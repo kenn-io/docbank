@@ -47,24 +47,38 @@ embeds msgvault-typed `ManifestStats`/`ManifestAttachments`, and
 - `internal/backup` → `pkg/backup`, generalized around small composable
   interfaces that the engine consumes at create, restore, AND verify time:
 
+The hooks must serve all three engine operations — create, restore, and
+verify. Today `AttachmentRefs` and `Stats` are methods on the frozen
+session (a consistent read view), and restore hardwires the `msgvault.db`
+filename, the `attachments/` directory, and msgvault-specific SQL that
+re-derives content refs from the restored DB. The seam follows that
+structure: create-side hooks operate against the frozen view; restore-side
+hooks operate against the restored DB.
+
 ```go
 // Freezer produces a consistent read view of the application database.
 type Freezer interface {
-    Freeze(ctx context.Context, dbPath string) (FrozenSession, error)
+    Freeze(ctx context.Context, dbPath string) (FrozenView, error)
 }
 
-// ContentSource enumerates the content-addressed files the DB references.
-type ContentSource interface {
+// FrozenView is the create-side hook surface: content enumeration and
+// stats are computed against the frozen snapshot, never the live DB.
+type FrozenView interface {
     ContentRefs(ctx context.Context) ([]ContentRef, error)
     HasNonCanonicalPaths(ctx context.Context) (bool, error)
-    ContentDir() string
+    Stats(ctx context.Context) (json.RawMessage, error) // opaque to engine
+    Close() error
 }
 
-// StatsProvider computes application stats for the manifest, and
-// recomputes them from a restored DB to prove restore fidelity.
-// The engine treats the payload as opaque bytes: it stores them at
-// create and byte-compares them at restore.
-type StatsProvider interface {
+// RestoreLayout tells the engine how to materialize and prove a restore.
+type RestoreLayout interface {
+    DBFileName() string  // "msgvault.db" / "docbank.db"
+    ContentDirName() string // "attachments" / "blobs"
+    // ContentRefs re-derives content refs from the restored DB so the
+    // engine can verify every referenced file was materialized.
+    ContentRefs(ctx context.Context, db *sql.DB) ([]ContentRef, error)
+    // Stats recomputes the app stats from the restored DB; the engine
+    // byte-compares against the manifest's stats as the fidelity proof.
     Stats(ctx context.Context, db *sql.DB) (json.RawMessage, error)
 }
 
@@ -76,8 +90,7 @@ type ExclusionProvider interface {
 // App composes the hooks. msgvault and docbank each implement it.
 type App interface {
     Freezer
-    ContentSource
-    StatsProvider
+    RestoreLayout
     ExclusionProvider
     Version() string // recorded in the manifest (app name + version)
 }
@@ -92,12 +105,20 @@ type App interface {
   populate it identically. If any field cannot be preserved byte-for-byte,
   the PR bumps `FormatVersion`/`MinReaderVersion` per the existing
   versioning discipline in `docs/architecture/backup-format.md` — silent
-  incompatibility is not an option.
+  incompatibility is not an option. Note that snapshot IDs are recomputed
+  by readers from the manifest's marshaled JSON, so field order and key
+  names are load-bearing: turning `ManifestStats` into raw JSON must
+  produce byte-identical marshaling for msgvault or the recompute check
+  breaks on old readers.
 - Also exported for reuse: the scheduler (`internal/scheduler`), the
   config/home-dir mechanics (`internal/config` path handling, atomic
   save), and `internal/fileutil`. Exact export surface decided in the PR.
-- msgvault behavior is unchanged; its existing backup tests plus a
-  round-trip test against a pre-extraction repo fixture guard the PR.
+- msgvault behavior is unchanged; the PR is guarded in both directions:
+  its existing backup tests, a round-trip test restoring a pre-extraction
+  repo fixture (old writer → new reader), and a golden-manifest test
+  proving a newly written msgvault snapshot is byte-compatible with the
+  pre-extraction reader (new writer → old reader), covering the
+  snapshot-ID recompute check.
 
 ## Architecture
 
@@ -158,8 +179,11 @@ ingests      (id, started_at, source_kind, source_desc)
 provenance   (node_id, ingest_id, original_path, original_mtime)
 tags         (id, name UNIQUE)
 node_tags    (node_id, tag_id)
-extracted_text (blob_hash, extractor, extractor_version, text,
-                extracted_at, PRIMARY KEY (blob_hash, extractor))
+extracted_text (blob_hash, extractor, extractor_version, status,
+                error, attempts, text, extracted_at,
+                PRIMARY KEY (blob_hash, extractor))
+-- one row per (blob_hash, extractor); re-extraction with a newer
+-- extractor_version replaces the row. status: 'ok' | 'failed'.
 -- FTS5 external-content table over extracted_text + node names
 ```
 
@@ -168,7 +192,10 @@ extracted_text (blob_hash, extractor, extractor_version, text,
 These rules are enforced in the store layer and matter immediately for
 agent-driven batch reorganization:
 
-- Exactly one root node (`parent_id IS NULL`, kind `dir`).
+- Exactly one root node (`parent_id IS NULL`, kind `dir`). Because
+  SQLite treats NULLs as distinct in unique indexes, this needs its own
+  enforcement: a partial unique index on a constant expression
+  (`CREATE UNIQUE INDEX one_root ON nodes((1)) WHERE parent_id IS NULL`).
 - `UNIQUE(parent_id, name)` among **live** nodes (partial index
   `WHERE trashed_at IS NULL`). Trashed nodes do not block reuse of a name.
 - Names are stored as given, Unicode NFC-normalized, compared
@@ -198,8 +225,13 @@ no diffing.
 One pipeline behind all entry points:
 
 1. Hash the source file (SHA-256, streaming).
-2. If the blob does not exist: write to `blobs/tmp/`, fsync, rename to
-   `blobs/<aa>/<hash>`. Rename onto an existing blob is success (idempotent).
+2. If the blob does not exist: write to `blobs/tmp/`, fsync the file,
+   rename to `blobs/<aa>/<hash>`, then fsync the `<aa>` directory (and
+   `blobs/` itself when `<aa>` was just created) so the directory entry
+   is durable before the DB row commits — otherwise power loss can leave
+   a committed row pointing at a vanished blob. `pkg/pack` already
+   exports this discipline (`SyncDir`, `mkdirAllSynced`); reuse it.
+   Rename onto an existing blob is success (idempotent).
 3. In one DB transaction: insert/refresh `blobs` row, create the node,
    write provenance, auto-suffix on name collision.
 4. Queue text extraction for the blob (skipped if
@@ -223,7 +255,12 @@ One pipeline behind all entry points:
   import recursively, preserving relative structure as the initial
   virtual tree. This is the bulk-migration path for 20 years of
   accumulated Documents/Dropbox/old-drive trees; it must be resumable
-  (re-running converges via hash dedup + provenance matching).
+  with a concrete idempotency rule: for each source file, if a live node
+  already exists at the computed destination path with the same
+  `blob_hash`, the file is skipped (already imported); same path with
+  different content gets the collision suffix; otherwise a new node is
+  created. Re-running an interrupted import therefore converges without
+  duplicating nodes, and needs no provenance-table uniqueness.
 - **Watched inboxes:** the daemon watches configured directories (scanner
   output, a "To File" folder). A file is imported only after a stability
   window — size and mtime unchanged for a configurable settle period
@@ -235,14 +272,18 @@ One pipeline behind all entry points:
 ### Text extraction
 
 Background workers (daemon or on-demand after CLI ingest) extract text
-keyed by `(blob_hash, extractor, extractor_version)`:
+per blob, one record per `(blob_hash, extractor)` with the
+`extractor_version` that produced it:
 
 - PDF text layer, plain text/markdown, and office formats in v1.
 - Renames/moves never trigger re-extraction; only new blobs do.
-- Bumping an extractor's version makes re-extraction eligible; a
-  `docbank extract --missing` command backfills.
-- Extraction failures are recorded per blob (error, not silence) and
-  retryable; a corrupt PDF must not wedge the queue.
+- A blob is extraction-eligible when it has no record for the extractor
+  or its record's `extractor_version` is older than the current one;
+  re-extraction replaces the record (stale text from old extractor
+  versions is never kept). `docbank extract --missing` backfills.
+- Failures are recorded in the same record (`status='failed'`, error
+  text, attempt count) — an error, not silence — and are retryable; a
+  corrupt PDF must not wedge the queue.
 
 FTS5 indexes extracted text plus node names/paths and tags.
 
@@ -287,6 +328,12 @@ Direct reuse of the extracted engine. `internal/backupapp` implements
 `backup.App`: freeze = SQLite WAL-checkpoint + pinned read transaction
 (engine-provided helper); content refs = all rows in `blobs`; stats =
 node/blob/tag counts + date range as JSON; exclusions = `logs/`, `tmp/`.
+
+Backup reachability is deliberately broader than GC reachability: every
+`blobs` row is captured, including blobs that are GC candidates (e.g.
+after emptying the trash but before `docbank gc --run`). Backups
+preserve GC candidates until GC actually reclaims them; only then do
+they age out of new snapshots.
 
 Commands mirror msgvault 0.17: `docbank backup init|create|list|verify|restore`
 against a NAS-mounted (or any) repo path. Incremental by construction:
