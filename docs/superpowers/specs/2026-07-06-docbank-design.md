@@ -230,13 +230,14 @@ One pipeline behind all entry points:
    `blobs/` itself when `<aa>` was just created) so the directory entry
    is durable before the DB row commits — otherwise power loss can leave
    a committed row pointing at a vanished blob. `pkg/pack` already
-   exports this discipline (`SyncDir`, `mkdirAllSynced`); reuse it.
+   implements this discipline (`SyncDir` is exported; the Phase 0 PR
+   also exports the currently-internal mkdir-synced helper); reuse it.
    Rename onto an existing blob is success (idempotent).
 3. In one DB transaction: insert/refresh `blobs` row, create the node,
    write provenance, auto-suffix on name collision.
-4. Queue text extraction for the blob (skipped if
-   `(blob_hash, extractor)` already extracted — dedup means one
-   extraction per unique content, ever).
+4. Queue text extraction for the blob (skipped when the blob already
+   has a completed record at the current extractor version — dedup
+   means each unique content is extracted once per extractor version).
 
 ### Crash and retry semantics
 
@@ -255,12 +256,15 @@ One pipeline behind all entry points:
   import recursively, preserving relative structure as the initial
   virtual tree. This is the bulk-migration path for 20 years of
   accumulated Documents/Dropbox/old-drive trees; it must be resumable
-  with a concrete idempotency rule: for each source file, if a live node
-  already exists at the computed destination path with the same
-  `blob_hash`, the file is skipped (already imported); same path with
-  different content gets the collision suffix; otherwise a new node is
-  created. Re-running an interrupted import therefore converges without
-  duplicating nodes, and needs no provenance-table uniqueness.
+  with a concrete idempotency rule: for each source file, the suffix
+  resolver walks the candidate names in the destination directory
+  (`report.pdf`, `report (2).pdf`, `report (3).pdf`, …); if any live
+  candidate has the same `blob_hash`, the file is skipped (already
+  imported — including files a prior run imported under a suffix). If
+  all candidates exist with different content, the next free suffix is
+  used; otherwise the first free candidate name is taken. Re-running an
+  interrupted import therefore converges without duplicating nodes, and
+  needs no provenance-table uniqueness.
 - **Watched inboxes:** the daemon watches configured directories (scanner
   output, a "To File" folder). A file is imported only after a stability
   window — size and mtime unchanged for a configurable settle period
@@ -379,8 +383,12 @@ Deletion is soft and blobs are never reclaimed implicitly. v1 ships
   batch-move dry-run vs execute; pagination.
 - Backup: full round-trip (create → verify → restore → prove stats) on a
   populated store.
-- Phase 0: msgvault's existing backup tests must pass unchanged, plus a
-  fixture round-trip proving pre-extraction repos still restore.
+- Phase 0: msgvault's existing backup tests must pass unchanged, plus
+  both compatibility directions: a fixture round-trip proving
+  pre-extraction repos still restore (old writer → new reader), and the
+  golden-manifest test proving newly written snapshots remain
+  byte-compatible with the pre-extraction reader (new writer → old
+  reader).
 
 ## Build order
 
