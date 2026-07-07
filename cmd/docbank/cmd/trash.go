@@ -55,7 +55,6 @@ var trashEmptyCmd = &cobra.Command{
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		age, err := parseAge(trashOlderThan)
-		trashOlderThan = "" // package-level flag vars persist across in-process Execute calls
 		if err != nil {
 			return err
 		}

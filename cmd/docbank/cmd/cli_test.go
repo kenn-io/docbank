@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"testing"
 
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -25,6 +27,7 @@ import (
 // execute against an earlier test's canceled context.
 func runCLI(t *testing.T, args ...string) (string, error) {
 	t.Helper()
+	resetFlags(rootCmd)
 	var out bytes.Buffer
 	rootCmd.SetOut(&out)
 	rootCmd.SetErr(&out)
@@ -32,6 +35,22 @@ func runCLI(t *testing.T, args ...string) (string, error) {
 	err := rootCmd.ExecuteContext(context.Background())
 	rootCmd.SetArgs(nil)
 	return out.String(), err
+}
+
+// resetFlags restores every command's flags to their defaults. Package-level
+// flag vars persist across in-process Execute calls, and a parse or argument
+// validation failure exits before any command code could reset them, so the
+// wrapper is the only reliable place.
+func resetFlags(c *cobra.Command) {
+	c.Flags().VisitAll(func(f *pflag.Flag) {
+		if f.Changed {
+			_ = f.Value.Set(f.DefValue)
+			f.Changed = false
+		}
+	})
+	for _, sub := range c.Commands() {
+		resetFlags(sub)
+	}
 }
 
 func setupVaultHome(t *testing.T) string {
@@ -320,4 +339,24 @@ func TestVerifyDetectsMissingAndCorrupt(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, out, "corrupt: "+alphaHash)
 	assert.Contains(t, out, "missing: "+betaHash)
+}
+
+// A validation failure exits before RunE, so nothing command-side can reset
+// the parsed flag; the runCLI wrapper must prevent the stale --dest from
+// leaking into the next invocation.
+func TestAddDestDoesNotLeakAcrossValidationFailure(t *testing.T) {
+	setupVaultHome(t)
+
+	_, err := runCLI(t, "add", "--dest", "/leaked") // no sources: MinimumNArgs fails
+	require.Error(t, err)
+
+	src := writeSourceFile(t, "a.txt", "alpha")
+	_, err = runCLI(t, "add", src) // no --dest: must use the default /inbox
+	require.NoError(t, err)
+
+	out, err := runCLI(t, "ls", "/inbox")
+	require.NoError(t, err)
+	assert.Contains(t, out, "a.txt")
+	_, err = runCLI(t, "ls", "/leaked")
+	require.ErrorIs(t, err, store.ErrNotFound)
 }

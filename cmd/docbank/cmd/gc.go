@@ -13,8 +13,6 @@ var gcCmd = &cobra.Command{
 	Short: "Reclaim unreachable blobs (dry-run unless --run)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		run := gcRun
-		gcRun = false // package-level flag vars persist across in-process Execute calls
 		// Exclusive: no concurrent ingest may dedup against a file gc
 		// is about to delete (see store.UnreachableBlobs docs).
 		v, err := openVaultExclusive()
@@ -33,8 +31,8 @@ var gcCmd = &cobra.Command{
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%d candidate blob(s), %d byte(s) reclaimable\n",
 			len(candidates), bytes)
-		if !run || len(candidates) == 0 {
-			if !run && len(candidates) > 0 {
+		if !gcRun || len(candidates) == 0 {
+			if !gcRun && len(candidates) > 0 {
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "dry run — pass --run to delete")
 			}
 			return nil

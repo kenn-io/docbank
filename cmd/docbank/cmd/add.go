@@ -16,7 +16,6 @@ var addCmd = &cobra.Command{
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dest := addDest
-		addDest = "/inbox" // package-level flag vars persist across in-process Execute calls
 		v, err := openVault()
 		if err != nil {
 			return err
