@@ -3,6 +3,7 @@ package blob
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/pack"
 )
 
 func newTestBlobStore(t *testing.T) *Store {
@@ -78,4 +80,46 @@ func TestRemoveAndCleanTmp(t *testing.T) {
 	require.NoError(t, bs.CleanTmp())
 	_, err = os.Stat(stray)
 	assert.True(t, os.IsNotExist(err))
+}
+
+func TestInvalidHashRejected(t *testing.T) {
+	bs := newTestBlobStore(t)
+
+	_, err := bs.Open("short")
+	require.ErrorIs(t, err, ErrInvalidHash)
+
+	ok, err := bs.Exists("short")
+	require.ErrorIs(t, err, ErrInvalidHash)
+	assert.False(t, ok)
+
+	err = bs.Remove("short")
+	require.ErrorIs(t, err, ErrInvalidHash)
+}
+
+func TestWriteSurfacesSyncDirFailure(t *testing.T) {
+	bs := newTestBlobStore(t)
+
+	// Pre-create the destination shard dir so MkdirAllSynced's fast path
+	// (dir already exists) short-circuits without calling SyncDir itself;
+	// otherwise the swapped SyncDir below would fail inside MkdirAllSynced
+	// instead of at Write's own post-rename sync.
+	content := "x"
+	sum := sha256.Sum256([]byte(content))
+	wantHash := hex.EncodeToString(sum[:])
+	require.NoError(t, os.MkdirAll(filepath.Join(bs.dir, wantHash[:2]), 0o700))
+
+	orig := pack.SyncDir
+	pack.SyncDir = func(string) error { return errors.New("boom") }
+	t.Cleanup(func() { pack.SyncDir = orig })
+
+	hash, size, err := bs.Write(strings.NewReader(content))
+	require.Error(t, err)
+	require.ErrorContains(t, err, "syncing blob shard dir")
+
+	// A durably-successful write reports (hash, size); on SyncDir failure
+	// Write must return the zero values so no caller can mistake this write
+	// for a durable success, even though the rename onto the final path
+	// already happened before the fsync failed.
+	assert.Empty(t, hash)
+	assert.Zero(t, size)
 }

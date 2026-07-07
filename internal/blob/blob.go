@@ -5,6 +5,7 @@ package blob
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,10 @@ import (
 
 	"go.kenn.io/kit/pack"
 )
+
+// ErrInvalidHash is returned when a caller-supplied hash is not a 64-char
+// lowercase SHA-256 hex string.
+var ErrInvalidHash = errors.New("invalid blob hash")
 
 // Store is a content-addressed blob directory.
 type Store struct {
@@ -26,9 +31,24 @@ func New(blobsDir string) *Store {
 
 func (s *Store) tmpDir() string { return filepath.Join(s.dir, "tmp") }
 
-// Path returns the final on-disk path for a hash.
+// Path returns the final on-disk path for a hash. Its result is only
+// meaningful when hash is a valid 64-char lowercase SHA-256 hex string;
+// callers that accept hashes from outside this package (e.g. DB rows) should
+// validate via Open, Exists, or Remove instead of calling Path directly.
 func (s *Store) Path(hash string) string {
 	return filepath.Join(s.dir, hash[:2], hash)
+}
+
+func validHash(hash string) bool {
+	if len(hash) != 64 {
+		return false
+	}
+	for _, c := range hash {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // Write streams r into the store, returning the content's SHA-256 (lowercase
@@ -81,6 +101,9 @@ func (s *Store) Write(r io.Reader) (string, int64, error) {
 
 // Open opens a blob for reading.
 func (s *Store) Open(hash string) (*os.File, error) {
+	if !validHash(hash) {
+		return nil, fmt.Errorf("blob hash %q: %w", hash, ErrInvalidHash)
+	}
 	f, err := os.Open(s.Path(hash))
 	if err != nil {
 		return nil, fmt.Errorf("opening blob %s: %w", hash, err)
@@ -90,6 +113,9 @@ func (s *Store) Open(hash string) (*os.File, error) {
 
 // Exists reports whether the blob file is present.
 func (s *Store) Exists(hash string) (bool, error) {
+	if !validHash(hash) {
+		return false, fmt.Errorf("blob hash %q: %w", hash, ErrInvalidHash)
+	}
 	_, err := os.Stat(s.Path(hash))
 	if err == nil {
 		return true, nil
@@ -103,6 +129,9 @@ func (s *Store) Exists(hash string) (bool, error) {
 // Remove deletes a blob file; a missing file is success (GC re-runs
 // reconcile crash leftovers).
 func (s *Store) Remove(hash string) error {
+	if !validHash(hash) {
+		return fmt.Errorf("blob hash %q: %w", hash, ErrInvalidHash)
+	}
 	if err := os.Remove(s.Path(hash)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("removing blob %s: %w", hash, err)
 	}
