@@ -213,3 +213,65 @@ func TestOpenVaultSkipsTmpCleanupWhileVaultBusy(t *testing.T) {
 	require.NoError(t, err)
 	assert.NoFileExists(t, stale)
 }
+
+func TestGcReclaimsUnreachableBlobs(t *testing.T) {
+	home := setupVaultHome(t)
+	src := writeSourceFile(t, "a.txt", "alpha")
+	_, err := runCLI(t, "add", src, "--dest", "/inbox")
+	require.NoError(t, err)
+
+	// Nothing to collect while the node is live.
+	out, err := runCLI(t, "gc")
+	require.NoError(t, err)
+	assert.Contains(t, out, "0 candidate")
+
+	_, err = runCLI(t, "rm", "/inbox/a.txt")
+	require.NoError(t, err)
+	_, err = runCLI(t, "trash", "empty")
+	require.NoError(t, err)
+
+	// Dry-run reports but does not delete.
+	out, err = runCLI(t, "gc")
+	require.NoError(t, err)
+	assert.Contains(t, out, "1 candidate")
+	blobFiles, err := filepath.Glob(filepath.Join(home, "blobs", "??", "*"))
+	require.NoError(t, err)
+	assert.Len(t, blobFiles, 1)
+
+	// --run deletes file and rows.
+	out, err = runCLI(t, "gc", "--run")
+	require.NoError(t, err)
+	assert.Contains(t, out, "reclaimed")
+	blobFiles, err = filepath.Glob(filepath.Join(home, "blobs", "??", "*"))
+	require.NoError(t, err)
+	assert.Empty(t, blobFiles)
+
+	// Re-run converges.
+	out, err = runCLI(t, "gc")
+	require.NoError(t, err)
+	assert.Contains(t, out, "0 candidate")
+}
+
+func TestVerifyDetectsMissingAndCorrupt(t *testing.T) {
+	home := setupVaultHome(t)
+	srcA := writeSourceFile(t, "a.txt", "alpha")
+	srcB := writeSourceFile(t, "b.txt", "beta")
+	_, err := runCLI(t, "add", srcA, srcB, "--dest", "/inbox")
+	require.NoError(t, err)
+
+	out, err := runCLI(t, "verify")
+	require.NoError(t, err)
+	assert.Contains(t, out, "2 blob(s) ok")
+
+	// Corrupt one blob file, delete the other.
+	blobFiles, err := filepath.Glob(filepath.Join(home, "blobs", "??", "*"))
+	require.NoError(t, err)
+	require.Len(t, blobFiles, 2)
+	require.NoError(t, os.WriteFile(blobFiles[0], []byte("tampered"), 0o600))
+	require.NoError(t, os.Remove(blobFiles[1]))
+
+	out, err = runCLI(t, "verify")
+	require.Error(t, err)
+	assert.Contains(t, out, "corrupt")
+	assert.Contains(t, out, "missing")
+}

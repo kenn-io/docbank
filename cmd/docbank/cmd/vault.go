@@ -17,6 +17,13 @@ type vault struct {
 // exclusive holder (gc).
 func openVault() (*vault, error) { return openVaultLocked(false) }
 
+// openVaultExclusive opens the vault holding the exclusive lock, blocking
+// out every other docbank process. gc --run requires this: between the
+// unreachable-blobs query and blob file removal, a concurrent ingest could
+// otherwise dedup against a blob file gc is about to delete, leaving a live
+// node pointing at nothing.
+func openVaultExclusive() (*vault, error) { return openVaultLocked(true) }
+
 func openVaultLocked(exclusive bool) (*vault, error) {
 	layout, err := home.Resolve()
 	if err != nil {
