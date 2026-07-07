@@ -181,7 +181,7 @@ func (s *Store) EmptyTrash(ctx context.Context, olderThan time.Duration) (int64,
 			// (clock skew) must not survive an explicit empty-everything.
 			res, err = tx.Exec(`DELETE FROM nodes WHERE trash_name IS NOT NULL`)
 		} else {
-			cutoff := time.Now().UTC().Add(-olderThan).Format(time.RFC3339Nano)
+			cutoff := time.Now().UTC().Add(-olderThan).Format(timestampLayout)
 			res, err = tx.Exec(
 				`DELETE FROM nodes WHERE trash_name IS NOT NULL AND trashed_at <= ?`, cutoff)
 		}

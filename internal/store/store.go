@@ -103,6 +103,12 @@ func (s *Store) withTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
 	return nil
 }
 
+// timestampLayout is RFC 3339 UTC with fixed-width nanoseconds. Timestamps
+// are compared and sorted as strings in SQL (EmptyTrash, TrashedRoots), so
+// lexicographic order must match chronological order; RFC3339Nano trims
+// trailing zeros and breaks that within a second.
+const timestampLayout = "2006-01-02T15:04:05.000000000Z07:00"
+
 func nowRFC3339() string {
-	return time.Now().UTC().Format(time.RFC3339Nano)
+	return time.Now().UTC().Format(timestampLayout)
 }

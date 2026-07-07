@@ -148,3 +148,23 @@ func TestEmptyTrash(t *testing.T) {
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM blobs`).Scan(&blobCount))
 	assert.Equal(t, 1, blobCount)
 }
+
+func TestEmptyTrashWholeSecondTimestamp(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+
+	// trashed_at is compared to the cutoff as a string, so a whole-second
+	// timestamp must sort before a cutoff with fractional digits in the same
+	// second. Under the old variable-width RFC3339Nano format it rendered
+	// without fractional digits ("...:00Z" > "...:00.5Z") and survived.
+	d, err := s.Mkdir(ctx, s.RootID(), "old")
+	require.NoError(t, err)
+	require.NoError(t, s.Trash(ctx, d.ID))
+	stamp := time.Now().UTC().Add(-time.Hour).Truncate(time.Second).Format(timestampLayout)
+	_, err = s.db.Exec(`UPDATE nodes SET trashed_at = ? WHERE id = ?`, stamp, d.ID)
+	require.NoError(t, err)
+
+	n, err := s.EmptyTrash(ctx, time.Hour)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
+}

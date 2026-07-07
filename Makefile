@@ -2,7 +2,13 @@
 
 .DEFAULT_GOAL := help
 
-VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+# Tag names are attacker-controlled in CI and VERSION is interpolated into
+# the shell command line of build/install: strip anything outside a strict
+# allowlist rather than trusting git metadata.
+VERSION := $(shell (git describe --tags --always --dirty 2>/dev/null || echo dev) | tr -cd 'A-Za-z0-9._+-')
+ifeq ($(VERSION),)
+VERSION := dev
+endif
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
 LDFLAGS := -X go.kenn.io/docbank/cmd/docbank/cmd.Version=$(VERSION) \
