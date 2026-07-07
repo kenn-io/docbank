@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"path/filepath"
 )
 
 // BeginIngest records the start of an ingest run and returns its id.
@@ -22,24 +23,29 @@ func (s *Store) BeginIngest(ctx context.Context, sourceKind, sourceDesc string) 
 	return id, nil
 }
 
-// resolveIngestNameTx applies the import idempotency rule: enumerate all
-// live suffix candidates of name under parentID; if any has blobHash the
-// file is already imported (skip); otherwise return the smallest free
+// resolveIngestNameTx applies the import idempotency rule: a live suffix
+// candidate of name under parentID that carries blobHash AND was originally
+// imported under this same basename means the file is already imported
+// (skip). Content alone is not enough: a real source file named like an
+// auto-suffixed copy ("report (2).pdf" next to an identical "report.pdf")
+// is a distinct file, not a re-import. Otherwise returns the smallest free
 // candidate name.
 func resolveIngestNameTx(tx *sql.Tx, parentID int64, name, blobHash string) (string, bool, error) {
 	base, ext := splitSuffix(name)
 	rows, err := tx.Query(
-		`SELECT name, COALESCE(blob_hash, '') FROM nodes
+		`SELECT id, name, COALESCE(blob_hash, '') FROM nodes
 		 WHERE parent_id = ? AND trashed_at IS NULL AND kind = 'file'`, parentID)
 	if err != nil {
 		return "", false, fmt.Errorf("listing siblings for %q: %w", name, err)
 	}
 	defer func() { _ = rows.Close() }()
 
+	var sameHash []int64
 	taken := map[int]bool{}
 	for rows.Next() {
+		var sibID int64
 		var sibName, sibHash string
-		if err := rows.Scan(&sibName, &sibHash); err != nil {
+		if err := rows.Scan(&sibID, &sibName, &sibHash); err != nil {
 			return "", false, fmt.Errorf("scanning sibling: %w", err)
 		}
 		n, ok := parseSuffix(sibName, base, ext)
@@ -47,12 +53,21 @@ func resolveIngestNameTx(tx *sql.Tx, parentID int64, name, blobHash string) (str
 			continue
 		}
 		if sibHash == blobHash {
-			return "", true, nil // already imported (possibly under a suffix)
+			sameHash = append(sameHash, sibID)
 		}
 		taken[n] = true
 	}
 	if err := rows.Err(); err != nil {
 		return "", false, fmt.Errorf("listing siblings for %q: %w", name, err)
+	}
+	for _, sibID := range sameHash {
+		imported, err := sameOriginTx(tx, sibID, name)
+		if err != nil {
+			return "", false, err
+		}
+		if imported {
+			return "", true, nil // already imported (possibly under a suffix)
+		}
 	}
 	// Directories can occupy candidate names too; they don't carry content,
 	// but their names are still taken. Probe them via the unique index by
@@ -74,6 +89,40 @@ func resolveIngestNameTx(tx *sql.Tx, parentID int64, name, blobHash string) (str
 		}
 		n++
 	}
+}
+
+// sameOriginTx reports whether node nodeID was imported from a source whose
+// basename (normalized) equals name — i.e. the incoming file is a re-import
+// of the same logical file, not a distinct source that merely shares
+// content. A node with no provenance rows matches unconditionally: its
+// origin is unknown, and skipping preserves the old idempotent behavior.
+func sameOriginTx(tx *sql.Tx, nodeID int64, name string) (bool, error) {
+	rows, err := tx.Query(`SELECT original_path FROM provenance WHERE node_id = ?`, nodeID)
+	if err != nil {
+		return false, fmt.Errorf("reading provenance of node %d: %w", nodeID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	sawProvenance := false
+	match := false
+	for rows.Next() {
+		var origPath string
+		if err := rows.Scan(&origPath); err != nil {
+			return false, fmt.Errorf("scanning provenance of node %d: %w", nodeID, err)
+		}
+		sawProvenance = true
+		origName, err := NormalizeName(filepath.Base(origPath))
+		if err != nil {
+			continue // unnormalizable origin can't match a normalized name
+		}
+		if origName == name {
+			match = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("reading provenance of node %d: %w", nodeID, err)
+	}
+	return match || !sawProvenance, nil
 }
 
 // IngestFile imports one already-durable blob as a node under parentID,

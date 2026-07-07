@@ -96,3 +96,36 @@ func TestIngestFileRecordsProvenance(t *testing.T) {
 	assert.Equal(t, "/orig/a.txt", origPath)
 	assert.Equal(t, "2026-01-02T03:04:05Z", origMtime)
 }
+
+func TestIngestFileDistinctSourceNamedLikeSuffix(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+
+	ing, err := s.BeginIngest(ctx, "cli", "test")
+	require.NoError(t, err)
+
+	// A real source file named like an auto-suffixed copy imports first...
+	n1, added, err := s.IngestFile(ctx, ing, s.RootID(),
+		"report (2).pdf", fakeHash("a1"), 1, "application/pdf", "/src/report (2).pdf", "")
+	require.NoError(t, err)
+	require.True(t, added)
+	assert.Equal(t, "report (2).pdf", n1.Name)
+
+	// ...and an identical-content report.pdf is a distinct source file,
+	// not a re-import: it must land under its own name.
+	n2, added, err := s.IngestFile(ctx, ing, s.RootID(),
+		"report.pdf", fakeHash("a1"), 1, "application/pdf", "/src/report.pdf", "")
+	require.NoError(t, err)
+	require.True(t, added)
+	assert.Equal(t, "report.pdf", n2.Name)
+
+	// Re-running both converges: each skips against its own prior import.
+	_, added, err = s.IngestFile(ctx, ing, s.RootID(),
+		"report (2).pdf", fakeHash("a1"), 1, "application/pdf", "/src/report (2).pdf", "")
+	require.NoError(t, err)
+	assert.False(t, added)
+	_, added, err = s.IngestFile(ctx, ing, s.RootID(),
+		"report.pdf", fakeHash("a1"), 1, "application/pdf", "/src/report.pdf", "")
+	require.NoError(t, err)
+	assert.False(t, added)
+}

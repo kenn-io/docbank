@@ -75,6 +75,15 @@ tmp_config_base=""
 
 find "$tmp_docs" -depth -name '.*' -exec rm -rf {} +
 
+# tar preserves symlinks, and a symlink could smuggle excluded or
+# out-of-tree content (.env, superpowers plans) past the publishing
+# boundary when zensical follows it.
+symlinks="$(find "$tmp_docs" -type l)"
+if [[ -n "$symlinks" ]]; then
+  printf 'refusing to publish: symlinks in docs tree:\n%s\n' "$symlinks" >&2
+  exit 1
+fi
+
 awk -v docs_dir="$tmp_docs_name" -v site_dir="$site_dir" '
   $0 == "docs_dir = \"docs\"" {
     print "docs_dir = \"" docs_dir "\""

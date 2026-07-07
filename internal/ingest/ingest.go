@@ -55,7 +55,7 @@ func (ing *Ingester) AddPaths(ctx context.Context, sources []string, destPath st
 		}
 		switch {
 		case info.Mode().IsRegular():
-			ing.addOne(ctx, &rep, ingestID, dest.ID, src, info)
+			ing.addOne(ctx, &rep, ingestID, dest.ID, src)
 		case info.IsDir():
 			if err := ing.addTree(ctx, &rep, ingestID, dest.ID, src); err != nil {
 				return rep, err
@@ -110,16 +110,11 @@ func (ing *Ingester) addTree(ctx context.Context, rep *Report, ingestID, destDir
 			}
 			dirIDs[p] = dir.ID
 		case d.Type().IsRegular():
-			info, err := d.Info()
-			if err != nil {
-				rep.Failed = append(rep.Failed, FileError{Path: p, Err: err})
-				return nil //nolint:nilerr // intentional: record error and continue walk
-			}
 			parentID, ok := dirIDs[filepath.Dir(p)]
 			if !ok {
 				return fmt.Errorf("internal: no virtual dir recorded for %s", filepath.Dir(p))
 			}
-			ing.addOne(ctx, rep, ingestID, parentID, p, info)
+			ing.addOne(ctx, rep, ingestID, parentID, p)
 		default:
 			rep.Failed = append(rep.Failed, FileError{Path: p,
 				Err: errors.New("not a regular file (symlinks are skipped)")})
@@ -130,8 +125,8 @@ func (ing *Ingester) addTree(ctx context.Context, rep *Report, ingestID, destDir
 }
 
 // addOne imports a single regular file; failures land in the report.
-func (ing *Ingester) addOne(ctx context.Context, rep *Report, ingestID, parentID int64, src string, info os.FileInfo) {
-	added, err := ing.importFile(ctx, ingestID, parentID, src, info)
+func (ing *Ingester) addOne(ctx context.Context, rep *Report, ingestID, parentID int64, src string) {
+	added, err := ing.importFile(ctx, ingestID, parentID, src)
 	switch {
 	case err != nil:
 		rep.Failed = append(rep.Failed, FileError{Path: src, Err: err})
@@ -142,12 +137,22 @@ func (ing *Ingester) addOne(ctx context.Context, rep *Report, ingestID, parentID
 	}
 }
 
-func (ing *Ingester) importFile(ctx context.Context, ingestID, parentID int64, src string, info os.FileInfo) (bool, error) {
-	f, err := os.Open(src)
+func (ing *Ingester) importFile(ctx context.Context, ingestID, parentID int64, src string) (bool, error) {
+	// No-follow plus fstat, not the earlier Lstat/WalkDir classification:
+	// the file could have been swapped since, and "symlinks are skipped"
+	// must hold for the file actually read, not the one classified.
+	f, err := openNoFollow(src)
 	if err != nil {
 		return false, fmt.Errorf("opening %s: %w", src, err)
 	}
 	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return false, fmt.Errorf("checking %s: %w", src, err)
+	}
+	if !info.Mode().IsRegular() {
+		return false, fmt.Errorf("%s: not a regular file", src)
+	}
 
 	head := make([]byte, 512)
 	n, err := io.ReadFull(f, head)

@@ -146,13 +146,22 @@ func (s *Store) Exists(hash string) (bool, error) {
 }
 
 // Remove deletes a blob file; a missing file is success (GC re-runs
-// reconcile crash leftovers).
+// reconcile crash leftovers). The unlink is durable — shard directory
+// fsynced — before Remove returns, because callers delete the blob's
+// metadata row next: a crash resurfacing the file after the row commit
+// would leave an untracked blob no later gc or verify could see.
 func (s *Store) Remove(hash string) error {
 	if !validHash(hash) {
 		return fmt.Errorf("blob hash %q: %w", hash, ErrInvalidHash)
 	}
-	if err := os.Remove(s.path(hash)); err != nil && !os.IsNotExist(err) {
+	if err := os.Remove(s.path(hash)); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return fmt.Errorf("removing blob %s: %w", hash, err)
+	}
+	if err := pack.SyncDir(filepath.Dir(s.path(hash))); err != nil {
+		return fmt.Errorf("syncing blob shard dir: %w", err)
 	}
 	return nil
 }

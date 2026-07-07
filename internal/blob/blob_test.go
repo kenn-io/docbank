@@ -164,3 +164,23 @@ func TestCleanTmpRefusesSymlinkedTmpDir(t *testing.T) {
 	_, err := os.Stat(victim)
 	assert.NoError(t, err, "file behind the symlink must survive")
 }
+
+func TestRemoveSurfacesSyncDirFailure(t *testing.T) {
+	bs := newTestBlobStore(t)
+	hash, _, err := bs.Write(strings.NewReader("gone"))
+	require.NoError(t, err)
+
+	orig := pack.SyncDir
+	pack.SyncDir = func(string) error { return errors.New("boom") }
+	t.Cleanup(func() { pack.SyncDir = orig })
+
+	// A remove whose unlink is not provably durable must fail, so gc keeps
+	// the metadata row for a file that could resurface after a crash.
+	err = bs.Remove(hash)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "syncing blob shard dir")
+
+	// The unlink itself already happened; removing the now-missing blob is
+	// a no-op that makes no directory change and needs no sync.
+	require.NoError(t, bs.Remove(hash))
+}
