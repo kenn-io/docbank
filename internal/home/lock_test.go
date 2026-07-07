@@ -1,3 +1,5 @@
+//go:build unix
+
 package home
 
 import (
@@ -62,4 +64,33 @@ func TestLockExclusiveBlocksOthers(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		require.Fail(t, "shared acquire must proceed after exclusive release")
 	}
+}
+
+// flock lock conversions are release-then-acquire, so a failed TryUpgrade
+// could silently drop the shared lock; the holder must still be counted
+// afterwards or gc could run concurrently with a command that believes it
+// holds the vault.
+func TestFailedUpgradeRetainsSharedLock(t *testing.T) {
+	l := Layout{Root: t.TempDir()}
+	require.NoError(t, l.Ensure())
+
+	a, err := l.AcquireLock(false)
+	require.NoError(t, err)
+	b, err := l.AcquireLock(false)
+	require.NoError(t, err)
+
+	ok, err := a.TryUpgrade() // fails: b also holds shared
+	require.NoError(t, err)
+	require.False(t, ok)
+	require.NoError(t, b.Release())
+
+	// If a's shared lock survived, a third holder cannot upgrade.
+	c, err := l.AcquireLock(false)
+	require.NoError(t, err)
+	ok, err = c.TryUpgrade()
+	require.NoError(t, err)
+	assert.False(t, ok, "a's shared lock must survive its failed upgrade")
+
+	require.NoError(t, c.Release())
+	require.NoError(t, a.Release())
 }

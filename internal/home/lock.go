@@ -1,3 +1,8 @@
+// Vault locking requires a Unix-like OS (flock); docbank does not support
+// Windows.
+
+//go:build unix
+
 package home
 
 import (
@@ -52,10 +57,19 @@ func (lk *Lock) TryUpgrade() (bool, error) {
 	if err == nil {
 		return true, nil
 	}
-	if errors.Is(err, syscall.EWOULDBLOCK) {
-		return false, nil
+	if !errors.Is(err, syscall.EWOULDBLOCK) {
+		return false, fmt.Errorf("upgrading vault lock: %w", err)
 	}
-	return false, fmt.Errorf("upgrading vault lock: %w", err)
+	// On Linux, flock conversions are release-then-acquire ("not guaranteed
+	// to be atomic", flock(2)), so the failed upgrade may have dropped the
+	// shared lock; take it back (blocking behind any exclusive holder that
+	// slipped in) before reporting failure, or the caller would proceed
+	// holding nothing. On Darwin the shared lock survives and this
+	// reconverts shared to shared, a harmless no-op.
+	if err := flock(lk.f, syscall.LOCK_SH); err != nil {
+		return false, fmt.Errorf("reacquiring shared vault lock: %w", err)
+	}
+	return false, nil
 }
 
 // Downgrade converts the lock back to shared. The conversion may briefly
