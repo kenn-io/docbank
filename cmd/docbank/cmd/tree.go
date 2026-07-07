@@ -31,6 +31,9 @@ var treeCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("resolving %q: %w", path, err)
 		}
+		if !root.IsDir() {
+			return fmt.Errorf("%s: %w", path, store.ErrNotDir)
+		}
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), path)
 		return printTree(ctx, cmd.OutOrStdout(), v.store, root.ID, 1)
 	},

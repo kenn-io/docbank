@@ -80,3 +80,25 @@ func TestSearchRanksMoreRelevantFirst(t *testing.T) {
 	assert.Equal(t, "tax tax tax.pdf", hits[0].Node.Name)
 	assert.Equal(t, "tax report.pdf", hits[1].Node.Name)
 }
+
+func TestSearchTieBreaksByName(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+
+	// Same token count and term frequency → equal BM25 rank. Insert in
+	// reverse name order so unordered scan order disagrees with the name
+	// tie-break — dropping the secondary ORDER BY fails this test.
+	_, err := s.CreateFile(ctx, s.RootID(), "tax c.pdf", fakeHash("c3"), 1, "application/pdf")
+	require.NoError(t, err)
+	_, err = s.CreateFile(ctx, s.RootID(), "tax b.pdf", fakeHash("b2"), 1, "application/pdf")
+	require.NoError(t, err)
+	_, err = s.CreateFile(ctx, s.RootID(), "tax a.pdf", fakeHash("a1"), 1, "application/pdf")
+	require.NoError(t, err)
+
+	hits, err := s.Search(ctx, "tax", 0)
+	require.NoError(t, err)
+	require.Len(t, hits, 3)
+	assert.Equal(t, "tax a.pdf", hits[0].Node.Name)
+	assert.Equal(t, "tax b.pdf", hits[1].Node.Name)
+	assert.Equal(t, "tax c.pdf", hits[2].Node.Name)
+}

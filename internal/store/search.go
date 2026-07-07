@@ -38,7 +38,8 @@ func (s *Store) Search(ctx context.Context, query string, limit int) ([]SearchHi
 		FROM nodes
 		WHERE id IN (SELECT rowid FROM nodes_fts WHERE nodes_fts MATCH ?)
 		  AND trashed_at IS NULL
-		ORDER BY (SELECT rank FROM nodes_fts WHERE rowid = nodes.id AND nodes_fts MATCH ?)
+		ORDER BY (SELECT rank FROM nodes_fts WHERE rowid = nodes.id AND nodes_fts MATCH ?),
+		         name, id
 		LIMIT ?`, fq, fq, limit)
 	if err != nil {
 		return nil, fmt.Errorf("searching %q: %w", query, err)

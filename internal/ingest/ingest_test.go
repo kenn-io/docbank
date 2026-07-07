@@ -163,3 +163,21 @@ func TestAddContinuesPastDirCollision(t *testing.T) {
 	_, err = ing.Store.NodeByPath(ctx, "/inbox/"+filepath.Base(srcA)+"/a.txt")
 	require.NoError(t, err)
 }
+
+// A non-clean source argument ("docs/") must import like the clean spelling:
+// WalkDir hands the root back as given while children are Join-cleaned, so
+// without normalization the dirIDs lookup misses and the import aborts.
+func TestAddDirectoryTrailingSlash(t *testing.T) {
+	ing := newTestIngester(t)
+	ctx := t.Context()
+	src := writeTree(t, map[string]string{"docs/notes.txt": "hello"})
+
+	rep, err := ing.AddPaths(ctx,
+		[]string{filepath.Join(src, "docs") + string(os.PathSeparator)}, "/inbox")
+	require.NoError(t, err)
+	assert.Equal(t, 1, rep.Added)
+	assert.Empty(t, rep.Failed)
+
+	_, err = ing.Store.NodeByPath(ctx, "/inbox/docs/notes.txt")
+	require.NoError(t, err)
+}

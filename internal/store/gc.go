@@ -29,7 +29,11 @@ func scanBlobInfos(rows *sql.Rows, op string) ([]BlobInfo, error) {
 }
 
 // UnreachableBlobs lists blobs referenced by no node (live or trashed) and
-// no recorded prior version. These are the gc candidates.
+// no recorded prior version. These are the gc candidates. Callers that go
+// on to delete blob files must hold the exclusive vault lock
+// (home.Layout.AcquireLock): with writers running, a concurrent ingest can
+// dedup against a candidate's file between this query and the deletion,
+// leaving a live node pointing at a removed blob.
 func (s *Store) UnreachableBlobs(ctx context.Context) ([]BlobInfo, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT b.hash, b.size FROM blobs b
@@ -43,8 +47,9 @@ func (s *Store) UnreachableBlobs(ctx context.Context) ([]BlobInfo, error) {
 }
 
 // DeleteBlobRows removes the metadata rows for reclaimed blobs. Callers
-// delete the blob files first; a crash in between leaves rows without
-// files, which a gc re-run reconciles.
+// must hold the exclusive vault lock (see UnreachableBlobs) and delete the
+// blob files first; a crash in between leaves rows without files, which a
+// gc re-run reconciles.
 func (s *Store) DeleteBlobRows(ctx context.Context, hashes []string) error {
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		for _, h := range hashes {

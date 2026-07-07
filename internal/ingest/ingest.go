@@ -71,11 +71,15 @@ func (ing *Ingester) AddPaths(ctx context.Context, sources []string, destPath st
 // addTree imports srcRoot recursively; its basename becomes a directory
 // under destDirID and relative structure is preserved.
 func (ing *Ingester) addTree(ctx context.Context, rep *Report, ingestID, destDirID int64, srcRoot string) error {
+	// Clean first: WalkDir hands back the root spelled exactly as given
+	// ("docs/", "./docs") while children come from filepath.Join, which
+	// cleans — dirIDs keys must use one spelling.
+	srcRoot = filepath.Clean(srcRoot)
 	destPath, err := ing.Store.Path(ctx, destDirID)
 	if err != nil {
 		return err
 	}
-	topName := filepath.Base(filepath.Clean(srcRoot))
+	topName := filepath.Base(srcRoot)
 
 	dirIDs := map[string]int64{} // source dir path -> virtual dir node id
 	walkErr := filepath.WalkDir(srcRoot, func(p string, d fs.DirEntry, err error) error {

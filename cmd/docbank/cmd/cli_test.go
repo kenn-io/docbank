@@ -10,6 +10,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/docbank/internal/home"
+	"go.kenn.io/docbank/internal/store"
 )
 
 // runCLI executes the root command against a test vault (caller must have
@@ -29,7 +32,6 @@ func runCLI(t *testing.T, args ...string) (string, error) {
 	return out.String(), err
 }
 
-//nolint:unparam // kept for reuse in Tasks 15-16
 func setupVaultHome(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -159,4 +161,55 @@ func TestTrashEmpty(t *testing.T) {
 	out, err = runCLI(t, "trash", "list")
 	require.NoError(t, err)
 	assert.Contains(t, out, "trash is empty")
+}
+
+func TestTreeRejectsFileWithoutOutput(t *testing.T) {
+	setupVaultHome(t)
+	src := writeSourceFile(t, "a.txt", "alpha")
+	_, err := runCLI(t, "add", src, "--dest", "/inbox")
+	require.NoError(t, err)
+
+	out, err := runCLI(t, "tree", "/inbox/a.txt")
+	require.ErrorIs(t, err, store.ErrNotDir)
+	assert.Empty(t, out, "tree must not emit partial output before failing")
+}
+
+func TestTrashEmptyRejectsNegativeAge(t *testing.T) {
+	setupVaultHome(t)
+	src := writeSourceFile(t, "a.txt", "alpha")
+	_, err := runCLI(t, "add", src, "--dest", "/inbox")
+	require.NoError(t, err)
+	_, err = runCLI(t, "rm", "/inbox/a.txt")
+	require.NoError(t, err)
+
+	_, err = runCLI(t, "trash", "empty", "--older-than=-1h")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "negative")
+
+	// Nothing was deleted.
+	out, err := runCLI(t, "trash", "list")
+	require.NoError(t, err)
+	assert.Contains(t, out, "a.txt")
+}
+
+func TestOpenVaultSkipsTmpCleanupWhileVaultBusy(t *testing.T) {
+	dir := setupVaultHome(t)
+	_, err := runCLI(t, "ls", "/") // create the vault layout
+	require.NoError(t, err)
+	stale := filepath.Join(dir, "blobs", "tmp", "blob-stale")
+	require.NoError(t, os.WriteFile(stale, []byte("x"), 0o600))
+
+	// Another holder (simulating a concurrent docbank process mid-write)
+	// must prevent startup cleanup from deleting its temp file.
+	other, err := home.Layout{Root: dir}.AcquireLock(false)
+	require.NoError(t, err)
+	_, err = runCLI(t, "ls", "/")
+	require.NoError(t, err)
+	assert.FileExists(t, stale, "cleanup must be skipped while the vault is shared")
+
+	// Sole process again: startup cleanup reclaims the stale file.
+	require.NoError(t, other.Release())
+	_, err = runCLI(t, "ls", "/")
+	require.NoError(t, err)
+	assert.NoFileExists(t, stale)
 }
