@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -84,4 +85,78 @@ func TestCatRejectsDirectory(t *testing.T) {
 
 	_, err = runCLI(t, "cat", "/inbox")
 	require.Error(t, err)
+}
+
+func TestMvIntoDirAndRename(t *testing.T) {
+	setupVaultHome(t)
+	src := writeSourceFile(t, "a.txt", "alpha")
+	_, err := runCLI(t, "add", src, "--dest", "/inbox")
+	require.NoError(t, err)
+
+	// Rename in place (dest is a non-existent name in an existing dir).
+	_, err = runCLI(t, "mv", "/inbox/a.txt", "/inbox/b.txt")
+	require.NoError(t, err)
+
+	// Move into an existing directory, keeping the name.
+	seed := writeSourceFile(t, "seed.txt", "s")
+	_, err = runCLI(t, "add", seed, "--dest", "/filed")
+	require.NoError(t, err)
+	_, err = runCLI(t, "mv", "/inbox/b.txt", "/filed")
+	require.NoError(t, err)
+
+	out, err := runCLI(t, "ls", "/filed")
+	require.NoError(t, err)
+	assert.Contains(t, out, "b.txt")
+}
+
+func TestRmRestoreRoundTrip(t *testing.T) {
+	setupVaultHome(t)
+	src := writeSourceFile(t, "a.txt", "alpha")
+	_, err := runCLI(t, "add", src, "--dest", "/inbox")
+	require.NoError(t, err)
+
+	// rm prints "trashed [<id>] <path> ..."; parse the id for restore.
+	out, err := runCLI(t, "rm", "/inbox/a.txt")
+	require.NoError(t, err)
+	assert.Contains(t, out, "trashed")
+	m := regexp.MustCompile(`\[(\d+)\]`).FindStringSubmatch(out)
+	require.Len(t, m, 2)
+
+	out, err = runCLI(t, "trash", "list")
+	require.NoError(t, err)
+	assert.Contains(t, out, "a.txt")
+
+	_, err = runCLI(t, "restore", m[1])
+	require.NoError(t, err)
+	out, err = runCLI(t, "ls", "/inbox")
+	require.NoError(t, err)
+	assert.Contains(t, out, "a.txt")
+}
+
+func TestSearchCLI(t *testing.T) {
+	setupVaultHome(t)
+	src := writeSourceFile(t, "insurance-2026.txt", "policy")
+	_, err := runCLI(t, "add", src, "--dest", "/inbox")
+	require.NoError(t, err)
+
+	out, err := runCLI(t, "search", "insurance")
+	require.NoError(t, err)
+	assert.Contains(t, out, "/inbox/insurance-2026.txt")
+}
+
+func TestTrashEmpty(t *testing.T) {
+	setupVaultHome(t)
+	src := writeSourceFile(t, "a.txt", "alpha")
+	_, err := runCLI(t, "add", src, "--dest", "/inbox")
+	require.NoError(t, err)
+	_, err = runCLI(t, "rm", "/inbox/a.txt")
+	require.NoError(t, err)
+
+	out, err := runCLI(t, "trash", "empty")
+	require.NoError(t, err)
+	assert.Contains(t, out, "deleted 1")
+
+	out, err = runCLI(t, "trash", "list")
+	require.NoError(t, err)
+	assert.Contains(t, out, "trash is empty")
 }
