@@ -27,6 +27,8 @@ func bumpRevisionTx(tx *sql.Tx, id int64, now string) error {
 }
 
 // liveDirTx loads id and errors unless it is a live directory.
+//
+//nolint:unparam // Node result is part of the shared tx-helper contract; later tasks consume it.
 func liveDirTx(tx *sql.Tx, id int64) (Node, error) {
 	n, err := nodeByIDTx(tx, id)
 	if err != nil {
@@ -134,4 +136,60 @@ func (s *Store) MkdirAll(ctx context.Context, path string) (Node, error) {
 		}
 	}
 	return n, nil
+}
+
+// EnsureBlobTx records a blob row if missing. The blob file must already be
+// durable on disk before the enclosing transaction commits.
+func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64) error {
+	if _, err := tx.Exec(
+		`INSERT OR IGNORE INTO blobs (hash, size, created_at) VALUES (?, ?, ?)`,
+		hash, size, nowRFC3339()); err != nil {
+		return fmt.Errorf("recording blob %s: %w", hash, err)
+	}
+	return nil
+}
+
+func (s *Store) createFileTx(tx *sql.Tx, parentID int64, name, blobHash string, size int64, mimeType string) (Node, error) {
+	if _, err := liveDirTx(tx, parentID); err != nil {
+		return Node{}, err
+	}
+	if err := s.EnsureBlobTx(tx, blobHash, size); err != nil {
+		return Node{}, err
+	}
+	now := nowRFC3339()
+	res, err := tx.Exec(
+		`INSERT INTO nodes (parent_id, name, kind, blob_hash, size, mime_type, created_at, modified_at)
+		 VALUES (?, ?, 'file', ?, ?, ?, ?, ?)`,
+		parentID, name, blobHash, size, mimeType, now, now)
+	if isUniqueViolation(err) {
+		return Node{}, fmt.Errorf("creating file %q under node %d: %w", name, parentID, ErrExists)
+	}
+	if err != nil {
+		return Node{}, fmt.Errorf("creating file %q under node %d: %w", name, parentID, err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return Node{}, fmt.Errorf("creating file %q: reading id: %w", name, err)
+	}
+	if err := bumpRevisionTx(tx, parentID, now); err != nil {
+		return Node{}, err
+	}
+	return nodeByIDTx(tx, id)
+}
+
+// CreateFile creates a file node pointing at an already-durable blob.
+func (s *Store) CreateFile(ctx context.Context, parentID int64, name, blobHash string, size int64, mimeType string) (Node, error) {
+	name, err := NormalizeName(name)
+	if err != nil {
+		return Node{}, err
+	}
+	var created Node
+	err = s.withTx(ctx, func(tx *sql.Tx) error {
+		created, err = s.createFileTx(tx, parentID, name, blobHash, size, mimeType)
+		return err
+	})
+	if err != nil {
+		return Node{}, err
+	}
+	return created, nil
 }
