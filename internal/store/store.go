@@ -72,8 +72,6 @@ func (s *Store) Close() error { return s.db.Close() }
 
 // withTx runs fn inside a transaction, committing on nil and rolling back
 // on error. Used by later packages (Task 4+) for transactional operations.
-//
-//nolint:unused // used by later tasks in other packages
 func (s *Store) withTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
