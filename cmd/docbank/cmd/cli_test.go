@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,13 +13,17 @@ import (
 
 // runCLI executes the root command against a test vault (caller must have
 // set DOCBANK_HOME via t.Setenv) and returns captured stdout.
+//
+// It must not pass t.Context(): cobra caches the first context on each
+// subcommand (Command.ctx is only assigned when nil), so a later test would
+// execute against an earlier test's canceled context.
 func runCLI(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	var out bytes.Buffer
 	rootCmd.SetOut(&out)
 	rootCmd.SetErr(&out)
 	rootCmd.SetArgs(args)
-	err := rootCmd.ExecuteContext(t.Context())
+	err := rootCmd.ExecuteContext(context.Background())
 	rootCmd.SetArgs(nil)
 	return out.String(), err
 }
