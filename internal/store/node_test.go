@@ -1,6 +1,7 @@
 package store
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -84,6 +85,36 @@ func TestMkdirAllCreatesIntermediates(t *testing.T) {
 	again, err := s.MkdirAll(ctx, "/a/b/c")
 	require.NoError(t, err)
 	assert.Equal(t, leaf.ID, again.ID)
+}
+
+func TestMkdirAllConcurrent(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+
+	const n = 8
+	var wg sync.WaitGroup
+	ids := make([]int64, n)
+	errs := make([]error, n)
+	for i := range n {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			leaf, err := s.MkdirAll(ctx, "/a/b/c")
+			ids[i] = leaf.ID
+			errs[i] = err
+		}(i)
+	}
+	wg.Wait()
+
+	for i := range n {
+		require.NoError(t, errs[i])
+		assert.Equal(t, ids[0], ids[i])
+	}
+
+	kids, err := s.Children(ctx, s.RootID())
+	require.NoError(t, err)
+	require.Len(t, kids, 1)
+	assert.Equal(t, "a", kids[0].Name)
 }
 
 func TestChildrenSortedDirsFirst(t *testing.T) {

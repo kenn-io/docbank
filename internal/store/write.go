@@ -139,12 +139,23 @@ func (s *Store) MkdirAll(ctx context.Context, path string) (Node, error) {
 }
 
 // EnsureBlobTx records a blob row if missing. The blob file must already be
-// durable on disk before the enclosing transaction commits.
+// durable on disk before the enclosing transaction commits. If a blob row
+// already exists under hash, its recorded size must match size: a mismatch
+// means two different contents hashed to the same value, or a caller passed
+// a wrong size, either of which is a corruption signal rather than ordinary
+// dedup and must not be silently accepted.
 func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64) error {
 	if _, err := tx.Exec(
 		`INSERT OR IGNORE INTO blobs (hash, size, created_at) VALUES (?, ?, ?)`,
 		hash, size, nowRFC3339()); err != nil {
 		return fmt.Errorf("recording blob %s: %w", hash, err)
+	}
+	var stored int64
+	if err := tx.QueryRow(`SELECT size FROM blobs WHERE hash = ?`, hash).Scan(&stored); err != nil {
+		return fmt.Errorf("verifying blob %s: %w", hash, err)
+	}
+	if stored != size {
+		return fmt.Errorf("blob %s: recorded size %d does not match caller size %d", hash, stored, size)
 	}
 	return nil
 }

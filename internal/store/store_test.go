@@ -2,6 +2,7 @@ package store
 
 import (
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -32,6 +33,37 @@ func TestOpenBootstrapsRoot(t *testing.T) {
 
 	var count int
 	require.NoError(t, s2.db.QueryRow(
+		`SELECT COUNT(*) FROM nodes WHERE parent_id IS NULL`).Scan(&count))
+	assert.Equal(t, 1, count)
+}
+
+func TestOpenConcurrentBootstrap(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "docbank.db")
+
+	const n = 2
+	var wg sync.WaitGroup
+	stores := make([]*Store, n)
+	errs := make([]error, n)
+	for i := range n {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			stores[i], errs[i] = Open(dbPath)
+		}(i)
+	}
+	wg.Wait()
+
+	for i := range n {
+		require.NoError(t, errs[i])
+	}
+	defer func() {
+		for i := range n {
+			require.NoError(t, stores[i].Close())
+		}
+	}()
+
+	var count int
+	require.NoError(t, stores[0].db.QueryRow(
 		`SELECT COUNT(*) FROM nodes WHERE parent_id IS NULL`).Scan(&count))
 	assert.Equal(t, 1, count)
 }

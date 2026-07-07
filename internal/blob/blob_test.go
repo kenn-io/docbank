@@ -34,7 +34,7 @@ func TestWriteAndReadBack(t *testing.T) {
 	assert.Equal(t, int64(len(content)), size)
 
 	// Sharded path: blobs/<aa>/<hash>.
-	assert.Equal(t, filepath.Join(bs.dir, wantHex[:2], wantHex), bs.Path(hash))
+	assert.Equal(t, filepath.Join(bs.dir, wantHex[:2], wantHex), bs.path(hash))
 
 	f, err := bs.Open(hash)
 	require.NoError(t, err)

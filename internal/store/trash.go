@@ -172,11 +172,19 @@ func (s *Store) TrashedRoots(ctx context.Context) ([]Node, error) {
 // when olderThan is zero). Subtrees go with them via ON DELETE CASCADE.
 // Returns the number of trash roots deleted.
 func (s *Store) EmptyTrash(ctx context.Context, olderThan time.Duration) (int64, error) {
-	cutoff := time.Now().UTC().Add(-olderThan).Format(time.RFC3339Nano)
 	var deleted int64
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		res, err := tx.Exec(
-			`DELETE FROM nodes WHERE trash_name IS NOT NULL AND trashed_at <= ?`, cutoff)
+		var res sql.Result
+		var err error
+		if olderThan == 0 {
+			// No timestamp predicate at all: a future-dated trashed_at
+			// (clock skew) must not survive an explicit empty-everything.
+			res, err = tx.Exec(`DELETE FROM nodes WHERE trash_name IS NOT NULL`)
+		} else {
+			cutoff := time.Now().UTC().Add(-olderThan).Format(time.RFC3339Nano)
+			res, err = tx.Exec(
+				`DELETE FROM nodes WHERE trash_name IS NOT NULL AND trashed_at <= ?`, cutoff)
+		}
 		if err != nil {
 			return fmt.Errorf("emptying trash: %w", err)
 		}

@@ -31,11 +31,11 @@ func New(blobsDir string) *Store {
 
 func (s *Store) tmpDir() string { return filepath.Join(s.dir, "tmp") }
 
-// Path returns the final on-disk path for a hash. Its result is only
+// path returns the final on-disk path for a hash. Its result is only
 // meaningful when hash is a valid 64-char lowercase SHA-256 hex string;
 // callers that accept hashes from outside this package (e.g. DB rows) should
-// validate via Open, Exists, or Remove instead of calling Path directly.
-func (s *Store) Path(hash string) string {
+// validate via Open, Exists, or Remove instead of calling path directly.
+func (s *Store) path(hash string) string {
 	return filepath.Join(s.dir, hash[:2], hash)
 }
 
@@ -79,7 +79,7 @@ func (s *Store) Write(r io.Reader) (string, int64, error) {
 	}
 
 	hash := hex.EncodeToString(hasher.Sum(nil))
-	final := s.Path(hash)
+	final := s.path(hash)
 	if _, err := os.Stat(final); err == nil {
 		return hash, size, nil // dedup: existing blob wins
 	} else if !os.IsNotExist(err) {
@@ -91,7 +91,14 @@ func (s *Store) Write(r io.Reader) (string, int64, error) {
 		return "", 0, fmt.Errorf("creating blob shard dir: %w", err)
 	}
 	if err := os.Rename(tmpName, final); err != nil {
-		return "", 0, fmt.Errorf("finalizing blob %s: %w", hash, err)
+		// Some filesystems refuse to rename onto an existing destination
+		// (or a concurrent writer's rename can interleave with ours). If
+		// the destination now exists, a concurrent Write for the same
+		// content already finalized it: that's dedup success, not our
+		// failure, so fall through and sync/return as if we'd won.
+		if _, statErr := os.Stat(final); statErr != nil {
+			return "", 0, fmt.Errorf("finalizing blob %s: %w", hash, err)
+		}
 	}
 	if err := pack.SyncDir(shard); err != nil {
 		return "", 0, fmt.Errorf("syncing blob shard dir: %w", err)
@@ -104,7 +111,7 @@ func (s *Store) Open(hash string) (*os.File, error) {
 	if !validHash(hash) {
 		return nil, fmt.Errorf("blob hash %q: %w", hash, ErrInvalidHash)
 	}
-	f, err := os.Open(s.Path(hash))
+	f, err := os.Open(s.path(hash))
 	if err != nil {
 		return nil, fmt.Errorf("opening blob %s: %w", hash, err)
 	}
@@ -116,7 +123,7 @@ func (s *Store) Exists(hash string) (bool, error) {
 	if !validHash(hash) {
 		return false, fmt.Errorf("blob hash %q: %w", hash, ErrInvalidHash)
 	}
-	_, err := os.Stat(s.Path(hash))
+	_, err := os.Stat(s.path(hash))
 	if err == nil {
 		return true, nil
 	}
@@ -132,7 +139,7 @@ func (s *Store) Remove(hash string) error {
 	if !validHash(hash) {
 		return fmt.Errorf("blob hash %q: %w", hash, ErrInvalidHash)
 	}
-	if err := os.Remove(s.Path(hash)); err != nil && !os.IsNotExist(err) {
+	if err := os.Remove(s.path(hash)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("removing blob %s: %w", hash, err)
 	}
 	return nil

@@ -42,6 +42,17 @@ func TestCreateFile(t *testing.T) {
 	assert.Equal(t, 1, blobCount)
 }
 
+func TestCreateFileRejectsBlobSizeMismatch(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+
+	_, err := s.CreateFile(ctx, s.RootID(), "a.txt", fakeHash("a1"), 10, "text/plain")
+	require.NoError(t, err)
+
+	_, err = s.CreateFile(ctx, s.RootID(), "b.txt", fakeHash("a1"), 11, "text/plain")
+	require.ErrorContains(t, err, "does not match")
+}
+
 func TestCreateFileRejectsFileParent(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
