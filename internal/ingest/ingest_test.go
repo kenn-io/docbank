@@ -181,3 +181,41 @@ func TestAddDirectoryTrailingSlash(t *testing.T) {
 	_, err = ing.Store.NodeByPath(ctx, "/inbox/docs/notes.txt")
 	require.NoError(t, err)
 }
+
+func TestAddDotDotSourceStaysUnderDest(t *testing.T) {
+	ing := newTestIngester(t)
+	ctx := t.Context()
+	src := writeTree(t, map[string]string{"sub/a.txt": "hello"})
+	t.Chdir(filepath.Join(src, "sub"))
+
+	// A source spelled ".." must import under its real basename, not climb
+	// out of the destination via Join(dest, "..", rel).
+	rep, err := ing.AddPaths(ctx, []string{".."}, "/inbox")
+	require.NoError(t, err)
+	assert.Equal(t, 1, rep.Added)
+	assert.Empty(t, rep.Failed)
+
+	top := filepath.Base(src)
+	_, err = ing.Store.NodeByPath(ctx, "/inbox/"+top+"/sub/a.txt")
+	require.NoError(t, err)
+
+	// Nothing escaped to the tree root: it holds exactly the dest dir.
+	kids, err := ing.Store.Children(ctx, ing.Store.RootID())
+	require.NoError(t, err)
+	require.Len(t, kids, 1)
+	assert.Equal(t, "inbox", kids[0].Name)
+}
+
+func TestAddDotSourceUsesRealBasename(t *testing.T) {
+	ing := newTestIngester(t)
+	ctx := t.Context()
+	src := writeTree(t, map[string]string{"a.txt": "hello"})
+	t.Chdir(src)
+
+	rep, err := ing.AddPaths(ctx, []string{"."}, "/inbox")
+	require.NoError(t, err)
+	assert.Equal(t, 1, rep.Added)
+
+	_, err = ing.Store.NodeByPath(ctx, "/inbox/"+filepath.Base(src)+"/a.txt")
+	require.NoError(t, err)
+}
