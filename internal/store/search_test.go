@@ -60,3 +60,21 @@ func TestSearchSurvivesOperatorInput(t *testing.T) {
 		assert.NoError(t, err, q)
 	}
 }
+
+func TestSearchRanksMoreRelevantFirst(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+
+	// Create two files: one with term frequency 3, one with frequency 1.
+	// BM25 ranking should place the higher-frequency match first.
+	_, err := s.CreateFile(ctx, s.RootID(), "tax tax tax.pdf", fakeHash("a1"), 1, "application/pdf")
+	require.NoError(t, err)
+	_, err = s.CreateFile(ctx, s.RootID(), "tax report.pdf", fakeHash("b2"), 1, "application/pdf")
+	require.NoError(t, err)
+
+	hits, err := s.Search(ctx, "tax", 0)
+	require.NoError(t, err)
+	require.Len(t, hits, 2)
+	assert.Equal(t, "tax tax tax.pdf", hits[0].Node.Name)
+	assert.Equal(t, "tax report.pdf", hits[1].Node.Name)
+}

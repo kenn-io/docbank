@@ -17,7 +17,7 @@ type SearchHit struct {
 // quotes are doubled per FTS5 string syntax.
 func ftsQuery(input string) string {
 	var terms []string
-	for _, t := range strings.Fields(input) { //nolint:modernize // strings.FieldsSeq not available in this Go version
+	for t := range strings.FieldsSeq(input) {
 		t = strings.ReplaceAll(t, `"`, `""`)
 		terms = append(terms, `"`+t+`"*`)
 	}
