@@ -196,3 +196,34 @@ func TestTrashPath(t *testing.T) {
 	_, err = s.TrashPath(ctx, "/docs")
 	assert.ErrorIs(t, err, ErrNotFound)
 }
+
+func TestRestoreAfterParentHardDeleteNeverRetargets(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+
+	// f gets a lower id than its parent D, so hard-deleting D frees the
+	// maximum rowid — exactly the id a fresh directory would reuse if node
+	// ids were reusable.
+	f, err := s.CreateFile(ctx, s.RootID(), "f.txt", fakeHash("a1"), 1, "text/plain")
+	require.NoError(t, err)
+	d, err := s.Mkdir(ctx, s.RootID(), "D")
+	require.NoError(t, err)
+	_, err = s.Move(ctx, f.ID, d.ID, "f.txt")
+	require.NoError(t, err)
+
+	require.NoError(t, s.Trash(ctx, f.ID)) // records trash_parent = D
+	require.NoError(t, s.Trash(ctx, d.ID))
+	deleteTrashRoot(t, s, d.ID)
+
+	e, err := s.Mkdir(ctx, s.RootID(), "E")
+	require.NoError(t, err)
+	require.NotEqual(t, d.ID, e.ID, "node ids must never be reused")
+
+	// The original parent is gone: restore must fall back to the root, not
+	// land inside an unrelated directory occupying a reused id.
+	restored, err := s.Restore(ctx, f.ID)
+	require.NoError(t, err)
+	p, err := s.Path(ctx, restored.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "/f.txt", p)
+}

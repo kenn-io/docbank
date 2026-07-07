@@ -166,6 +166,39 @@ func (s *Store) Remove(hash string) error {
 	return nil
 }
 
+// List returns the hash and size of every blob file present on disk,
+// walking the shard directories directly. gc uses it to find files that
+// never gained (or lost) their metadata row — a blob written durably whose
+// metadata transaction then failed is invisible to every row-based query.
+func (s *Store) List() (map[string]int64, error) {
+	shards, err := os.ReadDir(s.dir)
+	if err != nil {
+		return nil, fmt.Errorf("reading blob dir: %w", err)
+	}
+	out := map[string]int64{}
+	for _, shard := range shards {
+		if !shard.IsDir() || len(shard.Name()) != 2 {
+			continue // tmp/ and anything else that is not a shard
+		}
+		entries, err := os.ReadDir(filepath.Join(s.dir, shard.Name()))
+		if err != nil {
+			return nil, fmt.Errorf("reading blob shard %s: %w", shard.Name(), err)
+		}
+		for _, e := range entries {
+			name := e.Name()
+			if !validHash(name) || name[:2] != shard.Name() || !e.Type().IsRegular() {
+				continue
+			}
+			info, err := e.Info()
+			if err != nil {
+				return nil, fmt.Errorf("reading blob %s: %w", name, err)
+			}
+			out[name] = info.Size()
+		}
+	}
+	return out, nil
+}
+
 // CleanTmp removes leftover temp files from interrupted writes.
 func (s *Store) CleanTmp() error {
 	// Cleanup deletes everything it finds, so refuse to follow a symlinked

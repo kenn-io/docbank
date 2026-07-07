@@ -360,3 +360,36 @@ func TestAddDestDoesNotLeakAcrossValidationFailure(t *testing.T) {
 	_, err = runCLI(t, "ls", "/leaked")
 	require.ErrorIs(t, err, store.ErrNotFound)
 }
+
+func TestGcReclaimsUntrackedBlobFiles(t *testing.T) {
+	home := setupVaultHome(t)
+	src := writeSourceFile(t, "a.txt", "alpha")
+	_, err := runCLI(t, "add", src, "--dest", "/inbox")
+	require.NoError(t, err)
+
+	// Manufacture the failed-transaction / crash shape: a durable blob file
+	// with no blobs row. Row-based queries can never see it.
+	content := []byte("orphaned bytes")
+	sum := sha256.Sum256(content)
+	hash := hex.EncodeToString(sum[:])
+	shard := filepath.Join(home, "blobs", hash[:2])
+	require.NoError(t, os.MkdirAll(shard, 0o700))
+	orphan := filepath.Join(shard, hash)
+	require.NoError(t, os.WriteFile(orphan, content, 0o600))
+
+	// Dry run reports it without deleting.
+	out, err := runCLI(t, "gc")
+	require.NoError(t, err)
+	assert.Contains(t, out, "1 untracked")
+	assert.FileExists(t, orphan)
+
+	out, err = runCLI(t, "gc", "--run")
+	require.NoError(t, err)
+	assert.Contains(t, out, "reclaimed")
+	assert.NoFileExists(t, orphan)
+
+	// The tracked, live blob is untouched.
+	catOut, err := runCLI(t, "cat", "/inbox/a.txt")
+	require.NoError(t, err)
+	assert.Equal(t, "alpha", catOut)
+}

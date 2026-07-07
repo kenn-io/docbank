@@ -70,6 +70,12 @@ func (ing *Ingester) AddPaths(ctx context.Context, sources []string, destPath st
 
 // addTree imports srcRoot recursively; its basename becomes a directory
 // under destDirID and relative structure is preserved.
+//
+// Traversal is by path (WalkDir): swapping an already-classified directory
+// for a symlink mid-walk can redirect descent outside srcRoot. That race is
+// accepted — docbank is single-user and imports the user's own trees, so a
+// process able to race the walk already runs as the user; importFile's
+// no-follow open covers the accidental symlink case.
 func (ing *Ingester) addTree(ctx context.Context, rep *Report, ingestID, destDirID int64, srcRoot string) error {
 	// Absolutize first. WalkDir hands back the root spelled exactly as given
 	// while children come from filepath.Join, which cleans — dirIDs keys must
@@ -165,8 +171,9 @@ func (ing *Ingester) importFile(ctx context.Context, ingestID, parentID int64, s
 	}
 
 	// Blob first: the node row must never commit before its bytes are
-	// durable. A skip after this point can orphan the blob — harmless,
-	// reclaimed by gc.
+	// durable. A skip, metadata failure, or crash after this point can
+	// orphan the blob file — harmless, reclaimed by gc's untracked-file
+	// scan.
 	hash, size, err := ing.Blobs.Write(f)
 	if err != nil {
 		return false, fmt.Errorf("storing content of %s: %w", src, err)

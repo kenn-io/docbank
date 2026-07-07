@@ -1,7 +1,10 @@
 -- docbank core schema. Idempotent: applied on every Open.
 
+-- AUTOINCREMENT: node ids are stored as origins (trash_parent) and will be
+-- handed to agents over the HTTP API; a reused rowid would silently retarget
+-- those references at an unrelated node.
 CREATE TABLE IF NOT EXISTS nodes (
-    id            INTEGER PRIMARY KEY,
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
     parent_id     INTEGER REFERENCES nodes(id) ON DELETE CASCADE,
     name          TEXT NOT NULL,
     kind          TEXT NOT NULL CHECK (kind IN ('dir', 'file')),
@@ -12,7 +15,7 @@ CREATE TABLE IF NOT EXISTS nodes (
     created_at    TEXT NOT NULL,
     modified_at   TEXT NOT NULL,
     trashed_at    TEXT,
-    trash_parent  INTEGER,
+    trash_parent  INTEGER REFERENCES nodes(id) ON DELETE SET NULL,
     trash_name    TEXT,
     CHECK ((kind = 'file') = (blob_hash IS NOT NULL))
 );
