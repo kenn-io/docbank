@@ -37,6 +37,14 @@ func TestMkdirAndLookup(t *testing.T) {
 	assert.Equal(t, "/docs", p)
 }
 
+func TestPathOnMissingNodeReturnsNotFound(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+
+	_, err := s.Path(ctx, 99999)
+	assert.ErrorIs(t, err, ErrNotFound)
+}
+
 func TestMkdirRejectsCollisionAndBadNames(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()

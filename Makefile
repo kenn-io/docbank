@@ -21,6 +21,7 @@ build:
 	CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS)" -o docbank ./cmd/docbank
 
 install:
+	@mkdir -p "$(HOME)/.local/bin"
 	CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS)" -o "$(HOME)/.local/bin/docbank" ./cmd/docbank
 
 clean:

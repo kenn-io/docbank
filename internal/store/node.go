@@ -122,6 +122,9 @@ func (s *Store) Children(ctx context.Context, dirID int64) ([]Node, error) {
 
 // Path returns the display path of a node ("/" for the root).
 func (s *Store) Path(ctx context.Context, id int64) (string, error) {
+	if _, err := s.NodeByID(ctx, id); err != nil {
+		return "", fmt.Errorf("computing path of node %d: %w", id, err)
+	}
 	var path string
 	err := s.db.QueryRowContext(ctx, `
 		WITH RECURSIVE ancestry(id, parent_id, name, depth) AS (

@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
-	"errors"
 	"fmt"
 	"time"
 
@@ -42,24 +41,23 @@ func Open(path string) (*Store, error) {
 	return s, nil
 }
 
+// bootstrapRoot creates the root node if it does not already exist. The
+// insert-then-select is a single atomic statement (SQLite serializes
+// writers), so concurrent Open calls on the same database converge on one
+// root instead of racing a read-then-insert and hitting the one_root unique
+// index.
 func (s *Store) bootstrapRoot() error {
-	err := s.db.QueryRow(`SELECT id FROM nodes WHERE parent_id IS NULL`).Scan(&s.rootID)
-	if err == nil {
-		return nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("looking up root node: %w", err)
-	}
 	now := nowRFC3339()
-	res, err := s.db.Exec(
+	if _, err := s.db.Exec(
 		`INSERT INTO nodes (parent_id, name, kind, created_at, modified_at)
-		 VALUES (NULL, '', 'dir', ?, ?)`, now, now)
-	if err != nil {
+		 SELECT NULL, '', 'dir', ?, ?
+		 WHERE NOT EXISTS (SELECT 1 FROM nodes WHERE parent_id IS NULL)`,
+		now, now); err != nil {
 		return fmt.Errorf("creating root node: %w", err)
 	}
-	s.rootID, err = res.LastInsertId()
-	if err != nil {
-		return fmt.Errorf("reading root node id: %w", err)
+	if err := s.db.QueryRow(
+		`SELECT id FROM nodes WHERE parent_id IS NULL`).Scan(&s.rootID); err != nil {
+		return fmt.Errorf("looking up root node: %w", err)
 	}
 	return nil
 }

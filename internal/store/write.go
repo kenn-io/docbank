@@ -111,10 +111,24 @@ func (s *Store) MkdirAll(ctx context.Context, path string) (Node, error) {
 			}
 			n = next
 		case errors.Is(err, ErrNotFound):
-			n, err = s.Mkdir(ctx, n.ID, seg)
+			created, mkErr := s.Mkdir(ctx, n.ID, seg)
+			if mkErr == nil {
+				n = created
+				continue
+			}
+			if !errors.Is(mkErr, ErrExists) {
+				return Node{}, fmt.Errorf("mkdir -p %q: %w", path, mkErr)
+			}
+			// Lost a race with a concurrent MkdirAll/Mkdir: re-read the
+			// now-existing child and converge on it.
+			next, err = s.childByName(ctx, n.ID, seg)
 			if err != nil {
 				return Node{}, fmt.Errorf("mkdir -p %q: %w", path, err)
 			}
+			if !next.IsDir() {
+				return Node{}, fmt.Errorf("mkdir -p %q: %q is a file: %w", path, seg, ErrNotDir)
+			}
+			n = next
 		default:
 			return Node{}, fmt.Errorf("mkdir -p %q: %w", path, err)
 		}
