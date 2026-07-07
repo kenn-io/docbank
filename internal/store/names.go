@@ -45,8 +45,6 @@ func suffixedName(base, ext string, n int) string {
 
 // parseSuffix reports which candidate ordinal name is for the given
 // base/ext, if any: base+ext -> 1, "base (n)"+ext -> n.
-//
-//nolint:unparam // base is used to validate the name pattern
 func parseSuffix(name, base, ext string) (int, bool) {
 	if name == base+ext {
 		return 1, true
