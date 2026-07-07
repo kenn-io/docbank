@@ -3,6 +3,7 @@ package ingest
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -126,4 +127,39 @@ func TestAddContinuesPastFailures(t *testing.T) {
 	assert.Equal(t, 1, rep.Added)
 	require.Len(t, rep.Failed, 1)
 	assert.Contains(t, rep.Failed[0].Path, "dangling")
+}
+
+// TestAddContinuesPastDirCollision covers a dir-creation failure mid-tree:
+// a WalkDir callback error must not abort the whole AddPaths batch. Only
+// the colliding subtree should be skipped; sibling sources still import.
+func TestAddContinuesPastDirCollision(t *testing.T) {
+	ing := newTestIngester(t)
+	ctx := t.Context()
+
+	srcB := writeTree(t, map[string]string{"sub/b.txt": "beta"})
+	srcA := writeTree(t, map[string]string{"a.txt": "alpha"})
+	srcBBase := filepath.Base(srcB)
+
+	// Pre-create a FILE node at the exact virtual path srcB's "sub"
+	// subdirectory will later need ("/inbox/<srcBBase>/sub"), so that
+	// MkdirAll for it collides with ErrNotDir during the real import.
+	collision := writeTree(t, map[string]string{"sub": "not a directory"})
+	_, err := ing.AddPaths(ctx, []string{filepath.Join(collision, "sub")}, "/inbox/"+srcBBase)
+	require.NoError(t, err)
+
+	rep, err := ing.AddPaths(ctx, []string{srcB, srcA}, "/inbox")
+	require.NoError(t, err)
+
+	require.NotEmpty(t, rep.Failed)
+	found := false
+	for _, f := range rep.Failed {
+		if strings.Contains(f.Path, "sub") || strings.Contains(f.Err.Error(), "sub") {
+			found = true
+		}
+	}
+	assert.True(t, found, "expected a recorded failure for the colliding dir, got %+v", rep.Failed)
+
+	assert.GreaterOrEqual(t, rep.Added, 1)
+	_, err = ing.Store.NodeByPath(ctx, "/inbox/"+filepath.Base(srcA)+"/a.txt")
+	require.NoError(t, err)
 }

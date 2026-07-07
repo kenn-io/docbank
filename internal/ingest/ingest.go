@@ -92,7 +92,9 @@ func (ing *Ingester) addTree(ctx context.Context, rep *Report, ingestID, destDir
 			virtual := filepath.ToSlash(filepath.Join(destPath, topName, rel))
 			dir, err := ing.Store.MkdirAll(ctx, virtual)
 			if err != nil {
-				return fmt.Errorf("creating virtual dir %q: %w", virtual, err)
+				rep.Failed = append(rep.Failed, FileError{Path: p,
+					Err: fmt.Errorf("creating virtual dir %q: %w", virtual, err)})
+				return fs.SkipDir
 			}
 			dirIDs[p] = dir.ID
 		case d.Type().IsRegular():
