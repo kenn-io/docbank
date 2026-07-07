@@ -66,10 +66,12 @@ func TestSearchRanksMoreRelevantFirst(t *testing.T) {
 	ctx := t.Context()
 
 	// Create two files: one with term frequency 3, one with frequency 1.
-	// BM25 ranking should place the higher-frequency match first.
-	_, err := s.CreateFile(ctx, s.RootID(), "tax tax tax.pdf", fakeHash("a1"), 1, "application/pdf")
+	// BM25 ranking should place the higher-frequency match first. The
+	// less-relevant name is inserted FIRST so unordered rowid/scan order
+	// disagrees with rank order — dropping the ORDER BY fails this test.
+	_, err := s.CreateFile(ctx, s.RootID(), "tax report.pdf", fakeHash("b2"), 1, "application/pdf")
 	require.NoError(t, err)
-	_, err = s.CreateFile(ctx, s.RootID(), "tax report.pdf", fakeHash("b2"), 1, "application/pdf")
+	_, err = s.CreateFile(ctx, s.RootID(), "tax tax tax.pdf", fakeHash("a1"), 1, "application/pdf")
 	require.NoError(t, err)
 
 	hits, err := s.Search(ctx, "tax", 0)
