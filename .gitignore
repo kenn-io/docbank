@@ -8,3 +8,4 @@ docs/.venv/
 docs/site/
 docs/zensical-public-docs.*
 docs/.zensical-build.*
+.kata.local.toml
