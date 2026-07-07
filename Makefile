@@ -15,7 +15,7 @@ DEFAULT_GOLANGCI_LINT_CACHE := $(shell git rev-parse --path-format=absolute --gi
 GOLANGCI_LINT_CACHE ?= $(DEFAULT_GOLANGCI_LINT_CACHE)
 export GOLANGCI_LINT_CACHE
 
-.PHONY: build install clean test test-v fmt lint lint-ci tidy install-hooks help
+.PHONY: build install clean test test-v fmt lint lint-ci tidy install-hooks docs-install docs-build docs-serve help
 
 build:
 	CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS)" -o docbank ./cmd/docbank
@@ -60,5 +60,14 @@ install-hooks:
 	fi
 	prek install
 
+docs-install:
+	cd docs && uv sync --frozen
+
+docs-build:
+	cd docs && ./zensical-docs.sh build
+
+docs-serve:
+	cd docs && ./zensical-docs.sh serve
+
 help:
-	@echo "Targets: build install clean test test-v fmt lint lint-ci tidy install-hooks"
+	@echo "Targets: build install clean test test-v fmt lint lint-ci tidy install-hooks docs-install docs-build docs-serve"
