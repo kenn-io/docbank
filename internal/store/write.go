@@ -43,7 +43,7 @@ func liveDirTx(tx *sql.Tx, id int64) (Node, error) {
 
 func isUniqueViolation(err error) bool {
 	var se sqlite3.Error
-	return errors.As(err, &se) && se.Code == sqlite3.ErrConstraint
+	return errors.As(err, &se) && se.ExtendedCode == sqlite3.ErrConstraintUnique
 }
 
 // Mkdir creates a directory under parentID.
