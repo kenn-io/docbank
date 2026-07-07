@@ -169,7 +169,6 @@ linters:
       # `encoding/json` errors already include the operation in their message.
       ignore-package-globs:
         - go.kenn.io/docbank/*
-        - github.com/spf13/cobra
         - database/sql
         - database/sql/*
         - io

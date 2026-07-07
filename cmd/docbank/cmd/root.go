@@ -21,5 +21,5 @@ var rootCmd = &cobra.Command{
 }
 
 func Execute() error {
-	return rootCmd.Execute()
+	return rootCmd.Execute() //nolint:wrapcheck // Execute's error is the user-facing CLI error; wrapping would prefix noise
 }
