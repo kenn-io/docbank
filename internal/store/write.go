@@ -48,6 +48,11 @@ func isUniqueViolation(err error) bool {
 	return errors.As(err, &se) && se.ExtendedCode == sqlite3.ErrConstraintUnique
 }
 
+func isBusy(err error) bool {
+	var se sqlite3.Error
+	return errors.As(err, &se) && se.Code == sqlite3.ErrBusy
+}
+
 // Mkdir creates a directory under parentID.
 func (s *Store) Mkdir(ctx context.Context, parentID int64, name string) (Node, error) {
 	name, err := NormalizeName(name)

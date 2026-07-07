@@ -28,38 +28,54 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening database %s: %w", path, err)
 	}
-	if _, err := db.Exec(schemaSQL); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("applying schema: %w", err)
-	}
-
 	s := &Store{db: db}
-	if err := s.bootstrapRoot(); err != nil {
+	if err := s.bootstrap(); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 	return s, nil
 }
 
-// bootstrapRoot creates the root node if it does not already exist. The
-// insert-then-select is a single atomic statement (SQLite serializes
-// writers), so concurrent Open calls on the same database converge on one
-// root instead of racing a read-then-insert and hitting the one_root unique
-// index.
-func (s *Store) bootstrapRoot() error {
-	now := nowRFC3339()
-	if _, err := s.db.Exec(
-		`INSERT INTO nodes (parent_id, name, kind, created_at, modified_at)
-		 SELECT NULL, '', 'dir', ?, ?
-		 WHERE NOT EXISTS (SELECT 1 FROM nodes WHERE parent_id IS NULL)`,
-		now, now); err != nil {
-		return fmt.Errorf("creating root node: %w", err)
+// bootstrap applies the schema and creates the root node if missing, all in
+// one transaction, retrying SQLITE_BUSY. Both halves matter for concurrent
+// first-time Opens: _txlock=immediate makes the transaction BEGIN IMMEDIATE
+// (autocommit DDL upgrades a read lock mid-statement, which fails without
+// invoking the busy handler), and the retry loop covers converting the fresh
+// database to WAL, which needs an exclusive lock and likewise fails
+// immediately while another connection is mid-bootstrap. Every statement is
+// idempotent, so retrying the whole transaction is safe. The root
+// insert-then-select stays a single atomic statement as extra insurance
+// against racing a read-then-insert into the one_root unique index.
+func (s *Store) bootstrap() error {
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		err := s.bootstrapTx()
+		if err == nil || !isBusy(err) || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	if err := s.db.QueryRow(
-		`SELECT id FROM nodes WHERE parent_id IS NULL`).Scan(&s.rootID); err != nil {
-		return fmt.Errorf("looking up root node: %w", err)
-	}
-	return nil
+}
+
+func (s *Store) bootstrapTx() error {
+	return s.withTx(context.Background(), func(tx *sql.Tx) error {
+		if _, err := tx.Exec(schemaSQL); err != nil {
+			return fmt.Errorf("applying schema: %w", err)
+		}
+		now := nowRFC3339()
+		if _, err := tx.Exec(
+			`INSERT INTO nodes (parent_id, name, kind, created_at, modified_at)
+			 SELECT NULL, '', 'dir', ?, ?
+			 WHERE NOT EXISTS (SELECT 1 FROM nodes WHERE parent_id IS NULL)`,
+			now, now); err != nil {
+			return fmt.Errorf("creating root node: %w", err)
+		}
+		if err := tx.QueryRow(
+			`SELECT id FROM nodes WHERE parent_id IS NULL`).Scan(&s.rootID); err != nil {
+			return fmt.Errorf("looking up root node: %w", err)
+		}
+		return nil
+	})
 }
 
 // RootID returns the id of the tree root.
