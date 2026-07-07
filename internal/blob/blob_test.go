@@ -180,7 +180,16 @@ func TestRemoveSurfacesSyncDirFailure(t *testing.T) {
 	require.Error(t, err)
 	require.ErrorContains(t, err, "syncing blob shard dir")
 
-	// The unlink itself already happened; removing the now-missing blob is
-	// a no-op that makes no directory change and needs no sync.
+	// The retry finds the file already gone, but the earlier unlink was
+	// never durably synced: returning success without a sync would let gc
+	// delete the row above a still-volatile unlink.
+	err = bs.Remove(hash)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "syncing blob shard dir")
+
+	// Once syncing works the retry converges, and a blob whose shard dir
+	// never existed has no entry to resurface and needs no sync.
+	pack.SyncDir = orig
 	require.NoError(t, bs.Remove(hash))
+	require.NoError(t, bs.Remove(strings.Repeat("f", 64)))
 }

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -154,13 +155,17 @@ func (s *Store) Remove(hash string) error {
 	if !validHash(hash) {
 		return fmt.Errorf("blob hash %q: %w", hash, ErrInvalidHash)
 	}
-	if err := os.Remove(s.path(hash)); err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
+	if err := os.Remove(s.path(hash)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("removing blob %s: %w", hash, err)
 	}
+	// Sync even when the file was already missing: a prior Remove may have
+	// unlinked it and then failed this same sync, and returning success
+	// here without one would let gc delete the row above a still-volatile
+	// unlink. A shard dir that never existed has no entry to resurface.
 	if err := pack.SyncDir(filepath.Dir(s.path(hash))); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
 		return fmt.Errorf("syncing blob shard dir: %w", err)
 	}
 	return nil
