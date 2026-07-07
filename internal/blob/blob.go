@@ -102,6 +102,12 @@ func (s *Store) Write(r io.Reader) (string, int64, error) {
 		// the destination now exists, a concurrent Write for the same
 		// content already finalized it: that's dedup success, not our
 		// failure, so fall through and sync/return as if we'd won.
+		//
+		// The reverse interleaving — our rename replacing a concurrent
+		// writer's already-synced file — is equally benign: same hash
+		// means same bytes, and every writer syncs its temp file before
+		// renaming, so the directory entry swaps between two durable
+		// identical inodes.
 		if _, statErr := os.Stat(final); statErr != nil {
 			return "", 0, fmt.Errorf("finalizing blob %s: %w", hash, err)
 		}
@@ -153,6 +159,16 @@ func (s *Store) Remove(hash string) error {
 
 // CleanTmp removes leftover temp files from interrupted writes.
 func (s *Store) CleanTmp() error {
+	// Cleanup deletes everything it finds, so refuse to follow a symlinked
+	// tmp dir: it would delete files outside the vault (and a tmp on another
+	// filesystem would break rename-based finalization anyway).
+	fi, err := os.Lstat(s.tmpDir())
+	if err != nil {
+		return fmt.Errorf("checking blob tmp dir: %w", err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("blob tmp dir %s is a symlink; refusing to clean it", s.tmpDir())
+	}
 	entries, err := os.ReadDir(s.tmpDir())
 	if err != nil {
 		return fmt.Errorf("reading blob tmp dir: %w", err)

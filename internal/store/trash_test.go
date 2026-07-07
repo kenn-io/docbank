@@ -168,3 +168,31 @@ func TestEmptyTrashWholeSecondTimestamp(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), n)
 }
+
+func TestTrashPath(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+
+	docs, err := s.Mkdir(ctx, s.RootID(), "docs")
+	require.NoError(t, err)
+	_, err = s.CreateFile(ctx, docs.ID, "a.txt", fakeHash("a1"), 1, "text/plain")
+	require.NoError(t, err)
+
+	n, err := s.TrashPath(ctx, "/docs")
+	require.NoError(t, err)
+	assert.Equal(t, docs.ID, n.ID)
+
+	// Gone from the live tree; restorable as a trash root.
+	_, err = s.NodeByPath(ctx, "/docs")
+	require.ErrorIs(t, err, ErrNotFound)
+	roots, err := s.TrashedRoots(ctx)
+	require.NoError(t, err)
+	require.Len(t, roots, 1)
+	assert.Equal(t, docs.ID, roots[0].ID)
+
+	// The root and no-longer-resolving paths are refused.
+	_, err = s.TrashPath(ctx, "/")
+	require.ErrorIs(t, err, ErrIsRoot)
+	_, err = s.TrashPath(ctx, "/docs")
+	assert.ErrorIs(t, err, ErrNotFound)
+}

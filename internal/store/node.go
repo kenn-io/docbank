@@ -66,18 +66,29 @@ func splitPath(path string) []string {
 	return segs
 }
 
+// rowQuerier is satisfied by both *sql.DB and *sql.Tx, so path resolution
+// can run standalone or inside a mutation's transaction.
+type rowQuerier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
 // NodeByPath walks live nodes from the root along the given /-separated path.
 func (s *Store) NodeByPath(ctx context.Context, path string) (Node, error) {
-	n, err := s.NodeByID(ctx, s.rootID)
+	return nodeByPath(ctx, s.db, s.rootID, path)
+}
+
+func nodeByPath(ctx context.Context, q rowQuerier, rootID int64, path string) (Node, error) {
+	row := q.QueryRowContext(ctx, `SELECT `+nodeCols+` FROM nodes WHERE id = ?`, rootID)
+	n, err := scanNode(row)
 	if err != nil {
-		return Node{}, err
+		return Node{}, fmt.Errorf("node %d: %w", rootID, err)
 	}
 	for _, seg := range splitPath(path) {
 		seg, err := NormalizeName(seg)
 		if err != nil {
 			return Node{}, fmt.Errorf("path %q: %w", path, err)
 		}
-		row := s.db.QueryRowContext(ctx,
+		row := q.QueryRowContext(ctx,
 			`SELECT `+nodeCols+` FROM nodes
 			 WHERE parent_id = ? AND name = ? AND trashed_at IS NULL`, n.ID, seg)
 		n, err = scanNode(row)

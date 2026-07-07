@@ -23,8 +23,38 @@ func (s *Store) Trash(ctx context.Context, id int64) error {
 		if n.TrashedAt != nil {
 			return fmt.Errorf("node %d already trashed: %w", id, ErrNotFound)
 		}
-		now := nowRFC3339()
-		if _, err := tx.Exec(`
+		return s.trashNodeTx(tx, n)
+	})
+}
+
+// TrashPath resolves path and trashes the node inside one transaction, so a
+// concurrent move cannot relocate the node (or an ancestor) between
+// resolution and mutation. Returns the node that was trashed.
+func (s *Store) TrashPath(ctx context.Context, path string) (Node, error) {
+	var trashed Node
+	err := s.withTx(ctx, func(tx *sql.Tx) error {
+		n, err := nodeByPath(ctx, tx, s.rootID, path)
+		if err != nil {
+			return fmt.Errorf("resolving %q: %w", path, err)
+		}
+		if n.ID == s.rootID {
+			return ErrIsRoot
+		}
+		trashed = n
+		return s.trashNodeTx(tx, n)
+	})
+	if err != nil {
+		return Node{}, err
+	}
+	return trashed, nil
+}
+
+// trashNodeTx trashes a live node n (pre-checked by the caller) and its live
+// subtree within the caller's transaction.
+func (s *Store) trashNodeTx(tx *sql.Tx, n Node) error {
+	id := n.ID
+	now := nowRFC3339()
+	if _, err := tx.Exec(`
 			WITH RECURSIVE subtree(id) AS (
 				SELECT id FROM nodes WHERE id = ?
 				UNION ALL
@@ -34,20 +64,19 @@ func (s *Store) Trash(ctx context.Context, id int64) error {
 			)
 			UPDATE nodes SET trashed_at = ?, revision = revision + 1, modified_at = ?
 			WHERE id IN (SELECT id FROM subtree)`, id, now, now); err != nil {
-			return fmt.Errorf("trashing subtree of node %d: %w", id, err)
-		}
-		// Detach the trash root from its original parent (parent_id has ON
-		// DELETE CASCADE, so leaving it in place would silently destroy this
-		// trash root if the original parent were ever hard-deleted). The
-		// origin travels in trash_parent/trash_name; parent_id points at the
-		// tree root because the one_root index forbids a second NULL parent.
-		if _, err := tx.Exec(
-			`UPDATE nodes SET parent_id = ?, trash_parent = ?, trash_name = ? WHERE id = ?`,
-			s.rootID, *n.ParentID, n.Name, id); err != nil {
-			return fmt.Errorf("recording trash origin of node %d: %w", id, err)
-		}
-		return bumpRevisionTx(tx, *n.ParentID, now)
-	})
+		return fmt.Errorf("trashing subtree of node %d: %w", id, err)
+	}
+	// Detach the trash root from its original parent (parent_id has ON
+	// DELETE CASCADE, so leaving it in place would silently destroy this
+	// trash root if the original parent were ever hard-deleted). The
+	// origin travels in trash_parent/trash_name; parent_id points at the
+	// tree root because the one_root index forbids a second NULL parent.
+	if _, err := tx.Exec(
+		`UPDATE nodes SET parent_id = ?, trash_parent = ?, trash_name = ? WHERE id = ?`,
+		s.rootID, *n.ParentID, n.Name, id); err != nil {
+		return fmt.Errorf("recording trash origin of node %d: %w", id, err)
+	}
+	return bumpRevisionTx(tx, *n.ParentID, now)
 }
 
 // nextFreeNameTx finds the smallest free suffix candidate among live

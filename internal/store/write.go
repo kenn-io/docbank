@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"path"
 
 	sqlite3 "github.com/mattn/go-sqlite3"
 )
@@ -232,59 +233,109 @@ func isAncestorTx(tx *sql.Tx, maybeAncestor, candidate int64) (bool, error) {
 
 // Move renames and/or reparents a live node in one transaction.
 func (s *Store) Move(ctx context.Context, id, newParentID int64, newName string) (Node, error) {
-	newName, err := NormalizeName(newName)
-	if err != nil {
-		return Node{}, err
-	}
-	if id == s.rootID {
-		return Node{}, ErrIsRoot
-	}
 	var moved Node
-	err = s.withTx(ctx, func(tx *sql.Tx) error {
-		n, err := nodeByIDTx(tx, id)
-		if err != nil {
-			return err
-		}
-		if n.TrashedAt != nil {
-			return fmt.Errorf("node %d is trashed: %w", id, ErrNotFound)
-		}
-		if _, err := liveDirTx(tx, newParentID); err != nil {
-			return err
-		}
-		// The destination may not be the node itself or any of its
-		// descendants (equivalently: id may not be an ancestor of dest).
-		inCycle, err := isAncestorTx(tx, id, newParentID)
-		if err != nil {
-			return err
-		}
-		if inCycle {
-			return fmt.Errorf("moving node %d under %d: %w", id, newParentID, ErrCycle)
-		}
-		now := nowRFC3339()
-		_, err = tx.Exec(
-			`UPDATE nodes SET parent_id = ?, name = ?, revision = revision + 1,
-			        modified_at = ? WHERE id = ?`,
-			newParentID, newName, now, id)
-		if isUniqueViolation(err) {
-			return fmt.Errorf("moving node %d to %q: %w", id, newName, ErrExists)
-		}
-		if err != nil {
-			return fmt.Errorf("moving node %d: %w", id, err)
-		}
-		oldParent := *n.ParentID
-		if err := bumpRevisionTx(tx, oldParent, now); err != nil {
-			return err
-		}
-		if newParentID != oldParent {
-			if err := bumpRevisionTx(tx, newParentID, now); err != nil {
-				return err
-			}
-		}
-		moved, err = nodeByIDTx(tx, id)
+	err := s.withTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		moved, err = s.moveTx(tx, id, newParentID, newName)
 		return err
 	})
 	if err != nil {
 		return Node{}, err
 	}
 	return moved, nil
+}
+
+// MovePath resolves srcPath and destPath and moves inside one transaction,
+// so a concurrent operation cannot relocate either between resolution and
+// mutation. A destPath naming an existing live directory means "move into,
+// keep name"; otherwise its parent must exist and its basename becomes the
+// new name.
+func (s *Store) MovePath(ctx context.Context, srcPath, destPath string) (Node, error) {
+	var moved Node
+	err := s.withTx(ctx, func(tx *sql.Tx) error {
+		src, err := nodeByPath(ctx, tx, s.rootID, srcPath)
+		if err != nil {
+			return fmt.Errorf("resolving %q: %w", srcPath, err)
+		}
+		if src.ID == s.rootID {
+			return ErrIsRoot
+		}
+		newParentID, newName, err := s.resolveMoveTargetTx(ctx, tx, destPath, src.Name)
+		if err != nil {
+			return err
+		}
+		moved, err = s.moveTx(tx, src.ID, newParentID, newName)
+		return err
+	})
+	if err != nil {
+		return Node{}, err
+	}
+	return moved, nil
+}
+
+func (s *Store) resolveMoveTargetTx(
+	ctx context.Context, tx *sql.Tx, destPath, keepName string) (int64, string, error) {
+	if dest, err := nodeByPath(ctx, tx, s.rootID, destPath); err == nil {
+		if dest.IsDir() {
+			return dest.ID, keepName, nil
+		}
+		return 0, "", fmt.Errorf("destination %q: %w", destPath, ErrExists)
+	} else if !errors.Is(err, ErrNotFound) {
+		return 0, "", fmt.Errorf("resolving destination %q: %w", destPath, err)
+	}
+	parent, err := nodeByPath(ctx, tx, s.rootID, path.Dir(destPath))
+	if err != nil {
+		return 0, "", fmt.Errorf("resolving destination parent %q: %w", path.Dir(destPath), err)
+	}
+	return parent.ID, path.Base(destPath), nil
+}
+
+func (s *Store) moveTx(tx *sql.Tx, id, newParentID int64, newName string) (Node, error) {
+	if id == s.rootID {
+		return Node{}, ErrIsRoot
+	}
+	newName, err := NormalizeName(newName)
+	if err != nil {
+		return Node{}, err
+	}
+	n, err := nodeByIDTx(tx, id)
+	if err != nil {
+		return Node{}, err
+	}
+	if n.TrashedAt != nil {
+		return Node{}, fmt.Errorf("node %d is trashed: %w", id, ErrNotFound)
+	}
+	if _, err := liveDirTx(tx, newParentID); err != nil {
+		return Node{}, err
+	}
+	// The destination may not be the node itself or any of its
+	// descendants (equivalently: id may not be an ancestor of dest).
+	inCycle, err := isAncestorTx(tx, id, newParentID)
+	if err != nil {
+		return Node{}, err
+	}
+	if inCycle {
+		return Node{}, fmt.Errorf("moving node %d under %d: %w", id, newParentID, ErrCycle)
+	}
+	now := nowRFC3339()
+	_, err = tx.Exec(
+		`UPDATE nodes SET parent_id = ?, name = ?, revision = revision + 1,
+		        modified_at = ? WHERE id = ?`,
+		newParentID, newName, now, id)
+	if isUniqueViolation(err) {
+		return Node{}, fmt.Errorf("moving node %d to %q: %w", id, newName, ErrExists)
+	}
+	if err != nil {
+		return Node{}, fmt.Errorf("moving node %d: %w", id, err)
+	}
+	oldParent := *n.ParentID
+	if err := bumpRevisionTx(tx, oldParent, now); err != nil {
+		return Node{}, err
+	}
+	if newParentID != oldParent {
+		if err := bumpRevisionTx(tx, newParentID, now); err != nil {
+			return Node{}, err
+		}
+	}
+	return nodeByIDTx(tx, id)
 }

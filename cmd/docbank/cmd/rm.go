@@ -17,11 +17,8 @@ var rmCmd = &cobra.Command{
 		}
 		defer func() { _ = v.close() }()
 
-		n, err := v.store.NodeByPath(cmd.Context(), args[0])
+		n, err := v.store.TrashPath(cmd.Context(), args[0])
 		if err != nil {
-			return fmt.Errorf("resolving %q: %w", args[0], err)
-		}
-		if err := v.store.Trash(cmd.Context(), n.ID); err != nil {
 			return err
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(),

@@ -149,3 +149,18 @@ func TestWriteDedupFastPathSurfacesSyncDirFailure(t *testing.T) {
 	assert.Equal(t, hex.EncodeToString(sum[:]), hash1)
 	assert.NotZero(t, size1)
 }
+
+func TestCleanTmpRefusesSymlinkedTmpDir(t *testing.T) {
+	bs := newTestBlobStore(t)
+	outside := t.TempDir()
+	victim := filepath.Join(outside, "keep.txt")
+	require.NoError(t, os.WriteFile(victim, []byte("keep"), 0o600))
+
+	tmp := filepath.Join(bs.dir, "tmp")
+	require.NoError(t, os.RemoveAll(tmp))
+	require.NoError(t, os.Symlink(outside, tmp))
+
+	require.Error(t, bs.CleanTmp())
+	_, err := os.Stat(victim)
+	assert.NoError(t, err, "file behind the symlink must survive")
+}
