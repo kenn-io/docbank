@@ -3,6 +3,8 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -79,6 +81,13 @@ func TestAddRerunReportsSkips(t *testing.T) {
 	assert.Contains(t, out, "skipped: 1")
 }
 
+func TestAddMissingSourceFails(t *testing.T) {
+	_ = setupVaultHome(t)
+
+	_, err := runCLI(t, "add", "/no/such/file", "--dest", "/x")
+	require.Error(t, err)
+}
+
 func TestCatRejectsDirectory(t *testing.T) {
 	_ = setupVaultHome(t)
 	src := writeSourceFile(t, "a.txt", "alpha")
@@ -99,6 +108,10 @@ func TestMvIntoDirAndRename(t *testing.T) {
 	_, err = runCLI(t, "mv", "/inbox/a.txt", "/inbox/b.txt")
 	require.NoError(t, err)
 
+	out, err := runCLI(t, "ls", "/inbox")
+	require.NoError(t, err)
+	assert.NotContains(t, out, "a.txt", "renamed source must be vacated")
+
 	// Move into an existing directory, keeping the name.
 	seed := writeSourceFile(t, "seed.txt", "s")
 	_, err = runCLI(t, "add", seed, "--dest", "/filed")
@@ -106,9 +119,23 @@ func TestMvIntoDirAndRename(t *testing.T) {
 	_, err = runCLI(t, "mv", "/inbox/b.txt", "/filed")
 	require.NoError(t, err)
 
-	out, err := runCLI(t, "ls", "/filed")
+	out, err = runCLI(t, "ls", "/filed")
 	require.NoError(t, err)
 	assert.Contains(t, out, "b.txt")
+
+	out, err = runCLI(t, "ls", "/inbox")
+	require.NoError(t, err)
+	assert.NotContains(t, out, "b.txt", "moved source must be vacated")
+}
+
+func TestMvOntoSelfFails(t *testing.T) {
+	setupVaultHome(t)
+	src := writeSourceFile(t, "a.txt", "alpha")
+	_, err := runCLI(t, "add", src, "--dest", "/inbox")
+	require.NoError(t, err)
+
+	_, err = runCLI(t, "mv", "/inbox/a.txt", "/inbox/a.txt")
+	require.ErrorIs(t, err, store.ErrExists)
 }
 
 func TestRmRestoreRoundTrip(t *testing.T) {
@@ -263,15 +290,34 @@ func TestVerifyDetectsMissingAndCorrupt(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "2 blob(s) ok")
 
-	// Corrupt one blob file, delete the other.
+	alphaSum := sha256.Sum256([]byte("alpha"))
+	alphaHash := hex.EncodeToString(alphaSum[:])
+	betaSum := sha256.Sum256([]byte("beta"))
+	betaHash := hex.EncodeToString(betaSum[:])
+
+	// Blobs are hash-named; find each by its expected hash rather than
+	// assuming Glob's return order matches insertion order.
 	blobFiles, err := filepath.Glob(filepath.Join(home, "blobs", "??", "*"))
 	require.NoError(t, err)
 	require.Len(t, blobFiles, 2)
-	require.NoError(t, os.WriteFile(blobFiles[0], []byte("tampered"), 0o600))
-	require.NoError(t, os.Remove(blobFiles[1]))
+	var alphaPath, betaPath string
+	for _, p := range blobFiles {
+		switch filepath.Base(p) {
+		case alphaHash:
+			alphaPath = p
+		case betaHash:
+			betaPath = p
+		}
+	}
+	require.NotEmpty(t, alphaPath, "alpha blob not found among %v", blobFiles)
+	require.NotEmpty(t, betaPath, "beta blob not found among %v", blobFiles)
+
+	// Tamper alpha's blob, delete beta's.
+	require.NoError(t, os.WriteFile(alphaPath, []byte("tampered"), 0o600))
+	require.NoError(t, os.Remove(betaPath))
 
 	out, err = runCLI(t, "verify")
 	require.Error(t, err)
-	assert.Contains(t, out, "corrupt")
-	assert.Contains(t, out, "missing")
+	assert.Contains(t, out, "corrupt: "+alphaHash)
+	assert.Contains(t, out, "missing: "+betaHash)
 }

@@ -81,7 +81,13 @@ func (s *Store) Write(r io.Reader) (string, int64, error) {
 	hash := hex.EncodeToString(hasher.Sum(nil))
 	final := s.path(hash)
 	if _, err := os.Stat(final); err == nil {
-		return hash, size, nil // dedup: existing blob wins
+		// Dedup: existing blob wins. Still sync the shard dir in case a
+		// prior writer crashed after rename but before its own dir sync,
+		// so we don't report durable success for a non-durable entry.
+		if err := pack.SyncDir(filepath.Dir(final)); err != nil {
+			return "", 0, fmt.Errorf("syncing blob shard dir: %w", err)
+		}
+		return hash, size, nil
 	} else if !os.IsNotExist(err) {
 		return "", 0, fmt.Errorf("checking existing blob %s: %w", hash, err)
 	}

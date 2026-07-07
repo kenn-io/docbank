@@ -123,3 +123,29 @@ func TestWriteSurfacesSyncDirFailure(t *testing.T) {
 	assert.Empty(t, hash)
 	assert.Zero(t, size)
 }
+
+func TestWriteDedupFastPathSurfacesSyncDirFailure(t *testing.T) {
+	bs := newTestBlobStore(t)
+	content := "dedup me"
+
+	hash1, size1, err := bs.Write(strings.NewReader(content))
+	require.NoError(t, err)
+
+	orig := pack.SyncDir
+	pack.SyncDir = func(string) error { return errors.New("boom") }
+	t.Cleanup(func() { pack.SyncDir = orig })
+
+	// Second write hits the dedup fast path (blob already exists), which
+	// must still sync the shard dir and surface a failure there instead of
+	// reporting durable success.
+	hash2, size2, err := bs.Write(strings.NewReader(content))
+	require.Error(t, err)
+	require.ErrorContains(t, err, "syncing blob shard dir")
+	assert.Empty(t, hash2)
+	assert.Zero(t, size2)
+
+	// Sanity: the first write did succeed and produced the expected hash.
+	sum := sha256.Sum256([]byte(content))
+	assert.Equal(t, hex.EncodeToString(sum[:]), hash1)
+	assert.NotZero(t, size1)
+}

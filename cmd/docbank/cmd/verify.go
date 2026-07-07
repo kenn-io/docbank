@@ -47,7 +47,7 @@ var verifyCmd = &cobra.Command{
 	},
 }
 
-// checkBlob returns "", "missing", or "corrupt".
+// checkBlob returns "", "missing", "corrupt", or "unreadable".
 func checkBlob(v *vault, hash string) string {
 	f, err := v.blobs.Open(hash)
 	if err != nil {

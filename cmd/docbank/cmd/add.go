@@ -15,6 +15,8 @@ var addCmd = &cobra.Command{
 	Short: "Import files or directory trees into the vault",
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		dest := addDest
+		addDest = "/inbox" // package-level flag vars persist across in-process Execute calls
 		v, err := openVault()
 		if err != nil {
 			return err
@@ -22,7 +24,7 @@ var addCmd = &cobra.Command{
 		defer func() { _ = v.close() }()
 
 		ing := &ingest.Ingester{Store: v.store, Blobs: v.blobs}
-		rep, err := ing.AddPaths(cmd.Context(), args, addDest)
+		rep, err := ing.AddPaths(cmd.Context(), args, dest)
 		if err != nil {
 			return err
 		}

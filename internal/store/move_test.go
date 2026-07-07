@@ -88,3 +88,19 @@ func TestMoveRejectsCycleCollisionRoot(t *testing.T) {
 	_, err = s.Move(ctx, b.ID, f.ID, "b")
 	assert.ErrorIs(t, err, ErrNotDir)
 }
+
+func TestMoveRejectsMissingOrTrashedSource(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+
+	// Nonexistent node id.
+	_, err := s.Move(ctx, 999999, s.RootID(), "nope")
+	require.ErrorIs(t, err, ErrNotFound)
+
+	// Trashed source node.
+	f, err := s.CreateFile(ctx, s.RootID(), "a.txt", fakeHash("a1"), 1, "text/plain")
+	require.NoError(t, err)
+	require.NoError(t, s.Trash(ctx, f.ID))
+	_, err = s.Move(ctx, f.ID, s.RootID(), "b.txt")
+	require.ErrorIs(t, err, ErrNotFound)
+}

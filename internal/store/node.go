@@ -58,7 +58,7 @@ func (s *Store) NodeByID(ctx context.Context, id int64) (Node, error) {
 // splitPath turns "/a/b/" into ["a","b"]. "" and "/" yield nil (the root).
 func splitPath(path string) []string {
 	var segs []string
-	for _, seg := range strings.Split(path, "/") { //nolint:modernize // strings.SplitSeq not available in this Go version
+	for seg := range strings.SplitSeq(path, "/") {
 		if seg != "" {
 			segs = append(segs, seg)
 		}

@@ -159,7 +159,7 @@ func TestAddContinuesPastDirCollision(t *testing.T) {
 	}
 	assert.True(t, found, "expected a recorded failure for the colliding dir, got %+v", rep.Failed)
 
-	assert.GreaterOrEqual(t, rep.Added, 1)
+	assert.Equal(t, 1, rep.Added)
 	_, err = ing.Store.NodeByPath(ctx, "/inbox/"+filepath.Base(srcA)+"/a.txt")
 	require.NoError(t, err)
 }
