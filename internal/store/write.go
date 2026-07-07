@@ -193,3 +193,82 @@ func (s *Store) CreateFile(ctx context.Context, parentID int64, name, blobHash s
 	}
 	return created, nil
 }
+
+// isAncestorTx reports whether maybeAncestor is candidate itself or one of
+// its ancestors (walking parent links).
+func isAncestorTx(tx *sql.Tx, maybeAncestor, candidate int64) (bool, error) {
+	cur := candidate
+	for {
+		if cur == maybeAncestor {
+			return true, nil
+		}
+		var parent sql.NullInt64
+		err := tx.QueryRow(`SELECT parent_id FROM nodes WHERE id = ?`, cur).Scan(&parent)
+		if err != nil {
+			return false, fmt.Errorf("walking ancestry of node %d: %w", candidate, err)
+		}
+		if !parent.Valid {
+			return false, nil
+		}
+		cur = parent.Int64
+	}
+}
+
+// Move renames and/or reparents a live node in one transaction.
+func (s *Store) Move(ctx context.Context, id, newParentID int64, newName string) (Node, error) {
+	newName, err := NormalizeName(newName)
+	if err != nil {
+		return Node{}, err
+	}
+	if id == s.rootID {
+		return Node{}, ErrIsRoot
+	}
+	var moved Node
+	err = s.withTx(ctx, func(tx *sql.Tx) error {
+		n, err := nodeByIDTx(tx, id)
+		if err != nil {
+			return err
+		}
+		if n.TrashedAt != nil {
+			return fmt.Errorf("node %d is trashed: %w", id, ErrNotFound)
+		}
+		if _, err := liveDirTx(tx, newParentID); err != nil {
+			return err
+		}
+		// The destination may not be the node itself or any of its
+		// descendants (equivalently: id may not be an ancestor of dest).
+		inCycle, err := isAncestorTx(tx, id, newParentID)
+		if err != nil {
+			return err
+		}
+		if inCycle {
+			return fmt.Errorf("moving node %d under %d: %w", id, newParentID, ErrCycle)
+		}
+		now := nowRFC3339()
+		_, err = tx.Exec(
+			`UPDATE nodes SET parent_id = ?, name = ?, revision = revision + 1,
+			        modified_at = ? WHERE id = ?`,
+			newParentID, newName, now, id)
+		if isUniqueViolation(err) {
+			return fmt.Errorf("moving node %d to %q: %w", id, newName, ErrExists)
+		}
+		if err != nil {
+			return fmt.Errorf("moving node %d: %w", id, err)
+		}
+		oldParent := *n.ParentID
+		if err := bumpRevisionTx(tx, oldParent, now); err != nil {
+			return err
+		}
+		if newParentID != oldParent {
+			if err := bumpRevisionTx(tx, newParentID, now); err != nil {
+				return err
+			}
+		}
+		moved, err = nodeByIDTx(tx, id)
+		return err
+	})
+	if err != nil {
+		return Node{}, err
+	}
+	return moved, nil
+}
