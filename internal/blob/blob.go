@@ -52,10 +52,29 @@ func validHash(hash string) bool {
 	return true
 }
 
+// isStoredBlob reports whether final already stores this blob: a regular
+// file (Lstat, so symlinks don't impersonate one) of the expected size.
+// Anything else at that path is not the content its name promises; the
+// caller replaces it with its own verified temp file. Size plus type catches
+// every structural corruption at Lstat cost — same-size bit rot is verify's
+// contract, and re-reading the full blob on every dedup would double the
+// I/O of duplicate imports.
+func isStoredBlob(final string, size int64) (bool, error) {
+	fi, err := os.Lstat(final)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return fi.Mode().IsRegular() && fi.Size() == size, nil
+}
+
 // Write streams r into the store, returning the content's SHA-256 (lowercase
 // hex) and size. The blob is durable — file fsynced, directory entries
 // fsynced — before Write returns. Writing content that already exists is a
-// no-op success.
+// no-op success; a stale invalid object at the blob's path (wrong size,
+// symlink) is replaced with the verified bytes.
 func (s *Store) Write(r io.Reader) (string, int64, error) {
 	tmp, err := os.CreateTemp(s.tmpDir(), "blob-*")
 	if err != nil {
@@ -81,7 +100,11 @@ func (s *Store) Write(r io.Reader) (string, int64, error) {
 
 	hash := hex.EncodeToString(hasher.Sum(nil))
 	final := s.path(hash)
-	if _, err := os.Stat(final); err == nil {
+	ok, err := isStoredBlob(final, size)
+	if err != nil {
+		return "", 0, fmt.Errorf("checking existing blob %s: %w", hash, err)
+	}
+	if ok {
 		// Dedup: existing blob wins. Still sync the shard dir in case a
 		// prior writer crashed after rename but before its own dir sync,
 		// so we don't report durable success for a non-durable entry.
@@ -89,8 +112,6 @@ func (s *Store) Write(r io.Reader) (string, int64, error) {
 			return "", 0, fmt.Errorf("syncing blob shard dir: %w", err)
 		}
 		return hash, size, nil
-	} else if !os.IsNotExist(err) {
-		return "", 0, fmt.Errorf("checking existing blob %s: %w", hash, err)
 	}
 
 	shard := filepath.Dir(final)
@@ -100,16 +121,19 @@ func (s *Store) Write(r io.Reader) (string, int64, error) {
 	if err := os.Rename(tmpName, final); err != nil {
 		// Some filesystems refuse to rename onto an existing destination
 		// (or a concurrent writer's rename can interleave with ours). If
-		// the destination now exists, a concurrent Write for the same
-		// content already finalized it: that's dedup success, not our
-		// failure, so fall through and sync/return as if we'd won.
+		// the destination now holds a valid blob, a concurrent Write for
+		// the same content already finalized it: that's dedup success, not
+		// our failure, so fall through and sync/return as if we'd won.
+		// Anything else there — e.g. a directory, which rename cannot
+		// replace — stays a hard error.
 		//
 		// The reverse interleaving — our rename replacing a concurrent
 		// writer's already-synced file — is equally benign: same hash
 		// means same bytes, and every writer syncs its temp file before
 		// renaming, so the directory entry swaps between two durable
 		// identical inodes.
-		if _, statErr := os.Stat(final); statErr != nil {
+		ok, verr := isStoredBlob(final, size)
+		if verr != nil || !ok {
 			return "", 0, fmt.Errorf("finalizing blob %s: %w", hash, err)
 		}
 	}

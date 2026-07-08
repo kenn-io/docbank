@@ -193,3 +193,43 @@ func TestRemoveSurfacesSyncDirFailure(t *testing.T) {
 	require.NoError(t, bs.Remove(hash))
 	require.NoError(t, bs.Remove(strings.Repeat("f", 64)))
 }
+
+func TestWriteReplacesInvalidExistingObject(t *testing.T) {
+	bs := newTestBlobStore(t)
+	content := "healthy bytes"
+	sum := sha256.Sum256([]byte(content))
+	hash := hex.EncodeToString(sum[:])
+	final := filepath.Join(bs.dir, hash[:2], hash)
+	require.NoError(t, os.MkdirAll(filepath.Dir(final), 0o700))
+
+	// A wrong-size regular file is not the content this hash promises:
+	// dedup must not vouch for it; the verified bytes replace it.
+	require.NoError(t, os.WriteFile(final, []byte("truncated"), 0o600))
+	h, _, err := bs.Write(strings.NewReader(content))
+	require.NoError(t, err)
+	assert.Equal(t, hash, h)
+	got, err := os.ReadFile(final)
+	require.NoError(t, err)
+	assert.Equal(t, content, string(got))
+
+	// A symlink (even to identical bytes) is replaced by a real file.
+	other := filepath.Join(t.TempDir(), "elsewhere")
+	require.NoError(t, os.WriteFile(other, []byte(content), 0o600))
+	require.NoError(t, os.Remove(final))
+	require.NoError(t, os.Symlink(other, final))
+	_, _, err = bs.Write(strings.NewReader(content))
+	require.NoError(t, err)
+	fi, err := os.Lstat(final)
+	require.NoError(t, err)
+	assert.True(t, fi.Mode().IsRegular())
+	got, err = os.ReadFile(final)
+	require.NoError(t, err)
+	assert.Equal(t, content, string(got))
+
+	// A directory cannot be replaced by rename: hard error, never a fake
+	// dedup success.
+	require.NoError(t, os.Remove(final))
+	require.NoError(t, os.Mkdir(final, 0o700))
+	_, _, err = bs.Write(strings.NewReader(content))
+	require.Error(t, err)
+}
