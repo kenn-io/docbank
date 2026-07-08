@@ -4,6 +4,7 @@ go 1.26.3
 
 require (
 	github.com/BurntSushi/toml v1.6.0
+	github.com/danielgtaylor/huma/v2 v2.38.0
 	github.com/mattn/go-sqlite3 v1.14.47
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
@@ -13,7 +14,6 @@ require (
 )
 
 require (
-	github.com/danielgtaylor/huma/v2 v2.38.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/gofrs/flock v0.13.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect

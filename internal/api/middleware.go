@@ -65,7 +65,7 @@ func authMiddleware(next http.Handler, key string) http.Handler {
 // address or key. See the spec's ingest addendum.
 func loopbackMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/ingest" && !isLoopbackRemote(r.RemoteAddr) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/ingest" && !isLoopbackRemote(r.RemoteAddr) {
 			writeError(w, NewError(http.StatusForbidden, "loopback_only",
 				"ingest by server-side path is loopback-only; remote clients need multipart upload (planned)"))
 			return
