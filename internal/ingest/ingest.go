@@ -150,7 +150,7 @@ func (ing *Ingester) importFile(ctx context.Context, ingestID, parentID int64, s
 	// No-follow plus fstat, not the earlier Lstat/WalkDir classification:
 	// the file could have been swapped since, and "symlinks are skipped"
 	// must hold for the file actually read, not the one classified.
-	f, err := openNoFollow(src)
+	f, err := blob.OpenNoFollow(src)
 	if err != nil {
 		return false, fmt.Errorf("opening %s: %w", src, err)
 	}

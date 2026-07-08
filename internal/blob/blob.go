@@ -143,26 +143,38 @@ func (s *Store) Write(r io.Reader) (string, int64, error) {
 	return hash, size, nil
 }
 
-// Open opens a blob for reading.
+// Open opens a blob for reading, upholding the write path's invariant: the
+// object must be a regular file reached without following a symlink, so a
+// tampered vault cannot serve substitute content through cat or verify.
 func (s *Store) Open(hash string) (*os.File, error) {
 	if !validHash(hash) {
 		return nil, fmt.Errorf("blob hash %q: %w", hash, ErrInvalidHash)
 	}
-	f, err := os.Open(s.path(hash))
+	f, err := OpenNoFollow(s.path(hash))
 	if err != nil {
 		return nil, fmt.Errorf("opening blob %s: %w", hash, err)
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("checking blob %s: %w", hash, err)
+	}
+	if !fi.Mode().IsRegular() {
+		_ = f.Close()
+		return nil, fmt.Errorf("blob %s: not a regular file", hash)
 	}
 	return f, nil
 }
 
-// Exists reports whether the blob file is present.
+// Exists reports whether the blob is present as a regular file (no-follow,
+// matching Open and Write's dedup check).
 func (s *Store) Exists(hash string) (bool, error) {
 	if !validHash(hash) {
 		return false, fmt.Errorf("blob hash %q: %w", hash, ErrInvalidHash)
 	}
-	_, err := os.Stat(s.path(hash))
+	fi, err := os.Lstat(s.path(hash))
 	if err == nil {
-		return true, nil
+		return fi.Mode().IsRegular(), nil
 	}
 	if os.IsNotExist(err) {
 		return false, nil
