@@ -1,8 +1,11 @@
 package api_test
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -88,6 +91,47 @@ func get(t *testing.T, ts *httptest.Server, path string, hdr map[string]string) 
 	require.NoError(t, err)
 	_ = resp.Body.Close()
 	return resp, string(body)
+}
+
+// do issues a request with an optional JSON body, marshaling non-nil bodies
+// and setting Content-Type accordingly. Mutation route tests share this.
+func do(t *testing.T, ts *httptest.Server, method, path string, hdr map[string]string, body any) (*http.Response, string) {
+	t.Helper()
+	var reader io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		require.NoError(t, err)
+		reader = bytes.NewReader(b)
+	}
+	req, err := http.NewRequest(method, ts.URL+path, reader)
+	require.NoError(t, err)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	for k, v := range hdr {
+		req.Header.Set(k, v)
+	}
+	resp, err := ts.Client().Do(req)
+	require.NoError(t, err)
+	respBody, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	return resp, string(respBody)
+}
+
+// etagOf stats a node and returns it along with the ETag header (a
+// quoted revision), the value mutation endpoints expect in If-Match. The
+// node itself is part of the shared fixture signature for callers that
+// need it, even though today's callers only use the ETag.
+//
+//nolint:unparam // see comment above.
+func etagOf(t *testing.T, ts *httptest.Server, id int64) (api.Node, string) {
+	t.Helper()
+	resp, body := get(t, ts, fmt.Sprintf("/api/v1/nodes/%d", id), nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var n api.Node
+	require.NoError(t, json.Unmarshal([]byte(body), &n))
+	return n, resp.Header.Get("ETag")
 }
 
 func TestHealthAndPing(t *testing.T) {
