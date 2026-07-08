@@ -66,6 +66,21 @@ func TestLockExclusiveBlocksOthers(t *testing.T) {
 	}
 }
 
+func TestTryLockExclusive(t *testing.T) {
+	l := Layout{Root: t.TempDir()}
+	require.NoError(t, l.Ensure())
+
+	lk, err := l.TryLockExclusive()
+	require.NoError(t, err)
+	_, err = l.TryLockExclusive()
+	require.ErrorIs(t, err, ErrVaultLocked)
+	require.NoError(t, lk.Release())
+
+	lk2, err := l.TryLockExclusive()
+	require.NoError(t, err)
+	require.NoError(t, lk2.Release())
+}
+
 // flock lock conversions are release-then-acquire, so a failed TryUpgrade
 // could silently drop the shared lock; the holder must still be counted
 // afterwards or gc could run concurrently with a command that believes it
