@@ -147,3 +147,30 @@ func TestMovePath(t *testing.T) {
 	_, err = s.MovePath(ctx, "/docs", "/docs/sub")
 	assert.ErrorIs(t, err, ErrCycle)
 }
+
+func TestMovePathRejectsDotSegments(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+
+	docs, err := s.Mkdir(ctx, s.RootID(), "docs")
+	require.NoError(t, err)
+	_, err = s.CreateFile(ctx, docs.ID, "a.txt", fakeHash("a1"), 1, "text/plain")
+	require.NoError(t, err)
+
+	// path.Dir semantics would Clean "/missing/../renamed" into a rename at
+	// the root; virtual paths have no dot segments, so this must be
+	// rejected outright and nothing may land at /renamed.
+	_, err = s.MovePath(ctx, "/docs/a.txt", "/missing/../renamed")
+	require.ErrorIs(t, err, ErrInvalidName)
+	_, err = s.NodeByPath(ctx, "/renamed")
+	require.ErrorIs(t, err, ErrNotFound)
+
+	_, err = s.MovePath(ctx, "/docs/a.txt", "/docs/..")
+	require.ErrorIs(t, err, ErrInvalidName)
+	_, err = s.MovePath(ctx, "/docs/a.txt", "/docs/.")
+	require.ErrorIs(t, err, ErrInvalidName)
+
+	// The file never moved.
+	_, err = s.NodeByPath(ctx, "/docs/a.txt")
+	require.NoError(t, err)
+}
