@@ -18,6 +18,12 @@ type Node struct {
 	Path       string `json:"path,omitempty"` // set on single-node responses only
 }
 
+// SearchHit pairs a matched node with its display path.
+type SearchHit struct {
+	Node Node   `json:"node"`
+	Path string `json:"path"`
+}
+
 func fromStoreNode(n store.Node) Node {
 	out := Node{
 		ID: n.ID, ParentID: n.ParentID, Name: n.Name, Kind: n.Kind,

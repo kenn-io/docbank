@@ -1,10 +1,14 @@
 package api_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -16,23 +20,59 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-// newTestServer builds a real store in a temp dir and serves the API over
-// httptest (loopback client addr). Later route tasks reuse this helper.
-//
-//nolint:unparam // the *store.Store result is consumed by later route tasks' tests.
-func newTestServer(t *testing.T, mutate func(*api.Deps)) (*httptest.Server, *store.Store) {
+// testStore bundles the store and blob store the test server was built
+// with, so fixtures can write blobs and nodes through the exact instances
+// the server reads from.
+type testStore struct {
+	*store.Store
+
+	Blobs *blob.Store
+}
+
+// newTestServer builds a real store and blob dir in a temp dir and serves
+// the API over httptest (loopback client addr). Later route tasks reuse
+// this helper.
+func newTestServer(t *testing.T, mutate func(*api.Deps)) (*httptest.Server, *testStore) {
 	t.Helper()
 	dir := t.TempDir()
 	s, err := store.Open(filepath.Join(dir, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = s.Close() })
-	d := api.Deps{Store: s, Blobs: blob.New(filepath.Join(dir, "blobs")), Cfg: config.Default()}
+	blobsDir := filepath.Join(dir, "blobs")
+	require.NoError(t, os.MkdirAll(filepath.Join(blobsDir, "tmp"), 0o700))
+	blobs := blob.New(blobsDir)
+	d := api.Deps{Store: s, Blobs: blobs, Cfg: config.Default()}
 	if mutate != nil {
 		mutate(&d)
 	}
 	ts := httptest.NewServer(api.NewServer(d).Handler())
 	t.Cleanup(ts.Close)
-	return ts, s
+	return ts, &testStore{Store: s, Blobs: blobs}
+}
+
+// testHash returns a sha256 hex digest of seed. The store only validates
+// blob hash shape, so any distinct, correctly-shaped string works as a
+// stand-in for a real blob's content hash.
+func testHash(seed string) string {
+	sum := sha256.Sum256([]byte(seed))
+	return hex.EncodeToString(sum[:])
+}
+
+// createFileWithContent writes content through the server's blob store and
+// links it into the tree at the given root-level path, returning the
+// resulting node. ts is accepted (rather than just s) so every fixture that
+// touches the running server shares one calling convention, even though
+// this one only needs the store and blob store.
+//
+//nolint:unparam // see comment above; ts is part of the shared fixture signature.
+func createFileWithContent(t *testing.T, ts *httptest.Server, s *testStore, path, content string) store.Node {
+	t.Helper()
+	hash, size, err := s.Blobs.Write(strings.NewReader(content))
+	require.NoError(t, err)
+	name := strings.TrimPrefix(path, "/")
+	n, err := s.CreateFile(t.Context(), s.RootID(), name, hash, size, "text/plain")
+	require.NoError(t, err)
+	return n
 }
 
 func get(t *testing.T, ts *httptest.Server, path string, hdr map[string]string) (*http.Response, string) {

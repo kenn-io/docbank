@@ -206,6 +206,7 @@ linters:
 
       # bodyclose can't see across function boundaries: internal/api's get()
       # test helper reads and closes the response body itself before
-      # returning it for status/header assertions.
+      # returning it for status/header assertions. Every route test file in
+      # the package calls it, so the exclusion covers the whole package.
       - linters: [bodyclose]
-        path: internal/api/server_test\.go
+        path: internal/api/.*_test\.go
