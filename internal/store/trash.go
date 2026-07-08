@@ -10,12 +10,15 @@ import (
 
 // Trash soft-deletes a live node and its live subtree as a unit. All subtree
 // rows share one trashed_at stamp; only the top node records its original
-// location for restore.
-func (s *Store) Trash(ctx context.Context, id int64) error {
+// location for restore. If ifRev is not -1, the mutation fails with
+// ErrStaleRevision unless it matches the node's current revision. Returns the
+// node as it stands after trashing.
+func (s *Store) Trash(ctx context.Context, id, ifRev int64) (Node, error) {
 	if id == s.rootID {
-		return ErrIsRoot
+		return Node{}, ErrIsRoot
 	}
-	return s.withTx(ctx, func(tx *sql.Tx) error {
+	var trashed Node
+	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		n, err := nodeByIDTx(tx, id)
 		if err != nil {
 			return err
@@ -23,8 +26,20 @@ func (s *Store) Trash(ctx context.Context, id int64) error {
 		if n.TrashedAt != nil {
 			return fmt.Errorf("node %d already trashed: %w", id, ErrNotFound)
 		}
-		return s.trashNodeTx(tx, n)
+		if ifRev >= 0 && n.Revision != ifRev {
+			return fmt.Errorf("node %d at revision %d, expected %d: %w",
+				id, n.Revision, ifRev, ErrStaleRevision)
+		}
+		if err := s.trashNodeTx(tx, n); err != nil {
+			return err
+		}
+		trashed, err = nodeByIDTx(tx, id)
+		return err
 	})
+	if err != nil {
+		return Node{}, err
+	}
+	return trashed, nil
 }
 
 // TrashPath resolves path and trashes the node inside one transaction, so a
@@ -100,8 +115,9 @@ func nextFreeNameTx(tx *sql.Tx, parentID int64, name string) (string, error) {
 
 // Restore returns a trash root to its original location (or the tree root if
 // that location is gone), re-suffixing on conflict. Descendants trashed in
-// earlier separate operations stay trashed.
-func (s *Store) Restore(ctx context.Context, id int64) (Node, error) {
+// earlier separate operations stay trashed. If ifRev is not -1, the mutation
+// fails with ErrStaleRevision unless it matches the node's current revision.
+func (s *Store) Restore(ctx context.Context, id, ifRev int64) (Node, error) {
 	var restored Node
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		n, err := nodeByIDTx(tx, id)
@@ -110,6 +126,10 @@ func (s *Store) Restore(ctx context.Context, id int64) (Node, error) {
 		}
 		if n.TrashedAt == nil {
 			return fmt.Errorf("node %d: %w", id, ErrNotTrashed)
+		}
+		if ifRev >= 0 && n.Revision != ifRev {
+			return fmt.Errorf("node %d at revision %d, expected %d: %w",
+				id, n.Revision, ifRev, ErrStaleRevision)
 		}
 		var trashParent sql.NullInt64
 		var trashName sql.NullString

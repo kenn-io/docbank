@@ -33,13 +33,15 @@ func TestUnreachableBlobs(t *testing.T) {
 	assert.Empty(t, un)
 
 	// Trashed-but-not-emptied stays reachable.
-	require.NoError(t, s.Trash(ctx, trashed.ID))
+	_, err = s.Trash(ctx, trashed.ID, -1)
+	require.NoError(t, err)
 	un, err = s.UnreachableBlobs(ctx)
 	require.NoError(t, err)
 	assert.Empty(t, un)
 
 	// Hard-deleting a node makes its blob unreachable.
-	require.NoError(t, s.Trash(ctx, gone.ID))
+	_, err = s.Trash(ctx, gone.ID, -1)
+	require.NoError(t, err)
 	// Only 'gone' and 'trashed' are in the trash; empty just 'gone' by
 	// deleting it directly (EmptyTrash cutoffs are time-based).
 	_, err = s.db.Exec(`DELETE FROM nodes WHERE id = ?`, gone.ID)

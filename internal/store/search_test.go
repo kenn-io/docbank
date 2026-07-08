@@ -17,7 +17,8 @@ func TestSearchFindsLiveNodesOnly(t *testing.T) {
 	require.NoError(t, err)
 	trashed, err := s.CreateFile(ctx, docs.ID, "tax-return-2019.pdf", fakeHash("b2"), 1, "application/pdf")
 	require.NoError(t, err)
-	require.NoError(t, s.Trash(ctx, trashed.ID))
+	_, err = s.Trash(ctx, trashed.ID, -1)
+	require.NoError(t, err)
 
 	hits, err := s.Search(ctx, "tax", 0)
 	require.NoError(t, err)
@@ -38,7 +39,7 @@ func TestSearchPrefixAndRename(t *testing.T) {
 	require.Len(t, hits, 1)
 
 	// Rename must update the index (FTS triggers).
-	_, err = s.Move(ctx, f.ID, s.RootID(), "car-policy.pdf")
+	_, err = s.Move(ctx, f.ID, s.RootID(), "car-policy.pdf", -1)
 	require.NoError(t, err)
 	hits, err = s.Search(ctx, "insur", 0)
 	require.NoError(t, err)

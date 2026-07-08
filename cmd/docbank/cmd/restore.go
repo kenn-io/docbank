@@ -22,7 +22,7 @@ var restoreCmd = &cobra.Command{
 		}
 		defer func() { _ = v.close() }()
 
-		n, err := v.store.Restore(cmd.Context(), id)
+		n, err := v.store.Restore(cmd.Context(), id, -1)
 		if err != nil {
 			return err
 		}

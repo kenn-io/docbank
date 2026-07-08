@@ -19,4 +19,7 @@ var (
 	ErrNotTrashed = errors.New("node is not trashed")
 	// ErrIsRoot is returned when an operation targets the root node.
 	ErrIsRoot = errors.New("operation not allowed on root")
+	// ErrStaleRevision means a mutation's expected revision no longer
+	// matches the node (lost-update guard for If-Match).
+	ErrStaleRevision = errors.New("revision mismatch")
 )
