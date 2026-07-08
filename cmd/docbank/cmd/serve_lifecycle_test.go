@@ -51,6 +51,7 @@ func TestLifecycleStartStatusStop(t *testing.T) {
 
 	out, err = run("serve", "start")
 	require.NoError(t, err, out)
+	t.Cleanup(func() { _, _ = client.Stop(context.Background(), dir) })
 	out, err = run("serve", "status")
 	require.NoError(t, err, out)
 	assert.Contains(t, out, "running")

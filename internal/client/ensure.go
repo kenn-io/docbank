@@ -85,7 +85,10 @@ func Ensure(ctx context.Context) (*Client, error) {
 	defer func() { _ = launch.Unlock() }()
 
 	rec, _, ok, err = kitdaemon.Discover(ctx, RuntimeStore(layout.Root), discoverOptions(true))
-	if err == nil && ok {
+	if err != nil {
+		return nil, fmt.Errorf("discovering daemon: %w", err)
+	}
+	if ok {
 		return newClientFor(rec, cfg), nil
 	}
 
