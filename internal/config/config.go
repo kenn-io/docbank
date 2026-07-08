@@ -17,6 +17,8 @@ import (
 
 // Duration is a time.Duration that unmarshals from a TOML string such as
 // "30m"; "0" disables the associated timeout.
+//
+//nolint:recvcheck // UnmarshalText needs a pointer receiver; Std is value semantics by design.
 type Duration time.Duration
 
 // UnmarshalText parses a duration string, rejecting negative durations.
@@ -33,7 +35,7 @@ func (d *Duration) UnmarshalText(b []byte) error {
 }
 
 // Std returns d as a time.Duration.
-func (d *Duration) Std() time.Duration { return time.Duration(*d) }
+func (d Duration) Std() time.Duration { return time.Duration(d) }
 
 // ServerConfig configures the docbank API daemon's listen address and idle
 // shutdown behavior.

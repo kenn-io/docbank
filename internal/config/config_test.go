@@ -41,6 +41,18 @@ func TestLoadRejectsUnknownKeys(t *testing.T) {
 	require.ErrorContains(t, err, "bindaddr")
 }
 
+func TestLoadPartialFileKeepsDefaults(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"),
+		[]byte("[server]\napi_port = 8080\n"), 0o600))
+	c, err := Load(dir)
+	require.NoError(t, err)
+	assert.Equal(t, 8080, c.Server.APIPort)
+	assert.Equal(t, "127.0.0.1", c.Server.BindAddr)
+	assert.Equal(t, 30*time.Minute, c.Server.IdleTimeout.Std())
+	assert.True(t, c.Web.Enabled)
+}
+
 func TestValidate(t *testing.T) {
 	for _, tc := range []struct {
 		name, bind, key string
