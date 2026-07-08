@@ -1,0 +1,115 @@
+---
+title: Storage
+description: The SQLite schema, blob store layout, durability discipline, and enforced invariants.
+---
+
+# Storage
+
+Everything lives under `~/.docbank/`: one SQLite database and one blob
+directory. The pair is the archive — copy both and you've moved the
+vault; `docbank verify` proves the copy is intact.
+
+## Blob store
+
+```
+blobs/
+├── tmp/                      # in-flight writes
+└── <aa>/<sha256>             # aa = first two hex chars of the hash
+```
+
+One file per unique content, named by its SHA-256, sharded by the first
+byte to keep directories small. Blobs are immutable and deduplicated by
+construction: writing content that already exists is a no-op success.
+
+**Durability discipline.** Every write streams to `blobs/tmp/`, fsyncs
+the file, renames it into place, then fsyncs the shard directory (using
+`go.kenn.io/kit/pack`'s synced-directory helpers) — including on the
+deduplication fast path, so a reference is never handed out for a
+directory entry that could vanish on power loss. The database
+transaction that references a blob commits only after the blob is
+durable. A crash between the two leaves an *orphan blob*: harmless,
+invisible, reclaimed by `gc`.
+
+Stale `tmp/` files from interrupted writes are cleaned at startup — but
+only when no other docbank process holds the vault (see
+[Concurrency & Locking](locking.md)).
+
+## Database schema
+
+Core tables (`internal/store/schema.sql`):
+
+```sql
+nodes (
+    id            INTEGER PRIMARY KEY,
+    parent_id     INTEGER REFERENCES nodes(id) ON DELETE CASCADE,
+    name          TEXT NOT NULL,
+    kind          TEXT NOT NULL,          -- 'dir' | 'file'
+    blob_hash     TEXT REFERENCES blobs(hash),   -- files only
+    size          INTEGER,
+    mime_type     TEXT,
+    revision      INTEGER NOT NULL DEFAULT 1,
+    created_at    TEXT NOT NULL,
+    modified_at   TEXT NOT NULL,
+    trashed_at    TEXT,                   -- NULL = live
+    trash_parent  INTEGER,                -- original location, for restore
+    trash_name    TEXT
+)
+blobs          (hash PRIMARY KEY, size, created_at)
+node_versions  (node_id, blob_hash, size, replaced_at)   -- prior contents
+ingests        (id, started_at, source_kind, source_desc)
+provenance     (node_id, ingest_id, original_path, original_mtime)
+tags           (id, name UNIQUE)          -- schema present; surfaces later
+node_tags      (node_id, tag_id)
+extracted_text (blob_hash, extractor, extractor_version, status,
+                error, attempts, text, extracted_at)      -- Phase 2 workers
+nodes_fts      -- FTS5 external-content index over live node names
+```
+
+## Invariants enforced in the schema
+
+The important rules hold at the SQL layer, so they bind every writer:
+
+- **Exactly one root.** SQLite treats NULLs as distinct in unique
+  indexes, so a partial unique index on a constant expression does it:
+  `CREATE UNIQUE INDEX one_root ON nodes((1)) WHERE parent_id IS NULL`.
+- **Live-sibling name uniqueness.**
+  `UNIQUE(parent_id, name) WHERE trashed_at IS NULL` — trashed nodes
+  never block a name.
+- **Kind/content consistency.** A CHECK constraint ties
+  `kind = 'file'` to `blob_hash IS NOT NULL` and directories to NULL.
+- **Referential integrity.** `blob_hash` references `blobs`; a blob row
+  can't be deleted while anything points at it, which is what makes GC's
+  reachability query trustworthy.
+
+The store layer adds the rules SQL can't express: name validation
+(reject empty, `.`, `..`, `/`, NUL) with Unicode NFC normalization,
+cycle prevention on moves (ancestry walk inside the move transaction),
+revision bumps on every mutation, and size consistency between a node
+and its blob row.
+
+## Timestamps and identity
+
+- All timestamps are UTC RFC 3339 text.
+- **Node IDs are canonical**; paths are derived for display. Every CLI
+  listing includes IDs, and ID-based operations (`restore`) survive any
+  amount of renaming.
+
+## Trash representation
+
+Trashing stamps `trashed_at` on the whole subtree in one transaction and
+records `trash_parent`/`trash_name` on the trash root so restore can put
+it back. The trash root is reparented under `/` at trash time: since
+`parent_id` cascades on delete, this keeps an independently-trashed
+subtree alive even if its original parent is later permanently deleted.
+All nodes trashed in one operation share the same `trashed_at` stamp,
+which is how `trash list` distinguishes trash roots from members of a
+trashed subtree.
+
+## Concurrent first-open
+
+The schema is applied and the root node created inside a single
+`BEGIN IMMEDIATE` transaction with a bounded busy-retry. Two processes
+racing to create the same fresh vault serialize instead of tripping over
+SQLite's WAL-conversion and DDL lock upgrades, and both arrive at the
+same single root (the root insert is an atomic
+`INSERT ... SELECT ... WHERE NOT EXISTS`).

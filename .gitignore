@@ -1,2 +1,11 @@
 # roborev snapshots
 /.roborev/
+/.superpowers/
+/docbank
+
+# docs build
+docs/.venv/
+docs/site/
+docs/zensical-public-docs.*
+docs/.zensical-build.*
+.kata.local.toml
