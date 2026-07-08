@@ -11,8 +11,8 @@ VERSION := dev
 endif
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
-LDFLAGS := -X go.kenn.io/docbank/cmd/docbank/cmd.Version=$(VERSION) \
-           -X go.kenn.io/docbank/cmd/docbank/cmd.Commit=$(COMMIT)
+LDFLAGS := -X go.kenn.io/docbank/internal/version.Version=$(VERSION) \
+           -X go.kenn.io/docbank/internal/version.Commit=$(COMMIT)
 
 # fts5: enable the SQLite FTS5 full-text search extension
 BUILD_TAGS := fts5

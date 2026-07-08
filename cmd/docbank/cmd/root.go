@@ -4,18 +4,13 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-)
-
-// Set via -ldflags at build time.
-var (
-	Version = "dev"
-	Commit  = "unknown"
+	"go.kenn.io/docbank/internal/version"
 )
 
 var rootCmd = &cobra.Command{
 	Use:           "docbank",
 	Short:         "Personal document archive with a virtual tree over content-addressed storage",
-	Version:       fmt.Sprintf("%s (%s)", Version, Commit),
+	Version:       fmt.Sprintf("%s (%s)", version.Version, version.Commit),
 	SilenceUsage:  true,
 	SilenceErrors: true,
 }
