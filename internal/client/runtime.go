@@ -60,8 +60,6 @@ func processCreateTimeMillis(pid int) (int64, bool) {
 // createTimeMatches reports whether rec's recorded create_time still
 // describes the live process at rec.PID. A record without the key matches
 // trivially (older daemons); a mismatch means PID reuse — treat as dead.
-//
-//nolint:unused // consumed by the client discovery task.
 func createTimeMatches(rec kitdaemon.RuntimeRecord) bool {
 	recorded := rec.Metadata[metaCreateTime]
 	if recorded == "" {

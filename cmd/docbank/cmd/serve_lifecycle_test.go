@@ -1,0 +1,65 @@
+//go:build unix
+
+package cmd
+
+import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/docbank/internal/client"
+)
+
+func buildDocbank(t *testing.T) string {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("integration test: builds the binary")
+	}
+	bin := filepath.Join(t.TempDir(), "docbank")
+	cmd := exec.Command("go", "build", "-tags", "fts5", "-o", bin, "go.kenn.io/docbank/cmd/docbank")
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=1")
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	return bin
+}
+
+func TestLifecycleStartStatusStop(t *testing.T) {
+	bin := buildDocbank(t)
+	dir := t.TempDir()
+	env := append(os.Environ(), "DOCBANK_HOME="+dir)
+
+	run := func(args ...string) (string, error) {
+		cmd := exec.Command(bin, args...)
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+
+	// status/stop before any daemon: report, don't spawn.
+	out, err := run("serve", "status")
+	require.Error(t, err) // exit 1 when not running
+	assert.Contains(t, out, "not running")
+	recs, lerr := client.RuntimeStore(dir).List()
+	require.NoError(t, lerr)
+	assert.Empty(t, recs, "status must not autostart")
+
+	out, err = run("serve", "start")
+	require.NoError(t, err, out)
+	out, err = run("serve", "status")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "running")
+
+	out, err = run("serve", "stop")
+	require.NoError(t, err, out)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, _, found, err := client.Find(ctx, dir)
+	require.NoError(t, err)
+	assert.False(t, found)
+}
