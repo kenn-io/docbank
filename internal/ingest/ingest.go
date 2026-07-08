@@ -51,7 +51,10 @@ func (ing *Ingester) AddPaths(ctx context.Context, sources []string, destPath st
 	for _, src := range sources {
 		info, err := os.Lstat(src)
 		if err != nil {
-			return rep, fmt.Errorf("reading source %s: %w", src, err)
+			// Per-file failure like any other: aborting here would leave
+			// already-imported files out of the report entirely.
+			rep.Failed = append(rep.Failed, FileError{Path: src, Err: err})
+			continue
 		}
 		switch {
 		case info.Mode().IsRegular():

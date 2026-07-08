@@ -243,3 +243,22 @@ func TestAddTreeStaleDestinationIsNotResurrected(t *testing.T) {
 	_, err = ing.Store.NodeByPath(ctx, "/inbox")
 	assert.ErrorIs(t, err, store.ErrNotFound, "trashed destination must stay trashed")
 }
+
+func TestAddMissingSourceIsReportedNotFatal(t *testing.T) {
+	ing := newTestIngester(t)
+	ctx := t.Context()
+	src := writeTree(t, map[string]string{"good.txt": "hello"})
+
+	// A missing top-level source is a per-file failure like any other:
+	// the good file's import must complete and be reported, not vanish
+	// behind an early error return.
+	rep, err := ing.AddPaths(ctx,
+		[]string{filepath.Join(src, "good.txt"), filepath.Join(src, "missing.txt")}, "/inbox")
+	require.NoError(t, err)
+	assert.Equal(t, 1, rep.Added)
+	require.Len(t, rep.Failed, 1)
+	assert.Equal(t, filepath.Join(src, "missing.txt"), rep.Failed[0].Path)
+
+	_, err = ing.Store.NodeByPath(ctx, "/inbox/good.txt")
+	require.NoError(t, err)
+}
