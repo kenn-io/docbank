@@ -102,9 +102,21 @@ files (the Phase 1 `cleanTmpIfSole` logic moves here — the exclusive
 lock makes "sole" trivially true) → `kit/daemon.Listen` on
 `[server] bind_addr:api_port` (default `127.0.0.1:0`, ephemeral) →
 write a `kit/daemon.RuntimeRecord` into `$DOCBANK_HOME` carrying
-service name (`docbank`), build version, the *actual bound* port, a
-random shutdown token, and process create-time → serve until signal or
-shutdown request.
+service name (`docbank`), build version, and the *actual bound* port,
+with a random shutdown token and the process create-time in the
+record's `Metadata` → serve until signal or shutdown request.
+
+Create-time is not a kit field: kit's record carries PID/endpoint/
+service/version/StartedAt plus a free-form `Metadata` map, and kit's
+discovery checks only `ProcessAlive` and ping-PID equality. docbank
+follows msgvault's pattern exactly — write
+`Metadata["create_time"]` (epoch millis via
+`gopsutil/v4/process.CreateTime`) at startup, and treat a record whose
+recorded create-time mismatches the live PID's as dead during
+discovery and before any signal fallback. The dependency is justified:
+it is the only portable guard against SIGTERM-ing an unrelated process
+that reused the recorded PID. Hoisting this into `kit/daemon` is a
+candidate follow-up, not part of this project.
 
 The exclusive lock replaces Phase 1's shared/exclusive split: with all
 access funneled through one process, the daemon is the single lock
@@ -114,10 +126,10 @@ construction. The Unix-only lock policy is unchanged; the vault remains
 Unix-only.
 
 **Discovery and auto-start (CLI side):** `kit/daemon.Manager.Ensure` —
-list runtime records, drop dead PIDs (create-time checked against PID
-reuse), probe `/api/ping` (`ExpectedService: "docbank"`), require
-**exact version match** (pre-1.0: no compatibility matrix, no
-auto-restart policy knob). On version mismatch the CLI gracefully stops
+list runtime records, drop dead PIDs (with the docbank-side
+create-time check above guarding PID reuse), probe `/api/ping`
+(`ExpectedService: "docbank"`), require **exact version match**
+(pre-1.0: no compatibility matrix, no auto-restart policy knob). On version mismatch the CLI gracefully stops
 the old daemon (shutdown endpoint with token, SIGTERM fallback) and
 starts fresh. Auto-start is `kit/daemon.StartDetached` re-exec of
 `os.Executable()` with `serve` and `DOCBANK_BACKGROUND_DAEMON=1`; a
@@ -129,12 +141,15 @@ tracked by middleware. Foreground `serve` never idles out.
 
 **Stop:** `docbank serve stop` sends `POST /api/daemon/shutdown` with
 the shutdown token from the runtime record (hidden route, loopback
-semantics); falls back to SIGTERM at the recorded PID. Graceful
-shutdown finishes in-flight requests, closes the store, releases the
-lock, removes the runtime record.
+semantics); falls back to SIGTERM at the recorded PID only when the
+create-time check confirms the PID still belongs to the recorded
+daemon. Graceful shutdown finishes in-flight requests, closes the
+store, releases the lock, removes the runtime record.
 
 **Status:** `docbank serve status` reports pid, address, version,
-uptime; `--json` for agents.
+uptime; `--json` for agents. `serve status` and `serve stop` are
+**discovery-only** (`Manager.Find`, never `Ensure`): reporting on or
+stopping a daemon must not spawn one.
 
 **Logs:** background daemons log JSON to `$DOCBANK_HOME/logs/` via
 `kit/logging` (daily files, size rotation, retained count); foreground
@@ -150,11 +165,11 @@ at the root for free. Root-level extras: `GET /health`,
 `POST /api/daemon/shutdown`, and `/` (web placeholder).
 
 Endpoints, per the http-api.md contract — IDs canonical in every
-response, `If-Match: <revision>` required on mutations:
+response:
 
 | Route | Backs |
 |-------|-------|
-| `GET /nodes/{id}`, `GET /path/{path...}` | stat |
+| `GET /nodes/{id}`, `GET /path?path=/a/b` | stat |
 | `GET /nodes/{id}/children` (limit/offset pagination) | `ls`, `tree` (client-side walk) |
 | `GET /nodes/{id}/content` (streamed) | `cat` |
 | `GET /search?q=&limit=` | `search` |
@@ -165,13 +180,44 @@ response, `If-Match: <revision>` required on mutations:
 | `GET /trash`, `POST /trash/empty` `{older_than?}` | `trash`, `trash empty` |
 | `POST /gc` `{run}` , `POST /verify` | `gc`, `verify` (timeout-exempt) |
 
+**Path resolution:** `GET /path` takes the virtual path as a **query
+parameter** (`?path=/inbox/doc.pdf`), not a catch-all URL segment —
+stdlib-mux wildcard decoding of percent-encoded slashes makes a
+`/path/{path...}` route ambiguous for names containing `/`-adjacent
+encodings, and a query parameter has one well-defined encoding. The
+path must be absolute (leading `/`); `?path=/` stats the root. Query
+encoding is ordinary URL encoding; the server applies the store's
+existing NFC normalization and name validation and returns 422 for
+invalid paths. http-api.md's route table is updated to this form.
+
+**`If-Match` semantics per endpoint:** the contract's rule —
+mutations require `If-Match: <revision>` — applies where a mutation
+targets one existing node; bulk and maintenance operations are
+explicit exceptions:
+
+| Endpoint | Precondition |
+|----------|--------------|
+| `PATCH /nodes/{id}` | required — target node's revision |
+| `POST /nodes/{id}/trash` | required — target node's revision |
+| `POST /nodes/{id}/restore` | required — target node's revision |
+| `POST /nodes` (create dir) | none — creation has no prior revision; name collision is 409 |
+| `POST /ingest` | none — long-running bulk operation with per-path partial success; the destination directory may legitimately change while it runs. Collisions resolve by Phase 1's suffixing rules |
+| `POST /trash/empty`, `POST /gc`, `POST /verify` | none — vault-wide maintenance, serialized by the maintenance gate |
+
+Stale revision → 412; missing `If-Match` where required → 428
+Precondition Required. Both carry problem-JSON explaining the rule.
+
 **Contract addendum — `POST /ingest`:** takes server-side local paths
 and a destination, returns the ingest report (imported / skipped /
 failed, per-path errors). For a local daemon this preserves Phase 1's
 provenance recording, resumability, and partial-failure reporting, and
-avoids re-streaming whole trees over loopback. It is equally usable by
-agents (they run on the same machine). Multipart upload for remote-style
-clients stays planned. http-api.md gets updated accordingly.
+avoids re-streaming whole trees over loopback. Because it grants
+"read any daemon-readable local path" capability, it is **restricted
+to loopback connections** (checked per-request against `RemoteAddr`)
+regardless of bind address or API key — a private-LAN client gets 403
+with problem-JSON pointing at the planned multipart upload, which is
+the correct remote ingest path. Multipart upload stays planned.
+http-api.md gets updated accordingly.
 
 **Error mapping:** the store's typed errors map to statuses exactly as
 the contract table specifies (`ErrNotFound` 404, `ErrExists`/`ErrCycle`
@@ -284,9 +330,12 @@ Windows artifacts: the vault is Unix-only.
 
 - **API:** `httptest` against the real store (existing design
   commitment — no store mocking). Table-driven per endpoint: happy
-  path, `If-Match` 412 on stale revision, missing `If-Match`, error
-  mapping (404/409/412/422), pagination bounds, auth on/off, and the
-  startup refusal of non-loopback-without-key.
+  path, `If-Match` 412 on stale revision, 428 where required and
+  absent, no-precondition endpoints accepting requests without one,
+  error mapping (404/409/412/422), pagination bounds, auth on/off,
+  the startup refusal of non-loopback-without-key, path-query
+  resolution (root, invalid names, encoding), and `POST /ingest`
+  rejecting non-loopback callers with 403.
 - **Client:** round-trips against an `httptest` server; problem-JSON →
   typed store error mapping verified in both directions.
 - **CLI e2e:** existing cmd tests keep passing by running a real
@@ -294,7 +343,10 @@ Windows artifacts: the vault is Unix-only.
   into the test's temp `DOCBANK_HOME`; CLI discovery finds it
   naturally. No test-only hooks or transport injection.
 - **Lifecycle integration (Unix):** real `StartDetached` spawn → probe
-  → version-mismatch restart → graceful stop, in a temp home.
+  → version-mismatch restart → graceful stop, in a temp home; plus
+  `serve status`/`serve stop` against an empty home proving neither
+  spawns a daemon, and a stale record with a reused-PID create-time
+  mismatch being treated as dead.
 - **Update:** `kit/selfupdate` accepts base-URL overrides — fake
   release server in `httptest` serving a real archive + SHA256SUMS,
   install into a temp dir; daemon stop/restart coordination tested
@@ -329,7 +381,9 @@ fails against the unfixed code before trusting it.
   the launch lock, and `serve stop`'s SIGTERM fallback). Accepted in
   exchange for a single write path and no dual-model locking.
 - **`POST /ingest` takes server-side paths:** an intentional local-
-  daemon affordance; a remote deployment would need multipart upload
-  first. Documented in the contract.
+  daemon affordance, restricted to loopback callers so an API key
+  never grants remote read of arbitrary daemon-readable files; a
+  remote deployment needs multipart upload first. Documented in the
+  contract.
 - **No API compatibility window pre-1.0:** exact version match between
   CLI and daemon, restart on mismatch. Revisit at 1.0.
