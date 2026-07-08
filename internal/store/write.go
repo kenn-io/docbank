@@ -107,41 +107,47 @@ func (s *Store) MkdirAll(ctx context.Context, path string) (Node, error) {
 		return Node{}, err
 	}
 	for _, seg := range splitPath(path) {
-		seg, err := NormalizeName(seg)
+		n, err = s.EnsureDir(ctx, n.ID, seg)
 		if err != nil {
-			return Node{}, fmt.Errorf("mkdir -p %q: %w", path, err)
-		}
-		next, err := s.childByName(ctx, n.ID, seg)
-		switch {
-		case err == nil:
-			if !next.IsDir() {
-				return Node{}, fmt.Errorf("mkdir -p %q: %q is a file: %w", path, seg, ErrNotDir)
-			}
-			n = next
-		case errors.Is(err, ErrNotFound):
-			created, mkErr := s.Mkdir(ctx, n.ID, seg)
-			if mkErr == nil {
-				n = created
-				continue
-			}
-			if !errors.Is(mkErr, ErrExists) {
-				return Node{}, fmt.Errorf("mkdir -p %q: %w", path, mkErr)
-			}
-			// Lost a race with a concurrent MkdirAll/Mkdir: re-read the
-			// now-existing child and converge on it.
-			next, err = s.childByName(ctx, n.ID, seg)
-			if err != nil {
-				return Node{}, fmt.Errorf("mkdir -p %q: %w", path, err)
-			}
-			if !next.IsDir() {
-				return Node{}, fmt.Errorf("mkdir -p %q: %q is a file: %w", path, seg, ErrNotDir)
-			}
-			n = next
-		default:
 			return Node{}, fmt.Errorf("mkdir -p %q: %w", path, err)
 		}
 	}
 	return n, nil
+}
+
+// EnsureDir returns the live directory named name under parentID, creating
+// it if missing and converging on a concurrent creation. ID-based on
+// purpose: callers that resolved a destination once (ingest) must not
+// re-derive it from a path, which a concurrent move or trash can redirect.
+func (s *Store) EnsureDir(ctx context.Context, parentID int64, name string) (Node, error) {
+	name, err := NormalizeName(name)
+	if err != nil {
+		return Node{}, err
+	}
+	next, err := s.childByName(ctx, parentID, name)
+	switch {
+	case err == nil:
+	case errors.Is(err, ErrNotFound):
+		created, mkErr := s.Mkdir(ctx, parentID, name)
+		if mkErr == nil {
+			return created, nil
+		}
+		if !errors.Is(mkErr, ErrExists) {
+			return Node{}, mkErr
+		}
+		// Lost a race with a concurrent create: re-read the now-existing
+		// child and converge on it.
+		next, err = s.childByName(ctx, parentID, name)
+		if err != nil {
+			return Node{}, err
+		}
+	default:
+		return Node{}, err
+	}
+	if !next.IsDir() {
+		return Node{}, fmt.Errorf("%q is a file: %w", name, ErrNotDir)
+	}
+	return next, nil
 }
 
 // EnsureBlobTx records a blob row if missing. The blob file must already be

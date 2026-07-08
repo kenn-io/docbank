@@ -219,3 +219,27 @@ func TestAddDotSourceUsesRealBasename(t *testing.T) {
 	_, err = ing.Store.NodeByPath(ctx, "/inbox/"+filepath.Base(src)+"/a.txt")
 	require.NoError(t, err)
 }
+
+func TestAddTreeStaleDestinationIsNotResurrected(t *testing.T) {
+	ing := newTestIngester(t)
+	ctx := t.Context()
+	src := writeTree(t, map[string]string{"sub/a.txt": "x"})
+
+	dest, err := ing.Store.MkdirAll(ctx, "/inbox")
+	require.NoError(t, err)
+	// The destination is trashed after the command resolved its id —
+	// the concurrent-trash shape. Import must fail per-directory, not
+	// re-create a live /inbox from the stale path and fill it.
+	_, err = ing.Store.TrashPath(ctx, "/inbox")
+	require.NoError(t, err)
+
+	ingestID, err := ing.Store.BeginIngest(ctx, "cli", "test")
+	require.NoError(t, err)
+	var rep Report
+	require.NoError(t, ing.addTree(ctx, &rep, ingestID, dest.ID, src))
+	assert.NotEmpty(t, rep.Failed)
+	assert.Zero(t, rep.Added)
+
+	_, err = ing.Store.NodeByPath(ctx, "/inbox")
+	assert.ErrorIs(t, err, store.ErrNotFound, "trashed destination must stay trashed")
+}

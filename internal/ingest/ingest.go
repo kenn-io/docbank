@@ -90,28 +90,31 @@ func (ing *Ingester) addTree(ctx context.Context, rep *Report, ingestID, destDir
 	if topName == string(filepath.Separator) {
 		return fmt.Errorf("cannot import filesystem root %q", srcRoot)
 	}
-	destPath, err := ing.Store.Path(ctx, destDirID)
-	if err != nil {
-		return err
-	}
 
+	// Parentage stays ID-based throughout: every directory is created under
+	// the resolved id of its parent, never by re-deriving a path from
+	// destDirID — a concurrent move or trash of the destination would make
+	// that path re-create (even resurrect) a tree somewhere else.
 	dirIDs := map[string]int64{} // source dir path -> virtual dir node id
 	walkErr := filepath.WalkDir(srcRoot, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			rep.Failed = append(rep.Failed, FileError{Path: p, Err: err})
 			return nil //nolint:nilerr // intentional: record error and continue walk
 		}
-		rel, err := filepath.Rel(srcRoot, p)
-		if err != nil {
-			return fmt.Errorf("computing relative path of %s: %w", p, err)
-		}
 		switch {
 		case d.IsDir():
-			virtual := filepath.ToSlash(filepath.Join(destPath, topName, rel))
-			dir, err := ing.Store.MkdirAll(ctx, virtual)
+			parentID, name := destDirID, topName
+			if p != srcRoot {
+				pid, ok := dirIDs[filepath.Dir(p)]
+				if !ok {
+					return fmt.Errorf("internal: no virtual dir recorded for %s", filepath.Dir(p))
+				}
+				parentID, name = pid, d.Name()
+			}
+			dir, err := ing.Store.EnsureDir(ctx, parentID, name)
 			if err != nil {
 				rep.Failed = append(rep.Failed, FileError{Path: p,
-					Err: fmt.Errorf("creating virtual dir %q: %w", virtual, err)})
+					Err: fmt.Errorf("creating virtual dir %q under node %d: %w", name, parentID, err)})
 				return fs.SkipDir
 			}
 			dirIDs[p] = dir.ID
