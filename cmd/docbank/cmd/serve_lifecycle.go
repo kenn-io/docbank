@@ -10,6 +10,7 @@ import (
 
 	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/home"
+	"go.kenn.io/docbank/internal/version"
 )
 
 var serveStartCmd = &cobra.Command{
@@ -24,12 +25,21 @@ var serveStartCmd = &cobra.Command{
 		if err := layout.Ensure(); err != nil {
 			return err
 		}
-		if rec, _, ok, _ := client.Find(cmd.Context(), layout.Root); ok {
+		rec, _, ok, err := client.Find(cmd.Context(), layout.Root)
+		if err != nil {
+			return err
+		}
+		if ok {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "already running: pid %d at %s (%s)\n",
 				rec.PID, rec.Address, rec.Version)
+			if rec.Version != version.Version {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+					"note: daemon version differs from this CLI (%s); `docbank serve stop && docbank serve start` to replace it\n",
+					version.Version)
+			}
 			return nil
 		}
-		rec, err := client.Start(cmd.Context(), layout.Root)
+		rec, err = client.Start(cmd.Context(), layout.Root)
 		if err != nil {
 			return err
 		}

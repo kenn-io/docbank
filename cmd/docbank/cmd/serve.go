@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -133,7 +132,11 @@ func runServe(ctx context.Context) error {
 	logger.Info("docbank daemon shutting down")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := httpSrv.Shutdown(shutdownCtx); err != nil && !errors.Is(err, context.DeadlineExceeded) {
+	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+		// A timed-out drain means handlers may still be running. Force-close
+		// their connections before the deferred store close and lock release,
+		// and report the shutdown as unclean rather than pretending success.
+		_ = httpSrv.Close()
 		return fmt.Errorf("draining daemon requests: %w", err)
 	}
 	return nil
