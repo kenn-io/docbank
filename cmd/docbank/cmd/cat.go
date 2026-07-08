@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -14,25 +15,23 @@ var catCmd = &cobra.Command{
 	Short: "Write a file's content to stdout",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		v, err := openVault()
+		c, err := client.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		defer func() { _ = v.close() }()
-
-		n, err := v.store.NodeByPath(cmd.Context(), args[0])
+		n, err := c.Stat(cmd.Context(), args[0])
 		if err != nil {
 			return fmt.Errorf("resolving %q: %w", args[0], err)
 		}
-		if n.IsDir() {
+		if n.Kind == "dir" {
 			return fmt.Errorf("%q: %w", args[0], store.ErrNotFile)
 		}
-		f, err := v.blobs.Open(n.BlobHash)
+		rc, err := c.Content(cmd.Context(), n.ID)
 		if err != nil {
 			return err
 		}
-		defer func() { _ = f.Close() }()
-		if _, err := io.Copy(cmd.OutOrStdout(), f); err != nil {
+		defer func() { _ = rc.Close() }()
+		if _, err := io.Copy(cmd.OutOrStdout(), rc); err != nil {
 			return fmt.Errorf("streaming %q: %w", args[0], err)
 		}
 		return nil

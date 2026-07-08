@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/client"
 )
 
 var restoreCmd = &cobra.Command{
@@ -18,21 +18,19 @@ var restoreCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("invalid node id %q: %w", args[0], err)
 		}
-		v, err := openVault()
+		c, err := client.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		defer func() { _ = v.close() }()
-
-		n, err := v.store.Restore(cmd.Context(), id, store.UnconditionalRev)
+		n, err := c.Node(cmd.Context(), id)
 		if err != nil {
 			return err
 		}
-		p, err := v.store.Path(cmd.Context(), n.ID)
+		restored, err := c.Restore(cmd.Context(), id, n.Revision)
 		if err != nil {
 			return err
 		}
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "restored [%d] %s\n", n.ID, p)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "restored [%d] %s\n", restored.ID, restored.Path)
 		return nil
 	},
 }

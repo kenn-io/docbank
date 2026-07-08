@@ -6,6 +6,8 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
+
+	"go.kenn.io/docbank/internal/client"
 )
 
 var searchCmd = &cobra.Command{
@@ -13,13 +15,11 @@ var searchCmd = &cobra.Command{
 	Short: "Full-text search over node names",
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		v, err := openVault()
+		c, err := client.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		defer func() { _ = v.close() }()
-
-		hits, err := v.store.Search(cmd.Context(), strings.Join(args, " "), 50)
+		hits, err := c.Search(cmd.Context(), strings.Join(args, " "), 50)
 		if err != nil {
 			return err
 		}

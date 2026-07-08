@@ -9,13 +9,14 @@ import (
 	"path/filepath"
 	"regexp"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"go.kenn.io/docbank/internal/home"
+	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -57,7 +58,30 @@ func setupVaultHome(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("DOCBANK_HOME", dir)
+	startTestDaemon(t, dir)
 	return dir
+}
+
+// startTestDaemon runs runServe in-process against dir and tears it down
+// with the test. CLI commands discover it through the runtime record like
+// production; no test-only transport exists.
+func startTestDaemon(t *testing.T, dir string) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runServe(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Error("test daemon did not shut down")
+		}
+	})
+	require.Eventually(t, func() bool {
+		_, _, ok, err := client.Find(ctx, dir)
+		return err == nil && ok
+	}, 10*time.Second, 25*time.Millisecond, "test daemon never became ready")
 }
 
 func writeSourceFile(t *testing.T, name, content string) string {
@@ -236,28 +260,6 @@ func TestTrashEmptyRejectsNegativeAge(t *testing.T) {
 	out, err := runCLI(t, "trash", "list")
 	require.NoError(t, err)
 	assert.Contains(t, out, "a.txt")
-}
-
-func TestOpenVaultSkipsTmpCleanupWhileVaultBusy(t *testing.T) {
-	dir := setupVaultHome(t)
-	_, err := runCLI(t, "ls", "/") // create the vault layout
-	require.NoError(t, err)
-	stale := filepath.Join(dir, "blobs", "tmp", "blob-stale")
-	require.NoError(t, os.WriteFile(stale, []byte("x"), 0o600))
-
-	// Another holder (simulating a concurrent docbank process mid-write)
-	// must prevent startup cleanup from deleting its temp file.
-	other, err := home.Layout{Root: dir}.AcquireLock(false)
-	require.NoError(t, err)
-	_, err = runCLI(t, "ls", "/")
-	require.NoError(t, err)
-	assert.FileExists(t, stale, "cleanup must be skipped while the vault is shared")
-
-	// Sole process again: startup cleanup reclaims the stale file.
-	require.NoError(t, other.Release())
-	_, err = runCLI(t, "ls", "/")
-	require.NoError(t, err)
-	assert.NoFileExists(t, stale)
 }
 
 func TestGcReclaimsUnreachableBlobs(t *testing.T) {

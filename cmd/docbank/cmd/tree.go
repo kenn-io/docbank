@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -20,34 +21,32 @@ var treeCmd = &cobra.Command{
 		if len(args) == 1 {
 			path = args[0]
 		}
-		v, err := openVault()
+		c, err := client.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		defer func() { _ = v.close() }()
-
 		ctx := cmd.Context()
-		root, err := v.store.NodeByPath(ctx, path)
+		root, err := c.Stat(ctx, path)
 		if err != nil {
 			return fmt.Errorf("resolving %q: %w", path, err)
 		}
-		if !root.IsDir() {
+		if root.Kind != "dir" {
 			return fmt.Errorf("%s: %w", path, store.ErrNotDir)
 		}
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), path)
-		return printTree(ctx, cmd.OutOrStdout(), v.store, root.ID, 1)
+		return printTree(ctx, cmd.OutOrStdout(), c, root.ID, 1)
 	},
 }
 
-func printTree(ctx context.Context, w io.Writer, s *store.Store, dirID int64, depth int) error {
-	kids, err := s.Children(ctx, dirID)
+func printTree(ctx context.Context, w io.Writer, c *client.Client, dirID int64, depth int) error {
+	kids, err := c.Children(ctx, dirID)
 	if err != nil {
 		return err
 	}
 	for _, k := range kids {
 		_, _ = fmt.Fprintf(w, "%s%s  [%d]\n", strings.Repeat("  ", depth), k.Name, k.ID)
-		if k.IsDir() {
-			if err := printTree(ctx, w, s, k.ID, depth+1); err != nil {
+		if k.Kind == "dir" {
+			if err := printTree(ctx, w, c, k.ID, depth+1); err != nil {
 				return err
 			}
 		}

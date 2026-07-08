@@ -230,7 +230,7 @@ func TestAddTreeStaleDestinationIsNotResurrected(t *testing.T) {
 	// The destination is trashed after the command resolved its id —
 	// the concurrent-trash shape. Import must fail per-directory, not
 	// re-create a live /inbox from the stale path and fill it.
-	_, err = ing.Store.TrashPath(ctx, "/inbox")
+	_, err = ing.Store.Trash(ctx, dest.ID, store.UnconditionalRev)
 	require.NoError(t, err)
 
 	ingestID, err := ing.Store.BeginIngest(ctx, "cli", "test")

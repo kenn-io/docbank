@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/client"
 )
 
 var trashCmd = &cobra.Command{
@@ -19,13 +20,11 @@ var trashListCmd = &cobra.Command{
 	Short: "List restorable trashed nodes",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		v, err := openVault()
+		c, err := client.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		defer func() { _ = v.close() }()
-
-		roots, err := v.store.TrashedRoots(cmd.Context())
+		roots, err := c.TrashList(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -36,11 +35,7 @@ var trashListCmd = &cobra.Command{
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
 		_, _ = fmt.Fprintln(w, "ID\tTRASHED AT\tNAME")
 		for _, n := range roots {
-			trashedAt := ""
-			if n.TrashedAt != nil {
-				trashedAt = *n.TrashedAt
-			}
-			_, _ = fmt.Fprintf(w, "%d\t%s\t%s\n", n.ID, trashedAt, n.Name)
+			_, _ = fmt.Fprintf(w, "%d\t%s\t%s\n", n.ID, n.TrashedAt, n.Name)
 		}
 		return w.Flush()
 	},
@@ -53,17 +48,14 @@ var trashEmptyCmd = &cobra.Command{
 	Short: "Permanently delete trashed nodes (their blobs become gc candidates)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		age, err := api.ParseAge(trashOlderThan)
+		if _, err := api.ParseAge(trashOlderThan); err != nil {
+			return err
+		}
+		c, err := client.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		v, err := openVault()
-		if err != nil {
-			return err
-		}
-		defer func() { _ = v.close() }()
-
-		n, err := v.store.EmptyTrash(cmd.Context(), age)
+		n, err := c.TrashEmpty(cmd.Context(), trashOlderThan)
 		if err != nil {
 			return err
 		}

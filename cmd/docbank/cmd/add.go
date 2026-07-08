@@ -2,10 +2,11 @@ package cmd
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
-	"go.kenn.io/docbank/internal/ingest"
+	"go.kenn.io/docbank/internal/client"
 )
 
 var addDest string
@@ -15,22 +16,26 @@ var addCmd = &cobra.Command{
 	Short: "Import files or directory trees into the vault",
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		dest := addDest
-		v, err := openVault()
+		abs := make([]string, len(args))
+		for i, a := range args {
+			p, err := filepath.Abs(a)
+			if err != nil {
+				return fmt.Errorf("resolving %q: %w", a, err)
+			}
+			abs[i] = p
+		}
+		c, err := client.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		defer func() { _ = v.close() }()
-
-		ing := &ingest.Ingester{Store: v.store, Blobs: v.blobs}
-		rep, err := ing.AddPaths(cmd.Context(), args, dest)
+		rep, err := c.Ingest(cmd.Context(), abs, addDest)
 		if err != nil {
 			return err
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "added: %d  skipped: %d  failed: %d\n",
 			rep.Added, rep.Skipped, len(rep.Failed))
 		for _, f := range rep.Failed {
-			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "failed: %s: %v\n", f.Path, f.Err)
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "failed: %s: %s\n", f.Path, f.Error)
 		}
 		if len(rep.Failed) > 0 {
 			return fmt.Errorf("%d file(s) failed to import", len(rep.Failed))

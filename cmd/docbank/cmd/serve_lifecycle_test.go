@@ -56,6 +56,9 @@ func TestLifecycleStartStatusStop(t *testing.T) {
 	require.NoError(t, err, out)
 	assert.Contains(t, out, "running")
 
+	out, err = run("ls", "/")
+	require.NoError(t, err, out)
+
 	out, err = run("serve", "stop")
 	require.NoError(t, err, out)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

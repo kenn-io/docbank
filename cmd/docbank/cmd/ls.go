@@ -5,6 +5,8 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
+
+	"go.kenn.io/docbank/internal/client"
 )
 
 var lsCmd = &cobra.Command{
@@ -16,18 +18,15 @@ var lsCmd = &cobra.Command{
 		if len(args) == 1 {
 			path = args[0]
 		}
-		v, err := openVault()
+		c, err := client.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		defer func() { _ = v.close() }()
-
-		ctx := cmd.Context()
-		dir, err := v.store.NodeByPath(ctx, path)
+		dir, err := c.Stat(cmd.Context(), path)
 		if err != nil {
 			return fmt.Errorf("resolving %q: %w", path, err)
 		}
-		kids, err := v.store.Children(ctx, dir.ID)
+		kids, err := c.Children(cmd.Context(), dir.ID)
 		if err != nil {
 			return err
 		}

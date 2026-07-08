@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+
+	"go.kenn.io/docbank/internal/client"
 )
 
 var rmCmd = &cobra.Command{
@@ -11,14 +13,15 @@ var rmCmd = &cobra.Command{
 	Short: "Move a node (and its subtree) to the trash",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		v, err := openVault()
+		c, err := client.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		defer func() { _ = v.close() }()
-
-		n, err := v.store.TrashPath(cmd.Context(), args[0])
+		n, err := c.Stat(cmd.Context(), args[0])
 		if err != nil {
+			return fmt.Errorf("resolving %q: %w", args[0], err)
+		}
+		if _, err := c.Trash(cmd.Context(), n.ID, n.Revision); err != nil {
 			return err
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
