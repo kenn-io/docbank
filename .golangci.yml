@@ -203,3 +203,9 @@ linters:
       - linters: [staticcheck]
         path: _test\.go
         text: "SA5011"
+
+      # bodyclose can't see across function boundaries: internal/api's get()
+      # test helper reads and closes the response body itself before
+      # returning it for status/header assertions.
+      - linters: [bodyclose]
+        path: internal/api/server_test\.go
