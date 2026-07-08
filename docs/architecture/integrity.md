@@ -19,10 +19,11 @@ environment (`DOCBANK_HOME`), and every docbank process runs with the
 user's privileges. Consequently:
 
 - **In scope:** crashes and power loss at any instant; filesystem bit
-  rot; accidental damage to the vault or source trees (a stray symlink,
-  a deleted file, a manual edit inside `~/.docbank`); concurrent
-  docbank processes; a *stale* or *tampered* object being silently
-  vouched for.
+  rot; accidental damage to the vault or source trees (a stray symlink
+  where a document or blob *file* belongs, a deleted file, a manual
+  edit inside `~/.docbank`); concurrent docbank processes; a *stale* or
+  *tampered* object being silently vouched for. The vault's own
+  *directory structure* is trusted — see the read-guarantee note below.
 - **Out of scope:** an adversary with the user's own privileges. Anyone
   who can race a running docbank process while rewriting the user's
   files already executes as the user and does not need docbank as a
