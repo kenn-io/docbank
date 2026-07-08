@@ -1472,6 +1472,13 @@ func TestMoveRequiresIfMatch(t *testing.T) {
 	assert.Equal(t, http.StatusPreconditionFailed, resp.StatusCode)
 	assert.Contains(t, body, `"code":"stale_revision"`)
 
+	// "-1" is the store's unconditional sentinel; via HTTP it must be a 400,
+	// never a precondition bypass.
+	resp, body = do(t, ts, http.MethodPatch, fmt.Sprintf("/api/v1/nodes/%d", f.ID),
+		map[string]string{"If-Match": `"-1"`}, map[string]any{"new_name": "b.txt"})
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Contains(t, body, `"code":"validation"`)
+
 	_, etag := etagOf(t, ts, f.ID)
 	resp, body = do(t, ts, http.MethodPatch, fmt.Sprintf("/api/v1/nodes/%d", f.ID),
 		map[string]string{"If-Match": etag}, map[string]any{"new_name": "b.txt"})
@@ -1530,16 +1537,19 @@ import (
 )
 
 // parseIfMatch parses the required If-Match revision. ETag-style quoting is
-// accepted ("3" or 3). Empty → 428; garbage → 400.
+// accepted ("3" or 3). Empty → 428; garbage or negative → 400. Negatives are
+// rejected here because the store reserves -1 as its unconditional sentinel:
+// an If-Match of "-1" reaching the store would silently skip the precondition
+// this header exists to enforce.
 func parseIfMatch(v string) (int64, error) {
 	if v == "" {
 		return 0, NewError(http.StatusPreconditionRequired, "precondition_required",
 			"this endpoint requires If-Match: <revision> (stat the node to get it)")
 	}
 	rev, err := strconv.ParseInt(strings.Trim(v, `"`), 10, 64)
-	if err != nil {
+	if err != nil || rev < 0 {
 		return 0, NewError(http.StatusBadRequest, "validation",
-			fmt.Sprintf("invalid If-Match %q: want a node revision", v))
+			fmt.Sprintf("invalid If-Match %q: want a non-negative node revision", v))
 	}
 	return rev, nil
 }
@@ -2808,7 +2818,13 @@ func runServe(ctx context.Context) error {
 // spawned daemons don't accumulate. Foreground serves never idle out.
 func idleWatch(ctx context.Context, t *api.ActivityTracker, timeout time.Duration,
 	logger *slog.Logger, stop func()) {
-	ticker := time.NewTicker(timeout / 10)
+	// Clamp the poll interval: NewTicker panics on a non-positive duration,
+	// and a pathologically small configured timeout must not spin.
+	interval := timeout / 10
+	if interval < 50*time.Millisecond {
+		interval = 50 * time.Millisecond
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -3057,10 +3073,13 @@ func Start(ctx context.Context, root string) (kitdaemon.RuntimeRecord, error) {
 		return kitdaemon.RuntimeRecord{}, fmt.Errorf("opening %s: %w", logPath, err)
 	}
 	defer func() { _ = logFile.Close() }()
+	// DOCBANK_HOME is forced to root so a caller-supplied root (update's
+	// restart path, tests) can never spawn a daemon on a different vault
+	// than the one being discovered.
 	err = kitdaemon.StartDetached(ctx, kitdaemon.StartDetachedOptions{
 		Executable: exe,
 		Args:       []string{"serve"},
-		Env:        append(os.Environ(), EnvBackgroundDaemon+"=1"),
+		Env:        append(os.Environ(), EnvBackgroundDaemon+"=1", "DOCBANK_HOME="+root),
 		Stdout:     logFile,
 		Stderr:     logFile,
 	})

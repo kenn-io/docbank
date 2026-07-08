@@ -39,6 +39,32 @@ func TestNegativeRevisionSkipsCheck(t *testing.T) {
 	ctx := t.Context()
 	f, err := s.CreateFile(ctx, s.RootID(), "f.txt", fakeHash("a1"), 1, "text/plain")
 	require.NoError(t, err)
-	_, err = s.Move(ctx, f.ID, s.RootID(), "g.txt", -1)
+	_, err = s.Move(ctx, f.ID, s.RootID(), "g.txt", UnconditionalRev)
+	require.NoError(t, err)
+}
+
+// Only UnconditionalRev (-1) skips the precondition. Any other negative can
+// never equal a real revision, so it must fail stale — an accidentally
+// propagated bad value must not silently mutate.
+func TestBelowSentinelRevisionFailsStale(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	f, err := s.CreateFile(ctx, s.RootID(), "f.txt", fakeHash("a1"), 1, "text/plain")
+	require.NoError(t, err)
+
+	_, err = s.Move(ctx, f.ID, s.RootID(), "g.txt", -2)
+	require.ErrorIs(t, err, ErrStaleRevision)
+	_, err = s.Trash(ctx, f.ID, -2)
+	require.ErrorIs(t, err, ErrStaleRevision)
+
+	// Untouched: still live under its original name.
+	_, err = s.NodeByPath(ctx, "/f.txt")
+	require.NoError(t, err)
+
+	trashed, err := s.Trash(ctx, f.ID, f.Revision)
+	require.NoError(t, err)
+	_, err = s.Restore(ctx, f.ID, -2)
+	require.ErrorIs(t, err, ErrStaleRevision)
+	_, err = s.Restore(ctx, f.ID, trashed.Revision)
 	require.NoError(t, err)
 }

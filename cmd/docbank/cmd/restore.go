@@ -5,6 +5,8 @@ import (
 	"strconv"
 
 	"github.com/spf13/cobra"
+
+	"go.kenn.io/docbank/internal/store"
 )
 
 var restoreCmd = &cobra.Command{
@@ -22,7 +24,7 @@ var restoreCmd = &cobra.Command{
 		}
 		defer func() { _ = v.close() }()
 
-		n, err := v.store.Restore(cmd.Context(), id, -1)
+		n, err := v.store.Restore(cmd.Context(), id, store.UnconditionalRev)
 		if err != nil {
 			return err
 		}

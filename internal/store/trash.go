@@ -10,9 +10,9 @@ import (
 
 // Trash soft-deletes a live node and its live subtree as a unit. All subtree
 // rows share one trashed_at stamp; only the top node records its original
-// location for restore. If ifRev is not -1, the mutation fails with
-// ErrStaleRevision unless it matches the node's current revision. Returns the
-// node as it stands after trashing.
+// location for restore. Unless ifRev is UnconditionalRev, the mutation
+// fails with ErrStaleRevision unless ifRev matches the node's current
+// revision. Returns the node as it stands after trashing.
 func (s *Store) Trash(ctx context.Context, id, ifRev int64) (Node, error) {
 	if id == s.rootID {
 		return Node{}, ErrIsRoot
@@ -26,7 +26,7 @@ func (s *Store) Trash(ctx context.Context, id, ifRev int64) (Node, error) {
 		if n.TrashedAt != nil {
 			return fmt.Errorf("node %d already trashed: %w", id, ErrNotFound)
 		}
-		if ifRev >= 0 && n.Revision != ifRev {
+		if ifRev != UnconditionalRev && n.Revision != ifRev {
 			return fmt.Errorf("node %d at revision %d, expected %d: %w",
 				id, n.Revision, ifRev, ErrStaleRevision)
 		}
@@ -115,8 +115,9 @@ func nextFreeNameTx(tx *sql.Tx, parentID int64, name string) (string, error) {
 
 // Restore returns a trash root to its original location (or the tree root if
 // that location is gone), re-suffixing on conflict. Descendants trashed in
-// earlier separate operations stay trashed. If ifRev is not -1, the mutation
-// fails with ErrStaleRevision unless it matches the node's current revision.
+// earlier separate operations stay trashed. Unless ifRev is
+// UnconditionalRev, the mutation fails with ErrStaleRevision unless ifRev
+// matches the node's current revision.
 func (s *Store) Restore(ctx context.Context, id, ifRev int64) (Node, error) {
 	var restored Node
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
@@ -127,7 +128,7 @@ func (s *Store) Restore(ctx context.Context, id, ifRev int64) (Node, error) {
 		if n.TrashedAt == nil {
 			return fmt.Errorf("node %d: %w", id, ErrNotTrashed)
 		}
-		if ifRev >= 0 && n.Revision != ifRev {
+		if ifRev != UnconditionalRev && n.Revision != ifRev {
 			return fmt.Errorf("node %d at revision %d, expected %d: %w",
 				id, n.Revision, ifRev, ErrStaleRevision)
 		}

@@ -209,7 +209,11 @@ Precondition Required. Both carry problem-JSON explaining the rule.
 
 **Contract addendum — `POST /ingest`:** takes server-side local paths
 and a destination, returns the ingest report (imported / skipped /
-failed, per-path errors). For a local daemon this preserves Phase 1's
+failed, per-path errors). Paths must be **absolute**: the long-lived
+daemon's working directory is meaningless, so relative paths are
+rejected with 422 and the CLI resolves `docbank add` sources to
+absolute paths before calling (preserving Phase 1's relative-path UX
+regardless of where the daemon was started). For a local daemon this preserves Phase 1's
 provenance recording, resumability, and partial-failure reporting, and
 avoids re-streaming whole trees over loopback. Because it grants
 "read any daemon-readable local path" capability, it is **restricted
@@ -217,7 +221,9 @@ to loopback connections** (checked per-request against `RemoteAddr`)
 regardless of bind address or API key — a private-LAN client gets 403
 with problem-JSON pointing at the planned multipart upload, which is
 the correct remote ingest path. Multipart upload stays planned.
-http-api.md gets updated accordingly.
+http-api.md is brought in line with all of this by this project's
+documentation task — until that task lands, the existing page (marked
+"Planned" throughout) intentionally still shows the older contract.
 
 **Error mapping:** the store's typed errors map to statuses exactly as
 the contract table specifies (`ErrNotFound` 404, `ErrExists`/`ErrCycle`

@@ -237,9 +237,9 @@ func isAncestorTx(tx *sql.Tx, maybeAncestor, candidate int64) (bool, error) {
 	}
 }
 
-// Move renames and/or reparents a live node in one transaction. If ifRev is
-// not -1, the mutation fails with ErrStaleRevision unless it matches the
-// node's current revision.
+// Move renames and/or reparents a live node in one transaction. Unless
+// ifRev is UnconditionalRev, the mutation fails with ErrStaleRevision
+// unless ifRev matches the node's current revision.
 func (s *Store) Move(ctx context.Context, id, newParentID int64, newName string, ifRev int64) (Node, error) {
 	var moved Node
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
@@ -272,7 +272,7 @@ func (s *Store) MovePath(ctx context.Context, srcPath, destPath string) (Node, e
 		if err != nil {
 			return err
 		}
-		moved, err = s.moveTx(tx, src.ID, newParentID, newName, -1)
+		moved, err = s.moveTx(tx, src.ID, newParentID, newName, UnconditionalRev)
 		return err
 	})
 	if err != nil {
@@ -330,7 +330,7 @@ func (s *Store) moveTx(tx *sql.Tx, id, newParentID int64, newName string, ifRev 
 	if n.TrashedAt != nil {
 		return Node{}, fmt.Errorf("node %d is trashed: %w", id, ErrNotFound)
 	}
-	if ifRev >= 0 && n.Revision != ifRev {
+	if ifRev != UnconditionalRev && n.Revision != ifRev {
 		return Node{}, fmt.Errorf("node %d at revision %d, expected %d: %w",
 			id, n.Revision, ifRev, ErrStaleRevision)
 	}

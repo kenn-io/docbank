@@ -23,3 +23,10 @@ var (
 	// matches the node (lost-update guard for If-Match).
 	ErrStaleRevision = errors.New("revision mismatch")
 )
+
+// UnconditionalRev is the only ifRev value that skips the revision
+// precondition on Move, Trash, and Restore. Every other value — including
+// other negatives, which can never match a real revision — must satisfy
+// the check, so an accidentally propagated bad revision fails stale
+// instead of silently mutating.
+const UnconditionalRev int64 = -1
