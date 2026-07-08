@@ -20,6 +20,7 @@ func TestServeServesAndShutsDownGracefully(t *testing.T) {
 	t.Setenv("DOCBANK_HOME", dir)
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- runServe(ctx) }()
 

@@ -85,6 +85,7 @@ func runServe(ctx context.Context) error {
 
 	tokenBytes := make([]byte, 32)
 	if _, err := rand.Read(tokenBytes); err != nil {
+		_ = listener.Close()
 		return fmt.Errorf("generating shutdown token: %w", err)
 	}
 	token := hex.EncodeToString(tokenBytes)
