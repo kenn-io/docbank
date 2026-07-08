@@ -36,7 +36,7 @@ user's privileges. Consequently:
 | A referenced blob is durable | `blob.Write` | tmp → fsync → rename → dir fsync, on every path including dedup |
 | A deleted blob stays deleted | `blob.Remove` | shard dir fsync before gc deletes the metadata row, including on the already-missing retry path |
 | A stored object is what its name claims *structurally* | `blob.Write` dedup check | no-follow `Lstat`: regular file of the expected size, else replaced with the verified temp file |
-| Reads serve only stored blobs | `blob.Open` / `blob.Exists` | no-follow open + regular-file check; symlinks at blob paths are refused, never followed |
+| Reads serve only stored blobs | `blob.Open` / `blob.Exists` | no-follow open + regular-file check on the blob itself; the vault's own directory structure above it is trusted per the boundary above (a symlinked shard dir is user-privileged relocation or tampering, not an attack docbank can meaningfully resist) |
 | Content matches its hash *byte-for-byte* | `docbank verify` | full re-hash of every blob, on demand |
 | No orphan blob file survives | `docbank gc` | reachability query for rows **plus** a directory scan for files that never gained (or lost) their row |
 | Imports read the file they classified | ingest | `O_NOFOLLOW` + fstat at open, not the earlier `Lstat`/`WalkDir` classification |
