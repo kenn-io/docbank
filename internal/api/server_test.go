@@ -119,6 +119,42 @@ func do(t *testing.T, ts *httptest.Server, method, path string, hdr map[string]s
 	return resp, string(respBody)
 }
 
+// try is do's goroutine-safe sibling: transport errors come back as the
+// third return value instead of failing the test via require, which panics
+// if called off the main test goroutine. Concurrency tests that fire
+// requests from goroutines must use this instead of do.
+func try(t *testing.T, ts *httptest.Server, method, path string, hdr map[string]string, body any) (*http.Response, string, error) {
+	t.Helper()
+	var reader io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return nil, "", err
+		}
+		reader = bytes.NewReader(b)
+	}
+	req, err := http.NewRequest(method, ts.URL+path, reader)
+	if err != nil {
+		return nil, "", err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	for k, v := range hdr {
+		req.Header.Set(k, v)
+	}
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", err
+	}
+	_ = resp.Body.Close()
+	return resp, string(respBody), nil
+}
+
 // etagOf stats a node and returns it along with the ETag header (a
 // quoted revision), the value mutation endpoints expect in If-Match. The
 // node itself is part of the shared fixture signature for callers that

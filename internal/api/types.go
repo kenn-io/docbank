@@ -24,6 +24,40 @@ type SearchHit struct {
 	Path string `json:"path"`
 }
 
+// IngestFailure records one source path that failed to import.
+type IngestFailure struct {
+	Path  string `json:"path"`
+	Error string `json:"error"`
+}
+
+// IngestReport summarizes an ingest run.
+type IngestReport struct {
+	Added   int             `json:"added"`
+	Skipped int             `json:"skipped"`
+	Failed  []IngestFailure `json:"failed,omitempty"`
+}
+
+// GCReport summarizes a gc dry run (Run=false) or an actual reclaim.
+type GCReport struct {
+	CandidateBlobs   int   `json:"candidate_blobs"`
+	UntrackedFiles   int   `json:"untracked_files"`
+	ReclaimableBytes int64 `json:"reclaimable_bytes"`
+	Removed          int   `json:"removed"`
+	Run              bool  `json:"run"`
+}
+
+// VerifyProblem flags one blob whose content didn't check out.
+type VerifyProblem struct {
+	Hash    string `json:"hash"`
+	Problem string `json:"problem" enum:"missing,corrupt,unreadable"`
+}
+
+// VerifyReport summarizes a full blob verification pass.
+type VerifyReport struct {
+	OK       int             `json:"ok"`
+	Problems []VerifyProblem `json:"problems,omitempty"`
+}
+
 func fromStoreNode(n store.Node) Node {
 	out := Node{
 		ID: n.ID, ParentID: n.ParentID, Name: n.Name, Kind: n.Kind,

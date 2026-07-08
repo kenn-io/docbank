@@ -2,12 +2,11 @@ package cmd
 
 import (
 	"fmt"
-	"strconv"
-	"strings"
 	"text/tabwriter"
-	"time"
 
 	"github.com/spf13/cobra"
+
+	"go.kenn.io/docbank/internal/api"
 )
 
 var trashCmd = &cobra.Command{
@@ -54,7 +53,7 @@ var trashEmptyCmd = &cobra.Command{
 	Short: "Permanently delete trashed nodes (their blobs become gc candidates)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		age, err := parseAge(trashOlderThan)
+		age, err := api.ParseAge(trashOlderThan)
 		if err != nil {
 			return err
 		}
@@ -71,33 +70,6 @@ var trashEmptyCmd = &cobra.Command{
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "deleted %d trashed node(s)\n", n)
 		return nil
 	},
-}
-
-// parseAge parses Go durations plus a day suffix: "30d" = 30*24h. Empty
-// means zero (everything). Negative ages are rejected: a future cutoff
-// would silently delete the entire trash.
-func parseAge(s string) (time.Duration, error) {
-	if s == "" {
-		return 0, nil
-	}
-	var d time.Duration
-	if base, ok := strings.CutSuffix(s, "d"); ok {
-		days, err := strconv.Atoi(base)
-		if err != nil {
-			return 0, fmt.Errorf("invalid age %q (want e.g. 30d or 12h): %w", s, err)
-		}
-		d = time.Duration(days) * 24 * time.Hour
-	} else {
-		var err error
-		d, err = time.ParseDuration(s)
-		if err != nil {
-			return 0, fmt.Errorf("invalid age %q (want e.g. 30d or 12h): %w", s, err)
-		}
-	}
-	if d < 0 {
-		return 0, fmt.Errorf("invalid age %q: must not be negative", s)
-	}
-	return d, nil
 }
 
 func init() {

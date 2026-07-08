@@ -14,7 +14,6 @@ func (g *gate) mutate(fn func() error) error {
 	return fn()
 }
 
-//nolint:unused // consumed by the maintenance ops route task.
 func (g *gate) maintain(fn func() error) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
