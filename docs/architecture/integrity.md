@@ -43,6 +43,7 @@ user's privileges. Consequently:
 | Imports read the file they classified | ingest | `O_NOFOLLOW` + fstat at open, not the earlier `Lstat`/`WalkDir` classification |
 | Mutations act on the path the user named | store | path resolution inside the mutation's transaction (`TrashPath`, `MovePath`, ID-based ingest parentage) |
 | Node identity is permanent | schema | `AUTOINCREMENT` ids plus `trash_parent ... ON DELETE SET NULL` — a dangling origin becomes NULL, never a reused id |
+| Vault contents are private to the user | `home.Ensure` | the 0700 boundary is enforced on every open, not assumed: layout directories are tightened to 0700, the database file to 0600 (WAL/SHM inherit its mode), and blob files are written 0600 |
 
 ## Accepted trade-offs
 
