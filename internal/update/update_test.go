@@ -105,6 +105,18 @@ func newFakeClient(t *testing.T, ts *httptest.Server, currentVersion string) sel
 	return c
 }
 
+// withoutDaemon replaces the real daemon-coordination hooks with no-ops for
+// tests that exercise the check/download/verify/swap path itself. The real
+// hooks are unix-only by design (Windows CI runs these tests), and the
+// coordination wiring has its own test with fakes
+// (TestUpdateCoordinatesDaemonUnderLaunchLock).
+func withoutDaemon(o update.Options) update.Options {
+	o.WithLaunchLock = func(_ context.Context, _ string, fn func() error) error { return fn() }
+	o.Stop = func(context.Context, string) (bool, error) { return false, nil }
+	o.Start = func(context.Context, string) error { return nil }
+	return o
+}
+
 func TestUpdateInstallsFromFakeRelease(t *testing.T) {
 	ts, sum := fakeReleaseServer(t, "9.9.9")
 	c := newFakeClient(t, ts, "0.0.1")
@@ -113,9 +125,9 @@ func TestUpdateInstallsFromFakeRelease(t *testing.T) {
 	require.NoError(t, os.WriteFile(dest, []byte("old"), 0o755))
 
 	var out strings.Builder
-	err := update.Run(t.Context(), &out, update.Options{
+	err := update.Run(t.Context(), &out, withoutDaemon(update.Options{
 		Yes: true, Client: &c, Root: t.TempDir(), Destination: dest,
-	})
+	}))
 	require.NoError(t, err, out.String())
 	got, err := os.ReadFile(dest)
 	require.NoError(t, err)
@@ -220,9 +232,9 @@ func TestUpdateDevBuildRequiresForce(t *testing.T) {
 	assert.Equal(t, "old", string(got), "dev build without --force must not install")
 
 	out.Reset()
-	err = update.Run(t.Context(), &out, update.Options{
+	err = update.Run(t.Context(), &out, withoutDaemon(update.Options{
 		Yes: true, Force: true, Client: &c, Root: t.TempDir(), Destination: dest,
-	})
+	}))
 	require.NoError(t, err, out.String())
 	got, err = os.ReadFile(dest)
 	require.NoError(t, err)
@@ -272,9 +284,9 @@ func TestUpdateForcedDevBuildInstall(t *testing.T) {
 	require.NoError(t, os.WriteFile(dest, []byte("old"), 0o755))
 
 	var out strings.Builder
-	err = update.Run(t.Context(), &out, update.Options{
+	err = update.Run(t.Context(), &out, withoutDaemon(update.Options{
 		Yes: true, Force: true, Client: &c, Root: t.TempDir(), Destination: dest,
-	})
+	}))
 	require.NoError(t, err, out.String())
 	assert.Contains(t, out.String(), "download:", "refetch must repopulate download metadata before install")
 	got, err := os.ReadFile(dest)
