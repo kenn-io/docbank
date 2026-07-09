@@ -16,6 +16,7 @@ jobs:
           - { runner: ubuntu-24.04-arm,  goos: linux,  goarch: arm64 }
           - { runner: macos-latest,      goos: darwin, goarch: arm64 }
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -51,6 +52,7 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:

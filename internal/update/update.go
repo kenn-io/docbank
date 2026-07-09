@@ -91,15 +91,6 @@ func Run(ctx context.Context, out io.Writer, opts Options) error {
 	if opts.CheckOnly {
 		return nil
 	}
-	if info.NeedsRefetch() {
-		if info, err = c.Check(ctx, selfupdate.CheckOptions{Force: true}); err != nil {
-			return fmt.Errorf("refreshing release info: %w", err)
-		}
-		if info == nil {
-			_, _ = fmt.Fprintln(out, "already up to date")
-			return nil
-		}
-	}
 	if info.Checksum == "" {
 		return errors.New("release has no SHA256 checksum; refusing to install")
 	}

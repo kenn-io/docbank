@@ -234,11 +234,11 @@ func TestUpdateRequiresConfirmationWithoutYes(t *testing.T) {
 	assert.Equal(t, "old", string(got))
 }
 
-// TestUpdateDevBuildCacheRefetch primes the check cache with a cache-only
-// dev-build hit (kit's Info.NeedsRefetch case: version known, but no
-// download metadata) and verifies Run performs the forced refetch before
-// installing rather than trying to install the incomplete cached Info.
-func TestUpdateDevBuildCacheRefetch(t *testing.T) {
+// TestUpdateForcedDevBuildInstall verifies that --force on a dev build
+// installs the latest release with complete download metadata even when a
+// stale check cache is present: kit's Check bypasses the cache under Force,
+// so the primed cache file must not short-circuit the install.
+func TestUpdateForcedDevBuildInstall(t *testing.T) {
 	ts, _ := fakeReleaseServer(t, "9.9.9")
 	cacheDir := t.TempDir()
 	cache := struct {

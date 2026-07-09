@@ -7,11 +7,25 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/version"
 )
+
+// printAlreadyRunning reports an existing daemon, with a replacement hint
+// when its version differs from this CLI: serve start never stops a running
+// daemon (only the data commands' auto-start path replaces on mismatch).
+func printAlreadyRunning(cmd *cobra.Command, rec kitdaemon.RuntimeRecord) {
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "already running: pid %d at %s (%s)\n",
+		rec.PID, rec.Address, rec.Version)
+	if rec.Version != version.Version {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+			"note: daemon version differs from this CLI (%s); `docbank serve stop && docbank serve start` to replace it\n",
+			version.Version)
+	}
+}
 
 var serveStartCmd = &cobra.Command{
 	Use:   "start",
@@ -30,13 +44,7 @@ var serveStartCmd = &cobra.Command{
 			return err
 		}
 		if ok {
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "already running: pid %d at %s (%s)\n",
-				rec.PID, rec.Address, rec.Version)
-			if rec.Version != version.Version {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-					"note: daemon version differs from this CLI (%s); `docbank serve stop && docbank serve start` to replace it\n",
-					version.Version)
-			}
+			printAlreadyRunning(cmd, rec)
 			return nil
 		}
 		err = client.WithLaunchLock(cmd.Context(), layout.Root, func() error {
@@ -51,8 +59,7 @@ var serveStartCmd = &cobra.Command{
 			return err
 		}
 		if ok {
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "already running: pid %d at %s (%s)\n",
-				rec.PID, rec.Address, rec.Version)
+			printAlreadyRunning(cmd, rec)
 			return nil
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "started: pid %d at %s (%s)\n",
