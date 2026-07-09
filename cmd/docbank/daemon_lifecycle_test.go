@@ -140,7 +140,9 @@ func TestDaemonStartReplacesVersionMismatchedDaemon(t *testing.T) {
 
 func TestRestartWhenNotRunningStartsFresh(t *testing.T) {
 	bin := buildDocbank(t)
-	dir := t.TempDir()
+	// A path that does not exist yet: first-run restart must treat the
+	// missing home as "not running", not fail during discovery.
+	dir := filepath.Join(t.TempDir(), "home")
 	env := append(os.Environ(), "DOCBANK_HOME="+dir)
 
 	run := func(args ...string) (string, error) {
