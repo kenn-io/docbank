@@ -1,0 +1,78 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - { runner: ubuntu-latest,     goos: linux,  goarch: amd64 }
+          - { runner: ubuntu-24.04-arm,  goos: linux,  goarch: arm64 }
+          - { runner: macos-latest,      goos: darwin, goarch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Build
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          COMMIT="$(git rev-parse --short HEAD)"
+          LDFLAGS="-X go.kenn.io/docbank/internal/version.Version=${VERSION} \
+                   -X go.kenn.io/docbank/internal/version.Commit=${COMMIT}"
+          go build -tags fts5 -trimpath -ldflags "${LDFLAGS}" -o dist/docbank ./cmd/docbank
+          ./dist/docbank --version
+      - name: Package
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          ARCHIVE="docbank_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz"
+          tar -C dist -czf "${ARCHIVE}" docbank
+          mkdir -p out && mv "${ARCHIVE}" out/
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: docbank-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: out/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd assets
+          sha256sum -- *.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF#refs/tags/}"
+          gh release create "${TAG}" assets/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${TAG}" \
+            --generate-notes

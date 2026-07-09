@@ -1,0 +1,41 @@
+package main
+
+import (
+	"fmt"
+	"io"
+
+	"github.com/spf13/cobra"
+
+	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/store"
+)
+
+var catCmd = &cobra.Command{
+	Use:   "cat <path>",
+	Short: "Write a file's content to stdout",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := client.Ensure(cmd.Context())
+		if err != nil {
+			return err
+		}
+		n, err := c.Stat(cmd.Context(), args[0])
+		if err != nil {
+			return fmt.Errorf("resolving %q: %w", args[0], err)
+		}
+		if n.Kind == "dir" {
+			return fmt.Errorf("%q: %w", args[0], store.ErrNotFile)
+		}
+		rc, err := c.Content(cmd.Context(), n.ID)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = rc.Close() }()
+		if _, err := io.Copy(cmd.OutOrStdout(), rc); err != nil {
+			return fmt.Errorf("streaming %q: %w", args[0], err)
+		}
+		return nil
+	},
+}
+
+func init() { rootCmd.AddCommand(catCmd) }

@@ -10,12 +10,19 @@ import (
 
 // Trash soft-deletes a live node and its live subtree as a unit. All subtree
 // rows share one trashed_at stamp; only the top node records its original
-// location for restore.
-func (s *Store) Trash(ctx context.Context, id int64) error {
+// location for restore. Unless ifRev is UnconditionalRev, the mutation
+// fails with ErrStaleRevision unless ifRev matches the node's current
+// revision. Returns the node as it stands after trashing, plus its
+// pre-trash path — computed inside the same transaction, because trashing
+// re-parents the node (making the path uncomputable afterwards) and a
+// concurrent ancestor move could stale a path captured beforehand.
+func (s *Store) Trash(ctx context.Context, id, ifRev int64) (Node, string, error) {
 	if id == s.rootID {
-		return ErrIsRoot
+		return Node{}, "", ErrIsRoot
 	}
-	return s.withTx(ctx, func(tx *sql.Tx) error {
+	var trashed Node
+	var origPath string
+	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		n, err := nodeByIDTx(tx, id)
 		if err != nil {
 			return err
@@ -23,15 +30,32 @@ func (s *Store) Trash(ctx context.Context, id int64) error {
 		if n.TrashedAt != nil {
 			return fmt.Errorf("node %d already trashed: %w", id, ErrNotFound)
 		}
-		return s.trashNodeTx(tx, n)
+		if ifRev != UnconditionalRev && n.Revision != ifRev {
+			return fmt.Errorf("node %d at revision %d, expected %d: %w",
+				id, n.Revision, ifRev, ErrStaleRevision)
+		}
+		if origPath, err = pathOf(ctx, tx, id); err != nil {
+			return err
+		}
+		if err := s.trashNodeTx(tx, n); err != nil {
+			return err
+		}
+		trashed, err = nodeByIDTx(tx, id)
+		return err
 	})
+	if err != nil {
+		return Node{}, "", err
+	}
+	return trashed, origPath, nil
 }
 
 // TrashPath resolves path and trashes the node inside one transaction, so a
-// concurrent move cannot relocate the node (or an ancestor) between
-// resolution and mutation. Returns the node that was trashed.
-func (s *Store) TrashPath(ctx context.Context, path string) (Node, error) {
+// concurrent move cannot relocate the node or an ancestor between resolution
+// and mutation. Returns the node that was trashed and its canonical
+// pre-trash path (see Trash).
+func (s *Store) TrashPath(ctx context.Context, path string) (Node, string, error) {
 	var trashed Node
+	var origPath string
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		n, err := nodeByPath(ctx, tx, s.rootID, path)
 		if err != nil {
@@ -40,13 +64,19 @@ func (s *Store) TrashPath(ctx context.Context, path string) (Node, error) {
 		if n.ID == s.rootID {
 			return ErrIsRoot
 		}
-		trashed = n
-		return s.trashNodeTx(tx, n)
+		if origPath, err = pathOf(ctx, tx, n.ID); err != nil {
+			return err
+		}
+		if err := s.trashNodeTx(tx, n); err != nil {
+			return err
+		}
+		trashed, err = nodeByIDTx(tx, n.ID)
+		return err
 	})
 	if err != nil {
-		return Node{}, err
+		return Node{}, "", err
 	}
-	return trashed, nil
+	return trashed, origPath, nil
 }
 
 // trashNodeTx trashes a live node n (pre-checked by the caller) and its live
@@ -100,8 +130,10 @@ func nextFreeNameTx(tx *sql.Tx, parentID int64, name string) (string, error) {
 
 // Restore returns a trash root to its original location (or the tree root if
 // that location is gone), re-suffixing on conflict. Descendants trashed in
-// earlier separate operations stay trashed.
-func (s *Store) Restore(ctx context.Context, id int64) (Node, error) {
+// earlier separate operations stay trashed. Unless ifRev is
+// UnconditionalRev, the mutation fails with ErrStaleRevision unless ifRev
+// matches the node's current revision.
+func (s *Store) Restore(ctx context.Context, id, ifRev int64) (Node, error) {
 	var restored Node
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		n, err := nodeByIDTx(tx, id)
@@ -110,6 +142,10 @@ func (s *Store) Restore(ctx context.Context, id int64) (Node, error) {
 		}
 		if n.TrashedAt == nil {
 			return fmt.Errorf("node %d: %w", id, ErrNotTrashed)
+		}
+		if ifRev != UnconditionalRev && n.Revision != ifRev {
+			return fmt.Errorf("node %d at revision %d, expected %d: %w",
+				id, n.Revision, ifRev, ErrStaleRevision)
 		}
 		var trashParent sql.NullInt64
 		var trashName sql.NullString

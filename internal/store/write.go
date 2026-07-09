@@ -237,12 +237,14 @@ func isAncestorTx(tx *sql.Tx, maybeAncestor, candidate int64) (bool, error) {
 	}
 }
 
-// Move renames and/or reparents a live node in one transaction.
-func (s *Store) Move(ctx context.Context, id, newParentID int64, newName string) (Node, error) {
+// Move renames and/or reparents a live node in one transaction. Unless
+// ifRev is UnconditionalRev, the mutation fails with ErrStaleRevision
+// unless ifRev matches the node's current revision.
+func (s *Store) Move(ctx context.Context, id, newParentID int64, newName string, ifRev int64) (Node, error) {
 	var moved Node
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		moved, err = s.moveTx(tx, id, newParentID, newName)
+		moved, err = s.moveTx(tx, id, newParentID, newName, ifRev)
 		return err
 	})
 	if err != nil {
@@ -252,10 +254,10 @@ func (s *Store) Move(ctx context.Context, id, newParentID int64, newName string)
 }
 
 // MovePath resolves srcPath and destPath and moves inside one transaction,
-// so a concurrent operation cannot relocate either between resolution and
-// mutation. A destPath naming an existing live directory means "move into,
-// keep name"; otherwise its parent must exist and its basename becomes the
-// new name.
+// so a concurrent operation cannot relocate either path between resolution
+// and mutation. A destPath naming an existing live directory means "move
+// into, keep name"; otherwise its parent must exist and its basename becomes
+// the new name.
 func (s *Store) MovePath(ctx context.Context, srcPath, destPath string) (Node, error) {
 	var moved Node
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
@@ -270,7 +272,7 @@ func (s *Store) MovePath(ctx context.Context, srcPath, destPath string) (Node, e
 		if err != nil {
 			return err
 		}
-		moved, err = s.moveTx(tx, src.ID, newParentID, newName)
+		moved, err = s.moveTx(tx, src.ID, newParentID, newName, UnconditionalRev)
 		return err
 	})
 	if err != nil {
@@ -280,7 +282,8 @@ func (s *Store) MovePath(ctx context.Context, srcPath, destPath string) (Node, e
 }
 
 func (s *Store) resolveMoveTargetTx(
-	ctx context.Context, tx *sql.Tx, destPath, keepName string) (int64, string, error) {
+	ctx context.Context, tx *sql.Tx, destPath, keepName string,
+) (int64, string, error) {
 	// Validate every segment up front, literally. Virtual paths have no
 	// dot-segment semantics, and deriving the parent with path.Dir would
 	// Clean them: "/missing/../renamed" must be rejected, not silently
@@ -302,8 +305,7 @@ func (s *Store) resolveMoveTargetTx(
 		return 0, "", fmt.Errorf("resolving destination %q: %w", destPath, err)
 	}
 	if len(segs) == 0 {
-		// Unreachable: "/" always resolves as a directory above.
-		return 0, "", fmt.Errorf("internal: unresolvable empty destination %q", destPath)
+		return 0, "", fmt.Errorf("destination %q: %w", destPath, ErrExists)
 	}
 	parentPath := "/" + strings.Join(segs[:len(segs)-1], "/")
 	parent, err := nodeByPath(ctx, tx, s.rootID, parentPath)
@@ -313,7 +315,7 @@ func (s *Store) resolveMoveTargetTx(
 	return parent.ID, segs[len(segs)-1], nil
 }
 
-func (s *Store) moveTx(tx *sql.Tx, id, newParentID int64, newName string) (Node, error) {
+func (s *Store) moveTx(tx *sql.Tx, id, newParentID int64, newName string, ifRev int64) (Node, error) {
 	if id == s.rootID {
 		return Node{}, ErrIsRoot
 	}
@@ -327,6 +329,10 @@ func (s *Store) moveTx(tx *sql.Tx, id, newParentID int64, newName string) (Node,
 	}
 	if n.TrashedAt != nil {
 		return Node{}, fmt.Errorf("node %d is trashed: %w", id, ErrNotFound)
+	}
+	if ifRev != UnconditionalRev && n.Revision != ifRev {
+		return Node{}, fmt.Errorf("node %d at revision %d, expected %d: %w",
+			id, n.Revision, ifRev, ErrStaleRevision)
 	}
 	if _, err := liveDirTx(tx, newParentID); err != nil {
 		return Node{}, err

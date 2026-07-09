@@ -41,7 +41,7 @@ user's privileges. Consequently:
 | Content matches its hash *byte-for-byte* | `docbank verify` | full re-hash of every blob, on demand |
 | No orphan blob file survives | `docbank gc` | reachability query for rows **plus** a directory scan for files that never gained (or lost) their row |
 | Imports read the file they classified | ingest | `O_NOFOLLOW` + fstat at open, not the earlier `Lstat`/`WalkDir` classification |
-| Mutations act on the path the user named | store | path resolution inside the mutation's transaction (`TrashPath`, `MovePath`, ID-based ingest parentage) |
+| Mutations act on the node the caller named | store | id-addressed mutations (`Move`, `Trash`, `Restore`) require an `If-Match` revision precondition; path-addressed mutations (`MovePath`, `TrashPath`, backing `POST /path/move` and `/path/trash`) resolve and mutate inside one store transaction — either way, no path-race window between resolving a name and acting on it |
 | Node identity is permanent | schema | `AUTOINCREMENT` ids plus `trash_parent ... ON DELETE SET NULL` — a dangling origin becomes NULL, never a reused id |
 | Vault contents are private to the user | `home.Ensure` | the 0700 boundary is enforced on every open, not assumed: layout directories are tightened to 0700, the database file to 0600 (WAL/SHM inherit its mode), and blob files are written 0600 |
 
@@ -86,10 +86,12 @@ exist** is risk with no beneficiary. This holds until the first
 release that can leave real vaults behind a schema change, at which
 point migration machinery becomes part of the release contract.
 
-### Blocking vault lock
+### One vault lock holder
 
-Commands wait indefinitely on the vault flock rather than failing
-fast. Ordinary operations hold the shared lock for milliseconds; only
-`gc --run` holds it exclusively, briefly. A lock timeout would convert
-rare, short waits into user-visible errors. (Surfacing a "waiting for
-vault lock" notice is tracked as a CLI UX issue.)
+The daemon holds the vault flock exclusively for its whole lifetime,
+acquired non-blocking at startup — a second daemon is refused
+immediately, never queued. Ordinary commands don't touch the lock at
+all: they are HTTP clients of the daemon. Maintenance (`gc --run`,
+`verify`, `trash empty`) is serialized against ordinary mutations by
+the daemon's in-process maintenance gate. See
+[Concurrency & Locking](locking.md).

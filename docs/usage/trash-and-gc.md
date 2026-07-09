@@ -69,8 +69,8 @@ docbank gc          # dry run: candidate count and reclaimable bytes
 docbank gc --run    # delete files, then metadata rows
 ```
 
-`gc --run` holds the vault lock exclusively so a concurrent import can
-never dedup against a blob that's being deleted (see
+`gc --run` runs behind the daemon's maintenance gate, so a concurrent
+import can never dedup against a blob that's being deleted (see
 [Concurrency & Locking](../architecture/locking.md)). Files are removed
 before their rows: a crash in between leaves rows-without-files, which
 the next `gc --run` reconciles and `verify` flags in the meantime.

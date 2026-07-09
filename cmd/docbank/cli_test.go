@@ -1,0 +1,397 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"os"
+	"path/filepath"
+	"regexp"
+	"testing"
+	"time"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/store"
+)
+
+// runCLI executes the root command against a test vault (caller must have
+// set DOCBANK_HOME via t.Setenv) and returns captured stdout.
+//
+// It must not pass t.Context(): cobra caches the first context on each
+// subcommand (Command.ctx is only assigned when nil), so a later test would
+// execute against an earlier test's canceled context.
+func runCLI(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	resetFlags(rootCmd)
+	var out bytes.Buffer
+	rootCmd.SetOut(&out)
+	rootCmd.SetErr(&out)
+	rootCmd.SetArgs(args)
+	err := rootCmd.ExecuteContext(context.Background())
+	rootCmd.SetArgs(nil)
+	return out.String(), err
+}
+
+// resetFlags restores every command's flags to their defaults. Package-level
+// flag vars persist across in-process Execute calls, and a parse or argument
+// validation failure exits before any command code could reset them, so the
+// wrapper is the only reliable place.
+func resetFlags(c *cobra.Command) {
+	c.Flags().VisitAll(func(f *pflag.Flag) {
+		if f.Changed {
+			_ = f.Value.Set(f.DefValue)
+			f.Changed = false
+		}
+	})
+	for _, sub := range c.Commands() {
+		resetFlags(sub)
+	}
+}
+
+func setupVaultHome(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("DOCBANK_HOME", dir)
+	startTestDaemon(t, dir)
+	return dir
+}
+
+// startTestDaemon runs runServe in-process against dir and tears it down
+// with the test. CLI commands discover it through the runtime record like
+// production; no test-only transport exists.
+func startTestDaemon(t *testing.T, dir string) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runServe(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Error("test daemon did not shut down")
+		}
+	})
+	require.Eventually(t, func() bool {
+		_, _, ok, err := client.Find(ctx, dir)
+		return err == nil && ok
+	}, 10*time.Second, 25*time.Millisecond, "test daemon never became ready")
+}
+
+func writeSourceFile(t *testing.T, name, content string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), name)
+	require.NoError(t, os.WriteFile(p, []byte(content), 0o644))
+	return p
+}
+
+func TestAddLsTreeCat(t *testing.T) {
+	_ = setupVaultHome(t)
+	src := writeSourceFile(t, "notes.txt", "hello vault")
+
+	out, err := runCLI(t, "add", src, "--dest", "/inbox")
+	require.NoError(t, err)
+	assert.Contains(t, out, "added: 1")
+
+	out, err = runCLI(t, "ls", "/inbox")
+	require.NoError(t, err)
+	assert.Contains(t, out, "notes.txt")
+
+	out, err = runCLI(t, "tree", "/")
+	require.NoError(t, err)
+	assert.Contains(t, out, "inbox")
+	assert.Contains(t, out, "notes.txt")
+
+	out, err = runCLI(t, "cat", "/inbox/notes.txt")
+	require.NoError(t, err)
+	assert.Equal(t, "hello vault", out)
+}
+
+func TestAddRerunReportsSkips(t *testing.T) {
+	_ = setupVaultHome(t)
+	src := writeSourceFile(t, "a.txt", "alpha")
+
+	_, err := runCLI(t, "add", src, "--dest", "/inbox")
+	require.NoError(t, err)
+	out, err := runCLI(t, "add", src, "--dest", "/inbox")
+	require.NoError(t, err)
+	assert.Contains(t, out, "skipped: 1")
+}
+
+func TestAddMissingSourceFails(t *testing.T) {
+	_ = setupVaultHome(t)
+
+	_, err := runCLI(t, "add", "/no/such/file", "--dest", "/x")
+	require.Error(t, err)
+}
+
+func TestCatRejectsDirectory(t *testing.T) {
+	_ = setupVaultHome(t)
+	src := writeSourceFile(t, "a.txt", "alpha")
+	_, err := runCLI(t, "add", src, "--dest", "/inbox")
+	require.NoError(t, err)
+
+	_, err = runCLI(t, "cat", "/inbox")
+	require.Error(t, err)
+}
+
+func TestMvIntoDirAndRename(t *testing.T) {
+	setupVaultHome(t)
+	src := writeSourceFile(t, "a.txt", "alpha")
+	_, err := runCLI(t, "add", src, "--dest", "/inbox")
+	require.NoError(t, err)
+
+	// Rename in place (dest is a non-existent name in an existing dir).
+	_, err = runCLI(t, "mv", "/inbox/a.txt", "/inbox/b.txt")
+	require.NoError(t, err)
+
+	out, err := runCLI(t, "ls", "/inbox")
+	require.NoError(t, err)
+	assert.NotContains(t, out, "a.txt", "renamed source must be vacated")
+
+	// Move into an existing directory, keeping the name.
+	seed := writeSourceFile(t, "seed.txt", "s")
+	_, err = runCLI(t, "add", seed, "--dest", "/filed")
+	require.NoError(t, err)
+	_, err = runCLI(t, "mv", "/inbox/b.txt", "/filed")
+	require.NoError(t, err)
+
+	out, err = runCLI(t, "ls", "/filed")
+	require.NoError(t, err)
+	assert.Contains(t, out, "b.txt")
+
+	out, err = runCLI(t, "ls", "/inbox")
+	require.NoError(t, err)
+	assert.NotContains(t, out, "b.txt", "moved source must be vacated")
+}
+
+func TestMvOntoSelfFails(t *testing.T) {
+	setupVaultHome(t)
+	src := writeSourceFile(t, "a.txt", "alpha")
+	_, err := runCLI(t, "add", src, "--dest", "/inbox")
+	require.NoError(t, err)
+
+	_, err = runCLI(t, "mv", "/inbox/a.txt", "/inbox/a.txt")
+	require.ErrorIs(t, err, store.ErrExists)
+}
+
+func TestRmRestoreRoundTrip(t *testing.T) {
+	setupVaultHome(t)
+	src := writeSourceFile(t, "a.txt", "alpha")
+	_, err := runCLI(t, "add", src, "--dest", "/inbox")
+	require.NoError(t, err)
+
+	// rm prints "trashed [<id>] <path> ..."; parse the id for restore.
+	out, err := runCLI(t, "rm", "/inbox/a.txt")
+	require.NoError(t, err)
+	assert.Contains(t, out, "trashed")
+	m := regexp.MustCompile(`\[(\d+)\]`).FindStringSubmatch(out)
+	require.Len(t, m, 2)
+
+	out, err = runCLI(t, "trash", "list")
+	require.NoError(t, err)
+	assert.Contains(t, out, "a.txt")
+
+	_, err = runCLI(t, "restore", m[1])
+	require.NoError(t, err)
+	out, err = runCLI(t, "ls", "/inbox")
+	require.NoError(t, err)
+	assert.Contains(t, out, "a.txt")
+}
+
+func TestSearchCLI(t *testing.T) {
+	setupVaultHome(t)
+	src := writeSourceFile(t, "insurance-2026.txt", "policy")
+	_, err := runCLI(t, "add", src, "--dest", "/inbox")
+	require.NoError(t, err)
+
+	out, err := runCLI(t, "search", "insurance")
+	require.NoError(t, err)
+	assert.Contains(t, out, "/inbox/insurance-2026.txt")
+}
+
+func TestTrashEmpty(t *testing.T) {
+	setupVaultHome(t)
+	src := writeSourceFile(t, "a.txt", "alpha")
+	_, err := runCLI(t, "add", src, "--dest", "/inbox")
+	require.NoError(t, err)
+	_, err = runCLI(t, "rm", "/inbox/a.txt")
+	require.NoError(t, err)
+
+	out, err := runCLI(t, "trash", "empty")
+	require.NoError(t, err)
+	assert.Contains(t, out, "deleted 1")
+
+	out, err = runCLI(t, "trash", "list")
+	require.NoError(t, err)
+	assert.Contains(t, out, "trash is empty")
+}
+
+func TestTreeRejectsFileWithoutOutput(t *testing.T) {
+	setupVaultHome(t)
+	src := writeSourceFile(t, "a.txt", "alpha")
+	_, err := runCLI(t, "add", src, "--dest", "/inbox")
+	require.NoError(t, err)
+
+	out, err := runCLI(t, "tree", "/inbox/a.txt")
+	require.ErrorIs(t, err, store.ErrNotDir)
+	assert.Empty(t, out, "tree must not emit partial output before failing")
+}
+
+func TestTrashEmptyRejectsNegativeAge(t *testing.T) {
+	setupVaultHome(t)
+	src := writeSourceFile(t, "a.txt", "alpha")
+	_, err := runCLI(t, "add", src, "--dest", "/inbox")
+	require.NoError(t, err)
+	_, err = runCLI(t, "rm", "/inbox/a.txt")
+	require.NoError(t, err)
+
+	_, err = runCLI(t, "trash", "empty", "--older-than=-1h")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "negative")
+
+	// Nothing was deleted.
+	out, err := runCLI(t, "trash", "list")
+	require.NoError(t, err)
+	assert.Contains(t, out, "a.txt")
+}
+
+func TestGcReclaimsUnreachableBlobs(t *testing.T) {
+	home := setupVaultHome(t)
+	src := writeSourceFile(t, "a.txt", "alpha")
+	_, err := runCLI(t, "add", src, "--dest", "/inbox")
+	require.NoError(t, err)
+
+	// Nothing to collect while the node is live.
+	out, err := runCLI(t, "gc")
+	require.NoError(t, err)
+	assert.Contains(t, out, "0 candidate")
+
+	_, err = runCLI(t, "rm", "/inbox/a.txt")
+	require.NoError(t, err)
+	_, err = runCLI(t, "trash", "empty")
+	require.NoError(t, err)
+
+	// Dry-run reports but does not delete.
+	out, err = runCLI(t, "gc")
+	require.NoError(t, err)
+	assert.Contains(t, out, "1 candidate")
+	blobFiles, err := filepath.Glob(filepath.Join(home, "blobs", "??", "*"))
+	require.NoError(t, err)
+	assert.Len(t, blobFiles, 1)
+
+	// --run deletes file and rows.
+	out, err = runCLI(t, "gc", "--run")
+	require.NoError(t, err)
+	assert.Contains(t, out, "reclaimed")
+	blobFiles, err = filepath.Glob(filepath.Join(home, "blobs", "??", "*"))
+	require.NoError(t, err)
+	assert.Empty(t, blobFiles)
+
+	// Re-run converges.
+	out, err = runCLI(t, "gc")
+	require.NoError(t, err)
+	assert.Contains(t, out, "0 candidate")
+}
+
+func TestVerifyDetectsMissingAndCorrupt(t *testing.T) {
+	home := setupVaultHome(t)
+	srcA := writeSourceFile(t, "a.txt", "alpha")
+	srcB := writeSourceFile(t, "b.txt", "beta")
+	_, err := runCLI(t, "add", srcA, srcB, "--dest", "/inbox")
+	require.NoError(t, err)
+
+	out, err := runCLI(t, "verify")
+	require.NoError(t, err)
+	assert.Contains(t, out, "2 blob(s) ok")
+
+	alphaSum := sha256.Sum256([]byte("alpha"))
+	alphaHash := hex.EncodeToString(alphaSum[:])
+	betaSum := sha256.Sum256([]byte("beta"))
+	betaHash := hex.EncodeToString(betaSum[:])
+
+	// Blobs are hash-named; find each by its expected hash rather than
+	// assuming Glob's return order matches insertion order.
+	blobFiles, err := filepath.Glob(filepath.Join(home, "blobs", "??", "*"))
+	require.NoError(t, err)
+	require.Len(t, blobFiles, 2)
+	var alphaPath, betaPath string
+	for _, p := range blobFiles {
+		switch filepath.Base(p) {
+		case alphaHash:
+			alphaPath = p
+		case betaHash:
+			betaPath = p
+		}
+	}
+	require.NotEmpty(t, alphaPath, "alpha blob not found among %v", blobFiles)
+	require.NotEmpty(t, betaPath, "beta blob not found among %v", blobFiles)
+
+	// Tamper alpha's blob, delete beta's.
+	require.NoError(t, os.WriteFile(alphaPath, []byte("tampered"), 0o600))
+	require.NoError(t, os.Remove(betaPath))
+
+	out, err = runCLI(t, "verify")
+	require.Error(t, err)
+	assert.Contains(t, out, "corrupt: "+alphaHash)
+	assert.Contains(t, out, "missing: "+betaHash)
+}
+
+// A validation failure exits before RunE, so nothing command-side can reset
+// the parsed flag; the runCLI wrapper must prevent the stale --dest from
+// leaking into the next invocation.
+func TestAddDestDoesNotLeakAcrossValidationFailure(t *testing.T) {
+	setupVaultHome(t)
+
+	_, err := runCLI(t, "add", "--dest", "/leaked") // no sources: MinimumNArgs fails
+	require.Error(t, err)
+
+	src := writeSourceFile(t, "a.txt", "alpha")
+	_, err = runCLI(t, "add", src) // no --dest: must use the default /inbox
+	require.NoError(t, err)
+
+	out, err := runCLI(t, "ls", "/inbox")
+	require.NoError(t, err)
+	assert.Contains(t, out, "a.txt")
+	_, err = runCLI(t, "ls", "/leaked")
+	require.ErrorIs(t, err, store.ErrNotFound)
+}
+
+func TestGcReclaimsUntrackedBlobFiles(t *testing.T) {
+	home := setupVaultHome(t)
+	src := writeSourceFile(t, "a.txt", "alpha")
+	_, err := runCLI(t, "add", src, "--dest", "/inbox")
+	require.NoError(t, err)
+
+	// Manufacture the failed-transaction / crash shape: a durable blob file
+	// with no blobs row. Row-based queries can never see it.
+	content := []byte("orphaned bytes")
+	sum := sha256.Sum256(content)
+	hash := hex.EncodeToString(sum[:])
+	shard := filepath.Join(home, "blobs", hash[:2])
+	require.NoError(t, os.MkdirAll(shard, 0o700))
+	orphan := filepath.Join(shard, hash)
+	require.NoError(t, os.WriteFile(orphan, content, 0o600))
+
+	// Dry run reports it without deleting.
+	out, err := runCLI(t, "gc")
+	require.NoError(t, err)
+	assert.Contains(t, out, "1 untracked")
+	assert.FileExists(t, orphan)
+
+	out, err = runCLI(t, "gc", "--run")
+	require.NoError(t, err)
+	assert.Contains(t, out, "reclaimed")
+	assert.NoFileExists(t, orphan)
+
+	// The tracked, live blob is untouched.
+	catOut, err := runCLI(t, "cat", "/inbox/a.txt")
+	require.NoError(t, err)
+	assert.Equal(t, "alpha", catOut)
+}

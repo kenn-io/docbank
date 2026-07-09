@@ -1,0 +1,144 @@
+package api
+
+import (
+	"crypto/subtle"
+	"encoding/json"
+	"log/slog"
+	"net/http"
+	"os"
+	"time"
+
+	"github.com/danielgtaylor/huma/v2"
+	"github.com/danielgtaylor/huma/v2/adapters/humago"
+	kitdaemon "go.kenn.io/kit/daemon"
+
+	"go.kenn.io/docbank/internal/blob"
+	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/version"
+)
+
+const kitPingPath = kitdaemon.DefaultPingPath
+
+// Deps assembles everything a Server needs to build its routes.
+type Deps struct {
+	Store         *store.Store
+	Blobs         *blob.Store
+	Cfg           config.Config
+	Logger        *slog.Logger // nil → slog.Default()
+	StartedAt     time.Time
+	ShutdownToken string           // "" disables the shutdown route
+	Shutdown      func()           // called (async) by the shutdown route
+	Tracker       *ActivityTracker // nil → no idle tracking
+}
+
+// Server is docbank's HTTP API: a huma-described /api/v1 surface plus a
+// handful of plain http.Handler routes (health, ping, shutdown, web).
+type Server struct {
+	deps    Deps
+	handler http.Handler
+	api     huma.API
+}
+
+// NewServer wires all routes and middleware onto a fresh mux. The handler
+// is safe to mount under httptest; nothing here binds a socket.
+func NewServer(d Deps) *Server {
+	if d.Cfg.Server.APIKey == "" {
+		// A serving daemon always has an effective key (configured or
+		// ephemeral; see cmd/docbank/daemon.go). An empty key here means
+		// a caller forgot to set one — the one sanctioned exception is
+		// OpenAPIYAML's offline document render, which supplies a
+		// placeholder key precisely to avoid tripping this check.
+		panic("api: NewServer requires a non-empty Cfg.Server.APIKey")
+	}
+	installErrorFormatter()
+	if d.Logger == nil {
+		d.Logger = slog.Default()
+	}
+	if d.StartedAt.IsZero() {
+		d.StartedAt = time.Now()
+	}
+
+	mux := http.NewServeMux()
+	cfg := huma.DefaultConfig("docbank", version.Version)
+	// Every /api/v1 operation sits behind authMiddleware; the document-level
+	// security requirement tells generated clients that credentials are
+	// mandatory (either header form works, see the middleware).
+	cfg.Components.SecuritySchemes = map[string]*huma.SecurityScheme{
+		"apiKey": {Type: "apiKey", In: "header", Name: "X-Api-Key",
+			Description: "The daemon's API key: configured `api_key`, or the " +
+				"ephemeral per-run key published in the runtime record."},
+		"bearer": {Type: "http", Scheme: "bearer",
+			Description: "The same API key as a bearer token."},
+	}
+	cfg.Security = []map[string][]string{{"apiKey": {}}, {"bearer": {}}}
+	humaAPI := humago.New(mux, cfg)
+	s := &Server{deps: d, api: humaAPI}
+	g := &gate{}
+
+	registerReadRoutes(humaAPI, d)      // Task 5 (stat-by-id lands in this task)
+	registerMutateRoutes(humaAPI, d, g) // Task 6
+	registerOpsRoutes(humaAPI, d, g)    // Task 7
+	s.registerHealth(mux)
+	mux.Handle("GET "+kitPingPath, kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{
+		Service: "docbank", Version: version.Version, PID: os.Getpid(),
+	}))
+	s.registerShutdown(mux)
+	registerWeb(mux, d.Cfg.Web.Enabled)
+
+	h := http.Handler(mux)
+	h = authMiddleware(h, d.Cfg.Server.APIKey)
+	h = loopbackMiddleware(h)
+	h = timeoutMiddleware(h)
+	h = recoverMiddleware(h, d.Logger)
+	h = logMiddleware(h, d.Logger)
+	h = trackMiddleware(h, d.Tracker)
+	s.handler = h
+	return s
+}
+
+func (s *Server) Handler() http.Handler { return s.handler }
+func (s *Server) API() huma.API         { return s.api }
+
+func (s *Server) registerHealth(mux *http.ServeMux) {
+	type health struct {
+		Status        string `json:"status"`
+		Version       string `json:"version"`
+		UptimeSeconds int64  `json:"uptime_seconds"`
+	}
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, health{
+			Status: "ok", Version: version.Version,
+			UptimeSeconds: int64(time.Since(s.deps.StartedAt).Seconds()),
+		})
+	})
+}
+
+// registerShutdown adds the hidden token-gated endpoint daemon stop uses.
+// Not in the OpenAPI document: it is lifecycle plumbing, not agent surface.
+func (s *Server) registerShutdown(mux *http.ServeMux) {
+	if s.deps.ShutdownToken == "" {
+		return
+	}
+	mux.HandleFunc("POST /api/daemon/shutdown", func(w http.ResponseWriter, r *http.Request) {
+		got := r.Header.Get("X-Docbank-Daemon-Token")
+		if subtle.ConstantTimeCompare([]byte(got), []byte(s.deps.ShutdownToken)) != 1 {
+			writeError(w, NewError(http.StatusUnauthorized, "unauthorized", "bad shutdown token"))
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		if s.deps.Shutdown != nil {
+			go s.deps.Shutdown()
+		}
+	})
+}
+
+// writeJSON encodes v as the response body with the given status code.
+// Status and headers are already committed by the time Encode runs; every
+// caller in this package passes a fixed, JSON-safe struct, so there is
+// nothing actionable to do if encoding somehow fails.
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v) //nolint:errchkjson // see above
+}

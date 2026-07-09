@@ -20,8 +20,8 @@ docbank cat /taxes/w2.pdf  # stream file bytes to stdout
 
 Node IDs appear everywhere deliberately: IDs are the canonical way to
 refer to a document. Paths change when you reorganize; IDs never do.
-Today the CLI uses IDs for trash recovery (`docbank restore <id>`); the
-planned HTTP API is ID-first throughout.
+The CLI uses IDs for trash recovery (`docbank restore <id>`), and the
+[HTTP API](../architecture/http-api.md) is ID-first throughout.
 
 ## Moving and renaming
 
@@ -59,8 +59,8 @@ suffix if its old name is occupied at restore time).
 - Every `mv` is its own transaction: a failed move in a scripted batch
   leaves everything else applied and consistent.
 
-!!! info "Planned — Phase 2"
-    The HTTP API adds `POST /batch/move` with a `dry_run` mode that
+!!! info "Planned — Phase 2b"
+    `POST /batch/move` joins the HTTP API with a `dry_run` mode that
     validates an entire reorganization (collisions, cycles, missing IDs)
     before applying it all-or-nothing in one transaction — designed for
     agent-driven filing. Tags (orthogonal to the tree) are in the schema

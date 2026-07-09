@@ -43,11 +43,12 @@ docbank verify                                # prove the bytes are intact
 - **Ingest never touches sources.** Importing copies; it never deletes or
   modifies the original files.
 - **IDs are canonical, paths are convenience.** Every listing shows node
-  IDs; trash recovery and (in future) the HTTP API operate on IDs so
-  renames can't strand a reference.
-- **Agents are first-class.** The planned HTTP API exposes everything the
-  CLI and TUI can do, with optimistic-concurrency preconditions designed
-  for agent read-modify-write loops. See [HTTP API](architecture/http-api.md).
+  IDs; trash recovery and the HTTP API operate on IDs so renames can't
+  strand a reference.
+- **Agents are first-class.** The HTTP API exposes everything the CLI
+  can do — the CLI is itself an HTTP client of it — with
+  optimistic-concurrency preconditions designed for agent
+  read-modify-write loops. See [HTTP API](architecture/http-api.md).
 - **Documents are mutable, history is not.** Editing replaces a node's
   content and records the prior version; old blobs remain retrievable
   until you garbage-collect them. See
@@ -56,8 +57,10 @@ docbank verify                                # prove the bytes are intact
 ## Status
 
 docbank is pre-release. Phase 1 (store, ingest pipeline, and the full
-core CLI) is implemented and tested; the daemon, HTTP API, editing
-commands, TUI, and backup are designed but not yet built. The
+core CLI) and Phase 2a (the daemon, the HTTP API, the daemon-first CLI,
+and self-update) are implemented and tested; editing commands, tags,
+watched inboxes, text extraction (Phase 2b), the TUI (Phase 3), and
+backup (Phase 4) are designed but not yet built. The
 [Roadmap](roadmap.md) tracks what exists versus what is planned, and every
 page in this documentation marks planned behavior explicitly.
 

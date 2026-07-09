@@ -17,7 +17,9 @@ func TestTrashAndRestoreRoundTrip(t *testing.T) {
 	f, err := s.CreateFile(ctx, docs.ID, "a.txt", fakeHash("a1"), 1, "text/plain")
 	require.NoError(t, err)
 
-	require.NoError(t, s.Trash(ctx, docs.ID))
+	_, origPath, err := s.Trash(ctx, docs.ID, -1)
+	require.NoError(t, err)
+	assert.Equal(t, "/docs", origPath)
 
 	// Subtree is gone from live views.
 	_, err = s.NodeByPath(ctx, "/docs")
@@ -31,7 +33,7 @@ func TestTrashAndRestoreRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 
 	// Restore re-suffixes because /docs is taken again.
-	restored, err := s.Restore(ctx, docs.ID)
+	restored, err := s.Restore(ctx, docs.ID, -1)
 	require.NoError(t, err)
 	assert.Equal(t, "docs (2)", restored.Name)
 	assert.Nil(t, restored.TrashedAt)
@@ -51,17 +53,19 @@ func TestNestedTrashRestoreKeepsEarlierTrash(t *testing.T) {
 	require.NoError(t, err)
 
 	// Trash inner first (separate operation), then the whole of docs.
-	require.NoError(t, s.Trash(ctx, inner.ID))
-	require.NoError(t, s.Trash(ctx, docs.ID))
+	_, _, err = s.Trash(ctx, inner.ID, -1)
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, docs.ID, -1)
+	require.NoError(t, err)
 
 	// Restoring docs must NOT resurrect inner.
-	_, err = s.Restore(ctx, docs.ID)
+	_, err = s.Restore(ctx, docs.ID, -1)
 	require.NoError(t, err)
 	_, err = s.NodeByPath(ctx, "/docs/inner")
 	require.ErrorIs(t, err, ErrNotFound)
 
 	// inner is still restorable on its own.
-	_, err = s.Restore(ctx, inner.ID)
+	_, err = s.Restore(ctx, inner.ID, -1)
 	require.NoError(t, err)
 	_, err = s.NodeByPath(ctx, "/docs/inner")
 	require.NoError(t, err)
@@ -85,11 +89,13 @@ func TestRestoreFallsBackToRootWhenParentGone(t *testing.T) {
 	require.NoError(t, err)
 
 	// f becomes its own trash root, then its original home disappears.
-	require.NoError(t, s.Trash(ctx, f.ID))
-	require.NoError(t, s.Trash(ctx, docs.ID))
+	_, _, err = s.Trash(ctx, f.ID, -1)
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, docs.ID, -1)
+	require.NoError(t, err)
 	deleteTrashRoot(t, s, docs.ID)
 
-	restored, err := s.Restore(ctx, f.ID)
+	restored, err := s.Restore(ctx, f.ID, -1)
 	require.NoError(t, err)
 	p, err := s.Path(ctx, restored.ID)
 	require.NoError(t, err)
@@ -100,21 +106,56 @@ func TestTrashGuards(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
 
-	require.ErrorIs(t, s.Trash(ctx, s.RootID()), ErrIsRoot)
+	_, _, err := s.Trash(ctx, s.RootID(), -1)
+	require.ErrorIs(t, err, ErrIsRoot)
 
 	docs, err := s.Mkdir(ctx, s.RootID(), "docs")
 	require.NoError(t, err)
-	require.NoError(t, s.Trash(ctx, docs.ID))
-	require.ErrorIs(t, s.Trash(ctx, docs.ID), ErrNotFound)
+	_, _, err = s.Trash(ctx, docs.ID, -1)
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, docs.ID, -1)
+	require.ErrorIs(t, err, ErrNotFound)
 
 	// Restore of a non-trash-root child is refused.
 	inner, err := s.Mkdir(ctx, s.RootID(), "x")
 	require.NoError(t, err)
 	leaf, err := s.CreateFile(ctx, inner.ID, "y.txt", fakeHash("b2"), 1, "text/plain")
 	require.NoError(t, err)
-	require.NoError(t, s.Trash(ctx, inner.ID))
-	_, err = s.Restore(ctx, leaf.ID)
+	_, _, err = s.Trash(ctx, inner.ID, -1)
+	require.NoError(t, err)
+	_, err = s.Restore(ctx, leaf.ID, -1)
 	assert.ErrorIs(t, err, ErrNotTrashed)
+}
+
+func TestTrashPath(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+
+	docs, err := s.Mkdir(ctx, s.RootID(), "docs")
+	require.NoError(t, err)
+	_, err = s.CreateFile(ctx, docs.ID, "a.txt", fakeHash("a1"), 1, "text/plain")
+	require.NoError(t, err)
+
+	n, origPath, err := s.TrashPath(ctx, "/docs")
+	require.NoError(t, err)
+	assert.Equal(t, docs.ID, n.ID)
+	// Pre-trash path from inside the trash transaction: afterwards the
+	// trash root is re-parented and the path is uncomputable.
+	assert.Equal(t, "/docs", origPath)
+
+	// Gone from the live tree; restorable as a trash root.
+	_, err = s.NodeByPath(ctx, "/docs")
+	require.ErrorIs(t, err, ErrNotFound)
+	roots, err := s.TrashedRoots(ctx)
+	require.NoError(t, err)
+	require.Len(t, roots, 1)
+	assert.Equal(t, docs.ID, roots[0].ID)
+
+	// The root and no-longer-resolving paths are refused.
+	_, _, err = s.TrashPath(ctx, "/")
+	require.ErrorIs(t, err, ErrIsRoot)
+	_, _, err = s.TrashPath(ctx, "/docs")
+	assert.ErrorIs(t, err, ErrNotFound)
 }
 
 func TestEmptyTrash(t *testing.T) {
@@ -125,7 +166,8 @@ func TestEmptyTrash(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.CreateFile(ctx, a.ID, "f.txt", fakeHash("a1"), 1, "text/plain")
 	require.NoError(t, err)
-	require.NoError(t, s.Trash(ctx, a.ID))
+	_, _, err = s.Trash(ctx, a.ID, -1)
+	require.NoError(t, err)
 
 	roots, err := s.TrashedRoots(ctx)
 	require.NoError(t, err)
@@ -159,7 +201,8 @@ func TestEmptyTrashWholeSecondTimestamp(t *testing.T) {
 	// without fractional digits ("...:00Z" > "...:00.5Z") and survived.
 	d, err := s.Mkdir(ctx, s.RootID(), "old")
 	require.NoError(t, err)
-	require.NoError(t, s.Trash(ctx, d.ID))
+	_, _, err = s.Trash(ctx, d.ID, -1)
+	require.NoError(t, err)
 	stamp := time.Now().UTC().Add(-time.Hour).Truncate(time.Second).Format(timestampLayout)
 	_, err = s.db.Exec(`UPDATE nodes SET trashed_at = ? WHERE id = ?`, stamp, d.ID)
 	require.NoError(t, err)
@@ -167,34 +210,6 @@ func TestEmptyTrashWholeSecondTimestamp(t *testing.T) {
 	n, err := s.EmptyTrash(ctx, time.Hour)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), n)
-}
-
-func TestTrashPath(t *testing.T) {
-	s := newTestStore(t)
-	ctx := t.Context()
-
-	docs, err := s.Mkdir(ctx, s.RootID(), "docs")
-	require.NoError(t, err)
-	_, err = s.CreateFile(ctx, docs.ID, "a.txt", fakeHash("a1"), 1, "text/plain")
-	require.NoError(t, err)
-
-	n, err := s.TrashPath(ctx, "/docs")
-	require.NoError(t, err)
-	assert.Equal(t, docs.ID, n.ID)
-
-	// Gone from the live tree; restorable as a trash root.
-	_, err = s.NodeByPath(ctx, "/docs")
-	require.ErrorIs(t, err, ErrNotFound)
-	roots, err := s.TrashedRoots(ctx)
-	require.NoError(t, err)
-	require.Len(t, roots, 1)
-	assert.Equal(t, docs.ID, roots[0].ID)
-
-	// The root and no-longer-resolving paths are refused.
-	_, err = s.TrashPath(ctx, "/")
-	require.ErrorIs(t, err, ErrIsRoot)
-	_, err = s.TrashPath(ctx, "/docs")
-	assert.ErrorIs(t, err, ErrNotFound)
 }
 
 func TestRestoreAfterParentHardDeleteNeverRetargets(t *testing.T) {
@@ -208,11 +223,13 @@ func TestRestoreAfterParentHardDeleteNeverRetargets(t *testing.T) {
 	require.NoError(t, err)
 	d, err := s.Mkdir(ctx, s.RootID(), "D")
 	require.NoError(t, err)
-	_, err = s.Move(ctx, f.ID, d.ID, "f.txt")
+	_, err = s.Move(ctx, f.ID, d.ID, "f.txt", -1)
 	require.NoError(t, err)
 
-	require.NoError(t, s.Trash(ctx, f.ID)) // records trash_parent = D
-	require.NoError(t, s.Trash(ctx, d.ID))
+	_, _, err = s.Trash(ctx, f.ID, -1) // records trash_parent = D
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, d.ID, -1)
+	require.NoError(t, err)
 	deleteTrashRoot(t, s, d.ID)
 
 	e, err := s.Mkdir(ctx, s.RootID(), "E")
@@ -221,7 +238,7 @@ func TestRestoreAfterParentHardDeleteNeverRetargets(t *testing.T) {
 
 	// The original parent is gone: restore must fall back to the root, not
 	// land inside an unrelated directory occupying a reused id.
-	restored, err := s.Restore(ctx, f.ID)
+	restored, err := s.Restore(ctx, f.ID, -1)
 	require.NoError(t, err)
 	p, err := s.Path(ctx, restored.ID)
 	require.NoError(t, err)

@@ -17,13 +17,13 @@ func TestMoveRename(t *testing.T) {
 	require.NoError(t, err)
 
 	// Pure rename.
-	renamed, err := s.Move(ctx, f.ID, docs.ID, "b.txt")
+	renamed, err := s.Move(ctx, f.ID, docs.ID, "b.txt", -1)
 	require.NoError(t, err)
 	assert.Equal(t, "b.txt", renamed.Name)
 	assert.Equal(t, f.Revision+1, renamed.Revision)
 
 	// Reparent to root.
-	moved, err := s.Move(ctx, f.ID, s.RootID(), "b.txt")
+	moved, err := s.Move(ctx, f.ID, s.RootID(), "b.txt", -1)
 	require.NoError(t, err)
 	p, err := s.Path(ctx, moved.ID)
 	require.NoError(t, err)
@@ -46,7 +46,7 @@ func TestMoveBumpsBothParents(t *testing.T) {
 	dstBefore, err := s.NodeByID(ctx, dst.ID)
 	require.NoError(t, err)
 
-	_, err = s.Move(ctx, f.ID, dst.ID, "a.txt")
+	_, err = s.Move(ctx, f.ID, dst.ID, "a.txt", -1)
 	require.NoError(t, err)
 
 	srcAfter, err := s.NodeByID(ctx, src.ID)
@@ -67,25 +67,25 @@ func TestMoveRejectsCycleCollisionRoot(t *testing.T) {
 	require.NoError(t, err)
 
 	// Cycle: a under its own child b; and a under itself.
-	_, err = s.Move(ctx, a.ID, b.ID, "a")
+	_, err = s.Move(ctx, a.ID, b.ID, "a", -1)
 	require.ErrorIs(t, err, ErrCycle)
-	_, err = s.Move(ctx, a.ID, a.ID, "a")
+	_, err = s.Move(ctx, a.ID, a.ID, "a", -1)
 	require.ErrorIs(t, err, ErrCycle)
 
 	// Collision at destination.
 	_, err = s.Mkdir(ctx, s.RootID(), "b")
 	require.NoError(t, err)
-	_, err = s.Move(ctx, b.ID, s.RootID(), "b")
+	_, err = s.Move(ctx, b.ID, s.RootID(), "b", -1)
 	require.ErrorIs(t, err, ErrExists)
 
 	// Root cannot move.
-	_, err = s.Move(ctx, s.RootID(), a.ID, "root")
+	_, err = s.Move(ctx, s.RootID(), a.ID, "root", -1)
 	require.ErrorIs(t, err, ErrIsRoot)
 
 	// Destination must be a live dir.
 	f, err := s.CreateFile(ctx, s.RootID(), "f.txt", fakeHash("a1"), 1, "text/plain")
 	require.NoError(t, err)
-	_, err = s.Move(ctx, b.ID, f.ID, "b")
+	_, err = s.Move(ctx, b.ID, f.ID, "b", -1)
 	assert.ErrorIs(t, err, ErrNotDir)
 }
 
@@ -94,14 +94,15 @@ func TestMoveRejectsMissingOrTrashedSource(t *testing.T) {
 	ctx := t.Context()
 
 	// Nonexistent node id.
-	_, err := s.Move(ctx, 999999, s.RootID(), "nope")
+	_, err := s.Move(ctx, 999999, s.RootID(), "nope", -1)
 	require.ErrorIs(t, err, ErrNotFound)
 
 	// Trashed source node.
 	f, err := s.CreateFile(ctx, s.RootID(), "a.txt", fakeHash("a1"), 1, "text/plain")
 	require.NoError(t, err)
-	require.NoError(t, s.Trash(ctx, f.ID))
-	_, err = s.Move(ctx, f.ID, s.RootID(), "b.txt")
+	_, _, err = s.Trash(ctx, f.ID, -1)
+	require.NoError(t, err)
+	_, err = s.Move(ctx, f.ID, s.RootID(), "b.txt", -1)
 	require.ErrorIs(t, err, ErrNotFound)
 }
 

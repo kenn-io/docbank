@@ -1,21 +1,25 @@
 ---
 title: Concurrency & Locking
-description: How concurrent docbank processes coordinate — SQLite for data, an advisory flock for cross-layer operations.
+description: How the daemon coordinates concurrent access — SQLite for data, a single exclusive flock for the vault, an in-daemon gate for maintenance.
 ---
 
 # Concurrency & Locking
 
-Two layers coordinate concurrent access: SQLite serializes all metadata
-writes, and an advisory file lock serializes the few operations that
-span the database *and* the blob directory.
+The daemon is the single process that opens the vault: it holds the
+vault lock **exclusively** for its entire lifetime, and every other
+consumer — CLI, agents — reaches the vault only through its HTTP API
+([Daemon](daemon.md)). Two layers below that still do the real
+coordination work: SQLite serializes metadata writes, and an in-process
+gate serializes the daemon's own maintenance operations against its
+regular ones.
 
 ## What SQLite handles
 
 Every tree mutation is one transaction; the store opens the database in
 WAL mode with `BEGIN IMMEDIATE` write transactions and a busy timeout.
-Concurrent imports, moves, and trash operations from multiple processes
-interleave safely — invariants are enforced by the schema, and losers of
-a name race get a typed `name already exists` error, not corruption.
+Concurrent API requests interleave safely — invariants are enforced by
+the schema, and losers of a name race get a typed `name already exists`
+error, not corruption.
 
 ## What SQLite can't handle
 
@@ -29,34 +33,48 @@ that window, because half of it lives on the filesystem.
 The same shape recurs at startup: clearing stale `blobs/tmp/` files must
 not delete a temp file another process is actively writing.
 
-## The vault lock
+## The vault lock: one exclusive holder
 
-`~/.docbank/vault.lock` is an advisory `flock(2)`:
+`~/.docbank/vault.lock` is an advisory `flock(2)` that `docbank daemon
+run` takes exclusively (`TryLockExclusive`) at startup and releases only on
+shutdown. Because it's a single long-lived process rather than one lock
+acquisition per command, the shared/exclusive split from Phase 1 is
+gone: with all access funneled through one process, the daemon *is* the
+serialization point, and a second daemon on the same vault is impossible
+by construction.
 
-| Holder | Mode | Held for |
-|--------|------|----------|
-| Every normal command | **shared** | the life of the command |
-| `docbank gc` | **exclusive** | the whole collection |
-| startup tmp cleanup | momentary **exclusive** (non-blocking attempt) | the cleanup only |
+`TryLockExclusive` is **non-blocking**: a second `docbank daemon run`
+against a vault that's already locked fails immediately with a clear "is a
+docbank daemon already running?" error rather than hanging. This matches
+the daemon's role — waiting to acquire a lock another daemon holds for
+its entire lifetime would mean waiting indefinitely for no reason, since
+that daemon isn't going to release it and retry.
 
-Normal commands coexist; `gc` waits for them to finish and blocks new
-ones while it runs, which makes its query-then-delete sequence
-atomic *with respect to other docbank processes*. Startup cleanup tries
-a non-blocking upgrade to exclusive: success proves this is the only
-live process, so stale temp files can be removed; failure (any other
-holder) skips cleanup and lets a later sole process or `gc` handle it.
+Startup blob-tmp cleanup (`blob.CleanTmp`, the same stale-temp-file
+problem described above) needs no locking scheme of its own anymore: the
+daemon holding the vault lock exclusively at that point in startup
+*proves* it's the sole process that could have left those files
+mid-write, so cleanup is unconditional rather than a best-effort
+non-blocking attempt.
 
-Two implementation details worth recording:
+**Unix only, explicitly.** The lock is the one platform-specific piece
+of docbank. It's compiled under a `unix` build tag with a stub elsewhere
+that fails at vault open with a clear unsupported-platform error, rather
+than an undefined-symbol build break. This is unchanged from Phase 1;
+the vault remains Unix-only.
 
-- **Failed upgrades must reacquire.** On Linux, flock lock conversion is
-  release-then-acquire, so a failed non-blocking upgrade can silently
-  drop the shared lock. The lock wrapper reacquires shared before
-  reporting failure — otherwise a command would keep running convinced
-  it holds the vault while holding nothing.
-- **Unix only, explicitly.** The lock is the one platform-specific piece
-  of docbank. It's compiled under a `unix` build tag with a stub
-  elsewhere that fails at vault open with a clear unsupported-platform
-  error, rather than an undefined-symbol build break.
+## The maintenance gate: serializing inside the daemon
+
+With one process holding the vault lock for its whole run, `gc --run`,
+`trash empty`, and `verify` can no longer take the *vault* lock
+exclusively the way Phase 1's CLI did — the daemon already holds it.
+Instead, an in-process `sync.RWMutex`-shaped gate serializes maintenance
+against regular mutations: ordinary mutating API handlers take the read
+side (concurrent with each other), and `gc --run`/`trash empty`/`verify`
+take the write side, giving them the same "observe a quiescent vault"
+guarantee the exclusive flock gave Phase 1's `gc`. Requests queue rather
+than fail. See [HTTP API: maintenance gate](http-api.md#maintenance-gate)
+for the request-handling detail.
 
 ## First-open bootstrap
 
@@ -68,9 +86,10 @@ contact. The store applies the schema and creates the root inside one
 backoff; every statement is idempotent, so whichever process wins, both
 converge on the same initialized vault.
 
-## Guidance for other layers
-
-The daemon (Phase 2) is just another vault-lock participant: API
-mutations take the shared lock like CLI commands, and scheduled GC takes
-exclusive. Nothing about the model assumes a single resident process —
-which is precisely why a CLI invoked while the daemon runs stays safe.
+`docbank daemon run` takes the vault lock before opening the store, so two
+daemons racing to bootstrap the same fresh vault can no longer both
+reach `store.Open` at once — the loser fails at the flock instead. The
+retry logic stays in `internal/store` regardless: it's exercised
+directly by the store package's own tests, and it's the correct
+behavior for any caller that opens the store without first taking the
+vault lock.

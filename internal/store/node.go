@@ -136,8 +136,15 @@ func (s *Store) Path(ctx context.Context, id int64) (string, error) {
 	if _, err := s.NodeByID(ctx, id); err != nil {
 		return "", fmt.Errorf("computing path of node %d: %w", id, err)
 	}
+	return pathOf(ctx, s.db, id)
+}
+
+// pathOf computes a node's display path against q — the live database or a
+// transaction, for callers that must see the path a mutation in flight is
+// about to change (Trash captures the pre-trash path this way).
+func pathOf(ctx context.Context, q rowQuerier, id int64) (string, error) {
 	var path string
-	err := s.db.QueryRowContext(ctx, `
+	err := q.QueryRowContext(ctx, `
 		WITH RECURSIVE ancestry(id, parent_id, name, depth) AS (
 			SELECT id, parent_id, name, 0 FROM nodes WHERE id = ?
 			UNION ALL

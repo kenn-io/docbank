@@ -66,7 +66,7 @@ you prune it.
 
 ## Editing surfaces
 
-!!! info "Planned — Phase 2"
+!!! info "Planned — Phase 2b"
     The version machinery (schema, GC reachability) shipped in Phase 1,
     but no user-facing editing surface exists yet. The surfaces below
     are the design commitment; exact flags and shapes land in the CLI
