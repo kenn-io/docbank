@@ -4319,3 +4319,7 @@ Executors: when reality contradicts this plan (kit signature differs, huma behav
 
 
 
+
+- Task 13: the brief's `Run` pseudocode dereferenced `info.LatestVersion` where kit's `Check` returns `nil, nil` when up to date, and its Step-1 test needed a TLS test server, a `/releases/tag/` handler, and a runtime-GOOS/GOARCH asset to match real kit behavior. Implemented against the actual kit contract.
+- Task 14: darwin/amd64 leg dropped per this plan's own contingency — GitHub retired macos-13, the last free x86_64 macOS runner.
+- Final Verification: the smoke test imports `docs/index.md` — the repo has no root `README.md`. The `MovePath|TrashPath` grep is intentionally non-empty since commit 4900f7a restored them as transactional store methods backing `POST /api/v1/path/move` and `/path/trash`; the grep still proves `openVault`/`AcquireLock` are gone. `GOOS=windows go vet` fails on `internal/store` locally on any branch including main (cgo cross-compile without a Windows toolchain); the native Windows CI leg is the authoritative check.
