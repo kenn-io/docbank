@@ -158,7 +158,7 @@ func TestTrashPath(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotFound)
 }
 
-func TestEmptyTrash(t *testing.T) {
+func TestTrashEmpty(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -203,7 +203,7 @@ func TestEmptyTrash(t *testing.T) {
 	assert.Equal(t, 1, blobCount)
 }
 
-func TestEmptyTrashWholeSecondTimestamp(t *testing.T) {
+func TestTrashEmptyWholeSecondTimestamp(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -219,9 +219,9 @@ func TestEmptyTrashWholeSecondTimestamp(t *testing.T) {
 	_, err = s.db.Exec(`UPDATE nodes SET trashed_at = ? WHERE id = ?`, stamp, d.ID)
 	require.NoError(t, err)
 
-	n, err := s.EmptyTrash(ctx, time.Hour)
+	rep, err := s.TrashEmpty(ctx, time.Hour, true)
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), n)
+	assert.Equal(t, int64(1), rep.Deleted)
 }
 
 func TestRestoreAfterParentHardDeleteNeverRetargets(t *testing.T) {

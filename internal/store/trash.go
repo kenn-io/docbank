@@ -274,11 +274,3 @@ func (s *Store) TrashEmpty(ctx context.Context, olderThan time.Duration, run boo
 	}
 	return rep, nil
 }
-
-// EmptyTrash hard-deletes selected trash roots. It remains as the store-level
-// execution shorthand; user-facing callers should use TrashEmpty so dry-run
-// state is explicit.
-func (s *Store) EmptyTrash(ctx context.Context, olderThan time.Duration) (int64, error) {
-	rep, err := s.TrashEmpty(ctx, olderThan, true)
-	return rep.Deleted, err
-}

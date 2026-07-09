@@ -225,7 +225,7 @@ func TestSearchCLIReportsTruncation(t *testing.T) {
 
 	out, err := runCLI(t, "search", "report", "--limit", "1")
 	require.NoError(t, err)
-	assert.Contains(t, out, "more than 1 results")
+	assert.Contains(t, out, "more than 1 result")
 	assert.Contains(t, out, "increase --limit")
 
 	_, err = runCLI(t, "search", "report", "--limit", "0")

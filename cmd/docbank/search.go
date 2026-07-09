@@ -46,9 +46,13 @@ var searchCmd = &cobra.Command{
 			return fmt.Errorf("writing search results: %w", err)
 		}
 		if rep.Truncated {
+			noun := "results"
+			if rep.Limit == 1 {
+				noun = "result"
+			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-				"more than %d results; showing the first %d (increase --limit to see more)\n",
-				rep.Limit, rep.Limit)
+				"more than %d %s; showing the first %d (increase --limit to see more)\n",
+				rep.Limit, noun, rep.Limit)
 		}
 		return nil
 	},

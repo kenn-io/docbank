@@ -24,13 +24,6 @@ func ftsQuery(input string) string {
 	return strings.Join(terms, " ")
 }
 
-// Search matches live node names against the query, best rank first. Callers
-// that need to know whether the limit hid more matches should use SearchPage.
-func (s *Store) Search(ctx context.Context, query string, limit int) ([]SearchHit, error) {
-	hits, _, err := s.SearchPage(ctx, query, limit)
-	return hits, err
-}
-
 // SearchPage matches live node names against the query, best rank first, and
 // reports whether at least one additional match exists beyond limit.
 func (s *Store) SearchPage(ctx context.Context, query string, limit int) ([]SearchHit, bool, error) {

@@ -20,7 +20,7 @@ func TestSearchFindsLiveNodesOnly(t *testing.T) {
 	_, _, err = s.Trash(ctx, trashed.ID, -1)
 	require.NoError(t, err)
 
-	hits, err := s.Search(ctx, "tax", 0)
+	hits, _, err := s.SearchPage(ctx, "tax", 0)
 	require.NoError(t, err)
 	require.Len(t, hits, 1)
 	assert.Equal(t, "tax-return-2024.pdf", hits[0].Node.Name)
@@ -34,17 +34,17 @@ func TestSearchPrefixAndRename(t *testing.T) {
 	f, err := s.CreateFile(ctx, s.RootID(), "insurance-policy.pdf", fakeHash("a1"), 1, "application/pdf")
 	require.NoError(t, err)
 
-	hits, err := s.Search(ctx, "insur", 0)
+	hits, _, err := s.SearchPage(ctx, "insur", 0)
 	require.NoError(t, err)
 	require.Len(t, hits, 1)
 
 	// Rename must update the index (FTS triggers).
 	_, err = s.Move(ctx, f.ID, s.RootID(), "car-policy.pdf", -1)
 	require.NoError(t, err)
-	hits, err = s.Search(ctx, "insur", 0)
+	hits, _, err = s.SearchPage(ctx, "insur", 0)
 	require.NoError(t, err)
 	assert.Empty(t, hits)
-	hits, err = s.Search(ctx, "car", 0)
+	hits, _, err = s.SearchPage(ctx, "car", 0)
 	require.NoError(t, err)
 	assert.Len(t, hits, 1)
 }
@@ -57,7 +57,7 @@ func TestSearchSurvivesOperatorInput(t *testing.T) {
 
 	// FTS operator syntax in user input must not error.
 	for _, q := range []string{`"unbalanced`, `AND OR NOT`, `a*b(c)`} {
-		_, err := s.Search(ctx, q, 0)
+		_, _, err := s.SearchPage(ctx, q, 0)
 		assert.NoError(t, err, q)
 	}
 }
@@ -75,7 +75,7 @@ func TestSearchRanksMoreRelevantFirst(t *testing.T) {
 	_, err = s.CreateFile(ctx, s.RootID(), "tax tax tax.pdf", fakeHash("a1"), 1, "application/pdf")
 	require.NoError(t, err)
 
-	hits, err := s.Search(ctx, "tax", 0)
+	hits, _, err := s.SearchPage(ctx, "tax", 0)
 	require.NoError(t, err)
 	require.Len(t, hits, 2)
 	assert.Equal(t, "tax tax tax.pdf", hits[0].Node.Name)
@@ -96,7 +96,7 @@ func TestSearchTieBreaksByName(t *testing.T) {
 	_, err = s.CreateFile(ctx, s.RootID(), "tax a.pdf", fakeHash("a1"), 1, "application/pdf")
 	require.NoError(t, err)
 
-	hits, err := s.Search(ctx, "tax", 0)
+	hits, _, err := s.SearchPage(ctx, "tax", 0)
 	require.NoError(t, err)
 	require.Len(t, hits, 3)
 	assert.Equal(t, "tax a.pdf", hits[0].Node.Name)
