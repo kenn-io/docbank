@@ -62,7 +62,7 @@ jobs:
         run: |
           set -euo pipefail
           cd assets
-          sha256sum ./*.tar.gz > SHA256SUMS
+          sha256sum -- *.tar.gz > SHA256SUMS
           cat SHA256SUMS
       - name: Create release
         env:
