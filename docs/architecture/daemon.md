@@ -56,8 +56,14 @@ A running daemon writes a runtime record — `$DOCBANK_HOME/daemon.<pid>.json`
 — naming its service (`docbank`), build version, and the actual bound
 address (the configured `api_port` may be `0`, in which case the OS
 picks an ephemeral port and the record carries the real one). The record
-also carries, in its metadata, the process's create-time and a random
-shutdown token generated at startup.
+also carries, in its metadata, the process's create-time, a random
+shutdown token generated at startup, and the daemon's effective API key
+(the configured `[server] api_key`, or a freshly generated one when it's
+unset). The record lives inside the 0700 `$DOCBANK_HOME`, so publishing
+the key there — rather than requiring every loopback caller to already
+know it — is safe: only the vault's owner can read it. Same-user CLI
+commands pick the key up from the record automatically; there is no
+keyless request path even when `api_key` is left unset.
 
 Discovery lists runtime records, drops any whose PID isn't alive, and
 probes `/api/ping` on the survivors. Two guards keep this safe against

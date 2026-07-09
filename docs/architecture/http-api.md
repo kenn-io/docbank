@@ -46,8 +46,9 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 Root-level, outside `/api/v1` and auth-exempt: `GET /health`, `GET
 /api/ping` (daemon discovery), `GET /docs` and the OpenAPI documents,
 and `/` (the placeholder web UI, when `[web] enabled`). A hidden `POST
-/api/daemon/shutdown` (token-gated, not in the OpenAPI document) backs
-`docbank serve stop`.
+/api/daemon/shutdown` (not in the OpenAPI document) backs `docbank serve
+stop`; it isn't auth-exempt, so it requires both the API key and its own
+shutdown token.
 
 !!! info "Planned"
     Not yet implemented: `PUT /nodes/{id}/content` (versioned edit) and
@@ -143,12 +144,17 @@ since `gc`/`verify` can legitimately run long on a large vault.
 ## Auth
 
 `X-Api-Key` or `Authorization: Bearer <key>`, constant-time compared
-against `[server] api_key`. An empty key is valid only for loopback
-binds ("keyless = local-allow"); a non-loopback bind without a key
-refuses to start at all (see [Configuration](../configuration.md)).
-`/health`, `/api/ping`, `/docs`, the OpenAPI documents, and the web
-placeholder at `/` are auth-exempt; everything else under `/api/v1`
-requires the key whenever one is configured.
+against the daemon's effective key. The daemon always has one: an
+unset `[server] api_key` is valid only on a loopback bind, and in that
+case the daemon generates a fresh key at startup and publishes it,
+inside the 0700 `$DOCBANK_HOME`, through the same runtime record the
+CLI already uses for discovery — readable only by the vault's owner,
+never sent over the network unencrypted, never logged. A non-loopback
+bind without a configured key refuses to start at all, since a remote
+client can't read the runtime record (see
+[Configuration](../configuration.md)). `/health`, `/api/ping`, `/docs`,
+the OpenAPI documents, and the web placeholder at `/` are auth-exempt;
+everything else, including the shutdown route, requires the key.
 
 ## Error mapping
 

@@ -64,7 +64,7 @@ treated as a typo and rejected at startup rather than silently ignored.
 bind_addr = "127.0.0.1"
 api_port = 0          # 0 = ephemeral; clients discover the real port
                       # from the runtime record
-api_key = ""          # empty = keyless local-only mode
+api_key = ""          # empty = ephemeral per-run key (loopback only)
 idle_timeout = "30m"  # background daemons only; "0" = never
 
 [web]
@@ -72,13 +72,16 @@ enabled = true
 ```
 
 - **`bind_addr`** — the interface the API listens on. Loopback
-  (`127.0.0.1`, `::1`, `localhost`) needs no key.
+  (`127.0.0.1`, `::1`, `localhost`) doesn't need a configured key.
 - **`api_port`** — `0` picks an ephemeral port; the CLI never needs to
   know it in advance because it discovers the actual bound address from
   the daemon's runtime record.
 - **`api_key`** — checked against `X-Api-Key` or `Authorization: Bearer`
-  on every `/api/v1` request. Empty means keyless mode, which is valid
-  **only** on a loopback bind.
+  on every authenticated request; the daemon always enforces one. Empty
+  is valid **only** on a loopback bind, where it means "generate an
+  ephemeral key at startup" rather than "no auth required" — the
+  generated key is published to same-user clients via the runtime
+  record, the same mechanism the shutdown token already uses.
 - **`idle_timeout`** — how long a background daemon waits without
   requests before exiting on its own. `"0"` disables idle shutdown.
   Foreground `docbank serve` ignores this and never idles out.
@@ -92,9 +95,11 @@ serve` immediately rather than silently serving insecurely:
 
 - An unspecified address (`0.0.0.0`, `::`) is always rejected: it binds
   every interface, including public ones, regardless of intent.
-- A **loopback** `bind_addr` accepts an empty `api_key` (keyless mode).
-- Any other `bind_addr` **requires** a non-empty `api_key` — keyless
-  mode is loopback-only by design.
+- A **loopback** `bind_addr` accepts an empty `api_key`: the daemon
+  generates one at startup instead.
+- Any other `bind_addr` **requires** a non-empty, configured `api_key`
+  — a remote client has no way to read the runtime record an
+  ephemeral key would be published through.
 - Non-loopback addresses are additionally checked with `kit`'s
   `RequireNonPublic`, which permits private-network addresses (RFC 1918,
   link-local, CGNAT) and rejects a genuinely public one outright,

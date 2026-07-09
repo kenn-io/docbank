@@ -6,7 +6,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/config"
 )
 
 var openapiJSON bool
@@ -17,8 +16,7 @@ var openapiCmd = &cobra.Command{
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if openapiJSON {
-			s := api.NewServer(api.Deps{Cfg: config.Default()})
-			out, err := s.API().OpenAPI().MarshalJSON()
+			out, err := api.NewOfflineServer().API().OpenAPI().MarshalJSON()
 			if err != nil {
 				return fmt.Errorf("rendering OpenAPI document: %w", err)
 			}

@@ -32,9 +32,20 @@ type testStore struct {
 	Blobs *blob.Store
 }
 
+// testAPIKey is the default key newTestServer configures: production always
+// has an effective key (configured or ephemeral; see cmd/docbank/cmd/
+// serve.go and NewServer's refusal of an empty one), so tests must supply
+// one too. mutate can override it (e.g. TestAuthRequiredWhenKeySet uses its
+// own key to prove the value itself is checked, not just its presence).
+const testAPIKey = "test-api-key"
+
 // newTestServer builds a real store and blob dir in a temp dir and serves
 // the API over httptest (loopback client addr). Later route tasks reuse
-// this helper.
+// this helper. The returned server's http.Client transport auto-attaches
+// the configured key to every request that doesn't already carry an
+// explicit X-Api-Key header, so the ~30 non-auth-focused tests using get/
+// do/try need no per-call header plumbing; tests exercising the missing-
+// or wrong-key path set X-Api-Key explicitly (even to "") to opt out.
 func newTestServer(t *testing.T, mutate func(*api.Deps)) (*httptest.Server, *testStore) {
 	t.Helper()
 	dir := t.TempDir()
@@ -45,12 +56,34 @@ func newTestServer(t *testing.T, mutate func(*api.Deps)) (*httptest.Server, *tes
 	require.NoError(t, os.MkdirAll(filepath.Join(blobsDir, "tmp"), 0o700))
 	blobs := blob.New(blobsDir)
 	d := api.Deps{Store: s, Blobs: blobs, Cfg: config.Default()}
+	d.Cfg.Server.APIKey = testAPIKey
 	if mutate != nil {
 		mutate(&d)
 	}
 	ts := httptest.NewServer(api.NewServer(d).Handler())
 	t.Cleanup(ts.Close)
+	ts.Client().Transport = &apiKeyTransport{key: d.Cfg.Server.APIKey, next: ts.Client().Transport}
 	return ts, &testStore{Store: s, Blobs: blobs}
+}
+
+// apiKeyTransport injects key as X-Api-Key on any request that doesn't
+// already carry the header explicitly (present-with-empty-value counts as
+// explicit, so callers can opt out by setting it to "").
+type apiKeyTransport struct {
+	key  string
+	next http.RoundTripper
+}
+
+func (a *apiKeyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if _, present := req.Header["X-Api-Key"]; !present && a.key != "" {
+		req = req.Clone(req.Context())
+		req.Header.Set("X-Api-Key", a.key)
+	}
+	next := a.next
+	if next == nil {
+		next = http.DefaultTransport
+	}
+	return next.RoundTrip(req)
 }
 
 // testHash returns a sha256 hex digest of seed. The store only validates
@@ -184,7 +217,10 @@ func TestAuthRequiredWhenKeySet(t *testing.T) {
 	mutate := func(d *api.Deps) { d.Cfg.Server.APIKey = "sekrit" }
 	ts, _ := newTestServer(t, mutate)
 
-	resp, body := get(t, ts, "/api/v1/nodes/1", nil)
+	// hdr sets X-Api-Key to "" explicitly, opting out of the transport's
+	// auto-injected key, so this genuinely exercises the no-key request.
+	noKey := map[string]string{"X-Api-Key": ""}
+	resp, body := get(t, ts, "/api/v1/nodes/1", noKey)
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	assert.Contains(t, body, `"code":"unauthorized"`)
 
@@ -193,17 +229,44 @@ func TestAuthRequiredWhenKeySet(t *testing.T) {
 	resp, _ = get(t, ts, "/api/v1/nodes/1", map[string]string{"Authorization": "Bearer sekrit"})
 	assert.NotEqual(t, http.StatusUnauthorized, resp.StatusCode)
 
+	// A wrong key is still unauthorized, not silently accepted.
+	resp, body = get(t, ts, "/api/v1/nodes/1", map[string]string{"X-Api-Key": "wrong"})
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	assert.Contains(t, body, `"code":"unauthorized"`)
+
+	// A mutating route requires the key too, not just reads.
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/nodes", noKey,
+		map[string]any{"parent_id": 1, "name": "x", "kind": "dir"})
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	assert.Contains(t, body, `"code":"unauthorized"`)
+
 	// Exempt surfaces work keyless.
 	for _, p := range []string{"/health", "/api/ping", "/docs", "/openapi.json", "/"} {
-		resp, _ := get(t, ts, p, nil)
+		resp, _ := get(t, ts, p, noKey)
 		assert.NotEqual(t, http.StatusUnauthorized, resp.StatusCode, p)
 	}
 }
 
-func TestKeylessAllowsAll(t *testing.T) {
+// TestKeylessConfigStillRequiresAuth is the regression test for the
+// keyless-loopback finding: NewServer must never let an empty-configured
+// key fall back to unauthenticated access. newTestServer's default already
+// configures a non-empty key (mirroring production, which always computes
+// one — see cmd/docbank/cmd/serve.go); this test proves a request without
+// that key is refused rather than silently allowed through.
+func TestKeylessConfigStillRequiresAuth(t *testing.T) {
 	ts, _ := newTestServer(t, nil)
-	resp, _ := get(t, ts, "/api/v1/nodes/1", nil)
-	assert.NotEqual(t, http.StatusUnauthorized, resp.StatusCode)
+	resp, _ := get(t, ts, "/api/v1/nodes/1", map[string]string{"X-Api-Key": ""})
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
+// TestNewServerRefusesEmptyKey pins the defense-in-depth invariant behind
+// TestKeylessConfigStillRequiresAuth: even if some future caller reproduced
+// the old bug and built Deps with an empty key, NewServer itself refuses to
+// construct rather than silently falling back to unauthenticated.
+func TestNewServerRefusesEmptyKey(t *testing.T) {
+	assert.Panics(t, func() {
+		api.NewServer(api.Deps{Cfg: config.Default()})
+	})
 }
 
 func TestWebPlaceholder(t *testing.T) {
@@ -219,6 +282,9 @@ func TestWebPlaceholder(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
+// TestShutdownRoute proves the shutdown route now requires both the API
+// key (it isn't in authExempt, so authMiddleware wraps it like every other
+// route) and its own token: neither alone is enough.
 func TestShutdownRoute(t *testing.T) {
 	called := make(chan struct{}, 1)
 	mutate := func(d *api.Deps) {
@@ -227,13 +293,36 @@ func TestShutdownRoute(t *testing.T) {
 	}
 	ts, _ := newTestServer(t, mutate)
 
+	// No key, no token.
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/daemon/shutdown", nil)
+	req.Header.Set("X-Api-Key", "")
 	resp, err := ts.Client().Do(req)
 	require.NoError(t, err)
 	_ = resp.Body.Close()
-	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode) // no token
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 
+	// Correct key, but no token: authMiddleware passes it through, the
+	// shutdown handler itself rejects it.
 	req, _ = http.NewRequest(http.MethodPost, ts.URL+"/api/daemon/shutdown", nil)
+	req.Header.Set("X-Api-Key", testAPIKey)
+	resp, err = ts.Client().Do(req)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+
+	// Correct token, but no key: authMiddleware rejects it before the
+	// shutdown handler ever sees the token.
+	req, _ = http.NewRequest(http.MethodPost, ts.URL+"/api/daemon/shutdown", nil)
+	req.Header.Set("X-Api-Key", "")
+	req.Header.Set("X-Docbank-Daemon-Token", "tok")
+	resp, err = ts.Client().Do(req)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+
+	// Both correct: succeeds.
+	req, _ = http.NewRequest(http.MethodPost, ts.URL+"/api/daemon/shutdown", nil)
+	req.Header.Set("X-Api-Key", testAPIKey)
 	req.Header.Set("X-Docbank-Daemon-Token", "tok")
 	resp, err = ts.Client().Do(req)
 	require.NoError(t, err)

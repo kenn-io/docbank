@@ -14,7 +14,6 @@ import (
 	"github.com/gofrs/flock"
 	kitdaemon "go.kenn.io/kit/daemon"
 
-	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/version"
 )
@@ -48,8 +47,13 @@ func Find(ctx context.Context, root string) (kitdaemon.RuntimeRecord, kitdaemon.
 	return rec, info, ok, nil
 }
 
-func newClientFor(rec kitdaemon.RuntimeRecord, cfg config.Config) *Client {
-	return New("http://"+rec.Address, cfg.Server.APIKey)
+// newClientFor authenticates with the key the daemon itself published in
+// its runtime record (configured or ephemeral) rather than re-reading
+// config.toml: the record's key is the one the running daemon actually
+// enforces, which matters when a background daemon was started under an
+// older config than the one on disk now.
+func newClientFor(rec kitdaemon.RuntimeRecord) *Client {
+	return New("http://"+rec.Address, rec.Metadata[metaAPIKey])
 }
 
 // WithLaunchLock serializes daemon auto-start with update's stop/install/
@@ -75,17 +79,13 @@ func Ensure(ctx context.Context) (*Client, error) {
 	if err := layout.Ensure(); err != nil {
 		return nil, err
 	}
-	cfg, err := config.Load(layout.Root)
-	if err != nil {
-		return nil, err
-	}
 
 	rec, _, ok, err := kitdaemon.Discover(ctx, RuntimeStore(layout.Root), discoverOptions(true))
 	if err != nil {
 		return nil, fmt.Errorf("discovering daemon: %w", err)
 	}
 	if ok {
-		return newClientFor(rec, cfg), nil
+		return newClientFor(rec), nil
 	}
 
 	// Serialize racing starters; re-check under the lock.
@@ -104,7 +104,7 @@ func Ensure(ctx context.Context) (*Client, error) {
 			return findErr
 		}
 		if found {
-			if err := stopRecord(ctx, old, cfg); err != nil {
+			if err := stopRecord(ctx, old); err != nil {
 				return fmt.Errorf("stopping version-mismatched daemon (pid %d, %s): %w",
 					old.PID, old.Version, err)
 			}
@@ -116,7 +116,7 @@ func Ensure(ctx context.Context) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newClientFor(rec, cfg), nil
+	return newClientFor(rec), nil
 }
 
 // Start spawns a detached daemon and waits for a compatible ping.
@@ -177,20 +177,15 @@ func start(ctx context.Context, root string, requireVersion bool) (kitdaemon.Run
 // SIGTERM only when create_time still matches the recorded PID. Returns
 // false when no daemon was running.
 func Stop(ctx context.Context, root string) (bool, error) {
-	layout := home.Layout{Root: root}
-	cfg, err := config.Load(layout.Root)
-	if err != nil {
-		return false, err
-	}
 	rec, _, ok, err := Find(ctx, root)
 	if err != nil || !ok {
 		return false, err
 	}
-	return true, stopRecord(ctx, rec, cfg)
+	return true, stopRecord(ctx, rec)
 }
 
-func stopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord, cfg config.Config) error {
-	c := newClientFor(rec, cfg)
+func stopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
+	c := newClientFor(rec)
 	if token := rec.Metadata[metaShutdownToken]; token != "" {
 		if err := c.Shutdown(ctx, token); err == nil {
 			if waitDead(ctx, rec, 10*time.Second) {

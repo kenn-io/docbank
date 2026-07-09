@@ -59,9 +59,12 @@ func TestIngestRejectsNonLoopback(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(blobsDir, "tmp"), 0o700))
 	blobs := blob.New(blobsDir)
 
-	srv := api.NewServer(api.Deps{Store: s, Blobs: blobs, Cfg: config.Default()})
+	cfg := config.Default()
+	cfg.Server.APIKey = "test-key"
+	srv := api.NewServer(api.Deps{Store: s, Blobs: blobs, Cfg: cfg})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/ingest", strings.NewReader(`{"paths":["/x"],"dest":"/inbox"}`))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Api-Key", "test-key")
 	req.RemoteAddr = "192.0.2.1:4444"
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)

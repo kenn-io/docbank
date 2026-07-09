@@ -82,15 +82,28 @@ func runServe(ctx context.Context) error {
 	}
 	addr := listener.Addr().String()
 
-	tokenBytes := make([]byte, 32)
-	if _, err := rand.Read(tokenBytes); err != nil {
+	shutdownToken, err := randomHex32()
+	if err != nil {
 		_ = listener.Close()
 		return fmt.Errorf("generating shutdown token: %w", err)
 	}
-	token := hex.EncodeToString(tokenBytes)
+
+	// The daemon always requires an API key. A configured key is used as-is;
+	// otherwise a fresh per-run key is generated and published only to
+	// same-user clients via the runtime record inside the 0700 DOCBANK_HOME
+	// — never over the network, never logged.
+	apiKey := cfg.Server.APIKey
+	if apiKey == "" {
+		apiKey, err = randomHex32()
+		if err != nil {
+			_ = listener.Close()
+			return fmt.Errorf("generating ephemeral API key: %w", err)
+		}
+	}
+	cfg.Server.APIKey = apiKey
 
 	rtStore := client.RuntimeStore(layout.Root)
-	recPath, err := rtStore.Write(client.NewRecord(addr, token))
+	recPath, err := rtStore.Write(client.NewRecord(addr, apiKey, shutdownToken))
 	if err != nil {
 		_ = listener.Close()
 		return fmt.Errorf("writing daemon runtime record: %w", err)
@@ -104,7 +117,7 @@ func runServe(ctx context.Context) error {
 	tracker := api.NewActivityTracker()
 	srv := api.NewServer(api.Deps{
 		Store: s, Blobs: blobs, Cfg: cfg, Logger: logger,
-		StartedAt: time.Now(), ShutdownToken: token, Shutdown: stop, Tracker: tracker,
+		StartedAt: time.Now(), ShutdownToken: shutdownToken, Shutdown: stop, Tracker: tracker,
 	})
 	httpSrv := &http.Server{
 		Handler:           srv.Handler(),
@@ -179,6 +192,16 @@ func buildServeLogger(layout home.Layout, background bool) (*slog.Logger, error)
 		return nil, fmt.Errorf("building daemon logger: %w", err)
 	}
 	return logger, nil
+}
+
+// randomHex32 returns a fresh 32-byte value hex-encoded, used for both the
+// shutdown token and an ephemeral API key.
+func randomHex32() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("reading random bytes: %w", err)
+	}
+	return hex.EncodeToString(b), nil
 }
 
 func init() { rootCmd.AddCommand(serveCmd) }

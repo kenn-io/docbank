@@ -23,7 +23,8 @@ func timeoutExempt(path string) bool {
 }
 
 // auth-exempt: discovery, docs, and the static placeholder carry no vault
-// data. Everything else under /api requires the key when one is set.
+// data. Everything else requires the key — the daemon always has one; see
+// NewServer.
 func authExempt(path string) bool {
 	switch path {
 	case "/", "/health", kitPingPath:
@@ -42,9 +43,13 @@ func writeError(w http.ResponseWriter, e *Error) {
 	_ = json.NewEncoder(w).Encode(e) //nolint:errchkjson // see above
 }
 
+// authMiddleware requires key on every non-exempt route. There is no
+// keyless bypass: NewServer refuses to build a server with an empty key
+// (the offline OpenAPI-document path is the only caller that doesn't serve
+// requests, and it supplies a placeholder key), so key is always set here.
 func authMiddleware(next http.Handler, key string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if key == "" || authExempt(r.URL.Path) {
+		if authExempt(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}

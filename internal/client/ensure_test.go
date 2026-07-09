@@ -12,7 +12,7 @@ import (
 )
 
 func TestCreateTimeMatches(t *testing.T) {
-	rec := NewRecord("127.0.0.1:1", "tok")
+	rec := NewRecord("127.0.0.1:1", "key", "tok")
 	require.Equal(t, os.Getpid(), rec.PID)
 	assert.True(t, createTimeMatches(rec), "own record must match")
 

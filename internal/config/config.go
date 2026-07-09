@@ -42,7 +42,7 @@ func (d Duration) Std() time.Duration { return time.Duration(d) }
 type ServerConfig struct {
 	BindAddr    string   `toml:"bind_addr"`    // default "127.0.0.1"
 	APIPort     int      `toml:"api_port"`     // default 0 (ephemeral)
-	APIKey      string   `toml:"api_key"`      // default "" (keyless local)
+	APIKey      string   `toml:"api_key"`      // default "" (ephemeral per-run key on loopback)
 	IdleTimeout Duration `toml:"idle_timeout"` // default 30m; background daemons only
 }
 
@@ -88,8 +88,12 @@ func Load(root string) (Config, error) {
 
 // Validate enforces the bind/key policy: an unspecified address (0.0.0.0,
 // ::) is always rejected because it binds every interface including public
-// ones; keyless mode is valid only on loopback; and any other non-loopback
-// address must be non-public (kit RequireNonPublic) and carry an api_key.
+// ones; an unset api_key is valid only on loopback, where the daemon
+// generates and self-publishes an ephemeral key rather than serving
+// unauthenticated (see cmd/docbank/cmd/serve.go); and any other
+// non-loopback address must be non-public (kit RequireNonPublic) and carry
+// a configured api_key, since remote clients can't read the runtime record
+// an ephemeral key would be published through.
 func (c Config) Validate() error {
 	host := c.Server.BindAddr
 	if isLoopbackHost(host) {

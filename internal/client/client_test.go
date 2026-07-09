@@ -15,22 +15,30 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func newClient(t *testing.T, key string) (*client.Client, *store.Store) {
+// serverKey is the fixed key every test server in this file is built with:
+// production always has an effective key (see cmd/docbank/cmd/serve.go and
+// NewServer's refusal of an empty one), so the fake server must too.
+const serverKey = "server-key"
+
+// newClient builds a real server keyed with serverKey and a client keyed
+// with clientKey (which may differ from serverKey, to exercise the
+// mismatched-key path — see TestWrongAPIKeyIsRejected).
+func newClient(t *testing.T, clientKey string) (*client.Client, *store.Store) {
 	t.Helper()
 	dir := t.TempDir()
 	s, err := store.Open(filepath.Join(dir, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = s.Close() })
 	cfg := config.Default()
-	cfg.Server.APIKey = key
+	cfg.Server.APIKey = serverKey
 	srv := api.NewServer(api.Deps{Store: s, Blobs: blob.New(filepath.Join(dir, "blobs")), Cfg: cfg})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
-	return client.New(ts.URL, key), s
+	return client.New(ts.URL, clientKey), s
 }
 
 func TestRoundTrip(t *testing.T) {
-	c, s := newClient(t, "")
+	c, s := newClient(t, serverKey)
 	ctx := t.Context()
 
 	dir, err := c.Mkdir(ctx, s.RootID(), "docs")
@@ -61,7 +69,7 @@ func TestRoundTrip(t *testing.T) {
 }
 
 func TestErrorMapping(t *testing.T) {
-	c, s := newClient(t, "")
+	c, s := newClient(t, serverKey)
 	ctx := t.Context()
 
 	_, err := c.Stat(ctx, "/missing")
@@ -77,8 +85,19 @@ func TestErrorMapping(t *testing.T) {
 }
 
 func TestAPIKeySent(t *testing.T) {
-	c, _ := newClient(t, "k")
+	c, _ := newClient(t, serverKey)
 	require.NoError(t, c.Health(t.Context()))
 	_, err := c.TrashList(t.Context()) // authed route succeeds only with the key
 	require.NoError(t, err)
+}
+
+// TestWrongAPIKeyIsRejected is the client-side half of the keyless-loopback
+// regression: a client holding the wrong key must get a clearly readable
+// 401, never silent success and never an opaque envelope dump.
+func TestWrongAPIKeyIsRejected(t *testing.T) {
+	c, _ := newClient(t, "wrong-key")
+	_, err := c.TrashList(t.Context())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "401")
+	assert.Contains(t, err.Error(), "unauthorized")
 }
