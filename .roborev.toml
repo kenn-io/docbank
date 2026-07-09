@@ -18,8 +18,8 @@ Key assumptions reviewers MUST account for:
    yields a `*string`. DO NOT flag value-form `new` calls as "new
    requires a type" compile errors; that was true through 1.25 only.
    Likewise, `go build -o dist/docbank` creates missing parent
-   directories on this toolchain (verified empirically on go1.26.4;
-   CI pins the same via go-version-file) — do not flag a missing
+   directories on this toolchain (verified on the Go 1.26 line;
+   CI pins that line via go-version-file) — do not flag a missing
    `mkdir -p dist` in the release workflow.
 
 3. BUILD TAGS: everything builds and tests with `-tags fts5` and CGO
