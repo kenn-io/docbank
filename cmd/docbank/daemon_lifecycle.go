@@ -37,7 +37,7 @@ var daemonStartCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the daemon in the background",
 	Long: "Start a daemon for this vault in the background, replacing a running daemon " +
-		"whose version does not match this binary. Same convergence as the data commands' " +
+		"whose version or protocol does not match this binary. Same convergence as the data commands' " +
 		"auto-start: after `daemon start` succeeds, the one running daemon is current.",
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {

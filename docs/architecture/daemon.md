@@ -99,11 +99,14 @@ the restart.
 
 ## Auto-start and idle shutdown
 
-Every data command calls `client.Ensure`, which discovers a
-version-matched daemon or starts one — the CLI never fails with "no
-daemon running" for `add`, `ls`, `cat`, and the rest. `daemon status` and
-`daemon stop` are discovery-only and never start a daemon, so checking on
-or stopping the daemon can't accidentally spawn one.
+Every data command calls `client.Ensure`, which discovers a version- and
+protocol-matched daemon or starts one — the CLI never fails with "no daemon
+running" for `add`, `ls`, `cat`, and the rest. The protocol revision in the
+runtime record distinguishes incompatible development builds that share the
+same version string; a missing or mismatched revision forces replacement
+before a CLI data request is sent. `daemon status` and `daemon stop` are
+discovery-only and never start a daemon, so checking on or stopping the daemon
+can't accidentally spawn one.
 
 A background-spawned daemon (started via auto-start, `daemon start`, or
 `daemon restart`) exits after `[server] idle_timeout` (default 30

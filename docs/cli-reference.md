@@ -221,10 +221,10 @@ daemon (or prints `no daemon running`) without starting one. Every data
 command auto-starts a daemon if none is running — `daemon start` exists
 for explicit control (long-running background use, inspecting logs
 before running commands). `daemon start`, `daemon restart`, and
-auto-start all converge the same way: a running daemon whose version
-does not match the invoking binary is stopped and replaced (printed as
-`replaced daemon <old> (pid N) with <new>: ...`), so after any of them
-succeeds, the one running daemon is current. See
+auto-start all converge the same way: a running daemon whose version or
+API protocol does not match the invoking binary is stopped and replaced
+(printed as `replaced daemon <old> (pid N) with <new>: ...`), so after
+any of them succeeds, the one running daemon is current. See
 [Daemon](architecture/daemon.md).
 
 ## docbank update

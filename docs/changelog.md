@@ -12,7 +12,9 @@ docbank is pre-1.0; interfaces and storage migrations may still evolve.
 Release hardening:
 
 - `trash empty` is now a dry run unless `--run` explicitly authorizes
-  permanent metadata deletion, matching `gc`'s mutation boundary
+  permanent metadata deletion, matching `gc`'s mutation boundary; daemon
+  protocol negotiation prevents an older same-version daemon from interpreting
+  that dry run as the legacy destructive request
 - `search --limit` controls the bounded result set and both the API and CLI
   report when more matches exist
 - Updated the shared `go.kenn.io/kit` dependency to v0.4.0

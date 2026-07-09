@@ -37,19 +37,26 @@ Key assumptions reviewers MUST account for:
    multi-tenant concerns. DO flag any path that would serve without an
    effective key or accept a non-loopback bind.
 
-5. CONCURRENCY MODEL: one daemon holds the vault flock exclusively for
+5. DAEMON COMPATIBILITY: data commands accept only a daemon runtime
+   record carrying this binary's protocol revision and an effective API
+   key, even when its version string matches. Missing or mismatched
+   protocol metadata forces stop-and-replace before any data request;
+   discovery for status/stop remains permissive so an incompatible daemon
+   can still be found and shut down.
+
+6. CONCURRENCY MODEL: one daemon holds the vault flock exclusively for
    its lifetime; gc/verify/trash-empty serialize against mutations via
    the in-process maintenance gate, not the flock. Id-addressed
    mutations require If-Match revisions; path mutations
    (POST /path/move, /path/trash) intentionally take no If-Match
    because they resolve and mutate inside one store transaction.
 
-6. PLATFORM: the vault is Unix-only by design. internal/... must
+7. PLATFORM: the vault is Unix-only by design. internal/... must
    compile on Windows via stubs, and those stubs intentionally return
    "requires a Unix-like OS" errors for daemon lifecycle operations.
    Do not flag stubbed functionality as missing implementation.
 
-7. LOCAL FILE TRUST: files under $DOCBANK_HOME are user-owned in a
+8. LOCAL FILE TRUST: files under $DOCBANK_HOME are user-owned in a
    0700 directory. An attacker with access to them already has the
    user's privileges; do not flag TOCTOU or permission races on
    vault-local paths. POST /ingest reads server-side local paths and
@@ -60,11 +67,11 @@ Key assumptions reviewers MUST account for:
    as an ingest capability bypass; there is no principal with the API
    key and tunnel access but without shell.
 
-8. SINGLE-USER SCALE: do not flag O(n) scans, in-memory pagination, or
+9. SINGLE-USER SCALE: do not flag O(n) scans, in-memory pagination, or
    missing batching at personal-archive scale unless the code path is
    plausibly hot at tens of thousands of nodes.
 
-9. RELEASE SIGNING IS DEFERRED, ON RECORD: `docbank update` accepts
+10. RELEASE SIGNING IS DEFERRED, ON RECORD: `docbank update` accepts
    unsigned SHA256 checksums (`AllowUnsignedChecksums: true`) as a
    deliberate decision — the only party who could tamper with release
    assets can compromise the repository, and a CI-held signing key
