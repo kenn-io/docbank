@@ -22,9 +22,16 @@ import (
 func NewClient(cacheDir string) selfupdate.Client {
 	return selfupdate.Client{
 		Owner: "kenn-io", Repo: "docbank", BinaryName: "docbank",
-		CurrentVersion:         version.Version,
-		CacheDir:               cacheDir,
-		GitHubToken:            selfupdate.EnvironmentGitHubToken(),
+		CurrentVersion: version.Version,
+		CacheDir:       cacheDir,
+		GitHubToken:    selfupdate.EnvironmentGitHubToken(),
+		// Deliberate for now: the only attacker who could swap release
+		// assets can compromise the repository itself, and a CI-held
+		// signing key signs whatever that attacker releases — no gain
+		// until there's an offline/protected signing key. Tracked as a
+		// kata issue ("Sign releases for docbank update") to revisit
+		// before the repo goes public; kit/selfupdate already supports
+		// ed25519 verification via TrustedPublicKeys.
 		AllowUnsignedChecksums: true,
 	}
 }

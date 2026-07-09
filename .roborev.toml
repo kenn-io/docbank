@@ -55,6 +55,16 @@ Key assumptions reviewers MUST account for:
    missing batching at personal-archive scale unless the code path is
    plausibly hot at tens of thousands of nodes.
 
+9. RELEASE SIGNING IS DEFERRED, ON RECORD: `docbank update` accepts
+   unsigned SHA256 checksums (`AllowUnsignedChecksums: true`) as a
+   deliberate decision — the only party who could tamper with release
+   assets can compromise the repository, and a CI-held signing key
+   would sign whatever that attacker releases. Ed25519 signing with an
+   offline/protected key is tracked (kata issue "Sign releases for
+   docbank update") for before the repo goes public. Do not re-flag
+   unsigned release checksums; DO flag any weakening beyond this
+   (e.g. skipping checksum verification itself).
+
 Do NOT flag issues that only apply to public-facing, multi-tenant, or
 internet-exposed services. Focus on bugs, logic errors, data corruption
 risks, and code quality issues.
