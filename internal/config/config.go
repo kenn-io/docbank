@@ -91,7 +91,7 @@ func Load(root string) (Config, error) {
 // goes through an SSH tunnel or VPN to the loopback listener until the
 // daemon grows TLS. An unset api_key stays valid: the daemon generates and
 // self-publishes an ephemeral key rather than serving unauthenticated (see
-// cmd/docbank/serve.go).
+// cmd/docbank/daemon.go).
 func (c Config) Validate() error {
 	host := c.Server.BindAddr
 	if isLoopbackHost(host) {

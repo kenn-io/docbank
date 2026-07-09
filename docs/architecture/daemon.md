@@ -1,11 +1,11 @@
 ---
 title: Daemon
-description: docbank serve — the single process that owns the vault, and how the CLI discovers, auto-starts, and stops it.
+description: docbank daemon run — the single process that owns the vault, and how the CLI discovers, auto-starts, and stops it.
 ---
 
 # Daemon
 
-`docbank serve` is the one process that opens the vault. Every data
+`docbank daemon run` is the one process that opens the vault. Every data
 command — `add`, `ls`, `tree`, `cat`, `mv`, `rm`, `restore`, `search`,
 `trash list`/`empty`, `gc`, `verify` — is an HTTP client of it, over the
 [HTTP API](http-api.md). `docbank openapi` is the one exception:
@@ -27,7 +27,7 @@ results).
 
 ## Lifecycle
 
-`docbank serve` runs in the foreground: it resolves `$DOCBANK_HOME`,
+`docbank daemon run` runs in the foreground: it resolves `$DOCBANK_HOME`,
 loads and validates `config.toml`, takes the vault lock **exclusively**
 for its entire run, opens the store, cleans up any stale `blobs/tmp/`
 files left by a prior crash (safe unconditionally — the exclusive lock
@@ -35,19 +35,22 @@ proves this process is the only one that could be writing them), binds
 the API listener, and serves until it receives `SIGINT`/`SIGTERM` or a
 shutdown request.
 
-`docbank serve start` spawns the same binary as a detached background
-process; `docbank serve stop` asks it to shut down; `docbank serve
-status` reports whether it's running. Shutdown is graceful: in-flight
-requests drain, the store closes, the vault lock releases, and the
-runtime record is removed — in that order, so a stopped daemon leaves no
-trace for the next `serve start` or auto-start to trip over.
+`docbank daemon start` spawns the same binary as a detached background
+process running `daemon run`; `docbank daemon stop` asks it to shut down;
+`docbank daemon restart` stops it (tolerating it not already running) and
+starts it again; `docbank daemon status` reports whether it's running.
+Shutdown is graceful: in-flight requests drain, the store closes, the
+vault lock releases, and the runtime record is removed — in that order,
+so a stopped daemon leaves no trace for the next `daemon start` or
+auto-start to trip over.
 
 ```bash
-docbank serve             # foreground; logs to stderr
-docbank serve start       # background; logs to $DOCBANK_HOME/logs/
-docbank serve status      # pid, address, version, uptime
-docbank serve status --json
-docbank serve stop
+docbank daemon run          # foreground; logs to stderr
+docbank daemon start        # background; logs to $DOCBANK_HOME/logs/
+docbank daemon status       # pid, address, version, uptime
+docbank daemon status --json
+docbank daemon restart      # stop (if running) then start
+docbank daemon stop
 ```
 
 ## Discovery
@@ -76,38 +79,41 @@ stale state:
   stale," never signaling or trusting a process it didn't start.
 - **Exact version match.** Pre-1.0, there is no compatibility matrix:
   the CLI requires the daemon's version to match its own exactly. `docbank
-  serve status` and `docbank serve stop` report *any* live daemon
+  daemon status` and `docbank daemon stop` report *any* live daemon
   regardless of version (they only discover, never start); the
   auto-start path used by data commands (`client.Ensure`) requires the
   exact match and, on a mismatch, stops the old daemon and starts a
   fresh one — see [Auto-start](#auto-start-and-idle-shutdown) below.
-  `docbank serve start` does **not** replace a version-mismatched
+  `docbank daemon start` does **not** replace a version-mismatched
   daemon; it reports the running instance and prints a note suggesting
-  `docbank serve stop && docbank serve start` to replace it manually.
+  `docbank daemon stop && docbank daemon start` to replace it manually.
 
 A `launch.lock` file in `$DOCBANK_HOME` serializes racing starters: two
 CLI invocations that both find no daemon and both try to start one
 serialize on this lock, and the second re-checks discovery after
-acquiring it instead of spawning a redundant daemon.
+acquiring it instead of spawning a redundant daemon. `daemon restart`
+reuses the same launch-lock path as `daemon start` for the start half of
+the restart.
 
 ## Auto-start and idle shutdown
 
 Every data command calls `client.Ensure`, which discovers a
 version-matched daemon or starts one — the CLI never fails with "no
-daemon running" for `add`, `ls`, `cat`, and the rest. `serve status` and
-`serve stop` are discovery-only and never start a daemon, so checking on
+daemon running" for `add`, `ls`, `cat`, and the rest. `daemon status` and
+`daemon stop` are discovery-only and never start a daemon, so checking on
 or stopping the daemon can't accidentally spawn one.
 
-A background-spawned daemon (started via auto-start or `serve start`)
-exits after `[server] idle_timeout` (default 30 minutes) with no
-requests, so spawned daemons don't accumulate across sessions.
-`idle_timeout = "0"` disables idle shutdown. A foreground `docbank
-serve` never idles out — it runs until signaled or stopped.
+A background-spawned daemon (started via auto-start, `daemon start`, or
+`daemon restart`) exits after `[server] idle_timeout` (default 30
+minutes) with no requests, so spawned daemons don't accumulate across
+sessions. `idle_timeout = "0"` disables idle shutdown. A foreground
+`docbank daemon run` never idles out — it runs until signaled or
+stopped.
 
 ## Logs
 
 A background daemon logs structured JSON to `$DOCBANK_HOME/logs/`, one
 file per day (`docbank-YYYY-MM-DD.log`), rotated at 50 MiB with the 5
-most recent rotated files retained. A foreground `docbank serve` logs to
-stderr instead. `DOCBANK_LOG_LEVEL` controls the level for both (see
-[CLI Reference](../cli-reference.md)).
+most recent rotated files retained. A foreground `docbank daemon run`
+logs to stderr instead. `DOCBANK_LOG_LEVEL` controls the level for both
+(see [CLI Reference](../cli-reference.md)).

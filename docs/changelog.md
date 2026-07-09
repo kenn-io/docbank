@@ -11,9 +11,9 @@ docbank is pre-release; nothing has been versioned or announced yet.
 
 Phase 2a (Infrastructure) complete:
 
-- `docbank serve` daemon (+ `start`/`status`/`stop`) on `go.kenn.io/kit`
-  lifecycle primitives: discovery, auto-start, idle shutdown, exclusive
-  vault lock for the daemon's lifetime
+- `docbank daemon` (`run`/`start`/`status`/`restart`/`stop`) on
+  `go.kenn.io/kit` lifecycle primitives: discovery, auto-start, idle
+  shutdown, exclusive vault lock for the daemon's lifetime
 - Huma v2 HTTP API under `/api/v1`: stat, list, content, search,
   create-directory, ingest, move, trash/restore, trash-empty, gc, verify
 - Every CLI data command rewritten as an HTTP client of the daemon, with

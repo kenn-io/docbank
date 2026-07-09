@@ -17,7 +17,7 @@ flowchart TD
     CLI["CLI (HTTP client)"]
     AGENTS["Agents (HTTP clients)"]
     TUI["TUI (Phase 3)"]
-    subgraph daemon ["docbank serve"]
+    subgraph daemon ["docbank daemon run"]
         API["HTTP API: /api/v1"]
         INGEST["ingest pipeline"]
     end
@@ -95,8 +95,8 @@ the same durability rules, and the same backup engine from
   discovery/auto-start ([Daemon](daemon.md)); shares request/response
   types with `internal/api`.
 - **`cmd/docbank`** — thin cobra commands; no business logic. Data
-  commands are `internal/client` calls; `serve` is the one command that
-  opens the store and blob directory, because it *is* the daemon.
+  commands are `internal/client` calls; `daemon run` is the one command
+  that opens the store and blob directory, because it *is* the daemon.
 
 ## Build phases
 
@@ -106,8 +106,8 @@ Each phase ships independently useful software; the
 0. **Extraction** — msgvault's pack/backup engine generalized into
    `go.kenn.io/kit` (shared with docbank). Done, pending final merge.
 1. **Core** — store, ingest, full CLI. **Implemented.**
-2. **2a: Infrastructure** — `serve` daemon, HTTP API, daemon-first CLI,
-   self-update, release pipeline. **Implemented.**
+2. **2a: Infrastructure** — `daemon` subcommands, HTTP API, daemon-first
+   CLI, self-update, release pipeline. **Implemented.**
    **2b: Features** — versioned editing, tags, watched inboxes, text
    extraction. Designed.
 3. **TUI** — Bubble Tea file browser, another client of the same API.

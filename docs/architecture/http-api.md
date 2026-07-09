@@ -6,7 +6,7 @@ description: The agent-first HTTP API — filesystem-shaped endpoints, revision 
 # HTTP API
 
 !!! info "Implemented, with exceptions"
-    The endpoints below marked **Implemented** exist in `docbank serve`
+    The endpoints below marked **Implemented** exist in `docbank daemon run`
     today and back the CLI's data commands — the CLI is an HTTP client
     of exactly this surface, with no other path into the vault. Rows
     under the "Planned" admonitions further down (versioned editing,
@@ -22,7 +22,7 @@ discipline.
 
 ## Shape
 
-Served by `docbank serve`: [Huma v2](https://huma.rocks) with the
+Served by `docbank daemon run`: [Huma v2](https://huma.rocks) with the
 `humago` (stdlib `net/http`) adapter, a typed OpenAPI contract
 (`docbank openapi`, or `GET /openapi.json` / `/openapi.yaml` / `/docs`
 on a running daemon), and `X-Api-Key` / `Authorization: Bearer` auth.
@@ -46,9 +46,9 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 Root-level, outside `/api/v1` and auth-exempt: `GET /health`, `GET
 /api/ping` (daemon discovery), `GET /docs` and the OpenAPI documents,
 and `/` (the placeholder web UI, when `[web] enabled`). A hidden `POST
-/api/daemon/shutdown` (not in the OpenAPI document) backs `docbank serve
-stop`; it isn't auth-exempt, so it requires both the API key and its own
-shutdown token.
+/api/daemon/shutdown` (not in the OpenAPI document) backs `docbank
+daemon stop`; it isn't auth-exempt, so it requires both the API key and
+its own shutdown token.
 
 !!! info "Planned"
     Not yet implemented: `PUT /nodes/{id}/content` (versioned edit) and
@@ -152,7 +152,7 @@ record the CLI already uses for discovery — readable only by the
 vault's owner, never sent over the network unencrypted, never logged.
 Binds are loopback-only: the API is plain HTTP, so a non-loopback bind
 would expose the key and vault contents in cleartext, and `docbank
-serve` refuses to start on one — remote access goes through an SSH
+daemon run` refuses to start on one — remote access goes through an SSH
 tunnel or VPN (see [Configuration](../configuration.md)). `/health`,
 `/api/ping`, `/docs`, the OpenAPI documents, and the web placeholder at
 `/` are auth-exempt; everything else, including the shutdown route,

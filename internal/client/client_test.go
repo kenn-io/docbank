@@ -16,7 +16,7 @@ import (
 )
 
 // serverKey is the fixed key every test server in this file is built with:
-// production always has an effective key (see cmd/docbank/serve.go and
+// production always has an effective key (see cmd/docbank/daemon.go and
 // NewServer's refusal of an empty one), so the fake server must too.
 const serverKey = "server-key"
 

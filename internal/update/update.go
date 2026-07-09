@@ -157,7 +157,7 @@ func Run(ctx context.Context, out io.Writer, opts Options) error {
 		_, _ = fmt.Fprintf(out, "installed %s -> %s\n", info.LatestVersion, dest)
 		if wasRunning {
 			if err := startFn(ctx, root); err != nil {
-				return fmt.Errorf("daemon restart after update failed (start it with docbank serve start): %w", err)
+				return fmt.Errorf("daemon restart after update failed (start it with docbank daemon start): %w", err)
 			}
 			_, _ = fmt.Fprintln(out, "daemon restarted")
 		}

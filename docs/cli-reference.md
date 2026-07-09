@@ -14,7 +14,7 @@ Every data command below (`add`, `ls`, `tree`, `cat`, `mv`, `rm`,
 `restore`, `search`, `trash`, `gc`, `verify`) talks to the `docbank`
 daemon over its HTTP API rather than opening the vault itself; if none
 is running, the command auto-starts one in the background. `docbank
-serve status` and `docbank serve stop` never auto-start. See
+daemon status` and `docbank daemon stop` never auto-start. See
 [Daemon](architecture/daemon.md) and
 [Concurrency & Locking](architecture/locking.md).
 
@@ -195,27 +195,32 @@ line per problem — `missing: <hash>` (row without file),
 then a summary `<n> blob(s) ok, <n> problem(s)`. Exits non-zero if any
 problem was found.
 
-## docbank serve
+## docbank daemon
 
 ```
-docbank serve
-docbank serve start
-docbank serve status [--json]
-docbank serve stop
+docbank daemon run
+docbank daemon start
+docbank daemon status [--json]
+docbank daemon restart
+docbank daemon stop
 ```
 
-`serve` runs the daemon in the foreground, logging to stderr, until
-signaled or stopped. `serve start` spawns it detached in the background,
-logging JSON to `$DOCBANK_HOME/logs/`. `serve status` reports whether a
-daemon is running (pid, address, version, uptime) without starting one;
-`--json` emits `{"running": bool, "pid", "address", "version",
-"started_at"}` for agents. `serve stop` gracefully stops the running
+`daemon run` runs the daemon in the foreground, logging to stderr, until
+signaled or stopped; it's usually invoked by `daemon start` in the
+background, and is useful directly for debugging. `daemon start` spawns
+it detached in the background, logging JSON to `$DOCBANK_HOME/logs/`.
+`daemon status` reports whether a daemon is running (pid, address,
+version, uptime) without starting one; `--json` emits `{"running": bool,
+"pid", "address", "version", "started_at"}` for agents. `daemon restart`
+stops the daemon if one is running (tolerating it not already running),
+then starts it again, printing `restarted: ...` or `started (was not
+running): ...` accordingly. `daemon stop` gracefully stops the running
 daemon (or prints `no daemon running`) without starting one. Every data
-command auto-starts a daemon if none is running — `serve start` exists
+command auto-starts a daemon if none is running — `daemon start` exists
 for explicit control (long-running background use, inspecting logs
 before running commands) and does not replace a version-mismatched
-running daemon; it reports the mismatch and suggests `docbank serve stop
-&& docbank serve start`. See [Daemon](architecture/daemon.md).
+running daemon; it reports the mismatch and suggests `docbank daemon stop
+&& docbank daemon start`. See [Daemon](architecture/daemon.md).
 
 ## docbank update
 
@@ -258,7 +263,7 @@ builds; release builds inject both via `-ldflags`).
 
 `DOCBANK_HOME` selects the vault (see [Configuration](configuration.md)).
 `DOCBANK_LOG_LEVEL` sets the daemon's log level (`debug`, `info`,
-`warn`, `error`; default `info`) for both `docbank serve` and
+`warn`, `error`; default `info`) for both `docbank daemon run` and
 background-spawned daemons.
 
 ## Planned commands

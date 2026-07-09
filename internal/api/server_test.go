@@ -34,7 +34,7 @@ type testStore struct {
 
 // testAPIKey is the default key newTestServer configures: production always
 // has an effective key (configured or ephemeral; see cmd/docbank/
-// serve.go and NewServer's refusal of an empty one), so tests must supply
+// daemon.go and NewServer's refusal of an empty one), so tests must supply
 // one too. mutate can override it (e.g. TestAuthRequiredWhenKeySet uses its
 // own key to prove the value itself is checked, not just its presence).
 const testAPIKey = "test-api-key"
@@ -251,7 +251,7 @@ func TestAuthRequiredWhenKeySet(t *testing.T) {
 // keyless-loopback finding: NewServer must never let an empty-configured
 // key fall back to unauthenticated access. newTestServer's default already
 // configures a non-empty key (mirroring production, which always computes
-// one — see cmd/docbank/serve.go); this test proves a request without
+// one — see cmd/docbank/daemon.go); this test proves a request without
 // that key is refused rather than silently allowed through.
 func TestKeylessConfigStillRequiresAuth(t *testing.T) {
 	ts, _ := newTestServer(t, nil)

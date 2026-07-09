@@ -14,7 +14,7 @@ const (
 	// Service is the daemon's runtime-record service name.
 	Service = "docbank"
 	// EnvBackgroundDaemon marks a process as an auto-spawned background
-	// daemon (as opposed to a foreground `docbank serve`).
+	// daemon (as opposed to a foreground `docbank daemon run`).
 	EnvBackgroundDaemon = "DOCBANK_BACKGROUND_DAEMON"
 	metaCreateTime      = "create_time"
 	metaShutdownToken   = "shutdown_token"

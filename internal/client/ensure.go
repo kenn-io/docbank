@@ -155,7 +155,7 @@ func start(ctx context.Context, root string, requireVersion bool) (kitdaemon.Run
 	// than the one being discovered.
 	err = kitdaemon.StartDetached(ctx, kitdaemon.StartDetachedOptions{
 		Executable: exe,
-		Args:       []string{"serve"},
+		Args:       []string{"daemon", "run"},
 		Env:        append(os.Environ(), EnvBackgroundDaemon+"=1", "DOCBANK_HOME="+root),
 		Stdout:     logFile,
 		Stderr:     logFile,

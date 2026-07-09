@@ -36,9 +36,10 @@ marked planned appears elsewhere in these docs only under an explicit
 
 ## Phase 2a — Infrastructure (implemented)
 
-- `docbank serve` (+ `start`/`status`/`stop`): a single daemon owns the
-  vault; discovery, auto-start, idle shutdown, and PID-reuse-safe
-  lifecycle on `go.kenn.io/kit` primitives ([design](architecture/daemon.md))
+- `docbank daemon` (`run`/`start`/`status`/`restart`/`stop`): a single
+  daemon owns the vault; discovery, auto-start, idle shutdown, and
+  PID-reuse-safe lifecycle on `go.kenn.io/kit` primitives
+  ([design](architecture/daemon.md))
 - Huma v2 HTTP API under `/api/v1` implementing stat, list, content,
   search, create-directory, ingest, move, trash/restore, trash-empty,
   gc, and verify — the CLI's data commands are HTTP clients of this

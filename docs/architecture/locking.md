@@ -35,16 +35,16 @@ not delete a temp file another process is actively writing.
 
 ## The vault lock: one exclusive holder
 
-`~/.docbank/vault.lock` is an advisory `flock(2)` that `docbank serve`
-takes exclusively (`TryLockExclusive`) at startup and releases only on
+`~/.docbank/vault.lock` is an advisory `flock(2)` that `docbank daemon
+run` takes exclusively (`TryLockExclusive`) at startup and releases only on
 shutdown. Because it's a single long-lived process rather than one lock
 acquisition per command, the shared/exclusive split from Phase 1 is
 gone: with all access funneled through one process, the daemon *is* the
 serialization point, and a second daemon on the same vault is impossible
 by construction.
 
-`TryLockExclusive` is **non-blocking**: a second `docbank serve` against
-a vault that's already locked fails immediately with a clear "is a
+`TryLockExclusive` is **non-blocking**: a second `docbank daemon run`
+against a vault that's already locked fails immediately with a clear "is a
 docbank daemon already running?" error rather than hanging. This matches
 the daemon's role — waiting to acquire a lock another daemon holds for
 its entire lifetime would mean waiting indefinitely for no reason, since
@@ -86,7 +86,7 @@ contact. The store applies the schema and creates the root inside one
 backoff; every statement is idempotent, so whichever process wins, both
 converge on the same initialized vault.
 
-`docbank serve` takes the vault lock before opening the store, so two
+`docbank daemon run` takes the vault lock before opening the store, so two
 daemons racing to bootstrap the same fresh vault can no longer both
 reach `store.Open` at once — the loser fails at the flock instead. The
 retry logic stays in `internal/store` regardless: it's exercised

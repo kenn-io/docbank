@@ -38,7 +38,7 @@ The directory layout is created on first use:
 up if you've customized it (it can hold an `api_key`). `vault.lock`,
 `launch.lock`, and `daemon.<pid>.json` are daemon runtime state, safe to
 ignore in backups and safe to delete when no daemon is running
-(`docbank serve stop` removes its own record cleanly on graceful
+(`docbank daemon stop` removes its own record cleanly on graceful
 shutdown). The database
 references blobs by hash, so restoring a copied `docbank.db` + `blobs/`
 pair onto any machine yields a working vault — `docbank verify` proves
@@ -53,7 +53,7 @@ the pair is consistent.
 ## config.toml
 
 `$DOCBANK_HOME/config.toml` is read once, at daemon startup (`docbank
-serve` / `serve start`). It's optional — every value has a default —
+daemon run` / `daemon start`). It's optional — every value has a default —
 and there are no per-field environment variable or flag overrides; the
 only environment knob remains `DOCBANK_HOME`. An unrecognized key is
 treated as a typo and rejected at startup rather than silently ignored.
@@ -87,14 +87,14 @@ enabled = true
   tunnel from another machine).
 - **`idle_timeout`** — how long a background daemon waits without
   requests before exiting on its own. `"0"` disables idle shutdown.
-  Foreground `docbank serve` ignores this and never idles out.
+  Foreground `docbank daemon run` ignores this and never idles out.
 - **`[web] enabled`** — serves the placeholder web page at `/`. Disabling
   it 404s `/`; the API and `/docs` are unaffected.
 
 ### Bind validation
 
 Validated once, at daemon startup — a misconfiguration fails `docbank
-serve` immediately rather than silently serving insecurely:
+daemon run` immediately rather than silently serving insecurely:
 
 - A **loopback** `bind_addr` (`127.0.0.1`, `::1`, `localhost`) is the
   only accepted value. An empty `api_key` is fine there: the daemon
@@ -109,4 +109,4 @@ serve` immediately rather than silently serving insecurely:
 | Variable | Effect |
 |----------|--------|
 | `DOCBANK_HOME` | Vault location; see [Vault location](#vault-location) above. |
-| `DOCBANK_LOG_LEVEL` | Log level (`debug`, `info`, `warn`, `error`) for `docbank serve`, foreground or background. Invalid values are ignored and fall back to `info`. |
+| `DOCBANK_LOG_LEVEL` | Log level (`debug`, `info`, `warn`, `error`) for `docbank daemon run`, foreground or background. Invalid values are ignored and fall back to `info`. |

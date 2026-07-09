@@ -27,11 +27,13 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-var serveCmd = &cobra.Command{
-	Use:   "serve",
-	Short: "Run the docbank daemon in the foreground",
-	Args:  cobra.NoArgs,
-	RunE:  func(cmd *cobra.Command, _ []string) error { return runServe(cmd.Context()) },
+var daemonRunCmd = &cobra.Command{
+	Use:   "run",
+	Short: "Run the daemon in the foreground",
+	Long: "Run the daemon in the foreground. Usually invoked by `docbank daemon start`\n" +
+		"in the background; useful directly for debugging.",
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error { return runServe(cmd.Context()) },
 }
 
 func runServe(ctx context.Context) error {
@@ -156,7 +158,7 @@ func runServe(ctx context.Context) error {
 }
 
 // idleWatch exits an auto-started daemon after a fully quiet window so
-// spawned daemons don't accumulate. Foreground serves never idle out.
+// spawned daemons don't accumulate. Foreground `daemon run` never idles out.
 func idleWatch(ctx context.Context, t *api.ActivityTracker, timeout time.Duration,
 	logger *slog.Logger, stop func()) {
 	// Clamp the poll interval: NewTicker panics on a non-positive duration,
@@ -203,5 +205,3 @@ func randomHex32() (string, error) {
 	}
 	return hex.EncodeToString(b), nil
 }
-
-func init() { rootCmd.AddCommand(serveCmd) }

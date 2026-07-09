@@ -33,8 +33,8 @@ preserved. Without `--dest`, files land in `/inbox`.
 
 That `add` just auto-started the `docbank` daemon in the background —
 every data command does, if one isn't already running. You don't need
-to think about it day to day; `docbank serve status` shows it if you're
-curious, and `docbank serve stop` shuts it down (it also exits on its
+to think about it day to day; `docbank daemon status` shows it if you're
+curious, and `docbank daemon stop` shuts it down (it also exits on its
 own after a period of inactivity). See [Daemon](architecture/daemon.md).
 
 Re-running the same import is safe — already-imported files (matched by

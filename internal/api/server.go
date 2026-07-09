@@ -45,7 +45,7 @@ type Server struct {
 func NewServer(d Deps) *Server {
 	if d.Cfg.Server.APIKey == "" {
 		// A serving daemon always has an effective key (configured or
-		// ephemeral; see cmd/docbank/serve.go). An empty key here means
+		// ephemeral; see cmd/docbank/daemon.go). An empty key here means
 		// a caller forgot to set one — the one sanctioned exception is
 		// OpenAPIYAML's offline document render, which supplies a
 		// placeholder key precisely to avoid tripping this check.
@@ -102,7 +102,7 @@ func (s *Server) registerHealth(mux *http.ServeMux) {
 	})
 }
 
-// registerShutdown adds the hidden token-gated endpoint serve stop uses.
+// registerShutdown adds the hidden token-gated endpoint daemon stop uses.
 // Not in the OpenAPI document: it is lifecycle plumbing, not agent surface.
 func (s *Server) registerShutdown(mux *http.ServeMux) {
 	if s.deps.ShutdownToken == "" {
