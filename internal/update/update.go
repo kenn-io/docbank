@@ -40,9 +40,12 @@ type Options struct {
 	Confirm func(prompt string) (bool, error)
 
 	// test seams:
-	Client      *selfupdate.Client
-	Root        string
-	Destination string
+	Client         *selfupdate.Client
+	Root           string
+	Destination    string
+	WithLaunchLock func(context.Context, string, func() error) error
+	Stop           func(context.Context, string) (bool, error)
+	Start          func(context.Context, string) error
 }
 
 // Run checks for a newer docbank release and, unless CheckOnly, installs it:
@@ -123,31 +126,50 @@ func Run(ctx context.Context, out io.Writer, opts Options) error {
 		}
 	}
 
+	lockFn := opts.WithLaunchLock
+	if lockFn == nil {
+		lockFn = client.WithLaunchLock
+	}
+	stopFn := opts.Stop
+	if stopFn == nil {
+		stopFn = client.Stop
+	}
+	startFn := opts.Start
+	if startFn == nil {
+		startFn = func(ctx context.Context, root string) error {
+			_, err := client.StartAnyVersion(ctx, root)
+			return err
+		}
+	}
+
 	// Daemon coordination: a running daemon serves from the old binary and
-	// would version-mismatch every CLI call after the swap. Stop, install,
-	// restart with the new executable.
-	wasRunning, err := client.Stop(ctx, root)
-	if err != nil {
-		return fmt.Errorf("stopping daemon before update: %w", err)
-	}
-	if wasRunning {
-		_, _ = fmt.Fprintln(out, "stopped running daemon")
-	}
-	if err := c.Install(ctx, info, selfupdate.InstallOptions{DestinationPath: dest}); err != nil {
+	// would version-mismatch every CLI call after the swap. Hold the same
+	// launch lock Ensure uses, then stop, install, and restart with the new
+	// executable before other CLI calls can auto-start an old daemon.
+	return lockFn(ctx, root, func() error {
+		wasRunning, err := stopFn(ctx, root)
+		if err != nil {
+			return fmt.Errorf("stopping daemon before update: %w", err)
+		}
 		if wasRunning {
-			if _, rerr := client.Start(ctx, root); rerr != nil {
-				return fmt.Errorf("install failed (%w) and daemon restart failed: %w", err, rerr)
+			_, _ = fmt.Fprintln(out, "stopped running daemon")
+		}
+		if err := c.Install(ctx, info, selfupdate.InstallOptions{DestinationPath: dest}); err != nil {
+			if wasRunning {
+				if rerr := startFn(ctx, root); rerr != nil {
+					return fmt.Errorf("install failed (%w) and daemon restart failed: %w", err, rerr)
+				}
+				_, _ = fmt.Fprintln(out, "install failed; restarted previous daemon")
 			}
-			_, _ = fmt.Fprintln(out, "install failed; restarted previous daemon")
+			return fmt.Errorf("installing %s: %w", info.LatestVersion, err)
 		}
-		return fmt.Errorf("installing %s: %w", info.LatestVersion, err)
-	}
-	_, _ = fmt.Fprintf(out, "installed %s -> %s\n", info.LatestVersion, dest)
-	if wasRunning {
-		if _, err := client.Start(ctx, root); err != nil {
-			return fmt.Errorf("daemon restart after update failed (start it with docbank serve start): %w", err)
+		_, _ = fmt.Fprintf(out, "installed %s -> %s\n", info.LatestVersion, dest)
+		if wasRunning {
+			if err := startFn(ctx, root); err != nil {
+				return fmt.Errorf("daemon restart after update failed (start it with docbank serve start): %w", err)
+			}
+			_, _ = fmt.Fprintln(out, "daemon restarted")
 		}
-		_, _ = fmt.Fprintln(out, "daemon restarted")
-	}
-	return nil
+		return nil
+	})
 }

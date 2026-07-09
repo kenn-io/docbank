@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -108,6 +109,48 @@ func TestUpdateInstallsFromFakeRelease(t *testing.T) {
 	assert.Contains(t, string(got), "9.9.9")
 	assert.Contains(t, out.String(), "9.9.9")
 	assert.Contains(t, out.String(), sum, "reported checksum must match the release's SHA256SUMS entry")
+}
+
+func TestUpdateCoordinatesDaemonUnderLaunchLock(t *testing.T) {
+	ts, _ := fakeReleaseServer(t, "9.9.9")
+	c := newFakeClient(t, ts, "0.0.1")
+	root := t.TempDir()
+	dest := filepath.Join(t.TempDir(), "docbank")
+	require.NoError(t, os.WriteFile(dest, []byte("old"), 0o755))
+
+	var locked bool
+	var order []string
+	var out strings.Builder
+	err := update.Run(t.Context(), &out, update.Options{
+		Yes: true, Client: &c, Root: root, Destination: dest,
+		WithLaunchLock: func(_ context.Context, gotRoot string, fn func() error) error {
+			require.Equal(t, root, gotRoot)
+			order = append(order, "lock")
+			locked = true
+			err := fn()
+			locked = false
+			order = append(order, "unlock")
+			return err
+		},
+		Stop: func(_ context.Context, gotRoot string) (bool, error) {
+			require.True(t, locked, "stop must happen while the launch lock is held")
+			require.Equal(t, root, gotRoot)
+			order = append(order, "stop")
+			return true, nil
+		},
+		Start: func(_ context.Context, gotRoot string) error {
+			require.True(t, locked, "restart must happen while the launch lock is held")
+			require.Equal(t, root, gotRoot)
+			got, err := os.ReadFile(dest)
+			require.NoError(t, err)
+			require.Contains(t, string(got), "9.9.9", "restart should happen after install")
+			order = append(order, "start")
+			return nil
+		},
+	})
+	require.NoError(t, err, out.String())
+	assert.Equal(t, []string{"lock", "stop", "start", "unlock"}, order)
+	assert.Contains(t, out.String(), "daemon restarted")
 }
 
 func TestUpdateCheckOnly(t *testing.T) {

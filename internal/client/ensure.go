@@ -52,6 +52,19 @@ func newClientFor(rec kitdaemon.RuntimeRecord, cfg config.Config) *Client {
 	return New("http://"+rec.Address, cfg.Server.APIKey)
 }
 
+// WithLaunchLock serializes daemon auto-start with update's stop/install/
+// restart window. Callers should re-run discovery inside fn before spawning.
+func WithLaunchLock(ctx context.Context, root string, fn func() error) error {
+	launch := flock.New(filepath.Join(root, "launch.lock"))
+	lockCtx, cancel := context.WithTimeout(ctx, ensureTimeout)
+	defer cancel()
+	if _, err := launch.TryLockContext(lockCtx, 100*time.Millisecond); err != nil {
+		return fmt.Errorf("acquiring daemon launch lock: %w", err)
+	}
+	defer func() { _ = launch.Unlock() }()
+	return fn()
+}
+
 // Ensure returns a client for a version-matched daemon, starting (and if
 // needed, replacing a version-mismatched) one. CLI commands call this.
 func Ensure(ctx context.Context) (*Client, error) {
@@ -76,31 +89,30 @@ func Ensure(ctx context.Context) (*Client, error) {
 	}
 
 	// Serialize racing starters; re-check under the lock.
-	launch := flock.New(filepath.Join(layout.Root, "launch.lock"))
-	lockCtx, cancel := context.WithTimeout(ctx, ensureTimeout)
-	defer cancel()
-	if _, err := launch.TryLockContext(lockCtx, 100*time.Millisecond); err != nil {
-		return nil, fmt.Errorf("acquiring daemon launch lock: %w", err)
-	}
-	defer func() { _ = launch.Unlock() }()
-
-	rec, _, ok, err = kitdaemon.Discover(ctx, RuntimeStore(layout.Root), discoverOptions(true))
-	if err != nil {
-		return nil, fmt.Errorf("discovering daemon: %w", err)
-	}
-	if ok {
-		return newClientFor(rec, cfg), nil
-	}
-
-	// A live daemon with the wrong version blocks the vault lock: replace it.
-	if old, _, found, _ := Find(ctx, layout.Root); found {
-		if err := stopRecord(ctx, old, cfg); err != nil {
-			return nil, fmt.Errorf("stopping version-mismatched daemon (pid %d, %s): %w",
-				old.PID, old.Version, err)
+	err = WithLaunchLock(ctx, layout.Root, func() error {
+		rec, _, ok, err = kitdaemon.Discover(ctx, RuntimeStore(layout.Root), discoverOptions(true))
+		if err != nil {
+			return fmt.Errorf("discovering daemon: %w", err)
 		}
-	}
+		if ok {
+			return nil
+		}
 
-	rec, err = Start(ctx, layout.Root)
+		// A live daemon with the wrong version blocks the vault lock: replace it.
+		old, _, found, findErr := Find(ctx, layout.Root)
+		if findErr != nil {
+			return findErr
+		}
+		if found {
+			if err := stopRecord(ctx, old, cfg); err != nil {
+				return fmt.Errorf("stopping version-mismatched daemon (pid %d, %s): %w",
+					old.PID, old.Version, err)
+			}
+		}
+
+		rec, err = Start(ctx, layout.Root)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -109,6 +121,17 @@ func Ensure(ctx context.Context) (*Client, error) {
 
 // Start spawns a detached daemon and waits for a compatible ping.
 func Start(ctx context.Context, root string) (kitdaemon.RuntimeRecord, error) {
+	return start(ctx, root, true)
+}
+
+// StartAnyVersion spawns a detached daemon and waits for any docbank daemon.
+// update uses this after replacing the executable, because the old updater
+// process cannot know the new binary's version string at compile time.
+func StartAnyVersion(ctx context.Context, root string) (kitdaemon.RuntimeRecord, error) {
+	return start(ctx, root, false)
+}
+
+func start(ctx context.Context, root string, requireVersion bool) (kitdaemon.RuntimeRecord, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return kitdaemon.RuntimeRecord{}, fmt.Errorf("resolving executable for daemon spawn: %w", err)
@@ -134,8 +157,9 @@ func Start(ctx context.Context, root string) (kitdaemon.RuntimeRecord, error) {
 	}
 
 	deadline := time.Now().Add(ensureTimeout)
+	opts := discoverOptions(requireVersion)
 	for time.Now().Before(deadline) {
-		rec, _, ok, err := kitdaemon.Discover(ctx, RuntimeStore(root), discoverOptions(true))
+		rec, _, ok, err := kitdaemon.Discover(ctx, RuntimeStore(root), opts)
 		if err == nil && ok {
 			return rec, nil
 		}

@@ -17,11 +17,8 @@ var rmCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		n, err := c.Stat(cmd.Context(), args[0])
+		n, err := c.TrashPath(cmd.Context(), args[0])
 		if err != nil {
-			return fmt.Errorf("resolving %q: %w", args[0], err)
-		}
-		if _, err := c.Trash(cmd.Context(), n.ID, n.Revision); err != nil {
 			return err
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(),

@@ -40,6 +40,6 @@ var updateCmd = &cobra.Command{
 func init() {
 	updateCmd.Flags().BoolVar(&updateCheck, "check", false, "check only; do not install")
 	updateCmd.Flags().BoolVar(&updateYes, "yes", false, "install without confirmation")
-	updateCmd.Flags().BoolVar(&updateForce, "force", false, "install even if up to date or a dev build")
+	updateCmd.Flags().BoolVar(&updateForce, "force", false, "refresh update metadata and allow replacing dev builds")
 	rootCmd.AddCommand(updateCmd)
 }

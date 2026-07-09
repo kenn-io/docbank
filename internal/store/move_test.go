@@ -105,3 +105,73 @@ func TestMoveRejectsMissingOrTrashedSource(t *testing.T) {
 	_, err = s.Move(ctx, f.ID, s.RootID(), "b.txt", -1)
 	require.ErrorIs(t, err, ErrNotFound)
 }
+
+func TestMovePath(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+
+	docs, err := s.Mkdir(ctx, s.RootID(), "docs")
+	require.NoError(t, err)
+	_, err = s.Mkdir(ctx, s.RootID(), "filed")
+	require.NoError(t, err)
+	f, err := s.CreateFile(ctx, docs.ID, "a.txt", fakeHash("a1"), 1, "text/plain")
+	require.NoError(t, err)
+
+	// Non-existing dest path: parent + basename = rename.
+	moved, err := s.MovePath(ctx, "/docs/a.txt", "/docs/b.txt")
+	require.NoError(t, err)
+	assert.Equal(t, f.ID, moved.ID)
+	assert.Equal(t, "b.txt", moved.Name)
+
+	// Dest is an existing dir: move into, keep name.
+	moved, err = s.MovePath(ctx, "/docs/b.txt", "/filed")
+	require.NoError(t, err)
+	p, err := s.Path(ctx, moved.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "/filed/b.txt", p)
+
+	// Dest exists and is a file: refused.
+	_, err = s.CreateFile(ctx, docs.ID, "c.txt", fakeHash("c1"), 1, "text/plain")
+	require.NoError(t, err)
+	_, err = s.MovePath(ctx, "/filed/b.txt", "/docs/c.txt")
+	require.ErrorIs(t, err, ErrExists)
+
+	// Missing source, missing dest parent, root source, cycle.
+	_, err = s.MovePath(ctx, "/nope", "/docs/x")
+	require.ErrorIs(t, err, ErrNotFound)
+	_, err = s.MovePath(ctx, "/filed/b.txt", "/nope/x")
+	require.ErrorIs(t, err, ErrNotFound)
+	_, err = s.MovePath(ctx, "/", "/docs")
+	require.ErrorIs(t, err, ErrIsRoot)
+	_, err = s.Mkdir(ctx, docs.ID, "sub")
+	require.NoError(t, err)
+	_, err = s.MovePath(ctx, "/docs", "/docs/sub")
+	assert.ErrorIs(t, err, ErrCycle)
+}
+
+func TestMovePathRejectsDotSegments(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+
+	docs, err := s.Mkdir(ctx, s.RootID(), "docs")
+	require.NoError(t, err)
+	_, err = s.CreateFile(ctx, docs.ID, "a.txt", fakeHash("a1"), 1, "text/plain")
+	require.NoError(t, err)
+
+	// path.Dir semantics would Clean "/missing/../renamed" into a rename at
+	// the root; virtual paths have no dot segments, so this must be
+	// rejected outright and nothing may land at /renamed.
+	_, err = s.MovePath(ctx, "/docs/a.txt", "/missing/../renamed")
+	require.ErrorIs(t, err, ErrInvalidName)
+	_, err = s.NodeByPath(ctx, "/renamed")
+	require.ErrorIs(t, err, ErrNotFound)
+
+	_, err = s.MovePath(ctx, "/docs/a.txt", "/docs/..")
+	require.ErrorIs(t, err, ErrInvalidName)
+	_, err = s.MovePath(ctx, "/docs/a.txt", "/docs/.")
+	require.ErrorIs(t, err, ErrInvalidName)
+
+	// The file never moved.
+	_, err = s.NodeByPath(ctx, "/docs/a.txt")
+	require.NoError(t, err)
+}

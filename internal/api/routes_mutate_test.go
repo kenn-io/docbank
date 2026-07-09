@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestCreateDirectory(t *testing.T) {
@@ -74,6 +75,39 @@ func TestMoveRequiresIfMatch(t *testing.T) {
 	resp, _ = do(t, ts, http.MethodPatch, fmt.Sprintf("/api/v1/nodes/%d", f.ID),
 		map[string]string{"If-Match": etag}, map[string]any{})
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+}
+
+func TestMovePathAndTrashPath(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	_, err := s.Mkdir(t.Context(), s.RootID(), "docs")
+	require.NoError(t, err)
+	_, err = s.Mkdir(t.Context(), s.RootID(), "filed")
+	require.NoError(t, err)
+	f := createFileWithContent(t, ts, s, "/a.txt", "x")
+	_, err = s.Move(t.Context(), f.ID, s.RootID(), "a.txt", store.UnconditionalRev)
+	require.NoError(t, err)
+	_, err = s.MovePath(t.Context(), "/a.txt", "/docs")
+	require.NoError(t, err)
+
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/path/move", nil,
+		map[string]any{"src_path": "/docs/a.txt", "dest_path": "/filed"})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var moved api.Node
+	require.NoError(t, json.Unmarshal([]byte(body), &moved))
+	assert.Equal(t, "/filed/a.txt", moved.Path)
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/path/trash", nil,
+		map[string]any{"path": "/filed/a.txt"})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var trashed api.Node
+	require.NoError(t, json.Unmarshal([]byte(body), &trashed))
+	assert.Equal(t, moved.ID, trashed.ID)
+	assert.NotEmpty(t, trashed.TrashedAt)
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/path/move", nil,
+		map[string]any{"src_path": "relative", "dest_path": "/x"})
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+	assert.Contains(t, body, `"code":"validation"`)
 }
 
 func TestTrashAndRestoreRoundTripHTTP(t *testing.T) {

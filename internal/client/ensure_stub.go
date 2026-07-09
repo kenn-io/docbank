@@ -22,8 +22,18 @@ func Ensure(context.Context) (*Client, error) {
 	return nil, errUnsupported
 }
 
+// WithLaunchLock fails: daemon auto-start is Unix-only.
+func WithLaunchLock(context.Context, string, func() error) error {
+	return errUnsupported
+}
+
 // Start fails: daemon auto-start is Unix-only.
 func Start(context.Context, string) (kitdaemon.RuntimeRecord, error) {
+	return kitdaemon.RuntimeRecord{}, errUnsupported
+}
+
+// StartAnyVersion fails: daemon auto-start is Unix-only.
+func StartAnyVersion(context.Context, string) (kitdaemon.RuntimeRecord, error) {
 	return kitdaemon.RuntimeRecord{}, errUnsupported
 }
 

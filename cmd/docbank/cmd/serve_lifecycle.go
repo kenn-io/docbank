@@ -39,9 +39,21 @@ var serveStartCmd = &cobra.Command{
 			}
 			return nil
 		}
-		rec, err = client.Start(cmd.Context(), layout.Root)
+		err = client.WithLaunchLock(cmd.Context(), layout.Root, func() error {
+			rec, _, ok, err = client.Find(cmd.Context(), layout.Root)
+			if err != nil || ok {
+				return err
+			}
+			rec, err = client.Start(cmd.Context(), layout.Root)
+			return err
+		})
 		if err != nil {
 			return err
+		}
+		if ok {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "already running: pid %d at %s (%s)\n",
+				rec.PID, rec.Address, rec.Version)
+			return nil
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "started: pid %d at %s (%s)\n",
 			rec.PID, rec.Address, rec.Version)

@@ -45,15 +45,19 @@ func TestRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "/papers", renamed.Path)
 
+	moved, err := c.MovePath(ctx, "/papers", "/docs")
+	require.NoError(t, err)
+	assert.Equal(t, "/docs", moved.Path)
+
 	kids, err := c.Children(ctx, s.RootID())
 	require.NoError(t, err)
 	assert.Len(t, kids, 1)
 
-	trashed, err := c.Trash(ctx, dir.ID, renamed.Revision)
+	trashed, err := c.TrashPath(ctx, "/docs")
 	require.NoError(t, err)
 	restored, err := c.Restore(ctx, dir.ID, trashed.Revision)
 	require.NoError(t, err)
-	assert.Equal(t, "/papers", restored.Path)
+	assert.Equal(t, "/docs", restored.Path)
 }
 
 func TestErrorMapping(t *testing.T) {

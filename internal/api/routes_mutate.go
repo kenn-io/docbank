@@ -112,6 +112,36 @@ func registerMutateRoutes(api huma.API, d Deps, g *gate) {
 	})
 
 	huma.Register(api, huma.Operation{
+		OperationID: "movePath", Method: http.MethodPost, Path: "/api/v1/path/move",
+		Summary: "Move a node by virtual path in one transaction",
+		Description: "CLI-oriented path mutation: source and destination paths " +
+			"are resolved inside the daemon/store transaction so ancestor moves " +
+			"cannot redirect the operation between separate client requests.",
+	}, func(ctx context.Context, in *struct {
+		Body struct {
+			SrcPath  string `json:"src_path" minLength:"1" example:"/inbox/a.pdf"`
+			DestPath string `json:"dest_path" minLength:"1" example:"/filed/a.pdf"`
+		}
+	}) (*nodeOutput, error) {
+		for _, p := range []string{in.Body.SrcPath, in.Body.DestPath} {
+			if !strings.HasPrefix(p, "/") {
+				return nil, NewError(http.StatusUnprocessableEntity, "validation",
+					fmt.Sprintf("path %q must be absolute (start with /)", p))
+			}
+		}
+		var out *nodeOutput
+		err := g.mutate(func() error {
+			n, err := d.Store.MovePath(ctx, in.Body.SrcPath, in.Body.DestPath)
+			if err != nil {
+				return FromStoreError(err)
+			}
+			out, err = nodeWithPath(ctx, d, n.ID)
+			return err
+		})
+		return out, err
+	})
+
+	huma.Register(api, huma.Operation{
 		OperationID: "trashNode", Method: http.MethodPost, Path: "/api/v1/nodes/{id}/trash",
 		Summary: "Move a node and its subtree to the trash",
 	}, func(ctx context.Context, in *struct {
@@ -125,6 +155,33 @@ func registerMutateRoutes(api huma.API, d Deps, g *gate) {
 		var out *nodeOutput
 		err = g.mutate(func() error {
 			n, err := d.Store.Trash(ctx, in.ID, rev)
+			if err != nil {
+				return FromStoreError(err)
+			}
+			out, err = nodeWithPath(ctx, d, n.ID)
+			return err
+		})
+		return out, err
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "trashPath", Method: http.MethodPost, Path: "/api/v1/path/trash",
+		Summary: "Move a virtual path and its subtree to the trash in one transaction",
+		Description: "CLI-oriented path mutation: the path is resolved inside " +
+			"the daemon/store transaction so ancestor moves cannot redirect a " +
+			"separately resolved node id.",
+	}, func(ctx context.Context, in *struct {
+		Body struct {
+			Path string `json:"path" minLength:"1" example:"/inbox/a.pdf"`
+		}
+	}) (*nodeOutput, error) {
+		if !strings.HasPrefix(in.Body.Path, "/") {
+			return nil, NewError(http.StatusUnprocessableEntity, "validation",
+				fmt.Sprintf("path %q must be absolute (start with /)", in.Body.Path))
+		}
+		var out *nodeOutput
+		err := g.mutate(func() error {
+			n, err := d.Store.TrashPath(ctx, in.Body.Path)
 			if err != nil {
 				return FromStoreError(err)
 			}

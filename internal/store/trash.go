@@ -42,6 +42,31 @@ func (s *Store) Trash(ctx context.Context, id, ifRev int64) (Node, error) {
 	return trashed, nil
 }
 
+// TrashPath resolves path and trashes the node inside one transaction, so a
+// concurrent move cannot relocate the node or an ancestor between resolution
+// and mutation. Returns the node that was trashed.
+func (s *Store) TrashPath(ctx context.Context, path string) (Node, error) {
+	var trashed Node
+	err := s.withTx(ctx, func(tx *sql.Tx) error {
+		n, err := nodeByPath(ctx, tx, s.rootID, path)
+		if err != nil {
+			return fmt.Errorf("resolving %q: %w", path, err)
+		}
+		if n.ID == s.rootID {
+			return ErrIsRoot
+		}
+		if err := s.trashNodeTx(tx, n); err != nil {
+			return err
+		}
+		trashed, err = nodeByIDTx(tx, n.ID)
+		return err
+	})
+	if err != nil {
+		return Node{}, err
+	}
+	return trashed, nil
+}
+
 // trashNodeTx trashes a live node n (pre-checked by the caller) and its live
 // subtree within the caller's transaction.
 func (s *Store) trashNodeTx(tx *sql.Tx, n Node) error {

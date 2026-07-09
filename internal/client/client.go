@@ -192,9 +192,22 @@ func (c *Client) Move(ctx context.Context, id, rev int64, newParentID *int64, ne
 	return n, err
 }
 
+func (c *Client) MovePath(ctx context.Context, srcPath, destPath string) (api.Node, error) {
+	var n api.Node
+	err := c.do(ctx, http.MethodPost, "/api/v1/path/move", nil,
+		map[string]any{"src_path": srcPath, "dest_path": destPath}, &n)
+	return n, err
+}
+
 func (c *Client) Trash(ctx context.Context, id, rev int64) (api.Node, error) {
 	var n api.Node
 	err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/nodes/%d/trash", id), ifMatch(rev), nil, &n)
+	return n, err
+}
+
+func (c *Client) TrashPath(ctx context.Context, path string) (api.Node, error) {
+	var n api.Node
+	err := c.do(ctx, http.MethodPost, "/api/v1/path/trash", nil, map[string]any{"path": path}, &n)
 	return n, err
 }
 

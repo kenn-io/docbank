@@ -15,7 +15,7 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 	require.NoError(t, err)
 	doc := string(out)
 	for _, op := range []string{"getNode", "resolvePath", "listChildren", "getNodeContent",
-		"search", "createNode", "moveNode", "trashNode", "restoreNode",
+		"search", "createNode", "moveNode", "movePath", "trashNode", "trashPath", "restoreNode",
 		"ingest", "listTrash", "emptyTrash", "gc", "verify"} {
 		assert.Contains(t, doc, op, "operation missing from OpenAPI doc")
 	}
