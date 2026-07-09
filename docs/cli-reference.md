@@ -229,9 +229,10 @@ from the new executable (rolling back to a restart of the old daemon on
 install failure). `--check` prints the current and latest versions and
 stops there. `--yes` skips the install confirmation prompt (required in
 non-interactive use, since there is no default without a terminal to
-prompt on). `--force` installs even when already up to date or when the
-current build is an unversioned dev build. Refuses to install a release
-with no published SHA256 checksum.
+prompt on). `--force` bypasses the cached check (release metadata is
+refetched) and allows replacing an unversioned dev build; it does not
+reinstall a release that is already current. Refuses to install a
+release with no published SHA256 checksum.
 
 ## docbank openapi
 

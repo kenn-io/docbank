@@ -86,10 +86,12 @@ exist** is risk with no beneficiary. This holds until the first
 release that can leave real vaults behind a schema change, at which
 point migration machinery becomes part of the release contract.
 
-### Blocking vault lock
+### One vault lock holder
 
-Commands wait indefinitely on the vault flock rather than failing
-fast. Ordinary operations hold the shared lock for milliseconds; only
-`gc --run` holds it exclusively, briefly. A lock timeout would convert
-rare, short waits into user-visible errors. (Surfacing a "waiting for
-vault lock" notice is tracked as a CLI UX issue.)
+The daemon holds the vault flock exclusively for its whole lifetime,
+acquired non-blocking at startup — a second daemon is refused
+immediately, never queued. Ordinary commands don't touch the lock at
+all: they are HTTP clients of the daemon. Maintenance (`gc --run`,
+`verify`, `trash empty`) is serialized against ordinary mutations by
+the daemon's in-process maintenance gate. See
+[Concurrency & Locking](locking.md).

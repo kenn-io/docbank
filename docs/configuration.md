@@ -34,10 +34,12 @@ The directory layout is created on first use:
 ```
 
 `docbank.db` and `blobs/` together are the archive; back up both.
-`config.toml`, `vault.lock`, `launch.lock`, and `daemon.<pid>.json` are
-not part of the archive — they're daemon runtime state, safe to ignore
-in backups and safe to delete when no daemon is running (`docbank serve
-stop` removes its own record cleanly on graceful shutdown). The database
+`config.toml` is configuration, not archive data — optional, but back it
+up if you've customized it (it can hold an `api_key`). `vault.lock`,
+`launch.lock`, and `daemon.<pid>.json` are daemon runtime state, safe to
+ignore in backups and safe to delete when no daemon is running
+(`docbank serve stop` removes its own record cleanly on graceful
+shutdown). The database
 references blobs by hash, so restoring a copied `docbank.db` + `blobs/`
 pair onto any machine yields a working vault — `docbank verify` proves
 the pair is consistent.

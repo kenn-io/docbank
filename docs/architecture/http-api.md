@@ -38,6 +38,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `POST /nodes` | create a directory (`kind: "dir"`) | Implemented |
 | `POST /ingest` | import server-side paths — see [addendum](#addendum-post-ingest) | Implemented |
 | `PATCH /nodes/{id}` | move and/or rename | Implemented |
+| `POST /path/move` · `POST /path/trash` | move / trash by virtual path, resolved and mutated in one store transaction | Implemented |
 | `POST /nodes/{id}/trash` · `POST /nodes/{id}/restore` | soft delete / recover | Implemented |
 | `GET /trash` · `POST /trash/empty` | list / hard-delete trash roots | Implemented |
 | `POST /gc` `{run}` · `POST /verify` | reclaim unreachable blobs / re-hash all blobs | Implemented |
@@ -80,15 +81,16 @@ actual contention. SQLite already serializes the writes — preconditions
 exist to catch **lost updates across an agent's read-modify-write
 turns**, not to lock.
 
-`If-Match` is required where a mutation targets one existing node; bulk
-and maintenance operations are explicit exceptions, since there is no
-single node revision for them to condition on:
+`If-Match` is required where a mutation targets one existing node that
+the caller read in an earlier request; path mutations, bulk operations,
+and maintenance are explicit exceptions:
 
 | Endpoint | Precondition |
 |----------|--------------|
 | `PATCH /nodes/{id}` | required — target node's revision |
 | `POST /nodes/{id}/trash` | required — target node's revision |
 | `POST /nodes/{id}/restore` | required — target node's revision |
+| `POST /path/move`, `POST /path/trash` | none — the path is resolved and mutated inside one store transaction, so there is no separate read for a revision to guard |
 | `POST /nodes` (create dir) | none — creation has no prior revision; a name collision is `409` |
 | `POST /ingest` | none — long-running bulk operation with per-path partial success; the destination directory may legitimately change while it runs |
 | `POST /trash/empty`, `POST /gc`, `POST /verify` | none — vault-wide maintenance, serialized by the maintenance gate |
