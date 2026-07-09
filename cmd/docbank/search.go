@@ -10,30 +10,56 @@ import (
 	"go.kenn.io/docbank/internal/client"
 )
 
+const (
+	defaultSearchLimit = 50
+	maxSearchLimit     = 1000
+)
+
+var searchLimit int
+
 var searchCmd = &cobra.Command{
 	Use:   "search <query>...",
 	Short: "Full-text search over node names",
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if searchLimit < 1 || searchLimit > maxSearchLimit {
+			return fmt.Errorf("--limit must be between 1 and %d", maxSearchLimit)
+		}
 		c, err := client.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		hits, err := c.Search(cmd.Context(), strings.Join(args, " "), 50)
+		rep, err := c.Search(cmd.Context(), strings.Join(args, " "), searchLimit)
 		if err != nil {
 			return err
 		}
-		if len(hits) == 0 {
+		if len(rep.Hits) == 0 {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "no matches")
 			return nil
 		}
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
 		_, _ = fmt.Fprintln(w, "ID\tPATH")
-		for _, h := range hits {
+		for _, h := range rep.Hits {
 			_, _ = fmt.Fprintf(w, "%d\t%s\n", h.Node.ID, h.Path)
 		}
-		return w.Flush()
+		if err := w.Flush(); err != nil {
+			return fmt.Errorf("writing search results: %w", err)
+		}
+		if rep.Truncated {
+			noun := "results"
+			if rep.Limit == 1 {
+				noun = "result"
+			}
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+				"more than %d %s; showing the first %d (increase --limit to see more)\n",
+				rep.Limit, noun, rep.Limit)
+		}
+		return nil
 	},
 }
 
-func init() { rootCmd.AddCommand(searchCmd) }
+func init() {
+	searchCmd.Flags().IntVar(&searchLimit, "limit", defaultSearchLimit,
+		"maximum results to return (1-1000)")
+	rootCmd.AddCommand(searchCmd)
+}

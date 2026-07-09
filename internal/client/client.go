@@ -156,13 +156,11 @@ func (c *Client) Content(ctx context.Context, id int64) (io.ReadCloser, error) {
 	return resp.Body, nil
 }
 
-func (c *Client) Search(ctx context.Context, query string, limit int) ([]api.SearchHit, error) {
-	var out struct {
-		Hits []api.SearchHit `json:"hits"`
-	}
+func (c *Client) Search(ctx context.Context, query string, limit int) (api.SearchReport, error) {
+	var out api.SearchReport
 	p := fmt.Sprintf("/api/v1/search?q=%s&limit=%d", url.QueryEscape(query), limit)
 	err := c.do(ctx, http.MethodGet, p, nil, nil, &out)
-	return out.Hits, err
+	return out, err
 }
 
 func (c *Client) Mkdir(ctx context.Context, parentID int64, name string) (api.Node, error) {
@@ -225,13 +223,11 @@ func (c *Client) TrashList(ctx context.Context) ([]api.Node, error) {
 	return out.Items, err
 }
 
-func (c *Client) TrashEmpty(ctx context.Context, olderThan string) (int64, error) {
-	var out struct {
-		Deleted int64 `json:"deleted"`
-	}
+func (c *Client) TrashEmpty(ctx context.Context, olderThan string, run bool) (api.TrashEmptyReport, error) {
+	var out api.TrashEmptyReport
 	err := c.do(ctx, http.MethodPost, "/api/v1/trash/empty", nil,
-		map[string]any{"older_than": olderThan}, &out)
-	return out.Deleted, err
+		map[string]any{"older_than": olderThan, "run": run}, &out)
+	return out, err
 }
 
 func (c *Client) GC(ctx context.Context, run bool) (api.GCReport, error) {

@@ -47,7 +47,7 @@ the pair is consistent.
 !!! warning
     Don't edit or prune `blobs/` by hand. Blob files are referenced by
     the database (including as prior document versions); use
-    `docbank trash empty` and `docbank gc --run` to reclaim space, and
+    `docbank trash empty --run` and `docbank gc --run` to reclaim space, and
     `docbank verify` to check integrity.
 
 ## config.toml

@@ -13,7 +13,7 @@ you want it to be:
 flowchart LR
     A[live node] -- "docbank rm" --> B[trash]
     B -- "docbank restore" --> A
-    B -- "docbank trash empty" --> C[unreferenced blob]
+    B -- "docbank trash empty --run" --> C[unreferenced blob]
     C -- "docbank gc --run" --> D[bytes reclaimed]
 ```
 
@@ -47,11 +47,13 @@ separately.
 ## Stage 2: Empty the trash
 
 ```bash
-docbank trash empty                  # everything
-docbank trash empty --older-than 30d # only items trashed ≥30 days ago
+docbank trash empty                        # dry run: everything
+docbank trash empty --older-than 30d       # dry run: items trashed ≥30 days ago
+docbank trash empty --older-than 30d --run # permanently delete those items
 ```
 
-This permanently deletes the tree entries. The document bytes are still
+The command is a dry run unless `--run` is present. An executed run
+permanently deletes the selected tree entries. The document bytes are still
 on disk — they've merely become unreferenced.
 
 ## Stage 3: Garbage collection (`gc`)

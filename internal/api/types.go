@@ -24,6 +24,13 @@ type SearchHit struct {
 	Path string `json:"path"`
 }
 
+// SearchReport is one bounded search result page.
+type SearchReport struct {
+	Hits      []SearchHit `json:"hits"`
+	Limit     int         `json:"limit"`
+	Truncated bool        `json:"truncated"`
+}
+
 // IngestFailure records one source path that failed to import.
 type IngestFailure struct {
 	Path  string `json:"path"`
@@ -35,6 +42,13 @@ type IngestReport struct {
 	Added   int             `json:"added"`
 	Skipped int             `json:"skipped"`
 	Failed  []IngestFailure `json:"failed,omitempty"`
+}
+
+// TrashEmptyReport summarizes a trash-empty dry run or execution.
+type TrashEmptyReport struct {
+	CandidateRoots int64 `json:"candidate_roots"`
+	Deleted        int64 `json:"deleted"`
+	Run            bool  `json:"run"`
 }
 
 // GCReport summarizes a gc dry run (Run=false) or an actual reclaim.

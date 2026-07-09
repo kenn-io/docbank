@@ -100,7 +100,7 @@ func TestLifecycleStartStatusRestartStop(t *testing.T) {
 	assert.False(t, found)
 }
 
-func TestDaemonStartReplacesVersionMismatchedDaemon(t *testing.T) {
+func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	oldBin := buildDocbank(t) // reports version "dev"
 	newBin := buildDocbankVersion(t, "v9.9.9-test")
 	dir := t.TempDir()
@@ -124,14 +124,33 @@ func TestDaemonStartReplacesVersionMismatchedDaemon(t *testing.T) {
 	assert.Contains(t, out, "already running")
 	assert.Equal(t, oldPID, parsePID(t, out))
 
+	// A same-version daemon without this binary's protocol revision is also
+	// stale. Simulate an older dev build by removing the field from its live
+	// runtime record; start must replace it before returning a client.
+	recs, err := client.RuntimeStore(dir).List()
+	require.NoError(t, err)
+	require.Len(t, recs, 1)
+	require.NotEmpty(t, recs[0].Metadata["protocol_version"])
+	delete(recs[0].Metadata, "protocol_version")
+	_, err = client.RuntimeStore(dir).Write(recs[0])
+	require.NoError(t, err)
+
+	out, err = run(oldBin, "daemon", "start")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "replaced daemon dev (pid "+oldPID+") with dev")
+	pids := pidRe.FindAllStringSubmatch(out, -1)
+	require.Len(t, pids, 2, out)
+	protocolPID := pids[1][1]
+	assert.NotEqual(t, oldPID, protocolPID)
+
 	// A mismatched-version start stops the stale daemon and starts its own.
 	out, err = run(newBin, "daemon", "start")
 	require.NoError(t, err, out)
-	assert.Contains(t, out, "replaced daemon dev (pid "+oldPID+") with v9.9.9-test")
-	pids := pidRe.FindAllStringSubmatch(out, -1) // old pid, then the new daemon's
+	assert.Contains(t, out, "replaced daemon dev (pid "+protocolPID+") with v9.9.9-test")
+	pids = pidRe.FindAllStringSubmatch(out, -1) // old pid, then the new daemon's
 	require.Len(t, pids, 2, out)
 	newPID := pids[1][1]
-	assert.NotEqual(t, oldPID, newPID)
+	assert.NotEqual(t, protocolPID, newPID)
 
 	out, err = run(newBin, "daemon", "status")
 	require.NoError(t, err, out)

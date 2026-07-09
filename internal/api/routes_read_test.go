@@ -83,9 +83,15 @@ func TestContentOnDirIs422(t *testing.T) {
 
 func TestSearch(t *testing.T) {
 	ts, s := newTestServer(t, nil)
-	_, err := s.CreateFile(t.Context(), s.RootID(), "insurance-2024.pdf", testHash("x"), 3, "application/pdf")
-	require.NoError(t, err)
-	resp, body := get(t, ts, "/api/v1/search?q=insurance", nil)
+	for i, name := range []string{"insurance-a.pdf", "insurance-b.pdf"} {
+		_, err := s.CreateFile(t.Context(), s.RootID(), name, testHash(string(rune('x'+i))), 3, "application/pdf")
+		require.NoError(t, err)
+	}
+	resp, body := get(t, ts, "/api/v1/search?q=insurance&limit=1", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Contains(t, body, "insurance-2024.pdf", body)
+	var rep api.SearchReport
+	require.NoError(t, json.Unmarshal([]byte(body), &rep))
+	assert.Len(t, rep.Hits, 1)
+	assert.Equal(t, 1, rep.Limit)
+	assert.True(t, rep.Truncated)
 }

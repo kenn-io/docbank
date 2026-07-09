@@ -8,6 +8,7 @@ description: Full-text search over the vault with FTS5.
 ```bash
 docbank search insurance
 docbank search tax 2026
+docbank search report --limit 200
 ```
 
 ```
@@ -24,8 +25,9 @@ ID   PATH
 - **Operator-safe.** Query text is escaped before reaching FTS5, so
   `AND`, `OR`, quotes, and parentheses in a query are searched for
   literally, never interpreted. Any string is a safe query.
-- **Ranked.** Results are ordered by BM25 relevance, with deterministic
-  name/ID tie-breaks, and capped at 50.
+- **Ranked and bounded.** Results are ordered by BM25 relevance, with
+  deterministic name/ID tie-breaks. The default limit is 50; `--limit`
+  accepts 1–1000, and truncation is always reported.
 - **Live nodes only.** Trashed documents don't appear; restore returns
   them to the index. Renames update the index immediately.
 

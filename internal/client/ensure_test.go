@@ -45,3 +45,23 @@ func TestEnsureDiscoveryRejectsKeylessRecords(t *testing.T) {
 	assert.True(t, discoverOptions(false).Accept(rec, info),
 		"status/stop discovery must still see keyless daemons")
 }
+
+// Same-version development builds can still have incompatible HTTP behavior.
+// A missing or mismatched protocol revision must therefore force replacement;
+// status/stop discovery remains permissive so the old daemon can be stopped.
+func TestEnsureDiscoveryRejectsProtocolMismatch(t *testing.T) {
+	rec := NewRecord("127.0.0.1:1", "key", "tok")
+	info := kitdaemon.PingInfo{Version: version.Version}
+
+	require.True(t, discoverOptions(true).Accept(rec, info))
+
+	delete(rec.Metadata, metaProtocolVersion)
+	assert.False(t, discoverOptions(true).Accept(rec, info),
+		"same-version record without a protocol revision must be replaced")
+	assert.True(t, discoverOptions(false).Accept(rec, info),
+		"status/stop discovery must still see incompatible daemons")
+
+	rec.Metadata[metaProtocolVersion] = "0"
+	assert.False(t, discoverOptions(true).Accept(rec, info),
+		"same-version record with a mismatched protocol revision must be replaced")
+}

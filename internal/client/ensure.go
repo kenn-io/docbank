@@ -35,12 +35,13 @@ func discoverOptions(requireVersion bool) kitdaemon.DiscoverOptions {
 			if !requireVersion {
 				return true
 			}
-			// A record without a published API key is a daemon from before
-			// keys were mandatory. Version strings can't tell dev builds
-			// apart, so treat it like a version mismatch: reject it here and
-			// Ensure's replace path stops it and starts a keyed daemon —
-			// never hand out an unauthenticated (or 401-doomed) client.
-			return info.Version == version.Version && rec.Metadata[metaAPIKey] != ""
+			// Version strings cannot distinguish incompatible dev builds. The
+			// runtime protocol revision covers the HTTP/runtime-record contract,
+			// while the key check also rejects pre-key daemons. Ensure replaces
+			// any incompatible daemon before handing a client to a data command.
+			return info.Version == version.Version &&
+				rec.Metadata[metaProtocolVersion] == daemonProtocolVersion &&
+				rec.Metadata[metaAPIKey] != ""
 		},
 	}
 }
@@ -77,8 +78,9 @@ func WithLaunchLock(ctx context.Context, root string, fn func() error) error {
 	return fn()
 }
 
-// Ensure returns a client for a version-matched daemon, starting (and if
-// needed, replacing a version-mismatched) one. CLI commands call this.
+// Ensure returns a client for a version- and protocol-matched daemon,
+// starting (and if needed, replacing an incompatible) one. CLI commands call
+// this.
 func Ensure(ctx context.Context) (*Client, error) {
 	layout, err := home.Resolve()
 	if err != nil {
@@ -94,12 +96,12 @@ func Ensure(ctx context.Context) (*Client, error) {
 	return newClientFor(res.Record), nil
 }
 
-// EnsureDaemon converges the vault on exactly one version-matched daemon:
-// it returns the running daemon when its version matches this binary, and
-// otherwise — under the launch lock — stops any mismatched (or pre-key)
-// daemon and starts a fresh one. `daemon start`, `daemon restart`, and the
-// data commands' auto-start all share this path, so there is a single
-// replacement policy and no command ever leaves a stale daemon behind.
+// EnsureDaemon converges the vault on exactly one version- and
+// protocol-matched daemon: it returns the running daemon when it is compatible
+// with this binary, and otherwise — under the launch lock — stops it and starts
+// a fresh one. `daemon start`, `daemon restart`, and the data commands'
+// auto-start all share this path, so there is a single replacement policy and
+// no command ever leaves a stale daemon behind.
 func EnsureDaemon(ctx context.Context, root string) (EnsureResult, error) {
 	var res EnsureResult
 	rec, _, ok, err := kitdaemon.Discover(ctx, RuntimeStore(root), discoverOptions(true))
@@ -122,14 +124,14 @@ func EnsureDaemon(ctx context.Context, root string) (EnsureResult, error) {
 			return nil
 		}
 
-		// A live daemon with the wrong version blocks the vault lock: replace it.
+		// Any live incompatible daemon blocks the vault lock: replace it.
 		old, _, found, findErr := Find(ctx, root)
 		if findErr != nil {
 			return findErr
 		}
 		if found {
 			if err := stopRecord(ctx, old); err != nil {
-				return fmt.Errorf("stopping version-mismatched daemon (pid %d, %s): %w",
+				return fmt.Errorf("stopping incompatible daemon (pid %d, %s): %w",
 					old.PID, old.Version, err)
 			}
 			res.Replaced = &old

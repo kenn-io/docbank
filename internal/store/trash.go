@@ -233,34 +233,44 @@ func (s *Store) TrashedRoots(ctx context.Context) ([]Node, error) {
 	return roots, nil
 }
 
-// EmptyTrash hard-deletes trash roots older than the cutoff (all of them
-// when olderThan is zero). Subtrees go with them via ON DELETE CASCADE.
-// Returns the number of trash roots deleted.
-func (s *Store) EmptyTrash(ctx context.Context, olderThan time.Duration) (int64, error) {
-	var deleted int64
+// TrashEmptyResult reports one trash-empty dry run or execution.
+type TrashEmptyResult struct {
+	Candidates int64
+	Deleted    int64
+	Run        bool
+}
+
+// TrashEmpty reports trash roots older than the cutoff and, when run is true,
+// hard-deletes them. A zero age selects every trash root, including any with
+// a future timestamp caused by clock skew. Subtrees follow via ON DELETE
+// CASCADE.
+func (s *Store) TrashEmpty(ctx context.Context, olderThan time.Duration, run bool) (TrashEmptyResult, error) {
+	rep := TrashEmptyResult{Run: run}
+	where := `trash_name IS NOT NULL`
+	var args []any
+	if olderThan > 0 {
+		where += ` AND trashed_at <= ?`
+		args = append(args, time.Now().UTC().Add(-olderThan).Format(timestampLayout))
+	}
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		var res sql.Result
-		var err error
-		if olderThan == 0 {
-			// No timestamp predicate at all: a future-dated trashed_at
-			// (clock skew) must not survive an explicit empty-everything.
-			res, err = tx.Exec(`DELETE FROM nodes WHERE trash_name IS NOT NULL`)
-		} else {
-			cutoff := time.Now().UTC().Add(-olderThan).Format(timestampLayout)
-			res, err = tx.Exec(
-				`DELETE FROM nodes WHERE trash_name IS NOT NULL AND trashed_at <= ?`, cutoff)
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM nodes WHERE `+where, args...).Scan(&rep.Candidates); err != nil {
+			return fmt.Errorf("counting trash-empty candidates: %w", err)
 		}
+		if !run {
+			return nil
+		}
+		res, err := tx.Exec(`DELETE FROM nodes WHERE `+where, args...)
 		if err != nil {
 			return fmt.Errorf("emptying trash: %w", err)
 		}
-		deleted, err = res.RowsAffected()
+		rep.Deleted, err = res.RowsAffected()
 		if err != nil {
 			return fmt.Errorf("emptying trash: %w", err)
 		}
 		return nil
 	})
 	if err != nil {
-		return 0, err
+		return TrashEmptyResult{}, err
 	}
-	return deleted, nil
+	return rep, nil
 }

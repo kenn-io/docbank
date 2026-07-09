@@ -131,11 +131,7 @@ func registerReadRoutes(api huma.API, d Deps) {
 		}}, nil
 	})
 
-	type searchOutput struct {
-		Body struct {
-			Hits []SearchHit `json:"hits"`
-		}
-	}
+	type searchOutput struct{ Body SearchReport }
 	huma.Register(api, huma.Operation{
 		OperationID: "search", Method: http.MethodGet, Path: "/api/v1/search",
 		Summary: "Full-text search over node names, best rank first",
@@ -143,12 +139,11 @@ func registerReadRoutes(api huma.API, d Deps) {
 		Q     string `query:"q" required:"true"`
 		Limit int    `query:"limit" default:"50" minimum:"1" maximum:"1000"`
 	}) (*searchOutput, error) {
-		hits, err := d.Store.Search(ctx, in.Q, in.Limit)
+		hits, truncated, err := d.Store.SearchPage(ctx, in.Q, in.Limit)
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		out := &searchOutput{}
-		out.Body.Hits = []SearchHit{}
+		out := &searchOutput{Body: SearchReport{Hits: []SearchHit{}, Limit: in.Limit, Truncated: truncated}}
 		for _, h := range hits {
 			out.Body.Hits = append(out.Body.Hits, SearchHit{Node: fromStoreNode(h.Node), Path: h.Path})
 		}
