@@ -7,24 +7,32 @@ description: The virtual tree over content-addressed storage, and how the compon
 
 docbank separates **what a document is** from **where it lives and what
 it's called**. Bytes go into an immutable content-addressed store;
-identity, naming, hierarchy, versions, and history live in SQLite. Every
-higher layer — CLI today; daemon, HTTP API, and TUI later — goes through
-the same store package, so no surface has privileged operations.
+identity, naming, hierarchy, versions, and history live in SQLite. One
+process — the [daemon](daemon.md) — owns both, and every consumer (the
+CLI today; agents; the TUI and a real web frontend later) goes through
+its [HTTP API](http-api.md), so no surface has privileged operations.
 
 ```mermaid
 flowchart TD
-    CLI["CLI (Phase 1)"] --> STORE
-    API["HTTP API (Phase 2)"] --> STORE
-    TUI["TUI (Phase 3)"] --> STORE
+    CLI["CLI (HTTP client)"]
+    AGENTS["Agents (HTTP clients)"]
+    TUI["TUI (Phase 3)"]
+    subgraph daemon ["docbank serve"]
+        API["HTTP API: /api/v1"]
+        INGEST["ingest pipeline"]
+    end
     subgraph vault ["~/.docbank"]
         STORE["store: SQLite virtual tree<br/>nodes · versions · provenance · FTS"]
         BLOBS["blob store: blobs/&lt;aa&gt;/&lt;sha256&gt;<br/>immutable, deduplicated"]
     end
-    STORE -. "references by hash" .-> BLOBS
-    INGEST["ingest pipeline"] --> STORE
-    INGEST --> BLOBS
-    CLI --> INGEST
+    CLI --> API
+    AGENTS --> API
+    TUI -.-> API
+    API --> STORE
     API --> INGEST
+    INGEST --> STORE
+    INGEST --> BLOBS
+    STORE -. "references by hash" .-> BLOBS
 ```
 
 ## The two-layer split
@@ -69,15 +77,26 @@ the same durability rules, and the same backup engine from
 
 - **`internal/store`** — SQLite schema and every tree operation. Typed
   sentinel errors (`ErrNotFound`, `ErrExists`, `ErrCycle`, …) that the
-  CLI prints and the future API maps to HTTP status codes.
+  API maps to HTTP status codes and machine-readable error codes, and
+  the client maps back so CLI error messages stay typed end to end.
 - **`internal/blob`** — content-addressed file store with the fsync
   discipline; knows nothing about the tree.
 - **`internal/ingest`** — the single import pipeline all entry points
-  share (CLI now; watcher and HTTP upload later): hash → durable blob →
-  one metadata transaction per file.
-- **`internal/home`** — vault directory layout and the inter-process
-  advisory lock ([Concurrency & Locking](locking.md)).
-- **`cmd/docbank`** — thin cobra commands; no business logic.
+  share: hash → durable blob → one metadata transaction per file. The
+  daemon is its caller today (`POST /ingest`, backing `docbank add`);
+  the watched-inbox watcher and multipart upload join later.
+- **`internal/home`** — vault directory layout and the vault lock the
+  daemon holds exclusively ([Concurrency & Locking](locking.md)).
+- **`internal/config`** — optional `config.toml` loading and the
+  bind/key validation ([Configuration](../configuration.md)).
+- **`internal/api`** — the huma v2 HTTP surface: routes, middleware,
+  auth, the maintenance gate ([HTTP API](http-api.md)).
+- **`internal/client`** — the typed HTTP client plus daemon
+  discovery/auto-start ([Daemon](daemon.md)); shares request/response
+  types with `internal/api`.
+- **`cmd/docbank`** — thin cobra commands; no business logic. Data
+  commands are `internal/client` calls; `serve` is the one command that
+  opens the store and blob directory, because it *is* the daemon.
 
 ## Build phases
 
@@ -87,7 +106,9 @@ Each phase ships independently useful software; the
 0. **Extraction** — msgvault's pack/backup engine generalized into
    `go.kenn.io/kit` (shared with docbank). Done, pending final merge.
 1. **Core** — store, ingest, full CLI. **Implemented.**
-2. **Daemon + API** — `serve`, HTTP API, watched inboxes, text
-   extraction, editing commands.
-3. **TUI** — Bubble Tea file browser over the same store.
+2. **2a: Infrastructure** — `serve` daemon, HTTP API, daemon-first CLI,
+   self-update, release pipeline. **Implemented.**
+   **2b: Features** — versioned editing, tags, watched inboxes, text
+   extraction. Designed.
+3. **TUI** — Bubble Tea file browser, another client of the same API.
 4. **Backup** — the kit backup engine wired to docbank's schema.

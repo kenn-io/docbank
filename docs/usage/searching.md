@@ -35,10 +35,10 @@ Phase 1 indexes **node names** only. That already covers the common
 "where did I file that" lookup, since document filenames tend to carry
 their subject.
 
-!!! info "Planned — Phase 2"
+!!! info "Planned — Phase 2b"
     Text extraction workers add document **contents** to the same index:
     PDF text layers, plain text/markdown, and office formats, extracted
     once per unique blob and per extractor version. Search gains filters
-    (tag, MIME type, date, path prefix) alongside the HTTP `/search`
-    endpoint. Because extraction is keyed by content hash, renaming or
-    moving files never triggers re-extraction.
+    (tag, MIME type, date, path prefix) in both the CLI and the HTTP
+    `/search` endpoint. Because extraction is keyed by content hash,
+    renaming or moving files never triggers re-extraction.

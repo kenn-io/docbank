@@ -61,7 +61,7 @@ provenance     (node_id, ingest_id, original_path, original_mtime)
 tags           (id, name UNIQUE)          -- schema present; surfaces later
 node_tags      (node_id, tag_id)
 extracted_text (blob_hash, extractor, extractor_version, status,
-                error, attempts, text, extracted_at)      -- Phase 2 workers
+                error, attempts, text, extracted_at)      -- Phase 2b workers
 nodes_fts      -- FTS5 external-content index over live node names
 ```
 

@@ -80,9 +80,10 @@ Import never deletes or modifies source files. Delete originals yourself
 once `docbank verify` and your own spot-checks satisfy you — the same
 archive-first, delete-later posture msgvault takes with mailboxes.
 
-!!! info "Planned — Phase 2"
+!!! info "Planned — Phase 2b"
     **Watched inboxes**: the daemon will watch configured directories
     (scanner output, a "To File" folder) and import files automatically
     once they've been stable for a settle period, landing under
-    `/inbox/<date>/` for later filing. **HTTP upload** arrives with the
-    [HTTP API](../architecture/http-api.md).
+    `/inbox/<date>/` for later filing. **Multipart upload** joins the
+    [HTTP API](../architecture/http-api.md) as the remote counterpart
+    to today's loopback-only, server-side-path `POST /ingest`.
