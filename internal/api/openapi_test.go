@@ -21,3 +21,15 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 	}
 	assert.NotContains(t, doc, "/api/daemon/shutdown", "lifecycle plumbing must stay hidden")
 }
+
+func TestOpenAPIDeclaresSecurity(t *testing.T) {
+	// Generated clients must learn from the document alone that every
+	// operation needs credentials (X-Api-Key header or bearer token).
+	out, err := api.OpenAPIYAML()
+	require.NoError(t, err)
+	doc := string(out)
+	assert.Contains(t, doc, "securitySchemes")
+	assert.Contains(t, doc, "X-Api-Key")
+	assert.Contains(t, doc, "scheme: bearer")
+	assert.Contains(t, doc, "security:", "document-level security requirement missing")
+}

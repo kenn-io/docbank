@@ -103,6 +103,9 @@ func TestMovePathAndTrashPath(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &trashed))
 	assert.Equal(t, moved.ID, trashed.ID)
 	assert.NotEmpty(t, trashed.TrashedAt)
+	// Pre-trash location, not the post-trash "/a.txt" the store's
+	// root-re-parenting would yield.
+	assert.Equal(t, "/filed/a.txt", trashed.Path)
 
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/path/move", nil,
 		map[string]any{"src_path": "relative", "dest_path": "/x"})
@@ -112,7 +115,11 @@ func TestMovePathAndTrashPath(t *testing.T) {
 
 func TestTrashAndRestoreRoundTripHTTP(t *testing.T) {
 	ts, s := newTestServer(t, nil)
+	_, err := s.Mkdir(t.Context(), s.RootID(), "inbox")
+	require.NoError(t, err)
 	f := createFileWithContent(t, ts, s, "/doc.txt", "x")
+	_, err = s.MovePath(t.Context(), "/doc.txt", "/inbox")
+	require.NoError(t, err)
 
 	_, etag := etagOf(t, ts, f.ID)
 	resp, body := do(t, ts, http.MethodPost, fmt.Sprintf("/api/v1/nodes/%d/trash", f.ID),
@@ -121,6 +128,9 @@ func TestTrashAndRestoreRoundTripHTTP(t *testing.T) {
 	var n api.Node
 	require.NoError(t, json.Unmarshal([]byte(body), &n))
 	assert.NotEmpty(t, n.TrashedAt)
+	// Pre-trash location: the store re-parents trash roots to the vault
+	// root, which would misreport this as "/doc.txt".
+	assert.Equal(t, "/inbox/doc.txt", n.Path)
 
 	_, etag = etagOf(t, ts, f.ID)
 	resp, body = do(t, ts, http.MethodPost, fmt.Sprintf("/api/v1/nodes/%d/restore", f.ID),
@@ -132,5 +142,5 @@ func TestTrashAndRestoreRoundTripHTTP(t *testing.T) {
 	var restored api.Node
 	require.NoError(t, json.Unmarshal([]byte(body), &restored))
 	assert.Empty(t, restored.TrashedAt)
-	assert.Equal(t, "/doc.txt", restored.Path)
+	assert.Equal(t, "/inbox/doc.txt", restored.Path)
 }

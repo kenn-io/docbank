@@ -144,6 +144,8 @@ func registerMutateRoutes(api huma.API, d Deps, g *gate) {
 	huma.Register(api, huma.Operation{
 		OperationID: "trashNode", Method: http.MethodPost, Path: "/api/v1/nodes/{id}/trash",
 		Summary: "Move a node and its subtree to the trash",
+		Description: "The response's `path` is the node's pre-trash location " +
+			"(where a restore would return it), not a resolvable live path.",
 	}, func(ctx context.Context, in *struct {
 		ID      int64  `path:"id"`
 		IfMatch string `header:"If-Match"`
@@ -154,12 +156,21 @@ func registerMutateRoutes(api huma.API, d Deps, g *gate) {
 		}
 		var out *nodeOutput
 		err = g.mutate(func() error {
+			// Capture the path before trashing: Trash re-parents the trash
+			// root to the vault root, so computing it afterwards would
+			// render /inbox/a.txt as a misleading (possibly colliding)
+			// /a.txt. The gate serializes mutations, so nothing can move
+			// the node between these calls.
+			p, err := d.Store.Path(ctx, in.ID)
+			if err != nil {
+				return FromStoreError(err)
+			}
 			n, err := d.Store.Trash(ctx, in.ID, rev)
 			if err != nil {
 				return FromStoreError(err)
 			}
-			out, err = nodeWithPath(ctx, d, n.ID)
-			return err
+			out = nodeOutputAt(n, p)
+			return nil
 		})
 		return out, err
 	})
@@ -169,7 +180,9 @@ func registerMutateRoutes(api huma.API, d Deps, g *gate) {
 		Summary: "Move a virtual path and its subtree to the trash in one transaction",
 		Description: "CLI-oriented path mutation: the path is resolved inside " +
 			"the daemon/store transaction so ancestor moves cannot redirect a " +
-			"separately resolved node id.",
+			"separately resolved node id. The response's `path` is the node's " +
+			"pre-trash location (where a restore would return it), not a " +
+			"resolvable live path.",
 	}, func(ctx context.Context, in *struct {
 		Body struct {
 			Path string `json:"path" minLength:"1" example:"/inbox/a.pdf"`
@@ -181,12 +194,24 @@ func registerMutateRoutes(api huma.API, d Deps, g *gate) {
 		}
 		var out *nodeOutput
 		err := g.mutate(func() error {
+			// Capture the canonical pre-trash path first (see trashNode):
+			// post-trash re-parenting makes it uncomputable afterwards, and
+			// the request path may be non-normalized. Safe outside
+			// TrashPath's transaction because the gate serializes mutations.
+			pre, err := d.Store.NodeByPath(ctx, in.Body.Path)
+			if err != nil {
+				return FromStoreError(err)
+			}
+			p, err := d.Store.Path(ctx, pre.ID)
+			if err != nil {
+				return FromStoreError(err)
+			}
 			n, err := d.Store.TrashPath(ctx, in.Body.Path)
 			if err != nil {
 				return FromStoreError(err)
 			}
-			out, err = nodeWithPath(ctx, d, n.ID)
-			return err
+			out = nodeOutputAt(n, p)
+			return nil
 		})
 		return out, err
 	})

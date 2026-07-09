@@ -49,7 +49,12 @@ Key assumptions reviewers MUST account for:
    0700 directory. An attacker with access to them already has the
    user's privileges; do not flag TOCTOU or permission races on
    vault-local paths. POST /ingest reads server-side local paths and
-   is loopback-fenced per request by design.
+   is loopback-fenced per request by design. Reaching that loopback
+   listener remotely (the documented SSH tunnel) requires an SSH
+   account on the daemon host, which already grants filesystem access
+   exceeding anything ingest exposes — do not flag tunneled loopback
+   as an ingest capability bypass; there is no principal with the API
+   key and tunnel access but without shell.
 
 8. SINGLE-USER SCALE: do not flag O(n) scans, in-memory pagination, or
    missing batching at personal-archive scale unless the code path is

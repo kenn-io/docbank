@@ -9,11 +9,22 @@ import (
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
+
+	"go.kenn.io/docbank/internal/store"
 )
 
 type nodeOutput struct {
 	ETag string `header:"ETag"`
 	Body Node
+}
+
+// nodeOutputAt builds the single-node response with a caller-supplied
+// display path (used where the store-computed path would mislead, e.g.
+// trash responses reporting the pre-trash location).
+func nodeOutputAt(n store.Node, path string) *nodeOutput {
+	body := fromStoreNode(n)
+	body.Path = path
+	return &nodeOutput{ETag: fmt.Sprintf("%q", strconv.FormatInt(n.Revision, 10)), Body: body}
 }
 
 // nodeWithPath loads the node's display path and builds the single-node
@@ -27,9 +38,7 @@ func nodeWithPath(ctx context.Context, d Deps, id int64) (*nodeOutput, error) {
 	if err != nil {
 		return nil, FromStoreError(err)
 	}
-	body := fromStoreNode(n)
-	body.Path = p
-	return &nodeOutput{ETag: fmt.Sprintf("%q", strconv.FormatInt(n.Revision, 10)), Body: body}, nil
+	return nodeOutputAt(n, p), nil
 }
 
 func registerReadRoutes(api huma.API, d Deps) {

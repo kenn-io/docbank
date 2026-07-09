@@ -60,7 +60,19 @@ func NewServer(d Deps) *Server {
 	}
 
 	mux := http.NewServeMux()
-	humaAPI := humago.New(mux, huma.DefaultConfig("docbank", version.Version))
+	cfg := huma.DefaultConfig("docbank", version.Version)
+	// Every /api/v1 operation sits behind authMiddleware; the document-level
+	// security requirement tells generated clients that credentials are
+	// mandatory (either header form works, see the middleware).
+	cfg.Components.SecuritySchemes = map[string]*huma.SecurityScheme{
+		"apiKey": {Type: "apiKey", In: "header", Name: "X-Api-Key",
+			Description: "The daemon's API key: configured `api_key`, or the " +
+				"ephemeral per-run key published in the runtime record."},
+		"bearer": {Type: "http", Scheme: "bearer",
+			Description: "The same API key as a bearer token."},
+	}
+	cfg.Security = []map[string][]string{{"apiKey": {}}, {"bearer": {}}}
+	humaAPI := humago.New(mux, cfg)
 	s := &Server{deps: d, api: humaAPI}
 	g := &gate{}
 
