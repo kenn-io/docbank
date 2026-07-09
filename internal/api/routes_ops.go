@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -34,10 +35,20 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 					fmt.Sprintf("path %q must be absolute: the daemon has no meaningful working directory", p))
 			}
 		}
+		// The schema default covers an absent dest, not an explicit ""
+		// (which MkdirAll would treat as the vault root).
+		dest := in.Body.Dest
+		if dest == "" {
+			dest = "/inbox"
+		}
+		if !strings.HasPrefix(dest, "/") {
+			return nil, NewError(http.StatusUnprocessableEntity, "validation",
+				fmt.Sprintf("dest %q must be an absolute virtual path (start with /)", dest))
+		}
 		out := &ingestOutput{}
 		err := g.mutate(func() error {
 			ing := &ingest.Ingester{Store: d.Store, Blobs: d.Blobs}
-			rep, err := ing.AddPaths(ctx, in.Body.Paths, in.Body.Dest)
+			rep, err := ing.AddPaths(ctx, in.Body.Paths, dest)
 			if err != nil {
 				return FromStoreError(err)
 			}

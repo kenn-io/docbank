@@ -44,6 +44,23 @@ func TestIngestEndpoint(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, json.Unmarshal([]byte(body), &rep))
 	assert.Len(t, rep.Failed, 1)
+
+	// A relative dest is rejected, not silently rooted at /.
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/ingest", nil,
+		map[string]any{"paths": []string{filepath.Join(src, "a.txt")}, "dest": "inbox"})
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+	assert.Contains(t, body, `"code":"validation"`)
+
+	// An explicit empty dest gets the same /inbox default as an absent one
+	// (the schema default only covers absence) — never the vault root.
+	require.NoError(t, os.WriteFile(filepath.Join(src, "b.txt"), []byte("empty dest"), 0o600))
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/ingest", nil,
+		map[string]any{"paths": []string{filepath.Join(src, "b.txt")}, "dest": ""})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &rep))
+	assert.Equal(t, 1, rep.Added)
+	resp, body = do(t, ts, http.MethodGet, "/api/v1/path?path=/inbox/b.txt", nil, nil)
+	assert.Equal(t, http.StatusOK, resp.StatusCode, body)
 }
 
 func TestIngestRejectsNonLoopback(t *testing.T) {
