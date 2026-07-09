@@ -12,12 +12,16 @@ import (
 // rows share one trashed_at stamp; only the top node records its original
 // location for restore. Unless ifRev is UnconditionalRev, the mutation
 // fails with ErrStaleRevision unless ifRev matches the node's current
-// revision. Returns the node as it stands after trashing.
-func (s *Store) Trash(ctx context.Context, id, ifRev int64) (Node, error) {
+// revision. Returns the node as it stands after trashing, plus its
+// pre-trash path — computed inside the same transaction, because trashing
+// re-parents the node (making the path uncomputable afterwards) and a
+// concurrent ancestor move could stale a path captured beforehand.
+func (s *Store) Trash(ctx context.Context, id, ifRev int64) (Node, string, error) {
 	if id == s.rootID {
-		return Node{}, ErrIsRoot
+		return Node{}, "", ErrIsRoot
 	}
 	var trashed Node
+	var origPath string
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		n, err := nodeByIDTx(tx, id)
 		if err != nil {
@@ -30,6 +34,9 @@ func (s *Store) Trash(ctx context.Context, id, ifRev int64) (Node, error) {
 			return fmt.Errorf("node %d at revision %d, expected %d: %w",
 				id, n.Revision, ifRev, ErrStaleRevision)
 		}
+		if origPath, err = pathOf(ctx, tx, id); err != nil {
+			return err
+		}
 		if err := s.trashNodeTx(tx, n); err != nil {
 			return err
 		}
@@ -37,16 +44,18 @@ func (s *Store) Trash(ctx context.Context, id, ifRev int64) (Node, error) {
 		return err
 	})
 	if err != nil {
-		return Node{}, err
+		return Node{}, "", err
 	}
-	return trashed, nil
+	return trashed, origPath, nil
 }
 
 // TrashPath resolves path and trashes the node inside one transaction, so a
 // concurrent move cannot relocate the node or an ancestor between resolution
-// and mutation. Returns the node that was trashed.
-func (s *Store) TrashPath(ctx context.Context, path string) (Node, error) {
+// and mutation. Returns the node that was trashed and its canonical
+// pre-trash path (see Trash).
+func (s *Store) TrashPath(ctx context.Context, path string) (Node, string, error) {
 	var trashed Node
+	var origPath string
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		n, err := nodeByPath(ctx, tx, s.rootID, path)
 		if err != nil {
@@ -55,6 +64,9 @@ func (s *Store) TrashPath(ctx context.Context, path string) (Node, error) {
 		if n.ID == s.rootID {
 			return ErrIsRoot
 		}
+		if origPath, err = pathOf(ctx, tx, n.ID); err != nil {
+			return err
+		}
 		if err := s.trashNodeTx(tx, n); err != nil {
 			return err
 		}
@@ -62,9 +74,9 @@ func (s *Store) TrashPath(ctx context.Context, path string) (Node, error) {
 		return err
 	})
 	if err != nil {
-		return Node{}, err
+		return Node{}, "", err
 	}
-	return trashed, nil
+	return trashed, origPath, nil
 }
 
 // trashNodeTx trashes a live node n (pre-checked by the caller) and its live

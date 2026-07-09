@@ -17,7 +17,7 @@ func TestSearchFindsLiveNodesOnly(t *testing.T) {
 	require.NoError(t, err)
 	trashed, err := s.CreateFile(ctx, docs.ID, "tax-return-2019.pdf", fakeHash("b2"), 1, "application/pdf")
 	require.NoError(t, err)
-	_, err = s.Trash(ctx, trashed.ID, -1)
+	_, _, err = s.Trash(ctx, trashed.ID, -1)
 	require.NoError(t, err)
 
 	hits, err := s.Search(ctx, "tax", 0)

@@ -156,20 +156,17 @@ func registerMutateRoutes(api huma.API, d Deps, g *gate) {
 		}
 		var out *nodeOutput
 		err = g.mutate(func() error {
-			// Capture the path before trashing: Trash re-parents the trash
-			// root to the vault root, so computing it afterwards would
-			// render /inbox/a.txt as a misleading (possibly colliding)
-			// /a.txt. The gate serializes mutations, so nothing can move
-			// the node between these calls.
-			p, err := d.Store.Path(ctx, in.ID)
+			// The store computes the pre-trash path inside the trash
+			// transaction: afterwards the trash root is re-parented (the
+			// path would misleadingly render as a live-looking "/<name>"),
+			// and capturing it in a separate call before would race
+			// concurrent ancestor moves — mutate() is the gate's shared
+			// side, so ordinary mutations run concurrently.
+			n, origPath, err := d.Store.Trash(ctx, in.ID, rev)
 			if err != nil {
 				return FromStoreError(err)
 			}
-			n, err := d.Store.Trash(ctx, in.ID, rev)
-			if err != nil {
-				return FromStoreError(err)
-			}
-			out = nodeOutputAt(n, p)
+			out = nodeOutputAt(n, origPath)
 			return nil
 		})
 		return out, err
@@ -194,23 +191,14 @@ func registerMutateRoutes(api huma.API, d Deps, g *gate) {
 		}
 		var out *nodeOutput
 		err := g.mutate(func() error {
-			// Capture the canonical pre-trash path first (see trashNode):
-			// post-trash re-parenting makes it uncomputable afterwards, and
-			// the request path may be non-normalized. Safe outside
-			// TrashPath's transaction because the gate serializes mutations.
-			pre, err := d.Store.NodeByPath(ctx, in.Body.Path)
+			// The canonical pre-trash path comes from inside the trash
+			// transaction (see trashNode); the request path may be
+			// non-normalized.
+			n, origPath, err := d.Store.TrashPath(ctx, in.Body.Path)
 			if err != nil {
 				return FromStoreError(err)
 			}
-			p, err := d.Store.Path(ctx, pre.ID)
-			if err != nil {
-				return FromStoreError(err)
-			}
-			n, err := d.Store.TrashPath(ctx, in.Body.Path)
-			if err != nil {
-				return FromStoreError(err)
-			}
-			out = nodeOutputAt(n, p)
+			out = nodeOutputAt(n, origPath)
 			return nil
 		})
 		return out, err

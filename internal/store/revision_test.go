@@ -17,7 +17,7 @@ func TestStaleRevisionRejected(t *testing.T) {
 
 	_, err = s.Move(ctx, f.ID, d.ID, "f.txt", f.Revision+1)
 	require.ErrorIs(t, err, ErrStaleRevision)
-	_, err = s.Trash(ctx, f.ID, f.Revision+1)
+	_, _, err = s.Trash(ctx, f.ID, f.Revision+1)
 	require.ErrorIs(t, err, ErrStaleRevision)
 
 	// Nothing mutated: still live at the root under its original name.
@@ -25,7 +25,7 @@ func TestStaleRevisionRejected(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, f.Revision, got.Revision)
 
-	trashed, err := s.Trash(ctx, f.ID, f.Revision)
+	trashed, _, err := s.Trash(ctx, f.ID, f.Revision)
 	require.NoError(t, err)
 	assert.NotNil(t, trashed.TrashedAt)
 	_, err = s.Restore(ctx, f.ID, trashed.Revision+1)
@@ -54,14 +54,14 @@ func TestBelowSentinelRevisionFailsStale(t *testing.T) {
 
 	_, err = s.Move(ctx, f.ID, s.RootID(), "g.txt", -2)
 	require.ErrorIs(t, err, ErrStaleRevision)
-	_, err = s.Trash(ctx, f.ID, -2)
+	_, _, err = s.Trash(ctx, f.ID, -2)
 	require.ErrorIs(t, err, ErrStaleRevision)
 
 	// Untouched: still live under its original name.
 	_, err = s.NodeByPath(ctx, "/f.txt")
 	require.NoError(t, err)
 
-	trashed, err := s.Trash(ctx, f.ID, f.Revision)
+	trashed, _, err := s.Trash(ctx, f.ID, f.Revision)
 	require.NoError(t, err)
 	_, err = s.Restore(ctx, f.ID, -2)
 	require.ErrorIs(t, err, ErrStaleRevision)

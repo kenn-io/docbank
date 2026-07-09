@@ -100,7 +100,7 @@ func TestMoveRejectsMissingOrTrashedSource(t *testing.T) {
 	// Trashed source node.
 	f, err := s.CreateFile(ctx, s.RootID(), "a.txt", fakeHash("a1"), 1, "text/plain")
 	require.NoError(t, err)
-	_, err = s.Trash(ctx, f.ID, -1)
+	_, _, err = s.Trash(ctx, f.ID, -1)
 	require.NoError(t, err)
 	_, err = s.Move(ctx, f.ID, s.RootID(), "b.txt", -1)
 	require.ErrorIs(t, err, ErrNotFound)
