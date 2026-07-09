@@ -42,7 +42,8 @@ if ! gh auth status >/dev/null 2>&1; then
     exit 1
 fi
 
-git -C "$REPO_ROOT" fetch --quiet origin main --tags
+git -C "$REPO_ROOT" fetch --quiet origin \
+    '+refs/heads/main:refs/remotes/origin/main' --tags
 
 if [[ "$(git -C "$REPO_ROOT" rev-parse HEAD)" != "$(git -C "$REPO_ROOT" rev-parse origin/main)" ]]; then
     echo "Error: local main must exactly match origin/main"
