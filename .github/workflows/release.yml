@@ -98,7 +98,7 @@ jobs:
           else
             : > release-notes.md
           fi
-          if [[ -s release-notes.md ]]; then
+          if grep -q '[^[:space:]]' release-notes.md; then
             echo "has_body=true" >> "${GITHUB_OUTPUT}"
           else
             echo "has_body=false" >> "${GITHUB_OUTPUT}"
