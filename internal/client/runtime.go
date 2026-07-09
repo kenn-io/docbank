@@ -21,6 +21,17 @@ const (
 	metaAPIKey          = "api_key"
 )
 
+// EnsureResult reports what EnsureDaemon found or did.
+type EnsureResult struct {
+	// Record is the version-matched daemon now running.
+	Record kitdaemon.RuntimeRecord
+	// Started is true when EnsureDaemon spawned a new daemon.
+	Started bool
+	// Replaced is the mismatched daemon EnsureDaemon stopped before
+	// starting Record, nil when nothing was replaced.
+	Replaced *kitdaemon.RuntimeRecord
+}
+
 // RuntimeStore returns the kit runtime-record store rooted at root.
 func RuntimeStore(root string) kitdaemon.RuntimeStore {
 	return kitdaemon.RuntimeStore{Dir: root, Prefix: "daemon"}

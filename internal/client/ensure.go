@@ -87,27 +87,43 @@ func Ensure(ctx context.Context) (*Client, error) {
 	if err := layout.Ensure(); err != nil {
 		return nil, err
 	}
-
-	rec, _, ok, err := kitdaemon.Discover(ctx, RuntimeStore(layout.Root), discoverOptions(true))
+	res, err := EnsureDaemon(ctx, layout.Root)
 	if err != nil {
-		return nil, fmt.Errorf("discovering daemon: %w", err)
+		return nil, err
+	}
+	return newClientFor(res.Record), nil
+}
+
+// EnsureDaemon converges the vault on exactly one version-matched daemon:
+// it returns the running daemon when its version matches this binary, and
+// otherwise — under the launch lock — stops any mismatched (or pre-key)
+// daemon and starts a fresh one. `daemon start`, `daemon restart`, and the
+// data commands' auto-start all share this path, so there is a single
+// replacement policy and no command ever leaves a stale daemon behind.
+func EnsureDaemon(ctx context.Context, root string) (EnsureResult, error) {
+	var res EnsureResult
+	rec, _, ok, err := kitdaemon.Discover(ctx, RuntimeStore(root), discoverOptions(true))
+	if err != nil {
+		return res, fmt.Errorf("discovering daemon: %w", err)
 	}
 	if ok {
-		return newClientFor(rec), nil
+		res.Record = rec
+		return res, nil
 	}
 
 	// Serialize racing starters; re-check under the lock.
-	err = WithLaunchLock(ctx, layout.Root, func() error {
-		rec, _, ok, err = kitdaemon.Discover(ctx, RuntimeStore(layout.Root), discoverOptions(true))
+	err = WithLaunchLock(ctx, root, func() error {
+		rec, _, ok, err = kitdaemon.Discover(ctx, RuntimeStore(root), discoverOptions(true))
 		if err != nil {
 			return fmt.Errorf("discovering daemon: %w", err)
 		}
 		if ok {
+			res.Record = rec
 			return nil
 		}
 
 		// A live daemon with the wrong version blocks the vault lock: replace it.
-		old, _, found, findErr := Find(ctx, layout.Root)
+		old, _, found, findErr := Find(ctx, root)
 		if findErr != nil {
 			return findErr
 		}
@@ -116,15 +132,14 @@ func Ensure(ctx context.Context) (*Client, error) {
 				return fmt.Errorf("stopping version-mismatched daemon (pid %d, %s): %w",
 					old.PID, old.Version, err)
 			}
+			res.Replaced = &old
 		}
 
-		rec, err = Start(ctx, layout.Root)
+		res.Record, err = Start(ctx, root)
+		res.Started = err == nil
 		return err
 	})
-	if err != nil {
-		return nil, err
-	}
-	return newClientFor(rec), nil
+	return res, err
 }
 
 // Start spawns a detached daemon and waits for a compatible ping.

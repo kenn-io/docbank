@@ -80,13 +80,15 @@ stale state:
 - **Exact version match.** Pre-1.0, there is no compatibility matrix:
   the CLI requires the daemon's version to match its own exactly. `docbank
   daemon status` and `docbank daemon stop` report *any* live daemon
-  regardless of version (they only discover, never start); the
-  auto-start path used by data commands (`client.Ensure`) requires the
-  exact match and, on a mismatch, stops the old daemon and starts a
-  fresh one — see [Auto-start](#auto-start-and-idle-shutdown) below.
-  `docbank daemon start` does **not** replace a version-mismatched
-  daemon; it reports the running instance and prints a note suggesting
-  `docbank daemon stop && docbank daemon start` to replace it manually.
+  regardless of version (they only discover, never start). Everything
+  that starts a daemon — `daemon start`, `daemon restart`, and the data
+  commands' auto-start — goes through one path (`client.EnsureDaemon`)
+  that requires the exact match and, on a mismatch, stops the old daemon
+  and starts a fresh one under the launch lock. There is deliberately no
+  way to start a daemon that leaves a stale-version daemon running: the
+  exclusive vault lock already guarantees at most one daemon per vault,
+  and the single convergence path guarantees that the one daemon is
+  current after any successful start.
 
 A `launch.lock` file in `$DOCBANK_HOME` serializes racing starters: two
 CLI invocations that both find no daemon and both try to start one

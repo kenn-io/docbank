@@ -1,18 +1,15 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/spf13/cobra"
-	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/home"
-	"go.kenn.io/docbank/internal/version"
 )
 
 var daemonCmd = &cobra.Command{
@@ -20,51 +17,29 @@ var daemonCmd = &cobra.Command{
 	Short: "Manage the docbank daemon",
 }
 
-// printAlreadyRunning reports an existing daemon, with a replacement hint
-// when its version differs from this CLI: daemon start never stops a
-// running daemon (only the data commands' auto-start path replaces on
-// mismatch).
-func printAlreadyRunning(cmd *cobra.Command, rec kitdaemon.RuntimeRecord) {
+// printEnsured reports what client.EnsureDaemon found or did.
+func printEnsured(cmd *cobra.Command, res client.EnsureResult) {
+	if res.Replaced != nil {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "replaced daemon %s (pid %d) with %s: pid %d at %s\n",
+			res.Replaced.Version, res.Replaced.PID, res.Record.Version, res.Record.PID, res.Record.Address)
+		return
+	}
+	if res.Started {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "started: pid %d at %s (%s)\n",
+			res.Record.PID, res.Record.Address, res.Record.Version)
+		return
+	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "already running: pid %d at %s (%s)\n",
-		rec.PID, rec.Address, rec.Version)
-	if rec.Version != version.Version {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-			"note: daemon version differs from this CLI (%s); `docbank daemon stop && docbank daemon start` to replace it\n",
-			version.Version)
-	}
-}
-
-// startOrFind returns the already-running daemon if discovery finds one, or
-// starts a fresh one under the launch lock (re-checking discovery inside the
-// lock so a racing starter is never duplicated). `daemon start` and `daemon
-// restart` share this path so both get the same launch-lock and
-// version-match semantics.
-func startOrFind(ctx context.Context, root string) (rec kitdaemon.RuntimeRecord, alreadyRunning bool, err error) {
-	rec, _, ok, err := client.Find(ctx, root)
-	if err != nil {
-		return kitdaemon.RuntimeRecord{}, false, err
-	}
-	if ok {
-		return rec, true, nil
-	}
-	err = client.WithLaunchLock(ctx, root, func() error {
-		rec, _, ok, err = client.Find(ctx, root)
-		if err != nil || ok {
-			return err
-		}
-		rec, err = client.Start(ctx, root)
-		return err
-	})
-	if err != nil {
-		return kitdaemon.RuntimeRecord{}, false, err
-	}
-	return rec, ok, nil
+		res.Record.PID, res.Record.Address, res.Record.Version)
 }
 
 var daemonStartCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the daemon in the background",
-	Args:  cobra.NoArgs,
+	Long: "Start a daemon for this vault in the background, replacing a running daemon " +
+		"whose version does not match this binary. Same convergence as the data commands' " +
+		"auto-start: after `daemon start` succeeds, the one running daemon is current.",
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		layout, err := home.Resolve()
 		if err != nil {
@@ -73,16 +48,11 @@ var daemonStartCmd = &cobra.Command{
 		if err := layout.Ensure(); err != nil {
 			return err
 		}
-		rec, alreadyRunning, err := startOrFind(cmd.Context(), layout.Root)
+		res, err := client.EnsureDaemon(cmd.Context(), layout.Root)
 		if err != nil {
 			return err
 		}
-		if alreadyRunning {
-			printAlreadyRunning(cmd, rec)
-			return nil
-		}
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "started: pid %d at %s (%s)\n",
-			rec.PID, rec.Address, rec.Version)
+		printEnsured(cmd, res)
 		return nil
 	},
 }
@@ -163,10 +133,11 @@ var daemonRestartCmd = &cobra.Command{
 		if err := layout.Ensure(); err != nil {
 			return err
 		}
-		rec, _, err := startOrFind(cmd.Context(), layout.Root)
+		res, err := client.EnsureDaemon(cmd.Context(), layout.Root)
 		if err != nil {
 			return err
 		}
+		rec := res.Record
 		if wasRunning {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "restarted: pid %d at %s (%s)\n",
 				rec.PID, rec.Address, rec.Version)

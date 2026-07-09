@@ -22,6 +22,11 @@ func Ensure(context.Context) (*Client, error) {
 	return nil, errUnsupported
 }
 
+// EnsureDaemon fails: daemon auto-start is Unix-only.
+func EnsureDaemon(context.Context, string) (EnsureResult, error) {
+	return EnsureResult{}, errUnsupported
+}
+
 // WithLaunchLock fails: daemon auto-start is Unix-only.
 func WithLaunchLock(context.Context, string, func() error) error {
 	return errUnsupported
