@@ -2,6 +2,7 @@ package update_test
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -26,25 +27,37 @@ import (
 	"go.kenn.io/docbank/internal/update"
 )
 
-// buildRelease returns a tar.gz containing a fake "docbank" binary and its
+// buildRelease returns an archive containing a fake docbank binary and its
 // sha256, using kit's DefaultAssetName so naming matches production. The
 // asset targets the test's own runtime.GOOS/GOARCH: Options exposes no
 // CheckOptions override, so Check() always resolves the platform from
 // runtime.GOOS/GOARCH, and the fake asset must match whatever machine runs
-// the test.
+// the test — including kit's platform conventions of a .zip archive and a
+// "docbank.exe" entry on Windows (tar.gz + "docbank" everywhere else).
 func buildRelease(t *testing.T, version string) (assetName string, archive []byte, sum string) {
 	t.Helper()
 	content := []byte("#!/bin/sh\necho docbank " + version + "\n")
 	var buf bytes.Buffer
-	gz := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(gz)
-	require.NoError(t, tw.WriteHeader(&tar.Header{Name: "docbank", Mode: 0o755, Size: int64(len(content))}))
-	_, err := tw.Write(content)
-	require.NoError(t, err)
-	require.NoError(t, tw.Close())
-	require.NoError(t, gz.Close())
+	ext := ".tar.gz"
+	if runtime.GOOS == "windows" {
+		ext = ".zip"
+		zw := zip.NewWriter(&buf)
+		f, err := zw.Create("docbank.exe")
+		require.NoError(t, err)
+		_, err = f.Write(content)
+		require.NoError(t, err)
+		require.NoError(t, zw.Close())
+	} else {
+		gz := gzip.NewWriter(&buf)
+		tw := tar.NewWriter(gz)
+		require.NoError(t, tw.WriteHeader(&tar.Header{Name: "docbank", Mode: 0o755, Size: int64(len(content))}))
+		_, err := tw.Write(content)
+		require.NoError(t, err)
+		require.NoError(t, tw.Close())
+		require.NoError(t, gz.Close())
+	}
 	name := selfupdate.DefaultAssetName(selfupdate.AssetRequest{
-		BinaryName: "docbank", Version: version, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Extension: ".tar.gz",
+		BinaryName: "docbank", Version: version, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Extension: ext,
 	})
 	h := sha256.Sum256(buf.Bytes())
 	return name, buf.Bytes(), hex.EncodeToString(h[:])

@@ -120,12 +120,13 @@ upload, which is the correct remote-ingest path once it exists.
 Multipart upload itself is still planned.
 
 !!! info "Planned"
-    Ingest records no provenance today — where the bytes came from is
-    forgotten once the report returns, and the source path is consumed,
-    never stored as identity. Generic provenance fields
-    (`source_kind` / `source_ref` / `source_meta`) and node lookup by
-    content hash are planned so external applications can trace a node
-    to its origin and deduplicate against the vault; see the
+    Ingest provenance today is filesystem-shaped: each import records
+    the source's original path and mtime in the store's `provenance`
+    table (the path is a record, never identity). Generalizing it —
+    `source_kind` / `source_ref` / `source_meta` fields for non-file
+    origins — and node lookup by content hash are planned so external
+    applications can trace a node to its origin and deduplicate against
+    the vault; see the
     [roadmap](../roadmap.md#phase-2b-features-designed).
 
 ## Maintenance gate

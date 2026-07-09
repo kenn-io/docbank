@@ -69,9 +69,10 @@ marked planned appears elsewhere in these docs only under an explicit
   under `/inbox/<date>/`
 - Text extraction workers (PDF text layer, plain text/markdown, office
   formats) feeding content search
-- External integration surface: generic ingest provenance
-  (`source_kind` / `source_ref` / `source_meta`) so a node records where
-  its bytes came from — a watched inbox, another application's archive —
+- External integration surface: generalized ingest provenance —
+  today's `provenance` table records the original filesystem path and
+  mtime; `source_kind` / `source_ref` / `source_meta` fields extend it
+  to non-file origins (a watched inbox, another application's archive)
   as generic fields, never application-specific tables; and node lookup
   by content hash, so an external system of record holding
   `node_id` + hash references can ask "is this already in the vault?" in

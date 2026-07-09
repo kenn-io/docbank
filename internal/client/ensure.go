@@ -32,7 +32,15 @@ func discoverOptions(requireVersion bool) kitdaemon.DiscoverOptions {
 			if !createTimeMatches(rec) {
 				return false
 			}
-			return !requireVersion || info.Version == version.Version
+			if !requireVersion {
+				return true
+			}
+			// A record without a published API key is a daemon from before
+			// keys were mandatory. Version strings can't tell dev builds
+			// apart, so treat it like a version mismatch: reject it here and
+			// Ensure's replace path stops it and starts a keyed daemon —
+			// never hand out an unauthenticated (or 401-doomed) client.
+			return info.Version == version.Version && rec.Metadata[metaAPIKey] != ""
 		},
 	}
 }
