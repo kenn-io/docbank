@@ -26,6 +26,7 @@ nav = [
     {"Integrity & Threat Model" = "architecture/integrity.md"},
     {"Editing & Versions" = "architecture/editing-and-versions.md"},
     {"Concurrency & Locking" = "architecture/locking.md"},
+    {"Daemon" = "architecture/daemon.md"},
     {"HTTP API" = "architecture/http-api.md"},
     {"Backup" = "architecture/backup.md"},
   ]},

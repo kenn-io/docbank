@@ -14,7 +14,8 @@ marked planned appears elsewhere in these docs only under an explicit
 |-------|-------|--------|
 | 0 | Extract msgvault's pack/backup engine into `go.kenn.io/kit` | Done; final upstream merge in progress |
 | 1 | Core: store, blob store, ingest pipeline, full CLI | **Implemented** |
-| 2 | Daemon: `serve` + HTTP API, watched inboxes, text extraction, editing commands | Designed |
+| 2a | Infrastructure: daemon, HTTP API, daemon-first CLI, self-update, release pipeline | **Implemented** |
+| 2b | Features: versioned editing, tags, watched inboxes, text extraction | Designed |
 | 3 | TUI file browser | Designed |
 | 4 | Backup commands over the kit engine | Designed |
 
@@ -33,18 +34,41 @@ marked planned appears elsewhere in these docs only under an explicit
 - CLI: `add`, `ls`, `tree`, `cat`, `mv`, `rm`, `restore`, `search`,
   `trash`, `gc`, `verify`
 
-## Phase 2 — Daemon + API + Editing
+## Phase 2a — Infrastructure (implemented)
 
-- `docbank serve`: Huma v2 HTTP API with typed OpenAPI contract,
-  API-key auth, generated client ([design](architecture/http-api.md))
+- `docbank serve` (+ `start`/`status`/`stop`): a single daemon owns the
+  vault; discovery, auto-start, idle shutdown, and PID-reuse-safe
+  lifecycle on `go.kenn.io/kit` primitives ([design](architecture/daemon.md))
+- Huma v2 HTTP API under `/api/v1` implementing stat, list, content,
+  search, create-directory, ingest, move, trash/restore, trash-empty,
+  gc, and verify — the CLI's data commands are HTTP clients of this
+  surface, with no other path into the vault
+  ([design](architecture/http-api.md))
+- The vault lock becomes a single exclusive holder (the daemon) instead
+  of Phase 1's per-command shared/exclusive split; an in-daemon
+  maintenance gate replaces `gc`'s own exclusive acquisition
+  ([design](architecture/locking.md))
+- `config.toml` for the daemon's listen address, API key, idle timeout,
+  and web placeholder toggle ([design](configuration.md))
+- `docbank update`: self-update from GitHub releases via
+  `kit/selfupdate`, coordinating daemon stop/replace/restart
+- `docbank openapi`: offline OpenAPI document for agents and client
+  generation
+- Tag-driven release pipeline building signed-checksum archives for
+  Linux (amd64/arm64) and macOS (arm64)
+- A handwritten placeholder web page at `/`, naming the vault and
+  linking to `/docs`
+
+## Phase 2b — Features (designed)
+
 - Editing surfaces: `PUT` content, `docbank edit`/`put`/`revert`, and
   `versions` listing ([design](architecture/editing-and-versions.md))
+- Tags surfaced in CLI, search filters, and the API; `POST /batch/move`
+  bulk reorganization; multipart file upload
 - Watched inbox directories with a stability window, landing imports
   under `/inbox/<date>/`
 - Text extraction workers (PDF text layer, plain text/markdown, office
   formats) feeding content search
-- Tags surfaced in CLI, search filters, and the API
-- `config.toml` for daemon settings
 
 ## Phase 3 — TUI
 
