@@ -45,7 +45,7 @@ type Server struct {
 func NewServer(d Deps) *Server {
 	if d.Cfg.Server.APIKey == "" {
 		// A serving daemon always has an effective key (configured or
-		// ephemeral; see cmd/docbank/cmd/serve.go). An empty key here means
+		// ephemeral; see cmd/docbank/serve.go). An empty key here means
 		// a caller forgot to set one — the one sanctioned exception is
 		// OpenAPIYAML's offline document render, which supplies a
 		// placeholder key precisely to avoid tripping this check.

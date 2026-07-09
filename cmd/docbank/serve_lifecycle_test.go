@@ -1,6 +1,6 @@
 //go:build unix
 
-package cmd
+package main
 
 import (
 	"context"

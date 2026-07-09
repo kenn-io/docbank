@@ -90,7 +90,7 @@ func Load(root string) (Config, error) {
 // ::) is always rejected because it binds every interface including public
 // ones; an unset api_key is valid only on loopback, where the daemon
 // generates and self-publishes an ephemeral key rather than serving
-// unauthenticated (see cmd/docbank/cmd/serve.go); and any other
+// unauthenticated (see cmd/docbank/serve.go); and any other
 // non-loopback address must be non-public (kit RequireNonPublic) and carry
 // a configured api_key, since remote clients can't read the runtime record
 // an ephemeral key would be published through.
