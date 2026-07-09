@@ -15,7 +15,7 @@ marked planned appears elsewhere in these docs only under an explicit
 | 0 | Extract msgvault's pack/backup engine into `go.kenn.io/kit` | Done; final upstream merge in progress |
 | 1 | Core: store, blob store, ingest pipeline, full CLI | **Implemented** |
 | 2a | Infrastructure: daemon, HTTP API, daemon-first CLI, self-update, release pipeline | **Implemented** |
-| 2b | Features: versioned editing, tags, watched inboxes, text extraction | Designed |
+| 2b | Features: versioned editing, tags, watched inboxes, text extraction, ingest provenance | Designed |
 | 3 | TUI file browser | Designed |
 | 4 | Backup commands over the kit engine | Designed |
 
@@ -69,6 +69,16 @@ marked planned appears elsewhere in these docs only under an explicit
   under `/inbox/<date>/`
 - Text extraction workers (PDF text layer, plain text/markdown, office
   formats) feeding content search
+- External integration surface: generic ingest provenance
+  (`source_kind` / `source_ref` / `source_meta`) so a node records where
+  its bytes came from — a watched inbox, another application's archive —
+  as generic fields, never application-specific tables; and node lookup
+  by content hash, so an external system of record holding
+  `node_id` + hash references can ask "is this already in the vault?" in
+  one call. To settle before the refs schema exists: whether external
+  references pin nodes against `trash empty`/`gc`, or dangling-ref
+  detection stays the referrer's job (docbank guarantees only that node
+  ids are never reused)
 
 ## Phase 3 — TUI
 

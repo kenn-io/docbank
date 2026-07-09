@@ -118,6 +118,15 @@ non-loopback client gets `403` (`loopback_only`) pointing at multipart
 upload, which is the correct remote-ingest path once it exists.
 Multipart upload itself is still planned.
 
+!!! info "Planned"
+    Ingest records no provenance today — where the bytes came from is
+    forgotten once the report returns, and the source path is consumed,
+    never stored as identity. Generic provenance fields
+    (`source_kind` / `source_ref` / `source_meta`) and node lookup by
+    content hash are planned so external applications can trace a node
+    to its origin and deduplicate against the vault; see the
+    [roadmap](../roadmap.md#phase-2b-features-designed).
+
 ## Maintenance gate
 
 `gc --run`, `trash empty`, and `verify` need the vault quiescent while
