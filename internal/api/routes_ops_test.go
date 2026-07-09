@@ -104,11 +104,22 @@ func TestTrashListAndEmpty(t *testing.T) {
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
 		map[string]any{"older_than": ""})
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	var out struct {
-		Deleted int64 `json:"deleted"`
-	}
+	var out api.TrashEmptyReport
+	require.NoError(t, json.Unmarshal([]byte(body), &out))
+	assert.Equal(t, int64(1), out.CandidateRoots)
+	assert.Zero(t, out.Deleted)
+	assert.False(t, out.Run)
+
+	// Dry run leaves the node restorable; run performs the deletion.
+	resp, body = get(t, ts, "/api/v1/trash", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, body, "old.txt")
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
+		map[string]any{"older_than": "", "run": true})
+	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, json.Unmarshal([]byte(body), &out))
 	assert.Equal(t, int64(1), out.Deleted)
+	assert.True(t, out.Run)
 
 	// Bad age string → 422.
 	resp, _ = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
@@ -122,7 +133,7 @@ func TestGCDryRunAndRun(t *testing.T) {
 	_, etag := etagOf(t, ts, f.ID)
 	_, _ = do(t, ts, http.MethodPost, fmt.Sprintf("/api/v1/nodes/%d/trash", f.ID),
 		map[string]string{"If-Match": etag}, nil)
-	_, _ = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil, map[string]any{})
+	_, _ = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil, map[string]any{"run": true})
 
 	resp, body := do(t, ts, http.MethodPost, "/api/v1/gc", nil, map[string]any{"run": false})
 	require.Equal(t, http.StatusOK, resp.StatusCode)

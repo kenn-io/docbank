@@ -216,6 +216,23 @@ func TestSearchCLI(t *testing.T) {
 	assert.Contains(t, out, "/inbox/insurance-2026.txt")
 }
 
+func TestSearchCLIReportsTruncation(t *testing.T) {
+	setupVaultHome(t)
+	srcA := writeSourceFile(t, "report-a.txt", "alpha")
+	srcB := writeSourceFile(t, "report-b.txt", "bravo")
+	_, err := runCLI(t, "add", srcA, srcB, "--dest", "/inbox")
+	require.NoError(t, err)
+
+	out, err := runCLI(t, "search", "report", "--limit", "1")
+	require.NoError(t, err)
+	assert.Contains(t, out, "more than 1 results")
+	assert.Contains(t, out, "increase --limit")
+
+	_, err = runCLI(t, "search", "report", "--limit", "0")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "between 1 and 1000")
+}
+
 func TestTrashEmpty(t *testing.T) {
 	setupVaultHome(t)
 	src := writeSourceFile(t, "a.txt", "alpha")
@@ -225,6 +242,16 @@ func TestTrashEmpty(t *testing.T) {
 	require.NoError(t, err)
 
 	out, err := runCLI(t, "trash", "empty")
+	require.NoError(t, err)
+	assert.Contains(t, out, "1 trashed root")
+	assert.Contains(t, out, "dry run")
+
+	// Dry run leaves the node in trash.
+	out, err = runCLI(t, "trash", "list")
+	require.NoError(t, err)
+	assert.Contains(t, out, "a.txt")
+
+	out, err = runCLI(t, "trash", "empty", "--run")
 	require.NoError(t, err)
 	assert.Contains(t, out, "deleted 1")
 
@@ -275,7 +302,7 @@ func TestGcReclaimsUnreachableBlobs(t *testing.T) {
 
 	_, err = runCLI(t, "rm", "/inbox/a.txt")
 	require.NoError(t, err)
-	_, err = runCLI(t, "trash", "empty")
+	_, err = runCLI(t, "trash", "empty", "--run")
 	require.NoError(t, err)
 
 	// Dry-run reports but does not delete.

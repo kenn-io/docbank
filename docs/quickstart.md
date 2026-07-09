@@ -123,7 +123,8 @@ trashed [15] /taxes/2024/return.pdf (restore with: docbank restore 15)
 ```bash
 docbank trash list        # what's recoverable
 docbank restore 15        # put it back where it was
-docbank trash empty --older-than 30d   # permanently delete old trash
+docbank trash empty --older-than 30d         # dry run: report old trash
+docbank trash empty --older-than 30d --run   # permanently delete old trash
 ```
 
 ## Reclaim and verify

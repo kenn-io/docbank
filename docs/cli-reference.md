@@ -131,14 +131,16 @@ restored under `/`. Prints `restored [<id>] <path>`.
 ## docbank search
 
 ```
-docbank search <query>...
+docbank search <query>... [--limit <n>]
 ```
 
 Full-text search over live node names (FTS5). Every whitespace-separated
 term is matched as a prefix; FTS operator syntax in the query is escaped,
 not interpreted. Results are ranked best-first (BM25, ties broken by
-name) and capped at 50. Output columns are `ID` and `PATH`; no matches
-prints `no matches`.
+name). The default limit is 50 and `--limit` accepts 1–1000. When more
+matches exist, the command says that the result is truncated rather than
+silently implying completeness. Output columns are `ID` and `PATH`; no
+matches prints `no matches`.
 
 !!! info "Planned — Phase 2b"
     Search currently covers node names only. Extracted document text
@@ -149,18 +151,18 @@ prints `no matches`.
 
 ```
 docbank trash list
-docbank trash empty [--older-than <age>]
+docbank trash empty [--older-than <age>] [--run]
 ```
 
 `list` shows restorable trashed nodes: `ID`, `TRASHED AT`, `NAME`. Only
 trash roots are listed — trashing a directory produces one entry, and
 restoring it brings the whole subtree back.
 
-`empty` permanently deletes trashed nodes; their blobs become `gc`
-candidates unless referenced elsewhere. `--older-than` accepts Go
+`empty` reports how many trash roots are eligible but does not delete by
+default. Pass `--run` to permanently delete them; their blobs then become
+`gc` candidates unless referenced elsewhere. `--older-than` accepts Go
 durations (`12h`, `30m`) plus a day suffix (`30d`); negative ages are
-rejected. Without the flag, everything in the trash is deleted. Prints
-`deleted <n> trashed node(s)`.
+rejected. Without that filter, every trash root is eligible.
 
 ## docbank gc
 

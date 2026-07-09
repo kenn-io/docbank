@@ -34,13 +34,13 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `GET /path?path=/a/b` | stat by virtual path | Implemented |
 | `GET /nodes/{id}/children` | list a directory, paginated (`limit`/`offset`) | Implemented |
 | `GET /nodes/{id}/content` | stream document bytes | Implemented |
-| `GET /search?q=&limit=` | name search (FTS5), best rank first | Implemented |
+| `GET /search?q=&limit=` | bounded name search (FTS5), with explicit `truncated` status | Implemented |
 | `POST /nodes` | create a directory (`kind: "dir"`) | Implemented |
 | `POST /ingest` | import server-side paths — see [addendum](#addendum-post-ingest) | Implemented |
 | `PATCH /nodes/{id}` | move and/or rename | Implemented |
 | `POST /path/move` · `POST /path/trash` | move / trash by virtual path, resolved and mutated in one store transaction | Implemented |
 | `POST /nodes/{id}/trash` · `POST /nodes/{id}/restore` | soft delete / recover | Implemented |
-| `GET /trash` · `POST /trash/empty` | list / hard-delete trash roots | Implemented |
+| `GET /trash` · `POST /trash/empty` `{run, older_than}` | list / report or hard-delete trash roots | Implemented |
 | `POST /gc` `{run}` · `POST /verify` | reclaim unreachable blobs / re-hash all blobs | Implemented |
 
 Root-level, outside `/api/v1` and auth-exempt: `GET /health`, `GET

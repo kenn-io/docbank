@@ -41,11 +41,14 @@ var trashListCmd = &cobra.Command{
 	},
 }
 
-var trashOlderThan string
+var (
+	trashOlderThan string
+	trashRun       bool
+)
 
 var trashEmptyCmd = &cobra.Command{
 	Use:   "empty",
-	Short: "Permanently delete trashed nodes (their blobs become gc candidates)",
+	Short: "Report or permanently delete trashed nodes",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if _, err := api.ParseAge(trashOlderThan); err != nil {
@@ -55,18 +58,28 @@ var trashEmptyCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		n, err := c.TrashEmpty(cmd.Context(), trashOlderThan)
+		rep, err := c.TrashEmpty(cmd.Context(), trashOlderThan, trashRun)
 		if err != nil {
 			return err
 		}
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "deleted %d trashed node(s)\n", n)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%d trashed root(s) eligible for permanent deletion\n",
+			rep.CandidateRoots)
+		if !rep.Run {
+			if rep.CandidateRoots > 0 {
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "dry run — pass --run to delete")
+			}
+			return nil
+		}
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "deleted %d trashed root(s)\n", rep.Deleted)
 		return nil
 	},
 }
 
 func init() {
 	trashEmptyCmd.Flags().StringVar(&trashOlderThan, "older-than", "",
-		"only delete items trashed at least this long ago (e.g. 30d)")
+		"select only items trashed at least this long ago (e.g. 30d)")
+	trashEmptyCmd.Flags().BoolVar(&trashRun, "run", false,
+		"actually delete (default is dry-run)")
 	trashCmd.AddCommand(trashListCmd, trashEmptyCmd)
 	rootCmd.AddCommand(trashCmd)
 }

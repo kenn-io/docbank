@@ -174,14 +174,26 @@ func TestEmptyTrash(t *testing.T) {
 	require.Len(t, roots, 1)
 
 	// Nothing older than an hour.
-	n, err := s.EmptyTrash(ctx, time.Hour)
+	rep, err := s.TrashEmpty(ctx, time.Hour, false)
 	require.NoError(t, err)
-	assert.Equal(t, int64(0), n)
+	assert.Equal(t, int64(0), rep.Candidates)
+	assert.False(t, rep.Run)
 
-	// Everything.
-	n, err = s.EmptyTrash(ctx, 0)
+	// A dry run reports everything without deleting it.
+	rep, err = s.TrashEmpty(ctx, 0, false)
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), n)
+	assert.Equal(t, int64(1), rep.Candidates)
+	assert.Zero(t, rep.Deleted)
+	roots, err = s.TrashedRoots(ctx)
+	require.NoError(t, err)
+	require.Len(t, roots, 1)
+
+	// --run semantics delete exactly the reported roots.
+	rep, err = s.TrashEmpty(ctx, 0, true)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), rep.Candidates)
+	assert.Equal(t, int64(1), rep.Deleted)
+	assert.True(t, rep.Run)
 
 	// Subtree rows are gone (cascade), blob row remains (GC's job).
 	var nodeCount, blobCount int

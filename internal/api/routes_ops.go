@@ -82,17 +82,14 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 		return out, nil
 	})
 
-	type emptyOutput struct {
-		Body struct {
-			Deleted int64 `json:"deleted"`
-		}
-	}
+	type emptyOutput struct{ Body TrashEmptyReport }
 	huma.Register(api, huma.Operation{
 		OperationID: "emptyTrash", Method: http.MethodPost, Path: "/api/v1/trash/empty",
-		Summary: "Hard-delete trash roots (their blobs become gc candidates)",
+		Summary: "Report (run=false) or hard-delete (run=true) trash roots",
 	}, func(ctx context.Context, in *struct {
 		Body struct {
 			OlderThan string `json:"older_than,omitempty" example:"30d"`
+			Run       bool   `json:"run,omitempty" default:"false"`
 		}
 	}) (*emptyOutput, error) {
 		age, err := ParseAge(in.Body.OlderThan)
@@ -101,11 +98,15 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 		}
 		out := &emptyOutput{}
 		err = g.maintain(func() error {
-			n, err := d.Store.EmptyTrash(ctx, age)
+			rep, err := d.Store.TrashEmpty(ctx, age, in.Body.Run)
 			if err != nil {
 				return FromStoreError(err)
 			}
-			out.Body.Deleted = n
+			out.Body = TrashEmptyReport{
+				CandidateRoots: rep.Candidates,
+				Deleted:        rep.Deleted,
+				Run:            rep.Run,
+			}
 			return nil
 		})
 		return out, err

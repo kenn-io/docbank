@@ -103,3 +103,22 @@ func TestSearchTieBreaksByName(t *testing.T) {
 	assert.Equal(t, "tax b.pdf", hits[1].Node.Name)
 	assert.Equal(t, "tax c.pdf", hits[2].Node.Name)
 }
+
+func TestSearchPageReportsTruncation(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	for i, name := range []string{"report-a.pdf", "report-b.pdf", "report-c.pdf"} {
+		_, err := s.CreateFile(ctx, s.RootID(), name, fakeHash(string(rune('a'+i))), 1, "application/pdf")
+		require.NoError(t, err)
+	}
+
+	hits, truncated, err := s.SearchPage(ctx, "report", 2)
+	require.NoError(t, err)
+	assert.Len(t, hits, 2)
+	assert.True(t, truncated)
+
+	hits, truncated, err = s.SearchPage(ctx, "report", 3)
+	require.NoError(t, err)
+	assert.Len(t, hits, 3)
+	assert.False(t, truncated)
+}

@@ -12,7 +12,7 @@ marked planned appears elsewhere in these docs only under an explicit
 
 | Phase | Scope | Status |
 |-------|-------|--------|
-| 0 | Extract msgvault's pack/backup engine into `go.kenn.io/kit` | Done; final upstream merge in progress |
+| 0 | Extract msgvault's pack/backup engine into `go.kenn.io/kit` | **Implemented** (`kit` v0.4.0) |
 | 1 | Core: store, blob store, ingest pipeline, full CLI | **Implemented** |
 | 2a | Infrastructure: daemon, HTTP API, daemon-first CLI, self-update, release pipeline | **Implemented** |
 | 2b | Features: versioned editing, tags, watched inboxes, text extraction, ingest provenance | Designed |
@@ -55,7 +55,7 @@ marked planned appears elsewhere in these docs only under an explicit
   `kit/selfupdate`, coordinating daemon stop/replace/restart
 - `docbank openapi`: offline OpenAPI document for agents and client
   generation
-- Tag-driven release pipeline building signed-checksum archives for
+- Tag-driven release pipeline building archives plus `SHA256SUMS` for
   Linux (amd64/arm64) and macOS (arm64)
 - A handwritten placeholder web page at `/`, naming the vault and
   linking to `/docs`

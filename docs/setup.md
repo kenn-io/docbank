@@ -5,18 +5,36 @@ description: Build docbank from source and initialize the vault.
 
 # Setup
 
-docbank is pre-release: there are no binary releases yet, so you build
-from source.
+docbank is pre-1.0. Published releases provide archives for Linux amd64/arm64
+and macOS arm64; building from source remains supported on Unix-like systems.
 
 ## Requirements
 
-- Go (latest stable) with CGO enabled — the store uses
-  [mattn/go-sqlite3](https://github.com/mattn/go-sqlite3)
-- A C compiler (Xcode command-line tools on macOS, `gcc`/`clang` on Linux)
 - macOS or Linux. docbank requires a Unix-like OS: vault locking uses
   `flock(2)`, and there is no Windows port.
 
-## Build and install
+Installing a release archive needs no build toolchain. Building from source
+additionally requires:
+
+- Go 1.26 or newer with CGO enabled — the store uses
+  [mattn/go-sqlite3](https://github.com/mattn/go-sqlite3)
+- A C compiler (Xcode command-line tools on macOS, `gcc`/`clang` on Linux)
+
+## Install a release
+
+For a published release, download the archive for your platform and
+`SHA256SUMS` from the
+[GitHub Releases](https://github.com/kenn-io/docbank/releases) page. Verify
+the archive against `SHA256SUMS`, extract it, and place `docbank` somewhere
+on your `PATH` (for example, `~/.local/bin`). Release archives are named:
+
+```
+docbank_<version>_<goos>_<goarch>.tar.gz
+```
+
+Windows is not published because the vault is Unix-only.
+
+## Build and install from source
 
 ```bash
 git clone https://github.com/kenn-io/docbank.git

@@ -104,7 +104,7 @@ Each phase ships independently useful software; the
 [Roadmap](../roadmap.md) tracks status.
 
 0. **Extraction** — msgvault's pack/backup engine generalized into
-   `go.kenn.io/kit` (shared with docbank). Done, pending final merge.
+   `go.kenn.io/kit` (shared with docbank). **Implemented** in kit v0.4.0.
 1. **Core** — store, ingest, full CLI. **Implemented.**
 2. **2a: Infrastructure** — `daemon` subcommands, HTTP API, daemon-first
    CLI, self-update, release pipeline. **Implemented.**
