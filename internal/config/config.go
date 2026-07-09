@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
-	kitdaemon "go.kenn.io/kit/daemon"
 )
 
 // Duration is a time.Duration that unmarshals from a TOML string such as
@@ -86,36 +85,23 @@ func Load(root string) (Config, error) {
 	return c, nil
 }
 
-// Validate enforces the bind/key policy: an unspecified address (0.0.0.0,
-// ::) is always rejected because it binds every interface including public
-// ones; an unset api_key is valid only on loopback, where the daemon
-// generates and self-publishes an ephemeral key rather than serving
-// unauthenticated (see cmd/docbank/serve.go); and any other
-// non-loopback address must be non-public (kit RequireNonPublic) and carry
-// a configured api_key, since remote clients can't read the runtime record
-// an ephemeral key would be published through.
+// Validate enforces the bind policy: loopback only. The API is plain HTTP,
+// so any non-loopback bind — even a keyed, private-network one — would put
+// the API key and vault contents on the wire in cleartext. Remote access
+// goes through an SSH tunnel or VPN to the loopback listener until the
+// daemon grows TLS. An unset api_key stays valid: the daemon generates and
+// self-publishes an ephemeral key rather than serving unauthenticated (see
+// cmd/docbank/serve.go).
 func (c Config) Validate() error {
 	host := c.Server.BindAddr
 	if isLoopbackHost(host) {
 		return nil
 	}
-	ip := net.ParseIP(host)
-	if ip == nil {
+	if net.ParseIP(host) == nil {
 		return fmt.Errorf("[server] bind_addr %q: not an IP address or localhost", host)
 	}
-	if ip.IsUnspecified() {
-		return fmt.Errorf(
-			"[server] bind_addr %q: unspecified address binds every interface; "+
-				"use a concrete address", host)
-	}
-	if c.Server.APIKey == "" {
-		return fmt.Errorf("[server] bind_addr %q requires a non-empty api_key "+
-			"(keyless mode is loopback-only)", host)
-	}
-	if err := kitdaemon.RequireNonPublic(net.JoinHostPort(host, "0")); err != nil {
-		return fmt.Errorf("[server] bind_addr %q: %w", host, err)
-	}
-	return nil
+	return fmt.Errorf("[server] bind_addr %q: the API is plain HTTP, so binds are "+
+		"loopback-only; reach a remote docbank through an SSH tunnel or VPN", host)
 }
 
 func isLoopbackHost(host string) bool {

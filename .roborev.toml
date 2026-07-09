@@ -1,0 +1,61 @@
+review_guidelines = """
+docbank is a single-user personal document archive: a local daemon owns
+the vault (SQLite + content-addressed blobs) and the CLI, agents, and a
+future web UI are HTTP clients of its loopback API. Not designed for
+multi-user, multi-tenant, or internet-facing deployment.
+
+Key assumptions reviewers MUST account for:
+
+1. COMPILATION IS CI'S JOB. The tree is gated by `go build`, `go vet`,
+   and the full test suite with `-tags fts5` and CGO on Linux, macOS,
+   and Windows before any review runs. Do not report "this does not
+   compile" findings; if code looks syntactically impossible, verify
+   against the go.mod language version before flagging (see 2), and
+   prefer flagging logic over legality.
+
+2. GO VERSION: go.mod pins Go 1.26+. Go 1.26 added value-form `new(v)`,
+   which returns `*T` pointing to v — e.g. `new("clean")` is valid and
+   yields a `*string`. DO NOT flag value-form `new` calls as "new
+   requires a type" compile errors; that was true through 1.25 only.
+
+3. BUILD TAGS: everything builds and tests with `-tags fts5` and CGO
+   enabled (`make test`). A failure of an untagged `go build`/`go test`
+   is not a finding.
+
+4. AUTH MODEL: the daemon always enforces an API key. An empty
+   configured `api_key` means the daemon generates an ephemeral per-run
+   key at startup and publishes it through the runtime record inside
+   the 0700 $DOCBANK_HOME — readable only by the vault owner, exactly
+   like the shutdown token. Keyless config is therefore NOT
+   unauthenticated. Binds are loopback-only by validation; the API is
+   plain HTTP by design and remote access is documented as SSH
+   tunnel/VPN. Do not flag missing TLS, missing rate limiting, or
+   multi-tenant concerns. DO flag any path that would serve without an
+   effective key or accept a non-loopback bind.
+
+5. CONCURRENCY MODEL: one daemon holds the vault flock exclusively for
+   its lifetime; gc/verify/trash-empty serialize against mutations via
+   the in-process maintenance gate, not the flock. Id-addressed
+   mutations require If-Match revisions; path mutations
+   (POST /path/move, /path/trash) intentionally take no If-Match
+   because they resolve and mutate inside one store transaction.
+
+6. PLATFORM: the vault is Unix-only by design. internal/... must
+   compile on Windows via stubs, and those stubs intentionally return
+   "requires a Unix-like OS" errors for daemon lifecycle operations.
+   Do not flag stubbed functionality as missing implementation.
+
+7. LOCAL FILE TRUST: files under $DOCBANK_HOME are user-owned in a
+   0700 directory. An attacker with access to them already has the
+   user's privileges; do not flag TOCTOU or permission races on
+   vault-local paths. POST /ingest reads server-side local paths and
+   is loopback-fenced per request by design.
+
+8. SINGLE-USER SCALE: do not flag O(n) scans, in-memory pagination, or
+   missing batching at personal-archive scale unless the code path is
+   plausibly hot at tens of thousands of nodes.
+
+Do NOT flag issues that only apply to public-facing, multi-tenant, or
+internet-exposed services. Focus on bugs, logic errors, data corruption
+risks, and code quality issues.
+"""

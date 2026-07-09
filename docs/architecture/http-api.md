@@ -145,17 +145,18 @@ since `gc`/`verify` can legitimately run long on a large vault.
 ## Auth
 
 `X-Api-Key` or `Authorization: Bearer <key>`, constant-time compared
-against the daemon's effective key. The daemon always has one: an
-unset `[server] api_key` is valid only on a loopback bind, and in that
-case the daemon generates a fresh key at startup and publishes it,
-inside the 0700 `$DOCBANK_HOME`, through the same runtime record the
-CLI already uses for discovery — readable only by the vault's owner,
-never sent over the network unencrypted, never logged. A non-loopback
-bind without a configured key refuses to start at all, since a remote
-client can't read the runtime record (see
-[Configuration](../configuration.md)). `/health`, `/api/ping`, `/docs`,
-the OpenAPI documents, and the web placeholder at `/` are auth-exempt;
-everything else, including the shutdown route, requires the key.
+against the daemon's effective key. The daemon always has one: with
+`[server] api_key` unset it generates a fresh key at startup and
+publishes it, inside the 0700 `$DOCBANK_HOME`, through the same runtime
+record the CLI already uses for discovery — readable only by the
+vault's owner, never sent over the network unencrypted, never logged.
+Binds are loopback-only: the API is plain HTTP, so a non-loopback bind
+would expose the key and vault contents in cleartext, and `docbank
+serve` refuses to start on one — remote access goes through an SSH
+tunnel or VPN (see [Configuration](../configuration.md)). `/health`,
+`/api/ping`, `/docs`, the OpenAPI documents, and the web placeholder at
+`/` are auth-exempt; everything else, including the shutdown route,
+requires the key.
 
 ## Error mapping
 

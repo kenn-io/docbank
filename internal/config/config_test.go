@@ -60,8 +60,12 @@ func TestValidate(t *testing.T) {
 	}{
 		{"loopback keyless", "127.0.0.1", "", false},
 		{"localhost keyless", "localhost", "", false},
+		{"ipv6 loopback keyless", "::1", "", false},
+		{"loopback with key", "127.0.0.1", "k", false},
+		// The API is plain HTTP: every non-loopback bind is refused, keyed
+		// or not - a key on the wire in cleartext is not protection.
 		{"private keyless", "192.168.1.5", "", true},
-		{"private with key", "192.168.1.5", "k", false},
+		{"private with key", "192.168.1.5", "k", true},
 		{"public with key", "203.0.113.9", "k", true},
 		{"wildcard keyless", "0.0.0.0", "", true},
 		{"wildcard with key", "0.0.0.0", "k", true},

@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +20,14 @@ func ParseAge(s string) (time.Duration, error) {
 		days, err := strconv.Atoi(base)
 		if err != nil {
 			return 0, fmt.Errorf("invalid age %q (want e.g. 30d or 12h): %w", s, err)
+		}
+		// Guard the multiplication: a huge day count overflows int64
+		// nanoseconds and can wrap to a small POSITIVE duration, which the
+		// negative check below would miss — and a wrapped-small cutoff makes
+		// trash empty delete far newer entries than requested.
+		const maxDays = int(math.MaxInt64 / (24 * int64(time.Hour)))
+		if days > maxDays || days < -maxDays {
+			return 0, fmt.Errorf("invalid age %q: day count overflows a duration", s)
 		}
 		d = time.Duration(days) * 24 * time.Hour
 	} else {
