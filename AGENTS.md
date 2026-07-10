@@ -23,6 +23,16 @@ Instructions for autonomous coding agents working in this repository.
    job, merging is the user's.
 4. Run `prek run` before committing.
 
+## Releases
+
+- Cut releases only from a clean local `main` that exactly matches
+  `origin/main`.
+- Preview notes with `scripts/changelog.sh <version>`; publish with
+  `scripts/release.sh <version> [extra_instructions]`.
+- The release script creates and pushes an annotated `vX.Y.Z` tag. The release
+  workflow uses the tag body as GitHub release notes and falls back to generated
+  notes only for a lightweight or empty tag.
+
 ## Design Invariants
 
 - Daemon-first: the daemon is the only process that opens the store; CLI

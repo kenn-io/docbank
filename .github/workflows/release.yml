@@ -25,6 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          fetch-tags: true
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
@@ -36,6 +37,10 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF#refs/tags/v}"
+          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "FATAL: release tag must use vX.Y.Z format" >&2
+            exit 1
+          fi
           COMMIT="$(git rev-parse --short HEAD)"
           LDFLAGS="-X go.kenn.io/docbank/internal/version.Version=${VERSION} \
                    -X go.kenn.io/docbank/internal/version.Commit=${COMMIT}"
@@ -65,6 +70,9 @@ jobs:
     permissions:
       contents: write # gh release create uploads archives and checksums
     steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: assets
@@ -75,13 +83,39 @@ jobs:
           cd assets
           sha256sum -- *.tar.gz > SHA256SUMS
           cat SHA256SUMS
-      - name: Create release
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Read annotated tag message
+        id: tag_message
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF#refs/tags/}"
+          TAG_TYPE="$(git for-each-ref --format='%(objecttype)' "refs/tags/${TAG}")"
+          if [[ -z "${TAG_TYPE}" ]]; then
+            echo "FATAL: checkout did not fetch ${TAG}" >&2
+            exit 1
+          fi
+          if [[ "${TAG_TYPE}" == "tag" ]]; then
+            git for-each-ref --format='%(contents:body)' "refs/tags/${TAG}" > release-notes.md
+          else
+            : > release-notes.md
+          fi
+          if grep -q '[^[:space:]]' release-notes.md; then
+            echo "has_body=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "has_body=false" >> "${GITHUB_OUTPUT}"
+          fi
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HAS_TAG_BODY: ${{ steps.tag_message.outputs.has_body }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF#refs/tags/}"
+          NOTES_ARGS=(--generate-notes)
+          if [[ "${HAS_TAG_BODY}" == "true" ]]; then
+            NOTES_ARGS=(--notes-file release-notes.md)
+          fi
           gh release create "${TAG}" assets/* \
             --repo "${GITHUB_REPOSITORY}" \
             --title "${TAG}" \
-            --generate-notes
+            --verify-tag \
+            "${NOTES_ARGS[@]}"
