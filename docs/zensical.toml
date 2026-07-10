@@ -23,6 +23,7 @@ nav = [
   {"Design" = [
     {"Overview" = "architecture/overview.md"},
     {"Storage" = "architecture/storage.md"},
+    {"Packed Storage Foundation" = "architecture/packed-storage.md"},
     {"Integrity & Threat Model" = "architecture/integrity.md"},
     {"Editing & Versions" = "architecture/editing-and-versions.md"},
     {"Concurrency & Locking" = "architecture/locking.md"},
