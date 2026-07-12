@@ -28,7 +28,8 @@ marked planned appears elsewhere in these docs only under an explicit
 - Idempotent, resumable bulk import with collision suffixing and
   provenance
 - FTS5 name search, ranked and operator-safe
-- Trash / restore / `trash empty` with the three-stage deletion pipeline
+- Trash / restore / `trash empty`, explicit unreachable-content GC, and
+  separate packed-space reclamation
 - `gc` (dry-run default) and `verify`
 - Inter-process vault locking (shared/exclusive flock)
 - CLI: `add`, `ls`, `tree`, `cat`, `mv`, `rm`, `restore`, `search`,

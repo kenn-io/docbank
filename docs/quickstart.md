@@ -130,19 +130,22 @@ docbank trash empty --older-than 30d --run   # permanently delete old trash
 ## Reclaim and verify
 
 Emptying the trash deletes tree entries, but the underlying bytes remain
-until you garbage-collect. `gc` is a dry run by default:
+until you garbage-collect. `gc` is a dry run by default; it removes loose files
+directly and marks unreachable packed payload as pending repack:
 
 ```bash
 docbank gc
 ```
 
 ```
-3 candidate blob(s), 1204882 byte(s) reclaimable
+3 candidate blob(s), 0 untracked file(s), 1204882 loose byte(s) reclaimable
 dry run — pass --run to delete
 ```
 
 ```bash
 docbank gc --run
+docbank storage status     # shows dead packed payload, if any
+docbank storage repack     # compacts eligible sparse packs
 docbank verify            # re-hash every stored blob
 ```
 

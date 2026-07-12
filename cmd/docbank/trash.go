@@ -49,7 +49,10 @@ var (
 var trashEmptyCmd = &cobra.Command{
 	Use:   "empty",
 	Short: "Report or permanently delete trashed nodes",
-	Args:  cobra.NoArgs,
+	Long: "Report or permanently delete trashed tree metadata. Content bytes remain " +
+		"until they are unreachable and an explicit gc run removes their authority; " +
+		"packed space then requires repack.",
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if _, err := api.ParseAge(trashOlderThan); err != nil {
 			return err

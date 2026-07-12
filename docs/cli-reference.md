@@ -117,6 +117,11 @@ The freed name is immediately reusable. Prints:
 trashed [15] /taxes/2024/return.pdf (restore with: docbank restore 15)
 ```
 
+There is no hard-delete flag. GC cannot collect a trashed document because the
+trash entry remains a restorable reference. Permanent metadata deletion,
+unreachable-content collection, and packed-space reclamation are the separate
+`trash empty --run`, `gc --run`, and `storage repack` operations.
+
 ## docbank restore
 
 ```
@@ -187,6 +192,7 @@ rows without files, which the next `gc --run` reconciles and `verify`
 reports in the meantime. The daemon's maintenance gate holds off
 concurrent mutations while `gc --run` runs, so it never races a
 concurrent import (see [Concurrency & Locking](architecture/locking.md)).
+GC does not invoke repack, and no automatic GC/repack scheduler exists today.
 
 ## docbank storage status
 

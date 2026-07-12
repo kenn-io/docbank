@@ -13,7 +13,10 @@ var gcRun bool
 var gcCmd = &cobra.Command{
 	Use:   "gc",
 	Short: "Reclaim unreachable blobs (dry-run unless --run)",
-	Args:  cobra.NoArgs,
+	Long: "Remove authority for blobs with no remaining references. With --run, loose " +
+		"files are reclaimed immediately; packed payload becomes logically dead and " +
+		"requires a separate storage repack to reclaim physical pack space.",
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := client.Ensure(cmd.Context())
 		if err != nil {

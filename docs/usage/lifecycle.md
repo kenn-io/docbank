@@ -45,7 +45,7 @@ has captured the vault.
 
 ### Before removing anything permanently
 
-Deletion has three separate gates:
+Deletion and physical reclamation have separate gates:
 
 1. `rm` moves a node to recoverable trash.
 2. `trash empty` permanently removes old tree entries, but is a dry run unless
@@ -53,6 +53,11 @@ Deletion has three separate gates:
 3. `gc` reclaims unreachable loose bytes, but is also a dry run unless `--run`
    is present. Packed bytes become logically dead and await repacking; they are
    not reported as physically reclaimed.
+4. `storage repack` rewrites eligible sparse packs and retires their old files.
+
+There is no `rm --hard`, and none of these maintenance commands is scheduled
+automatically today. Running `gc --run` immediately after `rm` cannot reclaim
+the document because the recoverable trash entry still references it.
 
 ```bash
 docbank rm /inbox/duplicate.pdf
@@ -61,6 +66,8 @@ docbank trash empty --older-than 30d
 docbank trash empty --older-than 30d --run
 docbank gc
 docbank gc --run
+docbank storage status
+docbank storage repack
 ```
 
 Read each dry-run count before adding `--run`. If a document should return,

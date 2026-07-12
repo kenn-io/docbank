@@ -21,7 +21,7 @@ nav = [
     {"Importing Documents" = "usage/importing.md"},
     {"Organizing the Tree" = "usage/organizing.md"},
     {"Searching" = "usage/searching.md"},
-    {"Trash, GC & Verify" = "usage/trash-and-gc.md"},
+    {"Trash, GC, Repack & Verify" = "usage/trash-and-gc.md"},
   ]},
   {"Reference" = [
     {"CLI Reference" = "cli-reference.md"},
