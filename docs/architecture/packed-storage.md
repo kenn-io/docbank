@@ -27,11 +27,12 @@ index, reader cache, recovery state machine, and repacker.
 
 `kit/packstore` sits above the low-level `kit/pack` format. It provides a mixed
 loose-and-packed content-addressed store, so migration can be gradual and
-interrupted work remains recoverable. Docbank explicitly caps new content
-objects and pack maintenance at 64 MiB. That is application policy rather than
-an inherited Kit default, so upgrading the shared engine cannot silently raise
-it. Oversized loose objects accepted by an earlier release remain readable and
-eligible for backup, but maintenance leaves them loose.
+interrupted work remains recoverable. Docbank explicitly caps new loose-object
+admission at 4 GiB while keeping packing, packed reads, and packed restore at
+64 MiB. These are application policies rather than inherited Kit defaults, so
+upgrading the shared engine cannot silently raise either one. An admitted object
+above 64 MiB remains loose, readable, and eligible for backup; pack maintenance
+reports it as deferred instead of attempting to prepare it.
 
 ## Ownership boundary
 
@@ -86,13 +87,20 @@ end-to-end verification. It does not fork Kit's reader cache, reconciliation,
 or repacker. The existing loose representation remains both the recovery path
 and the staging representation before packing.
 
-Raising the 64 MiB ceiling is a separate policy decision. It requires
-representative measurements of memory, temporary space, descriptors,
-throughput, cancellation, and restore behavior. Streaming removes
-whole-object heap allocation, but pack preparation can still require roughly
-2.004 times the raw object size in scratch space per concurrent preparation,
-and active streams can temporarily exceed the idle reader-cache descriptor
-count.
+The separate limits are deliberate. The 4 GiB admission ceiling matches Kit's
+format-v1 raw-object ceiling, preserving backup eligibility for every admitted
+object. Verified loose streaming and backup keep the measured 1 GiB workload
+within the recorded memory envelope, while even a 1 GiB pack candidate could
+require about 2.004 GiB of scratch for preparation before frame overhead.
+Raising the 64 MiB packed-content limit therefore remains a separate decision
+that requires representative measurements of temporary space, descriptors,
+throughput, cancellation, and restore behavior. Active streams can also
+temporarily exceed the idle reader-cache descriptor count.
+
+Large loose objects retain the filesystem tradeoff that packing solves for
+small-object collections. In the incompressible case, one large object can
+require roughly its raw size in the live vault, again in the backup repository,
+and again in a simultaneous restore target.
 
 The `blobs` membership boundary also lets logical features evolve without
 changing physical pack authority.

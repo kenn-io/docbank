@@ -2,8 +2,6 @@ package backupapp_test
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"io"
 	"os"
 	"path/filepath"
@@ -119,23 +117,20 @@ func TestLooseSnapshotVerifyAndRestore(t *testing.T) {
 	require.NoError(t, restoredStore.Close())
 }
 
-func TestOversizedLegacyLooseSnapshotVerifyAndRestore(t *testing.T) {
+func TestLooseAbovePackingLimitSnapshotVerifyAndRestore(t *testing.T) {
 	fixture := newArchiveFixture(t)
-	size := blob.MaxBlobBytes + 1
-	digest := sha256.New()
-	_, err := io.CopyN(digest, zeroReader{}, size)
-	require.NoError(t, err)
-	hash := hex.EncodeToString(digest.Sum(nil))
-	path := filepath.Join(fixture.root, "blobs", hash[:2], hash)
-	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
-	f, err := os.Create(path)
-	require.NoError(t, err)
-	_, err = io.CopyN(f, zeroReader{}, size)
-	require.NoError(t, err)
-	require.NoError(t, f.Close())
-	_, err = fixture.metadata.CreateFile(t.Context(), fixture.metadata.RootID(), "legacy-large.bin",
-		hash, size, "application/octet-stream")
-	require.NoError(t, err)
+	size := blob.MaxPackedBlobBytes + 1
+	var hash string
+	require.NoError(t, fixture.blobs.WithMutation(t.Context(), func() error {
+		var err error
+		hash, _, err = fixture.blobs.WriteContext(t.Context(), io.LimitReader(zeroReader{}, size))
+		if err != nil {
+			return err
+		}
+		_, err = fixture.metadata.CreateFile(t.Context(), fixture.metadata.RootID(), "large-loose.bin",
+			hash, size, "application/octet-stream")
+		return err
+	}))
 
 	app := backupapp.New("test-version")
 	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))

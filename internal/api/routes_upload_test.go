@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -122,6 +123,18 @@ func TestUploadAcceptsEmptyFile(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
 	assert.Zero(t, receipt.ComputedSize)
 	assert.Equal(t, in.expectedHash, receipt.ComputedHash)
+}
+
+func TestUploadRejectsDeclaredSizeAboveIngestLimit(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	content := []byte("small envelope")
+	in := uploadRequest{name: "too-large.bin", content: content,
+		expectedHash: uploadIdentity(content), expectedSize: blob.MaxIngestBytes + 1}
+	resp, body := sendUpload(t, ts.URL, ts.Client(), s.RootID(), in)
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	assert.Contains(t, body, strconv.FormatInt(blob.MaxIngestBytes, 10))
+	_, err := s.NodeByPath(t.Context(), "/too-large.bin")
+	require.ErrorIs(t, err, store.ErrNotFound)
 }
 
 func TestUploadRejectsMismatchedEvidenceWithoutAuthority(t *testing.T) {
