@@ -6,6 +6,8 @@ package client
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -22,6 +24,27 @@ type Client struct {
 	base string
 	key  string
 	hc   *http.Client
+}
+
+// ContentStream exposes the catalog identity available before a download and
+// the RFC 9530 digest trailer available after Body reaches EOF. Callers prove
+// the transfer by comparing ContentDigest with the SHA-256 they compute while
+// reading; BlobHash is the vault's expected immutable identity.
+type ContentStream struct {
+	io.ReadCloser
+
+	BlobHash string
+	Size     int64
+	trailer  http.Header
+}
+
+// ContentDigest returns the digest of bytes actually streamed. HTTP trailers
+// are populated only after the response body has been read to EOF.
+func (s *ContentStream) ContentDigest() string {
+	if s == nil {
+		return ""
+	}
+	return s.trailer.Get("Content-Digest")
 }
 
 func New(baseURL, apiKey string) *Client {
@@ -136,7 +159,7 @@ func (c *Client) Children(ctx context.Context, id int64) ([]api.Node, error) {
 	}
 }
 
-func (c *Client) Content(ctx context.Context, id int64) (io.ReadCloser, error) {
+func (c *Client) Content(ctx context.Context, id int64) (*ContentStream, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		fmt.Sprintf("%s/api/v1/nodes/%d/content", c.base, id), nil)
 	if err != nil {
@@ -153,7 +176,26 @@ func (c *Client) Content(ctx context.Context, id int64) (io.ReadCloser, error) {
 		defer func() { _ = resp.Body.Close() }()
 		return nil, decodeError(resp)
 	}
-	return resp.Body, nil
+	size, err := strconv.ParseInt(resp.Header.Get(api.BlobSizeHeader), 10, 64)
+	if err != nil || size < 0 {
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("content of node %d returned invalid %s %q",
+			id, api.BlobSizeHeader, resp.Header.Get(api.BlobSizeHeader))
+	}
+	hash := resp.Header.Get(api.BlobHashHeader)
+	decoded, decodeErr := hex.DecodeString(hash)
+	if decodeErr != nil || len(decoded) != sha256.Size || hex.EncodeToString(decoded) != hash {
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("content of node %d returned invalid %s %q", id, api.BlobHashHeader, hash)
+	}
+	return &ContentStream{ReadCloser: resp.Body, BlobHash: hash, Size: size, trailer: resp.Trailer}, nil
+}
+
+func (c *Client) VerifyNodeContent(ctx context.Context, id, revision int64) (api.ContentVerification, error) {
+	var report api.ContentVerification
+	err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/nodes/%d/verify", id),
+		ifMatch(revision), nil, &report)
+	return report, err
 }
 
 func (c *Client) Search(ctx context.Context, query string, limit int) (api.SearchReport, error) {

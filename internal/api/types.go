@@ -2,6 +2,15 @@ package api
 
 import "go.kenn.io/docbank/internal/store"
 
+const (
+	// BlobHashHeader carries docbank's canonical lowercase SHA-256 identity.
+	BlobHashHeader = "X-Docbank-Blob-Hash"
+	// BlobSizeHeader carries the catalog's expected raw byte length. Content
+	// streams use it instead of Content-Length so HTTP/1.1 can carry a digest
+	// trailer computed while streaming without a second physical read.
+	BlobSizeHeader = "X-Docbank-Blob-Size"
+)
+
 // Node is the wire representation of a store.Node. Path is only populated on
 // single-node responses; list responses omit it.
 type Node struct {
@@ -9,6 +18,7 @@ type Node struct {
 	ParentID   *int64 `json:"parent_id,omitempty"`
 	Name       string `json:"name"`
 	Kind       string `json:"kind" enum:"dir,file"`
+	BlobHash   string `json:"blob_hash,omitempty" pattern:"^[0-9a-f]{64}$"`
 	Size       int64  `json:"size"`
 	MimeType   string `json:"mime_type,omitempty"`
 	Revision   int64  `json:"revision"`
@@ -16,6 +26,20 @@ type Node struct {
 	ModifiedAt string `json:"modified_at"`
 	TrashedAt  string `json:"trashed_at,omitempty"`
 	Path       string `json:"path,omitempty"` // set on single-node responses only
+}
+
+// ContentVerification binds a fresh physical read to the exact node revision
+// the caller inspected. BlobHash and Size are catalog identity; ComputedHash
+// and ComputedSize describe the bytes read through the mixed store.
+type ContentVerification struct {
+	NodeID       int64  `json:"node_id"`
+	Revision     int64  `json:"revision"`
+	BlobHash     string `json:"blob_hash" pattern:"^[0-9a-f]{64}$"`
+	Size         int64  `json:"size"`
+	ComputedHash string `json:"computed_hash,omitempty" pattern:"^[0-9a-f]{64}$"`
+	ComputedSize int64  `json:"computed_size"`
+	Verified     bool   `json:"verified"`
+	Problem      string `json:"problem,omitempty" enum:"missing,corrupt,unreadable"`
 }
 
 // SearchHit pairs a matched node with its display path.
@@ -129,7 +153,7 @@ type VerifyReport struct {
 func fromStoreNode(n store.Node) Node {
 	out := Node{
 		ID: n.ID, ParentID: n.ParentID, Name: n.Name, Kind: n.Kind,
-		Size: n.Size, MimeType: n.MimeType, Revision: n.Revision,
+		BlobHash: n.BlobHash, Size: n.Size, MimeType: n.MimeType, Revision: n.Revision,
 		CreatedAt: n.CreatedAt, ModifiedAt: n.ModifiedAt,
 	}
 	if n.TrashedAt != nil {

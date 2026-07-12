@@ -33,7 +33,8 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `GET /nodes/{id}` | stat by id (live or trashed) | Implemented |
 | `GET /path?path=/a/b` | stat by virtual path | Implemented |
 | `GET /nodes/{id}/children` | list a directory, paginated (`limit`/`offset`) | Implemented |
-| `GET /nodes/{id}/content` | stream document bytes | Implemented |
+| `GET /nodes/{id}/content` | stream document bytes with catalog identity and a computed digest trailer | Implemented |
+| `POST /nodes/{id}/verify` | re-hash one file, bound to an inspected node revision | Implemented |
 | `GET /search?q=&limit=` | bounded name search (FTS5), with explicit `truncated` status | Implemented |
 | `POST /nodes` | create a directory (`kind: "dir"`) | Implemented |
 | `POST /ingest` | import server-side paths — see [addendum](#addendum-post-ingest) | Implemented |
@@ -92,6 +93,7 @@ and maintenance are explicit exceptions:
 | `PATCH /nodes/{id}` | required — target node's revision |
 | `POST /nodes/{id}/trash` | required — target node's revision |
 | `POST /nodes/{id}/restore` | required — target node's revision |
+| `POST /nodes/{id}/verify` | required — binds the evidence to the exact node state the caller inspected |
 | `POST /path/move`, `POST /path/trash` | none — the path is resolved and mutated inside one store transaction, so there is no separate read for a revision to guard |
 | `POST /nodes` (create dir) | none — creation has no prior revision; a name collision is `409` |
 | `POST /ingest` | none — long-running bulk operation with per-path partial success; the destination directory may legitimately change while it runs |
@@ -101,6 +103,41 @@ A stale revision gets `412 Precondition Failed`, telling the caller to
 re-read and retry. A required `If-Match` that's missing gets `428
 Precondition Required`. Both carry the problem-JSON error envelope
 below explaining the rule.
+
+## Content identity and verification evidence
+
+Every file-node representation includes `blob_hash`, docbank's canonical
+lowercase SHA-256 content identity, together with its raw `size`. Directories
+omit `blob_hash`. The hash is stable across moves and renames; a future content
+replacement will retain the node ID but change its hash and revision.
+
+`GET /nodes/{id}/content` exposes the catalog identity before streaming in
+`X-Docbank-Blob-Hash` and `X-Docbank-Blob-Size`. It then hashes the bytes while
+they pass through the response and emits the result as the
+[RFC 9530](https://www.rfc-editor.org/rfc/rfc9530.html) `Content-Digest`
+trailer. The response deliberately omits standard
+`Content-Length`: HTTP/1.1 cannot carry a trailer on a fixed-length message,
+and pre-reading a large loose or packed blob solely to populate a header would
+double physical I/O. Clients that need independent transfer proof hash the
+body themselves and compare both their digest and the trailer with the node's
+`blob_hash`.
+
+`POST /nodes/{id}/verify` is the bounded server-side proof. It requires
+`If-Match` from a prior node response, reopens the blob through the same mixed
+loose/packed store used for downloads, and returns the recorded and computed
+hashes and sizes. Missing, corrupt, and unreadable content are successful
+reports with `verified: false` and a `problem`; transport, validation, and
+stale-node failures remain non-2xx responses. The route checks the revision
+again after reading, so a concurrent rename, trash, or future content
+replacement yields `412` instead of ambiguous evidence.
+
+The single-node route is exempt from the ordinary request timeout. It is
+bounded in scope, not necessarily short in duration: hashing one very large
+blob may legitimately take longer than a minute.
+
+These are integrity receipts from the authenticated daemon, not
+non-repudiable attestations against a malicious server. Signed receipts or a
+transparency log are outside docbank's current trust model.
 
 ## Addendum: `POST /ingest`
 

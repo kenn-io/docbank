@@ -75,6 +75,11 @@ to publish loose blobs; startup never performs an implicit migration.
 
 ## Phase 2b — Features (designed)
 
+Implemented foundation: file-node API responses expose immutable SHA-256
+identity, content streams carry catalog identity plus a freshly computed digest
+trailer, and a revision-bound single-node endpoint verifies stored bytes. This
+is the evidence contract future remote writers build on.
+
 - Editing surfaces: `PUT` content, `docbank edit`/`put`/`revert`, and
   `versions` listing ([design](architecture/editing-and-versions.md))
 - Tags surfaced in CLI, search filters, and the API; `POST /batch/move`

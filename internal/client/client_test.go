@@ -1,6 +1,10 @@
 package client_test
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"io"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -110,6 +114,45 @@ func TestStoragePackRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, report.BlobsPacked)
 	assert.True(t, report.BudgetExhausted)
+}
+
+func TestContentIdentityAndVerificationRoundTrip(t *testing.T) {
+	c, _ := newClient(t, serverKey)
+	content := []byte("remote writer evidence")
+	src := filepath.Join(t.TempDir(), "evidence.txt")
+	require.NoError(t, os.WriteFile(src, content, 0o600))
+	report, err := c.Ingest(t.Context(), []string{src}, "/inbox")
+	require.NoError(t, err)
+	require.Equal(t, 1, report.Added)
+
+	node, err := c.Stat(t.Context(), "/inbox/evidence.txt")
+	require.NoError(t, err)
+	sum := sha256.Sum256(content)
+	wantHash := hex.EncodeToString(sum[:])
+	assert.Equal(t, wantHash, node.BlobHash)
+
+	stream, err := c.Content(t.Context(), node.ID)
+	require.NoError(t, err)
+	assert.Equal(t, wantHash, stream.BlobHash)
+	assert.Equal(t, int64(len(content)), stream.Size)
+	got, err := io.ReadAll(stream)
+	require.NoError(t, err)
+	require.NoError(t, stream.Close())
+	assert.Equal(t, content, got)
+	assert.Equal(t, "sha-256=:"+base64.StdEncoding.EncodeToString(sum[:])+":", stream.ContentDigest())
+
+	verified, err := c.VerifyNodeContent(t.Context(), node.ID, node.Revision)
+	require.NoError(t, err)
+	assert.True(t, verified.Verified)
+	assert.Equal(t, wantHash, verified.ComputedHash)
+
+	packed, err := c.StoragePack(t.Context(), 0)
+	require.NoError(t, err)
+	require.Equal(t, 1, packed.BlobsPacked)
+	verified, err = c.VerifyNodeContent(t.Context(), node.ID, node.Revision)
+	require.NoError(t, err)
+	assert.True(t, verified.Verified, "the same evidence contract reads packed authority")
+	assert.Equal(t, wantHash, verified.ComputedHash)
 }
 
 func TestStorageRepackRoundTrip(t *testing.T) {

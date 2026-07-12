@@ -70,6 +70,22 @@ Do not add a path mutation that resolves through a separate preflight query.
 Use an ID plus revision for read-modify-write or add a transactional store
 operation for one-shot path intent.
 
+File-node wire representations expose the catalog's lowercase SHA-256
+`blob_hash`; stable node identity and immutable content identity are separate
+on purpose. A content response sends that expected identity before the body
+and computes an RFC 9530 `Content-Digest` trailer while streaming actual bytes.
+Do not substitute the catalog value directly into `Content-Digest`: corruption
+would turn an integrity field into a false assertion.
+
+Single-node verification requires `If-Match`, reads through the mixed store,
+and checks the node revision again afterward. The second check is essential:
+ordinary mutations may run concurrently, and evidence must never silently
+change meaning if the node is renamed, trashed, or eventually pointed at a new
+content version during a long read. Physical pack maintenance remains safe
+through Kit's reader lifecycle and does not change blob identity.
+Because one blob may still be very large, this route is timeout-exempt like the
+vault-wide verifier; cancellation still propagates from the client connection.
+
 ## Request concurrency and maintenance
 
 SQLite serializes metadata writes and schema/store invariants choose the winner
