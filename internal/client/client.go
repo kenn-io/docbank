@@ -242,6 +242,13 @@ func (c *Client) StorageStatus(ctx context.Context) (api.StorageStatus, error) {
 	return status, err
 }
 
+func (c *Client) StoragePack(ctx context.Context, maxBytes int64) (api.StoragePackReport, error) {
+	var report api.StoragePackReport
+	err := c.do(ctx, http.MethodPost, "/api/v1/storage/pack", nil,
+		map[string]any{"max_bytes": maxBytes}, &report)
+	return report, err
+}
+
 func (c *Client) Verify(ctx context.Context) (api.VerifyReport, error) {
 	var rep api.VerifyReport
 	err := c.do(ctx, http.MethodPost, "/api/v1/verify", nil, nil, &rep)

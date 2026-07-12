@@ -16,7 +16,8 @@ const requestTimeout = 60 * time.Second
 // timeout-exempt: long-running maintenance and bulk ingest.
 func timeoutExempt(path string) bool {
 	switch path {
-	case "/api/v1/ingest", "/api/v1/gc", "/api/v1/verify", "/api/v1/trash/empty":
+	case "/api/v1/ingest", "/api/v1/gc", "/api/v1/verify", "/api/v1/trash/empty",
+		"/api/v1/storage/pack":
 		return true
 	}
 	return false

@@ -199,6 +199,25 @@ live packed blobs and their stored/raw bytes, pack count, and immutable packed
 bytes pending repack. The command is read-only. `--json` emits the same fields
 as the authenticated `GET /api/v1/storage` endpoint.
 
+## docbank storage pack
+
+```
+docbank storage pack [--max-bytes <bytes>] [--json]
+```
+
+Explicitly converts authorized loose blobs into immutable Kit pack files. The
+operation runs through the authenticated daemon and holds the vault maintenance
+gate; reads remain available, while imports and other mutations wait. Packing
+does not change document identity or blob read authority, and mixed loose and
+packed storage remains valid after an interruption.
+
+`--max-bytes` is a soft raw-byte work budget. The blob that crosses the budget
+is committed before the operation stops, and output says the budget was
+exhausted. Check `storage status` and rerun if loose blobs remain; crossing the
+budget does not itself prove that more eligible work exists. Zero (the default)
+is unlimited. `--json` includes packing, repair, deferral, and reconciliation
+counters from the shared Kit lifecycle engine.
+
 ## docbank verify
 
 ```

@@ -13,9 +13,10 @@ conversion: ordinary writes still land loose and both representations are
 valid indefinitely.
 
 `docbank storage status` exposes loose and packed inventory through the
-authenticated daemon API. Explicit packing, repacking, and unpacking remain
-planned. Startup never performs an implicit migration, and automatic
-background maintenance remains a later step.
+authenticated daemon API, and `docbank storage pack` explicitly moves
+authorized loose content into immutable packs with an optional work budget.
+Repacking and unpacking remain planned. Startup never performs an implicit
+migration, and automatic background maintenance remains a later step.
 
 Large collections of small files are expensive to enumerate, copy, and restore.
 msgvault uses immutable pack files as the steady-state storage format for
@@ -64,9 +65,11 @@ and does not own either application's schema or garbage-collection policy.
    writer, GC integration, and the Kit catalog conformance suite.
 4. **Complete:** expose read-only loose, live-packed, and dead-packed storage
    inventory through the authenticated daemon API and CLI.
+5. **Complete:** expose explicit, optionally budgeted packing through the
+   daemon maintenance gate and Kit coordinator.
 
 !!! info "Planned — next adoption steps"
-    Daemon-first pack, repack, and unpack operations will expose the existing
+    Daemon-first repack and unpack operations will expose the remaining
     mechanics. Built-in backup and external integrations will use the catalog
     and content-hash boundary rather than private pack internals.
 

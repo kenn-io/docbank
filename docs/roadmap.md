@@ -64,10 +64,11 @@ marked planned appears elsewhere in these docs only under an explicit
   open without conversion, and GC/verify operate through the shared
   physical store
 
-`docbank storage status` now reports loose, live-packed, and dead-packed
-inventory through the daemon. Pack, repack, and unpack commands remain the
-next delivery. Until then, ordinary ingests continue to publish loose blobs;
-startup never performs an implicit migration.
+`docbank storage status` reports loose, live-packed, and dead-packed inventory,
+and `docbank storage pack` performs explicit optionally budgeted packing through
+the daemon. Repack and unpack commands remain the next delivery. Ordinary
+ingests continue to publish loose blobs; startup never performs an implicit
+migration.
 
 ## Phase 2b — Features (designed)
 
