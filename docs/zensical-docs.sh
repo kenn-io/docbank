@@ -12,18 +12,13 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 docs_root="$script_dir"
 site_dir="${DOCBANK_DOCS_SITE_DIR:-site}"
 
-python3 "$docs_root/scripts/check_markdown_sources.py"
-
-if [[ -n "${VIRTUAL_ENV:-}" && -x "$VIRTUAL_ENV/bin/zensical" ]]; then
-  zensical_bin="$VIRTUAL_ENV/bin/zensical"
-elif [[ -x "$docs_root/.venv/bin/zensical" ]]; then
-  zensical_bin="$docs_root/.venv/bin/zensical"
-elif command -v zensical >/dev/null 2>&1; then
-  zensical_bin="zensical"
-else
-  printf 'zensical not found; install with: cd docs && uv sync --frozen --no-dev\n' >&2
+if ! command -v uv >/dev/null 2>&1; then
+  printf 'uv not found; install it from https://docs.astral.sh/uv/\n' >&2
   exit 127
 fi
+uv_run=(uv run --project "$docs_root" --frozen --no-dev)
+
+"${uv_run[@]}" python "$docs_root/scripts/check_markdown_sources.py"
 
 tmp_docs=""
 tmp_config_base=""
@@ -103,10 +98,10 @@ awk -v docs_dir="$tmp_docs_name" -v site_dir="$site_dir" '
 
 case "$command_name" in
   build)
-    (cd "$docs_root" && "$zensical_bin" build --strict --config-file "$tmp_config_name" "$@")
-    python3 "$docs_root/scripts/check_built_site.py" "$docs_root/$site_dir"
+    (cd "$docs_root" && "${uv_run[@]}" zensical build --strict --config-file "$tmp_config_name" "$@")
+    "${uv_run[@]}" python "$docs_root/scripts/check_built_site.py" "$docs_root/$site_dir"
     ;;
   serve)
-    (cd "$docs_root" && "$zensical_bin" serve --config-file "$tmp_config_name" "$@")
+    (cd "$docs_root" && "${uv_run[@]}" zensical serve --config-file "$tmp_config_name" "$@")
     ;;
 esac

@@ -15,7 +15,8 @@ plus internal design material.
 - `zensical.toml` — site configuration
 - `zensical-docs.sh` — build wrapper; validates sources, copies publishable
   content into a temporary tree, and checks the generated site's links,
-  metadata, assets, and publishing boundary
+  metadata, assets, and publishing boundary; all Python tools run through
+  the locked `uv` environment
 
 ## Building
 
