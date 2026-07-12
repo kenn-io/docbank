@@ -50,8 +50,8 @@ failed: /src/broken.pdf: opening /src/broken.pdf: permission denied
 ```
 
 Exit is non-zero if any file failed. A missing or unreadable top-level
-source argument aborts the run with an error (per-file failures inside a
-directory tree do not).
+source is reported as a failure and the command continues with remaining
+source arguments, just as it does for failures inside a directory tree.
 
 ## docbank ls
 

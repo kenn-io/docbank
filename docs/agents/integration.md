@@ -72,7 +72,7 @@ Then make an authenticated request. Resolve `/` to obtain the root node and
 its ID:
 
 ```bash
-curl --fail --get \
+curl --fail-with-body --get \
   -H "Authorization: Bearer $DOCBANK_API_KEY" \
   --data-urlencode 'path=/' \
   "$DOCBANK_URL/api/v1/path"
@@ -88,7 +88,7 @@ Directory children are paginated and sorted with directories first, then by
 name. Use `total`, `limit`, and `offset` until the complete page set is read:
 
 ```bash
-curl --fail \
+curl --fail-with-body \
   -H "X-Api-Key: $DOCBANK_API_KEY" \
   "$DOCBANK_URL/api/v1/nodes/1/children?limit=500&offset=0"
 ```
@@ -97,7 +97,7 @@ Search is bounded separately. Always inspect `truncated`; increase the limit
 or refine the query rather than assuming the returned array is complete.
 
 ```bash
-curl --fail --get \
+curl --fail-with-body --get \
   -H "X-Api-Key: $DOCBANK_API_KEY" \
   --data-urlencode 'q=tax return' \
   --data 'limit=100' \
@@ -120,7 +120,7 @@ revision belongs to the node state the agent evaluated:
 
 ```bash
 # A prior GET returned id=42 and revision=7.
-curl --fail -X PATCH \
+curl --fail-with-body -X PATCH \
   -H "X-Api-Key: $DOCBANK_API_KEY" \
   -H 'If-Match: "7"' \
   -H 'Content-Type: application/json' \
@@ -150,7 +150,7 @@ agent previously inspected a particular node and wants lost-update protection.
 Create a directory under a known parent ID:
 
 ```bash
-curl --fail -X POST \
+curl --fail-with-body -X POST \
   -H "X-Api-Key: $DOCBANK_API_KEY" \
   -H 'Content-Type: application/json' \
   --data '{"parent_id": 1, "name": "receipts", "kind": "dir"}' \
@@ -164,7 +164,7 @@ name and verify that it is the directory the workflow intended.
 to loopback callers. It is not a file-upload endpoint:
 
 ```bash
-curl --fail -X POST \
+curl --fail-with-body -X POST \
   -H "X-Api-Key: $DOCBANK_API_KEY" \
   -H 'Content-Type: application/json' \
   --data '{"paths":["/Users/me/Downloads/receipt.pdf"],"dest":"/receipts"}' \
@@ -186,13 +186,13 @@ Trash empty and GC are dry-run operations when `run` is false. An agent should
 present or evaluate the report before issuing a separate execution request:
 
 ```bash
-curl --fail -X POST \
+curl --fail-with-body -X POST \
   -H "X-Api-Key: $DOCBANK_API_KEY" \
   -H 'Content-Type: application/json' \
   --data '{"older_than":"30d","run":false}' \
   "$DOCBANK_URL/api/v1/trash/empty"
 
-curl --fail -X POST \
+curl --fail-with-body -X POST \
   -H "X-Api-Key: $DOCBANK_API_KEY" \
   -H 'Content-Type: application/json' \
   --data '{"run":false}' \

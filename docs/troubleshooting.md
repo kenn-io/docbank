@@ -73,9 +73,10 @@ successful portion.
 docbank add ~/Documents/archive --dest /imports
 ```
 
-A missing or unreadable top-level argument aborts immediately. Symlinks and
-non-regular files are intentionally skipped; import the regular target file
-explicitly if it belongs in the vault.
+A missing or unreadable top-level argument is reported as a failed source, and
+the command continues with any remaining arguments. Symlinks and non-regular
+files are intentionally skipped; import the regular target file explicitly if
+it belongs in the vault.
 
 ## Search cannot find document text
 
