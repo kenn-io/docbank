@@ -20,6 +20,8 @@ import (
 	"strconv"
 	"time"
 
+	"go.kenn.io/kit/packstore"
+
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -55,17 +57,19 @@ func New(baseURL, apiKey string) *Client {
 	return &Client{base: baseURL, key: apiKey, hc: &http.Client{Timeout: 0}}
 }
 
-// codeToStoreErr is the inverse of the server's FromStoreError mapping.
-var codeToStoreErr = map[string]error{
-	"not_found":      store.ErrNotFound,
-	"exists":         store.ErrExists,
-	"cycle":          store.ErrCycle,
-	"stale_revision": store.ErrStaleRevision,
-	"not_dir":        store.ErrNotDir,
-	"not_file":       store.ErrNotFile,
-	"invalid_name":   store.ErrInvalidName,
-	"not_trashed":    store.ErrNotTrashed,
-	"is_root":        store.ErrIsRoot,
+// codeToTypedErr preserves server problem codes that have a stable local
+// sentinel for callers using errors.Is.
+var codeToTypedErr = map[string]error{
+	"not_found":                store.ErrNotFound,
+	"exists":                   store.ErrExists,
+	"cycle":                    store.ErrCycle,
+	"stale_revision":           store.ErrStaleRevision,
+	"not_dir":                  store.ErrNotDir,
+	"not_file":                 store.ErrNotFile,
+	"invalid_name":             store.ErrInvalidName,
+	"not_trashed":              store.ErrNotTrashed,
+	"is_root":                  store.ErrIsRoot,
+	"pack_retirement_deferred": packstore.ErrPackRetirementDeferred,
 }
 
 func decodeError(resp *http.Response) error {
@@ -74,7 +78,7 @@ func decodeError(resp *http.Response) error {
 	if err := json.Unmarshal(body, &e); err != nil || e.Status == 0 {
 		return fmt.Errorf("daemon returned %s: %s", resp.Status, string(body))
 	}
-	if target, ok := codeToStoreErr[e.Code]; ok {
+	if target, ok := codeToTypedErr[e.Code]; ok {
 		return fmt.Errorf("%s: %w", e.Detail, target)
 	}
 	return fmt.Errorf("daemon error (%d %s): %s", e.Status, e.Code, e.Detail)

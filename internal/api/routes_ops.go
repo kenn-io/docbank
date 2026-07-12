@@ -61,7 +61,7 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 				},
 			})
 			if err != nil {
-				return FromStoreError(err)
+				return FromMaintenanceError(err)
 			}
 			out.Body = storageRepackReport(stats)
 			return nil
@@ -82,7 +82,7 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 		err := g.maintain(func() error {
 			stats, err := d.Blobs.Maintainer().Pack(ctx, packstore.PackOptions{MaxBytes: in.Body.MaxBytes})
 			if err != nil {
-				return FromStoreError(err)
+				return FromMaintenanceError(err)
 			}
 			out.Body = storagePackReport(stats)
 			return nil

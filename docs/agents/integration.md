@@ -317,6 +317,9 @@ Branch on `code`, never `detail`. Useful policy groups:
   `not_dir`, `not_file`, `is_root`.
 - Reconcile desired state: `exists`, `cycle`, `not_trashed`, `not_found`.
 - Stop and surface credentials or topology: `unauthorized`, `loopback_only`.
+- Release external file locks, then run `storage pack` reconciliation:
+  `pack_retirement_deferred`. The preceding repack catalog change already
+  committed; never restore the retired mapping or assume rollback.
 - Stop automation and preserve evidence: `internal`.
 
 The complete mapping lives in [HTTP API](../architecture/http-api.md) and the

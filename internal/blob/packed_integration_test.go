@@ -3,6 +3,7 @@ package blob_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -18,6 +19,49 @@ import (
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
 )
+
+type deferredRetirementCatalog struct {
+	packstore.Catalog
+
+	blobsDir string
+	heldPath string
+	packPath string
+}
+
+func (c *deferredRetirementCatalog) CommitRepack(
+	ctx context.Context, sourceIDs []string, records []packstore.PackRecord, moves []packstore.RepackMove,
+) error {
+	if err := c.Catalog.CommitRepack(ctx, sourceIDs, records, moves); err != nil {
+		return fmt.Errorf("committing test repack: %w", err)
+	}
+	if len(sourceIDs) != 1 {
+		return fmt.Errorf("test retirement hook expected one source pack, got %d", len(sourceIDs))
+	}
+	c.packPath = filepath.Join(c.blobsDir, "packs", sourceIDs[0][:2], sourceIDs[0]+packstore.PackExt)
+	c.heldPath = c.packPath + ".held"
+	if err := os.Rename(c.packPath, c.heldPath); err != nil {
+		return fmt.Errorf("holding retired source pack: %w", err)
+	}
+	if err := os.Mkdir(c.packPath, 0o700); err != nil {
+		return fmt.Errorf("blocking retired source path: %w", err)
+	}
+	return os.WriteFile(filepath.Join(c.packPath, "lock"), []byte("held"), 0o600)
+}
+
+func (c *deferredRetirementCatalog) release() error {
+	if c.heldPath == "" {
+		return nil
+	}
+	if _, err := os.Stat(c.heldPath); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if err := os.RemoveAll(c.packPath); err != nil {
+		return err
+	}
+	return os.Rename(c.heldPath, c.packPath)
+}
 
 func TestMixedStoreLifecyclePreservesMembershipAndBytes(t *testing.T) {
 	t.Parallel()
@@ -249,6 +293,79 @@ func TestActiveStreamSurvivesRepackRetirementAndStoreClose(t *testing.T) {
 	assert.Equal(t, liveContent, got)
 	assert.True(t, stream.Verified())
 	require.NoError(t, stream.Close())
+}
+
+func TestDeferredRetirementCommitsAuthorityAndPackReconcilesOrphan(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	root := t.TempDir()
+	metadata, err := store.Open(filepath.Join(root, "docbank.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, metadata.Close()) })
+	blobsDir := filepath.Join(root, "blobs")
+	require.NoError(t, os.MkdirAll(filepath.Join(blobsDir, "tmp"), 0o700))
+	baseCatalog := store.NewPackCatalog(metadata)
+	catalog := &deferredRetirementCatalog{Catalog: baseCatalog, blobsDir: blobsDir}
+	physical, err := blob.New(catalog, blobsDir)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, physical.Close()) })
+	t.Cleanup(func() { require.NoError(t, catalog.release()) })
+
+	var nodes []store.Node
+	require.NoError(t, physical.WithMutation(ctx, func() error {
+		for i, content := range []string{"live after deferred retirement", "dead one", "dead two"} {
+			hash, size, writeErr := physical.WriteContext(ctx, strings.NewReader(content))
+			if writeErr != nil {
+				return writeErr
+			}
+			node, createErr := metadata.CreateFile(ctx, metadata.RootID(), fmt.Sprintf("item-%d.txt", i),
+				hash, size, "text/plain")
+			if createErr != nil {
+				return createErr
+			}
+			nodes = append(nodes, node)
+		}
+		return nil
+	}))
+	packed, err := physical.Maintainer().Pack(ctx, packstore.PackOptions{})
+	require.NoError(t, err)
+	require.Equal(t, 1, packed.PacksSealed)
+	records, err := baseCatalog.ListPackRecords(ctx)
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	sourceID := records[0].PackID
+
+	require.NoError(t, physical.WithMutation(ctx, func() error {
+		for _, node := range nodes[1:] {
+			if _, _, trashErr := metadata.Trash(ctx, node.ID, -1); trashErr != nil {
+				return trashErr
+			}
+		}
+		if _, emptyErr := metadata.TrashEmpty(ctx, 0, true); emptyErr != nil {
+			return emptyErr
+		}
+		return metadata.DeleteBlobRows(ctx, []string{nodes[1].BlobHash, nodes[2].BlobHash})
+	}))
+	repacked, err := physical.Maintainer().Repack(ctx, packstore.RepackOptions{
+		Now: time.Now().UTC().Add(48 * time.Hour),
+		Selection: packstore.RepackSelection{
+			MinAge: time.Nanosecond, MinDeadStored: 1,
+		},
+	})
+	require.ErrorIs(t, err, packstore.ErrPackRetirementDeferred)
+	assert.Equal(t, 1, repacked.PacksRewritten)
+	assert.Zero(t, repacked.PacksRemoved)
+	hasSource, err := baseCatalog.HasPackRecord(ctx, sourceID)
+	require.NoError(t, err)
+	assert.False(t, hasSource, "the committed replacement must not be rolled back")
+	assertBlobContent(t, physical, nodes[0].BlobHash, "live after deferred retirement")
+
+	require.NoError(t, catalog.release())
+	reconciled, err := physical.Maintainer().Pack(ctx, packstore.PackOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, 1, reconciled.PacksRemoved)
+	assert.NoFileExists(t, catalog.packPath)
+	assertBlobContent(t, physical, nodes[0].BlobHash, "live after deferred retirement")
 }
 
 func assertBlobContent(t *testing.T, physical *blob.Store, hash, want string) {

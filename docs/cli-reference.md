@@ -246,6 +246,13 @@ errors after committed work. The report's `bytes_repacked` is live raw content
 rewritten, not a claim about filesystem bytes reclaimed. Compare `storage
 status` before and after when exact inventory change matters.
 
+Pack retirement can be deferred when another process holds a source pack open,
+most commonly through a Windows handle that does not permit deletion. The
+repack response then uses `pack_retirement_deferred`: replacement catalog
+authority has already committed, so do not restore the old mapping or assume
+the rewrite rolled back. Release the external file lock and run `docbank
+storage pack`; its reconciliation pass removes the orphaned source pack.
+
 ## docbank verify
 
 ```

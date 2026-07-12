@@ -2,9 +2,11 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/store"
 )
@@ -82,4 +84,16 @@ func FromStoreError(err error) error {
 		}
 	}
 	return NewError(http.StatusInternalServerError, "internal", err.Error())
+}
+
+// FromMaintenanceError preserves the commit boundary of a deferred physical
+// pack retirement. Repack catalog changes are already authoritative; a later
+// pack pass reconciles the now-orphaned source file after external locks clear.
+func FromMaintenanceError(err error) error {
+	if errors.Is(err, packstore.ErrPackRetirementDeferred) {
+		return NewError(http.StatusServiceUnavailable, "pack_retirement_deferred", fmt.Sprintf(
+			"pack replacement committed, but source-file cleanup was deferred; release external file locks, "+
+				"then run docbank storage pack to reconcile orphan packs: %v", err))
+	}
+	return FromStoreError(err)
 }
