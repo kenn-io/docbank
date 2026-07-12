@@ -1,6 +1,7 @@
 package blob
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -27,11 +28,77 @@ func newTestBlobStore(t *testing.T) *Store {
 	return store
 }
 
+func TestStoragePolicyKeepsBlobLimitExplicit(t *testing.T) {
+	assert.Equal(t, MaxBlobBytes, int64(64<<20))
+	assert.Equal(t, MaxBlobBytes, StorageLimits().BlobBytes)
+}
+
+func TestWriteEnforcesBlobLimit(t *testing.T) {
+	bs := newTestBlobStore(t)
+	hash, size, err := bs.Write(io.LimitReader(zeroReader{}, MaxBlobBytes+1))
+	require.ErrorIs(t, err, packstore.ErrContentMismatch)
+	assert.Empty(t, hash)
+	assert.Zero(t, size)
+}
+
+func TestOpenStreamGrandfathersOversizedLooseBlob(t *testing.T) {
+	bs := newTestBlobStore(t)
+	size := MaxBlobBytes + 1
+	digest := sha256.New()
+	_, err := io.CopyN(digest, zeroReader{}, size)
+	require.NoError(t, err)
+	hash := hex.EncodeToString(digest.Sum(nil))
+	path := bs.path(hash)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	f, err := os.Create(path)
+	require.NoError(t, err)
+	_, err = io.CopyN(f, zeroReader{}, size)
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	stream, gotSize, err := bs.OpenStream(hash)
+	require.NoError(t, err)
+	assert.Equal(t, size, gotSize)
+	written, err := io.Copy(io.Discard, stream)
+	require.NoError(t, err)
+	assert.Equal(t, size, written)
+	assert.True(t, stream.Verified())
+	require.NoError(t, stream.Close())
+}
+
+func TestOversizedLooseCompatibilityStreamStillRequiresVerification(t *testing.T) {
+	content := []byte("compatibility content")
+	sum := sha256.Sum256(content)
+	expected, err := packstore.ParseHash(hex.EncodeToString(sum[:]))
+	require.NoError(t, err)
+
+	partial := newVerifiedLooseCompatibilityStream(t.Context(), &readSeekCloser{bytes.NewReader(content)},
+		expected, int64(len(content)))
+	_, err = partial.Read(make([]byte, 1))
+	require.NoError(t, err)
+	require.ErrorIs(t, partial.Close(), pack.ErrVerificationIncomplete)
+
+	corrupt := newVerifiedLooseCompatibilityStream(t.Context(),
+		&readSeekCloser{bytes.NewReader([]byte("corrupted content!!"))}, expected, int64(len(content)))
+	require.ErrorIs(t, corrupt.Verify(), packstore.ErrContentMismatch)
+}
+
 type alwaysMemberResolver struct{}
 
 func (alwaysMemberResolver) Resolve(_ context.Context, _ packstore.Hash) (packstore.Location, error) {
 	return packstore.Location{Member: true}, nil
 }
+
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
+}
+
+type readSeekCloser struct{ *bytes.Reader }
+
+func (*readSeekCloser) Close() error { return nil }
 
 func TestWriteAndReadBack(t *testing.T) {
 	bs := newTestBlobStore(t)

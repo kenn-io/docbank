@@ -2,6 +2,8 @@ package backupapp_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"os"
 	"path/filepath"
@@ -23,6 +25,13 @@ type archiveFixture struct {
 	metadata *store.Store
 	blobs    *blob.Store
 	content  map[string]string
+}
+
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
 }
 
 func newArchiveFixture(t *testing.T) *archiveFixture {
@@ -108,6 +117,55 @@ func TestLooseSnapshotVerifyAndRestore(t *testing.T) {
 	}
 	require.NoError(t, restoredBlobs.Close())
 	require.NoError(t, restoredStore.Close())
+}
+
+func TestOversizedLegacyLooseSnapshotVerifyAndRestore(t *testing.T) {
+	fixture := newArchiveFixture(t)
+	size := blob.MaxBlobBytes + 1
+	digest := sha256.New()
+	_, err := io.CopyN(digest, zeroReader{}, size)
+	require.NoError(t, err)
+	hash := hex.EncodeToString(digest.Sum(nil))
+	path := filepath.Join(fixture.root, "blobs", hash[:2], hash)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	f, err := os.Create(path)
+	require.NoError(t, err)
+	_, err = io.CopyN(f, zeroReader{}, size)
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+	_, err = fixture.metadata.CreateFile(t.Context(), fixture.metadata.RootID(), "legacy-large.bin",
+		hash, size, "application/octet-stream")
+	require.NoError(t, err)
+
+	app := backupapp.New("test-version")
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	manifest, err := backup.Create(t.Context(), repo, app, backup.CreateOptions{
+		DBPath: filepath.Join(fixture.root, "docbank.db"), ContentSource: backupapp.NewContentSource(fixture.blobs),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), manifest.Attachments.Blobs)
+	verified, err := backup.Verify(t.Context(), repo, app, backup.VerifyOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, verified.Problems)
+
+	target := filepath.Join(t.TempDir(), "restored")
+	_, err = backup.Restore(t.Context(), repo, app, backup.RestoreOptions{TargetDir: target})
+	require.NoError(t, err)
+	restoredStore, err := store.Open(filepath.Join(target, "docbank.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restoredStore.Close()) })
+	restoredBlobs, err := blob.New(store.NewPackCatalog(restoredStore), filepath.Join(target, "blobs"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restoredBlobs.Close()) })
+	stream, restoredSize, err := restoredBlobs.OpenStreamContext(t.Context(), hash)
+	require.NoError(t, err)
+	assert.Equal(t, size, restoredSize)
+	written, err := io.Copy(io.Discard, stream)
+	require.NoError(t, err)
+	assert.Equal(t, size, written)
+	assert.True(t, stream.Verified())
+	require.NoError(t, stream.Close())
 }
 
 func TestPackedSnapshotRequiresAndUsesPackedRestoreTarget(t *testing.T) {

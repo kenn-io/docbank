@@ -170,7 +170,8 @@ Two request headers declare the expected identity of the **file part**, not the
 multipart envelope:
 
 - `X-Docbank-Blob-Hash`: canonical lowercase hexadecimal SHA-256;
-- `X-Docbank-Blob-Size`: raw byte length, bounded by Kit's blob limit.
+- `X-Docbank-Blob-Size`: raw byte length, bounded by docbank's explicit 64 MiB
+  object policy.
 
 The server streams the file once through Kit's durable writer and independently
 computes both values. Only after they match, the closing multipart boundary has
