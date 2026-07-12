@@ -190,6 +190,30 @@ func (s *Store) OpenContext(ctx context.Context, hash string) (io.ReadSeekCloser
 	return reader, nil
 }
 
+// OpenStream returns catalog-authorized loose or packed content without
+// buffering the complete object. The bytes become authoritative only after
+// terminal EOF or a successful Verify call; an early Close reports incomplete
+// verification and does not drain the stream.
+func (s *Store) OpenStream(hash string) (packstore.VerifiedReadCloser, int64, error) {
+	return s.OpenStreamContext(context.Background(), hash)
+}
+
+// OpenStreamContext is OpenStream with cancellation for sequential daemon
+// request and backup paths.
+func (s *Store) OpenStreamContext(
+	ctx context.Context, hash string,
+) (packstore.VerifiedReadCloser, int64, error) {
+	parsed, err := packstore.ParseHash(hash)
+	if err != nil {
+		return nil, 0, fmt.Errorf("blob hash %q: %w", hash, ErrInvalidHash)
+	}
+	reader, size, err := s.reader.OpenStream(ctx, parsed)
+	if err != nil {
+		return nil, 0, fmt.Errorf("opening blob stream %s: %w", hash, err)
+	}
+	return reader, size, nil
+}
+
 // Exists reports whether catalog-authorized content can be opened.
 func (s *Store) Exists(hash string) (bool, error) {
 	reader, err := s.Open(hash)

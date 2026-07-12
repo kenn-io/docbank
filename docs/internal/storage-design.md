@@ -115,6 +115,15 @@ Kit owns:
 - staging cleanup, orphan reconciliation, pack, unpack, and repack mechanics;
 - physical deletion ordering, cancellation, and maintenance budgets.
 
+Sequential reads use Kit's verified stream rather than its buffered
+read-seek compatibility API. Bytes from either a loose object or a pack are
+provisional until the reader reaches terminal EOF or `Verify` succeeds. An
+early `Close` deliberately reports incomplete verification and never drains
+the remaining object in the background. HTTP delivery, single-node and
+vault-wide verification, and backup capture must therefore consume through
+that terminal boundary; existence probes retain the buffered open-and-close
+path because they ask about catalog authority, not fresh byte evidence.
+
 Docbank owns:
 
 - the SQLite schema and catalog adapter;

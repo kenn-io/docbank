@@ -64,6 +64,60 @@ func TestWriteAndReadBack(t *testing.T) {
 	assert.Empty(t, entries)
 }
 
+func TestOpenStreamRequiresTerminalVerification(t *testing.T) {
+	bs := newTestBlobStore(t)
+	content := "stream me completely"
+	hash, _, err := bs.Write(strings.NewReader(content))
+	require.NoError(t, err)
+
+	partial, size, err := bs.OpenStream(hash)
+	require.NoError(t, err)
+	assert.Equal(t, int64(len(content)), size)
+	buf := make([]byte, 1)
+	_, err = partial.Read(buf)
+	require.NoError(t, err)
+	assert.False(t, partial.Verified())
+	require.ErrorIs(t, partial.Close(), pack.ErrVerificationIncomplete)
+
+	complete, size, err := bs.OpenStream(hash)
+	require.NoError(t, err)
+	got, err := io.ReadAll(complete)
+	require.NoError(t, err)
+	assert.Equal(t, int64(len(got)), size)
+	assert.Equal(t, content, string(got))
+	assert.True(t, complete.Verified())
+	require.NoError(t, complete.Close())
+}
+
+func TestOpenStreamHonorsCancellation(t *testing.T) {
+	bs := newTestBlobStore(t)
+	hash, _, err := bs.Write(strings.NewReader("cancel this stream"))
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	stream, _, err := bs.OpenStreamContext(ctx, hash)
+	require.NoError(t, err)
+	cancel()
+	_, err = stream.Read(make([]byte, 1))
+	require.ErrorIs(t, err, context.Canceled)
+	require.ErrorIs(t, stream.Close(), context.Canceled)
+}
+
+func TestOpenStreamDetectsLooseCorruption(t *testing.T) {
+	bs := newTestBlobStore(t)
+	content := "expected bytes"
+	hash, _, err := bs.Write(strings.NewReader(content))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(bs.path(hash), []byte("corrupted data"), 0o600))
+
+	stream, _, err := bs.OpenStream(hash)
+	require.NoError(t, err)
+	_, err = io.ReadAll(stream)
+	require.ErrorIs(t, err, packstore.ErrContentMismatch)
+	assert.False(t, stream.Verified())
+	require.ErrorIs(t, stream.Close(), packstore.ErrContentMismatch)
+}
+
 func TestWriteIsIdempotent(t *testing.T) {
 	bs := newTestBlobStore(t)
 	h1, _, err := bs.Write(strings.NewReader("same bytes"))

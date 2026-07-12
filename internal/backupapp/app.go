@@ -197,23 +197,25 @@ func ParseStats(raw json.RawMessage) (Stats, error) {
 	return stats, nil
 }
 
-// BlobOpener is the mixed loose/packed read surface backup capture needs.
-type BlobOpener interface {
-	OpenContext(ctx context.Context, hash string) (io.ReadSeekCloser, error)
+// BlobStreamer is the verified mixed loose/packed read surface backup capture
+// needs. Kit must consume the returned stream through verified EOF before its
+// bytes can enter an archive.
+type BlobStreamer interface {
+	OpenStreamContext(ctx context.Context, hash string) (packstore.VerifiedReadCloser, int64, error)
 }
 
 // ContentSource adapts docbank's catalog-authorized mixed store to backup.
-type ContentSource struct{ blobs BlobOpener }
+type ContentSource struct{ blobs BlobStreamer }
 
 var _ backup.ContentSource = (*ContentSource)(nil)
 
-func NewContentSource(blobs BlobOpener) *ContentSource { return &ContentSource{blobs: blobs} }
+func NewContentSource(blobs BlobStreamer) *ContentSource { return &ContentSource{blobs: blobs} }
 
 func (s *ContentSource) Open(ctx context.Context, ref backup.ContentRef) (io.ReadCloser, error) {
 	if s == nil || s.blobs == nil {
 		return nil, errors.New("backupapp: content source has no blob store")
 	}
-	reader, err := s.blobs.OpenContext(ctx, ref.Hash)
+	reader, _, err := s.blobs.OpenStreamContext(ctx, ref.Hash)
 	if err != nil {
 		return nil, fmt.Errorf("backupapp: opening content %s: %w", ref.Hash, err)
 	}

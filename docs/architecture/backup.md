@@ -23,6 +23,11 @@ tests prove loose create/verify/restore and capture directly from a packed live
 store. Physical pack tables are excluded from fidelity stats so a restore may
 choose a different representation without changing the archive.
 
+Capture reads loose and packed blobs through Kit's bounded-memory stream. The
+archive may grant authority to copied bytes only after terminal EOF verifies
+their stored framing, decoded length, and SHA-256 identity; opening a stream or
+closing it early is not a successful copy.
+
 Snapshots taken from a packed vault retain source pack metadata in their
 captured database. Docbank therefore fails closed if such a snapshot is sent
 through Kit's loose-only restore path: loose files plus stale pack authority

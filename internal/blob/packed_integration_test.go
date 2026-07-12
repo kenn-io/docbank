@@ -123,11 +123,13 @@ func TestMixedStoreLifecyclePreservesMembershipAndBytes(t *testing.T) {
 
 func assertBlobContent(t *testing.T, physical *blob.Store, hash, want string) {
 	t.Helper()
-	reader, err := physical.Open(hash)
+	reader, size, err := physical.OpenStream(hash)
 	require.NoError(t, err)
 	data, readErr := io.ReadAll(reader)
 	closeErr := reader.Close()
 	require.NoError(t, readErr)
 	require.NoError(t, closeErr)
+	assert.True(t, reader.Verified())
+	assert.Equal(t, int64(len(data)), size)
 	assert.Equal(t, want, string(data))
 }

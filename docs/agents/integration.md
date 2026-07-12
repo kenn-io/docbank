@@ -130,6 +130,12 @@ that needs independent transfer proof hashes `document.bin` itself and compares
 that digest, the trailer, and the file node's `blob_hash`. Do not treat the
 catalog header alone as a fresh physical verification.
 
+Read the response through successful EOF and require the trailer. A readable
+prefix is not verified content: if the request is cancelled, the body ends in
+error, or the trailer is absent, discard any staged output rather than
+publishing it. Docbank does not drain an abandoned response merely to complete
+verification.
+
 For a bounded server-side check, send the revision from the node response:
 
 ```bash
