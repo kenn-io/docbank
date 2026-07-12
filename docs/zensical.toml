@@ -17,6 +17,7 @@ nav = [
     {"Configuration" = "configuration.md"},
   ]},
   {"User Guide" = [
+    {"Vault Lifecycle" = "usage/lifecycle.md"},
     {"Importing Documents" = "usage/importing.md"},
     {"Organizing the Tree" = "usage/organizing.md"},
     {"Searching" = "usage/searching.md"},
@@ -24,8 +25,12 @@ nav = [
   ]},
   {"Reference" = [
     {"CLI Reference" = "cli-reference.md"},
+  ]},
+  {"For Agents" = [
+    {"Integration Guide" = "agents/integration.md"},
     {"Agent HTTP API" = "architecture/http-api.md"},
   ]},
+  {"Troubleshooting" = "troubleshooting.md"},
   {"Architecture" = [
     {"Overview" = "architecture/overview.md"},
     {"Storage" = "architecture/storage.md"},

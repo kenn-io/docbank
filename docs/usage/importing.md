@@ -70,9 +70,9 @@ failed: /src/link.pdf: not a regular file or directory (symlinks are skipped)
 ```
 
 The exit code is non-zero when any file failed, so scripted migrations
-can detect partial imports. One exception: a top-level source argument
-that doesn't exist aborts immediately — that's a typo, not a corrupt
-file.
+can detect partial imports. A missing or unreadable top-level source is
+reported the same way, and the command continues with the remaining
+source arguments.
 
 ## Sources are read-only
 

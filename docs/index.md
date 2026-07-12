@@ -14,7 +14,7 @@ the tree above them is yours to rename, move, search, trash, and restore.
 <p class="hero-actions">
   <a class="md-button md-button--primary" href="setup/">Set up docbank</a>
   <a class="md-button" href="quickstart/">Take the ten-minute tour</a>
-  <a class="md-button" href="architecture/http-api/">Build an agent integration</a>
+  <a class="md-button" href="agents/integration/">Build an agent integration</a>
 </p>
 
 <div class="signal-grid">
@@ -100,5 +100,8 @@ and self-update) are implemented and tested.
 
 - [Setup](setup.md) — build and install the binary
 - [Quickstart](quickstart.md) — a ten-minute tour of the CLI
+- [Vault Lifecycle](usage/lifecycle.md) — operate, update, snapshot, and recover safely
+- [Agent Integration](agents/integration.md) — build revision-aware automations
+- [Troubleshooting](troubleshooting.md) — diagnose failures without risking the vault
 - [CLI Reference](cli-reference.md) — every command, flag, and output format
 - [Architecture → Overview](architecture/overview.md) — how the pieces fit together

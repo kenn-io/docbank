@@ -150,5 +150,7 @@ docbank verify            # re-hash every stored blob
 211 blob(s) ok, 0 problem(s)
 ```
 
-That's the complete Phase 1 surface. See the
-[CLI Reference](cli-reference.md) for exact semantics of every command.
+That is the core document workflow. Continue with
+[Vault Lifecycle](usage/lifecycle.md) for maintenance, upgrades, snapshots,
+and recovery, or use the [CLI Reference](cli-reference.md) for exact command
+semantics.
