@@ -28,7 +28,7 @@ index, reader cache, recovery state machine, and repacker.
 `kit/packstore` sits above the low-level `kit/pack` format. It provides a mixed
 loose-and-packed content-addressed store, so migration can be gradual and
 interrupted work remains recoverable. Docbank explicitly caps new loose-object
-admission at 1 GiB while keeping packing, packed reads, and packed restore at
+admission at 4 GiB while keeping packing, packed reads, and packed restore at
 64 MiB. These are application policies rather than inherited Kit defaults, so
 upgrading the shared engine cannot silently raise either one. An admitted object
 above 64 MiB remains loose, readable, and eligible for backup; pack maintenance
@@ -87,18 +87,20 @@ end-to-end verification. It does not fork Kit's reader cache, reconciliation,
 or repacker. The existing loose representation remains both the recovery path
 and the staging representation before packing.
 
-The separate limits are deliberate. Verified loose streaming and backup keep a
-1 GiB object within the measured memory envelope, while a 1 GiB pack candidate
-could require about 2.004 GiB of scratch for preparation before frame overhead.
+The separate limits are deliberate. The 4 GiB admission ceiling matches Kit's
+format-v1 raw-object ceiling, preserving backup eligibility for every admitted
+object. Verified loose streaming and backup keep the measured 1 GiB workload
+within the recorded memory envelope, while even a 1 GiB pack candidate could
+require about 2.004 GiB of scratch for preparation before frame overhead.
 Raising the 64 MiB packed-content limit therefore remains a separate decision
 that requires representative measurements of temporary space, descriptors,
 throughput, cancellation, and restore behavior. Active streams can also
 temporarily exceed the idle reader-cache descriptor count.
 
 Large loose objects retain the filesystem tradeoff that packing solves for
-small-object collections. In the incompressible case, operating with one 1 GiB
-object can require roughly 1 GiB in the live vault, another 1 GiB in the backup
-repository, and another 1 GiB in a simultaneous restore target.
+small-object collections. In the incompressible case, one large object can
+require roughly its raw size in the live vault, again in the backup repository,
+and again in a simultaneous restore target.
 
 The `blobs` membership boundary also lets logical features evolve without
 changing physical pack authority.

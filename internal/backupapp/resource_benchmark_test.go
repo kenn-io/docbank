@@ -19,6 +19,8 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+const measuredLargeLooseBytes int64 = 1 << 30
+
 type resourceNoiseReader struct{ state uint32 }
 
 func (r *resourceNoiseReader) Read(p []byte) (int, error) {
@@ -183,10 +185,10 @@ func BenchmarkDocbankBackupRoundTrip64MiB(b *testing.B) {
 func BenchmarkDocbankLooseWrite1GiB(b *testing.B) {
 	fixture := newEmptyResourceFixture(b)
 	b.ReportAllocs()
-	b.SetBytes(blob.MaxIngestBytes)
+	b.SetBytes(measuredLargeLooseBytes)
 	b.ResetTimer()
 	for i := range b.N {
-		if err := fixture.addLoose(context.Background(), blob.MaxIngestBytes, i); err != nil {
+		if err := fixture.addLoose(context.Background(), measuredLargeLooseBytes, i); err != nil {
 			b.Fatalf("writing loose object: %v", err)
 		}
 	}
@@ -194,9 +196,9 @@ func BenchmarkDocbankLooseWrite1GiB(b *testing.B) {
 
 func BenchmarkDocbankLooseRead1GiB(b *testing.B) {
 	fixture := newEmptyResourceFixture(b)
-	require.NoError(b, fixture.addLoose(context.Background(), blob.MaxIngestBytes, 0))
+	require.NoError(b, fixture.addLoose(context.Background(), measuredLargeLooseBytes, 0))
 	b.ReportAllocs()
-	b.SetBytes(blob.MaxIngestBytes)
+	b.SetBytes(measuredLargeLooseBytes)
 	baselineFDs := 0
 	if entries, err := filepath.Glob("/dev/fd/*"); err == nil {
 		baselineFDs = len(entries)
@@ -213,8 +215,8 @@ func BenchmarkDocbankLooseRead1GiB(b *testing.B) {
 			peakFDs = max(peakFDs, len(entries))
 		}
 		b.StartTimer()
-		if size != blob.MaxIngestBytes {
-			b.Fatalf("stream size %d, want %d", size, blob.MaxIngestBytes)
+		if size != measuredLargeLooseBytes {
+			b.Fatalf("stream size %d, want %d", size, measuredLargeLooseBytes)
 		}
 		_, copyErr := io.Copy(io.Discard, stream)
 		if copyErr != nil {
@@ -235,8 +237,8 @@ func BenchmarkDocbankLooseRead1GiB(b *testing.B) {
 
 func BenchmarkDocbankLooseBackupRoundTrip1GiB(b *testing.B) {
 	fixture := newEmptyResourceFixture(b)
-	require.NoError(b, fixture.addLoose(context.Background(), blob.MaxIngestBytes, 0))
-	benchmarkBackupRoundTrip(b, fixture, blob.MaxIngestBytes)
+	require.NoError(b, fixture.addLoose(context.Background(), measuredLargeLooseBytes, 0))
+	benchmarkBackupRoundTrip(b, fixture, measuredLargeLooseBytes)
 }
 
 func benchmarkBackupRoundTrip(b *testing.B, fixture *resourceFixture, size int64) {

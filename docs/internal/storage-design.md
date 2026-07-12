@@ -125,8 +125,9 @@ that terminal boundary; existence probes retain the buffered open-and-close
 path because they ask about catalog authority, not fresh byte evidence.
 
 Docbank deliberately separates two policies. New local and remote writes may
-admit one loose object through 1 GiB. Kit's packed-read, maintenance, and
-packed-restore `BlobBytes` limit remains 64 MiB. Kit v0.8 keeps
+admit one loose object through 4 GiB, matching the format-v1 backup ceiling.
+Kit's packed-read, maintenance, and packed-restore `BlobBytes` limit remains
+64 MiB. Kit v0.8 keeps
 catalog-authorized larger loose objects available through the same verified
 `OpenStream`; they remain eligible for backup but not packing. Do not add a
 second Docbank loose-stream adapter or mistake the packed limit for a
@@ -198,14 +199,15 @@ and each concurrent loose or packed stream can add one descriptor until EOF or
 `Close`. Cancellation and early-close cleanup remain mandatory race-tested
 gates, not benchmark outcomes.
 
-The 1 GiB benchmarks exercise Docbank's production admission path, Kit's
-durable loose writer, the mutation and SQLite authority boundary, native
+The 1 GiB benchmarks exercise a representative large object through Docbank's
+production admission path, Kit's durable loose writer, the mutation and SQLite
+authority boundary, native
 verified `OpenStream`, and the real backup adapters. They do not admit the
-object to packing. They are the resource evidence for the current 1 GiB
-loose-ingestion policy while packed maintenance stays at 64 MiB, not a
-performance guarantee. Such an object still needs roughly its raw size for
-live storage, repository storage, and a simultaneous restore target in the
-incompressible case.
+object to packing. They are bounded-memory evidence supporting the current
+4 GiB loose-ingestion ceiling while packed maintenance stays at 64 MiB, not a
+measurement of the ceiling itself or a performance guarantee. A large object
+still needs roughly its raw size for live storage, repository storage, and a
+simultaneous restore target in the incompressible case.
 
 Any proposal to change admission or maintenance limits, reader slots, or
 backup concurrency must rerun this suite on representative target hardware and

@@ -170,8 +170,8 @@ Two request headers declare the expected identity of the **file part**, not the
 multipart envelope:
 
 - `X-Docbank-Blob-Hash`: canonical lowercase hexadecimal SHA-256;
-- `X-Docbank-Blob-Size`: raw byte length, bounded by docbank's explicit 1 GiB
-  loose-ingestion policy.
+- `X-Docbank-Blob-Size`: raw byte length, bounded by docbank's explicit 4 GiB
+  format-v1 backup ceiling.
 
 The server streams the file once through Kit's durable writer and independently
 computes both values. Only after they match, the closing multipart boundary has
@@ -190,7 +190,7 @@ rather than overwriting an existing document.
 
 Objects through 64 MiB are eligible for packing. Larger accepted objects remain
 loose, but use the same content-hash authority, verified streaming, backup, and
-restore contracts. The 1 GiB admission limit therefore does not imply that a
+restore contracts. The 4 GiB admission limit therefore does not imply that a
 single object will be moved into a pack.
 
 Digest or size disagreement returns `422 digest_mismatch` or
