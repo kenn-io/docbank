@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import collections
 import pathlib
 import re
 import sys
@@ -11,7 +10,6 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 EXCLUDED = {".cache", ".venv", "internal", "scripts", "site", "superpowers"}
 FORBIDDEN = ("@astrojs/starlight", "<Card", "<Aside", "<Tabs", ":::")
 ADMONITION = re.compile(r'!!!\s+[A-Za-z][\w-]*(?:\s+"(?:[^"\\]|\\.)*")?')
-DECISIONS = ROOT / "internal" / "decisions"
 
 
 def public_markdown() -> list[pathlib.Path]:
@@ -39,83 +37,12 @@ def nav_paths(value: object) -> set[str]:
     return result
 
 
-def check_decisions(errors: list[str]) -> None:
-    index_path = DECISIONS / "README.md"
-    if not index_path.is_file():
-        errors.append("internal/decisions/README.md: decision index is missing")
-        return
-
-    index = index_path.read_text(encoding="utf-8")
-    index_section = re.search(r"(?ms)^## Index\s*$\n(.*?)(?=^## |\Z)", index)
-    if index_section is None:
-        errors.append("internal/decisions/README.md: missing ## Index section")
-        indexed: set[str] = set()
-    else:
-        entries: list[str] = []
-        row_pattern = re.compile(
-            r"^\|\s*\[ADR-(\d{4})\]\((\d{4}-[^)]+\.md)\)\s*\|[^|]+\|[^|]+\|\s*$"
-        )
-        for line in index_section.group(1).splitlines():
-            if not line.lstrip().startswith("| [ADR-"):
-                continue
-            match = row_pattern.fullmatch(line)
-            if match is None:
-                errors.append(f"internal/decisions/README.md: malformed index row {line!r}")
-                continue
-            decision_id, filename = match.groups()
-            if not filename.startswith(f"{decision_id}-"):
-                errors.append(
-                    "internal/decisions/README.md: "
-                    f"ADR-{decision_id} does not match filename {filename}"
-                )
-            entries.append(filename)
-        counts = collections.Counter(entries)
-        for filename, count in sorted(counts.items()):
-            if count != 1:
-                errors.append(
-                    f"internal/decisions/README.md: {filename} appears {count} times in index"
-                )
-        indexed = set(entries)
-
-    candidates = sorted(path for path in DECISIONS.glob("*.md") if path.name != "README.md")
-    records: list[pathlib.Path] = []
-    for path in candidates:
-        if re.fullmatch(r"\d{4}-[a-z0-9]+(?:[.-][a-z0-9]+)*\.md", path.name) is None:
-            errors.append(f"internal/decisions/{path.name}: invalid decision filename")
-        else:
-            records.append(path)
-    names = {path.name for path in records}
-    for missing in sorted(names - indexed):
-        errors.append(f"internal/decisions/{missing}: record is missing from index")
-    for missing in sorted(indexed - names):
-        errors.append(f"internal/decisions/README.md: indexed record {missing} does not exist")
-
-    required = (
-        "- **Status:**",
-        "- **Date:**",
-        "## Context",
-        "## Decision",
-        "## Consequences",
-        "## Alternatives rejected",
-        "## Public architecture",
-    )
-    for path in records:
-        text = path.read_text(encoding="utf-8")
-        expected_title = f"# ADR-{path.name[:4]}:"
-        if not text.startswith(expected_title):
-            errors.append(f"internal/decisions/{path.name}: title must start with {expected_title}")
-        for marker in required:
-            if marker not in text:
-                errors.append(f"internal/decisions/{path.name}: missing {marker}")
-
-
 def main() -> None:
     errors: list[str] = []
     files = public_markdown()
     public = {path.relative_to(ROOT).as_posix() for path in files}
     config = tomllib.loads((ROOT / "zensical.toml").read_text(encoding="utf-8"))
     configured = nav_paths(config["project"]["nav"])
-    check_decisions(errors)
     for missing in sorted(public - configured):
         errors.append(f"{missing}: public page is missing from navigation")
     for missing in sorted(configured - public):

@@ -8,8 +8,7 @@ plus internal design material.
 - `*.md`, `usage/`, `architecture/` — published site content
 - `stylesheets/` — published visual theme
 - `scripts/` — source and built-site validation (never published)
-- `internal/` — maintained internal engineering notes and indexed architecture
-  decisions (never published)
+- `internal/` — living agent/developer design documentation (never published)
 - `superpowers/` — transient working specs and implementation plans for
   in-flight development (never published; exists only while a project
   is being executed)
@@ -49,6 +48,6 @@ Or from the repository root: `make docs-install`, `make docs-serve`,
   same PR. Once a project ships and its design content is digested into
   the site, delete its spec and plan — git history keeps the
   point-in-time record; the working tree carries only maintained docs.
-- Durable rationale belongs in `internal/decisions/`. Accepted records are not
-  rewritten when a decision changes; add a superseding record, update the old
-  status, and revise the corresponding public Architecture page in the same PR.
+- `internal/` is the definitive developer description of how the system works
+  and why. Update it in place with implementation changes; revise the matching
+  public Architecture page when user-visible behavior or boundaries change.
