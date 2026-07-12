@@ -428,6 +428,32 @@ func TestDeletionHelpSeparatesTrashGCAndRepack(t *testing.T) {
 	assert.Contains(t, out, "requires a separate storage repack")
 }
 
+func TestStorageUnpackJSON(t *testing.T) {
+	_ = setupVaultHome(t)
+	for name, content := range map[string]string{"a.txt": "alpha", "b.txt": "bravo"} {
+		src := writeSourceFile(t, name, content)
+		_, err := runCLI(t, "add", src, "--dest", "/inbox")
+		require.NoError(t, err)
+	}
+	_, err := runCLI(t, "storage", "pack")
+	require.NoError(t, err)
+
+	out, err := runCLI(t, "storage", "unpack", "--json")
+	require.NoError(t, err)
+	var report api.StorageUnpackReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	assert.Equal(t, 1, report.PacksUnpacked)
+	assert.Equal(t, 2, report.BlobsRestored)
+	assert.Equal(t, int64(len("alpha")+len("bravo")), report.BytesRestored)
+
+	out, err = runCLI(t, "storage", "status", "--json")
+	require.NoError(t, err)
+	var status api.StorageStatus
+	require.NoError(t, json.Unmarshal([]byte(out), &status))
+	assert.Equal(t, 2, status.LooseBlobs)
+	assert.Zero(t, status.Packs)
+}
+
 func TestVerifyDetectsMissingAndCorrupt(t *testing.T) {
 	home := setupVaultHome(t)
 	srcA := writeSourceFile(t, "a.txt", "alpha")

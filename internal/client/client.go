@@ -258,6 +258,12 @@ func (c *Client) StorageRepack(ctx context.Context, maxBytes int64, minAge time.
 	return report, err
 }
 
+func (c *Client) StorageUnpack(ctx context.Context) (api.StorageUnpackReport, error) {
+	var report api.StorageUnpackReport
+	err := c.do(ctx, http.MethodPost, "/api/v1/storage/unpack", nil, nil, &report)
+	return report, err
+}
+
 func (c *Client) Verify(ctx context.Context) (api.VerifyReport, error) {
 	var rep api.VerifyReport
 	err := c.do(ctx, http.MethodPost, "/api/v1/verify", nil, nil, &rep)

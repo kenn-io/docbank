@@ -37,6 +37,23 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 		}}, nil
 	})
 
+	type storageUnpackOutput struct{ Body StorageUnpackReport }
+	huma.Register(api, huma.Operation{
+		OperationID: "storageUnpack", Method: http.MethodPost, Path: "/api/v1/storage/unpack",
+		Summary: "Materialize live packed blobs loose and retire all pack files",
+	}, func(ctx context.Context, _ *struct{}) (*storageUnpackOutput, error) {
+		out := &storageUnpackOutput{}
+		err := g.maintain(func() error {
+			stats, err := d.Blobs.Maintainer().Unpack(ctx)
+			if err != nil {
+				return FromStoreError(err)
+			}
+			out.Body = storageUnpackReport(stats)
+			return nil
+		})
+		return out, err
+	})
+
 	type storageRepackOutput struct{ Body StorageRepackReport }
 	huma.Register(api, huma.Operation{
 		OperationID: "storageRepack", Method: http.MethodPost, Path: "/api/v1/storage/repack",
@@ -258,6 +275,13 @@ func storageRepackReport(stats packstore.RepackStats) StorageRepackReport {
 		PacksRemoved: stats.PacksRemoved, PacksDeferredOversized: stats.PacksDeferredOversized,
 		BlobsRepacked: stats.BlobsRepacked, BytesRepacked: stats.BytesRepacked,
 		BudgetExhausted: stats.BudgetExhausted,
+	}
+}
+
+func storageUnpackReport(stats packstore.UnpackStats) StorageUnpackReport {
+	return StorageUnpackReport{
+		PacksUnpacked: stats.PacksUnpacked, BlobsRestored: stats.BlobsRestored,
+		BytesRestored: stats.BytesRestored, MappingsPruned: stats.MappingsPruned,
 	}
 }
 

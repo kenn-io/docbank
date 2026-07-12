@@ -17,7 +17,7 @@ const requestTimeout = 60 * time.Second
 func timeoutExempt(path string) bool {
 	switch path {
 	case "/api/v1/ingest", "/api/v1/gc", "/api/v1/verify", "/api/v1/trash/empty",
-		"/api/v1/storage/pack", "/api/v1/storage/repack":
+		"/api/v1/storage/pack", "/api/v1/storage/repack", "/api/v1/storage/unpack":
 		return true
 	}
 	return false

@@ -114,6 +114,15 @@ type StorageRepackReport struct {
 	BudgetExhausted        bool  `json:"budget_exhausted"`
 }
 
+// StorageUnpackReport summarizes durable loose materialization and packed
+// authority retirement.
+type StorageUnpackReport struct {
+	PacksUnpacked  int   `json:"packs_unpacked"`
+	BlobsRestored  int   `json:"blobs_restored"`
+	BytesRestored  int64 `json:"bytes_restored"`
+	MappingsPruned int64 `json:"mappings_pruned"`
+}
+
 // VerifyProblem flags one blob whose content didn't check out.
 type VerifyProblem struct {
 	Hash    string `json:"hash"`

@@ -230,6 +230,11 @@ thresholds are policy, not a preview guarantee: inspect storage status before
 and after. `bytes_repacked` counts live raw bytes rewritten and must not be
 reported as reclaimed disk space.
 
+`POST /api/v1/storage/unpack` is the explicit all-loose recovery path. It
+preflights every source before writing, but may temporarily need space for both
+packs and live raw loose content. Treat `bytes_restored` as materialized raw
+content, not net disk growth, and compare storage status before and after.
+
 ## Branch on problem codes
 
 Non-2xx responses use RFC 7807 problem JSON:

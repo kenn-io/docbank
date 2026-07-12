@@ -250,6 +250,44 @@ func TestStorageRepackReclaimsSparsePack(t *testing.T) {
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 }
 
+func TestStorageUnpackMaterializesLooseAndConverges(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	files := []store.Node{
+		createFileWithContent(t, ts, s, "/one.txt", "one"),
+		createFileWithContent(t, ts, s, "/two.txt", "two"),
+	}
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/storage/pack", nil,
+		map[string]any{"max_bytes": 0})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/storage/unpack", nil, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var report api.StorageUnpackReport
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	assert.Equal(t, 1, report.PacksUnpacked)
+	assert.Equal(t, 2, report.BlobsRestored)
+	assert.Equal(t, int64(len("one")+len("two")), report.BytesRestored)
+
+	statusResp, statusBody := get(t, ts, "/api/v1/storage", nil)
+	require.Equal(t, http.StatusOK, statusResp.StatusCode, statusBody)
+	var status api.StorageStatus
+	require.NoError(t, json.Unmarshal([]byte(statusBody), &status))
+	assert.Equal(t, 2, status.LooseBlobs)
+	assert.Zero(t, status.Packs)
+	assert.Zero(t, status.PackedBlobs)
+	for _, file := range files {
+		contentResp, content := get(t, ts, fmt.Sprintf("/api/v1/nodes/%d/content", file.ID), nil)
+		require.Equal(t, http.StatusOK, contentResp.StatusCode, content)
+		assert.Equal(t, file.Size, int64(len(content)))
+	}
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/storage/unpack", nil, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	assert.Zero(t, report.PacksUnpacked)
+	assert.Zero(t, report.BlobsRestored)
+}
+
 func TestGCRevokesPackedBlobAuthority(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	file := createFileWithContent(t, ts, s, "/packed.txt", "packed gc content")

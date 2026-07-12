@@ -145,6 +145,34 @@ var storageRepackCmd = &cobra.Command{
 	},
 }
 
+var storageUnpackJSON bool
+
+var storageUnpackCmd = &cobra.Command{
+	Use:   "unpack",
+	Short: "Materialize packed blobs loose and retire all pack files",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		c, err := client.Ensure(cmd.Context())
+		if err != nil {
+			return err
+		}
+		report, err := c.StorageUnpack(cmd.Context())
+		if err != nil {
+			return err
+		}
+		if storageUnpackJSON {
+			enc := json.NewEncoder(cmd.OutOrStdout())
+			enc.SetIndent("", "  ")
+			return enc.Encode(report)
+		}
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "restored %d blob(s), %d byte(s), to loose storage\n",
+			report.BlobsRestored, report.BytesRestored)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "retired %d pack(s); pruned %d stale mapping(s)\n",
+			report.PacksUnpacked, report.MappingsPruned)
+		return nil
+	},
+}
+
 func init() {
 	storageStatusCmd.Flags().BoolVar(&storageStatusJSON, "json", false, "machine-readable output")
 	storagePackCmd.Flags().Int64Var(&storagePackMaxBytes, "max-bytes", 0,
@@ -157,6 +185,7 @@ func init() {
 	storageRepackCmd.Flags().Int64Var(&storageRepackMinDeadBytes, "min-dead-bytes", 8<<20,
 		"minimum dead stored payload in a sparse pack")
 	storageRepackCmd.Flags().BoolVar(&storageRepackJSON, "json", false, "machine-readable output")
-	storageCmd.AddCommand(storageStatusCmd, storagePackCmd, storageRepackCmd)
+	storageUnpackCmd.Flags().BoolVar(&storageUnpackJSON, "json", false, "machine-readable output")
+	storageCmd.AddCommand(storageStatusCmd, storagePackCmd, storageRepackCmd, storageUnpackCmd)
 	rootCmd.AddCommand(storageCmd)
 }

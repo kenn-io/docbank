@@ -16,8 +16,9 @@ valid indefinitely.
 authenticated daemon API, and `docbank storage pack` explicitly moves
 authorized loose content into immutable packs with an optional work budget.
 `docbank storage repack` compacts eligible sparse packs and retires dead pack
-files. Unpacking remains planned. Startup never performs an implicit migration,
-and automatic background maintenance remains a later step.
+files. `docbank storage unpack` durably materializes all live content loose and
+retires every pack. Startup never performs an implicit migration, and automatic
+background maintenance remains a later step.
 
 Large collections of small files are expensive to enumerate, copy, and restore.
 msgvault uses immutable pack files as the steady-state storage format for
@@ -70,11 +71,13 @@ and does not own either application's schema or garbage-collection policy.
    daemon maintenance gate and Kit coordinator.
 6. **Complete:** expose policy-selected sparse repacking and reader-safe source
    retirement through the same ordering.
+7. **Complete:** expose preflighted all-pack unpacking as the recovery path back
+   to canonical loose storage.
 
 !!! info "Planned — next adoption steps"
-    A daemon-first unpack operation will expose the remaining lifecycle
-    mechanic. Built-in backup and external integrations will use the catalog
-    and content-hash boundary rather than private pack internals.
+    Built-in backup and external integrations will use the catalog and
+    content-hash boundary rather than private pack internals. Automatic storage
+    maintenance remains deferred until watched-inbox policy lands.
 
 ## Consequences for docbank
 

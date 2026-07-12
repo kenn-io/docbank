@@ -246,6 +246,25 @@ errors after committed work. The report's `bytes_repacked` is live raw content
 rewritten, not a claim about filesystem bytes reclaimed. Compare `storage
 status` before and after when exact inventory change matters.
 
+## docbank storage unpack
+
+```
+docbank storage unpack [--json]
+```
+
+Converts every live packed blob back to durable canonical loose storage and
+retires all pack files. Kit preflights every source pack and footer before the
+first loose write, then materializes and verifies every live blob before
+atomically clearing packed catalog authority. Source packs are retired only
+after loose authority is established and active readers release them.
+
+Unpack is an explicit representation change, not a logical content operation:
+node IDs, paths, blob hashes, and readable bytes remain unchanged. It may
+temporarily require enough disk space for both the existing packs and all live
+raw loose content. Use `storage status` before and after; repeated unpack runs
+converge to a zero-work report. `--json` reports restored blobs/bytes, retired
+packs, and stale mappings pruned during preflight.
+
 ## docbank verify
 
 ```
