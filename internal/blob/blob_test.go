@@ -1,6 +1,7 @@
 package blob
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -13,13 +14,23 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/pack"
+	"go.kenn.io/kit/packstore"
 )
 
 func newTestBlobStore(t *testing.T) *Store {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "blobs")
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "tmp"), 0o700))
-	return New(dir)
+	store, err := newReaderStore(alwaysMemberResolver{}, dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	return store
+}
+
+type alwaysMemberResolver struct{}
+
+func (alwaysMemberResolver) Resolve(_ context.Context, _ packstore.Hash) (packstore.Location, error) {
+	return packstore.Location{Member: true}, nil
 }
 
 func TestWriteAndReadBack(t *testing.T) {
@@ -114,7 +125,7 @@ func TestWriteSurfacesSyncDirFailure(t *testing.T) {
 
 	hash, size, err := bs.Write(strings.NewReader(content))
 	require.Error(t, err)
-	require.ErrorContains(t, err, "syncing blob shard dir")
+	require.ErrorContains(t, err, "sync")
 
 	// A durably-successful write reports (hash, size); on SyncDir failure
 	// Write must return the zero values so no caller can mistake this write
@@ -140,7 +151,7 @@ func TestWriteDedupFastPathSurfacesSyncDirFailure(t *testing.T) {
 	// reporting durable success.
 	hash2, size2, err := bs.Write(strings.NewReader(content))
 	require.Error(t, err)
-	require.ErrorContains(t, err, "syncing blob shard dir")
+	require.ErrorContains(t, err, "sync")
 	assert.Empty(t, hash2)
 	assert.Zero(t, size2)
 
@@ -178,14 +189,14 @@ func TestRemoveSurfacesSyncDirFailure(t *testing.T) {
 	// the metadata row for a file that could resurface after a crash.
 	err = bs.Remove(hash)
 	require.Error(t, err)
-	require.ErrorContains(t, err, "syncing blob shard dir")
+	require.ErrorContains(t, err, "sync loose removal")
 
 	// The retry finds the file already gone, but the earlier unlink was
 	// never durably synced: returning success without a sync would let gc
 	// delete the row above a still-volatile unlink.
 	err = bs.Remove(hash)
 	require.Error(t, err)
-	require.ErrorContains(t, err, "syncing blob shard dir")
+	require.ErrorContains(t, err, "sync loose removal")
 
 	// Once syncing works the retry converges, and a blob whose shard dir
 	// never existed has no entry to resurface and needs no sync.
@@ -194,7 +205,7 @@ func TestRemoveSurfacesSyncDirFailure(t *testing.T) {
 	require.NoError(t, bs.Remove(strings.Repeat("f", 64)))
 }
 
-func TestWriteReplacesInvalidExistingObject(t *testing.T) {
+func TestWriteRefusesInvalidExistingObject(t *testing.T) {
 	bs := newTestBlobStore(t)
 	content := "healthy bytes"
 	sum := sha256.Sum256([]byte(content))
@@ -202,29 +213,27 @@ func TestWriteReplacesInvalidExistingObject(t *testing.T) {
 	final := filepath.Join(bs.dir, hash[:2], hash)
 	require.NoError(t, os.MkdirAll(filepath.Dir(final), 0o700))
 
-	// A wrong-size regular file is not the content this hash promises:
-	// dedup must not vouch for it; the verified bytes replace it.
+	// A wrong-size regular file is not the content this hash promises.
+	// Kit fails closed rather than replacing a path whose identity raced or
+	// was tampered with.
 	require.NoError(t, os.WriteFile(final, []byte("truncated"), 0o600))
 	h, _, err := bs.Write(strings.NewReader(content))
-	require.NoError(t, err)
-	assert.Equal(t, hash, h)
+	require.ErrorIs(t, err, packstore.ErrContentMismatch)
+	assert.Empty(t, h)
 	got, err := os.ReadFile(final)
 	require.NoError(t, err)
-	assert.Equal(t, content, string(got))
+	assert.Equal(t, "truncated", string(got))
 
-	// A symlink (even to identical bytes) is replaced by a real file.
+	// A symlink (even to identical bytes) is likewise refused.
 	other := filepath.Join(t.TempDir(), "elsewhere")
 	require.NoError(t, os.WriteFile(other, []byte(content), 0o600))
 	require.NoError(t, os.Remove(final))
 	require.NoError(t, os.Symlink(other, final))
 	_, _, err = bs.Write(strings.NewReader(content))
-	require.NoError(t, err)
+	require.ErrorIs(t, err, packstore.ErrContentMismatch)
 	fi, err := os.Lstat(final)
 	require.NoError(t, err)
-	assert.True(t, fi.Mode().IsRegular())
-	got, err = os.ReadFile(final)
-	require.NoError(t, err)
-	assert.Equal(t, content, string(got))
+	assert.NotZero(t, fi.Mode()&os.ModeSymlink)
 
 	// A directory cannot be replaced by rename: hard error, never a fake
 	// dedup success.

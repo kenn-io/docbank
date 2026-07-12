@@ -53,6 +53,9 @@ func (s *Store) UnreachableBlobs(ctx context.Context) ([]BlobInfo, error) {
 func (s *Store) DeleteBlobRows(ctx context.Context, hashes []string) error {
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		for _, h := range hashes {
+			if _, err := tx.Exec(`DELETE FROM blob_pack_index WHERE blob_hash = ?`, h); err != nil {
+				return fmt.Errorf("deleting packed mapping of %s: %w", h, err)
+			}
 			if _, err := tx.Exec(`DELETE FROM extracted_text WHERE blob_hash = ?`, h); err != nil {
 				return fmt.Errorf("deleting extracted text of %s: %w", h, err)
 			}
@@ -71,4 +74,28 @@ func (s *Store) AllBlobs(ctx context.Context) ([]BlobInfo, error) {
 		return nil, fmt.Errorf("listing blobs: %w", err)
 	}
 	return scanBlobInfos(rows, "listing blobs")
+}
+
+// PackedBlobStoredBytes returns the physical stored length of every cataloged
+// packed blob. GC uses it to distinguish bytes unlinked immediately from dead
+// immutable-pack space that requires a later repack.
+func (s *Store) PackedBlobStoredBytes(ctx context.Context) (map[string]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT blob_hash, stored_len FROM blob_pack_index`)
+	if err != nil {
+		return nil, fmt.Errorf("listing packed blob sizes: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	result := make(map[string]int64)
+	for rows.Next() {
+		var hash string
+		var size int64
+		if err := rows.Scan(&hash, &size); err != nil {
+			return nil, fmt.Errorf("scanning packed blob size: %w", err)
+		}
+		result[hash] = size
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("listing packed blob sizes: %w", err)
+	}
+	return result, nil
 }

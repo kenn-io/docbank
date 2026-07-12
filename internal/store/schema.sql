@@ -39,6 +39,29 @@ CREATE TABLE IF NOT EXISTS blobs (
     created_at TEXT NOT NULL
 );
 
+-- Physical packed-CAS metadata. blobs remains the membership authority:
+-- deleting a blob row revokes reads, while maintenance later prunes any stale
+-- mapping and reclaims dead bytes from the immutable pack. Pack rows remain
+-- until their files have been retired so the table is a truthful inventory.
+CREATE TABLE IF NOT EXISTS blob_packs (
+    pack_id      TEXT PRIMARY KEY,
+    entry_count  INTEGER NOT NULL CHECK (entry_count >= 0),
+    stored_bytes INTEGER NOT NULL CHECK (stored_bytes >= 0),
+    created_at   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS blob_pack_index (
+    blob_hash   TEXT PRIMARY KEY,
+    pack_id     TEXT NOT NULL REFERENCES blob_packs(pack_id) ON DELETE CASCADE,
+    pack_offset INTEGER NOT NULL CHECK (pack_offset >= 0),
+    stored_len  INTEGER NOT NULL CHECK (stored_len >= 0),
+    raw_len     INTEGER NOT NULL CHECK (raw_len >= 0),
+    flags       INTEGER NOT NULL CHECK (flags BETWEEN 0 AND 255),
+    crc32c      INTEGER NOT NULL CHECK (crc32c BETWEEN 0 AND 4294967295)
+);
+
+CREATE INDEX IF NOT EXISTS blob_pack_index_pack ON blob_pack_index(pack_id);
+
 CREATE TABLE IF NOT EXISTS node_versions (
     node_id     INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
     blob_hash   TEXT NOT NULL REFERENCES blobs(hash),

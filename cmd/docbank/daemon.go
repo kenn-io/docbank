@@ -69,7 +69,11 @@ func runServe(ctx context.Context) error {
 		return err
 	}
 	defer func() { _ = s.Close() }()
-	blobs := blob.New(layout.BlobsDir())
+	blobs, err := blob.New(store.NewPackCatalog(s), layout.BlobsDir())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = blobs.Close() }()
 	// Exclusive lock holder: any stale tmp file is provably abandoned.
 	if err := blobs.CleanTmp(); err != nil {
 		return err

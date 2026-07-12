@@ -2,6 +2,7 @@ package client_test
 
 import (
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -31,7 +32,12 @@ func newClient(t *testing.T, clientKey string) (*client.Client, *store.Store) {
 	t.Cleanup(func() { _ = s.Close() })
 	cfg := config.Default()
 	cfg.Server.APIKey = serverKey
-	srv := api.NewServer(api.Deps{Store: s, Blobs: blob.New(filepath.Join(dir, "blobs")), Cfg: cfg})
+	blobsDir := filepath.Join(dir, "blobs")
+	require.NoError(t, os.MkdirAll(filepath.Join(blobsDir, "tmp"), 0o700))
+	blobs, err := blob.New(store.NewPackCatalog(s), blobsDir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = blobs.Close() })
+	srv := api.NewServer(api.Deps{Store: s, Blobs: blobs, Cfg: cfg})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return client.New(ts.URL, clientKey), s

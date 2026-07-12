@@ -21,7 +21,10 @@ func newTestIngester(t *testing.T) *Ingester {
 	s, err := store.Open(filepath.Join(home, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
-	return &Ingester{Store: s, Blobs: blob.New(blobsDir)}
+	blobs, err := blob.New(store.NewPackCatalog(s), blobsDir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = blobs.Close() })
+	return &Ingester{Store: s, Blobs: blobs}
 }
 
 // writeTree creates a synthetic source tree and returns its root.

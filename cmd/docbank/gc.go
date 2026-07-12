@@ -24,8 +24,13 @@ var gcCmd = &cobra.Command{
 			return err
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-			"%d candidate blob(s), %d untracked file(s), %d byte(s) reclaimable\n",
+			"%d candidate blob(s), %d untracked file(s), %d loose byte(s) reclaimable\n",
 			rep.CandidateBlobs, rep.UntrackedFiles, rep.ReclaimableBytes)
+		if rep.PendingPackedBlobs > 0 {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+				"%d packed blob(s), %d stored byte(s) pending repack\n",
+				rep.PendingPackedBlobs, rep.PendingPackedBytes)
+		}
 		if !gcRun {
 			if rep.CandidateBlobs+rep.UntrackedFiles > 0 {
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "dry run — pass --run to delete")
@@ -33,8 +38,9 @@ var gcCmd = &cobra.Command{
 			return nil
 		}
 		if rep.Removed > 0 {
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reclaimed %d blob(s), %d byte(s)\n",
-				rep.Removed, rep.ReclaimableBytes)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+				"removed %d blob record(s); reclaimed %d loose file(s), %d byte(s)\n",
+				rep.RemovedBlobs, rep.ReclaimedFiles, rep.ReclaimableBytes)
 		}
 		return nil
 	},

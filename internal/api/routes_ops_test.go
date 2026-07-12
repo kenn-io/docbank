@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
@@ -74,7 +75,9 @@ func TestIngestRejectsNonLoopback(t *testing.T) {
 	t.Cleanup(func() { _ = s.Close() })
 	blobsDir := filepath.Join(dir, "blobs")
 	require.NoError(t, os.MkdirAll(filepath.Join(blobsDir, "tmp"), 0o700))
-	blobs := blob.New(blobsDir)
+	blobs, err := blob.New(store.NewPackCatalog(s), blobsDir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = blobs.Close() })
 
 	cfg := config.Default()
 	cfg.Server.APIKey = "test-key"
@@ -127,6 +130,45 @@ func TestTrashListAndEmpty(t *testing.T) {
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 }
 
+func TestGCRevokesPackedBlobAuthority(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	file := createFileWithContent(t, ts, s, "/packed.txt", "packed gc content")
+	packed, err := s.Blobs.Maintainer().Pack(t.Context(), packstore.PackOptions{})
+	require.NoError(t, err)
+	require.Equal(t, 1, packed.BlobsPacked)
+
+	_, etag := etagOf(t, ts, file.ID)
+	resp, body := do(t, ts, http.MethodPost, fmt.Sprintf("/api/v1/nodes/%d/trash", file.ID),
+		map[string]string{"If-Match": etag}, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
+		map[string]any{"run": true})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/gc", nil,
+		map[string]any{"run": true})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var gcReport api.GCReport
+	require.NoError(t, json.Unmarshal([]byte(body), &gcReport))
+	assert.Zero(t, gcReport.ReclaimableBytes)
+	assert.Equal(t, 1, gcReport.PendingPackedBlobs)
+	assert.Positive(t, gcReport.PendingPackedBytes)
+	assert.Zero(t, gcReport.ReclaimedFiles)
+	assert.Equal(t, 1, gcReport.RemovedBlobs)
+
+	_, err = s.Blobs.Open(file.BlobHash)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	entries, err := store.NewPackCatalog(s.Store).ListIndexed(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, entries, "GC removes packed authority in the blob-row transaction")
+	records, err := store.NewPackCatalog(s.Store).ListPackRecords(t.Context())
+	require.NoError(t, err)
+	require.Len(t, records, 1, "physical inventory remains until reader-safe retirement")
+
+	repacked, err := s.Blobs.Maintainer().Repack(t.Context(), packstore.RepackOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, 1, repacked.PacksRemoved)
+}
+
 func TestGCDryRunAndRun(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	f := createFileWithContent(t, ts, s, "/g.txt", "gc-me")
@@ -140,12 +182,17 @@ func TestGCDryRunAndRun(t *testing.T) {
 	var rep api.GCReport
 	require.NoError(t, json.Unmarshal([]byte(body), &rep))
 	assert.Equal(t, 1, rep.CandidateBlobs)
+	assert.Equal(t, int64(len("gc-me")), rep.ReclaimableBytes)
+	assert.Zero(t, rep.PendingPackedBytes)
 	assert.False(t, rep.Run)
 
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/gc", nil, map[string]any{"run": true})
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, json.Unmarshal([]byte(body), &rep))
 	assert.Equal(t, 1, rep.Removed)
+	assert.Equal(t, 1, rep.RemovedBlobs)
+	assert.Equal(t, 1, rep.ReclaimedFiles)
+	assert.Equal(t, int64(len("gc-me")), rep.ReclaimableBytes)
 }
 
 func TestVerifyEndpoint(t *testing.T) {

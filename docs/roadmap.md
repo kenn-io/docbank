@@ -12,7 +12,7 @@ marked planned appears elsewhere in these docs only under an explicit
 
 | Phase | Scope | Status |
 |-------|-------|--------|
-| 0 | Extract msgvault's pack/backup engine into `go.kenn.io/kit` | **Implemented** (`kit` v0.4.0) |
+| 0 | Extract msgvault's pack/backup and packed-CAS engines into `go.kenn.io/kit` | **Implemented** (`kit` v0.7.0) |
 | 1 | Core: store, blob store, ingest pipeline, full CLI | **Implemented** |
 | 2a | Infrastructure: daemon, HTTP API, daemon-first CLI, self-update, release pipeline | **Implemented** |
 | 2b | Features: versioned editing, tags, watched inboxes, text extraction, ingest provenance | Designed |
@@ -59,6 +59,15 @@ marked planned appears elsewhere in these docs only under an explicit
   Linux (amd64/arm64) and macOS (arm64)
 - A handwritten placeholder web page at `/`, naming the vault and
   linking to `/docs`
+- Internal mixed loose/packed blob storage on `kit/packstore`: docbank's
+  `blobs` rows remain the read-authority boundary, existing loose vaults
+  open without conversion, and GC/verify operate through the shared
+  physical store
+
+!!! info "Planned — packed-storage operations"
+    Daemon-backed status, pack, repack, and unpack commands are the next
+    delivery. Until then, ordinary ingests continue to publish loose blobs;
+    startup never performs an implicit migration.
 
 ## Phase 2b — Features (designed)
 

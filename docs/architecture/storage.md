@@ -14,16 +14,19 @@ vault; `docbank verify` proves the copy is intact.
 ```
 blobs/
 ├── tmp/                      # in-flight writes
-└── <aa>/<sha256>             # aa = first two hex chars of the hash
+├── <aa>/<sha256>             # loose content; aa = first two hash chars
+└── packs/<aa>/<pack>.mvpack  # sealed immutable packs
 ```
 
-One file per unique content, named by its SHA-256, sharded by the first
-byte to keep directories small. Blobs are immutable and deduplicated by
-construction: writing content that already exists is a no-op success.
+Blobs are immutable and deduplicated by SHA-256. New content is first
+published loose; the shared Kit engine can later move eligible content into
+sealed packs without changing its identity. Reads consult the SQLite catalog
+and transparently use the current loose or packed representation. Existing
+loose-only vaults open without conversion.
 
-**Durability discipline.** Every write streams to `blobs/tmp/`, fsyncs
-the file, renames it into place, then fsyncs the shard directory (using
-`go.kenn.io/kit/pack`'s synced-directory helpers) — including on the
+**Durability discipline.** `go.kenn.io/kit/packstore` streams every write to
+`blobs/tmp/`, fsyncs the file, renames it into place, then fsyncs the shard
+directory — including on the
 deduplication fast path, so a reference is never handed out for a
 directory entry that could vanish on power loss. The database
 transaction that references a blob commits only after the blob is
@@ -55,6 +58,9 @@ nodes (
     trash_name    TEXT
 )
 blobs          (hash PRIMARY KEY, size, created_at)
+blob_packs     (pack_id PRIMARY KEY, entry_count, stored_bytes, created_at)
+blob_pack_index(blob_hash PRIMARY KEY, pack_id, pack_offset,
+                stored_len, raw_len, flags, crc32c)
 node_versions  (node_id, blob_hash, size, replaced_at)   -- prior contents
 ingests        (id, started_at, source_kind, source_desc)
 provenance     (node_id, ingest_id, original_path, original_mtime)

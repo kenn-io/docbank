@@ -51,13 +51,18 @@ type TrashEmptyReport struct {
 	Run            bool  `json:"run"`
 }
 
-// GCReport summarizes a gc dry run (Run=false) or an actual reclaim.
+// GCReport separates immediate loose-file reclamation from immutable pack
+// space made logically dead and pending a later repack.
 type GCReport struct {
-	CandidateBlobs   int   `json:"candidate_blobs"`
-	UntrackedFiles   int   `json:"untracked_files"`
-	ReclaimableBytes int64 `json:"reclaimable_bytes"`
-	Removed          int   `json:"removed"`
-	Run              bool  `json:"run"`
+	CandidateBlobs     int   `json:"candidate_blobs"`
+	UntrackedFiles     int   `json:"untracked_files"`
+	ReclaimableBytes   int64 `json:"reclaimable_bytes"`
+	PendingPackedBlobs int   `json:"pending_packed_blobs"`
+	PendingPackedBytes int64 `json:"pending_packed_bytes"`
+	ReclaimedFiles     int   `json:"reclaimed_files"`
+	RemovedBlobs       int   `json:"removed_blobs"`
+	Removed            int   `json:"removed"` // total removed records/files; retained for wire compatibility
+	Run                bool  `json:"run"`
 }
 
 // VerifyProblem flags one blob whose content didn't check out.
