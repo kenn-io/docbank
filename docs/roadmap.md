@@ -106,6 +106,9 @@ operations — anything the TUI does, the API can do.
 `docbank backup init|create|list|verify|restore` against the kit engine
 ([design](architecture/backup.md)).
 
+The internal Kit application adapter and loose/packed capture proof are
+implemented. Command/API orchestration and packed restore publication remain.
+
 ## Deferred beyond v1
 
 OCR of scans, embeddings/AI tagging, a web UI, at-rest encryption of the
