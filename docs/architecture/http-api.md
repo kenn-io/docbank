@@ -262,6 +262,7 @@ machine-readable string clients branch on instead of parsing `detail`:
 | `loopback_only` | 403 | `POST /ingest` called by a non-loopback peer |
 | `digest_mismatch` / `size_mismatch` | 422 | uploaded file bytes disagree with the required declaration; no node/blob authority committed |
 | `too_large` | 413 | upload exceeded its declared size plus bounded multipart overhead |
+| `pack_retirement_deferred` | 503 | repack authority committed but an old source pack remains physically locked; release the lock, then run `storage pack` reconciliation |
 | `unauthorized` | 401 | missing or invalid API key; bad shutdown token |
 | `internal` | 500 | unmapped error (still surfaced with a message — this is a single-user local daemon, not a hardened multi-tenant service) |
 

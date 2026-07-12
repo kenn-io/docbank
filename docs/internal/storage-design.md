@@ -133,6 +133,13 @@ measurements first: pack preparation can use about 2.004 times raw size in
 scratch per concurrent object, and active stream leases can temporarily raise
 open descriptors above the idle reader-cache bound.
 
+Repack commits replacement mappings before retiring an old immutable pack. If
+Kit returns `ErrPackRetirementDeferred`, the catalog change must not be rolled
+back: the old pack is now an untrusted physical orphan, not authority. Docbank
+reports the condition as retryable cleanup. After external readers or Windows
+file locks release it, the operator runs `storage pack`; Kit's orphan
+reconciliation verifies current authority and removes the redundant source.
+
 Docbank owns:
 
 - the SQLite schema and catalog adapter;

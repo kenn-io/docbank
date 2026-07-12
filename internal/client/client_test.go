@@ -4,7 +4,9 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
@@ -94,6 +97,23 @@ func TestErrorMapping(t *testing.T) {
 
 	_, err = c.Move(ctx, d.ID, d.Revision+99, nil, new("x"))
 	require.ErrorIs(t, err, store.ErrStaleRevision)
+}
+
+func TestDeferredRetirementProblemKeepsTypedClientError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		if err := json.NewEncoder(w).Encode(api.Error{
+			Title: http.StatusText(http.StatusServiceUnavailable), Status: http.StatusServiceUnavailable,
+			Code: "pack_retirement_deferred", Detail: "replacement committed; run storage pack",
+		}); err != nil {
+			t.Errorf("encoding problem response: %v", err)
+		}
+	}))
+	t.Cleanup(ts.Close)
+	c := client.New(ts.URL, "key")
+	_, err := c.StorageRepack(t.Context(), 0, 0, 0)
+	require.ErrorIs(t, err, packstore.ErrPackRetirementDeferred)
 }
 
 func TestAPIKeySent(t *testing.T) {
