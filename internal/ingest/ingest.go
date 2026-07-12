@@ -180,7 +180,7 @@ func (ing *Ingester) importFile(ctx context.Context, ingestID, parentID int64, s
 	// durable. A skip, metadata failure, or crash after this point can
 	// orphan the blob file — harmless, reclaimed by gc's untracked-file
 	// scan.
-	hash, size, err := ing.Blobs.Write(f)
+	hash, size, err := ing.Blobs.WriteContext(ctx, f)
 	if err != nil {
 		return false, fmt.Errorf("storing content of %s: %w", src, err)
 	}

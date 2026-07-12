@@ -54,7 +54,9 @@ func newTestServer(t *testing.T, mutate func(*api.Deps)) (*httptest.Server, *tes
 	t.Cleanup(func() { _ = s.Close() })
 	blobsDir := filepath.Join(dir, "blobs")
 	require.NoError(t, os.MkdirAll(filepath.Join(blobsDir, "tmp"), 0o700))
-	blobs := blob.New(blobsDir)
+	blobs, err := blob.New(store.NewPackCatalog(s), blobsDir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = blobs.Close() })
 	d := api.Deps{Store: s, Blobs: blobs, Cfg: config.Default()}
 	d.Cfg.Server.APIKey = testAPIKey
 	if mutate != nil {

@@ -47,16 +47,18 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 		}
 		out := &ingestOutput{}
 		err := g.mutate(func() error {
-			ing := &ingest.Ingester{Store: d.Store, Blobs: d.Blobs}
-			rep, err := ing.AddPaths(ctx, in.Body.Paths, dest)
-			if err != nil {
-				return FromStoreError(err)
-			}
-			out.Body = IngestReport{Added: rep.Added, Skipped: rep.Skipped}
-			for _, f := range rep.Failed {
-				out.Body.Failed = append(out.Body.Failed, IngestFailure{Path: f.Path, Error: f.Err.Error()})
-			}
-			return nil
+			return d.Blobs.WithMutation(ctx, func() error {
+				ing := &ingest.Ingester{Store: d.Store, Blobs: d.Blobs}
+				rep, err := ing.AddPaths(ctx, in.Body.Paths, dest)
+				if err != nil {
+					return FromStoreError(err)
+				}
+				out.Body = IngestReport{Added: rep.Added, Skipped: rep.Skipped}
+				for _, f := range rep.Failed {
+					out.Body.Failed = append(out.Body.Failed, IngestFailure{Path: f.Path, Error: f.Err.Error()})
+				}
+				return nil
+			})
 		})
 		return out, err
 	})
@@ -123,12 +125,14 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 	}) (*gcOutput, error) {
 		out := &gcOutput{}
 		err := g.maintain(func() error {
-			rep, err := runGC(ctx, d, in.Body.Run)
-			if err != nil {
-				return err
-			}
-			out.Body = rep
-			return nil
+			return d.Blobs.WithMutation(ctx, func() error {
+				rep, err := runGC(ctx, d, in.Body.Run)
+				if err != nil {
+					return err
+				}
+				out.Body = rep
+				return nil
+			})
 		})
 		return out, err
 	})
@@ -149,7 +153,7 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 					return NewError(http.StatusInternalServerError, "internal",
 						fmt.Sprintf("verify interrupted: %v", err))
 				}
-				if problem := checkBlob(d, b.Hash); problem == "" {
+				if problem := checkBlob(ctx, d, b.Hash); problem == "" {
 					out.Body.OK++
 				} else {
 					out.Body.Problems = append(out.Body.Problems, VerifyProblem{Hash: b.Hash, Problem: problem})
@@ -218,8 +222,8 @@ func runGC(ctx context.Context, d Deps, run bool) (GCReport, error) {
 }
 
 // checkBlob returns "", "missing", "corrupt", or "unreadable".
-func checkBlob(d Deps, hash string) string {
-	f, err := d.Blobs.Open(hash)
+func checkBlob(ctx context.Context, d Deps, hash string) string {
+	f, err := d.Blobs.OpenContext(ctx, hash)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return "missing"

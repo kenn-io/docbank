@@ -114,7 +114,7 @@ func registerReadRoutes(api huma.API, d Deps) {
 			return nil, NewError(http.StatusUnprocessableEntity, "not_file",
 				fmt.Sprintf("node %d is a directory", n.ID))
 		}
-		f, err := d.Blobs.Open(n.BlobHash)
+		f, err := d.Blobs.OpenContext(ctx, n.BlobHash)
 		if err != nil {
 			return nil, NewError(http.StatusInternalServerError, "internal",
 				fmt.Sprintf("opening blob %s: %v (run docbank verify)", n.BlobHash, err))

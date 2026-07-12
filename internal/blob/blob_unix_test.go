@@ -35,6 +35,6 @@ func TestOpenAndExistsRefuseSymlinkedBlob(t *testing.T) {
 	require.Error(t, err)
 
 	ok, err := bs.Exists(hash)
-	require.NoError(t, err)
+	require.Error(t, err)
 	assert.False(t, ok, "a symlink at the blob path is not a stored blob")
 }
