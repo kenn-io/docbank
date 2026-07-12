@@ -22,6 +22,12 @@ Instructions for autonomous coding agents working in this repository.
 3. Do not merge pull requests; opening and reporting them is the agent's
    job, merging is the user's.
 4. Run `prek run` before committing.
+5. Keep pull request descriptions rationale-first. Do not add routine
+   `Validation`, `Testing`, or checklist sections for `make test`, lint, docs,
+   vet, `prek`, CI, or ordinary conformance suites; report those results in the
+   handoff instead. Include validation in the PR body only when it is novel
+   evidence that materially informs review, such as a migration rehearsal,
+   benchmark, real-vault hardening run, or compatibility experiment.
 
 ## Releases
 
