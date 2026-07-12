@@ -78,12 +78,14 @@ to publish loose blobs; startup never performs an implicit migration.
 Implemented foundation: file-node API responses expose immutable SHA-256
 identity, content streams carry catalog identity plus a freshly computed digest
 trailer, and a revision-bound single-node endpoint verifies stored bytes. This
-is the evidence contract future remote writers build on.
+evidence contract now backs file-granular multipart upload: remote writers must
+declare SHA-256 and size, and receive the stable node plus server-computed
+identity only after both match.
 
 - Editing surfaces: `PUT` content, `docbank edit`/`put`/`revert`, and
   `versions` listing ([design](architecture/editing-and-versions.md))
 - Tags surfaced in CLI, search filters, and the API; `POST /batch/move`
-  bulk reorganization; multipart file upload
+  bulk reorganization
 - Watched inbox directories with a stability window, landing imports
   under `/inbox/<date>/`
 - Text extraction workers (PDF text layer, plain text/markdown, office

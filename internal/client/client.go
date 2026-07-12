@@ -9,9 +9,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"strconv"
 	"time"
@@ -183,12 +187,16 @@ func (c *Client) Content(ctx context.Context, id int64) (*ContentStream, error) 
 			id, api.BlobSizeHeader, resp.Header.Get(api.BlobSizeHeader))
 	}
 	hash := resp.Header.Get(api.BlobHashHeader)
-	decoded, decodeErr := hex.DecodeString(hash)
-	if decodeErr != nil || len(decoded) != sha256.Size || hex.EncodeToString(decoded) != hash {
+	if !validSHA256Hex(hash) {
 		_ = resp.Body.Close()
 		return nil, fmt.Errorf("content of node %d returned invalid %s %q", id, api.BlobHashHeader, hash)
 	}
 	return &ContentStream{ReadCloser: resp.Body, BlobHash: hash, Size: size, trailer: resp.Trailer}, nil
+}
+
+func validSHA256Hex(hash string) bool {
+	decoded, err := hex.DecodeString(hash)
+	return err == nil && len(decoded) == sha256.Size && hex.EncodeToString(decoded) == hash
 }
 
 func (c *Client) VerifyNodeContent(ctx context.Context, id, revision int64) (api.ContentVerification, error) {
@@ -217,6 +225,96 @@ func (c *Client) Ingest(ctx context.Context, paths []string, dest string) (api.I
 	err := c.do(ctx, http.MethodPost, "/api/v1/ingest", nil,
 		map[string]any{"paths": paths, "dest": dest}, &rep)
 	return rep, err
+}
+
+// Upload streams one remote file as a digest-checked multipart request. The
+// reader is consumed once; callers retain responsibility for closing it when
+// it also implements io.Closer.
+func (c *Client) Upload(
+	ctx context.Context, parentID int64, name, mimeType, expectedHash string,
+	expectedSize int64, content io.Reader,
+) (api.UploadReceipt, error) {
+	var receipt api.UploadReceipt
+	if parentID <= 0 {
+		return receipt, errors.New("upload parent ID must be positive")
+	}
+	if _, err := store.NormalizeName(name); err != nil {
+		return receipt, fmt.Errorf("upload name: %w", err)
+	}
+	if !validSHA256Hex(expectedHash) {
+		return receipt, errors.New("upload hash must be canonical lowercase SHA-256")
+	}
+	if expectedSize < 0 {
+		return receipt, errors.New("upload size must not be negative")
+	}
+	if content == nil {
+		return receipt, errors.New("upload content reader is nil")
+	}
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	} else {
+		mediaType, params, err := mime.ParseMediaType(mimeType)
+		if err != nil {
+			return receipt, fmt.Errorf("upload media type %q: %w", mimeType, err)
+		}
+		mimeType = mime.FormatMediaType(mediaType, params)
+	}
+
+	pipeReader, pipeWriter := io.Pipe()
+	multipartWriter := multipart.NewWriter(pipeWriter)
+	writeDone := make(chan error, 1)
+	go func() {
+		header := make(textproto.MIMEHeader)
+		header.Set("Content-Disposition", multipart.FileContentDisposition("file", name))
+		header.Set("Content-Type", mimeType)
+		part, err := multipartWriter.CreatePart(header)
+		if err == nil {
+			_, err = io.Copy(part, content)
+		}
+		if err == nil {
+			err = multipartWriter.Close()
+		}
+		if err != nil {
+			_ = pipeWriter.CloseWithError(err)
+		} else {
+			err = pipeWriter.Close()
+		}
+		writeDone <- err
+	}()
+
+	query := url.Values{"parent_id": {strconv.FormatInt(parentID, 10)}, "name": {name}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.base+"/api/v1/uploads?"+query.Encode(), pipeReader)
+	if err != nil {
+		_ = pipeReader.Close()
+		return receipt, fmt.Errorf("building upload request: %w", err)
+	}
+	req.Header.Set("Content-Type", multipartWriter.FormDataContentType())
+	req.Header.Set(api.BlobHashHeader, expectedHash)
+	req.Header.Set(api.BlobSizeHeader, strconv.FormatInt(expectedSize, 10))
+	if c.key != "" {
+		req.Header.Set("X-Api-Key", c.key)
+	}
+	resp, callErr := c.hc.Do(req)
+	if callErr != nil {
+		_ = pipeReader.CloseWithError(callErr)
+		<-writeDone
+		return receipt, fmt.Errorf("uploading %q: %w", name, callErr)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		_ = pipeReader.Close()
+		<-writeDone
+		return receipt, decodeError(resp)
+	}
+	writerErr := <-writeDone
+	if writerErr != nil {
+		return receipt, fmt.Errorf("streaming upload %q: %w", name, writerErr)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&receipt); err != nil {
+		return receipt, fmt.Errorf("decoding upload response: %w", err)
+	}
+	return receipt, nil
 }
 
 func (c *Client) Move(ctx context.Context, id, rev int64, newParentID *int64, newName *string) (api.Node, error) {

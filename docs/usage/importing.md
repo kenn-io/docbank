@@ -80,10 +80,16 @@ Import never deletes or modifies source files. Delete originals yourself
 once `docbank verify` and your own spot-checks satisfy you — the same
 archive-first, delete-later posture msgvault takes with mailboxes.
 
-!!! info "Planned — Phase 2b"
-    **Watched inboxes**: the daemon will watch configured directories
-    (scanner output, a "To File" folder) and import files automatically
-    once they've been stable for a settle period, landing under
-    `/inbox/<date>/` for later filing. **Multipart upload** joins the
-    [HTTP API](../architecture/http-api.md) as the remote counterpart
-    to today's loopback-only, server-side-path `POST /ingest`.
+## Remote API imports
+
+Authenticated integrations can send one digest-checked file at a time through
+`POST /api/v1/uploads`. The server requires the writer's SHA-256 and byte length,
+computes both independently while streaming, and creates no node or blob
+authority when either differs. See the [HTTP API](../architecture/http-api.md#addendum-post-uploads)
+and [Agent Integration Guide](../agents/integration.md#create-and-ingest-safely)
+for the exact contract.
+
+!!! info "Planned — watched inboxes"
+    The daemon will watch configured directories (scanner output, a "To File"
+    folder) and import files automatically once they've been stable for a
+    settle period, landing under `/inbox/<date>/` for later filing.

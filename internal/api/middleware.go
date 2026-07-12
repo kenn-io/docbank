@@ -17,7 +17,7 @@ const requestTimeout = 60 * time.Second
 func timeoutExempt(path string) bool {
 	switch path {
 	case "/api/v1/ingest", "/api/v1/gc", "/api/v1/verify", "/api/v1/trash/empty",
-		"/api/v1/storage/pack", "/api/v1/storage/repack":
+		"/api/v1/storage/pack", "/api/v1/storage/repack", "/api/v1/uploads":
 		return true
 	}
 	return strings.HasPrefix(path, "/api/v1/nodes/") && strings.HasSuffix(path, "/verify")
@@ -73,7 +73,7 @@ func loopbackMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/ingest" && !isLoopbackRemote(r.RemoteAddr) {
 			writeError(w, NewError(http.StatusForbidden, "loopback_only",
-				"ingest by server-side path is loopback-only; remote clients need multipart upload (planned)"))
+				"ingest by server-side path is loopback-only; remote clients use POST /api/v1/uploads"))
 			return
 		}
 		next.ServeHTTP(w, r)

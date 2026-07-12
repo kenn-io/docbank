@@ -16,6 +16,15 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+var (
+	// ErrUploadDigestMismatch reports bytes that do not match the identity the
+	// remote writer declared. The physical write may leave an authority-free
+	// object for GC, but no blobs row or node is committed.
+	ErrUploadDigestMismatch = errors.New("upload digest mismatch")
+	// ErrUploadSizeMismatch is the corresponding declared-length failure.
+	ErrUploadSizeMismatch = errors.New("upload size mismatch")
+)
+
 // Ingester wires the metadata store to the blob store.
 type Ingester struct {
 	Store *store.Store
@@ -33,6 +42,83 @@ type Report struct {
 	Added   int
 	Skipped int
 	Failed  []FileError
+}
+
+// UploadResult is the server's independently computed receipt for one remote
+// file. Node is populated for both a new import and an idempotent retry.
+type UploadResult struct {
+	Node         store.Node
+	Added        bool
+	ComputedHash string
+	ComputedSize int64
+}
+
+// PreparedUpload is a verified, authority-free remote write. The caller may
+// validate the remainder of its transport envelope before Commit grants blob
+// and node authority.
+type PreparedUpload struct {
+	ing      *Ingester
+	parentID int64
+	name     string
+	mimeType string
+	result   UploadResult
+}
+
+// PrepareUpload streams one remote file through Kit's durable writer and
+// checks the independently declared identity. It intentionally stops before
+// inserting application metadata so callers can reject a malformed trailing
+// multipart envelope without partially accepting the request.
+func (ing *Ingester) PrepareUpload(
+	ctx context.Context, parentID int64, name, mimeType string, r io.Reader,
+	expectedHash string, expectedSize int64,
+) (*PreparedUpload, error) {
+	var result UploadResult
+	name, err := store.NormalizeName(name)
+	if err != nil {
+		return nil, err
+	}
+	parent, err := ing.Store.NodeByID(ctx, parentID)
+	if err != nil {
+		return nil, err
+	}
+	if parent.TrashedAt != nil {
+		return nil, store.ErrNotFound
+	}
+	if !parent.IsDir() {
+		return nil, store.ErrNotDir
+	}
+
+	result.ComputedHash, result.ComputedSize, err = ing.Blobs.WriteContext(ctx, r)
+	if err != nil {
+		return nil, err
+	}
+	if result.ComputedSize != expectedSize {
+		return nil, fmt.Errorf("declared %d bytes, received %d: %w",
+			expectedSize, result.ComputedSize, ErrUploadSizeMismatch)
+	}
+	if result.ComputedHash != expectedHash {
+		return nil, fmt.Errorf("declared SHA-256 %s, computed %s: %w",
+			expectedHash, result.ComputedHash, ErrUploadDigestMismatch)
+	}
+	return &PreparedUpload{
+		ing: ing, parentID: parentID, name: name, mimeType: mimeType, result: result,
+	}, nil
+}
+
+// Commit grants application authority to a prepared upload and returns the
+// stable node for either a new import or an idempotent retry.
+func (p *PreparedUpload) Commit(ctx context.Context) (UploadResult, error) {
+	result := p.result
+	ingestID, err := p.ing.Store.BeginIngest(ctx, "upload", p.name)
+	if err != nil {
+		return result, err
+	}
+	result.Node, result.Added, err = p.ing.Store.IngestFile(ctx, ingestID, p.parentID,
+		p.name, result.ComputedHash, result.ComputedSize, p.mimeType, p.name, "")
+	if err != nil {
+		return result, err
+	}
+	return result, nil
 }
 
 // AddPaths ingests files and directory trees under the virtual destPath.

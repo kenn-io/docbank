@@ -209,10 +209,40 @@ Inspect `added`, `skipped`, and every member of `failed`. Repeating the same
 ingest after fixing a partial failure is safe; successful content converges to
 `skipped` rather than another copy.
 
-!!! info "Planned — remote upload"
-    Multipart upload is not implemented. A client on another machine cannot
-    send document bytes through the API yet; `POST /ingest` names paths local
-    to the daemon host.
+Remote writers use a file-granular multipart request. Compute the expected
+identity before sending bytes, and address the destination by stable directory
+ID:
+
+```bash
+FILE=receipt.pdf
+HASH=$(shasum -a 256 "$FILE" | awk '{print $1}')
+SIZE=$(wc -c < "$FILE" | tr -d ' ')
+
+curl --fail-with-body -X POST \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  -H "X-Docbank-Blob-Hash: $HASH" \
+  -H "X-Docbank-Blob-Size: $SIZE" \
+  -F 'file=@receipt.pdf;filename=receipt.pdf;type=application/pdf' \
+  "$DOCBANK_URL/api/v1/uploads?parent_id=18&name=receipt.pdf"
+```
+
+Clients must percent-encode a nontrivial `name` query value. The request has
+exactly one part named `file`, and its multipart filename must equal `name`.
+The hash and size headers describe that file payload; top-level
+`Content-Digest` would instead describe the multipart envelope and is therefore
+not the write precondition.
+
+On `201`, require `status: "added"`; an idempotent retry returns `200` with
+`status: "skipped"` and the same stable node. In both cases compare
+`computed_hash` and `computed_size` with the locally calculated values, then
+retain `node.id`, `node.revision`, and `node.blob_hash`. A
+`digest_mismatch` or `size_mismatch` is a failed write with no new node/blob
+authority. Upload many files as independent requests so each result is
+unambiguous and independently retryable.
+
+The receipt proves receive-time agreement. Use the revision-bound single-node
+verification endpoint later when policy requires evidence about bytes currently
+stored in the vault.
 
 ## Treat destructive maintenance as a two-step decision
 

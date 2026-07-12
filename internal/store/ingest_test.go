@@ -22,10 +22,11 @@ func TestIngestFileIdempotency(t *testing.T) {
 	assert.Equal(t, "report.pdf", n1.Name)
 
 	// Same content, same name: skipped.
-	_, added, err = s.IngestFile(ctx, ing, s.RootID(),
+	skipped, added, err := s.IngestFile(ctx, ing, s.RootID(),
 		"report.pdf", fakeHash("a1"), 10, "application/pdf", "/src/docs/report.pdf", "")
 	require.NoError(t, err)
 	assert.False(t, added)
+	assert.Equal(t, n1.ID, skipped.ID)
 
 	// Different content, same name: suffixed.
 	n2, added, err := s.IngestFile(ctx, ing, s.RootID(),
@@ -35,10 +36,11 @@ func TestIngestFileIdempotency(t *testing.T) {
 	assert.Equal(t, "report (2).pdf", n2.Name)
 
 	// Re-run of the suffixed one: skipped even though names differ.
-	_, added, err = s.IngestFile(ctx, ing, s.RootID(),
+	skipped, added, err = s.IngestFile(ctx, ing, s.RootID(),
 		"report.pdf", fakeHash("b2"), 11, "application/pdf", "/other/report.pdf", "")
 	require.NoError(t, err)
 	assert.False(t, added)
+	assert.Equal(t, n2.ID, skipped.ID)
 
 	// Third distinct content takes the next free ordinal.
 	n3, added, err := s.IngestFile(ctx, ing, s.RootID(),

@@ -42,6 +42,16 @@ type ContentVerification struct {
 	Problem      string `json:"problem,omitempty" enum:"missing,corrupt,unreadable"`
 }
 
+// UploadReceipt proves which bytes the daemon computed and which stable node
+// now names them. Status is "added" for a new node and "skipped" for an
+// idempotent retry that converged on an existing node.
+type UploadReceipt struct {
+	Status       string `json:"status" enum:"added,skipped"`
+	Node         Node   `json:"node"`
+	ComputedHash string `json:"computed_hash" pattern:"^[0-9a-f]{64}$"`
+	ComputedSize int64  `json:"computed_size"`
+}
+
 // SearchHit pairs a matched node with its display path.
 type SearchHit struct {
 	Node Node   `json:"node"`
