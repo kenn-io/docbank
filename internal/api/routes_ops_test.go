@@ -130,6 +130,33 @@ func TestTrashListAndEmpty(t *testing.T) {
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 }
 
+func TestStorageStatusReportsLooseAndPackedUsage(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	createFileWithContent(t, ts, s, "/packed.txt", "packed storage status")
+
+	resp, body := get(t, ts, "/api/v1/storage", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var status api.StorageStatus
+	require.NoError(t, json.Unmarshal([]byte(body), &status))
+	assert.Equal(t, 1, status.LooseBlobs)
+	assert.Equal(t, int64(len("packed storage status")), status.LooseBytes)
+	assert.Zero(t, status.Packs)
+
+	packed, err := s.Blobs.Maintainer().Pack(t.Context(), packstore.PackOptions{})
+	require.NoError(t, err)
+	require.Equal(t, 1, packed.BlobsPacked)
+	resp, body = get(t, ts, "/api/v1/storage", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &status))
+	assert.Zero(t, status.LooseBlobs)
+	assert.Equal(t, 1, status.Packs)
+	assert.Equal(t, int64(1), status.PackedBlobs)
+	assert.Equal(t, int64(len("packed storage status")), status.PackedRawBytes)
+	assert.Positive(t, status.PackedStoredBytes)
+	assert.Equal(t, status.PackedStoredBytes, status.PackStoredBytes)
+	assert.Zero(t, status.DeadPackedBytes)
+}
+
 func TestGCRevokesPackedBlobAuthority(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	file := createFileWithContent(t, ts, s, "/packed.txt", "packed gc content")
@@ -163,6 +190,13 @@ func TestGCRevokesPackedBlobAuthority(t *testing.T) {
 	records, err := store.NewPackCatalog(s.Store).ListPackRecords(t.Context())
 	require.NoError(t, err)
 	require.Len(t, records, 1, "physical inventory remains until reader-safe retirement")
+	resp, body = get(t, ts, "/api/v1/storage", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var status api.StorageStatus
+	require.NoError(t, json.Unmarshal([]byte(body), &status))
+	assert.Zero(t, status.PackedBlobs)
+	assert.Positive(t, status.DeadPackedBytes)
+	assert.Equal(t, status.PackStoredBytes, status.DeadPackedBytes)
 
 	repacked, err := s.Blobs.Maintainer().Repack(t.Context(), packstore.RepackOptions{})
 	require.NoError(t, err)

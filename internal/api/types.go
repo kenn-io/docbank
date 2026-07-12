@@ -65,6 +65,19 @@ type GCReport struct {
 	Run                bool  `json:"run"`
 }
 
+// StorageStatus reports physical loose inventory and catalog-authorized pack
+// usage. PackStoredBytes includes both live and logically dead payload bytes.
+type StorageStatus struct {
+	LooseBlobs        int   `json:"loose_blobs"`
+	LooseBytes        int64 `json:"loose_bytes"`
+	Packs             int   `json:"packs"`
+	PackStoredBytes   int64 `json:"pack_stored_bytes"`
+	PackedBlobs       int64 `json:"packed_blobs"`
+	PackedRawBytes    int64 `json:"packed_raw_bytes"`
+	PackedStoredBytes int64 `json:"packed_stored_bytes"`
+	DeadPackedBytes   int64 `json:"dead_packed_bytes"`
+}
+
 // VerifyProblem flags one blob whose content didn't check out.
 type VerifyProblem struct {
 	Hash    string `json:"hash"`

@@ -188,6 +188,17 @@ reports in the meantime. The daemon's maintenance gate holds off
 concurrent mutations while `gc --run` runs, so it never races a
 concurrent import (see [Concurrency & Locking](architecture/locking.md)).
 
+## docbank storage status
+
+```
+docbank storage status [--json]
+```
+
+Reports the daemon's physical storage inventory: loose blob count and bytes,
+live packed blobs and their stored/raw bytes, pack count, and immutable packed
+bytes pending repack. The command is read-only. `--json` emits the same fields
+as the authenticated `GET /api/v1/storage` endpoint.
+
 ## docbank verify
 
 ```
