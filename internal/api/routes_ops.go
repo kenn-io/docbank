@@ -336,7 +336,7 @@ func runGC(ctx context.Context, d Deps, run bool) (GCReport, error) {
 
 // checkBlob returns "", "missing", "corrupt", or "unreadable".
 func checkBlob(ctx context.Context, d Deps, hash string) string {
-	f, err := d.Blobs.OpenContext(ctx, hash)
+	f, _, err := d.Blobs.OpenStreamContext(ctx, hash)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return "missing"
@@ -346,6 +346,9 @@ func checkBlob(ctx context.Context, d Deps, hash string) string {
 	defer func() { _ = f.Close() }()
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
+		if isContentCorruption(err) {
+			return "corrupt"
+		}
 		return "unreadable"
 	}
 	if hex.EncodeToString(h.Sum(nil)) != hash {

@@ -14,6 +14,8 @@ import (
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/kit/pack"
+	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/store"
 )
@@ -25,6 +27,14 @@ type nodeOutput struct {
 
 func contentDigest(hash []byte) string {
 	return "sha-256=:" + base64.StdEncoding.EncodeToString(hash) + ":"
+}
+
+func isContentCorruption(err error) bool {
+	return errors.Is(err, packstore.ErrContentMismatch) ||
+		errors.Is(err, pack.ErrTruncated) ||
+		errors.Is(err, pack.ErrChecksum) ||
+		errors.Is(err, pack.ErrCorrupt) ||
+		errors.Is(err, pack.ErrBlobMismatch)
 }
 
 func staleRevisionError(id, expected, actual int64) error {
@@ -148,7 +158,7 @@ func registerReadRoutes(api huma.API, d Deps) {
 			return nil, NewError(http.StatusUnprocessableEntity, "not_file",
 				fmt.Sprintf("node %d is a directory", n.ID))
 		}
-		f, err := d.Blobs.OpenContext(ctx, n.BlobHash)
+		f, _, err := d.Blobs.OpenStreamContext(ctx, n.BlobHash)
 		if err != nil {
 			return nil, NewError(http.StatusInternalServerError, "internal",
 				fmt.Sprintf("opening blob %s: %v (run docbank verify)", n.BlobHash, err))
@@ -199,7 +209,7 @@ func registerReadRoutes(api huma.API, d Deps) {
 		report := ContentVerification{
 			NodeID: n.ID, Revision: n.Revision, BlobHash: n.BlobHash, Size: n.Size,
 		}
-		f, openErr := d.Blobs.OpenContext(ctx, n.BlobHash)
+		f, _, openErr := d.Blobs.OpenStreamContext(ctx, n.BlobHash)
 		if openErr != nil {
 			if errors.Is(openErr, fs.ErrNotExist) {
 				report.Problem = "missing"
@@ -210,10 +220,13 @@ func registerReadRoutes(api huma.API, d Deps) {
 			hash := sha256.New()
 			report.ComputedSize, err = io.Copy(hash, f)
 			closeErr := f.Close()
-			if err != nil || closeErr != nil {
+			report.ComputedHash = hex.EncodeToString(hash.Sum(nil))
+			readErr := errors.Join(err, closeErr)
+			if isContentCorruption(readErr) {
+				report.Problem = "corrupt"
+			} else if readErr != nil {
 				report.Problem = "unreadable"
 			} else {
-				report.ComputedHash = hex.EncodeToString(hash.Sum(nil))
 				report.Verified = report.ComputedHash == n.BlobHash && report.ComputedSize == n.Size
 				if !report.Verified {
 					report.Problem = "corrupt"
