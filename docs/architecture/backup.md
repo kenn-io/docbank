@@ -23,10 +23,19 @@ tests prove loose create/verify/restore and capture directly from a packed live
 store. Physical pack tables are excluded from fidelity stats so a restore may
 choose a different representation without changing the archive.
 
+Snapshots taken from a packed vault retain source pack metadata in their
+captured database. Docbank therefore fails closed if such a snapshot is sent
+through Kit's loose-only restore path: loose files plus stale pack authority
+would make the restored vault unreadable. The paired packed-restore adapter
+instead publishes verified repository packs into the target and atomically
+replaces all captured pack records and mappings before the staged vault becomes
+visible. Integration coverage opens every restored blob through the same mixed
+store used by a live vault.
+
 !!! info "Planned — Phase 4"
-    Command/API orchestration and packed catalog publication on restore have
-    not landed. The completed adapter is internal and does not make any
-    `docbank backup` command available yet.
+    Command/API orchestration has not landed. The completed capture and restore
+    adapters are internal and do not make any `docbank backup` command
+    available yet.
 
     The planned command family is `docbank backup init|create|list|verify|restore`.
     Exact flags will enter the CLI reference only when implemented.

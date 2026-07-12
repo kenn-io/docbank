@@ -110,7 +110,7 @@ func TestLooseSnapshotVerifyAndRestore(t *testing.T) {
 	require.NoError(t, restoredStore.Close())
 }
 
-func TestPackedContentSourceCreatesVerifiableSnapshot(t *testing.T) {
+func TestPackedSnapshotRequiresAndUsesPackedRestoreTarget(t *testing.T) {
 	fixture := newArchiveFixture(t)
 	packed, err := fixture.blobs.Maintainer().Pack(t.Context(), packstore.PackOptions{})
 	require.NoError(t, err)
@@ -131,4 +131,44 @@ func TestPackedContentSourceCreatesVerifiableSnapshot(t *testing.T) {
 	verified, err := backup.Verify(t.Context(), repo, app, backup.VerifyOptions{Jobs: 2})
 	require.NoError(t, err)
 	assert.Empty(t, verified.Problems)
+
+	unsafeTarget := filepath.Join(t.TempDir(), "unsafe-restored")
+	_, err = backup.Restore(t.Context(), repo, app, backup.RestoreOptions{
+		TargetDir: unsafeTarget, Jobs: 2,
+	})
+	require.ErrorContains(t, err, "snapshot contains packed blob authority")
+
+	restoreApp, packedTarget := backupapp.NewPackedRestore("test-version")
+	target := filepath.Join(t.TempDir(), "restored")
+	restored, err := backup.Restore(t.Context(), repo, restoreApp, backup.RestoreOptions{
+		TargetDir: target, Jobs: 2, PackedContent: packedTarget,
+	})
+	require.NoError(t, err)
+	assert.Zero(t, restored.LooseAttachmentBlobs)
+	assert.Equal(t, int64(2), restored.PackedAttachmentBlobs)
+	assert.Positive(t, restored.AttachmentPacks)
+
+	restoredStore, err := store.Open(filepath.Join(target, "docbank.db"))
+	require.NoError(t, err)
+	restoredCatalog := store.NewPackCatalog(restoredStore)
+	records, err := restoredCatalog.ListPackRecords(t.Context())
+	require.NoError(t, err)
+	assert.NotEmpty(t, records)
+	entries, err := restoredCatalog.ListIndexed(t.Context())
+	require.NoError(t, err)
+	assert.Len(t, entries, 2)
+	restoredBlobs, err := blob.New(restoredCatalog, filepath.Join(target, "blobs"))
+	require.NoError(t, err)
+	for name, want := range fixture.content {
+		node, nodeErr := restoredStore.NodeByPath(t.Context(), "/"+name)
+		require.NoError(t, nodeErr)
+		reader, openErr := restoredBlobs.OpenContext(t.Context(), node.BlobHash)
+		require.NoError(t, openErr)
+		got, readErr := io.ReadAll(reader)
+		require.NoError(t, readErr)
+		require.NoError(t, reader.Close())
+		assert.Equal(t, want, string(got))
+	}
+	require.NoError(t, restoredBlobs.Close())
+	require.NoError(t, restoredStore.Close())
 }

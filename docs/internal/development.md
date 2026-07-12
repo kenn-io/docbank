@@ -9,7 +9,7 @@ developers update the right layer and preserve cross-layer contracts.
 |------|------|--------------|
 | `internal/store` | schema, transactions, tree identity, reachability queries, typed domain errors | HTTP, CLI formatting, physical pack lifecycle |
 | `internal/blob` | docbank adapter around Kit physical storage | virtual paths or node policy |
-| `internal/backupapp` | frozen logical enumeration, fidelity stats, restore paths, mixed backup reads | repository orchestration or CLI policy |
+| `internal/backupapp` | frozen logical enumeration, fidelity stats, restore paths, mixed backup reads, packed restore policy | repository orchestration or CLI policy |
 | `internal/ingest` | source traversal and bytes-before-reference pipeline | daemon discovery or UI behavior |
 | `internal/api` | wire contract, auth, middleware, gate classification, error mapping | direct CLI output policy |
 | `internal/client` | typed HTTP calls and daemon convergence | opening SQLite or blobs |
