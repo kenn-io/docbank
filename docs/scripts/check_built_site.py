@@ -53,7 +53,7 @@ def markdown_route(site: pathlib.Path, rel: pathlib.Path) -> pathlib.Path:
 
 def markdown_output(site: pathlib.Path, rel: pathlib.Path) -> pathlib.Path:
     if rel.name == "index.md" and rel.parent != pathlib.Path("."):
-        return site / rel.parent.with_suffix(".md")
+        return site / pathlib.Path(f"{rel.parent}.md")
     return site / rel
 
 
@@ -129,7 +129,7 @@ def main() -> None:
             markdown = (
                 site / "index.md"
                 if rel == pathlib.Path("index.html")
-                else page.parent.with_suffix(".md")
+                else site / pathlib.Path(f"{rel.parent}.md")
             )
             if not markdown.is_file():
                 errors.append(f"{rel}: rendered route has no Markdown counterpart")
