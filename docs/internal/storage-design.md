@@ -141,6 +141,45 @@ reports the condition as retryable cleanup. After external readers or Windows
 file locks release it, the operator runs `storage pack`; Kit's orphan
 reconciliation verifies current authority and removes the redundant source.
 
+## Current 64 MiB resource envelope
+
+`internal/backupapp/resource_benchmark_test.go` is the reproducible downstream
+gate for the real SQLite catalog and Docbank adapters:
+
+```bash
+go test -tags fts5 ./internal/backupapp -run '^$' \
+  -bench '^BenchmarkDocbank' -benchtime=1x -benchmem -count=1
+```
+
+The current darwin/arm64 baseline on an Apple M4 Max with Go 1.26.4 and Kit
+commit `7335149` is:
+
+| Workload | Throughput | Heap allocated per operation | Additional stream descriptors |
+| --- | ---: | ---: | ---: |
+| verified loose read, 64 MiB | 2,607 MB/s | 15,584 bytes | 1 |
+| verified packed read, 64 MiB | 2,115 MB/s | 18,584 bytes | 1 |
+| write + pack + sparse repack, 64 MiB total | 147 MB/s | 75,593,880 bytes cumulative | — |
+| snapshot + verify + loose restore, 64 MiB, one job | 672 MB/s | 71,132,216 bytes cumulative | — |
+
+A prebuilt benchmark binary running all four workloads sequentially peaked at
+80,478,208 bytes (76.8 MiB) resident. `B/op` for the compound maintenance and
+backup rows is cumulative allocation across several streaming stages, not peak
+live heap; the external RSS measurement is the process envelope.
+
+Resource policy still needs capacity beyond RSS. Incompressible preparation at
+the 64 MiB ceiling can require about 128.256 MiB of scratch for one object.
+Docbank serializes maintenance, so pack/repack currently has one preparation in
+flight; future backup concurrency must multiply scratch and codec windows by
+its explicit job count. The mixed reader keeps at most 16 idle pack descriptors,
+and each concurrent loose or packed stream can add one descriptor until EOF or
+`Close`. Cancellation and early-close cleanup remain mandatory race-tested
+gates, not benchmark outcomes.
+
+These numbers are evidence for retaining the current ceiling, not performance
+guarantees. Any proposal to raise `MaxBlobBytes`, maintenance limits, reader
+slots, or backup concurrency must rerun this suite on representative target
+hardware and revise this envelope.
+
 Docbank owns:
 
 - the SQLite schema and catalog adapter;
