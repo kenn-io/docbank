@@ -1,7 +1,6 @@
 package blob
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -41,7 +40,7 @@ func TestWriteEnforcesBlobLimit(t *testing.T) {
 	assert.Zero(t, size)
 }
 
-func TestOpenStreamGrandfathersOversizedLooseBlob(t *testing.T) {
+func TestOpenStreamReadsLooseBlobAbovePackingLimit(t *testing.T) {
 	bs := newTestBlobStore(t)
 	size := MaxBlobBytes + 1
 	digest := sha256.New()
@@ -66,23 +65,6 @@ func TestOpenStreamGrandfathersOversizedLooseBlob(t *testing.T) {
 	require.NoError(t, stream.Close())
 }
 
-func TestOversizedLooseCompatibilityStreamStillRequiresVerification(t *testing.T) {
-	content := []byte("compatibility content")
-	sum := sha256.Sum256(content)
-	expected, err := packstore.ParseHash(hex.EncodeToString(sum[:]))
-	require.NoError(t, err)
-
-	partial := newVerifiedLooseCompatibilityStream(t.Context(), &readSeekCloser{bytes.NewReader(content)},
-		expected, int64(len(content)))
-	_, err = partial.Read(make([]byte, 1))
-	require.NoError(t, err)
-	require.ErrorIs(t, partial.Close(), pack.ErrVerificationIncomplete)
-
-	corrupt := newVerifiedLooseCompatibilityStream(t.Context(),
-		&readSeekCloser{bytes.NewReader([]byte("corrupted content!!"))}, expected, int64(len(content)))
-	require.ErrorIs(t, corrupt.Verify(), packstore.ErrContentMismatch)
-}
-
 type alwaysMemberResolver struct{}
 
 func (alwaysMemberResolver) Resolve(_ context.Context, _ packstore.Hash) (packstore.Location, error) {
@@ -95,10 +77,6 @@ func (zeroReader) Read(p []byte) (int, error) {
 	clear(p)
 	return len(p), nil
 }
-
-type readSeekCloser struct{ *bytes.Reader }
-
-func (*readSeekCloser) Close() error { return nil }
 
 func TestWriteAndReadBack(t *testing.T) {
 	bs := newTestBlobStore(t)

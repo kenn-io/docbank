@@ -17,12 +17,13 @@ import (
 // ErrInvalidHash reports a value that is not canonical lowercase SHA-256.
 var ErrInvalidHash = packstore.ErrInvalidHash
 
-// MaxBlobBytes is docbank's application policy for one content object. Keep
-// this explicit: a future change to Kit's conservative defaults must not
-// silently expand docbank's upload, read, maintenance, or restore limits.
+// MaxBlobBytes is docbank's current admission and packed-content policy for one
+// object. Keep it explicit: a future Kit default must not silently change
+// docbank writes, packed reads, maintenance, or packed restore.
 const MaxBlobBytes int64 = 64 << 20
 
-// StorageLimits returns the shared Kit limits with docbank's object policy.
+// StorageLimits returns Kit's packed-read and maintenance limits with
+// docbank's current packed-object policy.
 func StorageLimits() packstore.Limits {
 	limits := packstore.DefaultLimits()
 	limits.BlobBytes = MaxBlobBytes
@@ -35,7 +36,6 @@ func StorageLimits() packstore.Limits {
 type Store struct {
 	dir         string
 	layout      packstore.Layout
-	resolver    packstore.Resolver
 	catalog     packstore.Catalog
 	loose       *packstore.LooseStore
 	reader      *packstore.Store
@@ -62,7 +62,7 @@ func New(catalog packstore.Catalog, blobsDir string) (*Store, error) {
 		_ = maintainer.Close()
 		return nil, fmt.Errorf("creating loose blob store: %w", err)
 	}
-	return &Store{dir: blobsDir, layout: layout, resolver: catalog, catalog: catalog, loose: loose,
+	return &Store{dir: blobsDir, layout: layout, catalog: catalog, loose: loose,
 		reader:     maintainer.Store(),
 		maintainer: maintainer, coordinator: coordinator}, nil
 }
@@ -123,7 +123,7 @@ func newReaderStore(resolver packstore.Resolver, blobsDir string) (*Store, error
 	if err != nil {
 		return nil, fmt.Errorf("creating test mixed blob reader: %w", err)
 	}
-	return &Store{dir: blobsDir, layout: layout, resolver: resolver, loose: loose, reader: reader}, nil
+	return &Store{dir: blobsDir, layout: layout, loose: loose, reader: reader}, nil
 }
 
 func newLayout(blobsDir string) (packstore.Layout, error) {
@@ -224,25 +224,10 @@ func (s *Store) OpenStreamContext(
 		return nil, 0, fmt.Errorf("blob hash %q: %w", hash, ErrInvalidHash)
 	}
 	reader, size, err := s.reader.OpenStream(ctx, parsed)
-	if err == nil {
-		return reader, size, nil
-	}
-	var limitErr *packstore.LimitError
-	if !errors.As(err, &limitErr) || limitErr.Dimension != packstore.LimitBlobRawBytes {
+	if err != nil {
 		return nil, 0, fmt.Errorf("opening blob stream %s: %w", hash, err)
 	}
-	location, resolveErr := s.resolver.Resolve(ctx, parsed)
-	if resolveErr != nil {
-		return nil, 0, fmt.Errorf("resolving oversized blob %s: %w", hash, resolveErr)
-	}
-	if !location.Member || location.Pack != nil {
-		return nil, 0, fmt.Errorf("opening blob stream %s: %w", hash, err)
-	}
-	compat, size, openErr := s.reader.Open(ctx, parsed)
-	if openErr != nil {
-		return nil, 0, fmt.Errorf("opening oversized loose blob %s: %w", hash, openErr)
-	}
-	return newVerifiedLooseCompatibilityStream(ctx, compat, parsed, size), size, nil
+	return reader, size, nil
 }
 
 // Exists reports whether catalog-authorized content can be opened.
