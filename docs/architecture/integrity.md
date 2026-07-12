@@ -91,15 +91,17 @@ not justify platform-specific `openat`/`fstatat` machinery. The
 classified, reported, and skipped, and the final open refuses to
 follow links regardless.
 
-### No schema migrations before the first release
+### Schema compatibility after v0.1.0
 
-Schema changes apply via `CREATE TABLE IF NOT EXISTS`, so a vault
-created before a schema change keeps its old shape. Rebuild migrations
-for SQLite (new table, copy, drop, rename, across the FTS triggers)
-are high-risk surgery; writing them while **zero released vaults
-exist** is risk with no beneficiary. This holds until the first
-release that can leave real vaults behind a schema change, at which
-point migration machinery becomes part of the release contract.
+The pre-release decision to avoid migration machinery expired when v0.1.0
+shipped: released vaults can now survive across binary upgrades. Startup still
+applies the idempotent schema with `CREATE ... IF NOT EXISTS`, which can create
+missing tables and indexes but cannot safely express a table rebuild or other
+incompatible change.
+
+Until versioned, transactional migrations exist, a release must not require an
+incompatible change to an existing table, column, trigger, or index. Migration
+machinery must land before such a schema change, not afterward as repair work.
 
 ### One vault lock holder
 

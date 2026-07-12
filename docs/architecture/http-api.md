@@ -115,9 +115,8 @@ Collisions resolve by the same suffixing rules as Phase 1's import.
 Because it grants "read any daemon-readable local path," `POST /ingest`
 is checked per-request against `RemoteAddr` and **restricted to
 loopback callers** regardless of bind address or API key — a
-non-loopback client gets `403` (`loopback_only`) pointing at multipart
-upload, which is the correct remote-ingest path once it exists.
-Multipart upload itself is still planned.
+non-loopback client gets `403` (`loopback_only`). There is no remote file-upload
+endpoint in the current API.
 
 !!! info "Planned"
     Ingest provenance today is filesystem-shaped: each import records
@@ -187,12 +186,8 @@ machine-readable string clients branch on instead of parsing `detail`:
 
 ## Non-goals
 
-- No server-side rendering or web UI beyond the static placeholder (the
-  API serves programs; a real frontend is future work with its own
-  design).
+- No server-side rendering or web UI beyond the static placeholder.
 - No multi-user model: one vault, one key. Sharing is out of scope for
   v1.
-- No MCP server yet — but the OpenAPI contract is designed to make
-  wrapping one mechanical, post-v1.
-- No remote-daemon mode: config is shaped so it can be added without
-  breakage, but `[remote]` doesn't exist yet.
+- No MCP server.
+- No remote-daemon mode or `[remote]` configuration.
