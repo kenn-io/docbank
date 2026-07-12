@@ -45,8 +45,19 @@ def local_target(
     return target.resolve(), urllib.parse.unquote(parsed.fragment)
 
 
+def markdown_route(site: pathlib.Path, rel: pathlib.Path) -> pathlib.Path:
+    if rel.name == "index.md":
+        return site / rel.parent / "index.html"
+    return site / rel.with_suffix("") / "index.html"
+
+
+def markdown_output(site: pathlib.Path, rel: pathlib.Path) -> pathlib.Path:
+    return site / rel
+
+
 def main() -> None:
     site = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "site").resolve()
+    source = pathlib.Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else None
     errors: list[str] = []
     pages = sorted(site.rglob("*.html"))
     if not pages:
@@ -88,6 +99,38 @@ def main() -> None:
                 and fragment not in parsed_pages[target].anchors
             ):
                 errors.append(f"{rel}: broken local fragment {raw}")
+
+    if source is not None:
+        source_markdown = sorted(source.rglob("*.md"))
+        expected_markdown: set[pathlib.Path] = set()
+        for markdown in source_markdown:
+            rel = markdown.relative_to(source)
+            published = markdown_output(site, rel)
+            expected_markdown.add(published.resolve())
+            if not published.is_file():
+                errors.append(f"{rel}: Markdown counterpart was not published")
+            elif published.read_bytes() != markdown.read_bytes():
+                errors.append(f"{rel}: published Markdown differs from its source")
+
+            route = markdown_route(site, rel)
+            if not route.is_file():
+                errors.append(f"{rel}: rendered route does not exist")
+
+        for published in site.rglob("*.md"):
+            if published.resolve() not in expected_markdown:
+                errors.append(f"{published.relative_to(site)}: no matching Markdown source")
+
+        for page in pages:
+            rel = page.relative_to(site)
+            if rel == pathlib.Path("404.html"):
+                continue
+            markdown = (
+                site / "index.md"
+                if rel == pathlib.Path("index.html")
+                else site / pathlib.Path(f"{rel.parent}.md")
+            )
+            if not markdown.is_file():
+                errors.append(f"{rel}: rendered route has no Markdown counterpart")
 
     if errors:
         print("built documentation validation failed:", file=sys.stderr)

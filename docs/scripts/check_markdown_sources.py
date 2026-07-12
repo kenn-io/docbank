@@ -50,6 +50,12 @@ def main() -> None:
 
     for path in files:
         rel = path.relative_to(ROOT)
+        if rel.name == "index.md" and rel != pathlib.Path("index.md"):
+            section_page = pathlib.Path(f"{rel.parent}.md")
+            errors.append(
+                f"{rel}: nested index pages are unsupported; use {section_page} "
+                "so the rendered and Markdown routes share a URL base"
+            )
         text = path.read_text(encoding="utf-8")
         lines = text.splitlines()
         if len(lines) < 4 or lines[0] != "---":

@@ -148,7 +148,13 @@ awk -v docs_dir="$tmp_docs_name" -v site_dir="$site_config_dir" '
 case "$command_name" in
   build)
     (cd "$docs_root" && "${uv_run[@]}" zensical build --strict --config-file "$tmp_config_name" "$@")
-    "${uv_run[@]}" python "$docs_root/scripts/check_built_site.py" "$tmp_site"
+    while IFS= read -r -d '' markdown_source; do
+      markdown_rel="${markdown_source#"$tmp_docs/"}"
+      markdown_dest="$tmp_site/$markdown_rel"
+      mkdir -p "$(dirname "$markdown_dest")"
+      cp "$markdown_source" "$markdown_dest"
+    done < <(find "$tmp_docs" -type f -name '*.md' -print0)
+    "${uv_run[@]}" python "$docs_root/scripts/check_built_site.py" "$tmp_site" "$tmp_docs"
     printf '%s\n' "$site_marker_contents" > "$tmp_site/$site_marker"
     mkdir -p "$(dirname "$site_path")"
     if [[ -e "$site_path" || -L "$site_path" ]]; then
