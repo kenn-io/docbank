@@ -174,12 +174,15 @@ Garbage-collects unreachable blobs — content referenced by no live node,
 no trashed node, and no recorded prior version. Dry-run by default:
 
 ```
-3 candidate blob(s), 1204882 byte(s) reclaimable
+3 candidate blob(s), 0 untracked file(s), 1204882 loose byte(s) reclaimable
 dry run — pass --run to delete
 ```
 
-With `--run`, blob files are deleted first, then their metadata rows;
-prints `reclaimed <n> blob(s), <bytes> byte(s)`. A crash mid-GC leaves
+Packed candidates are reported separately as stored bytes pending repack;
+removing their catalog authority does not claim that immutable pack space was
+already reclaimed. With `--run`, loose blob files are deleted first, then their
+metadata rows; output separately reports removed blob records, reclaimed loose
+files, and reclaimed bytes. A crash mid-GC leaves
 rows without files, which the next `gc --run` reconciles and `verify`
 reports in the meantime. The daemon's maintenance gate holds off
 concurrent mutations while `gc --run` runs, so it never races a

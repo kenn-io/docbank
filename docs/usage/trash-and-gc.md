@@ -14,7 +14,7 @@ flowchart LR
     A[live node] -- "docbank rm" --> B[trash]
     B -- "docbank restore" --> A
     B -- "docbank trash empty --run" --> C[unreferenced blob]
-    C -- "docbank gc --run" --> D[bytes reclaimed]
+    C -- "docbank gc --run" --> D[authority removed; loose bytes reclaimed]
 ```
 
 ## Stage 1: Trash (`rm`, `restore`, `trash list`)
@@ -70,6 +70,12 @@ therefore never collected — while any of these reference it:
 docbank gc          # dry run: candidate count and reclaimable bytes
 docbank gc --run    # delete files, then metadata rows
 ```
+
+For loose blobs, the reported reclaimable count is the number of bytes that GC
+can unlink immediately. A packed blob becomes logically dead when GC removes
+its catalog authority, but its stored bytes remain in the immutable pack until
+repack compacts that container; GC reports those bytes separately as pending
+repack rather than claiming they were reclaimed.
 
 `gc --run` runs behind the daemon's maintenance gate, so a concurrent
 import can never dedup against a blob that's being deleted (see

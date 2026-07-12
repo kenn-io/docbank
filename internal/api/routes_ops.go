@@ -196,8 +196,18 @@ func runGC(ctx context.Context, d Deps, run bool) (GCReport, error) {
 	}
 	sort.Strings(untracked)
 	rep.UntrackedFiles = len(untracked)
+	packedSizes, err := d.Store.PackedBlobStoredBytes(ctx)
+	if err != nil {
+		return GCReport{}, FromStoreError(err)
+	}
 	for _, c := range candidates {
-		rep.ReclaimableBytes += c.Size
+		if looseSize, exists := files[c.Hash]; exists {
+			rep.ReclaimableBytes += looseSize
+		}
+		if storedSize, packed := packedSizes[c.Hash]; packed {
+			rep.PendingPackedBlobs++
+			rep.PendingPackedBytes += storedSize
+		}
 	}
 	if !run {
 		return rep, nil
@@ -217,6 +227,13 @@ func runGC(ctx context.Context, d Deps, run bool) (GCReport, error) {
 	if err := d.Store.DeleteBlobRows(ctx, hashes); err != nil {
 		return GCReport{}, FromStoreError(err)
 	}
+	rep.ReclaimedFiles = len(untracked)
+	for _, c := range candidates {
+		if _, existed := files[c.Hash]; existed {
+			rep.ReclaimedFiles++
+		}
+	}
+	rep.RemovedBlobs = len(hashes)
 	rep.Removed = len(hashes) + len(untracked)
 	return rep, nil
 }

@@ -147,6 +147,13 @@ func TestGCRevokesPackedBlobAuthority(t *testing.T) {
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/gc", nil,
 		map[string]any{"run": true})
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var gcReport api.GCReport
+	require.NoError(t, json.Unmarshal([]byte(body), &gcReport))
+	assert.Zero(t, gcReport.ReclaimableBytes)
+	assert.Equal(t, 1, gcReport.PendingPackedBlobs)
+	assert.Positive(t, gcReport.PendingPackedBytes)
+	assert.Zero(t, gcReport.ReclaimedFiles)
+	assert.Equal(t, 1, gcReport.RemovedBlobs)
 
 	_, err = s.Blobs.Open(file.BlobHash)
 	require.ErrorIs(t, err, os.ErrNotExist)
@@ -175,12 +182,17 @@ func TestGCDryRunAndRun(t *testing.T) {
 	var rep api.GCReport
 	require.NoError(t, json.Unmarshal([]byte(body), &rep))
 	assert.Equal(t, 1, rep.CandidateBlobs)
+	assert.Equal(t, int64(len("gc-me")), rep.ReclaimableBytes)
+	assert.Zero(t, rep.PendingPackedBytes)
 	assert.False(t, rep.Run)
 
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/gc", nil, map[string]any{"run": true})
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, json.Unmarshal([]byte(body), &rep))
 	assert.Equal(t, 1, rep.Removed)
+	assert.Equal(t, 1, rep.RemovedBlobs)
+	assert.Equal(t, 1, rep.ReclaimedFiles)
+	assert.Equal(t, int64(len("gc-me")), rep.ReclaimableBytes)
 }
 
 func TestVerifyEndpoint(t *testing.T) {
