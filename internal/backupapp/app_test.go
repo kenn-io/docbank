@@ -138,10 +138,9 @@ func TestPackedSnapshotRequiresAndUsesPackedRestoreTarget(t *testing.T) {
 	})
 	require.ErrorContains(t, err, "snapshot contains packed blob authority")
 
-	restoreApp, packedTarget := backupapp.NewPackedRestore("test-version")
 	target := filepath.Join(t.TempDir(), "restored")
-	restored, err := backup.Restore(t.Context(), repo, restoreApp, backup.RestoreOptions{
-		TargetDir: target, Jobs: 2, PackedContent: packedTarget,
+	restored, err := backupapp.Restore(t.Context(), repo, "test-version", backup.RestoreOptions{
+		TargetDir: target, Jobs: 2,
 	})
 	require.NoError(t, err)
 	assert.Zero(t, restored.LooseAttachmentBlobs)

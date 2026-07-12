@@ -26,11 +26,11 @@ choose a different representation without changing the archive.
 Snapshots taken from a packed vault retain source pack metadata in their
 captured database. Docbank therefore fails closed if such a snapshot is sent
 through Kit's loose-only restore path: loose files plus stale pack authority
-would make the restored vault unreadable. The paired packed-restore adapter
-instead publishes verified repository packs into the target and atomically
-replaces all captured pack records and mappings before the staged vault becomes
-visible. Integration coverage opens every restored blob through the same mixed
-store used by a live vault.
+would make the restored vault unreadable. Docbank's restore wrapper inseparably
+owns the application adapter and packed target: it publishes verified repository
+packs into the target and atomically replaces all captured pack records and
+mappings before the staged vault becomes visible. Integration coverage opens
+every restored blob through the same mixed store used by a live vault.
 
 !!! info "Planned — Phase 4"
     Command/API orchestration has not landed. The completed capture and restore

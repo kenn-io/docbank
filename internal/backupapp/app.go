@@ -67,22 +67,11 @@ func computeStats(ctx context.Context, q rowQuerier) (Stats, error) {
 }
 
 // App implements backup.App for docbank.
-type App struct {
-	version            string
-	allowPackedRestore bool
-}
+type App struct{ version string }
 
 var _ backup.App = (*App)(nil)
 
 func New(version string) *App { return &App{version: version} }
-
-// NewPackedRestore returns the application adapter and packed-content target
-// that must be passed together to backup.Restore. The paired adapter permits
-// the snapshot's physical pack metadata to remain in the unpublished database
-// until Kit atomically replaces it with the packs published into the target.
-func NewPackedRestore(version string) (*App, *PackedRestoreTarget) {
-	return &App{version: version, allowPackedRestore: true}, newPackedRestoreTarget()
-}
 
 func (a *App) FrozenView(session *backup.FrozenSession) backup.FrozenView {
 	return &frozenView{tx: session.Tx()}
@@ -133,7 +122,11 @@ func (v *frozenView) Stats(ctx context.Context) (json.RawMessage, error) {
 }
 
 func (a *App) RestoredContentPaths(ctx context.Context, db *sql.DB) (map[string][]string, error) {
-	if !a.allowPackedRestore {
+	return restoredContentPaths(ctx, db, false)
+}
+
+func restoredContentPaths(ctx context.Context, db *sql.DB, allowPackedRestore bool) (map[string][]string, error) {
+	if !allowPackedRestore {
 		var packed bool
 		if err := db.QueryRowContext(ctx, `
 			SELECT EXISTS(SELECT 1 FROM blob_pack_index)
@@ -141,7 +134,7 @@ func (a *App) RestoredContentPaths(ctx context.Context, db *sql.DB) (map[string]
 			return nil, fmt.Errorf("backupapp: checking restored pack authority: %w", err)
 		}
 		if packed {
-			return nil, errors.New("backupapp: snapshot contains packed blob authority; use NewPackedRestore with its packed-content target")
+			return nil, errors.New("backupapp: snapshot contains packed blob authority; use backupapp.Restore")
 		}
 	}
 	rows, err := db.QueryContext(ctx, `SELECT hash FROM blobs ORDER BY hash`)
