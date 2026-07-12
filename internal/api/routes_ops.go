@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/ingest"
 )
@@ -34,6 +35,27 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 			PackedBlobs: stats.PackedBlobs, PackedRawBytes: stats.PackedRawBytes,
 			PackedStoredBytes: stats.PackedStoredBytes, DeadPackedBytes: stats.DeadPackedBytes,
 		}}, nil
+	})
+
+	type storagePackOutput struct{ Body StoragePackReport }
+	huma.Register(api, huma.Operation{
+		OperationID: "storagePack", Method: http.MethodPost, Path: "/api/v1/storage/pack",
+		Summary: "Pack authorized loose blobs into immutable pack files",
+	}, func(ctx context.Context, in *struct {
+		Body struct {
+			MaxBytes int64 `json:"max_bytes,omitempty" minimum:"0"`
+		}
+	}) (*storagePackOutput, error) {
+		out := &storagePackOutput{}
+		err := g.maintain(func() error {
+			stats, err := d.Blobs.Maintainer().Pack(ctx, packstore.PackOptions{MaxBytes: in.Body.MaxBytes})
+			if err != nil {
+				return FromStoreError(err)
+			}
+			out.Body = storagePackReport(stats)
+			return nil
+		})
+		return out, err
 	})
 
 	type ingestOutput struct{ Body IngestReport }
@@ -180,6 +202,21 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 		})
 		return out, err
 	})
+}
+
+func storagePackReport(stats packstore.PackStats) StoragePackReport {
+	return StoragePackReport{
+		PacksSealed: stats.PacksSealed, BlobsPacked: stats.BlobsPacked, BytesPacked: stats.BytesPacked,
+		PacksAdopted: stats.PacksAdopted, PacksRemoved: stats.PacksRemoved,
+		PacksQuarantined: stats.PacksQuarantined, PacksUnreadable: stats.PacksUnreadable,
+		RecordsDropped: stats.RecordsDropped, MappingsPruned: stats.MappingsPruned,
+		BlobsMissing: stats.BlobsMissing, BlobsCorrupt: stats.BlobsCorrupt,
+		BlobsDeferredOversized: stats.BlobsDeferredOversized,
+		PacksDeferredOversized: stats.PacksDeferredOversized,
+		LooseSwept:             stats.LooseSwept, LooseOrphansRemoved: stats.LooseOrphansRemoved,
+		LooseOrphanSweepSuppressed: stats.LooseOrphanSweepSuppressed,
+		BudgetExhausted:            stats.BudgetExhausted,
+	}
 }
 
 // runGC ports cmd/gc.go's semantics: candidates from row reachability,

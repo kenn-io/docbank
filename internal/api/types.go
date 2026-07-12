@@ -78,6 +78,27 @@ type StorageStatus struct {
 	DeadPackedBytes   int64 `json:"dead_packed_bytes"`
 }
 
+// StoragePackReport summarizes one explicit Kit packing and repair pass.
+type StoragePackReport struct {
+	PacksSealed                int   `json:"packs_sealed"`
+	BlobsPacked                int   `json:"blobs_packed"`
+	BytesPacked                int64 `json:"bytes_packed"`
+	PacksAdopted               int   `json:"packs_adopted"`
+	PacksRemoved               int   `json:"packs_removed"`
+	PacksQuarantined           int   `json:"packs_quarantined"`
+	PacksUnreadable            int   `json:"packs_unreadable"`
+	RecordsDropped             int   `json:"records_dropped"`
+	MappingsPruned             int64 `json:"mappings_pruned"`
+	BlobsMissing               int   `json:"blobs_missing"`
+	BlobsCorrupt               int   `json:"blobs_corrupt"`
+	BlobsDeferredOversized     int   `json:"blobs_deferred_oversized"`
+	PacksDeferredOversized     int   `json:"packs_deferred_oversized"`
+	LooseSwept                 int   `json:"loose_swept"`
+	LooseOrphansRemoved        int   `json:"loose_orphans_removed"`
+	LooseOrphanSweepSuppressed bool  `json:"loose_orphan_sweep_suppressed"`
+	BudgetExhausted            bool  `json:"budget_exhausted"`
+}
+
 // VerifyProblem flags one blob whose content didn't check out.
 type VerifyProblem struct {
 	Hash    string `json:"hash"`

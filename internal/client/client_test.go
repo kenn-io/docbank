@@ -97,6 +97,20 @@ func TestAPIKeySent(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestStoragePackRoundTrip(t *testing.T) {
+	c, _ := newClient(t, serverKey)
+	src := filepath.Join(t.TempDir(), "pack.txt")
+	require.NoError(t, os.WriteFile(src, []byte("pack me"), 0o600))
+	ingested, err := c.Ingest(t.Context(), []string{src}, "/inbox")
+	require.NoError(t, err)
+	require.Equal(t, 1, ingested.Added)
+
+	report, err := c.StoragePack(t.Context(), 1)
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.BlobsPacked)
+	assert.True(t, report.BudgetExhausted)
+}
+
 // TestWrongAPIKeyIsRejected is the client-side half of the keyless-loopback
 // regression: a client holding the wrong key must get a clearly readable
 // 401, never silent success and never an opaque envelope dump.

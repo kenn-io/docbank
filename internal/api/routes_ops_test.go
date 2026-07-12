@@ -157,6 +157,45 @@ func TestStorageStatusReportsLooseAndPackedUsage(t *testing.T) {
 	assert.Zero(t, status.DeadPackedBytes)
 }
 
+func TestStoragePackHonorsBudgetAndConverges(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	createFileWithContent(t, ts, s, "/one.txt", "one")
+	createFileWithContent(t, ts, s, "/two.txt", "two")
+
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/storage/pack", nil,
+		map[string]any{"max_bytes": 1})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var report api.StoragePackReport
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	assert.Equal(t, 1, report.BlobsPacked)
+	assert.Equal(t, 1, report.PacksSealed)
+	assert.True(t, report.BudgetExhausted)
+
+	statusResp, statusBody := get(t, ts, "/api/v1/storage", nil)
+	require.Equal(t, http.StatusOK, statusResp.StatusCode, statusBody)
+	var status api.StorageStatus
+	require.NoError(t, json.Unmarshal([]byte(statusBody), &status))
+	assert.Equal(t, 1, status.LooseBlobs)
+	assert.Equal(t, int64(1), status.PackedBlobs)
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/storage/pack", nil,
+		map[string]any{"max_bytes": 0})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	assert.Equal(t, 1, report.BlobsPacked)
+	assert.False(t, report.BudgetExhausted)
+
+	statusResp, statusBody = get(t, ts, "/api/v1/storage", nil)
+	require.Equal(t, http.StatusOK, statusResp.StatusCode, statusBody)
+	require.NoError(t, json.Unmarshal([]byte(statusBody), &status))
+	assert.Zero(t, status.LooseBlobs)
+	assert.Equal(t, int64(2), status.PackedBlobs)
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/storage/pack", nil,
+		map[string]any{"max_bytes": -1})
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+}
+
 func TestGCRevokesPackedBlobAuthority(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	file := createFileWithContent(t, ts, s, "/packed.txt", "packed gc content")

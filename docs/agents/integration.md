@@ -216,6 +216,13 @@ expensive. Maintenance requests serialize against mutations and may run
 without the ordinary request timeout; agents should expose progress as
 “waiting” rather than assuming a queued request is hung.
 
+`POST /api/v1/storage/pack` is explicit but non-destructive: it changes the
+physical representation without changing document identity or blob read
+authority. Use `GET /api/v1/storage` before and after when an operator needs an
+auditable result. A positive `max_bytes` bounds raw-byte work softly—the blob
+that crosses the budget is committed—and `budget_exhausted: true` means another
+request is needed to continue.
+
 ## Branch on problem codes
 
 Non-2xx responses use RFC 7807 problem JSON:

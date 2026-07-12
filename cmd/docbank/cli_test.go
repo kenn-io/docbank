@@ -348,6 +348,34 @@ func TestStorageStatusHumanAndJSON(t *testing.T) {
 	assert.Equal(t, int64(5), status.LooseBytes)
 }
 
+func TestStoragePackBudgetAndJSON(t *testing.T) {
+	_ = setupVaultHome(t)
+	for name, content := range map[string]string{"a.txt": "alpha", "b.txt": "bravo"} {
+		src := writeSourceFile(t, name, content)
+		_, err := runCLI(t, "add", src, "--dest", "/inbox")
+		require.NoError(t, err)
+	}
+
+	out, err := runCLI(t, "storage", "pack", "--max-bytes", "1")
+	require.NoError(t, err)
+	assert.Contains(t, out, "packed 1 blob(s)")
+	assert.Contains(t, out, "byte budget exhausted")
+
+	out, err = runCLI(t, "storage", "pack", "--json")
+	require.NoError(t, err)
+	var report api.StoragePackReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	assert.Equal(t, 1, report.BlobsPacked)
+	assert.False(t, report.BudgetExhausted)
+
+	out, err = runCLI(t, "storage", "status", "--json")
+	require.NoError(t, err)
+	var status api.StorageStatus
+	require.NoError(t, json.Unmarshal([]byte(out), &status))
+	assert.Zero(t, status.LooseBlobs)
+	assert.Equal(t, int64(2), status.PackedBlobs)
+}
+
 func TestVerifyDetectsMissingAndCorrupt(t *testing.T) {
 	home := setupVaultHome(t)
 	srcA := writeSourceFile(t, "a.txt", "alpha")
