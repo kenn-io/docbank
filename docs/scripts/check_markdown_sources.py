@@ -10,6 +10,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 EXCLUDED = {".cache", ".venv", "internal", "scripts", "site", "superpowers"}
 FORBIDDEN = ("@astrojs/starlight", "<Card", "<Aside", "<Tabs", ":::")
 ADMONITION = re.compile(r'!!!\s+[A-Za-z][\w-]*(?:\s+"(?:[^"\\]|\\.)*")?')
+DECISIONS = ROOT / "internal" / "decisions"
 
 
 def public_markdown() -> list[pathlib.Path]:
@@ -37,12 +38,47 @@ def nav_paths(value: object) -> set[str]:
     return result
 
 
+def check_decisions(errors: list[str]) -> None:
+    index_path = DECISIONS / "README.md"
+    if not index_path.is_file():
+        errors.append("internal/decisions/README.md: decision index is missing")
+        return
+
+    index = index_path.read_text(encoding="utf-8")
+    records = sorted(DECISIONS.glob("[0-9][0-9][0-9][0-9]-*.md"))
+    indexed = set(re.findall(r"\((\d{4}-[^)]+\.md)\)", index))
+    names = {path.name for path in records}
+    for missing in sorted(names - indexed):
+        errors.append(f"internal/decisions/{missing}: record is missing from index")
+    for missing in sorted(indexed - names):
+        errors.append(f"internal/decisions/README.md: indexed record {missing} does not exist")
+
+    required = (
+        "- **Status:**",
+        "- **Date:**",
+        "## Context",
+        "## Decision",
+        "## Consequences",
+        "## Alternatives rejected",
+        "## Public architecture",
+    )
+    for path in records:
+        text = path.read_text(encoding="utf-8")
+        expected_title = f"# ADR-{path.name[:4]}:"
+        if not text.startswith(expected_title):
+            errors.append(f"internal/decisions/{path.name}: title must start with {expected_title}")
+        for marker in required:
+            if marker not in text:
+                errors.append(f"internal/decisions/{path.name}: missing {marker}")
+
+
 def main() -> None:
     errors: list[str] = []
     files = public_markdown()
     public = {path.relative_to(ROOT).as_posix() for path in files}
     config = tomllib.loads((ROOT / "zensical.toml").read_text(encoding="utf-8"))
     configured = nav_paths(config["project"]["nav"])
+    check_decisions(errors)
     for missing in sorted(public - configured):
         errors.append(f"{missing}: public page is missing from navigation")
     for missing in sorted(configured - public):

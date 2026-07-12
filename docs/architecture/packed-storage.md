@@ -18,10 +18,9 @@ valid indefinitely.
     migration, and automatic background maintenance remains a later step.
 
 Large collections of small files are expensive to enumerate, copy, and restore.
-msgvault is addressing the same problem by making immutable pack files the
-steady-state storage format for attachments. docbank should reuse that work
-rather than grow an independent pack index, reader cache, recovery state
-machine, and repacker.
+msgvault uses immutable pack files as the steady-state storage format for
+attachments. docbank reuses that work rather than growing an independent pack
+index, reader cache, recovery state machine, and repacker.
 
 `kit/packstore` sits above the low-level `kit/pack` format. It provides a mixed
 loose-and-packed content-addressed store, so migration can be gradual and
@@ -50,11 +49,10 @@ Each application retains the policy that gives those mechanics meaning:
 
 This boundary matters because the applications have different reachability
 rules. msgvault derives liveness from attachment content and thumbnail
-references. In docbank, a row in `blobs` grants physical read authority; live
-and trashed nodes, prior versions, and eventually references held by external
-applications decide whether GC may remove that row. Kit therefore accepts an
-application-supplied catalog and does not own either application's schema or
-garbage-collection policy.
+references. In docbank, a row in `blobs` grants physical read authority.
+Current GC keeps that row while any live node, trashed node, or recorded prior
+version refers to it. Kit therefore accepts an application-supplied catalog
+and does not own either application's schema or garbage-collection policy.
 
 ## Adoption sequence
 
@@ -64,10 +62,11 @@ garbage-collection policy.
    catalog interfaces and migrate msgvault without observable behavior change.
 3. **Complete:** add docbank's SQLite catalog, mixed reader, durable loose
    writer, GC integration, and the Kit catalog conformance suite.
-4. **Next:** expose daemon-first maintenance operations, then reuse the same
-   catalog in Kit backup and direct packed restore.
-5. **Later:** build first-class external integrations on content hashes and the
-   shared storage contract rather than private pack internals.
+
+!!! info "Planned — next adoption steps"
+    Daemon-first pack, repack, and unpack operations will expose the existing
+    mechanics. Built-in backup and external integrations will use the catalog
+    and content-hash boundary rather than private pack internals.
 
 ## Consequences for docbank
 
@@ -76,8 +75,11 @@ end-to-end verification. It does not fork Kit's reader cache, reconciliation,
 or repacker. The existing loose representation remains both the recovery path
 and the representation for blobs above the bounded maintenance limit.
 
-The `blobs` membership boundary also lets feature work proceed independently.
-Editing and versions, tags, watched inboxes, text extraction, provenance, and
-external references change logical reachability without changing physical pack
-authority. An eventual external pin can keep a blob row alive without pinning a
-virtual-tree node against normal trash operations.
+The `blobs` membership boundary also lets logical features evolve without
+changing physical pack authority.
+
+!!! info "Planned — external reachability"
+    Editing and versions, generalized provenance, and external references must
+    define their liveness policy at the docbank catalog boundary. Whether an
+    external reference pins content or merely detects a dangling reference is
+    intentionally unresolved and must be decided before that schema lands.

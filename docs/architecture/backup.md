@@ -1,55 +1,42 @@
 ---
 title: Backup
-description: Verifiable, incremental backups via the shared kit engine.
+description: Current manual snapshot requirements and the planned Kit-backed backup integration.
 ---
 
 # Backup
 
+Docbank has no built-in backup commands in the current release. A coherent
+manual filesystem snapshot requires stopping the daemon before copying the
+vault so `docbank.db` and the blob catalog cannot change during the copy. See
+[Vault Lifecycle](../usage/lifecycle.md#take-a-coherent-manual-snapshot).
+
+The essential archive is the database plus `blobs/`. Configuration is useful
+to retain when customized; logs, locks, and runtime records are not archive
+state. A restored copy is not trusted until `docbank verify` succeeds.
+
+## Planned Kit integration
+
 !!! info "Planned — Phase 4"
-    The backup engine itself exists and is battle-tested — it's
-    msgvault's, extracted into `go.kenn.io/kit` precisely so docbank
-    could reuse it — but docbank's wiring (`internal/backupapp` and the
-    `docbank backup` commands) is not yet implemented.
+    Docbank will integrate `go.kenn.io/kit/backup`, the shared engine already
+    used by msgvault. The application adapter will own WAL checkpointing and a
+    pinned read transaction, content enumeration from docbank's `blobs` rows,
+    fidelity statistics, and exclusions for logs and staging files.
 
-## The engine
+    Snapshots will contain page-diffed SQLite state plus only-new content in
+    sealed, verifiable packs. Restore will materialize `docbank.db` and
+    `blobs/`, then compare application statistics with the manifest before the
+    result is accepted.
 
-docbank reuses `kit/backup` and `kit/pack`: page-diffed SQLite snapshots
-plus only-new content files packed into sealed, verifiable packs.
-Incremental by construction — a snapshot after adding ten documents
-captures ten blobs and the changed database pages, nothing else. The
-repository format, manifest discipline, and verification model are
-documented in msgvault's
-[backup format specification](https://msgvault.io/architecture/backup-format/);
-docbank inherits them wholesale.
+    The planned command family is `docbank backup init|create|list|verify|restore`.
+    Exact flags will enter the CLI reference only when implemented.
 
-The engine is generalized around an application seam (`backup.App`):
-docbank provides freeze (WAL-checkpoint + pinned read transaction),
-content enumeration (every row in `blobs`), stats for the fidelity
-proof (node/blob/tag counts and date range), and exclusions (`logs/`,
-`blobs/tmp/`). Restore materializes `docbank.db` + `blobs/` and proves
-the restored stats byte-match the manifest.
+    Backup reachability will intentionally be broader than GC reachability:
+    every `blobs` row will be captured, including a row that has become a GC
+    candidate but has not yet been reclaimed. This preserves the deletion
+    pipeline's regret window inside the snapshot.
 
-## Commands
+## Boundary with packed storage
 
-Mirroring msgvault:
-
-```
-docbank backup init <repo-path>
-docbank backup create
-docbank backup list
-docbank backup verify [--snapshot <id>]
-docbank backup restore <snapshot> <dest>
-```
-
-A NAS-mounted directory is the expected repo target; any path works.
-
-## Backup reachability ≠ GC reachability
-
-Deliberately, backup captures **every** `blobs` row — including blobs
-that are already GC candidates (for example, after `trash empty` but
-before `gc --run`). A backup taken mid-deletion-pipeline preserves the
-regret window; candidates age out of new snapshots only after GC
-actually reclaims them. The rule composes with
-[editing](editing-and-versions.md) the obvious way: prior versions are
-reachable rows, so backups always include the full edit history that
-exists at snapshot time.
+Backup and live packed storage share Kit's physical formats and verification
+primitives, but docbank remains responsible for which catalog rows belong in a
+snapshot. Kit does not infer application liveness or reach into docbank SQL.

@@ -19,7 +19,7 @@ blobs/
 ```
 
 Blobs are immutable and deduplicated by SHA-256. New content is first
-published loose; the shared Kit engine can later move eligible content into
+published loose; the shared Kit engine supports moving eligible content into
 sealed packs without changing its identity. Reads consult the SQLite catalog
 and transparently use the current loose or packed representation. Existing
 loose-only vaults open without conversion.
@@ -61,13 +61,13 @@ blobs          (hash PRIMARY KEY, size, created_at)
 blob_packs     (pack_id PRIMARY KEY, entry_count, stored_bytes, created_at)
 blob_pack_index(blob_hash PRIMARY KEY, pack_id, pack_offset,
                 stored_len, raw_len, flags, crc32c)
-node_versions  (node_id, blob_hash, size, replaced_at)   -- prior contents
+node_versions  (node_id, blob_hash, size, replaced_at)   -- reserved; no writer yet
 ingests        (id, started_at, source_kind, source_desc)
 provenance     (node_id, ingest_id, original_path, original_mtime)
-tags           (id, name UNIQUE)          -- schema present; surfaces later
+tags           (id, name UNIQUE)          -- reserved; no API/CLI surface yet
 node_tags      (node_id, tag_id)
 extracted_text (blob_hash, extractor, extractor_version, status,
-                error, attempts, text, extracted_at)      -- Phase 2b workers
+                error, attempts, text, extracted_at)      -- reserved; no workers yet
 nodes_fts      -- FTS5 external-content index over live node names
 ```
 

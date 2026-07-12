@@ -14,8 +14,8 @@ invoked, so it needs neither a daemon nor a vault.
 
 ## Why a daemon
 
-One process owns SQLite and the blob store; the CLI, agents, and the
-future web UI are all HTTP clients of the same `/api/v1` surface. There
+One process owns SQLite and the blob store; the CLI and agents are HTTP clients
+of the same `/api/v1` surface. There
 is no separate code path that opens the store directly — the CLI's own
 commands are the design test that the agent-facing API is sufficient,
 because the CLI has no other way to reach the vault.
