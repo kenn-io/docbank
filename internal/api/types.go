@@ -99,6 +99,21 @@ type StoragePackReport struct {
 	BudgetExhausted            bool  `json:"budget_exhausted"`
 }
 
+// StorageRepackReport summarizes sparse-pack selection, rewriting, and
+// reader-safe retirement. BytesRepacked is live raw content rewritten, not a
+// measurement of filesystem bytes reclaimed.
+type StorageRepackReport struct {
+	MappingsPruned         int64 `json:"mappings_pruned"`
+	PacksSelected          int   `json:"packs_selected"`
+	PacksRewritten         int   `json:"packs_rewritten"`
+	PacksSealed            int   `json:"packs_sealed"`
+	PacksRemoved           int   `json:"packs_removed"`
+	PacksDeferredOversized int   `json:"packs_deferred_oversized"`
+	BlobsRepacked          int   `json:"blobs_repacked"`
+	BytesRepacked          int64 `json:"bytes_repacked"`
+	BudgetExhausted        bool  `json:"budget_exhausted"`
+}
+
 // VerifyProblem flags one blob whose content didn't check out.
 type VerifyProblem struct {
 	Hash    string `json:"hash"`

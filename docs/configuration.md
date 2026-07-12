@@ -48,8 +48,9 @@ snapshot; see [Vault Lifecycle](usage/lifecycle.md#take-a-coherent-manual-snapsh
 !!! warning
     Don't edit or prune `blobs/` by hand. Blob files are referenced by
     the database (including as prior document versions); use
-    `docbank trash empty --run` and `docbank gc --run` to reclaim space, and
-    `docbank verify` to check integrity.
+    `docbank trash empty --run`, `docbank gc --run`, and (for dead packed
+    payload) `docbank storage repack` to reclaim space; use `docbank verify` to
+    check integrity.
 
 ## config.toml
 

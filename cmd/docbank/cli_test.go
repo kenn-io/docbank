@@ -376,6 +376,58 @@ func TestStoragePackBudgetAndJSON(t *testing.T) {
 	assert.Equal(t, int64(2), status.PackedBlobs)
 }
 
+func TestStorageRepackJSON(t *testing.T) {
+	_ = setupVaultHome(t)
+	for name, content := range map[string]string{
+		"keep.txt": "keep", "drop-a.txt": "drop a", "drop-b.txt": "drop b",
+	} {
+		src := writeSourceFile(t, name, content)
+		_, err := runCLI(t, "add", src, "--dest", "/inbox")
+		require.NoError(t, err)
+	}
+	_, err := runCLI(t, "storage", "pack")
+	require.NoError(t, err)
+	for _, path := range []string{"/inbox/drop-a.txt", "/inbox/drop-b.txt"} {
+		_, err = runCLI(t, "rm", path)
+		require.NoError(t, err)
+	}
+	_, err = runCLI(t, "trash", "empty", "--run")
+	require.NoError(t, err)
+	_, err = runCLI(t, "gc", "--run")
+	require.NoError(t, err)
+
+	out, err := runCLI(t, "storage", "repack", "--min-age", "1ns",
+		"--min-dead-bytes", "1", "--json")
+	require.NoError(t, err)
+	var report api.StorageRepackReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	assert.Equal(t, 1, report.PacksRewritten)
+	assert.Equal(t, 1, report.PacksRemoved)
+	assert.Equal(t, 1, report.BlobsRepacked)
+
+	out, err = runCLI(t, "storage", "status", "--json")
+	require.NoError(t, err)
+	var status api.StorageStatus
+	require.NoError(t, json.Unmarshal([]byte(out), &status))
+	assert.Zero(t, status.DeadPackedBytes)
+}
+
+func TestDeletionHelpSeparatesTrashGCAndRepack(t *testing.T) {
+	out, err := runCLI(t, "rm", "--help")
+	require.NoError(t, err)
+	assert.Contains(t, out, "rm never permanently deletes metadata or reclaims content")
+
+	out, err = runCLI(t, "trash", "empty", "--help")
+	require.NoError(t, err)
+	assert.Contains(t, out, "Content bytes remain")
+	assert.Contains(t, out, "packed space then requires repack")
+
+	out, err = runCLI(t, "gc", "--help")
+	require.NoError(t, err)
+	assert.Contains(t, out, "loose files are reclaimed immediately")
+	assert.Contains(t, out, "requires a separate storage repack")
+}
+
 func TestVerifyDetectsMissingAndCorrupt(t *testing.T) {
 	home := setupVaultHome(t)
 	srcA := writeSourceFile(t, "a.txt", "alpha")

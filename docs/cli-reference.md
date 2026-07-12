@@ -117,6 +117,11 @@ The freed name is immediately reusable. Prints:
 trashed [15] /taxes/2024/return.pdf (restore with: docbank restore 15)
 ```
 
+There is no hard-delete flag. GC cannot collect a trashed document because the
+trash entry remains a restorable reference. Permanent metadata deletion,
+unreachable-content collection, and packed-space reclamation are the separate
+`trash empty --run`, `gc --run`, and `storage repack` operations.
+
 ## docbank restore
 
 ```
@@ -187,6 +192,7 @@ rows without files, which the next `gc --run` reconciles and `verify`
 reports in the meantime. The daemon's maintenance gate holds off
 concurrent mutations while `gc --run` runs, so it never races a
 concurrent import (see [Concurrency & Locking](architecture/locking.md)).
+GC does not invoke repack, and no automatic GC/repack scheduler exists today.
 
 ## docbank storage status
 
@@ -217,6 +223,28 @@ exhausted. Check `storage status` and rerun if loose blobs remain; crossing the
 budget does not itself prove that more eligible work exists. Zero (the default)
 is unlimited. `--json` includes packing, repair, deferral, and reconciliation
 counters from the shared Kit lifecycle engine.
+
+## docbank storage repack
+
+```
+docbank storage repack [--min-age <duration>] [--min-dead-bytes <bytes>]
+                       [--max-bytes <bytes>] [--json]
+```
+
+Rewrites eligible sparse packs with only their live blobs, atomically changes
+catalog authority, and retires the old immutable pack files after active
+readers release them. Packs with no live mappings are retired regardless of
+age. A partially live pack is eligible when at most half its entries remain and
+it satisfies both selection thresholds. Defaults are `--min-age 24h` and
+`--min-dead-bytes 8388608`; use explicit smaller positive values for immediate
+manual compaction.
+
+`--max-bytes` is a soft live raw-byte budget. Zero is unlimited and makes a
+source-content error fail the operation immediately; a positive budget lets
+Kit continue with independent eligible source packs and return their combined
+errors after committed work. The report's `bytes_repacked` is live raw content
+rewritten, not a claim about filesystem bytes reclaimed. Compare `storage
+status` before and after when exact inventory change matters.
 
 ## docbank verify
 

@@ -47,7 +47,9 @@ docbank tree /taxes                           # browse the virtual tree
 docbank search "insurance"                    # full-text search
 docbank mv "/inbox/scan (2).pdf" /taxes/2026  # reorganize, metadata only
 docbank rm /inbox/junk.pdf                    # trash, recoverable
-docbank gc --run                              # reclaim unreferenced bytes
+docbank trash empty --run                     # permanently delete trash metadata
+docbank gc --run                              # reclaim loose; mark packed bytes dead
+docbank storage repack                        # compact eligible sparse packs
 docbank verify                                # prove the bytes are intact
 ```
 
@@ -73,9 +75,9 @@ docbank verify                                # prove the bytes are intact
 </div>
 
 - **Never lose a byte.** Blob writes are durable (fsync discipline) before
-  the database ever references them. Deletion is soft; nothing is
-  reclaimed except by an explicit `gc --run`. `verify` re-hashes
-  everything on demand.
+  the database ever references them. `rm` is always soft; permanent tree
+  deletion, unreachable-content GC, and packed-space reclamation are separate
+  explicit operations. `verify` re-hashes everything on demand.
 - **Ingest never touches sources.** Importing copies; it never deletes or
   modifies the original files.
 - **IDs are canonical, paths are convenience.** Every listing shows node

@@ -11,7 +11,10 @@ import (
 var rmCmd = &cobra.Command{
 	Use:   "rm <path>",
 	Short: "Move a node (and its subtree) to the trash",
-	Args:  cobra.ExactArgs(1),
+	Long: "Move a node (and its subtree) to recoverable trash. rm never permanently " +
+		"deletes metadata or reclaims content; use trash empty, gc, and storage repack " +
+		"as separate explicit maintenance steps.",
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := client.Ensure(cmd.Context())
 		if err != nil {

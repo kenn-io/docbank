@@ -85,7 +85,12 @@ Deletion is deliberately three-stage:
 
 1. Trash stamps a subtree and records original parent/name recovery context.
 2. Trash empty permanently removes eligible tree metadata.
-3. GC removes unreachable blob authority and physical content.
+3. GC removes unreachable blob authority and any loose physical content.
+
+The third stage removes loose files immediately. For packed content it only
+makes the immutable range logically dead; a separate repack maintenance pass
+rewrites live ranges and retires sparse source packs. No removal command folds
+that physical rewrite into logical deletion.
 
 Trashed nodes remain reachable. Permanent node deletion may make a blob row a
 GC candidate, but it does not itself claim disk space. GC must consider live

@@ -249,6 +249,15 @@ func (c *Client) StoragePack(ctx context.Context, maxBytes int64) (api.StoragePa
 	return report, err
 }
 
+func (c *Client) StorageRepack(ctx context.Context, maxBytes int64, minAge time.Duration,
+	minDeadBytes int64) (api.StorageRepackReport, error) {
+	var report api.StorageRepackReport
+	err := c.do(ctx, http.MethodPost, "/api/v1/storage/repack", nil, map[string]any{
+		"max_bytes": maxBytes, "min_age": minAge.String(), "min_dead_bytes": minDeadBytes,
+	}, &report)
+	return report, err
+}
+
 func (c *Client) Verify(ctx context.Context) (api.VerifyReport, error) {
 	var rep api.VerifyReport
 	err := c.do(ctx, http.MethodPost, "/api/v1/verify", nil, nil, &rep)

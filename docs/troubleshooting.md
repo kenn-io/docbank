@@ -129,7 +129,8 @@ is known-good.
 
 Packed blobs are immutable members of pack files. GC can remove their catalog
 authority, but that only makes their stored ranges logically dead; physical
-pack space remains until repacking is available. The report separates
+pack space remains until `docbank storage repack` selects and retires the
+sparse source pack. The report separates
 `pending_packed_bytes` from loose bytes actually reclaimable so logical
 deletion is not presented as disk reclamation.
 
