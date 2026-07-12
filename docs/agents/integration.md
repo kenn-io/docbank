@@ -78,9 +78,16 @@ curl --fail-with-body --get \
   "$DOCBANK_URL/api/v1/path"
 ```
 
-A node response includes stable `id`, mutable `revision`, `kind`, timestamps,
-and—on single-node responses—its current `path`. IDs survive renames; paths are
-for display and one-shot path operations.
+A node response includes stable `id`, mutable `revision`, `kind`, and
+timestamps. Live single-node responses also include the current `path`. IDs
+survive renames; use a live path only for display or a one-shot path operation.
+
+Trash is the important exception. A successful trash response returns the
+node's **pre-trash path** to explain where a restore would try to put it. That
+path no longer resolves to the trashed node and may later resolve to a different
+node if its name is reused. Retain the response's `id` and `revision` for
+subsequent ID-addressed inspection or restore, and treat every path attached to
+a trashed node as display or recovery context rather than identity.
 
 ## Read a tree without unbounded responses
 
