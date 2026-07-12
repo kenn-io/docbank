@@ -19,6 +19,8 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+const candidateLooseBytes = int64(1 << 30)
+
 type resourceNoiseReader struct{ state uint32 }
 
 func (r *resourceNoiseReader) Read(p []byte) (int, error) {
@@ -49,23 +51,15 @@ func (f *resourceFixture) Close() error {
 
 func newResourceFixture(b *testing.B, sizes ...int64) *resourceFixture {
 	b.Helper()
-	root := b.TempDir()
-	metadata, err := store.Open(filepath.Join(root, "docbank.db"))
-	require.NoError(b, err)
-	blobsDir := filepath.Join(root, "blobs")
-	require.NoError(b, os.MkdirAll(filepath.Join(blobsDir, "tmp"), 0o700))
-	blobs, err := blob.New(store.NewPackCatalog(metadata), blobsDir)
-	require.NoError(b, err)
-	fixture := &resourceFixture{root: root, metadata: metadata, blobs: blobs}
-	b.Cleanup(func() { require.NoError(b, fixture.Close()) })
-	require.NoError(b, blobs.WithMutation(context.Background(), func() error {
+	fixture := newEmptyResourceFixture(b)
+	require.NoError(b, fixture.blobs.WithMutation(context.Background(), func() error {
 		for i, size := range sizes {
-			hash, written, writeErr := blobs.WriteContext(context.Background(),
+			hash, written, writeErr := fixture.blobs.WriteContext(context.Background(),
 				io.LimitReader(&resourceNoiseReader{state: uint32(i + 1)}, size))
 			if writeErr != nil {
 				return writeErr
 			}
-			node, createErr := metadata.CreateFile(context.Background(), metadata.RootID(),
+			node, createErr := fixture.metadata.CreateFile(context.Background(), fixture.metadata.RootID(),
 				fmt.Sprintf("resource-%d.bin", i), hash, written, "application/octet-stream")
 			if createErr != nil {
 				return createErr
@@ -75,6 +69,57 @@ func newResourceFixture(b *testing.B, sizes ...int64) *resourceFixture {
 		return nil
 	}))
 	return fixture
+}
+
+func newEmptyResourceFixture(b *testing.B) *resourceFixture {
+	b.Helper()
+	root := b.TempDir()
+	metadata, err := store.Open(filepath.Join(root, "docbank.db"))
+	require.NoError(b, err)
+	blobsDir := filepath.Join(root, "blobs")
+	require.NoError(b, os.MkdirAll(filepath.Join(blobsDir, "tmp"), 0o700))
+	blobs, err := blob.New(store.NewPackCatalog(metadata), blobsDir)
+	require.NoError(b, err)
+	fixture := &resourceFixture{root: root, metadata: metadata, blobs: blobs}
+	b.Cleanup(func() { require.NoError(b, fixture.Close()) })
+	return fixture
+}
+
+// addCandidateLoose models a higher admission ceiling without changing the
+// production MaxBlobBytes policy. It uses the same Kit durable loose write and
+// Docbank mutation/catalog boundary that WriteContext wraps.
+func (f *resourceFixture) addCandidateLoose(ctx context.Context, size int64) error {
+	layout, err := packstore.NewLayout(filepath.Join(f.root, "blobs"), packstore.LayoutOptions{
+		Staging: packstore.StagingStoreDirectory, StagingDir: "tmp",
+	})
+	if err != nil {
+		return fmt.Errorf("creating candidate layout: %w", err)
+	}
+	loose, err := packstore.NewLooseStore(layout)
+	if err != nil {
+		return fmt.Errorf("creating candidate loose store: %w", err)
+	}
+	if err := f.blobs.WithMutation(ctx, func() error {
+		result, writeErr := loose.Write(ctx,
+			io.LimitReader(&resourceNoiseReader{state: 1}, size), packstore.WriteOptions{
+				Durability: packstore.DurablePublication,
+				Dedup:      packstore.VerifyTypeAndSize,
+				MaxBytes:   size,
+			})
+		if writeErr != nil {
+			return fmt.Errorf("writing candidate loose object: %w", writeErr)
+		}
+		node, createErr := f.metadata.CreateFile(ctx, f.metadata.RootID(), "candidate-large.bin",
+			result.Hash.String(), result.Size, "application/octet-stream")
+		if createErr != nil {
+			return fmt.Errorf("authorizing candidate loose object: %w", createErr)
+		}
+		f.nodes = append(f.nodes, node)
+		return nil
+	}); err != nil {
+		return fmt.Errorf("writing candidate through mutation boundary: %w", err)
+	}
+	return nil
 }
 
 func BenchmarkDocbankVerifiedRead64MiB(b *testing.B) {
@@ -151,10 +196,59 @@ func BenchmarkDocbankWritePackRepack64MiB(b *testing.B) {
 
 func BenchmarkDocbankBackupRoundTrip64MiB(b *testing.B) {
 	fixture := newResourceFixture(b, blob.MaxBlobBytes)
+	benchmarkBackupRoundTrip(b, fixture, blob.MaxBlobBytes)
+}
+
+func BenchmarkDocbankCandidateLooseWrite1GiB(b *testing.B) {
+	b.ReportAllocs()
+	b.SetBytes(candidateLooseBytes)
+	for range b.N {
+		fixture := newEmptyResourceFixture(b)
+		require.NoError(b, fixture.addCandidateLoose(context.Background(), candidateLooseBytes))
+		require.NoError(b, fixture.Close())
+	}
+}
+
+func BenchmarkDocbankCandidateLooseRead1GiB(b *testing.B) {
+	fixture := newEmptyResourceFixture(b)
+	require.NoError(b, fixture.addCandidateLoose(context.Background(), candidateLooseBytes))
+	b.ReportAllocs()
+	b.SetBytes(candidateLooseBytes)
+	baselineFDs := 0
+	if entries, err := filepath.Glob("/dev/fd/*"); err == nil {
+		baselineFDs = len(entries)
+	}
+	b.ResetTimer()
+	peakFDs := baselineFDs
+	for range b.N {
+		stream, size, err := fixture.blobs.OpenStream(fixture.nodes[0].BlobHash)
+		require.NoError(b, err)
+		require.Equal(b, candidateLooseBytes, size)
+		if entries, readErr := filepath.Glob("/dev/fd/*"); readErr == nil {
+			peakFDs = max(peakFDs, len(entries))
+		}
+		_, copyErr := io.Copy(io.Discard, stream)
+		require.NoError(b, copyErr)
+		require.True(b, stream.Verified())
+		require.NoError(b, stream.Close())
+	}
+	if baselineFDs > 0 {
+		b.ReportMetric(float64(peakFDs-baselineFDs), "stream-fds")
+	}
+}
+
+func BenchmarkDocbankCandidateLooseBackupRoundTrip1GiB(b *testing.B) {
+	fixture := newEmptyResourceFixture(b)
+	require.NoError(b, fixture.addCandidateLoose(context.Background(), candidateLooseBytes))
+	benchmarkBackupRoundTrip(b, fixture, candidateLooseBytes)
+}
+
+func benchmarkBackupRoundTrip(b *testing.B, fixture *resourceFixture, size int64) {
+	b.Helper()
 	app := backupapp.New("benchmark-version")
 	root := b.TempDir()
 	b.ReportAllocs()
-	b.SetBytes(3 * blob.MaxBlobBytes)
+	b.SetBytes(3 * size)
 	b.ResetTimer()
 	for i := range b.N {
 		repo, err := backup.Init(filepath.Join(root, fmt.Sprintf("repo-%d", i)))
