@@ -18,6 +18,11 @@ plus internal design material.
   metadata, assets, and publishing boundary; all Python tools run through
   the locked `uv` environment
 
+Every rendered directory route also publishes its exact Markdown source at
+the sibling `.md` path: `/setup/` has `/setup.md`, and
+`/usage/importing/` has `/usage/importing.md`. This gives agents and other
+text-first clients a stable representation without scraping rendered HTML.
+
 ## Building
 
 ```bash
