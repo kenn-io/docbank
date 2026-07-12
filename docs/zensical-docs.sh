@@ -40,7 +40,7 @@ fi
 if [[ "$site_path" == "$docs_root/"* ]]; then
   site_source_exclude="./${site_path#"$docs_root/"}"
 fi
-if [[ "$external_site" == true && ( -e "$site_path" || -L "$site_path" ) ]]; then
+if [[ "$command_name" == "build" && "$external_site" == true && ( -e "$site_path" || -L "$site_path" ) ]]; then
   if [[ ! -f "$site_path/$site_marker" ]] || [[ "$(<"$site_path/$site_marker")" != "$site_marker_contents" ]]; then
     printf 'refusing to replace non-docbank output directory: %s\n' "$site_path" >&2
     exit 2
