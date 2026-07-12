@@ -70,11 +70,9 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-if [[ "$external_site" == true ]]; then
-  tmp_site_name="$(cd "$docs_root" && mktemp -d zensical-site.XXXXXX)"
-  tmp_site="$docs_root/$tmp_site_name"
-  site_config_dir="$tmp_site_name"
-fi
+tmp_site_name="$(cd "$docs_root" && mktemp -d zensical-site.XXXXXX)"
+tmp_site="$docs_root/$tmp_site_name"
+site_config_dir="$tmp_site_name"
 
 tmp_docs_name="$(cd "$docs_root" && mktemp -d zensical-public-docs.XXXXXX)"
 tmp_docs="$docs_root/$tmp_docs_name"
@@ -150,20 +148,20 @@ awk -v docs_dir="$tmp_docs_name" -v site_dir="$site_config_dir" '
 case "$command_name" in
   build)
     (cd "$docs_root" && "${uv_run[@]}" zensical build --strict --config-file "$tmp_config_name" "$@")
-    if [[ "$external_site" == true ]]; then
-      mkdir -p "$(dirname "$site_path")"
-      printf '%s\n' "$site_marker_contents" > "$tmp_site/$site_marker"
-      if [[ -e "$site_path" || -L "$site_path" ]]; then
+    "${uv_run[@]}" python "$docs_root/scripts/check_built_site.py" "$tmp_site"
+    printf '%s\n' "$site_marker_contents" > "$tmp_site/$site_marker"
+    mkdir -p "$(dirname "$site_path")"
+    if [[ -e "$site_path" || -L "$site_path" ]]; then
+      if [[ "$external_site" == true ]]; then
         if [[ ! -f "$site_path/$site_marker" ]] || [[ "$(<"$site_path/$site_marker")" != "$site_marker_contents" ]]; then
           printf 'refusing to replace non-docbank output directory: %s\n' "$site_path" >&2
           exit 2
         fi
-        rm -rf "$site_path"
       fi
-      mv "$tmp_site" "$site_path"
-      tmp_site=""
+      rm -rf -- "$site_path"
     fi
-    "${uv_run[@]}" python "$docs_root/scripts/check_built_site.py" "$site_path"
+    mv "$tmp_site" "$site_path"
+    tmp_site=""
     ;;
   serve)
     (cd "$docs_root" && "${uv_run[@]}" zensical serve --config-file "$tmp_config_name" "$@")
