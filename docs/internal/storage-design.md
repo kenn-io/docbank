@@ -128,6 +128,14 @@ reader or lifecycle mechanics in docbank. A physical-storage bug shared by
 msgvault belongs in Kit; a decision about whether a docbank reference keeps a
 blob alive belongs here.
 
+Kit owning a mechanic does not imply that docbank exposes it. In particular,
+`packstore.Maintainer.Unpack` remains available for conformance tests,
+migrations, and a purpose-built emergency recovery path, but is not part of the
+ordinary daemon API or CLI. A public unpack operation would reverse the
+small-file benefit, require transient duplicate disk capacity, and leak
+physical-format selection into the product. Do not add one without a concrete
+recovery workflow that cannot be served by verified backup/restore.
+
 ## Schema compatibility
 
 Store startup runs the embedded idempotent schema in one immediate transaction
@@ -148,5 +156,5 @@ failure rollback behavior, and a documented backup-before-migrate contract.
   pin blob authority, or allow dangling-reference detection in the referrer.
 - Version writers must preserve bytes-before-reference ordering and add their
   rows to reachability atomically with pointer replacement.
-- Pack maintenance commands must remain daemon/API operations; no CLI path may
-  open the physical store directly.
+- Pack and repack maintenance commands must remain daemon/API operations; no
+  CLI path may open the physical store directly.

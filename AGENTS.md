@@ -46,6 +46,10 @@ Instructions for autonomous coding agents working in this repository.
   open the vault directly from a command.
 - The daemon always enforces an API key (ephemeral per-run when none is
   configured, published via the runtime record). Binds are loopback-only.
+- Packed storage is managed, not a user-selected format. The ordinary operator
+  surface is status, pack, and repack. Do not expose Kit's unpack primitive as
+  a general API or CLI command; reserve it for tests, migrations, or a
+  purpose-built emergency recovery workflow with a demonstrated need.
 - User-facing docs describe only what exists; planned behavior sits under
   `!!! info "Planned"` admonitions.
 

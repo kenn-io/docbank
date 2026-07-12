@@ -68,8 +68,10 @@ marked planned appears elsewhere in these docs only under an explicit
 `docbank storage status` reports loose, live-packed, and dead-packed inventory,
 and `docbank storage pack` performs explicit optionally budgeted packing through
 the daemon. `docbank storage repack` compacts eligible sparse packs and retires
-dead source files. Unpack remains the next lifecycle delivery. Ordinary ingests
-continue to publish loose blobs; startup never performs an implicit migration.
+dead source files. This is the complete ordinary storage-maintenance surface;
+Kit unpack remains internal to tests, migrations, or a future purpose-built
+recovery workflow rather than a planned user command. Ordinary ingests continue
+to publish loose blobs; startup never performs an implicit migration.
 
 ## Phase 2b — Features (designed)
 
