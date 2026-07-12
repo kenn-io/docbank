@@ -141,6 +141,75 @@ reports the condition as retryable cleanup. After external readers or Windows
 file locks release it, the operator runs `storage pack`; Kit's orphan
 reconciliation verifies current authority and removes the redundant source.
 
+## Current resource envelope
+
+`internal/backupapp/resource_benchmark_test.go` is the reproducible downstream
+gate for the real SQLite catalog and Docbank adapters:
+
+```bash
+go test -tags fts5 ./internal/backupapp -run '^$' \
+  -bench '^BenchmarkDocbank' -benchtime=1x -benchmem -count=1
+```
+
+The peak-RSS figures use a prebuilt test binary so compilation is outside the
+measurement. On macOS, reproduce the full and candidate-only runs with:
+
+```bash
+go test -c -tags fts5 -o /tmp/docbank-resource.test ./internal/backupapp
+/usr/bin/time -l /tmp/docbank-resource.test -test.run '^$' \
+  -test.bench '^BenchmarkDocbank' -test.benchtime=1x -test.benchmem -test.count=1
+/usr/bin/time -l /tmp/docbank-resource.test -test.run '^$' \
+  -test.bench '^BenchmarkDocbankCandidateLoose' \
+  -test.benchtime=1x -test.benchmem -test.count=1
+```
+
+Record `maximum resident set size`; other operating systems need their
+equivalent external process measurement rather than Go's cumulative `B/op`.
+
+The current darwin/arm64 baseline on an Apple M4 Max with Go 1.26.4 and Kit
+v0.8.0 is:
+
+| Workload | Throughput | Heap allocated per operation | Additional stream descriptors |
+| --- | ---: | ---: | ---: |
+| verified loose read, 64 MiB | 2,622 MB/s | 12,944 bytes | 1 |
+| verified packed read, 64 MiB | 2,132 MB/s | 15,928 bytes | 1 |
+| write + pack + sparse repack, 64 MiB total | 148 MB/s | 75,620,568 bytes cumulative | — |
+| snapshot + verify + loose restore, 64 MiB, one job | 652 MB/s | 71,135,648 bytes cumulative | — |
+| candidate durable loose write, 1 GiB | 294 MB/s | 48,872 bytes | — |
+| candidate verified loose read, 1 GiB | 2,635 MB/s | 12,944 bytes | 1 |
+| candidate snapshot + verify + loose restore, 1 GiB, one job | 954 MB/s | 71,138,880 bytes cumulative | — |
+
+A prebuilt benchmark binary running all seven workloads sequentially peaked at
+110,706,688 bytes (105.6 MiB) resident. Running only the three 1 GiB loose
+candidate workloads peaked at 49,659,904 bytes (47.4 MiB) resident. The full
+suite retains allocator and codec high-water state from prior maintenance, so
+the larger number is the appropriate whole-process capacity baseline. `B/op`
+for compound maintenance and backup rows is cumulative allocation across
+several streaming stages, not peak live heap; the external RSS measurements
+are the process envelopes.
+
+Resource policy still needs capacity beyond RSS. Incompressible preparation at
+the 64 MiB ceiling can require about 128.256 MiB of scratch for one object.
+Docbank serializes maintenance, so pack/repack currently has one preparation in
+flight; future backup concurrency must multiply scratch and codec windows by
+its explicit job count. The mixed reader keeps at most 16 idle pack descriptors,
+and each concurrent loose or packed stream can add one descriptor until EOF or
+`Close`. Cancellation and early-close cleanup remain mandatory race-tested
+gates, not benchmark outcomes.
+
+The 1 GiB candidate benchmarks bypass only Docbank's current admission check;
+they use Kit's durable loose writer, Docbank's mutation and SQLite authority
+boundary, native verified `OpenStream`, and the real backup adapters. They do
+not admit the object to packing. This is evidence that a 1 GiB loose-ingestion
+policy can remain bounded while packed maintenance stays at 64 MiB, not a
+performance guarantee or a policy change by itself. Such an object still needs
+roughly its raw size for live storage, repository storage, and a simultaneous
+restore target in the incompressible case.
+
+Any proposal to change admission or maintenance limits, reader slots, or
+backup concurrency must rerun this suite on representative target hardware and
+revise this envelope.
+
 Docbank owns:
 
 - the SQLite schema and catalog adapter;
