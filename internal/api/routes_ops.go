@@ -19,6 +19,23 @@ import (
 )
 
 func registerOpsRoutes(api huma.API, d Deps, g *gate) {
+	type storageStatusOutput struct{ Body StorageStatus }
+	huma.Register(api, huma.Operation{
+		OperationID: "storageStatus", Method: http.MethodGet, Path: "/api/v1/storage",
+		Summary: "Report loose and packed physical storage usage",
+	}, func(ctx context.Context, _ *struct{}) (*storageStatusOutput, error) {
+		stats, err := d.Blobs.Stats(ctx)
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
+		return &storageStatusOutput{Body: StorageStatus{
+			LooseBlobs: stats.LooseBlobs, LooseBytes: stats.LooseBytes,
+			Packs: stats.Packs, PackStoredBytes: stats.PackStoredBytes,
+			PackedBlobs: stats.PackedBlobs, PackedRawBytes: stats.PackedRawBytes,
+			PackedStoredBytes: stats.PackedStoredBytes, DeadPackedBytes: stats.DeadPackedBytes,
+		}}, nil
+	})
+
 	type ingestOutput struct{ Body IngestReport }
 	huma.Register(api, huma.Operation{
 		OperationID: "ingest", Method: http.MethodPost, Path: "/api/v1/ingest",

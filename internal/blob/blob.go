@@ -23,6 +23,7 @@ var ErrInvalidHash = packstore.ErrInvalidHash
 type Store struct {
 	dir         string
 	layout      packstore.Layout
+	catalog     packstore.Catalog
 	loose       *packstore.LooseStore
 	reader      *packstore.Store
 	maintainer  *packstore.Maintainer
@@ -47,8 +48,49 @@ func New(catalog packstore.Catalog, blobsDir string) (*Store, error) {
 		_ = maintainer.Close()
 		return nil, fmt.Errorf("creating loose blob store: %w", err)
 	}
-	return &Store{dir: blobsDir, layout: layout, loose: loose, reader: maintainer.Store(),
+	return &Store{dir: blobsDir, layout: layout, catalog: catalog, loose: loose, reader: maintainer.Store(),
 		maintainer: maintainer, coordinator: coordinator}, nil
+}
+
+// StorageStats describes the daemon's current physical storage inventory.
+// Packed dead bytes remain inside immutable packs until repack retires them.
+type StorageStats struct {
+	LooseBlobs        int
+	LooseBytes        int64
+	Packs             int
+	PackStoredBytes   int64
+	PackedBlobs       int64
+	PackedRawBytes    int64
+	PackedStoredBytes int64
+	DeadPackedBytes   int64
+}
+
+// Stats reports loose files and catalog-authorized pack usage without opening
+// or rewriting content.
+func (s *Store) Stats(ctx context.Context) (StorageStats, error) {
+	loose, err := s.List()
+	if err != nil {
+		return StorageStats{}, err
+	}
+	usage, err := s.catalog.ListPackUsage(ctx)
+	if err != nil {
+		return StorageStats{}, fmt.Errorf("listing pack usage: %w", err)
+	}
+	stats := StorageStats{LooseBlobs: len(loose), Packs: len(usage)}
+	for _, size := range loose {
+		stats.LooseBytes += size
+	}
+	for _, pack := range usage {
+		stats.PackStoredBytes += pack.StoredBytes
+		stats.PackedBlobs += pack.LiveEntries
+		stats.PackedRawBytes += pack.LiveRawBytes
+		stats.PackedStoredBytes += pack.LiveStoredBytes
+	}
+	if stats.PackedStoredBytes > stats.PackStoredBytes {
+		return StorageStats{}, errors.New("pack usage is inconsistent: live stored bytes exceed pack totals")
+	}
+	stats.DeadPackedBytes = stats.PackStoredBytes - stats.PackedStoredBytes
+	return stats, nil
 }
 
 // newReaderStore constructs a mixed reader without a maintenance catalog. It

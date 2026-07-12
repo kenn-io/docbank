@@ -236,6 +236,12 @@ func (c *Client) GC(ctx context.Context, run bool) (api.GCReport, error) {
 	return rep, err
 }
 
+func (c *Client) StorageStatus(ctx context.Context) (api.StorageStatus, error) {
+	var status api.StorageStatus
+	err := c.do(ctx, http.MethodGet, "/api/v1/storage", nil, nil, &status)
+	return status, err
+}
+
 func (c *Client) Verify(ctx context.Context) (api.VerifyReport, error) {
 	var rep api.VerifyReport
 	err := c.do(ctx, http.MethodPost, "/api/v1/verify", nil, nil, &rep)

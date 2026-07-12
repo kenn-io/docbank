@@ -12,10 +12,10 @@ mixed reads, and physical lifecycle coordination. Existing vaults require no
 conversion: ordinary writes still land loose and both representations are
 valid indefinitely.
 
-!!! info "Planned — operator surface"
-    Authenticated daemon operations for status, explicit packing, repacking,
-    and unpacking have not landed yet. Startup never performs an implicit
-    migration, and automatic background maintenance remains a later step.
+`docbank storage status` exposes loose and packed inventory through the
+authenticated daemon API. Explicit packing, repacking, and unpacking remain
+planned. Startup never performs an implicit migration, and automatic
+background maintenance remains a later step.
 
 Large collections of small files are expensive to enumerate, copy, and restore.
 msgvault uses immutable pack files as the steady-state storage format for
@@ -62,6 +62,8 @@ and does not own either application's schema or garbage-collection policy.
    catalog interfaces and migrate msgvault without observable behavior change.
 3. **Complete:** add docbank's SQLite catalog, mixed reader, durable loose
    writer, GC integration, and the Kit catalog conformance suite.
+4. **Complete:** expose read-only loose, live-packed, and dead-packed storage
+   inventory through the authenticated daemon API and CLI.
 
 !!! info "Planned — next adoption steps"
     Daemon-first pack, repack, and unpack operations will expose the existing

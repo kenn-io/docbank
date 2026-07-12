@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -16,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -325,6 +327,25 @@ func TestGcReclaimsUnreachableBlobs(t *testing.T) {
 	out, err = runCLI(t, "gc")
 	require.NoError(t, err)
 	assert.Contains(t, out, "0 candidate")
+}
+
+func TestStorageStatusHumanAndJSON(t *testing.T) {
+	_ = setupVaultHome(t)
+	src := writeSourceFile(t, "a.txt", "alpha")
+	_, err := runCLI(t, "add", src, "--dest", "/inbox")
+	require.NoError(t, err)
+
+	out, err := runCLI(t, "storage", "status")
+	require.NoError(t, err)
+	assert.Contains(t, out, "loose: 1 blob(s), 5 byte(s)")
+	assert.Contains(t, out, "packed: 0 live blob(s) in 0 pack(s)")
+
+	out, err = runCLI(t, "storage", "status", "--json")
+	require.NoError(t, err)
+	var status api.StorageStatus
+	require.NoError(t, json.Unmarshal([]byte(out), &status))
+	assert.Equal(t, 1, status.LooseBlobs)
+	assert.Equal(t, int64(5), status.LooseBytes)
 }
 
 func TestVerifyDetectsMissingAndCorrupt(t *testing.T) {
