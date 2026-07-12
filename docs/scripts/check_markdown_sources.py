@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import collections
 import pathlib
 import re
 import sys
@@ -50,7 +51,31 @@ def check_decisions(errors: list[str]) -> None:
         errors.append("internal/decisions/README.md: missing ## Index section")
         indexed: set[str] = set()
     else:
-        indexed = set(re.findall(r"\((\d{4}-[^)]+\.md)\)", index_section.group(1)))
+        entries: list[str] = []
+        row_pattern = re.compile(
+            r"^\|\s*\[ADR-(\d{4})\]\((\d{4}-[^)]+\.md)\)\s*\|[^|]+\|[^|]+\|\s*$"
+        )
+        for line in index_section.group(1).splitlines():
+            if not line.lstrip().startswith("| [ADR-"):
+                continue
+            match = row_pattern.fullmatch(line)
+            if match is None:
+                errors.append(f"internal/decisions/README.md: malformed index row {line!r}")
+                continue
+            decision_id, filename = match.groups()
+            if not filename.startswith(f"{decision_id}-"):
+                errors.append(
+                    "internal/decisions/README.md: "
+                    f"ADR-{decision_id} does not match filename {filename}"
+                )
+            entries.append(filename)
+        counts = collections.Counter(entries)
+        for filename, count in sorted(counts.items()):
+            if count != 1:
+                errors.append(
+                    f"internal/decisions/README.md: {filename} appears {count} times in index"
+                )
+        indexed = set(entries)
 
     candidates = sorted(path for path in DECISIONS.glob("*.md") if path.name != "README.md")
     records: list[pathlib.Path] = []
