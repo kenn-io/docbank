@@ -18,11 +18,24 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 uv_run=(uv run --project "$docs_root" --frozen --no-dev)
 
+site_path="$docs_root/$site_dir"
+site_config_dir="$site_dir"
+external_site=false
+if [[ "$site_dir" = /* ]]; then
+  if [[ "$site_dir" == "/" ]]; then
+    printf 'refusing to use filesystem root as docs site directory\n' >&2
+    exit 2
+  fi
+  site_path="$site_dir"
+  external_site=true
+fi
+
 "${uv_run[@]}" python "$docs_root/scripts/check_markdown_sources.py"
 
 tmp_docs=""
 tmp_config_base=""
 tmp_config=""
+tmp_site=""
 
 cleanup() {
   if [[ -n "$tmp_docs" ]]; then
@@ -34,8 +47,17 @@ cleanup() {
   if [[ -n "$tmp_config_base" ]]; then
     rm -f "$tmp_config_base"
   fi
+  if [[ -n "$tmp_site" ]]; then
+    rm -rf "$tmp_site"
+  fi
 }
 trap cleanup EXIT INT TERM
+
+if [[ "$external_site" == true ]]; then
+  tmp_site_name="$(cd "$docs_root" && mktemp -d zensical-site.XXXXXX)"
+  tmp_site="$docs_root/$tmp_site_name"
+  site_config_dir="$tmp_site_name"
+fi
 
 tmp_docs_name="$(cd "$docs_root" && mktemp -d zensical-public-docs.XXXXXX)"
 tmp_docs="$docs_root/$tmp_docs_name"
@@ -62,6 +84,7 @@ tmp_config_base=""
     --exclude './internal' \
     --exclude './scripts' \
     --exclude './site' \
+    --exclude './zensical-site.*' \
     --exclude './zensical-public-docs.*' \
     --exclude './.zensical-build.*' \
     --exclude './superpowers' \
@@ -84,7 +107,7 @@ if [[ -n "$symlinks" ]]; then
   exit 1
 fi
 
-awk -v docs_dir="$tmp_docs_name" -v site_dir="$site_dir" '
+awk -v docs_dir="$tmp_docs_name" -v site_dir="$site_config_dir" '
   $0 == "docs_dir = \"docs\"" {
     print "docs_dir = \"" docs_dir "\""
     next
@@ -99,7 +122,13 @@ awk -v docs_dir="$tmp_docs_name" -v site_dir="$site_dir" '
 case "$command_name" in
   build)
     (cd "$docs_root" && "${uv_run[@]}" zensical build --strict --config-file "$tmp_config_name" "$@")
-    "${uv_run[@]}" python "$docs_root/scripts/check_built_site.py" "$docs_root/$site_dir"
+    if [[ "$external_site" == true ]]; then
+      mkdir -p "$(dirname "$site_path")"
+      rm -rf "$site_path"
+      mv "$tmp_site" "$site_path"
+      tmp_site=""
+    fi
+    "${uv_run[@]}" python "$docs_root/scripts/check_built_site.py" "$site_path"
     ;;
   serve)
     (cd "$docs_root" && "${uv_run[@]}" zensical serve --config-file "$tmp_config_name" "$@")

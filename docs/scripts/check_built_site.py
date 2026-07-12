@@ -13,6 +13,7 @@ class PageParser(html.parser.HTMLParser):
         self.title = False
         self.description = False
         self.urls: list[str] = []
+        self.anchors: set[str] = set()
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         values = {key: value or "" for key, value in attrs}
@@ -20,19 +21,28 @@ class PageParser(html.parser.HTMLParser):
             self.title = True
         if tag == "meta" and values.get("name") == "description" and values.get("content"):
             self.description = True
+        if values.get("id"):
+            self.anchors.add(values["id"])
+        if tag == "a" and values.get("name"):
+            self.anchors.add(values["name"])
         for key in ("href", "src"):
             if key in values:
                 self.urls.append(values[key])
 
 
-def local_target(site: pathlib.Path, page: pathlib.Path, raw: str) -> pathlib.Path | None:
+def local_target(
+    site: pathlib.Path, page: pathlib.Path, raw: str
+) -> tuple[pathlib.Path, str] | None:
     parsed = urllib.parse.urlsplit(raw)
-    if parsed.scheme or parsed.netloc or not parsed.path:
+    if parsed.scheme or parsed.netloc:
         return None
-    target = site / parsed.path.lstrip("/") if parsed.path.startswith("/") else page.parent / parsed.path
-    if parsed.path.endswith("/") or target.suffix == "":
-        target /= "index.html"
-    return target.resolve()
+    if parsed.path:
+        target = site / parsed.path.lstrip("/") if parsed.path.startswith("/") else page.parent / parsed.path
+        if parsed.path.endswith("/") or target.suffix == "":
+            target /= "index.html"
+    else:
+        target = page
+    return target.resolve(), urllib.parse.unquote(parsed.fragment)
 
 
 def main() -> None:
@@ -46,18 +56,24 @@ def main() -> None:
         if forbidden.intersection(path.relative_to(site).parts):
             errors.append(f"publishing boundary leaked {path.relative_to(site)}")
 
+    parsed_pages: dict[pathlib.Path, PageParser] = {}
     for page in pages:
         parser = PageParser()
         parser.feed(page.read_text(encoding="utf-8"))
+        parsed_pages[page.resolve()] = parser
+
+    for page in pages:
+        parser = parsed_pages[page.resolve()]
         rel = page.relative_to(site)
         if not parser.title:
             errors.append(f"{rel}: missing title")
         if not parser.description:
             errors.append(f"{rel}: missing meta description")
         for raw in parser.urls:
-            target = local_target(site, page, raw)
-            if target is None:
+            local = local_target(site, page, raw)
+            if local is None:
                 continue
+            target, fragment = local
             try:
                 target.relative_to(site)
             except ValueError:
@@ -65,6 +81,13 @@ def main() -> None:
                 continue
             if not target.exists():
                 errors.append(f"{rel}: broken local URL {raw}")
+            elif (
+                fragment
+                and fragment != "__skip"
+                and target in parsed_pages
+                and fragment not in parsed_pages[target].anchors
+            ):
+                errors.append(f"{rel}: broken local fragment {raw}")
 
     if errors:
         print("built documentation validation failed:", file=sys.stderr)
