@@ -52,8 +52,6 @@ def markdown_route(site: pathlib.Path, rel: pathlib.Path) -> pathlib.Path:
 
 
 def markdown_output(site: pathlib.Path, rel: pathlib.Path) -> pathlib.Path:
-    if rel.name == "index.md" and rel.parent != pathlib.Path("."):
-        return site / pathlib.Path(f"{rel.parent}.md")
     return site / rel
 
 

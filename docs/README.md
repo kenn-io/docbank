@@ -22,6 +22,8 @@ Every rendered directory route also publishes its exact Markdown source at
 the sibling `.md` path: `/setup/` has `/setup.md`, and
 `/usage/importing/` has `/usage/importing.md`. This gives agents and other
 text-first clients a stable representation without scraping rendered HTML.
+Section landing pages use a sibling source such as `usage.md`, not
+`usage/index.md`, so relative links keep the same base at `/usage.md`.
 
 ## Building
 

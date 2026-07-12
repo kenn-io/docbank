@@ -150,11 +150,7 @@ case "$command_name" in
     (cd "$docs_root" && "${uv_run[@]}" zensical build --strict --config-file "$tmp_config_name" "$@")
     while IFS= read -r -d '' markdown_source; do
       markdown_rel="${markdown_source#"$tmp_docs/"}"
-      if [[ "$markdown_rel" == */index.md ]]; then
-        markdown_dest="$tmp_site/${markdown_rel%/index.md}.md"
-      else
-        markdown_dest="$tmp_site/$markdown_rel"
-      fi
+      markdown_dest="$tmp_site/$markdown_rel"
       mkdir -p "$(dirname "$markdown_dest")"
       cp "$markdown_source" "$markdown_dest"
     done < <(find "$tmp_docs" -type f -name '*.md' -print0)
