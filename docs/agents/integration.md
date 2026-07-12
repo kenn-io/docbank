@@ -224,6 +224,12 @@ that crosses the budget is committed. `budget_exhausted: true` describes that
 crossing, not whether eligible loose blobs remain; inspect storage status before
 deciding to issue another request.
 
+`POST /api/v1/storage/repack` physically retires empty packs and rewrites
+eligible sparse packs without changing logical content authority. Its selection
+thresholds are policy, not a preview guarantee: inspect storage status before
+and after. `bytes_repacked` counts live raw bytes rewritten and must not be
+reported as reclaimed disk space.
+
 ## Branch on problem codes
 
 Non-2xx responses use RFC 7807 problem JSON:

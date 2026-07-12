@@ -218,6 +218,28 @@ budget does not itself prove that more eligible work exists. Zero (the default)
 is unlimited. `--json` includes packing, repair, deferral, and reconciliation
 counters from the shared Kit lifecycle engine.
 
+## docbank storage repack
+
+```
+docbank storage repack [--min-age <duration>] [--min-dead-bytes <bytes>]
+                       [--max-bytes <bytes>] [--json]
+```
+
+Rewrites eligible sparse packs with only their live blobs, atomically changes
+catalog authority, and retires the old immutable pack files after active
+readers release them. Packs with no live mappings are retired regardless of
+age. A partially live pack is eligible when at most half its entries remain and
+it satisfies both selection thresholds. Defaults are `--min-age 24h` and
+`--min-dead-bytes 8388608`; use explicit smaller positive values for immediate
+manual compaction.
+
+`--max-bytes` is a soft live raw-byte budget. Zero is unlimited and makes a
+source-content error fail the operation immediately; a positive budget lets
+Kit continue with independent eligible source packs and return their combined
+errors after committed work. The report's `bytes_repacked` is live raw content
+rewritten, not a claim about filesystem bytes reclaimed. Compare `storage
+status` before and after when exact inventory change matters.
+
 ## docbank verify
 
 ```

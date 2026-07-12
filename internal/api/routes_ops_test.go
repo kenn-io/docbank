@@ -196,6 +196,60 @@ func TestStoragePackHonorsBudgetAndConverges(t *testing.T) {
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 }
 
+func TestStorageRepackReclaimsSparsePack(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	files := []store.Node{
+		createFileWithContent(t, ts, s, "/one.txt", "one"),
+		createFileWithContent(t, ts, s, "/two.txt", "two"),
+		createFileWithContent(t, ts, s, "/three.txt", "three"),
+	}
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/storage/pack", nil,
+		map[string]any{"max_bytes": 0})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+
+	for _, file := range files[:2] {
+		_, etag := etagOf(t, ts, file.ID)
+		resp, body = do(t, ts, http.MethodPost, fmt.Sprintf("/api/v1/nodes/%d/trash", file.ID),
+			map[string]string{"If-Match": etag}, nil)
+		require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	}
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
+		map[string]any{"run": true})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/gc", nil, map[string]any{"run": true})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+
+	statusResp, statusBody := get(t, ts, "/api/v1/storage", nil)
+	require.Equal(t, http.StatusOK, statusResp.StatusCode, statusBody)
+	var before api.StorageStatus
+	require.NoError(t, json.Unmarshal([]byte(statusBody), &before))
+	assert.Positive(t, before.DeadPackedBytes)
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/storage/repack", nil,
+		map[string]any{"min_age": "1ns", "min_dead_bytes": 1, "max_bytes": 0})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var report api.StorageRepackReport
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	assert.Equal(t, 1, report.PacksSelected)
+	assert.Equal(t, 1, report.PacksRewritten)
+	assert.Equal(t, 1, report.PacksRemoved)
+	assert.Equal(t, 1, report.BlobsRepacked)
+	assert.Equal(t, int64(len("three")), report.BytesRepacked)
+
+	statusResp, statusBody = get(t, ts, "/api/v1/storage", nil)
+	require.Equal(t, http.StatusOK, statusResp.StatusCode, statusBody)
+	require.NoError(t, json.Unmarshal([]byte(statusBody), &before))
+	assert.Zero(t, before.DeadPackedBytes)
+	assert.Equal(t, int64(1), before.PackedBlobs)
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/storage/repack", nil,
+		map[string]any{"min_age": "-1h", "min_dead_bytes": 1})
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/storage/repack", nil,
+		map[string]any{"min_age": "1ns", "min_dead_bytes": -1})
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+}
+
 func TestGCRevokesPackedBlobAuthority(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	file := createFileWithContent(t, ts, s, "/packed.txt", "packed gc content")

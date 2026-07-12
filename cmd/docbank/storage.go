@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -102,11 +103,60 @@ var storagePackCmd = &cobra.Command{
 	},
 }
 
+var (
+	storageRepackMaxBytes     int64
+	storageRepackMinAge       time.Duration
+	storageRepackMinDeadBytes int64
+	storageRepackJSON         bool
+)
+
+var storageRepackCmd = &cobra.Command{
+	Use:   "repack",
+	Short: "Rewrite sparse packs and retire dead pack files",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		c, err := client.Ensure(cmd.Context())
+		if err != nil {
+			return err
+		}
+		report, err := c.StorageRepack(cmd.Context(), storageRepackMaxBytes,
+			storageRepackMinAge, storageRepackMinDeadBytes)
+		if err != nil {
+			return err
+		}
+		if storageRepackJSON {
+			enc := json.NewEncoder(cmd.OutOrStdout())
+			enc.SetIndent("", "  ")
+			return enc.Encode(report)
+		}
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+			"selected %d pack(s); rewrote %d live blob(s), %d raw byte(s), into %d pack(s)\n",
+			report.PacksSelected, report.BlobsRepacked, report.BytesRepacked, report.PacksSealed)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "retired %d source pack(s); pruned %d stale mapping(s)\n",
+			report.PacksRemoved, report.MappingsPruned)
+		if report.PacksDeferredOversized > 0 {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "deferred %d oversized pack(s)\n",
+				report.PacksDeferredOversized)
+		}
+		if report.BudgetExhausted {
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "byte budget exhausted; rerun to continue selected work")
+		}
+		return nil
+	},
+}
+
 func init() {
 	storageStatusCmd.Flags().BoolVar(&storageStatusJSON, "json", false, "machine-readable output")
 	storagePackCmd.Flags().Int64Var(&storagePackMaxBytes, "max-bytes", 0,
 		"soft raw-byte work budget (0 is unlimited)")
 	storagePackCmd.Flags().BoolVar(&storagePackJSON, "json", false, "machine-readable output")
-	storageCmd.AddCommand(storageStatusCmd, storagePackCmd)
+	storageRepackCmd.Flags().Int64Var(&storageRepackMaxBytes, "max-bytes", 0,
+		"soft live raw-byte work budget (0 is unlimited and fail-fast)")
+	storageRepackCmd.Flags().DurationVar(&storageRepackMinAge, "min-age", 24*time.Hour,
+		"minimum source pack age")
+	storageRepackCmd.Flags().Int64Var(&storageRepackMinDeadBytes, "min-dead-bytes", 8<<20,
+		"minimum dead stored payload in a sparse pack")
+	storageRepackCmd.Flags().BoolVar(&storageRepackJSON, "json", false, "machine-readable output")
+	storageCmd.AddCommand(storageStatusCmd, storagePackCmd, storageRepackCmd)
 	rootCmd.AddCommand(storageCmd)
 }

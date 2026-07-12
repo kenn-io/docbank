@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -109,6 +110,36 @@ func TestStoragePackRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, report.BlobsPacked)
 	assert.True(t, report.BudgetExhausted)
+}
+
+func TestStorageRepackRoundTrip(t *testing.T) {
+	c, _ := newClient(t, serverKey)
+	for name, content := range map[string]string{
+		"keep.txt": "keep", "drop-a.txt": "drop a", "drop-b.txt": "drop b",
+	} {
+		src := filepath.Join(t.TempDir(), name)
+		require.NoError(t, os.WriteFile(src, []byte(content), 0o600))
+		ingested, err := c.Ingest(t.Context(), []string{src}, "/inbox")
+		require.NoError(t, err)
+		require.Equal(t, 1, ingested.Added)
+	}
+	_, err := c.StoragePack(t.Context(), 0)
+	require.NoError(t, err)
+	for _, path := range []string{"/inbox/drop-a.txt", "/inbox/drop-b.txt"} {
+		drop, statErr := c.Stat(t.Context(), path)
+		require.NoError(t, statErr)
+		_, err = c.Trash(t.Context(), drop.ID, drop.Revision)
+		require.NoError(t, err)
+	}
+	_, err = c.TrashEmpty(t.Context(), "", true)
+	require.NoError(t, err)
+	_, err = c.GC(t.Context(), true)
+	require.NoError(t, err)
+
+	report, err := c.StorageRepack(t.Context(), 0, time.Nanosecond, 1)
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.PacksRewritten)
+	assert.Equal(t, 1, report.PacksRemoved)
 }
 
 // TestWrongAPIKeyIsRejected is the client-side half of the keyless-loopback

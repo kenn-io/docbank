@@ -37,6 +37,38 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 		}}, nil
 	})
 
+	type storageRepackOutput struct{ Body StorageRepackReport }
+	huma.Register(api, huma.Operation{
+		OperationID: "storageRepack", Method: http.MethodPost, Path: "/api/v1/storage/repack",
+		Summary: "Rewrite eligible sparse packs and retire dead pack files",
+	}, func(ctx context.Context, in *struct {
+		Body struct {
+			MaxBytes     int64  `json:"max_bytes,omitempty" minimum:"0"`
+			MinAge       string `json:"min_age,omitempty" example:"24h"`
+			MinDeadBytes int64  `json:"min_dead_bytes,omitempty" minimum:"0"`
+		}
+	}) (*storageRepackOutput, error) {
+		minAge, err := ParseAge(in.Body.MinAge)
+		if err != nil {
+			return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
+		}
+		out := &storageRepackOutput{}
+		err = g.maintain(func() error {
+			stats, err := d.Blobs.Maintainer().Repack(ctx, packstore.RepackOptions{
+				MaxBytes: in.Body.MaxBytes,
+				Selection: packstore.RepackSelection{
+					MinAge: minAge, MinDeadStored: in.Body.MinDeadBytes,
+				},
+			})
+			if err != nil {
+				return FromStoreError(err)
+			}
+			out.Body = storageRepackReport(stats)
+			return nil
+		})
+		return out, err
+	})
+
 	type storagePackOutput struct{ Body StoragePackReport }
 	huma.Register(api, huma.Operation{
 		OperationID: "storagePack", Method: http.MethodPost, Path: "/api/v1/storage/pack",
@@ -216,6 +248,16 @@ func storagePackReport(stats packstore.PackStats) StoragePackReport {
 		LooseSwept:             stats.LooseSwept, LooseOrphansRemoved: stats.LooseOrphansRemoved,
 		LooseOrphanSweepSuppressed: stats.LooseOrphanSweepSuppressed,
 		BudgetExhausted:            stats.BudgetExhausted,
+	}
+}
+
+func storageRepackReport(stats packstore.RepackStats) StorageRepackReport {
+	return StorageRepackReport{
+		MappingsPruned: stats.MappingsPruned, PacksSelected: stats.PacksSelected,
+		PacksRewritten: stats.PacksRewritten, PacksSealed: stats.PacksSealed,
+		PacksRemoved: stats.PacksRemoved, PacksDeferredOversized: stats.PacksDeferredOversized,
+		BlobsRepacked: stats.BlobsRepacked, BytesRepacked: stats.BytesRepacked,
+		BudgetExhausted: stats.BudgetExhausted,
 	}
 }
 
