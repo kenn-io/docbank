@@ -45,6 +45,18 @@ def local_target(
     return target.resolve(), urllib.parse.unquote(parsed.fragment)
 
 
+def markdown_route(site: pathlib.Path, rel: pathlib.Path) -> pathlib.Path:
+    if rel.name == "index.md":
+        return site / rel.parent / "index.html"
+    return site / rel.with_suffix("") / "index.html"
+
+
+def markdown_output(site: pathlib.Path, rel: pathlib.Path) -> pathlib.Path:
+    if rel.name == "index.md" and rel.parent != pathlib.Path("."):
+        return site / rel.parent.with_suffix(".md")
+    return site / rel
+
+
 def main() -> None:
     site = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "site").resolve()
     source = pathlib.Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else None
@@ -95,18 +107,14 @@ def main() -> None:
         expected_markdown: set[pathlib.Path] = set()
         for markdown in source_markdown:
             rel = markdown.relative_to(source)
-            published = site / rel
+            published = markdown_output(site, rel)
             expected_markdown.add(published.resolve())
             if not published.is_file():
                 errors.append(f"{rel}: Markdown counterpart was not published")
             elif published.read_bytes() != markdown.read_bytes():
                 errors.append(f"{rel}: published Markdown differs from its source")
 
-            route = (
-                site / "index.html"
-                if rel == pathlib.Path("index.md")
-                else site / rel.with_suffix("") / "index.html"
-            )
+            route = markdown_route(site, rel)
             if not route.is_file():
                 errors.append(f"{rel}: rendered route does not exist")
 
