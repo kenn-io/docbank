@@ -13,7 +13,7 @@ old plans, review threads, and commits. They are internal and never published.
 | [ADR-0004](0004-deletion-stages.md) | Trash, metadata deletion, and byte reclamation are separate | Accepted |
 | [ADR-0005](0005-kit-physical-storage-boundary.md) | Kit owns physical storage mechanics; docbank owns policy | Accepted |
 | [ADR-0006](0006-single-user-trust-boundary.md) | Security is scoped to a local single-user vault | Accepted |
-| [ADR-0007](0007-schema-compatibility-after-v0.1.md) | Released vaults require explicit schema compatibility | Accepted; machinery pending |
+| [ADR-0007](0007-schema-compatibility-after-v0.1.md) | Released vaults require explicit schema compatibility | Accepted |
 
 ## Lifecycle
 

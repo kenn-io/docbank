@@ -1,6 +1,6 @@
 # ADR-0007: Released vaults require explicit schema compatibility
 
-- **Status:** Accepted; migration machinery pending
+- **Status:** Accepted
 - **Date:** 2026-07-12
 - **Decision source:** post-v0.1 architecture audit
 - **Implementation tracking:** kata `7q8z`

@@ -45,8 +45,20 @@ def check_decisions(errors: list[str]) -> None:
         return
 
     index = index_path.read_text(encoding="utf-8")
-    records = sorted(DECISIONS.glob("[0-9][0-9][0-9][0-9]-*.md"))
-    indexed = set(re.findall(r"\((\d{4}-[^)]+\.md)\)", index))
+    index_section = re.search(r"(?ms)^## Index\s*$\n(.*?)(?=^## |\Z)", index)
+    if index_section is None:
+        errors.append("internal/decisions/README.md: missing ## Index section")
+        indexed: set[str] = set()
+    else:
+        indexed = set(re.findall(r"\((\d{4}-[^)]+\.md)\)", index_section.group(1)))
+
+    candidates = sorted(path for path in DECISIONS.glob("*.md") if path.name != "README.md")
+    records: list[pathlib.Path] = []
+    for path in candidates:
+        if re.fullmatch(r"\d{4}-[a-z0-9]+(?:[.-][a-z0-9]+)*\.md", path.name) is None:
+            errors.append(f"internal/decisions/{path.name}: invalid decision filename")
+        else:
+            records.append(path)
     names = {path.name for path in records}
     for missing in sorted(names - indexed):
         errors.append(f"internal/decisions/{missing}: record is missing from index")
