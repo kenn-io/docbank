@@ -17,6 +17,18 @@ import (
 // ErrInvalidHash reports a value that is not canonical lowercase SHA-256.
 var ErrInvalidHash = packstore.ErrInvalidHash
 
+// MaxBlobBytes is docbank's application policy for one content object. Keep
+// this explicit: a future change to Kit's conservative defaults must not
+// silently expand docbank's upload, read, maintenance, or restore limits.
+const MaxBlobBytes int64 = 64 << 20
+
+// StorageLimits returns the shared Kit limits with docbank's object policy.
+func StorageLimits() packstore.Limits {
+	limits := packstore.DefaultLimits()
+	limits.BlobBytes = MaxBlobBytes
+	return limits
+}
+
 // Store owns docbank's durable loose writer and daemon-shared mixed reader.
 // The maintainer and coordinator are exposed to the daemon integration, but
 // physical maintenance remains unavailable to CLI processes directly.
@@ -39,6 +51,7 @@ func New(catalog packstore.Catalog, blobsDir string) (*Store, error) {
 	coordinator := packstore.NewCoordinator()
 	maintainer, err := packstore.NewMaintainer(catalog, layout, packstore.MaintainerOptions{
 		Coordinator: coordinator,
+		Limits:      StorageLimits(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("creating blob maintainer: %w", err)
@@ -104,7 +117,7 @@ func newReaderStore(resolver packstore.Resolver, blobsDir string) (*Store, error
 	if err != nil {
 		return nil, fmt.Errorf("creating test loose blob store: %w", err)
 	}
-	reader, err := packstore.NewStore(resolver, layout, packstore.StoreOptions{})
+	reader, err := packstore.NewStore(resolver, layout, packstore.StoreOptions{Limits: StorageLimits()})
 	if err != nil {
 		return nil, fmt.Errorf("creating test mixed blob reader: %w", err)
 	}
@@ -165,6 +178,7 @@ func (s *Store) WriteContext(ctx context.Context, r io.Reader) (string, int64, e
 	result, err := s.loose.Write(ctx, r, packstore.WriteOptions{
 		Durability: packstore.DurablePublication,
 		Dedup:      packstore.VerifyTypeAndSize,
+		MaxBytes:   MaxBlobBytes,
 	})
 	if err != nil {
 		return "", 0, fmt.Errorf("writing blob: %w", err)

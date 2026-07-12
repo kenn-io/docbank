@@ -9,6 +9,7 @@ import (
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -34,7 +35,7 @@ func (a *packedRestoreApp) RestoredContentPaths(
 func newPackedRestoreTarget() *packedRestoreTarget {
 	return &packedRestoreTarget{
 		coordinator: packstore.NewCoordinator(),
-		limits:      packstore.DefaultLimits(),
+		limits:      blob.StorageLimits(),
 	}
 }
 

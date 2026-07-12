@@ -12,6 +12,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -180,10 +181,9 @@ func parseUploadIdentity(r *http.Request) (int64, string, string, int64, *Error)
 			BlobHashHeader+" must be canonical lowercase SHA-256")
 	}
 	expectedSize, err := strconv.ParseInt(r.Header.Get(BlobSizeHeader), 10, 64)
-	limits := packstore.DefaultLimits()
-	if err != nil || expectedSize < 0 || expectedSize > limits.BlobBytes {
+	if err != nil || expectedSize < 0 || expectedSize > blob.MaxBlobBytes {
 		return 0, "", "", 0, NewError(http.StatusUnprocessableEntity, "validation",
-			fmt.Sprintf("%s must be between 0 and %d", BlobSizeHeader, limits.BlobBytes))
+			fmt.Sprintf("%s must be between 0 and %d", BlobSizeHeader, blob.MaxBlobBytes))
 	}
 	return parentID, name, expectedHash, expectedSize, nil
 }

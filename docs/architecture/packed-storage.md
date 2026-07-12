@@ -27,9 +27,10 @@ index, reader cache, recovery state machine, and repacker.
 
 `kit/packstore` sits above the low-level `kit/pack` format. It provides a mixed
 loose-and-packed content-addressed store, so migration can be gradual and
-interrupted work remains recoverable. Its default maintenance limit is 64 MiB
-per blob; larger documents remain loose and readable rather than forcing an
-unbounded in-memory pack operation.
+interrupted work remains recoverable. Docbank explicitly caps one content
+object at 64 MiB across ingest, upload, reads, maintenance, backup, and restore.
+That is application policy rather than an inherited Kit default, so upgrading
+the shared engine cannot silently raise it.
 
 ## Ownership boundary
 
@@ -82,7 +83,15 @@ and does not own either application's schema or garbage-collection policy.
 Docbank owns only its catalog adapter, daemon wiring, migration policy, and
 end-to-end verification. It does not fork Kit's reader cache, reconciliation,
 or repacker. The existing loose representation remains both the recovery path
-and the representation for blobs above the bounded maintenance limit.
+and the staging representation before packing.
+
+Raising the 64 MiB ceiling is a separate policy decision. It requires
+representative measurements of memory, temporary space, descriptors,
+throughput, cancellation, and restore behavior. Streaming removes
+whole-object heap allocation, but pack preparation can still require roughly
+2.004 times the raw object size in scratch space per concurrent preparation,
+and active streams can temporarily exceed the idle reader-cache descriptor
+count.
 
 The `blobs` membership boundary also lets logical features evolve without
 changing physical pack authority.

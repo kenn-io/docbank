@@ -27,10 +27,30 @@ func newTestBlobStore(t *testing.T) *Store {
 	return store
 }
 
+func TestStoragePolicyKeepsBlobLimitExplicit(t *testing.T) {
+	assert.Equal(t, MaxBlobBytes, int64(64<<20))
+	assert.Equal(t, MaxBlobBytes, StorageLimits().BlobBytes)
+}
+
+func TestWriteEnforcesBlobLimit(t *testing.T) {
+	bs := newTestBlobStore(t)
+	hash, size, err := bs.Write(io.LimitReader(zeroReader{}, MaxBlobBytes+1))
+	require.ErrorIs(t, err, packstore.ErrContentMismatch)
+	assert.Empty(t, hash)
+	assert.Zero(t, size)
+}
+
 type alwaysMemberResolver struct{}
 
 func (alwaysMemberResolver) Resolve(_ context.Context, _ packstore.Hash) (packstore.Location, error) {
 	return packstore.Location{Member: true}, nil
+}
+
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
 }
 
 func TestWriteAndReadBack(t *testing.T) {
