@@ -27,10 +27,11 @@ index, reader cache, recovery state machine, and repacker.
 
 `kit/packstore` sits above the low-level `kit/pack` format. It provides a mixed
 loose-and-packed content-addressed store, so migration can be gradual and
-interrupted work remains recoverable. Docbank explicitly caps one content
-object at 64 MiB across ingest, upload, reads, maintenance, backup, and restore.
-That is application policy rather than an inherited Kit default, so upgrading
-the shared engine cannot silently raise it.
+interrupted work remains recoverable. Docbank explicitly caps new content
+objects and pack maintenance at 64 MiB. That is application policy rather than
+an inherited Kit default, so upgrading the shared engine cannot silently raise
+it. Oversized loose objects accepted by an earlier release remain readable and
+eligible for backup, but maintenance leaves them loose.
 
 ## Ownership boundary
 

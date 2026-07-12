@@ -124,9 +124,11 @@ vault-wide verification, and backup capture must therefore consume through
 that terminal boundary; existence probes retain the buffered open-and-close
 path because they ask about catalog authority, not fresh byte evidence.
 
-Docbank sets `BlobBytes` explicitly to 64 MiB for loose writes, mixed reads,
-maintenance, remote uploads, and packed restore. Never replace that shared
-policy with an ambient Kit default. A larger ceiling needs downstream
+Docbank sets `BlobBytes` explicitly to 64 MiB for new loose writes, maintenance,
+remote uploads, and packed restore. Never replace that shared policy with an
+ambient Kit default. Catalog-authorized oversized loose objects created before
+write enforcement are grandfathered for verified reads and backup; they are
+not eligible for packing. A larger ceiling for new content needs downstream
 measurements first: pack preparation can use about 2.004 times raw size in
 scratch per concurrent object, and active stream leases can temporarily raise
 open descriptors above the idle reader-cache bound.
