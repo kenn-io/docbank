@@ -16,8 +16,9 @@ valid indefinitely.
 authenticated daemon API, and `docbank storage pack` explicitly moves
 authorized loose content into immutable packs with an optional work budget.
 `docbank storage repack` compacts eligible sparse packs and retires dead pack
-files. Unpacking remains planned. Startup never performs an implicit migration,
-and automatic background maintenance remains a later step.
+files. These commands are the complete ordinary representation-management
+surface. Startup never performs an implicit migration, and automatic background
+maintenance remains a later step.
 
 Large collections of small files are expensive to enumerate, copy, and restore.
 msgvault uses immutable pack files as the steady-state storage format for
@@ -72,9 +73,9 @@ and does not own either application's schema or garbage-collection policy.
    retirement through the same ordering.
 
 !!! info "Planned — next adoption steps"
-    A daemon-first unpack operation will expose the remaining lifecycle
-    mechanic. Built-in backup and external integrations will use the catalog
-    and content-hash boundary rather than private pack internals.
+    Built-in backup and external integrations will use the catalog and
+    content-hash boundary rather than private pack internals. Automatic storage
+    maintenance remains deferred until watched-inbox policy lands.
 
 ## Consequences for docbank
 
@@ -85,6 +86,20 @@ and the representation for blobs above the bounded maintenance limit.
 
 The `blobs` membership boundary also lets logical features evolve without
 changing physical pack authority.
+
+## Why unpack is not an operator command
+
+Kit retains an unpack primitive because shared storage tests, migrations, and a
+future purpose-built recovery tool may need to materialize packed content
+loose. Docbank intentionally does not expose that primitive as a normal API or
+CLI operation.
+
+Packing exists to avoid the enumeration, backup, and restore cost of thousands
+of small files. A general unpack command would recreate that problem, could
+temporarily require space for both representations, and would make users manage
+an implementation format that docbank should own. Recovery belongs in verified
+backup/restore or a concrete repair workflow; the existence of a low-level Kit
+operation is not by itself a product use case.
 
 !!! info "Planned — external reachability"
     Editing and versions, generalized provenance, and external references must
