@@ -42,7 +42,8 @@ ignore in backups and safe to delete when no daemon is running
 shutdown). The database
 references blobs by hash, so restoring a copied `docbank.db` + `blobs/`
 pair onto any machine yields a working vault — `docbank verify` proves
-the pair is consistent.
+the pair is consistent. Stop the daemon before taking a manual filesystem
+snapshot; see [Vault Lifecycle](usage/lifecycle.md#take-a-coherent-manual-snapshot).
 
 !!! warning
     Don't edit or prune `blobs/` by hand. Blob files are referenced by

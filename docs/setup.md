@@ -40,7 +40,7 @@ Windows is not published because the vault is Unix-only.
 git clone https://github.com/kenn-io/docbank.git
 cd docbank
 make build      # builds ./docbank
-make install    # installs to ~/.local/bin (or GOPATH/bin)
+make install    # installs to ~/.local/bin
 ```
 
 The SQLite full-text index requires the `fts5` build tag; the Makefile
@@ -63,6 +63,9 @@ docbank ls /inbox
 
 Set `DOCBANK_HOME` to keep the vault somewhere else — see
 [Configuration](configuration.md).
+
+Before importing irreplaceable material, read [Vault Lifecycle](usage/lifecycle.md)
+and decide how the vault will be snapshotted.
 
 ## Verifying the toolchain
 
