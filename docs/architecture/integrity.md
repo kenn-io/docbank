@@ -36,7 +36,7 @@ user's privileges. Consequently:
 |---|---|---|
 | A referenced blob is durable | `blob.Write` | tmp → fsync → rename → dir fsync, on every path including dedup |
 | A deleted blob stays deleted | `blob.Remove` | shard dir fsync before gc deletes the metadata row, including on the already-missing retry path |
-| A stored object is what its name claims *structurally* | `blob.Write` dedup check | no-follow `Lstat`: regular file of the expected size, else replaced with the verified temp file |
+| A stored object is what its name claims *structurally* | `blob.Write` dedup check | Kit performs a no-follow identity check; a wrong-sized object, symlink, or special file fails closed and is left unchanged for explicit recovery |
 | Reads serve only stored blobs | `blob.Open` / `blob.Exists` | no-follow open + regular-file check on the blob itself; the vault's own directory structure above it is trusted per the boundary above (a symlinked shard dir is user-privileged relocation or tampering, not an attack docbank can meaningfully resist) |
 | Content matches its hash *byte-for-byte* | `docbank verify` | full re-hash of every blob, on demand |
 | No orphan blob file survives | `docbank gc` | reachability query for rows **plus** a directory scan for files that never gained (or lost) their row |
@@ -63,6 +63,21 @@ reason beyond cost: a corrupt blob is equally wrong for every node
 happens to pass by is not an integrity guarantee — it's a coincidence.
 The systematic answer is a scan that covers every blob regardless of
 import traffic, which is precisely `verify`'s contract.
+
+### Fail closed on an invalid canonical object
+
+An existing wrong-sized file, symlink, or special file at a blob's canonical
+path is evidence of damage or manual modification, not a valid deduplication
+target. `blob.Write` returns a content-mismatch error and leaves that object
+unchanged; it does not replace a path whose identity may have raced or been
+tampered with.
+
+Recovery is explicit: stop the daemon, move the suspect object outside the
+vault for diagnosis, restart the daemon, and re-add the content from a trusted
+source (or restore it from a verified backup). The durable write happens before
+the existing node is recognized as an idempotent ingest, so re-adding repairs a
+missing loose copy without creating a duplicate document. Run `docbank verify`
+afterward to confirm the vault.
 
 ### No fd-relative directory traversal on import
 
