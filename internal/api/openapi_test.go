@@ -14,12 +14,15 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 	out, err := api.OpenAPIYAML()
 	require.NoError(t, err)
 	doc := string(out)
-	for _, op := range []string{"getNode", "resolvePath", "listChildren", "getNodeContent",
+	for _, op := range []string{"getNode", "resolvePath", "listChildren", "getNodeContent", "verifyNodeContent",
 		"search", "createNode", "moveNode", "movePath", "trashNode", "trashPath", "restoreNode",
 		"storageStatus", "storagePack", "storageRepack", "ingest", "listTrash", "emptyTrash", "gc", "verify"} {
 		assert.Contains(t, doc, op, "operation missing from OpenAPI doc")
 	}
 	assert.NotContains(t, doc, "/api/daemon/shutdown", "lifecycle plumbing must stay hidden")
+	assert.Contains(t, doc, "X-Docbank-Blob-Hash")
+	assert.Contains(t, doc, "Content-Digest")
+	assert.Contains(t, doc, "computed_hash")
 }
 
 func TestOpenAPIDeclaresSecurity(t *testing.T) {

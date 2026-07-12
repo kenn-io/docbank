@@ -2,8 +2,13 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"strconv"
 	"strings"
@@ -16,6 +21,15 @@ import (
 type nodeOutput struct {
 	ETag string `header:"ETag"`
 	Body Node
+}
+
+func contentDigest(hash []byte) string {
+	return "sha-256=:" + base64.StdEncoding.EncodeToString(hash) + ":"
+}
+
+func staleRevisionError(id, expected, actual int64) error {
+	return FromStoreError(fmt.Errorf("node %d revision is %d, expected %d: %w",
+		id, actual, expected, store.ErrStaleRevision))
 }
 
 // nodeOutputAt builds the single-node response with a caller-supplied
@@ -103,6 +117,26 @@ func registerReadRoutes(api huma.API, d Deps) {
 	huma.Register(api, huma.Operation{
 		OperationID: "getNodeContent", Method: http.MethodGet, Path: "/api/v1/nodes/{id}/content",
 		Summary: "Stream a file's bytes",
+		Description: "X-Docbank-Blob-Hash and X-Docbank-Blob-Size carry catalog identity " +
+			"before the body. Content-Digest is an RFC 9530 trailer computed from the bytes " +
+			"actually streamed; the standard Content-Length header is omitted so HTTP/1.1 " +
+			"can transmit that trailer without a second physical read.",
+		Responses: map[string]*huma.Response{
+			"200": {
+				Description: "Document bytes with expected identity headers and a computed digest trailer",
+				Headers: map[string]*huma.Param{
+					BlobHashHeader: {Description: "Catalog SHA-256 identity (lowercase hex)",
+						Schema: &huma.Schema{Type: "string", Pattern: "^[0-9a-f]{64}$"}},
+					BlobSizeHeader: {Description: "Catalog raw byte length",
+						Schema: &huma.Schema{Type: "string", Pattern: "^[0-9]+$"}},
+					"Content-Digest": {Description: "RFC 9530 SHA-256 of bytes actually streamed; delivered as an HTTP trailer",
+						Schema: &huma.Schema{Type: "string"}},
+				},
+				Content: map[string]*huma.MediaType{
+					"application/octet-stream": {Schema: &huma.Schema{Type: "string", Format: "binary"}},
+				},
+			},
+		},
 	}, func(ctx context.Context, in *struct {
 		ID int64 `path:"id"`
 	}) (*huma.StreamResponse, error) {
@@ -126,9 +160,79 @@ func registerReadRoutes(api huma.API, d Deps) {
 		return &huma.StreamResponse{Body: func(hctx huma.Context) {
 			defer func() { _ = f.Close() }()
 			hctx.SetHeader("Content-Type", ct)
-			hctx.SetHeader("Content-Length", strconv.FormatInt(n.Size, 10))
-			_, _ = io.Copy(hctx.BodyWriter(), f)
+			hctx.SetHeader(BlobHashHeader, n.BlobHash)
+			hctx.SetHeader(BlobSizeHeader, strconv.FormatInt(n.Size, 10))
+			hctx.SetHeader("Trailer", "Content-Digest")
+			hash := sha256.New()
+			if _, err := io.Copy(hctx.BodyWriter(), io.TeeReader(f, hash)); err == nil {
+				hctx.SetHeader("Content-Digest", contentDigest(hash.Sum(nil)))
+			}
 		}}, nil
+	})
+
+	type verifyNodeOutput struct{ Body ContentVerification }
+	huma.Register(api, huma.Operation{
+		OperationID: "verifyNodeContent", Method: http.MethodPost, Path: "/api/v1/nodes/{id}/verify",
+		Summary: "Re-hash one file and bind the evidence to its node revision",
+		Description: "Requires If-Match from a prior node response. Returns catalog identity and " +
+			"a fresh read through the mixed loose/packed store; a concurrent node change returns 412.",
+	}, func(ctx context.Context, in *struct {
+		ID      int64  `path:"id"`
+		IfMatch string `header:"If-Match"`
+	}) (*verifyNodeOutput, error) {
+		revision, err := parseIfMatch(in.IfMatch)
+		if err != nil {
+			return nil, err
+		}
+		n, err := d.Store.NodeByID(ctx, in.ID)
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
+		if n.IsDir() {
+			return nil, NewError(http.StatusUnprocessableEntity, "not_file",
+				fmt.Sprintf("node %d is a directory", n.ID))
+		}
+		if n.Revision != revision {
+			return nil, staleRevisionError(n.ID, revision, n.Revision)
+		}
+
+		report := ContentVerification{
+			NodeID: n.ID, Revision: n.Revision, BlobHash: n.BlobHash, Size: n.Size,
+		}
+		f, openErr := d.Blobs.OpenContext(ctx, n.BlobHash)
+		if openErr != nil {
+			if errors.Is(openErr, fs.ErrNotExist) {
+				report.Problem = "missing"
+			} else {
+				report.Problem = "unreadable"
+			}
+		} else {
+			hash := sha256.New()
+			report.ComputedSize, err = io.Copy(hash, f)
+			closeErr := f.Close()
+			if err != nil || closeErr != nil {
+				report.Problem = "unreadable"
+			} else {
+				report.ComputedHash = hex.EncodeToString(hash.Sum(nil))
+				report.Verified = report.ComputedHash == n.BlobHash && report.ComputedSize == n.Size
+				if !report.Verified {
+					report.Problem = "corrupt"
+				}
+			}
+		}
+
+		current, err := d.Store.NodeByID(ctx, in.ID)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return nil, FromStoreError(fmt.Errorf(
+					"node %d disappeared during verification: %w", in.ID, store.ErrStaleRevision))
+			}
+			return nil, FromStoreError(err)
+		}
+		if current.Revision != revision || current.BlobHash != n.BlobHash {
+			return nil, staleRevisionError(n.ID, revision, current.Revision)
+		}
+		return &verifyNodeOutput{Body: report}, nil
 	})
 
 	type searchOutput struct{ Body SearchReport }

@@ -2,9 +2,13 @@
 package api_test
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 
@@ -25,6 +29,7 @@ func TestStatByIDAndPath(t *testing.T) {
 	var n api.Node
 	require.NoError(t, json.Unmarshal([]byte(body), &n))
 	assert.Equal(t, d.ID, n.ID)
+	assert.Empty(t, n.BlobHash)
 	assert.Equal(t, "/docs", n.Path)
 	assert.Equal(t, fmt.Sprintf("%q", strconv.FormatInt(d.Revision, 10)), resp.Header.Get("ETag"))
 
@@ -70,6 +75,82 @@ func TestContentStreamsBlob(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, "hello world", body)
 	assert.Contains(t, resp.Header.Get("Content-Type"), "text/plain")
+	assert.Equal(t, n.BlobHash, resp.Header.Get(api.BlobHashHeader))
+	assert.Equal(t, strconv.FormatInt(n.Size, 10), resp.Header.Get(api.BlobSizeHeader))
+	assert.Empty(t, resp.Header.Get("Content-Length"), "fixed length would suppress the digest trailer on HTTP/1.1")
+	sum := sha256.Sum256([]byte("hello world"))
+	assert.Equal(t, "sha-256=:"+base64.StdEncoding.EncodeToString(sum[:])+":",
+		resp.Trailer.Get("Content-Digest"))
+}
+
+func TestFileNodeExposesBlobIdentity(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	n := createFileWithContent(t, ts, s, "/identity.txt", "identity")
+	resp, body := get(t, ts, fmt.Sprintf("/api/v1/nodes/%d", n.ID), nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var got api.Node
+	require.NoError(t, json.Unmarshal([]byte(body), &got))
+	assert.Equal(t, n.BlobHash, got.BlobHash)
+	assert.Equal(t, n.Size, got.Size)
+}
+
+func TestVerifyNodeContentBindsRevisionAndReadsStoredBytes(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	n := createFileWithContent(t, ts, s, "/evidence.txt", "evidence")
+	_, etag := etagOf(t, ts, n.ID)
+	path := fmt.Sprintf("/api/v1/nodes/%d/verify", n.ID)
+
+	resp, body := do(t, ts, http.MethodPost, path, map[string]string{"If-Match": etag}, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var report api.ContentVerification
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	assert.Equal(t, n.ID, report.NodeID)
+	assert.Equal(t, n.Revision, report.Revision)
+	assert.Equal(t, n.BlobHash, report.BlobHash)
+	assert.Equal(t, n.BlobHash, report.ComputedHash)
+	assert.Equal(t, n.Size, report.Size)
+	assert.Equal(t, n.Size, report.ComputedSize)
+	assert.True(t, report.Verified)
+	assert.Empty(t, report.Problem)
+
+	resp, body = do(t, ts, http.MethodPost, path, nil, nil)
+	assert.Equal(t, http.StatusPreconditionRequired, resp.StatusCode)
+	assert.Contains(t, body, `"code":"precondition_required"`)
+	resp, body = do(t, ts, http.MethodPost, path,
+		map[string]string{"If-Match": `"999"`}, nil)
+	assert.Equal(t, http.StatusPreconditionFailed, resp.StatusCode)
+	assert.Contains(t, body, `"code":"stale_revision"`)
+
+	corrupt := []byte("damaged!")
+	require.Len(t, corrupt, int(n.Size))
+	require.NoError(t, os.WriteFile(filepath.Join(s.BlobsDir, n.BlobHash[:2], n.BlobHash), corrupt, 0o600))
+	resp, body = do(t, ts, http.MethodPost, path, map[string]string{"If-Match": etag}, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	report = api.ContentVerification{}
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	assert.False(t, report.Verified)
+	assert.Equal(t, "corrupt", report.Problem)
+	assert.NotEqual(t, report.BlobHash, report.ComputedHash)
+	assert.Equal(t, report.Size, report.ComputedSize)
+
+	require.NoError(t, s.Blobs.Remove(n.BlobHash))
+	resp, body = do(t, ts, http.MethodPost, path, map[string]string{"If-Match": etag}, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	report = api.ContentVerification{}
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	assert.False(t, report.Verified)
+	assert.Equal(t, "missing", report.Problem)
+}
+
+func TestVerifyNodeContentRejectsDirectory(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	d, err := s.Mkdir(t.Context(), s.RootID(), "directory")
+	require.NoError(t, err)
+	_, etag := etagOf(t, ts, d.ID)
+	resp, body := do(t, ts, http.MethodPost,
+		fmt.Sprintf("/api/v1/nodes/%d/verify", d.ID), map[string]string{"If-Match": etag}, nil)
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+	assert.Contains(t, body, `"code":"not_file"`)
 }
 
 func TestContentOnDirIs422(t *testing.T) {

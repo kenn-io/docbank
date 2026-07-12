@@ -79,8 +79,10 @@ curl --fail-with-body --get \
 ```
 
 A node response includes stable `id`, mutable `revision`, `kind`, and
-timestamps. Live single-node responses also include the current `path`. IDs
-survive renames; use a live path only for display or a one-shot path operation.
+timestamps. File nodes also include their immutable SHA-256 `blob_hash` and
+raw `size`; directories omit the hash. Live single-node responses include the
+current `path`. IDs survive renames; use a live path only for display or a
+one-shot path operation.
 
 Trash is the important exception. A successful trash response returns the
 node's **pre-trash path** to explain where a restore would try to put it. That
@@ -119,6 +121,31 @@ curl --fail \
   "$DOCBANK_URL/api/v1/nodes/42/content" \
   --output document.bin
 ```
+
+The content response sends `X-Docbank-Blob-Hash` and
+`X-Docbank-Blob-Size` before the body. After the body it sends an
+[RFC 9530](https://www.rfc-editor.org/rfc/rfc9530.html) `Content-Digest`
+trailer computed from the bytes actually streamed. A client
+that needs independent transfer proof hashes `document.bin` itself and compares
+that digest, the trailer, and the file node's `blob_hash`. Do not treat the
+catalog header alone as a fresh physical verification.
+
+For a bounded server-side check, send the revision from the node response:
+
+```bash
+curl --fail-with-body -X POST \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  -H 'If-Match: "7"' \
+  "$DOCBANK_URL/api/v1/nodes/42/verify"
+```
+
+A successful proof returns `blob_hash`, `computed_hash`, `size`,
+`computed_size`, and `verified: true`, bound to `node_id` and `revision`.
+Missing or damaged content returns HTTP 200 with `verified: false` and
+`problem: "missing"`, `"corrupt"`, or `"unreadable"`; those are completed
+checks with negative evidence, not request failures. A `412 stale_revision`
+means the node changed during or since inspection—read it again before deciding
+what content to verify.
 
 ## Use revisions for read-modify-write
 
@@ -215,6 +242,10 @@ physically reclaimed.
 expensive. Maintenance requests serialize against mutations and may run
 without the ordinary request timeout; agents should expose progress as
 “waiting” rather than assuming a queued request is hung.
+
+Use `POST /api/v1/nodes/{id}/verify` when the decision concerns one inspected
+file. Unlike the vault-wide operation it requires `If-Match`, stays bounded to
+one blob, and returns the recorded and freshly computed identities directly.
 
 `POST /api/v1/storage/pack` is explicit but non-destructive: it changes the
 physical representation without changing document identity or blob read

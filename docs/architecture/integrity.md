@@ -38,7 +38,7 @@ user's privileges. Consequently:
 | A deleted blob stays deleted | `blob.Remove` | shard dir fsync before gc deletes the metadata row, including on the already-missing retry path |
 | A stored object is what its name claims *structurally* | `blob.Write` dedup check | Kit performs a no-follow identity check; a wrong-sized object, symlink, or special file fails closed and is left unchanged for explicit recovery |
 | Reads serve only stored blobs | `blob.Open` / `blob.Exists` | no-follow open + regular-file check on the blob itself; the vault's own directory structure above it is trusted per the boundary above (a symlinked shard dir is user-privileged relocation or tampering, not an attack docbank can meaningfully resist) |
-| Content matches its hash *byte-for-byte* | `docbank verify` | full re-hash of every blob, on demand |
+| Content matches its hash *byte-for-byte* | `docbank verify`; `POST /nodes/{id}/verify` | full-vault re-hash on demand, or a revision-bound fresh read of one file through the mixed store |
 | No orphan blob file survives | `docbank gc` | reachability query for rows **plus** a directory scan for files that never gained (or lost) their row |
 | Imports read the file they classified | ingest | `O_NOFOLLOW` + fstat at open, not the earlier `Lstat`/`WalkDir` classification |
 | Mutations act on the node the caller named | store | id-addressed mutations (`Move`, `Trash`, `Restore`) require an `If-Match` revision precondition; path-addressed mutations (`MovePath`, `TrashPath`, backing `POST /path/move` and `/path/trash`) resolve and mutate inside one store transaction — either way, no path-race window between resolving a name and acting on it |
