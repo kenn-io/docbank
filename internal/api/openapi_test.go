@@ -16,7 +16,7 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 	doc := string(out)
 	for _, op := range []string{"getNode", "resolvePath", "listChildren", "getNodeContent", "verifyNodeContent",
 		"search", "createNode", "moveNode", "movePath", "trashNode", "trashPath", "restoreNode",
-		"storageStatus", "storagePack", "storageRepack", "ingest", "listTrash", "emptyTrash", "gc", "verify"} {
+		"storageStatus", "storagePack", "storageRepack", "ingest", "uploadFile", "listTrash", "emptyTrash", "gc", "verify"} {
 		assert.Contains(t, doc, op, "operation missing from OpenAPI doc")
 	}
 	assert.NotContains(t, doc, "/api/daemon/shutdown", "lifecycle plumbing must stay hidden")
@@ -35,4 +35,25 @@ func TestOpenAPIDeclaresSecurity(t *testing.T) {
 	assert.Contains(t, doc, "X-Api-Key")
 	assert.Contains(t, doc, "scheme: bearer")
 	assert.Contains(t, doc, "security:", "document-level security requirement missing")
+}
+
+func TestOpenAPIDeclaresDigestCheckedUpload(t *testing.T) {
+	doc := api.NewOfflineServer().API().OpenAPI()
+	op := doc.Paths["/api/v1/uploads"].Post
+	require.NotNil(t, op)
+	assert.Equal(t, "uploadFile", op.OperationID)
+	form := op.RequestBody.Content["multipart/form-data"]
+	require.NotNil(t, form)
+	assert.Equal(t, "binary", form.Schema.Properties["file"].Format)
+	assert.Contains(t, form.Schema.Required, "file")
+
+	required := map[string]bool{}
+	for _, param := range op.Parameters {
+		required[param.Name] = param.Required
+	}
+	for _, name := range []string{"parent_id", "name", api.BlobHashHeader, api.BlobSizeHeader} {
+		assert.True(t, required[name], "%s must be required", name)
+	}
+	assert.NotNil(t, op.Responses["200"])
+	assert.NotNil(t, op.Responses["201"])
 }

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -153,6 +154,32 @@ func TestContentIdentityAndVerificationRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, verified.Verified, "the same evidence contract reads packed authority")
 	assert.Equal(t, wantHash, verified.ComputedHash)
+}
+
+func TestDigestCheckedUploadRoundTrip(t *testing.T) {
+	c, s := newClient(t, serverKey)
+	content := "client upload"
+	sum := sha256.Sum256([]byte(content))
+	hash := hex.EncodeToString(sum[:])
+
+	added, err := c.Upload(t.Context(), s.RootID(), "upload.txt", "text/plain",
+		hash, int64(len(content)), strings.NewReader(content))
+	require.NoError(t, err)
+	assert.Equal(t, "added", added.Status)
+	assert.Equal(t, hash, added.ComputedHash)
+	assert.Equal(t, hash, added.Node.BlobHash)
+
+	skipped, err := c.Upload(t.Context(), s.RootID(), "upload.txt", "text/plain",
+		hash, int64(len(content)), strings.NewReader(content))
+	require.NoError(t, err)
+	assert.Equal(t, "skipped", skipped.Status)
+	assert.Equal(t, added.Node.ID, skipped.Node.ID)
+
+	wrong := sha256.Sum256([]byte("wrong"))
+	_, err = c.Upload(t.Context(), s.RootID(), "rejected.txt", "text/plain",
+		hex.EncodeToString(wrong[:]), int64(len(content)), strings.NewReader(content))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "digest_mismatch")
 }
 
 func TestStorageRepackRoundTrip(t *testing.T) {

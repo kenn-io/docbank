@@ -97,7 +97,8 @@ metadata, durability rules, and physical storage primitives from
   discipline; knows nothing about the tree.
 - **`internal/ingest`** — the single import pipeline all entry points
   share: hash → durable blob → one metadata transaction per file. The
-  daemon is its caller (`POST /ingest`, backing `docbank add`).
+  daemon is its caller (`POST /ingest`, backing `docbank add`, and
+  digest-checked `POST /uploads` for remote writers).
 - **`internal/home`** — vault directory layout and the vault lock the
   daemon holds exclusively ([Concurrency & Locking](locking.md)).
 - **`internal/config`** — optional `config.toml` loading and the

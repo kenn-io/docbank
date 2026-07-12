@@ -22,7 +22,7 @@ func TestCreateDirectory(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &n))
 	assert.Equal(t, "/taxes", n.Path)
 
-	// Name collision → 409 exists; kind=file → 422 (multipart is planned).
+	// Name collision → 409 exists; kind=file uses the dedicated upload route.
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/nodes", nil,
 		map[string]any{"parent_id": s.RootID(), "name": "taxes", "kind": "dir"})
 	assert.Equal(t, http.StatusConflict, resp.StatusCode)

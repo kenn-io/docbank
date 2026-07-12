@@ -137,6 +137,27 @@ The CLI resolves user arguments to absolute paths before sending the request,
 preserving shell-relative ergonomics. Partial source failures are returned in
 the report while other sources continue.
 
+`POST /uploads` is the remote counterpart, but it is deliberately one file per
+request. `parent_id` and normalized `name` identify the destination; required
+hash/size headers describe the sole multipart `file` part. File granularity
+makes success, failure, and retry atomic rather than embedding partially
+successful application work inside one transport result.
+
+The raw handler streams directly from `multipart.Reader` instead of using
+Huma's decoded multipart input, which pre-parses the complete request into
+memory or temporary files before invoking application code. Its OpenAPI
+operation is registered manually against the same Huma document. Keep the raw
+handler and schema synchronized in one registration function.
+
+The operation holds the application mutation gate before Kit's mutation lease.
+Kit durably publishes and hashes bytes first. A prepared upload exposes no
+application authority, allowing the handler to validate the closing boundary
+and absence of extra parts before its metadata transaction inserts the blob and
+node. Digest/size mismatch or malformed trailing multipart data can leave an
+untracked physical object, never a readable blob row; GC owns that ordinary
+crash/rejection residue. Successful retries return the existing node, so the
+receipt always carries stable identity.
+
 ## Change constraints
 
 - New data commands must be HTTP clients, never direct store callers.

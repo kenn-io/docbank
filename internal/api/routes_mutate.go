@@ -40,7 +40,7 @@ func registerMutateRoutes(api huma.API, d Deps, g *gate) {
 		OperationID: "createNode", Method: http.MethodPost, Path: "/api/v1/nodes",
 		Summary: "Create a directory", DefaultStatus: http.StatusCreated,
 		Description: "kind must be \"dir\"; file creation is POST /api/v1/ingest " +
-			"(server-side paths) today, multipart upload later.",
+			"for server-side paths or digest-checked POST /api/v1/uploads for remote bytes.",
 	}, func(ctx context.Context, in *struct {
 		Body struct {
 			ParentID int64  `json:"parent_id"`
@@ -50,7 +50,7 @@ func registerMutateRoutes(api huma.API, d Deps, g *gate) {
 	}) (*nodeOutput, error) {
 		if in.Body.Kind != "dir" {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation",
-				"kind \"file\" is not supported here: use POST /api/v1/ingest (multipart upload is planned)")
+				"kind \"file\" is not supported here: use POST /api/v1/ingest or POST /api/v1/uploads")
 		}
 		var out *nodeOutput
 		err := g.mutate(func() error {

@@ -41,6 +41,7 @@ user's privileges. Consequently:
 | Content matches its hash *byte-for-byte* | `docbank verify`; `POST /nodes/{id}/verify` | full-vault re-hash on demand, or a revision-bound fresh read of one file through the mixed store |
 | No orphan blob file survives | `docbank gc` | reachability query for rows **plus** a directory scan for files that never gained (or lost) their row |
 | Imports read the file they classified | ingest | `O_NOFOLLOW` + fstat at open, not the earlier `Lstat`/`WalkDir` classification |
+| Remote writes match the writer's bytes | `POST /uploads` | required SHA-256/size declarations are compared with Kit's streamed result before any blob row or node authority commits |
 | Mutations act on the node the caller named | store | id-addressed mutations (`Move`, `Trash`, `Restore`) require an `If-Match` revision precondition; path-addressed mutations (`MovePath`, `TrashPath`, backing `POST /path/move` and `/path/trash`) resolve and mutate inside one store transaction — either way, no path-race window between resolving a name and acting on it |
 | Node identity is permanent | schema | `AUTOINCREMENT` ids plus `trash_parent ... ON DELETE SET NULL` — a dangling origin becomes NULL, never a reused id |
 | Vault contents are private to the user | `home.Ensure` | the 0700 boundary is enforced on every open, not assumed: layout directories are tightened to 0700, the database file to 0600 (WAL/SHM inherit its mode), and blob files are written 0600 |

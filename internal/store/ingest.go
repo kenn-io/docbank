@@ -30,13 +30,13 @@ func (s *Store) BeginIngest(ctx context.Context, sourceKind, sourceDesc string) 
 // auto-suffixed copy ("report (2).pdf" next to an identical "report.pdf")
 // is a distinct file, not a re-import. Otherwise returns the smallest free
 // candidate name.
-func resolveIngestNameTx(tx *sql.Tx, parentID int64, name, blobHash string) (string, bool, error) {
+func resolveIngestNameTx(tx *sql.Tx, parentID int64, name, blobHash string) (string, int64, bool, error) {
 	base, ext := splitSuffix(name)
 	rows, err := tx.Query(
 		`SELECT id, name, COALESCE(blob_hash, '') FROM nodes
 		 WHERE parent_id = ? AND trashed_at IS NULL AND kind = 'file'`, parentID)
 	if err != nil {
-		return "", false, fmt.Errorf("listing siblings for %q: %w", name, err)
+		return "", 0, false, fmt.Errorf("listing siblings for %q: %w", name, err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -46,7 +46,7 @@ func resolveIngestNameTx(tx *sql.Tx, parentID int64, name, blobHash string) (str
 		var sibID int64
 		var sibName, sibHash string
 		if err := rows.Scan(&sibID, &sibName, &sibHash); err != nil {
-			return "", false, fmt.Errorf("scanning sibling: %w", err)
+			return "", 0, false, fmt.Errorf("scanning sibling: %w", err)
 		}
 		n, ok := parseSuffix(sibName, base, ext)
 		if !ok {
@@ -58,15 +58,15 @@ func resolveIngestNameTx(tx *sql.Tx, parentID int64, name, blobHash string) (str
 		taken[n] = true
 	}
 	if err := rows.Err(); err != nil {
-		return "", false, fmt.Errorf("listing siblings for %q: %w", name, err)
+		return "", 0, false, fmt.Errorf("listing siblings for %q: %w", name, err)
 	}
 	for _, sibID := range sameHash {
 		imported, err := sameOriginTx(tx, sibID, name)
 		if err != nil {
-			return "", false, err
+			return "", 0, false, err
 		}
 		if imported {
-			return "", true, nil // already imported (possibly under a suffix)
+			return "", sibID, true, nil // already imported (possibly under a suffix)
 		}
 	}
 	// Directories can occupy candidate names too; they don't carry content,
@@ -81,10 +81,10 @@ func resolveIngestNameTx(tx *sql.Tx, parentID int64, name, blobHash string) (str
 				`SELECT 1 FROM nodes WHERE parent_id = ? AND name = ? AND trashed_at IS NULL`,
 				parentID, candidate).Scan(&one)
 			if errors.Is(err, sql.ErrNoRows) {
-				return candidate, false, nil
+				return candidate, 0, false, nil
 			}
 			if err != nil {
-				return "", false, fmt.Errorf("probing name %q: %w", candidate, err)
+				return "", 0, false, fmt.Errorf("probing name %q: %w", candidate, err)
 			}
 		}
 		n++
@@ -138,11 +138,15 @@ func (s *Store) IngestFile(ctx context.Context, ingestID, parentID int64, name, 
 		added   bool
 	)
 	err = s.withTx(ctx, func(tx *sql.Tx) error {
-		finalName, skip, err := resolveIngestNameTx(tx, parentID, name, blobHash)
+		finalName, existingID, skip, err := resolveIngestNameTx(tx, parentID, name, blobHash)
 		if err != nil {
 			return err
 		}
 		if skip {
+			created, err = scanNode(tx.QueryRow(`SELECT `+nodeCols+` FROM nodes WHERE id = ?`, existingID))
+			if err != nil {
+				return fmt.Errorf("reading idempotent ingest node %d: %w", existingID, err)
+			}
 			return nil
 		}
 		created, err = s.createFileTx(tx, parentID, finalName, blobHash, size, mimeType)

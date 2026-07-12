@@ -10,7 +10,7 @@ description: The agent-first HTTP API — filesystem-shaped endpoints, revision 
     today and back the CLI's data commands — the CLI is an HTTP client
     of exactly this surface, with no other path into the vault. Rows
     under the "Planned" admonitions further down (versioned editing,
-    tags, batch move, multipart upload) are designed but not built; see
+    tags, batch move) are designed but not built; see
     [Roadmap](../roadmap.md).
 
 **Design test: an agent must be able to do everything the CLI can,
@@ -38,6 +38,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `GET /search?q=&limit=` | bounded name search (FTS5), with explicit `truncated` status | Implemented |
 | `POST /nodes` | create a directory (`kind: "dir"`) | Implemented |
 | `POST /ingest` | import server-side paths — see [addendum](#addendum-post-ingest) | Implemented |
+| `POST /uploads?parent_id=&name=` | stream one digest-checked remote file — see [addendum](#addendum-post-uploads) | Implemented |
 | `PATCH /nodes/{id}` | move and/or rename | Implemented |
 | `POST /path/move` · `POST /path/trash` | move / trash by virtual path, resolved and mutated in one store transaction | Implemented |
 | `POST /nodes/{id}/trash` · `POST /nodes/{id}/restore` | soft delete / recover | Implemented |
@@ -55,10 +56,8 @@ its own shutdown token.
 !!! info "Planned"
     Not yet implemented: `PUT /nodes/{id}/content` (versioned edit) and
     `GET /nodes/{id}/versions` ([Editing & Versions](editing-and-versions.md));
-    tags (`GET /tags` + CRUD, tag filters on search); `POST /batch/move`
-    bulk reorganization with `dry_run`; multipart file upload (`POST
-    /nodes` with `kind: "file"`) as the remote counterpart to `POST
-    /ingest`.
+    tags (`GET /tags` + CRUD, tag filters on search); and
+    `POST /batch/move` bulk reorganization with `dry_run`.
 
 IDs are canonical everywhere: every response carries them, and mutating
 endpoints address nodes by ID so a rename can't strand a concurrent
@@ -97,6 +96,7 @@ and maintenance are explicit exceptions:
 | `POST /path/move`, `POST /path/trash` | none — the path is resolved and mutated inside one store transaction, so there is no separate read for a revision to guard |
 | `POST /nodes` (create dir) | none — creation has no prior revision; a name collision is `409` |
 | `POST /ingest` | none — long-running bulk operation with per-path partial success; the destination directory may legitimately change while it runs |
+| `POST /uploads` | none — creates or idempotently resolves one file under the stable `parent_id`; name/content collision policy is transactional |
 | `POST /trash/empty`, `POST /gc`, `POST /verify` | none — vault-wide maintenance, serialized by the maintenance gate |
 
 A stale revision gets `412 Precondition Failed`, telling the caller to
@@ -154,7 +154,47 @@ Because it grants "read any daemon-readable local path," `POST /ingest`
 is checked per-request against `RemoteAddr` and **restricted to
 loopback callers** regardless of bind address or API key — a
 non-loopback client gets `403` (`loopback_only`). There is no remote file-upload
-endpoint in the current API.
+capability on this route: remote bytes use `POST /uploads`, while remote access
+to the loopback-bound daemon still terminates through the configured SSH/VPN
+tunnel.
+
+## Addendum: `POST /uploads`
+
+`POST /uploads?parent_id=<id>&name=<filename>` accepts exactly one
+`multipart/form-data` file field named `file`. The query uses a stable
+destination directory ID rather than a mutable path. The multipart filename
+must equal the normalized `name` query value, preventing the envelope and
+requested tree entry from describing different files.
+
+Two request headers declare the expected identity of the **file part**, not the
+multipart envelope:
+
+- `X-Docbank-Blob-Hash`: canonical lowercase hexadecimal SHA-256;
+- `X-Docbank-Blob-Size`: raw byte length, bounded by Kit's blob limit.
+
+The server streams the file once through Kit's durable writer and independently
+computes both values. Only after they match, the closing multipart boundary has
+been validated, and no extra parts remain does one metadata transaction grant
+blob authority and create the node. `201` with `status: "added"` identifies a
+new node. Repeating the same name, hash, and parent converges to that stable node
+with `200` and `status: "skipped"`. The receipt always includes the server's
+`computed_hash`, `computed_size`, and the node's ID and revision; clients compare
+the values themselves.
+
+Uploads are intentionally file-granular. A caller sending many files issues
+independent requests (concurrently when useful), so one failure never makes the
+success of another file ambiguous and each item can be retried on its own.
+Different content under the same requested name follows normal ingest suffixing
+rather than overwriting an existing document.
+
+Digest or size disagreement returns `422 digest_mismatch` or
+`422 size_mismatch` and grants no new `blobs` row or node authority. Because
+physical bytes are published before metadata by design, a rejected stream may
+leave an authority-free loose object; the normal GC untracked-file scan removes
+it. Malformed envelopes and extra parts are also rejected before authority.
+Request bodies are capped at the declared size plus bounded multipart overhead,
+and the route is exempt from the ordinary timeout so a legitimate large upload
+is governed by client cancellation rather than a one-minute deadline.
 
 !!! info "Planned"
     Ingest provenance today is filesystem-shaped: each import records
@@ -216,9 +256,11 @@ machine-readable string clients branch on instead of parsing `detail`:
 | `cycle` | 409 | `store.ErrCycle` (move under own descendant) |
 | `stale_revision` | 412 | `store.ErrStaleRevision` — `If-Match` didn't match the current revision |
 | `not_dir` / `not_file` / `invalid_name` / `not_trashed` / `is_root` | 422 | `store.ErrNotDir` / `ErrNotFile` / `ErrInvalidName` / `ErrNotTrashed` / `ErrIsRoot` |
-| `validation` | 400 or 422 | malformed request (bad `If-Match`, non-absolute `?path=` or ingest path, huma request validation) |
+| `validation` | 400, 415, or 422 | malformed request (bad `If-Match`, paths, media type, multipart envelope, or generated validation) |
 | `precondition_required` | 428 | required `If-Match` header missing |
 | `loopback_only` | 403 | `POST /ingest` called by a non-loopback peer |
+| `digest_mismatch` / `size_mismatch` | 422 | uploaded file bytes disagree with the required declaration; no node/blob authority committed |
+| `too_large` | 413 | upload exceeded its declared size plus bounded multipart overhead |
 | `unauthorized` | 401 | missing or invalid API key; bad shutdown token |
 | `internal` | 500 | unmapped error (still surfaced with a message — this is a single-user local daemon, not a hardened multi-tenant service) |
 
