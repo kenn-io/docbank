@@ -88,7 +88,7 @@ func newEmptyResourceFixture(b *testing.B) *resourceFixture {
 // addCandidateLoose models a higher admission ceiling without changing the
 // production MaxBlobBytes policy. It uses the same Kit durable loose write and
 // Docbank mutation/catalog boundary that WriteContext wraps.
-func (f *resourceFixture) addCandidateLoose(ctx context.Context, size int64) error {
+func (f *resourceFixture) addCandidateLoose(ctx context.Context, size int64, index int) error {
 	layout, err := packstore.NewLayout(filepath.Join(f.root, "blobs"), packstore.LayoutOptions{
 		Staging: packstore.StagingStoreDirectory, StagingDir: "tmp",
 	})
@@ -101,7 +101,7 @@ func (f *resourceFixture) addCandidateLoose(ctx context.Context, size int64) err
 	}
 	if err := f.blobs.WithMutation(ctx, func() error {
 		result, writeErr := loose.Write(ctx,
-			io.LimitReader(&resourceNoiseReader{state: 1}, size), packstore.WriteOptions{
+			io.LimitReader(&resourceNoiseReader{state: uint32(index + 1)}, size), packstore.WriteOptions{
 				Durability: packstore.DurablePublication,
 				Dedup:      packstore.VerifyTypeAndSize,
 				MaxBytes:   size,
@@ -109,7 +109,8 @@ func (f *resourceFixture) addCandidateLoose(ctx context.Context, size int64) err
 		if writeErr != nil {
 			return fmt.Errorf("writing candidate loose object: %w", writeErr)
 		}
-		node, createErr := f.metadata.CreateFile(ctx, f.metadata.RootID(), "candidate-large.bin",
+		node, createErr := f.metadata.CreateFile(ctx, f.metadata.RootID(),
+			fmt.Sprintf("candidate-large-%d.bin", index),
 			result.Hash.String(), result.Size, "application/octet-stream")
 		if createErr != nil {
 			return fmt.Errorf("authorizing candidate loose object: %w", createErr)
@@ -145,16 +146,29 @@ func BenchmarkDocbankVerifiedRead64MiB(b *testing.B) {
 			peakFDs := baselineFDs
 			for range b.N {
 				stream, size, err := fixture.blobs.OpenStream(fixture.nodes[0].BlobHash)
-				require.NoError(b, err)
+				if err != nil {
+					b.Fatalf("opening verified stream: %v", err)
+				}
+				b.StopTimer()
 				if entries, readErr := filepath.Glob("/dev/fd/*"); readErr == nil {
 					peakFDs = max(peakFDs, len(entries))
 				}
-				require.Equal(b, blob.MaxBlobBytes, size)
+				b.StartTimer()
+				if size != blob.MaxBlobBytes {
+					b.Fatalf("stream size %d, want %d", size, blob.MaxBlobBytes)
+				}
 				_, copyErr := io.Copy(io.Discard, stream)
-				require.NoError(b, copyErr)
-				require.True(b, stream.Verified())
-				require.NoError(b, stream.Close())
+				if copyErr != nil {
+					b.Fatalf("copying verified stream: %v", copyErr)
+				}
+				if !stream.Verified() {
+					b.Fatal("stream did not verify at EOF")
+				}
+				if closeErr := stream.Close(); closeErr != nil {
+					b.Fatalf("closing verified stream: %v", closeErr)
+				}
 			}
+			b.StopTimer()
 			if baselineFDs > 0 {
 				b.ReportMetric(float64(peakFDs-baselineFDs), "stream-fds")
 			}
@@ -200,18 +214,20 @@ func BenchmarkDocbankBackupRoundTrip64MiB(b *testing.B) {
 }
 
 func BenchmarkDocbankCandidateLooseWrite1GiB(b *testing.B) {
+	fixture := newEmptyResourceFixture(b)
 	b.ReportAllocs()
 	b.SetBytes(candidateLooseBytes)
-	for range b.N {
-		fixture := newEmptyResourceFixture(b)
-		require.NoError(b, fixture.addCandidateLoose(context.Background(), candidateLooseBytes))
-		require.NoError(b, fixture.Close())
+	b.ResetTimer()
+	for i := range b.N {
+		if err := fixture.addCandidateLoose(context.Background(), candidateLooseBytes, i); err != nil {
+			b.Fatalf("writing candidate loose object: %v", err)
+		}
 	}
 }
 
 func BenchmarkDocbankCandidateLooseRead1GiB(b *testing.B) {
 	fixture := newEmptyResourceFixture(b)
-	require.NoError(b, fixture.addCandidateLoose(context.Background(), candidateLooseBytes))
+	require.NoError(b, fixture.addCandidateLoose(context.Background(), candidateLooseBytes, 0))
 	b.ReportAllocs()
 	b.SetBytes(candidateLooseBytes)
 	baselineFDs := 0
@@ -222,16 +238,29 @@ func BenchmarkDocbankCandidateLooseRead1GiB(b *testing.B) {
 	peakFDs := baselineFDs
 	for range b.N {
 		stream, size, err := fixture.blobs.OpenStream(fixture.nodes[0].BlobHash)
-		require.NoError(b, err)
-		require.Equal(b, candidateLooseBytes, size)
+		if err != nil {
+			b.Fatalf("opening candidate stream: %v", err)
+		}
+		b.StopTimer()
 		if entries, readErr := filepath.Glob("/dev/fd/*"); readErr == nil {
 			peakFDs = max(peakFDs, len(entries))
 		}
+		b.StartTimer()
+		if size != candidateLooseBytes {
+			b.Fatalf("stream size %d, want %d", size, candidateLooseBytes)
+		}
 		_, copyErr := io.Copy(io.Discard, stream)
-		require.NoError(b, copyErr)
-		require.True(b, stream.Verified())
-		require.NoError(b, stream.Close())
+		if copyErr != nil {
+			b.Fatalf("copying candidate stream: %v", copyErr)
+		}
+		if !stream.Verified() {
+			b.Fatal("candidate stream did not verify at EOF")
+		}
+		if closeErr := stream.Close(); closeErr != nil {
+			b.Fatalf("closing candidate stream: %v", closeErr)
+		}
 	}
+	b.StopTimer()
 	if baselineFDs > 0 {
 		b.ReportMetric(float64(peakFDs-baselineFDs), "stream-fds")
 	}
@@ -239,7 +268,7 @@ func BenchmarkDocbankCandidateLooseRead1GiB(b *testing.B) {
 
 func BenchmarkDocbankCandidateLooseBackupRoundTrip1GiB(b *testing.B) {
 	fixture := newEmptyResourceFixture(b)
-	require.NoError(b, fixture.addCandidateLoose(context.Background(), candidateLooseBytes))
+	require.NoError(b, fixture.addCandidateLoose(context.Background(), candidateLooseBytes, 0))
 	benchmarkBackupRoundTrip(b, fixture, candidateLooseBytes)
 }
 
