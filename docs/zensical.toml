@@ -1,26 +1,32 @@
 [project]
 site_name = "docbank"
-site_description = "Personal document archive: a virtual tree over content-addressed storage, with full-text search, trash and recovery, versioned editing, and an agent-first HTTP API."
+site_description = "Personal document archive: a virtual tree over content-addressed storage, with full-text search, trash and recovery, and an agent-first HTTP API."
 site_author = "Kenn Software LLC"
 copyright = 'Copyright &copy; 2026 <a href="https://kenn.io">Kenn Software LLC</a>.'
 docs_dir = "docs"
 site_dir = "site"
 repo_url = "https://github.com/kenn-io/docbank"
 repo_name = "kenn-io/docbank"
+extra_css = ["stylesheets/extra.css"]
 use_directory_urls = true
 nav = [
   {"Introduction" = "index.md"},
-  {"Setup" = "setup.md"},
-  {"Quickstart" = "quickstart.md"},
-  {"CLI Reference" = "cli-reference.md"},
-  {"Configuration" = "configuration.md"},
-  {"Usage" = [
+  {"Getting Started" = [
+    {"Setup" = "setup.md"},
+    {"Quickstart" = "quickstart.md"},
+    {"Configuration" = "configuration.md"},
+  ]},
+  {"User Guide" = [
     {"Importing Documents" = "usage/importing.md"},
     {"Organizing the Tree" = "usage/organizing.md"},
     {"Searching" = "usage/searching.md"},
     {"Trash, GC & Verify" = "usage/trash-and-gc.md"},
   ]},
-  {"Design" = [
+  {"Reference" = [
+    {"CLI Reference" = "cli-reference.md"},
+    {"Agent HTTP API" = "architecture/http-api.md"},
+  ]},
+  {"Architecture" = [
     {"Overview" = "architecture/overview.md"},
     {"Storage" = "architecture/storage.md"},
     {"Packed Storage Foundation" = "architecture/packed-storage.md"},
@@ -28,7 +34,6 @@ nav = [
     {"Editing & Versions" = "architecture/editing-and-versions.md"},
     {"Concurrency & Locking" = "architecture/locking.md"},
     {"Daemon" = "architecture/daemon.md"},
-    {"HTTP API" = "architecture/http-api.md"},
     {"Backup" = "architecture/backup.md"},
   ]},
   {"Roadmap" = "roadmap.md"},
@@ -56,6 +61,8 @@ accent = "custom"
 
 [project.theme.icon]
 repo = "fontawesome/brands/github"
+edit = "lucide/pencil"
+view = "lucide/file-code"
 
 [project.markdown_extensions.admonition]
 

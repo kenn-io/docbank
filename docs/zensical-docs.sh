@@ -12,6 +12,8 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 docs_root="$script_dir"
 site_dir="${DOCBANK_DOCS_SITE_DIR:-site}"
 
+python3 "$docs_root/scripts/check_markdown_sources.py"
+
 if [[ -n "${VIRTUAL_ENV:-}" && -x "$VIRTUAL_ENV/bin/zensical" ]]; then
   zensical_bin="$VIRTUAL_ENV/bin/zensical"
 elif [[ -x "$docs_root/.venv/bin/zensical" ]]; then
@@ -58,9 +60,12 @@ tmp_config_base=""
 (
   cd "$docs_root"
   tar \
+    --exclude './.cache' \
     --exclude './.venv' \
     --exclude './.env' \
     --exclude './.env.*' \
+    --exclude './internal' \
+    --exclude './scripts' \
     --exclude './site' \
     --exclude './zensical-public-docs.*' \
     --exclude './.zensical-build.*' \
@@ -99,6 +104,7 @@ awk -v docs_dir="$tmp_docs_name" -v site_dir="$site_dir" '
 case "$command_name" in
   build)
     (cd "$docs_root" && "$zensical_bin" build --strict --config-file "$tmp_config_name" "$@")
+    python3 "$docs_root/scripts/check_built_site.py" "$docs_root/$site_dir"
     ;;
   serve)
     (cd "$docs_root" && "$zensical_bin" serve --config-file "$tmp_config_name" "$@")
