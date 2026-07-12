@@ -17,16 +17,20 @@ import (
 // ErrInvalidHash reports a value that is not canonical lowercase SHA-256.
 var ErrInvalidHash = packstore.ErrInvalidHash
 
-// MaxBlobBytes is docbank's current admission and packed-content policy for one
-// object. Keep it explicit: a future Kit default must not silently change
-// docbank writes, packed reads, maintenance, or packed restore.
-const MaxBlobBytes int64 = 64 << 20
+const (
+	// MaxIngestBytes is docbank's admission policy for a new loose object.
+	MaxIngestBytes int64 = 1 << 30
+
+	// MaxPackedBlobBytes is docbank's policy for packing, packed reads, and
+	// packed restore. Larger admitted objects remain authoritative loose blobs.
+	MaxPackedBlobBytes int64 = 64 << 20
+)
 
 // StorageLimits returns Kit's packed-read and maintenance limits with
 // docbank's current packed-object policy.
 func StorageLimits() packstore.Limits {
 	limits := packstore.DefaultLimits()
-	limits.BlobBytes = MaxBlobBytes
+	limits.BlobBytes = MaxPackedBlobBytes
 	return limits
 }
 
@@ -180,7 +184,7 @@ func (s *Store) WriteContext(ctx context.Context, r io.Reader) (string, int64, e
 	result, err := s.loose.Write(ctx, r, packstore.WriteOptions{
 		Durability: packstore.DurablePublication,
 		Dedup:      packstore.VerifyTypeAndSize,
-		MaxBytes:   MaxBlobBytes,
+		MaxBytes:   MaxIngestBytes,
 	})
 	if err != nil {
 		return "", 0, fmt.Errorf("writing blob: %w", err)

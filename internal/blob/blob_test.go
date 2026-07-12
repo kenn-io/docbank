@@ -28,39 +28,24 @@ func newTestBlobStore(t *testing.T) *Store {
 }
 
 func TestStoragePolicyKeepsBlobLimitExplicit(t *testing.T) {
-	assert.Equal(t, MaxBlobBytes, int64(64<<20))
-	assert.Equal(t, MaxBlobBytes, StorageLimits().BlobBytes)
+	assert.Equal(t, MaxIngestBytes, int64(1<<30))
+	assert.Equal(t, MaxPackedBlobBytes, int64(64<<20))
+	assert.Equal(t, MaxPackedBlobBytes, StorageLimits().BlobBytes)
 }
 
-func TestWriteEnforcesBlobLimit(t *testing.T) {
+func TestWriteAcceptsLooseBlobAbovePackingLimit(t *testing.T) {
 	bs := newTestBlobStore(t)
-	hash, size, err := bs.Write(io.LimitReader(zeroReader{}, MaxBlobBytes+1))
-	require.ErrorIs(t, err, packstore.ErrContentMismatch)
-	assert.Empty(t, hash)
-	assert.Zero(t, size)
-}
-
-func TestOpenStreamReadsLooseBlobAbovePackingLimit(t *testing.T) {
-	bs := newTestBlobStore(t)
-	size := MaxBlobBytes + 1
-	digest := sha256.New()
-	_, err := io.CopyN(digest, zeroReader{}, size)
+	wantSize := MaxPackedBlobBytes + 1
+	hash, size, err := bs.Write(io.LimitReader(zeroReader{}, wantSize))
 	require.NoError(t, err)
-	hash := hex.EncodeToString(digest.Sum(nil))
-	path := bs.path(hash)
-	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
-	f, err := os.Create(path)
-	require.NoError(t, err)
-	_, err = io.CopyN(f, zeroReader{}, size)
-	require.NoError(t, err)
-	require.NoError(t, f.Close())
+	assert.Equal(t, wantSize, size)
 
 	stream, gotSize, err := bs.OpenStream(hash)
 	require.NoError(t, err)
-	assert.Equal(t, size, gotSize)
+	assert.Equal(t, wantSize, gotSize)
 	written, err := io.Copy(io.Discard, stream)
 	require.NoError(t, err)
-	assert.Equal(t, size, written)
+	assert.Equal(t, wantSize, written)
 	assert.True(t, stream.Verified())
 	require.NoError(t, stream.Close())
 }

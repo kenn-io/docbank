@@ -124,15 +124,16 @@ vault-wide verification, and backup capture must therefore consume through
 that terminal boundary; existence probes retain the buffered open-and-close
 path because they ask about catalog authority, not fresh byte evidence.
 
-Docbank currently uses 64 MiB for two distinct policies: new local and remote
-writes, and Kit's packed-read, maintenance, and packed-restore `BlobBytes`
-limit. Kit v0.8 keeps catalog-authorized oversized loose objects available
-through the same verified `OpenStream`; they remain eligible for backup but not
-packing. Do not add a second Docbank loose-stream adapter or mistake the packed
-limit for a read-availability boundary. Raising either application policy needs
-downstream measurements first: pack preparation can use about 2.004 times raw
-size in scratch per concurrent object, and active stream leases can temporarily
-raise open descriptors above the idle reader-cache bound.
+Docbank deliberately separates two policies. New local and remote writes may
+admit one loose object through 1 GiB. Kit's packed-read, maintenance, and
+packed-restore `BlobBytes` limit remains 64 MiB. Kit v0.8 keeps
+catalog-authorized larger loose objects available through the same verified
+`OpenStream`; they remain eligible for backup but not packing. Do not add a
+second Docbank loose-stream adapter or mistake the packed limit for a
+read-availability boundary. Raising either application policy needs downstream
+measurements first: pack preparation can use about 2.004 times raw size in
+scratch per concurrent object, and active stream leases can temporarily raise
+open descriptors above the idle reader-cache bound.
 
 Repack commits replacement mappings before retiring an old immutable pack. If
 Kit returns `ErrPackRetirementDeferred`, the catalog change must not be rolled
@@ -152,14 +153,14 @@ go test -tags fts5 ./internal/backupapp -run '^$' \
 ```
 
 The peak-RSS figures use a prebuilt test binary so compilation is outside the
-measurement. On macOS, reproduce the full and candidate-only runs with:
+measurement. On macOS, reproduce the full and 1 GiB loose-only runs with:
 
 ```bash
 go test -c -tags fts5 -o /tmp/docbank-resource.test ./internal/backupapp
 /usr/bin/time -l /tmp/docbank-resource.test -test.run '^$' \
   -test.bench '^BenchmarkDocbank' -test.benchtime=1x -test.benchmem -test.count=1
 /usr/bin/time -l /tmp/docbank-resource.test -test.run '^$' \
-  -test.bench '^BenchmarkDocbankCandidateLoose' \
+  -test.bench '^BenchmarkDocbankLoose' \
   -test.benchtime=1x -test.benchmem -test.count=1
 ```
 
@@ -171,17 +172,17 @@ v0.8.0 is:
 
 | Workload | Throughput | Heap allocated per operation | Additional stream descriptors |
 | --- | ---: | ---: | ---: |
-| verified loose read, 64 MiB | 2,622 MB/s | 12,944 bytes | 1 |
-| verified packed read, 64 MiB | 2,132 MB/s | 15,928 bytes | 1 |
-| write + pack + sparse repack, 64 MiB total | 148 MB/s | 75,620,568 bytes cumulative | — |
-| snapshot + verify + loose restore, 64 MiB, one job | 652 MB/s | 71,135,648 bytes cumulative | — |
-| candidate durable loose write, 1 GiB | 294 MB/s | 48,872 bytes | — |
-| candidate verified loose read, 1 GiB | 2,635 MB/s | 12,944 bytes | 1 |
-| candidate snapshot + verify + loose restore, 1 GiB, one job | 954 MB/s | 71,138,880 bytes cumulative | — |
+| verified loose read, 64 MiB | 2,570 MB/s | 12,944 bytes | 1 |
+| verified packed read, 64 MiB | 2,159 MB/s | 15,928 bytes | 1 |
+| write + pack + sparse repack, 64 MiB total | 145 MB/s | 75,589,880 bytes cumulative | — |
+| snapshot + verify + loose restore, 64 MiB, one job | 633 MB/s | 71,131,056 bytes cumulative | — |
+| durable loose write, 1 GiB | 295 MB/s | 49,624 bytes | — |
+| verified loose read, 1 GiB | 2,639 MB/s | 12,944 bytes | 1 |
+| snapshot + verify + loose restore, 1 GiB, one job | 950 MB/s | 49,987,056 bytes cumulative | — |
 
 A prebuilt benchmark binary running all seven workloads sequentially peaked at
-110,706,688 bytes (105.6 MiB) resident. Running only the three 1 GiB loose
-candidate workloads peaked at 49,659,904 bytes (47.4 MiB) resident. The full
+109,953,024 bytes (104.9 MiB) resident. Running only the three 1 GiB loose
+workloads peaked at 49,348,608 bytes (47.1 MiB) resident. The full
 suite retains allocator and codec high-water state from prior maintenance, so
 the larger number is the appropriate whole-process capacity baseline. `B/op`
 for compound maintenance and backup rows is cumulative allocation across
@@ -197,14 +198,14 @@ and each concurrent loose or packed stream can add one descriptor until EOF or
 `Close`. Cancellation and early-close cleanup remain mandatory race-tested
 gates, not benchmark outcomes.
 
-The 1 GiB candidate benchmarks bypass only Docbank's current admission check;
-they use Kit's durable loose writer, Docbank's mutation and SQLite authority
-boundary, native verified `OpenStream`, and the real backup adapters. They do
-not admit the object to packing. This is evidence that a 1 GiB loose-ingestion
-policy can remain bounded while packed maintenance stays at 64 MiB, not a
-performance guarantee or a policy change by itself. Such an object still needs
-roughly its raw size for live storage, repository storage, and a simultaneous
-restore target in the incompressible case.
+The 1 GiB benchmarks exercise Docbank's production admission path, Kit's
+durable loose writer, the mutation and SQLite authority boundary, native
+verified `OpenStream`, and the real backup adapters. They do not admit the
+object to packing. They are the resource evidence for the current 1 GiB
+loose-ingestion policy while packed maintenance stays at 64 MiB, not a
+performance guarantee. Such an object still needs roughly its raw size for
+live storage, repository storage, and a simultaneous restore target in the
+incompressible case.
 
 Any proposal to change admission or maintenance limits, reader slots, or
 backup concurrency must rerun this suite on representative target hardware and

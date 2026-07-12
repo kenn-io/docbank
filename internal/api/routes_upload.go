@@ -181,9 +181,9 @@ func parseUploadIdentity(r *http.Request) (int64, string, string, int64, *Error)
 			BlobHashHeader+" must be canonical lowercase SHA-256")
 	}
 	expectedSize, err := strconv.ParseInt(r.Header.Get(BlobSizeHeader), 10, 64)
-	if err != nil || expectedSize < 0 || expectedSize > blob.MaxBlobBytes {
+	if err != nil || expectedSize < 0 || expectedSize > blob.MaxIngestBytes {
 		return 0, "", "", 0, NewError(http.StatusUnprocessableEntity, "validation",
-			fmt.Sprintf("%s must be between 0 and %d", BlobSizeHeader, blob.MaxBlobBytes))
+			fmt.Sprintf("%s must be between 0 and %d", BlobSizeHeader, blob.MaxIngestBytes))
 	}
 	return parentID, name, expectedHash, expectedSize, nil
 }
