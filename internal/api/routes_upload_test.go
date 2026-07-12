@@ -171,3 +171,30 @@ func TestUploadRejectsNonDirectoryBeforeReadingContent(t *testing.T) {
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 	assert.Contains(t, body, `"code":"not_dir"`)
 }
+
+func TestUploadRejectsTruncatedMultipartAsValidation(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	content := "truncated"
+	boundary := "missing-closing-boundary"
+	body := fmt.Sprintf("--%s\r\nContent-Disposition: form-data; name=\"file\"; filename=\"bad.txt\"\r\n"+
+		"Content-Type: text/plain\r\n\r\n%s", boundary, content)
+	query := url.Values{"parent_id": {strconv.FormatInt(s.RootID(), 10)}, "name": {"bad.txt"}}
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/uploads?"+query.Encode(), bytes.NewBufferString(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "multipart/form-data; boundary="+boundary)
+	req.Header.Set(api.BlobHashHeader, uploadIdentity([]byte(content)))
+	req.Header.Set(api.BlobSizeHeader, strconv.Itoa(len(content)))
+	resp, err := ts.Client().Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	var response bytes.Buffer
+	_, err = response.ReadFrom(resp.Body)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, response.String())
+	assert.Contains(t, response.String(), `"code":"validation"`)
+	_, err = s.NodeByPath(t.Context(), "/bad.txt")
+	require.ErrorIs(t, err, store.ErrNotFound)
+	blobs, err := s.AllBlobs(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, blobs)
+}

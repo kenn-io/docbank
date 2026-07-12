@@ -208,6 +208,9 @@ func uploadError(err error) *Error {
 		return NewError(http.StatusUnprocessableEntity, "size_mismatch", err.Error())
 	case errors.As(err, &maxBytesErr):
 		return NewError(http.StatusRequestEntityTooLarge, "too_large", err.Error())
+	case errors.Is(err, io.ErrUnexpectedEOF):
+		return NewError(http.StatusUnprocessableEntity, "validation",
+			"invalid upload multipart envelope: "+err.Error())
 	case errors.Is(err, errInvalidUploadEnvelope):
 		return NewError(http.StatusUnprocessableEntity, "validation", err.Error())
 	default:
