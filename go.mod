@@ -11,7 +11,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.11.1
-	go.kenn.io/kit v0.7.0
+	go.kenn.io/kit v0.7.2-0.20260712185051-733514989978
 	golang.org/x/text v0.38.0
 )
 
