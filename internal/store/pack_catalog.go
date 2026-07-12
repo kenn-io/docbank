@@ -23,6 +23,77 @@ func NewPackCatalog(s *Store) *PackCatalog { return &PackCatalog{store: s} }
 
 var _ packstore.Catalog = (*PackCatalog)(nil)
 
+// PackRestoreCatalog grants packed authority in an unpublished restored
+// database. It deliberately accepts a *sql.DB rather than a Store because Kit
+// owns the staged database lifecycle until restore publication.
+type PackRestoreCatalog struct{ db *sql.DB }
+
+// NewPackRestoreCatalog constructs a restore-only packed catalog over db.
+func NewPackRestoreCatalog(db *sql.DB) *PackRestoreCatalog { return &PackRestoreCatalog{db: db} }
+
+var _ packstore.RestoreCatalog = (*PackRestoreCatalog)(nil)
+
+// ReplaceRestoredPacks atomically discards pack metadata captured from the
+// source vault and grants authority only to packs Kit published and verified
+// in the restore target.
+func (c *PackRestoreCatalog) ReplaceRestoredPacks(
+	ctx context.Context, records []packstore.PackRecord, adoptions []packstore.Adoption,
+) error {
+	packIDs := make(map[string]struct{}, len(records))
+	for _, record := range records {
+		if err := record.Validate(); err != nil {
+			return fmt.Errorf("validating restored blob pack %s: %w", record.PackID, err)
+		}
+		if _, duplicate := packIDs[record.PackID]; duplicate {
+			return fmt.Errorf("duplicate restored blob pack %s", record.PackID)
+		}
+		packIDs[record.PackID] = struct{}{}
+	}
+	hashes := make(map[packstore.Hash]struct{}, len(adoptions))
+	for _, adoption := range adoptions {
+		if err := adoption.Entry.Validate(); err != nil {
+			return fmt.Errorf("validating restored packed blob %s: %w", adoption.Entry.Hash, err)
+		}
+		if _, ok := packIDs[adoption.Entry.PackID]; !ok {
+			return fmt.Errorf("restored packed blob %s names unknown pack %s",
+				adoption.Entry.Hash, adoption.Entry.PackID)
+		}
+		if _, duplicate := hashes[adoption.Entry.Hash]; duplicate {
+			return fmt.Errorf("duplicate restored packed blob %s", adoption.Entry.Hash)
+		}
+		hashes[adoption.Entry.Hash] = struct{}{}
+	}
+
+	tx, err := c.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning restored pack catalog replacement: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM blob_pack_index`); err != nil {
+		return fmt.Errorf("clearing restored packed blob mappings: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM blob_packs`); err != nil {
+		return fmt.Errorf("clearing restored blob pack records: %w", err)
+	}
+	for _, record := range records {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO blob_packs (pack_id, entry_count, stored_bytes, created_at)
+			VALUES (?, ?, ?, ?)`, record.PackID, record.EntryCount, record.StoredBytes,
+			record.CreatedAt.UTC().Format(timestampLayout)); err != nil {
+			return fmt.Errorf("recording restored blob pack %s: %w", record.PackID, err)
+		}
+	}
+	for _, adoption := range adoptions {
+		if err := writeAdoption(ctx, tx, adoption.Entry, false); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing restored pack catalog replacement: %w", err)
+	}
+	return nil
+}
+
 func (c *PackCatalog) Resolve(ctx context.Context, hash packstore.Hash) (packstore.Location, error) {
 	row := c.store.db.QueryRowContext(ctx, `
 		SELECT i.pack_id, i.pack_offset, i.stored_len, i.raw_len, i.flags, i.crc32c

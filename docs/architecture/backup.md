@@ -1,6 +1,6 @@
 ---
 title: Backup
-description: Current manual snapshot requirements and the planned Kit-backed backup integration.
+description: Current manual snapshots and the staged Kit-backed backup integration.
 ---
 
 # Backup
@@ -14,18 +14,28 @@ The essential archive is the database plus `blobs/`. Configuration is useful
 to retain when customized; logs, locks, and runtime records are not archive
 state. A restored copy is not trusted until `docbank verify` succeeds.
 
-## Planned Kit integration
+## Kit integration status
+
+The internal `backupapp` adapter now supplies Kit with docbank's frozen logical
+view: every authoritative `blobs` row, representation-neutral fidelity stats,
+canonical restore paths, and mixed loose/packed content reads. Integration
+tests prove loose create/verify/restore and capture directly from a packed live
+store. Physical pack tables are excluded from fidelity stats so a restore may
+choose a different representation without changing the archive.
+
+Snapshots taken from a packed vault retain source pack metadata in their
+captured database. Docbank therefore fails closed if such a snapshot is sent
+through Kit's loose-only restore path: loose files plus stale pack authority
+would make the restored vault unreadable. Docbank's restore wrapper inseparably
+owns the application adapter and packed target: it publishes verified repository
+packs into the target and atomically replaces all captured pack records and
+mappings before the staged vault becomes visible. Integration coverage opens
+every restored blob through the same mixed store used by a live vault.
 
 !!! info "Planned — Phase 4"
-    Docbank will integrate `go.kenn.io/kit/backup`, the shared engine already
-    used by msgvault. The application adapter will own WAL checkpointing and a
-    pinned read transaction, content enumeration from docbank's `blobs` rows,
-    fidelity statistics, and exclusions for logs and staging files.
-
-    Snapshots will contain page-diffed SQLite state plus only-new content in
-    sealed, verifiable packs. Restore will materialize `docbank.db` and
-    `blobs/`, then compare application statistics with the manifest before the
-    result is accepted.
+    Command/API orchestration has not landed. The completed capture and restore
+    adapters are internal and do not make any `docbank backup` command
+    available yet.
 
     The planned command family is `docbank backup init|create|list|verify|restore`.
     Exact flags will enter the CLI reference only when implemented.
