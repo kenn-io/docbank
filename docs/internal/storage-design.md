@@ -221,6 +221,36 @@ Docbank owns:
 - trash, version, provenance, and future external-reference semantics;
 - daemon commands, scheduling, logging, and product output.
 
+## Logical metadata portability
+
+SQLite is Docbank's runtime query and transaction engine, but its historical
+page layout is not the intended long-lived backup contract. The logical
+boundary is deterministic JSONL headed by `docbank-metadata` and an integer
+format version. Records are emitted in dependency-stable order and deterministic
+key order: blobs, nodes, ingests, node versions, provenance, tags, node tags,
+and extracted text. Nodes carry parent IDs, so directory structure, trash
+restore coordinates, and stable external node references survive a roundtrip.
+
+The stream excludes `nodes_fts`, `blob_packs`, and `blob_pack_index`. FTS is a
+derived index rebuilt by the node insert triggers. Pack tables describe one
+physical representation and must never regain authority merely because an old
+metadata snapshot mentioned offsets; Kit restore verifies and publishes the
+chosen loose or packed representation before installing fresh catalog mappings.
+
+Import runs only against a pristine current-schema database, in one transaction
+with deferred foreign-key checks. Unknown format versions, unknown record types
+or fields, uniqueness failures, and dangling references abort the transaction.
+Explicit node IDs advance SQLite's `AUTOINCREMENT` sequence, preserving the
+invariant that a deleted historical ID is never silently reused.
+
+This boundary replaces in-place schema evolution with export → construct a
+fresh current-schema database → import → verify → atomic replacement. It does
+not make compatibility work disappear: each supported JSONL version needs an
+explicit decoder, and a live cutover must carry current physical pack authority
+through a separately verified path. The current codec establishes version 1;
+automatic database replacement and Kit metadata-artifact integration remain
+follow-up work.
+
 Do not move docbank SQL or reachability policy into Kit. Do not reimplement Kit
 reader or lifecycle mechanics in docbank. A physical-storage bug shared by
 msgvault belongs in Kit; a decision about whether a docbank reference keeps a
