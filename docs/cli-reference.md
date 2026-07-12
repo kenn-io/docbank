@@ -213,9 +213,10 @@ packed storage remains valid after an interruption.
 
 `--max-bytes` is a soft raw-byte work budget. The blob that crosses the budget
 is committed before the operation stops, and output says the budget was
-exhausted; run the command again to continue. Zero (the default) is unlimited.
-`--json` includes packing, repair, deferral, and reconciliation counters from
-the shared Kit lifecycle engine.
+exhausted. Check `storage status` and rerun if loose blobs remain; crossing the
+budget does not itself prove that more eligible work exists. Zero (the default)
+is unlimited. `--json` includes packing, repair, deferral, and reconciliation
+counters from the shared Kit lifecycle engine.
 
 ## docbank verify
 

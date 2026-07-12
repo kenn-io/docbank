@@ -96,7 +96,7 @@ var storagePackCmd = &cobra.Command{
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "orphan loose sweep suppressed: reference inventory was incomplete")
 		}
 		if report.BudgetExhausted {
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "byte budget exhausted; run again to continue")
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "byte budget exhausted; rerun if loose blobs remain")
 		}
 		return nil
 	},
