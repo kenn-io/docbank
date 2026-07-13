@@ -5,9 +5,10 @@ description: Vault location, data layout, config.toml, and environment variables
 
 # Configuration
 
-The only required knob is where the vault lives. `config.toml` is
-optional and controls the daemon's listen address, auth, and idle
-behavior; every value has a default and the CLI works without the file.
+The only required knob is where the vault lives. `config.toml` is optional and
+controls the daemon's listen address, auth, idle behavior, and default backup
+repository. The vault works without the file; backup commands require either a
+configured repository or their explicit `--repo` flag.
 
 ## Vault location
 
@@ -55,10 +56,11 @@ snapshot; see [Vault Lifecycle](usage/lifecycle.md#take-a-coherent-manual-snapsh
 ## config.toml
 
 `$DOCBANK_HOME/config.toml` is read once, at daemon startup (`docbank
-daemon run` / `daemon start`). It's optional — every value has a default —
-and there are no per-field environment variable or flag overrides; the
-only environment knob remains `DOCBANK_HOME`. An unrecognized key is
-treated as a typo and rejected at startup rather than silently ignored.
+daemon run` / `daemon start`). It's optional. There are no general per-field
+environment overrides; the only environment knob remains `DOCBANK_HOME`.
+Backup commands can override their configured repository with `--repo`. An
+unrecognized key is treated as a typo and rejected at startup rather than
+silently ignored.
 
 ```toml
 # ~/.docbank/config.toml — optional, defaults shown
@@ -71,6 +73,10 @@ idle_timeout = "30m"  # background daemons only; "0" = never
 
 [web]
 enabled = true
+
+[backup]
+repo = ""           # no implicit repository; set a path or pass --repo
+zstd_level = 0      # 0 = Kit default; otherwise 1-19
 ```
 
 - **`bind_addr`** — the interface the API listens on. Loopback only
@@ -92,6 +98,12 @@ enabled = true
   Foreground `docbank daemon run` ignores this and never idles out.
 - **`[web] enabled`** — serves the placeholder web page at `/`. Disabling
   it 404s `/`; the API and `/docs` are unaffected.
+- **`[backup] repo`** — default immutable snapshot repository used when a
+  backup command or API request omits `repo`. `~/...` expands against the
+  daemon user's home; a relative path is resolved beneath `$DOCBANK_HOME`.
+  Keep the repository outside the live vault in normal deployments.
+- **`[backup] zstd_level`** — repository compression level. `0` uses Kit's
+  default; explicit values are limited to `1` through `19`.
 
 ### Bind validation
 

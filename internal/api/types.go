@@ -160,6 +160,55 @@ type VerifyReport struct {
 	Problems []VerifyProblem `json:"problems,omitempty"`
 }
 
+// BackupRepository identifies an initialized Kit snapshot repository.
+type BackupRepository struct {
+	ID   string `json:"id"`
+	Path string `json:"path"`
+}
+
+// BackupSnapshot is the stable API summary of one Docbank snapshot manifest.
+// It deliberately omits Kit's physical pack/index details.
+type BackupSnapshot struct {
+	ID              string  `json:"id"`
+	ParentID        string  `json:"parent_id,omitempty"`
+	CreatedAt       string  `json:"created_at"`
+	Tag             string  `json:"tag,omitempty"`
+	MetadataFormat  string  `json:"metadata_format"`
+	Nodes           int64   `json:"nodes"`
+	Files           int64   `json:"files"`
+	Blobs           int64   `json:"blobs"`
+	BlobBytes       int64   `json:"blob_bytes"`
+	PacksAdded      int     `json:"packs_added"`
+	BytesAdded      int64   `json:"bytes_added"`
+	DurationSeconds float64 `json:"duration_seconds"`
+}
+
+// BackupSnapshotList is returned as an object so later pagination can be
+// added without changing a top-level JSON array contract.
+type BackupSnapshotList struct {
+	Items []BackupSnapshot `json:"items"`
+}
+
+// BackupProgress is one structured update from a long-running backup
+// operation. Totals are zero when Kit cannot know them in advance.
+type BackupProgress struct {
+	Stage      string `json:"stage"`
+	Done       int64  `json:"done"`
+	Total      int64  `json:"total"`
+	BytesDone  int64  `json:"bytes_done"`
+	BytesTotal int64  `json:"bytes_total"`
+	Final      bool   `json:"final"`
+}
+
+// BackupCreateEvent is one line of the backup-create NDJSON stream. A result
+// or error is terminal; progress may appear zero or more times before it.
+type BackupCreateEvent struct {
+	Type     string          `json:"type" enum:"progress,result,error"`
+	Progress *BackupProgress `json:"progress,omitempty"`
+	Snapshot *BackupSnapshot `json:"snapshot,omitempty"`
+	Error    *Error          `json:"error,omitempty"`
+}
+
 func fromStoreNode(n store.Node) Node {
 	out := Node{
 		ID: n.ID, ParentID: n.ParentID, Name: n.Name, Kind: n.Kind,

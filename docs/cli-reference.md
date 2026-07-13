@@ -265,6 +265,30 @@ line per problem — `missing: <hash>` (row without file),
 then a summary `<n> blob(s) ok, <n> problem(s)`. Exits non-zero if any
 problem was found.
 
+## docbank backup
+
+```text
+docbank backup init [--repo <dir>] [--json]
+docbank backup create [--repo <dir>] [--tag <label>] [--jobs <n>]
+                      [--force-unlock] [--progress auto|bar|plain] [--json]
+docbank backup list [--repo <dir>] [--json]
+```
+
+Initializes an immutable Kit repository, captures a verified JSONL-native
+snapshot through the daemon, and lists snapshot history. `--repo` overrides
+`[backup] repo`; one of them is required. `create` briefly quiesces mutations
+only while pinning its logical view, then streams loose or packed content while
+normal daemon work resumes. `--jobs 1` serializes repository readers;
+`--force-unlock` is only for a repository lock whose owner is known to be gone.
+`create` draws per-stage progress bars on a terminal and durable progress lines
+when redirected; `--progress` can force either form. Every subcommand supports
+typed `--json` output; create suppresses progress in that mode. See
+[Backup](usage/backup.md).
+
+!!! info "Planned"
+    `docbank backup verify` and `docbank backup restore` are the next Phase 4
+    command slice and are not available yet.
+
 ## docbank daemon
 
 ```
@@ -346,5 +370,5 @@ background-spawned daemons.
     here with exact semantics when they ship. `docbank edit` and
     `docbank versions` (Phase 2b, [Editing & Versions](architecture/editing-and-versions.md));
     `docbank extract` (Phase 2b, [HTTP API](architecture/http-api.md));
-    `docbank tui` (Phase 3); `docbank backup init|create|list|verify|restore`
+    `docbank tui` (Phase 3); `docbank backup verify|restore`
     (Phase 4, [Backup](architecture/backup.md)).

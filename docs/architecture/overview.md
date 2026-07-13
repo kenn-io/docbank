@@ -126,6 +126,7 @@ metadata, durability rules, and physical storage primitives from
 
 !!! info "Planned — later clients and features"
     Versioned editing, tags, watched inboxes, text extraction, the TUI, and
-    built-in backup commands are designed but not implemented. They must fit
-    the boundaries above rather than introduce a privileged path around the
-    daemon or mutable blob bytes. See the [Roadmap](../roadmap.md).
+    built-in backup verification and restore are designed but not implemented.
+    Backup initialization, creation, and listing already use the daemon
+    boundary above. Later features must not introduce a privileged path around
+    the daemon or mutable blob bytes. See the [Roadmap](../roadmap.md).

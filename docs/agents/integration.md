@@ -153,6 +153,26 @@ checks with negative evidence, not request failures. A `412 stale_revision`
 means the node changed during or since inspection—read it again before deciding
 what content to verify.
 
+## Follow backup progress without scraping a CLI
+
+Agents that create snapshots can use `POST
+/api/v1/backup/snapshots/stream`. It accepts the same JSON object as the
+single-response endpoint:
+
+```bash
+curl --no-buffer --fail-with-body \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  -H "Content-Type: application/json" \
+  --data '{"repo":"/absolute/server/path","tag":"before-edit","jobs":1}' \
+  "$DOCBANK_URL/api/v1/backup/snapshots/stream"
+```
+
+The response is NDJSON. Each `progress` line contains `stage`, `done`, `total`,
+`bytes_done`, `bytes_total`, and `final`. The last line is either `result` with
+the stable snapshot summary or `error` with the normal problem fields. Treat
+EOF before that terminal line as failure. In particular, do not interpret HTTP
+200 as snapshot success: it only confirms that streaming began.
+
 ## Use revisions for read-modify-write
 
 ID-addressed move, trash, and restore operations require `If-Match`. The

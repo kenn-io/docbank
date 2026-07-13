@@ -45,6 +45,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `GET /trash` · `POST /trash/empty` `{run, older_than}` | list / report or hard-delete trash roots | Implemented |
 | `POST /gc` `{run}` · `POST /verify` | reclaim unreachable blobs / re-hash all blobs | Implemented |
 | `GET /storage` · `POST /storage/pack` · `POST /storage/repack` | inspect usage / pack loose blobs / compact sparse packs | Implemented |
+| `POST /backup/init` · `POST /backup/snapshots` · `POST /backup/snapshots/stream` · `GET /backup/snapshots` | initialize a repository / create with JSON or streamed progress / list snapshots | Implemented |
 
 Root-level, outside `/api/v1` and auth-exempt: `GET /health`, `GET
 /api/ping` (daemon discovery), `GET /docs` and the OpenAPI documents,
@@ -62,6 +63,29 @@ its own shutdown token.
 IDs are canonical everywhere: every response carries them, and mutating
 endpoints address nodes by ID so a rename can't strand a concurrent
 client's reference.
+
+### Backup repository endpoints
+
+`POST /backup/init` accepts `{"repo": "/absolute/server/path"}` and returns
+the repository identity and canonical path. `repo` may be omitted when
+`[backup] repo` is configured. `POST /backup/snapshots` accepts the same
+optional repository plus `tag`, `jobs`, and `force_unlock`; it returns a
+stable logical summary rather than exposing Kit's physical manifest layout.
+The `/backup/snapshots/stream` variant accepts the same body and returns
+`application/x-ndjson`: zero or more `progress` events followed by exactly one
+terminal `result` or `error` event. Progress data carries stage, item counts,
+byte counts, and a final-stage marker, so clients can render bars without
+parsing human text. Because response headers commit when streaming begins, an
+HTTP 200 means only that the stream started; clients must read through EOF and
+require the terminal event. The CLI uses this variant for human output and the
+single-JSON endpoint for `--json`.
+`GET /backup/snapshots?repo=...` returns `{items: [...]}` so pagination can be
+added later without changing a top-level array contract.
+
+Explicit repository paths are server filesystem paths and must be absolute.
+The CLI resolves a relative `--repo` against its own working directory before
+sending it. API clients over an SSH tunnel must reason about the daemon host's
+filesystem, not the caller's. Every endpoint requires the daemon API key.
 
 ### Path resolution: a query parameter, not a URL segment
 
@@ -98,6 +122,7 @@ and maintenance are explicit exceptions:
 | `POST /ingest` | none — long-running bulk operation with per-path partial success; the destination directory may legitimately change while it runs |
 | `POST /uploads` | none — creates or idempotently resolves one file under the stable `parent_id`; name/content collision policy is transactional |
 | `POST /trash/empty`, `POST /gc`, `POST /verify` | none — vault-wide maintenance, serialized by the maintenance gate |
+| `POST /backup/snapshots`, `POST /backup/snapshots/stream` | none — mutations pause only while pinning one logical snapshot; a preservation lease queues maintenance for the full capture, and the repository has its own exclusive lock |
 
 A stale revision gets `412 Precondition Failed`, telling the caller to
 re-read and retry. A required `If-Match` that's missing gets `428
@@ -224,6 +249,15 @@ ingest) take the read side and may run concurrently with each other;
 maintenance handlers take the write side. Requests queue rather than
 fail, and maintenance routes are exempt from the per-request timeout
 since `gc`/`verify` can legitimately run long on a large vault.
+
+Backup creation uses the mutation-exclusive side only for Kit's freeze window.
+Once Docbank's deferred read transaction is pinned, ordinary mutations continue
+into SQLite's WAL while verified metadata and blob streams are captured. The
+backup retains a separate shared preservation lease until capture ends;
+maintenance takes that lease exclusively, so GC cannot delete a loose blob or
+catalog mapping still referenced by the pinned snapshot. The create route is
+timeout-exempt; cancellation still propagates through Kit and prevents
+publication of a snapshot manifest.
 
 ## Auth
 

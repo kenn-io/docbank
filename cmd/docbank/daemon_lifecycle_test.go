@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"testing"
 	"time"
 
@@ -124,30 +125,40 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	assert.Contains(t, out, "already running")
 	assert.Equal(t, oldPID, parsePID(t, out))
 
-	// A same-version daemon without this binary's protocol revision is also
-	// stale. Simulate an older dev build by removing the field from its live
-	// runtime record; start must replace it before returning a client.
+	// Initialize the repository before making the runtime record stale: the
+	// following backup create must replace that daemon before it calls the new
+	// progress-stream endpoint.
+	repoPath := filepath.Join(t.TempDir(), "backup")
+	out, err = run(oldBin, "backup", "init", "--repo", repoPath)
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "initialized backup repository")
+
+	// Simulate the immediately preceding same-version dev protocol. Data
+	// commands share daemon start's convergence path, so backup create must
+	// replace it instead of reaching the old daemon and failing with 404.
 	recs, err := client.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
-	require.NotEmpty(t, recs[0].Metadata["protocol_version"])
-	delete(recs[0].Metadata, "protocol_version")
+	require.Equal(t, "5", recs[0].Metadata["protocol_version"])
+	recs[0].Metadata["protocol_version"] = "4"
 	_, err = client.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
 
-	out, err = run(oldBin, "daemon", "start")
+	out, err = run(oldBin, "backup", "create", "--repo", repoPath, "--progress", "plain")
 	require.NoError(t, err, out)
-	assert.Contains(t, out, "replaced daemon dev (pid "+oldPID+") with dev")
-	pids := pidRe.FindAllStringSubmatch(out, -1)
-	require.Len(t, pids, 2, out)
-	protocolPID := pids[1][1]
+	assert.Contains(t, out, "freeze:")
+	assert.Contains(t, out, "created snapshot")
+	recs, err = client.RuntimeStore(dir).List()
+	require.NoError(t, err)
+	require.Len(t, recs, 1)
+	protocolPID := strconv.Itoa(recs[0].PID)
 	assert.NotEqual(t, oldPID, protocolPID)
 
 	// A mismatched-version start stops the stale daemon and starts its own.
 	out, err = run(newBin, "daemon", "start")
 	require.NoError(t, err, out)
 	assert.Contains(t, out, "replaced daemon dev (pid "+protocolPID+") with v9.9.9-test")
-	pids = pidRe.FindAllStringSubmatch(out, -1) // old pid, then the new daemon's
+	pids := pidRe.FindAllStringSubmatch(out, -1) // old pid, then the new daemon's
 	require.Len(t, pids, 2, out)
 	newPID := pids[1][1]
 	assert.NotEqual(t, protocolPID, newPID)
