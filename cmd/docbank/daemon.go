@@ -122,7 +122,7 @@ func runServe(ctx context.Context) error {
 
 	tracker := api.NewActivityTracker()
 	srv := api.NewServer(api.Deps{
-		Store: s, Blobs: blobs, Cfg: cfg, Logger: logger,
+		Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Logger: logger,
 		StartedAt: time.Now(), ShutdownToken: shutdownToken, Shutdown: stop, Tracker: tracker,
 	})
 	httpSrv := &http.Server{

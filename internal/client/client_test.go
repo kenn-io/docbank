@@ -48,7 +48,7 @@ func newClient(t *testing.T, clientKey string) (*client.Client, *store.Store) {
 	blobs, err := blob.New(store.NewPackCatalog(s), blobsDir)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = blobs.Close() })
-	srv := api.NewServer(api.Deps{Store: s, Blobs: blobs, Cfg: cfg})
+	srv := api.NewServer(api.Deps{Store: s, Blobs: blobs, VaultRoot: dir, Cfg: cfg})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return client.New(ts.URL, clientKey), s
@@ -207,6 +207,42 @@ func TestBackupCreateStreamRoundTripAndTypedError(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{snapshot.ID}, quick.Snapshots)
 	assert.Positive(t, quick.BytesRead, "quick verification still reads metadata")
+
+	cancelledTarget := filepath.Join(t.TempDir(), "cancelled-restore")
+	restoreCtx, cancelRestore := context.WithCancel(t.Context())
+	_, err = c.BackupRestoreStream(restoreCtx, client.BackupRestoreOptions{
+		Repo: repoPath, Target: cancelledTarget, SnapshotID: snapshot.ID, Jobs: 1,
+	}, func(api.BackupProgress) { cancelRestore() })
+	require.Error(t, err)
+	_, err = os.Stat(filepath.Join(cancelledTarget, "docbank.db"))
+	require.ErrorIs(t, err, os.ErrNotExist, "cancelled restore must not publish its database")
+	require.Eventually(t, func() bool {
+		lock, lockErr = repo.AcquireExclusiveLock("restore-cancel-test", false)
+		return lockErr == nil
+	}, 5*time.Second, 10*time.Millisecond,
+		"server-side cancellation must release the restore repository lock")
+	require.NoError(t, lock.Release())
+
+	var restoreEvents []api.BackupProgress
+	restored, err := c.BackupRestoreStream(t.Context(), client.BackupRestoreOptions{
+		Repo: repoPath, Target: filepath.Join(t.TempDir(), "stream-restore"),
+		SnapshotID: snapshot.ID, Jobs: 1,
+	}, func(event api.BackupProgress) { restoreEvents = append(restoreEvents, event) })
+	require.NoError(t, err)
+	assert.Equal(t, snapshot.ID, restored.SnapshotID)
+	assert.Equal(t, int64(1), restored.DocumentBlobs)
+	assert.Equal(t, int64(1), restored.PackedBlobs)
+	assert.True(t, restored.Proof.ContentVerified)
+	require.NotEmpty(t, restoreEvents)
+	assert.Equal(t, "proof", restoreEvents[len(restoreEvents)-1].Stage)
+	assert.True(t, restoreEvents[len(restoreEvents)-1].Final)
+
+	restored, err = c.BackupRestore(t.Context(), client.BackupRestoreOptions{
+		Repo: repoPath, Target: filepath.Join(t.TempDir(), "json-restore"), Jobs: 1,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, snapshot.ID, restored.SnapshotID)
+	assert.True(t, restored.Proof.SQLiteIntegrity)
 }
 
 func TestContentIdentityAndVerificationRoundTrip(t *testing.T) {

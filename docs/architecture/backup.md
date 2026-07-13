@@ -87,10 +87,18 @@ snapshots, and returns every finding rather than stopping at the first damaged
 object. Kit's shared repository lock permits concurrent verifies and restores
 while excluding repository writers.
 
-!!! info "Planned — remaining Phase 4 command"
-    `docbank backup restore` has not landed. The restore adapter described above
-    is internal until the recovery CLI/API defines target confinement,
-    overwrite behavior, and operator output.
+Restore is likewise daemon-mediated but never mutates the running store. Before
+Kit receives a target, Docbank canonicalizes its existing path prefix and
+rejects any parent, descendant, or symlink alias overlapping the live vault or
+repository. An existing vault target's lock is held across the operation to
+exclude another daemon. Kit then holds an `os.Root` for target-confined writes.
+Compatible
+packs are verified and published before one staged catalog replacement;
+incompatible selections fall back to verified loose content. The restored
+database remains private until content verification, SQLite integrity, and
+manifest-stat proofs all pass. The streaming API exposes those stages and a
+terminal typed proof; the non-streaming endpoint keeps agent output to one JSON
+document.
 
 Backup reachability is intentionally broader than GC reachability: every
 `blobs` row is captured, including a row that has become a GC candidate but has

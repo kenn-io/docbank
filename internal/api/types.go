@@ -235,6 +235,47 @@ type BackupVerifyEvent struct {
 	Error    *Error              `json:"error,omitempty"`
 }
 
+// BackupRestoreFallback summarizes content that could not retain its source
+// pack representation and was verified and published loose instead.
+type BackupRestoreFallback struct {
+	Reason string `json:"reason" enum:"pack_container_limit,pack_footer_limit,pack_entry_count_limit,pack_encoding,pack_publication,blob_limit"`
+	Count  int    `json:"count" minimum:"1"`
+}
+
+// BackupRestoreProof makes the successful restore contract explicit to API
+// clients. A restore report is returned only after all three checks pass.
+type BackupRestoreProof struct {
+	ContentVerified bool `json:"content_verified"`
+	SQLiteIntegrity bool `json:"sqlite_integrity"`
+	ManifestStats   bool `json:"manifest_stats"`
+}
+
+// BackupRestoreReport summarizes a completely materialized and proved vault.
+type BackupRestoreReport struct {
+	SnapshotID      string                  `json:"snapshot_id"`
+	Target          string                  `json:"target"`
+	DatabasePath    string                  `json:"database_path"`
+	DatabaseBytes   int64                   `json:"database_bytes"`
+	DocumentBlobs   int64                   `json:"document_blobs"`
+	DocumentBytes   int64                   `json:"document_bytes"`
+	PackedBlobs     int64                   `json:"packed_blobs"`
+	LooseBlobs      int64                   `json:"loose_blobs"`
+	Packs           int                     `json:"packs"`
+	Fallbacks       []BackupRestoreFallback `json:"fallbacks"`
+	ExtrasFiles     int                     `json:"extras_files"`
+	DurationSeconds float64                 `json:"duration_seconds"`
+	Proof           BackupRestoreProof      `json:"proof"`
+}
+
+// BackupRestoreEvent is one line of the backup-restore NDJSON stream. A report
+// or error is terminal; progress may appear zero or more times before it.
+type BackupRestoreEvent struct {
+	Type     string               `json:"type" enum:"progress,result,error"`
+	Progress *BackupProgress      `json:"progress,omitempty"`
+	Report   *BackupRestoreReport `json:"report,omitempty"`
+	Error    *Error               `json:"error,omitempty"`
+}
+
 func fromStoreNode(n store.Node) Node {
 	out := Node{
 		ID: n.ID, ParentID: n.ParentID, Name: n.Name, Kind: n.Kind,

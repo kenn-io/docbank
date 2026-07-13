@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -202,6 +203,62 @@ var backupVerifyCmd = &cobra.Command{
 	},
 }
 
+var (
+	backupRestoreRepo        string
+	backupRestoreTarget      string
+	backupRestoreOverwrite   bool
+	backupRestoreJobs        int
+	backupRestoreForceUnlock bool
+	backupRestoreJSON        bool
+	backupRestoreProgress    string
+)
+
+var backupRestoreCmd = &cobra.Command{
+	Use:   "restore [SNAPSHOT]",
+	Short: "Restore and prove a snapshot in a separate vault directory",
+	Args:  cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		repo, err := absoluteBackupRepo(backupRestoreRepo)
+		if err != nil {
+			return err
+		}
+		target, err := absoluteBackupTarget(backupRestoreTarget)
+		if err != nil {
+			return err
+		}
+		c, err := client.Ensure(cmd.Context())
+		if err != nil {
+			return err
+		}
+		opts := client.BackupRestoreOptions{
+			Repo: repo, Target: target, Overwrite: backupRestoreOverwrite,
+			Jobs: backupRestoreJobs, ForceUnlock: backupRestoreForceUnlock,
+		}
+		if len(args) == 1 {
+			opts.SnapshotID = args[0]
+		}
+		var report api.BackupRestoreReport
+		if backupRestoreJSON {
+			report, err = c.BackupRestore(cmd.Context(), opts)
+		} else {
+			mode, modeErr := backupProgressModeFromFlag(backupRestoreProgress)
+			if modeErr != nil {
+				return modeErr
+			}
+			renderer := newBackupProgressRenderer(cmd.ErrOrStderr(), mode)
+			defer renderer.finish()
+			report, err = c.BackupRestoreStream(cmd.Context(), opts, renderer.handle)
+		}
+		if err != nil {
+			return err
+		}
+		if backupRestoreJSON {
+			return writeBackupJSON(cmd.OutOrStdout(), report)
+		}
+		return writeBackupRestoreReport(cmd.OutOrStdout(), report)
+	},
+}
+
 func absoluteBackupRepo(repo string) (string, error) {
 	if repo == "" {
 		return "", nil
@@ -209,6 +266,17 @@ func absoluteBackupRepo(repo string) (string, error) {
 	abs, err := filepath.Abs(repo)
 	if err != nil {
 		return "", fmt.Errorf("resolving backup repository %q: %w", repo, err)
+	}
+	return filepath.Clean(abs), nil
+}
+
+func absoluteBackupTarget(target string) (string, error) {
+	if target == "" {
+		return "", errors.New("backup restore: --target is required")
+	}
+	abs, err := filepath.Abs(target)
+	if err != nil {
+		return "", fmt.Errorf("resolving backup restore target %q: %w", target, err)
 	}
 	return filepath.Clean(abs), nil
 }
@@ -267,6 +335,36 @@ func writeBackupVerifyReport(w io.Writer, report api.BackupVerifyReport) error {
 	return nil
 }
 
+func writeBackupRestoreReport(w io.Writer, report api.BackupRestoreReport) error {
+	lines := []string{
+		fmt.Sprintf("restored snapshot %s to %s\n", report.SnapshotID, report.Target),
+		fmt.Sprintf("database: %s (%s)\n", report.DatabasePath,
+			formatBackupBytes(report.DatabaseBytes)),
+		fmt.Sprintf("documents: %d blob(s), %s; %d packed in %d pack(s), %d loose\n",
+			report.DocumentBlobs, formatBackupBytes(report.DocumentBytes), report.PackedBlobs,
+			report.Packs, report.LooseBlobs),
+	}
+	if len(report.Fallbacks) > 0 {
+		parts := make([]string, 0, len(report.Fallbacks))
+		for _, fallback := range report.Fallbacks {
+			parts = append(parts, fmt.Sprintf("%s=%d", fallback.Reason, fallback.Count))
+		}
+		lines = append(lines, "pack fallbacks: "+strings.Join(parts, ", ")+"\n")
+	}
+	if report.ExtrasFiles > 0 {
+		lines = append(lines, fmt.Sprintf("extras: %d file(s)\n", report.ExtrasFiles))
+	}
+	lines = append(lines,
+		"proof: content verified, SQLite integrity ok, manifest stats match\n",
+		fmt.Sprintf("duration: %.1fs\n", report.DurationSeconds))
+	for _, line := range lines {
+		if _, err := io.WriteString(w, line); err != nil {
+			return fmt.Errorf("writing backup restore output: %w", err)
+		}
+	}
+	return nil
+}
+
 func init() {
 	backupInitCmd.Flags().StringVar(&backupInitRepo, "repo", "", "backup repository directory")
 	backupInitCmd.Flags().BoolVar(&backupInitJSON, "json", false, "machine-readable output")
@@ -292,6 +390,19 @@ func init() {
 	backupVerifyCmd.Flags().BoolVar(&backupVerifyJSON, "json", false, "machine-readable output")
 	backupVerifyCmd.Flags().StringVar(&backupVerifyProgress, "progress", "auto",
 		"progress output mode: auto, bar, or plain (suppressed by --json)")
-	backupCmd.AddCommand(backupInitCmd, backupCreateCmd, backupListCmd, backupVerifyCmd)
+	backupRestoreCmd.Flags().StringVar(&backupRestoreRepo, "repo", "", "backup repository directory")
+	backupRestoreCmd.Flags().StringVar(&backupRestoreTarget, "target", "", "directory to restore into (required)")
+	_ = backupRestoreCmd.MarkFlagRequired("target")
+	backupRestoreCmd.Flags().BoolVar(&backupRestoreOverwrite, "overwrite", false,
+		"allow restoring into a non-empty target directory")
+	backupRestoreCmd.Flags().IntVar(&backupRestoreJobs, "jobs", 0,
+		"concurrent pack readers (0 uses one per CPU; use 1 for spinning disks or NAS shares)")
+	backupRestoreCmd.Flags().BoolVar(&backupRestoreForceUnlock, "force-unlock", false,
+		"break a fresh repository lock only when its owner is known to be gone")
+	backupRestoreCmd.Flags().BoolVar(&backupRestoreJSON, "json", false, "machine-readable output")
+	backupRestoreCmd.Flags().StringVar(&backupRestoreProgress, "progress", "auto",
+		"progress output mode: auto, bar, or plain (suppressed by --json)")
+	backupCmd.AddCommand(backupInitCmd, backupCreateCmd, backupListCmd, backupVerifyCmd,
+		backupRestoreCmd)
 	rootCmd.AddCommand(backupCmd)
 }

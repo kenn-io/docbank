@@ -24,6 +24,7 @@ const kitPingPath = kitdaemon.DefaultPingPath
 type Deps struct {
 	Store         *store.Store
 	Blobs         *blob.Store
+	VaultRoot     string // live vault root; backup restore must remain disjoint
 	Cfg           config.Config
 	Logger        *slog.Logger // nil → slog.Default()
 	StartedAt     time.Time
@@ -50,6 +51,9 @@ func NewServer(d Deps) *Server {
 		// OpenAPIYAML's offline document render, which supplies a
 		// placeholder key precisely to avoid tripping this check.
 		panic("api: NewServer requires a non-empty Cfg.Server.APIKey")
+	}
+	if d.Store != nil && d.VaultRoot == "" {
+		panic("api: NewServer requires VaultRoot when serving a store")
 	}
 	installErrorFormatter()
 	if d.Logger == nil {

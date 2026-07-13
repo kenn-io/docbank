@@ -139,7 +139,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	recs, err := client.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
-	require.Equal(t, "6", recs[0].Metadata["protocol_version"])
+	require.Equal(t, "7", recs[0].Metadata["protocol_version"])
 	recs[0].Metadata["protocol_version"] = "4"
 	_, err = client.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)

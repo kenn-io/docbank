@@ -111,15 +111,13 @@ allow replacing an unversioned development build.
 
 ## Take a coherent manual snapshot
 
-Docbank provides `backup init`, `backup create`, `backup list`, and `backup
-verify` for incremental capture and independent integrity proof in an
-immutable Kit repository; see [Backup](backup.md). Those repositories are
-compressed but **not encrypted**, and user-facing `backup restore` has not
-landed yet.
+Docbank provides `backup init`, `backup create`, `backup list`, `backup
+verify`, and `backup restore` for incremental capture and proved recovery from
+an immutable Kit repository; see [Backup](backup.md). Those repositories are
+compressed but **not encrypted**.
 
-A stopped-vault copy remains the complete manual recovery path while restore is
-planned. Stop the daemon before copying so the SQLite database and blob catalog
-cannot change during the copy.
+A stopped-vault copy remains a simple alternative. Stop the daemon before
+copying so the SQLite database and blob catalog cannot change during the copy.
 
 ```bash
 vault="${DOCBANK_HOME:-$HOME/.docbank}"
@@ -150,10 +148,11 @@ a running vault. To replace a damaged vault, stop the daemon, preserve the old
 directory under another name, restore the snapshot, and verify before resuming
 normal use.
 
-!!! info "Planned — backup restore"
-    `docbank backup restore` will complete the built-in recovery workflow.
-    Initialization, incremental capture, listing, and repository verification
-    already exist for unencrypted repositories. See [Backup](backup.md).
+For routine recovery testing, prefer restoring the latest built-in snapshot to
+a separate target and inspecting it under a separate `DOCBANK_HOME`. Restore
+already verifies repository reads, SQLite integrity, and manifest statistics
+before it reports success; `docbank verify` then exercises the resulting live
+store through its normal daemon boundary.
 
 ## Move a vault
 

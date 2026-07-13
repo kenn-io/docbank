@@ -635,6 +635,109 @@ func backupVerifyRequest(opts BackupVerifyOptions) map[string]any {
 	}
 }
 
+type BackupRestoreOptions struct {
+	Repo        string
+	Target      string
+	SnapshotID  string
+	Overwrite   bool
+	Jobs        int
+	ForceUnlock bool
+}
+
+func (c *Client) BackupRestore(
+	ctx context.Context, opts BackupRestoreOptions,
+) (api.BackupRestoreReport, error) {
+	var out api.BackupRestoreReport
+	err := c.do(ctx, http.MethodPost, "/api/v1/backup/restore", nil,
+		backupRestoreRequest(opts), &out)
+	return out, err
+}
+
+// BackupRestoreStream restores and proves a snapshot while delivering
+// structured progress. Success requires a terminal report event, not merely
+// successful HTTP headers.
+func (c *Client) BackupRestoreStream(
+	ctx context.Context,
+	opts BackupRestoreOptions,
+	progress func(api.BackupProgress),
+) (api.BackupRestoreReport, error) {
+	body, err := json.Marshal(backupRestoreRequest(opts))
+	if err != nil {
+		return api.BackupRestoreReport{}, fmt.Errorf("encoding backup restore request: %w", err)
+	}
+	const path = "/api/v1/backup/restore/stream"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+path, bytes.NewReader(body))
+	if err != nil {
+		return api.BackupRestoreReport{}, fmt.Errorf("building backup restore stream request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/x-ndjson")
+	if c.key != "" {
+		req.Header.Set("X-Api-Key", c.key)
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return api.BackupRestoreReport{}, fmt.Errorf("calling daemon (POST %s): %w", path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return api.BackupRestoreReport{}, decodeError(resp)
+	}
+
+	decoder := json.NewDecoder(resp.Body)
+	var result *api.BackupRestoreReport
+	for {
+		var event api.BackupRestoreEvent
+		if err := decoder.Decode(&event); err != nil {
+			if errors.Is(err, io.EOF) {
+				if result == nil {
+					return api.BackupRestoreReport{}, errors.New(
+						"backup restore progress stream ended without a result")
+				}
+				return *result, nil
+			}
+			return api.BackupRestoreReport{}, fmt.Errorf("decoding backup restore progress: %w", err)
+		}
+		if result != nil {
+			return api.BackupRestoreReport{}, errors.New(
+				"backup restore progress stream continued after its result")
+		}
+		switch event.Type {
+		case "progress":
+			if event.Progress == nil || event.Report != nil || event.Error != nil {
+				return api.BackupRestoreReport{}, errors.New(
+					"backup restore returned malformed progress event")
+			}
+			if progress != nil {
+				progress(*event.Progress)
+			}
+		case "result":
+			if event.Report == nil || event.Progress != nil || event.Error != nil {
+				return api.BackupRestoreReport{}, errors.New(
+					"backup restore returned malformed result event")
+			}
+			report := *event.Report
+			result = &report
+		case "error":
+			if event.Error == nil || event.Progress != nil || event.Report != nil {
+				return api.BackupRestoreReport{}, errors.New(
+					"backup restore returned malformed error event")
+			}
+			return api.BackupRestoreReport{}, apiProblemError(*event.Error)
+		default:
+			return api.BackupRestoreReport{}, fmt.Errorf(
+				"backup restore returned unknown progress event type %q", event.Type)
+		}
+	}
+}
+
+func backupRestoreRequest(opts BackupRestoreOptions) map[string]any {
+	return map[string]any{
+		"repo": opts.Repo, "target": opts.Target, "snapshot_id": opts.SnapshotID,
+		"overwrite": opts.Overwrite, "jobs": opts.Jobs, "force_unlock": opts.ForceUnlock,
+	}
+}
+
 func (c *Client) Shutdown(ctx context.Context, token string) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
