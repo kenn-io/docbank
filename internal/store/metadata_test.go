@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,12 +25,30 @@ func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
 	seedMetadataRoundTrip(t, source)
+	filesystemMTime := time.Date(2026, time.February, 3, 4, 5, 6, 120_000_000, time.UTC).
+		Format(time.RFC3339Nano)
+	ingestID, err := source.BeginIngest(ctx, "cli", "actual filesystem timestamp")
+	require.NoError(t, err)
+	_, added, err := source.IngestFile(ctx, ingestID, source.RootID(), "filesystem-time.txt",
+		"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", 4,
+		"text/plain", "/source/filesystem-time.txt", filesystemMTime)
+	require.NoError(t, err)
+	require.True(t, added)
+	require.NoError(t, source.withTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO nodes(id,parent_id,name,kind,created_at,modified_at)
+			VALUES(100,1,'later-deleted','dir','2026-02-04T00:00:00.000000000Z','2026-02-04T00:00:00.000000000Z')`); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `DELETE FROM nodes WHERE id=100`)
+		return err
+	}))
 
 	var first, second bytes.Buffer
 	require.NoError(t, source.ExportMetadata(ctx, &first))
 	require.NoError(t, source.ExportMetadata(ctx, &second))
 	assert.Equal(t, first.Bytes(), second.Bytes(), "unchanged metadata must export byte-identically")
-	assert.Contains(t, first.String(), `{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":50}`)
+	assert.Contains(t, first.String(), `{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":100}`)
+	assert.Contains(t, first.String(), `"original_mtime":"2026-02-03T04:05:06.12Z"`)
 	assert.Contains(t, first.String(), `{"type":"node","id":7,"parent_id":1,"name":"Projects","kind":"dir"`)
 	assert.NotContains(t, first.String(), "blob_pack_index")
 	assert.NotContains(t, first.String(), "metadata-pack")
@@ -64,7 +83,7 @@ func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 
 	created, err := target.Mkdir(ctx, target.RootID(), "after-restore")
 	require.NoError(t, err)
-	assert.Greater(t, created.ID, int64(50), "AUTOINCREMENT must not reuse any historically allocated ID")
+	assert.Greater(t, created.ID, int64(100), "AUTOINCREMENT must not reuse any historically allocated ID")
 }
 
 func TestImportMetadataRejectsDanglingContentAndRollsBack(t *testing.T) {
@@ -208,7 +227,7 @@ func seedMetadataRoundTrip(t *testing.T, s *Store) {
 			`INSERT INTO ingests(id,started_at,source_kind,source_desc)
 			 VALUES(4,'2026-01-08T00:00:00.000000000Z','filesystem','dropbox')`,
 			`INSERT INTO provenance(node_id,ingest_id,original_path,original_mtime)
-			 VALUES(10,4,'/source/report.txt','2025-12-31T23:00:00.000000000Z')`,
+			 VALUES(10,4,'/source/report.txt','2025-12-31T23:00:00.12Z')`,
 			`INSERT INTO tags(id,name) VALUES(8,'important')`,
 			`INSERT INTO node_tags(node_id,tag_id) VALUES(10,8)`,
 			`INSERT INTO extracted_text(blob_hash,extractor,extractor_version,status,error,attempts,text,extracted_at)

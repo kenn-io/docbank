@@ -245,7 +245,9 @@ with deferred foreign-key checks. Unknown format versions, unknown record types
 or fields, uniqueness failures, orphaned extraction rows, and dangling
 references abort the transaction. Timestamps must use Docbank's canonical UTC
 representation because retention queries compare their fixed-width strings
-lexicographically.
+lexicographically. The exception is provenance `original_mtime`: it records an
+external filesystem value using canonical UTC `RFC3339Nano`, matching ordinary
+ingestion, and is never used as a retention cutoff.
 Explicit node IDs advance SQLite's `AUTOINCREMENT` sequence, preserving the
 invariant that a deleted historical ID is never silently reused.
 

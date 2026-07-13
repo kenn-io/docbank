@@ -524,7 +524,7 @@ func importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw json
 			return errors.New("invalid provenance record")
 		}
 		if v.OriginalMTime != nil {
-			if err := validateMetadataTime("provenance original_mtime", *v.OriginalMTime); err != nil {
+			if err := validateProvenanceTime(*v.OriginalMTime); err != nil {
 				return err
 			}
 		}
@@ -680,6 +680,17 @@ func validateMetadataTime(field, value string) error {
 	}
 	if value != parsed.UTC().Format(timestampLayout) {
 		return fmt.Errorf("invalid %s: timestamp is not canonical UTC", field)
+	}
+	return nil
+}
+
+func validateProvenanceTime(value string) error {
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return fmt.Errorf("invalid provenance original_mtime: %w", err)
+	}
+	if value != parsed.UTC().Format(time.RFC3339Nano) {
+		return errors.New("invalid provenance original_mtime: timestamp is not canonical UTC RFC3339Nano")
 	}
 	return nil
 }
