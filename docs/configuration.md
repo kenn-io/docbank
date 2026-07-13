@@ -30,14 +30,13 @@ The directory layout is created on first use:
 ├── logs/                # JSON logs from background daemons
 ├── config.toml          # optional; see below
 ├── vault.lock           # advisory lock, held by a daemon or target restore
-├── launch.lock          # serializes racing daemon auto-starts
 └── daemon.<pid>.json    # runtime record of a live daemon
 ```
 
 `docbank.db` and `blobs/` together are the archive; back up both.
 `config.toml` is configuration, not archive data — optional, but back it
-up if you've customized it (it can hold an `api_key`). `vault.lock`,
-`launch.lock`, and `daemon.<pid>.json` are coordination/runtime state, safe to
+up if you've customized it (it can hold an `api_key`). `vault.lock` and
+`daemon.<pid>.json` are coordination/runtime state, safe to
 ignore in backups and safe to delete when no daemon or restore is running
 (`docbank daemon stop` removes its own record cleanly on graceful
 shutdown). The database
@@ -50,7 +49,8 @@ Docbank also keeps persistent per-user coordination files under
 `~/.local/state/docbank/target-locks`, using the home directory from the
 operating-system account record. They contain no document data, but must not be
 deleted: daemons and restores use their stable identities to exclude overlapping
-vault trees, including simultaneous restores whose target trees overlap.
+vault trees, including simultaneous restores whose target trees overlap, and
+to serialize daemon launch before the launcher owns or creates the vault root.
 
 !!! warning
     Don't edit or prune `blobs/` by hand. Blob files are referenced by

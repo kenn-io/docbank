@@ -121,6 +121,18 @@ func TestOpenAndLockExclusiveLocksEachCreatedComponentBeforeDescending(t *testin
 		"a newly claimed component must stop startup before deeper creation")
 }
 
+func TestTryLockLaunchDoesNotCreateVaultRoot(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "missing", "vault")
+	lock, err := (Layout{Root: target}).TryLockLaunch()
+	require.NoError(t, err)
+	_, err = (Layout{Root: target}).TryLockLaunch()
+	require.ErrorIs(t, err, ErrVaultLocked)
+	require.NoError(t, lock.Release())
+	_, err = os.Lstat(filepath.Dir(target))
+	require.ErrorIs(t, err, os.ErrNotExist,
+		"launch coordination must live outside the unowned vault tree")
+}
+
 func TestTargetLockRegistryIgnoresProcessHomeEnvironment(t *testing.T) {
 	before, err := targetLockRegistryDir()
 	require.NoError(t, err)

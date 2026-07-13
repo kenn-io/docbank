@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/home"
 )
 
 func buildDocbank(t *testing.T) string {
@@ -99,6 +100,24 @@ func TestLifecycleStartStatusRestartStop(t *testing.T) {
 	_, _, found, err := client.Find(ctx, dir)
 	require.NoError(t, err)
 	assert.False(t, found)
+}
+
+func TestDaemonStartDoesNotInitializeRestoreOwnedMissingTarget(t *testing.T) {
+	bin := buildDocbank(t)
+	parent := filepath.Join(t.TempDir(), "restore-target")
+	require.NoError(t, os.Mkdir(parent, 0o700))
+	lock, err := (home.Layout{Root: parent}).TryLockExclusive()
+	require.NoError(t, err)
+	defer func() { _ = lock.Release() }()
+
+	target := filepath.Join(parent, "docbank.db")
+	cmd := exec.Command(bin, "daemon", "start")
+	cmd.Env = append(os.Environ(), "DOCBANK_HOME="+target)
+	out, err := cmd.CombinedOutput()
+	require.Error(t, err, string(out))
+	_, err = os.Lstat(target)
+	require.ErrorIs(t, err, os.ErrNotExist,
+		"the launcher and failed child must not initialize a restore-owned target")
 }
 
 func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {

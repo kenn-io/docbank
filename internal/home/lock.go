@@ -6,6 +6,7 @@
 package home
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -67,6 +68,30 @@ func (l Layout) OpenAndLockExclusive() (*os.Root, *Lock, error) {
 		return nil, nil, fmt.Errorf("opening vault root %s: %w", l.Root, err)
 	}
 	return l.createAndLockExclusive()
+}
+
+// TryLockLaunch serializes daemon starters without creating or modifying the
+// vault root. The lock lives in the private per-user registry because startup
+// must coordinate before it owns the target tree.
+func (l Layout) TryLockLaunch() (*Lock, error) {
+	target, err := canonicalLockTarget(l.Root)
+	if err != nil {
+		return nil, err
+	}
+	registry, err := targetLockRegistryDir()
+	if err != nil {
+		return nil, err
+	}
+	digest := sha256.Sum256([]byte(target))
+	f, err := openRegistryLock(registry, fmt.Sprintf("launch-%x.lock", digest))
+	if err != nil {
+		return nil, err
+	}
+	if err := flock(f, syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = f.Close()
+		return nil, classifyLockError(err, target)
+	}
+	return &Lock{files: []*os.File{f}}, nil
 }
 
 // TryLockExclusiveRoot coordinates an exclusive vault owner against the exact
@@ -342,6 +367,33 @@ func directoryIdentity(info os.FileInfo, path string) (string, error) {
 		return "", fmt.Errorf("reading target-tree identity for %s", path)
 	}
 	return fmt.Sprintf("dev-%x-ino-%x", stat.Dev, stat.Ino), nil
+}
+
+func canonicalLockTarget(path string) (string, error) {
+	target, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolving vault root %s: %w", path, err)
+	}
+	current := filepath.Clean(target)
+	var missing []string
+	for {
+		resolved, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			for _, component := range slices.Backward(missing) {
+				resolved = filepath.Join(resolved, component)
+			}
+			return filepath.Clean(resolved), nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("resolving vault root for launch: %w", err)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", fmt.Errorf("vault root has no existing ancestor: %s", target)
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
 }
 
 func targetLockRegistryDir() (string, error) {

@@ -91,12 +91,14 @@ stale state:
   and the single convergence path guarantees that the one daemon is
   current after any successful start.
 
-A `launch.lock` file in `$DOCBANK_HOME` serializes racing starters: two
-CLI invocations that both find no daemon and both try to start one
-serialize on this lock, and the second re-checks discovery after
-acquiring it instead of spawning a redundant daemon. `daemon restart`
-reuses the same launch-lock path as `daemon start` for the start half of
-the restart.
+An external launch lock under the canonical per-user target-lock registry
+serializes racing starters: two CLI invocations that both find no daemon and
+both try to start one serialize there, and the second re-checks discovery after
+acquiring it instead of spawning a redundant daemon. Keeping launch
+coordination outside `$DOCBANK_HOME` is essential: discovery and launch do not
+create the target, its database, logs, or runtime records before the child
+daemon acquires the vault-tree lock. `daemon restart` reuses the same lock for
+the start half of the restart.
 
 ## Auto-start and idle shutdown
 
@@ -118,7 +120,8 @@ stopped.
 
 ## Logs
 
-A background daemon logs structured JSON to `$DOCBANK_HOME/logs/`, one
+A background daemon creates its logs only after acquiring vault ownership, then
+logs structured JSON to `$DOCBANK_HOME/logs/`, one
 file per day (`docbank-YYYY-MM-DD.log`), rotated at 50 MiB with the 5
 most recent rotated files retained. A foreground `docbank daemon run`
 logs to stderr instead. `DOCBANK_LOG_LEVEL` controls the level for both
