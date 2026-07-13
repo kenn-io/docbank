@@ -221,6 +221,54 @@ Docbank owns:
 - trash, version, provenance, and future external-reference semantics;
 - daemon commands, scheduling, logging, and product output.
 
+## Logical metadata portability
+
+SQLite is Docbank's runtime query and transaction engine, but its historical
+page layout is not the intended long-lived backup contract. The logical
+boundary is deterministic JSONL headed by `docbank-metadata` and an integer
+format version. Records are emitted in dependency-stable order and deterministic
+key order: blobs, nodes, ingests, node versions, provenance, tags, node tags,
+and extracted text. Nodes carry parent IDs, so directory structure, trash
+restore coordinates, and stable external node references survive a roundtrip.
+The header carries SQLite's node `AUTOINCREMENT` high-water mark separately
+from the live rows; import restores it only after proving it is at least the
+maximum surviving node ID.
+
+The stream excludes `nodes_fts`, `blob_packs`, and `blob_pack_index`. FTS is a
+derived index rebuilt by the node insert triggers. Pack tables describe one
+physical representation and must never regain authority merely because an old
+metadata snapshot mentioned offsets; Kit restore verifies and publishes the
+chosen loose or packed representation before installing fresh catalog mappings.
+
+Import runs only against a pristine current-schema database, in one transaction
+with deferred foreign-key checks. Unknown format versions, unknown record types
+or fields, uniqueness failures, orphaned extraction rows, and dangling
+references abort the transaction. Timestamps must use Docbank's canonical UTC
+representation because retention queries compare their fixed-width strings
+lexicographically. The exception is provenance `original_mtime`: it records an
+external filesystem value using canonical UTC `RFC3339Nano`, matching ordinary
+ingestion, and is never used as a retention cutoff.
+
+Trash roots remain detached beneath the tree root in portable metadata. Their
+saved `trash_parent` may be absent when the original directory was hard-deleted;
+`trash_name` remains authoritative and restore then falls back to the tree root.
+When a saved parent is present, import proves it is neither the trash root nor
+one of its descendants, so restore cannot create a cycle from hostile or
+corrupted coordinates. Every trashed node must belong to exactly one such root,
+and every member of that subtree must be trashed under the root's exact
+operation timestamp. This mirrors restore's timestamp-scoped update and rejects
+both permanently hidden orphans and live nodes nested beneath trash.
+Explicit node IDs advance SQLite's `AUTOINCREMENT` sequence, preserving the
+invariant that a deleted historical ID is never silently reused.
+
+This boundary replaces in-place schema evolution with export → construct a
+fresh current-schema database → import → verify → atomic replacement. It does
+not make compatibility work disappear: each supported JSONL version needs an
+explicit decoder, and a live cutover must carry current physical pack authority
+through a separately verified path. The current codec establishes version 1;
+automatic database replacement and Kit metadata-artifact integration remain
+follow-up work.
+
 Do not move docbank SQL or reachability policy into Kit. Do not reimplement Kit
 reader or lifecycle mechanics in docbank. A physical-storage bug shared by
 msgvault belongs in Kit; a decision about whether a docbank reference keeps a
