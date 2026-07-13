@@ -95,7 +95,9 @@ and self-update) are implemented and tested.
 
 !!! info "Planned — later phases"
     Editing commands, tags, watched inboxes, text extraction (Phase 2b), the
-    TUI (Phase 3), and backup (Phase 4) are designed but not yet built. The
+    TUI (Phase 3), and backup verification/restore (Phase 4) are designed but
+    not yet built. Snapshot repository initialization, creation, and listing
+    are implemented. The
     [Roadmap](roadmap.md) tracks what exists versus what is planned.
 
 ## Where to go next

@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io/fs"
 	"net"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -50,10 +52,19 @@ type WebConfig struct {
 	Enabled bool `toml:"enabled"` // default true
 }
 
+// BackupConfig configures the default immutable snapshot repository and its
+// compression policy. An empty Repo keeps backup commands available through
+// an explicit request path without silently choosing storage under the vault.
+type BackupConfig struct {
+	Repo      string `toml:"repo"`
+	ZstdLevel int    `toml:"zstd_level"`
+}
+
 // Config is the full contents of config.toml.
 type Config struct {
 	Server ServerConfig `toml:"server"`
 	Web    WebConfig    `toml:"web"`
+	Backup BackupConfig `toml:"backup"`
 }
 
 // Default returns the configuration used when config.toml is absent.
@@ -82,7 +93,37 @@ func Load(root string) (Config, error) {
 	if undec := md.Undecoded(); len(undec) > 0 {
 		return Config{}, fmt.Errorf("loading %s: unknown key %q (typo?)", path, undec[0].String())
 	}
+	if err := resolveBackupRepo(root, &c.Backup); err != nil {
+		return Config{}, fmt.Errorf("loading %s: %w", path, err)
+	}
 	return c, nil
+}
+
+func resolveBackupRepo(root string, backup *BackupConfig) error {
+	if backup.Repo == "" {
+		return nil
+	}
+	repo := backup.Repo
+	if repo == "~" || strings.HasPrefix(repo, "~/") || strings.HasPrefix(repo, `~\`) {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("resolving [backup] repo %q: %w", repo, err)
+		}
+		if repo == "~" {
+			repo = home
+		} else {
+			repo = filepath.Join(home, strings.TrimLeft(repo[1:], `/\`))
+		}
+	}
+	if !filepath.IsAbs(repo) {
+		repo = filepath.Join(root, repo)
+	}
+	abs, err := filepath.Abs(repo)
+	if err != nil {
+		return fmt.Errorf("resolving [backup] repo %q: %w", backup.Repo, err)
+	}
+	backup.Repo = filepath.Clean(abs)
+	return nil
 }
 
 // Validate enforces the bind policy: loopback only. The API is plain HTTP,
@@ -93,6 +134,9 @@ func Load(root string) (Config, error) {
 // self-publishes an ephemeral key rather than serving unauthenticated (see
 // cmd/docbank/daemon.go).
 func (c Config) Validate() error {
+	if c.Backup.ZstdLevel != 0 && (c.Backup.ZstdLevel < 1 || c.Backup.ZstdLevel > 19) {
+		return fmt.Errorf("[backup] zstd_level %d: want 0 or 1-19", c.Backup.ZstdLevel)
+	}
 	host := c.Server.BindAddr
 	if isLoopbackHost(host) {
 		return nil

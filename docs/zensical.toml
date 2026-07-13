@@ -22,6 +22,7 @@ nav = [
     {"Organizing the Tree" = "usage/organizing.md"},
     {"Searching" = "usage/searching.md"},
     {"Trash, GC, Repack & Verify" = "usage/trash-and-gc.md"},
+    {"Backup" = "usage/backup.md"},
   ]},
   {"Reference" = [
     {"CLI Reference" = "cli-reference.md"},

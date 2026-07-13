@@ -1,13 +1,14 @@
 ---
 title: Backup
-description: Current manual snapshots and Docbank's JSONL-native Kit backup engine.
+description: Docbank's JSONL-native Kit snapshot and restore architecture.
 ---
 
 # Backup
 
-Docbank has no built-in backup commands in the current release. A coherent
-manual filesystem snapshot requires stopping the daemon before copying the
-vault so `docbank.db` and the blob catalog cannot change during the copy. See
+`docbank backup init`, `backup create`, and `backup list` are implemented over
+the authenticated daemon API; see the [Backup user guide](../usage/backup.md).
+A coherent manual filesystem snapshot remains available by stopping the daemon
+before copying the vault; see
 [Vault Lifecycle](../usage/lifecycle.md#take-a-coherent-manual-snapshot).
 
 The essential archive is the database plus `blobs/`. Configuration is useful
@@ -60,18 +61,22 @@ They remain restorable through the same wrapper. New captures always use JSONL;
 the legacy path is a reader compatibility boundary, not an alternative format
 for new snapshots.
 
-!!! info "Planned — Phase 4"
-    Command/API orchestration has not landed. The completed capture and restore
-    adapters are internal and do not make any `docbank backup` command
-    available yet.
+The daemon's create handler uses the same operation gate as mutations and
+maintenance, but it does not hold the gate throughout backup I/O. Kit calls the
+gate-backed freeze coordinator, Docbank pins the deferred JSONL transaction,
+and Kit releases the gate before streaming metadata and blobs. The repository's
+exclusive lock independently prevents concurrent writers to the same snapshot
+repository.
 
-    The planned command family is `docbank backup init|create|list|verify|restore`.
-    Exact flags will enter the CLI reference only when implemented.
+!!! info "Planned — remaining Phase 4 commands"
+    `docbank backup verify` and `docbank backup restore` have not landed. The
+    restore adapter described above is internal until the recovery CLI/API
+    defines target confinement, overwrite behavior, and operator output.
 
-    Backup reachability will intentionally be broader than GC reachability:
-    every `blobs` row will be captured, including a row that has become a GC
-    candidate but has not yet been reclaimed. This preserves the deletion
-    pipeline's regret window inside the snapshot.
+Backup reachability is intentionally broader than GC reachability: every
+`blobs` row is captured, including a row that has become a GC candidate but has
+not yet been reclaimed. This preserves the deletion pipeline's regret window
+inside the snapshot.
 
 ## Boundary with packed storage
 

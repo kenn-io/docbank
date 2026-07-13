@@ -16,7 +16,8 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 	doc := string(out)
 	for _, op := range []string{"getNode", "resolvePath", "listChildren", "getNodeContent", "verifyNodeContent",
 		"search", "createNode", "moveNode", "movePath", "trashNode", "trashPath", "restoreNode",
-		"storageStatus", "storagePack", "storageRepack", "ingest", "uploadFile", "listTrash", "emptyTrash", "gc", "verify"} {
+		"storageStatus", "storagePack", "storageRepack", "ingest", "uploadFile", "listTrash", "emptyTrash", "gc", "verify",
+		"initBackupRepository", "createBackupSnapshot", "listBackupSnapshots"} {
 		assert.Contains(t, doc, op, "operation missing from OpenAPI doc")
 	}
 	assert.NotContains(t, doc, "/api/daemon/shutdown", "lifecycle plumbing must stay hidden")

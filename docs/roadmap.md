@@ -17,7 +17,7 @@ marked planned appears elsewhere in these docs only under an explicit
 | 2a | Infrastructure: daemon, HTTP API, daemon-first CLI, self-update, release pipeline | **Implemented** |
 | 2b | Features: versioned editing, tags, watched inboxes, text extraction, ingest provenance | Designed |
 | 3 | TUI file browser | Designed |
-| 4 | Backup commands over the kit engine | Designed |
+| 4 | Backup commands over the kit engine | In progress (`init`, `create`, `list` implemented) |
 
 ## Implemented (Phase 1)
 
@@ -118,8 +118,9 @@ packed restore publication are implemented. Every new internal capture uses
 Docbank's deterministic logical JSONL artifact, which round-trips directory
 structure, stable node IDs, content membership, trash state, versions,
 provenance, tags, and extraction state into a fresh current-schema database.
-Historical SQLite page-map snapshots remain restorable. Command/API
-orchestration remains.
+Historical SQLite page-map snapshots remain restorable. Authenticated daemon
+API and CLI orchestration for repository initialization, snapshot creation, and
+listing are implemented; verification and restore commands remain.
 
 ## Deferred beyond v1
 

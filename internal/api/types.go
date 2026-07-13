@@ -160,6 +160,35 @@ type VerifyReport struct {
 	Problems []VerifyProblem `json:"problems,omitempty"`
 }
 
+// BackupRepository identifies an initialized Kit snapshot repository.
+type BackupRepository struct {
+	ID   string `json:"id"`
+	Path string `json:"path"`
+}
+
+// BackupSnapshot is the stable API summary of one Docbank snapshot manifest.
+// It deliberately omits Kit's physical pack/index details.
+type BackupSnapshot struct {
+	ID              string  `json:"id"`
+	ParentID        string  `json:"parent_id,omitempty"`
+	CreatedAt       string  `json:"created_at"`
+	Tag             string  `json:"tag,omitempty"`
+	MetadataFormat  string  `json:"metadata_format"`
+	Nodes           int64   `json:"nodes"`
+	Files           int64   `json:"files"`
+	Blobs           int64   `json:"blobs"`
+	BlobBytes       int64   `json:"blob_bytes"`
+	PacksAdded      int     `json:"packs_added"`
+	BytesAdded      int64   `json:"bytes_added"`
+	DurationSeconds float64 `json:"duration_seconds"`
+}
+
+// BackupSnapshotList is returned as an object so later pagination can be
+// added without changing a top-level JSON array contract.
+type BackupSnapshotList struct {
+	Items []BackupSnapshot `json:"items"`
+}
+
 func fromStoreNode(n store.Node) Node {
 	out := Node{
 		ID: n.ID, ParentID: n.ParentID, Name: n.Name, Kind: n.Kind,

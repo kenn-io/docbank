@@ -16,8 +16,10 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/backup"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -346,6 +348,44 @@ func TestStorageStatusHumanAndJSON(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &status))
 	assert.Equal(t, 1, status.LooseBlobs)
 	assert.Equal(t, int64(5), status.LooseBytes)
+}
+
+func TestBackupInitCreateListCLI(t *testing.T) {
+	home := t.TempDir()
+	repoPath := filepath.Join(t.TempDir(), "repo")
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(
+		"[backup]\nrepo = \""+filepath.ToSlash(repoPath)+"\"\n"), 0o600))
+	t.Setenv("DOCBANK_HOME", home)
+	startTestDaemon(t, home)
+
+	out, err := runCLI(t, "backup", "init")
+	require.NoError(t, err)
+	assert.Contains(t, out, "initialized backup repository")
+
+	src := writeSourceFile(t, "archive.txt", "durable backup")
+	_, err = runCLI(t, "add", src, "--dest", "/inbox")
+	require.NoError(t, err)
+	out, err = runCLI(t, "backup", "create", "--tag", "first", "--jobs", "1")
+	require.NoError(t, err)
+	assert.Contains(t, out, "created snapshot")
+	assert.Contains(t, out, "1 file(s), 1 blob(s)")
+
+	out, err = runCLI(t, "backup", "list")
+	require.NoError(t, err)
+	assert.Contains(t, out, "SNAPSHOT")
+	assert.Contains(t, out, "first")
+	out, err = runCLI(t, "backup", "list", "--json")
+	require.NoError(t, err)
+	var listed api.BackupSnapshotList
+	require.NoError(t, json.Unmarshal([]byte(out), &listed))
+	require.Len(t, listed.Items, 1)
+	assert.Equal(t, backupapp.MetadataFormat, listed.Items[0].MetadataFormat)
+
+	repo, err := backup.Open(repoPath)
+	require.NoError(t, err)
+	verified, err := backup.Verify(t.Context(), repo, backupapp.New("test"), backup.VerifyOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, verified.Problems)
 }
 
 func TestStoragePackBudgetAndJSON(t *testing.T) {

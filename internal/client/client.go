@@ -408,6 +408,44 @@ func (c *Client) Verify(ctx context.Context) (api.VerifyReport, error) {
 	return rep, err
 }
 
+func (c *Client) BackupInit(ctx context.Context, repo string) (api.BackupRepository, error) {
+	var out api.BackupRepository
+	err := c.do(ctx, http.MethodPost, "/api/v1/backup/init", nil,
+		map[string]any{"repo": repo}, &out)
+	return out, err
+}
+
+type BackupCreateOptions struct {
+	Repo        string
+	Tag         string
+	Jobs        int
+	ForceUnlock bool
+}
+
+func (c *Client) BackupCreate(
+	ctx context.Context, opts BackupCreateOptions,
+) (api.BackupSnapshot, error) {
+	var out api.BackupSnapshot
+	err := c.do(ctx, http.MethodPost, "/api/v1/backup/snapshots", nil, map[string]any{
+		"repo": opts.Repo, "tag": opts.Tag, "jobs": opts.Jobs, "force_unlock": opts.ForceUnlock,
+	}, &out)
+	return out, err
+}
+
+func (c *Client) BackupList(ctx context.Context, repo string) ([]api.BackupSnapshot, error) {
+	var out api.BackupSnapshotList
+	query := url.Values{}
+	if repo != "" {
+		query.Set("repo", repo)
+	}
+	path := "/api/v1/backup/snapshots"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	err := c.do(ctx, http.MethodGet, path, nil, nil, &out)
+	return out.Items, err
+}
+
 func (c *Client) Shutdown(ctx context.Context, token string) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
