@@ -170,15 +170,20 @@ func TestBackupCreateStreamRoundTripAndTypedError(t *testing.T) {
 	_, err = c.BackupCreateStream(cancelCtx, client.BackupCreateOptions{Repo: repoPath},
 		func(api.BackupProgress) { cancel() })
 	require.Error(t, err)
-	snapshots, err := c.BackupList(t.Context(), repoPath)
-	require.NoError(t, err)
-	assert.Len(t, snapshots, 1, "a disconnected progress client must not publish a snapshot")
 
 	repo, err := backup.Open(repoPath)
 	require.NoError(t, err)
-	lock, err := repo.AcquireExclusiveLock("test", false)
-	require.NoError(t, err)
+	var lock *backup.RepoLock
+	var lockErr error
+	require.Eventually(t, func() bool {
+		lock, lockErr = repo.AcquireExclusiveLock("test", false)
+		return lockErr == nil
+	}, 5*time.Second, 10*time.Millisecond,
+		"server-side cancellation must release the repository lock")
 	t.Cleanup(func() { _ = lock.Release() })
+	snapshots, err := c.BackupList(t.Context(), repoPath)
+	require.NoError(t, err)
+	assert.Len(t, snapshots, 1, "a disconnected progress client must not publish a snapshot")
 	_, err = c.BackupCreateStream(t.Context(), client.BackupCreateOptions{Repo: repoPath}, nil)
 	require.ErrorIs(t, err, backup.ErrRepoLocked)
 }
