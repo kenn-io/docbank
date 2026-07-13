@@ -415,10 +415,19 @@ func directoryIdentityChain(target string) ([]string, error) {
 	return identities, nil
 }
 
+// targetLockRegistryTestBase is set only by same-package tests that exercise
+// the process-global launch mutex. Package test binaries run concurrently, so
+// those unit tests must not contend with cmd/docbank's real daemon processes.
+var targetLockRegistryTestBase string
+
 func targetLockRegistryDir() (string, error) {
-	dir, err := targetLockRegistryBase()
-	if err != nil {
-		return "", err
+	dir := targetLockRegistryTestBase
+	if dir == "" {
+		var err error
+		dir, err = targetLockRegistryBase()
+		if err != nil {
+			return "", err
+		}
 	}
 	if err := safefileio.EnsurePrivateDir(dir); err != nil {
 		return "", fmt.Errorf("securing target-lock registry: %w", err)
