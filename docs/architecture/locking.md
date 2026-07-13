@@ -60,14 +60,14 @@ exclusive lock for its root identity. Parent and descendant trees consequently
 conflict in either acquisition order, while disjoint sibling vault daemons
 remain independent.
 
-Unix permits a locked directory to be renamed beneath a different parent, which
-can make any recorded ancestor chain stale. Restore therefore also holds one
-exclusive per-user restore-ownership lock for its lifetime. This deliberately
-allows only one restore at a time for that user and makes reparenting unable to
-bypass restore/restore exclusion. Daemon startup checks the same ownership gate
-while establishing its tree lock, then releases the gate for its serving
-lifetime. The persistent registry files contain no vault data and must not be
-removed; their stable names are coordination state keyed by device and inode.
+The persistent registry files contain no vault data and must not be removed;
+their stable names are coordination state keyed by device and inode. These
+locks coordinate Docbank daemons and restores that retain the paths they were
+given. They do not attempt to make arbitrary same-user filesystem reparenting a
+safe operation: a process able to move a restore root into another live vault
+already has the authority to modify that vault directly. The held `os.Root`
+still prevents such a rename from redirecting restore writes through the old
+pathname.
 
 Restore acquires this hierarchy before writing even when the target is fresh,
 while the serving daemon continues to hold the live vault's hierarchy. This

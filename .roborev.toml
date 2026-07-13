@@ -59,7 +59,14 @@ Key assumptions reviewers MUST account for:
 8. LOCAL FILE TRUST: files under $DOCBANK_HOME are user-owned in a
    0700 directory. An attacker with access to them already has the
    user's privileges; do not flag TOCTOU or permission races on
-   vault-local paths. POST /ingest reads server-side local paths and
+   vault-local paths. Restore targets and their parent paths have the same
+   local-user trust boundary. Restore holds descriptor-confined roots so a
+   pathname replacement cannot redirect writes, while hierarchy locks
+   coordinate cooperating Docbank processes with stable root paths. Do not
+   require those advisory locks to withstand a same-UID process arbitrarily
+   reparenting a leased directory into another live vault: that requires write
+   authority to the destination vault and already permits direct corruption.
+   POST /ingest reads server-side local paths and
    is loopback-fenced per request by design. Reaching that loopback
    listener remotely (the documented SSH tunnel) requires an SSH
    account on the daemon host, which already grants filesystem access

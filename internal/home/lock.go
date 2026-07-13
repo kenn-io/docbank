@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
-	"strings"
 	"syscall"
 )
 
@@ -56,19 +55,6 @@ func (l Layout) TryLockExclusive() (*Lock, error) {
 // identity make an owner conflict with restores of parent or descendant trees;
 // the target's ordinary vault.lock preserves coordination with older builds.
 func (l Layout) TryLockExclusiveRoot(root *os.Root) (*Lock, error) {
-	return l.tryLockExclusiveRoot(root, false)
-}
-
-// TryLockRestoreRoot takes exclusive per-user restore ownership in addition to
-// the vault-tree locks. Serializing restores closes the otherwise unresolvable
-// Unix rename case where a held target is reparented after its ancestor
-// identities were locked. Daemon startup checks the same ownership file but
-// releases that gate once its stable tree lock is established.
-func (l Layout) TryLockRestoreRoot(root *os.Root) (*Lock, error) {
-	return l.tryLockExclusiveRoot(root, true)
-}
-
-func (l Layout) tryLockExclusiveRoot(root *os.Root, restore bool) (*Lock, error) {
 	target, err := filepath.Abs(l.Root)
 	if err != nil {
 		return nil, fmt.Errorf("resolving vault root %s: %w", l.Root, err)
@@ -92,19 +78,6 @@ func (l Layout) tryLockExclusiveRoot(root *os.Root, restore bool) (*Lock, error)
 			_ = lk.Release()
 		}
 	}()
-	global, err := openRegistryLock(registry, "restore-owner.lock")
-	if err != nil {
-		return nil, err
-	}
-	globalHow := syscall.LOCK_SH | syscall.LOCK_NB
-	if restore {
-		globalHow = syscall.LOCK_EX | syscall.LOCK_NB
-	}
-	if err := flock(global, globalHow); err != nil {
-		_ = global.Close()
-		return nil, classifyLockError(err, target)
-	}
-	lk.files = append(lk.files, global)
 	for i, identity := range identities {
 		how := syscall.LOCK_SH | syscall.LOCK_NB
 		if i == len(identities)-1 {
@@ -132,12 +105,6 @@ func (l Layout) tryLockExclusiveRoot(root *os.Root, restore bool) (*Lock, error)
 	lk.files = append(lk.files, local)
 	if err := verifyLayoutRoot(target, root); err != nil {
 		return nil, err
-	}
-	if !restore {
-		if err := global.Close(); err != nil {
-			return nil, fmt.Errorf("releasing restore-startup gate: %w", err)
-		}
-		lk.files = slices.Delete(lk.files, 0, 1)
 	}
 	failed = false
 	return lk, nil
@@ -198,13 +165,6 @@ func targetLockRegistryDir() (string, error) {
 		return "", fmt.Errorf("effective user home is not absolute: %q", account.HomeDir)
 	}
 	dir := filepath.Join(account.HomeDir, ".local", "state", "docbank", "target-locks")
-	// Separate go test package binaries deliberately exercise independent
-	// temporary vaults in parallel. Giving each test process its own registry
-	// preserves in-process lock semantics without making unrelated package
-	// suites behave like competing production restores.
-	if strings.HasSuffix(filepath.Base(os.Args[0]), ".test") {
-		dir = filepath.Join(dir, "tests", strconv.Itoa(os.Getpid()))
-	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("creating target-lock registry: %w", err)
 	}
