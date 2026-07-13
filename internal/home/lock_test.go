@@ -70,6 +70,24 @@ func TestTryLockExclusiveResolvesIntermediateSymlinkAncestry(t *testing.T) {
 		"an alias must lock every ancestor of its resolved destination")
 }
 
+func TestOpenAndLockExclusiveAcceptsFinalSymlink(t *testing.T) {
+	base := t.TempDir()
+	realRoot := filepath.Join(base, "real")
+	alias := filepath.Join(base, "alias")
+	require.NoError(t, os.Mkdir(realRoot, 0o700))
+	require.NoError(t, os.Symlink(realRoot, alias))
+
+	root, lock, err := (Layout{Root: alias}).OpenAndLockExclusive()
+	require.NoError(t, err)
+	defer func() { _ = root.Close() }()
+	defer func() { _ = lock.Release() }()
+	held, err := root.Stat(".")
+	require.NoError(t, err)
+	realInfo, err := os.Stat(realRoot)
+	require.NoError(t, err)
+	require.True(t, os.SameFile(realInfo, held))
+}
+
 func TestOpenAndLockExclusiveCoordinatesBeforeCreatingMissingRoot(t *testing.T) {
 	parent := filepath.Join(t.TempDir(), "restore")
 	require.NoError(t, os.Mkdir(parent, 0o700))

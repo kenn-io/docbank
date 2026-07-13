@@ -330,12 +330,9 @@ func enterVaultDir(parent *os.Root, component string) (*os.Root, error) {
 }
 
 func verifyLayoutRoot(path string, root *os.Root) error {
-	byPath, err := os.Lstat(path)
+	byPath, err := os.Stat(path)
 	if err != nil {
 		return fmt.Errorf("checking vault root %s: %w", path, err)
-	}
-	if byPath.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("vault root %s was replaced with a symlink", path)
 	}
 	byRoot, err := root.Stat(".")
 	if err != nil {

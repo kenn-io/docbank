@@ -111,6 +111,10 @@ func Ensure(ctx context.Context) (*Client, error) {
 // no command ever leaves a stale daemon behind.
 func EnsureDaemon(ctx context.Context, root string) (EnsureResult, error) {
 	var res EnsureResult
+	root, err := home.CanonicalRoot(root)
+	if err != nil {
+		return res, err
+	}
 	rec, _, ok, err := discover(ctx, root, true)
 	if err != nil {
 		return res, fmt.Errorf("discovering daemon: %w", err)
@@ -164,6 +168,10 @@ func StartAnyVersion(ctx context.Context, root string) (kitdaemon.RuntimeRecord,
 }
 
 func start(ctx context.Context, root string, requireVersion bool) (kitdaemon.RuntimeRecord, error) {
+	root, err := home.CanonicalRoot(root)
+	if err != nil {
+		return kitdaemon.RuntimeRecord{}, err
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		return kitdaemon.RuntimeRecord{}, fmt.Errorf("resolving executable for daemon spawn: %w", err)
@@ -235,6 +243,10 @@ func discover(
 func discoverWithOptions(
 	ctx context.Context, root string, opts kitdaemon.DiscoverOptions,
 ) (kitdaemon.RuntimeRecord, kitdaemon.PingInfo, bool, error) {
+	root, err := home.CanonicalRoot(root)
+	if err != nil {
+		return kitdaemon.RuntimeRecord{}, kitdaemon.PingInfo{}, false, err
+	}
 	info, err := os.Stat(root)
 	if errors.Is(err, os.ErrNotExist) {
 		return kitdaemon.RuntimeRecord{}, kitdaemon.PingInfo{}, false, nil
