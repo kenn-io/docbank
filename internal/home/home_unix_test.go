@@ -73,3 +73,19 @@ func TestCanonicalRootResolvesExistingSymlinkAncestor(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join(canonicalParent, "missing", "vault"), root)
 }
+
+func TestCanonicalRootResolvesSymlinkBeforeParentTraversal(t *testing.T) {
+	base := t.TempDir()
+	realParent := filepath.Join(base, "real")
+	realChild := filepath.Join(realParent, "child")
+	alias := filepath.Join(base, "alias")
+	require.NoError(t, os.MkdirAll(realChild, 0o700))
+	require.NoError(t, os.Symlink(realChild, alias))
+
+	root, err := CanonicalRoot(alias + string(os.PathSeparator) + ".." +
+		string(os.PathSeparator) + "vault")
+	require.NoError(t, err)
+	canonicalParent, err := filepath.EvalSymlinks(realParent)
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(canonicalParent, "vault"), root)
+}

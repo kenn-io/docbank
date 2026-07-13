@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 )
 
 // Layout describes the on-disk data directory rooted at Root.
@@ -40,25 +41,36 @@ func resolveLayout(root string) (Layout, error) {
 // resolved existing ancestor, so discovery and a subsequently launched daemon
 // agree before and after first creation.
 func CanonicalRoot(root string) (string, error) {
-	target, err := filepath.Abs(root)
-	if err != nil {
-		return "", fmt.Errorf("resolving vault root %s: %w", root, err)
+	target := root
+	if !filepath.IsAbs(target) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("resolving vault root %s: %w", root, err)
+		}
+		target = cwd + string(os.PathSeparator) + target
 	}
-	current := filepath.Clean(target)
+	current := strings.TrimRight(target, string(os.PathSeparator))
+	if current == "" {
+		current = string(os.PathSeparator)
+	}
 	var missing []string
 	for {
-		_, err := os.Lstat(current)
+		_, err := os.Lstat(current) //nolint:gosec // user-selected vault path is the intended lookup target
 		if err == nil {
 			break
 		}
 		if !errors.Is(err, os.ErrNotExist) {
 			return "", fmt.Errorf("checking vault root %s: %w", target, err)
 		}
-		parent := filepath.Dir(current)
+		parent, component := rawPathParent(current)
 		if parent == current {
 			return "", fmt.Errorf("vault root has no existing ancestor: %s", target)
 		}
-		missing = append(missing, filepath.Base(current))
+		if component == "." || component == ".." {
+			return "", fmt.Errorf(
+				"vault root traverses %q after a missing component: %s", component, target)
+		}
+		missing = append(missing, component)
 		current = parent
 	}
 	resolved, err := filepath.EvalSymlinks(current)
@@ -67,6 +79,22 @@ func CanonicalRoot(root string) (string, error) {
 	}
 	slices.Reverse(missing)
 	return filepath.Join(append([]string{resolved}, missing...)...), nil
+}
+
+func rawPathParent(path string) (string, string) {
+	volume := filepath.VolumeName(path)
+	rest := path[len(volume):]
+	rest = strings.TrimRight(rest, string(os.PathSeparator))
+	index := strings.LastIndex(rest, string(os.PathSeparator))
+	if index < 0 {
+		return path, ""
+	}
+	component := rest[index+1:]
+	parentRest := strings.TrimRight(rest[:index], string(os.PathSeparator))
+	if parentRest == "" {
+		parentRest = string(os.PathSeparator)
+	}
+	return volume + parentRest, component
 }
 
 func (l Layout) DBPath() string     { return filepath.Join(l.Root, "docbank.db") }
