@@ -1,6 +1,6 @@
 ---
 title: docbank
-description: Personal document archive with a virtual tree over content-addressed storage, full-text search, trash and recovery, and an agent-first HTTP API.
+description: Local-first document archive with immutable content, flexible organization, verified backup and recovery, and an agent-ready HTTP API.
 ---
 
 <p class="eyebrow">LOCAL-FIRST DOCUMENT ARCHIVE</p>
@@ -14,7 +14,7 @@ the tree above them is yours to rename, move, search, trash, and restore.
 <p class="hero-actions">
   <a class="md-button md-button--primary" href="setup/">Set up docbank</a>
   <a class="md-button" href="quickstart/">Take the ten-minute tour</a>
-  <a class="md-button" href="agents/integration/">Build an agent integration</a>
+  <a class="md-button" href="agents/">Use docbank with agents</a>
 </p>
 
 <div class="signal-grid">
@@ -26,8 +26,21 @@ the tree above them is yours to rename, move, search, trash, and restore.
 docbank belongs to a family of personal data tools alongside
 [msgvault](https://msgvault.io) (communications archive) and fotobank
 (photo/video archive). Where msgvault preserves an immutable historical
-record of your messages, docbank manages **living documents**: files you
-still rename, refile, and edit.
+record of your messages, docbank manages **working documents**: files you
+still organize, retrieve, and build workflows around.
+
+## Why docbank
+
+Ordinary folders make their paths part of their identity. Sync tools copy that
+coupling between machines. Docbank separates the durable document from its
+current filing location: content has a verified SHA-256 identity, while a
+transactional virtual tree supplies names and paths that can change cheaply.
+
+That gives people a recoverable archive instead of another folder to curate,
+and gives agents a bounded interface instead of unrestricted filesystem access.
+Imports are repeatable, deletion proceeds through explicit stages, reads can
+prove the returned bytes, and incremental snapshots can be verified and
+restored before they are trusted.
 
 ## How it works
 
@@ -44,13 +57,15 @@ renames, and reorganization are metadata transactions that never touch bytes.
 ```
 docbank add ~/Documents/taxes --dest /taxes   # bulk import, resumable
 docbank tree /taxes                           # browse the virtual tree
-docbank search "insurance"                    # full-text search
+docbank search "insurance"                    # indexed name search
 docbank mv "/inbox/scan (2).pdf" /taxes/2026  # reorganize, metadata only
 docbank rm /inbox/junk.pdf                    # trash, recoverable
 docbank trash empty --run                     # permanently delete trash metadata
 docbank gc --run                              # reclaim loose; mark packed bytes dead
 docbank storage repack                        # compact eligible sparse packs
 docbank verify                                # prove the bytes are intact
+docbank backup create --repo ~/Backups/docbank
+docbank backup restore --repo ~/Backups/docbank --target ~/Restores/docbank
 ```
 
 ## Principles
@@ -87,17 +102,18 @@ docbank verify                                # prove the bytes are intact
   can do — the CLI is itself an HTTP client of it — with
   optimistic-concurrency preconditions designed for agent
   read-modify-write loops. See [HTTP API](architecture/http-api.md).
+
 ## Status
 
-docbank is pre-release. Phase 1 (store, ingest pipeline, and the full
-core CLI) and Phase 2a (the daemon, the HTTP API, the daemon-first CLI,
-and self-update) are implemented and tested.
+docbank is alpha software with tagged releases. The core store and ingest
+pipeline, virtual-tree CLI, authenticated daemon API, packed storage,
+integrity verification, and incremental backup creation, verification, and
+restore are implemented and tested. Representative-corpus hardening and
+distribution work continue before a stable 1.0 release.
 
 !!! info "Planned — later phases"
-    Editing commands, tags, watched inboxes, text extraction (Phase 2b), the
-    TUI (Phase 3), and backup verification/restore (Phase 4) are designed but
-    not yet built. Snapshot repository initialization, creation, and listing
-    are implemented. The
+    Versioned editing, tags, watched inboxes, content-text extraction and
+    search, and the TUI are designed but not yet built. The
     [Roadmap](roadmap.md) tracks what exists versus what is planned.
 
 ## Where to go next
@@ -105,6 +121,7 @@ and self-update) are implemented and tested.
 - [Setup](setup.md) — build and install the binary
 - [Quickstart](quickstart.md) — a ten-minute tour of the CLI
 - [Vault Lifecycle](usage/lifecycle.md) — operate, update, snapshot, and recover safely
+- [Docbank for Agents](agents.md) — understand the automation contract
 - [Agent Integration](agents/integration.md) — build revision-aware automations
 - [Troubleshooting](troubleshooting.md) — diagnose failures without risking the vault
 - [CLI Reference](cli-reference.md) — every command, flag, and output format

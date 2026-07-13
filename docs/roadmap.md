@@ -12,12 +12,12 @@ marked planned appears elsewhere in these docs only under an explicit
 
 | Phase | Scope | Status |
 |-------|-------|--------|
-| 0 | Extract msgvault's pack/backup and packed-CAS engines into `go.kenn.io/kit` | **Implemented** (`kit` v0.7.0) |
+| 0 | Extract msgvault's pack/backup and packed-CAS engines into `go.kenn.io/kit` | **Implemented** (Docbank uses `kit` v0.9.2) |
 | 1 | Core: store, blob store, ingest pipeline, full CLI | **Implemented** |
 | 2a | Infrastructure: daemon, HTTP API, daemon-first CLI, self-update, release pipeline | **Implemented** |
 | 2b | Features: versioned editing, tags, watched inboxes, text extraction, ingest provenance | Designed |
 | 3 | TUI file browser | Designed |
-| 4 | Backup commands over the kit engine | In progress (`init`, `create`, `list` implemented) |
+| 4 | Backup commands over the kit engine | **Implemented**; representative-corpus hardening continues |
 
 ## Implemented (Phase 1)
 
@@ -108,7 +108,7 @@ Bubble Tea file manager over the same store: navigate, search, rename,
 move, trash/restore, version list, open-in-default-app. No privileged
 operations — anything the TUI does, the API can do.
 
-## Phase 4 — Backup
+## Phase 4 — Backup (implemented)
 
 `docbank backup init|create|list|verify|restore` against the kit engine
 ([design](architecture/backup.md)).

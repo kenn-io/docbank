@@ -1,6 +1,6 @@
 [project]
 site_name = "docbank"
-site_description = "Personal document archive: a virtual tree over content-addressed storage, with full-text search, trash and recovery, and an agent-first HTTP API."
+site_description = "Local-first document archive with immutable content, flexible organization, verified backup and recovery, and an agent-ready HTTP API."
 site_author = "Kenn Software LLC"
 copyright = 'Copyright &copy; 2026 <a href="https://kenn.io">Kenn Software LLC</a>.'
 docs_dir = "docs"
@@ -10,29 +10,32 @@ repo_name = "kenn-io/docbank"
 extra_css = ["stylesheets/extra.css"]
 use_directory_urls = true
 nav = [
-  {"Introduction" = "index.md"},
-  {"Getting Started" = [
+  {"Overview" = "index.md"},
+  {"Start Here" = [
     {"Setup" = "setup.md"},
     {"Quickstart" = "quickstart.md"},
     {"Configuration" = "configuration.md"},
   ]},
-  {"User Guide" = [
-    {"Vault Lifecycle" = "usage/lifecycle.md"},
+  {"Work with Documents" = [
     {"Importing Documents" = "usage/importing.md"},
     {"Organizing the Tree" = "usage/organizing.md"},
-    {"Searching" = "usage/searching.md"},
+    {"Finding Documents" = "usage/searching.md"},
+  ]},
+  {"Protect & Operate" = [
+    {"Vault Lifecycle" = "usage/lifecycle.md"},
     {"Trash, GC, Repack & Verify" = "usage/trash-and-gc.md"},
-    {"Backup" = "usage/backup.md"},
+    {"Backup & Restore" = "usage/backup.md"},
+  ]},
+  {"Automate & Integrate" = [
+    {"Docbank for Agents" = "agents.md"},
+    {"Integration Guide" = "agents/integration.md"},
+    {"HTTP API Contract" = "architecture/http-api.md"},
   ]},
   {"Reference" = [
     {"CLI Reference" = "cli-reference.md"},
+    {"Troubleshooting" = "troubleshooting.md"},
   ]},
-  {"For Agents" = [
-    {"Integration Guide" = "agents/integration.md"},
-    {"Agent HTTP API" = "architecture/http-api.md"},
-  ]},
-  {"Troubleshooting" = "troubleshooting.md"},
-  {"Architecture" = [
+  {"How It Works" = [
     {"Overview" = "architecture/overview.md"},
     {"Storage" = "architecture/storage.md"},
     {"Packed Storage Foundation" = "architecture/packed-storage.md"},
@@ -42,8 +45,10 @@ nav = [
     {"Daemon" = "architecture/daemon.md"},
     {"Backup" = "architecture/backup.md"},
   ]},
-  {"Roadmap" = "roadmap.md"},
-  {"Changelog" = "changelog.md"},
+  {"Project" = [
+    {"Roadmap" = "roadmap.md"},
+    {"Changelog" = "changelog.md"},
+  ]},
 ]
 
 [project.extra]

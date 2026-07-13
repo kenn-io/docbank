@@ -378,5 +378,4 @@ background-spawned daemons.
     here with exact semantics when they ship. `docbank edit` and
     `docbank versions` (Phase 2b, [Editing & Versions](architecture/editing-and-versions.md));
     `docbank extract` (Phase 2b, [HTTP API](architecture/http-api.md));
-    `docbank tui` (Phase 3); `docbank backup verify|restore`
-    (Phase 4, [Backup](architecture/backup.md)).
+    and `docbank tui` (Phase 3).

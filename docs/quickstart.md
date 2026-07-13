@@ -153,7 +153,32 @@ docbank verify            # re-hash every stored blob
 211 blob(s) ok, 0 problem(s)
 ```
 
+## Prove recovery
+
+Backup repositories are separate from the live vault. Captures are
+incremental: unchanged content is reused across snapshots. This scratch loop
+creates a repository, captures the vault, verifies the repository, and restores
+the latest snapshot into a different vault:
+
+```bash
+export DOCBANK_BACKUP=$(mktemp -d)
+export DOCBANK_RESTORE=$(mktemp -d)
+
+docbank backup init --repo "$DOCBANK_BACKUP"
+docbank backup create --repo "$DOCBANK_BACKUP"
+docbank backup list --repo "$DOCBANK_BACKUP"
+docbank backup verify --repo "$DOCBANK_BACKUP"
+docbank backup restore --repo "$DOCBANK_BACKUP" --target "$DOCBANK_RESTORE"
+
+DOCBANK_HOME="$DOCBANK_RESTORE" docbank tree /
+DOCBANK_HOME="$DOCBANK_RESTORE" docbank verify
+```
+
+The restored target is independently usable; the running source vault is not
+replaced. See [Backup & Restore](usage/backup.md) for progress modes, snapshot
+selection, overwrite rules, and the exact proof returned by restore.
+
 That is the core document workflow. Continue with
-[Vault Lifecycle](usage/lifecycle.md) for maintenance, upgrades, snapshots,
-and recovery, or use the [CLI Reference](cli-reference.md) for exact command
-semantics.
+[Vault Lifecycle](usage/lifecycle.md) for maintenance and upgrades, explore
+[Docbank for Agents](agents.md) for automation, or use the
+[CLI Reference](cli-reference.md) for exact command semantics.
