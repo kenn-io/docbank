@@ -49,7 +49,11 @@ func Restore(
 	if opts.PackedContent != nil {
 		return nil, errors.New("backupapp: restore options must not supply packed content policy")
 	}
+	if opts.MetadataRestorer != nil {
+		return nil, errors.New("backupapp: restore options must not supply a metadata restorer")
+	}
 	opts.PackedContent = newPackedRestoreTarget()
+	opts.MetadataRestorer = metadataRestorer{}
 	app := &packedRestoreApp{App: New(version)}
 	result, err := backup.Restore(ctx, repo, app, opts)
 	if err != nil {

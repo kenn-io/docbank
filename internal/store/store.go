@@ -17,6 +17,7 @@ var schemaSQL string
 // Store is the single access path to the docbank database.
 type Store struct {
 	db     *sql.DB
+	path   string
 	rootID int64
 }
 
@@ -28,7 +29,7 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening database %s: %w", path, err)
 	}
-	s := &Store{db: db}
+	s := &Store{db: db, path: path}
 	if err := s.bootstrap(); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -83,6 +84,23 @@ func (s *Store) RootID() int64 { return s.rootID }
 
 // Close closes the underlying database.
 func (s *Store) Close() error { return s.db.Close() }
+
+// Checkpoint truncates the WAL after all application writes have completed.
+// Portable restore uses it before closing a freshly imported database so the
+// main file is self-contained and no sidecar is required for publication.
+func (s *Store) Checkpoint(ctx context.Context) error {
+	var busy, logFrames, checkpointed int64
+	if err := s.db.QueryRowContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`).Scan(
+		&busy, &logFrames, &checkpointed); err != nil {
+		return fmt.Errorf("checkpointing database: %w", err)
+	}
+	if busy != 0 || logFrames != 0 {
+		return fmt.Errorf(
+			"checkpointing database: WAL remains busy=%d log=%d checkpointed=%d",
+			busy, logFrames, checkpointed)
+	}
+	return nil
+}
 
 // withTx runs fn inside a transaction, committing on nil and rolling back
 // on error. Used by later packages (Task 4+) for transactional operations.

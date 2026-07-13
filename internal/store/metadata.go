@@ -16,6 +16,62 @@ import (
 
 const metadataFormatVersion = 1
 
+// MetadataSnapshot owns a dedicated deferred read transaction. Store's normal
+// connections use BEGIN IMMEDIATE for mutations; using that pool here would
+// hold the writer lock for the full backup instead of only pinning a WAL view.
+type MetadataSnapshot struct {
+	db *sql.DB
+	tx *sql.Tx
+}
+
+func (s *MetadataSnapshot) QueryContext(
+	ctx context.Context, query string, args ...any,
+) (*sql.Rows, error) {
+	return s.tx.QueryContext(ctx, query, args...)
+}
+
+func (s *MetadataSnapshot) QueryRowContext(
+	ctx context.Context, query string, args ...any,
+) *sql.Row {
+	return s.tx.QueryRowContext(ctx, query, args...)
+}
+
+func (s *MetadataSnapshot) Close() error {
+	rollbackErr := s.tx.Rollback()
+	if errors.Is(rollbackErr, sql.ErrTxDone) {
+		rollbackErr = nil
+	}
+	return errors.Join(rollbackErr, s.db.Close())
+}
+
+// Export writes the deterministic logical metadata held by this snapshot.
+func (s *MetadataSnapshot) Export(ctx context.Context, w io.Writer) error {
+	return exportMetadataSnapshot(ctx, s, w)
+}
+
+// BeginMetadataSnapshot establishes a pinned read transaction for logical
+// backup capture. The initial read is required: BeginTx alone is lazy in
+// SQLite and would not pin a snapshot before Kit releases the mutation gate.
+func (s *Store) BeginMetadataSnapshot(ctx context.Context) (*MetadataSnapshot, error) {
+	db, err := sql.Open("sqlite3",
+		s.path+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000&_txlock=deferred")
+	if err != nil {
+		return nil, fmt.Errorf("beginning metadata snapshot: %w", err)
+	}
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("beginning metadata snapshot: %w", err)
+	}
+	var schemaVersion int64
+	if err := tx.QueryRowContext(ctx, `PRAGMA schema_version`).Scan(&schemaVersion); err != nil {
+		_ = tx.Rollback()
+		_ = db.Close()
+		return nil, fmt.Errorf("pinning metadata snapshot: %w", err)
+	}
+	return &MetadataSnapshot{db: db, tx: tx}, nil
+}
+
 type metadataHeader struct {
 	Type         string `json:"type"`
 	Format       string `json:"format"`
@@ -98,24 +154,29 @@ type metadataExtractedText struct {
 // ExportMetadata writes a deterministic JSONL description of Docbank's
 // logical state. Rebuildable FTS data and physical pack authority are omitted.
 func (s *Store) ExportMetadata(ctx context.Context, w io.Writer) error {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.BeginMetadataSnapshot(ctx)
 	if err != nil {
-		return fmt.Errorf("beginning metadata snapshot: %w", err)
-	}
-	if err := ExportMetadataTx(ctx, tx, w); err != nil {
-		_ = tx.Rollback()
 		return err
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("committing metadata snapshot: %w", err)
+	if err := tx.Export(ctx, w); err != nil {
+		_ = tx.Close()
+		return err
+	}
+	if err := tx.Close(); err != nil {
+		return fmt.Errorf("closing metadata snapshot: %w", err)
 	}
 	return nil
 }
 
-// ExportMetadataTx writes metadata from an already pinned SQLite snapshot.
+type metadataQuerier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// exportMetadataSnapshot writes metadata from an already pinned SQLite snapshot.
 // Backup capture uses this entry point so metadata and blob membership come
 // from the same frozen transaction.
-func ExportMetadataTx(ctx context.Context, tx *sql.Tx, w io.Writer) error {
+func exportMetadataSnapshot(ctx context.Context, tx metadataQuerier, w io.Writer) error {
 	if tx == nil {
 		return errors.New("exporting metadata: nil transaction")
 	}
@@ -162,7 +223,7 @@ func ExportMetadataTx(ctx context.Context, tx *sql.Tx, w io.Writer) error {
 
 type metadataWrite func(any) error
 
-func exportBlobs(ctx context.Context, tx *sql.Tx, write metadataWrite) error {
+func exportBlobs(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
 	rows, err := tx.QueryContext(ctx, `SELECT hash, size, created_at FROM blobs ORDER BY hash`)
 	if err != nil {
 		return fmt.Errorf("exporting blobs: %w", err)
@@ -180,7 +241,7 @@ func exportBlobs(ctx context.Context, tx *sql.Tx, write metadataWrite) error {
 	return rowsError("blob", rows)
 }
 
-func exportNodes(ctx context.Context, tx *sql.Tx, write metadataWrite) error {
+func exportNodes(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT id, parent_id, name, kind, blob_hash, size, mime_type, revision,
 		       created_at, modified_at, trashed_at, trash_parent, trash_name
@@ -207,7 +268,7 @@ func exportNodes(ctx context.Context, tx *sql.Tx, write metadataWrite) error {
 	return rowsError("node", rows)
 }
 
-func exportNodeVersions(ctx context.Context, tx *sql.Tx, write metadataWrite) error {
+func exportNodeVersions(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT node_id, blob_hash, size, replaced_at FROM node_versions
 		ORDER BY node_id, replaced_at, blob_hash, size`)
@@ -227,7 +288,7 @@ func exportNodeVersions(ctx context.Context, tx *sql.Tx, write metadataWrite) er
 	return rowsError("node version", rows)
 }
 
-func exportIngests(ctx context.Context, tx *sql.Tx, write metadataWrite) error {
+func exportIngests(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
 	rows, err := tx.QueryContext(ctx, `SELECT id, started_at, source_kind, source_desc FROM ingests ORDER BY id`)
 	if err != nil {
 		return fmt.Errorf("exporting ingests: %w", err)
@@ -245,7 +306,7 @@ func exportIngests(ctx context.Context, tx *sql.Tx, write metadataWrite) error {
 	return rowsError("ingest", rows)
 }
 
-func exportProvenance(ctx context.Context, tx *sql.Tx, write metadataWrite) error {
+func exportProvenance(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT node_id, ingest_id, original_path, original_mtime FROM provenance
 		ORDER BY node_id, ingest_id, original_path, original_mtime`)
@@ -267,7 +328,7 @@ func exportProvenance(ctx context.Context, tx *sql.Tx, write metadataWrite) erro
 	return rowsError("provenance", rows)
 }
 
-func exportTags(ctx context.Context, tx *sql.Tx, write metadataWrite) error {
+func exportTags(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
 	rows, err := tx.QueryContext(ctx, `SELECT id, name FROM tags ORDER BY id`)
 	if err != nil {
 		return fmt.Errorf("exporting tags: %w", err)
@@ -285,7 +346,7 @@ func exportTags(ctx context.Context, tx *sql.Tx, write metadataWrite) error {
 	return rowsError("tag", rows)
 }
 
-func exportNodeTags(ctx context.Context, tx *sql.Tx, write metadataWrite) error {
+func exportNodeTags(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
 	rows, err := tx.QueryContext(ctx, `SELECT node_id, tag_id FROM node_tags ORDER BY node_id, tag_id`)
 	if err != nil {
 		return fmt.Errorf("exporting node tags: %w", err)
@@ -303,7 +364,7 @@ func exportNodeTags(ctx context.Context, tx *sql.Tx, write metadataWrite) error 
 	return rowsError("node tag", rows)
 }
 
-func exportExtractedText(ctx context.Context, tx *sql.Tx, write metadataWrite) error {
+func exportExtractedText(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT blob_hash, extractor, extractor_version, status, error, attempts, text, extracted_at
 		FROM extracted_text ORDER BY blob_hash, extractor`)

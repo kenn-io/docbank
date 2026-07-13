@@ -1,7 +1,9 @@
 package backupapp_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -26,6 +28,39 @@ type archiveFixture struct {
 }
 
 type zeroReader struct{}
+
+type freezeCoordinator struct {
+	end func(context.Context) error
+}
+
+func (freezeCoordinator) Begin(context.Context) error { return nil }
+
+func (f freezeCoordinator) End(ctx context.Context) error { return f.end(ctx) }
+
+type malformedMetadataSource struct{}
+
+func (malformedMetadataSource) Format() string { return backupapp.MetadataFormat }
+
+func (malformedMetadataSource) OpenSnapshot(context.Context) (backup.MetadataSnapshot, error) {
+	return malformedMetadataSnapshot{}, nil
+}
+
+type malformedMetadataSnapshot struct{}
+
+func (malformedMetadataSnapshot) OpenMetadata(context.Context) (io.ReadCloser, int64, error) {
+	const metadata = "{malformed\n"
+	return io.NopCloser(strings.NewReader(metadata)), int64(len(metadata)), nil
+}
+
+func (malformedMetadataSnapshot) ContentInfo(context.Context) (*backup.ContentInfo, error) {
+	return &backup.ContentInfo{}, nil
+}
+
+func (malformedMetadataSnapshot) Stats(context.Context) (json.RawMessage, error) {
+	return json.RawMessage(`{}`), nil
+}
+
+func (malformedMetadataSnapshot) Close() error { return nil }
 
 func (zeroReader) Read(p []byte) (int, error) {
 	clear(p)
@@ -65,18 +100,28 @@ func newArchiveFixture(t *testing.T) *archiveFixture {
 	return fixture
 }
 
-func TestLooseSnapshotVerifyAndRestore(t *testing.T) {
+func exportMetadata(t *testing.T, metadata *store.Store) []byte {
+	t.Helper()
+	var dst bytes.Buffer
+	require.NoError(t, metadata.ExportMetadata(t.Context(), &dst))
+	return dst.Bytes()
+}
+
+func TestJSONLLooseSnapshotVerifyAndRestore(t *testing.T) {
 	fixture := newArchiveFixture(t)
+	wantMetadata := exportMetadata(t, fixture.metadata)
 	app := backupapp.New("test-version")
 	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
 	require.NoError(t, err)
 
-	manifest, err := backup.Create(t.Context(), repo, app, backup.CreateOptions{
-		DBPath:        filepath.Join(fixture.root, "docbank.db"),
-		ContentSource: backupapp.NewContentSource(fixture.blobs),
-		Jobs:          2,
-	})
+	manifest, err := backupapp.Create(
+		t.Context(), repo, "test-version", fixture.metadata, fixture.blobs, backup.CreateOptions{
+			Jobs: 2,
+		})
 	require.NoError(t, err)
+	require.NotNil(t, manifest.Metadata)
+	assert.Equal(t, backupapp.MetadataFormat, manifest.Metadata.Format)
+	assert.Empty(t, manifest.DB.Engine)
 	assert.Equal(t, int64(2), manifest.Attachments.Rows)
 	assert.Equal(t, int64(2), manifest.Attachments.Blobs)
 	assert.Equal(t, int64(len("alpha backup")+len("bravo backup")), manifest.Attachments.BlobBytes)
@@ -92,12 +137,59 @@ func TestLooseSnapshotVerifyAndRestore(t *testing.T) {
 	assert.Equal(t, []string{manifest.SnapshotID}, verified.Snapshots)
 
 	target := filepath.Join(t.TempDir(), "restored")
-	restored, err := backup.Restore(t.Context(), repo, app, backup.RestoreOptions{
+	_, err = backup.Restore(t.Context(), repo, app, backup.RestoreOptions{
+		TargetDir: filepath.Join(t.TempDir(), "missing-metadata-restorer"), Jobs: 2,
+	})
+	require.ErrorContains(t, err, "requires a MetadataRestorer")
+
+	restored, err := backupapp.Restore(t.Context(), repo, "test-version", backup.RestoreOptions{
 		TargetDir: target, Jobs: 2,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), restored.AttachmentBlobs)
-	assert.Equal(t, int64(2), restored.LooseAttachmentBlobs)
+	assert.Equal(t, int64(2), restored.PackedAttachmentBlobs)
+	assert.Zero(t, restored.LooseAttachmentBlobs)
+
+	restoredStore, err := store.Open(filepath.Join(target, "docbank.db"))
+	require.NoError(t, err)
+	assert.Equal(t, string(wantMetadata), string(exportMetadata(t, restoredStore)))
+	restoredBlobs, err := blob.New(store.NewPackCatalog(restoredStore), filepath.Join(target, "blobs"))
+	require.NoError(t, err)
+	for name, want := range fixture.content {
+		node, nodeErr := restoredStore.NodeByPath(t.Context(), "/"+name)
+		require.NoError(t, nodeErr)
+		reader, openErr := restoredBlobs.OpenContext(t.Context(), node.BlobHash)
+		require.NoError(t, openErr)
+		got, readErr := io.ReadAll(reader)
+		require.NoError(t, readErr)
+		require.NoError(t, reader.Close())
+		assert.Equal(t, want, string(got))
+	}
+	require.NoError(t, restoredBlobs.Close())
+	require.NoError(t, restoredStore.Close())
+}
+
+func TestRestoreSupportsLegacySQLitePageSnapshots(t *testing.T) {
+	fixture := newArchiveFixture(t)
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	app := backupapp.New("legacy-version")
+	manifest, err := backup.Create(t.Context(), repo, app, backup.CreateOptions{
+		DBPath:        filepath.Join(fixture.root, "docbank.db"),
+		ContentSource: backupapp.NewContentSource(fixture.blobs),
+		Jobs:          2,
+	})
+	require.NoError(t, err)
+	assert.Nil(t, manifest.Metadata)
+	assert.NotEmpty(t, manifest.DB.Engine)
+
+	target := filepath.Join(t.TempDir(), "restored")
+	result, err := backupapp.Restore(t.Context(), repo, "current-version", backup.RestoreOptions{
+		TargetDir: target,
+		Jobs:      2,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), result.AttachmentBlobs)
 
 	restoredStore, err := store.Open(filepath.Join(target, "docbank.db"))
 	require.NoError(t, err)
@@ -115,6 +207,52 @@ func TestLooseSnapshotVerifyAndRestore(t *testing.T) {
 	}
 	require.NoError(t, restoredBlobs.Close())
 	require.NoError(t, restoredStore.Close())
+}
+
+func TestJSONLSnapshotRemainsStableAfterFreezeEnds(t *testing.T) {
+	fixture := newArchiveFixture(t)
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	freezer := freezeCoordinator{end: func(ctx context.Context) error {
+		_, mkdirErr := fixture.metadata.Mkdir(ctx, fixture.metadata.RootID(), "created-after-snapshot")
+		return mkdirErr
+	}}
+
+	manifest, err := backupapp.Create(
+		t.Context(), repo, "test-version", fixture.metadata, fixture.blobs,
+		backup.CreateOptions{Freezer: freezer, Jobs: 2})
+	require.NoError(t, err)
+	stats, err := backupapp.ParseStats(manifest.Stats)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), stats.Nodes)
+	_, err = fixture.metadata.NodeByPath(t.Context(), "/created-after-snapshot")
+	require.NoError(t, err)
+
+	target := filepath.Join(t.TempDir(), "restored")
+	_, err = backupapp.Restore(
+		t.Context(), repo, "test-version", backup.RestoreOptions{TargetDir: target, Jobs: 2})
+	require.NoError(t, err)
+	restoredStore, err := store.Open(filepath.Join(target, "docbank.db"))
+	require.NoError(t, err)
+	_, err = restoredStore.NodeByPath(t.Context(), "/created-after-snapshot")
+	require.Error(t, err)
+	require.NoError(t, restoredStore.Close())
+}
+
+func TestMalformedJSONLRestoreLeavesNoPublishedDatabase(t *testing.T) {
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	_, err = backup.Create(t.Context(), repo, backupapp.New("test-version"), backup.CreateOptions{
+		MetadataSource: malformedMetadataSource{},
+	})
+	require.NoError(t, err)
+
+	target := filepath.Join(t.TempDir(), "restored")
+	_, err = backupapp.Restore(
+		t.Context(), repo, "test-version", backup.RestoreOptions{TargetDir: target})
+	require.ErrorContains(t, err, "importing metadata JSONL")
+	_, statErr := os.Stat(filepath.Join(target, "docbank.db"))
+	require.ErrorIs(t, statErr, os.ErrNotExist)
 }
 
 func TestLooseAbovePackingLimitSnapshotVerifyAndRestore(t *testing.T) {
@@ -135,9 +273,8 @@ func TestLooseAbovePackingLimitSnapshotVerifyAndRestore(t *testing.T) {
 	app := backupapp.New("test-version")
 	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
 	require.NoError(t, err)
-	manifest, err := backup.Create(t.Context(), repo, app, backup.CreateOptions{
-		DBPath: filepath.Join(fixture.root, "docbank.db"), ContentSource: backupapp.NewContentSource(fixture.blobs),
-	})
+	manifest, err := backupapp.Create(
+		t.Context(), repo, "test-version", fixture.metadata, fixture.blobs, backup.CreateOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), manifest.Attachments.Blobs)
 	verified, err := backup.Verify(t.Context(), repo, app, backup.VerifyOptions{})
@@ -145,7 +282,8 @@ func TestLooseAbovePackingLimitSnapshotVerifyAndRestore(t *testing.T) {
 	assert.Empty(t, verified.Problems)
 
 	target := filepath.Join(t.TempDir(), "restored")
-	_, err = backup.Restore(t.Context(), repo, app, backup.RestoreOptions{TargetDir: target})
+	_, err = backupapp.Restore(
+		t.Context(), repo, "test-version", backup.RestoreOptions{TargetDir: target})
 	require.NoError(t, err)
 	restoredStore, err := store.Open(filepath.Join(target, "docbank.db"))
 	require.NoError(t, err)
@@ -173,11 +311,10 @@ func TestPackedSnapshotRequiresAndUsesPackedRestoreTarget(t *testing.T) {
 	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
 	require.NoError(t, err)
 	app := backupapp.New("test-version")
-	manifest, err := backup.Create(context.Background(), repo, app, backup.CreateOptions{
-		DBPath:        filepath.Join(fixture.root, "docbank.db"),
-		ContentSource: backupapp.NewContentSource(fixture.blobs),
-		Jobs:          2,
-	})
+	manifest, err := backupapp.Create(
+		context.Background(), repo, "test-version", fixture.metadata, fixture.blobs, backup.CreateOptions{
+			Jobs: 2,
+		})
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), manifest.Attachments.Blobs)
 
@@ -189,7 +326,7 @@ func TestPackedSnapshotRequiresAndUsesPackedRestoreTarget(t *testing.T) {
 	_, err = backup.Restore(t.Context(), repo, app, backup.RestoreOptions{
 		TargetDir: unsafeTarget, Jobs: 2,
 	})
-	require.ErrorContains(t, err, "snapshot contains packed blob authority")
+	require.ErrorContains(t, err, "requires a MetadataRestorer")
 
 	target := filepath.Join(t.TempDir(), "restored")
 	restored, err := backupapp.Restore(t.Context(), repo, "test-version", backup.RestoreOptions{

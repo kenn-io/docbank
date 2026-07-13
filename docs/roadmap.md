@@ -114,11 +114,12 @@ operations — anything the TUI does, the API can do.
 ([design](architecture/backup.md)).
 
 The internal Kit application adapter, loose/packed capture proof, and atomic
-packed restore publication are implemented. Docbank's deterministic logical
-JSONL codec also round-trips directory structure, stable node IDs, content
-membership, trash state, versions, provenance, tags, and extraction state into
-a fresh current-schema database. Kit metadata-artifact integration and
-command/API orchestration remain.
+packed restore publication are implemented. Every new internal capture uses
+Docbank's deterministic logical JSONL artifact, which round-trips directory
+structure, stable node IDs, content membership, trash state, versions,
+provenance, tags, and extraction state into a fresh current-schema database.
+Historical SQLite page-map snapshots remain restorable. Command/API
+orchestration remains.
 
 ## Deferred beyond v1
 
