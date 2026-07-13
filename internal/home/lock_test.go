@@ -3,6 +3,8 @@
 package home
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -21,4 +23,31 @@ func TestTryLockExclusive(t *testing.T) {
 	lk2, err := l.TryLockExclusive()
 	require.NoError(t, err)
 	require.NoError(t, lk2.Release())
+}
+
+func TestTryLockExclusiveRejectsOverlappingTrees(t *testing.T) {
+	base := t.TempDir()
+	parent := filepath.Join(base, "restore")
+	child := filepath.Join(parent, "blobs")
+	sibling := filepath.Join(base, "sibling")
+	for _, dir := range []string{child, sibling} {
+		require.NoError(t, os.MkdirAll(dir, 0o700))
+	}
+
+	parentLock, err := (Layout{Root: parent}).TryLockExclusive()
+	require.NoError(t, err)
+	_, err = (Layout{Root: child}).TryLockExclusive()
+	require.ErrorIs(t, err, ErrVaultLocked,
+		"a descendant must share-lock the exclusively owned parent identity")
+	siblingLock, err := (Layout{Root: sibling}).TryLockExclusive()
+	require.NoError(t, err, "disjoint sibling trees may be owned concurrently")
+	require.NoError(t, siblingLock.Release())
+	require.NoError(t, parentLock.Release())
+
+	childLock, err := (Layout{Root: child}).TryLockExclusive()
+	require.NoError(t, err)
+	_, err = (Layout{Root: parent}).TryLockExclusive()
+	require.ErrorIs(t, err, ErrVaultLocked,
+		"a parent must exclusive-lock an identity already shared by its descendant")
+	require.NoError(t, childLock.Release())
 }

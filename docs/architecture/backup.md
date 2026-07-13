@@ -91,12 +91,14 @@ Restore is likewise daemon-mediated but never mutates the running store. Before
 Kit receives a target, Docbank canonicalizes its existing path prefix and
 rejects any parent, descendant, or symlink alias overlapping the live vault or
 repository. Filesystem identity supplements those lexical checks for case- or
-normalization-equivalent aliases. Every target's vault lock is held across the
-operation, including a fresh target, to exclude another restore or daemon
-startup; daemon startup takes that same lock before initializing vault state.
-The lock file is retained after success or failure so every contender locks the
-same inode; it does not count as payload for empty-target policy. Kit then holds
-an `os.Root` for target-confined writes.
+normalization-equivalent aliases. Kit then opens the target without following a
+final symlink and passes that same held `os.Root` to Docbank's coordinator
+before cleanup or publication. The coordinator repeats the identity, overlap,
+and empty-target checks against the held directory and locks its entire ancestor
+hierarchy. This excludes overlapping restores and daemon roots; replacing the
+pathname afterward cannot redirect Kit's descriptor-relative writes. The local
+lock file is retained after success or failure so every contender locks the
+same inode; it does not count as payload for empty-target policy.
 Compatible
 packs are verified and published before one staged catalog replacement;
 incompatible selections fall back to verified loose content. The restored

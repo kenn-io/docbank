@@ -2,10 +2,26 @@
 
 package api
 
-type noopRestoreTargetLock struct{}
+import (
+	"context"
+	"os"
 
-func (noopRestoreTargetLock) Release() error { return nil }
+	"go.kenn.io/kit/backup"
+)
 
-func acquireRestoreTargetLock(string) (restoreTargetLock, error) {
-	return noopRestoreTargetLock{}, nil
+type platformRestoreTargetCoordinator struct {
+	target    string
+	repoRoot  string
+	vaultRoot string
+	overwrite bool
+}
+
+type noopRestoreTargetLease struct{}
+
+func (noopRestoreTargetLease) Release() error { return nil }
+
+func (platformRestoreTargetCoordinator) AcquireRestoreTarget(
+	context.Context, *os.Root,
+) (backup.RestoreTargetLease, error) {
+	return noopRestoreTargetLease{}, nil
 }

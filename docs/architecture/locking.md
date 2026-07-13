@@ -43,15 +43,31 @@ gone: with all access funneled through one process, the daemon *is* the
 serialization point, and a second daemon on the same vault is impossible
 by construction.
 
-Restore uses the same lock for its separate target tree. It takes the target
-lock before writing even when the target is fresh, while the serving daemon
-continues to hold the live vault's lock. This prevents a second restore or a
-daemon pointed at the target from racing publication. Daemon startup creates
-only the root needed to place `vault.lock` before it attempts the lock; it does
-not initialize the database, blob tree, logs, or configuration first.
+Restore uses the same lock for its separate target tree. Kit first opens the
+target without following a final symlink and keeps that directory descriptor
+through publication. Docbank validates and locks that exact held directory,
+then Kit performs every cleanup and write relative to it. Renaming or replacing
+the target pathname cannot redirect a restore into the live vault, repository,
+or another tree.
+
+A `vault.lock` alone cannot coordinate overlapping roots: `/restore` and
+`/restore/nested` contain different lock files. Docbank therefore also keeps a
+per-user target-lock registry under the operating system's cache directory.
+Each daemon or restore takes shared locks for the filesystem identities of all
+ancestors and an exclusive lock for its root identity. Parent and descendant
+trees consequently conflict in either acquisition order, while disjoint
+sibling vaults remain independent. The registry files contain no vault data;
+their stable names are coordination state keyed by device and inode.
+
+Restore acquires this hierarchy before writing even when the target is fresh,
+while the serving daemon continues to hold the live vault's hierarchy. This
+prevents a second restore, a daemon pointed at the target, or a restore nested
+inside an active vault from racing publication. Daemon startup creates only the
+root needed for locking before it attempts the lock; it does not initialize the
+database, blob tree, logs, or configuration first.
 
 `TryLockExclusive` is **non-blocking**: a second `docbank daemon run` or restore
-against a vault that's already locked fails immediately rather than hanging.
+against an overlapping vault tree fails immediately rather than hanging.
 This matches the daemon's role — waiting to acquire a lock another daemon holds
 for its entire lifetime would mean waiting indefinitely. Restore reports its
 conflict as `backup_restore_target_active`.

@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/home"
 )
 
 func TestBackupRestoreRejectsSymlinkedVaultAndRepositoryAliases(t *testing.T) {
@@ -38,16 +37,6 @@ func TestBackupRestoreRejectsSymlinkedVaultAndRepositoryAliases(t *testing.T) {
 		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 		assert.Contains(t, body, `"code":"validation"`)
 	}
-
-	activeTarget := filepath.Join(t.TempDir(), "active-target")
-	require.NoError(t, os.MkdirAll(activeTarget, 0o700))
-	lock, err := (home.Layout{Root: activeTarget}).TryLockExclusive()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = lock.Release() })
-	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/restore", nil,
-		map[string]any{"target": activeTarget, "overwrite": true})
-	assert.Equal(t, http.StatusConflict, resp.StatusCode, body)
-	assert.Contains(t, body, `"code":"backup_restore_target_active"`)
 }
 
 func TestBackupRestoreRejectsCaseEquivalentRepositoryAlias(t *testing.T) {

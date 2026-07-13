@@ -20,7 +20,6 @@ import (
 	"go.kenn.io/kit/backup"
 
 	"go.kenn.io/docbank/internal/backupapp"
-	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/version"
 )
 
@@ -240,7 +239,10 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, err
 		}
-		report, err := restoreBackupSnapshot(ctx, repo, target, in.Body, nil)
+		coordinator := newRestoreTargetCoordinator(
+			target, repo.Root(), d.VaultRoot, in.Body.Overwrite)
+		report, err := restoreBackupSnapshot(
+			ctx, repo, target, in.Body, coordinator, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -270,13 +272,16 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, err
 		}
+		coordinator := newRestoreTargetCoordinator(
+			target, repo.Root(), d.VaultRoot, in.Body.Overwrite)
 		return &huma.StreamResponse{Body: func(hctx huma.Context) {
 			hctx.SetHeader("Content-Type", "application/x-ndjson")
 			hctx.SetHeader("Cache-Control", "no-store")
 			runCtx, cancel := context.WithCancel(hctx.Context())
 			defer cancel()
 			stream := newBackupEventWriter[BackupRestoreEvent](hctx.BodyWriter(), cancel)
-			report, restoreErr := restoreBackupSnapshot(runCtx, repo, target, in.Body,
+			report, restoreErr := restoreBackupSnapshot(
+				runCtx, repo, target, in.Body, coordinator,
 				func(event backup.ProgressEvent) {
 					stream.send(BackupRestoreEvent{
 						Type: "progress", Progress: backupProgress(event),
@@ -428,9 +433,11 @@ func restoreBackupSnapshot(
 	repo *backup.Repo,
 	target string,
 	in backupRestoreRequest,
+	coordinator backup.RestoreTargetCoordinator,
 	progress func(backup.ProgressEvent),
 ) (BackupRestoreReport, error) {
-	return restoreBackupSnapshotWith(ctx, repo, target, in, progress, backupapp.Restore)
+	return restoreBackupSnapshotWith(
+		ctx, repo, target, in, coordinator, progress, backupapp.Restore)
 }
 
 type backupRestoreRunner func(
@@ -442,74 +449,14 @@ func restoreBackupSnapshotWith(
 	repo *backup.Repo,
 	target string,
 	in backupRestoreRequest,
+	coordinator backup.RestoreTargetCoordinator,
 	progress func(backup.ProgressEvent),
 	run backupRestoreRunner,
 ) (report BackupRestoreReport, retErr error) {
-	targetExisted := true
-	targetInfo, targetStatErr := os.Stat(target)
-	if errors.Is(targetStatErr, fs.ErrNotExist) {
-		targetExisted = false
-		if err := os.MkdirAll(target, 0o700); err != nil {
-			return report, NewError(http.StatusUnprocessableEntity, "validation",
-				fmt.Sprintf("creating backup restore target: %v", err))
-		}
-	} else if targetStatErr != nil {
-		return report, NewError(http.StatusUnprocessableEntity, "validation",
-			fmt.Sprintf("checking backup restore target: %v", targetStatErr))
-	} else if !targetInfo.IsDir() {
-		return report, NewError(http.StatusUnprocessableEntity, "validation",
-			"backup restore target must be a directory")
-	}
-
-	lockInfo, lockStatErr := os.Lstat(filepath.Join(target, "vault.lock"))
-	if lockStatErr == nil {
-		if !lockInfo.Mode().IsRegular() {
-			return report, NewError(http.StatusUnprocessableEntity,
-				"validation", "backup restore target vault.lock must be a regular file")
-		}
-	} else if !errors.Is(lockStatErr, fs.ErrNotExist) {
-		return report, NewError(http.StatusUnprocessableEntity,
-			"validation", fmt.Sprintf("checking backup restore target lock: %v", lockStatErr))
-	}
-
-	targetLock, lockErr := acquireRestoreTargetLock(target)
-	if lockErr != nil {
-		if !targetExisted {
-			_ = os.Remove(target)
-		}
-		if errors.Is(lockErr, home.ErrVaultLocked) {
-			return report, NewError(http.StatusConflict,
-				"backup_restore_target_active",
-				"backup restore target is owned by another restore or docbank daemon")
-		}
-		return report, NewError(http.StatusInternalServerError,
-			"backup_failed", fmt.Sprintf("locking backup restore target: %v", lockErr))
-	}
-	// The lock pathname must remain stable even after failure. Unlinking it
-	// while this inode is locked would let a contender create and lock a new
-	// inode at the same path before this restore releases ownership.
-	defer func() { _ = targetLock.Release() }()
-
-	// The public overwrite decision was made before locking. Recheck while
-	// holding the target lock so a competing daemon or restore cannot race
-	// content into an empty target between validation and publication.
-	if !in.Overwrite {
-		entries, err := os.ReadDir(target)
-		if err != nil {
-			return report, NewError(http.StatusUnprocessableEntity, "validation",
-				fmt.Sprintf("reading locked backup restore target: %v", err))
-		}
-		if restoreTargetHasPayload(entries) {
-			return report, NewError(http.StatusConflict, "backup_restore_target_not_empty",
-				"backup restore target is not empty; set overwrite to merge into it")
-		}
-	}
-
-	// Kit sees Docbank's own vault.lock, so the target is no longer literally
-	// empty. Docbank has already enforced the caller's overwrite policy above.
 	result, err := run(ctx, repo, version.Version, backup.RestoreOptions{
 		SnapshotID: in.SnapshotID, TargetDir: target, Overwrite: true,
 		Jobs: in.Jobs, ForceUnlock: in.ForceUnlock, Progress: progress,
+		TargetCoordinator: coordinator,
 	})
 	if err != nil {
 		return report, fromBackupError(err)
