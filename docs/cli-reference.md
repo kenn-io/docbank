@@ -274,11 +274,14 @@ docbank backup create [--repo <dir>] [--tag <label>] [--jobs <n>]
 docbank backup list [--repo <dir>] [--json]
 docbank backup verify [snapshot] [--repo <dir>] [--all] [--quick] [--jobs <n>]
                       [--force-unlock] [--progress auto|bar|plain] [--json]
+docbank backup restore [snapshot] --target <dir> [--repo <dir>] [--overwrite]
+                       [--jobs <n>] [--force-unlock]
+                       [--progress auto|bar|plain] [--json]
 ```
 
 Initializes an immutable Kit repository, captures a verified JSONL-native
-snapshot through the daemon, lists snapshot history, and independently proves
-repository integrity. `--repo` overrides
+snapshot through the daemon, lists snapshot history, independently proves
+repository integrity, and restores a proved vault. `--repo` overrides
 `[backup] repo`; one of them is required. `create` briefly quiesces mutations
 only while pinning its logical view, then streams loose or packed content while
 normal daemon work resumes. `--jobs 1` serializes repository readers;
@@ -286,13 +289,13 @@ normal daemon work resumes. `--jobs 1` serializes repository readers;
 `create` and `verify` draw per-stage progress bars on a terminal and durable
 progress lines when redirected; `--progress` can force either form. `verify`
 checks the latest snapshot by default, one named snapshot positionally, or all
-snapshots with `--all`; `--quick` skips content reads. Every subcommand supports
-typed `--json` output; long-running operations suppress progress in that mode. See
+snapshots with `--all`; `--quick` skips content reads. `restore` targets the
+latest snapshot by default and requires a separate `--target`; non-empty
+targets require `--overwrite`, which merges rather than clearing unrelated
+files. Compatible content is restored packed, with verified loose fallbacks
+reported explicitly. Every subcommand supports typed `--json` output;
+long-running operations suppress progress in that mode. See
 [Backup](usage/backup.md).
-
-!!! info "Planned"
-    `docbank backup restore` is the remaining Phase 4 command and is not
-    available yet.
 
 ## docbank daemon
 

@@ -15,11 +15,13 @@ func TestResolveUsesEnvOverride(t *testing.T) {
 
 	l, err := Resolve()
 	require.NoError(t, err)
-	assert.Equal(t, dir, l.Root)
-	assert.Equal(t, filepath.Join(dir, "docbank.db"), l.DBPath())
-	assert.Equal(t, filepath.Join(dir, "blobs"), l.BlobsDir())
-	assert.Equal(t, filepath.Join(dir, "blobs", "tmp"), l.BlobTmpDir())
-	assert.Equal(t, filepath.Join(dir, "logs"), l.LogsDir())
+	canonical, err := filepath.EvalSymlinks(dir)
+	require.NoError(t, err)
+	assert.Equal(t, canonical, l.Root)
+	assert.Equal(t, filepath.Join(canonical, "docbank.db"), l.DBPath())
+	assert.Equal(t, filepath.Join(canonical, "blobs"), l.BlobsDir())
+	assert.Equal(t, filepath.Join(canonical, "blobs", "tmp"), l.BlobTmpDir())
+	assert.Equal(t, filepath.Join(canonical, "logs"), l.LogsDir())
 }
 
 func TestResolveDefaultsToHomeDir(t *testing.T) {

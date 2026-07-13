@@ -41,6 +41,13 @@ func runServe(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	root, lock, err := layout.OpenAndLockExclusive()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	defer func() { _ = lock.Release() }()
+
 	if err := layout.Ensure(); err != nil {
 		return err
 	}
@@ -57,12 +64,6 @@ func runServe(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-
-	lock, err := layout.TryLockExclusive()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = lock.Release() }()
 
 	s, err := store.Open(layout.DBPath())
 	if err != nil {
@@ -122,7 +123,7 @@ func runServe(ctx context.Context) error {
 
 	tracker := api.NewActivityTracker()
 	srv := api.NewServer(api.Deps{
-		Store: s, Blobs: blobs, Cfg: cfg, Logger: logger,
+		Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Logger: logger,
 		StartedAt: time.Now(), ShutdownToken: shutdownToken, Shutdown: stop, Tracker: tracker,
 	})
 	httpSrv := &http.Server{

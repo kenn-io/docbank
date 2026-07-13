@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/home"
 )
 
 func buildDocbank(t *testing.T) string {
@@ -101,6 +102,26 @@ func TestLifecycleStartStatusRestartStop(t *testing.T) {
 	assert.False(t, found)
 }
 
+func TestDaemonStartDoesNotInitializeRestoreOwnedMissingTarget(t *testing.T) {
+	bin := buildDocbank(t)
+	parent := filepath.Join(t.TempDir(), "restore-target")
+	require.NoError(t, os.Mkdir(parent, 0o700))
+	lock, err := (home.Layout{Root: parent}).TryLockExclusive()
+	require.NoError(t, err)
+	defer func() { _ = lock.Release() }()
+
+	target := filepath.Join(parent, "docbank.db")
+	cmd := exec.Command(bin, "daemon", "start")
+	cmd.Env = append(os.Environ(), "DOCBANK_HOME="+target)
+	out, err := cmd.CombinedOutput()
+	require.Error(t, err, string(out))
+	assert.Contains(t, string(out), "vault is locked",
+		"the external bootstrap capture must preserve the child startup error")
+	_, err = os.Lstat(target)
+	require.ErrorIs(t, err, os.ErrNotExist,
+		"the launcher and failed child must not initialize a restore-owned target")
+}
+
 func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	oldBin := buildDocbank(t) // reports version "dev"
 	newBin := buildDocbankVersion(t, "v9.9.9-test")
@@ -139,7 +160,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	recs, err := client.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
-	require.Equal(t, "6", recs[0].Metadata["protocol_version"])
+	require.Equal(t, "7", recs[0].Metadata["protocol_version"])
 	recs[0].Metadata["protocol_version"] = "4"
 	_, err = client.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)

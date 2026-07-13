@@ -141,6 +141,7 @@ func (r *backupProgressRenderer) stopTickerLocked() {
 }
 
 func (r *backupProgressRenderer) render(event api.BackupProgress) {
+	stage := backupProgressStageLabel(event.Stage)
 	pct := backupProgressPercent(event.Done, event.Total)
 	counts := strconv.FormatInt(event.Done, 10)
 	if event.Total > 0 {
@@ -167,12 +168,12 @@ func (r *backupProgressRenderer) render(event api.BackupProgress) {
 			done = " (done)"
 		}
 		_, _ = fmt.Fprintf(r.writer(), "%s: %s (%3.0f%%)%s\n",
-			event.Stage, detail, pct, done)
+			stage, detail, pct, done)
 		return
 	}
 
 	line := fmt.Sprintf("  %-11s %s %3.0f%%  %s",
-		event.Stage, backupProgressBarString(pct), pct, detail)
+		stage, backupProgressBarString(pct), pct, detail)
 	width := utf8.RuneCountInString(line)
 	if width < r.lastWidth {
 		line += strings.Repeat(" ", r.lastWidth-width)
@@ -187,6 +188,17 @@ func (r *backupProgressRenderer) render(event api.BackupProgress) {
 	}
 	_, _ = fmt.Fprint(r.writer(), "\r"+line)
 	r.lineOpen = true
+}
+
+func backupProgressStageLabel(stage string) string {
+	switch stage {
+	case "integrity_check":
+		return "integrity"
+	case "restore_stats":
+		return "statistics"
+	default:
+		return stage
+	}
 }
 
 func (r *backupProgressRenderer) writer() io.Writer {

@@ -120,7 +120,9 @@ structure, stable node IDs, content membership, trash state, versions,
 provenance, tags, and extraction state into a fresh current-schema database.
 Historical SQLite page-map snapshots remain restorable. Authenticated daemon
 API and CLI orchestration for repository initialization, snapshot creation,
-listing, and repository verification are implemented; restore remains.
+listing, verification, and confined packed restore are implemented. Remaining
+Phase 4 work is representative-corpus hardening and eventual retention policy,
+not a missing recovery command.
 
 ## Deferred beyond v1
 

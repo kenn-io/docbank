@@ -81,7 +81,7 @@ func TestIngestRejectsNonLoopback(t *testing.T) {
 
 	cfg := config.Default()
 	cfg.Server.APIKey = "test-key"
-	srv := api.NewServer(api.Deps{Store: s, Blobs: blobs, Cfg: cfg})
+	srv := api.NewServer(api.Deps{Store: s, Blobs: blobs, VaultRoot: dir, Cfg: cfg})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/ingest", strings.NewReader(`{"paths":["/x"],"dest":"/inbox"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Api-Key", "test-key")

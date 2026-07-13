@@ -2,7 +2,10 @@
 
 package home
 
-import "errors"
+import (
+	"errors"
+	"os"
+)
 
 var errUnsupported = errors.New(
 	"docbank requires a Unix-like OS: vault locking uses flock(2)")
@@ -16,6 +19,25 @@ var ErrVaultLocked = errors.New("vault is locked by another process")
 
 // TryLockExclusive fails: vault locking is Unix-only.
 func (l Layout) TryLockExclusive() (*Lock, error) { return nil, errUnsupported }
+
+// OpenAndLockExclusive fails: vault locking is Unix-only.
+func (l Layout) OpenAndLockExclusive() (*os.Root, *Lock, error) {
+	return nil, nil, errUnsupported
+}
+
+// TryLockLaunch fails: vault locking is Unix-only.
+func (l Layout) TryLockLaunch() (*Lock, error) { return nil, errUnsupported }
+
+// TryLockExistingAncestors fails: vault locking is Unix-only.
+func (l Layout) TryLockExistingAncestors() (*Lock, error) { return nil, errUnsupported }
+
+// OpenLaunchOutput fails: vault locking is Unix-only.
+func (l Layout) OpenLaunchOutput() (*os.File, string, error) {
+	return nil, "", errUnsupported
+}
+
+// TryLockExclusiveRoot fails: vault locking is Unix-only.
+func (l Layout) TryLockExclusiveRoot(*os.Root) (*Lock, error) { return nil, errUnsupported }
 
 // Release fails: vault locking is Unix-only.
 func (lk *Lock) Release() error { return errUnsupported }

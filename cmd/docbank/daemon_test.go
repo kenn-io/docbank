@@ -5,6 +5,8 @@ package main
 import (
 	"context"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -13,7 +15,41 @@ import (
 	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/home"
 )
+
+func TestServeLocksBeforeInitializingVault(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "restore-target")
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	lock, err := (home.Layout{Root: dir}).TryLockExclusive()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = lock.Release() })
+	t.Setenv("DOCBANK_HOME", dir)
+
+	err = runServe(context.Background())
+	require.ErrorIs(t, err, home.ErrVaultLocked)
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "vault.lock", entries[0].Name(),
+		"daemon startup must not initialize a restore-owned target")
+}
+
+func TestServeLocksExistingAncestorBeforeCreatingVault(t *testing.T) {
+	parent := filepath.Join(t.TempDir(), "restore-target")
+	require.NoError(t, os.Mkdir(parent, 0o700))
+	lock, err := (home.Layout{Root: parent}).TryLockExclusive()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = lock.Release() })
+
+	nested := filepath.Join(parent, "docbank.db")
+	t.Setenv("DOCBANK_HOME", nested)
+	err = runServe(context.Background())
+	require.ErrorIs(t, err, home.ErrVaultLocked)
+	_, err = os.Lstat(nested)
+	require.ErrorIs(t, err, os.ErrNotExist,
+		"daemon startup must not create a nested root beneath a restore-owned target")
+}
 
 func TestServeServesAndShutsDownGracefully(t *testing.T) {
 	dir := t.TempDir()

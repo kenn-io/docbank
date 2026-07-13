@@ -14,9 +14,8 @@ new manifest. Metadata is a complete logical JSONL description per snapshot,
 not a row-level delta: an unchanged description is reused by hash, while any
 logical change stores one new compressed metadata object.
 
-The current command surface initializes repositories, creates snapshots,
-lists them, and verifies repository integrity. User-facing restore is the next
-backup slice; the underlying verified restore engine is already integrated.
+The command surface initializes repositories, creates incremental snapshots,
+lists and verifies them, and restores a proved vault into a separate target.
 
 !!! warning "Repositories are not encrypted"
     Snapshot metadata and document content are compressed but not encrypted.
@@ -38,6 +37,9 @@ docbank backup list --repo ~/Backups/docbank
 
 # Prove the latest snapshot, including every referenced content byte
 docbank backup verify --repo ~/Backups/docbank
+
+# Recover and prove it without touching the running vault
+docbank backup restore --repo ~/Backups/docbank --target ~/Restores/docbank-test
 ```
 
 Set a default repository to omit `--repo`:
@@ -128,6 +130,62 @@ disks and latency-sensitive network storage. The progress and JSON contracts
 match `backup create`: progress is written to stderr, and `--json` suppresses
 progress so stdout contains one typed report.
 
+## Restore and prove a snapshot
+
+```bash
+docbank backup restore [SNAPSHOT] --target DIR [--repo DIR] [--overwrite]
+                       [--jobs N] [--force-unlock]
+                       [--progress auto|bar|plain] [--json]
+```
+
+Restore selects the latest snapshot by default; pass an immutable snapshot ID
+to recover a historical point. The CLI resolves `--target` from its working
+directory before sending an absolute server path to the daemon. The target
+must be separate from both the running vault and the immutable repository.
+Direct paths, parents, descendants, and symlink aliases that overlap either
+one are rejected. Filesystem-identity checks also reject differently cased or
+Unicode-normalized spellings that identify the same tree on filesystems where
+those names are equivalent.
+
+Every restore pins the target directory and takes its vault-tree lock before
+writing, including for a fresh or empty target. That excludes a second restore,
+a restore to any ancestor or descendant, and a daemon rooted anywhere in the
+same tree. Replacing the target pathname while restore is running cannot
+redirect publication. A successful restore leaves the ordinary `vault.lock` as
+part of the usable vault. A failed restore also retains that stable advisory
+file after releasing it: retries ignore `vault.lock` when deciding whether the
+target contains payload, and retaining the pathname avoids split-lock races
+between old and newly created lock files.
+
+A new or empty target needs no destructive flag. A non-empty target is refused
+unless `--overwrite` is explicit. Overwrite is a merge: files absent from the
+snapshot remain in place. The old database and SQLite sidecars remain intact
+until all repository content has been read and verified, the replacement
+database passes `integrity_check`, and its logical statistics match the
+manifest. Only then is the database published. A failed or cancelled restore
+does not publish `docbank.db` for a new target and does not replace an existing
+database.
+
+Compatible repository packs are copied, verified, durably published, and
+granted catalog authority by default. A pack or object that exceeds Docbank's
+current storage policy is restored as a verified loose blob instead; the
+result reports the loose count and grouped fallback reasons. This is a
+representation choice, not an integrity failure.
+
+Interactive restore shows metadata, document, extras, SQLite integrity, and
+manifest-statistics progress as separate stages.
+`--json` suppresses progress and returns one report containing physical layout
+counts and explicit `content_verified`, `sqlite_integrity`, and
+`manifest_stats` proof fields. A successful report means the target is a
+complete vault, but it does not automatically replace or start it. Inspect it
+under its own home first:
+
+```bash
+DOCBANK_HOME=~/Restores/docbank-test docbank verify
+DOCBANK_HOME=~/Restores/docbank-test docbank tree /
+DOCBANK_HOME=~/Restores/docbank-test docbank daemon stop
+```
+
 ## Repository placement
 
 Keep the repository outside `$DOCBANK_HOME`. It is independent archive state,
@@ -135,9 +193,3 @@ not a live-vault subdirectory. Its files are write-once, making a completed
 repository suitable for `rsync`, `rclone`, cloud-drive sync, filesystem
 snapshots, or removable media. Sync after `backup create` completes; never edit
 repository packs, indexes, manifests, locks, or configuration by hand.
-
-!!! info "Planned — restore command"
-    `docbank backup restore` is not exposed yet. Until it lands, the built-in
-    workflow can capture and independently verify snapshots but cannot
-    materialize one through the user-facing CLI. Manual filesystem snapshots
-    remain documented under [Vault Lifecycle](lifecycle.md).

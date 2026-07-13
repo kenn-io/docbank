@@ -18,8 +18,10 @@ entire lifetime would only hang.
 Data commands call `client.Ensure` and never import store-opening code. Status
 and stop are discovery-only so they can find an incompatible daemon without
 starting a replacement. Start, restart, and auto-start share one convergence
-path under `launch.lock`; they replace a daemon whose version or protocol
-revision is incompatible with the invoking CLI.
+path under an external per-user launch lock; they replace a daemon whose
+version or protocol revision is incompatible with the invoking CLI. The
+launcher must not initialize the vault or open vault-local logs before the
+child daemon acquires the target-tree lock.
 
 When a change makes old clients unsafe against a new daemon, or vice versa,
 bump the daemon protocol revision even when both development binaries still

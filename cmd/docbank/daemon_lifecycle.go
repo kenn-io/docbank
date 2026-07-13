@@ -45,9 +45,6 @@ var daemonStartCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if err := layout.Ensure(); err != nil {
-			return err
-		}
 		res, err := client.EnsureDaemon(cmd.Context(), layout.Root)
 		if err != nil {
 			return err
@@ -128,9 +125,6 @@ var daemonRestartCmd = &cobra.Command{
 		}
 		wasRunning, err := client.Stop(cmd.Context(), layout.Root)
 		if err != nil {
-			return err
-		}
-		if err := layout.Ensure(); err != nil {
 			return err
 		}
 		res, err := client.EnsureDaemon(cmd.Context(), layout.Root)

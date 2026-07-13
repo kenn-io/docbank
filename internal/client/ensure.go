@@ -6,12 +6,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
-	"path/filepath"
+	"os/exec"
+	"strings"
 	"syscall"
 	"time"
 
-	"github.com/gofrs/flock"
 	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/docbank/internal/home"
@@ -49,7 +50,7 @@ func discoverOptions(requireVersion bool) kitdaemon.DiscoverOptions {
 // Find reports the live, responding docbank daemon (any version): daemon
 // discovery for status/stop. NEVER auto-starts.
 func Find(ctx context.Context, root string) (kitdaemon.RuntimeRecord, kitdaemon.PingInfo, bool, error) {
-	rec, info, ok, err := kitdaemon.Discover(ctx, RuntimeStore(root), discoverOptions(false))
+	rec, info, ok, err := discover(ctx, root, false)
 	if err != nil {
 		return rec, info, ok, fmt.Errorf("discovering daemon: %w", err)
 	}
@@ -66,16 +67,25 @@ func newClientFor(rec kitdaemon.RuntimeRecord) *Client {
 }
 
 // WithLaunchLock serializes daemon auto-start with update's stop/install/
-// restart window. Callers should re-run discovery inside fn before spawning.
+// restart window. Acquisition waits until the caller's context expires because
+// an update may legitimately hold the per-user lock beyond startup's readiness
+// timeout. Callers should re-run discovery inside fn before spawning.
 func WithLaunchLock(ctx context.Context, root string, fn func() error) error {
-	launch := flock.New(filepath.Join(root, "launch.lock"))
-	lockCtx, cancel := context.WithTimeout(ctx, ensureTimeout)
-	defer cancel()
-	if _, err := launch.TryLockContext(lockCtx, 100*time.Millisecond); err != nil {
-		return fmt.Errorf("acquiring daemon launch lock: %w", err)
+	for {
+		launch, err := (home.Layout{Root: root}).TryLockLaunch()
+		if err == nil {
+			defer func() { _ = launch.Release() }()
+			return fn()
+		}
+		if !errors.Is(err, home.ErrVaultLocked) {
+			return fmt.Errorf("acquiring daemon launch lock: %w", err)
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("acquiring daemon launch lock: %w", ctx.Err())
+		case <-time.After(100 * time.Millisecond):
+		}
 	}
-	defer func() { _ = launch.Unlock() }()
-	return fn()
 }
 
 // Ensure returns a client for a version- and protocol-matched daemon,
@@ -84,9 +94,6 @@ func WithLaunchLock(ctx context.Context, root string, fn func() error) error {
 func Ensure(ctx context.Context) (*Client, error) {
 	layout, err := home.Resolve()
 	if err != nil {
-		return nil, err
-	}
-	if err := layout.Ensure(); err != nil {
 		return nil, err
 	}
 	res, err := EnsureDaemon(ctx, layout.Root)
@@ -104,7 +111,11 @@ func Ensure(ctx context.Context) (*Client, error) {
 // no command ever leaves a stale daemon behind.
 func EnsureDaemon(ctx context.Context, root string) (EnsureResult, error) {
 	var res EnsureResult
-	rec, _, ok, err := kitdaemon.Discover(ctx, RuntimeStore(root), discoverOptions(true))
+	root, err := home.CanonicalRoot(root)
+	if err != nil {
+		return res, err
+	}
+	rec, _, ok, err := discover(ctx, root, true)
 	if err != nil {
 		return res, fmt.Errorf("discovering daemon: %w", err)
 	}
@@ -115,7 +126,7 @@ func EnsureDaemon(ctx context.Context, root string) (EnsureResult, error) {
 
 	// Serialize racing starters; re-check under the lock.
 	err = WithLaunchLock(ctx, root, func() error {
-		rec, _, ok, err = kitdaemon.Discover(ctx, RuntimeStore(root), discoverOptions(true))
+		rec, _, ok, err = discover(ctx, root, true)
 		if err != nil {
 			return fmt.Errorf("discovering daemon: %w", err)
 		}
@@ -157,25 +168,31 @@ func StartAnyVersion(ctx context.Context, root string) (kitdaemon.RuntimeRecord,
 }
 
 func start(ctx context.Context, root string, requireVersion bool) (kitdaemon.RuntimeRecord, error) {
+	root, err := home.CanonicalRoot(root)
+	if err != nil {
+		return kitdaemon.RuntimeRecord{}, err
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		return kitdaemon.RuntimeRecord{}, fmt.Errorf("resolving executable for daemon spawn: %w", err)
 	}
-	logPath := filepath.Join(root, "logs", "serve.log")
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	logFile, logPath, err := (home.Layout{Root: root}).OpenLaunchOutput()
 	if err != nil {
-		return kitdaemon.RuntimeRecord{}, fmt.Errorf("opening %s: %w", logPath, err)
+		return kitdaemon.RuntimeRecord{}, err
 	}
 	defer func() { _ = logFile.Close() }()
+	defer func() { _ = os.Remove(logPath) }()
 	// DOCBANK_HOME is forced to root so a caller-supplied root (update's
 	// restart path, tests) can never spawn a daemon on a different vault
 	// than the one being discovered.
+	childPID := 0
 	err = kitdaemon.StartDetached(ctx, kitdaemon.StartDetachedOptions{
 		Executable: exe,
 		Args:       []string{"daemon", "run"},
 		Env:        append(os.Environ(), EnvBackgroundDaemon+"=1", "DOCBANK_HOME="+root),
 		Stdout:     logFile,
 		Stderr:     logFile,
+		AfterStart: func(cmd *exec.Cmd) { childPID = cmd.Process.Pid },
 	})
 	if err != nil {
 		return kitdaemon.RuntimeRecord{}, fmt.Errorf("spawning daemon: %w", err)
@@ -184,9 +201,13 @@ func start(ctx context.Context, root string, requireVersion bool) (kitdaemon.Run
 	deadline := time.Now().Add(ensureTimeout)
 	opts := discoverOptions(requireVersion)
 	for time.Now().Before(deadline) {
-		rec, _, ok, err := kitdaemon.Discover(ctx, RuntimeStore(root), opts)
+		rec, _, ok, err := discoverWithOptions(ctx, root, opts)
 		if err == nil && ok {
 			return rec, nil
+		}
+		if childPID > 0 && !kitdaemon.ProcessAlive(childPID) {
+			return kitdaemon.RuntimeRecord{}, daemonStartFailure(
+				logFile, "daemon exited before becoming ready")
 		}
 		select {
 		case <-ctx.Done():
@@ -194,8 +215,55 @@ func start(ctx context.Context, root string, requireVersion bool) (kitdaemon.Run
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
-	return kitdaemon.RuntimeRecord{}, fmt.Errorf(
-		"daemon did not become ready within %s; check %s", ensureTimeout, logPath)
+	return kitdaemon.RuntimeRecord{}, daemonStartFailure(
+		logFile, fmt.Sprintf("daemon did not become ready within %s", ensureTimeout))
+}
+
+func daemonStartFailure(output *os.File, summary string) error {
+	_ = output.Sync()
+	if _, err := output.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("%s (reading bootstrap output: %w)", summary, err)
+	}
+	data, err := io.ReadAll(io.LimitReader(output, 64<<10))
+	if err != nil {
+		return fmt.Errorf("%s (reading bootstrap output: %w)", summary, err)
+	}
+	if detail := strings.TrimSpace(string(data)); detail != "" {
+		return fmt.Errorf("%s: %s", summary, detail)
+	}
+	return errors.New(summary)
+}
+
+func discover(
+	ctx context.Context, root string, requireVersion bool,
+) (kitdaemon.RuntimeRecord, kitdaemon.PingInfo, bool, error) {
+	return discoverWithOptions(ctx, root, discoverOptions(requireVersion))
+}
+
+func discoverWithOptions(
+	ctx context.Context, root string, opts kitdaemon.DiscoverOptions,
+) (kitdaemon.RuntimeRecord, kitdaemon.PingInfo, bool, error) {
+	root, err := home.CanonicalRoot(root)
+	if err != nil {
+		return kitdaemon.RuntimeRecord{}, kitdaemon.PingInfo{}, false, err
+	}
+	info, err := os.Stat(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return kitdaemon.RuntimeRecord{}, kitdaemon.PingInfo{}, false, nil
+	}
+	if err != nil {
+		return kitdaemon.RuntimeRecord{}, kitdaemon.PingInfo{}, false,
+			fmt.Errorf("checking daemon runtime directory: %w", err)
+	}
+	if !info.IsDir() {
+		return kitdaemon.RuntimeRecord{}, kitdaemon.PingInfo{}, false,
+			fmt.Errorf("daemon runtime path %s is not a directory", root)
+	}
+	rec, ping, ok, err := kitdaemon.Discover(ctx, RuntimeStore(root), opts)
+	if err != nil {
+		return rec, ping, ok, fmt.Errorf("scanning daemon runtime records: %w", err)
+	}
+	return rec, ping, ok, nil
 }
 
 // Stop gracefully stops the discovered daemon: token endpoint first,

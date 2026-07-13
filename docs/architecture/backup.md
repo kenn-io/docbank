@@ -17,7 +17,7 @@ state. A restored copy is not trusted until `docbank verify` succeeds.
 
 ## Kit integration status
 
-The internal `backupapp` adapter supplies Kit v0.9.0 with Docbank's frozen logical
+The internal `backupapp` adapter supplies Kit v0.9.2 with Docbank's frozen logical
 view: every authoritative `blobs` row, representation-neutral fidelity stats,
 and mixed loose/packed content reads. A short daemon freeze opens and pins one
 deferred SQLite read transaction; the freeze then ends, writers resume into the
@@ -87,10 +87,26 @@ snapshots, and returns every finding rather than stopping at the first damaged
 object. Kit's shared repository lock permits concurrent verifies and restores
 while excluding repository writers.
 
-!!! info "Planned — remaining Phase 4 command"
-    `docbank backup restore` has not landed. The restore adapter described above
-    is internal until the recovery CLI/API defines target confinement,
-    overwrite behavior, and operator output.
+Restore is likewise daemon-mediated but never mutates the running store. Before
+Kit receives a target, Docbank canonicalizes its existing path prefix and
+rejects any parent, descendant, or symlink alias overlapping the live vault or
+repository. Filesystem identity supplements those lexical checks for case- or
+normalization-equivalent aliases. Kit then opens the target without following a
+final symlink and passes that same held `os.Root` to Docbank's coordinator
+before cleanup or publication. The coordinator repeats the identity, overlap,
+and empty-target checks against the held directory and locks its entire ancestor
+hierarchy. This excludes overlapping restores and daemon roots; replacing the
+pathname afterward cannot redirect Kit's descriptor-relative writes. The local
+lock file is retained after success or failure so every contender locks the
+same inode; it does not count as payload for empty-target policy.
+Compatible
+packs are verified and published before one staged catalog replacement;
+incompatible selections fall back to verified loose content. The restored
+database remains private until content verification, SQLite integrity, and
+manifest-stat proofs all pass. The streaming API exposes those stages and a
+terminal typed proof, with the SQLite scan and manifest-stat comparison
+reported separately; the non-streaming endpoint keeps agent output to one JSON
+document.
 
 Backup reachability is intentionally broader than GC reachability: every
 `blobs` row is captured, including a row that has become a GC candidate but has

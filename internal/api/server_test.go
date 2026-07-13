@@ -58,7 +58,7 @@ func newTestServer(t *testing.T, mutate func(*api.Deps)) (*httptest.Server, *tes
 	blobs, err := blob.New(store.NewPackCatalog(s), blobsDir)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = blobs.Close() })
-	d := api.Deps{Store: s, Blobs: blobs, Cfg: config.Default()}
+	d := api.Deps{Store: s, Blobs: blobs, VaultRoot: dir, Cfg: config.Default()}
 	d.Cfg.Server.APIKey = testAPIKey
 	if mutate != nil {
 		mutate(&d)

@@ -408,6 +408,54 @@ func TestBackupInitCreateListVerifyCLI(t *testing.T) {
 	_, err = runCLI(t, "backup", "verify", created.ID, "--all")
 	require.ErrorContains(t, err, "mutually exclusive")
 
+	restoreTarget := filepath.Join(t.TempDir(), "human-restore")
+	out, err = runCLI(t, "backup", "restore", created.ID, "--target", restoreTarget,
+		"--jobs", "1", "--progress", "plain")
+	require.NoError(t, err)
+	for _, stage := range []string{
+		"metadata:", "attachments:", "integrity:", "statistics:",
+	} {
+		assert.Contains(t, out, stage)
+	}
+	assert.Contains(t, out, "restored snapshot "+created.ID)
+	assert.Contains(t, out, "1 packed in 1 pack(s), 0 loose")
+	assert.Contains(t, out, "proof: content verified, SQLite integrity ok, manifest stats match")
+
+	jsonRestoreTarget := filepath.Join(t.TempDir(), "json-restore")
+	out, err = runCLI(t, "backup", "restore", "--target", jsonRestoreTarget,
+		"--jobs", "1", "--json")
+	require.NoError(t, err)
+	var restoreReport api.BackupRestoreReport
+	require.NoError(t, json.Unmarshal([]byte(out), &restoreReport),
+		"--json must contain no progress lines")
+	assert.Equal(t, created.ID, restoreReport.SnapshotID)
+	targetInfo, err := os.Stat(jsonRestoreTarget)
+	require.NoError(t, err)
+	reportedTargetInfo, err := os.Stat(restoreReport.Target)
+	require.NoError(t, err)
+	assert.True(t, os.SameFile(targetInfo, reportedTargetInfo),
+		"report target must identify the requested directory")
+	assert.True(t, restoreReport.Proof.ContentVerified)
+	assert.True(t, restoreReport.Proof.SQLiteIntegrity)
+	assert.True(t, restoreReport.Proof.ManifestStats)
+
+	overwriteTarget := filepath.Join(t.TempDir(), "overwrite-restore")
+	require.NoError(t, os.MkdirAll(overwriteTarget, 0o700))
+	marker := filepath.Join(overwriteTarget, "keep.txt")
+	require.NoError(t, os.WriteFile(marker, []byte("keep"), 0o600))
+	_, err = runCLI(t, "backup", "restore", "--target", overwriteTarget, "--jobs", "1", "--json")
+	require.ErrorContains(t, err, "not empty")
+	markerBytes, err := os.ReadFile(marker)
+	require.NoError(t, err)
+	assert.Equal(t, "keep", string(markerBytes))
+	out, err = runCLI(t, "backup", "restore", "--target", overwriteTarget,
+		"--overwrite", "--jobs", "1", "--json")
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &restoreReport))
+	markerBytes, err = os.ReadFile(marker)
+	require.NoError(t, err)
+	assert.Equal(t, "keep", string(markerBytes), "overwrite merges unrelated files")
+
 	repo, err := backup.Open(repoPath)
 	require.NoError(t, err)
 	verified, err := backup.Verify(t.Context(), repo, backupapp.New("test"), backup.VerifyOptions{})
