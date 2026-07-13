@@ -243,23 +243,22 @@ func BenchmarkDocbankLooseBackupRoundTrip1GiB(b *testing.B) {
 
 func benchmarkBackupRoundTrip(b *testing.B, fixture *resourceFixture, size int64) {
 	b.Helper()
-	app := backupapp.New("benchmark-version")
 	root := b.TempDir()
+	app := backupapp.New("benchmark-version")
 	b.ReportAllocs()
 	b.SetBytes(3 * size)
 	b.ResetTimer()
 	for i := range b.N {
 		repo, err := backup.Init(filepath.Join(root, fmt.Sprintf("repo-%d", i)))
 		require.NoError(b, err)
-		_, err = backup.Create(context.Background(), repo, app, backup.CreateOptions{
-			DBPath:        filepath.Join(fixture.root, "docbank.db"),
-			ContentSource: backupapp.NewContentSource(fixture.blobs), Jobs: 1,
-		})
+		_, err = backupapp.Create(
+			context.Background(), repo, "benchmark-version", fixture.metadata, fixture.blobs,
+			backup.CreateOptions{Jobs: 1})
 		require.NoError(b, err)
 		verified, err := backup.Verify(context.Background(), repo, app, backup.VerifyOptions{Jobs: 1})
 		require.NoError(b, err)
 		require.Empty(b, verified.Problems)
-		_, err = backup.Restore(context.Background(), repo, app, backup.RestoreOptions{
+		_, err = backupapp.Restore(context.Background(), repo, "benchmark-version", backup.RestoreOptions{
 			TargetDir: filepath.Join(root, fmt.Sprintf("restore-%d", i)), Jobs: 1,
 		})
 		require.NoError(b, err)

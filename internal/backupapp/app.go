@@ -12,6 +12,8 @@ import (
 
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/packstore"
+
+	"go.kenn.io/docbank/internal/store"
 )
 
 // Stats is the representation-neutral fidelity payload recorded in each
@@ -33,6 +35,7 @@ type Stats struct {
 }
 
 type rowQuerier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
@@ -73,6 +76,29 @@ var _ backup.App = (*App)(nil)
 
 func New(version string) *App { return &App{version: version} }
 
+// Create captures Docbank's logical JSONL metadata and catalog-authorized blob
+// streams. The wrapper owns both adapters so ordinary callers cannot
+// accidentally fall back to SQLite page capture or loose-path reads.
+func Create(
+	ctx context.Context,
+	repo *backup.Repo,
+	version string,
+	metadata *store.Store,
+	blobs BlobStreamer,
+	opts backup.CreateOptions,
+) (*backup.Manifest, error) {
+	if opts.MetadataSource != nil || opts.ContentSource != nil || opts.DBPath != "" {
+		return nil, errors.New("backupapp: create options must not supply metadata or content sources")
+	}
+	opts.MetadataSource = NewMetadataSource(metadata)
+	opts.ContentSource = NewContentSource(blobs)
+	manifest, err := backup.Create(ctx, repo, New(version), opts)
+	if err != nil {
+		return nil, fmt.Errorf("backupapp: creating snapshot: %w", err)
+	}
+	return manifest, nil
+}
+
 func (a *App) FrozenView(session *backup.FrozenSession) backup.FrozenView {
 	return &frozenView{tx: session.Tx()}
 }
@@ -85,7 +111,7 @@ func (a *App) ExcludedPaths() []string {
 	return []string{"config.toml", "logs/", "vault.lock", "launch.lock", "daemon.*.json", "blobs/tmp/"}
 }
 
-type frozenView struct{ tx *sql.Tx }
+type frozenView struct{ tx rowQuerier }
 
 func (v *frozenView) ContentInfo(ctx context.Context) (*backup.ContentInfo, error) {
 	rows, err := v.tx.QueryContext(ctx, `SELECT hash, size FROM blobs ORDER BY hash`)

@@ -1,6 +1,6 @@
 ---
 title: Backup
-description: Current manual snapshots and the staged Kit-backed backup integration.
+description: Current manual snapshots and Docbank's JSONL-native Kit backup engine.
 ---
 
 # Backup
@@ -16,49 +16,54 @@ state. A restored copy is not trusted until `docbank verify` succeeds.
 
 ## Kit integration status
 
-The internal `backupapp` adapter now supplies Kit with docbank's frozen logical
+The internal `backupapp` adapter supplies Kit v0.9.0 with Docbank's frozen logical
 view: every authoritative `blobs` row, representation-neutral fidelity stats,
-canonical restore paths, and mixed loose/packed content reads. Integration
-tests prove loose create/verify/restore and capture directly from a packed live
-store. Physical pack tables are excluded from fidelity stats so a restore may
-choose a different representation without changing the archive.
+and mixed loose/packed content reads. A short daemon freeze opens and pins one
+deferred SQLite read transaction; the freeze then ends, writers resume into the
+WAL, and metadata, content membership, and fidelity statistics continue to see
+the same point-in-time state.
 
 Docbank also has a deterministic, versioned JSONL representation of its logical
-metadata. It contains the complete virtual directory tree and file records,
+metadata, identified in manifests as `docbank-metadata-jsonl-v1`. It contains
+the complete virtual directory tree and file records,
 including stable IDs, content hashes, timestamps, trash coordinates, prior
 versions, ingest provenance, tags, and extracted text. It intentionally omits
 FTS rows and physical pack mappings: search indexes are rebuilt by importing
 nodes, while restore grants physical authority only after content has been
 verified and published. Import targets must be fresh current-schema databases;
 a malformed or referentially incomplete stream leaves the pristine target
-unchanged. The header also preserves the node-ID allocation high-water mark,
-including IDs whose rows were later deleted, so restore never reuses a value
-that an external reference may remember.
+unchanged. Capture makes two deterministic passes over the same pinned
+transaction: the first establishes the exact artifact size and the second
+streams the bytes into Kit without materializing a second database or a JSONL
+temporary file. The header also preserves the node-ID allocation high-water
+mark, including IDs whose rows were later deleted, so restore never reuses a
+value that an external reference may remember.
 
 Capture reads loose and packed blobs through Kit's bounded-memory stream. The
 archive may grant authority to copied bytes only after terminal EOF verifies
 their stored framing, decoded length, and SHA-256 identity; opening a stream or
 closing it early is not a successful copy.
 
-Snapshots taken from a packed vault retain source pack metadata in their
-captured database. Docbank therefore fails closed if such a snapshot is sent
-through Kit's loose-only restore path: loose files plus stale pack authority
-would make the restored vault unreadable. Docbank's restore wrapper inseparably
-owns the application adapter and packed target: it publishes verified repository
-packs into the target and atomically replaces all captured pack records and
-mappings before the staged vault becomes visible. Integration coverage opens
-every restored blob through the same mixed store used by a live vault.
+Restore constructs a fresh current-schema database from the verified JSONL
+artifact inside Kit's private staging area. It then checkpoints the database,
+publishes verified content, grants fresh catalog authority to the chosen loose
+or packed representation, reproduces the recorded fidelity statistics, and
+only then publishes the staged vault. Source pack rows never enter the JSONL
+artifact. Docbank's restore wrapper owns both the metadata restorer and packed
+target so callers cannot accidentally separate those policies. Integration
+coverage proves logical JSONL equality, loose and packed source capture,
+packed publication, large loose-object fallback, and reads every restored blob
+through the same mixed store used by a live vault.
+
+Snapshots created before this cutover used Kit's SQLite page-map metadata.
+They remain restorable through the same wrapper. New captures always use JSONL;
+the legacy path is a reader compatibility boundary, not an alternative format
+for new snapshots.
 
 !!! info "Planned — Phase 4"
     Command/API orchestration has not landed. The completed capture and restore
     adapters are internal and do not make any `docbank backup` command
     available yet.
-
-    Kit currently captures the frozen SQLite database as its metadata artifact.
-    The next integration step is to make the logical JSONL stream the archive's
-    application metadata and rebuild a fresh current-schema database during
-    restore. Until that lands, the JSONL codec alone does not change the bytes
-    in a Kit snapshot.
 
     The planned command family is `docbank backup init|create|list|verify|restore`.
     Exact flags will enter the CLI reference only when implemented.

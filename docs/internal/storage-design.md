@@ -261,13 +261,14 @@ both permanently hidden orphans and live nodes nested beneath trash.
 Explicit node IDs advance SQLite's `AUTOINCREMENT` sequence, preserving the
 invariant that a deleted historical ID is never silently reused.
 
-This boundary replaces in-place schema evolution with export → construct a
-fresh current-schema database → import → verify → atomic replacement. It does
-not make compatibility work disappear: each supported JSONL version needs an
-explicit decoder, and a live cutover must carry current physical pack authority
-through a separately verified path. The current codec establishes version 1;
-automatic database replacement and Kit metadata-artifact integration remain
-follow-up work.
+The Kit v0.9.0 backup adapter now uses this boundary for every new snapshot:
+export → verified metadata artifact → construct a fresh current-schema
+database → import → checkpoint → publish verified content and fresh pack
+authority → prove fidelity → atomic replacement. Historical SQLite page-map
+snapshots remain restorable, but new captures cannot select that legacy path.
+This does not make compatibility work disappear: each supported JSONL version
+needs an explicit decoder, and physical pack authority must always travel
+through Kit's separately verified publication path.
 
 Do not move docbank SQL or reachability policy into Kit. Do not reimplement Kit
 reader or lifecycle mechanics in docbank. A physical-storage bug shared by
