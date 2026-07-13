@@ -50,6 +50,25 @@ func (l Layout) TryLockExclusive() (*Lock, error) {
 	return l.TryLockExclusiveRoot(root)
 }
 
+// OpenAndLockExclusive opens an existing vault root or creates a missing one
+// through a held parent while coordinating every existing ancestor. The
+// returned root is the same directory protected by the returned lock.
+func (l Layout) OpenAndLockExclusive() (*os.Root, *Lock, error) {
+	root, err := os.OpenRoot(l.Root)
+	if err == nil {
+		lk, lockErr := l.TryLockExclusiveRoot(root)
+		if lockErr != nil {
+			_ = root.Close()
+			return nil, nil, lockErr
+		}
+		return root, lk, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return nil, nil, fmt.Errorf("opening vault root %s: %w", l.Root, err)
+	}
+	return l.createAndLockExclusive()
+}
+
 // TryLockExclusiveRoot coordinates an exclusive vault owner against the exact
 // borrowed directory descriptor it will mutate. Shared locks on every ancestor
 // identity make an owner conflict with restores of parent or descendant trees;
@@ -62,7 +81,11 @@ func (l Layout) TryLockExclusiveRoot(root *os.Root) (*Lock, error) {
 	if err := verifyLayoutRoot(target, root); err != nil {
 		return nil, err
 	}
-	identities, err := directoryIdentityChain(target)
+	resolved, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return nil, fmt.Errorf("resolving vault root %s: %w", target, err)
+	}
+	identities, err := directoryIdentityChain(resolved)
 	if err != nil {
 		return nil, err
 	}
@@ -78,20 +101,8 @@ func (l Layout) TryLockExclusiveRoot(root *os.Root) (*Lock, error) {
 			_ = lk.Release()
 		}
 	}()
-	for i, identity := range identities {
-		how := syscall.LOCK_SH | syscall.LOCK_NB
-		if i == len(identities)-1 {
-			how = syscall.LOCK_EX | syscall.LOCK_NB
-		}
-		f, openErr := openRegistryLock(registry, identity+".lock")
-		if openErr != nil {
-			return nil, fmt.Errorf("opening target-tree lock: %w", openErr)
-		}
-		if lockErr := flock(f, how); lockErr != nil {
-			_ = f.Close()
-			return nil, classifyLockError(lockErr, target)
-		}
-		lk.files = append(lk.files, f)
+	if err := lk.lockIdentities(registry, identities, true, target); err != nil {
+		return nil, err
 	}
 
 	local, err := openRootLock(root)
@@ -108,6 +119,168 @@ func (l Layout) TryLockExclusiveRoot(root *os.Root) (*Lock, error) {
 	}
 	failed = false
 	return lk, nil
+}
+
+func (l Layout) createAndLockExclusive() (*os.Root, *Lock, error) {
+	target, err := filepath.Abs(l.Root)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolving vault root %s: %w", l.Root, err)
+	}
+	current := target
+	var missing []string
+	for {
+		_, err = os.Lstat(current)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, nil, fmt.Errorf("checking vault root ancestor: %w", err)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return nil, nil, fmt.Errorf("vault root has no existing ancestor: %s", target)
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
+	ancestor, err := os.Stat(current)
+	if err != nil {
+		return nil, nil, fmt.Errorf("checking vault root ancestor identity: %w", err)
+	}
+	resolved, err := filepath.EvalSymlinks(current)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolving vault root ancestor: %w", err)
+	}
+	root, err := os.OpenRoot(resolved)
+	if err != nil {
+		return nil, nil, fmt.Errorf("opening vault root ancestor: %w", err)
+	}
+	fail := func(lk *Lock, cause error) (*os.Root, *Lock, error) {
+		_ = root.Close()
+		if lk != nil {
+			_ = lk.Release()
+		}
+		return nil, nil, cause
+	}
+	heldAncestor, err := root.Stat(".")
+	if err != nil {
+		return fail(nil, fmt.Errorf("checking held vault root ancestor: %w", err))
+	}
+	if !os.SameFile(ancestor, heldAncestor) {
+		return fail(nil, fmt.Errorf(
+			"vault root ancestor %s was replaced while opening it", current))
+	}
+	ancestorIdentities, err := directoryIdentityChain(resolved)
+	if err != nil {
+		return fail(nil, err)
+	}
+	registry, err := targetLockRegistryDir()
+	if err != nil {
+		return fail(nil, err)
+	}
+	lk := &Lock{}
+	if err := lk.lockIdentities(
+		registry, ancestorIdentities, false, target); err != nil {
+		return fail(lk, err)
+	}
+	slices.Reverse(missing)
+	for _, component := range missing {
+		next, enterErr := enterVaultDir(root, component)
+		_ = root.Close()
+		if enterErr != nil {
+			root = nil
+			_ = lk.Release()
+			return nil, nil, fmt.Errorf(
+				"creating vault root component %q: %w", component, enterErr)
+		}
+		root = next
+	}
+	if err := verifyLayoutRoot(target, root); err != nil {
+		return fail(lk, err)
+	}
+	resolvedTarget, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return fail(lk, fmt.Errorf("resolving created vault root: %w", err))
+	}
+	identities, err := directoryIdentityChain(resolvedTarget)
+	if err != nil {
+		return fail(lk, err)
+	}
+	if len(identities) <= len(ancestorIdentities) ||
+		!slices.Equal(identities[:len(ancestorIdentities)], ancestorIdentities) {
+		return fail(lk, errors.New("vault root ancestry changed while creating it"))
+	}
+	if err := lk.lockIdentities(
+		registry, identities[len(ancestorIdentities):], true, target); err != nil {
+		return fail(lk, err)
+	}
+	local, err := openRootLock(root)
+	if err != nil {
+		return fail(lk, err)
+	}
+	if err := flock(local, syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = local.Close()
+		return fail(lk, classifyLockError(err, target))
+	}
+	lk.files = append(lk.files, local)
+	if err := verifyLayoutRoot(target, root); err != nil {
+		return fail(lk, err)
+	}
+	return root, lk, nil
+}
+
+func (lk *Lock) lockIdentities(
+	registry string,
+	identities []string,
+	exclusiveFinal bool,
+	target string,
+) error {
+	for i, identity := range identities {
+		how := syscall.LOCK_SH | syscall.LOCK_NB
+		if exclusiveFinal && i == len(identities)-1 {
+			how = syscall.LOCK_EX | syscall.LOCK_NB
+		}
+		f, err := openRegistryLock(registry, identity+".lock")
+		if err != nil {
+			return fmt.Errorf("opening target-tree lock: %w", err)
+		}
+		if err := flock(f, how); err != nil {
+			_ = f.Close()
+			return classifyLockError(err, target)
+		}
+		lk.files = append(lk.files, f)
+	}
+	return nil
+}
+
+func enterVaultDir(parent *os.Root, component string) (*os.Root, error) {
+	info, err := parent.Lstat(component)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := parent.Mkdir(component, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+			return nil, err
+		}
+		info, err = parent.Lstat(component)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return nil, fmt.Errorf("path component %q is not a real directory", component)
+	}
+	root, err := parent.OpenRoot(component)
+	if err != nil {
+		return nil, err
+	}
+	held, err := root.Stat(".")
+	if err != nil {
+		_ = root.Close()
+		return nil, err
+	}
+	if !os.SameFile(info, held) {
+		_ = root.Close()
+		return nil, fmt.Errorf("path component %q changed while opening", component)
+	}
+	return root, nil
 }
 
 func verifyLayoutRoot(path string, root *os.Root) error {

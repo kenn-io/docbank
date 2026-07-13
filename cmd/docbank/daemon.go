@@ -41,16 +41,11 @@ func runServe(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	// Create only the lock's parent before taking ownership. All other vault
-	// mutation must happen after the lock so restore and daemon startup cannot
-	// initialize the same target concurrently.
-	if err := os.MkdirAll(layout.Root, 0o700); err != nil {
-		return err
-	}
-	lock, err := layout.TryLockExclusive()
+	root, lock, err := layout.OpenAndLockExclusive()
 	if err != nil {
 		return err
 	}
+	defer func() { _ = root.Close() }()
 	defer func() { _ = lock.Release() }()
 
 	if err := layout.Ensure(); err != nil {

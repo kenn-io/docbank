@@ -20,6 +20,11 @@ var ErrVaultLocked = errors.New("vault is locked by another process")
 // TryLockExclusive fails: vault locking is Unix-only.
 func (l Layout) TryLockExclusive() (*Lock, error) { return nil, errUnsupported }
 
+// OpenAndLockExclusive fails: vault locking is Unix-only.
+func (l Layout) OpenAndLockExclusive() (*os.Root, *Lock, error) {
+	return nil, nil, errUnsupported
+}
+
 // TryLockExclusiveRoot fails: vault locking is Unix-only.
 func (l Layout) TryLockExclusiveRoot(*os.Root) (*Lock, error) { return nil, errUnsupported }
 

@@ -52,6 +52,45 @@ func TestTryLockExclusiveRejectsOverlappingTrees(t *testing.T) {
 	require.NoError(t, childLock.Release())
 }
 
+func TestTryLockExclusiveResolvesIntermediateSymlinkAncestry(t *testing.T) {
+	base := t.TempDir()
+	realParent := filepath.Join(base, "real")
+	resolvedParent := filepath.Join(realParent, "deep")
+	vault := filepath.Join(resolvedParent, "vault")
+	alias := filepath.Join(base, "alias")
+	require.NoError(t, os.MkdirAll(vault, 0o700))
+	require.NoError(t, os.Symlink(resolvedParent, alias))
+
+	aliasLock, err := (Layout{Root: filepath.Join(alias, "vault")}).TryLockExclusive()
+	require.NoError(t, err)
+	defer func() { _ = aliasLock.Release() }()
+
+	_, err = (Layout{Root: realParent}).TryLockExclusive()
+	require.ErrorIs(t, err, ErrVaultLocked,
+		"an alias must lock every ancestor of its resolved destination")
+}
+
+func TestOpenAndLockExclusiveCoordinatesBeforeCreatingMissingRoot(t *testing.T) {
+	parent := filepath.Join(t.TempDir(), "restore")
+	require.NoError(t, os.Mkdir(parent, 0o700))
+	parentLock, err := (Layout{Root: parent}).TryLockExclusive()
+	require.NoError(t, err)
+	defer func() { _ = parentLock.Release() }()
+
+	missing := filepath.Join(parent, "docbank.db")
+	root, lock, err := (Layout{Root: missing}).OpenAndLockExclusive()
+	if root != nil {
+		_ = root.Close()
+	}
+	if lock != nil {
+		_ = lock.Release()
+	}
+	require.ErrorIs(t, err, ErrVaultLocked)
+	_, err = os.Lstat(missing)
+	require.ErrorIs(t, err, os.ErrNotExist,
+		"startup must coordinate with the existing ancestor before creating the root")
+}
+
 func TestTargetLockRegistryIgnoresProcessHomeEnvironment(t *testing.T) {
 	before, err := targetLockRegistryDir()
 	require.NoError(t, err)

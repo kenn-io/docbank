@@ -35,6 +35,22 @@ func TestServeLocksBeforeInitializingVault(t *testing.T) {
 		"daemon startup must not initialize a restore-owned target")
 }
 
+func TestServeLocksExistingAncestorBeforeCreatingVault(t *testing.T) {
+	parent := filepath.Join(t.TempDir(), "restore-target")
+	require.NoError(t, os.Mkdir(parent, 0o700))
+	lock, err := (home.Layout{Root: parent}).TryLockExclusive()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = lock.Release() })
+
+	nested := filepath.Join(parent, "docbank.db")
+	t.Setenv("DOCBANK_HOME", nested)
+	err = runServe(context.Background())
+	require.ErrorIs(t, err, home.ErrVaultLocked)
+	_, err = os.Lstat(nested)
+	require.ErrorIs(t, err, os.ErrNotExist,
+		"daemon startup must not create a nested root beneath a restore-owned target")
+}
+
 func TestServeServesAndShutsDownGracefully(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("DOCBANK_HOME", dir)
