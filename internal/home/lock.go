@@ -445,7 +445,11 @@ func launchLockKeys(path string) ([]string, string, error) {
 		if suffix == "." {
 			suffix = ""
 		}
-		keys = append(keys, identity+"\x00"+filepath.ToSlash(suffix))
+		suffix, err = launchSuffixKey(existing, suffix)
+		if err != nil {
+			return nil, "", err
+		}
+		keys = append(keys, identity+"\x00"+suffix)
 	}
 	if len(keys) == 0 {
 		return nil, "", fmt.Errorf("vault root has no lockable ancestor: %s", target)
