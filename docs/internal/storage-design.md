@@ -248,6 +248,13 @@ representation because retention queries compare their fixed-width strings
 lexicographically. The exception is provenance `original_mtime`: it records an
 external filesystem value using canonical UTC `RFC3339Nano`, matching ordinary
 ingestion, and is never used as a retention cutoff.
+
+Trash roots remain detached beneath the tree root in portable metadata. Their
+saved `trash_parent` may be absent when the original directory was hard-deleted;
+`trash_name` remains authoritative and restore then falls back to the tree root.
+When a saved parent is present, import proves it is neither the trash root nor
+one of its descendants, so restore cannot create a cycle from hostile or
+corrupted coordinates.
 Explicit node IDs advance SQLite's `AUTOINCREMENT` sequence, preserving the
 invariant that a deleted historical ID is never silently reused.
 

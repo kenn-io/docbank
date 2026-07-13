@@ -644,8 +644,17 @@ func validateNodeRecord(v metadataNode) error {
 	default:
 		return fmt.Errorf("invalid node kind %q", v.Kind)
 	}
-	if (v.TrashParent == nil) != (v.TrashName == nil) || (v.TrashParent != nil && v.TrashedAt == nil) {
+	if v.TrashParent != nil && v.TrashName == nil {
 		return errors.New("incomplete node trash coordinates")
+	}
+	if (v.TrashParent != nil || v.TrashName != nil) && v.TrashedAt == nil {
+		return errors.New("incomplete node trash coordinates")
+	}
+	if v.TrashName != nil {
+		normalizedTrashName, err := NormalizeName(*v.TrashName)
+		if err != nil || normalizedTrashName != *v.TrashName {
+			return fmt.Errorf("invalid node trash_name %q", *v.TrashName)
+		}
 	}
 	return nil
 }
@@ -710,6 +719,25 @@ func validateImportedMetadata(ctx context.Context, tx *sql.Tx) error {
 			SELECT EXISTS(SELECT 1 FROM nodes n JOIN nodes p ON p.id=n.parent_id WHERE p.kind != 'dir')`},
 		{"trash parent is not a directory", `
 			SELECT EXISTS(SELECT 1 FROM nodes n JOIN nodes p ON p.id=n.trash_parent WHERE p.kind != 'dir')`},
+		{"trash root is not detached beneath the tree root", `
+			SELECT EXISTS(
+			  SELECT 1 FROM nodes n
+			  WHERE n.trash_name IS NOT NULL
+			    AND n.parent_id != (SELECT id FROM nodes WHERE parent_id IS NULL)
+			)`},
+		{"trash parent points inside its subtree", `
+			WITH RECURSIVE trash_subtree(trash_root, id) AS (
+			  SELECT id, id FROM nodes WHERE trash_name IS NOT NULL
+			  UNION
+			  SELECT s.trash_root, n.id
+			  FROM trash_subtree s JOIN nodes n ON n.parent_id = s.id
+			)
+			SELECT EXISTS(
+			  SELECT 1 FROM nodes root
+			  JOIN trash_subtree s
+			    ON s.trash_root = root.id AND s.id = root.trash_parent
+			  WHERE root.trash_parent IS NOT NULL
+			)`},
 		{"node size differs from blob authority", `
 			SELECT EXISTS(SELECT 1 FROM nodes n JOIN blobs b ON b.hash=n.blob_hash WHERE n.size != b.size)`},
 		{"node version size differs from blob authority", `

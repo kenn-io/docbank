@@ -34,6 +34,17 @@ func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 		"text/plain", "/source/filesystem-time.txt", filesystemMTime)
 	require.NoError(t, err)
 	require.True(t, added)
+	lostParent, err := source.Mkdir(ctx, source.RootID(), "deleted-parent")
+	require.NoError(t, err)
+	lostFile, err := source.CreateFile(ctx, lostParent.ID, "lost.txt",
+		"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", 6, "text/plain")
+	require.NoError(t, err)
+	_, _, err = source.Trash(ctx, lostFile.ID, UnconditionalRev)
+	require.NoError(t, err)
+	_, _, err = source.Trash(ctx, lostParent.ID, UnconditionalRev)
+	require.NoError(t, err)
+	_, err = source.db.ExecContext(ctx, `DELETE FROM nodes WHERE id = ?`, lostParent.ID)
+	require.NoError(t, err)
 	require.NoError(t, source.withTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO nodes(id,parent_id,name,kind,created_at,modified_at)
 			VALUES(100,1,'later-deleted','dir','2026-02-04T00:00:00.000000000Z','2026-02-04T00:00:00.000000000Z')`); err != nil {
@@ -62,6 +73,14 @@ func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 	require.NoError(t, target.ExportMetadata(ctx, &restored))
 	assert.Equal(t, first.Bytes(), restored.Bytes())
 	assert.Equal(t, int64(1), target.RootID())
+	var importedTrashParent sql.NullInt64
+	var importedTrashName sql.NullString
+	require.NoError(t, target.db.QueryRowContext(ctx,
+		`SELECT trash_parent, trash_name FROM nodes WHERE id = ?`, lostFile.ID).
+		Scan(&importedTrashParent, &importedTrashName))
+	assert.False(t, importedTrashParent.Valid)
+	require.True(t, importedTrashName.Valid)
+	assert.Equal(t, "lost.txt", importedTrashName.String)
 
 	node, err := target.NodeByPath(ctx, "/Projects/report.txt")
 	require.NoError(t, err)
@@ -80,6 +99,11 @@ func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 	require.NoError(t, target.db.QueryRowContext(ctx,
 		`SELECT (SELECT COUNT(*) FROM blob_packs) + (SELECT COUNT(*) FROM blob_pack_index)`).Scan(&packRows))
 	assert.Zero(t, packRows, "physical pack authority is reconstructed separately")
+	restoredLostFile, err := target.Restore(ctx, lostFile.ID, UnconditionalRev)
+	require.NoError(t, err)
+	restoredLostPath, err := target.Path(ctx, restoredLostFile.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "/lost.txt", restoredLostPath)
 
 	created, err := target.Mkdir(ctx, target.RootID(), "after-restore")
 	require.NoError(t, err)
@@ -144,6 +168,49 @@ func TestImportMetadataRejectsDisconnectedCycle(t *testing.T) {
 	var nodes int64
 	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodes))
 	assert.Equal(t, int64(1), nodes)
+}
+
+func TestImportMetadataRejectsUnsafeTrashTopology(t *testing.T) {
+	stamp := "2026-01-01T00:00:00.000000000Z"
+	root := `{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","blob_hash":null,"size":null,"mime_type":null,"revision":1,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":null,"trash_parent":null,"trash_name":null}`
+	tests := []struct {
+		name    string
+		records []string
+		want    string
+	}{
+		{
+			name: "restore parent inside subtree",
+			records: []string{
+				`{"type":"node","id":2,"parent_id":1,"name":"A","kind":"dir","blob_hash":null,"size":null,"mime_type":null,"revision":2,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":"` + stamp + `","trash_parent":3,"trash_name":"A"}`,
+				`{"type":"node","id":3,"parent_id":2,"name":"B","kind":"dir","blob_hash":null,"size":null,"mime_type":null,"revision":2,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":"` + stamp + `","trash_parent":null,"trash_name":null}`,
+			},
+			want: "trash parent points inside its subtree",
+		},
+		{
+			name: "trash root not detached",
+			records: []string{
+				`{"type":"node","id":3,"parent_id":1,"name":"container","kind":"dir","blob_hash":null,"size":null,"mime_type":null,"revision":1,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":null,"trash_parent":null,"trash_name":null}`,
+				`{"type":"node","id":2,"parent_id":3,"name":"A","kind":"dir","blob_hash":null,"size":null,"mime_type":null,"revision":2,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":"` + stamp + `","trash_parent":1,"trash_name":"A"}`,
+			},
+			want: "trash root is not detached",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, target.Close()) })
+			lines := append([]string{
+				`{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":3}`,
+				root,
+			}, tt.records...)
+			err = target.ImportMetadata(context.Background(), strings.NewReader(strings.Join(lines, "\n")+"\n"))
+			require.ErrorContains(t, err, tt.want)
+			var nodes int64
+			require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodes))
+			assert.Equal(t, int64(1), nodes)
+		})
+	}
 }
 
 func TestImportMetadataRejectsNodeSequenceBelowSurvivingIDs(t *testing.T) {
@@ -219,7 +286,7 @@ func seedMetadataRoundTrip(t *testing.T, s *Store) {
 			 VALUES(10,7,'report.txt','file','` + metadataHashCurrent + `',12,'text/plain',3,
 			 '2026-01-08T00:00:00.000000000Z','2026-01-09T00:00:00.000000000Z')`,
 			`INSERT INTO nodes(id,parent_id,name,kind,blob_hash,size,mime_type,revision,created_at,modified_at,trashed_at,trash_parent,trash_name)
-			 VALUES(11,7,'old.bin','file','` + metadataHashTrashed + `',5,'application/octet-stream',2,
+			 VALUES(11,1,'old.bin','file','` + metadataHashTrashed + `',5,'application/octet-stream',2,
 			 '2026-01-10T00:00:00.000000000Z','2026-01-11T00:00:00.000000000Z',
 			 '2026-01-12T00:00:00.000000000Z',7,'old.bin')`,
 			`INSERT INTO node_versions(node_id,blob_hash,size,replaced_at)
