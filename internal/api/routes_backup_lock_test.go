@@ -1,5 +1,3 @@
-//go:build unix
-
 package api
 
 import (
@@ -59,7 +57,9 @@ func TestBackupRestoreCoordinatorPinsTargetAcrossPathSwap(t *testing.T) {
 	defer func() { _ = lease.Release() }()
 
 	require.NoError(t, os.Rename(target, parked))
-	require.NoError(t, os.Symlink(repository, target))
+	if err := os.Symlink(repository, target); err != nil {
+		t.Skipf("creating a symlink requires additional platform permission: %v", err)
+	}
 	require.NoError(t, root.WriteFile("descriptor-write", []byte("pinned"), 0o600))
 	content, err := os.ReadFile(filepath.Join(parked, "descriptor-write"))
 	require.NoError(t, err)
@@ -80,7 +80,9 @@ func TestBackupRestoreCoordinatorRejectsSwapBeforeAcquisition(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = root.Close() }()
 	require.NoError(t, os.Rename(target, parked))
-	require.NoError(t, os.Symlink(repository, target))
+	if err := os.Symlink(repository, target); err != nil {
+		t.Skipf("creating a symlink requires additional platform permission: %v", err)
+	}
 
 	coordinator := newRestoreTargetCoordinator(target, repository, "", true)
 	_, err = coordinator.AcquireRestoreTarget(t.Context(), root)

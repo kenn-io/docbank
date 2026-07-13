@@ -106,7 +106,7 @@ machinery must land before such a schema change, not afterward as repair work.
 
 ### One vault lock holder
 
-The daemon holds the vault flock exclusively for its whole lifetime,
+The daemon holds the portable vault file lock exclusively for its whole lifetime,
 acquired non-blocking at startup — a second daemon is refused
 immediately, never queued. Ordinary commands don't touch the lock at
 all: they are HTTP clients of the daemon. Maintenance (`gc --run`,

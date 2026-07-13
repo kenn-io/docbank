@@ -1,5 +1,3 @@
-//go:build unix
-
 package home
 
 import (
@@ -59,7 +57,9 @@ func TestTryLockExclusiveResolvesIntermediateSymlinkAncestry(t *testing.T) {
 	vault := filepath.Join(resolvedParent, "vault")
 	alias := filepath.Join(base, "alias")
 	require.NoError(t, os.MkdirAll(vault, 0o700))
-	require.NoError(t, os.Symlink(resolvedParent, alias))
+	if err := os.Symlink(resolvedParent, alias); err != nil {
+		t.Skipf("creating a symlink requires additional platform permission: %v", err)
+	}
 
 	aliasLock, err := (Layout{Root: filepath.Join(alias, "vault")}).TryLockExclusive()
 	require.NoError(t, err)
@@ -75,7 +75,9 @@ func TestOpenAndLockExclusiveAcceptsFinalSymlink(t *testing.T) {
 	realRoot := filepath.Join(base, "real")
 	alias := filepath.Join(base, "alias")
 	require.NoError(t, os.Mkdir(realRoot, 0o700))
-	require.NoError(t, os.Symlink(realRoot, alias))
+	if err := os.Symlink(realRoot, alias); err != nil {
+		t.Skipf("creating a symlink requires additional platform permission: %v", err)
+	}
 
 	root, lock, err := (Layout{Root: alias}).OpenAndLockExclusive()
 	require.NoError(t, err)
@@ -172,7 +174,9 @@ func TestTryLockLaunchUsesFilesystemIdentityForAliases(t *testing.T) {
 	realParent := filepath.Join(base, "real")
 	alias := filepath.Join(base, "alias")
 	require.NoError(t, os.Mkdir(realParent, 0o700))
-	require.NoError(t, os.Symlink(realParent, alias))
+	if err := os.Symlink(realParent, alias); err != nil {
+		t.Skipf("creating a symlink requires additional platform permission: %v", err)
+	}
 
 	lock, err := (Layout{Root: filepath.Join(realParent, "vault")}).TryLockLaunch()
 	require.NoError(t, err)

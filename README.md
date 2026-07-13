@@ -45,6 +45,7 @@ maintenance.
 - Incremental backup repositories with create, list, verify, and confined restore
 - Daemon-first CLI, authenticated loopback HTTP API, and offline OpenAPI output
 - Linux amd64/arm64 and macOS arm64 release archives with SHA-256 checksums
+- Native vault, daemon, and recovery support on Linux, macOS, and Windows
 
 Versioned content editing, tags, watched inboxes, text extraction, and the TUI
 are planned rather than implemented. See the [roadmap](docs/roadmap.md) for the
@@ -52,7 +53,8 @@ current boundary.
 
 ## Installation
 
-Docbank requires macOS or Linux. Download an archive and `SHA256SUMS` from
+Docbank supports Linux, macOS, and 64-bit Windows. Download an archive and
+`SHA256SUMS` from
 [GitHub Releases](https://github.com/kenn-io/docbank/releases), verify it,
 extract `docbank`, and put the binary on your `PATH`.
 
@@ -64,8 +66,13 @@ cd docbank
 make install
 ```
 
-The next distribution work will add a checksum-verifying installer, macOS
-amd64 archives, and reproducible package definitions. The
+On Windows, build `docbank.exe` with
+`go build -tags fts5 -o docbank.exe ./cmd/docbank`; the
+[setup guide](docs/setup.md) covers the platform toolchain.
+
+The current release predates Windows runtime support. The next distribution
+release will add Windows amd64/arm64, macOS amd64, and checksum-verifying
+installers. The
 [setup guide](docs/setup.md) is the installation authority.
 
 ## Quick start

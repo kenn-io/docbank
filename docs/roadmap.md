@@ -31,7 +31,7 @@ marked planned appears elsewhere in these docs only under an explicit
 - Trash / restore / `trash empty`, explicit unreachable-content GC, and
   separate packed-space reclamation
 - `gc` (dry-run default) and `verify`
-- Inter-process vault locking (shared/exclusive flock)
+- Inter-process vault locking (`flock` on Unix, `LockFileEx` on Windows)
 - CLI: `add`, `ls`, `tree`, `cat`, `mv`, `rm`, `restore`, `search`,
   `trash`, `gc`, `verify`
 

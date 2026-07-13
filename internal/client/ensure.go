@@ -1,5 +1,3 @@
-//go:build unix
-
 package client
 
 import (
@@ -10,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 	"time"
 
 	kitdaemon "go.kenn.io/kit/daemon"
@@ -290,7 +287,7 @@ func stopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
 	if !createTimeMatches(rec) {
 		return errors.New("daemon PID no longer matches its recorded create time; not signaling")
 	}
-	if err := syscall.Kill(rec.PID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+	if err := terminateProcess(rec.PID); err != nil {
 		return fmt.Errorf("signaling daemon pid %d: %w", rec.PID, err)
 	}
 	if !waitDead(ctx, rec, 10*time.Second) {

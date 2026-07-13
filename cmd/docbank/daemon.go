@@ -97,7 +97,7 @@ func runServe(ctx context.Context) error {
 
 	// The daemon always requires an API key. A configured key is used as-is;
 	// otherwise a fresh per-run key is generated and published only to
-	// same-user clients via the runtime record inside the 0700 DOCBANK_HOME
+	// same-user clients via the runtime record inside owner-private DOCBANK_HOME
 	// — never over the network, never logged.
 	apiKey := cfg.Server.APIKey
 	if apiKey == "" {

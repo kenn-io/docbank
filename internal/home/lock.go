@@ -1,19 +1,13 @@
-// Vault locking requires a Unix-like OS (flock); docbank does not support
-// Windows.
-
-//go:build unix
-
 package home
 
 import (
 	"errors"
 	"fmt"
 	"os"
-	"os/user"
 	"path/filepath"
 	"slices"
-	"strconv"
-	"syscall"
+
+	"go.kenn.io/kit/safefileio"
 )
 
 // LockPath is the advisory lock file serializing vault access across
@@ -25,14 +19,7 @@ type Lock struct {
 	files []*os.File
 }
 
-func flock(f *os.File, how int) error {
-	for {
-		err := syscall.Flock(int(f.Fd()), how)
-		if !errors.Is(err, syscall.EINTR) {
-			return err //nolint:wrapcheck // raw errno needed: TryLockExclusive matches EWOULDBLOCK; exported callers wrap
-		}
-	}
-}
+var errLockWouldBlock = errors.New("file lock would block")
 
 // ErrVaultLocked is returned by TryLockExclusive when another process
 // already holds the vault lock.
@@ -86,7 +73,7 @@ func (l Layout) TryLockLaunch() (*Lock, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := flock(f, syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := lockFile(f, true); err != nil {
 		_ = f.Close()
 		return nil, classifyLockError(err, target)
 	}
@@ -200,7 +187,7 @@ func (l Layout) TryLockExclusiveRoot(root *os.Root) (*Lock, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := flock(local, syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := lockFile(local, true); err != nil {
 		_ = local.Close()
 		return nil, classifyLockError(err, target)
 	}
@@ -307,7 +294,8 @@ func (l Layout) createAndLockExclusiveWith(
 			return fail(lk, fmt.Errorf(
 				"checking created vault root component %q: %w", component, err))
 		}
-		identity, err := directoryIdentity(info, component)
+		identityPath := filepath.Join(append([]string{resolved}, missing[:i+1]...)...)
+		identity, err := directoryIdentity(info, identityPath)
 		if err != nil {
 			return fail(lk, err)
 		}
@@ -323,7 +311,7 @@ func (l Layout) createAndLockExclusiveWith(
 	if err != nil {
 		return fail(lk, err)
 	}
-	if err := flock(local, syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := lockFile(local, true); err != nil {
 		_ = local.Close()
 		return fail(lk, classifyLockError(err, target))
 	}
@@ -341,15 +329,12 @@ func (lk *Lock) lockIdentities(
 	target string,
 ) error {
 	for i, identity := range identities {
-		how := syscall.LOCK_SH | syscall.LOCK_NB
-		if exclusiveFinal && i == len(identities)-1 {
-			how = syscall.LOCK_EX | syscall.LOCK_NB
-		}
+		exclusive := exclusiveFinal && i == len(identities)-1
 		f, err := openRegistryLock(registry, identity+".lock")
 		if err != nil {
 			return fmt.Errorf("opening target-tree lock: %w", err)
 		}
-		if err := flock(f, how); err != nil {
+		if err := lockFile(f, exclusive); err != nil {
 			_ = f.Close()
 			return classifyLockError(err, target)
 		}
@@ -430,36 +415,12 @@ func directoryIdentityChain(target string) ([]string, error) {
 	return identities, nil
 }
 
-func directoryIdentity(info os.FileInfo, path string) (string, error) {
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return "", fmt.Errorf("reading target-tree identity for %s", path)
-	}
-	return fmt.Sprintf("dev-%x-ino-%x", stat.Dev, stat.Ino), nil
-}
-
 func targetLockRegistryDir() (string, error) {
-	account, err := user.LookupId(strconv.Itoa(os.Geteuid()))
+	dir, err := targetLockRegistryBase()
 	if err != nil {
-		return "", fmt.Errorf("resolving effective user: %w", err)
+		return "", err
 	}
-	if !filepath.IsAbs(account.HomeDir) {
-		return "", fmt.Errorf("effective user home is not absolute: %q", account.HomeDir)
-	}
-	dir := filepath.Join(account.HomeDir, ".local", "state", "docbank", "target-locks")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", fmt.Errorf("creating target-lock registry: %w", err)
-	}
-	info, err := os.Lstat(dir)
-	if err != nil {
-		return "", fmt.Errorf("checking target-lock registry: %w", err)
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || !ok ||
-		strconv.FormatUint(uint64(stat.Uid), 10) != account.Uid {
-		return "", errors.New("target-lock registry must be a private directory owned by the effective user")
-	}
-	if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // directory needs owner execute permission
+	if err := safefileio.EnsurePrivateDir(dir); err != nil {
 		return "", fmt.Errorf("securing target-lock registry: %w", err)
 	}
 	return dir, nil
@@ -505,7 +466,7 @@ func openRootLock(root *os.Root) (*os.File, error) {
 }
 
 func classifyLockError(err error, target string) error {
-	if errors.Is(err, syscall.EWOULDBLOCK) {
+	if errors.Is(err, errLockWouldBlock) {
 		return fmt.Errorf("%s: %w (is a docbank daemon or restore already running?)",
 			target, ErrVaultLocked)
 	}
@@ -516,6 +477,9 @@ func classifyLockError(err error, target string) error {
 func (lk *Lock) Release() error {
 	var errs []error
 	for _, f := range slices.Backward(lk.files) {
+		if err := unlockFile(f); err != nil {
+			errs = append(errs, err)
+		}
 		if err := f.Close(); err != nil {
 			errs = append(errs, err)
 		}

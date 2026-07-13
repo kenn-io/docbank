@@ -13,7 +13,7 @@ developers update the right layer and preserve cross-layer contracts.
 | `internal/ingest` | source traversal and bytes-before-reference pipeline | daemon discovery or UI behavior |
 | `internal/api` | wire contract, auth, middleware, gate classification, error mapping | direct CLI output policy |
 | `internal/client` | typed HTTP calls and daemon convergence | opening SQLite or blobs |
-| `internal/home` | vault layout, permissions, flock, platform stubs | data operations |
+| `internal/home` | vault layout, privacy, and portable vault/tree locking | data operations |
 | `internal/config` | strict config parsing and security validation | runtime discovery |
 | `cmd/docbank` | Cobra ergonomics and human output | store business logic |
 
@@ -54,8 +54,8 @@ and old-vault fixtures.
 ### Change daemon lifecycle
 
 Exercise foreground, detached, auto-start, restart, mismatch replacement,
-concurrent starters, PID reuse, graceful stop, idle timeout, and Windows stub
-compilation. Keep status/stop discovery permissive and all starter paths
+concurrent starters, PID reuse, graceful stop, idle timeout, and both Windows
+architectures. Keep status/stop discovery permissive and all starter paths
 convergent.
 
 ## Design and documentation updates
@@ -80,8 +80,8 @@ Repository commands are defined in `AGENTS.md` and the Makefile. The important
 design-specific checks are:
 
 - every Go build/test/lint uses CGO and the `fts5` tag;
-- internal packages continue to compile against Windows stubs even though the
-  vault is Unix-only;
+- Linux, macOS, and Windows exercise the real daemon and vault lifecycle, with
+  Windows CI covering amd64 and arm64;
 - docs build strictly, publish Markdown counterparts, and exclude this internal
   directory;
 - API examples are checked against generated OpenAPI when routes change;

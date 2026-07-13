@@ -12,8 +12,9 @@ Instructions for autonomous coding agents working in this repository.
   symbols is expected, not a defect.
 - Lint with `make lint` (golangci-lint, fts5 tag). Docs build strict with
   `make docs-build`; fix every warning.
-- The vault is Unix-only; `internal/...` must keep compiling on Windows
-  through the non-Unix stubs (CI enforces this).
+- Linux, macOS, and Windows are supported. Windows CI runs the complete CLI,
+  daemon, lock, backup, and restore suite on amd64 and arm64; do not replace
+  real platform behavior with compile-only stubs.
 
 ## Git Rules
 
