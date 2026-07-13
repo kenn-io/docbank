@@ -57,3 +57,16 @@ func TestBackupRestoreLockExcludesRestoreAndDaemonStart(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist,
 		"a failed restore must remove the lock file it created")
 }
+
+func TestBackupRestoreLeavesVaultLockAfterSuccess(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "restore-target")
+	_, err := restoreBackupSnapshotWith(t.Context(), nil, target,
+		backupRestoreRequest{}, nil,
+		func(context.Context, *backup.Repo, string, backup.RestoreOptions) (*backup.RestoreResult, error) {
+			return &backup.RestoreResult{SnapshotID: "snapshot"}, nil
+		})
+	require.NoError(t, err)
+	lockInfo, err := os.Stat(filepath.Join(target, "vault.lock"))
+	require.NoError(t, err)
+	assert.True(t, lockInfo.Mode().IsRegular())
+}

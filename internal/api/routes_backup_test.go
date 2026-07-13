@@ -310,9 +310,6 @@ func TestBackupRestoreProgressProofAndConfinement(t *testing.T) {
 	assert.Equal(t, snapshot.ID, report.SnapshotID)
 	targetInfo, err := os.Stat(target)
 	require.NoError(t, err)
-	lockInfo, err := os.Stat(filepath.Join(target, "vault.lock"))
-	require.NoError(t, err)
-	assert.True(t, lockInfo.Mode().IsRegular())
 	reportedTargetInfo, err := os.Stat(report.Target)
 	require.NoError(t, err)
 	assert.True(t, os.SameFile(targetInfo, reportedTargetInfo),
