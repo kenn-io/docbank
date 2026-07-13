@@ -35,7 +35,9 @@ Instructions for autonomous coding agents working in this repository.
 - Cut releases only from a clean local `main` that exactly matches
   `origin/main`.
 - Preview notes with `scripts/changelog.sh <version>`; publish with
-  `scripts/release.sh <version> [extra_instructions]`.
+  `scripts/release.sh <version> [extra_instructions] [start_tag]`. Supply the
+  optional start tag only when notes must span an intervening tag that did not
+  publish.
 - The release script creates and pushes an annotated `vX.Y.Z` tag. The release
   workflow uses the tag body as GitHub release notes and falls back to generated
   notes only for a lightweight or empty tag.
