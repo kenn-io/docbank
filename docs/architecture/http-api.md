@@ -45,7 +45,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `GET /trash` · `POST /trash/empty` `{run, older_than}` | list / report or hard-delete trash roots | Implemented |
 | `POST /gc` `{run}` · `POST /verify` | reclaim unreachable blobs / re-hash all blobs | Implemented |
 | `GET /storage` · `POST /storage/pack` · `POST /storage/repack` | inspect usage / pack loose blobs / compact sparse packs | Implemented |
-| `POST /backup/init` · `POST /backup/snapshots` · `GET /backup/snapshots` | initialize a repository / create and list snapshots | Implemented |
+| `POST /backup/init` · `POST /backup/snapshots` · `POST /backup/snapshots/stream` · `GET /backup/snapshots` | initialize a repository / create with JSON or streamed progress / list snapshots | Implemented |
 
 Root-level, outside `/api/v1` and auth-exempt: `GET /health`, `GET
 /api/ping` (daemon discovery), `GET /docs` and the OpenAPI documents,
@@ -71,6 +71,14 @@ the repository identity and canonical path. `repo` may be omitted when
 `[backup] repo` is configured. `POST /backup/snapshots` accepts the same
 optional repository plus `tag`, `jobs`, and `force_unlock`; it returns a
 stable logical summary rather than exposing Kit's physical manifest layout.
+The `/backup/snapshots/stream` variant accepts the same body and returns
+`application/x-ndjson`: zero or more `progress` events followed by exactly one
+terminal `result` or `error` event. Progress data carries stage, item counts,
+byte counts, and a final-stage marker, so clients can render bars without
+parsing human text. Because response headers commit when streaming begins, an
+HTTP 200 means only that the stream started; clients must read through EOF and
+require the terminal event. The CLI uses this variant for human output and the
+single-JSON endpoint for `--json`.
 `GET /backup/snapshots?repo=...` returns `{items: [...]}` so pagination can be
 added later without changing a top-level array contract.
 
@@ -114,7 +122,7 @@ and maintenance are explicit exceptions:
 | `POST /ingest` | none — long-running bulk operation with per-path partial success; the destination directory may legitimately change while it runs |
 | `POST /uploads` | none — creates or idempotently resolves one file under the stable `parent_id`; name/content collision policy is transactional |
 | `POST /trash/empty`, `POST /gc`, `POST /verify` | none — vault-wide maintenance, serialized by the maintenance gate |
-| `POST /backup/snapshots` | none — the gate is held only while pinning one logical snapshot; the repository has its own exclusive lock |
+| `POST /backup/snapshots`, `POST /backup/snapshots/stream` | none — the gate is held only while pinning one logical snapshot; the repository has its own exclusive lock |
 
 A stale revision gets `412 Precondition Failed`, telling the caller to
 re-read and retry. A required `If-Match` that's missing gets `428

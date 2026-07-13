@@ -1,6 +1,7 @@
 package client_test
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/api"
@@ -135,6 +137,50 @@ func TestStoragePackRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, report.BlobsPacked)
 	assert.True(t, report.BudgetExhausted)
+}
+
+func TestBackupCreateStreamRoundTripAndTypedError(t *testing.T) {
+	c, _ := newClient(t, serverKey)
+	repoPath := filepath.Join(t.TempDir(), "repo")
+	_, err := c.BackupInit(t.Context(), repoPath)
+	require.NoError(t, err)
+	src := filepath.Join(t.TempDir(), "backup.txt")
+	require.NoError(t, os.WriteFile(src, []byte("stream this backup"), 0o600))
+	_, err = c.Ingest(t.Context(), []string{src}, "/inbox")
+	require.NoError(t, err)
+
+	var events []api.BackupProgress
+	snapshot, err := c.BackupCreateStream(t.Context(), client.BackupCreateOptions{
+		Repo: repoPath, Tag: "client", Jobs: 1,
+	}, func(event api.BackupProgress) { events = append(events, event) })
+	require.NoError(t, err)
+	assert.Equal(t, "client", snapshot.Tag)
+	assert.Equal(t, int64(1), snapshot.Files)
+	finalStages := map[string]bool{}
+	for _, event := range events {
+		if event.Final {
+			finalStages[event.Stage] = true
+		}
+	}
+	for _, stage := range []string{"freeze", "metadata", "attachments", "seal"} {
+		assert.True(t, finalStages[stage], "stage %q emitted a final event", stage)
+	}
+
+	cancelCtx, cancel := context.WithCancel(t.Context())
+	_, err = c.BackupCreateStream(cancelCtx, client.BackupCreateOptions{Repo: repoPath},
+		func(api.BackupProgress) { cancel() })
+	require.Error(t, err)
+	snapshots, err := c.BackupList(t.Context(), repoPath)
+	require.NoError(t, err)
+	assert.Len(t, snapshots, 1, "a disconnected progress client must not publish a snapshot")
+
+	repo, err := backup.Open(repoPath)
+	require.NoError(t, err)
+	lock, err := repo.AcquireExclusiveLock("test", false)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = lock.Release() })
+	_, err = c.BackupCreateStream(t.Context(), client.BackupCreateOptions{Repo: repoPath}, nil)
+	require.ErrorIs(t, err, backup.ErrRepoLocked)
 }
 
 func TestContentIdentityAndVerificationRoundTrip(t *testing.T) {

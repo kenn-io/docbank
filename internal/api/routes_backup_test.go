@@ -2,8 +2,10 @@ package api_test
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,6 +15,21 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/backupapp"
 )
+
+func decodeBackupEvents(t *testing.T, body string) []api.BackupCreateEvent {
+	t.Helper()
+	decoder := json.NewDecoder(strings.NewReader(body))
+	var events []api.BackupCreateEvent
+	for {
+		var event api.BackupCreateEvent
+		err := decoder.Decode(&event)
+		if err == io.EOF {
+			return events
+		}
+		require.NoError(t, err)
+		events = append(events, event)
+	}
+}
 
 func TestBackupInitCreateListRoundTrip(t *testing.T) {
 	repoPath := filepath.Join(t.TempDir(), "repo")
@@ -84,4 +101,47 @@ func TestBackupRoutesValidateRepositoryAndReportLock(t *testing.T) {
 		map[string]any{"repo": repoPath})
 	assert.Equal(t, http.StatusConflict, resp.StatusCode)
 	assert.Contains(t, body, `"code":"backup_locked"`)
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/snapshots/stream", nil,
+		map[string]any{"repo": repoPath})
+	assert.Equal(t, http.StatusOK, resp.StatusCode,
+		"streaming errors are terminal events after response headers commit")
+	events := decodeBackupEvents(t, body)
+	require.Len(t, events, 1)
+	require.NotNil(t, events[0].Error)
+	assert.Equal(t, "error", events[0].Type)
+	assert.Equal(t, "backup_locked", events[0].Error.Code)
+}
+
+func TestBackupCreateProgressStreamEndsWithResult(t *testing.T) {
+	repoPath := filepath.Join(t.TempDir(), "repo")
+	ts, s := newTestServer(t, func(d *api.Deps) { d.Cfg.Backup.Repo = repoPath })
+	createFileWithContent(t, ts, s, "/stream.txt", "visible work")
+
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/backup/init", nil, map[string]any{})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/snapshots/stream", nil,
+		map[string]any{"tag": "streamed", "jobs": 1})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	assert.Contains(t, resp.Header.Get("Content-Type"), "application/x-ndjson")
+	assert.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
+
+	events := decodeBackupEvents(t, body)
+	require.NotEmpty(t, events)
+	finalStages := map[string]bool{}
+	for i, event := range events[:len(events)-1] {
+		assert.Equal(t, "progress", event.Type, "event %d", i)
+		require.NotNil(t, event.Progress)
+		if event.Progress.Final {
+			finalStages[event.Progress.Stage] = true
+		}
+	}
+	for _, stage := range []string{"freeze", "metadata", "attachments", "seal"} {
+		assert.True(t, finalStages[stage], "stage %q emitted a final event", stage)
+	}
+	terminal := events[len(events)-1]
+	assert.Equal(t, "result", terminal.Type)
+	require.NotNil(t, terminal.Snapshot)
+	assert.Equal(t, "streamed", terminal.Snapshot.Tag)
+	assert.Equal(t, int64(1), terminal.Snapshot.Files)
 }

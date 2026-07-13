@@ -62,7 +62,7 @@ shell's working directory before it is sent to the daemon.
 
 ```bash
 docbank backup create [--repo DIR] [--tag LABEL] [--jobs N]
-                      [--force-unlock] [--json]
+                      [--force-unlock] [--progress auto|bar|plain] [--json]
 ```
 
 Creation runs inside the one vault-owning daemon. It briefly holds the
@@ -72,6 +72,13 @@ stream from the pinned point-in-time view. Every loose or packed content stream
 must reach verified EOF before its bytes are accepted into the repository. A
 failure never publishes a partial snapshot manifest; rerun the command after
 addressing the error.
+
+During an interactive run, `--progress auto` draws an in-place bar for each
+stage (freeze, metadata, attachments, and seal), including item and byte
+counts when available. Redirected output uses throttled, newline-terminated
+progress instead, so logs remain readable. Force either behavior with
+`--progress bar` or `--progress plain`. Progress goes to stderr; `--json`
+suppresses it and writes one snapshot object to stdout for automation.
 
 `--jobs 1` serializes blob readers for repositories on spinning disks or NAS
 storage. Zero uses Kit's CPU-based default. `--tag` is a free-form label shown

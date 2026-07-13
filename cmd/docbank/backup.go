@@ -58,6 +58,7 @@ var (
 	backupCreateJobs        int
 	backupCreateForceUnlock bool
 	backupCreateJSON        bool
+	backupCreateProgress    string
 )
 
 var backupCreateCmd = &cobra.Command{
@@ -73,10 +74,22 @@ var backupCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		snapshot, err := c.BackupCreate(cmd.Context(), client.BackupCreateOptions{
+		opts := client.BackupCreateOptions{
 			Repo: repo, Tag: backupCreateTag, Jobs: backupCreateJobs,
 			ForceUnlock: backupCreateForceUnlock,
-		})
+		}
+		var snapshot api.BackupSnapshot
+		if backupCreateJSON {
+			snapshot, err = c.BackupCreate(cmd.Context(), opts)
+		} else {
+			mode, modeErr := backupProgressModeFromFlag(backupCreateProgress)
+			if modeErr != nil {
+				return modeErr
+			}
+			renderer := newBackupProgressRenderer(cmd.ErrOrStderr(), mode)
+			defer renderer.finish()
+			snapshot, err = c.BackupCreateStream(cmd.Context(), opts, renderer.handle)
+		}
 		if err != nil {
 			return err
 		}
@@ -185,6 +198,8 @@ func init() {
 	backupCreateCmd.Flags().BoolVar(&backupCreateForceUnlock, "force-unlock", false,
 		"break a fresh repository lock only when its owner is known to be gone")
 	backupCreateCmd.Flags().BoolVar(&backupCreateJSON, "json", false, "machine-readable output")
+	backupCreateCmd.Flags().StringVar(&backupCreateProgress, "progress", "auto",
+		"progress output mode: auto, bar, or plain (suppressed by --json)")
 	backupListCmd.Flags().StringVar(&backupListRepo, "repo", "", "backup repository directory")
 	backupListCmd.Flags().BoolVar(&backupListJSON, "json", false, "machine-readable output")
 	backupCmd.AddCommand(backupInitCmd, backupCreateCmd, backupListCmd)

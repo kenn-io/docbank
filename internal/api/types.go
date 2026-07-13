@@ -189,6 +189,26 @@ type BackupSnapshotList struct {
 	Items []BackupSnapshot `json:"items"`
 }
 
+// BackupProgress is one structured update from a long-running backup
+// operation. Totals are zero when Kit cannot know them in advance.
+type BackupProgress struct {
+	Stage      string `json:"stage"`
+	Done       int64  `json:"done"`
+	Total      int64  `json:"total"`
+	BytesDone  int64  `json:"bytes_done"`
+	BytesTotal int64  `json:"bytes_total"`
+	Final      bool   `json:"final"`
+}
+
+// BackupCreateEvent is one line of the backup-create NDJSON stream. A result
+// or error is terminal; progress may appear zero or more times before it.
+type BackupCreateEvent struct {
+	Type     string          `json:"type" enum:"progress,result,error"`
+	Progress *BackupProgress `json:"progress,omitempty"`
+	Snapshot *BackupSnapshot `json:"snapshot,omitempty"`
+	Error    *Error          `json:"error,omitempty"`
+}
+
 func fromStoreNode(n store.Node) Node {
 	out := Node{
 		ID: n.ID, ParentID: n.ParentID, Name: n.Name, Kind: n.Kind,

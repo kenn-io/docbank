@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"time"
 
+	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/api"
@@ -69,6 +70,7 @@ var codeToTypedErr = map[string]error{
 	"invalid_name":             store.ErrInvalidName,
 	"not_trashed":              store.ErrNotTrashed,
 	"is_root":                  store.ErrIsRoot,
+	"backup_locked":            backup.ErrRepoLocked,
 	"pack_retirement_deferred": packstore.ErrPackRetirementDeferred,
 }
 
@@ -78,6 +80,10 @@ func decodeError(resp *http.Response) error {
 	if err := json.Unmarshal(body, &e); err != nil || e.Status == 0 {
 		return fmt.Errorf("daemon returned %s: %s", resp.Status, string(body))
 	}
+	return apiProblemError(e)
+}
+
+func apiProblemError(e api.Error) error {
 	if target, ok := codeToTypedErr[e.Code]; ok {
 		return fmt.Errorf("%s: %w", e.Detail, target)
 	}
@@ -426,10 +432,90 @@ func (c *Client) BackupCreate(
 	ctx context.Context, opts BackupCreateOptions,
 ) (api.BackupSnapshot, error) {
 	var out api.BackupSnapshot
-	err := c.do(ctx, http.MethodPost, "/api/v1/backup/snapshots", nil, map[string]any{
-		"repo": opts.Repo, "tag": opts.Tag, "jobs": opts.Jobs, "force_unlock": opts.ForceUnlock,
-	}, &out)
+	err := c.do(ctx, http.MethodPost, "/api/v1/backup/snapshots", nil,
+		backupCreateRequest(opts), &out)
 	return out, err
+}
+
+// BackupCreateStream creates a snapshot while delivering structured progress
+// events. A successful HTTP status only starts the stream; the method returns
+// success only after receiving its terminal result event.
+func (c *Client) BackupCreateStream(
+	ctx context.Context,
+	opts BackupCreateOptions,
+	progress func(api.BackupProgress),
+) (api.BackupSnapshot, error) {
+	body, err := json.Marshal(backupCreateRequest(opts))
+	if err != nil {
+		return api.BackupSnapshot{}, fmt.Errorf("encoding backup create request: %w", err)
+	}
+	const path = "/api/v1/backup/snapshots/stream"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+path, bytes.NewReader(body))
+	if err != nil {
+		return api.BackupSnapshot{}, fmt.Errorf("building backup create stream request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/x-ndjson")
+	if c.key != "" {
+		req.Header.Set("X-Api-Key", c.key)
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return api.BackupSnapshot{}, fmt.Errorf("calling daemon (POST %s): %w", path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return api.BackupSnapshot{}, decodeError(resp)
+	}
+
+	decoder := json.NewDecoder(resp.Body)
+	var result *api.BackupSnapshot
+	for {
+		var event api.BackupCreateEvent
+		if err := decoder.Decode(&event); err != nil {
+			if errors.Is(err, io.EOF) {
+				if result == nil {
+					return api.BackupSnapshot{}, errors.New(
+						"backup create progress stream ended without a result")
+				}
+				return *result, nil
+			}
+			return api.BackupSnapshot{}, fmt.Errorf("decoding backup create progress: %w", err)
+		}
+		if result != nil {
+			return api.BackupSnapshot{}, errors.New(
+				"backup create progress stream continued after its result")
+		}
+		switch event.Type {
+		case "progress":
+			if event.Progress == nil || event.Snapshot != nil || event.Error != nil {
+				return api.BackupSnapshot{}, errors.New("backup create returned malformed progress event")
+			}
+			if progress != nil {
+				progress(*event.Progress)
+			}
+		case "result":
+			if event.Snapshot == nil || event.Progress != nil || event.Error != nil {
+				return api.BackupSnapshot{}, errors.New("backup create returned malformed result event")
+			}
+			snapshot := *event.Snapshot
+			result = &snapshot
+		case "error":
+			if event.Error == nil || event.Progress != nil || event.Snapshot != nil {
+				return api.BackupSnapshot{}, errors.New("backup create returned malformed error event")
+			}
+			return api.BackupSnapshot{}, apiProblemError(*event.Error)
+		default:
+			return api.BackupSnapshot{}, fmt.Errorf(
+				"backup create returned unknown progress event type %q", event.Type)
+		}
+	}
+}
+
+func backupCreateRequest(opts BackupCreateOptions) map[string]any {
+	return map[string]any{
+		"repo": opts.Repo, "tag": opts.Tag, "jobs": opts.Jobs, "force_unlock": opts.ForceUnlock,
+	}
 }
 
 func (c *Client) BackupList(ctx context.Context, repo string) ([]api.BackupSnapshot, error) {

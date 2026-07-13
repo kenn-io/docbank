@@ -2,10 +2,14 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"path/filepath"
+	"reflect"
+	"sync"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/kit/backup"
@@ -13,6 +17,13 @@ import (
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/version"
 )
+
+type backupCreateRequest struct {
+	Repo        string `json:"repo,omitempty"`
+	Tag         string `json:"tag,omitempty" maxLength:"256"`
+	Jobs        int    `json:"jobs,omitempty" minimum:"0"`
+	ForceUnlock bool   `json:"force_unlock,omitempty"`
+}
 
 func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 	type initOutput struct{ Body BackupRepository }
@@ -40,34 +51,64 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 		OperationID: "createBackupSnapshot", Method: http.MethodPost, Path: "/api/v1/backup/snapshots",
 		Summary: "Capture a verified logical snapshot of the live vault",
 	}, func(ctx context.Context, in *struct {
-		Body struct {
-			Repo        string `json:"repo,omitempty"`
-			Tag         string `json:"tag,omitempty" maxLength:"256"`
-			Jobs        int    `json:"jobs,omitempty" minimum:"0"`
-			ForceUnlock bool   `json:"force_unlock,omitempty"`
-		}
+		Body backupCreateRequest
 	}) (*createOutput, error) {
-		repoPath, err := backupRepoPath(d, in.Body.Repo)
+		repo, err := openBackupRepository(d, in.Body.Repo)
 		if err != nil {
 			return nil, err
 		}
-		repo, err := backup.Open(repoPath)
+		snapshot, err := createBackupSnapshot(ctx, repo, d, g, in.Body, nil)
 		if err != nil {
-			return nil, NewError(http.StatusUnprocessableEntity, "backup_repository", err.Error())
-		}
-		manifest, err := backupapp.Create(ctx, repo, version.Version, d.Store, d.Blobs,
-			backup.CreateOptions{
-				Tag: in.Body.Tag, ZstdLevel: d.Cfg.Backup.ZstdLevel,
-				Freezer: &gateFreezer{gate: g}, ForceUnlock: in.Body.ForceUnlock, Jobs: in.Body.Jobs,
-			})
-		if err != nil {
-			return nil, fromBackupError(err)
-		}
-		snapshot, err := backupSnapshot(manifest)
-		if err != nil {
-			return nil, NewError(http.StatusInternalServerError, "backup_manifest", err.Error())
+			return nil, err
 		}
 		return &createOutput{Body: snapshot}, nil
+	})
+
+	streamSchema := api.OpenAPI().Components.Schemas.Schema(
+		reflect.TypeFor[BackupCreateEvent](), true, "BackupCreateEvent")
+	huma.Register(api, huma.Operation{
+		OperationID: "streamBackupSnapshotCreation", Method: http.MethodPost,
+		Path:    "/api/v1/backup/snapshots/stream",
+		Summary: "Capture a snapshot and stream structured progress",
+		Description: "Returns newline-delimited JSON. Progress events precede exactly one terminal " +
+			"result or error event; an HTTP 200 only means the stream started.",
+		Responses: map[string]*huma.Response{
+			"200": {
+				Description: "Backup progress followed by one terminal result or error",
+				Content: map[string]*huma.MediaType{
+					"application/x-ndjson": {Schema: streamSchema},
+				},
+			},
+		},
+	}, func(_ context.Context, in *struct {
+		Body backupCreateRequest
+	}) (*huma.StreamResponse, error) {
+		repo, err := openBackupRepository(d, in.Body.Repo)
+		if err != nil {
+			return nil, err
+		}
+		return &huma.StreamResponse{Body: func(hctx huma.Context) {
+			hctx.SetHeader("Content-Type", "application/x-ndjson")
+			hctx.SetHeader("Cache-Control", "no-store")
+			runCtx, cancel := context.WithCancel(hctx.Context())
+			defer cancel()
+			stream := newBackupEventWriter(hctx.BodyWriter(), cancel)
+			snapshot, createErr := createBackupSnapshot(
+				runCtx, repo, d, g, in.Body,
+				func(event backup.ProgressEvent) {
+					stream.send(BackupCreateEvent{
+						Type: "progress", Progress: backupProgress(event),
+					})
+				})
+			if stream.err() != nil {
+				return
+			}
+			if createErr != nil {
+				stream.send(BackupCreateEvent{Type: "error", Error: backupProblem(createErr)})
+				return
+			}
+			stream.send(BackupCreateEvent{Type: "result", Snapshot: &snapshot})
+		}}, nil
 	})
 
 	type listOutput struct{ Body BackupSnapshotList }
@@ -99,6 +140,98 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 		}
 		return out, nil
 	})
+}
+
+func openBackupRepository(d Deps, requested string) (*backup.Repo, error) {
+	repoPath, err := backupRepoPath(d, requested)
+	if err != nil {
+		return nil, err
+	}
+	repo, err := backup.Open(repoPath)
+	if err != nil {
+		return nil, NewError(http.StatusUnprocessableEntity, "backup_repository", err.Error())
+	}
+	return repo, nil
+}
+
+func createBackupSnapshot(
+	ctx context.Context,
+	repo *backup.Repo,
+	d Deps,
+	g *gate,
+	in backupCreateRequest,
+	progress func(backup.ProgressEvent),
+) (BackupSnapshot, error) {
+	manifest, err := backupapp.Create(ctx, repo, version.Version, d.Store, d.Blobs,
+		backup.CreateOptions{
+			Tag: in.Tag, ZstdLevel: d.Cfg.Backup.ZstdLevel,
+			Freezer: &gateFreezer{gate: g}, ForceUnlock: in.ForceUnlock, Jobs: in.Jobs,
+			Progress: progress,
+		})
+	if err != nil {
+		return BackupSnapshot{}, fromBackupError(err)
+	}
+	snapshot, err := backupSnapshot(manifest)
+	if err != nil {
+		return BackupSnapshot{}, NewError(http.StatusInternalServerError, "backup_manifest", err.Error())
+	}
+	return snapshot, nil
+}
+
+func backupProgress(event backup.ProgressEvent) *BackupProgress {
+	return &BackupProgress{
+		Stage: string(event.Stage), Done: event.Done, Total: event.Total,
+		BytesDone: event.BytesDone, BytesTotal: event.BytesTotal, Final: event.Final,
+	}
+}
+
+type backupEventWriter struct {
+	mu       sync.Mutex
+	encoder  *json.Encoder
+	flusher  http.Flusher
+	cancel   context.CancelFunc
+	writeErr error
+}
+
+func newBackupEventWriter(w io.Writer, cancel context.CancelFunc) *backupEventWriter {
+	return &backupEventWriter{
+		encoder: json.NewEncoder(w), flusher: responseFlusher(w), cancel: cancel,
+	}
+}
+
+func (w *backupEventWriter) send(event BackupCreateEvent) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.writeErr != nil {
+		return
+	}
+	if err := w.encoder.Encode(event); err != nil {
+		w.writeErr = err
+		w.cancel()
+		return
+	}
+	if w.flusher != nil {
+		w.flusher.Flush()
+	}
+}
+
+func (w *backupEventWriter) err() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.writeErr
+}
+
+func responseFlusher(w io.Writer) http.Flusher {
+	for {
+		if flusher, ok := w.(http.Flusher); ok {
+			return flusher
+		}
+		unwrapper, ok := w.(interface{ Unwrap() http.ResponseWriter })
+		if !ok {
+			return nil
+		}
+		w = unwrapper.Unwrap()
+	}
 }
 
 func backupRepoPath(d Deps, requested string) (string, error) {
@@ -139,6 +272,14 @@ func backupSnapshot(manifest *backup.Manifest) (BackupSnapshot, error) {
 }
 
 func fromBackupError(err error) error {
+	return backupProblem(err)
+}
+
+func backupProblem(err error) *Error {
+	var problem *Error
+	if errors.As(err, &problem) {
+		return problem
+	}
 	if errors.Is(err, backup.ErrRepoLocked) {
 		return NewError(http.StatusConflict, "backup_locked", err.Error())
 	}

@@ -270,7 +270,7 @@ problem was found.
 ```text
 docbank backup init [--repo <dir>] [--json]
 docbank backup create [--repo <dir>] [--tag <label>] [--jobs <n>]
-                      [--force-unlock] [--json]
+                      [--force-unlock] [--progress auto|bar|plain] [--json]
 docbank backup list [--repo <dir>] [--json]
 ```
 
@@ -280,7 +280,10 @@ snapshot through the daemon, and lists snapshot history. `--repo` overrides
 only while pinning its logical view, then streams loose or packed content while
 normal daemon work resumes. `--jobs 1` serializes repository readers;
 `--force-unlock` is only for a repository lock whose owner is known to be gone.
-Every subcommand supports typed `--json` output. See [Backup](usage/backup.md).
+`create` draws per-stage progress bars on a terminal and durable progress lines
+when redirected; `--progress` can force either form. Every subcommand supports
+typed `--json` output; create suppresses progress in that mode. See
+[Backup](usage/backup.md).
 
 !!! info "Planned"
     `docbank backup verify` and `docbank backup restore` are the next Phase 4

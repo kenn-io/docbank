@@ -68,6 +68,13 @@ and Kit releases the gate before streaming metadata and blobs. The repository's
 exclusive lock independently prevents concurrent writers to the same snapshot
 repository.
 
+Kit's structured progress events remain structured across the daemon boundary.
+The streaming create endpoint emits NDJSON stage updates followed by one
+terminal result or error; the typed client validates that sequence before
+reporting success. The human CLI renders the same events as terminal bars or
+plain log lines. Machine-readable CLI output uses the non-streaming endpoint so
+stdout remains one JSON document.
+
 !!! info "Planned — remaining Phase 4 commands"
     `docbank backup verify` and `docbank backup restore` have not landed. The
     restore adapter described above is internal until the recovery CLI/API

@@ -369,6 +369,15 @@ func TestBackupInitCreateListCLI(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "created snapshot")
 	assert.Contains(t, out, "1 file(s), 1 blob(s)")
+	for _, stage := range []string{"freeze:", "metadata:", "attachments:", "seal:"} {
+		assert.Contains(t, out, stage)
+	}
+
+	out, err = runCLI(t, "backup", "create", "--tag", "json", "--jobs", "1", "--json")
+	require.NoError(t, err)
+	var created api.BackupSnapshot
+	require.NoError(t, json.Unmarshal([]byte(out), &created), "--json must contain no progress lines")
+	assert.Equal(t, "json", created.Tag)
 
 	out, err = runCLI(t, "backup", "list")
 	require.NoError(t, err)
@@ -378,7 +387,7 @@ func TestBackupInitCreateListCLI(t *testing.T) {
 	require.NoError(t, err)
 	var listed api.BackupSnapshotList
 	require.NoError(t, json.Unmarshal([]byte(out), &listed))
-	require.Len(t, listed.Items, 1)
+	require.Len(t, listed.Items, 2)
 	assert.Equal(t, backupapp.MetadataFormat, listed.Items[0].MetadataFormat)
 
 	repo, err := backup.Open(repoPath)

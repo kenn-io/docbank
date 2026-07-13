@@ -18,7 +18,7 @@ func timeoutExempt(path string) bool {
 	switch path {
 	case "/api/v1/ingest", "/api/v1/gc", "/api/v1/verify", "/api/v1/trash/empty",
 		"/api/v1/storage/pack", "/api/v1/storage/repack", "/api/v1/uploads",
-		"/api/v1/backup/snapshots":
+		"/api/v1/backup/snapshots", "/api/v1/backup/snapshots/stream":
 		return true
 	}
 	return strings.HasPrefix(path, "/api/v1/nodes/") && strings.HasSuffix(path, "/verify")
