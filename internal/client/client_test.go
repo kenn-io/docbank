@@ -186,6 +186,27 @@ func TestBackupCreateStreamRoundTripAndTypedError(t *testing.T) {
 	assert.Len(t, snapshots, 1, "a disconnected progress client must not publish a snapshot")
 	_, err = c.BackupCreateStream(t.Context(), client.BackupCreateOptions{Repo: repoPath}, nil)
 	require.ErrorIs(t, err, backup.ErrRepoLocked)
+	require.NoError(t, lock.Release())
+
+	var verifyEvents []api.BackupProgress
+	verified, err := c.BackupVerifyStream(t.Context(), client.BackupVerifyOptions{
+		Repo: repoPath, Jobs: 1,
+	}, func(event api.BackupProgress) { verifyEvents = append(verifyEvents, event) })
+	require.NoError(t, err)
+	assert.Equal(t, []string{snapshot.ID}, verified.Snapshots)
+	assert.Positive(t, verified.BlobsChecked)
+	assert.Positive(t, verified.BytesRead)
+	assert.Empty(t, verified.Problems)
+	require.NotEmpty(t, verifyEvents)
+	assert.Equal(t, "verify", verifyEvents[len(verifyEvents)-1].Stage)
+	assert.True(t, verifyEvents[len(verifyEvents)-1].Final)
+
+	quick, err := c.BackupVerify(t.Context(), client.BackupVerifyOptions{
+		Repo: repoPath, SnapshotID: snapshot.ID, Quick: true,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{snapshot.ID}, quick.Snapshots)
+	assert.Positive(t, quick.BytesRead, "quick verification still reads metadata")
 }
 
 func TestContentIdentityAndVerificationRoundTrip(t *testing.T) {

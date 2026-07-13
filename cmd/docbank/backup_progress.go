@@ -61,7 +61,7 @@ func backupProgressModeFromFlag(value string) (backupProgressMode, error) {
 		return backupProgressPlain, nil
 	default:
 		return backupProgressAuto, fmt.Errorf(
-			"backup create: invalid --progress value %q (want auto, bar, or plain)", value)
+			"backup: invalid --progress value %q (want auto, bar, or plain)", value)
 	}
 }
 

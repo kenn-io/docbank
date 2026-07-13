@@ -209,6 +209,32 @@ type BackupCreateEvent struct {
 	Error    *Error          `json:"error,omitempty"`
 }
 
+// BackupVerifyProblem identifies one repository-integrity failure and the
+// snapshot whose logical state exposed it.
+type BackupVerifyProblem struct {
+	SnapshotID string `json:"snapshot_id"`
+	Detail     string `json:"detail"`
+}
+
+// BackupVerifyReport summarizes one completed repository verification pass.
+// Problems are findings rather than transport failures, so the API returns the
+// complete report and lets callers decide how to present a failed proof.
+type BackupVerifyReport struct {
+	Snapshots    []string              `json:"snapshots"`
+	BlobsChecked int64                 `json:"blobs_checked"`
+	BytesRead    int64                 `json:"bytes_read"`
+	Problems     []BackupVerifyProblem `json:"problems"`
+}
+
+// BackupVerifyEvent is one line of the backup-verify NDJSON stream. A report
+// or error is terminal; progress may appear zero or more times before it.
+type BackupVerifyEvent struct {
+	Type     string              `json:"type" enum:"progress,result,error"`
+	Progress *BackupProgress     `json:"progress,omitempty"`
+	Report   *BackupVerifyReport `json:"report,omitempty"`
+	Error    *Error              `json:"error,omitempty"`
+}
+
 func fromStoreNode(n store.Node) Node {
 	out := Node{
 		ID: n.ID, ParentID: n.ParentID, Name: n.Name, Kind: n.Kind,

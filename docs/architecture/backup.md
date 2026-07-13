@@ -77,10 +77,20 @@ reporting success. The human CLI renders the same events as terminal bars or
 plain log lines. Machine-readable CLI output uses the non-streaming endpoint so
 stdout remains one JSON document.
 
-!!! info "Planned — remaining Phase 4 commands"
-    `docbank backup verify` and `docbank backup restore` have not landed. The
-    restore adapter described above is internal until the recovery CLI/API
-    defines target confinement, overwrite behavior, and operator output.
+Repository verification is daemon-mediated even though it reads the backup
+repository rather than the live vault. The authenticated JSON endpoint returns
+one complete typed report; the NDJSON endpoint carries Kit's verification
+progress followed by exactly one terminal report or error. Quick mode proves
+structure and references without reading document content. Full mode reads and
+hash-verifies referenced content, deduplicating shared objects across selected
+snapshots, and returns every finding rather than stopping at the first damaged
+object. Kit's shared repository lock permits concurrent verifies and restores
+while excluding repository writers.
+
+!!! info "Planned — remaining Phase 4 command"
+    `docbank backup restore` has not landed. The restore adapter described above
+    is internal until the recovery CLI/API defines target confinement,
+    overwrite behavior, and operator output.
 
 Backup reachability is intentionally broader than GC reachability: every
 `blobs` row is captured, including a row that has become a GC candidate but has

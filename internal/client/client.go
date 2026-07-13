@@ -532,6 +532,109 @@ func (c *Client) BackupList(ctx context.Context, repo string) ([]api.BackupSnaps
 	return out.Items, err
 }
 
+type BackupVerifyOptions struct {
+	Repo        string
+	SnapshotID  string
+	All         bool
+	Quick       bool
+	Jobs        int
+	ForceUnlock bool
+}
+
+func (c *Client) BackupVerify(
+	ctx context.Context, opts BackupVerifyOptions,
+) (api.BackupVerifyReport, error) {
+	var out api.BackupVerifyReport
+	err := c.do(ctx, http.MethodPost, "/api/v1/backup/verify", nil,
+		backupVerifyRequest(opts), &out)
+	return out, err
+}
+
+// BackupVerifyStream verifies a repository while delivering structured
+// progress. A successful HTTP status only starts the stream; the method
+// returns success only after receiving its terminal report event.
+func (c *Client) BackupVerifyStream(
+	ctx context.Context,
+	opts BackupVerifyOptions,
+	progress func(api.BackupProgress),
+) (api.BackupVerifyReport, error) {
+	body, err := json.Marshal(backupVerifyRequest(opts))
+	if err != nil {
+		return api.BackupVerifyReport{}, fmt.Errorf("encoding backup verify request: %w", err)
+	}
+	const path = "/api/v1/backup/verify/stream"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+path, bytes.NewReader(body))
+	if err != nil {
+		return api.BackupVerifyReport{}, fmt.Errorf("building backup verify stream request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/x-ndjson")
+	if c.key != "" {
+		req.Header.Set("X-Api-Key", c.key)
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return api.BackupVerifyReport{}, fmt.Errorf("calling daemon (POST %s): %w", path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return api.BackupVerifyReport{}, decodeError(resp)
+	}
+
+	decoder := json.NewDecoder(resp.Body)
+	var result *api.BackupVerifyReport
+	for {
+		var event api.BackupVerifyEvent
+		if err := decoder.Decode(&event); err != nil {
+			if errors.Is(err, io.EOF) {
+				if result == nil {
+					return api.BackupVerifyReport{}, errors.New(
+						"backup verify progress stream ended without a result")
+				}
+				return *result, nil
+			}
+			return api.BackupVerifyReport{}, fmt.Errorf("decoding backup verify progress: %w", err)
+		}
+		if result != nil {
+			return api.BackupVerifyReport{}, errors.New(
+				"backup verify progress stream continued after its result")
+		}
+		switch event.Type {
+		case "progress":
+			if event.Progress == nil || event.Report != nil || event.Error != nil {
+				return api.BackupVerifyReport{}, errors.New(
+					"backup verify returned malformed progress event")
+			}
+			if progress != nil {
+				progress(*event.Progress)
+			}
+		case "result":
+			if event.Report == nil || event.Progress != nil || event.Error != nil {
+				return api.BackupVerifyReport{}, errors.New(
+					"backup verify returned malformed result event")
+			}
+			report := *event.Report
+			result = &report
+		case "error":
+			if event.Error == nil || event.Progress != nil || event.Report != nil {
+				return api.BackupVerifyReport{}, errors.New(
+					"backup verify returned malformed error event")
+			}
+			return api.BackupVerifyReport{}, apiProblemError(*event.Error)
+		default:
+			return api.BackupVerifyReport{}, fmt.Errorf(
+				"backup verify returned unknown progress event type %q", event.Type)
+		}
+	}
+}
+
+func backupVerifyRequest(opts BackupVerifyOptions) map[string]any {
+	return map[string]any{
+		"repo": opts.Repo, "snapshot_id": opts.SnapshotID, "all": opts.All,
+		"quick": opts.Quick, "jobs": opts.Jobs, "force_unlock": opts.ForceUnlock,
+	}
+}
+
 func (c *Client) Shutdown(ctx context.Context, token string) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()

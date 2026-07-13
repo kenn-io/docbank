@@ -119,8 +119,8 @@ Docbank's deterministic logical JSONL artifact, which round-trips directory
 structure, stable node IDs, content membership, trash state, versions,
 provenance, tags, and extraction state into a fresh current-schema database.
 Historical SQLite page-map snapshots remain restorable. Authenticated daemon
-API and CLI orchestration for repository initialization, snapshot creation, and
-listing are implemented; verification and restore commands remain.
+API and CLI orchestration for repository initialization, snapshot creation,
+listing, and repository verification are implemented; restore remains.
 
 ## Deferred beyond v1
 
