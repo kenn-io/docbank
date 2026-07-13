@@ -117,6 +117,7 @@ func TestOpenAndLockExclusiveLocksEachCreatedComponentBeforeDescending(t *testin
 	var contender *Lock
 
 	root, lock, err := (Layout{Root: target}).createAndLockExclusiveWith(
+		nil,
 		func(index int, _ *os.Root) error {
 			if index != 0 {
 				return nil
@@ -137,6 +138,21 @@ func TestOpenAndLockExclusiveLocksEachCreatedComponentBeforeDescending(t *testin
 	_, err = os.Lstat(second)
 	require.ErrorIs(t, err, os.ErrNotExist,
 		"a newly claimed component must stop startup before deeper creation")
+}
+
+func TestOpenAndLockExclusiveOwnsTargetThatAppearsBeforeScan(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "appearing-vault")
+	root, lock, err := (Layout{Root: target}).createAndLockExclusiveWith(
+		func() error { return os.Mkdir(target, 0o700) }, nil)
+	require.NoError(t, err)
+	defer func() { _ = root.Close() }()
+	defer func() { _ = lock.Release() }()
+
+	child := filepath.Join(target, "child")
+	require.NoError(t, os.Mkdir(child, 0o700))
+	_, err = (Layout{Root: child}).TryLockExclusive()
+	require.ErrorIs(t, err, ErrVaultLocked,
+		"a target appearing before the scan must still be exclusively owned")
 }
 
 func TestTryLockLaunchDoesNotCreateVaultRoot(t *testing.T) {

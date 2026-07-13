@@ -213,12 +213,18 @@ func (l Layout) TryLockExclusiveRoot(root *os.Root) (*Lock, error) {
 }
 
 func (l Layout) createAndLockExclusive() (*os.Root, *Lock, error) {
-	return l.createAndLockExclusiveWith(nil)
+	return l.createAndLockExclusiveWith(nil, nil)
 }
 
 func (l Layout) createAndLockExclusiveWith(
+	beforeScan func() error,
 	afterOpen func(int, *os.Root) error,
 ) (*os.Root, *Lock, error) {
+	if beforeScan != nil {
+		if err := beforeScan(); err != nil {
+			return nil, nil, err
+		}
+	}
 	target, err := filepath.Abs(l.Root)
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolving vault root %s: %w", l.Root, err)
@@ -277,7 +283,7 @@ func (l Layout) createAndLockExclusiveWith(
 	}
 	lk := &Lock{}
 	if err := lk.lockIdentities(
-		registry, ancestorIdentities, false, target); err != nil {
+		registry, ancestorIdentities, len(missing) == 0, target); err != nil {
 		return fail(lk, err)
 	}
 	slices.Reverse(missing)
