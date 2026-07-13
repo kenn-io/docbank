@@ -23,6 +23,9 @@ jobs:
     runs-on: ${{ matrix.runner }}
     container:
       image: ubuntu:22.04
+    defaults:
+      run:
+        shell: bash
     timeout-minutes: 20
     steps:
       - name: Install build tools
