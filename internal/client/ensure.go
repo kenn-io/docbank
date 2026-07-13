@@ -67,10 +67,10 @@ func newClientFor(rec kitdaemon.RuntimeRecord) *Client {
 }
 
 // WithLaunchLock serializes daemon auto-start with update's stop/install/
-// restart window. Callers should re-run discovery inside fn before spawning.
+// restart window. Acquisition waits until the caller's context expires because
+// an update may legitimately hold the per-user lock beyond startup's readiness
+// timeout. Callers should re-run discovery inside fn before spawning.
 func WithLaunchLock(ctx context.Context, root string, fn func() error) error {
-	lockCtx, cancel := context.WithTimeout(ctx, ensureTimeout)
-	defer cancel()
 	for {
 		launch, err := (home.Layout{Root: root}).TryLockLaunch()
 		if err == nil {
@@ -81,8 +81,8 @@ func WithLaunchLock(ctx context.Context, root string, fn func() error) error {
 			return fmt.Errorf("acquiring daemon launch lock: %w", err)
 		}
 		select {
-		case <-lockCtx.Done():
-			return fmt.Errorf("acquiring daemon launch lock: %w", lockCtx.Err())
+		case <-ctx.Done():
+			return fmt.Errorf("acquiring daemon launch lock: %w", ctx.Err())
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
