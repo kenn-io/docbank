@@ -87,7 +87,7 @@ func compileExclusions(values []string) (exclusions, error) {
 			return exclusions{}, errors.New("exclude rule must not be empty")
 		}
 		converted := filepath.FromSlash(raw)
-		if filepath.IsAbs(converted) || filepath.VolumeName(converted) != "" {
+		if !filepath.IsLocal(converted) {
 			return exclusions{}, fmt.Errorf("exclude rule %q must be relative", raw)
 		}
 		if slices.Contains(strings.Split(converted, string(filepath.Separator)), "..") {
