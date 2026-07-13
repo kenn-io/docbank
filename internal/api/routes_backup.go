@@ -116,7 +116,7 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 		OperationID: "listBackupSnapshots", Method: http.MethodGet, Path: "/api/v1/backup/snapshots",
 		Summary: "List snapshots in a backup repository",
 	}, func(_ context.Context, in *struct {
-		Repo string `query:"repo,omitempty"`
+		Repo string `query:"repo"`
 	}) (*listOutput, error) {
 		repoPath, err := backupRepoPath(d, in.Repo)
 		if err != nil {

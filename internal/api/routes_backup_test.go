@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -91,6 +92,12 @@ func TestBackupRoutesValidateRepositoryAndReportLock(t *testing.T) {
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/init", nil,
 		map[string]any{"repo": repoPath})
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	resp, body = get(t, ts, "/api/v1/backup/snapshots?repo="+url.QueryEscape(repoPath), nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var listed api.BackupSnapshotList
+	require.NoError(t, json.Unmarshal([]byte(body), &listed))
+	assert.Empty(t, listed.Items,
+		"the explicit repo query must work without a configured backup repository")
 	repo, err := backup.Open(repoPath)
 	require.NoError(t, err)
 	lock, err := repo.AcquireExclusiveLock("test", false)
