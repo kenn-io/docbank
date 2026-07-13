@@ -3,6 +3,11 @@ name: release
 on:
   push:
     tags: ["v*"]
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - go.mod
+      - go.sum
 
 permissions:
   contents: read
@@ -33,7 +38,7 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends ca-certificates file gcc git gzip tar
+          apt-get install -y --no-install-recommends build-essential ca-certificates file git gzip tar
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -52,7 +57,11 @@ jobs:
           GOOS: linux
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF#refs/tags/v}"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION="0.0.0"
+          fi
           if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "FATAL: release tag must use vX.Y.Z format" >&2
             exit 1
@@ -100,7 +109,11 @@ jobs:
           GOOS: darwin
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF#refs/tags/v}"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION="0.0.0"
+          fi
           if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "FATAL: release tag must use vX.Y.Z format" >&2
             exit 1
@@ -177,7 +190,11 @@ jobs:
           GOOS: windows
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF#refs/tags/v}"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION="0.0.0"
+          fi
           if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "FATAL: release tag must use vX.Y.Z format" >&2
             exit 1
@@ -205,6 +222,7 @@ jobs:
   publish:
     name: Publish GitHub release
     needs: [build-linux, build-darwin, build-windows]
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
