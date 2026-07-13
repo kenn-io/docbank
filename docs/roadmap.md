@@ -125,6 +125,5 @@ listing are implemented; verification and restore commands remain.
 ## Deferred beyond v1
 
 OCR of scans, embeddings/AI tagging, a web UI, at-rest encryption of the
-live store (encrypted *backups* come free with the pack layer),
-importing attachments out of msgvault, multi-user/sharing, and an MCP
-server wrapping the API.
+live store, encryption for backup repositories, importing attachments out of
+msgvault, multi-user/sharing, and an MCP server wrapping the API.
