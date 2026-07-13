@@ -50,7 +50,7 @@ Docbank also keeps persistent per-user coordination files under
 `~/.local/state/docbank/target-locks`, using the home directory from the
 operating-system account record. They contain no document data, but must not be
 deleted: daemons and restores use their stable identities to exclude overlapping
-vault trees and simultaneous restores.
+vault trees, including simultaneous restores whose target trees overlap.
 
 !!! warning
     Don't edit or prune `blobs/` by hand. Blob files are referenced by
