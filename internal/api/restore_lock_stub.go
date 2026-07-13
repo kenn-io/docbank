@@ -20,7 +20,11 @@ type noopRestoreTargetLease struct{}
 
 func (noopRestoreTargetLease) Release() error { return nil }
 
-func (platformRestoreTargetCoordinator) AcquireRestoreTarget(
+func (*platformRestoreTargetCoordinator) Prepare(context.Context) error { return nil }
+
+func (*platformRestoreTargetCoordinator) ReleasePreparation() error { return nil }
+
+func (*platformRestoreTargetCoordinator) AcquireRestoreTarget(
 	context.Context, *os.Root,
 ) (backup.RestoreTargetLease, error) {
 	return noopRestoreTargetLease{}, nil

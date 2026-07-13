@@ -93,6 +93,59 @@ func (l Layout) TryLockLaunch() (*Lock, error) {
 	return &Lock{files: []*os.File{f}}, nil
 }
 
+// TryLockExistingAncestors takes shared hierarchy locks through the deepest
+// existing ancestor of a possibly missing vault root without creating anything
+// in that tree. A caller can retain this while another component securely
+// creates the final path, then acquire exclusive target ownership before
+// releasing it.
+func (l Layout) TryLockExistingAncestors() (*Lock, error) {
+	target, err := CanonicalRoot(l.Root)
+	if err != nil {
+		return nil, err
+	}
+	current := target
+	for {
+		_, err := os.Stat(current)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("checking vault root ancestor: %w", err)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return nil, fmt.Errorf("vault root has no existing ancestor: %s", target)
+		}
+		current = parent
+	}
+	before, err := os.Stat(current)
+	if err != nil {
+		return nil, fmt.Errorf("checking vault root ancestor identity: %w", err)
+	}
+	identities, err := directoryIdentityChain(current)
+	if err != nil {
+		return nil, err
+	}
+	registry, err := targetLockRegistryDir()
+	if err != nil {
+		return nil, err
+	}
+	lk := &Lock{}
+	if err := lk.lockIdentities(registry, identities, false, target); err != nil {
+		_ = lk.Release()
+		return nil, err
+	}
+	after, err := os.Stat(current)
+	if err != nil || !os.SameFile(before, after) {
+		_ = lk.Release()
+		if err != nil {
+			return nil, fmt.Errorf("rechecking vault root ancestor identity: %w", err)
+		}
+		return nil, fmt.Errorf("vault root ancestor %s changed while locking", current)
+	}
+	return lk, nil
+}
+
 // OpenLaunchOutput creates private transient bootstrap output outside the
 // unowned vault tree. The caller closes and removes the returned path.
 func (l Layout) OpenLaunchOutput() (*os.File, string, error) {

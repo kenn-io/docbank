@@ -28,6 +28,9 @@ func (l Layout) OpenAndLockExclusive() (*os.Root, *Lock, error) {
 // TryLockLaunch fails: vault locking is Unix-only.
 func (l Layout) TryLockLaunch() (*Lock, error) { return nil, errUnsupported }
 
+// TryLockExistingAncestors fails: vault locking is Unix-only.
+func (l Layout) TryLockExistingAncestors() (*Lock, error) { return nil, errUnsupported }
+
 // OpenLaunchOutput fails: vault locking is Unix-only.
 func (l Layout) OpenLaunchOutput() (*os.File, string, error) {
 	return nil, "", errUnsupported

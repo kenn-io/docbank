@@ -136,6 +136,26 @@ func TestBackupRestoreCoordinatorExcludesOverlappingTargets(t *testing.T) {
 	assertRestoreTargetActive(t, err)
 }
 
+func TestBackupRestoreCoordinatorRejectsMissingDescendantBeforeCreation(t *testing.T) {
+	parent := filepath.Join(t.TempDir(), "active-restore")
+	descendant := filepath.Join(parent, "docbank.db")
+	require.NoError(t, os.Mkdir(parent, 0o700))
+	parentRoot, err := os.OpenRoot(parent)
+	require.NoError(t, err)
+	defer func() { _ = parentRoot.Close() }()
+	parentCoordinator := newRestoreTargetCoordinator(parent, "", "", true)
+	parentLease, err := parentCoordinator.AcquireRestoreTarget(t.Context(), parentRoot)
+	require.NoError(t, err)
+	defer func() { _ = parentLease.Release() }()
+
+	descendantCoordinator := newRestoreTargetCoordinator(descendant, "", "", true)
+	err = descendantCoordinator.Prepare(t.Context())
+	assertRestoreTargetActive(t, err)
+	_, err = os.Lstat(descendant)
+	require.ErrorIs(t, err, os.ErrNotExist,
+		"coordination must reject a missing descendant before Kit can create it")
+}
+
 func assertRestoreTargetActive(t *testing.T, err error) {
 	t.Helper()
 	var problem *Error

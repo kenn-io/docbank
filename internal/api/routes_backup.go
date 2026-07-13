@@ -433,7 +433,7 @@ func restoreBackupSnapshot(
 	repo *backup.Repo,
 	target string,
 	in backupRestoreRequest,
-	coordinator backup.RestoreTargetCoordinator,
+	coordinator restoreTargetCoordinator,
 	progress func(backup.ProgressEvent),
 ) (BackupRestoreReport, error) {
 	return restoreBackupSnapshotWith(
@@ -449,10 +449,19 @@ func restoreBackupSnapshotWith(
 	repo *backup.Repo,
 	target string,
 	in backupRestoreRequest,
-	coordinator backup.RestoreTargetCoordinator,
+	coordinator restoreTargetCoordinator,
 	progress func(backup.ProgressEvent),
 	run backupRestoreRunner,
 ) (report BackupRestoreReport, retErr error) {
+	if err := coordinator.Prepare(ctx); err != nil {
+		return report, err
+	}
+	defer func() {
+		if err := coordinator.ReleasePreparation(); err != nil {
+			retErr = errors.Join(retErr, NewError(http.StatusInternalServerError, "backup_failed",
+				fmt.Sprintf("releasing backup restore target preparation: %v", err)))
+		}
+	}()
 	result, err := run(ctx, repo, version.Version, backup.RestoreOptions{
 		SnapshotID: in.SnapshotID, TargetDir: target, Overwrite: true,
 		Jobs: in.Jobs, ForceUnlock: in.ForceUnlock, Progress: progress,
