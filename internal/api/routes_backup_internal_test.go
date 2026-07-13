@@ -14,7 +14,7 @@ func TestBackupRestoreReportGroupsFallbacksDeterministically(t *testing.T) {
 		SnapshotID: "snapshot", DBPath: "/restore/docbank.db", DBBytes: 12,
 		AttachmentBlobs: 3, AttachmentBytes: 34, PackedAttachmentBlobs: 1,
 		LooseAttachmentBlobs: 2, AttachmentPacks: 1, ExtrasFiles: 4,
-		Duration: 1500 * time.Millisecond,
+		Duration: 1500 * time.Millisecond, DatabaseIntegrityChecked: true,
 		PackFallbacks: []packstore.ImportFallback{
 			{Reason: packstore.FallbackPackPublication},
 			{Reason: packstore.FallbackBlobLimit},

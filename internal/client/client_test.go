@@ -234,7 +234,7 @@ func TestBackupCreateStreamRoundTripAndTypedError(t *testing.T) {
 	assert.Equal(t, int64(1), restored.PackedBlobs)
 	assert.True(t, restored.Proof.ContentVerified)
 	require.NotEmpty(t, restoreEvents)
-	assert.Equal(t, "proof", restoreEvents[len(restoreEvents)-1].Stage)
+	assert.Equal(t, "restore_stats", restoreEvents[len(restoreEvents)-1].Stage)
 	assert.True(t, restoreEvents[len(restoreEvents)-1].Final)
 
 	restored, err = c.BackupRestore(t.Context(), client.BackupRestoreOptions{

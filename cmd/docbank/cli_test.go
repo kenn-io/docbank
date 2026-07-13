@@ -412,7 +412,9 @@ func TestBackupInitCreateListVerifyCLI(t *testing.T) {
 	out, err = runCLI(t, "backup", "restore", created.ID, "--target", restoreTarget,
 		"--jobs", "1", "--progress", "plain")
 	require.NoError(t, err)
-	for _, stage := range []string{"metadata:", "attachments:", "proof:"} {
+	for _, stage := range []string{
+		"metadata:", "attachments:", "integrity:", "statistics:",
+	} {
 		assert.Contains(t, out, stage)
 	}
 	assert.Contains(t, out, "restored snapshot "+created.ID)

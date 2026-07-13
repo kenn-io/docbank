@@ -32,6 +32,23 @@ func TestBackupProgressRendererPlain(t *testing.T) {
 	assert.Contains(t, text, "(done)")
 }
 
+func TestBackupProgressRendererUsesReadableRestoreProofStages(t *testing.T) {
+	var out bytes.Buffer
+	renderer := newBackupProgressRenderer(&out, backupProgressPlain)
+	renderer.interval = 0
+	renderer.handle(api.BackupProgress{
+		Stage: "integrity_check", Done: 1, Total: 1, Final: true,
+	})
+	renderer.handle(api.BackupProgress{
+		Stage: "restore_stats", Done: 1, Total: 1, Final: true,
+	})
+
+	assert.Contains(t, out.String(), "integrity:")
+	assert.Contains(t, out.String(), "statistics:")
+	assert.NotContains(t, out.String(), "integrity_check:")
+	assert.NotContains(t, out.String(), "restore_stats:")
+}
+
 func TestBackupProgressRendererBarRedrawsAndTerminates(t *testing.T) {
 	var out bytes.Buffer
 	renderer := newBackupProgressRenderer(&out, backupProgressBar)

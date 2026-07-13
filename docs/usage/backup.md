@@ -172,7 +172,8 @@ current storage policy is restored as a verified loose blob instead; the
 result reports the loose count and grouped fallback reasons. This is a
 representation choice, not an integrity failure.
 
-Interactive restore shows metadata, document, extras, and proof progress.
+Interactive restore shows metadata, document, extras, SQLite integrity, and
+manifest-statistics progress as separate stages.
 `--json` suppresses progress and returns one report containing physical layout
 counts and explicit `content_verified`, `sqlite_integrity`, and
 `manifest_stats` proof fields. A successful report means the target is a

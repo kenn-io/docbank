@@ -497,7 +497,9 @@ func backupRestoreReport(target string, result *backup.RestoreResult) BackupRest
 		Fallbacks: fallbacks, ExtrasFiles: result.ExtrasFiles,
 		DurationSeconds: result.Duration.Seconds(),
 		Proof: BackupRestoreProof{
-			ContentVerified: true, SQLiteIntegrity: true, ManifestStats: true,
+			ContentVerified: true,
+			SQLiteIntegrity: result.DatabaseIntegrityChecked,
+			ManifestStats:   true,
 		},
 	}
 }

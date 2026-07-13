@@ -104,7 +104,8 @@ packs are verified and published before one staged catalog replacement;
 incompatible selections fall back to verified loose content. The restored
 database remains private until content verification, SQLite integrity, and
 manifest-stat proofs all pass. The streaming API exposes those stages and a
-terminal typed proof; the non-streaming endpoint keeps agent output to one JSON
+terminal typed proof, with the SQLite scan and manifest-stat comparison
+reported separately; the non-streaming endpoint keeps agent output to one JSON
 document.
 
 Backup reachability is intentionally broader than GC reachability: every

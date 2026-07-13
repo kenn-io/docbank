@@ -300,7 +300,9 @@ func TestBackupRestoreProgressProofAndConfinement(t *testing.T) {
 			finalStages[event.Progress.Stage] = true
 		}
 	}
-	for _, stage := range []string{"metadata", "attachments", "proof"} {
+	for _, stage := range []string{
+		"metadata", "attachments", "integrity_check", "restore_stats",
+	} {
 		assert.True(t, finalStages[stage], "stage %q emitted a final event", stage)
 	}
 	terminal := events[len(events)-1]
