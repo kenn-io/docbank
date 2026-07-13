@@ -17,9 +17,10 @@ import (
 const metadataFormatVersion = 1
 
 type metadataHeader struct {
-	Type    string `json:"type"`
-	Format  string `json:"format"`
-	Version int    `json:"version"`
+	Type         string `json:"type"`
+	Format       string `json:"format"`
+	Version      int    `json:"version"`
+	NodeSequence int64  `json:"node_sequence"`
 }
 
 type metadataBlob struct {
@@ -126,7 +127,13 @@ func ExportMetadataTx(ctx context.Context, tx *sql.Tx, w io.Writer) error {
 		}
 		return nil
 	}
-	if err := write(metadataHeader{Type: "meta", Format: "docbank-metadata", Version: metadataFormatVersion}); err != nil {
+	var nodeSequence int64
+	if err := tx.QueryRowContext(ctx, `SELECT seq FROM sqlite_sequence WHERE name = 'nodes'`).Scan(&nodeSequence); err != nil {
+		return fmt.Errorf("reading node ID high-water mark: %w", err)
+	}
+	if err := write(metadataHeader{
+		Type: "meta", Format: "docbank-metadata", Version: metadataFormatVersion, NodeSequence: nodeSequence,
+	}); err != nil {
 		return err
 	}
 	if err := exportBlobs(ctx, tx, write); err != nil {
@@ -354,11 +361,22 @@ func (s *Store) ImportMetadata(ctx context.Context, r io.Reader) error {
 		if _, err := tx.ExecContext(ctx, `PRAGMA defer_foreign_keys = ON`); err != nil {
 			return fmt.Errorf("deferring metadata foreign keys: %w", err)
 		}
-		if err := importMetadataLines(ctx, tx, r); err != nil {
+		nodeSequence, err := importMetadataLines(ctx, tx, r)
+		if err != nil {
 			return err
 		}
 		if err := validateImportedMetadata(ctx, tx); err != nil {
 			return err
+		}
+		var maxNodeID int64
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM nodes`).Scan(&maxNodeID); err != nil {
+			return fmt.Errorf("reading imported maximum node ID: %w", err)
+		}
+		if nodeSequence < maxNodeID {
+			return fmt.Errorf("node ID high-water mark %d is below imported maximum %d", nodeSequence, maxNodeID)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE sqlite_sequence SET seq = ? WHERE name = 'nodes'`, nodeSequence); err != nil {
+			return fmt.Errorf("restoring node ID high-water mark: %w", err)
 		}
 		if err := tx.QueryRowContext(ctx, `SELECT id FROM nodes WHERE parent_id IS NULL`).Scan(&rootID); err != nil {
 			return fmt.Errorf("finding imported root: %w", err)
@@ -406,34 +424,35 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 	return nil
 }
 
-func importMetadataLines(ctx context.Context, tx *sql.Tx, r io.Reader) error {
+func importMetadataLines(ctx context.Context, tx *sql.Tx, r io.Reader) (int64, error) {
 	dec := json.NewDecoder(bufio.NewReader(r))
 	dec.DisallowUnknownFields()
 	var header metadataHeader
 	if err := dec.Decode(&header); err != nil {
-		return fmt.Errorf("decoding metadata header: %w", err)
+		return 0, fmt.Errorf("decoding metadata header: %w", err)
 	}
-	if header != (metadataHeader{Type: "meta", Format: "docbank-metadata", Version: metadataFormatVersion}) {
-		return fmt.Errorf("unsupported metadata header: type=%q format=%q version=%d",
-			header.Type, header.Format, header.Version)
+	if header.Type != "meta" || header.Format != "docbank-metadata" ||
+		header.Version != metadataFormatVersion || header.NodeSequence <= 0 {
+		return 0, fmt.Errorf("unsupported metadata header: type=%q format=%q version=%d node_sequence=%d",
+			header.Type, header.Format, header.Version, header.NodeSequence)
 	}
 	for record := 2; ; record++ {
 		var raw json.RawMessage
 		err := dec.Decode(&raw)
 		if errors.Is(err, io.EOF) {
-			return nil
+			return header.NodeSequence, nil
 		}
 		if err != nil {
-			return fmt.Errorf("decoding metadata record %d: %w", record, err)
+			return 0, fmt.Errorf("decoding metadata record %d: %w", record, err)
 		}
 		var kind struct {
 			Type string `json:"type"`
 		}
 		if err := json.Unmarshal(raw, &kind); err != nil {
-			return fmt.Errorf("decoding metadata record %d type: %w", record, err)
+			return 0, fmt.Errorf("decoding metadata record %d type: %w", record, err)
 		}
 		if err := importMetadataRecord(ctx, tx, kind.Type, raw); err != nil {
-			return fmt.Errorf("importing metadata record %d (%s): %w", record, kind.Type, err)
+			return 0, fmt.Errorf("importing metadata record %d (%s): %w", record, kind.Type, err)
 		}
 	}
 }
@@ -655,8 +674,12 @@ func validateExtractedTextRecord(v metadataExtractedText) error {
 }
 
 func validateMetadataTime(field, value string) error {
-	if _, err := time.Parse(timestampLayout, value); err != nil {
+	parsed, err := time.Parse(timestampLayout, value)
+	if err != nil {
 		return fmt.Errorf("invalid %s: %w", field, err)
+	}
+	if value != parsed.UTC().Format(timestampLayout) {
+		return fmt.Errorf("invalid %s: timestamp is not canonical UTC", field)
 	}
 	return nil
 }
@@ -680,6 +703,8 @@ func validateImportedMetadata(ctx context.Context, tx *sql.Tx) error {
 			SELECT EXISTS(SELECT 1 FROM nodes n JOIN blobs b ON b.hash=n.blob_hash WHERE n.size != b.size)`},
 		{"node version size differs from blob authority", `
 			SELECT EXISTS(SELECT 1 FROM node_versions v JOIN blobs b ON b.hash=v.blob_hash WHERE v.size != b.size)`},
+		{"extracted text references missing blob authority", `
+			SELECT EXISTS(SELECT 1 FROM extracted_text e LEFT JOIN blobs b ON b.hash=e.blob_hash WHERE b.hash IS NULL)`},
 	}
 	for _, check := range checks {
 		var failed bool

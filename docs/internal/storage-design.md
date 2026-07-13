@@ -230,6 +230,9 @@ format version. Records are emitted in dependency-stable order and deterministic
 key order: blobs, nodes, ingests, node versions, provenance, tags, node tags,
 and extracted text. Nodes carry parent IDs, so directory structure, trash
 restore coordinates, and stable external node references survive a roundtrip.
+The header carries SQLite's node `AUTOINCREMENT` high-water mark separately
+from the live rows; import restores it only after proving it is at least the
+maximum surviving node ID.
 
 The stream excludes `nodes_fts`, `blob_packs`, and `blob_pack_index`. FTS is a
 derived index rebuilt by the node insert triggers. Pack tables describe one
@@ -239,7 +242,10 @@ chosen loose or packed representation before installing fresh catalog mappings.
 
 Import runs only against a pristine current-schema database, in one transaction
 with deferred foreign-key checks. Unknown format versions, unknown record types
-or fields, uniqueness failures, and dangling references abort the transaction.
+or fields, uniqueness failures, orphaned extraction rows, and dangling
+references abort the transaction. Timestamps must use Docbank's canonical UTC
+representation because retention queries compare their fixed-width strings
+lexicographically.
 Explicit node IDs advance SQLite's `AUTOINCREMENT` sequence, preserving the
 invariant that a deleted historical ID is never silently reused.
 

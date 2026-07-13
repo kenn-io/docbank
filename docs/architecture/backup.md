@@ -31,7 +31,9 @@ FTS rows and physical pack mappings: search indexes are rebuilt by importing
 nodes, while restore grants physical authority only after content has been
 verified and published. Import targets must be fresh current-schema databases;
 a malformed or referentially incomplete stream leaves the pristine target
-unchanged.
+unchanged. The header also preserves the node-ID allocation high-water mark,
+including IDs whose rows were later deleted, so restore never reuses a value
+that an external reference may remember.
 
 Capture reads loose and packed blobs through Kit's bounded-memory stream. The
 archive may grant authority to copied bytes only after terminal EOF verifies

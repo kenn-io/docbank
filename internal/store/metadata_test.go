@@ -29,6 +29,7 @@ func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 	require.NoError(t, source.ExportMetadata(ctx, &first))
 	require.NoError(t, source.ExportMetadata(ctx, &second))
 	assert.Equal(t, first.Bytes(), second.Bytes(), "unchanged metadata must export byte-identically")
+	assert.Contains(t, first.String(), `{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":50}`)
 	assert.Contains(t, first.String(), `{"type":"node","id":7,"parent_id":1,"name":"Projects","kind":"dir"`)
 	assert.NotContains(t, first.String(), "blob_pack_index")
 	assert.NotContains(t, first.String(), "metadata-pack")
@@ -63,7 +64,7 @@ func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 
 	created, err := target.Mkdir(ctx, target.RootID(), "after-restore")
 	require.NoError(t, err)
-	assert.Greater(t, created.ID, int64(12), "AUTOINCREMENT must not reuse imported stable IDs")
+	assert.Greater(t, created.ID, int64(50), "AUTOINCREMENT must not reuse any historically allocated ID")
 }
 
 func TestImportMetadataRejectsDanglingContentAndRollsBack(t *testing.T) {
@@ -72,7 +73,7 @@ func TestImportMetadataRejectsDanglingContentAndRollsBack(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, target.Close()) })
 
 	input := strings.Join([]string{
-		`{"type":"meta","format":"docbank-metadata","version":1}`,
+		`{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":2}`,
 		`{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","blob_hash":null,"size":null,"mime_type":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}`,
 		`{"type":"node","id":2,"parent_id":1,"name":"missing.bin","kind":"file","blob_hash":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","size":1,"mime_type":"application/octet-stream","revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}`,
 	}, "\n") + "\n"
@@ -82,6 +83,25 @@ func TestImportMetadataRejectsDanglingContentAndRollsBack(t *testing.T) {
 	var nodes int64
 	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodes))
 	assert.Equal(t, int64(1), nodes, "failed import must leave the pristine target intact")
+}
+
+func TestImportMetadataRejectsOrphanedExtractionAndRollsBack(t *testing.T) {
+	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, target.Close()) })
+
+	input := strings.Join([]string{
+		`{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":1}`,
+		`{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","blob_hash":null,"size":null,"mime_type":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}`,
+		`{"type":"extracted_text","blob_hash":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","extractor":"plain","extractor_version":1,"status":"ok","error":null,"attempts":1,"text":"orphan","extracted_at":"2026-01-01T00:00:00.000000000Z"}`,
+	}, "\n") + "\n"
+	err = target.ImportMetadata(context.Background(), strings.NewReader(input))
+	require.ErrorContains(t, err, "extracted text references missing blob authority")
+	var nodes, extracted int64
+	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodes))
+	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM extracted_text`).Scan(&extracted))
+	assert.Equal(t, int64(1), nodes)
+	assert.Zero(t, extracted)
 }
 
 func TestImportMetadataRejectsDisconnectedCycle(t *testing.T) {
@@ -107,6 +127,26 @@ func TestImportMetadataRejectsDisconnectedCycle(t *testing.T) {
 	assert.Equal(t, int64(1), nodes)
 }
 
+func TestImportMetadataRejectsNodeSequenceBelowSurvivingIDs(t *testing.T) {
+	ctx := context.Background()
+	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, source.Close()) })
+	seedMetadataRoundTrip(t, source)
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(ctx, &exported))
+	badSequence := strings.Replace(exported.String(), `"node_sequence":50`, `"node_sequence":10`, 1)
+
+	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, target.Close()) })
+	err = target.ImportMetadata(ctx, strings.NewReader(badSequence))
+	require.ErrorContains(t, err, "below imported maximum")
+	var nodes int64
+	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodes))
+	assert.Equal(t, int64(1), nodes)
+}
+
 func TestImportMetadataRejectsNonPristineTarget(t *testing.T) {
 	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
 	require.NoError(t, err)
@@ -114,7 +154,7 @@ func TestImportMetadataRejectsNonPristineTarget(t *testing.T) {
 	_, err = target.Mkdir(context.Background(), target.RootID(), "existing")
 	require.NoError(t, err)
 
-	input := `{"type":"meta","format":"docbank-metadata","version":1}` + "\n"
+	input := `{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":1}` + "\n"
 	err = target.ImportMetadata(context.Background(), strings.NewReader(input))
 	require.ErrorContains(t, err, "not pristine")
 	_, err = target.NodeByPath(context.Background(), "/existing")
@@ -123,12 +163,15 @@ func TestImportMetadataRejectsNonPristineTarget(t *testing.T) {
 
 func TestImportMetadataRejectsUnknownVersionAndFields(t *testing.T) {
 	for _, input := range []string{
-		`{"type":"meta","format":"docbank-metadata","version":2}` + "\n",
-		`{"type":"meta","format":"docbank-metadata","version":1,"surprise":true}` + "\n",
-		`{"type":"meta","format":"docbank-metadata","version":1}` + "\n" +
+		`{"type":"meta","format":"docbank-metadata","version":2,"node_sequence":1}` + "\n",
+		`{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":1,"surprise":true}` + "\n",
+		`{"type":"meta","format":"docbank-metadata","version":1}` + "\n",
+		`{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":1}` + "\n" +
 			`{"type":"future_record","value":1}` + "\n",
-		`{"type":"meta","format":"docbank-metadata","version":1}` + "\n" +
+		`{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":1}` + "\n" +
 			`{"type":"blob","hash":"` + metadataHashCurrent + `","size":12}` + "\n",
+		`{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":1}` + "\n" +
+			`{"type":"blob","hash":"` + metadataHashCurrent + `","size":12,"created_at":"2026-01-01T00:00:00.000000000+00:00"}` + "\n",
 	} {
 		t.Run(input, func(t *testing.T) {
 			target, err := Open(filepath.Join(t.TempDir(), "target.db"))
@@ -174,6 +217,9 @@ func seedMetadataRoundTrip(t *testing.T, s *Store) {
 			 VALUES('metadata-pack',1,12,'2026-01-14T00:00:00.000000000Z')`,
 			`INSERT INTO blob_pack_index(blob_hash,pack_id,pack_offset,stored_len,raw_len,flags,crc32c)
 			 VALUES('` + metadataHashCurrent + `','metadata-pack',16,12,12,0,42)`,
+			`INSERT INTO nodes(id,parent_id,name,kind,created_at,modified_at)
+			 VALUES(50,1,'historical-high-water','dir','2026-01-15T00:00:00.000000000Z','2026-01-15T00:00:00.000000000Z')`,
+			`DELETE FROM nodes WHERE id=50`,
 		}
 		for _, statement := range statements {
 			if _, err := tx.ExecContext(ctx, statement); err != nil {
