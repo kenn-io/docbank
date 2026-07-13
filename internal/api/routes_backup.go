@@ -162,12 +162,17 @@ func createBackupSnapshot(
 	in backupCreateRequest,
 	progress func(backup.ProgressEvent),
 ) (BackupSnapshot, error) {
-	manifest, err := backupapp.Create(ctx, repo, version.Version, d.Store, d.Blobs,
-		backup.CreateOptions{
-			Tag: in.Tag, ZstdLevel: d.Cfg.Backup.ZstdLevel,
-			Freezer: &gateFreezer{gate: g}, ForceUnlock: in.ForceUnlock, Jobs: in.Jobs,
-			Progress: progress,
-		})
+	var manifest *backup.Manifest
+	err := g.capture(func() error {
+		var err error
+		manifest, err = backupapp.Create(ctx, repo, version.Version, d.Store, d.Blobs,
+			backup.CreateOptions{
+				Tag: in.Tag, ZstdLevel: d.Cfg.Backup.ZstdLevel,
+				Freezer: &gateFreezer{gate: g}, ForceUnlock: in.ForceUnlock, Jobs: in.Jobs,
+				Progress: progress,
+			})
+		return err
+	})
 	if err != nil {
 		return BackupSnapshot{}, fromBackupError(err)
 	}

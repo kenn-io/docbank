@@ -122,7 +122,7 @@ and maintenance are explicit exceptions:
 | `POST /ingest` | none — long-running bulk operation with per-path partial success; the destination directory may legitimately change while it runs |
 | `POST /uploads` | none — creates or idempotently resolves one file under the stable `parent_id`; name/content collision policy is transactional |
 | `POST /trash/empty`, `POST /gc`, `POST /verify` | none — vault-wide maintenance, serialized by the maintenance gate |
-| `POST /backup/snapshots`, `POST /backup/snapshots/stream` | none — the gate is held only while pinning one logical snapshot; the repository has its own exclusive lock |
+| `POST /backup/snapshots`, `POST /backup/snapshots/stream` | none — mutations pause only while pinning one logical snapshot; a preservation lease queues maintenance for the full capture, and the repository has its own exclusive lock |
 
 A stale revision gets `412 Precondition Failed`, telling the caller to
 re-read and retry. A required `If-Match` that's missing gets `428
@@ -250,11 +250,14 @@ maintenance handlers take the write side. Requests queue rather than
 fail, and maintenance routes are exempt from the per-request timeout
 since `gc`/`verify` can legitimately run long on a large vault.
 
-Backup creation uses the write side only for Kit's freeze window. Once
-Docbank's deferred read transaction is pinned, the gate is released and
-ordinary mutations continue into SQLite's WAL while verified metadata and blob
-streams are captured. The create route is timeout-exempt; cancellation still
-propagates through Kit and prevents publication of a snapshot manifest.
+Backup creation uses the mutation-exclusive side only for Kit's freeze window.
+Once Docbank's deferred read transaction is pinned, ordinary mutations continue
+into SQLite's WAL while verified metadata and blob streams are captured. The
+backup retains a separate shared preservation lease until capture ends;
+maintenance takes that lease exclusively, so GC cannot delete a loose blob or
+catalog mapping still referenced by the pinned snapshot. The create route is
+timeout-exempt; cancellation still propagates through Kit and prevents
+publication of a snapshot manifest.
 
 ## Auth
 

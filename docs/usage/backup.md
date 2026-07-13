@@ -65,13 +65,15 @@ docbank backup create [--repo DIR] [--tag LABEL] [--jobs N]
                       [--force-unlock] [--progress auto|bar|plain] [--json]
 ```
 
-Creation runs inside the one vault-owning daemon. It briefly holds the
-operation gate while opening a deferred SQLite read transaction, then releases
-the gate: normal writes resume into the WAL while JSONL and document content
-stream from the pinned point-in-time view. Every loose or packed content stream
-must reach verified EOF before its bytes are accepted into the repository. A
-failure never publishes a partial snapshot manifest; rerun the command after
-addressing the error.
+Creation runs inside the one vault-owning daemon. It briefly pauses mutations
+while opening a deferred SQLite read transaction, then normal writes resume
+into the WAL while JSONL and document content stream from the pinned
+point-in-time view. GC, trash empty, verification, and packed-storage
+maintenance queue until capture finishes so they cannot remove content the
+snapshot still requires. Every loose or packed content stream must reach
+verified EOF before its bytes are accepted into the repository. A failure never
+publishes a partial snapshot manifest; rerun the command after addressing the
+error.
 
 During an interactive run, `--progress auto` draws an in-place bar for each
 stage (freeze, metadata, attachments, and seal), including item and byte

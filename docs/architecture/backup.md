@@ -61,12 +61,14 @@ They remain restorable through the same wrapper. New captures always use JSONL;
 the legacy path is a reader compatibility boundary, not an alternative format
 for new snapshots.
 
-The daemon's create handler uses the same operation gate as mutations and
-maintenance, but it does not hold the gate throughout backup I/O. Kit calls the
-gate-backed freeze coordinator, Docbank pins the deferred JSONL transaction,
-and Kit releases the gate before streaming metadata and blobs. The repository's
-exclusive lock independently prevents concurrent writers to the same snapshot
-repository.
+The daemon's create handler uses two sides of the operation gate. Kit's freeze
+coordinator briefly takes the mutation-exclusive side while Docbank pins the
+deferred JSONL transaction, then releases it so writers can resume before
+metadata and blob streaming finishes. A separate shared preservation side is
+held for the complete capture. Maintenance takes that side exclusively, so GC,
+trash empty, verification, pack, and repack cannot remove or replace content
+authority still named by the pinned snapshot. The repository's exclusive lock
+independently prevents concurrent writers to the same snapshot repository.
 
 Kit's structured progress events remain structured across the daemon boundary.
 The streaming create endpoint emits NDJSON stage updates followed by one
