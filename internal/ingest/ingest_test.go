@@ -239,7 +239,7 @@ func TestAddTreeStaleDestinationIsNotResurrected(t *testing.T) {
 	ingestID, err := ing.Store.BeginIngest(ctx, "cli", "test")
 	require.NoError(t, err)
 	var rep Report
-	require.NoError(t, ing.addTree(ctx, &rep, ingestID, dest.ID, src))
+	require.NoError(t, ing.addTree(ctx, &rep, ingestID, dest.ID, src, src))
 	assert.NotEmpty(t, rep.Failed)
 	assert.Zero(t, rep.Added)
 
