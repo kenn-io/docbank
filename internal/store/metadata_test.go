@@ -172,6 +172,7 @@ func TestImportMetadataRejectsDisconnectedCycle(t *testing.T) {
 
 func TestImportMetadataRejectsUnsafeTrashTopology(t *testing.T) {
 	stamp := "2026-01-01T00:00:00.000000000Z"
+	otherStamp := "2026-01-02T00:00:00.000000000Z"
 	root := `{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","blob_hash":null,"size":null,"mime_type":null,"revision":1,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":null,"trash_parent":null,"trash_name":null}`
 	tests := []struct {
 		name    string
@@ -193,6 +194,29 @@ func TestImportMetadataRejectsUnsafeTrashTopology(t *testing.T) {
 				`{"type":"node","id":2,"parent_id":3,"name":"A","kind":"dir","blob_hash":null,"size":null,"mime_type":null,"revision":2,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":"` + stamp + `","trash_parent":1,"trash_name":"A"}`,
 			},
 			want: "trash root is not detached",
+		},
+		{
+			name: "trashed node without trash root",
+			records: []string{
+				`{"type":"node","id":2,"parent_id":1,"name":"orphan","kind":"dir","blob_hash":null,"size":null,"mime_type":null,"revision":2,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":"` + stamp + `","trash_parent":null,"trash_name":null}`,
+			},
+			want: "does not belong to exactly one trash root",
+		},
+		{
+			name: "trash descendant timestamp differs",
+			records: []string{
+				`{"type":"node","id":2,"parent_id":1,"name":"A","kind":"dir","blob_hash":null,"size":null,"mime_type":null,"revision":2,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":"` + stamp + `","trash_parent":1,"trash_name":"A"}`,
+				`{"type":"node","id":3,"parent_id":2,"name":"B","kind":"dir","blob_hash":null,"size":null,"mime_type":null,"revision":2,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":"` + otherStamp + `","trash_parent":null,"trash_name":null}`,
+			},
+			want: "live node or mismatched timestamp",
+		},
+		{
+			name: "live descendant beneath trash root",
+			records: []string{
+				`{"type":"node","id":2,"parent_id":1,"name":"A","kind":"dir","blob_hash":null,"size":null,"mime_type":null,"revision":2,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":"` + stamp + `","trash_parent":1,"trash_name":"A"}`,
+				`{"type":"node","id":3,"parent_id":2,"name":"B","kind":"dir","blob_hash":null,"size":null,"mime_type":null,"revision":1,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":null,"trash_parent":null,"trash_name":null}`,
+			},
+			want: "live node or mismatched timestamp",
 		},
 	}
 	for _, tt := range tests {

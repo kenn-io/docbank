@@ -738,6 +738,31 @@ func validateImportedMetadata(ctx context.Context, tx *sql.Tx) error {
 			    ON s.trash_root = root.id AND s.id = root.trash_parent
 			  WHERE root.trash_parent IS NOT NULL
 			)`},
+		{"trashed node does not belong to exactly one trash root", `
+			WITH RECURSIVE trash_subtree(trash_root, id) AS (
+			  SELECT id, id FROM nodes WHERE trash_name IS NOT NULL
+			  UNION ALL
+			  SELECT s.trash_root, n.id
+			  FROM trash_subtree s JOIN nodes n ON n.parent_id = s.id
+			)
+			SELECT EXISTS(
+			  SELECT 1 FROM nodes n
+			  LEFT JOIN trash_subtree s ON s.id = n.id
+			  WHERE n.trashed_at IS NOT NULL
+			  GROUP BY n.id
+			  HAVING COUNT(s.trash_root) != 1
+			)`},
+		{"trash subtree contains live node or mismatched timestamp", `
+			WITH RECURSIVE trash_subtree(trash_root, root_stamp, id) AS (
+			  SELECT id, trashed_at, id FROM nodes WHERE trash_name IS NOT NULL
+			  UNION ALL
+			  SELECT s.trash_root, s.root_stamp, n.id
+			  FROM trash_subtree s JOIN nodes n ON n.parent_id = s.id
+			)
+			SELECT EXISTS(
+			  SELECT 1 FROM trash_subtree s JOIN nodes n ON n.id = s.id
+			  WHERE n.trashed_at IS NULL OR n.trashed_at != s.root_stamp
+			)`},
 		{"node size differs from blob authority", `
 			SELECT EXISTS(SELECT 1 FROM nodes n JOIN blobs b ON b.hash=n.blob_hash WHERE n.size != b.size)`},
 		{"node version size differs from blob authority", `

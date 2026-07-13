@@ -254,7 +254,10 @@ saved `trash_parent` may be absent when the original directory was hard-deleted;
 `trash_name` remains authoritative and restore then falls back to the tree root.
 When a saved parent is present, import proves it is neither the trash root nor
 one of its descendants, so restore cannot create a cycle from hostile or
-corrupted coordinates.
+corrupted coordinates. Every trashed node must belong to exactly one such root,
+and every member of that subtree must be trashed under the root's exact
+operation timestamp. This mirrors restore's timestamp-scoped update and rejects
+both permanently hidden orphans and live nodes nested beneath trash.
 Explicit node IDs advance SQLite's `AUTOINCREMENT` sequence, preserving the
 invariant that a deleted historical ID is never silently reused.
 
