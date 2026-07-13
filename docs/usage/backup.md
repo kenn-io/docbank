@@ -10,10 +10,12 @@ checksummed files. A snapshot contains the deterministic JSONL description of
 the virtual tree plus every catalog-authorized document blob, whether its live
 representation is loose or packed. Unchanged metadata and content are reused
 across snapshots, so repeated captures add only new repository objects and a
-new manifest.
+new manifest. Metadata is a complete logical JSONL description per snapshot,
+not a row-level delta: an unchanged description is reused by hash, while any
+logical change stores one new compressed metadata object.
 
-The current command surface initializes repositories, creates snapshots, and
-lists them. Repository verification and user-facing restore are the next
+The current command surface initializes repositories, creates snapshots,
+lists them, and verifies repository integrity. User-facing restore is the next
 backup slice; the underlying verified restore engine is already integrated.
 
 !!! warning "Repositories are not encrypted"
@@ -33,6 +35,9 @@ docbank backup create --repo ~/Backups/docbank --tag before-reorganization
 
 # Inspect the snapshot history
 docbank backup list --repo ~/Backups/docbank
+
+# Prove the latest snapshot, including every referenced content byte
+docbank backup verify --repo ~/Backups/docbank
 ```
 
 Set a default repository to omit `--repo`:
@@ -98,6 +103,31 @@ counts, bytes newly added to the repository, and tag. `--json` returns the same
 typed snapshot summaries as `GET /api/v1/backup/snapshots`, including the
 metadata format and parent snapshot ID.
 
+## Verify repository integrity
+
+```bash
+docbank backup verify [SNAPSHOT] [--repo DIR] [--all] [--quick] [--jobs N]
+                      [--force-unlock] [--progress auto|bar|plain] [--json]
+```
+
+With no snapshot argument, verification proves the latest snapshot. Pass an
+immutable snapshot ID to prove one historical snapshot, or `--all` to prove
+every manifest. A full verification resolves repository indexes and pack
+footers, materializes the snapshot's JSONL metadata, reads and SHA-256 verifies
+every referenced content object, and checks Docbank's recorded logical totals.
+Content shared by several selected snapshots is read only once during one
+verification pass. Every finding is reported with the affected snapshot, and
+the command exits non-zero if any problems were found.
+
+`--quick` checks manifests, indexes, pack structure, metadata, and logical
+references without reading document content. Its `bytes_read` therefore still
+includes metadata bytes. It is useful after each capture,
+but it does not prove the storage medium has retained every content byte; run
+full verification regularly. `--jobs 1` avoids concurrent reads on spinning
+disks and latency-sensitive network storage. The progress and JSON contracts
+match `backup create`: progress is written to stderr, and `--json` suppresses
+progress so stdout contains one typed report.
+
 ## Repository placement
 
 Keep the repository outside `$DOCBANK_HOME`. It is independent archive state,
@@ -106,8 +136,8 @@ repository suitable for `rsync`, `rclone`, cloud-drive sync, filesystem
 snapshots, or removable media. Sync after `backup create` completes; never edit
 repository packs, indexes, manifests, locks, or configuration by hand.
 
-!!! info "Planned — verification and restore commands"
-    `docbank backup verify` and `docbank backup restore` are not exposed yet.
-    Until they land, snapshot creation and listing are usable, but the CLI does
-    not yet provide the complete recovery workflow. Manual filesystem snapshots
+!!! info "Planned — restore command"
+    `docbank backup restore` is not exposed yet. Until it lands, the built-in
+    workflow can capture and independently verify snapshots but cannot
+    materialize one through the user-facing CLI. Manual filesystem snapshots
     remain documented under [Vault Lifecycle](lifecycle.md).

@@ -25,6 +25,15 @@ type backupCreateRequest struct {
 	ForceUnlock bool   `json:"force_unlock,omitempty"`
 }
 
+type backupVerifyRequest struct {
+	Repo        string `json:"repo,omitempty"`
+	SnapshotID  string `json:"snapshot_id,omitempty"`
+	All         bool   `json:"all,omitempty"`
+	Quick       bool   `json:"quick,omitempty"`
+	Jobs        int    `json:"jobs,omitempty" minimum:"0"`
+	ForceUnlock bool   `json:"force_unlock,omitempty"`
+}
+
 func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 	type initOutput struct{ Body BackupRepository }
 	huma.Register(api, huma.Operation{
@@ -92,7 +101,7 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 			hctx.SetHeader("Cache-Control", "no-store")
 			runCtx, cancel := context.WithCancel(hctx.Context())
 			defer cancel()
-			stream := newBackupEventWriter(hctx.BodyWriter(), cancel)
+			stream := newBackupEventWriter[BackupCreateEvent](hctx.BodyWriter(), cancel)
 			snapshot, createErr := createBackupSnapshot(
 				runCtx, repo, d, g, in.Body,
 				func(event backup.ProgressEvent) {
@@ -140,6 +149,70 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 		}
 		return out, nil
 	})
+
+	type verifyOutput struct{ Body BackupVerifyReport }
+	huma.Register(api, huma.Operation{
+		OperationID: "verifyBackupRepository", Method: http.MethodPost, Path: "/api/v1/backup/verify",
+		Summary: "Verify backup repository integrity",
+	}, func(ctx context.Context, in *struct {
+		Body backupVerifyRequest
+	}) (*verifyOutput, error) {
+		repo, err := openBackupRepository(d, in.Body.Repo)
+		if err != nil {
+			return nil, err
+		}
+		report, err := verifyBackupRepository(ctx, repo, in.Body, nil)
+		if err != nil {
+			return nil, err
+		}
+		return &verifyOutput{Body: report}, nil
+	})
+
+	verifyStreamSchema := api.OpenAPI().Components.Schemas.Schema(
+		reflect.TypeFor[BackupVerifyEvent](), true, "BackupVerifyEvent")
+	huma.Register(api, huma.Operation{
+		OperationID: "streamBackupRepositoryVerification", Method: http.MethodPost,
+		Path:    "/api/v1/backup/verify/stream",
+		Summary: "Verify a backup repository and stream structured progress",
+		Description: "Returns newline-delimited JSON. Progress events precede exactly one terminal " +
+			"result or error event; an HTTP 200 only means the stream started.",
+		Responses: map[string]*huma.Response{
+			"200": {
+				Description: "Backup verification progress followed by one terminal result or error",
+				Content: map[string]*huma.MediaType{
+					"application/x-ndjson": {Schema: verifyStreamSchema},
+				},
+			},
+		},
+	}, func(_ context.Context, in *struct {
+		Body backupVerifyRequest
+	}) (*huma.StreamResponse, error) {
+		repo, err := openBackupRepository(d, in.Body.Repo)
+		if err != nil {
+			return nil, err
+		}
+		return &huma.StreamResponse{Body: func(hctx huma.Context) {
+			hctx.SetHeader("Content-Type", "application/x-ndjson")
+			hctx.SetHeader("Cache-Control", "no-store")
+			runCtx, cancel := context.WithCancel(hctx.Context())
+			defer cancel()
+			stream := newBackupEventWriter[BackupVerifyEvent](hctx.BodyWriter(), cancel)
+			report, verifyErr := verifyBackupRepository(runCtx, repo, in.Body,
+				func(event backup.ProgressEvent) {
+					stream.send(BackupVerifyEvent{
+						Type: "progress", Progress: backupProgress(event),
+					})
+				})
+			if stream.err() != nil {
+				return
+			}
+			if verifyErr != nil {
+				stream.send(BackupVerifyEvent{Type: "error", Error: backupProblem(verifyErr)})
+				return
+			}
+			stream.send(BackupVerifyEvent{Type: "result", Report: &report})
+		}}, nil
+	})
 }
 
 func openBackupRepository(d Deps, requested string) (*backup.Repo, error) {
@@ -183,6 +256,36 @@ func createBackupSnapshot(
 	return snapshot, nil
 }
 
+func verifyBackupRepository(
+	ctx context.Context,
+	repo *backup.Repo,
+	in backupVerifyRequest,
+	progress func(backup.ProgressEvent),
+) (BackupVerifyReport, error) {
+	if in.All && in.SnapshotID != "" {
+		return BackupVerifyReport{}, NewError(http.StatusUnprocessableEntity, "validation",
+			"snapshot_id and all are mutually exclusive")
+	}
+	result, err := backup.Verify(ctx, repo, backupapp.New(version.Version), backup.VerifyOptions{
+		SnapshotID: in.SnapshotID, All: in.All, Quick: in.Quick, Jobs: in.Jobs,
+		ForceUnlock: in.ForceUnlock, Progress: progress,
+	})
+	if err != nil {
+		return BackupVerifyReport{}, fromBackupError(err)
+	}
+	report := BackupVerifyReport{
+		Snapshots: result.Snapshots, BlobsChecked: result.BlobsChecked,
+		BytesRead: result.BytesRead,
+		Problems:  make([]BackupVerifyProblem, 0, len(result.Problems)),
+	}
+	for _, problem := range result.Problems {
+		report.Problems = append(report.Problems, BackupVerifyProblem{
+			SnapshotID: problem.SnapshotID, Detail: problem.Detail,
+		})
+	}
+	return report, nil
+}
+
 func backupProgress(event backup.ProgressEvent) *BackupProgress {
 	return &BackupProgress{
 		Stage: string(event.Stage), Done: event.Done, Total: event.Total,
@@ -190,7 +293,7 @@ func backupProgress(event backup.ProgressEvent) *BackupProgress {
 	}
 }
 
-type backupEventWriter struct {
+type backupEventWriter[T any] struct {
 	mu       sync.Mutex
 	encoder  *json.Encoder
 	flusher  http.Flusher
@@ -198,13 +301,13 @@ type backupEventWriter struct {
 	writeErr error
 }
 
-func newBackupEventWriter(w io.Writer, cancel context.CancelFunc) *backupEventWriter {
-	return &backupEventWriter{
+func newBackupEventWriter[T any](w io.Writer, cancel context.CancelFunc) *backupEventWriter[T] {
+	return &backupEventWriter[T]{
 		encoder: json.NewEncoder(w), flusher: responseFlusher(w), cancel: cancel,
 	}
 }
 
-func (w *backupEventWriter) send(event BackupCreateEvent) {
+func (w *backupEventWriter[T]) send(event T) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.writeErr != nil {
@@ -220,7 +323,7 @@ func (w *backupEventWriter) send(event BackupCreateEvent) {
 	}
 }
 
-func (w *backupEventWriter) err() error {
+func (w *backupEventWriter[T]) err() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.writeErr

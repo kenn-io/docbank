@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/backup"
+	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/backupapp"
@@ -23,6 +25,21 @@ func decodeBackupEvents(t *testing.T, body string) []api.BackupCreateEvent {
 	var events []api.BackupCreateEvent
 	for {
 		var event api.BackupCreateEvent
+		err := decoder.Decode(&event)
+		if err == io.EOF {
+			return events
+		}
+		require.NoError(t, err)
+		events = append(events, event)
+	}
+}
+
+func decodeBackupVerifyEvents(t *testing.T, body string) []api.BackupVerifyEvent {
+	t.Helper()
+	decoder := json.NewDecoder(strings.NewReader(body))
+	var events []api.BackupVerifyEvent
+	for {
+		var event api.BackupVerifyEvent
 		err := decoder.Decode(&event)
 		if err == io.EOF {
 			return events
@@ -118,6 +135,11 @@ func TestBackupRoutesValidateRepositoryAndReportLock(t *testing.T) {
 	require.NotNil(t, events[0].Error)
 	assert.Equal(t, "error", events[0].Type)
 	assert.Equal(t, "backup_locked", events[0].Error.Code)
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/verify", nil,
+		map[string]any{"repo": repoPath})
+	assert.Equal(t, http.StatusConflict, resp.StatusCode)
+	assert.Contains(t, body, `"code":"backup_locked"`)
 }
 
 func TestBackupCreateProgressStreamEndsWithResult(t *testing.T) {
@@ -151,4 +173,74 @@ func TestBackupCreateProgressStreamEndsWithResult(t *testing.T) {
 	require.NotNil(t, terminal.Snapshot)
 	assert.Equal(t, "streamed", terminal.Snapshot.Tag)
 	assert.Equal(t, int64(1), terminal.Snapshot.Files)
+}
+
+func TestBackupVerifySelectionAndProgressStream(t *testing.T) {
+	repoPath := filepath.Join(t.TempDir(), "repo")
+	ts, s := newTestServer(t, func(d *api.Deps) { d.Cfg.Backup.Repo = repoPath })
+	createFileWithContent(t, ts, s, "/verified.txt", "read every byte")
+
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/backup/init", nil, map[string]any{})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/snapshots", nil,
+		map[string]any{"tag": "first", "jobs": 1})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var first api.BackupSnapshot
+	require.NoError(t, json.Unmarshal([]byte(body), &first))
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/snapshots", nil,
+		map[string]any{"tag": "second", "jobs": 1})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/verify", nil,
+		map[string]any{"snapshot_id": first.ID, "jobs": 1})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var report api.BackupVerifyReport
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	assert.Equal(t, []string{first.ID}, report.Snapshots)
+	assert.Positive(t, report.BlobsChecked)
+	assert.Positive(t, report.BytesRead)
+	assert.Empty(t, report.Problems)
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/verify/stream", nil,
+		map[string]any{"all": true, "quick": true})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	assert.Contains(t, resp.Header.Get("Content-Type"), "application/x-ndjson")
+	assert.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
+	events := decodeBackupVerifyEvents(t, body)
+	require.GreaterOrEqual(t, len(events), 2)
+	terminal := events[len(events)-1]
+	assert.Equal(t, "result", terminal.Type)
+	require.NotNil(t, terminal.Report)
+	assert.Len(t, terminal.Report.Snapshots, 2)
+	assert.Positive(t, terminal.Report.BytesRead,
+		"quick verification still reads the authoritative metadata object")
+	assert.Empty(t, terminal.Report.Problems)
+	require.NotNil(t, events[len(events)-2].Progress)
+	assert.True(t, events[len(events)-2].Progress.Final)
+	assert.Equal(t, "verify", events[len(events)-2].Progress.Stage)
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/verify", nil,
+		map[string]any{"all": true, "snapshot_id": first.ID})
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+	assert.Contains(t, body, `"code":"validation"`)
+
+	repo, err := backup.Open(repoPath)
+	require.NoError(t, err)
+	manifest, err := repo.LoadManifest(first.ID)
+	require.NoError(t, err)
+	require.NotEmpty(t, manifest.NewPacks)
+	packID := manifest.NewPacks[0]
+	packPath := repo.Path("packs", packID[:2], packID+packstore.PackExt)
+	packBytes, err := os.ReadFile(packPath)
+	require.NoError(t, err)
+	packBytes[len(packBytes)/3] ^= 1
+	require.NoError(t, os.WriteFile(packPath, packBytes, 0o600))
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/verify", nil,
+		map[string]any{"snapshot_id": first.ID, "jobs": 1})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body,
+		"integrity findings belong in the complete report")
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	assert.NotEmpty(t, report.Problems)
+	assert.Equal(t, first.ID, report.Problems[0].SnapshotID)
 }

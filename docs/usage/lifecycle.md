@@ -111,11 +111,11 @@ allow replacing an unversioned development build.
 
 ## Take a coherent manual snapshot
 
-Docbank provides `backup init`, `backup create`, and `backup list` for
-incremental, verified capture into an immutable Kit repository; see
-[Backup](backup.md). Those repositories are compressed but **not encrypted**,
-and user-facing `backup verify` and `backup restore` commands have not landed
-yet.
+Docbank provides `backup init`, `backup create`, `backup list`, and `backup
+verify` for incremental capture and independent integrity proof in an
+immutable Kit repository; see [Backup](backup.md). Those repositories are
+compressed but **not encrypted**, and user-facing `backup restore` has not
+landed yet.
 
 A stopped-vault copy remains the complete manual recovery path while restore is
 planned. Stop the daemon before copying so the SQLite database and blob catalog
@@ -150,11 +150,10 @@ a running vault. To replace a damaged vault, stop the daemon, preserve the old
 directory under another name, restore the snapshot, and verify before resuming
 normal use.
 
-!!! info "Planned — backup verification and restore"
-    `docbank backup verify` and `docbank backup restore` will complete the
-    built-in recovery workflow. `backup init`, `backup create`, and `backup
-    list` already exist and produce unencrypted incremental snapshots. See
-    [Backup](backup.md).
+!!! info "Planned — backup restore"
+    `docbank backup restore` will complete the built-in recovery workflow.
+    Initialization, incremental capture, listing, and repository verification
+    already exist for unencrypted repositories. See [Backup](backup.md).
 
 ## Move a vault
 

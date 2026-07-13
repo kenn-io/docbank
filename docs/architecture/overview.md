@@ -126,7 +126,7 @@ metadata, durability rules, and physical storage primitives from
 
 !!! info "Planned — later clients and features"
     Versioned editing, tags, watched inboxes, text extraction, the TUI, and
-    built-in backup verification and restore are designed but not implemented.
-    Backup initialization, creation, and listing already use the daemon
+    built-in backup restore is designed but not implemented. Backup
+    initialization, creation, listing, and repository verification use the daemon
     boundary above. Later features must not introduce a privileged path around
     the daemon or mutable blob bytes. See the [Roadmap](../roadmap.md).

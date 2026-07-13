@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/backup"
+	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/backupapp"
@@ -350,7 +351,7 @@ func TestStorageStatusHumanAndJSON(t *testing.T) {
 	assert.Equal(t, int64(5), status.LooseBytes)
 }
 
-func TestBackupInitCreateListCLI(t *testing.T) {
+func TestBackupInitCreateListVerifyCLI(t *testing.T) {
 	home := t.TempDir()
 	repoPath := filepath.Join(t.TempDir(), "repo")
 	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(
@@ -390,11 +391,47 @@ func TestBackupInitCreateListCLI(t *testing.T) {
 	require.Len(t, listed.Items, 2)
 	assert.Equal(t, backupapp.MetadataFormat, listed.Items[0].MetadataFormat)
 
+	out, err = runCLI(t, "backup", "verify", "--all", "--jobs", "1", "--progress", "plain")
+	require.NoError(t, err)
+	assert.Contains(t, out, "verify:")
+	assert.Contains(t, out, "verified 2 snapshot(s)")
+	assert.Contains(t, out, "0 problem(s)")
+
+	out, err = runCLI(t, "backup", "verify", created.ID, "--quick", "--json")
+	require.NoError(t, err)
+	var verification api.BackupVerifyReport
+	require.NoError(t, json.Unmarshal([]byte(out), &verification),
+		"--json must contain no progress lines")
+	assert.Equal(t, []string{created.ID}, verification.Snapshots)
+	assert.Positive(t, verification.BytesRead, "quick verification still reads metadata")
+
+	_, err = runCLI(t, "backup", "verify", created.ID, "--all")
+	require.ErrorContains(t, err, "mutually exclusive")
+
 	repo, err := backup.Open(repoPath)
 	require.NoError(t, err)
 	verified, err := backup.Verify(t.Context(), repo, backupapp.New("test"), backup.VerifyOptions{})
 	require.NoError(t, err)
 	assert.Empty(t, verified.Problems)
+
+	manifests, err := repo.ListSnapshots()
+	require.NoError(t, err)
+	require.Len(t, manifests, 2)
+	manifest := manifests[0]
+	require.NotEmpty(t, manifest.NewPacks)
+	packID := manifest.NewPacks[0]
+	packPath := repo.Path("packs", packID[:2], packID+packstore.PackExt)
+	packBytes, err := os.ReadFile(packPath)
+	require.NoError(t, err)
+	packBytes[len(packBytes)/3] ^= 1
+	require.NoError(t, os.WriteFile(packPath, packBytes, 0o600))
+
+	out, err = runCLI(t, "backup", "verify", manifest.SnapshotID, "--jobs", "1", "--json")
+	require.ErrorContains(t, err, "found")
+	require.NoError(t, json.Unmarshal([]byte(out), &verification),
+		"failed JSON proof must remain one machine-readable report")
+	assert.NotEmpty(t, verification.Problems)
+	assert.Equal(t, manifest.SnapshotID, verification.Problems[0].SnapshotID)
 }
 
 func TestStoragePackBudgetAndJSON(t *testing.T) {

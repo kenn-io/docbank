@@ -272,22 +272,27 @@ docbank backup init [--repo <dir>] [--json]
 docbank backup create [--repo <dir>] [--tag <label>] [--jobs <n>]
                       [--force-unlock] [--progress auto|bar|plain] [--json]
 docbank backup list [--repo <dir>] [--json]
+docbank backup verify [snapshot] [--repo <dir>] [--all] [--quick] [--jobs <n>]
+                      [--force-unlock] [--progress auto|bar|plain] [--json]
 ```
 
 Initializes an immutable Kit repository, captures a verified JSONL-native
-snapshot through the daemon, and lists snapshot history. `--repo` overrides
+snapshot through the daemon, lists snapshot history, and independently proves
+repository integrity. `--repo` overrides
 `[backup] repo`; one of them is required. `create` briefly quiesces mutations
 only while pinning its logical view, then streams loose or packed content while
 normal daemon work resumes. `--jobs 1` serializes repository readers;
 `--force-unlock` is only for a repository lock whose owner is known to be gone.
-`create` draws per-stage progress bars on a terminal and durable progress lines
-when redirected; `--progress` can force either form. Every subcommand supports
-typed `--json` output; create suppresses progress in that mode. See
+`create` and `verify` draw per-stage progress bars on a terminal and durable
+progress lines when redirected; `--progress` can force either form. `verify`
+checks the latest snapshot by default, one named snapshot positionally, or all
+snapshots with `--all`; `--quick` skips content reads. Every subcommand supports
+typed `--json` output; long-running operations suppress progress in that mode. See
 [Backup](usage/backup.md).
 
 !!! info "Planned"
-    `docbank backup verify` and `docbank backup restore` are the next Phase 4
-    command slice and are not available yet.
+    `docbank backup restore` is the remaining Phase 4 command and is not
+    available yet.
 
 ## docbank daemon
 
