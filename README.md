@@ -44,7 +44,7 @@ maintenance.
 - Whole-vault integrity verification
 - Incremental backup repositories with create, list, verify, and confined restore
 - Daemon-first CLI, authenticated loopback HTTP API, and offline OpenAPI output
-- Release archives for Linux, macOS, and Windows on amd64 and arm64, with
+- A release pipeline for Linux, macOS, and Windows on amd64 and arm64, with
   SHA-256 checksums and checksum-enforcing installers
 - Native vault, daemon, and recovery support on Linux, macOS, and Windows
 
@@ -56,6 +56,11 @@ current boundary.
 
 Docbank supports Linux, macOS, and 64-bit Windows on amd64 and arm64. On Linux
 or macOS, install the latest release with:
+
+> **Current release:** v0.1.0 predates the complete distribution pipeline. Its
+> archives cover Linux amd64/arm64 and macOS arm64 only. Windows and macOS
+> amd64 users must build from source until the next release is published; the
+> installers fail rather than substitute an incompatible archive.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/kenn-io/docbank/main/scripts/install.sh | sh

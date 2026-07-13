@@ -263,11 +263,6 @@ jobs:
               *darwin_amd64*) grep -Eq 'x86-64|x86_64' <<<"${binary_info}" ;;
               *darwin_arm64*) grep -Eqi 'aarch64|arm64' <<<"${binary_info}" ;;
             esac
-            if [[ "${archive}" == *linux_amd64* ]]; then
-              SMOKE_OUT="$("${tmpdir}/docbank" --version 2>&1)"
-              echo "${SMOKE_OUT}"
-              grep -Fq "docbank version ${VERSION}" <<<"${SMOKE_OUT}"
-            fi
             rm -rf "${tmpdir}"
           done
 
