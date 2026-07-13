@@ -3,6 +3,7 @@
 package api_test
 
 import (
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -47,4 +48,29 @@ func TestBackupRestoreRejectsSymlinkedVaultAndRepositoryAliases(t *testing.T) {
 		map[string]any{"target": activeTarget, "overwrite": true})
 	assert.Equal(t, http.StatusConflict, resp.StatusCode, body)
 	assert.Contains(t, body, `"code":"backup_restore_target_active"`)
+}
+
+func TestBackupRestoreRejectsCaseEquivalentRepositoryAlias(t *testing.T) {
+	parent := t.TempDir()
+	repoPath := filepath.Join(parent, "CaseSensitiveRepo")
+	ts, _ := newTestServer(t, func(d *api.Deps) { d.Cfg.Backup.Repo = repoPath })
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/backup/init", nil, map[string]any{})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+
+	repoAlias := filepath.Join(parent, "casesensitiverepo")
+	repoInfo, err := os.Stat(repoPath)
+	require.NoError(t, err)
+	aliasInfo, err := os.Stat(repoAlias)
+	if errors.Is(err, os.ErrNotExist) {
+		t.Skip("filesystem is case-sensitive")
+	}
+	require.NoError(t, err)
+	if !os.SameFile(repoInfo, aliasInfo) {
+		t.Skip("case variant does not identify the repository directory")
+	}
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/restore", nil,
+		map[string]any{"target": filepath.Join(repoAlias, "nested-target"), "overwrite": true})
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	assert.Contains(t, body, `"code":"validation"`)
 }

@@ -33,7 +33,7 @@ that window, because half of it lives on the filesystem.
 The same shape recurs at startup: clearing stale `blobs/tmp/` files must
 not delete a temp file another process is actively writing.
 
-## The vault lock: one exclusive holder
+## The vault lock: one exclusive holder per vault tree
 
 `~/.docbank/vault.lock` is an advisory `flock(2)` that `docbank daemon
 run` takes exclusively (`TryLockExclusive`) at startup and releases only on
@@ -43,12 +43,18 @@ gone: with all access funneled through one process, the daemon *is* the
 serialization point, and a second daemon on the same vault is impossible
 by construction.
 
-`TryLockExclusive` is **non-blocking**: a second `docbank daemon run`
-against a vault that's already locked fails immediately with a clear "is a
-docbank daemon already running?" error rather than hanging. This matches
-the daemon's role — waiting to acquire a lock another daemon holds for
-its entire lifetime would mean waiting indefinitely for no reason, since
-that daemon isn't going to release it and retry.
+Restore uses the same lock for its separate target tree. It takes the target
+lock before writing even when the target is fresh, while the serving daemon
+continues to hold the live vault's lock. This prevents a second restore or a
+daemon pointed at the target from racing publication. Daemon startup creates
+only the root needed to place `vault.lock` before it attempts the lock; it does
+not initialize the database, blob tree, logs, or configuration first.
+
+`TryLockExclusive` is **non-blocking**: a second `docbank daemon run` or restore
+against a vault that's already locked fails immediately rather than hanging.
+This matches the daemon's role — waiting to acquire a lock another daemon holds
+for its entire lifetime would mean waiting indefinitely. Restore reports its
+conflict as `backup_restore_target_active`.
 
 Startup blob-tmp cleanup (`blob.CleanTmp`, the same stale-temp-file
 problem described above) needs no locking scheme of its own anymore: the

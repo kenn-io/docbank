@@ -29,7 +29,7 @@ The directory layout is created on first use:
 │   └── tmp/             # staging for in-flight writes
 ├── logs/                # JSON logs from background daemons
 ├── config.toml          # optional; see below
-├── vault.lock           # advisory inter-process lock, held by the daemon
+├── vault.lock           # advisory lock, held by a daemon or target restore
 ├── launch.lock          # serializes racing daemon auto-starts
 └── daemon.<pid>.json    # runtime record of a live daemon
 ```
@@ -37,8 +37,8 @@ The directory layout is created on first use:
 `docbank.db` and `blobs/` together are the archive; back up both.
 `config.toml` is configuration, not archive data — optional, but back it
 up if you've customized it (it can hold an `api_key`). `vault.lock`,
-`launch.lock`, and `daemon.<pid>.json` are daemon runtime state, safe to
-ignore in backups and safe to delete when no daemon is running
+`launch.lock`, and `daemon.<pid>.json` are coordination/runtime state, safe to
+ignore in backups and safe to delete when no daemon or restore is running
 (`docbank daemon stop` removes its own record cleanly on graceful
 shutdown). The database
 references blobs by hash, so restoring a copied `docbank.db` + `blobs/`

@@ -28,8 +28,9 @@ results).
 ## Lifecycle
 
 `docbank daemon run` runs in the foreground: it resolves `$DOCBANK_HOME`,
-loads and validates `config.toml`, takes the vault lock **exclusively**
-for its entire run, opens the store, cleans up any stale `blobs/tmp/`
+creates only that root directory, takes the vault lock **exclusively**
+for its entire run, initializes the remaining layout, loads and validates
+`config.toml`, opens the store, cleans up any stale `blobs/tmp/`
 files left by a prior crash (safe unconditionally — the exclusive lock
 proves this process is the only one that could be writing them), binds
 the API listener, and serves until it receives `SIGINT`/`SIGTERM` or a

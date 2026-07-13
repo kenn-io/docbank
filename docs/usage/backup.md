@@ -143,8 +143,15 @@ to recover a historical point. The CLI resolves `--target` from its working
 directory before sending an absolute server path to the daemon. The target
 must be separate from both the running vault and the immutable repository.
 Direct paths, parents, descendants, and symlink aliases that overlap either
-one are rejected. An existing vault target's lock is also held for the
-operation, so a vault owned by another Docbank daemon cannot be overwritten.
+one are rejected. Filesystem-identity checks also reject differently cased or
+Unicode-normalized spellings that identify the same tree on filesystems where
+those names are equivalent.
+
+Every restore takes the target's vault lock before writing, including for a
+fresh or empty target. That excludes a second restore and prevents a daemon
+from initializing the target during publication. A successful restore leaves
+the ordinary `vault.lock` as part of the usable vault; a failed restore removes
+a lock file it created itself.
 
 A new or empty target needs no destructive flag. A non-empty target is refused
 unless `--overwrite` is explicit. Overwrite is a merge: files absent from the

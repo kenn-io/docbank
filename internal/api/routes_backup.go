@@ -386,7 +386,12 @@ func prepareBackupRestore(
 		return nil, "", NewError(http.StatusUnprocessableEntity, "backup_repository",
 			fmt.Sprintf("resolving backup repository: %v", err))
 	}
-	if pathsOverlap(target, repoRoot) {
+	overlaps, overlapErr := pathsOverlap(target, repoRoot)
+	if overlapErr != nil {
+		return nil, "", NewError(http.StatusUnprocessableEntity, "validation",
+			fmt.Sprintf("checking backup repository overlap: %v", overlapErr))
+	}
+	if overlaps {
 		return nil, "", NewError(http.StatusUnprocessableEntity, "validation",
 			"backup restore target must be disjoint from the backup repository")
 	}
@@ -396,13 +401,18 @@ func prepareBackupRestore(
 			return nil, "", NewError(http.StatusInternalServerError, "backup_failed",
 				fmt.Sprintf("resolving live vault root: %v", resolveErr))
 		}
-		if pathsOverlap(target, vaultRoot) {
+		overlaps, overlapErr = pathsOverlap(target, vaultRoot)
+		if overlapErr != nil {
+			return nil, "", NewError(http.StatusInternalServerError, "backup_failed",
+				fmt.Sprintf("checking live vault overlap: %v", overlapErr))
+		}
+		if overlaps {
 			return nil, "", NewError(http.StatusUnprocessableEntity, "validation",
 				"backup restore target must be disjoint from the running vault")
 		}
 	}
 	entries, readErr := os.ReadDir(target)
-	if readErr == nil && len(entries) > 0 && !in.Overwrite {
+	if readErr == nil && restoreTargetHasPayload(entries) && !in.Overwrite {
 		return nil, "", NewError(http.StatusConflict, "backup_restore_target_not_empty",
 			"backup restore target is not empty; set overwrite to merge into it")
 	}
@@ -420,39 +430,114 @@ func restoreBackupSnapshot(
 	in backupRestoreRequest,
 	progress func(backup.ProgressEvent),
 ) (BackupRestoreReport, error) {
-	var targetLock restoreTargetLock
+	return restoreBackupSnapshotWith(ctx, repo, target, in, progress, backupapp.Restore)
+}
+
+type backupRestoreRunner func(
+	context.Context, *backup.Repo, string, backup.RestoreOptions,
+) (*backup.RestoreResult, error)
+
+func restoreBackupSnapshotWith(
+	ctx context.Context,
+	repo *backup.Repo,
+	target string,
+	in backupRestoreRequest,
+	progress func(backup.ProgressEvent),
+	run backupRestoreRunner,
+) (report BackupRestoreReport, retErr error) {
+	targetExisted := true
+	targetInfo, targetStatErr := os.Stat(target)
+	if errors.Is(targetStatErr, fs.ErrNotExist) {
+		targetExisted = false
+		if err := os.MkdirAll(target, 0o700); err != nil {
+			return report, NewError(http.StatusUnprocessableEntity, "validation",
+				fmt.Sprintf("creating backup restore target: %v", err))
+		}
+	} else if targetStatErr != nil {
+		return report, NewError(http.StatusUnprocessableEntity, "validation",
+			fmt.Sprintf("checking backup restore target: %v", targetStatErr))
+	} else if !targetInfo.IsDir() {
+		return report, NewError(http.StatusUnprocessableEntity, "validation",
+			"backup restore target must be a directory")
+	}
+
+	lockPath := filepath.Join(target, "vault.lock")
+	lockExisted := false
 	lockInfo, lockStatErr := os.Lstat(filepath.Join(target, "vault.lock"))
 	if lockStatErr == nil {
 		if !lockInfo.Mode().IsRegular() {
-			return BackupRestoreReport{}, NewError(http.StatusUnprocessableEntity,
+			return report, NewError(http.StatusUnprocessableEntity,
 				"validation", "backup restore target vault.lock must be a regular file")
 		}
-		var lockErr error
-		targetLock, lockErr = acquireRestoreTargetLock(target)
-		if lockErr != nil {
-			if errors.Is(lockErr, home.ErrVaultLocked) {
-				return BackupRestoreReport{}, NewError(http.StatusConflict,
-					"backup_restore_target_active",
-					"backup restore target is owned by a running docbank daemon")
-			}
-			return BackupRestoreReport{}, NewError(http.StatusInternalServerError,
-				"backup_failed", fmt.Sprintf("locking backup restore target: %v", lockErr))
-		}
+		lockExisted = true
 	} else if !errors.Is(lockStatErr, fs.ErrNotExist) {
-		return BackupRestoreReport{}, NewError(http.StatusUnprocessableEntity,
+		return report, NewError(http.StatusUnprocessableEntity,
 			"validation", fmt.Sprintf("checking backup restore target lock: %v", lockStatErr))
 	}
-	if targetLock != nil {
-		defer func() { _ = targetLock.Release() }()
+
+	targetLock, lockErr := acquireRestoreTargetLock(target)
+	if lockErr != nil {
+		if !targetExisted {
+			_ = os.Remove(target)
+		}
+		if errors.Is(lockErr, home.ErrVaultLocked) {
+			return report, NewError(http.StatusConflict,
+				"backup_restore_target_active",
+				"backup restore target is owned by another restore or docbank daemon")
+		}
+		return report, NewError(http.StatusInternalServerError,
+			"backup_failed", fmt.Sprintf("locking backup restore target: %v", lockErr))
 	}
-	result, err := backupapp.Restore(ctx, repo, version.Version, backup.RestoreOptions{
-		SnapshotID: in.SnapshotID, TargetDir: target, Overwrite: in.Overwrite,
+	defer func() {
+		if retErr != nil && !lockExisted {
+			// Unlink our lock while still holding its inode. Releasing first would
+			// let another process acquire it before we removed its pathname.
+			if removeErr := os.Remove(lockPath); removeErr != nil &&
+				!errors.Is(removeErr, fs.ErrNotExist) {
+				retErr = NewError(http.StatusInternalServerError, "backup_failed",
+					fmt.Sprintf("%v; removing failed restore lock: %v", retErr, removeErr))
+			}
+		}
+		_ = targetLock.Release()
+		if retErr != nil && !targetExisted {
+			_ = os.Remove(target)
+		}
+	}()
+
+	// The public overwrite decision was made before locking. Recheck while
+	// holding the target lock so a competing daemon or restore cannot race
+	// content into an empty target between validation and publication.
+	if !in.Overwrite {
+		entries, err := os.ReadDir(target)
+		if err != nil {
+			return report, NewError(http.StatusUnprocessableEntity, "validation",
+				fmt.Sprintf("reading locked backup restore target: %v", err))
+		}
+		if restoreTargetHasPayload(entries) {
+			return report, NewError(http.StatusConflict, "backup_restore_target_not_empty",
+				"backup restore target is not empty; set overwrite to merge into it")
+		}
+	}
+
+	// Kit sees Docbank's own vault.lock, so the target is no longer literally
+	// empty. Docbank has already enforced the caller's overwrite policy above.
+	result, err := run(ctx, repo, version.Version, backup.RestoreOptions{
+		SnapshotID: in.SnapshotID, TargetDir: target, Overwrite: true,
 		Jobs: in.Jobs, ForceUnlock: in.ForceUnlock, Progress: progress,
 	})
 	if err != nil {
-		return BackupRestoreReport{}, fromBackupError(err)
+		return report, fromBackupError(err)
 	}
 	return backupRestoreReport(target, result), nil
+}
+
+func restoreTargetHasPayload(entries []os.DirEntry) bool {
+	for _, entry := range entries {
+		if entry.Name() != "vault.lock" {
+			return true
+		}
+	}
+	return false
 }
 
 func backupRestoreReport(target string, result *backup.RestoreResult) BackupRestoreReport {
@@ -514,8 +599,48 @@ func canonicalServerPath(path string) (string, error) {
 	}
 }
 
-func pathsOverlap(a, b string) bool {
-	return pathContains(a, b) || pathContains(b, a)
+func pathsOverlap(a, b string) (bool, error) {
+	if pathContains(a, b) || pathContains(b, a) {
+		return true, nil
+	}
+	for _, pair := range [][2]string{{a, b}, {b, a}} {
+		overlaps, err := existingAncestorMatches(pair[0], pair[1])
+		if err != nil {
+			return false, err
+		}
+		if overlaps {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// existingAncestorMatches supplements filepath.Rel with filesystem identity.
+// This catches case- and normalization-equivalent spellings on filesystems
+// where distinct lexical paths name the same directory.
+func existingAncestorMatches(path, protected string) (bool, error) {
+	protectedInfo, err := os.Stat(protected)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("checking protected path %q: %w", protected, err)
+	}
+	current := path
+	for {
+		info, statErr := os.Stat(current)
+		if statErr == nil && os.SameFile(info, protectedInfo) {
+			return true, nil
+		}
+		if statErr != nil && !errors.Is(statErr, fs.ErrNotExist) {
+			return false, fmt.Errorf("checking path ancestor %q: %w", current, statErr)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return false, nil
+		}
+		current = parent
+	}
 }
 
 func pathContains(parent, child string) bool {
