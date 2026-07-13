@@ -13,10 +13,15 @@ import (
 func terminateProcess(pid int) error {
 	process, err := os.FindProcess(pid)
 	if err != nil {
-		return err
+		if errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
+			return nil
+		}
+		return fmt.Errorf("finding process: %w", err)
 	}
+	defer func() { _ = process.Release() }()
 	err = process.Kill()
-	if errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
+	if errors.Is(err, os.ErrProcessDone) ||
+		errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
 		return nil
 	}
 	if err != nil {
