@@ -14,8 +14,9 @@ docbank is pre-1.0; interfaces and storage migrations may still evolve.
   ingest, overlapping vault/restore exclusion, backup, restore, and self-update
   use native Windows primitives.
 - Windows CI runs the complete CLI and internal suite on amd64 and arm64.
-- Six-platform release archives and checksum-verifying installers follow in the
-  distribution release work.
+- Releases publish Linux, macOS, and Windows archives for amd64 and arm64. The
+  shell and PowerShell installers select the native archive, verify it against
+  `SHA256SUMS`, and reject missing, ambiguous, or invalid checksums.
 
 ## v0.1.0
 

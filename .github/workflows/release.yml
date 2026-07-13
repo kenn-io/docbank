@@ -12,28 +12,44 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
-    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+  build-linux:
+    name: Build linux/${{ matrix.goarch }}
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - { runner: ubuntu-latest,     goos: linux,  goarch: amd64 }
-          - { runner: ubuntu-24.04-arm,  goos: linux,  goarch: arm64 }
-          - { runner: macos-latest,      goos: darwin, goarch: arm64 }
+          - { runner: ubuntu-latest, goarch: amd64 }
+          - { runner: ubuntu-24.04-arm, goarch: arm64 }
     runs-on: ${{ matrix.runner }}
+    container:
+      image: ubuntu:22.04
+    defaults:
+      run:
+        shell: bash
     timeout-minutes: 20
     steps:
+      - name: Install build tools
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates file gcc git gzip tar
+
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-tags: true
           persist-credentials: false
+
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
           cache: false
-      - name: Build
+
+      - name: Build and package
         env:
           CGO_ENABLED: "1"
+          GOARCH: ${{ matrix.goarch }}
+          GOOS: linux
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF#refs/tags/v}"
@@ -41,30 +57,154 @@ jobs:
             echo "FATAL: release tag must use vX.Y.Z format" >&2
             exit 1
           fi
-          COMMIT="$(git rev-parse --short HEAD)"
-          LDFLAGS="-X go.kenn.io/docbank/internal/version.Version=${VERSION} \
-                   -X go.kenn.io/docbank/internal/version.Commit=${COMMIT}"
-          go build -tags fts5 -trimpath -ldflags "${LDFLAGS}" -o dist/docbank ./cmd/docbank
-          ./dist/docbank --version
-      - name: Package
+          COMMIT="$(printf '%s' "${GITHUB_SHA}" | cut -c1-8)"
+          LDFLAGS="-s -w -X go.kenn.io/docbank/internal/version.Version=${VERSION} -X go.kenn.io/docbank/internal/version.Commit=${COMMIT}"
+          go build -tags fts5 -trimpath -buildvcs=false -ldflags "${LDFLAGS}" -o dist/docbank ./cmd/docbank
+          file dist/docbank
+          SMOKE_OUT="$(dist/docbank --version 2>&1)"
+          echo "${SMOKE_OUT}"
+          grep -Fq "docbank version ${VERSION} (${COMMIT})" <<<"${SMOKE_OUT}"
+          cd dist
+          tar -czf "docbank_${VERSION}_linux_${GOARCH}.tar.gz" docbank
+          rm docbank
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: docbank-linux-${{ matrix.goarch }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  build-darwin:
+    name: Build darwin/${{ matrix.goarch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        goarch: [amd64, arm64]
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-tags: true
+          persist-credentials: false
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build and package
         env:
+          CGO_ENABLED: "1"
           GOARCH: ${{ matrix.goarch }}
-          GOOS: ${{ matrix.goos }}
+          GOOS: darwin
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF#refs/tags/v}"
-          ARCHIVE="docbank_${VERSION}_${GOOS}_${GOARCH}.tar.gz"
-          tar -C dist -czf "${ARCHIVE}" docbank
-          mkdir -p out && mv "${ARCHIVE}" out/
+          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "FATAL: release tag must use vX.Y.Z format" >&2
+            exit 1
+          fi
+          COMMIT="$(printf '%s' "${GITHUB_SHA}" | cut -c1-8)"
+          LDFLAGS="-s -w -X go.kenn.io/docbank/internal/version.Version=${VERSION} -X go.kenn.io/docbank/internal/version.Commit=${COMMIT}"
+          go build -tags fts5 -trimpath -buildvcs=false -ldflags "${LDFLAGS}" -o dist/docbank ./cmd/docbank
+          file dist/docbank
+          otool -L dist/docbank
+          if [[ "${GOARCH}" == "arm64" ]]; then
+            SMOKE_OUT="$(dist/docbank --version 2>&1)"
+            echo "${SMOKE_OUT}"
+            grep -Fq "docbank version ${VERSION} (${COMMIT})" <<<"${SMOKE_OUT}"
+          fi
+          cd dist
+          tar -czf "docbank_${VERSION}_darwin_${GOARCH}.tar.gz" docbank
+          rm docbank
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: docbank-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: out/*.tar.gz
+          name: docbank-darwin-${{ matrix.goarch }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  build-windows:
+    name: Build windows/${{ matrix.goarch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: windows-latest, goarch: amd64 }
+          - { runner: windows-11-arm, goarch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-tags: true
+          persist-credentials: false
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Set up ARM64 C compiler
+        if: matrix.goarch == 'arm64'
+        shell: pwsh
+        env:
+          LLVM_MINGW_VERSION: "20260602"
+          LLVM_MINGW_NAME: llvm-mingw-20260602-ucrt-aarch64
+          LLVM_MINGW_SHA256: cb5c20fbe1808e31ada5cbe4efd9daa2fee19c91dac6ec5ca1ac46a9c7247e37
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zip = Join-Path $env:RUNNER_TEMP 'llvm-mingw.zip'
+          $url = "https://github.com/mstorsjo/llvm-mingw/releases/download/$env:LLVM_MINGW_VERSION/$env:LLVM_MINGW_NAME.zip"
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          $actual = (Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLower()
+          if ($actual -ne $env:LLVM_MINGW_SHA256) {
+            throw "Checksum mismatch for $url`n  expected $env:LLVM_MINGW_SHA256`n  actual   $actual"
+          }
+          7z x $zip -o"$env:RUNNER_TEMP" | Out-Null
+          $cc = Join-Path $env:RUNNER_TEMP "$env:LLVM_MINGW_NAME\bin\aarch64-w64-mingw32-clang.exe"
+          if (-not (Test-Path $cc)) { throw "CC not found at $cc" }
+          Add-Content -Path $env:GITHUB_ENV -Value "CC=$cc"
+
+      - name: Build and package
+        env:
+          CGO_ENABLED: "1"
+          GOARCH: ${{ matrix.goarch }}
+          GOOS: windows
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "FATAL: release tag must use vX.Y.Z format" >&2
+            exit 1
+          fi
+          COMMIT="$(printf '%s' "${GITHUB_SHA}" | cut -c1-8)"
+          LDFLAGS="-s -w -X go.kenn.io/docbank/internal/version.Version=${VERSION} -X go.kenn.io/docbank/internal/version.Commit=${COMMIT}"
+          go build -tags fts5 -trimpath -buildvcs=false -ldflags "${LDFLAGS}" -o dist/docbank.exe ./cmd/docbank
+          SMOKE_OUT="$(dist/docbank.exe --version 2>&1)"
+          echo "${SMOKE_OUT}"
+          grep -Fq "docbank version ${VERSION} (${COMMIT})" <<<"${SMOKE_OUT}"
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF -replace '^refs/tags/v', ''
+          Compress-Archive -Path dist/docbank.exe -DestinationPath "dist/docbank_${version}_windows_${{ matrix.goarch }}.zip"
+          Remove-Item dist/docbank.exe
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: docbank-windows-${{ matrix.goarch }}
+          path: dist/*.zip
           if-no-files-found: error
 
   publish:
     name: Publish GitHub release
-    needs: build
+    needs: [build-linux, build-darwin, build-windows]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -72,17 +212,76 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          fetch-tags: true
           persist-credentials: false
+
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: assets
           merge-multiple: true
-      - name: Checksums
+
+      - name: Validate artifacts and generate checksums
         run: |
           set -euo pipefail
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          EXPECTED=(
+            "docbank_${VERSION}_linux_amd64.tar.gz"
+            "docbank_${VERSION}_linux_arm64.tar.gz"
+            "docbank_${VERSION}_darwin_amd64.tar.gz"
+            "docbank_${VERSION}_darwin_arm64.tar.gz"
+            "docbank_${VERSION}_windows_amd64.zip"
+            "docbank_${VERSION}_windows_arm64.zip"
+          )
+          mapfile -t ACTUAL < <(find assets -maxdepth 1 -type f -printf '%f\n' | sort)
+          mapfile -t WANTED < <(printf '%s\n' "${EXPECTED[@]}" | sort)
+          if [[ "$(printf '%s\n' "${ACTUAL[@]}")" != "$(printf '%s\n' "${WANTED[@]}")" ]]; then
+            echo "FATAL: release artifact set differs from the six supported targets" >&2
+            printf 'expected: %s\n' "${WANTED[*]}" >&2
+            printf 'actual:   %s\n' "${ACTUAL[*]}" >&2
+            exit 1
+          fi
+
+          for archive in assets/*.tar.gz; do
+            tmpdir="$(mktemp -d)"
+            entries="$(tar -tzf "${archive}")"
+            if [[ "${entries}" != "docbank" ]]; then
+              echo "FATAL: ${archive} must contain only docbank at its root" >&2
+              exit 1
+            fi
+            tar -xzf "${archive}" -C "${tmpdir}"
+            test -x "${tmpdir}/docbank"
+            binary_info="$(file "${tmpdir}/docbank")"
+            echo "${binary_info}"
+            case "${archive}" in
+              *linux_amd64*) grep -Eq 'x86-64|x86_64' <<<"${binary_info}" ;;
+              *linux_arm64*) grep -Eqi 'aarch64|arm64' <<<"${binary_info}" ;;
+              *darwin_amd64*) grep -Eq 'x86-64|x86_64' <<<"${binary_info}" ;;
+              *darwin_arm64*) grep -Eqi 'aarch64|arm64' <<<"${binary_info}" ;;
+            esac
+            rm -rf "${tmpdir}"
+          done
+
+          for archive in assets/*.zip; do
+            tmpdir="$(mktemp -d)"
+            mapfile -t entries < <(zipinfo -1 "${archive}")
+            if [[ "${#entries[@]}" -ne 1 || "${entries[0]}" != "docbank.exe" ]]; then
+              echo "FATAL: ${archive} must contain only docbank.exe at its root" >&2
+              exit 1
+            fi
+            unzip -q "${archive}" -d "${tmpdir}"
+            binary_info="$(file "${tmpdir}/docbank.exe")"
+            echo "${binary_info}"
+            case "${archive}" in
+              *windows_amd64*) grep -Eq 'x86-64|x86_64' <<<"${binary_info}" ;;
+              *windows_arm64*) grep -Eqi 'aarch64|arm64' <<<"${binary_info}" ;;
+            esac
+            rm -rf "${tmpdir}"
+          done
+
           cd assets
-          sha256sum -- *.tar.gz > SHA256SUMS
+          sha256sum -- "${EXPECTED[@]}" > SHA256SUMS
           cat SHA256SUMS
+
       - name: Read annotated tag message
         id: tag_message
         run: |
@@ -103,6 +302,7 @@ jobs:
           else
             echo "has_body=false" >> "${GITHUB_OUTPUT}"
           fi
+
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}

@@ -28,6 +28,9 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Check Unix installer
+        run: sh -n scripts/install.sh
+
       - name: Vet
         run: go vet -tags fts5 ./...
 
@@ -74,6 +77,13 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Check PowerShell installer
+        if: matrix.goarch == 'amd64'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          [scriptblock]::Create((Get-Content -Raw scripts/install.ps1)) | Out-Null
 
       - name: Set up ARM64 C compiler
         if: matrix.goarch == 'arm64'

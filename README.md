@@ -44,7 +44,8 @@ maintenance.
 - Whole-vault integrity verification
 - Incremental backup repositories with create, list, verify, and confined restore
 - Daemon-first CLI, authenticated loopback HTTP API, and offline OpenAPI output
-- Linux amd64/arm64 and macOS arm64 release archives with SHA-256 checksums
+- A release pipeline for Linux, macOS, and Windows on amd64 and arm64, with
+  SHA-256 checksums and checksum-enforcing installers
 - Native vault, daemon, and recovery support on Linux, macOS, and Windows
 
 Versioned content editing, tags, watched inboxes, text extraction, and the TUI
@@ -53,10 +54,28 @@ current boundary.
 
 ## Installation
 
-Docbank supports Linux, macOS, and 64-bit Windows. Download an archive and
-`SHA256SUMS` from
-[GitHub Releases](https://github.com/kenn-io/docbank/releases), verify it,
-extract `docbank`, and put the binary on your `PATH`.
+Docbank supports Linux, macOS, and 64-bit Windows on amd64 and arm64. On Linux
+or macOS, install the latest release with:
+
+> **Current release:** v0.1.0 predates the complete distribution pipeline. Its
+> archives cover Linux amd64/arm64 and macOS arm64 only. Windows and macOS
+> amd64 users must build from source until the next release is published; the
+> installers fail rather than substitute an incompatible archive.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kenn-io/docbank/main/scripts/install.sh | sh
+```
+
+On Windows, run this in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/kenn-io/docbank/main/scripts/install.ps1 | iex
+```
+
+Both installers select the native archive and refuse to install it unless its
+SHA-256 digest matches the release's `SHA256SUMS`. You can instead download and
+verify an archive manually from
+[GitHub Releases](https://github.com/kenn-io/docbank/releases).
 
 To build from source, install Go 1.26+, CGO, and a C compiler:
 
@@ -69,11 +88,7 @@ make install
 On Windows, build `docbank.exe` with
 `go build -tags fts5 -o docbank.exe ./cmd/docbank`; the
 [setup guide](docs/setup.md) covers the platform toolchain.
-
-The current release predates Windows runtime support. The next distribution
-release will add Windows amd64/arm64, macOS amd64, and checksum-verifying
-installers. The
-[setup guide](docs/setup.md) is the installation authority.
+The [setup guide](docs/setup.md) is the installation authority.
 
 ## Quick start
 
