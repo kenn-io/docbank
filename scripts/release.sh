@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Generate release notes, create an annotated version tag, and push it.
+# Usage: ./scripts/release.sh <version> [extra_instructions] [start_tag]
 
 set -euo pipefail
 
@@ -8,11 +9,13 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 VERSION="${1:-}"
 EXTRA_INSTRUCTIONS="${2:-}"
+START_TAG="${3:--}"
 
 if [[ -z "$VERSION" ]]; then
-    echo "Usage: $0 <version> [extra_instructions]"
+    echo "Usage: $0 <version> [extra_instructions] [start_tag]"
     echo "Example: $0 0.2.0"
     echo "Example: $0 0.2.0 \"Focus on editing and version history\""
+    echo "Example: $0 0.2.1 \"Include the unpublished release features\" v0.1.0"
     exit 1
 fi
 
@@ -58,7 +61,7 @@ fi
 CHANGELOG_FILE="$(mktemp)"
 trap 'rm -f "$CHANGELOG_FILE"' EXIT
 
-"$SCRIPT_DIR/changelog.sh" "$VERSION" - "$EXTRA_INSTRUCTIONS" >"$CHANGELOG_FILE"
+"$SCRIPT_DIR/changelog.sh" "$VERSION" "$START_TAG" "$EXTRA_INSTRUCTIONS" >"$CHANGELOG_FILE"
 
 if [[ ! -s "$CHANGELOG_FILE" ]]; then
     echo "Error: no release-note content was generated"
