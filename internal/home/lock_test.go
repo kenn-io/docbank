@@ -148,6 +148,36 @@ func TestTryLockLaunchUsesFilesystemIdentityForAliases(t *testing.T) {
 		"aliases of one missing vault must share the ancestor-identity launch lock")
 }
 
+func TestTryLockLaunchRemainsStableWhenVaultAppears(t *testing.T) {
+	base := t.TempDir()
+	target := filepath.Join(base, "new", "vault")
+	lock, err := (Layout{Root: target}).TryLockLaunch()
+	require.NoError(t, err)
+	defer func() { _ = lock.Release() }()
+	require.NoError(t, os.MkdirAll(target, 0o700))
+
+	_, err = (Layout{Root: target}).TryLockLaunch()
+	require.ErrorIs(t, err, ErrVaultLocked,
+		"post-creation launch keys must retain the pre-creation ancestor keys")
+}
+
+func TestTryLockLaunchKeepsDistinctCaseSensitiveSuffixes(t *testing.T) {
+	base := t.TempDir()
+	probe := filepath.Join(base, "case-probe")
+	require.NoError(t, os.WriteFile(probe, []byte("probe"), 0o600))
+	if _, err := os.Stat(filepath.Join(base, "CASE-PROBE")); err == nil {
+		t.Skip("filesystem is case-insensitive")
+	}
+
+	lower, err := (Layout{Root: filepath.Join(base, "vault")}).TryLockLaunch()
+	require.NoError(t, err)
+	defer func() { _ = lower.Release() }()
+	upper, err := (Layout{Root: filepath.Join(base, "Vault")}).TryLockLaunch()
+	require.NoError(t, err,
+		"case-sensitive sibling paths must not share a launch lock")
+	require.NoError(t, upper.Release())
+}
+
 func TestOpenLaunchOutputStaysOutsideVault(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "missing", "vault")
 	f, path, err := (Layout{Root: target}).OpenLaunchOutput()
