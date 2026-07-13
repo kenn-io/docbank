@@ -6,8 +6,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"time"
 
@@ -166,11 +168,12 @@ func start(ctx context.Context, root string, requireVersion bool) (kitdaemon.Run
 	if err != nil {
 		return kitdaemon.RuntimeRecord{}, fmt.Errorf("resolving executable for daemon spawn: %w", err)
 	}
-	logFile, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	logFile, logPath, err := (home.Layout{Root: root}).OpenLaunchOutput()
 	if err != nil {
-		return kitdaemon.RuntimeRecord{}, fmt.Errorf("opening daemon output sink: %w", err)
+		return kitdaemon.RuntimeRecord{}, err
 	}
 	defer func() { _ = logFile.Close() }()
+	defer func() { _ = os.Remove(logPath) }()
 	// DOCBANK_HOME is forced to root so a caller-supplied root (update's
 	// restart path, tests) can never spawn a daemon on a different vault
 	// than the one being discovered.
@@ -195,7 +198,8 @@ func start(ctx context.Context, root string, requireVersion bool) (kitdaemon.Run
 			return rec, nil
 		}
 		if childPID > 0 && !kitdaemon.ProcessAlive(childPID) {
-			return kitdaemon.RuntimeRecord{}, errors.New("daemon exited before becoming ready")
+			return kitdaemon.RuntimeRecord{}, daemonStartFailure(
+				logFile, "daemon exited before becoming ready")
 		}
 		select {
 		case <-ctx.Done():
@@ -203,7 +207,23 @@ func start(ctx context.Context, root string, requireVersion bool) (kitdaemon.Run
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
-	return kitdaemon.RuntimeRecord{}, fmt.Errorf("daemon did not become ready within %s", ensureTimeout)
+	return kitdaemon.RuntimeRecord{}, daemonStartFailure(
+		logFile, fmt.Sprintf("daemon did not become ready within %s", ensureTimeout))
+}
+
+func daemonStartFailure(output *os.File, summary string) error {
+	_ = output.Sync()
+	if _, err := output.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("%s (reading bootstrap output: %w)", summary, err)
+	}
+	data, err := io.ReadAll(io.LimitReader(output, 64<<10))
+	if err != nil {
+		return fmt.Errorf("%s (reading bootstrap output: %w)", summary, err)
+	}
+	if detail := strings.TrimSpace(string(data)); detail != "" {
+		return fmt.Errorf("%s: %s", summary, detail)
+	}
+	return errors.New(summary)
 }
 
 func discover(

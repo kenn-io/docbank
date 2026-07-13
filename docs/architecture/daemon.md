@@ -98,7 +98,9 @@ acquiring it instead of spawning a redundant daemon. Keeping launch
 coordination outside `$DOCBANK_HOME` is essential: discovery and launch do not
 create the target, its database, logs, or runtime records before the child
 daemon acquires the vault-tree lock. `daemon restart` reuses the same lock for
-the start half of the restart.
+the start half of the restart. Bootstrap stderr is captured in a private
+transient file beside that external lock, included in a startup failure, and
+removed when the start attempt finishes.
 
 ## Auto-start and idle shutdown
 

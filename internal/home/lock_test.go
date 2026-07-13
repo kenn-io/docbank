@@ -133,6 +133,32 @@ func TestTryLockLaunchDoesNotCreateVaultRoot(t *testing.T) {
 		"launch coordination must live outside the unowned vault tree")
 }
 
+func TestTryLockLaunchUsesFilesystemIdentityForAliases(t *testing.T) {
+	base := t.TempDir()
+	realParent := filepath.Join(base, "real")
+	alias := filepath.Join(base, "alias")
+	require.NoError(t, os.Mkdir(realParent, 0o700))
+	require.NoError(t, os.Symlink(realParent, alias))
+
+	lock, err := (Layout{Root: filepath.Join(realParent, "vault")}).TryLockLaunch()
+	require.NoError(t, err)
+	defer func() { _ = lock.Release() }()
+	_, err = (Layout{Root: filepath.Join(alias, "vault")}).TryLockLaunch()
+	require.ErrorIs(t, err, ErrVaultLocked,
+		"aliases of one missing vault must share the ancestor-identity launch lock")
+}
+
+func TestOpenLaunchOutputStaysOutsideVault(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "missing", "vault")
+	f, path, err := (Layout{Root: target}).OpenLaunchOutput()
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(path) }()
+	require.NoError(t, f.Close())
+	require.NotEqual(t, target, filepath.Dir(path))
+	_, err = os.Lstat(filepath.Dir(target))
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
 func TestTargetLockRegistryIgnoresProcessHomeEnvironment(t *testing.T) {
 	before, err := targetLockRegistryDir()
 	require.NoError(t, err)

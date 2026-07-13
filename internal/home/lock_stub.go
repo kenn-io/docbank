@@ -28,6 +28,11 @@ func (l Layout) OpenAndLockExclusive() (*os.Root, *Lock, error) {
 // TryLockLaunch fails: vault locking is Unix-only.
 func (l Layout) TryLockLaunch() (*Lock, error) { return nil, errUnsupported }
 
+// OpenLaunchOutput fails: vault locking is Unix-only.
+func (l Layout) OpenLaunchOutput() (*os.File, string, error) {
+	return nil, "", errUnsupported
+}
+
 // TryLockExclusiveRoot fails: vault locking is Unix-only.
 func (l Layout) TryLockExclusiveRoot(*os.Root) (*Lock, error) { return nil, errUnsupported }
 
