@@ -39,9 +39,10 @@ type FileError struct {
 
 // Report summarizes an ingest run.
 type Report struct {
-	Added   int
-	Skipped int
-	Failed  []FileError
+	Added    int
+	Skipped  int
+	Excluded int
+	Failed   []FileError
 }
 
 // UploadResult is the server's independently computed receipt for one remote
@@ -124,7 +125,22 @@ func (p *PreparedUpload) Commit(ctx context.Context) (UploadResult, error) {
 // AddPaths ingests files and directory trees under the virtual destPath.
 // Per-file failures are collected in the report; the run continues.
 func (ing *Ingester) AddPaths(ctx context.Context, sources []string, destPath string) (Report, error) {
+	return ing.AddPathsWithOptions(ctx, sources, destPath, Options{})
+}
+
+// AddPathsWithOptions ingests the selected parts of files and directory trees
+// under the virtual destPath. Exclusions have the same semantics as Preflight.
+func (ing *Ingester) AddPathsWithOptions(
+	ctx context.Context,
+	sources []string,
+	destPath string,
+	opts Options,
+) (Report, error) {
 	var rep Report
+	excludes, err := compileExclusions(opts.Exclude)
+	if err != nil {
+		return rep, err
+	}
 	dest, err := ing.Store.MkdirAll(ctx, destPath)
 	if err != nil {
 		return rep, fmt.Errorf("resolving destination %q: %w", destPath, err)
@@ -142,11 +158,15 @@ func (ing *Ingester) AddPaths(ctx context.Context, sources []string, destPath st
 			rep.Failed = append(rep.Failed, FileError{Path: src, Err: err})
 			continue
 		}
+		if excludes.match(src, src) {
+			rep.Excluded++
+			continue
+		}
 		switch {
 		case info.Mode().IsRegular():
 			ing.addOne(ctx, &rep, ingestID, dest.ID, src, src)
 		case info.IsDir():
-			if err := ing.addTree(ctx, &rep, ingestID, dest.ID, src, src); err != nil {
+			if err := ing.addTree(ctx, &rep, ingestID, dest.ID, src, src, excludes); err != nil {
 				return rep, err
 			}
 		case info.Mode()&fs.ModeSymlink != 0:
@@ -167,7 +187,7 @@ func (ing *Ingester) AddPaths(ctx context.Context, sources []string, destPath st
 					Err: errors.New("explicit symlink source does not resolve to a directory")})
 				continue
 			}
-			if err := ing.addTree(ctx, &rep, ingestID, dest.ID, src, walkRoot); err != nil {
+			if err := ing.addTree(ctx, &rep, ingestID, dest.ID, src, walkRoot, excludes); err != nil {
 				return rep, err
 			}
 		default:
@@ -194,6 +214,7 @@ func (ing *Ingester) addTree(
 	rep *Report,
 	ingestID, destDirID int64,
 	sourceRoot, walkRoot string,
+	excludes exclusions,
 ) error {
 	// Absolutize first. WalkDir hands back the root spelled exactly as given
 	// while children come from filepath.Join, which cleans — dirIDs keys must
@@ -223,6 +244,13 @@ func (ing *Ingester) addTree(
 		if err != nil {
 			rep.Failed = append(rep.Failed, FileError{Path: sourcePath, Err: err})
 			return nil //nolint:nilerr // intentional: record error and continue walk
+		}
+		if excludes.match(sourceRoot, sourcePath) {
+			rep.Excluded++
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
 		}
 		switch {
 		case d.IsDir():

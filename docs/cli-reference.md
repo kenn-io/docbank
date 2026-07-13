@@ -21,7 +21,8 @@ daemon status` and `docbank daemon stop` never auto-start. See
 ## docbank add
 
 ```
-docbank add <path>... [--dest <virtual-dir>]
+docbank add <path>... [--dest <virtual-dir>] [--exclude <rule>]...
+docbank add <path>... --preflight [--exclude <rule>]... [--json]
 ```
 
 Imports files or directory trees into the vault. Sources are copied,
@@ -30,6 +31,9 @@ never modified or deleted.
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--dest` | `/inbox` | Virtual destination directory; created (with parents) if missing |
+| `--exclude` | none | Prune a matching entry name anywhere, or a relative path within each source; repeatable |
+| `--preflight` | false | Inventory source metadata without opening file content or changing the vault |
+| `--json` | false | Emit the preflight report as JSON; requires `--preflight` |
 
 - A directory argument imports recursively: its basename becomes a
   directory under `--dest` and relative structure is preserved.
@@ -44,10 +48,24 @@ never modified or deleted.
   interrupted bulk import can simply be re-run. See
   [Importing Documents](usage/importing.md).
 
+Run `--preflight` before a large import. It reports regular-file and directory
+counts, logical bytes, pack-eligible files, larger loose-only files, files over
+the ingest ceiling, exclusions, skipped non-regular entries, filesystem errors,
+and the largest extension groups. The scan reads filesystem metadata only: it
+does not open cloud placeholders, create the destination, record an ingest, or
+write blobs. `--json` retains a bounded set of detailed findings and file-type
+groups for agents and scripts.
+
+Exclusion rules are deliberately simple and shared by preflight and import. A
+bare entry name such as `.git` or `node_modules` matches at any depth. A path
+containing `/`, such as `project/cache`, matches that relative path and its
+descendants within every supplied source. Rules are not shell globs and must be
+relative; absolute paths and `..` escapes are rejected.
+
 Output is a one-line summary plus one stderr line per failed file:
 
 ```
-added: 12  skipped: 3  failed: 1
+added: 12  skipped: 3  excluded: 2  failed: 1
 failed: /src/broken.pdf: opening /src/broken.pdf: permission denied
 ```
 

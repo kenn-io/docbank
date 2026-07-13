@@ -239,12 +239,94 @@ func TestAddTreeStaleDestinationIsNotResurrected(t *testing.T) {
 	ingestID, err := ing.Store.BeginIngest(ctx, "cli", "test")
 	require.NoError(t, err)
 	var rep Report
-	require.NoError(t, ing.addTree(ctx, &rep, ingestID, dest.ID, src, src))
+	require.NoError(t, ing.addTree(ctx, &rep, ingestID, dest.ID, src, src, exclusions{}))
 	assert.NotEmpty(t, rep.Failed)
 	assert.Zero(t, rep.Added)
 
 	_, err = ing.Store.NodeByPath(ctx, "/inbox")
 	assert.ErrorIs(t, err, store.ErrNotFound, "trashed destination must stay trashed")
+}
+
+func TestPreflightInventoriesWithoutMutatingVault(t *testing.T) {
+	ing := newTestIngester(t)
+	src := writeTree(t, map[string]string{
+		"keep/report.PDF":        "report",
+		"keep/readme":            "read me",
+		".git/config":            "secret-ish metadata",
+		"project/cache/data.bin": "cache",
+		"project/data.jsonl":     "{\"ok\":true}\n",
+	})
+
+	report, err := Preflight(t.Context(), []string{src}, Options{
+		Exclude: []string{".git", "project/cache"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), report.Files)
+	assert.Equal(t, int64(len("report")+len("read me")+len("{\"ok\":true}\n")), report.LogicalBytes)
+	assert.Equal(t, int64(3), report.PackEligible.Files)
+	assert.Zero(t, report.LooseOnly.Files)
+	assert.Zero(t, report.Rejected.Files)
+	assert.Equal(t, int64(2), report.Excluded)
+	assert.Zero(t, report.Errors)
+	require.Len(t, report.FileTypes, 3)
+	assert.Equal(t, ".jsonl", report.FileTypes[0].Extension)
+	assert.Empty(t, report.FileTypes[1].Extension)
+	assert.Equal(t, ".pdf", report.FileTypes[2].Extension)
+
+	_, err = ing.Store.NodeByPath(t.Context(), "/inbox")
+	require.ErrorIs(t, err, store.ErrNotFound, "preflight must not create a destination or ingest rows")
+}
+
+func TestPreflightSizePolicyBoundaries(t *testing.T) {
+	var report PreflightReport
+	types := make(map[string]FileType)
+	report.addFile("packed.bin", blob.MaxPackedBlobBytes, types)
+	report.addFile("loose.bin", blob.MaxPackedBlobBytes+1, types)
+	report.addFile("limit.bin", blob.MaxIngestBytes, types)
+	report.addFile("rejected.bin", blob.MaxIngestBytes+1, types)
+
+	assert.Equal(t, int64(1), report.PackEligible.Files)
+	assert.Equal(t, int64(2), report.LooseOnly.Files)
+	assert.Equal(t, int64(1), report.Rejected.Files)
+}
+
+func TestAddPathsHonorsPreflightExclusions(t *testing.T) {
+	ing := newTestIngester(t)
+	src := writeTree(t, map[string]string{
+		"keep.txt":               "keep",
+		".git/config":            "exclude",
+		"project/cache/data.bin": "exclude",
+		"project/session.jsonl":  "keep",
+	})
+
+	report, err := ing.AddPathsWithOptions(t.Context(), []string{src}, "/inbox", Options{
+		Exclude: []string{".git", "project/cache"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, report.Added)
+	assert.Equal(t, 2, report.Excluded)
+	assert.Empty(t, report.Failed)
+
+	top := "/inbox/" + filepath.Base(src)
+	_, err = ing.Store.NodeByPath(t.Context(), top+"/keep.txt")
+	require.NoError(t, err)
+	_, err = ing.Store.NodeByPath(t.Context(), top+"/project/session.jsonl")
+	require.NoError(t, err)
+	_, err = ing.Store.NodeByPath(t.Context(), top+"/.git")
+	require.ErrorIs(t, err, store.ErrNotFound)
+	_, err = ing.Store.NodeByPath(t.Context(), top+"/project/cache")
+	require.ErrorIs(t, err, store.ErrNotFound)
+}
+
+func TestPreflightRejectsUnsafeExclusionRules(t *testing.T) {
+	for _, rule := range []string{
+		"", ".", "..", "../outside", "inside/../other", string(filepath.Separator) + "absolute",
+	} {
+		t.Run(rule, func(t *testing.T) {
+			_, err := Preflight(t.Context(), nil, Options{Exclude: []string{rule}})
+			require.Error(t, err)
+		})
+	}
 }
 
 func TestAddMissingSourceIsReportedNotFatal(t *testing.T) {

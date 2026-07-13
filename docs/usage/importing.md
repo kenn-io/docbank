@@ -39,6 +39,36 @@ provenance using the path the user supplied. Symlinks encountered *inside* the
 tree remain skipped and reported, and an explicitly named symlink to a file is
 not imported.
 
+## Preflight a large tree
+
+Inventory a source before Docbank opens any file content or changes the vault:
+
+```bash
+docbank add ~/Dropbox --preflight \
+  --exclude .git \
+  --exclude .Trash \
+  --exclude project/cache
+```
+
+The report separates files currently eligible for packing (through 64 MiB),
+larger files that will remain authoritative loose objects, and files above the
+current format-v1 ingest ceiling. It also reports logical bytes, directory
+count, skipped non-regular entries, filesystem errors, and the largest groups
+by lowercase filename extension. Use `--json` for a structured, bounded report.
+
+Preflight is metadata-only. In particular, it does not open cloud-provider
+placeholder content merely to estimate the import. That avoids an inventory
+silently hydrating an entire cloud tree, but it also means successful preflight
+cannot promise that every file will remain readable when the later import
+opens it. Re-run preflight after changing exclusions, then pass the exact same
+`--exclude` flags to the real `docbank add` command.
+
+A bare exclusion such as `.git` prunes that entry name wherever it occurs. A
+relative path such as `project/cache` prunes that path and its descendants
+within each supplied source. Exclusions do not use glob syntax. A pruned
+directory counts as one excluded entry because Docbank deliberately does not
+walk it to count hidden descendants.
+
 ## Idempotency: safe to re-run
 
 Interrupted a 200,000-file import? Run the same command again. For each

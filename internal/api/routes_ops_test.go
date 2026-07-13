@@ -64,6 +64,43 @@ func TestIngestEndpoint(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode, body)
 }
 
+func TestIngestPreflightIsReadOnlyAndSharesExclusions(t *testing.T) {
+	ts, _ := newTestServer(t, nil)
+	src := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(src, "keep.jsonl"), []byte("{\"ok\":true}\n"), 0o600))
+	require.NoError(t, os.MkdirAll(filepath.Join(src, ".git"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(src, ".git", "config"), []byte("ignored"), 0o600))
+
+	request := map[string]any{"paths": []string{src}, "exclude": []string{".git"}}
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/ingest/preflight", nil, request)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var report api.IngestPreflightReport
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	assert.Equal(t, int64(1), report.Files)
+	assert.Equal(t, int64(1), report.Excluded)
+	assert.Equal(t, int64(len("{\"ok\":true}\n")), report.LogicalBytes)
+	assert.Equal(t, int64(1), report.PackEligible.Files)
+	assert.Zero(t, report.Errors)
+	require.Len(t, report.FileTypes, 1)
+	assert.Equal(t, ".jsonl", report.FileTypes[0].Extension)
+
+	resp, body = get(t, ts, "/api/v1/path?path=/inbox", nil)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode, body)
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/ingest", nil,
+		map[string]any{"paths": []string{src}, "dest": "/inbox", "exclude": []string{".git"}})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var ingested api.IngestReport
+	require.NoError(t, json.Unmarshal([]byte(body), &ingested))
+	assert.Equal(t, 1, ingested.Added)
+	assert.Equal(t, 1, ingested.Excluded)
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/ingest/preflight", nil,
+		map[string]any{"paths": []string{src}, "exclude": []string{"../outside"}})
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	assert.Contains(t, body, `"code":"validation"`)
+}
+
 func TestIngestRejectsNonLoopback(t *testing.T) {
 	// httptest.NewRequest-style direct handler invocation with a non-loopback
 	// RemoteAddr proves the middleware fence without real remote networking.
@@ -82,14 +119,18 @@ func TestIngestRejectsNonLoopback(t *testing.T) {
 	cfg := config.Default()
 	cfg.Server.APIKey = "test-key"
 	srv := api.NewServer(api.Deps{Store: s, Blobs: blobs, VaultRoot: dir, Cfg: cfg})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/ingest", strings.NewReader(`{"paths":["/x"],"dest":"/inbox"}`))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Api-Key", "test-key")
-	req.RemoteAddr = "192.0.2.1:4444"
-	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, req)
-	assert.Equal(t, http.StatusForbidden, rec.Code)
-	assert.Contains(t, rec.Body.String(), `"code":"loopback_only"`)
+	for _, path := range []string{"/api/v1/ingest", "/api/v1/ingest/preflight"} {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"paths":["/x"],"dest":"/inbox"}`))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Api-Key", "test-key")
+			req.RemoteAddr = "192.0.2.1:4444"
+			rec := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(rec, req)
+			assert.Equal(t, http.StatusForbidden, rec.Code)
+			assert.Contains(t, rec.Body.String(), `"code":"loopback_only"`)
+		})
+	}
 }
 
 func TestTrashListAndEmpty(t *testing.T) {

@@ -66,6 +66,23 @@ func TestAddExplicitDirectorySymlinkPreservesSourceSpelling(t *testing.T) {
 	assert.NotZero(t, nestedInfo.Mode()&os.ModeSymlink)
 }
 
+func TestPreflightExplicitDirectorySymlinkUsesAliasAndSkipsNestedLinks(t *testing.T) {
+	target := writeTree(t, map[string]string{"nested/session.jsonl": "{\"ok\":true}\n"})
+	alias := filepath.Join(t.TempDir(), "Agent Sessions")
+	require.NoError(t, os.Symlink(target, alias))
+	nestedLink := filepath.Join(target, "nested", "latest.jsonl")
+	require.NoError(t, os.Symlink(filepath.Join(target, "nested", "session.jsonl"), nestedLink))
+
+	report, err := Preflight(t.Context(), []string{alias}, Options{})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), report.Files)
+	assert.Equal(t, int64(2), report.Directories)
+	assert.Equal(t, int64(1), report.Skipped)
+	require.Len(t, report.Findings, 1)
+	assert.Equal(t, filepath.Join(alias, "nested", "latest.jsonl"), report.Findings[0].Path)
+	assert.Equal(t, "skipped", report.Findings[0].Kind)
+}
+
 func provenancePath(t *testing.T, ing *Ingester, nodeID int64) string {
 	t.Helper()
 	var metadata bytes.Buffer

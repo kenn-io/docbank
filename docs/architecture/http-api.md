@@ -37,7 +37,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `POST /nodes/{id}/verify` | re-hash one file, bound to an inspected node revision | Implemented |
 | `GET /search?q=&limit=` | bounded name search (FTS5), with explicit `truncated` status | Implemented |
 | `POST /nodes` | create a directory (`kind: "dir"`) | Implemented |
-| `POST /ingest` | import server-side paths — see [addendum](#addendum-post-ingest) | Implemented |
+| `POST /ingest` · `POST /ingest/preflight` | import or inventory server-side paths — see [addendum](#addendum-post-ingest-and-post-ingestpreflight) | Implemented |
 | `POST /uploads?parent_id=&name=` | stream one digest-checked remote file — see [addendum](#addendum-post-uploads) | Implemented |
 | `PATCH /nodes/{id}` | move and/or rename | Implemented |
 | `POST /path/move` · `POST /path/trash` | move / trash by virtual path, resolved and mutated in one store transaction | Implemented |
@@ -164,10 +164,20 @@ These are integrity receipts from the authenticated daemon, not
 non-repudiable attestations against a malicious server. Signed receipts or a
 transparency log are outside docbank's current trust model.
 
-## Addendum: `POST /ingest`
+## Addendum: `POST /ingest` and `POST /ingest/preflight`
+
+`POST /ingest/preflight` takes `{paths: [...], exclude: [...]}` and performs a
+metadata-only source inventory. It opens no regular-file content and writes no
+vault metadata or blobs. Its report includes file/directory/logical-byte totals,
+pack-eligible, loose-only, and rejected size classes, exclusion/skip/error
+counts, bounded findings, and extension summaries. The route uses the same
+absolute-path validation, explicit root-directory-symlink behavior, exclusion
+rules, loopback fence, and timeout exemption as the real ingest. Findings are
+observations rather than a snapshot lock: sources can still change before
+ingest, and metadata-only scanning cannot prove later content readability.
 
 `POST /ingest` takes **server-side local paths** — `{paths: [...],
-dest: "/inbox"}` — and returns an `IngestReport` (`added`, `skipped`,
+dest: "/inbox", exclude: [...]}` — and returns an `IngestReport` (`added`, `skipped`, `excluded`,
 per-path `failed` entries), backing `docbank add`. Paths must be
 **absolute**: the long-lived daemon's working directory is meaningless,
 so a relative path is rejected with `422`. The CLI resolves `docbank
@@ -182,6 +192,11 @@ non-loopback client gets `403` (`loopback_only`). There is no remote file-upload
 capability on this route: remote bytes use `POST /uploads`, while remote access
 to the loopback-bound daemon still terminates through the configured SSH/VPN
 tunnel.
+
+Each exclusion is either a bare entry name, matched at any depth, or a relative
+path containing `/`, matched within every supplied source. Matching a directory
+prunes its subtree. The preflight and ingest implementations share this matcher
+so reviewed selection and actual selection cannot drift.
 
 ## Addendum: `POST /uploads`
 

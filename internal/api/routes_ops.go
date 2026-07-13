@@ -91,20 +91,46 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 	})
 
 	type ingestOutput struct{ Body IngestReport }
+	type ingestPreflightOutput struct{ Body IngestPreflightReport }
+	huma.Register(api, huma.Operation{
+		OperationID: "preflightIngest", Method: http.MethodPost, Path: "/api/v1/ingest/preflight",
+		Summary: "Inventory server-side files without opening content or mutating the vault",
+	}, func(ctx context.Context, in *struct {
+		Body struct {
+			Paths   []string `json:"paths" minItems:"1"`
+			Exclude []string `json:"exclude,omitempty"`
+		}
+	}) (*ingestPreflightOutput, error) {
+		if err := validateIngestPaths(in.Body.Paths); err != nil {
+			return nil, err
+		}
+		opts := ingest.Options{Exclude: in.Body.Exclude}
+		if err := ingest.ValidateOptions(opts); err != nil {
+			return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
+		}
+		report, err := ingest.Preflight(ctx, in.Body.Paths, opts)
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
+		return &ingestPreflightOutput{Body: ingestPreflightReport(report)}, nil
+	})
+
 	huma.Register(api, huma.Operation{
 		OperationID: "ingest", Method: http.MethodPost, Path: "/api/v1/ingest",
 		Summary: "Import server-side files or directory trees (loopback callers only)",
 	}, func(ctx context.Context, in *struct {
 		Body struct {
-			Paths []string `json:"paths" minItems:"1"`
-			Dest  string   `json:"dest" default:"/inbox"`
+			Paths   []string `json:"paths" minItems:"1"`
+			Dest    string   `json:"dest" default:"/inbox"`
+			Exclude []string `json:"exclude,omitempty"`
 		}
 	}) (*ingestOutput, error) {
-		for _, p := range in.Body.Paths {
-			if !filepath.IsAbs(p) {
-				return nil, NewError(http.StatusUnprocessableEntity, "validation",
-					fmt.Sprintf("path %q must be absolute: the daemon has no meaningful working directory", p))
-			}
+		if err := validateIngestPaths(in.Body.Paths); err != nil {
+			return nil, err
+		}
+		opts := ingest.Options{Exclude: in.Body.Exclude}
+		if err := ingest.ValidateOptions(opts); err != nil {
+			return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
 		}
 		// The schema default covers an absent dest, not an explicit ""
 		// (which MkdirAll would treat as the vault root).
@@ -120,11 +146,11 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 		err := g.mutate(func() error {
 			return d.Blobs.WithMutation(ctx, func() error {
 				ing := &ingest.Ingester{Store: d.Store, Blobs: d.Blobs}
-				rep, err := ing.AddPaths(ctx, in.Body.Paths, dest)
+				rep, err := ing.AddPathsWithOptions(ctx, in.Body.Paths, dest, opts)
 				if err != nil {
 					return FromStoreError(err)
 				}
-				out.Body = IngestReport{Added: rep.Added, Skipped: rep.Skipped}
+				out.Body = IngestReport{Added: rep.Added, Skipped: rep.Skipped, Excluded: rep.Excluded}
 				for _, f := range rep.Failed {
 					out.Body.Failed = append(out.Body.Failed, IngestFailure{Path: f.Path, Error: f.Err.Error()})
 				}
@@ -234,6 +260,45 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 		})
 		return out, err
 	})
+}
+
+func validateIngestPaths(paths []string) error {
+	for _, path := range paths {
+		if !filepath.IsAbs(path) {
+			return NewError(http.StatusUnprocessableEntity, "validation",
+				fmt.Sprintf("path %q must be absolute: the daemon has no meaningful working directory", path))
+		}
+	}
+	return nil
+}
+
+func ingestPreflightReport(report ingest.PreflightReport) IngestPreflightReport {
+	out := IngestPreflightReport{
+		Files: report.Files, Directories: report.Directories, LogicalBytes: report.LogicalBytes,
+		PackEligible: ingestSizeClass(report.PackEligible),
+		LooseOnly:    ingestSizeClass(report.LooseOnly),
+		Rejected:     ingestSizeClass(report.Rejected),
+		Excluded:     report.Excluded, Skipped: report.Skipped, Errors: report.Errors,
+		OtherFileTypes:     ingestSizeClass(report.OtherFileTypes),
+		FileTypesTruncated: report.FileTypesTruncated, FindingsTruncated: report.FindingsTruncated,
+		FileTypes: make([]IngestFileType, 0, len(report.FileTypes)),
+		Findings:  make([]IngestPreflightFinding, 0, len(report.Findings)),
+	}
+	for _, fileType := range report.FileTypes {
+		out.FileTypes = append(out.FileTypes, IngestFileType{
+			Extension: fileType.Extension, Files: fileType.Files, Bytes: fileType.Bytes,
+		})
+	}
+	for _, finding := range report.Findings {
+		out.Findings = append(out.Findings, IngestPreflightFinding{
+			Path: finding.Path, Kind: finding.Kind, Detail: finding.Detail,
+		})
+	}
+	return out
+}
+
+func ingestSizeClass(class ingest.SizeClass) IngestSizeClass {
+	return IngestSizeClass{Files: class.Files, Bytes: class.Bytes}
 }
 
 func storagePackReport(stats packstore.PackStats) StoragePackReport {

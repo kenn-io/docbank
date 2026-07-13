@@ -129,6 +129,40 @@ func TestAddRerunReportsSkips(t *testing.T) {
 	assert.Contains(t, out, "skipped: 1")
 }
 
+func TestAddPreflightReportsWithoutImporting(t *testing.T) {
+	_ = setupVaultHome(t)
+	src := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(src, "session.jsonl"), []byte("{\"ok\":true}\n"), 0o600))
+	require.NoError(t, os.MkdirAll(filepath.Join(src, ".git"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(src, ".git", "config"), []byte("ignored"), 0o600))
+
+	out, err := runCLI(t, "add", src, "--preflight", "--exclude", ".git")
+	require.NoError(t, err)
+	assert.Contains(t, out, "files: 1")
+	assert.Contains(t, out, "excluded: 1")
+	assert.Contains(t, out, ".jsonl")
+
+	_, err = runCLI(t, "ls", "/inbox")
+	require.Error(t, err, "preflight must not create the destination")
+
+	out, err = runCLI(t, "add", src, "--preflight", "--exclude", ".git", "--json")
+	require.NoError(t, err)
+	var report api.IngestPreflightReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	assert.Equal(t, int64(1), report.Files)
+	assert.Equal(t, int64(1), report.Excluded)
+
+	out, err = runCLI(t, "add", src, "--exclude", ".git")
+	require.NoError(t, err)
+	assert.Contains(t, out, "added: 1")
+	assert.Contains(t, out, "excluded: 1")
+
+	out, err = runCLI(t, "tree", "/inbox")
+	require.NoError(t, err)
+	assert.Contains(t, out, "session.jsonl")
+	assert.NotContains(t, out, ".git")
+}
+
 func TestAddMissingSourceFails(t *testing.T) {
 	_ = setupVaultHome(t)
 
