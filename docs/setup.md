@@ -1,13 +1,12 @@
 ---
 title: Setup
-description: Build docbank from source and initialize the vault.
+description: Install docbank on Linux, macOS, or Windows and create the vault.
 ---
 
 # Setup
 
-docbank is pre-1.0. Linux, macOS, and 64-bit Windows are supported. The current
-tagged release provides Linux amd64/arm64 and macOS arm64 archives; the next
-distribution release adds the other supported targets and installers.
+docbank is pre-1.0. Linux, macOS, and 64-bit Windows are supported on amd64 and
+arm64.
 
 ## Requirements
 
@@ -23,6 +22,34 @@ additionally requires:
 
 ## Install a release
 
+On Linux or macOS, the installer selects the native archive and installs
+`docbank` to `~/.local/bin` by default:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kenn-io/docbank/main/scripts/install.sh | sh
+```
+
+Set `DOCBANK_INSTALL_DIR` to choose another destination. Set
+`DOCBANK_VERSION=vX.Y.Z` to install a specific release rather than the latest.
+
+On Windows, run the PowerShell installer:
+
+```powershell
+irm https://raw.githubusercontent.com/kenn-io/docbank/main/scripts/install.ps1 | iex
+```
+
+It installs to `%LOCALAPPDATA%\Programs\docbank\bin` and adds that directory
+to the user `PATH`. `DOCBANK_INSTALL_DIR` and `DOCBANK_VERSION` provide the
+same overrides as on Unix; set `DOCBANK_NO_MODIFY_PATH=1` to leave `PATH`
+unchanged.
+
+The installers fail closed: the archive is not extracted or installed unless
+`SHA256SUMS` is available, contains exactly one matching entry, and verifies.
+They also reject an archive that contains anything other than the expected
+top-level executable.
+
+### Manual installation
+
 For a published release, download the archive for your platform and
 `SHA256SUMS` from the
 [GitHub Releases](https://github.com/kenn-io/docbank/releases) page. Verify
@@ -34,10 +61,10 @@ docbank_<version>_<goos>_<goarch>.tar.gz  # Linux and macOS
 docbank_<version>_windows_<goarch>.zip    # Windows
 ```
 
-!!! info "Current release assets"
-    The first release predates the Windows port and macOS amd64 build. Until
-    the next release is published, those users must build this branch from
-    source. Never install an archive for a different OS or architecture.
+Releases produced by the current distribution workflow publish all six
+archives. Earlier tags may contain fewer targets; an installer fails instead
+of substituting another platform. Never install an archive for a different OS
+or architecture.
 
 ## Build and install from source
 
