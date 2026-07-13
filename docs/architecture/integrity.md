@@ -90,7 +90,12 @@ payoff (importing user-readable files into the user's own vault) does
 not justify platform-specific `openat`/`fstatat` machinery. The
 *accidental* case — a symlink sitting in the tree — is handled: it is
 classified, reported, and skipped, and the final open refuses to
-follow links regardless.
+follow links regardless. The one explicit exception is a source argument whose
+final component is a symlink to a directory, which is common for cloud-storage
+roots. Docbank resolves that link before walking and continues on the resolved
+path, so retargeting the user-facing link after resolution cannot redirect the
+walk. Descendant symlinks are still skipped, while virtual naming and provenance
+retain the spelling the user supplied.
 
 ### Schema compatibility after v0.1.0
 

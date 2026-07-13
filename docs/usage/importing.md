@@ -32,6 +32,13 @@ docbank add ~/old-laptop/Documents --dest /archive
 Trailing slashes and `./`-style paths are normalized; `add docs/` and
 `add ./docs` behave identically to `add docs`.
 
+An explicitly named source may be a symlink to a directory. This supports
+ordinary platform layouts such as `~/Dropbox` on macOS: docbank resolves that
+one root link, retains `Dropbox` as the virtual directory name, and records
+provenance using the path the user supplied. Symlinks encountered *inside* the
+tree remain skipped and reported, and an explicitly named symlink to a file is
+not imported.
+
 ## Idempotency: safe to re-run
 
 Interrupted a 200,000-file import? Run the same command again. For each
@@ -76,7 +83,8 @@ source arguments.
 
 ## Sources are read-only
 
-Import never deletes or modifies source files. Delete originals yourself
+Import never deletes or modifies source files, including a followed root
+directory symlink. Delete originals yourself
 once `docbank verify` and your own spot-checks satisfy you — the same
 archive-first, delete-later posture msgvault takes with mailboxes.
 

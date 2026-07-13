@@ -33,8 +33,10 @@ never modified or deleted.
 
 - A directory argument imports recursively: its basename becomes a
   directory under `--dest` and relative structure is preserved.
-- Symlinks and other non-regular files are skipped and reported as
-  failures; they do not abort the run.
+- An explicitly named symlink to a directory is followed as the import root;
+  its supplied basename and provenance spelling are retained. Symlinks inside
+  that tree, symlinks to files, and other non-regular files are skipped and
+  reported as failures; they do not abort the run.
 - Name collisions with different content auto-suffix:
   `report.pdf` → `report (2).pdf`.
 - Re-running an import converges: a file whose content already exists
