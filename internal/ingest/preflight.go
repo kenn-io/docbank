@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -89,10 +90,8 @@ func compileExclusions(values []string) (exclusions, error) {
 		if filepath.IsAbs(converted) || filepath.VolumeName(converted) != "" {
 			return exclusions{}, fmt.Errorf("exclude rule %q must be relative", raw)
 		}
-		for _, component := range strings.Split(converted, string(filepath.Separator)) {
-			if component == ".." {
-				return exclusions{}, fmt.Errorf("exclude rule %q must not contain parent traversal", raw)
-			}
+		if slices.Contains(strings.Split(converted, string(filepath.Separator)), "..") {
+			return exclusions{}, fmt.Errorf("exclude rule %q must not contain parent traversal", raw)
 		}
 		clean := filepath.Clean(converted)
 		if clean == "." {
