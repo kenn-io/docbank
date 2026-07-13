@@ -199,6 +199,7 @@ jobs:
             echo "FATAL: release tag must use vX.Y.Z format" >&2
             exit 1
           fi
+          printf 'RELEASE_VERSION=%s\n' "${VERSION}" >> "${GITHUB_ENV}"
           COMMIT="$(printf '%s' "${GITHUB_SHA}" | cut -c1-8)"
           LDFLAGS="-s -w -X go.kenn.io/docbank/internal/version.Version=${VERSION} -X go.kenn.io/docbank/internal/version.Commit=${COMMIT}"
           go build -tags fts5 -trimpath -buildvcs=false -ldflags "${LDFLAGS}" -o dist/docbank.exe ./cmd/docbank
@@ -209,8 +210,7 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          $version = $env:GITHUB_REF -replace '^refs/tags/v', ''
-          Compress-Archive -Path dist/docbank.exe -DestinationPath "dist/docbank_${version}_windows_${{ matrix.goarch }}.zip"
+          Compress-Archive -Path dist/docbank.exe -DestinationPath "dist/docbank_$($env:RELEASE_VERSION)_windows_${{ matrix.goarch }}.zip"
           Remove-Item dist/docbank.exe
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
