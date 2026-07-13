@@ -91,21 +91,21 @@ function Add-ToUserPath([string]$Directory) {
 }
 
 function Get-ExpectedChecksum([string]$Path, [string]$ArchiveName) {
-    $matches = @()
+    $checksumMatches = @()
     foreach ($line in Get-Content -LiteralPath $Path) {
         if ($line -match '^\s*$') { continue }
         $parts = $line -split '\s+', 2
         if ($parts.Count -ne 2) { continue }
         $name = $parts[1] -replace '^\*', '' -replace '^\.\\', '' -replace '^\./', ''
-        if ($name -eq $ArchiveName) { $matches += $parts[0] }
+        if ($name -eq $ArchiveName) { $checksumMatches += $parts[0] }
     }
-    if ($matches.Count -ne 1) {
+    if ($checksumMatches.Count -ne 1) {
         throw "SHA256SUMS must contain exactly one entry for $ArchiveName"
     }
-    if ($matches[0] -notmatch '^[0-9a-fA-F]{64}$') {
+    if ($checksumMatches[0] -notmatch '^[0-9a-fA-F]{64}$') {
         throw "invalid SHA-256 value for $ArchiveName"
     }
-    return $matches[0].ToLowerInvariant()
+    return $checksumMatches[0].ToLowerInvariant()
 }
 
 function Assert-ZipLayout([string]$Path) {
@@ -132,7 +132,11 @@ function Install-Docbank {
     }
     $versionNumber = $version.Substring(1)
     $archiveName = "docbank_${versionNumber}_windows_${architecture}.zip"
-    $baseUrl = "https://github.com/$repo/releases/download/$version"
+    $baseUrl = if ($env:DOCBANK_RELEASE_BASE_URL) {
+        $env:DOCBANK_RELEASE_BASE_URL.TrimEnd('/')
+    } else {
+        "https://github.com/$repo/releases/download/$version"
+    }
     $installDirectory = Get-InstallDirectory
     New-Item -ItemType Directory -Path $installDirectory -Force | Out-Null
 

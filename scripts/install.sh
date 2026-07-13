@@ -116,7 +116,8 @@ install_docbank() {
 
     version_number=${version#v}
     filename="docbank_${version_number}_${os}_${arch}.tar.gz"
-    base_url="https://github.com/${repo}/releases/download/${version}"
+    base_url=${DOCBANK_RELEASE_BASE_URL:-"https://github.com/${repo}/releases/download/${version}"}
+    base_url=${base_url%/}
     install_dir=${DOCBANK_INSTALL_DIR:-"$HOME/.local/bin"}
     mkdir -p "$install_dir"
     [ -d "$install_dir" ] || fail "install destination is not a directory: ${install_dir}"
