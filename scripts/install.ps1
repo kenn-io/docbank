@@ -108,6 +108,18 @@ function Get-ExpectedChecksum([string]$Path, [string]$ArchiveName) {
     return $checksumMatches[0].ToLowerInvariant()
 }
 
+function Get-Sha256([string]$Path) {
+    $stream = [IO.File]::OpenRead($Path)
+    $algorithm = [Security.Cryptography.SHA256]::Create()
+    try {
+        $digest = $algorithm.ComputeHash($stream)
+        return [BitConverter]::ToString($digest).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $algorithm.Dispose()
+        $stream.Dispose()
+    }
+}
+
 function Assert-ZipLayout([string]$Path) {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $zip = [System.IO.Compression.ZipFile]::OpenRead($Path)
@@ -151,7 +163,7 @@ function Install-Docbank {
         Invoke-WebRequestCompat -Uri "$baseUrl/SHA256SUMS" -OutFile $checksums | Out-Null
 
         $expected = Get-ExpectedChecksum -Path $checksums -ArchiveName $archiveName
-        $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+        $actual = Get-Sha256 -Path $archive
         if ($actual -ne $expected) {
             throw "checksum mismatch for $archiveName (expected $expected, got $actual)"
         }
