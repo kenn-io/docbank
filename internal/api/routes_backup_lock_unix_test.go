@@ -53,9 +53,12 @@ func TestBackupRestoreLockExcludesRestoreAndDaemonStart(t *testing.T) {
 	err = <-firstDone
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), forcedErr.Error())
-	_, err = os.Stat(filepath.Join(target, "vault.lock"))
-	require.ErrorIs(t, err, os.ErrNotExist,
-		"a failed restore must remove the lock file it created")
+	lockInfo, err := os.Stat(filepath.Join(target, "vault.lock"))
+	require.NoError(t, err)
+	assert.True(t, lockInfo.Mode().IsRegular())
+	retryLock, err := (home.Layout{Root: target}).TryLockExclusive()
+	require.NoError(t, err, "failure must release the retained stable lock")
+	require.NoError(t, retryLock.Release())
 }
 
 func TestBackupRestoreLeavesVaultLockAfterSuccess(t *testing.T) {

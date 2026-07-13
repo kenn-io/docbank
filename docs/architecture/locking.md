@@ -56,6 +56,12 @@ This matches the daemon's role — waiting to acquire a lock another daemon hold
 for its entire lifetime would mean waiting indefinitely. Restore reports its
 conflict as `backup_restore_target_active`.
 
+The `vault.lock` pathname is stable coordination state, not a success marker.
+It remains after both successful and failed restores. Removing a held lock file
+would allow a contender to create and lock a different inode at the same path,
+breaking mutual exclusion; restore retries therefore ignore the retained file
+when applying the empty-target rule.
+
 Startup blob-tmp cleanup (`blob.CleanTmp`, the same stale-temp-file
 problem described above) needs no locking scheme of its own anymore: the
 daemon holding the vault lock exclusively at that point in startup

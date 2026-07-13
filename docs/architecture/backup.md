@@ -94,7 +94,9 @@ repository. Filesystem identity supplements those lexical checks for case- or
 normalization-equivalent aliases. Every target's vault lock is held across the
 operation, including a fresh target, to exclude another restore or daemon
 startup; daemon startup takes that same lock before initializing vault state.
-Kit then holds an `os.Root` for target-confined writes.
+The lock file is retained after success or failure so every contender locks the
+same inode; it does not count as payload for empty-target policy. Kit then holds
+an `os.Root` for target-confined writes.
 Compatible
 packs are verified and published before one staged catalog replacement;
 incompatible selections fall back to verified loose content. The restored

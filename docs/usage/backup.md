@@ -150,8 +150,10 @@ those names are equivalent.
 Every restore takes the target's vault lock before writing, including for a
 fresh or empty target. That excludes a second restore and prevents a daemon
 from initializing the target during publication. A successful restore leaves
-the ordinary `vault.lock` as part of the usable vault; a failed restore removes
-a lock file it created itself.
+the ordinary `vault.lock` as part of the usable vault. A failed restore also
+retains that stable advisory file after releasing it: retries ignore
+`vault.lock` when deciding whether the target contains payload, and retaining
+the pathname avoids split-lock races between old and newly created lock files.
 
 A new or empty target needs no destructive flag. A non-empty target is refused
 unless `--overwrite` is explicit. Overwrite is a merge: files absent from the

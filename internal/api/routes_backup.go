@@ -461,15 +461,12 @@ func restoreBackupSnapshotWith(
 			"backup restore target must be a directory")
 	}
 
-	lockPath := filepath.Join(target, "vault.lock")
-	lockExisted := false
 	lockInfo, lockStatErr := os.Lstat(filepath.Join(target, "vault.lock"))
 	if lockStatErr == nil {
 		if !lockInfo.Mode().IsRegular() {
 			return report, NewError(http.StatusUnprocessableEntity,
 				"validation", "backup restore target vault.lock must be a regular file")
 		}
-		lockExisted = true
 	} else if !errors.Is(lockStatErr, fs.ErrNotExist) {
 		return report, NewError(http.StatusUnprocessableEntity,
 			"validation", fmt.Sprintf("checking backup restore target lock: %v", lockStatErr))
@@ -488,21 +485,10 @@ func restoreBackupSnapshotWith(
 		return report, NewError(http.StatusInternalServerError,
 			"backup_failed", fmt.Sprintf("locking backup restore target: %v", lockErr))
 	}
-	defer func() {
-		if retErr != nil && !lockExisted {
-			// Unlink our lock while still holding its inode. Releasing first would
-			// let another process acquire it before we removed its pathname.
-			if removeErr := os.Remove(lockPath); removeErr != nil &&
-				!errors.Is(removeErr, fs.ErrNotExist) {
-				retErr = NewError(http.StatusInternalServerError, "backup_failed",
-					fmt.Sprintf("%v; removing failed restore lock: %v", retErr, removeErr))
-			}
-		}
-		_ = targetLock.Release()
-		if retErr != nil && !targetExisted {
-			_ = os.Remove(target)
-		}
-	}()
+	// The lock pathname must remain stable even after failure. Unlinking it
+	// while this inode is locked would let a contender create and lock a new
+	// inode at the same path before this restore releases ownership.
+	defer func() { _ = targetLock.Release() }()
 
 	// The public overwrite decision was made before locking. Recheck while
 	// holding the target lock so a competing daemon or restore cannot race
