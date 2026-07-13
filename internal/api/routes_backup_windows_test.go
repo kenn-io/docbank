@@ -50,3 +50,22 @@ func TestBackupRestoreRejectsWindowsRepositoryReparseAlias(t *testing.T) {
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 	assert.Contains(t, body, `"code":"validation"`)
 }
+
+func TestBackupRestoreOpenRootPreventsWindowsTargetSwap(t *testing.T) {
+	base := t.TempDir()
+	target := filepath.Join(base, "target")
+	require.NoError(t, os.Mkdir(target, 0o700))
+
+	root, err := os.OpenRoot(target)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, root.Close()) })
+
+	err = os.Rename(target, filepath.Join(base, "parked"))
+	require.Error(t, err, "an open restore root must pin the target directory on Windows")
+	targetInfo, statErr := os.Stat(target)
+	require.NoError(t, statErr)
+	heldInfo, statErr := root.Stat(".")
+	require.NoError(t, statErr)
+	assert.True(t, os.SameFile(targetInfo, heldInfo),
+		"the target pathname must still identify the pinned restore root")
+}

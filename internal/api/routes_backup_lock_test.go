@@ -3,6 +3,7 @@ package api
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -42,6 +43,9 @@ func TestBackupRestoreCoordinatorExcludesRestoreAndDaemon(t *testing.T) {
 }
 
 func TestBackupRestoreCoordinatorPinsTargetAcrossPathSwap(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows prevents renaming the directory while its restore root is open")
+	}
 	base := t.TempDir()
 	target := filepath.Join(base, "target")
 	parked := filepath.Join(base, "parked")
@@ -70,6 +74,9 @@ func TestBackupRestoreCoordinatorPinsTargetAcrossPathSwap(t *testing.T) {
 }
 
 func TestBackupRestoreCoordinatorRejectsSwapBeforeAcquisition(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows prevents renaming the directory while its restore root is open")
+	}
 	base := t.TempDir()
 	target := filepath.Join(base, "target")
 	parked := filepath.Join(base, "parked")
