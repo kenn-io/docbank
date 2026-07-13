@@ -23,7 +23,7 @@ func TestLoadMissingFileReturnsDefaults(t *testing.T) {
 }
 
 func TestLoadParsesFile(t *testing.T) {
-	dir := t.TempDir()
+	dir := privateTestConfigDir(t)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(
 		"[server]\nbind_addr = \"127.0.0.1\"\napi_port = 8080\napi_key = \"k\"\n"+
 			"idle_timeout = \"0\"\n[web]\nenabled = false\n[backup]\nrepo = \"snapshots\"\nzstd_level = 9\n"), 0o600))
@@ -38,7 +38,7 @@ func TestLoadParsesFile(t *testing.T) {
 }
 
 func TestLoadExpandsBackupRepoHome(t *testing.T) {
-	dir := t.TempDir()
+	dir := privateTestConfigDir(t)
 	home, err := os.UserHomeDir()
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"),
@@ -49,7 +49,7 @@ func TestLoadExpandsBackupRepoHome(t *testing.T) {
 }
 
 func TestLoadRejectsUnknownKeys(t *testing.T) {
-	dir := t.TempDir()
+	dir := privateTestConfigDir(t)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"),
 		[]byte("[server]\nbindaddr = \"x\"\n"), 0o600))
 	_, err := Load(dir)
@@ -57,7 +57,7 @@ func TestLoadRejectsUnknownKeys(t *testing.T) {
 }
 
 func TestLoadPartialFileKeepsDefaults(t *testing.T) {
-	dir := t.TempDir()
+	dir := privateTestConfigDir(t)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"),
 		[]byte("[server]\napi_port = 8080\n"), 0o600))
 	c, err := Load(dir)

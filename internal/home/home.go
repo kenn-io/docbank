@@ -121,5 +121,8 @@ func (l Layout) Ensure() error {
 		return fmt.Errorf("creating %s: %w", l.DBPath(), err)
 	}
 	_ = db.Close()
-	return enforceMode(l.DBPath(), 0o600)
+	if err := enforceMode(l.DBPath(), 0o600); err != nil {
+		return err
+	}
+	return secureOptionalConfig(filepath.Join(l.Root, "config.toml"))
 }

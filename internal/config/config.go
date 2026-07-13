@@ -83,12 +83,20 @@ func Default() Config {
 func Load(root string) (Config, error) {
 	c := Default()
 	path := filepath.Join(root, "config.toml")
-	md, err := toml.DecodeFile(path, &c)
+	file, err := openConfig(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return c, nil
 	}
 	if err != nil {
 		return Config{}, fmt.Errorf("loading %s: %w", path, err)
+	}
+	md, decodeErr := toml.NewDecoder(file).Decode(&c)
+	closeErr := file.Close()
+	if decodeErr != nil {
+		return Config{}, fmt.Errorf("loading %s: %w", path, decodeErr)
+	}
+	if closeErr != nil {
+		return Config{}, fmt.Errorf("loading %s: %w", path, closeErr)
 	}
 	if undec := md.Undecoded(); len(undec) > 0 {
 		return Config{}, fmt.Errorf("loading %s: unknown key %q (typo?)", path, undec[0].String())

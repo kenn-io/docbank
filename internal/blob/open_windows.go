@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"go.kenn.io/docbank/internal/winsecurity"
 	"golang.org/x/sys/windows"
 )
 
@@ -14,7 +15,11 @@ import (
 // stream retains its handle while pack maintenance or cleanup retires the
 // directory entry.
 func OpenNoFollow(path string) (*os.File, error) {
-	path16, err := windows.UTF16PtrFromString(path)
+	extended, err := winsecurity.ExtendedLengthPath(path)
+	if err != nil {
+		return nil, fmt.Errorf("resolving source path: %w", err)
+	}
+	path16, err := windows.UTF16PtrFromString(extended)
 	if err != nil {
 		return nil, fmt.Errorf("encoding source path: %w", err)
 	}

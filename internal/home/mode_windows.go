@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"go.kenn.io/docbank/internal/winsecurity"
 	"go.kenn.io/kit/safefileio"
 )
 
@@ -20,12 +21,8 @@ func enforceMode(path string, _ os.FileMode) error {
 		}
 		return nil
 	}
-	file, err := safefileio.OpenCurrentUserFile(path)
-	if err != nil {
-		return fmt.Errorf("validating private file %s: %w", path, err)
-	}
-	if err := file.Close(); err != nil {
-		return fmt.Errorf("closing private file %s: %w", path, err)
+	if err := winsecurity.RestrictCurrentUserFile(path); err != nil {
+		return fmt.Errorf("securing file %s: %w", path, err)
 	}
 	return nil
 }

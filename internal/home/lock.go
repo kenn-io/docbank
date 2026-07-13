@@ -346,7 +346,7 @@ func (lk *Lock) lockIdentities(
 func enterVaultDir(parent *os.Root, component string) (*os.Root, error) {
 	info, err := parent.Lstat(component)
 	if errors.Is(err, os.ErrNotExist) {
-		if err := parent.Mkdir(component, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+		if err := mkdirVaultDir(parent, component); err != nil {
 			return nil, err
 		}
 		info, err = parent.Lstat(component)
