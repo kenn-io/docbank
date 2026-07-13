@@ -163,8 +163,9 @@ store through its normal daemon boundary.
 5. Start using the destination only after both checks succeed.
 
 The database refers to content by hash rather than absolute filesystem path,
-so no path rewriting is required. docbank itself still requires macOS or
-Linux; the Windows build contains lifecycle stubs but cannot open a vault.
+so no path rewriting is required. Linux, macOS, and Windows can open the same
+logical vault format. When moving between filesystems, copy while stopped and
+run both verification commands before treating the destination as authoritative.
 
 ## When something looks wrong
 

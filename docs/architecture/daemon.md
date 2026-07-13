@@ -21,7 +21,7 @@ commands are the design test that the agent-facing API is sufficient,
 because the CLI has no other way to reach the vault.
 
 This replaces Phase 1's model, where every command opened the store and
-coordinated through the vault flock directly ([Concurrency &
+coordinated through the vault lock directly ([Concurrency &
 Locking](locking.md) covers the daemon's single-lock-holder model that
 results).
 

@@ -29,7 +29,8 @@ Key assumptions reviewers MUST account for:
 4. AUTH MODEL: the daemon always enforces an API key. An empty
    configured `api_key` means the daemon generates an ephemeral per-run
    key at startup and publishes it through the runtime record inside
-   the 0700 $DOCBANK_HOME — readable only by the vault owner, exactly
+   the owner-private $DOCBANK_HOME (0700 on Unix, a restricted DACL on
+   Windows) — readable only by the vault owner, exactly
    like the shutdown token. Keyless config is therefore NOT
    unauthenticated. Binds are loopback-only by validation; the API is
    plain HTTP by design and remote access is documented as SSH
@@ -44,20 +45,21 @@ Key assumptions reviewers MUST account for:
    discovery for status/stop remains permissive so an incompatible daemon
    can still be found and shut down.
 
-6. CONCURRENCY MODEL: one daemon holds the vault flock exclusively for
+6. CONCURRENCY MODEL: one daemon holds the portable vault file lock exclusively for
    its lifetime; gc/verify/trash-empty serialize against mutations via
-   the in-process maintenance gate, not the flock. Id-addressed
+   the in-process maintenance gate, not the file lock. Id-addressed
    mutations require If-Match revisions; path mutations
    (POST /path/move, /path/trash) intentionally take no If-Match
    because they resolve and mutate inside one store transaction.
 
-7. PLATFORM: the vault is Unix-only by design. internal/... must
-   compile on Windows via stubs, and those stubs intentionally return
-   "requires a Unix-like OS" errors for daemon lifecycle operations.
-   Do not flag stubbed functionality as missing implementation.
+7. PLATFORM: Linux, macOS, and Windows are supported. The complete CLI,
+   daemon, vault/tree lock, backup, and restore suites run on Windows amd64
+   and arm64. Unix uses flock identities; Windows uses LockFileEx plus
+   volume/file identities and rejects final reparse points. Do not reintroduce
+   compile-only Windows lifecycle stubs.
 
-8. LOCAL FILE TRUST: files under $DOCBANK_HOME are user-owned in a
-   0700 directory. An attacker with access to them already has the
+8. LOCAL FILE TRUST: files under $DOCBANK_HOME are user-owned in an
+   owner-private directory (0700 or a restricted DACL). An attacker with access to them already has the
    user's privileges; do not flag TOCTOU or permission races on
    vault-local paths. Restore targets and their parent paths have the same
    local-user trust boundary. Restore holds descriptor-confined roots so a

@@ -7,6 +7,16 @@ description: Release history.
 
 docbank is pre-1.0; interfaces and storage migrations may still evolve.
 
+## Unreleased
+
+- Windows is a supported vault platform rather than a compile-only target:
+  daemon discovery and detached startup, owner-private vaults, no-follow
+  ingest, overlapping vault/restore exclusion, backup, restore, and self-update
+  use native Windows primitives.
+- Windows CI runs the complete CLI and internal suite on amd64 and arm64.
+- Six-platform release archives and checksum-verifying installers follow in the
+  distribution release work.
+
 ## v0.1.0
 
 Release hardening:

@@ -1,5 +1,3 @@
-//go:build unix
-
 package main
 
 import (
@@ -8,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"testing"
 	"time"
@@ -31,7 +30,11 @@ func buildDocbankVersion(t *testing.T, v string) string {
 	if testing.Short() {
 		t.Skip("integration test: builds the binary")
 	}
-	bin := filepath.Join(t.TempDir(), "docbank")
+	name := "docbank"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	bin := filepath.Join(t.TempDir(), name)
 	args := []string{"build", "-tags", "fts5"}
 	if v != "" {
 		args = append(args, "-ldflags", "-X go.kenn.io/docbank/internal/version.Version="+v)

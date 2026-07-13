@@ -242,7 +242,7 @@ is governed by client cancellation rather than a one-minute deadline.
 `gc --run`, `trash empty`, and `verify` need the vault quiescent while
 they run — the same reachability-then-delete race described in
 [Concurrency & Locking](locking.md). Rather than the daemon's exclusive
-vault flock (held for the daemon's whole lifetime, not per-request), an
+vault lock (held for the daemon's whole lifetime, not per-request), an
 in-process `sync.RWMutex`-shaped gate serializes them against regular
 mutations: ordinary mutating handlers (`PATCH`, trash, restore, create,
 ingest) take the read side and may run concurrently with each other;
@@ -264,7 +264,7 @@ publication of a snapshot manifest.
 `X-Api-Key` or `Authorization: Bearer <key>`, constant-time compared
 against the daemon's effective key. The daemon always has one: with
 `[server] api_key` unset it generates a fresh key at startup and
-publishes it, inside the 0700 `$DOCBANK_HOME`, through the same runtime
+publishes it, inside the owner-private `$DOCBANK_HOME`, through the same runtime
 record the CLI already uses for discovery — readable only by the
 vault's owner, never sent over the network unencrypted, never logged.
 Binds are loopback-only: the API is plain HTTP, so a non-loopback bind

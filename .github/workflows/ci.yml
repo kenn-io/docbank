@@ -55,8 +55,14 @@ jobs:
           version: v2.12.2
 
   windows:
-    name: Windows
-    runs-on: windows-latest
+    name: Windows ${{ matrix.goarch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: windows-latest, goarch: amd64 }
+          - { runner: windows-11-arm, goarch: arm64 }
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -69,21 +75,41 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Set up ARM64 C compiler
+        if: matrix.goarch == 'arm64'
+        shell: pwsh
+        env:
+          LLVM_MINGW_VERSION: "20260602"
+          LLVM_MINGW_NAME: llvm-mingw-20260602-ucrt-aarch64
+          LLVM_MINGW_SHA256: cb5c20fbe1808e31ada5cbe4efd9daa2fee19c91dac6ec5ca1ac46a9c7247e37
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zip = Join-Path $env:RUNNER_TEMP 'llvm-mingw.zip'
+          $url = "https://github.com/mstorsjo/llvm-mingw/releases/download/$env:LLVM_MINGW_VERSION/$env:LLVM_MINGW_NAME.zip"
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          $actual = (Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLower()
+          if ($actual -ne $env:LLVM_MINGW_SHA256) {
+            throw "Checksum mismatch for $url`n  expected $env:LLVM_MINGW_SHA256`n  actual   $actual"
+          }
+          7z x $zip -o"$env:RUNNER_TEMP" | Out-Null
+          $cc = Join-Path $env:RUNNER_TEMP "$env:LLVM_MINGW_NAME\bin\aarch64-w64-mingw32-clang.exe"
+          if (-not (Test-Path $cc)) { throw "CC not found at $cc" }
+          Add-Content -Path $env:GITHUB_ENV -Value "CC=$cc"
+
       - name: Build
         env:
           CGO_ENABLED: "1"
+          GOARCH: ${{ matrix.goarch }}
         run: go build -tags fts5 ./...
 
       - name: Vet
         env:
           CGO_ENABLED: "1"
+          GOARCH: ${{ matrix.goarch }}
         run: go vet -tags fts5 ./...
 
-      # cmd is excluded: its CLI tests open a vault, and vault locking is
-      # Unix-only (internal/home lock stub errors on other platforms). The
-      # store, blob, ingest, and home packages are platform-independent and
-      # keep the non-Unix stubs honest.
       - name: Test
         env:
           CGO_ENABLED: "1"
-        run: go test -tags fts5 ./internal/...
+          GOARCH: ${{ matrix.goarch }}
+        run: go test -timeout 20m -tags fts5 ./...

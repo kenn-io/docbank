@@ -7,7 +7,7 @@ contract for the CLI and agents.
 ## Sole vault ownership
 
 `docbank daemon run` resolves the home, validates configuration, takes the
-vault flock exclusively and non-blocking, opens SQLite and the Kit blob store,
+portable vault lock exclusively and non-blocking, opens SQLite and the Kit blob store,
 cleans staging files, publishes a runtime record, and serves requests until
 graceful shutdown.
 
@@ -29,8 +29,9 @@ report the same version string.
 
 ## Runtime record and trust boundary
 
-Docbank is a single-user local service. `$DOCBANK_HOME` is tightened to 0700,
-and every process runs with that user's privileges. The real integrity threats
+Docbank is a single-user local service. `$DOCBANK_HOME` is private to the
+current user (0700 on Unix, a restricted DACL on Windows), and every process
+runs with that user's privileges. The real integrity threats
 are crashes, stale process state, PID reuse, accidental damage, and serving an
 object whose identity is false—not an adversary already able to rewrite the
 user's vault.
@@ -108,7 +109,7 @@ maintenance sides:
 
 Requests queue rather than returning “busy.” Maintenance is exempt from the
 ordinary request timeout because a personal archive scan may legitimately be
-long. The gate is not the vault flock; the daemon already owns that flock for
+long. The gate is not the vault lock; the daemon already owns that lock for
 its lifetime.
 
 Any new endpoint that changes reachability or physical content must be placed

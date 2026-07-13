@@ -1,6 +1,6 @@
 ---
 title: Concurrency & Locking
-description: How the daemon coordinates concurrent access — SQLite for data, a single exclusive flock for the vault, an in-daemon gate for maintenance.
+description: How the daemon coordinates concurrent access — SQLite for data, a portable exclusive vault lock, and an in-daemon gate for maintenance.
 ---
 
 # Concurrency & Locking
@@ -35,9 +35,10 @@ not delete a temp file another process is actively writing.
 
 ## The vault lock: one exclusive holder per vault tree
 
-`~/.docbank/vault.lock` is an advisory `flock(2)` that `docbank daemon
-run` takes exclusively (`TryLockExclusive`) at startup and releases only on
-shutdown. Because it's a single long-lived process rather than one lock
+`~/.docbank/vault.lock` is an advisory byte-range file lock that `docbank
+daemon run` takes exclusively (`TryLockExclusive`) at startup and releases
+only on shutdown. Unix uses `flock(2)` and Windows uses `LockFileEx`. Because
+it's a single long-lived process rather than one lock
 acquisition per command, the shared/exclusive split from Phase 1 is
 gone: with all access funneled through one process, the daemon *is* the
 serialization point, and a second daemon on the same vault is impossible
@@ -56,12 +57,14 @@ canonical per-user target-lock registry at
 `~/.local/state/docbank/target-locks`, resolved from the operating-system user
 record rather than `HOME` or XDG environment variables. Each daemon or restore
 takes shared locks for the filesystem identities of all ancestors and an
-exclusive lock for its root identity. Parent and descendant trees consequently
-conflict in either acquisition order, while disjoint sibling vault daemons
-remain independent.
+exclusive lock for its root identity. Unix keys these identities by device and
+inode; Windows uses volume serial and file ID. Parent and descendant trees
+consequently conflict in either acquisition order, while disjoint sibling vault
+daemons remain independent.
 
 The persistent registry files contain no vault data and must not be removed;
-their stable names are coordination state keyed by device and inode. These
+their stable names are coordination state keyed by the platform filesystem
+identity above. These
 locks coordinate Docbank daemons and restores that retain the paths they were
 given. They do not attempt to make arbitrary same-user filesystem reparenting a
 safe operation: a process able to move a restore root into another live vault
@@ -95,11 +98,13 @@ daemon holding the vault lock exclusively at that point in startup
 mid-write, so cleanup is unconditional rather than a best-effort
 non-blocking attempt.
 
-**Unix only, explicitly.** The lock is the one platform-specific piece
-of docbank. It's compiled under a `unix` build tag with a stub elsewhere
-that fails at vault open with a clear unsupported-platform error, rather
-than an undefined-symbol build break. This is unchanged from Phase 1;
-the vault remains Unix-only.
+The lock implementation is platform-specific without changing the contract.
+Unix retries interrupted `flock` calls; Windows uses non-blocking shared or
+exclusive `LockFileEx` ranges. Windows directory identities come from opened
+handles, and final reparse points are rejected in the same places Unix rejects
+symlinks. The target-lock registry and vault root are private to the current
+user: POSIX modes enforce this on Unix and restricted DACLs enforce it on
+Windows.
 
 ## The maintenance gate: serializing inside the daemon
 
@@ -110,7 +115,7 @@ Instead, an in-process `sync.RWMutex`-shaped gate serializes maintenance
 against regular mutations: ordinary mutating API handlers take the read
 side (concurrent with each other), and `gc --run`/`trash empty`/`verify`
 take the write side, giving them the same "observe a quiescent vault"
-guarantee the exclusive flock gave Phase 1's `gc`. Requests queue rather
+guarantee the exclusive vault lock gave Phase 1's `gc`. Requests queue rather
 than fail. See [HTTP API: maintenance gate](http-api.md#maintenance-gate)
 for the request-handling detail.
 
@@ -126,7 +131,7 @@ converge on the same initialized vault.
 
 `docbank daemon run` takes the vault lock before opening the store, so two
 daemons racing to bootstrap the same fresh vault can no longer both
-reach `store.Open` at once — the loser fails at the flock instead. The
+reach `store.Open` at once — the loser fails at the vault lock instead. The
 retry logic stays in `internal/store` regardless: it's exercised
 directly by the store package's own tests, and it's the correct
 behavior for any caller that opens the store without first taking the

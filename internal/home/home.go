@@ -103,12 +103,10 @@ func (l Layout) BlobTmpDir() string { return filepath.Join(l.Root, "blobs", "tmp
 func (l Layout) LogsDir() string    { return filepath.Join(l.Root, "logs") }
 
 // Ensure creates the directory layout if missing and enforces the privacy
-// the design documents rather than assuming it: every layout directory is
-// 0700 and the database file 0600, tightening pre-existing lax modes.
-// MkdirAll alone would trust an existing world-readable root, and SQLite
-// creates a missing database with umask-derived permissions — pre-creating
-// it at 0600 also covers the WAL and SHM siblings, which SQLite gives the
-// database file's mode.
+// the design documents rather than assuming it: Unix uses 0700 directories
+// and a 0600 database; Windows applies an owner-restricted DACL. MkdirAll alone
+// would trust a pre-existing public root. Pre-creating the private database
+// also makes SQLite's WAL and SHM siblings inherit the vault's protection.
 func (l Layout) Ensure() error {
 	for _, dir := range []string{l.Root, l.BlobsDir(), l.BlobTmpDir(), l.LogsDir()} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -123,22 +121,8 @@ func (l Layout) Ensure() error {
 		return fmt.Errorf("creating %s: %w", l.DBPath(), err)
 	}
 	_ = db.Close()
-	return enforceMode(l.DBPath(), 0o600)
-}
-
-// enforceMode chmods path to mode unless it already matches. On platforms
-// without POSIX permissions (Windows) Chmod is a near no-op and the vault
-// is unsupported anyway (see lock_stub.go).
-func enforceMode(path string, mode os.FileMode) error {
-	fi, err := os.Stat(path)
-	if err != nil {
-		return fmt.Errorf("checking permissions of %s: %w", path, err)
+	if err := enforceMode(l.DBPath(), 0o600); err != nil {
+		return err
 	}
-	if fi.Mode().Perm() == mode {
-		return nil
-	}
-	if err := os.Chmod(path, mode); err != nil {
-		return fmt.Errorf("tightening permissions of %s: %w", path, err)
-	}
-	return nil
+	return secureOptionalConfig(filepath.Join(l.Root, "config.toml"))
 }

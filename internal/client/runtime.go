@@ -45,7 +45,7 @@ func RuntimeStore(root string) kitdaemon.RuntimeStore {
 // recorded PID against reuse: kit's record has no such field, so docbank
 // carries it in Metadata (msgvault's pattern) and checks it before trusting
 // or signaling a PID. apiKey is the daemon's effective API key (configured
-// or freshly generated); publishing it here, inside the 0700 DOCBANK_HOME,
+// or freshly generated); publishing it here, inside owner-private DOCBANK_HOME,
 // is how same-user CLI invocations authenticate without a separate secret
 // channel — the same pattern the shutdown token already uses. The protocol
 // revision prevents a same-version client from trusting an incompatible

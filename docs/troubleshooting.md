@@ -31,8 +31,6 @@ Common causes:
   bind address. The daemon rejects these rather than guessing.
 - Another process owns the same vault. Check `docbank daemon status`; do not
   remove `vault.lock` while a daemon may still be alive.
-- The vault is on Windows. Storage and daemon lifecycle require a Unix-like
-  operating system.
 - The configured port is already in use. Set `api_port = 0` to let the OS
   choose one, or choose another fixed port.
 
