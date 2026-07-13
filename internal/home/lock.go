@@ -6,7 +6,6 @@
 package home
 
 import (
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -70,34 +69,28 @@ func (l Layout) OpenAndLockExclusive() (*os.Root, *Lock, error) {
 	return l.createAndLockExclusive()
 }
 
-// TryLockLaunch serializes daemon starters without creating or modifying the
-// vault root. The lock lives in the private per-user registry because startup
-// must coordinate before it owns the target tree.
+// TryLockLaunch serializes daemon starters without creating or modifying any
+// vault root. Startup uses one short-lived per-user lock because missing paths
+// cannot be compared reliably across filesystem-specific case, Unicode, and
+// mount-point rules. A started daemon's ordinary vault locks remain per-tree.
 func (l Layout) TryLockLaunch() (*Lock, error) {
-	keys, target, err := launchLockKeys(l.Root)
+	target, err := filepath.Abs(l.Root)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("resolving vault root %s: %w", l.Root, err)
 	}
 	registry, err := targetLockRegistryDir()
 	if err != nil {
 		return nil, err
 	}
-	lk := &Lock{}
-	for _, key := range keys {
-		digest := sha256.Sum256([]byte(key))
-		f, err := openRegistryLock(registry, fmt.Sprintf("launch-%x.lock", digest))
-		if err != nil {
-			_ = lk.Release()
-			return nil, err
-		}
-		if err := flock(f, syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-			_ = f.Close()
-			_ = lk.Release()
-			return nil, classifyLockError(err, target)
-		}
-		lk.files = append(lk.files, f)
+	f, err := openRegistryLock(registry, "daemon-launch.lock")
+	if err != nil {
+		return nil, err
 	}
-	return lk, nil
+	if err := flock(f, syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = f.Close()
+		return nil, classifyLockError(err, target)
+	}
+	return &Lock{files: []*os.File{f}}, nil
 }
 
 // OpenLaunchOutput creates private transient bootstrap output outside the
@@ -387,74 +380,6 @@ func directoryIdentity(info os.FileInfo, path string) (string, error) {
 		return "", fmt.Errorf("reading target-tree identity for %s", path)
 	}
 	return fmt.Sprintf("dev-%x-ino-%x", stat.Dev, stat.Ino), nil
-}
-
-func launchLockKeys(path string) ([]string, string, error) {
-	target, err := filepath.Abs(path)
-	if err != nil {
-		return nil, "", fmt.Errorf("resolving vault root %s: %w", path, err)
-	}
-	current := filepath.Clean(target)
-	var missing []string
-	for {
-		_, err := os.Stat(current)
-		if err == nil {
-			break
-		}
-		if !errors.Is(err, os.ErrNotExist) {
-			return nil, "", fmt.Errorf("resolving vault root for launch: %w", err)
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return nil, "", fmt.Errorf("vault root has no existing ancestor: %s", target)
-		}
-		missing = append(missing, filepath.Base(current))
-		current = parent
-	}
-	resolved, err := filepath.EvalSymlinks(current)
-	if err != nil {
-		return nil, "", fmt.Errorf("resolving vault root for launch: %w", err)
-	}
-	slices.Reverse(missing)
-	canonical := filepath.Join(append([]string{resolved}, missing...)...)
-	var paths []string
-	for current = canonical; ; current = filepath.Dir(current) {
-		paths = append(paths, current)
-		if current == filepath.Dir(current) {
-			break
-		}
-	}
-	slices.Reverse(paths)
-	keys := make([]string, 0, len(paths))
-	for _, existing := range paths {
-		info, statErr := os.Stat(existing)
-		if errors.Is(statErr, os.ErrNotExist) {
-			break
-		}
-		if statErr != nil {
-			return nil, "", fmt.Errorf("checking daemon launch ancestor: %w", statErr)
-		}
-		identity, identityErr := directoryIdentity(info, existing)
-		if identityErr != nil {
-			return nil, "", identityErr
-		}
-		suffix, relErr := filepath.Rel(existing, canonical)
-		if relErr != nil {
-			return nil, "", fmt.Errorf("computing daemon launch suffix: %w", relErr)
-		}
-		if suffix == "." {
-			suffix = ""
-		}
-		suffix, err = launchSuffixKey(existing, suffix)
-		if err != nil {
-			return nil, "", err
-		}
-		keys = append(keys, identity+"\x00"+suffix)
-	}
-	if len(keys) == 0 {
-		return nil, "", fmt.Errorf("vault root has no lockable ancestor: %s", target)
-	}
-	return keys, target, nil
 }
 
 func targetLockRegistryDir() (string, error) {

@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"golang.org/x/text/unicode/norm"
 )
 
 func TestTryLockExclusive(t *testing.T) {
@@ -162,46 +161,14 @@ func TestTryLockLaunchRemainsStableWhenVaultAppears(t *testing.T) {
 		"post-creation launch keys must retain the pre-creation ancestor keys")
 }
 
-func TestTryLockLaunchKeepsDistinctCaseSensitiveSuffixes(t *testing.T) {
+func TestTryLockLaunchSerializesDifferentVaults(t *testing.T) {
 	base := t.TempDir()
-	probe := filepath.Join(base, "case-probe")
-	require.NoError(t, os.WriteFile(probe, []byte("probe"), 0o600))
-	_, aliasErr := os.Stat(filepath.Join(base, "CASE-PROBE"))
-
-	lower, err := (Layout{Root: filepath.Join(base, "vault")}).TryLockLaunch()
-	require.NoError(t, err)
-	defer func() { _ = lower.Release() }()
-	upper, err := (Layout{Root: filepath.Join(base, "Vault")}).TryLockLaunch()
-	if aliasErr == nil {
-		require.ErrorIs(t, err, ErrVaultLocked,
-			"case-insensitive aliases must share a launch lock")
-		return
-	}
-	require.NoError(t, err, "case-sensitive sibling paths must not share a launch lock")
-	require.NoError(t, upper.Release())
-}
-
-func TestTryLockLaunchMatchesFilesystemUnicodeNormalization(t *testing.T) {
-	base := t.TempDir()
-	composed := "v\u00e1ult"
-	decomposed := norm.NFD.String(composed)
-	probe := filepath.Join(base, composed)
-	require.NoError(t, os.WriteFile(probe, []byte("probe"), 0o600))
-	_, aliasErr := os.Stat(filepath.Join(base, decomposed))
-	require.NoError(t, os.Remove(probe))
-
-	first, err := (Layout{Root: filepath.Join(base, composed)}).TryLockLaunch()
+	first, err := (Layout{Root: filepath.Join(base, "one")}).TryLockLaunch()
 	require.NoError(t, err)
 	defer func() { _ = first.Release() }()
-	second, err := (Layout{Root: filepath.Join(base, decomposed)}).TryLockLaunch()
-	if aliasErr == nil {
-		require.ErrorIs(t, err, ErrVaultLocked,
-			"normalization-insensitive aliases must share a launch lock")
-		return
-	}
-	require.NoError(t, err,
-		"normalization-sensitive sibling paths must not share a launch lock")
-	require.NoError(t, second.Release())
+	_, err = (Layout{Root: filepath.Join(base, "two")}).TryLockLaunch()
+	require.ErrorIs(t, err, ErrVaultLocked,
+		"the short-lived per-user launch lock must serialize all daemon starters")
 }
 
 func TestOpenLaunchOutputStaysOutsideVault(t *testing.T) {
