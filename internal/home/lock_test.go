@@ -91,6 +91,36 @@ func TestOpenAndLockExclusiveCoordinatesBeforeCreatingMissingRoot(t *testing.T) 
 		"startup must coordinate with the existing ancestor before creating the root")
 }
 
+func TestOpenAndLockExclusiveLocksEachCreatedComponentBeforeDescending(t *testing.T) {
+	base := t.TempDir()
+	first := filepath.Join(base, "first")
+	second := filepath.Join(first, "second")
+	target := filepath.Join(second, "vault")
+	var contender *Lock
+
+	root, lock, err := (Layout{Root: target}).createAndLockExclusiveWith(
+		func(index int, _ *os.Root) error {
+			if index != 0 {
+				return nil
+			}
+			var lockErr error
+			contender, lockErr = (Layout{Root: first}).TryLockExclusive()
+			return lockErr
+		})
+	if root != nil {
+		_ = root.Close()
+	}
+	if lock != nil {
+		_ = lock.Release()
+	}
+	require.ErrorIs(t, err, ErrVaultLocked)
+	require.NotNil(t, contender)
+	defer func() { _ = contender.Release() }()
+	_, err = os.Lstat(second)
+	require.ErrorIs(t, err, os.ErrNotExist,
+		"a newly claimed component must stop startup before deeper creation")
+}
+
 func TestTargetLockRegistryIgnoresProcessHomeEnvironment(t *testing.T) {
 	before, err := targetLockRegistryDir()
 	require.NoError(t, err)

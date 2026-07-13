@@ -17,7 +17,7 @@ state. A restored copy is not trusted until `docbank verify` succeeds.
 
 ## Kit integration status
 
-The internal `backupapp` adapter supplies Kit v0.9.0 with Docbank's frozen logical
+The internal `backupapp` adapter supplies Kit v0.9.2 with Docbank's frozen logical
 view: every authoritative `blobs` row, representation-neutral fidelity stats,
 and mixed loose/packed content reads. A short daemon freeze opens and pins one
 deferred SQLite read transaction; the freeze then ends, writers resume into the

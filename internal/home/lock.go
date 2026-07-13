@@ -122,6 +122,12 @@ func (l Layout) TryLockExclusiveRoot(root *os.Root) (*Lock, error) {
 }
 
 func (l Layout) createAndLockExclusive() (*os.Root, *Lock, error) {
+	return l.createAndLockExclusiveWith(nil)
+}
+
+func (l Layout) createAndLockExclusiveWith(
+	afterOpen func(int, *os.Root) error,
+) (*os.Root, *Lock, error) {
 	target, err := filepath.Abs(l.Root)
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolving vault root %s: %w", l.Root, err)
@@ -184,7 +190,7 @@ func (l Layout) createAndLockExclusive() (*os.Root, *Lock, error) {
 		return fail(lk, err)
 	}
 	slices.Reverse(missing)
-	for _, component := range missing {
+	for i, component := range missing {
 		next, enterErr := enterVaultDir(root, component)
 		_ = root.Close()
 		if enterErr != nil {
@@ -194,24 +200,26 @@ func (l Layout) createAndLockExclusive() (*os.Root, *Lock, error) {
 				"creating vault root component %q: %w", component, enterErr)
 		}
 		root = next
+		if afterOpen != nil {
+			if err := afterOpen(i, root); err != nil {
+				return fail(lk, err)
+			}
+		}
+		info, err := root.Stat(".")
+		if err != nil {
+			return fail(lk, fmt.Errorf(
+				"checking created vault root component %q: %w", component, err))
+		}
+		identity, err := directoryIdentity(info, component)
+		if err != nil {
+			return fail(lk, err)
+		}
+		if err := lk.lockIdentities(
+			registry, []string{identity}, i == len(missing)-1, target); err != nil {
+			return fail(lk, err)
+		}
 	}
 	if err := verifyLayoutRoot(target, root); err != nil {
-		return fail(lk, err)
-	}
-	resolvedTarget, err := filepath.EvalSymlinks(target)
-	if err != nil {
-		return fail(lk, fmt.Errorf("resolving created vault root: %w", err))
-	}
-	identities, err := directoryIdentityChain(resolvedTarget)
-	if err != nil {
-		return fail(lk, err)
-	}
-	if len(identities) <= len(ancestorIdentities) ||
-		!slices.Equal(identities[:len(ancestorIdentities)], ancestorIdentities) {
-		return fail(lk, errors.New("vault root ancestry changed while creating it"))
-	}
-	if err := lk.lockIdentities(
-		registry, identities[len(ancestorIdentities):], true, target); err != nil {
 		return fail(lk, err)
 	}
 	local, err := openRootLock(root)
@@ -319,14 +327,21 @@ func directoryIdentityChain(target string) ([]string, error) {
 		if !info.IsDir() {
 			return nil, fmt.Errorf("target-tree ancestor %s is not a directory", path)
 		}
-		stat, ok := info.Sys().(*syscall.Stat_t)
-		if !ok {
-			return nil, fmt.Errorf("reading target-tree identity for %s", path)
+		identity, err := directoryIdentity(info, path)
+		if err != nil {
+			return nil, err
 		}
-		identities = append(identities,
-			fmt.Sprintf("dev-%x-ino-%x", stat.Dev, stat.Ino))
+		identities = append(identities, identity)
 	}
 	return identities, nil
+}
+
+func directoryIdentity(info os.FileInfo, path string) (string, error) {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return "", fmt.Errorf("reading target-tree identity for %s", path)
+	}
+	return fmt.Sprintf("dev-%x-ino-%x", stat.Dev, stat.Ino), nil
 }
 
 func targetLockRegistryDir() (string, error) {
