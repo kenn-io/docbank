@@ -31,7 +31,7 @@ func (c platformRestoreTargetCoordinator) AcquireRestoreTarget(
 	if err := c.validate(root); err != nil {
 		return nil, err
 	}
-	lock, err := (home.Layout{Root: c.target}).TryLockExclusiveRoot(root)
+	lock, err := (home.Layout{Root: c.target}).TryLockRestoreRoot(root)
 	if err != nil {
 		if errors.Is(err, home.ErrVaultLocked) {
 			return nil, NewError(http.StatusConflict, "backup_restore_target_active",

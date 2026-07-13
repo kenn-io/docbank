@@ -9,8 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"slices"
+	"strconv"
+	"strings"
 	"syscall"
 )
 
@@ -53,6 +56,19 @@ func (l Layout) TryLockExclusive() (*Lock, error) {
 // identity make an owner conflict with restores of parent or descendant trees;
 // the target's ordinary vault.lock preserves coordination with older builds.
 func (l Layout) TryLockExclusiveRoot(root *os.Root) (*Lock, error) {
+	return l.tryLockExclusiveRoot(root, false)
+}
+
+// TryLockRestoreRoot takes exclusive per-user restore ownership in addition to
+// the vault-tree locks. Serializing restores closes the otherwise unresolvable
+// Unix rename case where a held target is reparented after its ancestor
+// identities were locked. Daemon startup checks the same ownership file but
+// releases that gate once its stable tree lock is established.
+func (l Layout) TryLockRestoreRoot(root *os.Root) (*Lock, error) {
+	return l.tryLockExclusiveRoot(root, true)
+}
+
+func (l Layout) tryLockExclusiveRoot(root *os.Root, restore bool) (*Lock, error) {
 	target, err := filepath.Abs(l.Root)
 	if err != nil {
 		return nil, fmt.Errorf("resolving vault root %s: %w", l.Root, err)
@@ -76,13 +92,25 @@ func (l Layout) TryLockExclusiveRoot(root *os.Root) (*Lock, error) {
 			_ = lk.Release()
 		}
 	}()
+	global, err := openRegistryLock(registry, "restore-owner.lock")
+	if err != nil {
+		return nil, err
+	}
+	globalHow := syscall.LOCK_SH | syscall.LOCK_NB
+	if restore {
+		globalHow = syscall.LOCK_EX | syscall.LOCK_NB
+	}
+	if err := flock(global, globalHow); err != nil {
+		_ = global.Close()
+		return nil, classifyLockError(err, target)
+	}
+	lk.files = append(lk.files, global)
 	for i, identity := range identities {
 		how := syscall.LOCK_SH | syscall.LOCK_NB
 		if i == len(identities)-1 {
 			how = syscall.LOCK_EX | syscall.LOCK_NB
 		}
-		f, openErr := os.OpenFile(
-			filepath.Join(registry, identity+".lock"), os.O_CREATE|os.O_RDWR, 0o600)
+		f, openErr := openRegistryLock(registry, identity+".lock")
 		if openErr != nil {
 			return nil, fmt.Errorf("opening target-tree lock: %w", openErr)
 		}
@@ -104,6 +132,12 @@ func (l Layout) TryLockExclusiveRoot(root *os.Root) (*Lock, error) {
 	lk.files = append(lk.files, local)
 	if err := verifyLayoutRoot(target, root); err != nil {
 		return nil, err
+	}
+	if !restore {
+		if err := global.Close(); err != nil {
+			return nil, fmt.Errorf("releasing restore-startup gate: %w", err)
+		}
+		lk.files = slices.Delete(lk.files, 0, 1)
 	}
 	failed = false
 	return lk, nil
@@ -156,18 +190,57 @@ func directoryIdentityChain(target string) ([]string, error) {
 }
 
 func targetLockRegistryDir() (string, error) {
-	cache, err := os.UserCacheDir()
+	account, err := user.LookupId(strconv.Itoa(os.Geteuid()))
 	if err != nil {
-		return "", fmt.Errorf("resolving user cache directory: %w", err)
+		return "", fmt.Errorf("resolving effective user: %w", err)
 	}
-	dir := filepath.Join(cache, "docbank", "target-locks")
+	if !filepath.IsAbs(account.HomeDir) {
+		return "", fmt.Errorf("effective user home is not absolute: %q", account.HomeDir)
+	}
+	dir := filepath.Join(account.HomeDir, ".local", "state", "docbank", "target-locks")
+	// Separate go test package binaries deliberately exercise independent
+	// temporary vaults in parallel. Giving each test process its own registry
+	// preserves in-process lock semantics without making unrelated package
+	// suites behave like competing production restores.
+	if strings.HasSuffix(filepath.Base(os.Args[0]), ".test") {
+		dir = filepath.Join(dir, "tests", strconv.Itoa(os.Getpid()))
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("creating target-lock registry: %w", err)
+	}
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return "", fmt.Errorf("checking target-lock registry: %w", err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || !ok ||
+		strconv.FormatUint(uint64(stat.Uid), 10) != account.Uid {
+		return "", errors.New("target-lock registry must be a private directory owned by the effective user")
 	}
 	if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // directory needs owner execute permission
 		return "", fmt.Errorf("securing target-lock registry: %w", err)
 	}
 	return dir, nil
+}
+
+func openRegistryLock(registry, name string) (*os.File, error) {
+	path := filepath.Join(registry, name)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("opening target-tree lock: %w", err)
+	}
+	opened, statErr := f.Stat()
+	leaf, lstatErr := os.Lstat(path)
+	if err := errors.Join(statErr, lstatErr); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("checking target-tree lock: %w", err)
+	}
+	if !opened.Mode().IsRegular() || !leaf.Mode().IsRegular() ||
+		!os.SameFile(opened, leaf) {
+		_ = f.Close()
+		return nil, errors.New("target-tree lock must be one stable regular file")
+	}
+	return f, nil
 }
 
 func openRootLock(root *os.Root) (*os.File, error) {

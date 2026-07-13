@@ -136,6 +136,31 @@ func TestBackupRestoreCoordinatorExcludesOverlappingTargets(t *testing.T) {
 	assertRestoreTargetActive(t, err)
 }
 
+func TestBackupRestoreCoordinatorSurvivesTargetReparenting(t *testing.T) {
+	base := t.TempDir()
+	originalParent := filepath.Join(base, "original")
+	newParent := filepath.Join(base, "new-parent")
+	target := filepath.Join(originalParent, "target")
+	movedTarget := filepath.Join(newParent, "moved-target")
+	require.NoError(t, os.MkdirAll(target, 0o700))
+	require.NoError(t, os.MkdirAll(newParent, 0o700))
+	targetRoot, err := os.OpenRoot(target)
+	require.NoError(t, err)
+	defer func() { _ = targetRoot.Close() }()
+	lease, err := newRestoreTargetCoordinator(
+		target, "", "", true).AcquireRestoreTarget(t.Context(), targetRoot)
+	require.NoError(t, err)
+	defer func() { _ = lease.Release() }()
+
+	require.NoError(t, os.Rename(target, movedTarget))
+	parentRoot, err := os.OpenRoot(newParent)
+	require.NoError(t, err)
+	defer func() { _ = parentRoot.Close() }()
+	_, err = newRestoreTargetCoordinator(
+		newParent, "", "", true).AcquireRestoreTarget(t.Context(), parentRoot)
+	assertRestoreTargetActive(t, err)
+}
+
 func assertRestoreTargetActive(t *testing.T, err error) {
 	t.Helper()
 	var problem *Error

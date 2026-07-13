@@ -51,3 +51,14 @@ func TestTryLockExclusiveRejectsOverlappingTrees(t *testing.T) {
 		"a parent must exclusive-lock an identity already shared by its descendant")
 	require.NoError(t, childLock.Release())
 }
+
+func TestTargetLockRegistryIgnoresProcessHomeEnvironment(t *testing.T) {
+	before, err := targetLockRegistryDir()
+	require.NoError(t, err)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	after, err := targetLockRegistryDir()
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+}

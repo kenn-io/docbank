@@ -52,12 +52,22 @@ or another tree.
 
 A `vault.lock` alone cannot coordinate overlapping roots: `/restore` and
 `/restore/nested` contain different lock files. Docbank therefore also keeps a
-per-user target-lock registry under the operating system's cache directory.
-Each daemon or restore takes shared locks for the filesystem identities of all
-ancestors and an exclusive lock for its root identity. Parent and descendant
-trees consequently conflict in either acquisition order, while disjoint
-sibling vaults remain independent. The registry files contain no vault data;
-their stable names are coordination state keyed by device and inode.
+canonical per-user target-lock registry at
+`~/.local/state/docbank/target-locks`, resolved from the operating-system user
+record rather than `HOME` or XDG environment variables. Each daemon or restore
+takes shared locks for the filesystem identities of all ancestors and an
+exclusive lock for its root identity. Parent and descendant trees consequently
+conflict in either acquisition order, while disjoint sibling vault daemons
+remain independent.
+
+Unix permits a locked directory to be renamed beneath a different parent, which
+can make any recorded ancestor chain stale. Restore therefore also holds one
+exclusive per-user restore-ownership lock for its lifetime. This deliberately
+allows only one restore at a time for that user and makes reparenting unable to
+bypass restore/restore exclusion. Daemon startup checks the same ownership gate
+while establishing its tree lock, then releases the gate for its serving
+lifetime. The persistent registry files contain no vault data and must not be
+removed; their stable names are coordination state keyed by device and inode.
 
 Restore acquires this hierarchy before writing even when the target is fresh,
 while the serving daemon continues to hold the live vault's hierarchy. This

@@ -151,11 +151,14 @@ Every restore pins the target directory and takes its vault-tree lock before
 writing, including for a fresh or empty target. That excludes a second restore,
 a restore to any ancestor or descendant, and a daemon rooted anywhere in the
 same tree. Replacing the target pathname while restore is running cannot
-redirect publication. A successful restore leaves the ordinary `vault.lock` as
-part of the usable vault. A failed restore also retains that stable advisory
-file after releasing it: retries ignore `vault.lock` when deciding whether the
-target contains payload, and retaining the pathname avoids split-lock races
-between old and newly created lock files.
+redirect publication. Restores are serialized per operating-system user—even
+when their destinations are disjoint—because Unix permits a held directory to
+be moved beneath a different parent after its tree locks were acquired. A
+successful restore leaves the ordinary `vault.lock` as part of the usable
+vault. A failed restore also retains that stable advisory file after releasing
+it: retries ignore `vault.lock` when deciding whether the target contains
+payload, and retaining the pathname avoids split-lock races between old and
+newly created lock files.
 
 A new or empty target needs no destructive flag. A non-empty target is refused
 unless `--overwrite` is explicit. Overwrite is a merge: files absent from the

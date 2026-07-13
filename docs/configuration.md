@@ -46,6 +46,12 @@ pair onto any machine yields a working vault — `docbank verify` proves
 the pair is consistent. Stop the daemon before taking a manual filesystem
 snapshot; see [Vault Lifecycle](usage/lifecycle.md#take-a-coherent-manual-snapshot).
 
+Docbank also keeps persistent per-user coordination files under
+`~/.local/state/docbank/target-locks`, using the home directory from the
+operating-system account record. They contain no document data, but must not be
+deleted: daemons and restores use their stable identities to exclude overlapping
+vault trees and simultaneous restores.
+
 !!! warning
     Don't edit or prune `blobs/` by hand. Blob files are referenced by
     the database (including as prior document versions); use

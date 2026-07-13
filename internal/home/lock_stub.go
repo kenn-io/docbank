@@ -23,5 +23,8 @@ func (l Layout) TryLockExclusive() (*Lock, error) { return nil, errUnsupported }
 // TryLockExclusiveRoot fails: vault locking is Unix-only.
 func (l Layout) TryLockExclusiveRoot(*os.Root) (*Lock, error) { return nil, errUnsupported }
 
+// TryLockRestoreRoot fails: vault locking is Unix-only.
+func (l Layout) TryLockRestoreRoot(*os.Root) (*Lock, error) { return nil, errUnsupported }
+
 // Release fails: vault locking is Unix-only.
 func (lk *Lock) Release() error { return errUnsupported }
