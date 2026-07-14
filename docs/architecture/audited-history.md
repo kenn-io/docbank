@@ -75,10 +75,11 @@ derive every adopted member's canonical path at that boundary. It contains a
 deduplicated, canonically ordered topology record for each member and every
 ancestor on its live or immutable trash-origin spine: stable node ID, parent ID,
 name, immutable file/directory kind, canonical creation/modification/trash
-timestamps, and live, trash, or tombstone state. A known spine ends at the vault
-root; the unknown-origin representation defined below ends at its
-domain-separated sentinel. These witness records participate in the batch
-digest. Witnessing an unaudited ancestor does not enroll it, protect its
+timestamps, and live, trash, or tombstone state. A fully known spine ends at the
+vault root; a mixed spine follows every known edge until the unknown-origin
+anchor defined below and ends at that domain-separated sentinel. These witness
+records participate in the batch digest. Witnessing an unaudited ancestor does
+not enroll it, protect its
 content, or give it history of its own; it preserves only the historical
 topology on which an audited member's path depends.
 
@@ -133,10 +134,12 @@ The first audit genesis and each later trash transition may seed an origin edge
 from the then-available `trash_parent`, but the replayed vault-wide last-known
 origin graph is authoritative for every post-activation enrollment. Closure
 follows that graph, including through another trash root adopted by the same
-baseline batch; a later locator clear cannot remove the edge. Adoption freezes
-the applicable coordinates as immutable audit origin records. This closes the
-escape where a file is trashed immediately before its directory is enrolled and
-then emptied.
+baseline batch. A known chain that reaches an unknown-origin trash root joins
+that root's unresolved component rather than being discarded or guessed; root
+enrollment adopts the component as one complete closure. A later locator clear
+cannot remove an edge. Adoption freezes the applicable coordinates as immutable
+audit origin records. This closes the escape where a file is trashed immediately
+before its directory is enrolled and then emptied.
 If earlier permanent deletion already erased the origin ancestry, Docbank cannot
 infer that the remaining trash once belonged to the scope; the preview reports
 the unresolved trash root without claiming it as a member.
@@ -153,13 +156,18 @@ trash root's stable node ID, an absent parent, and an optional retained
 origin-name byte string. It is never silently
 replaced with a guessed parent. Replay gives it the non-resolving canonical
 history path `@trash/unknown/<node-id>` and appends descendant names beneath
-that path; user interfaces may show the retained origin name as a label but
-must not present it as a recovered location. Restore places it at `/` using the
+that path. A known-origin trash root whose last-known ancestry terminates at
+this unknown root appends each intervening immutable known-origin name beneath
+the same anchor before its own descendants. User interfaces may show the
+retained origin name as a label but must not present it as a recovered location.
+Restore places it at `/` using the
 retained name, or deterministic `restored-<node-id>` when no name survived,
 subject to the ordinary sibling-collision rules. JSONL preserves this record
 verbatim. Non-root enrollment cannot infer membership from an unknown origin,
-so those roots remain explicitly unresolved in its preview; root enrollment
-adopts them all under this representation.
+so the unknown root and every known-origin root whose ancestry terminates there
+remain explicitly unresolved in its preview unless the known prefix reaches the
+selected subtree before that sentinel. Root enrollment adopts the complete
+mixed closure under this representation.
 
 Once a node is audited, its trash event also persists immutable audit origin
 metadata independent of the operational `trash_parent` foreign key: normally a
@@ -302,19 +310,26 @@ separator, separators are never doubled, and a trailing slash is invalid except
 that the live vault root is exactly the single byte `/`. Every other live path
 is `/` followed by its root-to-node components joined with `/`.
 
-A trash path has a separate domain. A known-origin trash root is
-`@trash/known/` followed by the root-to-origin-parent components, its immutable
-origin name, and any descendant components, all joined with single `/` bytes;
-the vault root contributes no empty component. An unknown-origin trash root is
-`@trash/unknown/` followed by the adopted trash root's stable node ID in
-shortest unsigned base-10 ASCII—no sign or leading zero—and then any descendant
-components. Its optional retained origin name is display-only and never enters
-the path bytes. A `path_state` with state `live` accepts only the `/` form;
+A trash path has a separate domain. A fully known origin spine uses
+`@trash/known/` followed by the root-to-origin-parent components, the detached
+root's immutable origin name, and any ordinary descendant components, all
+joined with single `/` bytes; the vault root contributes no empty component.
+An unknown-origin anchor uses `@trash/unknown/` followed by that anchor trash
+root's stable node ID in shortest unsigned base-10 ASCII—no sign or leading
+zero. The anchor's optional retained origin name is display-only and never
+enters the path bytes.
+
+When a known-origin trash root's last-known parent chain terminates at that
+unknown anchor, the same unknown prefix is followed by the immutable known-origin
+names from the anchor's nearest known child through the detached root, then by
+the affected node's ordinary descendant components. Thus the ID is always the
+terminal unknown anchor's ID, never an intermediate trash root or the affected
+descendant ID. A `path_state` with state `live` accepts only the `/` form;
 state `trash` accepts only an `@trash/known/` or `@trash/unknown/` form. A known
-spine must terminate at the vault root, while the unknown form always uses the
-trash-root ID rather than the affected descendant ID. Baseline construction,
-event creation, replay, and import independently derive these exact bytes and
-reject a supplied path that differs.
+chain must terminate at either the vault root or exactly one unknown-origin
+anchor, and no known edge may continue past that sentinel. Baseline
+construction, event creation, replay, and import independently derive these
+exact bytes and reject a supplied path that differs.
 
 Historical witness generations and deltas are immutable, while the **active
 witness projection** is derived. A witness generation is keyed by node ID and
@@ -468,6 +483,10 @@ compares the materialized expectations with memberships, baselines, events,
 lineage, and scope heads actually written. It also compares each baseline's
 members, versions, and attachments with the derived trash-origin closure; a
 missing detached root or extra adopted record rolls the whole transaction back.
+That derivation follows nested known-origin edges to the vault root or their
+terminal unknown-origin anchor and treats the resulting mixed component according
+to the unresolved/root-enrollment rules above; it never truncates the closure at
+the first detached root.
 Direct SQL, a helper that forgets inherited membership, and an
 unaudited-ancestor rename that omits descendant events therefore fail rather
 than creating a purge or history escape.
@@ -858,7 +877,9 @@ origin record. That origin's `node_id` must equal the enclosing
 and a valid non-root `name`; its parent ID must resolve in the replayed
 last-known topology to immutable `node_kind: dir`, whether that parent is live,
 trashed, or tombstoned. The resulting parent graph must be acyclic and terminate
-at the vault root. An `unknown_origin` has the registered absent
+at either the vault root or a trash root carrying `unknown_origin`; that record
+is the terminal sentinel and traversal never follows its operational parent.
+An `unknown_origin` has the registered absent
 parent and an absent or valid non-root retained name. The known name and any
 present unknown retained name equal the enclosing trash root's topology name
 byte-for-byte. Neither form may appear on the vault root, a live node, or a
@@ -888,6 +909,34 @@ absent, while the bootstrap's version for a node's then-current content is also
 duplicate present `(node_id, introduced_operation_id)` pair among native
 records, and every unknown origin token before hashing or installing version
 authority.
+
+Version revision chronology is also portable authority. For each file node,
+every present `node_revision` across native and legacy versions is positive and
+unique, never exceeds the node's current revision, and sorts the retained known
+heads in their original order. At most one `legacy_v1` version has a present
+revision: the bootstrap-current anchor described above. Older legacy versions
+with absent revisions are excluded from numeric ordering but remain distinct
+historical records. Every native version after a legacy anchor has a strictly
+greater revision.
+
+A retained native `content_create` is unique for its node, has revision one and
+`recorded_at` equal to the node's creation time, and cannot coexist with any
+legacy version; its operation is the node-creation operation wherever audit
+lineage exists. Native `content_replace` and `content_revert` require revisions
+greater than one. Gaps are valid because non-content mutations advance the node
+revision and unaudited retention policy may prune intermediate versions; a
+replace or revert therefore need not retain its immediate predecessor. Revert
+still obeys the source-version identity and ordering rules above.
+
+The node's `current_version_id` resolves to a version with a present revision
+and that revision is the greatest retained known revision for the node; it may
+be lower than the node's current revision after later metadata-only mutations.
+No retained native version may sort after the current head. Direct v2 import,
+zero-scope import, enrollment-baseline construction, replay, and final-state
+reconciliation all enforce these rules. Audited content events additionally
+require the post version's revision to equal their resulting node revision.
+Duplicate known revisions, a create at a later revision, a native version at or
+before the legacy anchor, or an older current pointer makes the stream invalid.
 
 Every `topology_node` carries `node_kind` as one of the exact ASCII tokens `file`
 or `dir`, plus canonical UTC `created_at` and `modified_at`. Kind and creation
