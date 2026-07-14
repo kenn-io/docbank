@@ -177,6 +177,17 @@ all existing version identities rather than assigning new ones. Reverting may
 reference the same bytes as an old version, but never removes the intervening
 history.
 
+A content-version ID is an opaque UUIDv4 generated from the operating system's
+cryptographic random source and stored in canonical lowercase form under a
+unique constraint. A collision retries with a new UUID. It is never derived
+from a node ID, blob hash, timestamp, or sequential allocator, and a deleted
+unaudited version ID remains globally non-reusable by contract. Writers neither
+accept caller-selected version IDs nor intentionally issue a prior value; the
+UUID's random namespace makes accidental reuse negligible. JSONL preserves the
+UUID verbatim and import validates its canonical form and uniqueness. A stale
+reference to a pruned version therefore becomes not-found; it cannot silently
+retarget a later version after export/import.
+
 Blob deduplication remains valid. Two versions or nodes may reference the same
 SHA-256 object, but they remain distinct historical facts. Re-submitting bytes
 that leave all authoritative state unchanged is a no-op, not a fabricated
@@ -209,15 +220,24 @@ commit or all roll back. Durable blob publication may precede that transaction;
 a rollback can leave only an unreferenced blob eligible for later GC, never a
 new document head without matching history.
 
-Every successful authoritative operation receives one monotonically increasing
-vault-wide operation-sequence number. Its node events are ordered by stable
-node ID; if one node needs more than one event, a documented event-kind ordinal
-breaks the tie. The canonical total order is therefore
+An authoritative operation is exactly one committed SQLite metadata
+transaction. It receives one monotonically increasing vault-wide
+operation-sequence number and one cryptographically random operation ID; neither
+identity is shared with another transaction. Its node events are ordered by
+stable node ID; if one node needs more than one event, a documented event-kind
+ordinal breaks the tie. The canonical total order is therefore
 `(operation_sequence, event_ordinal)`, independent of filesystem walk, map
 iteration, or SQL query order. Each affected scope appends one chain entry that
 commits the operation's ordered event hashes and any enrollment-baseline
-digests. Interactive grouping uses the same operation identity and never
-changes this order.
+digests.
+
+A higher-level command or job that spans transactions—recursive ingest is the
+important example—may assign one UUIDv4 grouping ID to all of its operations.
+The grouping ID is created once for that command or job, recorded in and hashed
+with each audited canonical mutation, but it never substitutes for the
+per-transaction operation ID, serves as the allocation-lineage identity, or
+changes canonical ordering. Clients may collapse related operations visually
+while verification continues to check each transaction independently.
 
 Enabling the first scope also creates a vault-wide allocation-lineage genesis
 that commits a cryptographically random 128-bit lineage ID and the existing
@@ -402,8 +422,10 @@ useful ways:
 
 Interactive clients show newest first by default, but cursors preserve stable
 forward/backward traversal and chain verification reads canonical order.
-Mutations that share an operation identity—such as one subtree ingest or move—
-may be visually grouped without collapsing their individual node events.
+Events committed in one metadata transaction share an operation identity. A
+multi-transaction command such as recursive ingest shares only its grouping ID;
+clients may visually group either level without collapsing individual node
+events or presenting the group as one atomic mutation.
 
 Comparison is type-aware but never invents semantic equivalence. Plain text
 and canonical metadata can render inline or side by side. Images and PDFs may

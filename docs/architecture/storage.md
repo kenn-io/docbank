@@ -74,8 +74,10 @@ nodes_fts      -- FTS5 external-content index over live node names
 !!! info "Planned — version and audit schema"
     The reserved `node_versions` shape is not yet a compatibility promise.
     Before the first editing writer lands, it will gain stable version identity
-    and the fields needed by [Audited History](audited-history.md). Audit
-    scopes, sticky memberships, mutation records, and chain state will be
+    as a canonical UUIDv4 with a uniqueness constraint and the fields needed by
+    [Audited History](audited-history.md). UUID identity avoids a portable
+    allocator whose rollback or reuse could retarget stale version references.
+    Audit scopes, sticky memberships, mutation records, and chain state will be
     current-schema metadata included in deterministic JSONL rather than
     inferred from paths or pack layout. A daemon-exclusive bootstrap will give
     every existing file a stable initial version and `current_version_id`, and

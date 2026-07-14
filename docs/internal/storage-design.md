@@ -42,6 +42,9 @@ share a blob without sharing document identity.
     any missing, duplicate, or mismatched cross-chain binding. Snapshot manifests
     and status/verification proofs expose scope and allocation-lineage
     count/heads together as one rollback-evidence bundle.
+    Content-version IDs use random UUIDv4 values under a unique constraint,
+    rather than another sequential allocator, so pruning and JSONL round trips
+    cannot reuse or retarget an old agent-visible version reference.
     Audited trash-origin coordinates are immutable metadata rather than a
     nullable live foreign-key relationship; an unaudited origin can disappear
     without mutating the audited node's chain state. The nullable `trash_parent`

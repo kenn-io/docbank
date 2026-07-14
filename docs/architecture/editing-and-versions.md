@@ -40,6 +40,14 @@ transactionally; it cannot edit bytes in place without invalidating their hash.
     that may reference an older blob. Every current or historical head is
     therefore addressable before it is ever displaced.
 
+    Version identities are opaque UUIDv4 values generated from the operating
+    system's cryptographic random source, stored in canonical lowercase form,
+    and protected by a unique constraint with collision retry. They are not
+    sequential and are never derived from node IDs, content hashes, or clocks.
+    Pruning an unaudited version therefore cannot make its identity available
+    for reuse; deterministic JSONL preserves each retained UUID verbatim and
+    rejects malformed or duplicate values during import.
+
     Existing vaults require a one-time bootstrap before the daemon advertises
     editing or audit support. In one daemon-exclusive metadata transaction,
     Docbank creates a stable initial version for every file that still points
