@@ -86,6 +86,9 @@ nodes_fts      -- FTS5 external-content index over live node names
     outside nullable live foreign-key semantics, so deleting an unaudited origin
     cannot rewrite protected history. The existing `trash_parent` becomes a
     non-authoritative locator excluded from audit hashing and reconciliation.
+    Audit baselines and replay also cover `node_tags` with their `tags` records
+    and `provenance` with referenced `ingests`; FTS and `extracted_text` remain
+    rebuildable derived data outside audit authority.
 
 ## Invariants enforced in the schema
 

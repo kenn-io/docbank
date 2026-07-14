@@ -45,6 +45,10 @@ share a blob without sharing document identity.
     Content-version IDs use random UUIDv4 values under a unique constraint,
     rather than another sequential allocator, so pruning and JSONL round trips
     cannot reuse or retarget an old agent-visible version reference.
+    Audit baselines and final-state reconciliation include authoritative tag
+    assignments and their definitions plus provenance and its referenced ingest
+    records. Import validates and replays that referential closure; derived FTS,
+    extraction-cache, and job rows remain outside audit hashes.
     Audited trash-origin coordinates are immutable metadata rather than a
     nullable live foreign-key relationship; an unaudited origin can disappear
     without mutating the audited node's chain state. The nullable `trash_parent`

@@ -40,15 +40,20 @@ scope runs as a daemon job behind the mutation gate and atomically records:
 - a baseline of the directory, every live descendant, every discoverable
   pre-enrollment trash root whose recorded origin ancestry reaches that
   directory, and all descendants of those trash roots;
-- every content version Docbank still retains for those nodes; and
+- every content version Docbank still retains for those nodes;
+- every authoritative attachment for those nodes: tag assignments with their
+  stable tag definitions, plus provenance records with their referenced ingest
+  records; and
 - explicit membership for every node in that baseline.
 
 The baseline is an immutable canonical snapshot, not only an implementation
 scan. Its digest covers the scope and target IDs; every adopted node and
 membership; their enrollment-time state and immutable trash-origin state; and
-every complete content-version record retained at enrollment. The first
-scope-chain entry commits that digest. Later renames, moves, or versions append
-events; they never rewrite the frozen baseline records.
+every complete content-version record and authoritative attachment retained at
+enrollment. Attached records use canonical stable-ID and field ordering, so tag
+definitions, assignments, provenance, and referenced ingest facts produce the
+same digest on every platform. The first scope-chain entry commits that digest.
+Later mutations append events; they never rewrite the frozen baseline records.
 
 The pre-feature metadata bootstrap creates a stable vault ID before any audit
 preview can run. Baseline and mutation hashes include that ID as domain
@@ -108,8 +113,9 @@ enrolled with a baseline in the same transaction as that move or restore. The
 baseline applies the same origin-ancestry closure as initial enrollment: it
 adopts the live subtree, all still-retained versions, and every detached trash
 root whose recorded origin ancestry reaches the newly enrolled subtree,
-including those roots' descendants and versions. Its enrollment event commits
-the canonical baseline digest. New children inherit every audit scope that
+including those roots' descendants, versions, and authoritative attachments.
+Its enrollment event commits the canonical baseline digest. New children
+inherit every audit scope that
 protects their parent. That includes children created beneath a sticky member
 directory after it has moved outside the scope's current path: the protected
 directory continues carrying the promise. Nested and overlapping scopes are
@@ -146,13 +152,15 @@ The audit stream records successful authoritative mutations:
 - initial creation or ingest;
 - content replacement and reversion;
 - rename and move, including old and new parent/name coordinates;
-- tag changes and provenance additions;
+- tag-definition and assignment changes, plus provenance additions;
 - trash and restore; and
 - audit enrollment and later inherited membership.
 
 Each mutation has an immutable event identity, time, stable node ID, resulting
-node revision, operation, canonical post-change state, and the relevant prior
-state. The origin distinguishes import, API/CLI mutation, or daemon job. A
+node revision, operation, canonical post-change node and attached-metadata
+state, and the relevant prior state. Changing a shared tag definition emits an
+event for every audited member carrying that tag, across all affected scopes.
+The origin distinguishes import, API/CLI mutation, or daemon job. A
 caller-supplied agent label may be useful provenance, but is not presented as a
 verified human identity while Docbank remains a single-user system.
 
@@ -163,7 +171,9 @@ integrity, not that the host clock was correct.
 
 Reads, searches, verification runs, extraction-cache refreshes, and physical
 loose/pack movement are not document changes. They may have operational logs,
-but do not create document-history events.
+but do not create document-history events. FTS rows, extracted-text cache rows,
+and background-job state are derived or operational data, not authoritative
+attachments, and do not enter baseline or mutation hashes.
 
 ### Content versions
 
@@ -208,17 +218,19 @@ Enrollment is a canonical mutation whose hash includes its baseline digest.
 Verification, JSONL import, and restore recompute that digest from the immutable
 enrollment snapshot records before accepting the first chain entry. They then
 verify or replay subsequent mutations in canonical order and reconcile the
-resulting final state with current node, membership, and version metadata.
-Current mutable state is never substituted for enrollment-time inputs.
-Baseline membership or version metadata therefore cannot change independently
-of the recorded scope head, while valid later changes do not invalidate it.
+resulting final state with current node, membership, version, tag-assignment,
+tag-definition, provenance, and referenced-ingest metadata for every audited
+member. Current mutable state is never substituted for enrollment-time inputs.
+Baseline membership, version, or authoritative attachment metadata therefore
+cannot change independently of the recorded scope head, while valid later
+changes do not invalidate it.
 
 The authoritative mutation and its audit effects are one SQLite transaction.
-Node state, content-version records, history events, membership changes, every
-affected scope-chain entry, and each scope's expected count/head either all
-commit or all roll back. Durable blob publication may precede that transaction;
-a rollback can leave only an unreferenced blob eligible for later GC, never a
-new document head without matching history.
+Node state, content-version records, authoritative attachment changes, history
+events, membership changes, every affected scope-chain entry, and each scope's
+expected count/head either all commit or all roll back. Durable blob publication
+may precede that transaction; a rollback can leave only an unreferenced blob
+eligible for later GC, never a new document head without matching history.
 
 An authoritative operation is exactly one committed SQLite metadata
 transaction. It receives one monotonically increasing vault-wide
@@ -328,17 +340,21 @@ format will be versioned to include:
 - the vault-wide allocation-lineage genesis, entries, count, and head;
 - sticky node memberships and enrollment baselines;
 - immutable audited trash-origin parent IDs and names;
+- authoritative tag definitions and assignments, provenance records, and their
+  referenced ingest records;
 - canonical mutation records and per-scope chain entries; and
 - stable content-version records referencing every retained blob.
 
 Export orders those records deterministically from one pinned metadata
 snapshot. Import into a fresh current-schema store validates IDs, membership
-topology, event order, chain hashes and heads, node revisions, and every
-protected blob reference in one transaction. It also reconstructs every
-enrollment baseline and verifies its digest before accepting the chain. Unknown
-audit records, internally missing or reordered events, altered baseline state,
-dangling versions, or inconsistent heads fail the import; they never produce a
-current-tree-only restore.
+topology, event order, chain hashes and heads, node revisions, every protected
+blob reference, and the referential closure of authoritative attachments in one
+transaction. It reconstructs every enrollment baseline, verifies its digest,
+replays attached-metadata changes, and requires the resulting tag and provenance
+projection to equal the imported current state before accepting the chain.
+Unknown audit records, internally missing or reordered events, altered baseline
+state, dangling versions or attachments, or inconsistent heads fail the import;
+they never produce a current-tree-only restore.
 
 Import verifies the allocation lineage from its vault-specific genesis through
 its declared count/head. Each entry's operation sequence must advance from the
@@ -374,7 +390,8 @@ authority at that point. Every snapshot manifest records the complete evidence
 bundle, including allocation-lineage count/head even when the latest operations
 were unaudited. Verify and restore must reproduce identical scope IDs,
 memberships, event count/heads, allocation lineage, content hashes, and deletion
-protections across loose and packed source vaults.
+protections across loose and packed source vaults. The comparison also includes
+the complete authoritative attachment projection for every audited member.
 
 Normal overwrite restore is forward-only for an existing audited target. While
 holding the target hierarchy lock and before cleanup, restore reads the target's
