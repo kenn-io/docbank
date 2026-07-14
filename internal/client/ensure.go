@@ -154,9 +154,21 @@ func EnsureDaemon(ctx context.Context, root string) (EnsureResult, error) {
 				return liveErr
 			}
 			if live {
-				if err := waitForStoppingRecord(ctx, stopping); err != nil {
+				info, responsive, waitErr := waitForRuntimeTransition(ctx, stopping)
+				if waitErr != nil {
 					return fmt.Errorf("waiting for stopping daemon (pid %d): %w",
-						stopping.PID, err)
+						stopping.PID, waitErr)
+				}
+				if responsive {
+					if discoverOptions(true).Accept(stopping, info) {
+						res.Record = stopping
+						return nil
+					}
+					if err := stopRecord(ctx, stopping); err != nil {
+						return fmt.Errorf("stopping incompatible daemon (pid %d, %s): %w",
+							stopping.PID, stopping.Version, err)
+					}
+					res.Replaced = &stopping
 				}
 			}
 		}
@@ -300,16 +312,23 @@ func Stop(ctx context.Context, root string) (bool, error) {
 	if err != nil || !ok {
 		return false, err
 	}
-	return true, waitForStoppingRecord(ctx, rec)
+	_, responsive, err := waitForRuntimeTransition(ctx, rec)
+	if err != nil || !responsive {
+		return true, err
+	}
+	return true, stopRecord(ctx, rec)
 }
 
 func stopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
 	c := newClientFor(rec)
 	if token := rec.Metadata[metaShutdownToken]; token != "" {
-		// Even a failed request can mean the listener closed because another
-		// caller already initiated shutdown. In either case, preserve the full
-		// daemon drain budget before considering forced termination.
-		_ = c.Shutdown(ctx, token)
+		// A transport failure can mean another caller already closed the listener,
+		// so preserve the drain budget. A completed HTTP rejection proves this
+		// request did not initiate shutdown and uses the process-signal fallback.
+		shutdownErr := c.Shutdown(ctx, token)
+		if _, rejected := responseStatus(shutdownErr); rejected {
+			return signalStopRecord(ctx, rec)
+		}
 		dead, err := waitDead(ctx, rec, daemonlife.GracefulExitTimeout)
 		if err != nil {
 			return fmt.Errorf("waiting for graceful daemon shutdown: %w", err)
@@ -319,9 +338,14 @@ func stopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
 		}
 		return forceStopRecord(ctx, rec)
 	}
-	// Older records without a token need the platform's graceful signal first.
-	// Current Windows records always carry a token; its fallback has no console
-	// signal equivalent and terminates through the native process handle.
+	return signalStopRecord(ctx, rec)
+}
+
+func signalStopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
+	// Older records without a token, and definitive HTTP rejections, need the
+	// platform's graceful signal. Current Windows records always carry a token;
+	// its fallback has no console signal equivalent and terminates through the
+	// native process handle.
 	if err := verifyRecordProcess(rec); err != nil {
 		return err
 	}
@@ -331,17 +355,6 @@ func stopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
 	dead, err := waitDead(ctx, rec, daemonlife.GracefulExitTimeout)
 	if err != nil {
 		return fmt.Errorf("waiting for signaled daemon shutdown: %w", err)
-	}
-	if dead {
-		return nil
-	}
-	return forceStopRecord(ctx, rec)
-}
-
-func waitForStoppingRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
-	dead, err := waitDead(ctx, rec, daemonlife.GracefulExitTimeout)
-	if err != nil {
-		return fmt.Errorf("waiting for graceful daemon shutdown: %w", err)
 	}
 	if dead {
 		return nil
@@ -364,6 +377,44 @@ func forceStopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
 		return fmt.Errorf("daemon pid %d did not exit after forced termination", rec.PID)
 	}
 	return nil
+}
+
+// waitForRuntimeTransition resolves the ambiguous pingless-record state. The
+// process may be draining, still starting, or briefly unable to answer. It
+// returns a verified ping as soon as one appears, returns responsive=false
+// when the process exits, and force-terminates only after the full grace.
+func waitForRuntimeTransition(
+	ctx context.Context, rec kitdaemon.RuntimeRecord,
+) (kitdaemon.PingInfo, bool, error) {
+	const transitionProbeTimeout = 500 * time.Millisecond
+	deadline := time.Now().Add(daemonlife.GracefulExitTimeout)
+	for time.Now().Before(deadline) {
+		if !kitdaemon.ProcessAlive(rec.PID) {
+			return kitdaemon.PingInfo{}, false, nil
+		}
+		if !createTimeMatches(rec) {
+			return kitdaemon.PingInfo{}, false,
+				errors.New("daemon PID no longer matches its recorded create time")
+		}
+		probeCtx, cancel := context.WithTimeout(ctx, transitionProbeTimeout)
+		info, err := kitdaemon.Probe(probeCtx, rec.Endpoint(), probeOptions())
+		cancel()
+		if err == nil && info.PID == rec.PID {
+			return info, true, nil
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return kitdaemon.PingInfo{}, false, ctxErr
+		}
+		select {
+		case <-ctx.Done():
+			return kitdaemon.PingInfo{}, false, ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	if err := forceStopRecord(ctx, rec); err != nil {
+		return kitdaemon.PingInfo{}, false, err
+	}
+	return kitdaemon.PingInfo{}, false, nil
 }
 
 func verifyRecordProcess(rec kitdaemon.RuntimeRecord) error {

@@ -2,10 +2,15 @@ package client
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -99,6 +104,55 @@ func TestStopContextDoesNotKillDrainingDaemon(t *testing.T) {
 		"an interrupted client wait must not force-kill valid cleanup")
 }
 
+func TestEnsureReusesPinglessDaemonThatBecomesReady(t *testing.T) {
+	root, rec := startUnresponsiveRuntime(t)
+	var probes atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Ensure probes once before and twice inside launch coordination. Model a
+		// slow startup that becomes healthy only during transition waiting.
+		if probes.Add(1) <= 3 {
+			http.Error(w, "starting", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(kitdaemon.PingInfo{
+			OK: true, Service: Service, Version: version.Version, PID: rec.PID,
+		}); err != nil {
+			t.Errorf("encoding ping: %v", err)
+		}
+	}))
+	t.Cleanup(ts.Close)
+	rec.Address = strings.TrimPrefix(ts.URL, "http://")
+	_, err := RuntimeStore(root).Write(rec)
+	require.NoError(t, err)
+
+	result, err := EnsureDaemon(t.Context(), root)
+	require.NoError(t, err)
+	assert.False(t, result.Started)
+	assert.Nil(t, result.Replaced)
+	assert.Equal(t, rec.PID, result.Record.PID)
+	assert.True(t, kitdaemon.ProcessAlive(rec.PID),
+		"a compatible daemon that finishes startup must be reused")
+}
+
+func TestShutdownHTTPRejectionUsesProcessStop(t *testing.T) {
+	_, rec := startUnresponsiveRuntime(t)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"title":"Unauthorized","status":401,"code":"unauthorized"}`))
+	}))
+	t.Cleanup(ts.Close)
+	rec.Address = strings.TrimPrefix(ts.URL, "http://")
+	rec.Metadata[metaShutdownToken] = "rejected-token"
+
+	started := time.Now()
+	require.NoError(t, stopRecord(t.Context(), rec))
+	assert.Less(t, time.Since(started), 5*time.Second,
+		"a definitive rejection must not consume the already-stopping grace window")
+	assert.False(t, kitdaemon.ProcessAlive(rec.PID))
+}
+
 func TestStopMissingDaemonDoesNotCreateVault(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "missing")
 	stopped, err := Stop(t.Context(), root)
@@ -116,9 +170,18 @@ func startUnresponsiveRuntime(t *testing.T) (string, kitdaemon.RuntimeRecord) {
 	cmd := exec.Command(os.Args[0], "-test.run=^TestUnresponsiveDaemonHelper$")
 	cmd.Env = append(os.Environ(), "DOCBANK_UNRESPONSIVE_HELPER=1")
 	require.NoError(t, cmd.Start())
+	done := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(done)
+	}()
 	t.Cleanup(func() {
 		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("helper process did not exit")
+		}
 	})
 
 	var created int64

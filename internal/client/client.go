@@ -33,6 +33,24 @@ type Client struct {
 	hc   *http.Client
 }
 
+// responseError distinguishes an HTTP response from transport failure while
+// preserving the existing typed API error through Unwrap.
+type responseError struct {
+	status int
+	err    error
+}
+
+func (e *responseError) Error() string { return e.err.Error() }
+func (e *responseError) Unwrap() error { return e.err }
+
+func responseStatus(err error) (int, bool) {
+	var response *responseError
+	if !errors.As(err, &response) {
+		return 0, false
+	}
+	return response.status, true
+}
+
 // ContentStream exposes the catalog identity available before a download and
 // the RFC 9530 digest trailer available after Body reaches EOF. Callers prove
 // the transfer by comparing ContentDigest with the SHA-256 they compute while
@@ -78,9 +96,10 @@ func decodeError(resp *http.Response) error {
 	var e api.Error
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err := json.Unmarshal(body, &e); err != nil || e.Status == 0 {
-		return fmt.Errorf("daemon returned %s: %s", resp.Status, string(body))
+		return &responseError{status: resp.StatusCode,
+			err: fmt.Errorf("daemon returned %s: %s", resp.Status, string(body))}
 	}
-	return apiProblemError(e)
+	return &responseError{status: resp.StatusCode, err: apiProblemError(e)}
 }
 
 func apiProblemError(e api.Error) error {

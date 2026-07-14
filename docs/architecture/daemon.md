@@ -109,11 +109,14 @@ removed when the start attempt finishes.
 The listener closes before background tasks finish draining. During that
 interval ping-based discovery cannot identify the daemon, but its runtime
 record and process remain live while it still owns the vault lock. A starter
-therefore treats a create-time-verified live runtime PID as a stopping daemon,
-waits through the complete graceful-exit budget, and only then considers
-forced termination and replacement. Runtime records without create-time proof
-are never trusted for this ping-less path. This prevents a concurrent command
-from spawning into a vault whose previous owner is still cleaning up.
+therefore treats a create-time-verified live runtime PID as an unresolved
+transition: it re-probes while waiting, reuses the daemon if it becomes healthy
+and compatible, requests authenticated shutdown if it becomes healthy but
+incompatible, and recognizes a process exit as completed cleanup. Only after
+the complete graceful-exit budget can it consider forced termination and
+replacement. Runtime records without create-time proof are never trusted for
+this ping-less path. This handles both shutdown and slow startup without
+spawning into a vault whose existing owner still holds the lock.
 
 ## Auto-start and idle shutdown
 
