@@ -62,7 +62,8 @@ containing `/`, such as `project/cache`, matches that relative path and its
 descendants within every supplied source. Rules are not shell globs and must be
 relative; absolute paths and `..` escapes are rejected. Rule form is preserved:
 `cache` is a name at any depth, while `cache/` and `./cache` mean only the
-root-relative `cache` entry.
+root-relative `cache` entry. Each `--exclude` value is literal and commas are
+ordinary filename characters; repeat the flag to supply multiple rules.
 
 Output is a one-line summary plus one stderr line per failed file:
 

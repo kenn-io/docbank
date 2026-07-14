@@ -77,7 +77,7 @@ var addCmd = &cobra.Command{
 
 func init() {
 	addCmd.Flags().StringVar(&addDest, "dest", "/inbox", "virtual destination directory")
-	addCmd.Flags().StringSliceVar(&addExclude, "exclude", nil,
+	addCmd.Flags().StringArrayVar(&addExclude, "exclude", nil,
 		"exclude an entry name anywhere or a relative path within each source (repeatable)")
 	addCmd.Flags().BoolVar(&addPreflight, "preflight", false,
 		"inventory sources without opening content or changing the vault")

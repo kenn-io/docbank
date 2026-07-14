@@ -69,7 +69,9 @@ within each supplied source. Exclusions do not use glob syntax. A pruned
 directory counts as one excluded entry because Docbank deliberately does not
 walk it to count hidden descendants. A trailing slash or leading `./` keeps a
 single-component rule path-shaped: `cache` matches that name anywhere, whereas
-`cache/` and `./cache` match only the source root's `cache` entry.
+`cache/` and `./cache` match only the source root's `cache` entry. Commas are
+literal filename characters, not rule separators; pass `--exclude` repeatedly
+for multiple rules.
 
 ## Idempotency: safe to re-run
 
