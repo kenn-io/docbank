@@ -56,6 +56,13 @@ facts produce the same digest on every platform. The first scope-chain entry
 commits that digest. Later mutations append events; they never rewrite the
 frozen batch records.
 
+For every adopted node, the batch's `member_state` records the exact
+post-operation node revision and current content-version ID; directories use an
+absent version. A file's current ID must resolve to exactly one version in that
+same batch, while every other retained version is historical. Replay initializes
+the scope's member-authority projection from these records rather than guessing
+the head from version timestamps or introducing revisions.
+
 The batch also captures the minimal **path-topology projection** needed to
 derive every adopted member's canonical path at that boundary. It contains a
 deduplicated, canonically ordered topology record for each member and every
@@ -170,6 +177,13 @@ this deliberately favors a simple exact review boundary over concurrent
 enablement. Of concurrent executions, only the first matching token can commit.
 Expiration or daemon restart discards tokens without changing the vault, and
 the client must preview again after `audit_preview_stale`.
+
+For first activation, preview preallocates the random operation and lineage IDs,
+operation sequence, event timestamp, and other non-derivable inputs used by its
+baseline digest and keeps them in the server-side token state. Expiration before
+execution discards those unused identities. Once execution accepts the token,
+the same values move into the durable `audit_pending` record before the daemon
+discards its ephemeral token state.
 
 Membership is **sticky**. A member moved outside the directory remains audited;
 otherwise moving a file out, deleting it, and moving it back would be a purge
@@ -643,6 +657,9 @@ Nested record schemas are:
 | `ingest_identity` | `ingest_id:uuid` |
 | `provenance_identity_ref` | `identity:digest` |
 | `event_identity` | `operation_id:uuid`, `event_ordinal:u64` |
+| `member_state` | `node_id:u64`, `node_revision:u64`, `current_version_id:?uuid` |
+| `member_state_change` | `node_id:u64`, `prior_revision:u64`, `resulting_revision:u64`, `prior_current_version_id:?uuid`, `resulting_current_version_id:?uuid` |
+| `witnessed_state` | `node:topology_node` |
 | `witness` | `node_id:u64`, `generation_operation_id:uuid`, `state_digest:digest` |
 | `baseline_binding` | `scope_id:uuid`, `target_node_id:u64`, `baseline_digest:digest` |
 | `topology_change` | `node_id:u64`, `pre:?topology_node`, `post:?topology_node` |
@@ -650,7 +667,7 @@ Nested record schemas are:
 | `path_effect` | `scope_id:uuid`, `member_node_id:u64`, `old:path_state`, `new:path_state` |
 | `witness_change` | `node_id:u64`, `generation_operation_id:uuid`, `action:action`, `state_digest:?digest` |
 | `attached_metadata_change` | `record_kind:text`, `stable_identity:record`, `pre:?record`, `post:?record` |
-| `audit_event` | `event_id:digest`, `operation_id:uuid`, `node_id:u64`, `event_kind:text`, `scope_id:uuid`, `target_node_id:?u64`, `attachment_kind:?text`, `attachment_identity:?record`, `event_ordinal:u64`, `recorded_at:timestamp`, `resulting_node_revision:u64`, `origin:text`, `agent_label:?text`, `pre:?record`, `post:?record`, `topology_delta:?digest`, `baseline_digest:?digest` |
+| `audit_event` | `event_id:digest`, `operation_id:uuid`, `node_id:u64`, `event_kind:text`, `scope_id:uuid`, `target_node_id:?u64`, `attachment_kind:?text`, `attachment_identity:?record`, `event_ordinal:u64`, `recorded_at:timestamp`, `prior_node_revision:u64`, `resulting_node_revision:u64`, `prior_current_version_id:?uuid`, `resulting_current_version_id:?uuid`, `origin:text`, `agent_label:?text`, `pre:?record`, `post:?record`, `topology_delta:?digest`, `baseline_digest:?digest` |
 
 In that table, `record` means one complete nested CAE2 record of the applicable
 registered kind. An attached-metadata change permits only `tag_definition`,
@@ -681,7 +698,9 @@ Event payload presence is exact:
 Fields not required by the selected row are absent, except that `agent_label`
 may independently be present or absent for every event. `event_id`, `operation_id`,
 `scope_id`, `node_id`, `event_kind`, `event_ordinal`, `recorded_at`,
-`resulting_node_revision`, and `origin` are always present. `origin` is one of
+`prior_node_revision`, `resulting_node_revision`, and `origin` are always
+present; both current-version fields independently use absent for a directory.
+`origin` is one of
 the exact ASCII tokens `api`, `cli`, `import`, or `job`; `agent_label` is
 unverified caller text. The tag “matching record” is `tag_definition` for
 define/rename/delete and `tag_assignment` for assign/unassign. Import rejects
@@ -696,11 +715,24 @@ rename requires the same tag ID in pre and post and uses that ID. A
 `post.identity`. A `provenance_add` reference likewise equals `post.identity`.
 Import verifies these relationships before event sorting or hashing.
 
+`member_state_changes` is one operation-level simultaneous list, not one entry
+per event. Replay requires every `prior_*` value to match the current member
+projection, validates all events for the operation against the same pre/post
+change, then applies each node's change once. Every event for that node in the
+operation carries those same prior/result values. A direct node-row mutation
+advances the revision by exactly one; a derived descendant-path event or shared
+tag-definition fan-out leaves it unchanged. Current-version identity changes
+only for content create/replace/revert and must resolve to the corresponding
+post content-version record. If revision and current version are unchanged, no
+state-change entry is emitted and the event carries equal prior/result values.
+Replay and import finally require the projected revision and current-version ID
+of every audited member to equal the current node table.
+
 Hashed top-level record schemas are:
 
 | `record_kind` | Exact fields |
 | --- | --- |
-| `enrollment_baseline` | `vault_id:uuid`, `scope_id:uuid`, `target_node_id:u64`, `operation_id:uuid`, `cause:text`, `members:[u64]`, `nodes:[topology_node]`, `versions:[content_version]`, `attachments:[record]`, `witnesses:[witness]` |
+| `enrollment_baseline` | `vault_id:uuid`, `scope_id:uuid`, `target_node_id:u64`, `operation_id:uuid`, `cause:text`, `members:[u64]`, `member_states:[member_state]`, `nodes:[topology_node]`, `versions:[content_version]`, `attachments:[record]`, `witnesses:[witness]` |
 | `topology_genesis` | `vault_id:uuid`, `lineage_id:uuid`, `nodes:[topology_node]` |
 | `attached_metadata_genesis` | `vault_id:uuid`, `lineage_id:uuid`, `records:[record]` |
 | `topology_delta` | `operation_id:uuid`, `changes:[topology_change]` |
@@ -708,10 +740,11 @@ Hashed top-level record schemas are:
 | `witness_change_list` | `operation_id:uuid`, `changes:[witness_change]` |
 | `attached_metadata_delta` | `operation_id:uuid`, `changes:[attached_metadata_change]` |
 | `event` | `event:audit_event` |
-| `canonical_mutation` | `vault_id:uuid`, `operation_sequence:u64`, `operation_id:uuid`, `grouping_id:?uuid`, `events:[audit_event]`, `baselines:[baseline_binding]`, `topology_delta:?digest`, `path_effect_count:u64`, `path_effect_digest:?digest`, `witness_change_count:u64`, `witness_change_digest:?digest`, `attached_metadata_change_count:u64`, `attached_metadata_change_digest:?digest` |
+| `canonical_mutation` | `vault_id:uuid`, `operation_sequence:u64`, `operation_id:uuid`, `grouping_id:?uuid`, `events:[audit_event]`, `member_state_changes:[member_state_change]`, `baselines:[baseline_binding]`, `topology_delta:?digest`, `path_effect_count:u64`, `path_effect_digest:?digest`, `witness_change_count:u64`, `witness_change_digest:?digest`, `attached_metadata_change_count:u64`, `attached_metadata_change_digest:?digest` |
 | `scope_chain_entry` | `vault_id:uuid`, `scope_id:uuid`, `entry_count:u64`, `previous_head:?digest`, `mutation_hash:digest` |
 | `allocation_genesis` | `vault_id:uuid`, `lineage_id:uuid`, `node_id_high_water:u64`, `operation_sequence_high_water:u64`, `topology_count:u64`, `topology_digest:digest`, `attached_metadata_count:u64`, `attached_metadata_digest:digest` |
 | `allocation_entry` | `vault_id:uuid`, `lineage_id:uuid`, `previous_head:digest`, `operation_sequence:u64`, `operation_id:uuid`, `allocated_node_ids:[u64]`, `node_id_high_water:u64`, `operation_sequence_high_water:u64`, `has_audited_mutation:bool`, `mutation_hash:?digest`, `has_topology_change:bool`, `topology_delta:?digest`, `has_witness_change:bool`, `witness_change_count:u64`, `witness_change_digest:?digest`, `has_attached_metadata_change:bool`, `attached_metadata_change_count:u64`, `attached_metadata_change_digest:?digest` |
+| `audit_pending` | `scope_id:uuid`, `target_node_id:u64`, `preview_token_digest:digest`, `preview_generation:u64`, `baseline_digest:digest`, `operation_id:uuid`, `lineage_id:uuid`, `operation_sequence:u64`, `grouping_id:?uuid`, `recorded_at:timestamp`, `origin:text`, `agent_label:?text`, `cause:text`, `node_id_high_water:u64`, `operation_sequence_high_water:u64`, `topology_inventory_digest:digest`, `attached_metadata_inventory_digest:digest` |
 
 The four `has_*` booleans are the normative allocation-entry no-change markers.
 `false` requires the paired digest absent and count zero where a count exists;
@@ -724,7 +757,8 @@ combinations are invalid.
 List order is also part of the registry: member IDs use unsigned numeric order;
 allocated-node IDs preserve intrinsic allocation order; topology nodes/changes
 use `node_id`; versions use
-`(node_id, version_id)`; attachments and attached-metadata changes use
+`(node_id, version_id)`; member states and state changes use `node_id`;
+attachments and attached-metadata changes use
 `(record_kind, CAE2(stable_identity))`; witnesses use
 `(node_id, generation_operation_id)` and witness changes add `action`;
 path effects use `(scope_id, member_node_id, old.path, new.path, old.state,
@@ -748,9 +782,18 @@ Likewise, `event_id` is the SHA-256 digest of the registered CAE2
 `event_identity` record containing `operation_id` and `event_ordinal`, and
 import recomputes it.
 
+A witness `state_digest` is the SHA-256 digest of the registered
+`witnessed_state` record containing the exact corresponding `topology_node`.
+A baseline witness must match the unique topology node in that same baseline.
+A later `create` witness change must match the node's replay-derived post-delta
+topology state; `retire` requires an absent `state_digest` and an existing active
+generation. Import recomputes these relationships before accepting the witness
+list or either chain binding.
+
 The digest of a baseline, event, topology delta, net path-effect list,
 witness-change list, attached-metadata delta, canonical mutation, scope-chain
-entry, allocation genesis/entry, topology genesis, or attached-metadata genesis
+entry, allocation genesis/entry, topology genesis, attached-metadata genesis, or
+audit-pending record
 is `SHA-256(CAE2(record_kind, fields))` using its distinct lowercase kind token.
 A scope-chain entry includes the stable vault and scope IDs, entry count,
 optional previous head, and mutation digest. An allocation entry includes every
@@ -855,8 +898,15 @@ Creating the first audit scope permanently raises the vault's required
 live-store feature level through a second crash-safe cutover. After revalidating
 the preview under the mutation gate and exclusive vault lock, Docbank durably
 publishes and parent-syncs a non-ignorable `audit_pending` layout generation
-containing the accepted scope ID, target node ID, baseline digest, and preview
-generation. This happens before beginning or committing the SQLite enrollment
+containing the accepted scope and target node IDs, preview-token digest and
+generation, baseline digest, preallocated operation and lineage IDs, operation
+sequence, optional grouping ID, event timestamp, origin and optional agent
+label, fixed enrollment cause, both allocator high-water marks, and the accepted
+topology/attached-metadata inventory digests. These are every nondeterministic or
+externally supplied input to genesis, baseline, events, and the first mutation;
+the pending record carries the SHA-256 digest of its registered CAE2
+`audit_pending` form. This happens before
+beginning or committing the SQLite enrollment
 transaction, so every supported pre-audit v2 binary fails store open before any
 audit authority exists. Only an audit-aware recovery path can open the pending
 generation.
