@@ -85,8 +85,10 @@ nodes_fts      -- FTS5 external-content index over live node names
     legacy tag and ingest records, before editing or audit capabilities become
     available. That cutover uses metadata JSONL v2 even with zero audit scopes;
     the zero-scope form preserves editing identities without an audit genesis or
-    lineage, which begins only when the first scope is enabled. Audited trash
-    origins will retain immutable parent IDs and names
+    lineage, which begins only when the first scope is enabled. Bootstrap also
+    publishes a non-ignorable feature/layout fence so pre-bootstrap writers and
+    legacy overwrite-restore paths cannot reopen or replace the v2 authority.
+    Audited trash origins will retain immutable parent IDs and names
     outside nullable live foreign-key semantics, so deleting an unaudited origin
     cannot rewrite protected history. The existing `trash_parent` becomes a
     non-authoritative locator excluded from audit hashing and reconciliation.

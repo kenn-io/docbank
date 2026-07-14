@@ -49,7 +49,9 @@ share a blob without sharing document identity.
     retained legacy tag and ingest records and creates the stable vault ID.
     Zero-scope v2 is the portable editing/version form and contains no audit
     genesis or lineage; enabling the first scope later adds those authorities
-    from the current v2 projection.
+    from the current v2 projection. Bootstrap activates a non-ignorable
+    live-store fence against pre-bootstrap writers and legacy overwrite restore;
+    audit activation advances that fence again for pre-audit binaries.
     Audit baselines and final-state reconciliation include authoritative tag
     assignments and their definitions plus provenance and its referenced ingest
     records. Import validates and replays that referential closure; derived FTS,

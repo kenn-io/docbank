@@ -119,8 +119,10 @@ inside the snapshot.
     `docbank-metadata-jsonl-v2`; today's v1 remains the pre-bootstrap format.
     Zero-scope v2 will preserve the stable vault ID, node-ID allocator
     high-water mark, content versions and current references, and non-reusable
-    tag and ingest identities without audit genesis or lineage. Enabling the
-    first audit scope will extend that same v2 authority
+    tag identities plus every retained ingest record without audit genesis or
+    lineage. Its live-store fence will reject legacy overwrite restore into a
+    bootstrapped target. Enabling the first audit scope will extend that same v2
+    authority
     with scopes, sticky memberships, shared enrollment-baseline batches and
     digests, mutation records, a complete
     vault-topology genesis snapshot, canonical unknown-origin records, baseline

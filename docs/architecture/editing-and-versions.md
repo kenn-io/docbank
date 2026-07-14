@@ -75,6 +75,18 @@ transactionally; it cannot edit bytes in place without invalidating their hash.
     the existing v2 projection; import and restore never synthesize audit
     authority for a zero-scope stream.
 
+    Bootstrap also permanently raises the live-store feature level. It publishes
+    a non-ignorable store/layout fence before exposing any editing endpoint, so
+    every supported pre-bootstrap binary fails during store open rather than
+    writing through a schema that cannot preserve `current_version_id` or the
+    portable identities. The fenced layout is outside legacy overwrite-restore
+    cleanup and publication paths; restoring a v1 snapshot may target a fresh
+    directory but cannot replace a bootstrapped vault. Release compatibility
+    tests attempt store open and overwrite restore with each supported
+    pre-bootstrap binary and require refusal with no file or metadata change.
+    Enabling full audit later advances the fence again to the stricter
+    audit-aware level described in [Audited History](audited-history.md).
+
     Versions will be whole-content snapshots, not diffs. Identical bytes will
     still deduplicate, and a crash before the metadata transaction commits will
     leave the old head intact with at most an orphan blob for GC.

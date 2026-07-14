@@ -720,8 +720,8 @@ authority below. Every version 2 stream includes:
 - the stable vault ID used to domain-separate audit hashes;
 - the node-ID allocator high-water mark;
 - every stable content-version record and node current-version reference;
-- authoritative tag definitions and assignments, provenance records, and their
-  stable referenced ingest records.
+- authoritative tag definitions and assignments, every retained ingest record,
+  and every provenance record.
 
 When at least one audit scope exists, version 2 additionally includes:
 
@@ -742,8 +742,11 @@ When at least one audit scope exists, version 2 additionally includes:
 
 Import accepts the zero-scope form only when every audit-specific record is
 absent. It validates the vault and stable record identities, node current-version
-references, and attachment closure without inventing an audit lineage. The first
-later `audit enable` creates genesis from that imported current projection.
+references, the complete retained ingest set, and every provenance-to-ingest
+reference without inventing an audit lineage. An unreferenced ingest record is
+still portable authority and cannot be dropped merely because an ingest run
+created no provenance facts. The first later `audit enable` creates genesis from
+that imported current projection.
 Conversely, any scope or other audit record requires exactly one valid genesis
 and the full cross-bound authority; a partial audit form is rejected.
 
