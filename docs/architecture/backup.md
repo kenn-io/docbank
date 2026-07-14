@@ -118,10 +118,12 @@ inside the snapshot.
     Full audit will extend the deterministic JSONL with scopes, sticky
     memberships, canonical mutation records, per-scope chain entries/heads,
     and stable content versions. Every protected historical blob becomes
-    snapshot content. Import, verification, and restore must reject a missing,
-    malformed, reordered, truncated, or downgraded audit stream before
-    publishing the database. The complete contract is in
-    [Audited History](audited-history.md).
+    snapshot content. Import, verification, and restore must reject an
+    internally missing, malformed, reordered, truncated, or hash-inconsistent
+    audit stream before publishing the database. Rollback is detectable only
+    against an expected count/head from a trusted prior snapshot or external
+    record; a fresh import cannot detect a coherently rewritten chain. The
+    complete contract is in [Audited History](audited-history.md).
 
 ## Boundary with packed storage
 

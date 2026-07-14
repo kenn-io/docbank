@@ -71,12 +71,13 @@ extracted_text (blob_hash, extractor, extractor_version, status,
 nodes_fts      -- FTS5 external-content index over live node names
 ```
 
-The reserved `node_versions` shape is not yet a compatibility promise. Before
-the first editing writer lands, it will gain stable version identity and the
-fields needed by [Audited History](audited-history.md). Audit scopes, sticky
-memberships, mutation records, and chain state are planned current-schema
-metadata and will be included in deterministic JSONL rather than inferred from
-paths or pack layout.
+!!! info "Planned — version and audit schema"
+    The reserved `node_versions` shape is not yet a compatibility promise.
+    Before the first editing writer lands, it will gain stable version identity
+    and the fields needed by [Audited History](audited-history.md). Audit
+    scopes, sticky memberships, mutation records, and chain state will be
+    current-schema metadata included in deterministic JSONL rather than
+    inferred from paths or pack layout.
 
 ## Invariants enforced in the schema
 

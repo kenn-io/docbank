@@ -69,10 +69,13 @@ non-goals.
 !!! info "Planned — audited scopes"
     A full-audit scope will make membership sticky and retain every successful
     authoritative mutation and content version. Ordinary trash remains
-    reversible, but trash empty, version pruning, and GC will refuse protected
-    history with a structured error naming the blocking scope. Agents will be
-    able to inspect and verify that history, but no normal agent surface will
-    destroy it. See [Audited History](architecture/audited-history.md).
+    reversible; trash empty will loudly exclude protected roots while removing
+    eligible ordinary trash, and version pruning and GC cannot remove protected
+    history. Refused protected mutations return every blocking scope. Agents
+    must obtain and present a server-issued baseline-preview token before the
+    irreversible enable operation. They can inspect and verify history, but no
+    normal agent surface will destroy it. See
+    [Audited History](architecture/audited-history.md).
 
 ## Common agent workflows
 

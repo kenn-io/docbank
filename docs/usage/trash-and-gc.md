@@ -64,11 +64,13 @@ on disk and may still be referenced by another node or version. Only content
 with no remaining reference becomes a GC candidate.
 
 !!! info "Planned — full-audit protection"
-    An executed selection containing any member of a full-audit scope will be
-    refused as one operation; Docbank will not silently skip protected nodes or
-    partially empty the selection. Dry-run output will identify the blocking
-    scope. Trashing and restoring audited nodes remain allowed and become
-    history events. See [Audited History](../architecture/audited-history.md).
+    Any trash root containing an audited node is explicitly outside the
+    eligible deletion set. Dry-run and execution reports list eligible roots
+    separately from protected roots and identify every protecting scope.
+    Execution deletes the eligible roots and leaves protected roots intact, so
+    one audited item never wedges cleanup of unrelated trash. Trashing and
+    restoring audited nodes remain allowed and become history events. See
+    [Audited History](../architecture/audited-history.md).
 
 ## Stage 3: Garbage collection (`gc`)
 
@@ -80,10 +82,11 @@ Unreachable blob authority is removed only by explicit GC. A blob is
 - a recorded prior version of an edited document
   (see [Editing & Versions](../architecture/editing-and-versions.md)).
 
-Planned full-audit membership makes every protected historical version a
-permanent reachability root for ordinary maintenance. Repack may change where
-those bytes are physically stored, but only after verified replacement
-publication; it cannot revoke their logical authority.
+!!! info "Planned — full-audit reachability"
+    Full-audit membership makes every protected historical version a permanent
+    reachability root for ordinary maintenance. Repack may change where those
+    bytes are physically stored, but only after verified replacement
+    publication; it cannot revoke their logical authority.
 
 ```bash
 docbank gc          # dry run: candidate count and reclaimable bytes

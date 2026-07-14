@@ -134,9 +134,11 @@ progress so stdout contains one typed report.
     The portable JSONL format will carry audit scopes, sticky memberships,
     canonical mutation records, per-scope chain heads, and stable content
     versions. Capture will include every protected historical blob. Verify and
-    restore will reject missing, reordered, truncated, downgraded, or
+    restore will reject internally missing, reordered, truncated, or
     hash-invalid audit history rather than restoring only the current tree.
-    See [Audited History](../architecture/audited-history.md).
+    Rollback detection additionally requires a trusted prior count/head; a
+    fresh import cannot identify a coherently rewritten chain. See
+    [Audited History](../architecture/audited-history.md).
 
 ## Restore and prove a snapshot
 

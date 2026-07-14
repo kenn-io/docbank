@@ -1,6 +1,6 @@
 ---
 title: Audited History
-description: The planned indelible-history contract for protected directory scopes, content versions, backup, agents, the TUI, and the web portal.
+description: The planned permanent, tamper-evident history contract for protected directory scopes, content versions, backup, agents, the TUI, and the web portal.
 ---
 
 # Audited history
@@ -37,28 +37,41 @@ Renaming or moving the directory therefore moves the scope with it. Enabling a
 scope runs as a daemon job behind the mutation gate and atomically records:
 
 - the scope and its initial chain state;
-- a baseline of the directory, every existing descendant, and every content
-  version Docbank still retains for those nodes; and
+- a baseline of the directory, every live descendant, every discoverable
+  pre-enrollment trash root whose recorded origin ancestry reaches that
+  directory, and all descendants of those trash roots;
+- every content version Docbank still retains for those nodes; and
 - explicit membership for every node in that baseline.
+
+Trash is detached from the live tree, so current parentage alone is not enough.
+Enrollment follows stable `trash_parent` origin IDs, including through another
+trash root adopted by the same baseline. This closes the escape where a file is
+trashed immediately before its directory is enrolled and then emptied. If
+earlier permanent deletion already erased the origin ancestry, Docbank cannot
+infer that the remaining trash once belonged to the scope; the preview reports
+the unresolved trash root without claiming it as a member.
 
 The policy is vault metadata, not `config.toml`. It therefore participates in
 the same transactional authority, JSONL export, backup, and restore as the
 documents it protects.
 
 Because enrollment is irreversible, every enablement surface — CLI, API
-clients and agents, TUI, and web — requires the same two-step shape: a
-dry-run baseline inventory reporting the nodes, content versions, and storage
-the scope would protect, then a separate explicit execution. The API exposes
-preview and enable as distinct operations, so no client can enroll a scope in
-a single call.
+clients and agents, TUI, and web — requires the same two-step shape. Preview
+returns the baseline inventory, storage impact, unresolved trash origins, and
+a short-lived server-issued token bound to the scope ID, baseline digest, and
+relevant vault revision. Enablement requires that token and fails if it is
+expired, belongs to another scope, or the baseline changed. A client therefore
+cannot bypass review by calling the execution operation directly.
 
 Membership is **sticky**. A member moved outside the directory remains audited;
 otherwise moving a file out, deleting it, and moving it back would be a purge
 escape. A file or subtree moved into an audited directory is enrolled with a
 baseline that adopts all of its still-retained content versions in the same
 transaction as the move. New children inherit every audit scope that protects
-their parent. Nested and overlapping scopes are allowed, and membership is
-additive rather than replacing an earlier promise.
+their parent. That includes children created beneath a sticky member directory
+after it has moved outside the scope's current path: the protected directory
+continues carrying the promise. Nested and overlapping scopes are allowed, and
+membership is additive rather than replacing an earlier promise.
 
 An external application or pseudo-folder uses the same model: an integration
 projects its collection onto a stable Docbank directory/scope reference. The
@@ -81,6 +94,11 @@ node revision, operation, canonical post-change state, and the relevant prior
 state. The origin distinguishes import, API/CLI mutation, or daemon job. A
 caller-supplied agent label may be useful provenance, but is not presented as a
 verified human identity while Docbank remains a single-user system.
+
+Chain order is authoritative; wall-clock time is not. Event times are
+canonical UTC values reported by the daemon's local clock, not trusted or
+externally attested timestamps. Verification proves their recorded order and
+integrity, not that the host clock was correct.
 
 Reads, searches, verification runs, extraction-cache refreshes, and physical
 loose/pack movement are not document changes. They may have operational logs,
@@ -124,10 +142,15 @@ provide stronger independent evidence.
 `docbank rm` remains a reversible trash operation for audited nodes. Restore
 continues to work normally, and both transitions appear in history.
 
-An executed `trash empty` selection that contains any audited member fails as
-one operation. It does not silently skip protected nodes or partially empty
-the selection. Version pruning likewise refuses audited versions. Dry runs
-report which scopes and nodes prevent deletion.
+A trash root is protected when it or any descendant belongs to an audit scope;
+the whole root is then outside the eligible `trash empty` deletion set. Dry
+runs and executions both report eligible roots separately from protected roots,
+with the stable IDs of every protecting scope. Execution deletes exactly the
+reported eligible set and leaves protected roots intact; this is an explicit
+selection boundary, not a silent partial success. An audited item can therefore
+remain out of the live tree without permanently preventing cleanup of unrelated
+trash. Version pruning that directly targets an audited version is refused with
+`audit_protected` and all blocking scope IDs.
 
 Every current and historical content hash protected by audit remains a blob
 reachability root, so GC cannot revoke its catalog authority or unlink its
@@ -155,9 +178,17 @@ format will be versioned to include:
 Export orders those records deterministically from one pinned metadata
 snapshot. Import into a fresh current-schema store validates IDs, membership
 topology, event order, chain hashes and heads, node revisions, and every
-protected blob reference in one transaction. Unknown audit records, missing
-events, dangling versions, or a history downgrade fail the import; they never
-produce a current-tree-only restore.
+protected blob reference in one transaction. Unknown audit records, internally
+missing or reordered events, dangling versions, or inconsistent heads fail the
+import; they never produce a current-tree-only restore.
+
+A fresh import with no trusted reference cannot distinguish a coherently
+rewritten and re-chained stream from an original one. Downgrade or rollback is
+detectable only when the operation is given an expected count/head from a
+trusted prior snapshot manifest or an externally recorded audit head. Restore
+checks every expectation carried by its selected snapshot; independent
+evidence remains necessary against an attacker who can replace the repository,
+manifest, and history together.
 
 Portable backup capture includes every blob reachable from a current audited
 head or historical version. Incremental snapshots may reuse existing backup
@@ -194,13 +225,16 @@ download/open actions; richer format-aware comparison can be added later.
 
 ### CLI and agents
 
-Planned CLI concepts are `audit enable`, `audit status`, `history`, `versions`,
-and `audit verify`. `audit enable` previews its baseline inventory by default
-and enrolls only with a separate explicit run flag — the same dry-run-first
-shape as `gc` — because enrollment is permanent. Machine output uses stable
-scope, node, event, and version IDs and explicit protection state. A refused
-deletion returns a structured error naming the blocking scope rather than
-relying on prose parsing.
+Planned CLI concepts are `audit enable`, `audit status`, `audit history`,
+`audit verify`, and the general `versions` command. `audit enable` previews its
+baseline inventory and returns a server-issued preview token by default; a
+separate execution supplies that token because enrollment is permanent.
+Machine output uses stable scope, node, event, and version IDs and explicit
+protection state. `audit history` and the node-timeline API return
+`audit_not_enrolled` for a node outside every audit scope rather than presenting
+an empty timeline as complete. A refused protected mutation returns
+`audit_protected` with a list of every blocking scope rather than relying on
+prose parsing.
 
 ### TUI
 
@@ -223,8 +257,8 @@ Selection in the tree drives the history pane; selecting an event or version
 drives detail. Scope and node views are switchable without losing the selected
 stable node. Filtering, comparison, external open, and chain verification are
 first-class actions. Policy enablement shows the dry-run baseline inventory
-and requires the separate explicit confirmation all surfaces share; exceptional
-destruction is absent.
+and requires the separate explicit confirmation, backed by the preview token,
+that all surfaces share; exceptional destruction is absent.
 
 It can render concise text or metadata differences. Rich PDF, office, image,
 and binary comparison opens an external tool or directs the operator to the web
@@ -244,5 +278,7 @@ drawer. A scope dashboard summarizes enrolled nodes, protected current and
 historical bytes, chain status, latest verification, and snapshots known to
 contain the scope. Enabling audit is a reviewed workflow: preview the baseline
 inventory and storage impact, name the scope, then confirm enrollment.
+The confirmation consumes the server-issued preview token and must refresh the
+inventory if relevant vault state changed.
 
 Neither UI presents exceptional audit destruction as an ordinary action.
