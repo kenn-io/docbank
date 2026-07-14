@@ -73,9 +73,53 @@ type IngestFailure struct {
 
 // IngestReport summarizes an ingest run.
 type IngestReport struct {
-	Added   int             `json:"added"`
-	Skipped int             `json:"skipped"`
-	Failed  []IngestFailure `json:"failed,omitempty"`
+	Added    int             `json:"added"`
+	Skipped  int             `json:"skipped"`
+	Excluded int             `json:"excluded"`
+	Failed   []IngestFailure `json:"failed,omitempty"`
+}
+
+// IngestSizeClass summarizes files in one storage-policy outcome.
+type IngestSizeClass struct {
+	Files int64 `json:"files"`
+	Bytes int64 `json:"bytes"`
+}
+
+// IngestFileType summarizes regular files by lowercase extension. Extension
+// is empty for names without an extension.
+type IngestFileType struct {
+	Extension string `json:"extension"`
+	Files     int64  `json:"files"`
+	Bytes     int64  `json:"bytes"`
+}
+
+// IngestPreflightFinding is one bounded sample from a source scan.
+type IngestPreflightFinding struct {
+	Path   string `json:"path"`
+	Kind   string `json:"kind" enum:"excluded,skipped,error"`
+	Detail string `json:"detail"`
+}
+
+// IngestPreflightReport inventories a prospective server-side import without
+// opening file content or mutating the vault.
+type IngestPreflightReport struct {
+	Files        int64 `json:"files"`
+	Directories  int64 `json:"directories"`
+	LogicalBytes int64 `json:"logical_bytes"`
+
+	PackEligible IngestSizeClass `json:"pack_eligible"`
+	LooseOnly    IngestSizeClass `json:"loose_only"`
+	Rejected     IngestSizeClass `json:"rejected"`
+
+	Excluded int64 `json:"excluded"`
+	Skipped  int64 `json:"skipped"`
+	Errors   int64 `json:"errors"`
+
+	FileTypes          []IngestFileType         `json:"file_types"`
+	OtherFileTypes     IngestSizeClass          `json:"other_file_types"`
+	FileTypesTruncated bool                     `json:"file_types_truncated"`
+	Findings           []IngestPreflightFinding `json:"findings"`
+	FindingsTruncated  bool                     `json:"findings_truncated"`
 }
 
 // TrashEmptyReport summarizes a trash-empty dry run or execution.

@@ -79,6 +79,14 @@ problems converges without discarding prior progress. The destination directory
 is ID-based once resolved so a concurrent move cannot cause later files to
 recreate an old path.
 
+Preflight and import share one exclusion matcher and explicit-root-symlink
+model. Preflight stops at filesystem metadata: it never opens a regular file,
+hydrates cloud content, creates a destination, records an ingest, or writes a
+blob. It therefore predicts selection and size-policy outcomes, not future
+readability. Detailed findings and extension groups are bounded while their
+aggregate counts remain complete, preventing an adversarial tree from creating
+an unbounded API response.
+
 ## Trash, permanent deletion, and GC
 
 Deletion is deliberately three-stage:

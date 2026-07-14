@@ -50,7 +50,11 @@ func runCLI(t *testing.T, args ...string) (string, error) {
 func resetFlags(c *cobra.Command) {
 	c.Flags().VisitAll(func(f *pflag.Flag) {
 		if f.Changed {
-			_ = f.Value.Set(f.DefValue)
+			if values, ok := f.Value.(pflag.SliceValue); ok && f.DefValue == "[]" {
+				_ = values.Replace(nil)
+			} else {
+				_ = f.Value.Set(f.DefValue)
+			}
 			f.Changed = false
 		}
 	})
@@ -127,6 +131,66 @@ func TestAddRerunReportsSkips(t *testing.T) {
 	out, err := runCLI(t, "add", src, "--dest", "/inbox")
 	require.NoError(t, err)
 	assert.Contains(t, out, "skipped: 1")
+}
+
+func TestAddPreflightReportsWithoutImporting(t *testing.T) {
+	_ = setupVaultHome(t)
+	src := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(src, "session.jsonl"), []byte("{\"ok\":true}\n"), 0o600))
+	require.NoError(t, os.MkdirAll(filepath.Join(src, ".git"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(src, ".git", "config"), []byte("ignored"), 0o600))
+
+	out, err := runCLI(t, "add", src, "--preflight", "--exclude", ".git")
+	require.NoError(t, err)
+	assert.Contains(t, out, "files: 1")
+	assert.Contains(t, out, "excluded: 1")
+	assert.Contains(t, out, ".jsonl")
+
+	_, err = runCLI(t, "ls", "/inbox")
+	require.Error(t, err, "preflight must not create the destination")
+
+	out, err = runCLI(t, "add", src, "--preflight", "--exclude", ".git", "--json")
+	require.NoError(t, err)
+	var report api.IngestPreflightReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	assert.Equal(t, int64(1), report.Files)
+	assert.Equal(t, int64(1), report.Excluded)
+
+	out, err = runCLI(t, "add", src, "--exclude", ".git")
+	require.NoError(t, err)
+	assert.Contains(t, out, "added: 1")
+	assert.Contains(t, out, "excluded: 1")
+
+	out, err = runCLI(t, "tree", "/inbox")
+	require.NoError(t, err)
+	assert.Contains(t, out, "session.jsonl")
+	assert.NotContains(t, out, ".git")
+}
+
+func TestAddExcludeCommaIsLiteral(t *testing.T) {
+	_ = setupVaultHome(t)
+	src := t.TempDir()
+	for _, rel := range []string{"cache,tmp/ignored.txt", "cache/kept.txt", "tmp/kept.txt"} {
+		path := filepath.Join(src, filepath.FromSlash(rel))
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+		require.NoError(t, os.WriteFile(path, []byte(rel), 0o600))
+	}
+
+	out, err := runCLI(t, "add", src, "--preflight", "--exclude", "cache,tmp", "--json")
+	require.NoError(t, err)
+	var report api.IngestPreflightReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	assert.Equal(t, int64(2), report.Files,
+		"comma-containing entry must be one literal rule; cache and tmp remain selected")
+	assert.Equal(t, int64(1), report.Excluded)
+
+	// The literal array flag appends repeated occurrences in production, but
+	// in-process CLI executions must still reset it between invocations.
+	out, err = runCLI(t, "add", src, "--preflight", "--json")
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	assert.Equal(t, int64(3), report.Files)
+	assert.Zero(t, report.Excluded)
 }
 
 func TestAddMissingSourceFails(t *testing.T) {

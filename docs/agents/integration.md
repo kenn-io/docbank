@@ -223,15 +223,31 @@ name and verify that it is the directory the workflow intended.
 `POST /api/v1/ingest` reads absolute paths on the daemon host and is restricted
 to loopback callers. It is not a file-upload endpoint:
 
+For a large tree, inventory the exact selection first. This request reads
+filesystem metadata but does not open file content or mutate the vault:
+
 ```bash
 curl --fail-with-body -X POST \
   -H "X-Api-Key: $DOCBANK_API_KEY" \
   -H 'Content-Type: application/json' \
-  --data '{"paths":["/Users/me/Downloads/receipt.pdf"],"dest":"/receipts"}' \
+  --data '{"paths":["/Users/me/Dropbox"],"exclude":[".git",".Trash"]}' \
+  "$DOCBANK_URL/api/v1/ingest/preflight"
+```
+
+Require `errors == 0` and `rejected.files == 0`, inspect every returned
+finding, and retain the exact exclusion list for ingest. Findings and extension
+groups are bounded; their count and truncation fields say when the detailed
+arrays are samples rather than complete lists.
+
+```bash
+curl --fail-with-body -X POST \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{"paths":["/Users/me/Downloads/receipt.pdf"],"dest":"/receipts","exclude":[]}' \
   "$DOCBANK_URL/api/v1/ingest"
 ```
 
-Inspect `added`, `skipped`, and every member of `failed`. Repeating the same
+Inspect `added`, `skipped`, `excluded`, and every member of `failed`. Repeating the same
 ingest after fixing a partial failure is safe; successful content converges to
 `skipped` rather than another copy.
 

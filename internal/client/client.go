@@ -231,9 +231,33 @@ func (c *Client) Mkdir(ctx context.Context, parentID int64, name string) (api.No
 }
 
 func (c *Client) Ingest(ctx context.Context, paths []string, dest string) (api.IngestReport, error) {
+	return c.IngestWithOptions(ctx, paths, dest, nil)
+}
+
+// IngestWithOptions imports server-side paths with the same exclusion rules
+// accepted by PreflightIngest.
+func (c *Client) IngestWithOptions(
+	ctx context.Context,
+	paths []string,
+	dest string,
+	exclude []string,
+) (api.IngestReport, error) {
 	var rep api.IngestReport
 	err := c.do(ctx, http.MethodPost, "/api/v1/ingest", nil,
-		map[string]any{"paths": paths, "dest": dest}, &rep)
+		map[string]any{"paths": paths, "dest": dest, "exclude": exclude}, &rep)
+	return rep, err
+}
+
+// PreflightIngest inventories server-side paths without opening file content
+// or mutating the vault.
+func (c *Client) PreflightIngest(
+	ctx context.Context,
+	paths []string,
+	exclude []string,
+) (api.IngestPreflightReport, error) {
+	var rep api.IngestPreflightReport
+	err := c.do(ctx, http.MethodPost, "/api/v1/ingest/preflight", nil,
+		map[string]any{"paths": paths, "exclude": exclude}, &rep)
 	return rep, err
 }
 
