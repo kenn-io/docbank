@@ -600,12 +600,13 @@ retarget a later version after export/import.
 
 A metadata transaction may create at most one content version for a given node.
 Every native version records that transaction's immutable operation ID, and
-`(node_id, introduced_operation_id)` is unique. For a node protected in the
-pre- or post-operation scope projection, that version has exactly one canonical
-content transition whose event fans out identically under the membership rules
-above: pre-protected scopes receive it, and scopes inherited in the same
-operation receive it only for creation. Every copy has the same event kind,
-pre/post version IDs, and optional source version. Creation uses
+the pair is unique among records whose `introduced_operation_id` is present.
+Legacy absent values do not participate in that partial uniqueness rule. For a
+node protected in the pre- or post-operation scope projection, that version has
+exactly one canonical content transition whose event fans out identically under
+the membership rules above: pre-protected scopes receive it, and scopes
+inherited in the same operation receive it only for creation. Every copy has the
+same event kind, pre/post version IDs, and optional source version. Creation uses
 `content_create`; an existing-node update without a selected source uses
 `content_replace`; and `content_revert` is valid only when the caller selected
 the verified non-current source version. A second content touch, a second
@@ -753,8 +754,9 @@ record. No other identity record is valid.
 metadata-v2 bootstrap may omit them; every legacy record requires
 `introduced_operation_id` absent, while the bootstrap's version for a node's
 then-current content is also `legacy_v1` but retains its known revision. Import
-rejects invalid presence, a duplicate `(node_id, introduced_operation_id)`, and
-every unknown origin token before hashing or installing version authority.
+rejects invalid presence, a duplicate present
+`(node_id, introduced_operation_id)` pair among native records, and every
+unknown origin token before hashing or installing version authority.
 
 Every `topology_node` carries `node_kind` as one of the exact ASCII tokens `file`
 or `dir`, plus canonical UTC `created_at` and `modified_at`. Kind and creation

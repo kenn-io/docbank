@@ -50,9 +50,10 @@ transactionally; it cannot edit bytes in place without invalidating their hash.
 
     A metadata transaction may create at most one version for a node. Every
     native version records the immutable operation ID that introduced it, with a
-    unique `(node_id, introduced_operation_id)` constraint. This binds one new
-    head to one create, replace, or revert intent even when audited event fan-out
-    repeats that transition across overlapping scopes.
+    partial unique `(node_id, introduced_operation_id)` constraint applying only
+    when that operation ID is present. Legacy absent values do not collide. This
+    binds one new head to one create, replace, or revert intent even when audited
+    event fan-out repeats that transition across overlapping scopes.
 
     Existing vaults require a one-time bootstrap before the daemon advertises
     editing or audit support. In one daemon-exclusive metadata transaction,
