@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,7 +9,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -73,66 +71,35 @@ func TestEnsureDiscoveryRejectsProtocolMismatch(t *testing.T) {
 		"same-version record with a mismatched protocol revision must be replaced")
 }
 
-// TestEnsureWaitsForLiveUnresponsiveRuntime models the interval after a
-// daemon closes its listener but before a blocked background job lets the
-// process exit. A concurrent command must wait for that verified owner rather
-// than spawning a replacement that will collide with its vault lock.
-func TestEnsureWaitsForLiveUnresponsiveRuntime(t *testing.T) {
+// TestEnsureStopsPinglessRuntimeBeforeReplacement models both a daemon whose
+// listener closed during job draining and a startup that published its record
+// before answering. Public ping fields cannot authenticate a rebound port, so
+// Ensure signals only the verified PID and starts replacement after it exits.
+func TestEnsureStopsPinglessRuntimeBeforeReplacement(t *testing.T) {
 	root, rec := startUnresponsiveRuntime(t)
-
-	ctx, cancel := context.WithTimeout(t.Context(), 250*time.Millisecond)
-	defer cancel()
-	started := time.Now()
-	_, err := EnsureDaemon(ctx, root)
-	require.ErrorIs(t, err, context.DeadlineExceeded)
-	assert.GreaterOrEqual(t, time.Since(started), 200*time.Millisecond)
-	assert.True(t, kitdaemon.ProcessAlive(rec.PID),
-		"context cancellation must not force-kill the draining daemon")
-	records, err := RuntimeStore(root).List()
+	canonicalRoot, err := filepath.EvalSymlinks(root)
 	require.NoError(t, err)
-	assert.Len(t, records, 1, "no replacement runtime record should be published")
+	started := false
+	result, err := ensureDaemon(t.Context(), root,
+		func(_ context.Context, gotRoot string) (kitdaemon.RuntimeRecord, error) {
+			started = true
+			assert.Equal(t, canonicalRoot, gotRoot)
+			assert.False(t, kitdaemon.ProcessAlive(rec.PID),
+				"replacement must wait for the recorded owner to exit")
+			return NewRecord("127.0.0.1:2", "new-key", "new-token"), nil
+		})
+	require.NoError(t, err)
+	assert.True(t, started)
+	require.NotNil(t, result.Replaced)
+	assert.Equal(t, rec.PID, result.Replaced.PID)
 }
 
-func TestStopContextDoesNotKillDrainingDaemon(t *testing.T) {
+func TestStopSignalsPinglessDaemonWithoutSendingSecrets(t *testing.T) {
 	root, rec := startUnresponsiveRuntime(t)
-	ctx, cancel := context.WithTimeout(t.Context(), 250*time.Millisecond)
-	defer cancel()
-	stopped, err := Stop(ctx, root)
+	stopped, err := Stop(t.Context(), root)
 	assert.True(t, stopped, "the live runtime PID must be recognized as stopping")
-	require.ErrorIs(t, err, context.DeadlineExceeded)
-	assert.True(t, kitdaemon.ProcessAlive(rec.PID),
-		"an interrupted client wait must not force-kill valid cleanup")
-}
-
-func TestEnsureReusesPinglessDaemonThatBecomesReady(t *testing.T) {
-	root, rec := startUnresponsiveRuntime(t)
-	var probes atomic.Int32
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		// Ensure probes once before and twice inside launch coordination. Model a
-		// slow startup that becomes healthy only during transition waiting.
-		if probes.Add(1) <= 3 {
-			http.Error(w, "starting", http.StatusServiceUnavailable)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(kitdaemon.PingInfo{
-			OK: true, Service: Service, Version: version.Version, PID: rec.PID,
-		}); err != nil {
-			t.Errorf("encoding ping: %v", err)
-		}
-	}))
-	t.Cleanup(ts.Close)
-	rec.Address = strings.TrimPrefix(ts.URL, "http://")
-	_, err := RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
-
-	result, err := EnsureDaemon(t.Context(), root)
-	require.NoError(t, err)
-	assert.False(t, result.Started)
-	assert.Nil(t, result.Replaced)
-	assert.Equal(t, rec.PID, result.Record.PID)
-	assert.True(t, kitdaemon.ProcessAlive(rec.PID),
-		"a compatible daemon that finishes startup must be reused")
+	assert.False(t, kitdaemon.ProcessAlive(rec.PID))
 }
 
 func TestShutdownHTTPRejectionUsesProcessStop(t *testing.T) {

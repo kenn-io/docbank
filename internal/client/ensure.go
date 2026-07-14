@@ -108,6 +108,14 @@ func Ensure(ctx context.Context) (*Client, error) {
 // auto-start all share this path, so there is a single replacement policy and
 // no command ever leaves a stale daemon behind.
 func EnsureDaemon(ctx context.Context, root string) (EnsureResult, error) {
+	return ensureDaemon(ctx, root, Start)
+}
+
+func ensureDaemon(
+	ctx context.Context,
+	root string,
+	startFn func(context.Context, string) (kitdaemon.RuntimeRecord, error),
+) (EnsureResult, error) {
 	var res EnsureResult
 	root, err := home.CanonicalRoot(root)
 	if err != nil {
@@ -154,26 +162,20 @@ func EnsureDaemon(ctx context.Context, root string) (EnsureResult, error) {
 				return liveErr
 			}
 			if live {
-				info, responsive, waitErr := waitForRuntimeTransition(ctx, stopping)
-				if waitErr != nil {
-					return fmt.Errorf("waiting for stopping daemon (pid %d): %w",
-						stopping.PID, waitErr)
+				// A pingless endpoint is not authenticated ownership evidence: once
+				// the recorded listener closes, another local process can claim its
+				// port and forge the public ping fields. Stop only the identity-checked
+				// recorded PID, then replace it after exit; never send its API key to a
+				// listener that appeared during this transition.
+				if err := signalStopRecord(ctx, stopping); err != nil {
+					return fmt.Errorf("stopping pingless daemon (pid %d): %w",
+						stopping.PID, err)
 				}
-				if responsive {
-					if discoverOptions(true).Accept(stopping, info) {
-						res.Record = stopping
-						return nil
-					}
-					if err := stopRecord(ctx, stopping); err != nil {
-						return fmt.Errorf("stopping incompatible daemon (pid %d, %s): %w",
-							stopping.PID, stopping.Version, err)
-					}
-					res.Replaced = &stopping
-				}
+				res.Replaced = &stopping
 			}
 		}
 
-		res.Record, err = Start(ctx, root)
+		res.Record, err = startFn(ctx, root)
 		res.Started = err == nil
 		return err
 	})
@@ -312,11 +314,9 @@ func Stop(ctx context.Context, root string) (bool, error) {
 	if err != nil || !ok {
 		return false, err
 	}
-	_, responsive, err := waitForRuntimeTransition(ctx, rec)
-	if err != nil || !responsive {
-		return true, err
-	}
-	return true, stopRecord(ctx, rec)
+	// Do not probe or send secrets to a listener that may have been rebound
+	// after the recorded daemon stopped answering. Signal only the verified PID.
+	return true, signalStopRecord(ctx, rec)
 }
 
 func stopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
@@ -377,44 +377,6 @@ func forceStopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
 		return fmt.Errorf("daemon pid %d did not exit after forced termination", rec.PID)
 	}
 	return nil
-}
-
-// waitForRuntimeTransition resolves the ambiguous pingless-record state. The
-// process may be draining, still starting, or briefly unable to answer. It
-// returns a verified ping as soon as one appears, returns responsive=false
-// when the process exits, and force-terminates only after the full grace.
-func waitForRuntimeTransition(
-	ctx context.Context, rec kitdaemon.RuntimeRecord,
-) (kitdaemon.PingInfo, bool, error) {
-	const transitionProbeTimeout = 500 * time.Millisecond
-	deadline := time.Now().Add(daemonlife.GracefulExitTimeout)
-	for time.Now().Before(deadline) {
-		if !kitdaemon.ProcessAlive(rec.PID) {
-			return kitdaemon.PingInfo{}, false, nil
-		}
-		if !createTimeMatches(rec) {
-			return kitdaemon.PingInfo{}, false,
-				errors.New("daemon PID no longer matches its recorded create time")
-		}
-		probeCtx, cancel := context.WithTimeout(ctx, transitionProbeTimeout)
-		info, err := kitdaemon.Probe(probeCtx, rec.Endpoint(), probeOptions())
-		cancel()
-		if err == nil && info.PID == rec.PID {
-			return info, true, nil
-		}
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return kitdaemon.PingInfo{}, false, ctxErr
-		}
-		select {
-		case <-ctx.Done():
-			return kitdaemon.PingInfo{}, false, ctx.Err()
-		case <-time.After(100 * time.Millisecond):
-		}
-	}
-	if err := forceStopRecord(ctx, rec); err != nil {
-		return kitdaemon.PingInfo{}, false, err
-	}
-	return kitdaemon.PingInfo{}, false, nil
 }
 
 func verifyRecordProcess(rec kitdaemon.RuntimeRecord) error {

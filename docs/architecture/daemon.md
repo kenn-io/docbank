@@ -108,15 +108,15 @@ removed when the start attempt finishes.
 
 The listener closes before background tasks finish draining. During that
 interval ping-based discovery cannot identify the daemon, but its runtime
-record and process remain live while it still owns the vault lock. A starter
-therefore treats a create-time-verified live runtime PID as an unresolved
-transition: it re-probes while waiting, reuses the daemon if it becomes healthy
-and compatible, requests authenticated shutdown if it becomes healthy but
-incompatible, and recognizes a process exit as completed cleanup. Only after
-the complete graceful-exit budget can it consider forced termination and
-replacement. Runtime records without create-time proof are never trusted for
-this ping-less path. This handles both shutdown and slow startup without
-spawning into a vault whose existing owner still holds the lock.
+record and process remain live while it still owns the vault lock. Public ping
+fields cannot prove that a listener appearing on the same loopback port still
+belongs to that PID; accepting such a response could send the API key to a
+locally hijacked port. A starter therefore never re-probes a pingless record or
+sends secrets to that endpoint. It requests graceful process termination only
+for the create-time-verified PID, waits for exit, and then starts replacement.
+Runtime records without create-time proof are never trusted for this path.
+This handles shutdown and the rarer uncoordinated slow-start transition without
+spawning into an owned vault or trusting a rebound listener.
 
 ## Auto-start and idle shutdown
 
