@@ -343,12 +343,14 @@ machine-readable string clients branch on instead of parsing `detail`:
     One bounded, cursor-paginated model will expose audit scope status, sticky
     membership, canonical mutation events, content versions, comparison
     metadata, and chain verification to CLI, agent, TUI, and web clients. Scope
-    preview returns a short-lived token bound to the baseline and vault
-    revision; enablement requires that token. `audit_not_enrolled` (409) means
+    preview returns a short-lived token bound to the baseline and vault preview
+    generation; enablement requires that token. `audit_not_enrolled` (409) means
     a requested node timeline has no audit authority. `audit_protected` (409)
     refuses an incompatible mutation and carries a `blocking_scopes` array;
-    overlapping scopes are never collapsed to one. Credentialed clients will
-    not receive an ordinary audit-destruction operation. See
+    overlapping scopes are never collapsed to one. `audit_preview_stale` (409)
+    means the one-use preview token expired, the daemon restarted, another
+    execution consumed it, or authoritative state advanced. Credentialed
+    clients will not receive an ordinary audit-destruction operation. See
     [Audited History](audited-history.md).
 
 ## Non-goals

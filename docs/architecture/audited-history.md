@@ -50,10 +50,11 @@ every complete content-version record retained at enrollment. The first
 scope-chain entry commits that digest. Later renames, moves, or versions append
 events; they never rewrite the frozen baseline records.
 
-The audit cutover also creates a stable vault ID. Baseline and mutation hashes
-include that ID as domain separation, and deterministic JSONL plus backup
-manifests preserve it. A restored copy remains recognizably the same logical
-vault even when published at another filesystem location.
+The pre-feature metadata bootstrap creates a stable vault ID before any audit
+preview can run. Baseline and mutation hashes include that ID as domain
+separation, and deterministic JSONL plus backup manifests preserve it. A
+restored copy remains recognizably the same logical vault even when published
+at another filesystem location.
 
 Trash is detached from the live tree, so current parentage alone is not enough.
 Enrollment follows stable `trash_parent` origin IDs, including through another
@@ -71,11 +72,14 @@ emptying.
 
 Once a node is audited, its trash event also persists immutable origin parent
 ID and name as audit metadata independent of the operational `trash_parent`
-foreign key. Node IDs are never reused. Deleting an unaudited origin directory
-may therefore clear an operational locator, but cannot rewrite the protected
-origin coordinates, baseline digest, or chain. Restore tries the immutable
-parent ID and falls back to `/` when that node no longer exists, while history
-continues to show the original intended location.
+foreign key. Node IDs are never reused. `trash_parent` is a non-authoritative,
+repairable locator: it is excluded from canonical event/baseline hashes, final
+state reconciliation, and audit write guards. When non-null it must resolve to
+the immutable origin ID; null is valid after that parent disappears. Deleting
+an unaudited origin directory may therefore clear the locator without rewriting
+the protected origin coordinates, baseline digest, or chain. Restore tries the
+immutable parent ID and falls back to `/` when that node no longer exists,
+while history continues to show the original intended location.
 
 The policy is vault metadata, not `config.toml`. It therefore participates in
 the same transactional authority, JSONL export, backup, and restore as the
@@ -85,9 +89,17 @@ Because enrollment is irreversible, every enablement surface — CLI, API
 clients and agents, TUI, and web — requires the same two-step shape. Preview
 returns the baseline inventory, storage impact, unresolved trash origins, and
 a short-lived server-issued token bound to the scope ID, baseline digest, and
-relevant vault revision. Enablement requires that token and fails if it is
+vault preview generation. Enablement requires that token and fails if it is
 expired, belongs to another scope, or the baseline changed. A client therefore
 cannot bypass review by calling the execution operation directly.
+
+Preview tokens are one-use and held by the issuing daemon. Any intervening
+authoritative mutation or successful enablement advances the vault preview
+generation and invalidates every outstanding token, even for a disjoint scope;
+this deliberately favors a simple exact review boundary over concurrent
+enablement. Of concurrent executions, only the first matching token can commit.
+Expiration or daemon restart discards tokens without changing the vault, and
+the client must preview again after `audit_preview_stale`.
 
 Membership is **sticky**. A member moved outside the directory remains audited;
 otherwise moving a file out, deleting it, and moving it back would be a purge
@@ -220,7 +232,10 @@ nodes, memberships, versions, chain state, and protected blob reachability
 unless the current audit-aware writer performs the complete authorized
 transaction. Raw legacy trash-empty and GC statements must fail rather than
 cascade or omit protected state. The daemon protocol check remains useful for
-client replacement, but is not the live-store downgrade defense.
+client replacement, but is not the live-store downgrade defense. The
+non-authoritative `trash_parent` locator is the narrow exception: foreign-key
+cleanup may clear it because immutable audit origin metadata, not that locator,
+is the protected fact.
 
 ## Deletion and storage maintenance
 

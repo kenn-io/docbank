@@ -43,13 +43,15 @@ transactionally; it cannot edit bytes in place without invalidating their hash.
     Existing vaults require a one-time bootstrap before the daemon advertises
     editing or audit support. In one daemon-exclusive metadata transaction,
     Docbank creates a stable initial version for every file that still points
-    directly at a blob and assigns the node's `current_version_id`. That record
-    is explicitly a legacy baseline: it preserves the current hash, size, media
+    directly at a blob, assigns the node's `current_version_id`, and creates the
+    stable vault ID used by future audit hashes. That version record is
+    explicitly a legacy baseline: it preserves the current hash, size, media
     type, node revision, and observed bootstrap time, but does not invent an
     original content-introduction time that the old schema never recorded. A
     failure rolls the whole bootstrap back, and no editing or audit endpoint is
-    available until every file has a current version identity. Deterministic
-    JSONL export/import preserves those assigned IDs after the cutover.
+    available until every file has a current version identity and the vault ID
+    is durable. Deterministic JSONL export/import preserves those assigned IDs
+    after the cutover.
 
     Versions will be whole-content snapshots, not diffs. Identical bytes will
     still deduplicate, and a crash before the metadata transaction commits will
