@@ -115,26 +115,29 @@ not yet been reclaimed. This preserves the deletion pipeline's regret window
 inside the snapshot.
 
 !!! info "Planned — audited-history authority"
-    Full audit will extend the deterministic JSONL with scopes, sticky
-    memberships, shared enrollment-baseline batches and digests, mutation
-    records, frozen detached-root origin censuses, canonical unknown-origin
-    records, baseline ancestor-spine witnesses, atomic topology deltas and
-    independently replayable net path-effect commitments, per-scope chain
-    entries/heads, a stable vault ID, both allocator
-    high-water marks, a vault-wide allocation lineage, stable content versions,
-    and authoritative tag/provenance attachments with their referenced records.
+    Full audit will introduce `docbank-metadata-jsonl-v2`; today's v1 remains
+    the pre-audit format. V2 will add scopes, sticky memberships, shared
+    enrollment-baseline batches and digests, mutation records, a complete
+    vault-topology genesis snapshot, canonical unknown-origin records, baseline
+    ancestor-spine witness generations, witness-change lists, atomic topology
+    deltas, independently replayable net path-effect commitments, per-scope
+    chain entries/heads, a stable vault ID, both allocator high-water marks, a
+    vault-wide allocation lineage, stable content versions, and authoritative
+    tag/provenance attachments with their referenced records.
     Every protected historical blob becomes snapshot content. Import,
     verification, and restore must recompute baseline digests from immutable
-    enrollment snapshots, derive every enrollment's exact trash-origin closure,
-    derive every topology delta's net affected member set from the prior
-    replayed projection, reconcile attached metadata, verify
-    later mutations and allocation lineage separately, restore the allocators
-    at the verified lineage tail, and reject an
-    internally missing, malformed, reordered, truncated, or hash-inconsistent
-    stream before publishing the database. Each canonical mutation is bound to
-    exactly one allocation-lineage entry by operation ID and mutation hash;
+    enrollment snapshots, replay the complete vault topology from its genesis,
+    derive every enrollment's exact trash-origin closure, and derive every
+    topology delta's net affected member and witness sets from the prior
+    projections. They reconcile attached metadata, verify later mutations and
+    allocation lineage separately, restore the allocators at the verified
+    lineage tail, and reject an internally missing, malformed, reordered,
+    truncated, or hash-inconsistent stream before publishing the database. Each
+    canonical mutation is bound to exactly one allocation-lineage entry by
+    operation ID and mutation hash;
     every post-audit topology delta is likewise bound by operation ID and delta
-    digest even when it has no scoped audit effect.
+    digest even when it has no scoped audit effect; witness-change counts and
+    digests are bound the same way.
     Snapshot manifests carry an evidence bundle containing the stable vault ID,
     every scope count/head, and allocation-lineage count/head. When independently
     trusted, that manifest or bundle is rollback evidence; a fresh import without

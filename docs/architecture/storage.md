@@ -100,14 +100,16 @@ nodes_fts      -- FTS5 external-content index over live node names
     subtree target, and operation. Every newly acquired membership references
     exactly one batch; existing memberships are never re-baselined. Baselines
     also preserve the minimal ancestor-spine topology needed to derive audited
-    paths, a complete detached-root origin census for deriving the exact adopted
-    closure, and a canonical unknown-origin record for root-scope legacy trash.
+    paths and a canonical unknown-origin record for root-scope legacy trash. A
+    complete vault-topology genesis snapshot plus every later lineage-bound
+    delta provides the independent authority for deriving each adopted closure.
     Later multi-change topology mutations commit one atomic sorted delta and a
     canonical net path-effect set that import derives from the previous replayed
     projection before accepting descendant events. Allocation lineage commits
     every post-audit topology-delta digest, including operations whose derived
-    audit effect is empty, and active ancestor witnesses are retired and
-    re-created deterministically as path dependencies change.
+    audit effect is empty. Active ancestor witnesses are retired and re-created
+    deterministically as path dependencies change, and each sorted witness-change
+    count/digest is committed by both mutation and allocation lineage.
 
 ## Invariants enforced in the schema
 

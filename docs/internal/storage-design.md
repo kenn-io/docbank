@@ -68,19 +68,22 @@ share a blob without sharing document identity.
     scope, normalized top-level target, and operation—not one baseline per
     member. Each new membership references exactly one batch, whose sorted
     member and adopted-record set is replayed atomically. Each batch also
-    preserves deduplicated ancestor-spine topology witnesses and a hash-bound
-    census of the complete detached-root origin graph. Commit and import derive
-    the exact adopted trash closure from that census and compare its members,
-    versions, and attachments with the batch. Root-scope legacy trash with lost
-    ancestry uses an explicit unknown-origin sentinel rather than a guessed
-    parent. Later topology mutations commit one sorted atomic pre/post delta and
-    a net path-effect set with count and digest. Verification derives that set
+    preserves deduplicated ancestor-spine topology witnesses. A vault-wide,
+    hash-bound topology genesis snapshot plus every later lineage delta lets
+    commit and import independently derive the exact adopted trash closure and
+    compare its members, versions, and attachments with the batch. Root-scope
+    legacy trash with lost ancestry uses an explicit unknown-origin sentinel
+    rather than a guessed parent. Later topology mutations commit one sorted
+    atomic pre/post delta and a net path-effect set with count and digest.
+    Verification derives that set
     from the previous replayed topology before applying the delta, so nested
     batch moves, a writer's claim, or matching final paths cannot conceal an
     omitted descendant event. Every post-audit topology delta is also bound into
     allocation lineage even when it has no scoped effect. Active witness
     generations retire when no audited path depends on them and are recreated
     from current state on later reuse; historical generations remain immutable.
+    Sorted witness-change counts/digests are committed into both canonical
+    mutations and allocation lineage.
     Shared tag or ingest records are copied identically into every baseline batch
     that references them, with inclusion evaluated against pre-operation state.
     Audited trash-origin coordinates are immutable metadata rather than a
@@ -327,6 +330,11 @@ restore coordinates, and stable external node references survive a roundtrip.
 The header carries SQLite's node `AUTOINCREMENT` high-water mark separately
 from the live rows; import restores it only after proving it is at least the
 maximum surviving node ID.
+
+!!! info "Planned — audited metadata v2"
+    Full audit will advance this boundary to `docbank-metadata` version 2 and
+    `docbank-metadata-jsonl-v2`; existing version 1 remains the pre-audit format
+    and cannot contain audit records.
 
 The stream excludes `nodes_fts`, `blob_packs`, and `blob_pack_index`. FTS is a
 derived index rebuilt by the node insert triggers. Pack tables describe one
