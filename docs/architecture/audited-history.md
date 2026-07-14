@@ -178,6 +178,14 @@ enablement. Of concurrent executions, only the first matching token can commit.
 Expiration or daemon restart discards tokens without changing the vault, and
 the client must preview again after `audit_preview_stale`.
 
+The wire token is the unpadded base64url encoding of a cryptographically random
+32-byte secret. Its stored digest is SHA-256 over the registered CAE2
+`preview_token` record containing that secret and the exact scope, target,
+vault ID, baseline digest, preview generation, operation ID, and lineage ID. Token
+validation decodes the secret, reconstructs that record from server-held state,
+and compares the digest; the raw secret never enters `audit_pending`, JSONL, or
+a backup.
+
 For first activation, preview preallocates the random operation and lineage IDs,
 operation sequence, event timestamp, and other non-derivable inputs used by its
 baseline digest and keeps them in the server-side token state. Expiration before
@@ -696,11 +704,16 @@ Event payload presence is exact:
 | `provenance_supersede` | `provenance` / `provenance` | attachment kind/identity present |
 
 Fields not required by the selected row are absent, except that `agent_label`
-may independently be present or absent for every event. `event_id`, `operation_id`,
+and both current-version fields follow the node rules below for every event.
+`event_id`, `operation_id`,
 `scope_id`, `node_id`, `event_kind`, `event_ordinal`, `recorded_at`,
 `prior_node_revision`, `resulting_node_revision`, and `origin` are always
-present; both current-version fields independently use absent for a directory.
-`origin` is one of
+present. For each pre/post side where the node is a file, its corresponding
+current-version field is present and names that side's head; for a directory or
+a side where the node does not yet exist, it is absent. Node creation uses prior
+revision zero and an absent prior version. Enrollment events still describe the
+vault-wide operation's actual pre/post node state even though a newly acquired
+scope installs only the post-operation baseline. `origin` is one of
 the exact ASCII tokens `api`, `cli`, `import`, or `job`; `agent_label` is
 unverified caller text. The tag “matching record” is `tag_definition` for
 define/rename/delete and `tag_assignment` for assign/unassign. Import rejects
@@ -715,18 +728,26 @@ rename requires the same tag ID in pre and post and uses that ID. A
 `post.identity`. A `provenance_add` reference likewise equals `post.identity`.
 Import verifies these relationships before event sorting or hashing.
 
-`member_state_changes` is one operation-level simultaneous list, not one entry
-per event. Replay requires every `prior_*` value to match the current member
-projection, validates all events for the operation against the same pre/post
-change, then applies each node's change once. Every event for that node in the
-operation carries those same prior/result values. A direct node-row mutation
+`member_state_changes` is one operation-level simultaneous list against a
+single vault-wide audited-member projection, not one entry per event or scope.
+Replay freezes the pre-operation projection and scope set, requires every
+`prior_*` value for an already audited node to match, and validates all events
+for the operation against the same pre/post change. It then applies each such
+node's state change once. Every event for that node in a pre-existing scope
+carries those same prior/result values. A direct node-row mutation
 advances the revision by exactly one; a derived descendant-path event or shared
 tag-definition fan-out leaves it unchanged. Current-version identity changes
 only for content create/replace/revert and must resolve to the corresponding
 post content-version record. If revision and current version are unchanged, no
 state-change entry is emitted and the event carries equal prior/result values.
-Replay and import finally require the projected revision and current-version ID
-of every audited member to equal the current node table.
+
+Only after those changes validate does replay install each newly acquired
+scope's post-operation baseline. A node already audited in one scope therefore
+advances once in the vault projection before another scope adopts the resulting
+state; the new scope gets no transition event. A node first audited by several
+baselines in the same operation is installed once from their required-identical
+post member state. Replay and import finally require the projected revision and
+current-version ID of every audited member to equal the current node table.
 
 Hashed top-level record schemas are:
 
@@ -744,7 +765,8 @@ Hashed top-level record schemas are:
 | `scope_chain_entry` | `vault_id:uuid`, `scope_id:uuid`, `entry_count:u64`, `previous_head:?digest`, `mutation_hash:digest` |
 | `allocation_genesis` | `vault_id:uuid`, `lineage_id:uuid`, `node_id_high_water:u64`, `operation_sequence_high_water:u64`, `topology_count:u64`, `topology_digest:digest`, `attached_metadata_count:u64`, `attached_metadata_digest:digest` |
 | `allocation_entry` | `vault_id:uuid`, `lineage_id:uuid`, `previous_head:digest`, `operation_sequence:u64`, `operation_id:uuid`, `allocated_node_ids:[u64]`, `node_id_high_water:u64`, `operation_sequence_high_water:u64`, `has_audited_mutation:bool`, `mutation_hash:?digest`, `has_topology_change:bool`, `topology_delta:?digest`, `has_witness_change:bool`, `witness_change_count:u64`, `witness_change_digest:?digest`, `has_attached_metadata_change:bool`, `attached_metadata_change_count:u64`, `attached_metadata_change_digest:?digest` |
-| `audit_pending` | `scope_id:uuid`, `target_node_id:u64`, `preview_token_digest:digest`, `preview_generation:u64`, `baseline_digest:digest`, `operation_id:uuid`, `lineage_id:uuid`, `operation_sequence:u64`, `grouping_id:?uuid`, `recorded_at:timestamp`, `origin:text`, `agent_label:?text`, `cause:text`, `node_id_high_water:u64`, `operation_sequence_high_water:u64`, `topology_inventory_digest:digest`, `attached_metadata_inventory_digest:digest` |
+| `preview_token` | `secret:bytes`, `vault_id:uuid`, `scope_id:uuid`, `target_node_id:u64`, `baseline_digest:digest`, `preview_generation:u64`, `operation_id:uuid`, `lineage_id:uuid` |
+| `audit_pending` | `vault_id:uuid`, `scope_id:uuid`, `target_node_id:u64`, `preview_token_digest:digest`, `preview_generation:u64`, `baseline_digest:digest`, `operation_id:uuid`, `lineage_id:uuid`, `operation_sequence:u64`, `grouping_id:?uuid`, `recorded_at:timestamp`, `origin:text`, `agent_label:?text`, `cause:text`, `node_id_high_water:u64`, `operation_sequence_high_water:u64`, `topology_genesis_digest:digest`, `attached_metadata_genesis_digest:digest` |
 
 The four `has_*` booleans are the normative allocation-entry no-change markers.
 `false` requires the paired digest absent and count zero where a count exists;
@@ -793,7 +815,7 @@ list or either chain binding.
 The digest of a baseline, event, topology delta, net path-effect list,
 witness-change list, attached-metadata delta, canonical mutation, scope-chain
 entry, allocation genesis/entry, topology genesis, attached-metadata genesis, or
-audit-pending record
+preview-token/audit-pending record
 is `SHA-256(CAE2(record_kind, fields))` using its distinct lowercase kind token.
 A scope-chain entry includes the stable vault and scope IDs, entry count,
 optional previous head, and mutation digest. An allocation entry includes every
@@ -902,12 +924,15 @@ containing the accepted scope and target node IDs, preview-token digest and
 generation, baseline digest, preallocated operation and lineage IDs, operation
 sequence, optional grouping ID, event timestamp, origin and optional agent
 label, fixed enrollment cause, both allocator high-water marks, and the accepted
-topology/attached-metadata inventory digests. These are every nondeterministic or
-externally supplied input to genesis, baseline, events, and the first mutation;
+topology- and attached-metadata-genesis digests. Each must equal SHA-256 over the
+exact registered CAE2 genesis record that the transaction will install, using
+the pending vault/lineage identity and accepted sorted inventory. These are
+every nondeterministic or externally supplied input to genesis, baseline,
+events, and the first mutation;
 the pending record carries the SHA-256 digest of its registered CAE2
-`audit_pending` form. This happens before
-beginning or committing the SQLite enrollment
-transaction, so every supported pre-audit v2 binary fails store open before any
+`audit_pending` form. This happens before beginning or committing the SQLite
+enrollment transaction, so every supported pre-audit v2 binary fails store open
+before any
 audit authority exists. Only an audit-aware recovery path can open the pending
 generation.
 
