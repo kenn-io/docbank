@@ -855,8 +855,10 @@ absent `origin`. A current trash root has state `trash`, an operational
 `parent_id` equal to the vault root, a valid non-root name, and exactly one
 origin record. That origin's `node_id` must equal the enclosing
 `topology_node.node_id`. A `known_origin` has a different positive `parent_id`
-and a valid non-root `name`; its replayed last-known parent graph must be acyclic
-and terminate at the vault root. An `unknown_origin` has the registered absent
+and a valid non-root `name`; its parent ID must resolve in the replayed
+last-known topology to immutable `node_kind: dir`, whether that parent is live,
+trashed, or tombstoned. The resulting parent graph must be acyclic and terminate
+at the vault root. An `unknown_origin` has the registered absent
 parent and an absent or valid non-root retained name. The known name and any
 present unknown retained name equal the enclosing trash root's topology name
 byte-for-byte. Neither form may appear on the vault root, a live node, or a
