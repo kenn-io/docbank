@@ -16,6 +16,22 @@ Instructions for autonomous coding agents working in this repository.
   daemon, lock, backup, and restore suite on amd64 and arm64; do not replace
   real platform behavior with compile-only stubs.
 
+## Private Data Boundary
+
+- Never put private developer information in tracked files. Tests, fixtures,
+  golden files, examples, and documentation must use synthetic data—not files,
+  filenames, directory structure, document contents, credentials, session
+  transcripts, hashes, or metadata copied from a developer's home directory or
+  personal corpus.
+- Access a real personal corpus only with explicit authorization for that
+  validation. Keep the source read-only, work in an owner-private isolated
+  directory outside the repository, and emit only aggregate evidence unless
+  the user explicitly requests otherwise.
+- Before handing off a real-corpus validation, stop its processes and remove
+  every temporary vault, backup, restore, binary, report, mismatch list, log,
+  and cache created for the run—even when the validation fails. Confirm the
+  cleanup rather than assuming a deferred cleanup ran.
+
 ## Git Rules
 
 1. Commit every turn that changes tracked files; never amend.
