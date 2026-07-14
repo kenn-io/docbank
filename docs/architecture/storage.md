@@ -93,9 +93,10 @@ nodes_fts      -- FTS5 external-content index over live node names
     update or deletion when an audited member roots them.
     Tag IDs likewise become canonical non-reusable UUIDv4 values; tag names may
     change or be recreated without retargeting historical assignments. Once any
-    scope exists, node insertion and parent/name/trash changes require a guarded
-    audit transaction whose precomputed membership, baseline, descendant-event,
-    lineage, and scope-head effects must match exactly before commit.
+    scope exists, node insertion/deletion and parent/name/trash changes require a
+    guarded audit transaction whose precomputed membership, baseline,
+    descendant-event, lineage, and scope-head effects must match exactly before
+    commit. Direct and cascading deletion must publish exact topology tombstones.
     Enrollment storage uses one shared baseline batch per scope, normalized
     subtree target, and operation. Every newly acquired membership references
     exactly one batch; existing memberships are never re-baselined. Baselines

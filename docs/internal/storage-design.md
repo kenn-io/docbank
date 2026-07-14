@@ -58,8 +58,9 @@ share a blob without sharing document identity.
     after sorting, and separately sorts every `(scope, target, baseline digest)`
     binding before hashing.
     Tag identities are non-reusable UUIDv4 values independent of mutable names.
-    Node insertion and topology changes require a transaction-scoped audit
-    context even when the directly touched node is unaudited. The mutation path
+    Node insertion, deletion (including cascades), and topology changes require
+    a transaction-scoped audit context even when the directly touched node is
+    unaudited. The mutation path
     precomputes inherited memberships and path-affecting descendant events, then
     refuses commit unless the resulting baselines, events, lineage, and scope
     heads exactly match that closure; database guards reject writes without the

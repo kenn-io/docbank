@@ -228,8 +228,11 @@ retirement or re-witnessing, and final-state reconciliation compares current
 nodes only with active generations; historical generations are checked at
 their original replay boundary rather than treated as stale current state.
 
-Every operation that creates or retires witnesses commits a canonical
-witness-change list sorted by
+Witness generations introduced inside an enrollment baseline are bound by that
+batch's digest and canonical baseline binding; they do not also appear in a
+witness-change list. Import installs them only after recomputing and accepting
+the batch. Every other operation that creates or retires witnesses commits a
+canonical witness-change list sorted by
 `(node_id, witness_generation_operation_id, action_code)`. Creation records
 also commit the canonical witnessed-state digest. The canonical mutation and
 allocation-lineage entry both commit the list's count and digest, and import
@@ -241,11 +244,11 @@ changing both chains.
 
 ### Guarded mutation closure
 
-Once audit is enabled, inserting a node or changing any node's parent, name, or
-trash state requires a guarded audit transaction even when the directly changed
-node is not yet a member. The transaction reads the relevant pre-state under the
-single-writer mutation gate and materializes an expected-effect set before it
-changes topology:
+Once audit is enabled, inserting or deleting a node or changing any node's
+parent, name, or trash state requires a guarded audit transaction even when the
+directly changed node is not yet a member. The transaction reads the relevant
+pre-state under the single-writer mutation gate and materializes an
+expected-effect set before it changes topology:
 
 - every node in an inserted or reparented subtree must retain its existing
   sticky memberships and, evaluated top-down, acquire the union of scopes
@@ -280,6 +283,13 @@ Direct SQL, a helper that forgets inherited membership, and an
 unaudited-ancestor rename that omits descendant events therefore fail rather
 than creating a purge or history escape.
 
+The same guards cover direct and cascading node deletion. Hard-deleting an
+unaudited trash root after audit activation is allowed only when the protected
+closure is empty and the transaction records every deleted subtree node as a
+tombstone in its atomic topology delta and allocation-lineage entry. An audited
+member or missing tombstone aborts the whole deletion. `trash empty` cannot use
+an unguarded legacy `DELETE` path for otherwise eligible trash.
+
 Verification and JSONL import independently enforce the same closure. Every
 live parent/child edge must give the child at least the parent's memberships.
 Import starts from the independently hash-bound vault-wide topology genesis and
@@ -300,8 +310,8 @@ the whole delta atomically. A missing event therefore remains detectable even
 when another change in the same batch or a later mutation happens to restore or
 otherwise mask the same final path.
 
-Every node insertion or deletion and every parent, name, trash-state, or
-trash-origin mutation after audit activation has a topology-delta record in its
+Every node insertion or deletion and every parent, name, or trash-state mutation
+after audit activation has a topology-delta record in its
 allocation-lineage entry, even when the derived membership and net path-effect
 sets are empty. Import replays that delta against the vault-wide topology and
 active witness projections before accepting either a canonical mutation hash or
@@ -500,10 +510,13 @@ JSONL carries every genesis record, and import recomputes the count and digest
 before deriving the first enrollment. This vault-wide authority—not a batch's
 claimed member list—establishes which detached roots existed at the cutover.
 For every detached root, genesis freezes its available origin edge as
-last-known topology. A later operational locator clear is a replayed delta and
-does not erase that historical edge, so a still-retained root can be associated
-with a scope enrolled later; an origin already absent at genesis uses the
-unknown-origin representation.
+last-known topology. A later operational `trash_parent` locator clear remains
+non-authoritative: it creates no delta and does not alter the replay projection.
+The frozen edge therefore survives for closure derivation, so a still-retained
+root can be associated with a scope enrolled later; an origin already absent at
+genesis uses the unknown-origin representation. A later trash transition may
+establish a new last-known origin as part of its authoritative trash-state
+delta, independently of the repairable locator.
 
 That same transaction then appends the enrollment as the first ordinary lineage
 entry. Copies that enable audit independently therefore start different
