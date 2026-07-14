@@ -678,13 +678,23 @@ Event payload presence is exact:
 | `provenance_add` | absent / `provenance` | attachment kind/identity present |
 | `provenance_supersede` | `provenance` / `provenance` | attachment kind/identity present |
 
-Fields not required by the selected row are absent. `event_id`, `operation_id`,
+Fields not required by the selected row are absent, except that `agent_label`
+may independently be present or absent for every event. `event_id`, `operation_id`,
 `scope_id`, `node_id`, `event_kind`, `event_ordinal`, `recorded_at`,
 `resulting_node_revision`, and `origin` are always present. `origin` is one of
 the exact ASCII tokens `api`, `cli`, `import`, or `job`; `agent_label` is
 unverified caller text. The tag “matching record” is `tag_definition` for
 define/rename/delete and `tag_assignment` for assign/unassign. Import rejects
 any other presence pattern before hashing.
+
+An attachment identity must equal the identity derived from its event payload.
+Define/assign/add use the post record; delete/unassign use the pre record; tag
+rename requires the same tag ID in pre and post and uses that ID. A
+`provenance_supersede` event uses the **post/new** fact's
+`provenance_identity_ref`; pre and post must name the same node,
+`post.supersedes` must equal `pre.identity`, and the reference must equal
+`post.identity`. A `provenance_add` reference likewise equals `post.identity`.
+Import verifies these relationships before event sorting or hashing.
 
 Hashed top-level record schemas are:
 
