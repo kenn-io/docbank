@@ -268,14 +268,22 @@ Historical witness generations and deltas are immutable, while the **active
 witness projection** is derived. A witness generation is keyed by node ID and
 the operation that introduced it. It is active only while at least one audited
 member's current path traverses that generation. A delta that removes the last
-such dependency retires the active pointer without deleting history. Later
-changes to the retired node still appear as topology deltas in allocation
+such dependency retires the active pointer without deleting history. If any
+hashed `topology_node` field changes while the dependency remains—including a
+`modified_at` touch that does not change a path—the same operation retires the
+old generation and creates a replacement from the exact post-delta state. A
+single operation may therefore contain a retire/create pair for one node. Every
+scope with a member still depending on that witness commits the canonical
+mutation even when the net path-effect list is empty.
+
+Later changes to a retired node still appear as topology deltas in allocation
 lineage but require no scoped path event. If an audited path depends on that
 node again, the guarded operation records a new witness generation for its
-current state before publication. Replay deterministically performs the same
-retirement or re-witnessing, and final-state reconciliation compares current
-nodes only with active generations; historical generations are checked at
-their original replay boundary rather than treated as stale current state.
+current state before publication. Replay deterministically derives retire-only,
+create-only, rotation, or no-change from the pre/post dependency and node-state
+projections. Final-state reconciliation compares current nodes only with active
+generations; historical generations are checked at their original replay
+boundary rather than treated as stale current state.
 
 Witness generations introduced inside an enrollment baseline are bound by that
 batch's digest and canonical baseline binding; they do not also appear in a
@@ -292,6 +300,13 @@ binding. Metadata format version 2 freezes the action codes as the lowercase
 ASCII tokens `create` and `retire`; unknown codes are rejected. A later witness
 generation can therefore neither be altered nor inserted after the fact without
 changing both chains.
+
+For a rotation, `retire` names the old generation's introducing operation and
+has no state digest; `create` names the current operation as the new generation
+and hashes the replay-derived post-delta `topology_node`. The two records have
+distinct canonical sort keys. Omitting either half, retaining two active
+generations for the same node, or rotating when the post-state is byte-identical
+is invalid.
 
 Authoritative attached metadata has the same replay boundary. Enabling the
 first scope records a vault-wide, canonically sorted genesis projection of every
@@ -381,8 +396,9 @@ changes authoritative node state:
   operation receives only its post-operation baseline binding; a newly created
   node also requires the exact baseline-bound creation events described above;
 - the canonical operation-level topology delta, any newly required
-  ancestor-spine witnesses, and the sorted net path-effect count and digest must
-  describe exactly that same descendant-event set; and
+  ancestor-spine witness creations, retirements, or state rotations, and the
+  sorted net path-effect count and digest must describe exactly that same
+  descendant-event set and active witness projection; and
 - the canonical mutation, allocation-lineage entry, affected scope entries, and
   resulting count/heads must cover exactly those expected effects.
 
@@ -866,8 +882,10 @@ A witness `state_digest` is the SHA-256 digest of the registered
 A baseline witness must match the unique topology node in that same baseline.
 A later `create` witness change must match the node's replay-derived post-delta
 topology state; `retire` requires an absent `state_digest` and an existing active
-generation. Import recomputes these relationships before accepting the witness
-list or either chain binding.
+generation. When that node remains a dependency and its state changes, the same
+list requires the matching retire/create rotation described above. Import
+recomputes these relationships before accepting the witness list or either chain
+binding.
 
 The digest of a baseline, event, topology delta, net path-effect list,
 witness-change list, attached-metadata delta, canonical mutation, scope-chain
