@@ -598,6 +598,25 @@ UUID verbatim and import validates its canonical form and uniqueness. A stale
 reference to a pruned version therefore becomes not-found; it cannot silently
 retarget a later version after export/import.
 
+A metadata transaction may create at most one content version for a given node.
+Every native version records that transaction's immutable operation ID, and
+`(node_id, introduced_operation_id)` is unique. For a node protected in the
+pre- or post-operation scope projection, that version has exactly one canonical
+content transition whose event fans out identically under the membership rules
+above: pre-protected scopes receive it, and scopes inherited in the same
+operation receive it only for creation. Every copy has the same event kind,
+pre/post version IDs, and optional source version. Creation uses
+`content_create`; an existing-node update without a selected source uses
+`content_replace`; and `content_revert` is valid only when the caller selected
+the verified non-current source version. A second content touch, a second
+native version for the node/operation, mixed replace/revert kinds across scopes,
+or a new audited head without its complete fan-out aborts the transaction.
+
+A wholly unaudited node still records the introducing operation ID on its native
+version but emits no scoped event; this preserves the stated boundary that
+allocation lineage does not retain unaudited content. Later enrollment adopts
+that complete version record in its baseline.
+
 Blob deduplication remains valid. Two versions or nodes may reference the same
 SHA-256 object, but they remain distinct historical facts. Re-submitting bytes
 that leave all authoritative state unchanged is a no-op, not a fabricated
@@ -694,7 +713,7 @@ Nested record schemas are:
 | `unknown_origin` | `node_id:u64`, `parent_id:?u64` (always absent), `name:?bytes` |
 | `known_origin` | `node_id:u64`, `parent_id:u64`, `name:bytes` |
 | `topology_node` | `node_id:u64`, `parent_id:?u64`, `name:bytes`, `node_kind:text`, `state:state`, `origin:?record`, `created_at:timestamp`, `modified_at:timestamp`, `trashed_at:?timestamp` |
-| `content_version` | `version_id:uuid`, `node_id:u64`, `blob_hash:digest`, `size:u64`, `media_type:?text`, `recorded_at:timestamp`, `node_revision:?u64`, `version_origin:text` |
+| `content_version` | `version_id:uuid`, `node_id:u64`, `blob_hash:digest`, `size:u64`, `media_type:?text`, `recorded_at:timestamp`, `node_revision:?u64`, `version_origin:text`, `introduced_operation_id:?uuid` |
 | `tag_definition` | `tag_id:uuid`, `name:text` |
 | `tag_assignment` | `tag_id:uuid`, `node_id:u64` |
 | `ingest` | `ingest_id:uuid`, `started_at:timestamp`, `source_kind:text`, `source_desc:text` |
@@ -729,11 +748,13 @@ selected by `record_kind`; event attachment identity uses the same matching
 record. No other identity record is valid.
 
 `content_version.version_origin` is one of the exact ASCII tokens `native` or
-`legacy_v1`. A native record requires `node_revision` present. Only a
-`legacy_v1` record produced by the metadata-v2 bootstrap may omit it; the
-bootstrap's version for a node's then-current content is also `legacy_v1` but
-retains the known revision. Import rejects an absent native revision and every
-unknown origin token before hashing or installing version authority.
+`legacy_v1`. A native record requires both `node_revision` and
+`introduced_operation_id` present. Only a `legacy_v1` record produced by the
+metadata-v2 bootstrap may omit them; every legacy record requires
+`introduced_operation_id` absent, while the bootstrap's version for a node's
+then-current content is also `legacy_v1` but retains its known revision. Import
+rejects invalid presence, a duplicate `(node_id, introduced_operation_id)`, and
+every unknown origin token before hashing or installing version authority.
 
 Every `topology_node` carries `node_kind` as one of the exact ASCII tokens `file`
 or `dir`, plus canonical UTC `created_at` and `modified_at`. Kind and creation
@@ -788,6 +809,15 @@ fields, while the post version has a distinct newly allocated ID and the
 operation's resulting revision. Replay and import verify that relationship
 before event sorting or hashing. Every other event kind requires
 `source_version_id` absent.
+
+For each `(operation_id, node_id)`, content events must have exactly one of the
+three content kinds. Every scoped copy must carry the same kind, pre/post version
+records, source-version ID, node revisions/current heads, recorded time, origin,
+and agent label; only `scope_id`, `event_id`, and the canonically derived
+`event_ordinal` vary. The post record's `introduced_operation_id` must equal the
+event operation ID. The post record must be the one new native version and the
+node's resulting current head. Import derives the required scope fan-out from
+pre/post membership and rejects a missing, extra, or mixed-kind event.
 
 An attachment identity must equal the identity derived from its event payload.
 Define/assign/add use the post record; delete/unassign use the pre record; tag

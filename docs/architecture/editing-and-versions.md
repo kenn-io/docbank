@@ -48,6 +48,12 @@ transactionally; it cannot edit bytes in place without invalidating their hash.
     for reuse; deterministic JSONL preserves each retained UUID verbatim and
     rejects malformed or duplicate values during import.
 
+    A metadata transaction may create at most one version for a node. Every
+    native version records the immutable operation ID that introduced it, with a
+    unique `(node_id, introduced_operation_id)` constraint. This binds one new
+    head to one create, replace, or revert intent even when audited event fan-out
+    repeats that transition across overlapping scopes.
+
     Existing vaults require a one-time bootstrap before the daemon advertises
     editing or audit support. In one daemon-exclusive metadata transaction,
     Docbank creates a stable initial version for every file that still points
@@ -72,8 +78,9 @@ transactionally; it cannot edit bytes in place without invalidating their hash.
     the observed bootstrap time, but does not invent an original
     content-introduction time that the old schema never recorded. Every version
     created natively by v2 carries `version_origin: native` and must record its
-    introducing node revision. Import rejects an absent revision unless the
-    record is marked `legacy_v1`, and rejects any unknown origin token.
+    introducing node revision and operation ID. Migrated `legacy_v1` records
+    require the operation ID absent because v1 never recorded it. Import rejects
+    invalid revision/operation-ID presence or any unknown origin token.
 
     Bootstrap also assigns canonical, non-reusable UUIDv4 identities to every
     retained legacy tag and ingest record; any existing integer IDs remain
