@@ -132,7 +132,9 @@ inside the snapshot.
     at the verified lineage tail, and reject an
     internally missing, malformed, reordered, truncated, or hash-inconsistent
     stream before publishing the database. Each canonical mutation is bound to
-    exactly one allocation-lineage entry by operation ID and mutation hash.
+    exactly one allocation-lineage entry by operation ID and mutation hash;
+    every post-audit topology delta is likewise bound by operation ID and delta
+    digest even when it has no scoped audit effect.
     Snapshot manifests carry an evidence bundle containing the stable vault ID,
     every scope count/head, and allocation-lineage count/head. When independently
     trusted, that manifest or bundle is rollback evidence; a fresh import without

@@ -50,11 +50,13 @@ share a blob without sharing document identity.
     records. Import validates and replays that referential closure; derived FTS,
     extraction-cache, and job rows remain outside audit hashes. Ingest and
     provenance rows are immutable; audited references are database-guarded
-    retention roots, corrections append facts rather than rewriting them, and
-    inserting an identical canonical provenance fact is an idempotent no-op.
+    retention roots. Corrections append an immutable superseding fact, replay
+    retains the old fact and derives the active leaves, and inserting an
+    identical canonical provenance fact is an idempotent no-op.
     Canonical mutation ordering uses the full node/kind/scope/target/attachment
-    tuple, assigns ordinals only after sorting, and separately sorts every
-    `(scope, target, baseline digest)` binding before hashing.
+    tuple with format-versioned stable string kind codes, assigns ordinals only
+    after sorting, and separately sorts every `(scope, target, baseline digest)`
+    binding before hashing.
     Tag identities are non-reusable UUIDv4 values independent of mutable names.
     Node insertion and topology changes require a transaction-scoped audit
     context even when the directly touched node is unaudited. The mutation path
@@ -75,7 +77,12 @@ share a blob without sharing document identity.
     a net path-effect set with count and digest. Verification derives that set
     from the previous replayed topology before applying the delta, so nested
     batch moves, a writer's claim, or matching final paths cannot conceal an
-    omitted descendant event.
+    omitted descendant event. Every post-audit topology delta is also bound into
+    allocation lineage even when it has no scoped effect. Active witness
+    generations retire when no audited path depends on them and are recreated
+    from current state on later reuse; historical generations remain immutable.
+    Shared tag or ingest records are copied identically into every baseline batch
+    that references them, with inclusion evaluated against pre-operation state.
     Audited trash-origin coordinates are immutable metadata rather than a
     nullable live foreign-key relationship; an unaudited origin can disappear
     without mutating the audited node's chain state. The nullable `trash_parent`

@@ -148,7 +148,9 @@ progress so stdout contains one typed report.
     internally missing, reordered, truncated, or hash-invalid authority rather
     than restoring only the current tree.
     Canonical mutations and allocation entries will be cross-bound by operation
-    ID and mutation hash. Each snapshot manifest will carry the stable vault ID,
+    ID and mutation hash. Every post-audit topology delta will also be bound to
+    its allocation entry by operation ID and delta digest, including deltas with
+    no scoped effect. Each snapshot manifest will carry the stable vault ID,
     every scope count/head, and allocation-lineage count/head as one evidence
     bundle. Rollback detection requires that complete bundle from a trusted
     prior snapshot or external record; a fresh import cannot identify a

@@ -104,7 +104,10 @@ nodes_fts      -- FTS5 external-content index over live node names
     closure, and a canonical unknown-origin record for root-scope legacy trash.
     Later multi-change topology mutations commit one atomic sorted delta and a
     canonical net path-effect set that import derives from the previous replayed
-    projection before accepting descendant events.
+    projection before accepting descendant events. Allocation lineage commits
+    every post-audit topology-delta digest, including operations whose derived
+    audit effect is empty, and active ancestor witnesses are retired and
+    re-created deterministically as path dependencies change.
 
 ## Invariants enforced in the schema
 

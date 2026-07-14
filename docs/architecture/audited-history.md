@@ -83,6 +83,14 @@ immutable reference to that shared batch. A node already in the scope is not
 included or re-baselined; it receives the ordinary transition event instead.
 No membership can appear in two batches for the same scope and operation.
 
+Attachment inclusion is evaluated against the scope's **pre-operation** state,
+never against batches already assembled in the same operation. Each batch
+independently includes the complete tag definition and ingest/provenance record
+snapshot referenced by its newly adopted members, even when another batch in
+that operation includes the same stable record. Replay deduplicates identical
+stable identities and rejects differing copies. Batch construction order
+therefore cannot change a digest or decide which batch owns shared metadata.
+
 The pre-feature metadata bootstrap creates a stable vault ID before any audit
 preview can run. Baseline and mutation hashes include that ID as domain
 separation, and deterministic JSONL plus backup manifests preserve it. A
@@ -160,10 +168,10 @@ transaction as that move or restore. Each batch applies the same origin-ancestry
 closure as initial enrollment: it adopts the live subtree, all still-retained
 versions, and every detached trash root whose recorded origin ancestry reaches
 the newly enrolled subtree, including those roots' descendants, versions, and
-authoritative attachments not already protected by that scope. Each batch's
-enrollment binding commits its canonical digest. New children inherit every
-audit scope that protects their
-parent. That includes children created beneath a sticky member directory after
+authoritative attachments not already protected in that scope's pre-operation
+state. Each batch's enrollment binding commits its canonical digest. New
+children inherit every audit scope that protects their parent. That includes
+children created beneath a sticky member directory after
 it has moved outside the scope's current path: the protected directory continues
 carrying the promise. Nested and overlapping scopes are allowed, and membership
 is additive rather than replacing an earlier promise.
@@ -205,8 +213,20 @@ new ancestor-spine records needed by replay. The canonical net path-effect list
 contains `(scope_id, member_node_id, old_path, new_path)` and is sorted by those
 fields' canonical byte encodings. The mutation commits the topology delta and
 the effect list's count and digest; each net event commits that same delta
-digest. Historical witnesses and deltas remain immutable even after the current
-tree no longer depends on them.
+digest.
+
+Historical witness generations and deltas are immutable, while the **active
+witness projection** is derived. A witness generation is keyed by node ID and
+the operation that introduced it. It is active only while at least one audited
+member's current path traverses that generation. A delta that removes the last
+such dependency retires the active pointer without deleting history. Later
+changes to the retired node still appear as topology deltas in allocation
+lineage but require no scoped path event. If an audited path depends on that
+node again, the guarded operation records a new witness generation for its
+current state before publication. Replay deterministically performs the same
+retirement or re-witnessing, and final-state reconciliation compares current
+nodes only with active generations; historical generations are checked at
+their original replay boundary rather than treated as stale current state.
 
 ### Guarded mutation closure
 
@@ -230,7 +250,9 @@ changes topology:
   exactly the remaining newly adopted nodes, every still-retained version, and
   every authoritative attachment for those nodes;
 - every audited descendant whose derived path changes through an ancestor must
-  have exactly one old-path/new-path event for each protecting scope; and
+  have exactly one old-path/new-path event for each scope that protected it in
+  the pre-operation state. A scope inherited in this operation receives only
+  its post-operation baseline binding;
 - the canonical operation-level topology delta, any newly required
   ancestor-spine witnesses, and the sorted net path-effect count and digest must
   describe exactly that same descendant-event set; and
@@ -266,6 +288,15 @@ the whole delta atomically. A missing event therefore remains detectable even
 when another change in the same batch or a later mutation happens to restore or
 otherwise mask the same final path.
 
+Every node insertion and every parent, name, or trash-state mutation after audit
+activation has a topology-delta record in its allocation-lineage entry, even
+when the derived membership and net path-effect sets are empty. Import replays
+that delta against the active witness projection before accepting either a
+canonical mutation hash or the no-audited-mutation marker. A lineage entry may
+claim no audited mutation only when replay derives no membership, baseline,
+attachment, or scoped-event effect; omitting both a topology delta and its
+required audit effects is therefore not a valid encoding of an ancestor change.
+
 An external application or pseudo-folder uses the same model: an integration
 projects its collection onto a stable Docbank directory/scope reference. The
 core schema remains application-neutral and never contains product-specific
@@ -278,7 +309,8 @@ The audit stream records successful authoritative mutations:
 - initial creation or ingest;
 - content replacement and reversion;
 - rename and move, including old and new parent/name coordinates;
-- tag-definition and assignment changes, plus provenance additions;
+- tag-definition and assignment changes, plus provenance additions and
+  supersessions;
 - trash and restore; and
 - audit enrollment and later inherited membership.
 
@@ -317,10 +349,19 @@ reference becomes not-found rather than silently naming a later tag. Import
 rejects non-canonical or duplicate tag UUIDs.
 
 Ingest and provenance records are different: their fields are immutable after
-insertion. Correcting provenance appends a new provenance fact, backed by a new
-ingest record when its source description changes; it never updates the old row
-in place. Re-adding a byte-for-byte identical canonical provenance fact is an
-idempotent no-op, not a duplicate row or event. Adding a new fact to an audited
+insertion. Each provenance fact has a stable identity derived from its canonical
+immutable fields and may carry an immutable `supersedes` identity. A correction
+appends a new fact that supersedes the currently active fact for the same node,
+backed by a new ingest record when its source description changes; it never
+updates or erases the old row. The superseded fact remains visible in history,
+while the current provenance projection selects the unsuperseded leaves.
+Constraints require the target to exist on the same node, permit at most one
+direct successor, and reject cycles. Replay applies the supersession edge, and
+baseline hashing plus import preserve and validate the full graph and its active
+projection.
+
+Re-adding a byte-for-byte identical canonical provenance fact is an idempotent
+no-op, not a duplicate row or event. Adding or superseding a fact on an audited
 member emits an event in the insertion transaction. Database constraints and
 audit write guards reject update or deletion of provenance attached to an
 audited member and reject deletion of any ingest record it references. Those
@@ -392,13 +433,23 @@ transaction. It receives one monotonically increasing vault-wide
 operation-sequence number and one cryptographically random operation ID; neither
 identity is shared with another transaction. Before hashing, its events are
 sorted by the complete tuple
-`(node_id, event_kind_ordinal, scope_id, target_node_id,
-attachment_kind_ordinal, attachment_identity)`. IDs use their canonical byte
+`(node_id, event_kind_code, scope_id, target_node_id,
+attachment_kind_code, attachment_identity)`. IDs use their canonical byte
 encoding, and an absent field uses a fixed empty sentinel that sorts before a
 present value. A provenance fact's attachment identity is the digest of its
 canonical immutable fields; tag attachments use their stable tag ID. Emitting
 two events with the same complete key is an invariant violation rather than an
 invitation to preserve discovery order.
+
+Kind codes are stable lowercase ASCII tokens frozen by the metadata-format
+version, not implementation-assigned ordinals. Version 1 event codes are
+`audit_enroll`, `audit_inherit`, `content_create`, `content_replace`,
+`content_revert`, `node_create`, `node_move`, `node_restore`, `node_trash`,
+`provenance_add`, `provenance_supersede`, `tag_assign`, `tag_define`,
+`tag_delete`, `tag_rename`, and `tag_unassign`; attachment codes are
+`provenance` and `tag`. Canonical bytewise token order determines sorting. A
+later format may add codes but never remaps an existing token, and import rejects
+an unknown or non-canonical code for the declared format version.
 
 The zero-based position after that sort becomes `event_ordinal`. The canonical
 total order is therefore
@@ -434,13 +485,17 @@ state. Every authoritative operation from that enrollment onward, audited or
 not, appends one allocation-lineage entry in its transaction. An entry commits
 its previous lineage head, operation sequence, a cryptographically random
 128-bit operation ID, the ordered node IDs allocated by the operation, both
-resulting allocator high-water marks, and either that operation's canonical
-mutation hash or an explicit no-audited-mutation marker. The random operation ID
-is generated once for that transaction and is the same value hashed into the
-canonical mutation. It makes independently mutated copies diverge even when
-they consume the same numeric IDs in the same sequence position. The lineage
-records allocation identity and ancestry, not an unaudited operation's document
-contents.
+resulting allocator high-water marks, either that operation's canonical
+mutation hash or an explicit no-audited-mutation marker, and either its
+topology-delta digest or an explicit no-topology-mutation marker. Every JSONL
+topology delta resolves to exactly one lineage entry with the same operation ID
+and digest; an entry for a topology-changing transaction cannot carry the
+no-topology marker. The random operation ID is generated once for that
+transaction and is the same value hashed into the canonical mutation. It makes
+independently mutated copies diverge even when they consume the same numeric IDs
+in the same sequence position. The lineage records allocation identity,
+ancestry, and replayable topology facts required by audit verification, not an
+unaudited operation's document contents.
 
 The guarantee is application-enforced and tamper-evident. It protects against
 ordinary Docbank commands, API clients, maintenance, software mistakes, and
@@ -574,9 +629,13 @@ than reusing a gap.
 Import also cross-checks the authorities one-to-one. Every canonical mutation
 must have exactly one allocation-lineage entry with the same operation sequence,
 operation ID, and mutation hash; a lineage entry marked as unaudited must have no
-canonical mutation. Every affected scope-chain entry must commit that same
-mutation hash. Mixing a valid scope history from one branch with a valid
-allocation lineage from another therefore fails before publication.
+canonical mutation. Independently, every topology delta must have exactly one
+lineage entry with the same operation ID and delta digest, and the no-topology
+marker is valid only when no topology delta exists for that operation. Replay
+must agree with the entry's audited/no-audited marker. Every affected scope-chain
+entry must commit that same mutation hash. Mixing a valid scope history from one
+branch with a valid allocation lineage from another therefore fails before
+publication.
 
 A fresh import with no trusted reference cannot distinguish a coherently
 rewritten and re-chained stream from an original one. Downgrade or rollback is
