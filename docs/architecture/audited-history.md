@@ -43,11 +43,12 @@ scope runs as a daemon job behind the mutation gate and atomically records:
 - every content version Docbank still retains for those nodes; and
 - explicit membership for every node in that baseline.
 
-The baseline is a canonical record, not only an implementation scan. Its
-digest covers the scope and target IDs; every adopted node and membership;
-their canonical current and immutable trash-origin state; and every complete
-retained content-version record. The first scope-chain entry commits that
-digest.
+The baseline is an immutable canonical snapshot, not only an implementation
+scan. Its digest covers the scope and target IDs; every adopted node and
+membership; their enrollment-time state and immutable trash-origin state; and
+every complete content-version record retained at enrollment. The first
+scope-chain entry commits that digest. Later renames, moves, or versions append
+events; they never rewrite the frozen baseline records.
 
 Trash is detached from the live tree, so current parentage alone is not enough.
 Enrollment follows stable `trash_parent` origin IDs, including through another
@@ -163,10 +164,13 @@ history without duplicating the canonical mutation payload for overlapping
 scopes.
 
 Enrollment is a canonical mutation whose hash includes its baseline digest.
-Verification, JSONL import, and restore recompute that digest from the adopted
-nodes, memberships, current state, trash origins, and complete version records
-before accepting the chain. Baseline membership or version metadata therefore
-cannot change independently of the recorded scope head.
+Verification, JSONL import, and restore recompute that digest from the immutable
+enrollment snapshot records before accepting the first chain entry. They then
+verify or replay subsequent mutations in canonical order and reconcile the
+resulting final state with current node, membership, and version metadata.
+Current mutable state is never substituted for enrollment-time inputs.
+Baseline membership or version metadata therefore cannot change independently
+of the recorded scope head, while valid later changes do not invalidate it.
 
 The authoritative mutation and its audit effects are one SQLite transaction.
 Node state, content-version records, history events, membership changes, every

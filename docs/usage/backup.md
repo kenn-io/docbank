@@ -135,10 +135,11 @@ progress so stdout contains one typed report.
     canonical enrollment baselines and digests, mutation records, per-scope
     chain heads, and stable content versions. Capture will include every
     protected historical blob. Verify and restore will recompute baseline
-    digests and reject internally missing, reordered, truncated, or hash-invalid
-    audit history rather than restoring only the current tree. Rollback
-    detection additionally requires a trusted prior count/head; a fresh import
-    cannot identify a coherently rewritten chain. See the
+    digests from frozen enrollment records, verify later mutations separately,
+    and reject internally missing, reordered, truncated, or hash-invalid audit
+    history rather than restoring only the current tree. Rollback detection
+    additionally requires a trusted prior count/head; a fresh import cannot
+    identify a coherently rewritten chain. See the
     [Audited History](../architecture/audited-history.md) contract.
 
 ## Restore and prove a snapshot

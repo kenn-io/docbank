@@ -119,7 +119,8 @@ inside the snapshot.
     memberships, canonical enrollment baselines and digests, mutation records,
     per-scope chain entries/heads, and stable content versions. Every protected
     historical blob becomes snapshot content. Import, verification, and
-    restore must recompute baseline digests and reject an internally missing,
+    restore must recompute baseline digests from immutable enrollment snapshots,
+    verify later mutations separately, and reject an internally missing,
     malformed, reordered, truncated, or hash-inconsistent audit stream before
     publishing the database. Rollback is detectable only against an expected
     count/head from a trusted prior snapshot or external record; a fresh import
