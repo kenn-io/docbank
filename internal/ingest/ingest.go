@@ -150,7 +150,8 @@ func (ing *Ingester) AddPathsWithOptions(
 		return rep, err
 	}
 
-	for _, src := range sources {
+	for _, rawSource := range sources {
+		src := filepath.Clean(rawSource)
 		info, err := os.Lstat(src)
 		if err != nil {
 			// Per-file failure like any other: aborting here would leave

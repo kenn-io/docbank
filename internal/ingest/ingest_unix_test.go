@@ -66,6 +66,47 @@ func TestAddExplicitDirectorySymlinkPreservesSourceSpelling(t *testing.T) {
 	assert.NotZero(t, nestedInfo.Mode()&os.ModeSymlink)
 }
 
+func TestExplicitDirectorySymlinkWithTrailingSeparator(t *testing.T) {
+	ing := newTestIngester(t)
+	target := writeTree(t, map[string]string{"notes.txt": "hello"})
+	alias := filepath.Join(t.TempDir(), "Dropbox")
+	require.NoError(t, os.Symlink(target, alias))
+	spelled := alias + string(filepath.Separator)
+
+	report, err := Preflight(t.Context(), []string{spelled}, Options{})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), report.Files)
+	assert.Equal(t, int64(1), report.Directories)
+	assert.Zero(t, report.Skipped)
+	assert.Zero(t, report.Errors)
+
+	rep, err := ing.AddPaths(t.Context(), []string{spelled}, "/archive")
+	require.NoError(t, err)
+	assert.Equal(t, 1, rep.Added)
+	assert.Empty(t, rep.Failed)
+	_, err = ing.Store.NodeByPath(t.Context(), "/archive/Dropbox/notes.txt")
+	require.NoError(t, err)
+}
+
+func TestExcludedBrokenRootSymlinkDoesNotResolve(t *testing.T) {
+	ing := newTestIngester(t)
+	alias := filepath.Join(t.TempDir(), "excluded")
+	require.NoError(t, os.Symlink(filepath.Join(t.TempDir(), "missing"), alias))
+	opts := Options{Exclude: []string{"excluded"}}
+
+	report, err := Preflight(t.Context(), []string{alias}, opts)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), report.Excluded)
+	assert.Zero(t, report.Errors)
+	require.Len(t, report.Findings, 1)
+	assert.Equal(t, "excluded", report.Findings[0].Kind)
+
+	rep, err := ing.AddPathsWithOptions(t.Context(), []string{alias}, "/archive", opts)
+	require.NoError(t, err)
+	assert.Equal(t, 1, rep.Excluded)
+	assert.Empty(t, rep.Failed)
+}
+
 func TestPreflightExplicitDirectorySymlinkUsesAliasAndSkipsNestedLinks(t *testing.T) {
 	target := writeTree(t, map[string]string{"nested/session.jsonl": "{\"ok\":true}\n"})
 	alias := filepath.Join(t.TempDir(), "Agent Sessions")

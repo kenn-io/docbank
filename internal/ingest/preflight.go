@@ -143,13 +143,18 @@ func Preflight(ctx context.Context, sources []string, opts Options) (PreflightRe
 		return report, err
 	}
 	types := make(map[string]FileType)
-	for _, source := range sources {
+	for _, rawSource := range sources {
+		source := filepath.Clean(rawSource)
 		if err := ctx.Err(); err != nil {
 			return report, err
 		}
 		info, err := os.Lstat(source)
 		if err != nil {
 			report.addFinding(source, "error", err.Error())
+			continue
+		}
+		if excludes.match(source, source) {
+			report.addFinding(source, "excluded", "matched an exclusion rule")
 			continue
 		}
 		walkRoot := source
@@ -170,10 +175,6 @@ func Preflight(ctx context.Context, sources []string, opts Options) (PreflightRe
 			}
 		}
 		if info.Mode().IsRegular() {
-			if excludes.match(source, source) {
-				report.addFinding(source, "excluded", "matched an exclusion rule")
-				continue
-			}
 			report.addFile(source, info.Size(), types)
 			continue
 		}
