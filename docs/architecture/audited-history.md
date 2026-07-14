@@ -716,11 +716,13 @@ overlapping scopes.
 Attribution is operation-level authority, not an incidental event field. Every
 canonical mutation carries exactly one `recorded_at`, `origin`, and optional
 `agent_label` tuple even when its event list is empty, as for a witness-only
-rotation. Every event in the mutation must repeat that exact tuple. A native
-content version introduced by the operation uses the same `recorded_at`, and
-every direct post-state node timestamp required to equal the operation time uses
-that value. Conflicting event attribution or a missing eventless attribution
-tuple is invalid before hashing.
+rotation. The mutation-level `origin` is restricted to the exact ASCII tokens
+`api`, `cli`, `import`, or `job` regardless of whether events exist. Every event
+in the mutation must repeat that exact tuple. A native content version introduced
+by the operation uses the same `recorded_at`, and every direct post-state node
+timestamp required to equal the operation time uses that value. An unknown
+mutation origin, conflicting event attribution, or a missing eventless
+attribution tuple is invalid before hashing.
 
 Enrollment is a canonical mutation whose hash includes every sorted baseline
 batch binding. Verification, JSONL import, and restore recompute each batch
