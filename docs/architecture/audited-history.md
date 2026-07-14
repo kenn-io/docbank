@@ -67,12 +67,13 @@ The batch also captures the minimal **path-topology projection** needed to
 derive every adopted member's canonical path at that boundary. It contains a
 deduplicated, canonically ordered topology record for each member and every
 ancestor on its live or immutable trash-origin spine: stable node ID, parent ID,
-name, and live, trash, or tombstone state. A known spine ends at the vault root;
-the unknown-origin representation defined below ends at its domain-separated
-sentinel. These witness records participate in the batch digest. Witnessing an
-unaudited ancestor does not enroll it, protect its content, or give it history
-of its own; it preserves only the historical topology on which an audited
-member's path depends.
+name, immutable file/directory kind, canonical creation/modification/trash
+timestamps, and live, trash, or tombstone state. A known spine ends at the vault
+root; the unknown-origin representation defined below ends at its
+domain-separated sentinel. These witness records participate in the batch
+digest. Witnessing an unaudited ancestor does not enroll it, protect its
+content, or give it history of its own; it preserves only the historical
+topology on which an audited member's path depends.
 
 Baseline cardinality is **one shared baseline batch per
 `(scope_id, enrollment_target_node_id, operation_id)`**, not one baseline per
@@ -355,10 +356,11 @@ changes the audited effects.
 ### Guarded mutation closure
 
 Once audit is enabled, inserting or deleting a node or changing any node's
-parent, name, or trash state requires a guarded audit transaction even when the
-directly changed node is not yet a member. The transaction reads the relevant
-pre-state under the single-writer mutation gate and materializes an
-expected-effect set before it changes topology:
+parent, name, live/trash state, `created_at`, `modified_at`, or `trashed_at`
+requires a guarded audit transaction even when the directly changed node is not
+yet a member. The transaction reads the relevant pre-state under the
+single-writer mutation gate and materializes an expected-effect set before it
+changes authoritative node state:
 
 - every node in an inserted or reparented subtree must retain its existing
   sticky memberships and, evaluated top-down, acquire the union of scopes
@@ -405,9 +407,12 @@ than creating a purge or history escape.
 The same guards cover direct and cascading node deletion. Hard-deleting an
 unaudited trash root after audit activation is allowed only when the protected
 closure is empty and the transaction records every deleted subtree node as a
-tombstone in its atomic topology delta and allocation-lineage entry. An audited
-member or missing tombstone aborts the whole deletion. `trash empty` cannot use
-an unguarded legacy `DELETE` path for otherwise eligible trash.
+tombstone in its atomic topology delta and allocation-lineage entry. The
+tombstone preserves the node's creation time, last parent/name/origin, and prior
+trash time while setting `modified_at` to the deletion operation's canonical
+timestamp. An audited member or missing tombstone aborts the whole deletion.
+`trash empty` cannot use an unguarded legacy `DELETE` path for otherwise
+eligible trash.
 
 Verification and JSONL import independently enforce the same closure. Every
 live parent/child edge must give the child at least the parent's memberships.
@@ -475,9 +480,10 @@ The audit stream records successful authoritative mutations:
 - audit enrollment and later inherited membership.
 
 Each mutation has an immutable event identity, time, stable node ID, resulting
-node revision, operation, canonical post-change node and attached-metadata
-state, and the relevant prior state. Changing a shared tag definition emits an
-event for every audited member carrying that tag, across all affected scopes.
+node revision, operation, canonical post-change node state including its
+authoritative timestamps, attached-metadata state, and the relevant prior state.
+Changing a shared tag definition emits an event for every audited member
+carrying that tag, across all affected scopes.
 The origin distinguishes import, API/CLI mutation, or daemon job. A
 caller-supplied agent label may be useful provenance, but is not presented as a
 verified human identity while Docbank remains a single-user system.
@@ -671,7 +677,7 @@ Nested record schemas are:
 | --- | --- |
 | `unknown_origin` | `node_id:u64`, `parent_id:?u64` (always absent), `name:?bytes` |
 | `known_origin` | `node_id:u64`, `parent_id:u64`, `name:bytes` |
-| `topology_node` | `node_id:u64`, `parent_id:?u64`, `name:bytes`, `state:state`, `origin:?record` |
+| `topology_node` | `node_id:u64`, `parent_id:?u64`, `name:bytes`, `node_kind:text`, `state:state`, `origin:?record`, `created_at:timestamp`, `modified_at:timestamp`, `trashed_at:?timestamp` |
 | `content_version` | `version_id:uuid`, `node_id:u64`, `blob_hash:digest`, `size:u64`, `media_type:?text`, `recorded_at:timestamp`, `node_revision:?u64`, `version_origin:text` |
 | `tag_definition` | `tag_id:uuid`, `name:text` |
 | `tag_assignment` | `tag_id:uuid`, `node_id:u64` |
@@ -712,6 +718,20 @@ record. No other identity record is valid.
 bootstrap's version for a node's then-current content is also `legacy_v1` but
 retains the known revision. Import rejects an absent native revision and every
 unknown origin token before hashing or installing version authority.
+
+Every `topology_node` carries `node_kind` as one of the exact ASCII tokens `file`
+or `dir`, plus canonical UTC `created_at` and `modified_at`. Kind and creation
+time are immutable after insertion. Creation sets both timestamps to the
+operation timestamp. A direct authoritative node mutation sets post-state
+`modified_at` to that operation's timestamp; derived descendant path effects do
+not alter the descendant timestamp. Live state requires `trashed_at` absent,
+trash state requires it present and equal to the trash operation's timestamp,
+and restore returns it to absent. A tombstone preserves the pre-state kind,
+creation time, and `trashed_at` value (present or absent) and uses the deletion
+operation's timestamp as `modified_at`. Import rejects any other presence
+pattern or a delta that changes kind or `created_at`. Because these fields are
+inside `topology_node`, baseline, genesis, witness, node-create, and
+topology-delta hashes all bind them.
 
 Event payload presence is exact:
 
@@ -905,10 +925,11 @@ that commits a cryptographically random 128-bit lineage ID and the existing
 node-ID and operation-sequence allocator high-water marks immediately before
 enrollment. The genesis also commits separate counts and digests for a complete,
 canonically sorted topology snapshot containing every extant node's stable ID,
-parent, name, live/trash state, and available or unknown trash-origin record,
-and for the complete attached-metadata projection defined above. JSONL carries
-every genesis record, and import recomputes both digests before deriving the
-first enrollment. This vault-wide authority—not a batch's claimed member or
+parent, name, file/directory kind, live/trash state, canonical node timestamps,
+and available or unknown trash-origin record, and for the complete
+attached-metadata projection defined above. JSONL carries every genesis record,
+and import recomputes both digests before deriving the first enrollment. This
+vault-wide authority—not a batch's claimed member or
 attachment list—establishes which detached roots and authoritative metadata
 existed at the cutover.
 For every detached root, genesis freezes its available origin edge as
@@ -1008,11 +1029,14 @@ cleanup may clear it because immutable audit origin metadata, not that locator,
 is the protected fact.
 
 The same protection applies to indirect topology effects. Node insertion,
-direct or cascading deletion, and parent/name/trash updates require the guarded
-operation context whenever any scope exists. Commit-time validation proves the
-complete inherited membership and path-affecting descendant closure and matches
-every deleted node to its topology tombstone. A row need not already be audited
-for its write to be guarded.
+direct or cascading deletion, and parent/name/state or authoritative timestamp
+updates require the guarded operation context whenever any scope exists. This
+includes a parent revision/`modified_at` touch caused by child creation or move
+and a content replacement's node `modified_at` change; each appears in the same
+canonical node-state delta even when no path changes. Commit-time validation
+proves the complete inherited membership and path-affecting descendant closure
+and matches every deleted node to its topology tombstone. A row need not already
+be audited for its write to be guarded.
 
 Once any audit scope exists, database guards likewise cover every insert,
 update, direct delete, and cascading delete of tag definitions, tag assignments,
@@ -1130,14 +1154,14 @@ provenance fact whose ingest or supersession target is absent.
 Import builds the vault-wide topology projection from its digested genesis
 snapshot and the complete attached-metadata projection from its independently
 digested genesis snapshot, then derives active path witnesses from baseline
-records. Before
-applying each later atomic topology delta, it derives the complete affected
-member set, old/new paths, and witness changes from the prior projections;
-verifies the claimed canonical lists, counts, digests, and scoped events; and
-only then installs the post-state. It rejects missing dependency witnesses,
-impossible pre-states, duplicate changed-node records, extra or omitted members,
+records. Before applying each later atomic topology delta, it derives the
+complete affected member set, old/new paths, and witness changes from the prior
+projections; verifies the claimed canonical lists, counts, digests, and scoped
+events; and only then installs the post-state. It rejects missing dependency
+witnesses, impossible pre-states, duplicate changed-node records, extra or omitted members,
 and final replayed topology or active witnesses that differ from current node
-and immutable trash-origin state.
+authority—including parent, name, live/trash state, `created_at`, `modified_at`,
+`trashed_at`, file/directory kind, and immutable trash-origin state.
 
 At each operation, import also applies the canonical attached-metadata delta to
 the prior replayed projection. It rejects an impossible pre-state, missing or
