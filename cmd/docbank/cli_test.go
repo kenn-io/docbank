@@ -122,6 +122,19 @@ func TestAddLsTreeCat(t *testing.T) {
 	assert.Equal(t, "hello vault", out)
 }
 
+func TestJobsShowsDaemonStatus(t *testing.T) {
+	_ = setupVaultHome(t)
+	out, err := runCLI(t, "jobs")
+	require.NoError(t, err)
+	assert.Equal(t, "no background jobs\n", out)
+
+	out, err = runCLI(t, "jobs", "--json")
+	require.NoError(t, err)
+	var got api.JobList
+	require.NoError(t, json.Unmarshal([]byte(out), &got))
+	assert.Empty(t, got.Items)
+}
+
 func TestAddRerunReportsSkips(t *testing.T) {
 	_ = setupVaultHome(t)
 	src := writeSourceFile(t, "a.txt", "alpha")

@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -214,6 +215,26 @@ func TestHealthAndPing(t *testing.T) {
 	resp, body = get(t, ts, "/api/ping", nil)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Contains(t, body, `"docbank"`)
+}
+
+func TestDaemonOwnershipChallengeDoesNotRequireOrRevealCredentials(t *testing.T) {
+	const token = "per-run-shutdown-secret"
+	ts, _ := newTestServer(t, func(d *api.Deps) { d.ShutdownToken = token })
+	nonce := bytes.Repeat([]byte{0x42}, daemonauth.NonceBytes)
+	path := daemonauth.ChallengePath + "?nonce=" + hex.EncodeToString(nonce)
+
+	resp, body := get(t, ts, path, map[string]string{"X-Api-Key": ""})
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var result struct {
+		Proof string `json:"proof"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &result))
+	assert.True(t, daemonauth.Verify(token, nonce, result.Proof))
+	assert.NotContains(t, body, token)
+
+	resp, _ = get(t, ts, daemonauth.ChallengePath+"?nonce=short",
+		map[string]string{"X-Api-Key": ""})
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
 func TestAuthRequiredWhenKeySet(t *testing.T) {

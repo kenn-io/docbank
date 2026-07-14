@@ -45,6 +45,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `GET /trash` · `POST /trash/empty` `{run, older_than}` | list / report or hard-delete trash roots | Implemented |
 | `POST /gc` `{run}` · `POST /verify` | reclaim unreachable blobs / re-hash all blobs | Implemented |
 | `GET /storage` · `POST /storage/pack` · `POST /storage/repack` | inspect usage / pack loose blobs / compact sparse packs | Implemented |
+| `GET /jobs` | inspect daemon-owned background tasks and terminal failures | Implemented |
 | `POST /backup/init` · `POST /backup/snapshots` · `POST /backup/snapshots/stream` · `GET /backup/snapshots` | initialize a repository / create with JSON or streamed progress / list snapshots | Implemented |
 
 Root-level, outside `/api/v1` and auth-exempt: `GET /health`, `GET
@@ -86,6 +87,15 @@ Explicit repository paths are server filesystem paths and must be absolute.
 The CLI resolves a relative `--repo` against its own working directory before
 sending it. API clients over an SSH tunnel must reason about the daemon host's
 filesystem, not the caller's. Every endpoint requires the daemon API key.
+
+### Background-job status
+
+`GET /jobs` returns `{items: [...]}` in stable job-name order. Each item carries
+`name`, `status` (`running`, `completed`, `failed`, or `cancelled`), and a UTC
+`started_at`; terminal jobs add `finished_at`, and failures add a bounded
+`error`. Records describe this daemon run only and disappear when it restarts.
+The endpoint is observation, not control: stopping a task requires stopping or
+reconfiguring the daemon feature that owns it.
 
 ### Path resolution: a query parameter, not a URL segment
 

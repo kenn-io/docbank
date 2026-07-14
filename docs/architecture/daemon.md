@@ -40,10 +40,14 @@ shutdown request.
 process running `daemon run`; `docbank daemon stop` asks it to shut down;
 `docbank daemon restart` stops it (tolerating it not already running) and
 starts it again; `docbank daemon status` reports whether it's running.
-Shutdown is graceful: in-flight requests drain, the store closes, the
-vault lock releases, and the runtime record is removed — in that order,
+Shutdown is graceful: background tasks receive cancellation, in-flight
+requests drain, tasks receive a bounded window to return, the store closes,
+the vault lock releases, and the runtime record is removed — in that order,
 so a stopped daemon leaves no trace for the next `daemon start` or
-auto-start to trip over.
+auto-start to trip over. HTTP draining and background-task draining each have
+a ten-second ceiling. Clients preserve a 25-second graceful-exit window before
+forced termination, so scheduling and cleanup do not consume either drain
+budget.
 
 ```bash
 docbank daemon run          # foreground; logs to stderr
@@ -102,6 +106,22 @@ the start half of the restart. Bootstrap stderr is captured in a private
 transient file beside that external lock, included in a startup failure, and
 removed when the start attempt finishes.
 
+The listener closes before background tasks finish draining. During that
+interval ping-based discovery cannot identify the daemon, but its runtime
+record and process remain live while it still owns the vault lock. Public ping
+fields cannot prove that a listener appearing on the same loopback port still
+belongs to that PID. Discovery therefore follows ping with a fresh nonce
+challenge whose HMAC requires the per-run shutdown secret in the private
+runtime record; neither that secret nor the API key crosses the socket during
+the proof. Credential-bearing requests remain pinned to that proven TCP
+connection and fail rather than redirecting or reconnecting. A forged or
+pingless endpoint is never sent secrets. The starter instead requests graceful
+process termination only for the create-time-verified PID, waits for exit, and
+then starts replacement. Runtime records without create-time proof are never
+trusted for this path. This handles shutdown and the rarer uncoordinated
+slow-start transition without spawning into an owned vault or trusting a
+rebound listener.
+
 ## Auto-start and idle shutdown
 
 Every data command calls `client.Ensure`, which discovers a version- and
@@ -119,6 +139,22 @@ minutes) with no requests, so spawned daemons don't accumulate across
 sessions. `idle_timeout = "0"` disables idle shutdown. A foreground
 `docbank daemon run` never idles out — it runs until signaled or
 stopped.
+
+## Background tasks
+
+Every daemon-owned task runs under one supervisor rooted in the daemon's
+shutdown context. Names are unique and stable for the lifetime of that daemon;
+a task panic is recovered and recorded as a failure rather than crashing the
+process. `docbank jobs` and authenticated `GET /api/v1/jobs` expose running and
+terminal state in deterministic order. Terminal records remain until restart,
+which makes a failed task visible instead of silently disappearing.
+
+The supervisor stops accepting work as soon as shutdown begins, cancels every
+runner, and waits before SQLite and blob storage close. Runners must honor
+their context; the wait is bounded so a defective runner cannot prevent daemon
+exit forever. The background daemon's idle-timeout loop is supervised through
+this same path. Watched inboxes and scheduled maintenance are still planned,
+but must use this lifecycle rather than creating unmanaged goroutines.
 
 ## Logs
 

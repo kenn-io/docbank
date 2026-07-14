@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -23,7 +24,9 @@ import (
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/daemonlife"
 	"go.kenn.io/docbank/internal/home"
+	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -36,7 +39,7 @@ var daemonRunCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, _ []string) error { return runServe(cmd.Context()) },
 }
 
-func runServe(ctx context.Context) error {
+func runServe(ctx context.Context) (retErr error) {
 	layout, err := home.Resolve()
 	if err != nil {
 		return err
@@ -45,6 +48,15 @@ func runServe(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// This is deliberately the first cleanup registered after acquiring the
+	// vault. LIFO execution removes the runtime record only after supervised
+	// jobs, storage, the lock, and the held root have all finished cleanup.
+	var recPath string
+	defer func() {
+		if recPath != "" {
+			_ = os.Remove(recPath)
+		}
+	}()
 	defer func() { _ = root.Close() }()
 	defer func() { _ = lock.Release() }()
 
@@ -64,6 +76,8 @@ func runServe(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	sigCtx, sigCancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+	defer sigCancel()
 
 	s, err := store.Open(layout.DBPath())
 	if err != nil {
@@ -79,6 +93,7 @@ func runServe(ctx context.Context) error {
 	if err := blobs.CleanTmp(); err != nil {
 		return err
 	}
+	jobSupervisor := jobs.New(sigCtx, logger)
 
 	listener, err := kitdaemon.Listen(ctx, kitdaemon.Endpoint{
 		Network: kitdaemon.NetworkTCP,
@@ -110,12 +125,21 @@ func runServe(ctx context.Context) error {
 	cfg.Server.APIKey = apiKey
 
 	rtStore := client.RuntimeStore(layout.Root)
-	recPath, err := rtStore.Write(client.NewRecord(addr, apiKey, shutdownToken))
+	recPath, err = rtStore.Write(client.NewRecord(addr, apiKey, shutdownToken))
 	if err != nil {
 		_ = listener.Close()
 		return fmt.Errorf("writing daemon runtime record: %w", err)
 	}
-	defer func() { _ = os.Remove(recPath) }()
+	// Register the job wait after store/blob cleanup so their resources remain
+	// open until runners return. The earlier runtime cleanup remains last.
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(
+			context.Background(), daemonlife.JobDrainTimeout)
+		defer cancel()
+		if err := jobSupervisor.Shutdown(shutdownCtx); err != nil {
+			retErr = errors.Join(retErr, err)
+		}
+	}()
 
 	var stopOnce sync.Once
 	stopCh := make(chan struct{})
@@ -125,6 +149,7 @@ func runServe(ctx context.Context) error {
 	srv := api.NewServer(api.Deps{
 		Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Logger: logger,
 		StartedAt: time.Now(), ShutdownToken: shutdownToken, Shutdown: stop, Tracker: tracker,
+		Jobs: jobSupervisor,
 	})
 	httpSrv := &http.Server{
 		Handler:           srv.Handler(),
@@ -132,11 +157,13 @@ func runServe(ctx context.Context) error {
 		BaseContext:       func(net.Listener) context.Context { return ctx },
 	}
 
-	sigCtx, sigCancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
-	defer sigCancel()
-
 	if background && cfg.Server.IdleTimeout.Std() > 0 {
-		go idleWatch(sigCtx, tracker, cfg.Server.IdleTimeout.Std(), logger, stop)
+		if err := jobSupervisor.Start("daemon.idle-timeout", func(ctx context.Context) error {
+			idleWatch(ctx, tracker, cfg.Server.IdleTimeout.Std(), logger, stop)
+			return nil
+		}); err != nil {
+			return fmt.Errorf("starting idle-timeout job: %w", err)
+		}
 	}
 
 	errCh := make(chan error, 1)
@@ -150,7 +177,9 @@ func runServe(ctx context.Context) error {
 	case <-stopCh:
 	}
 	logger.Info("docbank daemon shutting down")
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	jobSupervisor.Stop()
+	shutdownCtx, cancel := context.WithTimeout(
+		context.Background(), daemonlife.HTTPDrainTimeout)
 	defer cancel()
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
 		// A timed-out drain means handlers may still be running. Force-close

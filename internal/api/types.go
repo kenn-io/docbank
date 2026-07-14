@@ -229,6 +229,22 @@ type VerifyReport struct {
 	Problems []VerifyProblem `json:"problems,omitempty"`
 }
 
+// Job is the observable state of one daemon-owned background task. Names are
+// stable within a daemon run and terminal records remain visible until restart.
+type Job struct {
+	Name       string `json:"name"`
+	Status     string `json:"status" enum:"running,completed,failed,cancelled"`
+	StartedAt  string `json:"started_at"`
+	FinishedAt string `json:"finished_at,omitempty"`
+	Error      string `json:"error,omitempty"`
+}
+
+// JobList is returned as an object so the contract can gain aggregate state
+// without changing a top-level JSON array.
+type JobList struct {
+	Items []Job `json:"items"`
+}
+
 // BackupRepository identifies an initialized Kit snapshot repository.
 type BackupRepository struct {
 	ID   string `json:"id"`

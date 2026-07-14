@@ -46,6 +46,10 @@ marked planned appears elsewhere in these docs only under an explicit
   gc, and verify — the CLI's data commands are HTTP clients of this
   surface, with no other path into the vault
   ([design](architecture/http-api.md))
+- Daemon background-task supervision with shared cancellation, bounded
+  shutdown before storage closes, failure capture, and observable
+  `docbank jobs` / `GET /api/v1/jobs` status. Watched inbox behavior remains
+  Phase 2b work on top of this implemented lifecycle.
 - The vault lock becomes a single exclusive holder (the daemon) instead
   of Phase 1's per-command shared/exclusive split; an in-daemon
   maintenance gate replaces `gc`'s own exclusive acquisition
@@ -56,8 +60,8 @@ marked planned appears elsewhere in these docs only under an explicit
   `kit/selfupdate`, coordinating daemon stop/replace/restart
 - `docbank openapi`: offline OpenAPI document for agents and client
   generation
-- Tag-driven release pipeline building archives plus `SHA256SUMS` for
-  Linux (amd64/arm64) and macOS (arm64)
+- Tag-driven release pipeline building archives plus `SHA256SUMS` for Linux,
+  macOS, and Windows on amd64 and arm64
 - A handwritten placeholder web page at `/`, naming the vault and
   linking to `/docs`
 - Internal mixed loose/packed blob storage on `kit/packstore`: docbank's

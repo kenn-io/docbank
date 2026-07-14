@@ -149,15 +149,34 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	assert.Contains(t, out, "already running")
 	assert.Equal(t, oldPID, parsePID(t, out))
 
+	// Protocol 9 predates background-job status. Ensure must replace it before
+	// the CLI requests /api/v1/jobs rather than sending the new request to a
+	// same-version daemon that will return 404.
+	recs, err := client.RuntimeStore(dir).List()
+	require.NoError(t, err)
+	require.Len(t, recs, 1)
+	require.Equal(t, "10", recs[0].Metadata["protocol_version"])
+	recs[0].Metadata["protocol_version"] = "9"
+	_, err = client.RuntimeStore(dir).Write(recs[0])
+	require.NoError(t, err)
+	out, err = run(oldBin, "jobs", "--json")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, `"items"`)
+	recs, err = client.RuntimeStore(dir).List()
+	require.NoError(t, err)
+	require.Len(t, recs, 1)
+	jobsPID := strconv.Itoa(recs[0].PID)
+	assert.NotEqual(t, oldPID, jobsPID)
+
 	// A same-version daemon from before ingest preflight/exclusions existed
 	// must be replaced before the CLI issues the new request. Otherwise
 	// preflight returns 404 and a real ingest can silently ignore exclusions.
 	src := filepath.Join(t.TempDir(), "preflight.txt")
 	require.NoError(t, os.WriteFile(src, []byte("preview"), 0o600))
-	recs, err := client.RuntimeStore(dir).List()
+	recs, err = client.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
-	require.Equal(t, "9", recs[0].Metadata["protocol_version"])
+	require.Equal(t, "10", recs[0].Metadata["protocol_version"])
 	recs[0].Metadata["protocol_version"] = "7"
 	_, err = client.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
@@ -169,7 +188,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
 	preflightPID := strconv.Itoa(recs[0].PID)
-	assert.NotEqual(t, oldPID, preflightPID)
+	assert.NotEqual(t, jobsPID, preflightPID)
 
 	// Protocol 8 predates the ordinary ingest progress stream. Human-mode add
 	// must replace it before requesting that endpoint rather than fail with a
@@ -202,7 +221,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	recs, err = client.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
-	require.Equal(t, "9", recs[0].Metadata["protocol_version"])
+	require.Equal(t, "10", recs[0].Metadata["protocol_version"])
 	recs[0].Metadata["protocol_version"] = "4"
 	_, err = client.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)

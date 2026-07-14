@@ -2,6 +2,7 @@ package api
 
 import (
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -14,6 +15,8 @@ import (
 
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/daemonauth"
+	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/internal/version"
 )
@@ -31,6 +34,7 @@ type Deps struct {
 	ShutdownToken string           // "" disables the shutdown route
 	Shutdown      func()           // called (async) by the shutdown route
 	Tracker       *ActivityTracker // nil → no idle tracking
+	Jobs          *jobs.Supervisor // nil → no registered background jobs
 }
 
 // Server is docbank's HTTP API: a huma-described /api/v1 surface plus a
@@ -84,11 +88,13 @@ func NewServer(d Deps) *Server {
 	registerMutateRoutes(humaAPI, d, g) // Task 6
 	registerOpsRoutes(humaAPI, d, g)    // Task 7
 	registerBackupRoutes(humaAPI, d, g)
+	registerJobRoutes(humaAPI, d)
 	registerUploadRoute(mux, humaAPI, d, g)
 	s.registerHealth(mux)
 	mux.Handle("GET "+kitPingPath, kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{
 		Service: "docbank", Version: version.Version, PID: os.Getpid(),
 	}))
+	s.registerChallenge(mux)
 	s.registerShutdown(mux)
 	registerWeb(mux, d.Cfg.Web.Enabled)
 
@@ -117,6 +123,26 @@ func (s *Server) registerHealth(mux *http.ServeMux) {
 			Status: "ok", Version: version.Version,
 			UptimeSeconds: int64(time.Since(s.deps.StartedAt).Seconds()),
 		})
+	})
+}
+
+// registerChallenge proves that the process answering public ping owns the
+// owner-private runtime record. The token never crosses the socket: the client
+// supplies a fresh nonce and verifies this HMAC before sending API credentials.
+func (s *Server) registerChallenge(mux *http.ServeMux) {
+	if s.deps.ShutdownToken == "" {
+		return
+	}
+	mux.HandleFunc("GET "+daemonauth.ChallengePath, func(w http.ResponseWriter, r *http.Request) {
+		nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
+		if err != nil || len(nonce) != daemonauth.NonceBytes {
+			writeError(w, NewError(http.StatusBadRequest, "invalid_challenge",
+				"nonce must be 32 bytes encoded as hexadecimal"))
+			return
+		}
+		writeJSON(w, http.StatusOK, struct {
+			Proof string `json:"proof"`
+		}{Proof: daemonauth.Proof(s.deps.ShutdownToken, nonce)})
 	})
 }
 
