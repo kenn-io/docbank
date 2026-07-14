@@ -52,20 +52,45 @@ transactionally; it cannot edit bytes in place without invalidating their hash.
     editing or audit support. In one daemon-exclusive metadata transaction,
     Docbank creates a stable initial version for every file that still points
     directly at a blob, assigns the node's `current_version_id`, and creates the
-    stable vault ID used by future audit hashes. It also assigns canonical,
-    non-reusable UUIDv4 identities to every retained legacy tag and ingest
-    record; any existing integer IDs remain internal implementation keys rather
-    than portable identities. It canonicalizes legacy provenance and
-    deterministically collapses identical duplicate facts before deriving their
-    v2 identities; distinct facts remain intact and the bootstrap report records
-    the collapsed count. That version record is
-    explicitly a legacy baseline: it preserves the current hash, size, media
-    type, node revision, and observed bootstrap time, but does not invent an
-    original content-introduction time that the old schema never recorded. A
-    failure rolls the whole bootstrap back, and no editing or audit endpoint is
+    stable vault ID used by future audit hashes. It also migrates every retained
+    legacy `node_versions` row into a historical content-version record. Before
+    conversion it requires the referenced node to be a file, the referenced
+    blob to exist, the size to equal blob authority, and `replaced_at` to be a
+    canonical UTC timestamp. Failure of any check aborts the complete bootstrap.
+
+    Legacy version rows have no identity, media type, or introducing node
+    revision. Bootstrap sorts them by `(node_id, replaced_at, blob_hash, size)`,
+    collapses only exact duplicate tuples, and records that collapsed count in
+    its report. It assigns a fresh, non-reusable UUIDv4 to every remaining row,
+    preserves `replaced_at` as `recorded_at`, and represents the unavailable
+    media type and node revision as absent. Distinct timestamps remain distinct
+    versions even when they reference the same blob, and a historical row equal
+    to the node's current content remains separate from the newly created
+    current version. The current version is explicitly a legacy baseline: it
+    preserves the current hash, size, media type, and node revision and uses the
+    observed bootstrap time, but does not invent an original content-introduction
+    time that the old schema never recorded. Every version created natively by
+    v2 records its introducing node revision; only migrated v1 history may carry
+    an absent value.
+
+    Bootstrap also assigns canonical, non-reusable UUIDv4 identities to every
+    retained legacy tag and ingest record; any existing integer IDs remain
+    internal implementation keys rather than portable identities. It
+    canonicalizes legacy provenance and deterministically collapses identical
+    duplicate facts before deriving their v2 identities; distinct facts remain
+    intact and the bootstrap report records the collapsed count. A failure
+    rolls the whole bootstrap back, and no editing or audit endpoint is
     available until every file has a current version identity and the vault ID
     plus every portable tag and ingest identity is durable. Deterministic JSONL
     export/import preserves those assigned IDs after the cutover.
+
+    A v1 JSONL import first validates and materializes its records into private
+    v1 staging, then runs this exact bootstrap before the restored store can be
+    published or opened. It does not translate rows piecemeal while decoding or
+    expose an intermediate store. Compatibility fixtures cover both direct v1
+    databases and v1 JSONL imports, including duplicate and same-blob historical
+    rows, absent legacy fields, invalid references, retained GC roots, and the
+    resulting v2 export/import round trip.
 
     Bootstrap switches the vault's portable authority to
     `docbank-metadata-jsonl-v2`, even when it has no audit scope. This

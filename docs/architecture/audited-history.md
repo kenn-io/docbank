@@ -654,7 +654,7 @@ Nested record schemas are:
 | `unknown_origin` | `node_id:u64`, `parent_id:?u64` (always absent), `name:?bytes` |
 | `known_origin` | `node_id:u64`, `parent_id:u64`, `name:bytes` |
 | `topology_node` | `node_id:u64`, `parent_id:?u64`, `name:bytes`, `state:state`, `origin:?record` |
-| `content_version` | `version_id:uuid`, `node_id:u64`, `blob_hash:digest`, `size:u64`, `media_type:?text`, `recorded_at:timestamp`, `node_revision:u64` |
+| `content_version` | `version_id:uuid`, `node_id:u64`, `blob_hash:digest`, `size:u64`, `media_type:?text`, `recorded_at:timestamp`, `node_revision:?u64` |
 | `tag_definition` | `tag_id:uuid`, `name:text` |
 | `tag_assignment` | `tag_id:uuid`, `node_id:u64` |
 | `ingest` | `ingest_id:uuid`, `started_at:timestamp`, `source_kind:text`, `source_desc:text` |
@@ -763,7 +763,7 @@ Hashed top-level record schemas are:
 | `event` | `event:audit_event` |
 | `canonical_mutation` | `vault_id:uuid`, `operation_sequence:u64`, `operation_id:uuid`, `grouping_id:?uuid`, `events:[audit_event]`, `member_state_changes:[member_state_change]`, `baselines:[baseline_binding]`, `topology_delta:?digest`, `path_effect_count:u64`, `path_effect_digest:?digest`, `witness_change_count:u64`, `witness_change_digest:?digest`, `attached_metadata_change_count:u64`, `attached_metadata_change_digest:?digest` |
 | `scope_chain_entry` | `vault_id:uuid`, `scope_id:uuid`, `entry_count:u64`, `previous_head:?digest`, `mutation_hash:digest` |
-| `allocation_genesis` | `vault_id:uuid`, `lineage_id:uuid`, `node_id_high_water:u64`, `operation_sequence_high_water:u64`, `topology_count:u64`, `topology_digest:digest`, `attached_metadata_count:u64`, `attached_metadata_digest:digest` |
+| `allocation_genesis` | `vault_id:uuid`, `lineage_id:uuid`, `previous_head:?digest`, `node_id_high_water:u64`, `operation_sequence_high_water:u64`, `topology_count:u64`, `topology_digest:digest`, `attached_metadata_count:u64`, `attached_metadata_digest:digest` |
 | `allocation_entry` | `vault_id:uuid`, `lineage_id:uuid`, `previous_head:digest`, `operation_sequence:u64`, `operation_id:uuid`, `allocated_node_ids:[u64]`, `node_id_high_water:u64`, `operation_sequence_high_water:u64`, `has_audited_mutation:bool`, `mutation_hash:?digest`, `has_topology_change:bool`, `topology_delta:?digest`, `has_witness_change:bool`, `witness_change_count:u64`, `witness_change_digest:?digest`, `has_attached_metadata_change:bool`, `attached_metadata_change_count:u64`, `attached_metadata_change_digest:?digest` |
 | `preview_token` | `secret:bytes`, `vault_id:uuid`, `scope_id:uuid`, `target_node_id:u64`, `baseline_digest:digest`, `preview_generation:u64`, `operation_id:uuid`, `lineage_id:uuid` |
 | `audit_pending` | `vault_id:uuid`, `scope_id:uuid`, `target_node_id:u64`, `preview_token_digest:digest`, `preview_generation:u64`, `baseline_digest:digest`, `operation_id:uuid`, `lineage_id:uuid`, `operation_sequence:u64`, `grouping_id:?uuid`, `recorded_at:timestamp`, `origin:text`, `agent_label:?text`, `cause:text`, `node_id_high_water:u64`, `operation_sequence_high_water:u64`, `topology_genesis_digest:digest`, `attached_metadata_genesis_digest:digest` |
@@ -819,9 +819,11 @@ preview-token/audit-pending record
 is `SHA-256(CAE2(record_kind, fields))` using its distinct lowercase kind token.
 A scope-chain entry includes the stable vault and scope IDs, entry count,
 optional previous head, and mutation digest. An allocation entry includes every
-field and explicit no-change marker specified below. Genesis uses absent for a
-previous head, never an all-zero digest. Composite records embed child digests
-with the digest type; no implementation hashes unframed concatenated values.
+field and explicit no-change marker specified below. Allocation genesis encodes
+its registered `previous_head` field as absent, never as an all-zero digest; its
+digest is the required `previous_head` of the first allocation entry. Composite
+records embed child digests with the digest type; no implementation hashes
+unframed concatenated values.
 Format-v2 golden vectors cover every record kind, absent versus empty values,
 Unicode byte distinctions, integer limits, and timestamp encoding; export,
 import, verification, and restore must all reproduce them byte-for-byte.
