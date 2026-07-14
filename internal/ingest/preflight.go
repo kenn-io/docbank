@@ -24,6 +24,9 @@ const (
 // rule matches that entry and its descendants within each supplied source.
 type Options struct {
 	Exclude []string
+	// Progress receives bounded updates while a real ingest reads and commits
+	// files. Preflight ignores it because it never opens file content.
+	Progress func(ProgressEvent)
 }
 
 // SizeClass summarizes one physical-policy outcome.

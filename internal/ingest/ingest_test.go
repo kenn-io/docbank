@@ -1,6 +1,8 @@
 package ingest
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,6 +63,75 @@ func TestAddSingleFile(t *testing.T) {
 	// Source untouched.
 	_, err = os.Stat(filepath.Join(src, "notes.txt"))
 	require.NoError(t, err)
+}
+
+func TestAddProgressReportsBytesAndFinalOutcome(t *testing.T) {
+	ing := newTestIngester(t)
+	src := writeTree(t, map[string]string{"a.txt": "alpha", "b.txt": "beta"})
+	paths := []string{filepath.Join(src, "a.txt"), filepath.Join(src, "b.txt")}
+	var events []ProgressEvent
+
+	rep, err := ing.AddPathsWithOptions(t.Context(), paths, "/inbox", Options{
+		Progress: func(event ProgressEvent) { events = append(events, event) },
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, rep.Added)
+	require.NotEmpty(t, events)
+	assert.Zero(t, events[0].FilesDone)
+	assert.False(t, events[0].Final)
+	last := events[len(events)-1]
+	assert.True(t, last.Final)
+	assert.Equal(t, int64(2), last.FilesDone)
+	assert.Equal(t, int64(len("alpha")+len("beta")), last.BytesRead)
+	assert.Equal(t, 2, last.Added)
+	assert.Zero(t, last.Failed)
+}
+
+func TestAddCancellationDoesNotAuthorizeIncompleteFile(t *testing.T) {
+	ing := newTestIngester(t)
+	src := filepath.Join(t.TempDir(), "large.bin")
+	f, err := os.Create(src)
+	require.NoError(t, err)
+	require.NoError(t, f.Truncate(progressByteInterval*2))
+	require.NoError(t, f.Close())
+
+	ctx, cancel := context.WithCancel(t.Context())
+	var events []ProgressEvent
+	_, err = ing.AddPathsWithOptions(ctx, []string{src}, "/inbox", Options{
+		Progress: func(event ProgressEvent) {
+			events = append(events, event)
+			if event.BytesRead >= progressByteInterval {
+				cancel()
+			}
+		},
+	})
+	require.Error(t, err)
+	require.ErrorIs(t, err, context.Canceled, err)
+	require.NotEmpty(t, events)
+	assert.False(t, events[len(events)-1].Final)
+	_, err = ing.Store.NodeByPath(t.Context(), "/inbox/large.bin")
+	assert.ErrorIs(t, err, store.ErrNotFound,
+		"cancellation during blob reading must not grant node authority")
+}
+
+func TestAddProgressBatchesManySmallFiles(t *testing.T) {
+	ing := newTestIngester(t)
+	files := make(map[string]string, 130)
+	for i := range 130 {
+		files[fmt.Sprintf("%03d.txt", i)] = "x"
+	}
+	src := writeTree(t, files)
+	var events []ProgressEvent
+
+	rep, err := ing.AddPathsWithOptions(t.Context(), []string{src}, "/inbox", Options{
+		Progress: func(event ProgressEvent) { events = append(events, event) },
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 130, rep.Added)
+	require.GreaterOrEqual(t, len(events), 4, "initial, two batches, and final")
+	assert.Less(t, len(events), 10, "progress must not emit one event per small file")
+	assert.True(t, events[len(events)-1].Final)
+	assert.Equal(t, int64(130), events[len(events)-1].FilesDone)
 }
 
 func TestAddDirectoryPreservesStructure(t *testing.T) {
@@ -239,7 +310,7 @@ func TestAddTreeStaleDestinationIsNotResurrected(t *testing.T) {
 	ingestID, err := ing.Store.BeginIngest(ctx, "cli", "test")
 	require.NoError(t, err)
 	var rep Report
-	require.NoError(t, ing.addTree(ctx, &rep, ingestID, dest.ID, src, src, exclusions{}))
+	require.NoError(t, ing.addTree(ctx, &rep, ingestID, dest.ID, src, src, exclusions{}, nil))
 	assert.NotEmpty(t, rep.Failed)
 	assert.Zero(t, rep.Added)
 

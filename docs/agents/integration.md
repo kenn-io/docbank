@@ -251,6 +251,16 @@ Inspect `added`, `skipped`, `excluded`, and every member of `failed`. Repeating 
 ingest after fixing a partial failure is safe; successful content converges to
 `skipped` rather than another copy.
 
+For an interactive or long-running local integration, send the same body to
+`POST /api/v1/ingest/stream` with `Accept: application/x-ndjson`. Read every
+line through EOF. `progress` events cover the metadata-only `scan` and content
+`ingest` stages; a `result` carrying the final report or an `error` is the
+single terminal event. HTTP 200 means only that streaming started. Treat EOF
+without a terminal event, malformed events, or data after the terminal event
+as failure. Cancelling or disconnecting cancels traversal and the active blob
+write; only files whose individual publication already completed retain
+authority and are safely reported as skipped on a rerun.
+
 Remote writers use a file-granular multipart request. Compute the expected
 identity before sending bytes, and address the destination by stable directory
 ID:

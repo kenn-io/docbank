@@ -248,6 +248,83 @@ func (c *Client) IngestWithOptions(
 	return rep, err
 }
 
+// IngestStream imports server-side paths while delivering structured scan and
+// ingest progress. Success requires a terminal report event; an HTTP 200 only
+// means that the stream started.
+func (c *Client) IngestStream(
+	ctx context.Context,
+	paths []string,
+	dest string,
+	exclude []string,
+	progress func(api.IngestProgress),
+) (api.IngestReport, error) {
+	body, err := json.Marshal(map[string]any{
+		"paths": paths, "dest": dest, "exclude": exclude,
+	})
+	if err != nil {
+		return api.IngestReport{}, fmt.Errorf("encoding ingest request: %w", err)
+	}
+	const path = "/api/v1/ingest/stream"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+path, bytes.NewReader(body))
+	if err != nil {
+		return api.IngestReport{}, fmt.Errorf("building ingest stream request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/x-ndjson")
+	if c.key != "" {
+		req.Header.Set("X-Api-Key", c.key)
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return api.IngestReport{}, fmt.Errorf("calling daemon (POST %s): %w", path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return api.IngestReport{}, decodeError(resp)
+	}
+
+	decoder := json.NewDecoder(resp.Body)
+	var result *api.IngestReport
+	for {
+		var event api.IngestEvent
+		if err := decoder.Decode(&event); err != nil {
+			if errors.Is(err, io.EOF) {
+				if result == nil {
+					return api.IngestReport{}, errors.New("ingest progress stream ended without a result")
+				}
+				return *result, nil
+			}
+			return api.IngestReport{}, fmt.Errorf("decoding ingest progress: %w", err)
+		}
+		if result != nil {
+			return api.IngestReport{}, errors.New("ingest progress stream continued after its result")
+		}
+		switch event.Type {
+		case "progress":
+			if event.Progress == nil || event.Report != nil || event.Error != nil {
+				return api.IngestReport{}, errors.New("ingest returned malformed progress event")
+			}
+			if progress != nil {
+				progress(*event.Progress)
+			}
+		case "result":
+			if event.Report == nil || event.Progress != nil || event.Error != nil {
+				return api.IngestReport{}, errors.New("ingest returned malformed result event")
+			}
+			report := *event.Report
+			result = &report
+		case "error":
+			if event.Error == nil || event.Progress != nil || event.Report != nil {
+				return api.IngestReport{}, errors.New("ingest returned malformed error event")
+			}
+			return api.IngestReport{}, apiProblemError(*event.Error)
+		default:
+			return api.IngestReport{}, fmt.Errorf(
+				"ingest returned unknown progress event type %q", event.Type)
+		}
+	}
+}
+
 // PreflightIngest inventories server-side paths without opening file content
 // or mutating the vault.
 func (c *Client) PreflightIngest(

@@ -130,7 +130,22 @@ func TestAddRerunReportsSkips(t *testing.T) {
 	require.NoError(t, err)
 	out, err := runCLI(t, "add", src, "--dest", "/inbox")
 	require.NoError(t, err)
+	assert.Contains(t, out, "scan:")
+	assert.Contains(t, out, "ingest:")
 	assert.Contains(t, out, "skipped: 1")
+}
+
+func TestAddJSONSuppressesProgress(t *testing.T) {
+	_ = setupVaultHome(t)
+	src := writeSourceFile(t, "json.txt", "quiet automation")
+
+	out, err := runCLI(t, "add", src, "--dest", "/inbox", "--json")
+	require.NoError(t, err)
+	var report api.IngestReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report), out)
+	assert.Equal(t, 1, report.Added)
+	assert.NotContains(t, out, "scan:")
+	assert.NotContains(t, out, "ingest:")
 }
 
 func TestAddPreflightReportsWithoutImporting(t *testing.T) {

@@ -52,6 +52,10 @@ func newBackupProgressRenderer(out io.Writer, mode backupProgressMode) *backupPr
 }
 
 func backupProgressModeFromFlag(value string) (backupProgressMode, error) {
+	return progressModeFromFlag("backup", value)
+}
+
+func progressModeFromFlag(command, value string) (backupProgressMode, error) {
 	switch value {
 	case "", "auto":
 		return backupProgressAuto, nil
@@ -61,7 +65,7 @@ func backupProgressModeFromFlag(value string) (backupProgressMode, error) {
 		return backupProgressPlain, nil
 	default:
 		return backupProgressAuto, fmt.Errorf(
-			"backup: invalid --progress value %q (want auto, bar, or plain)", value)
+			"%s: invalid --progress value %q (want auto, bar, or plain)", command, value)
 	}
 }
 

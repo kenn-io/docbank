@@ -37,7 +37,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `POST /nodes/{id}/verify` | re-hash one file, bound to an inspected node revision | Implemented |
 | `GET /search?q=&limit=` | bounded name search (FTS5), with explicit `truncated` status | Implemented |
 | `POST /nodes` | create a directory (`kind: "dir"`) | Implemented |
-| `POST /ingest` · `POST /ingest/preflight` | import or inventory server-side paths — see [addendum](#addendum-post-ingest-and-post-ingestpreflight) | Implemented |
+| `POST /ingest` · `POST /ingest/stream` · `POST /ingest/preflight` | import with JSON or streamed progress / inventory server-side paths — see [addendum](#addendum-post-ingest-post-ingeststream-and-post-ingestpreflight) | Implemented |
 | `POST /uploads?parent_id=&name=` | stream one digest-checked remote file — see [addendum](#addendum-post-uploads) | Implemented |
 | `PATCH /nodes/{id}` | move and/or rename | Implemented |
 | `POST /path/move` · `POST /path/trash` | move / trash by virtual path, resolved and mutated in one store transaction | Implemented |
@@ -119,7 +119,7 @@ and maintenance are explicit exceptions:
 | `POST /nodes/{id}/verify` | required — binds the evidence to the exact node state the caller inspected |
 | `POST /path/move`, `POST /path/trash` | none — the path is resolved and mutated inside one store transaction, so there is no separate read for a revision to guard |
 | `POST /nodes` (create dir) | none — creation has no prior revision; a name collision is `409` |
-| `POST /ingest` | none — long-running bulk operation with per-path partial success; the destination directory may legitimately change while it runs |
+| `POST /ingest` · `POST /ingest/stream` | none — long-running bulk operations with per-path partial success; the destination directory may legitimately change while they run |
 | `POST /uploads` | none — creates or idempotently resolves one file under the stable `parent_id`; name/content collision policy is transactional |
 | `POST /trash/empty`, `POST /gc`, `POST /verify` | none — vault-wide maintenance, serialized by the maintenance gate |
 | `POST /backup/snapshots`, `POST /backup/snapshots/stream` | none — mutations pause only while pinning one logical snapshot; a preservation lease queues maintenance for the full capture, and the repository has its own exclusive lock |
@@ -164,7 +164,7 @@ These are integrity receipts from the authenticated daemon, not
 non-repudiable attestations against a malicious server. Signed receipts or a
 transparency log are outside docbank's current trust model.
 
-## Addendum: `POST /ingest` and `POST /ingest/preflight`
+## Addendum: `POST /ingest`, `POST /ingest/stream`, and `POST /ingest/preflight`
 
 `POST /ingest/preflight` takes `{paths: [...], exclude: [...]}` and performs a
 metadata-only source inventory. It opens no regular-file content and writes no
@@ -185,9 +185,18 @@ add`'s arguments to absolute paths before calling, so the command-line
 UX (relative paths, `cwd`-relative sources) is unchanged from Phase 1.
 Collisions resolve by the same suffixing rules as Phase 1's import.
 
-Because it grants "read any daemon-readable local path," `POST /ingest`
-is checked per-request against `RemoteAddr` and **restricted to
-loopback callers** regardless of bind address or API key — a
+`POST /ingest/stream` accepts the same body and returns
+`application/x-ndjson`. A metadata-only `scan` stage establishes advisory file
+and byte totals, followed by `ingest` progress for bytes read and file outcomes.
+Exactly one `result` carrying `IngestReport` or `error` terminates the stream;
+HTTP 200 alone is not success. A write failure or client disconnect cancels the
+request context used by traversal, blob writing, and metadata transactions.
+Already completed files remain valid and converge on retry, while an
+incomplete blob never receives node authority.
+
+Because they grant "read any daemon-readable local path," `POST /ingest` and
+`POST /ingest/stream` are checked per-request against `RemoteAddr` and
+**restricted to loopback callers** regardless of bind address or API key — a
 non-loopback client gets `403` (`loopback_only`). There is no remote file-upload
 capability on this route: remote bytes use `POST /uploads`, while remote access
 to the loopback-bound daemon still terminates through the configured SSH/VPN
@@ -313,7 +322,7 @@ machine-readable string clients branch on instead of parsing `detail`:
 | `not_dir` / `not_file` / `invalid_name` / `not_trashed` / `is_root` | 422 | `store.ErrNotDir` / `ErrNotFile` / `ErrInvalidName` / `ErrNotTrashed` / `ErrIsRoot` |
 | `validation` | 400, 415, or 422 | malformed request (bad `If-Match`, paths, media type, multipart envelope, or generated validation) |
 | `precondition_required` | 428 | required `If-Match` header missing |
-| `loopback_only` | 403 | `POST /ingest` called by a non-loopback peer |
+| `loopback_only` | 403 | server-path ingest or preflight called by a non-loopback peer |
 | `digest_mismatch` / `size_mismatch` | 422 | uploaded file bytes disagree with the required declaration; no node/blob authority committed |
 | `too_large` | 413 | upload exceeded its declared size plus bounded multipart overhead |
 | `pack_retirement_deferred` | 503 | repack authority committed but an old source pack remains physically locked; release the lock, then run `storage pack` reconciliation |

@@ -25,7 +25,7 @@ func TestImportRefusesSymlinkAtOpen(t *testing.T) {
 	// are skipped" has to hold at the point the file is opened for reading.
 	ingestID, err := ing.Store.BeginIngest(ctx, "cli", "test")
 	require.NoError(t, err)
-	_, err = ing.importFile(ctx, ingestID, ing.Store.RootID(), link, link)
+	_, err = ing.importFile(ctx, ingestID, ing.Store.RootID(), link, link, nil)
 	require.Error(t, err)
 }
 
