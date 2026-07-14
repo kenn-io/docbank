@@ -184,12 +184,14 @@ version.
 
 ## Tamper evidence and the guarantee boundary
 
-Canonical mutation records are hashed. Each affected audit scope appends a
-chain entry containing that mutation hash and its previous chain head; the
-scope authority records the expected entry count and current head. This lets
-verification and import detect changed, reordered, duplicated, or truncated
-history without duplicating the canonical mutation payload for overlapping
-scopes.
+Each audited authoritative operation has exactly one canonical mutation record.
+Its hash includes the stable vault ID, operation sequence, random operation ID,
+ordered node events, and any enrollment-baseline digests. Each affected audit
+scope appends a chain entry containing that mutation hash and its previous chain
+head; the scope authority records the expected entry count and current head.
+This lets verification and import detect changed, reordered, duplicated, or
+truncated history without duplicating the canonical mutation payload for
+overlapping scopes.
 
 Enrollment is a canonical mutation whose hash includes its baseline digest.
 Verification, JSONL import, and restore recompute that digest from the immutable
@@ -219,24 +221,29 @@ changes this order.
 
 Enabling the first scope also creates a vault-wide allocation-lineage genesis
 that commits a cryptographically random 128-bit lineage ID and the existing
-node-ID and operation-sequence allocator high-water marks. Copies that enable
-audit independently therefore start different lineages even when they inherited
-the same vault ID and allocator state. Thereafter every authoritative operation,
-audited or not, appends one allocation-lineage entry in the same transaction. An
-entry commits its previous lineage head, operation sequence, a cryptographically
-random 128-bit operation ID, the ordered node IDs allocated by the operation,
-and both resulting allocator high-water marks. The random operation ID is
-generated once for that transaction and makes independently mutated copies
-diverge even when they consume the same numeric IDs in the same sequence
-position. The lineage records allocation identity and ancestry, not the
-unaudited operation's document contents.
+node-ID and operation-sequence allocator high-water marks immediately before
+enrollment. That same transaction then appends the enrollment as the first
+ordinary lineage entry. Copies that enable audit independently therefore start
+different lineages even when they inherited the same vault ID and allocator
+state. Every authoritative operation from that enrollment onward, audited or
+not, appends one allocation-lineage entry in its transaction. An entry commits
+its previous lineage head, operation sequence, a cryptographically random
+128-bit operation ID, the ordered node IDs allocated by the operation, both
+resulting allocator high-water marks, and either that operation's canonical
+mutation hash or an explicit no-audited-mutation marker. The random operation ID
+is generated once for that transaction and is the same value hashed into the
+canonical mutation. It makes independently mutated copies diverge even when
+they consume the same numeric IDs in the same sequence position. The lineage
+records allocation identity and ancestry, not an unaudited operation's document
+contents.
 
 The guarantee is application-enforced and tamper-evident. It protects against
 ordinary Docbank commands, API clients, maintenance, software mistakes, and
 incomplete metadata restores. It cannot make bytes metaphysically indelible to
 the operating-system account that can rewrite SQLite, packs, the executable,
-and every backup. Backup manifests and externally recorded audit-chain heads
-provide stronger independent evidence.
+and every backup. Backup manifests and externally recorded evidence bundles—
+the stable vault ID, every scope count/head, and the allocation-lineage
+count/head—provide stronger independent evidence.
 
 ### Live-store downgrade fence
 
@@ -324,20 +331,30 @@ Import restores both allocators and their lineage in the same transaction as
 metadata authority; the next operation advances from that exact tail rather
 than reusing a gap.
 
+Import also cross-checks the authorities one-to-one. Every canonical mutation
+must have exactly one allocation-lineage entry with the same operation sequence,
+operation ID, and mutation hash; a lineage entry marked as unaudited must have no
+canonical mutation. Every affected scope-chain entry must commit that same
+mutation hash. Mixing a valid scope history from one branch with a valid
+allocation lineage from another therefore fails before publication.
+
 A fresh import with no trusted reference cannot distinguish a coherently
 rewritten and re-chained stream from an original one. Downgrade or rollback is
-detectable only when the operation is given an expected count/head from a
-trusted prior snapshot manifest or an externally recorded audit head. Restore
-checks every expectation carried by its selected snapshot; independent
-evidence remains necessary against an attacker who can replace the repository,
-manifest, and history together.
+detectable only when the operation is given a trusted evidence bundle from a
+prior snapshot manifest or external record: the stable vault ID, every expected
+scope count/head, and the allocation-lineage count/head. Restore and verification
+check the complete bundle rather than only audit heads. Independent evidence
+remains necessary against an attacker who can replace the repository, manifest,
+and history together.
 
 Portable backup capture includes every blob reachable from a current audited
 head or historical version. Incremental snapshots may reuse existing backup
 packs, but each snapshot's logical metadata describes the complete audit
-authority at that point. Verify and restore must reproduce identical scope IDs,
-memberships, event count/heads, content hashes, and deletion protections across
-loose and packed source vaults.
+authority at that point. Every snapshot manifest records the complete evidence
+bundle, including allocation-lineage count/head even when the latest operations
+were unaudited. Verify and restore must reproduce identical scope IDs,
+memberships, event count/heads, allocation lineage, content hashes, and deletion
+protections across loose and packed source vaults.
 
 Normal overwrite restore is forward-only for an existing audited target. While
 holding the target hierarchy lock and before cleanup, restore reads the target's
@@ -371,7 +388,9 @@ workflow. The ordinary overwrite form of `docbank backup restore` rejects it.
 The daemon API owns one bounded, cursor-paginated representation for audit
 scope status, events, content versions, comparisons, and chain verification.
 CLI, agents, TUI, and web clients consume that same model; none opens SQLite or
-the blob store directly.
+the blob store directly. Status and terminal verification proofs expose the
+stable vault ID, every scope count/head, and allocation-lineage count/head as one
+evidence bundle suitable for external recording and later expected-state checks.
 
 The event order is canonical and total, while clients project it in three
 useful ways:
@@ -399,7 +418,9 @@ Planned CLI concepts are `audit enable`, `audit status`, `audit history`,
 baseline inventory and returns a server-issued preview token by default; a
 separate execution supplies that token because enrollment is permanent.
 Machine output uses stable scope, node, event, and version IDs and explicit
-protection state. `audit history` and the node-timeline API return
+protection state. `audit status --json` and `audit verify --json` include the
+complete evidence bundle rather than reporting only per-scope heads. The
+`audit history` command and node-timeline API return
 `audit_not_enrolled` for a node outside every audit scope rather than presenting
 an empty timeline as complete. A refused protected mutation returns
 `audit_protected` with a list of every blocking scope rather than relying on

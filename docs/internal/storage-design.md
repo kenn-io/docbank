@@ -36,7 +36,12 @@ share a blob without sharing document identity.
     authoritative operation appends with a random operation ID. Import verifies
     and restores that authority transactionally before any new operation can
     run; independently mutated copies therefore have distinguishable ancestry
-    even when they consume the same numeric IDs.
+    even when they consume the same numeric IDs. An audited operation's
+    canonical mutation hash includes that operation ID, and its allocation entry
+    and every affected scope chain commit the same mutation hash; import rejects
+    any missing, duplicate, or mismatched cross-chain binding. Snapshot manifests
+    and status/verification proofs expose scope and allocation-lineage
+    count/heads together as one rollback-evidence bundle.
     Audited trash-origin coordinates are immutable metadata rather than a
     nullable live foreign-key relationship; an unaudited origin can disappear
     without mutating the audited node's chain state. The nullable `trash_parent`

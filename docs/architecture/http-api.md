@@ -342,9 +342,13 @@ machine-readable string clients branch on instead of parsing `detail`:
 !!! info "Planned — audited-history API"
     One bounded, cursor-paginated model will expose audit scope status, sticky
     membership, canonical mutation events, content versions, comparison
-    metadata, and chain verification to CLI, agent, TUI, and web clients. Scope
-    preview returns a short-lived token bound to the baseline and vault preview
-    generation; enablement requires that token. `audit_not_enrolled` (409) means
+    metadata, and chain verification to CLI, agent, TUI, and web clients. Status
+    and terminal verification responses will expose one rollback-evidence
+    bundle: stable vault ID, every scope count/head, and allocation-lineage
+    count/head. Expected-state verification checks all of those fields, including
+    lineage advances caused only by unaudited operations. Scope preview returns
+    a short-lived token bound to the baseline and vault preview generation;
+    enablement requires that token. `audit_not_enrolled` (409) means
     a requested node timeline has no audit authority. `audit_protected` (409)
     refuses an incompatible mutation and carries a `blocking_scopes` array;
     overlapping scopes are never collapsed to one. `audit_preview_stale` (409)

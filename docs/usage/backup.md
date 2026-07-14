@@ -140,8 +140,12 @@ progress so stdout contains one typed report.
     allocation lineage separately, restore the allocators at the verified
     lineage tail, and reject internally missing, reordered, truncated, or
     hash-invalid authority rather than restoring only the current tree.
-    Rollback detection additionally requires a trusted prior count/head; a
-    fresh import cannot identify a coherently rewritten chain.
+    Canonical mutations and allocation entries will be cross-bound by operation
+    ID and mutation hash. Each snapshot manifest will carry the stable vault ID,
+    every scope count/head, and allocation-lineage count/head as one evidence
+    bundle. Rollback detection requires that complete bundle from a trusted
+    prior snapshot or external record; a fresh import cannot identify a
+    coherently rewritten set of chains.
 
     Overwriting an existing audited target is forward-only: under the target
     lock, the snapshot must prove the same vault ID and preserve or extend every

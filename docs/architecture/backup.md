@@ -124,9 +124,13 @@ inside the snapshot.
     snapshots, verify later mutations and allocation lineage separately,
     restore the allocators at the verified lineage tail, and reject an
     internally missing, malformed, reordered, truncated, or hash-inconsistent
-    stream before publishing the database. Rollback is detectable only against
-    an expected count/head from a trusted prior snapshot or external record; a
-    fresh import cannot detect a coherently rewritten chain.
+    stream before publishing the database. Each canonical mutation is bound to
+    exactly one allocation-lineage entry by operation ID and mutation hash.
+    Snapshot manifests carry an evidence bundle containing the stable vault ID,
+    every scope count/head, and allocation-lineage count/head. When independently
+    trusted, that manifest or bundle is rollback evidence; a fresh import without
+    such an external reference cannot detect a coherently rewritten set of
+    chains.
 
     Before overwriting an existing audited target, restore inspects it under
     the target lock. The snapshot must have the same vault ID and prove every
