@@ -20,6 +20,12 @@ Ordinary commands cannot prune, empty, garbage-collect, or otherwise erase
 that protected history. Enrollment cannot reconstruct changes or versions
 that were already discarded before the baseline.
 
+Enrollment is also **permanent in v1**: membership is additive-only, there is
+no `audit disable`, and no ordinary command destroys audited history. Enabling
+a scope is an irreversible commitment — every protected version's bytes remain
+reachable forever — so every enablement surface treats it as a deliberate
+two-step act, never a side effect.
+
 This is deliberately stronger than an ordinary version-retention policy.
 Ordinary policy may eventually keep the newest *N* versions or discard old
 ones after a chosen age. Full audit never applies those limits.
@@ -38,6 +44,13 @@ scope runs as a daemon job behind the mutation gate and atomically records:
 The policy is vault metadata, not `config.toml`. It therefore participates in
 the same transactional authority, JSONL export, backup, and restore as the
 documents it protects.
+
+Because enrollment is irreversible, every enablement surface — CLI, API
+clients and agents, TUI, and web — requires the same two-step shape: a
+dry-run baseline inventory reporting the nodes, content versions, and storage
+the scope would protect, then a separate explicit execution. The API exposes
+preview and enable as distinct operations, so no client can enroll a scope in
+a single call.
 
 Membership is **sticky**. A member moved outside the directory remains audited;
 otherwise moving a file out, deleting it, and moving it back would be a purge
@@ -182,9 +195,12 @@ download/open actions; richer format-aware comparison can be added later.
 ### CLI and agents
 
 Planned CLI concepts are `audit enable`, `audit status`, `history`, `versions`,
-and `audit verify`. Machine output uses stable scope, node, event, and version
-IDs and explicit protection state. A refused deletion returns a structured
-error naming the blocking scope rather than relying on prose parsing.
+and `audit verify`. `audit enable` previews its baseline inventory by default
+and enrolls only with a separate explicit run flag — the same dry-run-first
+shape as `gc` — because enrollment is permanent. Machine output uses stable
+scope, node, event, and version IDs and explicit protection state. A refused
+deletion returns a structured error naming the blocking scope rather than
+relying on prose parsing.
 
 ### TUI
 
@@ -206,8 +222,9 @@ The TUI is a focused operator browser with three coordinated panes:
 Selection in the tree drives the history pane; selecting an event or version
 drives detail. Scope and node views are switchable without losing the selected
 stable node. Filtering, comparison, external open, and chain verification are
-first-class actions. Policy enablement may show a dry-run baseline inventory,
-but exceptional destruction is absent.
+first-class actions. Policy enablement shows the dry-run baseline inventory
+and requires the separate explicit confirmation all surfaces share; exceptional
+destruction is absent.
 
 It can render concise text or metadata differences. Rich PDF, office, image,
 and binary comparison opens an external tool or directs the operator to the web
