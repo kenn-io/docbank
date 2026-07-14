@@ -173,6 +173,23 @@ the stable snapshot summary or `error` with the normal problem fields. Treat
 EOF before that terminal line as failure. In particular, do not interpret HTTP
 200 as snapshot success: it only confirms that streaming began.
 
+## Inspect daemon background work
+
+Before relying on a configured background feature, inspect its task state:
+
+```bash
+curl --fail-with-body \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  "$DOCBANK_URL/api/v1/jobs"
+```
+
+The response is `{items: [...]}`, sorted by stable task name. Branch on
+`status`: `running` is active; `completed`, `failed`, and `cancelled` are
+terminal for this daemon run. Surface a failed task's bounded `error` to the
+operator, but do not parse its prose as a protocol. An absent item is not proof
+that work completed—it can mean the feature is unconfigured or the daemon
+restarted, because status history is intentionally process-local.
+
 ## Use revisions for read-modify-write
 
 ID-addressed move, trash, and restore operations require `If-Match`. The

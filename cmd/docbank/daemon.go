@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -24,6 +25,7 @@ import (
 	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/home"
+	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -36,7 +38,7 @@ var daemonRunCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, _ []string) error { return runServe(cmd.Context()) },
 }
 
-func runServe(ctx context.Context) error {
+func runServe(ctx context.Context) (retErr error) {
 	layout, err := home.Resolve()
 	if err != nil {
 		return err
@@ -64,6 +66,8 @@ func runServe(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	sigCtx, sigCancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+	defer sigCancel()
 
 	s, err := store.Open(layout.DBPath())
 	if err != nil {
@@ -79,6 +83,16 @@ func runServe(ctx context.Context) error {
 	if err := blobs.CleanTmp(); err != nil {
 		return err
 	}
+	jobSupervisor := jobs.New(sigCtx, logger)
+	// Register this after the store/blob defers so jobs always stop before the
+	// resources their runners may use are closed, including early error paths.
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := jobSupervisor.Shutdown(shutdownCtx); err != nil {
+			retErr = errors.Join(retErr, err)
+		}
+	}()
 
 	listener, err := kitdaemon.Listen(ctx, kitdaemon.Endpoint{
 		Network: kitdaemon.NetworkTCP,
@@ -125,6 +139,7 @@ func runServe(ctx context.Context) error {
 	srv := api.NewServer(api.Deps{
 		Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Logger: logger,
 		StartedAt: time.Now(), ShutdownToken: shutdownToken, Shutdown: stop, Tracker: tracker,
+		Jobs: jobSupervisor,
 	})
 	httpSrv := &http.Server{
 		Handler:           srv.Handler(),
@@ -132,11 +147,13 @@ func runServe(ctx context.Context) error {
 		BaseContext:       func(net.Listener) context.Context { return ctx },
 	}
 
-	sigCtx, sigCancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
-	defer sigCancel()
-
 	if background && cfg.Server.IdleTimeout.Std() > 0 {
-		go idleWatch(sigCtx, tracker, cfg.Server.IdleTimeout.Std(), logger, stop)
+		if err := jobSupervisor.Start("daemon.idle-timeout", func(ctx context.Context) error {
+			idleWatch(ctx, tracker, cfg.Server.IdleTimeout.Std(), logger, stop)
+			return nil
+		}); err != nil {
+			return fmt.Errorf("starting idle-timeout job: %w", err)
+		}
 	}
 
 	errCh := make(chan error, 1)
@@ -150,6 +167,7 @@ func runServe(ctx context.Context) error {
 	case <-stopCh:
 	}
 	logger.Info("docbank daemon shutting down")
+	jobSupervisor.Stop()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil {

@@ -103,6 +103,8 @@ metadata, durability rules, and physical storage primitives from
   daemon holds exclusively ([Concurrency & Locking](locking.md)).
 - **`internal/config`** — optional `config.toml` loading and the
   bind/key validation ([Configuration](../configuration.md)).
+- **`internal/jobs`** — daemon-owned background-task supervision, cancellation,
+  bounded shutdown, panic/error capture, and deterministic status snapshots.
 - **`internal/api`** — the huma v2 HTTP surface: routes, middleware,
   auth, the maintenance gate ([HTTP API](http-api.md)).
 - **`internal/client`** — the typed HTTP client plus daemon
@@ -120,6 +122,8 @@ metadata, durability rules, and physical storage primitives from
 - Kit owns application-neutral loose/packed storage mechanics; docbank owns
   catalog authority and garbage-collection policy.
 - The HTTP API is the sole data contract for clients, including the CLI.
+- Background work is daemon-owned, observable through the API, and stopped
+  before storage resources close.
 - Stable node IDs identify objects; paths are mutable addressing conveniences.
 - Trash, permanent metadata deletion, and physical byte reclamation are
   separate decisions.

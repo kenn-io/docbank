@@ -11,7 +11,7 @@ stderr and produce a non-zero exit code. Virtual paths are absolute,
 `/`-separated, and case-sensitive.
 
 Every data command below (`add`, `ls`, `tree`, `cat`, `mv`, `rm`,
-`restore`, `search`, `trash`, `gc`, `verify`) talks to the `docbank`
+`restore`, `search`, `trash`, `gc`, `verify`, `storage`, `backup`, `jobs`) talks to the `docbank`
 daemon over its HTTP API rather than opening the vault itself; if none
 is running, the command auto-starts one in the background. `docbank
 daemon status` and `docbank daemon stop` never auto-start. See
@@ -357,6 +357,19 @@ API protocol does not match the invoking binary is stopped and replaced
 (printed as `replaced daemon <old> (pid N) with <new>: ...`), so after
 any of them succeeds, the one running daemon is current. See
 [Daemon](architecture/daemon.md).
+
+## docbank jobs
+
+```
+docbank jobs [--json]
+```
+
+Shows daemon-owned background tasks in stable name order, including status,
+start and finish timestamps, and the bounded error recorded for a failed task.
+Running tasks have no finish timestamp; terminal task records remain visible
+until the daemon restarts. `--json` emits `{"items": [...]}` for automation.
+An empty list is normal when no configured feature has registered background
+work. See [Daemon](architecture/daemon.md).
 
 ## docbank update
 

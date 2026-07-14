@@ -633,6 +633,13 @@ func (c *Client) BackupList(ctx context.Context, repo string) ([]api.BackupSnaps
 	return out.Items, err
 }
 
+// Jobs returns the stable, name-sorted snapshot of daemon background work.
+func (c *Client) Jobs(ctx context.Context) ([]api.Job, error) {
+	var out api.JobList
+	err := c.do(ctx, http.MethodGet, "/api/v1/jobs", nil, nil, &out)
+	return out.Items, err
+}
+
 type BackupVerifyOptions struct {
 	Repo        string
 	SnapshotID  string

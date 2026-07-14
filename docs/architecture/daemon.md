@@ -40,8 +40,9 @@ shutdown request.
 process running `daemon run`; `docbank daemon stop` asks it to shut down;
 `docbank daemon restart` stops it (tolerating it not already running) and
 starts it again; `docbank daemon status` reports whether it's running.
-Shutdown is graceful: in-flight requests drain, the store closes, the
-vault lock releases, and the runtime record is removed — in that order,
+Shutdown is graceful: background tasks receive cancellation, in-flight
+requests drain, tasks receive a bounded window to return, the store closes,
+the vault lock releases, and the runtime record is removed — in that order,
 so a stopped daemon leaves no trace for the next `daemon start` or
 auto-start to trip over.
 
@@ -119,6 +120,22 @@ minutes) with no requests, so spawned daemons don't accumulate across
 sessions. `idle_timeout = "0"` disables idle shutdown. A foreground
 `docbank daemon run` never idles out — it runs until signaled or
 stopped.
+
+## Background tasks
+
+Every daemon-owned task runs under one supervisor rooted in the daemon's
+shutdown context. Names are unique and stable for the lifetime of that daemon;
+a task panic is recovered and recorded as a failure rather than crashing the
+process. `docbank jobs` and authenticated `GET /api/v1/jobs` expose running and
+terminal state in deterministic order. Terminal records remain until restart,
+which makes a failed task visible instead of silently disappearing.
+
+The supervisor stops accepting work as soon as shutdown begins, cancels every
+runner, and waits before SQLite and blob storage close. Runners must honor
+their context; the wait is bounded so a defective runner cannot prevent daemon
+exit forever. The background daemon's idle-timeout loop is supervised through
+this same path. Watched inboxes and scheduled maintenance are still planned,
+but must use this lifecycle rather than creating unmanaged goroutines.
 
 ## Logs
 

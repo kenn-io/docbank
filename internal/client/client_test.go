@@ -125,6 +125,13 @@ func TestAPIKeySent(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestJobsRoundTrip(t *testing.T) {
+	c, _ := newClient(t, serverKey)
+	items, err := c.Jobs(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, items)
+}
+
 func TestStoragePackRoundTrip(t *testing.T) {
 	c, _ := newClient(t, serverKey)
 	src := filepath.Join(t.TempDir(), "pack.txt")

@@ -14,6 +14,7 @@ import (
 
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/internal/version"
 )
@@ -31,6 +32,7 @@ type Deps struct {
 	ShutdownToken string           // "" disables the shutdown route
 	Shutdown      func()           // called (async) by the shutdown route
 	Tracker       *ActivityTracker // nil → no idle tracking
+	Jobs          *jobs.Supervisor // nil → no registered background jobs
 }
 
 // Server is docbank's HTTP API: a huma-described /api/v1 surface plus a
@@ -84,6 +86,7 @@ func NewServer(d Deps) *Server {
 	registerMutateRoutes(humaAPI, d, g) // Task 6
 	registerOpsRoutes(humaAPI, d, g)    // Task 7
 	registerBackupRoutes(humaAPI, d, g)
+	registerJobRoutes(humaAPI, d)
 	registerUploadRoute(mux, humaAPI, d, g)
 	s.registerHealth(mux)
 	mux.Handle("GET "+kitPingPath, kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{
