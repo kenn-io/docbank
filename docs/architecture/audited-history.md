@@ -98,11 +98,14 @@ restored copy remains recognizably the same logical vault even when published
 at another filesystem location.
 
 Trash is detached from the live tree, so current parentage alone is not enough.
-Enrollment follows every available recorded `trash_parent` origin ID, including
-through another trash root adopted by the same baseline batch. Adoption freezes
-those coordinates as immutable audit origin records. This closes the escape
-where a file is trashed immediately before its directory is enrolled and then
-emptied.
+The first audit genesis and each later trash transition may seed an origin edge
+from the then-available `trash_parent`, but the replayed vault-wide last-known
+origin graph is authoritative for every post-activation enrollment. Closure
+follows that graph, including through another trash root adopted by the same
+baseline batch; a later locator clear cannot remove the edge. Adoption freezes
+the applicable coordinates as immutable audit origin records. This closes the
+escape where a file is trashed immediately before its directory is enrolled and
+then emptied.
 If earlier permanent deletion already erased the origin ancestry, Docbank cannot
 infer that the remaining trash once belonged to the scope; the preview reports
 the unresolved trash root without claiming it as a member.
@@ -231,8 +234,10 @@ their original replay boundary rather than treated as stale current state.
 Witness generations introduced inside an enrollment baseline are bound by that
 batch's digest and canonical baseline binding; they do not also appear in a
 witness-change list. Import installs them only after recomputing and accepting
-the batch. Every other operation that creates or retires witnesses commits a
-canonical witness-change list sorted by
+the batch. This exemption is per witness creation, not per operation: when one
+transaction contains baseline enrollment and ordinary transitions, every
+creation or retirement not contained in a baseline remains in the operation's
+canonical witness-change list, sorted by
 `(node_id, witness_generation_operation_id, action_code)`. Creation records
 also commit the canonical witnessed-state digest. The canonical mutation and
 allocation-lineage entry both commit the list's count and digest, and import
@@ -572,11 +577,12 @@ non-authoritative `trash_parent` locator is the narrow exception: foreign-key
 cleanup may clear it because immutable audit origin metadata, not that locator,
 is the protected fact.
 
-The same protection applies to indirect topology effects. Node insertion and
-parent/name/trash updates require the guarded operation context whenever any
-scope exists, and commit-time validation proves the complete inherited
-membership and path-affecting descendant closure described above. A row need
-not already be audited for its write to be guarded.
+The same protection applies to indirect topology effects. Node insertion,
+direct or cascading deletion, and parent/name/trash updates require the guarded
+operation context whenever any scope exists. Commit-time validation proves the
+complete inherited membership and path-affecting descendant closure and matches
+every deleted node to its topology tombstone. A row need not already be audited
+for its write to be guarded.
 
 ## Deletion and storage maintenance
 
