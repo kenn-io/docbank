@@ -171,7 +171,8 @@ locator must resolve to the immutable origin ID; null is valid after that parent
 disappears. Deleting an unaudited origin directory may therefore clear the
 locator without rewriting the protected origin coordinates, baseline digest,
 or chain. Restore tries a known immutable parent ID and falls back to `/` when
-that node no longer exists, while history continues to show the original
+that node does not resolve to a live directory—including when it is missing,
+trashed, or no longer a directory—while history continues to show the original
 intended location. Unknown origins use the explicit behavior above.
 
 The policy is vault metadata, not `config.toml`. It therefore participates in
