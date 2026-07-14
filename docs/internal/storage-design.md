@@ -22,6 +22,120 @@ Stable node IDs are document identity. Paths are derived from parent/name rows
 and can change or be reused. Blob hashes are content identity. Two nodes may
 share a blob without sharing document identity.
 
+!!! info "Planned — full-audit authority"
+    Full-audit policy adds a fourth logical authority: sticky membership and
+    append-only history decide which node/version facts can never be removed by
+    ordinary maintenance. That policy remains Docbank metadata rather than a
+    Kit storage concern. Its definitive contract is
+    [Audited History](../architecture/audited-history.md). A logical mutation,
+    its ordered history events, membership changes, and every affected scope
+    chain/count/head update commit in one SQLite transaction. Canonical order
+    comes from a vault-wide operation sequence plus deterministic per-operation
+    event ordinals, never incidental traversal order. JSONL preserves the
+    allocator high-water marks and a vault-wide allocation lineage that every
+    authoritative operation appends with a random operation ID. Import verifies
+    and restores that authority transactionally before any new operation can
+    run; independently mutated copies therefore have distinguishable ancestry
+    even when they consume the same numeric IDs. An audited operation's
+    canonical mutation hash includes that operation ID, and its allocation entry
+    and every affected scope chain commit the same mutation hash; import rejects
+    any missing, duplicate, or mismatched cross-chain binding. Snapshot manifests
+    and status/verification proofs expose scope and allocation-lineage
+    count/heads together as one rollback-evidence bundle.
+    Content-version IDs use random UUIDv4 values under a unique constraint,
+    rather than another sequential allocator, so pruning and JSONL round trips
+    cannot reuse or retarget an old agent-visible version reference.
+    The same metadata-v2 bootstrap assigns non-reusable UUIDv4 identities to
+    retained legacy tag and ingest records and creates the stable vault ID.
+    Identical legacy provenance duplicates are canonicalized and collapsed
+    before their field-derived v2 identities are assigned; distinct facts remain
+    intact, and migration fixtures cover duplicates from stores and v1 imports.
+    Zero-scope v2 is the portable editing/version form and contains no audit
+    genesis or lineage; enabling the first scope later adds those authorities
+    from the current v2 projection. Bootstrap activates a non-ignorable
+    live-store fence against pre-bootstrap writers and legacy overwrite restore.
+    The synced `bootstrap_pending` generation precedes the SQLite cutover;
+    `v2_ready` is published only after committed authority is reverified, and
+    crash recovery resumes or verifies bootstrap without reopening legacy
+    access. Audit activation advances that fence again for pre-audit binaries.
+    Audit baselines and final-state reconciliation include authoritative tag
+    assignments and their definitions plus provenance and its referenced ingest
+    records. Import validates and replays that referential closure; derived FTS,
+    extraction-cache, and job rows remain outside audit hashes. Ingest and
+    provenance rows are immutable; audited references are database-guarded
+    retention roots. Deletion is permitted only when replayed pre-state proves
+    the record wholly unprotected and the attached-metadata delta contains its
+    tombstone, including in a transaction with an unrelated audited effect.
+    Corrections append an immutable superseding fact, replay retains the old fact
+    and derives the active leaves, and inserting an identical canonical
+    provenance fact is an idempotent no-op.
+    Canonical mutation ordering uses the full node/kind/scope/target/attachment
+    tuple with format-versioned stable string kind codes, assigns ordinals only
+    after sorting, and separately sorts every `(scope, target, baseline digest)`
+    binding before hashing. All audit digests use SHA-256 over the normative
+    CAE2 typed, length-framed, domain-separated encoding; golden vectors bind
+    every record kind and optional-value edge case. Net topology effects always
+    use `node_path`, with labels derived from committed pre/post state rather
+    than ambiguous action precedence.
+    Tag identities are non-reusable UUIDv4 values independent of mutable names.
+    Node insertion, deletion (including cascades), and topology changes require
+    a transaction-scoped audit context even when the directly touched node is
+    unaudited. The mutation path
+    precomputes inherited memberships and path-affecting descendant events, then
+    refuses commit unless the resulting baselines, events, lineage, and scope
+    heads exactly match that closure; database guards reject writes without the
+    context.
+    Inherited memberships are partitioned into shared baseline batches keyed by
+    scope, normalized top-level target, and operation—not one baseline per
+    member. Each new membership references exactly one batch, whose sorted
+    member state includes the enrollment revision and current-version ID and
+    whose adopted-record set is replayed atomically. Later canonical mutations
+    carry operation-level member-state changes so import can reconcile revisions
+    and heads with current nodes. Each batch also
+    preserves deduplicated ancestor-spine topology witnesses. A vault-wide,
+    hash-bound topology genesis snapshot plus every later lineage delta lets
+    commit and import independently derive the exact adopted trash closure and
+    compare its members, versions, and attachments with the batch. Root-scope
+    legacy trash with lost ancestry uses an explicit unknown-origin sentinel
+    rather than a guessed parent. Later topology mutations commit one sorted
+    atomic pre/post delta and a net path-effect set with count and digest.
+    Verification derives that set
+    from the previous replayed topology before applying the delta, so nested
+    batch moves, a writer's claim, or matching final paths cannot conceal an
+    omitted descendant event. Every post-audit topology delta is also bound into
+    allocation lineage even when it has no scoped effect. Active witness
+    generations retire when no audited path depends on them and are recreated
+    from current state on later reuse; historical generations remain immutable.
+    Every witness state digest is SHA-256 over the registered CAE2 witnessed
+    topology record. Sorted witness-change counts/digests are committed into
+    both canonical mutations and allocation lineage.
+    Shared tag or ingest records are copied identically into every baseline batch
+    that references them. Their values and references come from the complete
+    post-operation projection; pre-operation memberships decide only which
+    nodes were already protected and how new baseline batches are partitioned.
+    Audited trash-origin coordinates are immutable metadata rather than a
+    nullable live foreign-key relationship; an unaudited origin can disappear
+    without mutating the audited node's chain state. The nullable `trash_parent`
+    locator is explicitly non-authoritative and excluded from hashes,
+    final-state reconciliation, and guards; the immutable origin record is
+    authoritative. Enabling the first scope first syncs an `audit_pending`
+    layout generation containing every preallocated operation/lineage identity
+    and other non-derivable preview input, commits and revalidates enrollment,
+    then syncs
+    `audit_ready`; recovery resumes a rolled-back enrollment or verifies a
+    committed one while pre-audit binaries remain fenced. Database write guards
+    prevent bypass through legacy mutation, GC, or backup paths, and the audited
+    layouts stay outside legacy restore publication paths. The enable preview
+    separately discloses that scope-specific content protection activates
+    vault-wide retention of topology tombstones and authoritative tag,
+    ingest, and provenance metadata for replay. The planned audited restore
+    workflow inspects an existing
+    target under its hierarchy lock and accepts overwrite only when the
+    snapshot's stable vault ID, scope-chain prefixes, and allocation-lineage
+    prefix preserve every promise and consumed identity. High-water comparison
+    alone is not proof: divergent copies are rejected even when their counters
+    happen to match.
+
 ## Immutable content and mutable organization
 
 Canonical blobs are immutable SHA-256 objects. Rewriting bytes in place would
@@ -104,6 +218,15 @@ Trashed nodes remain reachable. Permanent node deletion may make a blob row a
 GC candidate, but it does not itself claim disk space. GC must consider live
 nodes, trashed nodes, and `node_versions`; new logical reference types must be
 added to reachability before their schema is usable.
+
+!!! info "Planned — full-audit maintenance"
+    Full-audit membership is sticky and protected historical versions remain
+    reachability roots. A trash root containing any audited member is excluded
+    explicitly from trash-empty eligibility and reported separately, while
+    eligible unrelated roots can still be removed. GC cannot revoke protected
+    blob authority. Repack may replace physical mappings only through Kit's
+    verified publication ordering; audit does not pin a particular loose file
+    or pack container.
 
 GC and ingest cross SQLite/filesystem boundaries. The daemon maintenance gate
 prevents a mutation from deduplicating against bytes between GC's reachability
@@ -241,6 +364,14 @@ restore coordinates, and stable external node references survive a roundtrip.
 The header carries SQLite's node `AUTOINCREMENT` high-water mark separately
 from the live rows; import restores it only after proving it is at least the
 maximum surviving node ID.
+
+!!! info "Planned — editing and audited metadata v2"
+    The editing/identity bootstrap will advance this boundary to
+    `docbank-metadata` version 2 and `docbank-metadata-jsonl-v2`; existing
+    version 1 remains the pre-bootstrap format and cannot contain stable content
+    versions or audit records. Zero-scope v2 preserves editing and portable
+    identities without audit genesis or lineage. Enabling the first scope adds
+    the complete audit authority to that same format.
 
 The stream excludes `nodes_fts`, `blob_packs`, and `blob_pack_index`. FTS is a
 derived index rebuilt by the node insert triggers. Pack tables describe one

@@ -66,6 +66,21 @@ non-goals.
 6. **Dry run before policy-changing maintenance.** Preview destructive work,
    evaluate the result, then make the separate explicit run request.
 
+!!! info "Planned — audited scopes"
+    A full-audit scope will make membership sticky and retain every successful
+    authoritative mutation and content version. Ordinary trash remains
+    reversible; trash empty will loudly exclude protected roots while removing
+    eligible ordinary trash, and version pruning and GC cannot remove protected
+    history. Refused protected mutations return every blocking scope. Agents
+    must inspect the preview's structured `vault_metadata_retention` inventory
+    as well as its scope baseline. The irreversible enable operation requires
+    both the server-issued preview token and
+    `acknowledge_vault_metadata_retention: true`; an agent must not supply that
+    acknowledgment unless its caller explicitly approved permanent metadata
+    retention outside the selected scope. Agents can inspect and verify history,
+    but no normal agent surface will destroy it. See
+    [Audited History](architecture/audited-history.md).
+
 ## Common agent workflows
 
 - **File local material:** preflight large server-side trees with the intended

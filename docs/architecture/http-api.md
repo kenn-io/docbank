@@ -58,7 +58,8 @@ its own shutdown token.
 !!! info "Planned"
     Not yet implemented: `PUT /nodes/{id}/content` (versioned edit) and
     `GET /nodes/{id}/versions` ([Editing & Versions](editing-and-versions.md));
-    tags (`GET /tags` + CRUD, tag filters on search); and
+    tags (`GET /tags` + CRUD, tag filters on search), whose IDs are opaque
+    non-reusable UUIDv4 values independent of mutable names; and
     `POST /batch/move` bulk reorganization with `dry_run`.
 
 IDs are canonical everywhere: every response carries them, and mutating
@@ -339,9 +340,37 @@ machine-readable string clients branch on instead of parsing `detail`:
 | `unauthorized` | 401 | missing or invalid API key; bad shutdown token |
 | `internal` | 500 | unmapped error (still surfaced with a message — this is a single-user local daemon, not a hardened multi-tenant service) |
 
+!!! info "Planned — audited-history API"
+    One bounded, cursor-paginated model will expose audit scope status, sticky
+    membership, canonical mutation events, content versions, comparison
+    metadata, and chain verification to CLI, agent, TUI, and web clients. Status
+    and terminal verification responses will expose one rollback-evidence
+    bundle: stable vault ID, every scope count/head, and allocation-lineage
+    count/head. Expected-state verification checks all of those fields, including
+    lineage advances caused only by unaudited operations. Mutation events expose
+    a unique per-transaction `operation_id` and an optional `grouping_id` for a
+    command or job spanning several transactions; grouping never implies atomic
+    commit. Scope preview returns a short-lived token bound to the baseline and
+    vault preview generation plus `vault_metadata_retention`: whether the
+    vault-wide lineage is newly activated or already active, genesis record
+    counts by kind, estimated serialized bytes, the retained metadata classes,
+    and `unaudited_content_retained: false`. Enablement requires both that token
+    and `acknowledge_vault_metadata_retention: true`; omitting or falsifying the
+    acknowledgment is a validation error, never implicit consent.
+    `audit_not_enrolled` (409) means
+    a requested node timeline has no audit authority. `audit_protected` (409)
+    refuses an incompatible mutation and carries a `blocking_scopes` array;
+    overlapping scopes are never collapsed to one. `audit_preview_stale` (409)
+    means the one-use preview token expired, the daemon restarted, another
+    execution consumed it, or authoritative state advanced. Credentialed
+    clients will not receive an ordinary audit-destruction operation. See
+    [Audited History](audited-history.md).
+
 ## Non-goals
 
-- No server-side rendering or web UI beyond the static placeholder.
+- No server-side rendering. The current root is a static placeholder; the
+  planned kit-ui portal remains an ordinary authenticated API client and gains
+  no privileged data path.
 - No multi-user model: one vault, one key. Sharing is out of scope for
   v1.
 - No MCP server.

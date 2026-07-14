@@ -63,6 +63,17 @@ permanently deletes the selected tree entries. The document bytes are still
 on disk and may still be referenced by another node or version. Only content
 with no remaining reference becomes a GC candidate.
 
+!!! info "Planned — full-audit protection"
+    Any trash root containing an audited node is explicitly outside the
+    eligible deletion set. Dry-run and execution reports list eligible roots
+    separately from protected roots and identify every protecting scope.
+    Execution deletes the eligible roots and leaves protected roots intact, so
+    one audited item never wedges cleanup of unrelated trash. Trashing and
+    restoring audited nodes remain allowed and become history events. Their
+    original parent ID/name remain protected even if an unrelated origin
+    directory is later emptied; restore falls back to `/` without erasing that
+    evidence. See [Audited History](../architecture/audited-history.md).
+
 ## Stage 3: Garbage collection (`gc`)
 
 Unreachable blob authority is removed only by explicit GC. A blob is
@@ -72,6 +83,12 @@ Unreachable blob authority is removed only by explicit GC. A blob is
 - a trashed node (trash is always restorable in full), or
 - a recorded prior version of an edited document
   (see [Editing & Versions](../architecture/editing-and-versions.md)).
+
+!!! info "Planned — full-audit reachability"
+    Full-audit membership makes every protected historical version a permanent
+    reachability root for ordinary maintenance. Repack may change where those
+    bytes are physically stored, but only after verified replacement
+    publication; it cannot revoke their logical authority.
 
 ```bash
 docbank gc          # dry run: candidate count and reclaimable bytes

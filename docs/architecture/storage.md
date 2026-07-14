@@ -71,6 +71,60 @@ extracted_text (blob_hash, extractor, extractor_version, status,
 nodes_fts      -- FTS5 external-content index over live node names
 ```
 
+!!! info "Planned — version and audit schema"
+    The reserved `node_versions` shape is not yet a compatibility promise.
+    Before the first editing writer lands, it will gain stable version identity
+    as a canonical UUIDv4 with a uniqueness constraint and the fields needed by
+    [Audited History](audited-history.md). UUID identity avoids a portable
+    allocator whose rollback or reuse could retarget stale version references.
+    Audit scopes, sticky memberships, mutation records, and chain state will be
+    current-schema metadata included in deterministic JSONL rather than
+    inferred from paths or pack layout. A daemon-exclusive bootstrap will give
+    every existing file a stable initial version and `current_version_id`, and
+    create the stable vault ID plus non-reusable UUIDv4 identities for retained
+    legacy tag and ingest records, before editing or audit capabilities become
+    available. That cutover uses metadata JSONL v2 even with zero audit scopes;
+    the zero-scope form preserves editing identities without an audit genesis or
+    lineage, which begins only when the first scope is enabled. Bootstrap also
+    durably publishes a non-ignorable `bootstrap_pending` feature/layout
+    generation before the v2 transaction and advances it to `v2_ready` only
+    after committed authority is reverified. Recovery resumes or verifies that
+    cutover while pre-bootstrap writers and legacy overwrite-restore paths stay
+    blocked.
+    First audit activation uses an analogous synced `audit_pending` generation,
+    enrollment transaction, verified `audit_ready` publication, and locked
+    recovery path; pre-audit v2 binaries never observe a committed scope without
+    its fence.
+    Audited trash origins will retain immutable parent IDs and names
+    outside nullable live foreign-key semantics, so deleting an unaudited origin
+    cannot rewrite protected history. The existing `trash_parent` becomes a
+    non-authoritative locator excluded from audit hashing and reconciliation.
+    Audit baselines and replay also cover `node_tags` with their `tags` records
+    and `provenance` with referenced `ingests`; FTS and `extracted_text` remain
+    rebuildable derived data outside audit authority. Ingest and provenance
+    records become immutable facts, with database guards preventing ordinary
+    update or deletion when an audited member roots them.
+    Tag IDs likewise become canonical non-reusable UUIDv4 values; tag names may
+    change or be recreated without retargeting historical assignments. Once any
+    scope exists, node insertion/deletion and parent/name/trash changes require a
+    guarded audit transaction whose precomputed membership, baseline,
+    descendant-event, lineage, and scope-head effects must match exactly before
+    commit. Direct and cascading deletion must publish exact topology tombstones.
+    Enrollment storage uses one shared baseline batch per scope, normalized
+    subtree target, and operation. Every newly acquired membership references
+    exactly one batch; existing memberships are never re-baselined. Baselines
+    also preserve the minimal ancestor-spine topology needed to derive audited
+    paths and a canonical unknown-origin record for root-scope legacy trash. A
+    complete vault-topology genesis snapshot plus every later lineage-bound
+    delta provides the independent authority for deriving each adopted closure.
+    Later multi-change topology mutations commit one atomic sorted delta and a
+    canonical net path-effect set that import derives from the previous replayed
+    projection before accepting descendant events. Allocation lineage commits
+    every post-audit topology-delta digest, including operations whose derived
+    audit effect is empty. Active ancestor witnesses are retired and re-created
+    deterministically as path dependencies change, and each sorted witness-change
+    count/digest is committed by both mutation and allocation lineage.
+
 ## Invariants enforced in the schema
 
 The important rules hold at the SQL layer, so they bind every writer:

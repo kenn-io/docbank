@@ -421,5 +421,7 @@ background-spawned daemons.
     The following are designed but not yet implemented; they will appear
     here with exact semantics when they ship. `docbank edit` and
     `docbank versions` (Phase 2b, [Editing & Versions](architecture/editing-and-versions.md));
+    `docbank audit enable`, `audit status`, `audit history`, and `audit verify`
+    (Phase 2b, [Audited History](architecture/audited-history.md));
     `docbank extract` (Phase 2b, [HTTP API](architecture/http-api.md));
     and `docbank tui` (Phase 3).

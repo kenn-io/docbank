@@ -130,6 +130,54 @@ disks and latency-sensitive network storage. The progress and JSON contracts
 match `backup create`: progress is written to stderr, and `--json` suppresses
 progress so stdout contains one typed report.
 
+!!! info "Planned — editing and audited-history fidelity"
+    The editing/identity bootstrap will use `docbank-metadata-jsonl-v2`;
+    today's v1 remains the pre-bootstrap format. Zero-scope v2 will preserve the
+    stable vault ID, node-ID allocator high-water mark, content versions and
+    current references, and non-reusable tag identities plus every retained
+    ingest record without audit genesis or lineage. Its live-store fence will
+    reject legacy overwrite restore into a bootstrapped target. Enabling the
+    first audit scope will extend that same v2 authority with audit scopes,
+    sticky memberships, shared enrollment-baseline batches and digests,
+    mutation records, per-scope chain heads, a complete vault-topology genesis
+    snapshot, canonical
+    unknown-origin records, baseline ancestor-spine witness generations,
+    witness-change lists, atomic topology deltas, net path-effect commitments, a
+    stable vault ID, both allocator high-water marks, a vault-wide allocation
+    lineage, and authoritative
+    tag/provenance attachments with the tag and ingest records they reference.
+    Capture will include every protected historical blob. Snapshot metadata will
+    also include the vault-wide topology tombstones and tag/ingest/provenance
+    lineage needed for replay, including values from unaudited nodes; audit does
+    not retain those nodes' content bytes solely for that reason. Verify and
+    restore
+    will recompute baseline digests from frozen enrollment records, replay and
+    reconcile attached metadata, replay the vault topology from genesis, derive
+    each enrollment's exact trash-origin closure, and derive each topology
+    delta's net descendant and witness sets from the prior projections. They
+    verify later mutations and allocation lineage separately, restore the
+    allocators at the verified lineage tail, and reject internally missing,
+    reordered, truncated, or hash-invalid authority rather than restoring only
+    the current tree.
+    Canonical mutations and allocation entries will be cross-bound by operation
+    ID and mutation hash. Every post-audit topology delta will also be bound to
+    its allocation entry by operation ID and delta digest, including deltas with
+    no scoped effect; witness-change lists will be bound by count and digest.
+    Each snapshot manifest will carry the stable vault ID, every scope
+    count/head, and allocation-lineage count/head as one evidence bundle.
+    Rollback detection requires that complete bundle from a trusted
+    prior snapshot or external record; a fresh import cannot identify a
+    coherently rewritten set of chains.
+
+    Overwriting an existing audited target is forward-only: under the target
+    lock, the snapshot must prove the same vault ID and preserve or extend every
+    existing scope chain and the vault-wide allocation lineage. Independently
+    mutated copies diverge in that lineage even when they consume the same node
+    IDs or operation sequences. Older, pre-audit, divergent, or unrelated
+    snapshots can restore to a fresh directory but cannot replace the audited
+    target through the normal command. See the
+    [Audited History](../architecture/audited-history.md) contract.
+
 ## Restore and prove a snapshot
 
 ```bash
