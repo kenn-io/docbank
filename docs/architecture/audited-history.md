@@ -211,16 +211,26 @@ is additive rather than replacing an earlier promise.
 
 An inherited baseline batch is the canonical **post-operation** snapshot. For a
 scope that already protected a node before the operation, replay applies the
-normal pre-state-to-post-state mutation event. For a scope the node joins
-because of that same move, restore, or creation, replay installs the
-post-operation batch and does not also apply the triggering transition. The
-enrollment record retains the operation identity and cause, but protection
-begins at that post-state boundary. If a node was already in one scope and joins another, the
+normal pre-state-to-post-state mutation event. For a scope an existing node
+joins because of that same move or restore, replay installs the post-operation
+batch and does not also apply the triggering transition. The enrollment record
+retains the operation identity and cause, but protection begins at that
+post-state boundary. If a node was already in one scope and joins another, the
 first scope receives the transition while the new scope receives only its shared
-batch. Replay installs every membership and adopted record in that batch
-atomically from its one binding; it does not synthesize per-member baselines. One
-scope-chain entry may commit both transition and batch categories in canonical
-order without omitting or double-applying the mutation.
+batch.
+
+Creation is the deliberate exception because the creation itself is part of the
+promised history. A node created beneath an audited parent emits `node_create`
+for every inherited scope; a file also emits `content_create`. Those
+**baseline-bound creation events** are committed alongside the shared
+post-operation batch. Replay validates their absent pre-state, exact post-state,
+topology delta, new content version, and inherited scope against that batch, but
+does not apply them a second time to the member projection. A moved or restored
+pre-existing node never fabricates creation events. Replay installs every
+membership and adopted record in a batch atomically from its one binding; it
+does not synthesize per-member baselines. One scope-chain entry may commit both
+transition and batch categories in canonical order without omitting or
+double-applying the mutation.
 
 Path history follows a **path-affecting closure**, not only directly mutated
 members. Renaming, moving, trashing, or restoring any directory finds every
@@ -333,11 +343,14 @@ Fan-out is derived mechanically from that simultaneous transition:
   an enrollment baseline or the referenced input to a provenance transition.
 
 For every candidate node, events fan out to each scope that protected it in the
-pre-operation membership projection. A scope acquired by that node in the same
-operation receives only its canonical post-operation baseline, never duplicate
-transition events. The complete event sort key keeps definition and assignment
-events distinct. These rules also govern combined rename/assignment operations,
-so neither SQL cascade order nor request order changes the audited effects.
+pre-operation membership projection. A scope acquired by an existing node in
+the same operation receives only its canonical post-operation baseline, never
+duplicate transition events. A node created in the operation receives the
+baseline-bound `node_create` and, for a file, `content_create` events defined
+above in every inherited scope. The complete event sort key keeps definition
+and assignment events distinct. These rules also govern combined
+rename/assignment operations, so neither SQL cascade order nor request order
+changes the audited effects.
 
 ### Guarded mutation closure
 
@@ -362,8 +375,9 @@ expected-effect set before it changes topology:
   every authoritative attachment for those nodes;
 - every audited descendant whose derived path changes through an ancestor must
   have exactly one old-path/new-path event for each scope that protected it in
-  the pre-operation state. A scope inherited in this operation receives only
-  its post-operation baseline binding;
+  the pre-operation state. A scope inherited by an existing node in this
+  operation receives only its post-operation baseline binding; a newly created
+  node also requires the exact baseline-bound creation events described above;
 - the canonical operation-level topology delta, any newly required
   ancestor-spine witnesses, and the sorted net path-effect count and digest must
   describe exactly that same descendant-event set; and
@@ -542,10 +556,14 @@ Every head has a stable content-version identity recording the blob hash,
 size, media type, time, and node revision that introduced it. Initial ingest
 creates the first version and the node references it as its current version.
 Replacement and reversion each create a new version and atomically advance that
-reference; the previous head remains an immutable version. Enrollment adopts
-all existing version identities rather than assigning new ones. Reverting may
-reference the same bytes as an old version, but never removes the intervening
-history.
+reference; the previous head remains an immutable version. A reversion also
+names the selected historical version UUID. That source must already belong to
+the same node, and its blob hash, size, and media type must exactly match the new
+head; the new version still receives its own UUID, timestamp, and introducing
+revision. Enrollment adopts all existing version identities rather than
+assigning new ones. Reverting may reference the same bytes as another version,
+but its source identity makes the user's selection unambiguous and never removes
+the intervening history.
 
 A content-version ID is an opaque UUIDv4 generated from the operating system's
 cryptographic random source and stored in canonical lowercase form under a
@@ -675,7 +693,7 @@ Nested record schemas are:
 | `path_effect` | `scope_id:uuid`, `member_node_id:u64`, `old:path_state`, `new:path_state` |
 | `witness_change` | `node_id:u64`, `generation_operation_id:uuid`, `action:action`, `state_digest:?digest` |
 | `attached_metadata_change` | `record_kind:text`, `stable_identity:record`, `pre:?record`, `post:?record` |
-| `audit_event` | `event_id:digest`, `operation_id:uuid`, `node_id:u64`, `event_kind:text`, `scope_id:uuid`, `target_node_id:?u64`, `attachment_kind:?text`, `attachment_identity:?record`, `event_ordinal:u64`, `recorded_at:timestamp`, `prior_node_revision:u64`, `resulting_node_revision:u64`, `prior_current_version_id:?uuid`, `resulting_current_version_id:?uuid`, `origin:text`, `agent_label:?text`, `pre:?record`, `post:?record`, `topology_delta:?digest`, `baseline_digest:?digest` |
+| `audit_event` | `event_id:digest`, `operation_id:uuid`, `node_id:u64`, `event_kind:text`, `scope_id:uuid`, `target_node_id:?u64`, `attachment_kind:?text`, `attachment_identity:?record`, `source_version_id:?uuid`, `event_ordinal:u64`, `recorded_at:timestamp`, `prior_node_revision:u64`, `resulting_node_revision:u64`, `prior_current_version_id:?uuid`, `resulting_current_version_id:?uuid`, `origin:text`, `agent_label:?text`, `pre:?record`, `post:?record`, `topology_delta:?digest`, `baseline_digest:?digest` |
 
 In that table, `record` means one complete nested CAE2 record of the applicable
 registered kind. An attached-metadata change permits only `tag_definition`,
@@ -700,8 +718,9 @@ Event payload presence is exact:
 | Event codes | `pre` / `post` | Other required optional fields |
 | --- | --- | --- |
 | `audit_enroll`, `audit_inherit` | both absent | `target_node_id` and `baseline_digest` present |
-| `content_create` | absent / `content_version` | all topology/baseline fields absent |
-| `content_replace`, `content_revert` | `content_version` / `content_version` | all topology/baseline fields absent |
+| `content_create` | absent / `content_version` | `source_version_id` and all topology/baseline fields absent |
+| `content_replace` | `content_version` / `content_version` | `source_version_id` and all topology/baseline fields absent |
+| `content_revert` | `content_version` / `content_version` | `source_version_id` present; all topology/baseline fields absent |
 | `node_create` | absent / `topology_node` | `topology_delta` present |
 | `node_path` | `path_state` / `path_state` | `topology_delta` present |
 | `tag_define`, `tag_assign` | absent / matching tag record | attachment kind/identity present |
@@ -725,6 +744,14 @@ the exact ASCII tokens `api`, `cli`, `import`, or `job`; `agent_label` is
 unverified caller text. The tag “matching record” is `tag_definition` for
 define/rename/delete and `tag_assignment` for assign/unassign. Import rejects
 any other presence pattern before hashing.
+
+For `content_revert`, `source_version_id` must resolve in the pre-operation
+version projection to a retained, non-current version belonging to `node_id`.
+Its blob hash, size, and media type must equal the post version's corresponding
+fields, while the post version has a distinct newly allocated ID and the
+operation's resulting revision. Replay and import verify that relationship
+before event sorting or hashing. Every other event kind requires
+`source_version_id` absent.
 
 An attachment identity must equal the identity derived from its event payload.
 Define/assign/add use the post record; delete/unassign use the pre record; tag
@@ -751,10 +778,13 @@ state-change entry is emitted and the event carries equal prior/result values.
 Only after those changes validate does replay install each newly acquired
 scope's post-operation baseline. A node already audited in one scope therefore
 advances once in the vault projection before another scope adopts the resulting
-state; the new scope gets no transition event. A node first audited by several
-baselines in the same operation is installed once from their required-identical
-post member state. Replay and import finally require the projected revision and
-current-version ID of every audited member to equal the current node table.
+state; the new scope gets no transition event. A newly created node's
+baseline-bound creation events are verified as the historical cause of that
+post-state but produce no `member_state_change` and are not applied after
+installation. A node first audited by several baselines in the same operation
+is installed once from their required-identical post member state. Replay and
+import finally require the projected revision and current-version ID of every
+audited member to equal the current node table.
 
 Hashed top-level record schemas are:
 
