@@ -1,9 +1,9 @@
-// Package metadatav2 defines Docbank's zero-scope metadata-v2 logical model.
+// Package metadata defines Docbank's metadata-v1 logical model and codec.
 //
-// It is intentionally separate from store.Open: existing vaults remain on the
-// v1 runtime schema until the crash-safe logical cutover and downgrade fence are
-// installed. This package is the verified target used by that future cutover.
-package metadatav2
+// Before Docbank's first public release this is the only supported metadata
+// shape. Older development vaults and streams are intentionally incompatible;
+// they are not migration inputs.
+package metadata
 
 import (
 	"context"
@@ -19,7 +19,10 @@ import (
 
 const (
 	Format        = "docbank-metadata"
-	FormatVersion = 2
+	FormatVersion = 1
+
+	typeField            = "type"
+	provenanceRecordType = "provenance"
 
 	timestampLayout = "2006-01-02T15:04:05.000000000Z07:00"
 )
@@ -27,25 +30,24 @@ const (
 //go:embed schema.sql
 var schemaSQL string
 
-// CreateSchema creates an empty zero-scope v2 logical database. Callers must
-// use a private staging database; this function does not migrate a live vault.
+// CreateSchema creates an empty metadata-v1 logical database.
 func CreateSchema(ctx context.Context, db *sql.DB) error {
 	if db == nil {
-		return errors.New("creating metadata v2 schema: nil database")
+		return errors.New("creating metadata v1 schema: nil database")
 	}
 	if err := requireForeignKeys(ctx, db); err != nil {
-		return fmt.Errorf("creating metadata v2 schema: %w", err)
+		return fmt.Errorf("creating metadata v1 schema: %w", err)
 	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("creating metadata v2 schema: %w", err)
+		return fmt.Errorf("creating metadata v1 schema: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, schemaSQL); err != nil {
-		return fmt.Errorf("creating metadata v2 schema: %w", err)
+		return fmt.Errorf("creating metadata v1 schema: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("creating metadata v2 schema: %w", err)
+		return fmt.Errorf("creating metadata v1 schema: %w", err)
 	}
 	return nil
 }
@@ -126,10 +128,9 @@ type ContentVersion struct {
 	Size                  int64   `json:"size"`
 	MediaType             *string `json:"media_type"`
 	RecordedAt            string  `json:"recorded_at"`
-	NodeRevision          *int64  `json:"node_revision"`
-	VersionOrigin         string  `json:"version_origin"`
-	IntroducedOperationID *string `json:"introduced_operation_id"`
-	TransitionKind        *string `json:"transition_kind"`
+	NodeRevision          int64   `json:"node_revision"`
+	IntroducedOperationID string  `json:"introduced_operation_id"`
+	TransitionKind        string  `json:"transition_kind"`
 	SourceVersionID       *string `json:"source_version_id"`
 }
 

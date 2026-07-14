@@ -1,4 +1,4 @@
-package metadatav2
+package metadata
 
 import (
 	"context"
@@ -9,21 +9,21 @@ import (
 	"io"
 )
 
-// Export writes a deterministic zero-scope metadata-v2 JSONL stream from one
-// pinned SQLite snapshot.
+// Export writes a deterministic metadata-v1 JSONL stream from one pinned
+// SQLite snapshot.
 func Export(ctx context.Context, db *sql.DB, w io.Writer) error {
 	if db == nil {
-		return errors.New("exporting metadata v2: nil database")
+		return errors.New("exporting metadata v1: nil database")
 	}
 	if w == nil {
-		return errors.New("exporting metadata v2: nil writer")
+		return errors.New("exporting metadata v1: nil writer")
 	}
 	if err := requireForeignKeys(ctx, db); err != nil {
-		return fmt.Errorf("exporting metadata v2: %w", err)
+		return fmt.Errorf("exporting metadata v1: %w", err)
 	}
 	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		return fmt.Errorf("beginning metadata v2 export: %w", err)
+		return fmt.Errorf("beginning metadata v1 export: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
@@ -31,7 +31,7 @@ func Export(ctx context.Context, db *sql.DB, w io.Writer) error {
 	enc.SetEscapeHTML(false)
 	write := func(record any) error {
 		if err := enc.Encode(record); err != nil {
-			return fmt.Errorf("encoding metadata v2: %w", err)
+			return fmt.Errorf("encoding metadata v1: %w", err)
 		}
 		return nil
 	}
@@ -41,17 +41,17 @@ func Export(ctx context.Context, db *sql.DB, w io.Writer) error {
 	header.Format = Format
 	header.Version = FormatVersion
 	if err := tx.QueryRowContext(ctx,
-		`SELECT vault_id FROM vault_metadata WHERE singleton = 1 AND format_version = 2`,
+		`SELECT vault_id FROM vault_metadata WHERE singleton = 1 AND format_version = 1`,
 	).Scan(&header.VaultID); err != nil {
-		return fmt.Errorf("reading metadata v2 header: %w", err)
+		return fmt.Errorf("reading metadata v1 header: %w", err)
 	}
 	if err := tx.QueryRowContext(ctx,
 		`SELECT COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'nodes'), 0)`,
 	).Scan(&header.NodeSequence); err != nil {
-		return fmt.Errorf("reading metadata v2 node sequence: %w", err)
+		return fmt.Errorf("reading metadata v1 node sequence: %w", err)
 	}
 	if err := validateTx(ctx, tx, header.NodeSequence); err != nil {
-		return fmt.Errorf("validating metadata v2 export: %w", err)
+		return fmt.Errorf("validating metadata v1 export: %w", err)
 	}
 	if err := write(header); err != nil {
 		return err
@@ -73,7 +73,7 @@ func Export(ctx context.Context, db *sql.DB, w io.Writer) error {
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("closing metadata v2 export snapshot: %w", err)
+		return fmt.Errorf("closing metadata v1 export snapshot: %w", err)
 	}
 	return nil
 }
@@ -81,13 +81,13 @@ func Export(ctx context.Context, db *sql.DB, w io.Writer) error {
 func exportBlobs(ctx context.Context, tx *sql.Tx, write func(any) error) error {
 	rows, err := tx.QueryContext(ctx, `SELECT hash,size,created_at FROM blobs ORDER BY hash`)
 	if err != nil {
-		return fmt.Errorf("exporting metadata v2 blobs: %w", err)
+		return fmt.Errorf("exporting metadata v1 blobs: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		record := Blob{Type: "blob"}
 		if err := rows.Scan(&record.Hash, &record.Size, &record.CreatedAt); err != nil {
-			return fmt.Errorf("scanning metadata v2 blob: %w", err)
+			return fmt.Errorf("scanning metadata v1 blob: %w", err)
 		}
 		if err := write(record); err != nil {
 			return err
@@ -102,7 +102,7 @@ func exportNodes(ctx context.Context, tx *sql.Tx, write func(any) error) error {
 		       trashed_at,trash_parent,trash_name
 		FROM nodes ORDER BY id`)
 	if err != nil {
-		return fmt.Errorf("exporting metadata v2 nodes: %w", err)
+		return fmt.Errorf("exporting metadata v1 nodes: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
@@ -114,7 +114,7 @@ func exportNodes(ctx context.Context, tx *sql.Tx, write func(any) error) error {
 			&record.ID, &parent, &name, &record.Kind, &current, &record.Revision,
 			&record.CreatedAt, &record.ModifiedAt, &trashed, &trashParent, &trashName,
 		); err != nil {
-			return fmt.Errorf("scanning metadata v2 node: %w", err)
+			return fmt.Errorf("scanning metadata v1 node: %w", err)
 		}
 		record.ParentID = nullInt64(parent)
 		record.CurrentVersionID = nullString(current)
@@ -139,27 +139,23 @@ func exportNodes(ctx context.Context, tx *sql.Tx, write func(any) error) error {
 func exportContentVersions(ctx context.Context, tx *sql.Tx, write func(any) error) error {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT version_id,node_id,blob_hash,size,media_type,recorded_at,node_revision,
-		       version_origin,introduced_operation_id,transition_kind,source_version_id
+		       introduced_operation_id,transition_kind,source_version_id
 		FROM content_versions ORDER BY node_id,version_id`)
 	if err != nil {
-		return fmt.Errorf("exporting metadata v2 content versions: %w", err)
+		return fmt.Errorf("exporting metadata v1 content versions: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		record := ContentVersion{Type: "content_version"}
-		var mediaType, operationID, transition, source sql.NullString
-		var nodeRevision sql.NullInt64
+		var mediaType, source sql.NullString
 		if err := rows.Scan(
 			&record.VersionID, &record.NodeID, &record.BlobHash, &record.Size,
-			&mediaType, &record.RecordedAt, &nodeRevision, &record.VersionOrigin,
-			&operationID, &transition, &source,
+			&mediaType, &record.RecordedAt, &record.NodeRevision,
+			&record.IntroducedOperationID, &record.TransitionKind, &source,
 		); err != nil {
-			return fmt.Errorf("scanning metadata v2 content version: %w", err)
+			return fmt.Errorf("scanning metadata v1 content version: %w", err)
 		}
 		record.MediaType = nullString(mediaType)
-		record.NodeRevision = nullInt64(nodeRevision)
-		record.IntroducedOperationID = nullString(operationID)
-		record.TransitionKind = nullString(transition)
 		record.SourceVersionID = nullString(source)
 		if err := write(record); err != nil {
 			return err
@@ -172,7 +168,7 @@ func exportIngests(ctx context.Context, tx *sql.Tx, write func(any) error) error
 	rows, err := tx.QueryContext(ctx,
 		`SELECT ingest_id,started_at,source_kind,source_desc FROM ingests ORDER BY ingest_id`)
 	if err != nil {
-		return fmt.Errorf("exporting metadata v2 ingests: %w", err)
+		return fmt.Errorf("exporting metadata v1 ingests: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
@@ -181,7 +177,7 @@ func exportIngests(ctx context.Context, tx *sql.Tx, write func(any) error) error
 		if err := rows.Scan(
 			&record.IngestID, &record.StartedAt, &record.SourceKind, &sourceDesc,
 		); err != nil {
-			return fmt.Errorf("scanning metadata v2 ingest: %w", err)
+			return fmt.Errorf("scanning metadata v1 ingest: %w", err)
 		}
 		record.SourceDesc, err = requiredBytes("ingest source description", sourceDesc)
 		if err != nil {
@@ -199,18 +195,18 @@ func exportProvenance(ctx context.Context, tx *sql.Tx, write func(any) error) er
 		SELECT identity,node_id,ingest_id,original_path,original_mtime,supersedes
 		FROM provenance ORDER BY identity`)
 	if err != nil {
-		return fmt.Errorf("exporting metadata v2 provenance: %w", err)
+		return fmt.Errorf("exporting metadata v1 provenance: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
-		record := Provenance{Type: "provenance"}
+		record := Provenance{Type: provenanceRecordType}
 		var originalPath any
 		var originalMTime, supersedes sql.NullString
 		if err := rows.Scan(
 			&record.Identity, &record.NodeID, &record.IngestID, &originalPath,
 			&originalMTime, &supersedes,
 		); err != nil {
-			return fmt.Errorf("scanning metadata v2 provenance: %w", err)
+			return fmt.Errorf("scanning metadata v1 provenance: %w", err)
 		}
 		var err error
 		record.OriginalPath, err = optionalBytes("provenance original path", originalPath)
@@ -229,13 +225,13 @@ func exportProvenance(ctx context.Context, tx *sql.Tx, write func(any) error) er
 func exportTags(ctx context.Context, tx *sql.Tx, write func(any) error) error {
 	rows, err := tx.QueryContext(ctx, `SELECT tag_id,name FROM tags ORDER BY tag_id`)
 	if err != nil {
-		return fmt.Errorf("exporting metadata v2 tags: %w", err)
+		return fmt.Errorf("exporting metadata v1 tags: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		record := Tag{Type: "tag"}
 		if err := rows.Scan(&record.TagID, &record.Name); err != nil {
-			return fmt.Errorf("scanning metadata v2 tag: %w", err)
+			return fmt.Errorf("scanning metadata v1 tag: %w", err)
 		}
 		if err := write(record); err != nil {
 			return err
@@ -248,13 +244,13 @@ func exportNodeTags(ctx context.Context, tx *sql.Tx, write func(any) error) erro
 	rows, err := tx.QueryContext(ctx,
 		`SELECT node_id,tag_id FROM node_tags ORDER BY node_id,tag_id`)
 	if err != nil {
-		return fmt.Errorf("exporting metadata v2 node tags: %w", err)
+		return fmt.Errorf("exporting metadata v1 node tags: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		record := NodeTag{Type: "node_tag"}
 		if err := rows.Scan(&record.NodeID, &record.TagID); err != nil {
-			return fmt.Errorf("scanning metadata v2 node tag: %w", err)
+			return fmt.Errorf("scanning metadata v1 node tag: %w", err)
 		}
 		if err := write(record); err != nil {
 			return err
@@ -268,7 +264,7 @@ func exportExtractedText(ctx context.Context, tx *sql.Tx, write func(any) error)
 		SELECT blob_hash,extractor,extractor_version,status,error,attempts,text,extracted_at
 		FROM extracted_text ORDER BY blob_hash,extractor`)
 	if err != nil {
-		return fmt.Errorf("exporting metadata v2 extracted text: %w", err)
+		return fmt.Errorf("exporting metadata v1 extracted text: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
@@ -278,7 +274,7 @@ func exportExtractedText(ctx context.Context, tx *sql.Tx, write func(any) error)
 			&record.BlobHash, &record.Extractor, &record.ExtractorVersion,
 			&record.Status, &errorText, &record.Attempts, &text, &record.ExtractedAt,
 		); err != nil {
-			return fmt.Errorf("scanning metadata v2 extracted text: %w", err)
+			return fmt.Errorf("scanning metadata v1 extracted text: %w", err)
 		}
 		record.Error = nullString(errorText)
 		record.Text = nullString(text)

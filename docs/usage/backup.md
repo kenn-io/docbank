@@ -131,13 +131,12 @@ match `backup create`: progress is written to stderr, and `--json` suppresses
 progress so stdout contains one typed report.
 
 !!! info "Planned — editing and audited-history fidelity"
-    The editing/identity bootstrap will use `docbank-metadata-jsonl-v2`;
-    today's v1 remains the pre-bootstrap format. Zero-scope v2 will preserve the
+    Before the first public release, `docbank-metadata-jsonl-v1` will directly
+    adopt the
     stable vault ID, node-ID allocator high-water mark, content versions and
     current references, and non-reusable tag identities plus every retained
-    ingest record without audit genesis or lineage. Its live-store fence will
-    reject legacy overwrite restore into a bootstrapped target. Enabling the
-    first audit scope will extend that same v2 authority with audit scopes,
+    ingest record without audit genesis or lineage. Enabling the first audit
+    scope will extend that same v1 authority with audit scopes,
     sticky memberships, shared enrollment-baseline batches and digests,
     mutation records, per-scope chain heads, a complete vault-topology genesis
     snapshot, canonical

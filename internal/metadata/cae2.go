@@ -1,4 +1,4 @@
-package metadatav2
+package metadata
 
 import (
 	"bytes"
@@ -18,7 +18,7 @@ const (
 	caeDigest   = byte(0x09)
 )
 
-// ProvenanceIdentity returns the normative CAE2 identity digest for a v2
+// ProvenanceIdentity returns the normative CAE2 identity digest for a v1
 // provenance fact. The stored identity field itself is deliberately excluded.
 func ProvenanceIdentity(p Provenance) (string, error) {
 	ingestID, err := parseUUID(p.IngestID)

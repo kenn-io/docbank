@@ -1,4 +1,4 @@
-package metadatav2
+package metadata
 
 import (
 	"context"
@@ -7,25 +7,25 @@ import (
 	"fmt"
 )
 
-// Validate verifies a complete zero-scope v2 logical database without changing
+// Validate verifies a complete metadata-v1 logical database without changing
 // it. Physical pack metadata is outside this authority.
 func Validate(ctx context.Context, db *sql.DB) error {
 	if db == nil {
-		return errors.New("validating metadata v2: nil database")
+		return errors.New("validating metadata v1: nil database")
 	}
 	if err := requireForeignKeys(ctx, db); err != nil {
-		return fmt.Errorf("validating metadata v2: %w", err)
+		return fmt.Errorf("validating metadata v1: %w", err)
 	}
 	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		return fmt.Errorf("beginning metadata v2 validation: %w", err)
+		return fmt.Errorf("beginning metadata v1 validation: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	var sequence int64
 	if err := tx.QueryRowContext(ctx,
 		`SELECT COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'nodes'), 0)`,
 	).Scan(&sequence); err != nil {
-		return fmt.Errorf("reading metadata v2 node sequence: %w", err)
+		return fmt.Errorf("reading metadata v1 node sequence: %w", err)
 	}
 	if err := validateTx(ctx, tx, sequence); err != nil {
 		return err
@@ -37,16 +37,16 @@ func validateTx(ctx context.Context, tx *sql.Tx, nodeSequence int64) error {
 	var vaultID string
 	if err := tx.QueryRowContext(ctx, `
 		SELECT vault_id FROM vault_metadata
-		WHERE singleton = 1 AND format_version = 2
+		WHERE singleton = 1 AND format_version = 1
 	`).Scan(&vaultID); err != nil {
-		return fmt.Errorf("reading v2 vault identity: %w", err)
+		return fmt.Errorf("reading v1 vault identity: %w", err)
 	}
 	if err := validateUUID("vault ID", vaultID); err != nil {
 		return err
 	}
 	var maxNodeID int64
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(id),0) FROM nodes`).Scan(&maxNodeID); err != nil {
-		return fmt.Errorf("reading v2 maximum node ID: %w", err)
+		return fmt.Errorf("reading v1 maximum node ID: %w", err)
 	}
 	if nodeSequence < maxNodeID {
 		return fmt.Errorf("node ID high-water mark %d is below maximum node ID %d", nodeSequence, maxNodeID)
@@ -111,6 +111,11 @@ func validateTx(ctx context.Context, tx *sql.Tx, nodeSequence int64) error {
 			  SELECT 1 FROM content_versions v JOIN blobs b ON b.hash=v.blob_hash
 			  WHERE v.size!=b.size
 			)`},
+		{"directory retains a content version", `
+			SELECT EXISTS(
+			  SELECT 1 FROM content_versions v JOIN nodes n ON n.id=v.node_id
+			  WHERE n.kind!='file'
+			)`},
 		{"file current version is missing, historical, or belongs to another node", `
 			SELECT EXISTS(
 			  SELECT 1 FROM nodes n LEFT JOIN content_versions v ON v.version_id=n.current_version_id
@@ -128,27 +133,11 @@ func validateTx(ctx context.Context, tx *sql.Tx, nodeSequence int64) error {
 			  JOIN content_versions later ON later.node_id=n.id
 			  WHERE later.node_revision>current.node_revision
 			)`},
-		{"node has multiple known legacy anchors", `
-			SELECT EXISTS(
-			  SELECT 1 FROM content_versions
-			  WHERE version_origin='legacy_v1' AND node_revision IS NOT NULL
-			  GROUP BY node_id HAVING COUNT(*)>1
-			)`},
-		{"native version is not after its legacy anchor", `
-			SELECT EXISTS(
-			  SELECT 1 FROM content_versions native
-			  JOIN content_versions legacy ON legacy.node_id=native.node_id
-			  WHERE native.version_origin='native'
-			    AND legacy.version_origin='legacy_v1' AND legacy.node_revision IS NOT NULL
-			    AND native.node_revision<=legacy.node_revision
-			)`},
 		{"content-create chronology is invalid", `
 			SELECT EXISTS(
 			  SELECT 1 FROM content_versions v JOIN nodes n ON n.id=v.node_id
 			  WHERE v.transition_kind='content_create'
-			    AND (v.node_revision!=1 OR v.recorded_at!=n.created_at
-			      OR EXISTS(SELECT 1 FROM content_versions legacy
-			                WHERE legacy.node_id=v.node_id AND legacy.version_origin='legacy_v1'))
+			    AND (v.node_revision!=1 OR v.recorded_at!=n.created_at)
 			)`},
 		{"content replace/revert revision is not greater than one", `
 			SELECT EXISTS(
@@ -173,6 +162,21 @@ func validateTx(ctx context.Context, tx *sql.Tx, nodeSequence int64) error {
 			  SELECT 1 FROM extracted_text e LEFT JOIN blobs b ON b.hash=e.blob_hash
 			  WHERE b.hash IS NULL
 			)`},
+		{"provenance supersedes a fact on another node", `
+			SELECT EXISTS(
+			  SELECT 1 FROM provenance p JOIN provenance prior ON prior.identity=p.supersedes
+			  WHERE p.node_id!=prior.node_id
+			)`},
+		{"provenance supersession graph contains a cycle", `
+			WITH RECURSIVE chain(start,current) AS (
+			  SELECT identity,supersedes FROM provenance WHERE supersedes IS NOT NULL
+			  UNION ALL
+			  SELECT chain.start,p.supersedes
+			  FROM chain JOIN provenance p ON p.identity=chain.current
+			  WHERE chain.current IS NOT NULL AND chain.current!=chain.start
+			)
+			SELECT EXISTS(SELECT 1 FROM chain WHERE current=start)
+		`},
 	}
 	for _, check := range checks {
 		var failed bool
@@ -189,7 +193,7 @@ func validateTx(ctx context.Context, tx *sql.Tx, nodeSequence int64) error {
 	}
 	rows, err := tx.QueryContext(ctx, `PRAGMA foreign_key_check`)
 	if err != nil {
-		return fmt.Errorf("checking metadata v2 foreign keys: %w", err)
+		return fmt.Errorf("checking metadata v1 foreign keys: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	if rows.Next() {
@@ -197,9 +201,9 @@ func validateTx(ctx context.Context, tx *sql.Tx, nodeSequence int64) error {
 		var rowID, parent any
 		var fk int64
 		if err := rows.Scan(&table, &rowID, &parent, &fk); err != nil {
-			return fmt.Errorf("reading metadata v2 foreign-key failure: %w", err)
+			return fmt.Errorf("reading metadata v1 foreign-key failure: %w", err)
 		}
-		return fmt.Errorf("metadata v2 violates foreign key %s[%v] constraint %d", table, rowID, fk)
+		return fmt.Errorf("metadata v1 violates foreign key %s[%v] constraint %d", table, rowID, fk)
 	}
 	return rows.Err()
 }
@@ -285,7 +289,7 @@ func validateStoredNodes(ctx context.Context, tx *sql.Tx) error {
 func validateStoredVersions(ctx context.Context, tx *sql.Tx) error {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT version_id,node_id,blob_hash,size,media_type,recorded_at,node_revision,
-		       version_origin,introduced_operation_id,transition_kind,source_version_id
+		       introduced_operation_id,transition_kind,source_version_id
 		FROM content_versions`)
 	if err != nil {
 		return err
@@ -293,19 +297,15 @@ func validateStoredVersions(ctx context.Context, tx *sql.Tx) error {
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		record := ContentVersion{Type: "content_version"}
-		var media, operation, transition, source sql.NullString
-		var revision sql.NullInt64
+		var media, source sql.NullString
 		if err := rows.Scan(
 			&record.VersionID, &record.NodeID, &record.BlobHash, &record.Size,
-			&media, &record.RecordedAt, &revision, &record.VersionOrigin,
-			&operation, &transition, &source,
+			&media, &record.RecordedAt, &record.NodeRevision,
+			&record.IntroducedOperationID, &record.TransitionKind, &source,
 		); err != nil {
 			return err
 		}
 		record.MediaType = nullString(media)
-		record.NodeRevision = nullInt64(revision)
-		record.IntroducedOperationID = nullString(operation)
-		record.TransitionKind = nullString(transition)
 		record.SourceVersionID = nullString(source)
 		if err := validateContentVersion(record); err != nil {
 			return err
@@ -345,7 +345,7 @@ func validateStoredProvenance(ctx context.Context, tx *sql.Tx) error {
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
-		record := Provenance{Type: "provenance"}
+		record := Provenance{Type: provenanceRecordType}
 		var path any
 		var mtime, supersedes sql.NullString
 		if err := rows.Scan(

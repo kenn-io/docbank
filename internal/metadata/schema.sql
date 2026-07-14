@@ -1,12 +1,11 @@
--- Zero-scope metadata-v2 logical schema.
---
--- This schema is intentionally private to the logical builder and tests until
--- the crash-safe v1 -> v2 cutover publishes its downgrade fence. Physical pack
--- authority and rebuildable search indexes do not belong to this model.
+-- Docbank metadata-v1 logical schema. Before the first public release this is
+-- the only supported shape; older development vaults are intentionally not
+-- migration inputs. Physical pack authority and rebuildable search indexes do
+-- not belong to the portable model.
 
 CREATE TABLE vault_metadata (
     singleton      INTEGER PRIMARY KEY CHECK (singleton = 1),
-    format_version INTEGER NOT NULL CHECK (format_version = 2),
+    format_version INTEGER NOT NULL CHECK (format_version = 1),
     vault_id       TEXT NOT NULL UNIQUE
 );
 
@@ -46,35 +45,22 @@ CREATE TABLE content_versions (
     size                    INTEGER NOT NULL CHECK (size >= 0),
     media_type              TEXT,
     recorded_at             TEXT NOT NULL,
-    node_revision           INTEGER CHECK (node_revision > 0),
-    version_origin          TEXT NOT NULL CHECK (version_origin IN ('native', 'legacy_v1')),
-    introduced_operation_id TEXT,
-    transition_kind         TEXT CHECK (transition_kind IN (
+    node_revision           INTEGER NOT NULL CHECK (node_revision > 0),
+    introduced_operation_id TEXT NOT NULL,
+    transition_kind         TEXT NOT NULL CHECK (transition_kind IN (
                                 'content_create', 'content_replace', 'content_revert'
                             )),
     source_version_id       TEXT REFERENCES content_versions(version_id)
                                 DEFERRABLE INITIALLY DEFERRED,
-    CHECK (
-        (version_origin = 'legacy_v1'
-            AND introduced_operation_id IS NULL
-            AND transition_kind IS NULL
-            AND source_version_id IS NULL)
-        OR
-        (version_origin = 'native'
-            AND node_revision IS NOT NULL
-            AND introduced_operation_id IS NOT NULL
-            AND transition_kind IS NOT NULL
-            AND ((transition_kind = 'content_revert') = (source_version_id IS NOT NULL)))
-    )
+    CHECK ((transition_kind = 'content_revert') = (source_version_id IS NOT NULL))
 );
 
 CREATE INDEX content_versions_node ON content_versions(node_id);
 CREATE INDEX content_versions_blob ON content_versions(blob_hash);
 CREATE UNIQUE INDEX content_versions_node_revision
-    ON content_versions(node_id, node_revision) WHERE node_revision IS NOT NULL;
+    ON content_versions(node_id, node_revision);
 CREATE UNIQUE INDEX content_versions_node_operation
-    ON content_versions(node_id, introduced_operation_id)
-    WHERE introduced_operation_id IS NOT NULL;
+    ON content_versions(node_id, introduced_operation_id);
 
 CREATE TABLE ingests (
     ingest_id   TEXT PRIMARY KEY,
@@ -95,6 +81,8 @@ CREATE TABLE provenance (
 
 CREATE INDEX provenance_node ON provenance(node_id);
 CREATE INDEX provenance_ingest ON provenance(ingest_id);
+CREATE UNIQUE INDEX provenance_one_successor
+    ON provenance(supersedes) WHERE supersedes IS NOT NULL;
 
 CREATE TABLE tags (
     tag_id TEXT PRIMARY KEY,

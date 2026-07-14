@@ -45,19 +45,13 @@ share a blob without sharing document identity.
     Content-version IDs use random UUIDv4 values under a unique constraint,
     rather than another sequential allocator, so pruning and JSONL round trips
     cannot reuse or retarget an old agent-visible version reference.
-    The same metadata-v2 bootstrap assigns non-reusable UUIDv4 identities to
-    retained legacy tag and ingest records and creates the stable vault ID.
-    Identical legacy provenance duplicates are canonicalized and collapsed
-    before their field-derived v2 identities are assigned; distinct facts remain
-    intact, and migration fixtures cover duplicates from stores and v1 imports.
-    Zero-scope v2 is the portable editing/version form and contains no audit
+    Vault, tag, and ingest UUIDs exist from creation in the pre-release
+    metadata-v1 shape. Provenance identities are derived from their canonical
+    fields, and identical facts are idempotent. Zero-scope v1 contains no audit
     genesis or lineage; enabling the first scope later adds those authorities
-    from the current v2 projection. Bootstrap activates a non-ignorable
-    live-store fence against pre-bootstrap writers and legacy overwrite restore.
-    The synced `bootstrap_pending` generation precedes the SQLite cutover;
-    `v2_ready` is published only after committed authority is reverified, and
-    crash recovery resumes or verifies bootstrap without reopening legacy
-    access. Audit activation advances that fence again for pre-audit binaries.
+    directly to the current v1 projection in one guarded transaction. There is
+    no legacy conversion or live-store feature fence before the first public
+    release.
     Audit baselines and final-state reconciliation include authoritative tag
     assignments and their definitions plus provenance and its referenced ingest
     records. Import validates and replays that referential closure; derived FTS,
@@ -118,14 +112,11 @@ share a blob without sharing document identity.
     without mutating the audited node's chain state. The nullable `trash_parent`
     locator is explicitly non-authoritative and excluded from hashes,
     final-state reconciliation, and guards; the immutable origin record is
-    authoritative. Enabling the first scope first syncs an `audit_pending`
-    layout generation containing every preallocated operation/lineage identity
-    and other non-derivable preview input, commits and revalidates enrollment,
-    then syncs
-    `audit_ready`; recovery resumes a rolled-back enrollment or verifies a
-    committed one while pre-audit binaries remain fenced. Database write guards
-    prevent bypass through legacy mutation, GC, or backup paths, and the audited
-    layouts stay outside legacy restore publication paths. The enable preview
+    authoritative. Enabling the first scope revalidates the preview and commits
+    the preallocated operation/lineage identities, genesis, enrollment, and
+    chain authority in one SQLite transaction. A crash either commits that
+    complete state or rolls it back. Database write guards prevent bypass
+    through unguarded mutation, GC, or backup paths. The enable preview
     separately discloses that scope-specific content protection activates
     vault-wide retention of topology tombstones and authoritative tag,
     ingest, and provenance metadata for replay. The planned audited restore
@@ -365,13 +356,12 @@ The header carries SQLite's node `AUTOINCREMENT` high-water mark separately
 from the live rows; import restores it only after proving it is at least the
 maximum surviving node ID.
 
-!!! info "Planned — editing and audited metadata v2"
-    The editing/identity bootstrap will advance this boundary to
-    `docbank-metadata` version 2 and `docbank-metadata-jsonl-v2`; existing
-    version 1 remains the pre-bootstrap format and cannot contain stable content
-    versions or audit records. Zero-scope v2 preserves editing and portable
-    identities without audit genesis or lineage. Enabling the first scope adds
-    the complete audit authority to that same format.
+!!! info "Planned — editing and audited metadata v1"
+    Before the first public release this boundary will adopt stable content,
+    vault, tag, ingest, and provenance identities directly while remaining
+    `docbank-metadata` version 1 and `docbank-metadata-jsonl-v1`. Enabling the
+    first scope adds complete audit authority to the same format. Earlier
+    development shapes are disposable and receive no compatibility decoder.
 
 The stream excludes `nodes_fts`, `blob_packs`, and `blob_pack_index`. FTS is a
 derived index rebuilt by the node insert triggers. Pack tables describe one
@@ -405,9 +395,8 @@ export → verified metadata artifact → construct a fresh current-schema
 database → import → checkpoint → publish verified content and fresh pack
 authority → prove fidelity → atomic replacement. Historical SQLite page-map
 snapshots remain restorable, but new captures cannot select that legacy path.
-This does not make compatibility work disappear: each supported JSONL version
-needs an explicit decoder, and physical pack authority must always travel
-through Kit's separately verified publication path.
+Physical pack authority must always travel through Kit's separately verified
+publication path.
 
 Do not move docbank SQL or reachability policy into Kit. Do not reimplement Kit
 reader or lifecycle mechanics in docbank. A physical-storage bug shared by
@@ -422,28 +411,25 @@ small-file benefit, require transient duplicate disk capacity, and leak
 physical-format selection into the product. Do not add one without a concrete
 recovery workflow that cannot be served by verified backup/restore.
 
-## Schema compatibility
+## Pre-release schema policy
 
 Store startup runs the embedded idempotent schema in one immediate transaction
 and ensures the root exists. This safely creates missing compatible tables and
 indexes, but it is not a general migration system.
 
-`internal/metadatav2` contains the separately tested zero-scope v2 logical
-schema and deterministic codec that the future cutover will build in private
-staging. It is deliberately dormant: `store.Open` still creates and opens only
-the v1 runtime shape, and current backup capture still emits JSONL v1. Do not
-apply the v2 schema to a live database or expose its format until the logical
-cutover publishes the durable `bootstrap_pending` / `v2_ready` downgrade fence.
+`internal/metadata` defines and tests the intended metadata-v1 logical schema
+and deterministic codec. Follow-on implementation replaces the development
+runtime schema and backup codec with that shape directly; it does not translate
+or upgrade existing developer vaults.
 
-The pre-v0.1 freedom to change schema without migrations is over. Until kata
-`7q8z` activates the crash-safe JSONL cutover, no release may depend on an
-incompatible change to an existing table, column, trigger, or index. Cutover
-machinery must precede the incompatible reader/writer; do not add an in-place
-SQLite migration ledger as a substitute.
+Until the first public release, incompatible schema work is allowed and the
+format identifier remains v1. Earlier development vaults and JSONL streams are
+disposable. Do not add an in-place migration ledger, compatibility decoder,
+cutover protocol, store-generation fence, or old-binary test matrix for them.
 
-When the logical cutover lands, tests need real old-vault fixtures, upgrade
-verification, crash recovery, downgrade refusal, and a documented
-backup-before-cutover contract.
+The first public release establishes the compatibility boundary. From that
+point onward, incompatible changes require an explicit policy grounded in
+actual released formats and fixtures rather than speculative migration work.
 
 ## Open design constraints
 

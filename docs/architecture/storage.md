@@ -79,22 +79,13 @@ nodes_fts      -- FTS5 external-content index over live node names
     allocator whose rollback or reuse could retarget stale version references.
     Audit scopes, sticky memberships, mutation records, and chain state will be
     current-schema metadata included in deterministic JSONL rather than
-    inferred from paths or pack layout. A daemon-exclusive bootstrap will give
-    every existing file a stable initial version and `current_version_id`, and
-    create the stable vault ID plus non-reusable UUIDv4 identities for retained
-    legacy tag and ingest records, before editing or audit capabilities become
-    available. That cutover uses metadata JSONL v2 even with zero audit scopes;
-    the zero-scope form preserves editing identities without an audit genesis or
-    lineage, which begins only when the first scope is enabled. Bootstrap also
-    durably publishes a non-ignorable `bootstrap_pending` feature/layout
-    generation before the v2 transaction and advances it to `v2_ready` only
-    after committed authority is reverified. Recovery resumes or verifies that
-    cutover while pre-bootstrap writers and legacy overwrite-restore paths stay
-    blocked.
-    First audit activation uses an analogous synced `audit_pending` generation,
-    enrollment transaction, verified `audit_ready` publication, and locked
-    recovery path; pre-audit v2 binaries never observe a committed scope without
-    its fence.
+    inferred from paths or pack layout. Before the first public release the
+    development schema will be replaced directly: every newly created file will
+    begin with a stable version and `current_version_id`, and vault, tag, ingest,
+    and provenance identities will exist from creation. The one JSONL format
+    remains version 1 with or without audit scopes. There is no legacy bootstrap,
+    compatibility decoder, store-generation cutover, or downgrade fence for
+    disposable development vaults.
     Audited trash origins will retain immutable parent IDs and names
     outside nullable live foreign-key semantics, so deleting an unaudited origin
     cannot rewrite protected history. The existing `trash_parent` becomes a

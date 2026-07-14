@@ -57,7 +57,7 @@ coverage proves logical JSONL equality, loose and packed source capture,
 packed publication, large loose-object fallback, and reads every restored blob
 through the same mixed store used by a live vault.
 
-Snapshots created before this cutover used Kit's SQLite page-map metadata.
+Earlier development snapshots used Kit's SQLite page-map metadata.
 They remain restorable through the same wrapper. New captures always use JSONL;
 the legacy path is a reader compatibility boundary, not an alternative format
 for new snapshots.
@@ -115,13 +115,11 @@ not yet been reclaimed. This preserves the deletion pipeline's regret window
 inside the snapshot.
 
 !!! info "Planned — editing and audited-history authority"
-    The editing/identity bootstrap will introduce
-    `docbank-metadata-jsonl-v2`; today's v1 remains the pre-bootstrap format.
-    Zero-scope v2 will preserve the stable vault ID, node-ID allocator
+    Before the first public release, `docbank-metadata-jsonl-v1` will directly
+    adopt the stable vault ID, node-ID allocator
     high-water mark, content versions and current references, and non-reusable
     tag identities plus every retained ingest record without audit genesis or
-    lineage. Its live-store fence will reject legacy overwrite restore into a
-    bootstrapped target. Enabling the first audit scope will extend that same v2
+    lineage. Enabling the first audit scope will extend that same v1
     authority with scopes, sticky memberships, shared enrollment-baseline
     batches and digests, mutation records, a complete vault-topology genesis
     snapshot, canonical unknown-origin records, baseline

@@ -46,10 +46,11 @@ actually removed; packed logical death is pending repack.
 
 ### Change schema
 
-Classify the change as compatible addition or incompatible mutation. The
-current bootstrap is not a migration runner. No incompatible released schema
-change may ship before kata `7q8z` provides versioned transactional migrations
-and old-vault fixtures.
+Before the first public release, change the current schema and JSONL v1
+authority directly and update synthetic fixtures; developer vaults are
+disposable. Do not build migrations or cutovers for unreleased layouts. After
+the first public release, begin any incompatible change by defining the
+compatibility policy and released-vault fixtures it requires.
 
 ### Change daemon lifecycle
 

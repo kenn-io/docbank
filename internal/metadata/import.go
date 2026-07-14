@@ -1,4 +1,4 @@
-package metadatav2
+package metadata
 
 import (
 	"bufio"
@@ -9,29 +9,30 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 	"unicode/utf8"
 )
 
-// Import transactionally installs a zero-scope metadata-v2 JSONL stream into
-// an empty v2 logical schema.
+// Import transactionally installs a metadata-v1 JSONL stream into an empty
+// logical schema.
 func Import(ctx context.Context, db *sql.DB, r io.Reader) error {
 	if db == nil {
-		return errors.New("importing metadata v2: nil database")
+		return errors.New("importing metadata v1: nil database")
 	}
 	if r == nil {
-		return errors.New("importing metadata v2: nil reader")
+		return errors.New("importing metadata v1: nil reader")
 	}
 	if err := requireForeignKeys(ctx, db); err != nil {
-		return fmt.Errorf("importing metadata v2: %w", err)
+		return fmt.Errorf("importing metadata v1: %w", err)
 	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("beginning metadata v2 import: %w", err)
+		return fmt.Errorf("beginning metadata v1 import: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, `PRAGMA defer_foreign_keys = ON`); err != nil {
-		return fmt.Errorf("deferring metadata v2 foreign keys: %w", err)
+		return fmt.Errorf("deferring metadata v1 foreign keys: %w", err)
 	}
 	if err := requirePristine(ctx, tx); err != nil {
 		return err
@@ -41,23 +42,23 @@ func Import(ctx context.Context, db *sql.DB, r io.Reader) error {
 	dec.DisallowUnknownFields()
 	var rawHeader json.RawMessage
 	if err := dec.Decode(&rawHeader); err != nil {
-		return fmt.Errorf("decoding metadata v2 header: %w", err)
+		return fmt.Errorf("decoding metadata v1 header: %w", err)
 	}
 	if err := validateJSONStrings(rawHeader); err != nil {
-		return fmt.Errorf("decoding metadata v2 header: %w", err)
+		return fmt.Errorf("decoding metadata v1 header: %w", err)
 	}
 	if err := requireFields(rawHeader,
-		[]string{"type", "format", "version", "vault_id", "node_sequence"}); err != nil {
-		return fmt.Errorf("decoding metadata v2 header: %w", err)
+		[]string{typeField, "format", "version", "vault_id", "node_sequence"}, nil); err != nil {
+		return fmt.Errorf("decoding metadata v1 header: %w", err)
 	}
 	var header Header
 	if err := decodeExact(rawHeader, &header); err != nil {
-		return fmt.Errorf("decoding metadata v2 header: %w", err)
+		return fmt.Errorf("decoding metadata v1 header: %w", err)
 	}
 	if header.Type != "meta" || header.Format != Format ||
 		header.Version != FormatVersion || header.NodeSequence <= 0 {
 		return fmt.Errorf(
-			"unsupported metadata v2 header: type=%q format=%q version=%d node_sequence=%d",
+			"unsupported metadata v1 header: type=%q format=%q version=%d node_sequence=%d",
 			header.Type, header.Format, header.Version, header.NodeSequence,
 		)
 	}
@@ -65,10 +66,10 @@ func Import(ctx context.Context, db *sql.DB, r io.Reader) error {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO vault_metadata(singleton,format_version,vault_id) VALUES(1,2,?)`,
+		`INSERT INTO vault_metadata(singleton,format_version,vault_id) VALUES(1,1,?)`,
 		header.VaultID,
 	); err != nil {
-		return fmt.Errorf("installing metadata v2 header: %w", err)
+		return fmt.Errorf("installing metadata v1 header: %w", err)
 	}
 
 	for recordNumber := 2; ; recordNumber++ {
@@ -78,68 +79,78 @@ func Import(ctx context.Context, db *sql.DB, r io.Reader) error {
 			break
 		}
 		if err != nil {
-			return fmt.Errorf("decoding metadata v2 record %d: %w", recordNumber, err)
+			return fmt.Errorf("decoding metadata v1 record %d: %w", recordNumber, err)
 		}
 		if err := validateJSONStrings(raw); err != nil {
-			return fmt.Errorf("decoding metadata v2 record %d: %w", recordNumber, err)
+			return fmt.Errorf("decoding metadata v1 record %d: %w", recordNumber, err)
 		}
-		var envelope struct {
-			Type string `json:"type"`
+		envelope, err := recordType(raw)
+		if err != nil {
+			return fmt.Errorf("decoding metadata v1 record %d type: %w", recordNumber, err)
 		}
-		if err := json.Unmarshal(raw, &envelope); err != nil {
-			return fmt.Errorf("decoding metadata v2 record %d type: %w", recordNumber, err)
-		}
-		if err := importRecord(ctx, tx, envelope.Type, raw); err != nil {
+		if err := importRecord(ctx, tx, envelope, raw); err != nil {
 			return fmt.Errorf(
-				"importing metadata v2 record %d (%s): %w",
-				recordNumber, envelope.Type, err,
+				"importing metadata v1 record %d (%s): %w",
+				recordNumber, envelope, err,
 			)
 		}
 	}
 	if err := validateTx(ctx, tx, header.NodeSequence); err != nil {
-		return fmt.Errorf("validating metadata v2 import: %w", err)
+		return fmt.Errorf("validating metadata v1 import: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE sqlite_sequence SET seq = ? WHERE name = 'nodes'`, header.NodeSequence,
 	); err != nil {
-		return fmt.Errorf("restoring metadata v2 node sequence: %w", err)
+		return fmt.Errorf("restoring metadata v1 node sequence: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("committing metadata v2 import: %w", err)
+		return fmt.Errorf("committing metadata v1 import: %w", err)
 	}
 	return nil
 }
 
 var requiredFields = map[string][]string{
 	"blob": {
-		"type", "hash", "size", "created_at",
+		typeField, "hash", "size", "created_at",
 	},
 	"node": {
-		"type", "id", "parent_id", "name", "kind", "current_version_id",
+		typeField, "id", "parent_id", "name", "kind", "current_version_id",
 		"revision", "created_at", "modified_at", "trashed_at", "trash_parent", "trash_name",
 	},
 	"content_version": {
-		"type", "version_id", "node_id", "blob_hash", "size", "media_type",
-		"recorded_at", "node_revision", "version_origin", "introduced_operation_id",
+		typeField, "version_id", "node_id", "blob_hash", "size", "media_type",
+		"recorded_at", "node_revision", "introduced_operation_id",
 		"transition_kind", "source_version_id",
 	},
 	"ingest": {
-		"type", "ingest_id", "started_at", "source_kind", "source_desc",
+		typeField, "ingest_id", "started_at", "source_kind", "source_desc",
 	},
-	"provenance": {
-		"type", "identity", "node_id", "ingest_id", "original_path",
+	provenanceRecordType: {
+		typeField, "identity", "node_id", "ingest_id", "original_path",
 		"original_mtime", "supersedes",
 	},
 	"tag": {
-		"type", "tag_id", "name",
+		typeField, "tag_id", "name",
 	},
 	"node_tag": {
-		"type", "node_id", "tag_id",
+		typeField, "node_id", "tag_id",
 	},
 	"extracted_text": {
-		"type", "blob_hash", "extractor", "extractor_version", "status",
+		typeField, "blob_hash", "extractor", "extractor_version", "status",
 		"error", "attempts", "text", "extracted_at",
 	},
+}
+
+var nullableFields = map[string]map[string]struct{}{
+	"node": {
+		"parent_id": {}, "current_version_id": {}, "trashed_at": {},
+		"trash_parent": {}, "trash_name": {},
+	},
+	"content_version": {"media_type": {}, "source_version_id": {}},
+	provenanceRecordType: {
+		"original_path": {}, "original_mtime": {}, "supersedes": {},
+	},
+	"extracted_text": {"error": {}, "text": {}},
 }
 
 func importRecord(ctx context.Context, tx *sql.Tx, kind string, raw json.RawMessage) error {
@@ -147,7 +158,7 @@ func importRecord(ctx context.Context, tx *sql.Tx, kind string, raw json.RawMess
 	if !ok {
 		return fmt.Errorf("unknown record type %q", kind)
 	}
-	if err := requireFields(raw, required); err != nil {
+	if err := requireFields(raw, required, nullableFields[kind]); err != nil {
 		return err
 	}
 	switch kind {
@@ -193,10 +204,10 @@ func importRecord(ctx context.Context, tx *sql.Tx, kind string, raw json.RawMess
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO content_versions(
 				version_id,node_id,blob_hash,size,media_type,recorded_at,node_revision,
-				version_origin,introduced_operation_id,transition_kind,source_version_id
-			) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+				introduced_operation_id,transition_kind,source_version_id
+			) VALUES(?,?,?,?,?,?,?,?,?,?)`,
 			record.VersionID, record.NodeID, record.BlobHash, record.Size,
-			record.MediaType, record.RecordedAt, record.NodeRevision, record.VersionOrigin,
+			record.MediaType, record.RecordedAt, record.NodeRevision,
 			record.IntroducedOperationID, record.TransitionKind, record.SourceVersionID,
 		)
 		return err
@@ -213,7 +224,7 @@ func importRecord(ctx context.Context, tx *sql.Tx, kind string, raw json.RawMess
 			record.IngestID, record.StartedAt, record.SourceKind, []byte(record.SourceDesc),
 		)
 		return err
-	case "provenance":
+	case provenanceRecordType:
 		var record Provenance
 		if err := decodeExact(raw, &record); err != nil {
 			return err
@@ -287,17 +298,92 @@ func decodeExact(raw json.RawMessage, target any) error {
 	return nil
 }
 
-func requireFields(raw json.RawMessage, required []string) error {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil {
+func requireFields(
+	raw json.RawMessage, required []string, nullable map[string]struct{},
+) error {
+	fields, err := objectFields(raw, required)
+	if err != nil {
 		return err
 	}
 	for _, field := range required {
-		if _, ok := fields[field]; !ok {
-			return fmt.Errorf("metadata v2 record lacks required field %q", field)
+		value, ok := fields[field]
+		if !ok {
+			return fmt.Errorf("metadata v1 record lacks required field %q", field)
+		}
+		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			if _, ok := nullable[field]; !ok {
+				return fmt.Errorf("metadata v1 field %q cannot be null", field)
+			}
 		}
 	}
 	return nil
+}
+
+func recordType(raw json.RawMessage) (string, error) {
+	fields, err := objectFields(raw, []string{typeField})
+	if err != nil {
+		return "", err
+	}
+	value, ok := fields[typeField]
+	if !ok || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+		return "", errors.New("metadata v1 record lacks non-null field \"type\"")
+	}
+	var kind string
+	if err := json.Unmarshal(value, &kind); err != nil {
+		return "", err
+	}
+	return kind, nil
+}
+
+func objectFields(raw json.RawMessage, known []string) (map[string]json.RawMessage, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	first, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if delim, ok := first.(json.Delim); !ok || delim != '{' {
+		return nil, errors.New("metadata v1 record must be a JSON object")
+	}
+	fields := make(map[string]json.RawMessage)
+	for dec.More() {
+		token, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		key, ok := token.(string)
+		if !ok {
+			return nil, errors.New("metadata v1 object key is not a string")
+		}
+		for _, canonical := range known {
+			if strings.EqualFold(key, canonical) && key != canonical {
+				return nil, fmt.Errorf(
+					"metadata v1 field %q is a case alias of %q", key, canonical,
+				)
+			}
+		}
+		if _, exists := fields[key]; exists {
+			return nil, fmt.Errorf("metadata v1 record contains duplicate field %q", key)
+		}
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return nil, err
+		}
+		fields[key] = value
+	}
+	last, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if delim, ok := last.(json.Delim); !ok || delim != '}' {
+		return nil, errors.New("metadata v1 record has invalid object terminator")
+	}
+	if err := dec.Decode(new(any)); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return nil, errors.New("metadata v1 record contains more than one JSON value")
+		}
+		return nil, err
+	}
+	return fields, nil
 }
 
 func validateBlob(record Blob) error {
@@ -381,43 +467,26 @@ func validateContentVersion(record ContentVersion) error {
 	if record.MediaType != nil && !utf8.ValidString(*record.MediaType) {
 		return errors.New("content version media type is not valid UTF-8")
 	}
-	switch record.VersionOrigin {
-	case "legacy_v1":
-		if record.IntroducedOperationID != nil || record.TransitionKind != nil ||
-			record.SourceVersionID != nil {
-			return errors.New("legacy content version carries native transition fields")
+	if record.NodeRevision <= 0 {
+		return errors.New("content version has invalid node revision")
+	}
+	if err := validateUUID("introduced operation ID", record.IntroducedOperationID); err != nil {
+		return err
+	}
+	switch record.TransitionKind {
+	case "content_create", "content_replace":
+		if record.SourceVersionID != nil {
+			return errors.New("create/replace content version carries source")
 		}
-		if record.NodeRevision == nil && record.MediaType != nil {
-			return errors.New("historical legacy content version invents media type")
+	case "content_revert":
+		if record.SourceVersionID == nil {
+			return errors.New("revert content version lacks source")
 		}
-	case "native":
-		if record.NodeRevision == nil || record.IntroducedOperationID == nil ||
-			record.TransitionKind == nil {
-			return errors.New("native content version lacks transition fields")
-		}
-		if *record.NodeRevision <= 0 {
-			return errors.New("native content version has invalid node revision")
-		}
-		if err := validateUUID("introduced operation ID", *record.IntroducedOperationID); err != nil {
+		if err := validateUUID("source version ID", *record.SourceVersionID); err != nil {
 			return err
 		}
-		switch *record.TransitionKind {
-		case "content_create", "content_replace":
-			if record.SourceVersionID != nil {
-				return errors.New("create/replace content version carries source")
-			}
-		case "content_revert":
-			if record.SourceVersionID == nil {
-				return errors.New("revert content version lacks source")
-			}
-			if err := validateUUID("source version ID", *record.SourceVersionID); err != nil {
-				return err
-			}
-		default:
-			return fmt.Errorf("invalid transition kind %q", *record.TransitionKind)
-		}
 	default:
-		return fmt.Errorf("invalid version origin %q", record.VersionOrigin)
+		return fmt.Errorf("invalid transition kind %q", record.TransitionKind)
 	}
 	return nil
 }
@@ -433,7 +502,7 @@ func validateIngest(record Ingest) error {
 }
 
 func validateProvenance(record Provenance) error {
-	if record.Type != "provenance" || record.NodeID <= 0 {
+	if record.Type != provenanceRecordType || record.NodeID <= 0 {
 		return errors.New("invalid provenance record")
 	}
 	if _, err := parseDigest("provenance identity", record.Identity); err != nil {
@@ -526,10 +595,10 @@ func requirePristine(ctx context.Context, tx *sql.Tx) error {
 		  (SELECT COUNT(*) FROM node_tags) +
 		  (SELECT COUNT(*) FROM extracted_text)
 	`).Scan(&count); err != nil {
-		return fmt.Errorf("checking metadata v2 import target: %w", err)
+		return fmt.Errorf("checking metadata v1 import target: %w", err)
 	}
 	if count != 0 {
-		return fmt.Errorf("metadata v2 import target is not pristine: rows=%d", count)
+		return fmt.Errorf("metadata v1 import target is not pristine: rows=%d", count)
 	}
 	return nil
 }

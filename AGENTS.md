@@ -71,6 +71,13 @@ Instructions for autonomous coding agents working in this repository.
   purpose-built emergency recovery workflow with a demonstrated need.
 - User-facing docs describe only what exists; planned behavior sits under
   `!!! info "Planned"` admonitions.
+- No storage compatibility boundary exists before the first public release.
+  Keep the live schema and deterministic JSONL authority at format v1, make
+  breaking pre-release changes directly, and treat vaults created by earlier
+  development commits as disposable. Do not build migrations, logical
+  cutovers, compatibility decoders, downgrade fences, or old-binary matrices
+  for unreleased layouts. After the first public release, define compatibility
+  work only when an actual released-format change requires it.
 
 <!-- BEGIN KATA (managed by `kata init --with-agents`) -->
 ## kata issue tracker
