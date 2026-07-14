@@ -314,10 +314,10 @@ A trash path has a separate domain. A fully known origin spine uses
 `@trash/known/` followed by the root-to-origin-parent components, the detached
 root's immutable origin name, and any ordinary descendant components, all
 joined with single `/` bytes; the vault root contributes no empty component.
-An unknown-origin anchor uses `@trash/unknown/` followed by that anchor trash
-root's stable node ID in shortest unsigned base-10 ASCII—no sign or leading
-zero. The anchor's optional retained origin name is display-only and never
-enters the path bytes.
+An unknown-origin anchor uses `@trash/unknown/` followed by that current or
+tombstoned anchor's stable node ID in shortest unsigned base-10 ASCII—no sign
+or leading zero. The anchor's optional retained origin name is display-only and
+never enters the path bytes.
 
 When a known-origin trash root's last-known parent chain terminates at that
 unknown anchor, the same unknown prefix is followed by the immutable known-origin
@@ -877,8 +877,10 @@ origin record. That origin's `node_id` must equal the enclosing
 and a valid non-root `name`; its parent ID must resolve in the replayed
 last-known topology to immutable `node_kind: dir`, whether that parent is live,
 trashed, or tombstoned. The resulting parent graph must be acyclic and terminate
-at either the vault root or a trash root carrying `unknown_origin`; that record
-is the terminal sentinel and traversal never follows its operational parent.
+at either the vault root, a current trash root carrying `unknown_origin`, or a
+tombstoned former trash root that retained that unknown origin verbatim. That
+current or historical record is the terminal sentinel, and traversal never
+follows its operational parent.
 An `unknown_origin` has the registered absent
 parent and an absent or valid non-root retained name. The known name and any
 present unknown retained name equal the enclosing trash root's topology name
