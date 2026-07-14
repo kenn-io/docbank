@@ -75,17 +75,33 @@ transactionally; it cannot edit bytes in place without invalidating their hash.
     the existing v2 projection; import and restore never synthesize audit
     authority for a zero-scope stream.
 
-    Bootstrap also permanently raises the live-store feature level. It publishes
-    a non-ignorable store/layout fence before exposing any editing endpoint, so
-    every supported pre-bootstrap binary fails during store open rather than
-    writing through a schema that cannot preserve `current_version_id` or the
-    portable identities. The fenced layout is outside legacy overwrite-restore
-    cleanup and publication paths; restoring a v1 snapshot may target a fresh
-    directory but cannot replace a bootstrapped vault. Release compatibility
-    tests attempt store open and overwrite restore with each supported
-    pre-bootstrap binary and require refusal with no file or metadata change.
-    Enabling full audit later advances the fence again to the stricter
-    audit-aware level described in [Audited History](audited-history.md).
+    Bootstrap also permanently raises the live-store feature level through a
+    crash-safe, daemon-exclusive cutover. Before beginning or committing any v2
+    metadata transaction, Docbank publishes a non-ignorable
+    `bootstrap_pending` store/layout generation and syncs both it and its parent
+    directory. Every supported pre-bootstrap binary fails store open on that
+    generation. Only then may the new daemon create portable identities in one
+    SQLite transaction. After commit it reopens a pinned read snapshot, verifies
+    every v2 bootstrap invariant, atomically publishes `v2_ready`, and syncs the
+    generation again before exposing editing, export, backup, or restore.
+
+    A crash before the pending generation is durable leaves no v2 authority. A
+    crash after it is durable leaves legacy access blocked. On the next open, an
+    v2-aware binary takes the exclusive vault lock and examines the database:
+    a rolled-back pre-bootstrap database resumes the idempotent bootstrap from
+    the beginning, while a committed complete v2 database is fully reverified
+    before the fence advances to `v2_ready`. An incomplete or contradictory
+    state is a hard recovery error and never serves data. No path clears the
+    pending fence merely to regain legacy access.
+
+    The fenced layout is outside legacy overwrite-restore cleanup and
+    publication paths; restoring a v1 snapshot may target a fresh directory but
+    cannot replace a pending or ready v2 vault. Release compatibility tests
+    exercise both fence states and every crash boundary, then attempt store open
+    and overwrite restore with each supported pre-bootstrap binary and require
+    refusal with no file or metadata change. Enabling full audit later advances
+    the fence again to the stricter audit-aware level described in
+    [Audited History](audited-history.md).
 
     Versions will be whole-content snapshots, not diffs. Identical bytes will
     still deduplicate, and a crash before the metadata transaction commits will

@@ -86,8 +86,11 @@ nodes_fts      -- FTS5 external-content index over live node names
     available. That cutover uses metadata JSONL v2 even with zero audit scopes;
     the zero-scope form preserves editing identities without an audit genesis or
     lineage, which begins only when the first scope is enabled. Bootstrap also
-    publishes a non-ignorable feature/layout fence so pre-bootstrap writers and
-    legacy overwrite-restore paths cannot reopen or replace the v2 authority.
+    durably publishes a non-ignorable `bootstrap_pending` feature/layout
+    generation before the v2 transaction and advances it to `v2_ready` only
+    after committed authority is reverified. Recovery resumes or verifies that
+    cutover while pre-bootstrap writers and legacy overwrite-restore paths stay
+    blocked.
     Audited trash origins will retain immutable parent IDs and names
     outside nullable live foreign-key semantics, so deleting an unaudited origin
     cannot rewrite protected history. The existing `trash_parent` becomes a

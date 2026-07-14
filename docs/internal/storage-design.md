@@ -50,8 +50,11 @@ share a blob without sharing document identity.
     Zero-scope v2 is the portable editing/version form and contains no audit
     genesis or lineage; enabling the first scope later adds those authorities
     from the current v2 projection. Bootstrap activates a non-ignorable
-    live-store fence against pre-bootstrap writers and legacy overwrite restore;
-    audit activation advances that fence again for pre-audit binaries.
+    live-store fence against pre-bootstrap writers and legacy overwrite restore.
+    The synced `bootstrap_pending` generation precedes the SQLite cutover;
+    `v2_ready` is published only after committed authority is reverified, and
+    crash recovery resumes or verifies bootstrap without reopening legacy
+    access. Audit activation advances that fence again for pre-audit binaries.
     Audit baselines and final-state reconciliation include authoritative tag
     assignments and their definitions plus provenance and its referenced ingest
     records. Import validates and replays that referential closure; derived FTS,
