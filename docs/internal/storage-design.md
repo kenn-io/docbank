@@ -428,13 +428,22 @@ Store startup runs the embedded idempotent schema in one immediate transaction
 and ensures the root exists. This safely creates missing compatible tables and
 indexes, but it is not a general migration system.
 
-The pre-v0.1 freedom to change schema without migrations is over. Until kata
-`7q8z` adds version tracking and transactional forward migrations, no release
-may depend on an incompatible change to an existing table, column, trigger, or
-index. Migration machinery must precede the incompatible reader/writer.
+`internal/metadatav2` contains the separately tested zero-scope v2 logical
+schema and deterministic codec that the future cutover will build in private
+staging. It is deliberately dormant: `store.Open` still creates and opens only
+the v1 runtime shape, and current backup capture still emits JSONL v1. Do not
+apply the v2 schema to a live database or expose its format until the logical
+cutover publishes the durable `bootstrap_pending` / `v2_ready` downgrade fence.
 
-When migrations land, tests need real old-vault fixtures, upgrade verification,
-failure rollback behavior, and a documented backup-before-migrate contract.
+The pre-v0.1 freedom to change schema without migrations is over. Until kata
+`7q8z` activates the crash-safe JSONL cutover, no release may depend on an
+incompatible change to an existing table, column, trigger, or index. Cutover
+machinery must precede the incompatible reader/writer; do not add an in-place
+SQLite migration ledger as a substitute.
+
+When the logical cutover lands, tests need real old-vault fixtures, upgrade
+verification, crash recovery, downgrade refusal, and a documented
+backup-before-cutover contract.
 
 ## Open design constraints
 
