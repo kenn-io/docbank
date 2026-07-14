@@ -2,8 +2,8 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -17,6 +17,7 @@ var (
 	addExclude   []string
 	addPreflight bool
 	addJSON      bool
+	addProgress  string
 )
 
 var addCmd = &cobra.Command{
@@ -24,9 +25,6 @@ var addCmd = &cobra.Command{
 	Short: "Import files or directory trees into the vault",
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if addJSON && !addPreflight {
-			return errors.New("--json requires --preflight")
-		}
 		abs := make([]string, len(args))
 		for i, a := range args {
 			p, err := filepath.Abs(a)
@@ -59,14 +57,33 @@ var addCmd = &cobra.Command{
 			}
 			return nil
 		}
-		rep, err := c.IngestWithOptions(cmd.Context(), abs, addDest, addExclude)
+		var rep api.IngestReport
+		if addJSON {
+			rep, err = c.IngestWithOptions(cmd.Context(), abs, addDest, addExclude)
+		} else {
+			mode, modeErr := progressModeFromFlag("add", addProgress)
+			if modeErr != nil {
+				return modeErr
+			}
+			renderer := newIngestProgressRenderer(cmd.ErrOrStderr(), mode)
+			defer renderer.finish()
+			rep, err = c.IngestStream(cmd.Context(), abs, addDest, addExclude, renderer.handle)
+		}
 		if err != nil {
 			return err
 		}
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "added: %d  skipped: %d  excluded: %d  failed: %d\n",
-			rep.Added, rep.Skipped, rep.Excluded, len(rep.Failed))
-		for _, f := range rep.Failed {
-			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "failed: %s: %s\n", f.Path, f.Error)
+		if addJSON {
+			enc := json.NewEncoder(cmd.OutOrStdout())
+			enc.SetIndent("", "  ")
+			if err := enc.Encode(rep); err != nil {
+				return fmt.Errorf("encoding ingest report: %w", err)
+			}
+		} else {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "added: %d  skipped: %d  excluded: %d  failed: %d\n",
+				rep.Added, rep.Skipped, rep.Excluded, len(rep.Failed))
+			for _, f := range rep.Failed {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "failed: %s: %s\n", f.Path, f.Error)
+			}
 		}
 		if len(rep.Failed) > 0 {
 			return fmt.Errorf("%d file(s) failed to import", len(rep.Failed))
@@ -81,8 +98,30 @@ func init() {
 		"exclude an entry name anywhere or a relative path within each source (repeatable)")
 	addCmd.Flags().BoolVar(&addPreflight, "preflight", false,
 		"inventory sources without opening content or changing the vault")
-	addCmd.Flags().BoolVar(&addJSON, "json", false, "machine-readable preflight report")
+	addCmd.Flags().BoolVar(&addJSON, "json", false,
+		"machine-readable terminal report (progress suppressed)")
+	addCmd.Flags().StringVar(&addProgress, "progress", "auto",
+		"progress output mode: auto, bar, or plain (suppressed by --json)")
 	rootCmd.AddCommand(addCmd)
+}
+
+type ingestProgressRenderer struct {
+	base *backupProgressRenderer
+}
+
+func newIngestProgressRenderer(out io.Writer, mode backupProgressMode) *ingestProgressRenderer {
+	return &ingestProgressRenderer{base: newBackupProgressRenderer(out, mode)}
+}
+
+func (r *ingestProgressRenderer) handle(event api.IngestProgress) {
+	r.base.handle(api.BackupProgress{
+		Stage: event.Stage, Done: event.Done, Total: event.Total,
+		BytesDone: event.BytesDone, BytesTotal: event.BytesTotal, Final: event.Final,
+	})
+}
+
+func (r *ingestProgressRenderer) finish() {
+	r.base.finish()
 }
 
 func printIngestPreflight(cmd *cobra.Command, rep api.IngestPreflightReport) {

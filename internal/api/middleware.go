@@ -16,7 +16,7 @@ const requestTimeout = 60 * time.Second
 // timeout-exempt: long-running maintenance, integrity reads, and bulk ingest.
 func timeoutExempt(path string) bool {
 	switch path {
-	case "/api/v1/ingest", "/api/v1/ingest/preflight", "/api/v1/gc", "/api/v1/verify", "/api/v1/trash/empty",
+	case "/api/v1/ingest", "/api/v1/ingest/stream", "/api/v1/ingest/preflight", "/api/v1/gc", "/api/v1/verify", "/api/v1/trash/empty",
 		"/api/v1/storage/pack", "/api/v1/storage/repack", "/api/v1/uploads",
 		"/api/v1/backup/snapshots", "/api/v1/backup/snapshots/stream",
 		"/api/v1/backup/verify", "/api/v1/backup/verify/stream",
@@ -84,7 +84,7 @@ func loopbackMiddleware(next http.Handler) http.Handler {
 }
 
 func isServerPathIngestRoute(path string) bool {
-	return path == "/api/v1/ingest" || path == "/api/v1/ingest/preflight"
+	return path == "/api/v1/ingest" || path == "/api/v1/ingest/stream" || path == "/api/v1/ingest/preflight"
 }
 
 func isLoopbackRemote(remoteAddr string) bool {

@@ -45,6 +45,103 @@ type Report struct {
 	Failed   []FileError
 }
 
+// ProgressEvent reports bytes read and file outcomes observed so far. A file
+// contributes to FilesDone only after its blob and metadata operation returns;
+// BytesRead may include an incomplete file when the operation is cancelled.
+type ProgressEvent struct {
+	FilesDone int64
+	BytesRead int64
+	Added     int
+	Skipped   int
+	Excluded  int
+	Failed    int
+	Final     bool
+}
+
+const (
+	progressByteInterval = 4 << 20
+	progressFileInterval = 64
+	progressTimeInterval = time.Second
+)
+
+type progressTracker struct {
+	notify               func(ProgressEvent)
+	event                ProgressEvent
+	lastNotifiedBytes    int64
+	lastNotifiedFiles    int64
+	lastNotifiedExcluded int
+	lastNotifiedFailed   int
+	lastNotifiedAt       time.Time
+}
+
+func newProgressTracker(notify func(ProgressEvent)) *progressTracker {
+	if notify == nil {
+		return nil
+	}
+	return &progressTracker{notify: notify}
+}
+
+func (p *progressTracker) addBytes(n int) {
+	if p == nil || n <= 0 {
+		return
+	}
+	p.event.BytesRead += int64(n)
+	if p.event.BytesRead-p.lastNotifiedBytes >= progressByteInterval ||
+		time.Since(p.lastNotifiedAt) >= progressTimeInterval {
+		p.emit(false)
+	}
+}
+
+func (p *progressTracker) report(rep Report, final bool) {
+	if p == nil {
+		return
+	}
+	p.event.FilesDone = int64(rep.Added + rep.Skipped + len(rep.Failed))
+	p.event.Added = rep.Added
+	p.event.Skipped = rep.Skipped
+	p.event.Excluded = rep.Excluded
+	p.event.Failed = len(rep.Failed)
+	if p.lastNotifiedAt.IsZero() || final ||
+		p.event.FilesDone-p.lastNotifiedFiles >= progressFileInterval ||
+		p.event.Excluded-p.lastNotifiedExcluded >= progressFileInterval ||
+		p.event.Failed > p.lastNotifiedFailed ||
+		time.Since(p.lastNotifiedAt) >= progressTimeInterval {
+		p.emit(final)
+	}
+}
+
+func (p *progressTracker) emit(final bool) {
+	if p == nil {
+		return
+	}
+	p.event.Final = final
+	p.lastNotifiedBytes = p.event.BytesRead
+	p.lastNotifiedFiles = p.event.FilesDone
+	p.lastNotifiedExcluded = p.event.Excluded
+	p.lastNotifiedFailed = p.event.Failed
+	p.lastNotifiedAt = time.Now()
+	p.notify(p.event)
+}
+
+type progressReader struct {
+	io.Reader
+
+	ctx     context.Context
+	tracker *progressTracker
+}
+
+func (r progressReader) Read(buf []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	n, err := r.Reader.Read(buf)
+	r.tracker.addBytes(n)
+	if err == nil {
+		err = r.ctx.Err()
+	}
+	return n, err
+}
+
 // UploadResult is the server's independently computed receipt for one remote
 // file. Node is populated for both a new import and an idempotent retry.
 type UploadResult struct {
@@ -135,8 +232,12 @@ func (ing *Ingester) AddPathsWithOptions(
 	sources []string,
 	destPath string,
 	opts Options,
-) (Report, error) {
-	var rep Report
+) (rep Report, err error) {
+	progress := newProgressTracker(opts.Progress)
+	progress.report(rep, false)
+	if err := ctx.Err(); err != nil {
+		return rep, err
+	}
 	excludes, err := compileExclusions(opts.Exclude)
 	if err != nil {
 		return rep, err
@@ -151,23 +252,30 @@ func (ing *Ingester) AddPathsWithOptions(
 	}
 
 	for _, rawSource := range sources {
+		if err := ctx.Err(); err != nil {
+			return rep, err
+		}
 		src := filepath.Clean(rawSource)
 		info, err := os.Lstat(src)
 		if err != nil {
 			// Per-file failure like any other: aborting here would leave
 			// already-imported files out of the report entirely.
 			rep.Failed = append(rep.Failed, FileError{Path: src, Err: err})
+			progress.report(rep, false)
 			continue
 		}
 		if excludes.match(src, src) {
 			rep.Excluded++
+			progress.report(rep, false)
 			continue
 		}
 		switch {
 		case info.Mode().IsRegular():
-			ing.addOne(ctx, &rep, ingestID, dest.ID, src, src)
+			if err := ing.addOne(ctx, &rep, ingestID, dest.ID, src, src, progress); err != nil {
+				return rep, err
+			}
 		case info.IsDir():
-			if err := ing.addTree(ctx, &rep, ingestID, dest.ID, src, src, excludes); err != nil {
+			if err := ing.addTree(ctx, &rep, ingestID, dest.ID, src, src, excludes, progress); err != nil {
 				return rep, err
 			}
 		case info.Mode()&fs.ModeSymlink != 0:
@@ -175,27 +283,32 @@ func (ing *Ingester) AddPathsWithOptions(
 			if err != nil {
 				rep.Failed = append(rep.Failed, FileError{Path: src,
 					Err: fmt.Errorf("resolving explicitly named directory symlink: %w", err)})
+				progress.report(rep, false)
 				continue
 			}
 			target, err := os.Stat(walkRoot)
 			if err != nil {
 				rep.Failed = append(rep.Failed, FileError{Path: src,
 					Err: fmt.Errorf("checking explicitly named directory symlink: %w", err)})
+				progress.report(rep, false)
 				continue
 			}
 			if !target.IsDir() {
 				rep.Failed = append(rep.Failed, FileError{Path: src,
 					Err: errors.New("explicit symlink source does not resolve to a directory")})
+				progress.report(rep, false)
 				continue
 			}
-			if err := ing.addTree(ctx, &rep, ingestID, dest.ID, src, walkRoot, excludes); err != nil {
+			if err := ing.addTree(ctx, &rep, ingestID, dest.ID, src, walkRoot, excludes, progress); err != nil {
 				return rep, err
 			}
 		default:
 			rep.Failed = append(rep.Failed, FileError{Path: src,
 				Err: errors.New("not a regular file or directory (symlinks are skipped)")})
+			progress.report(rep, false)
 		}
 	}
+	progress.report(rep, true)
 	return rep, nil
 }
 
@@ -216,6 +329,7 @@ func (ing *Ingester) addTree(
 	ingestID, destDirID int64,
 	sourceRoot, walkRoot string,
 	excludes exclusions,
+	progress *progressTracker,
 ) error {
 	// Absolutize first. WalkDir hands back the root spelled exactly as given
 	// while children come from filepath.Join, which cleans — dirIDs keys must
@@ -241,13 +355,18 @@ func (ing *Ingester) addTree(
 	// that path re-create (even resurrect) a tree somewhere else.
 	dirIDs := map[string]int64{} // source dir path -> virtual dir node id
 	walkErr := filepath.WalkDir(walkRoot, func(p string, d fs.DirEntry, err error) error {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		sourcePath := sourceTreePath(sourceRoot, walkRoot, p)
 		if err != nil {
 			rep.Failed = append(rep.Failed, FileError{Path: sourcePath, Err: err})
+			progress.report(*rep, false)
 			return nil //nolint:nilerr // intentional: record error and continue walk
 		}
 		if excludes.match(sourceRoot, sourcePath) {
 			rep.Excluded++
+			progress.report(*rep, false)
 			if d.IsDir() {
 				return fs.SkipDir
 			}
@@ -265,8 +384,12 @@ func (ing *Ingester) addTree(
 			}
 			dir, err := ing.Store.EnsureDir(ctx, parentID, name)
 			if err != nil {
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return ctxErr
+				}
 				rep.Failed = append(rep.Failed, FileError{Path: sourcePath,
 					Err: fmt.Errorf("creating virtual dir %q under node %d: %w", name, parentID, err)})
+				progress.report(*rep, false)
 				return fs.SkipDir
 			}
 			dirIDs[p] = dir.ID
@@ -275,10 +398,13 @@ func (ing *Ingester) addTree(
 			if !ok {
 				return fmt.Errorf("internal: no virtual dir recorded for %s", filepath.Dir(p))
 			}
-			ing.addOne(ctx, rep, ingestID, parentID, p, sourcePath)
+			if err := ing.addOne(ctx, rep, ingestID, parentID, p, sourcePath, progress); err != nil {
+				return err
+			}
 		default:
 			rep.Failed = append(rep.Failed, FileError{Path: sourcePath,
 				Err: errors.New("not a regular file (symlinks are skipped)")})
+			progress.report(*rep, false)
 		}
 		return nil
 	})
@@ -299,22 +425,29 @@ func (ing *Ingester) addOne(
 	rep *Report,
 	ingestID, parentID int64,
 	openPath, sourcePath string,
-) {
-	added, err := ing.importFile(ctx, ingestID, parentID, openPath, sourcePath)
+	progress *progressTracker,
+) error {
+	added, err := ing.importFile(ctx, ingestID, parentID, openPath, sourcePath, progress)
 	switch {
 	case err != nil:
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		rep.Failed = append(rep.Failed, FileError{Path: sourcePath, Err: err})
 	case added:
 		rep.Added++
 	default:
 		rep.Skipped++
 	}
+	progress.report(*rep, false)
+	return nil
 }
 
 func (ing *Ingester) importFile(
 	ctx context.Context,
 	ingestID, parentID int64,
 	openPath, sourcePath string,
+	progress *progressTracker,
 ) (bool, error) {
 	// No-follow plus fstat, not the earlier Lstat/WalkDir classification:
 	// the file could have been swapped since, and "symlinks are skipped"
@@ -346,7 +479,11 @@ func (ing *Ingester) importFile(
 	// durable. A skip, metadata failure, or crash after this point can
 	// orphan the blob file — harmless, reclaimed by gc's untracked-file
 	// scan.
-	hash, size, err := ing.Blobs.WriteContext(ctx, f)
+	var content io.Reader = f
+	if progress != nil {
+		content = progressReader{Reader: f, ctx: ctx, tracker: progress}
+	}
+	hash, size, err := ing.Blobs.WriteContext(ctx, content)
 	if err != nil {
 		return false, fmt.Errorf("storing content of %s: %w", sourcePath, err)
 	}

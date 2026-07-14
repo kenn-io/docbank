@@ -115,7 +115,7 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 			hctx.SetHeader("Cache-Control", "no-store")
 			runCtx, cancel := context.WithCancel(hctx.Context())
 			defer cancel()
-			stream := newBackupEventWriter[BackupCreateEvent](hctx.BodyWriter(), cancel)
+			stream := newEventStreamWriter[BackupCreateEvent](hctx.BodyWriter(), cancel)
 			snapshot, createErr := createBackupSnapshot(
 				runCtx, repo, d, g, in.Body,
 				func(event backup.ProgressEvent) {
@@ -210,7 +210,7 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 			hctx.SetHeader("Cache-Control", "no-store")
 			runCtx, cancel := context.WithCancel(hctx.Context())
 			defer cancel()
-			stream := newBackupEventWriter[BackupVerifyEvent](hctx.BodyWriter(), cancel)
+			stream := newEventStreamWriter[BackupVerifyEvent](hctx.BodyWriter(), cancel)
 			report, verifyErr := verifyBackupRepository(runCtx, repo, in.Body,
 				func(event backup.ProgressEvent) {
 					stream.send(BackupVerifyEvent{
@@ -279,7 +279,7 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 			hctx.SetHeader("Cache-Control", "no-store")
 			runCtx, cancel := context.WithCancel(hctx.Context())
 			defer cancel()
-			stream := newBackupEventWriter[BackupRestoreEvent](hctx.BodyWriter(), cancel)
+			stream := newEventStreamWriter[BackupRestoreEvent](hctx.BodyWriter(), cancel)
 			report, restoreErr := restoreBackupSnapshot(
 				runCtx, repo, target, in.Body, coordinator,
 				func(event backup.ProgressEvent) {
@@ -602,7 +602,7 @@ func backupProgress(event backup.ProgressEvent) *BackupProgress {
 	}
 }
 
-type backupEventWriter[T any] struct {
+type eventStreamWriter[T any] struct {
 	mu       sync.Mutex
 	encoder  *json.Encoder
 	flusher  http.Flusher
@@ -610,13 +610,13 @@ type backupEventWriter[T any] struct {
 	writeErr error
 }
 
-func newBackupEventWriter[T any](w io.Writer, cancel context.CancelFunc) *backupEventWriter[T] {
-	return &backupEventWriter[T]{
+func newEventStreamWriter[T any](w io.Writer, cancel context.CancelFunc) *eventStreamWriter[T] {
+	return &eventStreamWriter[T]{
 		encoder: json.NewEncoder(w), flusher: responseFlusher(w), cancel: cancel,
 	}
 }
 
-func (w *backupEventWriter[T]) send(event T) {
+func (w *eventStreamWriter[T]) send(event T) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.writeErr != nil {
@@ -632,7 +632,7 @@ func (w *backupEventWriter[T]) send(event T) {
 	}
 }
 
-func (w *backupEventWriter[T]) err() error {
+func (w *eventStreamWriter[T]) err() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.writeErr

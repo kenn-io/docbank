@@ -79,6 +79,31 @@ type IngestReport struct {
 	Failed   []IngestFailure `json:"failed,omitempty"`
 }
 
+// IngestProgress is one structured update from a server-side import. Scan
+// establishes totals without opening content; ingest counts bytes actually
+// read and files whose individual import attempt has completed.
+type IngestProgress struct {
+	Stage      string `json:"stage" enum:"scan,ingest"`
+	Done       int64  `json:"done"`
+	Total      int64  `json:"total"`
+	BytesDone  int64  `json:"bytes_done"`
+	BytesTotal int64  `json:"bytes_total"`
+	Added      int    `json:"added"`
+	Skipped    int    `json:"skipped"`
+	Excluded   int    `json:"excluded"`
+	Failed     int    `json:"failed"`
+	Final      bool   `json:"final"`
+}
+
+// IngestEvent is one line of the ingest NDJSON stream. A report or error is
+// terminal; progress may appear zero or more times before it.
+type IngestEvent struct {
+	Type     string          `json:"type" enum:"progress,result,error"`
+	Progress *IngestProgress `json:"progress,omitempty"`
+	Report   *IngestReport   `json:"report,omitempty"`
+	Error    *Error          `json:"error,omitempty"`
+}
+
 // IngestSizeClass summarizes files in one storage-policy outcome.
 type IngestSizeClass struct {
 	Files int64 `json:"files"`

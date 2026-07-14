@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"net/http"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -119,45 +120,81 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 		OperationID: "ingest", Method: http.MethodPost, Path: "/api/v1/ingest",
 		Summary: "Import server-side files or directory trees (loopback callers only)",
 	}, func(ctx context.Context, in *struct {
-		Body struct {
-			Paths   []string `json:"paths" minItems:"1"`
-			Dest    string   `json:"dest" default:"/inbox"`
-			Exclude []string `json:"exclude,omitempty"`
-		}
+		Body ingestRequest
 	}) (*ingestOutput, error) {
-		if err := validateIngestPaths(in.Body.Paths); err != nil {
+		dest, opts, err := ingestParams(in.Body)
+		if err != nil {
 			return nil, err
 		}
-		opts := ingest.Options{Exclude: in.Body.Exclude}
-		if err := ingest.ValidateOptions(opts); err != nil {
-			return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
+		report, err := runIngest(ctx, d, g, in.Body.Paths, dest, opts)
+		return &ingestOutput{Body: report}, err
+	})
+
+	ingestStreamSchema := api.OpenAPI().Components.Schemas.Schema(
+		reflect.TypeFor[IngestEvent](), true, "IngestEvent")
+	huma.Register(api, huma.Operation{
+		OperationID: "streamIngest", Method: http.MethodPost, Path: "/api/v1/ingest/stream",
+		Summary: "Import server-side paths while streaming structured progress",
+		Description: "Returns newline-delimited JSON. Scan and ingest progress precede exactly one " +
+			"terminal result or error event; an HTTP 200 only means the stream started.",
+		Responses: map[string]*huma.Response{
+			"200": {
+				Description: "Ingest progress followed by one terminal result or error",
+				Content: map[string]*huma.MediaType{
+					"application/x-ndjson": {Schema: ingestStreamSchema},
+				},
+			},
+		},
+	}, func(_ context.Context, in *struct {
+		Body ingestRequest
+	}) (*huma.StreamResponse, error) {
+		dest, opts, err := ingestParams(in.Body)
+		if err != nil {
+			return nil, err
 		}
-		// The schema default covers an absent dest, not an explicit ""
-		// (which MkdirAll would treat as the vault root).
-		dest := in.Body.Dest
-		if dest == "" {
-			dest = "/inbox"
-		}
-		if !strings.HasPrefix(dest, "/") {
-			return nil, NewError(http.StatusUnprocessableEntity, "validation",
-				fmt.Sprintf("dest %q must be an absolute virtual path (start with /)", dest))
-		}
-		out := &ingestOutput{}
-		err := g.mutate(func() error {
-			return d.Blobs.WithMutation(ctx, func() error {
-				ing := &ingest.Ingester{Store: d.Store, Blobs: d.Blobs}
-				rep, err := ing.AddPathsWithOptions(ctx, in.Body.Paths, dest, opts)
-				if err != nil {
-					return FromStoreError(err)
-				}
-				out.Body = IngestReport{Added: rep.Added, Skipped: rep.Skipped, Excluded: rep.Excluded}
-				for _, f := range rep.Failed {
-					out.Body.Failed = append(out.Body.Failed, IngestFailure{Path: f.Path, Error: f.Err.Error()})
-				}
-				return nil
-			})
-		})
-		return out, err
+		return &huma.StreamResponse{Body: func(hctx huma.Context) {
+			hctx.SetHeader("Content-Type", "application/x-ndjson")
+			hctx.SetHeader("Cache-Control", "no-store")
+			runCtx, cancel := context.WithCancel(hctx.Context())
+			defer cancel()
+			stream := newEventStreamWriter[IngestEvent](hctx.BodyWriter(), cancel)
+			stream.send(IngestEvent{Type: "progress", Progress: &IngestProgress{Stage: "scan"}})
+			preflight, scanErr := ingest.Preflight(runCtx, in.Body.Paths, opts)
+			if stream.err() != nil {
+				return
+			}
+			if scanErr != nil {
+				stream.send(IngestEvent{Type: "error", Error: ingestProblem(scanErr)})
+				return
+			}
+			stream.send(IngestEvent{Type: "progress", Progress: &IngestProgress{
+				Stage: "scan", Done: preflight.Files, Total: preflight.Files,
+				BytesDone: preflight.LogicalBytes, BytesTotal: preflight.LogicalBytes, Final: true,
+			}})
+			stream.send(IngestEvent{Type: "progress", Progress: &IngestProgress{
+				Stage: "ingest", Total: preflight.Files, BytesTotal: preflight.LogicalBytes,
+			}})
+			if stream.err() != nil {
+				return
+			}
+			opts.Progress = func(event ingest.ProgressEvent) {
+				stream.send(IngestEvent{Type: "progress", Progress: &IngestProgress{
+					Stage: "ingest", Done: event.FilesDone, Total: preflight.Files,
+					BytesDone: event.BytesRead, BytesTotal: preflight.LogicalBytes,
+					Added: event.Added, Skipped: event.Skipped, Excluded: event.Excluded,
+					Failed: event.Failed, Final: event.Final,
+				}})
+			}
+			report, ingestErr := runIngest(runCtx, d, g, in.Body.Paths, dest, opts)
+			if stream.err() != nil {
+				return
+			}
+			if ingestErr != nil {
+				stream.send(IngestEvent{Type: "error", Error: ingestProblem(ingestErr)})
+				return
+			}
+			stream.send(IngestEvent{Type: "result", Report: &report})
+		}}, nil
 	})
 
 	type trashListOutput struct {
@@ -260,6 +297,73 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 		})
 		return out, err
 	})
+}
+
+type ingestRequest struct {
+	Paths   []string `json:"paths" minItems:"1"`
+	Dest    string   `json:"dest" default:"/inbox"`
+	Exclude []string `json:"exclude,omitempty"`
+}
+
+func ingestParams(body ingestRequest) (string, ingest.Options, error) {
+	if err := validateIngestPaths(body.Paths); err != nil {
+		return "", ingest.Options{}, err
+	}
+	opts := ingest.Options{Exclude: body.Exclude}
+	if err := ingest.ValidateOptions(opts); err != nil {
+		return "", ingest.Options{}, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
+	}
+	// The schema default covers an absent dest, not an explicit ""
+	// (which MkdirAll would treat as the vault root).
+	dest := body.Dest
+	if dest == "" {
+		dest = "/inbox"
+	}
+	if !strings.HasPrefix(dest, "/") {
+		return "", ingest.Options{}, NewError(http.StatusUnprocessableEntity, "validation",
+			fmt.Sprintf("dest %q must be an absolute virtual path (start with /)", dest))
+	}
+	return dest, opts, nil
+}
+
+func runIngest(
+	ctx context.Context,
+	d Deps,
+	g *gate,
+	paths []string,
+	dest string,
+	opts ingest.Options,
+) (IngestReport, error) {
+	var out IngestReport
+	err := g.mutate(func() error {
+		return d.Blobs.WithMutation(ctx, func() error {
+			ing := &ingest.Ingester{Store: d.Store, Blobs: d.Blobs}
+			rep, err := ing.AddPathsWithOptions(ctx, paths, dest, opts)
+			if err != nil {
+				return FromStoreError(err)
+			}
+			out = IngestReport{Added: rep.Added, Skipped: rep.Skipped, Excluded: rep.Excluded}
+			for _, failure := range rep.Failed {
+				out.Failed = append(out.Failed, IngestFailure{
+					Path: failure.Path, Error: failure.Err.Error(),
+				})
+			}
+			return nil
+		})
+	})
+	return out, err
+}
+
+func ingestProblem(err error) *Error {
+	var problem *Error
+	if errors.As(err, &problem) {
+		return problem
+	}
+	mapped := FromStoreError(err)
+	if errors.As(mapped, &problem) {
+		return problem
+	}
+	return NewError(http.StatusInternalServerError, "internal", err.Error())
 }
 
 func validateIngestPaths(paths []string) error {

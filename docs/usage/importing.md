@@ -73,6 +73,28 @@ single-component rule path-shaped: `cache` matches that name anywhere, whereas
 literal filename characters, not rule separators; pass `--exclude` repeatedly
 for multiple rules.
 
+## Follow a long import
+
+Human-mode `docbank add` performs a metadata-only scan to establish file and
+byte totals, then reports content-read progress while it imports:
+
+```bash
+docbank add ~/Dropbox --dest /archive --progress plain
+```
+
+`auto` (the default) draws a progress bar on a terminal and emits durable
+periodic lines when stderr is redirected. `plain` always emits durable lines;
+`bar` forces the redrawable form. Progress belongs on stderr and the terminal
+summary belongs on stdout. Use `--json` to suppress progress and emit only the
+machine-readable terminal report.
+
+The scan totals are an estimate rather than a filesystem lock: a source may
+change before Docbank opens it. Byte progress counts content actually read,
+while a file counts as done only after its individual blob and metadata
+operation returns. Interrupting the command cancels the daemon request. Files
+that already completed remain authoritative and make a rerun converge; an
+incomplete file never receives node authority.
+
 ## Idempotency: safe to re-run
 
 Interrupted a 200,000-file import? Run the same command again. For each

@@ -21,7 +21,7 @@ daemon status` and `docbank daemon stop` never auto-start. See
 ## docbank add
 
 ```
-docbank add <path>... [--dest <virtual-dir>] [--exclude <rule>]...
+docbank add <path>... [--dest <virtual-dir>] [--exclude <rule>]... [--progress auto|bar|plain] [--json]
 docbank add <path>... --preflight [--exclude <rule>]... [--json]
 ```
 
@@ -33,7 +33,8 @@ never modified or deleted.
 | `--dest` | `/inbox` | Virtual destination directory; created (with parents) if missing |
 | `--exclude` | none | Prune a matching entry name anywhere, or a relative path within each source; repeatable |
 | `--preflight` | false | Inventory source metadata without opening file content or changing the vault |
-| `--json` | false | Emit the preflight report as JSON; requires `--preflight` |
+| `--json` | false | Emit only the terminal preflight or ingest report as JSON; suppress progress |
+| `--progress` | `auto` | Human ingest progress: `auto`, `bar`, or durable `plain` lines |
 
 - A directory argument imports recursively: its basename becomes a
   directory under `--dest` and relative structure is preserved.
@@ -65,7 +66,12 @@ relative; absolute paths and `..` escapes are rejected. Rule form is preserved:
 root-relative `cache` entry. Each `--exclude` value is literal and commas are
 ordinary filename characters; repeat the flag to supply multiple rules.
 
-Output is a one-line summary plus one stderr line per failed file:
+An ordinary import first scans source metadata for file and byte totals, then
+shows ingest progress on stderr. `auto` uses a redrawable bar on a terminal and
+durable periodic lines when redirected; `--progress plain` forces durable
+lines. The scan is advisory because sources may change before they are opened.
+The command ends with a one-line stdout summary plus one stderr line per failed
+file:
 
 ```
 added: 12  skipped: 3  excluded: 2  failed: 1
@@ -75,6 +81,8 @@ failed: /src/broken.pdf: opening /src/broken.pdf: permission denied
 Exit is non-zero if any file failed. A missing or unreadable top-level
 source is reported as a failure and the command continues with remaining
 source arguments, just as it does for failures inside a directory tree.
+`--json` suppresses progress and returns the same terminal report shape as the
+HTTP JSON endpoint, so stdout remains safe for automation.
 
 ## docbank ls
 

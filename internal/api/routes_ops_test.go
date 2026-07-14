@@ -64,6 +64,50 @@ func TestIngestEndpoint(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode, body)
 }
 
+func TestIngestProgressStreamEndsWithResult(t *testing.T) {
+	ts, _ := newTestServer(t, nil)
+	src := filepath.Join(t.TempDir(), "progress.txt")
+	content := []byte("stream this import")
+	require.NoError(t, os.WriteFile(src, content, 0o600))
+
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/ingest/stream", nil,
+		map[string]any{"paths": []string{src}, "dest": "/inbox"})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	assert.Contains(t, resp.Header.Get("Content-Type"), "application/x-ndjson")
+
+	lines := strings.Split(strings.TrimSpace(body), "\n")
+	require.GreaterOrEqual(t, len(lines), 5)
+	var events []api.IngestEvent
+	for _, line := range lines {
+		var event api.IngestEvent
+		require.NoError(t, json.Unmarshal([]byte(line), &event), line)
+		events = append(events, event)
+	}
+	for i, event := range events[:len(events)-1] {
+		assert.Equal(t, "progress", event.Type, "event %d", i)
+		require.NotNil(t, event.Progress)
+	}
+	terminal := events[len(events)-1]
+	assert.Equal(t, "result", terminal.Type)
+	require.NotNil(t, terminal.Report)
+	assert.Equal(t, 1, terminal.Report.Added)
+	assert.Nil(t, terminal.Progress)
+	assert.Nil(t, terminal.Error)
+
+	finalStages := map[string]api.IngestProgress{}
+	for _, event := range events {
+		if event.Progress != nil && event.Progress.Final {
+			finalStages[event.Progress.Stage] = *event.Progress
+		}
+	}
+	require.Contains(t, finalStages, "scan")
+	require.Contains(t, finalStages, "ingest")
+	assert.Equal(t, int64(1), finalStages["scan"].Total)
+	assert.Equal(t, int64(len(content)), finalStages["scan"].BytesTotal)
+	assert.Equal(t, int64(1), finalStages["ingest"].Done)
+	assert.Equal(t, int64(len(content)), finalStages["ingest"].BytesDone)
+}
+
 func TestIngestPreflightIsReadOnlyAndSharesExclusions(t *testing.T) {
 	ts, _ := newTestServer(t, nil)
 	src := t.TempDir()
@@ -119,7 +163,7 @@ func TestIngestRejectsNonLoopback(t *testing.T) {
 	cfg := config.Default()
 	cfg.Server.APIKey = "test-key"
 	srv := api.NewServer(api.Deps{Store: s, Blobs: blobs, VaultRoot: dir, Cfg: cfg})
-	for _, path := range []string{"/api/v1/ingest", "/api/v1/ingest/preflight"} {
+	for _, path := range []string{"/api/v1/ingest", "/api/v1/ingest/stream", "/api/v1/ingest/preflight"} {
 		t.Run(path, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"paths":["/x"],"dest":"/inbox"}`))
 			req.Header.Set("Content-Type", "application/json")

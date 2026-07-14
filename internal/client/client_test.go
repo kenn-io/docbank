@@ -139,6 +139,32 @@ func TestStoragePackRoundTrip(t *testing.T) {
 	assert.True(t, report.BudgetExhausted)
 }
 
+func TestIngestStreamRoundTrip(t *testing.T) {
+	c, _ := newClient(t, serverKey)
+	src := filepath.Join(t.TempDir(), "stream.txt")
+	content := []byte("stream this ingest")
+	require.NoError(t, os.WriteFile(src, content, 0o600))
+
+	var events []api.IngestProgress
+	report, err := c.IngestStream(t.Context(), []string{src}, "/inbox", nil,
+		func(event api.IngestProgress) { events = append(events, event) })
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.Added)
+	assert.Empty(t, report.Failed)
+	require.NotEmpty(t, events)
+
+	finalStages := map[string]api.IngestProgress{}
+	for _, event := range events {
+		if event.Final {
+			finalStages[event.Stage] = event
+		}
+	}
+	require.Contains(t, finalStages, "scan")
+	require.Contains(t, finalStages, "ingest")
+	assert.Equal(t, int64(1), finalStages["ingest"].Done)
+	assert.Equal(t, int64(len(content)), finalStages["ingest"].BytesDone)
+}
+
 func TestBackupCreateStreamRoundTripAndTypedError(t *testing.T) {
 	c, _ := newClient(t, serverKey)
 	repoPath := filepath.Join(t.TempDir(), "repo")
