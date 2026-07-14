@@ -21,6 +21,7 @@ import (
 	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/docbank/internal/daemonauth"
+	"go.kenn.io/docbank/internal/daemonlife"
 	"go.kenn.io/docbank/internal/version"
 )
 
@@ -202,8 +203,14 @@ func TestShutdownHTTPRejectionUsesProcessStop(t *testing.T) {
 
 	started := time.Now()
 	require.NoError(t, stopRecord(t.Context(), rec))
-	assert.Less(t, time.Since(started), 5*time.Second,
-		"a definitive rejection must not consume the already-stopping grace window")
+	elapsed := time.Since(started)
+	if runtime.GOOS == "windows" {
+		assert.GreaterOrEqual(t, elapsed, daemonlife.GracefulExitTimeout-time.Second,
+			"Windows must preserve graceful draining before native termination")
+	} else {
+		assert.Less(t, elapsed, 5*time.Second,
+			"a definitive rejection must take the graceful process-signal path immediately")
+	}
 	assert.False(t, kitdaemon.ProcessAlive(rec.PID))
 }
 
