@@ -54,6 +54,12 @@ renames, and reorganization are metadata transactions that never touch bytes.
     mutable bytes. See [Editing & Versions](architecture/editing-and-versions.md)
     for the planned surface.
 
+!!! info "Planned — full audit"
+    Selected directory scopes will retain every authoritative change and
+    content version with sticky membership, tamper-evident history, and
+    complete backup/restore fidelity. See
+    [Audited History](architecture/audited-history.md).
+
 ```
 docbank add ~/Documents/taxes --dest /taxes   # bulk import, resumable
 docbank tree /taxes                           # browse the virtual tree
@@ -112,8 +118,9 @@ restore are implemented and tested. Representative-corpus hardening and
 distribution work continue before a stable 1.0 release.
 
 !!! info "Planned — later phases"
-    Versioned editing, tags, watched inboxes, content-text extraction and
-    search, and the TUI are designed but not yet built. The
+    Versioned editing, full audited history, tags, watched inboxes,
+    content-text extraction and search, the kit-ui web portal, and the focused
+    TUI are designed but not yet built. The
     [Roadmap](roadmap.md) tracks what exists versus what is planned.
 
 ## Where to go next

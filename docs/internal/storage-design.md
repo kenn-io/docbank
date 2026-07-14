@@ -22,6 +22,12 @@ Stable node IDs are document identity. Paths are derived from parent/name rows
 and can change or be reused. Blob hashes are content identity. Two nodes may
 share a blob without sharing document identity.
 
+Planned full-audit policy adds a fourth logical authority: sticky membership
+and append-only history decide which node/version facts can never be removed by
+ordinary maintenance. That policy remains Docbank metadata rather than a Kit
+storage concern. Its definitive contract is
+[Audited History](../architecture/audited-history.md).
+
 ## Immutable content and mutable organization
 
 Canonical blobs are immutable SHA-256 objects. Rewriting bytes in place would
@@ -104,6 +110,12 @@ Trashed nodes remain reachable. Permanent node deletion may make a blob row a
 GC candidate, but it does not itself claim disk space. GC must consider live
 nodes, trashed nodes, and `node_versions`; new logical reference types must be
 added to reachability before their schema is usable.
+
+For planned full audit, membership is sticky and protected historical versions
+remain reachability roots. Trash empty must refuse any selection containing an
+audited member as one transaction. GC cannot revoke protected blob authority.
+Repack may replace physical mappings only through Kit's verified publication
+ordering; audit does not pin a particular loose file or pack container.
 
 GC and ingest cross SQLite/filesystem boundaries. The daemon maintenance gate
 prevents a mutation from deduplicating against bytes between GC's reachability

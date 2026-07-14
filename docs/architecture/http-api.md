@@ -339,9 +339,19 @@ machine-readable string clients branch on instead of parsing `detail`:
 | `unauthorized` | 401 | missing or invalid API key; bad shutdown token |
 | `internal` | 500 | unmapped error (still surfaced with a message — this is a single-user local daemon, not a hardened multi-tenant service) |
 
+!!! info "Planned — audited-history API"
+    One bounded, cursor-paginated model will expose audit scope status, sticky
+    membership, canonical mutation events, content versions, comparison
+    metadata, and chain verification to CLI, agent, TUI, and web clients.
+    Protected deletion will return a structured error naming the blocking
+    scope. Credentialed clients will not receive an ordinary audit-destruction
+    operation. See [Audited History](audited-history.md).
+
 ## Non-goals
 
-- No server-side rendering or web UI beyond the static placeholder.
+- No server-side rendering. The current root is a static placeholder; the
+  planned kit-ui portal remains an ordinary authenticated API client and gains
+  no privileged data path.
 - No multi-user model: one vault, one key. Sharing is out of scope for
   v1.
 - No MCP server.

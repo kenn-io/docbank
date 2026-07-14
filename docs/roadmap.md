@@ -15,8 +15,8 @@ marked planned appears elsewhere in these docs only under an explicit
 | 0 | Extract msgvault's pack/backup and packed-CAS engines into `go.kenn.io/kit` | **Implemented** (Docbank uses `kit` v0.9.2) |
 | 1 | Core: store, blob store, ingest pipeline, full CLI | **Implemented** |
 | 2a | Infrastructure: daemon, HTTP API, daemon-first CLI, self-update, release pipeline | **Implemented** |
-| 2b | Features: versioned editing, tags, watched inboxes, text extraction, ingest provenance | Designed |
-| 3 | TUI file browser | Designed |
+| 2b | Features: versioned editing, full audit, tags, watched inboxes, text extraction, ingest provenance | Designed |
+| 3 | Primary kit-ui web portal and focused operator TUI | Designed |
 | 4 | Backup commands over the kit engine | **Implemented**; representative-corpus hardening continues |
 
 ## Implemented (Phase 1)
@@ -88,6 +88,10 @@ identity only after both match.
 
 - Editing surfaces: `PUT` content, `docbank edit`/`put`/`revert`, and
   `versions` listing ([design](architecture/editing-and-versions.md))
+- Full-audit directory scopes with sticky membership, complete authoritative
+  change and content-version retention, tamper-evident history, maintenance
+  refusal, and portable JSONL fidelity
+  ([design](architecture/audited-history.md))
 - Tags surfaced in CLI, search filters, and the API; `POST /batch/move`
   bulk reorganization
 - Watched inbox directories with a stability window, landing imports
@@ -106,11 +110,19 @@ identity only after both match.
   detection stays the referrer's job (docbank guarantees only that node
   ids are never reused)
 
-## Phase 3 — TUI
+## Phase 3 — Human applications
 
-Bubble Tea file manager over the same store: navigate, search, rename,
-move, trash/restore, version list, open-in-default-app. No privileged
-operations — anything the TUI does, the API can do.
+The kit-ui web portal is the primary human interface over the authenticated
+daemon API: virtual-tree browsing, search, import, metadata/provenance, audited
+history timelines and comparisons, trash, storage, backup, and observable jobs.
+Application-neutral tree, timeline, diff, evidence, and job components should
+be reusable by Msgvault and later tools.
+
+The focused TUI is the terminal companion: tree navigation, search, ingest and
+job progress, metadata/evidence, move/trash/restore, storage and backup state,
+plus a compact tree/history/detail audit browser. Rich document comparison
+belongs in external tools or the web portal. Neither client has privileged
+operations — anything either does, the API can do.
 
 ## Phase 4 — Backup (implemented)
 
@@ -130,6 +142,6 @@ not a missing recovery command.
 
 ## Deferred beyond v1
 
-OCR of scans, embeddings/AI tagging, a web UI, at-rest encryption of the
-live store, encryption for backup repositories, importing attachments out of
-msgvault, multi-user/sharing, and an MCP server wrapping the API.
+OCR of scans, embeddings/AI tagging, at-rest encryption of the live store,
+encryption for backup repositories, importing attachments out of msgvault,
+multi-user/sharing, and an MCP server wrapping the API.

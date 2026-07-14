@@ -130,6 +130,14 @@ disks and latency-sensitive network storage. The progress and JSON contracts
 match `backup create`: progress is written to stderr, and `--json` suppresses
 progress so stdout contains one typed report.
 
+!!! info "Planned — audited-history fidelity"
+    The portable JSONL format will carry audit scopes, sticky memberships,
+    canonical mutation records, per-scope chain heads, and stable content
+    versions. Capture will include every protected historical blob. Verify and
+    restore will reject missing, reordered, truncated, downgraded, or
+    hash-invalid audit history rather than restoring only the current tree.
+    See [Audited History](../architecture/audited-history.md).
+
 ## Restore and prove a snapshot
 
 ```bash

@@ -41,6 +41,7 @@ nav = [
     {"Packed Storage Foundation" = "architecture/packed-storage.md"},
     {"Integrity & Threat Model" = "architecture/integrity.md"},
     {"Editing & Versions" = "architecture/editing-and-versions.md"},
+    {"Audited History" = "architecture/audited-history.md"},
     {"Concurrency & Locking" = "architecture/locking.md"},
     {"Daemon" = "architecture/daemon.md"},
     {"Backup" = "architecture/backup.md"},

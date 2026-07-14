@@ -48,9 +48,9 @@ maintenance.
   SHA-256 checksums and checksum-enforcing installers
 - Native vault, daemon, and recovery support on Linux, macOS, and Windows
 
-Versioned content editing, tags, watched inboxes, text extraction, and the TUI
-are planned rather than implemented. See the [roadmap](docs/roadmap.md) for the
-current boundary.
+Versioned content editing, indelible audited history, tags, watched inboxes,
+text extraction, the kit-ui web portal, and the focused TUI are planned rather
+than implemented. See the [roadmap](docs/roadmap.md) for the current boundary.
 
 ## Installation
 

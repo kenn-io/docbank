@@ -14,7 +14,9 @@ rename, move, trash, and restore that node without changing its bytes.
 The schema includes `node_versions(node_id, blob_hash, size, replaced_at)`, and
 GC treats rows in that table as reachability roots. This reserves a safe place
 for prior immutable contents, but no current command or API route writes or
-reads version rows.
+reads version rows. The reserved shape is not yet a public contract and will be
+evolved before the first writer so versions have stable identity and can
+participate in [audited history](audited-history.md).
 
 The storage invariant already applies: a canonical blob is immutable. Any
 content-replacement feature must publish a new durable blob and change metadata
@@ -27,7 +29,8 @@ transactionally; it cannot edit bytes in place without invalidating their hash.
     changes. Replacing content will:
 
     1. hash and durably publish the new bytes;
-    2. record the current blob hash and size in `node_versions`;
+    2. record the current blob hash, size, media type, node revision, and stable
+       content-version identity;
     3. point the node at the new blob, update metadata, and bump its revision in
        the same SQLite transaction.
 
@@ -44,7 +47,9 @@ transactionally; it cannot edit bytes in place without invalidating their hash.
     Reverting will create a new head from old content rather than erase later
     history. Version pruning will be explicit and will release blob
     reachability only when its metadata row is removed. No automatic retention
-    policy is planned as a default.
+    policy is planned as a default. A version protected by a
+    [full-audit scope](audited-history.md) is never eligible for ordinary
+    pruning, regardless of any bounded retention policy on other documents.
 
 ```mermaid
 flowchart LR

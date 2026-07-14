@@ -87,6 +87,13 @@ metadata, durability rules, and physical storage primitives from
     hash in `node_versions`; no editing command or writer exists today. See
     [Editing & Versions](editing-and-versions.md).
 
+!!! info "Planned — full audit"
+    Selected directory scopes will be able to retain every authoritative
+    mutation and content version with sticky membership, tamper-evident event
+    chains, and complete JSONL backup/restore fidelity. Ordinary deletion and
+    GC will be unable to erase protected history. See
+    [Audited History](audited-history.md).
+
 ## Component responsibilities
 
 - **`internal/store`** — SQLite schema and every tree operation. Typed
@@ -129,9 +136,9 @@ metadata, durability rules, and physical storage primitives from
   separate decisions.
 
 !!! info "Planned — later clients and features"
-    Versioned editing, tags, watched inboxes, text extraction, and the TUI
-    remain planned. Later clients must not bypass the implemented backup and
-    restore API.
+    Versioned editing, full audit, tags, watched inboxes, text extraction, the
+    kit-ui web portal, and the focused TUI remain planned. Later clients must
+    not bypass the implemented backup and restore API.
     Backup initialization, creation, listing, verification, and restore use the
     daemon boundary above. Later features must not introduce a privileged path
     around the daemon or mutable blob bytes. See the [Roadmap](../roadmap.md).

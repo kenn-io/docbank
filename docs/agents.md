@@ -66,6 +66,14 @@ non-goals.
 6. **Dry run before policy-changing maintenance.** Preview destructive work,
    evaluate the result, then make the separate explicit run request.
 
+!!! info "Planned — audited scopes"
+    A full-audit scope will make membership sticky and retain every successful
+    authoritative mutation and content version. Ordinary trash remains
+    reversible, but trash empty, version pruning, and GC will refuse protected
+    history with a structured error naming the blocking scope. Agents will be
+    able to inspect and verify that history, but no normal agent surface will
+    destroy it. See [Audited History](architecture/audited-history.md).
+
 ## Common agent workflows
 
 - **File local material:** preflight large server-side trees with the intended

@@ -114,6 +114,15 @@ Backup reachability is intentionally broader than GC reachability: every
 not yet been reclaimed. This preserves the deletion pipeline's regret window
 inside the snapshot.
 
+!!! info "Planned — audited-history authority"
+    Full audit will extend the deterministic JSONL with scopes, sticky
+    memberships, canonical mutation records, per-scope chain entries/heads,
+    and stable content versions. Every protected historical blob becomes
+    snapshot content. Import, verification, and restore must reject a missing,
+    malformed, reordered, truncated, or downgraded audit stream before
+    publishing the database. The complete contract is in
+    [Audited History](audited-history.md).
+
 ## Boundary with packed storage
 
 Backup and live packed storage share Kit's physical formats and verification
