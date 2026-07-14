@@ -44,7 +44,10 @@ Shutdown is graceful: background tasks receive cancellation, in-flight
 requests drain, tasks receive a bounded window to return, the store closes,
 the vault lock releases, and the runtime record is removed — in that order,
 so a stopped daemon leaves no trace for the next `daemon start` or
-auto-start to trip over.
+auto-start to trip over. HTTP draining and background-task draining each have
+a ten-second ceiling. Clients preserve a 25-second graceful-exit window before
+forced termination, so scheduling and cleanup do not consume either drain
+budget.
 
 ```bash
 docbank daemon run          # foreground; logs to stderr
@@ -102,6 +105,15 @@ daemon acquires the vault-tree lock. `daemon restart` reuses the same lock for
 the start half of the restart. Bootstrap stderr is captured in a private
 transient file beside that external lock, included in a startup failure, and
 removed when the start attempt finishes.
+
+The listener closes before background tasks finish draining. During that
+interval ping-based discovery cannot identify the daemon, but its runtime
+record and process remain live while it still owns the vault lock. A starter
+therefore treats a create-time-verified live runtime PID as a stopping daemon,
+waits through the complete graceful-exit budget, and only then considers
+forced termination and replacement. Runtime records without create-time proof
+are never trusted for this ping-less path. This prevents a concurrent command
+from spawning into a vault whose previous owner is still cleaning up.
 
 ## Auto-start and idle shutdown
 

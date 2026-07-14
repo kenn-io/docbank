@@ -24,6 +24,7 @@ import (
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/daemonlife"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
@@ -125,7 +126,8 @@ func runServe(ctx context.Context) (retErr error) {
 	// runtime cleanup so the daemon stays discoverable while jobs drain, and
 	// after store/blob cleanup so their resources remain open until then.
 	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(
+			context.Background(), daemonlife.JobDrainTimeout)
 		defer cancel()
 		if err := jobSupervisor.Shutdown(shutdownCtx); err != nil {
 			retErr = errors.Join(retErr, err)
@@ -169,7 +171,8 @@ func runServe(ctx context.Context) (retErr error) {
 	}
 	logger.Info("docbank daemon shutting down")
 	jobSupervisor.Stop()
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(
+		context.Background(), daemonlife.HTTPDrainTimeout)
 	defer cancel()
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
 		// A timed-out drain means handlers may still be running. Force-close

@@ -12,6 +12,7 @@ import (
 
 	kitdaemon "go.kenn.io/kit/daemon"
 
+	"go.kenn.io/docbank/internal/daemonlife"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/version"
 )
@@ -143,6 +144,21 @@ func EnsureDaemon(ctx context.Context, root string) (EnsureResult, error) {
 					old.PID, old.Version, err)
 			}
 			res.Replaced = &old
+		} else {
+			// Shutdown closes the listener before background jobs finish. During
+			// that window ping-based discovery returns no daemon even though the
+			// verified runtime PID still owns the vault. Wait for that owner (and
+			// only force it after the complete graceful budget) before spawning.
+			stopping, live, liveErr := liveRuntimeRecord(root)
+			if liveErr != nil {
+				return liveErr
+			}
+			if live {
+				if err := waitForStoppingRecord(ctx, stopping); err != nil {
+					return fmt.Errorf("waiting for stopping daemon (pid %d): %w",
+						stopping.PID, err)
+				}
+			}
 		}
 
 		res.Record, err = Start(ctx, root)
@@ -267,22 +283,56 @@ func discoverWithOptions(
 // SIGTERM only when create_time still matches the recorded PID. Returns
 // false when no daemon was running.
 func Stop(ctx context.Context, root string) (bool, error) {
+	root, err := home.CanonicalRoot(root)
+	if err != nil {
+		return false, err
+	}
 	rec, _, ok, err := Find(ctx, root)
+	if err != nil {
+		return false, err
+	}
+	if ok {
+		return true, stopRecord(ctx, rec)
+	}
+	// A daemon that already closed its listener can still be draining jobs.
+	// Recognize only a create-time-verified runtime PID without ping evidence.
+	rec, ok, err = liveRuntimeRecord(root)
 	if err != nil || !ok {
 		return false, err
 	}
-	return true, stopRecord(ctx, rec)
+	return true, waitForStoppingRecord(ctx, rec)
 }
 
 func stopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
 	c := newClientFor(rec)
 	if token := rec.Metadata[metaShutdownToken]; token != "" {
-		if err := c.Shutdown(ctx, token); err == nil {
-			if waitDead(ctx, rec, 10*time.Second) {
-				return nil
-			}
+		// Even a failed request can mean the listener closed because another
+		// caller already initiated shutdown. In either case, preserve the full
+		// daemon drain budget before considering forced termination.
+		_ = c.Shutdown(ctx, token)
+		dead, err := waitDead(ctx, rec, daemonlife.GracefulExitTimeout)
+		if err != nil {
+			return fmt.Errorf("waiting for graceful daemon shutdown: %w", err)
+		}
+		if dead {
+			return nil
 		}
 	}
+	return forceStopRecord(ctx, rec)
+}
+
+func waitForStoppingRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
+	dead, err := waitDead(ctx, rec, daemonlife.GracefulExitTimeout)
+	if err != nil {
+		return fmt.Errorf("waiting for graceful daemon shutdown: %w", err)
+	}
+	if dead {
+		return nil
+	}
+	return forceStopRecord(ctx, rec)
+}
+
+func forceStopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
 	// Signal fallback only when the PID is provably still our daemon.
 	if !createTimeMatches(rec) {
 		return errors.New("daemon PID no longer matches its recorded create time; not signaling")
@@ -290,23 +340,60 @@ func stopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
 	if err := terminateProcess(rec.PID); err != nil {
 		return fmt.Errorf("signaling daemon pid %d: %w", rec.PID, err)
 	}
-	if !waitDead(ctx, rec, 10*time.Second) {
-		return fmt.Errorf("daemon pid %d did not exit after SIGTERM", rec.PID)
+	dead, err := waitDead(ctx, rec, daemonlife.ForcedExitTimeout)
+	if err != nil {
+		return fmt.Errorf("waiting for daemon after forced termination: %w", err)
+	}
+	if !dead {
+		return fmt.Errorf("daemon pid %d did not exit after forced termination", rec.PID)
 	}
 	return nil
 }
 
-func waitDead(ctx context.Context, rec kitdaemon.RuntimeRecord, timeout time.Duration) bool {
+// liveRuntimeRecord finds a non-responsive daemon only when its owner-private
+// record carries a create time that still matches a live process. Ping-less
+// records without that proof are never trusted for waiting or signaling.
+func liveRuntimeRecord(root string) (kitdaemon.RuntimeRecord, bool, error) {
+	info, err := os.Stat(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return kitdaemon.RuntimeRecord{}, false, nil
+	}
+	if err != nil {
+		return kitdaemon.RuntimeRecord{}, false,
+			fmt.Errorf("checking daemon runtime directory: %w", err)
+	}
+	if !info.IsDir() {
+		return kitdaemon.RuntimeRecord{}, false,
+			fmt.Errorf("daemon runtime path %s is not a directory", root)
+	}
+	records, err := RuntimeStore(root).List()
+	if err != nil {
+		return kitdaemon.RuntimeRecord{}, false,
+			fmt.Errorf("listing daemon runtime records: %w", err)
+	}
+	for _, rec := range records {
+		if rec.Service != Service || rec.Metadata[metaCreateTime] == "" ||
+			!kitdaemon.ProcessAlive(rec.PID) || !createTimeMatches(rec) {
+			continue
+		}
+		return rec, true, nil
+	}
+	return kitdaemon.RuntimeRecord{}, false, nil
+}
+
+func waitDead(
+	ctx context.Context, rec kitdaemon.RuntimeRecord, timeout time.Duration,
+) (bool, error) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if !kitdaemon.ProcessAlive(rec.PID) {
-			return true
+			return true, nil
 		}
 		select {
 		case <-ctx.Done():
-			return false
+			return false, ctx.Err()
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
-	return !kitdaemon.ProcessAlive(rec.PID)
+	return !kitdaemon.ProcessAlive(rec.PID), nil
 }
