@@ -52,14 +52,28 @@ transactionally; it cannot edit bytes in place without invalidating their hash.
     editing or audit support. In one daemon-exclusive metadata transaction,
     Docbank creates a stable initial version for every file that still points
     directly at a blob, assigns the node's `current_version_id`, and creates the
-    stable vault ID used by future audit hashes. That version record is
+    stable vault ID used by future audit hashes. It also assigns canonical,
+    non-reusable UUIDv4 identities to every retained legacy tag and ingest
+    record; any existing integer IDs remain internal implementation keys rather
+    than portable identities. That version record is
     explicitly a legacy baseline: it preserves the current hash, size, media
     type, node revision, and observed bootstrap time, but does not invent an
     original content-introduction time that the old schema never recorded. A
     failure rolls the whole bootstrap back, and no editing or audit endpoint is
     available until every file has a current version identity and the vault ID
-    is durable. Deterministic JSONL export/import preserves those assigned IDs
-    after the cutover.
+    plus every portable tag and ingest identity is durable. Deterministic JSONL
+    export/import preserves those assigned IDs after the cutover.
+
+    Bootstrap switches the vault's portable authority to
+    `docbank-metadata-jsonl-v2`, even when it has no audit scope. This
+    **zero-scope v2** form carries the stable vault ID, node-ID allocator
+    high-water mark, content-version records, node `current_version_id`
+    references, and stable tag, ingest, and provenance identities without audit
+    genesis, lineage, scopes, or chains. Format v1 is
+    valid only for a pre-bootstrap vault because it cannot represent those
+    identities. Enabling the first audit scope later creates audit genesis from
+    the existing v2 projection; import and restore never synthesize audit
+    authority for a zero-scope stream.
 
     Versions will be whole-content snapshots, not diffs. Identical bytes will
     still deduplicate, and a crash before the metadata transaction commits will

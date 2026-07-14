@@ -81,8 +81,12 @@ nodes_fts      -- FTS5 external-content index over live node names
     current-schema metadata included in deterministic JSONL rather than
     inferred from paths or pack layout. A daemon-exclusive bootstrap will give
     every existing file a stable initial version and `current_version_id`, and
-    create the stable vault ID, before editing or audit capabilities become
-    available. Audited trash origins will retain immutable parent IDs and names
+    create the stable vault ID plus non-reusable UUIDv4 identities for retained
+    legacy tag and ingest records, before editing or audit capabilities become
+    available. That cutover uses metadata JSONL v2 even with zero audit scopes;
+    the zero-scope form preserves editing identities without an audit genesis or
+    lineage, which begins only when the first scope is enabled. Audited trash
+    origins will retain immutable parent IDs and names
     outside nullable live foreign-key semantics, so deleting an unaudited origin
     cannot rewrite protected history. The existing `trash_parent` becomes a
     non-authoritative locator excluded from audit hashing and reconciliation.

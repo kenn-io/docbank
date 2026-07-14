@@ -45,6 +45,11 @@ share a blob without sharing document identity.
     Content-version IDs use random UUIDv4 values under a unique constraint,
     rather than another sequential allocator, so pruning and JSONL round trips
     cannot reuse or retarget an old agent-visible version reference.
+    The same metadata-v2 bootstrap assigns non-reusable UUIDv4 identities to
+    retained legacy tag and ingest records and creates the stable vault ID.
+    Zero-scope v2 is the portable editing/version form and contains no audit
+    genesis or lineage; enabling the first scope later adds those authorities
+    from the current v2 projection.
     Audit baselines and final-state reconciliation include authoritative tag
     assignments and their definitions plus provenance and its referenced ingest
     records. Import validates and replays that referential closure; derived FTS,
@@ -86,7 +91,9 @@ share a blob without sharing document identity.
     Sorted witness-change counts/digests are committed into both canonical
     mutations and allocation lineage.
     Shared tag or ingest records are copied identically into every baseline batch
-    that references them, with inclusion evaluated against pre-operation state.
+    that references them. Their values and references come from the complete
+    post-operation projection; pre-operation memberships decide only which
+    nodes were already protected and how new baseline batches are partitioned.
     Audited trash-origin coordinates are immutable metadata rather than a
     nullable live foreign-key relationship; an unaudited origin can disappear
     without mutating the audited node's chain state. The nullable `trash_parent`
@@ -332,10 +339,13 @@ The header carries SQLite's node `AUTOINCREMENT` high-water mark separately
 from the live rows; import restores it only after proving it is at least the
 maximum surviving node ID.
 
-!!! info "Planned — audited metadata v2"
-    Full audit will advance this boundary to `docbank-metadata` version 2 and
-    `docbank-metadata-jsonl-v2`; existing version 1 remains the pre-audit format
-    and cannot contain audit records.
+!!! info "Planned — editing and audited metadata v2"
+    The editing/identity bootstrap will advance this boundary to
+    `docbank-metadata` version 2 and `docbank-metadata-jsonl-v2`; existing
+    version 1 remains the pre-bootstrap format and cannot contain stable content
+    versions or audit records. Zero-scope v2 preserves editing and portable
+    identities without audit genesis or lineage. Enabling the first scope adds
+    the complete audit authority to that same format.
 
 The stream excludes `nodes_fts`, `blob_packs`, and `blob_pack_index`. FTS is a
 derived index rebuilt by the node insert triggers. Pack tables describe one

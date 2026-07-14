@@ -114,16 +114,21 @@ Backup reachability is intentionally broader than GC reachability: every
 not yet been reclaimed. This preserves the deletion pipeline's regret window
 inside the snapshot.
 
-!!! info "Planned — audited-history authority"
-    Full audit will introduce `docbank-metadata-jsonl-v2`; today's v1 remains
-    the pre-audit format. V2 will add scopes, sticky memberships, shared
-    enrollment-baseline batches and digests, mutation records, a complete
+!!! info "Planned — editing and audited-history authority"
+    The editing/identity bootstrap will introduce
+    `docbank-metadata-jsonl-v2`; today's v1 remains the pre-bootstrap format.
+    Zero-scope v2 will preserve the stable vault ID, node-ID allocator
+    high-water mark, content versions and current references, and non-reusable
+    tag and ingest identities without audit genesis or lineage. Enabling the
+    first audit scope will extend that same v2 authority
+    with scopes, sticky memberships, shared enrollment-baseline batches and
+    digests, mutation records, a complete
     vault-topology genesis snapshot, canonical unknown-origin records, baseline
     ancestor-spine witness generations, witness-change lists, atomic topology
     deltas, independently replayable net path-effect commitments, per-scope
     chain entries/heads, a stable vault ID, both allocator high-water marks, a
-    vault-wide allocation lineage, stable content versions, and authoritative
-    tag/provenance attachments with their referenced records.
+    vault-wide allocation lineage, and authoritative tag/provenance attachments
+    with their referenced records.
     Every protected historical blob becomes snapshot content. Import,
     verification, and restore must recompute baseline digests from immutable
     enrollment snapshots, replay the complete vault topology from its genesis,

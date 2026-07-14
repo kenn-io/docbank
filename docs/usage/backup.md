@@ -130,15 +130,20 @@ disks and latency-sensitive network storage. The progress and JSON contracts
 match `backup create`: progress is written to stderr, and `--json` suppresses
 progress so stdout contains one typed report.
 
-!!! info "Planned — audited-history fidelity"
-    Full audit will use `docbank-metadata-jsonl-v2`; today's v1 remains the
-    pre-audit format. V2 will carry audit scopes, sticky memberships,
-    shared enrollment-baseline batches and digests, mutation records, per-scope
+!!! info "Planned — editing and audited-history fidelity"
+    The editing/identity bootstrap will use `docbank-metadata-jsonl-v2`;
+    today's v1 remains the pre-bootstrap format. Zero-scope v2 will preserve the
+    stable vault ID, node-ID allocator high-water mark, content versions and
+    current references, and non-reusable tag and ingest identities without audit
+    genesis or lineage. Enabling the first audit scope will extend that same v2
+    authority with audit scopes,
+    sticky memberships, shared enrollment-baseline batches and digests,
+    mutation records, per-scope
     chain heads, a complete vault-topology genesis snapshot, canonical
     unknown-origin records, baseline ancestor-spine witness generations,
     witness-change lists, atomic topology deltas, net path-effect commitments, a
     stable vault ID, both allocator high-water marks, a vault-wide allocation
-    lineage, stable content versions, and authoritative
+    lineage, and authoritative
     tag/provenance attachments with the tag and ingest records they reference.
     Capture will include every protected historical blob. Verify and restore
     will recompute baseline digests from frozen enrollment records, replay and
