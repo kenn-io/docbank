@@ -40,10 +40,10 @@ share a blob without sharing document identity.
     scope also activates a non-ignorable live-store compatibility fence and
     database write guards; pre-audit binaries must fail store open rather than
     bypass history through legacy mutation, GC, or backup paths. The audited
-    layout also stays outside legacy restore publication paths. Current restore
-    inspects an existing target under its hierarchy lock and accepts overwrite
-    only when the snapshot's stable vault ID and scope-chain prefixes preserve
-    every promise.
+    layout also stays outside legacy restore publication paths. The planned
+    audited restore workflow inspects an existing target under its hierarchy
+    lock and accepts overwrite only when the snapshot's stable vault ID and
+    scope-chain prefixes preserve every promise.
 
 ## Immutable content and mutable organization
 

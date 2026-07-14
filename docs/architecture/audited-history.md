@@ -103,17 +103,17 @@ the client must preview again after `audit_preview_stale`.
 
 Membership is **sticky**. A member moved outside the directory remains audited;
 otherwise moving a file out, deleting it, and moving it back would be a purge
-escape. A file or subtree moved into an audited directory is enrolled with a
-baseline in the same transaction as the move. That baseline applies the same
-origin-ancestry closure as initial enrollment: it adopts the live subtree, all
-still-retained versions, and every detached trash root whose recorded origin
-ancestry reaches the moved subtree, including those roots' descendants and
-versions. Its enrollment event commits the canonical baseline digest. New
-children inherit every audit scope that protects their parent. That includes
-children created beneath a sticky member directory after it has moved outside
-the scope's current path: the protected directory continues carrying the
-promise. Nested and overlapping scopes are allowed, and membership is additive
-rather than replacing an earlier promise.
+escape. A file or subtree moved or restored into an audited directory is
+enrolled with a baseline in the same transaction as that move or restore. The
+baseline applies the same origin-ancestry closure as initial enrollment: it
+adopts the live subtree, all still-retained versions, and every detached trash
+root whose recorded origin ancestry reaches the newly enrolled subtree,
+including those roots' descendants and versions. Its enrollment event commits
+the canonical baseline digest. New children inherit every audit scope that
+protects their parent. That includes children created beneath a sticky member
+directory after it has moved outside the scope's current path: the protected
+directory continues carrying the promise. Nested and overlapping scopes are
+allowed, and membership is additive rather than replacing an earlier promise.
 
 Path history follows a **path-affecting closure**, not only directly mutated
 members. Renaming, moving, trashing, or restoring any directory finds every
