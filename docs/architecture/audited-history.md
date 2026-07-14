@@ -122,9 +122,9 @@ enrollment therefore has no unresolved trash that remains eligible for later
 emptying.
 
 An adopted legacy trash root with lost ancestry receives one canonical
-**unknown-origin** record. Its hash encoding is a fixed domain tag, the trash
-root's stable node ID, an absent-parent sentinel, and an explicit
-present/absent bit plus the retained origin-name bytes. It is never silently
+**unknown-origin** record. Its CAE2 nested record has kind `unknown_origin`, the
+trash root's stable node ID, an absent parent, and an optional retained
+origin-name byte string. It is never silently
 replaced with a guessed parent. Replay gives it the non-resolving canonical
 history path `@trash/unknown/<node-id>` and appends descendant names beneath
 that path; user interfaces may show the retained origin name as a label but
@@ -205,9 +205,12 @@ members. Renaming, moving, trashing, or restoring any directory finds every
 audited descendant whose derived path changes, even when the directory itself
 is unaudited. The same metadata transaction emits one scoped **net path event**
 for each affected `(scope_id, member_node_id)`, containing the old path, new
-path, and the operation-level topology-delta digest. A member affected by
-several nested moves therefore receives one net event, not colliding per-cause
-events.
+path, old/new live-or-trash state, and the operation-level topology-delta
+digest. Its event kind is always `node_path`, regardless of whether the atomic
+delta combined rename, move, trash, restore, or several nested causes. Clients
+derive human labels such as “restored” from the committed pre/post state; no
+action-kind precedence affects hashing. A member affected by several causes
+therefore receives one net event, not colliding per-cause events.
 
 Every transaction represents all of its topology changes as one canonical
 operation-level delta. The delta contains the complete pre/post record for each
@@ -576,11 +579,65 @@ canonical immutable fields; tag attachments use their stable tag ID. Emitting
 two events with the same complete key is an invariant violation rather than an
 invitation to preserve discovery order.
 
+### Normative audit hash encoding
+
+Every metadata-v2 audit digest uses SHA-256 over the **CAE2** typed binary
+encoding below. JSONL is only a transport representation; whitespace, object
+key order, escaping choices, and decimal rendering never enter a hash.
+
+Let `F(b)` be an unsigned 64-bit big-endian byte length followed by `b`, and let
+`U(n)` be an unsigned 64-bit big-endian integer. A record is exactly:
+
+```text
+F("docbank-audit") || U(2) || F(record_kind) || U(field_count) ||
+    each F(field_name) || value, sorted by field_name ASCII bytes
+```
+
+`record_kind` and `field_name` are the lowercase ASCII tokens fixed by the v2
+schema. Every declared field appears exactly once; an optional field uses the
+absent value rather than disappearing. Unknown, missing, or duplicate fields
+are invalid. Values have one-byte type tags followed by:
+
+| Tag | Value | Encoding |
+| --- | --- | --- |
+| `00` | absent | no payload |
+| `01` / `02` | false / true | no payload |
+| `03` | unsigned integer | `U(n)` |
+| `04` | signed integer | eight-byte big-endian two's-complement |
+| `05` | bytes | `F(raw_bytes)` |
+| `06` | text | `F(exact_UTF-8_bytes)` |
+| `07` | timestamp | `F(YYYY-MM-DDTHH:MM:SS.nnnnnnnnnZ)` |
+| `08` | UUID | 16 canonical parsed bytes |
+| `09` | SHA-256 digest | 32 raw bytes |
+| `0a` | list | `U(count)` followed by each complete typed value |
+| `0b` | nested record | `F(the complete CAE2 record)` |
+
+Text must be valid UTF-8 and receives **no Unicode normalization**; the exact
+stored byte sequence is authoritative. A field that can contain opaque
+filesystem bytes uses the bytes type instead. Empty text/bytes and absent are
+therefore distinct. Timestamps are UTC with exactly nine fractional digits.
+Lists representing sets are sorted by the tuple named for that record before
+encoding; intrinsically ordered lists retain their specified order. Maps and
+floating-point values are forbidden.
+
+The digest of a baseline, topology delta, net path-effect list,
+witness-change list, attached-metadata delta, canonical mutation, scope-chain
+entry, allocation genesis/entry, topology genesis, or attached-metadata genesis
+is `SHA-256(CAE2(record_kind, fields))` using its distinct lowercase kind token.
+A scope-chain entry includes the stable vault and scope IDs, entry count,
+optional previous head, and mutation digest. An allocation entry includes every
+field and explicit no-change marker specified below. Genesis uses absent for a
+previous head, never an all-zero digest. Composite records embed child digests
+with the digest type; no implementation hashes unframed concatenated values.
+Format-v2 golden vectors cover every record kind, absent versus empty values,
+Unicode byte distinctions, integer limits, and timestamp encoding; export,
+import, verification, and restore must all reproduce them byte-for-byte.
+
 Kind codes are stable lowercase ASCII tokens frozen by the metadata-format
 version, not implementation-assigned ordinals. Metadata format version 2 event
 codes are:
 `audit_enroll`, `audit_inherit`, `content_create`, `content_replace`,
-`content_revert`, `node_create`, `node_move`, `node_restore`, `node_trash`,
+`content_revert`, `node_create`, `node_path`,
 `provenance_add`, `provenance_supersede`, `tag_assign`, `tag_define`,
 `tag_delete`, `tag_rename`, and `tag_unassign`; attachment codes are
 `provenance` and `tag`. Canonical bytewise token order determines sorting. A
@@ -815,9 +872,16 @@ that created it with the same scope and operation; initial memberships resolve
 to the scope's sole enablement batch. Imported batches must use normalized
 non-overlapping targets, contain exactly their declared newly adopted members,
 and never assign one member to two batches for the same scope and operation.
-Audited mutation history that updates or deletes an ingest/provenance fact is
-invalid, as is a current audited provenance fact whose referenced ingest record
-is missing.
+Ingest/provenance updates are always invalid because those records are
+immutable. A deletion is valid only when replay of the pre-operation projection
+proves that the record belongs solely to unaudited nodes, is not retained by any
+baseline or historical protected reference, and—for an ingest—has no remaining
+provenance reference. The canonical attached-metadata delta must contain its
+tombstone. These rules are unchanged when the same transaction has an unrelated
+audited effect: the deletion emits no scoped event, while the canonical mutation
+still binds the complete delta. Import rejects only a deletion that fails those
+pre-state checks, a missing tombstone, or a current provenance fact whose ingest
+record is absent.
 
 Import builds the vault-wide topology projection from its digested genesis
 snapshot and the complete attached-metadata projection from its independently

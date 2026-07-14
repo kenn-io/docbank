@@ -63,13 +63,20 @@ share a blob without sharing document identity.
     records. Import validates and replays that referential closure; derived FTS,
     extraction-cache, and job rows remain outside audit hashes. Ingest and
     provenance rows are immutable; audited references are database-guarded
-    retention roots. Corrections append an immutable superseding fact, replay
-    retains the old fact and derives the active leaves, and inserting an
-    identical canonical provenance fact is an idempotent no-op.
+    retention roots. Deletion is permitted only when replayed pre-state proves
+    the record wholly unprotected and the attached-metadata delta contains its
+    tombstone, including in a transaction with an unrelated audited effect.
+    Corrections append an immutable superseding fact, replay retains the old fact
+    and derives the active leaves, and inserting an identical canonical
+    provenance fact is an idempotent no-op.
     Canonical mutation ordering uses the full node/kind/scope/target/attachment
     tuple with format-versioned stable string kind codes, assigns ordinals only
     after sorting, and separately sorts every `(scope, target, baseline digest)`
-    binding before hashing.
+    binding before hashing. All audit digests use SHA-256 over the normative
+    CAE2 typed, length-framed, domain-separated encoding; golden vectors bind
+    every record kind and optional-value edge case. Net topology effects always
+    use `node_path`, with labels derived from committed pre/post state rather
+    than ambiguous action precedence.
     Tag identities are non-reusable UUIDv4 values independent of mutable names.
     Node insertion, deletion (including cascades), and topology changes require
     a transaction-scoped audit context even when the directly touched node is
