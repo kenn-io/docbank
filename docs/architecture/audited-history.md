@@ -57,6 +57,12 @@ earlier permanent deletion already erased the origin ancestry, Docbank cannot
 infer that the remaining trash once belonged to the scope; the preview reports
 the unresolved trash root without claiming it as a member.
 
+The vault root is the exception: every node in the vault necessarily originated
+beneath it. Enrolling the root adopts every detached trash root, descendant,
+and retained version even when its recorded origin ancestry is missing. Root
+enrollment therefore has no unresolved trash that remains eligible for later
+emptying.
+
 Once a node is audited, its trash event also persists immutable origin parent
 ID and name as audit metadata independent of the operational `trash_parent`
 foreign key. Node IDs are never reused. Deleting an unaudited origin directory
@@ -90,6 +96,14 @@ children created beneath a sticky member directory after it has moved outside
 the scope's current path: the protected directory continues carrying the
 promise. Nested and overlapping scopes are allowed, and membership is additive
 rather than replacing an earlier promise.
+
+Path history follows a **path-affecting closure**, not only directly mutated
+members. Renaming, moving, trashing, or restoring any directory finds every
+audited descendant whose derived path changes, even when the directory itself
+is unaudited. The same metadata transaction emits a scoped event for each such
+descendant with the old path, new path, and causal ancestor ID. Those events use
+the operation's stable-node-ID ordering, so a large ancestor move produces the
+same chain on every platform.
 
 An external application or pseudo-folder uses the same model: an integration
 projects its collection onto a stable Docbank directory/scope reference. The
@@ -177,6 +191,24 @@ incomplete metadata restores. It cannot make bytes metaphysically indelible to
 the operating-system account that can rewrite SQLite, packs, the executable,
 and every backup. Backup manifests and externally recorded audit-chain heads
 provide stronger independent evidence.
+
+### Live-store downgrade fence
+
+Creating the first audit scope permanently raises the vault's required
+live-store feature level. The cutover uses an incompatible schema fence that
+makes every published pre-audit binary fail during store open, before it can
+serve reads, run maintenance, or create an incomplete backup. A marker that an
+old binary can ignore is not sufficient. The release test matrix opens an
+audited fixture with each supported pre-audit binary and requires a clean
+refusal with no file or metadata changes.
+
+The database also enforces the protection boundary independently of API
+routing. Constraints and write guards reject deletion or mutation of audited
+nodes, memberships, versions, chain state, and protected blob reachability
+unless the current audit-aware writer performs the complete authorized
+transaction. Raw legacy trash-empty and GC statements must fail rather than
+cascade or omit protected state. The daemon protocol check remains useful for
+client replacement, but is not the live-store downgrade defense.
 
 ## Deletion and storage maintenance
 

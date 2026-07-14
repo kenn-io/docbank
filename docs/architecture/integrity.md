@@ -109,6 +109,15 @@ Until versioned, transactional migrations exist, a release must not require an
 incompatible change to an existing table, column, trigger, or index. Migration
 machinery must land before such a schema change, not afterward as repair work.
 
+!!! info "Planned — audited-store downgrade fence"
+    Full audit cannot ship until that migration machinery can permanently raise
+    an audited vault's live-store feature level. The migrated layout must make
+    every published pre-audit binary fail during store open; an ignorable
+    version marker is insufficient. Database constraints and write guards also
+    protect audited nodes, versions, chain state, and blob reachability from raw
+    legacy mutations. Compatibility tests run old binaries against an audited
+    fixture and require refusal without changes.
+
 ### One vault lock holder
 
 The daemon holds the portable vault file lock exclusively for its whole lifetime,
