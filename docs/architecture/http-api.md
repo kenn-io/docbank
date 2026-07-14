@@ -351,7 +351,12 @@ machine-readable string clients branch on instead of parsing `detail`:
     a unique per-transaction `operation_id` and an optional `grouping_id` for a
     command or job spanning several transactions; grouping never implies atomic
     commit. Scope preview returns a short-lived token bound to the baseline and
-    vault preview generation; enablement requires that token.
+    vault preview generation plus `vault_metadata_retention`: whether the
+    vault-wide lineage is newly activated or already active, genesis record
+    counts by kind, estimated serialized bytes, the retained metadata classes,
+    and `unaudited_content_retained: false`. Enablement requires both that token
+    and `acknowledge_vault_metadata_retention: true`; omitting or falsifying the
+    acknowledgment is a validation error, never implicit consent.
     `audit_not_enrolled` (409) means
     a requested node timeline has no audit authority. `audit_protected` (409)
     refuses an incompatible mutation and carries a `blocking_scopes` array;

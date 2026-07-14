@@ -72,9 +72,13 @@ non-goals.
     reversible; trash empty will loudly exclude protected roots while removing
     eligible ordinary trash, and version pruning and GC cannot remove protected
     history. Refused protected mutations return every blocking scope. Agents
-    must obtain and present a server-issued baseline-preview token before the
-    irreversible enable operation. They can inspect and verify history, but no
-    normal agent surface will destroy it. See
+    must inspect the preview's structured `vault_metadata_retention` inventory
+    as well as its scope baseline. The irreversible enable operation requires
+    both the server-issued preview token and
+    `acknowledge_vault_metadata_retention: true`; an agent must not supply that
+    acknowledgment unless its caller explicitly approved permanent metadata
+    retention outside the selected scope. Agents can inspect and verify history,
+    but no normal agent surface will destroy it. See
     [Audited History](architecture/audited-history.md).
 
 ## Common agent workflows
