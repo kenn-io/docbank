@@ -46,6 +46,13 @@ scope runs as a daemon job behind the mutation gate and atomically records:
   records; and
 - explicit membership for every node in that batch.
 
+V1 scopes have no separate mutable display name. Their user-visible identity is
+the target directory's current path plus the stable scope UUID and target node
+ID; a moved or renamed target therefore needs no second label to reconcile.
+CLI, agent, TUI, web, JSONL, pending recovery, and backup surfaces all use that
+same identity. Adding aliases later would require an explicit portable schema
+and audited transition rather than an unbound UI field.
+
 The baseline batch is an immutable canonical snapshot, not only an
 implementation scan. Its digest covers the scope and target IDs; every adopted
 node and membership; their enrollment-time state and immutable trash-origin
@@ -548,24 +555,31 @@ unique constraint, never accepted from a caller, and never reused after
 deletion. The metadata-v2 bootstrap assigns such an identity to every retained
 legacy ingest record in the same daemon-exclusive transaction as the other
 portable identities; a legacy integer row ID may remain an internal key but is
-never the JSONL, provenance, or audit identity. An ingest's immutable
-`source_desc` is opaque bytes, not UTF-8 text: filesystem-derived descriptions
-can contain arbitrary POSIX path bytes. Human clients display valid UTF-8 and
-escape other bytes; hashes and JSONL preserve the exact byte sequence.
+never the JSONL, provenance, or audit identity.
 
-Direct-database bootstrap reads the raw SQLite value without text coercion. A
-v1 JSONL import requires valid UTF-8 JSON and paired Unicode escapes, then uses
-the exact UTF-8 encoding of the decoded string as the v2 bytes. Malformed input
-is rejected transactionally. An already-created v1 JSONL stream is authority
-only for the text it contains—bytes a legacy exporter had already replaced
-cannot be reconstructed—so import reports that compatibility boundary instead
-of claiming recovery. Fixtures cover invalid-UTF-8 direct SQLite descriptions,
-non-ASCII v1 JSONL text, malformed JSON strings, and v2 byte-exact round trips.
+All filesystem-derived values represented as CAE2 `bytes` share one migration
+rule: node names, known/unknown trash-origin names, provenance `original_path`,
+and ingest `source_desc`. They are opaque bytes rather than UTF-8 text because
+POSIX filesystems can contain arbitrary non-NUL path bytes. Human clients
+display valid UTF-8 and escape other bytes; hashes and JSONL preserve the exact
+sequence.
+
+Direct-database bootstrap reads each corresponding SQLite value as raw bytes
+without text coercion. A v1 JSONL import requires valid UTF-8 JSON and paired
+Unicode escapes for every such string, then uses the exact UTF-8 encoding of the
+decoded value as v2 bytes. Malformed input is rejected transactionally. An
+already-created v1 JSONL stream is authority only for the text it contains—raw
+bytes a legacy exporter had already replaced cannot be reconstructed. The
+bootstrap/import report gives per-field converted counts and separately lists
+records whose imported text contains U+FFFD as potentially legacy-lossy; that
+code point remains valid data and is never silently changed. Fixtures cover
+invalid-UTF-8 direct SQLite values, non-ASCII and U+FFFD v1 JSONL values,
+malformed JSON strings, and v2 byte-exact round trips for every field kind.
 
 Each provenance fact has a stable identity derived from its canonical immutable
 fields, including that ingest UUID, and may carry an immutable `supersedes`
-identity. A correction
-appends a new fact that supersedes the currently active fact for the same node,
+identity. A correction appends a new fact that supersedes the currently active
+fact for the same node,
 backed by a new ingest record when its source description changes; it never
 updates or erases the old row. The superseded fact remains visible in history,
 while the current provenance projection selects the unsuperseded leaves.
@@ -1441,8 +1455,9 @@ while a history workspace supplies filters, compare selection, and an evidence
 drawer. A scope dashboard summarizes enrolled nodes, protected current and
 historical bytes, chain status, latest verification, and snapshots known to
 contain the scope. Enabling audit is a reviewed workflow: preview the baseline
-inventory, storage impact, and vault-wide metadata-retention disclosure; name
-the scope; then acknowledge both retention boundaries and confirm enrollment.
+inventory, storage impact, and vault-wide metadata-retention disclosure; review
+the target's current path and stable IDs; then acknowledge both retention
+boundaries and confirm enrollment. V1 has no separate scope-name field.
 The confirmation consumes the server-issued preview token and must refresh the
 inventory if relevant vault state changed.
 

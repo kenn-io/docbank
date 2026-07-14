@@ -88,16 +88,21 @@ transactionally; it cannot edit bytes in place without invalidating their hash.
 
     Bootstrap also assigns canonical, non-reusable UUIDv4 identities to every
     retained legacy tag and ingest record; any existing integer IDs remain
-    internal implementation keys rather than portable identities. Ingest source
-    descriptions become opaque bytes: direct-store bootstrap reads the raw
-    SQLite value without UTF-8 coercion, while v1 JSONL accepts only valid
+    internal implementation keys rather than portable identities. Every v2
+    opaque filesystem field—node and trash-origin names, provenance paths, and
+    ingest source descriptions—uses one conversion rule. Direct-store bootstrap
+    reads raw SQLite bytes without UTF-8 coercion; v1 JSONL accepts only valid
     Unicode strings and stores their exact UTF-8 bytes. Invalid JSON strings
-    abort import; bytes already replaced by a legacy JSONL exporter cannot be
-    reconstructed and that compatibility boundary is reported. It
-    canonicalizes legacy provenance and deterministically collapses identical
-    duplicate facts before deriving their v2 identities; distinct facts remain
-    intact and the bootstrap report records the collapsed count. A failure
-    rolls the whole bootstrap back, and no editing or audit endpoint is
+    abort import. Bytes already replaced by a legacy exporter cannot be
+    reconstructed, so the report inventories conversions per field and flags
+    imported U+FFFD values as potentially legacy-lossy without changing them.
+    Migration fixtures cover direct invalid bytes and JSONL compatibility for
+    every opaque field.
+
+    Bootstrap canonicalizes legacy provenance and deterministically collapses
+    identical duplicate facts before deriving their v2 identities; distinct
+    facts remain intact and the bootstrap report records the collapsed count. A
+    failure rolls the whole bootstrap back, and no editing or audit endpoint is
     available until every file has a current version identity and the vault ID
     plus every portable tag and ingest identity is durable. Deterministic JSONL
     export/import preserves those assigned IDs after the cutover.
