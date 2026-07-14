@@ -317,6 +317,23 @@ func stopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
 		if dead {
 			return nil
 		}
+		return forceStopRecord(ctx, rec)
+	}
+	// Older records without a token need the platform's graceful signal first.
+	// Current Windows records always carry a token; its fallback has no console
+	// signal equivalent and terminates through the native process handle.
+	if err := verifyRecordProcess(rec); err != nil {
+		return err
+	}
+	if err := requestProcessStop(rec.PID); err != nil {
+		return fmt.Errorf("requesting daemon pid %d stop: %w", rec.PID, err)
+	}
+	dead, err := waitDead(ctx, rec, daemonlife.GracefulExitTimeout)
+	if err != nil {
+		return fmt.Errorf("waiting for signaled daemon shutdown: %w", err)
+	}
+	if dead {
+		return nil
 	}
 	return forceStopRecord(ctx, rec)
 }
@@ -333,12 +350,11 @@ func waitForStoppingRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) err
 }
 
 func forceStopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
-	// Signal fallback only when the PID is provably still our daemon.
-	if !createTimeMatches(rec) {
-		return errors.New("daemon PID no longer matches its recorded create time; not signaling")
+	if err := verifyRecordProcess(rec); err != nil {
+		return err
 	}
-	if err := terminateProcess(rec.PID); err != nil {
-		return fmt.Errorf("signaling daemon pid %d: %w", rec.PID, err)
+	if err := forceTerminateProcess(rec.PID); err != nil {
+		return fmt.Errorf("forcibly terminating daemon pid %d: %w", rec.PID, err)
 	}
 	dead, err := waitDead(ctx, rec, daemonlife.ForcedExitTimeout)
 	if err != nil {
@@ -346,6 +362,13 @@ func forceStopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
 	}
 	if !dead {
 		return fmt.Errorf("daemon pid %d did not exit after forced termination", rec.PID)
+	}
+	return nil
+}
+
+func verifyRecordProcess(rec kitdaemon.RuntimeRecord) error {
+	if !createTimeMatches(rec) {
+		return errors.New("daemon PID no longer matches its recorded create time; not signaling")
 	}
 	return nil
 }

@@ -48,6 +48,15 @@ func runServe(ctx context.Context) (retErr error) {
 	if err != nil {
 		return err
 	}
+	// This is deliberately the first cleanup registered after acquiring the
+	// vault. LIFO execution removes the runtime record only after supervised
+	// jobs, storage, the lock, and the held root have all finished cleanup.
+	var recPath string
+	defer func() {
+		if recPath != "" {
+			_ = os.Remove(recPath)
+		}
+	}()
 	defer func() { _ = root.Close() }()
 	defer func() { _ = lock.Release() }()
 
@@ -116,15 +125,13 @@ func runServe(ctx context.Context) (retErr error) {
 	cfg.Server.APIKey = apiKey
 
 	rtStore := client.RuntimeStore(layout.Root)
-	recPath, err := rtStore.Write(client.NewRecord(addr, apiKey, shutdownToken))
+	recPath, err = rtStore.Write(client.NewRecord(addr, apiKey, shutdownToken))
 	if err != nil {
 		_ = listener.Close()
 		return fmt.Errorf("writing daemon runtime record: %w", err)
 	}
-	defer func() { _ = os.Remove(recPath) }()
-	// Defers run in reverse registration order. Register the job wait after
-	// runtime cleanup so the daemon stays discoverable while jobs drain, and
-	// after store/blob cleanup so their resources remain open until then.
+	// Register the job wait after store/blob cleanup so their resources remain
+	// open until runners return. The earlier runtime cleanup remains last.
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(
 			context.Background(), daemonlife.JobDrainTimeout)

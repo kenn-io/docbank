@@ -10,7 +10,15 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func terminateProcess(pid int) error {
+func requestProcessStop(pid int) error {
+	return killProcess(pid)
+}
+
+func forceTerminateProcess(pid int) error {
+	return killProcess(pid)
+}
+
+func killProcess(pid int) error {
 	process, err := os.FindProcess(pid)
 	if err != nil {
 		if errors.Is(err, windows.ERROR_INVALID_PARAMETER) {

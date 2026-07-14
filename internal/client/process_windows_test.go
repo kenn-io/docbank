@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestTerminateProcessTreatsMissingProcessAsStopped(t *testing.T) {
-	require.NoError(t, terminateProcess(math.MaxInt32))
+func TestProcessTerminationTreatsMissingProcessAsStopped(t *testing.T) {
+	require.NoError(t, requestProcessStop(math.MaxInt32))
+	require.NoError(t, forceTerminateProcess(math.MaxInt32))
 }
