@@ -21,6 +21,7 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 		assert.Contains(t, doc, op, "operation missing from OpenAPI doc")
 	}
 	assert.NotContains(t, doc, "/api/daemon/shutdown", "lifecycle plumbing must stay hidden")
+	assert.NotContains(t, doc, "/api/daemon/challenge", "lifecycle plumbing must stay hidden")
 	assert.Contains(t, doc, "X-Docbank-Blob-Hash")
 	assert.Contains(t, doc, "Content-Digest")
 	assert.Contains(t, doc, "computed_hash")

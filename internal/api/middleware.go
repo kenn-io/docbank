@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"go.kenn.io/docbank/internal/daemonauth"
 )
 
 const requestTimeout = 60 * time.Second
@@ -26,12 +28,12 @@ func timeoutExempt(path string) bool {
 	return strings.HasPrefix(path, "/api/v1/nodes/") && strings.HasSuffix(path, "/verify")
 }
 
-// auth-exempt: discovery, docs, and the static placeholder carry no vault
-// data. Everything else requires the key — the daemon always has one; see
-// NewServer.
+// auth-exempt: discovery, credential-free ownership proof, docs, and the
+// static placeholder carry no vault data. Everything else requires the key —
+// the daemon always has one; see NewServer.
 func authExempt(path string) bool {
 	switch path {
-	case "/", "/health", kitPingPath:
+	case "/", "/health", kitPingPath, daemonauth.ChallengePath:
 		return true
 	}
 	return strings.HasPrefix(path, "/docs") ||

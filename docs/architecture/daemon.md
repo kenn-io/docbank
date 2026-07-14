@@ -110,13 +110,17 @@ The listener closes before background tasks finish draining. During that
 interval ping-based discovery cannot identify the daemon, but its runtime
 record and process remain live while it still owns the vault lock. Public ping
 fields cannot prove that a listener appearing on the same loopback port still
-belongs to that PID; accepting such a response could send the API key to a
-locally hijacked port. A starter therefore never re-probes a pingless record or
-sends secrets to that endpoint. It requests graceful process termination only
-for the create-time-verified PID, waits for exit, and then starts replacement.
-Runtime records without create-time proof are never trusted for this path.
-This handles shutdown and the rarer uncoordinated slow-start transition without
-spawning into an owned vault or trusting a rebound listener.
+belongs to that PID. Discovery therefore follows ping with a fresh nonce
+challenge whose HMAC requires the per-run shutdown secret in the private
+runtime record; neither that secret nor the API key crosses the socket during
+the proof. Credential-bearing requests remain pinned to that proven TCP
+connection and fail rather than redirecting or reconnecting. A forged or
+pingless endpoint is never sent secrets. The starter instead requests graceful
+process termination only for the create-time-verified PID, waits for exit, and
+then starts replacement. Runtime records without create-time proof are never
+trusted for this path. This handles shutdown and the rarer uncoordinated
+slow-start transition without spawning into an owned vault or trusting a
+rebound listener.
 
 ## Auto-start and idle shutdown
 

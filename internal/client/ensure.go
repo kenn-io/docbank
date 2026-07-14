@@ -2,16 +2,24 @@ package client
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	kitdaemon "go.kenn.io/kit/daemon"
 
+	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/daemonlife"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/version"
@@ -55,13 +63,63 @@ func Find(ctx context.Context, root string) (kitdaemon.RuntimeRecord, kitdaemon.
 	return rec, info, ok, nil
 }
 
-// newClientFor authenticates with the key the daemon itself published in
+// newProvenClientFor authenticates with the key the daemon itself published in
 // its runtime record (configured or ephemeral) rather than re-reading
-// config.toml: the record's key is the one the running daemon actually
-// enforces, which matters when a background daemon was started under an
-// older config than the one on disk now.
-func newClientFor(rec kitdaemon.RuntimeRecord) *Client {
-	return New("http://"+rec.Address, rec.Metadata[metaAPIKey])
+// config.toml. Before the key can cross the socket, the endpoint must prove it
+// owns that private record, and every later request stays on the proven socket.
+func newProvenClientFor(ctx context.Context, rec kitdaemon.RuntimeRecord) (*Client, error) {
+	probeCtx, cancel := context.WithTimeout(ctx, probeOptions().Timeout)
+	defer cancel()
+	conn, err := (&net.Dialer{}).DialContext(probeCtx, kitdaemon.NetworkTCP, rec.Address)
+	if err != nil {
+		return nil, fmt.Errorf("dialing daemon for ownership proof: %w", err)
+	}
+	dialer := &singleConnDialer{conn: conn}
+	transport := &http.Transport{
+		Proxy:               nil,
+		DialContext:         dialer.DialContext,
+		MaxConnsPerHost:     1,
+		MaxIdleConnsPerHost: 1,
+	}
+	hc := &http.Client{
+		Transport: transport,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return errors.New("daemon requests must not redirect")
+		},
+	}
+	owned, proofErr := proveOwnershipWithClient(ctx, rec, hc)
+	if proofErr != nil || !owned {
+		transport.CloseIdleConnections()
+		_ = conn.Close()
+		if proofErr != nil {
+			return nil, proofErr
+		}
+		return nil, errors.New("daemon endpoint failed ownership proof")
+	}
+	c := New("http://"+rec.Address, rec.Metadata[metaAPIKey])
+	c.hc = hc
+	return c, nil
+}
+
+// singleConnDialer gives the HTTP transport exactly the socket that completed
+// ownership proof. If that connection closes, requests fail rather than
+// reconnecting to a process that captured the loopback port.
+type singleConnDialer struct {
+	mu   sync.Mutex
+	conn net.Conn
+}
+
+func (d *singleConnDialer) DialContext(
+	_ context.Context, _, _ string,
+) (net.Conn, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.conn == nil {
+		return nil, errors.New("proven daemon connection is closed; refusing to redial")
+	}
+	conn := d.conn
+	d.conn = nil
+	return conn, nil
 }
 
 // WithLaunchLock serializes daemon auto-start with update's stop/install/
@@ -98,7 +156,7 @@ func Ensure(ctx context.Context) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newClientFor(res.Record), nil
+	return newProvenClientFor(ctx, res.Record)
 }
 
 // EnsureDaemon converges the vault on exactly one version- and
@@ -290,7 +348,69 @@ func discoverWithOptions(
 	if err != nil {
 		return rec, ping, ok, fmt.Errorf("scanning daemon runtime records: %w", err)
 	}
+	if ok {
+		owned, proofErr := proveEndpointOwnership(ctx, rec)
+		if proofErr != nil {
+			return rec, ping, false, proofErr
+		}
+		if !owned {
+			return rec, ping, false, nil
+		}
+	}
 	return rec, ping, ok, nil
+}
+
+// proveEndpointOwnership binds public ping to the owner-private runtime record
+// without transmitting its API key or shutdown token. A listener that captured
+// the port during teardown can copy ping fields but cannot forge this response.
+func proveEndpointOwnership(ctx context.Context, rec kitdaemon.RuntimeRecord) (bool, error) {
+	challengeClient := &http.Client{
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return errors.New("daemon ownership challenge must not redirect")
+		},
+	}
+	return proveOwnershipWithClient(ctx, rec, challengeClient)
+}
+
+func proveOwnershipWithClient(
+	ctx context.Context, rec kitdaemon.RuntimeRecord, challengeClient *http.Client,
+) (bool, error) {
+	token := rec.Metadata[metaShutdownToken]
+	if token == "" {
+		return false, nil
+	}
+	nonce := make([]byte, daemonauth.NonceBytes)
+	if _, err := rand.Read(nonce); err != nil {
+		return false, fmt.Errorf("generating daemon ownership challenge: %w", err)
+	}
+	u := url.URL{Scheme: "http", Host: rec.Address, Path: daemonauth.ChallengePath}
+	query := u.Query()
+	query.Set("nonce", hex.EncodeToString(nonce))
+	u.RawQuery = query.Encode()
+	probeCtx, cancel := context.WithTimeout(ctx, probeOptions().Timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return false, fmt.Errorf("building daemon ownership challenge: %w", err)
+	}
+	resp, err := challengeClient.Do(req)
+	if err != nil {
+		return false, nil
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+		return false, nil
+	}
+	var result struct {
+		Proof string `json:"proof"`
+	}
+	limited := io.LimitReader(resp.Body, 4<<10)
+	if err := json.NewDecoder(limited).Decode(&result); err != nil {
+		return false, nil
+	}
+	_, _ = io.Copy(io.Discard, limited)
+	return daemonauth.Verify(token, nonce, result.Proof), nil
 }
 
 // Stop gracefully stops the discovered daemon: token endpoint first,
@@ -320,7 +440,12 @@ func Stop(ctx context.Context, root string) (bool, error) {
 }
 
 func stopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
-	c := newClientFor(rec)
+	c, proofErr := newProvenClientFor(ctx, rec)
+	if proofErr != nil {
+		// Endpoint ownership could not be proven without exposing credentials.
+		// Signal only the create-time-verified process recorded in private state.
+		return signalStopRecord(ctx, rec)
+	}
 	if token := rec.Metadata[metaShutdownToken]; token != "" {
 		// A transport failure can mean another caller already closed the listener,
 		// so preserve the drain budget. A completed HTTP rejection proves this
@@ -343,9 +468,9 @@ func stopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
 
 func signalStopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
 	// Older records without a token, and definitive HTTP rejections, need the
-	// platform's graceful signal. Current Windows records always carry a token;
-	// its fallback has no console signal equivalent and terminates through the
-	// native process handle.
+	// platform's graceful signal. Windows has no process-scoped equivalent for a
+	// detached daemon, so its request is a no-op and the complete grace window
+	// elapses before force termination.
 	if err := verifyRecordProcess(rec); err != nil {
 		return err
 	}

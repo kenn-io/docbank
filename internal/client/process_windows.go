@@ -10,8 +10,11 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func requestProcessStop(pid int) error {
-	return killProcess(pid)
+func requestProcessStop(_ int) error {
+	// Windows has no process-scoped equivalent of SIGTERM for a detached
+	// daemon. Treat the graceful request as unsupported so the caller waits for
+	// an already-draining process through the full grace window before killing.
+	return nil
 }
 
 func forceTerminateProcess(pid int) error {

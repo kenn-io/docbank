@@ -2,13 +2,17 @@ package client
 
 import (
 	"context"
+	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 	kitdaemon "go.kenn.io/kit/daemon"
 
+	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/version"
 )
 
@@ -94,6 +99,77 @@ func TestEnsureStopsPinglessRuntimeBeforeReplacement(t *testing.T) {
 	assert.Equal(t, rec.PID, result.Replaced.PID)
 }
 
+func TestEnsureRejectsForgedPingWithoutSendingRuntimeSecrets(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows intentionally consumes the full graceful wait before force termination")
+	}
+	root, rec := startUnresponsiveRuntime(t)
+	var leaked atomic.Bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Api-Key") != "" ||
+			r.Header.Get("X-Docbank-Daemon-Token") != "" {
+			leaked.Store(true)
+		}
+		switch r.URL.Path {
+		case kitdaemon.DefaultPingPath:
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(kitdaemon.PingInfo{
+				OK: true, Service: Service, Version: version.Version, PID: rec.PID,
+			})
+		case daemonauth.ChallengePath:
+			_ = json.NewEncoder(w).Encode(map[string]string{"proof": "forged"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(ts.Close)
+	rec.Address = strings.TrimPrefix(ts.URL, "http://")
+	_, err := RuntimeStore(root).Write(rec)
+	require.NoError(t, err)
+
+	result, err := ensureDaemon(t.Context(), root,
+		func(_ context.Context, _ string) (kitdaemon.RuntimeRecord, error) {
+			assert.False(t, kitdaemon.ProcessAlive(rec.PID))
+			return NewRecord("127.0.0.1:2", "new-key", "new-token"), nil
+		})
+	require.NoError(t, err)
+	require.NotNil(t, result.Replaced)
+	assert.Equal(t, rec.PID, result.Replaced.PID)
+	assert.False(t, leaked.Load(), "forged endpoint must receive no runtime secret")
+}
+
+func TestProvenClientRefusesRedialAfterChallengeConnectionCloses(t *testing.T) {
+	const token = "connection-proof-token"
+	var leaked atomic.Bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Api-Key") != "" ||
+			r.Header.Get("X-Docbank-Daemon-Token") != "" {
+			leaked.Store(true)
+		}
+		if r.URL.Path != daemonauth.ChallengePath {
+			http.NotFound(w, r)
+			return
+		}
+		nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
+		if err != nil {
+			http.Error(w, "bad nonce", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Connection", "close")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"proof": daemonauth.Proof(token, nonce),
+		})
+	}))
+	t.Cleanup(ts.Close)
+	rec := NewRecord(strings.TrimPrefix(ts.URL, "http://"), "private-api-key", token)
+
+	c, err := newProvenClientFor(t.Context(), rec)
+	require.NoError(t, err)
+	require.Error(t, c.Health(t.Context()),
+		"a closed proven connection must fail instead of redialing")
+	assert.False(t, leaked.Load(), "redial target must receive no runtime secret")
+}
+
 func TestStopSignalsPinglessDaemonWithoutSendingSecrets(t *testing.T) {
 	root, rec := startUnresponsiveRuntime(t)
 	stopped, err := Stop(t.Context(), root)
@@ -104,14 +180,25 @@ func TestStopSignalsPinglessDaemonWithoutSendingSecrets(t *testing.T) {
 
 func TestShutdownHTTPRejectionUsesProcessStop(t *testing.T) {
 	_, rec := startUnresponsiveRuntime(t)
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	rec.Metadata[metaShutdownToken] = "rejected-token"
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == daemonauth.ChallengePath {
+			nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
+			if err != nil {
+				http.Error(w, "bad nonce", http.StatusBadRequest)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"proof": daemonauth.Proof(rec.Metadata[metaShutdownToken], nonce),
+			})
+			return
+		}
 		w.Header().Set("Content-Type", "application/problem+json")
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte(`{"title":"Unauthorized","status":401,"code":"unauthorized"}`))
 	}))
 	t.Cleanup(ts.Close)
 	rec.Address = strings.TrimPrefix(ts.URL, "http://")
-	rec.Metadata[metaShutdownToken] = "rejected-token"
 
 	started := time.Now()
 	require.NoError(t, stopRecord(t.Context(), rec))
@@ -166,6 +253,7 @@ func startUnresponsiveRuntime(t *testing.T) (string, kitdaemon.RuntimeRecord) {
 	rec.Metadata = map[string]string{
 		metaCreateTime: strconv.FormatInt(created, 10),
 		metaAPIKey:     "key", metaProtocolVersion: daemonProtocolVersion,
+		metaShutdownToken: "token",
 	}
 	_, err := RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
