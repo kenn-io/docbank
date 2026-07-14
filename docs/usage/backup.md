@@ -133,13 +133,15 @@ progress so stdout contains one typed report.
 !!! info "Planned — audited-history fidelity"
     The portable JSONL format will carry audit scopes, sticky memberships,
     canonical enrollment baselines and digests, mutation records, per-scope
-    chain heads, a stable vault ID, and stable content versions. Capture will
-    include every protected historical blob. Verify and restore will recompute
-    baseline digests from frozen enrollment records, verify later mutations
-    separately, and reject internally missing, reordered, truncated, or
-    hash-invalid audit history rather than restoring only the current tree.
-    Rollback detection additionally requires a trusted prior count/head; a
-    fresh import cannot identify a coherently rewritten chain.
+    chain heads, a stable vault ID, the operation-sequence allocator high-water
+    mark, and stable content versions. Capture will include every protected
+    historical blob. Verify and restore will recompute baseline digests from
+    frozen enrollment records, verify later mutations separately, restore the
+    allocator above its recorded high water, and reject internally missing,
+    reordered, truncated, or hash-invalid audit history rather than restoring
+    only the current tree. Rollback detection additionally requires a trusted
+    prior count/head; a fresh import cannot identify a coherently rewritten
+    chain.
 
     Overwriting an existing audited target is forward-only: under the target
     lock, the snapshot must prove the same vault ID and preserve or extend every

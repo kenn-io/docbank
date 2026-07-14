@@ -115,6 +115,17 @@ directory after it has moved outside the scope's current path: the protected
 directory continues carrying the promise. Nested and overlapping scopes are
 allowed, and membership is additive rather than replacing an earlier promise.
 
+An inherited baseline is the canonical **post-operation** snapshot. For a scope
+that already protected a node before the operation, replay applies the normal
+pre-state-to-post-state mutation event. For a scope the node joins because of
+that same move, restore, or creation, replay installs the post-operation
+baseline and does not also apply the triggering transition. The enrollment
+record retains the operation identity and cause, but protection begins at that
+post-state boundary. If a node was already in one scope and joins another, the
+first scope receives the transition while the new scope receives only its
+baseline. One scope-chain entry may commit both categories in their canonical
+event order without omitting or double-applying the mutation.
+
 Path history follows a **path-affecting closure**, not only directly mutated
 members. Renaming, moving, trashing, or restoring any directory finds every
 audited descendant whose derived path changes, even when the directory itself
@@ -272,6 +283,7 @@ format will be versioned to include:
 
 - audit scopes and their expected chain count/head;
 - the stable vault ID used to domain-separate audit hashes;
+- the vault-wide operation-sequence allocator high-water mark;
 - sticky node memberships and enrollment baselines;
 - immutable audited trash-origin parent IDs and names;
 - canonical mutation records and per-scope chain entries; and
@@ -285,6 +297,12 @@ enrollment baseline and verifies its digest before accepting the chain. Unknown
 audit records, internally missing or reordered events, altered baseline state,
 dangling versions, or inconsistent heads fail the import; they never produce a
 current-tree-only restore.
+
+The imported operation-sequence high-water mark must be at least the greatest
+exported event sequence. It may be higher because unaudited operations also
+consume sequence numbers. Import restores that allocator state in the same
+transaction as metadata authority, and the next operation receives a strictly
+greater number; gaps are preserved rather than reused.
 
 A fresh import with no trusted reference cannot distinguish a coherently
 rewritten and re-chained stream from an original one. Downgrade or rollback is

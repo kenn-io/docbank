@@ -31,19 +31,21 @@ share a blob without sharing document identity.
     its ordered history events, membership changes, and every affected scope
     chain/count/head update commit in one SQLite transaction. Canonical order
     comes from a vault-wide operation sequence plus deterministic per-operation
-    event ordinals, never incidental traversal order. Audited trash-origin
-    coordinates are immutable metadata rather than a nullable live foreign-key
-    relationship; an unaudited origin can disappear without mutating the
-    audited node's chain state. The nullable `trash_parent` locator is explicitly
-    non-authoritative and excluded from hashes, final-state reconciliation, and
-    guards; the immutable origin record is authoritative. Enabling the first
-    scope also activates a non-ignorable live-store compatibility fence and
-    database write guards; pre-audit binaries must fail store open rather than
-    bypass history through legacy mutation, GC, or backup paths. The audited
-    layout also stays outside legacy restore publication paths. The planned
-    audited restore workflow inspects an existing target under its hierarchy
-    lock and accepts overwrite only when the snapshot's stable vault ID and
-    scope-chain prefixes preserve every promise.
+    event ordinals, never incidental traversal order. JSONL preserves the
+    allocator high-water mark—including gaps from unaudited operations—and
+    import restores it transactionally before any new operation can run.
+    Audited trash-origin coordinates are immutable metadata rather than a
+    nullable live foreign-key relationship; an unaudited origin can disappear
+    without mutating the audited node's chain state. The nullable `trash_parent`
+    locator is explicitly non-authoritative and excluded from hashes,
+    final-state reconciliation, and guards; the immutable origin record is
+    authoritative. Enabling the first scope also activates a non-ignorable
+    live-store compatibility fence and database write guards; pre-audit binaries
+    must fail store open rather than bypass history through legacy mutation, GC,
+    or backup paths. The audited layout also stays outside legacy restore
+    publication paths. The planned audited restore workflow inspects an existing
+    target under its hierarchy lock and accepts overwrite only when the
+    snapshot's stable vault ID and scope-chain prefixes preserve every promise.
 
 ## Immutable content and mutable organization
 
