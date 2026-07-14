@@ -266,7 +266,8 @@ tag definition and assignment plus every ingest and provenance record. Its
 record count and digest are committed by allocation-lineage genesis. Every
 later transaction that changes that authority records one canonical
 **attached-metadata delta** containing the complete pre/post record for each
-changed entity, sorted by `(record_kind_code, stable_identity)`. A missing side
+changed entity, sorted by `(record_kind_code, CAE2(stable_identity))`. A
+missing side
 uses the format's absent-record sentinel, so tag deletion includes definition
 and assignment tombstones while rename, assignment, provenance addition, and
 supersession have unambiguous transitions. Metadata-format version 2 freezes
@@ -580,10 +581,10 @@ sorted by the complete tuple
 `(node_id, event_kind_code, scope_id, target_node_id,
 attachment_kind_code, attachment_identity)`. IDs use their canonical byte
 encoding, and an absent field uses a fixed empty sentinel that sorts before a
-present value. A provenance fact's attachment identity is the digest of its
-canonical immutable fields; tag attachments use their stable tag ID. Emitting
-two events with the same complete key is an invariant violation rather than an
-invitation to preserve discovery order.
+present value. Attachment identities compare by the complete CAE2 bytes of the
+registered typed identity record; there is no ad hoc tuple concatenation.
+Emitting two events with the same complete key is an invariant violation rather
+than an invitation to preserve discovery order.
 
 ### Normative audit hash encoding
 
@@ -635,15 +636,21 @@ Nested record schemas are:
 | `tag_definition` | `tag_id:uuid`, `name:text` |
 | `tag_assignment` | `tag_id:uuid`, `node_id:u64` |
 | `ingest` | `ingest_id:uuid`, `started_at:timestamp`, `source_kind:text`, `source_desc:text` |
+| `provenance_identity` | `node_id:u64`, `ingest_id:uuid`, `original_path:?bytes`, `original_mtime:?timestamp`, `supersedes:?digest` |
 | `provenance` | `identity:digest`, `node_id:u64`, `ingest_id:uuid`, `original_path:?bytes`, `original_mtime:?timestamp`, `supersedes:?digest` |
+| `tag_definition_identity` | `tag_id:uuid` |
+| `tag_assignment_identity` | `tag_id:uuid`, `node_id:u64` |
+| `ingest_identity` | `ingest_id:uuid` |
+| `provenance_identity_ref` | `identity:digest` |
+| `event_identity` | `operation_id:uuid`, `event_ordinal:u64` |
 | `witness` | `node_id:u64`, `generation_operation_id:uuid`, `state_digest:digest` |
 | `baseline_binding` | `scope_id:uuid`, `target_node_id:u64`, `baseline_digest:digest` |
 | `topology_change` | `node_id:u64`, `pre:?topology_node`, `post:?topology_node` |
 | `path_state` | `path:bytes`, `state:state` |
 | `path_effect` | `scope_id:uuid`, `member_node_id:u64`, `old:path_state`, `new:path_state` |
 | `witness_change` | `node_id:u64`, `generation_operation_id:uuid`, `action:action`, `state_digest:?digest` |
-| `attached_metadata_change` | `record_kind:text`, `stable_identity:bytes`, `pre:?record`, `post:?record` |
-| `audit_event` | `node_id:u64`, `event_kind:text`, `scope_id:uuid`, `target_node_id:?u64`, `attachment_kind:?text`, `attachment_identity:?bytes`, `event_ordinal:u64`, `pre:?record`, `post:?record`, `topology_delta:?digest`, `baseline_digest:?digest` |
+| `attached_metadata_change` | `record_kind:text`, `stable_identity:record`, `pre:?record`, `post:?record` |
+| `audit_event` | `event_id:digest`, `operation_id:uuid`, `node_id:u64`, `event_kind:text`, `scope_id:uuid`, `target_node_id:?u64`, `attachment_kind:?text`, `attachment_identity:?record`, `event_ordinal:u64`, `recorded_at:timestamp`, `resulting_node_revision:u64`, `origin:text`, `agent_label:?text`, `pre:?record`, `post:?record`, `topology_delta:?digest`, `baseline_digest:?digest` |
 
 In that table, `record` means one complete nested CAE2 record of the applicable
 registered kind. An attached-metadata change permits only `tag_definition`,
@@ -651,6 +658,10 @@ registered kind. An attached-metadata change permits only `tag_definition`,
 by `event_kind` (`path_state` for `node_path`, `content_version` for content
 events, and the matching attached record for tag/provenance events). A
 `topology_node.origin` permits only `known_origin` or `unknown_origin`.
+An attached-metadata identity uses `tag_definition_identity`,
+`tag_assignment_identity`, `ingest_identity`, or `provenance_identity_ref` as
+selected by `record_kind`; event attachment identity uses the same matching
+record. No other identity record is valid.
 
 Event payload presence is exact:
 
@@ -667,10 +678,13 @@ Event payload presence is exact:
 | `provenance_add` | absent / `provenance` | attachment kind/identity present |
 | `provenance_supersede` | `provenance` / `provenance` | attachment kind/identity present |
 
-Fields not required by the selected row are absent. `scope_id`, `node_id`,
-`event_kind`, and `event_ordinal` are always present. The tag “matching record”
-is `tag_definition` for define/rename/delete and `tag_assignment` for
-assign/unassign. Import rejects any other presence pattern before hashing.
+Fields not required by the selected row are absent. `event_id`, `operation_id`,
+`scope_id`, `node_id`, `event_kind`, `event_ordinal`, `recorded_at`,
+`resulting_node_revision`, and `origin` are always present. `origin` is one of
+the exact ASCII tokens `api`, `cli`, `import`, or `job`; `agent_label` is
+unverified caller text. The tag “matching record” is `tag_definition` for
+define/rename/delete and `tag_assignment` for assign/unassign. Import rejects
+any other presence pattern before hashing.
 
 Hashed top-level record schemas are:
 
@@ -683,7 +697,7 @@ Hashed top-level record schemas are:
 | `path_effect_list` | `operation_id:uuid`, `topology_delta:digest`, `effects:[path_effect]` |
 | `witness_change_list` | `operation_id:uuid`, `changes:[witness_change]` |
 | `attached_metadata_delta` | `operation_id:uuid`, `changes:[attached_metadata_change]` |
-| `event` | `operation_id:uuid`, `event:audit_event` |
+| `event` | `event:audit_event` |
 | `canonical_mutation` | `vault_id:uuid`, `operation_sequence:u64`, `operation_id:uuid`, `grouping_id:?uuid`, `events:[audit_event]`, `baselines:[baseline_binding]`, `topology_delta:?digest`, `path_effect_count:u64`, `path_effect_digest:?digest`, `witness_change_count:u64`, `witness_change_digest:?digest`, `attached_metadata_change_count:u64`, `attached_metadata_change_digest:?digest` |
 | `scope_chain_entry` | `vault_id:uuid`, `scope_id:uuid`, `entry_count:u64`, `previous_head:?digest`, `mutation_hash:digest` |
 | `allocation_genesis` | `vault_id:uuid`, `lineage_id:uuid`, `node_id_high_water:u64`, `operation_sequence_high_water:u64`, `topology_count:u64`, `topology_digest:digest`, `attached_metadata_count:u64`, `attached_metadata_digest:digest` |
@@ -701,7 +715,7 @@ List order is also part of the registry: member IDs use unsigned numeric order;
 allocated-node IDs preserve intrinsic allocation order; topology nodes/changes
 use `node_id`; versions use
 `(node_id, version_id)`; attachments and attached-metadata changes use
-`(record_kind, stable_identity)`; witnesses use
+`(record_kind, CAE2(stable_identity))`; witnesses use
 `(node_id, generation_operation_id)` and witness changes add `action`;
 path effects use `(scope_id, member_node_id, old.path, new.path, old.state,
 new.state)`; events use the complete event tuple defined below; and baseline
@@ -715,6 +729,14 @@ therefore distinct. Timestamps are UTC with exactly nine fractional digits.
 Lists representing sets are sorted by the tuple named for that record before
 encoding; intrinsically ordered lists retain their specified order. Maps and
 floating-point values are forbidden.
+
+The digest of a provenance identity is
+`SHA-256(CAE2("provenance_identity", fields))`; `supersedes` participates, so
+an otherwise identical correction that points to a prior fact has a distinct
+identity. The stored `provenance.identity` must equal that recomputed digest.
+Likewise, `event_id` is the SHA-256 digest of the registered CAE2
+`event_identity` record containing `operation_id` and `event_ordinal`, and
+import recomputes it.
 
 The digest of a baseline, event, topology delta, net path-effect list,
 witness-change list, attached-metadata delta, canonical mutation, scope-chain
