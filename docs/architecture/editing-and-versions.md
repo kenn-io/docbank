@@ -29,10 +29,16 @@ transactionally; it cannot edit bytes in place without invalidating their hash.
     changes. Replacing content will:
 
     1. hash and durably publish the new bytes;
-    2. record the current blob hash, size, media type, node revision, and stable
-       content-version identity;
-    3. point the node at the new blob, update metadata, and bump its revision in
-       the same SQLite transaction.
+    2. create a stable content-version record for the new head, including its
+       blob hash, size, media type, and resulting node revision; and
+    3. point the node at that version, update metadata, and bump its revision in
+       the same SQLite transaction. The previous version record remains
+       unchanged.
+
+    Initial ingest likewise creates a stable first version and makes it the
+    node's current version. Reversion creates another new head/version identity
+    that may reference an older blob. Every current or historical head is
+    therefore addressable before it is ever displaced.
 
     Versions will be whole-content snapshots, not diffs. Identical bytes will
     still deduplicate, and a crash before the metadata transaction commits will
@@ -53,10 +59,10 @@ transactionally; it cannot edit bytes in place without invalidating their hash.
 
 ```mermaid
 flowchart LR
-    NODE["stable file node"] --> HEAD["current blob hash"]
-    NODE --> HISTORY["node_versions"]
+    NODE["stable file node"] -->|current_version_id| HEAD["current version"]
+    NODE --> HISTORY["all content versions"]
     HEAD --> CURRENT[("immutable current blob")]
-    HISTORY --> PRIOR[("immutable prior blobs")]
+    HISTORY --> BLOBS[("immutable content blobs")]
 ```
 
 ## Why blobs will not be edited in place

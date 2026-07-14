@@ -13,9 +13,12 @@ description: The planned indelible-history contract for protected directory scop
 
 Full audit is an opt-in promise for records whose history matters more than
 easy reclamation: tax documents, contracts, regulated work, or an external
-application's archival collection. It retains every authoritative change and
-every file version under a protected scope. Ordinary commands cannot prune,
-empty, garbage-collect, or otherwise erase that history.
+application's archival collection. Its enrollment baseline adopts every
+current node and every content version Docbank still retains, then it records
+every authoritative change and content version from that point forward.
+Ordinary commands cannot prune, empty, garbage-collect, or otherwise erase
+that protected history. Enrollment cannot reconstruct changes or versions
+that were already discarded before the baseline.
 
 This is deliberately stronger than an ordinary version-retention policy.
 Ordinary policy may eventually keep the newest *N* versions or discard old
@@ -28,7 +31,8 @@ Renaming or moving the directory therefore moves the scope with it. Enabling a
 scope runs as a daemon job behind the mutation gate and atomically records:
 
 - the scope and its initial chain state;
-- a baseline of the directory and every existing descendant; and
+- a baseline of the directory, every existing descendant, and every content
+  version Docbank still retains for those nodes; and
 - explicit membership for every node in that baseline.
 
 The policy is vault metadata, not `config.toml`. It therefore participates in
@@ -38,9 +42,10 @@ documents it protects.
 Membership is **sticky**. A member moved outside the directory remains audited;
 otherwise moving a file out, deleting it, and moving it back would be a purge
 escape. A file or subtree moved into an audited directory is enrolled with a
-baseline in the same transaction as the move. New children inherit every audit
-scope that protects their parent. Nested and overlapping scopes are allowed,
-and membership is additive rather than replacing an earlier promise.
+baseline that adopts all of its still-retained content versions in the same
+transaction as the move. New children inherit every audit scope that protects
+their parent. Nested and overlapping scopes are allowed, and membership is
+additive rather than replacing an earlier promise.
 
 An external application or pseudo-folder uses the same model: an integration
 projects its collection onto a stable Docbank directory/scope reference. The
@@ -71,10 +76,14 @@ but do not create document-history events.
 ### Content versions
 
 A document node remains the stable identity while its content pointer changes.
-Every changed head receives a stable content-version identity recording the
-blob hash, size, media type, time, and node revision that introduced it. The
-previous head remains an immutable version. Reverting creates a new head that
-references the chosen old bytes; it never removes the intervening history.
+Every head has a stable content-version identity recording the blob hash,
+size, media type, time, and node revision that introduced it. Initial ingest
+creates the first version and the node references it as its current version.
+Replacement and reversion each create a new version and atomically advance that
+reference; the previous head remains an immutable version. Enrollment adopts
+all existing version identities rather than assigning new ones. Reverting may
+reference the same bytes as an old version, but never removes the intervening
+history.
 
 Blob deduplication remains valid. Two versions or nodes may reference the same
 SHA-256 object, but they remain distinct historical facts. Re-submitting bytes
