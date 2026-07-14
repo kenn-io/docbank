@@ -67,7 +67,9 @@ A bare exclusion such as `.git` prunes that entry name wherever it occurs. A
 relative path such as `project/cache` prunes that path and its descendants
 within each supplied source. Exclusions do not use glob syntax. A pruned
 directory counts as one excluded entry because Docbank deliberately does not
-walk it to count hidden descendants.
+walk it to count hidden descendants. A trailing slash or leading `./` keeps a
+single-component rule path-shaped: `cache` matches that name anywhere, whereas
+`cache/` and `./cache` match only the source root's `cache` entry.
 
 ## Idempotency: safe to re-run
 

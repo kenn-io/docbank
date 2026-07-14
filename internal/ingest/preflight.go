@@ -93,12 +93,13 @@ func compileExclusions(values []string) (exclusions, error) {
 		if slices.Contains(strings.Split(converted, string(filepath.Separator)), "..") {
 			return exclusions{}, fmt.Errorf("exclude rule %q must not contain parent traversal", raw)
 		}
+		pathForm := strings.ContainsRune(converted, filepath.Separator)
 		clean := filepath.Clean(converted)
 		if clean == "." {
 			return exclusions{}, fmt.Errorf("exclude rule %q must name an entry within each source", raw)
 		}
 		rule := exclusionRule{}
-		if strings.ContainsRune(clean, filepath.Separator) {
+		if pathForm {
 			rule.path = clean
 		} else {
 			rule.name = clean

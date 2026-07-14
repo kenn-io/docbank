@@ -60,7 +60,9 @@ Exclusion rules are deliberately simple and shared by preflight and import. A
 bare entry name such as `.git` or `node_modules` matches at any depth. A path
 containing `/`, such as `project/cache`, matches that relative path and its
 descendants within every supplied source. Rules are not shell globs and must be
-relative; absolute paths and `..` escapes are rejected.
+relative; absolute paths and `..` escapes are rejected. Rule form is preserved:
+`cache` is a name at any depth, while `cache/` and `./cache` mean only the
+root-relative `cache` entry.
 
 Output is a one-line summary plus one stderr line per failed file:
 

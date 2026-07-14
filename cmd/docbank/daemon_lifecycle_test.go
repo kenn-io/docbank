@@ -149,6 +149,28 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	assert.Contains(t, out, "already running")
 	assert.Equal(t, oldPID, parsePID(t, out))
 
+	// A same-version daemon from before ingest preflight/exclusions existed
+	// must be replaced before the CLI issues the new request. Otherwise
+	// preflight returns 404 and a real ingest can silently ignore exclusions.
+	src := filepath.Join(t.TempDir(), "preflight.txt")
+	require.NoError(t, os.WriteFile(src, []byte("preview"), 0o600))
+	recs, err := client.RuntimeStore(dir).List()
+	require.NoError(t, err)
+	require.Len(t, recs, 1)
+	require.Equal(t, "8", recs[0].Metadata["protocol_version"])
+	recs[0].Metadata["protocol_version"] = "7"
+	_, err = client.RuntimeStore(dir).Write(recs[0])
+	require.NoError(t, err)
+
+	out, err = run(oldBin, "add", src, "--preflight")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "files: 1")
+	recs, err = client.RuntimeStore(dir).List()
+	require.NoError(t, err)
+	require.Len(t, recs, 1)
+	preflightPID := strconv.Itoa(recs[0].PID)
+	assert.NotEqual(t, oldPID, preflightPID)
+
 	// Initialize the repository before making the runtime record stale: the
 	// following backup create must replace that daemon before it calls the new
 	// progress-stream endpoint.
@@ -160,10 +182,10 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	// Simulate the immediately preceding same-version dev protocol. Data
 	// commands share daemon start's convergence path, so backup create must
 	// replace it instead of reaching the old daemon and failing with 404.
-	recs, err := client.RuntimeStore(dir).List()
+	recs, err = client.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
-	require.Equal(t, "7", recs[0].Metadata["protocol_version"])
+	require.Equal(t, "8", recs[0].Metadata["protocol_version"])
 	recs[0].Metadata["protocol_version"] = "4"
 	_, err = client.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
@@ -176,7 +198,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
 	protocolPID := strconv.Itoa(recs[0].PID)
-	assert.NotEqual(t, oldPID, protocolPID)
+	assert.NotEqual(t, preflightPID, protocolPID)
 
 	// A mismatched-version start stops the stale daemon and starts its own.
 	out, err = run(newBin, "daemon", "start")

@@ -329,6 +329,25 @@ func TestPreflightRejectsUnsafeExclusionRules(t *testing.T) {
 	}
 }
 
+func TestPreflightPreservesPathFormExclusions(t *testing.T) {
+	src := writeTree(t, map[string]string{
+		"cache/root.bin":           "root cache",
+		"project/cache/nested.bin": "nested cache",
+		"keep.bin":                 "keep",
+	})
+	for _, rule := range []string{"cache/", "./cache"} {
+		t.Run(rule, func(t *testing.T) {
+			report, err := Preflight(t.Context(), []string{src}, Options{Exclude: []string{rule}})
+			require.NoError(t, err)
+			assert.Equal(t, int64(2), report.Files,
+				"path-form rule must not become a basename match at every depth")
+			assert.Equal(t, int64(1), report.Excluded)
+			require.Len(t, report.Findings, 1)
+			assert.Equal(t, filepath.Join(src, "cache"), report.Findings[0].Path)
+		})
+	}
+}
+
 func TestAddMissingSourceIsReportedNotFatal(t *testing.T) {
 	ing := newTestIngester(t)
 	ctx := t.Context()
