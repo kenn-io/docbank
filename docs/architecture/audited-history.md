@@ -258,7 +258,16 @@ uses the format's absent-record sentinel, so tag deletion includes definition
 and assignment tombstones while rename, assignment, provenance addition, and
 supersession have unambiguous transitions. Metadata-format version 2 freezes
 the record-kind codes as `ingest`, `provenance`, `tag_assignment`, and
-`tag_definition`.
+`tag_definition`; a tag assignment's stable identity is `(tag_id, node_id)`.
+
+This is one simultaneous pre-state-to-post-state delta, not a lossy summary of
+an imperative edit sequence. A transaction may touch each attached-metadata
+identity at most once. Batch normalization rejects duplicate touches before
+writing, and database guards roll back a helper or direct statement sequence
+that touches the same identity again. Rename-away/rename-back and
+unassign/reassign in one transaction are therefore invalid rather than encoded
+as an unchanged record. An equal pre/post record is omitted and cannot claim an
+event.
 
 The allocation-lineage entry always commits the attached-metadata delta's count
 and digest or an explicit no-attached-metadata-change marker. When the operation
@@ -269,6 +278,30 @@ fan-out events and audited/no-audited mutation marker. Thus an unaudited tag
 change still advances independently verifiable authority, while an omitted
 unassign/reassign or rename-away/rename-back cannot hide behind an unchanged
 final projection.
+
+Fan-out is derived mechanically from that simultaneous transition:
+
+- a tag definition's absent-to-present, changed-name, and present-to-absent
+  transitions produce `tag_define`, `tag_rename`, and `tag_delete`; their
+  candidate nodes are the union of assignments to that tag in the pre- and
+  post-operation projections;
+- an assignment's absent-to-present or present-to-absent transition produces
+  `tag_assign` or `tag_unassign` for its node;
+- deleting a tag therefore records the definition tombstone and every cascading
+  assignment tombstone, producing both `tag_delete` and `tag_unassign` for each
+  pre-assigned audited member. Creating and assigning a tag in one transaction
+  similarly produces both `tag_define` and `tag_assign`; and
+- a new provenance fact produces `provenance_add`, or
+  `provenance_supersede` when it carries a supersession edge, for its attached
+  node. An ingest-record insertion alone has no scoped event; it becomes part of
+  an enrollment baseline or the referenced input to a provenance transition.
+
+For every candidate node, events fan out to each scope that protected it in the
+pre-operation membership projection. A scope acquired by that node in the same
+operation receives only its canonical post-operation baseline, never duplicate
+transition events. The complete event sort key keeps definition and assignment
+events distinct. These rules also govern combined rename/assignment operations,
+so neither SQL cascade order nor request order changes the audited effects.
 
 ### Guarded mutation closure
 
@@ -619,6 +652,17 @@ operation context whenever any scope exists. Commit-time validation proves the
 complete inherited membership and path-affecting descendant closure and matches
 every deleted node to its topology tombstone. A row need not already be audited
 for its write to be guarded.
+
+Once any audit scope exists, database guards likewise cover every insert,
+update, direct delete, and cascading delete of tag definitions, tag assignments,
+ingest records, and provenance records, whether or not the affected node is
+audited. Each changed identity must match exactly one record in the registered
+attached-metadata delta; a second touch, an unregistered change, or a cascade
+missing one of its assignment tombstones aborts the transaction. Commit-time
+validation replays the complete simultaneous delta, enforces immutable
+ingest/provenance rules, derives its audited fan-out, and compares the lineage,
+canonical mutation, events, and scope heads actually written. There is no
+unguarded SQL path for unaudited metadata after activation.
 
 ## Deletion and storage maintenance
 
