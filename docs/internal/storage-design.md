@@ -27,7 +27,11 @@ share a blob without sharing document identity.
     append-only history decide which node/version facts can never be removed by
     ordinary maintenance. That policy remains Docbank metadata rather than a
     Kit storage concern. Its definitive contract is
-    [Audited History](../architecture/audited-history.md).
+    [Audited History](../architecture/audited-history.md). A logical mutation,
+    its ordered history events, membership changes, and every affected scope
+    chain/count/head update commit in one SQLite transaction. Canonical order
+    comes from a vault-wide operation sequence plus deterministic per-operation
+    event ordinals, never incidental traversal order.
 
 ## Immutable content and mutable organization
 

@@ -145,6 +145,23 @@ nodes, memberships, current state, trash origins, and complete version records
 before accepting the chain. Baseline membership or version metadata therefore
 cannot change independently of the recorded scope head.
 
+The authoritative mutation and its audit effects are one SQLite transaction.
+Node state, content-version records, history events, membership changes, every
+affected scope-chain entry, and each scope's expected count/head either all
+commit or all roll back. Durable blob publication may precede that transaction;
+a rollback can leave only an unreferenced blob eligible for later GC, never a
+new document head without matching history.
+
+Every successful authoritative operation receives one monotonically increasing
+vault-wide operation-sequence number. Its node events are ordered by stable
+node ID; if one node needs more than one event, a documented event-kind ordinal
+breaks the tie. The canonical total order is therefore
+`(operation_sequence, event_ordinal)`, independent of filesystem walk, map
+iteration, or SQL query order. Each affected scope appends one chain entry that
+commits the operation's ordered event hashes and any enrollment-baseline
+digests. Interactive grouping uses the same operation identity and never
+changes this order.
+
 The guarantee is application-enforced and tamper-evident. It protects against
 ordinary Docbank commands, API clients, maintenance, software mistakes, and
 incomplete metadata restores. It cannot make bytes metaphysically indelible to

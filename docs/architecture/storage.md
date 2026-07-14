@@ -77,7 +77,9 @@ nodes_fts      -- FTS5 external-content index over live node names
     and the fields needed by [Audited History](audited-history.md). Audit
     scopes, sticky memberships, mutation records, and chain state will be
     current-schema metadata included in deterministic JSONL rather than
-    inferred from paths or pack layout.
+    inferred from paths or pack layout. A daemon-exclusive bootstrap will give
+    every existing file a stable initial version and `current_version_id`
+    before editing or audit capabilities become available.
 
 ## Invariants enforced in the schema
 
