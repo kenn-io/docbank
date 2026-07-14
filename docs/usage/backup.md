@@ -139,14 +139,18 @@ progress so stdout contains one typed report.
     reject legacy overwrite restore into a bootstrapped target. Enabling the
     first audit scope will extend that same v2 authority with audit scopes,
     sticky memberships, shared enrollment-baseline batches and digests,
-    mutation records, per-scope
-    chain heads, a complete vault-topology genesis snapshot, canonical
+    mutation records, per-scope chain heads, a complete vault-topology genesis
+    snapshot, canonical
     unknown-origin records, baseline ancestor-spine witness generations,
     witness-change lists, atomic topology deltas, net path-effect commitments, a
     stable vault ID, both allocator high-water marks, a vault-wide allocation
     lineage, and authoritative
     tag/provenance attachments with the tag and ingest records they reference.
-    Capture will include every protected historical blob. Verify and restore
+    Capture will include every protected historical blob. Snapshot metadata will
+    also include the vault-wide topology tombstones and tag/ingest/provenance
+    lineage needed for replay, including values from unaudited nodes; audit does
+    not retain those nodes' content bytes solely for that reason. Verify and
+    restore
     will recompute baseline digests from frozen enrollment records, replay and
     reconcile attached metadata, replay the vault topology from genesis, derive
     each enrollment's exact trash-origin closure, and derive each topology

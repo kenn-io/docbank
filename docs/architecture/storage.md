@@ -91,6 +91,10 @@ nodes_fts      -- FTS5 external-content index over live node names
     after committed authority is reverified. Recovery resumes or verifies that
     cutover while pre-bootstrap writers and legacy overwrite-restore paths stay
     blocked.
+    First audit activation uses an analogous synced `audit_pending` generation,
+    enrollment transaction, verified `audit_ready` publication, and locked
+    recovery path; pre-audit v2 binaries never observe a committed scope without
+    its fence.
     Audited trash origins will retain immutable parent IDs and names
     outside nullable live foreign-key semantics, so deleting an unaudited origin
     cannot rewrite protected history. The existing `trash_parent` becomes a

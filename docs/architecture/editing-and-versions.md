@@ -55,7 +55,10 @@ transactionally; it cannot edit bytes in place without invalidating their hash.
     stable vault ID used by future audit hashes. It also assigns canonical,
     non-reusable UUIDv4 identities to every retained legacy tag and ingest
     record; any existing integer IDs remain internal implementation keys rather
-    than portable identities. That version record is
+    than portable identities. It canonicalizes legacy provenance and
+    deterministically collapses identical duplicate facts before deriving their
+    v2 identities; distinct facts remain intact and the bootstrap report records
+    the collapsed count. That version record is
     explicitly a legacy baseline: it preserves the current hash, size, media
     type, node revision, and observed bootstrap time, but does not invent an
     original content-introduction time that the old schema never recorded. A
@@ -86,7 +89,7 @@ transactionally; it cannot edit bytes in place without invalidating their hash.
     generation again before exposing editing, export, backup, or restore.
 
     A crash before the pending generation is durable leaves no v2 authority. A
-    crash after it is durable leaves legacy access blocked. On the next open, an
+    crash after it is durable leaves legacy access blocked. On the next open, a
     v2-aware binary takes the exclusive vault lock and examines the database:
     a rolled-back pre-bootstrap database resumes the idempotent bootstrap from
     the beginning, while a committed complete v2 database is fully reverified

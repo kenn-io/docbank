@@ -122,16 +122,18 @@ inside the snapshot.
     tag identities plus every retained ingest record without audit genesis or
     lineage. Its live-store fence will reject legacy overwrite restore into a
     bootstrapped target. Enabling the first audit scope will extend that same v2
-    authority
-    with scopes, sticky memberships, shared enrollment-baseline batches and
-    digests, mutation records, a complete
-    vault-topology genesis snapshot, canonical unknown-origin records, baseline
+    authority with scopes, sticky memberships, shared enrollment-baseline
+    batches and digests, mutation records, a complete vault-topology genesis
+    snapshot, canonical unknown-origin records, baseline
     ancestor-spine witness generations, witness-change lists, atomic topology
     deltas, independently replayable net path-effect commitments, per-scope
     chain entries/heads, a stable vault ID, both allocator high-water marks, a
     vault-wide allocation lineage, and authoritative tag/provenance attachments
     with their referenced records.
-    Every protected historical blob becomes snapshot content. Import,
+    Every protected historical blob becomes snapshot content. Audit snapshots
+    also carry the vault-wide topology tombstones and tag/ingest/provenance
+    lineage required for replay, including metadata for unaudited nodes; this
+    does not by itself retain their content bytes. Import,
     verification, and restore must recompute baseline digests from immutable
     enrollment snapshots, replay the complete vault topology from its genesis,
     derive every enrollment's exact trash-origin closure, and derive every

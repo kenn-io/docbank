@@ -155,10 +155,13 @@ documents it protects.
 Because enrollment is irreversible, every enablement surface — CLI, API
 clients and agents, TUI, and web — requires the same two-step shape. Preview
 returns the baseline inventory, storage impact, unresolved trash origins, and
-a short-lived server-issued token bound to the scope ID, baseline digest, and
-vault preview generation. Enablement requires that token and fails if it is
-expired, belongs to another scope, or the baseline changed. A client therefore
-cannot bypass review by calling the execution operation directly.
+a **vault-wide metadata-retention disclosure** described below, plus a
+short-lived server-issued token bound to the scope ID, baseline digest, and
+vault preview generation. Enablement requires that token and an explicit
+acknowledgment of both the scope promise and vault-wide disclosure; it fails if
+the token is expired, belongs to another scope, or the baseline changed. A
+client therefore cannot bypass review by calling the execution operation
+directly.
 
 Preview tokens are one-use and held by the issuing daemon. Any intervening
 authoritative mutation or successful enablement advances the vault preview
@@ -394,6 +397,24 @@ only when replay derives no membership, baseline, attachment, witness, or
 scoped-event effect; omitting both a topology delta and its required audit
 effects is therefore not a valid encoding of an ancestor change.
 
+This replay authority has an intentional privacy and storage consequence that
+is broader than the enrolled scope. First activation snapshots the complete
+vault topology and authoritative attached metadata. Thereafter, lineage retains
+names, parentage, trash origins, deletion tombstones, tag definitions and
+assignments, and ingest/provenance values for every authoritative vault mutation,
+including unaudited nodes. Ordinary deletion does not remove those historical
+metadata values from JSONL exports or backups. Full audit does **not** retain an
+unaudited file's content bytes or versions solely for this reason, but its
+vault-wide metadata trail persists with the audit authority.
+
+Every enablement preview states this distinction in plain language and reports
+whether vault-wide lineage is newly activated or already active. On first
+activation it inventories the topology and attached-metadata genesis by record
+kind and estimated serialized bytes; confirmation explicitly accepts permanent
+metadata retention outside the selected scope. CLI/agent JSON exposes the same
+structured counts and acknowledgment requirement, and TUI/web clients may not
+hide it behind a generic confirmation dialog.
+
 An external application or pseudo-folder uses the same model: an integration
 projects its collection onto a stable Docbank directory/scope reference. The
 core schema remains application-neutral and never contains product-specific
@@ -463,6 +484,15 @@ Constraints require the target to exist on the same node, permit at most one
 direct successor, and reject cycles. Replay applies the supersession edge, and
 baseline hashing plus import preserve and validate the full graph and its active
 projection.
+
+Legacy v1 permits duplicate byte-for-byte provenance rows. Before assigning v2
+fact identities, bootstrap canonicalizes their fields and collapses each equal
+`(node_id, ingest_uuid, original_path, original_mtime)` group to one fact in
+deterministic tuple order. The derived stable identity belongs to that fact, not
+to a legacy SQLite row ID; duplicates are semantically the idempotent no-op that
+v2 enforces. Non-identical facts remain distinct. This normalization and the
+number of collapsed rows are part of the bootstrap report, and migration tests
+cover direct legacy stores plus v1 import streams containing duplicates.
 
 Re-adding a byte-for-byte identical canonical provenance fact is an idempotent
 no-op, not a duplicate row or event. Adding or superseding a fact on an audited
@@ -637,15 +667,35 @@ count/head—provide stronger independent evidence.
 ### Live-store downgrade fence
 
 Creating the first audit scope permanently raises the vault's required
-live-store feature level. The cutover uses an incompatible store/layout fence
-that makes every published pre-audit binary fail during store open, before it
-can serve reads, run maintenance, or create an incomplete backup. It also keeps
-audited authority outside legacy restore cleanup/publication paths, so an old
-`backup restore --overwrite` cannot replace it with a legacy database. A marker
-that an old binary can ignore is not sufficient. The release test matrix opens
-and attempts an overwrite restore against an audited fixture with each
-supported pre-audit binary and requires a clean refusal with no file or
-metadata changes.
+live-store feature level through a second crash-safe cutover. After revalidating
+the preview under the mutation gate and exclusive vault lock, Docbank durably
+publishes and parent-syncs a non-ignorable `audit_pending` layout generation
+containing the accepted scope ID, target node ID, baseline digest, and preview
+generation. This happens before beginning or committing the SQLite enrollment
+transaction, so every supported pre-audit v2 binary fails store open before any
+audit authority exists. Only an audit-aware recovery path can open the pending
+generation.
+
+The transaction creates topology and attached-metadata genesis, allocation
+lineage, the scope, baseline, memberships, and first chain entry atomically.
+After commit, Docbank reopens a pinned read snapshot, verifies the complete
+cross-bound authority, then atomically publishes and syncs `audit_ready` before
+serving any data, maintenance, export, backup, or restore operation. A crash
+before `audit_pending` is durable leaves ordinary v2 authority unchanged. After
+it is durable, legacy access stays blocked: recovery either finds no enrollment
+transaction, recomputes the still-frozen accepted baseline, and resumes it, or
+finds the complete committed transaction and revalidates it before publishing
+`audit_ready`. Any mismatch or partial authority is a hard recovery error. A
+non-crash transaction failure may return to `v2_ready` only after proving that
+no audit record committed and durably publishing that rollback; it then reports
+that enablement did not occur and requires a new preview.
+
+The audit-pending and ready layouts remain outside pre-audit restore cleanup and
+publication paths, so an old `backup restore --overwrite` cannot replace them
+with an editing-only or legacy database. A marker an old binary can ignore is
+not sufficient. The release test matrix exercises every pending/commit/ready
+crash boundary, then opens and attempts overwrite restore with each supported
+pre-audit binary and requires clean refusal with no file or metadata changes.
 
 The database also enforces the protection boundary independently of API
 routing. Constraints and write guards reject deletion or mutation of audited
@@ -902,8 +952,10 @@ download/open actions; richer format-aware comparison can be added later.
 
 Planned CLI concepts are `audit enable`, `audit status`, `audit history`,
 `audit verify`, and the general `versions` command. `audit enable` previews its
-baseline inventory and returns a server-issued preview token by default; a
-separate execution supplies that token because enrollment is permanent.
+baseline inventory plus structured vault-wide metadata-retention counts and
+returns a server-issued preview token by default; a separate execution supplies
+that token and the explicit disclosure acknowledgment because enrollment is
+permanent.
 Machine output uses stable scope, node, event, and version IDs and explicit
 protection state. `audit status --json` and `audit verify --json` include the
 complete evidence bundle rather than reporting only per-scope heads. The
@@ -933,9 +985,9 @@ The TUI is a focused operator browser with three coordinated panes:
 Selection in the tree drives the history pane; selecting an event or version
 drives detail. Scope and node views are switchable without losing the selected
 stable node. Filtering, comparison, external open, and chain verification are
-first-class actions. Policy enablement shows the dry-run baseline inventory
-and requires the separate explicit confirmation, backed by the preview token,
-that all surfaces share; exceptional destruction is absent.
+first-class actions. Policy enablement shows the dry-run baseline inventory and
+vault-wide metadata-retention disclosure, then requires the separate explicit
+confirmation backed by the preview token; exceptional destruction is absent.
 
 It can render concise text or metadata differences. Rich PDF, office, image,
 and binary comparison opens an external tool or directs the operator to the web
@@ -954,7 +1006,8 @@ while a history workspace supplies filters, compare selection, and an evidence
 drawer. A scope dashboard summarizes enrolled nodes, protected current and
 historical bytes, chain status, latest verification, and snapshots known to
 contain the scope. Enabling audit is a reviewed workflow: preview the baseline
-inventory and storage impact, name the scope, then confirm enrollment.
+inventory, storage impact, and vault-wide metadata-retention disclosure; name
+the scope; then acknowledge both retention boundaries and confirm enrollment.
 The confirmation consumes the server-issued preview token and must refresh the
 inventory if relevant vault state changed.
 

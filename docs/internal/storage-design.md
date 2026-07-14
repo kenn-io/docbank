@@ -47,6 +47,9 @@ share a blob without sharing document identity.
     cannot reuse or retarget an old agent-visible version reference.
     The same metadata-v2 bootstrap assigns non-reusable UUIDv4 identities to
     retained legacy tag and ingest records and creates the stable vault ID.
+    Identical legacy provenance duplicates are canonicalized and collapsed
+    before their field-derived v2 identities are assigned; distinct facts remain
+    intact, and migration fixtures cover duplicates from stores and v1 imports.
     Zero-scope v2 is the portable editing/version form and contains no audit
     genesis or lineage; enabling the first scope later adds those authorities
     from the current v2 projection. Bootstrap activates a non-ignorable
@@ -104,11 +107,16 @@ share a blob without sharing document identity.
     without mutating the audited node's chain state. The nullable `trash_parent`
     locator is explicitly non-authoritative and excluded from hashes,
     final-state reconciliation, and guards; the immutable origin record is
-    authoritative. Enabling the first scope also activates a non-ignorable
-    live-store compatibility fence and database write guards; pre-audit binaries
-    must fail store open rather than bypass history through legacy mutation, GC,
-    or backup paths. The audited layout also stays outside legacy restore
-    publication paths. The planned audited restore workflow inspects an existing
+    authoritative. Enabling the first scope first syncs an `audit_pending`
+    layout generation, commits and revalidates enrollment, then syncs
+    `audit_ready`; recovery resumes a rolled-back enrollment or verifies a
+    committed one while pre-audit binaries remain fenced. Database write guards
+    prevent bypass through legacy mutation, GC, or backup paths, and the audited
+    layouts stay outside legacy restore publication paths. The enable preview
+    separately discloses that scope-specific content protection activates
+    vault-wide retention of topology tombstones and authoritative tag,
+    ingest, and provenance metadata for replay. The planned audited restore
+    workflow inspects an existing
     target under its hierarchy lock and accepts overwrite only when the
     snapshot's stable vault ID, scope-chain prefixes, and allocation-lineage
     prefix preserve every promise and consumed identity. High-water comparison
