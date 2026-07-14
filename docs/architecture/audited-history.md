@@ -217,6 +217,20 @@ commits the operation's ordered event hashes and any enrollment-baseline
 digests. Interactive grouping uses the same operation identity and never
 changes this order.
 
+Enabling the first scope also creates a vault-wide allocation-lineage genesis
+that commits a cryptographically random 128-bit lineage ID and the existing
+node-ID and operation-sequence allocator high-water marks. Copies that enable
+audit independently therefore start different lineages even when they inherited
+the same vault ID and allocator state. Thereafter every authoritative operation,
+audited or not, appends one allocation-lineage entry in the same transaction. An
+entry commits its previous lineage head, operation sequence, a cryptographically
+random 128-bit operation ID, the ordered node IDs allocated by the operation,
+and both resulting allocator high-water marks. The random operation ID is
+generated once for that transaction and makes independently mutated copies
+diverge even when they consume the same numeric IDs in the same sequence
+position. The lineage records allocation identity and ancestry, not the
+unaudited operation's document contents.
+
 The guarantee is application-enforced and tamper-evident. It protects against
 ordinary Docbank commands, API clients, maintenance, software mistakes, and
 incomplete metadata restores. It cannot make bytes metaphysically indelible to
@@ -283,7 +297,8 @@ format will be versioned to include:
 
 - audit scopes and their expected chain count/head;
 - the stable vault ID used to domain-separate audit hashes;
-- the vault-wide operation-sequence allocator high-water mark;
+- the node-ID and operation-sequence allocator high-water marks;
+- the vault-wide allocation-lineage genesis, entries, count, and head;
 - sticky node memberships and enrollment baselines;
 - immutable audited trash-origin parent IDs and names;
 - canonical mutation records and per-scope chain entries; and
@@ -298,11 +313,16 @@ audit records, internally missing or reordered events, altered baseline state,
 dangling versions, or inconsistent heads fail the import; they never produce a
 current-tree-only restore.
 
-The imported operation-sequence high-water mark must be at least the greatest
-exported event sequence. It may be higher because unaudited operations also
-consume sequence numbers. Import restores that allocator state in the same
-transaction as metadata authority, and the next operation receives a strictly
-greater number; gaps are preserved rather than reused.
+Import verifies the allocation lineage from its vault-specific genesis through
+its declared count/head. Each entry's operation sequence must advance from the
+previous tail, its node-ID high-water mark may only stay equal or increase, and
+every allocated node ID must agree with that node-allocator transition. The
+verified tail—genesis when it has no later entry—must agree with both exported
+high-water marks. The operation-sequence high-water mark may exceed the greatest
+audit event sequence because unaudited operations still append lineage entries.
+Import restores both allocators and their lineage in the same transaction as
+metadata authority; the next operation advances from that exact tail rather
+than reusing a gap.
 
 A fresh import with no trusted reference cannot distinguish a coherently
 rewritten and re-chained stream from an original one. Downgrade or rollback is
@@ -321,26 +341,30 @@ loose and packed source vaults.
 
 Normal overwrite restore is forward-only for an existing audited target. While
 holding the target hierarchy lock and before cleanup, restore reads the target's
-vault ID, verified scope heads, node-ID allocation high-water mark, and
-operation-sequence allocation high-water mark. The selected snapshot must carry
-the same vault ID and, for every existing scope, prove that the chain at the
-existing entry count has exactly the existing head; its final count may be equal
-or greater. A missing scope, shorter chain, divergent prefix, pre-audit snapshot,
-or different vault ID is rejected with `audit_protected` before publication.
+vault ID, verified scope heads, and verified allocation-lineage count/head. The
+selected snapshot must carry the same vault ID and, for every existing scope,
+prove that the chain at the existing entry count has exactly the existing head;
+its final count may be equal or greater. It must make the same prefix proof for
+the target's allocation lineage. The snapshot's final allocator high-water
+marks must equal its verified lineage tail and cannot be lower than the target's.
+A missing scope, shorter chain, divergent audit or allocation-lineage prefix,
+pre-audit snapshot, or different vault ID is rejected with `audit_protected`
+before publication.
 
-Scope heads alone do not capture allocation consumed by unaudited operations.
-When an overwrite is otherwise admissible, the staged database seeds each
-allocator to the greater of the locked target's and selected snapshot's recorded
-high-water marks. Publication therefore cannot move either allocator backward,
-even when post-snapshot unaudited nodes were created and deleted or unaudited
-operations left gaps in the operation sequence. The next allocated node ID and
-operation sequence are strictly greater than those preserved maxima.
+High-water comparison alone is deliberately insufficient. Copies restored from
+one snapshot share a vault ID and may independently consume the same numeric
+node IDs and operation sequences; their random operation IDs produce different
+lineage heads at the first mutation. Neither copy can then overwrite the other
+through the normal restore command, even if every scope head still matches.
+One branch may overwrite another only when the target's complete allocation
+lineage is an exact prefix of the snapshot's lineage, proving that every target
+allocation has the same ancestry and meaning in the incoming store.
 
-An older or unrelated snapshot may still be inspected or restored to a fresh
-directory because that does not erase an existing promise. Replacing an audited
-target with anything that does not preserve or extend all of its chains belongs
-only to the exceptional recovery workflow. The ordinary overwrite form of
-`docbank backup restore` rejects it.
+An older, unrelated, or divergent snapshot may still be inspected or restored
+to a fresh directory because that does not erase an existing promise. Replacing
+an audited target with anything that does not preserve or extend all of its
+audit and allocation lineages belongs only to the exceptional recovery
+workflow. The ordinary overwrite form of `docbank backup restore` rejects it.
 
 ## One history model, several clients
 

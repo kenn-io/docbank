@@ -32,8 +32,11 @@ share a blob without sharing document identity.
     chain/count/head update commit in one SQLite transaction. Canonical order
     comes from a vault-wide operation sequence plus deterministic per-operation
     event ordinals, never incidental traversal order. JSONL preserves the
-    allocator high-water mark—including gaps from unaudited operations—and
-    import restores it transactionally before any new operation can run.
+    allocator high-water marks and a vault-wide allocation lineage that every
+    authoritative operation appends with a random operation ID. Import verifies
+    and restores that authority transactionally before any new operation can
+    run; independently mutated copies therefore have distinguishable ancestry
+    even when they consume the same numeric IDs.
     Audited trash-origin coordinates are immutable metadata rather than a
     nullable live foreign-key relationship; an unaudited origin can disappear
     without mutating the audited node's chain state. The nullable `trash_parent`
@@ -45,11 +48,10 @@ share a blob without sharing document identity.
     or backup paths. The audited layout also stays outside legacy restore
     publication paths. The planned audited restore workflow inspects an existing
     target under its hierarchy lock and accepts overwrite only when the
-    snapshot's stable vault ID and scope-chain prefixes preserve every promise.
-    It also carries the locked target's node-ID and operation-sequence allocator
-    high-water marks into the staged database by taking the maximum of target
-    and snapshot values; chain equality cannot permit allocator rollback after
-    unaudited activity.
+    snapshot's stable vault ID, scope-chain prefixes, and allocation-lineage
+    prefix preserve every promise and consumed identity. High-water comparison
+    alone is not proof: divergent copies are rejected even when their counters
+    happen to match.
 
 ## Immutable content and mutable organization
 

@@ -133,24 +133,23 @@ progress so stdout contains one typed report.
 !!! info "Planned — audited-history fidelity"
     The portable JSONL format will carry audit scopes, sticky memberships,
     canonical enrollment baselines and digests, mutation records, per-scope
-    chain heads, a stable vault ID, the operation-sequence allocator high-water
-    mark, and stable content versions. Capture will include every protected
-    historical blob. Verify and restore will recompute baseline digests from
-    frozen enrollment records, verify later mutations separately, restore the
-    allocator above its recorded high water, and reject internally missing,
-    reordered, truncated, or hash-invalid audit history rather than restoring
-    only the current tree. Rollback detection additionally requires a trusted
-    prior count/head; a fresh import cannot identify a coherently rewritten
-    chain.
+    chain heads, a stable vault ID, both allocator high-water marks, a
+    vault-wide allocation lineage, and stable content versions. Capture will
+    include every protected historical blob. Verify and restore will recompute
+    baseline digests from frozen enrollment records, verify later mutations and
+    allocation lineage separately, restore the allocators at the verified
+    lineage tail, and reject internally missing, reordered, truncated, or
+    hash-invalid authority rather than restoring only the current tree.
+    Rollback detection additionally requires a trusted prior count/head; a
+    fresh import cannot identify a coherently rewritten chain.
 
     Overwriting an existing audited target is forward-only: under the target
     lock, the snapshot must prove the same vault ID and preserve or extend every
-    existing scope chain. Older, pre-audit, divergent, or unrelated snapshots
-    can restore to a fresh directory but cannot replace the audited target
-    through the normal command. An accepted overwrite preserves the greater of
-    the target and snapshot node-ID and operation-sequence allocator high-water
-    marks, so unaudited activity after capture cannot cause IDs or sequence
-    numbers to be reused. See the
+    existing scope chain and the vault-wide allocation lineage. Independently
+    mutated copies diverge in that lineage even when they consume the same node
+    IDs or operation sequences. Older, pre-audit, divergent, or unrelated
+    snapshots can restore to a fresh directory but cannot replace the audited
+    target through the normal command. See the
     [Audited History](../architecture/audited-history.md) contract.
 
 ## Restore and prove a snapshot

@@ -117,26 +117,25 @@ inside the snapshot.
 !!! info "Planned — audited-history authority"
     Full audit will extend the deterministic JSONL with scopes, sticky
     memberships, canonical enrollment baselines and digests, mutation records,
-    per-scope chain entries/heads, a stable vault ID, the operation-sequence
-    allocator high-water mark, and stable content versions. Every protected
-    historical blob becomes snapshot content. Import, verification, and restore
-    must recompute baseline digests from immutable enrollment snapshots, verify
-    later mutations separately, restore the allocator above its recorded high
-    water, and reject an internally missing, malformed, reordered, truncated,
-    or hash-inconsistent audit stream before publishing the database. Rollback
-    is detectable only against an expected count/head from a trusted prior
-    snapshot or external record; a fresh import cannot detect a coherently
-    rewritten chain.
+    per-scope chain entries/heads, a stable vault ID, both allocator high-water
+    marks, a vault-wide allocation lineage, and stable content versions. Every
+    protected historical blob becomes snapshot content. Import, verification,
+    and restore must recompute baseline digests from immutable enrollment
+    snapshots, verify later mutations and allocation lineage separately,
+    restore the allocators at the verified lineage tail, and reject an
+    internally missing, malformed, reordered, truncated, or hash-inconsistent
+    stream before publishing the database. Rollback is detectable only against
+    an expected count/head from a trusted prior snapshot or external record; a
+    fresh import cannot detect a coherently rewritten chain.
 
     Before overwriting an existing audited target, restore inspects it under
     the target lock. The snapshot must have the same vault ID and prove every
-    existing scope head as a chain prefix at the existing count; missing,
-    shorter, divergent, pre-audit, or unrelated history is refused before
-    cleanup. Restore also reads the target's node-ID and operation-sequence
-    allocator high-water marks before cleanup and seeds the staged database
-    with the greater of each target and snapshot value, so unaudited activity
-    cannot make an otherwise admissible overwrite reuse an identity. The
-    complete contract is in
+    existing scope head and the vault-wide allocation-lineage head as prefixes
+    at their existing counts; missing, shorter, divergent, pre-audit, or
+    unrelated history is refused before cleanup. Because every authoritative
+    operation carries a random operation ID in that lineage, independently
+    mutated copies cannot pass merely by consuming equal numeric allocator
+    values. The complete contract is in
     [Audited History](audited-history.md).
 
 ## Boundary with packed storage
