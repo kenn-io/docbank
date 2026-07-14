@@ -147,7 +147,10 @@ progress so stdout contains one typed report.
     lock, the snapshot must prove the same vault ID and preserve or extend every
     existing scope chain. Older, pre-audit, divergent, or unrelated snapshots
     can restore to a fresh directory but cannot replace the audited target
-    through the normal command. See the
+    through the normal command. An accepted overwrite preserves the greater of
+    the target and snapshot node-ID and operation-sequence allocator high-water
+    marks, so unaudited activity after capture cannot cause IDs or sequence
+    numbers to be reused. See the
     [Audited History](../architecture/audited-history.md) contract.
 
 ## Restore and prove a snapshot

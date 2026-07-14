@@ -132,7 +132,11 @@ inside the snapshot.
     the target lock. The snapshot must have the same vault ID and prove every
     existing scope head as a chain prefix at the existing count; missing,
     shorter, divergent, pre-audit, or unrelated history is refused before
-    cleanup. The complete contract is in
+    cleanup. Restore also reads the target's node-ID and operation-sequence
+    allocator high-water marks before cleanup and seeds the staged database
+    with the greater of each target and snapshot value, so unaudited activity
+    cannot make an otherwise admissible overwrite reuse an identity. The
+    complete contract is in
     [Audited History](audited-history.md).
 
 ## Boundary with packed storage

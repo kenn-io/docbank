@@ -46,6 +46,10 @@ share a blob without sharing document identity.
     publication paths. The planned audited restore workflow inspects an existing
     target under its hierarchy lock and accepts overwrite only when the
     snapshot's stable vault ID and scope-chain prefixes preserve every promise.
+    It also carries the locked target's node-ID and operation-sequence allocator
+    high-water marks into the staged database by taking the maximum of target
+    and snapshot values; chain equality cannot permit allocator rollback after
+    unaudited activity.
 
 ## Immutable content and mutable organization
 

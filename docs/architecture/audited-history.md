@@ -321,11 +321,20 @@ loose and packed source vaults.
 
 Normal overwrite restore is forward-only for an existing audited target. While
 holding the target hierarchy lock and before cleanup, restore reads the target's
-vault ID and verified scope heads. The selected snapshot must carry the same
-vault ID and, for every existing scope, prove that the chain at the existing
-entry count has exactly the existing head; its final count may be equal or
-greater. A missing scope, shorter chain, divergent prefix, pre-audit snapshot,
+vault ID, verified scope heads, node-ID allocation high-water mark, and
+operation-sequence allocation high-water mark. The selected snapshot must carry
+the same vault ID and, for every existing scope, prove that the chain at the
+existing entry count has exactly the existing head; its final count may be equal
+or greater. A missing scope, shorter chain, divergent prefix, pre-audit snapshot,
 or different vault ID is rejected with `audit_protected` before publication.
+
+Scope heads alone do not capture allocation consumed by unaudited operations.
+When an overwrite is otherwise admissible, the staged database seeds each
+allocator to the greater of the locked target's and selected snapshot's recorded
+high-water marks. Publication therefore cannot move either allocator backward,
+even when post-snapshot unaudited nodes were created and deleted or unaudited
+operations left gaps in the operation sequence. The next allocated node ID and
+operation sequence are strictly greater than those preserved maxima.
 
 An older or unrelated snapshot may still be inspected or restored to a fresh
 directory because that does not erase an existing promise. Replacing an audited
