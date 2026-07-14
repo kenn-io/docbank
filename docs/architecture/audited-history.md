@@ -247,6 +247,29 @@ ASCII tokens `create` and `retire`; unknown codes are rejected. A later witness
 generation can therefore neither be altered nor inserted after the fact without
 changing both chains.
 
+Authoritative attached metadata has the same replay boundary. Enabling the
+first scope records a vault-wide, canonically sorted genesis projection of every
+tag definition and assignment plus every ingest and provenance record. Its
+record count and digest are committed by allocation-lineage genesis. Every
+later transaction that changes that authority records one canonical
+**attached-metadata delta** containing the complete pre/post record for each
+changed entity, sorted by `(record_kind_code, stable_identity)`. A missing side
+uses the format's absent-record sentinel, so tag deletion includes definition
+and assignment tombstones while rename, assignment, provenance addition, and
+supersession have unambiguous transitions. Metadata-format version 2 freezes
+the record-kind codes as `ingest`, `provenance`, `tag_assignment`, and
+`tag_definition`.
+
+The allocation-lineage entry always commits the attached-metadata delta's count
+and digest or an explicit no-attached-metadata-change marker. When the operation
+has audited effects, its canonical mutation commits the identical count and
+digest. Import replays the delta from the genesis projection, derives the exact
+memberships and scopes affected by each transition, and requires the resulting
+fan-out events and audited/no-audited mutation marker. Thus an unaudited tag
+change still advances independently verifiable authority, while an omitted
+unassign/reassign or rename-away/rename-back cannot hide behind an unchanged
+final projection.
+
 ### Guarded mutation closure
 
 Once audit is enabled, inserting or deleting a node or changing any node's
@@ -277,6 +300,14 @@ expected-effect set before it changes topology:
   describe exactly that same descendant-event set; and
 - the canonical mutation, allocation-lineage entry, affected scope entries, and
   resulting count/heads must cover exactly those expected effects.
+
+Tag, assignment, ingest, and provenance statements use the same guarded audit
+context after activation. Before commit, their exact canonical
+attached-metadata delta is compared with the rows changed by the transaction;
+the replayed pre-state must match, immutable-record rules must hold, and the
+derived affected audited members must match the emitted fan-out events and
+mutation marker. A helper cannot omit an audited tag event merely because a
+later change restores the same tag projection.
 
 Database write guards reject the topology statement unless its transaction has
 registered an audit operation context. Before commit, the shared mutation path
@@ -431,7 +462,7 @@ Each audited authoritative operation has exactly one canonical mutation record.
 Its hash includes the stable vault ID, operation sequence, random operation ID,
 ordered node events, every sorted enrollment-baseline binding, and any canonical
 operation-level topology delta, net path-effect count/digest, and witness-change
-count/digest. Each affected
+count/digest and attached-metadata-delta count/digest. Each affected
 audit scope appends a chain entry containing that mutation hash and its previous
 chain head; the scope authority records the expected entry count and current
 head. This lets verification and import detect changed, reordered, duplicated,
@@ -508,12 +539,14 @@ while verification continues to check each transaction independently.
 Enabling the first scope also creates a vault-wide allocation-lineage genesis
 that commits a cryptographically random 128-bit lineage ID and the existing
 node-ID and operation-sequence allocator high-water marks immediately before
-enrollment. The genesis also commits the count and digest of a complete,
+enrollment. The genesis also commits separate counts and digests for a complete,
 canonically sorted topology snapshot containing every extant node's stable ID,
-parent, name, live/trash state, and available or unknown trash-origin record.
-JSONL carries every genesis record, and import recomputes the count and digest
-before deriving the first enrollment. This vault-wide authority—not a batch's
-claimed member list—establishes which detached roots existed at the cutover.
+parent, name, live/trash state, and available or unknown trash-origin record,
+and for the complete attached-metadata projection defined above. JSONL carries
+every genesis record, and import recomputes both digests before deriving the
+first enrollment. This vault-wide authority—not a batch's claimed member or
+attachment list—establishes which detached roots and authoritative metadata
+existed at the cutover.
 For every detached root, genesis freezes its available origin edge as
 last-known topology. A later operational `trash_parent` locator clear remains
 non-authoritative: it creates no delta and does not alter the replay projection.
@@ -533,7 +566,9 @@ its previous lineage head, operation sequence, a cryptographically random
 resulting allocator high-water marks, either that operation's canonical
 mutation hash or an explicit no-audited-mutation marker, and either its
 topology-delta digest or an explicit no-topology-mutation marker, plus either its
-witness-change count/digest or an explicit no-witness-change marker. Every JSONL
+witness-change count/digest or an explicit no-witness-change marker, and either
+its attached-metadata-delta count/digest or an explicit
+no-attached-metadata-change marker. Every JSONL
 topology delta resolves to exactly one lineage entry with the same operation ID
 and digest; an entry for a topology-changing transaction cannot carry the
 no-topology marker. Every witness-change list likewise resolves to its lineage
@@ -542,8 +577,9 @@ that mutation hash. The random operation ID is generated once for that
 transaction and is the same value hashed into the canonical mutation. It makes
 independently mutated copies diverge even when they consume the same numeric IDs
 in the same sequence position. The lineage records allocation identity,
-ancestry, and replayable topology facts required by audit verification, not an
-unaudited operation's document contents.
+ancestry, replayable topology facts, and authoritative attached-metadata
+transitions required by audit verification, not an unaudited operation's file
+content.
 
 The guarantee is application-enforced and tamper-evident. It protects against
 ordinary Docbank commands, API clients, maintenance, software mistakes, and
@@ -622,13 +658,14 @@ cannot contain audit records. Version 2 includes:
 - audit scopes and their expected chain count/head;
 - the stable vault ID used to domain-separate audit hashes;
 - the node-ID and operation-sequence allocator high-water marks;
-- the vault-wide allocation-lineage genesis, complete topology-genesis snapshot
-  and digest, entries, count, and head;
+- the vault-wide allocation-lineage genesis, complete topology-genesis and
+  attached-metadata-genesis snapshots with their digests, entries, count, and
+  head;
 - sticky node memberships, shared enrollment-baseline batches, and each
   membership's immutable batch reference;
 - baseline ancestor-spine witness generations, later witness-change lists,
-  atomic topology deltas, and their canonical net path-effect lists, counts,
-  and digests;
+  atomic topology deltas, attached-metadata deltas, and their canonical net
+  path-effect lists, counts, and digests;
 - immutable audited trash-origin parent IDs and names, including canonical
   unknown-origin records;
 - authoritative tag definitions and assignments, provenance records, and their
@@ -655,8 +692,10 @@ Audited mutation history that updates or deletes an ingest/provenance fact is
 invalid, as is a current audited provenance fact whose referenced ingest record
 is missing.
 
-Import builds the vault-wide topology projection from the digested genesis
-snapshot, then derives active path witnesses from baseline records. Before
+Import builds the vault-wide topology projection from its digested genesis
+snapshot and the complete attached-metadata projection from its independently
+digested genesis snapshot, then derives active path witnesses from baseline
+records. Before
 applying each later atomic topology delta, it derives the complete affected
 member set, old/new paths, and witness changes from the prior projections;
 verifies the claimed canonical lists, counts, digests, and scoped events; and
@@ -664,6 +703,14 @@ only then installs the post-state. It rejects missing dependency witnesses,
 impossible pre-states, duplicate changed-node records, extra or omitted members,
 and final replayed topology or active witnesses that differ from current node
 and immutable trash-origin state.
+
+At each operation, import also applies the canonical attached-metadata delta to
+the prior replayed projection. It rejects an impossible pre-state, missing or
+extra changed record, mutable provenance/ingest record, non-canonical
+tombstone, or final tag, assignment, provenance, or ingest projection that
+differs from current authority. From that verified transition and the replayed
+memberships it derives the exact scoped fan-out events and whether a canonical
+audited mutation is required.
 
 Unknown audit records, internally missing or reordered events, altered baseline
 state, dangling versions or attachments, or inconsistent heads fail the import;
@@ -689,9 +736,13 @@ marker is valid only when no topology delta exists for that operation. Every
 witness-change list must match the allocation entry's count/digest and, when a
 canonical mutation exists, the identical mutation-hash input; the no-witness
 marker is valid only for an empty derived list. Replay must agree with the
-entry's audited/no-audited marker. Every affected scope-chain entry must commit
-that same mutation hash. Mixing a valid scope history from one branch with a
-valid allocation lineage from another therefore fails before publication.
+entry's audited/no-audited marker. Every attached-metadata delta must likewise
+match the lineage entry's count/digest and, for an audited operation, the
+identical canonical-mutation input; the no-change marker is valid only when no
+authoritative attached-metadata record changed. Every affected scope-chain
+entry must commit that same mutation hash. Mixing a valid scope history from one
+branch with a valid allocation lineage from another therefore fails before
+publication.
 
 A fresh import with no trusted reference cannot distinguish a coherently
 rewritten and re-chained stream from an original one. Downgrade or rollback is
