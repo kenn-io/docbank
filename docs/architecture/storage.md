@@ -100,9 +100,11 @@ nodes_fts      -- FTS5 external-content index over live node names
     subtree target, and operation. Every newly acquired membership references
     exactly one batch; existing memberships are never re-baselined. Baselines
     also preserve the minimal ancestor-spine topology needed to derive audited
-    paths. Later topology mutations commit causal pre/post records and canonical
-    path-effect sets that import derives from the previous replayed projection
-    before accepting their descendant events.
+    paths, a complete detached-root origin census for deriving the exact adopted
+    closure, and a canonical unknown-origin record for root-scope legacy trash.
+    Later multi-change topology mutations commit one atomic sorted delta and a
+    canonical net path-effect set that import derives from the previous replayed
+    projection before accepting descendant events.
 
 ## Invariants enforced in the schema
 

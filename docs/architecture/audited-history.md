@@ -59,11 +59,13 @@ frozen batch records.
 The batch also captures the minimal **path-topology projection** needed to
 derive every adopted member's canonical path at that boundary. It contains a
 deduplicated, canonically ordered topology record for each member and every
-ancestor on its live or immutable trash-origin spine to the vault root: stable
-node ID, parent ID, name, and live, trash, or tombstone state. These witness
-records participate in the batch digest. Witnessing an unaudited ancestor does
-not enroll it, protect its content, or give it history of its own; it preserves
-only the historical topology on which an audited member's path depends.
+ancestor on its live or immutable trash-origin spine: stable node ID, parent ID,
+name, and live, trash, or tombstone state. A known spine ends at the vault root;
+the unknown-origin representation defined below ends at its domain-separated
+sentinel. These witness records participate in the batch digest. Witnessing an
+unaudited ancestor does not enroll it, protect its content, or give it history
+of its own; it preserves only the historical topology on which an audited
+member's path depends.
 
 Baseline cardinality is **one shared baseline batch per
 `(scope_id, enrollment_target_node_id, operation_id)`**, not one baseline per
@@ -88,9 +90,11 @@ restored copy remains recognizably the same logical vault even when published
 at another filesystem location.
 
 Trash is detached from the live tree, so current parentage alone is not enough.
-Enrollment follows stable `trash_parent` origin IDs, including through another
-trash root adopted by the same baseline batch. This closes the escape where a
-file is trashed immediately before its directory is enrolled and then emptied.
+Enrollment follows every available recorded `trash_parent` origin ID, including
+through another trash root adopted by the same baseline batch. Adoption freezes
+those coordinates as immutable audit origin records. This closes the escape
+where a file is trashed immediately before its directory is enrolled and then
+emptied.
 If earlier permanent deletion already erased the origin ancestry, Docbank cannot
 infer that the remaining trash once belonged to the scope; the preview reports
 the unresolved trash root without claiming it as a member.
@@ -101,16 +105,32 @@ and retained version even when its recorded origin ancestry is missing. Root
 enrollment therefore has no unresolved trash that remains eligible for later
 emptying.
 
-Once a node is audited, its trash event also persists immutable origin parent
-ID and name as audit metadata independent of the operational `trash_parent`
-foreign key. Node IDs are never reused. `trash_parent` is a non-authoritative,
+An adopted legacy trash root with lost ancestry receives one canonical
+**unknown-origin** record. Its hash encoding is a fixed domain tag, the trash
+root's stable node ID, an absent-parent sentinel, and an explicit
+present/absent bit plus the retained origin-name bytes. It is never silently
+replaced with a guessed parent. Replay gives it the non-resolving canonical
+history path `@trash/unknown/<node-id>` and appends descendant names beneath
+that path; user interfaces may show the retained origin name as a label but
+must not present it as a recovered location. Restore places it at `/` using the
+retained name, or deterministic `restored-<node-id>` when no name survived,
+subject to the ordinary sibling-collision rules. JSONL preserves this record
+verbatim. Non-root enrollment cannot infer membership from an unknown origin,
+so those roots remain explicitly unresolved in its preview; root enrollment
+adopts them all under this representation.
+
+Once a node is audited, its trash event also persists immutable audit origin
+metadata independent of the operational `trash_parent` foreign key: normally a
+known parent ID and name, or the explicit unknown-origin record for adopted
+legacy trash. Node IDs are never reused. `trash_parent` is a non-authoritative,
 repairable locator: it is excluded from canonical event/baseline hashes, final
-state reconciliation, and audit write guards. When non-null it must resolve to
-the immutable origin ID; null is valid after that parent disappears. Deleting
-an unaudited origin directory may therefore clear the locator without rewriting
-the protected origin coordinates, baseline digest, or chain. Restore tries the
-immutable parent ID and falls back to `/` when that node no longer exists,
-while history continues to show the original intended location.
+state reconciliation, and audit write guards. For a known origin, a non-null
+locator must resolve to the immutable origin ID; null is valid after that parent
+disappears. Deleting an unaudited origin directory may therefore clear the
+locator without rewriting the protected origin coordinates, baseline digest,
+or chain. Restore tries a known immutable parent ID and falls back to `/` when
+that node no longer exists, while history continues to show the original
+intended location. Unknown origins use the explicit behavior above.
 
 The policy is vault metadata, not `config.toml`. It therefore participates in
 the same transactional authority, JSONL export, backup, and restore as the
@@ -164,20 +184,29 @@ order without omitting or double-applying the mutation.
 Path history follows a **path-affecting closure**, not only directly mutated
 members. Renaming, moving, trashing, or restoring any directory finds every
 audited descendant whose derived path changes, even when the directory itself
-is unaudited. The same metadata transaction emits a scoped event for each such
-descendant with the old path, new path, and causal ancestor ID. Those events use
-the operation's complete canonical event ordering, so a large ancestor move
-produces the same chain on every platform.
+is unaudited. The same metadata transaction emits one scoped **net path event**
+for each affected `(scope_id, member_node_id)`, containing the old path, new
+path, and the operation-level topology-delta digest. A member affected by
+several nested moves therefore receives one net event, not colliding per-cause
+events.
 
-The path-topology projection evolves with those operations. Moving a protected
+Every transaction represents all of its topology changes as one canonical
+operation-level delta. The delta contains the complete pre/post record for each
+directly changed node and is sorted by stable node ID and canonical field bytes.
+Duplicate changes to one node and a cyclic or otherwise invalid final graph are
+rejected. Sorting defines encoding, not execution order: `POST /batch/move` and
+other multi-change operations are evaluated from one pre-state to one final
+post-state and replay installs the delta atomically. Nested moves are therefore
+unambiguous and independent of request, map, or traversal order.
+
+The path-topology projection evolves with that delta. Moving a protected
 subtree beneath a previously unwitnessed unaudited ancestry first records the
-new ancestor-spine records needed by replay. Each path-affecting mutation then
-commits the causal node's canonical pre- and post-topology records and a
-canonical path-effect list. Each entry is
-`(scope_id, member_node_id, causal_node_id, old_path, new_path)`; the list is
-sorted by those fields' canonical byte encodings and committed by both count and
-digest. Historical witness and transition records remain immutable even after
-the current tree no longer depends on them.
+new ancestor-spine records needed by replay. The canonical net path-effect list
+contains `(scope_id, member_node_id, old_path, new_path)` and is sorted by those
+fields' canonical byte encodings. The mutation commits the topology delta and
+the effect list's count and digest; each net event commits that same delta
+digest. Historical witnesses and deltas remain immutable even after the current
+tree no longer depends on them.
 
 ### Guarded mutation closure
 
@@ -193,32 +222,49 @@ changes topology:
 - newly acquired memberships must be partitioned into exactly one shared
   post-operation baseline batch per normalized `(scope, target)` pair, and every
   new membership must reference exactly one such batch;
+- from the frozen pre-state and final post-state, each batch must derive the
+  complete detached-trash closure whose available origin ancestry reaches its
+  newly adopted targets, recursively through other detached roots. The expected
+  candidate set is the live subtree plus that closure and every descendant.
+  After subtracting nodes that already carry the scope, the expected batch is
+  exactly the remaining newly adopted nodes, every still-retained version, and
+  every authoritative attachment for those nodes;
 - every audited descendant whose derived path changes through an ancestor must
   have exactly one old-path/new-path event for each protecting scope; and
-- the causal pre/post topology, any newly required ancestor-spine witnesses,
-  and the sorted path-effect count and digest must describe exactly that same
-  descendant-event set; and
+- the canonical operation-level topology delta, any newly required
+  ancestor-spine witnesses, and the sorted net path-effect count and digest must
+  describe exactly that same descendant-event set; and
 - the canonical mutation, allocation-lineage entry, affected scope entries, and
   resulting count/heads must cover exactly those expected effects.
 
 Database write guards reject the topology statement unless its transaction has
 registered an audit operation context. Before commit, the shared mutation path
 compares the materialized expectations with memberships, baselines, events,
-lineage, and scope heads actually written; a missing or extra effect rolls the
-whole transaction back. Direct SQL, a helper that forgets inherited membership,
-and an unaudited-ancestor rename that omits descendant events therefore fail
-rather than creating a purge or history escape.
+lineage, and scope heads actually written. It also compares each baseline's
+members, versions, and attachments with the derived trash-origin closure; a
+missing detached root or extra adopted record rolls the whole transaction back.
+Direct SQL, a helper that forgets inherited membership, and an
+unaudited-ancestor rename that omits descendant events therefore fail rather
+than creating a purge or history escape.
 
 Verification and JSONL import independently enforce the same closure. Every
 live parent/child edge must give the child at least the parent's memberships.
+Each enrollment batch carries a frozen, hash-bound census of the operation's
+complete detached-root origin graph, not merely the roots the writer selected.
+Import reconstructs the expected origin closure from that census and the
+pre/post live topology, then requires exact equality with the batch's members,
+versions, and authoritative attachments. An omitted detached root therefore
+cannot remain an unaudited `trash empty` candidate in an internally valid
+stream.
+
 For a topology mutation, the verifier derives the affected memberships and
-their old/new paths from the **previous** replayed path-topology projection,
-the recorded causal pre/post topology, and the resulting projection before it
-trusts any claimed descendant event. The derived canonical list, count, and
-digest must exactly match both the path-effect commitment and the scoped events;
-only then does replay install the transition. A missing event therefore remains
-detectable even when a later mutation happens to restore or otherwise mask the
-same final path.
+their old/new paths from the **previous** replayed path-topology projection and
+the canonical operation-level delta before it trusts any claimed descendant
+event. The derived canonical net list, count, and digest must exactly match both
+the path-effect commitment and the scoped events; only then does replay install
+the whole delta atomically. A missing event therefore remains detectable even
+when another change in the same batch or a later mutation happens to restore or
+otherwise mask the same final path.
 
 An external application or pseudo-folder uses the same model: an integration
 projects its collection onto a stable Docbank directory/scope reference. The
@@ -315,7 +361,7 @@ version.
 Each audited authoritative operation has exactly one canonical mutation record.
 Its hash includes the stable vault ID, operation sequence, random operation ID,
 ordered node events, every sorted enrollment-baseline binding, and any canonical
-path-topology transition and path-effect count/digest. Each affected
+operation-level topology delta and net path-effect count/digest. Each affected
 audit scope appends a chain entry containing that mutation hash and its previous
 chain head; the scope authority records the expected entry count and current
 head. This lets verification and import detect changed, reordered, duplicated,
@@ -363,6 +409,12 @@ encoded as `(scope_id, target_node_id, baseline_digest)` and sorted by canonical
 scope ID, target node ID, then digest bytes before the canonical mutation hashes
 them. Overlapping scopes can therefore enroll the same subtree without query or
 map order affecting the result.
+
+Canonical topology-delta records are sorted separately by changed node ID and
+their complete pre/post field bytes, then hashed as one atomic delta. Net path
+events are unique by `(scope_id, member_node_id)` within the operation and carry
+that delta digest, so multiple or nested batch-move causes cannot collide under
+the event key or acquire an incidental replay order.
 
 A higher-level command or job that spans transactions—recursive ingest is the
 important example—may assign one UUIDv4 grouping ID to all of its operations.
@@ -467,9 +519,11 @@ format will be versioned to include:
 - the vault-wide allocation-lineage genesis, entries, count, and head;
 - sticky node memberships, shared enrollment-baseline batches, and each
   membership's immutable batch reference;
-- baseline ancestor-spine witnesses plus later path-topology transitions and
-  their canonical path-effect lists, counts, and digests;
-- immutable audited trash-origin parent IDs and names;
+- each batch's frozen detached-root origin census and derived adopted closure;
+- baseline ancestor-spine witnesses plus later atomic topology deltas and their
+  canonical net path-effect lists, counts, and digests;
+- immutable audited trash-origin parent IDs and names, including canonical
+  unknown-origin records;
 - authoritative tag definitions and assignments, provenance records, and their
   referenced ingest records;
 - canonical mutation records and per-scope chain entries; and
@@ -494,12 +548,13 @@ invalid, as is a current audited provenance fact whose referenced ingest record
 is missing.
 
 Import builds the path-topology projection from the digested baseline witness
-records. Before applying each later topology transition, it derives the complete
-affected member set and old/new paths from the prior projection, verifies the
-claimed canonical list, count, digest, and scoped events, and only then installs
-the post-state. It rejects missing dependency witnesses, impossible causal
-pre-states, extra or omitted members, and a final replayed topology that differs
-from current node and immutable trash-origin state.
+records. Before applying each later atomic topology delta, it derives the
+complete affected member set and old/new paths from the prior projection,
+verifies the claimed canonical net list, count, digest, and scoped events, and
+only then installs the post-state. It rejects missing dependency witnesses,
+impossible pre-states, duplicate changed-node records, extra or omitted members,
+and a final replayed topology that differs from current node and immutable
+trash-origin state.
 
 Unknown audit records, internally missing or reordered events, altered baseline
 state, dangling versions or attachments, or inconsistent heads fail the import;

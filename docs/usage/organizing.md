@@ -63,5 +63,9 @@ suffix if its old name is occupied at restore time).
     `POST /batch/move` joins the HTTP API with a `dry_run` mode that
     validates an entire reorganization (collisions, cycles, missing IDs)
     before applying it all-or-nothing in one transaction — designed for
-    agent-driven filing. Tags (orthogonal to the tree) are in the schema
+    agent-driven filing. All entries are evaluated from one pre-state to one
+    final post-state rather than in request order; duplicate changes to one
+    node and invalid final graphs are rejected, while valid nested moves produce
+    one canonical atomic delta and net path changes. Tags (orthogonal to the
+    tree) are in the schema
     and surface alongside it.

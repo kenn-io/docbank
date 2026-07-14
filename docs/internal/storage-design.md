@@ -66,12 +66,16 @@ share a blob without sharing document identity.
     scope, normalized top-level target, and operation—not one baseline per
     member. Each new membership references exactly one batch, whose sorted
     member and adopted-record set is replayed atomically. Each batch also
-    preserves deduplicated ancestor-spine topology witnesses for its members.
-    Later topology mutations commit causal pre/post records and a sorted
-    path-effect set with count and digest. Verification derives that set from the
-    previous replayed topology before applying the transition, so neither a
-    writer's claim nor matching final paths can conceal an omitted descendant
-    event.
+    preserves deduplicated ancestor-spine topology witnesses and a hash-bound
+    census of the complete detached-root origin graph. Commit and import derive
+    the exact adopted trash closure from that census and compare its members,
+    versions, and attachments with the batch. Root-scope legacy trash with lost
+    ancestry uses an explicit unknown-origin sentinel rather than a guessed
+    parent. Later topology mutations commit one sorted atomic pre/post delta and
+    a net path-effect set with count and digest. Verification derives that set
+    from the previous replayed topology before applying the delta, so nested
+    batch moves, a writer's claim, or matching final paths cannot conceal an
+    omitted descendant event.
     Audited trash-origin coordinates are immutable metadata rather than a
     nullable live foreign-key relationship; an unaudited origin can disappear
     without mutating the audited node's chain state. The nullable `trash_parent`
