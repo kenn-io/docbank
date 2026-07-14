@@ -79,13 +79,21 @@ transactionally; it cannot edit bytes in place without invalidating their hash.
     the observed bootstrap time, but does not invent an original
     content-introduction time that the old schema never recorded. Every version
     created natively by v2 carries `version_origin: native` and must record its
-    introducing node revision and operation ID. Migrated `legacy_v1` records
-    require the operation ID absent because v1 never recorded it. Import rejects
-    invalid revision/operation-ID presence or any unknown origin token.
+    introducing node revision, operation ID, and immutable transition kind.
+    Revert versions also name their selected source version; create and replace
+    versions require that source absent. Migrated `legacy_v1` records require
+    operation ID, transition kind, and source absent because v1 never recorded
+    them. Import rejects invalid field presence or any unknown origin or
+    transition token.
 
     Bootstrap also assigns canonical, non-reusable UUIDv4 identities to every
     retained legacy tag and ingest record; any existing integer IDs remain
-    internal implementation keys rather than portable identities. It
+    internal implementation keys rather than portable identities. Ingest source
+    descriptions become opaque bytes: direct-store bootstrap reads the raw
+    SQLite value without UTF-8 coercion, while v1 JSONL accepts only valid
+    Unicode strings and stores their exact UTF-8 bytes. Invalid JSON strings
+    abort import; bytes already replaced by a legacy JSONL exporter cannot be
+    reconstructed and that compatibility boundary is reported. It
     canonicalizes legacy provenance and deterministically collapses identical
     duplicate facts before deriving their v2 identities; distinct facts remain
     intact and the bootstrap report records the collapsed count. A failure

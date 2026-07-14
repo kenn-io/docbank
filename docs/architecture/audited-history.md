@@ -91,6 +91,17 @@ immutable reference to that shared batch. A node already in the scope is not
 included or re-baselined; it receives the ordinary transition event instead.
 No membership can appear in two batches for the same scope and operation.
 
+Every baseline binding produces exactly one enrollment event, never one event
+per adopted member. Its `node_id` and `target_node_id` both equal the batch's
+enrollment target, and its `baseline_digest` equals that binding's digest. The
+kind is `audit_enroll` when the operation creates the scope and `audit_inherit`
+when it adds a batch to an existing scope. A newly created target therefore gets
+one `audit_inherit` event per inherited-scope batch in addition to its
+baseline-bound `node_create` and optional `content_create` events; its other
+adopted members get no separate inheritance events. Import derives this
+one-to-one event set from the sorted bindings and pre-operation scope set before
+assigning event ordinals and rejects any missing, extra, or mismatched event.
+
 Attachment values and references always come from the complete
 **post-operation** projection. The pre-operation membership projection decides
 only whether a node was already protected and how newly acquired memberships
@@ -537,9 +548,23 @@ unique constraint, never accepted from a caller, and never reused after
 deletion. The metadata-v2 bootstrap assigns such an identity to every retained
 legacy ingest record in the same daemon-exclusive transaction as the other
 portable identities; a legacy integer row ID may remain an internal key but is
-never the JSONL, provenance, or audit identity. Each provenance fact has a
-stable identity derived from its canonical immutable fields, including that
-ingest UUID, and may carry an immutable `supersedes` identity. A correction
+never the JSONL, provenance, or audit identity. An ingest's immutable
+`source_desc` is opaque bytes, not UTF-8 text: filesystem-derived descriptions
+can contain arbitrary POSIX path bytes. Human clients display valid UTF-8 and
+escape other bytes; hashes and JSONL preserve the exact byte sequence.
+
+Direct-database bootstrap reads the raw SQLite value without text coercion. A
+v1 JSONL import requires valid UTF-8 JSON and paired Unicode escapes, then uses
+the exact UTF-8 encoding of the decoded string as the v2 bytes. Malformed input
+is rejected transactionally. An already-created v1 JSONL stream is authority
+only for the text it contains—bytes a legacy exporter had already replaced
+cannot be reconstructed—so import reports that compatibility boundary instead
+of claiming recovery. Fixtures cover invalid-UTF-8 direct SQLite descriptions,
+non-ASCII v1 JSONL text, malformed JSON strings, and v2 byte-exact round trips.
+
+Each provenance fact has a stable identity derived from its canonical immutable
+fields, including that ingest UUID, and may carry an immutable `supersedes`
+identity. A correction
 appends a new fact that supersedes the currently active fact for the same node,
 backed by a new ingest record when its source description changes; it never
 updates or erases the old row. The superseded fact remains visible in history,
@@ -612,6 +637,19 @@ same event kind, pre/post version IDs, and optional source version. Creation use
 the verified non-current source version. A second content touch, a second
 native version for the node/operation, mixed replace/revert kinds across scopes,
 or a new audited head without its complete fan-out aborts the transaction.
+
+The immutable native version itself stores that transition kind and optional
+source-version ID, so intent remains authoritative even when the node is wholly
+unaudited and emits no scoped event. `content_create` and `content_replace`
+require the source absent; `content_revert` requires it present and resolving to
+the verified non-current version described above. Version-level import requires
+that source to be a different retained version of the same node with matching
+blob hash, size, and media type, and either a `legacy_v1` origin or a smaller
+known node revision; cycles are invalid. Audited replay additionally proves the
+source existed in the operation's pre-state. A retained revert version keeps its
+source version as a metadata and blob-reachability dependency.
+Unaudited pruning must therefore remove the complete dependent closure or leave
+the source intact; audited retention permits neither removal.
 
 A wholly unaudited node still records the introducing operation ID on its native
 version but emits no scoped event; this preserves the stated boundary that
@@ -714,10 +752,10 @@ Nested record schemas are:
 | `unknown_origin` | `node_id:u64`, `parent_id:?u64` (always absent), `name:?bytes` |
 | `known_origin` | `node_id:u64`, `parent_id:u64`, `name:bytes` |
 | `topology_node` | `node_id:u64`, `parent_id:?u64`, `name:bytes`, `node_kind:text`, `state:state`, `origin:?record`, `created_at:timestamp`, `modified_at:timestamp`, `trashed_at:?timestamp` |
-| `content_version` | `version_id:uuid`, `node_id:u64`, `blob_hash:digest`, `size:u64`, `media_type:?text`, `recorded_at:timestamp`, `node_revision:?u64`, `version_origin:text`, `introduced_operation_id:?uuid` |
+| `content_version` | `version_id:uuid`, `node_id:u64`, `blob_hash:digest`, `size:u64`, `media_type:?text`, `recorded_at:timestamp`, `node_revision:?u64`, `version_origin:text`, `introduced_operation_id:?uuid`, `transition_kind:?text`, `source_version_id:?uuid` |
 | `tag_definition` | `tag_id:uuid`, `name:text` |
 | `tag_assignment` | `tag_id:uuid`, `node_id:u64` |
-| `ingest` | `ingest_id:uuid`, `started_at:timestamp`, `source_kind:text`, `source_desc:text` |
+| `ingest` | `ingest_id:uuid`, `started_at:timestamp`, `source_kind:text`, `source_desc:bytes` |
 | `provenance_identity` | `node_id:u64`, `ingest_id:uuid`, `original_path:?bytes`, `original_mtime:?timestamp`, `supersedes:?digest` |
 | `provenance` | `identity:digest`, `node_id:u64`, `ingest_id:uuid`, `original_path:?bytes`, `original_mtime:?timestamp`, `supersedes:?digest` |
 | `tag_definition_identity` | `tag_id:uuid` |
@@ -750,13 +788,16 @@ record. No other identity record is valid.
 
 `content_version.version_origin` is one of the exact ASCII tokens `native` or
 `legacy_v1`. A native record requires both `node_revision` and
-`introduced_operation_id` present. Only a `legacy_v1` record produced by the
-metadata-v2 bootstrap may omit them; every legacy record requires
-`introduced_operation_id` absent, while the bootstrap's version for a node's
-then-current content is also `legacy_v1` but retains its known revision. Import
-rejects invalid presence, a duplicate present
-`(node_id, introduced_operation_id)` pair among native records, and every
-unknown origin token before hashing or installing version authority.
+`introduced_operation_id` present, plus a `transition_kind` of
+`content_create`, `content_replace`, or `content_revert`. Revert requires
+`source_version_id` present; the other two kinds require it absent. Only a
+`legacy_v1` record produced by the metadata-v2 bootstrap may omit the revision;
+every legacy record requires operation ID, transition kind, and source version
+absent, while the bootstrap's version for a node's then-current content is also
+`legacy_v1` but retains its known revision. Import rejects invalid presence, a
+duplicate present `(node_id, introduced_operation_id)` pair among native
+records, and every unknown origin token before hashing or installing version
+authority.
 
 Every `topology_node` carries `node_kind` as one of the exact ASCII tokens `file`
 or `dir`, plus canonical UTC `created_at` and `modified_at`. Kind and creation
@@ -820,6 +861,8 @@ and agent label; only `scope_id`, `event_id`, and the canonically derived
 event operation ID. The post record must be the one new native version and the
 node's resulting current head. Import derives the required scope fan-out from
 pre/post membership and rejects a missing, extra, or mixed-kind event.
+The event kind and `source_version_id` must also equal the post version's
+immutable `transition_kind` and `source_version_id` fields.
 
 An attachment identity must equal the identity derived from its event payload.
 Define/assign/add use the post record; delete/unassign use the pre record; tag
@@ -900,6 +943,14 @@ therefore distinct. Timestamps are UTC with exactly nine fractional digits.
 Lists representing sets are sorted by the tuple named for that record before
 encoding; intrinsically ordered lists retain their specified order. Maps and
 floating-point values are forbidden.
+
+In metadata JSONL v2, a schema field of CAE2 type `bytes` is an unpadded
+base64url JSON string; its registered field type distinguishes it from text.
+The empty string encodes empty bytes and JSON `null` encodes an absent optional
+bytes value. Export always emits this canonical spelling, and import rejects
+padding, non-url alphabet characters, non-zero trailing bits, or any decoded
+value whose re-encoding differs. This rule applies equally to node names,
+filesystem paths, trash-origin names, and ingest source descriptions.
 
 The digest of a provenance identity is
 `SHA-256(CAE2("provenance_identity", fields))`; `supersedes` participates, so
