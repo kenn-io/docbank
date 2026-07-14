@@ -183,35 +183,46 @@ Because enrollment is irreversible, every enablement surface — CLI, API
 clients and agents, TUI, and web — requires the same two-step shape. Preview
 returns the baseline inventory, storage impact, unresolved trash origins, and
 a **vault-wide metadata-retention disclosure** described below, plus a
-short-lived server-issued token bound to the scope ID, baseline digest, and
-vault preview generation. Enablement requires that token and an explicit
-acknowledgment of both the scope promise and vault-wide disclosure; it fails if
-the token is expired, belongs to another scope, or the baseline changed. A
-client therefore cannot bypass review by calling the execution operation
-directly.
+short-lived server-issued token bound to the scope ID, baseline digest, vault
+preview generation, and—on first activation—the exact topology- and
+attached-metadata-genesis digests behind that disclosure. Enablement requires
+that token and an explicit acknowledgment of both the scope promise and
+vault-wide disclosure; it fails if the token is expired, belongs to another
+scope, or the baseline or either genesis projection changed. A client therefore
+cannot bypass review by calling the execution operation directly.
 
 Preview tokens are one-use and held by the issuing daemon. Any intervening
-authoritative mutation or successful enablement advances the vault preview
-generation and invalidates every outstanding token, even for a disjoint scope;
-this deliberately favors a simple exact review boundary over concurrent
-enablement. Of concurrent executions, only the first matching token can commit.
+authoritative mutation, successful enablement, or pre-activation change to a
+genesis input advances the vault preview generation and invalidates every
+outstanding token, even for a disjoint scope. Genesis inputs include repairable
+trash locators: although a later locator clear is non-authoritative, before
+genesis it can change the origin edge or unknown-origin record retained
+permanently. This deliberately favors a simple exact review boundary over
+concurrent enablement. Of concurrent executions, only the first matching token
+can commit.
 Expiration or daemon restart discards tokens without changing the vault, and
 the client must preview again after `audit_preview_stale`.
 
 The wire token is the unpadded base64url encoding of a cryptographically random
 32-byte secret. Its stored digest is SHA-256 over the registered CAE2
 `preview_token` record containing that secret and the exact scope, target,
-vault ID, baseline digest, preview generation, operation ID, and lineage ID. Token
-validation decodes the secret, reconstructs that record from server-held state,
-and compares the digest; the raw secret never enters `audit_pending`, JSONL, or
-a backup.
+vault ID, baseline digest, preview generation, operation ID, lineage ID, and
+optional topology- and attached-metadata-genesis digests. Both genesis digests
+are present for first activation and both are absent after lineage already
+exists; mixed presence is invalid. Token validation decodes the secret,
+reconstructs that record from server-held state, and compares the digest; the
+raw secret never enters `audit_pending`, JSONL, or a backup.
 
 For first activation, preview preallocates the random operation and lineage IDs,
 operation sequence, event timestamp, and other non-derivable inputs used by its
-baseline digest and keeps them in the server-side token state. Expiration before
-execution discards those unused identities. Once execution accepts the token,
-the same values move into the durable `audit_pending` record before the daemon
-discards its ephemeral token state.
+baseline digest. It constructs the complete genesis projections, computes their
+registered digests, and keeps those inputs in the server-side token state. The
+displayed retention counts and serialized-byte estimates are deterministically
+derived from those exact projections. Execution recomputes the baseline,
+genesis digests, and disclosure under the mutation gate before accepting the
+token. Expiration before execution discards the unused identities. Once
+execution accepts the token, the same values and digests move into the durable
+`audit_pending` record before the daemon discards its ephemeral token state.
 
 Membership is **sticky**. A member moved outside the directory remains audited;
 otherwise moving a file out, deleting it, and moving it back would be a purge
@@ -837,6 +848,32 @@ An attached-metadata identity uses `tag_definition_identity`,
 selected by `record_kind`; event attachment identity uses the same matching
 record. No other identity record is valid.
 
+Origin presence and identity are exact. The unique vault root is a live
+directory with absent `parent_id`, empty `name`, and absent `origin`. Every
+other live node has a present live-directory parent, a valid non-root name, and
+absent `origin`. A current trash root has state `trash`, an operational
+`parent_id` equal to the vault root, a valid non-root name, and exactly one
+origin record. That origin's `node_id` must equal the enclosing
+`topology_node.node_id`. A `known_origin` has a different positive `parent_id`
+and a valid non-root `name`; its replayed last-known parent graph must be acyclic
+and terminate at the vault root. An `unknown_origin` has the registered absent
+parent and an absent or valid non-root retained name. The known name and any
+present unknown retained name equal the enclosing trash root's topology name
+byte-for-byte. Neither form may appear on the vault root, a live node, or a
+trash descendant.
+
+Every trash descendant has absent `origin`, a parent in the same detached trash
+subtree, and the same non-null `trashed_at` as its unique trash root. No live
+node may descend from a trash node. A tombstone is valid only as the post-side
+of a deletion delta with a live or trash pre-side for the same node. It copies
+that pre-side's parent, name, kind, creation time, trash time, and origin
+verbatim, while its modification time is the deletion time. Consequently only
+a tombstoned former trash root may retain an origin, and it retains the matching
+node ID and known/unknown presence exactly; tombstoning cannot add, remove, or
+rewrite origin authority. Baseline, genesis, delta, replay, JSONL import, and
+restore validation reject every record that violates these relationships before
+using it for trash closure or hashing.
+
 `content_version.version_origin` is one of the exact ASCII tokens `native` or
 `legacy_v1`. A native record requires both `node_revision` and
 `introduced_operation_id` present, plus a `transition_kind` of
@@ -972,7 +1009,7 @@ Hashed top-level record schemas are:
 | `scope_chain_entry` | `vault_id:uuid`, `scope_id:uuid`, `entry_count:u64`, `previous_head:?digest`, `mutation_hash:digest` |
 | `allocation_genesis` | `vault_id:uuid`, `lineage_id:uuid`, `previous_head:?digest`, `node_id_high_water:u64`, `operation_sequence_high_water:u64`, `topology_count:u64`, `topology_digest:digest`, `attached_metadata_count:u64`, `attached_metadata_digest:digest` |
 | `allocation_entry` | `vault_id:uuid`, `lineage_id:uuid`, `previous_head:digest`, `operation_sequence:u64`, `operation_id:uuid`, `allocated_node_ids:[u64]`, `node_id_high_water:u64`, `operation_sequence_high_water:u64`, `has_audited_mutation:bool`, `mutation_hash:?digest`, `has_topology_change:bool`, `topology_delta:?digest`, `has_witness_change:bool`, `witness_change_count:u64`, `witness_change_digest:?digest`, `has_attached_metadata_change:bool`, `attached_metadata_change_count:u64`, `attached_metadata_change_digest:?digest` |
-| `preview_token` | `secret:bytes`, `vault_id:uuid`, `scope_id:uuid`, `target_node_id:u64`, `baseline_digest:digest`, `preview_generation:u64`, `operation_id:uuid`, `lineage_id:uuid` |
+| `preview_token` | `secret:bytes`, `vault_id:uuid`, `scope_id:uuid`, `target_node_id:u64`, `baseline_digest:digest`, `preview_generation:u64`, `operation_id:uuid`, `lineage_id:uuid`, `topology_genesis_digest:?digest`, `attached_metadata_genesis_digest:?digest` |
 | `audit_pending` | `vault_id:uuid`, `scope_id:uuid`, `target_node_id:u64`, `preview_token_digest:digest`, `preview_generation:u64`, `baseline_digest:digest`, `operation_id:uuid`, `lineage_id:uuid`, `operation_sequence:u64`, `grouping_id:?uuid`, `recorded_at:timestamp`, `origin:text`, `agent_label:?text`, `cause:text`, `node_id_high_water:u64`, `operation_sequence_high_water:u64`, `topology_genesis_digest:digest`, `attached_metadata_genesis_digest:digest` |
 
 The four `has_*` booleans are the normative allocation-entry no-change markers.
