@@ -117,14 +117,20 @@ inside the snapshot.
 !!! info "Planned — audited-history authority"
     Full audit will extend the deterministic JSONL with scopes, sticky
     memberships, canonical enrollment baselines and digests, mutation records,
-    per-scope chain entries/heads, and stable content versions. Every protected
-    historical blob becomes snapshot content. Import, verification, and
-    restore must recompute baseline digests from immutable enrollment snapshots,
-    verify later mutations separately, and reject an internally missing,
-    malformed, reordered, truncated, or hash-inconsistent audit stream before
-    publishing the database. Rollback is detectable only against an expected
-    count/head from a trusted prior snapshot or external record; a fresh import
-    cannot detect a coherently rewritten chain. The complete contract is in
+    per-scope chain entries/heads, a stable vault ID, and stable content
+    versions. Every protected historical blob becomes snapshot content. Import,
+    verification, and restore must recompute baseline digests from immutable
+    enrollment snapshots, verify later mutations separately, and reject an
+    internally missing, malformed, reordered, truncated, or hash-inconsistent
+    audit stream before publishing the database. Rollback is detectable only
+    against an expected count/head from a trusted prior snapshot or external
+    record; a fresh import cannot detect a coherently rewritten chain.
+
+    Before overwriting an existing audited target, restore inspects it under
+    the target lock. The snapshot must have the same vault ID and prove every
+    existing scope head as a chain prefix at the existing count; missing,
+    shorter, divergent, pre-audit, or unrelated history is refused before
+    cleanup. The complete contract is in
     [Audited History](audited-history.md).
 
 ## Boundary with packed storage

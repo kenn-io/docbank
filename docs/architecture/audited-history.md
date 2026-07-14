@@ -50,6 +50,11 @@ every complete content-version record retained at enrollment. The first
 scope-chain entry commits that digest. Later renames, moves, or versions append
 events; they never rewrite the frozen baseline records.
 
+The audit cutover also creates a stable vault ID. Baseline and mutation hashes
+include that ID as domain separation, and deterministic JSONL plus backup
+manifests preserve it. A restored copy remains recognizably the same logical
+vault even when published at another filesystem location.
+
 Trash is detached from the live tree, so current parentage alone is not enough.
 Enrollment follows stable `trash_parent` origin IDs, including through another
 trash root adopted by the same baseline. This closes the escape where a file is
@@ -199,12 +204,15 @@ provide stronger independent evidence.
 ### Live-store downgrade fence
 
 Creating the first audit scope permanently raises the vault's required
-live-store feature level. The cutover uses an incompatible schema fence that
-makes every published pre-audit binary fail during store open, before it can
-serve reads, run maintenance, or create an incomplete backup. A marker that an
-old binary can ignore is not sufficient. The release test matrix opens an
-audited fixture with each supported pre-audit binary and requires a clean
-refusal with no file or metadata changes.
+live-store feature level. The cutover uses an incompatible store/layout fence
+that makes every published pre-audit binary fail during store open, before it
+can serve reads, run maintenance, or create an incomplete backup. It also keeps
+audited authority outside legacy restore cleanup/publication paths, so an old
+`backup restore --overwrite` cannot replace it with a legacy database. A marker
+that an old binary can ignore is not sufficient. The release test matrix opens
+and attempts an overwrite restore against an audited fixture with each
+supported pre-audit binary and requires a clean refusal with no file or
+metadata changes.
 
 The database also enforces the protection boundary independently of API
 routing. Constraints and write guards reject deletion or mutation of audited
@@ -248,6 +256,7 @@ Deterministic JSONL is the portable authority for audit metadata. The metadata
 format will be versioned to include:
 
 - audit scopes and their expected chain count/head;
+- the stable vault ID used to domain-separate audit hashes;
 - sticky node memberships and enrollment baselines;
 - immutable audited trash-origin parent IDs and names;
 - canonical mutation records and per-scope chain entries; and
@@ -276,6 +285,20 @@ packs, but each snapshot's logical metadata describes the complete audit
 authority at that point. Verify and restore must reproduce identical scope IDs,
 memberships, event count/heads, content hashes, and deletion protections across
 loose and packed source vaults.
+
+Normal overwrite restore is forward-only for an existing audited target. While
+holding the target hierarchy lock and before cleanup, restore reads the target's
+vault ID and verified scope heads. The selected snapshot must carry the same
+vault ID and, for every existing scope, prove that the chain at the existing
+entry count has exactly the existing head; its final count may be equal or
+greater. A missing scope, shorter chain, divergent prefix, pre-audit snapshot,
+or different vault ID is rejected with `audit_protected` before publication.
+
+An older or unrelated snapshot may still be inspected or restored to a fresh
+directory because that does not erase an existing promise. Replacing an audited
+target with anything that does not preserve or extend all of its chains belongs
+only to the exceptional recovery workflow. The ordinary overwrite form of
+`docbank backup restore` rejects it.
 
 ## One history model, several clients
 
