@@ -115,8 +115,8 @@ adopts the live subtree, all still-retained versions, and every detached trash
 root whose recorded origin ancestry reaches the newly enrolled subtree,
 including those roots' descendants, versions, and authoritative attachments.
 Its enrollment event commits the canonical baseline digest. New children
-inherit every audit scope that
-protects their parent. That includes children created beneath a sticky member
+inherit every audit scope that protects their parent. That includes children
+created beneath a sticky member
 directory after it has moved outside the scope's current path: the protected
 directory continues carrying the promise. Nested and overlapping scopes are
 allowed, and membership is additive rather than replacing an earlier promise.
@@ -137,8 +137,40 @@ members. Renaming, moving, trashing, or restoring any directory finds every
 audited descendant whose derived path changes, even when the directory itself
 is unaudited. The same metadata transaction emits a scoped event for each such
 descendant with the old path, new path, and causal ancestor ID. Those events use
-the operation's stable-node-ID ordering, so a large ancestor move produces the
-same chain on every platform.
+the operation's complete canonical event ordering, so a large ancestor move
+produces the same chain on every platform.
+
+### Guarded mutation closure
+
+Once audit is enabled, inserting a node or changing any node's parent, name, or
+trash state requires a guarded audit transaction even when the directly changed
+node is not yet a member. The transaction reads the relevant pre-state under the
+single-writer mutation gate and materializes an expected-effect set before it
+changes topology:
+
+- every node in an inserted or reparented subtree must retain its existing
+  sticky memberships and, evaluated top-down, acquire the union of scopes
+  carried by its post-operation parent;
+- every newly acquired membership must have exactly one post-operation baseline
+  binding with the complete node, version, trash-origin, and attachment closure;
+- every audited descendant whose derived path changes through an ancestor must
+  have exactly one old-path/new-path event for each protecting scope; and
+- the canonical mutation, allocation-lineage entry, affected scope entries, and
+  resulting count/heads must cover exactly those expected effects.
+
+Database write guards reject the topology statement unless its transaction has
+registered an audit operation context. Before commit, the shared mutation path
+compares the materialized expectations with memberships, baselines, events,
+lineage, and scope heads actually written; a missing or extra effect rolls the
+whole transaction back. Direct SQL, a helper that forgets inherited membership,
+and an unaudited-ancestor rename that omits descendant events therefore fail
+rather than creating a purge or history escape.
+
+Verification and JSONL import independently enforce the same closure. Every
+live parent/child edge must give the child at least the parent's memberships,
+while replay of topology mutations must reproduce the recorded path-affecting
+descendant event set. This validates indirect effects rather than trusting that
+the original writer used the intended helper.
 
 An external application or pseudo-folder uses the same model: an integration
 projects its collection onto a stable Docbank directory/scope reference. The
@@ -180,6 +212,15 @@ attachments, and do not enter baseline or mutation hashes.
 Tag definitions and assignments are mutable authority, so their create, rename,
 assign, unassign, and delete operations emit the canonical fan-out events
 described above whenever an audited member is affected.
+
+A tag's stable identity is an opaque UUIDv4 generated from the operating
+system's cryptographic random source, stored canonically under a unique
+constraint, and never selected by a caller or reused. The tag name is mutable
+and not identity. Deleting a tag removes its live definition and assignments but
+does not erase its UUID from audit baselines or events; recreating the same name
+always receives a new UUID. JSONL preserves tag UUIDs verbatim, so a stale tag
+reference becomes not-found rather than silently naming a later tag. Import
+rejects non-canonical or duplicate tag UUIDs.
 
 Ingest and provenance records are different: their fields are immutable after
 insertion. Correcting provenance appends a new provenance fact, backed by a new
@@ -330,6 +371,12 @@ client replacement, but is not the live-store downgrade defense. The
 non-authoritative `trash_parent` locator is the narrow exception: foreign-key
 cleanup may clear it because immutable audit origin metadata, not that locator,
 is the protected fact.
+
+The same protection applies to indirect topology effects. Node insertion and
+parent/name/trash updates require the guarded operation context whenever any
+scope exists, and commit-time validation proves the complete inherited
+membership and path-affecting descendant closure described above. A row need
+not already be audited for its write to be guarded.
 
 ## Deletion and storage maintenance
 

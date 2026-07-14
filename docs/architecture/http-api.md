@@ -58,7 +58,8 @@ its own shutdown token.
 !!! info "Planned"
     Not yet implemented: `PUT /nodes/{id}/content` (versioned edit) and
     `GET /nodes/{id}/versions` ([Editing & Versions](editing-and-versions.md));
-    tags (`GET /tags` + CRUD, tag filters on search); and
+    tags (`GET /tags` + CRUD, tag filters on search), whose IDs are opaque
+    non-reusable UUIDv4 values independent of mutable names; and
     `POST /batch/move` bulk reorganization with `dry_run`.
 
 IDs are canonical everywhere: every response carries them, and mutating

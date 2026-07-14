@@ -91,6 +91,11 @@ nodes_fts      -- FTS5 external-content index over live node names
     rebuildable derived data outside audit authority. Ingest and provenance
     records become immutable facts, with database guards preventing ordinary
     update or deletion when an audited member roots them.
+    Tag IDs likewise become canonical non-reusable UUIDv4 values; tag names may
+    change or be recreated without retargeting historical assignments. Once any
+    scope exists, node insertion and parent/name/trash changes require a guarded
+    audit transaction whose precomputed membership, baseline, descendant-event,
+    lineage, and scope-head effects must match exactly before commit.
 
 ## Invariants enforced in the schema
 
