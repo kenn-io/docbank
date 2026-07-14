@@ -31,7 +31,10 @@ share a blob without sharing document identity.
     its ordered history events, membership changes, and every affected scope
     chain/count/head update commit in one SQLite transaction. Canonical order
     comes from a vault-wide operation sequence plus deterministic per-operation
-    event ordinals, never incidental traversal order.
+    event ordinals, never incidental traversal order. Audited trash-origin
+    coordinates are immutable metadata rather than a nullable live foreign-key
+    relationship; an unaudited origin can disappear without mutating the
+    audited node's chain state.
 
 ## Immutable content and mutable organization
 

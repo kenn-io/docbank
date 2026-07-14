@@ -79,7 +79,10 @@ nodes_fts      -- FTS5 external-content index over live node names
     current-schema metadata included in deterministic JSONL rather than
     inferred from paths or pack layout. A daemon-exclusive bootstrap will give
     every existing file a stable initial version and `current_version_id`
-    before editing or audit capabilities become available.
+    before editing or audit capabilities become available. Audited trash
+    origins will retain immutable parent IDs and names outside nullable live
+    foreign-key semantics, so deleting an unaudited origin cannot rewrite
+    protected history.
 
 ## Invariants enforced in the schema
 

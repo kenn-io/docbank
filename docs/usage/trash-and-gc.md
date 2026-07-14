@@ -69,8 +69,10 @@ with no remaining reference becomes a GC candidate.
     separately from protected roots and identify every protecting scope.
     Execution deletes the eligible roots and leaves protected roots intact, so
     one audited item never wedges cleanup of unrelated trash. Trashing and
-    restoring audited nodes remain allowed and become history events. See
-    [Audited History](../architecture/audited-history.md).
+    restoring audited nodes remain allowed and become history events. Their
+    original parent ID/name remain protected even if an unrelated origin
+    directory is later emptied; restore falls back to `/` without erasing that
+    evidence. See [Audited History](../architecture/audited-history.md).
 
 ## Stage 3: Garbage collection (`gc`)
 

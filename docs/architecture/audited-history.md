@@ -45,8 +45,9 @@ scope runs as a daemon job behind the mutation gate and atomically records:
 
 The baseline is a canonical record, not only an implementation scan. Its
 digest covers the scope and target IDs; every adopted node and membership;
-their canonical current and trash-origin state; and every complete retained
-content-version record. The first scope-chain entry commits that digest.
+their canonical current and immutable trash-origin state; and every complete
+retained content-version record. The first scope-chain entry commits that
+digest.
 
 Trash is detached from the live tree, so current parentage alone is not enough.
 Enrollment follows stable `trash_parent` origin IDs, including through another
@@ -55,6 +56,14 @@ trashed immediately before its directory is enrolled and then emptied. If
 earlier permanent deletion already erased the origin ancestry, Docbank cannot
 infer that the remaining trash once belonged to the scope; the preview reports
 the unresolved trash root without claiming it as a member.
+
+Once a node is audited, its trash event also persists immutable origin parent
+ID and name as audit metadata independent of the operational `trash_parent`
+foreign key. Node IDs are never reused. Deleting an unaudited origin directory
+may therefore clear an operational locator, but cannot rewrite the protected
+origin coordinates, baseline digest, or chain. Restore tries the immutable
+parent ID and falls back to `/` when that node no longer exists, while history
+continues to show the original intended location.
 
 The policy is vault metadata, not `config.toml`. It therefore participates in
 the same transactional authority, JSONL export, backup, and restore as the
@@ -204,6 +213,7 @@ format will be versioned to include:
 
 - audit scopes and their expected chain count/head;
 - sticky node memberships and enrollment baselines;
+- immutable audited trash-origin parent IDs and names;
 - canonical mutation records and per-scope chain entries; and
 - stable content-version records referencing every retained blob.
 
