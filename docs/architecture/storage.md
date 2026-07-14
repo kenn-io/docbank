@@ -88,7 +88,9 @@ nodes_fts      -- FTS5 external-content index over live node names
     non-authoritative locator excluded from audit hashing and reconciliation.
     Audit baselines and replay also cover `node_tags` with their `tags` records
     and `provenance` with referenced `ingests`; FTS and `extracted_text` remain
-    rebuildable derived data outside audit authority.
+    rebuildable derived data outside audit authority. Ingest and provenance
+    records become immutable facts, with database guards preventing ordinary
+    update or deletion when an audited member roots them.
 
 ## Invariants enforced in the schema
 

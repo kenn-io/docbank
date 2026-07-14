@@ -48,7 +48,13 @@ share a blob without sharing document identity.
     Audit baselines and final-state reconciliation include authoritative tag
     assignments and their definitions plus provenance and its referenced ingest
     records. Import validates and replays that referential closure; derived FTS,
-    extraction-cache, and job rows remain outside audit hashes.
+    extraction-cache, and job rows remain outside audit hashes. Ingest and
+    provenance rows are immutable; audited references are database-guarded
+    retention roots, corrections append facts rather than rewriting them, and
+    inserting an identical canonical provenance fact is an idempotent no-op.
+    Canonical mutation ordering uses the full node/kind/scope/target/attachment
+    tuple, assigns ordinals only after sorting, and separately sorts every
+    `(scope, target, baseline digest)` binding before hashing.
     Audited trash-origin coordinates are immutable metadata rather than a
     nullable live foreign-key relationship; an unaudited origin can disappear
     without mutating the audited node's chain state. The nullable `trash_parent`

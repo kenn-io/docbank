@@ -175,6 +175,24 @@ but do not create document-history events. FTS rows, extracted-text cache rows,
 and background-job state are derived or operational data, not authoritative
 attachments, and do not enter baseline or mutation hashes.
 
+### Attached metadata lifecycle
+
+Tag definitions and assignments are mutable authority, so their create, rename,
+assign, unassign, and delete operations emit the canonical fan-out events
+described above whenever an audited member is affected.
+
+Ingest and provenance records are different: their fields are immutable after
+insertion. Correcting provenance appends a new provenance fact, backed by a new
+ingest record when its source description changes; it never updates the old row
+in place. Re-adding a byte-for-byte identical canonical provenance fact is an
+idempotent no-op, not a duplicate row or event. Adding a new fact to an audited
+member emits an event in the insertion transaction. Database constraints and
+audit write guards reject update or deletion of provenance attached to an
+audited member and reject deletion of any ingest record it references. Those
+records are permanent metadata retention roots just like the member's versions.
+Ordinary policy may delete facts belonging only to unaudited nodes; later
+enrollment adopts only facts still retained at its baseline.
+
 ### Content versions
 
 A document node remains the stable identity while its content pointer changes.
@@ -235,13 +253,25 @@ eligible for later GC, never a new document head without matching history.
 An authoritative operation is exactly one committed SQLite metadata
 transaction. It receives one monotonically increasing vault-wide
 operation-sequence number and one cryptographically random operation ID; neither
-identity is shared with another transaction. Its node events are ordered by
-stable node ID; if one node needs more than one event, a documented event-kind
-ordinal breaks the tie. The canonical total order is therefore
+identity is shared with another transaction. Before hashing, its events are
+sorted by the complete tuple
+`(node_id, event_kind_ordinal, scope_id, target_node_id,
+attachment_kind_ordinal, attachment_identity)`. IDs use their canonical byte
+encoding, and an absent field uses a fixed empty sentinel that sorts before a
+present value. A provenance fact's attachment identity is the digest of its
+canonical immutable fields; tag attachments use their stable tag ID. Emitting
+two events with the same complete key is an invariant violation rather than an
+invitation to preserve discovery order.
+
+The zero-based position after that sort becomes `event_ordinal`. The canonical
+total order is therefore
 `(operation_sequence, event_ordinal)`, independent of filesystem walk, map
 iteration, or SQL query order. Each affected scope appends one chain entry that
-commits the operation's ordered event hashes and any enrollment-baseline
-digests.
+commits the operation's ordered event hashes. Enrollment-baseline bindings are
+encoded as `(scope_id, target_node_id, baseline_digest)` and sorted by canonical
+scope ID, target node ID, then digest bytes before the canonical mutation hashes
+them. Overlapping scopes can therefore enroll the same subtree without query or
+map order affecting the result.
 
 A higher-level command or job that spans transactions—recursive ingest is the
 important example—may assign one UUIDv4 grouping ID to all of its operations.
@@ -351,7 +381,12 @@ topology, event order, chain hashes and heads, node revisions, every protected
 blob reference, and the referential closure of authoritative attachments in one
 transaction. It reconstructs every enrollment baseline, verifies its digest,
 replays attached-metadata changes, and requires the resulting tag and provenance
-projection to equal the imported current state before accepting the chain.
+projection to equal the imported current state before accepting the chain. It
+also recomputes the complete event sort keys and sorted baseline-binding lists;
+an ordinal, duplicate key, or digest order that is not canonical is rejected.
+Audited mutation history that updates or deletes an ingest/provenance fact is
+invalid, as is a current audited provenance fact whose referenced ingest record
+is missing.
 Unknown audit records, internally missing or reordered events, altered baseline
 state, dangling versions or attachments, or inconsistent heads fail the import;
 they never produce a current-tree-only restore.
