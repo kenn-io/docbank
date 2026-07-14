@@ -63,15 +63,17 @@ transactionally; it cannot edit bytes in place without invalidating their hash.
     collapses only exact duplicate tuples, and records that collapsed count in
     its report. It assigns a fresh, non-reusable UUIDv4 to every remaining row,
     preserves `replaced_at` as `recorded_at`, and represents the unavailable
-    media type and node revision as absent. Distinct timestamps remain distinct
+    media type and node revision as absent. Each receives the frozen
+    `version_origin` value `legacy_v1`. Distinct timestamps remain distinct
     versions even when they reference the same blob, and a historical row equal
     to the node's current content remains separate from the newly created
-    current version. The current version is explicitly a legacy baseline: it
-    preserves the current hash, size, media type, and node revision and uses the
-    observed bootstrap time, but does not invent an original content-introduction
-    time that the old schema never recorded. Every version created natively by
-    v2 records its introducing node revision; only migrated v1 history may carry
-    an absent value.
+    current version. The current version is explicitly a `legacy_v1` baseline:
+    it preserves the current hash, size, media type, and node revision and uses
+    the observed bootstrap time, but does not invent an original
+    content-introduction time that the old schema never recorded. Every version
+    created natively by v2 carries `version_origin: native` and must record its
+    introducing node revision. Import rejects an absent revision unless the
+    record is marked `legacy_v1`, and rejects any unknown origin token.
 
     Bootstrap also assigns canonical, non-reusable UUIDv4 identities to every
     retained legacy tag and ingest record; any existing integer IDs remain

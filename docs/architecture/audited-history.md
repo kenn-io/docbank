@@ -654,7 +654,7 @@ Nested record schemas are:
 | `unknown_origin` | `node_id:u64`, `parent_id:?u64` (always absent), `name:?bytes` |
 | `known_origin` | `node_id:u64`, `parent_id:u64`, `name:bytes` |
 | `topology_node` | `node_id:u64`, `parent_id:?u64`, `name:bytes`, `state:state`, `origin:?record` |
-| `content_version` | `version_id:uuid`, `node_id:u64`, `blob_hash:digest`, `size:u64`, `media_type:?text`, `recorded_at:timestamp`, `node_revision:?u64` |
+| `content_version` | `version_id:uuid`, `node_id:u64`, `blob_hash:digest`, `size:u64`, `media_type:?text`, `recorded_at:timestamp`, `node_revision:?u64`, `version_origin:text` |
 | `tag_definition` | `tag_id:uuid`, `name:text` |
 | `tag_assignment` | `tag_id:uuid`, `node_id:u64` |
 | `ingest` | `ingest_id:uuid`, `started_at:timestamp`, `source_kind:text`, `source_desc:text` |
@@ -687,6 +687,13 @@ An attached-metadata identity uses `tag_definition_identity`,
 `tag_assignment_identity`, `ingest_identity`, or `provenance_identity_ref` as
 selected by `record_kind`; event attachment identity uses the same matching
 record. No other identity record is valid.
+
+`content_version.version_origin` is one of the exact ASCII tokens `native` or
+`legacy_v1`. A native record requires `node_revision` present. Only a
+`legacy_v1` record produced by the metadata-v2 bootstrap may omit it; the
+bootstrap's version for a node's then-current content is also `legacy_v1` but
+retains the known revision. Import rejects an absent native revision and every
+unknown origin token before hashing or installing version authority.
 
 Event payload presence is exact:
 
