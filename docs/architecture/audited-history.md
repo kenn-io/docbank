@@ -644,10 +644,12 @@ unaudited and emits no scoped event. `content_create` and `content_replace`
 require the source absent; `content_revert` requires it present and resolving to
 the verified non-current version described above. Version-level import requires
 that source to be a different retained version of the same node with matching
-blob hash, size, and media type, and either a `legacy_v1` origin or a smaller
-known node revision; cycles are invalid. Audited replay additionally proves the
-source existed in the operation's pre-state. A retained revert version keeps its
-source version as a metadata and blob-reachability dependency.
+blob hash, size, and media type. A source with a known node revision must have a
+smaller revision than the revert; only a migrated source whose revision is
+actually absent uses the legacy ordering exemption. Cycles are invalid. Audited
+replay additionally proves the source existed in the operation's pre-state. A
+retained revert version keeps its source version as a metadata and
+blob-reachability dependency.
 Unaudited pruning must therefore remove the complete dependent closure or leave
 the source intact; audited retention permits neither removal.
 
