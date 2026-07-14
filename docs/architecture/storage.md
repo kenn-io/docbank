@@ -98,7 +98,11 @@ nodes_fts      -- FTS5 external-content index over live node names
     lineage, and scope-head effects must match exactly before commit.
     Enrollment storage uses one shared baseline batch per scope, normalized
     subtree target, and operation. Every newly acquired membership references
-    exactly one batch; existing memberships are never re-baselined.
+    exactly one batch; existing memberships are never re-baselined. Baselines
+    also preserve the minimal ancestor-spine topology needed to derive audited
+    paths. Later topology mutations commit causal pre/post records and canonical
+    path-effect sets that import derives from the previous replayed projection
+    before accepting their descendant events.
 
 ## Invariants enforced in the schema
 

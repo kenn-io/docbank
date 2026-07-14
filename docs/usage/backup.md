@@ -133,12 +133,15 @@ progress so stdout contains one typed report.
 !!! info "Planned — audited-history fidelity"
     The portable JSONL format will carry audit scopes, sticky memberships,
     shared enrollment-baseline batches and digests, mutation records, per-scope
-    chain heads, a stable vault ID, both allocator high-water marks, a
+    chain heads, baseline ancestor-spine witnesses, replayable path-topology
+    transitions and path-effect commitments, a stable vault ID, both allocator
+    high-water marks, a
     vault-wide allocation lineage, stable content versions, and authoritative
     tag/provenance attachments with the tag and ingest records they reference.
     Capture will include every protected historical blob. Verify and restore
     will recompute baseline digests from frozen enrollment records, replay and
-    reconcile attached metadata, verify later mutations and allocation lineage
+    reconcile attached metadata, derive each path-affecting descendant set from
+    the prior topology projection, verify later mutations and allocation lineage
     separately, restore the allocators at the verified lineage tail, and reject
     internally missing, reordered, truncated, or hash-invalid authority rather
     than restoring only the current tree.

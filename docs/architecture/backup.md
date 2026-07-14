@@ -117,14 +117,17 @@ inside the snapshot.
 !!! info "Planned — audited-history authority"
     Full audit will extend the deterministic JSONL with scopes, sticky
     memberships, shared enrollment-baseline batches and digests, mutation
-    records, per-scope chain entries/heads, a stable vault ID, both allocator
-    high-water marks, a vault-wide allocation lineage, stable content versions, and
-    authoritative tag/provenance attachments with their referenced records.
+    records, baseline ancestor-spine witnesses, path-topology transitions and
+    independently replayable path-effect commitments, per-scope chain
+    entries/heads, a stable vault ID, both allocator
+    high-water marks, a vault-wide allocation lineage, stable content versions,
+    and authoritative tag/provenance attachments with their referenced records.
     Every protected historical blob becomes snapshot content. Import,
     verification, and restore must recompute baseline digests from immutable
-    enrollment snapshots, replay and reconcile attached metadata, verify later
-    mutations and allocation lineage separately, restore the allocators at the
-    verified lineage tail, and reject an
+    enrollment snapshots, derive every topology mutation's affected member set
+    from the prior replayed projection, reconcile attached metadata, verify
+    later mutations and allocation lineage separately, restore the allocators
+    at the verified lineage tail, and reject an
     internally missing, malformed, reordered, truncated, or hash-inconsistent
     stream before publishing the database. Each canonical mutation is bound to
     exactly one allocation-lineage entry by operation ID and mutation hash.

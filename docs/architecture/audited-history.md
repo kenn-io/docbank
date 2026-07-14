@@ -56,6 +56,15 @@ facts produce the same digest on every platform. The first scope-chain entry
 commits that digest. Later mutations append events; they never rewrite the
 frozen batch records.
 
+The batch also captures the minimal **path-topology projection** needed to
+derive every adopted member's canonical path at that boundary. It contains a
+deduplicated, canonically ordered topology record for each member and every
+ancestor on its live or immutable trash-origin spine to the vault root: stable
+node ID, parent ID, name, and live, trash, or tombstone state. These witness
+records participate in the batch digest. Witnessing an unaudited ancestor does
+not enroll it, protect its content, or give it history of its own; it preserves
+only the historical topology on which an audited member's path depends.
+
 Baseline cardinality is **one shared baseline batch per
 `(scope_id, enrollment_target_node_id, operation_id)`**, not one baseline per
 member. Initial scope enablement creates exactly one batch whose target is the
@@ -160,6 +169,16 @@ descendant with the old path, new path, and causal ancestor ID. Those events use
 the operation's complete canonical event ordering, so a large ancestor move
 produces the same chain on every platform.
 
+The path-topology projection evolves with those operations. Moving a protected
+subtree beneath a previously unwitnessed unaudited ancestry first records the
+new ancestor-spine records needed by replay. Each path-affecting mutation then
+commits the causal node's canonical pre- and post-topology records and a
+canonical path-effect list. Each entry is
+`(scope_id, member_node_id, causal_node_id, old_path, new_path)`; the list is
+sorted by those fields' canonical byte encodings and committed by both count and
+digest. Historical witness and transition records remain immutable even after
+the current tree no longer depends on them.
+
 ### Guarded mutation closure
 
 Once audit is enabled, inserting a node or changing any node's parent, name, or
@@ -176,6 +195,9 @@ changes topology:
   new membership must reference exactly one such batch;
 - every audited descendant whose derived path changes through an ancestor must
   have exactly one old-path/new-path event for each protecting scope; and
+- the causal pre/post topology, any newly required ancestor-spine witnesses,
+  and the sorted path-effect count and digest must describe exactly that same
+  descendant-event set; and
 - the canonical mutation, allocation-lineage entry, affected scope entries, and
   resulting count/heads must cover exactly those expected effects.
 
@@ -188,10 +210,15 @@ and an unaudited-ancestor rename that omits descendant events therefore fail
 rather than creating a purge or history escape.
 
 Verification and JSONL import independently enforce the same closure. Every
-live parent/child edge must give the child at least the parent's memberships,
-while replay of topology mutations must reproduce the recorded path-affecting
-descendant event set. This validates indirect effects rather than trusting that
-the original writer used the intended helper.
+live parent/child edge must give the child at least the parent's memberships.
+For a topology mutation, the verifier derives the affected memberships and
+their old/new paths from the **previous** replayed path-topology projection,
+the recorded causal pre/post topology, and the resulting projection before it
+trusts any claimed descendant event. The derived canonical list, count, and
+digest must exactly match both the path-effect commitment and the scoped events;
+only then does replay install the transition. A missing event therefore remains
+detectable even when a later mutation happens to restore or otherwise mask the
+same final path.
 
 An external application or pseudo-folder uses the same model: an integration
 projects its collection onto a stable Docbank directory/scope reference. The
@@ -287,7 +314,8 @@ version.
 
 Each audited authoritative operation has exactly one canonical mutation record.
 Its hash includes the stable vault ID, operation sequence, random operation ID,
-ordered node events, and every sorted enrollment-baseline binding. Each affected
+ordered node events, every sorted enrollment-baseline binding, and any canonical
+path-topology transition and path-effect count/digest. Each affected
 audit scope appends a chain entry containing that mutation hash and its previous
 chain head; the scope authority records the expected entry count and current
 head. This lets verification and import detect changed, reordered, duplicated,
@@ -439,6 +467,8 @@ format will be versioned to include:
 - the vault-wide allocation-lineage genesis, entries, count, and head;
 - sticky node memberships, shared enrollment-baseline batches, and each
   membership's immutable batch reference;
+- baseline ancestor-spine witnesses plus later path-topology transitions and
+  their canonical path-effect lists, counts, and digests;
 - immutable audited trash-origin parent IDs and names;
 - authoritative tag definitions and assignments, provenance records, and their
   referenced ingest records;
@@ -462,6 +492,15 @@ and never assign one member to two batches for the same scope and operation.
 Audited mutation history that updates or deletes an ingest/provenance fact is
 invalid, as is a current audited provenance fact whose referenced ingest record
 is missing.
+
+Import builds the path-topology projection from the digested baseline witness
+records. Before applying each later topology transition, it derives the complete
+affected member set and old/new paths from the prior projection, verifies the
+claimed canonical list, count, digest, and scoped events, and only then installs
+the post-state. It rejects missing dependency witnesses, impossible causal
+pre-states, extra or omitted members, and a final replayed topology that differs
+from current node and immutable trash-origin state.
+
 Unknown audit records, internally missing or reordered events, altered baseline
 state, dangling versions or attachments, or inconsistent heads fail the import;
 they never produce a current-tree-only restore.
@@ -501,7 +540,8 @@ bundle, including allocation-lineage count/head even when the latest operations
 were unaudited. Verify and restore must reproduce identical scope IDs,
 memberships, event count/heads, allocation lineage, content hashes, and deletion
 protections across loose and packed source vaults. The comparison also includes
-the complete authoritative attachment projection for every audited member.
+the complete authoritative attachment projection for every audited member and
+the replayed path-topology projection with every path-effect commitment.
 
 Normal overwrite restore is forward-only for an existing audited target. While
 holding the target hierarchy lock and before cleanup, restore reads the target's
