@@ -62,6 +62,10 @@ share a blob without sharing document identity.
     refuses commit unless the resulting baselines, events, lineage, and scope
     heads exactly match that closure; database guards reject writes without the
     context.
+    Inherited memberships are partitioned into shared baseline batches keyed by
+    scope, normalized top-level target, and operation—not one baseline per
+    member. Each new membership references exactly one batch, whose sorted
+    member and adopted-record set is replayed atomically.
     Audited trash-origin coordinates are immutable metadata rather than a
     nullable live foreign-key relationship; an unaudited origin can disappear
     without mutating the audited node's chain state. The nullable `trash_parent`

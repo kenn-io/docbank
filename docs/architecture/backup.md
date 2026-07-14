@@ -116,9 +116,9 @@ inside the snapshot.
 
 !!! info "Planned — audited-history authority"
     Full audit will extend the deterministic JSONL with scopes, sticky
-    memberships, canonical enrollment baselines and digests, mutation records,
-    per-scope chain entries/heads, a stable vault ID, both allocator high-water
-    marks, a vault-wide allocation lineage, stable content versions, and
+    memberships, shared enrollment-baseline batches and digests, mutation
+    records, per-scope chain entries/heads, a stable vault ID, both allocator
+    high-water marks, a vault-wide allocation lineage, stable content versions, and
     authoritative tag/provenance attachments with their referenced records.
     Every protected historical blob becomes snapshot content. Import,
     verification, and restore must recompute baseline digests from immutable

@@ -132,7 +132,7 @@ progress so stdout contains one typed report.
 
 !!! info "Planned — audited-history fidelity"
     The portable JSONL format will carry audit scopes, sticky memberships,
-    canonical enrollment baselines and digests, mutation records, per-scope
+    shared enrollment-baseline batches and digests, mutation records, per-scope
     chain heads, a stable vault ID, both allocator high-water marks, a
     vault-wide allocation lineage, stable content versions, and authoritative
     tag/provenance attachments with the tag and ingest records they reference.

@@ -37,23 +37,40 @@ Renaming or moving the directory therefore moves the scope with it. Enabling a
 scope runs as a daemon job behind the mutation gate and atomically records:
 
 - the scope and its initial chain state;
-- a baseline of the directory, every live descendant, every discoverable
-  pre-enrollment trash root whose recorded origin ancestry reaches that
-  directory, and all descendants of those trash roots;
+- one shared baseline batch containing the directory, every live descendant,
+  every discoverable pre-enrollment trash root whose recorded origin ancestry
+  reaches that directory, and all descendants of those trash roots;
 - every content version Docbank still retains for those nodes;
 - every authoritative attachment for those nodes: tag assignments with their
   stable tag definitions, plus provenance records with their referenced ingest
   records; and
-- explicit membership for every node in that baseline.
+- explicit membership for every node in that batch.
 
-The baseline is an immutable canonical snapshot, not only an implementation
-scan. Its digest covers the scope and target IDs; every adopted node and
-membership; their enrollment-time state and immutable trash-origin state; and
-every complete content-version record and authoritative attachment retained at
-enrollment. Attached records use canonical stable-ID and field ordering, so tag
-definitions, assignments, provenance, and referenced ingest facts produce the
-same digest on every platform. The first scope-chain entry commits that digest.
-Later mutations append events; they never rewrite the frozen baseline records.
+The baseline batch is an immutable canonical snapshot, not only an
+implementation scan. Its digest covers the scope and target IDs; every adopted
+node and membership; their enrollment-time state and immutable trash-origin
+state; and every complete content-version record and authoritative attachment
+retained at enrollment. Attached records use canonical stable-ID and field
+ordering, so tag definitions, assignments, provenance, and referenced ingest
+facts produce the same digest on every platform. The first scope-chain entry
+commits that digest. Later mutations append events; they never rewrite the
+frozen batch records.
+
+Baseline cardinality is **one shared baseline batch per
+`(scope_id, enrollment_target_node_id, operation_id)`**, not one baseline per
+member. Initial scope enablement creates exactly one batch whose target is the
+scope directory. A later operation creates one batch for each scope and
+top-level subtree target that gains members. Overlapping scopes therefore get
+separate batches even for the same target. If one operation names overlapping
+targets within a scope, it first normalizes them to minimal non-overlapping
+roots; a redundant descendant target folds into its nearest selected ancestor.
+
+Each batch contains the canonically sorted set of nodes newly acquiring that
+scope plus the complete post-operation version, trash-origin, and authoritative
+attachment closure adopted for those nodes. Every new membership stores one
+immutable reference to that shared batch. A node already in the scope is not
+included or re-baselined; it receives the ordinary transition event instead.
+No membership can appear in two batches for the same scope and operation.
 
 The pre-feature metadata bootstrap creates a stable vault ID before any audit
 preview can run. Baseline and mutation hashes include that ID as domain
@@ -63,9 +80,9 @@ at another filesystem location.
 
 Trash is detached from the live tree, so current parentage alone is not enough.
 Enrollment follows stable `trash_parent` origin IDs, including through another
-trash root adopted by the same baseline. This closes the escape where a file is
-trashed immediately before its directory is enrolled and then emptied. If
-earlier permanent deletion already erased the origin ancestry, Docbank cannot
+trash root adopted by the same baseline batch. This closes the escape where a
+file is trashed immediately before its directory is enrolled and then emptied.
+If earlier permanent deletion already erased the origin ancestry, Docbank cannot
 infer that the remaining trash once belonged to the scope; the preview reports
 the unresolved trash root without claiming it as a member.
 
@@ -109,28 +126,31 @@ the client must preview again after `audit_preview_stale`.
 Membership is **sticky**. A member moved outside the directory remains audited;
 otherwise moving a file out, deleting it, and moving it back would be a purge
 escape. A file or subtree moved or restored into an audited directory is
-enrolled with a baseline in the same transaction as that move or restore. The
-baseline applies the same origin-ancestry closure as initial enrollment: it
-adopts the live subtree, all still-retained versions, and every detached trash
-root whose recorded origin ancestry reaches the newly enrolled subtree,
-including those roots' descendants, versions, and authoritative attachments.
-Its enrollment event commits the canonical baseline digest. New children
-inherit every audit scope that protects their parent. That includes children
-created beneath a sticky member
-directory after it has moved outside the scope's current path: the protected
-directory continues carrying the promise. Nested and overlapping scopes are
-allowed, and membership is additive rather than replacing an earlier promise.
+enrolled with one shared baseline batch per newly acquired scope in the same
+transaction as that move or restore. Each batch applies the same origin-ancestry
+closure as initial enrollment: it adopts the live subtree, all still-retained
+versions, and every detached trash root whose recorded origin ancestry reaches
+the newly enrolled subtree, including those roots' descendants, versions, and
+authoritative attachments not already protected by that scope. Each batch's
+enrollment binding commits its canonical digest. New children inherit every
+audit scope that protects their
+parent. That includes children created beneath a sticky member directory after
+it has moved outside the scope's current path: the protected directory continues
+carrying the promise. Nested and overlapping scopes are allowed, and membership
+is additive rather than replacing an earlier promise.
 
-An inherited baseline is the canonical **post-operation** snapshot. For a scope
-that already protected a node before the operation, replay applies the normal
-pre-state-to-post-state mutation event. For a scope the node joins because of
-that same move, restore, or creation, replay installs the post-operation
-baseline and does not also apply the triggering transition. The enrollment
-record retains the operation identity and cause, but protection begins at that
-post-state boundary. If a node was already in one scope and joins another, the
-first scope receives the transition while the new scope receives only its
-baseline. One scope-chain entry may commit both categories in their canonical
-event order without omitting or double-applying the mutation.
+An inherited baseline batch is the canonical **post-operation** snapshot. For a
+scope that already protected a node before the operation, replay applies the
+normal pre-state-to-post-state mutation event. For a scope the node joins
+because of that same move, restore, or creation, replay installs the
+post-operation batch and does not also apply the triggering transition. The
+enrollment record retains the operation identity and cause, but protection
+begins at that post-state boundary. If a node was already in one scope and joins another, the
+first scope receives the transition while the new scope receives only its shared
+batch. Replay installs every membership and adopted record in that batch
+atomically from its one binding; it does not synthesize per-member baselines. One
+scope-chain entry may commit both transition and batch categories in canonical
+order without omitting or double-applying the mutation.
 
 Path history follows a **path-affecting closure**, not only directly mutated
 members. Renaming, moving, trashing, or restoring any directory finds every
@@ -151,8 +171,9 @@ changes topology:
 - every node in an inserted or reparented subtree must retain its existing
   sticky memberships and, evaluated top-down, acquire the union of scopes
   carried by its post-operation parent;
-- every newly acquired membership must have exactly one post-operation baseline
-  binding with the complete node, version, trash-origin, and attachment closure;
+- newly acquired memberships must be partitioned into exactly one shared
+  post-operation baseline batch per normalized `(scope, target)` pair, and every
+  new membership must reference exactly one such batch;
 - every audited descendant whose derived path changes through an ancestor must
   have exactly one old-path/new-path event for each protecting scope; and
 - the canonical mutation, allocation-lineage entry, affected scope entries, and
@@ -232,7 +253,7 @@ audit write guards reject update or deletion of provenance attached to an
 audited member and reject deletion of any ingest record it references. Those
 records are permanent metadata retention roots just like the member's versions.
 Ordinary policy may delete facts belonging only to unaudited nodes; later
-enrollment adopts only facts still retained at its baseline.
+enrollment adopts only facts still retained in its baseline batch.
 
 ### Content versions
 
@@ -266,20 +287,21 @@ version.
 
 Each audited authoritative operation has exactly one canonical mutation record.
 Its hash includes the stable vault ID, operation sequence, random operation ID,
-ordered node events, and any enrollment-baseline digests. Each affected audit
-scope appends a chain entry containing that mutation hash and its previous chain
-head; the scope authority records the expected entry count and current head.
-This lets verification and import detect changed, reordered, duplicated, or
-truncated history without duplicating the canonical mutation payload for
+ordered node events, and every sorted enrollment-baseline binding. Each affected
+audit scope appends a chain entry containing that mutation hash and its previous
+chain head; the scope authority records the expected entry count and current
+head. This lets verification and import detect changed, reordered, duplicated,
+or truncated history without duplicating the canonical mutation payload for
 overlapping scopes.
 
-Enrollment is a canonical mutation whose hash includes its baseline digest.
-Verification, JSONL import, and restore recompute that digest from the immutable
-enrollment snapshot records before accepting the first chain entry. They then
-verify or replay subsequent mutations in canonical order and reconcile the
-resulting final state with current node, membership, version, tag-assignment,
-tag-definition, provenance, and referenced-ingest metadata for every audited
-member. Current mutable state is never substituted for enrollment-time inputs.
+Enrollment is a canonical mutation whose hash includes every sorted baseline
+batch binding. Verification, JSONL import, and restore recompute each batch
+digest from its immutable snapshot and member records before accepting the
+scope-chain entry. They then verify or replay subsequent mutations in canonical
+order and reconcile the resulting final state with current node, membership,
+version, tag-assignment, tag-definition, provenance, and referenced-ingest
+metadata for every audited member. Current mutable state is never substituted
+for enrollment-time inputs.
 Baseline membership, version, or authoritative attachment metadata therefore
 cannot change independently of the recorded scope head, while valid later
 changes do not invalidate it.
@@ -415,7 +437,8 @@ format will be versioned to include:
 - the stable vault ID used to domain-separate audit hashes;
 - the node-ID and operation-sequence allocator high-water marks;
 - the vault-wide allocation-lineage genesis, entries, count, and head;
-- sticky node memberships and enrollment baselines;
+- sticky node memberships, shared enrollment-baseline batches, and each
+  membership's immutable batch reference;
 - immutable audited trash-origin parent IDs and names;
 - authoritative tag definitions and assignments, provenance records, and their
   referenced ingest records;
@@ -426,11 +449,16 @@ Export orders those records deterministically from one pinned metadata
 snapshot. Import into a fresh current-schema store validates IDs, membership
 topology, event order, chain hashes and heads, node revisions, every protected
 blob reference, and the referential closure of authoritative attachments in one
-transaction. It reconstructs every enrollment baseline, verifies its digest,
-replays attached-metadata changes, and requires the resulting tag and provenance
-projection to equal the imported current state before accepting the chain. It
-also recomputes the complete event sort keys and sorted baseline-binding lists;
-an ordinal, duplicate key, or digest order that is not canonical is rejected.
+transaction. It reconstructs every enrollment baseline batch, verifies its
+digest and member set, replays attached-metadata changes, and requires the
+resulting tag and provenance projection to equal the imported current state
+before accepting the chain. It also recomputes the complete event sort keys and
+sorted baseline-binding lists; an ordinal, duplicate key, or digest order that
+is not canonical is rejected. Every membership must resolve to exactly one batch
+that created it with the same scope and operation; initial memberships resolve
+to the scope's sole enablement batch. Imported batches must use normalized
+non-overlapping targets, contain exactly their declared newly adopted members,
+and never assign one member to two batches for the same scope and operation.
 Audited mutation history that updates or deletes an ingest/provenance fact is
 invalid, as is a current audited provenance fact whose referenced ingest record
 is missing.

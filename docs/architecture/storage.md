@@ -96,6 +96,9 @@ nodes_fts      -- FTS5 external-content index over live node names
     scope exists, node insertion and parent/name/trash changes require a guarded
     audit transaction whose precomputed membership, baseline, descendant-event,
     lineage, and scope-head effects must match exactly before commit.
+    Enrollment storage uses one shared baseline batch per scope, normalized
+    subtree target, and operation. Every newly acquired membership references
+    exactly one batch; existing memberships are never re-baselined.
 
 ## Invariants enforced in the schema
 
