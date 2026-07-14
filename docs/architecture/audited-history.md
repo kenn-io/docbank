@@ -43,6 +43,11 @@ scope runs as a daemon job behind the mutation gate and atomically records:
 - every content version Docbank still retains for those nodes; and
 - explicit membership for every node in that baseline.
 
+The baseline is a canonical record, not only an implementation scan. Its
+digest covers the scope and target IDs; every adopted node and membership;
+their canonical current and trash-origin state; and every complete retained
+content-version record. The first scope-chain entry commits that digest.
+
 Trash is detached from the live tree, so current parentage alone is not enough.
 Enrollment follows stable `trash_parent` origin IDs, including through another
 trash root adopted by the same baseline. This closes the escape where a file is
@@ -66,12 +71,16 @@ cannot bypass review by calling the execution operation directly.
 Membership is **sticky**. A member moved outside the directory remains audited;
 otherwise moving a file out, deleting it, and moving it back would be a purge
 escape. A file or subtree moved into an audited directory is enrolled with a
-baseline that adopts all of its still-retained content versions in the same
-transaction as the move. New children inherit every audit scope that protects
-their parent. That includes children created beneath a sticky member directory
-after it has moved outside the scope's current path: the protected directory
-continues carrying the promise. Nested and overlapping scopes are allowed, and
-membership is additive rather than replacing an earlier promise.
+baseline in the same transaction as the move. That baseline applies the same
+origin-ancestry closure as initial enrollment: it adopts the live subtree, all
+still-retained versions, and every detached trash root whose recorded origin
+ancestry reaches the moved subtree, including those roots' descendants and
+versions. Its enrollment event commits the canonical baseline digest. New
+children inherit every audit scope that protects their parent. That includes
+children created beneath a sticky member directory after it has moved outside
+the scope's current path: the protected directory continues carrying the
+promise. Nested and overlapping scopes are allowed, and membership is additive
+rather than replacing an earlier promise.
 
 An external application or pseudo-folder uses the same model: an integration
 projects its collection onto a stable Docbank directory/scope reference. The
@@ -130,6 +139,12 @@ verification and import detect changed, reordered, duplicated, or truncated
 history without duplicating the canonical mutation payload for overlapping
 scopes.
 
+Enrollment is a canonical mutation whose hash includes its baseline digest.
+Verification, JSONL import, and restore recompute that digest from the adopted
+nodes, memberships, current state, trash origins, and complete version records
+before accepting the chain. Baseline membership or version metadata therefore
+cannot change independently of the recorded scope head.
+
 The guarantee is application-enforced and tamper-evident. It protects against
 ordinary Docbank commands, API clients, maintenance, software mistakes, and
 incomplete metadata restores. It cannot make bytes metaphysically indelible to
@@ -178,9 +193,11 @@ format will be versioned to include:
 Export orders those records deterministically from one pinned metadata
 snapshot. Import into a fresh current-schema store validates IDs, membership
 topology, event order, chain hashes and heads, node revisions, and every
-protected blob reference in one transaction. Unknown audit records, internally
-missing or reordered events, dangling versions, or inconsistent heads fail the
-import; they never produce a current-tree-only restore.
+protected blob reference in one transaction. It also reconstructs every
+enrollment baseline and verifies its digest before accepting the chain. Unknown
+audit records, internally missing or reordered events, altered baseline state,
+dangling versions, or inconsistent heads fail the import; they never produce a
+current-tree-only restore.
 
 A fresh import with no trusted reference cannot distinguish a coherently
 rewritten and re-chained stream from an original one. Downgrade or rollback is
