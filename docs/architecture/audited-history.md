@@ -224,10 +224,12 @@ unambiguous and independent of request, map, or traversal order.
 The path-topology projection evolves with that delta. Moving a protected
 subtree beneath a previously unwitnessed unaudited ancestry first records the
 new ancestor-spine records needed by replay. The canonical net path-effect list
-contains `(scope_id, member_node_id, old_path, new_path)` and is sorted by those
-fields' canonical byte encodings. The mutation commits the topology delta and
-the effect list's count and digest; each net event commits that same delta
-digest.
+contains
+`(scope_id, member_node_id, old_path, new_path, old_state, new_state)` and is
+sorted by those fields' canonical byte encodings in that order. The state tokens
+are `live` and `trash`. The mutation commits the topology delta and the effect
+list's count and digest; each net event must carry exactly the same six values
+plus that delta digest.
 
 Historical witness generations and deltas are immutable, while the **active
 witness projection** is derived. A witness generation is keyed by node ID and
@@ -504,7 +506,11 @@ audit write guards reject update or deletion of provenance attached to an
 audited member and reject deletion of any ingest record it references. Those
 records are permanent metadata retention roots just like the member's versions.
 Ordinary policy may delete facts belonging only to unaudited nodes; later
-enrollment adopts only facts still retained in its baseline batch.
+enrollment adopts only facts still retained in its baseline batch. A deletion
+set must be referentially closed: every fact whose `supersedes` points at a
+deleted fact is deleted in the same transaction, and deleting an ingest requires
+deleting every fact that references it. Every member of that closure must remain
+wholly unprotected, and the post-state may contain no dangling edge.
 
 ### Content versions
 
@@ -612,6 +618,96 @@ are invalid. Values have one-byte type tags followed by:
 | `0a` | list | `U(count)` followed by each complete typed value |
 | `0b` | nested record | `F(the complete CAE2 record)` |
 
+In the schema registry below, `?T` is a field of type `T` whose absent form uses
+tag `00`, and `[T]` is a list. Tokens, field names, and types are exact; changing
+any of them requires a later metadata format. `state` is text restricted to
+`live`, `trash`, or `tombstone`, and `action` is text restricted to the stable
+codes already defined for that record.
+
+Nested record schemas are:
+
+| `record_kind` | Exact fields |
+| --- | --- |
+| `unknown_origin` | `node_id:u64`, `parent_id:?u64` (always absent), `name:?bytes` |
+| `known_origin` | `node_id:u64`, `parent_id:u64`, `name:bytes` |
+| `topology_node` | `node_id:u64`, `parent_id:?u64`, `name:bytes`, `state:state`, `origin:?record` |
+| `content_version` | `version_id:uuid`, `node_id:u64`, `blob_hash:digest`, `size:u64`, `media_type:?text`, `recorded_at:timestamp`, `node_revision:u64` |
+| `tag_definition` | `tag_id:uuid`, `name:text` |
+| `tag_assignment` | `tag_id:uuid`, `node_id:u64` |
+| `ingest` | `ingest_id:uuid`, `started_at:timestamp`, `source_kind:text`, `source_desc:text` |
+| `provenance` | `identity:digest`, `node_id:u64`, `ingest_id:uuid`, `original_path:?bytes`, `original_mtime:?timestamp`, `supersedes:?digest` |
+| `witness` | `node_id:u64`, `generation_operation_id:uuid`, `state_digest:digest` |
+| `baseline_binding` | `scope_id:uuid`, `target_node_id:u64`, `baseline_digest:digest` |
+| `topology_change` | `node_id:u64`, `pre:?topology_node`, `post:?topology_node` |
+| `path_state` | `path:bytes`, `state:state` |
+| `path_effect` | `scope_id:uuid`, `member_node_id:u64`, `old:path_state`, `new:path_state` |
+| `witness_change` | `node_id:u64`, `generation_operation_id:uuid`, `action:action`, `state_digest:?digest` |
+| `attached_metadata_change` | `record_kind:text`, `stable_identity:bytes`, `pre:?record`, `post:?record` |
+| `audit_event` | `node_id:u64`, `event_kind:text`, `scope_id:uuid`, `target_node_id:?u64`, `attachment_kind:?text`, `attachment_identity:?bytes`, `event_ordinal:u64`, `pre:?record`, `post:?record`, `topology_delta:?digest`, `baseline_digest:?digest` |
+
+In that table, `record` means one complete nested CAE2 record of the applicable
+registered kind. An attached-metadata change permits only `tag_definition`,
+`tag_assignment`, `ingest`, or `provenance`; an event's pre/post kinds are fixed
+by `event_kind` (`path_state` for `node_path`, `content_version` for content
+events, and the matching attached record for tag/provenance events). A
+`topology_node.origin` permits only `known_origin` or `unknown_origin`.
+
+Event payload presence is exact:
+
+| Event codes | `pre` / `post` | Other required optional fields |
+| --- | --- | --- |
+| `audit_enroll`, `audit_inherit` | both absent | `target_node_id` and `baseline_digest` present |
+| `content_create` | absent / `content_version` | all topology/baseline fields absent |
+| `content_replace`, `content_revert` | `content_version` / `content_version` | all topology/baseline fields absent |
+| `node_create` | absent / `topology_node` | `topology_delta` present |
+| `node_path` | `path_state` / `path_state` | `topology_delta` present |
+| `tag_define`, `tag_assign` | absent / matching tag record | attachment kind/identity present |
+| `tag_rename` | `tag_definition` / `tag_definition` | attachment kind/identity present |
+| `tag_delete`, `tag_unassign` | matching tag record / absent | attachment kind/identity present |
+| `provenance_add` | absent / `provenance` | attachment kind/identity present |
+| `provenance_supersede` | `provenance` / `provenance` | attachment kind/identity present |
+
+Fields not required by the selected row are absent. `scope_id`, `node_id`,
+`event_kind`, and `event_ordinal` are always present. The tag “matching record”
+is `tag_definition` for define/rename/delete and `tag_assignment` for
+assign/unassign. Import rejects any other presence pattern before hashing.
+
+Hashed top-level record schemas are:
+
+| `record_kind` | Exact fields |
+| --- | --- |
+| `enrollment_baseline` | `vault_id:uuid`, `scope_id:uuid`, `target_node_id:u64`, `operation_id:uuid`, `cause:text`, `members:[u64]`, `nodes:[topology_node]`, `versions:[content_version]`, `attachments:[record]`, `witnesses:[witness]` |
+| `topology_genesis` | `vault_id:uuid`, `lineage_id:uuid`, `nodes:[topology_node]` |
+| `attached_metadata_genesis` | `vault_id:uuid`, `lineage_id:uuid`, `records:[record]` |
+| `topology_delta` | `operation_id:uuid`, `changes:[topology_change]` |
+| `path_effect_list` | `operation_id:uuid`, `topology_delta:digest`, `effects:[path_effect]` |
+| `witness_change_list` | `operation_id:uuid`, `changes:[witness_change]` |
+| `attached_metadata_delta` | `operation_id:uuid`, `changes:[attached_metadata_change]` |
+| `event` | `operation_id:uuid`, `event:audit_event` |
+| `canonical_mutation` | `vault_id:uuid`, `operation_sequence:u64`, `operation_id:uuid`, `grouping_id:?uuid`, `events:[audit_event]`, `baselines:[baseline_binding]`, `topology_delta:?digest`, `path_effect_count:u64`, `path_effect_digest:?digest`, `witness_change_count:u64`, `witness_change_digest:?digest`, `attached_metadata_change_count:u64`, `attached_metadata_change_digest:?digest` |
+| `scope_chain_entry` | `vault_id:uuid`, `scope_id:uuid`, `entry_count:u64`, `previous_head:?digest`, `mutation_hash:digest` |
+| `allocation_genesis` | `vault_id:uuid`, `lineage_id:uuid`, `node_id_high_water:u64`, `operation_sequence_high_water:u64`, `topology_count:u64`, `topology_digest:digest`, `attached_metadata_count:u64`, `attached_metadata_digest:digest` |
+| `allocation_entry` | `vault_id:uuid`, `lineage_id:uuid`, `previous_head:digest`, `operation_sequence:u64`, `operation_id:uuid`, `allocated_node_ids:[u64]`, `node_id_high_water:u64`, `operation_sequence_high_water:u64`, `has_audited_mutation:bool`, `mutation_hash:?digest`, `has_topology_change:bool`, `topology_delta:?digest`, `has_witness_change:bool`, `witness_change_count:u64`, `witness_change_digest:?digest`, `has_attached_metadata_change:bool`, `attached_metadata_change_count:u64`, `attached_metadata_change_digest:?digest` |
+
+The four `has_*` booleans are the normative allocation-entry no-change markers.
+`false` requires the paired digest absent and count zero where a count exists;
+`true` requires a
+present digest and a positive count, except that a topology delta has no
+separate count. In `canonical_mutation`, each count/digest pair uses zero plus
+absent as its empty marker and positive plus present otherwise. Contradictory
+combinations are invalid.
+
+List order is also part of the registry: member IDs use unsigned numeric order;
+allocated-node IDs preserve intrinsic allocation order; topology nodes/changes
+use `node_id`; versions use
+`(node_id, version_id)`; attachments and attached-metadata changes use
+`(record_kind, stable_identity)`; witnesses use
+`(node_id, generation_operation_id)` and witness changes add `action`;
+path effects use `(scope_id, member_node_id, old.path, new.path, old.state,
+new.state)`; events use the complete event tuple defined below; and baseline
+bindings use `(scope_id, target_node_id, baseline_digest)`. Genesis records use
+the corresponding attachment or topology order. Duplicate set keys are invalid.
+
 Text must be valid UTF-8 and receives **no Unicode normalization**; the exact
 stored byte sequence is authoritative. A field that can contain opaque
 filesystem bytes uses the bytes type instead. Empty text/bytes and absent are
@@ -620,7 +716,7 @@ Lists representing sets are sorted by the tuple named for that record before
 encoding; intrinsically ordered lists retain their specified order. Maps and
 floating-point values are forbidden.
 
-The digest of a baseline, topology delta, net path-effect list,
+The digest of a baseline, event, topology delta, net path-effect list,
 witness-change list, attached-metadata delta, canonical mutation, scope-chain
 entry, allocation genesis/entry, topology genesis, or attached-metadata genesis
 is `SHA-256(CAE2(record_kind, fields))` using its distinct lowercase kind token.
@@ -876,12 +972,14 @@ Ingest/provenance updates are always invalid because those records are
 immutable. A deletion is valid only when replay of the pre-operation projection
 proves that the record belongs solely to unaudited nodes, is not retained by any
 baseline or historical protected reference, and—for an ingest—has no remaining
-provenance reference. The canonical attached-metadata delta must contain its
-tombstone. These rules are unchanged when the same transaction has an unrelated
-audited effect: the deletion emits no scoped event, while the canonical mutation
-still binds the complete delta. Import rejects only a deletion that fails those
-pre-state checks, a missing tombstone, or a current provenance fact whose ingest
-record is absent.
+provenance reference. A deleted provenance fact may have no retained incoming
+`supersedes` edge; every dependent fact must be included in the same protected-
+closure check and deletion delta. The canonical attached-metadata delta must
+contain every tombstone. These rules are unchanged when the same transaction has
+an unrelated audited effect: the deletion emits no scoped event, while the
+canonical mutation still binds the complete delta. Import rejects a deletion
+that fails those pre/post referential checks, a missing tombstone, or any current
+provenance fact whose ingest or supersession target is absent.
 
 Import builds the vault-wide topology projection from its digested genesis
 snapshot and the complete attached-metadata projection from its independently
