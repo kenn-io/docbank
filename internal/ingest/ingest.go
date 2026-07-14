@@ -355,6 +355,9 @@ func (ing *Ingester) addTree(
 	// that path re-create (even resurrect) a tree somewhere else.
 	dirIDs := map[string]int64{} // source dir path -> virtual dir node id
 	walkErr := filepath.WalkDir(walkRoot, func(p string, d fs.DirEntry, err error) error {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		sourcePath := sourceTreePath(sourceRoot, walkRoot, p)
 		if err != nil {
 			rep.Failed = append(rep.Failed, FileError{Path: sourcePath, Err: err})
@@ -381,6 +384,9 @@ func (ing *Ingester) addTree(
 			}
 			dir, err := ing.Store.EnsureDir(ctx, parentID, name)
 			if err != nil {
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return ctxErr
+				}
 				rep.Failed = append(rep.Failed, FileError{Path: sourcePath,
 					Err: fmt.Errorf("creating virtual dir %q under node %d: %w", name, parentID, err)})
 				progress.report(*rep, false)

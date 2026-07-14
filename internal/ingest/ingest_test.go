@@ -134,6 +134,32 @@ func TestAddProgressBatchesManySmallFiles(t *testing.T) {
 	assert.Equal(t, int64(130), events[len(events)-1].FilesDone)
 }
 
+func TestAddCancellationStopsExcludedDirectoryWalk(t *testing.T) {
+	ing := newTestIngester(t)
+	src := t.TempDir()
+	for i := range 130 {
+		require.NoError(t, os.MkdirAll(
+			filepath.Join(src, fmt.Sprintf("%03d", i), "skip"), 0o700))
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	var events []ProgressEvent
+	_, err := ing.AddPathsWithOptions(ctx, []string{src}, "/inbox", Options{
+		Exclude: []string{"skip"},
+		Progress: func(event ProgressEvent) {
+			events = append(events, event)
+			if event.Excluded >= progressFileInterval {
+				cancel()
+			}
+		},
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	require.NotEmpty(t, events)
+	assert.False(t, events[len(events)-1].Final)
+	assert.Less(t, events[len(events)-1].Excluded, 130,
+		"the walk must stop instead of traversing every excluded directory")
+}
+
 func TestAddDirectoryPreservesStructure(t *testing.T) {
 	ing := newTestIngester(t)
 	ctx := t.Context()
