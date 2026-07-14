@@ -282,6 +282,28 @@ are `live` and `trash`. The mutation commits the topology delta and the effect
 list's count and digest; each net event must carry exactly the same six values
 plus that delta digest.
 
+Canonical history paths are opaque byte strings derived from the replayed
+topology, never host paths produced by `filepath`, Unicode normalization, or
+display escaping. A node-name component must be nonempty, must not equal `.` or
+`..`, and must contain neither NUL (`0x00`) nor slash (`0x2f`). Slash is the only
+separator, separators are never doubled, and a trailing slash is invalid except
+that the live vault root is exactly the single byte `/`. Every other live path
+is `/` followed by its root-to-node components joined with `/`.
+
+A trash path has a separate domain. A known-origin trash root is
+`@trash/known/` followed by the root-to-origin-parent components, its immutable
+origin name, and any descendant components, all joined with single `/` bytes;
+the vault root contributes no empty component. An unknown-origin trash root is
+`@trash/unknown/` followed by the adopted trash root's stable node ID in
+shortest unsigned base-10 ASCII—no sign or leading zero—and then any descendant
+components. Its optional retained origin name is display-only and never enters
+the path bytes. A `path_state` with state `live` accepts only the `/` form;
+state `trash` accepts only an `@trash/known/` or `@trash/unknown/` form. A known
+spine must terminate at the vault root, while the unknown form always uses the
+trash-root ID rather than the affected descendant ID. Baseline construction,
+event creation, replay, and import independently derive these exact bytes and
+reject a supplied path that differs.
+
 Historical witness generations and deltas are immutable, while the **active
 witness projection** is derived. A witness generation is keyed by node ID and
 the operation that introduced it. It is active only while at least one audited
@@ -681,7 +703,8 @@ version.
 
 Each audited authoritative operation has exactly one canonical mutation record.
 Its hash includes the stable vault ID, operation sequence, random operation ID,
-ordered node events, every sorted enrollment-baseline binding, and any canonical
+canonical operation timestamp, origin, optional agent label, ordered node
+events, every sorted enrollment-baseline binding, and any canonical
 operation-level topology delta, net path-effect count/digest, and witness-change
 count/digest and attached-metadata-delta count/digest. Each affected
 audit scope appends a chain entry containing that mutation hash and its previous
@@ -689,6 +712,15 @@ chain head; the scope authority records the expected entry count and current
 head. This lets verification and import detect changed, reordered, duplicated,
 or truncated history without duplicating the canonical mutation payload for
 overlapping scopes.
+
+Attribution is operation-level authority, not an incidental event field. Every
+canonical mutation carries exactly one `recorded_at`, `origin`, and optional
+`agent_label` tuple even when its event list is empty, as for a witness-only
+rotation. Every event in the mutation must repeat that exact tuple. A native
+content version introduced by the operation uses the same `recorded_at`, and
+every direct post-state node timestamp required to equal the operation time uses
+that value. Conflicting event attribution or a missing eventless attribution
+tuple is invalid before hashing.
 
 Enrollment is a canonical mutation whose hash includes every sorted baseline
 batch binding. Verification, JSONL import, and restore recompute each batch
@@ -861,6 +893,14 @@ unverified caller text. The tag “matching record” is `tag_definition` for
 define/rename/delete and `tag_assignment` for assign/unassign. Import rejects
 any other presence pattern before hashing.
 
+Every event's `recorded_at`, `origin`, and `agent_label` must equal the enclosing
+`canonical_mutation` fields byte-for-byte. For the optional label, equality
+distinguishes absent from present-but-empty. Scope fan-out repeats the tuple
+unchanged; no scope, event kind, importer, or user interface may rewrite it.
+The native content version introduced by a content event has the same
+`recorded_at`, and node timestamps governed by the operation-time rules above
+use it as well. Import verifies these bindings before event sorting or hashing.
+
 For `content_revert`, `source_version_id` must resolve in the pre-operation
 version projection to a retained, non-current version belonging to `node_id`.
 Its blob hash, size, and media type must equal the post version's corresponding
@@ -925,7 +965,7 @@ Hashed top-level record schemas are:
 | `witness_change_list` | `operation_id:uuid`, `changes:[witness_change]` |
 | `attached_metadata_delta` | `operation_id:uuid`, `changes:[attached_metadata_change]` |
 | `event` | `event:audit_event` |
-| `canonical_mutation` | `vault_id:uuid`, `operation_sequence:u64`, `operation_id:uuid`, `grouping_id:?uuid`, `events:[audit_event]`, `member_state_changes:[member_state_change]`, `baselines:[baseline_binding]`, `topology_delta:?digest`, `path_effect_count:u64`, `path_effect_digest:?digest`, `witness_change_count:u64`, `witness_change_digest:?digest`, `attached_metadata_change_count:u64`, `attached_metadata_change_digest:?digest` |
+| `canonical_mutation` | `vault_id:uuid`, `operation_sequence:u64`, `operation_id:uuid`, `grouping_id:?uuid`, `recorded_at:timestamp`, `origin:text`, `agent_label:?text`, `events:[audit_event]`, `member_state_changes:[member_state_change]`, `baselines:[baseline_binding]`, `topology_delta:?digest`, `path_effect_count:u64`, `path_effect_digest:?digest`, `witness_change_count:u64`, `witness_change_digest:?digest`, `attached_metadata_change_count:u64`, `attached_metadata_change_digest:?digest` |
 | `scope_chain_entry` | `vault_id:uuid`, `scope_id:uuid`, `entry_count:u64`, `previous_head:?digest`, `mutation_hash:digest` |
 | `allocation_genesis` | `vault_id:uuid`, `lineage_id:uuid`, `previous_head:?digest`, `node_id_high_water:u64`, `operation_sequence_high_water:u64`, `topology_count:u64`, `topology_digest:digest`, `attached_metadata_count:u64`, `attached_metadata_digest:digest` |
 | `allocation_entry` | `vault_id:uuid`, `lineage_id:uuid`, `previous_head:digest`, `operation_sequence:u64`, `operation_id:uuid`, `allocated_node_ids:[u64]`, `node_id_high_water:u64`, `operation_sequence_high_water:u64`, `has_audited_mutation:bool`, `mutation_hash:?digest`, `has_topology_change:bool`, `topology_delta:?digest`, `has_witness_change:bool`, `witness_change_count:u64`, `witness_change_digest:?digest`, `has_attached_metadata_change:bool`, `attached_metadata_change_count:u64`, `attached_metadata_change_digest:?digest` |
