@@ -84,15 +84,6 @@ func runServe(ctx context.Context) (retErr error) {
 		return err
 	}
 	jobSupervisor := jobs.New(sigCtx, logger)
-	// Register this after the store/blob defers so jobs always stop before the
-	// resources their runners may use are closed, including early error paths.
-	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := jobSupervisor.Shutdown(shutdownCtx); err != nil {
-			retErr = errors.Join(retErr, err)
-		}
-	}()
 
 	listener, err := kitdaemon.Listen(ctx, kitdaemon.Endpoint{
 		Network: kitdaemon.NetworkTCP,
@@ -130,6 +121,16 @@ func runServe(ctx context.Context) (retErr error) {
 		return fmt.Errorf("writing daemon runtime record: %w", err)
 	}
 	defer func() { _ = os.Remove(recPath) }()
+	// Defers run in reverse registration order. Register the job wait after
+	// runtime cleanup so the daemon stays discoverable while jobs drain, and
+	// after store/blob cleanup so their resources remain open until then.
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := jobSupervisor.Shutdown(shutdownCtx); err != nil {
+			retErr = errors.Join(retErr, err)
+		}
+	}()
 
 	var stopOnce sync.Once
 	stopCh := make(chan struct{})
