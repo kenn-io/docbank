@@ -39,8 +39,8 @@ not delete a temp file another process is actively writing.
 daemon run` takes exclusively (`TryLockExclusive`) at startup and releases
 only on shutdown. Unix uses `flock(2)` and Windows uses `LockFileEx`. Because
 it's a single long-lived process rather than one lock
-acquisition per command, the shared/exclusive split from Phase 1 is
-gone: with all access funneled through one process, the daemon *is* the
+acquisition per command, no per-command shared/exclusive split remains:
+with all access funneled through one process, the daemon *is* the
 serialization point, and a second daemon on the same vault is impossible
 by construction.
 
@@ -109,13 +109,13 @@ Windows.
 ## The maintenance gate: serializing inside the daemon
 
 With one process holding the vault lock for its whole run, `gc --run`,
-`trash empty`, and `verify` can no longer take the *vault* lock
-exclusively the way Phase 1's CLI did — the daemon already holds it.
+`trash empty`, and `verify` cannot take the *vault* lock exclusively per
+command — the daemon already holds it.
 Instead, an in-process `sync.RWMutex`-shaped gate serializes maintenance
 against regular mutations: ordinary mutating API handlers take the read
 side (concurrent with each other), and `gc --run`/`trash empty`/`verify`
 take the write side, giving them the same "observe a quiescent vault"
-guarantee the exclusive vault lock gave Phase 1's `gc`. Requests queue rather
+guarantee as an exclusive per-command lock. Requests queue rather
 than fail. See [HTTP API: maintenance gate](http-api.md#maintenance-gate)
 for the request-handling detail.
 

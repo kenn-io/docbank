@@ -5,10 +5,12 @@ description: What is implemented today and what each phase adds.
 
 # Roadmap
 
-docbank ships in phases, each independently useful. This page is the
-authoritative record of what exists versus what is designed — anything
-marked planned appears elsewhere in these docs only under an explicit
-"Planned" admonition.
+docbank ships in independently useful increments. This page is a high-level
+public view of current capability and product direction, not an execution
+ledger. The repository's kata ledger is the source of truth for actionable
+work, ordering, blockers, and completion state. Durable future contracts appear
+elsewhere only when they materially explain the design and are marked
+"Planned."
 
 | Phase | Scope | Status |
 |-------|-------|--------|

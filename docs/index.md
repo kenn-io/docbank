@@ -55,12 +55,6 @@ version through a new history row; neither discards earlier versions. Versions
 can be listed and retrieved independently of mutable paths. See
 [Editing & Versions](architecture/editing-and-versions.md).
 
-!!! info "Planned — full audit"
-    Selected directory scopes will retain every authoritative change and
-    content version with sticky membership, tamper-evident history, and
-    complete backup/restore fidelity. See
-    [Audited History](architecture/audited-history.md).
-
 ```
 docbank add ~/Documents/taxes --dest /taxes   # bulk import, resumable
 docbank tree /taxes                           # browse the virtual tree
@@ -120,14 +114,9 @@ integrity verification, and incremental backup creation, verification, and
 restore are implemented and tested. Stable content-version listing and
 ID-addressed retrieval, verified replacement, and reversion work through
 loose/packed storage and backup restore.
-Representative-corpus hardening and
-distribution work continue before a stable 1.0 release.
-
-!!! info "Planned — later phases"
-    Interactive editing, full audited history, tags, watched inboxes,
-    content-text extraction and search, the kit-ui web portal, and the focused
-    TUI are designed but not yet built. The
-    [Roadmap](roadmap.md) tracks what exists versus what is planned.
+Docbank is not yet a stable 1.0 release. The [Roadmap](roadmap.md) gives the
+high-level product direction without duplicating the project's kata work
+ledger.
 
 ## Where to go next
 

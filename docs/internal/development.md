@@ -68,12 +68,11 @@ For every material design change:
 2. Update public architecture when the user-visible model or boundary changes.
 3. Update CLI/API references and examples when a contract changes.
 4. Keep planned public behavior inside explicit planned callouts.
-5. Remove completed transient specs/plans after their durable content is
-   digested.
 
 Do not add a historical decision ledger. Git records prior versions; the
 working tree should let a new contributor understand the current system without
-replaying them.
+replaying them. Track work, ordering, blockers, and acceptance state in kata;
+documentation carries the resulting capability and durable rationale.
 
 ## Verification contract
 

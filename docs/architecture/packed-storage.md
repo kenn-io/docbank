@@ -60,26 +60,6 @@ Current GC keeps that row while any live node, trashed node, or recorded prior
 version refers to it. Kit therefore accepts an application-supplied catalog
 and does not own either application's schema or garbage-collection policy.
 
-## Adoption sequence
-
-1. **Complete:** prove msgvault's pack, logical-delete, repack, reader-retirement,
-   backup-overlap, unpack, and crash-recovery lifecycle.
-2. **Complete:** extract that lifecycle into Kit behind application-neutral
-   catalog interfaces and migrate msgvault without observable behavior change.
-3. **Complete:** add docbank's SQLite catalog, mixed reader, durable loose
-   writer, GC integration, and the Kit catalog conformance suite.
-4. **Complete:** expose read-only loose, live-packed, and dead-packed storage
-   inventory through the authenticated daemon API and CLI.
-5. **Complete:** expose explicit, optionally budgeted packing through the
-   daemon maintenance gate and Kit coordinator.
-6. **Complete:** expose policy-selected sparse repacking and reader-safe source
-   retirement through the same ordering.
-
-!!! info "Planned — next adoption steps"
-    Built-in backup and external integrations will use the catalog and
-    content-hash boundary rather than private pack internals. Automatic storage
-    maintenance remains deferred until watched-inbox policy lands.
-
 ## Consequences for docbank
 
 Docbank owns only its catalog adapter, daemon wiring, migration policy, and
@@ -119,8 +99,6 @@ an implementation format that docbank should own. Recovery belongs in verified
 backup/restore or a concrete repair workflow; the existence of a low-level Kit
 operation is not by itself a product use case.
 
-!!! info "Planned — external reachability"
-    Editing and versions, generalized provenance, and external references must
-    define their liveness policy at the docbank catalog boundary. Whether an
-    external reference pins content or merely detects a dangling reference is
-    intentionally unresolved and must be decided before that schema lands.
+Automatic storage maintenance and external content references are not current
+operator capabilities. Backup, replacement, reversion, and maintenance already
+use the catalog and content-hash boundary rather than private pack internals.

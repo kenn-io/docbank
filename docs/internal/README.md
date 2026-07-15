@@ -23,14 +23,17 @@ constraints, and implementation seams.
 
 ## Documentation boundary
 
-- **Public architecture:** what exists, the user-visible model, and planned
-  behavior only inside explicit planned callouts.
+- **User and agent guides:** shipped capabilities, exact contracts, and current
+  limitations.
+- **Public architecture:** the user-visible model and durable design intent;
+  future contracts appear only inside explicit planned callouts.
 - **Internal design:** current mechanics and rationale for agents and
   developers, including consequences and constraints.
-- **Transient specs/plans:** execution scaffolding under `docs/superpowers/`.
-  Digest useful content into the two maintained surfaces and remove the
-  transient file when the work ships.
+- **Roadmap:** one high-level public product-status view.
+- **Kata:** the sole home for work items, ordering, ownership, blockers, and
+  completion state.
 
 There is no separate decision ledger. If the design changes, revise the
 relevant living page so a new contributor can learn the current system without
-replaying historical records. Git history preserves the older state.
+replaying historical records. Git history preserves the older state. These
+pages must not become a second task ledger.

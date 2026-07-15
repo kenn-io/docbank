@@ -85,9 +85,8 @@ from the filename and remember that each term is a prefix match.
 docbank search insur stat
 ```
 
-!!! info "Planned — text extraction"
-    PDF, office-document, and plain-text extraction is designed for Phase 2b
-    but is not implemented. See [Searching](usage/searching.md).
+PDF, office-document, and plain-text extraction are not available. See
+[Searching](usage/searching.md) for the current name-search contract.
 
 ## A move or restore conflicts
 

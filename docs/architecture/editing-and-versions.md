@@ -126,17 +126,13 @@ Its receipt returns the resulting node, the new reversion row, the complete
 source version, and the resulting ETag. Clients accept success only when all
 node, revision, source, and content-authority fields agree.
 
-## Planned editing and retention
+## Current retention behavior
 
-!!! info "Planned — Phase 2b"
-    Interactive `edit` will use private staging and the implemented replacement
-    transaction. It must require optimistic concurrency rather than overwriting
-    another actor's head.
-
-    Version pruning is explicit and releases blob reachability only when its
-    metadata row is removed. No automatic retention policy is the default. A
-    version protected by a [full-audit scope](audited-history.md) is never
-    eligible for ordinary pruning.
+`put` and `revert` retain every prior content version. Docbank currently has no
+interactive `edit` command, version-pruning command, or automatic retention
+policy, so recorded versions remain reachability roots. The planned
+[full-audit contract](audited-history.md) defines a stronger permanent-retention
+mode separately from this current behavior.
 
 ```mermaid
 flowchart LR

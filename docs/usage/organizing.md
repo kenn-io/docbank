@@ -59,13 +59,5 @@ suffix if its old name is occupied at restore time).
 - Every `mv` is its own transaction: a failed move in a scripted batch
   leaves everything else applied and consistent.
 
-!!! info "Planned — Phase 2b"
-    `POST /batch/move` joins the HTTP API with a `dry_run` mode that
-    validates an entire reorganization (collisions, cycles, missing IDs)
-    before applying it all-or-nothing in one transaction — designed for
-    agent-driven filing. All entries are evaluated from one pre-state to one
-    final post-state rather than in request order; duplicate changes to one
-    node and invalid final graphs are rejected, while valid nested moves produce
-    one canonical atomic delta and net path changes. Tags (orthogonal to the
-    tree) are in the schema
-    and surface alongside it.
+Bulk all-or-nothing moves and user-facing tags are not available. Scripts must
+therefore treat each current `mv` as an independently committed operation.

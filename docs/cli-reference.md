@@ -257,10 +257,8 @@ matches exist, the command says that the result is truncated rather than
 silently implying completeness. Output columns are `ID` and `PATH`; no
 matches prints `no matches`.
 
-!!! info "Planned — Phase 2b"
-    Search currently covers node names only. Extracted document text
-    (PDF text layers, office formats) joins the index when the extraction
-    workers land. See [Searching](usage/searching.md).
+Search currently covers node names only; document-body extraction and content
+search are not available. See [Searching](usage/searching.md).
 
 ## docbank trash
 
@@ -493,14 +491,3 @@ builds; release builds inject both via `-ldflags`).
 `DOCBANK_LOG_LEVEL` sets the daemon's log level (`debug`, `info`,
 `warn`, `error`; default `info`) for both `docbank daemon run` and
 background-spawned daemons.
-
-## Planned commands
-
-!!! info "Planned — later phases"
-    The following are designed but not yet implemented; they will appear
-    here with exact semantics when they ship. `docbank edit`
-    (Phase 2b, [Editing & Versions](architecture/editing-and-versions.md));
-    `docbank audit enable`, `audit status`, `audit history`, and `audit verify`
-    (Phase 2b, [Audited History](architecture/audited-history.md));
-    `docbank extract` (Phase 2b, [HTTP API](architecture/http-api.md));
-    and `docbank tui` (Phase 3).

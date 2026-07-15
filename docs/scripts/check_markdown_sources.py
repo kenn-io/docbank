@@ -10,6 +10,16 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 EXCLUDED = {".cache", ".venv", "internal", "scripts", "site", "superpowers"}
 FORBIDDEN = ("@astrojs/starlight", "<Card", "<Aside", "<Tabs", ":::")
 ADMONITION = re.compile(r'!!!\s+[A-Za-z][\w-]*(?:\s+"(?:[^"\\]|\\.)*")?')
+TRACKER_ALLOWLIST = {pathlib.Path("changelog.md"), pathlib.Path("roadmap.md")}
+TRACKER_PATTERNS = (
+    (re.compile(r"(?im)^\s*(?:[-*]\s+)?\[[ xX]\]\s+"), "task checkbox"),
+    (re.compile(r"(?i)\bTODO\b"), "TODO marker"),
+    (re.compile(r"(?i)\bPhase\s+[0-9]+[a-z]?\b"), "phase tracking"),
+    (re.compile(r"(?i)\bimplementation plans?\b"), "implementation planning"),
+    (re.compile(r"(?i)\bremaining work\b"), "remaining-work tracking"),
+    (re.compile(r"(?i)\bfollow-on work\b"), "follow-on work tracking"),
+    (re.compile(r"(?i)docs/superpowers/"), "transient plan path"),
+)
 
 
 def public_markdown() -> list[pathlib.Path]:
@@ -19,6 +29,18 @@ def public_markdown() -> list[pathlib.Path]:
         if path.name != "README.md"
         and not any(
             part in EXCLUDED or part.startswith("zensical-public-docs.")
+            for part in path.relative_to(ROOT).parts
+        )
+    )
+
+
+def maintained_markdown() -> list[pathlib.Path]:
+    return sorted(
+        path
+        for path in ROOT.rglob("*.md")
+        if not any(
+            part in {".cache", ".venv", "site"}
+            or part.startswith("zensical-public-docs.")
             for part in path.relative_to(ROOT).parts
         )
     )
@@ -47,6 +69,19 @@ def main() -> None:
         errors.append(f"{missing}: public page is missing from navigation")
     for missing in sorted(configured - public):
         errors.append(f"{missing}: navigation target does not exist")
+
+    for path in maintained_markdown():
+        rel = path.relative_to(ROOT)
+        if rel in TRACKER_ALLOWLIST:
+            continue
+        text = path.read_text(encoding="utf-8")
+        for pattern, label in TRACKER_PATTERNS:
+            match = pattern.search(text)
+            if match is not None:
+                line = text.count("\n", 0, match.start()) + 1
+                errors.append(
+                    f"{rel}:{line}: {label} belongs in kata, not documentation"
+                )
 
     for path in files:
         rel = path.relative_to(ROOT)

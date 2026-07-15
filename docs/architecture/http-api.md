@@ -5,13 +5,9 @@ description: The agent-first HTTP API — filesystem-shaped endpoints, revision 
 
 # HTTP API
 
-!!! info "Implemented, with exceptions"
-    The endpoints below marked **Implemented** exist in `docbank daemon run`
-    today and back the CLI's data commands — the CLI is an HTTP client
-    of exactly this surface, with no other path into the vault. Rows
-    under the "Planned" admonitions further down (interactive editing,
-    tags, batch move) are designed but not built; see
-    [Roadmap](../roadmap.md).
+The endpoints below exist in `docbank daemon run` and back the CLI's data
+commands — the CLI is an HTTP client of exactly this surface, with no other
+path into the vault.
 
 **Design test: an agent must be able to do everything the CLI can,
 through the API alone.** Agents are not a secondary interface bolted
@@ -58,13 +54,6 @@ and `/` (the placeholder web UI, when `[web] enabled`). A hidden `POST
 /api/daemon/shutdown` (not in the OpenAPI document) backs `docbank
 daemon stop`; it isn't auth-exempt, so it requires both the API key and
 its own shutdown token.
-
-!!! info "Planned"
-    Not yet implemented: interactive edit and version pruning
-    ([Editing & Versions](editing-and-versions.md));
-    tags (`GET /tags` + CRUD, tag filters on search), whose IDs are opaque
-    non-reusable UUIDv4 values independent of mutable names; and
-    `POST /batch/move` bulk reorganization with `dry_run`.
 
 IDs are canonical everywhere: every response carries them, and mutating
 endpoints address nodes by ID so a rename can't strand a concurrent
@@ -208,8 +197,8 @@ per-path `failed` entries), backing `docbank add`. Paths must be
 **absolute**: the long-lived daemon's working directory is meaningless,
 so a relative path is rejected with `422`. The CLI resolves `docbank
 add`'s arguments to absolute paths before calling, so the command-line
-UX (relative paths, `cwd`-relative sources) is unchanged from Phase 1.
-Collisions resolve by the same suffixing rules as Phase 1's import.
+UX still accepts relative and `cwd`-relative sources. Collisions resolve by the
+same suffixing rules as other imports.
 
 `POST /ingest/stream` accepts the same body and returns
 `application/x-ndjson`. A metadata-only `scan` stage establishes advisory file
@@ -327,15 +316,10 @@ A stale target returns `412 stale_revision`. A source from another node returns
 `422 version_node_mismatch`, selecting the current head returns
 `422 version_already_current`, and an unknown source returns `404 not_found`.
 
-!!! info "Planned"
-    Ingest provenance today is filesystem-shaped: each import records
-    the source's original path and mtime in the store's `provenance`
-    table (the path is a record, never identity). Generalizing it —
-    `source_kind` / `source_ref` / `source_meta` fields for non-file
-    origins — and node lookup by content hash are planned so external
-    applications can trace a node to its origin and deduplicate against
-    the vault; see the
-    [roadmap](../roadmap.md#phase-2b-features-designed).
+Ingest provenance is currently filesystem-shaped: each import records the
+source's original path and mtime in the store's `provenance` table. The path is
+a record, never node identity. Non-file origin fields and lookup by content
+hash are not part of the current API.
 
 ## Maintenance gate
 
@@ -404,32 +388,6 @@ machine-readable string clients branch on instead of parsing `detail`:
 | `pack_retirement_deferred` | 503 | repack authority committed but an old source pack remains physically locked; release the lock, then run `storage pack` reconciliation |
 | `unauthorized` | 401 | missing or invalid API key; bad shutdown token |
 | `internal` | 500 | unmapped error (still surfaced with a message — this is a single-user local daemon, not a hardened multi-tenant service) |
-
-!!! info "Planned — audited-history API"
-    One bounded, cursor-paginated model will expose audit scope status, sticky
-    membership, canonical mutation events, content versions, comparison
-    metadata, and chain verification to CLI, agent, TUI, and web clients. Status
-    and terminal verification responses will expose one rollback-evidence
-    bundle: stable vault ID, every scope count/head, and allocation-lineage
-    count/head. Expected-state verification checks all of those fields, including
-    lineage advances caused only by unaudited operations. Mutation events expose
-    a unique per-transaction `operation_id` and an optional `grouping_id` for a
-    command or job spanning several transactions; grouping never implies atomic
-    commit. Scope preview returns a short-lived token bound to the baseline and
-    vault preview generation plus `vault_metadata_retention`: whether the
-    vault-wide lineage is newly activated or already active, genesis record
-    counts by kind, estimated serialized bytes, the retained metadata classes,
-    and `unaudited_content_retained: false`. Enablement requires both that token
-    and `acknowledge_vault_metadata_retention: true`; omitting or falsifying the
-    acknowledgment is a validation error, never implicit consent.
-    `audit_not_enrolled` (409) means
-    a requested node timeline has no audit authority. `audit_protected` (409)
-    refuses an incompatible mutation and carries a `blocking_scopes` array;
-    overlapping scopes are never collapsed to one. `audit_preview_stale` (409)
-    means the one-use preview token expired, the daemon restarted, another
-    execution consumed it, or authoritative state advanced. Credentialed
-    clients will not receive an ordinary audit-destruction operation. See
-    [Audited History](audited-history.md).
 
 ## Non-goals
 

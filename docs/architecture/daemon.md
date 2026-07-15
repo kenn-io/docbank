@@ -20,10 +20,9 @@ is no separate code path that opens the store directly — the CLI's own
 commands are the design test that the agent-facing API is sufficient,
 because the CLI has no other way to reach the vault.
 
-This replaces Phase 1's model, where every command opened the store and
-coordinated through the vault lock directly ([Concurrency &
-Locking](locking.md) covers the daemon's single-lock-holder model that
-results).
+Earlier development builds let every command open the store and coordinate
+through the vault lock directly. The current single-lock-holder model is
+described in [Concurrency & Locking](locking.md).
 
 ## Lifecycle
 
