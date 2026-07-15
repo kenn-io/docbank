@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -136,6 +137,70 @@ func TestContentVersionListMetadataAndPackedBytes(t *testing.T) {
 	resp, body = get(t, ts, "/api/v1/nodes/"+strconv.FormatInt(s.RootID(), 10)+"/versions", nil)
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 	assert.Contains(t, body, `"code":"not_file"`)
+}
+
+func TestContentReferenceLookupIsLogicalPaginatedAndRepresentationNeutral(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	wantedHash, wantedSize, err := s.Blobs.Write(strings.NewReader("shared content"))
+	require.NoError(t, err)
+	replacementHash, replacementSize, err := s.Blobs.Write(strings.NewReader("replacement"))
+	require.NoError(t, err)
+
+	historical, err := s.CreateFile(
+		ctx, s.RootID(), "historical.txt", wantedHash, wantedSize, "text/plain",
+	)
+	require.NoError(t, err)
+	historicalVersion := historical.CurrentVersionID
+	historical, _, err = s.ReplaceContent(ctx, historical.ID, historical.Revision,
+		replacementHash, replacementSize, "text/plain")
+	require.NoError(t, err)
+	current, err := s.CreateFile(ctx, s.RootID(), "current.txt", wantedHash, wantedSize, "text/plain")
+	require.NoError(t, err)
+	trashed, err := s.CreateFile(ctx, s.RootID(), "trashed.txt", wantedHash, wantedSize, "text/plain")
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, trashed.ID, trashed.Revision)
+	require.NoError(t, err)
+
+	lookup := "/api/v1/content-references?sha256=" + wantedHash + "&limit=10&offset=0"
+	resp, body := get(t, ts, lookup, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var loose api.ContentReferencePage
+	require.NoError(t, json.Unmarshal([]byte(body), &loose))
+	assert.Equal(t, 3, loose.Total)
+	require.Len(t, loose.Items, 3)
+	assert.Equal(t, current.ID, loose.Items[0].Node.ID)
+	assert.True(t, loose.Items[0].IsCurrent)
+	assert.Equal(t, "/current.txt", loose.Items[0].Path)
+	assert.Equal(t, historical.ID, loose.Items[1].Node.ID)
+	assert.Equal(t, historicalVersion, loose.Items[1].Version.ID)
+	assert.False(t, loose.Items[1].IsCurrent)
+	assert.Equal(t, replacementHash, loose.Items[1].Node.BlobHash)
+	assert.Equal(t, trashed.ID, loose.Items[2].Node.ID)
+	assert.NotEmpty(t, loose.Items[2].Node.TrashedAt)
+	assert.Empty(t, loose.Items[2].Path)
+
+	resp, body = get(t, ts,
+		"/api/v1/content-references?sha256="+wantedHash+"&limit=1&offset=1", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var page api.ContentReferencePage
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	assert.Equal(t, 3, page.Total)
+	require.Len(t, page.Items, 1)
+	assert.Equal(t, historicalVersion, page.Items[0].Version.ID)
+
+	packed, err := s.Blobs.Maintainer().Pack(ctx, packstore.PackOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, 2, packed.BlobsPacked)
+	resp, body = get(t, ts, lookup, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var afterPack api.ContentReferencePage
+	require.NoError(t, json.Unmarshal([]byte(body), &afterPack))
+	assert.Equal(t, loose, afterPack, "physical representation cannot change logical lookup")
+
+	resp, body = get(t, ts, "/api/v1/content-references?sha256=ABC", nil)
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+	assert.Contains(t, body, `"code":"validation"`)
 }
 
 func TestVerifyNodeContentBindsRevisionAndReadsStoredBytes(t *testing.T) {

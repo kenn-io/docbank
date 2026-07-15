@@ -40,7 +40,7 @@ maintenance.
 - Virtual folders with listing, tree browsing, rename, move, trash, and restore
 - Resumable bulk import and verified multipart upload
 - Stable content-version UUIDs, verified replacement and reversion, bounded
-  history listing, and ID-addressed retrieval
+  history listing, ID-addressed retrieval, and lookup by content hash
 - FTS5 name search (document-body extraction and search are planned)
 - Mixed loose and packed content storage with explicit pack, GC, and repack
 - Whole-vault integrity verification
@@ -50,10 +50,8 @@ maintenance.
   SHA-256 checksums and checksum-enforcing installers
 - Native vault, daemon, and recovery support on Linux, macOS, and Windows
 
-Interactive editing, permanent tamper-evident audited history, tags, watched
-inboxes, text extraction, the kit-ui web portal, and the focused TUI are planned
-rather than implemented. See the [roadmap](docs/roadmap.md) for the current
-boundary.
+See the [roadmap](docs/roadmap.md) for high-level product direction beyond the
+capabilities listed here.
 
 ## Installation
 
@@ -103,6 +101,7 @@ docbank add ~/Documents --dest /archive
 docbank tree /archive
 docbank search "tax return"
 docbank versions /archive/Documents/receipt.pdf
+docbank refs <receipt-sha256>
 docbank put revised-receipt.pdf /archive/Documents/receipt.pdf
 docbank revert /archive/Documents/receipt.pdf <prior-version-id>
 docbank mv /archive/Documents/receipt.pdf /archive/Documents/receipt-2026.pdf

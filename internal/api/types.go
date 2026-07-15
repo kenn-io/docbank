@@ -56,6 +56,23 @@ type ContentVersionPage struct {
 	Offset int              `json:"offset"`
 }
 
+// ContentReference identifies one stable node/version pair that retains a
+// requested content hash. Path is present only while the node is live.
+type ContentReference struct {
+	Version   ContentVersion `json:"version"`
+	Node      Node           `json:"node"`
+	Path      string         `json:"path,omitempty"`
+	IsCurrent bool           `json:"is_current"`
+}
+
+// ContentReferencePage is one bounded content-hash lookup page.
+type ContentReferencePage struct {
+	Items  []ContentReference `json:"items"`
+	Total  int                `json:"total"`
+	Limit  int                `json:"limit"`
+	Offset int                `json:"offset"`
+}
+
 // ContentVerification binds a fresh physical read to the exact node revision
 // the caller inspected. BlobHash and Size are catalog identity; ComputedHash
 // and ComputedSize describe the bytes read through the mixed store.
@@ -426,5 +443,12 @@ func fromStoreContentVersion(v store.ContentVersion) ContentVersion {
 		MimeType: v.MimeType, RecordedAt: v.RecordedAt, NodeRevision: v.NodeRevision,
 		IntroducedOperationID: v.IntroducedOperationID,
 		TransitionKind:        v.TransitionKind, SourceVersionID: v.SourceVersionID,
+	}
+}
+
+func fromStoreContentReference(ref store.ContentReference) ContentReference {
+	return ContentReference{
+		Version: fromStoreContentVersion(ref.Version), Node: fromStoreNode(ref.Node),
+		Path: ref.Path, IsCurrent: ref.IsCurrent,
 	}
 }

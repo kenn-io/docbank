@@ -16,6 +16,7 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 	doc := string(out)
 	for _, op := range []string{"getNode", "resolvePath", "listChildren", "getNodeContent", "verifyNodeContent",
 		"listContentVersions", "getContentVersion", "getContentVersionBytes",
+		"lookupContentReferences",
 		"search", "createNode", "moveNode", "movePath", "trashNode", "trashPath", "restoreNode",
 		"storageStatus", "storagePack", "storageRepack", "ingest", "uploadFile", "listTrash", "emptyTrash", "gc", "verify",
 		"initBackupRepository", "createBackupSnapshot", "listBackupSnapshots", "listJobs"} {

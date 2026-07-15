@@ -34,6 +34,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `POST /nodes/{id}/revert` | create a new head from a prior version of the same file | Implemented |
 | `GET /nodes/{id}/versions` | list immutable content versions newest-first, paginated (`limit`/`offset`) | Implemented |
 | `GET /versions/{version_id}` · `GET /versions/{version_id}/content` | inspect or stream one immutable version by stable UUID | Implemented |
+| `GET /content-references?sha256=&limit=&offset=` | find every stable node/version pair retaining a content hash | Implemented |
 | `POST /nodes/{id}/verify` | re-hash one file, bound to an inspected node revision | Implemented |
 | `GET /search?q=&limit=` | bounded name search (FTS5), with explicit `truncated` status | Implemented |
 | `POST /nodes` | create a directory (`kind: "dir"`) | Implemented |
@@ -161,6 +162,14 @@ body themselves and compare both their digest and the trailer with the node's
 metadata globally, and its `/content` child streams that version with the same
 identity headers and digest contract. A path rename cannot strand a retained
 version reference.
+
+`GET /content-references` is the inverse identity lookup. It accepts one
+canonical lowercase SHA-256 and returns only logical `content_versions`
+references backed by blob-catalog authority; it never infers a match from a
+loose file or pack entry alone. Each item contains the complete immutable
+version, its current node projection, whether that version is the node's
+current head, and a path only while the node is live. Results are bounded and
+deterministic: live current references, live history, then trashed references.
 
 `POST /nodes/{id}/verify` is the bounded server-side proof. It requires
 `If-Match` from a prior node response, reopens the blob through the same mixed

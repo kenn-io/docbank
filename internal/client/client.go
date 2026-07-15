@@ -286,6 +286,67 @@ func (c *Client) VersionContent(ctx context.Context, id string) (*ContentStream,
 	return stream, nil
 }
 
+// ContentReferences returns one bounded page of logical version references to
+// canonical SHA-256 content. It never infers authority from physical files.
+func (c *Client) ContentReferences(
+	ctx context.Context, hash string, limit, offset int,
+) (api.ContentReferencePage, error) {
+	var page api.ContentReferencePage
+	if !validSHA256Hex(hash) {
+		return page, errors.New("content hash must be canonical lowercase SHA-256")
+	}
+	if limit < 1 || limit > 1000 {
+		return page, errors.New("content-reference limit must be between 1 and 1000")
+	}
+	if offset < 0 {
+		return page, errors.New("content-reference offset must not be negative")
+	}
+	path := fmt.Sprintf("/api/v1/content-references?sha256=%s&limit=%d&offset=%d",
+		url.QueryEscape(hash), limit, offset)
+	if err := c.do(ctx, http.MethodGet, path, nil, nil, &page); err != nil {
+		return page, err
+	}
+	if err := validateContentReferencePage(page, hash, limit, offset); err != nil {
+		return api.ContentReferencePage{}, err
+	}
+	return page, nil
+}
+
+func validateContentReferencePage(page api.ContentReferencePage, hash string, limit, offset int) error {
+	if page.Limit != limit || page.Offset != offset || page.Total < 0 ||
+		len(page.Items) > limit ||
+		(len(page.Items) == 0 && offset < page.Total) ||
+		(len(page.Items) > 0 && offset+len(page.Items) > page.Total) {
+		return errors.New("content-reference response has inconsistent pagination")
+	}
+	seen := make(map[string]struct{}, len(page.Items))
+	for i, ref := range page.Items {
+		if !validUUIDv4(ref.Version.ID) || !validUUIDv4(ref.Version.IntroducedOperationID) ||
+			!validUUIDv4(ref.Node.CurrentVersionID) || ref.Node.Kind != "file" ||
+			ref.Version.NodeID != ref.Node.ID || ref.Version.BlobHash != hash ||
+			!validSHA256Hex(ref.Node.BlobHash) || ref.Version.Size < 0 || ref.Node.Size < 0 {
+			return fmt.Errorf("content-reference response item %d has inconsistent identity", i)
+		}
+		_, duplicate := seen[ref.Version.ID]
+		if duplicate {
+			return fmt.Errorf("content-reference response repeats version %s", ref.Version.ID)
+		}
+		seen[ref.Version.ID] = struct{}{}
+		current := ref.Version.ID == ref.Node.CurrentVersionID
+		if ref.IsCurrent != current {
+			return fmt.Errorf("content-reference response item %d has inconsistent current state", i)
+		}
+		if current && (ref.Node.BlobHash != hash || ref.Node.Size != ref.Version.Size ||
+			ref.Node.MimeType != ref.Version.MimeType) {
+			return fmt.Errorf("content-reference response item %d has inconsistent current authority", i)
+		}
+		if (ref.Node.TrashedAt == "") != strings.HasPrefix(ref.Path, "/") {
+			return fmt.Errorf("content-reference response item %d has inconsistent path state", i)
+		}
+	}
+	return nil
+}
+
 func (c *Client) content(ctx context.Context, path, identity string) (*ContentStream, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		c.base+path, nil)

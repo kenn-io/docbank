@@ -60,6 +60,7 @@ docbank add ~/Documents/taxes --dest /taxes   # bulk import, resumable
 docbank tree /taxes                           # browse the virtual tree
 docbank search "insurance"                    # indexed name search
 docbank versions /taxes/2026/return.pdf       # inspect stable content identity
+docbank refs <sha256>                         # find every retaining node/version
 docbank put revised.pdf /taxes/2026/return.pdf # retain the prior version
 docbank mv "/inbox/scan (2).pdf" /taxes/2026  # reorganize, metadata only
 docbank rm /inbox/junk.pdf                    # trash, recoverable
