@@ -17,10 +17,11 @@ var schemaSQL string
 
 // Store is the single access path to the docbank database.
 type Store struct {
-	db     *sql.DB
-	path   string
-	rootID int64
-	driver docsqlite.Driver
+	db      *sql.DB
+	path    string
+	rootID  int64
+	vaultID string
+	driver  docsqlite.Driver
 }
 
 // DefaultSQLiteDriver returns the build's standalone-compatible adapter: CGO
@@ -81,6 +82,25 @@ func (s *Store) bootstrapTx() error {
 		if _, err := tx.Exec(schemaSQL); err != nil {
 			return fmt.Errorf("applying schema: %w", err)
 		}
+		if err := tx.QueryRow(`SELECT vault_id FROM vault_metadata WHERE singleton = 1`).Scan(
+			&s.vaultID,
+		); errors.Is(err, sql.ErrNoRows) {
+			vaultID, idErr := newUUIDv4()
+			if idErr != nil {
+				return fmt.Errorf("creating vault identity: %w", idErr)
+			}
+			if _, idErr = tx.Exec(
+				`INSERT INTO vault_metadata(singleton, vault_id) VALUES(1, ?)`, vaultID,
+			); idErr != nil {
+				return fmt.Errorf("creating vault identity: %w", idErr)
+			}
+			s.vaultID = vaultID
+		} else if err != nil {
+			return fmt.Errorf("looking up vault identity: %w", err)
+		}
+		if err := validateUUIDv4(s.vaultID); err != nil {
+			return fmt.Errorf("validating vault identity: %w", err)
+		}
 		now := nowRFC3339()
 		if _, err := tx.Exec(
 			`INSERT INTO nodes (parent_id, name, kind, created_at, modified_at)
@@ -99,6 +119,10 @@ func (s *Store) bootstrapTx() error {
 
 // RootID returns the id of the tree root.
 func (s *Store) RootID() int64 { return s.rootID }
+
+// VaultID returns the stable logical identity preserved by metadata export,
+// backup, and restore. Moving or restoring a vault does not change it.
+func (s *Store) VaultID() string { return s.vaultID }
 
 // SQLiteDriver returns the exact adapter used by this store. Backup snapshots
 // and embedded lifecycle helpers reuse it for every auxiliary connection.

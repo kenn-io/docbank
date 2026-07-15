@@ -28,6 +28,8 @@ func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
+	sourceVaultID := source.VaultID()
+	require.NoError(t, validateUUIDv4(sourceVaultID))
 	seedMetadataRoundTrip(t, source)
 	filesystemMTime := time.Date(2026, time.February, 3, 4, 5, 6, 120_000_000, time.UTC).
 		Format(time.RFC3339Nano)
@@ -62,7 +64,8 @@ func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 	require.NoError(t, source.ExportMetadata(ctx, &first))
 	require.NoError(t, source.ExportMetadata(ctx, &second))
 	assert.Equal(t, first.Bytes(), second.Bytes(), "unchanged metadata must export byte-identically")
-	assert.Contains(t, first.String(), `{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":100}`)
+	assert.Contains(t, first.String(), `{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"`+
+		sourceVaultID+`","node_sequence":100}`)
 	assert.Contains(t, first.String(), `"original_mtime":"2026-02-03T04:05:06.12Z"`)
 	assert.Contains(t, first.String(), `{"type":"node","id":7,"parent_id":1,"name":"Projects","kind":"dir"`)
 	assert.NotContains(t, first.String(), "blob_pack_index")
@@ -72,6 +75,7 @@ func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, target.Close()) })
 	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(first.Bytes())))
+	assert.Equal(t, sourceVaultID, target.VaultID())
 
 	var restored bytes.Buffer
 	require.NoError(t, target.ExportMetadata(ctx, &restored))
@@ -125,9 +129,10 @@ func TestImportMetadataRejectsDanglingContentAndRollsBack(t *testing.T) {
 	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, target.Close()) })
+	targetVaultID := target.VaultID()
 
 	input := strings.Join([]string{
-		`{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":2}`,
+		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":2}`,
 		`{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}`,
 		`{"type":"node","id":2,"parent_id":1,"name":"missing.bin","kind":"file","current_version_id":"44444444-4444-4444-8444-444444444444","revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}`,
 	}, "\n") + "\n"
@@ -137,11 +142,17 @@ func TestImportMetadataRejectsDanglingContentAndRollsBack(t *testing.T) {
 	var nodes int64
 	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodes))
 	assert.Equal(t, int64(1), nodes, "failed import must leave the pristine target intact")
+	assert.Equal(t, targetVaultID, target.VaultID())
+	var storedVaultID string
+	require.NoError(t, target.db.QueryRow(
+		`SELECT vault_id FROM vault_metadata WHERE singleton = 1`,
+	).Scan(&storedVaultID))
+	assert.Equal(t, targetVaultID, storedVaultID)
 }
 
 func TestImportMetadataRejectsInvalidUTF8AndRollsBack(t *testing.T) {
 	const (
-		header = `{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":1}` + "\n"
+		header = `{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n"
 		root   = `{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}` + "\n"
 	)
 	withInvalidByte := func(prefix, suffix string) []byte {
@@ -154,7 +165,7 @@ func TestImportMetadataRejectsInvalidUTF8AndRollsBack(t *testing.T) {
 	}{
 		"header string": {
 			input: withInvalidByte(
-				`{"type":"meta","format":"docbank-`, `","version":1,"node_sequence":1}`+"\n"),
+				`{"type":"meta","format":"docbank-`, `","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}`+"\n"),
 			want: "metadata JSON is not valid UTF-8",
 		},
 		"record string": {
@@ -189,7 +200,7 @@ func TestImportMetadataRejectsInvalidUTF8AndRollsBack(t *testing.T) {
 
 func TestImportMetadataAcceptsValidSurrogatePair(t *testing.T) {
 	input := strings.Join([]string{
-		`{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":1}`,
+		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}`,
 		`{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}`,
 		`{"type":"tag","id":1,"name":"archive \ud83d\ude00"}`,
 	}, "\n") + "\n"
@@ -477,7 +488,7 @@ func TestImportMetadataRejectsOrphanedExtractionAndRollsBack(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, target.Close()) })
 
 	input := strings.Join([]string{
-		`{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":1}`,
+		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}`,
 		`{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}`,
 		`{"type":"extracted_text","blob_hash":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","extractor":"plain","extractor_version":1,"status":"ok","error":null,"attempts":1,"text":"orphan","extracted_at":"2026-01-01T00:00:00.000000000Z"}`,
 	}, "\n") + "\n"
@@ -568,7 +579,7 @@ func TestImportMetadataRejectsUnsafeTrashTopology(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, target.Close()) })
 			lines := append([]string{
-				`{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":3}`,
+				`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":3}`,
 				root,
 			}, tt.records...)
 			err = target.ImportMetadata(context.Background(), strings.NewReader(strings.Join(lines, "\n")+"\n"))
@@ -607,7 +618,7 @@ func TestImportMetadataRejectsNonPristineTarget(t *testing.T) {
 	_, err = target.Mkdir(context.Background(), target.RootID(), "existing")
 	require.NoError(t, err)
 
-	input := `{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":1}` + "\n"
+	input := `{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n"
 	err = target.ImportMetadata(context.Background(), strings.NewReader(input))
 	require.ErrorContains(t, err, "not pristine")
 	_, err = target.NodeByPath(context.Background(), "/existing")
@@ -616,19 +627,22 @@ func TestImportMetadataRejectsNonPristineTarget(t *testing.T) {
 
 func TestImportMetadataRejectsUnknownVersionAndFields(t *testing.T) {
 	for _, input := range []string{
-		`{"type":"meta","format":"docbank-metadata","version":2,"node_sequence":1}` + "\n",
-		`{"type":"meta","format":"docbank-metadata","version":1,"version":1,"node_sequence":1}` + "\n",
-		`{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":1,"surprise":true}` + "\n",
+		`{"type":"meta","format":"docbank-metadata","version":2,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n",
+		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"not-a-uuid","node_sequence":1}` + "\n",
+		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":null,"node_sequence":1}` + "\n",
+		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","vault_id":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee","node_sequence":1}` + "\n",
+		`{"type":"meta","format":"docbank-metadata","version":1,"version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n",
+		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1,"surprise":true}` + "\n",
 		`{"type":"meta","format":"docbank-metadata","version":1}` + "\n",
-		`{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":1}` + "\n" +
+		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n" +
 			`{"type":"future_record","value":1}` + "\n",
-		`{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":1}` + "\n" +
+		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n" +
 			`{"type":"blob","hash":"` + metadataHashCurrent + `","size":12}` + "\n",
-		`{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":1}` + "\n" +
+		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n" +
 			`{"type":"blob","hash":"` + metadataHashCurrent + `","size":null,"created_at":"2026-01-01T00:00:00.000000000Z"}` + "\n",
-		`{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":1}` + "\n" +
+		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n" +
 			`{"type":"blob","hash":"` + metadataHashCurrent + `","Size":12,"created_at":"2026-01-01T00:00:00.000000000Z"}` + "\n",
-		`{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":1}` + "\n" +
+		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n" +
 			`{"type":"blob","hash":"` + metadataHashCurrent + `","size":12,"created_at":"2026-01-01T00:00:00.000000000+00:00"}` + "\n",
 	} {
 		t.Run(input, func(t *testing.T) {
@@ -638,6 +652,17 @@ func TestImportMetadataRejectsUnknownVersionAndFields(t *testing.T) {
 			require.Error(t, target.ImportMetadata(context.Background(), strings.NewReader(input)))
 		})
 	}
+}
+
+func TestExportMetadataRejectsMalformedVaultIdentity(t *testing.T) {
+	source := newTestStore(t)
+	_, err := source.db.Exec(`UPDATE vault_metadata SET vault_id = 'not-a-uuid' WHERE singleton = 1`)
+	require.NoError(t, err)
+
+	var exported bytes.Buffer
+	err = source.ExportMetadata(t.Context(), &exported)
+	require.ErrorContains(t, err, "invalid vault identity")
+	assert.Empty(t, exported.Bytes())
 }
 
 func seedMetadataRoundTrip(t *testing.T, s *Store) {
