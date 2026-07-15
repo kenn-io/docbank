@@ -439,7 +439,12 @@ func restoreBackupSnapshot(
 	driver docsqlite.Driver,
 ) (BackupRestoreReport, error) {
 	return restoreBackupSnapshotWith(
-		ctx, repo, target, in, coordinator, progress, driver, backupapp.Restore)
+		ctx, repo, target, in, coordinator, progress,
+		func(ctx context.Context, repo *backup.Repo, version string, opts backup.RestoreOptions) (
+			*backup.RestoreResult, error,
+		) {
+			return backupapp.RestoreWithDriver(ctx, repo, version, driver, opts)
+		})
 }
 
 type backupRestoreRunner func(
@@ -453,7 +458,6 @@ func restoreBackupSnapshotWith(
 	in backupRestoreRequest,
 	coordinator restoreTargetCoordinator,
 	progress func(backup.ProgressEvent),
-	driver docsqlite.Driver,
 	run backupRestoreRunner,
 ) (report BackupRestoreReport, retErr error) {
 	if err := coordinator.Prepare(ctx); err != nil {
@@ -469,7 +473,6 @@ func restoreBackupSnapshotWith(
 		SnapshotID: in.SnapshotID, TargetDir: target, Overwrite: true,
 		Jobs: in.Jobs, ForceUnlock: in.ForceUnlock, Progress: progress,
 		TargetCoordinator: coordinator,
-		SQLiteOpener:      backupapp.SQLiteOpener(driver),
 	})
 	if err != nil {
 		return report, fromBackupError(err)
