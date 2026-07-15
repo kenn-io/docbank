@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
-	"mime"
 	"net"
 	"net/http"
 	"strings"
@@ -97,13 +96,13 @@ func isServerPathIngestRoute(path string) bool {
 // encoding/json's lossy behavior and replaces invalid UTF-8 or unpaired
 // surrogate escapes with U+FFFD. Names and paths must reach route validation
 // byte-for-byte or a mutation could target a different, replacement-character
-// node. Applying this to the media type rather than a route list keeps future
-// JSON mutations inside the same boundary automatically.
+// node. Every mutating request is text-validated regardless of Content-Type:
+// Huma accepts an omitted Content-Type for body-bound operations, and malformed
+// headers must not bypass the boundary. The upload route is the daemon's sole
+// opaque-body mutation and validates its multipart envelope separately.
 func jsonBodyTextMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mediaType, _, mediaErr := mime.ParseMediaType(r.Header.Get("Content-Type"))
-		if r.Body == nil || mediaErr != nil ||
-			(mediaType != "application/json" && !strings.HasSuffix(mediaType, "+json")) {
+		if r.Body == nil || !mutationMethod(r.Method) || r.URL.Path == "/api/v1/uploads" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -120,6 +119,15 @@ func jsonBodyTextMiddleware(next http.Handler) http.Handler {
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		next.ServeHTTP(w, r)
 	})
+}
+
+func mutationMethod(method string) bool {
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	default:
+		return false
+	}
 }
 
 func isLoopbackRemote(remoteAddr string) bool {
