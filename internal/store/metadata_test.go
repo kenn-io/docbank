@@ -138,6 +138,28 @@ func TestImportMetadataRejectsDanglingContentAndRollsBack(t *testing.T) {
 	assert.Equal(t, int64(1), nodes, "failed import must leave the pristine target intact")
 }
 
+func TestImportMetadataRejectsLaterContentCreateAndRollsBack(t *testing.T) {
+	ctx := t.Context()
+	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, source.Close()) })
+	seedMetadataRoundTrip(t, source)
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(ctx, &exported))
+	malformed := strings.Replace(exported.String(),
+		`"transition_kind":"content_replace"`, `"transition_kind":"content_create"`, 1)
+	require.NotEqual(t, exported.String(), malformed)
+
+	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, target.Close()) })
+	err = target.ImportMetadata(ctx, strings.NewReader(malformed))
+	require.ErrorContains(t, err, "content_create is required exactly at node revision one")
+	var nodes int64
+	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodes))
+	assert.Equal(t, int64(1), nodes, "failed import must leave the pristine target intact")
+}
+
 func TestImportMetadataRejectsOrphanedExtractionAndRollsBack(t *testing.T) {
 	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
 	require.NoError(t, err)

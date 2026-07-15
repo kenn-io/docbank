@@ -81,6 +81,7 @@ CREATE TABLE IF NOT EXISTS content_versions (
     UNIQUE (node_id, node_revision),
     UNIQUE (node_id, introduced_operation_id),
     UNIQUE (node_id, version_id),
+    CHECK ((transition_kind = 'content_create') = (node_revision = 1)),
     CHECK ((transition_kind = 'content_revert') = (source_version_id IS NOT NULL))
 );
 

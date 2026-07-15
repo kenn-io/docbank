@@ -34,6 +34,9 @@ func TestCreateFile(t *testing.T) {
 	assert.Equal(t, int64(1), versions[0].NodeRevision)
 	assert.Equal(t, "content_create", versions[0].TransitionKind)
 	require.NoError(t, validateUUIDv4(versions[0].IntroducedOperationID))
+	_, err = s.db.Exec(`UPDATE content_versions SET transition_kind='content_replace' WHERE version_id=?`,
+		f.CurrentVersionID)
+	require.Error(t, err, "revision one must remain the content_create transition")
 
 	// Blob row exists.
 	var size int64
@@ -107,4 +110,12 @@ func TestContentVersionsRequiresBoundedPage(t *testing.T) {
 	require.ErrorContains(t, err, "between 1 and 1000")
 	_, _, err = s.ContentVersions(t.Context(), file.ID, 1, -1)
 	require.ErrorContains(t, err, "must not be negative")
+	versions, total, err := s.ContentVersions(t.Context(), file.ID, 1, 1)
+	require.NoError(t, err)
+	assert.Empty(t, versions)
+	assert.Equal(t, 1, total, "an exhausted page still reports its snapshot's total")
+	_, _, err = s.ContentVersions(t.Context(), s.RootID(), 1, 0)
+	require.ErrorIs(t, err, ErrNotFile)
+	_, _, err = s.ContentVersions(t.Context(), file.ID+1000, 1, 0)
+	require.ErrorIs(t, err, ErrNotFound)
 }

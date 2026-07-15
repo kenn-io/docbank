@@ -65,36 +65,59 @@ func (s *Store) ContentVersions(
 	if offset < 0 {
 		return nil, 0, errors.New("content-version offset must not be negative")
 	}
-	n, err := s.NodeByID(ctx, nodeID)
-	if err != nil {
-		return nil, 0, err
-	}
-	if n.IsDir() {
-		return nil, 0, fmt.Errorf("node %d: %w", nodeID, ErrNotFile)
-	}
-	var total int
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM content_versions WHERE node_id = ?`, nodeID).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("counting content versions of node %d: %w", nodeID, err)
-	}
+	// Existence, kind, total, and page are deliberately one statement so a
+	// concurrent trash-empty observes either side of deletion, never a mixture.
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+contentVersionCols+` FROM content_versions
-		 WHERE node_id = ? ORDER BY node_revision DESC, version_id LIMIT ? OFFSET ?`,
-		nodeID, limit, offset)
+		`WITH target AS (
+		   SELECT kind FROM nodes WHERE id = ?
+		 ), page AS (
+		   SELECT version_id, node_id, blob_hash, size, mime_type, recorded_at,
+		          node_revision, introduced_operation_id, transition_kind,
+		          source_version_id
+		   FROM content_versions
+		   WHERE node_id = ?
+		   ORDER BY node_revision DESC, version_id LIMIT ? OFFSET ?
+		 ), totals AS (
+		   SELECT COUNT(*) AS total FROM content_versions WHERE node_id = ?
+		 )
+		 SELECT target.kind, totals.total,
+		        COALESCE(page.version_id, ''), COALESCE(page.node_id, 0),
+		        COALESCE(page.blob_hash, ''), COALESCE(page.size, 0),
+		        COALESCE(page.mime_type, ''), COALESCE(page.recorded_at, ''),
+		        COALESCE(page.node_revision, 0),
+		        COALESCE(page.introduced_operation_id, ''),
+		        COALESCE(page.transition_kind, ''), page.source_version_id
+		 FROM target CROSS JOIN totals LEFT JOIN page ON true
+		 ORDER BY page.node_revision DESC, page.version_id`,
+		nodeID, nodeID, limit, offset, nodeID)
 	if err != nil {
 		return nil, 0, fmt.Errorf("listing content versions of node %d: %w", nodeID, err)
 	}
 	defer func() { _ = rows.Close() }()
 	versions := make([]ContentVersion, 0)
+	var total int
+	found := false
 	for rows.Next() {
-		v, err := scanContentVersion(rows)
-		if err != nil {
-			return nil, 0, err
+		found = true
+		var kind string
+		var v ContentVersion
+		if err := rows.Scan(&kind, &total, &v.ID, &v.NodeID, &v.BlobHash, &v.Size,
+			&v.MimeType, &v.RecordedAt, &v.NodeRevision, &v.IntroducedOperationID,
+			&v.TransitionKind, &v.SourceVersionID); err != nil {
+			return nil, 0, fmt.Errorf("listing content versions of node %d: scanning page: %w", nodeID, err)
 		}
-		versions = append(versions, v)
+		if kind != "file" {
+			return nil, 0, fmt.Errorf("node %d: %w", nodeID, ErrNotFile)
+		}
+		if v.ID != "" {
+			versions = append(versions, v)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, 0, fmt.Errorf("listing content versions of node %d: %w", nodeID, err)
+	}
+	if !found {
+		return nil, 0, fmt.Errorf("node %d: %w", nodeID, ErrNotFound)
 	}
 	return versions, total, nil
 }

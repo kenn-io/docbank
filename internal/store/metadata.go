@@ -838,6 +838,9 @@ func validateContentVersionRecord(v metadataContentVersion) error {
 	default:
 		return fmt.Errorf("invalid content transition kind %q", v.TransitionKind)
 	}
+	if (v.TransitionKind == "content_create") != (v.NodeRevision == 1) {
+		return errors.New("content_create is required exactly at node revision one")
+	}
 	return validateMetadataTime("content version recorded_at", v.RecordedAt)
 }
 
