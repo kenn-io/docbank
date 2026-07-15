@@ -1,8 +1,10 @@
 package api_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -173,6 +175,40 @@ func TestIngestRejectsNonLoopback(t *testing.T) {
 			srv.Handler().ServeHTTP(rec, req)
 			assert.Equal(t, http.StatusForbidden, rec.Code)
 			assert.Contains(t, rec.Body.String(), `"code":"loopback_only"`)
+		})
+	}
+}
+
+func TestIngestRoutesRejectInvalidUTF8BeforeJSONDecoding(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	replacementName := "bad\ufffd.txt"
+	replacementPath := filepath.Join(t.TempDir(), replacementName)
+	require.NoError(t, os.WriteFile(replacementPath, []byte("must not be imported"), 0o600))
+	validBody, err := json.Marshal(map[string]any{
+		"paths": []string{replacementPath}, "dest": "/inbox",
+	})
+	require.NoError(t, err)
+	invalidBody := bytes.Replace(validBody, []byte("\ufffd"), []byte{0xff}, 1)
+	require.NotEqual(t, validBody, invalidBody, "fixture must replace the path's U+FFFD bytes")
+
+	for _, route := range []string{
+		"/api/v1/ingest", "/api/v1/ingest/stream", "/api/v1/ingest/preflight",
+	} {
+		t.Run(route, func(t *testing.T) {
+			req, reqErr := http.NewRequest(http.MethodPost, ts.URL+route, bytes.NewReader(invalidBody))
+			require.NoError(t, reqErr)
+			req.Header.Set("Content-Type", "application/json")
+			resp, reqErr := ts.Client().Do(req)
+			require.NoError(t, reqErr)
+			body, readErr := io.ReadAll(resp.Body)
+			require.NoError(t, readErr)
+			require.NoError(t, resp.Body.Close())
+			assert.Equal(t, http.StatusBadRequest, resp.StatusCode, string(body))
+			assert.Contains(t, string(body), `"code":"validation"`)
+			assert.Contains(t, string(body), "request body must be valid UTF-8")
+			_, lookupErr := s.NodeByPath(t.Context(), "/inbox/"+replacementName)
+			require.ErrorIs(t, lookupErr, store.ErrNotFound,
+				"invalid bytes must not retarget the replacement-character source")
 		})
 	}
 }

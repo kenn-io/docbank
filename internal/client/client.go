@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/packstore"
@@ -360,6 +361,9 @@ func (c *Client) IngestWithOptions(
 	exclude []string,
 ) (api.IngestReport, error) {
 	var rep api.IngestReport
+	if err := validateIngestRequestText(paths, dest, exclude); err != nil {
+		return rep, err
+	}
 	err := c.do(ctx, http.MethodPost, "/api/v1/ingest", nil,
 		map[string]any{"paths": paths, "dest": dest, "exclude": exclude}, &rep)
 	return rep, err
@@ -375,6 +379,9 @@ func (c *Client) IngestStream(
 	exclude []string,
 	progress func(api.IngestProgress),
 ) (api.IngestReport, error) {
+	if err := validateIngestRequestText(paths, dest, exclude); err != nil {
+		return api.IngestReport{}, err
+	}
 	body, err := json.Marshal(map[string]any{
 		"paths": paths, "dest": dest, "exclude": exclude,
 	})
@@ -450,9 +457,33 @@ func (c *Client) PreflightIngest(
 	exclude []string,
 ) (api.IngestPreflightReport, error) {
 	var rep api.IngestPreflightReport
+	if err := validateIngestRequestText(paths, "", exclude); err != nil {
+		return rep, err
+	}
 	err := c.do(ctx, http.MethodPost, "/api/v1/ingest/preflight", nil,
 		map[string]any{"paths": paths, "exclude": exclude}, &rep)
 	return rep, err
+}
+
+// validateIngestRequestText protects the local-filesystem selection contract
+// before encoding/json can replace invalid UTF-8 with U+FFFD. Every string
+// that affects what is selected or where it is filed must cross the wire
+// losslessly.
+func validateIngestRequestText(paths []string, dest string, exclude []string) error {
+	for _, path := range paths {
+		if !utf8.ValidString(path) {
+			return fmt.Errorf("ingest source path %s is not valid UTF-8", strconv.QuoteToASCII(path))
+		}
+	}
+	if !utf8.ValidString(dest) {
+		return fmt.Errorf("ingest destination %s is not valid UTF-8", strconv.QuoteToASCII(dest))
+	}
+	for _, rule := range exclude {
+		if !utf8.ValidString(rule) {
+			return fmt.Errorf("ingest exclusion %s is not valid UTF-8", strconv.QuoteToASCII(rule))
+		}
+	}
+	return nil
 }
 
 // Upload streams one remote file as a digest-checked multipart request. The

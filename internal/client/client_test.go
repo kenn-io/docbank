@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -172,6 +173,44 @@ func TestIngestStreamRoundTrip(t *testing.T) {
 	require.Contains(t, finalStages, "ingest")
 	assert.Equal(t, int64(1), finalStages["ingest"].Done)
 	assert.Equal(t, int64(len(content)), finalStages["ingest"].BytesDone)
+}
+
+func TestIngestMethodsRejectInvalidUTF8BeforeRequest(t *testing.T) {
+	var requests atomic.Int64
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	t.Cleanup(ts.Close)
+	c := client.New(ts.URL, "key")
+	invalidPath := string([]byte{'/', 'b', 'a', 'd', 0xff})
+
+	tests := []struct {
+		name string
+		call func() error
+	}{
+		{name: "ordinary", call: func() error {
+			_, err := c.IngestWithOptions(t.Context(), []string{invalidPath}, "/inbox", nil)
+			return err
+		}},
+		{name: "stream", call: func() error {
+			_, err := c.IngestStream(t.Context(), []string{invalidPath}, "/inbox", nil, nil)
+			return err
+		}},
+		{name: "preflight", call: func() error {
+			_, err := c.PreflightIngest(t.Context(), []string{invalidPath}, nil)
+			return err
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			before := requests.Load()
+			err := tt.call()
+			require.ErrorContains(t, err, "is not valid UTF-8")
+			assert.Equal(t, before, requests.Load(), "invalid text must not reach JSON or HTTP")
+		})
+	}
 }
 
 func TestBackupCreateStreamRoundTripAndTypedError(t *testing.T) {

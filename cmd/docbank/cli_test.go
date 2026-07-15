@@ -246,6 +246,14 @@ func TestAddMissingSourceFails(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestAddRejectsInvalidUTF8SourceBeforeEncoding(t *testing.T) {
+	_ = setupVaultHome(t)
+	invalidPath := filepath.Join(t.TempDir(), string([]byte{'b', 'a', 'd', 0xff}))
+
+	_, err := runCLI(t, "add", invalidPath)
+	require.ErrorContains(t, err, "is not valid UTF-8")
+}
+
 func TestCatRejectsDirectory(t *testing.T) {
 	_ = setupVaultHome(t)
 	src := writeSourceFile(t, "a.txt", "alpha")
