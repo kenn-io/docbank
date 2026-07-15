@@ -109,6 +109,20 @@ Reversion creates another immutable head that records its source. It does not
 copy the source blob or rewind history, so both the replacement and the original
 remain addressable.
 
+## Organize independently with tags
+
+Tags survive path changes because assignments use stable tag and node IDs:
+
+```bash
+docbank tag create taxes
+docbank tag assign taxes /taxes/checklist.pdf
+docbank tag nodes taxes
+```
+
+The human CLI accepts the current tag name or UUID. `docbank tag list` shows
+assignment counts; `tag rename` changes only the display name, and `tag delete`
+removes assignments without deleting any document.
+
 ## Reorganize
 
 Moves and renames are metadata-only; the stored bytes never move.

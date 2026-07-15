@@ -73,6 +73,50 @@ type ContentReferencePage struct {
 	Offset int                `json:"offset"`
 }
 
+// Tag is one stable organization label. Names may change; IDs never do.
+type Tag struct {
+	ID              string `json:"id" format:"uuid"`
+	Name            string `json:"name"`
+	AssignmentCount int    `json:"assignment_count" minimum:"0"`
+}
+
+// TagPage is one bounded name-sorted tag listing.
+type TagPage struct {
+	Items  []Tag `json:"items"`
+	Total  int   `json:"total"`
+	Limit  int   `json:"limit"`
+	Offset int   `json:"offset"`
+}
+
+// TaggedNode pairs a tagged node with its live path. Trashed nodes deliberately
+// omit Path because their former display coordinate is not resolvable.
+type TaggedNode struct {
+	Node Node   `json:"node"`
+	Path string `json:"path,omitempty"`
+}
+
+// TaggedNodePage is one bounded stable-ID-sorted reverse tag lookup.
+type TaggedNodePage struct {
+	Items  []TaggedNode `json:"items"`
+	Total  int          `json:"total"`
+	Limit  int          `json:"limit"`
+	Offset int          `json:"offset"`
+}
+
+// TagAssignmentReceipt records whether an idempotent assignment request
+// changed authority and returns the resulting tag and node projections.
+type TagAssignmentReceipt struct {
+	Tag     Tag  `json:"tag"`
+	Node    Node `json:"node"`
+	Changed bool `json:"changed"`
+}
+
+// TagDeletionReceipt reports the removed definition and assignment closure.
+type TagDeletionReceipt struct {
+	Tag                Tag `json:"tag"`
+	RemovedAssignments int `json:"removed_assignments" minimum:"0"`
+}
+
 // ContentVerification binds a fresh physical read to the exact node revision
 // the caller inspected. BlobHash and Size are catalog identity; ComputedHash
 // and ComputedSize describe the bytes read through the mixed store.
@@ -451,4 +495,8 @@ func fromStoreContentReference(ref store.ContentReference) ContentReference {
 		Version: fromStoreContentVersion(ref.Version), Node: fromStoreNode(ref.Node),
 		Path: ref.Path, IsCurrent: ref.IsCurrent,
 	}
+}
+
+func fromStoreTag(tag store.Tag) Tag {
+	return Tag{ID: tag.ID, Name: tag.Name, AssignmentCount: tag.AssignmentCount}
 }

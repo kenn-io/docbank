@@ -199,6 +199,32 @@ checks with negative evidence, not request failures. A `412 stale_revision`
 means the node changed during or since inspection—read it again before deciding
 what content to verify.
 
+## Organize with stable tags
+
+Create a tag once, then retain its returned UUID. Names are mutable display
+labels; IDs are durable authority.
+
+```bash
+curl --fail-with-body -X POST \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  -H "Content-Type: application/json" \
+  --data '{"name":"taxes"}' \
+  "$DOCBANK_URL/api/v1/tags"
+
+curl --fail-with-body -X PUT \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  -H 'If-Match: "7"' \
+  "$DOCBANK_URL/api/v1/nodes/42/tags/$TAG_ID"
+```
+
+Assignment receipts return `changed`, the resulting node revision/ETag, and
+the tag's current assignment count. `changed: false` is a successful
+idempotent convergence, not an error. Page `GET /nodes/{id}/tags` and `GET
+/tags/{tag_id}/nodes`; the latter includes trashed nodes without pretending
+they have a live path. Rename and delete by UUID so a concurrent display-name
+change cannot retarget the operation. Deleting a tag removes assignments only,
+never nodes or document bytes.
+
 ## Follow backup progress without scraping a CLI
 
 Agents that create snapshots can use `POST
@@ -466,7 +492,7 @@ Non-2xx responses use RFC 7807 problem JSON:
 Branch on `code`, never `detail`. Useful policy groups:
 
 - Re-read and reconsider: `stale_revision`.
-- Correct the request: `validation`, `precondition_required`, `invalid_name`,
+- Correct the request: `validation`, `precondition_required`, `invalid_name`, `invalid_tag`,
   `not_dir`, `not_file`, `is_root`.
 - Reconcile desired state: `exists`, `cycle`, `not_trashed`, `not_found`.
 - Stop and surface credentials or topology: `unauthorized`, `loopback_only`.

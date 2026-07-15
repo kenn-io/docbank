@@ -932,7 +932,14 @@ func validateTagRecord(v metadataTag) error {
 	if err := validateUUIDv4(v.ID); err != nil {
 		return fmt.Errorf("invalid tag ID: %w", err)
 	}
-	return validateUTF8Field("tag name", v.Name)
+	normalized, err := NormalizeTagName(v.Name)
+	if err != nil {
+		return err
+	}
+	if normalized != v.Name {
+		return errors.New("tag name is not canonical NFC")
+	}
+	return nil
 }
 
 func validateNodeTagRecord(v metadataNodeTag) error {

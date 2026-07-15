@@ -64,7 +64,7 @@ content_versions(version_id UUID PRIMARY KEY, node_id, blob_hash, size,
                  introduced_operation_id, transition_kind, source_version_id)
 ingests        (id, started_at, source_kind, source_desc)
 provenance     (node_id, ingest_id, original_path, original_mtime)
-tags           (id, name UNIQUE)          -- reserved; no API/CLI surface yet
+tags           (id UUID PRIMARY KEY, name UNIQUE)
 node_tags      (node_id, tag_id)
 extracted_text (blob_hash, extractor, extractor_version, status,
                 error, attempts, text, extracted_at)      -- reserved; no workers yet
@@ -105,6 +105,12 @@ The store layer adds the rules SQL can't express: name validation
 cycle prevention on moves (ancestry walk inside the move transaction),
 revision bumps on every mutation, and size consistency between a node
 and its blob row.
+
+Tag IDs are random UUIDv4 values and names are NFC-normalized, mutable text.
+Assignments refer to the stable ID. Assignment changes bump the directly
+affected node; renaming or deleting a shared tag bumps every assigned node once
+in the same transaction. Deleting a definition cascades through assignments,
+not nodes.
 
 ## Timestamps and identity
 

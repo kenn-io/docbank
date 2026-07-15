@@ -95,7 +95,10 @@ an optimistic revision precondition while retaining every prior version.
 `docbank revert` and `POST /nodes/{id}/revert` add a metadata-only
 `content_revert` head from one prior version without copying its loose or packed
 blob. `docbank refs` and `GET /content-references` resolve a SHA-256 identity to
-every retaining current, historical, or trashed node/version pair.
+every retaining current, historical, or trashed node/version pair. Stable tags
+are available across the CLI, authenticated API, typed client, OpenAPI, and
+metadata-v1 backup/restore authority, including bounded forward and reverse
+listings.
 
 - Remaining editing surface: `docbank edit`
   ([design](architecture/editing-and-versions.md))
@@ -103,8 +106,7 @@ every retaining current, historical, or trashed node/version pair.
   change and content-version retention, tamper-evident history, maintenance
   refusal, and portable JSONL fidelity
   ([design](architecture/audited-history.md))
-- Tags surfaced in CLI, search filters, and the API; `POST /batch/move`
-  bulk reorganization
+- Tag/MIME/date/path search filters; `POST /batch/move` bulk reorganization
 - Watched inbox directories with a stability window, landing imports
   under `/inbox/<date>/`
 - Text extraction workers (PDF text layer, plain text/markdown, office

@@ -41,6 +41,8 @@ metadata, content, and maintenance authority.
 - Resumable bulk import and verified multipart upload
 - Stable content-version UUIDs, verified replacement and reversion, bounded
   history listing, ID-addressed retrieval, and lookup by content hash
+- Stable tags with define, rename, assign, unassign, delete, and bounded
+  node/tag listings
 - FTS5 name search (document-body extraction and search are planned)
 - Mixed loose and packed content storage with explicit pack, GC, and repack
 - Whole-vault integrity verification
@@ -104,6 +106,8 @@ docbank tree /archive
 docbank search "tax return"
 docbank versions /archive/Documents/receipt.pdf
 docbank refs <receipt-sha256>
+docbank tag create taxes
+docbank tag assign taxes /archive/Documents/receipt.pdf
 docbank put revised-receipt.pdf /archive/Documents/receipt.pdf
 docbank revert /archive/Documents/receipt.pdf <prior-version-id>
 docbank mv /archive/Documents/receipt.pdf /archive/Documents/receipt-2026.pdf

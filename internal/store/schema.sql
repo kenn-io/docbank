@@ -119,7 +119,7 @@ CREATE TABLE IF NOT EXISTS tags (
 
 CREATE TABLE IF NOT EXISTS node_tags (
     node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-    tag_id  TEXT NOT NULL REFERENCES tags(id),
+    tag_id  TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
     PRIMARY KEY (node_id, tag_id)
 );
 

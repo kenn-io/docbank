@@ -325,6 +325,22 @@ A stale target returns `412 stale_revision`. A source from another node returns
 `422 version_node_mismatch`, selecting the current head returns
 `422 version_already_current`, and an unknown source returns `404 not_found`.
 
+## Addendum: tags
+
+Tag definitions use stable server-generated UUIDv4 identities and mutable,
+unique NFC-normalized names. `POST /tags`, `GET /tags`, `GET /tags/by-name`,
+and `GET|PATCH|DELETE /tags/{tag_id}` expose definition lifecycle. `GET
+/nodes/{id}/tags` and `GET /tags/{tag_id}/nodes` provide bounded forward and
+reverse listings; reverse results include a path only for live nodes.
+
+`PUT|DELETE /nodes/{id}/tags/{tag_id}` assign and unassign under the required
+node `If-Match` revision. Their receipt contains the resulting node and tag,
+`changed`, and the resulting ETag. Repeating the requested state returns
+`changed: false` without advancing the revision. A real assignment change
+advances the node once. Renaming or deleting a shared definition advances each
+assigned node once in the same metadata transaction; deletion removes
+assignments but never nodes or document bytes.
+
 Ingest provenance is currently filesystem-shaped: each import records the
 source's original path and mtime in the store's `provenance` table. The path is
 a record, never node identity. Non-file origin fields and lookup by content
@@ -388,7 +404,7 @@ machine-readable string clients branch on instead of parsing `detail`:
 | `exists` | 409 | `store.ErrExists` (name collision) |
 | `cycle` | 409 | `store.ErrCycle` (move under own descendant) |
 | `stale_revision` | 412 | `store.ErrStaleRevision` — `If-Match` didn't match the current revision |
-| `not_dir` / `not_file` / `invalid_name` / `not_trashed` / `is_root` | 422 | `store.ErrNotDir` / `ErrNotFile` / `ErrInvalidName` / `ErrNotTrashed` / `ErrIsRoot` |
+| `not_dir` / `not_file` / `invalid_name` / `invalid_tag` / `not_trashed` / `is_root` | 422 | `store.ErrNotDir` / `ErrNotFile` / `ErrInvalidName` / `ErrInvalidTag` / `ErrNotTrashed` / `ErrIsRoot` |
 | `validation` | 400, 415, or 422 | malformed request (bad `If-Match`, paths, media type, multipart envelope, or generated validation) |
 | `precondition_required` | 428 | required `If-Match` header missing |
 | `loopback_only` | 403 | server-path ingest or preflight called by a non-loopback peer |

@@ -703,6 +703,24 @@ func TestMetadataRejectsMalformedStableRecordIDs(t *testing.T) {
 	})
 }
 
+func TestMetadataRejectsNonCanonicalTagNames(t *testing.T) {
+	const (
+		header = `{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n"
+		root   = `{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}` + "\n"
+	)
+	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, target.Close()) })
+
+	record := `{"type":"tag","tag_id":"` + metadataTagID + `","name":"cafe\u0301"}` + "\n"
+	err = target.ImportMetadata(t.Context(), strings.NewReader(header+root+record))
+	require.ErrorContains(t, err, "canonical NFC")
+
+	var tags int64
+	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM tags`).Scan(&tags))
+	assert.Zero(t, tags, "failed import must not retain a non-canonical tag")
+}
+
 func TestImportMetadataRejectsDuplicateStableRecordIDsTransactionally(t *testing.T) {
 	header := `{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n"
 	root := `{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}` + "\n"
