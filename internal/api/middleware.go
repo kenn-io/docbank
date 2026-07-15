@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"mime"
 	"net"
 	"net/http"
 	"strings"
@@ -92,14 +93,17 @@ func isServerPathIngestRoute(path string) bool {
 	return path == "/api/v1/ingest" || path == "/api/v1/ingest/stream" || path == "/api/v1/ingest/preflight"
 }
 
-// ingestBodyTextMiddleware runs before Huma's JSON decoder, which follows
+// jsonBodyTextMiddleware runs before Huma's JSON decoder, which follows
 // encoding/json's lossy behavior and replaces invalid UTF-8 or unpaired
-// surrogate escapes with U+FFFD. Local source paths must reach route
-// validation byte-for-byte or the daemon could inspect and ingest a different,
-// replacement-character path.
-func ingestBodyTextMiddleware(next http.Handler) http.Handler {
+// surrogate escapes with U+FFFD. Names and paths must reach route validation
+// byte-for-byte or a mutation could target a different, replacement-character
+// node. Applying this to the media type rather than a route list keeps future
+// JSON mutations inside the same boundary automatically.
+func jsonBodyTextMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || !isServerPathIngestRoute(r.URL.Path) || r.Body == nil {
+		mediaType, _, mediaErr := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if r.Body == nil || mediaErr != nil ||
+			(mediaType != "application/json" && !strings.HasSuffix(mediaType, "+json")) {
 			next.ServeHTTP(w, r)
 			return
 		}

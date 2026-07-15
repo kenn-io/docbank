@@ -38,3 +38,10 @@ func TestValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateValueRejectsNestedInvalidUTF8(t *testing.T) {
+	invalid := string([]byte{'/', 'b', 'a', 'd', 0xff})
+	value := map[string]any{"paths": []string{"/good", invalid}}
+	require.ErrorContains(t, ValidateValue(value, "request"), "is not valid UTF-8")
+	require.NoError(t, ValidateValue(map[string]any{"paths": []string{"/good"}}, "request"))
+}

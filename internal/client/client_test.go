@@ -175,7 +175,7 @@ func TestIngestStreamRoundTrip(t *testing.T) {
 	assert.Equal(t, int64(len(content)), finalStages["ingest"].BytesDone)
 }
 
-func TestIngestMethodsRejectInvalidUTF8BeforeRequest(t *testing.T) {
+func TestJSONMethodsRejectInvalidUTF8BeforeRequest(t *testing.T) {
 	var requests atomic.Int64
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		requests.Add(1)
@@ -200,6 +200,26 @@ func TestIngestMethodsRejectInvalidUTF8BeforeRequest(t *testing.T) {
 		}},
 		{name: "preflight", call: func() error {
 			_, err := c.PreflightIngest(t.Context(), []string{invalidPath}, nil)
+			return err
+		}},
+		{name: "mkdir name", call: func() error {
+			_, err := c.Mkdir(t.Context(), 1, invalidPath)
+			return err
+		}},
+		{name: "move name", call: func() error {
+			_, err := c.Move(t.Context(), 2, 1, nil, &invalidPath)
+			return err
+		}},
+		{name: "move source path", call: func() error {
+			_, err := c.MovePath(t.Context(), invalidPath, "/dest")
+			return err
+		}},
+		{name: "move destination path", call: func() error {
+			_, err := c.MovePath(t.Context(), "/source", invalidPath)
+			return err
+		}},
+		{name: "trash path", call: func() error {
+			_, err := c.TrashPath(t.Context(), invalidPath)
 			return err
 		}},
 	}

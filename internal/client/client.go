@@ -21,12 +21,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/jsontext"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -152,7 +152,7 @@ func apiProblemError(e api.Error) error {
 func (c *Client) do(ctx context.Context, method, path string, hdr map[string]string, in, out any) error {
 	var body io.Reader
 	if in != nil {
-		b, err := json.Marshal(in)
+		b, err := marshalJSONRequest(in)
 		if err != nil {
 			return fmt.Errorf("encoding %s %s request: %w", method, path, err)
 		}
@@ -187,6 +187,24 @@ func (c *Client) do(ctx context.Context, method, path string, hdr map[string]str
 		return fmt.Errorf("decoding %s %s response: %w", method, path, err)
 	}
 	return nil
+}
+
+// marshalJSONRequest preserves every Go string before encoding/json can
+// replace invalid UTF-8 with U+FFFD. The post-marshal check also keeps custom
+// encoders from introducing malformed surrogate escapes. All typed JSON
+// request paths, including streaming operations, go through this boundary.
+func marshalJSONRequest(in any) ([]byte, error) {
+	if err := jsontext.ValidateValue(in, "JSON request"); err != nil {
+		return nil, err
+	}
+	body, err := json.Marshal(in)
+	if err != nil {
+		return nil, err
+	}
+	if err := jsontext.Validate(body, "JSON request"); err != nil {
+		return nil, err
+	}
+	return body, nil
 }
 
 func ifMatch(rev int64) map[string]string {
@@ -361,9 +379,6 @@ func (c *Client) IngestWithOptions(
 	exclude []string,
 ) (api.IngestReport, error) {
 	var rep api.IngestReport
-	if err := validateIngestRequestText(paths, dest, exclude); err != nil {
-		return rep, err
-	}
 	err := c.do(ctx, http.MethodPost, "/api/v1/ingest", nil,
 		map[string]any{"paths": paths, "dest": dest, "exclude": exclude}, &rep)
 	return rep, err
@@ -379,10 +394,7 @@ func (c *Client) IngestStream(
 	exclude []string,
 	progress func(api.IngestProgress),
 ) (api.IngestReport, error) {
-	if err := validateIngestRequestText(paths, dest, exclude); err != nil {
-		return api.IngestReport{}, err
-	}
-	body, err := json.Marshal(map[string]any{
+	body, err := marshalJSONRequest(map[string]any{
 		"paths": paths, "dest": dest, "exclude": exclude,
 	})
 	if err != nil {
@@ -457,33 +469,9 @@ func (c *Client) PreflightIngest(
 	exclude []string,
 ) (api.IngestPreflightReport, error) {
 	var rep api.IngestPreflightReport
-	if err := validateIngestRequestText(paths, "", exclude); err != nil {
-		return rep, err
-	}
 	err := c.do(ctx, http.MethodPost, "/api/v1/ingest/preflight", nil,
 		map[string]any{"paths": paths, "exclude": exclude}, &rep)
 	return rep, err
-}
-
-// validateIngestRequestText protects the local-filesystem selection contract
-// before encoding/json can replace invalid UTF-8 with U+FFFD. Every string
-// that affects what is selected or where it is filed must cross the wire
-// losslessly.
-func validateIngestRequestText(paths []string, dest string, exclude []string) error {
-	for _, path := range paths {
-		if !utf8.ValidString(path) {
-			return fmt.Errorf("ingest source path %s is not valid UTF-8", strconv.QuoteToASCII(path))
-		}
-	}
-	if !utf8.ValidString(dest) {
-		return fmt.Errorf("ingest destination %s is not valid UTF-8", strconv.QuoteToASCII(dest))
-	}
-	for _, rule := range exclude {
-		if !utf8.ValidString(rule) {
-			return fmt.Errorf("ingest exclusion %s is not valid UTF-8", strconv.QuoteToASCII(rule))
-		}
-	}
-	return nil
 }
 
 // Upload streams one remote file as a digest-checked multipart request. The
@@ -694,7 +682,7 @@ func (c *Client) BackupCreateStream(
 	opts BackupCreateOptions,
 	progress func(api.BackupProgress),
 ) (api.BackupSnapshot, error) {
-	body, err := json.Marshal(backupCreateRequest(opts))
+	body, err := marshalJSONRequest(backupCreateRequest(opts))
 	if err != nil {
 		return api.BackupSnapshot{}, fmt.Errorf("encoding backup create request: %w", err)
 	}
@@ -814,7 +802,7 @@ func (c *Client) BackupVerifyStream(
 	opts BackupVerifyOptions,
 	progress func(api.BackupProgress),
 ) (api.BackupVerifyReport, error) {
-	body, err := json.Marshal(backupVerifyRequest(opts))
+	body, err := marshalJSONRequest(backupVerifyRequest(opts))
 	if err != nil {
 		return api.BackupVerifyReport{}, fmt.Errorf("encoding backup verify request: %w", err)
 	}
@@ -917,7 +905,7 @@ func (c *Client) BackupRestoreStream(
 	opts BackupRestoreOptions,
 	progress func(api.BackupProgress),
 ) (api.BackupRestoreReport, error) {
-	body, err := json.Marshal(backupRestoreRequest(opts))
+	body, err := marshalJSONRequest(backupRestoreRequest(opts))
 	if err != nil {
 		return api.BackupRestoreReport{}, fmt.Errorf("encoding backup restore request: %w", err)
 	}

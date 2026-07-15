@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strconv"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
@@ -27,6 +29,12 @@ var addCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		abs := make([]string, len(args))
 		for i, a := range args {
+			// Windows absolute-path resolution converts through UTF-16 and can
+			// replace invalid source bytes with U+FFFD. Reject before any OS path
+			// normalization so the CLI cannot silently target another filename.
+			if !utf8.ValidString(a) {
+				return fmt.Errorf("ingest source path %s is not valid UTF-8", strconv.QuoteToASCII(a))
+			}
 			p, err := filepath.Abs(a)
 			if err != nil {
 				return fmt.Errorf("resolving %q: %w", a, err)

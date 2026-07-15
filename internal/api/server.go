@@ -99,10 +99,10 @@ func NewServer(d Deps) *Server {
 	registerWeb(mux, d.Cfg.Web.Enabled)
 
 	h := http.Handler(mux)
-	// Authenticate and enforce loopback origin before buffering the small JSON
-	// local-path ingest envelopes, then validate their raw bytes before Huma's
-	// encoding/json decoder can perform lossy Unicode replacement.
-	h = ingestBodyTextMiddleware(h)
+	// Authenticate and enforce route topology before buffering small JSON
+	// envelopes, then validate their raw text before Huma's encoding/json
+	// decoder can perform lossy Unicode replacement.
+	h = jsonBodyTextMiddleware(h)
 	h = authMiddleware(h, d.Cfg.Server.APIKey)
 	h = loopbackMiddleware(h)
 	h = timeoutMiddleware(h)

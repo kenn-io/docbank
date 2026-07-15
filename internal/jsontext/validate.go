@@ -3,7 +3,10 @@
 package jsontext
 
 import (
+	"errors"
 	"fmt"
+	"reflect"
+	"strconv"
 	"unicode/utf8"
 )
 
@@ -50,6 +53,66 @@ func Validate(raw []byte, subject string) error {
 				return fmt.Errorf("%s contains an unpaired UTF-16 surrogate escape", subject)
 			}
 		}
+	}
+	return nil
+}
+
+// ValidateValue rejects invalid UTF-8 in any string that encoding/json would
+// traverse. It covers the ordinary maps, slices, pointers, and structs used by
+// typed request clients; the depth guard also turns cycles into a bounded
+// error before marshaling.
+func ValidateValue(value any, subject string) error {
+	return validateValue(reflect.ValueOf(value), subject, 0)
+}
+
+func validateValue(value reflect.Value, subject string, depth int) error {
+	if !value.IsValid() {
+		return nil
+	}
+	if depth > 64 {
+		return errors.New(subject + " is too deeply nested")
+	}
+	switch value.Kind() {
+	case reflect.Interface, reflect.Pointer:
+		if value.IsNil() {
+			return nil
+		}
+		return validateValue(value.Elem(), subject, depth+1)
+	case reflect.String:
+		text := value.String()
+		if !utf8.ValidString(text) {
+			return fmt.Errorf("%s text %s is not valid UTF-8", subject, strconv.QuoteToASCII(text))
+		}
+	case reflect.Map:
+		iter := value.MapRange()
+		for iter.Next() {
+			if err := validateValue(iter.Key(), subject, depth+1); err != nil {
+				return err
+			}
+			if err := validateValue(iter.Value(), subject, depth+1); err != nil {
+				return err
+			}
+		}
+	case reflect.Slice, reflect.Array:
+		for i := range value.Len() {
+			if err := validateValue(value.Index(i), subject, depth+1); err != nil {
+				return err
+			}
+		}
+	case reflect.Struct:
+		valueType := value.Type()
+		for i := range value.NumField() {
+			field := valueType.Field(i)
+			if field.PkgPath != "" || field.Tag.Get("json") == "-" {
+				continue
+			}
+			if err := validateValue(value.Field(i), subject, depth+1); err != nil {
+				return err
+			}
+		}
+	default:
+		// Scalars and channels/functions carry no JSON string text. Unsupported
+		// values remain json.Marshal's responsibility.
 	}
 	return nil
 }
