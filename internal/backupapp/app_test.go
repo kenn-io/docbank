@@ -18,7 +18,7 @@ import (
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
-	docsqlite "go.kenn.io/docbank/sqlite"
+	docsqlite "go.kenn.io/docbank/pkg/sqlite"
 )
 
 type archiveFixture struct {

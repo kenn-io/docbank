@@ -15,7 +15,7 @@ import (
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/jsontext"
-	docsqlite "go.kenn.io/docbank/sqlite"
+	docsqlite "go.kenn.io/docbank/pkg/sqlite"
 )
 
 const metadataFormatVersion = 1

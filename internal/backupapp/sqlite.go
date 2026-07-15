@@ -6,7 +6,7 @@ import (
 
 	"go.kenn.io/kit/backup"
 
-	docsqlite "go.kenn.io/docbank/sqlite"
+	docsqlite "go.kenn.io/docbank/pkg/sqlite"
 )
 
 type sqliteOpener struct{ driver docsqlite.Driver }

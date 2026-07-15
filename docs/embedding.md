@@ -28,7 +28,7 @@ import (
     "context"
     "io"
 
-    "go.kenn.io/docbank"
+    "go.kenn.io/docbank/pkg"
 )
 
 func StoreSession(ctx context.Context, root string, sessionID string, jsonl []byte) error {
@@ -83,8 +83,8 @@ An application may select either adapter explicitly:
 
 ```go
 import (
-    "go.kenn.io/docbank"
-    "go.kenn.io/docbank/sqlite/modernc"
+    "go.kenn.io/docbank/pkg"
+    "go.kenn.io/docbank/pkg/sqlite/modernc"
 )
 
 vault, err := docbank.Open(ctx, docbank.OpenOptions{

@@ -7,8 +7,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	docsqlite "go.kenn.io/docbank/sqlite"
-	"go.kenn.io/docbank/sqlite/modernc"
+	docsqlite "go.kenn.io/docbank/pkg/sqlite"
+	"go.kenn.io/docbank/pkg/sqlite/modernc"
 )
 
 func TestEmbeddedVaultLifecycle(t *testing.T) {

@@ -3,8 +3,8 @@
 package store
 
 import (
-	docsqlite "go.kenn.io/docbank/sqlite"
-	"go.kenn.io/docbank/sqlite/modernc"
+	docsqlite "go.kenn.io/docbank/pkg/sqlite"
+	"go.kenn.io/docbank/pkg/sqlite/modernc"
 )
 
 func defaultSQLiteDriver() docsqlite.Driver { return modernc.Driver{} }

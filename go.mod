@@ -10,7 +10,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.11.1
-	go.kenn.io/kit v0.9.3-0.20260715130830-01990ae40c7a
+	go.kenn.io/kit v0.9.4-0.20260715135513-a4bc3c2dc835
 	golang.org/x/sys v0.46.0
 	golang.org/x/term v0.44.0
 	golang.org/x/text v0.38.0

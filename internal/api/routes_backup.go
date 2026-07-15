@@ -21,7 +21,7 @@ import (
 
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/version"
-	docsqlite "go.kenn.io/docbank/sqlite"
+	docsqlite "go.kenn.io/docbank/pkg/sqlite"
 )
 
 type backupCreateRequest struct {

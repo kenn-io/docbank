@@ -1,5 +1,7 @@
-// Package modernc adapts modernc.org/sqlite to Docbank without CGO.
-package modernc
+//go:build cgo
+
+// Package mattn adapts github.com/mattn/go-sqlite3 to Docbank.
+package mattn
 
 import (
 	"database/sql"
@@ -7,23 +9,19 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
-	modernsqlite "modernc.org/sqlite"
+	sqlite3 "github.com/mattn/go-sqlite3"
 
-	docsqlite "go.kenn.io/docbank/sqlite"
+	docsqlite "go.kenn.io/docbank/pkg/sqlite"
 )
 
-const (
-	sqliteBusy             = 5
-	sqliteConstraintUnique = 2067
-)
-
-// Driver is Docbank's pure-Go SQLite implementation.
+// Driver is Docbank's CGO-backed SQLite implementation.
 type Driver struct{}
 
-func (Driver) Name() string { return "modernc.org/sqlite" }
+func (Driver) Name() string { return "mattn/go-sqlite3" }
 
 func (Driver) Open(path string, opts docsqlite.OpenOptions) (*sql.DB, error) {
 	busy := opts.BusyTimeout
@@ -31,18 +29,16 @@ func (Driver) Open(path string, opts docsqlite.OpenOptions) (*sql.DB, error) {
 		busy = 5 * time.Second
 	}
 	query := url.Values{
-		"_pragma": {
-			fmt.Sprintf("busy_timeout(%d)", busy.Milliseconds()),
-			"foreign_keys(1)",
-		},
+		"_foreign_keys": {"on"},
+		"_busy_timeout": {strconv.FormatInt(busy.Milliseconds(), 10)},
 	}
 	switch opts.Access {
 	case docsqlite.Create:
 		query.Set("mode", "rwc")
-		query.Add("_pragma", "journal_mode(WAL)")
+		query.Set("_journal_mode", "WAL")
 	case docsqlite.ReadWriteExisting:
 		query.Set("mode", "rw")
-		query.Add("_pragma", "journal_mode(WAL)")
+		query.Set("_journal_mode", "WAL")
 	case docsqlite.ReadOnlyImmutable:
 		query.Set("mode", "ro")
 		query.Set("immutable", "1")
@@ -52,7 +48,7 @@ func (Driver) Open(path string, opts docsqlite.OpenOptions) (*sql.DB, error) {
 	if opts.Access != docsqlite.ReadOnlyImmutable {
 		query.Set("_txlock", string(opts.TransactionMode))
 	}
-	return sql.Open("sqlite", sqliteURI(path, query))
+	return sql.Open("sqlite3", sqliteURI(path, query))
 }
 
 func sqliteURI(path string, query url.Values) string {
@@ -67,21 +63,13 @@ func sqliteURI(path string, query url.Values) string {
 }
 
 func (Driver) IsBusy(err error) bool {
-	code, ok := errorCode(err)
-	return ok && code&0xff == sqliteBusy
+	var sqliteErr sqlite3.Error
+	return errors.As(err, &sqliteErr) && sqliteErr.Code == sqlite3.ErrBusy
 }
 
 func (Driver) IsUniqueViolation(err error) bool {
-	code, ok := errorCode(err)
-	return ok && code == sqliteConstraintUnique
-}
-
-func errorCode(err error) (int, bool) {
-	var sqliteErr *modernsqlite.Error
-	if !errors.As(err, &sqliteErr) {
-		return 0, false
-	}
-	return sqliteErr.Code(), true
+	var sqliteErr sqlite3.Error
+	return errors.As(err, &sqliteErr) && sqliteErr.ExtendedCode == sqlite3.ErrConstraintUnique
 }
 
 var _ docsqlite.Driver = Driver{}
