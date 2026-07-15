@@ -28,7 +28,11 @@ func timeoutExempt(path string) bool {
 		"/api/v1/backup/restore", "/api/v1/backup/restore/stream":
 		return true
 	}
-	return strings.HasPrefix(path, "/api/v1/nodes/") && strings.HasSuffix(path, "/verify")
+	if strings.HasPrefix(path, "/api/v1/nodes/") &&
+		(strings.HasSuffix(path, "/verify") || strings.HasSuffix(path, "/content")) {
+		return true
+	}
+	return strings.HasPrefix(path, "/api/v1/versions/") && strings.HasSuffix(path, "/content")
 }
 
 // auth-exempt: discovery, credential-free ownership proof, docs, and the
@@ -98,11 +102,11 @@ func isServerPathIngestRoute(path string) bool {
 // byte-for-byte or a mutation could target a different, replacement-character
 // node. Every mutating request is text-validated regardless of Content-Type:
 // Huma accepts an omitted Content-Type for body-bound operations, and malformed
-// headers must not bypass the boundary. The upload route is the daemon's sole
-// opaque-body mutation and validates its multipart envelope separately.
+// headers must not bypass the boundary. Explicit content-write routes carry
+// opaque bytes and validate their own size, digest, and transport envelope.
 func jsonBodyTextMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Body == nil || !mutationMethod(r.Method) || r.URL.Path == "/api/v1/uploads" {
+		if r.Body == nil || !mutationMethod(r.Method) || isOpaqueBodyMutation(r) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -119,6 +123,15 @@ func jsonBodyTextMiddleware(next http.Handler) http.Handler {
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		next.ServeHTTP(w, r)
 	})
+}
+
+func isOpaqueBodyMutation(r *http.Request) bool {
+	if r.Method == http.MethodPost && r.URL.Path == "/api/v1/uploads" {
+		return true
+	}
+	return r.Method == http.MethodPut &&
+		strings.HasPrefix(r.URL.Path, "/api/v1/nodes/") &&
+		strings.HasSuffix(r.URL.Path, "/content")
 }
 
 func mutationMethod(method string) bool {

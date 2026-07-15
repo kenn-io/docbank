@@ -15,7 +15,7 @@ marked planned appears elsewhere in these docs only under an explicit
 | 0 | Extract msgvault's pack/backup and packed-CAS engines into `go.kenn.io/kit` | **Implemented** (Docbank uses `kit` v0.9.2) |
 | 1 | Core: store, blob store, ingest pipeline, full CLI | **Implemented** |
 | 2a | Infrastructure: daemon, HTTP API, daemon-first CLI, self-update, release pipeline | **Implemented** |
-| 2b | Features: content versions, versioned editing, full audit, tags, watched inboxes, text extraction, ingest provenance | **In progress**: version identity and reads implemented; remaining work designed |
+| 2b | Features: content versions, versioned editing, full audit, tags, watched inboxes, text extraction, ingest provenance | **In progress**: version identity, reads, and verified replacement implemented; remaining work designed |
 | 3 | Primary kit-ui web portal and focused operator TUI | Designed |
 | 4 | Backup commands over the kit engine | **Implemented**; representative-corpus hardening continues |
 
@@ -87,9 +87,11 @@ identity through loose and packed storage. File-node responses expose current
 version plus immutable SHA-256 identity; content streams carry both catalog
 identities plus a freshly computed digest trailer. Remote writers must declare
 SHA-256 and size, and receive the stable node/version plus server-computed
-identity only after both match.
+identity only after both match. `docbank put` and raw
+`PUT /nodes/{id}/content` now add a digest-checked `content_replace` head under
+an optimistic revision precondition while retaining every prior version.
 
-- Remaining editing surfaces: `PUT` content and `docbank edit`/`put`/`revert`
+- Remaining editing surfaces: `docbank edit` and `docbank revert`
   ([design](architecture/editing-and-versions.md))
 - Full-audit directory scopes with sticky membership, complete authoritative
   change and content-version retention, tamper-evident history, maintenance

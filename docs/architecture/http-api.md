@@ -9,7 +9,7 @@ description: The agent-first HTTP API — filesystem-shaped endpoints, revision 
     The endpoints below marked **Implemented** exist in `docbank daemon run`
     today and back the CLI's data commands — the CLI is an HTTP client
     of exactly this surface, with no other path into the vault. Rows
-    under the "Planned" admonitions further down (versioned editing,
+    under the "Planned" admonitions further down (reversion,
     tags, batch move) are designed but not built; see
     [Roadmap](../roadmap.md).
 
@@ -34,6 +34,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `GET /path?path=/a/b` | stat by virtual path | Implemented |
 | `GET /nodes/{id}/children` | list a directory, paginated (`limit`/`offset`) | Implemented |
 | `GET /nodes/{id}/content` | stream document bytes with catalog identity and a computed digest trailer | Implemented |
+| `PUT /nodes/{id}/content` | replace raw content under revision, size, and digest preconditions — see [addendum](#addendum-put-nodesidcontent) | Implemented |
 | `GET /nodes/{id}/versions` | list immutable content versions newest-first, paginated (`limit`/`offset`) | Implemented |
 | `GET /versions/{version_id}` · `GET /versions/{version_id}/content` | inspect or stream one immutable version by stable UUID | Implemented |
 | `POST /nodes/{id}/verify` | re-hash one file, bound to an inspected node revision | Implemented |
@@ -58,8 +59,8 @@ daemon stop`; it isn't auth-exempt, so it requires both the API key and
 its own shutdown token.
 
 !!! info "Planned"
-    Not yet implemented: `PUT /nodes/{id}/content` (versioned edit), revert,
-    and version pruning ([Editing & Versions](editing-and-versions.md));
+    Not yet implemented: revert, interactive edit, and version pruning
+    ([Editing & Versions](editing-and-versions.md));
     tags (`GET /tags` + CRUD, tag filters on search), whose IDs are opaque
     non-reusable UUIDv4 values independent of mutable names; and
     `POST /batch/move` bulk reorganization with `dry_run`.
@@ -127,6 +128,7 @@ and maintenance are explicit exceptions:
 | Endpoint | Precondition |
 |----------|--------------|
 | `PATCH /nodes/{id}` | required — target node's revision |
+| `PUT /nodes/{id}/content` | required — prevents a replacement from overwriting a head the caller did not inspect |
 | `POST /nodes/{id}/trash` | required — target node's revision |
 | `POST /nodes/{id}/restore` | required — target node's revision |
 | `POST /nodes/{id}/verify` | required — binds the evidence to the exact node state the caller inspected |
@@ -147,8 +149,9 @@ below explaining the rule.
 Every file-node representation includes a stable `current_version_id` plus
 `blob_hash`, docbank's canonical lowercase SHA-256 content identity, and raw
 `size`. Directories omit content identity. Node and version IDs are stable
-across moves and renames; a future content replacement will retain the node ID,
-create a version, and change its current pointer, hash, and revision.
+across moves and renames. Content replacement retains the node ID, creates an
+immutable version, and changes its current pointer, hash, media type, and
+revision.
 
 `GET /nodes/{id}/content` exposes the catalog identity before streaming in
 `X-Docbank-Content-Version`, `X-Docbank-Blob-Hash`, and
@@ -174,8 +177,8 @@ loose/packed store used for downloads, and returns the recorded and computed
 version ID, hashes, and sizes. Missing, corrupt, and unreadable content are successful
 reports with `verified: false` and a `problem`; transport, validation, and
 stale-node failures remain non-2xx responses. The route checks the revision
-again after reading, so a concurrent rename, trash, or future content
-replacement yields `412` instead of ambiguous evidence.
+again after reading, so a concurrent rename, trash, or content replacement
+yields `412` instead of ambiguous evidence.
 
 The single-node route is exempt from the ordinary request timeout. It is
 bounded in scope, not necessarily short in duration: hashing one very large
@@ -272,6 +275,36 @@ it. Malformed envelopes and extra parts are also rejected before authority.
 Request bodies are capped at the declared size plus bounded multipart overhead,
 and the route is exempt from the ordinary timeout so a legitimate large upload
 is governed by client cancellation rather than a one-minute deadline.
+
+## Addendum: `PUT /nodes/{id}/content`
+
+Content replacement accepts raw bytes rather than multipart. A caller first
+reads the file node and sends its revision in `If-Match`, then declares the raw
+body's canonical SHA-256 and byte count in `X-Docbank-Blob-Hash` and
+`X-Docbank-Blob-Size`. `Content-Type` is normalized and stored on the new
+version; an omitted value becomes `application/octet-stream`.
+
+The daemon streams the body into durable authority-free storage and computes
+the identity independently. Only exact agreement permits one metadata
+transaction to create a `content_replace` version, advance the node's current
+pointer, and bump its revision. The old head remains an immutable GC root. A
+successful response includes the resulting ETag plus a receipt containing the
+node, new version, `computed_hash`, and `computed_size`; clients compare every
+field with the request before accepting success.
+
+Clients should send `Expect: 100-continue` for large writes. The daemon checks
+the target kind and revision before its first body read, then repeats those
+checks in the committing metadata transaction. The early check avoids wasting
+bandwidth; only the transactional check grants authority.
+
+Stale revisions return `412 stale_revision`; missing preconditions return
+`428 precondition_required`; identity disagreements return
+`422 digest_mismatch` or `422 size_mismatch`. A failed operation grants no new
+catalog authority, although a completely written loose object can remain
+authority-free until GC. Because the body may be binary, this route is an
+explicit exception to the raw JSON text validator; its byte count and digest
+are the lossless boundary instead. Cancellation propagates through physical
+writing and prevents the metadata transaction.
 
 !!! info "Planned"
     Ingest provenance today is filesystem-shaped: each import records

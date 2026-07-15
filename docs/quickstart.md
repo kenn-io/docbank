@@ -86,8 +86,19 @@ docbank version <version-id> --json
 docbank version <version-id> --content > /tmp/checklist-version.pdf
 ```
 
-The version ID survives node renames and moves. New files currently have one
-`content_create` version; editing and reversion will add history later.
+The version ID survives node renames and moves. Replace the current content
+without changing the stable file node:
+
+```bash
+docbank put ~/Documents/revised-checklist.pdf /taxes/checklist.pdf
+docbank versions /taxes/checklist.pdf
+```
+
+`put` hashes the source and then uploads it, showing separate progress for both
+passes. It requires the target revision observed before hashing, so a concurrent
+change fails instead of being overwritten. The prior version remains available
+through `docbank version <old-version-id> --content`. Reversion is planned; it
+will create another immutable head rather than rewind history.
 
 ## Reorganize
 

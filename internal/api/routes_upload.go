@@ -47,10 +47,10 @@ func registerUploadOpenAPI(api huma.API) {
 			{Name: "parent_id", In: "query", Required: true,
 				Description: "Stable destination directory node ID", Schema: &huma.Schema{Type: "integer", Format: "int64"}},
 			{Name: "name", In: "query", Required: true,
-				Description: "Virtual filename; must equal the multipart filename", Schema: &huma.Schema{Type: "string", MinLength: new(1)}},
+				Description: "Virtual filename; must equal the multipart filename", Schema: &huma.Schema{Type: openAPIStringType, MinLength: new(1)}},
 			{Name: BlobHashHeader, In: "header", Required: true,
 				Description: "Expected lowercase hexadecimal SHA-256 of the file payload",
-				Schema:      &huma.Schema{Type: "string", Pattern: "^[0-9a-f]{64}$"}},
+				Schema:      &huma.Schema{Type: openAPIStringType, Pattern: "^[0-9a-f]{64}$"}},
 			{Name: BlobSizeHeader, In: "header", Required: true,
 				Description: "Expected raw file byte length",
 				Schema:      &huma.Schema{Type: "integer", Format: "int64", Minimum: new(float64(0))}},
@@ -58,7 +58,7 @@ func registerUploadOpenAPI(api huma.API) {
 		RequestBody: &huma.RequestBody{Required: true, Content: map[string]*huma.MediaType{
 			"multipart/form-data": {
 				Schema: &huma.Schema{Type: "object", Properties: map[string]*huma.Schema{
-					"file": {Type: "string", Format: "binary"},
+					"file": {Type: openAPIStringType, Format: "binary"},
 				}, Required: []string{"file"}},
 				Encoding: map[string]*huma.Encoding{"file": {ContentType: "*/*"}},
 			},
@@ -174,18 +174,26 @@ func parseUploadIdentity(r *http.Request) (int64, string, string, int64, *Error)
 	if err != nil {
 		return 0, "", "", 0, NewError(http.StatusUnprocessableEntity, "invalid_name", err.Error())
 	}
+	expectedHash, expectedSize, identityErr := parseExpectedBlobIdentity(r)
+	if identityErr != nil {
+		return 0, "", "", 0, identityErr
+	}
+	return parentID, name, expectedHash, expectedSize, nil
+}
+
+func parseExpectedBlobIdentity(r *http.Request) (string, int64, *Error) {
 	expectedHash := r.Header.Get(BlobHashHeader)
 	parsed, err := packstore.ParseHash(expectedHash)
 	if err != nil || parsed.String() != expectedHash {
-		return 0, "", "", 0, NewError(http.StatusUnprocessableEntity, "validation",
+		return "", 0, NewError(http.StatusUnprocessableEntity, "validation",
 			BlobHashHeader+" must be canonical lowercase SHA-256")
 	}
 	expectedSize, err := strconv.ParseInt(r.Header.Get(BlobSizeHeader), 10, 64)
 	if err != nil || expectedSize < 0 || expectedSize > blob.MaxIngestBytes {
-		return 0, "", "", 0, NewError(http.StatusUnprocessableEntity, "validation",
+		return "", 0, NewError(http.StatusUnprocessableEntity, "validation",
 			fmt.Sprintf("%s must be between 0 and %d", BlobSizeHeader, blob.MaxIngestBytes))
 	}
-	return parentID, name, expectedHash, expectedSize, nil
+	return expectedHash, expectedSize, nil
 }
 
 func uploadMediaType(value string) (string, error) {

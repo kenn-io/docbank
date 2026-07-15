@@ -413,3 +413,72 @@ func TestPackedSnapshotRequiresAndUsesPackedRestoreTarget(t *testing.T) {
 	require.NoError(t, restoredBlobs.Close())
 	require.NoError(t, restoredStore.Close())
 }
+
+func TestVersionedReplacementRoundTripsPackedPriorContent(t *testing.T) {
+	fixture := newArchiveFixture(t)
+	alpha, err := fixture.metadata.NodeByPath(t.Context(), "/alpha.txt")
+	require.NoError(t, err)
+	priorVersionID := alpha.CurrentVersionID
+	packed, err := fixture.blobs.Maintainer().Pack(t.Context(), packstore.PackOptions{})
+	require.NoError(t, err)
+	require.Equal(t, 2, packed.BlobsPacked)
+
+	const replacement = "alpha replacement"
+	var replaced store.Node
+	require.NoError(t, fixture.blobs.WithMutation(t.Context(), func() error {
+		hash, size, writeErr := fixture.blobs.WriteContext(t.Context(), strings.NewReader(replacement))
+		if writeErr != nil {
+			return writeErr
+		}
+		replaced, _, writeErr = fixture.metadata.ReplaceContent(
+			t.Context(), alpha.ID, alpha.Revision, hash, size, "text/plain",
+		)
+		return writeErr
+	}))
+	wantMetadata := exportMetadata(t, fixture.metadata)
+
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	manifest, err := backupapp.Create(
+		t.Context(), repo, "test-version", fixture.metadata, fixture.blobs,
+		backup.CreateOptions{Jobs: 2})
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), manifest.Attachments.Blobs,
+		"backup must include both heads plus the other file")
+	stats, err := backupapp.ParseStats(manifest.Stats)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), stats.ContentVersions)
+
+	target := filepath.Join(t.TempDir(), "restored")
+	_, err = backupapp.Restore(t.Context(), repo, "test-version", backup.RestoreOptions{
+		TargetDir: target, Jobs: 2,
+	})
+	require.NoError(t, err)
+	restoredStore, err := store.Open(filepath.Join(target, "docbank.db"))
+	require.NoError(t, err)
+	assert.Equal(t, string(wantMetadata), string(exportMetadata(t, restoredStore)),
+		"JSONL restore must preserve the complete replacement history byte-for-byte")
+	restoredBlobs, err := blob.New(store.NewPackCatalog(restoredStore), filepath.Join(target, "blobs"))
+	require.NoError(t, err)
+
+	restoredNode, err := restoredStore.NodeByID(t.Context(), alpha.ID)
+	require.NoError(t, err)
+	assert.Equal(t, replaced.CurrentVersionID, restoredNode.CurrentVersionID)
+	assert.Equal(t, int64(2), restoredNode.Revision)
+	for versionID, want := range map[string]string{
+		priorVersionID:                "alpha backup",
+		restoredNode.CurrentVersionID: replacement,
+	} {
+		version, versionErr := restoredStore.ContentVersionByID(t.Context(), versionID)
+		require.NoError(t, versionErr)
+		stream, _, openErr := restoredBlobs.OpenStreamContext(t.Context(), version.BlobHash)
+		require.NoError(t, openErr)
+		got, readErr := io.ReadAll(stream)
+		require.NoError(t, readErr)
+		assert.True(t, stream.Verified())
+		require.NoError(t, stream.Close())
+		assert.Equal(t, want, string(got))
+	}
+	require.NoError(t, restoredBlobs.Close())
+	require.NoError(t, restoredStore.Close())
+}

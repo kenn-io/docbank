@@ -60,4 +60,10 @@ func TestOpenAPIDeclaresDigestCheckedUpload(t *testing.T) {
 	}
 	assert.NotNil(t, op.Responses["200"])
 	assert.NotNil(t, op.Responses["201"])
+
+	replace := doc.Paths["/api/v1/nodes/{id}/content"].Put
+	require.NotNil(t, replace)
+	require.NotNil(t, replace.RequestBody)
+	assert.Contains(t, replace.RequestBody.Content, "*/*")
+	assert.NotNil(t, replace.Responses["200"])
 }

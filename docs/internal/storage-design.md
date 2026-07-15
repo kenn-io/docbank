@@ -135,7 +135,7 @@ share a blob without sharing document identity.
 Canonical blobs are immutable SHA-256 objects. Rewriting bytes in place would
 make the path lie about content identity, surprise every deduplicated reader,
 and lose crash-safe history. All logical mutation therefore happens in SQLite:
-moves, renames, trash, restore, and future content-pointer replacement.
+moves, renames, trash, restore, and content-pointer replacement.
 
 The schema enforces the invariants that every writer must obey:
 
@@ -176,6 +176,14 @@ eligible. It does not rehash same-sized bytes on every duplicate ingest because
 that doubles common-path I/O without systematically protecting existing
 references. Full content validation belongs to `verify`, which covers every
 authorized blob.
+
+Content replacement uses the same ordering. A cheap node/revision check occurs
+before reading a potentially large request, but it is only an optimization.
+After durable publication, the metadata transaction repeats the target and
+revision checks, authorizes the blob, inserts one `content_replace` version,
+advances the current pointer, and bumps the node revision. A race or failed
+precondition may leave an untracked physical object, never a half-installed
+head.
 
 ## Ingest convergence
 
@@ -443,7 +451,8 @@ actual released formats and fixtures rather than speculative migration work.
 
 - External references need a liveness policy before their schema exists:
   pin blob authority, or allow dangling-reference detection in the referrer.
-- Version writers must preserve bytes-before-reference ordering and add their
-  rows to reachability atomically with pointer replacement.
+- Revert and future version writers must preserve the implemented
+  bytes-before-reference ordering and add rows to reachability atomically with
+  pointer replacement.
 - Pack and repack maintenance commands must remain daemon/API operations; no
   CLI path may open the physical store directly.

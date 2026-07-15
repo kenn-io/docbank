@@ -140,6 +140,51 @@ func TestAddLsTreeCat(t *testing.T) {
 	assert.Equal(t, "hello vault", out)
 }
 
+func TestPutReplacesContentAndRetainsHistory(t *testing.T) {
+	_ = setupVaultHome(t)
+	initial := writeSourceFile(t, "document.txt", "initial content")
+	_, err := runCLI(t, "add", initial, "--dest", "/inbox")
+	require.NoError(t, err)
+
+	out, err := runCLI(t, "versions", "/inbox/document.txt", "--json")
+	require.NoError(t, err)
+	var initialPage api.ContentVersionPage
+	require.NoError(t, json.Unmarshal([]byte(out), &initialPage))
+	require.Len(t, initialPage.Items, 1)
+	initialVersion := initialPage.Items[0].ID
+
+	replacement := writeSourceFile(t, "replacement.bin", "replacement content")
+	out, err = runCLI(t, "put", replacement, "/inbox/document.txt",
+		"--mime-type", "text/plain", "--progress", "plain")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "hash:")
+	assert.Contains(t, out, "upload:")
+	assert.Contains(t, out, "updated /inbox/document.txt to version")
+
+	out, err = runCLI(t, "cat", "/inbox/document.txt")
+	require.NoError(t, err)
+	assert.Equal(t, "replacement content", out)
+	out, err = runCLI(t, "version", initialVersion, "--content")
+	require.NoError(t, err)
+	assert.Equal(t, "initial content", out, "put must retain the prior immutable bytes")
+	out, err = runCLI(t, "versions", "/inbox/document.txt")
+	require.NoError(t, err)
+	assert.Contains(t, out, "content_replace")
+	assert.Contains(t, out, "content_create")
+
+	again := writeSourceFile(t, "again.bin", "third version")
+	out, err = runCLI(t, "put", again, "/inbox/document.txt",
+		"--mime-type", "application/octet-stream", "--json")
+	require.NoError(t, err, out)
+	assert.NotContains(t, out, "hash:", "JSON output must not contain progress lines")
+	assert.NotContains(t, out, "upload:", "JSON output must not contain progress lines")
+	var receipt api.ContentReplacementReceipt
+	require.NoError(t, json.Unmarshal([]byte(out), &receipt))
+	assert.Equal(t, "content_replace", receipt.Version.TransitionKind)
+	assert.Equal(t, int64(3), receipt.Node.Revision)
+	assert.Equal(t, "application/octet-stream", receipt.Node.MimeType)
+}
+
 func TestJobsShowsDaemonStatus(t *testing.T) {
 	_ = setupVaultHome(t)
 	out, err := runCLI(t, "jobs")

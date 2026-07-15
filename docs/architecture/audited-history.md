@@ -6,10 +6,11 @@ description: The planned permanent, tamper-evident history contract for protecte
 # Audited history
 
 !!! info "Planned — not yet implemented"
-    Docbank does not yet record content replacements or audited history. This
-    page is the definitive contract the Phase 2b implementation will follow.
-    Current commands retain only the current file content and the metadata
-    described elsewhere in these docs.
+    Docbank records immutable `content_create` and `content_replace` versions,
+    but does not yet implement audit scopes, mutation chains, or permanent
+    protected retention. This page is the definitive contract that work will
+    follow; the current ordinary version behavior is described in
+    [Editing & Versions](editing-and-versions.md).
 
 Full audit is an opt-in promise for records whose history matters more than
 easy reclamation: tax documents, contracts, regulated work, or an external

@@ -176,6 +176,15 @@ type UploadResult struct {
 	ComputedSize int64
 }
 
+// ReplacementResult is the independently verified byte identity and the new
+// immutable content authority installed for an existing file.
+type ReplacementResult struct {
+	Node         store.Node
+	Version      store.ContentVersion
+	ComputedHash string
+	ComputedSize int64
+}
+
 // PreparedUpload is a verified, authority-free remote write. The caller may
 // validate the remainder of its transport envelope before Commit grants blob
 // and node authority.
@@ -245,6 +254,39 @@ func (p *PreparedUpload) Commit(ctx context.Context) (UploadResult, error) {
 		return result, err
 	}
 	return result, nil
+}
+
+// ReplaceContent streams a remote body into durable authority-free storage,
+// verifies its declared identity, then atomically installs a content_replace
+// head under the caller's node-revision precondition.
+func (ing *Ingester) ReplaceContent(
+	ctx context.Context, nodeID, ifRev int64, mimeType string, r io.Reader,
+	expectedHash string, expectedSize int64,
+) (ReplacementResult, error) {
+	var result ReplacementResult
+	if !utf8.ValidString(mimeType) {
+		return result, errors.New("MIME type is not valid UTF-8")
+	}
+	if err := ing.Store.CheckContentReplacementTarget(ctx, nodeID, ifRev); err != nil {
+		return result, err
+	}
+	var err error
+	result.ComputedHash, result.ComputedSize, err = ing.Blobs.WriteContext(ctx, r)
+	if err != nil {
+		return result, err
+	}
+	if result.ComputedSize != expectedSize {
+		return result, fmt.Errorf("declared %d bytes, received %d: %w",
+			expectedSize, result.ComputedSize, ErrUploadSizeMismatch)
+	}
+	if result.ComputedHash != expectedHash {
+		return result, fmt.Errorf("declared SHA-256 %s, computed %s: %w",
+			expectedHash, result.ComputedHash, ErrUploadDigestMismatch)
+	}
+	result.Node, result.Version, err = ing.Store.ReplaceContent(
+		ctx, nodeID, ifRev, result.ComputedHash, result.ComputedSize, mimeType,
+	)
+	return result, err
 }
 
 // AddPaths ingests files and directory trees under the virtual destPath.

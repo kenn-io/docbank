@@ -139,6 +139,52 @@ func TestAddCancellationDoesNotAuthorizeIncompleteFile(t *testing.T) {
 		"cancellation during blob reading must not grant node authority")
 }
 
+type cancelingContentReader struct {
+	cancel context.CancelFunc
+	sent   bool
+}
+
+func (r *cancelingContentReader) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if r.sent {
+		return 0, context.Canceled
+	}
+	r.sent = true
+	p[0] = 'x'
+	r.cancel()
+	return 1, nil
+}
+
+func TestReplaceContentCancellationLeavesCurrentAuthorityUntouched(t *testing.T) {
+	ing := newTestIngester(t)
+	var created store.Node
+	require.NoError(t, ing.Blobs.WithMutation(t.Context(), func() error {
+		hash, size, err := ing.Blobs.WriteContext(t.Context(), strings.NewReader("current"))
+		if err != nil {
+			return err
+		}
+		created, err = ing.Store.CreateFile(
+			t.Context(), ing.Store.RootID(), "current.txt", hash, size, "text/plain",
+		)
+		return err
+	}))
+
+	ctx, cancel := context.WithCancel(t.Context())
+	_, err := ing.ReplaceContent(ctx, created.ID, created.Revision, "text/plain",
+		&cancelingContentReader{cancel: cancel}, strings.Repeat("0", 64), 2)
+	require.ErrorIs(t, err, context.Canceled)
+	unchanged, err := ing.Store.NodeByID(t.Context(), created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, created.Revision, unchanged.Revision)
+	assert.Equal(t, created.CurrentVersionID, unchanged.CurrentVersionID)
+	versions, total, err := ing.Store.ContentVersions(t.Context(), created.ID, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, total)
+	require.Len(t, versions, 1)
+}
+
 func TestAddProgressBatchesManySmallFiles(t *testing.T) {
 	ing := newTestIngester(t)
 	files := make(map[string]string, 130)
