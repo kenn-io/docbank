@@ -79,40 +79,10 @@ UUIDv4 values. `(node_id, node_revision)` and
 [Editing & Versions](editing-and-versions.md) for the read and retention
 contract.
 
-!!! info "Planned — full-audit schema"
-    Audit scopes, sticky memberships, mutation records, and chain state will be
-    current-schema metadata included in deterministic JSONL rather than
-    inferred from paths or pack layout. The one JSONL format remains version 1
-    with or without audit scopes.
-    Audited trash origins will retain immutable parent IDs and names
-    outside nullable live foreign-key semantics, so deleting an unaudited origin
-    cannot rewrite protected history. The existing `trash_parent` becomes a
-    non-authoritative locator excluded from audit hashing and reconciliation.
-    Audit baselines and replay also cover `node_tags` with their `tags` records
-    and `provenance` with referenced `ingests`; FTS and `extracted_text` remain
-    rebuildable derived data outside audit authority. Ingest and provenance
-    records become immutable facts, with database guards preventing ordinary
-    update or deletion when an audited member roots them.
-    Tag IDs likewise become canonical non-reusable UUIDv4 values; tag names may
-    change or be recreated without retargeting historical assignments. Once any
-    scope exists, node insertion/deletion and parent/name/trash changes require a
-    guarded audit transaction whose precomputed membership, baseline,
-    descendant-event, lineage, and scope-head effects must match exactly before
-    commit. Direct and cascading deletion must publish exact topology tombstones.
-    Enrollment storage uses one shared baseline batch per scope, normalized
-    subtree target, and operation. Every newly acquired membership references
-    exactly one batch; existing memberships are never re-baselined. Baselines
-    also preserve the minimal ancestor-spine topology needed to derive audited
-    paths and a canonical unknown-origin record for root-scope legacy trash. A
-    complete vault-topology genesis snapshot plus every later lineage-bound
-    delta provides the independent authority for deriving each adopted closure.
-    Later multi-change topology mutations commit one atomic sorted delta and a
-    canonical net path-effect set that import derives from the previous replayed
-    projection before accepting descendant events. Allocation lineage commits
-    every post-audit topology-delta digest, including operations whose derived
-    audit effect is empty. Active ancestor witnesses are retired and re-created
-    deterministically as path dependencies change, and each sorted witness-change
-    count/digest is committed by both mutation and allocation lineage.
+The current schema has no audit-scope authority. The planned storage contract
+for sticky membership, mutation chains, and JSONL fidelity is maintained in
+[Audited History](audited-history.md), rather than duplicated in this current
+schema reference.
 
 ## Invariants enforced in the schema
 

@@ -43,9 +43,9 @@ flowchart TD
 | What contract do the CLI and agents share? | [HTTP API](http-api.md) |
 | Which failures and adversaries are in scope? | [Integrity & Threat Model](integrity.md) |
 
-The [Roadmap](../roadmap.md) is the authority for planned features. These
-architecture pages describe implemented boundaries first and isolate future
-behavior in explicit planned callouts.
+The [Roadmap](../roadmap.md) gives high-level product direction. These
+architecture pages describe implemented boundaries and durable design intent;
+kata remains the authority for implementation work and status.
 
 ## The two-layer split
 
@@ -88,13 +88,6 @@ the node's current pointer under a revision precondition rather than rewriting
 a blob. See
 [Editing & Versions](editing-and-versions.md).
 
-!!! info "Planned — full audit"
-    Selected directory scopes will be able to retain every authoritative
-    mutation and content version with sticky membership, tamper-evident event
-    chains, and complete JSONL backup/restore fidelity. Ordinary deletion and
-    GC will be unable to erase protected history. See
-    [Audited History](audited-history.md).
-
 ## Component responsibilities
 
 - **`internal/store`** — SQLite schema and every tree operation. Typed
@@ -136,10 +129,7 @@ a blob. See
 - Trash, permanent metadata deletion, and physical byte reclamation are
   separate decisions.
 
-!!! info "Planned — later clients and features"
-    Interactive editing, full audit, tags, watched inboxes, text extraction,
-    the kit-ui web portal, and the focused TUI remain planned.
-    Later clients must not bypass the implemented backup and restore API.
-    Backup initialization, creation, listing, verification, and restore use the
-    daemon boundary above. Later features must not introduce a privileged path
-    around the daemon or mutable blob bytes. See the [Roadmap](../roadmap.md).
+Any future client or feature remains subject to these boundaries: it uses the
+daemon API, immutable blob bytes, and the implemented backup/restore surface.
+The [Audited History](audited-history.md) page records the separate planned
+retention contract where that future design matters.

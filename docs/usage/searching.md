@@ -33,14 +33,9 @@ ID   PATH
 
 ## What's indexed today
 
-Phase 1 indexes **node names** only. That already covers the common
+Docbank indexes **node names** only. That already covers the common
 "where did I file that" lookup, since document filenames tend to carry
 their subject.
 
-!!! info "Planned — Phase 2b"
-    Text extraction workers add document **contents** to the same index:
-    PDF text layers, plain text/markdown, and office formats, extracted
-    once per unique blob and per extractor version. Search gains filters
-    (tag, MIME type, date, path prefix) in both the CLI and the HTTP
-    `/search` endpoint. Because extraction is keyed by content hash,
-    renaming or moving files never triggers re-extraction.
+Document-body extraction, content search, and tag/MIME/date/path filters are
+not available in the current CLI or HTTP API.

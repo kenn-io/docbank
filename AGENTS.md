@@ -69,8 +69,13 @@ Instructions for autonomous coding agents working in this repository.
   surface is status, pack, and repack. Do not expose Kit's unpack primitive as
   a general API or CLI command; reserve it for tests, migrations, or a
   purpose-built emergency recovery workflow with a demonstrated need.
-- User-facing docs describe only what exists; planned behavior sits under
-  `!!! info "Planned"` admonitions.
+- Documentation is not the implementation tracker. User- and agent-facing
+  pages describe shipped capabilities and current limitations. Architecture
+  and internal pages may preserve durable future design under explicit
+  `!!! info "Planned"` admonitions, but must not carry task breakdowns,
+  sequencing, ownership, or completion criteria. `docs/roadmap.md` is the one
+  high-level public product-status view; kata is the sole source of truth for
+  actionable work and its status.
 - No storage compatibility boundary exists before the first public release.
   Keep the live schema and deterministic JSONL authority at format v1, make
   breaking pre-release changes directly, and treat vaults created by earlier

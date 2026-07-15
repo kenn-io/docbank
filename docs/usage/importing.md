@@ -158,7 +158,5 @@ authority when either differs. See the [HTTP API](../architecture/http-api.md#ad
 and [Agent Integration Guide](../agents/integration.md#create-and-ingest-safely)
 for the exact contract.
 
-!!! info "Planned — watched inboxes"
-    The daemon will watch configured directories (scanner output, a "To File"
-    folder) and import files automatically once they've been stable for a
-    settle period, landing under `/inbox/<date>/` for later filing.
+Docbank does not currently watch source directories or ingest changed files
+automatically; every import is an explicit CLI or API operation.

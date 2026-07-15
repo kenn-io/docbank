@@ -432,11 +432,11 @@ Store startup runs the embedded idempotent schema in one immediate transaction
 and ensures the root exists. This safely creates missing compatible tables and
 indexes, but it is not a general migration system.
 
-Implement the metadata-v1 identity model as vertical changes to the live store,
-ingest, reachability, and backup/restore paths. Do not land a parallel schema or
-codec that production code does not consume; shared metadata helpers should be
-extracted only when the live paths use them. Follow-on work replaces the
-development runtime shape directly rather than translating or upgrading it.
+Metadata-v1 identity changes are vertical changes to the live store, ingest,
+reachability, and backup/restore paths. A parallel schema or codec that
+production code does not consume has no authority; shared metadata helpers
+belong here only when live paths use them. Pre-release development replaces the
+runtime shape directly rather than translating or upgrading it.
 
 Until the first public release, incompatible schema work is allowed and the
 format identifier remains v1. Earlier development vaults and JSONL streams are
@@ -447,12 +447,12 @@ The first public release establishes the compatibility boundary. From that
 point onward, incompatible changes require an explicit policy grounded in
 actual released formats and fixtures rather than speculative migration work.
 
-## Open design constraints
+## Extension constraints
 
-- External references need a liveness policy before their schema exists:
-  pin blob authority, or allow dangling-reference detection in the referrer.
-- Future version writers must preserve the implemented bytes-before-reference
-  ordering and add rows to reachability atomically with pointer replacement.
+- An external-reference schema must define its liveness policy: either pin blob
+  authority or make dangling-reference detection the referrer's responsibility.
+- Every version writer preserves the implemented bytes-before-reference
+  ordering and adds reachability atomically with pointer replacement.
   Reversion is the metadata-only exception: it reuses already-authoritative
   source bytes and atomically adds a new reachability row and pointer.
 - Pack and repack maintenance commands must remain daemon/API operations; no

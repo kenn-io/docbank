@@ -9,9 +9,6 @@ plus internal design material.
 - `stylesheets/` — published visual theme
 - `scripts/` — source and built-site validation (never published)
 - `internal/` — living agent/developer design documentation (never published)
-- `superpowers/` — transient working specs and implementation plans for
-  in-flight development (never published; exists only while a project
-  is being executed)
 - `zensical.toml` — site configuration
 - `zensical-docs.sh` — build wrapper; validates sources, copies publishable
   content into a temporary tree, and checks the generated site's links,
@@ -37,17 +34,18 @@ uv sync --frozen          # one-time: installs zensical into docs/.venv
 Or from the repository root: `make docs-install`, `make docs-serve`,
 `make docs-build`.
 
-## Conventions
+## Documentation boundary
 
-- User-facing pages document only what the current binary does. Planned
-  behavior lives in the Architecture section and is labeled with a
-  `!!! info "Planned — Phase N"` admonition. Do not document flags or
-  endpoints that do not exist yet outside those admonitions.
-- The Architecture pages are the digested, maintained form of the superpowers
-  specs. When a design decision changes, update the Architecture page in the
-  same PR. Once a project ships and its design content is digested into
-  the site, delete its spec and plan — git history keeps the
-  point-in-time record; the working tree carries only maintained docs.
+- User- and agent-facing pages explain shipped capabilities, exact contracts,
+  and current limitations. They do not inventory future commands or endpoints.
+- Public Architecture pages explain product behavior and durable boundaries.
+  A future contract belongs there only when it materially explains design
+  intent, and is always isolated under an explicit `!!! info "Planned"`
+  admonition.
 - `internal/` is the definitive developer description of how the system works
   and why. Update it in place with implementation changes; revise the matching
   public Architecture page when user-visible behavior or boundaries change.
+- `roadmap.md` is the one high-level public view of product direction and
+  status. It is not an execution ledger.
+- Kata is the sole source of truth for actionable work, sequencing, ownership,
+  blockers, and completion state. Do not copy that state into documentation.
