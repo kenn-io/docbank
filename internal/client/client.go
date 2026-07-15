@@ -340,7 +340,8 @@ func validateContentReferencePage(page api.ContentReferencePage, hash string, li
 			ref.Node.MimeType != ref.Version.MimeType) {
 			return fmt.Errorf("content-reference response item %d has inconsistent current authority", i)
 		}
-		if (ref.Node.TrashedAt == "") != strings.HasPrefix(ref.Path, "/") {
+		if (ref.Node.TrashedAt != "" && ref.Path != "") ||
+			(ref.Node.TrashedAt == "" && !strings.HasPrefix(ref.Path, "/")) {
 			return fmt.Errorf("content-reference response item %d has inconsistent path state", i)
 		}
 	}

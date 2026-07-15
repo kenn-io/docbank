@@ -457,7 +457,11 @@ func TestContentReferencesRejectsInconsistentResponses(t *testing.T) {
 		"current state":     func(page *api.ContentReferencePage) { page.Items[0].IsCurrent = false },
 		"current authority": func(page *api.ContentReferencePage) { page.Items[0].Node.Size++ },
 		"path state":        func(page *api.ContentReferencePage) { page.Items[0].Path = "" },
-		"pagination":        func(page *api.ContentReferencePage) { page.Total = 0 },
+		"trashed path": func(page *api.ContentReferencePage) {
+			page.Items[0].Node.TrashedAt = "2026-07-15T12:00:00.000000000Z"
+			page.Items[0].Path = "doc.txt"
+		},
+		"pagination": func(page *api.ContentReferencePage) { page.Total = 0 },
 		"missing page": func(page *api.ContentReferencePage) {
 			page.Total = 2
 			page.Items = nil
