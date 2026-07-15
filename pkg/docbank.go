@@ -143,6 +143,15 @@ func (v *Vault) SQLiteDriver() string {
 	return v.metadata.SQLiteDriver().Name()
 }
 
+// ID reports the stable logical vault identity preserved by metadata export,
+// backup, and restore. It is independent of the vault's filesystem root.
+func (v *Vault) ID() string {
+	if v == nil || v.metadata == nil {
+		return ""
+	}
+	return v.metadata.VaultID()
+}
+
 // Stat resolves a live virtual path to its stable node projection.
 func (v *Vault) Stat(ctx context.Context, virtualPath string) (Node, error) {
 	if err := v.begin(); err != nil {

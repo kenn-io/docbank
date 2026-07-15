@@ -81,6 +81,7 @@ type metadataHeader struct {
 	Type         string `json:"type"`
 	Format       string `json:"format"`
 	Version      int    `json:"version"`
+	VaultID      string `json:"vault_id"`
 	NodeSequence int64  `json:"node_sequence"`
 }
 
@@ -189,6 +190,12 @@ func exportMetadataSnapshot(ctx context.Context, tx metadataQuerier, w io.Writer
 	if tx == nil {
 		return errors.New("exporting metadata: nil transaction")
 	}
+	var vaultID string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT vault_id FROM vault_metadata WHERE singleton = 1`,
+	).Scan(&vaultID); err != nil {
+		return fmt.Errorf("reading vault identity: %w", err)
+	}
 	var nodeSequence int64
 	if err := tx.QueryRowContext(ctx, `SELECT seq FROM sqlite_sequence WHERE name = 'nodes'`).Scan(&nodeSequence); err != nil {
 		return fmt.Errorf("reading node ID high-water mark: %w", err)
@@ -205,7 +212,8 @@ func exportMetadataSnapshot(ctx context.Context, tx metadataQuerier, w io.Writer
 		return nil
 	}
 	if err := write(metadataHeader{
-		Type: "meta", Format: "docbank-metadata", Version: metadataFormatVersion, NodeSequence: nodeSequence,
+		Type: "meta", Format: "docbank-metadata", Version: metadataFormatVersion,
+		VaultID: vaultID, NodeSequence: nodeSequence,
 	}); err != nil {
 		return err
 	}
@@ -453,6 +461,7 @@ func stringPtr(v sql.NullString) *string {
 // logical JSONL snapshot. It refuses a store containing user or pack state.
 func (s *Store) ImportMetadata(ctx context.Context, r io.Reader) error {
 	rootID := int64(0)
+	vaultID := ""
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		if err := requirePristineMetadataTarget(ctx, tx); err != nil {
 			return err
@@ -463,25 +472,32 @@ func (s *Store) ImportMetadata(ctx context.Context, r io.Reader) error {
 		if _, err := tx.ExecContext(ctx, `PRAGMA defer_foreign_keys = ON`); err != nil {
 			return fmt.Errorf("deferring metadata foreign keys: %w", err)
 		}
-		nodeSequence, err := importMetadataLines(ctx, tx, r)
+		header, err := importMetadataLines(ctx, tx, r)
 		if err != nil {
 			return err
 		}
-		if err := validateMetadataState(ctx, tx, nodeSequence); err != nil {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE vault_metadata SET vault_id = ? WHERE singleton = 1`, header.VaultID,
+		); err != nil {
+			return fmt.Errorf("restoring vault identity: %w", err)
+		}
+		if err := validateMetadataState(ctx, tx, header.NodeSequence); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE sqlite_sequence SET seq = ? WHERE name = 'nodes'`, nodeSequence); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE sqlite_sequence SET seq = ? WHERE name = 'nodes'`, header.NodeSequence); err != nil {
 			return fmt.Errorf("restoring node ID high-water mark: %w", err)
 		}
 		if err := tx.QueryRowContext(ctx, `SELECT id FROM nodes WHERE parent_id IS NULL`).Scan(&rootID); err != nil {
 			return fmt.Errorf("finding imported root: %w", err)
 		}
+		vaultID = header.VaultID
 		return nil
 	})
 	if err != nil {
 		return err
 	}
 	s.rootID = rootID
+	s.vaultID = vaultID
 	return nil
 }
 
@@ -505,47 +521,50 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 	return nil
 }
 
-func importMetadataLines(ctx context.Context, tx *sql.Tx, r io.Reader) (int64, error) {
+func importMetadataLines(ctx context.Context, tx *sql.Tx, r io.Reader) (metadataHeader, error) {
 	dec := json.NewDecoder(bufio.NewReader(r))
 	var rawHeader json.RawMessage
 	if err := dec.Decode(&rawHeader); err != nil {
-		return 0, fmt.Errorf("decoding metadata header: %w", err)
+		return metadataHeader{}, fmt.Errorf("decoding metadata header: %w", err)
 	}
 	if err := validateMetadataJSON(rawHeader); err != nil {
-		return 0, fmt.Errorf("decoding metadata header: %w", err)
+		return metadataHeader{}, fmt.Errorf("decoding metadata header: %w", err)
 	}
 	if err := requireMetadataFields(rawHeader, metadataHeaderFields, nil); err != nil {
-		return 0, fmt.Errorf("decoding metadata header: %w", err)
+		return metadataHeader{}, fmt.Errorf("decoding metadata header: %w", err)
 	}
 	var header metadataHeader
 	if err := decodeMetadataRecord(rawHeader, &header); err != nil {
-		return 0, fmt.Errorf("decoding metadata header: %w", err)
+		return metadataHeader{}, fmt.Errorf("decoding metadata header: %w", err)
 	}
 	if header.Type != "meta" || header.Format != "docbank-metadata" ||
 		header.Version != metadataFormatVersion || header.NodeSequence <= 0 {
-		return 0, fmt.Errorf("unsupported metadata header: type=%q format=%q version=%d node_sequence=%d",
+		return metadataHeader{}, fmt.Errorf("unsupported metadata header: type=%q format=%q version=%d node_sequence=%d",
 			header.Type, header.Format, header.Version, header.NodeSequence)
+	}
+	if err := validateUUIDv4(header.VaultID); err != nil {
+		return metadataHeader{}, fmt.Errorf("invalid metadata vault_id: %w", err)
 	}
 	for record := 2; ; record++ {
 		var raw json.RawMessage
 		err := dec.Decode(&raw)
 		if errors.Is(err, io.EOF) {
-			return header.NodeSequence, nil
+			return header, nil
 		}
 		if err != nil {
-			return 0, fmt.Errorf("decoding metadata record %d: %w", record, err)
+			return metadataHeader{}, fmt.Errorf("decoding metadata record %d: %w", record, err)
 		}
 		if err := validateMetadataJSON(raw); err != nil {
-			return 0, fmt.Errorf("decoding metadata record %d: %w", record, err)
+			return metadataHeader{}, fmt.Errorf("decoding metadata record %d: %w", record, err)
 		}
 		var kind struct {
 			Type string `json:"type"`
 		}
 		if err := json.Unmarshal(raw, &kind); err != nil {
-			return 0, fmt.Errorf("decoding metadata record %d type: %w", record, err)
+			return metadataHeader{}, fmt.Errorf("decoding metadata record %d type: %w", record, err)
 		}
 		if err := importMetadataRecord(ctx, tx, kind.Type, raw); err != nil {
-			return 0, fmt.Errorf("importing metadata record %d (%s): %w", record, kind.Type, err)
+			return metadataHeader{}, fmt.Errorf("importing metadata record %d (%s): %w", record, kind.Type, err)
 		}
 	}
 }
@@ -653,7 +672,7 @@ func importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw json
 
 const metadataTypeField = "type"
 
-var metadataHeaderFields = []string{metadataTypeField, "format", "version", "node_sequence"}
+var metadataHeaderFields = []string{metadataTypeField, "format", "version", "vault_id", "node_sequence"}
 
 var metadataRequiredFields = map[string][]string{
 	"blob":            {metadataTypeField, "hash", "size", "created_at"},
@@ -963,6 +982,15 @@ func validateProvenanceTime(value string) error {
 }
 
 func validateMetadataState(ctx context.Context, tx metadataQuerier, nodeSequence int64) error {
+	var vaultID string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT vault_id FROM vault_metadata WHERE singleton = 1`,
+	).Scan(&vaultID); err != nil {
+		return fmt.Errorf("reading vault identity: %w", err)
+	}
+	if err := validateUUIDv4(vaultID); err != nil {
+		return fmt.Errorf("invalid vault identity: %w", err)
+	}
 	if err := validateMetadataRelations(ctx, tx); err != nil {
 		return err
 	}

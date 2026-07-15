@@ -1,5 +1,12 @@
 -- docbank core schema. Idempotent: applied on every Open.
 
+-- One stable logical identity follows the vault through JSONL backup and
+-- restore. Filesystem location is deliberately not identity.
+CREATE TABLE IF NOT EXISTS vault_metadata (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    vault_id  TEXT NOT NULL UNIQUE
+);
+
 -- AUTOINCREMENT: node ids are stored as origins (trash_parent) and will be
 -- handed to agents over the HTTP API; a reused rowid would silently retarget
 -- those references at an unrelated node.
