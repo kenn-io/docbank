@@ -106,6 +106,8 @@ func testEmbeddedVaultLifecycle(t *testing.T, driver docsqlite.Driver) {
 	root := t.TempDir()
 	vault, err := Open(t.Context(), OpenOptions{Root: root, SQLite: driver})
 	require.NoError(err)
+	vaultID := vault.ID()
+	require.NotEmpty(vaultID)
 
 	first, err := vault.Put(t.Context(), "/sessions/one.jsonl", strings.NewReader("first\n"),
 		PutOptions{MediaType: "application/x-ndjson"})
@@ -140,6 +142,7 @@ func testEmbeddedVaultLifecycle(t *testing.T, driver docsqlite.Driver) {
 	reopened, err := Open(t.Context(), OpenOptions{Root: root, SQLite: driver})
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(reopened.Close()) })
+	require.Equal(vaultID, reopened.ID())
 	node, err := reopened.Stat(t.Context(), "/sessions/one.jsonl")
 	require.NoError(err)
 	require.Equal(second.Node.ID, node.ID)

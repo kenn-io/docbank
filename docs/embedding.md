@@ -67,6 +67,11 @@ version while preserving the node ID. Supply `PutOptions.Expected` when the
 caller already knows the SHA-256 and byte count and wants Docbank to reject a
 mismatched stream before granting metadata authority.
 
+`vault.ID()` returns the archive's stable UUID. JSONL backup and restore
+preserve that identity even when the restored vault has a different filesystem
+root; applications can therefore distinguish logical archives without treating
+paths as identity.
+
 An `OpenContent` stream is not authoritative until it reaches terminal `io.EOF`
 or `Verify` succeeds. Early `Close` does not drain the stream. `Vault.Close`
 waits for active operations and streams, closes storage, and releases the vault

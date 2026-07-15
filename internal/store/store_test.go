@@ -23,6 +23,8 @@ func TestOpenBootstrapsRoot(t *testing.T) {
 	require.NoError(t, err)
 	rootID := s.RootID()
 	assert.Positive(t, rootID)
+	vaultID := s.VaultID()
+	require.NoError(t, validateUUIDv4(vaultID))
 	require.NoError(t, s.Close())
 
 	// Reopen: same root, no duplicate.
@@ -30,6 +32,7 @@ func TestOpenBootstrapsRoot(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, s2.Close()) }()
 	assert.Equal(t, rootID, s2.RootID())
+	assert.Equal(t, vaultID, s2.VaultID())
 
 	var count int
 	require.NoError(t, s2.db.QueryRow(
@@ -55,6 +58,7 @@ func TestOpenConcurrentBootstrap(t *testing.T) {
 
 	for i := range n {
 		require.NoError(t, errs[i])
+		assert.Equal(t, stores[0].VaultID(), stores[i].VaultID())
 	}
 	defer func() {
 		for i := range n {
