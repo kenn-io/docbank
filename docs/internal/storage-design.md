@@ -417,10 +417,11 @@ Store startup runs the embedded idempotent schema in one immediate transaction
 and ensures the root exists. This safely creates missing compatible tables and
 indexes, but it is not a general migration system.
 
-`internal/metadata` defines and tests the intended metadata-v1 logical schema
-and deterministic codec. Follow-on implementation replaces the development
-runtime schema and backup codec with that shape directly; it does not translate
-or upgrade existing developer vaults.
+Implement the metadata-v1 identity model as vertical changes to the live store,
+ingest, reachability, and backup/restore paths. Do not land a parallel schema or
+codec that production code does not consume; shared metadata helpers should be
+extracted only when the live paths use them. Follow-on work replaces the
+development runtime shape directly rather than translating or upgrading it.
 
 Until the first public release, incompatible schema work is allowed and the
 format identifier remains v1. Earlier development vaults and JSONL streams are
