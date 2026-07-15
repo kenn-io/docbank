@@ -147,10 +147,14 @@ func Preflight(ctx context.Context, sources []string, opts Options) (PreflightRe
 	}
 	types := make(map[string]FileType)
 	for _, rawSource := range sources {
-		source := filepath.Clean(rawSource)
 		if err := ctx.Err(); err != nil {
 			return report, err
 		}
+		if err := validateSourcePath(rawSource); err != nil {
+			report.addFinding(rawSource, "error", err.Error())
+			continue
+		}
+		source := filepath.Clean(rawSource)
 		info, err := os.Lstat(source)
 		if err != nil {
 			report.addFinding(source, "error", err.Error())
@@ -220,6 +224,13 @@ func preflightTree(
 			report.addFinding(sourcePath, "error", walkErr.Error())
 			return nil
 		}
+		if err := validateSourcePath(sourcePath); err != nil {
+			report.addFinding(sourcePath, "error", err.Error())
+			if entry.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
 		if excludes.match(sourceRoot, sourcePath) {
 			report.addFinding(sourcePath, "excluded", "matched an exclusion rule")
 			if entry.IsDir() {
@@ -276,7 +287,7 @@ func (r *PreflightReport) addFinding(path, kind, detail string) {
 		r.Errors++
 	}
 	if len(r.Findings) < maxPreflightFindings {
-		r.Findings = append(r.Findings, PreflightFinding{Path: path, Kind: kind, Detail: detail})
+		r.Findings = append(r.Findings, PreflightFinding{Path: reportPath(path), Kind: kind, Detail: detail})
 	} else {
 		r.FindingsTruncated = true
 	}

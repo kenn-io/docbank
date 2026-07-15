@@ -10,9 +10,15 @@ import (
 
 // BeginIngest records the start of an ingest run and returns its id.
 func (s *Store) BeginIngest(ctx context.Context, sourceKind, sourceDesc string) (int64, error) {
+	startedAt := nowRFC3339()
+	if err := validateIngestRecord(metadataIngest{
+		Type: "ingest", ID: 1, StartedAt: startedAt, SourceKind: sourceKind, SourceDesc: sourceDesc,
+	}); err != nil {
+		return 0, fmt.Errorf("validating ingest start: %w", err)
+	}
 	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO ingests (started_at, source_kind, source_desc) VALUES (?, ?, ?)`,
-		nowRFC3339(), sourceKind, sourceDesc)
+		startedAt, sourceKind, sourceDesc)
 	if err != nil {
 		return 0, fmt.Errorf("recording ingest start: %w", err)
 	}
@@ -33,8 +39,9 @@ func (s *Store) BeginIngest(ctx context.Context, sourceKind, sourceDesc string) 
 func resolveIngestNameTx(tx *sql.Tx, parentID int64, name, blobHash string) (string, int64, bool, error) {
 	base, ext := splitSuffix(name)
 	rows, err := tx.Query(
-		`SELECT id, name, COALESCE(blob_hash, '') FROM nodes
-		 WHERE parent_id = ? AND trashed_at IS NULL AND kind = 'file'`, parentID)
+		`SELECT n.id, n.name, cv.blob_hash FROM nodes AS n
+		 JOIN content_versions AS cv ON cv.version_id = n.current_version_id
+		 WHERE n.parent_id = ? AND n.trashed_at IS NULL AND n.kind = 'file'`, parentID)
 	if err != nil {
 		return "", 0, false, fmt.Errorf("listing siblings for %q: %w", name, err)
 	}
@@ -133,6 +140,16 @@ func (s *Store) IngestFile(ctx context.Context, ingestID, parentID int64, name, 
 	if err != nil {
 		return Node{}, false, err
 	}
+	var recordedMtime *string
+	if originalMtime != "" {
+		recordedMtime = &originalMtime
+	}
+	if err := validateProvenanceRecord(metadataProvenance{
+		Type: "provenance", NodeID: 1, IngestID: ingestID,
+		OriginalPath: originalPath, OriginalMTime: recordedMtime,
+	}); err != nil {
+		return Node{}, false, fmt.Errorf("validating ingest provenance: %w", err)
+	}
 	var (
 		created Node
 		added   bool
@@ -143,7 +160,8 @@ func (s *Store) IngestFile(ctx context.Context, ingestID, parentID int64, name, 
 			return err
 		}
 		if skip {
-			created, err = scanNode(tx.QueryRow(`SELECT `+nodeCols+` FROM nodes WHERE id = ?`, existingID))
+			created, err = scanNode(tx.QueryRow(
+				`SELECT `+nodeCols+` FROM `+nodeFrom+` WHERE n.id = ?`, existingID))
 			if err != nil {
 				return fmt.Errorf("reading idempotent ingest node %d: %w", existingID, err)
 			}
@@ -153,14 +171,10 @@ func (s *Store) IngestFile(ctx context.Context, ingestID, parentID int64, name, 
 		if err != nil {
 			return err
 		}
-		var mtime any
-		if originalMtime != "" {
-			mtime = originalMtime
-		}
 		if _, err := tx.Exec(
 			`INSERT INTO provenance (node_id, ingest_id, original_path, original_mtime)
 			 VALUES (?, ?, ?, ?)`,
-			created.ID, ingestID, originalPath, mtime); err != nil {
+			created.ID, ingestID, originalPath, recordedMtime); err != nil {
 			return fmt.Errorf("recording provenance for %q: %w", finalName, err)
 		}
 		added = true

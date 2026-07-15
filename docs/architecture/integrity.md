@@ -97,26 +97,17 @@ path, so retargeting the user-facing link after resolution cannot redirect the
 walk. Descendant symlinks are still skipped, while virtual naming and provenance
 retain the spelling the user supplied.
 
-### Schema compatibility after v0.1.0
+### Pre-release schema freedom
 
-The pre-release decision to avoid migration machinery expired when v0.1.0
-shipped: released vaults can now survive across binary upgrades. Startup still
-applies the idempotent schema with `CREATE ... IF NOT EXISTS`, which can create
-missing tables and indexes but cannot safely express a table rebuild or other
-incompatible change.
+Docbank has not yet established a public storage compatibility boundary. Until
+the first public release, incompatible schema and JSONL changes replace the
+development shape directly while the format identifier remains version 1.
+Developer vaults created by earlier commits are disposable; do not build
+migrations, compatibility decoders, cutovers, or downgrade fences for them.
 
-Until versioned, transactional migrations exist, a release must not require an
-incompatible change to an existing table, column, trigger, or index. Migration
-machinery must land before such a schema change, not afterward as repair work.
-
-!!! info "Planned — audited-store downgrade fence"
-    Full audit cannot ship until that migration machinery can permanently raise
-    an audited vault's live-store feature level. The migrated layout must make
-    every published pre-audit binary fail during store open; an ignorable
-    version marker is insufficient. Database constraints and write guards also
-    protect audited nodes, versions, chain state, and blob reachability from raw
-    legacy mutations. Compatibility tests run old binaries against an audited
-    fixture and require refusal without changes.
+The first public release freezes that v1 contract. Any later incompatible
+change must begin by defining an explicit compatibility policy and real
+released-vault fixtures; that work is deliberately deferred until it is needed.
 
 ### One vault lock holder
 

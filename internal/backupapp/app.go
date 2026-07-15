@@ -20,18 +20,18 @@ import (
 // snapshot. Physical pack rows are deliberately excluded: restore may choose a
 // different loose/packed representation while preserving the same archive.
 type Stats struct {
-	Nodes         int64 `json:"nodes"`
-	Files         int64 `json:"files"`
-	Directories   int64 `json:"directories"`
-	TrashedNodes  int64 `json:"trashed_nodes"`
-	Blobs         int64 `json:"blobs"`
-	BlobBytes     int64 `json:"blob_bytes"`
-	NodeVersions  int64 `json:"node_versions"`
-	Ingests       int64 `json:"ingests"`
-	Provenance    int64 `json:"provenance"`
-	Tags          int64 `json:"tags"`
-	NodeTags      int64 `json:"node_tags"`
-	ExtractedText int64 `json:"extracted_text"`
+	Nodes           int64 `json:"nodes"`
+	Files           int64 `json:"files"`
+	Directories     int64 `json:"directories"`
+	TrashedNodes    int64 `json:"trashed_nodes"`
+	Blobs           int64 `json:"blobs"`
+	BlobBytes       int64 `json:"blob_bytes"`
+	ContentVersions int64 `json:"content_versions"`
+	Ingests         int64 `json:"ingests"`
+	Provenance      int64 `json:"provenance"`
+	Tags            int64 `json:"tags"`
+	NodeTags        int64 `json:"node_tags"`
+	ExtractedText   int64 `json:"extracted_text"`
 }
 
 type rowQuerier interface {
@@ -49,7 +49,7 @@ func computeStats(ctx context.Context, q rowQuerier) (Stats, error) {
 		{&stats.Files, `SELECT COUNT(*) FROM nodes WHERE kind = 'file'`},
 		{&stats.Directories, `SELECT COUNT(*) FROM nodes WHERE kind = 'dir'`},
 		{&stats.TrashedNodes, `SELECT COUNT(*) FROM nodes WHERE trashed_at IS NOT NULL`},
-		{&stats.NodeVersions, `SELECT COUNT(*) FROM node_versions`},
+		{&stats.ContentVersions, `SELECT COUNT(*) FROM content_versions`},
 		{&stats.Ingests, `SELECT COUNT(*) FROM ingests`},
 		{&stats.Provenance, `SELECT COUNT(*) FROM provenance`},
 		{&stats.Tags, `SELECT COUNT(*) FROM tags`},

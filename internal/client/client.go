@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -18,12 +19,14 @@ import (
 	"net/textproto"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/jsontext"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -58,9 +61,10 @@ func responseStatus(err error) (int, bool) {
 type ContentStream struct {
 	io.ReadCloser
 
-	BlobHash string
-	Size     int64
-	trailer  http.Header
+	VersionID string
+	BlobHash  string
+	Size      int64
+	trailer   http.Header
 }
 
 // ContentDigest returns the digest of bytes actually streamed. HTTP trailers
@@ -70,6 +74,40 @@ func (s *ContentStream) ContentDigest() string {
 		return ""
 	}
 	return s.trailer.Get("Content-Digest")
+}
+
+// CopyVerified writes the response body and succeeds only after the complete
+// stream agrees with the catalog size and SHA-256 identity and with the digest
+// trailer computed by the daemon. Bytes may already have reached w when an
+// error is returned, so callers publishing a file must write to private staging
+// and publish only after this method succeeds.
+func (s *ContentStream) CopyVerified(w io.Writer) (int64, error) {
+	if s == nil || s.ReadCloser == nil {
+		return 0, errors.New("copying content: nil stream")
+	}
+	hash := sha256.New()
+	written, err := io.Copy(io.MultiWriter(w, hash), s)
+	if err != nil {
+		return written, fmt.Errorf("copying content: %w", err)
+	}
+	if written != s.Size {
+		return written, fmt.Errorf("verifying content: received %d bytes, expected %d", written, s.Size)
+	}
+	computedHash := hex.EncodeToString(hash.Sum(nil))
+	if computedHash != s.BlobHash {
+		return written, fmt.Errorf("verifying content: computed SHA-256 %s, expected %s",
+			computedHash, s.BlobHash)
+	}
+	wantDigest := "sha-256=:" + base64.StdEncoding.EncodeToString(hash.Sum(nil)) + ":"
+	gotDigest := s.ContentDigest()
+	if gotDigest == "" {
+		return written, errors.New("verifying content: response lacks terminal Content-Digest")
+	}
+	if gotDigest != wantDigest {
+		return written, fmt.Errorf("verifying content: terminal Content-Digest %q, expected %q",
+			gotDigest, wantDigest)
+	}
+	return written, nil
 }
 
 func New(baseURL, apiKey string) *Client {
@@ -114,7 +152,7 @@ func apiProblemError(e api.Error) error {
 func (c *Client) do(ctx context.Context, method, path string, hdr map[string]string, in, out any) error {
 	var body io.Reader
 	if in != nil {
-		b, err := json.Marshal(in)
+		b, err := marshalJSONRequest(in)
 		if err != nil {
 			return fmt.Errorf("encoding %s %s request: %w", method, path, err)
 		}
@@ -149,6 +187,24 @@ func (c *Client) do(ctx context.Context, method, path string, hdr map[string]str
 		return fmt.Errorf("decoding %s %s response: %w", method, path, err)
 	}
 	return nil
+}
+
+// marshalJSONRequest preserves every Go string before encoding/json can
+// replace invalid UTF-8 with U+FFFD. The post-marshal check also keeps custom
+// encoders from introducing malformed surrogate escapes. All typed JSON
+// request paths, including streaming operations, go through this boundary.
+func marshalJSONRequest(in any) ([]byte, error) {
+	if err := jsontext.ValidateValue(in, "JSON request"); err != nil {
+		return nil, err
+	}
+	body, err := json.Marshal(in)
+	if err != nil {
+		return nil, err
+	}
+	if err := jsontext.Validate(body, "JSON request"); err != nil {
+		return nil, err
+	}
+	return body, nil
 }
 
 func ifMatch(rev int64) map[string]string {
@@ -193,8 +249,44 @@ func (c *Client) Children(ctx context.Context, id int64) ([]api.Node, error) {
 }
 
 func (c *Client) Content(ctx context.Context, id int64) (*ContentStream, error) {
+	return c.content(ctx, fmt.Sprintf("/api/v1/nodes/%d/content", id),
+		fmt.Sprintf("content of node %d", id))
+}
+
+// Versions returns one bounded newest-first page of a node's content history.
+func (c *Client) Versions(
+	ctx context.Context, nodeID int64, limit, offset int,
+) (api.ContentVersionPage, error) {
+	var page api.ContentVersionPage
+	path := fmt.Sprintf("/api/v1/nodes/%d/versions?limit=%d&offset=%d", nodeID, limit, offset)
+	err := c.do(ctx, http.MethodGet, path, nil, nil, &page)
+	return page, err
+}
+
+// Version returns immutable version metadata by stable ID.
+func (c *Client) Version(ctx context.Context, id string) (api.ContentVersion, error) {
+	var version api.ContentVersion
+	err := c.do(ctx, http.MethodGet, "/api/v1/versions/"+url.PathEscape(id), nil, nil, &version)
+	return version, err
+}
+
+// VersionContent streams immutable bytes by stable version ID.
+func (c *Client) VersionContent(ctx context.Context, id string) (*ContentStream, error) {
+	stream, err := c.content(ctx, "/api/v1/versions/"+url.PathEscape(id)+"/content",
+		"content version "+id)
+	if err != nil {
+		return nil, err
+	}
+	if stream.VersionID != id {
+		_ = stream.Close()
+		return nil, fmt.Errorf("content version %s returned version identity %s", id, stream.VersionID)
+	}
+	return stream, nil
+}
+
+func (c *Client) content(ctx context.Context, path, identity string) (*ContentStream, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		fmt.Sprintf("%s/api/v1/nodes/%d/content", c.base, id), nil)
+		c.base+path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("building content request: %w", err)
 	}
@@ -203,7 +295,7 @@ func (c *Client) Content(ctx context.Context, id int64) (*ContentStream, error) 
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("fetching content of node %d: %w", id, err)
+		return nil, fmt.Errorf("fetching %s: %w", identity, err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		defer func() { _ = resp.Body.Close() }()
@@ -212,20 +304,45 @@ func (c *Client) Content(ctx context.Context, id int64) (*ContentStream, error) 
 	size, err := strconv.ParseInt(resp.Header.Get(api.BlobSizeHeader), 10, 64)
 	if err != nil || size < 0 {
 		_ = resp.Body.Close()
-		return nil, fmt.Errorf("content of node %d returned invalid %s %q",
-			id, api.BlobSizeHeader, resp.Header.Get(api.BlobSizeHeader))
+		return nil, fmt.Errorf("%s returned invalid %s %q",
+			identity, api.BlobSizeHeader, resp.Header.Get(api.BlobSizeHeader))
 	}
 	hash := resp.Header.Get(api.BlobHashHeader)
 	if !validSHA256Hex(hash) {
 		_ = resp.Body.Close()
-		return nil, fmt.Errorf("content of node %d returned invalid %s %q", id, api.BlobHashHeader, hash)
+		return nil, fmt.Errorf("%s returned invalid %s %q", identity, api.BlobHashHeader, hash)
 	}
-	return &ContentStream{ReadCloser: resp.Body, BlobHash: hash, Size: size, trailer: resp.Trailer}, nil
+	versionID := resp.Header.Get(api.ContentVersionHeader)
+	if !validUUIDv4(versionID) {
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("%s returned invalid %s %q", identity, api.ContentVersionHeader, versionID)
+	}
+	return &ContentStream{ReadCloser: resp.Body, VersionID: versionID,
+		BlobHash: hash, Size: size, trailer: resp.Trailer}, nil
 }
 
 func validSHA256Hex(hash string) bool {
 	decoded, err := hex.DecodeString(hash)
 	return err == nil && len(decoded) == sha256.Size && hex.EncodeToString(decoded) == hash
+}
+
+func validUUIDv4(value string) bool {
+	if len(value) != 36 || value[8] != '-' || value[13] != '-' ||
+		value[18] != '-' || value[23] != '-' || value[14] != '4' {
+		return false
+	}
+	if !strings.ContainsRune("89ab", rune(value[19])) {
+		return false
+	}
+	for i, char := range value {
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			continue
+		}
+		if !strings.ContainsRune("0123456789abcdef", char) {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *Client) VerifyNodeContent(ctx context.Context, id, revision int64) (api.ContentVerification, error) {
@@ -277,7 +394,7 @@ func (c *Client) IngestStream(
 	exclude []string,
 	progress func(api.IngestProgress),
 ) (api.IngestReport, error) {
-	body, err := json.Marshal(map[string]any{
+	body, err := marshalJSONRequest(map[string]any{
 		"paths": paths, "dest": dest, "exclude": exclude,
 	})
 	if err != nil {
@@ -565,7 +682,7 @@ func (c *Client) BackupCreateStream(
 	opts BackupCreateOptions,
 	progress func(api.BackupProgress),
 ) (api.BackupSnapshot, error) {
-	body, err := json.Marshal(backupCreateRequest(opts))
+	body, err := marshalJSONRequest(backupCreateRequest(opts))
 	if err != nil {
 		return api.BackupSnapshot{}, fmt.Errorf("encoding backup create request: %w", err)
 	}
@@ -685,7 +802,7 @@ func (c *Client) BackupVerifyStream(
 	opts BackupVerifyOptions,
 	progress func(api.BackupProgress),
 ) (api.BackupVerifyReport, error) {
-	body, err := json.Marshal(backupVerifyRequest(opts))
+	body, err := marshalJSONRequest(backupVerifyRequest(opts))
 	if err != nil {
 		return api.BackupVerifyReport{}, fmt.Errorf("encoding backup verify request: %w", err)
 	}
@@ -788,7 +905,7 @@ func (c *Client) BackupRestoreStream(
 	opts BackupRestoreOptions,
 	progress func(api.BackupProgress),
 ) (api.BackupRestoreReport, error) {
-	body, err := json.Marshal(backupRestoreRequest(opts))
+	body, err := marshalJSONRequest(backupRestoreRequest(opts))
 	if err != nil {
 		return api.BackupRestoreReport{}, fmt.Errorf("encoding backup restore request: %w", err)
 	}

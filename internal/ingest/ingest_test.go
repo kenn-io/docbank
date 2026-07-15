@@ -1,12 +1,15 @@
 package ingest
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -63,6 +66,28 @@ func TestAddSingleFile(t *testing.T) {
 	// Source untouched.
 	_, err = os.Stat(filepath.Join(src, "notes.txt"))
 	require.NoError(t, err)
+}
+
+func TestAddPathsRejectsNonUTF8ExplicitSourceWithoutPoisoningMetadata(t *testing.T) {
+	ing := newTestIngester(t)
+	invalid := filepath.Join(t.TempDir(), "invalid-"+string([]byte{0xff})+".txt")
+	require.False(t, utf8.ValidString(invalid))
+
+	preflight, err := Preflight(t.Context(), []string{invalid}, Options{})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), preflight.Errors)
+	require.Len(t, preflight.Findings, 1)
+	assert.Equal(t, strconv.QuoteToASCII(invalid), preflight.Findings[0].Path)
+
+	rep, err := ing.AddPaths(t.Context(), []string{invalid}, "/inbox")
+	require.NoError(t, err)
+	assert.Zero(t, rep.Added)
+	require.Len(t, rep.Failed, 1)
+	assert.Equal(t, strconv.QuoteToASCII(invalid), rep.Failed[0].Path)
+	require.ErrorContains(t, rep.Failed[0].Err, "is not valid UTF-8")
+	var metadata bytes.Buffer
+	require.NoError(t, ing.Store.ExportMetadata(t.Context(), &metadata))
+	assert.True(t, utf8.Valid(metadata.Bytes()))
 }
 
 func TestAddProgressReportsBytesAndFinalOutcome(t *testing.T) {

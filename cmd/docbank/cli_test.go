@@ -120,6 +120,24 @@ func TestAddLsTreeCat(t *testing.T) {
 	out, err = runCLI(t, "cat", "/inbox/notes.txt")
 	require.NoError(t, err)
 	assert.Equal(t, "hello vault", out)
+
+	out, err = runCLI(t, "versions", "/inbox/notes.txt")
+	require.NoError(t, err)
+	assert.Contains(t, out, "content_create")
+	versionID := regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}`).
+		FindString(out)
+	require.NotEmpty(t, versionID)
+
+	out, err = runCLI(t, "version", versionID, "--json")
+	require.NoError(t, err)
+	var version api.ContentVersion
+	require.NoError(t, json.Unmarshal([]byte(out), &version))
+	assert.Equal(t, versionID, version.ID)
+	assert.Equal(t, "content_create", version.TransitionKind)
+
+	out, err = runCLI(t, "version", versionID, "--content")
+	require.NoError(t, err)
+	assert.Equal(t, "hello vault", out)
 }
 
 func TestJobsShowsDaemonStatus(t *testing.T) {
@@ -226,6 +244,14 @@ func TestAddMissingSourceFails(t *testing.T) {
 
 	_, err := runCLI(t, "add", "/no/such/file", "--dest", "/x")
 	require.Error(t, err)
+}
+
+func TestAddRejectsInvalidUTF8SourceBeforeEncoding(t *testing.T) {
+	_ = setupVaultHome(t)
+	invalidPath := filepath.Join(t.TempDir(), string([]byte{'b', 'a', 'd', 0xff}))
+
+	_, err := runCLI(t, "add", invalidPath)
+	require.ErrorContains(t, err, "is not valid UTF-8")
 }
 
 func TestCatRejectsDirectory(t *testing.T) {

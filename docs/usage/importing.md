@@ -17,9 +17,9 @@ For each regular file:
 1. The content is hashed (SHA-256, streaming) and written to the blob
    store — durably, before any database row references it. Content that
    already exists in the vault is not written twice.
-2. One database transaction creates the tree node, records the blob, and
-   captures provenance: the original filesystem path and modification
-   time survive any later renames or moves.
+2. One database transaction creates the tree node, its stable revision-one
+   `content_create` version, the blob authority, and provenance: the original
+   filesystem path and modification time survive any later renames or moves.
 
 Directory arguments walk recursively. The directory's basename becomes a
 folder under `--dest`, and everything below keeps its relative structure:
@@ -62,6 +62,11 @@ silently hydrating an entire cloud tree, but it also means successful preflight
 cannot promise that every file will remain readable when the later import
 opens it. Re-run preflight after changing exclusions, then pass the exact same
 `--exclude` flags to the real `docbank add` command.
+
+Filesystem names and provenance paths must currently be valid UTF-8. On POSIX
+filesystems that permit other byte sequences, preflight and ingest report each
+such entry with an escaped, printable path; Docbank does not open or import it,
+continues with the rest of the tree, and never alters the source.
 
 A bare exclusion such as `.git` prunes that entry name wherever it occurs. A
 relative path such as `project/cache` prunes that path and its descendants
@@ -110,7 +115,7 @@ directory — `report.pdf`, `report (2).pdf`, `report (3).pdf`, … — and:
 
 Re-runs therefore converge instead of duplicating. Identity is content,
 not filename: the same bytes under two source names import as two nodes
-sharing one stored blob.
+sharing one stored blob but carrying distinct version UUIDs.
 
 ## Collisions
 

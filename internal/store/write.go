@@ -11,7 +11,7 @@ import (
 )
 
 func nodeByIDTx(tx *sql.Tx, id int64) (Node, error) {
-	n, err := scanNode(tx.QueryRow(`SELECT `+nodeCols+` FROM nodes WHERE id = ?`, id))
+	n, err := scanNode(tx.QueryRow(`SELECT `+nodeCols+` FROM `+nodeFrom+` WHERE n.id = ?`, id))
 	if err != nil {
 		return Node{}, fmt.Errorf("node %d: %w", id, err)
 	}
@@ -95,8 +95,8 @@ func (s *Store) Mkdir(ctx context.Context, parentID int64, name string) (Node, e
 // be normalized).
 func (s *Store) childByName(ctx context.Context, dirID int64, name string) (Node, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT `+nodeCols+` FROM nodes
-		 WHERE parent_id = ? AND name = ? AND trashed_at IS NULL`, dirID, name)
+		`SELECT `+nodeCols+` FROM `+nodeFrom+`
+		 WHERE n.parent_id = ? AND n.name = ? AND n.trashed_at IS NULL`, dirID, name)
 	return scanNode(row)
 }
 
@@ -173,17 +173,28 @@ func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64) error {
 }
 
 func (s *Store) createFileTx(tx *sql.Tx, parentID int64, name, blobHash string, size int64, mimeType string) (Node, error) {
+	if err := validateUTF8Field("content MIME type", mimeType); err != nil {
+		return Node{}, err
+	}
 	if _, err := liveDirTx(tx, parentID); err != nil {
 		return Node{}, err
 	}
 	if err := s.EnsureBlobTx(tx, blobHash, size); err != nil {
 		return Node{}, err
 	}
+	versionID, err := newUUIDv4()
+	if err != nil {
+		return Node{}, err
+	}
+	operationID, err := newUUIDv4()
+	if err != nil {
+		return Node{}, err
+	}
 	now := nowRFC3339()
 	res, err := tx.Exec(
-		`INSERT INTO nodes (parent_id, name, kind, blob_hash, size, mime_type, created_at, modified_at)
-		 VALUES (?, ?, 'file', ?, ?, ?, ?, ?)`,
-		parentID, name, blobHash, size, mimeType, now, now)
+		`INSERT INTO nodes (parent_id, name, kind, current_version_id, created_at, modified_at)
+		 VALUES (?, ?, 'file', ?, ?, ?)`,
+		parentID, name, versionID, now, now)
 	if isUniqueViolation(err) {
 		return Node{}, fmt.Errorf("creating file %q under node %d: %w", name, parentID, ErrExists)
 	}
@@ -193,6 +204,18 @@ func (s *Store) createFileTx(tx *sql.Tx, parentID int64, name, blobHash string, 
 	id, err := res.LastInsertId()
 	if err != nil {
 		return Node{}, fmt.Errorf("creating file %q: reading id: %w", name, err)
+	}
+	var storedMime any
+	if mimeType != "" {
+		storedMime = mimeType
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO content_versions (
+			version_id, node_id, blob_hash, size, mime_type, recorded_at,
+			node_revision, introduced_operation_id, transition_kind, source_version_id
+		 ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, 'content_create', NULL)`,
+		versionID, id, blobHash, size, storedMime, now, operationID); err != nil {
+		return Node{}, fmt.Errorf("recording initial content version for node %d: %w", id, err)
 	}
 	if err := bumpRevisionTx(tx, parentID, now); err != nil {
 		return Node{}, err

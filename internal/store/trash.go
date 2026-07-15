@@ -213,8 +213,8 @@ func (s *Store) Restore(ctx context.Context, id, ifRev int64) (Node, error) {
 // TrashedRoots lists restorable trash roots, newest first.
 func (s *Store) TrashedRoots(ctx context.Context) ([]Node, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+nodeCols+` FROM nodes
-		 WHERE trash_name IS NOT NULL ORDER BY trashed_at DESC`)
+		`SELECT `+nodeCols+` FROM `+nodeFrom+`
+		 WHERE n.trash_name IS NOT NULL ORDER BY n.trashed_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("listing trash: %w", err)
 	}

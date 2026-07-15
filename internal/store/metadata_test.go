@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,9 +15,12 @@ import (
 )
 
 const (
-	metadataHashCurrent = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	metadataHashTrashed = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	metadataHashVersion = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	metadataHashCurrent    = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	metadataHashTrashed    = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	metadataHashVersion    = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	metadataVersionCurrent = "11111111-1111-4111-8111-111111111111"
+	metadataVersionOld     = "22222222-2222-4222-8222-222222222222"
+	metadataVersionTrashed = "33333333-3333-4333-8333-333333333333"
 )
 
 func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
@@ -86,6 +90,13 @@ func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(10), node.ID)
 	assert.Equal(t, metadataHashCurrent, node.BlobHash)
+	assert.Equal(t, metadataVersionCurrent, node.CurrentVersionID)
+	versions, total, err := target.ContentVersions(ctx, node.ID, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 2, total)
+	require.Len(t, versions, 2)
+	assert.Equal(t, metadataVersionCurrent, versions[0].ID)
+	assert.Equal(t, metadataVersionOld, versions[1].ID)
 	_, err = target.NodeByPath(ctx, "/Empty")
 	require.NoError(t, err, "empty directories are logical backup records")
 
@@ -117,15 +128,347 @@ func TestImportMetadataRejectsDanglingContentAndRollsBack(t *testing.T) {
 
 	input := strings.Join([]string{
 		`{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":2}`,
-		`{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","blob_hash":null,"size":null,"mime_type":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}`,
-		`{"type":"node","id":2,"parent_id":1,"name":"missing.bin","kind":"file","blob_hash":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","size":1,"mime_type":"application/octet-stream","revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}`,
+		`{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}`,
+		`{"type":"node","id":2,"parent_id":1,"name":"missing.bin","kind":"file","current_version_id":"44444444-4444-4444-8444-444444444444","revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}`,
 	}, "\n") + "\n"
 	err = target.ImportMetadata(context.Background(), strings.NewReader(input))
-	require.ErrorContains(t, err, "foreign key")
+	require.ErrorContains(t, err, "current version does not belong")
 	assert.Equal(t, int64(1), target.RootID())
 	var nodes int64
 	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodes))
 	assert.Equal(t, int64(1), nodes, "failed import must leave the pristine target intact")
+}
+
+func TestImportMetadataRejectsInvalidUTF8AndRollsBack(t *testing.T) {
+	const (
+		header = `{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":1}` + "\n"
+		root   = `{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}` + "\n"
+	)
+	withInvalidByte := func(prefix, suffix string) []byte {
+		result := append([]byte(prefix), 0xff)
+		return append(result, suffix...)
+	}
+	tests := map[string]struct {
+		input []byte
+		want  string
+	}{
+		"header string": {
+			input: withInvalidByte(
+				`{"type":"meta","format":"docbank-`, `","version":1,"node_sequence":1}`+"\n"),
+			want: "metadata JSON is not valid UTF-8",
+		},
+		"record string": {
+			input: withInvalidByte(
+				header+root+`{"type":"tag","id":1,"name":"invalid`, `"}`+"\n"),
+			want: "metadata JSON is not valid UTF-8",
+		},
+		"lone high surrogate": {
+			input: []byte(header + root + `{"type":"tag","id":1,"name":"invalid\ud800"}` + "\n"),
+			want:  "unpaired UTF-16 surrogate escape",
+		},
+		"lone low surrogate": {
+			input: []byte(header + root + `{"type":"tag","id":1,"name":"invalid\udc00"}` + "\n"),
+			want:  "unpaired UTF-16 surrogate escape",
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, target.Close()) })
+			err = target.ImportMetadata(t.Context(), bytes.NewReader(tt.input))
+			require.ErrorContains(t, err, tt.want)
+			var nodes, tags int64
+			require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodes))
+			require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM tags`).Scan(&tags))
+			assert.Equal(t, int64(1), nodes)
+			assert.Zero(t, tags)
+		})
+	}
+}
+
+func TestImportMetadataAcceptsValidSurrogatePair(t *testing.T) {
+	input := strings.Join([]string{
+		`{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":1}`,
+		`{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}`,
+		`{"type":"tag","id":1,"name":"archive \ud83d\ude00"}`,
+	}, "\n") + "\n"
+	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, target.Close()) })
+	require.NoError(t, target.ImportMetadata(t.Context(), strings.NewReader(input)))
+	var name string
+	require.NoError(t, target.db.QueryRow(`SELECT name FROM tags WHERE id=1`).Scan(&name))
+	assert.Equal(t, "archive 😀", name)
+}
+
+func TestImportMetadataRejectsLaterContentCreateAndRollsBack(t *testing.T) {
+	ctx := t.Context()
+	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, source.Close()) })
+	seedMetadataRoundTrip(t, source)
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(ctx, &exported))
+	malformed := strings.Replace(exported.String(),
+		`"transition_kind":"content_replace"`, `"transition_kind":"content_create"`, 1)
+	require.NotEqual(t, exported.String(), malformed)
+
+	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, target.Close()) })
+	err = target.ImportMetadata(ctx, strings.NewReader(malformed))
+	require.ErrorContains(t, err, "content_create is required exactly at node revision one")
+	var nodes int64
+	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodes))
+	assert.Equal(t, int64(1), nodes, "failed import must leave the pristine target intact")
+}
+
+func TestImportMetadataRejectsInvalidContentRelationshipsAndRollsBack(t *testing.T) {
+	ctx := t.Context()
+	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, source.Close()) })
+	seedMetadataRoundTrip(t, source)
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(ctx, &exported))
+
+	tests := []struct {
+		name    string
+		old     string
+		replace string
+		want    string
+	}{
+		{
+			name: "revert source names different content",
+			old:  `"transition_kind":"content_replace","source_version_id":null`,
+			replace: `"transition_kind":"content_revert","source_version_id":"` +
+				metadataVersionOld + `"`,
+			want: "revert source content differs from new version",
+		},
+		{
+			name:    "create time differs from node creation",
+			old:     `"recorded_at":"2026-01-08T00:00:00.000000000Z","node_revision":1`,
+			replace: `"recorded_at":"2026-01-08T00:00:01.000000000Z","node_revision":1`,
+			want:    "content_create time differs from node creation",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			malformed := strings.Replace(exported.String(), tt.old, tt.replace, 1)
+			require.NotEqual(t, exported.String(), malformed)
+			target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, target.Close()) })
+			err = target.ImportMetadata(ctx, strings.NewReader(malformed))
+			require.ErrorContains(t, err, tt.want)
+			var nodes int64
+			require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodes))
+			assert.Equal(t, int64(1), nodes, "failed import must leave the pristine target intact")
+		})
+	}
+}
+
+func TestImportMetadataRejectsEachRevertContentMismatch(t *testing.T) {
+	ctx := t.Context()
+	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, source.Close()) })
+	seedMetadataRoundTrip(t, source)
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(ctx, &exported))
+	const alternateHash = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+	tests := []struct {
+		name   string
+		mutate func(current, source map[string]any, records *[]map[string]any)
+	}{
+		{
+			name: "hash only",
+			mutate: func(current, _ map[string]any, records *[]map[string]any) {
+				current["blob_hash"] = alternateHash
+				current["size"] = float64(9)
+				*records = append(*records, map[string]any{
+					"type": "blob", "hash": alternateHash, "size": float64(9),
+					"created_at": "2026-01-16T00:00:00.000000000Z",
+				})
+			},
+		},
+		{
+			name: "size only",
+			mutate: func(current, _ map[string]any, _ *[]map[string]any) {
+				current["blob_hash"] = metadataHashVersion
+			},
+		},
+		{
+			name: "null source MIME",
+			mutate: func(current, source map[string]any, _ *[]map[string]any) {
+				current["blob_hash"] = metadataHashVersion
+				current["size"] = float64(9)
+				source["mime_type"] = nil
+			},
+		},
+		{
+			name: "null new MIME",
+			mutate: func(current, _ map[string]any, _ *[]map[string]any) {
+				current["blob_hash"] = metadataHashVersion
+				current["size"] = float64(9)
+				current["mime_type"] = nil
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var records []map[string]any
+			for line := range bytes.SplitSeq(bytes.TrimSpace(exported.Bytes()), []byte{'\n'}) {
+				var record map[string]any
+				require.NoError(t, json.Unmarshal(line, &record))
+				records = append(records, record)
+			}
+			var current, revertSource map[string]any
+			for _, record := range records {
+				switch record["version_id"] {
+				case metadataVersionCurrent:
+					current = record
+				case metadataVersionOld:
+					revertSource = record
+				}
+			}
+			require.NotNil(t, current)
+			require.NotNil(t, revertSource)
+			current["transition_kind"] = "content_revert"
+			current["source_version_id"] = metadataVersionOld
+			tt.mutate(current, revertSource, &records)
+
+			var malformed bytes.Buffer
+			enc := json.NewEncoder(&malformed)
+			for _, record := range records {
+				require.NoError(t, enc.Encode(record))
+			}
+			target, openErr := Open(filepath.Join(t.TempDir(), "target.db"))
+			require.NoError(t, openErr)
+			t.Cleanup(func() { require.NoError(t, target.Close()) })
+			importErr := target.ImportMetadata(ctx, &malformed)
+			require.ErrorContains(t, importErr, "revert source content differs from new version")
+			var nodes int64
+			require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodes))
+			assert.Equal(t, int64(1), nodes)
+		})
+	}
+}
+
+func TestExportMetadataRejectsMalformedContentVersion(t *testing.T) {
+	tests := []struct {
+		name      string
+		statement string
+		want      string
+	}{
+		{
+			name:      "operation UUID",
+			statement: `UPDATE content_versions SET introduced_operation_id='not-a-uuid' WHERE version_id=?`,
+			want:      "invalid content version operation ID",
+		},
+		{
+			name:      "recorded timestamp",
+			statement: `UPDATE content_versions SET recorded_at='not-a-timestamp' WHERE version_id=?`,
+			want:      "invalid content version recorded_at",
+		},
+		{
+			name:      "MIME UTF-8",
+			statement: `UPDATE content_versions SET mime_type=CAST(X'ff' AS TEXT) WHERE version_id=?`,
+			want:      "content version mime_type: not valid UTF-8",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, source.Close()) })
+			seedMetadataRoundTrip(t, source)
+			_, err = source.db.Exec(tt.statement, metadataVersionCurrent)
+			require.NoError(t, err)
+			var exported bytes.Buffer
+			err = source.ExportMetadata(t.Context(), &exported)
+			require.ErrorContains(t, err, tt.want)
+		})
+	}
+}
+
+func TestExportMetadataRejectsForeignKeyCorruption(t *testing.T) {
+	missingHash := strings.Repeat("d", 64)
+	tests := []struct {
+		name      string
+		statement string
+	}{
+		{
+			name: "content version node",
+			statement: `INSERT INTO content_versions(
+				version_id,node_id,blob_hash,size,mime_type,recorded_at,node_revision,
+				introduced_operation_id,transition_kind,source_version_id
+			) VALUES(
+				'55555555-5555-4555-8555-555555555555',999,'` + metadataHashCurrent + `',12,
+				'text/plain','2026-01-16T00:00:00.000000000Z',1,
+				'66666666-6666-4666-8666-666666666666','content_create',NULL)`,
+		},
+		{
+			name:      "content version blob",
+			statement: `UPDATE content_versions SET blob_hash='` + missingHash + `' WHERE version_id='` + metadataVersionOld + `'`,
+		},
+		{
+			name: "revert source version",
+			statement: `UPDATE content_versions
+				SET transition_kind='content_revert', source_version_id='77777777-7777-4777-8777-777777777777'
+				WHERE version_id='` + metadataVersionCurrent + `'`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, source.Close()) })
+			seedMetadataRoundTrip(t, source)
+			conn, err := source.db.Conn(t.Context())
+			require.NoError(t, err)
+			_, err = conn.ExecContext(t.Context(), `PRAGMA foreign_keys=OFF`)
+			require.NoError(t, err)
+			_, err = conn.ExecContext(t.Context(), tt.statement)
+			require.NoError(t, err)
+			require.NoError(t, conn.Close())
+
+			var exported bytes.Buffer
+			err = source.ExportMetadata(t.Context(), &exported)
+			require.ErrorContains(t, err, "metadata violates foreign key")
+		})
+	}
+}
+
+func TestExportMetadataRejectsMissingRoot(t *testing.T) {
+	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, source.Close()) })
+	conn, err := source.db.Conn(t.Context())
+	require.NoError(t, err)
+	_, err = conn.ExecContext(t.Context(), `PRAGMA foreign_keys=OFF`)
+	require.NoError(t, err)
+	_, err = conn.ExecContext(t.Context(), `DELETE FROM nodes`)
+	require.NoError(t, err)
+	require.NoError(t, conn.Close())
+
+	var exported bytes.Buffer
+	err = source.ExportMetadata(t.Context(), &exported)
+	require.ErrorContains(t, err, "tree does not have exactly one root")
+}
+
+func TestExportMetadataRejectsRegressedNodeSequence(t *testing.T) {
+	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, source.Close()) })
+	seedMetadataRoundTrip(t, source)
+	_, err = source.db.Exec(`UPDATE sqlite_sequence SET seq=1 WHERE name='nodes'`)
+	require.NoError(t, err)
+
+	var exported bytes.Buffer
+	err = source.ExportMetadata(t.Context(), &exported)
+	require.ErrorContains(t, err, "below maximum node ID")
 }
 
 func TestImportMetadataRejectsOrphanedExtractionAndRollsBack(t *testing.T) {
@@ -135,7 +478,7 @@ func TestImportMetadataRejectsOrphanedExtractionAndRollsBack(t *testing.T) {
 
 	input := strings.Join([]string{
 		`{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":1}`,
-		`{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","blob_hash":null,"size":null,"mime_type":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}`,
+		`{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}`,
 		`{"type":"extracted_text","blob_hash":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","extractor":"plain","extractor_version":1,"status":"ok","error":null,"attempts":1,"text":"orphan","extracted_at":"2026-01-01T00:00:00.000000000Z"}`,
 	}, "\n") + "\n"
 	err = target.ImportMetadata(context.Background(), strings.NewReader(input))
@@ -173,7 +516,7 @@ func TestImportMetadataRejectsDisconnectedCycle(t *testing.T) {
 func TestImportMetadataRejectsUnsafeTrashTopology(t *testing.T) {
 	stamp := "2026-01-01T00:00:00.000000000Z"
 	otherStamp := "2026-01-02T00:00:00.000000000Z"
-	root := `{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","blob_hash":null,"size":null,"mime_type":null,"revision":1,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":null,"trash_parent":null,"trash_name":null}`
+	root := `{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":null,"trash_parent":null,"trash_name":null}`
 	tests := []struct {
 		name    string
 		records []string
@@ -182,39 +525,39 @@ func TestImportMetadataRejectsUnsafeTrashTopology(t *testing.T) {
 		{
 			name: "restore parent inside subtree",
 			records: []string{
-				`{"type":"node","id":2,"parent_id":1,"name":"A","kind":"dir","blob_hash":null,"size":null,"mime_type":null,"revision":2,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":"` + stamp + `","trash_parent":3,"trash_name":"A"}`,
-				`{"type":"node","id":3,"parent_id":2,"name":"B","kind":"dir","blob_hash":null,"size":null,"mime_type":null,"revision":2,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":"` + stamp + `","trash_parent":null,"trash_name":null}`,
+				`{"type":"node","id":2,"parent_id":1,"name":"A","kind":"dir","current_version_id":null,"revision":2,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":"` + stamp + `","trash_parent":3,"trash_name":"A"}`,
+				`{"type":"node","id":3,"parent_id":2,"name":"B","kind":"dir","current_version_id":null,"revision":2,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":"` + stamp + `","trash_parent":null,"trash_name":null}`,
 			},
 			want: "trash parent points inside its subtree",
 		},
 		{
 			name: "trash root not detached",
 			records: []string{
-				`{"type":"node","id":3,"parent_id":1,"name":"container","kind":"dir","blob_hash":null,"size":null,"mime_type":null,"revision":1,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":null,"trash_parent":null,"trash_name":null}`,
-				`{"type":"node","id":2,"parent_id":3,"name":"A","kind":"dir","blob_hash":null,"size":null,"mime_type":null,"revision":2,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":"` + stamp + `","trash_parent":1,"trash_name":"A"}`,
+				`{"type":"node","id":3,"parent_id":1,"name":"container","kind":"dir","current_version_id":null,"revision":1,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":null,"trash_parent":null,"trash_name":null}`,
+				`{"type":"node","id":2,"parent_id":3,"name":"A","kind":"dir","current_version_id":null,"revision":2,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":"` + stamp + `","trash_parent":1,"trash_name":"A"}`,
 			},
 			want: "trash root is not detached",
 		},
 		{
 			name: "trashed node without trash root",
 			records: []string{
-				`{"type":"node","id":2,"parent_id":1,"name":"orphan","kind":"dir","blob_hash":null,"size":null,"mime_type":null,"revision":2,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":"` + stamp + `","trash_parent":null,"trash_name":null}`,
+				`{"type":"node","id":2,"parent_id":1,"name":"orphan","kind":"dir","current_version_id":null,"revision":2,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":"` + stamp + `","trash_parent":null,"trash_name":null}`,
 			},
 			want: "does not belong to exactly one trash root",
 		},
 		{
 			name: "trash descendant timestamp differs",
 			records: []string{
-				`{"type":"node","id":2,"parent_id":1,"name":"A","kind":"dir","blob_hash":null,"size":null,"mime_type":null,"revision":2,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":"` + stamp + `","trash_parent":1,"trash_name":"A"}`,
-				`{"type":"node","id":3,"parent_id":2,"name":"B","kind":"dir","blob_hash":null,"size":null,"mime_type":null,"revision":2,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":"` + otherStamp + `","trash_parent":null,"trash_name":null}`,
+				`{"type":"node","id":2,"parent_id":1,"name":"A","kind":"dir","current_version_id":null,"revision":2,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":"` + stamp + `","trash_parent":1,"trash_name":"A"}`,
+				`{"type":"node","id":3,"parent_id":2,"name":"B","kind":"dir","current_version_id":null,"revision":2,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":"` + otherStamp + `","trash_parent":null,"trash_name":null}`,
 			},
 			want: "live node or mismatched timestamp",
 		},
 		{
 			name: "live descendant beneath trash root",
 			records: []string{
-				`{"type":"node","id":2,"parent_id":1,"name":"A","kind":"dir","blob_hash":null,"size":null,"mime_type":null,"revision":2,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":"` + stamp + `","trash_parent":1,"trash_name":"A"}`,
-				`{"type":"node","id":3,"parent_id":2,"name":"B","kind":"dir","blob_hash":null,"size":null,"mime_type":null,"revision":1,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":null,"trash_parent":null,"trash_name":null}`,
+				`{"type":"node","id":2,"parent_id":1,"name":"A","kind":"dir","current_version_id":null,"revision":2,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":"` + stamp + `","trash_parent":1,"trash_name":"A"}`,
+				`{"type":"node","id":3,"parent_id":2,"name":"B","kind":"dir","current_version_id":null,"revision":1,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":null,"trash_parent":null,"trash_name":null}`,
 			},
 			want: "live node or mismatched timestamp",
 		},
@@ -251,7 +594,7 @@ func TestImportMetadataRejectsNodeSequenceBelowSurvivingIDs(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, target.Close()) })
 	err = target.ImportMetadata(ctx, strings.NewReader(badSequence))
-	require.ErrorContains(t, err, "below imported maximum")
+	require.ErrorContains(t, err, "below maximum node ID")
 	var nodes int64
 	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodes))
 	assert.Equal(t, int64(1), nodes)
@@ -274,12 +617,17 @@ func TestImportMetadataRejectsNonPristineTarget(t *testing.T) {
 func TestImportMetadataRejectsUnknownVersionAndFields(t *testing.T) {
 	for _, input := range []string{
 		`{"type":"meta","format":"docbank-metadata","version":2,"node_sequence":1}` + "\n",
+		`{"type":"meta","format":"docbank-metadata","version":1,"version":1,"node_sequence":1}` + "\n",
 		`{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":1,"surprise":true}` + "\n",
 		`{"type":"meta","format":"docbank-metadata","version":1}` + "\n",
 		`{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":1}` + "\n" +
 			`{"type":"future_record","value":1}` + "\n",
 		`{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":1}` + "\n" +
 			`{"type":"blob","hash":"` + metadataHashCurrent + `","size":12}` + "\n",
+		`{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":1}` + "\n" +
+			`{"type":"blob","hash":"` + metadataHashCurrent + `","size":null,"created_at":"2026-01-01T00:00:00.000000000Z"}` + "\n",
+		`{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":1}` + "\n" +
+			`{"type":"blob","hash":"` + metadataHashCurrent + `","Size":12,"created_at":"2026-01-01T00:00:00.000000000Z"}` + "\n",
 		`{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":1}` + "\n" +
 			`{"type":"blob","hash":"` + metadataHashCurrent + `","size":12,"created_at":"2026-01-01T00:00:00.000000000+00:00"}` + "\n",
 	} {
@@ -306,15 +654,23 @@ func seedMetadataRoundTrip(t *testing.T, s *Store) {
 			 (7,1,'Projects','dir','2026-01-06T00:00:00.000000000Z','2026-01-07T00:00:00.000000000Z')`,
 			`INSERT INTO nodes(id,parent_id,name,kind,created_at,modified_at) VALUES
 			 (12,1,'Empty','dir','2026-01-06T00:00:00.000000000Z','2026-01-07T00:00:00.000000000Z')`,
-			`INSERT INTO nodes(id,parent_id,name,kind,blob_hash,size,mime_type,revision,created_at,modified_at)
-			 VALUES(10,7,'report.txt','file','` + metadataHashCurrent + `',12,'text/plain',3,
+			`INSERT INTO nodes(id,parent_id,name,kind,current_version_id,revision,created_at,modified_at)
+			 VALUES(10,7,'report.txt','file','` + metadataVersionCurrent + `',3,
 			 '2026-01-08T00:00:00.000000000Z','2026-01-09T00:00:00.000000000Z')`,
-			`INSERT INTO nodes(id,parent_id,name,kind,blob_hash,size,mime_type,revision,created_at,modified_at,trashed_at,trash_parent,trash_name)
-			 VALUES(11,1,'old.bin','file','` + metadataHashTrashed + `',5,'application/octet-stream',2,
+			`INSERT INTO nodes(id,parent_id,name,kind,current_version_id,revision,created_at,modified_at,trashed_at,trash_parent,trash_name)
+			 VALUES(11,1,'old.bin','file','` + metadataVersionTrashed + `',2,
 			 '2026-01-10T00:00:00.000000000Z','2026-01-11T00:00:00.000000000Z',
 			 '2026-01-12T00:00:00.000000000Z',7,'old.bin')`,
-			`INSERT INTO node_versions(node_id,blob_hash,size,replaced_at)
-			 VALUES(10,'` + metadataHashVersion + `',9,'2026-01-09T00:00:00.000000000Z')`,
+			`INSERT INTO content_versions(
+				version_id,node_id,blob_hash,size,mime_type,recorded_at,node_revision,
+				introduced_operation_id,transition_kind,source_version_id
+			) VALUES
+			 ('` + metadataVersionOld + `',10,'` + metadataHashVersion + `',9,'text/plain',
+			  '2026-01-08T00:00:00.000000000Z',1,'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','content_create',NULL),
+			 ('` + metadataVersionCurrent + `',10,'` + metadataHashCurrent + `',12,'text/plain',
+			  '2026-01-09T00:00:00.000000000Z',2,'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','content_replace',NULL),
+			 ('` + metadataVersionTrashed + `',11,'` + metadataHashTrashed + `',5,'application/octet-stream',
+			  '2026-01-10T00:00:00.000000000Z',1,'cccccccc-cccc-4ccc-8ccc-cccccccccccc','content_create',NULL)`,
 			`INSERT INTO ingests(id,started_at,source_kind,source_desc)
 			 VALUES(4,'2026-01-08T00:00:00.000000000Z','filesystem','dropbox')`,
 			`INSERT INTO provenance(node_id,ingest_id,original_path,original_mtime)

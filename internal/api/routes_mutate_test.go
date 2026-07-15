@@ -1,8 +1,10 @@
 package api_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"testing"
 
@@ -111,6 +113,58 @@ func TestMovePathAndTrashPath(t *testing.T) {
 		map[string]any{"src_path": "relative", "dest_path": "/x"})
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 	assert.Contains(t, body, `"code":"validation"`)
+}
+
+func TestPathMutationsRejectInvalidUTF8BeforeJSONDecoding(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	const replacementName = "bad\ufffd.txt"
+	created := createFileWithContent(t, ts, s, "/"+replacementName, "keep")
+
+	operations := []struct {
+		name string
+		path string
+		body map[string]any
+	}{
+		{name: "trash source", path: "/api/v1/path/trash",
+			body: map[string]any{"path": "/" + replacementName}},
+		{name: "move source", path: "/api/v1/path/move",
+			body: map[string]any{"src_path": "/" + replacementName, "dest_path": "/moved.txt"}},
+	}
+	contentTypes := []struct {
+		name  string
+		value string
+	}{
+		{name: "JSON content type", value: "application/json"},
+		{name: "missing content type"},
+		{name: "malformed content type", value: `application/json; charset="`},
+	}
+	for _, operation := range operations {
+		for _, contentType := range contentTypes {
+			t.Run(operation.name+"/"+contentType.name, func(t *testing.T) {
+				validBody, err := json.Marshal(operation.body)
+				require.NoError(t, err)
+				invalidBody := bytes.Replace(validBody, []byte("\ufffd"), []byte{0xff}, 1)
+				require.NotEqual(t, validBody, invalidBody)
+				req, err := http.NewRequest(http.MethodPost, ts.URL+operation.path, bytes.NewReader(invalidBody))
+				require.NoError(t, err)
+				if contentType.value != "" {
+					req.Header.Set("Content-Type", contentType.value)
+				}
+				resp, err := ts.Client().Do(req)
+				require.NoError(t, err)
+				responseBody, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
+				require.NoError(t, resp.Body.Close())
+				assert.Equal(t, http.StatusBadRequest, resp.StatusCode, string(responseBody))
+				assert.Contains(t, string(responseBody), `"code":"validation"`)
+
+				unchanged, err := s.NodeByPath(t.Context(), "/"+replacementName)
+				require.NoError(t, err)
+				assert.Equal(t, created.ID, unchanged.ID,
+					"malformed text must not retarget the replacement-character node")
+			})
+		}
+	}
 }
 
 func TestTrashAndRestoreRoundTripHTTP(t *testing.T) {

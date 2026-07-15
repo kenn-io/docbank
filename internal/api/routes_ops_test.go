@@ -1,8 +1,10 @@
 package api_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -173,6 +175,108 @@ func TestIngestRejectsNonLoopback(t *testing.T) {
 			srv.Handler().ServeHTTP(rec, req)
 			assert.Equal(t, http.StatusForbidden, rec.Code)
 			assert.Contains(t, rec.Body.String(), `"code":"loopback_only"`)
+		})
+	}
+}
+
+func TestIngestRoutesRejectLossyJSONTextBeforeDecoding(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	replacementName := "bad\ufffd.txt"
+	replacementPath := filepath.Join(t.TempDir(), replacementName)
+	require.NoError(t, os.WriteFile(replacementPath, []byte("must not be imported"), 0o600))
+	validBody, err := json.Marshal(map[string]any{
+		"paths": []string{replacementPath}, "dest": "/inbox",
+	})
+	require.NoError(t, err)
+	tests := []struct {
+		name   string
+		body   []byte
+		detail string
+	}{
+		{name: "invalid UTF-8", body: bytes.Replace(validBody, []byte("\ufffd"), []byte{0xff}, 1),
+			detail: "request body is not valid UTF-8"},
+		{name: "lone high surrogate", body: bytes.Replace(validBody, []byte("\ufffd"), []byte(`\ud800`), 1),
+			detail: "request body contains an unpaired UTF-16 surrogate escape"},
+		{name: "lone low surrogate", body: bytes.Replace(validBody, []byte("\ufffd"), []byte(`\udc00`), 1),
+			detail: "request body contains an unpaired UTF-16 surrogate escape"},
+	}
+
+	for _, tt := range tests {
+		require.NotEqual(t, validBody, tt.body, "fixture must replace the path's U+FFFD bytes")
+		t.Run(tt.name, func(t *testing.T) {
+			for _, route := range []string{
+				"/api/v1/ingest", "/api/v1/ingest/stream", "/api/v1/ingest/preflight",
+			} {
+				t.Run(route, func(t *testing.T) {
+					req, reqErr := http.NewRequest(http.MethodPost, ts.URL+route, bytes.NewReader(tt.body))
+					require.NoError(t, reqErr)
+					req.Header.Set("Content-Type", "application/json")
+					resp, reqErr := ts.Client().Do(req)
+					require.NoError(t, reqErr)
+					body, readErr := io.ReadAll(resp.Body)
+					require.NoError(t, readErr)
+					require.NoError(t, resp.Body.Close())
+					assert.Equal(t, http.StatusBadRequest, resp.StatusCode, string(body))
+					assert.Contains(t, string(body), `"code":"validation"`)
+					assert.Contains(t, string(body), tt.detail)
+					_, lookupErr := s.NodeByPath(t.Context(), "/inbox/"+replacementName)
+					require.ErrorIs(t, lookupErr, store.ErrNotFound,
+						"malformed text must not retarget the replacement-character source")
+				})
+			}
+		})
+	}
+}
+
+func TestIngestRoutesAcceptPairedSurrogatePath(t *testing.T) {
+	for _, route := range []string{
+		"/api/v1/ingest", "/api/v1/ingest/stream", "/api/v1/ingest/preflight",
+	} {
+		t.Run(route, func(t *testing.T) {
+			ts, s := newTestServer(t, nil)
+			const sourceName = "valid-\U0001f600.txt"
+			sourcePath := filepath.Join(t.TempDir(), sourceName)
+			require.NoError(t, os.WriteFile(sourcePath, []byte("valid pair"), 0o600))
+			request := map[string]any{"paths": []string{sourcePath}}
+			if route != "/api/v1/ingest/preflight" {
+				request["dest"] = "/inbox"
+			}
+			body, err := json.Marshal(request)
+			require.NoError(t, err)
+			body = bytes.Replace(body, []byte("\U0001f600"), []byte(`\ud83d\ude00`), 1)
+			require.Contains(t, string(body), `\ud83d\ude00`)
+
+			req, err := http.NewRequest(http.MethodPost, ts.URL+route, bytes.NewReader(body))
+			require.NoError(t, err)
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := ts.Client().Do(req)
+			require.NoError(t, err)
+			responseBody, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			require.NoError(t, resp.Body.Close())
+			require.Equal(t, http.StatusOK, resp.StatusCode, string(responseBody))
+
+			if route == "/api/v1/ingest/preflight" {
+				var report api.IngestPreflightReport
+				require.NoError(t, json.Unmarshal(responseBody, &report))
+				assert.Equal(t, int64(1), report.Files)
+				_, err = s.NodeByPath(t.Context(), "/inbox/"+sourceName)
+				require.ErrorIs(t, err, store.ErrNotFound)
+				return
+			}
+			if route == "/api/v1/ingest/stream" {
+				lines := strings.Split(strings.TrimSpace(string(responseBody)), "\n")
+				var terminal api.IngestEvent
+				require.NoError(t, json.Unmarshal([]byte(lines[len(lines)-1]), &terminal))
+				require.NotNil(t, terminal.Report)
+				assert.Equal(t, 1, terminal.Report.Added)
+			} else {
+				var report api.IngestReport
+				require.NoError(t, json.Unmarshal(responseBody, &report))
+				assert.Equal(t, 1, report.Added)
+			}
+			_, err = s.NodeByPath(t.Context(), "/inbox/"+sourceName)
+			require.NoError(t, err)
 		})
 	}
 }

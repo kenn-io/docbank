@@ -47,9 +47,7 @@ nodes (
     parent_id     INTEGER REFERENCES nodes(id) ON DELETE CASCADE,
     name          TEXT NOT NULL,
     kind          TEXT NOT NULL,          -- 'dir' | 'file'
-    blob_hash     TEXT REFERENCES blobs(hash),   -- files only
-    size          INTEGER,
-    mime_type     TEXT,
+    current_version_id TEXT,                -- files only
     revision      INTEGER NOT NULL DEFAULT 1,
     created_at    TEXT NOT NULL,
     modified_at   TEXT NOT NULL,
@@ -61,7 +59,9 @@ blobs          (hash PRIMARY KEY, size, created_at)
 blob_packs     (pack_id PRIMARY KEY, entry_count, stored_bytes, created_at)
 blob_pack_index(blob_hash PRIMARY KEY, pack_id, pack_offset,
                 stored_len, raw_len, flags, crc32c)
-node_versions  (node_id, blob_hash, size, replaced_at)   -- reserved; no writer yet
+content_versions(version_id UUID PRIMARY KEY, node_id, blob_hash, size,
+                 mime_type, recorded_at, node_revision,
+                 introduced_operation_id, transition_kind, source_version_id)
 ingests        (id, started_at, source_kind, source_desc)
 provenance     (node_id, ingest_id, original_path, original_mtime)
 tags           (id, name UNIQUE)          -- reserved; no API/CLI surface yet
@@ -71,30 +71,19 @@ extracted_text (blob_hash, extractor, extractor_version, status,
 nodes_fts      -- FTS5 external-content index over live node names
 ```
 
-!!! info "Planned — version and audit schema"
-    The reserved `node_versions` shape is not yet a compatibility promise.
-    Before the first editing writer lands, it will gain stable version identity
-    as a canonical UUIDv4 with a uniqueness constraint and the fields needed by
-    [Audited History](audited-history.md). UUID identity avoids a portable
-    allocator whose rollback or reuse could retarget stale version references.
+File nodes and content versions cross-reference one another: a file must have a
+current version belonging to that node, while directories cannot carry one.
+Version UUIDs and their introducing operation UUIDs are random, canonical
+UUIDv4 values. `(node_id, node_revision)` and
+`(node_id, introduced_operation_id)` are unique. See
+[Editing & Versions](editing-and-versions.md) for the read and retention
+contract.
+
+!!! info "Planned — full-audit schema"
     Audit scopes, sticky memberships, mutation records, and chain state will be
     current-schema metadata included in deterministic JSONL rather than
-    inferred from paths or pack layout. A daemon-exclusive bootstrap will give
-    every existing file a stable initial version and `current_version_id`, and
-    create the stable vault ID plus non-reusable UUIDv4 identities for retained
-    legacy tag and ingest records, before editing or audit capabilities become
-    available. That cutover uses metadata JSONL v2 even with zero audit scopes;
-    the zero-scope form preserves editing identities without an audit genesis or
-    lineage, which begins only when the first scope is enabled. Bootstrap also
-    durably publishes a non-ignorable `bootstrap_pending` feature/layout
-    generation before the v2 transaction and advances it to `v2_ready` only
-    after committed authority is reverified. Recovery resumes or verifies that
-    cutover while pre-bootstrap writers and legacy overwrite-restore paths stay
-    blocked.
-    First audit activation uses an analogous synced `audit_pending` generation,
-    enrollment transaction, verified `audit_ready` publication, and locked
-    recovery path; pre-audit v2 binaries never observe a committed scope without
-    its fence.
+    inferred from paths or pack layout. The one JSONL format remains version 1
+    with or without audit scopes.
     Audited trash origins will retain immutable parent IDs and names
     outside nullable live foreign-key semantics, so deleting an unaudited origin
     cannot rewrite protected history. The existing `trash_parent` becomes a

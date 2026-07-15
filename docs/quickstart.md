@@ -78,6 +78,17 @@ docbank tree /taxes
 docbank cat /taxes/checklist.pdf > /tmp/checklist.pdf
 ```
 
+Every imported file also has a stable immutable content-version UUID:
+
+```bash
+docbank versions /taxes/checklist.pdf
+docbank version <version-id> --json
+docbank version <version-id> --content > /tmp/checklist-version.pdf
+```
+
+The version ID survives node renames and moves. New files currently have one
+`content_create` version; editing and reversion will add history later.
+
 ## Reorganize
 
 Moves and renames are metadata-only; the stored bytes never move.

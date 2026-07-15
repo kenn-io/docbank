@@ -114,6 +114,38 @@ docbank cat <path>
 Streams the file's stored bytes to stdout. Fails with `not a file` for
 directories.
 
+## docbank versions
+
+```text
+docbank versions <path> [--limit <n>] [--offset <n>] [--json]
+```
+
+Lists the file's immutable content versions newest-first. The default limit is
+100; `--limit` accepts 1–1000 and `--offset` continues through older records.
+Human output marks the node's current version. `--json` emits
+`{"items": [...], "total", "limit", "offset"}` so callers can distinguish a
+complete page from a prefix.
+
+Every newly imported file has one revision-one `content_create` version.
+Replacement and reversion are not implemented yet, so more than one row appears
+only after those write surfaces ship.
+
+## docbank version
+
+```text
+docbank version <version-id> [--json]
+docbank version <version-id> --content
+```
+
+Inspects one immutable version by stable UUID, independent of the file's current
+path. The human view prints node and node-revision identity, recording time,
+transition kind, blob hash, size, and media type; `--json` emits the typed record.
+`--content` writes that exact version's bytes to stdout and cannot be combined
+with `--json`. It exits successfully only after the response version ID, byte
+count, SHA-256 identity, and terminal `Content-Digest` all agree. Output may
+already have reached stdout when verification fails, so scripts publishing a
+file should write privately and rename it only after a successful exit.
+
 ## docbank mv
 
 ```
@@ -399,7 +431,7 @@ JSON. Needs no running daemon and no vault: routes are registered
 against an offline server instance and never invoked. For agents and
 API client generation; see [HTTP API](architecture/http-api.md).
 
-## docbank version
+## docbank --version
 
 ```
 docbank --version
@@ -419,8 +451,8 @@ background-spawned daemons.
 
 !!! info "Planned — later phases"
     The following are designed but not yet implemented; they will appear
-    here with exact semantics when they ship. `docbank edit` and
-    `docbank versions` (Phase 2b, [Editing & Versions](architecture/editing-and-versions.md));
+    here with exact semantics when they ship. `docbank edit`, `put`, and
+    `revert` (Phase 2b, [Editing & Versions](architecture/editing-and-versions.md));
     `docbank audit enable`, `audit status`, `audit history`, and `audit verify`
     (Phase 2b, [Audited History](architecture/audited-history.md));
     `docbank extract` (Phase 2b, [HTTP API](architecture/http-api.md));

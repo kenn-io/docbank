@@ -9,23 +9,49 @@ const (
 	// streams use it instead of Content-Length so HTTP/1.1 can carry a digest
 	// trailer computed while streaming without a second physical read.
 	BlobSizeHeader = "X-Docbank-Blob-Size"
+	// ContentVersionHeader carries the stable version identity whose immutable
+	// bytes are being streamed.
+	ContentVersionHeader = "X-Docbank-Content-Version"
 )
 
 // Node is the wire representation of a store.Node. Path is only populated on
 // single-node responses; list responses omit it.
 type Node struct {
-	ID         int64  `json:"id"`
-	ParentID   *int64 `json:"parent_id,omitempty"`
-	Name       string `json:"name"`
-	Kind       string `json:"kind" enum:"dir,file"`
-	BlobHash   string `json:"blob_hash,omitempty" pattern:"^[0-9a-f]{64}$"`
-	Size       int64  `json:"size"`
-	MimeType   string `json:"mime_type,omitempty"`
-	Revision   int64  `json:"revision"`
-	CreatedAt  string `json:"created_at"`
-	ModifiedAt string `json:"modified_at"`
-	TrashedAt  string `json:"trashed_at,omitempty"`
-	Path       string `json:"path,omitempty"` // set on single-node responses only
+	ID               int64  `json:"id"`
+	ParentID         *int64 `json:"parent_id,omitempty"`
+	Name             string `json:"name"`
+	Kind             string `json:"kind" enum:"dir,file"`
+	CurrentVersionID string `json:"current_version_id,omitempty" format:"uuid"`
+	BlobHash         string `json:"blob_hash,omitempty" pattern:"^[0-9a-f]{64}$"`
+	Size             int64  `json:"size"`
+	MimeType         string `json:"mime_type,omitempty"`
+	Revision         int64  `json:"revision"`
+	CreatedAt        string `json:"created_at"`
+	ModifiedAt       string `json:"modified_at"`
+	TrashedAt        string `json:"trashed_at,omitempty"`
+	Path             string `json:"path,omitempty"` // set on single-node responses only
+}
+
+// ContentVersion is the wire representation of an immutable version record.
+type ContentVersion struct {
+	ID                    string  `json:"id" format:"uuid"`
+	NodeID                int64   `json:"node_id"`
+	BlobHash              string  `json:"blob_hash" pattern:"^[0-9a-f]{64}$"`
+	Size                  int64   `json:"size" minimum:"0"`
+	MimeType              string  `json:"mime_type,omitempty"`
+	RecordedAt            string  `json:"recorded_at"`
+	NodeRevision          int64   `json:"node_revision" minimum:"1"`
+	IntroducedOperationID string  `json:"introduced_operation_id" format:"uuid"`
+	TransitionKind        string  `json:"transition_kind" enum:"content_create,content_replace,content_revert"`
+	SourceVersionID       *string `json:"source_version_id,omitempty" format:"uuid"`
+}
+
+// ContentVersionPage is one bounded newest-first version listing.
+type ContentVersionPage struct {
+	Items  []ContentVersion `json:"items"`
+	Total  int              `json:"total"`
+	Limit  int              `json:"limit"`
+	Offset int              `json:"offset"`
 }
 
 // ContentVerification binds a fresh physical read to the exact node revision
@@ -33,6 +59,7 @@ type Node struct {
 // and ComputedSize describe the bytes read through the mixed store.
 type ContentVerification struct {
 	NodeID       int64  `json:"node_id"`
+	VersionID    string `json:"version_id" format:"uuid"`
 	Revision     int64  `json:"revision"`
 	BlobHash     string `json:"blob_hash" pattern:"^[0-9a-f]{64}$"`
 	Size         int64  `json:"size"`
@@ -364,11 +391,21 @@ type BackupRestoreEvent struct {
 func fromStoreNode(n store.Node) Node {
 	out := Node{
 		ID: n.ID, ParentID: n.ParentID, Name: n.Name, Kind: n.Kind,
-		BlobHash: n.BlobHash, Size: n.Size, MimeType: n.MimeType, Revision: n.Revision,
+		CurrentVersionID: n.CurrentVersionID, BlobHash: n.BlobHash,
+		Size: n.Size, MimeType: n.MimeType, Revision: n.Revision,
 		CreatedAt: n.CreatedAt, ModifiedAt: n.ModifiedAt,
 	}
 	if n.TrashedAt != nil {
 		out.TrashedAt = *n.TrashedAt
 	}
 	return out
+}
+
+func fromStoreContentVersion(v store.ContentVersion) ContentVersion {
+	return ContentVersion{
+		ID: v.ID, NodeID: v.NodeID, BlobHash: v.BlobHash, Size: v.Size,
+		MimeType: v.MimeType, RecordedAt: v.RecordedAt, NodeRevision: v.NodeRevision,
+		IntroducedOperationID: v.IntroducedOperationID,
+		TransitionKind:        v.TransitionKind, SourceVersionID: v.SourceVersionID,
+	}
 }

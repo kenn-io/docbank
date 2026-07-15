@@ -15,6 +15,7 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 	require.NoError(t, err)
 	doc := string(out)
 	for _, op := range []string{"getNode", "resolvePath", "listChildren", "getNodeContent", "verifyNodeContent",
+		"listContentVersions", "getContentVersion", "getContentVersionBytes",
 		"search", "createNode", "moveNode", "movePath", "trashNode", "trashPath", "restoreNode",
 		"storageStatus", "storagePack", "storageRepack", "ingest", "uploadFile", "listTrash", "emptyTrash", "gc", "verify",
 		"initBackupRepository", "createBackupSnapshot", "listBackupSnapshots", "listJobs"} {
@@ -23,6 +24,7 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 	assert.NotContains(t, doc, "/api/daemon/shutdown", "lifecycle plumbing must stay hidden")
 	assert.NotContains(t, doc, "/api/daemon/challenge", "lifecycle plumbing must stay hidden")
 	assert.Contains(t, doc, "X-Docbank-Blob-Hash")
+	assert.Contains(t, doc, api.ContentVersionHeader)
 	assert.Contains(t, doc, "Content-Digest")
 	assert.Contains(t, doc, "computed_hash")
 }

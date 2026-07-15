@@ -10,30 +10,36 @@ import (
 
 // Node is a row of the virtual tree. IDs are canonical; paths are display.
 type Node struct {
-	ID         int64
-	ParentID   *int64
-	Name       string
-	Kind       string // "dir" | "file"
-	BlobHash   string
-	Size       int64
-	MimeType   string
-	Revision   int64
-	CreatedAt  string
-	ModifiedAt string
-	TrashedAt  *string
+	ID               int64
+	ParentID         *int64
+	Name             string
+	Kind             string // "dir" | "file"
+	CurrentVersionID string
+	BlobHash         string
+	Size             int64
+	MimeType         string
+	Revision         int64
+	CreatedAt        string
+	ModifiedAt       string
+	TrashedAt        *string
 }
 
 // IsDir reports whether the node is a directory.
 func (n Node) IsDir() bool { return n.Kind == "dir" }
 
-const nodeCols = `id, parent_id, name, kind,
-	COALESCE(blob_hash, ''), COALESCE(size, 0), COALESCE(mime_type, ''),
-	revision, created_at, modified_at, trashed_at`
+const nodeFrom = `nodes AS n
+	LEFT JOIN content_versions AS cv
+		ON cv.node_id = n.id AND cv.version_id = n.current_version_id`
+
+const nodeCols = `n.id, n.parent_id, n.name, n.kind,
+	COALESCE(n.current_version_id, ''), COALESCE(cv.blob_hash, ''),
+	COALESCE(cv.size, 0), COALESCE(cv.mime_type, ''),
+	n.revision, n.created_at, n.modified_at, n.trashed_at`
 
 func scanNode(row interface{ Scan(args ...any) error }) (Node, error) {
 	var n Node
 	err := row.Scan(&n.ID, &n.ParentID, &n.Name, &n.Kind,
-		&n.BlobHash, &n.Size, &n.MimeType,
+		&n.CurrentVersionID, &n.BlobHash, &n.Size, &n.MimeType,
 		&n.Revision, &n.CreatedAt, &n.ModifiedAt, &n.TrashedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Node{}, ErrNotFound
@@ -47,7 +53,7 @@ func scanNode(row interface{ Scan(args ...any) error }) (Node, error) {
 // NodeByID returns the node with the given id, live or trashed.
 func (s *Store) NodeByID(ctx context.Context, id int64) (Node, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT `+nodeCols+` FROM nodes WHERE id = ?`, id)
+		`SELECT `+nodeCols+` FROM `+nodeFrom+` WHERE n.id = ?`, id)
 	n, err := scanNode(row)
 	if err != nil {
 		return Node{}, fmt.Errorf("node %d: %w", id, err)
@@ -78,7 +84,7 @@ func (s *Store) NodeByPath(ctx context.Context, path string) (Node, error) {
 }
 
 func nodeByPath(ctx context.Context, q rowQuerier, rootID int64, path string) (Node, error) {
-	row := q.QueryRowContext(ctx, `SELECT `+nodeCols+` FROM nodes WHERE id = ?`, rootID)
+	row := q.QueryRowContext(ctx, `SELECT `+nodeCols+` FROM `+nodeFrom+` WHERE n.id = ?`, rootID)
 	n, err := scanNode(row)
 	if err != nil {
 		return Node{}, fmt.Errorf("node %d: %w", rootID, err)
@@ -89,8 +95,8 @@ func nodeByPath(ctx context.Context, q rowQuerier, rootID int64, path string) (N
 			return Node{}, fmt.Errorf("path %q: %w", path, err)
 		}
 		row := q.QueryRowContext(ctx,
-			`SELECT `+nodeCols+` FROM nodes
-			 WHERE parent_id = ? AND name = ? AND trashed_at IS NULL`, n.ID, seg)
+			`SELECT `+nodeCols+` FROM `+nodeFrom+`
+			 WHERE n.parent_id = ? AND n.name = ? AND n.trashed_at IS NULL`, n.ID, seg)
 		n, err = scanNode(row)
 		if err != nil {
 			return Node{}, fmt.Errorf("path %q: %w", path, err)
@@ -109,9 +115,9 @@ func (s *Store) Children(ctx context.Context, dirID int64) ([]Node, error) {
 		return nil, fmt.Errorf("node %d: %w", dirID, ErrNotDir)
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+nodeCols+` FROM nodes
-		 WHERE parent_id = ? AND trashed_at IS NULL
-		 ORDER BY kind = 'file', name`, dirID)
+		`SELECT `+nodeCols+` FROM `+nodeFrom+`
+		 WHERE n.parent_id = ? AND n.trashed_at IS NULL
+		 ORDER BY n.kind = 'file', n.name`, dirID)
 	if err != nil {
 		return nil, fmt.Errorf("listing children of %d: %w", dirID, err)
 	}

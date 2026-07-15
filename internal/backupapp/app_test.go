@@ -3,6 +3,7 @@ package backupapp_test
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"os"
@@ -129,6 +130,7 @@ func TestJSONLLooseSnapshotVerifyAndRestore(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), stats.Nodes, "root plus two files")
 	assert.Equal(t, int64(2), stats.Files)
+	assert.Equal(t, int64(2), stats.ContentVersions)
 	assert.Equal(t, manifest.Attachments.BlobBytes, stats.BlobBytes)
 
 	verified, err := backup.Verify(t.Context(), repo, app, backup.VerifyOptions{Jobs: 2})
@@ -164,6 +166,10 @@ func TestJSONLLooseSnapshotVerifyAndRestore(t *testing.T) {
 		require.NoError(t, readErr)
 		require.NoError(t, reader.Close())
 		assert.Equal(t, want, string(got))
+		version, versionErr := restoredStore.ContentVersionByID(t.Context(), node.CurrentVersionID)
+		require.NoError(t, versionErr)
+		assert.Equal(t, node.ID, version.NodeID)
+		assert.Equal(t, node.BlobHash, version.BlobHash)
 	}
 	require.NoError(t, restoredBlobs.Close())
 	require.NoError(t, restoredStore.Close())
@@ -204,6 +210,8 @@ func TestRestoreSupportsLegacySQLitePageSnapshots(t *testing.T) {
 		require.NoError(t, readErr)
 		require.NoError(t, reader.Close())
 		assert.Equal(t, want, string(got))
+		_, versionErr := restoredStore.ContentVersionByID(t.Context(), node.CurrentVersionID)
+		require.NoError(t, versionErr)
 	}
 	require.NoError(t, restoredBlobs.Close())
 	require.NoError(t, restoredStore.Close())
@@ -237,6 +245,47 @@ func TestJSONLSnapshotRemainsStableAfterFreezeEnds(t *testing.T) {
 	_, err = restoredStore.NodeByPath(t.Context(), "/created-after-snapshot")
 	require.Error(t, err)
 	require.NoError(t, restoredStore.Close())
+}
+
+func TestJSONLSnapshotRejectsMalformedLiveMetadata(t *testing.T) {
+	tests := []struct {
+		name      string
+		statement string
+		want      string
+	}{
+		{
+			name:      "invalid operation ID",
+			statement: `UPDATE content_versions SET introduced_operation_id='not-a-uuid'`,
+			want:      "invalid content version operation ID",
+		},
+		{
+			name: "dangling blob reference",
+			statement: `UPDATE content_versions SET blob_hash='` + strings.Repeat("d", 64) + `'
+				WHERE rowid=(SELECT rowid FROM content_versions LIMIT 1)`,
+			want: "metadata violates foreign key",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fixture := newArchiveFixture(t)
+			rawDB, err := sql.Open("sqlite3",
+				filepath.Join(fixture.root, "docbank.db")+"?_foreign_keys=off&_busy_timeout=5000")
+			require.NoError(t, err)
+			_, err = rawDB.Exec(tt.statement)
+			require.NoError(t, err)
+			require.NoError(t, rawDB.Close())
+
+			repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+			require.NoError(t, err)
+			manifest, err := backupapp.Create(
+				t.Context(), repo, "test-version", fixture.metadata, fixture.blobs, backup.CreateOptions{})
+			require.ErrorContains(t, err, tt.want)
+			assert.Nil(t, manifest)
+			snapshots, err := repo.ListSnapshots()
+			require.NoError(t, err)
+			assert.Empty(t, snapshots)
+		})
+	}
 }
 
 func TestMalformedJSONLRestoreLeavesNoPublishedDatabase(t *testing.T) {
@@ -357,6 +406,9 @@ func TestPackedSnapshotRequiresAndUsesPackedRestoreTarget(t *testing.T) {
 		require.NoError(t, readErr)
 		require.NoError(t, reader.Close())
 		assert.Equal(t, want, string(got))
+		version, versionErr := restoredStore.ContentVersionByID(t.Context(), node.CurrentVersionID)
+		require.NoError(t, versionErr)
+		assert.Equal(t, node.BlobHash, version.BlobHash)
 	}
 	require.NoError(t, restoredBlobs.Close())
 	require.NoError(t, restoredStore.Close())

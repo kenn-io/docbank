@@ -10,8 +10,11 @@ import (
 	"fmt"
 	"io"
 	"time"
+	"unicode/utf8"
 
 	"go.kenn.io/kit/packstore"
+
+	"go.kenn.io/docbank/internal/jsontext"
 )
 
 const metadataFormatVersion = 1
@@ -87,28 +90,32 @@ type metadataBlob struct {
 }
 
 type metadataNode struct {
-	Type        string  `json:"type"`
-	ID          int64   `json:"id"`
-	ParentID    *int64  `json:"parent_id"`
-	Name        string  `json:"name"`
-	Kind        string  `json:"kind"`
-	BlobHash    *string `json:"blob_hash"`
-	Size        *int64  `json:"size"`
-	MIMEType    *string `json:"mime_type"`
-	Revision    int64   `json:"revision"`
-	CreatedAt   string  `json:"created_at"`
-	ModifiedAt  string  `json:"modified_at"`
-	TrashedAt   *string `json:"trashed_at"`
-	TrashParent *int64  `json:"trash_parent"`
-	TrashName   *string `json:"trash_name"`
+	Type             string  `json:"type"`
+	ID               int64   `json:"id"`
+	ParentID         *int64  `json:"parent_id"`
+	Name             string  `json:"name"`
+	Kind             string  `json:"kind"`
+	CurrentVersionID *string `json:"current_version_id"`
+	Revision         int64   `json:"revision"`
+	CreatedAt        string  `json:"created_at"`
+	ModifiedAt       string  `json:"modified_at"`
+	TrashedAt        *string `json:"trashed_at"`
+	TrashParent      *int64  `json:"trash_parent"`
+	TrashName        *string `json:"trash_name"`
 }
 
-type metadataNodeVersion struct {
-	Type       string `json:"type"`
-	NodeID     int64  `json:"node_id"`
-	BlobHash   string `json:"blob_hash"`
-	Size       int64  `json:"size"`
-	ReplacedAt string `json:"replaced_at"`
+type metadataContentVersion struct {
+	Type                  string  `json:"type"`
+	VersionID             string  `json:"version_id"`
+	NodeID                int64   `json:"node_id"`
+	BlobHash              string  `json:"blob_hash"`
+	Size                  int64   `json:"size"`
+	MIMEType              *string `json:"mime_type"`
+	RecordedAt            string  `json:"recorded_at"`
+	NodeRevision          int64   `json:"node_revision"`
+	IntroducedOperationID string  `json:"introduced_operation_id"`
+	TransitionKind        string  `json:"transition_kind"`
+	SourceVersionID       *string `json:"source_version_id"`
 }
 
 type metadataIngest struct {
@@ -180,6 +187,13 @@ func exportMetadataSnapshot(ctx context.Context, tx metadataQuerier, w io.Writer
 	if tx == nil {
 		return errors.New("exporting metadata: nil transaction")
 	}
+	var nodeSequence int64
+	if err := tx.QueryRowContext(ctx, `SELECT seq FROM sqlite_sequence WHERE name = 'nodes'`).Scan(&nodeSequence); err != nil {
+		return fmt.Errorf("reading node ID high-water mark: %w", err)
+	}
+	if err := validateMetadataState(ctx, tx, nodeSequence); err != nil {
+		return fmt.Errorf("validating metadata snapshot: %w", err)
+	}
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
 	write := func(v any) error {
@@ -187,10 +201,6 @@ func exportMetadataSnapshot(ctx context.Context, tx metadataQuerier, w io.Writer
 			return fmt.Errorf("encoding metadata: %w", err)
 		}
 		return nil
-	}
-	var nodeSequence int64
-	if err := tx.QueryRowContext(ctx, `SELECT seq FROM sqlite_sequence WHERE name = 'nodes'`).Scan(&nodeSequence); err != nil {
-		return fmt.Errorf("reading node ID high-water mark: %w", err)
 	}
 	if err := write(metadataHeader{
 		Type: "meta", Format: "docbank-metadata", Version: metadataFormatVersion, NodeSequence: nodeSequence,
@@ -206,7 +216,7 @@ func exportMetadataSnapshot(ctx context.Context, tx metadataQuerier, w io.Writer
 	if err := exportIngests(ctx, tx, write); err != nil {
 		return err
 	}
-	if err := exportNodeVersions(ctx, tx, write); err != nil {
+	if err := exportContentVersions(ctx, tx, write); err != nil {
 		return err
 	}
 	if err := exportProvenance(ctx, tx, write); err != nil {
@@ -234,6 +244,9 @@ func exportBlobs(ctx context.Context, tx metadataQuerier, write metadataWrite) e
 		if err := rows.Scan(&r.Hash, &r.Size, &r.CreatedAt); err != nil {
 			return fmt.Errorf("scanning blob metadata: %w", err)
 		}
+		if err := validateBlobRecord(r); err != nil {
+			return fmt.Errorf("validating blob metadata for export: %w", err)
+		}
 		if err := write(r); err != nil {
 			return err
 		}
@@ -243,7 +256,7 @@ func exportBlobs(ctx context.Context, tx metadataQuerier, write metadataWrite) e
 
 func exportNodes(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT id, parent_id, name, kind, blob_hash, size, mime_type, revision,
+		SELECT id, parent_id, name, kind, current_version_id, revision,
 		       created_at, modified_at, trashed_at, trash_parent, trash_name
 		FROM nodes ORDER BY id`)
 	if err != nil {
@@ -252,15 +265,18 @@ func exportNodes(ctx context.Context, tx metadataQuerier, write metadataWrite) e
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		r := metadataNode{Type: "node"}
-		var parent, size, trashParent sql.NullInt64
-		var blobHash, mimeType, trashedAt, trashName sql.NullString
-		if err := rows.Scan(&r.ID, &parent, &r.Name, &r.Kind, &blobHash, &size, &mimeType,
+		var parent, trashParent sql.NullInt64
+		var currentVersionID, trashedAt, trashName sql.NullString
+		if err := rows.Scan(&r.ID, &parent, &r.Name, &r.Kind, &currentVersionID,
 			&r.Revision, &r.CreatedAt, &r.ModifiedAt, &trashedAt, &trashParent, &trashName); err != nil {
 			return fmt.Errorf("scanning node metadata: %w", err)
 		}
-		r.ParentID, r.Size, r.TrashParent = int64Ptr(parent), int64Ptr(size), int64Ptr(trashParent)
-		r.BlobHash, r.MIMEType = stringPtr(blobHash), stringPtr(mimeType)
+		r.ParentID, r.TrashParent = int64Ptr(parent), int64Ptr(trashParent)
+		r.CurrentVersionID = stringPtr(currentVersionID)
 		r.TrashedAt, r.TrashName = stringPtr(trashedAt), stringPtr(trashName)
+		if err := validateNodeRecord(r); err != nil {
+			return fmt.Errorf("validating node metadata for export: %w", err)
+		}
 		if err := write(r); err != nil {
 			return err
 		}
@@ -268,24 +284,32 @@ func exportNodes(ctx context.Context, tx metadataQuerier, write metadataWrite) e
 	return rowsError("node", rows)
 }
 
-func exportNodeVersions(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
+func exportContentVersions(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT node_id, blob_hash, size, replaced_at FROM node_versions
-		ORDER BY node_id, replaced_at, blob_hash, size`)
+		SELECT version_id, node_id, blob_hash, size, mime_type, recorded_at,
+		       node_revision, introduced_operation_id, transition_kind, source_version_id
+		FROM content_versions ORDER BY node_id, node_revision, version_id`)
 	if err != nil {
-		return fmt.Errorf("exporting node versions: %w", err)
+		return fmt.Errorf("exporting content versions: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
-		r := metadataNodeVersion{Type: "node_version"}
-		if err := rows.Scan(&r.NodeID, &r.BlobHash, &r.Size, &r.ReplacedAt); err != nil {
-			return fmt.Errorf("scanning node version metadata: %w", err)
+		r := metadataContentVersion{Type: "content_version"}
+		var mimeType, sourceVersionID sql.NullString
+		if err := rows.Scan(&r.VersionID, &r.NodeID, &r.BlobHash, &r.Size,
+			&mimeType, &r.RecordedAt, &r.NodeRevision, &r.IntroducedOperationID,
+			&r.TransitionKind, &sourceVersionID); err != nil {
+			return fmt.Errorf("scanning content version metadata: %w", err)
+		}
+		r.MIMEType, r.SourceVersionID = stringPtr(mimeType), stringPtr(sourceVersionID)
+		if err := validateContentVersionRecord(r); err != nil {
+			return fmt.Errorf("validating content version metadata for export: %w", err)
 		}
 		if err := write(r); err != nil {
 			return err
 		}
 	}
-	return rowsError("node version", rows)
+	return rowsError("content version", rows)
 }
 
 func exportIngests(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
@@ -298,6 +322,9 @@ func exportIngests(ctx context.Context, tx metadataQuerier, write metadataWrite)
 		r := metadataIngest{Type: "ingest"}
 		if err := rows.Scan(&r.ID, &r.StartedAt, &r.SourceKind, &r.SourceDesc); err != nil {
 			return fmt.Errorf("scanning ingest metadata: %w", err)
+		}
+		if err := validateIngestRecord(r); err != nil {
+			return fmt.Errorf("validating ingest metadata for export: %w", err)
 		}
 		if err := write(r); err != nil {
 			return err
@@ -321,6 +348,9 @@ func exportProvenance(ctx context.Context, tx metadataQuerier, write metadataWri
 			return fmt.Errorf("scanning provenance metadata: %w", err)
 		}
 		r.OriginalMTime = stringPtr(mtime)
+		if err := validateProvenanceRecord(r); err != nil {
+			return fmt.Errorf("validating provenance metadata for export: %w", err)
+		}
 		if err := write(r); err != nil {
 			return err
 		}
@@ -339,6 +369,9 @@ func exportTags(ctx context.Context, tx metadataQuerier, write metadataWrite) er
 		if err := rows.Scan(&r.ID, &r.Name); err != nil {
 			return fmt.Errorf("scanning tag metadata: %w", err)
 		}
+		if err := validateTagRecord(r); err != nil {
+			return fmt.Errorf("validating tag metadata for export: %w", err)
+		}
 		if err := write(r); err != nil {
 			return err
 		}
@@ -356,6 +389,9 @@ func exportNodeTags(ctx context.Context, tx metadataQuerier, write metadataWrite
 		r := metadataNodeTag{Type: "node_tag"}
 		if err := rows.Scan(&r.NodeID, &r.TagID); err != nil {
 			return fmt.Errorf("scanning node tag metadata: %w", err)
+		}
+		if err := validateNodeTagRecord(r); err != nil {
+			return fmt.Errorf("validating node tag metadata for export: %w", err)
 		}
 		if err := write(r); err != nil {
 			return err
@@ -380,6 +416,9 @@ func exportExtractedText(ctx context.Context, tx metadataQuerier, write metadata
 			return fmt.Errorf("scanning extracted text metadata: %w", err)
 		}
 		r.Error, r.Text = stringPtr(extractErr), stringPtr(text)
+		if err := validateExtractedTextRecord(r); err != nil {
+			return fmt.Errorf("validating extracted text metadata for export: %w", err)
+		}
 		if err := write(r); err != nil {
 			return err
 		}
@@ -426,15 +465,8 @@ func (s *Store) ImportMetadata(ctx context.Context, r io.Reader) error {
 		if err != nil {
 			return err
 		}
-		if err := validateImportedMetadata(ctx, tx); err != nil {
+		if err := validateMetadataState(ctx, tx, nodeSequence); err != nil {
 			return err
-		}
-		var maxNodeID int64
-		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM nodes`).Scan(&maxNodeID); err != nil {
-			return fmt.Errorf("reading imported maximum node ID: %w", err)
-		}
-		if nodeSequence < maxNodeID {
-			return fmt.Errorf("node ID high-water mark %d is below imported maximum %d", nodeSequence, maxNodeID)
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE sqlite_sequence SET seq = ? WHERE name = 'nodes'`, nodeSequence); err != nil {
 			return fmt.Errorf("restoring node ID high-water mark: %w", err)
@@ -442,21 +474,7 @@ func (s *Store) ImportMetadata(ctx context.Context, r io.Reader) error {
 		if err := tx.QueryRowContext(ctx, `SELECT id FROM nodes WHERE parent_id IS NULL`).Scan(&rootID); err != nil {
 			return fmt.Errorf("finding imported root: %w", err)
 		}
-		rows, err := tx.QueryContext(ctx, `PRAGMA foreign_key_check`)
-		if err != nil {
-			return fmt.Errorf("checking imported foreign keys: %w", err)
-		}
-		defer func() { _ = rows.Close() }()
-		if rows.Next() {
-			var table string
-			var rowID, parent any
-			var fk int64
-			if err := rows.Scan(&table, &rowID, &parent, &fk); err != nil {
-				return fmt.Errorf("reading imported foreign-key failure: %w", err)
-			}
-			return fmt.Errorf("imported metadata violates foreign key %s[%v] constraint %d", table, rowID, fk)
-		}
-		return rows.Err()
+		return nil
 	})
 	if err != nil {
 		return err
@@ -470,7 +488,7 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 	if err := tx.QueryRowContext(ctx, `
 		SELECT
 		  (SELECT COUNT(*) FROM nodes),
-		  (SELECT COUNT(*) FROM blobs) + (SELECT COUNT(*) FROM node_versions)
+		  (SELECT COUNT(*) FROM blobs) + (SELECT COUNT(*) FROM content_versions)
 		    + (SELECT COUNT(*) FROM ingests) + (SELECT COUNT(*) FROM provenance)
 		    + (SELECT COUNT(*) FROM tags) + (SELECT COUNT(*) FROM node_tags)
 		    + (SELECT COUNT(*) FROM extracted_text),
@@ -487,9 +505,18 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 
 func importMetadataLines(ctx context.Context, tx *sql.Tx, r io.Reader) (int64, error) {
 	dec := json.NewDecoder(bufio.NewReader(r))
-	dec.DisallowUnknownFields()
+	var rawHeader json.RawMessage
+	if err := dec.Decode(&rawHeader); err != nil {
+		return 0, fmt.Errorf("decoding metadata header: %w", err)
+	}
+	if err := validateMetadataJSON(rawHeader); err != nil {
+		return 0, fmt.Errorf("decoding metadata header: %w", err)
+	}
+	if err := requireMetadataFields(rawHeader, metadataHeaderFields, nil); err != nil {
+		return 0, fmt.Errorf("decoding metadata header: %w", err)
+	}
 	var header metadataHeader
-	if err := dec.Decode(&header); err != nil {
+	if err := decodeMetadataRecord(rawHeader, &header); err != nil {
 		return 0, fmt.Errorf("decoding metadata header: %w", err)
 	}
 	if header.Type != "meta" || header.Format != "docbank-metadata" ||
@@ -504,6 +531,9 @@ func importMetadataLines(ctx context.Context, tx *sql.Tx, r io.Reader) (int64, e
 			return header.NodeSequence, nil
 		}
 		if err != nil {
+			return 0, fmt.Errorf("decoding metadata record %d: %w", record, err)
+		}
+		if err := validateMetadataJSON(raw); err != nil {
 			return 0, fmt.Errorf("decoding metadata record %d: %w", record, err)
 		}
 		var kind struct {
@@ -523,18 +553,13 @@ func importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw json
 	if !ok {
 		return fmt.Errorf("unknown record type %q", kind)
 	}
-	if err := requireMetadataFields(raw, required); err != nil {
+	if err := requireMetadataFields(raw, required, metadataNullableFields[kind]); err != nil {
 		return err
-	}
-	decode := func(dst any) error {
-		dec := json.NewDecoder(bytes.NewReader(raw))
-		dec.DisallowUnknownFields()
-		return dec.Decode(dst)
 	}
 	switch kind {
 	case "blob":
 		var v metadataBlob
-		if err := decode(&v); err != nil {
+		if err := decodeMetadataRecord(raw, &v); err != nil {
 			return err
 		}
 		if err := validateBlobRecord(v); err != nil {
@@ -544,76 +569,73 @@ func importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw json
 		return err
 	case "node":
 		var v metadataNode
-		if err := decode(&v); err != nil {
+		if err := decodeMetadataRecord(raw, &v); err != nil {
 			return err
 		}
 		if err := validateNodeRecord(v); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO nodes(id,parent_id,name,kind,blob_hash,size,mime_type,revision,created_at,modified_at,trashed_at,trash_parent,trash_name) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-			v.ID, v.ParentID, v.Name, v.Kind, v.BlobHash, v.Size, v.MIMEType, v.Revision, v.CreatedAt, v.ModifiedAt, v.TrashedAt, v.TrashParent, v.TrashName)
+		_, err := tx.ExecContext(ctx, `INSERT INTO nodes(id,parent_id,name,kind,current_version_id,revision,created_at,modified_at,trashed_at,trash_parent,trash_name) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+			v.ID, v.ParentID, v.Name, v.Kind, v.CurrentVersionID, v.Revision, v.CreatedAt, v.ModifiedAt, v.TrashedAt, v.TrashParent, v.TrashName)
 		return err
-	case "node_version":
-		var v metadataNodeVersion
-		if err := decode(&v); err != nil {
+	case "content_version":
+		var v metadataContentVersion
+		if err := decodeMetadataRecord(raw, &v); err != nil {
 			return err
 		}
-		if err := validateNodeVersionRecord(v); err != nil {
+		if err := validateContentVersionRecord(v); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO node_versions(node_id,blob_hash,size,replaced_at) VALUES(?,?,?,?)`, v.NodeID, v.BlobHash, v.Size, v.ReplacedAt)
+		_, err := tx.ExecContext(ctx, `INSERT INTO content_versions(
+			version_id,node_id,blob_hash,size,mime_type,recorded_at,node_revision,
+			introduced_operation_id,transition_kind,source_version_id
+		) VALUES(?,?,?,?,?,?,?,?,?,?)`, v.VersionID, v.NodeID, v.BlobHash, v.Size,
+			v.MIMEType, v.RecordedAt, v.NodeRevision, v.IntroducedOperationID,
+			v.TransitionKind, v.SourceVersionID)
 		return err
 	case "ingest":
 		var v metadataIngest
-		if err := decode(&v); err != nil {
+		if err := decodeMetadataRecord(raw, &v); err != nil {
 			return err
 		}
-		if v.Type != kind || v.ID <= 0 || v.SourceKind == "" || v.SourceDesc == "" {
-			return errors.New("invalid ingest record")
-		}
-		if err := validateMetadataTime("ingest started_at", v.StartedAt); err != nil {
+		if err := validateIngestRecord(v); err != nil {
 			return err
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO ingests(id,started_at,source_kind,source_desc) VALUES(?,?,?,?)`, v.ID, v.StartedAt, v.SourceKind, v.SourceDesc)
 		return err
 	case "provenance":
 		var v metadataProvenance
-		if err := decode(&v); err != nil {
+		if err := decodeMetadataRecord(raw, &v); err != nil {
 			return err
 		}
-		if v.Type != kind || v.NodeID <= 0 || v.IngestID <= 0 || v.OriginalPath == "" {
-			return errors.New("invalid provenance record")
-		}
-		if v.OriginalMTime != nil {
-			if err := validateProvenanceTime(*v.OriginalMTime); err != nil {
-				return err
-			}
+		if err := validateProvenanceRecord(v); err != nil {
+			return err
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO provenance(node_id,ingest_id,original_path,original_mtime) VALUES(?,?,?,?)`, v.NodeID, v.IngestID, v.OriginalPath, v.OriginalMTime)
 		return err
 	case "tag":
 		var v metadataTag
-		if err := decode(&v); err != nil {
+		if err := decodeMetadataRecord(raw, &v); err != nil {
 			return err
 		}
-		if v.Type != kind || v.ID <= 0 || v.Name == "" {
-			return errors.New("invalid tag record")
+		if err := validateTagRecord(v); err != nil {
+			return err
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO tags(id,name) VALUES(?,?)`, v.ID, v.Name)
 		return err
 	case "node_tag":
 		var v metadataNodeTag
-		if err := decode(&v); err != nil {
+		if err := decodeMetadataRecord(raw, &v); err != nil {
 			return err
 		}
-		if v.Type != kind || v.NodeID <= 0 || v.TagID <= 0 {
-			return errors.New("invalid node tag record")
+		if err := validateNodeTagRecord(v); err != nil {
+			return err
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO node_tags(node_id,tag_id) VALUES(?,?)`, v.NodeID, v.TagID)
 		return err
 	case "extracted_text":
 		var v metadataExtractedText
-		if err := decode(&v); err != nil {
+		if err := decodeMetadataRecord(raw, &v); err != nil {
 			return err
 		}
 		if err := validateExtractedTextRecord(v); err != nil {
@@ -627,26 +649,111 @@ func importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw json
 	}
 }
 
+const metadataTypeField = "type"
+
+var metadataHeaderFields = []string{metadataTypeField, "format", "version", "node_sequence"}
+
 var metadataRequiredFields = map[string][]string{
-	"blob":           {"type", "hash", "size", "created_at"},
-	"node":           {"type", "id", "parent_id", "name", "kind", "blob_hash", "size", "mime_type", "revision", "created_at", "modified_at", "trashed_at", "trash_parent", "trash_name"},
-	"node_version":   {"type", "node_id", "blob_hash", "size", "replaced_at"},
-	"ingest":         {"type", "id", "started_at", "source_kind", "source_desc"},
-	"provenance":     {"type", "node_id", "ingest_id", "original_path", "original_mtime"},
-	"tag":            {"type", "id", "name"},
-	"node_tag":       {"type", "node_id", "tag_id"},
-	"extracted_text": {"type", "blob_hash", "extractor", "extractor_version", "status", "error", "attempts", "text", "extracted_at"},
+	"blob":            {metadataTypeField, "hash", "size", "created_at"},
+	"node":            {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", "revision", "created_at", "modified_at", "trashed_at", "trash_parent", "trash_name"},
+	"content_version": {metadataTypeField, "version_id", "node_id", "blob_hash", "size", "mime_type", "recorded_at", "node_revision", "introduced_operation_id", "transition_kind", "source_version_id"},
+	"ingest":          {metadataTypeField, "id", "started_at", "source_kind", "source_desc"},
+	"provenance":      {metadataTypeField, "node_id", "ingest_id", "original_path", "original_mtime"},
+	"tag":             {metadataTypeField, "id", "name"},
+	"node_tag":        {metadataTypeField, "node_id", "tag_id"},
+	"extracted_text":  {metadataTypeField, "blob_hash", "extractor", "extractor_version", "status", "error", "attempts", "text", "extracted_at"},
 }
 
-func requireMetadataFields(raw json.RawMessage, required []string) error {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return fmt.Errorf("decoding metadata fields: %w", err)
+var metadataNullableFields = map[string]map[string]bool{
+	"node": {
+		"parent_id": true, "current_version_id": true, "trashed_at": true,
+		"trash_parent": true, "trash_name": true,
+	},
+	"content_version": {"mime_type": true, "source_version_id": true},
+	"provenance":      {"original_mtime": true},
+	"extracted_text":  {"error": true, "text": true},
+}
+
+func decodeMetadataRecord(raw json.RawMessage, dst any) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		return err
 	}
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return errors.New("metadata record contains trailing JSON")
+	}
+	return nil
+}
+
+func requireMetadataFields(raw json.RawMessage, required []string, nullable map[string]bool) error {
+	fields, err := decodeMetadataFields(raw)
+	if err != nil {
+		return err
+	}
+	allowed := make(map[string]bool, len(required))
 	for _, field := range required {
-		if _, ok := fields[field]; !ok {
+		allowed[field] = true
+		value, ok := fields[field]
+		if !ok {
 			return fmt.Errorf("metadata record lacks required field %q", field)
 		}
+		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) && !nullable[field] {
+			return fmt.Errorf("metadata field %q cannot be null", field)
+		}
+	}
+	for field := range fields {
+		if !allowed[field] {
+			return fmt.Errorf("metadata record contains unknown or non-canonical field %q", field)
+		}
+	}
+	return nil
+}
+
+func decodeMetadataFields(raw json.RawMessage) (map[string]json.RawMessage, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	token, err := dec.Token()
+	if err != nil {
+		return nil, fmt.Errorf("decoding metadata fields: %w", err)
+	}
+	if delim, ok := token.(json.Delim); !ok || delim != '{' {
+		return nil, errors.New("metadata record must be a JSON object")
+	}
+	fields := make(map[string]json.RawMessage)
+	for dec.More() {
+		nameToken, err := dec.Token()
+		if err != nil {
+			return nil, fmt.Errorf("decoding metadata field name: %w", err)
+		}
+		name, ok := nameToken.(string)
+		if !ok {
+			return nil, errors.New("metadata field name is not a string")
+		}
+		if _, exists := fields[name]; exists {
+			return nil, fmt.Errorf("metadata record contains duplicate field %q", name)
+		}
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return nil, fmt.Errorf("decoding metadata field %q: %w", name, err)
+		}
+		fields[name] = value
+	}
+	if _, err := dec.Token(); err != nil {
+		return nil, fmt.Errorf("closing metadata object: %w", err)
+	}
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return nil, errors.New("metadata record contains trailing JSON")
+	}
+	return fields, nil
+}
+
+func validateMetadataJSON(raw json.RawMessage) error {
+	return jsontext.Validate(raw, "metadata JSON")
+}
+
+func validateUTF8Field(field, value string) error {
+	if !utf8.ValidString(value) {
+		return fmt.Errorf("invalid %s: not valid UTF-8", field)
 	}
 	return nil
 }
@@ -665,6 +772,9 @@ func validateNodeRecord(v metadataNode) error {
 	if v.Type != "node" || v.ID <= 0 || v.Revision <= 0 {
 		return errors.New("invalid node record")
 	}
+	if err := validateUTF8Field("node name", v.Name); err != nil {
+		return err
+	}
 	if err := validateMetadataTime("node created_at", v.CreatedAt); err != nil {
 		return err
 	}
@@ -677,7 +787,7 @@ func validateNodeRecord(v metadataNode) error {
 		}
 	}
 	if v.ParentID == nil {
-		if v.Name != "" || v.Kind != "dir" || v.BlobHash != nil || v.Size != nil || v.TrashedAt != nil ||
+		if v.Name != "" || v.Kind != "dir" || v.CurrentVersionID != nil || v.TrashedAt != nil ||
 			v.TrashParent != nil || v.TrashName != nil {
 			return errors.New("invalid root node record")
 		}
@@ -692,15 +802,15 @@ func validateNodeRecord(v metadataNode) error {
 	}
 	switch v.Kind {
 	case "dir":
-		if v.BlobHash != nil || v.Size != nil || v.MIMEType != nil {
+		if v.CurrentVersionID != nil {
 			return errors.New("directory record carries file content")
 		}
 	case "file":
-		if v.BlobHash == nil || v.Size == nil || *v.Size < 0 {
+		if v.CurrentVersionID == nil {
 			return errors.New("file record lacks valid content identity")
 		}
-		if _, err := packstore.ParseHash(*v.BlobHash); err != nil {
-			return fmt.Errorf("invalid node blob hash: %w", err)
+		if err := validateUUIDv4(*v.CurrentVersionID); err != nil {
+			return fmt.Errorf("invalid node current_version_id: %w", err)
 		}
 	default:
 		return fmt.Errorf("invalid node kind %q", v.Kind)
@@ -712,6 +822,9 @@ func validateNodeRecord(v metadataNode) error {
 		return errors.New("incomplete node trash coordinates")
 	}
 	if v.TrashName != nil {
+		if err := validateUTF8Field("node trash_name", *v.TrashName); err != nil {
+			return err
+		}
 		normalizedTrashName, err := NormalizeName(*v.TrashName)
 		if err != nil || normalizedTrashName != *v.TrashName {
 			return fmt.Errorf("invalid node trash_name %q", *v.TrashName)
@@ -720,14 +833,83 @@ func validateNodeRecord(v metadataNode) error {
 	return nil
 }
 
-func validateNodeVersionRecord(v metadataNodeVersion) error {
-	if v.Type != "node_version" || v.NodeID <= 0 || v.Size < 0 {
-		return errors.New("invalid node version record")
+func validateContentVersionRecord(v metadataContentVersion) error {
+	if v.Type != "content_version" || v.NodeID <= 0 || v.Size < 0 || v.NodeRevision <= 0 {
+		return errors.New("invalid content version record")
+	}
+	if err := validateUUIDv4(v.VersionID); err != nil {
+		return fmt.Errorf("invalid content version ID: %w", err)
+	}
+	if err := validateUUIDv4(v.IntroducedOperationID); err != nil {
+		return fmt.Errorf("invalid content version operation ID: %w", err)
 	}
 	if _, err := packstore.ParseHash(v.BlobHash); err != nil {
-		return fmt.Errorf("invalid node version blob hash: %w", err)
+		return fmt.Errorf("invalid content version blob hash: %w", err)
 	}
-	return validateMetadataTime("node version replaced_at", v.ReplacedAt)
+	if v.MIMEType != nil {
+		if err := validateUTF8Field("content version mime_type", *v.MIMEType); err != nil {
+			return err
+		}
+	}
+	switch v.TransitionKind {
+	case "content_create", "content_replace":
+		if v.SourceVersionID != nil {
+			return fmt.Errorf("%s content version has a source version", v.TransitionKind)
+		}
+	case "content_revert":
+		if v.SourceVersionID == nil {
+			return errors.New("content_revert version lacks a source version")
+		}
+		if err := validateUUIDv4(*v.SourceVersionID); err != nil {
+			return fmt.Errorf("invalid source content version ID: %w", err)
+		}
+	default:
+		return fmt.Errorf("invalid content transition kind %q", v.TransitionKind)
+	}
+	if (v.TransitionKind == "content_create") != (v.NodeRevision == 1) {
+		return errors.New("content_create is required exactly at node revision one")
+	}
+	return validateMetadataTime("content version recorded_at", v.RecordedAt)
+}
+
+func validateIngestRecord(v metadataIngest) error {
+	if v.Type != "ingest" || v.ID <= 0 || v.SourceKind == "" || v.SourceDesc == "" {
+		return errors.New("invalid ingest record")
+	}
+	if err := validateUTF8Field("ingest source_kind", v.SourceKind); err != nil {
+		return err
+	}
+	if err := validateUTF8Field("ingest source_desc", v.SourceDesc); err != nil {
+		return err
+	}
+	return validateMetadataTime("ingest started_at", v.StartedAt)
+}
+
+func validateProvenanceRecord(v metadataProvenance) error {
+	if v.Type != "provenance" || v.NodeID <= 0 || v.IngestID <= 0 || v.OriginalPath == "" {
+		return errors.New("invalid provenance record")
+	}
+	if err := validateUTF8Field("provenance original_path", v.OriginalPath); err != nil {
+		return err
+	}
+	if v.OriginalMTime != nil {
+		return validateProvenanceTime(*v.OriginalMTime)
+	}
+	return nil
+}
+
+func validateTagRecord(v metadataTag) error {
+	if v.Type != "tag" || v.ID <= 0 || v.Name == "" {
+		return errors.New("invalid tag record")
+	}
+	return validateUTF8Field("tag name", v.Name)
+}
+
+func validateNodeTagRecord(v metadataNodeTag) error {
+	if v.Type != "node_tag" || v.NodeID <= 0 || v.TagID <= 0 {
+		return errors.New("invalid node tag record")
+	}
+	return nil
 }
 
 func validateExtractedTextRecord(v metadataExtractedText) error {
@@ -739,6 +921,19 @@ func validateExtractedTextRecord(v metadataExtractedText) error {
 	}
 	if _, err := packstore.ParseHash(v.BlobHash); err != nil {
 		return fmt.Errorf("invalid extracted text blob hash: %w", err)
+	}
+	if err := validateUTF8Field("extracted text extractor", v.Extractor); err != nil {
+		return err
+	}
+	if v.Error != nil {
+		if err := validateUTF8Field("extracted text error", *v.Error); err != nil {
+			return err
+		}
+	}
+	if v.Text != nil {
+		if err := validateUTF8Field("extracted text value", *v.Text); err != nil {
+			return err
+		}
 	}
 	return validateMetadataTime("extracted text extracted_at", v.ExtractedAt)
 }
@@ -765,11 +960,41 @@ func validateProvenanceTime(value string) error {
 	return nil
 }
 
-func validateImportedMetadata(ctx context.Context, tx *sql.Tx) error {
+func validateMetadataState(ctx context.Context, tx metadataQuerier, nodeSequence int64) error {
+	if err := validateMetadataRelations(ctx, tx); err != nil {
+		return err
+	}
+	var maxNodeID int64
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM nodes`).Scan(&maxNodeID); err != nil {
+		return fmt.Errorf("reading maximum node ID: %w", err)
+	}
+	if nodeSequence < maxNodeID {
+		return fmt.Errorf("node ID high-water mark %d is below maximum node ID %d", nodeSequence, maxNodeID)
+	}
+	rows, err := tx.QueryContext(ctx, `PRAGMA foreign_key_check`)
+	if err != nil {
+		return fmt.Errorf("checking metadata foreign keys: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	if rows.Next() {
+		var table string
+		var rowID, parent any
+		var fk int64
+		if err := rows.Scan(&table, &rowID, &parent, &fk); err != nil {
+			return fmt.Errorf("reading metadata foreign-key failure: %w", err)
+		}
+		return fmt.Errorf("metadata violates foreign key %s[%v] constraint %d", table, rowID, fk)
+	}
+	return rows.Err()
+}
+
+func validateMetadataRelations(ctx context.Context, tx metadataQuerier) error {
 	checks := []struct {
 		name  string
 		query string
 	}{
+		{"tree does not have exactly one root", `
+			SELECT (SELECT COUNT(*) FROM nodes WHERE parent_id IS NULL) != 1`},
 		{"tree contains unreachable nodes", `
 			WITH RECURSIVE reachable(id) AS (
 			  SELECT id FROM nodes WHERE parent_id IS NULL
@@ -824,17 +1049,59 @@ func validateImportedMetadata(ctx context.Context, tx *sql.Tx) error {
 			  SELECT 1 FROM trash_subtree s JOIN nodes n ON n.id = s.id
 			  WHERE n.trashed_at IS NULL OR n.trashed_at != s.root_stamp
 			)`},
-		{"node size differs from blob authority", `
-			SELECT EXISTS(SELECT 1 FROM nodes n JOIN blobs b ON b.hash=n.blob_hash WHERE n.size != b.size)`},
-		{"node version size differs from blob authority", `
-			SELECT EXISTS(SELECT 1 FROM node_versions v JOIN blobs b ON b.hash=v.blob_hash WHERE v.size != b.size)`},
+		{"content version belongs to a directory", `
+			SELECT EXISTS(SELECT 1 FROM content_versions v JOIN nodes n ON n.id=v.node_id WHERE n.kind != 'file')`},
+		{"node current version does not belong to that node", `
+			SELECT EXISTS(
+			  SELECT 1 FROM nodes n LEFT JOIN content_versions v ON v.version_id=n.current_version_id
+			  WHERE n.kind='file' AND (v.version_id IS NULL OR v.node_id != n.id)
+			)`},
+		{"content version revision exceeds its node revision", `
+			SELECT EXISTS(SELECT 1 FROM content_versions v JOIN nodes n ON n.id=v.node_id
+			 WHERE v.node_revision > n.revision)`},
+		{"source content version belongs to another node", `
+			SELECT EXISTS(
+			  SELECT 1 FROM content_versions v JOIN content_versions source ON source.version_id=v.source_version_id
+			  WHERE source.node_id != v.node_id
+			)`},
+		{"source content version is not older than its revert", `
+			SELECT EXISTS(
+			  SELECT 1 FROM content_versions v JOIN content_versions source ON source.version_id=v.source_version_id
+			  WHERE source.node_revision >= v.node_revision
+			)`},
+		{"revert source content differs from new version", `
+			SELECT EXISTS(
+			  SELECT 1 FROM content_versions v JOIN content_versions source ON source.version_id=v.source_version_id
+			  WHERE v.transition_kind='content_revert'
+			    AND (source.blob_hash != v.blob_hash OR source.size != v.size
+			         OR source.mime_type IS NOT v.mime_type)
+			)`},
+		{"content version size differs from blob authority", `
+			SELECT EXISTS(SELECT 1 FROM content_versions v JOIN blobs b ON b.hash=v.blob_hash WHERE v.size != b.size)`},
+		{"content history lacks exactly one revision-one create", `
+			SELECT EXISTS(
+			  SELECT n.id FROM nodes n LEFT JOIN content_versions v
+			    ON v.node_id=n.id AND v.node_revision=1 AND v.transition_kind='content_create'
+			  WHERE n.kind='file' GROUP BY n.id HAVING COUNT(v.version_id) != 1
+			)`},
+		{"content_create time differs from node creation", `
+			SELECT EXISTS(
+			  SELECT 1 FROM content_versions v JOIN nodes n ON n.id=v.node_id
+			  WHERE v.transition_kind='content_create' AND v.recorded_at != n.created_at
+			)`},
+		{"node current version is not its newest content version", `
+			SELECT EXISTS(
+			  SELECT 1 FROM nodes n JOIN content_versions current ON current.version_id=n.current_version_id
+			  WHERE EXISTS(SELECT 1 FROM content_versions newer
+			    WHERE newer.node_id=n.id AND newer.node_revision > current.node_revision)
+			)`},
 		{"extracted text references missing blob authority", `
 			SELECT EXISTS(SELECT 1 FROM extracted_text e LEFT JOIN blobs b ON b.hash=e.blob_hash WHERE b.hash IS NULL)`},
 	}
 	for _, check := range checks {
 		var failed bool
 		if err := tx.QueryRowContext(ctx, check.query).Scan(&failed); err != nil {
-			return fmt.Errorf("validating imported metadata (%s): %w", check.name, err)
+			return fmt.Errorf("validating metadata (%s): %w", check.name, err)
 		}
 		if failed {
 			return errors.New(check.name)

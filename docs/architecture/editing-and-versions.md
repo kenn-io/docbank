@@ -1,175 +1,109 @@
 ---
 title: Editing & Versions
-description: The implemented version-storage foundation and the planned editing model over immutable content.
+description: Stable content-version identity, retrieval, retention, and the planned editing model over immutable content.
 ---
 
 # Editing and versions
 
-Docbank does not currently expose content replacement, version listing, or
-version retrieval. A file node points at the blob imported with it; users can
-rename, move, trash, and restore that node without changing its bytes.
+Every file enters Docbank with a stable content-version identity. The file node
+is document identity; the version identifies one immutable set of bytes. Users
+and agents can list versions, inspect one by UUID, and retrieve its bytes even
+after the node moves or is renamed.
 
-## Implemented foundation
+Content replacement and reversion are not implemented yet, so a newly created
+file currently has exactly one version. Establishing the identity and read
+contract at ingest means later editing can add history without redefining
+existing files or backups.
 
-The schema includes `node_versions(node_id, blob_hash, size, replaced_at)`, and
-GC treats rows in that table as reachability roots. This reserves a safe place
-for prior immutable contents, but no current command or API route writes or
-reads version rows. The reserved shape is not yet a public contract and will be
-evolved before the first writer so versions have stable identity and can
-participate in [audited history](audited-history.md).
+## Version contract
 
-The storage invariant already applies: a canonical blob is immutable. Any
-content-replacement feature must publish a new durable blob and change metadata
-transactionally; it cannot edit bytes in place without invalidating their hash.
+Initial ingest and remote upload create an immutable `content_create` record in
+the same SQLite transaction as the file node. The record carries:
 
-## Planned model and surfaces
+- a random, canonical UUIDv4 `version_id` that is never allocator-derived;
+- the stable node ID and node revision that introduced it;
+- SHA-256, byte length, and media type for the immutable blob;
+- a canonical UTC recording time; and
+- a separate random operation UUID and transition kind.
+
+The node's `current_version_id` points to a version belonging to that same node.
+SQLite enforces the cross-reference, one version per node revision, and one
+version per node/operation pair. Two files containing identical bytes share one
+blob but still receive distinct version and operation identities.
+
+Moves, renames, trash, and restore change node metadata and revisions without
+creating content versions. An idempotent re-import that skips an existing file
+also creates no version.
+
+## Read surfaces
+
+```bash
+docbank versions /taxes/2025/return.pdf
+docbank version <version-id> --json
+docbank version <version-id> --content > return.pdf
+```
+
+`versions` is newest-first and bounded by `--limit` and `--offset`; `--json`
+returns the complete page envelope including `total`. `version` addresses
+metadata or bytes by UUID, independent of the node's current path.
+
+The HTTP equivalents are:
+
+- `GET /api/v1/nodes/{id}/versions?limit=&offset=`;
+- `GET /api/v1/versions/{version_id}`; and
+- `GET /api/v1/versions/{version_id}/content`.
+
+Current-node and ID-addressed version streams both send
+`X-Docbank-Content-Version`, `X-Docbank-Blob-Hash`, and
+`X-Docbank-Blob-Size` before the body, then a computed `Content-Digest` trailer
+after successful EOF. A client must still hash privately staged bytes and
+compare the trailer before publishing them.
+
+## Retention and backup
+
+Every content-version row is a GC reachability root, whether or not it is the
+current head. Deleting a file's tree metadata through trash empty removes its
+versions; only then can unreferenced blobs become GC candidates. Repack may
+change physical placement but not version identity.
+
+Deterministic metadata JSONL includes every version and every node's current
+pointer. Backup capture, verification, and restore therefore preserve stable
+version IDs across loose or packed physical representations. Import rejects
+dangling current pointers, cross-node pointers, size disagreement, invalid UUIDs,
+and malformed JSON records transactionally.
+
+## Planned editing model
 
 !!! info "Planned — Phase 2b"
-    A document node will remain the stable identity while its content pointer
-    changes. Replacing content will:
+    A document node remains stable while its content pointer changes. Replacing
+    content will:
 
     1. hash and durably publish the new bytes;
-    2. create a stable content-version record for the new head, including its
-       blob hash, size, media type, and resulting node revision; and
+    2. create an immutable content-version record for the new head, including
+       its blob hash, size, media type, introducing operation, transition kind,
+       and resulting node revision; and
     3. point the node at that version, update metadata, and bump its revision in
-       the same SQLite transaction. The previous version record remains
-       unchanged.
+       the same SQLite transaction.
 
-    Initial ingest likewise creates a stable first version and makes it the
-    node's current version. Reversion creates another new head/version identity
-    that may reference an older blob. Every current or historical head is
-    therefore addressable before it is ever displaced.
+    Initial ingest already creates revision-one `content_create`. Replacement
+    will create `content_replace`. Reversion will create a new `content_revert` head that names
+    the older source version; it never rewinds or deletes later history. A
+    metadata transaction creates at most one version for a node, enforced by
+    unique `(node_id, node_revision)` and `(node_id,
+    introduced_operation_id)` constraints.
 
-    Version identities are opaque UUIDv4 values generated from the operating
-    system's cryptographic random source, stored in canonical lowercase form,
-    and protected by a unique constraint with collision retry. They are not
-    sequential and are never derived from node IDs, content hashes, or clocks.
-    Pruning an unaudited version therefore cannot make its identity available
-    for reuse; deterministic JSONL preserves each retained UUID verbatim and
-    rejects malformed or duplicate values during import.
+    Versions are whole-content snapshots, not diffs. Identical bytes still
+    deduplicate. A crash before the metadata transaction commits leaves the old
+    head intact with at most an orphan blob for GC.
 
-    A metadata transaction may create at most one version for a node. Every
-    native version records the immutable operation ID that introduced it, with a
-    partial unique `(node_id, introduced_operation_id)` constraint applying only
-    when that operation ID is present. Legacy absent values do not collide. This
-    binds one new head to one create, replace, or revert intent even when audited
-    event fan-out repeats that transition across overlapping scopes.
+    Planned write surfaces are `put`, `revert`, and `edit` plus
+    `PUT /nodes/{id}/content`. ID-addressed replacement requires `If-Match` so
+    concurrent edits fail with 412 rather than losing an update.
 
-    Existing vaults require a one-time bootstrap before the daemon advertises
-    editing or audit support. In one daemon-exclusive metadata transaction,
-    Docbank creates a stable initial version for every file that still points
-    directly at a blob, assigns the node's `current_version_id`, and creates the
-    stable vault ID used by future audit hashes. It also migrates every retained
-    legacy `node_versions` row into a historical content-version record. Before
-    conversion it requires the referenced node to be a file, the referenced
-    blob to exist, the size to equal blob authority, and `replaced_at` to be a
-    canonical UTC timestamp. Failure of any check aborts the complete bootstrap.
-
-    Legacy version rows have no identity, media type, or introducing node
-    revision. Bootstrap sorts them by `(node_id, replaced_at, blob_hash, size)`,
-    collapses only exact duplicate tuples, and records that collapsed count in
-    its report. It assigns a fresh, non-reusable UUIDv4 to every remaining row,
-    preserves `replaced_at` as `recorded_at`, and represents the unavailable
-    media type and node revision as absent. Each receives the frozen
-    `version_origin` value `legacy_v1`. Distinct timestamps remain distinct
-    versions even when they reference the same blob, and a historical row equal
-    to the node's current content remains separate from the newly created
-    current version. The current version is explicitly a `legacy_v1` baseline:
-    it preserves the current hash, size, media type, and node revision and uses
-    the observed bootstrap time, but does not invent an original
-    content-introduction time that the old schema never recorded. Every version
-    created natively by v2 carries `version_origin: native` and must record its
-    introducing node revision, operation ID, and immutable transition kind.
-    Revert versions also name their selected source version; create and replace
-    versions require that source absent. Migrated `legacy_v1` records require
-    operation ID, transition kind, and source absent because v1 never recorded
-    them. Import rejects invalid field presence or any unknown origin or
-    transition token.
-
-    Bootstrap also assigns canonical, non-reusable UUIDv4 identities to every
-    retained legacy tag and ingest record; any existing integer IDs remain
-    internal implementation keys rather than portable identities. Every v2
-    opaque filesystem field—node and trash-origin names, provenance paths, and
-    ingest source descriptions—uses one conversion rule. Direct-store bootstrap
-    reads raw SQLite bytes without UTF-8 coercion; v1 JSONL accepts only valid
-    Unicode strings and stores their exact UTF-8 bytes. Invalid JSON strings
-    abort import. Bytes already replaced by a legacy exporter cannot be
-    reconstructed, so the report inventories conversions per field and flags
-    imported U+FFFD values as potentially legacy-lossy without changing them.
-    Migration fixtures cover direct invalid bytes and JSONL compatibility for
-    every opaque field.
-
-    Bootstrap canonicalizes legacy provenance and deterministically collapses
-    identical duplicate facts before deriving their v2 identities; distinct
-    facts remain intact and the bootstrap report records the collapsed count. A
-    failure rolls the whole bootstrap back, and no editing or audit endpoint is
-    available until every file has a current version identity and the vault ID
-    plus every portable tag and ingest identity is durable. Deterministic JSONL
-    export/import preserves those assigned IDs after the cutover.
-
-    A v1 JSONL import first validates and materializes its records into private
-    v1 staging, then runs this exact bootstrap before the restored store can be
-    published or opened. It does not translate rows piecemeal while decoding or
-    expose an intermediate store. Compatibility fixtures cover both direct v1
-    databases and v1 JSONL imports, including duplicate and same-blob historical
-    rows, absent legacy fields, invalid references, retained GC roots, and the
-    resulting v2 export/import round trip.
-
-    Bootstrap switches the vault's portable authority to
-    `docbank-metadata-jsonl-v2`, even when it has no audit scope. This
-    **zero-scope v2** form carries the stable vault ID, node-ID allocator
-    high-water mark, content-version records, node `current_version_id`
-    references, and stable tag, ingest, and provenance identities without audit
-    genesis, lineage, scopes, or chains. Format v1 is
-    valid only for a pre-bootstrap vault because it cannot represent those
-    identities. Enabling the first audit scope later creates audit genesis from
-    the existing v2 projection; import and restore never synthesize audit
-    authority for a zero-scope stream.
-
-    Bootstrap also permanently raises the live-store feature level through a
-    crash-safe, daemon-exclusive cutover. Before beginning or committing any v2
-    metadata transaction, Docbank publishes a non-ignorable
-    `bootstrap_pending` store/layout generation and syncs both it and its parent
-    directory. Every supported pre-bootstrap binary fails store open on that
-    generation. Only then may the new daemon create portable identities in one
-    SQLite transaction. After commit it reopens a pinned read snapshot, verifies
-    every v2 bootstrap invariant, atomically publishes `v2_ready`, and syncs the
-    generation again before exposing editing, export, backup, or restore.
-
-    A crash before the pending generation is durable leaves no v2 authority. A
-    crash after it is durable leaves legacy access blocked. On the next open, a
-    v2-aware binary takes the exclusive vault lock and examines the database:
-    a rolled-back pre-bootstrap database resumes the idempotent bootstrap from
-    the beginning, while a committed complete v2 database is fully reverified
-    before the fence advances to `v2_ready`. An incomplete or contradictory
-    state is a hard recovery error and never serves data. No path clears the
-    pending fence merely to regain legacy access.
-
-    The fenced layout is outside legacy overwrite-restore cleanup and
-    publication paths; restoring a v1 snapshot may target a fresh directory but
-    cannot replace a pending or ready v2 vault. Release compatibility tests
-    exercise both fence states and every crash boundary, then attempt store open
-    and overwrite restore with each supported pre-bootstrap binary and require
-    refusal with no file or metadata change. Enabling full audit later advances
-    the fence again to the stricter audit-aware level described in
-    [Audited History](audited-history.md).
-
-    Versions will be whole-content snapshots, not diffs. Identical bytes will
-    still deduplicate, and a crash before the metadata transaction commits will
-    leave the old head intact with at most an orphan blob for GC.
-
-    Planned CLI surfaces are `versions`, `put`, `revert`, and `edit`. Planned
-    HTTP surfaces are `PUT /nodes/{id}/content`,
-    `GET /nodes/{id}/versions`, and version-content retrieval. ID-addressed
-    replacement will require `If-Match` so concurrent edits fail with 412
-    rather than losing an update.
-
-    Reverting will create a new head from old content rather than erase later
-    history. Version pruning will be explicit and will release blob
-    reachability only when its metadata row is removed. No automatic retention
-    policy is planned as a default. A version protected by a
-    [full-audit scope](audited-history.md) is never eligible for ordinary
-    pruning, regardless of any bounded retention policy on other documents.
+    Version pruning is explicit and releases blob reachability only when its
+    metadata row is removed. No automatic retention policy is the default. A
+    version protected by a [full-audit scope](audited-history.md) is never
+    eligible for ordinary pruning.
 
 ```mermaid
 flowchart LR

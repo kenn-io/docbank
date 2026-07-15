@@ -36,11 +36,11 @@ func (s *Store) SearchPage(ctx context.Context, query string, limit int) ([]Sear
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT `+nodeCols+`
-		FROM nodes
-		WHERE id IN (SELECT rowid FROM nodes_fts WHERE nodes_fts MATCH ?)
-		  AND trashed_at IS NULL
-		ORDER BY (SELECT rank FROM nodes_fts WHERE rowid = nodes.id AND nodes_fts MATCH ?),
-		         name, id
+		FROM `+nodeFrom+`
+		WHERE n.id IN (SELECT rowid FROM nodes_fts WHERE nodes_fts MATCH ?)
+		  AND n.trashed_at IS NULL
+		ORDER BY (SELECT rank FROM nodes_fts WHERE rowid = n.id AND nodes_fts MATCH ?),
+		         n.name, n.id
 		LIMIT ?`, fq, fq, limit+1)
 	if err != nil {
 		return nil, false, fmt.Errorf("searching %q: %w", query, err)

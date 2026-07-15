@@ -1,9 +1,11 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -11,6 +13,7 @@ import (
 	"time"
 
 	"go.kenn.io/docbank/internal/daemonauth"
+	"go.kenn.io/docbank/internal/jsontext"
 )
 
 const requestTimeout = 60 * time.Second
@@ -87,6 +90,44 @@ func loopbackMiddleware(next http.Handler) http.Handler {
 
 func isServerPathIngestRoute(path string) bool {
 	return path == "/api/v1/ingest" || path == "/api/v1/ingest/stream" || path == "/api/v1/ingest/preflight"
+}
+
+// jsonBodyTextMiddleware runs before Huma's JSON decoder, which follows
+// encoding/json's lossy behavior and replaces invalid UTF-8 or unpaired
+// surrogate escapes with U+FFFD. Names and paths must reach route validation
+// byte-for-byte or a mutation could target a different, replacement-character
+// node. Every mutating request is text-validated regardless of Content-Type:
+// Huma accepts an omitted Content-Type for body-bound operations, and malformed
+// headers must not bypass the boundary. The upload route is the daemon's sole
+// opaque-body mutation and validates its multipart envelope separately.
+func jsonBodyTextMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body == nil || !mutationMethod(r.Method) || r.URL.Path == "/api/v1/uploads" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		_ = r.Body.Close()
+		if err != nil {
+			writeError(w, NewError(http.StatusBadRequest, "validation", "could not read request body"))
+			return
+		}
+		if err := jsontext.Validate(body, "request body"); err != nil {
+			writeError(w, NewError(http.StatusBadRequest, "validation", err.Error()))
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		next.ServeHTTP(w, r)
+	})
+}
+
+func mutationMethod(method string) bool {
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	default:
+		return false
+	}
 }
 
 func isLoopbackRemote(remoteAddr string) bool {
