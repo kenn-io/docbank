@@ -10,7 +10,7 @@ All commands operate on the vault at `~/.docbank` (override with
 stderr and produce a non-zero exit code. Virtual paths are absolute,
 `/`-separated, and case-sensitive.
 
-Every data command below (`add`, `ls`, `tree`, `cat`, `put`, `versions`, `version`, `mv`, `rm`,
+Every data command below (`add`, `ls`, `tree`, `cat`, `put`, `versions`, `version`, `revert`, `mv`, `rm`,
 `restore`, `search`, `trash`, `gc`, `verify`, `storage`, `backup`, `jobs`) talks to the `docbank`
 daemon over its HTTP API rather than opening the vault itself; if none
 is running, the command auto-starts one in the background. `docbank
@@ -155,7 +155,8 @@ Human output marks the node's current version. `--json` emits
 complete page from a prefix.
 
 Every newly imported file has one revision-one `content_create` version. Each
-successful `put` adds a `content_replace` row. Reversion is not implemented yet.
+successful `put` adds a `content_replace` row and each `revert` adds a
+`content_revert` row naming its immutable source.
 
 ## docbank version
 
@@ -166,12 +167,31 @@ docbank version <version-id> --content
 
 Inspects one immutable version by stable UUID, independent of the file's current
 path. The human view prints node and node-revision identity, recording time,
-transition kind, blob hash, size, and media type; `--json` emits the typed record.
+transition kind, blob hash, size, media type, and any reversion source;
+`--json` emits the typed record.
 `--content` writes that exact version's bytes to stdout and cannot be combined
 with `--json`. It exits successfully only after the response version ID, byte
 count, SHA-256 identity, and terminal `Content-Digest` all agree. Output may
 already have reached stdout when verification fails, so scripts publishing a
 file should write privately and rename it only after a successful exit.
+
+## docbank revert
+
+```text
+docbank revert <vault-path> <version-id> [--json]
+```
+
+Makes a prior version current by creating a new immutable `content_revert`
+history row. It never deletes or rewinds the current or intervening versions,
+and it does not read or copy the source blob. The selected source must belong to
+the target file and must not already be its current version.
+
+The command inspects the target's stable node ID and revision, then sends both
+with the source version ID. A concurrent move, trash, replacement, or reversion
+fails with `stale_revision`. Human output identifies the source, new version,
+resulting revision, size, and hash; `--json` returns the node, new version, and
+complete source-version receipt. Repeating the same historical choice later is
+valid and records another explicit operation.
 
 ## docbank mv
 
@@ -478,8 +498,8 @@ background-spawned daemons.
 
 !!! info "Planned — later phases"
     The following are designed but not yet implemented; they will appear
-    here with exact semantics when they ship. `docbank edit` and
-    `revert` (Phase 2b, [Editing & Versions](architecture/editing-and-versions.md));
+    here with exact semantics when they ship. `docbank edit`
+    (Phase 2b, [Editing & Versions](architecture/editing-and-versions.md));
     `docbank audit enable`, `audit status`, `audit history`, and `audit verify`
     (Phase 2b, [Audited History](architecture/audited-history.md));
     `docbank extract` (Phase 2b, [HTTP API](architecture/http-api.md));

@@ -22,6 +22,12 @@ var (
 	// ErrStaleRevision means a mutation's expected revision no longer
 	// matches the node (lost-update guard for If-Match).
 	ErrStaleRevision = errors.New("revision mismatch")
+	// ErrVersionNodeMismatch means a requested source version belongs to a
+	// different stable file node.
+	ErrVersionNodeMismatch = errors.New("content version belongs to another node")
+	// ErrVersionAlreadyCurrent means a revert selected the node's current head,
+	// which is not a historical transition.
+	ErrVersionAlreadyCurrent = errors.New("content version is already current")
 )
 
 // UnconditionalRev is the only ifRev value that skips the revision

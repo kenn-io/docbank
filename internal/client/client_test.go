@@ -557,6 +557,91 @@ func TestContentReplacementRejectsUnprovenReceipt(t *testing.T) {
 	}
 }
 
+func TestContentReversionRoundTrip(t *testing.T) {
+	c, s := newClient(t, serverKey)
+	initial := "initial content"
+	initialSum := sha256.Sum256([]byte(initial))
+	created, err := c.Upload(t.Context(), s.RootID(), "versioned.txt", "text/plain",
+		hex.EncodeToString(initialSum[:]), int64(len(initial)), strings.NewReader(initial))
+	require.NoError(t, err)
+	replacement := "replacement"
+	replacementSum := sha256.Sum256([]byte(replacement))
+	replaced, err := c.ReplaceContent(t.Context(), created.Node.ID, created.Node.Revision,
+		"text/markdown", hex.EncodeToString(replacementSum[:]), int64(len(replacement)),
+		strings.NewReader(replacement))
+	require.NoError(t, err)
+
+	receipt, err := c.RevertContent(t.Context(), created.Node.ID, replaced.Node.Revision,
+		created.Node.CurrentVersionID)
+	require.NoError(t, err)
+	assert.Equal(t, created.Node.CurrentVersionID, receipt.SourceVersion.ID)
+	assert.Equal(t, "content_revert", receipt.Version.TransitionKind)
+	assert.Equal(t, created.Node.BlobHash, receipt.Node.BlobHash)
+	assert.Equal(t, "text/plain", receipt.Node.MimeType)
+
+	_, err = c.RevertContent(t.Context(), created.Node.ID, replaced.Node.Revision,
+		created.Node.CurrentVersionID)
+	require.ErrorIs(t, err, store.ErrStaleRevision)
+	_, err = c.RevertContent(t.Context(), created.Node.ID, receipt.Node.Revision, receipt.Version.ID)
+	require.ErrorIs(t, err, store.ErrVersionAlreadyCurrent)
+	other := "other content"
+	otherSum := sha256.Sum256([]byte(other))
+	otherNode, err := c.Upload(t.Context(), s.RootID(), "other.txt", "text/plain",
+		hex.EncodeToString(otherSum[:]), int64(len(other)), strings.NewReader(other))
+	require.NoError(t, err)
+	_, err = c.RevertContent(t.Context(), created.Node.ID, receipt.Node.Revision,
+		otherNode.Node.CurrentVersionID)
+	require.ErrorIs(t, err, store.ErrVersionNodeMismatch)
+}
+
+func TestContentReversionRejectsUnprovenReceipt(t *testing.T) {
+	const (
+		sourceID = "11111111-1111-4111-8111-111111111111"
+		newID    = "22222222-2222-4222-8222-222222222222"
+	)
+	hash := strings.Repeat("a", 64)
+	base := api.ContentReversionReceipt{
+		Node: api.Node{ID: 7, Revision: 4, CurrentVersionID: newID,
+			BlobHash: hash, Size: 12, MimeType: "text/plain"},
+		Version: api.ContentVersion{ID: newID, NodeID: 7, NodeRevision: 4,
+			BlobHash: hash, Size: 12, MimeType: "text/plain", TransitionKind: "content_revert",
+			SourceVersionID: new(string)},
+		SourceVersion: api.ContentVersion{ID: sourceID, NodeID: 7, NodeRevision: 1,
+			BlobHash: hash, Size: 12, MimeType: "text/plain", TransitionKind: "content_create"},
+	}
+	*base.Version.SourceVersionID = sourceID
+	tests := map[string]func(*api.ContentReversionReceipt){
+		"node":       func(r *api.ContentReversionReceipt) { r.Node.ID++ },
+		"revision":   func(r *api.ContentReversionReceipt) { r.Version.NodeRevision++ },
+		"new head":   func(r *api.ContentReversionReceipt) { r.Node.CurrentVersionID = sourceID },
+		"source":     func(r *api.ContentReversionReceipt) { r.SourceVersion.ID = newID },
+		"transition": func(r *api.ContentReversionReceipt) { r.Version.TransitionKind = "content_replace" },
+		"binding": func(r *api.ContentReversionReceipt) {
+			other := newID
+			r.Version.SourceVersionID = &other
+		},
+		"authority": func(r *api.ContentReversionReceipt) { r.Version.Size++ },
+		"etag":      func(_ *api.ContentReversionReceipt) {},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			receipt := base
+			source := sourceID
+			receipt.Version.SourceVersionID = &source
+			mutate(&receipt)
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if name != "etag" {
+					w.Header().Set("ETag", `"4"`)
+				}
+				_ = json.NewEncoder(w).Encode(receipt)
+			}))
+			t.Cleanup(ts.Close)
+			_, err := client.New(ts.URL, "key").RevertContent(t.Context(), 7, 3, sourceID)
+			require.Error(t, err)
+		})
+	}
+}
+
 func TestStorageRepackRoundTrip(t *testing.T) {
 	c, _ := newClient(t, serverKey)
 	for name, content := range map[string]string{

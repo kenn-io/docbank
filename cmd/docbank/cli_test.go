@@ -183,6 +183,26 @@ func TestPutReplacesContentAndRetainsHistory(t *testing.T) {
 	assert.Equal(t, "content_replace", receipt.Version.TransitionKind)
 	assert.Equal(t, int64(3), receipt.Node.Revision)
 	assert.Equal(t, "application/octet-stream", receipt.Node.MimeType)
+
+	out, err = runCLI(t, "revert", "/inbox/document.txt", initialVersion)
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "reverted /inbox/document.txt to source version "+initialVersion)
+	out, err = runCLI(t, "cat", "/inbox/document.txt")
+	require.NoError(t, err)
+	assert.Equal(t, "initial content", out)
+
+	// Selecting the same historical source again records another deliberate
+	// revert rather than mutating or reusing the current history row.
+	out, err = runCLI(t, "revert", "/inbox/document.txt", initialVersion, "--json")
+	require.NoError(t, err, out)
+	var reverted api.ContentReversionReceipt
+	require.NoError(t, json.Unmarshal([]byte(out), &reverted))
+	assert.Equal(t, initialVersion, reverted.SourceVersion.ID)
+	assert.Equal(t, "content_revert", reverted.Version.TransitionKind)
+	assert.Equal(t, int64(5), reverted.Node.Revision)
+	out, err = runCLI(t, "version", reverted.Version.ID)
+	require.NoError(t, err)
+	assert.Contains(t, out, "Source version:  "+initialVersion)
 }
 
 func TestJobsShowsDaemonStatus(t *testing.T) {

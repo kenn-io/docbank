@@ -83,9 +83,9 @@ metadata, durability rules, and physical storage primitives from
 
 Every imported file starts with a stable content-version UUID. Version listing,
 metadata lookup, and byte retrieval are implemented independently of the node's
-mutable path. Content replacement adds an immutable version and moves the
-node's current pointer under a revision precondition rather than rewriting a
-blob. Reversion remains planned. See
+mutable path. Content replacement and reversion add immutable versions and move
+the node's current pointer under a revision precondition rather than rewriting
+a blob. See
 [Editing & Versions](editing-and-versions.md).
 
 !!! info "Planned — full audit"
@@ -137,8 +137,8 @@ blob. Reversion remains planned. See
   separate decisions.
 
 !!! info "Planned — later clients and features"
-    Reversion, interactive editing, full audit, tags, watched inboxes, text
-    extraction, the kit-ui web portal, and the focused TUI remain planned.
+    Interactive editing, full audit, tags, watched inboxes, text extraction,
+    the kit-ui web portal, and the focused TUI remain planned.
     Later clients must not bypass the implemented backup and restore API.
     Backup initialization, creation, listing, verification, and restore use the
     daemon boundary above. Later features must not introduce a privileged path

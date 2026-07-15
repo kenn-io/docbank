@@ -9,7 +9,7 @@ description: The agent-first HTTP API — filesystem-shaped endpoints, revision 
     The endpoints below marked **Implemented** exist in `docbank daemon run`
     today and back the CLI's data commands — the CLI is an HTTP client
     of exactly this surface, with no other path into the vault. Rows
-    under the "Planned" admonitions further down (reversion,
+    under the "Planned" admonitions further down (interactive editing,
     tags, batch move) are designed but not built; see
     [Roadmap](../roadmap.md).
 
@@ -35,6 +35,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `GET /nodes/{id}/children` | list a directory, paginated (`limit`/`offset`) | Implemented |
 | `GET /nodes/{id}/content` | stream document bytes with catalog identity and a computed digest trailer | Implemented |
 | `PUT /nodes/{id}/content` | replace raw content under revision, size, and digest preconditions — see [addendum](#addendum-put-nodesidcontent) | Implemented |
+| `POST /nodes/{id}/revert` | create a new head from a prior version of the same file | Implemented |
 | `GET /nodes/{id}/versions` | list immutable content versions newest-first, paginated (`limit`/`offset`) | Implemented |
 | `GET /versions/{version_id}` · `GET /versions/{version_id}/content` | inspect or stream one immutable version by stable UUID | Implemented |
 | `POST /nodes/{id}/verify` | re-hash one file, bound to an inspected node revision | Implemented |
@@ -59,7 +60,7 @@ daemon stop`; it isn't auth-exempt, so it requires both the API key and
 its own shutdown token.
 
 !!! info "Planned"
-    Not yet implemented: revert, interactive edit, and version pruning
+    Not yet implemented: interactive edit and version pruning
     ([Editing & Versions](editing-and-versions.md));
     tags (`GET /tags` + CRUD, tag filters on search), whose IDs are opaque
     non-reusable UUIDv4 values independent of mutable names; and
@@ -129,6 +130,7 @@ and maintenance are explicit exceptions:
 |----------|--------------|
 | `PATCH /nodes/{id}` | required — target node's revision |
 | `PUT /nodes/{id}/content` | required — prevents a replacement from overwriting a head the caller did not inspect |
+| `POST /nodes/{id}/revert` | required — binds the selected source to the current head the caller inspected |
 | `POST /nodes/{id}/trash` | required — target node's revision |
 | `POST /nodes/{id}/restore` | required — target node's revision |
 | `POST /nodes/{id}/verify` | required — binds the evidence to the exact node state the caller inspected |
@@ -305,6 +307,25 @@ authority-free until GC. Because the body may be binary, this route is an
 explicit exception to the raw JSON text validator; its byte count and digest
 are the lossless boundary instead. Cancellation propagates through physical
 writing and prevents the metadata transaction.
+
+## Addendum: `POST /nodes/{id}/revert`
+
+Reversion accepts JSON `{"source_version_id":"<uuid>"}` and requires the
+target node's revision in `If-Match`. The source must be an immutable version of
+that same node and cannot be its current version. A successful transaction
+creates a distinct `content_revert` row, copies the source's blob hash, size,
+and media type into it, records `source_version_id`, advances the current
+pointer, and bumps the node revision.
+
+This operation is metadata-only: it neither streams nor copies the source blob,
+whether loose or packed. Every existing version remains a reachability root.
+The receipt contains `node`, the new `version`, and `source_version`, while the
+ETag carries the resulting revision. Clients cross-check all four authorities;
+HTTP 200 alone is not sufficient evidence.
+
+A stale target returns `412 stale_revision`. A source from another node returns
+`422 version_node_mismatch`, selecting the current head returns
+`422 version_already_current`, and an unknown source returns `404 not_found`.
 
 !!! info "Planned"
     Ingest provenance today is filesystem-shaped: each import records

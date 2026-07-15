@@ -1,6 +1,6 @@
 ---
 title: Editing & Versions
-description: Stable content-version identity, retrieval, retention, and the planned editing model over immutable content.
+description: Stable content-version identity, retrieval, replacement, reversion, and retention over immutable content.
 ---
 
 # Editing and versions
@@ -10,10 +10,9 @@ is document identity; the version identifies one immutable set of bytes. Users
 and agents can list versions, inspect one by UUID, and retrieve its bytes even
 after the node moves or is renamed.
 
-Content replacement is implemented by `docbank put` and the raw HTTP content
-write. Reversion and interactive editing are planned. Establishing one identity
-and read contract across ingest and replacement lets those later operations add
-history without redefining existing files or backups.
+Content replacement is implemented by `docbank put`, and reversion by
+`docbank revert`. Both add immutable history instead of rewriting an existing
+version. Interactive editing remains planned on top of the same write contract.
 
 ## Version contract
 
@@ -102,18 +101,37 @@ head remains readable throughout. Even a replacement with identical bytes
 creates a distinct version and operation while content storage deduplicates the
 shared blob.
 
-## Planned editing model
+## Reverting content
+
+```bash
+docbank revert /taxes/2025/return.pdf <prior-version-id>
+```
+
+Reversion is a metadata-only content transition. The selected version must
+belong to the target file and must not already be its current head. Under the
+target's inspected revision, one transaction creates a new `content_revert`
+version with the source's exact blob hash, size, and media type; records the
+source version ID; advances `current_version_id`; and bumps the node revision.
+No loose or packed bytes are read, copied, or rewritten.
+
+The source and every intervening version remain immutable and addressable. A
+later repeat of the same historical choice creates another explicit revert
+operation rather than reusing the earlier history row. Because no content is
+destroyed, reversion needs no destructive confirmation. A stale node fails with
+`412`; a source from another node and an already-current source fail with
+structured `422` errors.
+
+`POST /api/v1/nodes/{id}/revert` accepts `source_version_id` with `If-Match`.
+Its receipt returns the resulting node, the new reversion row, the complete
+source version, and the resulting ETag. Clients accept success only when all
+node, revision, source, and content-authority fields agree.
+
+## Planned editing and retention
 
 !!! info "Planned — Phase 2b"
-    Reversion will create a new `content_revert` head that names
-    the older source version; it never rewinds or deletes later history. A
-    metadata transaction creates at most one version for a node, enforced by
-    unique `(node_id, node_revision)` and `(node_id,
-    introduced_operation_id)` constraints.
-
-    Planned write surfaces are `revert` and interactive `edit`; both build on
-    the implemented immutable replacement transaction and require optimistic
-    concurrency rather than overwriting another actor's head.
+    Interactive `edit` will use private staging and the implemented replacement
+    transaction. It must require optimistic concurrency rather than overwriting
+    another actor's head.
 
     Version pruning is explicit and releases blob reachability only when its
     metadata row is removed. No automatic retention policy is the default. A

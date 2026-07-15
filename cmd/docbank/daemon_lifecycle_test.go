@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/home"
 )
@@ -155,7 +157,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	recs, err := client.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
-	require.Equal(t, "13", recs[0].Metadata["protocol_version"])
+	require.Equal(t, "14", recs[0].Metadata["protocol_version"])
 	recs[0].Metadata["protocol_version"] = "9"
 	_, err = client.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
@@ -176,7 +178,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	recs, err = client.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
-	require.Equal(t, "13", recs[0].Metadata["protocol_version"])
+	require.Equal(t, "14", recs[0].Metadata["protocol_version"])
 	recs[0].Metadata["protocol_version"] = "7"
 	_, err = client.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
@@ -255,6 +257,27 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	putPID := strconv.Itoa(recs[0].PID)
 	assert.NotEqual(t, metadataPID, putPID)
 
+	// Protocol 13 predates content reversion. Replace it before the CLI sends
+	// the mutation so an older same-version daemon cannot return 404 after the
+	// operator has selected a historical source.
+	out, err = run(oldBin, "versions", "/inbox/preflight.txt", "--json")
+	require.NoError(t, err, out)
+	var versionPage api.ContentVersionPage
+	require.NoError(t, json.Unmarshal([]byte(out), &versionPage))
+	require.Len(t, versionPage.Items, 2)
+	sourceVersionID := versionPage.Items[1].ID
+	recs[0].Metadata["protocol_version"] = "13"
+	_, err = client.RuntimeStore(dir).Write(recs[0])
+	require.NoError(t, err)
+	out, err = run(oldBin, "revert", "/inbox/preflight.txt", sourceVersionID, "--json")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, `"transition_kind":"content_revert"`)
+	recs, err = client.RuntimeStore(dir).List()
+	require.NoError(t, err)
+	require.Len(t, recs, 1)
+	revertPID := strconv.Itoa(recs[0].PID)
+	assert.NotEqual(t, putPID, revertPID)
+
 	// Initialize the repository before making the runtime record stale: the
 	// following backup create must replace that daemon before it calls the new
 	// progress-stream endpoint.
@@ -269,7 +292,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	recs, err = client.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
-	require.Equal(t, "13", recs[0].Metadata["protocol_version"])
+	require.Equal(t, "14", recs[0].Metadata["protocol_version"])
 	recs[0].Metadata["protocol_version"] = "4"
 	_, err = client.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
@@ -282,7 +305,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
 	protocolPID := strconv.Itoa(recs[0].PID)
-	assert.NotEqual(t, putPID, protocolPID)
+	assert.NotEqual(t, revertPID, protocolPID)
 
 	// A mismatched-version start stops the stale daemon and starts its own.
 	out, err = run(newBin, "daemon", "start")

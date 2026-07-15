@@ -112,6 +112,9 @@ var versionCmd = &cobra.Command{
 		if version.MimeType != "" {
 			_, _ = fmt.Fprintf(w, "Media type:\t%s\n", version.MimeType)
 		}
+		if version.SourceVersionID != nil {
+			_, _ = fmt.Fprintf(w, "Source version:\t%s\n", *version.SourceVersionID)
+		}
 		return w.Flush()
 	},
 }

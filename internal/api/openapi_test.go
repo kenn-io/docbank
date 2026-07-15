@@ -66,4 +66,10 @@ func TestOpenAPIDeclaresDigestCheckedUpload(t *testing.T) {
 	require.NotNil(t, replace.RequestBody)
 	assert.Contains(t, replace.RequestBody.Content, "*/*")
 	assert.NotNil(t, replace.Responses["200"])
+
+	revert := doc.Paths["/api/v1/nodes/{id}/revert"].Post
+	require.NotNil(t, revert)
+	require.NotNil(t, revert.RequestBody)
+	assert.Contains(t, revert.RequestBody.Content, "application/json")
+	assert.NotNil(t, revert.Responses["200"])
 }

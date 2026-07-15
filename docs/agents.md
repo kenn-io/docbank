@@ -58,7 +58,8 @@ non-goals.
    after inspecting it. Re-resolve paths when the intent is path-specific.
 3. **Content identity is immutable.** A file node names a stable current-version
    UUID plus SHA-256 and size. List or retrieve versions by stable ID; `put`
-   adds a verified immutable head rather than modifying stored bytes in place.
+   adds verified bytes and `revert` adds a new head from a prior version rather
+   than modifying stored history in place.
 4. **A stream is not verified until it finishes.** Read through successful EOF
    and require the digest evidence before publishing downloaded bytes.
 5. **Destruction has stages.** Trash is recoverable; trash empty removes tree
@@ -93,6 +94,9 @@ non-goals.
 - **Replace an inspected file:** retain its node ID and revision, send raw bytes
   with declared SHA-256 and size, and require the returned node, new version,
   computed identity, and ETag to agree before accepting success.
+- **Adopt a prior version:** retain the target node ID and revision, select a
+  version belonging to it, and require the reversion receipt's node, source,
+  new head, content authority, and ETag to agree. No byte transfer is involved.
 - **Reorganize after inspection:** read by ID, retain the revision, and mutate
   with `If-Match`. On `stale_revision`, re-read and reconsider rather than
   blindly replaying the action.

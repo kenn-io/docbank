@@ -69,6 +69,8 @@ var storeErrCodes = []struct {
 	{store.ErrInvalidName, http.StatusUnprocessableEntity, "invalid_name"},
 	{store.ErrNotTrashed, http.StatusUnprocessableEntity, "not_trashed"},
 	{store.ErrIsRoot, http.StatusUnprocessableEntity, "is_root"},
+	{store.ErrVersionNodeMismatch, http.StatusUnprocessableEntity, "version_node_mismatch"},
+	{store.ErrVersionAlreadyCurrent, http.StatusUnprocessableEntity, "version_already_current"},
 }
 
 // FromStoreError maps the store's typed errors onto the wire envelope; an

@@ -266,6 +266,26 @@ ETag to encode that resulting revision. The old version remains addressable.
 A `412` means the decision is stale—re-read and decide again rather than
 blindly retrying with a fresh revision.
 
+Reversion applies the same concurrency rule without uploading bytes. Select a
+prior version belonging to the inspected node and send:
+
+```bash
+curl --fail-with-body -X POST \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  -H 'If-Match: "8"' \
+  -H 'Content-Type: application/json' \
+  --data '{"source_version_id":"11111111-1111-4111-8111-111111111111"}' \
+  "$DOCBANK_URL/api/v1/nodes/42/revert"
+```
+
+Require `source_version.id` to equal the requested ID and all three records to
+name node 42. Require the new version to be `content_revert`, to name that source,
+and to reproduce its hash, size, and media type exactly. The node must install
+the new version at revision 9 and the ETag must agree. Reversion is metadata-only,
+so it has no computed digest receipt; it relies on already-authoritative source
+bytes and does not copy them. Use the ordinary content verification surface when
+a fresh physical proof is part of the workflow.
+
 Path mutations are intentionally different. `POST /api/v1/path/move` and
 `POST /api/v1/path/trash` resolve and mutate inside one store transaction, so
 they do not accept `If-Match`. Use them for a one-shot instruction tied to the
