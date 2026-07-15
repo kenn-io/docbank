@@ -67,6 +67,15 @@ func TestPutMetadataFailureRemovesOnlyUnrecordedLooseBlob(t *testing.T) {
 
 	kept, err := vault.Put(t.Context(), "/existing/file.txt", strings.NewReader("kept\n"), PutOptions{})
 	require.NoError(err)
+	_, err = vault.Put(t.Context(), "/existing", strings.NewReader("kept\n"), PutOptions{})
+	require.ErrorIs(err, ErrNotFile)
+	content, err := vault.OpenContent(t.Context(), "/existing/file.txt")
+	require.NoError(err)
+	keptContent, err := io.ReadAll(content.Reader)
+	require.NoError(err)
+	require.NoError(content.Reader.Close())
+	require.Equal("kept\n", string(keptContent))
+
 	_, err = vault.Put(t.Context(), "/existing", strings.NewReader("orphan\n"), PutOptions{})
 	require.ErrorIs(err, ErrNotFile)
 
