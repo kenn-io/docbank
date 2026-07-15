@@ -52,8 +52,27 @@ func TestPutExpectedMismatchLeavesTreeUnchanged(t *testing.T) {
 			require.Equal(before, after)
 			_, err = vault.Stat(t.Context(), "/missing")
 			require.ErrorIs(err, ErrNotFound)
+			loose, err := vault.blobs.List()
+			require.NoError(err)
+			require.Empty(loose)
 		})
 	}
+}
+
+func TestPutMetadataFailureRemovesOnlyUnrecordedLooseBlob(t *testing.T) {
+	require := require.New(t)
+	vault, err := Open(t.Context(), OpenOptions{Root: t.TempDir()})
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(vault.Close()) })
+
+	kept, err := vault.Put(t.Context(), "/existing/file.txt", strings.NewReader("kept\n"), PutOptions{})
+	require.NoError(err)
+	_, err = vault.Put(t.Context(), "/existing", strings.NewReader("orphan\n"), PutOptions{})
+	require.ErrorIs(err, ErrNotFile)
+
+	loose, err := vault.blobs.List()
+	require.NoError(err)
+	require.Equal(map[string]int64{kept.Computed.SHA256: kept.Computed.Size}, loose)
 }
 
 func TestEmbeddedVaultLifecycle(t *testing.T) {

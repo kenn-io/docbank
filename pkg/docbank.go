@@ -9,9 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"go.kenn.io/kit/packstore"
@@ -195,11 +197,16 @@ func (v *Vault) Put(
 	v.mutation.Lock()
 	defer v.mutation.Unlock()
 	var receipt PutReceipt
-	err = v.blobs.WithMutation(ctx, func() error {
+	err = v.blobs.WithMutation(ctx, func() (resultErr error) {
 		hash, size, writeErr := v.blobs.WriteContext(ctx, content)
 		if writeErr != nil {
 			return writeErr
 		}
+		defer func() {
+			if resultErr != nil {
+				resultErr = errors.Join(resultErr, v.removeUnrecordedLoose(hash))
+			}
+		}()
 		receipt.Computed = ContentIdentity{SHA256: hash, Size: size}
 		if opts.Expected != nil && opts.Expected.Size != size {
 			return fmt.Errorf("expected %d bytes, computed %d: %w",
@@ -260,6 +267,22 @@ func (v *Vault) Put(
 		return receipt, err
 	}
 	return receipt, nil
+}
+
+func (v *Vault) removeUnrecordedLoose(hash string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	recorded, err := v.metadata.HasBlob(ctx, hash)
+	if err != nil {
+		return fmt.Errorf("checking failed put cleanup for %s: %w", hash, err)
+	}
+	if recorded {
+		return nil
+	}
+	if err := v.blobs.Remove(hash); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("cleaning failed put blob %s: %w", hash, err)
+	}
+	return nil
 }
 
 // OpenContent opens the current catalog-authorized bytes for a live file. The

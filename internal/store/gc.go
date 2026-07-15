@@ -12,6 +12,17 @@ type BlobInfo struct {
 	Size int64
 }
 
+// HasBlob reports whether the metadata catalog grants authority to hash.
+func (s *Store) HasBlob(ctx context.Context, hash string) (bool, error) {
+	var recorded bool
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM blobs WHERE hash = ?)`, hash,
+	).Scan(&recorded); err != nil {
+		return false, fmt.Errorf("checking blob authority for %s: %w", hash, err)
+	}
+	return recorded, nil
+}
+
 func scanBlobInfos(rows *sql.Rows, op string) ([]BlobInfo, error) {
 	defer func() { _ = rows.Close() }()
 	var out []BlobInfo
