@@ -76,6 +76,9 @@ non-goals.
 - **Write from another machine:** upload one file with declared SHA-256, size,
   name, and destination directory ID; accept success only when the returned
   server-computed identity matches.
+- **Resolve known bytes:** query content references by canonical SHA-256 before
+  uploading; inspect every bounded result because the same bytes may be current
+  or historical on several live or trashed nodes.
 - **Replace an inspected file:** retain its node ID and revision, send raw bytes
   with declared SHA-256 and size, and require the returned node, new version,
   computed identity, and ETag to agree before accepting success.

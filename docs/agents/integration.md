@@ -156,6 +156,23 @@ recording time, transition kind, and introducing operation UUID. Version-byte
 responses use the same headers and terminal digest contract as current-node
 content.
 
+Resolve known bytes to every authoritative node/version reference without
+guessing from paths or physical storage:
+
+```bash
+curl --fail-with-body --get \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  --data-urlencode "sha256=$SHA256" \
+  --data 'limit=100' \
+  --data 'offset=0' \
+  "$DOCBANK_URL/api/v1/content-references"
+```
+
+The response is a bounded page ordered with live current references first,
+then live prior versions, then trash. A result's path is present only for a
+live node. No result means no logical content version currently retains the
+hash, even if unreferenced physical bytes have not yet been swept by GC.
+
 Read the response through successful EOF and require the trailer. A readable
 prefix is not verified content: if the request is cancelled, the body ends in
 error, or the trailer is absent, discard any staged output rather than

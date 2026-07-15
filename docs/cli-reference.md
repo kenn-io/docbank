@@ -10,7 +10,7 @@ All commands operate on the vault at `~/.docbank` (override with
 stderr and produce a non-zero exit code. Virtual paths are absolute,
 `/`-separated, and case-sensitive.
 
-Every data command below (`add`, `ls`, `tree`, `cat`, `put`, `versions`, `version`, `revert`, `mv`, `rm`,
+Every data command below (`add`, `ls`, `tree`, `cat`, `put`, `versions`, `version`, `refs`, `revert`, `mv`, `rm`,
 `restore`, `search`, `trash`, `gc`, `verify`, `storage`, `backup`, `jobs`) talks to the `docbank`
 daemon over its HTTP API rather than opening the vault itself; if none
 is running, the command auto-starts one in the background. `docbank
@@ -174,6 +174,23 @@ with `--json`. It exits successfully only after the response version ID, byte
 count, SHA-256 identity, and terminal `Content-Digest` all agree. Output may
 already have reached stdout when verification fails, so scripts publishing a
 file should write privately and rename it only after a successful exit.
+
+## docbank refs
+
+```text
+docbank refs <sha256> [--limit <n>] [--offset <n>] [--json]
+```
+
+Finds every immutable content version that retains the canonical lowercase
+SHA-256 identity. Live current references sort first, followed by live prior
+versions and trashed references. Each result carries the stable version and
+node IDs, node revision, current/history state, size, recording time, and the
+node's current path when it is live. Trashed nodes have no resolvable path.
+
+The default limit is 100; `--limit` accepts 1–1000 and `--offset` continues a
+bounded result. `--json` emits the page envelope with `items`, `total`, `limit`,
+and `offset`. A cataloged physical blob with no retained content version is not
+a match; the command reports `no authoritative references`.
 
 ## docbank revert
 

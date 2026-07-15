@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -203,6 +204,51 @@ func TestPutReplacesContentAndRetainsHistory(t *testing.T) {
 	out, err = runCLI(t, "version", reverted.Version.ID)
 	require.NoError(t, err)
 	assert.Contains(t, out, "Source version:  "+initialVersion)
+}
+
+func TestRefsFindsCurrentHistoricalAndTrashedContent(t *testing.T) {
+	_ = setupVaultHome(t)
+	initialBytes := []byte("stable lookup content")
+	initial := writeSourceFile(t, "lookup.txt", string(initialBytes))
+	_, err := runCLI(t, "add", initial, "--dest", "/inbox")
+	require.NoError(t, err)
+	sum := sha256.Sum256(initialBytes)
+	hash := hex.EncodeToString(sum[:])
+
+	out, err := runCLI(t, "refs", hash)
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "CURRENT")
+	assert.Contains(t, out, "yes")
+	assert.Contains(t, out, "live")
+	assert.Contains(t, out, "/inbox/lookup.txt")
+
+	replacement := writeSourceFile(t, "replacement.txt", "different bytes")
+	_, err = runCLI(t, "put", replacement, "/inbox/lookup.txt", "--progress", "plain")
+	require.NoError(t, err)
+	out, err = runCLI(t, "refs", hash)
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "no")
+	assert.Contains(t, out, "/inbox/lookup.txt")
+
+	_, err = runCLI(t, "rm", "/inbox/lookup.txt")
+	require.NoError(t, err)
+	out, err = runCLI(t, "refs", hash, "--json")
+	require.NoError(t, err, out)
+	var page api.ContentReferencePage
+	require.NoError(t, json.Unmarshal([]byte(out), &page))
+	assert.Equal(t, 1, page.Total)
+	require.Len(t, page.Items, 1)
+	assert.False(t, page.Items[0].IsCurrent)
+	assert.NotEmpty(t, page.Items[0].Node.TrashedAt)
+	assert.Empty(t, page.Items[0].Path)
+
+	out, err = runCLI(t, "refs", strings.Repeat("f", 64))
+	require.NoError(t, err, out)
+	assert.Equal(t, "no authoritative references\n", out)
+	_, err = runCLI(t, "refs", "ABC")
+	require.ErrorContains(t, err, "canonical lowercase SHA-256")
+	_, err = runCLI(t, "refs", hash, "--limit", "0")
+	require.ErrorContains(t, err, "--limit must be between 1 and 1000")
 }
 
 func TestJobsShowsDaemonStatus(t *testing.T) {

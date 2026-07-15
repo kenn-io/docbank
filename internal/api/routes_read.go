@@ -177,6 +177,33 @@ func registerReadRoutes(api huma.API, d Deps) {
 		return streamContentVersion(ctx, d, version)
 	})
 
+	type contentReferencesOutput struct{ Body ContentReferencePage }
+	huma.Register(api, huma.Operation{
+		OperationID: "lookupContentReferences", Method: http.MethodGet,
+		Path:    "/api/v1/content-references",
+		Summary: "Find stable document versions that retain a SHA-256 identity",
+		Description: "Results are logical content-version references, not physical loose or pack entries. " +
+			"Live current references sort first, followed by live history and trashed references.",
+	}, func(ctx context.Context, in *struct {
+		SHA256 string `query:"sha256" required:"true" pattern:"^[0-9a-f]{64}$"`
+		Limit  int    `query:"limit" default:"100" minimum:"1" maximum:"1000"`
+		Offset int    `query:"offset" default:"0" minimum:"0"`
+	}) (*contentReferencesOutput, error) {
+		references, total, err := d.Store.ContentReferencesByHash(
+			ctx, in.SHA256, in.Limit, in.Offset,
+		)
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
+		out := &contentReferencesOutput{Body: ContentReferencePage{
+			Items: []ContentReference{}, Total: total, Limit: in.Limit, Offset: in.Offset,
+		}}
+		for _, ref := range references {
+			out.Body.Items = append(out.Body.Items, fromStoreContentReference(ref))
+		}
+		return out, nil
+	})
+
 	huma.Register(api, huma.Operation{
 		OperationID: "resolvePath", Method: http.MethodGet, Path: "/api/v1/path",
 		Summary: "Resolve an absolute virtual path to its node",

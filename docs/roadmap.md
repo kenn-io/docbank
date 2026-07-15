@@ -94,7 +94,8 @@ identity only after both match. `docbank put` and raw
 an optimistic revision precondition while retaining every prior version.
 `docbank revert` and `POST /nodes/{id}/revert` add a metadata-only
 `content_revert` head from one prior version without copying its loose or packed
-blob.
+blob. `docbank refs` and `GET /content-references` resolve a SHA-256 identity to
+every retaining current, historical, or trashed node/version pair.
 
 - Remaining editing surface: `docbank edit`
   ([design](architecture/editing-and-versions.md))
@@ -112,10 +113,8 @@ blob.
   today's `provenance` table records the original filesystem path and
   mtime; `source_kind` / `source_ref` / `source_meta` fields extend it
   to non-file origins (a watched inbox, another application's archive)
-  as generic fields, never application-specific tables; and node lookup
-  by content hash, so an external system of record holding
-  `node_id` + hash references can ask "is this already in the vault?" in
-  one call. To settle before the refs schema exists: whether external
+  as generic fields, never application-specific tables. To settle before an
+  external-reference schema exists: whether external
   references pin nodes against `trash empty`/`gc`, or dangling-ref
   detection stays the referrer's job (docbank guarantees only that node
   ids are never reused)

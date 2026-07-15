@@ -374,6 +374,18 @@ func TestContentIdentityAndVerificationRoundTrip(t *testing.T) {
 	version, err := c.Version(t.Context(), node.CurrentVersionID)
 	require.NoError(t, err)
 	assert.Equal(t, page.Items[0], version)
+	looseRefs, err := c.ContentReferences(t.Context(), wantHash, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, looseRefs.Total)
+	require.Len(t, looseRefs.Items, 1)
+	assert.Equal(t, node.ID, looseRefs.Items[0].Node.ID)
+	assert.Equal(t, node.CurrentVersionID, looseRefs.Items[0].Version.ID)
+	assert.True(t, looseRefs.Items[0].IsCurrent)
+	assert.Equal(t, "/inbox/evidence.txt", looseRefs.Items[0].Path)
+	exhaustedRefs, err := c.ContentReferences(t.Context(), wantHash, 1, 10)
+	require.NoError(t, err)
+	assert.Equal(t, 1, exhaustedRefs.Total)
+	assert.Empty(t, exhaustedRefs.Items)
 
 	stream, err := c.Content(t.Context(), node.ID)
 	require.NoError(t, err)
@@ -395,6 +407,9 @@ func TestContentIdentityAndVerificationRoundTrip(t *testing.T) {
 	packed, err := c.StoragePack(t.Context(), 0)
 	require.NoError(t, err)
 	require.Equal(t, 1, packed.BlobsPacked)
+	packedRefs, err := c.ContentReferences(t.Context(), wantHash, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, looseRefs, packedRefs)
 	versionStream, err := c.VersionContent(t.Context(), node.CurrentVersionID)
 	require.NoError(t, err)
 	assert.Equal(t, node.CurrentVersionID, versionStream.VersionID)
@@ -409,6 +424,65 @@ func TestContentIdentityAndVerificationRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, verified.Verified, "the same evidence contract reads packed authority")
 	assert.Equal(t, wantHash, verified.ComputedHash)
+	_, err = c.ContentReferences(t.Context(), "ABC", 10, 0)
+	require.ErrorContains(t, err, "canonical lowercase SHA-256")
+	_, err = c.ContentReferences(t.Context(), wantHash, 0, 0)
+	require.ErrorContains(t, err, "between 1 and 1000")
+	_, err = c.ContentReferences(t.Context(), wantHash, 1, -1)
+	require.ErrorContains(t, err, "must not be negative")
+}
+
+func TestContentReferencesRejectsInconsistentResponses(t *testing.T) {
+	const (
+		versionID   = "11111111-1111-4111-8111-111111111111"
+		operationID = "22222222-2222-4222-8222-222222222222"
+	)
+	hash := strings.Repeat("a", 64)
+	base := api.ContentReferencePage{
+		Items: []api.ContentReference{{
+			Version: api.ContentVersion{ID: versionID, NodeID: 7, BlobHash: hash,
+				Size: 3, MimeType: "text/plain", NodeRevision: 1,
+				IntroducedOperationID: operationID, TransitionKind: "content_create"},
+			Node: api.Node{ID: 7, Name: "doc.txt", Kind: "file", CurrentVersionID: versionID,
+				BlobHash: hash, Size: 3, MimeType: "text/plain", Revision: 1},
+			Path: "/doc.txt", IsCurrent: true,
+		}},
+		Total: 1, Limit: 10, Offset: 0,
+	}
+	tests := map[string]func(*api.ContentReferencePage){
+		"requested hash": func(page *api.ContentReferencePage) {
+			page.Items[0].Version.BlobHash = strings.Repeat("b", 64)
+		},
+		"node identity":     func(page *api.ContentReferencePage) { page.Items[0].Node.ID++ },
+		"current state":     func(page *api.ContentReferencePage) { page.Items[0].IsCurrent = false },
+		"current authority": func(page *api.ContentReferencePage) { page.Items[0].Node.Size++ },
+		"path state":        func(page *api.ContentReferencePage) { page.Items[0].Path = "" },
+		"trashed path": func(page *api.ContentReferencePage) {
+			page.Items[0].Node.TrashedAt = "2026-07-15T12:00:00.000000000Z"
+			page.Items[0].Path = "doc.txt"
+		},
+		"pagination": func(page *api.ContentReferencePage) { page.Total = 0 },
+		"missing page": func(page *api.ContentReferencePage) {
+			page.Total = 2
+			page.Items = nil
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			page := base
+			page.Items = append([]api.ContentReference(nil), base.Items...)
+			mutate(&page)
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if err := json.NewEncoder(w).Encode(page); err != nil {
+					t.Errorf("encoding response: %v", err)
+				}
+			}))
+			t.Cleanup(ts.Close)
+			_, err := client.New(ts.URL, "").ContentReferences(t.Context(), hash, 10, 0)
+			require.ErrorContains(t, err, "content-reference response")
+		})
+	}
 }
 
 func TestVersionContentRejectsUnprovenResponses(t *testing.T) {

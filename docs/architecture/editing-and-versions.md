@@ -40,17 +40,21 @@ also creates no version.
 docbank versions /taxes/2025/return.pdf
 docbank version <version-id> --json
 docbank version <version-id> --content > return.pdf
+docbank refs <sha256>
 ```
 
 `versions` is newest-first and bounded by `--limit` and `--offset`; `--json`
 returns the complete page envelope including `total`. `version` addresses
 metadata or bytes by UUID, independent of the node's current path.
+`refs` performs the inverse lookup: one content hash to every stable
+node/version pair that retains it, including prior versions and trash.
 
 The HTTP equivalents are:
 
 - `GET /api/v1/nodes/{id}/versions?limit=&offset=`;
 - `GET /api/v1/versions/{version_id}`; and
-- `GET /api/v1/versions/{version_id}/content`.
+- `GET /api/v1/versions/{version_id}/content`; and
+- `GET /api/v1/content-references?sha256=&limit=&offset=`.
 
 Current-node and ID-addressed version streams both send
 `X-Docbank-Content-Version`, `X-Docbank-Blob-Hash`, and
