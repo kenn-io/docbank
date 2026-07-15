@@ -16,9 +16,9 @@ without moving the underlying content.
 
 It is designed to be useful both directly and as document infrastructure for
 other software. Humans use the CLI; agents and external applications use the
-same authenticated HTTP API. The daemon is the only process that opens the
-vault, so every client observes one authority for metadata, content, and
-maintenance.
+authenticated HTTP API. Go applications can instead embed independently rooted
+vaults in-process. In either mode exactly one owner holds a vault and its
+metadata, content, and maintenance authority.
 
 ## Why docbank?
 
@@ -46,6 +46,8 @@ maintenance.
 - Whole-vault integrity verification
 - Incremental backup repositories with create, list, verify, and confined restore
 - Daemon-first CLI, authenticated loopback HTTP API, and offline OpenAPI output
+- An embedded Go API with independently locked vaults and selectable CGO or
+  pure-Go SQLite
 - A release pipeline for Linux, macOS, and Windows on amd64 and arm64, with
   SHA-256 checksums and checksum-enforcing installers
 - Native vault, daemon, and recovery support on Linux, macOS, and Windows
@@ -124,6 +126,7 @@ docbank backup restore --repo ~/Backups/docbank --target ~/Restores/docbank-test
 - [Using docbank](docs/usage/lifecycle.md), including backup and recovery
 - [Docbank for agents](docs/agents.md) and the detailed
   [integration guide](docs/agents/integration.md)
+- [Embedding Docbank in Go](docs/embedding.md)
 - [CLI reference](docs/cli-reference.md)
 - [Architecture overview](docs/architecture/overview.md)
 - [Internal design map](docs/internal/README.md) for contributors and coding agents

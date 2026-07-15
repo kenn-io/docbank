@@ -52,6 +52,9 @@ func Restore(
 	if opts.MetadataRestorer != nil {
 		return nil, errors.New("backupapp: restore options must not supply a metadata restorer")
 	}
+	if opts.SQLiteOpener == nil {
+		opts.SQLiteOpener = SQLiteOpener(store.DefaultSQLiteDriver())
+	}
 	opts.PackedContent = newPackedRestoreTarget()
 	opts.MetadataRestorer = metadataRestorer{}
 	app := &packedRestoreApp{App: New(version)}

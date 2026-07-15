@@ -7,21 +7,23 @@ description: The virtual tree over content-addressed storage, and how the compon
 
 docbank separates **what a document is** from **where it lives and what
 it's called**. Bytes go into an immutable content-addressed store;
-identity, naming, hierarchy, provenance, and search metadata live in SQLite. One
-process — the [daemon](daemon.md) — owns both, and every consumer (the CLI and
-agents) goes through its [HTTP API](http-api.md), so no client surface has
-privileged storage access.
+identity, naming, hierarchy, provenance, and search metadata live in SQLite.
+Each vault has exactly one owner. A standalone vault is owned by the
+[daemon](daemon.md), and the CLI and external agents use its
+[HTTP API](http-api.md). A Go application may instead own a separately rooted
+vault through the [embedded API](../embedding.md).
 
 ```mermaid
 flowchart TD
     CLI["CLI (HTTP client)"]
     AGENTS["Agents (HTTP clients)"]
+    EMBEDDED["Embedded Go application"]
     subgraph daemon ["docbank daemon run"]
         API["HTTP API: /api/v1"]
         INGEST["ingest pipeline"]
     end
     subgraph vault ["~/.docbank"]
-        STORE["store: SQLite virtual tree<br/>nodes · versions · provenance · FTS"]
+    STORE["store: SQLite virtual tree<br/>nodes · versions · provenance · FTS"]
         BLOBS["blob store: blobs/&lt;aa&gt;/&lt;sha256&gt;<br/>immutable, deduplicated"]
     end
     CLI --> API
@@ -30,6 +32,8 @@ flowchart TD
     API --> INGEST
     INGEST --> STORE
     INGEST --> BLOBS
+    EMBEDDED --> STORE
+    EMBEDDED --> BLOBS
     STORE -. "references by hash" .-> BLOBS
 ```
 
@@ -117,7 +121,7 @@ a blob. See
 
 ## Boundary summary
 
-- The daemon alone owns SQLite and physical blob storage.
+- One owner holds a vault: either its daemon or one embedded Go application.
 - SQLite owns logical identity, hierarchy, reachability, and transactional
   invariants.
 - Kit owns application-neutral loose/packed storage mechanics; docbank owns

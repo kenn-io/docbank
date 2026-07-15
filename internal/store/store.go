@@ -5,10 +5,11 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
+	"errors"
 	"fmt"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3" // registers sqlite3 driver
+	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
 //go:embed schema.sql
@@ -19,17 +20,34 @@ type Store struct {
 	db     *sql.DB
 	path   string
 	rootID int64
+	driver docsqlite.Driver
 }
 
+// DefaultSQLiteDriver returns the build's standalone-compatible adapter: CGO
+// builds use mattn/go-sqlite3 and no-CGO builds use modernc.org/sqlite.
+func DefaultSQLiteDriver() docsqlite.Driver { return defaultSQLiteDriver() }
+
 // Open opens (creating if needed) the database at path, applies the schema,
-// and guarantees the root directory node exists.
-func Open(path string) (*Store, error) {
-	dsn := path + "?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000&_txlock=immediate"
-	db, err := sql.Open("sqlite3", dsn)
-	if err != nil {
-		return nil, fmt.Errorf("opening database %s: %w", path, err)
+// and guarantees the root directory node exists. When driver is omitted, CGO
+// builds use mattn/go-sqlite3 and no-CGO builds use modernc.org/sqlite.
+func Open(path string, drivers ...docsqlite.Driver) (*Store, error) {
+	if len(drivers) > 1 {
+		return nil, errors.New("opening database: at most one sqlite driver may be supplied")
 	}
-	s := &Store{db: db, path: path}
+	driver := DefaultSQLiteDriver()
+	if len(drivers) == 1 {
+		driver = drivers[0]
+	}
+	if err := docsqlite.Validate(driver); err != nil {
+		return nil, fmt.Errorf("opening database: %w", err)
+	}
+	db, err := driver.Open(path, docsqlite.OpenOptions{
+		Access: docsqlite.Create, TransactionMode: docsqlite.Immediate,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("opening database %s with %s: %w", path, driver.Name(), err)
+	}
+	s := &Store{db: db, path: path, driver: driver}
 	if err := s.bootstrap(); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -51,7 +69,7 @@ func (s *Store) bootstrap() error {
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		err := s.bootstrapTx()
-		if err == nil || !isBusy(err) || time.Now().After(deadline) {
+		if err == nil || !s.driver.IsBusy(err) || time.Now().After(deadline) {
 			return err
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -81,6 +99,10 @@ func (s *Store) bootstrapTx() error {
 
 // RootID returns the id of the tree root.
 func (s *Store) RootID() int64 { return s.rootID }
+
+// SQLiteDriver returns the exact adapter used by this store. Backup snapshots
+// and embedded lifecycle helpers reuse it for every auxiliary connection.
+func (s *Store) SQLiteDriver() docsqlite.Driver { return s.driver }
 
 // Close closes the underlying database.
 func (s *Store) Close() error { return s.db.Close() }

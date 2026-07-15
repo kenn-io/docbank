@@ -12,7 +12,9 @@ operating routine.
 
 ## Know what owns the vault
 
-The daemon is the only process that opens `docbank.db` and the blob store.
+In standalone CLI mode, the daemon is the only process that opens `docbank.db`
+and the blob store. Embedded Go applications own separately rooted vaults
+in-process; they never share a root with a daemon.
 Ordinary commands are HTTP clients of it and start a compatible background
 daemon automatically.
 

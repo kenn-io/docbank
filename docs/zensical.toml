@@ -29,6 +29,7 @@ nav = [
   {"Automate & Integrate" = [
     {"Docbank for Agents" = "agents.md"},
     {"Integration Guide" = "agents/integration.md"},
+    {"Embed in Go" = "embedding.md"},
     {"HTTP API Contract" = "architecture/http-api.md"},
   ]},
   {"Reference" = [

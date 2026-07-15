@@ -21,6 +21,7 @@ import (
 
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/version"
+	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
 type backupCreateRequest struct {
@@ -242,7 +243,7 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 		coordinator := newRestoreTargetCoordinator(
 			target, repo.Root(), d.VaultRoot, in.Body.Overwrite)
 		report, err := restoreBackupSnapshot(
-			ctx, repo, target, in.Body, coordinator, nil)
+			ctx, repo, target, in.Body, coordinator, nil, d.Store.SQLiteDriver())
 		if err != nil {
 			return nil, err
 		}
@@ -286,7 +287,7 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 					stream.send(BackupRestoreEvent{
 						Type: "progress", Progress: backupProgress(event),
 					})
-				})
+				}, d.Store.SQLiteDriver())
 			if stream.err() != nil {
 				return
 			}
@@ -435,9 +436,10 @@ func restoreBackupSnapshot(
 	in backupRestoreRequest,
 	coordinator restoreTargetCoordinator,
 	progress func(backup.ProgressEvent),
+	driver docsqlite.Driver,
 ) (BackupRestoreReport, error) {
 	return restoreBackupSnapshotWith(
-		ctx, repo, target, in, coordinator, progress, backupapp.Restore)
+		ctx, repo, target, in, coordinator, progress, driver, backupapp.Restore)
 }
 
 type backupRestoreRunner func(
@@ -451,6 +453,7 @@ func restoreBackupSnapshotWith(
 	in backupRestoreRequest,
 	coordinator restoreTargetCoordinator,
 	progress func(backup.ProgressEvent),
+	driver docsqlite.Driver,
 	run backupRestoreRunner,
 ) (report BackupRestoreReport, retErr error) {
 	if err := coordinator.Prepare(ctx); err != nil {
@@ -466,6 +469,7 @@ func restoreBackupSnapshotWith(
 		SnapshotID: in.SnapshotID, TargetDir: target, Overwrite: true,
 		Jobs: in.Jobs, ForceUnlock: in.ForceUnlock, Progress: progress,
 		TargetCoordinator: coordinator,
+		SQLiteOpener:      backupapp.SQLiteOpener(driver),
 	})
 	if err != nil {
 		return report, fromBackupError(err)

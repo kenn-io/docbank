@@ -5,8 +5,10 @@ description: Connect an agent to docbank safely using its OpenAPI contract, auth
 
 # Agent integration guide
 
-Docbank is daemon-first: the CLI, agents, and scripts all use the same HTTP
-API. An integration never opens `docbank.db` or the blob store directly.
+Standalone Docbank is daemon-first: the CLI, external agents, and scripts all
+use the same HTTP API. An external integration never opens `docbank.db` or the
+blob store directly. Go applications that own a separately rooted archive can
+instead use the [embedded API](../embedding.md).
 
 ## Choose the interface
 

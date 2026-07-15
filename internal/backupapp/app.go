@@ -90,8 +90,12 @@ func Create(
 	if opts.MetadataSource != nil || opts.ContentSource != nil || opts.DBPath != "" {
 		return nil, errors.New("backupapp: create options must not supply metadata or content sources")
 	}
+	if opts.SQLiteOpener != nil {
+		return nil, errors.New("backupapp: create options must not supply a SQLite opener")
+	}
 	opts.MetadataSource = NewMetadataSource(metadata)
 	opts.ContentSource = NewContentSource(blobs)
+	opts.SQLiteOpener = SQLiteOpener(metadata.SQLiteDriver())
 	manifest, err := backup.Create(ctx, repo, New(version), opts)
 	if err != nil {
 		return nil, fmt.Errorf("backupapp: creating snapshot: %w", err)
