@@ -960,11 +960,23 @@ func validateImportedMetadata(ctx context.Context, tx metadataQuerier) error {
 			  SELECT 1 FROM content_versions v JOIN content_versions source ON source.version_id=v.source_version_id
 			  WHERE source.node_revision >= v.node_revision
 			)`},
+		{"revert source content differs from new version", `
+			SELECT EXISTS(
+			  SELECT 1 FROM content_versions v JOIN content_versions source ON source.version_id=v.source_version_id
+			  WHERE v.transition_kind='content_revert'
+			    AND (source.blob_hash != v.blob_hash OR source.size != v.size
+			         OR source.mime_type IS NOT v.mime_type)
+			)`},
 		{"content history lacks exactly one revision-one create", `
 			SELECT EXISTS(
 			  SELECT n.id FROM nodes n LEFT JOIN content_versions v
 			    ON v.node_id=n.id AND v.node_revision=1 AND v.transition_kind='content_create'
 			  WHERE n.kind='file' GROUP BY n.id HAVING COUNT(v.version_id) != 1
+			)`},
+		{"content_create time differs from node creation", `
+			SELECT EXISTS(
+			  SELECT 1 FROM content_versions v JOIN nodes n ON n.id=v.node_id
+			  WHERE v.transition_kind='content_create' AND v.recorded_at != n.created_at
 			)`},
 		{"node current version is not its newest content version", `
 			SELECT EXISTS(

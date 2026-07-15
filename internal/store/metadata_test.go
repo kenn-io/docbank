@@ -160,6 +160,51 @@ func TestImportMetadataRejectsLaterContentCreateAndRollsBack(t *testing.T) {
 	assert.Equal(t, int64(1), nodes, "failed import must leave the pristine target intact")
 }
 
+func TestImportMetadataRejectsInvalidContentRelationshipsAndRollsBack(t *testing.T) {
+	ctx := t.Context()
+	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, source.Close()) })
+	seedMetadataRoundTrip(t, source)
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(ctx, &exported))
+
+	tests := []struct {
+		name    string
+		old     string
+		replace string
+		want    string
+	}{
+		{
+			name: "revert source names different content",
+			old:  `"transition_kind":"content_replace","source_version_id":null`,
+			replace: `"transition_kind":"content_revert","source_version_id":"` +
+				metadataVersionOld + `"`,
+			want: "revert source content differs from new version",
+		},
+		{
+			name:    "create time differs from node creation",
+			old:     `"recorded_at":"2026-01-08T00:00:00.000000000Z","node_revision":1`,
+			replace: `"recorded_at":"2026-01-08T00:00:01.000000000Z","node_revision":1`,
+			want:    "content_create time differs from node creation",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			malformed := strings.Replace(exported.String(), tt.old, tt.replace, 1)
+			require.NotEqual(t, exported.String(), malformed)
+			target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, target.Close()) })
+			err = target.ImportMetadata(ctx, strings.NewReader(malformed))
+			require.ErrorContains(t, err, tt.want)
+			var nodes int64
+			require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodes))
+			assert.Equal(t, int64(1), nodes, "failed import must leave the pristine target intact")
+		})
+	}
+}
+
 func TestImportMetadataRejectsOrphanedExtractionAndRollsBack(t *testing.T) {
 	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
 	require.NoError(t, err)
