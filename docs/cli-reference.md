@@ -10,7 +10,7 @@ All commands operate on the vault at `~/.docbank` (override with
 stderr and produce a non-zero exit code. Virtual paths are absolute,
 `/`-separated, and case-sensitive.
 
-Every data command below (`add`, `ls`, `tree`, `cat`, `mv`, `rm`,
+Every data command below (`add`, `ls`, `tree`, `cat`, `put`, `versions`, `version`, `mv`, `rm`,
 `restore`, `search`, `trash`, `gc`, `verify`, `storage`, `backup`, `jobs`) talks to the `docbank`
 daemon over its HTTP API rather than opening the vault itself; if none
 is running, the command auto-starts one in the background. `docbank
@@ -114,6 +114,34 @@ docbank cat <path>
 Streams the file's stored bytes to stdout. Fails with `not a file` for
 directories.
 
+## docbank put
+
+```text
+docbank put <source-file> <vault-path> [--mime-type <type>] [--progress auto|bar|plain] [--json]
+```
+
+Replaces one existing file's current content while retaining every prior
+immutable version. The source must be a regular file and is opened without
+following a final symlink. It is never modified.
+
+`put` reads the source twice: first to compute the SHA-256 and exact size the
+daemon must independently verify, then to upload the bytes. Human mode shows
+separate `hash` and `upload` progress; `auto` uses a terminal bar or durable
+redirected lines, and `plain` always emits durable lines. `--json` suppresses
+progress and returns the new node, immutable version, and server-computed hash
+and size. `--mime-type` overrides extension/content detection.
+
+The command completes its local hash before starting or contacting the daemon,
+then resolves the target to a stable node ID and revision immediately before
+upload. This keeps a slow local read outside the daemon's idle lifetime and
+shortens the optimistic-concurrency window. The raw `PUT` carries the inspected
+revision as `If-Match`; if another actor moves, trashes, or replaces the node
+afterward, the operation fails with `stale_revision` rather than losing the
+concurrent update. A successful put bumps the node revision, creates a
+`content_replace` version, and leaves the older bytes reachable through
+`docbank version <id> --content`. Replacing with identical bytes still records
+an explicit versioned operation while the blob itself deduplicates.
+
 ## docbank versions
 
 ```text
@@ -126,9 +154,8 @@ Human output marks the node's current version. `--json` emits
 `{"items": [...], "total", "limit", "offset"}` so callers can distinguish a
 complete page from a prefix.
 
-Every newly imported file has one revision-one `content_create` version.
-Replacement and reversion are not implemented yet, so more than one row appears
-only after those write surfaces ship.
+Every newly imported file has one revision-one `content_create` version. Each
+successful `put` adds a `content_replace` row. Reversion is not implemented yet.
 
 ## docbank version
 
@@ -451,7 +478,7 @@ background-spawned daemons.
 
 !!! info "Planned — later phases"
     The following are designed but not yet implemented; they will appear
-    here with exact semantics when they ship. `docbank edit`, `put`, and
+    here with exact semantics when they ship. `docbank edit` and
     `revert` (Phase 2b, [Editing & Versions](architecture/editing-and-versions.md));
     `docbank audit enable`, `audit status`, `audit history`, and `audit verify`
     (Phase 2b, [Audited History](architecture/audited-history.md));

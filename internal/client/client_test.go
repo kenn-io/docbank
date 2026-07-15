@@ -35,6 +35,17 @@ import (
 // NewServer's refusal of an empty one), so the fake server must too.
 const serverKey = "server-key"
 
+type countedReader struct {
+	reader io.Reader
+	read   *atomic.Int64
+}
+
+func (r countedReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	r.read.Add(int64(n))
+	return n, err
+}
+
 // newClient builds a real server keyed with serverKey and a client keyed
 // with clientKey (which may differ from serverKey, to exercise the
 // mismatched-key path — see TestWrongAPIKeyIsRejected).
@@ -478,6 +489,72 @@ func TestDigestCheckedUploadRoundTrip(t *testing.T) {
 		hex.EncodeToString(wrong[:]), int64(len(content)), strings.NewReader(content))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "digest_mismatch")
+}
+
+func TestContentReplacementRoundTrip(t *testing.T) {
+	c, s := newClient(t, serverKey)
+	initial := "initial content"
+	initialSum := sha256.Sum256([]byte(initial))
+	created, err := c.Upload(t.Context(), s.RootID(), "versioned.txt", "text/plain",
+		hex.EncodeToString(initialSum[:]), int64(len(initial)), strings.NewReader(initial))
+	require.NoError(t, err)
+
+	replacement := []byte{0x00, 0xff, 'n', 'e', 'w'}
+	replacementSum := sha256.Sum256(replacement)
+	receipt, err := c.ReplaceContent(t.Context(), created.Node.ID, created.Node.Revision,
+		"application/octet-stream", hex.EncodeToString(replacementSum[:]),
+		int64(len(replacement)), bytes.NewReader(replacement))
+	require.NoError(t, err)
+	assert.Equal(t, created.Node.Revision+1, receipt.Node.Revision)
+	assert.Equal(t, receipt.Version.ID, receipt.Node.CurrentVersionID)
+	assert.Equal(t, "content_replace", receipt.Version.TransitionKind)
+	assert.Equal(t, hex.EncodeToString(replacementSum[:]), receipt.ComputedHash)
+
+	var staleBytesRead atomic.Int64
+	_, err = c.ReplaceContent(t.Context(), created.Node.ID, created.Node.Revision,
+		"application/octet-stream", hex.EncodeToString(replacementSum[:]),
+		int64(len(replacement)), countedReader{
+			reader: bytes.NewReader(replacement), read: &staleBytesRead,
+		})
+	require.ErrorIs(t, err, store.ErrStaleRevision)
+	assert.Zero(t, staleBytesRead.Load(), "Expect: 100-continue must avoid sending a known-stale body")
+	versions, err := c.Versions(t.Context(), created.Node.ID, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 2, versions.Total)
+}
+
+func TestContentReplacementRejectsUnprovenReceipt(t *testing.T) {
+	content := []byte("replacement")
+	hash := sha256.Sum256(content)
+	expectedHash := hex.EncodeToString(hash[:])
+	base := api.ContentReplacementReceipt{
+		Node: api.Node{ID: 7, Revision: 4, CurrentVersionID: "11111111-1111-4111-8111-111111111111",
+			BlobHash: expectedHash, Size: int64(len(content)), MimeType: "text/plain"},
+		Version: api.ContentVersion{ID: "11111111-1111-4111-8111-111111111111", NodeID: 7,
+			NodeRevision: 4, BlobHash: expectedHash, Size: int64(len(content)), MimeType: "text/plain",
+			TransitionKind: "content_replace"},
+		ComputedHash: expectedHash, ComputedSize: int64(len(content)),
+	}
+	tests := map[string]func(*api.ContentReplacementReceipt){
+		"computed hash": func(r *api.ContentReplacementReceipt) { r.ComputedHash = strings.Repeat("0", 64) },
+		"node":          func(r *api.ContentReplacementReceipt) { r.Node.ID++ },
+		"version":       func(r *api.ContentReplacementReceipt) { r.Node.CurrentVersionID = "other" },
+		"authority":     func(r *api.ContentReplacementReceipt) { r.Version.Size++ },
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			receipt := base
+			mutate(&receipt)
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("ETag", `"4"`)
+				_ = json.NewEncoder(w).Encode(receipt)
+			}))
+			t.Cleanup(ts.Close)
+			_, err := client.New(ts.URL, "key").ReplaceContent(t.Context(), 7, 3, "text/plain",
+				expectedHash, int64(len(content)), bytes.NewReader(content))
+			require.Error(t, err)
+		})
+	}
 }
 
 func TestStorageRepackRoundTrip(t *testing.T) {

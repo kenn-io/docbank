@@ -243,6 +243,29 @@ If another actor changed the node first, the API returns `412` with
 A missing precondition returns `428 precondition_required`. An invalid header
 returns `400 validation`.
 
+Content replacement follows the same read-decide-write rule and adds byte
+evidence. Compute the local file's SHA-256 and size, retain the revision from
+the node response, then send raw bytes:
+
+```bash
+curl --fail-with-body -X PUT \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  -H 'If-Match: "7"' \
+  -H "X-Docbank-Blob-Hash: $SHA256" \
+  -H "X-Docbank-Blob-Size: $SIZE" \
+  -H 'Content-Type: application/pdf' \
+  --data-binary @revised.pdf \
+  "$DOCBANK_URL/api/v1/nodes/42/content"
+```
+
+Do not accept HTTP 200 alone. Require the receipt's `computed_hash` and
+`computed_size` to equal the local values; require its node and version to both
+name node 42; require `content_replace`, the next node revision, matching blob
+identity, and `node.current_version_id == version.id`; and require the response
+ETag to encode that resulting revision. The old version remains addressable.
+A `412` means the decision is stale—re-read and decide again rather than
+blindly retrying with a fresh revision.
+
 Path mutations are intentionally different. `POST /api/v1/path/move` and
 `POST /api/v1/path/trash` resolve and mutate inside one store transaction, so
 they do not accept `If-Match`. Use them for a one-shot instruction tied to the

@@ -2,6 +2,8 @@ package api
 
 import "go.kenn.io/docbank/internal/store"
 
+const openAPIStringType = "string"
+
 const (
 	// BlobHashHeader carries docbank's canonical lowercase SHA-256 identity.
 	BlobHashHeader = "X-Docbank-Blob-Hash"
@@ -77,6 +79,15 @@ type UploadReceipt struct {
 	Node         Node   `json:"node"`
 	ComputedHash string `json:"computed_hash" pattern:"^[0-9a-f]{64}$"`
 	ComputedSize int64  `json:"computed_size"`
+}
+
+// ContentReplacementReceipt proves which bytes the daemon received and which
+// immutable head the optimistic replacement installed.
+type ContentReplacementReceipt struct {
+	Node         Node           `json:"node"`
+	Version      ContentVersion `json:"version"`
+	ComputedHash string         `json:"computed_hash" pattern:"^[0-9a-f]{64}$"`
+	ComputedSize int64          `json:"computed_size" minimum:"0"`
 }
 
 // SearchHit pairs a matched node with its display path.

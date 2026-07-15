@@ -564,6 +564,110 @@ func (c *Client) Upload(
 	return receipt, nil
 }
 
+// ReplaceContent streams raw bytes into a new immutable head under an
+// optimistic node-revision precondition. Success requires the daemon's receipt
+// and ETag to agree with the caller-declared byte identity and the requested
+// node; callers retain responsibility for closing content when applicable.
+func (c *Client) ReplaceContent(
+	ctx context.Context, nodeID, revision int64, mimeType, expectedHash string,
+	expectedSize int64, content io.Reader,
+) (api.ContentReplacementReceipt, error) {
+	var receipt api.ContentReplacementReceipt
+	if nodeID <= 0 {
+		return receipt, errors.New("replacement node ID must be positive")
+	}
+	if revision < 0 {
+		return receipt, errors.New("replacement revision must not be negative")
+	}
+	if !validSHA256Hex(expectedHash) {
+		return receipt, errors.New("replacement hash must be canonical lowercase SHA-256")
+	}
+	if expectedSize < 0 {
+		return receipt, errors.New("replacement size must not be negative")
+	}
+	if content == nil {
+		return receipt, errors.New("replacement content reader is nil")
+	}
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	} else {
+		mediaType, params, err := mime.ParseMediaType(mimeType)
+		if err != nil {
+			return receipt, fmt.Errorf("replacement media type %q: %w", mimeType, err)
+		}
+		mimeType = mime.FormatMediaType(mediaType, params)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut,
+		fmt.Sprintf("%s/api/v1/nodes/%d/content", c.base, nodeID), io.NopCloser(content))
+	if err != nil {
+		return receipt, fmt.Errorf("building replacement request: %w", err)
+	}
+	req.ContentLength = expectedSize
+	req.Header.Set("Content-Type", mimeType)
+	req.Header.Set("Expect", "100-continue")
+	req.Header.Set("If-Match", fmt.Sprintf("%q", strconv.FormatInt(revision, 10)))
+	req.Header.Set(api.BlobHashHeader, expectedHash)
+	req.Header.Set(api.BlobSizeHeader, strconv.FormatInt(expectedSize, 10))
+	if c.key != "" {
+		req.Header.Set("X-Api-Key", c.key)
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return receipt, fmt.Errorf("replacing content of node %d: %w", nodeID, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return receipt, decodeError(resp)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&receipt); err != nil {
+		return receipt, fmt.Errorf("decoding content replacement response: %w", err)
+	}
+	if err := validateReplacementReceipt(
+		receipt, resp.Header.Get("ETag"), nodeID, revision, mimeType, expectedHash, expectedSize,
+	); err != nil {
+		return api.ContentReplacementReceipt{}, err
+	}
+	return receipt, nil
+}
+
+func validateReplacementReceipt(
+	receipt api.ContentReplacementReceipt, etag string, nodeID, revision int64,
+	mimeType, expectedHash string, expectedSize int64,
+) error {
+	if receipt.ComputedHash != expectedHash || receipt.ComputedSize != expectedSize {
+		return fmt.Errorf("content replacement receipt computed identity %s/%d, expected %s/%d",
+			receipt.ComputedHash, receipt.ComputedSize, expectedHash, expectedSize)
+	}
+	if receipt.Node.ID != nodeID || receipt.Version.NodeID != nodeID {
+		return fmt.Errorf("content replacement receipt targets node %d/%d, expected %d",
+			receipt.Node.ID, receipt.Version.NodeID, nodeID)
+	}
+	if receipt.Node.Revision != revision+1 || receipt.Version.NodeRevision != receipt.Node.Revision {
+		return fmt.Errorf("content replacement receipt revision %d/%d, expected %d",
+			receipt.Node.Revision, receipt.Version.NodeRevision, revision+1)
+	}
+	if receipt.Version.ID == "" || receipt.Node.CurrentVersionID != receipt.Version.ID {
+		return errors.New("content replacement receipt does not install its returned version as current")
+	}
+	if receipt.Version.TransitionKind != "content_replace" || receipt.Version.SourceVersionID != nil {
+		return errors.New("content replacement receipt does not describe a content_replace head")
+	}
+	if receipt.Node.BlobHash != expectedHash || receipt.Node.Size != expectedSize ||
+		receipt.Version.BlobHash != expectedHash || receipt.Version.Size != expectedSize {
+		return errors.New("content replacement receipt authority disagrees with declared bytes")
+	}
+	if receipt.Node.MimeType != mimeType || receipt.Version.MimeType != mimeType {
+		return fmt.Errorf("content replacement receipt media type %q/%q, expected %q",
+			receipt.Node.MimeType, receipt.Version.MimeType, mimeType)
+	}
+	expectedETag := fmt.Sprintf("%q", strconv.FormatInt(receipt.Node.Revision, 10))
+	if etag != expectedETag {
+		return fmt.Errorf("content replacement response ETag %q, expected %q", etag, expectedETag)
+	}
+	return nil
+}
+
 func (c *Client) Move(ctx context.Context, id, rev int64, newParentID *int64, newName *string) (api.Node, error) {
 	var n api.Node
 	body := map[string]any{}

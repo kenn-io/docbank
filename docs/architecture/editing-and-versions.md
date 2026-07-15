@@ -10,10 +10,10 @@ is document identity; the version identifies one immutable set of bytes. Users
 and agents can list versions, inspect one by UUID, and retrieve its bytes even
 after the node moves or is renamed.
 
-Content replacement and reversion are not implemented yet, so a newly created
-file currently has exactly one version. Establishing the identity and read
-contract at ingest means later editing can add history without redefining
-existing files or backups.
+Content replacement is implemented by `docbank put` and the raw HTTP content
+write. Reversion and interactive editing are planned. Establishing one identity
+and read contract across ingest and replacement lets those later operations add
+history without redefining existing files or backups.
 
 ## Version contract
 
@@ -72,33 +72,48 @@ version IDs across loose or packed physical representations. Import rejects
 dangling current pointers, cross-node pointers, size disagreement, invalid UUIDs,
 and malformed JSON records transactionally.
 
+## Replacing content
+
+```bash
+docbank put revised.pdf /taxes/2025/return.pdf
+```
+
+`put` opens a regular source without following a final symlink, detects or
+accepts its media type, and hashes it before starting or contacting the daemon.
+It then inspects the target and uploads with that node revision. Keeping the
+local pass outside the daemon lifecycle avoids idle shutdown during a slow read
+and shortens the optimistic-concurrency window. Hashing and upload have separate
+progress stages because the daemon requires the expected SHA-256 and size before
+granting authority. The client uses `Expect: 100-continue`, allowing the daemon
+to reject a stale or invalid target before the large body is transmitted.
+
+The corresponding `PUT /api/v1/nodes/{id}/content` body is the raw file bytes.
+It requires `If-Match`, `X-Docbank-Blob-Hash`, and
+`X-Docbank-Blob-Size`; `Content-Type` becomes version metadata. The daemon
+durably writes and independently hashes the body first. Only an exact match
+allows one transaction to create the `content_replace` record, advance
+`current_version_id`, update metadata, and bump the node revision. The response
+returns the new node and version plus the computed identity and resulting ETag.
+
+A stale revision fails with `412`; a size or digest mismatch fails with `422`.
+Neither grants new metadata or blob authority. A crash or rejection after the
+durable write may leave an authority-free loose object for ordinary GC. The old
+head remains readable throughout. Even a replacement with identical bytes
+creates a distinct version and operation while content storage deduplicates the
+shared blob.
+
 ## Planned editing model
 
 !!! info "Planned — Phase 2b"
-    A document node remains stable while its content pointer changes. Replacing
-    content will:
-
-    1. hash and durably publish the new bytes;
-    2. create an immutable content-version record for the new head, including
-       its blob hash, size, media type, introducing operation, transition kind,
-       and resulting node revision; and
-    3. point the node at that version, update metadata, and bump its revision in
-       the same SQLite transaction.
-
-    Initial ingest already creates revision-one `content_create`. Replacement
-    will create `content_replace`. Reversion will create a new `content_revert` head that names
+    Reversion will create a new `content_revert` head that names
     the older source version; it never rewinds or deletes later history. A
     metadata transaction creates at most one version for a node, enforced by
     unique `(node_id, node_revision)` and `(node_id,
     introduced_operation_id)` constraints.
 
-    Versions are whole-content snapshots, not diffs. Identical bytes still
-    deduplicate. A crash before the metadata transaction commits leaves the old
-    head intact with at most an orphan blob for GC.
-
-    Planned write surfaces are `put`, `revert`, and `edit` plus
-    `PUT /nodes/{id}/content`. ID-addressed replacement requires `If-Match` so
-    concurrent edits fail with 412 rather than losing an update.
+    Planned write surfaces are `revert` and interactive `edit`; both build on
+    the implemented immutable replacement transaction and require optimistic
+    concurrency rather than overwriting another actor's head.
 
     Version pruning is explicit and releases blob reachability only when its
     metadata row is removed. No automatic retention policy is the default. A

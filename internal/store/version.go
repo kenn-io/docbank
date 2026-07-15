@@ -5,11 +5,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 )
 
 // ContentVersion is one immutable byte identity recorded for a stable file
-// node. Initial ingest currently creates content_create records; later editing
-// operations can add new heads without changing this read contract.
+// node. Initial ingest creates content_create records and verified replacement
+// adds content_replace heads without changing this read contract.
 type ContentVersion struct {
 	ID                    string
 	NodeID                int64
@@ -120,4 +121,101 @@ func (s *Store) ContentVersions(
 		return nil, 0, fmt.Errorf("node %d: %w", nodeID, ErrNotFound)
 	}
 	return versions, total, nil
+}
+
+// ReplaceContent installs one already-durable blob as a file's new immutable
+// head. Unless ifRev is UnconditionalRev, the node must still be at ifRev;
+// version creation, pointer replacement, and the node revision bump commit as
+// one transaction.
+func (s *Store) ReplaceContent(
+	ctx context.Context, nodeID, ifRev int64, blobHash string, size int64, mimeType string,
+) (Node, ContentVersion, error) {
+	if size < 0 {
+		return Node{}, ContentVersion{}, errors.New("content size must not be negative")
+	}
+	if err := validateUTF8Field("content MIME type", mimeType); err != nil {
+		return Node{}, ContentVersion{}, err
+	}
+	var (
+		updated Node
+		version ContentVersion
+	)
+	err := s.withTx(ctx, func(tx *sql.Tx) error {
+		n, err := nodeByIDTx(tx, nodeID)
+		if err != nil {
+			return err
+		}
+		if err := validateContentReplacementTarget(n, ifRev); err != nil {
+			return err
+		}
+		if err := s.EnsureBlobTx(tx, blobHash, size); err != nil {
+			return err
+		}
+		versionID, err := newUUIDv4()
+		if err != nil {
+			return err
+		}
+		operationID, err := newUUIDv4()
+		if err != nil {
+			return err
+		}
+		now := nowRFC3339()
+		newRevision := n.Revision + 1
+		var storedMime any
+		if mimeType != "" {
+			storedMime = mimeType
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO content_versions (
+				version_id, node_id, blob_hash, size, mime_type, recorded_at,
+				node_revision, introduced_operation_id, transition_kind, source_version_id
+			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'content_replace', NULL)`,
+			versionID, nodeID, blobHash, size, storedMime, now, newRevision, operationID); err != nil {
+			return fmt.Errorf("recording replacement content version for node %d: %w", nodeID, err)
+		}
+		if _, err := tx.Exec(
+			`UPDATE nodes SET current_version_id = ?, revision = ?, modified_at = ? WHERE id = ?`,
+			versionID, newRevision, now, nodeID); err != nil {
+			return fmt.Errorf("installing replacement content version for node %d: %w", nodeID, err)
+		}
+		updated, err = nodeByIDTx(tx, nodeID)
+		if err != nil {
+			return err
+		}
+		version, err = scanContentVersion(tx.QueryRow(
+			`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = ?`, versionID))
+		return err
+	})
+	if err != nil {
+		return Node{}, ContentVersion{}, err
+	}
+	return updated, version, nil
+}
+
+// CheckContentReplacementTarget performs the cheap target and revision checks
+// before a caller streams bytes. ReplaceContent repeats them transactionally,
+// because this preflight is an optimization rather than mutation authority.
+func (s *Store) CheckContentReplacementTarget(ctx context.Context, nodeID, ifRev int64) error {
+	n, err := s.NodeByID(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	return validateContentReplacementTarget(n, ifRev)
+}
+
+func validateContentReplacementTarget(n Node, ifRev int64) error {
+	if n.TrashedAt != nil {
+		return fmt.Errorf("node %d is trashed: %w", n.ID, ErrNotFound)
+	}
+	if n.IsDir() {
+		return fmt.Errorf("node %d: %w", n.ID, ErrNotFile)
+	}
+	if ifRev != UnconditionalRev && n.Revision != ifRev {
+		return fmt.Errorf("node %d at revision %d, expected %d: %w",
+			n.ID, n.Revision, ifRev, ErrStaleRevision)
+	}
+	if n.Revision == math.MaxInt64 {
+		return fmt.Errorf("node %d revision cannot advance beyond %d", n.ID, n.Revision)
+	}
+	return nil
 }

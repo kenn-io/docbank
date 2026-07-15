@@ -99,6 +99,79 @@ func TestCurrentVersionMustBelongToItsNode(t *testing.T) {
 	assert.Equal(t, first.CurrentVersionID, unchanged.CurrentVersionID)
 }
 
+func TestReplaceContentCreatesImmutableHead(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	created, err := s.CreateFile(ctx, s.RootID(), "report.txt", fakeHash("a1"), 3, "text/plain")
+	require.NoError(t, err)
+
+	updated, replacement, err := s.ReplaceContent(
+		ctx, created.ID, created.Revision, fakeHash("b2"), 4, "text/markdown",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, created.ID, updated.ID)
+	assert.Equal(t, created.Revision+1, updated.Revision)
+	assert.Equal(t, replacement.ID, updated.CurrentVersionID)
+	assert.Equal(t, fakeHash("b2"), updated.BlobHash)
+	assert.Equal(t, int64(4), updated.Size)
+	assert.Equal(t, "text/markdown", updated.MimeType)
+	assert.Equal(t, updated.Revision, replacement.NodeRevision)
+	assert.Equal(t, "content_replace", replacement.TransitionKind)
+	assert.Nil(t, replacement.SourceVersionID)
+	require.NoError(t, validateUUIDv4(replacement.ID))
+	require.NoError(t, validateUUIDv4(replacement.IntroducedOperationID))
+
+	versions, total, err := s.ContentVersions(ctx, created.ID, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 2, total)
+	require.Len(t, versions, 2)
+	assert.Equal(t, replacement.ID, versions[0].ID)
+	assert.Equal(t, created.CurrentVersionID, versions[1].ID)
+	assert.Equal(t, fakeHash("a1"), versions[1].BlobHash,
+		"replacement must retain the prior immutable version")
+
+	// Replacing with the same bytes is still an explicit versioned mutation;
+	// storage deduplicates the blob while history records the operation.
+	sameBytes, sameVersion, err := s.ReplaceContent(
+		ctx, updated.ID, updated.Revision, updated.BlobHash, updated.Size, updated.MimeType,
+	)
+	require.NoError(t, err)
+	assert.NotEqual(t, replacement.ID, sameVersion.ID)
+	assert.Equal(t, replacement.BlobHash, sameVersion.BlobHash)
+	assert.Equal(t, updated.Revision+1, sameBytes.Revision)
+	var blobCount int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM blobs`).Scan(&blobCount))
+	assert.Equal(t, 2, blobCount)
+}
+
+func TestReplaceContentRejectsInvalidTargetAndStaleRevision(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	file, err := s.CreateFile(ctx, s.RootID(), "report.txt", fakeHash("a1"), 3, "text/plain")
+	require.NoError(t, err)
+	dir, err := s.Mkdir(ctx, s.RootID(), "folder")
+	require.NoError(t, err)
+
+	_, _, err = s.ReplaceContent(ctx, file.ID, file.Revision+1, fakeHash("b2"), 4, "text/plain")
+	require.ErrorIs(t, err, ErrStaleRevision)
+	_, _, err = s.ReplaceContent(ctx, dir.ID, dir.Revision, fakeHash("b2"), 4, "text/plain")
+	require.ErrorIs(t, err, ErrNotFile)
+	trashed, _, err := s.Trash(ctx, file.ID, file.Revision)
+	require.NoError(t, err)
+	_, _, err = s.ReplaceContent(ctx, trashed.ID, trashed.Revision, fakeHash("b2"), 4, "text/plain")
+	require.ErrorIs(t, err, ErrNotFound)
+
+	versions, total, err := s.ContentVersions(ctx, file.ID, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, total)
+	require.Len(t, versions, 1)
+	assert.Equal(t, file.CurrentVersionID, versions[0].ID)
+	var candidateBlobs int
+	require.NoError(t, s.db.QueryRow(
+		`SELECT COUNT(*) FROM blobs WHERE hash = ?`, fakeHash("b2")).Scan(&candidateBlobs))
+	assert.Zero(t, candidateBlobs, "failed replacements must not grant blob authority")
+}
+
 func TestContentVersionsRequiresBoundedPage(t *testing.T) {
 	s := newTestStore(t)
 	file, err := s.CreateFile(t.Context(), s.RootID(), "bounded.txt", fakeHash("a1"), 1, "text/plain")

@@ -90,6 +90,7 @@ func NewServer(d Deps) *Server {
 	registerBackupRoutes(humaAPI, d, g)
 	registerJobRoutes(humaAPI, d)
 	registerUploadRoute(mux, humaAPI, d, g)
+	registerContentWriteRoute(mux, humaAPI, d, g)
 	s.registerHealth(mux)
 	mux.Handle("GET "+kitPingPath, kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{
 		Service: "docbank", Version: version.Version, PID: os.Getpid(),
