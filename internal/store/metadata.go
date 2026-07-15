@@ -123,7 +123,7 @@ type metadataContentVersion struct {
 
 type metadataIngest struct {
 	Type       string `json:"type"`
-	ID         int64  `json:"id"`
+	ID         string `json:"ingest_id"`
 	StartedAt  string `json:"started_at"`
 	SourceKind string `json:"source_kind"`
 	SourceDesc string `json:"source_desc"`
@@ -132,21 +132,21 @@ type metadataIngest struct {
 type metadataProvenance struct {
 	Type          string  `json:"type"`
 	NodeID        int64   `json:"node_id"`
-	IngestID      int64   `json:"ingest_id"`
+	IngestID      string  `json:"ingest_id"`
 	OriginalPath  string  `json:"original_path"`
 	OriginalMTime *string `json:"original_mtime"`
 }
 
 type metadataTag struct {
 	Type string `json:"type"`
-	ID   int64  `json:"id"`
+	ID   string `json:"tag_id"`
 	Name string `json:"name"`
 }
 
 type metadataNodeTag struct {
 	Type   string `json:"type"`
 	NodeID int64  `json:"node_id"`
-	TagID  int64  `json:"tag_id"`
+	TagID  string `json:"tag_id"`
 }
 
 type metadataExtractedText struct {
@@ -678,9 +678,9 @@ var metadataRequiredFields = map[string][]string{
 	"blob":            {metadataTypeField, "hash", "size", "created_at"},
 	"node":            {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", "revision", "created_at", "modified_at", "trashed_at", "trash_parent", "trash_name"},
 	"content_version": {metadataTypeField, "version_id", "node_id", "blob_hash", "size", "mime_type", "recorded_at", "node_revision", "introduced_operation_id", "transition_kind", "source_version_id"},
-	"ingest":          {metadataTypeField, "id", "started_at", "source_kind", "source_desc"},
+	"ingest":          {metadataTypeField, "ingest_id", "started_at", "source_kind", "source_desc"},
 	"provenance":      {metadataTypeField, "node_id", "ingest_id", "original_path", "original_mtime"},
-	"tag":             {metadataTypeField, "id", "name"},
+	"tag":             {metadataTypeField, "tag_id", "name"},
 	"node_tag":        {metadataTypeField, "node_id", "tag_id"},
 	"extracted_text":  {metadataTypeField, "blob_hash", "extractor", "extractor_version", "status", "error", "attempts", "text", "extracted_at"},
 }
@@ -894,8 +894,11 @@ func validateContentVersionRecord(v metadataContentVersion) error {
 }
 
 func validateIngestRecord(v metadataIngest) error {
-	if v.Type != "ingest" || v.ID <= 0 || v.SourceKind == "" || v.SourceDesc == "" {
+	if v.Type != "ingest" || v.SourceKind == "" || v.SourceDesc == "" {
 		return errors.New("invalid ingest record")
+	}
+	if err := validateUUIDv4(v.ID); err != nil {
+		return fmt.Errorf("invalid ingest ID: %w", err)
 	}
 	if err := validateUTF8Field("ingest source_kind", v.SourceKind); err != nil {
 		return err
@@ -907,8 +910,11 @@ func validateIngestRecord(v metadataIngest) error {
 }
 
 func validateProvenanceRecord(v metadataProvenance) error {
-	if v.Type != "provenance" || v.NodeID <= 0 || v.IngestID <= 0 || v.OriginalPath == "" {
+	if v.Type != "provenance" || v.NodeID <= 0 || v.OriginalPath == "" {
 		return errors.New("invalid provenance record")
+	}
+	if err := validateUUIDv4(v.IngestID); err != nil {
+		return fmt.Errorf("invalid provenance ingest ID: %w", err)
 	}
 	if err := validateUTF8Field("provenance original_path", v.OriginalPath); err != nil {
 		return err
@@ -920,15 +926,21 @@ func validateProvenanceRecord(v metadataProvenance) error {
 }
 
 func validateTagRecord(v metadataTag) error {
-	if v.Type != "tag" || v.ID <= 0 || v.Name == "" {
+	if v.Type != "tag" || v.Name == "" {
 		return errors.New("invalid tag record")
+	}
+	if err := validateUUIDv4(v.ID); err != nil {
+		return fmt.Errorf("invalid tag ID: %w", err)
 	}
 	return validateUTF8Field("tag name", v.Name)
 }
 
 func validateNodeTagRecord(v metadataNodeTag) error {
-	if v.Type != "node_tag" || v.NodeID <= 0 || v.TagID <= 0 {
+	if v.Type != "node_tag" || v.NodeID <= 0 {
 		return errors.New("invalid node tag record")
+	}
+	if err := validateUUIDv4(v.TagID); err != nil {
+		return fmt.Errorf("invalid node tag tag ID: %w", err)
 	}
 	return nil
 }

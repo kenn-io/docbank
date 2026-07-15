@@ -97,7 +97,7 @@ CREATE INDEX IF NOT EXISTS content_versions_node
 CREATE INDEX IF NOT EXISTS content_versions_blob ON content_versions(blob_hash);
 
 CREATE TABLE IF NOT EXISTS ingests (
-    id          INTEGER PRIMARY KEY,
+    id          TEXT PRIMARY KEY NOT NULL,
     started_at  TEXT NOT NULL,
     source_kind TEXT NOT NULL,
     source_desc TEXT NOT NULL
@@ -105,7 +105,7 @@ CREATE TABLE IF NOT EXISTS ingests (
 
 CREATE TABLE IF NOT EXISTS provenance (
     node_id       INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-    ingest_id     INTEGER NOT NULL REFERENCES ingests(id),
+    ingest_id     TEXT NOT NULL REFERENCES ingests(id),
     original_path TEXT NOT NULL,
     original_mtime TEXT
 );
@@ -113,13 +113,13 @@ CREATE TABLE IF NOT EXISTS provenance (
 CREATE INDEX IF NOT EXISTS provenance_node ON provenance(node_id);
 
 CREATE TABLE IF NOT EXISTS tags (
-    id   INTEGER PRIMARY KEY,
+    id   TEXT PRIMARY KEY NOT NULL,
     name TEXT NOT NULL UNIQUE
 );
 
 CREATE TABLE IF NOT EXISTS node_tags (
     node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-    tag_id  INTEGER NOT NULL REFERENCES tags(id),
+    tag_id  TEXT NOT NULL REFERENCES tags(id),
     PRIMARY KEY (node_id, tag_id)
 );
 

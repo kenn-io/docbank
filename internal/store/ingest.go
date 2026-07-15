@@ -8,23 +8,23 @@ import (
 	"path/filepath"
 )
 
-// BeginIngest records the start of an ingest run and returns its id.
-func (s *Store) BeginIngest(ctx context.Context, sourceKind, sourceDesc string) (int64, error) {
+// BeginIngest records the start of an ingest run and returns its ID.
+func (s *Store) BeginIngest(ctx context.Context, sourceKind, sourceDesc string) (string, error) {
+	id, err := newUUIDv4()
+	if err != nil {
+		return "", fmt.Errorf("allocating ingest id: %w", err)
+	}
 	startedAt := nowRFC3339()
 	if err := validateIngestRecord(metadataIngest{
-		Type: "ingest", ID: 1, StartedAt: startedAt, SourceKind: sourceKind, SourceDesc: sourceDesc,
+		Type: "ingest", ID: id, StartedAt: startedAt, SourceKind: sourceKind, SourceDesc: sourceDesc,
 	}); err != nil {
-		return 0, fmt.Errorf("validating ingest start: %w", err)
+		return "", fmt.Errorf("validating ingest start: %w", err)
 	}
-	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO ingests (started_at, source_kind, source_desc) VALUES (?, ?, ?)`,
-		startedAt, sourceKind, sourceDesc)
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO ingests (id, started_at, source_kind, source_desc) VALUES (?, ?, ?, ?)`,
+		id, startedAt, sourceKind, sourceDesc)
 	if err != nil {
-		return 0, fmt.Errorf("recording ingest start: %w", err)
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		return 0, fmt.Errorf("reading ingest id: %w", err)
+		return "", fmt.Errorf("recording ingest start: %w", err)
 	}
 	return id, nil
 }
@@ -135,7 +135,7 @@ func sameOriginTx(tx *sql.Tx, nodeID int64, name string) (bool, error) {
 // IngestFile imports one already-durable blob as a node under parentID,
 // applying the idempotency rule and recording provenance. Returns
 // added=false when the content is already present under a candidate name.
-func (s *Store) IngestFile(ctx context.Context, ingestID, parentID int64, name, blobHash string, size int64, mimeType, originalPath, originalMtime string) (Node, bool, error) {
+func (s *Store) IngestFile(ctx context.Context, ingestID string, parentID int64, name, blobHash string, size int64, mimeType, originalPath, originalMtime string) (Node, bool, error) {
 	name, err := NormalizeName(name)
 	if err != nil {
 		return Node{}, false, err

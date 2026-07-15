@@ -87,6 +87,7 @@ func TestIngestFileRecordsProvenance(t *testing.T) {
 
 	ing, err := s.BeginIngest(ctx, "cli", "test")
 	require.NoError(t, err)
+	require.NoError(t, validateUUIDv4(ing))
 	n, added, err := s.IngestFile(ctx, ing, s.RootID(),
 		"a.txt", fakeHash("a1"), 1, "text/plain", "/orig/a.txt", "2026-01-02T03:04:05Z")
 	require.NoError(t, err)
@@ -98,6 +99,23 @@ func TestIngestFileRecordsProvenance(t *testing.T) {
 		n.ID).Scan(&origPath, &origMtime))
 	assert.Equal(t, "/orig/a.txt", origPath)
 	assert.Equal(t, "2026-01-02T03:04:05Z", origMtime)
+	var storedIngestID string
+	require.NoError(t, s.db.QueryRow(
+		`SELECT ingest_id FROM provenance WHERE node_id = ?`, n.ID,
+	).Scan(&storedIngestID))
+	assert.Equal(t, ing, storedIngestID)
+}
+
+func TestBeginIngestAllocatesDistinctUUIDs(t *testing.T) {
+	s := newTestStore(t)
+	first, err := s.BeginIngest(t.Context(), "cli", "first")
+	require.NoError(t, err)
+	second, err := s.BeginIngest(t.Context(), "cli", "second")
+	require.NoError(t, err)
+
+	require.NoError(t, validateUUIDv4(first))
+	require.NoError(t, validateUUIDv4(second))
+	assert.NotEqual(t, first, second)
 }
 
 func TestIngestRejectsNonUTF8MetadataBeforeCommit(t *testing.T) {

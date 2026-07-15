@@ -401,7 +401,8 @@ func (ing *Ingester) AddPathsWithOptions(
 func (ing *Ingester) addTree(
 	ctx context.Context,
 	rep *Report,
-	ingestID, destDirID int64,
+	ingestID string,
+	destDirID int64,
 	sourceRoot, walkRoot string,
 	excludes exclusions,
 	progress *progressTracker,
@@ -506,7 +507,8 @@ func sourceTreePath(sourceRoot, walkRoot, walkPath string) string {
 func (ing *Ingester) addOne(
 	ctx context.Context,
 	rep *Report,
-	ingestID, parentID int64,
+	ingestID string,
+	parentID int64,
 	openPath, sourcePath string,
 	progress *progressTracker,
 ) error {
@@ -528,7 +530,8 @@ func (ing *Ingester) addOne(
 
 func (ing *Ingester) importFile(
 	ctx context.Context,
-	ingestID, parentID int64,
+	ingestID string,
+	parentID int64,
 	openPath, sourcePath string,
 	progress *progressTracker,
 ) (bool, error) {

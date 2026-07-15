@@ -21,6 +21,8 @@ const (
 	metadataVersionCurrent = "11111111-1111-4111-8111-111111111111"
 	metadataVersionOld     = "22222222-2222-4222-8222-222222222222"
 	metadataVersionTrashed = "33333333-3333-4333-8333-333333333333"
+	metadataIngestID       = "44444444-4444-4444-8444-444444444444"
+	metadataTagID          = "55555555-5555-4555-8555-555555555555"
 )
 
 func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
@@ -170,15 +172,15 @@ func TestImportMetadataRejectsInvalidUTF8AndRollsBack(t *testing.T) {
 		},
 		"record string": {
 			input: withInvalidByte(
-				header+root+`{"type":"tag","id":1,"name":"invalid`, `"}`+"\n"),
+				header+root+`{"type":"tag","tag_id":"`+metadataTagID+`","name":"invalid`, `"}`+"\n"),
 			want: "metadata JSON is not valid UTF-8",
 		},
 		"lone high surrogate": {
-			input: []byte(header + root + `{"type":"tag","id":1,"name":"invalid\ud800"}` + "\n"),
+			input: []byte(header + root + `{"type":"tag","tag_id":"` + metadataTagID + `","name":"invalid\ud800"}` + "\n"),
 			want:  "unpaired UTF-16 surrogate escape",
 		},
 		"lone low surrogate": {
-			input: []byte(header + root + `{"type":"tag","id":1,"name":"invalid\udc00"}` + "\n"),
+			input: []byte(header + root + `{"type":"tag","tag_id":"` + metadataTagID + `","name":"invalid\udc00"}` + "\n"),
 			want:  "unpaired UTF-16 surrogate escape",
 		},
 	}
@@ -202,14 +204,14 @@ func TestImportMetadataAcceptsValidSurrogatePair(t *testing.T) {
 	input := strings.Join([]string{
 		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}`,
 		`{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}`,
-		`{"type":"tag","id":1,"name":"archive \ud83d\ude00"}`,
+		`{"type":"tag","tag_id":"` + metadataTagID + `","name":"archive \ud83d\ude00"}`,
 	}, "\n") + "\n"
 	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, target.Close()) })
 	require.NoError(t, target.ImportMetadata(t.Context(), strings.NewReader(input)))
 	var name string
-	require.NoError(t, target.db.QueryRow(`SELECT name FROM tags WHERE id=1`).Scan(&name))
+	require.NoError(t, target.db.QueryRow(`SELECT name FROM tags WHERE id=?`, metadataTagID).Scan(&name))
 	assert.Equal(t, "archive 😀", name)
 }
 
@@ -665,6 +667,66 @@ func TestExportMetadataRejectsMalformedVaultIdentity(t *testing.T) {
 	assert.Empty(t, exported.Bytes())
 }
 
+func TestMetadataRejectsMalformedStableRecordIDs(t *testing.T) {
+	t.Run("import", func(t *testing.T) {
+		header := `{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n"
+		root := `{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}` + "\n"
+		for name, record := range map[string]string{
+			"ingest": `{"type":"ingest","ingest_id":"not-a-uuid","started_at":"2026-01-01T00:00:00.000000000Z","source_kind":"cli","source_desc":"source"}`,
+			"tag":    `{"type":"tag","tag_id":"not-a-uuid","name":"archive"}`,
+		} {
+			t.Run(name, func(t *testing.T) {
+				target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, target.Close()) })
+				err = target.ImportMetadata(t.Context(), strings.NewReader(header+root+record+"\n"))
+				require.ErrorContains(t, err, "canonical UUIDv4")
+			})
+		}
+	})
+
+	t.Run("export", func(t *testing.T) {
+		for name, insert := range map[string]string{
+			"ingest": `INSERT INTO ingests(id,started_at,source_kind,source_desc)
+				VALUES('not-a-uuid','2026-01-01T00:00:00.000000000Z','cli','source')`,
+			"tag": `INSERT INTO tags(id,name) VALUES('not-a-uuid','archive')`,
+		} {
+			t.Run(name, func(t *testing.T) {
+				source := newTestStore(t)
+				_, err := source.db.Exec(insert)
+				require.NoError(t, err)
+				var exported bytes.Buffer
+				err = source.ExportMetadata(t.Context(), &exported)
+				require.ErrorContains(t, err, "canonical UUIDv4")
+			})
+		}
+	})
+}
+
+func TestImportMetadataRejectsDuplicateStableRecordIDsTransactionally(t *testing.T) {
+	header := `{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n"
+	root := `{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}` + "\n"
+	for name, record := range map[string]string{
+		"ingest": `{"type":"ingest","ingest_id":"` + metadataIngestID + `","started_at":"2026-01-01T00:00:00.000000000Z","source_kind":"cli","source_desc":"source"}`,
+		"tag":    `{"type":"tag","tag_id":"` + metadataTagID + `","name":"archive"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, target.Close()) })
+
+			err = target.ImportMetadata(t.Context(), strings.NewReader(header+root+record+"\n"+record+"\n"))
+			require.Error(t, err)
+
+			var recordCount int64
+			require.NoError(t, target.db.QueryRow(
+				`SELECT (SELECT COUNT(*) FROM ingests) + (SELECT COUNT(*) FROM tags)`,
+			).Scan(&recordCount))
+			assert.Zero(t, recordCount)
+		})
+	}
+}
+
 func seedMetadataRoundTrip(t *testing.T, s *Store) {
 	t.Helper()
 	ctx := context.Background()
@@ -697,11 +759,11 @@ func seedMetadataRoundTrip(t *testing.T, s *Store) {
 			 ('` + metadataVersionTrashed + `',11,'` + metadataHashTrashed + `',5,'application/octet-stream',
 			  '2026-01-10T00:00:00.000000000Z',1,'cccccccc-cccc-4ccc-8ccc-cccccccccccc','content_create',NULL)`,
 			`INSERT INTO ingests(id,started_at,source_kind,source_desc)
-			 VALUES(4,'2026-01-08T00:00:00.000000000Z','filesystem','dropbox')`,
+				 VALUES('` + metadataIngestID + `','2026-01-08T00:00:00.000000000Z','filesystem','dropbox')`,
 			`INSERT INTO provenance(node_id,ingest_id,original_path,original_mtime)
-			 VALUES(10,4,'/source/report.txt','2025-12-31T23:00:00.12Z')`,
-			`INSERT INTO tags(id,name) VALUES(8,'important')`,
-			`INSERT INTO node_tags(node_id,tag_id) VALUES(10,8)`,
+				 VALUES(10,'` + metadataIngestID + `','/source/report.txt','2025-12-31T23:00:00.12Z')`,
+			`INSERT INTO tags(id,name) VALUES('` + metadataTagID + `','important')`,
+			`INSERT INTO node_tags(node_id,tag_id) VALUES(10,'` + metadataTagID + `')`,
 			`INSERT INTO extracted_text(blob_hash,extractor,extractor_version,status,error,attempts,text,extracted_at)
 			 VALUES('` + metadataHashCurrent + `','plain',2,'ok',NULL,1,'line one\nline two','2026-01-13T00:00:00.000000000Z')`,
 			`INSERT INTO blob_packs(pack_id,entry_count,stored_bytes,created_at)
