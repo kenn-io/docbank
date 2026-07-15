@@ -196,10 +196,6 @@ func (v *Vault) Put(
 	defer v.mutation.Unlock()
 	var receipt PutReceipt
 	err = v.blobs.WithMutation(ctx, func() error {
-		parent, mkdirErr := v.metadata.MkdirAll(ctx, parentPath)
-		if mkdirErr != nil {
-			return mkdirErr
-		}
 		hash, size, writeErr := v.blobs.WriteContext(ctx, content)
 		if writeErr != nil {
 			return writeErr
@@ -212,6 +208,10 @@ func (v *Vault) Put(
 		if opts.Expected != nil && opts.Expected.SHA256 != hash {
 			return fmt.Errorf("expected SHA-256 %s, computed %s: %w",
 				opts.Expected.SHA256, hash, ErrDigestMismatch)
+		}
+		parent, mkdirErr := v.metadata.MkdirAll(ctx, parentPath)
+		if mkdirErr != nil {
+			return mkdirErr
 		}
 
 		existing, lookupErr := v.metadata.NodeByPath(ctx, canonicalPath)

@@ -1,6 +1,9 @@
 package docbank
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"strings"
 	"testing"
@@ -10,6 +13,48 @@ import (
 	docsqlite "go.kenn.io/docbank/pkg/sqlite"
 	"go.kenn.io/docbank/pkg/sqlite/modernc"
 )
+
+func TestPutExpectedMismatchLeavesTreeUnchanged(t *testing.T) {
+	content := []byte("authoritative bytes\n")
+	actual := sha256.Sum256(content)
+	other := sha256.Sum256([]byte("different bytes\n"))
+	tests := []struct {
+		name     string
+		expected ContentIdentity
+		wantErr  error
+	}{
+		{
+			name: "size", expected: ContentIdentity{
+				SHA256: hex.EncodeToString(actual[:]), Size: int64(len(content) + 1),
+			}, wantErr: ErrSizeMismatch,
+		},
+		{
+			name: "digest", expected: ContentIdentity{
+				SHA256: hex.EncodeToString(other[:]), Size: int64(len(content)),
+			}, wantErr: ErrDigestMismatch,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
+			vault, err := Open(t.Context(), OpenOptions{Root: t.TempDir()})
+			require.NoError(err)
+			t.Cleanup(func() { require.NoError(vault.Close()) })
+
+			before, err := vault.Stat(t.Context(), "/")
+			require.NoError(err)
+			_, err = vault.Put(t.Context(), "/missing/parent/file.bin", bytes.NewReader(content),
+				PutOptions{Expected: &test.expected})
+			require.ErrorIs(err, test.wantErr)
+
+			after, err := vault.Stat(t.Context(), "/")
+			require.NoError(err)
+			require.Equal(before, after)
+			_, err = vault.Stat(t.Context(), "/missing")
+			require.ErrorIs(err, ErrNotFound)
+		})
+	}
+}
 
 func TestEmbeddedVaultLifecycle(t *testing.T) {
 	tests := []struct {
