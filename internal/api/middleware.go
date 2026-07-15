@@ -11,9 +11,9 @@ import (
 	"net/http"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"go.kenn.io/docbank/internal/daemonauth"
+	"go.kenn.io/docbank/internal/jsontext"
 )
 
 const requestTimeout = 60 * time.Second
@@ -92,11 +92,12 @@ func isServerPathIngestRoute(path string) bool {
 	return path == "/api/v1/ingest" || path == "/api/v1/ingest/stream" || path == "/api/v1/ingest/preflight"
 }
 
-// ingestBodyUTF8Middleware runs before Huma's JSON decoder, which follows
-// encoding/json's lossy behavior and replaces invalid UTF-8 in strings with
-// U+FFFD. Local source paths must reach route validation byte-for-byte or the
-// daemon could inspect and ingest a different, replacement-character path.
-func ingestBodyUTF8Middleware(next http.Handler) http.Handler {
+// ingestBodyTextMiddleware runs before Huma's JSON decoder, which follows
+// encoding/json's lossy behavior and replaces invalid UTF-8 or unpaired
+// surrogate escapes with U+FFFD. Local source paths must reach route
+// validation byte-for-byte or the daemon could inspect and ingest a different,
+// replacement-character path.
+func ingestBodyTextMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || !isServerPathIngestRoute(r.URL.Path) || r.Body == nil {
 			next.ServeHTTP(w, r)
@@ -108,9 +109,8 @@ func ingestBodyUTF8Middleware(next http.Handler) http.Handler {
 			writeError(w, NewError(http.StatusBadRequest, "validation", "could not read request body"))
 			return
 		}
-		if !utf8.Valid(body) {
-			writeError(w, NewError(http.StatusBadRequest, "validation",
-				"request body must be valid UTF-8"))
+		if err := jsontext.Validate(body, "request body"); err != nil {
+			writeError(w, NewError(http.StatusBadRequest, "validation", err.Error()))
 			return
 		}
 		r.Body = io.NopCloser(bytes.NewReader(body))

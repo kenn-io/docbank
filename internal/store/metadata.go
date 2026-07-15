@@ -13,6 +13,8 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/kit/packstore"
+
+	"go.kenn.io/docbank/internal/jsontext"
 )
 
 const metadataFormatVersion = 1
@@ -746,67 +748,7 @@ func decodeMetadataFields(raw json.RawMessage) (map[string]json.RawMessage, erro
 }
 
 func validateMetadataJSON(raw json.RawMessage) error {
-	if !utf8.Valid(raw) {
-		return errors.New("metadata JSON is not valid UTF-8")
-	}
-	for i := 0; i < len(raw); i++ {
-		if raw[i] != '"' {
-			continue
-		}
-		for i++; i < len(raw) && raw[i] != '"'; i++ {
-			if raw[i] != '\\' {
-				continue
-			}
-			if i+1 >= len(raw) {
-				return errors.New("metadata JSON contains an incomplete escape")
-			}
-			if raw[i+1] != 'u' {
-				i++
-				continue
-			}
-			unit, ok := parseJSONUTF16Unit(raw[i+2:])
-			if !ok {
-				return errors.New("metadata JSON contains an invalid Unicode escape")
-			}
-			i += 5
-			switch {
-			case unit >= 0xd800 && unit <= 0xdbff:
-				next := i + 1
-				if next+6 > len(raw) || raw[next] != '\\' || raw[next+1] != 'u' {
-					return errors.New("metadata JSON contains an unpaired UTF-16 surrogate escape")
-				}
-				low, valid := parseJSONUTF16Unit(raw[next+2:])
-				if !valid || low < 0xdc00 || low > 0xdfff {
-					return errors.New("metadata JSON contains an unpaired UTF-16 surrogate escape")
-				}
-				i = next + 5
-			case unit >= 0xdc00 && unit <= 0xdfff:
-				return errors.New("metadata JSON contains an unpaired UTF-16 surrogate escape")
-			}
-		}
-	}
-	return nil
-}
-
-func parseJSONUTF16Unit(raw []byte) (uint16, bool) {
-	if len(raw) < 4 {
-		return 0, false
-	}
-	var value uint16
-	for _, b := range raw[:4] {
-		value <<= 4
-		switch {
-		case b >= '0' && b <= '9':
-			value |= uint16(b - '0')
-		case b >= 'a' && b <= 'f':
-			value |= uint16(b-'a') + 10
-		case b >= 'A' && b <= 'F':
-			value |= uint16(b-'A') + 10
-		default:
-			return 0, false
-		}
-	}
-	return value, true
+	return jsontext.Validate(raw, "metadata JSON")
 }
 
 func validateUTF8Field(field, value string) error {
