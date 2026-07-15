@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"time"
+	"unicode/utf8"
 
 	"go.kenn.io/kit/packstore"
 )
@@ -241,6 +242,9 @@ func exportBlobs(ctx context.Context, tx metadataQuerier, write metadataWrite) e
 		if err := rows.Scan(&r.Hash, &r.Size, &r.CreatedAt); err != nil {
 			return fmt.Errorf("scanning blob metadata: %w", err)
 		}
+		if err := validateBlobRecord(r); err != nil {
+			return fmt.Errorf("validating blob metadata for export: %w", err)
+		}
 		if err := write(r); err != nil {
 			return err
 		}
@@ -268,6 +272,9 @@ func exportNodes(ctx context.Context, tx metadataQuerier, write metadataWrite) e
 		r.ParentID, r.TrashParent = int64Ptr(parent), int64Ptr(trashParent)
 		r.CurrentVersionID = stringPtr(currentVersionID)
 		r.TrashedAt, r.TrashName = stringPtr(trashedAt), stringPtr(trashName)
+		if err := validateNodeRecord(r); err != nil {
+			return fmt.Errorf("validating node metadata for export: %w", err)
+		}
 		if err := write(r); err != nil {
 			return err
 		}
@@ -293,6 +300,9 @@ func exportContentVersions(ctx context.Context, tx metadataQuerier, write metada
 			return fmt.Errorf("scanning content version metadata: %w", err)
 		}
 		r.MIMEType, r.SourceVersionID = stringPtr(mimeType), stringPtr(sourceVersionID)
+		if err := validateContentVersionRecord(r); err != nil {
+			return fmt.Errorf("validating content version metadata for export: %w", err)
+		}
 		if err := write(r); err != nil {
 			return err
 		}
@@ -310,6 +320,9 @@ func exportIngests(ctx context.Context, tx metadataQuerier, write metadataWrite)
 		r := metadataIngest{Type: "ingest"}
 		if err := rows.Scan(&r.ID, &r.StartedAt, &r.SourceKind, &r.SourceDesc); err != nil {
 			return fmt.Errorf("scanning ingest metadata: %w", err)
+		}
+		if err := validateIngestRecord(r); err != nil {
+			return fmt.Errorf("validating ingest metadata for export: %w", err)
 		}
 		if err := write(r); err != nil {
 			return err
@@ -333,6 +346,9 @@ func exportProvenance(ctx context.Context, tx metadataQuerier, write metadataWri
 			return fmt.Errorf("scanning provenance metadata: %w", err)
 		}
 		r.OriginalMTime = stringPtr(mtime)
+		if err := validateProvenanceRecord(r); err != nil {
+			return fmt.Errorf("validating provenance metadata for export: %w", err)
+		}
 		if err := write(r); err != nil {
 			return err
 		}
@@ -351,6 +367,9 @@ func exportTags(ctx context.Context, tx metadataQuerier, write metadataWrite) er
 		if err := rows.Scan(&r.ID, &r.Name); err != nil {
 			return fmt.Errorf("scanning tag metadata: %w", err)
 		}
+		if err := validateTagRecord(r); err != nil {
+			return fmt.Errorf("validating tag metadata for export: %w", err)
+		}
 		if err := write(r); err != nil {
 			return err
 		}
@@ -368,6 +387,9 @@ func exportNodeTags(ctx context.Context, tx metadataQuerier, write metadataWrite
 		r := metadataNodeTag{Type: "node_tag"}
 		if err := rows.Scan(&r.NodeID, &r.TagID); err != nil {
 			return fmt.Errorf("scanning node tag metadata: %w", err)
+		}
+		if err := validateNodeTagRecord(r); err != nil {
+			return fmt.Errorf("validating node tag metadata for export: %w", err)
 		}
 		if err := write(r); err != nil {
 			return err
@@ -392,6 +414,9 @@ func exportExtractedText(ctx context.Context, tx metadataQuerier, write metadata
 			return fmt.Errorf("scanning extracted text metadata: %w", err)
 		}
 		r.Error, r.Text = stringPtr(extractErr), stringPtr(text)
+		if err := validateExtractedTextRecord(r); err != nil {
+			return fmt.Errorf("validating extracted text metadata for export: %w", err)
+		}
 		if err := write(r); err != nil {
 			return err
 		}
@@ -503,6 +528,9 @@ func importMetadataLines(ctx context.Context, tx *sql.Tx, r io.Reader) (int64, e
 	if err := dec.Decode(&rawHeader); err != nil {
 		return 0, fmt.Errorf("decoding metadata header: %w", err)
 	}
+	if !utf8.Valid(rawHeader) {
+		return 0, errors.New("decoding metadata header: metadata JSON is not valid UTF-8")
+	}
 	if err := requireMetadataFields(rawHeader, metadataHeaderFields, nil); err != nil {
 		return 0, fmt.Errorf("decoding metadata header: %w", err)
 	}
@@ -523,6 +551,9 @@ func importMetadataLines(ctx context.Context, tx *sql.Tx, r io.Reader) (int64, e
 		}
 		if err != nil {
 			return 0, fmt.Errorf("decoding metadata record %d: %w", record, err)
+		}
+		if !utf8.Valid(raw) {
+			return 0, fmt.Errorf("decoding metadata record %d: metadata JSON is not valid UTF-8", record)
 		}
 		var kind struct {
 			Type string `json:"type"`
@@ -586,10 +617,7 @@ func importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw json
 		if err := decodeMetadataRecord(raw, &v); err != nil {
 			return err
 		}
-		if v.Type != kind || v.ID <= 0 || v.SourceKind == "" || v.SourceDesc == "" {
-			return errors.New("invalid ingest record")
-		}
-		if err := validateMetadataTime("ingest started_at", v.StartedAt); err != nil {
+		if err := validateIngestRecord(v); err != nil {
 			return err
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO ingests(id,started_at,source_kind,source_desc) VALUES(?,?,?,?)`, v.ID, v.StartedAt, v.SourceKind, v.SourceDesc)
@@ -599,13 +627,8 @@ func importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw json
 		if err := decodeMetadataRecord(raw, &v); err != nil {
 			return err
 		}
-		if v.Type != kind || v.NodeID <= 0 || v.IngestID <= 0 || v.OriginalPath == "" {
-			return errors.New("invalid provenance record")
-		}
-		if v.OriginalMTime != nil {
-			if err := validateProvenanceTime(*v.OriginalMTime); err != nil {
-				return err
-			}
+		if err := validateProvenanceRecord(v); err != nil {
+			return err
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO provenance(node_id,ingest_id,original_path,original_mtime) VALUES(?,?,?,?)`, v.NodeID, v.IngestID, v.OriginalPath, v.OriginalMTime)
 		return err
@@ -614,8 +637,8 @@ func importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw json
 		if err := decodeMetadataRecord(raw, &v); err != nil {
 			return err
 		}
-		if v.Type != kind || v.ID <= 0 || v.Name == "" {
-			return errors.New("invalid tag record")
+		if err := validateTagRecord(v); err != nil {
+			return err
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO tags(id,name) VALUES(?,?)`, v.ID, v.Name)
 		return err
@@ -624,8 +647,8 @@ func importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw json
 		if err := decodeMetadataRecord(raw, &v); err != nil {
 			return err
 		}
-		if v.Type != kind || v.NodeID <= 0 || v.TagID <= 0 {
-			return errors.New("invalid node tag record")
+		if err := validateNodeTagRecord(v); err != nil {
+			return err
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO node_tags(node_id,tag_id) VALUES(?,?)`, v.NodeID, v.TagID)
 		return err
@@ -741,6 +764,13 @@ func decodeMetadataFields(raw json.RawMessage) (map[string]json.RawMessage, erro
 	return fields, nil
 }
 
+func validateUTF8Field(field, value string) error {
+	if !utf8.ValidString(value) {
+		return fmt.Errorf("invalid %s: not valid UTF-8", field)
+	}
+	return nil
+}
+
 func validateBlobRecord(v metadataBlob) error {
 	if v.Type != "blob" || v.Size < 0 {
 		return errors.New("invalid blob record")
@@ -754,6 +784,9 @@ func validateBlobRecord(v metadataBlob) error {
 func validateNodeRecord(v metadataNode) error {
 	if v.Type != "node" || v.ID <= 0 || v.Revision <= 0 {
 		return errors.New("invalid node record")
+	}
+	if err := validateUTF8Field("node name", v.Name); err != nil {
+		return err
 	}
 	if err := validateMetadataTime("node created_at", v.CreatedAt); err != nil {
 		return err
@@ -802,6 +835,9 @@ func validateNodeRecord(v metadataNode) error {
 		return errors.New("incomplete node trash coordinates")
 	}
 	if v.TrashName != nil {
+		if err := validateUTF8Field("node trash_name", *v.TrashName); err != nil {
+			return err
+		}
 		normalizedTrashName, err := NormalizeName(*v.TrashName)
 		if err != nil || normalizedTrashName != *v.TrashName {
 			return fmt.Errorf("invalid node trash_name %q", *v.TrashName)
@@ -822,6 +858,11 @@ func validateContentVersionRecord(v metadataContentVersion) error {
 	}
 	if _, err := packstore.ParseHash(v.BlobHash); err != nil {
 		return fmt.Errorf("invalid content version blob hash: %w", err)
+	}
+	if v.MIMEType != nil {
+		if err := validateUTF8Field("content version mime_type", *v.MIMEType); err != nil {
+			return err
+		}
 	}
 	switch v.TransitionKind {
 	case "content_create", "content_replace":
@@ -844,6 +885,46 @@ func validateContentVersionRecord(v metadataContentVersion) error {
 	return validateMetadataTime("content version recorded_at", v.RecordedAt)
 }
 
+func validateIngestRecord(v metadataIngest) error {
+	if v.Type != "ingest" || v.ID <= 0 || v.SourceKind == "" || v.SourceDesc == "" {
+		return errors.New("invalid ingest record")
+	}
+	if err := validateUTF8Field("ingest source_kind", v.SourceKind); err != nil {
+		return err
+	}
+	if err := validateUTF8Field("ingest source_desc", v.SourceDesc); err != nil {
+		return err
+	}
+	return validateMetadataTime("ingest started_at", v.StartedAt)
+}
+
+func validateProvenanceRecord(v metadataProvenance) error {
+	if v.Type != "provenance" || v.NodeID <= 0 || v.IngestID <= 0 || v.OriginalPath == "" {
+		return errors.New("invalid provenance record")
+	}
+	if err := validateUTF8Field("provenance original_path", v.OriginalPath); err != nil {
+		return err
+	}
+	if v.OriginalMTime != nil {
+		return validateProvenanceTime(*v.OriginalMTime)
+	}
+	return nil
+}
+
+func validateTagRecord(v metadataTag) error {
+	if v.Type != "tag" || v.ID <= 0 || v.Name == "" {
+		return errors.New("invalid tag record")
+	}
+	return validateUTF8Field("tag name", v.Name)
+}
+
+func validateNodeTagRecord(v metadataNodeTag) error {
+	if v.Type != "node_tag" || v.NodeID <= 0 || v.TagID <= 0 {
+		return errors.New("invalid node tag record")
+	}
+	return nil
+}
+
 func validateExtractedTextRecord(v metadataExtractedText) error {
 	if v.Type != "extracted_text" || v.Extractor == "" || v.ExtractorVersion < 0 || v.Attempts < 0 {
 		return errors.New("invalid extracted text record")
@@ -853,6 +934,19 @@ func validateExtractedTextRecord(v metadataExtractedText) error {
 	}
 	if _, err := packstore.ParseHash(v.BlobHash); err != nil {
 		return fmt.Errorf("invalid extracted text blob hash: %w", err)
+	}
+	if err := validateUTF8Field("extracted text extractor", v.Extractor); err != nil {
+		return err
+	}
+	if v.Error != nil {
+		if err := validateUTF8Field("extracted text error", *v.Error); err != nil {
+			return err
+		}
+	}
+	if v.Text != nil {
+		if err := validateUTF8Field("extracted text value", *v.Text); err != nil {
+			return err
+		}
 	}
 	return validateMetadataTime("extracted text extracted_at", v.ExtractedAt)
 }
