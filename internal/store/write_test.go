@@ -172,6 +172,104 @@ func TestReplaceContentRejectsInvalidTargetAndStaleRevision(t *testing.T) {
 	assert.Zero(t, candidateBlobs, "failed replacements must not grant blob authority")
 }
 
+func TestRevertContentCreatesNewHeadFromPriorAuthority(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	created, err := s.CreateFile(ctx, s.RootID(), "report.txt", fakeHash("a1"), 3, "text/plain")
+	require.NoError(t, err)
+	replaced, replacement, err := s.ReplaceContent(
+		ctx, created.ID, created.Revision, fakeHash("b2"), 4, "text/markdown",
+	)
+	require.NoError(t, err)
+
+	reverted, revertVersion, source, err := s.RevertContent(
+		ctx, created.ID, replaced.Revision, created.CurrentVersionID,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, created.CurrentVersionID, source.ID)
+	assert.Equal(t, created.BlobHash, revertVersion.BlobHash)
+	assert.Equal(t, created.Size, revertVersion.Size)
+	assert.Equal(t, created.MimeType, revertVersion.MimeType)
+	assert.Equal(t, "content_revert", revertVersion.TransitionKind)
+	require.NotNil(t, revertVersion.SourceVersionID)
+	assert.Equal(t, source.ID, *revertVersion.SourceVersionID)
+	assert.Equal(t, revertVersion.ID, reverted.CurrentVersionID)
+	assert.Equal(t, replaced.Revision+1, reverted.Revision)
+
+	// Repeating the same historical choice is another explicit operation. The
+	// current reversion row is distinct from its immutable source identity.
+	repeated, repeatedVersion, _, err := s.RevertContent(
+		ctx, created.ID, reverted.Revision, created.CurrentVersionID,
+	)
+	require.NoError(t, err)
+	assert.NotEqual(t, revertVersion.ID, repeatedVersion.ID)
+	assert.Equal(t, created.BlobHash, repeatedVersion.BlobHash)
+	assert.Equal(t, reverted.Revision+1, repeated.Revision)
+
+	versions, total, err := s.ContentVersions(ctx, created.ID, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 4, total)
+	require.Len(t, versions, 4)
+	assert.Equal(t, repeatedVersion.ID, versions[0].ID)
+	assert.Equal(t, revertVersion.ID, versions[1].ID)
+	assert.Equal(t, replacement.ID, versions[2].ID)
+	assert.Equal(t, created.CurrentVersionID, versions[3].ID)
+	var blobCount int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM blobs`).Scan(&blobCount))
+	assert.Equal(t, 2, blobCount, "reversion must not create or copy a blob")
+}
+
+func TestRevertContentRejectsInvalidSourceAndTarget(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	first, err := s.CreateFile(ctx, s.RootID(), "first.txt", fakeHash("a1"), 3, "text/plain")
+	require.NoError(t, err)
+	second, err := s.CreateFile(ctx, s.RootID(), "second.txt", fakeHash("b2"), 4, "text/plain")
+	require.NoError(t, err)
+	dir, err := s.Mkdir(ctx, s.RootID(), "folder")
+	require.NoError(t, err)
+
+	rejectedNode, rejectedVersion, rejectedSource, err := s.RevertContent(
+		ctx, first.ID, first.Revision, first.CurrentVersionID,
+	)
+	require.ErrorIs(t, err, ErrVersionAlreadyCurrent)
+	assert.Equal(t, Node{}, rejectedNode)
+	assert.Equal(t, ContentVersion{}, rejectedVersion)
+	assert.Equal(t, ContentVersion{}, rejectedSource)
+	wrongNode, wrongVersion, wrongSource, err := s.RevertContent(
+		ctx, first.ID, first.Revision, second.CurrentVersionID,
+	)
+	require.ErrorIs(t, err, ErrVersionNodeMismatch)
+	assert.Equal(t, Node{}, wrongNode)
+	assert.Equal(t, ContentVersion{}, wrongVersion)
+	assert.Equal(t, ContentVersion{}, wrongSource)
+	staleNode, staleVersion, staleSource, err := s.RevertContent(
+		ctx, first.ID, first.Revision+1, second.CurrentVersionID,
+	)
+	require.ErrorIs(t, err, ErrStaleRevision)
+	assert.Equal(t, Node{}, staleNode)
+	assert.Equal(t, ContentVersion{}, staleVersion)
+	assert.Equal(t, ContentVersion{}, staleSource)
+	dirNode, dirVersion, dirSource, err := s.RevertContent(
+		ctx, dir.ID, dir.Revision, first.CurrentVersionID,
+	)
+	require.ErrorIs(t, err, ErrNotFile)
+	assert.Equal(t, Node{}, dirNode)
+	assert.Equal(t, ContentVersion{}, dirVersion)
+	assert.Equal(t, ContentVersion{}, dirSource)
+	missingNode, missingVersion, missingSource, err := s.RevertContent(ctx, first.ID, first.Revision,
+		"11111111-1111-4111-8111-111111111111")
+	require.ErrorIs(t, err, ErrNotFound)
+	assert.Equal(t, Node{}, missingNode)
+	assert.Equal(t, ContentVersion{}, missingVersion)
+	assert.Equal(t, ContentVersion{}, missingSource)
+
+	versions, total, err := s.ContentVersions(ctx, first.ID, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, total)
+	require.Len(t, versions, 1)
+}
+
 func TestContentVersionsRequiresBoundedPage(t *testing.T) {
 	s := newTestStore(t)
 	file, err := s.CreateFile(t.Context(), s.RootID(), "bounded.txt", fakeHash("a1"), 1, "text/plain")

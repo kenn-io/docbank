@@ -126,6 +126,8 @@ var codeToTypedErr = map[string]error{
 	"invalid_name":             store.ErrInvalidName,
 	"not_trashed":              store.ErrNotTrashed,
 	"is_root":                  store.ErrIsRoot,
+	"version_node_mismatch":    store.ErrVersionNodeMismatch,
+	"version_already_current":  store.ErrVersionAlreadyCurrent,
 	"backup_locked":            backup.ErrRepoLocked,
 	"pack_retirement_deferred": packstore.ErrPackRetirementDeferred,
 }
@@ -664,6 +666,101 @@ func validateReplacementReceipt(
 	expectedETag := fmt.Sprintf("%q", strconv.FormatInt(receipt.Node.Revision, 10))
 	if etag != expectedETag {
 		return fmt.Errorf("content replacement response ETag %q, expected %q", etag, expectedETag)
+	}
+	return nil
+}
+
+// RevertContent creates a new immutable head from one prior version under an
+// optimistic node-revision precondition. The response must bind the requested
+// source, new history row, current node authority, and resulting ETag.
+func (c *Client) RevertContent(
+	ctx context.Context, nodeID, revision int64, sourceVersionID string,
+) (api.ContentReversionReceipt, error) {
+	var receipt api.ContentReversionReceipt
+	if nodeID <= 0 {
+		return receipt, errors.New("reversion node ID must be positive")
+	}
+	if revision < 0 {
+		return receipt, errors.New("reversion revision must not be negative")
+	}
+	if !validUUIDv4(sourceVersionID) {
+		return receipt, errors.New("reversion source must be a canonical UUIDv4")
+	}
+	headers := ifMatch(revision)
+	body, err := marshalJSONRequest(map[string]string{"source_version_id": sourceVersionID})
+	if err != nil {
+		return receipt, fmt.Errorf("encoding content reversion request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		fmt.Sprintf("%s/api/v1/nodes/%d/revert", c.base, nodeID), bytes.NewReader(body))
+	if err != nil {
+		return receipt, fmt.Errorf("building content reversion request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+	if c.key != "" {
+		req.Header.Set("X-Api-Key", c.key)
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return receipt, fmt.Errorf("reverting content of node %d: %w", nodeID, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return receipt, decodeError(resp)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&receipt); err != nil {
+		return receipt, fmt.Errorf("decoding content reversion response: %w", err)
+	}
+	if err := validateReversionReceipt(
+		receipt, resp.Header.Get("ETag"), nodeID, revision, sourceVersionID,
+	); err != nil {
+		return api.ContentReversionReceipt{}, err
+	}
+	return receipt, nil
+}
+
+func validateReversionReceipt(
+	receipt api.ContentReversionReceipt, etag string, nodeID, revision int64, sourceVersionID string,
+) error {
+	if receipt.Node.ID != nodeID || receipt.Version.NodeID != nodeID ||
+		receipt.SourceVersion.NodeID != nodeID {
+		return fmt.Errorf("content reversion receipt targets node %d/%d/%d, expected %d",
+			receipt.Node.ID, receipt.Version.NodeID, receipt.SourceVersion.NodeID, nodeID)
+	}
+	if receipt.Node.Revision != revision+1 || receipt.Version.NodeRevision != receipt.Node.Revision {
+		return fmt.Errorf("content reversion receipt revision %d/%d, expected %d",
+			receipt.Node.Revision, receipt.Version.NodeRevision, revision+1)
+	}
+	if !validUUIDv4(receipt.Version.ID) || receipt.Version.ID == sourceVersionID ||
+		receipt.Node.CurrentVersionID != receipt.Version.ID {
+		return errors.New("content reversion receipt does not install a valid returned version as current")
+	}
+	if receipt.SourceVersion.ID != sourceVersionID || !validUUIDv4(receipt.SourceVersion.ID) {
+		return fmt.Errorf("content reversion receipt source %q, expected %q",
+			receipt.SourceVersion.ID, sourceVersionID)
+	}
+	if receipt.Version.TransitionKind != "content_revert" ||
+		receipt.Version.SourceVersionID == nil ||
+		*receipt.Version.SourceVersionID != sourceVersionID {
+		return errors.New("content reversion receipt does not bind its content_revert source")
+	}
+	if receipt.SourceVersion.NodeRevision >= receipt.Version.NodeRevision {
+		return errors.New("content reversion receipt source is not older than its new head")
+	}
+	if receipt.Node.BlobHash != receipt.SourceVersion.BlobHash ||
+		receipt.Node.Size != receipt.SourceVersion.Size ||
+		receipt.Node.MimeType != receipt.SourceVersion.MimeType ||
+		receipt.Version.BlobHash != receipt.SourceVersion.BlobHash ||
+		receipt.Version.Size != receipt.SourceVersion.Size ||
+		receipt.Version.MimeType != receipt.SourceVersion.MimeType {
+		return errors.New("content reversion receipt authority disagrees with its source version")
+	}
+	expectedETag := fmt.Sprintf("%q", strconv.FormatInt(receipt.Node.Revision, 10))
+	if etag != expectedETag {
+		return fmt.Errorf("content reversion response ETag %q, expected %q", etag, expectedETag)
 	}
 	return nil
 }

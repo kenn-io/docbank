@@ -90,6 +90,14 @@ type ContentReplacementReceipt struct {
 	ComputedSize int64          `json:"computed_size" minimum:"0"`
 }
 
+// ContentReversionReceipt proves which immutable source authority was adopted
+// and which new history row became the node's current head.
+type ContentReversionReceipt struct {
+	Node          Node           `json:"node"`
+	Version       ContentVersion `json:"version"`
+	SourceVersion ContentVersion `json:"source_version"`
+}
+
 // SearchHit pairs a matched node with its display path.
 type SearchHit struct {
 	Node Node   `json:"node"`

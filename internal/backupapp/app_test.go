@@ -414,7 +414,7 @@ func TestPackedSnapshotRequiresAndUsesPackedRestoreTarget(t *testing.T) {
 	require.NoError(t, restoredStore.Close())
 }
 
-func TestVersionedReplacementRoundTripsPackedPriorContent(t *testing.T) {
+func TestVersionedEditingRoundTripsPackedRevertSource(t *testing.T) {
 	fixture := newArchiveFixture(t)
 	alpha, err := fixture.metadata.NodeByPath(t.Context(), "/alpha.txt")
 	require.NoError(t, err)
@@ -435,6 +435,10 @@ func TestVersionedReplacementRoundTripsPackedPriorContent(t *testing.T) {
 		)
 		return writeErr
 	}))
+	reverted, revertVersion, _, err := fixture.metadata.RevertContent(
+		t.Context(), alpha.ID, replaced.Revision, priorVersionID,
+	)
+	require.NoError(t, err)
 	wantMetadata := exportMetadata(t, fixture.metadata)
 
 	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
@@ -447,7 +451,7 @@ func TestVersionedReplacementRoundTripsPackedPriorContent(t *testing.T) {
 		"backup must include both heads plus the other file")
 	stats, err := backupapp.ParseStats(manifest.Stats)
 	require.NoError(t, err)
-	assert.Equal(t, int64(3), stats.ContentVersions)
+	assert.Equal(t, int64(4), stats.ContentVersions)
 
 	target := filepath.Join(t.TempDir(), "restored")
 	_, err = backupapp.Restore(t.Context(), repo, "test-version", backup.RestoreOptions{
@@ -463,11 +467,12 @@ func TestVersionedReplacementRoundTripsPackedPriorContent(t *testing.T) {
 
 	restoredNode, err := restoredStore.NodeByID(t.Context(), alpha.ID)
 	require.NoError(t, err)
-	assert.Equal(t, replaced.CurrentVersionID, restoredNode.CurrentVersionID)
-	assert.Equal(t, int64(2), restoredNode.Revision)
+	assert.Equal(t, reverted.CurrentVersionID, restoredNode.CurrentVersionID)
+	assert.Equal(t, int64(3), restoredNode.Revision)
 	for versionID, want := range map[string]string{
 		priorVersionID:                "alpha backup",
-		restoredNode.CurrentVersionID: replacement,
+		replaced.CurrentVersionID:     replacement,
+		restoredNode.CurrentVersionID: "alpha backup",
 	} {
 		version, versionErr := restoredStore.ContentVersionByID(t.Context(), versionID)
 		require.NoError(t, versionErr)
@@ -479,6 +484,10 @@ func TestVersionedReplacementRoundTripsPackedPriorContent(t *testing.T) {
 		require.NoError(t, stream.Close())
 		assert.Equal(t, want, string(got))
 	}
+	restoredRevert, err := restoredStore.ContentVersionByID(t.Context(), revertVersion.ID)
+	require.NoError(t, err)
+	require.NotNil(t, restoredRevert.SourceVersionID)
+	assert.Equal(t, priorVersionID, *restoredRevert.SourceVersionID)
 	require.NoError(t, restoredBlobs.Close())
 	require.NoError(t, restoredStore.Close())
 }

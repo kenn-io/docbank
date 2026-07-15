@@ -451,8 +451,9 @@ actual released formats and fixtures rather than speculative migration work.
 
 - External references need a liveness policy before their schema exists:
   pin blob authority, or allow dangling-reference detection in the referrer.
-- Revert and future version writers must preserve the implemented
-  bytes-before-reference ordering and add rows to reachability atomically with
-  pointer replacement.
+- Future version writers must preserve the implemented bytes-before-reference
+  ordering and add rows to reachability atomically with pointer replacement.
+  Reversion is the metadata-only exception: it reuses already-authoritative
+  source bytes and atomically adds a new reachability row and pointer.
 - Pack and repack maintenance commands must remain daemon/API operations; no
   CLI path may open the physical store directly.

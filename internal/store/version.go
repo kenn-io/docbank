@@ -9,8 +9,9 @@ import (
 )
 
 // ContentVersion is one immutable byte identity recorded for a stable file
-// node. Initial ingest creates content_create records and verified replacement
-// adds content_replace heads without changing this read contract.
+// node. Initial ingest creates content_create records, verified replacement
+// adds content_replace heads, and reversion adds content_revert heads that
+// retain their source identity.
 type ContentVersion struct {
 	ID                    string
 	NodeID                int64
@@ -151,41 +152,117 @@ func (s *Store) ReplaceContent(
 		if err := s.EnsureBlobTx(tx, blobHash, size); err != nil {
 			return err
 		}
-		versionID, err := newUUIDv4()
-		if err != nil {
-			return err
-		}
-		operationID, err := newUUIDv4()
-		if err != nil {
-			return err
-		}
-		now := nowRFC3339()
-		newRevision := n.Revision + 1
-		var storedMime any
-		if mimeType != "" {
-			storedMime = mimeType
-		}
-		if _, err := tx.Exec(
-			`INSERT INTO content_versions (
-				version_id, node_id, blob_hash, size, mime_type, recorded_at,
-				node_revision, introduced_operation_id, transition_kind, source_version_id
-			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'content_replace', NULL)`,
-			versionID, nodeID, blobHash, size, storedMime, now, newRevision, operationID); err != nil {
-			return fmt.Errorf("recording replacement content version for node %d: %w", nodeID, err)
-		}
-		if _, err := tx.Exec(
-			`UPDATE nodes SET current_version_id = ?, revision = ?, modified_at = ? WHERE id = ?`,
-			versionID, newRevision, now, nodeID); err != nil {
-			return fmt.Errorf("installing replacement content version for node %d: %w", nodeID, err)
-		}
-		updated, err = nodeByIDTx(tx, nodeID)
-		if err != nil {
-			return err
-		}
-		version, err = scanContentVersion(tx.QueryRow(
-			`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = ?`, versionID))
+		updated, version, err = installContentVersionTx(
+			tx, n, blobHash, size, mimeType, "content_replace", nil,
+		)
 		return err
 	})
+	if err != nil {
+		return Node{}, ContentVersion{}, err
+	}
+	return updated, version, nil
+}
+
+// RevertContent creates a new immutable head with the exact content authority
+// and media type of sourceVersionID. It records the source identity rather than
+// rewinding the node or changing any historical row.
+func (s *Store) RevertContent(
+	ctx context.Context, nodeID, ifRev int64, sourceVersionID string,
+) (Node, ContentVersion, ContentVersion, error) {
+	if err := validateUUIDv4(sourceVersionID); err != nil {
+		return Node{}, ContentVersion{}, ContentVersion{},
+			fmt.Errorf("content version %q: %w", sourceVersionID, ErrNotFound)
+	}
+	var (
+		updated Node
+		version ContentVersion
+		source  ContentVersion
+	)
+	err := s.withTx(ctx, func(tx *sql.Tx) error {
+		n, err := nodeByIDTx(tx, nodeID)
+		if err != nil {
+			return err
+		}
+		if err := validateContentReplacementTarget(n, ifRev); err != nil {
+			return err
+		}
+		source, err = scanContentVersion(tx.QueryRow(
+			`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = ?`, sourceVersionID))
+		if err != nil {
+			return fmt.Errorf("content version %q: %w", sourceVersionID, err)
+		}
+		if source.NodeID != nodeID {
+			return fmt.Errorf("content version %s belongs to node %d, not node %d: %w",
+				source.ID, source.NodeID, nodeID, ErrVersionNodeMismatch)
+		}
+		if source.ID == n.CurrentVersionID {
+			return fmt.Errorf("content version %s is the current head of node %d: %w",
+				source.ID, nodeID, ErrVersionAlreadyCurrent)
+		}
+		if source.NodeRevision >= n.Revision+1 {
+			return fmt.Errorf("source version %s revision %d is not older than node %d next revision %d",
+				source.ID, source.NodeRevision, nodeID, n.Revision+1)
+		}
+		var catalogSize int64
+		if err := tx.QueryRow(`SELECT size FROM blobs WHERE hash = ?`, source.BlobHash).
+			Scan(&catalogSize); err != nil {
+			return fmt.Errorf("checking source blob %s: %w", source.BlobHash, err)
+		}
+		if catalogSize != source.Size {
+			return fmt.Errorf("source version %s records %d bytes but blob %s records %d",
+				source.ID, source.Size, source.BlobHash, catalogSize)
+		}
+		updated, version, err = installContentVersionTx(
+			tx, n, source.BlobHash, source.Size, source.MimeType, "content_revert", &source.ID,
+		)
+		return err
+	})
+	if err != nil {
+		return Node{}, ContentVersion{}, ContentVersion{}, err
+	}
+	return updated, version, source, nil
+}
+
+func installContentVersionTx(
+	tx *sql.Tx, n Node, blobHash string, size int64, mimeType, transitionKind string,
+	sourceVersionID *string,
+) (Node, ContentVersion, error) {
+	versionID, err := newUUIDv4()
+	if err != nil {
+		return Node{}, ContentVersion{}, err
+	}
+	operationID, err := newUUIDv4()
+	if err != nil {
+		return Node{}, ContentVersion{}, err
+	}
+	now := nowRFC3339()
+	newRevision := n.Revision + 1
+	var storedMime any
+	if mimeType != "" {
+		storedMime = mimeType
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO content_versions (
+			version_id, node_id, blob_hash, size, mime_type, recorded_at,
+			node_revision, introduced_operation_id, transition_kind, source_version_id
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		versionID, n.ID, blobHash, size, storedMime, now, newRevision, operationID,
+		transitionKind, sourceVersionID); err != nil {
+		return Node{}, ContentVersion{}, fmt.Errorf(
+			"recording %s content version for node %d: %w", transitionKind, n.ID, err)
+	}
+	if _, err := tx.Exec(
+		`UPDATE nodes SET current_version_id = ?, revision = ?, modified_at = ? WHERE id = ?`,
+		versionID, newRevision, now, n.ID); err != nil {
+		return Node{}, ContentVersion{}, fmt.Errorf(
+			"installing %s content version for node %d: %w", transitionKind, n.ID, err)
+	}
+	updated, err := nodeByIDTx(tx, n.ID)
+	if err != nil {
+		return Node{}, ContentVersion{}, err
+	}
+	version, err := scanContentVersion(tx.QueryRow(
+		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = ?`, versionID))
 	if err != nil {
 		return Node{}, ContentVersion{}, err
 	}

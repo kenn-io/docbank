@@ -98,8 +98,16 @@ docbank versions /taxes/checklist.pdf
 and uploads it, showing separate progress for both file passes. The upload
 requires that freshly observed target revision, so a concurrent change fails
 instead of being overwritten. The prior version remains available through
-`docbank version <old-version-id> --content`. Reversion is planned; it will
-create another immutable head rather than rewind history.
+`docbank version <old-version-id> --content`. Adopt it as current without
+erasing the replacement:
+
+```bash
+docbank revert /taxes/checklist.pdf <old-version-id>
+```
+
+Reversion creates another immutable head that records its source. It does not
+copy the source blob or rewind history, so both the replacement and the original
+remain addressable.
 
 ## Reorganize
 

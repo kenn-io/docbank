@@ -50,8 +50,9 @@ organizing structure is a **virtual tree stored in SQLite**. Moves,
 renames, and reorganization are metadata transactions that never touch bytes.
 
 Every imported file starts with a stable content-version UUID. `docbank put`
-adds a verified immutable head without rewriting or discarding prior bytes;
-versions can be listed and retrieved independently of mutable paths. See
+adds verified bytes as an immutable head and `docbank revert` adopts a prior
+version through a new history row; neither discards earlier versions. Versions
+can be listed and retrieved independently of mutable paths. See
 [Editing & Versions](architecture/editing-and-versions.md).
 
 !!! info "Planned — full audit"
@@ -117,13 +118,13 @@ docbank is alpha software with tagged releases. The core store and ingest
 pipeline, virtual-tree CLI, authenticated daemon API, packed storage,
 integrity verification, and incremental backup creation, verification, and
 restore are implemented and tested. Stable content-version listing and
-ID-addressed retrieval and verified replacement work through loose/packed
-storage and backup restore.
+ID-addressed retrieval, verified replacement, and reversion work through
+loose/packed storage and backup restore.
 Representative-corpus hardening and
 distribution work continue before a stable 1.0 release.
 
 !!! info "Planned — later phases"
-    Reversion and interactive editing, full audited history, tags, watched inboxes,
+    Interactive editing, full audited history, tags, watched inboxes,
     content-text extraction and search, the kit-ui web portal, and the focused
     TUI are designed but not yet built. The
     [Roadmap](roadmap.md) tracks what exists versus what is planned.
