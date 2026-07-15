@@ -248,22 +248,44 @@ func TestJSONLSnapshotRemainsStableAfterFreezeEnds(t *testing.T) {
 }
 
 func TestJSONLSnapshotRejectsMalformedLiveMetadata(t *testing.T) {
-	fixture := newArchiveFixture(t)
-	rawDB, err := sql.Open("sqlite3", filepath.Join(fixture.root, "docbank.db")+"?_busy_timeout=5000")
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, rawDB.Close()) })
-	_, err = rawDB.Exec(`UPDATE content_versions SET introduced_operation_id = 'not-a-uuid'`)
-	require.NoError(t, err)
+	tests := []struct {
+		name      string
+		statement string
+		want      string
+	}{
+		{
+			name:      "invalid operation ID",
+			statement: `UPDATE content_versions SET introduced_operation_id='not-a-uuid'`,
+			want:      "invalid content version operation ID",
+		},
+		{
+			name: "dangling blob reference",
+			statement: `UPDATE content_versions SET blob_hash='` + strings.Repeat("d", 64) + `'
+				WHERE rowid=(SELECT rowid FROM content_versions LIMIT 1)`,
+			want: "metadata violates foreign key",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fixture := newArchiveFixture(t)
+			rawDB, err := sql.Open("sqlite3",
+				filepath.Join(fixture.root, "docbank.db")+"?_foreign_keys=off&_busy_timeout=5000")
+			require.NoError(t, err)
+			_, err = rawDB.Exec(tt.statement)
+			require.NoError(t, err)
+			require.NoError(t, rawDB.Close())
 
-	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
-	require.NoError(t, err)
-	manifest, err := backupapp.Create(
-		t.Context(), repo, "test-version", fixture.metadata, fixture.blobs, backup.CreateOptions{})
-	require.ErrorContains(t, err, "invalid content version operation ID")
-	assert.Nil(t, manifest)
-	snapshots, err := repo.ListSnapshots()
-	require.NoError(t, err)
-	assert.Empty(t, snapshots)
+			repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+			require.NoError(t, err)
+			manifest, err := backupapp.Create(
+				t.Context(), repo, "test-version", fixture.metadata, fixture.blobs, backup.CreateOptions{})
+			require.ErrorContains(t, err, tt.want)
+			assert.Nil(t, manifest)
+			snapshots, err := repo.ListSnapshots()
+			require.NoError(t, err)
+			assert.Empty(t, snapshots)
+		})
+	}
 }
 
 func TestMalformedJSONLRestoreLeavesNoPublishedDatabase(t *testing.T) {

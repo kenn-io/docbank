@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -147,19 +148,36 @@ func TestImportMetadataRejectsInvalidUTF8AndRollsBack(t *testing.T) {
 		result := append([]byte(prefix), 0xff)
 		return append(result, suffix...)
 	}
-	tests := map[string][]byte{
-		"header string": withInvalidByte(
-			`{"type":"meta","format":"docbank-`, `","version":1,"node_sequence":1}`+"\n"),
-		"record string": withInvalidByte(
-			header+root+`{"type":"tag","id":1,"name":"invalid`, `"}`+"\n"),
+	tests := map[string]struct {
+		input []byte
+		want  string
+	}{
+		"header string": {
+			input: withInvalidByte(
+				`{"type":"meta","format":"docbank-`, `","version":1,"node_sequence":1}`+"\n"),
+			want: "metadata JSON is not valid UTF-8",
+		},
+		"record string": {
+			input: withInvalidByte(
+				header+root+`{"type":"tag","id":1,"name":"invalid`, `"}`+"\n"),
+			want: "metadata JSON is not valid UTF-8",
+		},
+		"lone high surrogate": {
+			input: []byte(header + root + `{"type":"tag","id":1,"name":"invalid\ud800"}` + "\n"),
+			want:  "unpaired UTF-16 surrogate escape",
+		},
+		"lone low surrogate": {
+			input: []byte(header + root + `{"type":"tag","id":1,"name":"invalid\udc00"}` + "\n"),
+			want:  "unpaired UTF-16 surrogate escape",
+		},
 	}
-	for name, input := range tests {
+	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			target, err := Open(filepath.Join(t.TempDir(), "target.db"))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, target.Close()) })
-			err = target.ImportMetadata(t.Context(), bytes.NewReader(input))
-			require.ErrorContains(t, err, "metadata JSON is not valid UTF-8")
+			err = target.ImportMetadata(t.Context(), bytes.NewReader(tt.input))
+			require.ErrorContains(t, err, tt.want)
 			var nodes, tags int64
 			require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodes))
 			require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM tags`).Scan(&tags))
@@ -167,6 +185,21 @@ func TestImportMetadataRejectsInvalidUTF8AndRollsBack(t *testing.T) {
 			assert.Zero(t, tags)
 		})
 	}
+}
+
+func TestImportMetadataAcceptsValidSurrogatePair(t *testing.T) {
+	input := strings.Join([]string{
+		`{"type":"meta","format":"docbank-metadata","version":1,"node_sequence":1}`,
+		`{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}`,
+		`{"type":"tag","id":1,"name":"archive \ud83d\ude00"}`,
+	}, "\n") + "\n"
+	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, target.Close()) })
+	require.NoError(t, target.ImportMetadata(t.Context(), strings.NewReader(input)))
+	var name string
+	require.NoError(t, target.db.QueryRow(`SELECT name FROM tags WHERE id=1`).Scan(&name))
+	assert.Equal(t, "archive 😀", name)
 }
 
 func TestImportMetadataRejectsLaterContentCreateAndRollsBack(t *testing.T) {
@@ -236,6 +269,93 @@ func TestImportMetadataRejectsInvalidContentRelationshipsAndRollsBack(t *testing
 	}
 }
 
+func TestImportMetadataRejectsEachRevertContentMismatch(t *testing.T) {
+	ctx := t.Context()
+	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, source.Close()) })
+	seedMetadataRoundTrip(t, source)
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(ctx, &exported))
+	const alternateHash = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+	tests := []struct {
+		name   string
+		mutate func(current, source map[string]any, records *[]map[string]any)
+	}{
+		{
+			name: "hash only",
+			mutate: func(current, _ map[string]any, records *[]map[string]any) {
+				current["blob_hash"] = alternateHash
+				current["size"] = float64(9)
+				*records = append(*records, map[string]any{
+					"type": "blob", "hash": alternateHash, "size": float64(9),
+					"created_at": "2026-01-16T00:00:00.000000000Z",
+				})
+			},
+		},
+		{
+			name: "size only",
+			mutate: func(current, _ map[string]any, _ *[]map[string]any) {
+				current["blob_hash"] = metadataHashVersion
+			},
+		},
+		{
+			name: "null source MIME",
+			mutate: func(current, source map[string]any, _ *[]map[string]any) {
+				current["blob_hash"] = metadataHashVersion
+				current["size"] = float64(9)
+				source["mime_type"] = nil
+			},
+		},
+		{
+			name: "null new MIME",
+			mutate: func(current, _ map[string]any, _ *[]map[string]any) {
+				current["blob_hash"] = metadataHashVersion
+				current["size"] = float64(9)
+				current["mime_type"] = nil
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var records []map[string]any
+			for line := range bytes.SplitSeq(bytes.TrimSpace(exported.Bytes()), []byte{'\n'}) {
+				var record map[string]any
+				require.NoError(t, json.Unmarshal(line, &record))
+				records = append(records, record)
+			}
+			var current, revertSource map[string]any
+			for _, record := range records {
+				switch record["version_id"] {
+				case metadataVersionCurrent:
+					current = record
+				case metadataVersionOld:
+					revertSource = record
+				}
+			}
+			require.NotNil(t, current)
+			require.NotNil(t, revertSource)
+			current["transition_kind"] = "content_revert"
+			current["source_version_id"] = metadataVersionOld
+			tt.mutate(current, revertSource, &records)
+
+			var malformed bytes.Buffer
+			enc := json.NewEncoder(&malformed)
+			for _, record := range records {
+				require.NoError(t, enc.Encode(record))
+			}
+			target, openErr := Open(filepath.Join(t.TempDir(), "target.db"))
+			require.NoError(t, openErr)
+			t.Cleanup(func() { require.NoError(t, target.Close()) })
+			importErr := target.ImportMetadata(ctx, &malformed)
+			require.ErrorContains(t, importErr, "revert source content differs from new version")
+			var nodes int64
+			require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodes))
+			assert.Equal(t, int64(1), nodes)
+		})
+	}
+}
+
 func TestExportMetadataRejectsMalformedContentVersion(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -271,6 +391,84 @@ func TestExportMetadataRejectsMalformedContentVersion(t *testing.T) {
 			require.ErrorContains(t, err, tt.want)
 		})
 	}
+}
+
+func TestExportMetadataRejectsForeignKeyCorruption(t *testing.T) {
+	missingHash := strings.Repeat("d", 64)
+	tests := []struct {
+		name      string
+		statement string
+	}{
+		{
+			name: "content version node",
+			statement: `INSERT INTO content_versions(
+				version_id,node_id,blob_hash,size,mime_type,recorded_at,node_revision,
+				introduced_operation_id,transition_kind,source_version_id
+			) VALUES(
+				'55555555-5555-4555-8555-555555555555',999,'` + metadataHashCurrent + `',12,
+				'text/plain','2026-01-16T00:00:00.000000000Z',1,
+				'66666666-6666-4666-8666-666666666666','content_create',NULL)`,
+		},
+		{
+			name:      "content version blob",
+			statement: `UPDATE content_versions SET blob_hash='` + missingHash + `' WHERE version_id='` + metadataVersionOld + `'`,
+		},
+		{
+			name: "revert source version",
+			statement: `UPDATE content_versions
+				SET transition_kind='content_revert', source_version_id='77777777-7777-4777-8777-777777777777'
+				WHERE version_id='` + metadataVersionCurrent + `'`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, source.Close()) })
+			seedMetadataRoundTrip(t, source)
+			conn, err := source.db.Conn(t.Context())
+			require.NoError(t, err)
+			_, err = conn.ExecContext(t.Context(), `PRAGMA foreign_keys=OFF`)
+			require.NoError(t, err)
+			_, err = conn.ExecContext(t.Context(), tt.statement)
+			require.NoError(t, err)
+			require.NoError(t, conn.Close())
+
+			var exported bytes.Buffer
+			err = source.ExportMetadata(t.Context(), &exported)
+			require.ErrorContains(t, err, "metadata violates foreign key")
+		})
+	}
+}
+
+func TestExportMetadataRejectsMissingRoot(t *testing.T) {
+	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, source.Close()) })
+	conn, err := source.db.Conn(t.Context())
+	require.NoError(t, err)
+	_, err = conn.ExecContext(t.Context(), `PRAGMA foreign_keys=OFF`)
+	require.NoError(t, err)
+	_, err = conn.ExecContext(t.Context(), `DELETE FROM nodes`)
+	require.NoError(t, err)
+	require.NoError(t, conn.Close())
+
+	var exported bytes.Buffer
+	err = source.ExportMetadata(t.Context(), &exported)
+	require.ErrorContains(t, err, "tree does not have exactly one root")
+}
+
+func TestExportMetadataRejectsRegressedNodeSequence(t *testing.T) {
+	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, source.Close()) })
+	seedMetadataRoundTrip(t, source)
+	_, err = source.db.Exec(`UPDATE sqlite_sequence SET seq=1 WHERE name='nodes'`)
+	require.NoError(t, err)
+
+	var exported bytes.Buffer
+	err = source.ExportMetadata(t.Context(), &exported)
+	require.ErrorContains(t, err, "below maximum node ID")
 }
 
 func TestImportMetadataRejectsOrphanedExtractionAndRollsBack(t *testing.T) {
@@ -396,7 +594,7 @@ func TestImportMetadataRejectsNodeSequenceBelowSurvivingIDs(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, target.Close()) })
 	err = target.ImportMetadata(ctx, strings.NewReader(badSequence))
-	require.ErrorContains(t, err, "below imported maximum")
+	require.ErrorContains(t, err, "below maximum node ID")
 	var nodes int64
 	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodes))
 	assert.Equal(t, int64(1), nodes)
