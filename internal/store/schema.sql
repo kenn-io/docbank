@@ -8,16 +8,17 @@ CREATE TABLE IF NOT EXISTS nodes (
     parent_id     INTEGER REFERENCES nodes(id) ON DELETE CASCADE,
     name          TEXT NOT NULL,
     kind          TEXT NOT NULL CHECK (kind IN ('dir', 'file')),
-    blob_hash     TEXT REFERENCES blobs(hash),
-    size          INTEGER,
-    mime_type     TEXT,
+    current_version_id TEXT,
     revision      INTEGER NOT NULL DEFAULT 1,
     created_at    TEXT NOT NULL,
     modified_at   TEXT NOT NULL,
     trashed_at    TEXT,
     trash_parent  INTEGER REFERENCES nodes(id) ON DELETE SET NULL,
     trash_name    TEXT,
-    CHECK ((kind = 'file') = (blob_hash IS NOT NULL))
+    CHECK ((kind = 'file') = (current_version_id IS NOT NULL)),
+    FOREIGN KEY (id, current_version_id)
+        REFERENCES content_versions(node_id, version_id)
+        DEFERRABLE INITIALLY DEFERRED
 );
 
 -- Exactly one root. SQLite treats NULLs as distinct in unique indexes, so
@@ -30,7 +31,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS live_sibling_names
     ON nodes(parent_id, name) WHERE trashed_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS nodes_parent ON nodes(parent_id);
-CREATE INDEX IF NOT EXISTS nodes_blob ON nodes(blob_hash);
 CREATE INDEX IF NOT EXISTS nodes_trashed ON nodes(trashed_at) WHERE trashed_at IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS blobs (
@@ -62,15 +62,31 @@ CREATE TABLE IF NOT EXISTS blob_pack_index (
 
 CREATE INDEX IF NOT EXISTS blob_pack_index_pack ON blob_pack_index(pack_id);
 
-CREATE TABLE IF NOT EXISTS node_versions (
-    node_id     INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-    blob_hash   TEXT NOT NULL REFERENCES blobs(hash),
-    size        INTEGER NOT NULL,
-    replaced_at TEXT NOT NULL
+-- A file node is stable document identity; immutable content-version rows are
+-- its byte history. Random UUIDv4 identities remain safe across JSONL
+-- round-trips and pruning because they are never allocator-derived or reused.
+CREATE TABLE IF NOT EXISTS content_versions (
+    version_id              TEXT PRIMARY KEY,
+    node_id                 INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    blob_hash               TEXT NOT NULL REFERENCES blobs(hash),
+    size                    INTEGER NOT NULL CHECK (size >= 0),
+    mime_type               TEXT,
+    recorded_at             TEXT NOT NULL,
+    node_revision           INTEGER NOT NULL CHECK (node_revision > 0),
+    introduced_operation_id TEXT NOT NULL,
+    transition_kind         TEXT NOT NULL
+        CHECK (transition_kind IN ('content_create', 'content_replace', 'content_revert')),
+    source_version_id       TEXT REFERENCES content_versions(version_id)
+        DEFERRABLE INITIALLY DEFERRED,
+    UNIQUE (node_id, node_revision),
+    UNIQUE (node_id, introduced_operation_id),
+    UNIQUE (node_id, version_id),
+    CHECK ((transition_kind = 'content_revert') = (source_version_id IS NOT NULL))
 );
 
-CREATE INDEX IF NOT EXISTS node_versions_node ON node_versions(node_id);
-CREATE INDEX IF NOT EXISTS node_versions_blob ON node_versions(blob_hash);
+CREATE INDEX IF NOT EXISTS content_versions_node
+    ON content_versions(node_id, node_revision DESC);
+CREATE INDEX IF NOT EXISTS content_versions_blob ON content_versions(blob_hash);
 
 CREATE TABLE IF NOT EXISTS ingests (
     id          INTEGER PRIMARY KEY,

@@ -49,10 +49,10 @@ storage (one blob per unique content, named by its SHA-256), and the
 organizing structure is a **virtual tree stored in SQLite**. Moves,
 renames, and reorganization are metadata transactions that never touch bytes.
 
-!!! info "Planned — versioned editing"
-    The same split is designed to support versioned editing without making
-    mutable bytes. See [Editing & Versions](architecture/editing-and-versions.md)
-    for the planned surface.
+Every imported file starts with a stable content-version UUID. Versions can be
+listed and retrieved independently of mutable paths; planned editing will add
+new immutable heads rather than rewrite bytes. See
+[Editing & Versions](architecture/editing-and-versions.md).
 
 !!! info "Planned — full audit"
     Selected directory scopes will retain every authoritative change and
@@ -64,6 +64,7 @@ renames, and reorganization are metadata transactions that never touch bytes.
 docbank add ~/Documents/taxes --dest /taxes   # bulk import, resumable
 docbank tree /taxes                           # browse the virtual tree
 docbank search "insurance"                    # indexed name search
+docbank versions /taxes/2026/return.pdf       # inspect stable content identity
 docbank mv "/inbox/scan (2).pdf" /taxes/2026  # reorganize, metadata only
 docbank rm /inbox/junk.pdf                    # trash, recoverable
 docbank trash empty --run                     # permanently delete trash metadata
@@ -114,7 +115,9 @@ docbank backup restore --repo ~/Backups/docbank --target ~/Restores/docbank
 docbank is alpha software with tagged releases. The core store and ingest
 pipeline, virtual-tree CLI, authenticated daemon API, packed storage,
 integrity verification, and incremental backup creation, verification, and
-restore are implemented and tested. Representative-corpus hardening and
+restore are implemented and tested. Stable content-version listing and
+ID-addressed retrieval work through loose/packed storage and backup restore.
+Representative-corpus hardening and
 distribution work continue before a stable 1.0 release.
 
 !!! info "Planned — later phases"

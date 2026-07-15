@@ -15,7 +15,7 @@ marked planned appears elsewhere in these docs only under an explicit
 | 0 | Extract msgvault's pack/backup and packed-CAS engines into `go.kenn.io/kit` | **Implemented** (Docbank uses `kit` v0.9.2) |
 | 1 | Core: store, blob store, ingest pipeline, full CLI | **Implemented** |
 | 2a | Infrastructure: daemon, HTTP API, daemon-first CLI, self-update, release pipeline | **Implemented** |
-| 2b | Features: versioned editing, full audit, tags, watched inboxes, text extraction, ingest provenance | Designed |
+| 2b | Features: content versions, versioned editing, full audit, tags, watched inboxes, text extraction, ingest provenance | **In progress**: version identity and reads implemented; remaining work designed |
 | 3 | Primary kit-ui web portal and focused operator TUI | Designed |
 | 4 | Backup commands over the kit engine | **Implemented**; representative-corpus hardening continues |
 
@@ -79,15 +79,18 @@ to publish loose blobs; startup never performs an implicit migration.
 
 ## Phase 2b — Features (designed)
 
-Implemented foundation: file-node API responses expose immutable SHA-256
-identity, content streams carry catalog identity plus a freshly computed digest
-trailer, and a revision-bound single-node endpoint verifies stored bytes. This
-evidence contract now backs file-granular multipart upload: remote writers must
-declare SHA-256 and size, and receive the stable node plus server-computed
+Implemented foundation: every initial ingest/upload creates a stable UUIDv4
+content version and current node pointer. `docbank versions`, `docbank version`,
+bounded HTTP listing, ID-addressed metadata/byte retrieval, GC reachability,
+verification evidence, and deterministic JSONL backup/restore all carry that
+identity through loose and packed storage. File-node responses expose current
+version plus immutable SHA-256 identity; content streams carry both catalog
+identities plus a freshly computed digest trailer. Remote writers must declare
+SHA-256 and size, and receive the stable node/version plus server-computed
 identity only after both match.
 
-- Editing surfaces: `PUT` content, `docbank edit`/`put`/`revert`, and
-  `versions` listing ([design](architecture/editing-and-versions.md))
+- Remaining editing surfaces: `PUT` content and `docbank edit`/`put`/`revert`
+  ([design](architecture/editing-and-versions.md))
 - Full-audit directory scopes with sticky membership, complete authoritative
   change and content-version retention, tamper-evident history, maintenance
   refusal, and portable JSONL fidelity

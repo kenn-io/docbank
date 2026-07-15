@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/api"
 )
@@ -76,6 +77,7 @@ func TestContentStreamsBlob(t *testing.T) {
 	assert.Equal(t, "hello world", body)
 	assert.Contains(t, resp.Header.Get("Content-Type"), "text/plain")
 	assert.Equal(t, n.BlobHash, resp.Header.Get(api.BlobHashHeader))
+	assert.Equal(t, n.CurrentVersionID, resp.Header.Get(api.ContentVersionHeader))
 	assert.Equal(t, strconv.FormatInt(n.Size, 10), resp.Header.Get(api.BlobSizeHeader))
 	assert.Empty(t, resp.Header.Get("Content-Length"), "fixed length would suppress the digest trailer on HTTP/1.1")
 	sum := sha256.Sum256([]byte("hello world"))
@@ -92,6 +94,48 @@ func TestFileNodeExposesBlobIdentity(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &got))
 	assert.Equal(t, n.BlobHash, got.BlobHash)
 	assert.Equal(t, n.Size, got.Size)
+	assert.Equal(t, n.CurrentVersionID, got.CurrentVersionID)
+}
+
+func TestContentVersionListMetadataAndPackedBytes(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	n := createFileWithContent(t, ts, s, "/versioned.txt", "stable version bytes")
+	require.NotEmpty(t, n.CurrentVersionID)
+
+	resp, body := get(t, ts,
+		fmt.Sprintf("/api/v1/nodes/%d/versions?limit=1&offset=0", n.ID), nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var page api.ContentVersionPage
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	assert.Equal(t, 1, page.Total)
+	assert.Equal(t, 1, page.Limit)
+	require.Len(t, page.Items, 1)
+	version := page.Items[0]
+	assert.Equal(t, n.CurrentVersionID, version.ID)
+	assert.Equal(t, n.ID, version.NodeID)
+	assert.Equal(t, n.BlobHash, version.BlobHash)
+	assert.Equal(t, "content_create", version.TransitionKind)
+	assert.Equal(t, int64(1), version.NodeRevision)
+
+	resp, body = get(t, ts, "/api/v1/versions/"+version.ID, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var byID api.ContentVersion
+	require.NoError(t, json.Unmarshal([]byte(body), &byID))
+	assert.Equal(t, version, byID)
+
+	packed, err := s.Blobs.Maintainer().Pack(t.Context(), packstore.PackOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, 1, packed.BlobsPacked)
+	resp, body = get(t, ts, "/api/v1/versions/"+version.ID+"/content", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	assert.Equal(t, "stable version bytes", body)
+	assert.Equal(t, version.ID, resp.Header.Get(api.ContentVersionHeader))
+	assert.Equal(t, version.BlobHash, resp.Header.Get(api.BlobHashHeader))
+	assert.NotEmpty(t, resp.Trailer.Get("Content-Digest"))
+
+	resp, body = get(t, ts, "/api/v1/nodes/"+strconv.FormatInt(s.RootID(), 10)+"/versions", nil)
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+	assert.Contains(t, body, `"code":"not_file"`)
 }
 
 func TestVerifyNodeContentBindsRevisionAndReadsStoredBytes(t *testing.T) {
@@ -105,6 +149,7 @@ func TestVerifyNodeContentBindsRevisionAndReadsStoredBytes(t *testing.T) {
 	var report api.ContentVerification
 	require.NoError(t, json.Unmarshal([]byte(body), &report))
 	assert.Equal(t, n.ID, report.NodeID)
+	assert.Equal(t, n.CurrentVersionID, report.VersionID)
 	assert.Equal(t, n.Revision, report.Revision)
 	assert.Equal(t, n.BlobHash, report.BlobHash)
 	assert.Equal(t, n.BlobHash, report.ComputedHash)

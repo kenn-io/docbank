@@ -120,6 +120,24 @@ func TestAddLsTreeCat(t *testing.T) {
 	out, err = runCLI(t, "cat", "/inbox/notes.txt")
 	require.NoError(t, err)
 	assert.Equal(t, "hello vault", out)
+
+	out, err = runCLI(t, "versions", "/inbox/notes.txt")
+	require.NoError(t, err)
+	assert.Contains(t, out, "content_create")
+	versionID := regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}`).
+		FindString(out)
+	require.NotEmpty(t, versionID)
+
+	out, err = runCLI(t, "version", versionID, "--json")
+	require.NoError(t, err)
+	var version api.ContentVersion
+	require.NoError(t, json.Unmarshal([]byte(out), &version))
+	assert.Equal(t, versionID, version.ID)
+	assert.Equal(t, "content_create", version.TransitionKind)
+
+	out, err = runCLI(t, "version", versionID, "--content")
+	require.NoError(t, err)
+	assert.Equal(t, "hello vault", out)
 }
 
 func TestJobsShowsDaemonStatus(t *testing.T) {

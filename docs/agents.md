@@ -56,8 +56,9 @@ non-goals.
    files, or infer live content from filesystem layout.
 2. **IDs identify nodes; paths describe current placement.** Retain a node ID
    after inspecting it. Re-resolve paths when the intent is path-specific.
-3. **Content identity is immutable.** A file node names SHA-256 and size.
-   Future edits create versions rather than modifying stored bytes in place.
+3. **Content identity is immutable.** A file node names a stable current-version
+   UUID plus SHA-256 and size. List or retrieve versions by stable ID; future
+   edits add versions rather than modifying stored bytes in place.
 4. **A stream is not verified until it finishes.** Read through successful EOF
    and require the digest evidence before publishing downloaded bytes.
 5. **Destruction has stages.** Trash is recoverable; trash empty removes tree

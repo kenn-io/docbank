@@ -33,8 +33,9 @@ func (s *Store) BeginIngest(ctx context.Context, sourceKind, sourceDesc string) 
 func resolveIngestNameTx(tx *sql.Tx, parentID int64, name, blobHash string) (string, int64, bool, error) {
 	base, ext := splitSuffix(name)
 	rows, err := tx.Query(
-		`SELECT id, name, COALESCE(blob_hash, '') FROM nodes
-		 WHERE parent_id = ? AND trashed_at IS NULL AND kind = 'file'`, parentID)
+		`SELECT n.id, n.name, cv.blob_hash FROM nodes AS n
+		 JOIN content_versions AS cv ON cv.version_id = n.current_version_id
+		 WHERE n.parent_id = ? AND n.trashed_at IS NULL AND n.kind = 'file'`, parentID)
 	if err != nil {
 		return "", 0, false, fmt.Errorf("listing siblings for %q: %w", name, err)
 	}
@@ -143,7 +144,8 @@ func (s *Store) IngestFile(ctx context.Context, ingestID, parentID int64, name, 
 			return err
 		}
 		if skip {
-			created, err = scanNode(tx.QueryRow(`SELECT `+nodeCols+` FROM nodes WHERE id = ?`, existingID))
+			created, err = scanNode(tx.QueryRow(
+				`SELECT `+nodeCols+` FROM `+nodeFrom+` WHERE n.id = ?`, existingID))
 			if err != nil {
 				return fmt.Errorf("reading idempotent ingest node %d: %w", existingID, err)
 			}

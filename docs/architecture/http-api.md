@@ -34,6 +34,8 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `GET /path?path=/a/b` | stat by virtual path | Implemented |
 | `GET /nodes/{id}/children` | list a directory, paginated (`limit`/`offset`) | Implemented |
 | `GET /nodes/{id}/content` | stream document bytes with catalog identity and a computed digest trailer | Implemented |
+| `GET /nodes/{id}/versions` | list immutable content versions newest-first, paginated (`limit`/`offset`) | Implemented |
+| `GET /versions/{version_id}` · `GET /versions/{version_id}/content` | inspect or stream one immutable version by stable UUID | Implemented |
 | `POST /nodes/{id}/verify` | re-hash one file, bound to an inspected node revision | Implemented |
 | `GET /search?q=&limit=` | bounded name search (FTS5), with explicit `truncated` status | Implemented |
 | `POST /nodes` | create a directory (`kind: "dir"`) | Implemented |
@@ -56,8 +58,8 @@ daemon stop`; it isn't auth-exempt, so it requires both the API key and
 its own shutdown token.
 
 !!! info "Planned"
-    Not yet implemented: `PUT /nodes/{id}/content` (versioned edit) and
-    `GET /nodes/{id}/versions` ([Editing & Versions](editing-and-versions.md));
+    Not yet implemented: `PUT /nodes/{id}/content` (versioned edit), revert,
+    and version pruning ([Editing & Versions](editing-and-versions.md));
     tags (`GET /tags` + CRUD, tag filters on search), whose IDs are opaque
     non-reusable UUIDv4 values independent of mutable names; and
     `POST /batch/move` bulk reorganization with `dry_run`.
@@ -142,26 +144,34 @@ below explaining the rule.
 
 ## Content identity and verification evidence
 
-Every file-node representation includes `blob_hash`, docbank's canonical
-lowercase SHA-256 content identity, together with its raw `size`. Directories
-omit `blob_hash`. The hash is stable across moves and renames; a future content
-replacement will retain the node ID but change its hash and revision.
+Every file-node representation includes a stable `current_version_id` plus
+`blob_hash`, docbank's canonical lowercase SHA-256 content identity, and raw
+`size`. Directories omit content identity. Node and version IDs are stable
+across moves and renames; a future content replacement will retain the node ID,
+create a version, and change its current pointer, hash, and revision.
 
 `GET /nodes/{id}/content` exposes the catalog identity before streaming in
-`X-Docbank-Blob-Hash` and `X-Docbank-Blob-Size`. It then hashes the bytes while
-they pass through the response and emits the result as the
+`X-Docbank-Content-Version`, `X-Docbank-Blob-Hash`, and
+`X-Docbank-Blob-Size`. It then hashes the bytes while they pass through the
+response and emits the result as the
 [RFC 9530](https://www.rfc-editor.org/rfc/rfc9530.html) `Content-Digest`
 trailer. The response deliberately omits standard
 `Content-Length`: HTTP/1.1 cannot carry a trailer on a fixed-length message,
 and pre-reading a large loose or packed blob solely to populate a header would
 double physical I/O. Clients that need independent transfer proof hash the
 body themselves and compare both their digest and the trailer with the node's
-`blob_hash`.
+`blob_hash`; the version header must equal `current_version_id`.
+
+`GET /nodes/{id}/versions` returns a bounded, newest-first page with `items`,
+`total`, `limit`, and `offset`. `GET /versions/{version_id}` resolves immutable
+metadata globally, and its `/content` child streams that version with the same
+identity headers and digest contract. A path rename cannot strand a retained
+version reference.
 
 `POST /nodes/{id}/verify` is the bounded server-side proof. It requires
 `If-Match` from a prior node response, reopens the blob through the same mixed
 loose/packed store used for downloads, and returns the recorded and computed
-hashes and sizes. Missing, corrupt, and unreadable content are successful
+version ID, hashes, and sizes. Missing, corrupt, and unreadable content are successful
 reports with `verified: false` and a `problem`; transport, validation, and
 stale-node failures remain non-2xx responses. The route checks the revision
 again after reading, so a concurrent rename, trash, or future content
@@ -237,7 +247,8 @@ The server streams the file once through Kit's durable writer and independently
 computes both values. Only after they match, the closing multipart boundary has
 been validated, and no extra parts remain does one metadata transaction grant
 blob authority and create the node. `201` with `status: "added"` identifies a
-new node. Repeating the same name, hash, and parent converges to that stable node
+new node and its initial `content_create` version. Repeating the same name, hash,
+and parent converges to that stable node
 with `200` and `status: "skipped"`. The receipt always includes the server's
 `computed_hash`, `computed_size`, and the node's ID and revision; clients compare
 the values themselves.

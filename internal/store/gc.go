@@ -28,8 +28,9 @@ func scanBlobInfos(rows *sql.Rows, op string) ([]BlobInfo, error) {
 	return out, nil
 }
 
-// UnreachableBlobs lists blobs referenced by no node (live or trashed) and
-// no recorded prior version. These are the gc candidates. Callers that go
+// UnreachableBlobs lists blobs referenced by no content version. Every current
+// file head is itself a content version, as are retained prior versions. These
+// are the gc candidates. Callers that go
 // on to delete blob files must serialize against concurrent writers (the
 // daemon's maintenance gate does this): with writers running, a concurrent
 // ingest can dedup against a candidate's file between this query and the
@@ -37,8 +38,7 @@ func scanBlobInfos(rows *sql.Rows, op string) ([]BlobInfo, error) {
 func (s *Store) UnreachableBlobs(ctx context.Context) ([]BlobInfo, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT b.hash, b.size FROM blobs b
-		WHERE NOT EXISTS (SELECT 1 FROM nodes n WHERE n.blob_hash = b.hash)
-		  AND NOT EXISTS (SELECT 1 FROM node_versions v WHERE v.blob_hash = b.hash)
+		WHERE NOT EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash = b.hash)
 		ORDER BY b.hash`)
 	if err != nil {
 		return nil, fmt.Errorf("finding unreachable blobs: %w", err)

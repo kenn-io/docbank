@@ -65,6 +65,53 @@ func nodeWithPath(ctx context.Context, d Deps, id int64) (*nodeOutput, error) {
 	return nodeOutputAt(n, p), nil
 }
 
+func contentResponses() map[string]*huma.Response {
+	return map[string]*huma.Response{
+		"200": {
+			Description: "Document bytes with expected version and blob identity plus a computed digest trailer",
+			Headers: map[string]*huma.Param{
+				ContentVersionHeader: {Description: "Stable content-version UUID",
+					Schema: &huma.Schema{Type: "string", Format: "uuid"}},
+				BlobHashHeader: {Description: "Catalog SHA-256 identity (lowercase hex)",
+					Schema: &huma.Schema{Type: "string", Pattern: "^[0-9a-f]{64}$"}},
+				BlobSizeHeader: {Description: "Catalog raw byte length",
+					Schema: &huma.Schema{Type: "string", Pattern: "^[0-9]+$"}},
+				"Content-Digest": {Description: "RFC 9530 SHA-256 of bytes actually streamed; delivered as an HTTP trailer",
+					Schema: &huma.Schema{Type: "string"}},
+			},
+			Content: map[string]*huma.MediaType{
+				"application/octet-stream": {Schema: &huma.Schema{Type: "string", Format: "binary"}},
+			},
+		},
+	}
+}
+
+func streamContentVersion(
+	ctx context.Context, d Deps, version store.ContentVersion,
+) (*huma.StreamResponse, error) {
+	f, _, err := d.Blobs.OpenStreamContext(ctx, version.BlobHash)
+	if err != nil {
+		return nil, NewError(http.StatusInternalServerError, "internal",
+			fmt.Sprintf("opening blob %s: %v (run docbank verify)", version.BlobHash, err))
+	}
+	contentType := version.MimeType
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	return &huma.StreamResponse{Body: func(hctx huma.Context) {
+		defer func() { _ = f.Close() }()
+		hctx.SetHeader("Content-Type", contentType)
+		hctx.SetHeader(ContentVersionHeader, version.ID)
+		hctx.SetHeader(BlobHashHeader, version.BlobHash)
+		hctx.SetHeader(BlobSizeHeader, strconv.FormatInt(version.Size, 10))
+		hctx.SetHeader("Trailer", "Content-Digest")
+		hash := sha256.New()
+		if _, err := io.Copy(hctx.BodyWriter(), io.TeeReader(f, hash)); err == nil {
+			hctx.SetHeader("Content-Digest", contentDigest(hash.Sum(nil)))
+		}
+	}}, nil
+}
+
 func registerReadRoutes(api huma.API, d Deps) {
 	huma.Register(api, huma.Operation{
 		OperationID: "getNode", Method: http.MethodGet, Path: "/api/v1/nodes/{id}",
@@ -73,6 +120,61 @@ func registerReadRoutes(api huma.API, d Deps) {
 		ID int64 `path:"id"`
 	}) (*nodeOutput, error) {
 		return nodeWithPath(ctx, d, in.ID)
+	})
+
+	type contentVersionsOutput struct{ Body ContentVersionPage }
+	huma.Register(api, huma.Operation{
+		OperationID: "listContentVersions", Method: http.MethodGet,
+		Path:    "/api/v1/nodes/{id}/versions",
+		Summary: "List a file's immutable content versions, newest first",
+	}, func(ctx context.Context, in *struct {
+		ID     int64 `path:"id"`
+		Limit  int   `query:"limit" default:"100" minimum:"1" maximum:"1000"`
+		Offset int   `query:"offset" default:"0" minimum:"0"`
+	}) (*contentVersionsOutput, error) {
+		versions, total, err := d.Store.ContentVersions(ctx, in.ID, in.Limit, in.Offset)
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
+		out := &contentVersionsOutput{Body: ContentVersionPage{
+			Items: []ContentVersion{}, Total: total, Limit: in.Limit, Offset: in.Offset,
+		}}
+		for _, version := range versions {
+			out.Body.Items = append(out.Body.Items, fromStoreContentVersion(version))
+		}
+		return out, nil
+	})
+
+	type contentVersionOutput struct{ Body ContentVersion }
+	huma.Register(api, huma.Operation{
+		OperationID: "getContentVersion", Method: http.MethodGet,
+		Path:    "/api/v1/versions/{version_id}",
+		Summary: "Inspect one immutable content version by stable ID",
+	}, func(ctx context.Context, in *struct {
+		VersionID string `path:"version_id"`
+	}) (*contentVersionOutput, error) {
+		version, err := d.Store.ContentVersionByID(ctx, in.VersionID)
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
+		return &contentVersionOutput{Body: fromStoreContentVersion(version)}, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "getContentVersionBytes", Method: http.MethodGet,
+		Path:    "/api/v1/versions/{version_id}/content",
+		Summary: "Stream one immutable content version by stable ID",
+		Description: "Version, blob hash, and size headers identify expected authority before the body. " +
+			"Content-Digest is an RFC 9530 trailer computed from the bytes actually streamed.",
+		Responses: contentResponses(),
+	}, func(ctx context.Context, in *struct {
+		VersionID string `path:"version_id"`
+	}) (*huma.StreamResponse, error) {
+		version, err := d.Store.ContentVersionByID(ctx, in.VersionID)
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
+		return streamContentVersion(ctx, d, version)
 	})
 
 	huma.Register(api, huma.Operation{
@@ -127,26 +229,11 @@ func registerReadRoutes(api huma.API, d Deps) {
 	huma.Register(api, huma.Operation{
 		OperationID: "getNodeContent", Method: http.MethodGet, Path: "/api/v1/nodes/{id}/content",
 		Summary: "Stream a file's bytes",
-		Description: "X-Docbank-Blob-Hash and X-Docbank-Blob-Size carry catalog identity " +
+		Description: "X-Docbank-Content-Version, X-Docbank-Blob-Hash, and X-Docbank-Blob-Size carry catalog identity " +
 			"before the body. Content-Digest is an RFC 9530 trailer computed from the bytes " +
 			"actually streamed; the standard Content-Length header is omitted so HTTP/1.1 " +
 			"can transmit that trailer without a second physical read.",
-		Responses: map[string]*huma.Response{
-			"200": {
-				Description: "Document bytes with expected identity headers and a computed digest trailer",
-				Headers: map[string]*huma.Param{
-					BlobHashHeader: {Description: "Catalog SHA-256 identity (lowercase hex)",
-						Schema: &huma.Schema{Type: "string", Pattern: "^[0-9a-f]{64}$"}},
-					BlobSizeHeader: {Description: "Catalog raw byte length",
-						Schema: &huma.Schema{Type: "string", Pattern: "^[0-9]+$"}},
-					"Content-Digest": {Description: "RFC 9530 SHA-256 of bytes actually streamed; delivered as an HTTP trailer",
-						Schema: &huma.Schema{Type: "string"}},
-				},
-				Content: map[string]*huma.MediaType{
-					"application/octet-stream": {Schema: &huma.Schema{Type: "string", Format: "binary"}},
-				},
-			},
-		},
+		Responses: contentResponses(),
 	}, func(ctx context.Context, in *struct {
 		ID int64 `path:"id"`
 	}) (*huma.StreamResponse, error) {
@@ -158,26 +245,11 @@ func registerReadRoutes(api huma.API, d Deps) {
 			return nil, NewError(http.StatusUnprocessableEntity, "not_file",
 				fmt.Sprintf("node %d is a directory", n.ID))
 		}
-		f, _, err := d.Blobs.OpenStreamContext(ctx, n.BlobHash)
+		version, err := d.Store.ContentVersionByID(ctx, n.CurrentVersionID)
 		if err != nil {
-			return nil, NewError(http.StatusInternalServerError, "internal",
-				fmt.Sprintf("opening blob %s: %v (run docbank verify)", n.BlobHash, err))
+			return nil, FromStoreError(err)
 		}
-		ct := n.MimeType
-		if ct == "" {
-			ct = "application/octet-stream"
-		}
-		return &huma.StreamResponse{Body: func(hctx huma.Context) {
-			defer func() { _ = f.Close() }()
-			hctx.SetHeader("Content-Type", ct)
-			hctx.SetHeader(BlobHashHeader, n.BlobHash)
-			hctx.SetHeader(BlobSizeHeader, strconv.FormatInt(n.Size, 10))
-			hctx.SetHeader("Trailer", "Content-Digest")
-			hash := sha256.New()
-			if _, err := io.Copy(hctx.BodyWriter(), io.TeeReader(f, hash)); err == nil {
-				hctx.SetHeader("Content-Digest", contentDigest(hash.Sum(nil)))
-			}
-		}}, nil
+		return streamContentVersion(ctx, d, version)
 	})
 
 	type verifyNodeOutput struct{ Body ContentVerification }
@@ -207,7 +279,8 @@ func registerReadRoutes(api huma.API, d Deps) {
 		}
 
 		report := ContentVerification{
-			NodeID: n.ID, Revision: n.Revision, BlobHash: n.BlobHash, Size: n.Size,
+			NodeID: n.ID, VersionID: n.CurrentVersionID, Revision: n.Revision,
+			BlobHash: n.BlobHash, Size: n.Size,
 		}
 		f, _, openErr := d.Blobs.OpenStreamContext(ctx, n.BlobHash)
 		if openErr != nil {
@@ -242,7 +315,7 @@ func registerReadRoutes(api huma.API, d Deps) {
 			}
 			return nil, FromStoreError(err)
 		}
-		if current.Revision != revision || current.BlobHash != n.BlobHash {
+		if current.Revision != revision || current.CurrentVersionID != n.CurrentVersionID {
 			return nil, staleRevisionError(n.ID, revision, current.Revision)
 		}
 		return &verifyNodeOutput{Body: report}, nil

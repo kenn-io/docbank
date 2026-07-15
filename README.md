@@ -39,6 +39,8 @@ maintenance.
 
 - Virtual folders with listing, tree browsing, rename, move, trash, and restore
 - Resumable bulk import and verified multipart upload
+- Stable content-version UUIDs with bounded history listing and ID-addressed
+  retrieval
 - FTS5 name search (document-body extraction and search are planned)
 - Mixed loose and packed content storage with explicit pack, GC, and repack
 - Whole-vault integrity verification
@@ -100,6 +102,7 @@ vault and starts its daemon:
 docbank add ~/Documents --dest /archive
 docbank tree /archive
 docbank search "tax return"
+docbank versions /archive/Documents/receipt.pdf
 docbank mv /archive/Documents/receipt.pdf /archive/Documents/receipt-2026.pdf
 docbank verify
 ```

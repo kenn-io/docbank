@@ -129,6 +129,7 @@ func TestJSONLLooseSnapshotVerifyAndRestore(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), stats.Nodes, "root plus two files")
 	assert.Equal(t, int64(2), stats.Files)
+	assert.Equal(t, int64(2), stats.ContentVersions)
 	assert.Equal(t, manifest.Attachments.BlobBytes, stats.BlobBytes)
 
 	verified, err := backup.Verify(t.Context(), repo, app, backup.VerifyOptions{Jobs: 2})
@@ -164,6 +165,10 @@ func TestJSONLLooseSnapshotVerifyAndRestore(t *testing.T) {
 		require.NoError(t, readErr)
 		require.NoError(t, reader.Close())
 		assert.Equal(t, want, string(got))
+		version, versionErr := restoredStore.ContentVersionByID(t.Context(), node.CurrentVersionID)
+		require.NoError(t, versionErr)
+		assert.Equal(t, node.ID, version.NodeID)
+		assert.Equal(t, node.BlobHash, version.BlobHash)
 	}
 	require.NoError(t, restoredBlobs.Close())
 	require.NoError(t, restoredStore.Close())
@@ -204,6 +209,8 @@ func TestRestoreSupportsLegacySQLitePageSnapshots(t *testing.T) {
 		require.NoError(t, readErr)
 		require.NoError(t, reader.Close())
 		assert.Equal(t, want, string(got))
+		_, versionErr := restoredStore.ContentVersionByID(t.Context(), node.CurrentVersionID)
+		require.NoError(t, versionErr)
 	}
 	require.NoError(t, restoredBlobs.Close())
 	require.NoError(t, restoredStore.Close())
@@ -357,6 +364,9 @@ func TestPackedSnapshotRequiresAndUsesPackedRestoreTarget(t *testing.T) {
 		require.NoError(t, readErr)
 		require.NoError(t, reader.Close())
 		assert.Equal(t, want, string(got))
+		version, versionErr := restoredStore.ContentVersionByID(t.Context(), node.CurrentVersionID)
+		require.NoError(t, versionErr)
+		assert.Equal(t, node.BlobHash, version.BlobHash)
 	}
 	require.NoError(t, restoredBlobs.Close())
 	require.NoError(t, restoredStore.Close())

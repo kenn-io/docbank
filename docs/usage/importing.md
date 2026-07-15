@@ -17,9 +17,9 @@ For each regular file:
 1. The content is hashed (SHA-256, streaming) and written to the blob
    store — durably, before any database row references it. Content that
    already exists in the vault is not written twice.
-2. One database transaction creates the tree node, records the blob, and
-   captures provenance: the original filesystem path and modification
-   time survive any later renames or moves.
+2. One database transaction creates the tree node, its stable revision-one
+   `content_create` version, the blob authority, and provenance: the original
+   filesystem path and modification time survive any later renames or moves.
 
 Directory arguments walk recursively. The directory's basename becomes a
 folder under `--dest`, and everything below keeps its relative structure:
@@ -110,7 +110,7 @@ directory — `report.pdf`, `report (2).pdf`, `report (3).pdf`, … — and:
 
 Re-runs therefore converge instead of duplicating. Identity is content,
 not filename: the same bytes under two source names import as two nodes
-sharing one stored blob.
+sharing one stored blob but carrying distinct version UUIDs.
 
 ## Collisions
 

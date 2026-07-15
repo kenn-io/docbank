@@ -18,13 +18,20 @@ func TestUnreachableBlobs(t *testing.T) {
 	gone, err := s.CreateFile(ctx, s.RootID(), "gone.txt", fakeHash("c3"), 1, "text/plain")
 	require.NoError(t, err)
 
-	// A version-only blob: referenced solely from node_versions.
+	// Replacing the current pointer leaves the original version as a root.
 	_, err = s.db.Exec(`INSERT INTO blobs (hash, size, created_at) VALUES (?, 9, ?)`,
-		fakeHash("d4"), "2026-01-01T00:00:00Z")
+		fakeHash("d4"), "2026-01-01T00:00:00.000000000Z")
 	require.NoError(t, err)
 	_, err = s.db.Exec(
-		`INSERT INTO node_versions (node_id, blob_hash, size, replaced_at) VALUES (?, ?, 9, ?)`,
-		live.ID, fakeHash("d4"), "2026-01-01T00:00:00Z")
+		`INSERT INTO content_versions (
+			version_id, node_id, blob_hash, size, recorded_at, node_revision,
+			introduced_operation_id, transition_kind
+		) VALUES ('44444444-4444-4444-8444-444444444444', ?, ?, 9, ?, 2,
+			'dddddddd-dddd-4ddd-8ddd-dddddddddddd', 'content_replace')`,
+		live.ID, fakeHash("d4"), "2026-01-01T00:00:00.000000000Z")
+	require.NoError(t, err)
+	_, err = s.db.Exec(`UPDATE nodes SET current_version_id =
+		'44444444-4444-4444-8444-444444444444', revision = 2 WHERE id = ?`, live.ID)
 	require.NoError(t, err)
 
 	// Nothing unreachable yet.

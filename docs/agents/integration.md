@@ -79,10 +79,10 @@ curl --fail-with-body --get \
 ```
 
 A node response includes stable `id`, mutable `revision`, `kind`, and
-timestamps. File nodes also include their immutable SHA-256 `blob_hash` and
-raw `size`; directories omit the hash. Live single-node responses include the
-current `path`. IDs survive renames; use a live path only for display or a
-one-shot path operation.
+timestamps. File nodes also include stable `current_version_id`, immutable
+SHA-256 `blob_hash`, and raw `size`; directories omit content identity. Live
+single-node responses include the current `path`. Node and version IDs survive
+renames; use a live path only for display or a one-shot path operation.
 
 Trash is the important exception. A successful trash response returns the
 node's **pre-trash path** to explain where a restore would try to put it. That
@@ -122,13 +122,39 @@ curl --fail \
   --output document.bin
 ```
 
-The content response sends `X-Docbank-Blob-Hash` and
-`X-Docbank-Blob-Size` before the body. After the body it sends an
+The content response sends `X-Docbank-Content-Version`,
+`X-Docbank-Blob-Hash`, and `X-Docbank-Blob-Size` before the body. After the body
+it sends an
 [RFC 9530](https://www.rfc-editor.org/rfc/rfc9530.html) `Content-Digest`
 trailer computed from the bytes actually streamed. A client
 that needs independent transfer proof hashes `document.bin` itself and compares
-that digest, the trailer, and the file node's `blob_hash`. Do not treat the
-catalog header alone as a fresh physical verification.
+that digest, the trailer, and the file node's `blob_hash`. Require the version
+header to equal the node's `current_version_id`; do not treat catalog headers
+alone as a fresh physical verification.
+
+List a node's immutable versions with bounded pagination, then address one
+record or byte stream without relying on its current path:
+
+```bash
+curl --fail-with-body \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  "$DOCBANK_URL/api/v1/nodes/42/versions?limit=100&offset=0"
+
+curl --fail-with-body \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  "$DOCBANK_URL/api/v1/versions/$VERSION_ID"
+
+curl --fail \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  "$DOCBANK_URL/api/v1/versions/$VERSION_ID/content" \
+  --output version.bin
+```
+
+The listing is newest-first and returns `items`, `total`, `limit`, and
+`offset`. A version record includes its node, node revision, blob identity,
+recording time, transition kind, and introducing operation UUID. Version-byte
+responses use the same headers and terminal digest contract as current-node
+content.
 
 Read the response through successful EOF and require the trailer. A readable
 prefix is not verified content: if the request is cancelled, the body ends in
@@ -146,7 +172,8 @@ curl --fail-with-body -X POST \
 ```
 
 A successful proof returns `blob_hash`, `computed_hash`, `size`,
-`computed_size`, and `verified: true`, bound to `node_id` and `revision`.
+`computed_size`, and `verified: true`, bound to `node_id`, `version_id`, and
+`revision`.
 Missing or damaged content returns HTTP 200 with `verified: false` and
 `problem: "missing"`, `"corrupt"`, or `"unreadable"`; those are completed
 checks with negative evidence, not request failures. A `412 stale_revision`

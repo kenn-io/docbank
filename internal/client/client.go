@@ -18,6 +18,7 @@ import (
 	"net/textproto"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"go.kenn.io/kit/backup"
@@ -58,9 +59,10 @@ func responseStatus(err error) (int, bool) {
 type ContentStream struct {
 	io.ReadCloser
 
-	BlobHash string
-	Size     int64
-	trailer  http.Header
+	VersionID string
+	BlobHash  string
+	Size      int64
+	trailer   http.Header
 }
 
 // ContentDigest returns the digest of bytes actually streamed. HTTP trailers
@@ -193,8 +195,36 @@ func (c *Client) Children(ctx context.Context, id int64) ([]api.Node, error) {
 }
 
 func (c *Client) Content(ctx context.Context, id int64) (*ContentStream, error) {
+	return c.content(ctx, fmt.Sprintf("/api/v1/nodes/%d/content", id),
+		fmt.Sprintf("content of node %d", id))
+}
+
+// Versions returns one bounded newest-first page of a node's content history.
+func (c *Client) Versions(
+	ctx context.Context, nodeID int64, limit, offset int,
+) (api.ContentVersionPage, error) {
+	var page api.ContentVersionPage
+	path := fmt.Sprintf("/api/v1/nodes/%d/versions?limit=%d&offset=%d", nodeID, limit, offset)
+	err := c.do(ctx, http.MethodGet, path, nil, nil, &page)
+	return page, err
+}
+
+// Version returns immutable version metadata by stable ID.
+func (c *Client) Version(ctx context.Context, id string) (api.ContentVersion, error) {
+	var version api.ContentVersion
+	err := c.do(ctx, http.MethodGet, "/api/v1/versions/"+url.PathEscape(id), nil, nil, &version)
+	return version, err
+}
+
+// VersionContent streams immutable bytes by stable version ID.
+func (c *Client) VersionContent(ctx context.Context, id string) (*ContentStream, error) {
+	return c.content(ctx, "/api/v1/versions/"+url.PathEscape(id)+"/content",
+		"content version "+id)
+}
+
+func (c *Client) content(ctx context.Context, path, identity string) (*ContentStream, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		fmt.Sprintf("%s/api/v1/nodes/%d/content", c.base, id), nil)
+		c.base+path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("building content request: %w", err)
 	}
@@ -203,7 +233,7 @@ func (c *Client) Content(ctx context.Context, id int64) (*ContentStream, error) 
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("fetching content of node %d: %w", id, err)
+		return nil, fmt.Errorf("fetching %s: %w", identity, err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		defer func() { _ = resp.Body.Close() }()
@@ -212,20 +242,45 @@ func (c *Client) Content(ctx context.Context, id int64) (*ContentStream, error) 
 	size, err := strconv.ParseInt(resp.Header.Get(api.BlobSizeHeader), 10, 64)
 	if err != nil || size < 0 {
 		_ = resp.Body.Close()
-		return nil, fmt.Errorf("content of node %d returned invalid %s %q",
-			id, api.BlobSizeHeader, resp.Header.Get(api.BlobSizeHeader))
+		return nil, fmt.Errorf("%s returned invalid %s %q",
+			identity, api.BlobSizeHeader, resp.Header.Get(api.BlobSizeHeader))
 	}
 	hash := resp.Header.Get(api.BlobHashHeader)
 	if !validSHA256Hex(hash) {
 		_ = resp.Body.Close()
-		return nil, fmt.Errorf("content of node %d returned invalid %s %q", id, api.BlobHashHeader, hash)
+		return nil, fmt.Errorf("%s returned invalid %s %q", identity, api.BlobHashHeader, hash)
 	}
-	return &ContentStream{ReadCloser: resp.Body, BlobHash: hash, Size: size, trailer: resp.Trailer}, nil
+	versionID := resp.Header.Get(api.ContentVersionHeader)
+	if !validUUIDv4(versionID) {
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("%s returned invalid %s %q", identity, api.ContentVersionHeader, versionID)
+	}
+	return &ContentStream{ReadCloser: resp.Body, VersionID: versionID,
+		BlobHash: hash, Size: size, trailer: resp.Trailer}, nil
 }
 
 func validSHA256Hex(hash string) bool {
 	decoded, err := hex.DecodeString(hash)
 	return err == nil && len(decoded) == sha256.Size && hex.EncodeToString(decoded) == hash
+}
+
+func validUUIDv4(value string) bool {
+	if len(value) != 36 || value[8] != '-' || value[13] != '-' ||
+		value[18] != '-' || value[23] != '-' || value[14] != '4' {
+		return false
+	}
+	if !strings.ContainsRune("89ab", rune(value[19])) {
+		return false
+	}
+	for i, char := range value {
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			continue
+		}
+		if !strings.ContainsRune("0123456789abcdef", char) {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *Client) VerifyNodeContent(ctx context.Context, id, revision int64) (api.ContentVerification, error) {

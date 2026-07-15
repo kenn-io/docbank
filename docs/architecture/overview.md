@@ -81,11 +81,11 @@ metadata, durability rules, and physical storage primitives from
 | Organizing structure | Fixed (accounts, folders, threads from source) | Free-form virtual tree, user- and agent-reorganized |
 | Deletion | Staged deletion *from the source* (Gmail) | Trash → empty → GC pipeline inside the vault |
 
-!!! info "Planned — versioned editing"
-    Docbank's document identity is intended to outlive any one content blob.
-    Content replacement will write a new immutable blob and retain the prior
-    hash in `node_versions`; no editing command or writer exists today. See
-    [Editing & Versions](editing-and-versions.md).
+Every imported file starts with a stable content-version UUID. Version listing,
+metadata lookup, and byte retrieval are implemented independently of the node's
+mutable path. Content replacement and reversion remain planned; they will add
+immutable versions and move the node's current pointer rather than rewriting a
+blob. See [Editing & Versions](editing-and-versions.md).
 
 !!! info "Planned — full audit"
     Selected directory scopes will be able to retain every authoritative

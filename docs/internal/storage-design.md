@@ -6,12 +6,15 @@ owns application-neutral loose and packed storage mechanics.
 
 ## Authority model
 
-Three layers answer different questions:
+Four layers answer different questions:
 
-1. A `nodes` row says a document or directory exists in the virtual tree.
-2. A `blobs` row says a content hash is an authorized member of the physical
+1. A `nodes` row says a document or directory exists in the virtual tree; a
+   file points at its current immutable version.
+2. A `content_versions` row binds stable document identity and node revision to
+   one blob hash, size, media type, and stable version UUID.
+3. A `blobs` row says a content hash is an authorized member of the physical
    store and may be read through docbank.
-3. The pack catalog says where those authorized bytes currently live: loose,
+4. The pack catalog says where those authorized bytes currently live: loose,
    packed, or in a lifecycle transition coordinated by Kit.
 
 These layers must not be collapsed. Node reachability is product policy; blob
@@ -138,9 +141,12 @@ The schema enforces the invariants that every writer must obey:
 
 - exactly one root through a partial unique index on a constant expression;
 - live sibling names are unique while trashed names do not reserve a path;
-- file nodes have blob hashes and directories do not;
-- foreign keys prevent deleting a blob row while a node or version references
-  it; and
+- file nodes have a current content version belonging to that node and
+  directories do not;
+- foreign keys prevent deleting a blob row while any content version references
+  it;
+- version and introducing-operation UUIDs are random, non-allocator identities,
+  with one version per node revision and node/operation pair; and
 - node IDs use `AUTOINCREMENT` and are never recycled into a dangling external
   reference.
 
@@ -158,7 +164,7 @@ The ingest invariant is **bytes before reference**:
 3. Kit writes staging bytes, fsyncs, renames to the canonical loose path, and
    fsyncs the containing directory.
 4. Only after durable publication may the SQLite transaction insert the blob,
-   node, ingest, and provenance rows.
+   node, initial content version, ingest, and provenance rows.
 
 A crash after step 3 but before step 4 leaves an untracked physical object. It
 is harmless because no `blobs` row authorizes it; GC's physical scan can remove
@@ -205,10 +211,11 @@ makes the immutable range logically dead; a separate repack maintenance pass
 rewrites live ranges and retires sparse source packs. No removal command folds
 that physical rewrite into logical deletion.
 
-Trashed nodes remain reachable. Permanent node deletion may make a blob row a
-GC candidate, but it does not itself claim disk space. GC must consider live
-nodes, trashed nodes, and `node_versions`; new logical reference types must be
-added to reachability before their schema is usable.
+Trashed nodes retain their content versions. Permanent node deletion cascades
+through those versions and may make a blob row a GC candidate, but it does not
+itself claim disk space. GC treats every `content_versions` row—current or
+historical—as a reachability root; new logical reference types must be added to
+reachability before their schema is usable.
 
 !!! info "Planned — full-audit maintenance"
     Full-audit membership is sticky and protected historical versions remain
