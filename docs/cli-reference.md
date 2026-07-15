@@ -131,14 +131,16 @@ redirected lines, and `plain` always emits durable lines. `--json` suppresses
 progress and returns the new node, immutable version, and server-computed hash
 and size. `--mime-type` overrides extension/content detection.
 
-The command resolves the target to a stable node ID and revision before
-hashing. The raw `PUT` carries that revision as `If-Match`; if another actor
-moves, trashes, or replaces the node first, the operation fails with
-`stale_revision` rather than losing the concurrent update. A successful put
-bumps the node revision, creates a `content_replace` version, and leaves the
-older bytes reachable through `docbank version <id> --content`. Replacing with
-identical bytes still records an explicit versioned operation while the blob
-itself deduplicates.
+The command completes its local hash before starting or contacting the daemon,
+then resolves the target to a stable node ID and revision immediately before
+upload. This keeps a slow local read outside the daemon's idle lifetime and
+shortens the optimistic-concurrency window. The raw `PUT` carries the inspected
+revision as `If-Match`; if another actor moves, trashes, or replaces the node
+afterward, the operation fails with `stale_revision` rather than losing the
+concurrent update. A successful put bumps the node revision, creates a
+`content_replace` version, and leaves the older bytes reachable through
+`docbank version <id> --content`. Replacing with identical bytes still records
+an explicit versioned operation while the blob itself deduplicates.
 
 ## docbank versions
 

@@ -79,11 +79,13 @@ docbank put revised.pdf /taxes/2025/return.pdf
 ```
 
 `put` opens a regular source without following a final symlink, detects or
-accepts its media type, hashes it, and uploads it with the target node revision
-the CLI inspected. Hashing and upload have separate progress stages because the
-daemon requires the expected SHA-256 and size before granting authority. The
-client uses `Expect: 100-continue`, allowing the daemon to reject a stale or
-invalid target before the large body is transmitted.
+accepts its media type, and hashes it before starting or contacting the daemon.
+It then inspects the target and uploads with that node revision. Keeping the
+local pass outside the daemon lifecycle avoids idle shutdown during a slow read
+and shortens the optimistic-concurrency window. Hashing and upload have separate
+progress stages because the daemon requires the expected SHA-256 and size before
+granting authority. The client uses `Expect: 100-continue`, allowing the daemon
+to reject a stale or invalid target before the large body is transmitted.
 
 The corresponding `PUT /api/v1/nodes/{id}/content` body is the raw file bytes.
 It requires `If-Match`, `X-Docbank-Blob-Hash`, and

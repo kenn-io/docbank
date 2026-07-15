@@ -43,18 +43,6 @@ var putCmd = &cobra.Command{
 		}
 		defer func() { _ = source.Close() }()
 
-		c, err := client.Ensure(cmd.Context())
-		if err != nil {
-			return err
-		}
-		target, err := c.Stat(cmd.Context(), args[1])
-		if err != nil {
-			return fmt.Errorf("resolving %q: %w", args[1], err)
-		}
-		if target.Kind != "file" {
-			return fmt.Errorf("%q: %w", args[1], store.ErrNotFile)
-		}
-
 		mimeType, err := putSourceMIME(source, sourcePath, putMIMEType)
 		if err != nil {
 			return err
@@ -81,6 +69,21 @@ var putCmd = &cobra.Command{
 		hashReader.finish()
 		if _, err := source.Seek(0, io.SeekStart); err != nil {
 			return fmt.Errorf("rewinding %s: %w", sourcePath, err)
+		}
+
+		// Keep the potentially long local pass outside the daemon lifecycle.
+		// Inspect the target only when the upload is ready to begin so an idle
+		// daemon cannot disappear while the source is being hashed.
+		c, err := client.Ensure(cmd.Context())
+		if err != nil {
+			return err
+		}
+		target, err := c.Stat(cmd.Context(), args[1])
+		if err != nil {
+			return fmt.Errorf("resolving %q: %w", args[1], err)
+		}
+		if target.Kind != "file" {
+			return fmt.Errorf("%q: %w", args[1], store.ErrNotFile)
 		}
 
 		uploadReader := newPutProgressReader(cmd.Context(), source, size, "upload", renderer, putJSON)

@@ -94,11 +94,12 @@ docbank put ~/Documents/revised-checklist.pdf /taxes/checklist.pdf
 docbank versions /taxes/checklist.pdf
 ```
 
-`put` hashes the source and then uploads it, showing separate progress for both
-passes. It requires the target revision observed before hashing, so a concurrent
-change fails instead of being overwritten. The prior version remains available
-through `docbank version <old-version-id> --content`. Reversion is planned; it
-will create another immutable head rather than rewind history.
+`put` hashes the source before contacting the daemon, then inspects the target
+and uploads it, showing separate progress for both file passes. The upload
+requires that freshly observed target revision, so a concurrent change fails
+instead of being overwritten. The prior version remains available through
+`docbank version <old-version-id> --content`. Reversion is planned; it will
+create another immutable head rather than rewind history.
 
 ## Reorganize
 
