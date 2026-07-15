@@ -12,6 +12,7 @@ import (
 	"go.kenn.io/kit/backup"
 
 	"go.kenn.io/docbank/internal/store"
+	docsqlite "go.kenn.io/docbank/pkg/sqlite"
 )
 
 // MetadataFormat is the stable Kit manifest identifier for Docbank's
@@ -112,17 +113,17 @@ func (w *byteCounter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-type metadataRestorer struct{}
+type metadataRestorer struct{ driver docsqlite.Driver }
 
 var _ backup.MetadataRestorer = metadataRestorer{}
 
-func (metadataRestorer) RestoreMetadata(
+func (r metadataRestorer) RestoreMetadata(
 	ctx context.Context, format string, metadata io.Reader, targetPath string,
 ) (resultErr error) {
 	if format != MetadataFormat {
 		return fmt.Errorf("backupapp: unsupported metadata format %q", format)
 	}
-	target, err := store.Open(targetPath)
+	target, err := store.Open(targetPath, r.driver)
 	if err != nil {
 		return fmt.Errorf("backupapp: creating restored metadata store: %w", err)
 	}

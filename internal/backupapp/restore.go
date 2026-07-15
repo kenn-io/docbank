@@ -11,6 +11,7 @@ import (
 
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
+	docsqlite "go.kenn.io/docbank/pkg/sqlite"
 )
 
 // packedRestoreTarget supplies docbank's storage policy and catalog adapter to
@@ -46,14 +47,33 @@ func newPackedRestoreTarget() *packedRestoreTarget {
 func Restore(
 	ctx context.Context, repo *backup.Repo, version string, opts backup.RestoreOptions,
 ) (*backup.RestoreResult, error) {
+	return RestoreWithDriver(ctx, repo, version, store.DefaultSQLiteDriver(), opts)
+}
+
+// RestoreWithDriver restores through one SQLite adapter for metadata import,
+// Kit proof queries, and packed-catalog publication.
+func RestoreWithDriver(
+	ctx context.Context,
+	repo *backup.Repo,
+	version string,
+	driver docsqlite.Driver,
+	opts backup.RestoreOptions,
+) (*backup.RestoreResult, error) {
 	if opts.PackedContent != nil {
 		return nil, errors.New("backupapp: restore options must not supply packed content policy")
 	}
 	if opts.MetadataRestorer != nil {
 		return nil, errors.New("backupapp: restore options must not supply a metadata restorer")
 	}
+	if opts.SQLiteOpener != nil {
+		return nil, errors.New("backupapp: restore options must not supply a SQLite opener")
+	}
+	if err := docsqlite.Validate(driver); err != nil {
+		return nil, fmt.Errorf("backupapp: restore SQLite driver: %w", err)
+	}
+	opts.SQLiteOpener = SQLiteOpener(driver)
 	opts.PackedContent = newPackedRestoreTarget()
-	opts.MetadataRestorer = metadataRestorer{}
+	opts.MetadataRestorer = metadataRestorer{driver: driver}
 	app := &packedRestoreApp{App: New(version)}
 	result, err := backup.Restore(ctx, repo, app, opts)
 	if err != nil {

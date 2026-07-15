@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/jsontext"
+	docsqlite "go.kenn.io/docbank/pkg/sqlite"
 )
 
 const metadataFormatVersion = 1
@@ -56,8 +57,9 @@ func (s *MetadataSnapshot) Export(ctx context.Context, w io.Writer) error {
 // backup capture. The initial read is required: BeginTx alone is lazy in
 // SQLite and would not pin a snapshot before Kit releases the mutation gate.
 func (s *Store) BeginMetadataSnapshot(ctx context.Context) (*MetadataSnapshot, error) {
-	db, err := sql.Open("sqlite3",
-		s.path+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000&_txlock=deferred")
+	db, err := s.driver.Open(s.path, docsqlite.OpenOptions{
+		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("beginning metadata snapshot: %w", err)
 	}

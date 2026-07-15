@@ -7,9 +7,10 @@ Instructions for autonomous coding agents working in this repository.
 - Go 1.26+ (go.mod is authoritative). Go 1.26 language features — e.g.
   value-form `new(v)` — are in use; verify against the toolchain before
   treating unfamiliar syntax as an error.
-- Every build and test needs CGO and the fts5 tag: `make test` or
-  `go test -tags fts5 ./...`. A bare `go build ./...` failing on sqlite
-  symbols is expected, not a defect.
+- Every build and test needs the fts5 tag: `make test` or
+  `go test -tags fts5 ./...`. CGO builds use mattn SQLite; the supported
+  pure-Go path uses `CGO_ENABLED=0` and modernc SQLite. Keep the complete suite
+  passing in both modes.
 - Lint with `make lint` (golangci-lint, fts5 tag). Docs build strict with
   `make docs-build`; fix every warning.
 - Linux, macOS, and Windows are supported. Windows CI runs the complete CLI,
@@ -60,9 +61,11 @@ Instructions for autonomous coding agents working in this repository.
 
 ## Design Invariants
 
-- Daemon-first: the daemon is the only process that opens the store; CLI
-  commands are HTTP clients (`client.Ensure`). Do not add code paths that
-  open the vault directly from a command.
+- Standalone CLI operation is daemon-first: CLI commands are HTTP clients
+  (`client.Ensure`) and never open a vault directly. Go applications may use
+  the public embedded API to own separately rooted vaults in-process. Embedded
+  and daemon ownership share the same exclusive hierarchy lock; never create a
+  privileged path into a daemon-owned vault.
 - The daemon always enforces an API key (ephemeral per-run when none is
   configured, published via the runtime record). Binds are loopback-only.
 - Packed storage is managed, not a user-selected format. The ordinary operator

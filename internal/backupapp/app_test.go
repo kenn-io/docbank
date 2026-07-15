@@ -3,7 +3,6 @@ package backupapp_test
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"io"
 	"os"
@@ -19,6 +18,7 @@ import (
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
+	docsqlite "go.kenn.io/docbank/pkg/sqlite"
 )
 
 type archiveFixture struct {
@@ -183,6 +183,7 @@ func TestRestoreSupportsLegacySQLitePageSnapshots(t *testing.T) {
 	manifest, err := backup.Create(t.Context(), repo, app, backup.CreateOptions{
 		DBPath:        filepath.Join(fixture.root, "docbank.db"),
 		ContentSource: backupapp.NewContentSource(fixture.blobs),
+		SQLiteOpener:  backupapp.SQLiteOpener(fixture.metadata.SQLiteDriver()),
 		Jobs:          2,
 	})
 	require.NoError(t, err)
@@ -268,8 +269,13 @@ func TestJSONLSnapshotRejectsMalformedLiveMetadata(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fixture := newArchiveFixture(t)
-			rawDB, err := sql.Open("sqlite3",
-				filepath.Join(fixture.root, "docbank.db")+"?_foreign_keys=off&_busy_timeout=5000")
+			rawDB, err := fixture.metadata.SQLiteDriver().Open(
+				filepath.Join(fixture.root, "docbank.db"), docsqlite.OpenOptions{
+					Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+				})
+			require.NoError(t, err)
+			rawDB.SetMaxOpenConns(1)
+			_, err = rawDB.Exec(`PRAGMA foreign_keys=OFF`)
 			require.NoError(t, err)
 			_, err = rawDB.Exec(tt.statement)
 			require.NoError(t, err)

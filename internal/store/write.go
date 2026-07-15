@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-
-	sqlite3 "github.com/mattn/go-sqlite3"
 )
 
 func nodeByIDTx(tx *sql.Tx, id int64) (Node, error) {
@@ -44,16 +42,6 @@ func liveDirTx(tx *sql.Tx, id int64) (Node, error) {
 	return n, nil
 }
 
-func isUniqueViolation(err error) bool {
-	var se sqlite3.Error
-	return errors.As(err, &se) && se.ExtendedCode == sqlite3.ErrConstraintUnique
-}
-
-func isBusy(err error) bool {
-	var se sqlite3.Error
-	return errors.As(err, &se) && se.Code == sqlite3.ErrBusy
-}
-
 // Mkdir creates a directory under parentID.
 func (s *Store) Mkdir(ctx context.Context, parentID int64, name string) (Node, error) {
 	name, err := NormalizeName(name)
@@ -69,7 +57,7 @@ func (s *Store) Mkdir(ctx context.Context, parentID int64, name string) (Node, e
 		res, err := tx.Exec(
 			`INSERT INTO nodes (parent_id, name, kind, created_at, modified_at)
 			 VALUES (?, ?, 'dir', ?, ?)`, parentID, name, now, now)
-		if isUniqueViolation(err) {
+		if s.driver.IsUniqueViolation(err) {
 			return fmt.Errorf("mkdir %q under node %d: %w", name, parentID, ErrExists)
 		}
 		if err != nil {
@@ -195,7 +183,7 @@ func (s *Store) createFileTx(tx *sql.Tx, parentID int64, name, blobHash string, 
 		`INSERT INTO nodes (parent_id, name, kind, current_version_id, created_at, modified_at)
 		 VALUES (?, ?, 'file', ?, ?, ?)`,
 		parentID, name, versionID, now, now)
-	if isUniqueViolation(err) {
+	if s.driver.IsUniqueViolation(err) {
 		return Node{}, fmt.Errorf("creating file %q under node %d: %w", name, parentID, ErrExists)
 	}
 	if err != nil {
@@ -374,7 +362,7 @@ func (s *Store) moveTx(tx *sql.Tx, id, newParentID int64, newName string, ifRev 
 		`UPDATE nodes SET parent_id = ?, name = ?, revision = revision + 1,
 		        modified_at = ? WHERE id = ?`,
 		newParentID, newName, now, id)
-	if isUniqueViolation(err) {
+	if s.driver.IsUniqueViolation(err) {
 		return Node{}, fmt.Errorf("moving node %d to %q: %w", id, newName, ErrExists)
 	}
 	if err != nil {
