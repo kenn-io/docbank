@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io"
 
 	"github.com/spf13/cobra"
 
@@ -31,7 +30,11 @@ var catCmd = &cobra.Command{
 			return err
 		}
 		defer func() { _ = rc.Close() }()
-		if _, err := io.Copy(cmd.OutOrStdout(), rc); err != nil {
+		if rc.VersionID != n.CurrentVersionID {
+			return fmt.Errorf("streaming %q: received content version %s, expected %s",
+				args[0], rc.VersionID, n.CurrentVersionID)
+		}
+		if _, err := rc.CopyVerified(cmd.OutOrStdout()); err != nil {
 			return fmt.Errorf("streaming %q: %w", args[0], err)
 		}
 		return nil

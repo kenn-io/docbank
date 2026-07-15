@@ -1,6 +1,7 @@
 package client_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -11,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -308,10 +310,11 @@ func TestContentIdentityAndVerificationRoundTrip(t *testing.T) {
 	assert.Equal(t, node.CurrentVersionID, stream.VersionID)
 	assert.Equal(t, wantHash, stream.BlobHash)
 	assert.Equal(t, int64(len(content)), stream.Size)
-	got, err := io.ReadAll(stream)
+	var got bytes.Buffer
+	_, err = stream.CopyVerified(&got)
 	require.NoError(t, err)
 	require.NoError(t, stream.Close())
-	assert.Equal(t, content, got)
+	assert.Equal(t, content, got.Bytes())
 	assert.Equal(t, "sha-256=:"+base64.StdEncoding.EncodeToString(sum[:])+":", stream.ContentDigest())
 
 	verified, err := c.VerifyNodeContent(t.Context(), node.ID, node.Revision)
@@ -325,16 +328,71 @@ func TestContentIdentityAndVerificationRoundTrip(t *testing.T) {
 	versionStream, err := c.VersionContent(t.Context(), node.CurrentVersionID)
 	require.NoError(t, err)
 	assert.Equal(t, node.CurrentVersionID, versionStream.VersionID)
-	packedBytes, err := io.ReadAll(versionStream)
+	var packedBytes bytes.Buffer
+	_, err = versionStream.CopyVerified(&packedBytes)
 	require.NoError(t, err)
 	require.NoError(t, versionStream.Close())
-	assert.Equal(t, content, packedBytes)
+	assert.Equal(t, content, packedBytes.Bytes())
 	assert.Equal(t, "sha-256=:"+base64.StdEncoding.EncodeToString(sum[:])+":",
 		versionStream.ContentDigest())
 	verified, err = c.VerifyNodeContent(t.Context(), node.ID, node.Revision)
 	require.NoError(t, err)
 	assert.True(t, verified.Verified, "the same evidence contract reads packed authority")
 	assert.Equal(t, wantHash, verified.ComputedHash)
+}
+
+func TestVersionContentRejectsUnprovenResponses(t *testing.T) {
+	const (
+		requestedVersion = "11111111-1111-4111-8111-111111111111"
+		otherVersion     = "22222222-2222-4222-8222-222222222222"
+	)
+	content := []byte("version bytes")
+	sum := sha256.Sum256(content)
+	hash := hex.EncodeToString(sum[:])
+	digest := "sha-256=:" + base64.StdEncoding.EncodeToString(sum[:]) + ":"
+	tests := []struct {
+		name      string
+		versionID string
+		size      int64
+		hash      string
+		digest    string
+		wantError string
+	}{
+		{name: "different version", versionID: otherVersion, size: int64(len(content)), hash: hash,
+			digest: digest, wantError: "returned version identity"},
+		{name: "wrong size", versionID: requestedVersion, size: int64(len(content) + 1), hash: hash,
+			digest: digest, wantError: "received 13 bytes, expected 14"},
+		{name: "wrong hash", versionID: requestedVersion, size: int64(len(content)), hash: strings.Repeat("0", 64),
+			digest: digest, wantError: "computed SHA-256"},
+		{name: "missing digest", versionID: requestedVersion, size: int64(len(content)), hash: hash,
+			wantError: "lacks terminal Content-Digest"},
+		{name: "wrong digest", versionID: requestedVersion, size: int64(len(content)), hash: hash,
+			digest:    "sha-256=:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=:",
+			wantError: "terminal Content-Digest"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set(api.ContentVersionHeader, tt.versionID)
+				w.Header().Set(api.BlobHashHeader, tt.hash)
+				w.Header().Set(api.BlobSizeHeader, strconv.FormatInt(tt.size, 10))
+				w.Header().Set("Trailer", "Content-Digest")
+				_, _ = w.Write(content)
+				if tt.digest != "" {
+					w.Header().Set("Content-Digest", tt.digest)
+				}
+			}))
+			t.Cleanup(ts.Close)
+			stream, err := client.New(ts.URL, "key").VersionContent(t.Context(), requestedVersion)
+			if err != nil {
+				require.ErrorContains(t, err, tt.wantError)
+				return
+			}
+			defer func() { _ = stream.Close() }()
+			_, err = stream.CopyVerified(io.Discard)
+			require.ErrorContains(t, err, tt.wantError)
+		})
+	}
 }
 
 func TestDigestCheckedUploadRoundTrip(t *testing.T) {

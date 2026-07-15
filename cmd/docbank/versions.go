@@ -89,7 +89,7 @@ var versionCmd = &cobra.Command{
 				return err
 			}
 			defer func() { _ = stream.Close() }()
-			if _, err := io.Copy(cmd.OutOrStdout(), stream); err != nil {
+			if _, err := stream.CopyVerified(cmd.OutOrStdout()); err != nil {
 				return fmt.Errorf("streaming content version %s: %w", args[0], err)
 			}
 			return nil

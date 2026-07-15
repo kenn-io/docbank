@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -72,6 +73,40 @@ func (s *ContentStream) ContentDigest() string {
 		return ""
 	}
 	return s.trailer.Get("Content-Digest")
+}
+
+// CopyVerified writes the response body and succeeds only after the complete
+// stream agrees with the catalog size and SHA-256 identity and with the digest
+// trailer computed by the daemon. Bytes may already have reached w when an
+// error is returned, so callers publishing a file must write to private staging
+// and publish only after this method succeeds.
+func (s *ContentStream) CopyVerified(w io.Writer) (int64, error) {
+	if s == nil || s.ReadCloser == nil {
+		return 0, errors.New("copying content: nil stream")
+	}
+	hash := sha256.New()
+	written, err := io.Copy(io.MultiWriter(w, hash), s)
+	if err != nil {
+		return written, fmt.Errorf("copying content: %w", err)
+	}
+	if written != s.Size {
+		return written, fmt.Errorf("verifying content: received %d bytes, expected %d", written, s.Size)
+	}
+	computedHash := hex.EncodeToString(hash.Sum(nil))
+	if computedHash != s.BlobHash {
+		return written, fmt.Errorf("verifying content: computed SHA-256 %s, expected %s",
+			computedHash, s.BlobHash)
+	}
+	wantDigest := "sha-256=:" + base64.StdEncoding.EncodeToString(hash.Sum(nil)) + ":"
+	gotDigest := s.ContentDigest()
+	if gotDigest == "" {
+		return written, errors.New("verifying content: response lacks terminal Content-Digest")
+	}
+	if gotDigest != wantDigest {
+		return written, fmt.Errorf("verifying content: terminal Content-Digest %q, expected %q",
+			gotDigest, wantDigest)
+	}
+	return written, nil
 }
 
 func New(baseURL, apiKey string) *Client {
@@ -218,8 +253,16 @@ func (c *Client) Version(ctx context.Context, id string) (api.ContentVersion, er
 
 // VersionContent streams immutable bytes by stable version ID.
 func (c *Client) VersionContent(ctx context.Context, id string) (*ContentStream, error) {
-	return c.content(ctx, "/api/v1/versions/"+url.PathEscape(id)+"/content",
+	stream, err := c.content(ctx, "/api/v1/versions/"+url.PathEscape(id)+"/content",
 		"content version "+id)
+	if err != nil {
+		return nil, err
+	}
+	if stream.VersionID != id {
+		_ = stream.Close()
+		return nil, fmt.Errorf("content version %s returned version identity %s", id, stream.VersionID)
+	}
+	return stream, nil
 }
 
 func (c *Client) content(ctx context.Context, path, identity string) (*ContentStream, error) {

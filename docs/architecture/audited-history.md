@@ -670,9 +670,8 @@ reference to a pruned version therefore becomes not-found; it cannot silently
 retarget a later version after export/import.
 
 A metadata transaction may create at most one content version for a given node.
-Every native version records that transaction's immutable operation ID, and
-the pair is unique among records whose `introduced_operation_id` is present.
-Legacy absent values do not participate in that partial uniqueness rule. For a
+Every content version records that transaction's immutable operation ID, and
+the `(node_id, introduced_operation_id)` pair is unconditionally unique. For a
 node protected in the pre- or post-operation scope projection, that version has
 exactly one canonical content transition whose event fans out identically under
 the membership rules above: pre-protected scopes receive it, and scopes
@@ -681,25 +680,23 @@ same event kind, pre/post version IDs, and optional source version. Creation use
 `content_create`; an existing-node update without a selected source uses
 `content_replace`; and `content_revert` is valid only when the caller selected
 the verified non-current source version. A second content touch, a second
-native version for the node/operation, mixed replace/revert kinds across scopes,
+content version for the node/operation, mixed replace/revert kinds across scopes,
 or a new audited head without its complete fan-out aborts the transaction.
 
-The immutable native version itself stores that transition kind and optional
+The immutable content version itself stores that transition kind and optional
 source-version ID, so intent remains authoritative even when the node is wholly
 unaudited and emits no scoped event. `content_create` and `content_replace`
 require the source absent; `content_revert` requires it present and resolving to
 the verified non-current version described above. Version-level import requires
 that source to be a different retained version of the same node with matching
-blob hash, size, and media type. A source with a known node revision must have a
-smaller revision than the revert; only a migrated source whose revision is
-actually absent uses the legacy ordering exemption. Cycles are invalid. Audited
-replay additionally proves the source existed in the operation's pre-state. A
-retained revert version keeps its source version as a metadata and
-blob-reachability dependency.
+blob hash, size, and media type and a smaller revision than the revert. Cycles
+are invalid. Audited replay additionally proves the source existed in the
+operation's pre-state. A retained revert version keeps its source version as
+a metadata and blob-reachability dependency.
 Unaudited pruning must therefore remove the complete dependent closure or leave
 the source intact; audited retention permits neither removal.
 
-A wholly unaudited node still records the introducing operation ID on its native
+A wholly unaudited node still records the introducing operation ID on its content
 version but emits no scoped event; this preserves the stated boundary that
 allocation lineage does not retain unaudited content. Later enrollment adopts
 that complete version record in its baseline.
@@ -728,7 +725,7 @@ canonical mutation carries exactly one `recorded_at`, `origin`, and optional
 `agent_label` tuple even when its event list is empty, as for a witness-only
 rotation. The mutation-level `origin` is restricted to the exact ASCII tokens
 `api`, `cli`, `import`, or `job` regardless of whether events exist. Every event
-in the mutation must repeat that exact tuple. A native content version introduced
+in the mutation must repeat that exact tuple. A content version introduced
 by the operation uses the same `recorded_at`, and every direct post-state node
 timestamp required to equal the operation time uses that value. An unknown
 mutation origin, conflicting event attribution, or a missing eventless
@@ -896,15 +893,16 @@ intermediate versions; a replace or revert therefore need not retain its
 immediate predecessor. Revert
 still obeys the source-version identity and ordering rules above.
 
-The node's `current_version_id` resolves to a version with a present revision
-and that revision is the greatest retained known revision for the node; it may
+The node's `current_version_id` resolves to the version with the greatest
+retained revision for the node; that revision may
 be lower than the node's current revision after later metadata-only mutations.
-No retained native version may sort after the current head. Direct v2 import,
-zero-scope import, enrollment-baseline construction, replay, and final-state
-reconciliation all enforce these rules. Audited content events additionally
+No retained content version may sort after the current head. JSONL metadata v1
+import, enrollment-baseline construction, replay, and final-state reconciliation
+all enforce these rules. Audited content events additionally
 require the post version's revision to equal their resulting node revision.
-Duplicate known revisions, a create at a later revision, a native version at or
-before the legacy anchor, or an older current pointer makes the stream invalid.
+Duplicate revisions, a create at any revision other than one, or a current
+pointer that does not name the greatest retained revision makes the stream
+invalid.
 
 Every `topology_node` carries `node_kind` as one of the exact ASCII tokens `file`
 or `dir`, plus canonical UTC `created_at` and `modified_at`. Kind and creation
@@ -956,7 +954,7 @@ Every event's `recorded_at`, `origin`, and `agent_label` must equal the enclosin
 `canonical_mutation` fields byte-for-byte. For the optional label, equality
 distinguishes absent from present-but-empty. Scope fan-out repeats the tuple
 unchanged; no scope, event kind, importer, or user interface may rewrite it.
-The native content version introduced by a content event has the same
+The content version introduced by a content event has the same
 `recorded_at`, and node timestamps governed by the operation-time rules above
 use it as well. Import verifies these bindings before event sorting or hashing.
 
@@ -973,7 +971,7 @@ three content kinds. Every scoped copy must carry the same kind, pre/post versio
 records, source-version ID, node revisions/current heads, recorded time, origin,
 and agent label; only `scope_id`, `event_id`, and the canonically derived
 `event_ordinal` vary. The post record's `introduced_operation_id` must equal the
-event operation ID. The post record must be the one new native version and the
+event operation ID. The post record must be the one new content version and the
 node's resulting current head. Import derives the required scope fan-out from
 pre/post membership and rejects a missing, extra, or mixed-kind event.
 The event kind and `source_version_id` must also equal the post version's

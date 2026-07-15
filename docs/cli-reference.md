@@ -141,7 +141,10 @@ Inspects one immutable version by stable UUID, independent of the file's current
 path. The human view prints node and node-revision identity, recording time,
 transition kind, blob hash, size, and media type; `--json` emits the typed record.
 `--content` writes that exact version's bytes to stdout and cannot be combined
-with `--json`.
+with `--json`. It exits successfully only after the response version ID, byte
+count, SHA-256 identity, and terminal `Content-Digest` all agree. Output may
+already have reached stdout when verification fails, so scripts publishing a
+file should write privately and rename it only after a successful exit.
 
 ## docbank mv
 
