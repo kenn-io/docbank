@@ -63,6 +63,11 @@ cannot promise that every file will remain readable when the later import
 opens it. Re-run preflight after changing exclusions, then pass the exact same
 `--exclude` flags to the real `docbank add` command.
 
+Filesystem names and provenance paths must currently be valid UTF-8. On POSIX
+filesystems that permit other byte sequences, preflight and ingest report each
+such entry with an escaped, printable path; Docbank does not open or import it,
+continues with the rest of the tree, and never alters the source.
+
 A bare exclusion such as `.git` prunes that entry name wherever it occurs. A
 relative path such as `project/cache` prunes that path and its descendants
 within each supplied source. Exclusions do not use glob syntax. A pruned

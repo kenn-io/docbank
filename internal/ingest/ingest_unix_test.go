@@ -8,7 +8,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,6 +29,28 @@ func TestImportRefusesSymlinkAtOpen(t *testing.T) {
 	require.NoError(t, err)
 	_, err = ing.importFile(ctx, ingestID, ing.Store.RootID(), link, link, nil)
 	require.Error(t, err)
+}
+
+func TestAddOneRejectsNonUTF8SourcePathWithoutPoisoningMetadata(t *testing.T) {
+	ing := newTestIngester(t)
+	openPath := filepath.Join(t.TempDir(), "readable.txt")
+	require.NoError(t, os.WriteFile(openPath, []byte("must not import"), 0o600))
+	badName := "invalid-" + string([]byte{0xff}) + ".txt"
+	require.False(t, utf8.ValidString(badName))
+	badPath := filepath.Join(filepath.Dir(openPath), badName)
+	ingestID, err := ing.Store.BeginIngest(t.Context(), "cli", "test")
+	require.NoError(t, err)
+
+	var rep Report
+	require.NoError(t, ing.addOne(t.Context(), &rep, ingestID, ing.Store.RootID(), openPath, badPath, nil))
+	assert.Zero(t, rep.Added)
+	require.Len(t, rep.Failed, 1)
+	assert.Equal(t, strconv.QuoteToASCII(badPath), rep.Failed[0].Path)
+	require.ErrorContains(t, rep.Failed[0].Err, "is not valid UTF-8")
+
+	var metadata bytes.Buffer
+	require.NoError(t, ing.Store.ExportMetadata(t.Context(), &metadata))
+	assert.True(t, utf8.Valid(metadata.Bytes()))
 }
 
 func TestAddExplicitDirectorySymlinkPreservesSourceSpelling(t *testing.T) {

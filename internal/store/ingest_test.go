@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -97,6 +98,24 @@ func TestIngestFileRecordsProvenance(t *testing.T) {
 		n.ID).Scan(&origPath, &origMtime))
 	assert.Equal(t, "/orig/a.txt", origPath)
 	assert.Equal(t, "2026-01-02T03:04:05Z", origMtime)
+}
+
+func TestIngestRejectsNonUTF8MetadataBeforeCommit(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	ingestID, err := s.BeginIngest(ctx, "cli", "valid source")
+	require.NoError(t, err)
+	invalid := "source-" + string([]byte{0xff})
+	_, _, err = s.IngestFile(ctx, ingestID, s.RootID(),
+		"valid.txt", fakeHash("a1"), 1, "text/plain", invalid, "")
+	require.ErrorContains(t, err, "provenance original_path: not valid UTF-8")
+	_, err = s.NodeByPath(ctx, "/valid.txt")
+	require.ErrorIs(t, err, ErrNotFound)
+
+	_, err = s.BeginIngest(ctx, "cli", invalid)
+	require.ErrorContains(t, err, "ingest source_desc: not valid UTF-8")
+	var metadata bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &metadata))
 }
 
 func TestIngestFileDistinctSourceNamedLikeSuffix(t *testing.T) {

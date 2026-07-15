@@ -10,7 +10,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
@@ -35,6 +38,28 @@ type Ingester struct {
 type FileError struct {
 	Path string
 	Err  error
+}
+
+func validateSourcePath(path string) error {
+	if !utf8.ValidString(path) {
+		return fmt.Errorf("filesystem path %s is not valid UTF-8", strconv.QuoteToASCII(path))
+	}
+	return nil
+}
+
+func reportPath(path string) string {
+	if utf8.ValidString(path) {
+		return path
+	}
+	return strconv.QuoteToASCII(path)
+}
+
+func describeSources(sources []string) string {
+	quoted := make([]string, len(sources))
+	for i, source := range sources {
+		quoted[i] = strconv.QuoteToASCII(source)
+	}
+	return "[" + strings.Join(quoted, ", ") + "]"
 }
 
 // Report summarizes an ingest run.
@@ -175,6 +200,9 @@ func (ing *Ingester) PrepareUpload(
 	if err != nil {
 		return nil, err
 	}
+	if !utf8.ValidString(mimeType) {
+		return nil, errors.New("MIME type is not valid UTF-8")
+	}
 	parent, err := ing.Store.NodeByID(ctx, parentID)
 	if err != nil {
 		return nil, err
@@ -246,7 +274,7 @@ func (ing *Ingester) AddPathsWithOptions(
 	if err != nil {
 		return rep, fmt.Errorf("resolving destination %q: %w", destPath, err)
 	}
-	ingestID, err := ing.Store.BeginIngest(ctx, "cli", fmt.Sprintf("%v", sources))
+	ingestID, err := ing.Store.BeginIngest(ctx, "cli", describeSources(sources))
 	if err != nil {
 		return rep, err
 	}
@@ -254,6 +282,11 @@ func (ing *Ingester) AddPathsWithOptions(
 	for _, rawSource := range sources {
 		if err := ctx.Err(); err != nil {
 			return rep, err
+		}
+		if err := validateSourcePath(rawSource); err != nil {
+			rep.Failed = append(rep.Failed, FileError{Path: reportPath(rawSource), Err: err})
+			progress.report(rep, false)
+			continue
 		}
 		src := filepath.Clean(rawSource)
 		info, err := os.Lstat(src)
@@ -364,6 +397,14 @@ func (ing *Ingester) addTree(
 			progress.report(*rep, false)
 			return nil //nolint:nilerr // intentional: record error and continue walk
 		}
+		if err := validateSourcePath(sourcePath); err != nil {
+			rep.Failed = append(rep.Failed, FileError{Path: reportPath(sourcePath), Err: err})
+			progress.report(*rep, false)
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
 		if excludes.match(sourceRoot, sourcePath) {
 			rep.Excluded++
 			progress.report(*rep, false)
@@ -433,7 +474,7 @@ func (ing *Ingester) addOne(
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
-		rep.Failed = append(rep.Failed, FileError{Path: sourcePath, Err: err})
+		rep.Failed = append(rep.Failed, FileError{Path: reportPath(sourcePath), Err: err})
 	case added:
 		rep.Added++
 	default:
@@ -449,6 +490,9 @@ func (ing *Ingester) importFile(
 	openPath, sourcePath string,
 	progress *progressTracker,
 ) (bool, error) {
+	if err := validateSourcePath(sourcePath); err != nil {
+		return false, err
+	}
 	// No-follow plus fstat, not the earlier Lstat/WalkDir classification:
 	// the file could have been swapped since, and "symlinks are skipped"
 	// must hold for the file actually read, not the one classified.

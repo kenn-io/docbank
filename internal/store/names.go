@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/text/unicode/norm"
 )
@@ -11,6 +12,9 @@ import (
 // NormalizeName NFC-normalizes name and validates it for use as a node name.
 // Names are stored as given (post-NFC) and compared case-sensitively.
 func NormalizeName(name string) (string, error) {
+	if !utf8.ValidString(name) {
+		return "", fmt.Errorf("%w: name is not valid UTF-8", ErrInvalidName)
+	}
 	name = norm.NFC.String(name)
 	switch {
 	case name == "":

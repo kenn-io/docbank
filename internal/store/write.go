@@ -173,6 +173,9 @@ func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64) error {
 }
 
 func (s *Store) createFileTx(tx *sql.Tx, parentID int64, name, blobHash string, size int64, mimeType string) (Node, error) {
+	if err := validateUTF8Field("content MIME type", mimeType); err != nil {
+		return Node{}, err
+	}
 	if _, err := liveDirTx(tx, parentID); err != nil {
 		return Node{}, err
 	}

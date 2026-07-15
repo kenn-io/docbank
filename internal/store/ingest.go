@@ -10,9 +10,15 @@ import (
 
 // BeginIngest records the start of an ingest run and returns its id.
 func (s *Store) BeginIngest(ctx context.Context, sourceKind, sourceDesc string) (int64, error) {
+	startedAt := nowRFC3339()
+	if err := validateIngestRecord(metadataIngest{
+		Type: "ingest", ID: 1, StartedAt: startedAt, SourceKind: sourceKind, SourceDesc: sourceDesc,
+	}); err != nil {
+		return 0, fmt.Errorf("validating ingest start: %w", err)
+	}
 	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO ingests (started_at, source_kind, source_desc) VALUES (?, ?, ?)`,
-		nowRFC3339(), sourceKind, sourceDesc)
+		startedAt, sourceKind, sourceDesc)
 	if err != nil {
 		return 0, fmt.Errorf("recording ingest start: %w", err)
 	}
@@ -134,6 +140,16 @@ func (s *Store) IngestFile(ctx context.Context, ingestID, parentID int64, name, 
 	if err != nil {
 		return Node{}, false, err
 	}
+	var recordedMtime *string
+	if originalMtime != "" {
+		recordedMtime = &originalMtime
+	}
+	if err := validateProvenanceRecord(metadataProvenance{
+		Type: "provenance", NodeID: 1, IngestID: ingestID,
+		OriginalPath: originalPath, OriginalMTime: recordedMtime,
+	}); err != nil {
+		return Node{}, false, fmt.Errorf("validating ingest provenance: %w", err)
+	}
 	var (
 		created Node
 		added   bool
@@ -155,14 +171,10 @@ func (s *Store) IngestFile(ctx context.Context, ingestID, parentID int64, name, 
 		if err != nil {
 			return err
 		}
-		var mtime any
-		if originalMtime != "" {
-			mtime = originalMtime
-		}
 		if _, err := tx.Exec(
 			`INSERT INTO provenance (node_id, ingest_id, original_path, original_mtime)
 			 VALUES (?, ?, ?, ?)`,
-			created.ID, ingestID, originalPath, mtime); err != nil {
+			created.ID, ingestID, originalPath, recordedMtime); err != nil {
 			return fmt.Errorf("recording provenance for %q: %w", finalName, err)
 		}
 		added = true

@@ -24,6 +24,7 @@ func TestNormalizeName(t *testing.T) {
 		{"dotdot", "..", "", true},
 		{"slash", "a/b", "", true},
 		{"nul", "a\x00b", "", true},
+		{"invalid UTF-8", "bad-" + string([]byte{0xff}), "", true},
 		{"dotfile ok", ".bashrc", ".bashrc", false},
 	}
 	for _, tt := range tests {

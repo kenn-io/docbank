@@ -281,7 +281,8 @@ curl --fail-with-body -X POST \
 Require `errors == 0` and `rejected.files == 0`, inspect every returned
 finding, and retain the exact exclusion list for ingest. Findings and extension
 groups are bounded; their count and truncation fields say when the detailed
-arrays are samples rather than complete lists.
+arrays are samples rather than complete lists. A non-UTF-8 filesystem entry is
+an error with an escaped printable path and is never opened or imported.
 
 ```bash
 curl --fail-with-body -X POST \
