@@ -7,8 +7,8 @@ import (
 	"fmt"
 )
 
-// newUUIDv4 returns a canonical lowercase random UUID. Version identities are
-// intentionally independent of SQLite allocators, content hashes, and clocks.
+// newUUIDv4 returns a canonical lowercase random UUID. Persistent identities
+// are intentionally independent of SQLite allocators, content hashes, and clocks.
 func newUUIDv4() (string, error) {
 	var raw [16]byte
 	if _, err := rand.Read(raw[:]); err != nil {
