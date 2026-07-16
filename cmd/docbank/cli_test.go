@@ -264,8 +264,8 @@ func TestTagCLIOrganizesNodesByNameOrStableID(t *testing.T) {
 	assert.Zero(t, page.Total)
 	assert.Empty(t, page.Items)
 
-	// A UUID-shaped display name must not shadow the stable identity with that
-	// UUID. Once the identity is gone, the same selector falls back to the name.
+	// A UUID-shaped display name must never shadow the stable identity with that
+	// UUID, including after the stable identity has been deleted.
 	out, err = runCLI(t, "tag", "create", "identity target", "--json")
 	require.NoError(t, err, out)
 	var identityTarget api.Tag
@@ -280,7 +280,10 @@ func TestTagCLIOrganizesNodesByNameOrStableID(t *testing.T) {
 	require.NoError(t, err, out)
 	require.NoError(t, json.Unmarshal([]byte(out), &deleted))
 	assert.Equal(t, identityTarget.ID, deleted.Tag.ID)
-	out, err = runCLI(t, "tag", "show", identityTarget.ID, "--json")
+	_, err = runCLI(t, "tag", "show", identityTarget.ID, "--json")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+	out, err = runCLI(t, "tag", "show", nameShadow.ID, "--json")
 	require.NoError(t, err, out)
 	require.NoError(t, json.Unmarshal([]byte(out), &shown))
 	assert.Equal(t, nameShadow.ID, shown.ID)

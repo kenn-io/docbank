@@ -12,7 +12,6 @@ import (
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/client"
-	"go.kenn.io/docbank/internal/store"
 )
 
 const maxTagLimit = 1000
@@ -276,12 +275,10 @@ func changeTagAssignmentCLI(
 func resolveTag(cmd *cobra.Command, c *client.Client, selector string) (api.Tag, error) {
 	if canonicalTagID.MatchString(selector) {
 		tag, err := c.Tag(cmd.Context(), selector)
-		if err == nil {
-			return tag, nil
-		}
-		if !errors.Is(err, store.ErrNotFound) {
+		if err != nil {
 			return api.Tag{}, fmt.Errorf("resolving tag %q: %w", selector, err)
 		}
+		return tag, nil
 	}
 	tag, err := c.TagByName(cmd.Context(), selector)
 	if err != nil {

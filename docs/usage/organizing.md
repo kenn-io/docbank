@@ -75,6 +75,10 @@ same transaction as the change, so an ancestor move cannot make the command
 tag a node that has already left the requested path. Repeating an existing
 assignment or missing unassignment is an idempotent no-op.
 
+Canonical UUID-shaped selectors are always interpreted as stable IDs. A tag
+whose display name happens to look like a UUID remains addressable through its
+own generated ID, not through that ambiguous name.
+
 Deleting a tag removes its complete assignment set but never deletes a node or
 document content. Recreating the same name receives a new UUID. Trashed nodes
 retain their tag assignments and appear as `trashed` in `tag nodes`; path-based

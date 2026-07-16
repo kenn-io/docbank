@@ -230,6 +230,11 @@ case-sensitive, mutable, and cannot contain control characters. Renaming never
 changes the tag ID. Deleting a tag removes all assignments but does not delete
 nodes or content; recreating the same name allocates a different ID.
 
+A canonical UUID-shaped selector is always a stable ID, including after that
+ID is deleted. If a tag's display name itself looks like a UUID, address that
+tag through the different UUID returned when it was created. This prevents a
+mutable or reused display name from taking over a durable identifier.
+
 Assignment commands resolve the supplied live path and update its tag inside
 one daemon/store transaction, so moving an ancestor cannot redirect the
 operation between separate requests. Repeated assignment and unassignment are

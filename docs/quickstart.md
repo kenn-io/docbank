@@ -119,9 +119,11 @@ docbank tag assign taxes /taxes/checklist.pdf
 docbank tag nodes taxes
 ```
 
-The human CLI accepts the current tag name or UUID. `docbank tag list` shows
-assignment counts; `tag rename` changes only the display name, and `tag delete`
-removes assignments without deleting any document.
+The human CLI accepts the current tag name or UUID. Canonical UUID-shaped input
+is always treated as an ID, so stable authority cannot later be captured by a
+display name. `docbank tag list` shows assignment counts; `tag rename` changes
+only the display name, and `tag delete` removes assignments without deleting
+any document.
 
 ## Reorganize
 
