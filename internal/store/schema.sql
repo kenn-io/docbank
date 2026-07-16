@@ -124,6 +124,8 @@ CREATE TABLE IF NOT EXISTS node_tags (
     PRIMARY KEY (node_id, tag_id)
 );
 
+CREATE INDEX IF NOT EXISTS node_tags_tag ON node_tags(tag_id);
+
 CREATE TABLE IF NOT EXISTS extracted_text (
     blob_hash         TEXT NOT NULL,
     extractor         TEXT NOT NULL,

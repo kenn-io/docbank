@@ -152,7 +152,6 @@ func registerTagRoutes(api huma.API, d Deps, g *gate) {
 		})
 		return out, err
 	})
-	markDocumentedHeaderRequired(api, "/api/v1/tags/{tag_id}", http.MethodPatch, "If-Match")
 
 	huma.Register(api, huma.Operation{
 		OperationID: "deleteTag", Method: http.MethodDelete, Path: "/api/v1/tags/{tag_id}",
@@ -181,7 +180,6 @@ func registerTagRoutes(api huma.API, d Deps, g *gate) {
 		})
 		return out, err
 	})
-	markDocumentedHeaderRequired(api, "/api/v1/tags/{tag_id}", http.MethodDelete, "If-Match")
 
 	registerTagAssignmentRoute(api, d, g, http.MethodPut, true)
 	registerTagAssignmentRoute(api, d, g, http.MethodDelete, false)
@@ -223,7 +221,6 @@ func registerTagAssignmentRoute(api huma.API, d Deps, g *gate, method string, as
 		})
 		return out, err
 	})
-	markDocumentedHeaderRequired(api, path, method, "If-Match")
 }
 
 func registerTagPathAssignmentRoute(api huma.API, d Deps, g *gate, method string, assign bool) {
@@ -280,33 +277,6 @@ func tagResult(tag store.Tag) *tagOutput {
 
 func tagETag(tag store.Tag) string {
 	return fmt.Sprintf("%q", strconv.FormatInt(tag.Revision, 10))
-}
-
-// markDocumentedHeaderRequired keeps Huma's runtime parser permissive enough
-// for parseIfMatch to return Docbank's structured 428 response while making
-// the actual wire requirement unambiguous to generated clients.
-func markDocumentedHeaderRequired(api huma.API, path, method, header string) {
-	item := api.OpenAPI().Paths[path]
-	var operation *huma.Operation
-	switch method {
-	case http.MethodPut:
-		operation = item.Put
-	case http.MethodPatch:
-		operation = item.Patch
-	case http.MethodDelete:
-		operation = item.Delete
-	default:
-		panic("unsupported documented header method " + method)
-	}
-	for index, parameter := range operation.Parameters {
-		if parameter.In == "header" && parameter.Name == header {
-			documentedParameter := *parameter
-			documentedParameter.Required = true
-			operation.Parameters[index] = &documentedParameter
-			return
-		}
-	}
-	panic("route lacks documented header " + header)
 }
 
 func tagPage(tags []store.Tag, total, limit, offset int) *tagPageOutput {

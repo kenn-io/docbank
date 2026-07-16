@@ -134,7 +134,7 @@ func TestTagAssignmentRejectsStaleRevisionAndInvalidName(t *testing.T) {
 	resp, body := do(t, ts, http.MethodPatch, "/api/v1/tags/"+tag.ID,
 		map[string]string{"If-Match": `"-1"`}, map[string]any{"name": "renamed"})
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	assert.Contains(t, body, "non-negative resource revision")
+	assert.Contains(t, body, "positive resource revision")
 
 	path := fmt.Sprintf("/api/v1/nodes/%d/tags/%s", node.ID, tag.ID)
 	resp, body = do(t, ts, http.MethodPut, path,

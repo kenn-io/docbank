@@ -1148,11 +1148,6 @@ func validateMetadataRelations(ctx context.Context, tx metadataQuerier) error {
 			)`},
 		{"extracted text references missing blob authority", `
 			SELECT EXISTS(SELECT 1 FROM extracted_text e LEFT JOIN blobs b ON b.hash=e.blob_hash WHERE b.hash IS NULL)`},
-		{"tag revision predates its current assignments", `
-			SELECT EXISTS(
-			  SELECT t.id FROM tags t LEFT JOIN node_tags nt ON nt.tag_id=t.id
-			  GROUP BY t.id HAVING t.revision < COUNT(nt.node_id) + 1
-			)`},
 	}
 	for _, check := range checks {
 		var failed bool

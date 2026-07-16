@@ -222,6 +222,9 @@ func TestTagCLIOrganizesNodesByNameOrStableID(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &tag))
 	assert.Equal(t, "taxes", tag.Name)
 	assert.NotEmpty(t, tag.ID)
+	out, err = runCLI(t, "tag", "list", "--offset", "100")
+	require.NoError(t, err, out)
+	assert.Equal(t, "no tags at offset 100 (1 total)\n", out)
 
 	out, err = runCLI(t, "tag", "assign", "taxes", "/records/return.pdf")
 	require.NoError(t, err, out)
@@ -229,6 +232,9 @@ func TestTagCLIOrganizesNodesByNameOrStableID(t *testing.T) {
 	out, err = runCLI(t, "tag", "assign", tag.ID, "/records/return.pdf")
 	require.NoError(t, err, out)
 	assert.Contains(t, out, `already assigned tag "taxes"`)
+	out, err = runCLI(t, "tag", "nodes", "taxes", "--offset", "100")
+	require.NoError(t, err, out)
+	assert.Equal(t, "no nodes for tag \"taxes\" at offset 100 (1 total)\n", out)
 
 	out, err = runCLI(t, "tag", "list")
 	require.NoError(t, err, out)

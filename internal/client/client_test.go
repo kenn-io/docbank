@@ -116,6 +116,8 @@ func TestTagRoundTrip(t *testing.T) {
 	byID, err := c.Tag(ctx, tag.ID)
 	require.NoError(t, err)
 	assert.Equal(t, tag, byID)
+	_, err = c.AssignTag(ctx, tag.ID, node.ID, 0)
+	require.ErrorContains(t, err, "revision must be positive")
 
 	receipt, err := c.AssignTagPath(ctx, tag.ID, "/records")
 	require.NoError(t, err)

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"regexp"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -15,10 +14,6 @@ import (
 )
 
 const maxTagLimit = 1000
-
-var canonicalTagID = regexp.MustCompile(
-	`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`,
-)
 
 var (
 	tagListLimit    int
@@ -60,7 +55,12 @@ var tagListCmd = &cobra.Command{
 			return writeTagJSON(cmd.OutOrStdout(), page)
 		}
 		if len(page.Items) == 0 {
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "no tags")
+			if page.Total == 0 {
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "no tags")
+			} else {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+					"no tags at offset %d (%d total)\n", page.Offset, page.Total)
+			}
 			return nil
 		}
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
@@ -212,7 +212,13 @@ var tagNodesCmd = &cobra.Command{
 			return writeTagJSON(cmd.OutOrStdout(), page)
 		}
 		if len(page.Items) == 0 {
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "no nodes carry tag %q\n", tag.Name)
+			if page.Total == 0 {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "no nodes carry tag %q\n", tag.Name)
+			} else {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+					"no nodes for tag %q at offset %d (%d total)\n",
+					tag.Name, page.Offset, page.Total)
+			}
 			return nil
 		}
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
@@ -274,7 +280,7 @@ func changeTagAssignmentCLI(
 }
 
 func resolveTag(cmd *cobra.Command, c *client.Client, selector string) (api.Tag, error) {
-	if canonicalTagID.MatchString(selector) {
+	if client.IsCanonicalUUIDv4(selector) {
 		tag, err := c.Tag(cmd.Context(), selector)
 		if err != nil {
 			return api.Tag{}, fmt.Errorf("resolving tag %q: %w", selector, err)

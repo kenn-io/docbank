@@ -55,6 +55,11 @@ func TestMoveRequiresIfMatch(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	assert.Contains(t, body, `"code":"validation"`)
 
+	resp, body = do(t, ts, http.MethodPatch, fmt.Sprintf("/api/v1/nodes/%d", f.ID),
+		map[string]string{"If-Match": `"0"`}, map[string]any{"new_name": "b.txt"})
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Contains(t, body, "positive resource revision")
+
 	// Unbalanced or nested quotes are malformed, not a lenient parse of the
 	// digits inside.
 	for _, bad := range []string{`"3`, `3"`, `"""3"""`, `"`} {

@@ -742,7 +742,7 @@ func TestImportMetadataRejectsInvalidTagRevision(t *testing.T) {
 	assert.Zero(t, tags)
 }
 
-func TestImportMetadataRejectsTagRevisionBehindAssignments(t *testing.T) {
+func TestImportMetadataTreatsTagRevisionAsOpaque(t *testing.T) {
 	input := strings.Join([]string{
 		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}`,
 		`{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}`,
@@ -753,12 +753,11 @@ func TestImportMetadataRejectsTagRevisionBehindAssignments(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, target.Close()) })
 
-	err = target.ImportMetadata(t.Context(), strings.NewReader(input))
-	require.ErrorContains(t, err, "tag revision predates its current assignments")
-
-	var tags int64
-	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM tags`).Scan(&tags))
-	assert.Zero(t, tags)
+	require.NoError(t, target.ImportMetadata(t.Context(), strings.NewReader(input)))
+	tag, err := target.TagByID(t.Context(), metadataTagID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), tag.Revision)
+	assert.Equal(t, 1, tag.AssignmentCount)
 }
 
 func TestImportMetadataRejectsDuplicateStableRecordIDsTransactionally(t *testing.T) {

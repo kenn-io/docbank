@@ -79,9 +79,14 @@ func TestOpenAPIDeclaresDigestCheckedUpload(t *testing.T) {
 	assert.NotNil(t, revert.Responses["200"])
 }
 
-func TestOpenAPIDeclaresTagMutationPreconditions(t *testing.T) {
+func TestOpenAPIDeclaresMutationPreconditions(t *testing.T) {
 	doc := api.NewOfflineServer().API().OpenAPI()
 	for _, operation := range []*huma.Operation{
+		doc.Paths["/api/v1/nodes/{id}"].Patch,
+		doc.Paths["/api/v1/nodes/{id}/trash"].Post,
+		doc.Paths["/api/v1/nodes/{id}/restore"].Post,
+		doc.Paths["/api/v1/nodes/{id}/verify"].Post,
+		doc.Paths["/api/v1/nodes/{id}/revert"].Post,
 		doc.Paths["/api/v1/nodes/{id}/tags/{tag_id}"].Put,
 		doc.Paths["/api/v1/nodes/{id}/tags/{tag_id}"].Delete,
 		doc.Paths["/api/v1/tags/{tag_id}"].Patch,

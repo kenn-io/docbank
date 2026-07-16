@@ -259,6 +259,9 @@ func (s *Store) TrashEmpty(ctx context.Context, olderThan time.Duration, run boo
 		if !run {
 			return nil
 		}
+		// One trash-empty operation advances each affected tag once, even when
+		// several assignments disappear. A row-level node_tags trigger would
+		// instead expose physical cascade cardinality as revision semantics.
 		if _, err := tx.Exec(`
 			WITH RECURSIVE doomed(id) AS (
 			  SELECT id FROM nodes WHERE `+where+`

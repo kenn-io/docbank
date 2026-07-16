@@ -417,6 +417,13 @@ func validUUIDv4(value string) bool {
 	return true
 }
 
+// IsCanonicalUUIDv4 reports whether value is a lowercase RFC 4122 UUIDv4.
+// CLI selector dispatch uses the same rule as client request validation so a
+// durable identity can never be reinterpreted as a display name.
+func IsCanonicalUUIDv4(value string) bool {
+	return validUUIDv4(value)
+}
+
 func (c *Client) VerifyNodeContent(ctx context.Context, id, revision int64) (api.ContentVerification, error) {
 	var report api.ContentVerification
 	err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/nodes/%d/verify", id),
@@ -636,8 +643,8 @@ func (c *Client) changeTagAssignment(
 	if nodeID <= 0 {
 		return receipt, errors.New("tagged node ID must be positive")
 	}
-	if revision < 0 {
-		return receipt, errors.New("tagged node revision must not be negative")
+	if revision < 1 {
+		return receipt, errors.New("tagged node revision must be positive")
 	}
 	path := fmt.Sprintf("/api/v1/nodes/%d/tags/%s", nodeID, url.PathEscape(tagID))
 	receipt, etag, err := c.doTagAssignment(
@@ -654,6 +661,10 @@ func (c *Client) changeTagAssignment(
 			"tag assignment response has inconsistent node identity",
 		)
 	}
+	// The ID-addressed assignment contract advances the node exactly once for
+	// a real change and not at all for idempotent convergence. Treat divergence
+	// as incompatible response authority; a future policy change must update
+	// both protocol sides rather than silently weakening this check.
 	wantRevision := revision
 	if receipt.Changed {
 		wantRevision++
@@ -702,39 +713,11 @@ func (c *Client) doTagAssignment(
 	in any,
 ) (api.TagAssignmentReceipt, string, error) {
 	var receipt api.TagAssignmentReceipt
-	var body io.Reader
-	if in != nil {
-		encoded, err := marshalJSONRequest(in)
-		if err != nil {
-			return receipt, "", fmt.Errorf("encoding tag assignment request: %w", err)
-		}
-		body = bytes.NewReader(encoded)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, c.base+path, body)
+	responseHeaders, err := c.doWithHeaders(ctx, method, path, headers, in, &receipt)
 	if err != nil {
-		return receipt, "", fmt.Errorf("building tag assignment request: %w", err)
+		return receipt, "", err
 	}
-	if in != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	if c.key != "" {
-		req.Header.Set("X-Api-Key", c.key)
-	}
-	for name, value := range headers {
-		req.Header.Set(name, value)
-	}
-	resp, err := c.hc.Do(req)
-	if err != nil {
-		return receipt, "", fmt.Errorf("changing tag assignment: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return receipt, "", decodeError(resp)
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&receipt); err != nil {
-		return receipt, "", fmt.Errorf("decoding tag assignment response: %w", err)
-	}
-	return receipt, resp.Header.Get("ETag"), nil
+	return receipt, responseHeaders.Get("ETag"), nil
 }
 
 func validateTag(tag api.Tag) error {

@@ -14,8 +14,9 @@ import (
 
 // parseIfMatch parses the required If-Match revision. ETag-style quoting is
 // accepted ("3" or 3); anything else — unbalanced or nested quotes included —
-// is a 400, not a lenient parse. Empty → 428; garbage or negative → 400.
-// Negatives are rejected here because the store reserves -1 as its
+// is a 400, not a lenient parse. Empty → 428; garbage or non-positive → 400.
+// Non-positive values are rejected because node and tag revisions begin at
+// one, and the store reserves -1 as its
 // unconditional sentinel: an If-Match of "-1" reaching the store would
 // silently skip the precondition this header exists to enforce.
 func parseIfMatch(v string) (int64, error) {
@@ -28,9 +29,9 @@ func parseIfMatch(v string) (int64, error) {
 		raw = raw[1 : len(raw)-1]
 	}
 	rev, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || rev < 0 {
+	if err != nil || rev < 1 {
 		return 0, NewError(http.StatusBadRequest, "validation",
-			fmt.Sprintf("invalid If-Match %q: want a non-negative resource revision", v))
+			fmt.Sprintf("invalid If-Match %q: want a positive resource revision", v))
 	}
 	return rev, nil
 }
