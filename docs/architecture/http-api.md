@@ -397,7 +397,7 @@ hash are not part of the current API.
 
 `gc --run`, `trash empty`, and `verify` need the vault quiescent while
 they run — the same reachability-then-delete race described in
-[Concurrency & Locking](locking.md). Rather than the daemon's exclusive
+[Ownership & Concurrency](locking.md). Rather than the daemon's exclusive
 vault lock (held for the daemon's whole lifetime, not per-request), an
 in-process `sync.RWMutex`-shaped gate serializes them against regular
 mutations: ordinary mutating handlers (`PATCH`, trash, restore, create,

@@ -1,9 +1,9 @@
 ---
-title: Backup
+title: Backup & Recovery
 description: Docbank's JSONL-native Kit snapshot and restore architecture.
 ---
 
-# Backup
+# Backup and recovery
 
 `docbank backup init`, `backup create`, `backup list`, `backup verify`, and
 `backup restore` are implemented over the authenticated daemon API; see the

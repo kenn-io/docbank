@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCAE2BoundaryGoldenHashes(t *testing.T) {
+func TestAuditEncodingBoundaryGoldenHashes(t *testing.T) {
 	vectors := map[string]Value{
 		"absent":             Absent(),
 		"empty_bytes":        Bytes(nil),
@@ -46,7 +46,7 @@ func TestCAE2BoundaryGoldenHashes(t *testing.T) {
 	}
 }
 
-func TestCAE2GoldenRecord(t *testing.T) {
+func TestAuditEncodingGoldenRecord(t *testing.T) {
 	timestamp := mustTimestamp(t, "2026-07-16T12:34:56.123456789Z")
 	uuid := mustUUID(t, "00112233-4455-4677-8899-aabbccddeeff")
 	digest := sha256.Sum256([]byte("docbank"))
@@ -73,7 +73,7 @@ func TestCAE2GoldenRecord(t *testing.T) {
 	actual := hex.EncodeToString(encoded)
 	const expected = "000000000000000d646f6362616e6b2d61756469740000000000000001000000000000000d676f6c64656e5f7265636f7264000000000000000c0000000000000007615f66616c7365010000000000000006625f7472756502000000000000000a635f756e7369676e65640301020304050607080000000000000008645f7369676e656404fffffffffffffffe0000000000000007655f627974657305000000000000000200ff0000000000000006665f7465787406000000000000000368c3a9000000000000000b675f74696d657374616d7007000000000000001e323032362d30372d31365431323a33343a35362e3132333435363738395a0000000000000006685f757569640800112233445546778899aabbccddeeff0000000000000008695f64696765737409d1e815eb101fa389ebba332f74729f1aca88a97e8f814d007c63541fd241e5b800000000000000066a5f6c6973740a0000000000000003000300000000000000090600000000000000017800000000000000086b5f6e65737465640b0000000000000040000000000000000d646f6362616e6b2d6175646974000000000000000100000000000000056368696c640000000000000001000000000000000576616c75650200000000000000087a5f616273656e7400"
 	if actual != expected {
-		t.Fatalf("CAE2 golden bytes = %s", actual)
+		t.Fatalf("audit encoding golden bytes = %s", actual)
 	}
 	digestValue, err := Hash(record)
 	require.NoError(t, err)
@@ -81,7 +81,7 @@ func TestCAE2GoldenRecord(t *testing.T) {
 		hex.EncodeToString(digestValue[:]))
 }
 
-func TestCAE2SortsFieldsAndDistinguishesAbsentFromEmpty(t *testing.T) {
+func TestAuditEncodingSortsFieldsAndDistinguishesAbsentFromEmpty(t *testing.T) {
 	emptyText := mustText(t, "")
 	left, err := Encode(Record{Kind: "sample", Fields: []Field{
 		{Name: "z", Value: Bytes(nil)},
@@ -104,7 +104,7 @@ func TestCAE2SortsFieldsAndDistinguishesAbsentFromEmpty(t *testing.T) {
 	assert.NotEqual(t, absent, empty)
 }
 
-func TestCAE2ValuesOwnInputBytes(t *testing.T) {
+func TestAuditEncodingValuesOwnInputBytes(t *testing.T) {
 	input := []byte("before")
 	value := Bytes(input)
 	input[0] = 'x'
@@ -122,7 +122,7 @@ func TestCAE2ValuesOwnInputBytes(t *testing.T) {
 	assert.NotContains(t, string(encoded), "after")
 }
 
-func TestCAE2RejectsInvalidScalars(t *testing.T) {
+func TestAuditEncodingRejectsInvalidScalars(t *testing.T) {
 	_, err := Text(string([]byte{0xff}))
 	require.ErrorContains(t, err, "UTF-8")
 	for _, value := range []string{
@@ -148,7 +148,7 @@ func TestCAE2RejectsInvalidScalars(t *testing.T) {
 	}
 }
 
-func TestCAE2RejectsInvalidRecordShape(t *testing.T) {
+func TestAuditEncodingRejectsInvalidRecordShape(t *testing.T) {
 	for name, record := range map[string]Record{
 		"empty kind": {Fields: []Field{{Name: "value", Value: Absent()}}},
 		"kind case":  {Kind: "Bad", Fields: []Field{{Name: "value", Value: Absent()}}},
@@ -164,7 +164,7 @@ func TestCAE2RejectsInvalidRecordShape(t *testing.T) {
 	}
 }
 
-func TestCAE2BoundsRecursiveValues(t *testing.T) {
+func TestAuditEncodingBoundsRecursiveValues(t *testing.T) {
 	value := Absent()
 	for range maxValueDepth + 2 {
 		value = List(value)

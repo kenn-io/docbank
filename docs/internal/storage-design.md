@@ -70,7 +70,7 @@ share a blob without sharing document identity.
     tuple with format-versioned stable string kind codes, assigns ordinals only
     after sorting, and separately sorts every `(scope, target, baseline digest)`
     binding before hashing. All audit digests use SHA-256 over the normative
-    CAE2 typed, length-framed, domain-separated encoding; golden vectors bind
+    canonical typed, length-framed, domain-separated audit encoding; golden vectors bind
     every record kind and optional-value edge case. Net topology effects always
     use `node_path`, with labels derived from committed pre/post state rather
     than ambiguous action precedence.
@@ -103,7 +103,7 @@ share a blob without sharing document identity.
     allocation lineage even when it has no scoped effect. Active witness
     generations retire when no audited path depends on them and are recreated
     from current state on later reuse; historical generations remain immutable.
-    Every witness state digest is SHA-256 over the registered CAE2 witnessed
+    Every witness state digest is SHA-256 over the registered canonical witnessed
     topology record. Sorted witness-change counts/digests are committed into
     both canonical mutations and allocation lineage.
     Shared tag or ingest records are copied identically into every baseline batch

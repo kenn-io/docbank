@@ -13,10 +13,10 @@ import (
 )
 
 const (
-	cae2Domain    = "docbank-audit"
-	cae2Version   = 1
-	maxValueDepth = 64
-	timestampForm = "2006-01-02T15:04:05.000000000Z"
+	encodingDomain  = "docbank-audit"
+	encodingVersion = 1
+	maxValueDepth   = 64
+	timestampForm   = "2006-01-02T15:04:05.000000000Z"
 )
 
 type valueKind byte
@@ -36,7 +36,7 @@ const (
 	kindRecord
 )
 
-// Value is one immutable CAE2 typed value. Its zero value is the canonical
+// Value is one immutable canonical audit-encoding value. Its zero value is the canonical
 // absent value.
 type Value struct {
 	kind     valueKind
@@ -47,14 +47,14 @@ type Value struct {
 	record   *Record
 }
 
-// Field is one named field in a CAE2 record. Encoding sorts fields by their
+// Field is one named field in a canonical audit record. Encoding sorts fields by their
 // lowercase ASCII names and rejects duplicates.
 type Field struct {
 	Name  string
 	Value Value
 }
 
-// Record is one CAE2 record kind and its complete declared field set.
+// Record is one canonical audit record kind and its complete declared field set.
 type Record struct {
 	Kind   string
 	Fields []Field
@@ -85,7 +85,7 @@ func Bytes(value []byte) Value {
 // Text returns an exact UTF-8 text value without Unicode normalization.
 func Text(value string) (Value, error) {
 	if !utf8.ValidString(value) {
-		return Value{}, errors.New("CAE2 text is not valid UTF-8")
+		return Value{}, errors.New("audit-encoding text is not valid UTF-8")
 	}
 	return Value{kind: kindText, data: []byte(value)}, nil
 }
@@ -95,7 +95,7 @@ func Text(value string) (Value, error) {
 func Timestamp(value string) (Value, error) {
 	parsed, err := time.Parse(timestampForm, value)
 	if err != nil || parsed.Format(timestampForm) != value {
-		return Value{}, fmt.Errorf("CAE2 timestamp %q is not canonical UTC nanosecond form", value)
+		return Value{}, fmt.Errorf("audit-encoding timestamp %q is not canonical UTC nanosecond form", value)
 	}
 	return Value{kind: kindTimestamp, data: []byte(value)}, nil
 }
@@ -117,11 +117,11 @@ func Digest(value [sha256.Size]byte) Value {
 // DigestHex returns a digest value from canonical lowercase hexadecimal.
 func DigestHex(value string) (Value, error) {
 	if len(value) != sha256.Size*2 || !isLowerHex(value) {
-		return Value{}, errors.New("CAE2 digest must be canonical lowercase SHA-256")
+		return Value{}, errors.New("audit-encoding digest must be canonical lowercase SHA-256")
 	}
 	decoded, err := hex.DecodeString(value)
 	if err != nil {
-		return Value{}, fmt.Errorf("decoding CAE2 digest: %w", err)
+		return Value{}, fmt.Errorf("decoding audit-encoding digest: %w", err)
 	}
 	return Value{kind: kindDigest, data: decoded}, nil
 }
@@ -136,13 +136,13 @@ func List(values ...Value) Value {
 	return Value{kind: kindList, items: cloned}
 }
 
-// Nested returns a length-framed nested CAE2 record value.
+// Nested returns a length-framed nested canonical audit record value.
 func Nested(record Record) Value {
 	cloned := cloneRecord(record)
 	return Value{kind: kindRecord, record: &cloned}
 }
 
-// Encode returns the canonical CAE2 binary representation of a record.
+// Encode returns the canonical audit-encoding bytes for a record.
 func Encode(record Record) ([]byte, error) {
 	encoded := make([]byte, 0, 256)
 	if err := appendRecord(&encoded, record, 0); err != nil {
@@ -151,7 +151,7 @@ func Encode(record Record) ([]byte, error) {
 	return encoded, nil
 }
 
-// Hash returns SHA-256 over the canonical CAE2 record bytes.
+// Hash returns SHA-256 over the canonical audit-encoding bytes.
 func Hash(record Record) ([sha256.Size]byte, error) {
 	encoded, err := Encode(record)
 	if err != nil {
@@ -162,10 +162,10 @@ func Hash(record Record) ([sha256.Size]byte, error) {
 
 func appendRecord(dst *[]byte, record Record, depth int) error {
 	if depth > maxValueDepth {
-		return fmt.Errorf("CAE2 value nesting exceeds %d levels", maxValueDepth)
+		return fmt.Errorf("audit-encoding value nesting exceeds %d levels", maxValueDepth)
 	}
 	if !validToken(record.Kind) {
-		return fmt.Errorf("invalid CAE2 record kind %q", record.Kind)
+		return fmt.Errorf("invalid audit-encoding record kind %q", record.Kind)
 	}
 	fields := slices.Clone(record.Fields)
 	slices.SortFunc(fields, func(left, right Field) int {
@@ -179,20 +179,20 @@ func appendRecord(dst *[]byte, record Record, depth int) error {
 	})
 	for index, field := range fields {
 		if !validToken(field.Name) {
-			return fmt.Errorf("invalid CAE2 field name %q in %s", field.Name, record.Kind)
+			return fmt.Errorf("invalid audit-encoding field name %q in %s", field.Name, record.Kind)
 		}
 		if index > 0 && fields[index-1].Name == field.Name {
-			return fmt.Errorf("duplicate CAE2 field %q in %s", field.Name, record.Kind)
+			return fmt.Errorf("duplicate audit-encoding field %q in %s", field.Name, record.Kind)
 		}
 	}
-	appendFrame(dst, []byte(cae2Domain))
-	appendUint64(dst, cae2Version)
+	appendFrame(dst, []byte(encodingDomain))
+	appendUint64(dst, encodingVersion)
 	appendFrame(dst, []byte(record.Kind))
 	appendUint64(dst, uint64(len(fields)))
 	for _, field := range fields {
 		appendFrame(dst, []byte(field.Name))
 		if err := appendValue(dst, field.Value, depth); err != nil {
-			return fmt.Errorf("encoding CAE2 %s.%s: %w", record.Kind, field.Name, err)
+			return fmt.Errorf("encoding audit record %s.%s: %w", record.Kind, field.Name, err)
 		}
 	}
 	return nil
@@ -200,7 +200,7 @@ func appendRecord(dst *[]byte, record Record, depth int) error {
 
 func appendValue(dst *[]byte, value Value, depth int) error {
 	if depth > maxValueDepth {
-		return fmt.Errorf("CAE2 value nesting exceeds %d levels", maxValueDepth)
+		return fmt.Errorf("audit-encoding value nesting exceeds %d levels", maxValueDepth)
 	}
 	*dst = append(*dst, byte(value.kind))
 	switch value.kind {
@@ -216,12 +216,12 @@ func appendValue(dst *[]byte, value Value, depth int) error {
 		appendFrame(dst, value.data)
 	case kindUUID:
 		if len(value.data) != 16 {
-			return errors.New("invalid CAE2 UUID width")
+			return errors.New("invalid audit-encoding UUID width")
 		}
 		*dst = append(*dst, value.data...)
 	case kindDigest:
 		if len(value.data) != sha256.Size {
-			return errors.New("invalid CAE2 digest width")
+			return errors.New("invalid audit-encoding digest width")
 		}
 		*dst = append(*dst, value.data...)
 	case kindList:
@@ -233,7 +233,7 @@ func appendValue(dst *[]byte, value Value, depth int) error {
 		}
 	case kindRecord:
 		if value.record == nil {
-			return errors.New("nil CAE2 nested record")
+			return errors.New("nil nested audit record")
 		}
 		nested := make([]byte, 0, 128)
 		if err := appendRecord(&nested, *value.record, depth+1); err != nil {
@@ -241,7 +241,7 @@ func appendValue(dst *[]byte, value Value, depth int) error {
 		}
 		appendFrame(dst, nested)
 	default:
-		return fmt.Errorf("unknown CAE2 value tag 0x%02x", byte(value.kind))
+		return fmt.Errorf("unknown audit-encoding value tag 0x%02x", byte(value.kind))
 	}
 	return nil
 }
@@ -260,7 +260,7 @@ func appendUint64(dst *[]byte, value uint64) {
 func appendInt64(dst *[]byte, value int64) error {
 	var encoded [8]byte
 	if _, err := binary.Encode(encoded[:], binary.BigEndian, value); err != nil {
-		return fmt.Errorf("encoding CAE2 signed integer: %w", err)
+		return fmt.Errorf("encoding audit signed integer: %w", err)
 	}
 	*dst = append(*dst, encoded[:]...)
 	return nil
@@ -282,7 +282,7 @@ func validToken(value string) bool {
 func parseUUIDv4(value string) ([16]byte, error) {
 	var parsed [16]byte
 	if len(value) != 36 || value[8] != '-' || value[13] != '-' || value[18] != '-' || value[23] != '-' {
-		return parsed, errors.New("CAE2 UUID must be a canonical lowercase UUIDv4")
+		return parsed, errors.New("audit-encoding UUID must be a canonical lowercase UUIDv4")
 	}
 	compact := make([]byte, 0, 32)
 	for index := range len(value) {
@@ -291,13 +291,13 @@ func parseUUIDv4(value string) ([16]byte, error) {
 		}
 	}
 	if !isLowerHex(string(compact)) {
-		return parsed, errors.New("CAE2 UUID must be a canonical lowercase UUIDv4")
+		return parsed, errors.New("audit-encoding UUID must be a canonical lowercase UUIDv4")
 	}
 	if _, err := hex.Decode(parsed[:], compact); err != nil {
-		return parsed, fmt.Errorf("decoding CAE2 UUID: %w", err)
+		return parsed, fmt.Errorf("decoding audit-encoding UUID: %w", err)
 	}
 	if parsed[6]>>4 != 4 || parsed[8]>>6 != 2 {
-		return [16]byte{}, errors.New("CAE2 UUID must use version 4 and the RFC 4122 variant")
+		return [16]byte{}, errors.New("audit-encoding UUID must use version 4 and the RFC 4122 variant")
 	}
 	return parsed, nil
 }

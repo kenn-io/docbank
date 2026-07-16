@@ -1,139 +1,216 @@
 ---
-title: Architecture Overview
-description: The virtual tree over content-addressed storage, and how the components fit together.
+title: How Docbank Works
+description: A guided model of vaults, document identity, immutable content, storage authority, deletion, and recovery.
 ---
 
-# Architecture overview
+# How Docbank works
 
-docbank separates **what a document is** from **where it lives and what
-it's called**. Bytes go into an immutable content-addressed store;
-identity, naming, hierarchy, provenance, and search metadata live in SQLite.
-Each vault has exactly one owner. A standalone vault is owned by the
-[daemon](daemon.md), and the CLI and external agents use its
-[HTTP API](http-api.md). A Go application may instead own a separately rooted
-vault through the [embedded API](../embedding.md).
+Docbank presents a familiar tree of directories and files, but it is not a
+folder of ordinary files. It is a document system built from two cooperating
+parts:
+
+- **SQLite metadata** describes the tree people and agents work with: stable
+  document identity, paths, versions, tags, provenance, trash state, and
+  search indexes.
+- **Immutable content storage** holds the bytes, addressed by their SHA-256
+  digest and stored either as individual files or inside sealed pack files.
+
+Separating those parts makes large reorganizations cheap, deduplicates
+identical content, retains version history without copying mutable files in
+place, and lets backup rebuild the same logical vault independently of its
+physical layout.
+
+Docbank does not assume one global archive per machine. A person or application
+may operate many independent vaults, each with its own identity, metadata,
+content, policy, and backup history.
+
+## The model in one minute
+
+Five ideas explain most of the system:
+
+1. A **vault** is one independent document collection. Its database and content
+   store are one logical unit.
+2. A **node** is a directory or file with a stable numeric ID. Its path can
+   change without changing which document it is.
+3. A file's **content version** is an immutable historical record with its own
+   random UUID. Editing or reverting creates a new version; it never rewrites
+   an old one.
+4. A **blob** is the byte content of one or more versions. Its SHA-256 digest is
+   its identity, so byte-identical files share storage automatically.
+5. The **catalog** decides which bytes are authoritative and where Docbank may
+   read them. A loose file or pack entry found on disk has no authority by
+   itself.
 
 ```mermaid
-flowchart TD
-    CLI["CLI (HTTP client)"]
-    AGENTS["Agents (HTTP clients)"]
-    EMBEDDED["Embedded Go application"]
-    subgraph daemon ["docbank daemon run"]
-        API["HTTP API: /api/v1"]
-        INGEST["ingest pipeline"]
-    end
-    subgraph vault ["~/.docbank"]
-    STORE["store: SQLite virtual tree<br/>nodes · versions · provenance · FTS"]
-        BLOBS["blob store: blobs/&lt;aa&gt;/&lt;sha256&gt;<br/>immutable, deduplicated"]
-    end
-    CLI --> API
-    AGENTS --> API
-    API --> STORE
-    API --> INGEST
-    INGEST --> STORE
-    INGEST --> BLOBS
-    EMBEDDED --> STORE
-    EMBEDDED --> BLOBS
-    STORE -. "references by hash" .-> BLOBS
+flowchart LR
+    CLIENTS["People and agents<br/>CLI · HTTP · embedded Go"]
+    TREE["Virtual tree<br/>nodes · paths · tags · trash"]
+    VERSIONS["Immutable versions<br/>version ID · size · media type"]
+    CATALOG["Content catalog<br/>SHA-256 · authorized location"]
+    CONTENT["Immutable bytes<br/>loose blobs or sealed packs"]
+
+    CLIENTS --> TREE
+    TREE -->|"current and prior versions"| VERSIONS
+    VERSIONS -->|"content digest"| CATALOG
+    CATALOG -->|"loose or packed"| CONTENT
 ```
 
-## Reading map
+The arrows matter. A path resolves to a node; a file node selects a current
+version; a version names a content digest; and the catalog selects an
+authorized physical representation. Skipping a layer would make mutable names
+or stray files into accidental authority.
 
-| Question | Page |
-|----------|------|
-| What is stored, and which invariants are enforced? | [Storage](storage.md) |
-| How can loose and packed bytes coexist? | [Packed Storage](packed-storage.md) |
-| Why can only one process open the vault? | [Daemon](daemon.md) and [Concurrency & Locking](locking.md) |
-| What contract do the CLI and agents share? | [HTTP API](http-api.md) |
-| Which failures and adversaries are in scope? | [Integrity & Threat Model](integrity.md) |
+## Identity, addressing, and authority
 
-The [Roadmap](../roadmap.md) gives high-level product direction. These
-architecture pages describe implemented boundaries and durable design intent;
-kata remains the authority for implementation work and status.
+These values answer different questions and are intentionally not
+interchangeable:
 
-## The two-layer split
+| Value | What it answers | Stability and authority |
+| --- | --- | --- |
+| Vault ID | Which independent collection is this? | Stable across backup and restore |
+| Node ID | Which directory or file is this? | Stable across moves, renames, trash, and restore |
+| Path | Where is the node shown now? | Mutable addressing convenience, derived from the tree |
+| Node revision | Which observed node state am I changing? | Advances on mutation; used by `If-Match` to reject stale writes |
+| Version ID | Which historical file state is this? | Random, immutable, and independent of the node's current path |
+| Blob digest | Which exact bytes are these? | SHA-256 of the content; identical bytes have one identity |
+| Catalog membership and mapping | May Docbank read this content, and from where? | A `blobs` row grants authority; an optional pack mapping selects packed rather than loose storage |
 
-**Blobs are immutable.** A blob's name is the SHA-256 of its content;
-two ingested copies of the same file are one blob. Blobs are written
-durably (temp file → fsync → rename → directory fsync) *before* any
-database row references them, so a committed reference always points at real
-bytes. Blobs are never modified.
+This is why an automation should remember node and version IDs, not paths
+alone. It is also why finding a correctly named file under `blobs/` does not
+make that file part of the vault: only a committed catalog reference does.
 
-**The tree is mutable, transactionally.** Nodes (directories and files)
-form the hierarchy users see. Moves, renames, trash, and restore are single
-SQLite transactions over metadata. The
-store enforces the tree invariants — single root, live-sibling name
-uniqueness, no cycles, validated NFC-normalized names — mostly *in the
-schema itself* (partial unique indexes, CHECK constraints), so they hold
-against every future writer, not just today's code paths.
+## How a write becomes authoritative
 
-This split is what makes docbank cheap to reorganize (moving a folder of
-scans is a metadata transaction) and safe to deduplicate (identity is
-content, so re-imports converge instead of duplicating).
+An ordinary import or content replacement follows one ordering rule: prove and
+publish bytes before committing metadata that names them.
 
-## Contrast with msgvault
+1. Docbank streams the source into private staging while counting and hashing
+   it. A remote writer may supply an expected size and digest; a mismatch ends
+   the operation without granting node authority.
+2. The content store syncs the completed bytes, closes them, publishes them
+   under their digest, and syncs the containing directory.
+3. One SQLite transaction creates or updates the node, records the immutable
+   content version, and grants the blob catalog authority.
+4. The API returns the stable IDs, digest, size, revision, and ETag that describe
+   the committed result.
 
-msgvault archives an immutable historical record: a message, once synced,
-never changes. docbank manages a user-controlled document tree whose names and
-organization keep evolving. The designs share content-addressed bytes, SQLite
-metadata, durability rules, and physical storage primitives from
-`go.kenn.io/kit`, but their organization and deletion policies differ:
+If the process fails before step 3, durable bytes may exist without a database
+reference. They are harmless orphans: normal reads cannot see them, and garbage
+collection can reclaim them later. The reverse state—a committed version whose
+bytes were never durably published—is prevented by the ordering.
 
-| | msgvault | docbank |
-|---|---|---|
-| Stored bytes | Immutable content-addressed objects | Immutable content-addressed objects |
-| Organizing structure | Fixed (accounts, folders, threads from source) | Free-form virtual tree, user- and agent-reorganized |
-| Deletion | Staged deletion *from the source* (Gmail) | Trash → empty → GC pipeline inside the vault |
+Tree mutations such as move, rename, trash, restore, tag assignment, reversion,
+and version pruning happen in SQLite transactions. Path-based mutation
+endpoints resolve the path and perform the change in the same transaction, so
+a concurrent move cannot silently redirect the operation.
 
-Every imported file starts with a stable content-version UUID. Version listing,
-metadata lookup, and byte retrieval are implemented independently of the node's
-mutable path. Content replacement and reversion add immutable versions and move
-the node's current pointer under a revision precondition rather than rewriting
-a blob. See
-[Editing & Versions](editing-and-versions.md).
+## How a read is proved
 
-## Component responsibilities
+A read walks the authority chain in the opposite direction:
 
-- **`internal/store`** — SQLite schema and every tree operation. Typed
-  sentinel errors (`ErrNotFound`, `ErrExists`, `ErrCycle`, …) that the
-  API maps to HTTP status codes and machine-readable error codes, and
-  the client maps back so CLI error messages stay typed end to end.
-- **`internal/blob`** — content-addressed file store with the fsync
-  discipline; knows nothing about the tree.
-- **`internal/ingest`** — the single import pipeline all entry points
-  share: hash → durable blob → one metadata transaction per file. The
-  daemon is its caller (`POST /ingest`, backing `docbank add`, and
-  digest-checked `POST /uploads` for remote writers).
-- **`internal/home`** — vault directory layout and the vault lock the
-  daemon holds exclusively ([Concurrency & Locking](locking.md)).
-- **`internal/config`** — optional `config.toml` loading and the
-  bind/key validation ([Configuration](../configuration.md)).
-- **`internal/jobs`** — daemon-owned background-task supervision, cancellation,
-  bounded shutdown, panic/error capture, and deterministic status snapshots.
-- **`internal/api`** — the huma v2 HTTP surface: routes, middleware,
-  auth, the maintenance gate ([HTTP API](http-api.md)).
-- **`internal/client`** — the typed HTTP client plus daemon
-  discovery/auto-start ([Daemon](daemon.md)); shares request/response
-  types with `internal/api`.
-- **`cmd/docbank`** — thin cobra commands; no business logic. Data
-  commands are `internal/client` calls; `daemon run` is the one command
-  that opens the store and blob directory, because it *is* the daemon.
+1. Resolve a path or node ID to a file node.
+2. Select its current version, or address a historical version directly.
+3. Resolve that version's digest through the catalog.
+4. Stream the authorized loose blob or pack entry while verifying its recorded
+   framing, size, and SHA-256 digest.
 
-## Boundary summary
+Receiving some bytes is not yet proof of a complete read. The typed clients
+accept content only after reaching terminal EOF and validating the terminal
+`Content-Digest` trailer. Embedded streaming follows the same rule: an early
+close is incomplete verification, not success.
 
-- One owner holds a vault: either its daemon or one embedded Go application.
-- SQLite owns logical identity, hierarchy, reachability, and transactional
-  invariants.
-- Kit owns application-neutral loose/packed storage mechanics; docbank owns
-  catalog authority and garbage-collection policy.
-- The HTTP API is the sole data contract for clients, including the CLI.
-- Background work is daemon-owned, observable through the API, and stopped
-  before storage resources close.
-- Stable node IDs identify objects; paths are mutable addressing conveniences.
-- Trash, permanent metadata deletion, and physical byte reclamation are
-  separate decisions.
+## Editing, deletion, and reclamation are separate
 
-Any future client or feature remains subject to these boundaries: it uses the
-daemon API, immutable blob bytes, and the implemented backup/restore surface.
-The [Audited History](audited-history.md) page records the separate planned
-retention contract where that future design matters.
+Docbank keeps logical decisions distinct from physical storage maintenance:
+
+| Operation | What changes | What does not happen yet |
+| --- | --- | --- |
+| Edit or replace | Adds an immutable version and advances the file's current pointer | Prior versions are not rewritten |
+| Revert | Adds a new version that records the selected historical source | History is not rewound or erased |
+| Version prune | Removes explicitly selected prior-version authority after a preview and revision check | The current version is never selected; shared bytes may remain live |
+| Trash | Detaches a subtree from the live tree while retaining its identity, bytes, and restore coordinates | No content is physically reclaimed |
+| Trash empty | Permanently removes selected trashed metadata | Unreferenced loose files and dead pack entries may still occupy disk |
+| GC | Removes unreferenced catalog authority and loose bytes | Dead entries inside an immutable pack do not shrink that pack |
+| Repack | Copies live pack entries into new packs and retires sparse old packs | Logical document history is not changed |
+
+This staging provides a regret window without pretending storage is free.
+Users and agents can retain every edit by default, deliberately prune unwanted
+history, empty trash on their own schedule, and reclaim packed space only when
+repacking is worthwhile. [Editing & Versions](editing-and-versions.md) and
+[Trash, GC, Repack & Verify](../usage/trash-and-gc.md) give the command-level
+contracts.
+
+## Loose and packed bytes are one content store
+
+New content is published as a loose, digest-named file. Packing later combines
+eligible small blobs into sealed immutable pack files, reducing filesystem
+enumeration and backup overhead. The catalog changes representation without
+changing the blob digest, version identity, or document path.
+
+Readers therefore do not care whether content is loose or packed. Backup also
+captures logical content, not the source pack layout, and restore may publish a
+different valid representation under fresh catalog authority. See
+[Loose & Packed Content](packed-storage.md) for limits, maintenance, and the
+boundary between Docbank policy and Kit mechanics.
+
+## One owner, two integration modes
+
+Exactly one process owns an open vault at a time:
+
+- In **daemon mode**, `docbank daemon run` owns SQLite and content storage. The
+  CLI is a thin authenticated HTTP client, as are other local tools and agents.
+  Discovery and auto-start do not create a second storage owner.
+- In **embedded mode**, one Go application owns a separately rooted vault
+  through the Go package. It uses the same metadata, content authority, verified
+  reads, locking, and packing rules without running a sidecar daemon.
+
+A vault is not shared between the two modes concurrently. Hierarchical locks
+also prevent a daemon or restore from operating inside an already owned vault
+tree. [Ownership & Concurrency](locking.md), [Daemon & Process Model](daemon.md),
+and [Embed in Go](../embedding.md) describe those boundaries.
+
+## Backup reconstructs meaning, not a live database copy
+
+Snapshot repositories are append-only and incremental. Each snapshot contains
+a complete deterministic JSONL description of the logical vault plus every
+catalog-authorized content blob. Unchanged objects are reused by digest across
+snapshots.
+
+Restore verifies repository content, imports JSONL into a fresh current-schema
+database, reconstructs search and physical catalog state, checks SQLite and
+manifest statistics, and only then publishes the result. Source loose-versus-
+packed placement is not logical metadata. This makes backup a recovery contract
+rather than a fragile copy of a running SQLite file. See
+[Backup & Recovery](backup.md).
+
+## Integrity boundary
+
+Docbank is designed to detect truncation, corruption, stale writes, malformed
+metadata, and incomplete recovery within its application and storage
+boundaries. SHA-256 identifies bytes; revisions and ETags bind mutations to
+observed state; catalog authority excludes stray storage; full verification
+reads and hashes content; and restore validates the logical relations before
+publication.
+
+These mechanisms do not make a host administrator, compromised process, or
+someone able to rewrite both data and expected evidence harmless. The
+[Integrity & Trust](integrity.md) page states what is proved, when it is proved,
+and which threats require independent evidence.
+
+## Where to go next
+
+| If you want to understand… | Read… |
+| --- | --- |
+| The on-disk database, blob tree, and enforced invariants | [Storage](storage.md) |
+| Loose publication, packs, GC, and repacking | [Loose & Packed Content](packed-storage.md) |
+| Stable versions, replacement, reversion, and pruning | [Editing & Versions](editing-and-versions.md) |
+| Process ownership and mutation coordination | [Ownership & Concurrency](locking.md) and [Daemon & Process Model](daemon.md) |
+| Incremental snapshots and safe publication on restore | [Backup & Recovery](backup.md) |
+| The contract shared by the CLI and agents | [HTTP API Contract](http-api.md) |
+| What integrity checks do and do not establish | [Integrity & Trust](integrity.md) |
+| The planned permanent-retention model | [Audited History](audited-history.md) |
+
+The [Roadmap](../roadmap.md) gives high-level product direction. These pages
+explain implemented behavior and durable design intent; planned behavior is
+marked explicitly. Kata, rather than the documentation, is the authority for
+implementation work and status.

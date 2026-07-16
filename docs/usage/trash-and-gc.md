@@ -87,7 +87,7 @@ repack rather than claiming they were reclaimed.
 
 `gc --run` runs behind the daemon's maintenance gate, so a concurrent
 import can never dedup against a blob that's being deleted (see
-[Concurrency & Locking](../architecture/locking.md)). Files are removed
+[Ownership & Concurrency](../architecture/locking.md)). Files are removed
 before their rows: a crash in between leaves rows-without-files, which
 the next `gc --run` reconciles and `verify` flags in the meantime.
 Orphan blobs from interrupted ingests are reclaimed the same way.
