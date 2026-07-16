@@ -1,9 +1,9 @@
 ---
-title: Concurrency & Locking
+title: Ownership & Concurrency
 description: How the daemon coordinates concurrent access — SQLite for data, a portable exclusive vault lock, and an in-daemon gate for maintenance.
 ---
 
-# Concurrency & Locking
+# Ownership and concurrency
 
 The daemon is the single process that opens the vault: it holds the
 vault lock **exclusively** for its entire lifetime, and every other

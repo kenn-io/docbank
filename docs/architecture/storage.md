@@ -5,9 +5,11 @@ description: The SQLite schema, blob store layout, durability discipline, and en
 
 # Storage
 
-Everything lives under `~/.docbank/`: one SQLite database and one blob
-directory. The pair is the archive — copy both and you've moved the
-vault; `docbank verify` proves the copy is intact.
+A standalone vault normally lives under `~/.docbank/`: one SQLite database and
+one blob directory. The pair is the archive, but they must come from one
+coherent point in time. Do not copy a running vault as a backup; use
+`docbank backup create`, or stop the daemon before taking a manual filesystem
+snapshot. `docbank verify` proves a completed copy is internally consistent.
 
 ## Blob store
 
@@ -35,7 +37,7 @@ invisible, reclaimed by `gc`.
 
 Stale `tmp/` files from interrupted writes are cleaned at startup — but
 only when no other docbank process holds the vault (see
-[Concurrency & Locking](locking.md)).
+[Ownership & Concurrency](locking.md)).
 
 ## Database schema
 

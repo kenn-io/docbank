@@ -1,9 +1,9 @@
 ---
-title: Daemon
+title: Daemon & Process Model
 description: docbank daemon run — the single process that owns the vault, and how the CLI discovers, auto-starts, and stops it.
 ---
 
-# Daemon
+# Daemon and process model
 
 `docbank daemon run` is the one process that opens the vault. Every data
 command — `add`, `ls`, `tree`, `cat`, `mv`, `rm`, `restore`, `search`,
@@ -22,7 +22,7 @@ because the CLI has no other way to reach the vault.
 
 Earlier development builds let every command open the store and coordinate
 through the vault lock directly. The current single-lock-holder model is
-described in [Concurrency & Locking](locking.md).
+described in [Ownership & Concurrency](locking.md).
 
 ## Lifecycle
 

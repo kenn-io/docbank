@@ -151,7 +151,7 @@ enrollment therefore has no unresolved trash that remains eligible for later
 emptying.
 
 An adopted legacy trash root with lost ancestry receives one canonical
-**unknown-origin** record. Its CAE2 nested record has kind `unknown_origin`, the
+**unknown-origin** record. Its nested audit record has kind `unknown_origin`, the
 trash root's stable node ID, an absent parent, and an optional retained
 origin-name byte string. It is never silently
 replaced with a guessed parent. Replay gives it the non-resolving canonical
@@ -212,7 +212,7 @@ Expiration or daemon restart discards tokens without changing the vault, and
 the client must preview again after `audit_preview_stale`.
 
 The wire token is the unpadded base64url encoding of a cryptographically random
-32-byte secret. Its stored digest is SHA-256 over the registered CAE2
+32-byte secret. Its stored digest is SHA-256 over the registered canonical
 `preview_token` record containing that secret and the exact scope, target,
 vault ID, baseline digest, preview generation, operation ID, lineage ID, and
 optional topology- and attached-metadata-genesis digests. Both genesis digests
@@ -381,7 +381,7 @@ tag definition and assignment plus every ingest and provenance record. Its
 record count and digest are committed by allocation-lineage genesis. Every
 later transaction that changes that authority records one canonical
 **attached-metadata delta** containing the complete pre/post record for each
-changed entity, sorted by `(record_kind_code, CAE2(stable_identity))`. A
+changed entity, sorted by `(record_kind_code, audit_bytes(stable_identity))`. A
 missing side
 uses the format's absent-record sentinel, so tag deletion includes definition
 and assignment tombstones while rename, assignment, provenance addition, and
@@ -607,7 +607,7 @@ the operating system's cryptographic random source, stored canonically under a
 unique constraint, never accepted from a caller, and never reused after
 deletion.
 
-All filesystem-derived values represented as CAE2 `bytes` share one rule: node
+All filesystem-derived values represented as canonical `bytes` share one rule: node
 names, known/unknown trash-origin names, provenance `original_path`,
 and ingest `source_desc`. They are opaque bytes rather than UTF-8 text because
 POSIX filesystems can contain arbitrary non-NUL path bytes. Human clients
@@ -759,16 +759,19 @@ sorted by the complete tuple
 `(node_id, event_kind_code, scope_id, target_node_id,
 attachment_kind_code, attachment_identity)`. IDs use their canonical byte
 encoding, and an absent field uses a fixed empty sentinel that sorts before a
-present value. Attachment identities compare by the complete CAE2 bytes of the
-registered typed identity record; there is no ad hoc tuple concatenation.
+present value. Attachment identities compare by the complete canonical bytes
+of the registered typed identity record; there is no ad hoc tuple concatenation.
 Emitting two events with the same complete key is an invariant violation rather
 than an invitation to preserve discovery order.
 
-### Normative audit hash encoding
+### Canonical audit encoding
 
-Every metadata-v1 audit digest uses SHA-256 over the **CAE2** typed binary
-encoding below. JSONL is only a transport representation; whitespace, object
-key order, escaping choices, and decimal rendering never enter a hash.
+Every metadata-v1 audit digest uses SHA-256 over the typed binary encoding
+below. This internal **canonical audit encoding** turns one typed record into
+exactly one byte sequence before hashing. It is encoding version 1, is not a
+user-facing file format, and is separate from the metadata-v1 JSONL transport.
+JSONL whitespace, object key order, escaping choices, and decimal rendering
+therefore never enter a hash.
 
 Let `F(b)` be an unsigned 64-bit big-endian byte length followed by `b`, and let
 `U(n)` be an unsigned 64-bit big-endian integer. A record is exactly:
@@ -795,7 +798,7 @@ are invalid. Values have one-byte type tags followed by:
 | `08` | UUID | 16 canonical parsed bytes |
 | `09` | SHA-256 digest | 32 raw bytes |
 | `0a` | list | `U(count)` followed by each complete typed value |
-| `0b` | nested record | `F(the complete CAE2 record)` |
+| `0b` | nested record | `F(the complete canonical audit record)` |
 
 In the schema registry below, `?T` is a field of type `T` whose absent form uses
 tag `00`, and `[T]` is a list. Tokens, field names, and types are exact; changing
@@ -833,7 +836,7 @@ Nested record schemas are:
 | `attached_metadata_change` | `record_kind:text`, `stable_identity:record`, `pre:?record`, `post:?record` |
 | `audit_event` | `event_id:digest`, `operation_id:uuid`, `node_id:u64`, `event_kind:text`, `scope_id:uuid`, `target_node_id:?u64`, `attachment_kind:?text`, `attachment_identity:?record`, `source_version_id:?uuid`, `event_ordinal:u64`, `recorded_at:timestamp`, `prior_node_revision:u64`, `resulting_node_revision:u64`, `prior_current_version_id:?uuid`, `resulting_current_version_id:?uuid`, `origin:text`, `agent_label:?text`, `pre:?record`, `post:?record`, `topology_delta:?digest`, `baseline_digest:?digest` |
 
-In that table, `record` means one complete nested CAE2 record of the applicable
+In that table, `record` means one complete nested canonical record of the applicable
 registered kind. An attached-metadata change permits only `tag_definition`,
 `tag_assignment`, `ingest`, or `provenance`; an event's pre/post kinds are fixed
 by `event_kind` (`path_state` for `node_path`, `content_version` for content
@@ -1042,7 +1045,7 @@ allocated-node IDs preserve intrinsic allocation order; topology nodes/changes
 use `node_id`; versions use
 `(node_id, version_id)`; member states and state changes use `node_id`;
 attachments and attached-metadata changes use
-`(record_kind, CAE2(stable_identity))`; witnesses use
+`(record_kind, audit_bytes(stable_identity))`; witnesses use
 `(node_id, generation_operation_id)` and witness changes add `action`;
 path effects use `(scope_id, member_node_id, old.path, new.path, old.state,
 new.state)`; events use the complete event tuple defined below; and baseline
@@ -1057,7 +1060,7 @@ Lists representing sets are sorted by the tuple named for that record before
 encoding; intrinsically ordered lists retain their specified order. Maps and
 floating-point values are forbidden.
 
-In metadata JSONL v1, a schema field of CAE2 type `bytes` is an unpadded
+In metadata JSONL v1, a canonical-encoding field of type `bytes` is an unpadded
 base64url JSON string; its registered field type distinguishes it from text.
 The empty string encodes empty bytes and JSON `null` encodes an absent optional
 bytes value. Export always emits this canonical spelling, and import rejects
@@ -1066,10 +1069,11 @@ value whose re-encoding differs. This rule applies equally to node names,
 filesystem paths, trash-origin names, and ingest source descriptions.
 
 The digest of a provenance identity is
-`SHA-256(CAE2("provenance_identity", fields))`; `supersedes` participates, so
-an otherwise identical correction that points to a prior fact has a distinct
-identity. The stored `provenance.identity` must equal that recomputed digest.
-Likewise, `event_id` is the SHA-256 digest of the registered CAE2
+`SHA-256(audit_bytes("provenance_identity", fields))`; `supersedes`
+participates, so an otherwise identical correction that points to a prior fact
+has a distinct identity. The stored `provenance.identity` must equal that
+recomputed digest.
+Likewise, `event_id` is the SHA-256 digest of the registered canonical
 `event_identity` record containing `operation_id` and `event_ordinal`, and
 import recomputes it.
 
@@ -1086,8 +1090,8 @@ binding.
 The digest of a baseline, event, topology delta, net path-effect list,
 witness-change list, attached-metadata delta, canonical mutation, scope-chain
 entry, allocation genesis/entry, topology genesis, attached-metadata genesis, or
-preview-token record
-is `SHA-256(CAE2(record_kind, fields))` using its distinct lowercase kind token.
+preview-token record is `SHA-256(audit_bytes(record_kind, fields))` using its
+distinct lowercase kind token.
 A scope-chain entry includes the stable vault and scope IDs, entry count,
 optional previous head, and mutation digest. An allocation entry includes every
 field and explicit no-change marker specified below. Allocation genesis encodes

@@ -16,7 +16,7 @@ daemon over its HTTP API rather than opening the vault itself; if none
 is running, the command auto-starts one in the background. `docbank
 daemon status` and `docbank daemon stop` never auto-start. See
 [Daemon](architecture/daemon.md) and
-[Concurrency & Locking](architecture/locking.md).
+[Ownership & Concurrency](architecture/locking.md).
 
 ## docbank add
 
@@ -419,7 +419,7 @@ files, and reclaimed bytes. A crash mid-GC leaves
 rows without files, which the next `gc --run` reconciles and `verify`
 reports in the meantime. The daemon's maintenance gate holds off
 concurrent mutations while `gc --run` runs, so it never races a
-concurrent import (see [Concurrency & Locking](architecture/locking.md)).
+concurrent import (see [Ownership & Concurrency](architecture/locking.md)).
 GC does not invoke repack, and no automatic GC/repack scheduler exists today.
 
 ## docbank storage status

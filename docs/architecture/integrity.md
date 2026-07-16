@@ -1,9 +1,9 @@
 ---
-title: Integrity & Threat Model
+title: Integrity & Trust
 description: What docbank defends against, which layer owns each integrity guarantee, and the trade-offs that were considered and deliberately not taken.
 ---
 
-# Integrity & Threat Model
+# Integrity and trust
 
 This page records where docbank's integrity guarantees live and — just
 as deliberately — where they don't. Several of the decisions below have
@@ -117,4 +117,4 @@ immediately, never queued. Ordinary commands don't touch the lock at
 all: they are HTTP clients of the daemon. Maintenance (`gc --run`,
 `verify`, `trash empty`) is serialized against ordinary mutations by
 the daemon's in-process maintenance gate. See
-[Concurrency & Locking](locking.md).
+[Ownership & Concurrency](locking.md).

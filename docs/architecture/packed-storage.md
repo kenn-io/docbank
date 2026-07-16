@@ -1,9 +1,9 @@
 ---
-title: Packed Storage Foundation
+title: Loose & Packed Content
 description: The shared Kit packed-CAS layer and docbank's application-owned authority boundary.
 ---
 
-# Packed storage foundation
+# Loose and packed content
 
 The shared engine is implemented in `go.kenn.io/kit/packstore`, and msgvault
 has adopted it without changing its pack format or migration behavior. docbank
