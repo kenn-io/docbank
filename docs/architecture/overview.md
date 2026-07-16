@@ -81,18 +81,25 @@ make that file part of the vault: only a committed catalog reference does.
 
 ## How a write becomes authoritative
 
-An ordinary import or content replacement follows one ordering rule: prove and
-publish bytes before committing metadata that names them.
+Every content-write surface follows one ordering rule: prove and publish bytes
+before committing metadata that names them.
 
 1. Docbank streams the source into private staging while counting and hashing
-   it. A remote writer may supply an expected size and digest; a mismatch ends
-   the operation without granting node authority.
+   it. A verified upload or replacement must declare the expected size and
+   digest; a mismatch ends the operation without granting node authority.
 2. The content store syncs the completed bytes, closes them, publishes them
    under their digest, and syncs the containing directory.
 3. One SQLite transaction creates or updates the node, records the immutable
    content version, and grants the blob catalog authority.
-4. The API returns the stable IDs, digest, size, revision, and ETag that describe
-   the committed result.
+
+The entry points differ in what the caller can know and what evidence comes
+back:
+
+| Write surface | Caller contract | Success evidence |
+| --- | --- | --- |
+| Server-side `/ingest` | Names paths readable by the daemon host; Docbank computes each identity | Aggregate added, skipped, excluded, and failure results for the traversal |
+| Remote `/uploads` | Must declare destination, size, and SHA-256 before streaming one file | Status, committed node projection, and independently computed size and digest |
+| Content replacement | Must declare size and SHA-256 and supply `If-Match` for the stable node | Committed node and version, computed identity, resulting revision, and ETag |
 
 If the process fails before step 3, durable bytes may exist without a database
 reference. They are harmless orphans: normal reads cannot see them, and garbage
@@ -127,7 +134,7 @@ Docbank keeps logical decisions distinct from physical storage maintenance:
 | --- | --- | --- |
 | Edit or replace | Adds an immutable version and advances the file's current pointer | Prior versions are not rewritten |
 | Revert | Adds a new version that records the selected historical source | History is not rewound or erased |
-| Version prune | Removes explicitly selected prior-version authority after a preview and revision check | The current version is never selected; shared bytes may remain live |
+| Version prune | Removes selected history under a revision check; dry-run is the default, but execution may be requested directly | Current content remains; `--all-prior` may replace a current revert with a same-byte checkpoint before deleting the prior version identity, and shared bytes may remain live |
 | Trash | Detaches a subtree from the live tree while retaining its identity, bytes, and restore coordinates | No content is physically reclaimed |
 | Trash empty | Permanently removes selected trashed metadata | Unreferenced loose files and dead pack entries may still occupy disk |
 | GC | Removes unreferenced catalog authority and loose bytes | Dead entries inside an immutable pack do not shrink that pack |
