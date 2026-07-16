@@ -286,11 +286,16 @@ func parseUUIDv4(value string) ([16]byte, error) {
 	}
 	compact := make([]byte, 0, 32)
 	for index := range len(value) {
-		if value[index] != '-' {
-			compact = append(compact, value[index])
+		switch index {
+		case 8, 13, 18, 23:
+			continue
 		}
+		if value[index] == '-' {
+			return parsed, errors.New("audit-encoding UUID must be a canonical lowercase UUIDv4")
+		}
+		compact = append(compact, value[index])
 	}
-	if !isLowerHex(string(compact)) {
+	if len(compact) != 32 || !isLowerHex(string(compact)) {
 		return parsed, errors.New("audit-encoding UUID must be a canonical lowercase UUIDv4")
 	}
 	if _, err := hex.Decode(parsed[:], compact); err != nil {

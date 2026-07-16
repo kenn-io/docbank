@@ -138,10 +138,14 @@ func TestAuditEncodingRejectsInvalidScalars(t *testing.T) {
 		"00112233-4455-3677-8899-aabbccddeeff",
 		"00112233-4455-4677-0899-aabbccddeeff",
 		"00112233445546778899aabbccddeeff",
+		"00112233-4455-4677-8899-aabbccddee-f",
+		"00112233-4455-4677-8899-aabbccddee--",
 	} {
 		_, err = UUID(value)
 		require.Error(t, err, value)
 	}
+	_, err = UUID("00112233-4455-4677-8899-aabbccddee00")
+	require.NoError(t, err)
 	for _, value := range []string{strings.Repeat("a", 63), strings.Repeat("A", 64)} {
 		_, err = DigestHex(value)
 		require.ErrorContains(t, err, "canonical lowercase", value)
