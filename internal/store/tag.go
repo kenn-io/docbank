@@ -29,6 +29,15 @@ type TaggedNode struct {
 	Path string
 }
 
+// TagAssignmentChange is the transactionally consistent result of assigning
+// or unassigning one tag. Path is populated only while Node is live.
+type TagAssignmentChange struct {
+	Node    Node
+	Path    string
+	Tag     Tag
+	Changed bool
+}
+
 // NormalizeTagName validates and NFC-normalizes a user-facing tag name.
 // Names are compared case-sensitively and may contain spaces or '/'.
 func NormalizeTagName(name string) (string, error) {
@@ -206,7 +215,7 @@ func (s *Store) DeleteTag(ctx context.Context, id string) (Tag, error) {
 // still matches the current node revision.
 func (s *Store) AssignTag(
 	ctx context.Context, tagID string, nodeID, ifRev int64,
-) (Node, Tag, bool, error) {
+) (TagAssignmentChange, error) {
 	return s.changeTagAssignment(ctx, tagID, nodeID, ifRev, true)
 }
 
@@ -215,17 +224,17 @@ func (s *Store) AssignTag(
 // matches the current node revision.
 func (s *Store) UnassignTag(
 	ctx context.Context, tagID string, nodeID, ifRev int64,
-) (Node, Tag, bool, error) {
+) (TagAssignmentChange, error) {
 	return s.changeTagAssignment(ctx, tagID, nodeID, ifRev, false)
 }
 
 func (s *Store) changeTagAssignment(
 	ctx context.Context, tagID string, nodeID, ifRev int64, assign bool,
-) (Node, Tag, bool, error) {
+) (TagAssignmentChange, error) {
 	var (
-		node    Node
-		tag     Tag
-		changed bool
+		result TagAssignmentChange
+		node   Node
+		tag    Tag
 	)
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		var err error
@@ -247,34 +256,43 @@ func (s *Store) changeTagAssignment(
 		).Scan(&present); err != nil {
 			return fmt.Errorf("checking tag %s assignment to node %d: %w", tagID, nodeID, err)
 		}
-		changed = (present == 0) == assign
-		if !changed {
-			return nil
-		}
-		if assign {
-			if _, err := tx.Exec(`INSERT INTO node_tags(node_id, tag_id) VALUES(?, ?)`, nodeID, tagID); err != nil {
-				return fmt.Errorf("assigning tag %s to node %d: %w", tagID, nodeID, err)
+		result.Changed = (present == 0) == assign
+		if result.Changed {
+			if assign {
+				if _, err := tx.Exec(`INSERT INTO node_tags(node_id, tag_id) VALUES(?, ?)`, nodeID, tagID); err != nil {
+					return fmt.Errorf("assigning tag %s to node %d: %w", tagID, nodeID, err)
+				}
+				tag.AssignmentCount++
+			} else {
+				if _, err := tx.Exec(`DELETE FROM node_tags WHERE node_id = ? AND tag_id = ?`, nodeID, tagID); err != nil {
+					return fmt.Errorf("unassigning tag %s from node %d: %w", tagID, nodeID, err)
+				}
+				tag.AssignmentCount--
 			}
-			tag.AssignmentCount++
-		} else {
-			if _, err := tx.Exec(`DELETE FROM node_tags WHERE node_id = ? AND tag_id = ?`, nodeID, tagID); err != nil {
-				return fmt.Errorf("unassigning tag %s from node %d: %w", tagID, nodeID, err)
+			now := nowRFC3339()
+			if _, err := tx.Exec(
+				`UPDATE nodes SET revision = revision + 1, modified_at = ? WHERE id = ?`, now, nodeID,
+			); err != nil {
+				return fmt.Errorf("advancing node %d after tag assignment change: %w", nodeID, err)
 			}
-			tag.AssignmentCount--
+			node, err = nodeByIDTx(tx, nodeID)
+			if err != nil {
+				return err
+			}
 		}
-		now := nowRFC3339()
-		if _, err := tx.Exec(
-			`UPDATE nodes SET revision = revision + 1, modified_at = ? WHERE id = ?`, now, nodeID,
-		); err != nil {
-			return fmt.Errorf("advancing node %d after tag assignment change: %w", nodeID, err)
+		result.Node, result.Tag = node, tag
+		if node.TrashedAt == nil {
+			result.Path, err = pathOf(ctx, tx, nodeID)
+			if err != nil {
+				return err
+			}
 		}
-		node, err = nodeByIDTx(tx, nodeID)
-		return err
+		return nil
 	})
 	if err != nil {
-		return Node{}, Tag{}, false, err
+		return TagAssignmentChange{}, err
 	}
-	return node, tag, changed, nil
+	return result, nil
 }
 
 // NodeTags lists one name-sorted page of tags assigned to a node.

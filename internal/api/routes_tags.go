@@ -185,27 +185,22 @@ func registerTagAssignmentRoute(api huma.API, d Deps, g *gate, method string, as
 		}
 		var out *tagAssignmentOutput
 		err = g.mutate(func() error {
-			var node store.Node
-			var tag store.Tag
-			var changed bool
+			var change store.TagAssignmentChange
 			if assign {
-				node, tag, changed, err = d.Store.AssignTag(ctx, in.TagID, in.ID, revision)
+				change, err = d.Store.AssignTag(ctx, in.TagID, in.ID, revision)
 			} else {
-				node, tag, changed, err = d.Store.UnassignTag(ctx, in.TagID, in.ID, revision)
+				change, err = d.Store.UnassignTag(ctx, in.TagID, in.ID, revision)
 			}
 			if err != nil {
 				return FromStoreError(err)
 			}
-			wireNode := fromStoreNode(node)
-			if node.TrashedAt == nil {
-				wireNode.Path, err = d.Store.Path(ctx, node.ID)
-				if err != nil {
-					return FromStoreError(err)
-				}
-			}
+			wireNode := fromStoreNode(change.Node)
+			wireNode.Path = change.Path
 			out = &tagAssignmentOutput{
-				ETag: fmt.Sprintf("%q", strconv.FormatInt(node.Revision, 10)),
-				Body: TagAssignmentReceipt{Tag: fromStoreTag(tag), Node: wireNode, Changed: changed},
+				ETag: fmt.Sprintf("%q", strconv.FormatInt(change.Node.Revision, 10)),
+				Body: TagAssignmentReceipt{
+					Tag: fromStoreTag(change.Tag), Node: wireNode, Changed: change.Changed,
+				},
 			}
 			return nil
 		})
