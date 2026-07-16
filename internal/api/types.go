@@ -77,6 +77,7 @@ type ContentReferencePage struct {
 type Tag struct {
 	ID              string `json:"id" format:"uuid"`
 	Name            string `json:"name"`
+	Revision        int64  `json:"revision" minimum:"1"`
 	AssignmentCount int    `json:"assignment_count" minimum:"0"`
 }
 
@@ -498,5 +499,8 @@ func fromStoreContentReference(ref store.ContentReference) ContentReference {
 }
 
 func fromStoreTag(tag store.Tag) Tag {
-	return Tag{ID: tag.ID, Name: tag.Name, AssignmentCount: tag.AssignmentCount}
+	return Tag{
+		ID: tag.ID, Name: tag.Name, Revision: tag.Revision,
+		AssignmentCount: tag.AssignmentCount,
+	}
 }

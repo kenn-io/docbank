@@ -201,8 +201,9 @@ what content to verify.
 
 ## Organize with stable tags
 
-Create a tag once, then retain its returned UUID. Names are mutable display
-labels; IDs are durable authority.
+Create a tag once, then retain its returned UUID and revision/ETag. Names are
+mutable display labels; IDs are durable authority. A tag revision covers both
+its definition and complete assignment set.
 
 ```bash
 curl --fail-with-body -X POST \
@@ -218,12 +219,13 @@ curl --fail-with-body -X PUT \
 ```
 
 Assignment receipts return `changed`, the resulting node revision/ETag, and
-the tag's current assignment count. `changed: false` is a successful
+the tag's current revision and assignment count. `changed: false` is a successful
 idempotent convergence, not an error. Page `GET /nodes/{id}/tags` and `GET
 /tags/{tag_id}/nodes`; the latter includes trashed nodes without pretending
-they have a live path. Rename and delete by UUID so a concurrent display-name
-change cannot retarget the operation. Deleting a tag removes assignments only,
-never nodes or document bytes.
+they have a live path. Rename and delete by UUID with the most recently
+inspected tag ETag in `If-Match`; a concurrent definition or assignment change
+returns `412 stale_revision`. Deleting a tag removes assignments only, never
+nodes or document bytes.
 
 When the desired target is a path, send `{"path":"/records/report.pdf"}` to
 `PUT` or `DELETE /path/tags/{tag_id}`. Do not resolve the path with `GET /path`

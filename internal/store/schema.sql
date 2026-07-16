@@ -113,8 +113,9 @@ CREATE TABLE IF NOT EXISTS provenance (
 CREATE INDEX IF NOT EXISTS provenance_node ON provenance(node_id);
 
 CREATE TABLE IF NOT EXISTS tags (
-    id   TEXT PRIMARY KEY NOT NULL,
-    name TEXT NOT NULL UNIQUE
+    id       TEXT PRIMARY KEY NOT NULL,
+    name     TEXT NOT NULL UNIQUE,
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1)
 );
 
 CREATE TABLE IF NOT EXISTS node_tags (

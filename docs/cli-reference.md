@@ -235,10 +235,16 @@ ID is deleted. If a tag's display name itself looks like a UUID, address that
 tag through the different UUID returned when it was created. This prevents a
 mutable or reused display name from taking over a durable identifier.
 
+`tag list` and `tag show` expose each tag's revision. Rename and delete first
+resolve the selector, then condition the mutation on that inspected revision;
+a concurrent rename or assignment change returns `stale_revision` instead of
+overwriting or deleting the newer state.
+
 Assignment commands resolve the supplied live path and update its tag inside
 one daemon/store transaction, so moving an ancestor cannot redirect the
 operation between separate requests. Repeated assignment and unassignment are
-idempotent and report `changed: false` without a revision bump. `tag nodes`
+idempotent and report `changed: false` without a revision bump. A real
+assignment change advances both the node and tag revisions. `tag nodes`
 includes live and trashed nodes, but omits a path for trash because it has no
 resolvable live coordinate. List commands return at most 1000 results per page
 and JSON output includes `total`, `limit`, and `offset`.

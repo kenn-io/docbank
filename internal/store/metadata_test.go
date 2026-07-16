@@ -78,6 +78,9 @@ func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, target.Close()) })
 	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(first.Bytes())))
 	assert.Equal(t, sourceVaultID, target.VaultID())
+	importedTag, err := target.TagByID(ctx, metadataTagID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(7), importedTag.Revision)
 
 	var restored bytes.Buffer
 	require.NoError(t, target.ExportMetadata(ctx, &restored))
@@ -172,15 +175,15 @@ func TestImportMetadataRejectsInvalidUTF8AndRollsBack(t *testing.T) {
 		},
 		"record string": {
 			input: withInvalidByte(
-				header+root+`{"type":"tag","tag_id":"`+metadataTagID+`","name":"invalid`, `"}`+"\n"),
+				header+root+`{"type":"tag","tag_id":"`+metadataTagID+`","name":"invalid`, `","revision":1}`+"\n"),
 			want: "metadata JSON is not valid UTF-8",
 		},
 		"lone high surrogate": {
-			input: []byte(header + root + `{"type":"tag","tag_id":"` + metadataTagID + `","name":"invalid\ud800"}` + "\n"),
+			input: []byte(header + root + `{"type":"tag","tag_id":"` + metadataTagID + `","name":"invalid\ud800","revision":1}` + "\n"),
 			want:  "unpaired UTF-16 surrogate escape",
 		},
 		"lone low surrogate": {
-			input: []byte(header + root + `{"type":"tag","tag_id":"` + metadataTagID + `","name":"invalid\udc00"}` + "\n"),
+			input: []byte(header + root + `{"type":"tag","tag_id":"` + metadataTagID + `","name":"invalid\udc00","revision":1}` + "\n"),
 			want:  "unpaired UTF-16 surrogate escape",
 		},
 	}
@@ -204,7 +207,7 @@ func TestImportMetadataAcceptsValidSurrogatePair(t *testing.T) {
 	input := strings.Join([]string{
 		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}`,
 		`{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}`,
-		`{"type":"tag","tag_id":"` + metadataTagID + `","name":"archive \ud83d\ude00"}`,
+		`{"type":"tag","tag_id":"` + metadataTagID + `","name":"archive \ud83d\ude00","revision":1}`,
 	}, "\n") + "\n"
 	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
 	require.NoError(t, err)
@@ -673,7 +676,7 @@ func TestMetadataRejectsMalformedStableRecordIDs(t *testing.T) {
 		root := `{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}` + "\n"
 		for name, record := range map[string]string{
 			"ingest": `{"type":"ingest","ingest_id":"not-a-uuid","started_at":"2026-01-01T00:00:00.000000000Z","source_kind":"cli","source_desc":"source"}`,
-			"tag":    `{"type":"tag","tag_id":"not-a-uuid","name":"archive"}`,
+			"tag":    `{"type":"tag","tag_id":"not-a-uuid","name":"archive","revision":1}`,
 		} {
 			t.Run(name, func(t *testing.T) {
 				target, err := Open(filepath.Join(t.TempDir(), "target.db"))
@@ -712,7 +715,7 @@ func TestMetadataRejectsNonCanonicalTagNames(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, target.Close()) })
 
-	record := `{"type":"tag","tag_id":"` + metadataTagID + `","name":"cafe\u0301"}` + "\n"
+	record := `{"type":"tag","tag_id":"` + metadataTagID + `","name":"cafe\u0301","revision":1}` + "\n"
 	err = target.ImportMetadata(t.Context(), strings.NewReader(header+root+record))
 	require.ErrorContains(t, err, "canonical NFC")
 
@@ -721,12 +724,49 @@ func TestMetadataRejectsNonCanonicalTagNames(t *testing.T) {
 	assert.Zero(t, tags, "failed import must not retain a non-canonical tag")
 }
 
+func TestImportMetadataRejectsInvalidTagRevision(t *testing.T) {
+	const (
+		header = `{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n"
+		root   = `{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}` + "\n"
+	)
+	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, target.Close()) })
+
+	record := `{"type":"tag","tag_id":"` + metadataTagID + `","name":"archive","revision":0}` + "\n"
+	err = target.ImportMetadata(t.Context(), strings.NewReader(header+root+record))
+	require.ErrorContains(t, err, "invalid tag record")
+
+	var tags int64
+	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM tags`).Scan(&tags))
+	assert.Zero(t, tags)
+}
+
+func TestImportMetadataRejectsTagRevisionBehindAssignments(t *testing.T) {
+	input := strings.Join([]string{
+		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}`,
+		`{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}`,
+		`{"type":"tag","tag_id":"` + metadataTagID + `","name":"archive","revision":1}`,
+		`{"type":"node_tag","node_id":1,"tag_id":"` + metadataTagID + `"}`,
+	}, "\n") + "\n"
+	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, target.Close()) })
+
+	err = target.ImportMetadata(t.Context(), strings.NewReader(input))
+	require.ErrorContains(t, err, "tag revision predates its current assignments")
+
+	var tags int64
+	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM tags`).Scan(&tags))
+	assert.Zero(t, tags)
+}
+
 func TestImportMetadataRejectsDuplicateStableRecordIDsTransactionally(t *testing.T) {
 	header := `{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n"
 	root := `{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}` + "\n"
 	for name, record := range map[string]string{
 		"ingest": `{"type":"ingest","ingest_id":"` + metadataIngestID + `","started_at":"2026-01-01T00:00:00.000000000Z","source_kind":"cli","source_desc":"source"}`,
-		"tag":    `{"type":"tag","tag_id":"` + metadataTagID + `","name":"archive"}`,
+		"tag":    `{"type":"tag","tag_id":"` + metadataTagID + `","name":"archive","revision":1}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			target, err := Open(filepath.Join(t.TempDir(), "target.db"))
@@ -780,7 +820,7 @@ func seedMetadataRoundTrip(t *testing.T, s *Store) {
 				 VALUES('` + metadataIngestID + `','2026-01-08T00:00:00.000000000Z','filesystem','dropbox')`,
 			`INSERT INTO provenance(node_id,ingest_id,original_path,original_mtime)
 				 VALUES(10,'` + metadataIngestID + `','/source/report.txt','2025-12-31T23:00:00.12Z')`,
-			`INSERT INTO tags(id,name) VALUES('` + metadataTagID + `','important')`,
+			`INSERT INTO tags(id,name,revision) VALUES('` + metadataTagID + `','important',7)`,
 			`INSERT INTO node_tags(node_id,tag_id) VALUES(10,'` + metadataTagID + `')`,
 			`INSERT INTO extracted_text(blob_hash,extractor,extractor_version,status,error,attempts,text,extracted_at)
 			 VALUES('` + metadataHashCurrent + `','plain',2,'ok',NULL,1,'line one\nline two','2026-01-13T00:00:00.000000000Z')`,

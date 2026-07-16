@@ -64,9 +64,10 @@ var tagListCmd = &cobra.Command{
 			return nil
 		}
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
-		_, _ = fmt.Fprintln(w, "ID\tNAME\tASSIGNMENTS")
+		_, _ = fmt.Fprintln(w, "ID\tNAME\tREVISION\tASSIGNMENTS")
 		for _, tag := range page.Items {
-			_, _ = fmt.Fprintf(w, "%s\t%s\t%d\n", tag.ID, tag.Name, tag.AssignmentCount)
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%d\n",
+				tag.ID, tag.Name, tag.Revision, tag.AssignmentCount)
 		}
 		if err := w.Flush(); err != nil {
 			return fmt.Errorf("writing tags: %w", err)
@@ -130,7 +131,7 @@ var tagRenameCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		tag, err := c.RenameTag(cmd.Context(), current.ID, args[1])
+		tag, err := c.RenameTag(cmd.Context(), current.ID, current.Revision, args[1])
 		if err != nil {
 			return err
 		}
@@ -156,7 +157,7 @@ var tagDeleteCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		receipt, err := c.DeleteTag(cmd.Context(), tag.ID)
+		receipt, err := c.DeleteTag(cmd.Context(), tag.ID, tag.Revision)
 		if err != nil {
 			return err
 		}
@@ -301,6 +302,7 @@ func writeTag(w io.Writer, tag api.Tag) error {
 	tw := tabwriter.NewWriter(w, 2, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintf(tw, "ID:\t%s\n", tag.ID)
 	_, _ = fmt.Fprintf(tw, "Name:\t%s\n", tag.Name)
+	_, _ = fmt.Fprintf(tw, "Revision:\t%d\n", tag.Revision)
 	_, _ = fmt.Fprintf(tw, "Assignments:\t%d\n", tag.AssignmentCount)
 	if err := tw.Flush(); err != nil {
 		return fmt.Errorf("writing tag: %w", err)

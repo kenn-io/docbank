@@ -19,6 +19,7 @@ func TestTagLifecycleAndNodeRevisions(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, validateUUIDv4(tag.ID))
 	assert.Equal(t, "café", tag.Name)
+	assert.Equal(t, int64(1), tag.Revision)
 	assert.Zero(t, tag.AssignmentCount)
 
 	byName, err := s.TagByName(ctx, "café")
@@ -33,6 +34,7 @@ func TestTagLifecycleAndNodeRevisions(t *testing.T) {
 	assert.True(t, change.Changed)
 	assert.Equal(t, int64(2), one.Revision)
 	assert.Equal(t, "/one", change.Path)
+	assert.Equal(t, int64(2), change.Tag.Revision)
 	assert.Equal(t, 1, change.Tag.AssignmentCount)
 
 	change, err = s.AssignTag(ctx, tag.ID, one.ID, one.Revision)
@@ -49,10 +51,12 @@ func TestTagLifecycleAndNodeRevisions(t *testing.T) {
 	require.NoError(t, err)
 	two = change.Node
 	assert.True(t, change.Changed)
+	assert.Equal(t, int64(3), change.Tag.Revision)
 
-	renamed, err := s.RenameTag(ctx, tag.ID, "archive")
+	renamed, err := s.RenameTag(ctx, tag.ID, change.Tag.Revision, "archive")
 	require.NoError(t, err)
 	assert.Equal(t, 2, renamed.AssignmentCount)
+	assert.Equal(t, int64(4), renamed.Revision)
 	oneAfterRename, err := s.NodeByID(ctx, one.ID)
 	require.NoError(t, err)
 	twoAfterRename, err := s.NodeByID(ctx, two.ID)
@@ -65,9 +69,10 @@ func TestTagLifecycleAndNodeRevisions(t *testing.T) {
 	one = change.Node
 	assert.True(t, change.Changed)
 	assert.Equal(t, 1, change.Tag.AssignmentCount)
+	assert.Equal(t, int64(5), change.Tag.Revision)
 	assert.Equal(t, oneAfterRename.Revision+1, one.Revision)
 
-	deleted, err := s.DeleteTag(ctx, tag.ID)
+	deleted, err := s.DeleteTag(ctx, tag.ID, change.Tag.Revision)
 	require.NoError(t, err)
 	assert.Equal(t, "archive", deleted.Name)
 	assert.Equal(t, 1, deleted.AssignmentCount)
@@ -80,6 +85,28 @@ func TestTagLifecycleAndNodeRevisions(t *testing.T) {
 	var assignments int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM node_tags`).Scan(&assignments))
 	assert.Zero(t, assignments)
+}
+
+func TestTagRenameAndDeleteRejectStaleRevision(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	tag, err := s.CreateTag(ctx, "records")
+	require.NoError(t, err)
+	node, err := s.Mkdir(ctx, s.RootID(), "records")
+	require.NoError(t, err)
+	change, err := s.AssignTag(ctx, tag.ID, node.ID, node.Revision)
+	require.NoError(t, err)
+
+	_, err = s.RenameTag(ctx, tag.ID, tag.Revision, "archive")
+	require.ErrorIs(t, err, ErrStaleRevision)
+	_, err = s.DeleteTag(ctx, tag.ID, tag.Revision)
+	require.ErrorIs(t, err, ErrStaleRevision)
+
+	current, err := s.TagByID(ctx, tag.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "records", current.Name)
+	assert.Equal(t, change.Tag.Revision, current.Revision)
+	assert.Equal(t, 1, current.AssignmentCount)
 }
 
 func TestTagQueriesAreBoundedAndIncludeTrashedNodes(t *testing.T) {

@@ -69,11 +69,12 @@ docbank tag rename taxes "tax archive"
 `tag list` shows definitions and assignment counts. `tag show`, `tag rename`,
 `tag delete`, `tag assign`, `tag unassign`, and `tag nodes` accept either the
 exact current name or stable tag UUID. Assignment and definition changes bump
-the affected nodes' revisions, so a concurrent stale decision fails rather
-than silently overwriting newer metadata. CLI assignment paths resolve in the
-same transaction as the change, so an ancestor move cannot make the command
-tag a node that has already left the requested path. Repeating an existing
-assignment or missing unassignment is an idempotent no-op.
+the tag revision; they also bump affected nodes' revisions. Rename and delete
+condition their change on the inspected tag revision, so a concurrent stale
+decision fails rather than silently overwriting newer metadata. CLI assignment
+paths resolve in the same transaction as the change, so an ancestor move cannot
+make the command tag a node that has already left the requested path. Repeating
+an existing assignment or missing unassignment is an idempotent no-op.
 
 Canonical UUID-shaped selectors are always interpreted as stable IDs. A tag
 whose display name happens to look like a UUID remains addressable through its

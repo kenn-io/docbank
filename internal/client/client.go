@@ -153,17 +153,24 @@ func apiProblemError(e api.Error) error {
 // do issues one JSON round-trip. Non-nil out must be a pointer; a non-2xx
 // status decodes the error envelope instead.
 func (c *Client) do(ctx context.Context, method, path string, hdr map[string]string, in, out any) error {
+	_, err := c.doWithHeaders(ctx, method, path, hdr, in, out)
+	return err
+}
+
+func (c *Client) doWithHeaders(
+	ctx context.Context, method, path string, hdr map[string]string, in, out any,
+) (http.Header, error) {
 	var body io.Reader
 	if in != nil {
 		b, err := marshalJSONRequest(in)
 		if err != nil {
-			return fmt.Errorf("encoding %s %s request: %w", method, path, err)
+			return nil, fmt.Errorf("encoding %s %s request: %w", method, path, err)
 		}
 		body = bytes.NewReader(b)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.base+path, body)
 	if err != nil {
-		return fmt.Errorf("building %s %s: %w", method, path, err)
+		return nil, fmt.Errorf("building %s %s: %w", method, path, err)
 	}
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -176,20 +183,20 @@ func (c *Client) do(ctx context.Context, method, path string, hdr map[string]str
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return fmt.Errorf("calling daemon (%s %s): %w", method, path, err)
+		return nil, fmt.Errorf("calling daemon (%s %s): %w", method, path, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return decodeError(resp)
+		return nil, decodeError(resp)
 	}
 	if out == nil {
 		_, _ = io.Copy(io.Discard, resp.Body)
-		return nil
+		return resp.Header.Clone(), nil
 	}
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-		return fmt.Errorf("decoding %s %s response: %w", method, path, err)
+		return nil, fmt.Errorf("decoding %s %s response: %w", method, path, err)
 	}
-	return nil
+	return resp.Header.Clone(), nil
 }
 
 // marshalJSONRequest preserves every Go string before encoding/json can
@@ -443,10 +450,13 @@ func (c *Client) Tag(ctx context.Context, id string) (api.Tag, error) {
 	if !validUUIDv4(id) {
 		return tag, errors.New("tag ID must be a canonical UUIDv4")
 	}
-	if err := c.do(ctx, http.MethodGet, "/api/v1/tags/"+url.PathEscape(id), nil, nil, &tag); err != nil {
+	headers, err := c.doWithHeaders(
+		ctx, http.MethodGet, "/api/v1/tags/"+url.PathEscape(id), nil, nil, &tag,
+	)
+	if err != nil {
 		return tag, err
 	}
-	if err := validateTag(tag); err != nil {
+	if err := validateTagResponse(tag, headers.Get("ETag")); err != nil {
 		return api.Tag{}, err
 	}
 	if tag.ID != id {
@@ -463,10 +473,11 @@ func (c *Client) TagByName(ctx context.Context, name string) (api.Tag, error) {
 		return tag, err
 	}
 	path := "/api/v1/tags/by-name?name=" + url.QueryEscape(normalized)
-	if err := c.do(ctx, http.MethodGet, path, nil, nil, &tag); err != nil {
+	headers, err := c.doWithHeaders(ctx, http.MethodGet, path, nil, nil, &tag)
+	if err != nil {
 		return tag, err
 	}
-	if err := validateTag(tag); err != nil {
+	if err := validateTagResponse(tag, headers.Get("ETag")); err != nil {
 		return api.Tag{}, err
 	}
 	if tag.Name != normalized {
@@ -482,34 +493,39 @@ func (c *Client) CreateTag(ctx context.Context, name string) (api.Tag, error) {
 	if err != nil {
 		return tag, err
 	}
-	if err := c.do(ctx, http.MethodPost, "/api/v1/tags", nil,
-		map[string]string{"name": normalized}, &tag); err != nil {
+	headers, err := c.doWithHeaders(ctx, http.MethodPost, "/api/v1/tags", nil,
+		map[string]string{"name": normalized}, &tag)
+	if err != nil {
 		return tag, err
 	}
-	if err := validateTag(tag); err != nil {
+	if err := validateTagResponse(tag, headers.Get("ETag")); err != nil {
 		return api.Tag{}, err
 	}
-	if tag.Name != normalized || tag.AssignmentCount != 0 {
+	if tag.Name != normalized || tag.Revision != 1 || tag.AssignmentCount != 0 {
 		return api.Tag{}, errors.New("created tag response has inconsistent authority")
 	}
 	return tag, nil
 }
 
 // RenameTag changes a tag's display name without changing its stable ID.
-func (c *Client) RenameTag(ctx context.Context, id, name string) (api.Tag, error) {
+func (c *Client) RenameTag(ctx context.Context, id string, revision int64, name string) (api.Tag, error) {
 	var tag api.Tag
 	if !validUUIDv4(id) {
 		return tag, errors.New("tag ID must be a canonical UUIDv4")
+	}
+	if revision < 1 {
+		return tag, errors.New("tag revision must be positive")
 	}
 	normalized, err := store.NormalizeTagName(name)
 	if err != nil {
 		return tag, err
 	}
-	if err := c.do(ctx, http.MethodPatch, "/api/v1/tags/"+url.PathEscape(id), nil,
-		map[string]string{"name": normalized}, &tag); err != nil {
+	headers, err := c.doWithHeaders(ctx, http.MethodPatch, "/api/v1/tags/"+url.PathEscape(id),
+		ifMatch(revision), map[string]string{"name": normalized}, &tag)
+	if err != nil {
 		return tag, err
 	}
-	if err := validateTag(tag); err != nil {
+	if err := validateTagResponse(tag, headers.Get("ETag")); err != nil {
 		return api.Tag{}, err
 	}
 	if tag.ID != id || tag.Name != normalized {
@@ -519,16 +535,22 @@ func (c *Client) RenameTag(ctx context.Context, id, name string) (api.Tag, error
 }
 
 // DeleteTag removes one tag definition and its complete assignment set.
-func (c *Client) DeleteTag(ctx context.Context, id string) (api.TagDeletionReceipt, error) {
+func (c *Client) DeleteTag(
+	ctx context.Context, id string, revision int64,
+) (api.TagDeletionReceipt, error) {
 	var receipt api.TagDeletionReceipt
 	if !validUUIDv4(id) {
 		return receipt, errors.New("tag ID must be a canonical UUIDv4")
 	}
-	if err := c.do(ctx, http.MethodDelete, "/api/v1/tags/"+url.PathEscape(id), nil,
-		nil, &receipt); err != nil {
+	if revision < 1 {
+		return receipt, errors.New("tag revision must be positive")
+	}
+	headers, err := c.doWithHeaders(ctx, http.MethodDelete, "/api/v1/tags/"+url.PathEscape(id),
+		ifMatch(revision), nil, &receipt)
+	if err != nil {
 		return receipt, err
 	}
-	if err := validateTag(receipt.Tag); err != nil {
+	if err := validateTagResponse(receipt.Tag, headers.Get("ETag")); err != nil {
 		return api.TagDeletionReceipt{}, err
 	}
 	if receipt.Tag.ID != id || receipt.RemovedAssignments != receipt.Tag.AssignmentCount {
@@ -716,12 +738,23 @@ func (c *Client) doTagAssignment(
 }
 
 func validateTag(tag api.Tag) error {
-	if !validUUIDv4(tag.ID) || tag.AssignmentCount < 0 {
-		return errors.New("tag response has invalid identity or assignment count")
+	if !validUUIDv4(tag.ID) || tag.Revision < 1 || tag.AssignmentCount < 0 {
+		return errors.New("tag response has invalid identity, revision, or assignment count")
 	}
 	normalized, err := store.NormalizeTagName(tag.Name)
 	if err != nil || normalized != tag.Name {
 		return errors.New("tag response has invalid or non-canonical name")
+	}
+	return nil
+}
+
+func validateTagResponse(tag api.Tag, etag string) error {
+	if err := validateTag(tag); err != nil {
+		return err
+	}
+	want := fmt.Sprintf("%q", strconv.FormatInt(tag.Revision, 10))
+	if etag != want {
+		return fmt.Errorf("tag response ETag %q, expected %q", etag, want)
 	}
 	return nil
 }

@@ -19,6 +19,7 @@ const maxTagPageSize = 1000
 type Tag struct {
 	ID              string
 	Name            string
+	Revision        int64
 	AssignmentCount int
 }
 
@@ -56,7 +57,9 @@ func NormalizeTagName(name string) (string, error) {
 
 func scanTag(row interface{ Scan(args ...any) error }) (Tag, error) {
 	var tag Tag
-	if err := row.Scan(&tag.ID, &tag.Name, &tag.AssignmentCount); errors.Is(err, sql.ErrNoRows) {
+	if err := row.Scan(
+		&tag.ID, &tag.Name, &tag.Revision, &tag.AssignmentCount,
+	); errors.Is(err, sql.ErrNoRows) {
 		return Tag{}, ErrNotFound
 	} else if err != nil {
 		return Tag{}, fmt.Errorf("scanning tag: %w", err)
@@ -80,7 +83,7 @@ func (s *Store) CreateTag(ctx context.Context, name string) (Tag, error) {
 		}
 		return Tag{}, fmt.Errorf("creating tag %q: %w", name, err)
 	}
-	return Tag{ID: id, Name: name}, nil
+	return Tag{ID: id, Name: name, Revision: 1}, nil
 }
 
 // TagByID returns one tag by stable identity.
@@ -89,9 +92,9 @@ func (s *Store) TagByID(ctx context.Context, id string) (Tag, error) {
 		return Tag{}, fmt.Errorf("tag %q: %w", id, ErrNotFound)
 	}
 	tag, err := scanTag(s.db.QueryRowContext(ctx, `
-		SELECT t.id, t.name, COUNT(nt.node_id)
+		SELECT t.id, t.name, t.revision, COUNT(nt.node_id)
 		FROM tags t LEFT JOIN node_tags nt ON nt.tag_id = t.id
-		WHERE t.id = ? GROUP BY t.id, t.name`, id))
+		WHERE t.id = ? GROUP BY t.id, t.name, t.revision`, id))
 	if err != nil {
 		return Tag{}, fmt.Errorf("tag %q: %w", id, err)
 	}
@@ -105,9 +108,9 @@ func (s *Store) TagByName(ctx context.Context, name string) (Tag, error) {
 		return Tag{}, err
 	}
 	tag, err := scanTag(s.db.QueryRowContext(ctx, `
-		SELECT t.id, t.name, COUNT(nt.node_id)
+		SELECT t.id, t.name, t.revision, COUNT(nt.node_id)
 		FROM tags t LEFT JOIN node_tags nt ON nt.tag_id = t.id
-		WHERE t.name = ? GROUP BY t.id, t.name`, name))
+		WHERE t.name = ? GROUP BY t.id, t.name, t.revision`, name))
 	if err != nil {
 		return Tag{}, fmt.Errorf("tag %q: %w", name, err)
 	}
@@ -121,11 +124,12 @@ func (s *Store) Tags(ctx context.Context, limit, offset int) ([]Tag, int, error)
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		WITH page AS (
-		  SELECT t.id, t.name, COUNT(nt.node_id) AS assignments
+		  SELECT t.id, t.name, t.revision, COUNT(nt.node_id) AS assignments
 		  FROM tags t LEFT JOIN node_tags nt ON nt.tag_id = t.id
-		  GROUP BY t.id, t.name ORDER BY t.name, t.id LIMIT ? OFFSET ?
+		  GROUP BY t.id, t.name, t.revision ORDER BY t.name, t.id LIMIT ? OFFSET ?
 		), totals AS (SELECT COUNT(*) AS total FROM tags)
 		SELECT totals.total, COALESCE(page.id, ''), COALESCE(page.name, ''),
+		       COALESCE(page.revision, 0),
 		       COALESCE(page.assignments, 0)
 		FROM totals LEFT JOIN page ON true ORDER BY page.name, page.id`, limit, offset)
 	if err != nil {
@@ -138,7 +142,9 @@ func (s *Store) Tags(ctx context.Context, limit, offset int) ([]Tag, int, error)
 	)
 	for rows.Next() {
 		var tag Tag
-		if err := rows.Scan(&total, &tag.ID, &tag.Name, &tag.AssignmentCount); err != nil {
+		if err := rows.Scan(
+			&total, &tag.ID, &tag.Name, &tag.Revision, &tag.AssignmentCount,
+		); err != nil {
 			return nil, 0, fmt.Errorf("listing tags: scanning page: %w", err)
 		}
 		if tag.ID != "" {
@@ -151,9 +157,10 @@ func (s *Store) Tags(ctx context.Context, limit, offset int) ([]Tag, int, error)
 	return tags, total, nil
 }
 
-// RenameTag changes a tag's display name and advances every assigned node's
-// metadata revision. Repeating the current name is an idempotent no-op.
-func (s *Store) RenameTag(ctx context.Context, id, name string) (Tag, error) {
+// RenameTag changes a tag's display name under an optimistic tag revision and
+// advances every assigned node's metadata revision. Repeating the current name
+// is an idempotent no-op only when ifRev still matches.
+func (s *Store) RenameTag(ctx context.Context, id string, ifRev int64, name string) (Tag, error) {
 	name, err := NormalizeTagName(name)
 	if err != nil {
 		return Tag{}, err
@@ -164,11 +171,16 @@ func (s *Store) RenameTag(ctx context.Context, id, name string) (Tag, error) {
 		if err != nil {
 			return err
 		}
+		if err := checkTagRevision(current, ifRev); err != nil {
+			return err
+		}
 		if current.Name == name {
 			renamed = current
 			return nil
 		}
-		if _, err := tx.Exec(`UPDATE tags SET name = ? WHERE id = ?`, name, id); err != nil {
+		if _, err := tx.Exec(
+			`UPDATE tags SET name = ?, revision = revision + 1 WHERE id = ?`, name, id,
+		); err != nil {
 			if s.driver.IsUniqueViolation(err) {
 				return fmt.Errorf("tag %q: %w", name, ErrExists)
 			}
@@ -177,7 +189,9 @@ func (s *Store) RenameTag(ctx context.Context, id, name string) (Tag, error) {
 		if err := touchTaggedNodesTx(tx, id, nowRFC3339()); err != nil {
 			return err
 		}
-		renamed = Tag{ID: id, Name: name, AssignmentCount: current.AssignmentCount}
+		renamed = current
+		renamed.Name = name
+		renamed.Revision++
 		return nil
 	})
 	if err != nil {
@@ -188,11 +202,14 @@ func (s *Store) RenameTag(ctx context.Context, id, name string) (Tag, error) {
 
 // DeleteTag removes one definition and all of its assignments, advancing each
 // formerly assigned node's metadata revision exactly once.
-func (s *Store) DeleteTag(ctx context.Context, id string) (Tag, error) {
+func (s *Store) DeleteTag(ctx context.Context, id string, ifRev int64) (Tag, error) {
 	var deleted Tag
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		current, err := tagByIDTx(tx, id)
 		if err != nil {
+			return err
+		}
+		if err := checkTagRevision(current, ifRev); err != nil {
 			return err
 		}
 		if err := touchTaggedNodesTx(tx, id, nowRFC3339()); err != nil {
@@ -326,6 +343,14 @@ func changeTagAssignmentTx(
 			result.Tag.AssignmentCount--
 		}
 		if _, err := tx.Exec(
+			`UPDATE tags SET revision = revision + 1 WHERE id = ?`, tagID,
+		); err != nil {
+			return TagAssignmentChange{}, fmt.Errorf(
+				"advancing tag %s after assignment change: %w", tagID, err,
+			)
+		}
+		result.Tag.Revision++
+		if _, err := tx.Exec(
 			`UPDATE nodes SET revision = revision + 1, modified_at = ? WHERE id = ?`,
 			nowRFC3339(), node.ID,
 		); err != nil {
@@ -355,11 +380,13 @@ func (s *Store) NodeTags(ctx context.Context, nodeID int64, limit, offset int) (
 	rows, err := s.db.QueryContext(ctx, `
 		WITH target AS (SELECT id FROM nodes WHERE id = ?),
 		page AS (
-		  SELECT t.id, t.name, (SELECT COUNT(*) FROM node_tags all_nt WHERE all_nt.tag_id = t.id) AS assignments
+		  SELECT t.id, t.name, t.revision,
+		         (SELECT COUNT(*) FROM node_tags all_nt WHERE all_nt.tag_id = t.id) AS assignments
 		  FROM tags t JOIN node_tags nt ON nt.tag_id = t.id
 		  WHERE nt.node_id = ? ORDER BY t.name, t.id LIMIT ? OFFSET ?
 		), totals AS (SELECT COUNT(*) AS total FROM node_tags WHERE node_id = ?)
 		SELECT totals.total, COALESCE(page.id, ''), COALESCE(page.name, ''),
+		       COALESCE(page.revision, 0),
 		       COALESCE(page.assignments, 0)
 		FROM target CROSS JOIN totals LEFT JOIN page ON true ORDER BY page.name, page.id`,
 		nodeID, nodeID, limit, offset, nodeID)
@@ -373,7 +400,9 @@ func (s *Store) NodeTags(ctx context.Context, nodeID int64, limit, offset int) (
 	for rows.Next() {
 		found = true
 		var tag Tag
-		if err := rows.Scan(&total, &tag.ID, &tag.Name, &tag.AssignmentCount); err != nil {
+		if err := rows.Scan(
+			&total, &tag.ID, &tag.Name, &tag.Revision, &tag.AssignmentCount,
+		); err != nil {
 			return nil, 0, fmt.Errorf("listing tags of node %d: scanning page: %w", nodeID, err)
 		}
 		if tag.ID != "" {
@@ -466,13 +495,21 @@ func tagByIDTx(tx *sql.Tx, id string) (Tag, error) {
 		return Tag{}, fmt.Errorf("tag %q: %w", id, ErrNotFound)
 	}
 	tag, err := scanTag(tx.QueryRow(`
-		SELECT t.id, t.name, COUNT(nt.node_id)
+		SELECT t.id, t.name, t.revision, COUNT(nt.node_id)
 		FROM tags t LEFT JOIN node_tags nt ON nt.tag_id = t.id
-		WHERE t.id = ? GROUP BY t.id, t.name`, id))
+		WHERE t.id = ? GROUP BY t.id, t.name, t.revision`, id))
 	if err != nil {
 		return Tag{}, fmt.Errorf("tag %q: %w", id, err)
 	}
 	return tag, nil
+}
+
+func checkTagRevision(tag Tag, expected int64) error {
+	if expected != UnconditionalRev && tag.Revision != expected {
+		return fmt.Errorf("tag %s revision is %d, expected %d: %w",
+			tag.ID, tag.Revision, expected, ErrStaleRevision)
+	}
+	return nil
 }
 
 func touchTaggedNodesTx(tx *sql.Tx, tagID, timestamp string) error {

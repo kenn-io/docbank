@@ -84,6 +84,8 @@ func TestOpenAPIDeclaresTagMutationPreconditions(t *testing.T) {
 	for _, operation := range []*huma.Operation{
 		doc.Paths["/api/v1/nodes/{id}/tags/{tag_id}"].Put,
 		doc.Paths["/api/v1/nodes/{id}/tags/{tag_id}"].Delete,
+		doc.Paths["/api/v1/tags/{tag_id}"].Patch,
+		doc.Paths["/api/v1/tags/{tag_id}"].Delete,
 	} {
 		require.NotNil(t, operation)
 		required := map[string]bool{}

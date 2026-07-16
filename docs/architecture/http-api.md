@@ -35,6 +35,8 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `GET /nodes/{id}/versions` | list immutable content versions newest-first, paginated (`limit`/`offset`) | Implemented |
 | `GET /versions/{version_id}` · `GET /versions/{version_id}/content` | inspect or stream one immutable version by stable UUID | Implemented |
 | `GET /content-references?sha256=&limit=&offset=` | find every stable node/version pair retaining a content hash | Implemented |
+| `GET\|POST /tags` · `GET /tags/by-name` · `GET\|PATCH\|DELETE /tags/{tag_id}` | list, resolve, create, rename, or delete stable tag definitions | Implemented |
+| `GET /nodes/{id}/tags` · `GET /tags/{tag_id}/nodes` · `PUT\|DELETE /nodes/{id}/tags/{tag_id}` · `PUT\|DELETE /path/tags/{tag_id}` | inspect and change tag assignments | Implemented |
 | `POST /nodes/{id}/verify` | re-hash one file, bound to an inspected node revision | Implemented |
 | `GET /search?q=&limit=` | bounded name search (FTS5), with explicit `truncated` status | Implemented |
 | `POST /nodes` | create a directory (`kind: "dir"`) | Implemented |
@@ -102,7 +104,7 @@ encoding instead. The path must be absolute (leading `/`); `?path=/`
 resolves the root. The server applies the store's existing NFC name
 normalization and validation and returns `422` for an invalid path.
 
-## Concurrency: per-node revisions, `If-Match`
+## Concurrency: resource revisions and `If-Match`
 
 Every node carries a `revision` that bumps on each mutation (directories
 bump when their contents change). The granularity is deliberate: a
@@ -111,6 +113,11 @@ anything anywhere changed, while per-node revisions scope conflicts to
 actual contention. SQLite already serializes the writes — preconditions
 exist to catch **lost updates across an agent's read-modify-write
 turns**, not to lock.
+
+Every tag definition likewise carries a `revision`. It advances when its name
+or assignment set changes, so a client cannot rename over a concurrent rename
+or delete assignments it did not inspect. Single-tag responses carry an ETag
+matching this revision.
 
 `If-Match` is required where a mutation targets one existing node that
 the caller read in an earlier request; path mutations, bulk operations,
@@ -124,6 +131,8 @@ and maintenance are explicit exceptions:
 | `POST /nodes/{id}/trash` | required — target node's revision |
 | `POST /nodes/{id}/restore` | required — target node's revision |
 | `POST /nodes/{id}/verify` | required — binds the evidence to the exact node state the caller inspected |
+| `PATCH /tags/{tag_id}`, `DELETE /tags/{tag_id}` | required — tag definition/assignment-set revision |
+| `PUT\|DELETE /nodes/{id}/tags/{tag_id}` | required — target node revision; the tag revision also advances on a real assignment change |
 | `POST /path/move`, `POST /path/trash` | none — the path is resolved and mutated inside one store transaction, so there is no separate read for a revision to guard |
 | `POST /nodes` (create dir) | none — creation has no prior revision; a name collision is `409` |
 | `POST /ingest` · `POST /ingest/stream` | none — long-running bulk operations with per-path partial success; the destination directory may legitimately change while they run |
@@ -327,19 +336,22 @@ A stale target returns `412 stale_revision`. A source from another node returns
 
 ## Addendum: tags
 
-Tag definitions use stable server-generated UUIDv4 identities and mutable,
-unique NFC-normalized names. `POST /tags`, `GET /tags`, `GET /tags/by-name`,
+Tag definitions use stable server-generated UUIDv4 identities, mutable,
+unique NFC-normalized names, and a revision covering both the definition and
+its assignment set. `POST /tags`, `GET /tags`, `GET /tags/by-name`,
 and `GET|PATCH|DELETE /tags/{tag_id}` expose definition lifecycle. `GET
 /nodes/{id}/tags` and `GET /tags/{tag_id}/nodes` provide bounded forward and
 reverse listings; reverse results include a path only for live nodes.
 
 `PUT|DELETE /nodes/{id}/tags/{tag_id}` assign and unassign under the required
 node `If-Match` revision. Their receipt contains the resulting node and tag,
-`changed`, and the resulting ETag. Repeating the requested state returns
-`changed: false` without advancing the revision. A real assignment change
-advances the node once. Renaming or deleting a shared definition advances each
-assigned node once in the same metadata transaction; deletion removes
-assignments but never nodes or document bytes.
+`changed`, and the resulting node ETag. Repeating the requested state returns
+`changed: false` without advancing either revision. A real assignment change
+advances the node and tag once. Single-tag definition responses carry the tag
+ETag; `PATCH|DELETE /tags/{tag_id}` require that ETag in `If-Match`. Renaming
+advances the tag and every assigned node; deleting checks the current tag
+revision before removing the complete assignment set and advancing each
+assigned node. Deletion never removes nodes or document bytes.
 
 Path-oriented clients use `PUT|DELETE /path/tags/{tag_id}` with `{"path":"/..."}`.
 The store resolves that live path and changes the assignment in one SQLite

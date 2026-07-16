@@ -12,10 +12,16 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-type tagOutput struct{ Body Tag }
+type tagOutput struct {
+	ETag string `header:"ETag"`
+	Body Tag
+}
 type tagPageOutput struct{ Body TagPage }
 type taggedNodePageOutput struct{ Body TaggedNodePage }
-type tagDeletionOutput struct{ Body TagDeletionReceipt }
+type tagDeletionOutput struct {
+	ETag string `header:"ETag"`
+	Body TagDeletionReceipt
+}
 type tagAssignmentOutput struct {
 	ETag string `header:"ETag"`
 	Body TagAssignmentReceipt
@@ -46,7 +52,7 @@ func registerTagRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		return &tagOutput{Body: fromStoreTag(tag)}, nil
+		return tagResult(tag), nil
 	})
 
 	huma.Register(api, huma.Operation{
@@ -59,7 +65,7 @@ func registerTagRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		return &tagOutput{Body: fromStoreTag(tag)}, nil
+		return tagResult(tag), nil
 	})
 
 	huma.Register(api, huma.Operation{
@@ -115,7 +121,7 @@ func registerTagRoutes(api huma.API, d Deps, g *gate) {
 			if err != nil {
 				return FromStoreError(err)
 			}
-			out = &tagOutput{Body: fromStoreTag(tag)}
+			out = tagResult(tag)
 			return nil
 		})
 		return out, err
@@ -125,42 +131,57 @@ func registerTagRoutes(api huma.API, d Deps, g *gate) {
 		OperationID: "renameTag", Method: http.MethodPatch, Path: "/api/v1/tags/{tag_id}",
 		Summary: "Rename a tag without changing its stable ID",
 	}, func(ctx context.Context, in *struct {
-		TagID string `path:"tag_id"`
-		Body  struct {
+		TagID   string `path:"tag_id"`
+		IfMatch string `header:"If-Match"`
+		Body    struct {
 			Name string `json:"name" minLength:"1"`
 		}
 	}) (*tagOutput, error) {
+		revision, err := parseIfMatch(in.IfMatch)
+		if err != nil {
+			return nil, err
+		}
 		var out *tagOutput
-		err := g.mutate(func() error {
-			tag, err := d.Store.RenameTag(ctx, in.TagID, in.Body.Name)
+		err = g.mutate(func() error {
+			tag, err := d.Store.RenameTag(ctx, in.TagID, revision, in.Body.Name)
 			if err != nil {
 				return FromStoreError(err)
 			}
-			out = &tagOutput{Body: fromStoreTag(tag)}
+			out = tagResult(tag)
 			return nil
 		})
 		return out, err
 	})
+	markDocumentedHeaderRequired(api, "/api/v1/tags/{tag_id}", http.MethodPatch, "If-Match")
 
 	huma.Register(api, huma.Operation{
 		OperationID: "deleteTag", Method: http.MethodDelete, Path: "/api/v1/tags/{tag_id}",
 		Summary: "Delete a tag definition and all assignments",
 	}, func(ctx context.Context, in *struct {
-		TagID string `path:"tag_id"`
+		TagID   string `path:"tag_id"`
+		IfMatch string `header:"If-Match"`
 	}) (*tagDeletionOutput, error) {
+		revision, err := parseIfMatch(in.IfMatch)
+		if err != nil {
+			return nil, err
+		}
 		var out *tagDeletionOutput
-		err := g.mutate(func() error {
-			tag, err := d.Store.DeleteTag(ctx, in.TagID)
+		err = g.mutate(func() error {
+			tag, err := d.Store.DeleteTag(ctx, in.TagID, revision)
 			if err != nil {
 				return FromStoreError(err)
 			}
-			out = &tagDeletionOutput{Body: TagDeletionReceipt{
-				Tag: fromStoreTag(tag), RemovedAssignments: tag.AssignmentCount,
-			}}
+			out = &tagDeletionOutput{
+				ETag: tagETag(tag),
+				Body: TagDeletionReceipt{
+					Tag: fromStoreTag(tag), RemovedAssignments: tag.AssignmentCount,
+				},
+			}
 			return nil
 		})
 		return out, err
 	})
+	markDocumentedHeaderRequired(api, "/api/v1/tags/{tag_id}", http.MethodDelete, "If-Match")
 
 	registerTagAssignmentRoute(api, d, g, http.MethodPut, true)
 	registerTagAssignmentRoute(api, d, g, http.MethodDelete, false)
@@ -253,6 +274,14 @@ func tagAssignmentResult(change store.TagAssignmentChange) *tagAssignmentOutput 
 	}
 }
 
+func tagResult(tag store.Tag) *tagOutput {
+	return &tagOutput{ETag: tagETag(tag), Body: fromStoreTag(tag)}
+}
+
+func tagETag(tag store.Tag) string {
+	return fmt.Sprintf("%q", strconv.FormatInt(tag.Revision, 10))
+}
+
 // markDocumentedHeaderRequired keeps Huma's runtime parser permissive enough
 // for parseIfMatch to return Docbank's structured 428 response while making
 // the actual wire requirement unambiguous to generated clients.
@@ -262,10 +291,12 @@ func markDocumentedHeaderRequired(api huma.API, path, method, header string) {
 	switch method {
 	case http.MethodPut:
 		operation = item.Put
+	case http.MethodPatch:
+		operation = item.Patch
 	case http.MethodDelete:
 		operation = item.Delete
 	default:
-		panic("unsupported documented tag assignment method " + method)
+		panic("unsupported documented header method " + method)
 	}
 	for index, parameter := range operation.Parameters {
 		if parameter.In == "header" && parameter.Name == header {
@@ -275,7 +306,7 @@ func markDocumentedHeaderRequired(api huma.API, path, method, header string) {
 			return
 		}
 	}
-	panic("tag assignment route lacks documented header " + header)
+	panic("route lacks documented header " + header)
 }
 
 func tagPage(tags []store.Tag, total, limit, offset int) *tagPageOutput {

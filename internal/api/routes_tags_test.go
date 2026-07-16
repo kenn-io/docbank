@@ -25,7 +25,9 @@ func TestTagLifecycleHTTP(t *testing.T) {
 	var tag api.Tag
 	require.NoError(t, json.Unmarshal([]byte(body), &tag))
 	assert.Equal(t, "taxes", tag.Name)
+	assert.Equal(t, int64(1), tag.Revision)
 	assert.Regexp(t, `^[0-9a-f-]{36}$`, tag.ID)
+	assert.Equal(t, `"1"`, resp.Header.Get("ETag"))
 
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/tags", nil,
 		map[string]any{"name": "taxes"})
@@ -37,6 +39,7 @@ func TestTagLifecycleHTTP(t *testing.T) {
 	var resolved api.Tag
 	require.NoError(t, json.Unmarshal([]byte(body), &resolved))
 	assert.Equal(t, tag.ID, resolved.ID)
+	assert.Equal(t, `"1"`, resp.Header.Get("ETag"))
 
 	assignmentPath := fmt.Sprintf("/api/v1/nodes/%d/tags/%s", node.ID, tag.ID)
 	resp, body = do(t, ts, http.MethodPut, assignmentPath, nil, nil)
@@ -50,6 +53,7 @@ func TestTagLifecycleHTTP(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &assigned))
 	assert.True(t, assigned.Changed)
 	assert.Equal(t, 1, assigned.Tag.AssignmentCount)
+	assert.Equal(t, int64(2), assigned.Tag.Revision)
 	assert.Equal(t, int64(2), assigned.Node.Revision)
 	assert.Equal(t, "/records", assigned.Node.Path)
 	assert.Equal(t, `"2"`, resp.Header.Get("ETag"))
@@ -81,19 +85,33 @@ func TestTagLifecycleHTTP(t *testing.T) {
 
 	resp, body = do(t, ts, http.MethodPatch, "/api/v1/tags/"+tag.ID, nil,
 		map[string]any{"name": "tax records"})
+	assert.Equal(t, http.StatusPreconditionRequired, resp.StatusCode)
+	assert.Contains(t, body, `"code":"precondition_required"`)
+
+	resp, body = do(t, ts, http.MethodPatch, "/api/v1/tags/"+tag.ID,
+		map[string]string{"If-Match": `"2"`}, map[string]any{"name": "tax records"})
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	require.NoError(t, json.Unmarshal([]byte(body), &tag))
 	assert.Equal(t, "tax records", tag.Name)
+	assert.Equal(t, int64(3), tag.Revision)
+	assert.Equal(t, `"3"`, resp.Header.Get("ETag"))
 	afterRename, err := s.NodeByID(t.Context(), node.ID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), afterRename.Revision)
 
 	resp, body = do(t, ts, http.MethodDelete, "/api/v1/tags/"+tag.ID, nil, nil)
+	assert.Equal(t, http.StatusPreconditionRequired, resp.StatusCode)
+	assert.Contains(t, body, `"code":"precondition_required"`)
+
+	resp, body = do(t, ts, http.MethodDelete, "/api/v1/tags/"+tag.ID,
+		map[string]string{"If-Match": `"3"`}, nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	var deleted api.TagDeletionReceipt
 	require.NoError(t, json.Unmarshal([]byte(body), &deleted))
 	assert.Equal(t, tag.ID, deleted.Tag.ID)
 	assert.Equal(t, 1, deleted.RemovedAssignments)
+	assert.Equal(t, int64(3), deleted.Tag.Revision)
+	assert.Equal(t, `"3"`, resp.Header.Get("ETag"))
 	afterDelete, err := s.NodeByID(t.Context(), node.ID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(4), afterDelete.Revision)
@@ -117,6 +135,23 @@ func TestTagAssignmentRejectsStaleRevisionAndInvalidName(t *testing.T) {
 		map[string]string{"If-Match": strconv.Quote("99")}, nil)
 	assert.Equal(t, http.StatusPreconditionFailed, resp.StatusCode)
 	assert.Contains(t, body, `"code":"stale_revision"`)
+	resp, body = do(t, ts, http.MethodPut, path,
+		map[string]string{"If-Match": strconv.Quote(strconv.FormatInt(node.Revision, 10))}, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+
+	resp, body = do(t, ts, http.MethodPatch, "/api/v1/tags/"+tag.ID,
+		map[string]string{"If-Match": `"1"`}, map[string]any{"name": "renamed"})
+	assert.Equal(t, http.StatusPreconditionFailed, resp.StatusCode)
+	assert.Contains(t, body, `"code":"stale_revision"`)
+	resp, body = do(t, ts, http.MethodDelete, "/api/v1/tags/"+tag.ID,
+		map[string]string{"If-Match": `"1"`}, nil)
+	assert.Equal(t, http.StatusPreconditionFailed, resp.StatusCode)
+	assert.Contains(t, body, `"code":"stale_revision"`)
+	current, err := s.TagByID(t.Context(), tag.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "tag", current.Name)
+	assert.Equal(t, int64(2), current.Revision)
+	assert.Equal(t, 1, current.AssignmentCount)
 
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/tags", nil,
 		map[string]any{"name": "bad\x00tag"})
