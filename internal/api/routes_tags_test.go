@@ -123,3 +123,48 @@ func TestTagAssignmentRejectsStaleRevisionAndInvalidName(t *testing.T) {
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 	assert.Contains(t, body, `"code":"invalid_tag"`)
 }
+
+func TestTagPathAssignmentUsesCurrentTopology(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	left, err := s.Mkdir(t.Context(), s.RootID(), "left")
+	require.NoError(t, err)
+	right, err := s.Mkdir(t.Context(), s.RootID(), "right")
+	require.NoError(t, err)
+	leaf, err := s.Mkdir(t.Context(), left.ID, "leaf")
+	require.NoError(t, err)
+	tag, err := s.CreateTag(t.Context(), "topology")
+	require.NoError(t, err)
+	left, err = s.NodeByID(t.Context(), left.ID)
+	require.NoError(t, err)
+	_, err = s.Move(t.Context(), left.ID, right.ID, "moved", left.Revision)
+	require.NoError(t, err)
+
+	path := "/api/v1/path/tags/" + tag.ID
+	resp, body := do(t, ts, http.MethodPut, path, nil,
+		map[string]any{"path": "/left/leaf"})
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Contains(t, body, `"code":"not_found"`)
+
+	resp, body = do(t, ts, http.MethodPut, path, nil,
+		map[string]any{"path": "/right/moved/leaf"})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var assigned api.TagAssignmentReceipt
+	require.NoError(t, json.Unmarshal([]byte(body), &assigned))
+	assert.Equal(t, leaf.ID, assigned.Node.ID)
+	assert.Equal(t, "/right/moved/leaf", assigned.Node.Path)
+	assert.True(t, assigned.Changed)
+	assert.Equal(t, `"2"`, resp.Header.Get("ETag"))
+
+	resp, body = do(t, ts, http.MethodDelete, path, nil,
+		map[string]any{"path": "/right/moved/leaf"})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &assigned))
+	assert.Equal(t, leaf.ID, assigned.Node.ID)
+	assert.Equal(t, "/right/moved/leaf", assigned.Node.Path)
+	assert.True(t, assigned.Changed)
+
+	resp, body = do(t, ts, http.MethodPut, path, nil,
+		map[string]any{"path": "right/moved/leaf"})
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+	assert.Contains(t, body, `"code":"validation"`)
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -163,6 +164,8 @@ func registerTagRoutes(api huma.API, d Deps, g *gate) {
 
 	registerTagAssignmentRoute(api, d, g, http.MethodPut, true)
 	registerTagAssignmentRoute(api, d, g, http.MethodDelete, false)
+	registerTagPathAssignmentRoute(api, d, g, http.MethodPut, true)
+	registerTagPathAssignmentRoute(api, d, g, http.MethodDelete, false)
 }
 
 func registerTagAssignmentRoute(api huma.API, d Deps, g *gate, method string, assign bool) {
@@ -194,19 +197,60 @@ func registerTagAssignmentRoute(api huma.API, d Deps, g *gate, method string, as
 			if err != nil {
 				return FromStoreError(err)
 			}
-			wireNode := fromStoreNode(change.Node)
-			wireNode.Path = change.Path
-			out = &tagAssignmentOutput{
-				ETag: fmt.Sprintf("%q", strconv.FormatInt(change.Node.Revision, 10)),
-				Body: TagAssignmentReceipt{
-					Tag: fromStoreTag(change.Tag), Node: wireNode, Changed: change.Changed,
-				},
-			}
+			out = tagAssignmentResult(change)
 			return nil
 		})
 		return out, err
 	})
 	markDocumentedHeaderRequired(api, path, method, "If-Match")
+}
+
+func registerTagPathAssignmentRoute(api huma.API, d Deps, g *gate, method string, assign bool) {
+	operationID, summary := "unassignTagPath", "Remove a tag from a transactionally resolved path"
+	if assign {
+		operationID, summary = "assignTagPath", "Assign a tag to a transactionally resolved path"
+	}
+	huma.Register(api, huma.Operation{
+		OperationID: operationID, Method: method, Path: "/api/v1/path/tags/{tag_id}",
+		Summary: summary,
+	}, func(ctx context.Context, in *struct {
+		TagID string `path:"tag_id"`
+		Body  struct {
+			Path string `json:"path" minLength:"1" example:"/records/report.pdf"`
+		}
+	}) (*tagAssignmentOutput, error) {
+		if !strings.HasPrefix(in.Body.Path, "/") {
+			return nil, NewError(http.StatusUnprocessableEntity, "validation",
+				fmt.Sprintf("path %q must be absolute (start with /)", in.Body.Path))
+		}
+		var out *tagAssignmentOutput
+		err := g.mutate(func() error {
+			var change store.TagAssignmentChange
+			var err error
+			if assign {
+				change, err = d.Store.AssignTagPath(ctx, in.TagID, in.Body.Path)
+			} else {
+				change, err = d.Store.UnassignTagPath(ctx, in.TagID, in.Body.Path)
+			}
+			if err != nil {
+				return FromStoreError(err)
+			}
+			out = tagAssignmentResult(change)
+			return nil
+		})
+		return out, err
+	})
+}
+
+func tagAssignmentResult(change store.TagAssignmentChange) *tagAssignmentOutput {
+	wireNode := fromStoreNode(change.Node)
+	wireNode.Path = change.Path
+	return &tagAssignmentOutput{
+		ETag: fmt.Sprintf("%q", strconv.FormatInt(change.Node.Revision, 10)),
+		Body: TagAssignmentReceipt{
+			Tag: fromStoreTag(change.Tag), Node: wireNode, Changed: change.Changed,
+		},
+	}
 }
 
 // markDocumentedHeaderRequired keeps Huma's runtime parser permissive enough

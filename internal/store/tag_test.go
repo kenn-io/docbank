@@ -155,6 +155,42 @@ func TestTaggedNodesReturnsRootPath(t *testing.T) {
 	assert.Equal(t, "/", nodes[0].Path)
 }
 
+func TestTagAssignmentPathUsesCurrentTopology(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	left, err := s.Mkdir(ctx, s.RootID(), "left")
+	require.NoError(t, err)
+	right, err := s.Mkdir(ctx, s.RootID(), "right")
+	require.NoError(t, err)
+	leaf, err := s.Mkdir(ctx, left.ID, "leaf")
+	require.NoError(t, err)
+	tag, err := s.CreateTag(ctx, "topology")
+	require.NoError(t, err)
+
+	left, err = s.NodeByID(ctx, left.ID)
+	require.NoError(t, err)
+	_, err = s.Move(ctx, left.ID, right.ID, "moved", left.Revision)
+	require.NoError(t, err)
+	unchangedLeaf, err := s.NodeByID(ctx, leaf.ID)
+	require.NoError(t, err)
+	assert.Equal(t, leaf.Revision, unchangedLeaf.Revision,
+		"moving an ancestor must not be mistaken for a descendant revision change")
+
+	_, err = s.AssignTagPath(ctx, tag.ID, "/left/leaf")
+	require.ErrorIs(t, err, ErrNotFound)
+	change, err := s.AssignTagPath(ctx, tag.ID, "/right/moved/leaf")
+	require.NoError(t, err)
+	assert.Equal(t, leaf.ID, change.Node.ID)
+	assert.Equal(t, "/right/moved/leaf", change.Path)
+	assert.True(t, change.Changed)
+
+	change, err = s.UnassignTagPath(ctx, tag.ID, "/right/moved/leaf")
+	require.NoError(t, err)
+	assert.Equal(t, leaf.ID, change.Node.ID)
+	assert.Equal(t, "/right/moved/leaf", change.Path)
+	assert.True(t, change.Changed)
+}
+
 func TestTagNameValidation(t *testing.T) {
 	for name, input := range map[string]string{
 		"empty":        "",

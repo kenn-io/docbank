@@ -219,6 +219,13 @@ func (s *Store) AssignTag(
 	return s.changeTagAssignment(ctx, tagID, nodeID, ifRev, true)
 }
 
+// AssignTagPath resolves a live path and assigns a tag in the same transaction.
+func (s *Store) AssignTagPath(
+	ctx context.Context, tagID, path string,
+) (TagAssignmentChange, error) {
+	return s.changeTagAssignmentPath(ctx, tagID, path, true)
+}
+
 // UnassignTag removes a tag from a node under an optimistic revision check.
 // Repeating an absent assignment is an idempotent no-op only when ifRev still
 // matches the current node revision.
@@ -228,69 +235,114 @@ func (s *Store) UnassignTag(
 	return s.changeTagAssignment(ctx, tagID, nodeID, ifRev, false)
 }
 
+// UnassignTagPath resolves a live path and removes a tag in the same transaction.
+func (s *Store) UnassignTagPath(
+	ctx context.Context, tagID, path string,
+) (TagAssignmentChange, error) {
+	return s.changeTagAssignmentPath(ctx, tagID, path, false)
+}
+
 func (s *Store) changeTagAssignment(
 	ctx context.Context, tagID string, nodeID, ifRev int64, assign bool,
 ) (TagAssignmentChange, error) {
-	var (
-		result TagAssignmentChange
-		node   Node
-		tag    Tag
-	)
+	var result TagAssignmentChange
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		var err error
-		tag, err = tagByIDTx(tx, tagID)
+		node, err := nodeByIDTx(tx, nodeID)
 		if err != nil {
 			return err
 		}
-		node, err = nodeByIDTx(tx, nodeID)
-		if err != nil {
-			return err
-		}
-		if ifRev != UnconditionalRev && node.Revision != ifRev {
-			return fmt.Errorf("node %d revision is %d, expected %d: %w",
-				nodeID, node.Revision, ifRev, ErrStaleRevision)
-		}
-		var present int
-		if err := tx.QueryRow(
-			`SELECT COUNT(*) FROM node_tags WHERE node_id = ? AND tag_id = ?`, nodeID, tagID,
-		).Scan(&present); err != nil {
-			return fmt.Errorf("checking tag %s assignment to node %d: %w", tagID, nodeID, err)
-		}
-		result.Changed = (present == 0) == assign
-		if result.Changed {
-			if assign {
-				if _, err := tx.Exec(`INSERT INTO node_tags(node_id, tag_id) VALUES(?, ?)`, nodeID, tagID); err != nil {
-					return fmt.Errorf("assigning tag %s to node %d: %w", tagID, nodeID, err)
-				}
-				tag.AssignmentCount++
-			} else {
-				if _, err := tx.Exec(`DELETE FROM node_tags WHERE node_id = ? AND tag_id = ?`, nodeID, tagID); err != nil {
-					return fmt.Errorf("unassigning tag %s from node %d: %w", tagID, nodeID, err)
-				}
-				tag.AssignmentCount--
-			}
-			now := nowRFC3339()
-			if _, err := tx.Exec(
-				`UPDATE nodes SET revision = revision + 1, modified_at = ? WHERE id = ?`, now, nodeID,
-			); err != nil {
-				return fmt.Errorf("advancing node %d after tag assignment change: %w", nodeID, err)
-			}
-			node, err = nodeByIDTx(tx, nodeID)
-			if err != nil {
-				return err
-			}
-		}
-		result.Node, result.Tag = node, tag
-		if node.TrashedAt == nil {
-			result.Path, err = pathOf(ctx, tx, nodeID)
-			if err != nil {
-				return err
-			}
-		}
-		return nil
+		result, err = changeTagAssignmentTx(ctx, tx, tagID, node, ifRev, assign)
+		return err
 	})
 	if err != nil {
 		return TagAssignmentChange{}, err
+	}
+	return result, nil
+}
+
+func (s *Store) changeTagAssignmentPath(
+	ctx context.Context, tagID, path string, assign bool,
+) (TagAssignmentChange, error) {
+	var result TagAssignmentChange
+	err := s.withTx(ctx, func(tx *sql.Tx) error {
+		node, err := nodeByPath(ctx, tx, s.rootID, path)
+		if err != nil {
+			return err
+		}
+		result, err = changeTagAssignmentTx(
+			ctx, tx, tagID, node, UnconditionalRev, assign,
+		)
+		return err
+	})
+	if err != nil {
+		return TagAssignmentChange{}, err
+	}
+	return result, nil
+}
+
+func changeTagAssignmentTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	tagID string,
+	node Node,
+	ifRev int64,
+	assign bool,
+) (TagAssignmentChange, error) {
+	tag, err := tagByIDTx(tx, tagID)
+	if err != nil {
+		return TagAssignmentChange{}, err
+	}
+	if ifRev != UnconditionalRev && node.Revision != ifRev {
+		return TagAssignmentChange{}, fmt.Errorf("node %d revision is %d, expected %d: %w",
+			node.ID, node.Revision, ifRev, ErrStaleRevision)
+	}
+	var present int
+	if err := tx.QueryRow(
+		`SELECT COUNT(*) FROM node_tags WHERE node_id = ? AND tag_id = ?`, node.ID, tagID,
+	).Scan(&present); err != nil {
+		return TagAssignmentChange{}, fmt.Errorf(
+			"checking tag %s assignment to node %d: %w", tagID, node.ID, err,
+		)
+	}
+	result := TagAssignmentChange{Node: node, Tag: tag, Changed: (present == 0) == assign}
+	if result.Changed {
+		if assign {
+			if _, err := tx.Exec(
+				`INSERT INTO node_tags(node_id, tag_id) VALUES(?, ?)`, node.ID, tagID,
+			); err != nil {
+				return TagAssignmentChange{}, fmt.Errorf(
+					"assigning tag %s to node %d: %w", tagID, node.ID, err,
+				)
+			}
+			result.Tag.AssignmentCount++
+		} else {
+			if _, err := tx.Exec(
+				`DELETE FROM node_tags WHERE node_id = ? AND tag_id = ?`, node.ID, tagID,
+			); err != nil {
+				return TagAssignmentChange{}, fmt.Errorf(
+					"unassigning tag %s from node %d: %w", tagID, node.ID, err,
+				)
+			}
+			result.Tag.AssignmentCount--
+		}
+		if _, err := tx.Exec(
+			`UPDATE nodes SET revision = revision + 1, modified_at = ? WHERE id = ?`,
+			nowRFC3339(), node.ID,
+		); err != nil {
+			return TagAssignmentChange{}, fmt.Errorf(
+				"advancing node %d after tag assignment change: %w", node.ID, err,
+			)
+		}
+		result.Node, err = nodeByIDTx(tx, node.ID)
+		if err != nil {
+			return TagAssignmentChange{}, err
+		}
+	}
+	if result.Node.TrashedAt == nil {
+		result.Path, err = pathOf(ctx, tx, node.ID)
+		if err != nil {
+			return TagAssignmentChange{}, err
+		}
 	}
 	return result, nil
 }

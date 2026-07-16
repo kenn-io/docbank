@@ -588,6 +588,22 @@ func (c *Client) UnassignTag(
 	return c.changeTagAssignment(ctx, http.MethodDelete, tagID, nodeID, revision)
 }
 
+// AssignTagPath resolves a live virtual path and assigns tagID in one daemon
+// transaction, so ancestor moves cannot retarget the operation between calls.
+func (c *Client) AssignTagPath(
+	ctx context.Context, tagID, path string,
+) (api.TagAssignmentReceipt, error) {
+	return c.changeTagAssignmentPath(ctx, http.MethodPut, tagID, path)
+}
+
+// UnassignTagPath resolves a live virtual path and removes tagID in one daemon
+// transaction, so ancestor moves cannot retarget the operation between calls.
+func (c *Client) UnassignTagPath(
+	ctx context.Context, tagID, path string,
+) (api.TagAssignmentReceipt, error) {
+	return c.changeTagAssignmentPath(ctx, http.MethodDelete, tagID, path)
+}
+
 func (c *Client) changeTagAssignment(
 	ctx context.Context, method, tagID string, nodeID, revision int64,
 ) (api.TagAssignmentReceipt, error) {
@@ -602,31 +618,101 @@ func (c *Client) changeTagAssignment(
 		return receipt, errors.New("tagged node revision must not be negative")
 	}
 	path := fmt.Sprintf("/api/v1/nodes/%d/tags/%s", nodeID, url.PathEscape(tagID))
-	req, err := http.NewRequestWithContext(ctx, method, c.base+path, nil)
+	receipt, etag, err := c.doTagAssignment(
+		ctx, method, path, ifMatch(revision), nil,
+	)
 	if err != nil {
-		return receipt, fmt.Errorf("building tag assignment request: %w", err)
+		return receipt, err
 	}
-	req.Header.Set("If-Match", fmt.Sprintf("%q", strconv.FormatInt(revision, 10)))
+	if err := validateTagAssignmentReceipt(receipt, etag, tagID); err != nil {
+		return api.TagAssignmentReceipt{}, err
+	}
+	if receipt.Node.ID != nodeID {
+		return api.TagAssignmentReceipt{}, errors.New(
+			"tag assignment response has inconsistent node identity",
+		)
+	}
+	wantRevision := revision
+	if receipt.Changed {
+		wantRevision++
+	}
+	if receipt.Node.Revision != wantRevision {
+		return api.TagAssignmentReceipt{}, fmt.Errorf(
+			"tag assignment response revision %d, expected %d",
+			receipt.Node.Revision, wantRevision,
+		)
+	}
+	return receipt, nil
+}
+
+func (c *Client) changeTagAssignmentPath(
+	ctx context.Context, method, tagID, path string,
+) (api.TagAssignmentReceipt, error) {
+	var receipt api.TagAssignmentReceipt
+	if !validUUIDv4(tagID) {
+		return receipt, errors.New("tag ID must be a canonical UUIDv4")
+	}
+	if !strings.HasPrefix(path, "/") {
+		return receipt, errors.New("tag assignment path must be absolute")
+	}
+	requestPath := "/api/v1/path/tags/" + url.PathEscape(tagID)
+	receipt, etag, err := c.doTagAssignment(
+		ctx, method, requestPath, nil, map[string]string{"path": path},
+	)
+	if err != nil {
+		return receipt, err
+	}
+	if err := validateTagAssignmentReceipt(receipt, etag, tagID); err != nil {
+		return api.TagAssignmentReceipt{}, err
+	}
+	if receipt.Node.TrashedAt != "" {
+		return api.TagAssignmentReceipt{}, errors.New(
+			"path tag assignment returned a trashed node",
+		)
+	}
+	return receipt, nil
+}
+
+func (c *Client) doTagAssignment(
+	ctx context.Context,
+	method, path string,
+	headers map[string]string,
+	in any,
+) (api.TagAssignmentReceipt, string, error) {
+	var receipt api.TagAssignmentReceipt
+	var body io.Reader
+	if in != nil {
+		encoded, err := marshalJSONRequest(in)
+		if err != nil {
+			return receipt, "", fmt.Errorf("encoding tag assignment request: %w", err)
+		}
+		body = bytes.NewReader(encoded)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.base+path, body)
+	if err != nil {
+		return receipt, "", fmt.Errorf("building tag assignment request: %w", err)
+	}
+	if in != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	if c.key != "" {
 		req.Header.Set("X-Api-Key", c.key)
 	}
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return receipt, fmt.Errorf("changing tag assignment for node %d: %w", nodeID, err)
+		return receipt, "", fmt.Errorf("changing tag assignment: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return receipt, decodeError(resp)
+		return receipt, "", decodeError(resp)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&receipt); err != nil {
-		return receipt, fmt.Errorf("decoding tag assignment response: %w", err)
+		return receipt, "", fmt.Errorf("decoding tag assignment response: %w", err)
 	}
-	if err := validateTagAssignmentReceipt(
-		receipt, resp.Header.Get("ETag"), tagID, nodeID, revision,
-	); err != nil {
-		return api.TagAssignmentReceipt{}, err
-	}
-	return receipt, nil
+	return receipt, resp.Header.Get("ETag"), nil
 }
 
 func validateTag(tag api.Tag) error {
@@ -687,23 +773,19 @@ func validateTaggedNodePage(page api.TaggedNodePage, limit, offset int) error {
 }
 
 func validateTagAssignmentReceipt(
-	receipt api.TagAssignmentReceipt, etag, tagID string, nodeID, revision int64,
+	receipt api.TagAssignmentReceipt, etag, tagID string,
 ) error {
 	if err := validateTag(receipt.Tag); err != nil {
 		return err
 	}
-	if receipt.Tag.ID != tagID || receipt.Node.ID != nodeID {
+	if receipt.Tag.ID != tagID || receipt.Node.ID <= 0 || receipt.Node.Revision < 1 {
 		return errors.New("tag assignment response has inconsistent identities")
 	}
-	wantRevision := revision
-	if receipt.Changed {
-		wantRevision++
+	if (receipt.Node.TrashedAt == "" && !strings.HasPrefix(receipt.Node.Path, "/")) ||
+		(receipt.Node.TrashedAt != "" && receipt.Node.Path != "") {
+		return errors.New("tag assignment response has inconsistent path state")
 	}
-	if receipt.Node.Revision != wantRevision {
-		return fmt.Errorf("tag assignment response revision %d, expected %d",
-			receipt.Node.Revision, wantRevision)
-	}
-	wantETag := fmt.Sprintf("%q", strconv.FormatInt(wantRevision, 10))
+	wantETag := fmt.Sprintf("%q", strconv.FormatInt(receipt.Node.Revision, 10))
 	if etag != wantETag {
 		return fmt.Errorf("tag assignment response ETag %q, expected %q", etag, wantETag)
 	}

@@ -116,7 +116,7 @@ func TestTagRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, tag, byID)
 
-	receipt, err := c.AssignTag(ctx, tag.ID, node.ID, node.Revision)
+	receipt, err := c.AssignTagPath(ctx, tag.ID, "/records")
 	require.NoError(t, err)
 	assert.True(t, receipt.Changed)
 	assert.Equal(t, node.Revision+1, receipt.Node.Revision)
@@ -149,7 +149,7 @@ func TestTagRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), node.Revision)
 
-	receipt, err = c.UnassignTag(ctx, tag.ID, node.ID, node.Revision)
+	receipt, err = c.UnassignTagPath(ctx, tag.ID, "/records")
 	require.NoError(t, err)
 	assert.True(t, receipt.Changed)
 	assert.Zero(t, receipt.Tag.AssignmentCount)

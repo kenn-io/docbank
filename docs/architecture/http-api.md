@@ -341,6 +341,12 @@ advances the node once. Renaming or deleting a shared definition advances each
 assigned node once in the same metadata transaction; deletion removes
 assignments but never nodes or document bytes.
 
+Path-oriented clients use `PUT|DELETE /path/tags/{tag_id}` with `{"path":"/..."}`.
+The store resolves that live path and changes the assignment in one SQLite
+transaction. This is stronger than a separate path lookup followed by the
+ID-addressed endpoint: moving an ancestor changes a descendant's path without
+changing that descendant's revision.
+
 Ingest provenance is currently filesystem-shaped: each import records the
 source's original path and mtime in the store's `provenance` table. The path is
 a record, never node identity. Non-file origin fields and lookup by content

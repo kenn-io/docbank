@@ -244,15 +244,11 @@ func changeTagAssignmentCLI(
 	if err != nil {
 		return err
 	}
-	node, err := c.Stat(cmd.Context(), path)
-	if err != nil {
-		return fmt.Errorf("resolving %q: %w", path, err)
-	}
 	var receipt api.TagAssignmentReceipt
 	if assign {
-		receipt, err = c.AssignTag(cmd.Context(), tag.ID, node.ID, node.Revision)
+		receipt, err = c.AssignTagPath(cmd.Context(), tag.ID, path)
 	} else {
-		receipt, err = c.UnassignTag(cmd.Context(), tag.ID, node.ID, node.Revision)
+		receipt, err = c.UnassignTagPath(cmd.Context(), tag.ID, path)
 	}
 	if err != nil {
 		return err
@@ -273,7 +269,7 @@ func changeTagAssignmentCLI(
 		}
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s tag %q %s %s (revision %d)\n",
-		verb, receipt.Tag.Name, preposition, path, receipt.Node.Revision)
+		verb, receipt.Tag.Name, preposition, receipt.Node.Path, receipt.Node.Revision)
 	return nil
 }
 

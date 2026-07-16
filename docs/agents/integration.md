@@ -225,6 +225,13 @@ they have a live path. Rename and delete by UUID so a concurrent display-name
 change cannot retarget the operation. Deleting a tag removes assignments only,
 never nodes or document bytes.
 
+When the desired target is a path, send `{"path":"/records/report.pdf"}` to
+`PUT` or `DELETE /path/tags/{tag_id}`. Do not resolve the path with `GET /path`
+and then mutate by node ID: an ancestor can move without advancing the target
+node's revision. The path endpoint resolves and changes authority in one store
+transaction. Use the ID-addressed form only when the stable node ID itself is
+the intended authority.
+
 ## Follow backup progress without scraping a CLI
 
 Agents that create snapshots can use `POST

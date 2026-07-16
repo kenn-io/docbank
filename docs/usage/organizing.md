@@ -70,8 +70,10 @@ docbank tag rename taxes "tax archive"
 `tag delete`, `tag assign`, `tag unassign`, and `tag nodes` accept either the
 exact current name or stable tag UUID. Assignment and definition changes bump
 the affected nodes' revisions, so a concurrent stale decision fails rather
-than silently overwriting newer metadata. Repeating an existing assignment or
-missing unassignment is an idempotent no-op.
+than silently overwriting newer metadata. CLI assignment paths resolve in the
+same transaction as the change, so an ancestor move cannot make the command
+tag a node that has already left the requested path. Repeating an existing
+assignment or missing unassignment is an idempotent no-op.
 
 Deleting a tag removes its complete assignment set but never deletes a node or
 document content. Recreating the same name receives a new UUID. Trashed nodes

@@ -230,13 +230,13 @@ case-sensitive, mutable, and cannot contain control characters. Renaming never
 changes the tag ID. Deleting a tag removes all assignments but does not delete
 nodes or content; recreating the same name allocates a different ID.
 
-Assignment changes use the node revision observed immediately before the
-request. A concurrent mutation returns `stale_revision`. Repeated assignment
-and unassignment requests are idempotent and report `changed: false` without a
-revision bump. `tag nodes` includes live and trashed nodes, but omits a path for
-trash because it has no resolvable live coordinate. List commands return at
-most 1000 results per page and JSON output includes `total`, `limit`, and
-`offset`.
+Assignment commands resolve the supplied live path and update its tag inside
+one daemon/store transaction, so moving an ancestor cannot redirect the
+operation between separate requests. Repeated assignment and unassignment are
+idempotent and report `changed: false` without a revision bump. `tag nodes`
+includes live and trashed nodes, but omits a path for trash because it has no
+resolvable live coordinate. List commands return at most 1000 results per page
+and JSON output includes `total`, `limit`, and `offset`.
 
 ## docbank mv
 
