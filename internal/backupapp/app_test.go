@@ -497,3 +497,58 @@ func TestVersionedEditingRoundTripsPackedRevertSource(t *testing.T) {
 	require.NoError(t, restoredBlobs.Close())
 	require.NoError(t, restoredStore.Close())
 }
+
+func TestPrunedVersionHistoryRoundTripsWithoutResurrection(t *testing.T) {
+	fixture := newArchiveFixture(t)
+	alpha, err := fixture.metadata.NodeByPath(t.Context(), "/alpha.txt")
+	require.NoError(t, err)
+	prunedVersionID := alpha.CurrentVersionID
+	const replacement = "retained replacement"
+	var replaced store.Node
+	require.NoError(t, fixture.blobs.WithMutation(t.Context(), func() error {
+		hash, size, writeErr := fixture.blobs.WriteContext(t.Context(), strings.NewReader(replacement))
+		if writeErr != nil {
+			return writeErr
+		}
+		replaced, _, writeErr = fixture.metadata.ReplaceContent(
+			t.Context(), alpha.ID, alpha.Revision, hash, size, "text/plain",
+		)
+		return writeErr
+	}))
+	pruned, err := fixture.metadata.PruneContentVersions(t.Context(), alpha.ID, replaced.Revision,
+		store.VersionPruneSelector{AllPrior: true}, true)
+	require.NoError(t, err)
+	require.Equal(t, 1, pruned.DeletedVersions)
+	wantMetadata := exportMetadata(t, fixture.metadata)
+
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	manifest, err := backupapp.Create(
+		t.Context(), repo, "test-version", fixture.metadata, fixture.blobs,
+		backup.CreateOptions{Jobs: 2})
+	require.NoError(t, err)
+	stats, err := backupapp.ParseStats(manifest.Stats)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), stats.ContentVersions,
+		"backup metadata must contain only the retained heads")
+
+	target := filepath.Join(t.TempDir(), "restored")
+	_, err = backupapp.Restore(t.Context(), repo, "test-version", backup.RestoreOptions{
+		TargetDir: target, Jobs: 2,
+	})
+	require.NoError(t, err)
+	restoredStore, err := store.Open(filepath.Join(target, "docbank.db"))
+	require.NoError(t, err)
+	defer func() { require.NoError(t, restoredStore.Close()) }()
+	assert.Equal(t, string(wantMetadata), string(exportMetadata(t, restoredStore)))
+	_, err = restoredStore.ContentVersionByID(t.Context(), prunedVersionID)
+	require.ErrorIs(t, err, store.ErrNotFound,
+		"backup and restore must not resurrect released history")
+	restoredAlpha, err := restoredStore.NodeByPath(t.Context(), "/alpha.txt")
+	require.NoError(t, err)
+	versions, total, err := restoredStore.ContentVersions(t.Context(), restoredAlpha.ID, 10, 0)
+	require.NoError(t, err)
+	require.Equal(t, 1, total)
+	require.Len(t, versions, 1)
+	assert.Equal(t, replaced.CurrentVersionID, versions[0].ID)
+}

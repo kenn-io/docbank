@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -129,6 +130,7 @@ var codeToTypedErr = map[string]error{
 	"is_root":                  store.ErrIsRoot,
 	"version_node_mismatch":    store.ErrVersionNodeMismatch,
 	"version_already_current":  store.ErrVersionAlreadyCurrent,
+	"invalid_version_prune":    store.ErrInvalidVersionPrune,
 	"backup_locked":            backup.ErrRepoLocked,
 	"pack_retirement_deferred": packstore.ErrPackRetirementDeferred,
 }
@@ -292,6 +294,174 @@ func (c *Client) VersionContent(ctx context.Context, id string) (*ContentStream,
 		return nil, fmt.Errorf("content version %s returned version identity %s", id, stream.VersionID)
 	}
 	return stream, nil
+}
+
+// PruneContentVersions previews or executes one explicit version-history
+// selector under an optimistic node-revision precondition.
+func (c *Client) PruneContentVersions(
+	ctx context.Context, nodeID, revision int64, request api.VersionPruneRequest,
+) (api.VersionPruneReport, error) {
+	var report api.VersionPruneReport
+	if nodeID <= 0 {
+		return report, errors.New("version-prune node ID must be positive")
+	}
+	if revision < 1 {
+		return report, errors.New("version-prune revision must be positive")
+	}
+	if _, err := api.ParseVersionPruneRequest(request); err != nil {
+		return report, err
+	}
+	headers, err := c.doWithHeaders(ctx, http.MethodPost,
+		fmt.Sprintf("/api/v1/nodes/%d/versions/prune", nodeID), ifMatch(revision), request, &report)
+	if err != nil {
+		return api.VersionPruneReport{}, err
+	}
+	if err := validateVersionPruneReport(report, headers.Get("ETag"), nodeID, revision, request.Run); err != nil {
+		return api.VersionPruneReport{}, err
+	}
+	return report, nil
+}
+
+func validateVersionPruneReport(
+	report api.VersionPruneReport, etag string, nodeID, revision int64, run bool,
+) error {
+	if err := validateVersionPruneBinding(report, etag, nodeID, revision, run); err != nil {
+		return err
+	}
+	if err := validateVersionPruneCounts(report, run); err != nil {
+		return err
+	}
+	if err := validateVersionPruneVersions(report, nodeID, run); err != nil {
+		return err
+	}
+	return validateVersionPruneCheckpoint(report, nodeID, run)
+}
+
+func validateVersionPruneBinding(
+	report api.VersionPruneReport, etag string, nodeID, revision int64, run bool,
+) error {
+	if report.Node.ID != nodeID || report.Run != run {
+		return errors.New("version-prune receipt does not bind its request")
+	}
+	wantRevision := revision
+	if report.Changed {
+		if !run {
+			return errors.New("version-prune dry run reports a mutation")
+		}
+		wantRevision++
+	}
+	if report.Node.Revision != wantRevision {
+		return fmt.Errorf("version-prune node revision %d, expected %d", report.Node.Revision, wantRevision)
+	}
+	if etag != strconv.Quote(strconv.FormatInt(report.Node.Revision, 10)) {
+		return fmt.Errorf("version-prune response ETag %q disagrees with node revision %d",
+			etag, report.Node.Revision)
+	}
+	return nil
+}
+
+func validateVersionPruneCounts(report api.VersionPruneReport, run bool) error {
+	if !run && (report.DeletedVersions != 0 || report.Checkpoint != nil) {
+		return errors.New("version-prune dry run reports a mutation")
+	}
+	if run && report.DeletedVersions != len(report.Candidates) {
+		return errors.New("version-prune receipt has inconsistent deletion counts")
+	}
+	if report.Changed != (report.DeletedVersions > 0) {
+		return errors.New("version-prune receipt has inconsistent changed state")
+	}
+	if report.LogicalBytes < 0 || report.UniqueBlobs < 0 || report.SharedBlobs < 0 ||
+		report.ReleasableBlobs < 0 || report.ReleasableBytes < 0 ||
+		report.LooseBlobsPendingGC < 0 || report.LooseBytesPendingGC < 0 ||
+		report.PackedBlobsPendingRepack < 0 || report.PackedBytesPendingRepack < 0 ||
+		report.DeletedVersions < 0 {
+		return errors.New("version-prune receipt contains negative counts")
+	}
+	if report.UniqueBlobs != report.SharedBlobs+report.ReleasableBlobs ||
+		report.ReleasableBlobs != report.LooseBlobsPendingGC+report.PackedBlobsPendingRepack {
+		return errors.New("version-prune receipt has inconsistent blob counts")
+	}
+	return nil
+}
+
+func validateVersionPruneVersions(report api.VersionPruneReport, nodeID int64, run bool) error {
+	logicalBytes := int64(0)
+	uniqueBlobs := make(map[string]bool, len(report.Candidates))
+	seenVersions := make(map[string]bool, len(report.Candidates)+len(report.DependencyRetained))
+	checkpointPreviewIncludesCurrent := false
+	for _, version := range report.Candidates {
+		if err := validateVersionPruneReceiptVersion(version, nodeID, seenVersions); err != nil {
+			return err
+		}
+		currentCheckpointPreview := !run && report.CheckpointRequired &&
+			version.ID == report.Node.CurrentVersionID
+		checkpointPreviewIncludesCurrent = checkpointPreviewIncludesCurrent || currentCheckpointPreview
+		if version.ID == report.Node.CurrentVersionID && !currentCheckpointPreview {
+			return errors.New("version-prune receipt selects invalid current history")
+		}
+		if version.Size > math.MaxInt64-logicalBytes {
+			return errors.New("version-prune receipt logical size overflows")
+		}
+		logicalBytes += version.Size
+		uniqueBlobs[version.BlobHash] = true
+	}
+	for _, version := range report.DependencyRetained {
+		if err := validateVersionPruneReceiptVersion(version, nodeID, seenVersions); err != nil {
+			return err
+		}
+	}
+	if report.LogicalBytes != logicalBytes || report.UniqueBlobs != len(uniqueBlobs) {
+		return errors.New("version-prune receipt has inconsistent logical inventory")
+	}
+	if !run && report.CheckpointRequired && !checkpointPreviewIncludesCurrent {
+		return errors.New("version-prune preview omits its checkpointed current version")
+	}
+	return nil
+}
+
+func validateVersionPruneReceiptVersion(
+	version api.ContentVersion, nodeID int64, seen map[string]bool,
+) error {
+	if version.NodeID != nodeID || !validVersionPruneVersion(version) {
+		return errors.New("version-prune receipt contains an invalid version")
+	}
+	if seen[version.ID] {
+		return errors.New("version-prune receipt repeats a version")
+	}
+	seen[version.ID] = true
+	return nil
+}
+
+func validateVersionPruneCheckpoint(report api.VersionPruneReport, nodeID int64, run bool) error {
+	if report.Checkpoint != nil {
+		if !run || !report.Changed || !report.CheckpointRequired ||
+			report.Checkpoint.NodeID != nodeID || report.Node.CurrentVersionID != report.Checkpoint.ID ||
+			report.Checkpoint.NodeRevision != report.Node.Revision ||
+			report.Checkpoint.BlobHash != report.Node.BlobHash ||
+			report.Checkpoint.Size != report.Node.Size || report.Checkpoint.MimeType != report.Node.MimeType ||
+			report.Checkpoint.TransitionKind != "content_replace" || report.Checkpoint.SourceVersionID != nil ||
+			!validVersionPruneVersion(*report.Checkpoint) {
+			return errors.New("version-prune receipt contains an invalid checkpoint")
+		}
+	} else if run && report.Changed && report.CheckpointRequired {
+		return errors.New("version-prune receipt omits its required checkpoint")
+	}
+	return nil
+}
+
+func validVersionPruneVersion(version api.ContentVersion) bool {
+	if !validUUIDv4(version.ID) || !validUUIDv4(version.IntroducedOperationID) ||
+		!validSHA256Hex(version.BlobHash) || version.Size < 0 || version.NodeRevision < 1 {
+		return false
+	}
+	switch version.TransitionKind {
+	case "content_create", "content_replace":
+		return version.SourceVersionID == nil
+	case "content_revert":
+		return version.SourceVersionID != nil && validUUIDv4(*version.SourceVersionID)
+	default:
+		return false
+	}
 }
 
 // ContentReferences returns one bounded page of logical version references to

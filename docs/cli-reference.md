@@ -185,6 +185,43 @@ Every newly imported file has one revision-one `content_create` version. Each
 successful `put` adds a `content_replace` row and each `revert` adds a
 `content_revert` row naming its immutable source.
 
+### docbank versions prune
+
+```text
+docbank versions prune <path> --version <version-id> [--version <version-id>...] [--run] [--json]
+docbank versions prune <path> --keep-newest <n> [--run] [--json]
+docbank versions prune <path> --older-than <age> [--run] [--json]
+docbank versions prune <path> --all-prior [--run] [--json]
+```
+
+Selects unwanted non-current history for one file. Exactly one selector is
+required. `--version` is repeatable and literal, `--keep-newest` retains at
+least that many newest rows including the current head, `--older-than` accepts
+Go durations plus whole days such as `90d`, and `--all-prior` selects the
+complete old graph. The command is a dry run unless `--run` is present.
+
+The current content is always retained. Ordinary selectors cannot select the
+current row. If one includes a source still required by a retained reversion,
+the report identifies and retains that source. `--all-prior` can replace a
+current reversion with a same-byte source-free checkpoint so the complete
+previous graph, including that superseded revert row, can be released safely.
+Execution uses the node ID and revision inspected immediately beforehand; a
+concurrent change fails with `stale_revision`.
+
+Age previews report their evaluated cutoff. Wall-clock aging does not advance a
+node revision, so a later `--older-than ... --run` can also select versions that
+crossed the same age boundary after the preview. To execute the exact previewed
+set, pass its candidate IDs back through repeated `--version` flags.
+Explicit-ID requests accept at most 1,000 IDs; re-read the node revision between
+batches when applying a larger exact set.
+
+Human and JSON reports separate selected versions and logical bytes from
+physical consequences: shared blobs remain reachable, loose unreferenced blobs
+wait for `docbank gc --run`, and dead packed payload waits for GC followed by
+`docbank storage repack`. Pruning itself never claims to reclaim disk space.
+Deleted version IDs stop resolving. Backups made afterward preserve that
+result, while snapshots made before pruning still contain their earlier state.
+
 ## docbank version
 
 ```text

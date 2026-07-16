@@ -783,6 +783,132 @@ func TestContentReversionRejectsUnprovenReceipt(t *testing.T) {
 	}
 }
 
+func TestContentVersionPruneRoundTrip(t *testing.T) {
+	c, s := newClient(t, serverKey)
+	initial := "initial content"
+	initialSum := sha256.Sum256([]byte(initial))
+	created, err := c.Upload(t.Context(), s.RootID(), "versioned.txt", "text/plain",
+		hex.EncodeToString(initialSum[:]), int64(len(initial)), strings.NewReader(initial))
+	require.NoError(t, err)
+	replacement := "replacement content"
+	replacementSum := sha256.Sum256([]byte(replacement))
+	replaced, err := c.ReplaceContent(t.Context(), created.Node.ID, created.Node.Revision,
+		"text/plain", hex.EncodeToString(replacementSum[:]), int64(len(replacement)),
+		strings.NewReader(replacement))
+	require.NoError(t, err)
+
+	request := api.VersionPruneRequest{KeepNewest: 1}
+	preview, err := c.PruneContentVersions(
+		t.Context(), created.Node.ID, replaced.Node.Revision, request,
+	)
+	require.NoError(t, err)
+	assert.False(t, preview.Changed)
+	require.Len(t, preview.Candidates, 1)
+	assert.Equal(t, created.Node.CurrentVersionID, preview.Candidates[0].ID)
+
+	request.Run = true
+	receipt, err := c.PruneContentVersions(
+		t.Context(), created.Node.ID, replaced.Node.Revision, request,
+	)
+	require.NoError(t, err)
+	assert.True(t, receipt.Changed)
+	assert.Equal(t, 1, receipt.DeletedVersions)
+	assert.Equal(t, replaced.Node.Revision+1, receipt.Node.Revision)
+	versions, err := c.Versions(t.Context(), created.Node.ID, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, versions.Total)
+	_, err = c.PruneContentVersions(t.Context(), created.Node.ID, replaced.Node.Revision, request)
+	require.ErrorIs(t, err, store.ErrStaleRevision)
+}
+
+func TestContentVersionPruneAllPriorCheckpointsCurrentRevert(t *testing.T) {
+	c, s := newClient(t, serverKey)
+	initial := "initial content"
+	initialSum := sha256.Sum256([]byte(initial))
+	created, err := c.Upload(t.Context(), s.RootID(), "reverted.txt", "text/plain",
+		hex.EncodeToString(initialSum[:]), int64(len(initial)), strings.NewReader(initial))
+	require.NoError(t, err)
+	replacement := "replacement content"
+	replacementSum := sha256.Sum256([]byte(replacement))
+	replaced, err := c.ReplaceContent(t.Context(), created.Node.ID, created.Node.Revision,
+		"text/plain", hex.EncodeToString(replacementSum[:]), int64(len(replacement)),
+		strings.NewReader(replacement))
+	require.NoError(t, err)
+	reverted, err := c.RevertContent(t.Context(), created.Node.ID, replaced.Node.Revision,
+		created.Node.CurrentVersionID)
+	require.NoError(t, err)
+
+	request := api.VersionPruneRequest{AllPrior: true}
+	preview, err := c.PruneContentVersions(
+		t.Context(), created.Node.ID, reverted.Node.Revision, request,
+	)
+	require.NoError(t, err)
+	assert.True(t, preview.CheckpointRequired)
+	assert.Nil(t, preview.Checkpoint)
+	require.Len(t, preview.Candidates, 3)
+
+	request.Run = true
+	receipt, err := c.PruneContentVersions(
+		t.Context(), created.Node.ID, reverted.Node.Revision, request,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, receipt.Checkpoint)
+	assert.Equal(t, "content_replace", receipt.Checkpoint.TransitionKind)
+	assert.Nil(t, receipt.Checkpoint.SourceVersionID)
+	assert.Equal(t, receipt.Checkpoint.ID, receipt.Node.CurrentVersionID)
+	assert.Equal(t, created.Node.BlobHash, receipt.Node.BlobHash)
+	versions, err := c.Versions(t.Context(), created.Node.ID, 10, 0)
+	require.NoError(t, err)
+	require.Len(t, versions.Items, 1)
+	assert.Equal(t, receipt.Checkpoint.ID, versions.Items[0].ID)
+}
+
+func TestContentVersionPruneRejectsUnprovenReceipt(t *testing.T) {
+	const (
+		currentID = "11111111-1111-4111-8111-111111111111"
+		oldID     = "22222222-2222-4222-8222-222222222222"
+	)
+	base := api.VersionPruneReport{
+		Node: api.Node{ID: 7, Revision: 4, CurrentVersionID: currentID},
+		Candidates: []api.ContentVersion{{
+			ID: oldID, NodeID: 7, BlobHash: strings.Repeat("a", 64), Size: 12,
+			NodeRevision: 2, IntroducedOperationID: "33333333-3333-4333-8333-333333333333",
+			TransitionKind: "content_replace",
+		}},
+		DependencyRetained: []api.ContentVersion{},
+		LogicalBytes:       12, UniqueBlobs: 1, ReleasableBlobs: 1,
+		ReleasableBytes: 12, LooseBlobsPendingGC: 1, LooseBytesPendingGC: 12,
+	}
+	tests := map[string]func(*api.VersionPruneReport){
+		"node":      func(r *api.VersionPruneReport) { r.Node.ID++ },
+		"revision":  func(r *api.VersionPruneReport) { r.Node.Revision++ },
+		"current":   func(r *api.VersionPruneReport) { r.Node.CurrentVersionID = oldID },
+		"logical":   func(r *api.VersionPruneReport) { r.LogicalBytes++ },
+		"unique":    func(r *api.VersionPruneReport) { r.UniqueBlobs++ },
+		"negative":  func(r *api.VersionPruneReport) { r.ReleasableBytes = -1 },
+		"duplicate": func(r *api.VersionPruneReport) { r.DependencyRetained = r.Candidates },
+		"etag":      func(_ *api.VersionPruneReport) {},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			report := base
+			report.Candidates = append([]api.ContentVersion(nil), base.Candidates...)
+			mutate(&report)
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if name != "etag" {
+					w.Header().Set("ETag", `"4"`)
+				}
+				_ = json.NewEncoder(w).Encode(report)
+			}))
+			t.Cleanup(ts.Close)
+			_, err := client.New(ts.URL, "key").PruneContentVersions(
+				t.Context(), 7, 4, api.VersionPruneRequest{AllPrior: true},
+			)
+			require.Error(t, err)
+		})
+	}
+}
+
 func TestStorageRepackRoundTrip(t *testing.T) {
 	c, _ := newClient(t, serverKey)
 	for name, content := range map[string]string{

@@ -56,6 +56,39 @@ type ContentVersionPage struct {
 	Offset int              `json:"offset"`
 }
 
+// VersionPruneRequest selects one explicit history-pruning policy. Exactly one
+// of VersionIDs, KeepNewest, OlderThan, or AllPrior must be set.
+type VersionPruneRequest struct {
+	VersionIDs []string `json:"version_ids,omitempty" format:"uuid" minItems:"1" maxItems:"1000" uniqueItems:"true"`
+	KeepNewest int      `json:"keep_newest,omitempty" minimum:"1"`
+	OlderThan  string   `json:"older_than,omitempty" example:"90d"`
+	AllPrior   bool     `json:"all_prior,omitempty"`
+	Run        bool     `json:"run,omitempty" default:"false"`
+}
+
+// VersionPruneReport distinguishes released logical history from physical
+// bytes that only a later GC/repack can reclaim.
+type VersionPruneReport struct {
+	Node                     Node             `json:"node"`
+	Candidates               []ContentVersion `json:"candidates"`
+	DependencyRetained       []ContentVersion `json:"dependency_retained"`
+	Checkpoint               *ContentVersion  `json:"checkpoint,omitempty"`
+	Cutoff                   string           `json:"cutoff,omitempty"`
+	LogicalBytes             int64            `json:"logical_bytes" minimum:"0"`
+	UniqueBlobs              int              `json:"unique_blobs" minimum:"0"`
+	SharedBlobs              int              `json:"shared_blobs" minimum:"0"`
+	ReleasableBlobs          int              `json:"releasable_blobs" minimum:"0"`
+	ReleasableBytes          int64            `json:"releasable_bytes" minimum:"0"`
+	LooseBlobsPendingGC      int              `json:"loose_blobs_pending_gc" minimum:"0"`
+	LooseBytesPendingGC      int64            `json:"loose_bytes_pending_gc" minimum:"0"`
+	PackedBlobsPendingRepack int              `json:"packed_blobs_pending_repack" minimum:"0"`
+	PackedBytesPendingRepack int64            `json:"packed_bytes_pending_repack" minimum:"0"`
+	DeletedVersions          int              `json:"deleted_versions" minimum:"0"`
+	CheckpointRequired       bool             `json:"checkpoint_required"`
+	Changed                  bool             `json:"changed"`
+	Run                      bool             `json:"run"`
+}
+
 // ContentReference identifies one stable node/version pair that retains a
 // requested content hash. Path is present only while the node is live.
 type ContentReference struct {
@@ -489,6 +522,36 @@ func fromStoreContentVersion(v store.ContentVersion) ContentVersion {
 		IntroducedOperationID: v.IntroducedOperationID,
 		TransitionKind:        v.TransitionKind, SourceVersionID: v.SourceVersionID,
 	}
+}
+
+func fromStoreVersionPruneResult(result store.VersionPruneResult) VersionPruneReport {
+	report := VersionPruneReport{
+		Node: fromStoreNode(result.Node), Candidates: []ContentVersion{},
+		DependencyRetained: []ContentVersion{}, Cutoff: result.Cutoff,
+		LogicalBytes: result.LogicalBytes, UniqueBlobs: result.UniqueBlobs,
+		SharedBlobs: result.SharedBlobs, ReleasableBlobs: result.ReleasableBlobs,
+		ReleasableBytes:          result.ReleasableBytes,
+		LooseBlobsPendingGC:      result.LooseBlobsPendingGC,
+		LooseBytesPendingGC:      result.LooseBytesPendingGC,
+		PackedBlobsPendingRepack: result.PackedBlobsPendingRepack,
+		PackedBytesPendingRepack: result.PackedBytesPendingRepack,
+		DeletedVersions:          result.DeletedVersions,
+		CheckpointRequired:       result.CheckpointRequired,
+		Changed:                  result.Changed, Run: result.Run,
+	}
+	for _, version := range result.Candidates {
+		report.Candidates = append(report.Candidates, fromStoreContentVersion(version))
+	}
+	for _, version := range result.DependencyRetained {
+		report.DependencyRetained = append(
+			report.DependencyRetained, fromStoreContentVersion(version),
+		)
+	}
+	if result.Checkpoint != nil {
+		checkpoint := fromStoreContentVersion(*result.Checkpoint)
+		report.Checkpoint = &checkpoint
+	}
+	return report
 }
 
 func fromStoreContentReference(ref store.ContentReference) ContentReference {

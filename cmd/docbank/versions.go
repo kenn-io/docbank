@@ -9,17 +9,24 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/client"
 )
 
 const maxVersionsLimit = 1000
 
 var (
-	versionsLimit  int
-	versionsOffset int
-	versionsJSON   bool
-	versionJSON    bool
-	versionContent bool
+	versionsLimit   int
+	versionsOffset  int
+	versionsJSON    bool
+	versionJSON     bool
+	versionContent  bool
+	pruneVersionIDs []string
+	pruneKeepNewest int
+	pruneOlderThan  string
+	pruneAllPrior   bool
+	pruneRun        bool
+	pruneJSON       bool
 )
 
 var versionsCmd = &cobra.Command{
@@ -119,6 +126,89 @@ var versionCmd = &cobra.Command{
 	},
 }
 
+var versionsPruneCmd = &cobra.Command{
+	Use:   "prune <path>",
+	Short: "Preview or release selected version history",
+	Long: "Release selected immutable history while retaining the current content. " +
+		"This changes logical reachability only: run gc for loose bytes and storage repack " +
+		"for dead packed space. The default is a dry run.",
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		request := api.VersionPruneRequest{
+			VersionIDs: pruneVersionIDs, KeepNewest: pruneKeepNewest,
+			OlderThan: pruneOlderThan, AllPrior: pruneAllPrior, Run: pruneRun,
+		}
+		if cmd.Flags().Changed("keep-newest") && pruneKeepNewest < 1 {
+			return errors.New("--keep-newest must be at least 1")
+		}
+		if _, err := api.ParseVersionPruneRequest(request); err != nil {
+			return err
+		}
+		c, err := client.Ensure(cmd.Context())
+		if err != nil {
+			return err
+		}
+		node, err := c.Stat(cmd.Context(), args[0])
+		if err != nil {
+			return fmt.Errorf("resolving %q: %w", args[0], err)
+		}
+		report, err := c.PruneContentVersions(
+			cmd.Context(), node.ID, node.Revision, request,
+		)
+		if err != nil {
+			return fmt.Errorf("pruning versions of %q: %w", args[0], err)
+		}
+		if pruneJSON {
+			return writeVersionJSON(cmd.OutOrStdout(), report)
+		}
+		writeVersionPruneReport(cmd, report)
+		return nil
+	},
+}
+
+func writeVersionPruneReport(cmd *cobra.Command, report api.VersionPruneReport) {
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+		"%d version(s) selected, %d logical byte(s), %d unique blob(s)\n",
+		len(report.Candidates), report.LogicalBytes, report.UniqueBlobs)
+	if report.Cutoff != "" {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "age cutoff: %s\n", report.Cutoff)
+	}
+	if len(report.DependencyRetained) > 0 {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+			"retained %d selected source version(s) required by remaining reverts\n",
+			len(report.DependencyRetained))
+	}
+	if report.CheckpointRequired {
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(),
+			"the current revert will be replaced by a same-byte checkpoint before pruning")
+	}
+	if report.ReleasableBlobs > 0 {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+			"%d blob(s), %d byte(s) become eligible for later physical maintenance\n",
+			report.ReleasableBlobs, report.ReleasableBytes)
+	}
+	if report.LooseBlobsPendingGC > 0 {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%d loose blob(s), %d byte(s) pending gc\n",
+			report.LooseBlobsPendingGC, report.LooseBytesPendingGC)
+	}
+	if report.PackedBlobsPendingRepack > 0 {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%d packed blob(s), %d stored byte(s) pending gc then repack\n",
+			report.PackedBlobsPendingRepack, report.PackedBytesPendingRepack)
+	}
+	if !report.Run {
+		if len(report.Candidates) > 0 {
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "dry run — pass --run to prune")
+		}
+		return
+	}
+	if report.Changed {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "pruned %d version(s); node revision is now %d\n",
+			report.DeletedVersions, report.Node.Revision)
+		return
+	}
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "pruned 0 version(s); nothing to do")
+}
+
 func writeVersionJSON(w io.Writer, value any) error {
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
@@ -134,5 +224,17 @@ func init() {
 	versionsCmd.Flags().BoolVar(&versionsJSON, "json", false, "emit machine-readable JSON")
 	versionCmd.Flags().BoolVar(&versionJSON, "json", false, "emit machine-readable JSON")
 	versionCmd.Flags().BoolVar(&versionContent, "content", false, "write this version's bytes to stdout")
+	versionsPruneCmd.Flags().StringArrayVar(&pruneVersionIDs, "version", nil,
+		"select one version UUID (repeatable; commas are literal)")
+	versionsPruneCmd.Flags().IntVar(&pruneKeepNewest, "keep-newest", 0,
+		"retain at least this many newest versions")
+	versionsPruneCmd.Flags().StringVar(&pruneOlderThan, "older-than", "",
+		"select versions at least this old (e.g. 90d or 12h)")
+	versionsPruneCmd.Flags().BoolVar(&pruneAllPrior, "all-prior", false,
+		"remove the complete prior history while retaining current content")
+	versionsPruneCmd.Flags().BoolVar(&pruneRun, "run", false,
+		"actually prune (default is dry-run)")
+	versionsPruneCmd.Flags().BoolVar(&pruneJSON, "json", false, "emit a machine-readable report")
+	versionsCmd.AddCommand(versionsPruneCmd)
 	rootCmd.AddCommand(versionsCmd, versionCmd)
 }

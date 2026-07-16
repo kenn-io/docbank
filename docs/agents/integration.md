@@ -345,6 +345,43 @@ so it has no computed digest receipt; it relies on already-authoritative source
 bytes and does not copy them. Use the ordinary content verification surface when
 a fresh physical proof is part of the workflow.
 
+Version retention is unlimited by default. To release unwanted non-current
+history, preview exactly one selector through the authenticated pruning route:
+
+```bash
+curl --fail-with-body -X POST \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  -H 'If-Match: "9"' \
+  -H 'Content-Type: application/json' \
+  --data '{"keep_newest":3}' \
+  "$DOCBANK_URL/api/v1/nodes/42/versions/prune"
+```
+
+The other request selectors are `version_ids`, `older_than`, and `all_prior`;
+exactly one is allowed. Omitted or false `run` is a dry run. After evaluating
+the returned candidate IDs, logical bytes, retained revert dependencies, and
+loose/packed maintenance consequences, repeat with `"run":true` and the same
+inspected revision. Do not blindly replace a stale `If-Match`: re-read the node
+and re-evaluate the selection.
+
+`older_than` is evaluated against the `cutoff` returned by each request. Time
+can move versions across that boundary without changing the node ETag, so a
+later age-based run can contain additional candidates. If execution must match
+the preview exactly, send its candidate IDs through `version_ids` instead of
+repeating the age selector. Explicit-ID requests accept at most 1,000 IDs; for
+larger sets, execute batches and inspect the advanced node revision before
+sending each next batch.
+
+For a dry run, require the response node and ETag to match the inspected node
+and revision, `changed:false`, `deleted_versions:0`, and no checkpoint. For an
+executed change, require `deleted_versions` to equal the candidate count,
+`changed:true`, and exactly one revision advance. When
+`checkpoint_required:true`, execution must return a source-free
+`content_replace` checkpoint installed as the current version. Blob counts must
+partition into shared versus releasable, and releasable into loose pending GC
+versus packed pending repack. These are future maintenance candidates, not
+bytes reclaimed by pruning.
+
 Path mutations are intentionally different. `POST /api/v1/path/move` and
 `POST /api/v1/path/trash` resolve and mutate inside one store transaction, so
 they do not accept `If-Match`. Use them for a one-shot instruction tied to the

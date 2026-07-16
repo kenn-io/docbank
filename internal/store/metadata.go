@@ -1129,12 +1129,9 @@ func validateMetadataRelations(ctx context.Context, tx metadataQuerier) error {
 			)`},
 		{"content version size differs from blob authority", `
 			SELECT EXISTS(SELECT 1 FROM content_versions v JOIN blobs b ON b.hash=v.blob_hash WHERE v.size != b.size)`},
-		{"content history lacks exactly one revision-one create", `
-			SELECT EXISTS(
-			  SELECT n.id FROM nodes n LEFT JOIN content_versions v
-			    ON v.node_id=n.id AND v.node_revision=1 AND v.transition_kind='content_create'
-			  WHERE n.kind='file' GROUP BY n.id HAVING COUNT(v.version_id) != 1
-			)`},
+		// Explicit version pruning may remove the revision-one create. UUID
+		// identities are never reused and the node allocator/revision remain at
+		// their high-water marks, so retained history may begin at any revision.
 		{"content_create time differs from node creation", `
 			SELECT EXISTS(
 			  SELECT 1 FROM content_versions v JOIN nodes n ON n.id=v.node_id

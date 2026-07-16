@@ -30,6 +30,9 @@ var (
 	// ErrVersionAlreadyCurrent means a revert selected the node's current head,
 	// which is not a historical transition.
 	ErrVersionAlreadyCurrent = errors.New("content version is already current")
+	// ErrInvalidVersionPrune means a history-pruning selector is absent,
+	// contradictory, or otherwise unsafe to execute.
+	ErrInvalidVersionPrune = errors.New("invalid version-prune selector")
 )
 
 // UnconditionalRev is the only ifRev value that skips the revision

@@ -16,7 +16,7 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 	require.NoError(t, err)
 	doc := string(out)
 	for _, op := range []string{"getNode", "resolvePath", "listChildren", "getNodeContent", "verifyNodeContent",
-		"listContentVersions", "getContentVersion", "getContentVersionBytes",
+		"listContentVersions", "getContentVersion", "getContentVersionBytes", "pruneNodeContentVersions",
 		"lookupContentReferences",
 		"listTags", "resolveTagByName", "getTag", "listTagNodes", "listNodeTags",
 		"createTag", "renameTag", "deleteTag", "assignTag", "unassignTag",
@@ -81,12 +81,26 @@ func TestOpenAPIDeclaresDigestCheckedUpload(t *testing.T) {
 
 func TestOpenAPIDeclaresMutationPreconditions(t *testing.T) {
 	doc := api.NewOfflineServer().API().OpenAPI()
+	pruneRequest := doc.Components.Schemas.Map()["VersionPruneRequest"]
+	require.NotNil(t, pruneRequest)
+	versionIDs := pruneRequest.Properties["version_ids"]
+	require.NotNil(t, versionIDs)
+	require.NotNil(t, versionIDs.MaxItems)
+	assert.Equal(t, 1000, *versionIDs.MaxItems)
+	assert.True(t, versionIDs.UniqueItems)
+	require.NotNil(t, versionIDs.Items)
+	assert.Equal(t, "uuid", versionIDs.Items.Format)
+	keepNewest := pruneRequest.Properties["keep_newest"]
+	require.NotNil(t, keepNewest)
+	require.NotNil(t, keepNewest.Minimum)
+	assert.InDelta(t, 1, *keepNewest.Minimum, 0)
 	for _, operation := range []*huma.Operation{
 		doc.Paths["/api/v1/nodes/{id}"].Patch,
 		doc.Paths["/api/v1/nodes/{id}/trash"].Post,
 		doc.Paths["/api/v1/nodes/{id}/restore"].Post,
 		doc.Paths["/api/v1/nodes/{id}/verify"].Post,
 		doc.Paths["/api/v1/nodes/{id}/revert"].Post,
+		doc.Paths["/api/v1/nodes/{id}/versions/prune"].Post,
 		doc.Paths["/api/v1/nodes/{id}/tags/{tag_id}"].Put,
 		doc.Paths["/api/v1/nodes/{id}/tags/{tag_id}"].Delete,
 		doc.Paths["/api/v1/tags/{tag_id}"].Patch,
