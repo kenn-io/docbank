@@ -88,6 +88,25 @@ func TestEditorCommandPrecedenceAndParsing(t *testing.T) {
 	assert.Equal(t, []string{"nano"}, command)
 }
 
+func TestEditStagePatternUsesOnlySafeBoundedExtensions(t *testing.T) {
+	tests := map[string]string{
+		"notes.md":                    "document-*.md",
+		"notes.tar.gz":                "document-*.gz",
+		"notes.*":                     "document-*",
+		"notes.bad:stream":            "document-*",
+		"notes.question?":             "document-*",
+		"notes.é":                     "document-*",
+		"notes.abcdefghijklmnop":      "document-*.abcdefghijklmnop",
+		"notes.abcdefghijklmnopq":     "document-*",
+		"notes.non-ascii-extension-é": "document-*",
+	}
+	for name, expected := range tests {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, expected, editStagePattern(name))
+		})
+	}
+}
+
 func TestEditFailureAndConcurrentReplacementDoNotOverwrite(t *testing.T) {
 	_ = setupVaultHome(t)
 	initial := writeSourceFile(t, "notes.txt", "initial text")

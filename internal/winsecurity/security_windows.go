@@ -62,7 +62,7 @@ func MkdirPrivateAt(parent *os.Root, component string) error {
 		0,
 	)
 	if err == windows.STATUS_OBJECT_NAME_COLLISION {
-		return nil
+		return fmt.Errorf("private directory %q: %w", component, os.ErrExist)
 	}
 	if err != nil {
 		return err

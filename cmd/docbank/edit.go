@@ -64,7 +64,7 @@ func runEdit(cmd *cobra.Command, vaultPath string) (retErr error) {
 		return fmt.Errorf("%q: %w", vaultPath, store.ErrNotFile)
 	}
 
-	stageDir, err := os.MkdirTemp("", "docbank-edit-*")
+	stageDir, err := makePrivateEditDir()
 	if err != nil {
 		return fmt.Errorf("creating private edit staging: %w", err)
 	}
@@ -247,7 +247,7 @@ func stageCurrentVersion(
 			stream.BlobHash, stream.Size, node.BlobHash, node.Size)
 	}
 
-	file, err := os.CreateTemp(stageDir, "document-*"+filepath.Ext(node.Name))
+	file, err := os.CreateTemp(stageDir, editStagePattern(node.Name))
 	if err != nil {
 		return "", fmt.Errorf("creating staged file: %w", err)
 	}
@@ -272,6 +272,21 @@ func stageCurrentVersion(
 	}
 	file = nil
 	return path, nil
+}
+
+func editStagePattern(name string) string {
+	const maxExtensionBytes = 16
+	extension := filepath.Ext(name)
+	if len(extension) < 2 || len(extension)-1 > maxExtensionBytes {
+		return "document-*"
+	}
+	for _, char := range extension[1:] {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') &&
+			(char < '0' || char > '9') && char != '-' && char != '_' {
+			return "document-*"
+		}
+	}
+	return "document-*" + extension
 }
 
 type editProgressWriter struct {
