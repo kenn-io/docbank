@@ -81,6 +81,19 @@ func TestOpenAPIDeclaresDigestCheckedUpload(t *testing.T) {
 
 func TestOpenAPIDeclaresMutationPreconditions(t *testing.T) {
 	doc := api.NewOfflineServer().API().OpenAPI()
+	pruneRequest := doc.Components.Schemas.Map()["VersionPruneRequest"]
+	require.NotNil(t, pruneRequest)
+	versionIDs := pruneRequest.Properties["version_ids"]
+	require.NotNil(t, versionIDs)
+	require.NotNil(t, versionIDs.MaxItems)
+	assert.Equal(t, 1000, *versionIDs.MaxItems)
+	assert.True(t, versionIDs.UniqueItems)
+	require.NotNil(t, versionIDs.Items)
+	assert.Equal(t, "uuid", versionIDs.Items.Format)
+	keepNewest := pruneRequest.Properties["keep_newest"]
+	require.NotNil(t, keepNewest)
+	require.NotNil(t, keepNewest.Minimum)
+	assert.InDelta(t, 1, *keepNewest.Minimum, 0)
 	for _, operation := range []*huma.Operation{
 		doc.Paths["/api/v1/nodes/{id}"].Patch,
 		doc.Paths["/api/v1/nodes/{id}/trash"].Post,

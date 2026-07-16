@@ -6,8 +6,6 @@ import (
 	"strconv"
 
 	"github.com/danielgtaylor/huma/v2"
-
-	"go.kenn.io/docbank/internal/store"
 )
 
 func registerContentPruneRoute(api huma.API, d Deps, g *gate) {
@@ -19,7 +17,7 @@ func registerContentPruneRoute(api huma.API, d Deps, g *gate) {
 		OperationID: "pruneNodeContentVersions", Method: http.MethodPost,
 		Path:    "/api/v1/nodes/{id}/versions/prune",
 		Summary: "Preview or prune selected non-current content versions",
-		Description: "Dry-run by default. Execution requires If-Match and releases only logical " +
+		Description: "Requires If-Match for preview and execution; dry-run by default. Execution releases only logical " +
 			"history authority; GC and repack remain separate physical maintenance operations.",
 	}, func(ctx context.Context, in *struct {
 		ID      int64  `path:"id"`
@@ -30,13 +28,9 @@ func registerContentPruneRoute(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, err
 		}
-		age, err := ParseAge(in.Body.OlderThan)
+		selector, err := ParseVersionPruneRequest(in.Body)
 		if err != nil {
 			return nil, NewError(http.StatusUnprocessableEntity, "invalid_version_prune", err.Error())
-		}
-		selector := store.VersionPruneSelector{
-			VersionIDs: in.Body.VersionIDs, KeepNewest: in.Body.KeepNewest,
-			OlderThan: age, AllPrior: in.Body.AllPrior,
 		}
 		var report VersionPruneReport
 		err = g.mutate(func() error {

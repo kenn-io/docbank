@@ -138,7 +138,10 @@ var versionsPruneCmd = &cobra.Command{
 			VersionIDs: pruneVersionIDs, KeepNewest: pruneKeepNewest,
 			OlderThan: pruneOlderThan, AllPrior: pruneAllPrior, Run: pruneRun,
 		}
-		if err := validatePruneFlags(request); err != nil {
+		if cmd.Flags().Changed("keep-newest") && pruneKeepNewest < 1 {
+			return errors.New("--keep-newest must be at least 1")
+		}
+		if _, err := api.ParseVersionPruneRequest(request); err != nil {
 			return err
 		}
 		c, err := client.Ensure(cmd.Context())
@@ -163,40 +166,13 @@ var versionsPruneCmd = &cobra.Command{
 	},
 }
 
-func validatePruneFlags(request api.VersionPruneRequest) error {
-	if request.KeepNewest < 0 {
-		return errors.New("--keep-newest must be positive")
-	}
-	modes := 0
-	if len(request.VersionIDs) > 0 {
-		modes++
-	}
-	if request.KeepNewest > 0 {
-		modes++
-	}
-	if request.OlderThan != "" {
-		modes++
-		age, err := api.ParseAge(request.OlderThan)
-		if err != nil {
-			return err
-		}
-		if age == 0 {
-			return errors.New("--older-than must be greater than zero")
-		}
-	}
-	if request.AllPrior {
-		modes++
-	}
-	if modes != 1 {
-		return errors.New("choose exactly one of --version, --keep-newest, --older-than, or --all-prior")
-	}
-	return nil
-}
-
 func writeVersionPruneReport(cmd *cobra.Command, report api.VersionPruneReport) {
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 		"%d version(s) selected, %d logical byte(s), %d unique blob(s)\n",
 		len(report.Candidates), report.LogicalBytes, report.UniqueBlobs)
+	if report.Cutoff != "" {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "age cutoff: %s\n", report.Cutoff)
+	}
 	if len(report.DependencyRetained) > 0 {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 			"retained %d selected source version(s) required by remaining reverts\n",
@@ -228,7 +204,9 @@ func writeVersionPruneReport(cmd *cobra.Command, report api.VersionPruneReport) 
 	if report.Changed {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "pruned %d version(s); node revision is now %d\n",
 			report.DeletedVersions, report.Node.Revision)
+		return
 	}
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "pruned 0 version(s); nothing to do")
 }
 
 func writeVersionJSON(w io.Writer, value any) error {

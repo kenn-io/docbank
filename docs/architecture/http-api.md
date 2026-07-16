@@ -296,7 +296,8 @@ version; an omitted value becomes `application/octet-stream`.
 The daemon streams the body into durable authority-free storage and computes
 the identity independently. Only exact agreement permits one metadata
 transaction to create a `content_replace` version, advance the node's current
-pointer, and bump its revision. The old head remains an immutable GC root. A
+pointer, and bump its revision. The old head remains an immutable history and
+GC root until the operator explicitly prunes that version. A
 successful response includes the resulting ETag plus a receipt containing the
 node, new version, `computed_hash`, and `computed_size`; clients compare every
 field with the request before accepting success.
@@ -325,7 +326,8 @@ and media type into it, records `source_version_id`, advances the current
 pointer, and bumps the node revision.
 
 This operation is metadata-only: it neither streams nor copies the source blob,
-whether loose or packed. Every existing version remains a reachability root.
+whether loose or packed. Every existing version remains a reachability root
+until explicitly selected by version pruning.
 The receipt contains `node`, the new `version`, and `source_version`, while the
 ETag carries the resulting revision. Clients cross-check all four authorities;
 HTTP 200 alone is not sufficient evidence.
@@ -333,6 +335,33 @@ HTTP 200 alone is not sufficient evidence.
 A stale target returns `412 stale_revision`. A source from another node returns
 `422 version_node_mismatch`, selecting the current head returns
 `422 version_already_current`, and an unknown source returns `404 not_found`.
+
+## Addendum: `POST /nodes/{id}/versions/prune`
+
+Version pruning releases selected non-current history without changing current
+content. Every request requires the inspected node revision in `If-Match` and
+chooses exactly one selector: `version_ids` (at most 1,000 canonical UUIDs),
+`keep_newest`, `older_than`, or `all_prior`. The default is a dry run;
+`"run":true` performs the reported class of operation under the same node
+revision precondition.
+
+Ordinary selectors retain revert-source dependencies and report them
+separately. `all_prior` may first install a same-byte, source-free checkpoint
+when the current head is a revert, allowing the complete older graph to be
+removed safely. A successful run advances the node revision once when it
+deletes history and does not advance it for an empty selection. Deleted version
+IDs stop resolving.
+
+An `older_than` selector computes and returns its cutoff for each request. The
+node ETag protects content-graph changes, but wall-clock aging does not advance
+the revision; a later run can therefore include versions that crossed the age
+boundary after a preview. Callers needing an exact replay execute the preview's
+candidate IDs through `version_ids`.
+
+The receipt separates logical history bytes from physical consequences. Shared
+blobs remain reachable, authority-free loose blobs await GC, and dead packed
+payload awaits GC followed by repack. Pruning itself does not claim physical
+space reclamation.
 
 ## Addendum: tags
 

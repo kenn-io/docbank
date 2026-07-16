@@ -364,6 +364,14 @@ loose/packed maintenance consequences, repeat with `"run":true` and the same
 inspected revision. Do not blindly replace a stale `If-Match`: re-read the node
 and re-evaluate the selection.
 
+`older_than` is evaluated against the `cutoff` returned by each request. Time
+can move versions across that boundary without changing the node ETag, so a
+later age-based run can contain additional candidates. If execution must match
+the preview exactly, send its candidate IDs through `version_ids` instead of
+repeating the age selector. Explicit-ID requests accept at most 1,000 IDs; for
+larger sets, execute batches and inspect the advanced node revision before
+sending each next batch.
+
 For a dry run, require the response node and ETag to match the inspected node
 and revision, `changed:false`, `deleted_versions:0`, and no checkpoint. For an
 executed change, require `deleted_versions` to equal the candidate count,

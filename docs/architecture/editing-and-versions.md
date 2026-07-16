@@ -176,15 +176,24 @@ docbank versions prune /taxes/2025/return.pdf --version <version-id>
 docbank versions prune /taxes/2025/return.pdf --all-prior
 ```
 
-Exactly one selector is accepted. Nothing changes without `--run`, and an
-executed selection is bound to the node ID and revision inspected by the
-client. The current content is always retained. Ordinary selectors never
-select the current row and also retain any source version still required by a
-remaining `content_revert` record, reporting that dependency rather than
-producing a dangling history graph. `--all-prior` can release the complete
-older graph; when the current head is itself a revert, the transaction first
-installs a same-byte, source-free `content_replace` checkpoint and then removes
-the old graph, including the superseded revert head.
+Exactly one selector is accepted. Nothing changes without `--run`, and every
+request is bound to the node ID and revision inspected by the client. The
+current content is always retained. Ordinary selectors never select the
+current row and also retain any source version still required by a remaining
+`content_revert` record, reporting that dependency rather than producing a
+dangling history graph. `--all-prior` can release the complete older graph;
+when the current head is itself a revert, the transaction first installs a
+same-byte, source-free `content_replace` checkpoint and then removes the old
+graph, including the superseded revert head.
+
+An age selection is evaluated against the wall-clock cutoff reported in that
+request. Time can advance without changing a node revision, so a later
+`--older-than ... --run` request may include additional versions that crossed
+the boundary after the preview. This never selects a version younger than the
+requested age. When exact replay of a preview matters, execute its returned
+candidate IDs with repeated `--version` selectors instead. Explicit-ID requests
+are bounded to 1,000 IDs; larger selections can be applied in batches, reading
+the advanced node revision before each subsequent batch.
 
 Pruning deletes version authority, not bytes. Its report distinguishes logical
 bytes, shared blobs that remain reachable, loose blobs that become eligible for

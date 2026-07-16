@@ -6,8 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"time"
 )
+
+// MaxVersionPruneIDs bounds explicit point selections. Larger history cleanup
+// should use an age, count, or all-prior selector instead of holding a write
+// transaction for an unbounded request body.
+const MaxVersionPruneIDs = 1000
 
 // VersionPruneSelector chooses historical content versions. Exactly one mode
 // must be set. The current head is never removable; AllPrior may replace a
@@ -59,7 +65,7 @@ type pruneBlobStats struct {
 func (s *Store) PruneContentVersions(
 	ctx context.Context, nodeID, ifRev int64, selector VersionPruneSelector, run bool,
 ) (VersionPruneResult, error) {
-	if err := validateVersionPruneSelector(selector); err != nil {
+	if err := ValidateVersionPruneSelector(selector); err != nil {
 		return VersionPruneResult{}, err
 	}
 	result := VersionPruneResult{Run: run}
@@ -105,9 +111,6 @@ func (s *Store) PruneContentVersions(
 		if !run || len(candidateSet) == 0 {
 			return nil
 		}
-		if node.Revision == math.MaxInt64 {
-			return fmt.Errorf("node %d revision cannot advance beyond %d", node.ID, node.Revision)
-		}
 		if checkpointRequired {
 			updated, checkpoint, err := installContentVersionTx(
 				tx, node, versions[0].BlobHash, versions[0].Size, versions[0].MimeType,
@@ -120,15 +123,11 @@ func (s *Store) PruneContentVersions(
 			result.Checkpoint = &checkpoint
 		} else {
 			now := nowRFC3339()
-			if _, err := tx.Exec(
-				`UPDATE nodes SET revision = revision + 1, modified_at = ? WHERE id = ?`, now, node.ID,
-			); err != nil {
-				return fmt.Errorf("advancing node %d after version pruning: %w", node.ID, err)
-			}
-			result.Node, err = nodeByIDTx(tx, node.ID)
-			if err != nil {
+			if err := bumpRevisionTx(tx, node.ID, now); err != nil {
 				return err
 			}
+			result.Node.Revision++
+			result.Node.ModifiedAt = now
 		}
 		for _, version := range result.Candidates {
 			if _, err := tx.Exec(`DELETE FROM content_versions WHERE version_id = ?`, version.ID); err != nil {
@@ -151,7 +150,14 @@ func (s *Store) PruneContentVersions(
 	return result, nil
 }
 
-func validateVersionPruneSelector(selector VersionPruneSelector) error {
+// ValidateVersionPruneSelector applies the authoritative store-level selector
+// rules. HTTP and CLI adapters translate their inputs into this type and reuse
+// the same validation before opening a transaction.
+func ValidateVersionPruneSelector(selector VersionPruneSelector) error {
+	if len(selector.VersionIDs) > MaxVersionPruneIDs {
+		return fmt.Errorf("at most %d explicit version IDs may be pruned at once: %w",
+			MaxVersionPruneIDs, ErrInvalidVersionPrune)
+	}
 	modes := 0
 	if len(selector.VersionIDs) > 0 {
 		modes++
@@ -178,7 +184,8 @@ func validateVersionPruneSelector(selector VersionPruneSelector) error {
 	seen := make(map[string]bool, len(selector.VersionIDs))
 	for _, id := range selector.VersionIDs {
 		if err := validateUUIDv4(id); err != nil {
-			return fmt.Errorf("content version %q: %w", id, ErrNotFound)
+			return fmt.Errorf("content version %q must be a canonical UUIDv4: %w",
+				id, ErrInvalidVersionPrune)
 		}
 		if seen[id] {
 			return fmt.Errorf("content version %s is selected more than once: %w", id, ErrInvalidVersionPrune)
@@ -219,25 +226,38 @@ func selectVersionPruneCandidates(
 	checkpointRequired := selector.AllPrior && versions[0].TransitionKind == "content_revert"
 	switch {
 	case len(selector.VersionIDs) > 0:
+		byID := make(map[string]ContentVersion, len(versions))
+		for _, version := range versions {
+			byID[version.ID] = version
+		}
+		missing := make([]string, 0)
 		for _, id := range selector.VersionIDs {
-			version, err := scanContentVersion(tx.QueryRow(
-				`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = ?`, id))
-			if err != nil {
-				return nil, nil, "", false, fmt.Errorf("content version %q: %w", id, err)
+			_, ok := byID[id]
+			if !ok {
+				missing = append(missing, id)
+				continue
 			}
-			if version.NodeID != node.ID {
-				return nil, nil, "", false, fmt.Errorf(
-					"content version %s belongs to node %d, not node %d: %w",
-					version.ID, version.NodeID, node.ID, ErrVersionNodeMismatch,
-				)
-			}
-			if version.ID == node.CurrentVersionID {
+			if id == node.CurrentVersionID {
 				return nil, nil, "", false, fmt.Errorf(
 					"content version %s is the current head of node %d: %w",
-					version.ID, node.ID, ErrVersionAlreadyCurrent,
+					id, node.ID, ErrVersionAlreadyCurrent,
 				)
 			}
 			candidates[id] = true
+		}
+		if len(missing) > 0 {
+			owners, err := contentVersionOwnersTx(tx, missing)
+			if err != nil {
+				return nil, nil, "", false, err
+			}
+			id := missing[0]
+			if owner, ok := owners[id]; ok {
+				return nil, nil, "", false, fmt.Errorf(
+					"content version %s belongs to node %d, not node %d: %w",
+					id, owner, node.ID, ErrVersionNodeMismatch,
+				)
+			}
+			return nil, nil, "", false, fmt.Errorf("content version %q: %w", id, ErrNotFound)
 		}
 	case selector.KeepNewest > 0:
 		for index := selector.KeepNewest; index < len(versions); index++ {
@@ -281,6 +301,32 @@ func selectVersionPruneCandidates(
 	return candidates, dependencyRetained, cutoff, checkpointRequired, nil
 }
 
+func contentVersionOwnersTx(tx *sql.Tx, versionIDs []string) (map[string]int64, error) {
+	args := make([]any, len(versionIDs))
+	for index, id := range versionIDs {
+		args[index] = id
+	}
+	rows, err := tx.Query(`SELECT version_id, node_id FROM content_versions
+		WHERE version_id IN (`+placeholders(len(versionIDs))+`)`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("resolving selected content versions: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	owners := make(map[string]int64, len(versionIDs))
+	for rows.Next() {
+		var id string
+		var nodeID int64
+		if err := rows.Scan(&id, &nodeID); err != nil {
+			return nil, fmt.Errorf("resolving selected content versions: %w", err)
+		}
+		owners[id] = nodeID
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("resolving selected content versions: %w", err)
+	}
+	return owners, nil
+}
+
 func populateVersionPruneBlobStats(
 	tx *sql.Tx, result *VersionPruneResult, checkpointRequired bool,
 ) error {
@@ -292,29 +338,14 @@ func populateVersionPruneBlobStats(
 	if len(selectedByHash) == 0 {
 		return nil
 	}
-	rows, err := tx.Query(`
-		SELECT v.blob_hash, COUNT(*), b.size,
-		       CASE WHEN p.blob_hash IS NULL THEN 0 ELSE 1 END,
-		       COALESCE(p.stored_len, 0)
-		FROM content_versions v
-		JOIN blobs b ON b.hash = v.blob_hash
-		LEFT JOIN blob_pack_index p ON p.blob_hash = v.blob_hash
-		GROUP BY v.blob_hash, b.size, p.blob_hash, p.stored_len`)
+	hashes := make([]string, 0, len(selectedByHash))
+	for hash := range selectedByHash {
+		hashes = append(hashes, hash)
+	}
+	sort.Strings(hashes)
+	stats, err := versionPruneBlobStatsTx(tx, hashes)
 	if err != nil {
-		return fmt.Errorf("inventorying version-prune blobs: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	stats := make(map[string]pruneBlobStats, len(selectedByHash))
-	for rows.Next() {
-		var hash string
-		var item pruneBlobStats
-		if err := rows.Scan(&hash, &item.refs, &item.size, &item.packed, &item.storedLen); err != nil {
-			return fmt.Errorf("inventorying version-prune blobs: %w", err)
-		}
-		stats[hash] = item
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("inventorying version-prune blobs: %w", err)
+		return err
 	}
 	for hash, selected := range selectedByHash {
 		item, ok := stats[hash]
@@ -347,6 +378,52 @@ func populateVersionPruneBlobStats(
 			}
 			result.LooseBytesPendingGC += item.size
 		}
+	}
+	return nil
+}
+
+func versionPruneBlobStatsTx(tx *sql.Tx, hashes []string) (map[string]pruneBlobStats, error) {
+	const batchSize = 500
+	stats := make(map[string]pruneBlobStats, len(hashes))
+	for start := 0; start < len(hashes); start += batchSize {
+		end := min(start+batchSize, len(hashes))
+		if err := versionPruneBlobStatsBatchTx(tx, hashes[start:end], stats); err != nil {
+			return nil, err
+		}
+	}
+	return stats, nil
+}
+
+func versionPruneBlobStatsBatchTx(
+	tx *sql.Tx, hashes []string, stats map[string]pruneBlobStats,
+) error {
+	args := make([]any, len(hashes))
+	for index, hash := range hashes {
+		args[index] = hash
+	}
+	rows, err := tx.Query(`
+			SELECT v.blob_hash, COUNT(*), b.size,
+			       CASE WHEN p.blob_hash IS NULL THEN 0 ELSE 1 END,
+			       COALESCE(p.stored_len, 0)
+			FROM content_versions v
+			JOIN blobs b ON b.hash = v.blob_hash
+			LEFT JOIN blob_pack_index p ON p.blob_hash = v.blob_hash
+			WHERE v.blob_hash IN (`+placeholders(len(hashes))+`)
+			GROUP BY v.blob_hash, b.size, p.blob_hash, p.stored_len`, args...)
+	if err != nil {
+		return fmt.Errorf("inventorying version-prune blobs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var hash string
+		var item pruneBlobStats
+		if err := rows.Scan(&hash, &item.refs, &item.size, &item.packed, &item.storedLen); err != nil {
+			return fmt.Errorf("inventorying version-prune blobs: %w", err)
+		}
+		stats[hash] = item
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("inventorying version-prune blobs: %w", err)
 	}
 	return nil
 }

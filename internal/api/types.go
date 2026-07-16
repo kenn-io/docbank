@@ -59,8 +59,8 @@ type ContentVersionPage struct {
 // VersionPruneRequest selects one explicit history-pruning policy. Exactly one
 // of VersionIDs, KeepNewest, OlderThan, or AllPrior must be set.
 type VersionPruneRequest struct {
-	VersionIDs []string `json:"version_ids,omitempty"`
-	KeepNewest int      `json:"keep_newest,omitempty" minimum:"0"`
+	VersionIDs []string `json:"version_ids,omitempty" format:"uuid" minItems:"1" maxItems:"1000" uniqueItems:"true"`
+	KeepNewest int      `json:"keep_newest,omitempty" minimum:"1"`
 	OlderThan  string   `json:"older_than,omitempty" example:"90d"`
 	AllPrior   bool     `json:"all_prior,omitempty"`
 	Run        bool     `json:"run,omitempty" default:"false"`

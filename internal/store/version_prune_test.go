@@ -2,12 +2,27 @@ package store
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestVersionPruneBlobStatsBatchesCandidateHashes(t *testing.T) {
+	s := newTestStore(t)
+	tx, err := s.db.BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+	hashes := make([]string, 501)
+	for index := range hashes {
+		hashes[index] = fmt.Sprintf("%064x", index+1)
+	}
+	stats, err := versionPruneBlobStatsTx(tx, hashes)
+	require.NoError(t, err)
+	assert.Empty(t, stats)
+}
 
 func TestPruneContentVersionsPreviewRunAndMetadataRoundTrip(t *testing.T) {
 	s := newTestStore(t)
@@ -189,6 +204,7 @@ func TestPruneContentVersionsValidatesSelectorsAndTargets(t *testing.T) {
 		"several":    {KeepNewest: 1, AllPrior: true},
 		"zero age":   {OlderThan: 0},
 		"negative":   {KeepNewest: -1},
+		"too many":   {VersionIDs: make([]string, MaxVersionPruneIDs+1)},
 		"duplicate":  {VersionIDs: []string{second.CurrentVersionID, second.CurrentVersionID}},
 		"invalid id": {VersionIDs: []string{"not-a-uuid"}},
 	} {

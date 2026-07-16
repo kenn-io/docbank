@@ -308,7 +308,7 @@ func (c *Client) PruneContentVersions(
 	if revision < 1 {
 		return report, errors.New("version-prune revision must be positive")
 	}
-	if err := validateVersionPruneRequest(request); err != nil {
+	if _, err := api.ParseVersionPruneRequest(request); err != nil {
 		return report, err
 	}
 	headers, err := c.doWithHeaders(ctx, http.MethodPost,
@@ -322,44 +322,22 @@ func (c *Client) PruneContentVersions(
 	return report, nil
 }
 
-func validateVersionPruneRequest(request api.VersionPruneRequest) error {
-	if request.KeepNewest < 0 {
-		return errors.New("versions to keep must not be negative")
+func validateVersionPruneReport(
+	report api.VersionPruneReport, etag string, nodeID, revision int64, run bool,
+) error {
+	if err := validateVersionPruneBinding(report, etag, nodeID, revision, run); err != nil {
+		return err
 	}
-	modes := 0
-	if len(request.VersionIDs) > 0 {
-		modes++
+	if err := validateVersionPruneCounts(report, run); err != nil {
+		return err
 	}
-	if request.KeepNewest > 0 {
-		modes++
+	if err := validateVersionPruneVersions(report, nodeID, run); err != nil {
+		return err
 	}
-	if request.OlderThan != "" {
-		modes++
-		age, err := api.ParseAge(request.OlderThan)
-		if err != nil || age == 0 {
-			return fmt.Errorf("invalid version-prune age %q", request.OlderThan)
-		}
-	}
-	if request.AllPrior {
-		modes++
-	}
-	if modes != 1 {
-		return errors.New("version pruning requires exactly one selector")
-	}
-	seen := make(map[string]bool, len(request.VersionIDs))
-	for _, id := range request.VersionIDs {
-		if !validUUIDv4(id) {
-			return fmt.Errorf("version-prune ID %q must be a canonical UUIDv4", id)
-		}
-		if seen[id] {
-			return fmt.Errorf("version-prune ID %s appears more than once", id)
-		}
-		seen[id] = true
-	}
-	return nil
+	return validateVersionPruneCheckpoint(report, nodeID, run)
 }
 
-func validateVersionPruneReport(
+func validateVersionPruneBinding(
 	report api.VersionPruneReport, etag string, nodeID, revision int64, run bool,
 ) error {
 	if report.Node.ID != nodeID || report.Run != run {
@@ -379,7 +357,11 @@ func validateVersionPruneReport(
 		return fmt.Errorf("version-prune response ETag %q disagrees with node revision %d",
 			etag, report.Node.Revision)
 	}
-	if !run && (report.Changed || report.DeletedVersions != 0 || report.Checkpoint != nil) {
+	return nil
+}
+
+func validateVersionPruneCounts(report api.VersionPruneReport, run bool) error {
+	if !run && (report.DeletedVersions != 0 || report.Checkpoint != nil) {
 		return errors.New("version-prune dry run reports a mutation")
 	}
 	if run && report.DeletedVersions != len(report.Candidates) {
@@ -399,30 +381,33 @@ func validateVersionPruneReport(
 		report.ReleasableBlobs != report.LooseBlobsPendingGC+report.PackedBlobsPendingRepack {
 		return errors.New("version-prune receipt has inconsistent blob counts")
 	}
+	return nil
+}
+
+func validateVersionPruneVersions(report api.VersionPruneReport, nodeID int64, run bool) error {
 	logicalBytes := int64(0)
 	uniqueBlobs := make(map[string]bool, len(report.Candidates))
 	seenVersions := make(map[string]bool, len(report.Candidates)+len(report.DependencyRetained))
 	checkpointPreviewIncludesCurrent := false
-	for index, version := range append(append([]api.ContentVersion{}, report.Candidates...), report.DependencyRetained...) {
-		if version.NodeID != nodeID || !validVersionPruneVersion(version) {
-			return errors.New("version-prune receipt contains an invalid version")
+	for _, version := range report.Candidates {
+		if err := validateVersionPruneReceiptVersion(version, nodeID, seenVersions); err != nil {
+			return err
 		}
-		if seenVersions[version.ID] {
-			return errors.New("version-prune receipt repeats a version")
+		currentCheckpointPreview := !run && report.CheckpointRequired &&
+			version.ID == report.Node.CurrentVersionID
+		checkpointPreviewIncludesCurrent = checkpointPreviewIncludesCurrent || currentCheckpointPreview
+		if version.ID == report.Node.CurrentVersionID && !currentCheckpointPreview {
+			return errors.New("version-prune receipt selects invalid current history")
 		}
-		seenVersions[version.ID] = true
-		if index < len(report.Candidates) {
-			currentCheckpointPreview := !run && report.CheckpointRequired &&
-				version.ID == report.Node.CurrentVersionID
-			checkpointPreviewIncludesCurrent = checkpointPreviewIncludesCurrent || currentCheckpointPreview
-			if (version.ID == report.Node.CurrentVersionID && !currentCheckpointPreview) || version.Size < 0 {
-				return errors.New("version-prune receipt selects invalid current history")
-			}
-			if version.Size > math.MaxInt64-logicalBytes {
-				return errors.New("version-prune receipt logical size overflows")
-			}
-			logicalBytes += version.Size
-			uniqueBlobs[version.BlobHash] = true
+		if version.Size > math.MaxInt64-logicalBytes {
+			return errors.New("version-prune receipt logical size overflows")
+		}
+		logicalBytes += version.Size
+		uniqueBlobs[version.BlobHash] = true
+	}
+	for _, version := range report.DependencyRetained {
+		if err := validateVersionPruneReceiptVersion(version, nodeID, seenVersions); err != nil {
+			return err
 		}
 	}
 	if report.LogicalBytes != logicalBytes || report.UniqueBlobs != len(uniqueBlobs) {
@@ -431,6 +416,23 @@ func validateVersionPruneReport(
 	if !run && report.CheckpointRequired && !checkpointPreviewIncludesCurrent {
 		return errors.New("version-prune preview omits its checkpointed current version")
 	}
+	return nil
+}
+
+func validateVersionPruneReceiptVersion(
+	version api.ContentVersion, nodeID int64, seen map[string]bool,
+) error {
+	if version.NodeID != nodeID || !validVersionPruneVersion(version) {
+		return errors.New("version-prune receipt contains an invalid version")
+	}
+	if seen[version.ID] {
+		return errors.New("version-prune receipt repeats a version")
+	}
+	seen[version.ID] = true
+	return nil
+}
+
+func validateVersionPruneCheckpoint(report api.VersionPruneReport, nodeID int64, run bool) error {
 	if report.Checkpoint != nil {
 		if !run || !report.Changed || !report.CheckpointRequired ||
 			report.Checkpoint.NodeID != nodeID || report.Node.CurrentVersionID != report.Checkpoint.ID ||

@@ -228,6 +228,8 @@ func TestVersionsPruneIsPreviewFirstAndKeepsCurrentContent(t *testing.T) {
 		"--version", before.Items[1].ID+","+before.Items[2].ID)
 	require.ErrorContains(t, err, "canonical UUIDv4",
 		"repeatable --version values must treat commas literally")
+	_, err = runCLI(t, "versions", "prune", "/inbox/document.txt", "--keep-newest", "0")
+	require.ErrorContains(t, err, "--keep-newest must be at least 1")
 
 	out, err = runCLI(t, "versions", "prune", "/inbox/document.txt", "--keep-newest", "1")
 	require.NoError(t, err, out)
@@ -250,6 +252,9 @@ func TestVersionsPruneIsPreviewFirstAndKeepsCurrentContent(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &afterRun))
 	require.Len(t, afterRun.Items, 1)
 	assert.Equal(t, before.Items[0].ID, afterRun.Items[0].ID)
+	out, err = runCLI(t, "versions", "prune", "/inbox/document.txt", "--all-prior", "--run")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "pruned 0 version(s); nothing to do")
 	out, err = runCLI(t, "cat", "/inbox/document.txt")
 	require.NoError(t, err)
 	assert.Equal(t, "current content", out)

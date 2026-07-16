@@ -208,6 +208,13 @@ previous graph, including that superseded revert row, can be released safely.
 Execution uses the node ID and revision inspected immediately beforehand; a
 concurrent change fails with `stale_revision`.
 
+Age previews report their evaluated cutoff. Wall-clock aging does not advance a
+node revision, so a later `--older-than ... --run` can also select versions that
+crossed the same age boundary after the preview. To execute the exact previewed
+set, pass its candidate IDs back through repeated `--version` flags.
+Explicit-ID requests accept at most 1,000 IDs; re-read the node revision between
+batches when applying a larger exact set.
+
 Human and JSON reports separate selected versions and logical bytes from
 physical consequences: shared blobs remain reachable, loose unreferenced blobs
 wait for `docbank gc --run`, and dead packed payload waits for GC followed by

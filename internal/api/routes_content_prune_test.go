@@ -103,6 +103,19 @@ func TestContentVersionPruneRequiresRevisionAndOneSelector(t *testing.T) {
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, string(body))
 	assert.Contains(t, string(body), `"code":"invalid_version_prune"`)
 
+	resp, body = postContentPrune(t, ts.URL, ts.Client(), created.ID, &revision,
+		map[string]any{"older_than": "0h", "all_prior": true, "run": true})
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, string(body))
+	assert.Contains(t, string(body), `"code":"invalid_version_prune"`)
+
+	resp, body = postContentPrune(t, ts.URL, ts.Client(), created.ID, &revision,
+		map[string]any{"version_ids": []string{"not-a-uuid"}})
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, string(body))
+
+	_, total, err := s.ContentVersions(t.Context(), created.ID, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, total, "invalid execution must not alter history")
+
 	stale := revision + 1
 	resp, body = postContentPrune(t, ts.URL, ts.Client(), created.ID, &stale,
 		map[string]any{"all_prior": true, "run": true})
