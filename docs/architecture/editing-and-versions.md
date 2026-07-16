@@ -10,9 +10,9 @@ is document identity; the version identifies one immutable set of bytes. Users
 and agents can list versions, inspect one by UUID, and retrieve its bytes even
 after the node moves or is renamed.
 
-Content replacement is implemented by `docbank put`, and reversion by
-`docbank revert`. Both add immutable history instead of rewriting an existing
-version. Interactive editing remains planned on top of the same write contract.
+Content replacement is implemented by `docbank put`, interactive replacement
+by `docbank edit`, and reversion by `docbank revert`. Each changed result adds
+immutable history instead of rewriting an existing version.
 
 ## Version contract
 
@@ -105,6 +105,33 @@ head remains readable throughout. Even a replacement with identical bytes
 creates a distinct version and operation while content storage deduplicates the
 shared blob.
 
+## Interactive editing
+
+```bash
+docbank edit /taxes/2025/notes.md
+```
+
+`edit` privately stages the current immutable version and accepts the staged
+file only after its version ID, size, SHA-256, and terminal content digest all
+verify. It then runs the blocking command selected by `--editor`, `VISUAL`, or
+`EDITOR`, falling back to `vi` on Unix and Notepad on Windows. Commands with
+arguments use shell-style quoting, for example `VISUAL='code --wait'`; Docbank
+does not invoke a shell. The editor must wait until the file is closed.
+
+After the editor exits successfully, Docbank hashes the result. Unchanged bytes
+and media type create no version. A change is uploaded through the same verified
+replacement contract as `put`, using the node revision inspected before the
+editor opened. A concurrent replacement, move, or trash therefore causes a
+stale-revision failure instead of overwriting either writer. Because an editing
+session may outlive daemon idle shutdown, Docbank reacquires the daemon only
+after local hashing. The current media type is preserved unless `--mime-type`
+sets a new one. Download, hash, and upload stages have progress output.
+
+The staged directory and file are private and removed on success, no-op, editor
+failure, or upload failure. If cleanup fails after a replacement has already
+committed, the command reports the successful version and emits a warning
+rather than falsely inviting a retry.
+
 ## Reverting content
 
 ```bash
@@ -132,9 +159,9 @@ node, revision, source, and content-authority fields agree.
 
 ## Current retention behavior
 
-`put` and `revert` retain every prior content version. Docbank currently has no
-interactive `edit` command, version-pruning command, or automatic retention
-policy, so recorded versions remain reachability roots. The planned
+`put`, changed `edit` sessions, and `revert` retain every prior content version.
+Docbank currently has no version-pruning command or automatic retention policy,
+so recorded versions remain reachability roots. The planned
 [full-audit contract](audited-history.md) defines a stronger permanent-retention
 mode separately from this current behavior.
 

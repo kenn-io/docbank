@@ -109,6 +109,7 @@ docbank refs <receipt-sha256>
 docbank tag create taxes
 docbank tag assign taxes /archive/Documents/receipt.pdf
 docbank put revised-receipt.pdf /archive/Documents/receipt.pdf
+docbank edit /archive/Documents/notes.md
 docbank revert /archive/Documents/receipt.pdf <prior-version-id>
 docbank mv /archive/Documents/receipt.pdf /archive/Documents/receipt-2026.pdf
 docbank verify

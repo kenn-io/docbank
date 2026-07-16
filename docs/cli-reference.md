@@ -10,7 +10,7 @@ All commands operate on the vault at `~/.docbank` (override with
 stderr and produce a non-zero exit code. Virtual paths are absolute,
 `/`-separated, and case-sensitive.
 
-Every data command below (`add`, `ls`, `tree`, `cat`, `put`, `versions`, `version`, `refs`, `revert`, `tag`, `mv`, `rm`,
+Every data command below (`add`, `ls`, `tree`, `cat`, `put`, `edit`, `versions`, `version`, `refs`, `revert`, `tag`, `mv`, `rm`,
 `restore`, `search`, `trash`, `gc`, `verify`, `storage`, `backup`, `jobs`) talks to the `docbank`
 daemon over its HTTP API rather than opening the vault itself; if none
 is running, the command auto-starts one in the background. `docbank
@@ -141,6 +141,32 @@ concurrent update. A successful put bumps the node revision, creates a
 `content_replace` version, and leaves the older bytes reachable through
 `docbank version <id> --content`. Replacing with identical bytes still records
 an explicit versioned operation while the blob itself deduplicates.
+
+## docbank edit
+
+```text
+docbank edit <vault-path> [--editor <command>] [--mime-type <type>] [--progress auto|bar|plain]
+```
+
+Downloads the current immutable version into a private temporary directory,
+verifies its version ID, size, SHA-256, and terminal digest, and opens the staged
+file in a blocking editor. `--editor` takes precedence over `VISUAL`, then
+`EDITOR`; the platform fallback is `vi` on Unix or Notepad on Windows. Editor
+commands accept shell-style quoting but are executed directly without a shell.
+GUI editors must be configured to wait, such as `VISUAL='code --wait'`.
+
+After a successful editor exit, Docbank hashes the staged file. If its bytes and
+media type are unchanged, it reports the existing version and does not write.
+Otherwise it preserves the current media type (or applies `--mime-type`) and
+uploads a verified `content_replace` using the revision inspected before the
+editor opened. Concurrent mutation fails with `stale_revision`; the command
+does not silently reopen or overwrite the newer state. Since editing may exceed
+the idle timeout, the daemon is reacquired after hashing. Human progress covers
+`download`, `hash`, and `upload`; this interactive command has no JSON mode.
+
+Private staging is removed on every ordinary outcome. If cleanup fails after an
+update already committed, Docbank keeps the command successful, prints the new
+version, and emits a warning rather than encouraging a duplicate retry.
 
 ## docbank versions
 

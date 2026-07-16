@@ -89,7 +89,7 @@ identity through loose and packed storage. File-node responses expose current
 version plus immutable SHA-256 identity; content streams carry both catalog
 identities plus a freshly computed digest trailer. Remote writers must declare
 SHA-256 and size, and receive the stable node/version plus server-computed
-identity only after both match. `docbank put` and raw
+identity only after both match. `docbank put`, `docbank edit`, and raw
 `PUT /nodes/{id}/content` now add a digest-checked `content_replace` head under
 an optimistic revision precondition while retaining every prior version.
 `docbank revert` and `POST /nodes/{id}/revert` add a metadata-only
@@ -100,8 +100,6 @@ are available across the CLI, authenticated API, typed client, OpenAPI, and
 metadata-v1 backup/restore authority, including bounded forward and reverse
 listings.
 
-- Remaining editing surface: `docbank edit`
-  ([design](architecture/editing-and-versions.md))
 - Full-audit directory scopes with sticky membership, complete authoritative
   change and content-version retention, tamper-evident history, maintenance
   refusal, and portable JSONL fidelity
