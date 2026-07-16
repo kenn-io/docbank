@@ -320,6 +320,11 @@ ETag to encode that resulting revision. The old version remains addressable.
 A `412` means the decision is stale—re-read and decide again rather than
 blindly retrying with a fresh revision.
 
+`docbank edit` is a human-directed wrapper around this same contract: it opens
+an interactive local editor and intentionally has no JSON mode. Agents should
+use the raw replacement API or typed client so they can retain and validate the
+full byte-identity receipt themselves.
+
 Reversion applies the same concurrency rule without uploading bytes. Select a
 prior version belonging to the inspected node and send:
 

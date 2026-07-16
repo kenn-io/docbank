@@ -109,6 +109,15 @@ Reversion creates another immutable head that records its source. It does not
 copy the source blob or rewind history, so both the replacement and the original
 remain addressable.
 
+For text and other editor-friendly files, `edit` verifies a private copy, opens
+the blocking command from `VISUAL` or `EDITOR`, and creates a replacement only
+when the result changed. GUI editors need their wait flag, for example
+`VISUAL='code --wait'`.
+
+```bash
+docbank edit /notes/draft.md
+```
+
 ## Organize independently with tags
 
 Tags survive path changes because assignments use stable tag and node IDs:
