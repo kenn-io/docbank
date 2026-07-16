@@ -77,6 +77,63 @@ or `Verify` succeeds. Early `Close` does not drain the stream. `Vault.Close`
 waits for active operations and streams, closes storage, and releases the vault
 lock.
 
+## List and pack content
+
+`Children` exposes the live virtual tree without materializing an unbounded
+directory. Resolve a directory with `Stat`, then advance through its direct
+children with `Limit` and `Offset`:
+
+```go
+manifests, err := vault.Stat(ctx, "/manifests")
+if err != nil {
+    return err
+}
+for offset := 0; ; {
+    page, err := vault.Children(ctx, manifests.ID, docbank.ChildrenOptions{
+        Limit:  500,
+        Offset: offset,
+    })
+    if err != nil {
+        return err
+    }
+    for _, child := range page.Items {
+        // Inspect this bounded page.
+        _ = child
+    }
+    offset += len(page.Items)
+    if offset >= page.Total || len(page.Items) == 0 {
+        break
+    }
+}
+```
+
+Pages contain directories first and files second, name-sorted within each
+kind. A zero limit uses `DefaultChildrenLimit`; one call cannot exceed
+`MaxChildrenLimit`. The total and page come from one metadata snapshot, but a
+caller that needs a complete stable traversal must avoid concurrent tree
+mutations between page calls.
+
+Ordinary `Put` calls publish loose content. Call `Pack` explicitly when the
+embedded owner is ready to move authorized loose blobs into managed immutable
+packs:
+
+```go
+report, err := vault.Pack(ctx, docbank.PackOptions{MaxBytes: 256 << 20})
+if err != nil {
+    return err
+}
+if report.BudgetExhausted {
+    // Run another bounded pass when scheduling allows.
+}
+```
+
+`MaxBytes` is a soft committed raw-byte budget: the pass finishes the blob that
+crosses the budget, seals its pack, and stops. Zero is unlimited. The report
+includes packing, reconciliation, missing/corrupt content, and orphan cleanup
+outcomes; embedded applications should surface those fields rather than
+treating a nil error alone as a complete health report. Packing changes only
+physical representation. `OpenContent` keeps the same verified read contract.
+
 ## Choose SQLite
 
 The build default preserves performance where CGO is available:

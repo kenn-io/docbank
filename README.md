@@ -46,8 +46,8 @@ metadata, content, and maintenance authority.
 - Whole-vault integrity verification
 - Incremental backup repositories with create, list, verify, and confined restore
 - Daemon-first CLI, authenticated loopback HTTP API, and offline OpenAPI output
-- An embedded Go API with independently locked vaults and selectable CGO or
-  pure-Go SQLite
+- An embedded Go API with independently locked vaults, bounded tree listing,
+  explicit packing, and selectable CGO or pure-Go SQLite
 - A release pipeline for Linux, macOS, and Windows on amd64 and arm64, with
   SHA-256 checksums and checksum-enforcing installers
 - Native vault, daemon, and recovery support on Linux, macOS, and Windows

@@ -455,5 +455,7 @@ actual released formats and fixtures rather than speculative migration work.
   ordering and adds reachability atomically with pointer replacement.
   Reversion is the metadata-only exception: it reuses already-authoritative
   source bytes and atomically adds a new reachability row and pointer.
-- Pack and repack maintenance commands must remain daemon/API operations; no
-  CLI path may open the physical store directly.
+- Standalone pack and repack commands remain daemon/API operations; no CLI path
+  may open the physical store directly. An application that exclusively owns
+  an embedded vault may enter the same coordinated pack maintenance through
+  `pkg.Vault.Pack`.
