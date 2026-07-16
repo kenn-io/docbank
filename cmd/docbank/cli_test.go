@@ -263,6 +263,28 @@ func TestTagCLIOrganizesNodesByNameOrStableID(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &page))
 	assert.Zero(t, page.Total)
 	assert.Empty(t, page.Items)
+
+	// A UUID-shaped display name must not shadow the stable identity with that
+	// UUID. Once the identity is gone, the same selector falls back to the name.
+	out, err = runCLI(t, "tag", "create", "identity target", "--json")
+	require.NoError(t, err, out)
+	var identityTarget api.Tag
+	require.NoError(t, json.Unmarshal([]byte(out), &identityTarget))
+	out, err = runCLI(t, "tag", "create", identityTarget.ID, "--json")
+	require.NoError(t, err, out)
+	var nameShadow api.Tag
+	require.NoError(t, json.Unmarshal([]byte(out), &nameShadow))
+	assert.NotEqual(t, identityTarget.ID, nameShadow.ID)
+
+	out, err = runCLI(t, "tag", "delete", identityTarget.ID, "--json")
+	require.NoError(t, err, out)
+	require.NoError(t, json.Unmarshal([]byte(out), &deleted))
+	assert.Equal(t, identityTarget.ID, deleted.Tag.ID)
+	out, err = runCLI(t, "tag", "show", identityTarget.ID, "--json")
+	require.NoError(t, err, out)
+	require.NoError(t, json.Unmarshal([]byte(out), &shown))
+	assert.Equal(t, nameShadow.ID, shown.ID)
+	assert.Equal(t, identityTarget.ID, shown.Name)
 }
 
 func TestRefsFindsCurrentHistoricalAndTrashedContent(t *testing.T) {

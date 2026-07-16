@@ -278,14 +278,16 @@ func changeTagAssignmentCLI(
 }
 
 func resolveTag(cmd *cobra.Command, c *client.Client, selector string) (api.Tag, error) {
+	if canonicalTagID.MatchString(selector) {
+		tag, err := c.Tag(cmd.Context(), selector)
+		if err == nil {
+			return tag, nil
+		}
+		if !errors.Is(err, store.ErrNotFound) {
+			return api.Tag{}, fmt.Errorf("resolving tag %q: %w", selector, err)
+		}
+	}
 	tag, err := c.TagByName(cmd.Context(), selector)
-	if err == nil {
-		return tag, nil
-	}
-	if !errors.Is(err, store.ErrNotFound) || !canonicalTagID.MatchString(selector) {
-		return api.Tag{}, fmt.Errorf("resolving tag %q: %w", selector, err)
-	}
-	tag, err = c.Tag(cmd.Context(), selector)
 	if err != nil {
 		return api.Tag{}, fmt.Errorf("resolving tag %q: %w", selector, err)
 	}
