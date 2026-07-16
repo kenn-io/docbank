@@ -70,8 +70,9 @@ Unreachable blob authority is removed only by explicit GC. A blob is
 
 - a live node,
 - a trashed node (trash is always restorable in full), or
-- a recorded prior version of an edited document
-  (see [Editing & Versions](../architecture/editing-and-versions.md)).
+- a retained prior version of an edited document. Explicit, preview-first
+  [version pruning](../architecture/editing-and-versions.md#choosing-retention)
+  can release that reference without deleting the current file.
 
 ```bash
 docbank gc          # dry run: candidate count and reclaimable bytes

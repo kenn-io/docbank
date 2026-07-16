@@ -16,7 +16,7 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 	require.NoError(t, err)
 	doc := string(out)
 	for _, op := range []string{"getNode", "resolvePath", "listChildren", "getNodeContent", "verifyNodeContent",
-		"listContentVersions", "getContentVersion", "getContentVersionBytes",
+		"listContentVersions", "getContentVersion", "getContentVersionBytes", "pruneNodeContentVersions",
 		"lookupContentReferences",
 		"listTags", "resolveTagByName", "getTag", "listTagNodes", "listNodeTags",
 		"createTag", "renameTag", "deleteTag", "assignTag", "unassignTag",
@@ -87,6 +87,7 @@ func TestOpenAPIDeclaresMutationPreconditions(t *testing.T) {
 		doc.Paths["/api/v1/nodes/{id}/restore"].Post,
 		doc.Paths["/api/v1/nodes/{id}/verify"].Post,
 		doc.Paths["/api/v1/nodes/{id}/revert"].Post,
+		doc.Paths["/api/v1/nodes/{id}/versions/prune"].Post,
 		doc.Paths["/api/v1/nodes/{id}/tags/{tag_id}"].Put,
 		doc.Paths["/api/v1/nodes/{id}/tags/{tag_id}"].Delete,
 		doc.Paths["/api/v1/tags/{tag_id}"].Patch,

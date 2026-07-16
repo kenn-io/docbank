@@ -52,8 +52,8 @@ node/version pair that retains it, including prior versions and trash.
 The HTTP equivalents are:
 
 - `GET /api/v1/nodes/{id}/versions?limit=&offset=`;
-- `GET /api/v1/versions/{version_id}`; and
-- `GET /api/v1/versions/{version_id}/content`; and
+- `GET /api/v1/versions/{version_id}`;
+- `GET /api/v1/versions/{version_id}/content`;
 - `GET /api/v1/content-references?sha256=&limit=&offset=`.
 
 Current-node and ID-addressed version streams both send
@@ -64,16 +64,20 @@ compare the trailer before publishing them.
 
 ## Retention and backup
 
-Every content-version row is a GC reachability root, whether or not it is the
-current head. Deleting a file's tree metadata through trash empty removes its
-versions; only then can unreferenced blobs become GC candidates. Repack may
-change physical placement but not version identity.
+Every retained content-version row is a GC reachability root, whether or not it
+is the current head. Explicit version pruning or deletion of a file's tree
+metadata through trash empty can release those references; only then can an
+unreferenced blob become a GC candidate. Repack may change physical placement
+but not version identity.
 
 Deterministic metadata JSONL includes every version and every node's current
 pointer. Backup capture, verification, and restore therefore preserve stable
 version IDs across loose or packed physical representations. Import rejects
 dangling current pointers, cross-node pointers, size disagreement, invalid UUIDs,
-and malformed JSON records transactionally.
+and malformed JSON records transactionally. A backup captured after pruning
+preserves the retained graph and does not resurrect deleted version rows.
+Earlier snapshots remain independent historical records and can still restore
+the state they captured.
 
 ## Replacing content
 
@@ -158,13 +162,35 @@ Its receipt returns the resulting node, the new reversion row, the complete
 source version, and the resulting ETag. Clients accept success only when all
 node, revision, source, and content-authority fields agree.
 
-## Current retention behavior
+## Choosing retention
 
-`put`, changed `edit` sessions, and `revert` retain every prior content version.
-Docbank currently has no version-pruning command or automatic retention policy,
-so recorded versions remain reachability roots. The planned
-[full-audit contract](audited-history.md) defines a stronger permanent-retention
-mode separately from this current behavior.
+`put`, changed `edit` sessions, and `revert` retain every prior content version
+by default. Docbank does not choose an age or history limit for the operator.
+When a file's old versions are no longer wanted, pruning is explicit and
+preview-first:
+
+```bash
+docbank versions prune /taxes/2025/return.pdf --keep-newest 3
+docbank versions prune /taxes/2025/return.pdf --older-than 365d
+docbank versions prune /taxes/2025/return.pdf --version <version-id>
+docbank versions prune /taxes/2025/return.pdf --all-prior
+```
+
+Exactly one selector is accepted. Nothing changes without `--run`, and an
+executed selection is bound to the node ID and revision inspected by the
+client. The current content is always retained. Ordinary selectors never
+select the current row and also retain any source version still required by a
+remaining `content_revert` record, reporting that dependency rather than
+producing a dangling history graph. `--all-prior` can release the complete
+older graph; when the current head is itself a revert, the transaction first
+installs a same-byte, source-free `content_replace` checkpoint and then removes
+the old graph, including the superseded revert head.
+
+Pruning deletes version authority, not bytes. Its report distinguishes logical
+bytes, shared blobs that remain reachable, loose blobs that become eligible for
+`gc`, and packed payload that needs `gc` followed by `storage repack`. A run
+that deletes versions advances the node revision exactly once; an empty
+selection is a no-op. There is no automatic retention policy.
 
 ```mermaid
 flowchart LR

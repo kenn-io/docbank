@@ -157,7 +157,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	recs, err := client.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
-	require.Equal(t, "16", recs[0].Metadata["protocol_version"])
+	require.Equal(t, "17", recs[0].Metadata["protocol_version"])
 	recs[0].Metadata["protocol_version"] = "9"
 	_, err = client.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
@@ -178,7 +178,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	recs, err = client.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
-	require.Equal(t, "16", recs[0].Metadata["protocol_version"])
+	require.Equal(t, "17", recs[0].Metadata["protocol_version"])
 	recs[0].Metadata["protocol_version"] = "7"
 	_, err = client.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
@@ -292,6 +292,21 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	tagPID := strconv.Itoa(recs[0].PID)
 	assert.NotEqual(t, revertPID, tagPID)
 
+	// Protocol 16 predates explicit version pruning. Replace it before a dry
+	// run reaches a same-version daemon that would return 404 instead of a
+	// trustworthy history inventory.
+	recs[0].Metadata["protocol_version"] = "16"
+	_, err = client.RuntimeStore(dir).Write(recs[0])
+	require.NoError(t, err)
+	out, err = run(oldBin, "versions", "prune", "/inbox/preflight.txt", "--all-prior", "--json")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, `"checkpoint_required":true`)
+	recs, err = client.RuntimeStore(dir).List()
+	require.NoError(t, err)
+	require.Len(t, recs, 1)
+	prunePID := strconv.Itoa(recs[0].PID)
+	assert.NotEqual(t, tagPID, prunePID)
+
 	// Initialize the repository before making the runtime record stale: the
 	// following backup create must replace that daemon before it calls the new
 	// progress-stream endpoint.
@@ -306,7 +321,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	recs, err = client.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
-	require.Equal(t, "16", recs[0].Metadata["protocol_version"])
+	require.Equal(t, "17", recs[0].Metadata["protocol_version"])
 	recs[0].Metadata["protocol_version"] = "4"
 	_, err = client.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
@@ -319,7 +334,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
 	protocolPID := strconv.Itoa(recs[0].PID)
-	assert.NotEqual(t, tagPID, protocolPID)
+	assert.NotEqual(t, prunePID, protocolPID)
 
 	// A mismatched-version start stops the stale daemon and starts its own.
 	out, err = run(newBin, "daemon", "start")

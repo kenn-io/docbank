@@ -92,6 +92,7 @@ func NewServer(d Deps) *Server {
 	registerUploadRoute(mux, humaAPI, d, g)
 	registerContentWriteRoute(mux, humaAPI, d, g)
 	registerContentRevertRoute(humaAPI, d, g)
+	registerContentPruneRoute(humaAPI, d, g)
 	registerTagRoutes(humaAPI, d, g)
 	markRevisionPreconditionsRequired(humaAPI)
 	s.registerHealth(mux)
@@ -130,6 +131,7 @@ func markRevisionPreconditionsRequired(api huma.API) {
 		{"/api/v1/nodes/{id}/restore", http.MethodPost},
 		{"/api/v1/nodes/{id}/verify", http.MethodPost},
 		{"/api/v1/nodes/{id}/revert", http.MethodPost},
+		{"/api/v1/nodes/{id}/versions/prune", http.MethodPost},
 		{"/api/v1/nodes/{id}/tags/{tag_id}", http.MethodPut},
 		{"/api/v1/nodes/{id}/tags/{tag_id}", http.MethodDelete},
 		{"/api/v1/tags/{tag_id}", http.MethodPatch},

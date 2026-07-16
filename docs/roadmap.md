@@ -94,7 +94,10 @@ identity only after both match. `docbank put`, `docbank edit`, and raw
 an optimistic revision precondition while retaining every prior version.
 `docbank revert` and `POST /nodes/{id}/revert` add a metadata-only
 `content_revert` head from one prior version without copying its loose or packed
-blob. `docbank refs` and `GET /content-references` resolve a SHA-256 identity to
+blob. `docbank versions prune` and `POST /nodes/{id}/versions/prune` provide
+preview-first individual, age, count, and complete-prior-history selection,
+with revert dependency handling and honest GC/repack consequences. `docbank
+refs` and `GET /content-references` resolve a SHA-256 identity to
 every retaining current, historical, or trashed node/version pair. Stable tags
 are available across the CLI, authenticated API, typed client, OpenAPI, and
 metadata-v1 backup/restore authority, including bounded forward and reverse

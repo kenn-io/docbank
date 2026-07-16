@@ -206,6 +206,55 @@ func TestPutReplacesContentAndRetainsHistory(t *testing.T) {
 	assert.Contains(t, out, "Source version:  "+initialVersion)
 }
 
+func TestVersionsPruneIsPreviewFirstAndKeepsCurrentContent(t *testing.T) {
+	_ = setupVaultHome(t)
+	initial := writeSourceFile(t, "document.txt", "initial content")
+	_, err := runCLI(t, "add", initial, "--dest", "/inbox")
+	require.NoError(t, err)
+
+	second := writeSourceFile(t, "second.txt", "second content")
+	_, err = runCLI(t, "put", second, "/inbox/document.txt", "--progress", "plain")
+	require.NoError(t, err)
+	third := writeSourceFile(t, "third.txt", "current content")
+	_, err = runCLI(t, "put", third, "/inbox/document.txt", "--progress", "plain")
+	require.NoError(t, err)
+
+	out, err := runCLI(t, "versions", "/inbox/document.txt", "--json")
+	require.NoError(t, err)
+	var before api.ContentVersionPage
+	require.NoError(t, json.Unmarshal([]byte(out), &before))
+	require.Len(t, before.Items, 3)
+	_, err = runCLI(t, "versions", "prune", "/inbox/document.txt",
+		"--version", before.Items[1].ID+","+before.Items[2].ID)
+	require.ErrorContains(t, err, "canonical UUIDv4",
+		"repeatable --version values must treat commas literally")
+
+	out, err = runCLI(t, "versions", "prune", "/inbox/document.txt", "--keep-newest", "1")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "2 version(s) selected")
+	assert.Contains(t, out, "dry run")
+	assert.Contains(t, out, "pending gc")
+	out, err = runCLI(t, "versions", "/inbox/document.txt", "--json")
+	require.NoError(t, err)
+	var afterPreview api.ContentVersionPage
+	require.NoError(t, json.Unmarshal([]byte(out), &afterPreview))
+	assert.Equal(t, 3, afterPreview.Total, "preview must retain history")
+
+	out, err = runCLI(t, "versions", "prune", "/inbox/document.txt",
+		"--keep-newest", "1", "--run")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "pruned 2 version(s)")
+	out, err = runCLI(t, "versions", "/inbox/document.txt", "--json")
+	require.NoError(t, err)
+	var afterRun api.ContentVersionPage
+	require.NoError(t, json.Unmarshal([]byte(out), &afterRun))
+	require.Len(t, afterRun.Items, 1)
+	assert.Equal(t, before.Items[0].ID, afterRun.Items[0].ID)
+	out, err = runCLI(t, "cat", "/inbox/document.txt")
+	require.NoError(t, err)
+	assert.Equal(t, "current content", out)
+}
+
 func TestTagCLIOrganizesNodesByNameOrStableID(t *testing.T) {
 	_ = setupVaultHome(t)
 	source := writeSourceFile(t, "return.pdf", "tax return")
