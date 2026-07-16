@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"os"
-	"strconv"
 	"testing"
 	"time"
 
@@ -87,8 +86,6 @@ func TestEditorCommandPrecedenceAndParsing(t *testing.T) {
 	command, err = editorCommand("")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"nano"}, command)
-	_, err = editorCommand(`"unterminated`)
-	require.ErrorContains(t, err, "parsing editor command")
 }
 
 func TestEditFailureAndConcurrentReplacementDoNotOverwrite(t *testing.T) {
@@ -143,6 +140,50 @@ func TestEditFailureAndConcurrentReplacementDoNotOverwrite(t *testing.T) {
 	assert.Equal(t, string(concurrent), out)
 }
 
+func TestEditUnchangedRejectsConcurrentReplacement(t *testing.T) {
+	_ = setupVaultHome(t)
+	initial := writeSourceFile(t, "notes.txt", "initial text")
+	_, err := runCLI(t, "add", initial, "--dest", "/inbox")
+	require.NoError(t, err)
+
+	marker := t.TempDir() + string(os.PathSeparator) + "started"
+	release := t.TempDir() + string(os.PathSeparator) + "release"
+	setEditHelper(t, "initial text")
+	t.Setenv("DOCBANK_EDIT_TEST_MARKER", marker)
+	t.Setenv("DOCBANK_EDIT_TEST_RELEASE", release)
+	type result struct {
+		out string
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		got, runErr := runCLI(t, "edit", "/inbox/notes.txt", "--progress", "plain")
+		done <- result{got, runErr}
+	}()
+	require.Eventually(t, func() bool {
+		_, statErr := os.Stat(marker)
+		return statErr == nil
+	}, 10*time.Second, 20*time.Millisecond)
+
+	c, err := client.Ensure(t.Context())
+	require.NoError(t, err)
+	node, err := c.Stat(t.Context(), "/inbox/notes.txt")
+	require.NoError(t, err)
+	concurrent := []byte("concurrent replacement")
+	sum := sha256.Sum256(concurrent)
+	_, err = c.ReplaceContent(t.Context(), node.ID, node.Revision, node.MimeType,
+		hex.EncodeToString(sum[:]), int64(len(concurrent)), bytes.NewReader(concurrent))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(release, []byte("continue"), 0o600))
+
+	finished := <-done
+	require.ErrorContains(t, finished.err, "revision mismatch", finished.out)
+	assert.NotContains(t, finished.out, "unchanged /inbox/notes.txt")
+	out, err := runCLI(t, "cat", "/inbox/notes.txt")
+	require.NoError(t, err)
+	assert.Equal(t, string(concurrent), out)
+}
+
 func TestMain(m *testing.M) {
 	if os.Getenv("DOCBANK_EDIT_TEST_HELPER") == "1" {
 		os.Exit(runEditHelper())
@@ -185,6 +226,6 @@ func setEditHelper(t *testing.T, content string) {
 	t.Setenv("DOCBANK_EDIT_TEST_FAIL", "")
 	t.Setenv("DOCBANK_EDIT_TEST_MARKER", "")
 	t.Setenv("DOCBANK_EDIT_TEST_RELEASE", "")
-	t.Setenv("VISUAL", strconv.Quote(os.Args[0]))
+	t.Setenv("VISUAL", `"`+os.Args[0]+`"`)
 	t.Setenv("EDITOR", "")
 }

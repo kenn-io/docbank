@@ -11,11 +11,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
-	"github.com/google/shlex"
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/api"
@@ -123,6 +121,32 @@ func runEdit(cmd *cobra.Command, vaultPath string) (retErr error) {
 	if mimeOverride != "" {
 		editedMIME = mimeOverride
 	}
+
+	// Editors may remain open much longer than the daemon idle timeout. Reacquire
+	// a compatible daemon only after local hashing, then confirm the authority
+	// originally staged before reporting a no-op or attempting replacement.
+	c, err = client.Ensure(cmd.Context())
+	if err != nil {
+		return err
+	}
+	current, err := c.Node(cmd.Context(), node.ID)
+	if err != nil {
+		return fmt.Errorf("rechecking edited node %d: %w", node.ID, err)
+	}
+	if current.ID != node.ID {
+		return fmt.Errorf("rechecking edited node %d returned node %d", node.ID, current.ID)
+	}
+	if current.Revision != node.Revision || current.CurrentVersionID != node.CurrentVersionID {
+		return fmt.Errorf(
+			"node %d changed from revision %d/version %s to revision %d/version %s: %w",
+			node.ID, node.Revision, node.CurrentVersionID,
+			current.Revision, current.CurrentVersionID, store.ErrStaleRevision,
+		)
+	}
+	displayPath := current.Path
+	if displayPath == "" {
+		displayPath = vaultPath
+	}
 	if editedHash == node.BlobHash && editedSize == node.Size && editedMIME == node.MimeType {
 		if err := edited.Close(); err != nil {
 			return fmt.Errorf("closing unchanged edit: %w", err)
@@ -133,7 +157,7 @@ func runEdit(cmd *cobra.Command, vaultPath string) (retErr error) {
 		}
 		stageRemoved = true
 		if _, err = fmt.Fprintf(cmd.OutOrStdout(), "unchanged %s (version %s)\n",
-			vaultPath, node.CurrentVersionID); err != nil {
+			displayPath, node.CurrentVersionID); err != nil {
 			return fmt.Errorf("writing unchanged edit result: %w", err)
 		}
 		return nil
@@ -145,13 +169,6 @@ func runEdit(cmd *cobra.Command, vaultPath string) (retErr error) {
 		return fmt.Errorf("rewinding %s: %w", editedPath, err)
 	}
 
-	// Editors may remain open much longer than the daemon idle timeout. Reacquire
-	// a compatible daemon only after local hashing, while retaining the original
-	// node revision so a concurrent mutation fails instead of being overwritten.
-	c, err = client.Ensure(cmd.Context())
-	if err != nil {
-		return err
-	}
 	uploadReader := newPutProgressReader(
 		cmd.Context(), edited, editedSize, "upload", renderer, false,
 	)
@@ -172,7 +189,7 @@ func runEdit(cmd *cobra.Command, vaultPath string) (retErr error) {
 	}
 	_, err = fmt.Fprintf(cmd.OutOrStdout(),
 		"updated %s to version %s (revision %d, %s, sha256 %s)\n",
-		vaultPath, receipt.Version.ID, receipt.Node.Revision,
+		displayPath, receipt.Version.ID, receipt.Node.Revision,
 		formatBackupBytes(receipt.ComputedSize), receipt.ComputedHash)
 	if err != nil {
 		return fmt.Errorf("writing edit result: %w", err)
@@ -189,13 +206,9 @@ func editorCommand(override string) ([]string, error) {
 		raw = strings.TrimSpace(os.Getenv("EDITOR"))
 	}
 	if raw == "" {
-		if runtime.GOOS == "windows" {
-			raw = "notepad.exe"
-		} else {
-			raw = "vi"
-		}
+		raw = defaultEditorCommand()
 	}
-	parts, err := shlex.Split(raw)
+	parts, err := splitEditorCommand(raw)
 	if err != nil {
 		return nil, fmt.Errorf("parsing editor command %q: %w", raw, err)
 	}

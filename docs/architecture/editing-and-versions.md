@@ -114,9 +114,10 @@ docbank edit /taxes/2025/notes.md
 `edit` privately stages the current immutable version and accepts the staged
 file only after its version ID, size, SHA-256, and terminal content digest all
 verify. It then runs the blocking command selected by `--editor`, `VISUAL`, or
-`EDITOR`, falling back to `vi` on Unix and Notepad on Windows. Commands with
-arguments use shell-style quoting, for example `VISUAL='code --wait'`; Docbank
-does not invoke a shell. The editor must wait until the file is closed.
+`EDITOR`, falling back to `vi` on Unix and Notepad on Windows. Unix editor
+commands use shell-style quoting; Windows commands use native Windows
+command-line parsing so quoted executable paths and backslashes remain intact.
+Docbank does not invoke a shell. The editor must wait until the file is closed.
 
 After the editor exits successfully, Docbank hashes the result. Unchanged bytes
 and media type create no version. A change is uploaded through the same verified

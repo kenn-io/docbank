@@ -152,8 +152,9 @@ Downloads the current immutable version into a private temporary directory,
 verifies its version ID, size, SHA-256, and terminal digest, and opens the staged
 file in a blocking editor. `--editor` takes precedence over `VISUAL`, then
 `EDITOR`; the platform fallback is `vi` on Unix or Notepad on Windows. Editor
-commands accept shell-style quoting but are executed directly without a shell.
-GUI editors must be configured to wait, such as `VISUAL='code --wait'`.
+commands use shell-style quoting on Unix and native Windows command-line parsing
+on Windows, but are executed directly without a shell. GUI editors must be
+configured to wait, such as `VISUAL='code --wait'`.
 
 After a successful editor exit, Docbank hashes the staged file. If its bytes and
 media type are unchanged, it reports the existing version and does not write.
