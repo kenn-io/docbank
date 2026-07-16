@@ -45,6 +45,7 @@ func TestTagLifecycleHTTP(t *testing.T) {
 	resp, body = do(t, ts, http.MethodPut, assignmentPath, nil, nil)
 	assert.Equal(t, http.StatusPreconditionRequired, resp.StatusCode)
 	assert.Contains(t, body, `"code":"precondition_required"`)
+	assert.Contains(t, body, "read the target resource")
 
 	resp, body = do(t, ts, http.MethodPut, assignmentPath,
 		map[string]string{"If-Match": `"1"`}, nil)
@@ -87,6 +88,7 @@ func TestTagLifecycleHTTP(t *testing.T) {
 		map[string]any{"name": "tax records"})
 	assert.Equal(t, http.StatusPreconditionRequired, resp.StatusCode)
 	assert.Contains(t, body, `"code":"precondition_required"`)
+	assert.Contains(t, body, "read the target resource")
 
 	resp, body = do(t, ts, http.MethodPatch, "/api/v1/tags/"+tag.ID,
 		map[string]string{"If-Match": `"2"`}, map[string]any{"name": "tax records"})
@@ -129,9 +131,13 @@ func TestTagAssignmentRejectsStaleRevisionAndInvalidName(t *testing.T) {
 	require.NoError(t, err)
 	tag, err := s.CreateTag(t.Context(), "tag")
 	require.NoError(t, err)
+	resp, body := do(t, ts, http.MethodPatch, "/api/v1/tags/"+tag.ID,
+		map[string]string{"If-Match": `"-1"`}, map[string]any{"name": "renamed"})
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Contains(t, body, "non-negative resource revision")
 
 	path := fmt.Sprintf("/api/v1/nodes/%d/tags/%s", node.ID, tag.ID)
-	resp, body := do(t, ts, http.MethodPut, path,
+	resp, body = do(t, ts, http.MethodPut, path,
 		map[string]string{"If-Match": strconv.Quote("99")}, nil)
 	assert.Equal(t, http.StatusPreconditionFailed, resp.StatusCode)
 	assert.Contains(t, body, `"code":"stale_revision"`)

@@ -21,7 +21,7 @@ import (
 func parseIfMatch(v string) (int64, error) {
 	if v == "" {
 		return 0, NewError(http.StatusPreconditionRequired, "precondition_required",
-			"this endpoint requires If-Match: <revision> (stat the node to get it)")
+			"this endpoint requires If-Match: <revision> (read the target resource to get it)")
 	}
 	raw := v
 	if len(raw) >= 2 && strings.HasPrefix(raw, `"`) && strings.HasSuffix(raw, `"`) {
@@ -30,7 +30,7 @@ func parseIfMatch(v string) (int64, error) {
 	rev, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || rev < 0 {
 		return 0, NewError(http.StatusBadRequest, "validation",
-			fmt.Sprintf("invalid If-Match %q: want a non-negative node revision", v))
+			fmt.Sprintf("invalid If-Match %q: want a non-negative resource revision", v))
 	}
 	return rev, nil
 }
