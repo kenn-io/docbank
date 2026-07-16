@@ -36,7 +36,7 @@ func TestAuditEncodingBoundaryGoldenHashes(t *testing.T) {
 	}
 	for name, value := range vectors {
 		t.Run(name, func(t *testing.T) {
-			digest, err := Hash(Record{Kind: "vector", Fields: []Field{{Name: "value", Value: value}}})
+			digest, err := hashCanonical(Record{Kind: "vector", Fields: []Field{{Name: "value", Value: value}}})
 			require.NoError(t, err)
 			actual := hex.EncodeToString(digest[:])
 			if actual != expected[name] {
@@ -68,14 +68,14 @@ func TestAuditEncodingGoldenRecord(t *testing.T) {
 		{Name: "b_true", Value: Bool(true)},
 		{Name: "a_false", Value: Bool(false)},
 	}}
-	encoded, err := Encode(record)
+	encoded, err := encodeCanonical(record)
 	require.NoError(t, err)
 	actual := hex.EncodeToString(encoded)
 	const expected = "000000000000000d646f6362616e6b2d61756469740000000000000001000000000000000d676f6c64656e5f7265636f7264000000000000000c0000000000000007615f66616c7365010000000000000006625f7472756502000000000000000a635f756e7369676e65640301020304050607080000000000000008645f7369676e656404fffffffffffffffe0000000000000007655f627974657305000000000000000200ff0000000000000006665f7465787406000000000000000368c3a9000000000000000b675f74696d657374616d7007000000000000001e323032362d30372d31365431323a33343a35362e3132333435363738395a0000000000000006685f757569640800112233445546778899aabbccddeeff0000000000000008695f64696765737409d1e815eb101fa389ebba332f74729f1aca88a97e8f814d007c63541fd241e5b800000000000000066a5f6c6973740a0000000000000003000300000000000000090600000000000000017800000000000000086b5f6e65737465640b0000000000000040000000000000000d646f6362616e6b2d6175646974000000000000000100000000000000056368696c640000000000000001000000000000000576616c75650200000000000000087a5f616273656e7400"
 	if actual != expected {
 		t.Fatalf("audit encoding golden bytes = %s", actual)
 	}
-	digestValue, err := Hash(record)
+	digestValue, err := hashCanonical(record)
 	require.NoError(t, err)
 	assert.Equal(t, "5c851f9926b68c6689637d82cbe8d541c2703aa6ded1f04e5bb1650cbbfbc4cc",
 		hex.EncodeToString(digestValue[:]))
@@ -83,13 +83,13 @@ func TestAuditEncodingGoldenRecord(t *testing.T) {
 
 func TestAuditEncodingSortsFieldsAndDistinguishesAbsentFromEmpty(t *testing.T) {
 	emptyText := mustText(t, "")
-	left, err := Encode(Record{Kind: "sample", Fields: []Field{
+	left, err := encodeCanonical(Record{Kind: "sample", Fields: []Field{
 		{Name: "z", Value: Bytes(nil)},
 		{Name: "a", Value: Absent()},
 		{Name: "m", Value: emptyText},
 	}})
 	require.NoError(t, err)
-	right, err := Encode(Record{Kind: "sample", Fields: []Field{
+	right, err := encodeCanonical(Record{Kind: "sample", Fields: []Field{
 		{Name: "m", Value: emptyText},
 		{Name: "z", Value: Bytes([]byte{})},
 		{Name: "a", Value: Absent()},
@@ -97,9 +97,9 @@ func TestAuditEncodingSortsFieldsAndDistinguishesAbsentFromEmpty(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, left, right)
 
-	absent, err := Encode(Record{Kind: "sample", Fields: []Field{{Name: "a", Value: Absent()}}})
+	absent, err := encodeCanonical(Record{Kind: "sample", Fields: []Field{{Name: "a", Value: Absent()}}})
 	require.NoError(t, err)
-	empty, err := Encode(Record{Kind: "sample", Fields: []Field{{Name: "a", Value: Bytes(nil)}}})
+	empty, err := encodeCanonical(Record{Kind: "sample", Fields: []Field{{Name: "a", Value: Bytes(nil)}}})
 	require.NoError(t, err)
 	assert.NotEqual(t, absent, empty)
 }
@@ -108,7 +108,7 @@ func TestAuditEncodingValuesOwnInputBytes(t *testing.T) {
 	input := []byte("before")
 	value := Bytes(input)
 	input[0] = 'x'
-	encoded, err := Encode(Record{Kind: "sample", Fields: []Field{{Name: "value", Value: value}}})
+	encoded, err := encodeCanonical(Record{Kind: "sample", Fields: []Field{{Name: "value", Value: value}}})
 	require.NoError(t, err)
 	assert.Contains(t, string(encoded), "before")
 	assert.NotContains(t, string(encoded), "xefore")
@@ -116,7 +116,7 @@ func TestAuditEncodingValuesOwnInputBytes(t *testing.T) {
 	nested := Record{Kind: "child", Fields: []Field{{Name: "value", Value: Bytes([]byte("before"))}}}
 	nestedValue := Nested(nested)
 	nested.Fields[0].Value = Bytes([]byte("after"))
-	encoded, err = Encode(Record{Kind: "sample", Fields: []Field{{Name: "child", Value: nestedValue}}})
+	encoded, err = encodeCanonical(Record{Kind: "sample", Fields: []Field{{Name: "child", Value: nestedValue}}})
 	require.NoError(t, err)
 	assert.Contains(t, string(encoded), "before")
 	assert.NotContains(t, string(encoded), "after")
@@ -162,7 +162,7 @@ func TestAuditEncodingRejectsInvalidRecordShape(t *testing.T) {
 		}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := Encode(record)
+			_, err := encodeCanonical(record)
 			require.Error(t, err)
 		})
 	}
@@ -173,7 +173,7 @@ func TestAuditEncodingBoundsRecursiveValues(t *testing.T) {
 	for range maxValueDepth + 2 {
 		value = List(value)
 	}
-	_, err := Encode(Record{Kind: "deep", Fields: []Field{{Name: "value", Value: value}}})
+	_, err := encodeCanonical(Record{Kind: "deep", Fields: []Field{{Name: "value", Value: value}}})
 	require.ErrorContains(t, err, "nesting exceeds")
 }
 
