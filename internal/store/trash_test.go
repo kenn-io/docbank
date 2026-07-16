@@ -203,6 +203,52 @@ func TestTrashEmpty(t *testing.T) {
 	assert.Equal(t, 1, blobCount)
 }
 
+func TestTrashEmptyAdvancesAffectedTagRevisionsOnce(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+
+	dir, err := s.Mkdir(ctx, s.RootID(), "tagged-trash")
+	require.NoError(t, err)
+	child, err := s.CreateFile(ctx, dir.ID, "child.txt", fakeHash("tagged"), 6, "text/plain")
+	require.NoError(t, err)
+	dir, err = s.NodeByID(ctx, dir.ID)
+	require.NoError(t, err)
+	affected, err := s.CreateTag(ctx, "affected")
+	require.NoError(t, err)
+	change, err := s.AssignTag(ctx, affected.ID, dir.ID, dir.Revision)
+	require.NoError(t, err)
+	dir = change.Node
+	change, err = s.AssignTag(ctx, affected.ID, child.ID, child.Revision)
+	require.NoError(t, err)
+	affected = change.Tag
+
+	live, err := s.Mkdir(ctx, s.RootID(), "live")
+	require.NoError(t, err)
+	unaffected, err := s.CreateTag(ctx, "unaffected")
+	require.NoError(t, err)
+	change, err = s.AssignTag(ctx, unaffected.ID, live.ID, live.Revision)
+	require.NoError(t, err)
+	unaffected = change.Tag
+
+	_, _, err = s.Trash(ctx, dir.ID, dir.Revision)
+	require.NoError(t, err)
+	_, err = s.TrashEmpty(ctx, 0, false)
+	require.NoError(t, err)
+	afterDryRun, err := s.TagByID(ctx, affected.ID)
+	require.NoError(t, err)
+	assert.Equal(t, affected.Revision, afterDryRun.Revision)
+
+	_, err = s.TrashEmpty(ctx, 0, true)
+	require.NoError(t, err)
+	afterEmpty, err := s.TagByID(ctx, affected.ID)
+	require.NoError(t, err)
+	assert.Equal(t, affected.Revision+1, afterEmpty.Revision)
+	assert.Zero(t, afterEmpty.AssignmentCount)
+	stillUnaffected, err := s.TagByID(ctx, unaffected.ID)
+	require.NoError(t, err)
+	assert.Equal(t, unaffected, stillUnaffected)
+}
+
 func TestTrashEmptyWholeSecondTimestamp(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()

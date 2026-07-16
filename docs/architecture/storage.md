@@ -111,7 +111,8 @@ Assignments refer to the stable ID. Each tag revision covers its name and
 complete assignment set. Real assignment changes bump both the tag and directly
 affected node; renaming bumps the tag and every assigned node once in the same
 transaction. Delete checks the tag revision before cascading through
-assignments, not nodes.
+assignments, not nodes. Emptying tagged trash advances each affected tag once
+before its assignments cascade away.
 
 ## Timestamps and identity
 

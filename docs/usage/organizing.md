@@ -83,7 +83,9 @@ own generated ID, not through that ambiguous name.
 Deleting a tag removes its complete assignment set but never deletes a node or
 document content. Recreating the same name receives a new UUID. Trashed nodes
 retain their tag assignments and appear as `trashed` in `tag nodes`; path-based
-assignment commands intentionally address live nodes only.
+assignment commands intentionally address live nodes only. When `trash empty`
+permanently deletes tagged nodes, each affected tag revision advances before
+those assignments are removed.
 
 ## Tips for bulk reorganization
 

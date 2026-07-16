@@ -259,6 +259,18 @@ func (s *Store) TrashEmpty(ctx context.Context, olderThan time.Duration, run boo
 		if !run {
 			return nil
 		}
+		if _, err := tx.Exec(`
+			WITH RECURSIVE doomed(id) AS (
+			  SELECT id FROM nodes WHERE `+where+`
+			  UNION ALL
+			  SELECT n.id FROM nodes n JOIN doomed d ON n.parent_id = d.id
+			)
+			UPDATE tags SET revision = revision + 1
+			WHERE id IN (
+			  SELECT nt.tag_id FROM node_tags nt JOIN doomed d ON d.id = nt.node_id
+			)`, args...); err != nil {
+			return fmt.Errorf("advancing tags affected by trash empty: %w", err)
+		}
 		res, err := tx.Exec(`DELETE FROM nodes WHERE `+where, args...)
 		if err != nil {
 			return fmt.Errorf("emptying trash: %w", err)
