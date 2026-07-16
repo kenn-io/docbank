@@ -99,6 +99,73 @@ func TestRoundTrip(t *testing.T) {
 	assert.Equal(t, "/docs", restored.Path)
 }
 
+func TestTagRoundTrip(t *testing.T) {
+	c, s := newClient(t, serverKey)
+	ctx := t.Context()
+	node, err := c.Mkdir(ctx, s.RootID(), "records")
+	require.NoError(t, err)
+
+	tag, err := c.CreateTag(ctx, "cafe\u0301")
+	require.NoError(t, err)
+	assert.Equal(t, "café", tag.Name)
+	assert.Equal(t, int64(1), tag.Revision)
+	assert.Zero(t, tag.AssignmentCount)
+	byName, err := c.TagByName(ctx, "café")
+	require.NoError(t, err)
+	assert.Equal(t, tag, byName)
+	byID, err := c.Tag(ctx, tag.ID)
+	require.NoError(t, err)
+	assert.Equal(t, tag, byID)
+	_, err = c.AssignTag(ctx, tag.ID, node.ID, 0)
+	require.ErrorContains(t, err, "revision must be positive")
+
+	receipt, err := c.AssignTagPath(ctx, tag.ID, "/records")
+	require.NoError(t, err)
+	assert.True(t, receipt.Changed)
+	assert.Equal(t, node.Revision+1, receipt.Node.Revision)
+	assert.Equal(t, 1, receipt.Tag.AssignmentCount)
+	assert.Equal(t, int64(2), receipt.Tag.Revision)
+
+	receipt, err = c.AssignTag(ctx, tag.ID, node.ID, receipt.Node.Revision)
+	require.NoError(t, err)
+	assert.False(t, receipt.Changed)
+	assert.Equal(t, int64(2), receipt.Node.Revision)
+
+	page, err := c.Tags(ctx, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, page.Total)
+	require.Len(t, page.Items, 1)
+	assert.Equal(t, tag.ID, page.Items[0].ID)
+	page, err = c.NodeTags(ctx, node.ID, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, page.Total)
+
+	nodes, err := c.TaggedNodes(ctx, tag.ID, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, nodes.Total)
+	require.Len(t, nodes.Items, 1)
+	assert.Equal(t, "/records", nodes.Items[0].Path)
+
+	tag, err = c.RenameTag(ctx, tag.ID, receipt.Tag.Revision, "archive")
+	require.NoError(t, err)
+	assert.Equal(t, "archive", tag.Name)
+	assert.Equal(t, int64(3), tag.Revision)
+	node, err = c.Stat(ctx, "/records")
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), node.Revision)
+
+	receipt, err = c.UnassignTagPath(ctx, tag.ID, "/records")
+	require.NoError(t, err)
+	assert.True(t, receipt.Changed)
+	assert.Zero(t, receipt.Tag.AssignmentCount)
+	assert.Equal(t, int64(4), receipt.Tag.Revision)
+	deleted, err := c.DeleteTag(ctx, tag.ID, receipt.Tag.Revision)
+	require.NoError(t, err)
+	assert.Zero(t, deleted.RemovedAssignments)
+	_, err = c.Tag(ctx, tag.ID)
+	require.ErrorIs(t, err, store.ErrNotFound)
+}
+
 func TestErrorMapping(t *testing.T) {
 	c, s := newClient(t, serverKey)
 	ctx := t.Context()

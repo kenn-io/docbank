@@ -104,8 +104,8 @@ HTTP clients must also distinguish:
   action.
 - `412 stale_revision`: another mutation won; re-read the node and reconsider
   the action before retrying.
-- `428 precondition_required`: supply the revision from a fresh node response
-  in `If-Match`.
+- `428 precondition_required`: read the target node or tag again and send its
+  current revision in `If-Match`.
 
 ## Verify reports a problem
 

@@ -3,6 +3,7 @@ package api_test
 import (
 	"testing"
 
+	"github.com/danielgtaylor/huma/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -17,6 +18,9 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 	for _, op := range []string{"getNode", "resolvePath", "listChildren", "getNodeContent", "verifyNodeContent",
 		"listContentVersions", "getContentVersion", "getContentVersionBytes",
 		"lookupContentReferences",
+		"listTags", "resolveTagByName", "getTag", "listTagNodes", "listNodeTags",
+		"createTag", "renameTag", "deleteTag", "assignTag", "unassignTag",
+		"assignTagPath", "unassignTagPath",
 		"search", "createNode", "moveNode", "movePath", "trashNode", "trashPath", "restoreNode",
 		"storageStatus", "storagePack", "storageRepack", "ingest", "uploadFile", "listTrash", "emptyTrash", "gc", "verify",
 		"initBackupRepository", "createBackupSnapshot", "listBackupSnapshots", "listJobs"} {
@@ -73,4 +77,29 @@ func TestOpenAPIDeclaresDigestCheckedUpload(t *testing.T) {
 	require.NotNil(t, revert.RequestBody)
 	assert.Contains(t, revert.RequestBody.Content, "application/json")
 	assert.NotNil(t, revert.Responses["200"])
+}
+
+func TestOpenAPIDeclaresMutationPreconditions(t *testing.T) {
+	doc := api.NewOfflineServer().API().OpenAPI()
+	for _, operation := range []*huma.Operation{
+		doc.Paths["/api/v1/nodes/{id}"].Patch,
+		doc.Paths["/api/v1/nodes/{id}/trash"].Post,
+		doc.Paths["/api/v1/nodes/{id}/restore"].Post,
+		doc.Paths["/api/v1/nodes/{id}/verify"].Post,
+		doc.Paths["/api/v1/nodes/{id}/revert"].Post,
+		doc.Paths["/api/v1/nodes/{id}/tags/{tag_id}"].Put,
+		doc.Paths["/api/v1/nodes/{id}/tags/{tag_id}"].Delete,
+		doc.Paths["/api/v1/tags/{tag_id}"].Patch,
+		doc.Paths["/api/v1/tags/{tag_id}"].Delete,
+	} {
+		require.NotNil(t, operation)
+		required := map[string]bool{}
+		for _, parameter := range operation.Parameters {
+			required[parameter.Name] = parameter.Required
+		}
+		assert.True(t, required["If-Match"])
+	}
+	create := doc.Paths["/api/v1/tags"].Post
+	require.NotNil(t, create)
+	assert.NotNil(t, create.Responses["201"])
 }

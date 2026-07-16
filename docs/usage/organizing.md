@@ -52,6 +52,41 @@ Sibling-name uniqueness applies to **live** nodes only. After
 `draft.pdf` into `/inbox`; the trashed one remains restorable (it gets a
 suffix if its old name is occupied at restore time).
 
+## Tags
+
+Tags organize documents independently of their current paths. Each tag has a
+stable UUID; its name can change without breaking assignments or agent-held
+references.
+
+```bash
+docbank tag create taxes
+docbank tag assign taxes /taxes/2026/w2.pdf
+docbank tag assign taxes /taxes/2026/return.pdf
+docbank tag nodes taxes
+docbank tag rename taxes "tax archive"
+```
+
+`tag list` shows definitions and assignment counts. `tag show`, `tag rename`,
+`tag delete`, `tag assign`, `tag unassign`, and `tag nodes` accept either the
+exact current name or stable tag UUID. Assignment and definition changes bump
+the tag revision; they also bump affected nodes' revisions. Rename and delete
+condition their change on the inspected tag revision, so a concurrent stale
+decision fails rather than silently overwriting newer metadata. CLI assignment
+paths resolve in the same transaction as the change, so an ancestor move cannot
+make the command tag a node that has already left the requested path. Repeating
+an existing assignment or missing unassignment is an idempotent no-op.
+
+Canonical UUID-shaped selectors are always interpreted as stable IDs. A tag
+whose display name happens to look like a UUID remains addressable through its
+own generated ID, not through that ambiguous name.
+
+Deleting a tag removes its complete assignment set but never deletes a node or
+document content. Recreating the same name receives a new UUID. Trashed nodes
+retain their tag assignments and appear as `trashed` in `tag nodes`; path-based
+assignment commands intentionally address live nodes only. When `trash empty`
+permanently deletes tagged nodes, each affected tag revision advances before
+those assignments are removed.
+
 ## Tips for bulk reorganization
 
 - `tree` output includes IDs, so you can script against stable
@@ -59,5 +94,5 @@ suffix if its old name is occupied at restore time).
 - Every `mv` is its own transaction: a failed move in a scripted batch
   leaves everything else applied and consistent.
 
-Bulk all-or-nothing moves and user-facing tags are not available. Scripts must
-therefore treat each current `mv` as an independently committed operation.
+Bulk all-or-nothing moves are not available. Scripts must therefore treat each
+current `mv` as an independently committed operation.

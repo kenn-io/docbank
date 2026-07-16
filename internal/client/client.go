@@ -124,6 +124,7 @@ var codeToTypedErr = map[string]error{
 	"not_dir":                  store.ErrNotDir,
 	"not_file":                 store.ErrNotFile,
 	"invalid_name":             store.ErrInvalidName,
+	"invalid_tag":              store.ErrInvalidTag,
 	"not_trashed":              store.ErrNotTrashed,
 	"is_root":                  store.ErrIsRoot,
 	"version_node_mismatch":    store.ErrVersionNodeMismatch,
@@ -152,17 +153,24 @@ func apiProblemError(e api.Error) error {
 // do issues one JSON round-trip. Non-nil out must be a pointer; a non-2xx
 // status decodes the error envelope instead.
 func (c *Client) do(ctx context.Context, method, path string, hdr map[string]string, in, out any) error {
+	_, err := c.doWithHeaders(ctx, method, path, hdr, in, out)
+	return err
+}
+
+func (c *Client) doWithHeaders(
+	ctx context.Context, method, path string, hdr map[string]string, in, out any,
+) (http.Header, error) {
 	var body io.Reader
 	if in != nil {
 		b, err := marshalJSONRequest(in)
 		if err != nil {
-			return fmt.Errorf("encoding %s %s request: %w", method, path, err)
+			return nil, fmt.Errorf("encoding %s %s request: %w", method, path, err)
 		}
 		body = bytes.NewReader(b)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.base+path, body)
 	if err != nil {
-		return fmt.Errorf("building %s %s: %w", method, path, err)
+		return nil, fmt.Errorf("building %s %s: %w", method, path, err)
 	}
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -175,20 +183,20 @@ func (c *Client) do(ctx context.Context, method, path string, hdr map[string]str
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return fmt.Errorf("calling daemon (%s %s): %w", method, path, err)
+		return nil, fmt.Errorf("calling daemon (%s %s): %w", method, path, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return decodeError(resp)
+		return nil, decodeError(resp)
 	}
 	if out == nil {
 		_, _ = io.Copy(io.Discard, resp.Body)
-		return nil
+		return resp.Header.Clone(), nil
 	}
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-		return fmt.Errorf("decoding %s %s response: %w", method, path, err)
+		return nil, fmt.Errorf("decoding %s %s response: %w", method, path, err)
 	}
-	return nil
+	return resp.Header.Clone(), nil
 }
 
 // marshalJSONRequest preserves every Go string before encoding/json can
@@ -409,6 +417,13 @@ func validUUIDv4(value string) bool {
 	return true
 }
 
+// IsCanonicalUUIDv4 reports whether value is a lowercase RFC 4122 UUIDv4.
+// CLI selector dispatch uses the same rule as client request validation so a
+// durable identity can never be reinterpreted as a display name.
+func IsCanonicalUUIDv4(value string) bool {
+	return validUUIDv4(value)
+}
+
 func (c *Client) VerifyNodeContent(ctx context.Context, id, revision int64) (api.ContentVerification, error) {
 	var report api.ContentVerification
 	err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/nodes/%d/verify", id),
@@ -421,6 +436,376 @@ func (c *Client) Search(ctx context.Context, query string, limit int) (api.Searc
 	p := fmt.Sprintf("/api/v1/search?q=%s&limit=%d", url.QueryEscape(query), limit)
 	err := c.do(ctx, http.MethodGet, p, nil, nil, &out)
 	return out, err
+}
+
+// Tags returns one bounded name-sorted page of tag definitions.
+func (c *Client) Tags(ctx context.Context, limit, offset int) (api.TagPage, error) {
+	var page api.TagPage
+	path := fmt.Sprintf("/api/v1/tags?limit=%d&offset=%d", limit, offset)
+	if err := c.do(ctx, http.MethodGet, path, nil, nil, &page); err != nil {
+		return page, err
+	}
+	if err := validateTagPage(page, limit, offset); err != nil {
+		return api.TagPage{}, err
+	}
+	return page, nil
+}
+
+// Tag returns one tag definition by stable ID.
+func (c *Client) Tag(ctx context.Context, id string) (api.Tag, error) {
+	var tag api.Tag
+	if !validUUIDv4(id) {
+		return tag, errors.New("tag ID must be a canonical UUIDv4")
+	}
+	headers, err := c.doWithHeaders(
+		ctx, http.MethodGet, "/api/v1/tags/"+url.PathEscape(id), nil, nil, &tag,
+	)
+	if err != nil {
+		return tag, err
+	}
+	if err := validateTagResponse(tag, headers.Get("ETag")); err != nil {
+		return api.Tag{}, err
+	}
+	if tag.ID != id {
+		return api.Tag{}, fmt.Errorf("tag response ID %s does not match request %s", tag.ID, id)
+	}
+	return tag, nil
+}
+
+// TagByName resolves one exact normalized tag name.
+func (c *Client) TagByName(ctx context.Context, name string) (api.Tag, error) {
+	var tag api.Tag
+	normalized, err := store.NormalizeTagName(name)
+	if err != nil {
+		return tag, err
+	}
+	path := "/api/v1/tags/by-name?name=" + url.QueryEscape(normalized)
+	headers, err := c.doWithHeaders(ctx, http.MethodGet, path, nil, nil, &tag)
+	if err != nil {
+		return tag, err
+	}
+	if err := validateTagResponse(tag, headers.Get("ETag")); err != nil {
+		return api.Tag{}, err
+	}
+	if tag.Name != normalized {
+		return api.Tag{}, fmt.Errorf("tag response name %q does not match request %q", tag.Name, normalized)
+	}
+	return tag, nil
+}
+
+// CreateTag defines a tag with a server-allocated stable ID.
+func (c *Client) CreateTag(ctx context.Context, name string) (api.Tag, error) {
+	var tag api.Tag
+	normalized, err := store.NormalizeTagName(name)
+	if err != nil {
+		return tag, err
+	}
+	headers, err := c.doWithHeaders(ctx, http.MethodPost, "/api/v1/tags", nil,
+		map[string]string{"name": normalized}, &tag)
+	if err != nil {
+		return tag, err
+	}
+	if err := validateTagResponse(tag, headers.Get("ETag")); err != nil {
+		return api.Tag{}, err
+	}
+	if tag.Name != normalized || tag.Revision != 1 || tag.AssignmentCount != 0 {
+		return api.Tag{}, errors.New("created tag response has inconsistent authority")
+	}
+	return tag, nil
+}
+
+// RenameTag changes a tag's display name without changing its stable ID.
+func (c *Client) RenameTag(ctx context.Context, id string, revision int64, name string) (api.Tag, error) {
+	var tag api.Tag
+	if !validUUIDv4(id) {
+		return tag, errors.New("tag ID must be a canonical UUIDv4")
+	}
+	if revision < 1 {
+		return tag, errors.New("tag revision must be positive")
+	}
+	normalized, err := store.NormalizeTagName(name)
+	if err != nil {
+		return tag, err
+	}
+	headers, err := c.doWithHeaders(ctx, http.MethodPatch, "/api/v1/tags/"+url.PathEscape(id),
+		ifMatch(revision), map[string]string{"name": normalized}, &tag)
+	if err != nil {
+		return tag, err
+	}
+	if err := validateTagResponse(tag, headers.Get("ETag")); err != nil {
+		return api.Tag{}, err
+	}
+	if tag.ID != id || tag.Name != normalized {
+		return api.Tag{}, errors.New("renamed tag response has inconsistent authority")
+	}
+	return tag, nil
+}
+
+// DeleteTag removes one tag definition and its complete assignment set.
+func (c *Client) DeleteTag(
+	ctx context.Context, id string, revision int64,
+) (api.TagDeletionReceipt, error) {
+	var receipt api.TagDeletionReceipt
+	if !validUUIDv4(id) {
+		return receipt, errors.New("tag ID must be a canonical UUIDv4")
+	}
+	if revision < 1 {
+		return receipt, errors.New("tag revision must be positive")
+	}
+	headers, err := c.doWithHeaders(ctx, http.MethodDelete, "/api/v1/tags/"+url.PathEscape(id),
+		ifMatch(revision), nil, &receipt)
+	if err != nil {
+		return receipt, err
+	}
+	if err := validateTagResponse(receipt.Tag, headers.Get("ETag")); err != nil {
+		return api.TagDeletionReceipt{}, err
+	}
+	if receipt.Tag.ID != id || receipt.RemovedAssignments != receipt.Tag.AssignmentCount {
+		return api.TagDeletionReceipt{}, errors.New("deleted tag response has inconsistent authority")
+	}
+	return receipt, nil
+}
+
+// NodeTags returns one bounded page of tags attached to nodeID.
+func (c *Client) NodeTags(
+	ctx context.Context, nodeID int64, limit, offset int,
+) (api.TagPage, error) {
+	var page api.TagPage
+	if nodeID <= 0 {
+		return page, errors.New("tagged node ID must be positive")
+	}
+	path := fmt.Sprintf("/api/v1/nodes/%d/tags?limit=%d&offset=%d", nodeID, limit, offset)
+	if err := c.do(ctx, http.MethodGet, path, nil, nil, &page); err != nil {
+		return page, err
+	}
+	if err := validateTagPage(page, limit, offset); err != nil {
+		return api.TagPage{}, err
+	}
+	return page, nil
+}
+
+// TaggedNodes returns one bounded page of live or trashed nodes carrying tagID.
+func (c *Client) TaggedNodes(
+	ctx context.Context, tagID string, limit, offset int,
+) (api.TaggedNodePage, error) {
+	var page api.TaggedNodePage
+	if !validUUIDv4(tagID) {
+		return page, errors.New("tag ID must be a canonical UUIDv4")
+	}
+	path := fmt.Sprintf("/api/v1/tags/%s/nodes?limit=%d&offset=%d",
+		url.PathEscape(tagID), limit, offset)
+	if err := c.do(ctx, http.MethodGet, path, nil, nil, &page); err != nil {
+		return page, err
+	}
+	if err := validateTaggedNodePage(page, limit, offset); err != nil {
+		return api.TaggedNodePage{}, err
+	}
+	return page, nil
+}
+
+// AssignTag attaches tagID to nodeID under an optimistic node revision.
+func (c *Client) AssignTag(
+	ctx context.Context, tagID string, nodeID, revision int64,
+) (api.TagAssignmentReceipt, error) {
+	return c.changeTagAssignment(ctx, http.MethodPut, tagID, nodeID, revision)
+}
+
+// UnassignTag removes tagID from nodeID under an optimistic node revision.
+func (c *Client) UnassignTag(
+	ctx context.Context, tagID string, nodeID, revision int64,
+) (api.TagAssignmentReceipt, error) {
+	return c.changeTagAssignment(ctx, http.MethodDelete, tagID, nodeID, revision)
+}
+
+// AssignTagPath resolves a live virtual path and assigns tagID in one daemon
+// transaction, so ancestor moves cannot retarget the operation between calls.
+func (c *Client) AssignTagPath(
+	ctx context.Context, tagID, path string,
+) (api.TagAssignmentReceipt, error) {
+	return c.changeTagAssignmentPath(ctx, http.MethodPut, tagID, path)
+}
+
+// UnassignTagPath resolves a live virtual path and removes tagID in one daemon
+// transaction, so ancestor moves cannot retarget the operation between calls.
+func (c *Client) UnassignTagPath(
+	ctx context.Context, tagID, path string,
+) (api.TagAssignmentReceipt, error) {
+	return c.changeTagAssignmentPath(ctx, http.MethodDelete, tagID, path)
+}
+
+func (c *Client) changeTagAssignment(
+	ctx context.Context, method, tagID string, nodeID, revision int64,
+) (api.TagAssignmentReceipt, error) {
+	var receipt api.TagAssignmentReceipt
+	if !validUUIDv4(tagID) {
+		return receipt, errors.New("tag ID must be a canonical UUIDv4")
+	}
+	if nodeID <= 0 {
+		return receipt, errors.New("tagged node ID must be positive")
+	}
+	if revision < 1 {
+		return receipt, errors.New("tagged node revision must be positive")
+	}
+	path := fmt.Sprintf("/api/v1/nodes/%d/tags/%s", nodeID, url.PathEscape(tagID))
+	receipt, etag, err := c.doTagAssignment(
+		ctx, method, path, ifMatch(revision), nil,
+	)
+	if err != nil {
+		return receipt, err
+	}
+	if err := validateTagAssignmentReceipt(receipt, etag, tagID); err != nil {
+		return api.TagAssignmentReceipt{}, err
+	}
+	if receipt.Node.ID != nodeID {
+		return api.TagAssignmentReceipt{}, errors.New(
+			"tag assignment response has inconsistent node identity",
+		)
+	}
+	// The ID-addressed assignment contract advances the node exactly once for
+	// a real change and not at all for idempotent convergence. Treat divergence
+	// as incompatible response authority; a future policy change must update
+	// both protocol sides rather than silently weakening this check.
+	wantRevision := revision
+	if receipt.Changed {
+		wantRevision++
+	}
+	if receipt.Node.Revision != wantRevision {
+		return api.TagAssignmentReceipt{}, fmt.Errorf(
+			"tag assignment response revision %d, expected %d",
+			receipt.Node.Revision, wantRevision,
+		)
+	}
+	return receipt, nil
+}
+
+func (c *Client) changeTagAssignmentPath(
+	ctx context.Context, method, tagID, path string,
+) (api.TagAssignmentReceipt, error) {
+	var receipt api.TagAssignmentReceipt
+	if !validUUIDv4(tagID) {
+		return receipt, errors.New("tag ID must be a canonical UUIDv4")
+	}
+	if !strings.HasPrefix(path, "/") {
+		return receipt, errors.New("tag assignment path must be absolute")
+	}
+	requestPath := "/api/v1/path/tags/" + url.PathEscape(tagID)
+	receipt, etag, err := c.doTagAssignment(
+		ctx, method, requestPath, nil, map[string]string{"path": path},
+	)
+	if err != nil {
+		return receipt, err
+	}
+	if err := validateTagAssignmentReceipt(receipt, etag, tagID); err != nil {
+		return api.TagAssignmentReceipt{}, err
+	}
+	if receipt.Node.TrashedAt != "" {
+		return api.TagAssignmentReceipt{}, errors.New(
+			"path tag assignment returned a trashed node",
+		)
+	}
+	return receipt, nil
+}
+
+func (c *Client) doTagAssignment(
+	ctx context.Context,
+	method, path string,
+	headers map[string]string,
+	in any,
+) (api.TagAssignmentReceipt, string, error) {
+	var receipt api.TagAssignmentReceipt
+	responseHeaders, err := c.doWithHeaders(ctx, method, path, headers, in, &receipt)
+	if err != nil {
+		return receipt, "", err
+	}
+	return receipt, responseHeaders.Get("ETag"), nil
+}
+
+func validateTag(tag api.Tag) error {
+	if !validUUIDv4(tag.ID) || tag.Revision < 1 || tag.AssignmentCount < 0 {
+		return errors.New("tag response has invalid identity, revision, or assignment count")
+	}
+	normalized, err := store.NormalizeTagName(tag.Name)
+	if err != nil || normalized != tag.Name {
+		return errors.New("tag response has invalid or non-canonical name")
+	}
+	return nil
+}
+
+func validateTagResponse(tag api.Tag, etag string) error {
+	if err := validateTag(tag); err != nil {
+		return err
+	}
+	want := fmt.Sprintf("%q", strconv.FormatInt(tag.Revision, 10))
+	if etag != want {
+		return fmt.Errorf("tag response ETag %q, expected %q", etag, want)
+	}
+	return nil
+}
+
+func validateTagPage(page api.TagPage, limit, offset int) error {
+	if limit < 1 || limit > 1000 || offset < 0 || page.Limit != limit ||
+		page.Offset != offset || page.Total < 0 || len(page.Items) > limit ||
+		(len(page.Items) == 0 && offset < page.Total) ||
+		(len(page.Items) > 0 && offset+len(page.Items) > page.Total) {
+		return errors.New("tag response has inconsistent pagination")
+	}
+	seen := make(map[string]struct{}, len(page.Items))
+	for i, tag := range page.Items {
+		if err := validateTag(tag); err != nil {
+			return fmt.Errorf("tag response item %d: %w", i, err)
+		}
+		if _, duplicate := seen[tag.ID]; duplicate {
+			return fmt.Errorf("tag response repeats tag %s", tag.ID)
+		}
+		seen[tag.ID] = struct{}{}
+		if i > 0 && (page.Items[i-1].Name > tag.Name ||
+			(page.Items[i-1].Name == tag.Name && page.Items[i-1].ID >= tag.ID)) {
+			return errors.New("tag response is not canonically ordered")
+		}
+	}
+	return nil
+}
+
+func validateTaggedNodePage(page api.TaggedNodePage, limit, offset int) error {
+	if limit < 1 || limit > 1000 || offset < 0 || page.Limit != limit ||
+		page.Offset != offset || page.Total < 0 || len(page.Items) > limit ||
+		(len(page.Items) == 0 && offset < page.Total) ||
+		(len(page.Items) > 0 && offset+len(page.Items) > page.Total) {
+		return errors.New("tagged-node response has inconsistent pagination")
+	}
+	var previous int64
+	for i, item := range page.Items {
+		if item.Node.ID <= previous || item.Node.Revision < 1 ||
+			(item.Node.Kind != "file" && item.Node.Kind != "dir") {
+			return fmt.Errorf("tagged-node response item %d has inconsistent identity", i)
+		}
+		if (item.Node.TrashedAt == "" && !strings.HasPrefix(item.Path, "/")) ||
+			(item.Node.TrashedAt != "" && item.Path != "") {
+			return fmt.Errorf("tagged-node response item %d has inconsistent path state", i)
+		}
+		previous = item.Node.ID
+	}
+	return nil
+}
+
+func validateTagAssignmentReceipt(
+	receipt api.TagAssignmentReceipt, etag, tagID string,
+) error {
+	if err := validateTag(receipt.Tag); err != nil {
+		return err
+	}
+	if receipt.Tag.ID != tagID || receipt.Node.ID <= 0 || receipt.Node.Revision < 1 {
+		return errors.New("tag assignment response has inconsistent identities")
+	}
+	if (receipt.Node.TrashedAt == "" && !strings.HasPrefix(receipt.Node.Path, "/")) ||
+		(receipt.Node.TrashedAt != "" && receipt.Node.Path != "") {
+		return errors.New("tag assignment response has inconsistent path state")
+	}
+	wantETag := fmt.Sprintf("%q", strconv.FormatInt(receipt.Node.Revision, 10))
+	if etag != wantETag {
+		return fmt.Errorf("tag assignment response ETag %q, expected %q", etag, wantETag)
+	}
+	return nil
 }
 
 func (c *Client) Mkdir(ctx context.Context, parentID int64, name string) (api.Node, error) {

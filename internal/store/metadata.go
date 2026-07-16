@@ -138,9 +138,10 @@ type metadataProvenance struct {
 }
 
 type metadataTag struct {
-	Type string `json:"type"`
-	ID   string `json:"tag_id"`
-	Name string `json:"name"`
+	Type     string `json:"type"`
+	ID       string `json:"tag_id"`
+	Name     string `json:"name"`
+	Revision int64  `json:"revision"`
 }
 
 type metadataNodeTag struct {
@@ -369,14 +370,14 @@ func exportProvenance(ctx context.Context, tx metadataQuerier, write metadataWri
 }
 
 func exportTags(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	rows, err := tx.QueryContext(ctx, `SELECT id, name FROM tags ORDER BY id`)
+	rows, err := tx.QueryContext(ctx, `SELECT id, name, revision FROM tags ORDER BY id`)
 	if err != nil {
 		return fmt.Errorf("exporting tags: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		r := metadataTag{Type: "tag"}
-		if err := rows.Scan(&r.ID, &r.Name); err != nil {
+		if err := rows.Scan(&r.ID, &r.Name, &r.Revision); err != nil {
 			return fmt.Errorf("scanning tag metadata: %w", err)
 		}
 		if err := validateTagRecord(r); err != nil {
@@ -642,7 +643,8 @@ func importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw json
 		if err := validateTagRecord(v); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO tags(id,name) VALUES(?,?)`, v.ID, v.Name)
+		_, err := tx.ExecContext(ctx,
+			`INSERT INTO tags(id,name,revision) VALUES(?,?,?)`, v.ID, v.Name, v.Revision)
 		return err
 	case "node_tag":
 		var v metadataNodeTag
@@ -680,7 +682,7 @@ var metadataRequiredFields = map[string][]string{
 	"content_version": {metadataTypeField, "version_id", "node_id", "blob_hash", "size", "mime_type", "recorded_at", "node_revision", "introduced_operation_id", "transition_kind", "source_version_id"},
 	"ingest":          {metadataTypeField, "ingest_id", "started_at", "source_kind", "source_desc"},
 	"provenance":      {metadataTypeField, "node_id", "ingest_id", "original_path", "original_mtime"},
-	"tag":             {metadataTypeField, "tag_id", "name"},
+	"tag":             {metadataTypeField, "tag_id", "name", "revision"},
 	"node_tag":        {metadataTypeField, "node_id", "tag_id"},
 	"extracted_text":  {metadataTypeField, "blob_hash", "extractor", "extractor_version", "status", "error", "attempts", "text", "extracted_at"},
 }
@@ -926,13 +928,20 @@ func validateProvenanceRecord(v metadataProvenance) error {
 }
 
 func validateTagRecord(v metadataTag) error {
-	if v.Type != "tag" || v.Name == "" {
+	if v.Type != "tag" || v.Name == "" || v.Revision < 1 {
 		return errors.New("invalid tag record")
 	}
 	if err := validateUUIDv4(v.ID); err != nil {
 		return fmt.Errorf("invalid tag ID: %w", err)
 	}
-	return validateUTF8Field("tag name", v.Name)
+	normalized, err := NormalizeTagName(v.Name)
+	if err != nil {
+		return err
+	}
+	if normalized != v.Name {
+		return errors.New("tag name is not canonical NFC")
+	}
+	return nil
 }
 
 func validateNodeTagRecord(v metadataNodeTag) error {

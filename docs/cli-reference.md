@@ -10,7 +10,7 @@ All commands operate on the vault at `~/.docbank` (override with
 stderr and produce a non-zero exit code. Virtual paths are absolute,
 `/`-separated, and case-sensitive.
 
-Every data command below (`add`, `ls`, `tree`, `cat`, `put`, `versions`, `version`, `refs`, `revert`, `mv`, `rm`,
+Every data command below (`add`, `ls`, `tree`, `cat`, `put`, `versions`, `version`, `refs`, `revert`, `tag`, `mv`, `rm`,
 `restore`, `search`, `trash`, `gc`, `verify`, `storage`, `backup`, `jobs`) talks to the `docbank`
 daemon over its HTTP API rather than opening the vault itself; if none
 is running, the command auto-starts one in the background. `docbank
@@ -209,6 +209,45 @@ fails with `stale_revision`. Human output identifies the source, new version,
 resulting revision, size, and hash; `--json` returns the node, new version, and
 complete source-version receipt. Repeating the same historical choice later is
 valid and records another explicit operation.
+
+## docbank tag
+
+```text
+docbank tag create <name> [--json]
+docbank tag list [--limit <n>] [--offset <n>] [--json]
+docbank tag show <name-or-id> [--json]
+docbank tag rename <name-or-id> <new-name> [--json]
+docbank tag delete <name-or-id> [--json]
+docbank tag assign <name-or-id> <path> [--json]
+docbank tag unassign <name-or-id> <path> [--json]
+docbank tag nodes <name-or-id> [--limit <n>] [--offset <n>] [--json]
+```
+
+Defines stable tags and assigns them to live nodes independently of virtual
+paths. Every subcommand accepts the exact current tag name; commands operating
+on an existing tag also accept its UUID. Names are Unicode NFC-normalized,
+case-sensitive, mutable, and cannot contain control characters. Renaming never
+changes the tag ID. Deleting a tag removes all assignments but does not delete
+nodes or content; recreating the same name allocates a different ID.
+
+A canonical UUID-shaped selector is always a stable ID, including after that
+ID is deleted. If a tag's display name itself looks like a UUID, address that
+tag through the different UUID returned when it was created. This prevents a
+mutable or reused display name from taking over a durable identifier.
+
+`tag list` and `tag show` expose each tag's revision. Rename and delete first
+resolve the selector, then condition the mutation on that inspected revision;
+a concurrent rename or assignment change returns `stale_revision` instead of
+overwriting or deleting the newer state.
+
+Assignment commands resolve the supplied live path and update its tag inside
+one daemon/store transaction, so moving an ancestor cannot redirect the
+operation between separate requests. Repeated assignment and unassignment are
+idempotent and report `changed: false` without a revision bump. A real
+assignment change advances both the node and tag revisions. `tag nodes`
+includes live and trashed nodes, but omits a path for trash because it has no
+resolvable live coordinate. List commands return at most 1000 results per page
+and JSON output includes `total`, `limit`, and `offset`.
 
 ## docbank mv
 

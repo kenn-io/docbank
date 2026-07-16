@@ -206,6 +206,96 @@ func TestPutReplacesContentAndRetainsHistory(t *testing.T) {
 	assert.Contains(t, out, "Source version:  "+initialVersion)
 }
 
+func TestTagCLIOrganizesNodesByNameOrStableID(t *testing.T) {
+	_ = setupVaultHome(t)
+	source := writeSourceFile(t, "return.pdf", "tax return")
+	_, err := runCLI(t, "add", source, "--dest", "/records")
+	require.NoError(t, err)
+
+	out, err := runCLI(t, "tag", "list")
+	require.NoError(t, err)
+	assert.Equal(t, "no tags\n", out)
+
+	out, err = runCLI(t, "tag", "create", "taxes", "--json")
+	require.NoError(t, err, out)
+	var tag api.Tag
+	require.NoError(t, json.Unmarshal([]byte(out), &tag))
+	assert.Equal(t, "taxes", tag.Name)
+	assert.NotEmpty(t, tag.ID)
+	out, err = runCLI(t, "tag", "list", "--offset", "100")
+	require.NoError(t, err, out)
+	assert.Equal(t, "no tags at offset 100 (1 total)\n", out)
+
+	out, err = runCLI(t, "tag", "assign", "taxes", "/records/return.pdf")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, `assigned tag "taxes" to /records/return.pdf`)
+	out, err = runCLI(t, "tag", "assign", tag.ID, "/records/return.pdf")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, `already assigned tag "taxes"`)
+	out, err = runCLI(t, "tag", "nodes", "taxes", "--offset", "100")
+	require.NoError(t, err, out)
+	assert.Equal(t, "no nodes for tag \"taxes\" at offset 100 (1 total)\n", out)
+
+	out, err = runCLI(t, "tag", "list")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "ASSIGNMENTS")
+	assert.Contains(t, out, "taxes")
+	out, err = runCLI(t, "tag", "show", tag.ID, "--json")
+	require.NoError(t, err, out)
+	var shown api.Tag
+	require.NoError(t, json.Unmarshal([]byte(out), &shown))
+	assert.Equal(t, tag.ID, shown.ID)
+	assert.Equal(t, 1, shown.AssignmentCount)
+
+	out, err = runCLI(t, "tag", "nodes", "taxes", "--json")
+	require.NoError(t, err, out)
+	var nodes api.TaggedNodePage
+	require.NoError(t, json.Unmarshal([]byte(out), &nodes))
+	require.Len(t, nodes.Items, 1)
+	assert.Equal(t, "/records/return.pdf", nodes.Items[0].Path)
+
+	out, err = runCLI(t, "tag", "rename", "taxes", "tax archive")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, `renamed tag "taxes" to "tax archive"`)
+	out, err = runCLI(t, "tag", "delete", "tax archive", "--json")
+	require.NoError(t, err, out)
+	var deleted api.TagDeletionReceipt
+	require.NoError(t, json.Unmarshal([]byte(out), &deleted))
+	assert.Equal(t, 1, deleted.RemovedAssignments)
+
+	out, err = runCLI(t, "tag", "list", "--json")
+	require.NoError(t, err, out)
+	var page api.TagPage
+	require.NoError(t, json.Unmarshal([]byte(out), &page))
+	assert.Zero(t, page.Total)
+	assert.Empty(t, page.Items)
+
+	// A UUID-shaped display name must never shadow the stable identity with that
+	// UUID, including after the stable identity has been deleted.
+	out, err = runCLI(t, "tag", "create", "identity target", "--json")
+	require.NoError(t, err, out)
+	var identityTarget api.Tag
+	require.NoError(t, json.Unmarshal([]byte(out), &identityTarget))
+	out, err = runCLI(t, "tag", "create", identityTarget.ID, "--json")
+	require.NoError(t, err, out)
+	var nameShadow api.Tag
+	require.NoError(t, json.Unmarshal([]byte(out), &nameShadow))
+	assert.NotEqual(t, identityTarget.ID, nameShadow.ID)
+
+	out, err = runCLI(t, "tag", "delete", identityTarget.ID, "--json")
+	require.NoError(t, err, out)
+	require.NoError(t, json.Unmarshal([]byte(out), &deleted))
+	assert.Equal(t, identityTarget.ID, deleted.Tag.ID)
+	_, err = runCLI(t, "tag", "show", identityTarget.ID, "--json")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+	out, err = runCLI(t, "tag", "show", nameShadow.ID, "--json")
+	require.NoError(t, err, out)
+	require.NoError(t, json.Unmarshal([]byte(out), &shown))
+	assert.Equal(t, nameShadow.ID, shown.ID)
+	assert.Equal(t, identityTarget.ID, shown.Name)
+}
+
 func TestRefsFindsCurrentHistoricalAndTrashedContent(t *testing.T) {
 	_ = setupVaultHome(t)
 	initialBytes := []byte("stable lookup content")

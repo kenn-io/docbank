@@ -92,6 +92,8 @@ func NewServer(d Deps) *Server {
 	registerUploadRoute(mux, humaAPI, d, g)
 	registerContentWriteRoute(mux, humaAPI, d, g)
 	registerContentRevertRoute(humaAPI, d, g)
+	registerTagRoutes(humaAPI, d, g)
+	markRevisionPreconditionsRequired(humaAPI)
 	s.registerHealth(mux)
 	mux.Handle("GET "+kitPingPath, kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{
 		Service: "docbank", Version: version.Version, PID: os.Getpid(),
@@ -117,6 +119,51 @@ func NewServer(d Deps) *Server {
 
 func (s *Server) Handler() http.Handler { return s.handler }
 func (s *Server) API() huma.API         { return s.api }
+
+// markRevisionPreconditionsRequired keeps Huma's runtime parser permissive
+// enough for parseIfMatch to return Docbank's structured 428 response while
+// making the actual wire requirement unambiguous to generated clients.
+func markRevisionPreconditionsRequired(api huma.API) {
+	for _, route := range []struct{ path, method string }{
+		{"/api/v1/nodes/{id}", http.MethodPatch},
+		{"/api/v1/nodes/{id}/trash", http.MethodPost},
+		{"/api/v1/nodes/{id}/restore", http.MethodPost},
+		{"/api/v1/nodes/{id}/verify", http.MethodPost},
+		{"/api/v1/nodes/{id}/revert", http.MethodPost},
+		{"/api/v1/nodes/{id}/tags/{tag_id}", http.MethodPut},
+		{"/api/v1/nodes/{id}/tags/{tag_id}", http.MethodDelete},
+		{"/api/v1/tags/{tag_id}", http.MethodPatch},
+		{"/api/v1/tags/{tag_id}", http.MethodDelete},
+	} {
+		markDocumentedHeaderRequired(api, route.path, route.method, "If-Match")
+	}
+}
+
+func markDocumentedHeaderRequired(api huma.API, path, method, header string) {
+	item := api.OpenAPI().Paths[path]
+	var operation *huma.Operation
+	switch method {
+	case http.MethodPost:
+		operation = item.Post
+	case http.MethodPut:
+		operation = item.Put
+	case http.MethodPatch:
+		operation = item.Patch
+	case http.MethodDelete:
+		operation = item.Delete
+	default:
+		panic("unsupported documented header method " + method)
+	}
+	for index, parameter := range operation.Parameters {
+		if parameter.In == "header" && parameter.Name == header {
+			documentedParameter := *parameter
+			documentedParameter.Required = true
+			operation.Parameters[index] = &documentedParameter
+			return
+		}
+	}
+	panic("route lacks documented header " + header)
+}
 
 func (s *Server) registerHealth(mux *http.ServeMux) {
 	type health struct {

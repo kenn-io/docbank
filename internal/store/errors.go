@@ -15,6 +15,8 @@ var (
 	ErrCycle = errors.New("move would create a cycle")
 	// ErrInvalidName is returned for empty, ".", "..", or names containing '/' or NUL.
 	ErrInvalidName = errors.New("invalid name")
+	// ErrInvalidTag is returned for an empty, non-UTF-8, or control-containing tag name.
+	ErrInvalidTag = errors.New("invalid tag name")
 	// ErrNotTrashed is returned when restoring a node that is not a trash root.
 	ErrNotTrashed = errors.New("node is not trashed")
 	// ErrIsRoot is returned when an operation targets the root node.

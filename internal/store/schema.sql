@@ -113,15 +113,18 @@ CREATE TABLE IF NOT EXISTS provenance (
 CREATE INDEX IF NOT EXISTS provenance_node ON provenance(node_id);
 
 CREATE TABLE IF NOT EXISTS tags (
-    id   TEXT PRIMARY KEY NOT NULL,
-    name TEXT NOT NULL UNIQUE
+    id       TEXT PRIMARY KEY NOT NULL,
+    name     TEXT NOT NULL UNIQUE,
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1)
 );
 
 CREATE TABLE IF NOT EXISTS node_tags (
     node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-    tag_id  TEXT NOT NULL REFERENCES tags(id),
+    tag_id  TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
     PRIMARY KEY (node_id, tag_id)
 );
+
+CREATE INDEX IF NOT EXISTS node_tags_tag ON node_tags(tag_id);
 
 CREATE TABLE IF NOT EXISTS extracted_text (
     blob_hash         TEXT NOT NULL,
