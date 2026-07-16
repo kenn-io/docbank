@@ -16,6 +16,7 @@ developers update the right layer and preserve cross-layer contracts.
 | `internal/home` | vault layout, privacy, and portable vault/tree locking | data operations |
 | `internal/config` | strict config parsing and security validation | runtime discovery |
 | `cmd/docbank` | Cobra ergonomics and human output | store business logic |
+| `pkg` | lifecycle and bounded public operations for one exclusively owned embedded vault | standalone CLI paths or a second storage implementation |
 
 ## Common change paths
 

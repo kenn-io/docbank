@@ -1,6 +1,7 @@
 package store
 
 import (
+	"strings"
 	"sync"
 	"testing"
 
@@ -134,4 +135,46 @@ func TestChildrenSortedDirsFirst(t *testing.T) {
 
 	_, err = s.Children(ctx, kids[0].ID)
 	require.NoError(t, err)
+}
+
+func TestChildrenPageBoundsResultsAndPreservesTotal(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+
+	_, err := s.Mkdir(ctx, s.RootID(), "zdir")
+	require.NoError(t, err)
+	_, err = s.Mkdir(ctx, s.RootID(), "adir")
+	require.NoError(t, err)
+	for _, name := range []string{"bravo.txt", "alpha.txt"} {
+		_, err = s.CreateFile(ctx, s.RootID(), name, strings.Repeat("a", 64), 1, "text/plain")
+		require.NoError(t, err)
+	}
+
+	first, total, err := s.ChildrenPage(ctx, s.RootID(), 3, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 4, total)
+	require.Len(t, first, 3)
+	assert.Equal(t, []string{"adir", "zdir", "alpha.txt"}, []string{
+		first[0].Name, first[1].Name, first[2].Name,
+	})
+
+	last, total, err := s.ChildrenPage(ctx, s.RootID(), 3, 3)
+	require.NoError(t, err)
+	assert.Equal(t, 4, total)
+	require.Len(t, last, 1)
+	assert.Equal(t, "bravo.txt", last[0].Name)
+
+	empty, total, err := s.ChildrenPage(ctx, s.RootID(), 3, 4)
+	require.NoError(t, err)
+	assert.Equal(t, 4, total)
+	assert.Empty(t, empty)
+
+	_, _, err = s.ChildrenPage(ctx, first[2].ID, 3, 0)
+	require.ErrorIs(t, err, ErrNotDir)
+	_, _, err = s.ChildrenPage(ctx, 1<<62, 3, 0)
+	require.ErrorIs(t, err, ErrNotFound)
+	_, _, err = s.ChildrenPage(ctx, s.RootID(), 0, 0)
+	require.Error(t, err)
+	_, _, err = s.ChildrenPage(ctx, s.RootID(), 3, -1)
+	require.Error(t, err)
 }

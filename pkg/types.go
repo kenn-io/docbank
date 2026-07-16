@@ -3,6 +3,8 @@ package docbank
 import (
 	"io"
 
+	"go.kenn.io/kit/packstore"
+
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -51,6 +53,49 @@ type PutReceipt struct {
 	Replaced bool            `json:"replaced"`
 }
 
+// ChildrenOptions selects one bounded page of a directory's live children.
+// A zero Limit uses DefaultChildrenLimit. Offset must not be negative.
+type ChildrenOptions struct {
+	Limit  int
+	Offset int
+}
+
+// ChildrenPage is one bounded dirs-first, name-sorted child listing.
+type ChildrenPage struct {
+	Items  []Node `json:"items"`
+	Total  int    `json:"total"`
+	Limit  int    `json:"limit"`
+	Offset int    `json:"offset"`
+}
+
+// PackOptions bounds one explicit embedded packing pass. MaxBytes is a soft
+// committed raw-byte budget; zero is unlimited and negative values are
+// rejected.
+type PackOptions struct {
+	MaxBytes int64
+}
+
+// PackReport summarizes one explicit packing and repair pass.
+type PackReport struct {
+	PacksSealed                int   `json:"packs_sealed"`
+	BlobsPacked                int   `json:"blobs_packed"`
+	BytesPacked                int64 `json:"bytes_packed"`
+	PacksAdopted               int   `json:"packs_adopted"`
+	PacksRemoved               int   `json:"packs_removed"`
+	PacksQuarantined           int   `json:"packs_quarantined"`
+	PacksUnreadable            int   `json:"packs_unreadable"`
+	RecordsDropped             int   `json:"records_dropped"`
+	MappingsPruned             int64 `json:"mappings_pruned"`
+	BlobsMissing               int   `json:"blobs_missing"`
+	BlobsCorrupt               int   `json:"blobs_corrupt"`
+	BlobsDeferredOversized     int   `json:"blobs_deferred_oversized"`
+	PacksDeferredOversized     int   `json:"packs_deferred_oversized"`
+	LooseSwept                 int   `json:"loose_swept"`
+	LooseOrphansRemoved        int   `json:"loose_orphans_removed"`
+	LooseOrphanSweepSuppressed bool  `json:"loose_orphan_sweep_suppressed"`
+	BudgetExhausted            bool  `json:"budget_exhausted"`
+}
+
 // VerifiedReadCloser is a bounded-memory content reader. A caller must reach
 // terminal io.EOF or call Verify successfully before treating bytes as valid;
 // an early Close reports incomplete verification and never drains implicitly.
@@ -81,5 +126,20 @@ func fromStoreVersion(version store.ContentVersion) ContentVersion {
 		NodeRevision:          version.NodeRevision,
 		IntroducedOperationID: version.IntroducedOperationID,
 		TransitionKind:        version.TransitionKind, SourceVersionID: version.SourceVersionID,
+	}
+}
+
+func fromPackStats(stats packstore.PackStats) PackReport {
+	return PackReport{
+		PacksSealed: stats.PacksSealed, BlobsPacked: stats.BlobsPacked,
+		BytesPacked: stats.BytesPacked, PacksAdopted: stats.PacksAdopted,
+		PacksRemoved: stats.PacksRemoved, PacksQuarantined: stats.PacksQuarantined,
+		PacksUnreadable: stats.PacksUnreadable, RecordsDropped: stats.RecordsDropped,
+		MappingsPruned: stats.MappingsPruned, BlobsMissing: stats.BlobsMissing,
+		BlobsCorrupt: stats.BlobsCorrupt, BlobsDeferredOversized: stats.BlobsDeferredOversized,
+		PacksDeferredOversized: stats.PacksDeferredOversized, LooseSwept: stats.LooseSwept,
+		LooseOrphansRemoved:        stats.LooseOrphansRemoved,
+		LooseOrphanSweepSuppressed: stats.LooseOrphanSweepSuppressed,
+		BudgetExhausted:            stats.BudgetExhausted,
 	}
 }

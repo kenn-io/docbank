@@ -15,10 +15,11 @@ valid indefinitely.
 `docbank storage status` exposes loose and packed inventory through the
 authenticated daemon API, and `docbank storage pack` explicitly moves
 authorized loose content into immutable packs with an optional work budget.
-`docbank storage repack` compacts eligible sparse packs and retires dead pack
-files. These commands are the complete ordinary representation-management
-surface. Startup never performs an implicit migration, and automatic background
-maintenance remains a later step.
+An application that exclusively owns an embedded vault can invoke the same
+packing and reconciliation pass through `Vault.Pack`; it cannot bypass the
+catalog or Kit's maintenance coordinator. `docbank storage repack` compacts
+eligible sparse packs and retires dead pack files. Startup never performs an
+implicit migration, and automatic background maintenance remains a later step.
 
 Large collections of small files are expensive to enumerate, copy, and restore.
 msgvault uses immutable pack files as the steady-state storage format for

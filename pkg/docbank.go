@@ -41,6 +41,13 @@ var (
 	ErrStaleRevision = store.ErrStaleRevision
 )
 
+const (
+	// DefaultChildrenLimit is the page size used when ChildrenOptions.Limit is zero.
+	DefaultChildrenLimit = 500
+	// MaxChildrenLimit is the largest child page one embedded call may materialize.
+	MaxChildrenLimit = 5000
+)
+
 // OpenOptions selects one private vault root and, optionally, its SQLite
 // implementation. Nil SQLite uses mattn/go-sqlite3 in CGO builds and
 // modernc.org/sqlite when CGO is disabled.
@@ -163,6 +170,32 @@ func (v *Vault) Stat(ctx context.Context, virtualPath string) (Node, error) {
 		return Node{}, err
 	}
 	return fromStoreNode(node), nil
+}
+
+// Children lists one bounded page of a directory's live children, directories
+// first and then files, name-sorted within each kind.
+func (v *Vault) Children(
+	ctx context.Context, directoryID int64, opts ChildrenOptions,
+) (ChildrenPage, error) {
+	if err := v.begin(); err != nil {
+		return ChildrenPage{}, err
+	}
+	defer v.lifecycle.RUnlock()
+	limit := opts.Limit
+	if limit == 0 {
+		limit = DefaultChildrenLimit
+	}
+	children, total, err := v.metadata.ChildrenPage(ctx, directoryID, limit, opts.Offset)
+	if err != nil {
+		return ChildrenPage{}, err
+	}
+	page := ChildrenPage{
+		Items: make([]Node, 0, len(children)), Total: total, Limit: limit, Offset: opts.Offset,
+	}
+	for _, child := range children {
+		page.Items = append(page.Items, fromStoreNode(child))
+	}
+	return page, nil
 }
 
 // PutOptions controls one embedded content write. Expected is optional; when
@@ -325,6 +358,18 @@ func (v *Vault) OpenContent(ctx context.Context, virtualPath string) (*Content, 
 		Node:   fromStoreNode(node),
 		Reader: &leasedReader{VerifiedReadCloser: reader, release: v.lifecycle.RUnlock},
 	}, nil
+}
+
+// Pack explicitly moves authorized loose content into managed immutable packs.
+// It also performs the same reconciliation and repair pass as the standalone
+// storage pack operation. Ordinary Put calls remain loose until Pack is called.
+func (v *Vault) Pack(ctx context.Context, opts PackOptions) (PackReport, error) {
+	if err := v.begin(); err != nil {
+		return PackReport{}, err
+	}
+	defer v.lifecycle.RUnlock()
+	stats, err := v.blobs.Maintainer().Pack(ctx, packstore.PackOptions{MaxBytes: opts.MaxBytes})
+	return fromPackStats(stats), err
 }
 
 func (v *Vault) begin() error {
