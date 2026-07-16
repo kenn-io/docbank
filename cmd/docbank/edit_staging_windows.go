@@ -15,38 +15,41 @@ import (
 	"go.kenn.io/docbank/internal/winsecurity"
 )
 
-func makePrivateEditDir() (string, error) {
+func makePrivateEditDir() (*editStaging, error) {
 	return makePrivateEditDirAt(os.TempDir())
 }
 
-func makePrivateEditDirAt(parentPath string) (string, error) {
+func makePrivateEditDirAt(parentPath string) (*editStaging, error) {
 	parent, err := os.OpenRoot(parentPath)
 	if err != nil {
-		return "", fmt.Errorf("opening edit staging parent: %w", err)
+		return nil, fmt.Errorf("opening edit staging parent: %w", err)
 	}
 	defer func() { _ = parent.Close() }()
 
 	for range 10 {
 		random := make([]byte, 16)
 		if _, err := rand.Read(random); err != nil {
-			return "", fmt.Errorf("generating edit staging name: %w", err)
+			return nil, fmt.Errorf("generating edit staging name: %w", err)
 		}
 		component := "docbank-edit-" + hex.EncodeToString(random)
-		if err := winsecurity.MkdirPrivateAt(parent, component); err != nil {
+		pin, err := winsecurity.MkdirPrivatePinnedAt(parent, component)
+		if err != nil {
 			if errors.Is(err, os.ErrExist) {
 				continue
 			}
-			return "", fmt.Errorf("creating private edit staging: %w", err)
+			return nil, fmt.Errorf("creating private edit staging: %w", err)
 		}
 		path := filepath.Join(parentPath, component)
 		if err := safefileio.ValidatePrivateDir(path); err != nil {
+			pinErr := pin.Close()
 			cleanupErr := os.RemoveAll(path)
-			return "", errors.Join(
+			return nil, errors.Join(
 				fmt.Errorf("validating private edit staging: %w", err),
+				pinErr,
 				cleanupErr,
 			)
 		}
-		return path, nil
+		return openEditStaging(path, pin)
 	}
-	return "", errors.New("creating private edit staging: repeated name collisions")
+	return nil, errors.New("creating private edit staging: repeated name collisions")
 }

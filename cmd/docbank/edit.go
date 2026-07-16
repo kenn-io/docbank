@@ -64,7 +64,7 @@ func runEdit(cmd *cobra.Command, vaultPath string) (retErr error) {
 		return fmt.Errorf("%q: %w", vaultPath, store.ErrNotFile)
 	}
 
-	stageDir, err := makePrivateEditDir()
+	staging, err := makePrivateEditDir()
 	if err != nil {
 		return fmt.Errorf("creating private edit staging: %w", err)
 	}
@@ -73,11 +73,11 @@ func runEdit(cmd *cobra.Command, vaultPath string) (retErr error) {
 		if stageRemoved {
 			return
 		}
-		if cleanupErr := os.RemoveAll(stageDir); cleanupErr != nil {
+		if cleanupErr := staging.removeAll(); cleanupErr != nil {
 			retErr = errors.Join(retErr, fmt.Errorf("removing private edit staging: %w", cleanupErr))
 		}
 	}()
-	stagePath, err := stageCurrentVersion(cmd.Context(), c, node, stageDir, renderer)
+	stagePath, err := stageCurrentVersion(cmd.Context(), c, node, staging, renderer)
 	if err != nil {
 		return fmt.Errorf("staging %q: %w", vaultPath, err)
 	}
@@ -152,7 +152,7 @@ func runEdit(cmd *cobra.Command, vaultPath string) (retErr error) {
 			return fmt.Errorf("closing unchanged edit: %w", err)
 		}
 		editedOpen = false
-		if err := os.RemoveAll(stageDir); err != nil {
+		if err := staging.removeAll(); err != nil {
 			return fmt.Errorf("removing unchanged edit staging: %w", err)
 		}
 		stageRemoved = true
@@ -180,12 +180,12 @@ func runEdit(cmd *cobra.Command, vaultPath string) (retErr error) {
 	uploadReader.finish()
 	_ = edited.Close()
 	editedOpen = false
-	cleanupErr := os.RemoveAll(stageDir)
+	cleanupErr := staging.removeAll()
 	stageRemoved = true
 	if cleanupErr != nil {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
 			"warning: content was updated, but private edit staging remains at %s: %v\n",
-			stageDir, cleanupErr)
+			staging.path, cleanupErr)
 	}
 	_, err = fmt.Fprintf(cmd.OutOrStdout(),
 		"updated %s to version %s (revision %d, %s, sha256 %s)\n",
@@ -230,7 +230,7 @@ func normalizedMIMEOverride(value string) (string, error) {
 }
 
 func stageCurrentVersion(
-	ctx context.Context, c *client.Client, node api.Node, stageDir string,
+	ctx context.Context, c *client.Client, node api.Node, staging *editStaging,
 	renderer *backupProgressRenderer,
 ) (path string, retErr error) {
 	stream, err := c.VersionContent(ctx, node.CurrentVersionID)
@@ -247,11 +247,10 @@ func stageCurrentVersion(
 			stream.BlobHash, stream.Size, node.BlobHash, node.Size)
 	}
 
-	file, err := os.CreateTemp(stageDir, editStagePattern(node.Name))
+	file, path, err := staging.createFile(node.Name)
 	if err != nil {
-		return "", fmt.Errorf("creating staged file: %w", err)
+		return "", err
 	}
-	path = file.Name()
 	defer func() {
 		if file != nil {
 			if closeErr := file.Close(); closeErr != nil {

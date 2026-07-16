@@ -4,6 +4,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -38,6 +39,22 @@ func TestMakePrivateEditDirOverridesPermissiveParentDACL(t *testing.T) {
 
 	stage, err := makePrivateEditDirAt(parent)
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, os.RemoveAll(stage)) })
-	require.NoError(t, safefileio.ValidatePrivateDir(stage))
+	removed := false
+	t.Cleanup(func() {
+		if !removed {
+			_ = stage.removeAll()
+		}
+	})
+	require.NoError(t, safefileio.ValidatePrivateDir(stage.path))
+
+	moveTarget := filepath.Join(parent, "replaced-staging")
+	require.Error(t, os.Rename(stage.path, moveTarget))
+
+	file, path, err := stage.createFile("notes.txt")
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+	require.FileExists(t, path)
+	require.NoError(t, stage.removeAll())
+	removed = true
+	require.NoDirExists(t, stage.path)
 }

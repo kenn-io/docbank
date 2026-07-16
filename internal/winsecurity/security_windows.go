@@ -19,25 +19,36 @@ import (
 // create itself avoids a window in which inherited permissions expose a newly
 // created vault directory.
 func MkdirPrivateAt(parent *os.Root, component string) error {
+	dir, err := MkdirPrivatePinnedAt(parent, component)
+	if err != nil {
+		return err
+	}
+	return dir.Close()
+}
+
+// MkdirPrivatePinnedAt creates the same protected directory as MkdirPrivateAt
+// and returns its creation handle without delete sharing. Keeping that handle
+// open prevents a writable parent from renaming or replacing the directory.
+func MkdirPrivatePinnedAt(parent *os.Root, component string) (*os.File, error) {
 	parentFile, err := parent.Open(".")
 	if err != nil {
-		return fmt.Errorf("opening held parent directory: %w", err)
+		return nil, fmt.Errorf("opening held parent directory: %w", err)
 	}
 	defer func() { _ = parentFile.Close() }()
 
 	user, err := currentUserSID()
 	if err != nil {
-		return fmt.Errorf("resolving current Windows user: %w", err)
+		return nil, fmt.Errorf("resolving current Windows user: %w", err)
 	}
 	descriptor, err := windows.SecurityDescriptorFromString(
 		"D:P(A;OICI;GA;;;" + user.String() + ")",
 	)
 	if err != nil {
-		return fmt.Errorf("building private directory security descriptor: %w", err)
+		return nil, fmt.Errorf("building private directory security descriptor: %w", err)
 	}
 	name, err := windows.NewNTUnicodeString(component)
 	if err != nil {
-		return fmt.Errorf("encoding vault directory component: %w", err)
+		return nil, fmt.Errorf("encoding vault directory component: %w", err)
 	}
 	attributes := &windows.OBJECT_ATTRIBUTES{
 		Length:             uint32(unsafe.Sizeof(windows.OBJECT_ATTRIBUTES{})),
@@ -55,19 +66,19 @@ func MkdirPrivateAt(parent *os.Root, component string) error {
 		&status,
 		nil,
 		0,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
 		windows.FILE_CREATE,
 		windows.FILE_DIRECTORY_FILE|windows.FILE_SYNCHRONOUS_IO_NONALERT|windows.FILE_OPEN_REPARSE_POINT,
 		0,
 		0,
 	)
 	if err == windows.STATUS_OBJECT_NAME_COLLISION {
-		return fmt.Errorf("private directory %q: %w", component, os.ErrExist)
+		return nil, fmt.Errorf("private directory %q: %w", component, os.ErrExist)
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return windows.CloseHandle(handle)
+	return os.NewFile(uintptr(handle), component), nil
 }
 
 // OpenRestrictedCurrentUserFile opens a regular file without following a
