@@ -25,6 +25,13 @@ Stable node IDs are document identity. Paths are derived from parent/name rows
 and can change or be reused. Blob hashes are content identity. Two nodes may
 share a blob without sharing document identity.
 
+!!! info "Planned — application retention authority"
+    Applications will be able to retain exact immutable versions independently
+    of virtual-tree placement. Active references become logical reachability
+    roots while preserving `blobs` as physical membership authority. Owner,
+    idempotency, lifecycle, verification, and portability semantics are defined
+    in [Application retention references](retention-design.md).
+
 !!! info "Planned — full-audit authority"
     Full-audit policy adds a fourth logical authority: sticky membership and
     append-only history decide which node/version facts can never be removed by

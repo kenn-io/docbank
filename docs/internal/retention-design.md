@@ -7,11 +7,11 @@
 
 ## Purpose and non-goals
 
-An application retention reference gives an external application durable
+An application retention reference gives a calling application durable
 authority over one exact immutable content version. It prevents docbank from
 removing the version's metadata or bytes while the reference is active, even
-when no live or trashed virtual-tree node would otherwise keep that version
-reachable.
+when trash-empty would otherwise remove the trashed subtree that contains that
+version.
 
 Retention is not a second virtual tree, a path alias, a directory-history
 scope, or an export lease. It does not copy bytes, change content identity, or
@@ -19,6 +19,8 @@ make application metadata authoritative. It is also not permission for a
 remote application to force physical destruction: releasing the last
 application reference only removes that application's authority, after which
 ordinary docbank tree, trash, backup, and maintenance policy still applies.
+The design does not introduce detached version tombstones; protected versions
+remain attached to their node, and trash-empty refuses to remove that subtree.
 
 This design is intentionally separate from the planned full-audit directory
 scopes described in [Audited History](../architecture/audited-history.md).
@@ -27,7 +29,7 @@ unrelated versions merely because they once occupied the same directory.
 
 ## Current authority and reachability
 
-The current store has two related layers of authority:
+The current store has interlocking layers of authority:
 
 - `internal/store/schema.sql` records stable file nodes and their immutable
   byte history in `content_versions`. Every live file head is one of those
@@ -68,13 +70,14 @@ the same behavioral operations and typed outcomes.
 
 ### Daemon owners
 
-A daemon retention owner is a persisted record with:
+A persisted retention owner has:
 
 | Field | Meaning |
 |---|---|
 | `owner_id` | Stable random UUIDv4 allocated by docbank. |
+| `authority_kind` | `daemon` or `embedded`; determines whether a secret is required. |
 | `display_name` | Normalized, bounded, human-readable application name. |
-| `secret_verifier` | Versioned password-KDF verifier; never the plaintext secret. |
+| `secret_verifier` | Versioned password-KDF verifier for daemon owners; absent for embedded owners. |
 | `created_at` | UTC creation time. |
 | `last_used_at` | UTC time of the last successfully authenticated owner operation. |
 | `disabled_at` | Optional UTC time after which ordinary owner authentication fails. |
@@ -133,6 +136,7 @@ exact content version together with its expected hash and byte size.
 | `created_at` | UTC time at which the reference first became authoritative. |
 | `metadata` | Optional bounded, non-secret application context. |
 | `released_at` | Optional UTC time at which retention authority ended. |
+| `released_by` | Optional `owner` or `administrator` actor kind; never a credential. |
 
 `(owner_id, reference_key)` is the stable identity. A key is not reusable,
 including after release. An identical acquisition retry returns the existing
@@ -250,7 +254,7 @@ these layers or introduce a second physical catalog.
 | Metadata or version pruning | Refuse removal of a retained exact version and identify every blocking owner and reference. |
 | Trash | A node may move into recoverable trash; its active references and exact versions remain unchanged. |
 | Trash empty | Preflight every selected subtree. If any exact version is retained, make no deletions and report every blocking root, owner, operation, reference, and version. |
-| GC | Exclude retained exact versions and their blobs from candidates even when no other logical authority would keep them live. |
+| GC | Exclude active references and their exact-version blobs from candidates; retained trash remains ordinary version authority rather than a detached tombstone. |
 | Pack | A retained blob may move from loose storage into a verified immutable pack without changing version or reference identity. |
 | Repack | Copy every retained live member and commit its replacement mapping before retiring source-pack authority. |
 | Verify | Report a missing or corrupt retained version, blob row, loose object, or packed member as integrity failure. |
@@ -303,16 +307,156 @@ Retention authority and its exact-version closure are portable logical state.
 Backups and restores preserve that authority without archiving plaintext
 application credentials.
 
+### Deterministic logical authority
+
+The current metadata JSONL format gains deterministic records for retention
+owners and references. Owner records sort by owner UUID. Reference records sort
+by owner UUID and reference key. The header and relational validation bind
+their counts into the same format-v1 authority as nodes, versions, and blobs.
+
+Logical records preserve stable owner IDs, authority kind, display names,
+creation/last-use/disabled state, reference and operation keys, exact version
+IDs, expected hash and size, metadata, active/released state, and release actor
+kind. They do not contain plaintext owner secrets or password-KDF verifiers.
+Those values are credential material rather than portable content authority.
+
+Every imported active reference must resolve to an imported exact version
+whose hash and size match the reference and an imported authoritative blob row
+of the same size. Released references must still resolve to their historical
+owner and immutable identity fields. Import validates the complete relational
+closure transactionally before replacing a pristine target's authority.
+
+### Backup capture
+
+A pinned backup snapshot includes owner/reference records and every blob row
+required by its exact versions. Existing backup capture already includes all
+authoritative blob rows, which is broader than GC reachability; retention makes
+the reason for preserving the selected versions explicit in logical metadata.
+The preservation gate remains held until every required loose or packed object
+has been copied and verified.
+
+The manifest fidelity proof gains an owner count plus active and released
+reference counts. Repository verification follows active references through
+their versions and content and reports every missing or mismatched retained
+object. A backup is not valid merely because its JSONL parses while retained
+bytes are absent.
+
+### Restore publication and credentials
+
+Restore preserves stable owner and reference identities so application retry
+and release keys continue to converge. It stages metadata and content, checks
+the complete active-reference closure, and reports all missing or mismatched
+retained objects together before publication. Verified loose or packed bytes
+are published before the restored database grants retention authority; a
+failed restore leaves the live target absent or unchanged.
+
+Embedded owners need no credential recovery: exclusive filesystem access to
+the restored vault remains their authority. Restored daemon owners start with
+their references intact but ordinary owner authentication disabled until the
+administrator rotates or re-provisions a secret. Restore documentation and
+the terminal report list that requirement. The restore never invents a secret,
+copies a source verifier, or releases content because credentials are absent.
+
 ## Daemon API, embedded API, and CLI contract
 
 The daemon and embedded surfaces share domain request, response, and error
 semantics. Authentication differs only at the adapter boundary.
+
+### Domain surface
+
+Public Go types represent owners, exact identities, acquisition members and
+results, stable pages, release reports, blockers, and typed failures. One
+backend-neutral retention interface is implemented by the embedded vault
+adapter and the public daemon client. Consumers do not need mode-specific
+retention logic.
+
+Embedded calls select their auto-provisioned owner through the vault handle.
+Daemon data calls continue to require the effective vault API key. Ordinary
+retention calls additionally send the owner UUID and owner secret in dedicated
+authorization headers, never in a URL, query string, request body, log field,
+or RFC 7807 detail. Administrative owner creation, rotation, disabling,
+inspection, and override use the vault administrator authority.
+
+The API-key holder remains ultimate administrator under docbank's documented
+local, loopback-only, single-user trust model. Owner secrets prevent accidental
+or ordinary cross-application retention operations; they are not a claim that
+an application given the administrator key is isolated from administrator
+routes.
+
+The Huma-described route family provides:
+
+- administrator creation, secret rotation, disabling, and inspection of
+  owners;
+- owner-scoped verified batch acquisition;
+- owner-scoped paginated listing, optionally filtered by operation ID;
+- owner-safe and administrator views of references blocking one exact version;
+- owner-scoped idempotent batch release; and
+- explicit administrator release of an abandoned owner with a complete
+  report.
+
+All routes use bounded request sizes and bounded pages. Administrative release
+and trash-empty blockers include stable IDs and non-secret display context,
+not credentials or document bytes.
+
+### Compatibility and errors
+
+The authenticated vault-information response advertises a retention contract
+revision and capabilities for owner management, verified batch acquisition,
+enumeration, release, and blocker reporting. A public client verifies those
+capabilities when connecting. If an operation indicates contract drift, it
+refreshes capabilities once and then returns the same typed backend-
+incompatible error rather than exposing an unexplained `404` or decoding
+failure.
+
+Stable RFC 7807 codes include `retention_identity_mismatch`,
+`retention_idempotency_conflict`, `retention_owner_unauthorized`,
+`retention_owner_disabled`, `retention_blocked`, and
+`backend_incompatible`, alongside the existing `not_found` and validation
+codes. The public client maps them to the domain errors defined above. An
+owner-authenticated endpoint uses the same unauthorized response for an
+unknown owner, disabled owner, or bad secret; the more specific disabled state
+is visible only to an administrator or an already established local adapter.
+
+### CLI contract
+
+`docbank retention list` is the primary operator view. It supports owner,
+operation, exact-version, active/released, and age filters and reports owner
+name/ID, operation ID, reference key, version ID, expected hash and size,
+creation/release time, and state. Human and JSON output never include secrets
+or verifiers.
+
+Owner create and rotate commands reveal a server-issued secret exactly once
+and clearly state that it cannot be recovered. Disable and administrative
+release require explicit owner identity; release prints the complete affected
+reference report and does not claim bytes were reclaimed. All standalone CLI
+commands remain daemon HTTP clients.
 
 ## Operator recovery
 
 Vault administrators can inspect application retention authority and recover
 from abandoned or disabled external owners without pretending that released
 content has already been physically reclaimed.
+
+- **Lost daemon-owner secret:** active references remain roots. The
+  administrator rotates the secret, reconfigures the application, and may
+  inspect the owner before allowing ordinary release.
+- **Disabled application** — authentication stops but references remain
+  active. The administrator may rotate and re-enable it or explicitly release
+  it after reviewing every affected reference.
+- **Application decommissioning:** the operator lists active references by
+  owner and operation, disables the owner, and uses the administrator release
+  operation. Owner and released-reference records remain as reconciliation
+  history; hard deletion is not part of ordinary recovery.
+- **Stale operation ID:** the application or administrator enumerates the
+  complete stable batch. An identical acquisition or release safely resumes;
+  changed membership is rejected as an idempotency conflict.
+- **Restore:** daemon owners retain their identities and references but require
+  explicit secret rotation before ordinary use. Embedded owners resume through
+  filesystem authority and have no recoverable secret to lose.
+
+Operator output distinguishes releasing retention authority from deleting a
+node, emptying trash, reclaiming a loose object, and retiring dead packed
+space. Each later action follows its existing dry-run and maintenance contract.
 
 ## Conformance requirements
 

@@ -45,6 +45,11 @@ and logical liveness in docbank. Exercise Kit catalog conformance plus a real
 docbank lifecycle. Update GC reports so “reclaimed” means physical bytes
 actually removed; packed logical death is pending repack.
 
+Application-owned exact-version roots follow the planned
+[Application retention references](retention-design.md) contract. Changes in
+that area must keep embedded and daemon behavior, trash/GC/pack authority,
+verification, and backup/restore semantics aligned.
+
 ### Change schema
 
 Before the first public release, change the current schema and JSONL v1
