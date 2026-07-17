@@ -350,6 +350,9 @@ func newAuditedHistoryReplay(
 	if err != nil {
 		return nil, err
 	}
+	if err := validateGenesisProvenanceIngests(attachments); err != nil {
+		return nil, err
+	}
 	topology, err := auditRecordListField(initial["topology_genesis"][0].record, "nodes")
 	if err != nil {
 		return nil, err
@@ -417,6 +420,33 @@ func newAuditedHistoryReplay(
 		replay.topologyIndex[nodeID] = index
 	}
 	return replay, nil
+}
+
+func validateGenesisProvenanceIngests(attachments []audit.Record) error {
+	ingests := make(map[string]bool)
+	for _, record := range attachments {
+		if record.Kind != metadataIngestType {
+			continue
+		}
+		ingestID, err := auditUUIDField(record, "ingest_id")
+		if err != nil {
+			return fmt.Errorf("reading genesis ingest identity: %w", err)
+		}
+		ingests[ingestID] = true
+	}
+	for _, record := range attachments {
+		if record.Kind != metadataProvenanceType {
+			continue
+		}
+		ingestID, err := auditUUIDField(record, "ingest_id")
+		if err != nil {
+			return fmt.Errorf("reading genesis provenance ingest: %w", err)
+		}
+		if !ingests[ingestID] {
+			return fmt.Errorf("audit attachment genesis provenance references missing ingest %s", ingestID)
+		}
+	}
+	return nil
 }
 
 func auditRecordsBySequence(

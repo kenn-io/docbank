@@ -156,6 +156,55 @@ func TestAuditedIngestImportRejectsOmittedProvenance(t *testing.T) {
 	assert.Zero(t, auditRows)
 }
 
+func TestAuditReplayRejectsGenesisProvenanceFromLaterIngest(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	seedMetadataRoundTrip(t, s)
+	scopeNode, err := s.NodeByPath(t.Context(), "/Projects")
+	require.NoError(t, err)
+	seedInitialAuditAuthority(t, s, scopeNode.ID)
+	run, err := s.BeginIngest(t.Context(), "cli", "/later")
+	require.NoError(t, err)
+	_, added, err := s.IngestFile(
+		t.Context(), run, scopeNode.ID, "later.txt", fakeHash("ad5"), 10,
+		"text/plain", "/later/later.txt", "",
+	)
+	require.NoError(t, err)
+	require.True(t, added)
+
+	authority, scope, err := loadInitialAuditProjection(t.Context(), s.db)
+	require.NoError(t, err)
+	records, err := loadInitialAuditRecords(t.Context(), s.db)
+	require.NoError(t, err)
+	initial, err := selectInitialAuditRecords(authority, scope, records)
+	require.NoError(t, err)
+	deltaChanges, err := auditRecordListField(records["attached_metadata_delta"][0].record, "changes")
+	require.NoError(t, err)
+	var laterProvenance audit.Record
+	for _, change := range deltaChanges {
+		post, postErr := auditNestedField(change, "post")
+		require.NoError(t, postErr)
+		if post.Kind == metadataProvenanceType {
+			laterProvenance = post
+		}
+	}
+	require.Equal(t, metadataProvenanceType, laterProvenance.Kind)
+
+	genesis := initial["attached_metadata_genesis"][0]
+	genesisAttachments, err := auditRecordListField(genesis.record, "records")
+	require.NoError(t, err)
+	genesisAttachments = append(genesisAttachments, laterProvenance)
+	genesis.record, err = replaceAuditRecordField(
+		genesis.record, "records", audit.List(auditNestedValues(genesisAttachments)...),
+	)
+	require.NoError(t, err)
+	initial["attached_metadata_genesis"][0] = genesis
+
+	_, err = newAuditedHistoryReplay(authority, scope, initial)
+	require.ErrorContains(t, err, "genesis provenance references missing ingest "+run.ID())
+}
+
 func omitMetadataProvenance(t *testing.T, input []byte, nodeID int64) []byte {
 	t.Helper()
 	lines := bytes.Split(bytes.TrimSpace(input), []byte{'\n'})
