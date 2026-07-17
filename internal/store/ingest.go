@@ -98,13 +98,19 @@ func resolveIngestNameTx(tx *sql.Tx, parentID int64, name, blobHash string) (str
 	}
 }
 
-// sameOriginTx reports whether node nodeID was imported from a source whose
-// basename (normalized) equals name — i.e. the incoming file is a re-import
-// of the same logical file, not a distinct source that merely shares
-// content. A node with no provenance rows matches unconditionally: its
+// sameOriginTx reports whether node nodeID's active provenance leaf has a
+// source basename (normalized) equal to name — i.e. the incoming file is a
+// re-import of the same logical file, not a distinct source that merely
+// shares content. A node with no provenance matches unconditionally: its
 // origin is unknown, and skipping preserves the old idempotent behavior.
 func sameOriginTx(tx *sql.Tx, nodeID int64, name string) (bool, error) {
-	rows, err := tx.Query(`SELECT original_path FROM provenance WHERE node_id = ?`, nodeID)
+	rows, err := tx.Query(`
+		SELECT p.original_path
+		FROM provenance AS p
+		WHERE p.node_id = ?
+		  AND NOT EXISTS (
+			SELECT 1 FROM provenance AS successor WHERE successor.supersedes = p.identity
+		  )`, nodeID)
 	if err != nil {
 		return false, fmt.Errorf("reading provenance of node %d: %w", nodeID, err)
 	}

@@ -137,6 +137,42 @@ func TestIngestAndProvenanceFactsAreImmutable(t *testing.T) {
 	assert.Equal(t, "/source/a.txt", originalPath)
 }
 
+func TestIngestIdempotencyUsesActiveProvenanceLeaf(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	ingestID, err := s.BeginIngest(ctx, "cli", "source")
+	require.NoError(t, err)
+	node, added, err := s.IngestFile(ctx, ingestID, s.RootID(),
+		"report.pdf", fakeHash("a1"), 1, "application/pdf", "/obsolete/report.pdf", "")
+	require.NoError(t, err)
+	require.True(t, added)
+
+	var priorIdentity string
+	require.NoError(t, s.db.QueryRow(
+		`SELECT identity FROM provenance WHERE node_id=?`, node.ID,
+	).Scan(&priorIdentity))
+	corrected := metadataProvenance{
+		Type: metadataProvenanceType, NodeID: node.ID, IngestID: ingestID,
+		OriginalPath: "/corrected/renamed.pdf", Supersedes: &priorIdentity,
+	}
+	corrected.Identity, err = provenanceIdentity(corrected)
+	require.NoError(t, err)
+	_, err = s.db.Exec(`INSERT INTO provenance(
+		identity,node_id,ingest_id,original_path,original_mtime,supersedes
+	) VALUES(?,?,?,?,?,?)`, corrected.Identity, corrected.NodeID, corrected.IngestID,
+		corrected.OriginalPath, corrected.OriginalMTime, corrected.Supersedes)
+	require.NoError(t, err)
+
+	// The obsolete origin no longer identifies this node. An identical file
+	// imported from that basename is a distinct source and must not be skipped.
+	imported, added, err := s.IngestFile(ctx, ingestID, s.RootID(),
+		"report.pdf", fakeHash("a1"), 1, "application/pdf", "/other/report.pdf", "")
+	require.NoError(t, err)
+	require.True(t, added)
+	assert.NotEqual(t, node.ID, imported.ID)
+	assert.Equal(t, "report (2).pdf", imported.Name)
+}
+
 func TestBeginIngestAllocatesDistinctUUIDs(t *testing.T) {
 	s := newTestStore(t)
 	first, err := s.BeginIngest(t.Context(), "cli", "first")
