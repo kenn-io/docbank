@@ -104,13 +104,39 @@ CREATE TABLE IF NOT EXISTS ingests (
 );
 
 CREATE TABLE IF NOT EXISTS provenance (
-    node_id       INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-    ingest_id     TEXT NOT NULL REFERENCES ingests(id),
-    original_path TEXT NOT NULL,
-    original_mtime TEXT
+    identity       TEXT PRIMARY KEY NOT NULL,
+    node_id        INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    ingest_id      TEXT NOT NULL REFERENCES ingests(id),
+    original_path  TEXT NOT NULL,
+    original_mtime TEXT,
+    supersedes     TEXT REFERENCES provenance(identity)
+        DEFERRABLE INITIALLY DEFERRED
 );
 
 CREATE INDEX IF NOT EXISTS provenance_node ON provenance(node_id);
+CREATE UNIQUE INDEX IF NOT EXISTS provenance_direct_successor
+    ON provenance(supersedes) WHERE supersedes IS NOT NULL;
+
+-- Ingest and provenance facts are append-only authority. Corrections add a
+-- new provenance fact linked through supersedes; they never rewrite history.
+CREATE TRIGGER IF NOT EXISTS ingests_immutable_update
+BEFORE UPDATE ON ingests BEGIN
+    SELECT RAISE(ABORT, 'ingest records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS provenance_immutable_update
+BEFORE UPDATE ON provenance BEGIN
+    SELECT RAISE(ABORT, 'provenance records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS provenance_same_node_insert
+BEFORE INSERT ON provenance
+WHEN NEW.supersedes IS NOT NULL AND EXISTS (
+    SELECT 1 FROM provenance prior
+    WHERE prior.identity = NEW.supersedes AND prior.node_id != NEW.node_id
+) BEGIN
+    SELECT RAISE(ABORT, 'provenance supersession must stay on one node');
+END;
 
 CREATE TABLE IF NOT EXISTS tags (
     id       TEXT PRIMARY KEY NOT NULL,

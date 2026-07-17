@@ -47,7 +47,11 @@ func resolveIngestNameTx(tx *sql.Tx, parentID int64, name, blobHash string) (str
 	}
 	defer func() { _ = rows.Close() }()
 
-	var sameHash []int64
+	type hashCandidate struct {
+		nodeID       int64
+		inNameFamily bool
+	}
+	var sameHash []hashCandidate
 	taken := map[int]bool{}
 	for rows.Next() {
 		var sibID int64
@@ -55,25 +59,25 @@ func resolveIngestNameTx(tx *sql.Tx, parentID int64, name, blobHash string) (str
 		if err := rows.Scan(&sibID, &sibName, &sibHash); err != nil {
 			return "", 0, false, fmt.Errorf("scanning sibling: %w", err)
 		}
-		n, ok := parseSuffix(sibName, base, ext)
-		if !ok {
-			continue
-		}
+		n, inNameFamily := parseSuffix(sibName, base, ext)
 		if sibHash == blobHash {
-			sameHash = append(sameHash, sibID)
+			sameHash = append(sameHash, hashCandidate{nodeID: sibID, inNameFamily: inNameFamily})
+		}
+		if !inNameFamily {
+			continue
 		}
 		taken[n] = true
 	}
 	if err := rows.Err(); err != nil {
 		return "", 0, false, fmt.Errorf("listing siblings for %q: %w", name, err)
 	}
-	for _, sibID := range sameHash {
-		imported, err := sameOriginTx(tx, sibID, name)
+	for _, candidate := range sameHash {
+		imported, err := sameOriginTx(tx, candidate.nodeID, name, candidate.inNameFamily)
 		if err != nil {
 			return "", 0, false, err
 		}
 		if imported {
-			return "", sibID, true, nil // already imported (possibly under a suffix)
+			return "", candidate.nodeID, true, nil // already imported (possibly under a suffix)
 		}
 	}
 	// Directories can occupy candidate names too; they don't carry content,
@@ -98,13 +102,20 @@ func resolveIngestNameTx(tx *sql.Tx, parentID int64, name, blobHash string) (str
 	}
 }
 
-// sameOriginTx reports whether node nodeID was imported from a source whose
-// basename (normalized) equals name — i.e. the incoming file is a re-import
-// of the same logical file, not a distinct source that merely shares
-// content. A node with no provenance rows matches unconditionally: its
-// origin is unknown, and skipping preserves the old idempotent behavior.
-func sameOriginTx(tx *sql.Tx, nodeID int64, name string) (bool, error) {
-	rows, err := tx.Query(`SELECT original_path FROM provenance WHERE node_id = ?`, nodeID)
+// sameOriginTx reports whether node nodeID's active provenance leaf has a
+// source basename (normalized) equal to name — i.e. the incoming file is a
+// re-import of the same logical file, not a distinct source that merely
+// shares content. A node with no provenance matches only when its virtual name
+// belongs to the incoming suffix family: its origin is unknown, so the legacy
+// idempotent fallback must not suppress an unrelated same-content file.
+func sameOriginTx(tx *sql.Tx, nodeID int64, name string, allowUnknown bool) (bool, error) {
+	rows, err := tx.Query(`
+		SELECT p.original_path
+		FROM provenance AS p
+		WHERE p.node_id = ?
+		  AND NOT EXISTS (
+			SELECT 1 FROM provenance AS successor WHERE successor.supersedes = p.identity
+		  )`, nodeID)
 	if err != nil {
 		return false, fmt.Errorf("reading provenance of node %d: %w", nodeID, err)
 	}
@@ -129,7 +140,7 @@ func sameOriginTx(tx *sql.Tx, nodeID int64, name string) (bool, error) {
 	if err := rows.Err(); err != nil {
 		return false, fmt.Errorf("reading provenance of node %d: %w", nodeID, err)
 	}
-	return match || !sawProvenance, nil
+	return match || (!sawProvenance && allowUnknown), nil
 }
 
 // IngestFile imports one already-durable blob as a node under parentID,
@@ -144,10 +155,11 @@ func (s *Store) IngestFile(ctx context.Context, ingestID string, parentID int64,
 	if originalMtime != "" {
 		recordedMtime = &originalMtime
 	}
-	if err := validateProvenanceRecord(metadataProvenance{
-		Type: "provenance", NodeID: 1, IngestID: ingestID,
+	provenance := metadataProvenance{
+		Type: metadataProvenanceType, NodeID: 1, IngestID: ingestID,
 		OriginalPath: originalPath, OriginalMTime: recordedMtime,
-	}); err != nil {
+	}
+	if err := validateProvenanceFields(provenance); err != nil {
 		return Node{}, false, fmt.Errorf("validating ingest provenance: %w", err)
 	}
 	var (
@@ -171,10 +183,20 @@ func (s *Store) IngestFile(ctx context.Context, ingestID string, parentID int64,
 		if err != nil {
 			return err
 		}
+		provenance.NodeID = created.ID
+		provenance.Identity, err = provenanceIdentity(provenance)
+		if err != nil {
+			return fmt.Errorf("identifying provenance for %q: %w", finalName, err)
+		}
+		if err := validateProvenanceRecord(provenance); err != nil {
+			return fmt.Errorf("validating provenance for %q: %w", finalName, err)
+		}
 		if _, err := tx.Exec(
-			`INSERT INTO provenance (node_id, ingest_id, original_path, original_mtime)
-			 VALUES (?, ?, ?, ?)`,
-			created.ID, ingestID, originalPath, recordedMtime); err != nil {
+			`INSERT INTO provenance (
+				identity, node_id, ingest_id, original_path, original_mtime, supersedes
+			 ) VALUES (?, ?, ?, ?, ?, ?)`,
+			provenance.Identity, provenance.NodeID, provenance.IngestID,
+			provenance.OriginalPath, provenance.OriginalMTime, provenance.Supersedes); err != nil {
 			return fmt.Errorf("recording provenance for %q: %w", finalName, err)
 		}
 		added = true

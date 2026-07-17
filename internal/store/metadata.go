@@ -131,10 +131,12 @@ type metadataIngest struct {
 
 type metadataProvenance struct {
 	Type          string  `json:"type"`
+	Identity      string  `json:"identity"`
 	NodeID        int64   `json:"node_id"`
 	IngestID      string  `json:"ingest_id"`
 	OriginalPath  string  `json:"original_path"`
 	OriginalMTime *string `json:"original_mtime"`
+	Supersedes    *string `json:"supersedes"`
 }
 
 type metadataTag struct {
@@ -346,19 +348,20 @@ func exportIngests(ctx context.Context, tx metadataQuerier, write metadataWrite)
 
 func exportProvenance(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT node_id, ingest_id, original_path, original_mtime FROM provenance
-		ORDER BY node_id, ingest_id, original_path, original_mtime`)
+		SELECT identity, node_id, ingest_id, original_path, original_mtime, supersedes
+		FROM provenance ORDER BY identity`)
 	if err != nil {
 		return fmt.Errorf("exporting provenance: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
-		r := metadataProvenance{Type: "provenance"}
-		var mtime sql.NullString
-		if err := rows.Scan(&r.NodeID, &r.IngestID, &r.OriginalPath, &mtime); err != nil {
+		r := metadataProvenance{Type: metadataProvenanceType}
+		var mtime, supersedes sql.NullString
+		if err := rows.Scan(&r.Identity, &r.NodeID, &r.IngestID, &r.OriginalPath, &mtime, &supersedes); err != nil {
 			return fmt.Errorf("scanning provenance metadata: %w", err)
 		}
 		r.OriginalMTime = stringPtr(mtime)
+		r.Supersedes = stringPtr(supersedes)
 		if err := validateProvenanceRecord(r); err != nil {
 			return fmt.Errorf("validating provenance metadata for export: %w", err)
 		}
@@ -366,7 +369,7 @@ func exportProvenance(ctx context.Context, tx metadataQuerier, write metadataWri
 			return err
 		}
 	}
-	return rowsError("provenance", rows)
+	return rowsError(metadataProvenanceType, rows)
 }
 
 func exportTags(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
@@ -625,7 +628,7 @@ func importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw json
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO ingests(id,started_at,source_kind,source_desc) VALUES(?,?,?,?)`, v.ID, v.StartedAt, v.SourceKind, v.SourceDesc)
 		return err
-	case "provenance":
+	case metadataProvenanceType:
 		var v metadataProvenance
 		if err := decodeMetadataRecord(raw, &v); err != nil {
 			return err
@@ -633,7 +636,10 @@ func importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw json
 		if err := validateProvenanceRecord(v); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO provenance(node_id,ingest_id,original_path,original_mtime) VALUES(?,?,?,?)`, v.NodeID, v.IngestID, v.OriginalPath, v.OriginalMTime)
+		_, err := tx.ExecContext(ctx, `INSERT INTO provenance(
+			identity,node_id,ingest_id,original_path,original_mtime,supersedes
+		) VALUES(?,?,?,?,?,?)`, v.Identity, v.NodeID, v.IngestID, v.OriginalPath,
+			v.OriginalMTime, v.Supersedes)
 		return err
 	case "tag":
 		var v metadataTag
@@ -672,19 +678,22 @@ func importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw json
 	}
 }
 
-const metadataTypeField = "type"
+const (
+	metadataTypeField      = "type"
+	metadataProvenanceType = "provenance"
+)
 
 var metadataHeaderFields = []string{metadataTypeField, "format", "version", "vault_id", "node_sequence"}
 
 var metadataRequiredFields = map[string][]string{
-	"blob":            {metadataTypeField, "hash", "size", "created_at"},
-	"node":            {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", "revision", "created_at", "modified_at", "trashed_at", "trash_parent", "trash_name"},
-	"content_version": {metadataTypeField, "version_id", "node_id", "blob_hash", "size", "mime_type", "recorded_at", "node_revision", "introduced_operation_id", "transition_kind", "source_version_id"},
-	"ingest":          {metadataTypeField, "ingest_id", "started_at", "source_kind", "source_desc"},
-	"provenance":      {metadataTypeField, "node_id", "ingest_id", "original_path", "original_mtime"},
-	"tag":             {metadataTypeField, "tag_id", "name", "revision"},
-	"node_tag":        {metadataTypeField, "node_id", "tag_id"},
-	"extracted_text":  {metadataTypeField, "blob_hash", "extractor", "extractor_version", "status", "error", "attempts", "text", "extracted_at"},
+	"blob":                 {metadataTypeField, "hash", "size", "created_at"},
+	"node":                 {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", "revision", "created_at", "modified_at", "trashed_at", "trash_parent", "trash_name"},
+	"content_version":      {metadataTypeField, "version_id", "node_id", "blob_hash", "size", "mime_type", "recorded_at", "node_revision", "introduced_operation_id", "transition_kind", "source_version_id"},
+	"ingest":               {metadataTypeField, "ingest_id", "started_at", "source_kind", "source_desc"},
+	metadataProvenanceType: {metadataTypeField, "identity", "node_id", "ingest_id", "original_path", "original_mtime", "supersedes"},
+	"tag":                  {metadataTypeField, "tag_id", "name", "revision"},
+	"node_tag":             {metadataTypeField, "node_id", "tag_id"},
+	"extracted_text":       {metadataTypeField, "blob_hash", "extractor", "extractor_version", "status", "error", "attempts", "text", "extracted_at"},
 }
 
 var metadataNullableFields = map[string]map[string]bool{
@@ -692,9 +701,9 @@ var metadataNullableFields = map[string]map[string]bool{
 		"parent_id": true, "current_version_id": true, "trashed_at": true,
 		"trash_parent": true, "trash_name": true,
 	},
-	"content_version": {"mime_type": true, "source_version_id": true},
-	"provenance":      {"original_mtime": true},
-	"extracted_text":  {"error": true, "text": true},
+	"content_version":      {"mime_type": true, "source_version_id": true},
+	metadataProvenanceType: {"original_mtime": true, "supersedes": true},
+	"extracted_text":       {"error": true, "text": true},
 }
 
 func decodeMetadataRecord(raw json.RawMessage, dst any) error {
@@ -912,7 +921,27 @@ func validateIngestRecord(v metadataIngest) error {
 }
 
 func validateProvenanceRecord(v metadataProvenance) error {
-	if v.Type != "provenance" || v.NodeID <= 0 || v.OriginalPath == "" {
+	if v.Identity == "" {
+		return errors.New("invalid provenance record")
+	}
+	if err := validateProvenanceFields(v); err != nil {
+		return err
+	}
+	if _, err := packstore.ParseHash(v.Identity); err != nil {
+		return fmt.Errorf("invalid provenance identity: %w", err)
+	}
+	want, err := provenanceIdentity(v)
+	if err != nil {
+		return fmt.Errorf("computing provenance identity: %w", err)
+	}
+	if v.Identity != want {
+		return errors.New("provenance identity does not match its immutable fields")
+	}
+	return nil
+}
+
+func validateProvenanceFields(v metadataProvenance) error {
+	if v.Type != metadataProvenanceType || v.NodeID <= 0 || v.OriginalPath == "" {
 		return errors.New("invalid provenance record")
 	}
 	if err := validateUUIDv4(v.IngestID); err != nil {
@@ -922,7 +951,14 @@ func validateProvenanceRecord(v metadataProvenance) error {
 		return err
 	}
 	if v.OriginalMTime != nil {
-		return validateProvenanceTime(*v.OriginalMTime)
+		if err := validateProvenanceTime(*v.OriginalMTime); err != nil {
+			return err
+		}
+	}
+	if v.Supersedes != nil {
+		if _, err := packstore.ParseHash(*v.Supersedes); err != nil {
+			return fmt.Errorf("invalid superseded provenance identity: %w", err)
+		}
 	}
 	return nil
 }
@@ -1145,6 +1181,23 @@ func validateMetadataRelations(ctx context.Context, tx metadataQuerier) error {
 			)`},
 		{"extracted text references missing blob authority", `
 			SELECT EXISTS(SELECT 1 FROM extracted_text e LEFT JOIN blobs b ON b.hash=e.blob_hash WHERE b.hash IS NULL)`},
+		{"provenance supersedes a missing fact", `
+			SELECT EXISTS(
+			  SELECT 1 FROM provenance p LEFT JOIN provenance prior ON prior.identity=p.supersedes
+			  WHERE p.supersedes IS NOT NULL AND prior.identity IS NULL
+			)`},
+		{"provenance supersedes a fact on another node", `
+			SELECT EXISTS(
+			  SELECT 1 FROM provenance p JOIN provenance prior ON prior.identity=p.supersedes
+			  WHERE prior.node_id != p.node_id
+			)`},
+		{"provenance supersession graph contains a cycle", `
+			WITH RECURSIVE reachable(identity) AS (
+			  SELECT identity FROM provenance WHERE supersedes IS NULL
+			  UNION ALL
+			  SELECT p.identity FROM provenance p JOIN reachable r ON p.supersedes=r.identity
+			)
+			SELECT (SELECT COUNT(*) FROM reachable) != (SELECT COUNT(*) FROM provenance)`},
 	}
 	for _, check := range checks {
 		var failed bool

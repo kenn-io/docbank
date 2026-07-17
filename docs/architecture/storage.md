@@ -65,7 +65,8 @@ content_versions(version_id UUID PRIMARY KEY, node_id, blob_hash, size,
                  mime_type, recorded_at, node_revision,
                  introduced_operation_id, transition_kind, source_version_id)
 ingests        (id, started_at, source_kind, source_desc)
-provenance     (node_id, ingest_id, original_path, original_mtime)
+provenance     (identity SHA-256 PRIMARY KEY, node_id, ingest_id,
+                original_path, original_mtime, supersedes)
 tags           (id UUID PRIMARY KEY, name UNIQUE, revision)
 node_tags      (node_id, tag_id)
 extracted_text (blob_hash, extractor, extractor_version, status,
@@ -80,6 +81,12 @@ UUIDv4 values. `(node_id, node_revision)` and
 `(node_id, introduced_operation_id)` are unique. See
 [Editing & Versions](editing-and-versions.md) for the read and retention
 contract.
+
+Each provenance fact has a SHA-256 identity derived from its immutable node,
+ingest, original-path, mtime, and optional predecessor fields. Current ingest
+creates an unsuperseded fact; SQL prevents rewriting ingest or provenance rows.
+JSONL preserves the identity and optional `supersedes` edge and rejects a
+dangling, cross-node, branching, or cyclic graph during import.
 
 The current schema has no audit-scope authority. The planned storage contract
 for sticky membership, mutation chains, and JSONL fidelity is maintained in
@@ -97,10 +104,10 @@ The important rules hold at the SQL layer, so they bind every writer:
   `UNIQUE(parent_id, name) WHERE trashed_at IS NULL` — trashed nodes
   never block a name.
 - **Kind/content consistency.** A CHECK constraint ties
-  `kind = 'file'` to `blob_hash IS NOT NULL` and directories to NULL.
-- **Referential integrity.** `blob_hash` references `blobs`; a blob row
-  can't be deleted while anything points at it, which is what makes GC's
-  reachability query trustworthy.
+  `kind = 'file'` to `current_version_id IS NOT NULL` and directories to NULL.
+- **Referential integrity.** Content-version `blob_hash` values reference
+  `blobs`; a blob row can't be deleted while any retained version points at it,
+  which is what makes GC's reachability query trustworthy.
 
 The store layer adds the rules SQL can't express: name validation
 (reject empty, `.`, `..`, `/`, NUL) with Unicode NFC normalization,
