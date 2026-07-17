@@ -49,7 +49,7 @@ func (s *Store) Mkdir(ctx context.Context, parentID int64, name string) (Node, e
 		return Node{}, err
 	}
 	var created Node
-	err = s.withTx(ctx, func(tx *sql.Tx) error {
+	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		if _, err := liveDirTx(tx, parentID); err != nil {
 			return err
 		}
@@ -218,7 +218,7 @@ func (s *Store) CreateFile(ctx context.Context, parentID int64, name, blobHash s
 		return Node{}, err
 	}
 	var created Node
-	err = s.withTx(ctx, func(tx *sql.Tx) error {
+	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		created, err = s.createFileTx(tx, parentID, name, blobHash, size, mimeType)
 		return err
 	})
@@ -253,7 +253,7 @@ func isAncestorTx(tx *sql.Tx, maybeAncestor, candidate int64) (bool, error) {
 // unless ifRev matches the node's current revision.
 func (s *Store) Move(ctx context.Context, id, newParentID int64, newName string, ifRev int64) (Node, error) {
 	var moved Node
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		moved, err = s.moveTx(tx, id, newParentID, newName, ifRev)
 		return err
@@ -271,7 +271,7 @@ func (s *Store) Move(ctx context.Context, id, newParentID int64, newName string,
 // the new name.
 func (s *Store) MovePath(ctx context.Context, srcPath, destPath string) (Node, error) {
 	var moved Node
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		src, err := nodeByPath(ctx, tx, s.rootID, srcPath)
 		if err != nil {
 			return fmt.Errorf("resolving %q: %w", srcPath, err)

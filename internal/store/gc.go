@@ -62,7 +62,7 @@ func (s *Store) UnreachableBlobs(ctx context.Context) ([]BlobInfo, error) {
 // blob files first; a crash in between leaves rows without files, which a
 // gc re-run reconciles.
 func (s *Store) DeleteBlobRows(ctx context.Context, hashes []string) error {
-	return s.withTx(ctx, func(tx *sql.Tx) error {
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		for _, h := range hashes {
 			if _, err := tx.Exec(`DELETE FROM blob_pack_index WHERE blob_hash = ?`, h); err != nil {
 				return fmt.Errorf("deleting packed mapping of %s: %w", h, err)

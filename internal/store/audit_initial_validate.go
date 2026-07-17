@@ -27,14 +27,14 @@ type initialAuditScope struct {
 	chainHead    string
 }
 
-func validateInitialAuditAuthority(
+func validateAuditAuthority(
 	ctx context.Context, tx metadataQuerier, vaultID string, nodeSequence int64,
 ) error {
 	counts, err := auditAuthorityCounts(ctx, tx)
 	if err != nil {
 		return err
 	}
-	if counts[1] == 0 {
+	if counts[0] == 0 {
 		for index, count := range counts {
 			if count != 0 {
 				return fmt.Errorf("dormant audit authority has %d row(s) in relation %d", count, index)
@@ -42,9 +42,8 @@ func validateInitialAuditAuthority(
 		}
 		return nil
 	}
-	if counts[0] != 1 || counts[1] != 1 || counts[2] != 1 ||
-		counts[3] == 0 || counts[4] != int64(len(initialAuditRecordKinds)) || counts[5] != 1 {
-		return fmt.Errorf("initial audit authority must contain one authority, scope, baseline, and complete record set: counts=%v", counts)
+	if counts[0] != 1 || counts[1] != 1 || counts[2] != 1 || counts[3] == 0 {
+		return fmt.Errorf("audit authority must contain one authority, scope, and baseline: counts=%v", counts)
 	}
 	authority, scope, err := loadInitialAuditProjection(ctx, tx)
 	if err != nil {
@@ -54,22 +53,29 @@ func validateInitialAuditAuthority(
 	if err != nil {
 		return err
 	}
-	if err := requireInitialAuditRecordCardinality(records); err != nil {
+	initial, err := selectInitialAuditRecords(authority, scope, records)
+	if err != nil {
 		return err
 	}
-	return validateInitialAuditRecords(ctx, tx, vaultID, nodeSequence, authority, scope, records)
+	if err := validateInitialAuditRecords(
+		ctx, tx, vaultID, nodeSequence, authority, scope, initial,
+	); err != nil {
+		return err
+	}
+	return validateAuditedContentReplacementHistory(
+		ctx, tx, vaultID, nodeSequence, authority, scope, records, initial,
+	)
 }
 
-func auditAuthorityCounts(ctx context.Context, tx metadataQuerier) ([6]int64, error) {
-	var counts [6]int64
+func auditAuthorityCounts(ctx context.Context, tx metadataQuerier) ([5]int64, error) {
+	var counts [5]int64
 	err := tx.QueryRowContext(ctx, `SELECT
 		(SELECT COUNT(*) FROM audit_authority),
 		(SELECT COUNT(*) FROM audit_scopes),
 		(SELECT COUNT(*) FROM audit_baselines),
 		(SELECT COUNT(*) FROM audit_memberships),
-		(SELECT COUNT(*) FROM audit_records),
-		(SELECT COUNT(*) FROM audit_write_guard)`).Scan(
-		&counts[0], &counts[1], &counts[2], &counts[3], &counts[4], &counts[5])
+		(SELECT COUNT(*) FROM audit_records)`).Scan(
+		&counts[0], &counts[1], &counts[2], &counts[3], &counts[4])
 	if err != nil {
 		return counts, fmt.Errorf("counting audit authority: %w", err)
 	}
@@ -150,16 +156,66 @@ func sameNullInt64(value sql.NullInt64, expected *int64) bool {
 	return value.Valid == (expected != nil) && (!value.Valid || value.Int64 == *expected)
 }
 
-func requireInitialAuditRecordCardinality(records map[string][]storedAuditRecord) error {
-	if len(records) != len(initialAuditRecordKinds) {
-		return fmt.Errorf("initial audit authority has %d record kinds, want %d", len(records), len(initialAuditRecordKinds))
+func selectInitialAuditRecords(
+	authority initialAuditAuthority, scope initialAuditScope,
+	records map[string][]storedAuditRecord,
+) (map[string][]storedAuditRecord, error) {
+	if len(records) != len(auditRecordKinds) {
+		return nil, fmt.Errorf("audit authority has %d record kinds, want %d", len(records), len(auditRecordKinds))
 	}
-	for kind := range initialAuditRecordKinds {
+	for _, kind := range []string{
+		"topology_genesis", "attached_metadata_genesis", "allocation_genesis",
+		"enrollment_baseline",
+	} {
 		if len(records[kind]) != 1 {
-			return fmt.Errorf("initial audit authority has %d %s records, want 1", len(records[kind]), kind)
+			return nil, fmt.Errorf("audit authority has %d %s records, want 1", len(records[kind]), kind)
 		}
 	}
-	return nil
+	if authority.sequence < 1 || authority.allocationCount != authority.sequence ||
+		int64(len(records["canonical_mutation"])) != authority.sequence ||
+		int64(len(records["allocation_entry"])) != authority.allocationCount {
+		return nil, errors.New("audit allocation projection does not match its operation records")
+	}
+	if scope.entryCount < 1 || int64(len(records["scope_chain_entry"])) != scope.entryCount {
+		return nil, errors.New("audit scope projection does not match its chain records")
+	}
+	result := map[string][]storedAuditRecord{
+		"topology_genesis":          records["topology_genesis"],
+		"attached_metadata_genesis": records["attached_metadata_genesis"],
+		"allocation_genesis":        records["allocation_genesis"],
+		"enrollment_baseline":       records["enrollment_baseline"],
+	}
+	selectors := []struct {
+		kind  string
+		match func(storedAuditRecord) bool
+	}{
+		{"canonical_mutation", func(record storedAuditRecord) bool {
+			return record.index.operationSequence != nil && *record.index.operationSequence == 1
+		}},
+		{"allocation_entry", func(record storedAuditRecord) bool {
+			return record.index.operationSequence != nil && *record.index.operationSequence == 1
+		}},
+		{"scope_chain_entry", func(record storedAuditRecord) bool {
+			return record.index.scopeID != nil && *record.index.scopeID == scope.scopeID &&
+				record.index.entryCount != nil && *record.index.entryCount == 1
+		}},
+		{"event", func(record storedAuditRecord) bool {
+			return record.index.operationID != nil && *record.index.operationID == scope.operationID &&
+				record.index.eventOrdinal != nil && *record.index.eventOrdinal == 0
+		}},
+	}
+	for _, selector := range selectors {
+		for _, record := range records[selector.kind] {
+			if selector.match(record) {
+				result[selector.kind] = append(result[selector.kind], record)
+			}
+		}
+		if len(result[selector.kind]) != 1 {
+			return nil, fmt.Errorf("audit authority has %d initial %s records, want 1",
+				len(result[selector.kind]), selector.kind)
+		}
+	}
+	return result, nil
 }
 
 func validateInitialAuditRecords(
@@ -175,11 +231,13 @@ func validateInitialAuditRecords(
 	mutation := records["canonical_mutation"][0]
 	scopeEntry := records["scope_chain_entry"][0]
 	allocationEntry := records["allocation_entry"][0]
-	if err := validateInitialGenesis(ctx, tx, vaultID, nodeSequence, authority,
+	if err := validateInitialGenesis(vaultID, nodeSequence, authority,
 		topology, attachments, allocationGenesis); err != nil {
 		return err
 	}
-	if err := validateInitialBaseline(ctx, tx, vaultID, scope, baseline); err != nil {
+	if err := validateInitialBaseline(
+		ctx, tx, vaultID, scope, baseline, topology, attachments,
+	); err != nil {
 		return err
 	}
 	if err := validateInitialMutation(vaultID, scope, baseline, event, mutation); err != nil {
@@ -193,14 +251,10 @@ func validateInitialAuditRecords(
 }
 
 func validateInitialGenesis(
-	ctx context.Context, tx metadataQuerier, vaultID string, nodeSequence int64,
+	vaultID string, nodeSequence int64,
 	authority initialAuditAuthority, topology, attachments, allocation storedAuditRecord,
 ) error {
 	nodeHighWater, err := positiveAuditNodeID(nodeSequence)
-	if err != nil {
-		return err
-	}
-	currentTopology, err := currentAuditTopology(ctx, tx)
 	if err != nil {
 		return err
 	}
@@ -208,22 +262,12 @@ func validateInitialGenesis(
 	if err != nil {
 		return err
 	}
-	currentAttachments, err := currentAuditAttachments(ctx, tx)
-	if err != nil {
-		return err
-	}
 	storedAttachments, err := auditRecordListField(attachments.record, "records")
 	if err != nil {
 		return err
 	}
-	if !equalAuditRecordLists(storedTopology, currentTopology) {
-		return errors.New("audit topology genesis does not match current topology")
-	}
-	if !equalAuditRecordLists(storedAttachments, currentAttachments) {
-		return errors.New("audit attached-metadata genesis does not match current metadata")
-	}
 	for _, record := range []audit.Record{topology.record, attachments.record, allocation.record} {
-		if err := requireAuditUUID(record, "vault_id", vaultID); err != nil {
+		if err := requireAuditUUID(record, auditVaultIDField, vaultID); err != nil {
 			return err
 		}
 		if err := requireAuditUUID(record, "lineage_id", authority.lineageID); err != nil {
@@ -242,13 +286,13 @@ func validateInitialGenesis(
 	if err := requireAuditUnsigned(allocation.record, "operation_sequence_high_water", 0); err != nil {
 		return err
 	}
-	if err := requireAuditUnsigned(allocation.record, "topology_count", uint64(len(currentTopology))); err != nil {
+	if err := requireAuditUnsigned(allocation.record, "topology_count", uint64(len(storedTopology))); err != nil {
 		return err
 	}
 	if err := requireAuditDigest(allocation.record, "topology_digest", topology.digest); err != nil {
 		return err
 	}
-	if err := requireAuditUnsigned(allocation.record, "attached_metadata_count", uint64(len(currentAttachments))); err != nil {
+	if err := requireAuditUnsigned(allocation.record, "attached_metadata_count", uint64(len(storedAttachments))); err != nil {
 		return err
 	}
 	return requireAuditDigest(allocation.record, "attached_metadata_digest", attachments.digest)
@@ -256,9 +300,9 @@ func validateInitialGenesis(
 
 func validateInitialBaseline(
 	ctx context.Context, tx metadataQuerier, vaultID string, scope initialAuditScope,
-	baseline storedAuditRecord,
+	baseline, topology, attachments storedAuditRecord,
 ) error {
-	if err := requireAuditUUID(baseline.record, "vault_id", vaultID); err != nil {
+	if err := requireAuditUUID(baseline.record, auditVaultIDField, vaultID); err != nil {
 		return err
 	}
 	if err := requireAuditUUID(baseline.record, "scope_id", scope.scopeID); err != nil {
@@ -267,7 +311,7 @@ func validateInitialBaseline(
 	if err := requireAuditUnsigned(baseline.record, "target_node_id", scope.targetNodeID); err != nil {
 		return err
 	}
-	if err := requireAuditUUID(baseline.record, "operation_id", scope.operationID); err != nil {
+	if err := requireAuditUUID(baseline.record, auditOperationIDField, scope.operationID); err != nil {
 		return err
 	}
 	if err := requireAuditText(baseline.record, "cause", "explicit"); err != nil {
@@ -277,7 +321,13 @@ func validateInitialBaseline(
 	if err != nil {
 		return err
 	}
-	expectedMembers, err := deriveInitialAuditMembers(ctx, tx, scope.targetNodeID)
+	genesisTopology, err := auditRecordListField(topology.record, "nodes")
+	if err != nil {
+		return err
+	}
+	expectedMembers, err := deriveInitialAuditMembersFromRecords(
+		genesisTopology, scope.targetNodeID,
+	)
 	if err != nil {
 		return err
 	}
@@ -287,18 +337,7 @@ func validateInitialBaseline(
 	if err := validateInitialMembershipRows(ctx, tx, scope, baseline.digest, members); err != nil {
 		return err
 	}
-	states, err := currentAuditMemberStates(ctx, tx, members)
-	if err != nil {
-		return err
-	}
 	storedStates, err := auditRecordListField(baseline.record, "member_states")
-	if err != nil {
-		return err
-	}
-	if !equalAuditRecordLists(storedStates, states) {
-		return errors.New("audit enrollment member states do not match current nodes")
-	}
-	versions, err := currentAuditVersions(ctx, tx, members)
 	if err != nil {
 		return err
 	}
@@ -306,10 +345,12 @@ func validateInitialBaseline(
 	if err != nil {
 		return err
 	}
-	if !equalAuditRecordLists(storedVersions, versions) {
-		return errors.New("audit enrollment versions do not match retained content")
+	if err := validateInitialAuditMemberProjection(
+		members, genesisTopology, storedStates, storedVersions,
+	); err != nil {
+		return err
 	}
-	allAttachments, err := currentAuditAttachments(ctx, tx)
+	allAttachments, err := auditRecordListField(attachments.record, "records")
 	if err != nil {
 		return err
 	}
@@ -324,18 +365,17 @@ func validateInitialBaseline(
 	if !equalAuditRecordLists(storedAttachments, expectedAttachments) {
 		return errors.New("audit enrollment attachments do not match current metadata")
 	}
-	return validateInitialBaselineTopology(ctx, tx, baseline.record, members, scope.operationID)
+	return validateInitialBaselineTopology(
+		baseline.record, members, scope.operationID, genesisTopology,
+	)
 }
 
 func validateInitialBaselineTopology(
-	ctx context.Context, tx metadataQuerier, baseline audit.Record, members []uint64,
-	operationID string,
+	baseline audit.Record, members []uint64, operationID string, topology []audit.Record,
 ) error {
-	topology, err := currentAuditTopology(ctx, tx)
-	if err != nil {
-		return err
-	}
-	expectedNodes, expectedWitnesses, err := initialBaselineTopology(topology, members, operationID)
+	expectedNodes, expectedWitnesses, err := initialBaselineTopology(
+		topology, members, operationID,
+	)
 	if err != nil {
 		return err
 	}
@@ -410,13 +450,13 @@ func validateInitialMutation(
 	if err := validateInitialEvent(scope, baseline, event); err != nil {
 		return err
 	}
-	if err := requireAuditUUID(mutation.record, "vault_id", vaultID); err != nil {
+	if err := requireAuditUUID(mutation.record, auditVaultIDField, vaultID); err != nil {
 		return err
 	}
 	if err := requireAuditUnsigned(mutation.record, "operation_sequence", 1); err != nil {
 		return err
 	}
-	if err := requireAuditUUID(mutation.record, "operation_id", scope.operationID); err != nil {
+	if err := requireAuditUUID(mutation.record, auditOperationIDField, scope.operationID); err != nil {
 		return err
 	}
 	if err := requireAuditAbsent(mutation.record, "grouping_id"); err != nil {
@@ -458,7 +498,7 @@ func validateInitialEvent(scope initialAuditScope, baseline storedAuditRecord, e
 		return err
 	}
 	identityDigest, err := audit.Hash(audit.Record{Kind: "event_identity", Fields: []audit.Field{
-		{Name: "operation_id", Value: identityOperation},
+		{Name: auditOperationIDField, Value: identityOperation},
 		{Name: "event_ordinal", Value: audit.Unsigned(0)},
 	}})
 	if err != nil {
@@ -466,7 +506,7 @@ func validateInitialEvent(scope initialAuditScope, baseline storedAuditRecord, e
 	}
 	checks := []func() error{
 		func() error { return requireAuditDigest(event, "event_id", hex.EncodeToString(identityDigest[:])) },
-		func() error { return requireAuditUUID(event, "operation_id", scope.operationID) },
+		func() error { return requireAuditUUID(event, auditOperationIDField, scope.operationID) },
 		func() error { return requireAuditUnsigned(event, metadataNodeIDField, scope.targetNodeID) },
 		func() error { return requireAuditText(event, "event_kind", "audit_enroll") },
 		func() error { return requireAuditUUID(event, "scope_id", scope.scopeID) },
@@ -566,10 +606,7 @@ func requireMatchingEventEnvelope(mutation, event audit.Record) error {
 func validateInitialScopeChain(
 	vaultID string, scope initialAuditScope, mutation, entry storedAuditRecord,
 ) error {
-	if scope.entryCount != 1 || scope.chainHead != entry.digest {
-		return errors.New("initial audit scope projection does not match its first chain entry")
-	}
-	if err := requireAuditUUID(entry.record, "vault_id", vaultID); err != nil {
+	if err := requireAuditUUID(entry.record, auditVaultIDField, vaultID); err != nil {
 		return err
 	}
 	if err := requireAuditUUID(entry.record, "scope_id", scope.scopeID); err != nil {
@@ -592,11 +629,7 @@ func validateInitialAllocation(
 	if err != nil {
 		return err
 	}
-	if authority.sequence != 1 || authority.allocationCount != 1 ||
-		authority.allocationHead != entry.digest {
-		return errors.New("initial allocation authority does not match its first entry")
-	}
-	if err := requireAuditUUID(entry.record, "vault_id", vaultID); err != nil {
+	if err := requireAuditUUID(entry.record, auditVaultIDField, vaultID); err != nil {
 		return err
 	}
 	if err := requireAuditUUID(entry.record, "lineage_id", authority.lineageID); err != nil {
@@ -608,7 +641,7 @@ func validateInitialAllocation(
 	if err := requireAuditUnsigned(entry.record, "operation_sequence", 1); err != nil {
 		return err
 	}
-	if err := requireAuditUUID(entry.record, "operation_id", scope.operationID); err != nil {
+	if err := requireAuditUUID(entry.record, auditOperationIDField, scope.operationID); err != nil {
 		return err
 	}
 	allocated, err := auditUnsignedListField(entry.record, "allocated_node_ids")

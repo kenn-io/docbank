@@ -114,12 +114,14 @@ share a blob without sharing document identity.
     nullable live foreign-key relationship; an unaudited origin can disappear
     without mutating the audited node's chain state. The nullable `trash_parent`
     locator is explicitly non-authoritative and excluded from hashes,
-    final-state reconciliation, and guards; the immutable origin record is
-    authoritative. Enabling the first scope revalidates the preview and commits
+    final-state reconciliation, and mutation validation; the immutable origin
+    record is authoritative. Enabling the first scope revalidates the preview and commits
     the preallocated operation/lineage identities, genesis, enrollment, and
     chain authority in one SQLite transaction. A crash either commits that
-    complete state or rolls it back. Database write guards prevent bypass
-    through unguarded mutation, GC, or backup paths. The enable preview
+    complete state or rolls it back. The shared Go mutation boundary prevents
+    supported store operations from bypassing audit recording; independent
+    replay catches divergent state at verification and portability boundaries.
+    The enable preview
     separately discloses that scope-specific content protection activates
     vault-wide retention of topology tombstones and authoritative tag,
     ingest, and provenance metadata for replay. The planned audited restore
@@ -381,9 +383,12 @@ attached-metadata genesis, allocation genesis and first entry, one shared
 baseline and its memberships, one enrollment event and canonical mutation, and
 the first scope-chain entry. This is persistence infrastructure, not an
 enablement surface; ordinary vaults still export the compact zero-scope form.
-If this authority is restored, schema guards freeze logical metadata so its
-verified state cannot diverge before guarded mutation recording ships. Physical
-pack maintenance and read-only backup/export remain available.
+Once this authority exists, the Go store's logical-mutation boundary rejects
+mutation classes that do not have an audit-recording implementation. SQL retains
+only relational constraints; append-only semantics, canonical mutation
+construction, chain advancement, and independent replay remain backend-neutral
+Go logic. Content replacement is the first supported audited transition.
+Physical pack maintenance and read-only backup/export remain available.
 
 !!! info "Planned — audited mutations"
     Audit enablement, subsequent guarded mutations, maintenance protection, and

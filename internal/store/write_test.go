@@ -87,7 +87,7 @@ func TestCurrentVersionMustBelongToItsNode(t *testing.T) {
 	second, err := s.CreateFile(ctx, s.RootID(), "second.txt", fakeHash("b2"), 1, "text/plain")
 	require.NoError(t, err)
 
-	err = s.withTx(ctx, func(tx *sql.Tx) error {
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		_, updateErr := tx.Exec(`UPDATE nodes SET current_version_id = ? WHERE id = ?`,
 			second.CurrentVersionID, first.ID)
 		return updateErr

@@ -1,0 +1,792 @@
+package store
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"slices"
+
+	"go.kenn.io/docbank/internal/audit"
+)
+
+type replayAuditTopologyNode struct {
+	record       audit.Record
+	parentID     *uint64
+	originParent *uint64
+	kind         string
+	state        string
+}
+
+func deriveInitialAuditMembersFromRecords(
+	topology []audit.Record, targetNodeID uint64,
+) ([]uint64, error) {
+	nodes, err := replayAuditTopology(topology)
+	if err != nil {
+		return nil, err
+	}
+	target, ok := nodes[targetNodeID]
+	if !ok || target.kind != "dir" || target.state != "live" {
+		return nil, fmt.Errorf("audit enrollment target %d must be a live directory", targetNodeID)
+	}
+	children := make(map[uint64][]uint64)
+	for nodeID, node := range nodes {
+		if node.parentID != nil {
+			children[*node.parentID] = append(children[*node.parentID], nodeID)
+		}
+	}
+	members := map[uint64]bool{targetNodeID: true}
+	addReplayAuditDescendants(targetNodeID, nodes, children, members, true)
+	for changed := true; changed; {
+		changed = false
+		for nodeID, node := range nodes {
+			if node.state != "trash" || members[nodeID] {
+				continue
+			}
+			adopt := node.originParent != nil && members[*node.originParent]
+			if node.originParent == nil && target.parentID == nil {
+				adopt = true
+			}
+			if adopt {
+				members[nodeID] = true
+				addReplayAuditDescendants(nodeID, nodes, children, members, false)
+				changed = true
+			}
+		}
+	}
+	if target.parentID == nil && len(members) != len(nodes) {
+		return nil, fmt.Errorf("root audit enrollment covers %d extant nodes, want %d",
+			len(members), len(nodes))
+	}
+	return sortedAuditMembers(members), nil
+}
+
+func replayAuditTopology(topology []audit.Record) (map[uint64]replayAuditTopologyNode, error) {
+	result := make(map[uint64]replayAuditTopologyNode, len(topology))
+	for _, record := range topology {
+		nodeID, err := auditUnsignedField(record, metadataNodeIDField)
+		if err != nil || nodeID == 0 {
+			return nil, fmt.Errorf("reading audit topology node ID: %w", err)
+		}
+		if _, exists := result[nodeID]; exists {
+			return nil, fmt.Errorf("audit topology repeats node %d", nodeID)
+		}
+		parentID, err := auditOptionalUnsignedField(record, "parent_id")
+		if err != nil {
+			return nil, err
+		}
+		kind, err := auditTextField(record, "node_kind")
+		if err != nil {
+			return nil, err
+		}
+		state, err := auditTextField(record, "state")
+		if err != nil {
+			return nil, err
+		}
+		originValue, err := auditField(record, "origin")
+		if err != nil {
+			return nil, err
+		}
+		var originParent *uint64
+		if !originValue.IsAbsent() {
+			origin, ok := originValue.RecordValue()
+			if !ok {
+				return nil, fmt.Errorf("audit topology node %d has invalid origin", nodeID)
+			}
+			if origin.Kind == "known_origin" {
+				originParent, err = auditOptionalUnsignedField(origin, "parent_id")
+				if err != nil || originParent == nil {
+					return nil, fmt.Errorf("audit topology node %d has invalid known origin", nodeID)
+				}
+			}
+		}
+		result[nodeID] = replayAuditTopologyNode{
+			record: record, parentID: parentID, originParent: originParent,
+			kind: kind, state: state,
+		}
+	}
+	return result, nil
+}
+
+func addReplayAuditDescendants(
+	root uint64, nodes map[uint64]replayAuditTopologyNode,
+	children map[uint64][]uint64, members map[uint64]bool, liveOnly bool,
+) {
+	for _, child := range children[root] {
+		if members[child] || (liveOnly && nodes[child].state != "live") {
+			continue
+		}
+		members[child] = true
+		addReplayAuditDescendants(child, nodes, children, members, liveOnly)
+	}
+}
+
+func validateInitialAuditMemberProjection(
+	members []uint64, topology, states, versions []audit.Record,
+) error {
+	nodes, err := replayAuditTopology(topology)
+	if err != nil {
+		return err
+	}
+	if len(states) != len(members) {
+		return errors.New("audit enrollment member-state count does not match membership")
+	}
+	versionByID := make(map[string]audit.Record, len(versions))
+	versionNode := make(map[string]uint64, len(versions))
+	latestRevision := make(map[uint64]uint64)
+	for _, version := range versions {
+		versionID, err := auditUUIDField(version, "version_id")
+		if err != nil {
+			return err
+		}
+		nodeID, err := auditUnsignedField(version, metadataNodeIDField)
+		if err != nil {
+			return err
+		}
+		revision, err := auditUnsignedField(version, "node_revision")
+		if err != nil || revision == 0 {
+			return fmt.Errorf("audit content version %s has invalid revision", versionID)
+		}
+		if _, exists := versionByID[versionID]; exists {
+			return fmt.Errorf("audit enrollment repeats content version %s", versionID)
+		}
+		versionByID[versionID], versionNode[versionID] = version, nodeID
+		latestRevision[nodeID] = max(latestRevision[nodeID], revision)
+	}
+	for index, state := range states {
+		nodeID, err := auditUnsignedField(state, metadataNodeIDField)
+		if err != nil {
+			return err
+		}
+		if nodeID != members[index] {
+			return errors.New("audit enrollment member states do not follow membership order")
+		}
+		revision, err := auditUnsignedField(state, "node_revision")
+		if err != nil || revision == 0 {
+			return fmt.Errorf("audit member %d has invalid baseline revision", nodeID)
+		}
+		current, err := auditOptionalUUIDField(state, "current_version_id")
+		if err != nil {
+			return err
+		}
+		node, exists := nodes[nodeID]
+		if !exists {
+			return fmt.Errorf("audit member %d is absent from topology genesis", nodeID)
+		}
+		if node.kind == "dir" {
+			if current != nil || latestRevision[nodeID] != 0 {
+				return fmt.Errorf("audited directory %d carries content authority", nodeID)
+			}
+			continue
+		}
+		if current == nil || versionNode[*current] != nodeID {
+			return fmt.Errorf("audited file %d lacks its baseline content version", nodeID)
+		}
+		currentRevision, err := auditUnsignedField(versionByID[*current], "node_revision")
+		if err != nil {
+			return err
+		}
+		if currentRevision != latestRevision[nodeID] || currentRevision > revision {
+			return fmt.Errorf("audited file %d baseline head is not its latest version", nodeID)
+		}
+	}
+	return nil
+}
+
+type auditedHistoryReplay struct {
+	scopeID         string
+	lineageID       string
+	members         []uint64
+	memberSet       map[uint64]bool
+	states          map[uint64]audit.Record
+	versions        map[string]audit.Record
+	topology        []audit.Record
+	topologyIndex   map[uint64]int
+	scopeHead       string
+	scopeEntryCount int64
+	allocationHead  string
+	allocationCount int64
+}
+
+func validateAuditedContentReplacementHistory(
+	ctx context.Context, tx metadataQuerier, vaultID string, nodeSequence int64,
+	authority initialAuditAuthority, scope initialAuditScope,
+	records, initial map[string][]storedAuditRecord,
+) error {
+	replay, err := newAuditedHistoryReplay(authority, scope, initial)
+	if err != nil {
+		return err
+	}
+	mutations, err := auditRecordsBySequence(records["canonical_mutation"], authority.sequence)
+	if err != nil {
+		return err
+	}
+	allocations, err := auditRecordsBySequence(records["allocation_entry"], authority.sequence)
+	if err != nil {
+		return err
+	}
+	entries, err := auditScopeRecordsByCount(records["scope_chain_entry"], scope)
+	if err != nil {
+		return err
+	}
+	events, err := auditEventRecordsByID(records["event"])
+	if err != nil {
+		return err
+	}
+	usedEvents := map[string]bool{}
+	for sequence := int64(2); sequence <= authority.sequence; sequence++ {
+		if err := replay.applyContentReplacement(
+			vaultID, nodeSequence, mutations[sequence], allocations[sequence],
+			entries[sequence], events, usedEvents,
+		); err != nil {
+			return fmt.Errorf("validating audit operation %d: %w", sequence, err)
+		}
+	}
+	initialEventID := *initial["event"][0].index.eventID
+	usedEvents[initialEventID] = true
+	if len(usedEvents) != len(events) {
+		return errors.New("audit history contains an unbound event record")
+	}
+	if authority.sequence != replay.allocationCount || authority.allocationHead != replay.allocationHead {
+		return errors.New("audit allocation authority does not match replayed history")
+	}
+	if scope.entryCount != replay.scopeEntryCount || scope.chainHead != replay.scopeHead {
+		return errors.New("audit scope authority does not match replayed history")
+	}
+	return replay.reconcileCurrentState(ctx, tx, initial)
+}
+
+func newAuditedHistoryReplay(
+	authority initialAuditAuthority, scope initialAuditScope,
+	initial map[string][]storedAuditRecord,
+) (*auditedHistoryReplay, error) {
+	baseline := initial["enrollment_baseline"][0].record
+	members, err := auditUnsignedListField(baseline, "members")
+	if err != nil {
+		return nil, err
+	}
+	states, err := auditRecordListField(baseline, "member_states")
+	if err != nil {
+		return nil, err
+	}
+	versions, err := auditRecordListField(baseline, "versions")
+	if err != nil {
+		return nil, err
+	}
+	topology, err := auditRecordListField(initial["topology_genesis"][0].record, "nodes")
+	if err != nil {
+		return nil, err
+	}
+	replay := &auditedHistoryReplay{
+		scopeID:         scope.scopeID,
+		lineageID:       authority.lineageID,
+		members:         members,
+		memberSet:       auditMemberSet(members),
+		states:          make(map[uint64]audit.Record, len(states)),
+		versions:        make(map[string]audit.Record, len(versions)),
+		topology:        slices.Clone(topology),
+		topologyIndex:   make(map[uint64]int, len(topology)),
+		scopeHead:       initial["scope_chain_entry"][0].digest,
+		scopeEntryCount: 1,
+		allocationHead:  initial["allocation_entry"][0].digest,
+		allocationCount: 1,
+	}
+	for _, state := range states {
+		nodeID, err := auditUnsignedField(state, metadataNodeIDField)
+		if err != nil {
+			return nil, err
+		}
+		replay.states[nodeID] = state
+	}
+	for _, version := range versions {
+		versionID, err := auditUUIDField(version, "version_id")
+		if err != nil {
+			return nil, err
+		}
+		replay.versions[versionID] = version
+	}
+	for index, node := range topology {
+		nodeID, err := auditUnsignedField(node, metadataNodeIDField)
+		if err != nil {
+			return nil, err
+		}
+		replay.topologyIndex[nodeID] = index
+	}
+	return replay, nil
+}
+
+func auditRecordsBySequence(
+	records []storedAuditRecord, highWater int64,
+) (map[int64]storedAuditRecord, error) {
+	result := make(map[int64]storedAuditRecord, len(records))
+	for _, record := range records {
+		if record.index.operationSequence == nil {
+			return nil, fmt.Errorf("audit %s record lacks an operation sequence", record.record.Kind)
+		}
+		sequence := *record.index.operationSequence
+		if sequence < 1 || sequence > highWater || result[sequence].record.Kind != "" {
+			return nil, fmt.Errorf("audit %s has invalid or duplicate operation sequence %d",
+				record.record.Kind, sequence)
+		}
+		result[sequence] = record
+	}
+	if int64(len(result)) != highWater {
+		return nil, fmt.Errorf("audit %s sequence is incomplete", records[0].record.Kind)
+	}
+	return result, nil
+}
+
+func auditScopeRecordsByCount(
+	records []storedAuditRecord, scope initialAuditScope,
+) (map[int64]storedAuditRecord, error) {
+	result := make(map[int64]storedAuditRecord, len(records))
+	for _, record := range records {
+		if record.index.scopeID == nil || *record.index.scopeID != scope.scopeID ||
+			record.index.entryCount == nil {
+			return nil, errors.New("audit scope-chain record has invalid relational identity")
+		}
+		count := *record.index.entryCount
+		if count < 1 || count > scope.entryCount || result[count].record.Kind != "" {
+			return nil, fmt.Errorf("audit scope chain has invalid or duplicate entry %d", count)
+		}
+		result[count] = record
+	}
+	if int64(len(result)) != scope.entryCount {
+		return nil, errors.New("audit scope chain is incomplete")
+	}
+	return result, nil
+}
+
+func auditEventRecordsByID(records []storedAuditRecord) (map[string]storedAuditRecord, error) {
+	result := make(map[string]storedAuditRecord, len(records))
+	for _, record := range records {
+		if record.index.eventID == nil || result[*record.index.eventID].record.Kind != "" {
+			return nil, errors.New("audit event records contain an invalid or duplicate identity")
+		}
+		result[*record.index.eventID] = record
+	}
+	return result, nil
+}
+
+func (replay *auditedHistoryReplay) applyContentReplacement(
+	vaultID string, nodeSequence int64, mutation, allocation, scopeEntry storedAuditRecord,
+	eventRecords map[string]storedAuditRecord, usedEvents map[string]bool,
+) error {
+	sequence := *mutation.index.operationSequence
+	auditSequence, err := positiveAuditInteger("operation sequence", sequence)
+	if err != nil {
+		return err
+	}
+	operationID, err := auditUUIDField(mutation.record, auditOperationIDField)
+	if err != nil {
+		return err
+	}
+	if err := requireAuditUUID(mutation.record, auditVaultIDField, vaultID); err != nil {
+		return err
+	}
+	if err := requireAuditUnsigned(mutation.record, "operation_sequence", auditSequence); err != nil {
+		return err
+	}
+	if err := requireAuditAbsent(mutation.record, "grouping_id"); err != nil {
+		return err
+	}
+	events, err := auditRecordListField(mutation.record, "events")
+	if err != nil {
+		return err
+	}
+	if len(events) != 1 {
+		return errors.New("content-replacement mutation must contain one scope event")
+	}
+	nodeID, postVersion, err := replay.validateContentReplacementEvent(
+		operationID, mutation.record, events[0], eventRecords, usedEvents,
+	)
+	if err != nil {
+		return err
+	}
+	if err := replay.validateContentReplacementStateChange(mutation.record, nodeID, postVersion); err != nil {
+		return err
+	}
+	baselines, err := auditRecordListField(mutation.record, "baselines")
+	if err != nil {
+		return err
+	}
+	if len(baselines) != 0 {
+		return errors.New("content replacement cannot bind an enrollment baseline")
+	}
+	if err := requireNoChangeMutationFields(mutation.record); err != nil {
+		return err
+	}
+	if err := replay.advanceScope(vaultID, mutation, scopeEntry); err != nil {
+		return err
+	}
+	if err := replay.advanceAllocation(
+		vaultID, nodeSequence, operationID, mutation, allocation,
+	); err != nil {
+		return err
+	}
+	return replay.applyContentReplacementState(nodeID, postVersion, mutation.record)
+}
+
+func (replay *auditedHistoryReplay) validateContentReplacementEvent(
+	operationID string, mutation, event audit.Record,
+	eventRecords map[string]storedAuditRecord, usedEvents map[string]bool,
+) (uint64, audit.Record, error) {
+	eventID, err := auditDigestField(event, "event_id")
+	if err != nil {
+		return 0, audit.Record{}, err
+	}
+	wrapper, ok := eventRecords[eventID]
+	if !ok || usedEvents[eventID] {
+		return 0, audit.Record{}, errors.New("content replacement lacks one unique event wrapper")
+	}
+	wrapped, err := auditNestedField(wrapper.record, "event")
+	if err != nil || !auditRecordEqual(wrapped, event) {
+		return 0, audit.Record{}, errors.New("content replacement event wrapper does not match mutation")
+	}
+	usedEvents[eventID] = true
+	identityOperation, err := audit.UUID(operationID)
+	if err != nil {
+		return 0, audit.Record{}, err
+	}
+	identity, err := hashAuditRecord(audit.Record{Kind: "event_identity", Fields: []audit.Field{
+		{Name: auditOperationIDField, Value: identityOperation},
+		{Name: "event_ordinal", Value: audit.Unsigned(0)},
+	}})
+	if err != nil {
+		return 0, audit.Record{}, err
+	}
+	if eventID != identity.text {
+		return 0, audit.Record{}, errors.New("content replacement event identity does not match its operation")
+	}
+	nodeID, err := auditUnsignedField(event, metadataNodeIDField)
+	if err != nil || !replay.memberSet[nodeID] {
+		return 0, audit.Record{}, fmt.Errorf("content replacement targets unaudited node %d", nodeID)
+	}
+	checks := []func() error{
+		func() error { return requireAuditUUID(event, auditOperationIDField, operationID) },
+		func() error { return requireAuditText(event, "event_kind", "content_replace") },
+		func() error { return requireAuditUUID(event, "scope_id", replay.scopeID) },
+		func() error { return requireAuditUnsigned(event, "event_ordinal", 0) },
+	}
+	for _, check := range checks {
+		if err := check(); err != nil {
+			return 0, audit.Record{}, err
+		}
+	}
+	if err := requireAuditAbsentFields(event, "target_node_id", "attachment_kind",
+		"attachment_identity", "source_version_id", "topology_delta", "baseline_digest"); err != nil {
+		return 0, audit.Record{}, err
+	}
+	if err := requireMatchingEventEnvelope(mutation, event); err != nil {
+		return 0, audit.Record{}, err
+	}
+	state := replay.states[nodeID]
+	priorRevision, err := auditUnsignedField(state, "node_revision")
+	if err != nil {
+		return 0, audit.Record{}, err
+	}
+	priorVersionID, err := auditOptionalUUIDField(state, "current_version_id")
+	if err != nil || priorVersionID == nil {
+		return 0, audit.Record{}, fmt.Errorf("audited file %d lacks a prior content head", nodeID)
+	}
+	if err := requireAuditUnsigned(event, "prior_node_revision", priorRevision); err != nil {
+		return 0, audit.Record{}, err
+	}
+	if err := requireAuditUnsigned(event, "resulting_node_revision", priorRevision+1); err != nil {
+		return 0, audit.Record{}, err
+	}
+	if err := requireAuditOptionalUUID(event, "prior_current_version_id", priorVersionID); err != nil {
+		return 0, audit.Record{}, err
+	}
+	pre, err := auditNestedField(event, "pre")
+	if err != nil || !auditRecordEqual(pre, replay.versions[*priorVersionID]) {
+		return 0, audit.Record{}, errors.New("content replacement pre-version does not match replayed head")
+	}
+	post, err := auditNestedField(event, "post")
+	if err != nil {
+		return 0, audit.Record{}, err
+	}
+	postVersionID, err := auditUUIDField(post, "version_id")
+	if err != nil {
+		return 0, audit.Record{}, err
+	}
+	if _, exists := replay.versions[postVersionID]; exists {
+		return 0, audit.Record{}, errors.New("content replacement reuses a version identity")
+	}
+	if err := requireAuditUnsigned(post, metadataNodeIDField, nodeID); err != nil {
+		return 0, audit.Record{}, err
+	}
+	if err := requireAuditUnsigned(post, "node_revision", priorRevision+1); err != nil {
+		return 0, audit.Record{}, err
+	}
+	if err := requireAuditUUID(post, "introduced_operation_id", operationID); err != nil {
+		return 0, audit.Record{}, err
+	}
+	if err := requireAuditText(post, "transition_kind", "content_replace"); err != nil {
+		return 0, audit.Record{}, err
+	}
+	if err := requireAuditAbsent(post, "source_version_id"); err != nil {
+		return 0, audit.Record{}, err
+	}
+	postTime, err := auditField(post, "recorded_at")
+	if err != nil {
+		return 0, audit.Record{}, err
+	}
+	mutationTime, err := auditField(mutation, "recorded_at")
+	if err != nil || !equalAuditEnvelopeValue(postTime, mutationTime) {
+		return 0, audit.Record{}, errors.New("content replacement version time does not match its mutation")
+	}
+	if err := requireAuditOptionalUUID(event, "resulting_current_version_id", &postVersionID); err != nil {
+		return 0, audit.Record{}, err
+	}
+	return nodeID, post, nil
+}
+
+func (replay *auditedHistoryReplay) validateContentReplacementStateChange(
+	mutation audit.Record, nodeID uint64, postVersion audit.Record,
+) error {
+	changes, err := auditRecordListField(mutation, "member_state_changes")
+	if err != nil {
+		return err
+	}
+	if len(changes) != 1 {
+		return errors.New("content replacement must contain one member-state change")
+	}
+	state := replay.states[nodeID]
+	priorRevision, err := auditUnsignedField(state, "node_revision")
+	if err != nil {
+		return err
+	}
+	priorVersionID, err := auditOptionalUUIDField(state, "current_version_id")
+	if err != nil {
+		return err
+	}
+	postVersionID, err := auditUUIDField(postVersion, "version_id")
+	if err != nil {
+		return err
+	}
+	change := changes[0]
+	if err := requireAuditUnsigned(change, metadataNodeIDField, nodeID); err != nil {
+		return err
+	}
+	if err := requireAuditUnsigned(change, "prior_revision", priorRevision); err != nil {
+		return err
+	}
+	if err := requireAuditUnsigned(change, "resulting_revision", priorRevision+1); err != nil {
+		return err
+	}
+	if err := requireAuditOptionalUUID(change, "prior_current_version_id", priorVersionID); err != nil {
+		return err
+	}
+	return requireAuditOptionalUUID(change, "resulting_current_version_id", &postVersionID)
+}
+
+func (replay *auditedHistoryReplay) advanceScope(
+	vaultID string, mutation, entry storedAuditRecord,
+) error {
+	nextCount := replay.scopeEntryCount + 1
+	if entry.index.entryCount == nil || *entry.index.entryCount != nextCount {
+		return errors.New("content replacement scope entry is out of order")
+	}
+	if err := requireAuditUUID(entry.record, auditVaultIDField, vaultID); err != nil {
+		return err
+	}
+	if err := requireAuditUUID(entry.record, "scope_id", replay.scopeID); err != nil {
+		return err
+	}
+	if err := requireAuditDigest(entry.record, "previous_head", replay.scopeHead); err != nil {
+		return err
+	}
+	mutationDigest, err := hashAuditRecord(mutation.record)
+	if err != nil {
+		return err
+	}
+	if err := requireAuditDigest(entry.record, "mutation_hash", mutationDigest.text); err != nil {
+		return err
+	}
+	replay.scopeEntryCount, replay.scopeHead = nextCount, entry.digest
+	return nil
+}
+
+func (replay *auditedHistoryReplay) advanceAllocation(
+	vaultID string, nodeSequence int64, operationID string,
+	mutation, entry storedAuditRecord,
+) error {
+	nextCount := replay.allocationCount + 1
+	auditCount, err := positiveAuditInteger("allocation entry count", nextCount)
+	if err != nil {
+		return err
+	}
+	auditNodeSequence, err := positiveAuditInteger("node ID high-water mark", nodeSequence)
+	if err != nil {
+		return err
+	}
+	if entry.index.operationSequence == nil || *entry.index.operationSequence != nextCount {
+		return errors.New("content replacement allocation entry is out of order")
+	}
+	checks := []func() error{
+		func() error { return requireAuditUUID(entry.record, auditVaultIDField, vaultID) },
+		func() error { return requireAuditUUID(entry.record, "lineage_id", replay.lineageID) },
+		func() error { return requireAuditUUID(entry.record, auditOperationIDField, operationID) },
+		func() error { return requireAuditDigest(entry.record, "previous_head", replay.allocationHead) },
+		func() error { return requireAuditUnsigned(entry.record, "operation_sequence", auditCount) },
+		func() error {
+			return requireAuditUnsigned(entry.record, "operation_sequence_high_water", auditCount)
+		},
+		func() error { return requireAuditUnsigned(entry.record, "node_id_high_water", auditNodeSequence) },
+		func() error { return requireAuditBool(entry.record, "has_audited_mutation", true) },
+	}
+	for _, check := range checks {
+		if err := check(); err != nil {
+			return err
+		}
+	}
+	allocated, err := auditUnsignedListField(entry.record, "allocated_node_ids")
+	if err != nil {
+		return err
+	}
+	if len(allocated) != 0 {
+		return errors.New("content replacement allocation cannot allocate node IDs")
+	}
+	mutationDigest, err := hashAuditRecord(mutation.record)
+	if err != nil {
+		return err
+	}
+	if err := requireAuditDigest(entry.record, "mutation_hash", mutationDigest.text); err != nil {
+		return err
+	}
+	for _, field := range []string{
+		"has_topology_change", "has_witness_change", "has_attached_metadata_change",
+	} {
+		if err := requireAuditBool(entry.record, field, false); err != nil {
+			return err
+		}
+	}
+	for _, field := range []string{"witness_change_count", "attached_metadata_change_count"} {
+		if err := requireAuditUnsigned(entry.record, field, 0); err != nil {
+			return err
+		}
+	}
+	if err := requireAuditAbsentFields(entry.record, "topology_delta",
+		"witness_change_digest", "attached_metadata_change_digest"); err != nil {
+		return err
+	}
+	replay.allocationCount, replay.allocationHead = nextCount, entry.digest
+	return nil
+}
+
+func (replay *auditedHistoryReplay) applyContentReplacementState(
+	nodeID uint64, postVersion, mutation audit.Record,
+) error {
+	state := replay.states[nodeID]
+	priorRevision, err := auditUnsignedField(state, "node_revision")
+	if err != nil {
+		return err
+	}
+	postVersionID, err := auditUUIDField(postVersion, "version_id")
+	if err != nil {
+		return err
+	}
+	postVersionValue, err := audit.UUID(postVersionID)
+	if err != nil {
+		return err
+	}
+	replay.states[nodeID] = audit.Record{Kind: "member_state", Fields: []audit.Field{
+		{Name: metadataNodeIDField, Value: audit.Unsigned(nodeID)},
+		{Name: "node_revision", Value: audit.Unsigned(priorRevision + 1)},
+		{Name: "current_version_id", Value: postVersionValue},
+	}}
+	replay.versions[postVersionID] = postVersion
+	index, ok := replay.topologyIndex[nodeID]
+	if !ok {
+		return fmt.Errorf("audited node %d is absent from topology replay", nodeID)
+	}
+	modifiedAt, err := auditField(mutation, "recorded_at")
+	if err != nil {
+		return err
+	}
+	replay.topology[index], err = replaceAuditRecordField(
+		replay.topology[index], "modified_at", modifiedAt,
+	)
+	return err
+}
+
+func replaceAuditRecordField(record audit.Record, name string, value audit.Value) (audit.Record, error) {
+	result := audit.Record{Kind: record.Kind, Fields: slices.Clone(record.Fields)}
+	for index := range result.Fields {
+		if result.Fields[index].Name == name {
+			result.Fields[index].Value = value
+			return result, nil
+		}
+	}
+	return audit.Record{}, fmt.Errorf("audit record %s lacks field %s", record.Kind, name)
+}
+
+func (replay *auditedHistoryReplay) reconcileCurrentState(
+	ctx context.Context, tx metadataQuerier, initial map[string][]storedAuditRecord,
+) error {
+	currentStates, err := currentAuditMemberStates(ctx, tx, replay.members)
+	if err != nil {
+		return err
+	}
+	expectedStates := make([]audit.Record, len(replay.members))
+	for index, member := range replay.members {
+		expectedStates[index] = replay.states[member]
+	}
+	if !equalAuditRecordLists(expectedStates, currentStates) {
+		return errors.New("replayed audit member states do not match current nodes")
+	}
+	currentVersions, err := currentAuditVersions(ctx, tx, replay.members)
+	if err != nil {
+		return err
+	}
+	expectedVersions := make([]audit.Record, 0, len(replay.versions))
+	for _, version := range replay.versions {
+		expectedVersions = append(expectedVersions, version)
+	}
+	if !equalAuditRecordSets(expectedVersions, currentVersions) {
+		return errors.New("replayed audit versions do not match retained content")
+	}
+	currentTopology, err := currentAuditTopology(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if !equalAuditRecordLists(replay.topology, currentTopology) {
+		return errors.New("replayed audit topology does not match current nodes")
+	}
+	currentAttachments, err := currentAuditAttachments(ctx, tx)
+	if err != nil {
+		return err
+	}
+	genesisAttachments, err := auditRecordListField(
+		initial["attached_metadata_genesis"][0].record, "records",
+	)
+	if err != nil {
+		return err
+	}
+	if !equalAuditRecordLists(genesisAttachments, currentAttachments) {
+		return errors.New("replayed audit attachments do not match current metadata")
+	}
+	return nil
+}
+
+func equalAuditRecordSets(left, right []audit.Record) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	counts := make(map[string]int, len(left))
+	for _, record := range left {
+		encoded, err := audit.Encode(record)
+		if err != nil {
+			return false
+		}
+		counts[string(encoded)]++
+	}
+	for _, record := range right {
+		encoded, err := audit.Encode(record)
+		if err != nil || counts[string(encoded)] == 0 {
+			return false
+		}
+		counts[string(encoded)]--
+	}
+	return true
+}

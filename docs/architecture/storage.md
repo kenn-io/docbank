@@ -71,7 +71,6 @@ tags           (id UUID PRIMARY KEY, name UNIQUE, revision)
 node_tags      (node_id, tag_id)
 audit_records  (digest PRIMARY KEY, kind, operation indexes, record_json)
 audit_authority(lineage_id, operation high-water, allocation count/head)
-audit_write_guard(derived singleton installed after complete validation)
 audit_scopes   (scope_id, target_node_id, enable operation, count/head)
 audit_baselines(digest, scope_id, target_node_id, operation_id)
 audit_memberships(scope_id, node_id, baseline_digest)
@@ -99,15 +98,20 @@ enrollment: topology and attached-metadata genesis, a shared baseline, sticky
 membership, an enrollment event, scope chain, and allocation lineage. Import
 recomputes every canonical digest and reconciles the protected closure with the
 restored current state before accepting it. No command or HTTP route can create
-a scope yet, so this authority remains dormant in ordinary vaults. A restored
-authority is read-only at the logical metadata layer until guarded mutation
-recording is implemented; pack layout and backup reads remain maintainable. The
-planned mutation and maintenance contract is maintained in
-[Audited History](audited-history.md).
+a scope yet, so this authority remains dormant in ordinary vaults. Once audit
+authority exists, the Go store rejects logical mutation classes that do not yet
+record an audit transition. Content replacement is the first implemented
+transition: its new immutable version, event, scope-chain entries, and allocation
+entry commit in the same metadata transaction. Pack layout and backup reads
+remain maintainable. The planned mutation and maintenance contract is maintained
+in [Audited History](audited-history.md).
 
-## Invariants enforced in the schema
+## Structural invariants enforced in the schema
 
-The important rules hold at the SQL layer, so they bind every writer:
+SQL owns relational shape, uniqueness, foreign keys, and basic scalar checks.
+Append-only audit semantics, mutation sequencing, canonical construction, and
+replay are Go business logic so the same rules can serve another metadata
+backend:
 
 - **Exactly one root.** SQLite treats NULLs as distinct in unique
   indexes, so a partial unique index on a constant expression does it:

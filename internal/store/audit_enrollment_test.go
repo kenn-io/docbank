@@ -29,7 +29,7 @@ func TestInitializeAuditAuthorityCreatesValidatedClosedSet(t *testing.T) {
 
 	counts, err := auditAuthorityCounts(t.Context(), s.db)
 	require.NoError(t, err)
-	assert.Equal(t, [6]int64{1, 1, 1, 3, 8, 1}, counts)
+	assert.Equal(t, [5]int64{1, 1, 1, 3, 8}, counts)
 
 	var raw string
 	require.NoError(t, s.db.QueryRow(
@@ -66,7 +66,7 @@ func TestInitializeAuditAuthorityRollsBackPartialWrite(t *testing.T) {
 	require.ErrorContains(t, err, "forced enrollment failure")
 	counts, err := auditAuthorityCounts(t.Context(), s.db)
 	require.NoError(t, err)
-	assert.Equal(t, [6]int64{}, counts)
+	assert.Equal(t, [5]int64{}, counts)
 }
 
 func TestInitializeAuditAuthorityRejectsInvalidTargetsWithoutAuthority(t *testing.T) {
@@ -81,7 +81,7 @@ func TestInitializeAuditAuthorityRejectsInvalidTargetsWithoutAuthority(t *testin
 	}
 	counts, err := auditAuthorityCounts(t.Context(), s.db)
 	require.NoError(t, err)
-	assert.Equal(t, [6]int64{}, counts)
+	assert.Equal(t, [5]int64{}, counts)
 }
 
 func TestInitializeAuditAuthorityRejectsInvalidMetadataAndRollsBack(t *testing.T) {
@@ -98,5 +98,5 @@ func TestInitializeAuditAuthorityRejectsInvalidMetadataAndRollsBack(t *testing.T
 	require.ErrorContains(t, err, "node ID high-water mark 5 is below maximum node ID 12")
 	counts, err := auditAuthorityCounts(t.Context(), s.db)
 	require.NoError(t, err)
-	assert.Equal(t, [6]int64{}, counts)
+	assert.Equal(t, [5]int64{}, counts)
 }

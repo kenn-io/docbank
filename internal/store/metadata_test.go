@@ -53,7 +53,7 @@ func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 	require.NoError(t, err)
 	_, err = source.db.ExecContext(ctx, `DELETE FROM nodes WHERE id = ?`, lostParent.ID)
 	require.NoError(t, err)
-	require.NoError(t, source.withTx(ctx, func(tx *sql.Tx) error {
+	require.NoError(t, source.withStorageTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO nodes(id,parent_id,name,kind,created_at,modified_at)
 			VALUES(100,1,'later-deleted','dir','2026-02-04T00:00:00.000000000Z','2026-02-04T00:00:00.000000000Z')`); err != nil {
 			return err
@@ -901,7 +901,7 @@ func seedMetadataRoundTrip(t *testing.T, s *Store) {
 		OriginalPath: "/source/report.txt", OriginalMTime: &originalMTime,
 	})
 	require.NoError(t, err)
-	require.NoError(t, s.withTx(ctx, func(tx *sql.Tx) error {
+	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		statements := []string{
 			`UPDATE nodes SET created_at='2026-01-01T00:00:00.000000000Z', modified_at='2026-01-02T00:00:00.000000000Z' WHERE id=1`,
 			`INSERT INTO blobs(hash,size,created_at) VALUES

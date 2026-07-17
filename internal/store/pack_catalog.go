@@ -254,7 +254,7 @@ func (c *PackCatalog) writePack(ctx context.Context, record packstore.PackRecord
 	if err := record.Validate(); err != nil {
 		return fmt.Errorf("validating blob pack %s: %w", record.PackID, err)
 	}
-	return c.store.withTx(ctx, func(tx *sql.Tx) error {
+	return c.store.withStorageTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO blob_packs (pack_id, entry_count, stored_bytes, created_at)
 			VALUES (?, ?, ?, ?)`, record.PackID, record.EntryCount, record.StoredBytes,
@@ -402,7 +402,7 @@ func (c *PackCatalog) CommitRepack(ctx context.Context, sourceIDs []string,
 		}
 		expected[move.NewEntry.Hash] = move.OldPackID
 	}
-	return c.store.withTx(ctx, func(tx *sql.Tx) error {
+	return c.store.withStorageTx(ctx, func(tx *sql.Tx) error {
 		actual, err := liveMappingsForPacks(ctx, tx, sourceIDs)
 		if err != nil {
 			return err
@@ -488,7 +488,7 @@ func (c *PackCatalog) DeleteEmptyPackRecord(ctx context.Context, packID string) 
 }
 
 func (c *PackCatalog) ClearPackMetadata(ctx context.Context) error {
-	return c.store.withTx(ctx, func(tx *sql.Tx) error {
+	return c.store.withStorageTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM blob_pack_index`); err != nil {
 			return fmt.Errorf("clearing packed blob mappings: %w", err)
 		}
