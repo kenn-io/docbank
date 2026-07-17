@@ -127,6 +127,12 @@ type Content struct {
 	Reader VerifiedReadCloser
 }
 
+// VersionContent binds a verified byte stream to one immutable content version.
+type VersionContent struct {
+	Version ContentVersion
+	Reader  VerifiedReadCloser
+}
+
 func fromStoreNode(node store.Node) Node {
 	return Node{
 		ID: node.ID, ParentID: node.ParentID, Name: node.Name, Kind: node.Kind,

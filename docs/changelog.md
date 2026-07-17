@@ -9,6 +9,9 @@ docbank is pre-1.0; interfaces and storage migrations may still evolve.
 
 ## Unreleased
 
+- Embedded Go applications can page immutable content history with `Versions`
+  and open any historical version through the verified read contract with
+  `OpenVersionContent`.
 - Windows is a supported vault platform rather than a compile-only target:
   daemon discovery and detached startup, owner-private vaults, no-follow
   ingest, overlapping vault/restore exclusion, backup, restore, and self-update

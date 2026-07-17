@@ -382,6 +382,34 @@ func (v *Vault) OpenContent(ctx context.Context, virtualPath string) (*Content, 
 	}, nil
 }
 
+// OpenVersionContent opens the catalog-authorized bytes for one immutable
+// content version. The reader holds a vault lease and uses the same verified
+// read contract as OpenContent.
+func (v *Vault) OpenVersionContent(ctx context.Context, versionID string) (*VersionContent, error) {
+	if err := v.begin(); err != nil {
+		return nil, err
+	}
+	version, err := v.metadata.ContentVersionByID(ctx, versionID)
+	if err != nil {
+		v.lifecycle.RUnlock()
+		return nil, err
+	}
+	reader, size, err := v.blobs.OpenStreamContext(ctx, version.BlobHash)
+	if err != nil {
+		v.lifecycle.RUnlock()
+		return nil, err
+	}
+	if size != version.Size {
+		closeErr := reader.Close()
+		v.lifecycle.RUnlock()
+		return nil, errors.Join(fmt.Errorf("catalog size %d does not match version size %d", size, version.Size), closeErr)
+	}
+	return &VersionContent{
+		Version: fromStoreVersion(version),
+		Reader:  &leasedReader{VerifiedReadCloser: reader, release: v.lifecycle.RUnlock},
+	}, nil
+}
+
 // Pack explicitly moves authorized loose content into managed immutable packs.
 // It also performs the same reconciliation and repair pass as the standalone
 // storage pack operation. Ordinary Put calls remain loose until Pack is called.
