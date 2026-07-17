@@ -83,3 +83,20 @@ func TestInitializeAuditAuthorityRejectsInvalidTargetsWithoutAuthority(t *testin
 	require.NoError(t, err)
 	assert.Equal(t, [6]int64{}, counts)
 }
+
+func TestInitializeAuditAuthorityRejectsInvalidMetadataAndRollsBack(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	seedMetadataRoundTrip(t, s)
+	target, err := s.NodeByPath(t.Context(), "/Projects")
+	require.NoError(t, err)
+	_, err = s.db.Exec(`UPDATE sqlite_sequence SET seq=5 WHERE name='nodes'`)
+	require.NoError(t, err)
+
+	_, err = s.initializeAuditAuthority(t.Context(), target.ID, "cli", nil)
+	require.ErrorContains(t, err, "node ID high-water mark 5 is below maximum node ID 12")
+	counts, err := auditAuthorityCounts(t.Context(), s.db)
+	require.NoError(t, err)
+	assert.Equal(t, [6]int64{}, counts)
+}

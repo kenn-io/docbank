@@ -94,7 +94,7 @@ func (s *Store) initializeAuditAuthorityWithInput(
 		if err := persistInitialAuditEnrollment(ctx, tx, set); err != nil {
 			return err
 		}
-		if err := validateInitialAuditAuthority(ctx, tx, s.vaultID, set.nodeSequence); err != nil {
+		if err := validateMetadataState(ctx, tx, set.nodeSequence); err != nil {
 			return fmt.Errorf("validating created audit authority: %w", err)
 		}
 		result = initialAuditEnrollmentResult{
