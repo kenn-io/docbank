@@ -69,6 +69,12 @@ provenance     (identity SHA-256 PRIMARY KEY, node_id, ingest_id,
                 original_path, original_mtime, supersedes)
 tags           (id UUID PRIMARY KEY, name UNIQUE, revision)
 node_tags      (node_id, tag_id)
+audit_records  (digest PRIMARY KEY, kind, operation indexes, record_json)
+audit_authority(lineage_id, operation high-water, allocation count/head)
+audit_write_guard(derived singleton installed after complete validation)
+audit_scopes   (scope_id, target_node_id, enable operation, count/head)
+audit_baselines(digest, scope_id, target_node_id, operation_id)
+audit_memberships(scope_id, node_id, baseline_digest)
 extracted_text (blob_hash, extractor, extractor_version, status,
                 error, attempts, text, extracted_at)      -- reserved; no workers yet
 nodes_fts      -- FTS5 external-content index over live node names
@@ -88,10 +94,16 @@ creates an unsuperseded fact; SQL prevents rewriting ingest or provenance rows.
 JSONL preserves the identity and optional `supersedes` edge and rejects a
 dangling, cross-node, branching, or cyclic graph during import.
 
-The current schema has no audit-scope authority. The planned storage contract
-for sticky membership, mutation chains, and JSONL fidelity is maintained in
-[Audited History](audited-history.md), rather than duplicated in this current
-schema reference.
+The schema and metadata-v1 codec can persist one complete first audit
+enrollment: topology and attached-metadata genesis, a shared baseline, sticky
+membership, an enrollment event, scope chain, and allocation lineage. Import
+recomputes every canonical digest and reconciles the protected closure with the
+restored current state before accepting it. No command or HTTP route can create
+a scope yet, so this authority remains dormant in ordinary vaults. A restored
+authority is read-only at the logical metadata layer until guarded mutation
+recording is implemented; pack layout and backup reads remain maintainable. The
+planned mutation and maintenance contract is maintained in
+[Audited History](audited-history.md).
 
 ## Invariants enforced in the schema
 

@@ -16,7 +16,8 @@ func (s *Store) BeginIngest(ctx context.Context, sourceKind, sourceDesc string) 
 	}
 	startedAt := nowRFC3339()
 	if err := validateIngestRecord(metadataIngest{
-		Type: "ingest", ID: id, StartedAt: startedAt, SourceKind: sourceKind, SourceDesc: sourceDesc,
+		Type: metadataIngestType, ID: id, StartedAt: startedAt,
+		SourceKind: sourceKind, SourceDesc: sourceDesc,
 	}); err != nil {
 		return "", fmt.Errorf("validating ingest start: %w", err)
 	}

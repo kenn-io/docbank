@@ -164,6 +164,37 @@ type metadataExtractedText struct {
 	ExtractedAt      string  `json:"extracted_at"`
 }
 
+type metadataAuditRecord struct {
+	Type   string          `json:"type"`
+	Digest string          `json:"digest"`
+	Record json.RawMessage `json:"record"`
+}
+
+type metadataAuditAuthority struct {
+	Type                       string `json:"type"`
+	LineageID                  string `json:"lineage_id"`
+	OperationSequenceHighWater uint64 `json:"operation_sequence_high_water"`
+	AllocationGenesisDigest    string `json:"allocation_genesis_digest"`
+	AllocationEntryCount       uint64 `json:"allocation_entry_count"`
+	AllocationHead             string `json:"allocation_head"`
+}
+
+type metadataAuditScope struct {
+	Type              string `json:"type"`
+	ScopeID           string `json:"scope_id"`
+	TargetNodeID      uint64 `json:"target_node_id"`
+	EnableOperationID string `json:"enable_operation_id"`
+	EntryCount        uint64 `json:"entry_count"`
+	ChainHead         string `json:"chain_head"`
+}
+
+type metadataAuditMembership struct {
+	Type           string `json:"type"`
+	ScopeID        string `json:"scope_id"`
+	NodeID         uint64 `json:"node_id"`
+	BaselineDigest string `json:"baseline_digest"`
+}
+
 // ExportMetadata writes a deterministic JSONL description of Docbank's
 // logical state. Rebuildable FTS data and physical pack authority are omitted.
 func (s *Store) ExportMetadata(ctx context.Context, w io.Writer) error {
@@ -241,7 +272,10 @@ func exportMetadataSnapshot(ctx context.Context, tx metadataQuerier, w io.Writer
 	if err := exportNodeTags(ctx, tx, write); err != nil {
 		return err
 	}
-	return exportExtractedText(ctx, tx, write)
+	if err := exportExtractedText(ctx, tx, write); err != nil {
+		return err
+	}
+	return exportAuditMetadata(ctx, tx, write)
 }
 
 type metadataWrite func(any) error
@@ -332,7 +366,7 @@ func exportIngests(ctx context.Context, tx metadataQuerier, write metadataWrite)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
-		r := metadataIngest{Type: "ingest"}
+		r := metadataIngest{Type: metadataIngestType}
 		if err := rows.Scan(&r.ID, &r.StartedAt, &r.SourceKind, &r.SourceDesc); err != nil {
 			return fmt.Errorf("scanning ingest metadata: %w", err)
 		}
@@ -343,7 +377,7 @@ func exportIngests(ctx context.Context, tx metadataQuerier, write metadataWrite)
 			return err
 		}
 	}
-	return rowsError("ingest", rows)
+	return rowsError(metadataIngestType, rows)
 }
 
 func exportProvenance(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
@@ -485,6 +519,10 @@ func (s *Store) ImportMetadata(ctx context.Context, r io.Reader) error {
 		); err != nil {
 			return fmt.Errorf("restoring vault identity: %w", err)
 		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO audit_write_guard(singleton)
+			SELECT 1 WHERE EXISTS (SELECT 1 FROM audit_authority)`); err != nil {
+			return fmt.Errorf("activating restored audit authority: %w", err)
+		}
 		if err := validateMetadataState(ctx, tx, header.NodeSequence); err != nil {
 			return err
 		}
@@ -513,7 +551,13 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		  (SELECT COUNT(*) FROM blobs) + (SELECT COUNT(*) FROM content_versions)
 		    + (SELECT COUNT(*) FROM ingests) + (SELECT COUNT(*) FROM provenance)
 		    + (SELECT COUNT(*) FROM tags) + (SELECT COUNT(*) FROM node_tags)
-		    + (SELECT COUNT(*) FROM extracted_text),
+		    + (SELECT COUNT(*) FROM extracted_text)
+		    + (SELECT COUNT(*) FROM audit_records)
+		    + (SELECT COUNT(*) FROM audit_authority)
+		    + (SELECT COUNT(*) FROM audit_scopes)
+		    + (SELECT COUNT(*) FROM audit_baselines)
+		    + (SELECT COUNT(*) FROM audit_memberships)
+		    + (SELECT COUNT(*) FROM audit_write_guard),
 		  (SELECT COUNT(*) FROM blob_packs) + (SELECT COUNT(*) FROM blob_pack_index)
 	`).Scan(&nodes, &other, &packs); err != nil {
 		return fmt.Errorf("checking metadata import target: %w", err)
@@ -618,7 +662,7 @@ func importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw json
 			v.MIMEType, v.RecordedAt, v.NodeRevision, v.IntroducedOperationID,
 			v.TransitionKind, v.SourceVersionID)
 		return err
-	case "ingest":
+	case metadataIngestType:
 		var v metadataIngest
 		if err := decodeMetadataRecord(raw, &v); err != nil {
 			return err
@@ -673,27 +717,61 @@ func importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw json
 		_, err := tx.ExecContext(ctx, `INSERT INTO extracted_text(blob_hash,extractor,extractor_version,status,error,attempts,text,extracted_at) VALUES(?,?,?,?,?,?,?,?)`,
 			v.BlobHash, v.Extractor, v.ExtractorVersion, v.Status, v.Error, v.Attempts, v.Text, v.ExtractedAt)
 		return err
+	case metadataAuditAuthorityType:
+		var v metadataAuditAuthority
+		if err := decodeMetadataRecord(raw, &v); err != nil {
+			return err
+		}
+		return importAuditAuthority(ctx, tx, v)
+	case metadataAuditScopeType:
+		var v metadataAuditScope
+		if err := decodeMetadataRecord(raw, &v); err != nil {
+			return err
+		}
+		return importAuditScope(ctx, tx, v)
+	case metadataAuditMembershipType:
+		var v metadataAuditMembership
+		if err := decodeMetadataRecord(raw, &v); err != nil {
+			return err
+		}
+		return importAuditMembership(ctx, tx, v)
+	case metadataAuditRecordType:
+		var v metadataAuditRecord
+		if err := decodeMetadataRecord(raw, &v); err != nil {
+			return err
+		}
+		return importAuditRecord(ctx, tx, v)
 	default:
 		return fmt.Errorf("unknown record type %q", kind)
 	}
 }
 
 const (
-	metadataTypeField      = "type"
-	metadataProvenanceType = "provenance"
+	metadataTypeField           = "type"
+	metadataNodeIDField         = "node_id"
+	metadataIngestType          = "ingest"
+	metadataProvenanceType      = "provenance"
+	metadataAuditAuthorityType  = "audit_authority"
+	metadataAuditScopeType      = "audit_scope"
+	metadataAuditMembershipType = "audit_membership"
+	metadataAuditRecordType     = "audit_record"
 )
 
 var metadataHeaderFields = []string{metadataTypeField, "format", "version", "vault_id", "node_sequence"}
 
 var metadataRequiredFields = map[string][]string{
-	"blob":                 {metadataTypeField, "hash", "size", "created_at"},
-	"node":                 {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", "revision", "created_at", "modified_at", "trashed_at", "trash_parent", "trash_name"},
-	"content_version":      {metadataTypeField, "version_id", "node_id", "blob_hash", "size", "mime_type", "recorded_at", "node_revision", "introduced_operation_id", "transition_kind", "source_version_id"},
-	"ingest":               {metadataTypeField, "ingest_id", "started_at", "source_kind", "source_desc"},
-	metadataProvenanceType: {metadataTypeField, "identity", "node_id", "ingest_id", "original_path", "original_mtime", "supersedes"},
-	"tag":                  {metadataTypeField, "tag_id", "name", "revision"},
-	"node_tag":             {metadataTypeField, "node_id", "tag_id"},
-	"extracted_text":       {metadataTypeField, "blob_hash", "extractor", "extractor_version", "status", "error", "attempts", "text", "extracted_at"},
+	"blob":                      {metadataTypeField, "hash", "size", "created_at"},
+	"node":                      {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", "revision", "created_at", "modified_at", "trashed_at", "trash_parent", "trash_name"},
+	"content_version":           {metadataTypeField, "version_id", metadataNodeIDField, "blob_hash", "size", "mime_type", "recorded_at", "node_revision", "introduced_operation_id", "transition_kind", "source_version_id"},
+	metadataIngestType:          {metadataTypeField, "ingest_id", "started_at", "source_kind", "source_desc"},
+	metadataProvenanceType:      {metadataTypeField, "identity", metadataNodeIDField, "ingest_id", "original_path", "original_mtime", "supersedes"},
+	"tag":                       {metadataTypeField, "tag_id", "name", "revision"},
+	"node_tag":                  {metadataTypeField, metadataNodeIDField, "tag_id"},
+	"extracted_text":            {metadataTypeField, "blob_hash", "extractor", "extractor_version", "status", "error", "attempts", "text", "extracted_at"},
+	metadataAuditAuthorityType:  {metadataTypeField, "lineage_id", "operation_sequence_high_water", "allocation_genesis_digest", "allocation_entry_count", "allocation_head"},
+	metadataAuditScopeType:      {metadataTypeField, "scope_id", "target_node_id", "enable_operation_id", "entry_count", "chain_head"},
+	metadataAuditMembershipType: {metadataTypeField, "scope_id", metadataNodeIDField, "baseline_digest"},
+	metadataAuditRecordType:     {metadataTypeField, "digest", "record"},
 }
 
 var metadataNullableFields = map[string]map[string]bool{
@@ -905,7 +983,7 @@ func validateContentVersionRecord(v metadataContentVersion) error {
 }
 
 func validateIngestRecord(v metadataIngest) error {
-	if v.Type != "ingest" || v.SourceKind == "" || v.SourceDesc == "" {
+	if v.Type != metadataIngestType || v.SourceKind == "" || v.SourceDesc == "" {
 		return errors.New("invalid ingest record")
 	}
 	if err := validateUUIDv4(v.ID); err != nil {
@@ -1049,6 +1127,16 @@ func validateMetadataState(ctx context.Context, tx metadataQuerier, nodeSequence
 		return fmt.Errorf("invalid vault identity: %w", err)
 	}
 	if err := validateMetadataRelations(ctx, tx); err != nil {
+		return err
+	}
+	topology, err := loadAuditTopologyRows(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if err := validateAuditTrashOrigins(topology); err != nil {
+		return err
+	}
+	if err := validateInitialAuditAuthority(ctx, tx, vaultID, nodeSequence); err != nil {
 		return err
 	}
 	var maxNodeID int64
