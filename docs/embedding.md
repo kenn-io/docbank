@@ -14,7 +14,7 @@ Use an embedded vault when the application itself should own document
 lifecycle. Use the HTTP API when independent processes need to share one
 standalone vault.
 
-## Open a vault
+## Create a vault service
 
 Each root is an independent archive. One process may open several non-overlapping
 roots at once; overlapping roots are rejected so two owners cannot mutate the
@@ -28,11 +28,11 @@ import (
     "context"
     "io"
 
-    "go.kenn.io/docbank/pkg"
+    "go.kenn.io/docbank"
 )
 
 func StoreSession(ctx context.Context, root string, sessionID string, jsonl []byte) error {
-    vault, err := docbank.Open(ctx, docbank.OpenOptions{Root: root})
+    vault, err := docbank.New(ctx, docbank.Config{Root: root})
     if err != nil {
         return err
     }
@@ -152,11 +152,11 @@ An application may select either adapter explicitly:
 
 ```go
 import (
-    "go.kenn.io/docbank/pkg"
+    "go.kenn.io/docbank"
     "go.kenn.io/docbank/pkg/sqlite/modernc"
 )
 
-vault, err := docbank.Open(ctx, docbank.OpenOptions{
+vault, err := docbank.New(ctx, docbank.Config{
     Root: root,
     SQLite: modernc.Driver{},
 })
@@ -170,7 +170,7 @@ SQLite implementations.
 
 ## Ownership boundary
 
-Do not point a daemon and an embedded application at the same root. `Open`
+Do not point a daemon and an embedded application at the same root. `New`
 holds the same exclusive hierarchy lock as the daemon for the entire vault
 lifetime and fails if the requested root overlaps another active vault or
 restore target.

@@ -48,10 +48,10 @@ const (
 	MaxChildrenLimit = 5000
 )
 
-// OpenOptions selects one private vault root and, optionally, its SQLite
+// Config selects one private vault root and, optionally, its SQLite
 // implementation. Nil SQLite uses mattn/go-sqlite3 in CGO builds and
 // modernc.org/sqlite when CGO is disabled.
-type OpenOptions struct {
+type Config struct {
 	Root   string
 	SQLite docsqlite.Driver
 }
@@ -69,24 +69,24 @@ type Vault struct {
 	closed    bool
 }
 
-// Open creates or opens one embedded vault and holds its exclusive hierarchy
+// New creates or opens one embedded vault and holds its exclusive hierarchy
 // lock until Close. A standalone daemon or another embedded instance cannot
 // own the same or an overlapping vault concurrently.
-func Open(ctx context.Context, opts OpenOptions) (_ *Vault, retErr error) {
+func New(ctx context.Context, config Config) (_ *Vault, retErr error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	driver := opts.SQLite
+	driver := config.SQLite
 	if driver == nil {
 		driver = store.DefaultSQLiteDriver()
 	}
 	if err := docsqlite.Validate(driver); err != nil {
 		return nil, err
 	}
-	if opts.Root == "" {
+	if config.Root == "" {
 		return nil, errors.New("docbank vault root is required")
 	}
-	canonical, err := home.CanonicalRoot(opts.Root)
+	canonical, err := home.CanonicalRoot(config.Root)
 	if err != nil {
 		return nil, err
 	}
