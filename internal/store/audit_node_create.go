@@ -26,7 +26,7 @@ func persistAuditedNodeCreation(
 	ctx context.Context, tx *sql.Tx, vaultID string,
 	authority auditAuthorityState, scopes []auditScopeState,
 	priorParent, resultingParent, created Node, version ContentVersion,
-	operationID, recordedAt string,
+	operationID, recordedAt string, metadata *auditedCreationMetadata,
 ) error {
 	if len(scopes) != 1 {
 		return unsupportedAuditedNodeMutation(priorParent.ID)
@@ -64,12 +64,14 @@ func persistAuditedNodeCreation(
 		return err
 	}
 	baseline, err := buildAuditedCreationBaseline(
-		tx, values, scopes[0], created, version, createdTopology,
+		tx, values, scopes[0], created, version, createdTopology, metadata,
 	)
 	if err != nil {
 		return err
 	}
-	events, err := makeAuditedCreationEvents(values, baseline, created, topologyDigest)
+	events, err := makeAuditedCreationEvents(
+		values, baseline, created, topologyDigest, metadata,
+	)
 	if err != nil {
 		return err
 	}
@@ -82,14 +84,14 @@ func persistAuditedNodeCreation(
 		return err
 	}
 	mutation := makeAuditedCreationMutation(
-		values, auditOperationSequence, events, parentChange, baseline, topologyDigest,
+		values, auditOperationSequence, events, parentChange, baseline, topologyDigest, metadata,
 	)
 	mutationDigest, err := hashAuditRecord(mutation)
 	if err != nil {
 		return err
 	}
 	if err := persistAuditedCreationRecords(
-		ctx, tx, baseline, topologyDelta, events, mutation,
+		ctx, tx, baseline, topologyDelta, events, mutation, metadata,
 	); err != nil {
 		return err
 	}
@@ -104,7 +106,7 @@ func persistAuditedNodeCreation(
 	}
 	allocation, err := makeAuditedCreationAllocationEntry(
 		values, operationSequence, nodeSequence, created.ID,
-		authority.allocationHead, mutationDigest.value, topologyDigest.value,
+		authority.allocationHead, mutationDigest.value, topologyDigest.value, metadata,
 	)
 	if err != nil {
 		return err
@@ -207,7 +209,7 @@ func sortAuditTopologyRecords(records []audit.Record) error {
 func buildAuditedCreationBaseline(
 	tx *sql.Tx, values auditedMutationValues,
 	scope auditScopeState, created Node, version ContentVersion,
-	createdTopology audit.Record,
+	createdTopology audit.Record, metadata *auditedCreationMetadata,
 ) (auditedCreationBaseline, error) {
 	nodeID, err := positiveAuditNodeID(created.ID)
 	if err != nil {
@@ -250,7 +252,7 @@ func buildAuditedCreationBaseline(
 	}
 	record := makeInitialAuditBaseline(
 		initialValues, nodeID, []uint64{nodeID}, []audit.Record{state},
-		versions, nil, nodes, witnesses,
+		versions, auditedCreationBaselineAttachments(metadata), nodes, witnesses,
 	)
 	digest, err := hashAuditRecord(record)
 	if err != nil {
@@ -341,19 +343,25 @@ func auditCreationBaselineTopology(
 
 func makeAuditedCreationEvents(
 	values auditedMutationValues, baseline auditedCreationBaseline,
-	created Node, topologyDigest auditRecordHash,
+	created Node, topologyDigest auditRecordHash, metadata *auditedCreationMetadata,
 ) ([]audit.Record, error) {
 	eventCount := 2
 	if !created.IsDir() {
 		eventCount++
 	}
+	if metadata != nil {
+		eventCount++
+	}
 	events := make([]audit.Record, 0, eventCount)
-	for _, kind := range []string{"audit_inherit", "content_create", "node_create"} {
+	for _, kind := range []string{"audit_inherit", "content_create", "node_create", "provenance_add"} {
 		if kind == "content_create" && created.IsDir() {
 			continue
 		}
+		if kind == "provenance_add" && metadata == nil {
+			continue
+		}
 		event, err := makeAuditedCreationEvent(
-			values, baseline, kind, uint64(len(events)), created, topologyDigest,
+			values, baseline, kind, uint64(len(events)), created, topologyDigest, metadata,
 		)
 		if err != nil {
 			return nil, err
@@ -366,6 +374,7 @@ func makeAuditedCreationEvents(
 func makeAuditedCreationEvent(
 	values auditedMutationValues, baseline auditedCreationBaseline, kind string,
 	ordinal uint64, created Node, topologyDigest auditRecordHash,
+	metadata *auditedCreationMetadata,
 ) (audit.Record, error) {
 	identity, err := hashAuditRecord(audit.Record{Kind: "event_identity", Fields: []audit.Field{
 		{Name: auditOperationIDField, Value: values.operationID},
@@ -384,6 +393,7 @@ func makeAuditedCreationEvent(
 	}
 	target, pre, post := audit.Absent(), audit.Absent(), audit.Absent()
 	topology, baselineDigest := audit.Absent(), audit.Absent()
+	attachmentKind, attachmentIdentity := audit.Absent(), audit.Absent()
 	switch kind {
 	case "audit_inherit":
 		target, baselineDigest = audit.Unsigned(baseline.nodeID), baseline.digest.value
@@ -394,6 +404,19 @@ func makeAuditedCreationEvent(
 		post = audit.Nested(*baseline.version)
 	case "node_create":
 		post, topology = audit.Nested(baseline.topology), topologyDigest.value
+	case "provenance_add":
+		if metadata == nil {
+			return audit.Record{}, errors.New("provenance-add event lacks attached metadata")
+		}
+		attachmentKind, err = audit.Text(metadata.provenance.Kind)
+		if err != nil {
+			return audit.Record{}, err
+		}
+		identity, identityErr := attachedAuditIdentity(metadata.provenance)
+		if identityErr != nil {
+			return audit.Record{}, identityErr
+		}
+		attachmentIdentity, post = audit.Nested(identity), audit.Nested(metadata.provenance)
 	default:
 		return audit.Record{}, fmt.Errorf("unsupported creation event kind %q", kind)
 	}
@@ -404,8 +427,8 @@ func makeAuditedCreationEvent(
 		{Name: "event_kind", Value: kindValue},
 		{Name: auditScopeIDField, Value: baseline.scopeID},
 		{Name: "target_node_id", Value: target},
-		{Name: "attachment_kind", Value: audit.Absent()},
-		{Name: "attachment_identity", Value: audit.Absent()},
+		{Name: "attachment_kind", Value: attachmentKind},
+		{Name: "attachment_identity", Value: attachmentIdentity},
 		{Name: "source_version_id", Value: audit.Absent()},
 		{Name: "event_ordinal", Value: audit.Unsigned(ordinal)},
 		{Name: "recorded_at", Value: values.recordedAt},
@@ -425,13 +448,20 @@ func makeAuditedCreationEvent(
 func makeAuditedCreationMutation(
 	values auditedMutationValues, sequence uint64, events []audit.Record,
 	parentChange audit.Record, baseline auditedCreationBaseline,
-	topologyDigest auditRecordHash,
+	topologyDigest auditRecordHash, metadata *auditedCreationMetadata,
 ) audit.Record {
+	groupingID, attachedDigest := audit.Absent(), audit.Absent()
+	var attachedCount uint64
+	if metadata != nil {
+		groupingID = metadata.groupingID
+		attachedCount = uint64(len(metadata.changes))
+		attachedDigest = metadata.deltaDigest.value
+	}
 	return audit.Record{Kind: "canonical_mutation", Fields: []audit.Field{
 		{Name: auditVaultIDField, Value: values.vaultID},
 		{Name: "operation_sequence", Value: audit.Unsigned(sequence)},
 		{Name: auditOperationIDField, Value: values.operationID},
-		{Name: "grouping_id", Value: audit.Absent()},
+		{Name: "grouping_id", Value: groupingID},
 		{Name: "recorded_at", Value: values.recordedAt},
 		{Name: auditOriginField, Value: values.origin},
 		{Name: "agent_label", Value: audit.Absent()},
@@ -443,14 +473,15 @@ func makeAuditedCreationMutation(
 		{Name: "path_effect_digest", Value: audit.Absent()},
 		{Name: auditWitnessChangeCountField, Value: audit.Unsigned(0)},
 		{Name: "witness_change_digest", Value: audit.Absent()},
-		{Name: auditAttachedMetadataChangeCountField, Value: audit.Unsigned(0)},
-		{Name: "attached_metadata_change_digest", Value: audit.Absent()},
+		{Name: auditAttachedMetadataChangeCountField, Value: audit.Unsigned(attachedCount)},
+		{Name: "attached_metadata_change_digest", Value: attachedDigest},
 	}}
 }
 
 func persistAuditedCreationRecords(
 	ctx context.Context, tx *sql.Tx, baseline auditedCreationBaseline,
 	topologyDelta audit.Record, events []audit.Record, mutation audit.Record,
+	metadata *auditedCreationMetadata,
 ) error {
 	operationID, err := auditUUIDField(mutation, auditOperationIDField)
 	if err != nil {
@@ -472,6 +503,11 @@ func persistAuditedCreationRecords(
 	}
 	if err := insertAuditRecord(ctx, tx, topologyDelta); err != nil {
 		return err
+	}
+	if metadata != nil {
+		if err := insertAuditRecord(ctx, tx, metadata.delta); err != nil {
+			return err
+		}
 	}
 	for _, event := range events {
 		wrapper := audit.Record{Kind: auditEventField, Fields: []audit.Field{
@@ -517,6 +553,7 @@ func advanceAuditedCreationScope(
 func makeAuditedCreationAllocationEntry(
 	values auditedMutationValues, sequence, nodeSequence, allocatedNodeID int64,
 	previousHead string, mutationHash, topologyDigest audit.Value,
+	metadata *auditedCreationMetadata,
 ) (audit.Record, error) {
 	auditSequence, err := positiveAuditInteger("operation sequence", sequence)
 	if err != nil {
@@ -534,6 +571,12 @@ func makeAuditedCreationAllocationEntry(
 	if err != nil {
 		return audit.Record{}, err
 	}
+	attachedDigest := audit.Absent()
+	var attachedCount uint64
+	if metadata != nil {
+		attachedDigest = metadata.deltaDigest.value
+		attachedCount = uint64(len(metadata.changes))
+	}
 	return audit.Record{Kind: "allocation_entry", Fields: []audit.Field{
 		{Name: auditVaultIDField, Value: values.vaultID},
 		{Name: "lineage_id", Value: values.lineageID},
@@ -550,8 +593,8 @@ func makeAuditedCreationAllocationEntry(
 		{Name: "has_witness_change", Value: audit.Bool(false)},
 		{Name: auditWitnessChangeCountField, Value: audit.Unsigned(0)},
 		{Name: "witness_change_digest", Value: audit.Absent()},
-		{Name: "has_attached_metadata_change", Value: audit.Bool(false)},
-		{Name: auditAttachedMetadataChangeCountField, Value: audit.Unsigned(0)},
-		{Name: "attached_metadata_change_digest", Value: audit.Absent()},
+		{Name: "has_attached_metadata_change", Value: audit.Bool(metadata != nil)},
+		{Name: auditAttachedMetadataChangeCountField, Value: audit.Unsigned(attachedCount)},
+		{Name: "attached_metadata_change_digest", Value: attachedDigest},
 	}}, nil
 }

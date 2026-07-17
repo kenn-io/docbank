@@ -9,20 +9,26 @@ import (
 )
 
 type replayedNodeCreation struct {
-	childID, parentID uint64
-	childTopology     audit.Record
-	postTopology      []audit.Record
-	childState        audit.Record
-	version           *audit.Record
-	baselineDigest    string
-	topologyDigest    string
-	baseline          storedAuditRecord
+	childID, parentID   uint64
+	childTopology       audit.Record
+	postTopology        []audit.Record
+	childState          audit.Record
+	version             *audit.Record
+	baselineAttachments []audit.Record
+	attachmentChanges   []audit.Record
+	attachmentDigest    string
+	provenance          *audit.Record
+	ingestID            string
+	baselineDigest      string
+	topologyDigest      string
+	baseline            storedAuditRecord
 }
 
 func (replay *auditedHistoryReplay) applyNodeCreation(
 	vaultID string, mutation, allocation, scopeEntry storedAuditRecord,
-	baselineRecords, topologyRecords, eventRecords map[string]storedAuditRecord,
-	usedBaselines, usedTopology, usedEvents map[string]bool,
+	baselineRecords, topologyRecords, attachmentRecords,
+	eventRecords map[string]storedAuditRecord,
+	usedBaselines, usedTopology, usedAttachments, usedEvents map[string]bool,
 ) error {
 	sequence := *mutation.index.operationSequence
 	auditSequence, err := positiveAuditInteger("operation sequence", sequence)
@@ -39,14 +45,16 @@ func (replay *auditedHistoryReplay) applyNodeCreation(
 	if err := requireAuditUnsigned(mutation.record, "operation_sequence", auditSequence); err != nil {
 		return err
 	}
-	if err := requireAuditAbsent(mutation.record, "grouping_id"); err != nil {
-		return err
-	}
 	creation, err := replay.validateNodeCreationAuthority(
 		vaultID, mutation.record, operationID, baselineRecords, topologyRecords,
 		usedBaselines, usedTopology,
 	)
 	if err != nil {
+		return err
+	}
+	if err := replay.validateNodeCreationAttachedMetadata(
+		mutation.record, operationID, &creation, attachmentRecords, usedAttachments,
+	); err != nil {
 		return err
 	}
 	if err := replay.validateNodeCreationEvents(
@@ -319,9 +327,7 @@ func (replay *auditedHistoryReplay) validateNodeCreationBaseline(
 	if err != nil {
 		return err
 	}
-	if len(attachments) != 0 {
-		return errors.New("direct node creation baseline cannot contain attached metadata")
-	}
+	creation.baselineAttachments = attachments
 	expectedNodes, expectedWitnesses, err := initialBaselineTopology(
 		creation.postTopology, []uint64{creation.childID}, operationID,
 	)
@@ -387,6 +393,9 @@ func (replay *auditedHistoryReplay) validateNodeCreationEvents(
 	expectedKinds := []string{"audit_inherit", "node_create"}
 	if creation.version != nil {
 		expectedKinds = []string{"audit_inherit", "content_create", "node_create"}
+	}
+	if creation.provenance != nil {
+		expectedKinds = append(expectedKinds, "provenance_add")
 	}
 	if len(events) != len(expectedKinds) {
 		return errors.New("node creation has an invalid event set")
@@ -475,12 +484,16 @@ func validateCreationEventWrapper(
 func validateCreationEventPayload(
 	event audit.Record, kind string, creation replayedNodeCreation, topologyDigest string,
 ) error {
-	if err := requireAuditAbsentFields(event,
-		"attachment_kind", "attachment_identity", "source_version_id"); err != nil {
+	if err := requireAuditAbsent(event, "source_version_id"); err != nil {
 		return err
 	}
 	if err := requireAuditAbsent(event, "pre"); err != nil {
 		return err
+	}
+	if kind != "provenance_add" {
+		if err := requireAuditAbsentFields(event, "attachment_kind", "attachment_identity"); err != nil {
+			return err
+		}
 	}
 	switch kind {
 	case "audit_inherit":
@@ -512,6 +525,34 @@ func validateCreationEventPayload(
 			return err
 		}
 		return requireAuditAbsentFields(event, "target_node_id", "baseline_digest")
+	case "provenance_add":
+		if creation.provenance == nil {
+			return errors.New("provenance-add event has no replayed provenance")
+		}
+		post, err := auditNestedField(event, "post")
+		if err != nil {
+			return err
+		}
+		if !auditRecordEqual(post, *creation.provenance) {
+			return errors.New("provenance-add event does not match its attached-metadata delta")
+		}
+		if err := requireAuditText(event, "attachment_kind", metadataProvenanceType); err != nil {
+			return err
+		}
+		identity, err := attachedAuditIdentity(*creation.provenance)
+		if err != nil {
+			return err
+		}
+		storedIdentity, err := auditNestedField(event, "attachment_identity")
+		if err != nil {
+			return err
+		}
+		if !auditRecordEqual(identity, storedIdentity) {
+			return errors.New("provenance-add event identity does not match its post record")
+		}
+		return requireAuditAbsentFields(
+			event, "target_node_id", auditTopologyDeltaField, "baseline_digest",
+		)
 	default:
 		return fmt.Errorf("invalid node creation event kind %q", kind)
 	}
@@ -561,16 +602,36 @@ func validateNodeCreationMutationDigests(
 	if err := requireAuditDigest(mutation, auditTopologyDeltaField, creation.topologyDigest); err != nil {
 		return err
 	}
-	if err := requireAuditAbsentFields(mutation, "path_effect_digest",
-		"witness_change_digest", "attached_metadata_change_digest"); err != nil {
+	if err := requireAuditAbsentFields(
+		mutation, "path_effect_digest", "witness_change_digest",
+	); err != nil {
 		return err
 	}
-	for _, field := range []string{
-		"path_effect_count", auditWitnessChangeCountField, auditAttachedMetadataChangeCountField,
-	} {
+	for _, field := range []string{"path_effect_count", auditWitnessChangeCountField} {
 		if err := requireAuditUnsigned(mutation, field, 0); err != nil {
 			return err
 		}
+	}
+	if creation.provenance == nil {
+		if err := requireAuditAbsentFields(
+			mutation, "grouping_id", "attached_metadata_change_digest",
+		); err != nil {
+			return err
+		}
+		return requireAuditUnsigned(mutation, auditAttachedMetadataChangeCountField, 0)
+	}
+	if err := requireAuditUUID(mutation, "grouping_id", creation.ingestID); err != nil {
+		return err
+	}
+	if err := requireAuditDigest(
+		mutation, "attached_metadata_change_digest", creation.attachmentDigest,
+	); err != nil {
+		return err
+	}
+	if err := requireAuditUnsigned(
+		mutation, auditAttachedMetadataChangeCountField, uint64(len(creation.attachmentChanges)),
+	); err != nil {
+		return err
 	}
 	return nil
 }
@@ -599,7 +660,11 @@ func (replay *auditedHistoryReplay) advanceNodeCreationAllocation(
 		func() error { return requireAuditBool(entry.record, "has_audited_mutation", true) },
 		func() error { return requireAuditBool(entry.record, "has_topology_change", true) },
 		func() error { return requireAuditBool(entry.record, "has_witness_change", false) },
-		func() error { return requireAuditBool(entry.record, "has_attached_metadata_change", false) },
+		func() error {
+			return requireAuditBool(
+				entry.record, "has_attached_metadata_change", creation.provenance != nil,
+			)
+		},
 	}
 	for _, check := range checks {
 		if err := check(); err != nil {
@@ -627,14 +692,31 @@ func (replay *auditedHistoryReplay) advanceNodeCreationAllocation(
 	if err := requireAuditDigest(entry.record, auditTopologyDeltaField, topologyDigest); err != nil {
 		return err
 	}
-	for _, field := range []string{auditWitnessChangeCountField, auditAttachedMetadataChangeCountField} {
-		if err := requireAuditUnsigned(entry.record, field, 0); err != nil {
+	if err := requireAuditUnsigned(entry.record, auditWitnessChangeCountField, 0); err != nil {
+		return err
+	}
+	if err := requireAuditAbsent(entry.record, "witness_change_digest"); err != nil {
+		return err
+	}
+	if creation.provenance == nil {
+		if err := requireAuditUnsigned(entry.record, auditAttachedMetadataChangeCountField, 0); err != nil {
 			return err
 		}
-	}
-	if err := requireAuditAbsentFields(entry.record,
-		"witness_change_digest", "attached_metadata_change_digest"); err != nil {
-		return err
+		if err := requireAuditAbsent(entry.record, "attached_metadata_change_digest"); err != nil {
+			return err
+		}
+	} else {
+		if err := requireAuditUnsigned(
+			entry.record, auditAttachedMetadataChangeCountField,
+			uint64(len(creation.attachmentChanges)),
+		); err != nil {
+			return err
+		}
+		if err := requireAuditDigest(
+			entry.record, "attached_metadata_change_digest", creation.attachmentDigest,
+		); err != nil {
+			return err
+		}
 	}
 	replay.allocationCount, replay.allocationHead = nextCount, entry.digest
 	return nil
@@ -674,6 +756,20 @@ func (replay *auditedHistoryReplay) applyNodeCreationState(
 			return fmt.Errorf("created file reuses protected content version %s", versionID)
 		}
 		replay.versions[versionID] = *creation.version
+	}
+	for _, change := range creation.attachmentChanges {
+		post, err := validateAuditedIngestAddition(change)
+		if err != nil {
+			return err
+		}
+		key, err := attachedAuditKey(post)
+		if err != nil {
+			return err
+		}
+		if _, exists := replay.attachments[key]; exists {
+			return fmt.Errorf("audited ingest reuses attached metadata identity %s", post.Kind)
+		}
+		replay.attachments[key] = post
 	}
 	replay.topology = creation.postTopology
 	replay.topologyIndex = make(map[uint64]int, len(replay.topology))

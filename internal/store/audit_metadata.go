@@ -24,6 +24,7 @@ var auditRecordKinds = map[string]bool{
 	"allocation_genesis":        true,
 	"allocation_entry":          true,
 	auditTopologyDeltaField:     true,
+	"attached_metadata_delta":   true,
 }
 
 type auditRecordIndex struct {
@@ -333,7 +334,8 @@ func indexAuditRecord(record audit.Record) (auditRecordIndex, error) {
 			return index, err
 		}
 		index.scopeID, index.entryCount = &scopeID, &entryCount
-	case "topology_genesis", "attached_metadata_genesis", "allocation_genesis", auditTopologyDeltaField:
+	case "topology_genesis", "attached_metadata_genesis", "allocation_genesis",
+		auditTopologyDeltaField, "attached_metadata_delta":
 	default:
 		return index, fmt.Errorf("unsupported initial audit record kind %q", record.Kind)
 	}

@@ -401,7 +401,7 @@ func (ing *Ingester) AddPathsWithOptions(
 func (ing *Ingester) addTree(
 	ctx context.Context,
 	rep *Report,
-	ingestID string,
+	ingestRun store.IngestRun,
 	destDirID int64,
 	sourceRoot, walkRoot string,
 	excludes exclusions,
@@ -482,7 +482,7 @@ func (ing *Ingester) addTree(
 			if !ok {
 				return fmt.Errorf("internal: no virtual dir recorded for %s", filepath.Dir(p))
 			}
-			if err := ing.addOne(ctx, rep, ingestID, parentID, p, sourcePath, progress); err != nil {
+			if err := ing.addOne(ctx, rep, ingestRun, parentID, p, sourcePath, progress); err != nil {
 				return err
 			}
 		default:
@@ -507,12 +507,12 @@ func sourceTreePath(sourceRoot, walkRoot, walkPath string) string {
 func (ing *Ingester) addOne(
 	ctx context.Context,
 	rep *Report,
-	ingestID string,
+	ingestRun store.IngestRun,
 	parentID int64,
 	openPath, sourcePath string,
 	progress *progressTracker,
 ) error {
-	added, err := ing.importFile(ctx, ingestID, parentID, openPath, sourcePath, progress)
+	added, err := ing.importFile(ctx, ingestRun, parentID, openPath, sourcePath, progress)
 	switch {
 	case err != nil:
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -530,7 +530,7 @@ func (ing *Ingester) addOne(
 
 func (ing *Ingester) importFile(
 	ctx context.Context,
-	ingestID string,
+	ingestRun store.IngestRun,
 	parentID int64,
 	openPath, sourcePath string,
 	progress *progressTracker,
@@ -578,7 +578,7 @@ func (ing *Ingester) importFile(
 	}
 
 	mtime := info.ModTime().UTC().Format(time.RFC3339Nano)
-	_, added, err := ing.Store.IngestFile(ctx, ingestID, parentID,
+	_, added, err := ing.Store.IngestFile(ctx, ingestRun, parentID,
 		filepath.Base(sourcePath), hash, size, detectMime(sourcePath, head), sourcePath, mtime)
 	if err != nil {
 		return false, fmt.Errorf("recording %s: %w", sourcePath, err)

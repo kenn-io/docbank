@@ -152,24 +152,14 @@ func appendAuditIngests(ctx context.Context, tx metadataQuerier, records *[]audi
 		if err := rows.Scan(&id, &startedAt, &sourceKind, &sourceDesc); err != nil {
 			return fmt.Errorf("scanning audit ingest: %w", err)
 		}
-		idValue, err := audit.UUID(id)
+		record, err := ingestAuditRecord(metadataIngest{
+			Type: metadataIngestType, ID: id, StartedAt: startedAt,
+			SourceKind: sourceKind, SourceDesc: sourceDesc,
+		})
 		if err != nil {
 			return err
 		}
-		startedValue, err := audit.Timestamp(startedAt)
-		if err != nil {
-			return err
-		}
-		kindValue, err := audit.Text(sourceKind)
-		if err != nil {
-			return err
-		}
-		*records = append(*records, audit.Record{Kind: metadataIngestType, Fields: []audit.Field{
-			{Name: "ingest_id", Value: idValue},
-			{Name: "started_at", Value: startedValue},
-			{Name: "source_kind", Value: kindValue},
-			{Name: "source_desc", Value: audit.Bytes([]byte(sourceDesc))},
-		}})
+		*records = append(*records, record)
 	}
 	return rowsError("audit ingests", rows)
 }
@@ -320,6 +310,18 @@ func attachedAuditIdentity(record audit.Record) (audit.Record, error) {
 	default:
 		return audit.Record{}, fmt.Errorf("record kind %q has no attached-metadata identity", record.Kind)
 	}
+}
+
+func attachedAuditKey(record audit.Record) (string, error) {
+	identity, err := attachedAuditIdentity(record)
+	if err != nil {
+		return "", err
+	}
+	encoded, err := audit.Encode(identity)
+	if err != nil {
+		return "", err
+	}
+	return record.Kind + "\x00" + string(encoded), nil
 }
 
 func auditRecordsForNodes(records []audit.Record, members map[uint64]bool) ([]audit.Record, error) {
