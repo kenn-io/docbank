@@ -1129,6 +1129,13 @@ func validateMetadataState(ctx context.Context, tx metadataQuerier, nodeSequence
 	if err := validateMetadataRelations(ctx, tx); err != nil {
 		return err
 	}
+	topology, err := loadAuditTopologyRows(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if err := validateAuditTrashOrigins(topology); err != nil {
+		return err
+	}
 	if err := validateInitialAuditAuthority(ctx, tx, vaultID, nodeSequence); err != nil {
 		return err
 	}

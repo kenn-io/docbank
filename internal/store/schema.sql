@@ -314,8 +314,20 @@ WHEN EXISTS (SELECT 1 FROM audit_write_guard) BEGIN
     SELECT RAISE(ABORT, 'audited metadata is read-only until mutation enforcement is available');
 END;
 
+CREATE TRIGGER IF NOT EXISTS audited_vault_metadata_frozen_insert
+BEFORE INSERT ON vault_metadata
+WHEN EXISTS (SELECT 1 FROM audit_write_guard) BEGIN
+    SELECT RAISE(ABORT, 'audited metadata is read-only until mutation enforcement is available');
+END;
+
 CREATE TRIGGER IF NOT EXISTS audited_vault_metadata_frozen_delete
 BEFORE DELETE ON vault_metadata
+WHEN EXISTS (SELECT 1 FROM audit_write_guard) BEGIN
+    SELECT RAISE(ABORT, 'audited metadata is read-only until mutation enforcement is available');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audited_authority_frozen_insert
+BEFORE INSERT ON audit_authority
 WHEN EXISTS (SELECT 1 FROM audit_write_guard) BEGIN
     SELECT RAISE(ABORT, 'audited metadata is read-only until mutation enforcement is available');
 END;

@@ -16,6 +16,9 @@ func deriveInitialAuditMembers(
 	if err != nil {
 		return nil, err
 	}
+	if err := validateAuditTrashOrigins(rows); err != nil {
+		return nil, err
+	}
 	target, ok := rows[targetNodeID]
 	if !ok || target.kind != "dir" || target.trashedAt.Valid {
 		return nil, fmt.Errorf("audit enrollment target %d must be a live directory", targetNodeID)
@@ -56,7 +59,58 @@ func deriveInitialAuditMembers(
 			}
 		}
 	}
+	if !target.parentID.Valid && len(members) != len(rows) {
+		return nil, fmt.Errorf(
+			"root audit enrollment covers %d extant nodes, want %d", len(members), len(rows),
+		)
+	}
 	return sortedAuditMembers(members), nil
+}
+
+// validateAuditTrashOrigins follows the historical origin edge for detached
+// trash roots and the live parent edge everywhere else. Every chain must end
+// at the tree root or at an explicit unknown-origin trash anchor.
+func validateAuditTrashOrigins(rows map[uint64]auditTopologyRow) error {
+	roots := make(map[uint64]bool)
+	for id, row := range rows {
+		if row.trashName.Valid {
+			roots[id] = true
+		}
+	}
+	for _, start := range sortedAuditMembers(roots) {
+		seen := make(map[uint64]bool)
+		current := start
+		for {
+			if seen[current] {
+				return fmt.Errorf("audit trash-origin topology contains a cycle at node %d", current)
+			}
+			seen[current] = true
+			row, ok := rows[current]
+			if !ok {
+				return fmt.Errorf("audit trash-origin topology references missing node %d", current)
+			}
+			if row.trashName.Valid {
+				if !row.trashParent.Valid {
+					break
+				}
+				next, err := positiveAuditNodeID(row.trashParent.Int64)
+				if err != nil {
+					return err
+				}
+				current = next
+				continue
+			}
+			if !row.parentID.Valid {
+				break
+			}
+			next, err := positiveAuditNodeID(row.parentID.Int64)
+			if err != nil {
+				return err
+			}
+			current = next
+		}
+	}
+	return nil
 }
 
 func loadAuditTopologyRows(ctx context.Context, tx metadataQuerier) (map[uint64]auditTopologyRow, error) {

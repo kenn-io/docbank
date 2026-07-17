@@ -647,6 +647,14 @@ func TestImportMetadataRejectsUnsafeTrashTopology(t *testing.T) {
 			want: "trash parent points inside its subtree",
 		},
 		{
+			name: "trash origin cycle",
+			records: []string{
+				`{"type":"node","id":2,"parent_id":1,"name":"A","kind":"dir","current_version_id":null,"revision":2,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":"` + stamp + `","trash_parent":3,"trash_name":"A"}`,
+				`{"type":"node","id":3,"parent_id":1,"name":"B","kind":"dir","current_version_id":null,"revision":2,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":"` + stamp + `","trash_parent":2,"trash_name":"B"}`,
+			},
+			want: "trash-origin topology contains a cycle",
+		},
+		{
 			name: "trash root not detached",
 			records: []string{
 				`{"type":"node","id":3,"parent_id":1,"name":"container","kind":"dir","current_version_id":null,"revision":1,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":null,"trash_parent":null,"trash_name":null}`,
