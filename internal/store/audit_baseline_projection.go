@@ -324,7 +324,7 @@ func initialBaselineTopology(
 			return nil, nil, err
 		}
 		parents[id] = parent
-		originValue, err := auditField(record, "origin")
+		originValue, err := auditField(record, auditOriginField)
 		if err != nil {
 			return nil, nil, err
 		}

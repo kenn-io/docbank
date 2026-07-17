@@ -42,8 +42,8 @@ func validateAuditAuthority(
 		}
 		return nil
 	}
-	if counts[0] != 1 || counts[1] != 1 || counts[2] != 1 || counts[3] == 0 {
-		return fmt.Errorf("audit authority must contain one authority, scope, and baseline: counts=%v", counts)
+	if counts[0] != 1 || counts[1] != 1 || counts[2] < 1 || counts[3] == 0 {
+		return fmt.Errorf("audit authority must contain one authority and scope with baselines: counts=%v", counts)
 	}
 	authority, scope, err := loadInitialAuditProjection(ctx, tx)
 	if err != nil {
@@ -58,11 +58,11 @@ func validateAuditAuthority(
 		return err
 	}
 	if err := validateInitialAuditRecords(
-		ctx, tx, vaultID, nodeSequence, authority, scope, initial,
+		ctx, tx, vaultID, authority, scope, initial,
 	); err != nil {
 		return err
 	}
-	return validateAuditedContentReplacementHistory(
+	return validateAuditedHistory(
 		ctx, tx, vaultID, nodeSequence, authority, scope, records, initial,
 	)
 }
@@ -160,12 +160,8 @@ func selectInitialAuditRecords(
 	authority initialAuditAuthority, scope initialAuditScope,
 	records map[string][]storedAuditRecord,
 ) (map[string][]storedAuditRecord, error) {
-	if len(records) != len(auditRecordKinds) {
-		return nil, fmt.Errorf("audit authority has %d record kinds, want %d", len(records), len(auditRecordKinds))
-	}
 	for _, kind := range []string{
 		"topology_genesis", "attached_metadata_genesis", "allocation_genesis",
-		"enrollment_baseline",
 	} {
 		if len(records[kind]) != 1 {
 			return nil, fmt.Errorf("audit authority has %d %s records, want 1", len(records[kind]), kind)
@@ -183,7 +179,19 @@ func selectInitialAuditRecords(
 		"topology_genesis":          records["topology_genesis"],
 		"attached_metadata_genesis": records["attached_metadata_genesis"],
 		"allocation_genesis":        records["allocation_genesis"],
-		"enrollment_baseline":       records["enrollment_baseline"],
+	}
+	for _, record := range records["enrollment_baseline"] {
+		operationID, err := auditUUIDField(record.record, auditOperationIDField)
+		if err != nil {
+			return nil, err
+		}
+		if operationID == scope.operationID {
+			result["enrollment_baseline"] = append(result["enrollment_baseline"], record)
+		}
+	}
+	if len(result["enrollment_baseline"]) != 1 {
+		return nil, fmt.Errorf("audit authority has %d initial enrollment baselines, want 1",
+			len(result["enrollment_baseline"]))
 	}
 	selectors := []struct {
 		kind  string
@@ -219,7 +227,7 @@ func selectInitialAuditRecords(
 }
 
 func validateInitialAuditRecords(
-	ctx context.Context, tx metadataQuerier, vaultID string, nodeSequence int64,
+	ctx context.Context, tx metadataQuerier, vaultID string,
 	authority initialAuditAuthority, scope initialAuditScope,
 	records map[string][]storedAuditRecord,
 ) error {
@@ -231,7 +239,7 @@ func validateInitialAuditRecords(
 	mutation := records["canonical_mutation"][0]
 	scopeEntry := records["scope_chain_entry"][0]
 	allocationEntry := records["allocation_entry"][0]
-	if err := validateInitialGenesis(vaultID, nodeSequence, authority,
+	if err := validateInitialGenesis(vaultID, authority,
 		topology, attachments, allocationGenesis); err != nil {
 		return err
 	}
@@ -246,18 +254,18 @@ func validateInitialAuditRecords(
 	if err := validateInitialScopeChain(vaultID, scope, mutation, scopeEntry); err != nil {
 		return err
 	}
-	return validateInitialAllocation(vaultID, nodeSequence, authority, scope,
+	genesisHighWater, err := auditUnsignedField(allocationGenesis.record, "node_id_high_water")
+	if err != nil {
+		return err
+	}
+	return validateInitialAllocation(vaultID, genesisHighWater, authority, scope,
 		allocationGenesis, mutation, allocationEntry)
 }
 
 func validateInitialGenesis(
-	vaultID string, nodeSequence int64,
+	vaultID string,
 	authority initialAuditAuthority, topology, attachments, allocation storedAuditRecord,
 ) error {
-	nodeHighWater, err := positiveAuditNodeID(nodeSequence)
-	if err != nil {
-		return err
-	}
 	storedTopology, err := auditRecordListField(topology.record, "nodes")
 	if err != nil {
 		return err
@@ -279,6 +287,21 @@ func validateInitialGenesis(
 	}
 	if err := requireAuditAbsent(allocation.record, "previous_head"); err != nil {
 		return err
+	}
+	nodeHighWater, err := auditUnsignedField(allocation.record, "node_id_high_water")
+	if err != nil || nodeHighWater == 0 {
+		return errors.New("audit allocation genesis has an invalid node high-water mark")
+	}
+	var topologyHighWater uint64
+	for _, node := range storedTopology {
+		nodeID, err := auditUnsignedField(node, metadataNodeIDField)
+		if err != nil {
+			return err
+		}
+		topologyHighWater = max(topologyHighWater, nodeID)
+	}
+	if nodeHighWater < topologyHighWater {
+		return errors.New("audit allocation genesis is below its topology high-water mark")
 	}
 	if err := requireAuditUnsigned(allocation.record, "node_id_high_water", nodeHighWater); err != nil {
 		return err
@@ -305,7 +328,7 @@ func validateInitialBaseline(
 	if err := requireAuditUUID(baseline.record, auditVaultIDField, vaultID); err != nil {
 		return err
 	}
-	if err := requireAuditUUID(baseline.record, "scope_id", scope.scopeID); err != nil {
+	if err := requireAuditUUID(baseline.record, auditScopeIDField, scope.scopeID); err != nil {
 		return err
 	}
 	if err := requireAuditUnsigned(baseline.record, "target_node_id", scope.targetNodeID); err != nil {
@@ -413,7 +436,7 @@ func validateInitialMembershipRows(
 		return errors.New("audit baseline relation does not match its scope and operation")
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT node_id,baseline_digest FROM audit_memberships
-		WHERE scope_id=? ORDER BY node_id`, scope.scopeID)
+		WHERE scope_id=? AND baseline_digest=? ORDER BY node_id`, scope.scopeID, baselineDigest)
 	if err != nil {
 		return fmt.Errorf("reading audit membership projection: %w", err)
 	}
@@ -509,7 +532,7 @@ func validateInitialEvent(scope initialAuditScope, baseline storedAuditRecord, e
 		func() error { return requireAuditUUID(event, auditOperationIDField, scope.operationID) },
 		func() error { return requireAuditUnsigned(event, metadataNodeIDField, scope.targetNodeID) },
 		func() error { return requireAuditText(event, "event_kind", "audit_enroll") },
-		func() error { return requireAuditUUID(event, "scope_id", scope.scopeID) },
+		func() error { return requireAuditUUID(event, auditScopeIDField, scope.scopeID) },
 		func() error { return requireAuditUnsigned(event, "target_node_id", scope.targetNodeID) },
 		func() error { return requireAuditUnsigned(event, "event_ordinal", 0) },
 		func() error { return requireAuditDigest(event, "baseline_digest", baseline.digest) },
@@ -527,7 +550,7 @@ func validateInitialEvent(scope initialAuditScope, baseline storedAuditRecord, e
 		return err
 	}
 	return requireAuditAbsentFields(event, "attachment_kind", "attachment_identity",
-		"source_version_id", "pre", "post", "topology_delta")
+		"source_version_id", "pre", "post", auditTopologyDeltaField)
 }
 
 func validateInitialEventState(event audit.Record, targetNodeID uint64, states []audit.Record) error {
@@ -562,7 +585,7 @@ func validateInitialEventState(event audit.Record, targetNodeID uint64, states [
 }
 
 func validateInitialBaselineBinding(record audit.Record, scope initialAuditScope, digest string) error {
-	if err := requireAuditUUID(record, "scope_id", scope.scopeID); err != nil {
+	if err := requireAuditUUID(record, auditScopeIDField, scope.scopeID); err != nil {
 		return err
 	}
 	if err := requireAuditUnsigned(record, "target_node_id", scope.targetNodeID); err != nil {
@@ -572,12 +595,12 @@ func validateInitialBaselineBinding(record audit.Record, scope initialAuditScope
 }
 
 func requireNoChangeMutationFields(record audit.Record) error {
-	if err := requireAuditAbsentFields(record, "topology_delta", "path_effect_digest",
+	if err := requireAuditAbsentFields(record, auditTopologyDeltaField, "path_effect_digest",
 		"witness_change_digest", "attached_metadata_change_digest"); err != nil {
 		return err
 	}
 	for _, field := range []string{
-		"path_effect_count", "witness_change_count", "attached_metadata_change_count",
+		"path_effect_count", auditWitnessChangeCountField, auditAttachedMetadataChangeCountField,
 	} {
 		if err := requireAuditUnsigned(record, field, 0); err != nil {
 			return err
@@ -587,7 +610,7 @@ func requireNoChangeMutationFields(record audit.Record) error {
 }
 
 func requireMatchingEventEnvelope(mutation, event audit.Record) error {
-	for _, field := range []string{"recorded_at", "origin", "agent_label"} {
+	for _, field := range []string{"recorded_at", auditOriginField, "agent_label"} {
 		left, err := auditField(mutation, field)
 		if err != nil {
 			return err
@@ -609,7 +632,7 @@ func validateInitialScopeChain(
 	if err := requireAuditUUID(entry.record, auditVaultIDField, vaultID); err != nil {
 		return err
 	}
-	if err := requireAuditUUID(entry.record, "scope_id", scope.scopeID); err != nil {
+	if err := requireAuditUUID(entry.record, auditScopeIDField, scope.scopeID); err != nil {
 		return err
 	}
 	if err := requireAuditUnsigned(entry.record, "entry_count", 1); err != nil {
@@ -622,13 +645,9 @@ func validateInitialScopeChain(
 }
 
 func validateInitialAllocation(
-	vaultID string, nodeSequence int64, authority initialAuditAuthority,
+	vaultID string, nodeHighWater uint64, authority initialAuditAuthority,
 	scope initialAuditScope, genesis, mutation, entry storedAuditRecord,
 ) error {
-	nodeHighWater, err := positiveAuditNodeID(nodeSequence)
-	if err != nil {
-		return err
-	}
 	if err := requireAuditUUID(entry.record, auditVaultIDField, vaultID); err != nil {
 		return err
 	}
@@ -652,10 +671,10 @@ func validateInitialAllocation(
 		return errors.New("initial audit enrollment must not allocate node IDs")
 	}
 	for field, want := range map[string]uint64{
-		"node_id_high_water":             nodeHighWater,
-		"operation_sequence_high_water":  1,
-		"witness_change_count":           0,
-		"attached_metadata_change_count": 0,
+		"node_id_high_water":                  nodeHighWater,
+		"operation_sequence_high_water":       1,
+		auditWitnessChangeCountField:          0,
+		auditAttachedMetadataChangeCountField: 0,
 	} {
 		if err := requireAuditUnsigned(entry.record, field, want); err != nil {
 			return err
@@ -674,7 +693,7 @@ func validateInitialAllocation(
 			return err
 		}
 	}
-	return requireAuditAbsentFields(entry.record, "topology_delta", "witness_change_digest",
+	return requireAuditAbsentFields(entry.record, auditTopologyDeltaField, "witness_change_digest",
 		"attached_metadata_change_digest")
 }
 

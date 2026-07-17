@@ -327,7 +327,7 @@ func (s *Store) CheckContentReplacementTarget(ctx context.Context, nodeID, ifRev
 			return fmt.Errorf("checking audit membership for node %d: %w", nodeID, err)
 		}
 		if !member {
-			return unsupportedAuditedContentReplacement(nodeID)
+			return unsupportedAuditedNodeMutation(nodeID)
 		}
 		return nil
 	})

@@ -758,16 +758,21 @@ func importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw json
 }
 
 const (
-	metadataTypeField           = "type"
-	metadataNodeIDField         = "node_id"
-	auditVaultIDField           = "vault_id"
-	auditOperationIDField       = "operation_id"
-	metadataIngestType          = "ingest"
-	metadataProvenanceType      = "provenance"
-	metadataAuditAuthorityType  = "audit_authority"
-	metadataAuditScopeType      = "audit_scope"
-	metadataAuditMembershipType = "audit_membership"
-	metadataAuditRecordType     = "audit_record"
+	metadataTypeField                     = "type"
+	metadataNodeIDField                   = "node_id"
+	auditVaultIDField                     = "vault_id"
+	auditOperationIDField                 = "operation_id"
+	auditScopeIDField                     = "scope_id"
+	auditOriginField                      = "origin"
+	auditTopologyDeltaField               = "topology_delta"
+	auditWitnessChangeCountField          = "witness_change_count"
+	auditAttachedMetadataChangeCountField = "attached_metadata_change_count"
+	metadataIngestType                    = "ingest"
+	metadataProvenanceType                = "provenance"
+	metadataAuditAuthorityType            = "audit_authority"
+	metadataAuditScopeType                = "audit_scope"
+	metadataAuditMembershipType           = "audit_membership"
+	metadataAuditRecordType               = "audit_record"
 )
 
 var metadataHeaderFields = []string{metadataTypeField, "format", "version", auditVaultIDField, "node_sequence"}
@@ -782,8 +787,8 @@ var metadataRequiredFields = map[string][]string{
 	"node_tag":                  {metadataTypeField, metadataNodeIDField, "tag_id"},
 	"extracted_text":            {metadataTypeField, "blob_hash", "extractor", "extractor_version", "status", "error", "attempts", "text", "extracted_at"},
 	metadataAuditAuthorityType:  {metadataTypeField, "lineage_id", "operation_sequence_high_water", "allocation_genesis_digest", "allocation_entry_count", "allocation_head"},
-	metadataAuditScopeType:      {metadataTypeField, "scope_id", "target_node_id", "enable_operation_id", "entry_count", "chain_head"},
-	metadataAuditMembershipType: {metadataTypeField, "scope_id", metadataNodeIDField, "baseline_digest"},
+	metadataAuditScopeType:      {metadataTypeField, auditScopeIDField, "target_node_id", "enable_operation_id", "entry_count", "chain_head"},
+	metadataAuditMembershipType: {metadataTypeField, auditScopeIDField, metadataNodeIDField, "baseline_digest"},
 	metadataAuditRecordType:     {metadataTypeField, "digest", "record"},
 }
 

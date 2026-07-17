@@ -37,7 +37,7 @@ func replaceAuditedContentTx(
 	ctx context.Context, tx *sql.Tx, store *Store, node Node,
 	blobHash string, size int64, mimeType string,
 ) (Node, ContentVersion, error) {
-	authority, scopes, nodeSequence, err := loadAuditedReplacementAuthority(ctx, tx, node.ID)
+	authority, scopes, nodeSequence, err := loadAuditedNodeAuthority(ctx, tx, node.ID)
 	if err != nil {
 		return Node{}, ContentVersion{}, err
 	}
@@ -70,7 +70,7 @@ func replaceAuditedContentTx(
 	return updated, version, nil
 }
 
-func loadAuditedReplacementAuthority(
+func loadAuditedNodeAuthority(
 	ctx context.Context, tx *sql.Tx, nodeID int64,
 ) (auditAuthorityState, []auditScopeState, int64, error) {
 	var authority auditAuthorityState
@@ -104,7 +104,7 @@ func loadAuditedReplacementAuthority(
 		return authority, nil, 0, fmt.Errorf("reading audit memberships for node %d: %w", nodeID, err)
 	}
 	if len(scopes) == 0 {
-		return authority, nil, 0, unsupportedAuditedContentReplacement(nodeID)
+		return authority, nil, 0, unsupportedAuditedNodeMutation(nodeID)
 	}
 	var nodeSequence int64
 	if err := tx.QueryRowContext(ctx,
@@ -115,7 +115,7 @@ func loadAuditedReplacementAuthority(
 	return authority, scopes, nodeSequence, nil
 }
 
-func unsupportedAuditedContentReplacement(nodeID int64) error {
+func unsupportedAuditedNodeMutation(nodeID int64) error {
 	return fmt.Errorf("node %d is not in an audit scope: %w", nodeID, ErrAuditMutationUnsupported)
 }
 
@@ -135,7 +135,7 @@ func persistAuditedContentReplacement(
 	if err != nil {
 		return err
 	}
-	values, err := makeAuditedContentReplacementValues(
+	values, err := makeAuditedMutationValues(
 		vaultID, authority.lineageID, resultingVersion.IntroducedOperationID,
 		resultingVersion.RecordedAt,
 	)
@@ -234,15 +234,15 @@ func persistAuditedContentReplacement(
 	return nil
 }
 
-type auditedContentReplacementValues struct {
+type auditedMutationValues struct {
 	vaultID, lineageID, operationID audit.Value
 	recordedAt, origin              audit.Value
 }
 
-func makeAuditedContentReplacementValues(
+func makeAuditedMutationValues(
 	vaultID, lineageID, operationID, recordedAt string,
-) (auditedContentReplacementValues, error) {
-	var values auditedContentReplacementValues
+) (auditedMutationValues, error) {
+	var values auditedMutationValues
 	constructors := []struct {
 		name  string
 		value string
@@ -253,7 +253,7 @@ func makeAuditedContentReplacementValues(
 		{"lineage ID", lineageID, audit.UUID, &values.lineageID},
 		{"operation ID", operationID, audit.UUID, &values.operationID},
 		{"recorded time", recordedAt, audit.Timestamp, &values.recordedAt},
-		{"origin", "api", audit.Text, &values.origin},
+		{auditOriginField, "api", audit.Text, &values.origin},
 	}
 	for _, item := range constructors {
 		value, err := item.make(item.value)
@@ -283,7 +283,7 @@ func auditRecordForContentVersion(version ContentVersion) (audit.Record, error) 
 }
 
 func makeAuditedContentReplacementEvent(
-	values auditedContentReplacementValues, scopeID string, ordinal uint64,
+	values auditedMutationValues, scopeID string, ordinal uint64,
 	priorNode, resultingNode Node, priorVersion, resultingVersion audit.Record,
 ) (audit.Record, error) {
 	nodeID, err := positiveAuditNodeID(priorNode.ID)
@@ -326,7 +326,7 @@ func makeAuditedContentReplacementEvent(
 		{Name: auditOperationIDField, Value: values.operationID},
 		{Name: metadataNodeIDField, Value: audit.Unsigned(nodeID)},
 		{Name: "event_kind", Value: eventKind},
-		{Name: "scope_id", Value: scopeValue},
+		{Name: auditScopeIDField, Value: scopeValue},
 		{Name: "target_node_id", Value: audit.Absent()},
 		{Name: "attachment_kind", Value: audit.Absent()},
 		{Name: "attachment_identity", Value: audit.Absent()},
@@ -337,11 +337,11 @@ func makeAuditedContentReplacementEvent(
 		{Name: "resulting_node_revision", Value: audit.Unsigned(resultingRevision)},
 		{Name: "prior_current_version_id", Value: priorVersionID},
 		{Name: "resulting_current_version_id", Value: resultingVersionID},
-		{Name: "origin", Value: values.origin},
+		{Name: auditOriginField, Value: values.origin},
 		{Name: "agent_label", Value: audit.Absent()},
 		{Name: "pre", Value: audit.Nested(priorVersion)},
 		{Name: "post", Value: audit.Nested(resultingVersion)},
-		{Name: "topology_delta", Value: audit.Absent()},
+		{Name: auditTopologyDeltaField, Value: audit.Absent()},
 		{Name: "baseline_digest", Value: audit.Absent()},
 	}}, nil
 }
@@ -359,11 +359,11 @@ func makeAuditMemberStateChange(prior, resulting Node) (audit.Record, error) {
 	if err != nil || resultingRevision != priorRevision+1 {
 		return audit.Record{}, errors.New("audited member-state change has an invalid revision transition")
 	}
-	priorVersion, err := audit.UUID(prior.CurrentVersionID)
+	priorVersion, err := auditNodeCurrentVersion(prior)
 	if err != nil {
 		return audit.Record{}, err
 	}
-	resultingVersion, err := audit.UUID(resulting.CurrentVersionID)
+	resultingVersion, err := auditNodeCurrentVersion(resulting)
 	if err != nil {
 		return audit.Record{}, err
 	}
@@ -376,12 +376,19 @@ func makeAuditMemberStateChange(prior, resulting Node) (audit.Record, error) {
 	}}, nil
 }
 
+func auditNodeCurrentVersion(node Node) (audit.Value, error) {
+	if node.CurrentVersionID == "" {
+		return audit.Absent(), nil
+	}
+	return audit.UUID(node.CurrentVersionID)
+}
+
 func positiveAuditRevision(value int64) (uint64, error) {
 	return positiveAuditInteger("content revision", value)
 }
 
 func makeAuditedContentReplacementMutation(
-	values auditedContentReplacementValues, sequence int64,
+	values auditedMutationValues, sequence int64,
 	events []audit.Record, change audit.Record,
 ) (audit.Record, error) {
 	auditSequence, err := positiveAuditInteger("operation sequence", sequence)
@@ -398,23 +405,23 @@ func makeAuditedContentReplacementMutation(
 		{Name: auditOperationIDField, Value: values.operationID},
 		{Name: "grouping_id", Value: audit.Absent()},
 		{Name: "recorded_at", Value: values.recordedAt},
-		{Name: "origin", Value: values.origin},
+		{Name: auditOriginField, Value: values.origin},
 		{Name: "agent_label", Value: audit.Absent()},
 		{Name: "events", Value: audit.List(eventValues...)},
 		{Name: "member_state_changes", Value: audit.List(audit.Nested(change))},
 		{Name: "baselines", Value: audit.List()},
-		{Name: "topology_delta", Value: audit.Absent()},
+		{Name: auditTopologyDeltaField, Value: audit.Absent()},
 		{Name: "path_effect_count", Value: audit.Unsigned(0)},
 		{Name: "path_effect_digest", Value: audit.Absent()},
-		{Name: "witness_change_count", Value: audit.Unsigned(0)},
+		{Name: auditWitnessChangeCountField, Value: audit.Unsigned(0)},
 		{Name: "witness_change_digest", Value: audit.Absent()},
-		{Name: "attached_metadata_change_count", Value: audit.Unsigned(0)},
+		{Name: auditAttachedMetadataChangeCountField, Value: audit.Unsigned(0)},
 		{Name: "attached_metadata_change_digest", Value: audit.Absent()},
 	}}, nil
 }
 
 func makeAuditScopeChainEntry(
-	values auditedContentReplacementValues, scopeID string, entryCount int64,
+	values auditedMutationValues, scopeID string, entryCount int64,
 	previousHead string, mutationHash audit.Value,
 ) (audit.Record, error) {
 	auditEntryCount, err := positiveAuditInteger("scope entry count", entryCount)
@@ -431,7 +438,7 @@ func makeAuditScopeChainEntry(
 	}
 	return audit.Record{Kind: "scope_chain_entry", Fields: []audit.Field{
 		{Name: auditVaultIDField, Value: values.vaultID},
-		{Name: "scope_id", Value: scopeValue},
+		{Name: auditScopeIDField, Value: scopeValue},
 		{Name: "entry_count", Value: audit.Unsigned(auditEntryCount)},
 		{Name: "previous_head", Value: previousValue},
 		{Name: "mutation_hash", Value: mutationHash},
@@ -439,7 +446,7 @@ func makeAuditScopeChainEntry(
 }
 
 func makeAuditedContentAllocationEntry(
-	values auditedContentReplacementValues, sequence, nodeSequence int64,
+	values auditedMutationValues, sequence, nodeSequence int64,
 	previousHead string, mutationHash audit.Value,
 ) (audit.Record, error) {
 	auditSequence, err := positiveAuditInteger("operation sequence", sequence)
@@ -466,12 +473,12 @@ func makeAuditedContentAllocationEntry(
 		{Name: "has_audited_mutation", Value: audit.Bool(true)},
 		{Name: "mutation_hash", Value: mutationHash},
 		{Name: "has_topology_change", Value: audit.Bool(false)},
-		{Name: "topology_delta", Value: audit.Absent()},
+		{Name: auditTopologyDeltaField, Value: audit.Absent()},
 		{Name: "has_witness_change", Value: audit.Bool(false)},
-		{Name: "witness_change_count", Value: audit.Unsigned(0)},
+		{Name: auditWitnessChangeCountField, Value: audit.Unsigned(0)},
 		{Name: "witness_change_digest", Value: audit.Absent()},
 		{Name: "has_attached_metadata_change", Value: audit.Bool(false)},
-		{Name: "attached_metadata_change_count", Value: audit.Unsigned(0)},
+		{Name: auditAttachedMetadataChangeCountField, Value: audit.Unsigned(0)},
 		{Name: "attached_metadata_change_digest", Value: audit.Absent()},
 	}}, nil
 }

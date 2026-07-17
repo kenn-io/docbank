@@ -26,8 +26,6 @@ func bumpRevisionTx(tx *sql.Tx, id int64, now string) error {
 }
 
 // liveDirTx loads id and errors unless it is a live directory.
-//
-//nolint:unparam // Node result is part of the shared tx-helper contract; later tasks consume it.
 func liveDirTx(tx *sql.Tx, id int64) (Node, error) {
 	n, err := nodeByIDTx(tx, id)
 	if err != nil {
@@ -49,34 +47,68 @@ func (s *Store) Mkdir(ctx context.Context, parentID int64, name string) (Node, e
 		return Node{}, err
 	}
 	var created Node
-	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		if _, err := liveDirTx(tx, parentID); err != nil {
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		active, err := auditAuthorityActiveTx(ctx, tx)
+		if err != nil {
 			return err
 		}
-		now := nowRFC3339()
-		res, err := tx.Exec(
-			`INSERT INTO nodes (parent_id, name, kind, created_at, modified_at)
-			 VALUES (?, ?, 'dir', ?, ?)`, parentID, name, now, now)
-		if s.driver.IsUniqueViolation(err) {
-			return fmt.Errorf("mkdir %q under node %d: %w", name, parentID, ErrExists)
-		}
-		if err != nil {
-			return fmt.Errorf("mkdir %q under node %d: %w", name, parentID, err)
-		}
-		id, err := res.LastInsertId()
-		if err != nil {
-			return fmt.Errorf("mkdir %q: reading id: %w", name, err)
-		}
-		if err := bumpRevisionTx(tx, parentID, now); err != nil {
+		if !active {
+			created, err = s.mkdirTx(tx, parentID, name, nowRFC3339())
 			return err
 		}
-		created, err = nodeByIDTx(tx, id)
-		return err
+		priorParent, err := liveDirTx(tx, parentID)
+		if err != nil {
+			return err
+		}
+		authority, scopes, _, err := loadAuditedNodeAuthority(ctx, tx, parentID)
+		if err != nil {
+			return err
+		}
+		operationID, err := newUUIDv4()
+		if err != nil {
+			return err
+		}
+		recordedAt := nowRFC3339()
+		created, err = s.mkdirTx(tx, parentID, name, recordedAt)
+		if err != nil {
+			return err
+		}
+		resultingParent, err := nodeByIDTx(tx, parentID)
+		if err != nil {
+			return err
+		}
+		return persistAuditedNodeCreation(ctx, tx, s.vaultID, authority, scopes,
+			priorParent, resultingParent, created, ContentVersion{}, operationID, recordedAt)
 	})
 	if err != nil {
 		return Node{}, err
 	}
 	return created, nil
+}
+
+func (s *Store) mkdirTx(
+	tx *sql.Tx, parentID int64, name, recordedAt string,
+) (Node, error) {
+	if _, err := liveDirTx(tx, parentID); err != nil {
+		return Node{}, err
+	}
+	res, err := tx.Exec(
+		`INSERT INTO nodes (parent_id, name, kind, created_at, modified_at)
+		 VALUES (?, ?, 'dir', ?, ?)`, parentID, name, recordedAt, recordedAt)
+	if s.driver.IsUniqueViolation(err) {
+		return Node{}, fmt.Errorf("mkdir %q under node %d: %w", name, parentID, ErrExists)
+	}
+	if err != nil {
+		return Node{}, fmt.Errorf("mkdir %q under node %d: %w", name, parentID, err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return Node{}, fmt.Errorf("mkdir %q: reading id: %w", name, err)
+	}
+	if err := bumpRevisionTx(tx, parentID, recordedAt); err != nil {
+		return Node{}, err
+	}
+	return nodeByIDTx(tx, id)
 }
 
 // childByName returns the live child of dirID named name (name must already
@@ -161,37 +193,44 @@ func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64) error {
 }
 
 func (s *Store) createFileTx(tx *sql.Tx, parentID int64, name, blobHash string, size int64, mimeType string) (Node, error) {
-	if err := validateUTF8Field("content MIME type", mimeType); err != nil {
+	operation, err := newContentVersionOperation()
+	if err != nil {
 		return Node{}, err
+	}
+	created, _, err := s.createFileWithOperationTx(
+		tx, parentID, name, blobHash, size, mimeType, operation,
+	)
+	return created, err
+}
+
+func (s *Store) createFileWithOperationTx(
+	tx *sql.Tx, parentID int64, name, blobHash string, size int64, mimeType string,
+	operation contentVersionOperation,
+) (Node, ContentVersion, error) {
+	if err := validateUTF8Field("content MIME type", mimeType); err != nil {
+		return Node{}, ContentVersion{}, err
 	}
 	if _, err := liveDirTx(tx, parentID); err != nil {
-		return Node{}, err
+		return Node{}, ContentVersion{}, err
 	}
 	if err := s.EnsureBlobTx(tx, blobHash, size); err != nil {
-		return Node{}, err
+		return Node{}, ContentVersion{}, err
 	}
-	versionID, err := newUUIDv4()
-	if err != nil {
-		return Node{}, err
-	}
-	operationID, err := newUUIDv4()
-	if err != nil {
-		return Node{}, err
-	}
-	now := nowRFC3339()
 	res, err := tx.Exec(
 		`INSERT INTO nodes (parent_id, name, kind, current_version_id, created_at, modified_at)
 		 VALUES (?, ?, 'file', ?, ?, ?)`,
-		parentID, name, versionID, now, now)
+		parentID, name, operation.versionID, operation.recordedAt, operation.recordedAt)
 	if s.driver.IsUniqueViolation(err) {
-		return Node{}, fmt.Errorf("creating file %q under node %d: %w", name, parentID, ErrExists)
+		return Node{}, ContentVersion{}, fmt.Errorf(
+			"creating file %q under node %d: %w", name, parentID, ErrExists)
 	}
 	if err != nil {
-		return Node{}, fmt.Errorf("creating file %q under node %d: %w", name, parentID, err)
+		return Node{}, ContentVersion{}, fmt.Errorf(
+			"creating file %q under node %d: %w", name, parentID, err)
 	}
 	id, err := res.LastInsertId()
 	if err != nil {
-		return Node{}, fmt.Errorf("creating file %q: reading id: %w", name, err)
+		return Node{}, ContentVersion{}, fmt.Errorf("creating file %q: reading id: %w", name, err)
 	}
 	var storedMime any
 	if mimeType != "" {
@@ -202,13 +241,25 @@ func (s *Store) createFileTx(tx *sql.Tx, parentID int64, name, blobHash string, 
 			version_id, node_id, blob_hash, size, mime_type, recorded_at,
 			node_revision, introduced_operation_id, transition_kind, source_version_id
 		 ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, 'content_create', NULL)`,
-		versionID, id, blobHash, size, storedMime, now, operationID); err != nil {
-		return Node{}, fmt.Errorf("recording initial content version for node %d: %w", id, err)
+		operation.versionID, id, blobHash, size, storedMime, operation.recordedAt,
+		operation.operationID); err != nil {
+		return Node{}, ContentVersion{}, fmt.Errorf(
+			"recording initial content version for node %d: %w", id, err)
 	}
-	if err := bumpRevisionTx(tx, parentID, now); err != nil {
-		return Node{}, err
+	if err := bumpRevisionTx(tx, parentID, operation.recordedAt); err != nil {
+		return Node{}, ContentVersion{}, err
 	}
-	return nodeByIDTx(tx, id)
+	created, err := nodeByIDTx(tx, id)
+	if err != nil {
+		return Node{}, ContentVersion{}, err
+	}
+	version, err := scanContentVersion(tx.QueryRow(
+		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=?`, operation.versionID,
+	))
+	if err != nil {
+		return Node{}, ContentVersion{}, err
+	}
+	return created, version, nil
 }
 
 // CreateFile creates a file node pointing at an already-durable blob.
@@ -218,9 +269,41 @@ func (s *Store) CreateFile(ctx context.Context, parentID int64, name, blobHash s
 		return Node{}, err
 	}
 	var created Node
-	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		created, err = s.createFileTx(tx, parentID, name, blobHash, size, mimeType)
-		return err
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		active, err := auditAuthorityActiveTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if !active {
+			created, err = s.createFileTx(tx, parentID, name, blobHash, size, mimeType)
+			return err
+		}
+		priorParent, err := liveDirTx(tx, parentID)
+		if err != nil {
+			return err
+		}
+		authority, scopes, _, err := loadAuditedNodeAuthority(ctx, tx, parentID)
+		if err != nil {
+			return err
+		}
+		operation, err := newContentVersionOperation()
+		if err != nil {
+			return err
+		}
+		var version ContentVersion
+		created, version, err = s.createFileWithOperationTx(
+			tx, parentID, name, blobHash, size, mimeType, operation,
+		)
+		if err != nil {
+			return err
+		}
+		resultingParent, err := nodeByIDTx(tx, parentID)
+		if err != nil {
+			return err
+		}
+		return persistAuditedNodeCreation(ctx, tx, s.vaultID, authority, scopes,
+			priorParent, resultingParent, created, version, operation.operationID,
+			operation.recordedAt)
 	})
 	if err != nil {
 		return Node{}, err

@@ -37,7 +37,7 @@ func TestInitializeAuditAuthorityCreatesValidatedClosedSet(t *testing.T) {
 	).Scan(&raw))
 	mutation, err := audit.UnmarshalJSONRecord([]byte(raw))
 	require.NoError(t, err)
-	origin, err := auditTextField(mutation, "origin")
+	origin, err := auditTextField(mutation, auditOriginField)
 	require.NoError(t, err)
 	assert.Equal(t, "api", origin)
 	label, err := auditField(mutation, "agent_label")
