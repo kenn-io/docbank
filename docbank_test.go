@@ -40,7 +40,7 @@ func TestPutExpectedMismatchLeavesTreeUnchanged(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			require := require.New(t)
-			vault, err := Open(t.Context(), OpenOptions{Root: t.TempDir()})
+			vault, err := New(t.Context(), Config{Root: t.TempDir()})
 			require.NoError(err)
 			t.Cleanup(func() { require.NoError(vault.Close()) })
 
@@ -64,7 +64,7 @@ func TestPutExpectedMismatchLeavesTreeUnchanged(t *testing.T) {
 
 func TestPutMetadataFailureRemovesOnlyUnrecordedLooseBlob(t *testing.T) {
 	require := require.New(t)
-	vault, err := Open(t.Context(), OpenOptions{Root: t.TempDir()})
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(vault.Close()) })
 
@@ -89,7 +89,7 @@ func TestPutMetadataFailureRemovesOnlyUnrecordedLooseBlob(t *testing.T) {
 
 func TestChildrenReturnsBoundedStablePages(t *testing.T) {
 	require := require.New(t)
-	vault, err := Open(t.Context(), OpenOptions{Root: t.TempDir()})
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(vault.Close()) })
 
@@ -167,7 +167,7 @@ func testEmbeddedVersions(t *testing.T, driver docsqlite.Driver) {
 	t.Helper()
 	require := require.New(t)
 	ctx := t.Context()
-	vault, err := Open(ctx, OpenOptions{Root: t.TempDir(), SQLite: driver})
+	vault, err := New(ctx, Config{Root: t.TempDir(), SQLite: driver})
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(vault.Close()) })
 
@@ -237,7 +237,7 @@ func testEmbeddedVersionContent(t *testing.T, driver docsqlite.Driver) {
 	t.Helper()
 	require := require.New(t)
 	ctx := t.Context()
-	vault, err := Open(ctx, OpenOptions{Root: t.TempDir(), SQLite: driver})
+	vault, err := New(ctx, Config{Root: t.TempDir(), SQLite: driver})
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(vault.Close()) })
 
@@ -266,7 +266,7 @@ func testEmbeddedVersionContent(t *testing.T, driver docsqlite.Driver) {
 func TestEmbeddedVersionContentRejectsSizeMismatch(t *testing.T) {
 	require := require.New(t)
 	root := t.TempDir()
-	vault, err := Open(t.Context(), OpenOptions{Root: root})
+	vault, err := New(t.Context(), Config{Root: root})
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(vault.Close()) })
 
@@ -283,7 +283,7 @@ func TestEmbeddedVersionContentRejectsSizeMismatch(t *testing.T) {
 func TestEmbeddedVersionContentRejectsSameSizeCorruption(t *testing.T) {
 	require := require.New(t)
 	root := t.TempDir()
-	vault, err := Open(t.Context(), OpenOptions{Root: root})
+	vault, err := New(t.Context(), Config{Root: root})
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(vault.Close()) })
 
@@ -306,7 +306,7 @@ func TestEmbeddedVersionContentRejectsSameSizeCorruption(t *testing.T) {
 
 func TestPackBoundsWorkAndPreservesVerifiedContent(t *testing.T) {
 	require := require.New(t)
-	vault, err := Open(t.Context(), OpenOptions{Root: t.TempDir()})
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(vault.Close()) })
 
@@ -355,7 +355,7 @@ func TestPackBoundsWorkAndPreservesVerifiedContent(t *testing.T) {
 
 func TestChildrenAndPackRejectClosedVault(t *testing.T) {
 	require := require.New(t)
-	vault, err := Open(t.Context(), OpenOptions{Root: t.TempDir()})
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(err)
 	root, err := vault.Stat(t.Context(), "/")
 	require.NoError(err)
@@ -395,7 +395,7 @@ func testEmbeddedVaultLifecycle(t *testing.T, driver docsqlite.Driver) {
 	t.Helper()
 	require := require.New(t)
 	root := t.TempDir()
-	vault, err := Open(t.Context(), OpenOptions{Root: root, SQLite: driver})
+	vault, err := New(t.Context(), Config{Root: root, SQLite: driver})
 	require.NoError(err)
 	vaultID := vault.ID()
 	require.NotEmpty(vaultID)
@@ -430,7 +430,7 @@ func testEmbeddedVaultLifecycle(t *testing.T, driver docsqlite.Driver) {
 	require.NoError(content.Reader.Close())
 	require.NoError(vault.Close())
 
-	reopened, err := Open(t.Context(), OpenOptions{Root: root, SQLite: driver})
+	reopened, err := New(t.Context(), Config{Root: root, SQLite: driver})
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(reopened.Close()) })
 	require.Equal(vaultID, reopened.ID())
