@@ -213,6 +213,40 @@ func TestImportMetadataRejectsAuditRecordDigestMismatch(t *testing.T) {
 	assert.Zero(t, records)
 }
 
+func TestAuditImportAppliesExactMetadataV1RecordSchemas(t *testing.T) {
+	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, source.Close()) })
+	seedMetadataRoundTrip(t, source)
+	target, err := source.NodeByPath(t.Context(), "/Projects")
+	require.NoError(t, err)
+	seedInitialAuditAuthority(t, source, target.ID)
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(t.Context(), &exported))
+
+	malformed := mutateAuditMetadataRecord(
+		t, exported.Bytes(), metadataAuditRecordType, func(raw []byte) []byte {
+			var wrapper metadataAuditRecord
+			require.NoError(t, json.Unmarshal(raw, &wrapper))
+			var record map[string]any
+			require.NoError(t, json.Unmarshal(wrapper.Record, &record))
+			fields, ok := record["fields"].(map[string]any)
+			require.True(t, ok)
+			fields["future"] = nil
+			wrapper.Record, err = json.Marshal(record)
+			require.NoError(t, err)
+			result, err := json.Marshal(wrapper)
+			require.NoError(t, err)
+			return result
+		},
+	)
+	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restored.Close()) })
+	err = restored.ImportMetadata(t.Context(), bytes.NewReader(malformed))
+	require.ErrorContains(t, err, `contains unknown field "future"`)
+}
+
 func TestAuditValidationRejectsDirectDatabaseDivergence(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
@@ -228,6 +262,8 @@ func TestAuditValidationRejectsDirectDatabaseDivergence(t *testing.T) {
 	).Scan(&wrongHead))
 	_, err = s.db.Exec(`UPDATE audit_scopes SET chain_head=?`, wrongHead)
 	require.NoError(t, err)
+	err = s.ValidateMetadata(t.Context())
+	require.ErrorContains(t, err, "audit scope authority does not match replayed history")
 	err = s.ExportMetadata(t.Context(), &bytes.Buffer{})
 	require.ErrorContains(t, err, "audit scope authority does not match replayed history")
 }
@@ -248,6 +284,35 @@ func TestInitialAuditAuthorityRejectsUnsupportedLogicalMutations(t *testing.T) {
 	_, err = s.BeginIngest(t.Context(), "cli", "blocked")
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
 	_, err = s.TrashEmpty(t.Context(), 0, true)
+	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
+}
+
+func TestInitialAuditAuthorityAllowsReadOnlyMaintenancePreviews(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	seedMetadataRoundTrip(t, s)
+	target, err := s.NodeByPath(t.Context(), "/Projects")
+	require.NoError(t, err)
+	seedInitialAuditAuthority(t, s, target.ID)
+	file, err := s.NodeByPath(t.Context(), "/Projects/report.txt")
+	require.NoError(t, err)
+
+	trashPreview, err := s.TrashEmpty(t.Context(), 0, false)
+	require.NoError(t, err)
+	assert.False(t, trashPreview.Run)
+	prunePreview, err := s.PruneContentVersions(
+		t.Context(), file.ID, file.Revision, VersionPruneSelector{KeepNewest: 1}, false,
+	)
+	require.NoError(t, err)
+	assert.False(t, prunePreview.Run)
+	assert.NotEmpty(t, prunePreview.Candidates)
+
+	_, err = s.TrashEmpty(t.Context(), 0, true)
+	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
+	_, err = s.PruneContentVersions(
+		t.Context(), file.ID, file.Revision, VersionPruneSelector{KeepNewest: 1}, true,
+	)
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
 }
 

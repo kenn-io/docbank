@@ -212,6 +212,22 @@ func (s *Store) ExportMetadata(ctx context.Context, w io.Writer) error {
 	return nil
 }
 
+// ValidateMetadata verifies the current relational metadata and, when audit
+// authority exists, independently replays its canonical history against the
+// current projection. It exercises the same deterministic stream boundary as
+// backup without publishing that stream or mutating the vault.
+func (s *Store) ValidateMetadata(ctx context.Context) (err error) {
+	snapshot, err := s.BeginMetadataSnapshot(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, snapshot.Close()) }()
+	if err := snapshot.Export(ctx, io.Discard); err != nil {
+		return fmt.Errorf("validating metadata: %w", err)
+	}
+	return nil
+}
+
 type metadataQuerier interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row

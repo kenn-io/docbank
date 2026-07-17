@@ -46,7 +46,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `POST /path/move` · `POST /path/trash` | move / trash by virtual path, resolved and mutated in one store transaction | Implemented |
 | `POST /nodes/{id}/trash` · `POST /nodes/{id}/restore` | soft delete / recover | Implemented |
 | `GET /trash` · `POST /trash/empty` `{run, older_than}` | list / report or hard-delete trash roots | Implemented |
-| `POST /gc` `{run}` · `POST /verify` | reclaim unreachable blobs / re-hash all blobs | Implemented |
+| `POST /gc` `{run}` · `POST /verify` | reclaim unreachable blobs / validate metadata and re-hash all blobs | Implemented |
 | `GET /storage` · `POST /storage/pack` · `POST /storage/repack` | inspect usage / pack loose blobs / compact sparse packs | Implemented |
 | `GET /jobs` | inspect daemon-owned background tasks and terminal failures | Implemented |
 | `POST /backup/init` · `POST /backup/snapshots` · `POST /backup/snapshots/stream` · `GET /backup/snapshots` | initialize a repository / create with JSON or streamed progress / list snapshots | Implemented |
@@ -450,6 +450,7 @@ machine-readable string clients branch on instead of parsing `detail`:
 | `not_found` | 404 | `store.ErrNotFound` |
 | `exists` | 409 | `store.ErrExists` (name collision) |
 | `cycle` | 409 | `store.ErrCycle` (move under own descendant) |
+| `audit_mutation_unsupported` | 409 | the audited vault does not yet record this logical mutation class |
 | `stale_revision` | 412 | `store.ErrStaleRevision` — `If-Match` didn't match the current revision |
 | `not_dir` / `not_file` / `invalid_name` / `invalid_tag` / `not_trashed` / `is_root` | 422 | `store.ErrNotDir` / `ErrNotFile` / `ErrInvalidName` / `ErrInvalidTag` / `ErrNotTrashed` / `ErrIsRoot` |
 | `validation` | 400, 415, or 422 | malformed request (bad `If-Match`, paths, media type, multipart envelope, or generated validation) |

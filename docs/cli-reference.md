@@ -487,10 +487,11 @@ storage pack`; its reconciliation pass removes the orphaned source pack.
 docbank verify
 ```
 
-Re-hashes every stored blob against its recorded SHA-256. Reports one
-line per problem — `missing: <hash>` (row without file),
-`corrupt: <hash>` (hash mismatch), or `unreadable: <hash>` (I/O error) —
-then a summary `<n> blob(s) ok, <n> problem(s)`. Exits non-zero if any
+Validates logical metadata—including independent replay of any audit history—
+then re-hashes every stored blob against its recorded SHA-256. Reports metadata
+failures as `metadata: <detail>` and blob failures as `missing: <hash>` (row
+without file), `corrupt: <hash>` (hash mismatch), or `unreadable: <hash>` (I/O
+error), followed by `<n> blob(s) ok, <n> problem(s)`. Exits non-zero if any
 problem was found.
 
 ## docbank backup

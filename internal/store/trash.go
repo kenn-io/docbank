@@ -252,7 +252,11 @@ func (s *Store) TrashEmpty(ctx context.Context, olderThan time.Duration, run boo
 		where += ` AND trashed_at <= ?`
 		args = append(args, time.Now().UTC().Add(-olderThan).Format(timestampLayout))
 	}
-	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+	runTx := s.withStorageTx
+	if run {
+		runTx = s.withLogicalTx
+	}
+	err := runTx(ctx, func(tx *sql.Tx) error {
 		if err := tx.QueryRow(`SELECT COUNT(*) FROM nodes WHERE `+where, args...).Scan(&rep.Candidates); err != nil {
 			return fmt.Errorf("counting trash-empty candidates: %w", err)
 		}

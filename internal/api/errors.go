@@ -73,6 +73,7 @@ var storeErrCodes = []struct {
 	{store.ErrVersionNodeMismatch, http.StatusUnprocessableEntity, "version_node_mismatch"},
 	{store.ErrVersionAlreadyCurrent, http.StatusUnprocessableEntity, "version_already_current"},
 	{store.ErrInvalidVersionPrune, http.StatusUnprocessableEntity, "invalid_version_prune"},
+	{store.ErrAuditMutationUnsupported, http.StatusConflict, "audit_mutation_unsupported"},
 }
 
 // FromStoreError maps the store's typed errors onto the wire envelope; an

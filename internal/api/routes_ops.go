@@ -274,10 +274,17 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 	type verifyOutput struct{ Body VerifyReport }
 	huma.Register(api, huma.Operation{
 		OperationID: "verify", Method: http.MethodPost, Path: "/api/v1/verify",
-		Summary: "Re-hash every stored blob and report corruption",
+		Summary: "Validate metadata and re-hash every stored blob",
 	}, func(ctx context.Context, _ *struct{}) (*verifyOutput, error) {
 		out := &verifyOutput{}
 		err := g.maintain(func() error {
+			if err := d.Store.ValidateMetadata(ctx); err != nil {
+				if ctx.Err() != nil {
+					return NewError(http.StatusInternalServerError, "internal",
+						fmt.Sprintf("verify interrupted: %v", ctx.Err()))
+				}
+				out.Body.MetadataProblems = append(out.Body.MetadataProblems, err.Error())
+			}
 			blobs, err := d.Store.AllBlobs(ctx)
 			if err != nil {
 				return FromStoreError(err)

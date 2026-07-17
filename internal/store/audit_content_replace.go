@@ -105,7 +105,7 @@ func loadAuditedReplacementAuthority(
 	}
 	if len(scopes) == 0 {
 		return authority, nil, 0, fmt.Errorf(
-			"node %d is not in an audit scope; audited-vault mutation is not implemented", nodeID,
+			"node %d is not in an audit scope: %w", nodeID, ErrAuditMutationUnsupported,
 		)
 	}
 	var nodeSequence int64

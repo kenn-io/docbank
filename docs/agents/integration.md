@@ -504,10 +504,12 @@ Treat the execution as a new decision: the vault may have changed since the
 preview. Packed bytes reported as pending are logically dead but not yet
 physically reclaimed.
 
-`POST /api/v1/verify` is read-only with respect to archive content but can be
-expensive. Maintenance requests serialize against mutations and may run
-without the ordinary request timeout; agents should expose progress as
-“waiting” rather than assuming a queued request is hung.
+`POST /api/v1/verify` validates logical metadata and audit history before
+re-hashing every stored blob. It is read-only but can be expensive. Maintenance
+requests serialize against mutations and may run without the ordinary request
+timeout; agents should expose progress as “waiting” rather than assuming a
+queued request is hung. Treat either `metadata_problems` or blob `problems` as a
+failed verification.
 
 Use `POST /api/v1/nodes/{id}/verify` when the decision concerns one inspected
 file. Unlike the vault-wide operation it requires `If-Match`, stays bounded to

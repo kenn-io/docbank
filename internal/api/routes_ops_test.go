@@ -520,6 +520,7 @@ func TestVerifyEndpoint(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &rep))
 	assert.Equal(t, 1, rep.OK)
 	assert.Empty(t, rep.Problems)
+	assert.Empty(t, rep.MetadataProblems)
 }
 
 func TestMaintenanceGateQueuesMutations(t *testing.T) {

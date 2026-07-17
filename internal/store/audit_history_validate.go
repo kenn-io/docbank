@@ -212,6 +212,9 @@ func validateAuditedContentReplacementHistory(
 	authority initialAuditAuthority, scope initialAuditScope,
 	records, initial map[string][]storedAuditRecord,
 ) error {
+	if err := validateStoredAuditRecordSchemas(records); err != nil {
+		return err
+	}
 	replay, err := newAuditedHistoryReplay(authority, scope, initial)
 	if err != nil {
 		return err
@@ -253,6 +256,23 @@ func validateAuditedContentReplacementHistory(
 		return errors.New("audit scope authority does not match replayed history")
 	}
 	return replay.reconcileCurrentState(ctx, tx, initial)
+}
+
+func validateStoredAuditRecordSchemas(records map[string][]storedAuditRecord) error {
+	kinds := make([]string, 0, len(records))
+	for kind := range records {
+		kinds = append(kinds, kind)
+	}
+	slices.Sort(kinds)
+	for _, kind := range kinds {
+		stored := records[kind]
+		for _, record := range stored {
+			if err := audit.Validate(record.record); err != nil {
+				return fmt.Errorf("validating stored %s audit record: %w", kind, err)
+			}
+		}
+	}
+	return nil
 }
 
 func newAuditedHistoryReplay(

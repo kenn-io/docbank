@@ -10,7 +10,7 @@ import (
 
 var verifyCmd = &cobra.Command{
 	Use:   "verify",
-	Short: "Re-hash every stored blob and report corruption",
+	Short: "Validate metadata and re-hash every stored blob",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := client.Ensure(cmd.Context())
@@ -24,10 +24,14 @@ var verifyCmd = &cobra.Command{
 		for _, p := range rep.Problems {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", p.Problem, p.Hash)
 		}
+		for _, problem := range rep.MetadataProblems {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "metadata: %s\n", problem)
+		}
+		problemCount := len(rep.Problems) + len(rep.MetadataProblems)
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%d blob(s) ok, %d problem(s)\n",
-			rep.OK, len(rep.Problems))
-		if len(rep.Problems) > 0 {
-			return fmt.Errorf("verify found %d problem(s)", len(rep.Problems))
+			rep.OK, problemCount)
+		if problemCount > 0 {
+			return fmt.Errorf("verify found %d problem(s)", problemCount)
 		}
 		return nil
 	},
