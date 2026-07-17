@@ -22,7 +22,7 @@ func (s *Store) Trash(ctx context.Context, id, ifRev int64) (Node, string, error
 	}
 	var trashed Node
 	var origPath string
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		n, err := nodeByIDTx(tx, id)
 		if err != nil {
 			return err
@@ -56,7 +56,7 @@ func (s *Store) Trash(ctx context.Context, id, ifRev int64) (Node, string, error
 func (s *Store) TrashPath(ctx context.Context, path string) (Node, string, error) {
 	var trashed Node
 	var origPath string
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		n, err := nodeByPath(ctx, tx, s.rootID, path)
 		if err != nil {
 			return fmt.Errorf("resolving %q: %w", path, err)
@@ -135,7 +135,7 @@ func nextFreeNameTx(tx *sql.Tx, parentID int64, name string) (string, error) {
 // matches the node's current revision.
 func (s *Store) Restore(ctx context.Context, id, ifRev int64) (Node, error) {
 	var restored Node
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		n, err := nodeByIDTx(tx, id)
 		if err != nil {
 			return err
@@ -252,7 +252,11 @@ func (s *Store) TrashEmpty(ctx context.Context, olderThan time.Duration, run boo
 		where += ` AND trashed_at <= ?`
 		args = append(args, time.Now().UTC().Add(-olderThan).Format(timestampLayout))
 	}
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	runTx := s.withStorageTx
+	if run {
+		runTx = s.withLogicalTx
+	}
+	err := runTx(ctx, func(tx *sql.Tx) error {
 		if err := tx.QueryRow(`SELECT COUNT(*) FROM nodes WHERE `+where, args...).Scan(&rep.Candidates); err != nil {
 			return fmt.Errorf("counting trash-empty candidates: %w", err)
 		}

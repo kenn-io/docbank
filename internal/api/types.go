@@ -364,10 +364,11 @@ type VerifyProblem struct {
 	Problem string `json:"problem" enum:"missing,corrupt,unreadable"`
 }
 
-// VerifyReport summarizes a full blob verification pass.
+// VerifyReport summarizes a full content and metadata verification pass.
 type VerifyReport struct {
-	OK       int             `json:"ok"`
-	Problems []VerifyProblem `json:"problems,omitempty"`
+	OK               int             `json:"ok"`
+	Problems         []VerifyProblem `json:"problems,omitempty"`
+	MetadataProblems []string        `json:"metadata_problems,omitempty"`
 }
 
 // Job is the observable state of one daemon-owned background task. Names are

@@ -141,12 +141,22 @@ func (s *Store) ReplaceContent(
 		updated Node
 		version ContentVersion
 	)
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		n, err := nodeByIDTx(tx, nodeID)
 		if err != nil {
 			return err
 		}
 		if err := validateContentReplacementTarget(n, ifRev); err != nil {
+			return err
+		}
+		audited, err := auditAuthorityActiveTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if audited {
+			updated, version, err = replaceAuditedContentTx(
+				ctx, tx, s, n, blobHash, size, mimeType,
+			)
 			return err
 		}
 		if err := s.EnsureBlobTx(tx, blobHash, size); err != nil {
@@ -178,7 +188,7 @@ func (s *Store) RevertContent(
 		version ContentVersion
 		source  ContentVersion
 	)
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		n, err := nodeByIDTx(tx, nodeID)
 		if err != nil {
 			return err
@@ -227,15 +237,39 @@ func installContentVersionTx(
 	tx *sql.Tx, n Node, blobHash string, size int64, mimeType, transitionKind string,
 	sourceVersionID *string,
 ) (Node, ContentVersion, error) {
-	versionID, err := newUUIDv4()
+	operation, err := newContentVersionOperation()
 	if err != nil {
 		return Node{}, ContentVersion{}, err
+	}
+	return installContentVersionWithOperationTx(
+		tx, n, blobHash, size, mimeType, transitionKind, sourceVersionID, operation,
+	)
+}
+
+type contentVersionOperation struct {
+	versionID   string
+	operationID string
+	recordedAt  string
+}
+
+func newContentVersionOperation() (contentVersionOperation, error) {
+	versionID, err := newUUIDv4()
+	if err != nil {
+		return contentVersionOperation{}, err
 	}
 	operationID, err := newUUIDv4()
 	if err != nil {
-		return Node{}, ContentVersion{}, err
+		return contentVersionOperation{}, err
 	}
-	now := nowRFC3339()
+	return contentVersionOperation{
+		versionID: versionID, operationID: operationID, recordedAt: nowRFC3339(),
+	}, nil
+}
+
+func installContentVersionWithOperationTx(
+	tx *sql.Tx, n Node, blobHash string, size int64, mimeType, transitionKind string,
+	sourceVersionID *string, operation contentVersionOperation,
+) (Node, ContentVersion, error) {
 	newRevision := n.Revision + 1
 	var storedMime any
 	if mimeType != "" {
@@ -246,14 +280,15 @@ func installContentVersionTx(
 			version_id, node_id, blob_hash, size, mime_type, recorded_at,
 			node_revision, introduced_operation_id, transition_kind, source_version_id
 		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		versionID, n.ID, blobHash, size, storedMime, now, newRevision, operationID,
+		operation.versionID, n.ID, blobHash, size, storedMime, operation.recordedAt,
+		newRevision, operation.operationID,
 		transitionKind, sourceVersionID); err != nil {
 		return Node{}, ContentVersion{}, fmt.Errorf(
 			"recording %s content version for node %d: %w", transitionKind, n.ID, err)
 	}
 	if _, err := tx.Exec(
 		`UPDATE nodes SET current_version_id = ?, revision = ?, modified_at = ? WHERE id = ?`,
-		versionID, newRevision, now, n.ID); err != nil {
+		operation.versionID, newRevision, operation.recordedAt, n.ID); err != nil {
 		return Node{}, ContentVersion{}, fmt.Errorf(
 			"installing %s content version for node %d: %w", transitionKind, n.ID, err)
 	}
@@ -262,7 +297,7 @@ func installContentVersionTx(
 		return Node{}, ContentVersion{}, err
 	}
 	version, err := scanContentVersion(tx.QueryRow(
-		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = ?`, versionID))
+		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = ?`, operation.versionID))
 	if err != nil {
 		return Node{}, ContentVersion{}, err
 	}
@@ -273,11 +308,29 @@ func installContentVersionTx(
 // before a caller streams bytes. ReplaceContent repeats them transactionally,
 // because this preflight is an optimization rather than mutation authority.
 func (s *Store) CheckContentReplacementTarget(ctx context.Context, nodeID, ifRev int64) error {
-	n, err := s.NodeByID(ctx, nodeID)
-	if err != nil {
-		return err
-	}
-	return validateContentReplacementTarget(n, ifRev)
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		n, err := nodeByIDTx(tx, nodeID)
+		if err != nil {
+			return err
+		}
+		if err := validateContentReplacementTarget(n, ifRev); err != nil {
+			return err
+		}
+		audited, err := auditAuthorityActiveTx(ctx, tx)
+		if err != nil || !audited {
+			return err
+		}
+		var member bool
+		if err := tx.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM audit_memberships WHERE node_id=?)`, nodeID,
+		).Scan(&member); err != nil {
+			return fmt.Errorf("checking audit membership for node %d: %w", nodeID, err)
+		}
+		if !member {
+			return unsupportedAuditedContentReplacement(nodeID)
+		}
+		return nil
+	})
 }
 
 func validateContentReplacementTarget(n Node, ifRev int64) error {

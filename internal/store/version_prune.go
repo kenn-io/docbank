@@ -69,7 +69,11 @@ func (s *Store) PruneContentVersions(
 		return VersionPruneResult{}, err
 	}
 	result := VersionPruneResult{Run: run}
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	runTx := s.withStorageTx
+	if run {
+		runTx = s.withLogicalTx
+	}
+	err := runTx(ctx, func(tx *sql.Tx) error {
 		node, err := nodeByIDTx(tx, nodeID)
 		if err != nil {
 			return err

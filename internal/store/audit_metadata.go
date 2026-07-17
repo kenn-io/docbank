@@ -14,7 +14,7 @@ import (
 	"go.kenn.io/docbank/internal/audit"
 )
 
-var initialAuditRecordKinds = map[string]bool{
+var auditRecordKinds = map[string]bool{
 	"enrollment_baseline":       true,
 	"topology_genesis":          true,
 	"attached_metadata_genesis": true,
@@ -192,7 +192,7 @@ func importAuditRecord(ctx context.Context, tx *sql.Tx, value metadataAuditRecor
 	if err != nil {
 		return err
 	}
-	operationID, err := auditUUIDField(record, "operation_id")
+	operationID, err := auditUUIDField(record, auditOperationIDField)
 	if err != nil {
 		return err
 	}
@@ -253,9 +253,9 @@ func validateAuditRecord(value metadataAuditRecord) (audit.Record, auditRecordIn
 		return audit.Record{}, auditRecordIndex{}, nil,
 			fmt.Errorf("decoding canonical audit record: %w", err)
 	}
-	if !initialAuditRecordKinds[record.Kind] {
+	if !auditRecordKinds[record.Kind] {
 		return audit.Record{}, auditRecordIndex{}, nil,
-			fmt.Errorf("audit record kind %q is not valid before mutation enforcement", record.Kind)
+			fmt.Errorf("audit record kind %q is not valid in metadata-v1 audit authority", record.Kind)
 	}
 	digest, err := audit.Hash(record)
 	if err != nil {
@@ -280,7 +280,7 @@ func indexAuditRecord(record audit.Record) (auditRecordIndex, error) {
 	var index auditRecordIndex
 	switch record.Kind {
 	case "enrollment_baseline":
-		operationID, err := auditUUIDField(record, "operation_id")
+		operationID, err := auditUUIDField(record, auditOperationIDField)
 		if err != nil {
 			return index, err
 		}
@@ -294,7 +294,7 @@ func indexAuditRecord(record audit.Record) (auditRecordIndex, error) {
 		if err != nil {
 			return index, err
 		}
-		operationID, err := auditUUIDField(event, "operation_id")
+		operationID, err := auditUUIDField(event, auditOperationIDField)
 		if err != nil {
 			return index, err
 		}
@@ -313,7 +313,7 @@ func indexAuditRecord(record audit.Record) (auditRecordIndex, error) {
 		index.operationID, index.scopeID = &operationID, &scopeID
 		index.eventID, index.eventOrdinal = &eventID, &ordinal
 	case "canonical_mutation", "allocation_entry":
-		operationID, err := auditUUIDField(record, "operation_id")
+		operationID, err := auditUUIDField(record, auditOperationIDField)
 		if err != nil {
 			return index, err
 		}

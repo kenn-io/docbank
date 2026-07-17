@@ -45,8 +45,8 @@ type initialAuditValues struct {
 }
 
 // initializeAuditAuthority creates the first audit authority. It remains
-// internal until every logical mutation can extend that authority; exposing
-// enablement sooner would leave a vault intentionally frozen after enrollment.
+// internal until ordinary logical mutations either extend that authority or
+// fail through the shared Go mutation boundary with useful operator guidance.
 func (s *Store) initializeAuditAuthority(
 	ctx context.Context, targetNodeID int64, origin string, agentLabel *string,
 ) (initialAuditEnrollmentResult, error) {
@@ -77,7 +77,7 @@ func (s *Store) initializeAuditAuthorityWithInput(
 	ctx context.Context, input initialAuditEnrollmentInput,
 ) (initialAuditEnrollmentResult, error) {
 	var result initialAuditEnrollmentResult
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		counts, err := auditAuthorityCounts(ctx, tx)
 		if err != nil {
 			return err
@@ -141,12 +141,12 @@ func buildInitialAuditEnrollment(
 		return initialAuditEnrollmentSet{}, err
 	}
 	topologyGenesis := audit.Record{Kind: "topology_genesis", Fields: []audit.Field{
-		{Name: "vault_id", Value: values.vaultID},
+		{Name: auditVaultIDField, Value: values.vaultID},
 		{Name: "lineage_id", Value: values.lineageID},
 		{Name: "nodes", Value: audit.List(auditNestedValues(topology)...)},
 	}}
 	attachmentGenesis := audit.Record{Kind: "attached_metadata_genesis", Fields: []audit.Field{
-		{Name: "vault_id", Value: values.vaultID},
+		{Name: auditVaultIDField, Value: values.vaultID},
 		{Name: "lineage_id", Value: values.lineageID},
 		{Name: "records", Value: audit.List(auditNestedValues(attachments)...)},
 	}}
@@ -205,7 +205,7 @@ func buildInitialAuditEnrollment(
 		return initialAuditEnrollmentSet{}, err
 	}
 	scopeEntry := audit.Record{Kind: "scope_chain_entry", Fields: []audit.Field{
-		{Name: "vault_id", Value: values.vaultID},
+		{Name: auditVaultIDField, Value: values.vaultID},
 		{Name: "scope_id", Value: values.scopeID},
 		{Name: "entry_count", Value: audit.Unsigned(1)},
 		{Name: "previous_head", Value: audit.Absent()},
@@ -291,7 +291,7 @@ func makeInitialAllocationGenesis(
 	attachments []audit.Record, attachmentDigest auditRecordHash,
 ) audit.Record {
 	return audit.Record{Kind: "allocation_genesis", Fields: []audit.Field{
-		{Name: "vault_id", Value: values.vaultID},
+		{Name: auditVaultIDField, Value: values.vaultID},
 		{Name: "lineage_id", Value: values.lineageID},
 		{Name: "previous_head", Value: audit.Absent()},
 		{Name: "node_id_high_water", Value: audit.Unsigned(nodeSequence)},
@@ -312,10 +312,10 @@ func makeInitialAuditBaseline(
 		memberValues[index] = audit.Unsigned(member)
 	}
 	return audit.Record{Kind: "enrollment_baseline", Fields: []audit.Field{
-		{Name: "vault_id", Value: values.vaultID},
+		{Name: auditVaultIDField, Value: values.vaultID},
 		{Name: "scope_id", Value: values.scopeID},
 		{Name: "target_node_id", Value: audit.Unsigned(targetNodeID)},
-		{Name: "operation_id", Value: values.operationID},
+		{Name: auditOperationIDField, Value: values.operationID},
 		{Name: "cause", Value: values.cause},
 		{Name: "members", Value: audit.List(memberValues...)},
 		{Name: "member_states", Value: audit.List(auditNestedValues(states)...)},
@@ -331,7 +331,7 @@ func makeInitialAuditEnrollmentEvent(
 	states []audit.Record,
 ) (audit.Record, error) {
 	identityDigest, err := hashAuditRecord(audit.Record{Kind: "event_identity", Fields: []audit.Field{
-		{Name: "operation_id", Value: values.operationID},
+		{Name: auditOperationIDField, Value: values.operationID},
 		{Name: "event_ordinal", Value: audit.Unsigned(0)},
 	}})
 	if err != nil {
@@ -361,7 +361,7 @@ func makeInitialAuditEnrollmentEvent(
 	}
 	return audit.Record{Kind: "audit_event", Fields: []audit.Field{
 		{Name: "event_id", Value: identityDigest.value},
-		{Name: "operation_id", Value: values.operationID},
+		{Name: auditOperationIDField, Value: values.operationID},
 		{Name: metadataNodeIDField, Value: audit.Unsigned(targetNodeID)},
 		{Name: "event_kind", Value: values.eventKind},
 		{Name: "scope_id", Value: values.scopeID},
@@ -394,9 +394,9 @@ func makeInitialAuditMutation(
 		{Name: "baseline_digest", Value: baselineDigest.value},
 	}}
 	return audit.Record{Kind: "canonical_mutation", Fields: []audit.Field{
-		{Name: "vault_id", Value: values.vaultID},
+		{Name: auditVaultIDField, Value: values.vaultID},
 		{Name: "operation_sequence", Value: audit.Unsigned(1)},
-		{Name: "operation_id", Value: values.operationID},
+		{Name: auditOperationIDField, Value: values.operationID},
 		{Name: "grouping_id", Value: audit.Absent()},
 		{Name: "recorded_at", Value: values.recordedAt},
 		{Name: "origin", Value: values.origin},
@@ -419,11 +419,11 @@ func makeInitialAllocationEntry(
 	genesisDigest, mutationDigest audit.Value,
 ) audit.Record {
 	return audit.Record{Kind: "allocation_entry", Fields: []audit.Field{
-		{Name: "vault_id", Value: values.vaultID},
+		{Name: auditVaultIDField, Value: values.vaultID},
 		{Name: "lineage_id", Value: values.lineageID},
 		{Name: "previous_head", Value: genesisDigest},
 		{Name: "operation_sequence", Value: audit.Unsigned(1)},
-		{Name: "operation_id", Value: values.operationID},
+		{Name: auditOperationIDField, Value: values.operationID},
 		{Name: "allocated_node_ids", Value: audit.List()},
 		{Name: "node_id_high_water", Value: audit.Unsigned(nodeSequence)},
 		{Name: "operation_sequence_high_water", Value: audit.Unsigned(1)},
@@ -444,7 +444,7 @@ func persistInitialAuditEnrollment(
 	ctx context.Context, tx *sql.Tx, set initialAuditEnrollmentSet,
 ) error {
 	for _, record := range set.records {
-		if err := insertInitialAuditRecord(ctx, tx, record); err != nil {
+		if err := insertAuditRecord(ctx, tx, record); err != nil {
 			return err
 		}
 	}
@@ -473,13 +473,10 @@ func persistInitialAuditEnrollment(
 			return fmt.Errorf("creating audit membership for node %d: %w", member, err)
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_write_guard(singleton) VALUES(1)`); err != nil {
-		return fmt.Errorf("activating audit write guard: %w", err)
-	}
 	return nil
 }
 
-func insertInitialAuditRecord(ctx context.Context, tx *sql.Tx, record audit.Record) error {
+func insertAuditRecord(ctx context.Context, tx *sql.Tx, record audit.Record) error {
 	digest, err := hashAuditRecord(record)
 	if err != nil {
 		return err

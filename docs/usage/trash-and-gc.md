@@ -110,9 +110,10 @@ thresholds remain an independent storage-policy decision.
 docbank verify
 ```
 
-Re-hashes every stored blob against its recorded SHA-256 and reports
-`missing`, `corrupt`, or `unreadable` per problem blob, exiting non-zero
-if anything is wrong. Corruption is something you detect on your
+Validates logical metadata and audit history, then re-hashes every stored blob
+against its recorded SHA-256. It reports `metadata` failures or `missing`,
+`corrupt`, and `unreadable` problem blobs, exiting non-zero if anything is
+wrong. Corruption is something you detect on your
 schedule, not something you discover the day you need the document. Run
 it after moving the vault between disks, before deleting original
 sources, and periodically from cron.

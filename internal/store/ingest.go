@@ -21,9 +21,12 @@ func (s *Store) BeginIngest(ctx context.Context, sourceKind, sourceDesc string) 
 	}); err != nil {
 		return "", fmt.Errorf("validating ingest start: %w", err)
 	}
-	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO ingests (id, started_at, source_kind, source_desc) VALUES (?, ?, ?, ?)`,
-		id, startedAt, sourceKind, sourceDesc)
+	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+		_, execErr := tx.ExecContext(ctx,
+			`INSERT INTO ingests (id, started_at, source_kind, source_desc) VALUES (?, ?, ?, ?)`,
+			id, startedAt, sourceKind, sourceDesc)
+		return execErr
+	})
 	if err != nil {
 		return "", fmt.Errorf("recording ingest start: %w", err)
 	}
@@ -167,7 +170,7 @@ func (s *Store) IngestFile(ctx context.Context, ingestID string, parentID int64,
 		created Node
 		added   bool
 	)
-	err = s.withTx(ctx, func(tx *sql.Tx) error {
+	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		finalName, existingID, skip, err := resolveIngestNameTx(tx, parentID, name, blobHash)
 		if err != nil {
 			return err

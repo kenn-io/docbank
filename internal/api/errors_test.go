@@ -8,6 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/packstore"
+
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestFromMaintenanceErrorPreservesCommittedRetirementBoundary(t *testing.T) {
@@ -19,4 +21,12 @@ func TestFromMaintenanceErrorPreservesCommittedRetirementBoundary(t *testing.T) 
 	assert.Equal(t, "pack_retirement_deferred", mapped.Code)
 	assert.Contains(t, mapped.Detail, "pack replacement committed")
 	assert.Contains(t, mapped.Detail, "docbank storage pack")
+}
+
+func TestFromStoreErrorMapsUnsupportedAuditMutation(t *testing.T) {
+	mapped := &Error{}
+	ok := errors.As(FromStoreError(store.ErrAuditMutationUnsupported), &mapped)
+	require.True(t, ok)
+	assert.Equal(t, http.StatusConflict, mapped.Status)
+	assert.Equal(t, "audit_mutation_unsupported", mapped.Code)
 }

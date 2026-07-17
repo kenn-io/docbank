@@ -174,8 +174,8 @@ metadata independent of the operational `trash_parent` foreign key: normally a
 known parent ID and name, or the explicit unknown-origin record for adopted
 legacy trash. Node IDs are never reused. `trash_parent` is a non-authoritative,
 repairable locator: it is excluded from canonical event/baseline hashes, final
-state reconciliation, and audit write guards. For a known origin, a non-null
-locator must resolve to the immutable origin ID; null is valid after that parent
+state reconciliation, and audit mutation validation. For a known origin, a
+non-null locator must resolve to the immutable origin ID; null is valid after that parent
 disappears. Deleting an unaudited origin directory may therefore clear the
 locator without rewriting the protected origin coordinates, baseline digest,
 or chain. Restore tries a known immutable parent ID and falls back to `/` when
@@ -477,8 +477,8 @@ derived affected audited members must match the emitted fan-out events and
 mutation marker. A helper cannot omit an audited tag event merely because a
 later change restores the same tag projection.
 
-Database write guards reject the topology statement unless its transaction has
-registered an audit operation context. Before commit, the shared mutation path
+The shared Go mutation boundary rejects a topology change unless its transaction
+constructs the corresponding audit operation. Before commit, that path
 compares the materialized expectations with memberships, baselines, events,
 lineage, and scope heads actually written. It also compares each baseline's
 members, versions, and attachments with the derived trash-origin closure; a
@@ -487,11 +487,11 @@ That derivation follows nested known-origin edges to the vault root or their
 terminal unknown-origin anchor and treats the resulting mixed component according
 to the unresolved/root-enrollment rules above; it never truncates the closure at
 the first detached root.
-Direct SQL, a helper that forgets inherited membership, and an
-unaudited-ancestor rename that omits descendant events therefore fail rather
+An unsupported store mutation, a helper that forgets inherited membership, and
+an unaudited-ancestor rename that omits descendant events therefore fail rather
 than creating a purge or history escape.
 
-The same guards cover direct and cascading node deletion. Hard-deleting an
+The same mutation boundary covers direct and cascading node deletion. Hard-deleting an
 unaudited trash root after audit activation is allowed only when the protected
 closure is empty and the transaction records every deleted subtree node as a
 tombstone in its atomic topology delta and allocation-lineage entry. The
@@ -633,7 +633,7 @@ projection.
 Re-adding a byte-for-byte identical canonical provenance fact is an idempotent
 no-op, not a duplicate row or event. Adding or superseding a fact on an audited
 member emits an event in the insertion transaction. Database constraints and
-audit write guards reject update or deletion of provenance attached to an
+the Go mutation boundary reject update or deletion of provenance attached to an
 audited member and reject deletion of any ingest record it references. Those
 records are permanent metadata retention roots just like the member's versions.
 Ordinary policy may delete facts belonging only to unaudited nodes; later
@@ -1192,15 +1192,17 @@ and every backup. Backup manifests and externally recorded evidence bundles—
 the stable vault ID, every scope count/head, and the allocation-lineage
 count/head—provide stronger independent evidence.
 
-### Database protection boundary
+### Metadata protection boundary
 
-The database also enforces the protection boundary independently of API
-routing. Constraints and write guards reject deletion or mutation of audited
-nodes, memberships, versions, chain state, and protected blob reachability
-unless the current audit-aware writer performs the complete authorized
-transaction. Raw unguarded trash-empty and GC statements must fail rather than
-cascade or omit protected state. The non-authoritative `trash_parent` locator
-is the narrow exception: foreign-key
+The store enforces the protection boundary independently of API routing. Every
+supported logical mutation enters a Go transaction boundary that either records
+the complete audited transition or rejects the operation. SQL supplies
+relational constraints, while independent Go replay reconciles current state,
+memberships, versions, chain heads, and protected blob reachability. Direct
+database modification is outside the supported writer and
+the stated threat model; subsequent verification or metadata export fails on
+divergence rather than accepting a false history. The non-authoritative
+`trash_parent` locator is the narrow exception: foreign-key
 cleanup may clear it because immutable audit origin metadata, not that locator,
 is the protected fact.
 

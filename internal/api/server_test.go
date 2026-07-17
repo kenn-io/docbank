@@ -32,6 +32,7 @@ type testStore struct {
 
 	Blobs    *blob.Store
 	BlobsDir string
+	DBPath   string
 }
 
 // testAPIKey is the default key newTestServer configures: production always
@@ -51,7 +52,8 @@ const testAPIKey = "test-api-key"
 func newTestServer(t *testing.T, mutate func(*api.Deps)) (*httptest.Server, *testStore) {
 	t.Helper()
 	dir := t.TempDir()
-	s, err := store.Open(filepath.Join(dir, "docbank.db"))
+	dbPath := filepath.Join(dir, "docbank.db")
+	s, err := store.Open(dbPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = s.Close() })
 	blobsDir := filepath.Join(dir, "blobs")
@@ -67,7 +69,7 @@ func newTestServer(t *testing.T, mutate func(*api.Deps)) (*httptest.Server, *tes
 	ts := httptest.NewServer(api.NewServer(d).Handler())
 	t.Cleanup(ts.Close)
 	ts.Client().Transport = &apiKeyTransport{key: d.Cfg.Server.APIKey, next: ts.Client().Transport}
-	return ts, &testStore{Store: s, Blobs: blobs, BlobsDir: blobsDir}
+	return ts, &testStore{Store: s, Blobs: blobs, BlobsDir: blobsDir, DBPath: dbPath}
 }
 
 // apiKeyTransport injects key as X-Api-Key on any request that doesn't

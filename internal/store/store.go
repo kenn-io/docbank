@@ -78,7 +78,7 @@ func (s *Store) bootstrap() error {
 }
 
 func (s *Store) bootstrapTx() error {
-	return s.withTx(context.Background(), func(tx *sql.Tx) error {
+	return s.withStorageTx(context.Background(), func(tx *sql.Tx) error {
 		if _, err := tx.Exec(schemaSQL); err != nil {
 			return fmt.Errorf("applying schema: %w", err)
 		}
@@ -148,9 +148,11 @@ func (s *Store) Checkpoint(ctx context.Context) error {
 	return nil
 }
 
-// withTx runs fn inside a transaction, committing on nil and rolling back
-// on error. Used by later packages (Task 4+) for transactional operations.
-func (s *Store) withTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+// withStorageTx is the transaction primitive for bootstrap, import, audit
+// recording, and physical storage maintenance. User-visible metadata mutations
+// use withLogicalTx so audited vaults fail closed unless that mutation has an
+// explicit audit implementation in Go.
+func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)
@@ -165,6 +167,22 @@ func (s *Store) withTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
 		return fmt.Errorf("committing transaction: %w", err)
 	}
 	return nil
+}
+
+// withLogicalTx runs an ordinary metadata mutation. Once audit authority
+// exists, every logical mutation must use a dedicated audited implementation;
+// unsupported operations are rejected before they can alter state.
+func (s *Store) withLogicalTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		active, err := auditAuthorityActiveTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if active {
+			return ErrAuditMutationUnsupported
+		}
+		return fn(tx)
+	})
 }
 
 // timestampLayout is RFC 3339 UTC with fixed-width nanoseconds. Timestamps

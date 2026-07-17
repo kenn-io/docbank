@@ -77,7 +77,11 @@ func (s *Store) CreateTag(ctx context.Context, name string) (Tag, error) {
 	if err != nil {
 		return Tag{}, fmt.Errorf("allocating tag ID: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO tags(id, name) VALUES(?, ?)`, id, name); err != nil {
+	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+		_, execErr := tx.ExecContext(ctx, `INSERT INTO tags(id, name) VALUES(?, ?)`, id, name)
+		return execErr
+	})
+	if err != nil {
 		if s.driver.IsUniqueViolation(err) {
 			return Tag{}, fmt.Errorf("tag %q: %w", name, ErrExists)
 		}
@@ -166,7 +170,7 @@ func (s *Store) RenameTag(ctx context.Context, id string, ifRev int64, name stri
 		return Tag{}, err
 	}
 	var renamed Tag
-	err = s.withTx(ctx, func(tx *sql.Tx) error {
+	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		current, err := tagByIDTx(tx, id)
 		if err != nil {
 			return err
@@ -204,7 +208,7 @@ func (s *Store) RenameTag(ctx context.Context, id string, ifRev int64, name stri
 // formerly assigned node's metadata revision exactly once.
 func (s *Store) DeleteTag(ctx context.Context, id string, ifRev int64) (Tag, error) {
 	var deleted Tag
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		current, err := tagByIDTx(tx, id)
 		if err != nil {
 			return err
@@ -263,7 +267,7 @@ func (s *Store) changeTagAssignment(
 	ctx context.Context, tagID string, nodeID, ifRev int64, assign bool,
 ) (TagAssignmentChange, error) {
 	var result TagAssignmentChange
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		node, err := nodeByIDTx(tx, nodeID)
 		if err != nil {
 			return err
@@ -281,7 +285,7 @@ func (s *Store) changeTagAssignmentPath(
 	ctx context.Context, tagID, path string, assign bool,
 ) (TagAssignmentChange, error) {
 	var result TagAssignmentChange
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		node, err := nodeByPath(ctx, tx, s.rootID, path)
 		if err != nil {
 			return err

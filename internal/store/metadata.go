@@ -212,6 +212,22 @@ func (s *Store) ExportMetadata(ctx context.Context, w io.Writer) error {
 	return nil
 }
 
+// ValidateMetadata verifies the current relational metadata and, when audit
+// authority exists, independently replays its canonical history against the
+// current projection. It exercises the same deterministic stream boundary as
+// backup without publishing that stream or mutating the vault.
+func (s *Store) ValidateMetadata(ctx context.Context) (err error) {
+	snapshot, err := s.BeginMetadataSnapshot(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, snapshot.Close()) }()
+	if err := snapshot.Export(ctx, io.Discard); err != nil {
+		return fmt.Errorf("validating metadata: %w", err)
+	}
+	return nil
+}
+
 type metadataQuerier interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
@@ -500,7 +516,7 @@ func stringPtr(v sql.NullString) *string {
 func (s *Store) ImportMetadata(ctx context.Context, r io.Reader) error {
 	rootID := int64(0)
 	vaultID := ""
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		if err := requirePristineMetadataTarget(ctx, tx); err != nil {
 			return err
 		}
@@ -518,10 +534,6 @@ func (s *Store) ImportMetadata(ctx context.Context, r io.Reader) error {
 			`UPDATE vault_metadata SET vault_id = ? WHERE singleton = 1`, header.VaultID,
 		); err != nil {
 			return fmt.Errorf("restoring vault identity: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO audit_write_guard(singleton)
-			SELECT 1 WHERE EXISTS (SELECT 1 FROM audit_authority)`); err != nil {
-			return fmt.Errorf("activating restored audit authority: %w", err)
 		}
 		if err := validateMetadataState(ctx, tx, header.NodeSequence); err != nil {
 			return err
@@ -556,8 +568,7 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM audit_authority)
 		    + (SELECT COUNT(*) FROM audit_scopes)
 		    + (SELECT COUNT(*) FROM audit_baselines)
-		    + (SELECT COUNT(*) FROM audit_memberships)
-		    + (SELECT COUNT(*) FROM audit_write_guard),
+		    + (SELECT COUNT(*) FROM audit_memberships),
 		  (SELECT COUNT(*) FROM blob_packs) + (SELECT COUNT(*) FROM blob_pack_index)
 	`).Scan(&nodes, &other, &packs); err != nil {
 		return fmt.Errorf("checking metadata import target: %w", err)
@@ -749,6 +760,8 @@ func importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw json
 const (
 	metadataTypeField           = "type"
 	metadataNodeIDField         = "node_id"
+	auditVaultIDField           = "vault_id"
+	auditOperationIDField       = "operation_id"
 	metadataIngestType          = "ingest"
 	metadataProvenanceType      = "provenance"
 	metadataAuditAuthorityType  = "audit_authority"
@@ -757,7 +770,7 @@ const (
 	metadataAuditRecordType     = "audit_record"
 )
 
-var metadataHeaderFields = []string{metadataTypeField, "format", "version", "vault_id", "node_sequence"}
+var metadataHeaderFields = []string{metadataTypeField, "format", "version", auditVaultIDField, "node_sequence"}
 
 var metadataRequiredFields = map[string][]string{
 	"blob":                      {metadataTypeField, "hash", "size", "created_at"},
@@ -957,6 +970,9 @@ func validateContentVersionRecord(v metadataContentVersion) error {
 		return fmt.Errorf("invalid content version blob hash: %w", err)
 	}
 	if v.MIMEType != nil {
+		if *v.MIMEType == "" {
+			return errors.New("content version mime_type must be null or non-empty")
+		}
 		if err := validateUTF8Field("content version mime_type", *v.MIMEType); err != nil {
 			return err
 		}
@@ -1136,7 +1152,7 @@ func validateMetadataState(ctx context.Context, tx metadataQuerier, nodeSequence
 	if err := validateAuditTrashOrigins(topology); err != nil {
 		return err
 	}
-	if err := validateInitialAuditAuthority(ctx, tx, vaultID, nodeSequence); err != nil {
+	if err := validateAuditAuthority(ctx, tx, vaultID, nodeSequence); err != nil {
 		return err
 	}
 	var maxNodeID int64

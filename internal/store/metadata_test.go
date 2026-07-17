@@ -53,7 +53,7 @@ func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 	require.NoError(t, err)
 	_, err = source.db.ExecContext(ctx, `DELETE FROM nodes WHERE id = ?`, lostParent.ID)
 	require.NoError(t, err)
-	require.NoError(t, source.withTx(ctx, func(tx *sql.Tx) error {
+	require.NoError(t, source.withStorageTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO nodes(id,parent_id,name,kind,created_at,modified_at)
 			VALUES(100,1,'later-deleted','dir','2026-02-04T00:00:00.000000000Z','2026-02-04T00:00:00.000000000Z')`); err != nil {
 			return err
@@ -340,6 +340,29 @@ func TestImportMetadataRejectsLaterContentCreateAndRollsBack(t *testing.T) {
 	assert.Equal(t, int64(1), nodes, "failed import must leave the pristine target intact")
 }
 
+func TestImportMetadataRejectsEmptyNonNullContentMIME(t *testing.T) {
+	ctx := t.Context()
+	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, source.Close()) })
+	seedMetadataRoundTrip(t, source)
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(ctx, &exported))
+	malformed := strings.Replace(
+		exported.String(), `"mime_type":"text/plain"`, `"mime_type":""`, 1,
+	)
+	require.NotEqual(t, exported.String(), malformed)
+
+	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, target.Close()) })
+	err = target.ImportMetadata(ctx, strings.NewReader(malformed))
+	require.ErrorContains(t, err, "content version mime_type must be null or non-empty")
+	var nodes int64
+	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodes))
+	assert.Equal(t, int64(1), nodes, "failed import must leave the pristine target intact")
+}
+
 func TestImportMetadataRejectsInvalidContentRelationshipsAndRollsBack(t *testing.T) {
 	ctx := t.Context()
 	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
@@ -492,6 +515,11 @@ func TestExportMetadataRejectsMalformedContentVersion(t *testing.T) {
 			name:      "MIME UTF-8",
 			statement: `UPDATE content_versions SET mime_type=CAST(X'ff' AS TEXT) WHERE version_id=?`,
 			want:      "content version mime_type: not valid UTF-8",
+		},
+		{
+			name:      "empty non-null MIME",
+			statement: `UPDATE content_versions SET mime_type='' WHERE version_id=?`,
+			want:      "content version mime_type must be null or non-empty",
 		},
 	}
 	for _, tt := range tests {
@@ -901,7 +929,7 @@ func seedMetadataRoundTrip(t *testing.T, s *Store) {
 		OriginalPath: "/source/report.txt", OriginalMTime: &originalMTime,
 	})
 	require.NoError(t, err)
-	require.NoError(t, s.withTx(ctx, func(tx *sql.Tx) error {
+	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		statements := []string{
 			`UPDATE nodes SET created_at='2026-01-01T00:00:00.000000000Z', modified_at='2026-01-02T00:00:00.000000000Z' WHERE id=1`,
 			`INSERT INTO blobs(hash,size,created_at) VALUES

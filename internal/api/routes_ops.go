@@ -274,23 +274,35 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 	type verifyOutput struct{ Body VerifyReport }
 	huma.Register(api, huma.Operation{
 		OperationID: "verify", Method: http.MethodPost, Path: "/api/v1/verify",
-		Summary: "Re-hash every stored blob and report corruption",
+		Summary: "Validate metadata and re-hash every stored blob",
 	}, func(ctx context.Context, _ *struct{}) (*verifyOutput, error) {
 		out := &verifyOutput{}
 		err := g.maintain(func() error {
-			blobs, err := d.Store.AllBlobs(ctx)
-			if err != nil {
-				return FromStoreError(err)
+			if err := d.Store.ValidateMetadata(ctx); err != nil {
+				if ctx.Err() != nil {
+					return NewError(http.StatusInternalServerError, "internal",
+						fmt.Sprintf("verify interrupted: %v", ctx.Err()))
+				}
+				out.Body.MetadataProblems = append(out.Body.MetadataProblems, err.Error())
 			}
-			for _, b := range blobs {
+			hashes, err := d.Store.AllBlobHashes(ctx)
+			if err != nil {
+				if ctx.Err() != nil {
+					return NewError(http.StatusInternalServerError, "internal",
+						fmt.Sprintf("verify interrupted: %v", ctx.Err()))
+				}
+				out.Body.MetadataProblems = append(out.Body.MetadataProblems, err.Error())
+				return nil
+			}
+			for _, hash := range hashes {
 				if err := ctx.Err(); err != nil {
 					return NewError(http.StatusInternalServerError, "internal",
 						fmt.Sprintf("verify interrupted: %v", err))
 				}
-				if problem := checkBlob(ctx, d, b.Hash); problem == "" {
+				if problem := checkBlob(ctx, d, hash); problem == "" {
 					out.Body.OK++
 				} else {
-					out.Body.Problems = append(out.Body.Problems, VerifyProblem{Hash: b.Hash, Problem: problem})
+					out.Body.Problems = append(out.Body.Problems, VerifyProblem{Hash: hash, Problem: problem})
 				}
 			}
 			return nil
