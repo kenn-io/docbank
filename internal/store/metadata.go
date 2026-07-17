@@ -954,6 +954,9 @@ func validateContentVersionRecord(v metadataContentVersion) error {
 		return fmt.Errorf("invalid content version blob hash: %w", err)
 	}
 	if v.MIMEType != nil {
+		if *v.MIMEType == "" {
+			return errors.New("content version mime_type must be null or non-empty")
+		}
 		if err := validateUTF8Field("content version mime_type", *v.MIMEType); err != nil {
 			return err
 		}
