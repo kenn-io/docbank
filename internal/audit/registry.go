@@ -27,6 +27,7 @@ type valueRule struct {
 	textValues  []string
 	recordKinds []string
 	listElement *valueRule
+	listPolicy  collectionPolicy
 }
 
 type fieldRule struct {
@@ -209,39 +210,39 @@ var recordSchemas = map[string]recordSchema{
 		field("target_node_id", unsignedRule),
 		field("operation_id", uuidRule),
 		field("cause", textRule),
-		field("members", listOf(unsignedRule)),
-		field("member_states", listOf(recordOf("member_state"))),
-		field("nodes", listOf(recordOf("topology_node"))),
-		field("versions", listOf(recordOf("content_version"))),
-		field("attachments", listOf(attachedRecordRule())),
-		field("witnesses", listOf(recordOf("witness"))),
+		field("members", orderedListOf(unsignedRule, collectionUnsigned)),
+		field("member_states", orderedListOf(recordOf("member_state"), collectionNodeID)),
+		field("nodes", orderedListOf(recordOf("topology_node"), collectionNodeID)),
+		field("versions", orderedListOf(recordOf("content_version"), collectionVersion)),
+		field("attachments", orderedListOf(attachedRecordRule(), collectionAttachedRecord)),
+		field("witnesses", orderedListOf(recordOf("witness"), collectionWitness)),
 	),
 	"topology_genesis": schema(
 		field("vault_id", uuidRule),
 		field("lineage_id", uuidRule),
-		field("nodes", listOf(recordOf("topology_node"))),
+		field("nodes", orderedListOf(recordOf("topology_node"), collectionNodeID)),
 	),
 	"attached_metadata_genesis": schema(
 		field("vault_id", uuidRule),
 		field("lineage_id", uuidRule),
-		field("records", listOf(attachedRecordRule())),
+		field("records", orderedListOf(attachedRecordRule(), collectionAttachedRecord)),
 	),
 	"topology_delta": schema(
 		field("operation_id", uuidRule),
-		field("changes", listOf(recordOf("topology_change"))),
+		field("changes", orderedListOf(recordOf("topology_change"), collectionTopologyChange)),
 	),
 	"path_effect_list": schema(
 		field("operation_id", uuidRule),
 		field("topology_delta", digestRule),
-		field("effects", listOf(recordOf("path_effect"))),
+		field("effects", orderedListOf(recordOf("path_effect"), collectionPathEffect)),
 	),
 	"witness_change_list": schema(
 		field("operation_id", uuidRule),
-		field("changes", listOf(recordOf("witness_change"))),
+		field("changes", orderedListOf(recordOf("witness_change"), collectionWitnessChange)),
 	),
 	"attached_metadata_delta": schema(
 		field("operation_id", uuidRule),
-		field("changes", listOf(recordOf("attached_metadata_change"))),
+		field("changes", orderedListOf(recordOf("attached_metadata_change"), collectionAttachedChange)),
 	),
 	"event": schema(field("event", recordOf("audit_event"))),
 	"canonical_mutation": schema(
@@ -252,9 +253,9 @@ var recordSchemas = map[string]recordSchema{
 		field("recorded_at", timestampRule),
 		field("origin", originRule()),
 		field("agent_label", optionalText),
-		field("events", listOf(recordOf("audit_event"))),
-		field("member_state_changes", listOf(recordOf("member_state_change"))),
-		field("baselines", listOf(recordOf("baseline_binding"))),
+		field("events", orderedListOf(recordOf("audit_event"), collectionEvent)),
+		field("member_state_changes", orderedListOf(recordOf("member_state_change"), collectionNodeID)),
+		field("baselines", orderedListOf(recordOf("baseline_binding"), collectionBaselineBinding)),
 		field("topology_delta", optionalDigest),
 		field("path_effect_count", unsignedRule),
 		field("path_effect_digest", optionalDigest),
@@ -287,7 +288,7 @@ var recordSchemas = map[string]recordSchema{
 		field("previous_head", digestRule),
 		field("operation_sequence", unsignedRule),
 		field("operation_id", uuidRule),
-		field("allocated_node_ids", listOf(unsignedRule)),
+		field("allocated_node_ids", orderedListOf(unsignedRule, collectionAllocatedNodeID)),
 		field("node_id_high_water", unsignedRule),
 		field("operation_sequence_high_water", unsignedRule),
 		field("has_audited_mutation", boolRule),
@@ -388,6 +389,9 @@ func validateValue(value Value, rule valueRule, path string, depth int) error {
 				return err
 			}
 		}
+		if err := validateCollection(value.items, rule.listPolicy, path); err != nil {
+			return err
+		}
 	case typeRecord:
 		if value.record == nil {
 			return fmt.Errorf("field %s contains a nil audit record", path)
@@ -453,6 +457,12 @@ func recordOf(kinds ...string) valueRule {
 
 func listOf(element valueRule) valueRule {
 	return valueRule{typeOf: typeList, listElement: &element}
+}
+
+func orderedListOf(element valueRule, policy collectionPolicy) valueRule {
+	rule := listOf(element)
+	rule.listPolicy = policy
+	return rule
 }
 
 func attachedRecordRule() valueRule {
