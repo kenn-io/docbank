@@ -27,6 +27,9 @@ import (
 var (
 	// ErrClosed means an operation targeted a closed embedded vault.
 	ErrClosed = errors.New("docbank vault is closed")
+	// ErrContentUnavailable means catalog-authorized content could not be
+	// opened or its physical size disagreed with the metadata authority.
+	ErrContentUnavailable = errors.New("docbank content is unavailable")
 	// ErrDigestMismatch means the durable bytes did not match the caller's
 	// optional expected SHA-256 identity.
 	ErrDigestMismatch = errors.New("docbank content digest mismatch")
@@ -367,14 +370,20 @@ func (v *Vault) OpenContent(ctx context.Context, virtualPath string) (*Content, 
 	}
 	reader, size, err := v.blobs.OpenStreamContext(ctx, node.BlobHash)
 	if err != nil {
+		closeErr := closeContentReader(reader)
 		v.lifecycle.RUnlock()
-		return nil, err
+		return nil, errors.Join(fmt.Errorf(
+			"opening content for virtual path %q: %w: %w",
+			virtualPath, ErrContentUnavailable, err,
+		), closeErr)
 	}
 	if size != node.Size {
 		closeErr := reader.Close()
 		v.lifecycle.RUnlock()
 		return nil, errors.Join(fmt.Errorf(
-			"catalog size %d does not match node size %d", size, node.Size), closeErr)
+			"catalog size %d does not match node size %d: %w",
+			size, node.Size, ErrContentUnavailable,
+		), closeErr)
 	}
 	return &Content{
 		Node:   fromStoreNode(node),
@@ -396,18 +405,32 @@ func (v *Vault) OpenVersionContent(ctx context.Context, versionID string) (*Vers
 	}
 	reader, size, err := v.blobs.OpenStreamContext(ctx, version.BlobHash)
 	if err != nil {
+		closeErr := closeContentReader(reader)
 		v.lifecycle.RUnlock()
-		return nil, err
+		return nil, errors.Join(fmt.Errorf(
+			"opening content version %q: %w: %w",
+			versionID, ErrContentUnavailable, err,
+		), closeErr)
 	}
 	if size != version.Size {
 		closeErr := reader.Close()
 		v.lifecycle.RUnlock()
-		return nil, errors.Join(fmt.Errorf("catalog size %d does not match version size %d", size, version.Size), closeErr)
+		return nil, errors.Join(fmt.Errorf(
+			"catalog size %d does not match version size %d: %w",
+			size, version.Size, ErrContentUnavailable,
+		), closeErr)
 	}
 	return &VersionContent{
 		Version: fromStoreVersion(version),
 		Reader:  &leasedReader{VerifiedReadCloser: reader, release: v.lifecycle.RUnlock},
 	}, nil
+}
+
+func closeContentReader(reader packstore.VerifiedReadCloser) error {
+	if reader == nil {
+		return nil
+	}
+	return reader.Close()
 }
 
 // Pack explicitly moves authorized loose content into managed immutable packs.
