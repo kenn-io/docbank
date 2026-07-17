@@ -144,6 +144,13 @@ func Nested(record Record) Value {
 
 // Encode returns the canonical audit-encoding bytes for a record.
 func Encode(record Record) ([]byte, error) {
+	if err := Validate(record); err != nil {
+		return nil, err
+	}
+	return encodeCanonical(record)
+}
+
+func encodeCanonical(record Record) ([]byte, error) {
 	encoded := make([]byte, 0, 256)
 	if err := appendRecord(&encoded, record, 0); err != nil {
 		return nil, err
@@ -154,6 +161,14 @@ func Encode(record Record) ([]byte, error) {
 // Hash returns SHA-256 over the canonical audit-encoding bytes.
 func Hash(record Record) ([sha256.Size]byte, error) {
 	encoded, err := Encode(record)
+	if err != nil {
+		return [sha256.Size]byte{}, err
+	}
+	return sha256.Sum256(encoded), nil
+}
+
+func hashCanonical(record Record) ([sha256.Size]byte, error) {
+	encoded, err := encodeCanonical(record)
 	if err != nil {
 		return [sha256.Size]byte{}, err
 	}
