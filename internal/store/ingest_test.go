@@ -243,3 +243,20 @@ func TestIngestFileDistinctSourceNamedLikeSuffix(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, added)
 }
+
+func TestIngestFileDoesNotMatchUnknownOriginOutsideNameFamily(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+
+	manual, err := s.CreateFile(ctx, s.RootID(), "other.bin", fakeHash("a1"), 1, "application/octet-stream")
+	require.NoError(t, err)
+	ingestID, err := s.BeginIngest(ctx, "cli", "source")
+	require.NoError(t, err)
+
+	imported, added, err := s.IngestFile(ctx, ingestID, s.RootID(),
+		"report.pdf", fakeHash("a1"), 1, "application/pdf", "/source/report.pdf", "")
+	require.NoError(t, err)
+	require.True(t, added)
+	assert.NotEqual(t, manual.ID, imported.ID)
+	assert.Equal(t, "report.pdf", imported.Name)
+}

@@ -47,7 +47,11 @@ func resolveIngestNameTx(tx *sql.Tx, parentID int64, name, blobHash string) (str
 	}
 	defer func() { _ = rows.Close() }()
 
-	var sameHash []int64
+	type hashCandidate struct {
+		nodeID       int64
+		inNameFamily bool
+	}
+	var sameHash []hashCandidate
 	taken := map[int]bool{}
 	for rows.Next() {
 		var sibID int64
@@ -55,11 +59,11 @@ func resolveIngestNameTx(tx *sql.Tx, parentID int64, name, blobHash string) (str
 		if err := rows.Scan(&sibID, &sibName, &sibHash); err != nil {
 			return "", 0, false, fmt.Errorf("scanning sibling: %w", err)
 		}
+		n, inNameFamily := parseSuffix(sibName, base, ext)
 		if sibHash == blobHash {
-			sameHash = append(sameHash, sibID)
+			sameHash = append(sameHash, hashCandidate{nodeID: sibID, inNameFamily: inNameFamily})
 		}
-		n, ok := parseSuffix(sibName, base, ext)
-		if !ok {
+		if !inNameFamily {
 			continue
 		}
 		taken[n] = true
@@ -67,13 +71,13 @@ func resolveIngestNameTx(tx *sql.Tx, parentID int64, name, blobHash string) (str
 	if err := rows.Err(); err != nil {
 		return "", 0, false, fmt.Errorf("listing siblings for %q: %w", name, err)
 	}
-	for _, sibID := range sameHash {
-		imported, err := sameOriginTx(tx, sibID, name)
+	for _, candidate := range sameHash {
+		imported, err := sameOriginTx(tx, candidate.nodeID, name, candidate.inNameFamily)
 		if err != nil {
 			return "", 0, false, err
 		}
 		if imported {
-			return "", sibID, true, nil // already imported (possibly under a suffix)
+			return "", candidate.nodeID, true, nil // already imported (possibly under a suffix)
 		}
 	}
 	// Directories can occupy candidate names too; they don't carry content,
@@ -101,9 +105,10 @@ func resolveIngestNameTx(tx *sql.Tx, parentID int64, name, blobHash string) (str
 // sameOriginTx reports whether node nodeID's active provenance leaf has a
 // source basename (normalized) equal to name — i.e. the incoming file is a
 // re-import of the same logical file, not a distinct source that merely
-// shares content. A node with no provenance matches unconditionally: its
-// origin is unknown, and skipping preserves the old idempotent behavior.
-func sameOriginTx(tx *sql.Tx, nodeID int64, name string) (bool, error) {
+// shares content. A node with no provenance matches only when its virtual name
+// belongs to the incoming suffix family: its origin is unknown, so the legacy
+// idempotent fallback must not suppress an unrelated same-content file.
+func sameOriginTx(tx *sql.Tx, nodeID int64, name string, allowUnknown bool) (bool, error) {
 	rows, err := tx.Query(`
 		SELECT p.original_path
 		FROM provenance AS p
@@ -135,7 +140,7 @@ func sameOriginTx(tx *sql.Tx, nodeID int64, name string) (bool, error) {
 	if err := rows.Err(); err != nil {
 		return false, fmt.Errorf("reading provenance of node %d: %w", nodeID, err)
 	}
-	return match || !sawProvenance, nil
+	return match || (!sawProvenance && allowUnknown), nil
 }
 
 // IngestFile imports one already-durable blob as a node under parentID,
