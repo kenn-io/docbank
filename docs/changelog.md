@@ -9,6 +9,8 @@ docbank is pre-1.0; interfaces and storage migrations may still evolve.
 
 ## Unreleased
 
+- Embedded content opens classify missing or physically size-mismatched bytes
+  with `ErrContentUnavailable` without conflating metadata lookup failures.
 - Embedded Go applications can page immutable content history with `Versions`
   and open any historical version through the verified read contract with
   `OpenVersionContent`.

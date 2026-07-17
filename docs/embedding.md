@@ -84,6 +84,13 @@ or `Verify` succeeds. Early `Close` does not drain the stream. `Vault.Close`
 waits for active operations and streams, closes storage, and releases the vault
 lock.
 
+`OpenContent` and `OpenVersionContent` wrap `ErrContentUnavailable` when the
+catalog-authorized physical content cannot be opened or its physical size
+disagrees with metadata. Metadata lookup failures retain their existing
+`ErrNotFound`, `ErrNotFile`, or `ErrClosed` classification instead. A canceled
+physical open can match both `context.Canceled` and `ErrContentUnavailable`, so
+callers that distinguish cancellation should check the context error first.
+
 ## List and pack content
 
 `Children` exposes the live virtual tree without materializing an unbounded
