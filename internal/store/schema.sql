@@ -152,6 +152,270 @@ CREATE TABLE IF NOT EXISTS node_tags (
 
 CREATE INDEX IF NOT EXISTS node_tags_tag ON node_tags(tag_id);
 
+-- Canonical full-audit records are immutable content-addressed authority. The
+-- digest is over Docbank's typed canonical audit encoding, never the JSON
+-- spelling retained here for deterministic metadata-v1 transport.
+CREATE TABLE IF NOT EXISTS audit_records (
+    digest             TEXT PRIMARY KEY NOT NULL,
+    kind               TEXT NOT NULL CHECK (kind IN (
+        'enrollment_baseline', 'topology_genesis',
+        'attached_metadata_genesis', 'event', 'canonical_mutation',
+        'scope_chain_entry', 'allocation_genesis', 'allocation_entry'
+    )),
+    operation_id       TEXT,
+    operation_sequence INTEGER CHECK (operation_sequence IS NULL OR operation_sequence > 0),
+    scope_id           TEXT,
+    entry_count        INTEGER CHECK (entry_count IS NULL OR entry_count > 0),
+    event_id           TEXT,
+    event_ordinal      INTEGER CHECK (event_ordinal IS NULL OR event_ordinal >= 0),
+    record_json        TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS audit_record_event
+    ON audit_records(event_id) WHERE event_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS audit_record_mutation_operation
+    ON audit_records(operation_id) WHERE kind = 'canonical_mutation';
+CREATE UNIQUE INDEX IF NOT EXISTS audit_record_mutation_sequence
+    ON audit_records(operation_sequence) WHERE kind = 'canonical_mutation';
+CREATE UNIQUE INDEX IF NOT EXISTS audit_record_scope_entry
+    ON audit_records(scope_id, entry_count) WHERE kind = 'scope_chain_entry';
+CREATE UNIQUE INDEX IF NOT EXISTS audit_record_allocation_operation
+    ON audit_records(operation_id) WHERE kind = 'allocation_entry';
+CREATE UNIQUE INDEX IF NOT EXISTS audit_record_allocation_sequence
+    ON audit_records(operation_sequence) WHERE kind = 'allocation_entry';
+CREATE UNIQUE INDEX IF NOT EXISTS audit_record_single_genesis
+    ON audit_records(kind) WHERE kind IN (
+        'topology_genesis', 'attached_metadata_genesis', 'allocation_genesis'
+    );
+
+CREATE TABLE IF NOT EXISTS audit_authority (
+    singleton                       INTEGER PRIMARY KEY CHECK (singleton = 1),
+    lineage_id                      TEXT NOT NULL UNIQUE,
+    operation_sequence_high_water   INTEGER NOT NULL CHECK (operation_sequence_high_water > 0),
+    allocation_genesis_digest       TEXT NOT NULL UNIQUE REFERENCES audit_records(digest)
+        DEFERRABLE INITIALLY DEFERRED,
+    allocation_entry_count          INTEGER NOT NULL CHECK (allocation_entry_count > 0),
+    allocation_head                 TEXT NOT NULL REFERENCES audit_records(digest)
+        DEFERRABLE INITIALLY DEFERRED
+);
+
+-- Derived activation marker installed only after the closed first-enrollment
+-- set has been staged in one transaction. Keeping it out of JSONL lets import
+-- accept records in any order without enabling write guards halfway through
+-- the stream.
+CREATE TABLE IF NOT EXISTS audit_write_guard (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1)
+        REFERENCES audit_authority(singleton) DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TABLE IF NOT EXISTS audit_scopes (
+    scope_id             TEXT PRIMARY KEY NOT NULL,
+    target_node_id       INTEGER NOT NULL REFERENCES nodes(id),
+    enable_operation_id  TEXT NOT NULL UNIQUE,
+    entry_count          INTEGER NOT NULL CHECK (entry_count > 0),
+    chain_head           TEXT NOT NULL REFERENCES audit_records(digest)
+        DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TABLE IF NOT EXISTS audit_baselines (
+    digest          TEXT PRIMARY KEY NOT NULL REFERENCES audit_records(digest)
+        DEFERRABLE INITIALLY DEFERRED,
+    scope_id        TEXT NOT NULL REFERENCES audit_scopes(scope_id)
+        DEFERRABLE INITIALLY DEFERRED,
+    target_node_id  INTEGER NOT NULL REFERENCES nodes(id),
+    operation_id    TEXT NOT NULL,
+    UNIQUE (scope_id, target_node_id, operation_id)
+);
+
+CREATE TABLE IF NOT EXISTS audit_memberships (
+    scope_id         TEXT NOT NULL REFERENCES audit_scopes(scope_id)
+        DEFERRABLE INITIALLY DEFERRED,
+    node_id          INTEGER NOT NULL REFERENCES nodes(id),
+    baseline_digest  TEXT NOT NULL REFERENCES audit_baselines(digest)
+        DEFERRABLE INITIALLY DEFERRED,
+    PRIMARY KEY (scope_id, node_id)
+);
+
+CREATE INDEX IF NOT EXISTS audit_membership_node ON audit_memberships(node_id);
+
+CREATE TRIGGER IF NOT EXISTS audit_records_immutable_update
+BEFORE UPDATE ON audit_records BEGIN
+    SELECT RAISE(ABORT, 'audit records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audit_records_immutable_delete
+BEFORE DELETE ON audit_records BEGIN
+    SELECT RAISE(ABORT, 'audit records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audit_memberships_immutable_update
+BEFORE UPDATE ON audit_memberships BEGIN
+    SELECT RAISE(ABORT, 'audit memberships are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audit_memberships_immutable_delete
+BEFORE DELETE ON audit_memberships BEGIN
+    SELECT RAISE(ABORT, 'audit memberships are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audit_scope_identity_immutable
+BEFORE UPDATE OF scope_id, target_node_id, enable_operation_id ON audit_scopes BEGIN
+    SELECT RAISE(ABORT, 'audit scope identity is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audit_scopes_immutable_delete
+BEFORE DELETE ON audit_scopes BEGIN
+    SELECT RAISE(ABORT, 'audit scopes are permanent');
+END;
+
+-- Until guarded mutation recording is enabled, a restored first-enrollment
+-- authority is fail-closed. Physical blob/pack maintenance remains available,
+-- but no logical metadata may diverge from the imported audit state. These
+-- triggers will be replaced by guarded operation-context checks when audited
+-- mutations are implemented.
+CREATE TRIGGER IF NOT EXISTS audit_authority_frozen_update
+BEFORE UPDATE ON audit_authority BEGIN
+    SELECT RAISE(ABORT, 'audited metadata is read-only until mutation enforcement is available');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audit_authority_frozen_delete
+BEFORE DELETE ON audit_authority BEGIN
+    SELECT RAISE(ABORT, 'audited metadata is read-only until mutation enforcement is available');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audit_scope_state_frozen
+BEFORE UPDATE OF entry_count, chain_head ON audit_scopes BEGIN
+    SELECT RAISE(ABORT, 'audited metadata is read-only until mutation enforcement is available');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audit_baselines_immutable_update
+BEFORE UPDATE ON audit_baselines BEGIN
+    SELECT RAISE(ABORT, 'audit baselines are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audit_baselines_immutable_delete
+BEFORE DELETE ON audit_baselines BEGIN
+    SELECT RAISE(ABORT, 'audit baselines are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audit_write_guard_immutable_update
+BEFORE UPDATE ON audit_write_guard BEGIN
+    SELECT RAISE(ABORT, 'audit write guard is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audit_write_guard_immutable_delete
+BEFORE DELETE ON audit_write_guard BEGIN
+    SELECT RAISE(ABORT, 'audit write guard is permanent');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audited_nodes_frozen_insert
+BEFORE INSERT ON nodes
+WHEN EXISTS (SELECT 1 FROM audit_write_guard) BEGIN
+    SELECT RAISE(ABORT, 'audited metadata is read-only until mutation enforcement is available');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audited_nodes_frozen_update
+BEFORE UPDATE ON nodes
+WHEN EXISTS (SELECT 1 FROM audit_write_guard) BEGIN
+    SELECT RAISE(ABORT, 'audited metadata is read-only until mutation enforcement is available');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audited_nodes_frozen_delete
+BEFORE DELETE ON nodes
+WHEN EXISTS (SELECT 1 FROM audit_write_guard) BEGIN
+    SELECT RAISE(ABORT, 'audited metadata is read-only until mutation enforcement is available');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audited_versions_frozen_insert
+BEFORE INSERT ON content_versions
+WHEN EXISTS (SELECT 1 FROM audit_write_guard) BEGIN
+    SELECT RAISE(ABORT, 'audited metadata is read-only until mutation enforcement is available');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audited_versions_frozen_update
+BEFORE UPDATE ON content_versions
+WHEN EXISTS (SELECT 1 FROM audit_write_guard) BEGIN
+    SELECT RAISE(ABORT, 'audited metadata is read-only until mutation enforcement is available');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audited_versions_frozen_delete
+BEFORE DELETE ON content_versions
+WHEN EXISTS (SELECT 1 FROM audit_write_guard) BEGIN
+    SELECT RAISE(ABORT, 'audited metadata is read-only until mutation enforcement is available');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audited_blobs_frozen_insert
+BEFORE INSERT ON blobs
+WHEN EXISTS (SELECT 1 FROM audit_write_guard) BEGIN
+    SELECT RAISE(ABORT, 'audited metadata is read-only until mutation enforcement is available');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audited_blobs_frozen_update
+BEFORE UPDATE ON blobs
+WHEN EXISTS (SELECT 1 FROM audit_write_guard) BEGIN
+    SELECT RAISE(ABORT, 'audited metadata is read-only until mutation enforcement is available');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audited_ingests_frozen_insert
+BEFORE INSERT ON ingests
+WHEN EXISTS (SELECT 1 FROM audit_write_guard) BEGIN
+    SELECT RAISE(ABORT, 'audited metadata is read-only until mutation enforcement is available');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audited_ingests_frozen_delete
+BEFORE DELETE ON ingests
+WHEN EXISTS (SELECT 1 FROM audit_write_guard) BEGIN
+    SELECT RAISE(ABORT, 'audited metadata is read-only until mutation enforcement is available');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audited_provenance_frozen_insert
+BEFORE INSERT ON provenance
+WHEN EXISTS (SELECT 1 FROM audit_write_guard) BEGIN
+    SELECT RAISE(ABORT, 'audited metadata is read-only until mutation enforcement is available');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audited_provenance_frozen_delete
+BEFORE DELETE ON provenance
+WHEN EXISTS (SELECT 1 FROM audit_write_guard) BEGIN
+    SELECT RAISE(ABORT, 'audited metadata is read-only until mutation enforcement is available');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audited_tags_frozen_insert
+BEFORE INSERT ON tags
+WHEN EXISTS (SELECT 1 FROM audit_write_guard) BEGIN
+    SELECT RAISE(ABORT, 'audited metadata is read-only until mutation enforcement is available');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audited_tags_frozen_update
+BEFORE UPDATE ON tags
+WHEN EXISTS (SELECT 1 FROM audit_write_guard) BEGIN
+    SELECT RAISE(ABORT, 'audited metadata is read-only until mutation enforcement is available');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audited_tags_frozen_delete
+BEFORE DELETE ON tags
+WHEN EXISTS (SELECT 1 FROM audit_write_guard) BEGIN
+    SELECT RAISE(ABORT, 'audited metadata is read-only until mutation enforcement is available');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audited_node_tags_frozen_insert
+BEFORE INSERT ON node_tags
+WHEN EXISTS (SELECT 1 FROM audit_write_guard) BEGIN
+    SELECT RAISE(ABORT, 'audited metadata is read-only until mutation enforcement is available');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audited_node_tags_frozen_update
+BEFORE UPDATE ON node_tags
+WHEN EXISTS (SELECT 1 FROM audit_write_guard) BEGIN
+    SELECT RAISE(ABORT, 'audited metadata is read-only until mutation enforcement is available');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audited_node_tags_frozen_delete
+BEFORE DELETE ON node_tags
+WHEN EXISTS (SELECT 1 FROM audit_write_guard) BEGIN
+    SELECT RAISE(ABORT, 'audited metadata is read-only until mutation enforcement is available');
+END;
+
 CREATE TABLE IF NOT EXISTS extracted_text (
     blob_hash         TEXT NOT NULL,
     extractor         TEXT NOT NULL,
