@@ -240,10 +240,62 @@ that can remove metadata authority or physical content must account for active
 references under the same maintenance and snapshot-ordering rules as existing
 tree authority.
 
+An active reference protects the exact `content_versions` row it names. That
+version continues to protect its authoritative `blobs` row; the blob row
+continues to control loose or packed read authority. Retention does not bypass
+these layers or introduce a second physical catalog.
+
+| Operation | Required retention behavior |
+|---|---|
+| Metadata or version pruning | Refuse removal of a retained exact version and identify every blocking owner and reference. |
+| Trash | A node may move into recoverable trash; its active references and exact versions remain unchanged. |
+| Trash empty | Preflight every selected subtree. If any exact version is retained, make no deletions and report every blocking root, owner, operation, reference, and version. |
+| GC | Exclude retained exact versions and their blobs from candidates even when no other logical authority would keep them live. |
+| Pack | A retained blob may move from loose storage into a verified immutable pack without changing version or reference identity. |
+| Repack | Copy every retained live member and commit its replacement mapping before retiring source-pack authority. |
+| Verify | Report a missing or corrupt retained version, blob row, loose object, or packed member as integrity failure. |
+| Logical export | Include retention owners, reference records, and the exact-version closure needed to validate them. |
+| Backup | Include retention authority and every required object in the pinned snapshot. |
+| Restore | Verify and publish required objects before restored retention authority becomes visible. |
+
+Trash-empty's all-or-nothing preflight is deliberate. Skipping protected roots
+while deleting others would make a maintenance result depend on a caller
+noticing a secondary blocker list. The dry run and execution return the same
+complete blocker model; execution proceeds only when the selected set has no
+active reference.
+
+Retention acquisition and release are ordinary metadata mutations. Operations
+that can remove logical or physical authority—trash-empty, GC, and pack
+retirement—remain maintenance operations. They serialize through the existing
+daemon gate and the equivalent embedded mutation coordinator. Backup capture
+keeps the preservation side for its complete content stream, so maintenance
+cannot invalidate the pinned metadata snapshot after ordinary writes resume.
+
 ## Verification and corruption semantics
 
 A retained object is required content. Missing or mismatched retained bytes
 are corruption, not collectible garbage or an ignorable application error.
+
+Verification evaluates each active reference from owner through physical
+content:
+
+1. the owner and reference records are structurally valid;
+2. the exact content version exists;
+3. its recorded hash and size equal the reference's expected evidence;
+4. the corresponding authoritative blob row exists with the same size;
+5. the catalog resolves an authorized loose or packed representation; and
+6. a complete verified read yields the expected size and SHA-256.
+
+Vault-wide verification reports all retained-reference failures alongside
+ordinary metadata and physical-content findings. It never downgrades a missing
+retained object to an unreachable row, dead pack member, or removable orphan.
+An inactive released reference is historical reconciliation state and is not a
+reachability root, but its structural fields must remain valid.
+
+GC and pack maintenance consume a complete reference inventory. If malformed
+retention metadata prevents the store from proving that inventory complete,
+destructive maintenance stops rather than assuming the malformed record is
+inactive.
 
 ## Logical export, backup, and restore
 
@@ -268,9 +320,66 @@ One behavioral suite exercises embedded and daemon-backed implementations,
 including failure atomicity, retry convergence, lifecycle roots, and typed
 error equivalence.
 
+The shared suite proves at least these semantics against both adapters:
+
+- one invalid member makes an acquisition batch persist nothing;
+- an identical acquisition retry after a simulated lost response returns the
+  existing records without duplication;
+- an operation-ID replay with a changed, missing, or additional member is an
+  idempotency conflict;
+- releasing active, already released, and unknown keys converges to the same
+  terminal state;
+- ordinary owners cannot enumerate or release another owner's references;
+- embedded and daemon calls return the same typed category for every defined
+  failure; and
+- a retained exact version remains readable through trash, GC, pack, repack,
+  verify, backup, and restore.
+
+The upload-to-retention window has an explicit lifecycle scenario:
+
+1. upload a synthetic file and record its exact version, SHA-256, and size;
+2. leave it live without acquiring an application reference;
+3. run GC dry-run and execution and prove the version is not a candidate;
+4. pack it, exercise eligible repack maintenance, and verify an exact-version
+   read;
+5. trash and restore its node and prove the bytes survive;
+6. acquire a retention reference and replay the identical acquisition;
+7. trash the node and prove trash-empty refuses the subtree while naming the
+   blocking reference; and
+8. release the reference, rerun eligible destructive maintenance, and verify
+   that the outcome follows the remaining node/version authority.
+
+Steps 2–5 prove today's live-version authority protects the interval before
+retention acquisition. Steps 6–8 prove the new application root and its
+release boundary. The suite must exercise real loose and packed content rather
+than replacing lifecycle behavior with an in-memory mock.
+
 ## Security and failure analysis
 
 The design treats application credentials, crash ordering, interrupted
 maintenance, and restore publication as authority boundaries. No failure may
 silently turn required content into garbage or grant one ordinary owner
 authority over another owner's references.
+
+The required recovery behavior at each commit boundary is:
+
+| Boundary | Recovery rule |
+|---|---|
+| Bytes and live version are durable; retention batch is absent | Existing live node/version authority preserves the content. Retrying acquisition verifies and records the batch. |
+| Retention batch committed; caller lost the response | The identical operation and key set returns the existing acquisition result. |
+| Release committed; caller lost the response | Retrying release returns active-to-released and already-released results without restoring authority. |
+| Backup snapshot pinned while release races | The pinned transaction retains its captured reference view, and the preservation gate prevents maintenance from removing required content until capture ends. |
+| Restore interrupted before publication | Only private staged state changes; the live target remains absent or unchanged. |
+| Restored metadata would become visible before required bytes | Publication is forbidden. Aggregate verification fails while the staged target remains private. |
+| Administrator releases an abandoned owner | The result names every released reference. Content remains subject to ordinary tree and maintenance authority; no GC or destruction claim is implied. |
+
+An acquisition transaction never precedes durable version authority, so it
+cannot create a reference to bytes that are still only a temporary upload.
+Conversely, content upload must not delete its live operation-owned node until
+the caller has either acquired retention or explicitly cancelled the
+operation. The live node is the bridge across that interval.
+
+Owner disabling, secret loss, and application decommissioning preserve active
+references by default. Only an authenticated owner release or explicit
+administrator release changes reachability. This fail-closed posture may leave
+diagnosable retained content; it must never produce silent data loss.
