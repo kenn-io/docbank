@@ -301,7 +301,10 @@ func validateInitialGenesis(
 		topologyHighWater = max(topologyHighWater, nodeID)
 	}
 	if nodeHighWater < topologyHighWater {
-		return errors.New("audit allocation genesis is below its topology high-water mark")
+		return fmt.Errorf(
+			"node ID high-water mark %d is below maximum node ID %d",
+			nodeHighWater, topologyHighWater,
+		)
 	}
 	if err := requireAuditUnsigned(allocation.record, "node_id_high_water", nodeHighWater); err != nil {
 		return err
