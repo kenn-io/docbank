@@ -269,6 +269,36 @@ func TestInitialAuditAuthorityFreezesLogicalMetadata(t *testing.T) {
 	require.ErrorContains(t, err, "audited metadata is read-only")
 }
 
+func TestInitialAuditAuthorityAllowsUnreferencedBlobGC(t *testing.T) {
+	const orphanHash = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	seedMetadataRoundTrip(t, s)
+	_, err = s.db.Exec(`INSERT INTO blobs(hash,size,created_at)
+		VALUES(?,4,'2026-07-17T00:00:00.000000000Z')`, orphanHash)
+	require.NoError(t, err)
+	_, err = s.db.Exec(`INSERT INTO extracted_text(
+		blob_hash,extractor,extractor_version,status,attempts,extracted_at)
+		VALUES(?,'synthetic',1,'ok',1,'2026-07-17T00:00:00.000000000Z')`, orphanHash)
+	require.NoError(t, err)
+	target, err := s.NodeByPath(t.Context(), "/Projects")
+	require.NoError(t, err)
+	seedInitialAuditAuthority(t, s, target.ID)
+
+	unreachable, err := s.UnreachableBlobs(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, []BlobInfo{{Hash: orphanHash, Size: 4}}, unreachable)
+	require.NoError(t, s.DeleteBlobRows(t.Context(), []string{orphanHash}))
+
+	var rows int64
+	require.NoError(t, s.db.QueryRow(`SELECT
+		(SELECT COUNT(*) FROM blobs WHERE hash=?) +
+		(SELECT COUNT(*) FROM extracted_text WHERE blob_hash=?)`, orphanHash, orphanHash).Scan(&rows))
+	assert.Zero(t, rows)
+	require.NoError(t, s.ExportMetadata(t.Context(), &bytes.Buffer{}))
+}
+
 func TestInitialAuditAuthorityReopens(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "vault.db")
 	s, err := Open(path)

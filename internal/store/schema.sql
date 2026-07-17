@@ -344,6 +344,10 @@ WHEN EXISTS (SELECT 1 FROM audit_write_guard) BEGIN
     SELECT RAISE(ABORT, 'audited metadata is read-only until mutation enforcement is available');
 END;
 
+-- Blob deletion deliberately remains available for unreachable-blob GC: a
+-- referenced blob is protected by content_versions' foreign key. Extracted
+-- text is derived and remains replaceable, while ingest and provenance updates
+-- are already forbidden by their unconditional immutability triggers above.
 CREATE TRIGGER IF NOT EXISTS audited_blobs_frozen_insert
 BEFORE INSERT ON blobs
 WHEN EXISTS (SELECT 1 FROM audit_write_guard) BEGIN

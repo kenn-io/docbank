@@ -292,7 +292,10 @@ func validateInitialBaseline(
 		return err
 	}
 	storedStates, err := auditRecordListField(baseline.record, "member_states")
-	if err != nil || !equalAuditRecordLists(storedStates, states) {
+	if err != nil {
+		return err
+	}
+	if !equalAuditRecordLists(storedStates, states) {
 		return errors.New("audit enrollment member states do not match current nodes")
 	}
 	versions, err := currentAuditVersions(ctx, tx, members)
@@ -300,7 +303,10 @@ func validateInitialBaseline(
 		return err
 	}
 	storedVersions, err := auditRecordListField(baseline.record, "versions")
-	if err != nil || !equalAuditRecordLists(storedVersions, versions) {
+	if err != nil {
+		return err
+	}
+	if !equalAuditRecordLists(storedVersions, versions) {
 		return errors.New("audit enrollment versions do not match retained content")
 	}
 	allAttachments, err := currentAuditAttachments(ctx, tx)
@@ -312,7 +318,10 @@ func validateInitialBaseline(
 		return err
 	}
 	storedAttachments, err := auditRecordListField(baseline.record, "attachments")
-	if err != nil || !equalAuditRecordLists(storedAttachments, expectedAttachments) {
+	if err != nil {
+		return err
+	}
+	if !equalAuditRecordLists(storedAttachments, expectedAttachments) {
 		return errors.New("audit enrollment attachments do not match current metadata")
 	}
 	return validateInitialBaselineTopology(ctx, tx, baseline.record, members, scope.operationID)
@@ -331,11 +340,17 @@ func validateInitialBaselineTopology(
 		return err
 	}
 	storedNodes, err := auditRecordListField(baseline, "nodes")
-	if err != nil || !equalAuditRecordLists(storedNodes, expectedNodes) {
+	if err != nil {
+		return err
+	}
+	if !equalAuditRecordLists(storedNodes, expectedNodes) {
 		return errors.New("audit enrollment topology does not match current dependencies")
 	}
 	storedWitnesses, err := auditRecordListField(baseline, "witnesses")
-	if err != nil || !equalAuditRecordLists(storedWitnesses, expectedWitnesses) {
+	if err != nil {
+		return err
+	}
+	if !equalAuditRecordLists(storedWitnesses, expectedWitnesses) {
 		return errors.New("audit enrollment witnesses do not match topology dependencies")
 	}
 	return nil
@@ -408,15 +423,24 @@ func validateInitialMutation(
 		return err
 	}
 	events, err := auditRecordListField(mutation.record, "events")
-	if err != nil || len(events) != 1 || !auditRecordEqual(events[0], event) {
+	if err != nil {
+		return err
+	}
+	if len(events) != 1 || !auditRecordEqual(events[0], event) {
 		return errors.New("initial audit mutation does not bind its enrollment event")
 	}
 	changes, err := auditRecordListField(mutation.record, "member_state_changes")
-	if err != nil || len(changes) != 0 {
+	if err != nil {
+		return err
+	}
+	if len(changes) != 0 {
 		return errors.New("initial audit enrollment must not contain member-state changes")
 	}
 	bindings, err := auditRecordListField(mutation.record, "baselines")
-	if err != nil || len(bindings) != 1 {
+	if err != nil {
+		return err
+	}
+	if len(bindings) != 1 {
 		return errors.New("initial audit mutation must bind one enrollment baseline")
 	}
 	if err := validateInitialBaselineBinding(bindings[0], scope, baseline.digest); err != nil {
@@ -532,7 +556,7 @@ func requireMatchingEventEnvelope(mutation, event audit.Record) error {
 		if err != nil {
 			return err
 		}
-		if !auditValueEqual(left, right) {
+		if !equalAuditEnvelopeValue(left, right) {
 			return fmt.Errorf("initial audit mutation and event disagree on %s", field)
 		}
 	}
@@ -588,7 +612,10 @@ func validateInitialAllocation(
 		return err
 	}
 	allocated, err := auditUnsignedListField(entry.record, "allocated_node_ids")
-	if err != nil || len(allocated) != 0 {
+	if err != nil {
+		return err
+	}
+	if len(allocated) != 0 {
 		return errors.New("initial audit enrollment must not allocate node IDs")
 	}
 	for field, want := range map[string]uint64{
@@ -720,7 +747,9 @@ func requireAuditAbsentFields(record audit.Record, fields ...string) error {
 	return nil
 }
 
-func auditValueEqual(left, right audit.Value) bool {
+// equalAuditEnvelopeValue compares the optional text and timestamp field types
+// shared by canonical mutations and their events.
+func equalAuditEnvelopeValue(left, right audit.Value) bool {
 	if left.IsAbsent() || right.IsAbsent() {
 		return left.IsAbsent() && right.IsAbsent()
 	}
