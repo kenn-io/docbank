@@ -125,6 +125,35 @@ func TestAuditedNodeCreationImportRejectsCrossVaultBaseline(t *testing.T) {
 	assert.Zero(t, auditRows)
 }
 
+func TestAuditedNodeCreationImportRejectsProtectedVersionReuse(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	seedMetadataRoundTrip(t, s)
+	scope, err := s.NodeByPath(t.Context(), "/Projects")
+	require.NoError(t, err)
+	seedInitialAuditAuthority(t, s, scope.ID)
+	created, err := s.CreateFile(
+		t.Context(), scope.ID, "collision.txt", fakeHash("ac3"), 23, "text/plain",
+	)
+	require.NoError(t, err)
+	var exported bytes.Buffer
+	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
+	malformed := rewriteCreatedVersionCollision(
+		t, exported.Bytes(), created.ID, created.CurrentVersionID,
+		metadataVersionOld, metadataHashVersion,
+	)
+
+	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restored.Close()) })
+	err = restored.ImportMetadata(t.Context(), bytes.NewReader(malformed))
+	require.ErrorContains(t, err, "reuses protected content version "+metadataVersionOld)
+	var auditRows int64
+	require.NoError(t, restored.db.QueryRow(`SELECT COUNT(*) FROM audit_records`).Scan(&auditRows))
+	assert.Zero(t, auditRows)
+}
+
 func TestAuditedNodeCreationRollsBackWholeOperation(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
@@ -185,6 +214,97 @@ type auditRecordRewriteFixture struct {
 
 func rewriteCreatedBaselineVault(t *testing.T, input []byte, vaultID string) []byte {
 	t.Helper()
+	return rewriteCreatedOperation(t, input, createdOperationRewrite{
+		baseline: func(record audit.Record) audit.Record {
+			return mustReplaceAuditRecordField(
+				t, record, auditVaultIDField, mustAuditUUID(t, vaultID),
+			)
+		},
+	})
+}
+
+func rewriteCreatedVersionCollision(
+	t *testing.T, input []byte, nodeID int64,
+	createdVersionID, protectedVersionID, protectedBlobHash string,
+) []byte {
+	t.Helper()
+	protectedVersion := mustAuditUUID(t, protectedVersionID)
+	return rewriteCreatedOperation(t, input, createdOperationRewrite{
+		baseline: func(record audit.Record) audit.Record {
+			states, err := auditRecordListField(record, "member_states")
+			require.NoError(t, err)
+			require.Len(t, states, 1)
+			states[0] = mustReplaceAuditRecordField(
+				t, states[0], "current_version_id", protectedVersion,
+			)
+			versions, err := auditRecordListField(record, "versions")
+			require.NoError(t, err)
+			require.Len(t, versions, 1)
+			versions[0] = mustReplaceAuditRecordField(
+				t, versions[0], "version_id", protectedVersion,
+			)
+			record = mustReplaceAuditRecordField(
+				t, record, "member_states", audit.List(audit.Nested(states[0])),
+			)
+			return mustReplaceAuditRecordField(
+				t, record, "versions", audit.List(audit.Nested(versions[0])),
+			)
+		},
+		event: func(record audit.Record) audit.Record {
+			record = mustReplaceAuditRecordField(
+				t, record, "resulting_current_version_id", protectedVersion,
+			)
+			kind, err := auditTextField(record, "event_kind")
+			require.NoError(t, err)
+			if kind != "content_create" {
+				return record
+			}
+			post, err := auditNestedField(record, "post")
+			require.NoError(t, err)
+			post = mustReplaceAuditRecordField(t, post, "version_id", protectedVersion)
+			return mustReplaceAuditRecordField(t, record, "post", audit.Nested(post))
+		},
+		metadata: func(kind string, raw []byte) []byte {
+			switch kind {
+			case "blob":
+				var blob metadataBlob
+				require.NoError(t, json.Unmarshal(raw, &blob))
+				if blob.Hash == protectedBlobHash {
+					return nil
+				}
+			case "content_version":
+				var version metadataContentVersion
+				require.NoError(t, json.Unmarshal(raw, &version))
+				switch version.VersionID {
+				case protectedVersionID:
+					return nil
+				case createdVersionID:
+					version.VersionID = protectedVersionID
+					return mustMarshalJSON(t, version)
+				}
+			case "node":
+				var node metadataNode
+				require.NoError(t, json.Unmarshal(raw, &node))
+				if node.ID == nodeID {
+					node.CurrentVersionID = &protectedVersionID
+					return mustMarshalJSON(t, node)
+				}
+			}
+			return raw
+		},
+	})
+}
+
+type createdOperationRewrite struct {
+	baseline func(audit.Record) audit.Record
+	event    func(audit.Record) audit.Record
+	metadata func(string, []byte) []byte
+}
+
+func rewriteCreatedOperation(
+	t *testing.T, input []byte, plan createdOperationRewrite,
+) []byte {
+	t.Helper()
 	lines := bytes.Split(bytes.TrimSpace(input), []byte{'\n'})
 	records := make(map[string]auditRecordRewriteFixture)
 	for _, line := range lines {
@@ -219,36 +339,44 @@ func rewriteCreatedBaselineVault(t *testing.T, input []byte, vaultID string) []b
 		cause, err := auditTextField(record, "cause")
 		return err == nil && cause == "node_create"
 	})
-	baseline, err := replaceAuditRecordField(baseline, auditVaultIDField, mustAuditUUID(t, vaultID))
-	require.NoError(t, err)
+	if plan.baseline != nil {
+		baseline = plan.baseline(baseline)
+	}
 	newBaseline := rewrite(oldBaseline, baseline)
 
-	oldEventWrapper, eventWrapper := findAuditRecord(t, records, func(record audit.Record) bool {
-		if record.Kind != auditEventField {
-			return false
-		}
-		event, err := auditNestedField(record, auditEventField)
-		if err != nil {
-			return false
-		}
-		kind, err := auditTextField(event, "event_kind")
-		if err != nil || kind != "audit_inherit" {
-			return false
-		}
-		digest, err := auditDigestField(event, "baseline_digest")
-		return err == nil && digest == oldBaseline
-	})
-	inheritedEvent, err := auditNestedField(eventWrapper, auditEventField)
+	operationID, err := auditUUIDField(baseline, auditOperationIDField)
 	require.NoError(t, err)
-	inheritedEvent, err = replaceAuditRecordField(
-		inheritedEvent, "baseline_digest", mustAuditDigest(t, newBaseline),
-	)
-	require.NoError(t, err)
-	eventWrapper, err = replaceAuditRecordField(
-		eventWrapper, auditEventField, audit.Nested(inheritedEvent),
-	)
-	require.NoError(t, err)
-	rewrite(oldEventWrapper, eventWrapper)
+	rewrittenEvents := make(map[string]audit.Record)
+	for digest, fixture := range records {
+		if fixture.record.Kind != auditEventField {
+			continue
+		}
+		event, eventErr := auditNestedField(fixture.record, auditEventField)
+		require.NoError(t, eventErr)
+		eventOperationID, eventErr := auditUUIDField(event, auditOperationIDField)
+		require.NoError(t, eventErr)
+		if eventOperationID != operationID {
+			continue
+		}
+		baselineValue, eventErr := auditField(event, "baseline_digest")
+		require.NoError(t, eventErr)
+		if eventBaseline, ok := baselineValue.DigestValue(); ok && eventBaseline == oldBaseline {
+			event = mustReplaceAuditRecordField(
+				t, event, "baseline_digest", mustAuditDigest(t, newBaseline),
+			)
+		}
+		if plan.event != nil {
+			event = plan.event(event)
+		}
+		wrapper := mustReplaceAuditRecordField(
+			t, fixture.record, auditEventField, audit.Nested(event),
+		)
+		rewrite(digest, wrapper)
+		eventID, eventErr := auditDigestField(event, "event_id")
+		require.NoError(t, eventErr)
+		rewrittenEvents[eventID] = event
+	}
+	require.NotEmpty(t, rewrittenEvents)
 
 	oldMutation, mutation := findAuditRecord(t, records, func(record audit.Record) bool {
 		if record.Kind != "canonical_mutation" {
@@ -273,12 +401,11 @@ func rewriteCreatedBaselineVault(t *testing.T, input []byte, vaultID string) []b
 	require.NoError(t, err)
 	events, err := auditRecordListField(mutation, "events")
 	require.NoError(t, err)
-	wantEventID, err := auditDigestField(inheritedEvent, "event_id")
-	require.NoError(t, err)
 	for index := range events {
 		eventID, eventErr := auditDigestField(events[index], "event_id")
-		if eventErr == nil && eventID == wantEventID {
-			events[index] = inheritedEvent
+		require.NoError(t, eventErr)
+		if replacement, ok := rewrittenEvents[eventID]; ok {
+			events[index] = replacement
 		}
 	}
 	mutation, err = replaceAuditRecordField(
@@ -351,8 +478,33 @@ func rewriteCreatedBaselineVault(t *testing.T, input []byte, vaultID string) []b
 				require.NoError(t, err)
 			}
 		}
+		if plan.metadata != nil {
+			lines[index] = plan.metadata(header.Type, lines[index])
+		}
 	}
-	return append(bytes.Join(lines, []byte{'\n'}), '\n')
+	kept := lines[:0]
+	for _, line := range lines {
+		if line != nil {
+			kept = append(kept, line)
+		}
+	}
+	return append(bytes.Join(kept, []byte{'\n'}), '\n')
+}
+
+func mustReplaceAuditRecordField(
+	t *testing.T, record audit.Record, name string, value audit.Value,
+) audit.Record {
+	t.Helper()
+	result, err := replaceAuditRecordField(record, name, value)
+	require.NoError(t, err)
+	return result
+}
+
+func mustMarshalJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	result, err := json.Marshal(value)
+	require.NoError(t, err)
+	return result
 }
 
 func findAuditRecord(

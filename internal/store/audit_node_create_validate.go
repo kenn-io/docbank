@@ -303,6 +303,9 @@ func (replay *auditedHistoryReplay) validateNodeCreationBaseline(
 		if current == nil || len(versions) != 1 {
 			return errors.New("created file baseline lacks its initial content")
 		}
+		if _, exists := replay.versions[*current]; exists {
+			return fmt.Errorf("created file reuses protected content version %s", *current)
+		}
 		if err := validateCreatedContentVersion(
 			versions[0], creation.childID, *current, operationID, mutation,
 		); err != nil {
@@ -666,6 +669,9 @@ func (replay *auditedHistoryReplay) applyNodeCreationState(
 		versionID, err := auditUUIDField(*creation.version, "version_id")
 		if err != nil {
 			return err
+		}
+		if _, exists := replay.versions[versionID]; exists {
+			return fmt.Errorf("created file reuses protected content version %s", versionID)
 		}
 		replay.versions[versionID] = *creation.version
 	}
