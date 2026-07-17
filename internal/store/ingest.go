@@ -144,10 +144,11 @@ func (s *Store) IngestFile(ctx context.Context, ingestID string, parentID int64,
 	if originalMtime != "" {
 		recordedMtime = &originalMtime
 	}
-	if err := validateProvenanceRecord(metadataProvenance{
-		Type: "provenance", NodeID: 1, IngestID: ingestID,
+	provenance := metadataProvenance{
+		Type: metadataProvenanceType, NodeID: 1, IngestID: ingestID,
 		OriginalPath: originalPath, OriginalMTime: recordedMtime,
-	}); err != nil {
+	}
+	if err := validateProvenanceFields(provenance); err != nil {
 		return Node{}, false, fmt.Errorf("validating ingest provenance: %w", err)
 	}
 	var (
@@ -171,10 +172,20 @@ func (s *Store) IngestFile(ctx context.Context, ingestID string, parentID int64,
 		if err != nil {
 			return err
 		}
+		provenance.NodeID = created.ID
+		provenance.Identity, err = provenanceIdentity(provenance)
+		if err != nil {
+			return fmt.Errorf("identifying provenance for %q: %w", finalName, err)
+		}
+		if err := validateProvenanceRecord(provenance); err != nil {
+			return fmt.Errorf("validating provenance for %q: %w", finalName, err)
+		}
 		if _, err := tx.Exec(
-			`INSERT INTO provenance (node_id, ingest_id, original_path, original_mtime)
-			 VALUES (?, ?, ?, ?)`,
-			created.ID, ingestID, originalPath, recordedMtime); err != nil {
+			`INSERT INTO provenance (
+				identity, node_id, ingest_id, original_path, original_mtime, supersedes
+			 ) VALUES (?, ?, ?, ?, ?, ?)`,
+			provenance.Identity, provenance.NodeID, provenance.IngestID,
+			provenance.OriginalPath, provenance.OriginalMTime, provenance.Supersedes); err != nil {
 			return fmt.Errorf("recording provenance for %q: %w", finalName, err)
 		}
 		added = true

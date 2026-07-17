@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"database/sql"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -93,17 +94,47 @@ func TestIngestFileRecordsProvenance(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, added)
 
-	var origPath, origMtime string
+	var identity, origPath, origMtime string
+	var supersedes sql.NullString
 	require.NoError(t, s.db.QueryRow(
-		`SELECT original_path, original_mtime FROM provenance WHERE node_id = ?`,
-		n.ID).Scan(&origPath, &origMtime))
+		`SELECT identity, original_path, original_mtime, supersedes
+		 FROM provenance WHERE node_id = ?`,
+		n.ID).Scan(&identity, &origPath, &origMtime, &supersedes))
 	assert.Equal(t, "/orig/a.txt", origPath)
 	assert.Equal(t, "2026-01-02T03:04:05Z", origMtime)
+	assert.False(t, supersedes.Valid)
 	var storedIngestID string
 	require.NoError(t, s.db.QueryRow(
 		`SELECT ingest_id FROM provenance WHERE node_id = ?`, n.ID,
 	).Scan(&storedIngestID))
 	assert.Equal(t, ing, storedIngestID)
+	wantIdentity, err := provenanceIdentity(metadataProvenance{
+		Type: metadataProvenanceType, NodeID: n.ID, IngestID: ing,
+		OriginalPath: origPath, OriginalMTime: &origMtime,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, wantIdentity, identity)
+}
+
+func TestIngestAndProvenanceFactsAreImmutable(t *testing.T) {
+	s := newTestStore(t)
+	ingestID, err := s.BeginIngest(t.Context(), "cli", "source")
+	require.NoError(t, err)
+	node, added, err := s.IngestFile(t.Context(), ingestID, s.RootID(),
+		"a.txt", fakeHash("a1"), 1, "text/plain", "/source/a.txt", "")
+	require.NoError(t, err)
+	require.True(t, added)
+
+	_, err = s.db.Exec(`UPDATE ingests SET source_desc='rewritten' WHERE id=?`, ingestID)
+	require.ErrorContains(t, err, "ingest records are immutable")
+	_, err = s.db.Exec(`UPDATE provenance SET original_path='/rewritten' WHERE node_id=?`, node.ID)
+	require.ErrorContains(t, err, "provenance records are immutable")
+
+	var sourceDesc, originalPath string
+	require.NoError(t, s.db.QueryRow(`SELECT source_desc FROM ingests WHERE id=?`, ingestID).Scan(&sourceDesc))
+	require.NoError(t, s.db.QueryRow(`SELECT original_path FROM provenance WHERE node_id=?`, node.ID).Scan(&originalPath))
+	assert.Equal(t, "source", sourceDesc)
+	assert.Equal(t, "/source/a.txt", originalPath)
 }
 
 func TestBeginIngestAllocatesDistinctUUIDs(t *testing.T) {

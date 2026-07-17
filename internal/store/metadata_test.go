@@ -69,6 +69,8 @@ func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 	assert.Contains(t, first.String(), `{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"`+
 		sourceVaultID+`","node_sequence":100}`)
 	assert.Contains(t, first.String(), `"original_mtime":"2026-02-03T04:05:06.12Z"`)
+	assert.Contains(t, first.String(), `"type":"provenance","identity":"`)
+	assert.Contains(t, first.String(), `"supersedes":null`)
 	assert.Contains(t, first.String(), `{"type":"node","id":7,"parent_id":1,"name":"Projects","kind":"dir"`)
 	assert.NotContains(t, first.String(), "blob_pack_index")
 	assert.NotContains(t, first.String(), "metadata-pack")
@@ -128,6 +130,104 @@ func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 	created, err := target.Mkdir(ctx, target.RootID(), "after-restore")
 	require.NoError(t, err)
 	assert.Greater(t, created.ID, int64(100), "AUTOINCREMENT must not reuse any historically allocated ID")
+}
+
+func TestImportMetadataRejectsInvalidProvenanceAuthorityAndRollsBack(t *testing.T) {
+	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, source.Close()) })
+	seedMetadataRoundTrip(t, source)
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(t.Context(), &exported))
+	prior := firstProvenanceRecord(t, exported.Bytes())
+
+	dangling := strings.Repeat("d", 64)
+	crossNode := metadataProvenance{
+		Type: metadataProvenanceType, NodeID: 11, IngestID: prior.IngestID,
+		OriginalPath: "/source/cross-node.txt", Supersedes: &prior.Identity,
+	}
+	crossNode.Identity, err = provenanceIdentity(crossNode)
+	require.NoError(t, err)
+	firstSuccessor := metadataProvenance{
+		Type: metadataProvenanceType, NodeID: prior.NodeID, IngestID: prior.IngestID,
+		OriginalPath: "/source/corrected-one.txt", Supersedes: &prior.Identity,
+	}
+	firstSuccessor.Identity, err = provenanceIdentity(firstSuccessor)
+	require.NoError(t, err)
+	secondSuccessor := metadataProvenance{
+		Type: metadataProvenanceType, NodeID: prior.NodeID, IngestID: prior.IngestID,
+		OriginalPath: "/source/corrected-two.txt", Supersedes: &prior.Identity,
+	}
+	secondSuccessor.Identity, err = provenanceIdentity(secondSuccessor)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name  string
+		input []byte
+		want  string
+	}{
+		{
+			name: "identity mismatch",
+			input: mutateFirstProvenanceRecord(t, exported.Bytes(), false, func(record *metadataProvenance) {
+				record.OriginalPath = "/source/altered.txt"
+			}),
+			want: "provenance identity does not match",
+		},
+		{
+			name: "dangling predecessor",
+			input: mutateFirstProvenanceRecord(t, exported.Bytes(), true, func(record *metadataProvenance) {
+				record.Supersedes = &dangling
+			}),
+			want: "provenance supersedes a missing fact",
+		},
+		{
+			name:  "cross-node predecessor",
+			input: appendMetadataRecords(t, exported.Bytes(), crossNode),
+			want:  "provenance supersession must stay on one node",
+		},
+		{
+			name:  "two direct successors",
+			input: appendMetadataRecords(t, exported.Bytes(), firstSuccessor, secondSuccessor),
+			want:  "UNIQUE constraint failed",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			target, openErr := Open(filepath.Join(t.TempDir(), "target.db"))
+			require.NoError(t, openErr)
+			t.Cleanup(func() { require.NoError(t, target.Close()) })
+			targetVaultID := target.VaultID()
+			importErr := target.ImportMetadata(t.Context(), bytes.NewReader(test.input))
+			require.ErrorContains(t, importErr, test.want)
+			assert.Equal(t, targetVaultID, target.VaultID())
+			var nodes, provenanceRows int64
+			require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodes))
+			require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM provenance`).Scan(&provenanceRows))
+			assert.Equal(t, int64(1), nodes)
+			assert.Zero(t, provenanceRows)
+		})
+	}
+}
+
+func TestMetadataRelationsRejectProvenanceCycle(t *testing.T) {
+	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, source.Close()) })
+	seedMetadataRoundTrip(t, source)
+	firstIdentity := strings.Repeat("d", 64)
+	secondIdentity := strings.Repeat("e", 64)
+	_, err = source.db.Exec(`INSERT INTO provenance(
+		identity,node_id,ingest_id,original_path,original_mtime,supersedes
+	) VALUES
+		(?,10,?,'/cycle/one',NULL,?),
+		(?,10,?,'/cycle/two',NULL,?)`,
+		firstIdentity, metadataIngestID, secondIdentity,
+		secondIdentity, metadataIngestID, firstIdentity)
+	require.NoError(t, err)
+	require.ErrorContains(t,
+		validateMetadataRelations(t.Context(), source.db),
+		"provenance supersession graph contains a cycle",
+	)
 }
 
 func TestImportMetadataRejectsDanglingContentAndRollsBack(t *testing.T) {
@@ -787,6 +887,12 @@ func TestImportMetadataRejectsDuplicateStableRecordIDsTransactionally(t *testing
 func seedMetadataRoundTrip(t *testing.T, s *Store) {
 	t.Helper()
 	ctx := context.Background()
+	originalMTime := "2025-12-31T23:00:00.12Z"
+	provenanceID, err := provenanceIdentity(metadataProvenance{
+		Type: metadataProvenanceType, NodeID: 10, IngestID: metadataIngestID,
+		OriginalPath: "/source/report.txt", OriginalMTime: &originalMTime,
+	})
+	require.NoError(t, err)
 	require.NoError(t, s.withTx(ctx, func(tx *sql.Tx) error {
 		statements := []string{
 			`UPDATE nodes SET created_at='2026-01-01T00:00:00.000000000Z', modified_at='2026-01-02T00:00:00.000000000Z' WHERE id=1`,
@@ -817,8 +923,8 @@ func seedMetadataRoundTrip(t *testing.T, s *Store) {
 			  '2026-01-10T00:00:00.000000000Z',1,'cccccccc-cccc-4ccc-8ccc-cccccccccccc','content_create',NULL)`,
 			`INSERT INTO ingests(id,started_at,source_kind,source_desc)
 				 VALUES('` + metadataIngestID + `','2026-01-08T00:00:00.000000000Z','filesystem','dropbox')`,
-			`INSERT INTO provenance(node_id,ingest_id,original_path,original_mtime)
-				 VALUES(10,'` + metadataIngestID + `','/source/report.txt','2025-12-31T23:00:00.12Z')`,
+			`INSERT INTO provenance(identity,node_id,ingest_id,original_path,original_mtime,supersedes)
+				 VALUES('` + provenanceID + `',10,'` + metadataIngestID + `','/source/report.txt','` + originalMTime + `',NULL)`,
 			`INSERT INTO tags(id,name,revision) VALUES('` + metadataTagID + `','important',7)`,
 			`INSERT INTO node_tags(node_id,tag_id) VALUES(10,'` + metadataTagID + `')`,
 			`INSERT INTO extracted_text(blob_hash,extractor,extractor_version,status,error,attempts,text,extracted_at)
@@ -838,4 +944,67 @@ func seedMetadataRoundTrip(t *testing.T, s *Store) {
 		}
 		return nil
 	}))
+}
+
+func firstProvenanceRecord(t *testing.T, input []byte) metadataProvenance {
+	t.Helper()
+	for line := range bytes.SplitSeq(bytes.TrimSpace(input), []byte{'\n'}) {
+		var kind struct {
+			Type string `json:"type"`
+		}
+		require.NoError(t, json.Unmarshal(line, &kind))
+		if kind.Type != metadataProvenanceType {
+			continue
+		}
+		var record metadataProvenance
+		require.NoError(t, json.Unmarshal(line, &record))
+		return record
+	}
+	require.FailNow(t, "metadata lacks provenance record")
+	return metadataProvenance{}
+}
+
+func mutateFirstProvenanceRecord(
+	t *testing.T,
+	input []byte,
+	recomputeIdentity bool,
+	mutate func(*metadataProvenance),
+) []byte {
+	t.Helper()
+	lines := bytes.Split(bytes.TrimSpace(input), []byte{'\n'})
+	for index, line := range lines {
+		var kind struct {
+			Type string `json:"type"`
+		}
+		require.NoError(t, json.Unmarshal(line, &kind))
+		if kind.Type != metadataProvenanceType {
+			continue
+		}
+		var record metadataProvenance
+		require.NoError(t, json.Unmarshal(line, &record))
+		mutate(&record)
+		if recomputeIdentity {
+			var err error
+			record.Identity, err = provenanceIdentity(record)
+			require.NoError(t, err)
+		}
+		var err error
+		lines[index], err = json.Marshal(record)
+		require.NoError(t, err)
+		return append(bytes.Join(lines, []byte{'\n'}), '\n')
+	}
+	require.FailNow(t, "metadata lacks provenance record")
+	return nil
+}
+
+func appendMetadataRecords(t *testing.T, input []byte, records ...any) []byte {
+	t.Helper()
+	result := bytes.Clone(input)
+	for _, record := range records {
+		encoded, err := json.Marshal(record)
+		require.NoError(t, err)
+		result = append(result, encoded...)
+		result = append(result, '\n')
+	}
+	return result
 }
