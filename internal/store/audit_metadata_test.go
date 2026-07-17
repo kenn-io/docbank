@@ -3,7 +3,6 @@ package store
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"path/filepath"
@@ -327,250 +326,16 @@ func TestInitialAuditAuthorityReopens(t *testing.T) {
 
 func seedInitialAuditAuthority(t *testing.T, s *Store, targetNodeID int64) {
 	t.Helper()
-	ctx := context.Background()
-	topology, err := currentAuditTopology(ctx, s.db)
+	result, err := s.initializeAuditAuthorityWithInput(context.Background(), initialAuditEnrollmentInput{
+		targetNodeID: targetNodeID,
+		scopeID:      testAuditScopeID,
+		operationID:  testAuditOperationID,
+		lineageID:    testAuditLineageID,
+		recordedAt:   testAuditTimestamp,
+		origin:       "cli",
+	})
 	require.NoError(t, err)
-	attachments, err := currentAuditAttachments(ctx, s.db)
-	require.NoError(t, err)
-	var nodeSequence int64
-	require.NoError(t, s.db.QueryRow(
-		`SELECT seq FROM sqlite_sequence WHERE name='nodes'`).Scan(&nodeSequence))
-
-	topologyGenesis := audit.Record{Kind: "topology_genesis", Fields: []audit.Field{
-		{Name: "vault_id", Value: mustAuditUUID(t, s.VaultID())},
-		{Name: "lineage_id", Value: mustAuditUUID(t, testAuditLineageID)},
-		{Name: "nodes", Value: audit.List(auditNestedValues(topology)...)},
-	}}
-	attachmentGenesis := audit.Record{Kind: "attached_metadata_genesis", Fields: []audit.Field{
-		{Name: "vault_id", Value: mustAuditUUID(t, s.VaultID())},
-		{Name: "lineage_id", Value: mustAuditUUID(t, testAuditLineageID)},
-		{Name: "records", Value: audit.List(auditNestedValues(attachments)...)},
-	}}
-	topologyDigest := mustAuditRecordDigest(t, topologyGenesis)
-	attachmentDigest := mustAuditRecordDigest(t, attachmentGenesis)
-	allocationGenesis := audit.Record{Kind: "allocation_genesis", Fields: []audit.Field{
-		{Name: "vault_id", Value: mustAuditUUID(t, s.VaultID())},
-		{Name: "lineage_id", Value: mustAuditUUID(t, testAuditLineageID)},
-		{Name: "previous_head", Value: audit.Absent()},
-		{Name: "node_id_high_water", Value: audit.Unsigned(uint64(nodeSequence))},
-		{Name: "operation_sequence_high_water", Value: audit.Unsigned(0)},
-		{Name: "topology_count", Value: audit.Unsigned(uint64(len(topology)))},
-		{Name: "topology_digest", Value: mustAuditDigest(t, topologyDigest)},
-		{Name: "attached_metadata_count", Value: audit.Unsigned(uint64(len(attachments)))},
-		{Name: "attached_metadata_digest", Value: mustAuditDigest(t, attachmentDigest)},
-	}}
-	allocationGenesisDigest := mustAuditRecordDigest(t, allocationGenesis)
-
-	members, err := deriveInitialAuditMembers(ctx, s.db, uint64(targetNodeID))
-	require.NoError(t, err)
-	states, err := currentAuditMemberStates(ctx, s.db, members)
-	require.NoError(t, err)
-	versions, err := currentAuditVersions(ctx, s.db, members)
-	require.NoError(t, err)
-	baselineAttachments, err := auditRecordsForNodes(attachments, auditMemberSet(members))
-	require.NoError(t, err)
-	baselineNodes, witnesses, err := initialBaselineTopology(topology, members, testAuditOperationID)
-	require.NoError(t, err)
-	baseline := makeAuditEnrollmentBaseline(t, s.VaultID(), targetNodeID, members,
-		states, versions, baselineAttachments, baselineNodes, witnesses)
-	baselineDigest := mustAuditRecordDigest(t, baseline)
-	event := makeInitialAuditEvent(t, targetNodeID, baselineDigest, states)
-	eventWrapper := audit.Record{Kind: "event", Fields: []audit.Field{
-		{Name: "event", Value: audit.Nested(event)},
-	}}
-	mutation := makeInitialAuditMutation(t, s.VaultID(), targetNodeID, baselineDigest, event)
-	mutationDigest := mustAuditRecordDigest(t, mutation)
-	scopeEntry := audit.Record{Kind: "scope_chain_entry", Fields: []audit.Field{
-		{Name: "vault_id", Value: mustAuditUUID(t, s.VaultID())},
-		{Name: "scope_id", Value: mustAuditUUID(t, testAuditScopeID)},
-		{Name: "entry_count", Value: audit.Unsigned(1)},
-		{Name: "previous_head", Value: audit.Absent()},
-		{Name: "mutation_hash", Value: mustAuditDigest(t, mutationDigest)},
-	}}
-	allocationEntry := makeInitialAllocationEntry(t, s.VaultID(), nodeSequence,
-		allocationGenesisDigest, mutationDigest)
-
-	records := []audit.Record{topologyGenesis, attachmentGenesis, allocationGenesis,
-		baseline, eventWrapper, mutation, scopeEntry, allocationEntry}
-	require.NoError(t, s.withTx(ctx, func(tx *sql.Tx) error {
-		for _, record := range records {
-			if err := insertAuditRecordFixture(tx, record); err != nil {
-				return err
-			}
-		}
-		scopeHead := mustAuditRecordDigest(t, scopeEntry)
-		allocationHead := mustAuditRecordDigest(t, allocationEntry)
-		if _, err := tx.Exec(`INSERT INTO audit_authority VALUES(1,?,?,?,1,?)`,
-			testAuditLineageID, 1, allocationGenesisDigest, allocationHead); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(`INSERT INTO audit_scopes VALUES(?,?,?,1,?)`,
-			testAuditScopeID, targetNodeID, testAuditOperationID, scopeHead); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(`INSERT INTO audit_baselines VALUES(?,?,?,?)`,
-			baselineDigest, testAuditScopeID, targetNodeID, testAuditOperationID); err != nil {
-			return err
-		}
-		for _, member := range members {
-			if _, err := tx.Exec(`INSERT INTO audit_memberships VALUES(?,?,?)`,
-				testAuditScopeID, member, baselineDigest); err != nil {
-				return err
-			}
-		}
-		_, err := tx.Exec(`INSERT INTO audit_write_guard VALUES(1)`)
-		return err
-	}))
-}
-
-func makeAuditEnrollmentBaseline(
-	t *testing.T, vaultID string, targetNodeID int64, members []uint64,
-	states, versions, attachments, nodes, witnesses []audit.Record,
-) audit.Record {
-	t.Helper()
-	memberValues := make([]audit.Value, len(members))
-	for index, member := range members {
-		memberValues[index] = audit.Unsigned(member)
-	}
-	return audit.Record{Kind: "enrollment_baseline", Fields: []audit.Field{
-		{Name: "vault_id", Value: mustAuditUUID(t, vaultID)},
-		{Name: "scope_id", Value: mustAuditUUID(t, testAuditScopeID)},
-		{Name: "target_node_id", Value: audit.Unsigned(uint64(targetNodeID))},
-		{Name: "operation_id", Value: mustAuditUUID(t, testAuditOperationID)},
-		{Name: "cause", Value: mustAuditText(t, "explicit")},
-		{Name: "members", Value: audit.List(memberValues...)},
-		{Name: "member_states", Value: audit.List(auditNestedValues(states)...)},
-		{Name: "nodes", Value: audit.List(auditNestedValues(nodes)...)},
-		{Name: "versions", Value: audit.List(auditNestedValues(versions)...)},
-		{Name: "attachments", Value: audit.List(auditNestedValues(attachments)...)},
-		{Name: "witnesses", Value: audit.List(auditNestedValues(witnesses)...)},
-	}}
-}
-
-func makeInitialAuditEvent(
-	t *testing.T, targetNodeID int64, baselineDigest string, states []audit.Record,
-) audit.Record {
-	t.Helper()
-	operation := mustAuditUUID(t, testAuditOperationID)
-	eventIdentity := audit.Record{Kind: "event_identity", Fields: []audit.Field{
-		{Name: "operation_id", Value: operation},
-		{Name: "event_ordinal", Value: audit.Unsigned(0)},
-	}}
-	identityDigest := mustAuditRecordDigest(t, eventIdentity)
-	var targetState audit.Record
-	for _, state := range states {
-		id, err := auditUnsignedField(state, metadataNodeIDField)
-		require.NoError(t, err)
-		if id == uint64(targetNodeID) {
-			targetState = state
-		}
-	}
-	require.NotEmpty(t, targetState.Kind)
-	revision, err := auditUnsignedField(targetState, "node_revision")
-	require.NoError(t, err)
-	current, err := auditField(targetState, "current_version_id")
-	require.NoError(t, err)
-	return audit.Record{Kind: "audit_event", Fields: []audit.Field{
-		{Name: "event_id", Value: mustAuditDigest(t, identityDigest)},
-		{Name: "operation_id", Value: operation},
-		{Name: metadataNodeIDField, Value: audit.Unsigned(uint64(targetNodeID))},
-		{Name: "event_kind", Value: mustAuditText(t, "audit_enroll")},
-		{Name: "scope_id", Value: mustAuditUUID(t, testAuditScopeID)},
-		{Name: "target_node_id", Value: audit.Unsigned(uint64(targetNodeID))},
-		{Name: "attachment_kind", Value: audit.Absent()},
-		{Name: "attachment_identity", Value: audit.Absent()},
-		{Name: "source_version_id", Value: audit.Absent()},
-		{Name: "event_ordinal", Value: audit.Unsigned(0)},
-		{Name: "recorded_at", Value: mustAuditTimestamp(t, testAuditTimestamp)},
-		{Name: "prior_node_revision", Value: audit.Unsigned(revision)},
-		{Name: "resulting_node_revision", Value: audit.Unsigned(revision)},
-		{Name: "prior_current_version_id", Value: current},
-		{Name: "resulting_current_version_id", Value: current},
-		{Name: "origin", Value: mustAuditText(t, "cli")},
-		{Name: "agent_label", Value: audit.Absent()},
-		{Name: "pre", Value: audit.Absent()},
-		{Name: "post", Value: audit.Absent()},
-		{Name: "topology_delta", Value: audit.Absent()},
-		{Name: "baseline_digest", Value: mustAuditDigest(t, baselineDigest)},
-	}}
-}
-
-func makeInitialAuditMutation(
-	t *testing.T, vaultID string, targetNodeID int64, baselineDigest string,
-	event audit.Record,
-) audit.Record {
-	t.Helper()
-	binding := audit.Record{Kind: "baseline_binding", Fields: []audit.Field{
-		{Name: "scope_id", Value: mustAuditUUID(t, testAuditScopeID)},
-		{Name: "target_node_id", Value: audit.Unsigned(uint64(targetNodeID))},
-		{Name: "baseline_digest", Value: mustAuditDigest(t, baselineDigest)},
-	}}
-	return audit.Record{Kind: "canonical_mutation", Fields: []audit.Field{
-		{Name: "vault_id", Value: mustAuditUUID(t, vaultID)},
-		{Name: "operation_sequence", Value: audit.Unsigned(1)},
-		{Name: "operation_id", Value: mustAuditUUID(t, testAuditOperationID)},
-		{Name: "grouping_id", Value: audit.Absent()},
-		{Name: "recorded_at", Value: mustAuditTimestamp(t, testAuditTimestamp)},
-		{Name: "origin", Value: mustAuditText(t, "cli")},
-		{Name: "agent_label", Value: audit.Absent()},
-		{Name: "events", Value: audit.List(audit.Nested(event))},
-		{Name: "member_state_changes", Value: audit.List()},
-		{Name: "baselines", Value: audit.List(audit.Nested(binding))},
-		{Name: "topology_delta", Value: audit.Absent()},
-		{Name: "path_effect_count", Value: audit.Unsigned(0)},
-		{Name: "path_effect_digest", Value: audit.Absent()},
-		{Name: "witness_change_count", Value: audit.Unsigned(0)},
-		{Name: "witness_change_digest", Value: audit.Absent()},
-		{Name: "attached_metadata_change_count", Value: audit.Unsigned(0)},
-		{Name: "attached_metadata_change_digest", Value: audit.Absent()},
-	}}
-}
-
-func makeInitialAllocationEntry(
-	t *testing.T, vaultID string, nodeSequence int64, genesisDigest, mutationDigest string,
-) audit.Record {
-	t.Helper()
-	return audit.Record{Kind: "allocation_entry", Fields: []audit.Field{
-		{Name: "vault_id", Value: mustAuditUUID(t, vaultID)},
-		{Name: "lineage_id", Value: mustAuditUUID(t, testAuditLineageID)},
-		{Name: "previous_head", Value: mustAuditDigest(t, genesisDigest)},
-		{Name: "operation_sequence", Value: audit.Unsigned(1)},
-		{Name: "operation_id", Value: mustAuditUUID(t, testAuditOperationID)},
-		{Name: "allocated_node_ids", Value: audit.List()},
-		{Name: "node_id_high_water", Value: audit.Unsigned(uint64(nodeSequence))},
-		{Name: "operation_sequence_high_water", Value: audit.Unsigned(1)},
-		{Name: "has_audited_mutation", Value: audit.Bool(true)},
-		{Name: "mutation_hash", Value: mustAuditDigest(t, mutationDigest)},
-		{Name: "has_topology_change", Value: audit.Bool(false)},
-		{Name: "topology_delta", Value: audit.Absent()},
-		{Name: "has_witness_change", Value: audit.Bool(false)},
-		{Name: "witness_change_count", Value: audit.Unsigned(0)},
-		{Name: "witness_change_digest", Value: audit.Absent()},
-		{Name: "has_attached_metadata_change", Value: audit.Bool(false)},
-		{Name: "attached_metadata_change_count", Value: audit.Unsigned(0)},
-		{Name: "attached_metadata_change_digest", Value: audit.Absent()},
-	}}
-}
-
-func insertAuditRecordFixture(tx *sql.Tx, record audit.Record) error {
-	digestValue, err := audit.Hash(record)
-	if err != nil {
-		return err
-	}
-	digest := hex.EncodeToString(digestValue[:])
-	recordJSON, err := audit.MarshalJSONRecord(record)
-	if err != nil {
-		return err
-	}
-	index, err := indexAuditRecord(record)
-	if err != nil {
-		return err
-	}
-	_, err = tx.Exec(`INSERT INTO audit_records(digest,kind,operation_id,operation_sequence,
-		scope_id,entry_count,event_id,event_ordinal,record_json) VALUES(?,?,?,?,?,?,?,?,?)`,
-		digest, record.Kind, index.operationID, index.operationSequence, index.scopeID,
-		index.entryCount, index.eventID, index.eventOrdinal, string(recordJSON))
-	return err
+	require.NotEmpty(t, result.baselineDigest)
 }
 
 func mustAuditRecordDigest(t *testing.T, record audit.Record) string {
@@ -590,20 +355,6 @@ func mustAuditUUID(t *testing.T, value string) audit.Value {
 func mustAuditDigest(t *testing.T, value string) audit.Value {
 	t.Helper()
 	result, err := audit.DigestHex(value)
-	require.NoError(t, err)
-	return result
-}
-
-func mustAuditText(t *testing.T, value string) audit.Value {
-	t.Helper()
-	result, err := audit.Text(value)
-	require.NoError(t, err)
-	return result
-}
-
-func mustAuditTimestamp(t *testing.T, value string) audit.Value {
-	t.Helper()
-	result, err := audit.Timestamp(value)
 	require.NoError(t, err)
 	return result
 }
