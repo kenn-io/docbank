@@ -104,9 +104,7 @@ func loadAuditedReplacementAuthority(
 		return authority, nil, 0, fmt.Errorf("reading audit memberships for node %d: %w", nodeID, err)
 	}
 	if len(scopes) == 0 {
-		return authority, nil, 0, fmt.Errorf(
-			"node %d is not in an audit scope: %w", nodeID, ErrAuditMutationUnsupported,
-		)
+		return authority, nil, 0, unsupportedAuditedContentReplacement(nodeID)
 	}
 	var nodeSequence int64
 	if err := tx.QueryRowContext(ctx,
@@ -115,6 +113,10 @@ func loadAuditedReplacementAuthority(
 		return authority, nil, 0, fmt.Errorf("reading node ID high-water mark: %w", err)
 	}
 	return authority, scopes, nodeSequence, nil
+}
+
+func unsupportedAuditedContentReplacement(nodeID int64) error {
+	return fmt.Errorf("node %d is not in an audit scope: %w", nodeID, ErrAuditMutationUnsupported)
 }
 
 func nextAuditInteger(name string, value int64) (int64, error) {

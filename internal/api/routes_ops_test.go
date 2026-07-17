@@ -21,6 +21,7 @@ import (
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/store"
+	docsqlite "go.kenn.io/docbank/pkg/sqlite"
 )
 
 func TestIngestEndpoint(t *testing.T) {
@@ -521,6 +522,28 @@ func TestVerifyEndpoint(t *testing.T) {
 	assert.Equal(t, 1, rep.OK)
 	assert.Empty(t, rep.Problems)
 	assert.Empty(t, rep.MetadataProblems)
+}
+
+func TestVerifyEndpointReportsMalformedBlobMetadata(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	created := createFileWithContent(t, ts, s, "/malformed.txt", "still verifiable")
+
+	db, err := s.SQLiteDriver().Open(s.DBPath, docsqlite.OpenOptions{
+		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+	})
+	require.NoError(t, err)
+	_, err = db.ExecContext(t.Context(), `UPDATE blobs SET size='not-an-integer' WHERE hash=?`, created.BlobHash)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/verify", nil, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var rep api.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(body), &rep))
+	assert.Equal(t, 1, rep.OK)
+	assert.Empty(t, rep.Problems)
+	require.Len(t, rep.MetadataProblems, 1)
+	assert.Contains(t, rep.MetadataProblems[0], "size")
 }
 
 func TestMaintenanceGateQueuesMutations(t *testing.T) {

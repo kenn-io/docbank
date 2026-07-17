@@ -308,11 +308,29 @@ func installContentVersionWithOperationTx(
 // before a caller streams bytes. ReplaceContent repeats them transactionally,
 // because this preflight is an optimization rather than mutation authority.
 func (s *Store) CheckContentReplacementTarget(ctx context.Context, nodeID, ifRev int64) error {
-	n, err := s.NodeByID(ctx, nodeID)
-	if err != nil {
-		return err
-	}
-	return validateContentReplacementTarget(n, ifRev)
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		n, err := nodeByIDTx(tx, nodeID)
+		if err != nil {
+			return err
+		}
+		if err := validateContentReplacementTarget(n, ifRev); err != nil {
+			return err
+		}
+		audited, err := auditAuthorityActiveTx(ctx, tx)
+		if err != nil || !audited {
+			return err
+		}
+		var member bool
+		if err := tx.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM audit_memberships WHERE node_id=?)`, nodeID,
+		).Scan(&member); err != nil {
+			return fmt.Errorf("checking audit membership for node %d: %w", nodeID, err)
+		}
+		if !member {
+			return unsupportedAuditedContentReplacement(nodeID)
+		}
+		return nil
+	})
 }
 
 func validateContentReplacementTarget(n Node, ifRev int64) error {

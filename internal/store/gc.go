@@ -87,6 +87,29 @@ func (s *Store) AllBlobs(ctx context.Context) ([]BlobInfo, error) {
 	return scanBlobInfos(rows, "listing blobs")
 }
 
+// AllBlobHashes lists every recorded blob identity without reading ancillary
+// metadata. Integrity verification uses this after separately validating the
+// metadata stream, so one malformed scalar does not suppress the useful report.
+func (s *Store) AllBlobHashes(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT hash FROM blobs ORDER BY hash`)
+	if err != nil {
+		return nil, fmt.Errorf("listing blob hashes: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var hashes []string
+	for rows.Next() {
+		var hash string
+		if err := rows.Scan(&hash); err != nil {
+			return nil, fmt.Errorf("scanning blob hash: %w", err)
+		}
+		hashes = append(hashes, hash)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("listing blob hashes: %w", err)
+	}
+	return hashes, nil
+}
+
 // PackedBlobStoredBytes returns the physical stored length of every cataloged
 // packed blob. GC uses it to distinguish bytes unlinked immediately from dead
 // immutable-pack space that requires a later repack.

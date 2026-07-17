@@ -111,6 +111,10 @@ func TestAuditedVaultRejectsReplacementOutsideScope(t *testing.T) {
 	scope, err := s.NodeByPath(t.Context(), "/Projects")
 	require.NoError(t, err)
 	seedInitialAuditAuthority(t, s, scope.ID)
+	require.ErrorIs(t,
+		s.CheckContentReplacementTarget(t.Context(), outside.ID, outside.Revision),
+		ErrAuditMutationUnsupported,
+	)
 
 	_, _, err = s.ReplaceContent(
 		t.Context(), outside.ID, outside.Revision, fakeHash("e5"), 23, "text/markdown",
