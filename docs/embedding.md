@@ -67,6 +67,13 @@ version while preserving the node ID. Supply `PutOptions.Expected` when the
 caller already knows the SHA-256 and byte count and wants Docbank to reject a
 mismatched stream before granting metadata authority.
 
+`Put` is an idempotent content write, not an integrity repair primitive. Kit's
+structural dedup can reuse an existing canonical representation without hashing
+it, and packed catalog authority can remain selected over a loose copy.
+Consumers repairing a corrupt current version must publish different bytes or
+use Docbank verify/restore; they must verify the resulting head before treating
+its bytes as authoritative.
+
 `vault.ID()` returns the archive's stable UUID. JSONL backup and restore
 preserve that identity even when the restored vault has a different filesystem
 root; applications can therefore distinguish logical archives without treating

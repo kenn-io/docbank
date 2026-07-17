@@ -198,6 +198,28 @@ func (v *Vault) Children(
 	return page, nil
 }
 
+func (v *Vault) Versions(
+	ctx context.Context, nodeID int64, opts VersionsOptions,
+) (VersionsPage, error) {
+	if err := v.begin(); err != nil {
+		return VersionsPage{}, err
+	}
+	defer v.lifecycle.RUnlock()
+	limit := opts.Limit
+	if limit == 0 {
+		limit = DefaultVersionsLimit
+	}
+	versions, total, err := v.metadata.ContentVersions(ctx, nodeID, limit, opts.Offset)
+	if err != nil {
+		return VersionsPage{}, err
+	}
+	page := VersionsPage{Items: make([]ContentVersion, 0, len(versions)), Total: total, Limit: limit, Offset: opts.Offset}
+	for _, version := range versions {
+		page.Items = append(page.Items, fromStoreVersion(version))
+	}
+	return page, nil
+}
+
 // PutOptions controls one embedded content write. Expected is optional; when
 // present, no node or version authority is granted unless both fields match
 // the independently computed durable bytes.
@@ -357,6 +379,34 @@ func (v *Vault) OpenContent(ctx context.Context, virtualPath string) (*Content, 
 	return &Content{
 		Node:   fromStoreNode(node),
 		Reader: &leasedReader{VerifiedReadCloser: reader, release: v.lifecycle.RUnlock},
+	}, nil
+}
+
+// OpenVersionContent opens the catalog-authorized bytes for one immutable
+// content version. The reader holds a vault lease and uses the same verified
+// read contract as OpenContent.
+func (v *Vault) OpenVersionContent(ctx context.Context, versionID string) (*VersionContent, error) {
+	if err := v.begin(); err != nil {
+		return nil, err
+	}
+	version, err := v.metadata.ContentVersionByID(ctx, versionID)
+	if err != nil {
+		v.lifecycle.RUnlock()
+		return nil, err
+	}
+	reader, size, err := v.blobs.OpenStreamContext(ctx, version.BlobHash)
+	if err != nil {
+		v.lifecycle.RUnlock()
+		return nil, err
+	}
+	if size != version.Size {
+		closeErr := reader.Close()
+		v.lifecycle.RUnlock()
+		return nil, errors.Join(fmt.Errorf("catalog size %d does not match version size %d", size, version.Size), closeErr)
+	}
+	return &VersionContent{
+		Version: fromStoreVersion(version),
+		Reader:  &leasedReader{VerifiedReadCloser: reader, release: v.lifecycle.RUnlock},
 	}, nil
 }
 
