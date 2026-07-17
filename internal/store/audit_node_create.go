@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -15,7 +16,6 @@ type auditedCreationBaseline struct {
 	record   audit.Record
 	digest   auditRecordHash
 	binding  audit.Record
-	members  []uint64
 	nodeID   uint64
 	scopeID  audit.Value
 	version  *audit.Record
@@ -63,13 +63,13 @@ func persistAuditedNodeCreation(
 	if err != nil {
 		return err
 	}
-	baselines, err := buildAuditedCreationBaselines(
-		tx, values, scopes, created, version, createdTopology,
+	baseline, err := buildAuditedCreationBaseline(
+		tx, values, scopes[0], created, version, createdTopology,
 	)
 	if err != nil {
 		return err
 	}
-	events, err := makeAuditedCreationEvents(values, baselines, created, topologyDigest)
+	events, err := makeAuditedCreationEvents(values, baseline, created, topologyDigest)
 	if err != nil {
 		return err
 	}
@@ -82,19 +82,19 @@ func persistAuditedNodeCreation(
 		return err
 	}
 	mutation := makeAuditedCreationMutation(
-		values, auditOperationSequence, events, parentChange, baselines, topologyDigest,
+		values, auditOperationSequence, events, parentChange, baseline, topologyDigest,
 	)
 	mutationDigest, err := hashAuditRecord(mutation)
 	if err != nil {
 		return err
 	}
 	if err := persistAuditedCreationRecords(
-		ctx, tx, baselines, topologyDelta, events, mutation,
+		ctx, tx, baseline, topologyDelta, events, mutation,
 	); err != nil {
 		return err
 	}
-	if err := advanceAuditedCreationScopes(
-		ctx, tx, values, baselines, mutationDigest,
+	if err := advanceAuditedCreationScope(
+		ctx, tx, values, baseline, mutationDigest,
 	); err != nil {
 		return err
 	}
@@ -197,91 +197,75 @@ func sortAuditTopologyRecords(records []audit.Record) error {
 		}
 		keyed[index] = keyedRecord{id: id, record: record}
 	}
-	slices.SortFunc(keyed, func(left, right keyedRecord) int {
-		return cmpAuditNodeID(left.id, right.id)
-	})
+	slices.SortFunc(keyed, func(left, right keyedRecord) int { return cmp.Compare(left.id, right.id) })
 	for index := range keyed {
 		records[index] = keyed[index].record
 	}
 	return nil
 }
 
-func cmpAuditNodeID(left, right uint64) int {
-	if left < right {
-		return -1
-	}
-	if left > right {
-		return 1
-	}
-	return 0
-}
-
-func buildAuditedCreationBaselines(
+func buildAuditedCreationBaseline(
 	tx *sql.Tx, values auditedMutationValues,
-	scopes []auditScopeState, created Node, version ContentVersion,
+	scope auditScopeState, created Node, version ContentVersion,
 	createdTopology audit.Record,
-) ([]auditedCreationBaseline, error) {
+) (auditedCreationBaseline, error) {
 	nodeID, err := positiveAuditNodeID(created.ID)
 	if err != nil {
-		return nil, err
+		return auditedCreationBaseline{}, err
 	}
 	state, err := auditMemberStateForNode(created)
 	if err != nil {
-		return nil, err
+		return auditedCreationBaseline{}, err
 	}
 	var versions []audit.Record
 	var versionRecord *audit.Record
 	if !created.IsDir() {
 		record, err := auditRecordForContentVersion(version)
 		if err != nil {
-			return nil, err
+			return auditedCreationBaseline{}, err
 		}
 		versions = []audit.Record{record}
 		versionRecord = &versions[0]
 	}
 	nodes, witnesses, err := auditCreationBaselineTopology(tx, created.ID, values.operationID)
 	if err != nil {
-		return nil, err
+		return auditedCreationBaseline{}, err
 	}
-	result := make([]auditedCreationBaseline, len(scopes))
-	for index, scope := range scopes {
-		scopeID, err := audit.UUID(scope.scopeID)
-		if err != nil {
-			return nil, err
-		}
-		cause, err := audit.Text("node_create")
-		if err != nil {
-			return nil, err
-		}
-		eventKind, err := audit.Text("audit_inherit")
-		if err != nil {
-			return nil, err
-		}
-		initialValues := initialAuditValues{
-			vaultID: values.vaultID, scopeID: scopeID, operationID: values.operationID,
-			recordedAt: values.recordedAt, origin: values.origin, agentLabel: audit.Absent(),
-			cause: cause, eventKind: eventKind,
-		}
-		record := makeInitialAuditBaseline(
-			initialValues, nodeID, []uint64{nodeID}, []audit.Record{state},
-			versions, nil, nodes, witnesses,
-		)
-		digest, err := hashAuditRecord(record)
-		if err != nil {
-			return nil, err
-		}
-		binding := audit.Record{Kind: "baseline_binding", Fields: []audit.Field{
-			{Name: auditScopeIDField, Value: scopeID},
-			{Name: "target_node_id", Value: audit.Unsigned(nodeID)},
-			{Name: "baseline_digest", Value: digest.value},
-		}}
-		result[index] = auditedCreationBaseline{
-			scope: scope, record: record, digest: digest, binding: binding,
-			members: []uint64{nodeID}, nodeID: nodeID, scopeID: scopeID,
-			version: versionRecord, topology: createdTopology,
-		}
+	scopeID, err := audit.UUID(scope.scopeID)
+	if err != nil {
+		return auditedCreationBaseline{}, err
 	}
-	return result, nil
+	cause, err := audit.Text("node_create")
+	if err != nil {
+		return auditedCreationBaseline{}, err
+	}
+	eventKind, err := audit.Text("audit_inherit")
+	if err != nil {
+		return auditedCreationBaseline{}, err
+	}
+	initialValues := initialAuditValues{
+		vaultID: values.vaultID, scopeID: scopeID, operationID: values.operationID,
+		recordedAt: values.recordedAt, origin: values.origin, agentLabel: audit.Absent(),
+		cause: cause, eventKind: eventKind,
+	}
+	record := makeInitialAuditBaseline(
+		initialValues, nodeID, []uint64{nodeID}, []audit.Record{state},
+		versions, nil, nodes, witnesses,
+	)
+	digest, err := hashAuditRecord(record)
+	if err != nil {
+		return auditedCreationBaseline{}, err
+	}
+	binding := audit.Record{Kind: "baseline_binding", Fields: []audit.Field{
+		{Name: auditScopeIDField, Value: scopeID},
+		{Name: "target_node_id", Value: audit.Unsigned(nodeID)},
+		{Name: "baseline_digest", Value: digest.value},
+	}}
+	return auditedCreationBaseline{
+		scope: scope, record: record, digest: digest, binding: binding,
+		nodeID: nodeID, scopeID: scopeID,
+		version: versionRecord, topology: createdTopology,
+	}, nil
 }
 
 func auditMemberStateForNode(node Node) (audit.Record, error) {
@@ -356,27 +340,25 @@ func auditCreationBaselineTopology(
 }
 
 func makeAuditedCreationEvents(
-	values auditedMutationValues, baselines []auditedCreationBaseline,
+	values auditedMutationValues, baseline auditedCreationBaseline,
 	created Node, topologyDigest auditRecordHash,
 ) ([]audit.Record, error) {
-	eventCount := len(baselines) * 2
+	eventCount := 2
 	if !created.IsDir() {
-		eventCount += len(baselines)
+		eventCount++
 	}
 	events := make([]audit.Record, 0, eventCount)
 	for _, kind := range []string{"audit_inherit", "content_create", "node_create"} {
 		if kind == "content_create" && created.IsDir() {
 			continue
 		}
-		for _, baseline := range baselines {
-			event, err := makeAuditedCreationEvent(
-				values, baseline, kind, uint64(len(events)), created, topologyDigest,
-			)
-			if err != nil {
-				return nil, err
-			}
-			events = append(events, event)
+		event, err := makeAuditedCreationEvent(
+			values, baseline, kind, uint64(len(events)), created, topologyDigest,
+		)
+		if err != nil {
+			return nil, err
 		}
+		events = append(events, event)
 	}
 	return events, nil
 }
@@ -442,13 +424,9 @@ func makeAuditedCreationEvent(
 
 func makeAuditedCreationMutation(
 	values auditedMutationValues, sequence uint64, events []audit.Record,
-	parentChange audit.Record, baselines []auditedCreationBaseline,
+	parentChange audit.Record, baseline auditedCreationBaseline,
 	topologyDigest auditRecordHash,
 ) audit.Record {
-	bindings := make([]audit.Record, len(baselines))
-	for index := range baselines {
-		bindings[index] = baselines[index].binding
-	}
 	return audit.Record{Kind: "canonical_mutation", Fields: []audit.Field{
 		{Name: auditVaultIDField, Value: values.vaultID},
 		{Name: "operation_sequence", Value: audit.Unsigned(sequence)},
@@ -459,7 +437,7 @@ func makeAuditedCreationMutation(
 		{Name: "agent_label", Value: audit.Absent()},
 		{Name: "events", Value: audit.List(auditNestedValues(events)...)},
 		{Name: "member_state_changes", Value: audit.List(audit.Nested(parentChange))},
-		{Name: "baselines", Value: audit.List(auditNestedValues(bindings)...)},
+		{Name: "baselines", Value: audit.List(audit.Nested(baseline.binding))},
 		{Name: auditTopologyDeltaField, Value: topologyDigest.value},
 		{Name: "path_effect_count", Value: audit.Unsigned(0)},
 		{Name: "path_effect_digest", Value: audit.Absent()},
@@ -471,30 +449,26 @@ func makeAuditedCreationMutation(
 }
 
 func persistAuditedCreationRecords(
-	ctx context.Context, tx *sql.Tx, baselines []auditedCreationBaseline,
+	ctx context.Context, tx *sql.Tx, baseline auditedCreationBaseline,
 	topologyDelta audit.Record, events []audit.Record, mutation audit.Record,
 ) error {
 	operationID, err := auditUUIDField(mutation, auditOperationIDField)
 	if err != nil {
 		return err
 	}
-	for _, baseline := range baselines {
-		if err := insertAuditRecord(ctx, tx, baseline.record); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO audit_baselines(
-			digest,scope_id,target_node_id,operation_id) VALUES(?,?,?,?)`,
-			baseline.digest.text, baseline.scope.scopeID, baseline.nodeID,
-			operationID); err != nil {
-			return fmt.Errorf("creating inherited audit baseline: %w", err)
-		}
-		for _, member := range baseline.members {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO audit_memberships(
-				scope_id,node_id,baseline_digest) VALUES(?,?,?)`,
-				baseline.scope.scopeID, member, baseline.digest.text); err != nil {
-				return fmt.Errorf("creating inherited audit membership for node %d: %w", member, err)
-			}
-		}
+	if err := insertAuditRecord(ctx, tx, baseline.record); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_baselines(
+		digest,scope_id,target_node_id,operation_id) VALUES(?,?,?,?)`,
+		baseline.digest.text, baseline.scope.scopeID, baseline.nodeID,
+		operationID); err != nil {
+		return fmt.Errorf("creating inherited audit baseline: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_memberships(
+		scope_id,node_id,baseline_digest) VALUES(?,?,?)`,
+		baseline.scope.scopeID, baseline.nodeID, baseline.digest.text); err != nil {
+		return fmt.Errorf("creating inherited audit membership for node %d: %w", baseline.nodeID, err)
 	}
 	if err := insertAuditRecord(ctx, tx, topologyDelta); err != nil {
 		return err
@@ -510,34 +484,32 @@ func persistAuditedCreationRecords(
 	return insertAuditRecord(ctx, tx, mutation)
 }
 
-func advanceAuditedCreationScopes(
+func advanceAuditedCreationScope(
 	ctx context.Context, tx *sql.Tx, values auditedMutationValues,
-	baselines []auditedCreationBaseline, mutationDigest auditRecordHash,
+	baseline auditedCreationBaseline, mutationDigest auditRecordHash,
 ) error {
-	for _, baseline := range baselines {
-		entryCount, err := nextAuditInteger("scope entry count", baseline.scope.entryCount)
-		if err != nil {
-			return err
-		}
-		entry, err := makeAuditScopeChainEntry(
-			values, baseline.scope.scopeID, entryCount,
-			baseline.scope.chainHead, mutationDigest.value,
-		)
-		if err != nil {
-			return err
-		}
-		head, err := hashAuditRecord(entry)
-		if err != nil {
-			return err
-		}
-		if err := insertAuditRecord(ctx, tx, entry); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE audit_scopes
-			SET entry_count=?,chain_head=? WHERE scope_id=?`,
-			entryCount, head.text, baseline.scope.scopeID); err != nil {
-			return fmt.Errorf("advancing audit scope %s: %w", baseline.scope.scopeID, err)
-		}
+	entryCount, err := nextAuditInteger("scope entry count", baseline.scope.entryCount)
+	if err != nil {
+		return err
+	}
+	entry, err := makeAuditScopeChainEntry(
+		values, baseline.scope.scopeID, entryCount,
+		baseline.scope.chainHead, mutationDigest.value,
+	)
+	if err != nil {
+		return err
+	}
+	head, err := hashAuditRecord(entry)
+	if err != nil {
+		return err
+	}
+	if err := insertAuditRecord(ctx, tx, entry); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE audit_scopes
+		SET entry_count=?,chain_head=? WHERE scope_id=?`,
+		entryCount, head.text, baseline.scope.scopeID); err != nil {
+		return fmt.Errorf("advancing audit scope %s: %w", baseline.scope.scopeID, err)
 	}
 	return nil
 }

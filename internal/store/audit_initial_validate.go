@@ -289,7 +289,10 @@ func validateInitialGenesis(
 		return err
 	}
 	nodeHighWater, err := auditUnsignedField(allocation.record, "node_id_high_water")
-	if err != nil || nodeHighWater == 0 {
+	if err != nil {
+		return fmt.Errorf("reading audit allocation genesis node high-water mark: %w", err)
+	}
+	if nodeHighWater == 0 {
 		return errors.New("audit allocation genesis has an invalid node high-water mark")
 	}
 	var topologyHighWater uint64
@@ -305,9 +308,6 @@ func validateInitialGenesis(
 			"node ID high-water mark %d is below maximum node ID %d",
 			nodeHighWater, topologyHighWater,
 		)
-	}
-	if err := requireAuditUnsigned(allocation.record, "node_id_high_water", nodeHighWater); err != nil {
-		return err
 	}
 	if err := requireAuditUnsigned(allocation.record, "operation_sequence_high_water", 0); err != nil {
 		return err
