@@ -163,6 +163,14 @@ func TestIngestIdempotencyUsesActiveProvenanceLeaf(t *testing.T) {
 		corrected.OriginalPath, corrected.OriginalMTime, corrected.Supersedes)
 	require.NoError(t, err)
 
+	// The active origin identifies the existing node even though its current
+	// virtual name belongs to a different suffix family.
+	skipped, added, err := s.IngestFile(ctx, ingestID, s.RootID(),
+		"renamed.pdf", fakeHash("a1"), 1, "application/pdf", "/corrected/renamed.pdf", "")
+	require.NoError(t, err)
+	require.False(t, added)
+	assert.Equal(t, node.ID, skipped.ID)
+
 	// The obsolete origin no longer identifies this node. An identical file
 	// imported from that basename is a distinct source and must not be skipped.
 	imported, added, err := s.IngestFile(ctx, ingestID, s.RootID(),

@@ -55,12 +55,12 @@ func resolveIngestNameTx(tx *sql.Tx, parentID int64, name, blobHash string) (str
 		if err := rows.Scan(&sibID, &sibName, &sibHash); err != nil {
 			return "", 0, false, fmt.Errorf("scanning sibling: %w", err)
 		}
+		if sibHash == blobHash {
+			sameHash = append(sameHash, sibID)
+		}
 		n, ok := parseSuffix(sibName, base, ext)
 		if !ok {
 			continue
-		}
-		if sibHash == blobHash {
-			sameHash = append(sameHash, sibID)
 		}
 		taken[n] = true
 	}
