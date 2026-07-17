@@ -767,6 +767,7 @@ const (
 	auditTopologyDeltaField               = "topology_delta"
 	auditWitnessChangeCountField          = "witness_change_count"
 	auditAttachedMetadataChangeCountField = "attached_metadata_change_count"
+	auditEventField                       = "event"
 	metadataIngestType                    = "ingest"
 	metadataProvenanceType                = "provenance"
 	metadataAuditAuthorityType            = "audit_authority"

@@ -474,8 +474,8 @@ func persistAuditedCreationRecords(
 		return err
 	}
 	for _, event := range events {
-		wrapper := audit.Record{Kind: "event", Fields: []audit.Field{
-			{Name: "event", Value: audit.Nested(event)},
+		wrapper := audit.Record{Kind: auditEventField, Fields: []audit.Field{
+			{Name: auditEventField, Value: audit.Nested(event)},
 		}}
 		if err := insertAuditRecord(ctx, tx, wrapper); err != nil {
 			return err

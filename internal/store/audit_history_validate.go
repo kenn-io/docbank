@@ -239,7 +239,7 @@ func validateAuditedHistory(
 	if err != nil {
 		return err
 	}
-	events, err := auditEventRecordsByID(records["event"])
+	events, err := auditEventRecordsByID(records[auditEventField])
 	if err != nil {
 		return err
 	}
@@ -269,7 +269,7 @@ func validateAuditedHistory(
 			return fmt.Errorf("validating audit operation %d: %w", sequence, err)
 		}
 	}
-	initialEventID := *initial["event"][0].index.eventID
+	initialEventID := *initial[auditEventField][0].index.eventID
 	usedEvents[initialEventID] = true
 	if len(usedEvents) != len(events) {
 		return errors.New("audit history contains an unbound event record")
@@ -520,7 +520,7 @@ func (replay *auditedHistoryReplay) validateContentReplacementEvent(
 	if !ok || usedEvents[eventID] {
 		return 0, audit.Record{}, errors.New("content replacement lacks one unique event wrapper")
 	}
-	wrapped, err := auditNestedField(wrapper.record, "event")
+	wrapped, err := auditNestedField(wrapper.record, auditEventField)
 	if err != nil || !auditRecordEqual(wrapped, event) {
 		return 0, audit.Record{}, errors.New("content replacement event wrapper does not match mutation")
 	}

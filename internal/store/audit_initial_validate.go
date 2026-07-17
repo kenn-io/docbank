@@ -207,7 +207,7 @@ func selectInitialAuditRecords(
 			return record.index.scopeID != nil && *record.index.scopeID == scope.scopeID &&
 				record.index.entryCount != nil && *record.index.entryCount == 1
 		}},
-		{"event", func(record storedAuditRecord) bool {
+		{auditEventField, func(record storedAuditRecord) bool {
 			return record.index.operationID != nil && *record.index.operationID == scope.operationID &&
 				record.index.eventOrdinal != nil && *record.index.eventOrdinal == 0
 		}},
@@ -235,7 +235,7 @@ func validateInitialAuditRecords(
 	attachments := records["attached_metadata_genesis"][0]
 	allocationGenesis := records["allocation_genesis"][0]
 	baseline := records["enrollment_baseline"][0]
-	event := records["event"][0]
+	event := records[auditEventField][0]
 	mutation := records["canonical_mutation"][0]
 	scopeEntry := records["scope_chain_entry"][0]
 	allocationEntry := records["allocation_entry"][0]
@@ -469,7 +469,7 @@ func validateInitialMutation(
 	vaultID string, scope initialAuditScope, baseline, eventWrapper,
 	mutation storedAuditRecord,
 ) error {
-	event, err := auditNestedField(eventWrapper.record, "event")
+	event, err := auditNestedField(eventWrapper.record, auditEventField)
 	if err != nil {
 		return err
 	}

@@ -18,7 +18,7 @@ var auditRecordKinds = map[string]bool{
 	"enrollment_baseline":       true,
 	"topology_genesis":          true,
 	"attached_metadata_genesis": true,
-	"event":                     true,
+	auditEventField:             true,
 	"canonical_mutation":        true,
 	"scope_chain_entry":         true,
 	"allocation_genesis":        true,
@@ -290,8 +290,8 @@ func indexAuditRecord(record audit.Record) (auditRecordIndex, error) {
 			return index, err
 		}
 		index.operationID, index.scopeID = &operationID, &scopeID
-	case "event":
-		event, err := auditNestedField(record, "event")
+	case auditEventField:
+		event, err := auditNestedField(record, auditEventField)
 		if err != nil {
 			return index, err
 		}

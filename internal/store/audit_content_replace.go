@@ -175,8 +175,8 @@ func persistAuditedContentReplacement(
 		return err
 	}
 	for _, event := range events {
-		if err := insertAuditRecord(ctx, tx, audit.Record{Kind: "event", Fields: []audit.Field{
-			{Name: "event", Value: audit.Nested(event)},
+		if err := insertAuditRecord(ctx, tx, audit.Record{Kind: auditEventField, Fields: []audit.Field{
+			{Name: auditEventField, Value: audit.Nested(event)},
 		}}); err != nil {
 			return err
 		}

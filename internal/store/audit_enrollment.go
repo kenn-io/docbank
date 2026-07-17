@@ -196,8 +196,8 @@ func buildInitialAuditEnrollment(
 	if err != nil {
 		return initialAuditEnrollmentSet{}, err
 	}
-	eventWrapper := audit.Record{Kind: "event", Fields: []audit.Field{
-		{Name: "event", Value: audit.Nested(event)},
+	eventWrapper := audit.Record{Kind: auditEventField, Fields: []audit.Field{
+		{Name: auditEventField, Value: audit.Nested(event)},
 	}}
 	mutation := makeInitialAuditMutation(values, auditTargetNodeID, baselineDigest, event)
 	mutationDigest, err := hashAuditRecord(mutation)

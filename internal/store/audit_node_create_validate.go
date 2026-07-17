@@ -43,7 +43,7 @@ func (replay *auditedHistoryReplay) applyNodeCreation(
 		return err
 	}
 	creation, err := replay.validateNodeCreationAuthority(
-		mutation.record, operationID, baselineRecords, topologyRecords,
+		vaultID, mutation.record, operationID, baselineRecords, topologyRecords,
 		usedBaselines, usedTopology,
 	)
 	if err != nil {
@@ -72,7 +72,7 @@ func (replay *auditedHistoryReplay) applyNodeCreation(
 }
 
 func (replay *auditedHistoryReplay) validateNodeCreationAuthority(
-	mutation audit.Record, operationID string,
+	vaultID string, mutation audit.Record, operationID string,
 	baselineRecords, topologyRecords map[string]storedAuditRecord,
 	usedBaselines, usedTopology map[string]bool,
 ) (replayedNodeCreation, error) {
@@ -119,7 +119,7 @@ func (replay *auditedHistoryReplay) validateNodeCreationAuthority(
 	creation.baselineDigest, creation.baseline = baselineDigest, baseline
 	creation.topologyDigest = topologyDigest
 	if err := replay.validateNodeCreationBaseline(
-		mutation, operationID, &creation,
+		vaultID, mutation, operationID, &creation,
 	); err != nil {
 		return replayedNodeCreation{}, err
 	}
@@ -246,10 +246,11 @@ func validateCreatedTopologyNode(
 }
 
 func (replay *auditedHistoryReplay) validateNodeCreationBaseline(
-	mutation audit.Record, operationID string, creation *replayedNodeCreation,
+	vaultID string, mutation audit.Record, operationID string, creation *replayedNodeCreation,
 ) error {
 	baseline := creation.baseline.record
 	checks := []func() error{
+		func() error { return requireAuditUUID(baseline, auditVaultIDField, vaultID) },
 		func() error { return requireAuditUUID(baseline, auditScopeIDField, replay.scopeID) },
 		func() error { return requireAuditUnsigned(baseline, "target_node_id", creation.childID) },
 		func() error { return requireAuditUUID(baseline, auditOperationIDField, operationID) },
@@ -443,7 +444,7 @@ func validateCreationEventWrapper(
 	if !ok || usedEvents[eventID] {
 		return errors.New("node creation lacks one unique event wrapper")
 	}
-	wrapped, err := auditNestedField(wrapper.record, "event")
+	wrapped, err := auditNestedField(wrapper.record, auditEventField)
 	if err != nil {
 		return err
 	}
