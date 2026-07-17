@@ -198,6 +198,28 @@ func (v *Vault) Children(
 	return page, nil
 }
 
+func (v *Vault) Versions(
+	ctx context.Context, nodeID int64, opts VersionsOptions,
+) (VersionsPage, error) {
+	if err := v.begin(); err != nil {
+		return VersionsPage{}, err
+	}
+	defer v.lifecycle.RUnlock()
+	limit := opts.Limit
+	if limit == 0 {
+		limit = DefaultVersionsLimit
+	}
+	versions, total, err := v.metadata.ContentVersions(ctx, nodeID, limit, opts.Offset)
+	if err != nil {
+		return VersionsPage{}, err
+	}
+	page := VersionsPage{Items: make([]ContentVersion, 0, len(versions)), Total: total, Limit: limit, Offset: opts.Offset}
+	for _, version := range versions {
+		page.Items = append(page.Items, fromStoreVersion(version))
+	}
+	return page, nil
+}
+
 // PutOptions controls one embedded content write. Expected is optional; when
 // present, no node or version authority is granted unless both fields match
 // the independently computed durable bytes.

@@ -68,6 +68,23 @@ type ChildrenPage struct {
 	Offset int    `json:"offset"`
 }
 
+const (
+	DefaultVersionsLimit = 100
+	MaxVersionsLimit     = 1000
+)
+
+type VersionsOptions struct {
+	Limit  int
+	Offset int
+}
+
+type VersionsPage struct {
+	Items  []ContentVersion `json:"items"`
+	Total  int              `json:"total"`
+	Limit  int              `json:"limit"`
+	Offset int              `json:"offset"`
+}
+
 // PackOptions bounds one explicit embedded packing pass. MaxBytes is a soft
 // committed raw-byte budget; zero is unlimited and negative values are
 // rejected.
