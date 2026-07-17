@@ -308,6 +308,42 @@ BEFORE DELETE ON audit_write_guard BEGIN
     SELECT RAISE(ABORT, 'audit write guard is permanent');
 END;
 
+CREATE TRIGGER IF NOT EXISTS audited_vault_metadata_frozen_update
+BEFORE UPDATE ON vault_metadata
+WHEN EXISTS (SELECT 1 FROM audit_write_guard) BEGIN
+    SELECT RAISE(ABORT, 'audited metadata is read-only until mutation enforcement is available');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audited_vault_metadata_frozen_delete
+BEFORE DELETE ON vault_metadata
+WHEN EXISTS (SELECT 1 FROM audit_write_guard) BEGIN
+    SELECT RAISE(ABORT, 'audited metadata is read-only until mutation enforcement is available');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audited_records_frozen_insert
+BEFORE INSERT ON audit_records
+WHEN EXISTS (SELECT 1 FROM audit_write_guard) BEGIN
+    SELECT RAISE(ABORT, 'audited metadata is read-only until mutation enforcement is available');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audited_scopes_frozen_insert
+BEFORE INSERT ON audit_scopes
+WHEN EXISTS (SELECT 1 FROM audit_write_guard) BEGIN
+    SELECT RAISE(ABORT, 'audited metadata is read-only until mutation enforcement is available');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audited_baselines_frozen_insert
+BEFORE INSERT ON audit_baselines
+WHEN EXISTS (SELECT 1 FROM audit_write_guard) BEGIN
+    SELECT RAISE(ABORT, 'audited metadata is read-only until mutation enforcement is available');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audited_memberships_frozen_insert
+BEFORE INSERT ON audit_memberships
+WHEN EXISTS (SELECT 1 FROM audit_write_guard) BEGIN
+    SELECT RAISE(ABORT, 'audited metadata is read-only until mutation enforcement is available');
+END;
+
 CREATE TRIGGER IF NOT EXISTS audited_nodes_frozen_insert
 BEFORE INSERT ON nodes
 WHEN EXISTS (SELECT 1 FROM audit_write_guard) BEGIN

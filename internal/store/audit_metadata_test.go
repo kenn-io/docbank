@@ -245,6 +245,12 @@ func TestInitialAuditAuthorityFreezesLogicalMetadata(t *testing.T) {
 	seedInitialAuditAuthority(t, s, target.ID)
 
 	statements := []string{
+		`UPDATE vault_metadata SET vault_id=vault_id WHERE singleton=1`,
+		`DELETE FROM vault_metadata WHERE singleton=1`,
+		`INSERT INTO audit_records(digest,kind,record_json) VALUES('eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee','event','{}')`,
+		`INSERT INTO audit_scopes(scope_id,target_node_id,enable_operation_id,entry_count,chain_head) VALUES('99999999-9999-4999-8999-999999999999',1,'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',1,'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee')`,
+		`INSERT INTO audit_baselines(digest,scope_id,target_node_id,operation_id) VALUES('eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee','66666666-6666-4666-8666-666666666666',7,'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')`,
+		`INSERT INTO audit_memberships(scope_id,node_id,baseline_digest) SELECT scope_id,1,digest FROM audit_scopes JOIN audit_baselines USING(scope_id)`,
 		`UPDATE nodes SET name=name WHERE id=1`,
 		`UPDATE content_versions SET mime_type=mime_type WHERE node_id=10`,
 		`INSERT INTO blobs(hash,size,created_at) VALUES('dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',1,'2026-07-17T00:00:00.000000000Z')`,
