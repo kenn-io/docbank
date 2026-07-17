@@ -196,8 +196,8 @@ func buildInitialAuditEnrollment(
 	if err != nil {
 		return initialAuditEnrollmentSet{}, err
 	}
-	eventWrapper := audit.Record{Kind: "event", Fields: []audit.Field{
-		{Name: "event", Value: audit.Nested(event)},
+	eventWrapper := audit.Record{Kind: auditEventField, Fields: []audit.Field{
+		{Name: auditEventField, Value: audit.Nested(event)},
 	}}
 	mutation := makeInitialAuditMutation(values, auditTargetNodeID, baselineDigest, event)
 	mutationDigest, err := hashAuditRecord(mutation)
@@ -206,7 +206,7 @@ func buildInitialAuditEnrollment(
 	}
 	scopeEntry := audit.Record{Kind: "scope_chain_entry", Fields: []audit.Field{
 		{Name: auditVaultIDField, Value: values.vaultID},
-		{Name: "scope_id", Value: values.scopeID},
+		{Name: auditScopeIDField, Value: values.scopeID},
 		{Name: "entry_count", Value: audit.Unsigned(1)},
 		{Name: "previous_head", Value: audit.Absent()},
 		{Name: "mutation_hash", Value: mutationDigest.value},
@@ -263,7 +263,7 @@ func makeInitialAuditValues(vaultID string, input initialAuditEnrollmentInput) (
 		{"operation ID", input.operationID, audit.UUID, &values.operationID},
 		{"lineage ID", input.lineageID, audit.UUID, &values.lineageID},
 		{"recorded time", input.recordedAt, audit.Timestamp, &values.recordedAt},
-		{"origin", input.origin, audit.Text, &values.origin},
+		{auditOriginField, input.origin, audit.Text, &values.origin},
 		{"enrollment cause", "explicit", audit.Text, &values.cause},
 		{"enrollment event kind", "audit_enroll", audit.Text, &values.eventKind},
 	}
@@ -313,7 +313,7 @@ func makeInitialAuditBaseline(
 	}
 	return audit.Record{Kind: "enrollment_baseline", Fields: []audit.Field{
 		{Name: auditVaultIDField, Value: values.vaultID},
-		{Name: "scope_id", Value: values.scopeID},
+		{Name: auditScopeIDField, Value: values.scopeID},
 		{Name: "target_node_id", Value: audit.Unsigned(targetNodeID)},
 		{Name: auditOperationIDField, Value: values.operationID},
 		{Name: "cause", Value: values.cause},
@@ -364,7 +364,7 @@ func makeInitialAuditEnrollmentEvent(
 		{Name: auditOperationIDField, Value: values.operationID},
 		{Name: metadataNodeIDField, Value: audit.Unsigned(targetNodeID)},
 		{Name: "event_kind", Value: values.eventKind},
-		{Name: "scope_id", Value: values.scopeID},
+		{Name: auditScopeIDField, Value: values.scopeID},
 		{Name: "target_node_id", Value: audit.Unsigned(targetNodeID)},
 		{Name: "attachment_kind", Value: audit.Absent()},
 		{Name: "attachment_identity", Value: audit.Absent()},
@@ -375,11 +375,11 @@ func makeInitialAuditEnrollmentEvent(
 		{Name: "resulting_node_revision", Value: audit.Unsigned(revision)},
 		{Name: "prior_current_version_id", Value: current},
 		{Name: "resulting_current_version_id", Value: current},
-		{Name: "origin", Value: values.origin},
+		{Name: auditOriginField, Value: values.origin},
 		{Name: "agent_label", Value: values.agentLabel},
 		{Name: "pre", Value: audit.Absent()},
 		{Name: "post", Value: audit.Absent()},
-		{Name: "topology_delta", Value: audit.Absent()},
+		{Name: auditTopologyDeltaField, Value: audit.Absent()},
 		{Name: "baseline_digest", Value: baselineDigest.value},
 	}}, nil
 }
@@ -389,7 +389,7 @@ func makeInitialAuditMutation(
 	event audit.Record,
 ) audit.Record {
 	binding := audit.Record{Kind: "baseline_binding", Fields: []audit.Field{
-		{Name: "scope_id", Value: values.scopeID},
+		{Name: auditScopeIDField, Value: values.scopeID},
 		{Name: "target_node_id", Value: audit.Unsigned(targetNodeID)},
 		{Name: "baseline_digest", Value: baselineDigest.value},
 	}}
@@ -399,17 +399,17 @@ func makeInitialAuditMutation(
 		{Name: auditOperationIDField, Value: values.operationID},
 		{Name: "grouping_id", Value: audit.Absent()},
 		{Name: "recorded_at", Value: values.recordedAt},
-		{Name: "origin", Value: values.origin},
+		{Name: auditOriginField, Value: values.origin},
 		{Name: "agent_label", Value: values.agentLabel},
 		{Name: "events", Value: audit.List(audit.Nested(event))},
 		{Name: "member_state_changes", Value: audit.List()},
 		{Name: "baselines", Value: audit.List(audit.Nested(binding))},
-		{Name: "topology_delta", Value: audit.Absent()},
+		{Name: auditTopologyDeltaField, Value: audit.Absent()},
 		{Name: "path_effect_count", Value: audit.Unsigned(0)},
 		{Name: "path_effect_digest", Value: audit.Absent()},
-		{Name: "witness_change_count", Value: audit.Unsigned(0)},
+		{Name: auditWitnessChangeCountField, Value: audit.Unsigned(0)},
 		{Name: "witness_change_digest", Value: audit.Absent()},
-		{Name: "attached_metadata_change_count", Value: audit.Unsigned(0)},
+		{Name: auditAttachedMetadataChangeCountField, Value: audit.Unsigned(0)},
 		{Name: "attached_metadata_change_digest", Value: audit.Absent()},
 	}}
 }
@@ -430,12 +430,12 @@ func makeInitialAllocationEntry(
 		{Name: "has_audited_mutation", Value: audit.Bool(true)},
 		{Name: "mutation_hash", Value: mutationDigest},
 		{Name: "has_topology_change", Value: audit.Bool(false)},
-		{Name: "topology_delta", Value: audit.Absent()},
+		{Name: auditTopologyDeltaField, Value: audit.Absent()},
 		{Name: "has_witness_change", Value: audit.Bool(false)},
-		{Name: "witness_change_count", Value: audit.Unsigned(0)},
+		{Name: auditWitnessChangeCountField, Value: audit.Unsigned(0)},
 		{Name: "witness_change_digest", Value: audit.Absent()},
 		{Name: "has_attached_metadata_change", Value: audit.Bool(false)},
-		{Name: "attached_metadata_change_count", Value: audit.Unsigned(0)},
+		{Name: auditAttachedMetadataChangeCountField, Value: audit.Unsigned(0)},
 		{Name: "attached_metadata_change_digest", Value: audit.Absent()},
 	}}
 }

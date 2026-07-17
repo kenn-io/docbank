@@ -159,7 +159,7 @@ func TestImportMetadataRejectsOrphanAuditRecord(t *testing.T) {
 	require.NoError(t, source.ExportMetadata(t.Context(), &exported))
 	record := audit.Record{Kind: "scope_chain_entry", Fields: []audit.Field{
 		{Name: "vault_id", Value: mustAuditUUID(t, source.VaultID())},
-		{Name: "scope_id", Value: mustAuditUUID(t, testAuditScopeID)},
+		{Name: auditScopeIDField, Value: mustAuditUUID(t, testAuditScopeID)},
 		{Name: "entry_count", Value: audit.Unsigned(1)},
 		{Name: "previous_head", Value: audit.Absent()},
 		{Name: "mutation_hash", Value: mustAuditDigest(t, metadataHashCurrent)},

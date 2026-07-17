@@ -96,7 +96,7 @@ func topologyRecord(row auditTopologyRow) (audit.Record, error) {
 		{Name: "name", Value: audit.Bytes([]byte(row.name))},
 		{Name: "node_kind", Value: kindValue},
 		{Name: "state", Value: stateValue},
-		{Name: "origin", Value: origin},
+		{Name: auditOriginField, Value: origin},
 		{Name: "created_at", Value: createdAt},
 		{Name: "modified_at", Value: modifiedAt},
 		{Name: "trashed_at", Value: trashedAt},

@@ -18,11 +18,12 @@ var auditRecordKinds = map[string]bool{
 	"enrollment_baseline":       true,
 	"topology_genesis":          true,
 	"attached_metadata_genesis": true,
-	"event":                     true,
+	auditEventField:             true,
 	"canonical_mutation":        true,
 	"scope_chain_entry":         true,
 	"allocation_genesis":        true,
 	"allocation_entry":          true,
+	auditTopologyDeltaField:     true,
 }
 
 type auditRecordIndex struct {
@@ -184,7 +185,7 @@ func importAuditRecord(ctx context.Context, tx *sql.Tx, value metadataAuditRecor
 	if err != nil || record.Kind != "enrollment_baseline" {
 		return err
 	}
-	scopeID, err := auditUUIDField(record, "scope_id")
+	scopeID, err := auditUUIDField(record, auditScopeIDField)
 	if err != nil {
 		return err
 	}
@@ -284,13 +285,13 @@ func indexAuditRecord(record audit.Record) (auditRecordIndex, error) {
 		if err != nil {
 			return index, err
 		}
-		scopeID, err := auditUUIDField(record, "scope_id")
+		scopeID, err := auditUUIDField(record, auditScopeIDField)
 		if err != nil {
 			return index, err
 		}
 		index.operationID, index.scopeID = &operationID, &scopeID
-	case "event":
-		event, err := auditNestedField(record, "event")
+	case auditEventField:
+		event, err := auditNestedField(record, auditEventField)
 		if err != nil {
 			return index, err
 		}
@@ -298,7 +299,7 @@ func indexAuditRecord(record audit.Record) (auditRecordIndex, error) {
 		if err != nil {
 			return index, err
 		}
-		scopeID, err := auditUUIDField(event, "scope_id")
+		scopeID, err := auditUUIDField(event, auditScopeIDField)
 		if err != nil {
 			return index, err
 		}
@@ -323,7 +324,7 @@ func indexAuditRecord(record audit.Record) (auditRecordIndex, error) {
 		}
 		index.operationID, index.operationSequence = &operationID, &sequence
 	case "scope_chain_entry":
-		scopeID, err := auditUUIDField(record, "scope_id")
+		scopeID, err := auditUUIDField(record, auditScopeIDField)
 		if err != nil {
 			return index, err
 		}
@@ -332,7 +333,7 @@ func indexAuditRecord(record audit.Record) (auditRecordIndex, error) {
 			return index, err
 		}
 		index.scopeID, index.entryCount = &scopeID, &entryCount
-	case "topology_genesis", "attached_metadata_genesis", "allocation_genesis":
+	case "topology_genesis", "attached_metadata_genesis", "allocation_genesis", auditTopologyDeltaField:
 	default:
 		return index, fmt.Errorf("unsupported initial audit record kind %q", record.Kind)
 	}
