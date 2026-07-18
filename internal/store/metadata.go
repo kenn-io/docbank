@@ -253,14 +253,7 @@ func exportMetadataSnapshot(ctx context.Context, tx metadataQuerier, w io.Writer
 	if err := validateMetadataState(ctx, tx, nodeSequence); err != nil {
 		return fmt.Errorf("validating metadata snapshot: %w", err)
 	}
-	enc := json.NewEncoder(w)
-	enc.SetEscapeHTML(false)
-	write := func(v any) error {
-		if err := enc.Encode(v); err != nil {
-			return fmt.Errorf("encoding metadata: %w", err)
-		}
-		return nil
-	}
+	write := newMetadataJSONWriter(w)
 	if err := write(metadataHeader{
 		Type: "meta", Format: "docbank-metadata", Version: metadataFormatVersion,
 		VaultID: vaultID, NodeSequence: nodeSequence,
@@ -295,6 +288,20 @@ func exportMetadataSnapshot(ctx context.Context, tx metadataQuerier, w io.Writer
 }
 
 type metadataWrite func(any) error
+
+// newMetadataJSONWriter is the single JSONL encoding boundary used by exports
+// and exact projected-size calculations. Keeping both on this encoder prevents
+// previews from estimating a different wire representation than backups use.
+func newMetadataJSONWriter(w io.Writer) metadataWrite {
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	return func(v any) error {
+		if err := enc.Encode(v); err != nil {
+			return fmt.Errorf("encoding metadata: %w", err)
+		}
+		return nil
+	}
+}
 
 func exportBlobs(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
 	rows, err := tx.QueryContext(ctx, `SELECT hash, size, created_at FROM blobs ORDER BY hash`)

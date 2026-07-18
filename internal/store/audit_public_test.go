@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"path/filepath"
 	"testing"
 
@@ -13,6 +14,8 @@ func TestAuditEnrollmentPreviewEnablesExactReviewedAuthority(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
+	var before bytes.Buffer
+	require.NoError(t, s.ExportMetadata(t.Context(), &before))
 	target, err := s.NodeByPath(t.Context(), "/Projects")
 	require.NoError(t, err)
 
@@ -51,6 +54,11 @@ func TestAuditEnrollmentPreviewEnablesExactReviewedAuthority(t *testing.T) {
 	assert.Equal(t, preview.MemberCount, status.Scopes[0].MemberCount)
 	assert.Equal(t, preview.TargetPath, status.Scopes[0].TargetPath)
 	require.NoError(t, s.ValidateMetadata(t.Context()))
+	var after bytes.Buffer
+	require.NoError(t, s.ExportMetadata(t.Context(), &after))
+	require.Greater(t, after.Len(), before.Len())
+	assert.Equal(t, int64(after.Len()-before.Len()), preview.AuthorityJSONBytes,
+		"preview must count the exact metadata-v1 audit JSONL growth")
 	assertAuditMetadataRoundTrip(t, s)
 }
 

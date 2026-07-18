@@ -222,8 +222,8 @@ For first activation, preview preallocates the random operation and lineage IDs,
 operation sequence, event timestamp, and other non-derivable inputs used by its
 baseline digest. It constructs the complete genesis projections, computes their
 registered digests, and keeps those inputs in the server-side token state. The
-displayed retention counts and serialized-byte estimates are deterministically
-derived from those exact projections. Execution recomputes the baseline,
+displayed retention counts and exact projected JSONL audit growth are
+deterministically derived from those exact projections. Execution recomputes the baseline,
 genesis digests, and disclosure under the mutation gate before accepting the
 token. Expiration before execution discards the unused identities. Accepted
 execution uses those exact values in the one SQLite enrollment transaction and
@@ -538,13 +538,13 @@ metadata values from JSONL exports or backups. Full audit does **not** retain an
 unaudited file's content bytes or versions solely for this reason, but its
 vault-wide metadata trail persists with the audit authority.
 
-Every enablement preview states this distinction in plain language and reports
-whether vault-wide lineage is newly activated or already active. On first
-activation it inventories the topology and attached-metadata genesis by record
-kind and estimated serialized bytes; confirmation explicitly accepts permanent
-metadata retention outside the selected scope. CLI/agent JSON exposes the same
-structured counts and acknowledgment requirement, and TUI/web clients may not
-hide it behind a generic confirmation dialog.
+Every enablement preview states this distinction in plain language. On first
+activation it reports topology and attached-metadata counts plus the exact
+projected JSONL growth of the authority, scope, memberships, and canonical
+record envelopes. Confirmation explicitly accepts permanent metadata retention
+outside the selected scope. CLI/agent JSON exposes the same structured counts
+and acknowledgment requirement, and TUI/web clients may not hide it behind a
+generic confirmation dialog.
 
 An external application or pseudo-folder uses the same model: an integration
 projects its collection onto a stable Docbank directory/scope reference. The

@@ -343,17 +343,71 @@ func summarizeInitialAuditEnrollment(
 		}
 		preview.UniqueBlobBytes += size
 	}
-	for _, record := range set.records {
-		encoded, err := audit.MarshalJSONRecord(record)
-		if err != nil {
-			return AuditEnrollmentPreview{}, err
-		}
-		if len(encoded) >= math.MaxInt || preview.AuthorityJSONBytes > math.MaxInt64-int64(len(encoded)+1) {
-			return AuditEnrollmentPreview{}, errors.New("audit preview authority size overflows int64")
-		}
-		preview.AuthorityJSONBytes += int64(len(encoded) + 1)
+	preview.AuthorityJSONBytes, err = initialAuditMetadataJSONBytes(set)
+	if err != nil {
+		return AuditEnrollmentPreview{}, err
 	}
 	return preview, nil
+}
+
+type metadataByteCounter struct{ total int64 }
+
+func (counter *metadataByteCounter) Write(p []byte) (int, error) {
+	size := int64(len(p))
+	if counter.total > math.MaxInt64-size {
+		return 0, errors.New("audit preview metadata size overflows int64")
+	}
+	counter.total += size
+	return len(p), nil
+}
+
+func initialAuditMetadataJSONBytes(set initialAuditEnrollmentSet) (int64, error) {
+	if set.input.targetNodeID <= 0 {
+		return 0, errors.New("audit preview target node ID must be positive")
+	}
+	counter := new(metadataByteCounter)
+	write := newMetadataJSONWriter(counter)
+	input := set.input
+	targetNodeID := uint64(input.targetNodeID) //nolint:gosec // positivity is checked above
+	if err := write(metadataAuditAuthority{
+		Type: metadataAuditAuthorityType, LineageID: input.lineageID,
+		OperationSequenceHighWater: 1,
+		AllocationGenesisDigest:    set.allocationGenesisDigest,
+		AllocationEntryCount:       1, AllocationHead: set.allocationHead,
+	}); err != nil {
+		return 0, err
+	}
+	if err := write(metadataAuditScope{
+		Type: metadataAuditScopeType, ScopeID: input.scopeID,
+		TargetNodeID: targetNodeID, EnableOperationID: input.operationID,
+		EntryCount: 1, ChainHead: set.scopeHead,
+	}); err != nil {
+		return 0, err
+	}
+	for _, member := range set.members {
+		if err := write(metadataAuditMembership{
+			Type: metadataAuditMembershipType, ScopeID: input.scopeID,
+			NodeID: member, BaselineDigest: set.baselineDigest,
+		}); err != nil {
+			return 0, err
+		}
+	}
+	for _, record := range set.records {
+		digest, err := hashAuditRecord(record)
+		if err != nil {
+			return 0, err
+		}
+		recordJSON, err := audit.MarshalJSONRecord(record)
+		if err != nil {
+			return 0, fmt.Errorf("encoding projected %s audit record: %w", record.Kind, err)
+		}
+		if err := write(metadataAuditRecord{
+			Type: metadataAuditRecordType, Digest: digest.text, Record: recordJSON,
+		}); err != nil {
+			return 0, err
+		}
+	}
+	return counter.total, nil
 }
 
 func auditStatusTx(

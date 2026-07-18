@@ -326,10 +326,13 @@ docbank audit status --node-id <id> [--json]
 `audit enable` permanently protects a directory scope and all retained content
 versions beneath it. Enrollment cannot be disabled. The default invocation is
 a read-only preview that reports the exact protected set, storage impact,
-baseline digest, vault-wide evidence, and a one-use token. Execution is a
-separate command that accepts only that token and the explicit permanent-
-retention acknowledgment; target selectors are deliberately absent from the
-execution command.
+baseline digest, vault-wide permanent metadata, and a one-use token. The first
+scope permanently retains enrollment-time names, topology, tags, assignments,
+ingests, and provenance across the vault, including outside the selected scope;
+unrelated content does not become a scope member. Execution is a separate
+command that accepts only that token and the explicit permanent-retention
+acknowledgment; target selectors are deliberately absent from the execution
+command.
 
 The token expires after ten minutes, is consumed by one execution attempt, and
 does not survive daemon restart. The daemon recomputes the reviewed authority

@@ -127,9 +127,9 @@ func writeAuditPreview(w io.Writer, preview api.AuditEnrollmentPreview) error {
 		fmt.Sprintf("Retained versions: %d version(s), %d logical byte(s), %d unique blob(s), %d unique byte(s)",
 			preview.VersionCount, preview.LogicalVersionBytes,
 			preview.UniqueBlobs, preview.UniqueBlobBytes),
-		fmt.Sprintf("Vault-wide evidence: %d topology node(s), %d attached metadata record(s)",
+		fmt.Sprintf("Vault-wide permanent metadata: %d topology node(s), %d attached metadata record(s)",
 			preview.VaultTopologyNodes, preview.VaultAttachmentRecords),
-		fmt.Sprintf("Audit metadata estimate: %d JSONL byte(s)", preview.AuthorityJSONBytes),
+		fmt.Sprintf("Projected audit JSONL growth: %d byte(s)", preview.AuthorityJSONBytes),
 		"Baseline digest: " + preview.BaselineDigest,
 	}
 	if preview.UnresolvedTrashOrigins > 0 {
@@ -137,7 +137,8 @@ func writeAuditPreview(w io.Writer, preview api.AuditEnrollmentPreview) error {
 			preview.UnresolvedTrashOrigins))
 	}
 	lines = append(lines,
-		"This commitment is permanent: ordinary commands cannot disable it or purge protected history.",
+		"This commitment permanently retains protected history plus names, topology, tags, and provenance across the entire vault, including outside the selected scope.",
+		"Ordinary commands cannot disable audit or purge that retained authority.",
 		"Preview expires: "+preview.ExpiresAt,
 		"To enable exactly this reviewed scope:",
 		fmt.Sprintf("  docbank audit enable --run --token %s --acknowledge-permanent-retention",
@@ -237,7 +238,7 @@ func init() {
 		"one-use token returned by a fresh preview")
 	auditEnableCmd.Flags().BoolVar(&auditEnableAcknowledge,
 		"acknowledge-permanent-retention", false,
-		"confirm that ordinary commands cannot disable audit or purge protected history")
+		"confirm permanent protected history and vault-wide metadata, including names, topology, tags, and provenance outside the selected scope")
 	auditEnableCmd.Flags().BoolVar(&auditEnableJSON, "json", false, "machine-readable output")
 	auditStatusCmd.Flags().Int64Var(&auditStatusNodeID, "node-id", 0,
 		"inspect one stable node ID (alternative to path)")

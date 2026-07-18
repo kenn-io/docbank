@@ -494,8 +494,12 @@ curl --fail-with-body -X POST \
 ```
 
 Present or evaluate the returned protected node/version counts, logical and
-unique bytes, vault-wide evidence counts, and `baseline_digest`. Only after
-that review may a client execute the exact daemon-held plan:
+unique bytes, vault-wide evidence counts, and `baseline_digest`. First
+activation permanently retains enrollment-time names, topology, tags,
+assignments, ingests, and provenance across the vault, including outside the
+selected scope. Unrelated content versions do not become scope members, but the
+metadata snapshot remains evidence. Only after that review may a client execute
+the exact daemon-held plan:
 
 ```bash
 curl --fail-with-body -X POST \

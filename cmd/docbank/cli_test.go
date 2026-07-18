@@ -160,6 +160,10 @@ func TestAuditEnableIsPreviewFirstAndReportsProtection(t *testing.T) {
 	assert.Equal(t, "/Taxes", preview.TargetPath)
 	assert.Equal(t, 2, preview.MemberCount)
 	assert.NotEmpty(t, preview.PreviewToken)
+	humanPreview, err := runCLI(t, "audit", "enable", "/Taxes")
+	require.NoError(t, err, humanPreview)
+	assert.Contains(t, humanPreview, "Vault-wide permanent metadata:")
+	assert.Contains(t, humanPreview, "including outside the selected scope")
 
 	_, err = runCLI(t, "audit", "enable", "--run", "--token", preview.PreviewToken)
 	require.ErrorContains(t, err, "--acknowledge-permanent-retention")

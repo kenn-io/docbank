@@ -23,6 +23,12 @@ versions by default, but `versions prune` may deliberately release old ones.
 An audited version is a permanent reachability root. Docbank has no `audit
 disable` command.
 
+First activation also permanently retains one vault-wide metadata snapshot:
+node names and topology plus tag, assignment, ingest, and provenance records,
+including records outside the selected directory. Those unrelated documents
+do not become audit members and their content versions are not protected by
+the scope, but the enrollment-time metadata remains part of the evidence.
+
 ## Review before enabling
 
 Enrollment is always a separate preview and execution. Preview does not change
@@ -38,14 +44,16 @@ It reports:
 - directories, files, and existing versions that will become protected;
 - logical and unique blob bytes retained by those versions;
 - unresolved retained trash origins, if any;
-- the vault-wide topology and attached metadata committed as audit evidence;
-- the baseline digest and estimated JSONL authority size; and
+- the vault-wide topology and attached metadata, including records outside the
+  selected scope, that will be permanently retained as audit evidence;
+- the baseline digest and exact projected JSONL audit growth; and
 - a one-use token with a ten-minute expiration.
 
 The vault-wide evidence counts matter even when `/taxes` is a small subtree.
 The allocation lineage commits the surrounding topology and attached metadata
 needed to prove identities and detect rollback; it does not enroll unrelated
-documents into the scope.
+documents into the scope, but that enrollment-time metadata snapshot remains
+permanent.
 
 Read the preview before executing the command it prints:
 

@@ -64,8 +64,10 @@ func registerAuditRoutes(
 	huma.Register(api, huma.Operation{
 		OperationID: "enableAudit", Method: http.MethodPost, Path: "/api/v1/audit/enable",
 		Summary: "Permanently enable the exact reviewed first audit scope",
-		Description: "Consumes a one-use preview token. The irreversible retention " +
-			"acknowledgment must be explicit; preview again after any stale-token response.",
+		Description: "Consumes a one-use preview token. The acknowledgment explicitly " +
+			"accepts permanent protected history plus names, topology, tags, and provenance " +
+			"across the vault, including outside the selected scope; preview again after " +
+			"any stale-token response.",
 	}, func(ctx context.Context, in *struct {
 		Body struct {
 			PreviewToken                  string `json:"preview_token" minLength:"43" maxLength:"43"`
@@ -75,7 +77,7 @@ func registerAuditRoutes(
 		if !in.Body.AcknowledgePermanentRetention {
 			return nil, NewError(http.StatusUnprocessableEntity,
 				"audit_acknowledgment_required",
-				"audit enrollment is permanent; acknowledge permanent retention explicitly")
+				"acknowledge permanent protected history and vault-wide metadata retention")
 		}
 		var out *auditStatusOutput
 		err := g.mutate(func() error {
