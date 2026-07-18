@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 
 	"github.com/spf13/cobra"
 
@@ -120,7 +121,7 @@ func writeAuditPreview(w io.Writer, preview api.AuditEnrollmentPreview) error {
 		return fmt.Errorf("writing audit preview: %w", err)
 	}
 	lines := []string{
-		fmt.Sprintf("Target: %s (node %d)", preview.TargetPath, preview.TargetNodeID),
+		fmt.Sprintf("Target: %s (node %d)", auditDisplayPath(preview.TargetPath), preview.TargetNodeID),
 		"Permanent scope: " + preview.ScopeID,
 		fmt.Sprintf("Protected tree: %d node(s) — %d directories, %d file(s)",
 			preview.MemberCount, preview.DirectoryCount, preview.FileCount),
@@ -157,7 +158,7 @@ func writeAuditEnabled(w io.Writer, status api.AuditStatus) error {
 		return errors.New("enabled audit status does not contain exactly one first scope")
 	}
 	scope := status.Scopes[0]
-	path := scope.TargetPath
+	path := auditDisplayPath(scope.TargetPath)
 	if scope.TargetTrashed {
 		path = "(target is in trash)"
 	}
@@ -186,7 +187,7 @@ func writeAuditStatus(w io.Writer, status api.AuditStatus) error {
 			return fmt.Errorf("writing audit status: %w", err)
 		}
 		for _, scope := range status.Scopes {
-			path := scope.TargetPath
+			path := auditDisplayPath(scope.TargetPath)
 			if scope.TargetTrashed {
 				path = "(target is in trash)"
 			}
@@ -201,7 +202,7 @@ func writeAuditStatus(w io.Writer, status api.AuditStatus) error {
 	}
 	if status.Membership != nil {
 		member := status.Membership
-		coordinate := member.Path
+		coordinate := auditDisplayPath(member.Path)
 		if member.Trashed {
 			coordinate = fmt.Sprintf("node %d in trash", member.NodeID)
 		}
@@ -216,6 +217,10 @@ func writeAuditStatus(w io.Writer, status api.AuditStatus) error {
 		}
 	}
 	return nil
+}
+
+func auditDisplayPath(path string) string {
+	return strconv.QuoteToASCII(path)
 }
 
 func writeAuditJSON(w io.Writer, value any) error {

@@ -179,7 +179,7 @@ func TestAuditEnableIsPreviewFirstAndReportsProtection(t *testing.T) {
 
 	out, err = runCLI(t, "audit", "status", "/Taxes/return.txt")
 	require.NoError(t, err, out)
-	assert.Contains(t, out, "/Taxes/return.txt is permanently protected")
+	assert.Contains(t, out, `"/Taxes/return.txt" is permanently protected`)
 
 	replacement := writeSourceFile(t, "replacement.txt", "amended return")
 	_, err = runCLI(t, "put", replacement, "/Taxes/return.txt", "--progress", "plain")
