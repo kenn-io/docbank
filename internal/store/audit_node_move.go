@@ -516,7 +516,7 @@ func makeAuditedTopologyAllocationEntry(
 	values auditedMutationValues, sequence, nodeSequence int64,
 	previousHead string, mutationHash, topologyDigest audit.Value,
 ) (audit.Record, error) {
-	entry, err := makeAuditedContentAllocationEntry(
+	entry, err := makeAuditedMutationAllocationEntry(
 		values, sequence, nodeSequence, previousHead, mutationHash,
 	)
 	if err != nil {

@@ -1110,7 +1110,8 @@ codes are:
 `content_revert`, `node_create`, `node_path`,
 `provenance_add`, `provenance_supersede`, `tag_assign`, `tag_define`,
 `tag_delete`, `tag_rename`, and `tag_unassign`; attachment codes are
-`provenance` and `tag`. Canonical bytewise token order determines sorting. A
+`provenance`, `tag_assignment`, and `tag_definition`. Canonical bytewise token
+order determines sorting. A
 later format may add codes but never remaps an existing token, and import rejects
 an unknown or non-canonical code for the declared format version.
 

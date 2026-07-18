@@ -15,8 +15,11 @@ import (
 )
 
 const (
+	auditAgentLabelField   = "agent_label"
 	auditEventOrdinalField = "event_ordinal"
 	auditParentIDField     = "parent_id"
+	auditPostField         = "post"
+	auditPreField          = "pre"
 	auditRecordedAtField   = "recorded_at"
 )
 

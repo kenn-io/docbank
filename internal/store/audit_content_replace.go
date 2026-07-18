@@ -174,7 +174,7 @@ func persistAuditedContentTransition(
 	if err != nil {
 		return err
 	}
-	mutation, err := makeAuditedContentTransitionMutation(
+	mutation, err := makeAuditedMemberStateMutation(
 		values, operationSequence, events, change,
 	)
 	if err != nil {
@@ -194,13 +194,34 @@ func persistAuditedContentTransition(
 	if err := insertAuditRecord(ctx, tx, mutation); err != nil {
 		return err
 	}
+	if err := advanceAuditedMutationScopes(
+		ctx, tx, values, scopes, mutationDigest.value,
+	); err != nil {
+		return err
+	}
+	allocation, err := makeAuditedMutationAllocationEntry(
+		values, operationSequence, nodeSequence, authority.allocationHead,
+		mutationDigest.value,
+	)
+	if err != nil {
+		return err
+	}
+	return advanceAuditedMutationAuthority(
+		ctx, tx, authority, operationSequence, allocation,
+	)
+}
+
+func advanceAuditedMutationScopes(
+	ctx context.Context, tx *sql.Tx, values auditedMutationValues,
+	scopes []auditScopeState, mutationHash audit.Value,
+) error {
 	for _, scope := range scopes {
 		entryCount, err := nextAuditInteger("scope entry count", scope.entryCount)
 		if err != nil {
 			return err
 		}
 		entry, err := makeAuditScopeChainEntry(
-			values, scope.scopeID, entryCount, scope.chainHead, mutationDigest.value,
+			values, scope.scopeID, entryCount, scope.chainHead, mutationHash,
 		)
 		if err != nil {
 			return err
@@ -218,13 +239,13 @@ func persistAuditedContentTransition(
 			return fmt.Errorf("advancing audit scope %s: %w", scope.scopeID, err)
 		}
 	}
-	allocation, err := makeAuditedContentAllocationEntry(
-		values, operationSequence, nodeSequence, authority.allocationHead,
-		mutationDigest.value,
-	)
-	if err != nil {
-		return err
-	}
+	return nil
+}
+
+func advanceAuditedMutationAuthority(
+	ctx context.Context, tx *sql.Tx, authority auditAuthorityState,
+	operationSequence int64, allocation audit.Record,
+) error {
 	allocationHead, err := hashAuditRecord(allocation)
 	if err != nil {
 		return err
@@ -418,7 +439,7 @@ func positiveAuditRevision(value int64) (uint64, error) {
 	return positiveAuditInteger("content revision", value)
 }
 
-func makeAuditedContentTransitionMutation(
+func makeAuditedMemberStateMutation(
 	values auditedMutationValues, sequence int64,
 	events []audit.Record, change audit.Record,
 ) (audit.Record, error) {
@@ -476,7 +497,7 @@ func makeAuditScopeChainEntry(
 	}}, nil
 }
 
-func makeAuditedContentAllocationEntry(
+func makeAuditedMutationAllocationEntry(
 	values auditedMutationValues, sequence, nodeSequence int64,
 	previousHead string, mutationHash audit.Value,
 ) (audit.Record, error) {

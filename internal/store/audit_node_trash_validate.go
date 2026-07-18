@@ -59,7 +59,7 @@ func (replay *auditedHistoryReplay) applyNodeTrash(
 	); err != nil {
 		return err
 	}
-	if err := replay.validateTopologyStateChanges(
+	if err := replay.validateMemberStateChanges(
 		mutation.record, transition.changedIDs,
 	); err != nil {
 		return err

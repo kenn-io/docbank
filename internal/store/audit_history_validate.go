@@ -315,9 +315,21 @@ func validateAuditedHistory(
 			return fmt.Errorf("validating audit operation %d: %w", sequence, topologyErr)
 		}
 		if len(bindings) == 0 && topologyValue.IsAbsent() {
-			err = replay.applyContentTransition(
-				vaultID, mutation, allocations[sequence], entries[sequence], events, usedEvents,
+			attachedCount, attachedErr := auditUnsignedField(
+				mutation.record, auditAttachedMetadataChangeCountField,
 			)
+			if attachedErr != nil {
+				err = attachedErr
+			} else if attachedCount != 0 {
+				err = replay.applyTagAssignment(
+					vaultID, mutation, allocations[sequence], entries[sequence],
+					attachmentDeltas, events, usedAttachmentDeltas, usedEvents,
+				)
+			} else {
+				err = replay.applyContentTransition(
+					vaultID, mutation, allocations[sequence], entries[sequence], events, usedEvents,
+				)
+			}
 		} else if len(bindings) != 0 {
 			err = replay.applyNodeCreation(
 				vaultID, mutation, allocations[sequence], entries[sequence],
@@ -697,7 +709,7 @@ func (replay *auditedHistoryReplay) applyContentTransition(
 		return err
 	}
 	if err := replay.advanceAllocation(
-		vaultID, operationID, mutation, allocation,
+		vaultID, operationID, mutation, allocation, "",
 	); err != nil {
 		return err
 	}
@@ -961,7 +973,7 @@ func (replay *auditedHistoryReplay) advanceScope(
 
 func (replay *auditedHistoryReplay) advanceAllocation(
 	vaultID string, operationID string,
-	mutation, entry storedAuditRecord,
+	mutation, entry storedAuditRecord, attachedDigest string,
 ) error {
 	nextCount := replay.allocationCount + 1
 	auditCount, err := positiveAuditInteger("allocation entry count", nextCount)
@@ -969,7 +981,7 @@ func (replay *auditedHistoryReplay) advanceAllocation(
 		return err
 	}
 	if entry.index.operationSequence == nil || *entry.index.operationSequence != nextCount {
-		return errors.New("content mutation allocation entry is out of order")
+		return errors.New("audited mutation allocation entry is out of order")
 	}
 	checks := []func() error{
 		func() error { return requireAuditUUID(entry.record, auditVaultIDField, vaultID) },
@@ -993,7 +1005,7 @@ func (replay *auditedHistoryReplay) advanceAllocation(
 		return err
 	}
 	if len(allocated) != 0 {
-		return errors.New("content mutation allocation cannot allocate node IDs")
+		return errors.New("audited mutation allocation cannot allocate node IDs")
 	}
 	mutationDigest, err := hashAuditRecord(mutation.record)
 	if err != nil {
@@ -1002,21 +1014,45 @@ func (replay *auditedHistoryReplay) advanceAllocation(
 	if err := requireAuditDigest(entry.record, "mutation_hash", mutationDigest.text); err != nil {
 		return err
 	}
-	for _, field := range []string{
-		"has_topology_change", "has_witness_change", "has_attached_metadata_change",
-	} {
+	for _, field := range []string{"has_topology_change", "has_witness_change"} {
 		if err := requireAuditBool(entry.record, field, false); err != nil {
 			return err
 		}
 	}
-	for _, field := range []string{auditWitnessChangeCountField, auditAttachedMetadataChangeCountField} {
-		if err := requireAuditUnsigned(entry.record, field, 0); err != nil {
+	if err := requireAuditUnsigned(entry.record, auditWitnessChangeCountField, 0); err != nil {
+		return err
+	}
+	if err := requireAuditAbsentFields(
+		entry.record, auditTopologyDeltaField, "witness_change_digest",
+	); err != nil {
+		return err
+	}
+	if attachedDigest == "" {
+		if err := requireAuditBool(entry.record, "has_attached_metadata_change", false); err != nil {
 			return err
 		}
-	}
-	if err := requireAuditAbsentFields(entry.record, auditTopologyDeltaField,
-		"witness_change_digest", "attached_metadata_change_digest"); err != nil {
-		return err
+		if err := requireAuditUnsigned(
+			entry.record, auditAttachedMetadataChangeCountField, 0,
+		); err != nil {
+			return err
+		}
+		if err := requireAuditAbsent(entry.record, "attached_metadata_change_digest"); err != nil {
+			return err
+		}
+	} else {
+		if err := requireAuditBool(entry.record, "has_attached_metadata_change", true); err != nil {
+			return err
+		}
+		if err := requireAuditUnsigned(
+			entry.record, auditAttachedMetadataChangeCountField, 1,
+		); err != nil {
+			return err
+		}
+		if err := requireAuditDigest(
+			entry.record, "attached_metadata_change_digest", attachedDigest,
+		); err != nil {
+			return err
+		}
 	}
 	replay.allocationCount, replay.allocationHead = nextCount, entry.digest
 	return nil
