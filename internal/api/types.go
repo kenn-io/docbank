@@ -151,6 +151,68 @@ type TagDeletionReceipt struct {
 	RemovedAssignments int `json:"removed_assignments" minimum:"0"`
 }
 
+// AuditEnrollmentPreview is the exact permanent-retention boundary reviewed
+// before first activation. PreviewToken is daemon-local, short-lived, and
+// consumed by one enable attempt.
+type AuditEnrollmentPreview struct {
+	VaultID                string `json:"vault_id" format:"uuid"`
+	ScopeID                string `json:"scope_id" format:"uuid"`
+	OperationID            string `json:"operation_id" format:"uuid"`
+	TargetNodeID           int64  `json:"target_node_id" minimum:"1"`
+	TargetPath             string `json:"target_path"`
+	BaselineDigest         string `json:"baseline_digest" pattern:"^[0-9a-f]{64}$"`
+	MemberCount            int    `json:"member_count" minimum:"1"`
+	FileCount              int    `json:"file_count" minimum:"0"`
+	DirectoryCount         int    `json:"directory_count" minimum:"1"`
+	VersionCount           int    `json:"version_count" minimum:"0"`
+	LogicalVersionBytes    int64  `json:"logical_version_bytes" minimum:"0"`
+	UniqueBlobs            int    `json:"unique_blobs" minimum:"0"`
+	UniqueBlobBytes        int64  `json:"unique_blob_bytes" minimum:"0"`
+	UnresolvedTrashOrigins int    `json:"unresolved_trash_origins" minimum:"0"`
+	VaultTopologyNodes     int    `json:"vault_topology_nodes" minimum:"1"`
+	VaultAttachmentRecords int    `json:"vault_attachment_records" minimum:"0"`
+	AuthorityJSONBytes     int64  `json:"authority_json_bytes" minimum:"1"`
+	PreviewToken           string `json:"preview_token" minLength:"43" maxLength:"43"`
+	ExpiresAt              string `json:"expires_at" format:"date-time"`
+}
+
+// AuditScopeStatus is one permanent scope and the evidence needed to identify
+// its target, enrollment boundary, and current chain head.
+type AuditScopeStatus struct {
+	ID                string `json:"id" format:"uuid"`
+	TargetNodeID      int64  `json:"target_node_id" minimum:"1"`
+	TargetPath        string `json:"target_path,omitempty"`
+	TargetTrashed     bool   `json:"target_trashed"`
+	EnableOperationID string `json:"enable_operation_id" format:"uuid"`
+	BaselineDigest    string `json:"baseline_digest" pattern:"^[0-9a-f]{64}$"`
+	MemberCount       int    `json:"member_count" minimum:"1"`
+	EntryCount        int64  `json:"entry_count" minimum:"1"`
+	ChainHead         string `json:"chain_head" pattern:"^[0-9a-f]{64}$"`
+}
+
+// AuditMembershipStatus describes one inspected node's sticky scope bindings.
+type AuditMembershipStatus struct {
+	NodeID          int64    `json:"node_id" minimum:"1"`
+	Path            string   `json:"path,omitempty"`
+	Trashed         bool     `json:"trashed"`
+	Protected       bool     `json:"protected"`
+	ScopeIDs        []string `json:"scope_ids" format:"uuid"`
+	BaselineDigests []string `json:"baseline_digests" pattern:"^[0-9a-f]{64}$"`
+}
+
+// AuditStatus reports dormant or active vault authority and optional node
+// membership. Scopes is always a JSON array, including for a dormant vault.
+type AuditStatus struct {
+	Enabled                    bool                   `json:"enabled"`
+	VaultID                    string                 `json:"vault_id" format:"uuid"`
+	LineageID                  string                 `json:"lineage_id,omitempty" format:"uuid"`
+	OperationSequenceHighWater int64                  `json:"operation_sequence_high_water" minimum:"0"`
+	AllocationEntryCount       int64                  `json:"allocation_entry_count" minimum:"0"`
+	AllocationHead             string                 `json:"allocation_head,omitempty" pattern:"^[0-9a-f]{64}$"`
+	Scopes                     []AuditScopeStatus     `json:"scopes"`
+	Membership                 *AuditMembershipStatus `json:"membership,omitempty"`
+}
+
 // ContentVerification binds a fresh physical read to the exact node revision
 // the caller inspected. BlobHash and Size are catalog identity; ComputedHash
 // and ComputedSize describe the bytes read through the mixed store.

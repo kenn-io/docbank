@@ -22,12 +22,6 @@ additionally requires:
 
 ## Install a release
 
-!!! info "Current tagged release"
-    v0.1.0 predates the complete distribution pipeline. It includes Linux
-    amd64/arm64 and macOS arm64 archives only. Windows and macOS amd64 users
-    must build from source until the next release is published; the installers
-    fail rather than substitute an incompatible archive.
-
 On Linux or macOS, the installer selects the native archive and installs
 `docbank` to `~/.local/bin` by default:
 

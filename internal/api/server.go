@@ -40,9 +40,10 @@ type Deps struct {
 // Server is docbank's HTTP API: a huma-described /api/v1 surface plus a
 // handful of plain http.Handler routes (health, ping, shutdown, web).
 type Server struct {
-	deps    Deps
-	handler http.Handler
-	api     huma.API
+	deps          Deps
+	handler       http.Handler
+	api           huma.API
+	auditPreviews *auditPreviewRegistry
 }
 
 // NewServer wires all routes and middleware onto a fresh mux. The handler
@@ -81,7 +82,7 @@ func NewServer(d Deps) *Server {
 	}
 	cfg.Security = []map[string][]string{{"apiKey": {}}, {"bearer": {}}}
 	humaAPI := humago.New(mux, cfg)
-	s := &Server{deps: d, api: humaAPI}
+	s := &Server{deps: d, api: humaAPI, auditPreviews: newAuditPreviewRegistry()}
 	g := &gate{}
 
 	registerReadRoutes(humaAPI, d)      // Task 5 (stat-by-id lands in this task)
@@ -94,6 +95,7 @@ func NewServer(d Deps) *Server {
 	registerContentRevertRoute(humaAPI, d, g)
 	registerContentPruneRoute(humaAPI, d, g)
 	registerTagRoutes(humaAPI, d, g)
+	registerAuditRoutes(humaAPI, d, g, s.auditPreviews)
 	markRevisionPreconditionsRequired(humaAPI)
 	s.registerHealth(mux)
 	mux.Handle("GET "+kitPingPath, kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{

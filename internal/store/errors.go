@@ -36,6 +36,13 @@ var (
 	// ErrAuditMutationUnsupported means an audited vault cannot perform a
 	// logical mutation until that mutation records its audit transition.
 	ErrAuditMutationUnsupported = errors.New("mutation is not supported for an audited vault")
+	// ErrAuditAlreadyEnabled means first-scope enrollment cannot run because
+	// this vault already has audit authority. Later scope enrollment is a
+	// separate operation with different closure semantics.
+	ErrAuditAlreadyEnabled = errors.New("audit is already enabled for this vault")
+	// ErrAuditPreviewStale means enrollment no longer matches the exact
+	// metadata state reviewed by the caller.
+	ErrAuditPreviewStale = errors.New("audit enrollment preview is stale")
 )
 
 // UnconditionalRev is the only ifRev value that skips the revision

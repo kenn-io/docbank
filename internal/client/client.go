@@ -131,6 +131,8 @@ var codeToTypedErr = map[string]error{
 	"version_node_mismatch":    store.ErrVersionNodeMismatch,
 	"version_already_current":  store.ErrVersionAlreadyCurrent,
 	"invalid_version_prune":    store.ErrInvalidVersionPrune,
+	"audit_already_enabled":    store.ErrAuditAlreadyEnabled,
+	"audit_preview_stale":      store.ErrAuditPreviewStale,
 	"backup_locked":            backup.ErrRepoLocked,
 	"pack_retirement_deferred": packstore.ErrPackRetirementDeferred,
 }
@@ -606,6 +608,185 @@ func (c *Client) Search(ctx context.Context, query string, limit int) (api.Searc
 	p := fmt.Sprintf("/api/v1/search?q=%s&limit=%d", url.QueryEscape(query), limit)
 	err := c.do(ctx, http.MethodGet, p, nil, nil, &out)
 	return out, err
+}
+
+// AuditPreviewOptions selects one live directory for permanent first-scope
+// enrollment. Exactly one of Path or NodeID must be supplied.
+type AuditPreviewOptions struct {
+	Path       string
+	NodeID     int64
+	AgentLabel string
+}
+
+// PreviewAudit derives the exact permanent-retention boundary without
+// changing the vault and returns a short-lived, daemon-local execution token.
+func (c *Client) PreviewAudit(
+	ctx context.Context, opts AuditPreviewOptions,
+) (api.AuditEnrollmentPreview, error) {
+	var preview api.AuditEnrollmentPreview
+	if (opts.Path == "") == (opts.NodeID == 0) {
+		return preview, errors.New("audit preview requires exactly one path or node ID")
+	}
+	if opts.Path != "" && !strings.HasPrefix(opts.Path, "/") {
+		return preview, errors.New("audit preview path must be absolute")
+	}
+	if opts.NodeID < 0 {
+		return preview, errors.New("audit preview node ID must be positive")
+	}
+	body := map[string]any{}
+	if opts.Path != "" {
+		body["path"] = opts.Path
+	} else {
+		body["node_id"] = opts.NodeID
+	}
+	if opts.AgentLabel != "" {
+		body["agent_label"] = opts.AgentLabel
+	}
+	err := c.do(ctx, http.MethodPost, "/api/v1/audit/preview", nil, body, &preview)
+	if err != nil {
+		return preview, err
+	}
+	if err := validateAuditPreview(preview); err != nil {
+		return api.AuditEnrollmentPreview{}, err
+	}
+	return preview, nil
+}
+
+// EnableAudit consumes one preview after the caller has explicitly accepted
+// permanent retention. A token is one-use even when execution rolls back.
+func (c *Client) EnableAudit(
+	ctx context.Context, previewToken string, acknowledgePermanentRetention bool,
+) (api.AuditStatus, error) {
+	var status api.AuditStatus
+	if previewToken == "" {
+		return status, errors.New("audit enable requires a preview token")
+	}
+	if !acknowledgePermanentRetention {
+		return status, errors.New("audit enable requires permanent-retention acknowledgment")
+	}
+	err := c.do(ctx, http.MethodPost, "/api/v1/audit/enable", nil, map[string]any{
+		"preview_token":                   previewToken,
+		"acknowledge_permanent_retention": acknowledgePermanentRetention,
+	}, &status)
+	if err != nil {
+		return status, err
+	}
+	if err := validateAuditStatus(status); err != nil {
+		return api.AuditStatus{}, err
+	}
+	if !status.Enabled {
+		return api.AuditStatus{}, errors.New("audit enable response reports dormant authority")
+	}
+	return status, nil
+}
+
+// AuditStatus returns vault-wide authority and, when selected, one node's
+// sticky protection bindings. At most one of path and nodeID may be supplied.
+func (c *Client) AuditStatus(
+	ctx context.Context, path string, nodeID int64,
+) (api.AuditStatus, error) {
+	var status api.AuditStatus
+	if path != "" && nodeID != 0 {
+		return status, errors.New("audit status accepts at most one path or node ID")
+	}
+	if path != "" && !strings.HasPrefix(path, "/") {
+		return status, errors.New("audit status path must be absolute")
+	}
+	if nodeID < 0 {
+		return status, errors.New("audit status node ID must be positive")
+	}
+	query := url.Values{}
+	if path != "" {
+		query.Set("path", path)
+	}
+	if nodeID != 0 {
+		query.Set("node_id", strconv.FormatInt(nodeID, 10))
+	}
+	requestPath := "/api/v1/audit/status"
+	if encoded := query.Encode(); encoded != "" {
+		requestPath += "?" + encoded
+	}
+	if err := c.do(ctx, http.MethodGet, requestPath, nil, nil, &status); err != nil {
+		return status, err
+	}
+	if err := validateAuditStatus(status); err != nil {
+		return api.AuditStatus{}, err
+	}
+	return status, nil
+}
+
+func validateAuditPreview(preview api.AuditEnrollmentPreview) error {
+	secret, tokenErr := base64.RawURLEncoding.Strict().DecodeString(preview.PreviewToken)
+	expiresAt, timeErr := time.Parse(time.RFC3339Nano, preview.ExpiresAt)
+	if !validUUIDv4(preview.VaultID) || !validUUIDv4(preview.ScopeID) ||
+		!validUUIDv4(preview.OperationID) || preview.TargetNodeID < 1 ||
+		!strings.HasPrefix(preview.TargetPath, "/") || !validSHA256Hex(preview.BaselineDigest) ||
+		preview.MemberCount < 1 || preview.FileCount < 0 || preview.DirectoryCount < 1 ||
+		preview.FileCount+preview.DirectoryCount != preview.MemberCount ||
+		preview.VersionCount < 0 || preview.LogicalVersionBytes < 0 ||
+		preview.VersionCount < preview.FileCount ||
+		preview.UniqueBlobs < 0 || preview.UniqueBlobs > preview.VersionCount ||
+		preview.UniqueBlobBytes < 0 || preview.UniqueBlobBytes > preview.LogicalVersionBytes ||
+		preview.UnresolvedTrashOrigins < 0 || preview.UnresolvedTrashOrigins > preview.MemberCount ||
+		preview.VaultTopologyNodes < preview.MemberCount || preview.VaultAttachmentRecords < 0 ||
+		preview.AuthorityJSONBytes < 1 || tokenErr != nil || len(secret) != 32 ||
+		timeErr != nil || expiresAt.Location() != time.UTC {
+		return errors.New("audit preview response has inconsistent authority or inventory")
+	}
+	return nil
+}
+
+func validateAuditStatus(status api.AuditStatus) error {
+	if !validUUIDv4(status.VaultID) || status.OperationSequenceHighWater < 0 ||
+		status.AllocationEntryCount < 0 {
+		return errors.New("audit status has invalid vault identity or counters")
+	}
+	if !status.Enabled {
+		if status.LineageID != "" || status.OperationSequenceHighWater != 0 ||
+			status.AllocationEntryCount != 0 || status.AllocationHead != "" || len(status.Scopes) != 0 {
+			return errors.New("dormant audit status contains active authority")
+		}
+	} else if !validUUIDv4(status.LineageID) || status.OperationSequenceHighWater < 1 ||
+		status.AllocationEntryCount < 1 || !validSHA256Hex(status.AllocationHead) ||
+		len(status.Scopes) == 0 {
+		return errors.New("active audit status lacks complete authority")
+	}
+	seen := make(map[string]string, len(status.Scopes))
+	previousScopeID := ""
+	for index, scope := range status.Scopes {
+		_, duplicate := seen[scope.ID]
+		if !validUUIDv4(scope.ID) || duplicate ||
+			(previousScopeID != "" && scope.ID <= previousScopeID) || scope.TargetNodeID < 1 ||
+			(!scope.TargetTrashed && !strings.HasPrefix(scope.TargetPath, "/")) ||
+			(scope.TargetTrashed && scope.TargetPath != "") ||
+			!validUUIDv4(scope.EnableOperationID) || !validSHA256Hex(scope.BaselineDigest) ||
+			scope.MemberCount < 1 || scope.EntryCount < 1 || !validSHA256Hex(scope.ChainHead) {
+			return fmt.Errorf("audit status scope %d has invalid authority", index)
+		}
+		seen[scope.ID] = scope.BaselineDigest
+		previousScopeID = scope.ID
+	}
+	if status.Membership != nil {
+		member := status.Membership
+		if member.NodeID < 1 || (!member.Trashed && !strings.HasPrefix(member.Path, "/")) ||
+			(member.Trashed && member.Path != "") || member.Protected != (len(member.ScopeIDs) != 0) ||
+			(member.Protected && !status.Enabled) ||
+			len(member.ScopeIDs) != len(member.BaselineDigests) {
+			return errors.New("audit status has invalid node membership")
+		}
+		previousScopeID = ""
+		for index, scopeID := range member.ScopeIDs {
+			digest := member.BaselineDigests[index]
+			expectedDigest, knownScope := seen[scopeID]
+			if !validUUIDv4(scopeID) || !validSHA256Hex(digest) ||
+				!knownScope || expectedDigest != digest ||
+				(previousScopeID != "" && scopeID <= previousScopeID) {
+				return errors.New("audit status has invalid node membership binding")
+			}
+			previousScopeID = scopeID
+		}
+	}
+	return nil
 }
 
 // Tags returns one bounded name-sorted page of tag definitions.

@@ -480,6 +480,37 @@ The receipt proves receive-time agreement. Use the revision-bound single-node
 verification endpoint later when policy requires evidence about bytes currently
 stored in the vault.
 
+## Enroll permanent history only after an exact preview
+
+Audit enrollment is irreversible. An agent must first preview one live
+directory by path or stable node ID:
+
+```bash
+curl --fail-with-body -X POST \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{"path":"/taxes","agent_label":"records policy"}' \
+  "$DOCBANK_URL/api/v1/audit/preview"
+```
+
+Present or evaluate the returned protected node/version counts, logical and
+unique bytes, vault-wide evidence counts, and `baseline_digest`. Only after
+that review may a client execute the exact daemon-held plan:
+
+```bash
+curl --fail-with-body -X POST \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{"preview_token":"<one-use-token>","acknowledge_permanent_retention":true}' \
+  "$DOCBANK_URL/api/v1/audit/enable"
+```
+
+The token expires after ten minutes, is consumed by one attempt, and does not
+survive daemon restart. On `audit_preview_stale`, preview again; never retry the
+same execution blindly. `GET /api/v1/audit/status` reports vault-wide evidence.
+Add either `?path=/taxes/file.pdf` or `?node_id=57` to inspect sticky membership.
+The current public boundary permits one permanent scope per vault.
+
 ## Treat destructive maintenance as a two-step decision
 
 Trash empty and GC are dry-run operations when `run` is false. An agent should

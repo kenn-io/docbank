@@ -141,6 +141,51 @@ func TestAddLsTreeCat(t *testing.T) {
 	assert.Equal(t, "hello vault", out)
 }
 
+func TestAuditEnableIsPreviewFirstAndReportsProtection(t *testing.T) {
+	_ = setupVaultHome(t)
+	source := writeSourceFile(t, "return.txt", "tax return")
+	_, err := runCLI(t, "add", source, "--dest", "/Taxes")
+	require.NoError(t, err)
+
+	out, err := runCLI(t, "audit", "status", "--json")
+	require.NoError(t, err, out)
+	var dormant api.AuditStatus
+	require.NoError(t, json.Unmarshal([]byte(out), &dormant))
+	assert.False(t, dormant.Enabled)
+
+	out, err = runCLI(t, "audit", "enable", "/Taxes", "--json")
+	require.NoError(t, err, out)
+	var preview api.AuditEnrollmentPreview
+	require.NoError(t, json.Unmarshal([]byte(out), &preview))
+	assert.Equal(t, "/Taxes", preview.TargetPath)
+	assert.Equal(t, 2, preview.MemberCount)
+	assert.NotEmpty(t, preview.PreviewToken)
+
+	_, err = runCLI(t, "audit", "enable", "--run", "--token", preview.PreviewToken)
+	require.ErrorContains(t, err, "--acknowledge-permanent-retention")
+
+	out, err = runCLI(t, "audit", "enable", "--run", "--token", preview.PreviewToken,
+		"--acknowledge-permanent-retention", "--json")
+	require.NoError(t, err, out)
+	var status api.AuditStatus
+	require.NoError(t, json.Unmarshal([]byte(out), &status))
+	assert.True(t, status.Enabled)
+	require.Len(t, status.Scopes, 1)
+	assert.Equal(t, preview.ScopeID, status.Scopes[0].ID)
+
+	out, err = runCLI(t, "audit", "status", "/Taxes/return.txt")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "/Taxes/return.txt is permanently protected")
+
+	replacement := writeSourceFile(t, "replacement.txt", "amended return")
+	_, err = runCLI(t, "put", replacement, "/Taxes/return.txt", "--progress", "plain")
+	require.NoError(t, err)
+
+	_, err = runCLI(t, "audit", "enable", "--run", "--token", preview.PreviewToken,
+		"--acknowledge-permanent-retention")
+	require.ErrorIs(t, err, store.ErrAuditPreviewStale)
+}
+
 func TestPutReplacesContentAndRetainsHistory(t *testing.T) {
 	_ = setupVaultHome(t)
 	initial := writeSourceFile(t, "document.txt", "initial content")
