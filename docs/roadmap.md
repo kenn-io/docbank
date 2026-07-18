@@ -104,9 +104,10 @@ metadata-v1 backup/restore authority, including bounded forward and reverse
 listings. Permanent first-scope audit enrollment is preview-first across the
 CLI and API. Sticky membership, supported logical mutations, allocation and
 scope chains, status evidence, and JSONL backup/restore validation are
-implemented.
+implemented. One-node canonical audit history is available by path or stable ID
+with bounded, append-stable cursor pagination.
 
-- Additional and overlapping audit scopes, bounded history browsing, and a
+- Additional and overlapping audit scopes, scope-wide history browsing, and a
   dedicated independent verification command
   ([current workflow](usage/audited-history.md),
   [model](architecture/audited-history.md))

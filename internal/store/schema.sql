@@ -169,11 +169,14 @@ CREATE TABLE IF NOT EXISTS audit_records (
     entry_count        INTEGER CHECK (entry_count IS NULL OR entry_count > 0),
     event_id           TEXT,
     event_ordinal      INTEGER CHECK (event_ordinal IS NULL OR event_ordinal >= 0),
+    node_id            INTEGER CHECK (node_id IS NULL OR node_id > 0),
     record_json        TEXT NOT NULL
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS audit_record_event
     ON audit_records(event_id) WHERE event_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS audit_record_event_node
+    ON audit_records(node_id) WHERE kind = 'event';
 CREATE UNIQUE INDEX IF NOT EXISTS audit_record_mutation_operation
     ON audit_records(operation_id) WHERE kind = 'canonical_mutation';
 CREATE UNIQUE INDEX IF NOT EXISTS audit_record_mutation_sequence

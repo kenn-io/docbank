@@ -122,7 +122,7 @@ func (replay *auditedHistoryReplay) validateTagAssignmentDelta(
 		)
 	}
 	change := changes[0]
-	if err := requireAuditText(change, "record_kind", "tag_assignment"); err != nil {
+	if err := requireAuditText(change, "record_kind", auditTagAssignmentKind); err != nil {
 		return replayedTagAssignment{}, err
 	}
 	pre, hasPre, preErr := optionalNestedAuditRecord(change, auditPreField)
@@ -143,7 +143,7 @@ func (replay *auditedHistoryReplay) validateTagAssignmentDelta(
 	if !hasPost {
 		assignment = pre
 	}
-	if assignment.Kind != "tag_assignment" {
+	if assignment.Kind != auditTagAssignmentKind {
 		return replayedTagAssignment{}, errors.New(
 			"tag assignment delta carries the wrong record kind",
 		)
@@ -216,7 +216,7 @@ func optionalNestedAuditRecord(record audit.Record, field string) (audit.Record,
 
 func (replay *auditedHistoryReplay) hasTagDefinition(tagID string) (bool, error) {
 	for _, record := range replay.attachments {
-		if record.Kind != "tag_definition" {
+		if record.Kind != auditTagDefinitionKind {
 			continue
 		}
 		id, err := auditUUIDField(record, "tag_id")
@@ -273,7 +273,7 @@ func (replay *auditedHistoryReplay) validateTagAssignmentEvent(
 		func() error { return requireAuditUnsigned(event, metadataNodeIDField, transition.nodeID) },
 		func() error { return requireAuditText(event, "event_kind", kind) },
 		func() error { return requireAuditUUID(event, auditScopeIDField, replay.scopeID) },
-		func() error { return requireAuditText(event, "attachment_kind", "tag_assignment") },
+		func() error { return requireAuditText(event, "attachment_kind", auditTagAssignmentKind) },
 		func() error { return requireAuditUnsigned(event, auditEventOrdinalField, 0) },
 		func() error { return requireAuditUnsigned(event, "prior_node_revision", revision) },
 		func() error { return requireAuditUnsigned(event, "resulting_node_revision", revision+1) },

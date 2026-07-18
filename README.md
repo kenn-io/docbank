@@ -44,8 +44,8 @@ metadata, content, and maintenance authority.
 - Stable tags with define, rename, assign, unassign, delete, and bounded
   node/tag listings
 - Preview-first permanent audit enrollment for one directory scope, with
-  sticky retention, recorded supported mutations, status evidence, and
-  backup/restore fidelity
+  sticky retention, recorded supported mutations, status evidence, bounded
+  per-node history, and backup/restore fidelity
 - FTS5 name search (document-body extraction and search are planned)
 - Mixed loose and packed content storage with explicit pack, GC, and repack
 - Whole-vault integrity verification

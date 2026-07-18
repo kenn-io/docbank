@@ -184,6 +184,17 @@ func TestAuditEnableIsPreviewFirstAndReportsProtection(t *testing.T) {
 	replacement := writeSourceFile(t, "replacement.txt", "amended return")
 	_, err = runCLI(t, "put", replacement, "/Taxes/return.txt", "--progress", "plain")
 	require.NoError(t, err)
+	out, err = runCLI(t, "audit", "history", "/Taxes/return.txt", "--json")
+	require.NoError(t, err, out)
+	var history api.AuditEventPage
+	require.NoError(t, json.Unmarshal([]byte(out), &history))
+	require.NotEmpty(t, history.Items)
+	assert.Equal(t, "content_replace", history.Items[0].Kind)
+	assert.Equal(t, "/Taxes/return.txt", history.Path)
+	humanHistory, err := runCLI(t, "audit", "history", "/Taxes/return.txt")
+	require.NoError(t, err, humanHistory)
+	assert.Contains(t, humanHistory, "content_replace")
+	assert.Contains(t, humanHistory, `audit history for "/Taxes/return.txt"`)
 
 	_, err = runCLI(t, "audit", "enable", "--run", "--token", preview.PreviewToken,
 		"--acknowledge-permanent-retention")

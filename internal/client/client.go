@@ -133,6 +133,8 @@ var codeToTypedErr = map[string]error{
 	"invalid_version_prune":    store.ErrInvalidVersionPrune,
 	"audit_already_enabled":    store.ErrAuditAlreadyEnabled,
 	"audit_preview_stale":      store.ErrAuditPreviewStale,
+	"audit_not_enrolled":       store.ErrAuditNotEnrolled,
+	"invalid_audit_cursor":     store.ErrInvalidAuditCursor,
 	"backup_locked":            backup.ErrRepoLocked,
 	"pack_retirement_deferred": packstore.ErrPackRetirementDeferred,
 }
@@ -713,6 +715,223 @@ func (c *Client) AuditStatus(
 		return api.AuditStatus{}, err
 	}
 	return status, nil
+}
+
+// AuditHistory returns one stable newest-first page of canonical events for
+// exactly one audited node selected by live path or stable ID.
+func (c *Client) AuditHistory(
+	ctx context.Context, path string, nodeID int64, limit int, cursor string,
+) (api.AuditEventPage, error) {
+	var page api.AuditEventPage
+	if (path == "") == (nodeID == 0) {
+		return page, errors.New("audit history requires exactly one path or node ID")
+	}
+	if path != "" && !strings.HasPrefix(path, "/") {
+		return page, errors.New("audit history path must be absolute")
+	}
+	if nodeID < 0 {
+		return page, errors.New("audit history node ID must be positive")
+	}
+	if limit < 1 || limit > 500 {
+		return page, errors.New("audit history limit must be between 1 and 500")
+	}
+	if nodeID != 0 {
+		if err := store.ValidateAuditHistoryCursor(cursor, nodeID); err != nil {
+			return page, err
+		}
+	}
+	query := url.Values{}
+	if path != "" {
+		query.Set("path", path)
+	} else {
+		query.Set("node_id", strconv.FormatInt(nodeID, 10))
+	}
+	query.Set("limit", strconv.Itoa(limit))
+	if cursor != "" {
+		query.Set("cursor", cursor)
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/v1/audit/history?"+query.Encode(),
+		nil, nil, &page); err != nil {
+		return page, err
+	}
+	if err := validateAuditEventPage(page, nodeID, limit, cursor); err != nil {
+		return api.AuditEventPage{}, err
+	}
+	return page, nil
+}
+
+func validateAuditEventPage(page api.AuditEventPage, requestedNodeID int64, limit int, cursor string) error {
+	if page.Node.ID < 1 || (requestedNodeID != 0 && page.Node.ID != requestedNodeID) ||
+		page.Limit != limit || page.Cursor != cursor || page.Total < len(page.Items) ||
+		len(page.Items) > limit || (page.Node.TrashedAt == "") != strings.HasPrefix(page.Path, "/") {
+		return errors.New("audit history response has inconsistent node or pagination")
+	}
+	if err := store.ValidateAuditHistoryCursor(cursor, page.Node.ID); err != nil {
+		return err
+	}
+	if err := store.ValidateAuditHistoryCursor(page.NextCursor, page.Node.ID); err != nil {
+		return err
+	}
+	if page.NextCursor != "" && len(page.Items) != limit {
+		return errors.New("audit history response has a premature next cursor")
+	}
+	for i, event := range page.Items {
+		if err := validateAuditEvent(event, page.Node.ID); err != nil {
+			return fmt.Errorf("audit history item %d: %w", i, err)
+		}
+		if i > 0 && !auditEventPrecedes(page.Items[i-1], event) {
+			return errors.New("audit history response is not newest first")
+		}
+	}
+	return nil
+}
+
+func validateAuditEvent(event api.AuditEvent, nodeID int64) error {
+	recordedAt, timeErr := time.Parse(time.RFC3339Nano, event.RecordedAt)
+	if !validSHA256Hex(event.ID) || !validUUIDv4(event.OperationID) ||
+		event.OperationSequence < 1 || event.Ordinal < 0 || event.NodeID != nodeID ||
+		event.Kind == "" || !validUUIDv4(event.ScopeID) || event.Origin == "" ||
+		timeErr != nil || recordedAt.Location() != time.UTC ||
+		event.PriorNodeRevision < 0 || event.ResultingNodeRevision < 0 ||
+		!validOptionalUUID(event.PriorCurrentVersionID) ||
+		!validOptionalUUID(event.ResultingCurrentVersionID) ||
+		!validOptionalUUID(event.SourceVersionID) ||
+		(event.TargetNodeID != nil && *event.TargetNodeID < 1) ||
+		(event.BaselineDigest != nil && !validSHA256Hex(*event.BaselineDigest)) {
+		return errors.New("event has invalid canonical fields")
+	}
+	if event.Kind == "node_path" {
+		if event.OldPath == nil || event.NewPath == nil {
+			return errors.New("path event lacks old and new path states")
+		}
+		if err := store.ValidateAuditPathState(event.OldPath.Path, event.OldPath.State); err != nil {
+			return fmt.Errorf("invalid old path state: %w", err)
+		}
+		if err := store.ValidateAuditPathState(event.NewPath.Path, event.NewPath.State); err != nil {
+			return fmt.Errorf("invalid new path state: %w", err)
+		}
+	} else if event.OldPath != nil || event.NewPath != nil {
+		return errors.New("non-path event contains path states")
+	}
+	return validateAuditAttachment(event.Kind, event.Attachment)
+}
+
+func validateAuditAttachment(eventKind string, change *api.AuditAttachmentChange) error {
+	wantKind := ""
+	switch eventKind {
+	case "tag_define", "tag_rename", "tag_delete":
+		wantKind = "tag_definition"
+	case "tag_assign", "tag_unassign":
+		wantKind = "tag_assignment"
+	case "provenance_add", "provenance_supersede":
+		wantKind = "provenance"
+	}
+	if wantKind == "" {
+		if change != nil {
+			return errors.New("event kind cannot carry an attachment")
+		}
+		return nil
+	}
+	if change == nil || change.Kind != wantKind ||
+		(change.Before == nil && change.After == nil) {
+		return errors.New("attachment event lacks a complete typed change")
+	}
+	if err := validateAuditAttachmentIdentity(change.Kind, change.Identity); err != nil {
+		return err
+	}
+	for _, state := range []*api.AuditAttachmentState{change.Before, change.After} {
+		if state == nil {
+			continue
+		}
+		if err := validateAuditAttachmentState(change.Kind, change.Identity, *state); err != nil {
+			return err
+		}
+	}
+	switch eventKind {
+	case "tag_rename":
+		if change.Before != nil && change.After != nil {
+			return nil
+		}
+	case "tag_delete", "tag_unassign":
+		if change.Before != nil && change.After == nil {
+			return nil
+		}
+	case "tag_define", "tag_assign", "provenance_add":
+		if change.Before == nil && change.After != nil &&
+			(eventKind != "provenance_add" ||
+				change.After.ProvenanceID == change.Identity.ProvenanceID) {
+			return nil
+		}
+	case "provenance_supersede":
+		if change.Before != nil && change.After != nil &&
+			change.After.ProvenanceID == change.Identity.ProvenanceID &&
+			change.After.Supersedes != nil &&
+			*change.After.Supersedes == change.Before.ProvenanceID {
+			return nil
+		}
+	}
+	return errors.New("audit attachment has an invalid transition shape")
+}
+
+func validateAuditAttachmentIdentity(kind string, identity api.AuditAttachmentIdentity) error {
+	switch kind {
+	case "tag_definition":
+		if validUUIDv4(identity.TagID) && identity.NodeID == 0 && identity.ProvenanceID == "" {
+			return nil
+		}
+	case "tag_assignment":
+		if validUUIDv4(identity.TagID) && identity.NodeID > 0 && identity.ProvenanceID == "" {
+			return nil
+		}
+	case "provenance":
+		if identity.TagID == "" && identity.NodeID == 0 && validSHA256Hex(identity.ProvenanceID) {
+			return nil
+		}
+	}
+	return errors.New("audit attachment has an invalid stable identity")
+}
+
+func validateAuditAttachmentState(
+	kind string, identity api.AuditAttachmentIdentity, state api.AuditAttachmentState,
+) error {
+	switch kind {
+	case "tag_definition":
+		if state.TagID == identity.TagID && state.TagName != "" && state.NodeID == 0 &&
+			state.ProvenanceID == "" && state.IngestID == "" && state.OriginalPath == nil &&
+			state.OriginalMTime == nil && state.Supersedes == nil {
+			return nil
+		}
+	case "tag_assignment":
+		if state.TagID == identity.TagID && state.NodeID == identity.NodeID &&
+			state.TagName == "" && state.ProvenanceID == "" && state.IngestID == "" &&
+			state.OriginalPath == nil && state.OriginalMTime == nil && state.Supersedes == nil {
+			return nil
+		}
+	case "provenance":
+		mtimeValid := true
+		if state.OriginalMTime != nil {
+			parsed, err := time.Parse(time.RFC3339Nano, *state.OriginalMTime)
+			mtimeValid = err == nil && parsed.Location() == time.UTC
+		}
+		supersedesValid := state.Supersedes == nil || validSHA256Hex(*state.Supersedes)
+		if state.TagID == "" && state.TagName == "" && state.NodeID > 0 &&
+			validSHA256Hex(state.ProvenanceID) && validUUIDv4(state.IngestID) &&
+			mtimeValid && supersedesValid {
+			return nil
+		}
+	}
+	return errors.New("audit attachment has an invalid before or after state")
+}
+
+func validOptionalUUID(value *string) bool {
+	return value == nil || validUUIDv4(*value)
+}
+
+func auditEventPrecedes(newer, older api.AuditEvent) bool {
+	return newer.OperationSequence > older.OperationSequence ||
+		(newer.OperationSequence == older.OperationSequence && newer.Ordinal > older.Ordinal) ||
+		(newer.OperationSequence == older.OperationSequence && newer.Ordinal == older.Ordinal &&
+			newer.ID > older.ID)
 }
 
 func validateAuditPreview(preview api.AuditEnrollmentPreview) error {

@@ -513,6 +513,27 @@ The token expires after ten minutes, is consumed by one attempt, and does not
 survive daemon restart. On `audit_preview_stale`, preview again; never retry the
 same execution blindly. `GET /api/v1/audit/status` reports vault-wide evidence.
 Add either `?path=/taxes/file.pdf` or `?node_id=57` to inspect sticky membership.
+Read that node's canonical timeline with exactly one selector:
+
+```bash
+curl --fail-with-body \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  "$DOCBANK_URL/api/v1/audit/history?node_id=57&limit=50"
+```
+
+Events are newest first and bind stable event, operation, scope, node-revision,
+and optional path/content identities. A path state distinguishes `/live/paths`
+from canonical `@trash/known/...` and `@trash/unknown/...` coordinates. Tag and
+provenance events include an `attachment` object with a discriminating `kind`,
+stable `identity`, and typed `before`/`after` states, so clients do not need to
+decode canonical audit internals. Follow `next_cursor` to read older events;
+send it back unchanged and never derive meaning from its encoding. The cursor
+is node-bound and remains stable when newer operations append. Treat
+`audit_not_enrolled` as a valid answer that the node is outside permanent
+retention, and `invalid_audit_cursor` as a request error. A protected node may
+have an empty timeline when it was adopted at enrollment and has not changed;
+use status membership, not event count, to decide protection.
+
 The current public boundary permits one permanent scope per vault.
 
 ## Treat destructive maintenance as a two-step decision

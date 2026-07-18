@@ -8,10 +8,11 @@ description: The permanent, tamper-evident history model for protected directory
 !!! info "Current implementation boundary"
     Docbank implements permanent first-scope enrollment, sticky membership,
     mutation and allocation chains for the supported changes described below,
-    JSONL backup/restore fidelity, and status inspection. Additional scopes,
-    bounded history browsing, independent verification commands, and TUI/web
-    projections remain planned. See [Permanent Audited History](../usage/audited-history.md)
-    for the current operator workflow.
+    JSONL backup/restore fidelity, status inspection, and bounded per-node
+    history. Additional scopes, scope-wide browsing, independent verification
+    commands, and TUI/web projections remain planned. See
+    [Permanent Audited History](../usage/audited-history.md) for the current
+    operator workflow.
 
 Full audit is an opt-in promise for records whose history matters more than
 easy reclamation: tax documents, contracts, regulated work, or an external
@@ -1462,14 +1463,21 @@ a separate execution supplies that token and the explicit disclosure
 acknowledgment because enrollment is permanent. `audit status` reports the
 vault authority and can inspect one node's sticky membership. Machine output
 uses stable scope, node, operation, lineage, and baseline identities rather
-than asking agents to parse prose.
+than asking agents to parse prose. `audit history` exposes a bounded newest-first
+node timeline by live path or stable node ID. Its opaque continuation cursor is
+bound to the node and to the last canonical `(operation_sequence,
+event_ordinal, event_id)` position, so later appends do not shift older pages.
+An enrolled baseline member with no later node event returns an empty timeline;
+status membership, rather than event count, remains the protection authority.
+The projection retains the canonical live/trash path-state distinction and
+turns tag/provenance identity and pre/post records into a typed attachment
+change, rather than exposing the internal canonical encoding or dropping the
+metadata that explains the event.
 
 !!! info "Planned"
-    Bounded `audit history` and independent `audit verify` commands will expose
-    event timelines and terminal verification evidence. A history lookup for a
-    node outside every scope will return `audit_not_enrolled`, and refused
-    protected destruction will identify every blocking scope in structured
-    output.
+    Scope-wide history and independent `audit verify` will expose aggregate
+    timelines and terminal verification evidence. Refused protected destruction
+    will identify every blocking scope in structured output.
 
 ### TUI
 

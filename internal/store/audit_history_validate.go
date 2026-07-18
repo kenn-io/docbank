@@ -599,7 +599,7 @@ func newAuditedHistoryReplay(
 			return nil, errors.New("audit attachment genesis repeats an identity")
 		}
 		replay.attachments[key] = attachment
-		if attachment.Kind == "tag_definition" {
+		if attachment.Kind == auditTagDefinitionKind {
 			tagID, err := auditUUIDField(attachment, "tag_id")
 			if err != nil {
 				return nil, err

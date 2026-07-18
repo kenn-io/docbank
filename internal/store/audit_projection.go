@@ -276,7 +276,7 @@ func appendAuditTagAssignments(ctx context.Context, tx metadataQuerier, records 
 		if err != nil {
 			return err
 		}
-		*records = append(*records, audit.Record{Kind: "tag_assignment", Fields: []audit.Field{
+		*records = append(*records, audit.Record{Kind: auditTagAssignmentKind, Fields: []audit.Field{
 			{Name: "tag_id", Value: tagValue},
 			{Name: metadataNodeIDField, Value: audit.Unsigned(auditNodeID)},
 		}})
@@ -313,7 +313,7 @@ func tagDefinitionAuditRecord(tag Tag) (audit.Record, error) {
 	if err != nil {
 		return audit.Record{}, err
 	}
-	return audit.Record{Kind: "tag_definition", Fields: []audit.Field{
+	return audit.Record{Kind: auditTagDefinitionKind, Fields: []audit.Field{
 		{Name: "tag_id", Value: tagValue}, {Name: "name", Value: nameValue},
 	}}, nil
 }
@@ -326,7 +326,7 @@ func attachedAuditIdentity(record audit.Record) (audit.Record, error) {
 	case "provenance":
 		value, err := auditField(record, "identity")
 		return audit.Record{Kind: "provenance_identity_ref", Fields: []audit.Field{{Name: "identity", Value: value}}}, err
-	case "tag_assignment":
+	case auditTagAssignmentKind:
 		tagID, err := auditField(record, "tag_id")
 		if err != nil {
 			return audit.Record{}, err
@@ -335,7 +335,7 @@ func attachedAuditIdentity(record audit.Record) (audit.Record, error) {
 		return audit.Record{Kind: "tag_assignment_identity", Fields: []audit.Field{
 			{Name: "tag_id", Value: tagID}, {Name: metadataNodeIDField, Value: nodeID},
 		}}, err
-	case "tag_definition":
+	case auditTagDefinitionKind:
 		value, err := auditField(record, "tag_id")
 		return audit.Record{Kind: "tag_definition_identity", Fields: []audit.Field{{Name: "tag_id", Value: value}}}, err
 	default:
@@ -374,7 +374,7 @@ func auditRecordsForNodes(records []audit.Record, members map[uint64]bool) ([]au
 				}
 				ingests[ingestID] = true
 			}
-		case "tag_assignment":
+		case auditTagAssignmentKind:
 			nodeID, err := auditUnsignedField(record, metadataNodeIDField)
 			if err != nil {
 				return nil, err
@@ -399,7 +399,7 @@ func auditRecordsForNodes(records []audit.Record, members map[uint64]bool) ([]au
 			if ingests[id] {
 				selected = append(selected, record)
 			}
-		case "tag_definition":
+		case auditTagDefinitionKind:
 			id, err := auditUUIDField(record, "tag_id")
 			if err != nil {
 				return nil, err

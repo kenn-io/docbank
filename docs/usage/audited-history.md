@@ -97,6 +97,47 @@ docbank audit status --node-id 57 --json
 An empty timeline is not proof that a node is protected; use `audit status` and
 require `protected: true` plus its scope and baseline identities.
 
+## Read a node's history
+
+Read canonical events for one protected document or directory by its live path:
+
+```bash
+docbank audit history /taxes/2026/return.pdf
+docbank audit history /taxes/2026/return.pdf --json
+```
+
+Use a stable node ID when a document has moved, or while it is in trash:
+
+```bash
+docbank audit history --node-id 57
+```
+
+Events are newest first. Each one identifies its immutable event and operation,
+scope, recording time, origin, node revision before and after, and the fields
+relevant to that event. Path events include old and new coordinates plus their
+`live` or `trash` state; trash coordinates use the separate
+`@trash/known/...` or `@trash/unknown/...` domain rather than pretending to be
+live virtual paths. Content events include prior and resulting version IDs.
+Tag and provenance events include their stable attachment identity and complete
+before/after attachment state. Human output summarizes those changes. JSON
+returns the complete typed projection.
+
+The default page contains at most 50 events. Continue an older timeline with
+the opaque cursor printed by human output or returned as `next_cursor` in JSON:
+
+```bash
+docbank audit history --node-id 57 --limit 50 --cursor <next-cursor> --json
+```
+
+The cursor is bound to the stable node and does not shift when newer events are
+recorded. Do not parse or construct it. A cursor from another node returns
+`invalid_audit_cursor`; a node outside every audit scope returns
+`audit_not_enrolled`.
+
+A protected node adopted during first enrollment may have no node-specific
+events until its first later change. That empty timeline does not weaken its
+baseline protection; `audit status` is the membership authority.
+
 ## What remains usable
 
 Protected documents remain working documents. Docbank records direct creation
@@ -122,8 +163,8 @@ yet exposed. Status, mutation recording, JSONL export/import, and backup capture
 all preserve the first scope's authority.
 
 !!! info "Planned"
-    Bounded `audit history` and independent `audit verify` commands, additional
-    scope enrollment, and rich TUI/web history views are not implemented yet.
-    Until those arrive, `docbank verify` still validates the stored metadata
-    relations and every blob, while backup restore revalidates the portable
-    JSONL authority before publishing a vault.
+    Independent `audit verify`, additional scope enrollment, scope-wide history,
+    and rich TUI/web history views are not implemented yet. Until those arrive,
+    `docbank verify` still validates the stored metadata relations and every
+    blob, while backup restore revalidates the portable JSONL authority before
+    publishing a vault.

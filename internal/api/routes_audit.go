@@ -14,6 +14,7 @@ import (
 
 type auditPreviewOutput struct{ Body AuditEnrollmentPreview }
 type auditStatusOutput struct{ Body AuditStatus }
+type auditHistoryOutput struct{ Body AuditEventPage }
 
 func registerAuditRoutes(
 	api huma.API, d Deps, g *gate, previews *auditPreviewRegistry,
@@ -131,6 +132,39 @@ func registerAuditRoutes(
 		}
 		return &auditStatusOutput{Body: auditStatus(status)}, nil
 	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "auditNodeHistory", Method: http.MethodGet,
+		Path:    "/api/v1/audit/history",
+		Summary: "Read one audited node's canonical event timeline",
+		Description: "Returns newest-first canonical events for one stable node. " +
+			"Use next_cursor to continue without shifting when newer events arrive.",
+	}, func(ctx context.Context, in *struct {
+		Path   string `query:"path"`
+		NodeID int64  `query:"node_id" minimum:"1"`
+		Limit  int    `query:"limit" default:"50" minimum:"1" maximum:"500"`
+		Cursor string `query:"cursor" maxLength:"256"`
+	}) (*auditHistoryOutput, error) {
+		if (in.Path == "") == (in.NodeID == 0) {
+			return nil, NewError(http.StatusUnprocessableEntity, "validation",
+				"audit history requires exactly one of path or node_id")
+		}
+		if in.Path != "" && !strings.HasPrefix(in.Path, "/") {
+			return nil, NewError(http.StatusUnprocessableEntity, "validation",
+				fmt.Sprintf("path %q must be absolute (start with /)", in.Path))
+		}
+		var page store.AuditEventPage
+		var err error
+		if in.Path != "" {
+			page, err = d.Store.AuditHistoryPath(ctx, in.Path, in.Limit, in.Cursor)
+		} else {
+			page, err = d.Store.AuditHistory(ctx, in.NodeID, in.Limit, in.Cursor)
+		}
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
+		return &auditHistoryOutput{Body: auditEventPage(page)}, nil
+	})
 }
 
 func auditEnrollmentPreview(
@@ -176,4 +210,62 @@ func auditStatus(status store.AuditStatus) AuditStatus {
 		}
 	}
 	return out
+}
+
+func auditEventPage(page store.AuditEventPage) AuditEventPage {
+	out := AuditEventPage{
+		Node: fromStoreNode(page.Node), Path: page.Path,
+		Items: []AuditEvent{}, Total: page.Total, Limit: page.Limit,
+		Cursor: page.Cursor, NextCursor: page.NextCursor,
+	}
+	for _, event := range page.Items {
+		out.Items = append(out.Items, AuditEvent{
+			ID: event.ID, OperationID: event.OperationID,
+			OperationSequence: event.OperationSequence, Ordinal: event.Ordinal,
+			NodeID: event.NodeID, Kind: event.Kind, ScopeID: event.ScopeID,
+			RecordedAt: event.RecordedAt, Origin: event.Origin, AgentLabel: event.AgentLabel,
+			PriorNodeRevision:         event.PriorNodeRevision,
+			ResultingNodeRevision:     event.ResultingNodeRevision,
+			PriorCurrentVersionID:     event.PriorCurrentVersionID,
+			ResultingCurrentVersionID: event.ResultingCurrentVersionID,
+			SourceVersionID:           event.SourceVersionID, TargetNodeID: event.TargetNodeID,
+			BaselineDigest: event.BaselineDigest,
+			Attachment:     auditAttachmentChange(event.Attachment),
+			OldPath:        auditPathState(event.OldPath), NewPath: auditPathState(event.NewPath),
+		})
+	}
+	return out
+}
+
+func auditPathState(value *store.AuditPathState) *AuditPathState {
+	if value == nil {
+		return nil
+	}
+	return &AuditPathState{Path: value.Path, State: value.State}
+}
+
+func auditAttachmentChange(value *store.AuditAttachmentChange) *AuditAttachmentChange {
+	if value == nil {
+		return nil
+	}
+	return &AuditAttachmentChange{
+		Kind: value.Kind,
+		Identity: AuditAttachmentIdentity{
+			TagID: value.Identity.TagID, NodeID: value.Identity.NodeID,
+			ProvenanceID: value.Identity.ProvenanceID,
+		},
+		Before: auditAttachmentState(value.Before), After: auditAttachmentState(value.After),
+	}
+}
+
+func auditAttachmentState(value *store.AuditAttachmentState) *AuditAttachmentState {
+	if value == nil {
+		return nil
+	}
+	return &AuditAttachmentState{
+		TagID: value.TagID, NodeID: value.NodeID, TagName: value.TagName,
+		ProvenanceID: value.ProvenanceID, IngestID: value.IngestID,
+		OriginalPath: value.OriginalPath, OriginalMTime: value.OriginalMTime,
+		Supersedes: value.Supersedes,
+	}
 }

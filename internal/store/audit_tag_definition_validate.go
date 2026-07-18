@@ -46,7 +46,7 @@ func attachedMutationKind(
 		if err != nil {
 			return "", err
 		}
-		if kind != "tag_definition" {
+		if kind != auditTagDefinitionKind {
 			continue
 		}
 		_, hasPre, err := optionalNestedAuditRecord(change, auditPreField)
@@ -175,7 +175,7 @@ func (replay *auditedHistoryReplay) validateTagDefinitionDelta(
 		)
 	}
 	change := changes[0]
-	if err := requireAuditText(change, "record_kind", "tag_definition"); err != nil {
+	if err := requireAuditText(change, "record_kind", auditTagDefinitionKind); err != nil {
 		return replayedTagDefinitionChange{}, err
 	}
 	pre, hasPre, err := optionalNestedAuditRecord(change, auditPreField)
@@ -258,7 +258,7 @@ func (replay *auditedHistoryReplay) validateTagDefinitionNameAvailable(
 		return err
 	}
 	for _, current := range replay.attachments {
-		if current.Kind != "tag_definition" {
+		if current.Kind != auditTagDefinitionKind {
 			continue
 		}
 		currentID, err := auditUUIDField(current, "tag_id")
@@ -280,7 +280,7 @@ func (replay *auditedHistoryReplay) validateTagDefinitionNameAvailable(
 }
 
 func validateReplayedTagDefinition(definition audit.Record) error {
-	if definition.Kind != "tag_definition" {
+	if definition.Kind != auditTagDefinitionKind {
 		return errors.New("tag definition change carries the wrong record kind")
 	}
 	tagID, err := auditUUIDField(definition, "tag_id")
@@ -306,7 +306,7 @@ func (replay *auditedHistoryReplay) auditedTagDefinitionCandidates(
 ) ([]uint64, error) {
 	seen := make(map[uint64]bool)
 	for _, record := range replay.attachments {
-		if record.Kind != "tag_assignment" {
+		if record.Kind != auditTagAssignmentKind {
 			continue
 		}
 		candidateTagID, err := auditUUIDField(record, "tag_id")
@@ -461,7 +461,7 @@ func (replay *auditedHistoryReplay) validateTagRenameEvents(
 			func() error { return requireAuditUnsigned(event, metadataNodeIDField, nodeID) },
 			func() error { return requireAuditText(event, "event_kind", "tag_rename") },
 			func() error { return requireAuditUUID(event, auditScopeIDField, replay.scopeID) },
-			func() error { return requireAuditText(event, "attachment_kind", "tag_definition") },
+			func() error { return requireAuditText(event, "attachment_kind", auditTagDefinitionKind) },
 			func() error { return requireAuditUnsigned(event, auditEventOrdinalField, ordinal) },
 			func() error { return requireAuditUnsigned(event, "prior_node_revision", revision) },
 			func() error { return requireAuditUnsigned(event, "resulting_node_revision", revision+1) },

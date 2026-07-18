@@ -142,7 +142,7 @@ func auditTagAssignmentRecord(tagID string, nodeID int64) (audit.Record, error) 
 	if err != nil {
 		return audit.Record{}, err
 	}
-	return audit.Record{Kind: "tag_assignment", Fields: []audit.Field{
+	return audit.Record{Kind: auditTagAssignmentKind, Fields: []audit.Field{
 		{Name: "tag_id", Value: tagValue},
 		{Name: metadataNodeIDField, Value: audit.Unsigned(auditNodeID)},
 	}}, nil
