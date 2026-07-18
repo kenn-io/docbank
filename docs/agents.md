@@ -35,6 +35,17 @@ or verify documents without taking ownership of their physical storage format.
   </section>
 </div>
 
+In prose: node IDs survive renames and moves while immutable SHA-256
+identities describe content, so an agent's references stay valid across
+reorganization. Revisions with `If-Match` preconditions turn stale
+read-modify-write races into explicit HTTP 412 conflicts instead of silent
+overwrites. Uploads declare hash and size, and downloads carry digest
+evidence, so byte identity is checked rather than assumed. Node listings
+and search are bounded, and errors and maintenance are structured —
+pagination and search limits where the contract defines them, problem
+codes, dry runs, NDJSON progress — so automations never scrape
+human-oriented output.
+
 ## Choose the right surface
 
 | Surface | Use it for | Contract |

@@ -59,6 +59,14 @@ def main() -> None:
     site = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "site").resolve()
     source = pathlib.Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else None
     errors: list[str] = []
+
+    llms_source = source / "llms.txt" if source is not None else None
+    llms_built = site / "llms.txt"
+    if not llms_built.is_file():
+        errors.append("llms.txt: not published to the site root")
+    elif llms_source is not None and llms_built.read_bytes() != llms_source.read_bytes():
+        errors.append("llms.txt: published copy differs from docs/llms.txt")
+
     pages = sorted(site.rglob("*.html"))
     if not pages:
         errors.append(f"no HTML pages built under {site}")

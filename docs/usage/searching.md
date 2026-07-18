@@ -1,6 +1,6 @@
 ---
 title: Searching
-description: Full-text search over the vault with FTS5.
+description: Ranked, prefix-matching search over document names with FTS5; document-body search is not available.
 ---
 
 # Searching
@@ -39,3 +39,7 @@ their subject.
 
 Document-body extraction, content search, and tag/MIME/date/path filters are
 not available in the current CLI or HTTP API.
+
+Next: organize documents beyond paths with
+[Organizing & Tagging](organizing.md), or see every search flag in the
+[CLI Reference](../cli-reference.md).

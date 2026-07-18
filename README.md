@@ -66,13 +66,13 @@ Docbank supports Linux, macOS, and 64-bit Windows on amd64 and arm64. On Linux
 or macOS, install the latest release with:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/kenn-io/docbank/main/scripts/install.sh | sh
+curl -fsSL https://docbank.ai/install.sh | sh
 ```
 
 On Windows, run this in PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/kenn-io/docbank/main/scripts/install.ps1 | iex
+irm https://docbank.ai/install.ps1 | iex
 ```
 
 Both installers select the native archive and refuse to install it unless its

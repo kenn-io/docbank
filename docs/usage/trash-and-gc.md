@@ -117,3 +117,7 @@ wrong. Corruption is something you detect on your
 schedule, not something you discover the day you need the document. Run
 it after moving the vault between disks, before deleting original
 sources, and periodically from cron.
+
+Next: protect what remains with [Backup & Restore](backup.md), and see
+[Integrity & Trust](../architecture/integrity.md) for what `verify`
+defends against.

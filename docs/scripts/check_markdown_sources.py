@@ -59,6 +59,79 @@ def nav_paths(value: object) -> set[str]:
     return result
 
 
+LLMS_BASE_URL = "https://docbank.ai/"
+
+
+def frontmatter_field(path: pathlib.Path, field: str) -> str:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    for line in lines[1:80]:
+        if line == "---":
+            break
+        match = re.match(rf"{field}:\s+(\S.*)$", line)
+        if match is not None:
+            return match.group(1).strip()
+    return ""
+
+
+def expected_llms_sections(nav: list) -> list[str]:
+    lines: list[str] = []
+    for item in nav:
+        [(label, value)] = item.items()
+        lines.append(f"## {label}")
+        targets = [value] if isinstance(value, str) else [
+            path for entry in value for path in entry.values()
+        ]
+        for target in targets:
+            page = ROOT / target
+            if not page.is_file():
+                continue
+            title = frontmatter_field(page, "title")
+            description = frontmatter_field(page, "description")
+            lines.append(f"- [{title}]({LLMS_BASE_URL}{target}): {description}")
+        lines.append("")
+    return lines
+
+
+def check_llms_txt(config: dict, errors: list[str]) -> None:
+    llms = ROOT / "llms.txt"
+    if not llms.is_file():
+        errors.append("llms.txt: missing; every published page must be indexed")
+        return
+    text = llms.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    site_description = config["project"]["site_description"]
+    if f"> {site_description}" not in lines:
+        errors.append(
+            "llms.txt: blockquote line must match site_description exactly"
+        )
+    try:
+        first_section = next(
+            index for index, line in enumerate(lines) if line.startswith("## ")
+        )
+    except StopIteration:
+        errors.append("llms.txt: no '## <section>' headings found")
+        return
+    actual = [line.rstrip() for line in lines[first_section:]]
+    while actual and not actual[-1]:
+        actual.pop()
+    expected = expected_llms_sections(config["project"]["nav"])
+    while expected and not expected[-1]:
+        expected.pop()
+    if actual != expected:
+        for number, (have, want) in enumerate(zip(actual, expected)):
+            if have != want:
+                errors.append(
+                    f"llms.txt: line {first_section + number + 1} is\n"
+                    f"    {have!r}\n  expected\n    {want!r}"
+                )
+                break
+        else:
+            errors.append(
+                f"llms.txt: {len(actual)} section lines, expected {len(expected)}"
+                " (extra or missing entries)"
+            )
+
+
 def main() -> None:
     errors: list[str] = []
     files = public_markdown()
@@ -69,6 +142,7 @@ def main() -> None:
         errors.append(f"{missing}: public page is missing from navigation")
     for missing in sorted(configured - public):
         errors.append(f"{missing}: navigation target does not exist")
+    check_llms_txt(config, errors)
 
     for path in maintained_markdown():
         rel = path.relative_to(ROOT)

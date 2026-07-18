@@ -18,7 +18,7 @@ state. A restored copy is not trusted until `docbank verify` succeeds.
 
 ## Kit integration status
 
-The internal `backupapp` adapter supplies Kit v0.9.2 with Docbank's frozen logical
+The internal `backupapp` adapter supplies Kit v0.10.0 with Docbank's frozen logical
 view: every authoritative `blobs` row, representation-neutral fidelity stats,
 and mixed loose/packed content reads. A short daemon freeze opens and pins one
 deferred SQLite read transaction; the freeze then ends, writers resume into the
@@ -117,8 +117,9 @@ inside the snapshot.
 The current JSONL authority round-trips the node allocator high-water mark,
 blobs, tree and trash state, content versions and current pointers, ingests,
 provenance, tags, and extraction records. Its relational validation runs before
-a restored database is published. Audit scopes do not exist in the current
-store; their separate planned backup contract is maintained in
+a restored database is published. Enrollment is limited to a vault's first
+audit scope; the audited-history contract, including its backup and
+restore behavior, is described in
 [Audited History](audited-history.md).
 
 ## Boundary with packed storage

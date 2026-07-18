@@ -213,7 +213,7 @@ and which threats require independent evidence.
 | Stable versions, replacement, reversion, and pruning | [Editing & Versions](editing-and-versions.md) |
 | Process ownership and mutation coordination | [Ownership & Concurrency](locking.md) and [Daemon & Process Model](daemon.md) |
 | Incremental snapshots and safe publication on restore | [Backup & Recovery](backup.md) |
-| The contract shared by the CLI and agents | [HTTP API Contract](http-api.md) |
+| The contract shared by the CLI and agents | [HTTP API](http-api.md) |
 | What integrity checks do and do not establish | [Integrity & Trust](integrity.md) |
 | The planned permanent-retention model | [Audited History](audited-history.md) |
 

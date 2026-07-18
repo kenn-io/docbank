@@ -1,9 +1,9 @@
 ---
-title: Backup
+title: Backup & Restore
 description: Create incremental, verifiable snapshots in an immutable repository.
 ---
 
-# Backup
+# Backup & Restore
 
 Docbank snapshot repositories are append-only directories of immutable,
 checksummed files. A snapshot contains the deterministic JSONL description of

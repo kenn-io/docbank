@@ -14,31 +14,31 @@ nav = [
   {"Start Here" = [
     {"Setup" = "setup.md"},
     {"Quickstart" = "quickstart.md"},
-    {"Configuration" = "configuration.md"},
   ]},
   {"Work with Documents" = [
     {"Importing Documents" = "usage/importing.md"},
-    {"Organizing the Tree" = "usage/organizing.md"},
-    {"Finding Documents" = "usage/searching.md"},
+    {"Organizing & Tagging" = "usage/organizing.md"},
+    {"Searching" = "usage/searching.md"},
   ]},
   {"Protect & Operate" = [
     {"Vault Lifecycle" = "usage/lifecycle.md"},
     {"Permanent Audited History" = "usage/audited-history.md"},
     {"Trash, GC, Repack & Verify" = "usage/trash-and-gc.md"},
     {"Backup & Restore" = "usage/backup.md"},
+    {"Troubleshooting" = "troubleshooting.md"},
   ]},
   {"Automate & Integrate" = [
     {"Docbank for Agents" = "agents.md"},
-    {"Integration Guide" = "agents/integration.md"},
+    {"Agent Integration Guide" = "agents/integration.md"},
     {"Embed in Go" = "embedding.md"},
-    {"HTTP API Contract" = "architecture/http-api.md"},
   ]},
   {"Reference" = [
     {"CLI Reference" = "cli-reference.md"},
-    {"Troubleshooting" = "troubleshooting.md"},
+    {"Configuration" = "configuration.md"},
+    {"HTTP API" = "architecture/http-api.md"},
   ]},
   {"How It Works" = [
-    {"System Model" = "architecture/overview.md"},
+    {"How Docbank Works" = "architecture/overview.md"},
     {"Storage" = "architecture/storage.md"},
     {"Loose & Packed Content" = "architecture/packed-storage.md"},
     {"Editing & Versions" = "architecture/editing-and-versions.md"},
@@ -46,7 +46,7 @@ nav = [
     {"Daemon & Process Model" = "architecture/daemon.md"},
     {"Backup & Recovery" = "architecture/backup.md"},
     {"Integrity & Trust" = "architecture/integrity.md"},
-    {"Audited History Model" = "architecture/audited-history.md"},
+    {"Audited History" = "architecture/audited-history.md"},
   ]},
   {"Project" = [
     {"Roadmap" = "roadmap.md"},

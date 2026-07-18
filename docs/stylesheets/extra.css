@@ -29,6 +29,14 @@
   --md-accent-fg-color: var(--db-accent-bright);
   --md-typeset-a-color: var(--db-accent);
   --md-code-bg-color: #101820;
+  /* Mermaid inherits accent/code variables this palette doesn't define;
+     set the diagram colors explicitly. All pairs are WCAG-checked against
+     the dark surface: node text 12.7:1, edge labels 8.1:1, borders 7.8:1. */
+  --md-mermaid-node-bg-color: #1a292c;
+  --md-mermaid-node-fg-color: var(--db-accent);
+  --md-mermaid-edge-color: var(--db-muted);
+  --md-mermaid-label-bg-color: var(--db-bg);
+  --md-mermaid-label-fg-color: var(--db-text);
 }
 
 .md-header,
@@ -74,10 +82,10 @@
 }
 
 .md-typeset h1 {
-  max-width: 18ch;
+  max-width: 24ch;
   margin-bottom: 0.65em;
-  font-size: clamp(2rem, 5vw, 3.25rem);
-  line-height: 1.03;
+  font-size: clamp(1.4rem, 3.5vw, 2.3rem);
+  line-height: 1.1;
 }
 
 .md-typeset h2 {

@@ -22,11 +22,17 @@ additionally requires:
 
 ## Install a release
 
+!!! info "Current tagged release"
+    v0.5.0 publishes Linux, macOS, and Windows archives for amd64 and arm64
+    with SHA-256 checksums. The shell and PowerShell installers select the
+    native archive and verify it against `SHA256SUMS` before installing,
+    failing rather than substituting an incompatible or unverified archive.
+
 On Linux or macOS, the installer selects the native archive and installs
 `docbank` to `~/.local/bin` by default:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/kenn-io/docbank/main/scripts/install.sh | sh
+curl -fsSL https://docbank.ai/install.sh | sh
 ```
 
 Set `DOCBANK_INSTALL_DIR` to choose another destination. Set
@@ -35,7 +41,7 @@ Set `DOCBANK_INSTALL_DIR` to choose another destination. Set
 On Windows, run the PowerShell installer:
 
 ```powershell
-irm https://raw.githubusercontent.com/kenn-io/docbank/main/scripts/install.ps1 | iex
+irm https://docbank.ai/install.ps1 | iex
 ```
 
 It installs to `%LOCALAPPDATA%\Programs\docbank\bin` and adds that directory

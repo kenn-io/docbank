@@ -1,5 +1,5 @@
 # Install the latest docbank release on 64-bit Windows.
-# Usage: irm https://raw.githubusercontent.com/kenn-io/docbank/main/scripts/install.ps1 | iex
+# Usage: irm https://docbank.ai/install.ps1 | iex
 
 $ErrorActionPreference = 'Stop'
 
