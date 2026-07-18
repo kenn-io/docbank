@@ -390,11 +390,15 @@ func (replay *auditedHistoryReplay) deriveNodeMovePathEffects(
 	slices.Sort(memberIDs)
 	var effects []audit.Record
 	for _, nodeID := range memberIDs {
-		priorPath, priorLive, err := auditLivePath(replay.topology, nodeID)
+		priorPath, priorLive, err := auditLivePath(
+			replay.topology, replay.topologyIndex, nodeID,
+		)
 		if err != nil {
 			return nil, err
 		}
-		postPath, postLive, err := auditLivePath(postTopology, nodeID)
+		postPath, postLive, err := auditLivePath(
+			postTopology, replay.topologyIndex, nodeID,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -415,19 +419,14 @@ func (replay *auditedHistoryReplay) deriveNodeMovePathEffects(
 	return effects, nil
 }
 
-func auditLivePath(topology []audit.Record, nodeID uint64) ([]byte, bool, error) {
-	byID := make(map[uint64]audit.Record, len(topology))
-	for _, node := range topology {
-		id, err := auditUnsignedField(node, metadataNodeIDField)
-		if err != nil {
-			return nil, false, err
-		}
-		byID[id] = node
-	}
-	current, ok := byID[nodeID]
+func auditLivePath(
+	topology []audit.Record, topologyIndex map[uint64]int, nodeID uint64,
+) ([]byte, bool, error) {
+	index, ok := topologyIndex[nodeID]
 	if !ok {
 		return nil, false, fmt.Errorf("audit topology lacks node %d", nodeID)
 	}
+	current := topology[index]
 	state, err := auditTextField(current, "state")
 	if err != nil {
 		return nil, false, err
@@ -458,10 +457,11 @@ func auditLivePath(topology []audit.Record, nodeID uint64) ([]byte, bool, error)
 			return nil, false, err
 		}
 		components = append(components, name)
-		parent, exists := byID[*parentID]
+		parentIndex, exists := topologyIndex[*parentID]
 		if !exists {
 			return nil, false, fmt.Errorf("audit topology node %d has missing live parent %d", id, *parentID)
 		}
+		parent := topology[parentIndex]
 		if err := requireAuditText(parent, "state", "live"); err != nil {
 			return nil, false, err
 		}
