@@ -180,7 +180,7 @@ func (s *Store) RenameTag(ctx context.Context, id string, ifRev int64, name stri
 		return Tag{}, err
 	}
 	var renamed Tag
-	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		current, err := tagByIDTx(tx, id)
 		if err != nil {
 			return err
@@ -192,25 +192,48 @@ func (s *Store) RenameTag(ctx context.Context, id string, ifRev int64, name stri
 			renamed = current
 			return nil
 		}
-		if _, err := tx.Exec(
-			`UPDATE tags SET name = ?, revision = revision + 1 WHERE id = ?`, name, id,
-		); err != nil {
-			if s.driver.IsUniqueViolation(err) {
-				return fmt.Errorf("tag %q: %w", name, ErrExists)
-			}
-			return fmt.Errorf("renaming tag %s: %w", id, err)
-		}
-		if err := touchTaggedNodesTx(tx, id, nowRFC3339()); err != nil {
+		active, err := auditAuthorityActiveTx(ctx, tx)
+		if err != nil {
 			return err
 		}
-		renamed = current
-		renamed.Name = name
-		renamed.Revision++
-		return nil
+		if active {
+			renamed, err = s.renameAuditedTagTx(ctx, tx, current, name)
+			return err
+		}
+		renamed, err = s.renameTagTx(tx, current, name, nowRFC3339())
+		return err
 	})
 	if err != nil {
 		return Tag{}, err
 	}
+	return renamed, nil
+}
+
+func (s *Store) renameTagTx(
+	tx *sql.Tx, current Tag, name, recordedAt string,
+) (Tag, error) {
+	renamed, err := s.renameTagDefinitionTx(tx, current, name)
+	if err != nil {
+		return Tag{}, err
+	}
+	if err := touchTaggedNodesTx(tx, current.ID, recordedAt); err != nil {
+		return Tag{}, err
+	}
+	return renamed, nil
+}
+
+func (s *Store) renameTagDefinitionTx(tx *sql.Tx, current Tag, name string) (Tag, error) {
+	if _, err := tx.Exec(
+		`UPDATE tags SET name = ?, revision = revision + 1 WHERE id = ?`, name, current.ID,
+	); err != nil {
+		if s.driver.IsUniqueViolation(err) {
+			return Tag{}, fmt.Errorf("tag %q: %w", name, ErrExists)
+		}
+		return Tag{}, fmt.Errorf("renaming tag %s: %w", current.ID, err)
+	}
+	renamed := current
+	renamed.Name = name
+	renamed.Revision++
 	return renamed, nil
 }
 

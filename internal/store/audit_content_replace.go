@@ -453,6 +453,13 @@ func makeAuditedMemberStateMutation(
 	values auditedMutationValues, sequence int64,
 	events []audit.Record, change audit.Record,
 ) (audit.Record, error) {
+	return makeAuditedMemberStatesMutation(values, sequence, events, []audit.Record{change})
+}
+
+func makeAuditedMemberStatesMutation(
+	values auditedMutationValues, sequence int64,
+	events, changes []audit.Record,
+) (audit.Record, error) {
 	auditSequence, err := positiveAuditInteger("operation sequence", sequence)
 	if err != nil {
 		return audit.Record{}, err
@@ -460,6 +467,10 @@ func makeAuditedMemberStateMutation(
 	eventValues := make([]audit.Value, len(events))
 	for index := range events {
 		eventValues[index] = audit.Nested(events[index])
+	}
+	changeValues := make([]audit.Value, len(changes))
+	for index := range changes {
+		changeValues[index] = audit.Nested(changes[index])
 	}
 	return audit.Record{Kind: "canonical_mutation", Fields: []audit.Field{
 		{Name: auditVaultIDField, Value: values.vaultID},
@@ -470,7 +481,7 @@ func makeAuditedMemberStateMutation(
 		{Name: auditOriginField, Value: values.origin},
 		{Name: "agent_label", Value: audit.Absent()},
 		{Name: "events", Value: audit.List(eventValues...)},
-		{Name: "member_state_changes", Value: audit.List(audit.Nested(change))},
+		{Name: "member_state_changes", Value: audit.List(changeValues...)},
 		{Name: "baselines", Value: audit.List()},
 		{Name: auditTopologyDeltaField, Value: audit.Absent()},
 		{Name: "path_effect_count", Value: audit.Unsigned(0)},
