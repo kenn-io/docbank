@@ -264,7 +264,7 @@ func makeAuditedTagRenameEvent(
 	if err != nil {
 		return audit.Record{}, err
 	}
-	attachmentKind, err := audit.Text("tag_definition")
+	attachmentKind, err := audit.Text(auditTagDefinitionKind)
 	if err != nil {
 		return audit.Record{}, err
 	}

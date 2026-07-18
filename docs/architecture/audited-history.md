@@ -1469,6 +1469,10 @@ bound to the node and to the last canonical `(operation_sequence,
 event_ordinal, event_id)` position, so later appends do not shift older pages.
 An enrolled baseline member with no later node event returns an empty timeline;
 status membership, rather than event count, remains the protection authority.
+The projection retains the canonical live/trash path-state distinction and
+turns tag/provenance identity and pre/post records into a typed attachment
+change, rather than exposing the internal canonical encoding or dropping the
+metadata that explains the event.
 
 !!! info "Planned"
     Scope-wide history and independent `audit verify` will expose aggregate

@@ -114,9 +114,13 @@ docbank audit history --node-id 57
 
 Events are newest first. Each one identifies its immutable event and operation,
 scope, recording time, origin, node revision before and after, and the fields
-relevant to that event. Path events include the old and new paths; content
-events include prior and resulting version IDs. Human output summarizes those
-changes. JSON returns the complete typed projection.
+relevant to that event. Path events include old and new coordinates plus their
+`live` or `trash` state; trash coordinates use the separate
+`@trash/known/...` or `@trash/unknown/...` domain rather than pretending to be
+live virtual paths. Content events include prior and resulting version IDs.
+Tag and provenance events include their stable attachment identity and complete
+before/after attachment state. Human output summarizes those changes. JSON
+returns the complete typed projection.
 
 The default page contains at most 50 events. Continue an older timeline with
 the opaque cursor printed by human output or returned as `next_cursor` in JSON:

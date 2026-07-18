@@ -216,26 +216,61 @@ type AuditStatus struct {
 // AuditEvent is one canonical, immutable event involving an audited node.
 // Optional fields are present only when that event kind carries the relation.
 type AuditEvent struct {
-	ID                        string  `json:"id" pattern:"^[0-9a-f]{64}$"`
-	OperationID               string  `json:"operation_id" format:"uuid"`
-	OperationSequence         int64   `json:"operation_sequence" minimum:"1"`
-	Ordinal                   int64   `json:"ordinal" minimum:"0"`
-	NodeID                    int64   `json:"node_id" minimum:"1"`
-	Kind                      string  `json:"kind"`
-	ScopeID                   string  `json:"scope_id" format:"uuid"`
-	RecordedAt                string  `json:"recorded_at" format:"date-time"`
-	Origin                    string  `json:"origin"`
-	AgentLabel                *string `json:"agent_label,omitempty"`
-	PriorNodeRevision         int64   `json:"prior_node_revision" minimum:"0"`
-	ResultingNodeRevision     int64   `json:"resulting_node_revision" minimum:"0"`
-	PriorCurrentVersionID     *string `json:"prior_current_version_id,omitempty" format:"uuid"`
-	ResultingCurrentVersionID *string `json:"resulting_current_version_id,omitempty" format:"uuid"`
-	SourceVersionID           *string `json:"source_version_id,omitempty" format:"uuid"`
-	TargetNodeID              *int64  `json:"target_node_id,omitempty" minimum:"1"`
-	BaselineDigest            *string `json:"baseline_digest,omitempty" pattern:"^[0-9a-f]{64}$"`
-	AttachmentKind            *string `json:"attachment_kind,omitempty"`
-	OldPath                   *string `json:"old_path,omitempty"`
-	NewPath                   *string `json:"new_path,omitempty"`
+	ID                        string                 `json:"id" pattern:"^[0-9a-f]{64}$"`
+	OperationID               string                 `json:"operation_id" format:"uuid"`
+	OperationSequence         int64                  `json:"operation_sequence" minimum:"1"`
+	Ordinal                   int64                  `json:"ordinal" minimum:"0"`
+	NodeID                    int64                  `json:"node_id" minimum:"1"`
+	Kind                      string                 `json:"kind"`
+	ScopeID                   string                 `json:"scope_id" format:"uuid"`
+	RecordedAt                string                 `json:"recorded_at" format:"date-time"`
+	Origin                    string                 `json:"origin"`
+	AgentLabel                *string                `json:"agent_label,omitempty"`
+	PriorNodeRevision         int64                  `json:"prior_node_revision" minimum:"0"`
+	ResultingNodeRevision     int64                  `json:"resulting_node_revision" minimum:"0"`
+	PriorCurrentVersionID     *string                `json:"prior_current_version_id,omitempty" format:"uuid"`
+	ResultingCurrentVersionID *string                `json:"resulting_current_version_id,omitempty" format:"uuid"`
+	SourceVersionID           *string                `json:"source_version_id,omitempty" format:"uuid"`
+	TargetNodeID              *int64                 `json:"target_node_id,omitempty" minimum:"1"`
+	BaselineDigest            *string                `json:"baseline_digest,omitempty" pattern:"^[0-9a-f]{64}$"`
+	Attachment                *AuditAttachmentChange `json:"attachment,omitempty"`
+	OldPath                   *AuditPathState        `json:"old_path,omitempty"`
+	NewPath                   *AuditPathState        `json:"new_path,omitempty"`
+}
+
+// AuditPathState distinguishes a live virtual path from a retained canonical
+// trash coordinate.
+type AuditPathState struct {
+	Path  string `json:"path"`
+	State string `json:"state" enum:"live,trash"`
+}
+
+// AuditAttachmentIdentity is the stable key of one tag or provenance record.
+type AuditAttachmentIdentity struct {
+	TagID        string `json:"tag_id,omitempty" format:"uuid"`
+	NodeID       int64  `json:"node_id,omitempty" minimum:"1"`
+	ProvenanceID string `json:"provenance_id,omitempty" pattern:"^[0-9a-f]{64}$"`
+}
+
+// AuditAttachmentState is one typed side of a tag or provenance transition.
+type AuditAttachmentState struct {
+	TagID         string  `json:"tag_id,omitempty" format:"uuid"`
+	NodeID        int64   `json:"node_id,omitempty" minimum:"1"`
+	TagName       string  `json:"tag_name,omitempty"`
+	ProvenanceID  string  `json:"provenance_id,omitempty" pattern:"^[0-9a-f]{64}$"`
+	IngestID      string  `json:"ingest_id,omitempty" format:"uuid"`
+	OriginalPath  *string `json:"original_path,omitempty"`
+	OriginalMTime *string `json:"original_mtime,omitempty" format:"date-time"`
+	Supersedes    *string `json:"supersedes,omitempty" pattern:"^[0-9a-f]{64}$"`
+}
+
+// AuditAttachmentChange provides the stable identity and complete before/after
+// payload for one tag or provenance event.
+type AuditAttachmentChange struct {
+	Kind     string                  `json:"kind" enum:"tag_definition,tag_assignment,provenance"`
+	Identity AuditAttachmentIdentity `json:"identity"`
+	Before   *AuditAttachmentState   `json:"before,omitempty"`
+	After    *AuditAttachmentState   `json:"after,omitempty"`
 }
 
 // AuditEventPage is a newest-first, cursor-stable timeline for one node.

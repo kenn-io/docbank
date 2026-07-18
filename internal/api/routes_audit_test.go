@@ -88,6 +88,52 @@ func TestAuditPreviewEnableAndStatusLifecycle(t *testing.T) {
 	require.Len(t, secondHistory.Items, 1)
 	assert.Equal(t, "audit_inherit", secondHistory.Items[0].Kind)
 	assert.Empty(t, secondHistory.NextCursor)
+
+	trashed, _, err := s.Trash(t.Context(), inherited.ID, inherited.Revision)
+	require.NoError(t, err)
+	trashHistory, err := c.AuditHistory(t.Context(), "", inherited.ID, 10, "")
+	require.NoError(t, err)
+	require.NotNil(t, trashHistory.Items[0].NewPath)
+	assert.Equal(t, "trash", trashHistory.Items[0].NewPath.State)
+	assert.Equal(t, "@trash/known/Taxes/2027", trashHistory.Items[0].NewPath.Path)
+	restored, err := s.Restore(t.Context(), trashed.ID, trashed.Revision)
+	require.NoError(t, err)
+	restoreHistory, err := c.AuditHistory(t.Context(), "/Taxes/2027", 0, 10, "")
+	require.NoError(t, err)
+	require.NotNil(t, restoreHistory.Items[0].OldPath)
+	assert.Equal(t, "trash", restoreHistory.Items[0].OldPath.State)
+	assert.Equal(t, "@trash/known/Taxes/2027", restoreHistory.Items[0].OldPath.Path)
+
+	tag, err := s.CreateTag(t.Context(), "reviewed")
+	require.NoError(t, err)
+	_, err = s.AssignTag(t.Context(), tag.ID, inherited.ID, restored.Revision)
+	require.NoError(t, err)
+	tagHistory, err := c.AuditHistory(t.Context(), "", inherited.ID, 10, "")
+	require.NoError(t, err)
+	require.NotNil(t, tagHistory.Items[0].Attachment)
+	assert.Equal(t, "tag_assignment", tagHistory.Items[0].Attachment.Kind)
+	assert.Equal(t, tag.ID, tagHistory.Items[0].Attachment.Identity.TagID)
+	require.NotNil(t, tagHistory.Items[0].Attachment.After)
+
+	run, err := s.BeginIngest(t.Context(), "cli", "/source/taxes")
+	require.NoError(t, err)
+	ingested, added, err := s.IngestFile(
+		t.Context(), run, taxes.ID, "receipt.txt", testHash("audit provenance"), 7,
+		"text/plain", "/source/taxes/receipt.txt", "2026-07-18T12:00:00Z",
+	)
+	require.NoError(t, err)
+	require.True(t, added)
+	provenanceHistory, err := c.AuditHistory(t.Context(), "", ingested.ID, 10, "")
+	require.NoError(t, err)
+	require.NotEmpty(t, provenanceHistory.Items)
+	provenanceEvent := provenanceHistory.Items[0]
+	assert.Equal(t, "provenance_add", provenanceEvent.Kind)
+	require.NotNil(t, provenanceEvent.Attachment)
+	assert.Equal(t, "provenance", provenanceEvent.Attachment.Kind)
+	require.NotNil(t, provenanceEvent.Attachment.After)
+	assert.Equal(t, "/source/taxes/receipt.txt",
+		*provenanceEvent.Attachment.After.OriginalPath)
+
 	_, err = c.AuditHistory(t.Context(), "", s.RootID(), 10, "")
 	require.ErrorIs(t, err, store.ErrAuditNotEnrolled)
 

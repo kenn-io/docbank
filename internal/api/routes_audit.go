@@ -229,9 +229,43 @@ func auditEventPage(page store.AuditEventPage) AuditEventPage {
 			PriorCurrentVersionID:     event.PriorCurrentVersionID,
 			ResultingCurrentVersionID: event.ResultingCurrentVersionID,
 			SourceVersionID:           event.SourceVersionID, TargetNodeID: event.TargetNodeID,
-			BaselineDigest: event.BaselineDigest, AttachmentKind: event.AttachmentKind,
-			OldPath: event.OldPath, NewPath: event.NewPath,
+			BaselineDigest: event.BaselineDigest,
+			Attachment:     auditAttachmentChange(event.Attachment),
+			OldPath:        auditPathState(event.OldPath), NewPath: auditPathState(event.NewPath),
 		})
 	}
 	return out
+}
+
+func auditPathState(value *store.AuditPathState) *AuditPathState {
+	if value == nil {
+		return nil
+	}
+	return &AuditPathState{Path: value.Path, State: value.State}
+}
+
+func auditAttachmentChange(value *store.AuditAttachmentChange) *AuditAttachmentChange {
+	if value == nil {
+		return nil
+	}
+	return &AuditAttachmentChange{
+		Kind: value.Kind,
+		Identity: AuditAttachmentIdentity{
+			TagID: value.Identity.TagID, NodeID: value.Identity.NodeID,
+			ProvenanceID: value.Identity.ProvenanceID,
+		},
+		Before: auditAttachmentState(value.Before), After: auditAttachmentState(value.After),
+	}
+}
+
+func auditAttachmentState(value *store.AuditAttachmentState) *AuditAttachmentState {
+	if value == nil {
+		return nil
+	}
+	return &AuditAttachmentState{
+		TagID: value.TagID, NodeID: value.NodeID, TagName: value.TagName,
+		ProvenanceID: value.ProvenanceID, IngestID: value.IngestID,
+		OriginalPath: value.OriginalPath, OriginalMTime: value.OriginalMTime,
+		Supersedes: value.Supersedes,
+	}
 }

@@ -800,12 +800,127 @@ func validateAuditEvent(event api.AuditEvent, nodeID int64) error {
 		(event.BaselineDigest != nil && !validSHA256Hex(*event.BaselineDigest)) {
 		return errors.New("event has invalid canonical fields")
 	}
-	if event.Kind == "node_path" &&
-		(event.OldPath == nil || event.NewPath == nil ||
-			!strings.HasPrefix(*event.OldPath, "/") || !strings.HasPrefix(*event.NewPath, "/")) {
-		return errors.New("path event lacks absolute old and new paths")
+	if event.Kind == "node_path" {
+		if event.OldPath == nil || event.NewPath == nil {
+			return errors.New("path event lacks old and new path states")
+		}
+		if err := store.ValidateAuditPathState(event.OldPath.Path, event.OldPath.State); err != nil {
+			return fmt.Errorf("invalid old path state: %w", err)
+		}
+		if err := store.ValidateAuditPathState(event.NewPath.Path, event.NewPath.State); err != nil {
+			return fmt.Errorf("invalid new path state: %w", err)
+		}
+	} else if event.OldPath != nil || event.NewPath != nil {
+		return errors.New("non-path event contains path states")
 	}
-	return nil
+	return validateAuditAttachment(event.Kind, event.Attachment)
+}
+
+func validateAuditAttachment(eventKind string, change *api.AuditAttachmentChange) error {
+	wantKind := ""
+	switch eventKind {
+	case "tag_define", "tag_rename", "tag_delete":
+		wantKind = "tag_definition"
+	case "tag_assign", "tag_unassign":
+		wantKind = "tag_assignment"
+	case "provenance_add", "provenance_supersede":
+		wantKind = "provenance"
+	}
+	if wantKind == "" {
+		if change != nil {
+			return errors.New("event kind cannot carry an attachment")
+		}
+		return nil
+	}
+	if change == nil || change.Kind != wantKind ||
+		(change.Before == nil && change.After == nil) {
+		return errors.New("attachment event lacks a complete typed change")
+	}
+	if err := validateAuditAttachmentIdentity(change.Kind, change.Identity); err != nil {
+		return err
+	}
+	for _, state := range []*api.AuditAttachmentState{change.Before, change.After} {
+		if state == nil {
+			continue
+		}
+		if err := validateAuditAttachmentState(change.Kind, change.Identity, *state); err != nil {
+			return err
+		}
+	}
+	switch eventKind {
+	case "tag_rename":
+		if change.Before != nil && change.After != nil {
+			return nil
+		}
+	case "tag_delete", "tag_unassign":
+		if change.Before != nil && change.After == nil {
+			return nil
+		}
+	case "tag_define", "tag_assign", "provenance_add":
+		if change.Before == nil && change.After != nil &&
+			(eventKind != "provenance_add" ||
+				change.After.ProvenanceID == change.Identity.ProvenanceID) {
+			return nil
+		}
+	case "provenance_supersede":
+		if change.Before != nil && change.After != nil &&
+			change.After.ProvenanceID == change.Identity.ProvenanceID &&
+			change.After.Supersedes != nil &&
+			*change.After.Supersedes == change.Before.ProvenanceID {
+			return nil
+		}
+	}
+	return errors.New("audit attachment has an invalid transition shape")
+}
+
+func validateAuditAttachmentIdentity(kind string, identity api.AuditAttachmentIdentity) error {
+	switch kind {
+	case "tag_definition":
+		if validUUIDv4(identity.TagID) && identity.NodeID == 0 && identity.ProvenanceID == "" {
+			return nil
+		}
+	case "tag_assignment":
+		if validUUIDv4(identity.TagID) && identity.NodeID > 0 && identity.ProvenanceID == "" {
+			return nil
+		}
+	case "provenance":
+		if identity.TagID == "" && identity.NodeID == 0 && validSHA256Hex(identity.ProvenanceID) {
+			return nil
+		}
+	}
+	return errors.New("audit attachment has an invalid stable identity")
+}
+
+func validateAuditAttachmentState(
+	kind string, identity api.AuditAttachmentIdentity, state api.AuditAttachmentState,
+) error {
+	switch kind {
+	case "tag_definition":
+		if state.TagID == identity.TagID && state.TagName != "" && state.NodeID == 0 &&
+			state.ProvenanceID == "" && state.IngestID == "" && state.OriginalPath == nil &&
+			state.OriginalMTime == nil && state.Supersedes == nil {
+			return nil
+		}
+	case "tag_assignment":
+		if state.TagID == identity.TagID && state.NodeID == identity.NodeID &&
+			state.TagName == "" && state.ProvenanceID == "" && state.IngestID == "" &&
+			state.OriginalPath == nil && state.OriginalMTime == nil && state.Supersedes == nil {
+			return nil
+		}
+	case "provenance":
+		mtimeValid := true
+		if state.OriginalMTime != nil {
+			parsed, err := time.Parse(time.RFC3339Nano, *state.OriginalMTime)
+			mtimeValid = err == nil && parsed.Location() == time.UTC
+		}
+		supersedesValid := state.Supersedes == nil || validSHA256Hex(*state.Supersedes)
+		if state.TagID == "" && state.TagName == "" && state.NodeID > 0 &&
+			validSHA256Hex(state.ProvenanceID) && validUUIDv4(state.IngestID) &&
+			mtimeValid && supersedesValid {
+			return nil
+		}
+	}
+	return errors.New("audit attachment has an invalid before or after state")
 }
 
 func validOptionalUUID(value *string) bool {

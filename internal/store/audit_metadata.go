@@ -24,6 +24,7 @@ const (
 	auditPreField             = "pre"
 	auditRecordedAtField      = "recorded_at"
 	auditSourceVersionIDField = "source_version_id"
+	auditTagAssignmentKind    = "tag_assignment"
 	auditTagDefinitionKind    = "tag_definition"
 	auditTargetNodeIDField    = "target_node_id"
 )

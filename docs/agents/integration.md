@@ -522,7 +522,11 @@ curl --fail-with-body \
 ```
 
 Events are newest first and bind stable event, operation, scope, node-revision,
-and optional path/content identities. Follow `next_cursor` to read older events;
+and optional path/content identities. A path state distinguishes `/live/paths`
+from canonical `@trash/known/...` and `@trash/unknown/...` coordinates. Tag and
+provenance events include an `attachment` object with a discriminating `kind`,
+stable `identity`, and typed `before`/`after` states, so clients do not need to
+decode canonical audit internals. Follow `next_cursor` to read older events;
 send it back unchanged and never derive meaning from its encoding. The cursor
 is node-bound and remains stable when newer operations append. Treat
 `audit_not_enrolled` as a valid answer that the node is outside permanent

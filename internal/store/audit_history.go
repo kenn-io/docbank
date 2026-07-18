@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"go.kenn.io/docbank/internal/audit"
 )
@@ -33,9 +35,44 @@ type AuditEvent struct {
 	SourceVersionID           *string
 	TargetNodeID              *int64
 	BaselineDigest            *string
-	AttachmentKind            *string
-	OldPath                   *string
-	NewPath                   *string
+	Attachment                *AuditAttachmentChange
+	OldPath                   *AuditPathState
+	NewPath                   *AuditPathState
+}
+
+// AuditPathState preserves both the canonical coordinate and its domain.
+type AuditPathState struct {
+	Path  string
+	State string
+}
+
+// AuditAttachmentIdentity identifies one tag or provenance record without
+// relying on its mutable display fields.
+type AuditAttachmentIdentity struct {
+	TagID        string
+	NodeID       int64
+	ProvenanceID string
+}
+
+// AuditAttachmentState is the typed before/after state of one attached record.
+// The enclosing change Kind determines which fields are present.
+type AuditAttachmentState struct {
+	TagID         string
+	NodeID        int64
+	TagName       string
+	ProvenanceID  string
+	IngestID      string
+	OriginalPath  *string
+	OriginalMTime *string
+	Supersedes    *string
+}
+
+// AuditAttachmentChange makes tag and provenance events self-explanatory.
+type AuditAttachmentChange struct {
+	Kind     string
+	Identity AuditAttachmentIdentity
+	Before   *AuditAttachmentState
+	After    *AuditAttachmentState
 }
 
 // AuditEventPage is a stable newest-first page for one audited node.
@@ -234,7 +271,7 @@ func projectAuditEvent(raw []byte, sequence int64) (AuditEvent, error) {
 	if result.BaselineDigest, err = auditOptionalDigestField(event, auditBaselineDigestField); err != nil {
 		return AuditEvent{}, err
 	}
-	if result.AttachmentKind, err = auditOptionalTextField(event, "attachment_kind"); err != nil {
+	if result.Attachment, err = projectAuditAttachment(event); err != nil {
 		return AuditEvent{}, err
 	}
 	if result.Kind == "node_path" {
@@ -306,7 +343,167 @@ func auditOptionalNodeIDField(record audit.Record, name string) (*int64, error) 
 	return &signed, nil
 }
 
-func auditEventPathField(record audit.Record, name string) (*string, error) {
+func projectAuditAttachment(event audit.Record) (*AuditAttachmentChange, error) {
+	kind, err := auditOptionalTextField(event, "attachment_kind")
+	if err != nil {
+		return nil, err
+	}
+	identity, err := auditOptionalNestedField(event, "attachment_identity")
+	if err != nil {
+		return nil, err
+	}
+	if kind == nil {
+		if identity != nil {
+			return nil, errors.New("audit event has an identity without an attachment kind")
+		}
+		return nil, nil //nolint:nilnil // A nil pointer is the canonical absent attachment.
+	}
+	if identity == nil {
+		return nil, errors.New("audit attachment lacks its stable identity")
+	}
+	before, err := auditOptionalNestedField(event, auditPreField)
+	if err != nil {
+		return nil, err
+	}
+	after, err := auditOptionalNestedField(event, auditPostField)
+	if err != nil {
+		return nil, err
+	}
+	result := &AuditAttachmentChange{Kind: *kind}
+	if result.Identity, err = projectAuditAttachmentIdentity(*kind, *identity); err != nil {
+		return nil, err
+	}
+	if result.Before, err = projectAuditAttachmentState(*kind, before); err != nil {
+		return nil, err
+	}
+	if result.After, err = projectAuditAttachmentState(*kind, after); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func projectAuditAttachmentIdentity(
+	kind string, record audit.Record,
+) (AuditAttachmentIdentity, error) {
+	var result AuditAttachmentIdentity
+	var err error
+	switch kind {
+	case auditTagDefinitionKind:
+		if record.Kind != "tag_definition_identity" {
+			return result, fmt.Errorf("tag-definition identity has kind %q", record.Kind)
+		}
+		result.TagID, err = auditUUIDField(record, "tag_id")
+	case auditTagAssignmentKind:
+		if record.Kind != "tag_assignment_identity" {
+			return result, fmt.Errorf("tag-assignment identity has kind %q", record.Kind)
+		}
+		if result.TagID, err = auditUUIDField(record, "tag_id"); err == nil {
+			result.NodeID, err = auditInt64UnsignedField(record, metadataNodeIDField)
+		}
+	case "provenance":
+		if record.Kind != "provenance_identity_ref" {
+			return result, fmt.Errorf("provenance identity has kind %q", record.Kind)
+		}
+		result.ProvenanceID, err = auditDigestField(record, "identity")
+	default:
+		return result, fmt.Errorf("unsupported audit attachment kind %q", kind)
+	}
+	return result, err
+}
+
+func projectAuditAttachmentState(
+	kind string, record *audit.Record,
+) (*AuditAttachmentState, error) {
+	if record == nil {
+		return nil, nil //nolint:nilnil // A nil pointer is the canonical absent attachment state.
+	}
+	if record.Kind != kind {
+		return nil, fmt.Errorf("audit %s attachment state has kind %q", kind, record.Kind)
+	}
+	result := &AuditAttachmentState{}
+	var err error
+	switch kind {
+	case auditTagDefinitionKind:
+		if result.TagID, err = auditUUIDField(*record, "tag_id"); err == nil {
+			result.TagName, err = auditTextField(*record, "name")
+		}
+	case auditTagAssignmentKind:
+		if result.TagID, err = auditUUIDField(*record, "tag_id"); err == nil {
+			result.NodeID, err = auditInt64UnsignedField(*record, metadataNodeIDField)
+		}
+	case "provenance":
+		if result.ProvenanceID, err = auditDigestField(*record, "identity"); err != nil {
+			break
+		}
+		if result.NodeID, err = auditInt64UnsignedField(*record, metadataNodeIDField); err != nil {
+			break
+		}
+		if result.IngestID, err = auditUUIDField(*record, "ingest_id"); err != nil {
+			break
+		}
+		if result.OriginalPath, err = auditOptionalBytesField(*record, "original_path"); err != nil {
+			break
+		}
+		if result.OriginalMTime, err = auditOptionalTimestampField(*record, "original_mtime"); err != nil {
+			break
+		}
+		result.Supersedes, err = auditOptionalDigestField(*record, "supersedes")
+	default:
+		return nil, fmt.Errorf("unsupported audit attachment kind %q", kind)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func auditOptionalNestedField(record audit.Record, name string) (*audit.Record, error) {
+	value, err := auditField(record, name)
+	if err != nil {
+		return nil, err
+	}
+	if value.IsAbsent() {
+		return nil, nil //nolint:nilnil // A nil pointer is the canonical absent nested record.
+	}
+	result, ok := value.RecordValue()
+	if !ok {
+		return nil, fmt.Errorf("audit field %s.%s is not an optional record", record.Kind, name)
+	}
+	return &result, nil
+}
+
+func auditOptionalBytesField(record audit.Record, name string) (*string, error) {
+	value, err := auditField(record, name)
+	if err != nil {
+		return nil, err
+	}
+	if value.IsAbsent() {
+		return nil, nil //nolint:nilnil // A nil pointer is the canonical absent byte string.
+	}
+	result, ok := value.BytesValue()
+	if !ok || !utf8.Valid(result) {
+		return nil, fmt.Errorf("audit field %s.%s is not optional UTF-8 bytes", record.Kind, name)
+	}
+	text := string(result)
+	return &text, nil
+}
+
+func auditOptionalTimestampField(record audit.Record, name string) (*string, error) {
+	value, err := auditField(record, name)
+	if err != nil {
+		return nil, err
+	}
+	if value.IsAbsent() {
+		return nil, nil //nolint:nilnil // A nil pointer is the canonical absent timestamp.
+	}
+	result, ok := value.TimestampValue()
+	if !ok {
+		return nil, fmt.Errorf("audit field %s.%s is not an optional timestamp", record.Kind, name)
+	}
+	return &result, nil
+}
+
+func auditEventPathField(record audit.Record, name string) (*AuditPathState, error) {
 	state, err := auditNestedField(record, name)
 	if err != nil {
 		return nil, err
@@ -322,8 +519,75 @@ func auditEventPathField(record audit.Record, name string) (*string, error) {
 	if !ok {
 		return nil, fmt.Errorf("audit field %s.%s is not a byte path", state.Kind, auditPathField)
 	}
-	text := string(path)
-	return &text, nil
+	stateValue, err := auditTextField(state, auditStateField)
+	if err != nil {
+		return nil, err
+	}
+	result := AuditPathState{Path: string(path), State: stateValue}
+	if err := ValidateAuditPathState(result.Path, result.State); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ValidateAuditPathState checks the canonical coordinate domain used by an
+// audit path event. It deliberately does not use host-filesystem path rules.
+func ValidateAuditPathState(path, state string) error {
+	if !utf8.ValidString(path) {
+		return errors.New("audit path is not valid UTF-8")
+	}
+	switch state {
+	case "live":
+		if validAuditLiveCoordinate(path) {
+			return nil
+		}
+	case "trash":
+		if validAuditTrashCoordinate(path) {
+			return nil
+		}
+	}
+	return fmt.Errorf("audit path %q is not canonical for state %q", path, state)
+}
+
+func validAuditLiveCoordinate(path string) bool {
+	if path == "/" {
+		return true
+	}
+	return strings.HasPrefix(path, "/") && validAuditPathComponents(path[1:])
+}
+
+func validAuditTrashCoordinate(path string) bool {
+	const knownPrefix = "@trash/known/"
+	const unknownPrefix = "@trash/unknown/"
+	if after, ok := strings.CutPrefix(path, knownPrefix); ok {
+		return validAuditPathComponents(after)
+	}
+	if !strings.HasPrefix(path, unknownPrefix) {
+		return false
+	}
+	remainder := strings.TrimPrefix(path, unknownPrefix)
+	parts := strings.Split(remainder, "/")
+	if len(parts) == 0 || parts[0] == "" || (len(parts[0]) > 1 && parts[0][0] == '0') {
+		return false
+	}
+	id, err := strconv.ParseUint(parts[0], 10, 64)
+	if err != nil || id == 0 || id > math.MaxInt64 {
+		return false
+	}
+	return len(parts) == 1 || validAuditPathComponents(strings.Join(parts[1:], "/"))
+}
+
+func validAuditPathComponents(path string) bool {
+	if path == "" || strings.HasSuffix(path, "/") {
+		return false
+	}
+	for component := range strings.SplitSeq(path, "/") {
+		if component == "" || component == "." || component == ".." ||
+			strings.ContainsRune(component, 0) {
+			return false
+		}
+	}
+	return true
 }
 
 // ValidateAuditHistoryCursor checks that an opaque cursor belongs to nodeID.

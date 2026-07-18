@@ -70,7 +70,8 @@ func writeAuditHistory(w io.Writer, page api.AuditEventPage) error {
 		}
 		if event.OldPath != nil && event.NewPath != nil {
 			if _, err := fmt.Fprintf(w, "  path: %s -> %s\n",
-				auditDisplayPath(*event.OldPath), auditDisplayPath(*event.NewPath)); err != nil {
+				auditDisplayPath(event.OldPath.Path),
+				auditDisplayPath(event.NewPath.Path)); err != nil {
 				return fmt.Errorf("writing audit history: %w", err)
 			}
 		}
@@ -86,6 +87,11 @@ func writeAuditHistory(w io.Writer, page api.AuditEventPage) error {
 				return fmt.Errorf("writing audit history: %w", err)
 			}
 		}
+		if event.Attachment != nil {
+			if err := writeAuditAttachment(w, *event.Attachment); err != nil {
+				return err
+			}
+		}
 	}
 	if page.NextCursor != "" {
 		if _, err := fmt.Fprintln(w, "next cursor: "+page.NextCursor); err != nil {
@@ -93,6 +99,53 @@ func writeAuditHistory(w io.Writer, page api.AuditEventPage) error {
 		}
 	}
 	return nil
+}
+
+func writeAuditAttachment(w io.Writer, change api.AuditAttachmentChange) error {
+	var summary string
+	switch change.Kind {
+	case "tag_definition":
+		summary = fmt.Sprintf("tag %s: %s -> %s", change.Identity.TagID,
+			auditTagState(change.Before), auditTagState(change.After))
+	case "tag_assignment":
+		summary = fmt.Sprintf("tag %s on node %d: %s -> %s",
+			change.Identity.TagID, change.Identity.NodeID,
+			auditPresence(change.Before), auditPresence(change.After))
+	case "provenance":
+		summary = fmt.Sprintf("provenance %s: %s -> %s", change.Identity.ProvenanceID,
+			auditProvenanceState(change.Before), auditProvenanceState(change.After))
+	default:
+		return fmt.Errorf("writing audit history: unknown attachment kind %q", change.Kind)
+	}
+	if _, err := fmt.Fprintln(w, "  "+summary); err != nil {
+		return fmt.Errorf("writing audit history: %w", err)
+	}
+	return nil
+}
+
+func auditTagState(state *api.AuditAttachmentState) string {
+	if state == nil {
+		return "(absent)"
+	}
+	return auditDisplayPath(state.TagName)
+}
+
+func auditPresence(state *api.AuditAttachmentState) string {
+	if state == nil {
+		return "absent"
+	}
+	return "present"
+}
+
+func auditProvenanceState(state *api.AuditAttachmentState) string {
+	if state == nil {
+		return "(absent)"
+	}
+	path := "(path absent)"
+	if state.OriginalPath != nil {
+		path = auditDisplayPath(*state.OriginalPath)
+	}
+	return fmt.Sprintf("%s via ingest %s", path, state.IngestID)
 }
 
 func auditOptionalValue(value *string) string {

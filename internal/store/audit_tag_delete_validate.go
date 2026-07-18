@@ -119,7 +119,7 @@ func (replay *auditedHistoryReplay) validateTagDeletionDelta(
 			if err != nil {
 				return replayedTagDeletion{}, err
 			}
-		case "tag_assignment":
+		case auditTagAssignmentKind:
 			nodeID, err := auditUnsignedField(pre, metadataNodeIDField)
 			if err != nil {
 				return replayedTagDeletion{}, err
@@ -171,7 +171,7 @@ func (replay *auditedHistoryReplay) validateTagDeletionDelta(
 func (replay *auditedHistoryReplay) tagAssignmentNodes(tagID string) ([]uint64, error) {
 	var result []uint64
 	for _, record := range replay.attachments {
-		if record.Kind != "tag_assignment" {
+		if record.Kind != auditTagAssignmentKind {
 			continue
 		}
 		currentTagID, err := auditUUIDField(record, "tag_id")
