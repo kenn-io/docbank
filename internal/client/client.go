@@ -133,6 +133,8 @@ var codeToTypedErr = map[string]error{
 	"invalid_version_prune":    store.ErrInvalidVersionPrune,
 	"audit_already_enabled":    store.ErrAuditAlreadyEnabled,
 	"audit_preview_stale":      store.ErrAuditPreviewStale,
+	"audit_not_enrolled":       store.ErrAuditNotEnrolled,
+	"invalid_audit_cursor":     store.ErrInvalidAuditCursor,
 	"backup_locked":            backup.ErrRepoLocked,
 	"pack_retirement_deferred": packstore.ErrPackRetirementDeferred,
 }
@@ -713,6 +715,108 @@ func (c *Client) AuditStatus(
 		return api.AuditStatus{}, err
 	}
 	return status, nil
+}
+
+// AuditHistory returns one stable newest-first page of canonical events for
+// exactly one audited node selected by live path or stable ID.
+func (c *Client) AuditHistory(
+	ctx context.Context, path string, nodeID int64, limit int, cursor string,
+) (api.AuditEventPage, error) {
+	var page api.AuditEventPage
+	if (path == "") == (nodeID == 0) {
+		return page, errors.New("audit history requires exactly one path or node ID")
+	}
+	if path != "" && !strings.HasPrefix(path, "/") {
+		return page, errors.New("audit history path must be absolute")
+	}
+	if nodeID < 0 {
+		return page, errors.New("audit history node ID must be positive")
+	}
+	if limit < 1 || limit > 500 {
+		return page, errors.New("audit history limit must be between 1 and 500")
+	}
+	if nodeID != 0 {
+		if err := store.ValidateAuditHistoryCursor(cursor, nodeID); err != nil {
+			return page, err
+		}
+	}
+	query := url.Values{}
+	if path != "" {
+		query.Set("path", path)
+	} else {
+		query.Set("node_id", strconv.FormatInt(nodeID, 10))
+	}
+	query.Set("limit", strconv.Itoa(limit))
+	if cursor != "" {
+		query.Set("cursor", cursor)
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/v1/audit/history?"+query.Encode(),
+		nil, nil, &page); err != nil {
+		return page, err
+	}
+	if err := validateAuditEventPage(page, nodeID, limit, cursor); err != nil {
+		return api.AuditEventPage{}, err
+	}
+	return page, nil
+}
+
+func validateAuditEventPage(page api.AuditEventPage, requestedNodeID int64, limit int, cursor string) error {
+	if page.Node.ID < 1 || (requestedNodeID != 0 && page.Node.ID != requestedNodeID) ||
+		page.Limit != limit || page.Cursor != cursor || page.Total < len(page.Items) ||
+		len(page.Items) > limit || (page.Node.TrashedAt == "") != strings.HasPrefix(page.Path, "/") {
+		return errors.New("audit history response has inconsistent node or pagination")
+	}
+	if err := store.ValidateAuditHistoryCursor(cursor, page.Node.ID); err != nil {
+		return err
+	}
+	if err := store.ValidateAuditHistoryCursor(page.NextCursor, page.Node.ID); err != nil {
+		return err
+	}
+	if page.NextCursor != "" && len(page.Items) != limit {
+		return errors.New("audit history response has a premature next cursor")
+	}
+	for i, event := range page.Items {
+		if err := validateAuditEvent(event, page.Node.ID); err != nil {
+			return fmt.Errorf("audit history item %d: %w", i, err)
+		}
+		if i > 0 && !auditEventPrecedes(page.Items[i-1], event) {
+			return errors.New("audit history response is not newest first")
+		}
+	}
+	return nil
+}
+
+func validateAuditEvent(event api.AuditEvent, nodeID int64) error {
+	recordedAt, timeErr := time.Parse(time.RFC3339Nano, event.RecordedAt)
+	if !validSHA256Hex(event.ID) || !validUUIDv4(event.OperationID) ||
+		event.OperationSequence < 1 || event.Ordinal < 0 || event.NodeID != nodeID ||
+		event.Kind == "" || !validUUIDv4(event.ScopeID) || event.Origin == "" ||
+		timeErr != nil || recordedAt.Location() != time.UTC ||
+		event.PriorNodeRevision < 0 || event.ResultingNodeRevision < 0 ||
+		!validOptionalUUID(event.PriorCurrentVersionID) ||
+		!validOptionalUUID(event.ResultingCurrentVersionID) ||
+		!validOptionalUUID(event.SourceVersionID) ||
+		(event.TargetNodeID != nil && *event.TargetNodeID < 1) ||
+		(event.BaselineDigest != nil && !validSHA256Hex(*event.BaselineDigest)) {
+		return errors.New("event has invalid canonical fields")
+	}
+	if event.Kind == "node_path" &&
+		(event.OldPath == nil || event.NewPath == nil ||
+			!strings.HasPrefix(*event.OldPath, "/") || !strings.HasPrefix(*event.NewPath, "/")) {
+		return errors.New("path event lacks absolute old and new paths")
+	}
+	return nil
+}
+
+func validOptionalUUID(value *string) bool {
+	return value == nil || validUUIDv4(*value)
+}
+
+func auditEventPrecedes(newer, older api.AuditEvent) bool {
+	return newer.OperationSequence > older.OperationSequence ||
+		(newer.OperationSequence == older.OperationSequence && newer.Ordinal > older.Ordinal) ||
+		(newer.OperationSequence == older.OperationSequence && newer.Ordinal == older.Ordinal &&
+			newer.ID > older.ID)
 }
 
 func validateAuditPreview(preview api.AuditEnrollmentPreview) error {

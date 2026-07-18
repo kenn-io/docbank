@@ -21,7 +21,7 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 		"listTags", "resolveTagByName", "getTag", "listTagNodes", "listNodeTags",
 		"createTag", "renameTag", "deleteTag", "assignTag", "unassignTag",
 		"assignTagPath", "unassignTagPath",
-		"previewAuditEnrollment", "enableAudit", "auditStatus",
+		"previewAuditEnrollment", "enableAudit", "auditStatus", "auditNodeHistory",
 		"search", "createNode", "moveNode", "movePath", "trashNode", "trashPath", "restoreNode",
 		"storageStatus", "storagePack", "storageRepack", "ingest", "uploadFile", "listTrash", "emptyTrash", "gc", "verify",
 		"initBackupRepository", "createBackupSnapshot", "listBackupSnapshots", "listJobs"} {

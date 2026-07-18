@@ -213,6 +213,42 @@ type AuditStatus struct {
 	Membership                 *AuditMembershipStatus `json:"membership,omitempty"`
 }
 
+// AuditEvent is one canonical, immutable event involving an audited node.
+// Optional fields are present only when that event kind carries the relation.
+type AuditEvent struct {
+	ID                        string  `json:"id" pattern:"^[0-9a-f]{64}$"`
+	OperationID               string  `json:"operation_id" format:"uuid"`
+	OperationSequence         int64   `json:"operation_sequence" minimum:"1"`
+	Ordinal                   int64   `json:"ordinal" minimum:"0"`
+	NodeID                    int64   `json:"node_id" minimum:"1"`
+	Kind                      string  `json:"kind"`
+	ScopeID                   string  `json:"scope_id" format:"uuid"`
+	RecordedAt                string  `json:"recorded_at" format:"date-time"`
+	Origin                    string  `json:"origin"`
+	AgentLabel                *string `json:"agent_label,omitempty"`
+	PriorNodeRevision         int64   `json:"prior_node_revision" minimum:"0"`
+	ResultingNodeRevision     int64   `json:"resulting_node_revision" minimum:"0"`
+	PriorCurrentVersionID     *string `json:"prior_current_version_id,omitempty" format:"uuid"`
+	ResultingCurrentVersionID *string `json:"resulting_current_version_id,omitempty" format:"uuid"`
+	SourceVersionID           *string `json:"source_version_id,omitempty" format:"uuid"`
+	TargetNodeID              *int64  `json:"target_node_id,omitempty" minimum:"1"`
+	BaselineDigest            *string `json:"baseline_digest,omitempty" pattern:"^[0-9a-f]{64}$"`
+	AttachmentKind            *string `json:"attachment_kind,omitempty"`
+	OldPath                   *string `json:"old_path,omitempty"`
+	NewPath                   *string `json:"new_path,omitempty"`
+}
+
+// AuditEventPage is a newest-first, cursor-stable timeline for one node.
+type AuditEventPage struct {
+	Node       Node         `json:"node"`
+	Path       string       `json:"path,omitempty"`
+	Items      []AuditEvent `json:"items"`
+	Total      int          `json:"total" minimum:"0"`
+	Limit      int          `json:"limit" minimum:"1" maximum:"500"`
+	Cursor     string       `json:"cursor,omitempty"`
+	NextCursor string       `json:"next_cursor,omitempty"`
+}
+
 // ContentVerification binds a fresh physical read to the exact node revision
 // the caller inspected. BlobHash and Size are catalog identity; ComputedHash
 // and ComputedSize describe the bytes read through the mixed store.

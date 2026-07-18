@@ -49,6 +49,7 @@ type auditRecordIndex struct {
 	entryCount        *int64
 	eventID           *string
 	eventOrdinal      *int64
+	nodeID            *int64
 }
 
 type storedAuditRecord struct {
@@ -195,9 +196,10 @@ func importAuditRecord(ctx context.Context, tx *sql.Tx, value metadataAuditRecor
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO audit_records(
 		digest,kind,operation_id,operation_sequence,scope_id,entry_count,
-		event_id,event_ordinal,record_json) VALUES(?,?,?,?,?,?,?,?,?)`,
+		event_id,event_ordinal,node_id,record_json) VALUES(?,?,?,?,?,?,?,?,?,?)`,
 		value.Digest, record.Kind, index.operationID, index.operationSequence,
-		index.scopeID, index.entryCount, index.eventID, index.eventOrdinal, string(canonical))
+		index.scopeID, index.entryCount, index.eventID, index.eventOrdinal,
+		index.nodeID, string(canonical))
 	if err != nil || record.Kind != "enrollment_baseline" {
 		return err
 	}
@@ -327,8 +329,12 @@ func indexAuditRecord(record audit.Record) (auditRecordIndex, error) {
 		if err != nil {
 			return index, err
 		}
+		nodeID, err := auditInt64UnsignedField(event, metadataNodeIDField)
+		if err != nil {
+			return index, err
+		}
 		index.operationID, index.scopeID = &operationID, &scopeID
-		index.eventID, index.eventOrdinal = &eventID, &ordinal
+		index.eventID, index.eventOrdinal, index.nodeID = &eventID, &ordinal, &nodeID
 	case "canonical_mutation", "allocation_entry":
 		operationID, err := auditUUIDField(record, auditOperationIDField)
 		if err != nil {

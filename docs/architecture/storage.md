@@ -69,7 +69,7 @@ provenance     (identity SHA-256 PRIMARY KEY, node_id, ingest_id,
                 original_path, original_mtime, supersedes)
 tags           (id UUID PRIMARY KEY, name UNIQUE, revision)
 node_tags      (node_id, tag_id)
-audit_records  (digest PRIMARY KEY, kind, operation indexes, record_json)
+audit_records  (digest PRIMARY KEY, kind, operation/event/node indexes, record_json)
 audit_authority(lineage_id, operation high-water, allocation count/head)
 audit_scopes   (scope_id, target_node_id, enable operation, count/head)
 audit_baselines(digest, scope_id, target_node_id, operation_id)

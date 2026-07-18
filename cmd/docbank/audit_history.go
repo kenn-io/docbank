@@ -1,0 +1,115 @@
+package main
+
+import (
+	"errors"
+	"fmt"
+	"io"
+
+	"github.com/spf13/cobra"
+
+	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/client"
+)
+
+var (
+	auditHistoryNodeID int64
+	auditHistoryLimit  int
+	auditHistoryCursor string
+	auditHistoryJSON   bool
+)
+
+var auditHistoryCmd = &cobra.Command{
+	Use:   "history [path]",
+	Short: "Read one permanently protected node's canonical event timeline",
+	Args:  cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if (len(args) == 0) == (auditHistoryNodeID == 0) {
+			return errors.New("audit history requires exactly one path or --node-id")
+		}
+		path := ""
+		if len(args) == 1 {
+			path = args[0]
+		}
+		c, err := client.Ensure(cmd.Context())
+		if err != nil {
+			return err
+		}
+		page, err := c.AuditHistory(
+			cmd.Context(), path, auditHistoryNodeID, auditHistoryLimit, auditHistoryCursor,
+		)
+		if err != nil {
+			return err
+		}
+		if auditHistoryJSON {
+			return writeAuditJSON(cmd.OutOrStdout(), page)
+		}
+		return writeAuditHistory(cmd.OutOrStdout(), page)
+	},
+}
+
+func writeAuditHistory(w io.Writer, page api.AuditEventPage) error {
+	coordinate := auditDisplayPath(page.Path)
+	if page.Node.TrashedAt != "" {
+		coordinate = fmt.Sprintf("node %d in trash", page.Node.ID)
+	}
+	if _, err := fmt.Fprintf(w, "audit history for %s (node %d): %d recorded event(s)\n",
+		coordinate, page.Node.ID, page.Total); err != nil {
+		return fmt.Errorf("writing audit history: %w", err)
+	}
+	if len(page.Items) == 0 {
+		if _, err := fmt.Fprintln(w,
+			"no events on this page; the node is still permanently protected"); err != nil {
+			return fmt.Errorf("writing audit history: %w", err)
+		}
+	}
+	for _, event := range page.Items {
+		if _, err := fmt.Fprintf(w, "%s  %s  operation %d.%d  revision %d -> %d\n",
+			event.RecordedAt, event.Kind, event.OperationSequence, event.Ordinal,
+			event.PriorNodeRevision, event.ResultingNodeRevision); err != nil {
+			return fmt.Errorf("writing audit history: %w", err)
+		}
+		if event.OldPath != nil && event.NewPath != nil {
+			if _, err := fmt.Fprintf(w, "  path: %s -> %s\n",
+				auditDisplayPath(*event.OldPath), auditDisplayPath(*event.NewPath)); err != nil {
+				return fmt.Errorf("writing audit history: %w", err)
+			}
+		}
+		if event.PriorCurrentVersionID != nil || event.ResultingCurrentVersionID != nil {
+			if _, err := fmt.Fprintf(w, "  version: %s -> %s\n",
+				auditOptionalValue(event.PriorCurrentVersionID),
+				auditOptionalValue(event.ResultingCurrentVersionID)); err != nil {
+				return fmt.Errorf("writing audit history: %w", err)
+			}
+		}
+		if event.AgentLabel != nil {
+			if _, err := fmt.Fprintf(w, "  agent: %s\n", auditDisplayPath(*event.AgentLabel)); err != nil {
+				return fmt.Errorf("writing audit history: %w", err)
+			}
+		}
+	}
+	if page.NextCursor != "" {
+		if _, err := fmt.Fprintln(w, "next cursor: "+page.NextCursor); err != nil {
+			return fmt.Errorf("writing audit history: %w", err)
+		}
+	}
+	return nil
+}
+
+func auditOptionalValue(value *string) string {
+	if value == nil {
+		return "(none)"
+	}
+	return *value
+}
+
+func init() {
+	auditHistoryCmd.Flags().Int64Var(&auditHistoryNodeID, "node-id", 0,
+		"stable node ID, including a node in trash (alternative to path)")
+	auditHistoryCmd.Flags().IntVar(&auditHistoryLimit, "limit", 50,
+		"maximum events to return (1-500)")
+	auditHistoryCmd.Flags().StringVar(&auditHistoryCursor, "cursor", "",
+		"opaque continuation cursor from the preceding page")
+	auditHistoryCmd.Flags().BoolVar(&auditHistoryJSON, "json", false,
+		"machine-readable output")
+	auditCmd.AddCommand(auditHistoryCmd)
+}

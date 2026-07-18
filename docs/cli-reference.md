@@ -321,6 +321,8 @@ docbank audit enable --node-id <id> [--agent-label <label>] [--json]
 docbank audit enable --run --token <preview-token> --acknowledge-permanent-retention [--json]
 docbank audit status [path] [--json]
 docbank audit status --node-id <id> [--json]
+docbank audit history <path> [--limit <n>] [--cursor <cursor>] [--json]
+docbank audit history --node-id <id> [--limit <n>] [--cursor <cursor>] [--json]
 ```
 
 `audit enable` permanently protects a directory scope and all retained content
@@ -341,8 +343,20 @@ returns `audit_preview_stale` without enabling the scope; run a new preview.
 
 `audit status` without a selector reports vault and scope evidence. A path or
 stable node ID additionally reports whether that node has sticky audit
-membership. The current public boundary supports the first scope in a vault;
-a later `audit enable` returns `audit_already_enabled`. See
+membership.
+
+`audit history` reads canonical events for one protected node, newest first.
+Path events expose their old and new paths; content events expose prior and
+resulting immutable version IDs. The default and maximum page sizes are 50 and
+500. `next_cursor` in JSON, or the `next cursor` line in human output, continues
+through older events without shifting when a newer operation is appended. A
+cursor is opaque and bound to its stable node. Use `--node-id` for a moved or
+trashed node. A protected enrollment-baseline member can legitimately have no
+node-specific events until its first later mutation; use `audit status` for
+membership authority.
+
+The current public boundary supports the first scope in a vault; a later
+`audit enable` returns `audit_already_enabled`. See
 [Permanent Audited History](usage/audited-history.md) for supported mutations
 and maintenance behavior.
 

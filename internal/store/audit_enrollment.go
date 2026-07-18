@@ -474,9 +474,10 @@ func insertAuditRecord(ctx context.Context, tx *sql.Tx, record audit.Record) err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO audit_records(
 		digest,kind,operation_id,operation_sequence,scope_id,entry_count,
-		event_id,event_ordinal,record_json) VALUES(?,?,?,?,?,?,?,?,?)`,
+		event_id,event_ordinal,node_id,record_json) VALUES(?,?,?,?,?,?,?,?,?,?)`,
 		digest.text, record.Kind, index.operationID, index.operationSequence,
-		index.scopeID, index.entryCount, index.eventID, index.eventOrdinal, string(recordJSON))
+		index.scopeID, index.entryCount, index.eventID, index.eventOrdinal,
+		index.nodeID, string(recordJSON))
 	if err != nil {
 		return fmt.Errorf("storing %s audit record: %w", record.Kind, err)
 	}

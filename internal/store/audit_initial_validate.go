@@ -109,7 +109,7 @@ func loadInitialAuditRecords(
 	ctx context.Context, tx metadataQuerier,
 ) (map[string][]storedAuditRecord, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT digest,kind,operation_id,operation_sequence,
-		scope_id,entry_count,event_id,event_ordinal,record_json FROM audit_records`)
+		scope_id,entry_count,event_id,event_ordinal,node_id,record_json FROM audit_records`)
 	if err != nil {
 		return nil, fmt.Errorf("reading initial audit records: %w", err)
 	}
@@ -118,9 +118,9 @@ func loadInitialAuditRecords(
 	for rows.Next() {
 		var digest, kind, recordJSON string
 		var operationID, scopeID, eventID sql.NullString
-		var sequence, entryCount, ordinal sql.NullInt64
+		var sequence, entryCount, ordinal, nodeID sql.NullInt64
 		if err := rows.Scan(&digest, &kind, &operationID, &sequence, &scopeID,
-			&entryCount, &eventID, &ordinal, &recordJSON); err != nil {
+			&entryCount, &eventID, &ordinal, &nodeID, &recordJSON); err != nil {
 			return nil, fmt.Errorf("scanning initial audit record: %w", err)
 		}
 		record, index, canonical, err := validateAuditRecord(metadataAuditRecord{
@@ -135,7 +135,8 @@ func loadInitialAuditRecords(
 			!sameNullString(scopeID, index.scopeID) ||
 			!sameNullInt64(entryCount, index.entryCount) ||
 			!sameNullString(eventID, index.eventID) ||
-			!sameNullInt64(ordinal, index.eventOrdinal) {
+			!sameNullInt64(ordinal, index.eventOrdinal) ||
+			!sameNullInt64(nodeID, index.nodeID) {
 			return nil, fmt.Errorf("audit record %s relational index does not match canonical fields", digest)
 		}
 		result[kind] = append(result[kind], storedAuditRecord{

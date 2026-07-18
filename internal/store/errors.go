@@ -43,6 +43,11 @@ var (
 	// ErrAuditPreviewStale means enrollment no longer matches the exact
 	// metadata state reviewed by the caller.
 	ErrAuditPreviewStale = errors.New("audit enrollment preview is stale")
+	// ErrAuditNotEnrolled means a node exists but has no sticky audit membership.
+	ErrAuditNotEnrolled = errors.New("node is not enrolled in an audit scope")
+	// ErrInvalidAuditCursor means an audit-history cursor is malformed or belongs
+	// to a different stable node.
+	ErrInvalidAuditCursor = errors.New("invalid audit history cursor")
 )
 
 // UnconditionalRev is the only ifRev value that skips the revision
