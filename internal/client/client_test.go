@@ -933,8 +933,14 @@ func TestStorageRepackRoundTrip(t *testing.T) {
 	_, err = c.GC(t.Context(), true)
 	require.NoError(t, err)
 
-	report, err := c.StorageRepack(t.Context(), 0, time.Nanosecond, 1)
-	require.NoError(t, err)
+	var report api.StorageRepackReport
+	var repackErr error
+	require.Eventually(t, func() bool {
+		report, repackErr = c.StorageRepack(t.Context(), 0, time.Nanosecond, 1)
+		return repackErr == nil && report.PacksRewritten == 1
+	}, time.Second, 10*time.Millisecond,
+		"pack should become eligible after the platform clock advances")
+	require.NoError(t, repackErr)
 	assert.Equal(t, 1, report.PacksRewritten)
 	assert.Equal(t, 1, report.PacksRemoved)
 }

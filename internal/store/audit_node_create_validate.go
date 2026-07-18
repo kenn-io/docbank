@@ -205,6 +205,9 @@ func (replay *auditedHistoryReplay) validateNodeCreationTopology(
 	if err := sortAuditTopologyRecords(postTopology); err != nil {
 		return replayedNodeCreation{}, err
 	}
+	if err := validateReplayedAuditTopology(postTopology); err != nil {
+		return replayedNodeCreation{}, fmt.Errorf("validating node creation topology: %w", err)
+	}
 	return replayedNodeCreation{
 		childID: childID, parentID: parentID, childTopology: childPost,
 		postTopology: postTopology,
@@ -303,7 +306,7 @@ func (replay *auditedHistoryReplay) validateNodeCreationBaseline(
 		return err
 	}
 	switch kind {
-	case "dir":
+	case nodeKindDir:
 		if current != nil || len(versions) != 0 {
 			return errors.New("created directory baseline contains content")
 		}

@@ -25,7 +25,7 @@ func deriveInitialAuditMembersFromRecords(
 		return nil, err
 	}
 	target, ok := nodes[targetNodeID]
-	if !ok || target.kind != "dir" || target.state != "live" {
+	if !ok || target.kind != nodeKindDir || target.state != "live" {
 		return nil, fmt.Errorf("audit enrollment target %d must be a live directory", targetNodeID)
 	}
 	children := make(map[uint64][]uint64)
@@ -107,6 +107,56 @@ func replayAuditTopology(topology []audit.Record) (map[uint64]replayAuditTopolog
 	return result, nil
 }
 
+func validateReplayedAuditTopology(topology []audit.Record) error {
+	nodes, err := replayAuditTopology(topology)
+	if err != nil {
+		return err
+	}
+	type liveSibling struct {
+		parentID uint64
+		name     string
+	}
+	liveNames := make(map[liveSibling]uint64)
+	var rootID uint64
+	for nodeID, node := range nodes {
+		nameBytes, err := auditNameBytesField(node.record)
+		if err != nil {
+			return err
+		}
+		if node.parentID == nil {
+			if rootID != 0 || len(nameBytes) != 0 || node.kind != nodeKindDir || node.state != "live" {
+				return errors.New("audit topology has an invalid vault root")
+			}
+			rootID = nodeID
+			continue
+		}
+		name := string(nameBytes)
+		normalized, err := NormalizeName(name)
+		if err != nil || normalized != name {
+			return fmt.Errorf("audit topology node %d has invalid canonical name", nodeID)
+		}
+		if node.state != "live" {
+			continue
+		}
+		parent, ok := nodes[*node.parentID]
+		if !ok || parent.state != "live" || parent.kind != nodeKindDir {
+			return fmt.Errorf("live audit topology node %d has an invalid parent", nodeID)
+		}
+		key := liveSibling{parentID: *node.parentID, name: name}
+		if siblingID, exists := liveNames[key]; exists {
+			return fmt.Errorf(
+				"live audit topology nodes %d and %d have the same parent and name",
+				siblingID, nodeID,
+			)
+		}
+		liveNames[key] = nodeID
+	}
+	if rootID == 0 {
+		return errors.New("audit topology lacks a vault root")
+	}
+	return nil
+}
+
 func addReplayAuditDescendants(
 	root uint64, nodes map[uint64]replayAuditTopologyNode,
 	children map[uint64][]uint64, members map[uint64]bool, liveOnly bool,
@@ -172,7 +222,7 @@ func validateInitialAuditMemberProjection(
 		if !exists {
 			return fmt.Errorf("audit member %d is absent from topology genesis", nodeID)
 		}
-		if node.kind == "dir" {
+		if node.kind == nodeKindDir {
 			if current != nil || latestRevision[nodeID] != 0 {
 				return fmt.Errorf("audited directory %d carries content authority", nodeID)
 			}

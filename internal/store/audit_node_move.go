@@ -108,6 +108,34 @@ func (s *Store) prepareAuditedMove(
 		return snapshot, "", false, unsupportedAuditedNodeMutation(id)
 	}
 	oldParentID := *moved.ParentID
+	if oldParentID == newParentID && moved.Name == normalizedName {
+		snapshot.priorSubtree = map[int64]Node{id: moved}
+		return snapshot, normalizedName, true, nil
+	}
+	scopeMembers, err := auditScopeMemberSetTx(ctx, tx, scopes[0].scopeID)
+	if err != nil {
+		return snapshot, "", false, err
+	}
+	topology, err := currentAuditTopology(ctx, tx)
+	if err != nil {
+		return snapshot, "", false, err
+	}
+	auditNodeID, err := positiveAuditNodeID(id)
+	if err != nil {
+		return snapshot, "", false, err
+	}
+	affectsTrashOrigin, err := auditMoveAffectsTrashOrigin(
+		topology, scopeMembers, auditNodeID,
+	)
+	if err != nil {
+		return snapshot, "", false, err
+	}
+	if affectsTrashOrigin {
+		return snapshot, "", false, fmt.Errorf(
+			"moving node %d would change retained trash-origin paths: %w",
+			id, ErrAuditMutationUnsupported,
+		)
+	}
 	for _, parentID := range []int64{oldParentID, newParentID} {
 		member, err := nodeInAuditScopeTx(ctx, tx, parentID, scopes[0].scopeID)
 		if err != nil {
@@ -164,8 +192,7 @@ func (s *Store) prepareAuditedMove(
 		priorNodes: priorNodes, priorSubtree: priorSubtree,
 		priorPaths: priorPaths, subtreeIDs: subtreeIDs,
 	}
-	return snapshot, normalizedName,
-		oldParentID == newParentID && moved.Name == normalizedName, nil
+	return snapshot, normalizedName, false, nil
 }
 
 func nodeInAuditScopeTx(
@@ -178,6 +205,33 @@ func nodeInAuditScopeTx(
 		return false, fmt.Errorf("checking audit membership for node %d: %w", nodeID, err)
 	}
 	return member, nil
+}
+
+func auditScopeMemberSetTx(
+	ctx context.Context, tx *sql.Tx, scopeID string,
+) (map[uint64]bool, error) {
+	rows, err := tx.QueryContext(ctx,
+		`SELECT node_id FROM audit_memberships WHERE scope_id=? ORDER BY node_id`, scopeID)
+	if err != nil {
+		return nil, fmt.Errorf("listing audit scope %s members: %w", scopeID, err)
+	}
+	defer func() { _ = rows.Close() }()
+	result := make(map[uint64]bool)
+	for rows.Next() {
+		var rawID int64
+		if err := rows.Scan(&rawID); err != nil {
+			return nil, fmt.Errorf("scanning audit scope %s member: %w", scopeID, err)
+		}
+		nodeID, err := positiveAuditNodeID(rawID)
+		if err != nil {
+			return nil, err
+		}
+		result[nodeID] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("listing audit scope %s members: %w", scopeID, err)
+	}
+	return result, nil
 }
 
 func liveSubtreeIDsTx(ctx context.Context, tx *sql.Tx, rootID int64) ([]int64, error) {

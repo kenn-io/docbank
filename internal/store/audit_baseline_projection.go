@@ -20,7 +20,7 @@ func deriveInitialAuditMembers(
 		return nil, err
 	}
 	target, ok := rows[targetNodeID]
-	if !ok || target.kind != "dir" || target.trashedAt.Valid {
+	if !ok || target.kind != nodeKindDir || target.trashedAt.Valid {
 		return nil, fmt.Errorf("audit enrollment target %d must be a live directory", targetNodeID)
 	}
 	children := make(map[uint64][]uint64)

@@ -916,7 +916,7 @@ func validateNodeRecord(v metadataNode) error {
 		}
 	}
 	if v.ParentID == nil {
-		if v.Name != "" || v.Kind != "dir" || v.CurrentVersionID != nil || v.TrashedAt != nil ||
+		if v.Name != "" || v.Kind != nodeKindDir || v.CurrentVersionID != nil || v.TrashedAt != nil ||
 			v.TrashParent != nil || v.TrashName != nil {
 			return errors.New("invalid root node record")
 		}
@@ -930,7 +930,7 @@ func validateNodeRecord(v metadataNode) error {
 		return fmt.Errorf("invalid node name %q", v.Name)
 	}
 	switch v.Kind {
-	case "dir":
+	case nodeKindDir:
 		if v.CurrentVersionID != nil {
 			return errors.New("directory record carries file content")
 		}

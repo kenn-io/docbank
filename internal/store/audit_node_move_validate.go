@@ -163,10 +163,88 @@ func (replay *auditedHistoryReplay) validateNodeMoveTopology(
 	if err := requireLiveDirectoryTopology(postTopology, newParentID); err != nil {
 		return replayedNodeMove{}, err
 	}
+	affectsTrashOrigin, err := auditMoveAffectsTrashOrigin(
+		replay.topology, replay.memberSet, movedID,
+	)
+	if err != nil {
+		return replayedNodeMove{}, err
+	}
+	if affectsTrashOrigin {
+		return replayedNodeMove{}, errors.New(
+			"node move changes a retained trash-origin path without recording trash effects",
+		)
+	}
+	if err := validateReplayedAuditTopology(postTopology); err != nil {
+		return replayedNodeMove{}, fmt.Errorf("validating node move topology: %w", err)
+	}
 	usedTopology[digest] = true
 	return replayedNodeMove{
 		topologyDigest: digest, postTopology: postTopology, changedIDs: changedIDs,
 	}, nil
+}
+
+func auditMoveAffectsTrashOrigin(
+	topology []audit.Record, memberSet map[uint64]bool, movedID uint64,
+) (bool, error) {
+	nodes, err := replayAuditTopology(topology)
+	if err != nil {
+		return false, err
+	}
+	for nodeID, node := range nodes {
+		if !memberSet[nodeID] || node.originParent == nil {
+			continue
+		}
+		current := *node.originParent
+		seen := make(map[uint64]bool)
+		for {
+			if current == movedID {
+				return true, nil
+			}
+			if seen[current] {
+				return false, errors.New("audit trash-origin topology contains a cycle")
+			}
+			seen[current] = true
+			parent, ok := nodes[current]
+			if !ok {
+				return false, fmt.Errorf("audit trash origin references missing node %d", current)
+			}
+			next, err := auditHistoricalParent(parent)
+			if err != nil {
+				return false, err
+			}
+			if next == nil {
+				break
+			}
+			current = *next
+		}
+	}
+	return false, nil
+}
+
+func auditHistoricalParent(node replayAuditTopologyNode) (*uint64, error) {
+	originValue, err := auditField(node.record, auditOriginField)
+	if err != nil {
+		return nil, err
+	}
+	if originValue.IsAbsent() {
+		return node.parentID, nil
+	}
+	origin, ok := originValue.RecordValue()
+	if !ok {
+		return nil, errors.New("audit topology contains an invalid trash origin")
+	}
+	switch origin.Kind {
+	case "unknown_origin":
+		return nil, nil //nolint:nilnil // Unknown origin deliberately terminates the historical path.
+	case "known_origin":
+		parentID, err := auditUnsignedField(origin, auditParentIDField)
+		if err != nil {
+			return nil, err
+		}
+		return &parentID, nil
+	default:
+		return nil, fmt.Errorf("audit topology contains unsupported origin %q", origin.Kind)
+	}
 }
 
 func validateNodeMoveTopologyChange(
@@ -187,11 +265,11 @@ func validateNodeMoveTopologyChange(
 	if err != nil {
 		return false, 0, 0, err
 	}
-	preName, err := auditBytesField(pre, "name")
+	preName, err := auditNameBytesField(pre)
 	if err != nil {
 		return false, 0, 0, err
 	}
-	postName, err := auditBytesField(post, "name")
+	postName, err := auditNameBytesField(post)
 	if err != nil {
 		return false, 0, 0, err
 	}
@@ -228,14 +306,14 @@ func validateNodeMoveTopologyChange(
 	return true, *preParent, *postParent, nil
 }
 
-func auditBytesField(record audit.Record, name string) ([]byte, error) {
-	value, err := auditField(record, name)
+func auditNameBytesField(record audit.Record) ([]byte, error) {
+	value, err := auditField(record, "name")
 	if err != nil {
 		return nil, err
 	}
 	result, ok := value.BytesValue()
 	if !ok {
-		return nil, fmt.Errorf("audit field %s.%s is not bytes", record.Kind, name)
+		return nil, fmt.Errorf("audit field %s.name is not bytes", record.Kind)
 	}
 	return result, nil
 }
@@ -249,7 +327,7 @@ func requireLiveDirectoryTopology(topology []audit.Record, nodeID uint64) error 
 		if id != nodeID {
 			continue
 		}
-		if err := requireAuditText(node, "node_kind", "dir"); err != nil {
+		if err := requireAuditText(node, "node_kind", nodeKindDir); err != nil {
 			return err
 		}
 		return requireAuditText(node, "state", "live")
@@ -375,7 +453,7 @@ func auditLivePath(topology []audit.Record, nodeID uint64) ([]byte, bool, error)
 		if parentID == nil {
 			break
 		}
-		name, err := auditBytesField(current, "name")
+		name, err := auditNameBytesField(current)
 		if err != nil {
 			return nil, false, err
 		}

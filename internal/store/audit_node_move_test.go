@@ -95,18 +95,79 @@ func TestAuditedRootScopeRenameHandlesRootTimestampTouch(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
-	projects, err := s.NodeByPath(t.Context(), "/Projects")
+	empty, err := s.NodeByPath(t.Context(), "/Empty")
 	require.NoError(t, err)
 	seedInitialAuditAuthority(t, s, s.RootID())
 
 	renamed, err := s.Move(
-		t.Context(), projects.ID, s.RootID(), "RenamedProjects", projects.Revision,
+		t.Context(), empty.ID, s.RootID(), "RenamedEmpty", empty.Revision,
 	)
 	require.NoError(t, err)
-	assert.Equal(t, "RenamedProjects", renamed.Name)
+	assert.Equal(t, "RenamedEmpty", renamed.Name)
 	require.NoError(t, s.ValidateMetadata(t.Context()))
-	_, err = s.NodeByPath(t.Context(), "/RenamedProjects/report.txt")
+	_, err = s.NodeByPath(t.Context(), "/RenamedEmpty")
 	require.NoError(t, err)
+}
+
+func TestAuditedMoveRejectsRetainedTrashOriginPathChange(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	projects, err := s.Mkdir(t.Context(), s.RootID(), "Projects")
+	require.NoError(t, err)
+	file, err := s.CreateFile(
+		t.Context(), projects.ID, "old.txt", fakeHash("a723"), 9, "text/plain",
+	)
+	require.NoError(t, err)
+	_, _, err = s.Trash(t.Context(), file.ID, file.Revision)
+	require.NoError(t, err)
+	projects, err = s.NodeByID(t.Context(), projects.ID)
+	require.NoError(t, err)
+	seedInitialAuditAuthority(t, s, s.RootID())
+
+	_, err = s.Move(
+		t.Context(), projects.ID, s.RootID(), "RenamedProjects", projects.Revision,
+	)
+	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
+	require.ErrorContains(t, err, "trash-origin paths")
+	_, err = s.NodeByPath(t.Context(), "/Projects")
+	require.NoError(t, err)
+	var sequence int64
+	require.NoError(t, s.db.QueryRow(
+		`SELECT operation_sequence_high_water FROM audit_authority`,
+	).Scan(&sequence))
+	assert.Equal(t, int64(1), sequence)
+}
+
+func TestReplayedAuditTopologyRejectsImpossibleIntermediateState(t *testing.T) {
+	s := newAuditedMoveStore(t)
+	topology, err := currentAuditTopology(t.Context(), s.db)
+	require.NoError(t, err)
+	report, err := s.NodeByPath(t.Context(), "/Projects/report.txt")
+	require.NoError(t, err)
+
+	tests := map[string]struct {
+		name    string
+		message string
+	}{
+		"invalid canonical name": {name: "..", message: "invalid canonical name"},
+		"live sibling collision": {name: "Archive", message: "same parent and name"},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			candidate := append([]audit.Record(nil), topology...)
+			for index, record := range candidate {
+				if mustAuditUnsignedField(t, record, metadataNodeIDField) != uint64(report.ID) {
+					continue
+				}
+				candidate[index] = mustReplaceAuditRecordField(
+					t, record, "name", audit.Bytes([]byte(test.name)),
+				)
+			}
+			err := validateReplayedAuditTopology(candidate)
+			require.ErrorContains(t, err, test.message)
+		})
+	}
 }
 
 func TestAuditedMoveRefusesMembershipAndWitnessBoundaryCrossings(t *testing.T) {
