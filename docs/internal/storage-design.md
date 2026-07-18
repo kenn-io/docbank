@@ -388,9 +388,9 @@ mutation classes that do not have an audit-recording implementation. SQL retains
 only relational constraints; append-only semantics, canonical mutation
 construction, chain advancement, and independent replay remain backend-neutral
 Go logic. Implemented guarded transitions cover content replacement and revert,
-inherited node creation, move, trash, restore, and assignment or removal of an
-existing tag. Physical pack maintenance and read-only backup/export remain
-available.
+inherited node creation, move, trash, restore, creation of an unassigned tag,
+and assignment or removal of an existing tag. Physical pack maintenance and
+read-only backup/export remain available.
 
 !!! info "Planned — audited mutations"
     Public audit enablement, the remaining guarded mutation classes,

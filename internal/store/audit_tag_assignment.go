@@ -59,11 +59,9 @@ func persistAuditedTagAssignment(
 	if err != nil {
 		return err
 	}
-	delta := audit.Record{Kind: "attached_metadata_delta", Fields: []audit.Field{
-		{Name: auditOperationIDField, Value: values.operationID},
-		{Name: "changes", Value: audit.List(audit.Nested(change))},
-	}}
-	deltaDigest, err := hashAuditRecord(delta)
+	delta, deltaDigest, err := makeAttachedMetadataDelta(
+		values.operationID, []audit.Record{change},
+	)
 	if err != nil {
 		return err
 	}
@@ -122,31 +120,17 @@ func persistAuditedTagAssignment(
 	); err != nil {
 		return err
 	}
-	allocation, err := makeAuditedMutationAllocationEntry(
+	allocation, err := makeAuditAllocationEntry(
 		values, sequence, nodeSequence, authority.allocationHead, mutationDigest.value,
 	)
 	if err != nil {
 		return err
 	}
-	allocation, err = replaceAuditRecordField(
-		allocation, "has_attached_metadata_change", audit.Bool(true),
-	)
+	allocation, err = addAttachedMetadataToAllocation(allocation, 1, deltaDigest.value)
 	if err != nil {
 		return err
 	}
-	allocation, err = replaceAuditRecordField(
-		allocation, auditAttachedMetadataChangeCountField, audit.Unsigned(1),
-	)
-	if err != nil {
-		return err
-	}
-	allocation, err = replaceAuditRecordField(
-		allocation, "attached_metadata_change_digest", deltaDigest.value,
-	)
-	if err != nil {
-		return err
-	}
-	return advanceAuditedMutationAuthority(ctx, tx, authority, sequence, allocation)
+	return advanceAuditAuthority(ctx, tx, authority, sequence, allocation)
 }
 
 func auditTagAssignmentRecord(tagID string, nodeID int64) (audit.Record, error) {

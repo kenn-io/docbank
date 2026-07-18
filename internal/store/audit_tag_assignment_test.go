@@ -141,7 +141,7 @@ func TestAuditedTagAssignmentReplayRejectsRetargetedNode(t *testing.T) {
 	deltas[digest] = delta
 
 	_, err = replay.validateTagAssignmentDelta(
-		mutation.record, mustAuditUUIDField(t, mutation.record, auditOperationIDField),
+		mutation.record, mustAuditOperationID(t, mutation.record),
 		deltas, map[string]bool{},
 	)
 	require.ErrorContains(t, err, "unaudited node")
@@ -188,7 +188,7 @@ func auditEventKindForSequence(t *testing.T, s *Store, sequence int64) string {
 	t.Helper()
 	records, err := loadInitialAuditRecords(t.Context(), s.db)
 	require.NoError(t, err)
-	mutations, err := auditRecordsBySequence(records["canonical_mutation"], sequence)
+	mutations, err := auditRecordsByOptionalSequence(records["canonical_mutation"], sequence)
 	require.NoError(t, err)
 	events, err := auditRecordListField(mutations[sequence].record, "events")
 	require.NoError(t, err)

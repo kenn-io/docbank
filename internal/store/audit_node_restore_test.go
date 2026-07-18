@@ -257,7 +257,7 @@ func TestAuditedRestoreReplayRejectsOmittedDescendant(t *testing.T) {
 	)
 	topologyRecords[digest] = delta
 	_, _, err = replay.validateNodeRestoreTopology(
-		mutation.record, mustAuditUUIDField(t, mutation.record, auditOperationIDField),
+		mutation.record, mustAuditOperationID(t, mutation.record),
 		topologyRecords, usedTopology,
 	)
 	require.ErrorContains(t, err, "complete trash subtree")
