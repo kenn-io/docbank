@@ -64,7 +64,7 @@ func (replay *auditedHistoryReplay) applyNodeMove(
 	); err != nil {
 		return err
 	}
-	if err := replay.validateTopologyStateChanges(mutation.record, move.changedIDs); err != nil {
+	if err := replay.validateMemberStateChanges(mutation.record, move.changedIDs); err != nil {
 		return err
 	}
 	if err := replay.validateTopologyEvents(
@@ -486,7 +486,7 @@ func auditLivePath(
 	return result, true, nil
 }
 
-func (replay *auditedHistoryReplay) validateTopologyStateChanges(
+func (replay *auditedHistoryReplay) validateMemberStateChanges(
 	mutation audit.Record, changedIDs []uint64,
 ) error {
 	changes, err := auditRecordListField(mutation, "member_state_changes")
@@ -494,7 +494,7 @@ func (replay *auditedHistoryReplay) validateTopologyStateChanges(
 		return err
 	}
 	if len(changes) != len(changedIDs) {
-		return errors.New("topology member-state changes do not match changed topology")
+		return errors.New("member-state changes do not match changed nodes")
 	}
 	for index, nodeID := range changedIDs {
 		state := replay.states[nodeID]
@@ -545,7 +545,7 @@ func (replay *auditedHistoryReplay) validateTopologyEvents(
 		if err != nil {
 			return err
 		}
-		if err := validateCreationEventWrapper(
+		if err := validateAuditEventWrapper(
 			operationID, ordinal, event, eventRecords, usedEvents,
 		); err != nil {
 			return err

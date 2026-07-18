@@ -103,6 +103,12 @@ func ingestAuditRecord(ingest metadataIngest) (audit.Record, error) {
 }
 
 func makeAttachedMetadataAddition(record audit.Record) (audit.Record, error) {
+	return makeAttachedMetadataPresenceChange(record, true)
+}
+
+func makeAttachedMetadataPresenceChange(
+	record audit.Record, add bool,
+) (audit.Record, error) {
 	kind, err := audit.Text(record.Kind)
 	if err != nil {
 		return audit.Record{}, err
@@ -111,11 +117,15 @@ func makeAttachedMetadataAddition(record audit.Record) (audit.Record, error) {
 	if err != nil {
 		return audit.Record{}, err
 	}
+	pre, post := audit.Absent(), audit.Nested(record)
+	if !add {
+		pre, post = post, pre
+	}
 	return audit.Record{Kind: "attached_metadata_change", Fields: []audit.Field{
 		{Name: "record_kind", Value: kind},
 		{Name: "stable_identity", Value: audit.Nested(identity)},
-		{Name: "pre", Value: audit.Absent()},
-		{Name: "post", Value: audit.Nested(record)},
+		{Name: auditPreField, Value: pre},
+		{Name: auditPostField, Value: post},
 	}}, nil
 }
 

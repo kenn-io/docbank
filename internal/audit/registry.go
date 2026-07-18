@@ -188,7 +188,9 @@ var recordSchemas = map[string]recordSchema{
 		field("event_kind", eventKindRule()),
 		field("scope_id", uuidRule),
 		field("target_node_id", optionalUnsigned),
-		field("attachment_kind", optional(textEnum("provenance", "tag"))),
+		field("attachment_kind", optional(textEnum(
+			"provenance", "tag_assignment", "tag_definition",
+		))),
 		field("attachment_identity", optional(eventAttachmentIdentityRule())),
 		field("source_version_id", optionalUUID),
 		field("event_ordinal", unsignedRule),

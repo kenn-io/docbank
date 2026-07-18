@@ -267,12 +267,24 @@ func (s *Store) changeTagAssignment(
 	ctx context.Context, tagID string, nodeID, ifRev int64, assign bool,
 ) (TagAssignmentChange, error) {
 	var result TagAssignmentChange
-	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		node, err := nodeByIDTx(tx, nodeID)
 		if err != nil {
 			return err
 		}
-		result, err = changeTagAssignmentTx(ctx, tx, tagID, node, ifRev, assign)
+		active, err := auditAuthorityActiveTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if active {
+			result, err = s.changeAuditedTagAssignmentTx(
+				ctx, tx, tagID, node, ifRev, assign,
+			)
+			return err
+		}
+		result, err = changeTagAssignmentTx(
+			ctx, tx, tagID, node, ifRev, assign, nowRFC3339(),
+		)
 		return err
 	})
 	if err != nil {
@@ -285,13 +297,23 @@ func (s *Store) changeTagAssignmentPath(
 	ctx context.Context, tagID, path string, assign bool,
 ) (TagAssignmentChange, error) {
 	var result TagAssignmentChange
-	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		node, err := nodeByPath(ctx, tx, s.rootID, path)
 		if err != nil {
 			return err
 		}
+		active, err := auditAuthorityActiveTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if active {
+			result, err = s.changeAuditedTagAssignmentTx(
+				ctx, tx, tagID, node, UnconditionalRev, assign,
+			)
+			return err
+		}
 		result, err = changeTagAssignmentTx(
-			ctx, tx, tagID, node, UnconditionalRev, assign,
+			ctx, tx, tagID, node, UnconditionalRev, assign, nowRFC3339(),
 		)
 		return err
 	})
@@ -308,6 +330,7 @@ func changeTagAssignmentTx(
 	node Node,
 	ifRev int64,
 	assign bool,
+	recordedAt string,
 ) (TagAssignmentChange, error) {
 	tag, err := tagByIDTx(tx, tagID)
 	if err != nil {
@@ -356,7 +379,7 @@ func changeTagAssignmentTx(
 		result.Tag.Revision++
 		if _, err := tx.Exec(
 			`UPDATE nodes SET revision = revision + 1, modified_at = ? WHERE id = ?`,
-			nowRFC3339(), node.ID,
+			recordedAt, node.ID,
 		); err != nil {
 			return TagAssignmentChange{}, fmt.Errorf(
 				"advancing node %d after tag assignment change: %w", node.ID, err,

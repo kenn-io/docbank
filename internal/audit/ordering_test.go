@@ -169,9 +169,9 @@ func TestAuditEventCollectionSortsAbsentSentinelsFirst(t *testing.T) {
 	), "canonical order")
 
 	identity := Nested(exampleRecord(t, "tag_definition_identity"))
-	absentIdentity := nestedWith(t, "audit_event", "attachment_kind", mustText(t, "tag"))
+	absentIdentity := nestedWith(t, "audit_event", "attachment_kind", mustText(t, "tag_assignment"))
 	presentIdentity := nestedWithFields(t, "audit_event",
-		fieldValue{name: "attachment_kind", value: mustText(t, "tag")},
+		fieldValue{name: "attachment_kind", value: mustText(t, "tag_assignment")},
 		fieldValue{name: "attachment_identity", value: identity},
 	)
 	require.NoError(t, validateCollection(

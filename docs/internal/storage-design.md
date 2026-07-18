@@ -387,14 +387,16 @@ Once this authority exists, the Go store's logical-mutation boundary rejects
 mutation classes that do not have an audit-recording implementation. SQL retains
 only relational constraints; append-only semantics, canonical mutation
 construction, chain advancement, and independent replay remain backend-neutral
-Go logic. Content replacement is the first supported audited transition.
-Physical pack maintenance and read-only backup/export remain available.
+Go logic. Implemented guarded transitions cover content replacement and revert,
+inherited node creation, move, trash, restore, and assignment or removal of an
+existing tag. Physical pack maintenance and read-only backup/export remain
+available.
 
 !!! info "Planned — audited mutations"
-    Audit enablement, subsequent guarded mutations, maintenance protection, and
-    verification/status APIs will extend this same metadata-v1 authority before
-    the first public release. Earlier development shapes are disposable and
-    receive no compatibility decoder.
+    Public audit enablement, the remaining guarded mutation classes,
+    maintenance protection, and verification/status APIs will extend this same
+    metadata-v1 authority before the first public release. Earlier development
+    shapes are disposable and receive no compatibility decoder.
 
 The stream excludes `nodes_fts`, `blob_packs`, and `blob_pack_index`. FTS is a
 derived index rebuilt by the node insert triggers. Pack tables describe one

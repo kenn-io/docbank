@@ -413,7 +413,7 @@ func (replay *auditedHistoryReplay) validateNodeCreationEvents(
 	}
 	ordinal := uint64(0)
 	for index, event := range events {
-		if err := validateCreationEventWrapper(
+		if err := validateAuditEventWrapper(
 			operationID, ordinal, event, eventRecords, usedEvents,
 		); err != nil {
 			return err
@@ -447,7 +447,7 @@ func (replay *auditedHistoryReplay) validateNodeCreationEvents(
 	return nil
 }
 
-func validateCreationEventWrapper(
+func validateAuditEventWrapper(
 	operationID string, ordinal uint64, event audit.Record,
 	eventRecords map[string]storedAuditRecord, usedEvents map[string]bool,
 ) error {
@@ -457,14 +457,14 @@ func validateCreationEventWrapper(
 	}
 	wrapper, ok := eventRecords[eventID]
 	if !ok || usedEvents[eventID] {
-		return errors.New("node creation lacks one unique event wrapper")
+		return errors.New("audited mutation lacks one unique event wrapper")
 	}
 	wrapped, err := auditNestedField(wrapper.record, auditEventField)
 	if err != nil {
 		return err
 	}
 	if !auditRecordEqual(wrapped, event) {
-		return errors.New("node creation event wrapper does not match mutation")
+		return errors.New("audit event wrapper does not match mutation")
 	}
 	operationValue, err := audit.UUID(operationID)
 	if err != nil {
@@ -478,7 +478,7 @@ func validateCreationEventWrapper(
 		return err
 	}
 	if identity.text != eventID {
-		return errors.New("node creation event identity does not match its operation")
+		return errors.New("audit event identity does not match its operation")
 	}
 	usedEvents[eventID] = true
 	return nil
