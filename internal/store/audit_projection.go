@@ -25,6 +25,9 @@ type auditTopologyRow struct {
 const (
 	auditNodeStateLive  = "live"
 	auditNodeStateTrash = "trash"
+	auditPathStateKind  = "path_state"
+	auditPathField      = "path"
+	auditStateField     = "state"
 )
 
 func currentAuditTopology(ctx context.Context, tx metadataQuerier) ([]audit.Record, error) {
@@ -115,7 +118,7 @@ func topologyRecord(row auditTopologyRow) (audit.Record, error) {
 		{Name: "parent_id", Value: parent},
 		{Name: "name", Value: audit.Bytes([]byte(row.name))},
 		{Name: "node_kind", Value: kindValue},
-		{Name: "state", Value: stateValue},
+		{Name: auditStateField, Value: stateValue},
 		{Name: auditOriginField, Value: origin},
 		{Name: "created_at", Value: createdAt},
 		{Name: "modified_at", Value: modifiedAt},

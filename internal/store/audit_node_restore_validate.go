@@ -8,7 +8,7 @@ import (
 	"go.kenn.io/docbank/internal/audit"
 )
 
-func (replay *auditedHistoryReplay) applyNodeTrash(
+func (replay *auditedHistoryReplay) applyNodeRestore(
 	vaultID string, mutation, allocation, scopeEntry storedAuditRecord,
 	topologyRecords, pathEffectRecords, eventRecords map[string]storedAuditRecord,
 	usedTopology, usedPathEffects, usedEvents map[string]bool,
@@ -39,16 +39,16 @@ func (replay *auditedHistoryReplay) applyNodeTrash(
 		return err
 	}
 	if len(bindings) != 0 {
-		return errors.New("in-scope trash cannot bind an enrollment baseline")
+		return errors.New("in-scope restore cannot bind an enrollment baseline")
 	}
-	transition, trashIDs, err := replay.validateNodeTrashTopology(
+	transition, restoredIDs, err := replay.validateNodeRestoreTopology(
 		mutation.record, operationID, topologyRecords, usedTopology,
 	)
 	if err != nil {
 		return err
 	}
-	expectedEffects, err := replay.deriveNodeTrashPathEffects(
-		transition.postTopology, trashIDs,
+	expectedEffects, err := replay.deriveNodeRestorePathEffects(
+		transition.postTopology, restoredIDs,
 	)
 	if err != nil {
 		return err
@@ -93,7 +93,7 @@ func (replay *auditedHistoryReplay) applyNodeTrash(
 	return replay.applyTopologyState(transition)
 }
 
-func (replay *auditedHistoryReplay) validateNodeTrashTopology(
+func (replay *auditedHistoryReplay) validateNodeRestoreTopology(
 	mutation audit.Record, operationID string,
 	topologyRecords map[string]storedAuditRecord, usedTopology map[string]bool,
 ) (replayedTopologyMutation, []uint64, error) {
@@ -104,7 +104,7 @@ func (replay *auditedHistoryReplay) validateNodeTrashTopology(
 	delta, ok := topologyRecords[digest]
 	if !ok || usedTopology[digest] {
 		return replayedTopologyMutation{}, nil, errors.New(
-			"node trash lacks one unique topology delta",
+			"node restore lacks one unique topology delta",
 		)
 	}
 	if err := requireAuditUUID(delta.record, auditOperationIDField, operationID); err != nil {
@@ -116,11 +116,11 @@ func (replay *auditedHistoryReplay) validateNodeTrashTopology(
 	}
 	if len(changes) < 2 {
 		return replayedTopologyMutation{}, nil, errors.New(
-			"in-scope trash topology must change a subtree and its origin parent",
+			"in-scope restore topology must change a subtree and its destination parent",
 		)
 	}
 	changeByID := make(map[uint64]audit.Record, len(changes))
-	trashSet := make(map[uint64]bool, len(changes)-1)
+	restoredSet := make(map[uint64]bool, len(changes)-1)
 	storedIDs := make([]uint64, 0, len(changes))
 	for _, change := range changes {
 		nodeID, err := auditUnsignedField(change, metadataNodeIDField)
@@ -129,14 +129,14 @@ func (replay *auditedHistoryReplay) validateNodeTrashTopology(
 		}
 		if _, exists := changeByID[nodeID]; exists {
 			return replayedTopologyMutation{}, nil, fmt.Errorf(
-				"node trash repeats topology change for %d", nodeID,
+				"node restore repeats topology change for %d", nodeID,
 			)
 		}
 		pre, preErr := auditNestedField(change, "pre")
 		post, postErr := auditNestedField(change, "post")
 		if preErr != nil || postErr != nil {
 			return replayedTopologyMutation{}, nil, errors.New(
-				"in-scope trash requires complete topology sides",
+				"in-scope restore requires complete topology sides",
 			)
 		}
 		preState, err := auditTextField(pre, auditStateField)
@@ -147,11 +147,11 @@ func (replay *auditedHistoryReplay) validateNodeTrashTopology(
 		if err != nil {
 			return replayedTopologyMutation{}, nil, err
 		}
-		if preState == auditNodeStateLive && postState == auditNodeStateTrash {
-			trashSet[nodeID] = true
+		if preState == auditNodeStateTrash && postState == auditNodeStateLive {
+			restoredSet[nodeID] = true
 		} else if preState != auditNodeStateLive || postState != auditNodeStateLive {
 			return replayedTopologyMutation{}, nil, errors.New(
-				"node trash contains an unsupported topology state transition",
+				"node restore contains an unsupported topology state transition",
 			)
 		}
 		changeByID[nodeID] = change
@@ -159,63 +159,56 @@ func (replay *auditedHistoryReplay) validateNodeTrashTopology(
 	}
 	if !slices.IsSorted(storedIDs) {
 		return replayedTopologyMutation{}, nil, errors.New(
-			"node trash topology changes are not in canonical node order",
+			"node restore topology changes are not in canonical node order",
 		)
 	}
-	trashRoot, err := replay.deriveNodeTrashRoot(trashSet)
+	restoreRoot, originParent, originName, err := replay.deriveNodeRestoreRoot(restoredSet)
 	if err != nil {
 		return replayedTopologyMutation{}, nil, err
 	}
-	trashIDs, err := replay.liveTopologySubtree(trashRoot)
+	restoredIDs, err := replay.trashedTopologySubtree(restoreRoot)
 	if err != nil {
 		return replayedTopologyMutation{}, nil, err
 	}
-	if len(trashIDs) != len(trashSet) {
+	if len(restoredIDs) != len(restoredSet) {
 		return replayedTopologyMutation{}, nil, errors.New(
-			"node trash transition does not cover its complete live subtree",
+			"node restore transition does not cover its complete trash subtree",
 		)
 	}
-	for _, nodeID := range trashIDs {
-		if !trashSet[nodeID] {
+	for _, nodeID := range restoredIDs {
+		if !restoredSet[nodeID] {
 			return replayedTopologyMutation{}, nil, fmt.Errorf(
-				"node trash omits live subtree node %d", nodeID,
+				"node restore omits trash subtree node %d", nodeID,
 			)
 		}
 	}
-	rootPre, err := auditNestedField(changeByID[trashRoot], "pre")
-	if err != nil {
+	if restoredSet[originParent] || len(changeByID) != len(restoredIDs)+1 {
+		return replayedTopologyMutation{}, nil, errors.New(
+			"node restore changed-node set does not match its subtree and destination parent",
+		)
+	}
+	if _, ok := changeByID[originParent]; !ok {
+		return replayedTopologyMutation{}, nil, errors.New(
+			"node restore lacks its destination-parent topology change",
+		)
+	}
+	if err := requireLiveDirectoryTopology(replay.topology, originParent); err != nil {
 		return replayedTopologyMutation{}, nil, err
 	}
-	originParent, err := auditOptionalParentIDField(rootPre)
-	if err != nil || originParent == nil {
-		return replayedTopologyMutation{}, nil, errors.New(
-			"node trash root lacks its live origin parent",
-		)
-	}
-	if trashSet[*originParent] || len(changeByID) != len(trashIDs)+1 {
-		return replayedTopologyMutation{}, nil, errors.New(
-			"node trash changed-node set does not match its subtree and origin parent",
-		)
-	}
-	if _, ok := changeByID[*originParent]; !ok {
-		return replayedTopologyMutation{}, nil, errors.New(
-			"node trash lacks its origin-parent topology change",
-		)
+	finalName, err := replay.nextFreeTopologyName(originParent, originName)
+	if err != nil {
+		return replayedTopologyMutation{}, nil, err
 	}
 	changedIDs := make([]uint64, 0, len(changeByID))
 	for nodeID := range changeByID {
 		if !replay.memberSet[nodeID] {
 			return replayedTopologyMutation{}, nil, fmt.Errorf(
-				"in-scope trash changes unaudited node %d", nodeID,
+				"in-scope restore changes unaudited node %d", nodeID,
 			)
 		}
 		changedIDs = append(changedIDs, nodeID)
 	}
 	slices.Sort(changedIDs)
-	rootID, err := auditTopologyRootID(replay.topology)
-	if err != nil {
-		return replayedTopologyMutation{}, nil, err
-	}
 	recordedAt, err := auditField(mutation, auditRecordedAtField)
 	if err != nil {
 		return replayedTopologyMutation{}, nil, err
@@ -234,61 +227,94 @@ func (replay *auditedHistoryReplay) validateNodeTrashTopology(
 		index, ok := replay.topologyIndex[nodeID]
 		if !ok || !auditRecordEqual(replay.topology[index], pre) {
 			return replayedTopologyMutation{}, nil, fmt.Errorf(
-				"node trash pre-state for %d does not match replay", nodeID,
+				"node restore pre-state for %d does not match replay", nodeID,
 			)
 		}
-		expected, err := expectedNodeTrashPost(
-			pre, nodeID, trashRoot, rootID, *originParent, trashSet[nodeID], recordedAt,
+		expected, err := expectedNodeRestorePost(
+			pre, nodeID, restoreRoot, originParent, finalName,
+			restoredSet[nodeID], recordedAt,
 		)
 		if err != nil {
 			return replayedTopologyMutation{}, nil, err
 		}
 		if !auditRecordEqual(expected, post) {
 			return replayedTopologyMutation{}, nil, fmt.Errorf(
-				"node trash post-state for %d does not match its transition", nodeID,
+				"node restore post-state for %d does not match its transition", nodeID,
 			)
 		}
 		postTopology[index] = post
 	}
 	if err := validateReplayedAuditTopology(postTopology); err != nil {
 		return replayedTopologyMutation{}, nil, fmt.Errorf(
-			"validating node trash topology: %w", err,
+			"validating node restore topology: %w", err,
 		)
 	}
 	usedTopology[digest] = true
 	return replayedTopologyMutation{
 		topologyDigest: digest, postTopology: postTopology, changedIDs: changedIDs,
-	}, trashIDs, nil
+	}, restoredIDs, nil
 }
 
-func (replay *auditedHistoryReplay) deriveNodeTrashRoot(
-	trashSet map[uint64]bool,
-) (uint64, error) {
-	var root uint64
-	for nodeID := range trashSet {
+func (replay *auditedHistoryReplay) deriveNodeRestoreRoot(
+	restoredSet map[uint64]bool,
+) (uint64, uint64, []byte, error) {
+	var root, originParent uint64
+	var originName []byte
+	for nodeID := range restoredSet {
 		index, ok := replay.topologyIndex[nodeID]
 		if !ok {
-			return 0, fmt.Errorf("node trash references missing topology node %d", nodeID)
+			return 0, 0, nil, fmt.Errorf(
+				"node restore references missing topology node %d", nodeID,
+			)
 		}
-		parentID, err := auditOptionalParentIDField(replay.topology[index])
+		originValue, err := auditField(replay.topology[index], auditOriginField)
 		if err != nil {
-			return 0, err
+			return 0, 0, nil, err
 		}
-		if parentID == nil || trashSet[*parentID] {
+		if originValue.IsAbsent() {
 			continue
 		}
 		if root != 0 {
-			return 0, errors.New("node trash transition has multiple subtree roots")
+			return 0, 0, nil, errors.New("node restore transition has multiple trash roots")
+		}
+		origin, ok := originValue.RecordValue()
+		if !ok || origin.Kind != "known_origin" {
+			return 0, 0, nil, errors.New(
+				"in-scope restore requires one known trash origin",
+			)
+		}
+		if err := requireAuditUnsigned(origin, metadataNodeIDField, nodeID); err != nil {
+			return 0, 0, nil, err
+		}
+		originParent, err = auditUnsignedField(origin, "parent_id")
+		if err != nil {
+			return 0, 0, nil, err
+		}
+		originName, err = auditNameBytesField(origin)
+		if err != nil {
+			return 0, 0, nil, err
 		}
 		root = nodeID
 	}
 	if root == 0 {
-		return 0, errors.New("node trash transition lacks one subtree root")
+		return 0, 0, nil, errors.New("node restore transition lacks one trash root")
 	}
-	return root, nil
+	return root, originParent, originName, nil
 }
 
-func (replay *auditedHistoryReplay) liveTopologySubtree(root uint64) ([]uint64, error) {
+func (replay *auditedHistoryReplay) trashedTopologySubtree(root uint64) ([]uint64, error) {
+	rootIndex, ok := replay.topologyIndex[root]
+	if !ok {
+		return nil, fmt.Errorf("audit topology lacks trash root %d", root)
+	}
+	rootStamp, err := auditField(replay.topology[rootIndex], "trashed_at")
+	if err != nil {
+		return nil, err
+	}
+	rootTime, ok := rootStamp.TimestampValue()
+	if !ok {
+		return nil, errors.New("audit trash root lacks its trash timestamp")
+	}
 	children := make(map[uint64][]uint64)
 	for _, node := range replay.topology {
 		nodeID, err := auditUnsignedField(node, metadataNodeIDField)
@@ -303,7 +329,12 @@ func (replay *auditedHistoryReplay) liveTopologySubtree(root uint64) ([]uint64, 
 		if err != nil {
 			return nil, err
 		}
-		if state == auditNodeStateLive && parentID != nil {
+		stamp, err := auditField(node, "trashed_at")
+		if err != nil {
+			return nil, err
+		}
+		stampTime, hasStamp := stamp.TimestampValue()
+		if state == auditNodeStateTrash && hasStamp && stampTime == rootTime && parentID != nil {
 			children[*parentID] = append(children[*parentID], nodeID)
 		}
 	}
@@ -321,75 +352,75 @@ func (replay *auditedHistoryReplay) liveTopologySubtree(root uint64) ([]uint64, 
 	return result, nil
 }
 
-func expectedNodeTrashPost(
-	pre audit.Record, nodeID, trashRoot, vaultRoot, originParent uint64,
-	trashed bool, recordedAt audit.Value,
-) (audit.Record, error) {
-	expected, err := replaceAuditRecordField(pre, "modified_at", recordedAt)
-	if err != nil || !trashed {
-		return expected, err
-	}
-	trashState, err := audit.Text(auditNodeStateTrash)
-	if err != nil {
-		return audit.Record{}, err
-	}
-	expected, err = replaceAuditRecordField(expected, auditStateField, trashState)
-	if err != nil {
-		return audit.Record{}, err
-	}
-	expected, err = replaceAuditRecordField(expected, "trashed_at", recordedAt)
-	if err != nil || nodeID != trashRoot {
-		return expected, err
-	}
-	name, err := auditNameBytesField(pre)
-	if err != nil {
-		return audit.Record{}, err
-	}
-	origin := audit.Record{Kind: "known_origin", Fields: []audit.Field{
-		{Name: metadataNodeIDField, Value: audit.Unsigned(nodeID)},
-		{Name: "parent_id", Value: audit.Unsigned(originParent)},
-		{Name: "name", Value: audit.Bytes(name)},
-	}}
-	expected, err = replaceAuditRecordField(expected, "parent_id", audit.Unsigned(vaultRoot))
-	if err != nil {
-		return audit.Record{}, err
-	}
-	return replaceAuditRecordField(expected, auditOriginField, audit.Nested(origin))
-}
-
-func auditTopologyRootID(topology []audit.Record) (uint64, error) {
-	var root uint64
-	for _, node := range topology {
-		parentID, err := auditOptionalParentIDField(node)
+func (replay *auditedHistoryReplay) nextFreeTopologyName(
+	parentID uint64, name []byte,
+) ([]byte, error) {
+	base, ext := splitSuffix(string(name))
+	occupied := make(map[string]bool)
+	for _, node := range replay.topology {
+		state, err := auditTextField(node, auditStateField)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
-		if parentID != nil {
+		if state != auditNodeStateLive {
 			continue
 		}
-		nodeID, err := auditUnsignedField(node, metadataNodeIDField)
+		candidateParent, err := auditOptionalParentIDField(node)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
-		if root != 0 {
-			return 0, errors.New("audit topology has multiple vault roots")
+		if candidateParent == nil || *candidateParent != parentID {
+			continue
 		}
-		root = nodeID
+		candidateName, err := auditNameBytesField(node)
+		if err != nil {
+			return nil, err
+		}
+		occupied[string(candidateName)] = true
 	}
-	if root == 0 {
-		return 0, errors.New("audit topology lacks its vault root")
+	for suffix := 1; ; suffix++ {
+		candidate := suffixedName(base, ext, suffix)
+		if !occupied[candidate] {
+			return []byte(candidate), nil
+		}
 	}
-	return root, nil
 }
 
-func (replay *auditedHistoryReplay) deriveNodeTrashPathEffects(
-	postTopology []audit.Record, trashIDs []uint64,
+func expectedNodeRestorePost(
+	pre audit.Record, nodeID, restoreRoot, originParent uint64, finalName []byte,
+	restored bool, recordedAt audit.Value,
+) (audit.Record, error) {
+	expected, err := replaceAuditRecordField(pre, "modified_at", recordedAt)
+	if err != nil || !restored {
+		return expected, err
+	}
+	liveState, err := audit.Text(auditNodeStateLive)
+	if err != nil {
+		return audit.Record{}, err
+	}
+	expected, err = replaceAuditRecordField(expected, auditStateField, liveState)
+	if err != nil {
+		return audit.Record{}, err
+	}
+	expected, err = replaceAuditRecordField(expected, "trashed_at", audit.Absent())
+	if err != nil {
+		return audit.Record{}, err
+	}
+	expected, err = replaceAuditRecordField(expected, auditOriginField, audit.Absent())
+	if err != nil || nodeID != restoreRoot {
+		return expected, err
+	}
+	expected, err = replaceAuditRecordField(expected, "parent_id", audit.Unsigned(originParent))
+	if err != nil {
+		return audit.Record{}, err
+	}
+	return replaceAuditRecordField(expected, "name", audit.Bytes(finalName))
+}
+
+func (replay *auditedHistoryReplay) deriveNodeRestorePathEffects(
+	postTopology []audit.Record, restoredIDs []uint64,
 ) ([]audit.Record, error) {
 	scopeID, err := audit.UUID(replay.scopeID)
-	if err != nil {
-		return nil, err
-	}
-	live, err := audit.Text(auditNodeStateLive)
 	if err != nil {
 		return nil, err
 	}
@@ -397,115 +428,37 @@ func (replay *auditedHistoryReplay) deriveNodeTrashPathEffects(
 	if err != nil {
 		return nil, err
 	}
-	effects := make([]audit.Record, 0, len(trashIDs))
-	for _, nodeID := range trashIDs {
-		priorPath, priorLive, err := auditLivePath(
+	live, err := audit.Text(auditNodeStateLive)
+	if err != nil {
+		return nil, err
+	}
+	effects := make([]audit.Record, 0, len(restoredIDs))
+	for _, nodeID := range restoredIDs {
+		priorPath, err := auditKnownTrashPath(
 			replay.topology, replay.topologyIndex, nodeID,
 		)
 		if err != nil {
 			return nil, err
 		}
-		if !priorLive {
-			return nil, fmt.Errorf("node trash source %d is not live", nodeID)
-		}
-		postPath, err := auditKnownTrashPath(
+		postPath, postLive, err := auditLivePath(
 			postTopology, replay.topologyIndex, nodeID,
 		)
 		if err != nil {
 			return nil, err
 		}
+		if !postLive {
+			return nil, fmt.Errorf("node restore result %d is not live", nodeID)
+		}
 		effects = append(effects, audit.Record{Kind: "path_effect", Fields: []audit.Field{
 			{Name: auditScopeIDField, Value: scopeID},
 			{Name: "member_node_id", Value: audit.Unsigned(nodeID)},
 			{Name: "old", Value: audit.Nested(audit.Record{Kind: auditPathStateKind, Fields: []audit.Field{
-				{Name: auditPathField, Value: audit.Bytes(priorPath)}, {Name: auditStateField, Value: live},
+				{Name: auditPathField, Value: audit.Bytes(priorPath)}, {Name: auditStateField, Value: trash},
 			}})},
 			{Name: "new", Value: audit.Nested(audit.Record{Kind: auditPathStateKind, Fields: []audit.Field{
-				{Name: auditPathField, Value: audit.Bytes(postPath)}, {Name: auditStateField, Value: trash},
+				{Name: auditPathField, Value: audit.Bytes(postPath)}, {Name: auditStateField, Value: live},
 			}})},
 		}})
 	}
 	return effects, nil
-}
-
-func auditKnownTrashPath(
-	topology []audit.Record, topologyIndex map[uint64]int, nodeID uint64,
-) ([]byte, error) {
-	index, ok := topologyIndex[nodeID]
-	if !ok {
-		return nil, fmt.Errorf("audit topology lacks node %d", nodeID)
-	}
-	current := topology[index]
-	if err := requireAuditText(current, auditStateField, auditNodeStateTrash); err != nil {
-		return nil, err
-	}
-	visited := make(map[uint64]bool)
-	var descendants [][]byte
-	for {
-		currentID, err := auditUnsignedField(current, metadataNodeIDField)
-		if err != nil {
-			return nil, err
-		}
-		if visited[currentID] {
-			return nil, errors.New("audit topology contains a trash-parent cycle")
-		}
-		visited[currentID] = true
-		originValue, err := auditField(current, auditOriginField)
-		if err != nil {
-			return nil, err
-		}
-		if !originValue.IsAbsent() {
-			origin, ok := originValue.RecordValue()
-			if !ok || origin.Kind != "known_origin" {
-				return nil, errors.New("audited trash transition lacks a known origin")
-			}
-			if err := requireAuditUnsigned(origin, metadataNodeIDField, currentID); err != nil {
-				return nil, err
-			}
-			originParent, err := auditUnsignedField(origin, "parent_id")
-			if err != nil {
-				return nil, err
-			}
-			originName, err := auditNameBytesField(origin)
-			if err != nil {
-				return nil, err
-			}
-			parentPath, liveParent, err := auditLivePath(
-				topology, topologyIndex, originParent,
-			)
-			if err != nil {
-				return nil, err
-			}
-			if !liveParent {
-				return nil, errors.New("audited trash origin parent is not live")
-			}
-			result := append([]byte("@trash/known"), parentPath...)
-			if result[len(result)-1] != '/' {
-				result = append(result, '/')
-			}
-			result = append(result, originName...)
-			for _, name := range slices.Backward(descendants) {
-				result = append(result, '/')
-				result = append(result, name...)
-			}
-			return result, nil
-		}
-		name, err := auditNameBytesField(current)
-		if err != nil {
-			return nil, err
-		}
-		descendants = append(descendants, name)
-		parentID, err := auditOptionalParentIDField(current)
-		if err != nil || parentID == nil {
-			return nil, errors.New("trash descendant lacks its parent")
-		}
-		parentIndex, ok := topologyIndex[*parentID]
-		if !ok {
-			return nil, fmt.Errorf("trash descendant references missing parent %d", *parentID)
-		}
-		current = topology[parentIndex]
-		if err := requireAuditText(current, auditStateField, auditNodeStateTrash); err != nil {
-			return nil, err
-		}
-	}
 }

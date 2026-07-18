@@ -293,12 +293,9 @@ func persistAuditedMove(
 func makeAuditedMoveTopologyDelta(
 	operationID audit.Value, prior, resulting map[int64]Node,
 ) (audit.Record, error) {
-	changes := make([]audit.Record, 0, len(prior))
+	priorRecords := make(map[int64]audit.Record, len(prior))
+	resultingRecords := make(map[int64]audit.Record, len(resulting))
 	for nodeID, priorNode := range prior {
-		auditNodeID, err := positiveAuditNodeID(nodeID)
-		if err != nil {
-			return audit.Record{}, err
-		}
 		resultingNode, ok := resulting[nodeID]
 		if !ok {
 			return audit.Record{}, fmt.Errorf("audited move lacks resulting node %d", nodeID)
@@ -311,16 +308,9 @@ func makeAuditedMoveTopologyDelta(
 		if err != nil {
 			return audit.Record{}, err
 		}
-		changes = append(changes, audit.Record{Kind: "topology_change", Fields: []audit.Field{
-			{Name: metadataNodeIDField, Value: audit.Unsigned(auditNodeID)},
-			{Name: "pre", Value: audit.Nested(pre)},
-			{Name: "post", Value: audit.Nested(post)},
-		}})
+		priorRecords[nodeID], resultingRecords[nodeID] = pre, post
 	}
-	if err := sortAuditTopologyRecords(changes); err != nil {
-		return audit.Record{}, err
-	}
-	return makeAuditedTopologyDelta(operationID, changes), nil
+	return makeAuditedTopologyRecordDelta(operationID, priorRecords, resultingRecords)
 }
 
 func makeAuditedTopologyDelta(operationID audit.Value, changes []audit.Record) audit.Record {
@@ -356,13 +346,13 @@ func makeAuditedMovePathEffects(
 		effects = append(effects, audit.Record{Kind: "path_effect", Fields: []audit.Field{
 			{Name: auditScopeIDField, Value: scopeID},
 			{Name: "member_node_id", Value: audit.Unsigned(auditNodeID)},
-			{Name: "old", Value: audit.Nested(audit.Record{Kind: "path_state", Fields: []audit.Field{
-				{Name: "path", Value: audit.Bytes([]byte(priorPath))},
-				{Name: "state", Value: live},
+			{Name: "old", Value: audit.Nested(audit.Record{Kind: auditPathStateKind, Fields: []audit.Field{
+				{Name: auditPathField, Value: audit.Bytes([]byte(priorPath))},
+				{Name: auditStateField, Value: live},
 			}})},
-			{Name: "new", Value: audit.Nested(audit.Record{Kind: "path_state", Fields: []audit.Field{
-				{Name: "path", Value: audit.Bytes([]byte(resultingPath))},
-				{Name: "state", Value: live},
+			{Name: "new", Value: audit.Nested(audit.Record{Kind: auditPathStateKind, Fields: []audit.Field{
+				{Name: auditPathField, Value: audit.Bytes([]byte(resultingPath))},
+				{Name: auditStateField, Value: live},
 			}})},
 		}})
 	}
