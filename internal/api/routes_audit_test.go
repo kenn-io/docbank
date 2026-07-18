@@ -58,6 +58,17 @@ func TestAuditPreviewEnableAndStatusLifecycle(t *testing.T) {
 	assert.True(t, status.Membership.Protected)
 	assert.Equal(t, []string{preview.ScopeID}, status.Membership.ScopeIDs)
 
+	inherited, err := s.Mkdir(t.Context(), taxes.ID, "2027")
+	require.NoError(t, err)
+	status, err = c.AuditStatus(t.Context(), "", inherited.ID)
+	require.NoError(t, err)
+	require.NotNil(t, status.Membership)
+	assert.True(t, status.Membership.Protected)
+	assert.Equal(t, []string{preview.ScopeID}, status.Membership.ScopeIDs)
+	require.Len(t, status.Membership.BaselineDigests, 1)
+	assert.NotEqual(t, preview.BaselineDigest, status.Membership.BaselineDigests[0],
+		"an inherited node binds to its creation baseline, not the scope enrollment baseline")
+
 	_, err = c.EnableAudit(t.Context(), preview.PreviewToken, true)
 	require.ErrorIs(t, err, store.ErrAuditPreviewStale)
 	require.NoError(t, s.ValidateMetadata(t.Context()))

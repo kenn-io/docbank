@@ -751,7 +751,7 @@ func validateAuditStatus(status api.AuditStatus) error {
 		len(status.Scopes) == 0 {
 		return errors.New("active audit status lacks complete authority")
 	}
-	seen := make(map[string]string, len(status.Scopes))
+	seen := make(map[string]bool, len(status.Scopes))
 	previousScopeID := ""
 	for index, scope := range status.Scopes {
 		_, duplicate := seen[scope.ID]
@@ -763,7 +763,7 @@ func validateAuditStatus(status api.AuditStatus) error {
 			scope.MemberCount < 1 || scope.EntryCount < 1 || !validSHA256Hex(scope.ChainHead) {
 			return fmt.Errorf("audit status scope %d has invalid authority", index)
 		}
-		seen[scope.ID] = scope.BaselineDigest
+		seen[scope.ID] = true
 		previousScopeID = scope.ID
 	}
 	if status.Membership != nil {
@@ -777,9 +777,9 @@ func validateAuditStatus(status api.AuditStatus) error {
 		previousScopeID = ""
 		for index, scopeID := range member.ScopeIDs {
 			digest := member.BaselineDigests[index]
-			expectedDigest, knownScope := seen[scopeID]
+			knownScope := seen[scopeID]
 			if !validUUIDv4(scopeID) || !validSHA256Hex(digest) ||
-				!knownScope || expectedDigest != digest ||
+				!knownScope ||
 				(previousScopeID != "" && scopeID <= previousScopeID) {
 				return errors.New("audit status has invalid node membership binding")
 			}
