@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+const nodeKindDir = "dir"
+
 // Node is a row of the virtual tree. IDs are canonical; paths are display.
 type Node struct {
 	ID               int64
@@ -25,7 +27,7 @@ type Node struct {
 }
 
 // IsDir reports whether the node is a directory.
-func (n Node) IsDir() bool { return n.Kind == "dir" }
+func (n Node) IsDir() bool { return n.Kind == nodeKindDir }
 
 const nodeFrom = `nodes AS n
 	LEFT JOIN content_versions AS cv
@@ -198,7 +200,7 @@ func (s *Store) ChildrenPage(
 		); err != nil {
 			return nil, 0, fmt.Errorf("listing children of %d: scanning page: %w", dirID, err)
 		}
-		if targetKind != "dir" {
+		if targetKind != nodeKindDir {
 			return nil, 0, fmt.Errorf("node %d: %w", dirID, ErrNotDir)
 		}
 		if child.ID != 0 {

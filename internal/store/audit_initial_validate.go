@@ -270,6 +270,9 @@ func validateInitialGenesis(
 	if err != nil {
 		return err
 	}
+	if err := validateReplayedAuditTopology(storedTopology); err != nil {
+		return fmt.Errorf("validating audit topology genesis: %w", err)
+	}
 	storedAttachments, err := auditRecordListField(attachments.record, "records")
 	if err != nil {
 		return err
@@ -525,7 +528,7 @@ func validateInitialEvent(scope initialAuditScope, baseline storedAuditRecord, e
 	}
 	identityDigest, err := audit.Hash(audit.Record{Kind: "event_identity", Fields: []audit.Field{
 		{Name: auditOperationIDField, Value: identityOperation},
-		{Name: "event_ordinal", Value: audit.Unsigned(0)},
+		{Name: auditEventOrdinalField, Value: audit.Unsigned(0)},
 	}})
 	if err != nil {
 		return err
@@ -537,7 +540,7 @@ func validateInitialEvent(scope initialAuditScope, baseline storedAuditRecord, e
 		func() error { return requireAuditText(event, "event_kind", "audit_enroll") },
 		func() error { return requireAuditUUID(event, auditScopeIDField, scope.scopeID) },
 		func() error { return requireAuditUnsigned(event, "target_node_id", scope.targetNodeID) },
-		func() error { return requireAuditUnsigned(event, "event_ordinal", 0) },
+		func() error { return requireAuditUnsigned(event, auditEventOrdinalField, 0) },
 		func() error { return requireAuditDigest(event, "baseline_digest", baseline.digest) },
 	}
 	for _, check := range checks {
@@ -613,7 +616,7 @@ func requireNoChangeMutationFields(record audit.Record) error {
 }
 
 func requireMatchingEventEnvelope(mutation, event audit.Record) error {
-	for _, field := range []string{"recorded_at", auditOriginField, "agent_label"} {
+	for _, field := range []string{auditRecordedAtField, auditOriginField, "agent_label"} {
 		left, err := auditField(mutation, field)
 		if err != nil {
 			return err

@@ -339,7 +339,7 @@ func makeAuditedContentTransitionEvent(
 	}
 	identity, err := hashAuditRecord(audit.Record{Kind: "event_identity", Fields: []audit.Field{
 		{Name: auditOperationIDField, Value: values.operationID},
-		{Name: "event_ordinal", Value: audit.Unsigned(ordinal)},
+		{Name: auditEventOrdinalField, Value: audit.Unsigned(ordinal)},
 	}})
 	if err != nil {
 		return audit.Record{}, err
@@ -362,8 +362,8 @@ func makeAuditedContentTransitionEvent(
 		{Name: "attachment_kind", Value: audit.Absent()},
 		{Name: "attachment_identity", Value: audit.Absent()},
 		{Name: "source_version_id", Value: sourceVersion},
-		{Name: "event_ordinal", Value: audit.Unsigned(ordinal)},
-		{Name: "recorded_at", Value: values.recordedAt},
+		{Name: auditEventOrdinalField, Value: audit.Unsigned(ordinal)},
+		{Name: auditRecordedAtField, Value: values.recordedAt},
 		{Name: "prior_node_revision", Value: audit.Unsigned(priorRevision)},
 		{Name: "resulting_node_revision", Value: audit.Unsigned(resultingRevision)},
 		{Name: "prior_current_version_id", Value: priorVersionID},
@@ -435,7 +435,7 @@ func makeAuditedContentTransitionMutation(
 		{Name: "operation_sequence", Value: audit.Unsigned(auditSequence)},
 		{Name: auditOperationIDField, Value: values.operationID},
 		{Name: "grouping_id", Value: audit.Absent()},
-		{Name: "recorded_at", Value: values.recordedAt},
+		{Name: auditRecordedAtField, Value: values.recordedAt},
 		{Name: auditOriginField, Value: values.origin},
 		{Name: "agent_label", Value: audit.Absent()},
 		{Name: "events", Value: audit.List(eventValues...)},

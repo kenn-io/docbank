@@ -182,7 +182,7 @@ func (replay *auditedHistoryReplay) validateNodeCreationTopology(
 	if !ok || !auditRecordEqual(replay.topology[parentIndex], parentPre) {
 		return replayedNodeCreation{}, errors.New("node creation parent pre-state does not match replayed topology")
 	}
-	modifiedAt, err := auditField(mutation, "recorded_at")
+	modifiedAt, err := auditField(mutation, auditRecordedAtField)
 	if err != nil {
 		return replayedNodeCreation{}, err
 	}
@@ -204,6 +204,9 @@ func (replay *auditedHistoryReplay) validateNodeCreationTopology(
 	postTopology = append(postTopology, childPost)
 	if err := sortAuditTopologyRecords(postTopology); err != nil {
 		return replayedNodeCreation{}, err
+	}
+	if err := validateReplayedAuditTopology(postTopology); err != nil {
+		return replayedNodeCreation{}, fmt.Errorf("validating node creation topology: %w", err)
 	}
 	return replayedNodeCreation{
 		childID: childID, parentID: parentID, childTopology: childPost,
@@ -303,7 +306,7 @@ func (replay *auditedHistoryReplay) validateNodeCreationBaseline(
 		return err
 	}
 	switch kind {
-	case "dir":
+	case nodeKindDir:
 		if current != nil || len(versions) != 0 {
 			return errors.New("created directory baseline contains content")
 		}
@@ -368,11 +371,11 @@ func validateCreatedContentVersion(
 			return err
 		}
 	}
-	recordedAt, err := auditField(version, "recorded_at")
+	recordedAt, err := auditField(version, auditRecordedAtField)
 	if err != nil {
 		return err
 	}
-	mutationTime, err := auditField(mutation, "recorded_at")
+	mutationTime, err := auditField(mutation, auditRecordedAtField)
 	if err != nil {
 		return err
 	}
@@ -420,7 +423,7 @@ func (replay *auditedHistoryReplay) validateNodeCreationEvents(
 			func() error { return requireAuditUnsigned(event, metadataNodeIDField, creation.childID) },
 			func() error { return requireAuditText(event, "event_kind", expectedKinds[index]) },
 			func() error { return requireAuditUUID(event, auditScopeIDField, replay.scopeID) },
-			func() error { return requireAuditUnsigned(event, "event_ordinal", ordinal) },
+			func() error { return requireAuditUnsigned(event, auditEventOrdinalField, ordinal) },
 			func() error { return requireAuditUnsigned(event, "prior_node_revision", 0) },
 			func() error { return requireAuditUnsigned(event, "resulting_node_revision", 1) },
 			func() error { return requireAuditAbsent(event, "prior_current_version_id") },
@@ -469,7 +472,7 @@ func validateCreationEventWrapper(
 	}
 	identity, err := hashAuditRecord(audit.Record{Kind: "event_identity", Fields: []audit.Field{
 		{Name: auditOperationIDField, Value: operationValue},
-		{Name: "event_ordinal", Value: audit.Unsigned(ordinal)},
+		{Name: auditEventOrdinalField, Value: audit.Unsigned(ordinal)},
 	}})
 	if err != nil {
 		return err

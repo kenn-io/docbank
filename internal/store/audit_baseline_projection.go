@@ -20,7 +20,7 @@ func deriveInitialAuditMembers(
 		return nil, err
 	}
 	target, ok := rows[targetNodeID]
-	if !ok || target.kind != "dir" || target.trashedAt.Valid {
+	if !ok || target.kind != nodeKindDir || target.trashedAt.Valid {
 		return nil, fmt.Errorf("audit enrollment target %d must be a live directory", targetNodeID)
 	}
 	children := make(map[uint64][]uint64)
@@ -299,7 +299,7 @@ func contentVersionAuditRecord(
 		{Name: "blob_hash", Value: blobValue},
 		{Name: "size", Value: audit.Unsigned(size)},
 		{Name: "media_type", Value: mediaValue},
-		{Name: "recorded_at", Value: recordedValue},
+		{Name: auditRecordedAtField, Value: recordedValue},
 		{Name: "node_revision", Value: audit.Unsigned(revision)},
 		{Name: "introduced_operation_id", Value: operationValue},
 		{Name: "transition_kind", Value: transitionValue},
@@ -319,7 +319,7 @@ func initialBaselineTopology(
 			return nil, nil, err
 		}
 		byID[id] = record
-		parent, err := auditOptionalUnsignedField(record, "parent_id")
+		parent, err := auditOptionalParentIDField(record)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -391,8 +391,8 @@ func addAuditAncestors(id uint64, parents map[uint64]*uint64, closure map[uint64
 	}
 }
 
-func auditOptionalUnsignedField(record audit.Record, name string) (*uint64, error) {
-	value, err := auditField(record, name)
+func auditOptionalParentIDField(record audit.Record) (*uint64, error) {
+	value, err := auditField(record, auditParentIDField)
 	if err != nil {
 		return nil, err
 	}
@@ -401,7 +401,9 @@ func auditOptionalUnsignedField(record audit.Record, name string) (*uint64, erro
 	}
 	result, ok := value.UnsignedValue()
 	if !ok {
-		return nil, fmt.Errorf("audit field %s.%s is not optional unsigned", record.Kind, name)
+		return nil, fmt.Errorf(
+			"audit field %s.%s is not optional unsigned", record.Kind, auditParentIDField,
+		)
 	}
 	return &result, nil
 }

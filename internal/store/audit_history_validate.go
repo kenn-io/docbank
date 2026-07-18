@@ -25,7 +25,7 @@ func deriveInitialAuditMembersFromRecords(
 		return nil, err
 	}
 	target, ok := nodes[targetNodeID]
-	if !ok || target.kind != "dir" || target.state != "live" {
+	if !ok || target.kind != nodeKindDir || target.state != "live" {
 		return nil, fmt.Errorf("audit enrollment target %d must be a live directory", targetNodeID)
 	}
 	children := make(map[uint64][]uint64)
@@ -70,7 +70,7 @@ func replayAuditTopology(topology []audit.Record) (map[uint64]replayAuditTopolog
 		if _, exists := result[nodeID]; exists {
 			return nil, fmt.Errorf("audit topology repeats node %d", nodeID)
 		}
-		parentID, err := auditOptionalUnsignedField(record, "parent_id")
+		parentID, err := auditOptionalParentIDField(record)
 		if err != nil {
 			return nil, err
 		}
@@ -93,7 +93,7 @@ func replayAuditTopology(topology []audit.Record) (map[uint64]replayAuditTopolog
 				return nil, fmt.Errorf("audit topology node %d has invalid origin", nodeID)
 			}
 			if origin.Kind == "known_origin" {
-				originParent, err = auditOptionalUnsignedField(origin, "parent_id")
+				originParent, err = auditOptionalParentIDField(origin)
 				if err != nil || originParent == nil {
 					return nil, fmt.Errorf("audit topology node %d has invalid known origin", nodeID)
 				}
@@ -105,6 +105,56 @@ func replayAuditTopology(topology []audit.Record) (map[uint64]replayAuditTopolog
 		}
 	}
 	return result, nil
+}
+
+func validateReplayedAuditTopology(topology []audit.Record) error {
+	nodes, err := replayAuditTopology(topology)
+	if err != nil {
+		return err
+	}
+	type liveSibling struct {
+		parentID uint64
+		name     string
+	}
+	liveNames := make(map[liveSibling]uint64)
+	var rootID uint64
+	for nodeID, node := range nodes {
+		nameBytes, err := auditNameBytesField(node.record)
+		if err != nil {
+			return err
+		}
+		if node.parentID == nil {
+			if rootID != 0 || len(nameBytes) != 0 || node.kind != nodeKindDir || node.state != "live" {
+				return errors.New("audit topology has an invalid vault root")
+			}
+			rootID = nodeID
+			continue
+		}
+		name := string(nameBytes)
+		normalized, err := NormalizeName(name)
+		if err != nil || normalized != name {
+			return fmt.Errorf("audit topology node %d has invalid canonical name", nodeID)
+		}
+		if node.state != "live" {
+			continue
+		}
+		parent, ok := nodes[*node.parentID]
+		if !ok || parent.state != "live" || parent.kind != nodeKindDir {
+			return fmt.Errorf("live audit topology node %d has an invalid parent", nodeID)
+		}
+		key := liveSibling{parentID: *node.parentID, name: name}
+		if siblingID, exists := liveNames[key]; exists {
+			return fmt.Errorf(
+				"live audit topology nodes %d and %d have the same parent and name",
+				siblingID, nodeID,
+			)
+		}
+		liveNames[key] = nodeID
+	}
+	if rootID == 0 {
+		return errors.New("audit topology lacks a vault root")
+	}
+	return nil
 }
 
 func addReplayAuditDescendants(
@@ -172,7 +222,7 @@ func validateInitialAuditMemberProjection(
 		if !exists {
 			return fmt.Errorf("audit member %d is absent from topology genesis", nodeID)
 		}
-		if node.kind == "dir" {
+		if node.kind == nodeKindDir {
 			if current != nil || latestRevision[nodeID] != 0 {
 				return fmt.Errorf("audited directory %d carries content authority", nodeID)
 			}
@@ -247,9 +297,11 @@ func validateAuditedHistory(
 	usedEvents := map[string]bool{}
 	baselines := auditRecordsByDigest(records["enrollment_baseline"])
 	topologyDeltas := auditRecordsByDigest(records[auditTopologyDeltaField])
+	pathEffectLists := auditRecordsByDigest(records["path_effect_list"])
 	attachmentDeltas := auditRecordsByDigest(records["attached_metadata_delta"])
 	usedBaselines := map[string]bool{initial["enrollment_baseline"][0].digest: true}
 	usedTopologyDeltas := map[string]bool{}
+	usedPathEffectLists := map[string]bool{}
 	usedAttachmentDeltas := map[string]bool{}
 	for sequence := int64(2); sequence <= authority.sequence; sequence++ {
 		mutation := mutations[sequence]
@@ -257,15 +309,25 @@ func validateAuditedHistory(
 		if bindingErr != nil {
 			return fmt.Errorf("validating audit operation %d: %w", sequence, bindingErr)
 		}
-		if len(bindings) == 0 {
+		topologyValue, topologyErr := auditField(mutation.record, auditTopologyDeltaField)
+		if topologyErr != nil {
+			return fmt.Errorf("validating audit operation %d: %w", sequence, topologyErr)
+		}
+		if len(bindings) == 0 && topologyValue.IsAbsent() {
 			err = replay.applyContentTransition(
 				vaultID, mutation, allocations[sequence], entries[sequence], events, usedEvents,
 			)
-		} else {
+		} else if len(bindings) != 0 {
 			err = replay.applyNodeCreation(
 				vaultID, mutation, allocations[sequence], entries[sequence],
 				baselines, topologyDeltas, attachmentDeltas, events, usedBaselines,
 				usedTopologyDeltas, usedAttachmentDeltas, usedEvents,
+			)
+		} else {
+			err = replay.applyNodeMove(
+				vaultID, mutation, allocations[sequence], entries[sequence],
+				topologyDeltas, pathEffectLists, events,
+				usedTopologyDeltas, usedPathEffectLists, usedEvents,
 			)
 		}
 		if err != nil {
@@ -282,6 +344,9 @@ func validateAuditedHistory(
 	}
 	if len(usedTopologyDeltas) != len(topologyDeltas) {
 		return errors.New("audit history contains an unbound topology delta")
+	}
+	if len(usedPathEffectLists) != len(pathEffectLists) {
+		return errors.New("audit history contains an unbound path-effect list")
 	}
 	if len(usedAttachmentDeltas) != len(attachmentDeltas) {
 		return errors.New("audit history contains an unbound attached-metadata delta")
@@ -584,7 +649,7 @@ func (replay *auditedHistoryReplay) validateContentTransitionEvent(
 	}
 	identity, err := hashAuditRecord(audit.Record{Kind: "event_identity", Fields: []audit.Field{
 		{Name: auditOperationIDField, Value: identityOperation},
-		{Name: "event_ordinal", Value: audit.Unsigned(0)},
+		{Name: auditEventOrdinalField, Value: audit.Unsigned(0)},
 	}})
 	if err != nil {
 		return 0, audit.Record{}, err
@@ -606,7 +671,7 @@ func (replay *auditedHistoryReplay) validateContentTransitionEvent(
 	checks := []func() error{
 		func() error { return requireAuditUUID(event, auditOperationIDField, operationID) },
 		func() error { return requireAuditUUID(event, auditScopeIDField, replay.scopeID) },
-		func() error { return requireAuditUnsigned(event, "event_ordinal", 0) },
+		func() error { return requireAuditUnsigned(event, auditEventOrdinalField, 0) },
 	}
 	for _, check := range checks {
 		if err := check(); err != nil {
@@ -670,11 +735,11 @@ func (replay *auditedHistoryReplay) validateContentTransitionEvent(
 	); err != nil {
 		return 0, audit.Record{}, err
 	}
-	postTime, err := auditField(post, "recorded_at")
+	postTime, err := auditField(post, auditRecordedAtField)
 	if err != nil {
 		return 0, audit.Record{}, err
 	}
-	mutationTime, err := auditField(mutation, "recorded_at")
+	mutationTime, err := auditField(mutation, auditRecordedAtField)
 	if err != nil || !equalAuditEnvelopeValue(postTime, mutationTime) {
 		return 0, audit.Record{}, errors.New("content version time does not match its mutation")
 	}
@@ -905,7 +970,7 @@ func (replay *auditedHistoryReplay) applyContentTransitionState(
 	if !ok {
 		return fmt.Errorf("audited node %d is absent from topology replay", nodeID)
 	}
-	modifiedAt, err := auditField(mutation, "recorded_at")
+	modifiedAt, err := auditField(mutation, auditRecordedAtField)
 	if err != nil {
 		return err
 	}

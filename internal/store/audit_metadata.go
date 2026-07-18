@@ -14,6 +14,12 @@ import (
 	"go.kenn.io/docbank/internal/audit"
 )
 
+const (
+	auditEventOrdinalField = "event_ordinal"
+	auditParentIDField     = "parent_id"
+	auditRecordedAtField   = "recorded_at"
+)
+
 var auditRecordKinds = map[string]bool{
 	"enrollment_baseline":       true,
 	"topology_genesis":          true,
@@ -24,6 +30,7 @@ var auditRecordKinds = map[string]bool{
 	"allocation_genesis":        true,
 	"allocation_entry":          true,
 	auditTopologyDeltaField:     true,
+	"path_effect_list":          true,
 	"attached_metadata_delta":   true,
 }
 
@@ -308,7 +315,7 @@ func indexAuditRecord(record audit.Record) (auditRecordIndex, error) {
 		if err != nil {
 			return index, err
 		}
-		ordinal, err := auditInt64UnsignedField(event, "event_ordinal")
+		ordinal, err := auditInt64UnsignedField(event, auditEventOrdinalField)
 		if err != nil {
 			return index, err
 		}
@@ -335,7 +342,7 @@ func indexAuditRecord(record audit.Record) (auditRecordIndex, error) {
 		}
 		index.scopeID, index.entryCount = &scopeID, &entryCount
 	case "topology_genesis", "attached_metadata_genesis", "allocation_genesis",
-		auditTopologyDeltaField, "attached_metadata_delta":
+		auditTopologyDeltaField, "path_effect_list", "attached_metadata_delta":
 	default:
 		return index, fmt.Errorf("unsupported initial audit record kind %q", record.Kind)
 	}
