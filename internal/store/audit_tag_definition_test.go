@@ -136,7 +136,7 @@ func TestAuditedTagCreationReplayRejectsReusedIdentity(t *testing.T) {
 	)
 	deltas[digest] = delta
 
-	_, err = replay.validateTagCreationDelta(
+	_, err = replay.validateTagDefinitionDelta(
 		mustAuditOperationID(t, allocation.record),
 		digest, deltas, map[string]bool{},
 	)

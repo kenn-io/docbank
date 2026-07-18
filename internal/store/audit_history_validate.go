@@ -310,7 +310,7 @@ func validateAuditedHistory(
 		allocation := allocations[sequence]
 		mutation, hasMutation := mutations[sequence]
 		if !hasMutation {
-			err = replay.applyUnauditedTagCreation(
+			err = replay.applyUnscopedTagDefinitionChange(
 				vaultID, allocation, attachmentDeltas, usedAttachmentDeltas,
 			)
 			if err != nil {
@@ -337,10 +337,20 @@ func validateAuditedHistory(
 			if attachedErr != nil {
 				err = attachedErr
 			} else if attachedCount != 0 {
-				err = replay.applyTagAssignment(
-					vaultID, mutation, allocation, scopeEntry,
-					attachmentDeltas, events, usedAttachmentDeltas, usedEvents,
-				)
+				kind, kindErr := attachedMutationRecordKind(mutation.record, attachmentDeltas)
+				if kindErr != nil {
+					err = kindErr
+				} else if kind == "tag_definition" {
+					err = replay.applyTagDefinitionRename(
+						vaultID, mutation, allocation, scopeEntry,
+						attachmentDeltas, events, usedAttachmentDeltas, usedEvents,
+					)
+				} else {
+					err = replay.applyTagAssignment(
+						vaultID, mutation, allocation, scopeEntry,
+						attachmentDeltas, events, usedAttachmentDeltas, usedEvents,
+					)
+				}
 			} else {
 				err = replay.applyContentTransition(
 					vaultID, mutation, allocation, scopeEntry, events, usedEvents,

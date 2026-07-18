@@ -21,6 +21,7 @@ const (
 	auditPostField         = "post"
 	auditPreField          = "pre"
 	auditRecordedAtField   = "recorded_at"
+	auditTargetNodeIDField = "target_node_id"
 )
 
 var auditRecordKinds = map[string]bool{

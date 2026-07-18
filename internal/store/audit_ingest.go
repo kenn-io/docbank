@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"go.kenn.io/docbank/internal/audit"
@@ -116,6 +117,21 @@ func makeAttachedMetadataAddition(record audit.Record) (audit.Record, error) {
 func makeAttachedMetadataPresenceChange(
 	record audit.Record, add bool,
 ) (audit.Record, error) {
+	pre, post := audit.Record{}, record
+	if !add {
+		pre, post = post, pre
+	}
+	return makeAttachedMetadataChange(pre, post)
+}
+
+func makeAttachedMetadataChange(pre, post audit.Record) (audit.Record, error) {
+	record := post
+	if record.Kind == "" {
+		record = pre
+	}
+	if record.Kind == "" || (pre.Kind != "" && post.Kind != "" && pre.Kind != post.Kind) {
+		return audit.Record{}, errors.New("attached metadata change has inconsistent record kinds")
+	}
 	kind, err := audit.Text(record.Kind)
 	if err != nil {
 		return audit.Record{}, err
@@ -124,15 +140,32 @@ func makeAttachedMetadataPresenceChange(
 	if err != nil {
 		return audit.Record{}, err
 	}
-	pre, post := audit.Absent(), audit.Nested(record)
-	if !add {
-		pre, post = post, pre
+	preValue, postValue := audit.Absent(), audit.Absent()
+	if pre.Kind != "" {
+		preIdentity, err := attachedAuditIdentity(pre)
+		if err != nil {
+			return audit.Record{}, err
+		}
+		if !auditRecordEqual(preIdentity, identity) {
+			return audit.Record{}, errors.New("attached metadata change alters stable identity")
+		}
+		preValue = audit.Nested(pre)
+	}
+	if post.Kind != "" {
+		postIdentity, err := attachedAuditIdentity(post)
+		if err != nil {
+			return audit.Record{}, err
+		}
+		if !auditRecordEqual(postIdentity, identity) {
+			return audit.Record{}, errors.New("attached metadata change alters stable identity")
+		}
+		postValue = audit.Nested(post)
 	}
 	return audit.Record{Kind: "attached_metadata_change", Fields: []audit.Field{
 		{Name: "record_kind", Value: kind},
 		{Name: "stable_identity", Value: audit.Nested(identity)},
-		{Name: auditPreField, Value: pre},
-		{Name: auditPostField, Value: post},
+		{Name: auditPreField, Value: preValue},
+		{Name: auditPostField, Value: postValue},
 	}}, nil
 }
 
