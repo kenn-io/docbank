@@ -1,9 +1,11 @@
 package store
 
 import (
+	"bytes"
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 
 	"go.kenn.io/docbank/internal/audit"
 )
@@ -81,6 +83,40 @@ func makeAuditedIngestCreationMetadata(
 func makeAttachedMetadataDelta(
 	operationID audit.Value, changes []audit.Record,
 ) (audit.Record, auditRecordHash, error) {
+	type keyedChange struct {
+		record   audit.Record
+		kind     string
+		identity []byte
+	}
+	items := make([]keyedChange, len(changes))
+	for index, change := range changes {
+		kind, err := auditTextField(change, "record_kind")
+		if err != nil {
+			return audit.Record{}, auditRecordHash{}, err
+		}
+		identity, err := auditNestedField(change, "stable_identity")
+		if err != nil {
+			return audit.Record{}, auditRecordHash{}, err
+		}
+		encoded, err := audit.Encode(identity)
+		if err != nil {
+			return audit.Record{}, auditRecordHash{}, err
+		}
+		items[index] = keyedChange{record: change, kind: kind, identity: encoded}
+	}
+	slices.SortFunc(items, func(left, right keyedChange) int {
+		if left.kind < right.kind {
+			return -1
+		}
+		if left.kind > right.kind {
+			return 1
+		}
+		return bytes.Compare(left.identity, right.identity)
+	})
+	changes = make([]audit.Record, len(items))
+	for index := range items {
+		changes[index] = items[index].record
+	}
 	delta := audit.Record{Kind: "attached_metadata_delta", Fields: []audit.Field{
 		{Name: auditOperationIDField, Value: operationID},
 		{Name: "changes", Value: audit.List(auditNestedValues(changes)...)},

@@ -88,7 +88,7 @@ func (replay *auditedHistoryReplay) applyTagAssignment(
 		return err
 	}
 	if err := replay.advanceAllocation(
-		vaultID, operationID, mutation, allocation, transition.digest,
+		vaultID, operationID, mutation, allocation, transition.digest, 1,
 	); err != nil {
 		return err
 	}

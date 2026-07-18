@@ -770,6 +770,7 @@ const (
 	auditEventField                       = "event"
 	metadataIngestType                    = "ingest"
 	metadataProvenanceType                = "provenance"
+	metadataTagRecordType                 = "tag"
 	metadataAuditAuthorityType            = "audit_authority"
 	metadataAuditScopeType                = "audit_scope"
 	metadataAuditMembershipType           = "audit_membership"

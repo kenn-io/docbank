@@ -244,22 +244,23 @@ func validateInitialAuditMemberProjection(
 }
 
 type auditedHistoryReplay struct {
-	scopeID         string
-	lineageID       string
-	members         []uint64
-	memberSet       map[uint64]bool
-	states          map[uint64]audit.Record
-	versions        map[string]audit.Record
-	attachments     map[string]audit.Record
-	topology        []audit.Record
-	topologyIndex   map[uint64]int
-	scopeHead       string
-	scopeEntryCount int64
-	allocationHead  string
-	allocationCount int64
-	nodeHighWater   uint64
-	baselines       map[string]auditBaselineProjection
-	memberBaselines map[uint64]string
+	scopeID          string
+	lineageID        string
+	members          []uint64
+	memberSet        map[uint64]bool
+	states           map[uint64]audit.Record
+	versions         map[string]audit.Record
+	attachments      map[string]audit.Record
+	tagDefinitionIDs map[string]bool
+	topology         []audit.Record
+	topologyIndex    map[uint64]int
+	scopeHead        string
+	scopeEntryCount  int64
+	allocationHead   string
+	allocationCount  int64
+	nodeHighWater    uint64
+	baselines        map[string]auditBaselineProjection
+	memberBaselines  map[uint64]string
 }
 
 type auditBaselineProjection struct {
@@ -337,11 +338,16 @@ func validateAuditedHistory(
 			if attachedErr != nil {
 				err = attachedErr
 			} else if attachedCount != 0 {
-				kind, kindErr := attachedMutationRecordKind(mutation.record, attachmentDeltas)
+				kind, kindErr := attachedMutationKind(mutation.record, attachmentDeltas)
 				if kindErr != nil {
 					err = kindErr
-				} else if kind == "tag_definition" {
+				} else if kind == "tag_rename" {
 					err = replay.applyTagDefinitionRename(
+						vaultID, mutation, allocation, scopeEntry,
+						attachmentDeltas, events, usedAttachmentDeltas, usedEvents,
+					)
+				} else if kind == "tag_delete" {
+					err = replay.applyTagDefinitionDelete(
 						vaultID, mutation, allocation, scopeEntry,
 						attachmentDeltas, events, usedAttachmentDeltas, usedEvents,
 					)
@@ -544,20 +550,21 @@ func newAuditedHistoryReplay(
 	}
 	initialBaseline := initial["enrollment_baseline"][0]
 	replay := &auditedHistoryReplay{
-		scopeID:         scope.scopeID,
-		lineageID:       authority.lineageID,
-		members:         members,
-		memberSet:       auditMemberSet(members),
-		states:          make(map[uint64]audit.Record, len(states)),
-		versions:        make(map[string]audit.Record, len(versions)),
-		attachments:     make(map[string]audit.Record, len(attachments)),
-		topology:        slices.Clone(topology),
-		topologyIndex:   make(map[uint64]int, len(topology)),
-		scopeHead:       initial["scope_chain_entry"][0].digest,
-		scopeEntryCount: 1,
-		allocationHead:  initial["allocation_entry"][0].digest,
-		allocationCount: 1,
-		nodeHighWater:   nodeHighWater,
+		scopeID:          scope.scopeID,
+		lineageID:        authority.lineageID,
+		members:          members,
+		memberSet:        auditMemberSet(members),
+		states:           make(map[uint64]audit.Record, len(states)),
+		versions:         make(map[string]audit.Record, len(versions)),
+		attachments:      make(map[string]audit.Record, len(attachments)),
+		tagDefinitionIDs: make(map[string]bool),
+		topology:         slices.Clone(topology),
+		topologyIndex:    make(map[uint64]int, len(topology)),
+		scopeHead:        initial["scope_chain_entry"][0].digest,
+		scopeEntryCount:  1,
+		allocationHead:   initial["allocation_entry"][0].digest,
+		allocationCount:  1,
+		nodeHighWater:    nodeHighWater,
 		baselines: map[string]auditBaselineProjection{
 			initialBaseline.digest: {
 				scopeID: scope.scopeID, operationID: scope.operationID,
@@ -592,6 +599,13 @@ func newAuditedHistoryReplay(
 			return nil, errors.New("audit attachment genesis repeats an identity")
 		}
 		replay.attachments[key] = attachment
+		if attachment.Kind == "tag_definition" {
+			tagID, err := auditUUIDField(attachment, "tag_id")
+			if err != nil {
+				return nil, err
+			}
+			replay.tagDefinitionIDs[tagID] = true
+		}
 	}
 	for index, node := range topology {
 		nodeID, err := auditUnsignedField(node, metadataNodeIDField)
@@ -749,7 +763,7 @@ func (replay *auditedHistoryReplay) applyContentTransition(
 		return err
 	}
 	if err := replay.advanceAllocation(
-		vaultID, operationID, mutation, allocation, "",
+		vaultID, operationID, mutation, allocation, "", 0,
 	); err != nil {
 		return err
 	}
@@ -1013,7 +1027,7 @@ func (replay *auditedHistoryReplay) advanceScope(
 
 func (replay *auditedHistoryReplay) advanceAllocation(
 	vaultID string, operationID string,
-	mutation, entry storedAuditRecord, attachedDigest string,
+	mutation, entry storedAuditRecord, attachedDigest string, attachedCount uint64,
 ) error {
 	nextCount, err := replay.validateAllocationBase(vaultID, operationID, entry)
 	if err != nil {
@@ -1042,11 +1056,14 @@ func (replay *auditedHistoryReplay) advanceAllocation(
 			return err
 		}
 	} else {
+		if attachedCount == 0 {
+			return errors.New("audit allocation has a digest without attached-metadata changes")
+		}
 		if err := requireAuditBool(entry.record, "has_attached_metadata_change", true); err != nil {
 			return err
 		}
 		if err := requireAuditUnsigned(
-			entry.record, auditAttachedMetadataChangeCountField, 1,
+			entry.record, auditAttachedMetadataChangeCountField, attachedCount,
 		); err != nil {
 			return err
 		}

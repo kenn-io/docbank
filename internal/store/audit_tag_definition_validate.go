@@ -23,7 +23,7 @@ type replayedTagDefinitionChange struct {
 	candidates []uint64
 }
 
-func attachedMutationRecordKind(
+func attachedMutationKind(
 	mutation audit.Record, deltaRecords map[string]storedAuditRecord,
 ) (string, error) {
 	digest, err := auditDigestField(mutation, "attached_metadata_change_digest")
@@ -38,10 +38,38 @@ func attachedMutationRecordKind(
 	if err != nil {
 		return "", err
 	}
-	if len(changes) != 1 {
-		return "", errors.New("attached-metadata mutation must contain exactly one change")
+	if len(changes) == 0 {
+		return "", errors.New("attached-metadata mutation has no changes")
 	}
-	return auditTextField(changes[0], "record_kind")
+	for _, change := range changes {
+		kind, err := auditTextField(change, "record_kind")
+		if err != nil {
+			return "", err
+		}
+		if kind != "tag_definition" {
+			continue
+		}
+		_, hasPre, err := optionalNestedAuditRecord(change, auditPreField)
+		if err != nil {
+			return "", err
+		}
+		_, hasPost, err := optionalNestedAuditRecord(change, auditPostField)
+		if err != nil {
+			return "", err
+		}
+		switch {
+		case hasPre && !hasPost:
+			return "tag_delete", nil
+		case hasPre && hasPost:
+			return "tag_rename", nil
+		default:
+			return "", errors.New("audited tag definition has an unsupported transition")
+		}
+	}
+	if len(changes) == 1 {
+		return auditTextField(changes[0], "record_kind")
+	}
+	return "", errors.New("attached-metadata mutation has unsupported mixed changes")
 }
 
 func (replay *auditedHistoryReplay) applyUnscopedTagDefinitionChange(
@@ -67,13 +95,38 @@ func (replay *auditedHistoryReplay) applyUnscopedTagDefinitionChange(
 	); err != nil {
 		return err
 	}
+	digest, err := auditDigestField(allocation.record, "attached_metadata_change_digest")
+	if err != nil {
+		return err
+	}
+	deletion, err := attachedDeltaContainsTagDelete(digest, deltaRecords)
+	if err != nil {
+		return err
+	}
+	if deletion {
+		transition, err := replay.validateTagDeletionDelta(
+			operationID, digest, deltaRecords, usedDeltas,
+		)
+		if err != nil {
+			return err
+		}
+		if len(transition.candidates) != 0 {
+			return errors.New("tag deletion omits required audited effects")
+		}
+		if err := requireAuditUnsigned(
+			allocation.record, auditAttachedMetadataChangeCountField, transition.changeCount,
+		); err != nil {
+			return err
+		}
+		if err := replay.applyTagDeletionState(transition, nil); err != nil {
+			return err
+		}
+		replay.allocationCount, replay.allocationHead = nextCount, allocation.digest
+		return nil
+	}
 	if err := requireAuditUnsigned(
 		allocation.record, auditAttachedMetadataChangeCountField, 1,
 	); err != nil {
-		return err
-	}
-	digest, err := auditDigestField(allocation.record, "attached_metadata_change_digest")
-	if err != nil {
 		return err
 	}
 	transition, err := replay.validateTagDefinitionDelta(
@@ -171,7 +224,7 @@ func (replay *auditedHistoryReplay) validateTagDefinitionDelta(
 	}
 	current, exists := replay.attachments[key]
 	if transition.kind == tagDefinitionCreate {
-		if exists {
+		if replay.tagDefinitionIDs[transition.tagID] {
 			return replayedTagDefinitionChange{}, fmt.Errorf(
 				"tag creation reuses definition identity %s", transition.tagID,
 			)
@@ -360,7 +413,7 @@ func (replay *auditedHistoryReplay) applyTagDefinitionRename(
 		return err
 	}
 	if err := replay.advanceAllocation(
-		vaultID, operationID, mutation, allocation, transition.digest,
+		vaultID, operationID, mutation, allocation, transition.digest, 1,
 	); err != nil {
 		return err
 	}
@@ -450,7 +503,14 @@ func (replay *auditedHistoryReplay) applyTagDefinitionState(
 		return err
 	}
 	replay.attachments[key] = record
-	if len(transition.candidates) == 0 {
+	replay.tagDefinitionIDs[transition.tagID] = true
+	return replay.applyTagAffectedNodeState(transition.candidates, mutation)
+}
+
+func (replay *auditedHistoryReplay) applyTagAffectedNodeState(
+	candidates []uint64, mutation *audit.Record,
+) error {
+	if len(candidates) == 0 {
 		return nil
 	}
 	if mutation == nil {
@@ -460,7 +520,7 @@ func (replay *auditedHistoryReplay) applyTagDefinitionState(
 	if err != nil {
 		return err
 	}
-	for _, nodeID := range transition.candidates {
+	for _, nodeID := range candidates {
 		state := replay.states[nodeID]
 		revision, err := auditUnsignedField(state, "node_revision")
 		if err != nil {
