@@ -8,29 +8,68 @@ import (
 	"path/filepath"
 )
 
-// BeginIngest records the start of an ingest run and returns its ID.
-func (s *Store) BeginIngest(ctx context.Context, sourceKind, sourceDesc string) (string, error) {
+// IngestRun identifies one logical import and carries the immutable metadata
+// that is published with its first imported file. Holding a run grants no
+// metadata authority by itself.
+type IngestRun struct {
+	record metadataIngest
+}
+
+// ID returns the stable ingest identity.
+func (r IngestRun) ID() string { return r.record.ID }
+
+// BeginIngest prepares an authority-free ingest run. Its metadata is inserted
+// atomically with the first file that actually imports, so audited vaults never
+// contain a run whose provenance was committed in a separate transaction.
+func (s *Store) BeginIngest(ctx context.Context, sourceKind, sourceDesc string) (IngestRun, error) {
+	if err := ctx.Err(); err != nil {
+		return IngestRun{}, err
+	}
 	id, err := newUUIDv4()
 	if err != nil {
-		return "", fmt.Errorf("allocating ingest id: %w", err)
+		return IngestRun{}, fmt.Errorf("allocating ingest id: %w", err)
 	}
-	startedAt := nowRFC3339()
-	if err := validateIngestRecord(metadataIngest{
-		Type: metadataIngestType, ID: id, StartedAt: startedAt,
+	record := metadataIngest{
+		Type: metadataIngestType, ID: id, StartedAt: nowRFC3339(),
 		SourceKind: sourceKind, SourceDesc: sourceDesc,
-	}); err != nil {
-		return "", fmt.Errorf("validating ingest start: %w", err)
 	}
-	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		_, execErr := tx.ExecContext(ctx,
-			`INSERT INTO ingests (id, started_at, source_kind, source_desc) VALUES (?, ?, ?, ?)`,
-			id, startedAt, sourceKind, sourceDesc)
-		return execErr
-	})
+	if err := validateIngestRecord(record); err != nil {
+		return IngestRun{}, fmt.Errorf("validating ingest start: %w", err)
+	}
+	return IngestRun{record: record}, nil
+}
+
+// ensureIngestRunTx publishes run once and rejects any identity collision with
+// different immutable fields. The returned boolean reports whether this
+// transaction inserted the record.
+func ensureIngestRunTx(ctx context.Context, tx *sql.Tx, run IngestRun) (bool, error) {
+	if err := validateIngestRecord(run.record); err != nil {
+		return false, fmt.Errorf("validating ingest run: %w", err)
+	}
+	result, err := tx.ExecContext(ctx,
+		`INSERT OR IGNORE INTO ingests (id, started_at, source_kind, source_desc)
+		 VALUES (?, ?, ?, ?)`,
+		run.record.ID, run.record.StartedAt, run.record.SourceKind, run.record.SourceDesc)
 	if err != nil {
-		return "", fmt.Errorf("recording ingest start: %w", err)
+		return false, fmt.Errorf("recording ingest run: %w", err)
 	}
-	return id, nil
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("checking ingest run insertion: %w", err)
+	}
+	stored := metadataIngest{Type: metadataIngestType}
+	if err := tx.QueryRowContext(ctx,
+		`SELECT id,started_at,source_kind,source_desc FROM ingests WHERE id=?`,
+		run.record.ID).Scan(
+		&stored.ID, &stored.StartedAt, &stored.SourceKind, &stored.SourceDesc,
+	); err != nil {
+		return false, fmt.Errorf("reading ingest run %s: %w", run.record.ID, err)
+	}
+	if stored.ID != run.record.ID || stored.StartedAt != run.record.StartedAt ||
+		stored.SourceKind != run.record.SourceKind || stored.SourceDesc != run.record.SourceDesc {
+		return false, fmt.Errorf("ingest identity %s names different immutable metadata", run.record.ID)
+	}
+	return inserted == 1, nil
 }
 
 // resolveIngestNameTx applies the import idempotency rule: a live suffix
@@ -150,17 +189,20 @@ func sameOriginTx(tx *sql.Tx, nodeID int64, name string, allowUnknown bool) (boo
 // IngestFile imports one already-durable blob as a node under parentID,
 // applying the idempotency rule and recording provenance. Returns
 // added=false when the content is already present under a candidate name.
-func (s *Store) IngestFile(ctx context.Context, ingestID string, parentID int64, name, blobHash string, size int64, mimeType, originalPath, originalMtime string) (Node, bool, error) {
+func (s *Store) IngestFile(ctx context.Context, run IngestRun, parentID int64, name, blobHash string, size int64, mimeType, originalPath, originalMtime string) (Node, bool, error) {
 	name, err := NormalizeName(name)
 	if err != nil {
 		return Node{}, false, err
+	}
+	if err := validateIngestRecord(run.record); err != nil {
+		return Node{}, false, fmt.Errorf("validating ingest run: %w", err)
 	}
 	var recordedMtime *string
 	if originalMtime != "" {
 		recordedMtime = &originalMtime
 	}
 	provenance := metadataProvenance{
-		Type: metadataProvenanceType, NodeID: 1, IngestID: ingestID,
+		Type: metadataProvenanceType, NodeID: 1, IngestID: run.record.ID,
 		OriginalPath: originalPath, OriginalMTime: recordedMtime,
 	}
 	if err := validateProvenanceFields(provenance); err != nil {
@@ -170,7 +212,7 @@ func (s *Store) IngestFile(ctx context.Context, ingestID string, parentID int64,
 		created Node
 		added   bool
 	)
-	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		finalName, existingID, skip, err := resolveIngestNameTx(tx, parentID, name, blobHash)
 		if err != nil {
 			return err
@@ -183,7 +225,37 @@ func (s *Store) IngestFile(ctx context.Context, ingestID string, parentID int64,
 			}
 			return nil
 		}
-		created, err = s.createFileTx(tx, parentID, finalName, blobHash, size, mimeType)
+		active, err := auditAuthorityActiveTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		var (
+			authority auditAuthorityState
+			scopes    []auditScopeState
+			prior     Node
+		)
+		if active {
+			prior, err = liveDirTx(tx, parentID)
+			if err != nil {
+				return err
+			}
+			authority, scopes, _, err = loadAuditedNodeAuthority(ctx, tx, parentID)
+			if err != nil {
+				return err
+			}
+		}
+		ingestAdded, err := ensureIngestRunTx(ctx, tx, run)
+		if err != nil {
+			return err
+		}
+		operation, err := newContentVersionOperation()
+		if err != nil {
+			return err
+		}
+		var version ContentVersion
+		created, version, err = s.createFileWithOperationTx(
+			tx, parentID, finalName, blobHash, size, mimeType, operation,
+		)
 		if err != nil {
 			return err
 		}
@@ -202,6 +274,24 @@ func (s *Store) IngestFile(ctx context.Context, ingestID string, parentID int64,
 			provenance.Identity, provenance.NodeID, provenance.IngestID,
 			provenance.OriginalPath, provenance.OriginalMTime, provenance.Supersedes); err != nil {
 			return fmt.Errorf("recording provenance for %q: %w", finalName, err)
+		}
+		if active {
+			resultingParent, err := nodeByIDTx(tx, parentID)
+			if err != nil {
+				return err
+			}
+			metadata, err := makeAuditedIngestCreationMetadata(
+				run.record, provenance, ingestAdded, operation.operationID,
+			)
+			if err != nil {
+				return err
+			}
+			if err := persistAuditedNodeCreation(
+				ctx, tx, s.vaultID, authority, scopes, prior, resultingParent,
+				created, version, operation.operationID, operation.recordedAt, &metadata,
+			); err != nil {
+				return err
+			}
 		}
 		added = true
 		return nil

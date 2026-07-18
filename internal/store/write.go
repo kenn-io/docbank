@@ -78,7 +78,7 @@ func (s *Store) Mkdir(ctx context.Context, parentID int64, name string) (Node, e
 			return err
 		}
 		return persistAuditedNodeCreation(ctx, tx, s.vaultID, authority, scopes,
-			priorParent, resultingParent, created, ContentVersion{}, operationID, recordedAt)
+			priorParent, resultingParent, created, ContentVersion{}, operationID, recordedAt, nil)
 	})
 	if err != nil {
 		return Node{}, err
@@ -303,7 +303,7 @@ func (s *Store) CreateFile(ctx context.Context, parentID int64, name, blobHash s
 		}
 		return persistAuditedNodeCreation(ctx, tx, s.vaultID, authority, scopes,
 			priorParent, resultingParent, created, version, operation.operationID,
-			operation.recordedAt)
+			operation.recordedAt, nil)
 	})
 	if err != nil {
 		return Node{}, err

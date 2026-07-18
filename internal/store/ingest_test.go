@@ -88,7 +88,7 @@ func TestIngestFileRecordsProvenance(t *testing.T) {
 
 	ing, err := s.BeginIngest(ctx, "cli", "test")
 	require.NoError(t, err)
-	require.NoError(t, validateUUIDv4(ing))
+	require.NoError(t, validateUUIDv4(ing.ID()))
 	n, added, err := s.IngestFile(ctx, ing, s.RootID(),
 		"a.txt", fakeHash("a1"), 1, "text/plain", "/orig/a.txt", "2026-01-02T03:04:05Z")
 	require.NoError(t, err)
@@ -107,9 +107,9 @@ func TestIngestFileRecordsProvenance(t *testing.T) {
 	require.NoError(t, s.db.QueryRow(
 		`SELECT ingest_id FROM provenance WHERE node_id = ?`, n.ID,
 	).Scan(&storedIngestID))
-	assert.Equal(t, ing, storedIngestID)
+	assert.Equal(t, ing.ID(), storedIngestID)
 	wantIdentity, err := provenanceIdentity(metadataProvenance{
-		Type: metadataProvenanceType, NodeID: n.ID, IngestID: ing,
+		Type: metadataProvenanceType, NodeID: n.ID, IngestID: ing.ID(),
 		OriginalPath: origPath, OriginalMTime: &origMtime,
 	})
 	require.NoError(t, err)
@@ -125,13 +125,13 @@ func TestIngestAndProvenanceFactsAreImmutable(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, added)
 
-	_, err = s.db.Exec(`UPDATE ingests SET source_desc='rewritten' WHERE id=?`, ingestID)
+	_, err = s.db.Exec(`UPDATE ingests SET source_desc='rewritten' WHERE id=?`, ingestID.ID())
 	require.ErrorContains(t, err, "ingest records are immutable")
 	_, err = s.db.Exec(`UPDATE provenance SET original_path='/rewritten' WHERE node_id=?`, node.ID)
 	require.ErrorContains(t, err, "provenance records are immutable")
 
 	var sourceDesc, originalPath string
-	require.NoError(t, s.db.QueryRow(`SELECT source_desc FROM ingests WHERE id=?`, ingestID).Scan(&sourceDesc))
+	require.NoError(t, s.db.QueryRow(`SELECT source_desc FROM ingests WHERE id=?`, ingestID.ID()).Scan(&sourceDesc))
 	require.NoError(t, s.db.QueryRow(`SELECT original_path FROM provenance WHERE node_id=?`, node.ID).Scan(&originalPath))
 	assert.Equal(t, "source", sourceDesc)
 	assert.Equal(t, "/source/a.txt", originalPath)
@@ -152,7 +152,7 @@ func TestIngestIdempotencyUsesActiveProvenanceLeaf(t *testing.T) {
 		`SELECT identity FROM provenance WHERE node_id=?`, node.ID,
 	).Scan(&priorIdentity))
 	corrected := metadataProvenance{
-		Type: metadataProvenanceType, NodeID: node.ID, IngestID: ingestID,
+		Type: metadataProvenanceType, NodeID: node.ID, IngestID: ingestID.ID(),
 		OriginalPath: "/corrected/renamed.pdf", Supersedes: &priorIdentity,
 	}
 	corrected.Identity, err = provenanceIdentity(corrected)
@@ -188,9 +188,9 @@ func TestBeginIngestAllocatesDistinctUUIDs(t *testing.T) {
 	second, err := s.BeginIngest(t.Context(), "cli", "second")
 	require.NoError(t, err)
 
-	require.NoError(t, validateUUIDv4(first))
-	require.NoError(t, validateUUIDv4(second))
-	assert.NotEqual(t, first, second)
+	require.NoError(t, validateUUIDv4(first.ID()))
+	require.NoError(t, validateUUIDv4(second.ID()))
+	assert.NotEqual(t, first.ID(), second.ID())
 }
 
 func TestIngestRejectsNonUTF8MetadataBeforeCommit(t *testing.T) {

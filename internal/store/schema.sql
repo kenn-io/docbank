@@ -161,7 +161,7 @@ CREATE TABLE IF NOT EXISTS audit_records (
         'enrollment_baseline', 'topology_genesis',
         'attached_metadata_genesis', 'event', 'canonical_mutation',
         'scope_chain_entry', 'allocation_genesis', 'allocation_entry',
-        'topology_delta'
+        'topology_delta', 'attached_metadata_delta'
     )),
     operation_id       TEXT,
     operation_sequence INTEGER CHECK (operation_sequence IS NULL OR operation_sequence > 0),

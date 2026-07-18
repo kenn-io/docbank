@@ -281,7 +281,12 @@ func TestInitialAuditAuthorityRejectsUnsupportedLogicalMutations(t *testing.T) {
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
 	_, err = s.CreateTag(t.Context(), "blocked")
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
-	_, err = s.BeginIngest(t.Context(), "cli", "blocked")
+	run, err := s.BeginIngest(t.Context(), "cli", "blocked")
+	require.NoError(t, err)
+	_, _, err = s.IngestFile(
+		t.Context(), run, s.RootID(), "blocked.txt", fakeHash("blocked"), 1,
+		"text/plain", "/blocked.txt", "",
+	)
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
 	_, err = s.TrashEmpty(t.Context(), 0, true)
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)

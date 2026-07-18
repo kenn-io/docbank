@@ -199,6 +199,7 @@ type auditedHistoryReplay struct {
 	memberSet       map[uint64]bool
 	states          map[uint64]audit.Record
 	versions        map[string]audit.Record
+	attachments     map[string]audit.Record
 	topology        []audit.Record
 	topologyIndex   map[uint64]int
 	scopeHead       string
@@ -246,8 +247,10 @@ func validateAuditedHistory(
 	usedEvents := map[string]bool{}
 	baselines := auditRecordsByDigest(records["enrollment_baseline"])
 	topologyDeltas := auditRecordsByDigest(records[auditTopologyDeltaField])
+	attachmentDeltas := auditRecordsByDigest(records["attached_metadata_delta"])
 	usedBaselines := map[string]bool{initial["enrollment_baseline"][0].digest: true}
 	usedTopologyDeltas := map[string]bool{}
+	usedAttachmentDeltas := map[string]bool{}
 	for sequence := int64(2); sequence <= authority.sequence; sequence++ {
 		mutation := mutations[sequence]
 		bindings, bindingErr := auditRecordListField(mutation.record, "baselines")
@@ -261,8 +264,8 @@ func validateAuditedHistory(
 		} else {
 			err = replay.applyNodeCreation(
 				vaultID, mutation, allocations[sequence], entries[sequence],
-				baselines, topologyDeltas, events, usedBaselines,
-				usedTopologyDeltas, usedEvents,
+				baselines, topologyDeltas, attachmentDeltas, events, usedBaselines,
+				usedTopologyDeltas, usedAttachmentDeltas, usedEvents,
 			)
 		}
 		if err != nil {
@@ -280,6 +283,9 @@ func validateAuditedHistory(
 	if len(usedTopologyDeltas) != len(topologyDeltas) {
 		return errors.New("audit history contains an unbound topology delta")
 	}
+	if len(usedAttachmentDeltas) != len(attachmentDeltas) {
+		return errors.New("audit history contains an unbound attached-metadata delta")
+	}
 	if authority.sequence != replay.allocationCount || authority.allocationHead != replay.allocationHead {
 		return errors.New("audit allocation authority does not match replayed history")
 	}
@@ -293,7 +299,7 @@ func validateAuditedHistory(
 	if finalNodeHighWater != replay.nodeHighWater {
 		return errors.New("audit node allocation high-water mark does not match replayed history")
 	}
-	return replay.reconcileCurrentState(ctx, tx, initial)
+	return replay.reconcileCurrentState(ctx, tx)
 }
 
 func auditRecordsByDigest(records []storedAuditRecord) map[string]storedAuditRecord {
@@ -338,6 +344,15 @@ func newAuditedHistoryReplay(
 	if err != nil {
 		return nil, err
 	}
+	attachments, err := auditRecordListField(
+		initial["attached_metadata_genesis"][0].record, "records",
+	)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateGenesisProvenanceIngests(attachments); err != nil {
+		return nil, err
+	}
 	topology, err := auditRecordListField(initial["topology_genesis"][0].record, "nodes")
 	if err != nil {
 		return nil, err
@@ -354,6 +369,7 @@ func newAuditedHistoryReplay(
 		memberSet:       auditMemberSet(members),
 		states:          make(map[uint64]audit.Record, len(states)),
 		versions:        make(map[string]audit.Record, len(versions)),
+		attachments:     make(map[string]audit.Record, len(attachments)),
 		topology:        slices.Clone(topology),
 		topologyIndex:   make(map[uint64]int, len(topology)),
 		scopeHead:       initial["scope_chain_entry"][0].digest,
@@ -386,6 +402,16 @@ func newAuditedHistoryReplay(
 		}
 		replay.versions[versionID] = version
 	}
+	for _, attachment := range attachments {
+		key, err := attachedAuditKey(attachment)
+		if err != nil {
+			return nil, err
+		}
+		if _, exists := replay.attachments[key]; exists {
+			return nil, errors.New("audit attachment genesis repeats an identity")
+		}
+		replay.attachments[key] = attachment
+	}
 	for index, node := range topology {
 		nodeID, err := auditUnsignedField(node, metadataNodeIDField)
 		if err != nil {
@@ -394,6 +420,33 @@ func newAuditedHistoryReplay(
 		replay.topologyIndex[nodeID] = index
 	}
 	return replay, nil
+}
+
+func validateGenesisProvenanceIngests(attachments []audit.Record) error {
+	ingests := make(map[string]bool)
+	for _, record := range attachments {
+		if record.Kind != metadataIngestType {
+			continue
+		}
+		ingestID, err := auditUUIDField(record, "ingest_id")
+		if err != nil {
+			return fmt.Errorf("reading genesis ingest identity: %w", err)
+		}
+		ingests[ingestID] = true
+	}
+	for _, record := range attachments {
+		if record.Kind != metadataProvenanceType {
+			continue
+		}
+		ingestID, err := auditUUIDField(record, "ingest_id")
+		if err != nil {
+			return fmt.Errorf("reading genesis provenance ingest: %w", err)
+		}
+		if !ingests[ingestID] {
+			return fmt.Errorf("audit attachment genesis provenance references missing ingest %s", ingestID)
+		}
+	}
+	return nil
 }
 
 func auditRecordsBySequence(
@@ -800,7 +853,7 @@ func replaceAuditRecordField(record audit.Record, name string, value audit.Value
 }
 
 func (replay *auditedHistoryReplay) reconcileCurrentState(
-	ctx context.Context, tx metadataQuerier, initial map[string][]storedAuditRecord,
+	ctx context.Context, tx metadataQuerier,
 ) error {
 	if err := replay.reconcileMembershipProjection(ctx, tx); err != nil {
 		return err
@@ -838,13 +891,11 @@ func (replay *auditedHistoryReplay) reconcileCurrentState(
 	if err != nil {
 		return err
 	}
-	genesisAttachments, err := auditRecordListField(
-		initial["attached_metadata_genesis"][0].record, "records",
-	)
-	if err != nil {
-		return err
+	expectedAttachments := make([]audit.Record, 0, len(replay.attachments))
+	for _, record := range replay.attachments {
+		expectedAttachments = append(expectedAttachments, record)
 	}
-	if !equalAuditRecordLists(genesisAttachments, currentAttachments) {
+	if !equalAuditRecordSets(expectedAttachments, currentAttachments) {
 		return errors.New("replayed audit attachments do not match current metadata")
 	}
 	return nil
