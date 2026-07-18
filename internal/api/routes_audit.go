@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -31,6 +32,10 @@ func registerAuditRoutes(
 		if (in.Body.Path == "") == (in.Body.NodeID == 0) {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation",
 				"audit preview requires exactly one of path or node_id")
+		}
+		if in.Body.Path != "" && !strings.HasPrefix(in.Body.Path, "/") {
+			return nil, NewError(http.StatusUnprocessableEntity, "validation",
+				fmt.Sprintf("path %q must be absolute (start with /)", in.Body.Path))
 		}
 		var label *string
 		if in.Body.AgentLabel != "" {
@@ -106,6 +111,10 @@ func registerAuditRoutes(
 		if in.Path != "" && in.NodeID != 0 {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation",
 				"audit status accepts at most one of path or node_id")
+		}
+		if in.Path != "" && !strings.HasPrefix(in.Path, "/") {
+			return nil, NewError(http.StatusUnprocessableEntity, "validation",
+				fmt.Sprintf("path %q must be absolute (start with /)", in.Path))
 		}
 		var status store.AuditStatus
 		var err error

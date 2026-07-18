@@ -140,6 +140,34 @@ func TestAuditPreviewRequiresOneTarget(t *testing.T) {
 	}
 }
 
+func TestAuditRoutesRejectRelativePaths(t *testing.T) {
+	ts, _ := newTestServer(t, nil)
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   any
+	}{
+		{
+			name: "preview", method: http.MethodPost, path: "/api/v1/audit/preview",
+			body: map[string]any{"path": "Taxes"},
+		},
+		{
+			name: "status", method: http.MethodGet, path: "/api/v1/audit/status?path=Taxes",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			resp, raw := do(t, ts, test.method, test.path, nil, test.body)
+			assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+			var problem api.Error
+			require.NoError(t, json.Unmarshal([]byte(raw), &problem))
+			assert.Equal(t, "validation", problem.Code)
+			assert.Contains(t, problem.Detail, "must be absolute")
+		})
+	}
+}
+
 func TestAuditPreviewRejectsMissingAndNonDirectoryTargets(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	file, err := s.CreateFile(t.Context(), s.RootID(), "return.txt", testHash("return"), 6, "text/plain")
