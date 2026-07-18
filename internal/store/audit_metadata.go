@@ -15,13 +15,17 @@ import (
 )
 
 const (
-	auditAgentLabelField   = "agent_label"
-	auditEventOrdinalField = "event_ordinal"
-	auditParentIDField     = "parent_id"
-	auditPostField         = "post"
-	auditPreField          = "pre"
-	auditRecordedAtField   = "recorded_at"
-	auditTargetNodeIDField = "target_node_id"
+	auditAgentLabelField      = "agent_label"
+	auditBaselineDigestField  = "baseline_digest"
+	auditEventIdentityKind    = "event_identity"
+	auditEventOrdinalField    = "event_ordinal"
+	auditParentIDField        = "parent_id"
+	auditPostField            = "post"
+	auditPreField             = "pre"
+	auditRecordedAtField      = "recorded_at"
+	auditSourceVersionIDField = "source_version_id"
+	auditTagDefinitionKind    = "tag_definition"
+	auditTargetNodeIDField    = "target_node_id"
 )
 
 var auditRecordKinds = map[string]bool{

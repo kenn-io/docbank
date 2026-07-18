@@ -241,7 +241,7 @@ func (s *Store) renameTagDefinitionTx(tx *sql.Tx, current Tag, name string) (Tag
 // formerly assigned node's metadata revision exactly once.
 func (s *Store) DeleteTag(ctx context.Context, id string, ifRev int64) (Tag, error) {
 	var deleted Tag
-	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		current, err := tagByIDTx(tx, id)
 		if err != nil {
 			return err
@@ -249,19 +249,38 @@ func (s *Store) DeleteTag(ctx context.Context, id string, ifRev int64) (Tag, err
 		if err := checkTagRevision(current, ifRev); err != nil {
 			return err
 		}
-		if err := touchTaggedNodesTx(tx, id, nowRFC3339()); err != nil {
+		active, err := auditAuthorityActiveTx(ctx, tx)
+		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`DELETE FROM tags WHERE id = ?`, id); err != nil {
-			return fmt.Errorf("deleting tag %s: %w", id, err)
+		if active {
+			deleted, err = s.deleteAuditedTagTx(ctx, tx, current)
+			return err
 		}
-		deleted = current
-		return nil
+		deleted, err = deleteTagTx(tx, current, nowRFC3339())
+		return err
 	})
 	if err != nil {
 		return Tag{}, err
 	}
 	return deleted, nil
+}
+
+func deleteTagTx(tx *sql.Tx, current Tag, recordedAt string) (Tag, error) {
+	if err := touchTaggedNodesTx(tx, current.ID, recordedAt); err != nil {
+		return Tag{}, err
+	}
+	if err := deleteTagDefinitionTx(tx, current.ID); err != nil {
+		return Tag{}, err
+	}
+	return current, nil
+}
+
+func deleteTagDefinitionTx(tx *sql.Tx, tagID string) error {
+	if _, err := tx.Exec(`DELETE FROM tags WHERE id = ?`, tagID); err != nil {
+		return fmt.Errorf("deleting tag %s: %w", tagID, err)
+	}
+	return nil
 }
 
 // AssignTag attaches a tag to a node under an optimistic revision check.

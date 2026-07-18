@@ -9,9 +9,13 @@ import (
 	"go.kenn.io/docbank/internal/audit"
 )
 
-func (s *Store) renameAuditedTagTx(
-	ctx context.Context, tx *sql.Tx, current Tag, name string,
+func (s *Store) deleteAuditedTagTx(
+	ctx context.Context, tx *sql.Tx, current Tag,
 ) (Tag, error) {
+	assignmentNodeIDs, err := tagAssignmentNodeIDsTx(ctx, tx, current.ID)
+	if err != nil {
+		return Tag{}, err
+	}
 	priorNodes, scope, err := auditedTaggedNodesTx(ctx, tx, current.ID)
 	if err != nil {
 		return Tag{}, err
@@ -22,14 +26,15 @@ func (s *Store) renameAuditedTagTx(
 	}
 	operationID, err := newUUIDv4()
 	if err != nil {
-		return Tag{}, fmt.Errorf("allocating audited tag-rename operation: %w", err)
+		return Tag{}, fmt.Errorf("allocating audited tag-delete operation: %w", err)
 	}
 	recordedAt := nowRFC3339()
-	renamed, err := s.renameTagDefinitionTx(tx, current, name)
-	if err != nil {
+	if err := touchAuditedTagDefinitionNodesTx(
+		tx, current.ID, priorNodes, recordedAt,
+	); err != nil {
 		return Tag{}, err
 	}
-	if err := touchAuditedTagDefinitionNodesTx(tx, current.ID, priorNodes, recordedAt); err != nil {
+	if err := deleteTagDefinitionTx(tx, current.ID); err != nil {
 		return Tag{}, err
 	}
 	resultingNodes := make([]Node, len(priorNodes))
@@ -39,96 +44,46 @@ func (s *Store) renameAuditedTagTx(
 			return Tag{}, err
 		}
 	}
-	if err := persistAuditedTagRename(
+	if err := persistAuditedTagDelete(
 		ctx, tx, s.vaultID, operationID, recordedAt, nodeSequence,
-		authority, scope, current, renamed, priorNodes, resultingNodes,
+		authority, scope, current, assignmentNodeIDs, priorNodes, resultingNodes,
 	); err != nil {
 		return Tag{}, err
 	}
-	return renamed, nil
+	return current, nil
 }
 
-func touchAuditedTagDefinitionNodesTx(
-	tx *sql.Tx, tagID string, audited []Node, recordedAt string,
-) error {
-	// Revisions cover every assigned node. modified_at is changed only where the
-	// scoped mutation commits the operation timestamp; the allocation-only form
-	// deliberately has no timestamp from which replay could derive that field.
-	if _, err := tx.Exec(`UPDATE nodes SET revision=revision+1
-		WHERE id IN (SELECT node_id FROM node_tags WHERE tag_id=?)`, tagID); err != nil {
-		return fmt.Errorf("advancing nodes assigned tag %s: %w", tagID, err)
-	}
-	for _, node := range audited {
-		if _, err := tx.Exec(
-			`UPDATE nodes SET modified_at=? WHERE id=?`, recordedAt, node.ID,
-		); err != nil {
-			return fmt.Errorf("recording audited tag rename on node %d: %w", node.ID, err)
-		}
-	}
-	return nil
-}
-
-func auditedTaggedNodesTx(
+func tagAssignmentNodeIDsTx(
 	ctx context.Context, tx *sql.Tx, tagID string,
-) ([]Node, *auditScopeState, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT membership.node_id,scope.scope_id,
-		scope.entry_count,scope.chain_head
-		FROM node_tags assignment
-		JOIN audit_memberships membership ON membership.node_id=assignment.node_id
-		JOIN audit_scopes scope ON scope.scope_id=membership.scope_id
-		WHERE assignment.tag_id=? ORDER BY membership.node_id,scope.scope_id`, tagID)
+) ([]int64, error) {
+	rows, err := tx.QueryContext(ctx,
+		`SELECT node_id FROM node_tags WHERE tag_id=? ORDER BY node_id`, tagID,
+	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("listing audited nodes assigned tag %s: %w", tagID, err)
+		return nil, fmt.Errorf("listing assignments for tag %s: %w", tagID, err)
 	}
 	defer func() { _ = rows.Close() }()
-	var (
-		nodeIDs []int64
-		scope   *auditScopeState
-	)
+	var nodeIDs []int64
 	for rows.Next() {
 		var nodeID int64
-		var current auditScopeState
-		if err := rows.Scan(
-			&nodeID, &current.scopeID, &current.entryCount, &current.chainHead,
-		); err != nil {
-			_ = rows.Close()
-			return nil, nil, fmt.Errorf("scanning audited tag assignment: %w", err)
+		if err := rows.Scan(&nodeID); err != nil {
+			return nil, fmt.Errorf("scanning tag %s assignment: %w", tagID, err)
 		}
-		if scope != nil && scope.scopeID != current.scopeID {
-			_ = rows.Close()
-			return nil, nil, errors.New("tag rename across multiple audit scopes is not supported")
-		}
-		if scope == nil {
-			scope = &current
-		}
-		if len(nodeIDs) == 0 || nodeIDs[len(nodeIDs)-1] != nodeID {
-			nodeIDs = append(nodeIDs, nodeID)
-		}
+		nodeIDs = append(nodeIDs, nodeID)
 	}
 	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return nil, nil, fmt.Errorf("listing audited nodes assigned tag %s: %w", tagID, err)
+		return nil, fmt.Errorf("listing assignments for tag %s: %w", tagID, err)
 	}
-	if err := rows.Close(); err != nil {
-		return nil, nil, fmt.Errorf("closing audited tag assignment rows: %w", err)
-	}
-	nodes := make([]Node, len(nodeIDs))
-	for index, nodeID := range nodeIDs {
-		nodes[index], err = nodeByIDTx(tx, nodeID)
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-	return nodes, scope, nil
+	return nodeIDs, nil
 }
 
-func persistAuditedTagRename(
+func persistAuditedTagDelete(
 	ctx context.Context, tx *sql.Tx, vaultID, operationID, recordedAt string,
 	nodeSequence int64, authority auditAuthorityState, scope *auditScopeState,
-	priorTag, resultingTag Tag, priorNodes, resultingNodes []Node,
+	deletedTag Tag, assignmentNodeIDs []int64, priorNodes, resultingNodes []Node,
 ) error {
 	if len(priorNodes) != len(resultingNodes) || (len(priorNodes) != 0) != (scope != nil) {
-		return errors.New("audited tag rename has inconsistent affected-node authority")
+		return errors.New("audited tag delete has inconsistent affected-node authority")
 	}
 	sequence, err := nextAuditInteger("operation sequence", authority.sequence)
 	if err != nil {
@@ -138,37 +93,64 @@ func persistAuditedTagRename(
 	if err != nil {
 		return err
 	}
-	priorDefinition, err := tagDefinitionAuditRecord(priorTag)
+	definition, err := tagDefinitionAuditRecord(deletedTag)
 	if err != nil {
 		return err
 	}
-	resultingDefinition, err := tagDefinitionAuditRecord(resultingTag)
+	definitionChange, err := makeAttachedMetadataPresenceChange(definition, false)
 	if err != nil {
 		return err
 	}
-	change, err := makeAttachedMetadataChange(priorDefinition, resultingDefinition)
-	if err != nil {
-		return err
+	changes := make([]audit.Record, 0, len(assignmentNodeIDs)+1)
+	assignments := make(map[int64]audit.Record, len(assignmentNodeIDs))
+	for _, nodeID := range assignmentNodeIDs {
+		assignment, err := auditTagAssignmentRecord(deletedTag.ID, nodeID)
+		if err != nil {
+			return err
+		}
+		change, err := makeAttachedMetadataPresenceChange(assignment, false)
+		if err != nil {
+			return err
+		}
+		assignments[nodeID] = assignment
+		changes = append(changes, change)
 	}
-	delta, deltaDigest, err := makeAttachedMetadataDelta(values.operationID, []audit.Record{change})
+	changes = append(changes, definitionChange)
+	delta, deltaDigest, err := makeAttachedMetadataDelta(values.operationID, changes)
 	if err != nil {
 		return err
 	}
 	if err := insertAuditRecord(ctx, tx, delta); err != nil {
 		return err
 	}
+	changeCount := uint64(1)
+	for range assignmentNodeIDs {
+		changeCount++
+	}
 	mutationHash := audit.Absent()
 	if len(priorNodes) != 0 {
-		events := make([]audit.Record, len(priorNodes))
+		events := make([]audit.Record, 0, len(priorNodes)*2)
 		stateChanges := make([]audit.Record, len(priorNodes))
+		ordinal := uint64(0)
 		for index := range priorNodes {
-			events[index], err = makeAuditedTagRenameEvent(
-				values, scope.scopeID, uint64(index), priorNodes[index], resultingNodes[index],
-				priorDefinition, resultingDefinition,
+			definitionEvent, err := makeAuditedTagDeleteEvent(
+				values, scope.scopeID, ordinal, priorNodes[index], resultingNodes[index], definition,
 			)
 			if err != nil {
 				return err
 			}
+			events = append(events, definitionEvent)
+			ordinal++
+			assignment := assignments[priorNodes[index].ID]
+			unassignEvent, err := makeAuditedTagAssignmentEvent(
+				values, scope.scopeID, ordinal, priorNodes[index], resultingNodes[index],
+				assignment, false,
+			)
+			if err != nil {
+				return err
+			}
+			events = append(events, unassignEvent)
+			ordinal++
 			stateChanges[index], err = makeAuditMemberStateChange(
 				priorNodes[index], resultingNodes[index],
 			)
@@ -181,7 +163,7 @@ func persistAuditedTagRename(
 			return err
 		}
 		mutation, err = replaceAuditRecordField(
-			mutation, auditAttachedMetadataChangeCountField, audit.Unsigned(1),
+			mutation, auditAttachedMetadataChangeCountField, audit.Unsigned(changeCount),
 		)
 		if err != nil {
 			return err
@@ -219,19 +201,21 @@ func persistAuditedTagRename(
 	if err != nil {
 		return err
 	}
-	allocation, err = addAttachedMetadataToAllocation(allocation, 1, deltaDigest.value)
+	allocation, err = addAttachedMetadataToAllocation(
+		allocation, changeCount, deltaDigest.value,
+	)
 	if err != nil {
 		return err
 	}
 	return advanceAuditAuthority(ctx, tx, authority, sequence, allocation)
 }
 
-func makeAuditedTagRenameEvent(
+func makeAuditedTagDeleteEvent(
 	values auditedMutationValues, scopeID string, ordinal uint64,
-	priorNode, resultingNode Node, priorDefinition, resultingDefinition audit.Record,
+	priorNode, resultingNode Node, definition audit.Record,
 ) (audit.Record, error) {
 	if priorNode.ID != resultingNode.ID {
-		return audit.Record{}, errors.New("audited tag rename changes node identity")
+		return audit.Record{}, errors.New("audited tag delete changes node identity")
 	}
 	nodeID, err := positiveAuditNodeID(priorNode.ID)
 	if err != nil {
@@ -243,28 +227,28 @@ func makeAuditedTagRenameEvent(
 	}
 	resultingRevision, err := positiveAuditRevision(resultingNode.Revision)
 	if err != nil || resultingRevision != priorRevision+1 {
-		return audit.Record{}, errors.New("audited tag rename has an invalid revision transition")
+		return audit.Record{}, errors.New("audited tag delete has an invalid revision transition")
 	}
 	scopeValue, err := audit.UUID(scopeID)
 	if err != nil {
 		return audit.Record{}, err
 	}
-	identity, err := attachedAuditIdentity(priorDefinition)
+	identity, err := attachedAuditIdentity(definition)
 	if err != nil {
 		return audit.Record{}, err
 	}
-	eventIdentity, err := hashAuditRecord(audit.Record{Kind: "event_identity", Fields: []audit.Field{
+	eventIdentity, err := hashAuditRecord(audit.Record{Kind: auditEventIdentityKind, Fields: []audit.Field{
 		{Name: auditOperationIDField, Value: values.operationID},
 		{Name: auditEventOrdinalField, Value: audit.Unsigned(ordinal)},
 	}})
 	if err != nil {
 		return audit.Record{}, err
 	}
-	kind, err := audit.Text("tag_rename")
+	kind, err := audit.Text("tag_delete")
 	if err != nil {
 		return audit.Record{}, err
 	}
-	attachmentKind, err := audit.Text("tag_definition")
+	attachmentKind, err := audit.Text(auditTagDefinitionKind)
 	if err != nil {
 		return audit.Record{}, err
 	}
@@ -285,7 +269,7 @@ func makeAuditedTagRenameEvent(
 		{Name: auditTargetNodeIDField, Value: audit.Absent()},
 		{Name: "attachment_kind", Value: attachmentKind},
 		{Name: "attachment_identity", Value: audit.Nested(identity)},
-		{Name: "source_version_id", Value: audit.Absent()},
+		{Name: auditSourceVersionIDField, Value: audit.Absent()},
 		{Name: auditEventOrdinalField, Value: audit.Unsigned(ordinal)},
 		{Name: auditRecordedAtField, Value: values.recordedAt},
 		{Name: "prior_node_revision", Value: audit.Unsigned(priorRevision)},
@@ -294,9 +278,9 @@ func makeAuditedTagRenameEvent(
 		{Name: "resulting_current_version_id", Value: resultingVersion},
 		{Name: auditOriginField, Value: values.origin},
 		{Name: auditAgentLabelField, Value: audit.Absent()},
-		{Name: auditPreField, Value: audit.Nested(priorDefinition)},
-		{Name: auditPostField, Value: audit.Nested(resultingDefinition)},
+		{Name: auditPreField, Value: audit.Nested(definition)},
+		{Name: auditPostField, Value: audit.Absent()},
 		{Name: auditTopologyDeltaField, Value: audit.Absent()},
-		{Name: "baseline_digest", Value: audit.Absent()},
+		{Name: auditBaselineDigestField, Value: audit.Absent()},
 	}}, nil
 }
