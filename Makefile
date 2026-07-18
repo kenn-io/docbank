@@ -21,7 +21,7 @@ DEFAULT_GOLANGCI_LINT_CACHE := $(shell git rev-parse --path-format=absolute --gi
 GOLANGCI_LINT_CACHE ?= $(DEFAULT_GOLANGCI_LINT_CACHE)
 export GOLANGCI_LINT_CACHE
 
-.PHONY: build install clean test test-v fmt lint lint-ci tidy install-hooks docs-install docs-build docs-serve help
+.PHONY: build install clean test test-v fmt lint lint-ci tidy install-hooks docs-install docs-build docs-serve docs-link docs-deploy help
 
 build:
 	CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS)" -o docbank ./cmd/docbank
@@ -75,5 +75,17 @@ docs-build:
 docs-serve:
 	cd docs && ./zensical-docs.sh serve
 
+docs-link:
+	cd docs && npx vercel@latest link
+
+docs-deploy: docs-build
+	@if [ ! -f docs/.vercel/project.json ]; then \
+		echo "docs are not linked to a Vercel project yet." >&2; \
+		echo "Run: npx vercel@latest login && make docs-link" >&2; \
+		exit 1; \
+	fi
+	cp -R docs/.vercel docs/site/.vercel
+	npx vercel@latest deploy docs/site --prod --yes
+
 help:
-	@echo "Targets: build install clean test test-v fmt lint lint-ci tidy install-hooks docs-install docs-build docs-serve"
+	@echo "Targets: build install clean test test-v fmt lint lint-ci tidy install-hooks docs-install docs-build docs-serve docs-link docs-deploy"
