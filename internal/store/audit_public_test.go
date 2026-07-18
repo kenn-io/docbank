@@ -81,6 +81,37 @@ func TestAuditEnrollmentPreviewRejectsChangedVaultState(t *testing.T) {
 	assert.Equal(t, [5]int64{}, counts)
 }
 
+func TestAuditEnrollmentPreviewRejectsTrashedOrDeletedTargetAsStale(t *testing.T) {
+	for _, hardDelete := range []bool{false, true} {
+		name := "trashed"
+		if hardDelete {
+			name = "deleted"
+		}
+		t.Run(name, func(t *testing.T) {
+			s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, s.Close()) })
+			seedMetadataRoundTrip(t, s)
+			target, err := s.NodeByPath(t.Context(), "/Projects")
+			require.NoError(t, err)
+			plan, err := s.PreviewInitialAudit(t.Context(), target.ID, "api", nil)
+			require.NoError(t, err)
+
+			_, _, err = s.Trash(t.Context(), target.ID, target.Revision)
+			require.NoError(t, err)
+			if hardDelete {
+				_, err = s.TrashEmpty(t.Context(), 0, true)
+				require.NoError(t, err)
+			}
+			_, err = s.EnableInitialAudit(t.Context(), plan)
+			require.ErrorIs(t, err, ErrAuditPreviewStale)
+			counts, err := auditAuthorityCounts(t.Context(), s.db)
+			require.NoError(t, err)
+			assert.Equal(t, [5]int64{}, counts)
+		})
+	}
+}
+
 func TestAuditEnrollmentPreviewIsVaultBoundAndFirstActivationOnly(t *testing.T) {
 	first, err := Open(filepath.Join(t.TempDir(), "first.db"))
 	require.NoError(t, err)

@@ -83,6 +83,34 @@ func TestAuditEnableRejectsPreviewAfterVaultMutation(t *testing.T) {
 	assert.False(t, status.Enabled)
 }
 
+func TestAuditEnableReportsStaleWhenTargetIsTrashedOrDeleted(t *testing.T) {
+	for _, hardDelete := range []bool{false, true} {
+		name := "trashed"
+		if hardDelete {
+			name = "deleted"
+		}
+		t.Run(name, func(t *testing.T) {
+			ts, s := newTestServer(t, nil)
+			taxes, err := s.Mkdir(t.Context(), s.RootID(), "Taxes")
+			require.NoError(t, err)
+			c := client.New(ts.URL, testAPIKey)
+			preview, err := c.PreviewAudit(t.Context(), client.AuditPreviewOptions{
+				NodeID: taxes.ID,
+			})
+			require.NoError(t, err)
+
+			_, _, err = s.Trash(t.Context(), taxes.ID, taxes.Revision)
+			require.NoError(t, err)
+			if hardDelete {
+				_, err = s.TrashEmpty(t.Context(), 0, true)
+				require.NoError(t, err)
+			}
+			_, err = c.EnableAudit(t.Context(), preview.PreviewToken, true)
+			require.ErrorIs(t, err, store.ErrAuditPreviewStale)
+		})
+	}
+}
+
 func TestAuditPreviewRequiresOneTarget(t *testing.T) {
 	ts, _ := newTestServer(t, nil)
 	for _, body := range []map[string]any{

@@ -158,6 +158,9 @@ func (s *Store) EnableInitialAudit(
 		if err := requireDormantAuditAuthority(ctx, tx); err != nil {
 			return err
 		}
+		if err := requireLiveAuditPreviewTarget(tx, plan.input.targetNodeID); err != nil {
+			return err
+		}
 		set, err := buildInitialAuditEnrollment(ctx, tx, s.vaultID, plan.input)
 		if err != nil {
 			return err
@@ -176,6 +179,20 @@ func (s *Store) EnableInitialAudit(
 		return err
 	})
 	return status, err
+}
+
+func requireLiveAuditPreviewTarget(tx *sql.Tx, targetNodeID int64) error {
+	target, err := nodeByIDTx(tx, targetNodeID)
+	if errors.Is(err, ErrNotFound) {
+		return ErrAuditPreviewStale
+	}
+	if err != nil {
+		return err
+	}
+	if target.TrashedAt != nil || !target.IsDir() {
+		return ErrAuditPreviewStale
+	}
+	return nil
 }
 
 // AuditStatus reports current authority and optionally the sticky membership
