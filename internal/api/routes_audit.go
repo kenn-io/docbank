@@ -65,7 +65,8 @@ func registerAuditRoutes(
 		OperationID: "enableAudit", Method: http.MethodPost, Path: "/api/v1/audit/enable",
 		Summary: "Permanently enable the exact reviewed first audit scope",
 		Description: "Consumes a one-use preview token. The acknowledgment explicitly " +
-			"accepts permanent protected history plus names, topology, tags, and provenance " +
+			"accepts permanent protected history plus names, topology, tags, assignments, " +
+			"ingests, and provenance " +
 			"across the vault, including outside the selected scope; preview again after " +
 			"any stale-token response.",
 	}, func(ctx context.Context, in *struct {

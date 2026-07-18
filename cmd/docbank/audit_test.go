@@ -55,3 +55,14 @@ func TestHumanAuditOutputQuotesPaths(t *testing.T) {
 		})
 	}
 }
+
+func TestAuditRetentionDisclosureNamesEveryMetadataClass(t *testing.T) {
+	var output bytes.Buffer
+	require.NoError(t, writeAuditPreview(&output, api.AuditEnrollmentPreview{}))
+	help := auditEnableCmd.Flags().Lookup("acknowledge-permanent-retention").Usage
+	for _, text := range []string{output.String(), help} {
+		for _, class := range []string{"names", "topology", "tags", "assignments", "ingests", "provenance"} {
+			assert.Contains(t, text, class)
+		}
+	}
+}

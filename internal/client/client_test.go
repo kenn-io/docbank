@@ -99,6 +99,57 @@ func TestRoundTrip(t *testing.T) {
 	assert.Equal(t, "/docs", restored.Path)
 }
 
+func TestAuditStatusBindsOnlyScopeTargetToEnrollmentBaseline(t *testing.T) {
+	const (
+		vaultID     = "11111111-1111-4111-8111-111111111111"
+		lineageID   = "22222222-2222-4222-8222-222222222222"
+		scopeID     = "33333333-3333-4333-8333-333333333333"
+		operationID = "44444444-4444-4444-8444-444444444444"
+	)
+	enrollmentDigest := strings.Repeat("a", 64)
+	inheritedDigest := strings.Repeat("b", 64)
+	base := api.AuditStatus{
+		Enabled: true, VaultID: vaultID, LineageID: lineageID,
+		OperationSequenceHighWater: 2, AllocationEntryCount: 2,
+		AllocationHead: strings.Repeat("c", 64),
+		Scopes: []api.AuditScopeStatus{{
+			ID: scopeID, TargetNodeID: 7, TargetPath: "/Taxes",
+			EnableOperationID: operationID, BaselineDigest: enrollmentDigest,
+			MemberCount: 2, EntryCount: 2, ChainHead: strings.Repeat("d", 64),
+		}},
+	}
+	tests := []struct {
+		name    string
+		nodeID  int64
+		path    string
+		digest  string
+		wantErr bool
+	}{
+		{name: "scope target", nodeID: 7, path: "/Taxes", digest: enrollmentDigest},
+		{name: "inherited node", nodeID: 8, path: "/Taxes/2027", digest: inheritedDigest},
+		{name: "mismatched scope target", nodeID: 7, path: "/Taxes", digest: inheritedDigest, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			status := base
+			status.Membership = &api.AuditMembershipStatus{
+				NodeID: test.nodeID, Path: test.path, Protected: true,
+				ScopeIDs: []string{scopeID}, BaselineDigests: []string{test.digest},
+			}
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(status)
+			}))
+			t.Cleanup(ts.Close)
+			_, err := client.New(ts.URL, "key").AuditStatus(t.Context(), "", test.nodeID)
+			if test.wantErr {
+				require.ErrorContains(t, err, "invalid node membership binding")
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestTagRoundTrip(t *testing.T) {
 	c, s := newClient(t, serverKey)
 	ctx := t.Context()

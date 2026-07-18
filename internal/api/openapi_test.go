@@ -47,6 +47,15 @@ func TestOpenAPIDeclaresSecurity(t *testing.T) {
 	assert.Contains(t, doc, "security:", "document-level security requirement missing")
 }
 
+func TestOpenAPIAuditEnableDisclosesCompleteRetention(t *testing.T) {
+	doc := api.NewOfflineServer().API().OpenAPI()
+	op := doc.Paths["/api/v1/audit/enable"].Post
+	require.NotNil(t, op)
+	for _, class := range []string{"names", "topology", "tags", "assignments", "ingests", "provenance"} {
+		assert.Contains(t, op.Description, class)
+	}
+}
+
 func TestOpenAPIDeclaresDigestCheckedUpload(t *testing.T) {
 	doc := api.NewOfflineServer().API().OpenAPI()
 	op := doc.Paths["/api/v1/uploads"].Post

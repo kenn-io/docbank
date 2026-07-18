@@ -138,7 +138,7 @@ func writeAuditPreview(w io.Writer, preview api.AuditEnrollmentPreview) error {
 			preview.UnresolvedTrashOrigins))
 	}
 	lines = append(lines,
-		"This commitment permanently retains protected history plus names, topology, tags, and provenance across the entire vault, including outside the selected scope.",
+		"This commitment permanently retains protected history plus names, topology, tags, assignments, ingests, and provenance across the entire vault, including outside the selected scope.",
 		"Ordinary commands cannot disable audit or purge that retained authority.",
 		"Preview expires: "+preview.ExpiresAt,
 		"To enable exactly this reviewed scope:",
@@ -243,7 +243,7 @@ func init() {
 		"one-use token returned by a fresh preview")
 	auditEnableCmd.Flags().BoolVar(&auditEnableAcknowledge,
 		"acknowledge-permanent-retention", false,
-		"confirm permanent protected history and vault-wide metadata, including names, topology, tags, and provenance outside the selected scope")
+		"confirm permanent protected history and vault-wide metadata, including names, topology, tags, assignments, ingests, and provenance outside the selected scope")
 	auditEnableCmd.Flags().BoolVar(&auditEnableJSON, "json", false, "machine-readable output")
 	auditStatusCmd.Flags().Int64Var(&auditStatusNodeID, "node-id", 0,
 		"inspect one stable node ID (alternative to path)")

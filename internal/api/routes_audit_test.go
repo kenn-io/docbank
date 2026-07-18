@@ -51,6 +51,10 @@ func TestAuditPreviewEnableAndStatusLifecycle(t *testing.T) {
 	require.Len(t, status.Scopes, 1)
 	assert.Equal(t, preview.ScopeID, status.Scopes[0].ID)
 	assert.Equal(t, preview.BaselineDigest, status.Scopes[0].BaselineDigest)
+	status, err = c.AuditStatus(t.Context(), "", taxes.ID)
+	require.NoError(t, err)
+	require.NotNil(t, status.Membership)
+	assert.Equal(t, []string{preview.BaselineDigest}, status.Membership.BaselineDigests)
 
 	status, err = c.AuditStatus(t.Context(), "/Taxes/return.txt", 0)
 	require.NoError(t, err)
