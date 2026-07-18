@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 
 	"go.kenn.io/docbank/internal/audit"
@@ -278,99 +279,15 @@ func persistAuditedMove(
 	if err != nil {
 		return err
 	}
-	topologyDigest, err := hashAuditRecord(topology)
+	effects, err := makeAuditedMovePathEffects(snapshot, resultingPaths)
 	if err != nil {
 		return err
 	}
-	effects, effectList, effectDigest, err := makeAuditedMovePathEffects(
-		values, snapshot, resultingPaths, topologyDigest,
+	return persistAuditedTopologyMutation(
+		ctx, tx, values, snapshot.authority, snapshot.scope, snapshot.nodeSequence,
+		topology, effects, snapshot.priorNodes, resultingNodes,
+		snapshot.priorSubtree, resultingSubtree,
 	)
-	if err != nil {
-		return err
-	}
-	stateChanges, err := makeAuditedMoveStateChanges(snapshot.priorNodes, resultingNodes)
-	if err != nil {
-		return err
-	}
-	events, err := makeAuditedMoveEvents(
-		values, snapshot.scope.scopeID, snapshot, resultingSubtree, effects, topologyDigest,
-	)
-	if err != nil {
-		return err
-	}
-	mutation, err := makeAuditedMoveMutation(
-		values, snapshot.authority.sequence+1, events, stateChanges,
-		topologyDigest, uint64(len(effects)), effectDigest,
-	)
-	if err != nil {
-		return err
-	}
-	mutationDigest, err := hashAuditRecord(mutation)
-	if err != nil {
-		return err
-	}
-	for _, record := range []audit.Record{topology, effectList} {
-		if err := insertAuditRecord(ctx, tx, record); err != nil {
-			return err
-		}
-	}
-	for _, event := range events {
-		if err := insertAuditRecord(ctx, tx, audit.Record{Kind: auditEventField, Fields: []audit.Field{
-			{Name: auditEventField, Value: audit.Nested(event)},
-		}}); err != nil {
-			return err
-		}
-	}
-	if err := insertAuditRecord(ctx, tx, mutation); err != nil {
-		return err
-	}
-	entryCount, err := nextAuditInteger("scope entry count", snapshot.scope.entryCount)
-	if err != nil {
-		return err
-	}
-	entry, err := makeAuditScopeChainEntry(
-		values, snapshot.scope.scopeID, entryCount, snapshot.scope.chainHead, mutationDigest.value,
-	)
-	if err != nil {
-		return err
-	}
-	scopeHead, err := hashAuditRecord(entry)
-	if err != nil {
-		return err
-	}
-	if err := insertAuditRecord(ctx, tx, entry); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE audit_scopes SET entry_count=?,chain_head=? WHERE scope_id=?`,
-		entryCount, scopeHead.text, snapshot.scope.scopeID); err != nil {
-		return fmt.Errorf("advancing audit scope %s: %w", snapshot.scope.scopeID, err)
-	}
-	allocation, err := makeAuditedMoveAllocationEntry(
-		values, snapshot.authority.sequence+1, snapshot.nodeSequence,
-		snapshot.authority.allocationHead, mutationDigest.value, topologyDigest.value,
-	)
-	if err != nil {
-		return err
-	}
-	allocationHead, err := hashAuditRecord(allocation)
-	if err != nil {
-		return err
-	}
-	if err := insertAuditRecord(ctx, tx, allocation); err != nil {
-		return err
-	}
-	allocationCount, err := nextAuditInteger(
-		"allocation entry count", snapshot.authority.allocationCount,
-	)
-	if err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE audit_authority
-		SET operation_sequence_high_water=?,allocation_entry_count=?,allocation_head=?
-		WHERE singleton=1`, snapshot.authority.sequence+1, allocationCount, allocationHead.text); err != nil {
-		return fmt.Errorf("advancing audit allocation authority: %w", err)
-	}
-	return nil
 }
 
 func makeAuditedMoveTopologyDelta(
@@ -403,33 +320,36 @@ func makeAuditedMoveTopologyDelta(
 	if err := sortAuditTopologyRecords(changes); err != nil {
 		return audit.Record{}, err
 	}
+	return makeAuditedTopologyDelta(operationID, changes), nil
+}
+
+func makeAuditedTopologyDelta(operationID audit.Value, changes []audit.Record) audit.Record {
 	return audit.Record{Kind: auditTopologyDeltaField, Fields: []audit.Field{
 		{Name: auditOperationIDField, Value: operationID},
 		{Name: "changes", Value: audit.List(auditNestedValues(changes)...)},
-	}}, nil
+	}}
 }
 
 func makeAuditedMovePathEffects(
-	values auditedMutationValues, snapshot auditedMoveSnapshot,
-	resultingPaths map[int64]string, topologyDigest auditRecordHash,
-) ([]audit.Record, audit.Record, auditRecordHash, error) {
+	snapshot auditedMoveSnapshot, resultingPaths map[int64]string,
+) ([]audit.Record, error) {
 	scopeID, err := audit.UUID(snapshot.scope.scopeID)
 	if err != nil {
-		return nil, audit.Record{}, auditRecordHash{}, err
+		return nil, err
 	}
-	live, err := audit.Text("live")
+	live, err := audit.Text(auditNodeStateLive)
 	if err != nil {
-		return nil, audit.Record{}, auditRecordHash{}, err
+		return nil, err
 	}
 	effects := make([]audit.Record, 0, len(snapshot.subtreeIDs))
 	for _, nodeID := range snapshot.subtreeIDs {
 		auditNodeID, err := positiveAuditNodeID(nodeID)
 		if err != nil {
-			return nil, audit.Record{}, auditRecordHash{}, err
+			return nil, err
 		}
 		priorPath, resultingPath := snapshot.priorPaths[nodeID], resultingPaths[nodeID]
 		if priorPath == resultingPath {
-			return nil, audit.Record{}, auditRecordHash{}, fmt.Errorf(
+			return nil, fmt.Errorf(
 				"audited move did not change path of subtree node %d", nodeID,
 			)
 		}
@@ -446,16 +366,10 @@ func makeAuditedMovePathEffects(
 			}})},
 		}})
 	}
-	list := audit.Record{Kind: "path_effect_list", Fields: []audit.Field{
-		{Name: auditOperationIDField, Value: values.operationID},
-		{Name: auditTopologyDeltaField, Value: topologyDigest.value},
-		{Name: "effects", Value: audit.List(auditNestedValues(effects)...)},
-	}}
-	digest, err := hashAuditRecord(list)
-	return effects, list, digest, err
+	return effects, nil
 }
 
-func makeAuditedMoveStateChanges(
+func makeAuditedTopologyStateChanges(
 	prior, resulting map[int64]Node,
 ) ([]audit.Record, error) {
 	changes := make([]audit.Record, 0, len(prior))
@@ -476,27 +390,28 @@ func makeAuditedMoveStateChanges(
 	return changes, nil
 }
 
-func makeAuditedMoveEvents(
-	values auditedMutationValues, scopeID string, snapshot auditedMoveSnapshot,
-	resultingSubtree map[int64]Node, effects []audit.Record, topologyDigest auditRecordHash,
+func makeAuditedPathEvents(
+	values auditedMutationValues, scopeID string, prior, resulting map[int64]Node,
+	effects []audit.Record, topologyDigest auditRecordHash,
 ) ([]audit.Record, error) {
-	if len(effects) != len(snapshot.subtreeIDs) {
-		return nil, errors.New("audited move path effects do not match its subtree")
-	}
 	events := make([]audit.Record, len(effects))
 	ordinal := uint64(0)
 	for index, effect := range effects {
-		nodeID := snapshot.subtreeIDs[index]
-		auditNodeID, err := positiveAuditNodeID(nodeID)
+		auditNodeID, err := auditUnsignedField(effect, "member_node_id")
 		if err != nil {
 			return nil, err
 		}
-		if err := requireAuditUnsigned(effect, "member_node_id", auditNodeID); err != nil {
-			return nil, err
+		if auditNodeID > math.MaxInt64 {
+			return nil, fmt.Errorf("audited path effect node %d exceeds signed node range", auditNodeID)
 		}
-		events[index], err = makeAuditedMoveEvent(
-			values, scopeID, ordinal, snapshot.priorSubtree[nodeID],
-			resultingSubtree[nodeID], effect, topologyDigest,
+		nodeID := int64(auditNodeID)
+		priorNode, priorOK := prior[nodeID]
+		resultingNode, resultingOK := resulting[nodeID]
+		if !priorOK || !resultingOK {
+			return nil, fmt.Errorf("audited path effect lacks node state for %d", nodeID)
+		}
+		events[index], err = makeAuditedPathEvent(
+			values, scopeID, ordinal, priorNode, resultingNode, effect, topologyDigest,
 		)
 		if err != nil {
 			return nil, err
@@ -506,7 +421,7 @@ func makeAuditedMoveEvents(
 	return events, nil
 }
 
-func makeAuditedMoveEvent(
+func makeAuditedPathEvent(
 	values auditedMutationValues, scopeID string, ordinal uint64,
 	prior, resulting Node, effect audit.Record, topologyDigest auditRecordHash,
 ) (audit.Record, error) {
@@ -578,7 +493,7 @@ func makeAuditedMoveEvent(
 	}}, nil
 }
 
-func makeAuditedMoveMutation(
+func makeAuditedTopologyMutation(
 	values auditedMutationValues, sequence int64, events, changes []audit.Record,
 	topologyDigest auditRecordHash, effectCount uint64, effectDigest auditRecordHash,
 ) (audit.Record, error) {
@@ -607,7 +522,7 @@ func makeAuditedMoveMutation(
 	}}, nil
 }
 
-func makeAuditedMoveAllocationEntry(
+func makeAuditedTopologyAllocationEntry(
 	values auditedMutationValues, sequence, nodeSequence int64,
 	previousHead string, mutationHash, topologyDigest audit.Value,
 ) (audit.Record, error) {

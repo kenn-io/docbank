@@ -235,7 +235,7 @@ func validateCreatedTopologyNode(
 	checks := []func() error{
 		func() error { return requireAuditUnsigned(node, metadataNodeIDField, childID) },
 		func() error { return requireAuditUnsigned(node, "parent_id", parentID) },
-		func() error { return requireAuditText(node, "state", "live") },
+		func() error { return requireAuditText(node, "state", auditNodeStateLive) },
 		func() error { return requireAuditAbsent(node, auditOriginField) },
 		func() error { return requireAuditAbsent(node, "trashed_at") },
 	}

@@ -22,6 +22,11 @@ type auditTopologyRow struct {
 	trashName   sql.NullString
 }
 
+const (
+	auditNodeStateLive  = "live"
+	auditNodeStateTrash = "trash"
+)
+
 func currentAuditTopology(ctx context.Context, tx metadataQuerier) ([]audit.Record, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT id,parent_id,name,kind,created_at,modified_at,
 		trashed_at,trash_parent,trash_name FROM nodes ORDER BY id`)
@@ -48,6 +53,21 @@ func currentAuditTopology(ctx context.Context, tx metadataQuerier) ([]audit.Reco
 	return records, nil
 }
 
+func auditTopologyForNodeTx(
+	ctx context.Context, tx metadataQuerier, nodeID int64,
+) (audit.Record, error) {
+	var row auditTopologyRow
+	err := tx.QueryRowContext(ctx, `SELECT id,parent_id,name,kind,created_at,modified_at,
+		trashed_at,trash_parent,trash_name FROM nodes WHERE id=?`, nodeID).Scan(
+		&row.id, &row.parentID, &row.name, &row.kind, &row.createdAt,
+		&row.modifiedAt, &row.trashedAt, &row.trashParent, &row.trashName,
+	)
+	if err != nil {
+		return audit.Record{}, fmt.Errorf("reading audit topology for node %d: %w", nodeID, err)
+	}
+	return topologyRecord(row)
+}
+
 func topologyRecord(row auditTopologyRow) (audit.Record, error) {
 	nodeID, err := positiveAuditNodeID(row.id)
 	if err != nil {
@@ -70,9 +90,9 @@ func topologyRecord(row auditTopologyRow) (audit.Record, error) {
 		return audit.Record{}, fmt.Errorf("encoding topology node %d modification time: %w", row.id, err)
 	}
 	trashedAt := audit.Absent()
-	state := "live"
+	state := auditNodeStateLive
 	if row.trashedAt.Valid {
-		state = "trash"
+		state = auditNodeStateTrash
 		trashedAt, err = audit.Timestamp(row.trashedAt.String)
 		if err != nil {
 			return audit.Record{}, fmt.Errorf("encoding topology node %d trash time: %w", row.id, err)
