@@ -336,8 +336,16 @@ func isAncestorTx(tx *sql.Tx, maybeAncestor, candidate int64) (bool, error) {
 // unless ifRev matches the node's current revision.
 func (s *Store) Move(ctx context.Context, id, newParentID int64, newName string, ifRev int64) (Node, error) {
 	var moved Node
-	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var err error
+		active, err := auditAuthorityActiveTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if active {
+			moved, err = s.moveAuditedTx(ctx, tx, id, newParentID, newName, ifRev)
+			return err
+		}
 		moved, err = s.moveTx(tx, id, newParentID, newName, ifRev)
 		return err
 	})
@@ -354,7 +362,7 @@ func (s *Store) Move(ctx context.Context, id, newParentID int64, newName string,
 // the new name.
 func (s *Store) MovePath(ctx context.Context, srcPath, destPath string) (Node, error) {
 	var moved Node
-	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		src, err := nodeByPath(ctx, tx, s.rootID, srcPath)
 		if err != nil {
 			return fmt.Errorf("resolving %q: %w", srcPath, err)
@@ -364,6 +372,16 @@ func (s *Store) MovePath(ctx context.Context, srcPath, destPath string) (Node, e
 		}
 		newParentID, newName, err := s.resolveMoveTargetTx(ctx, tx, destPath, src.Name)
 		if err != nil {
+			return err
+		}
+		active, err := auditAuthorityActiveTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if active {
+			moved, err = s.moveAuditedTx(
+				ctx, tx, src.ID, newParentID, newName, UnconditionalRev,
+			)
 			return err
 		}
 		moved, err = s.moveTx(tx, src.ID, newParentID, newName, UnconditionalRev)
@@ -410,6 +428,12 @@ func (s *Store) resolveMoveTargetTx(
 }
 
 func (s *Store) moveTx(tx *sql.Tx, id, newParentID int64, newName string, ifRev int64) (Node, error) {
+	return s.moveAtTx(tx, id, newParentID, newName, ifRev, nowRFC3339())
+}
+
+func (s *Store) moveAtTx(
+	tx *sql.Tx, id, newParentID int64, newName string, ifRev int64, recordedAt string,
+) (Node, error) {
 	if id == s.rootID {
 		return Node{}, ErrIsRoot
 	}
@@ -431,6 +455,9 @@ func (s *Store) moveTx(tx *sql.Tx, id, newParentID int64, newName string, ifRev 
 	if _, err := liveDirTx(tx, newParentID); err != nil {
 		return Node{}, err
 	}
+	if *n.ParentID == newParentID && n.Name == newName {
+		return n, nil
+	}
 	// The destination may not be the node itself or any of its
 	// descendants (equivalently: id may not be an ancestor of dest).
 	inCycle, err := isAncestorTx(tx, id, newParentID)
@@ -440,11 +467,10 @@ func (s *Store) moveTx(tx *sql.Tx, id, newParentID int64, newName string, ifRev 
 	if inCycle {
 		return Node{}, fmt.Errorf("moving node %d under %d: %w", id, newParentID, ErrCycle)
 	}
-	now := nowRFC3339()
 	_, err = tx.Exec(
 		`UPDATE nodes SET parent_id = ?, name = ?, revision = revision + 1,
 		        modified_at = ? WHERE id = ?`,
-		newParentID, newName, now, id)
+		newParentID, newName, recordedAt, id)
 	if s.driver.IsUniqueViolation(err) {
 		return Node{}, fmt.Errorf("moving node %d to %q: %w", id, newName, ErrExists)
 	}
@@ -452,11 +478,11 @@ func (s *Store) moveTx(tx *sql.Tx, id, newParentID int64, newName string, ifRev 
 		return Node{}, fmt.Errorf("moving node %d: %w", id, err)
 	}
 	oldParent := *n.ParentID
-	if err := bumpRevisionTx(tx, oldParent, now); err != nil {
+	if err := bumpRevisionTx(tx, oldParent, recordedAt); err != nil {
 		return Node{}, err
 	}
 	if newParentID != oldParent {
-		if err := bumpRevisionTx(tx, newParentID, now); err != nil {
+		if err := bumpRevisionTx(tx, newParentID, recordedAt); err != nil {
 			return Node{}, err
 		}
 	}

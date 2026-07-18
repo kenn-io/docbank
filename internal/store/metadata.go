@@ -781,7 +781,7 @@ var metadataHeaderFields = []string{metadataTypeField, "format", "version", audi
 var metadataRequiredFields = map[string][]string{
 	"blob":                      {metadataTypeField, "hash", "size", "created_at"},
 	"node":                      {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", "revision", "created_at", "modified_at", "trashed_at", "trash_parent", "trash_name"},
-	"content_version":           {metadataTypeField, "version_id", metadataNodeIDField, "blob_hash", "size", "mime_type", "recorded_at", "node_revision", "introduced_operation_id", "transition_kind", "source_version_id"},
+	"content_version":           {metadataTypeField, "version_id", metadataNodeIDField, "blob_hash", "size", "mime_type", auditRecordedAtField, "node_revision", "introduced_operation_id", "transition_kind", "source_version_id"},
 	metadataIngestType:          {metadataTypeField, "ingest_id", "started_at", "source_kind", "source_desc"},
 	metadataProvenanceType:      {metadataTypeField, "identity", metadataNodeIDField, "ingest_id", "original_path", "original_mtime", "supersedes"},
 	"tag":                       {metadataTypeField, "tag_id", "name", "revision"},

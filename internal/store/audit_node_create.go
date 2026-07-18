@@ -378,7 +378,7 @@ func makeAuditedCreationEvent(
 ) (audit.Record, error) {
 	identity, err := hashAuditRecord(audit.Record{Kind: "event_identity", Fields: []audit.Field{
 		{Name: auditOperationIDField, Value: values.operationID},
-		{Name: "event_ordinal", Value: audit.Unsigned(ordinal)},
+		{Name: auditEventOrdinalField, Value: audit.Unsigned(ordinal)},
 	}})
 	if err != nil {
 		return audit.Record{}, err
@@ -430,8 +430,8 @@ func makeAuditedCreationEvent(
 		{Name: "attachment_kind", Value: attachmentKind},
 		{Name: "attachment_identity", Value: attachmentIdentity},
 		{Name: "source_version_id", Value: audit.Absent()},
-		{Name: "event_ordinal", Value: audit.Unsigned(ordinal)},
-		{Name: "recorded_at", Value: values.recordedAt},
+		{Name: auditEventOrdinalField, Value: audit.Unsigned(ordinal)},
+		{Name: auditRecordedAtField, Value: values.recordedAt},
 		{Name: "prior_node_revision", Value: audit.Unsigned(0)},
 		{Name: "resulting_node_revision", Value: audit.Unsigned(1)},
 		{Name: "prior_current_version_id", Value: audit.Absent()},
@@ -462,7 +462,7 @@ func makeAuditedCreationMutation(
 		{Name: "operation_sequence", Value: audit.Unsigned(sequence)},
 		{Name: auditOperationIDField, Value: values.operationID},
 		{Name: "grouping_id", Value: groupingID},
-		{Name: "recorded_at", Value: values.recordedAt},
+		{Name: auditRecordedAtField, Value: values.recordedAt},
 		{Name: auditOriginField, Value: values.origin},
 		{Name: "agent_label", Value: audit.Absent()},
 		{Name: "events", Value: audit.List(auditNestedValues(events)...)},
