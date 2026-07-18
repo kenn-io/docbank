@@ -258,7 +258,7 @@ func validateAuditedHistory(
 			return fmt.Errorf("validating audit operation %d: %w", sequence, bindingErr)
 		}
 		if len(bindings) == 0 {
-			err = replay.applyContentReplacement(
+			err = replay.applyContentTransition(
 				vaultID, mutation, allocations[sequence], entries[sequence], events, usedEvents,
 			)
 		} else {
@@ -502,7 +502,7 @@ func auditEventRecordsByID(records []storedAuditRecord) (map[string]storedAuditR
 	return result, nil
 }
 
-func (replay *auditedHistoryReplay) applyContentReplacement(
+func (replay *auditedHistoryReplay) applyContentTransition(
 	vaultID string, mutation, allocation, scopeEntry storedAuditRecord,
 	eventRecords map[string]storedAuditRecord, usedEvents map[string]bool,
 ) error {
@@ -529,15 +529,15 @@ func (replay *auditedHistoryReplay) applyContentReplacement(
 		return err
 	}
 	if len(events) != 1 {
-		return errors.New("content-replacement mutation must contain one scope event")
+		return errors.New("content mutation must contain one scope event")
 	}
-	nodeID, postVersion, err := replay.validateContentReplacementEvent(
+	nodeID, postVersion, err := replay.validateContentTransitionEvent(
 		operationID, mutation.record, events[0], eventRecords, usedEvents,
 	)
 	if err != nil {
 		return err
 	}
-	if err := replay.validateContentReplacementStateChange(mutation.record, nodeID, postVersion); err != nil {
+	if err := replay.validateContentTransitionStateChange(mutation.record, nodeID, postVersion); err != nil {
 		return err
 	}
 	baselines, err := auditRecordListField(mutation.record, "baselines")
@@ -545,7 +545,7 @@ func (replay *auditedHistoryReplay) applyContentReplacement(
 		return err
 	}
 	if len(baselines) != 0 {
-		return errors.New("content replacement cannot bind an enrollment baseline")
+		return errors.New("content mutation cannot bind an enrollment baseline")
 	}
 	if err := requireNoChangeMutationFields(mutation.record); err != nil {
 		return err
@@ -558,10 +558,10 @@ func (replay *auditedHistoryReplay) applyContentReplacement(
 	); err != nil {
 		return err
 	}
-	return replay.applyContentReplacementState(nodeID, postVersion, mutation.record)
+	return replay.applyContentTransitionState(nodeID, postVersion, mutation.record)
 }
 
-func (replay *auditedHistoryReplay) validateContentReplacementEvent(
+func (replay *auditedHistoryReplay) validateContentTransitionEvent(
 	operationID string, mutation, event audit.Record,
 	eventRecords map[string]storedAuditRecord, usedEvents map[string]bool,
 ) (uint64, audit.Record, error) {
@@ -571,11 +571,11 @@ func (replay *auditedHistoryReplay) validateContentReplacementEvent(
 	}
 	wrapper, ok := eventRecords[eventID]
 	if !ok || usedEvents[eventID] {
-		return 0, audit.Record{}, errors.New("content replacement lacks one unique event wrapper")
+		return 0, audit.Record{}, errors.New("content mutation lacks one unique event wrapper")
 	}
 	wrapped, err := auditNestedField(wrapper.record, auditEventField)
 	if err != nil || !auditRecordEqual(wrapped, event) {
-		return 0, audit.Record{}, errors.New("content replacement event wrapper does not match mutation")
+		return 0, audit.Record{}, errors.New("content event wrapper does not match mutation")
 	}
 	usedEvents[eventID] = true
 	identityOperation, err := audit.UUID(operationID)
@@ -590,15 +590,21 @@ func (replay *auditedHistoryReplay) validateContentReplacementEvent(
 		return 0, audit.Record{}, err
 	}
 	if eventID != identity.text {
-		return 0, audit.Record{}, errors.New("content replacement event identity does not match its operation")
+		return 0, audit.Record{}, errors.New("content event identity does not match its operation")
 	}
 	nodeID, err := auditUnsignedField(event, metadataNodeIDField)
 	if err != nil || !replay.memberSet[nodeID] {
-		return 0, audit.Record{}, fmt.Errorf("content replacement targets unaudited node %d", nodeID)
+		return 0, audit.Record{}, fmt.Errorf("content mutation targets unaudited node %d", nodeID)
+	}
+	eventKind, err := auditTextField(event, "event_kind")
+	if err != nil {
+		return 0, audit.Record{}, err
+	}
+	if eventKind != "content_replace" && eventKind != "content_revert" {
+		return 0, audit.Record{}, fmt.Errorf("unsupported audited content event %q", eventKind)
 	}
 	checks := []func() error{
 		func() error { return requireAuditUUID(event, auditOperationIDField, operationID) },
-		func() error { return requireAuditText(event, "event_kind", "content_replace") },
 		func() error { return requireAuditUUID(event, auditScopeIDField, replay.scopeID) },
 		func() error { return requireAuditUnsigned(event, "event_ordinal", 0) },
 	}
@@ -608,7 +614,7 @@ func (replay *auditedHistoryReplay) validateContentReplacementEvent(
 		}
 	}
 	if err := requireAuditAbsentFields(event, "target_node_id", "attachment_kind",
-		"attachment_identity", "source_version_id", auditTopologyDeltaField, "baseline_digest"); err != nil {
+		"attachment_identity", auditTopologyDeltaField, "baseline_digest"); err != nil {
 		return 0, audit.Record{}, err
 	}
 	if err := requireMatchingEventEnvelope(mutation, event); err != nil {
@@ -634,7 +640,7 @@ func (replay *auditedHistoryReplay) validateContentReplacementEvent(
 	}
 	pre, err := auditNestedField(event, "pre")
 	if err != nil || !auditRecordEqual(pre, replay.versions[*priorVersionID]) {
-		return 0, audit.Record{}, errors.New("content replacement pre-version does not match replayed head")
+		return 0, audit.Record{}, errors.New("content pre-version does not match replayed head")
 	}
 	post, err := auditNestedField(event, "post")
 	if err != nil {
@@ -645,7 +651,7 @@ func (replay *auditedHistoryReplay) validateContentReplacementEvent(
 		return 0, audit.Record{}, err
 	}
 	if _, exists := replay.versions[postVersionID]; exists {
-		return 0, audit.Record{}, errors.New("content replacement reuses a version identity")
+		return 0, audit.Record{}, errors.New("content mutation reuses a version identity")
 	}
 	if err := requireAuditUnsigned(post, metadataNodeIDField, nodeID); err != nil {
 		return 0, audit.Record{}, err
@@ -656,10 +662,12 @@ func (replay *auditedHistoryReplay) validateContentReplacementEvent(
 	if err := requireAuditUUID(post, "introduced_operation_id", operationID); err != nil {
 		return 0, audit.Record{}, err
 	}
-	if err := requireAuditText(post, "transition_kind", "content_replace"); err != nil {
+	if err := requireAuditText(post, "transition_kind", eventKind); err != nil {
 		return 0, audit.Record{}, err
 	}
-	if err := requireAuditAbsent(post, "source_version_id"); err != nil {
+	if err := replay.validateContentTransitionSource(
+		event, post, eventKind, nodeID, *priorVersionID, priorRevision,
+	); err != nil {
 		return 0, audit.Record{}, err
 	}
 	postTime, err := auditField(post, "recorded_at")
@@ -668,7 +676,7 @@ func (replay *auditedHistoryReplay) validateContentReplacementEvent(
 	}
 	mutationTime, err := auditField(mutation, "recorded_at")
 	if err != nil || !equalAuditEnvelopeValue(postTime, mutationTime) {
-		return 0, audit.Record{}, errors.New("content replacement version time does not match its mutation")
+		return 0, audit.Record{}, errors.New("content version time does not match its mutation")
 	}
 	if err := requireAuditOptionalUUID(event, "resulting_current_version_id", &postVersionID); err != nil {
 		return 0, audit.Record{}, err
@@ -676,7 +684,73 @@ func (replay *auditedHistoryReplay) validateContentReplacementEvent(
 	return nodeID, post, nil
 }
 
-func (replay *auditedHistoryReplay) validateContentReplacementStateChange(
+func (replay *auditedHistoryReplay) validateContentTransitionSource(
+	event, post audit.Record, eventKind string,
+	nodeID uint64, priorVersionID string, priorRevision uint64,
+) error {
+	eventSourceID, err := auditOptionalUUIDField(event, "source_version_id")
+	if err != nil {
+		return err
+	}
+	postSourceID, err := auditOptionalUUIDField(post, "source_version_id")
+	if err != nil {
+		return err
+	}
+	if eventKind == "content_replace" {
+		if eventSourceID != nil || postSourceID != nil {
+			return errors.New("content replacement carries a revert source")
+		}
+		return nil
+	}
+	if eventSourceID == nil || postSourceID == nil || *eventSourceID != *postSourceID {
+		return errors.New("content revert event and version do not share one source")
+	}
+	if *eventSourceID == priorVersionID {
+		return errors.New("content revert source is already the current head")
+	}
+	source, ok := replay.versions[*eventSourceID]
+	if !ok {
+		return fmt.Errorf("content revert references missing source version %s", *eventSourceID)
+	}
+	if err := requireAuditUnsigned(source, metadataNodeIDField, nodeID); err != nil {
+		return errors.New("content revert source belongs to another node")
+	}
+	sourceRevision, err := auditUnsignedField(source, "node_revision")
+	if err != nil {
+		return err
+	}
+	if sourceRevision >= priorRevision+1 {
+		return errors.New("content revert source is not older than the resulting revision")
+	}
+	sourceHash, err := auditDigestField(source, "blob_hash")
+	if err != nil {
+		return err
+	}
+	if err := requireAuditDigest(post, "blob_hash", sourceHash); err != nil {
+		return errors.New("content revert bytes do not match its source")
+	}
+	sourceSize, err := auditUnsignedField(source, "size")
+	if err != nil {
+		return err
+	}
+	if err := requireAuditUnsigned(post, "size", sourceSize); err != nil {
+		return errors.New("content revert size does not match its source")
+	}
+	sourceMIME, err := auditField(source, "media_type")
+	if err != nil {
+		return err
+	}
+	postMIME, err := auditField(post, "media_type")
+	if err != nil {
+		return err
+	}
+	if !equalAuditEnvelopeValue(sourceMIME, postMIME) {
+		return errors.New("content revert MIME type does not match its source")
+	}
+	return nil
+}
+
+func (replay *auditedHistoryReplay) validateContentTransitionStateChange(
 	mutation audit.Record, nodeID uint64, postVersion audit.Record,
 ) error {
 	changes, err := auditRecordListField(mutation, "member_state_changes")
@@ -684,7 +758,7 @@ func (replay *auditedHistoryReplay) validateContentReplacementStateChange(
 		return err
 	}
 	if len(changes) != 1 {
-		return errors.New("content replacement must contain one member-state change")
+		return errors.New("content mutation must contain one member-state change")
 	}
 	state := replay.states[nodeID]
 	priorRevision, err := auditUnsignedField(state, "node_revision")
@@ -720,7 +794,7 @@ func (replay *auditedHistoryReplay) advanceScope(
 ) error {
 	nextCount := replay.scopeEntryCount + 1
 	if entry.index.entryCount == nil || *entry.index.entryCount != nextCount {
-		return errors.New("content replacement scope entry is out of order")
+		return errors.New("content mutation scope entry is out of order")
 	}
 	if err := requireAuditUUID(entry.record, auditVaultIDField, vaultID); err != nil {
 		return err
@@ -752,7 +826,7 @@ func (replay *auditedHistoryReplay) advanceAllocation(
 		return err
 	}
 	if entry.index.operationSequence == nil || *entry.index.operationSequence != nextCount {
-		return errors.New("content replacement allocation entry is out of order")
+		return errors.New("content mutation allocation entry is out of order")
 	}
 	checks := []func() error{
 		func() error { return requireAuditUUID(entry.record, auditVaultIDField, vaultID) },
@@ -776,7 +850,7 @@ func (replay *auditedHistoryReplay) advanceAllocation(
 		return err
 	}
 	if len(allocated) != 0 {
-		return errors.New("content replacement allocation cannot allocate node IDs")
+		return errors.New("content mutation allocation cannot allocate node IDs")
 	}
 	mutationDigest, err := hashAuditRecord(mutation.record)
 	if err != nil {
@@ -805,7 +879,7 @@ func (replay *auditedHistoryReplay) advanceAllocation(
 	return nil
 }
 
-func (replay *auditedHistoryReplay) applyContentReplacementState(
+func (replay *auditedHistoryReplay) applyContentTransitionState(
 	nodeID uint64, postVersion, mutation audit.Record,
 ) error {
 	state := replay.states[nodeID]
