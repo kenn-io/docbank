@@ -120,6 +120,9 @@ func (s *Store) previewInitialAudit(
 		if err != nil {
 			return err
 		}
+		if err := validateLiveAuditEnrollmentTarget(tx, targetNodeID); err != nil {
+			return err
+		}
 		input, err := newInitialAuditEnrollmentInput(targetNodeID, origin, agentLabel)
 		if err != nil {
 			return err
@@ -182,15 +185,23 @@ func (s *Store) EnableInitialAudit(
 }
 
 func requireLiveAuditPreviewTarget(tx *sql.Tx, targetNodeID int64) error {
+	err := validateLiveAuditEnrollmentTarget(tx, targetNodeID)
+	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrNotDir) {
+		return ErrAuditPreviewStale
+	}
+	return err
+}
+
+func validateLiveAuditEnrollmentTarget(tx *sql.Tx, targetNodeID int64) error {
 	target, err := nodeByIDTx(tx, targetNodeID)
-	if errors.Is(err, ErrNotFound) {
-		return ErrAuditPreviewStale
-	}
 	if err != nil {
-		return err
+		return fmt.Errorf("audit enrollment target %d: %w", targetNodeID, err)
 	}
-	if target.TrashedAt != nil || !target.IsDir() {
-		return ErrAuditPreviewStale
+	if target.TrashedAt != nil {
+		return fmt.Errorf("audit enrollment target %d is trashed: %w", targetNodeID, ErrNotFound)
+	}
+	if !target.IsDir() {
+		return fmt.Errorf("audit enrollment target %d: %w", targetNodeID, ErrNotDir)
 	}
 	return nil
 }
@@ -385,7 +396,10 @@ func initialAuditMetadataJSONBytes(set initialAuditEnrollmentSet) (int64, error)
 	counter := new(metadataByteCounter)
 	write := newMetadataJSONWriter(counter)
 	input := set.input
-	targetNodeID := uint64(input.targetNodeID) //nolint:gosec // positivity is checked above
+	targetNodeID, err := positiveAuditNodeID(input.targetNodeID)
+	if err != nil {
+		return 0, err
+	}
 	if err := write(metadataAuditAuthority{
 		Type: metadataAuditAuthorityType, LineageID: input.lineageID,
 		OperationSequenceHighWater: 1,

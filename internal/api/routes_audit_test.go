@@ -136,6 +136,37 @@ func TestAuditPreviewRequiresOneTarget(t *testing.T) {
 	}
 }
 
+func TestAuditPreviewRejectsMissingAndNonDirectoryTargets(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	file, err := s.CreateFile(t.Context(), s.RootID(), "return.txt", testHash("return"), 6, "text/plain")
+	require.NoError(t, err)
+	trashed, err := s.Mkdir(t.Context(), s.RootID(), "Old Taxes")
+	require.NoError(t, err)
+	_, _, err = s.Trash(t.Context(), trashed.ID, trashed.Revision)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name   string
+		body   map[string]any
+		status int
+		code   string
+	}{
+		{name: "missing ID", body: map[string]any{"node_id": int64(999_999)}, status: http.StatusNotFound, code: "not_found"},
+		{name: "trashed ID", body: map[string]any{"node_id": trashed.ID}, status: http.StatusNotFound, code: "not_found"},
+		{name: "file ID", body: map[string]any{"node_id": file.ID}, status: http.StatusUnprocessableEntity, code: "not_dir"},
+		{name: "file path", body: map[string]any{"path": "/return.txt"}, status: http.StatusUnprocessableEntity, code: "not_dir"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			resp, raw := do(t, ts, http.MethodPost, "/api/v1/audit/preview", nil, test.body)
+			assert.Equal(t, test.status, resp.StatusCode)
+			var problem api.Error
+			require.NoError(t, json.Unmarshal([]byte(raw), &problem))
+			assert.Equal(t, test.code, problem.Code)
+		})
+	}
+}
+
 func TestAuditPreviewTokenIsDaemonLocal(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	taxes, err := s.Mkdir(t.Context(), s.RootID(), "Taxes")
