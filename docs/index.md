@@ -111,7 +111,8 @@ docbank backup create --repo ~/Backups/docbank # incremental snapshot
 - **Audited history.** Opt a directory into permanent, tamper-evident
   history: every change — ingest, replacement, reversion, moves, trash and
   restore, tag changes — is recorded and `verify` independently replays it.
-  Enroll a vault's first audit scope with `docbank audit enable`; see
+  Enroll a vault's first audit scope with `docbank audit enable` (newer
+  than the v0.5.0 release; build from source to use it today); see
   [Permanent Audited History](usage/audited-history.md).
 
 ## Two ways to run it
@@ -137,8 +138,10 @@ pipeline, the virtual-tree CLI, the authenticated daemon API, stable
 content versions with verified replacement, reversion, pruning, and
 lookup by content hash (`refs`), tags, loose and packed storage with
 explicit maintenance, whole-vault integrity verification, incremental
-backup create/verify/restore, and the embedded Go API. docbank is not yet
-a stable 1.0; the [Roadmap](roadmap.md) gives the product direction.
+backup create/verify/restore, and the embedded Go API. Permanent audit
+enrollment is newer than v0.5.0 and not yet in a tagged release; it is
+available from a source build. docbank is not yet a stable 1.0; the
+[Roadmap](roadmap.md) gives the product direction.
 
 docbank belongs to a family of personal data tools alongside
 [msgvault](https://msgvault.io) (communications archive) and fotobank

@@ -49,6 +49,18 @@ to the user `PATH`. `DOCBANK_INSTALL_DIR` and `DOCBANK_VERSION` provide the
 same overrides as on Unix; set `DOCBANK_NO_MODIFY_PATH=1` to leave `PATH`
 unchanged.
 
+Both installers are maintained in the repository as `scripts/install.sh`
+and `scripts/install.ps1`; docbank.ai serves those files verbatim. Every
+downloaded archive is verified against the `SHA256SUMS` file published
+with its GitHub release before anything is installed, and the installers
+fail rather than substitute an unverified archive. If you prefer to
+bootstrap from a trust origin independent of the docbank.ai hosting, run
+the repository copy directly:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kenn-io/docbank/main/scripts/install.sh | sh
+```
+
 The installers fail closed: the archive is not extracted or installed unless
 `SHA256SUMS` is available, contains exactly one matching entry, and verifies.
 They also reject an archive that contains anything other than the expected
