@@ -6,7 +6,6 @@
 # docs build
 docs/.venv/
 docs/site/
-docs/.vercel/
 docs/zensical-public-docs.*
 docs/.zensical-build.*
 .kata.local.toml
