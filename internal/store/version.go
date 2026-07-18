@@ -154,8 +154,8 @@ func (s *Store) ReplaceContent(
 			return err
 		}
 		if audited {
-			updated, version, err = replaceAuditedContentTx(
-				ctx, tx, s, n, blobHash, size, mimeType,
+			updated, version, err = installAuditedContentVersionTx(
+				ctx, tx, s, n, blobHash, size, mimeType, "content_replace", nil,
 			)
 			return err
 		}
@@ -188,7 +188,7 @@ func (s *Store) RevertContent(
 		version ContentVersion
 		source  ContentVersion
 	)
-	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		n, err := nodeByIDTx(tx, nodeID)
 		if err != nil {
 			return err
@@ -221,6 +221,17 @@ func (s *Store) RevertContent(
 		if catalogSize != source.Size {
 			return fmt.Errorf("source version %s records %d bytes but blob %s records %d",
 				source.ID, source.Size, source.BlobHash, catalogSize)
+		}
+		audited, err := auditAuthorityActiveTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if audited {
+			updated, version, err = installAuditedContentVersionTx(
+				ctx, tx, s, n, source.BlobHash, source.Size, source.MimeType,
+				"content_revert", &source.ID,
+			)
+			return err
 		}
 		updated, version, err = installContentVersionTx(
 			tx, n, source.BlobHash, source.Size, source.MimeType, "content_revert", &source.ID,

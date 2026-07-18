@@ -33,10 +33,20 @@ func auditAuthorityActiveTx(ctx context.Context, tx *sql.Tx) (bool, error) {
 	return active, nil
 }
 
-func replaceAuditedContentTx(
+func installAuditedContentVersionTx(
 	ctx context.Context, tx *sql.Tx, store *Store, node Node,
-	blobHash string, size int64, mimeType string,
+	blobHash string, size int64, mimeType, transitionKind string, sourceVersionID *string,
 ) (Node, ContentVersion, error) {
+	if transitionKind != "content_replace" && transitionKind != "content_revert" {
+		return Node{}, ContentVersion{}, fmt.Errorf(
+			"unsupported audited content transition %q", transitionKind,
+		)
+	}
+	if (transitionKind == "content_revert") != (sourceVersionID != nil) {
+		return Node{}, ContentVersion{}, fmt.Errorf(
+			"audited %s has inconsistent source-version authority", transitionKind,
+		)
+	}
 	authority, scopes, nodeSequence, err := loadAuditedNodeAuthority(ctx, tx, node.ID)
 	if err != nil {
 		return Node{}, ContentVersion{}, err
@@ -56,12 +66,12 @@ func replaceAuditedContentTx(
 		return Node{}, ContentVersion{}, fmt.Errorf("reading audited prior content: %w", err)
 	}
 	updated, version, err := installContentVersionWithOperationTx(
-		tx, node, blobHash, size, mimeType, "content_replace", nil, operation,
+		tx, node, blobHash, size, mimeType, transitionKind, sourceVersionID, operation,
 	)
 	if err != nil {
 		return Node{}, ContentVersion{}, err
 	}
-	if err := persistAuditedContentReplacement(
+	if err := persistAuditedContentTransition(
 		ctx, tx, store.vaultID, nodeSequence, authority, scopes,
 		node, updated, prior, version,
 	); err != nil {
@@ -126,7 +136,7 @@ func nextAuditInteger(name string, value int64) (int64, error) {
 	return value + 1, nil
 }
 
-func persistAuditedContentReplacement(
+func persistAuditedContentTransition(
 	ctx context.Context, tx *sql.Tx, vaultID string, nodeSequence int64,
 	authority auditAuthorityState, scopes []auditScopeState,
 	priorNode, resultingNode Node, priorVersion, resultingVersion ContentVersion,
@@ -152,7 +162,7 @@ func persistAuditedContentReplacement(
 	}
 	events := make([]audit.Record, len(scopes))
 	for index, scope := range scopes {
-		events[index], err = makeAuditedContentReplacementEvent(
+		events[index], err = makeAuditedContentTransitionEvent(
 			values, scope.scopeID, uint64(index), priorNode, resultingNode,
 			priorRecord, resultingRecord,
 		)
@@ -164,7 +174,7 @@ func persistAuditedContentReplacement(
 	if err != nil {
 		return err
 	}
-	mutation, err := makeAuditedContentReplacementMutation(
+	mutation, err := makeAuditedContentTransitionMutation(
 		values, operationSequence, events, change,
 	)
 	if err != nil {
@@ -258,7 +268,7 @@ func makeAuditedMutationValues(
 	for _, item := range constructors {
 		value, err := item.make(item.value)
 		if err != nil {
-			return values, fmt.Errorf("encoding audited content replacement %s: %w", item.name, err)
+			return values, fmt.Errorf("encoding audited content transition %s: %w", item.name, err)
 		}
 		*item.out = value
 	}
@@ -282,13 +292,13 @@ func auditRecordForContentVersion(version ContentVersion) (audit.Record, error) 
 	)
 }
 
-func makeAuditedContentReplacementEvent(
+func makeAuditedContentTransitionEvent(
 	values auditedMutationValues, scopeID string, ordinal uint64,
 	priorNode, resultingNode Node, priorVersion, resultingVersion audit.Record,
 ) (audit.Record, error) {
 	nodeID, err := positiveAuditNodeID(priorNode.ID)
 	if err != nil || resultingNode.ID != priorNode.ID {
-		return audit.Record{}, errors.New("audited content replacement changes node identity")
+		return audit.Record{}, errors.New("audited content transition changes node identity")
 	}
 	priorRevision, err := positiveAuditRevision(priorNode.Revision)
 	if err != nil {
@@ -296,15 +306,36 @@ func makeAuditedContentReplacementEvent(
 	}
 	resultingRevision, err := positiveAuditRevision(resultingNode.Revision)
 	if err != nil || resultingRevision != priorRevision+1 {
-		return audit.Record{}, errors.New("audited content replacement has an invalid revision transition")
+		return audit.Record{}, errors.New("audited content operation has an invalid revision transition")
 	}
 	scopeValue, err := audit.UUID(scopeID)
 	if err != nil {
 		return audit.Record{}, err
 	}
-	eventKind, err := audit.Text("content_replace")
+	transitionKind, err := auditTextField(resultingVersion, "transition_kind")
 	if err != nil {
 		return audit.Record{}, err
+	}
+	sourceVersionID, err := auditOptionalUUIDField(resultingVersion, "source_version_id")
+	if err != nil {
+		return audit.Record{}, err
+	}
+	if (transitionKind == "content_revert") != (sourceVersionID != nil) ||
+		(transitionKind != "content_replace" && transitionKind != "content_revert") {
+		return audit.Record{}, fmt.Errorf(
+			"audited %s has inconsistent source-version authority", transitionKind,
+		)
+	}
+	eventKind, err := audit.Text(transitionKind)
+	if err != nil {
+		return audit.Record{}, err
+	}
+	sourceVersion := audit.Absent()
+	if sourceVersionID != nil {
+		sourceVersion, err = audit.UUID(*sourceVersionID)
+		if err != nil {
+			return audit.Record{}, err
+		}
 	}
 	identity, err := hashAuditRecord(audit.Record{Kind: "event_identity", Fields: []audit.Field{
 		{Name: auditOperationIDField, Value: values.operationID},
@@ -330,7 +361,7 @@ func makeAuditedContentReplacementEvent(
 		{Name: "target_node_id", Value: audit.Absent()},
 		{Name: "attachment_kind", Value: audit.Absent()},
 		{Name: "attachment_identity", Value: audit.Absent()},
-		{Name: "source_version_id", Value: audit.Absent()},
+		{Name: "source_version_id", Value: sourceVersion},
 		{Name: "event_ordinal", Value: audit.Unsigned(ordinal)},
 		{Name: "recorded_at", Value: values.recordedAt},
 		{Name: "prior_node_revision", Value: audit.Unsigned(priorRevision)},
@@ -387,7 +418,7 @@ func positiveAuditRevision(value int64) (uint64, error) {
 	return positiveAuditInteger("content revision", value)
 }
 
-func makeAuditedContentReplacementMutation(
+func makeAuditedContentTransitionMutation(
 	values auditedMutationValues, sequence int64,
 	events []audit.Record, change audit.Record,
 ) (audit.Record, error) {
