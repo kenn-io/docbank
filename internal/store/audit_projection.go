@@ -295,19 +295,27 @@ func appendAuditTagDefinitions(ctx context.Context, tx metadataQuerier, records 
 		if err := rows.Scan(&tagID, &name); err != nil {
 			return fmt.Errorf("scanning audit tag definition: %w", err)
 		}
-		tagValue, err := audit.UUID(tagID)
+		record, err := tagDefinitionAuditRecord(Tag{ID: tagID, Name: name})
 		if err != nil {
 			return err
 		}
-		nameValue, err := audit.Text(name)
-		if err != nil {
-			return err
-		}
-		*records = append(*records, audit.Record{Kind: "tag_definition", Fields: []audit.Field{
-			{Name: "tag_id", Value: tagValue}, {Name: "name", Value: nameValue},
-		}})
+		*records = append(*records, record)
 	}
 	return rowsError("audit tag definitions", rows)
+}
+
+func tagDefinitionAuditRecord(tag Tag) (audit.Record, error) {
+	tagValue, err := audit.UUID(tag.ID)
+	if err != nil {
+		return audit.Record{}, err
+	}
+	nameValue, err := audit.Text(tag.Name)
+	if err != nil {
+		return audit.Record{}, err
+	}
+	return audit.Record{Kind: "tag_definition", Fields: []audit.Field{
+		{Name: "tag_id", Value: tagValue}, {Name: "name", Value: nameValue},
+	}}, nil
 }
 
 func attachedAuditIdentity(record audit.Record) (audit.Record, error) {

@@ -77,17 +77,27 @@ func (s *Store) CreateTag(ctx context.Context, name string) (Tag, error) {
 	if err != nil {
 		return Tag{}, fmt.Errorf("allocating tag ID: %w", err)
 	}
-	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		_, execErr := tx.ExecContext(ctx, `INSERT INTO tags(id, name) VALUES(?, ?)`, id, name)
-		return execErr
+	created := Tag{ID: id, Name: name, Revision: 1}
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		active, err := auditAuthorityActiveTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO tags(id, name) VALUES(?, ?)`, id, name); err != nil {
+			if s.driver.IsUniqueViolation(err) {
+				return fmt.Errorf("tag %q: %w", name, ErrExists)
+			}
+			return fmt.Errorf("creating tag %q: %w", name, err)
+		}
+		if !active {
+			return nil
+		}
+		return s.persistAuditedTagCreation(ctx, tx, created)
 	})
 	if err != nil {
-		if s.driver.IsUniqueViolation(err) {
-			return Tag{}, fmt.Errorf("tag %q: %w", name, ErrExists)
-		}
-		return Tag{}, fmt.Errorf("creating tag %q: %w", name, err)
+		return Tag{}, err
 	}
-	return Tag{ID: id, Name: name, Revision: 1}, nil
+	return created, nil
 }
 
 // TagByID returns one tag by stable identity.

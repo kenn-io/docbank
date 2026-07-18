@@ -63,11 +63,7 @@ func makeAuditedIngestCreationMetadata(
 	if err != nil {
 		return auditedCreationMetadata{}, err
 	}
-	delta := audit.Record{Kind: "attached_metadata_delta", Fields: []audit.Field{
-		{Name: auditOperationIDField, Value: operationValue},
-		{Name: "changes", Value: audit.List(auditNestedValues(changes)...)},
-	}}
-	digest, err := hashAuditRecord(delta)
+	delta, digest, err := makeAttachedMetadataDelta(operationValue, changes)
 	if err != nil {
 		return auditedCreationMetadata{}, err
 	}
@@ -79,6 +75,17 @@ func makeAuditedIngestCreationMetadata(
 		groupingID: groupingID, baselineRecords: baseline, changes: changes,
 		delta: delta, deltaDigest: digest, provenance: provenanceRecord,
 	}, nil
+}
+
+func makeAttachedMetadataDelta(
+	operationID audit.Value, changes []audit.Record,
+) (audit.Record, auditRecordHash, error) {
+	delta := audit.Record{Kind: "attached_metadata_delta", Fields: []audit.Field{
+		{Name: auditOperationIDField, Value: operationID},
+		{Name: "changes", Value: audit.List(auditNestedValues(changes)...)},
+	}}
+	digest, err := hashAuditRecord(delta)
+	return delta, digest, err
 }
 
 func ingestAuditRecord(ingest metadataIngest) (audit.Record, error) {

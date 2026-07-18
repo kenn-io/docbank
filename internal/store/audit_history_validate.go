@@ -279,7 +279,9 @@ func validateAuditedHistory(
 	if err != nil {
 		return err
 	}
-	mutations, err := auditRecordsBySequence(records["canonical_mutation"], authority.sequence)
+	mutations, err := auditRecordsByOptionalSequence(
+		records["canonical_mutation"], authority.sequence,
+	)
 	if err != nil {
 		return err
 	}
@@ -305,7 +307,21 @@ func validateAuditedHistory(
 	usedPathEffectLists := map[string]bool{}
 	usedAttachmentDeltas := map[string]bool{}
 	for sequence := int64(2); sequence <= authority.sequence; sequence++ {
-		mutation := mutations[sequence]
+		allocation := allocations[sequence]
+		mutation, hasMutation := mutations[sequence]
+		if !hasMutation {
+			err = replay.applyUnauditedTagCreation(
+				vaultID, allocation, attachmentDeltas, usedAttachmentDeltas,
+			)
+			if err != nil {
+				return fmt.Errorf("validating audit operation %d: %w", sequence, err)
+			}
+			continue
+		}
+		scopeEntry, ok := entries[replay.scopeEntryCount+1]
+		if !ok {
+			return fmt.Errorf("validating audit operation %d: audit scope chain is incomplete", sequence)
+		}
 		bindings, bindingErr := auditRecordListField(mutation.record, "baselines")
 		if bindingErr != nil {
 			return fmt.Errorf("validating audit operation %d: %w", sequence, bindingErr)
@@ -322,17 +338,17 @@ func validateAuditedHistory(
 				err = attachedErr
 			} else if attachedCount != 0 {
 				err = replay.applyTagAssignment(
-					vaultID, mutation, allocations[sequence], entries[sequence],
+					vaultID, mutation, allocation, scopeEntry,
 					attachmentDeltas, events, usedAttachmentDeltas, usedEvents,
 				)
 			} else {
 				err = replay.applyContentTransition(
-					vaultID, mutation, allocations[sequence], entries[sequence], events, usedEvents,
+					vaultID, mutation, allocation, scopeEntry, events, usedEvents,
 				)
 			}
 		} else if len(bindings) != 0 {
 			err = replay.applyNodeCreation(
-				vaultID, mutation, allocations[sequence], entries[sequence],
+				vaultID, mutation, allocation, scopeEntry,
 				baselines, topologyDeltas, attachmentDeltas, events, usedBaselines,
 				usedTopologyDeltas, usedAttachmentDeltas, usedEvents,
 			)
@@ -342,19 +358,19 @@ func validateAuditedHistory(
 				err = kindErr
 			} else if kind == auditedTopologyTrash {
 				err = replay.applyNodeTrash(
-					vaultID, mutation, allocations[sequence], entries[sequence],
+					vaultID, mutation, allocation, scopeEntry,
 					topologyDeltas, pathEffectLists, events,
 					usedTopologyDeltas, usedPathEffectLists, usedEvents,
 				)
 			} else if kind == auditedTopologyRestore {
 				err = replay.applyNodeRestore(
-					vaultID, mutation, allocations[sequence], entries[sequence],
+					vaultID, mutation, allocation, scopeEntry,
 					topologyDeltas, pathEffectLists, events,
 					usedTopologyDeltas, usedPathEffectLists, usedEvents,
 				)
 			} else {
 				err = replay.applyNodeMove(
-					vaultID, mutation, allocations[sequence], entries[sequence],
+					vaultID, mutation, allocation, scopeEntry,
 					topologyDeltas, pathEffectLists, events,
 					usedTopologyDeltas, usedPathEffectLists, usedEvents,
 				)
@@ -607,6 +623,23 @@ func validateGenesisProvenanceIngests(attachments []audit.Record) error {
 func auditRecordsBySequence(
 	records []storedAuditRecord, highWater int64,
 ) (map[int64]storedAuditRecord, error) {
+	result, err := auditRecordsByOptionalSequence(records, highWater)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(result)) != highWater {
+		kind := "record"
+		if len(records) != 0 {
+			kind = records[0].record.Kind
+		}
+		return nil, fmt.Errorf("audit %s sequence is incomplete", kind)
+	}
+	return result, nil
+}
+
+func auditRecordsByOptionalSequence(
+	records []storedAuditRecord, highWater int64,
+) (map[int64]storedAuditRecord, error) {
 	result := make(map[int64]storedAuditRecord, len(records))
 	for _, record := range records {
 		if record.index.operationSequence == nil {
@@ -618,9 +651,6 @@ func auditRecordsBySequence(
 				record.record.Kind, sequence)
 		}
 		result[sequence] = record
-	}
-	if int64(len(result)) != highWater {
-		return nil, fmt.Errorf("audit %s sequence is incomplete", records[0].record.Kind)
 	}
 	return result, nil
 }
@@ -949,7 +979,7 @@ func (replay *auditedHistoryReplay) advanceScope(
 ) error {
 	nextCount := replay.scopeEntryCount + 1
 	if entry.index.entryCount == nil || *entry.index.entryCount != nextCount {
-		return errors.New("content mutation scope entry is out of order")
+		return errors.New("audited mutation scope entry is out of order")
 	}
 	if err := requireAuditUUID(entry.record, auditVaultIDField, vaultID); err != nil {
 		return err
@@ -975,56 +1005,18 @@ func (replay *auditedHistoryReplay) advanceAllocation(
 	vaultID string, operationID string,
 	mutation, entry storedAuditRecord, attachedDigest string,
 ) error {
-	nextCount := replay.allocationCount + 1
-	auditCount, err := positiveAuditInteger("allocation entry count", nextCount)
+	nextCount, err := replay.validateAllocationBase(vaultID, operationID, entry)
 	if err != nil {
 		return err
 	}
-	if entry.index.operationSequence == nil || *entry.index.operationSequence != nextCount {
-		return errors.New("audited mutation allocation entry is out of order")
-	}
-	checks := []func() error{
-		func() error { return requireAuditUUID(entry.record, auditVaultIDField, vaultID) },
-		func() error { return requireAuditUUID(entry.record, "lineage_id", replay.lineageID) },
-		func() error { return requireAuditUUID(entry.record, auditOperationIDField, operationID) },
-		func() error { return requireAuditDigest(entry.record, "previous_head", replay.allocationHead) },
-		func() error { return requireAuditUnsigned(entry.record, "operation_sequence", auditCount) },
-		func() error {
-			return requireAuditUnsigned(entry.record, "operation_sequence_high_water", auditCount)
-		},
-		func() error { return requireAuditUnsigned(entry.record, "node_id_high_water", replay.nodeHighWater) },
-		func() error { return requireAuditBool(entry.record, "has_audited_mutation", true) },
-	}
-	for _, check := range checks {
-		if err := check(); err != nil {
-			return err
-		}
-	}
-	allocated, err := auditUnsignedListField(entry.record, "allocated_node_ids")
-	if err != nil {
+	if err := requireAuditBool(entry.record, "has_audited_mutation", true); err != nil {
 		return err
-	}
-	if len(allocated) != 0 {
-		return errors.New("audited mutation allocation cannot allocate node IDs")
 	}
 	mutationDigest, err := hashAuditRecord(mutation.record)
 	if err != nil {
 		return err
 	}
 	if err := requireAuditDigest(entry.record, "mutation_hash", mutationDigest.text); err != nil {
-		return err
-	}
-	for _, field := range []string{"has_topology_change", "has_witness_change"} {
-		if err := requireAuditBool(entry.record, field, false); err != nil {
-			return err
-		}
-	}
-	if err := requireAuditUnsigned(entry.record, auditWitnessChangeCountField, 0); err != nil {
-		return err
-	}
-	if err := requireAuditAbsentFields(
-		entry.record, auditTopologyDeltaField, "witness_change_digest",
-	); err != nil {
 		return err
 	}
 	if attachedDigest == "" {
@@ -1056,6 +1048,51 @@ func (replay *auditedHistoryReplay) advanceAllocation(
 	}
 	replay.allocationCount, replay.allocationHead = nextCount, entry.digest
 	return nil
+}
+
+func (replay *auditedHistoryReplay) validateAllocationBase(
+	vaultID, operationID string, entry storedAuditRecord,
+) (int64, error) {
+	nextCount := replay.allocationCount + 1
+	auditCount, err := positiveAuditInteger("allocation entry count", nextCount)
+	if err != nil {
+		return 0, err
+	}
+	if entry.index.operationSequence == nil || *entry.index.operationSequence != nextCount {
+		return 0, errors.New("audit allocation entry is out of order")
+	}
+	checks := []func() error{
+		func() error { return requireAuditUUID(entry.record, auditVaultIDField, vaultID) },
+		func() error { return requireAuditUUID(entry.record, "lineage_id", replay.lineageID) },
+		func() error { return requireAuditUUID(entry.record, auditOperationIDField, operationID) },
+		func() error { return requireAuditDigest(entry.record, "previous_head", replay.allocationHead) },
+		func() error { return requireAuditUnsigned(entry.record, "operation_sequence", auditCount) },
+		func() error {
+			return requireAuditUnsigned(entry.record, "operation_sequence_high_water", auditCount)
+		},
+		func() error { return requireAuditUnsigned(entry.record, "node_id_high_water", replay.nodeHighWater) },
+		func() error { return requireAuditBool(entry.record, "has_topology_change", false) },
+		func() error { return requireAuditBool(entry.record, "has_witness_change", false) },
+		func() error { return requireAuditUnsigned(entry.record, auditWitnessChangeCountField, 0) },
+		func() error {
+			return requireAuditAbsentFields(
+				entry.record, auditTopologyDeltaField, "witness_change_digest",
+			)
+		},
+	}
+	for _, check := range checks {
+		if err := check(); err != nil {
+			return 0, err
+		}
+	}
+	allocated, err := auditUnsignedListField(entry.record, "allocated_node_ids")
+	if err != nil {
+		return 0, err
+	}
+	if len(allocated) != 0 {
+		return 0, errors.New("audit allocation cannot allocate node IDs")
+	}
+	return nextCount, nil
 }
 
 func (replay *auditedHistoryReplay) applyContentTransitionState(

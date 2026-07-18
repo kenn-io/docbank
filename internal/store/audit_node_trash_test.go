@@ -177,7 +177,7 @@ func TestAuditedTrashReplayRejectsOmittedDescendant(t *testing.T) {
 	)
 	topologyRecords[digest] = delta
 	_, _, err = replay.validateNodeTrashTopology(
-		mutation.record, mustAuditUUIDField(t, mutation.record, auditOperationIDField),
+		mutation.record, mustAuditOperationID(t, mutation.record),
 		topologyRecords, map[string]bool{},
 	)
 	require.ErrorContains(t, err, "complete live subtree")
@@ -197,9 +197,9 @@ func assertAuditPathState(
 	require.NoError(t, requireAuditText(value, "state", state))
 }
 
-func mustAuditUUIDField(t *testing.T, record audit.Record, name string) string {
+func mustAuditOperationID(t *testing.T, record audit.Record) string {
 	t.Helper()
-	value, err := auditUUIDField(record, name)
+	value, err := auditUUIDField(record, auditOperationIDField)
 	require.NoError(t, err)
 	return value
 }

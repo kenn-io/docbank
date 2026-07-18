@@ -168,7 +168,7 @@ func selectInitialAuditRecords(
 		}
 	}
 	if authority.sequence < 1 || authority.allocationCount != authority.sequence ||
-		int64(len(records["canonical_mutation"])) != authority.sequence ||
+		int64(len(records["canonical_mutation"])) > authority.sequence ||
 		int64(len(records["allocation_entry"])) != authority.allocationCount {
 		return nil, errors.New("audit allocation projection does not match its operation records")
 	}

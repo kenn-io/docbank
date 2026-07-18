@@ -83,17 +83,9 @@ func installAuditedContentVersionTx(
 func loadAuditedNodeAuthority(
 	ctx context.Context, tx *sql.Tx, nodeID int64,
 ) (auditAuthorityState, []auditScopeState, int64, error) {
-	var authority auditAuthorityState
-	err := tx.QueryRowContext(ctx, `SELECT lineage_id,operation_sequence_high_water,
-		allocation_entry_count,allocation_head FROM audit_authority WHERE singleton=1`).Scan(
-		&authority.lineageID, &authority.sequence,
-		&authority.allocationCount, &authority.allocationHead,
-	)
+	authority, nodeSequence, err := loadAuditAuthorityTx(ctx, tx)
 	if err != nil {
-		return authority, nil, 0, fmt.Errorf("reading audit authority: %w", err)
-	}
-	if authority.sequence != authority.allocationCount {
-		return authority, nil, 0, errors.New("audit allocation count disagrees with operation sequence")
+		return authority, nil, 0, err
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT scope.scope_id,scope.entry_count,scope.chain_head
 		FROM audit_scopes scope JOIN audit_memberships membership USING(scope_id)
@@ -116,13 +108,31 @@ func loadAuditedNodeAuthority(
 	if len(scopes) == 0 {
 		return authority, nil, 0, unsupportedAuditedNodeMutation(nodeID)
 	}
+	return authority, scopes, nodeSequence, nil
+}
+
+func loadAuditAuthorityTx(
+	ctx context.Context, tx *sql.Tx,
+) (auditAuthorityState, int64, error) {
+	var authority auditAuthorityState
+	err := tx.QueryRowContext(ctx, `SELECT lineage_id,operation_sequence_high_water,
+		allocation_entry_count,allocation_head FROM audit_authority WHERE singleton=1`).Scan(
+		&authority.lineageID, &authority.sequence,
+		&authority.allocationCount, &authority.allocationHead,
+	)
+	if err != nil {
+		return authority, 0, fmt.Errorf("reading audit authority: %w", err)
+	}
+	if authority.sequence != authority.allocationCount {
+		return authority, 0, errors.New("audit allocation count disagrees with operation sequence")
+	}
 	var nodeSequence int64
 	if err := tx.QueryRowContext(ctx,
 		`SELECT seq FROM sqlite_sequence WHERE name='nodes'`,
 	).Scan(&nodeSequence); err != nil {
-		return authority, nil, 0, fmt.Errorf("reading node ID high-water mark: %w", err)
+		return authority, 0, fmt.Errorf("reading node ID high-water mark: %w", err)
 	}
-	return authority, scopes, nodeSequence, nil
+	return authority, nodeSequence, nil
 }
 
 func unsupportedAuditedNodeMutation(nodeID int64) error {
@@ -199,14 +209,14 @@ func persistAuditedContentTransition(
 	); err != nil {
 		return err
 	}
-	allocation, err := makeAuditedMutationAllocationEntry(
+	allocation, err := makeAuditAllocationEntry(
 		values, operationSequence, nodeSequence, authority.allocationHead,
 		mutationDigest.value,
 	)
 	if err != nil {
 		return err
 	}
-	return advanceAuditedMutationAuthority(
+	return advanceAuditAuthority(
 		ctx, tx, authority, operationSequence, allocation,
 	)
 }
@@ -242,7 +252,7 @@ func advanceAuditedMutationScopes(
 	return nil
 }
 
-func advanceAuditedMutationAuthority(
+func advanceAuditAuthority(
 	ctx context.Context, tx *sql.Tx, authority auditAuthorityState,
 	operationSequence int64, allocation audit.Record,
 ) error {
@@ -497,7 +507,7 @@ func makeAuditScopeChainEntry(
 	}}, nil
 }
 
-func makeAuditedMutationAllocationEntry(
+func makeAuditAllocationEntry(
 	values auditedMutationValues, sequence, nodeSequence int64,
 	previousHead string, mutationHash audit.Value,
 ) (audit.Record, error) {
@@ -522,7 +532,7 @@ func makeAuditedMutationAllocationEntry(
 		{Name: "allocated_node_ids", Value: audit.List()},
 		{Name: "node_id_high_water", Value: audit.Unsigned(auditNodeSequence)},
 		{Name: "operation_sequence_high_water", Value: audit.Unsigned(auditSequence)},
-		{Name: "has_audited_mutation", Value: audit.Bool(true)},
+		{Name: "has_audited_mutation", Value: audit.Bool(!mutationHash.IsAbsent())},
 		{Name: "mutation_hash", Value: mutationHash},
 		{Name: "has_topology_change", Value: audit.Bool(false)},
 		{Name: auditTopologyDeltaField, Value: audit.Absent()},
@@ -533,6 +543,25 @@ func makeAuditedMutationAllocationEntry(
 		{Name: auditAttachedMetadataChangeCountField, Value: audit.Unsigned(0)},
 		{Name: "attached_metadata_change_digest", Value: audit.Absent()},
 	}}, nil
+}
+
+func addAttachedMetadataToAllocation(
+	entry audit.Record, count uint64, digest audit.Value,
+) (audit.Record, error) {
+	var err error
+	entry, err = replaceAuditRecordField(
+		entry, "has_attached_metadata_change", audit.Bool(true),
+	)
+	if err != nil {
+		return audit.Record{}, err
+	}
+	entry, err = replaceAuditRecordField(
+		entry, auditAttachedMetadataChangeCountField, audit.Unsigned(count),
+	)
+	if err != nil {
+		return audit.Record{}, err
+	}
+	return replaceAuditRecordField(entry, "attached_metadata_change_digest", digest)
 }
 
 func positiveAuditInteger(name string, value int64) (uint64, error) {
