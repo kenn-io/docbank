@@ -82,6 +82,51 @@ func TestAuditedRestoreUsesCanonicalConflictSuffix(t *testing.T) {
 	require.NoError(t, s.ValidateMetadata(t.Context()))
 }
 
+func TestAuditedRestoreAllowsUnchangedRetainedTrashOriginPath(t *testing.T) {
+	s := newAuditedMoveStore(t)
+	child, err := s.NodeByPath(t.Context(), "/Projects/Work/child.txt")
+	require.NoError(t, err)
+	_, _, err = s.Trash(t.Context(), child.ID, child.Revision)
+	require.NoError(t, err)
+	work, err := s.NodeByPath(t.Context(), "/Projects/Work")
+	require.NoError(t, err)
+	trashedWork, _, err := s.Trash(t.Context(), work.ID, work.Revision)
+	require.NoError(t, err)
+
+	restored, err := s.Restore(t.Context(), trashedWork.ID, trashedWork.Revision)
+	require.NoError(t, err)
+	assert.Equal(t, "/Projects/Work", mustNodePath(t, s, restored.ID))
+	stillTrashed, err := s.NodeByID(t.Context(), child.ID)
+	require.NoError(t, err)
+	assert.NotNil(t, stillTrashed.TrashedAt)
+	require.NoError(t, s.ValidateMetadata(t.Context()))
+}
+
+func TestAuditedRestoreRejectsConflictThatRetargetsTrashOrigin(t *testing.T) {
+	s := newAuditedMoveStore(t)
+	child, err := s.NodeByPath(t.Context(), "/Projects/Work/child.txt")
+	require.NoError(t, err)
+	_, _, err = s.Trash(t.Context(), child.ID, child.Revision)
+	require.NoError(t, err)
+	work, err := s.NodeByPath(t.Context(), "/Projects/Work")
+	require.NoError(t, err)
+	trashedWork, _, err := s.Trash(t.Context(), work.ID, work.Revision)
+	require.NoError(t, err)
+	projects, err := s.NodeByPath(t.Context(), "/Projects")
+	require.NoError(t, err)
+	_, err = s.Mkdir(t.Context(), projects.ID, "Work")
+	require.NoError(t, err)
+
+	restored, err := s.Restore(t.Context(), trashedWork.ID, trashedWork.Revision)
+	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
+	require.ErrorContains(t, err, "retained trash-origin paths")
+	assert.Zero(t, restored)
+	stillTrashed, err := s.NodeByID(t.Context(), work.ID)
+	require.NoError(t, err)
+	assert.NotNil(t, stillTrashed.TrashedAt)
+	require.NoError(t, s.ValidateMetadata(t.Context()))
+}
+
 func TestAuditedRootScopeRestoreRecordsRootParentTouch(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
@@ -216,6 +261,31 @@ func TestAuditedRestoreReplayRejectsOmittedDescendant(t *testing.T) {
 		topologyRecords, usedTopology,
 	)
 	require.ErrorContains(t, err, "complete trash subtree")
+}
+
+func TestAuditedRestoreReplayRejectsTrashSubtreeCycle(t *testing.T) {
+	s := newAuditedMoveStore(t)
+	work, err := s.NodeByPath(t.Context(), "/Projects/Work")
+	require.NoError(t, err)
+	child, err := s.NodeByPath(t.Context(), "/Projects/Work/child.txt")
+	require.NoError(t, err)
+	_, _, err = s.Trash(t.Context(), work.ID, work.Revision)
+	require.NoError(t, err)
+	topology, err := currentAuditTopology(t.Context(), s.db)
+	require.NoError(t, err)
+	index := make(map[uint64]int, len(topology))
+	for i, node := range topology {
+		nodeID := mustAuditUnsignedField(t, node, metadataNodeIDField)
+		index[nodeID] = i
+	}
+	rootID, childID := uint64(work.ID), uint64(child.ID)
+	topology[index[rootID]] = mustReplaceAuditRecordField(
+		t, topology[index[rootID]], auditParentIDField, audit.Unsigned(childID),
+	)
+	replay := auditedHistoryReplay{topology: topology, topologyIndex: index}
+
+	_, err = replay.trashedTopologySubtree(rootID)
+	require.ErrorContains(t, err, "contains a cycle")
 }
 
 func auditPathEffectsForSequence(

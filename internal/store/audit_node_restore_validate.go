@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"slices"
@@ -199,6 +200,19 @@ func (replay *auditedHistoryReplay) validateNodeRestoreTopology(
 	if err != nil {
 		return replayedTopologyMutation{}, nil, err
 	}
+	if !bytes.Equal(finalName, originName) {
+		affectsTrashOrigin, err := auditMoveAffectsTrashOrigin(
+			replay.topology, replay.memberSet, restoreRoot,
+		)
+		if err != nil {
+			return replayedTopologyMutation{}, nil, err
+		}
+		if affectsTrashOrigin {
+			return replayedTopologyMutation{}, nil, errors.New(
+				"node restore changes a retained trash-origin path without recording trash effects",
+			)
+		}
+	}
 	changedIDs := make([]uint64, 0, len(changeByID))
 	for nodeID := range changeByID {
 		if !replay.memberSet[nodeID] {
@@ -339,15 +353,21 @@ func (replay *auditedHistoryReplay) trashedTopologySubtree(root uint64) ([]uint6
 		}
 	}
 	var result []uint64
-	var add func(uint64)
-	add = func(nodeID uint64) {
+	visited := make(map[uint64]bool)
+	pending := []uint64{root}
+	for len(pending) != 0 {
+		nodeID := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		if visited[nodeID] {
+			return nil, fmt.Errorf("audit trash subtree contains a cycle at node %d", nodeID)
+		}
+		visited[nodeID] = true
 		result = append(result, nodeID)
 		slices.Sort(children[nodeID])
-		for _, child := range children[nodeID] {
-			add(child)
+		for _, child := range slices.Backward(children[nodeID]) {
+			pending = append(pending, child)
 		}
 	}
-	add(root)
 	slices.Sort(result)
 	return result, nil
 }

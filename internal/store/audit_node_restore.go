@@ -112,6 +112,32 @@ func (s *Store) prepareAuditedRestore(
 		return snapshot, unsupportedAuditedNodeMutation(node.ID)
 	}
 	scope := scopes[0]
+	if target.finalName != target.originalName {
+		scopeMembers, err := auditScopeMemberSetTx(ctx, tx, scope.scopeID)
+		if err != nil {
+			return snapshot, err
+		}
+		topology, err := currentAuditTopology(ctx, tx)
+		if err != nil {
+			return snapshot, err
+		}
+		auditNodeID, err := positiveAuditNodeID(node.ID)
+		if err != nil {
+			return snapshot, err
+		}
+		affectsTrashOrigin, err := auditMoveAffectsTrashOrigin(
+			topology, scopeMembers, auditNodeID,
+		)
+		if err != nil {
+			return snapshot, err
+		}
+		if affectsTrashOrigin {
+			return snapshot, fmt.Errorf(
+				"restoring node %d under a conflict suffix would change retained trash-origin paths: %w",
+				node.ID, ErrAuditMutationUnsupported,
+			)
+		}
+	}
 	destinationMember, err := nodeInAuditScopeTx(ctx, tx, target.destID, scope.scopeID)
 	if err != nil {
 		return snapshot, err
