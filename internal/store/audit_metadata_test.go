@@ -57,6 +57,49 @@ func TestInitialAuditAuthorityMetadataRoundTrip(t *testing.T) {
 	assert.Equal(t, int64(8), records)
 }
 
+func TestInitialAuditGenesisRejectsLiveSiblingCollision(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	seedMetadataRoundTrip(t, s)
+	projects, err := s.NodeByPath(t.Context(), "/Projects")
+	require.NoError(t, err)
+	report, err := s.NodeByPath(t.Context(), "/Projects/report.txt")
+	require.NoError(t, err)
+	other, err := s.CreateFile(
+		t.Context(), projects.ID, "other.txt", fakeHash("a724"), 10, "text/plain",
+	)
+	require.NoError(t, err)
+	seedInitialAuditAuthority(t, s, projects.ID)
+
+	authority, scope, err := loadInitialAuditProjection(t.Context(), s.db)
+	require.NoError(t, err)
+	records, err := loadInitialAuditRecords(t.Context(), s.db)
+	require.NoError(t, err)
+	initial, err := selectInitialAuditRecords(authority, scope, records)
+	require.NoError(t, err)
+	topology := initial["topology_genesis"][0]
+	nodes, err := auditRecordListField(topology.record, "nodes")
+	require.NoError(t, err)
+	for index, node := range nodes {
+		if mustAuditUnsignedField(t, node, metadataNodeIDField) != uint64(report.ID) {
+			continue
+		}
+		nodes[index] = mustReplaceAuditRecordField(
+			t, node, "name", audit.Bytes([]byte(other.Name)),
+		)
+	}
+	topology.record = mustReplaceAuditRecordField(
+		t, topology.record, "nodes", audit.List(auditNestedValues(nodes)...),
+	)
+
+	err = validateInitialGenesis(
+		s.VaultID(), authority, topology,
+		initial["attached_metadata_genesis"][0], initial["allocation_genesis"][0],
+	)
+	require.ErrorContains(t, err, "same parent and name")
+}
+
 func TestInitialAuditAuthorityImportRejectsCorruptionAndRollsBack(t *testing.T) {
 	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)

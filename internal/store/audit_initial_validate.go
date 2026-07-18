@@ -270,6 +270,9 @@ func validateInitialGenesis(
 	if err != nil {
 		return err
 	}
+	if err := validateReplayedAuditTopology(storedTopology); err != nil {
+		return fmt.Errorf("validating audit topology genesis: %w", err)
+	}
 	storedAttachments, err := auditRecordListField(attachments.record, "records")
 	if err != nil {
 		return err
