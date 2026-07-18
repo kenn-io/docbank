@@ -1,9 +1,9 @@
 ---
-title: Embedding Docbank in Go
+title: Embed in Go
 description: Own one or more independently rooted Docbank vaults inside a Go application, with CGO or pure-Go SQLite.
 ---
 
-# Embedding Docbank in Go
+# Embed in Go
 
 Go applications can use Docbank as an in-process document store without
 starting or discovering a daemon. An embedded vault uses the same virtual tree,

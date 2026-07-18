@@ -22,11 +22,17 @@ additionally requires:
 
 ## Install a release
 
+!!! info "Current tagged release"
+    v0.5.0 publishes Linux, macOS, and Windows archives for amd64 and arm64
+    with SHA-256 checksums. The shell and PowerShell installers select the
+    native archive and verify it against `SHA256SUMS` before installing,
+    failing rather than substituting an incompatible or unverified archive.
+
 On Linux or macOS, the installer selects the native archive and installs
 `docbank` to `~/.local/bin` by default:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/kenn-io/docbank/main/scripts/install.sh | sh
+curl -fsSL https://docbank.ai/install.sh | sh
 ```
 
 Set `DOCBANK_INSTALL_DIR` to choose another destination. Set
@@ -35,13 +41,25 @@ Set `DOCBANK_INSTALL_DIR` to choose another destination. Set
 On Windows, run the PowerShell installer:
 
 ```powershell
-irm https://raw.githubusercontent.com/kenn-io/docbank/main/scripts/install.ps1 | iex
+irm https://docbank.ai/install.ps1 | iex
 ```
 
 It installs to `%LOCALAPPDATA%\Programs\docbank\bin` and adds that directory
 to the user `PATH`. `DOCBANK_INSTALL_DIR` and `DOCBANK_VERSION` provide the
 same overrides as on Unix; set `DOCBANK_NO_MODIFY_PATH=1` to leave `PATH`
 unchanged.
+
+Both installers are maintained in the repository as `scripts/install.sh`
+and `scripts/install.ps1`; docbank.ai serves those files verbatim. Every
+downloaded archive is verified against the `SHA256SUMS` file published
+with its GitHub release before anything is installed, and the installers
+fail rather than substitute an unverified archive. If you prefer to
+bootstrap from a trust origin independent of the docbank.ai hosting, run
+the repository copy directly:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kenn-io/docbank/main/scripts/install.sh | sh
+```
 
 The installers fail closed: the archive is not extracted or installed unless
 `SHA256SUMS` is available, contains exactly one matching entry, and verifies.

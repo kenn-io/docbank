@@ -97,13 +97,18 @@ The schema and metadata-v1 codec can persist one complete first audit
 enrollment: topology and attached-metadata genesis, a shared baseline, sticky
 membership, an enrollment event, scope chain, and allocation lineage. Import
 recomputes every canonical digest and reconciles the protected closure with the
-restored current state before accepting it. No command or HTTP route can create
-a scope yet, so this authority remains dormant in ordinary vaults. Once audit
+restored current state before accepting it. A vault's first audit scope is
+created through the public enrollment workflow (`docbank audit enable`);
+until a scope is enrolled, this authority remains dormant. Once audit
 authority exists, the Go store rejects logical mutation classes that do not yet
-record an audit transition. Content replacement is the first implemented
-transition: its new immutable version, event, scope-chain entries, and allocation
-entry commit in the same metadata transaction. Pack layout and backup reads
-remain maintainable. The planned mutation and maintenance contract is maintained
+record an audit transition. Supported transitions — filesystem ingest, content
+replacement and reversion, in-scope moves and renames, reversible trash and
+restore, and tag creation, assignment, and rename — commit in the same
+metadata transaction as the change they record: every authority change
+advances the allocation lineage, content operations add immutable versions,
+and changes with scoped effects additionally record events and scope-chain
+entries. Pack layout and backup reads
+remain maintainable. The mutation and maintenance contract is maintained
 in [Audited History](audited-history.md).
 
 ## Structural invariants enforced in the schema

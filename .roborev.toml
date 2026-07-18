@@ -90,6 +90,28 @@ Key assumptions reviewers MUST account for:
    unsigned release checksums; DO flag any weakening beyond this
    (e.g. skipping checksum verification itself).
 
+11. INSTALLER BOOTSTRAP ORIGIN IS DELIBERATE: the documented install
+   commands fetch scripts/install.sh and scripts/install.ps1 from
+   docbank.ai, which serves the repository copies verbatim (the docs
+   build copies them into the site root). Every curl|sh bootstrap
+   trusts its origin equally — a GitHub raw URL would swap the single
+   point of failure, not remove it — and the installers verify each
+   archive against its GitHub release's SHA256SUMS before installing,
+   so a compromised site cannot silently substitute binaries, only the
+   bootstrap itself. setup.md documents the raw.githubusercontent
+   command for readers who want a trust origin independent of the
+   site's hosting. Do not re-flag docbank.ai-served install commands
+   as a trust-boundary regression; DO flag installer changes that skip
+   archive verification or make the served copy diverge from
+   scripts/.
+
+12. DOCS DESCRIBE MAIN: user-facing pages document the capabilities of
+   main, which may be newer than the newest tagged release. A
+   capability that is not yet in a tagged release must carry a release
+   qualifier where users would act on it (homepage, setup). Flagging
+   an unqualified unreleased capability is correct; demanding the
+   capability's documentation be removed entirely is not.
+
 Do NOT flag issues that only apply to public-facing, multi-tenant, or
 internet-exposed services. Focus on bugs, logic errors, data corruption
 risks, and code quality issues.

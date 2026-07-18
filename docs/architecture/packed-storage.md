@@ -103,3 +103,7 @@ operation is not by itself a product use case.
 Automatic storage maintenance and external content references are not current
 operator capabilities. Backup, replacement, reversion, and maintenance already
 use the catalog and content-hash boundary rather than private pack internals.
+
+Next: [Storage](storage.md) documents the schema and blob-store invariants
+beneath this layer; [Trash, GC, Repack & Verify](../usage/trash-and-gc.md)
+is the operator workflow above it.

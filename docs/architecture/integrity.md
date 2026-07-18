@@ -119,3 +119,7 @@ all: they are HTTP clients of the daemon. Maintenance (`gc --run`,
 `verify`, `trash empty`) is serialized against ordinary mutations by
 the daemon's in-process maintenance gate. See
 [Ownership & Concurrency](locking.md).
+
+Next: [Backup & Recovery](backup.md) covers the snapshot architecture these
+guarantees extend to; [Troubleshooting](../troubleshooting.md) applies them
+when something looks wrong.

@@ -1,9 +1,9 @@
 ---
-title: Organizing the Tree
-description: Browsing, moving, and renaming in the virtual tree.
+title: Organizing & Tagging
+description: Browsing, moving, renaming, and tagging in the virtual tree.
 ---
 
-# Organizing the Tree
+# Organizing & Tagging
 
 The folder structure you see in `ls` and `tree` is virtual — rows in
 SQLite, not directories on disk. That makes reorganization instant and
@@ -96,3 +96,6 @@ those assignments are removed.
 
 Bulk all-or-nothing moves are not available. Scripts must therefore treat each
 current `mv` as an independently committed operation.
+
+Next: find what you filed with [Searching](searching.md), or manage
+deletion and recovery with [Trash, GC, Repack & Verify](trash-and-gc.md).

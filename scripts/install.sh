@@ -1,6 +1,6 @@
 #!/bin/sh
 # Install the latest docbank release on Linux or macOS.
-# Usage: curl -fsSL https://raw.githubusercontent.com/kenn-io/docbank/main/scripts/install.sh | sh
+# Usage: curl -fsSL https://docbank.ai/install.sh | sh
 
 set -eu
 

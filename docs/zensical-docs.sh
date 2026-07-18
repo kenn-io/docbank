@@ -133,6 +133,10 @@ if [[ -n "$symlinks" ]]; then
   exit 1
 fi
 
+# The installers are published at the site root (docbank.ai/install.sh);
+# the repo's scripts/ directory remains their single source of truth.
+cp "$repo_root/scripts/install.sh" "$repo_root/scripts/install.ps1" "$tmp_docs/"
+
 awk -v docs_dir="$tmp_docs_name" -v site_dir="$site_config_dir" '
   $0 == "docs_dir = \"docs\"" {
     print "docs_dir = \"" docs_dir "\""
