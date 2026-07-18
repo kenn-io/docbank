@@ -340,7 +340,7 @@ func requireLiveDirectoryTopology(topology []audit.Record, nodeID uint64) error 
 		if err := requireAuditText(node, "node_kind", nodeKindDir); err != nil {
 			return err
 		}
-		return requireAuditText(node, "state", auditNodeStateLive)
+		return requireAuditText(node, auditStateField, auditNodeStateLive)
 	}
 	return fmt.Errorf("node move parent %d is absent from topology", nodeID)
 }
@@ -417,11 +417,11 @@ func (replay *auditedHistoryReplay) deriveNodeMovePathEffects(
 		effects = append(effects, audit.Record{Kind: "path_effect", Fields: []audit.Field{
 			{Name: auditScopeIDField, Value: scopeID},
 			{Name: "member_node_id", Value: audit.Unsigned(nodeID)},
-			{Name: "old", Value: audit.Nested(audit.Record{Kind: "path_state", Fields: []audit.Field{
-				{Name: "path", Value: audit.Bytes(priorPath)}, {Name: "state", Value: live},
+			{Name: "old", Value: audit.Nested(audit.Record{Kind: auditPathStateKind, Fields: []audit.Field{
+				{Name: auditPathField, Value: audit.Bytes(priorPath)}, {Name: auditStateField, Value: live},
 			}})},
-			{Name: "new", Value: audit.Nested(audit.Record{Kind: "path_state", Fields: []audit.Field{
-				{Name: "path", Value: audit.Bytes(postPath)}, {Name: "state", Value: live},
+			{Name: "new", Value: audit.Nested(audit.Record{Kind: auditPathStateKind, Fields: []audit.Field{
+				{Name: auditPathField, Value: audit.Bytes(postPath)}, {Name: auditStateField, Value: live},
 			}})},
 		}})
 	}
@@ -436,7 +436,7 @@ func auditLivePath(
 		return nil, false, fmt.Errorf("audit topology lacks node %d", nodeID)
 	}
 	current := topology[index]
-	state, err := auditTextField(current, "state")
+	state, err := auditTextField(current, auditStateField)
 	if err != nil {
 		return nil, false, err
 	}
@@ -471,7 +471,7 @@ func auditLivePath(
 			return nil, false, fmt.Errorf("audit topology node %d has missing live parent %d", id, *parentID)
 		}
 		parent := topology[parentIndex]
-		if err := requireAuditText(parent, "state", auditNodeStateLive); err != nil {
+		if err := requireAuditText(parent, auditStateField, auditNodeStateLive); err != nil {
 			return nil, false, err
 		}
 		current = parent

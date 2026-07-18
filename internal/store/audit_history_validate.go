@@ -78,7 +78,7 @@ func replayAuditTopology(topology []audit.Record) (map[uint64]replayAuditTopolog
 		if err != nil {
 			return nil, err
 		}
-		state, err := auditTextField(record, "state")
+		state, err := auditTextField(record, auditStateField)
 		if err != nil {
 			return nil, err
 		}
@@ -334,6 +334,12 @@ func validateAuditedHistory(
 					topologyDeltas, pathEffectLists, events,
 					usedTopologyDeltas, usedPathEffectLists, usedEvents,
 				)
+			} else if kind == auditedTopologyRestore {
+				err = replay.applyNodeRestore(
+					vaultID, mutation, allocations[sequence], entries[sequence],
+					topologyDeltas, pathEffectLists, events,
+					usedTopologyDeltas, usedPathEffectLists, usedEvents,
+				)
 			} else {
 				err = replay.applyNodeMove(
 					vaultID, mutation, allocations[sequence], entries[sequence],
@@ -380,8 +386,9 @@ func validateAuditedHistory(
 }
 
 const (
-	auditedTopologyMove  = "move"
-	auditedTopologyTrash = "trash"
+	auditedTopologyMove    = "move"
+	auditedTopologyTrash   = "trash"
+	auditedTopologyRestore = "restore"
 )
 
 func classifyAuditedTopologyMutation(
@@ -399,32 +406,43 @@ func classifyAuditedTopologyMutation(
 	if err != nil {
 		return "", err
 	}
-	kind := auditedTopologyMove
+	var sawTrash, sawRestore bool
 	for _, change := range changes {
 		pre, preErr := auditNestedField(change, "pre")
 		post, postErr := auditNestedField(change, "post")
 		if preErr != nil || postErr != nil {
 			return "", errors.New("topology mutation requires complete pre/post states")
 		}
-		preState, err := auditTextField(pre, "state")
+		preState, err := auditTextField(pre, auditStateField)
 		if err != nil {
 			return "", err
 		}
-		postState, err := auditTextField(post, "state")
+		postState, err := auditTextField(post, auditStateField)
 		if err != nil {
 			return "", err
 		}
 		switch {
 		case preState == auditNodeStateLive && postState == auditNodeStateLive:
 		case preState == auditNodeStateLive && postState == auditNodeStateTrash:
-			kind = auditedTopologyTrash
+			sawTrash = true
+		case preState == auditNodeStateTrash && postState == auditNodeStateLive:
+			sawRestore = true
 		default:
 			return "", fmt.Errorf(
 				"unsupported audited topology state transition %s to %s", preState, postState,
 			)
 		}
 	}
-	return kind, nil
+	if sawTrash && sawRestore {
+		return "", errors.New("audited topology mutation mixes trash and restore transitions")
+	}
+	if sawTrash {
+		return auditedTopologyTrash, nil
+	}
+	if sawRestore {
+		return auditedTopologyRestore, nil
+	}
+	return auditedTopologyMove, nil
 }
 
 func auditRecordsByDigest(records []storedAuditRecord) map[string]storedAuditRecord {

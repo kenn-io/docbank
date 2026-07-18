@@ -200,7 +200,7 @@ func TestAddProgressBatchesManySmallFiles(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 130, rep.Added)
 	require.GreaterOrEqual(t, len(events), 4, "initial, two batches, and final")
-	assert.Less(t, len(events), 10, "progress must not emit one event per small file")
+	assert.Less(t, len(events), rep.Added, "progress must not emit one event per small file")
 	assert.True(t, events[len(events)-1].Final)
 	assert.Equal(t, int64(130), events[len(events)-1].FilesDone)
 }

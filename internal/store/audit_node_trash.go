@@ -157,30 +157,15 @@ func (s *Store) prepareAuditedTrash(
 func makeAuditedTrashTopologyDelta(
 	operationID audit.Value, prior map[int64]Node, resulting map[int64]audit.Record,
 ) (audit.Record, error) {
-	changes := make([]audit.Record, 0, len(prior))
+	priorRecords := make(map[int64]audit.Record, len(prior))
 	for nodeID, priorNode := range prior {
-		auditNodeID, err := positiveAuditNodeID(nodeID)
-		if err != nil {
-			return audit.Record{}, err
-		}
-		post, ok := resulting[nodeID]
-		if !ok {
-			return audit.Record{}, fmt.Errorf("audited trash lacks resulting node %d", nodeID)
-		}
 		pre, err := auditTopologyForLiveNode(priorNode)
 		if err != nil {
 			return audit.Record{}, err
 		}
-		changes = append(changes, audit.Record{Kind: "topology_change", Fields: []audit.Field{
-			{Name: metadataNodeIDField, Value: audit.Unsigned(auditNodeID)},
-			{Name: "pre", Value: audit.Nested(pre)},
-			{Name: "post", Value: audit.Nested(post)},
-		}})
+		priorRecords[nodeID] = pre
 	}
-	if err := sortAuditTopologyRecords(changes); err != nil {
-		return audit.Record{}, err
-	}
-	return makeAuditedTopologyDelta(operationID, changes), nil
+	return makeAuditedTopologyRecordDelta(operationID, priorRecords, resulting)
 }
 
 func makeAuditedTrashPathEffects(snapshot auditedTrashSnapshot) ([]audit.Record, error) {
@@ -210,11 +195,11 @@ func makeAuditedTrashPathEffects(snapshot auditedTrashSnapshot) ([]audit.Record,
 		effects = append(effects, audit.Record{Kind: "path_effect", Fields: []audit.Field{
 			{Name: auditScopeIDField, Value: scopeID},
 			{Name: "member_node_id", Value: audit.Unsigned(auditNodeID)},
-			{Name: "old", Value: audit.Nested(audit.Record{Kind: "path_state", Fields: []audit.Field{
-				{Name: "path", Value: audit.Bytes([]byte(priorPath))}, {Name: "state", Value: live},
+			{Name: "old", Value: audit.Nested(audit.Record{Kind: auditPathStateKind, Fields: []audit.Field{
+				{Name: auditPathField, Value: audit.Bytes([]byte(priorPath))}, {Name: auditStateField, Value: live},
 			}})},
-			{Name: "new", Value: audit.Nested(audit.Record{Kind: "path_state", Fields: []audit.Field{
-				{Name: "path", Value: audit.Bytes(trashPath)}, {Name: "state", Value: trash},
+			{Name: "new", Value: audit.Nested(audit.Record{Kind: auditPathStateKind, Fields: []audit.Field{
+				{Name: auditPathField, Value: audit.Bytes(trashPath)}, {Name: auditStateField, Value: trash},
 			}})},
 		}})
 	}

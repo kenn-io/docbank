@@ -8,6 +8,39 @@ import (
 	"go.kenn.io/docbank/internal/audit"
 )
 
+func makeAuditedTopologyRecordDelta(
+	operationID audit.Value, prior, resulting map[int64]audit.Record,
+) (audit.Record, error) {
+	if len(prior) != len(resulting) {
+		return audit.Record{}, fmt.Errorf(
+			"audited topology transition has %d prior nodes and %d resulting nodes",
+			len(prior), len(resulting),
+		)
+	}
+	changes := make([]audit.Record, 0, len(prior))
+	for nodeID, pre := range prior {
+		auditNodeID, err := positiveAuditNodeID(nodeID)
+		if err != nil {
+			return audit.Record{}, err
+		}
+		post, ok := resulting[nodeID]
+		if !ok {
+			return audit.Record{}, fmt.Errorf(
+				"audited topology transition lacks resulting node %d", nodeID,
+			)
+		}
+		changes = append(changes, audit.Record{Kind: "topology_change", Fields: []audit.Field{
+			{Name: metadataNodeIDField, Value: audit.Unsigned(auditNodeID)},
+			{Name: "pre", Value: audit.Nested(pre)},
+			{Name: "post", Value: audit.Nested(post)},
+		}})
+	}
+	if err := sortAuditTopologyRecords(changes); err != nil {
+		return audit.Record{}, err
+	}
+	return makeAuditedTopologyDelta(operationID, changes), nil
+}
+
 // persistAuditedTopologyMutation commits the record envelope shared by
 // topology changes that affect one existing audit scope. Callers remain
 // responsible for deriving the operation-specific topology and path effects.

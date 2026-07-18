@@ -152,9 +152,17 @@ func nextFreeNameTx(tx *sql.Tx, parentID int64, name string) (string, error) {
 // matches the node's current revision.
 func (s *Store) Restore(ctx context.Context, id, ifRev int64) (Node, error) {
 	var restored Node
-	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		n, err := nodeByIDTx(tx, id)
 		if err != nil {
+			return err
+		}
+		active, err := auditAuthorityActiveTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if active {
+			restored, err = s.restoreAuditedTx(ctx, tx, n, ifRev)
 			return err
 		}
 		if n.TrashedAt == nil {
@@ -164,67 +172,89 @@ func (s *Store) Restore(ctx context.Context, id, ifRev int64) (Node, error) {
 			return fmt.Errorf("node %d at revision %d, expected %d: %w",
 				id, n.Revision, ifRev, ErrStaleRevision)
 		}
-		var trashParent sql.NullInt64
-		var trashName sql.NullString
-		if err := tx.QueryRow(
-			`SELECT trash_parent, trash_name FROM nodes WHERE id = ?`, id).
-			Scan(&trashParent, &trashName); err != nil {
-			return fmt.Errorf("reading trash origin of node %d: %w", id, err)
-		}
-		if !trashName.Valid {
-			return fmt.Errorf("node %d is not a trash root: %w", id, ErrNotTrashed)
-		}
-
-		destID := s.rootID
-		if trashParent.Valid {
-			if _, err := liveDirTx(tx, trashParent.Int64); err == nil {
-				destID = trashParent.Int64
-			} else if !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrNotDir) {
-				return err
-			}
-		}
-		finalName, err := nextFreeNameTx(tx, destID, trashName.String)
+		target, err := s.restoreTargetTx(tx, n)
 		if err != nil {
 			return err
 		}
-		now := nowRFC3339()
-		// Reattach the top node FIRST — parent, final (possibly re-suffixed)
-		// name, and liveness in one statement. Un-trashing before renaming
-		// would trip the live-sibling unique index whenever the original
-		// name was reused while this node sat in the trash.
-		if _, err := tx.Exec(
-			`UPDATE nodes SET parent_id = ?, name = ?, trashed_at = NULL,
-			        trash_parent = NULL, trash_name = NULL,
-			        revision = revision + 1, modified_at = ? WHERE id = ?`,
-			destID, finalName, now, id); err != nil {
-			return fmt.Errorf("reattaching node %d: %w", id, err)
-		}
-		// Then un-trash the descendants that share this operation's stamp.
-		// Their (parent, name) pairs cannot conflict: nothing could be
-		// created under a trashed directory in the interim.
-		if _, err := tx.Exec(`
-			WITH RECURSIVE subtree(id) AS (
-				SELECT id FROM nodes WHERE id = ?
-				UNION ALL
-				SELECT n.id FROM nodes n
-				JOIN subtree st ON n.parent_id = st.id
-				WHERE n.trashed_at = ?
-			)
-			UPDATE nodes SET trashed_at = NULL, revision = revision + 1, modified_at = ?
-			WHERE id IN (SELECT id FROM subtree) AND trashed_at = ?`,
-			id, *n.TrashedAt, now, *n.TrashedAt); err != nil {
-			return fmt.Errorf("restoring subtree of node %d: %w", id, err)
-		}
-		if err := bumpRevisionTx(tx, destID, now); err != nil {
-			return err
-		}
-		restored, err = nodeByIDTx(tx, id)
+		restored, err = s.restoreNodeTx(tx, n, target, nowRFC3339())
 		return err
 	})
 	if err != nil {
 		return Node{}, err
 	}
 	return restored, nil
+}
+
+type restoreTarget struct {
+	destID         int64
+	originParentID *int64
+	originalName   string
+	finalName      string
+}
+
+func (s *Store) restoreTargetTx(tx *sql.Tx, node Node) (restoreTarget, error) {
+	var trashParent sql.NullInt64
+	var trashName sql.NullString
+	if err := tx.QueryRow(
+		`SELECT trash_parent, trash_name FROM nodes WHERE id = ?`, node.ID,
+	).Scan(&trashParent, &trashName); err != nil {
+		return restoreTarget{}, fmt.Errorf("reading trash origin of node %d: %w", node.ID, err)
+	}
+	if !trashName.Valid {
+		return restoreTarget{}, fmt.Errorf("node %d is not a trash root: %w", node.ID, ErrNotTrashed)
+	}
+	target := restoreTarget{destID: s.rootID, originalName: trashName.String}
+	if trashParent.Valid {
+		originParentID := trashParent.Int64
+		target.originParentID = &originParentID
+		if _, err := liveDirTx(tx, originParentID); err == nil {
+			target.destID = originParentID
+		} else if !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrNotDir) {
+			return restoreTarget{}, err
+		}
+	}
+	finalName, err := nextFreeNameTx(tx, target.destID, target.originalName)
+	if err != nil {
+		return restoreTarget{}, err
+	}
+	target.finalName = finalName
+	return target, nil
+}
+
+func (s *Store) restoreNodeTx(
+	tx *sql.Tx, node Node, target restoreTarget, now string,
+) (Node, error) {
+	// Reattach the top node FIRST — parent, final (possibly re-suffixed)
+	// name, and liveness in one statement. Un-trashing before renaming
+	// would trip the live-sibling unique index whenever the original
+	// name was reused while this node sat in the trash.
+	if _, err := tx.Exec(
+		`UPDATE nodes SET parent_id = ?, name = ?, trashed_at = NULL,
+		        trash_parent = NULL, trash_name = NULL,
+		        revision = revision + 1, modified_at = ? WHERE id = ?`,
+		target.destID, target.finalName, now, node.ID); err != nil {
+		return Node{}, fmt.Errorf("reattaching node %d: %w", node.ID, err)
+	}
+	// Then un-trash the descendants that share this operation's stamp.
+	// Their (parent, name) pairs cannot conflict: nothing could be
+	// created under a trashed directory in the interim.
+	if _, err := tx.Exec(`
+		WITH RECURSIVE subtree(id) AS (
+			SELECT id FROM nodes WHERE id = ?
+			UNION ALL
+			SELECT n.id FROM nodes n
+			JOIN subtree st ON n.parent_id = st.id
+			WHERE n.trashed_at = ?
+		)
+		UPDATE nodes SET trashed_at = NULL, revision = revision + 1, modified_at = ?
+		WHERE id IN (SELECT id FROM subtree) AND trashed_at = ?`,
+		node.ID, *node.TrashedAt, now, *node.TrashedAt); err != nil {
+		return Node{}, fmt.Errorf("restoring subtree of node %d: %w", node.ID, err)
+	}
+	if err := bumpRevisionTx(tx, target.destID, now); err != nil {
+		return Node{}, err
+	}
+	return nodeByIDTx(tx, node.ID)
 }
 
 // TrashedRoots lists restorable trash roots, newest first.
