@@ -17,7 +17,7 @@ elsewhere only when they materially explain the design and are marked
 | 0 | Extract msgvault's pack/backup and packed-CAS engines into `go.kenn.io/kit` | **Implemented** (Docbank uses `kit` v0.10.0) |
 | 1 | Core: store, blob store, ingest pipeline, full CLI | **Implemented** |
 | 2a | Infrastructure: daemon, HTTP API, daemon-first CLI, self-update, release pipeline | **Implemented** |
-| 2b | Features: content versions, versioned editing, full audit, tags, watched inboxes, text extraction, ingest provenance | **In progress**: version identity, reads, verified replacement, and reversion implemented; remaining work designed |
+| 2b | Features: content versions, versioned editing, full audit, tags, watched inboxes, text extraction, ingest provenance | **In progress**: versions, tags, provenance, and first-scope audit authority implemented; watched inboxes and extraction remain |
 | 3 | Primary kit-ui web portal and focused operator TUI | Designed |
 | 4 | Backup commands over the kit engine | **Implemented**; representative-corpus hardening continues |
 
@@ -79,7 +79,7 @@ Kit unpack remains internal to tests, migrations, or a future purpose-built
 recovery workflow rather than a planned user command. Ordinary ingests continue
 to publish loose blobs; startup never performs an implicit migration.
 
-## Phase 2b — Features (designed)
+## Phase 2b — Features (in progress)
 
 Implemented foundation: every initial ingest/upload creates a stable UUIDv4
 content version and current node pointer. `docbank versions`, `docbank version`,
@@ -101,12 +101,15 @@ refs` and `GET /content-references` resolve a SHA-256 identity to
 every retaining current, historical, or trashed node/version pair. Stable tags
 are available across the CLI, authenticated API, typed client, OpenAPI, and
 metadata-v1 backup/restore authority, including bounded forward and reverse
-listings.
+listings. Permanent first-scope audit enrollment is preview-first across the
+CLI and API. Sticky membership, supported logical mutations, allocation and
+scope chains, status evidence, and JSONL backup/restore validation are
+implemented.
 
-- Full-audit directory scopes with sticky membership, complete authoritative
-  change and content-version retention, tamper-evident history, maintenance
-  refusal, and portable JSONL fidelity
-  ([design](architecture/audited-history.md))
+- Additional and overlapping audit scopes, bounded history browsing, and a
+  dedicated independent verification command
+  ([current workflow](usage/audited-history.md),
+  [model](architecture/audited-history.md))
 - Tag/MIME/date/path search filters; `POST /batch/move` bulk reorganization
 - Watched inbox directories with a stability window, landing imports
   under `/inbox/<date>/`

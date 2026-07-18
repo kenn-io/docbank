@@ -23,6 +23,7 @@ nav = [
   ]},
   {"Protect & Operate" = [
     {"Vault Lifecycle" = "usage/lifecycle.md"},
+    {"Permanent Audited History" = "usage/audited-history.md"},
     {"Trash, GC, Repack & Verify" = "usage/trash-and-gc.md"},
     {"Backup & Restore" = "usage/backup.md"},
   ]},
@@ -45,7 +46,7 @@ nav = [
     {"Daemon & Process Model" = "architecture/daemon.md"},
     {"Backup & Recovery" = "architecture/backup.md"},
     {"Integrity & Trust" = "architecture/integrity.md"},
-    {"Planned: Audited History" = "architecture/audited-history.md"},
+    {"Audited History Model" = "architecture/audited-history.md"},
   ]},
   {"Project" = [
     {"Roadmap" = "roadmap.md"},

@@ -43,6 +43,9 @@ metadata, content, and maintenance authority.
   history listing, ID-addressed retrieval, and lookup by content hash
 - Stable tags with define, rename, assign, unassign, delete, and bounded
   node/tag listings
+- Preview-first permanent audit enrollment for one directory scope, with
+  sticky retention, recorded supported mutations, status evidence, and
+  backup/restore fidelity
 - FTS5 name search (document-body extraction and search are planned)
 - Mixed loose and packed content storage with explicit pack, GC, and repack
 - Whole-vault integrity verification
@@ -61,11 +64,6 @@ capabilities listed here.
 
 Docbank supports Linux, macOS, and 64-bit Windows on amd64 and arm64. On Linux
 or macOS, install the latest release with:
-
-> **Current release:** v0.1.0 predates the complete distribution pipeline. Its
-> archives cover Linux amd64/arm64 and macOS arm64 only. Windows and macOS
-> amd64 users must build from source until the next release is published; the
-> installers fail rather than substitute an incompatible archive.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/kenn-io/docbank/main/scripts/install.sh | sh

@@ -1,16 +1,17 @@
 ---
 title: Audited History
-description: The planned permanent, tamper-evident history contract for protected directory scopes, content versions, backup, agents, the TUI, and the web portal.
+description: The permanent, tamper-evident history model for protected directory scopes, content versions, backup, agents, and future interactive clients.
 ---
 
 # Audited history
 
-!!! info "Planned — not yet implemented"
-    Docbank records immutable `content_create` and `content_replace` versions,
-    but does not yet implement audit scopes, mutation chains, or permanent
-    protected retention. This page is the definitive contract that work will
-    follow; the current ordinary version behavior is described in
-    [Editing & Versions](editing-and-versions.md).
+!!! info "Current implementation boundary"
+    Docbank implements permanent first-scope enrollment, sticky membership,
+    mutation and allocation chains for the supported changes described below,
+    JSONL backup/restore fidelity, and status inspection. Additional scopes,
+    bounded history browsing, independent verification commands, and TUI/web
+    projections remain planned. See [Permanent Audited History](../usage/audited-history.md)
+    for the current operator workflow.
 
 Full audit is an opt-in promise for records whose history matters more than
 easy reclamation: tax documents, contracts, regulated work, or an external
@@ -192,19 +193,19 @@ clients and agents, TUI, and web — requires the same two-step shape. Preview
 returns the baseline inventory, storage impact, unresolved trash origins, and
 a **vault-wide metadata-retention disclosure** described below, plus a
 short-lived server-issued token bound to the scope ID, baseline digest, vault
-preview generation, and—on first activation—the exact topology- and
+identity, and—on first activation—the exact topology- and
 attached-metadata-genesis digests behind that disclosure. Enablement requires
 that token and an explicit acknowledgment of both the scope promise and
 vault-wide disclosure; it fails if the token is expired, belongs to another
 scope, or the baseline or either genesis projection changed. A client therefore
 cannot bypass review by calling the execution operation directly.
 
-Preview tokens are one-use and held by the issuing daemon. Any intervening
+Preview tokens are one-use and held by the issuing daemon. Execution recomputes
+the complete baseline and allocation-genesis digests; any intervening
 authoritative mutation, successful enablement, or pre-activation change to a
-genesis input advances the vault preview generation and invalidates every
-outstanding token, even for a disjoint scope. Genesis inputs include repairable
-trash locators: although a later locator clear is non-authoritative, before
-genesis it can change the origin edge or unknown-origin record retained
+genesis input therefore makes the reviewed plan stale. Genesis inputs include
+repairable trash locators: although a later locator clear is non-authoritative,
+before genesis it can change the origin edge or unknown-origin record retained
 permanently. This deliberately favors a simple exact review boundary over
 concurrent enablement. Of concurrent executions, only the first matching token
 can commit.
@@ -212,21 +213,17 @@ Expiration or daemon restart discards tokens without changing the vault, and
 the client must preview again after `audit_preview_stale`.
 
 The wire token is the unpadded base64url encoding of a cryptographically random
-32-byte secret. Its stored digest is SHA-256 over the registered canonical
-`preview_token` record containing that secret and the exact scope, target,
-vault ID, baseline digest, preview generation, operation ID, lineage ID, and
-optional topology- and attached-metadata-genesis digests. Both genesis digests
-are present for first activation and both are absent after lineage already
-exists; mixed presence is invalid. Token validation decodes the secret,
-reconstructs that record from server-held state, and compares the digest; the
-raw secret never enters JSONL or a backup.
+32-byte secret. The daemon retains only its SHA-256 digest, mapped to the exact
+opaque enrollment plan and expiration. Token validation decodes and hashes the
+secret, then atomically removes the matching plan before execution. Neither the
+raw secret nor its daemon-local plan enters JSONL or a backup.
 
 For first activation, preview preallocates the random operation and lineage IDs,
 operation sequence, event timestamp, and other non-derivable inputs used by its
 baseline digest. It constructs the complete genesis projections, computes their
 registered digests, and keeps those inputs in the server-side token state. The
-displayed retention counts and serialized-byte estimates are deterministically
-derived from those exact projections. Execution recomputes the baseline,
+displayed retention counts and exact projected JSONL audit growth are
+deterministically derived from those exact projections. Execution recomputes the baseline,
 genesis digests, and disclosure under the mutation gate before accepting the
 token. Expiration before execution discards the unused identities. Accepted
 execution uses those exact values in the one SQLite enrollment transaction and
@@ -541,13 +538,13 @@ metadata values from JSONL exports or backups. Full audit does **not** retain an
 unaudited file's content bytes or versions solely for this reason, but its
 vault-wide metadata trail persists with the audit authority.
 
-Every enablement preview states this distinction in plain language and reports
-whether vault-wide lineage is newly activated or already active. On first
-activation it inventories the topology and attached-metadata genesis by record
-kind and estimated serialized bytes; confirmation explicitly accepts permanent
-metadata retention outside the selected scope. CLI/agent JSON exposes the same
-structured counts and acknowledgment requirement, and TUI/web clients may not
-hide it behind a generic confirmation dialog.
+Every enablement preview states this distinction in plain language. On first
+activation it reports topology and attached-metadata counts plus the exact
+projected JSONL growth of the authority, scope, memberships, and canonical
+record envelopes. Confirmation explicitly accepts permanent metadata retention
+outside the selected scope. CLI/agent JSON exposes the same structured counts
+and acknowledgment requirement, and TUI/web clients may not hide it behind a
+generic confirmation dialog.
 
 An external application or pseudo-folder uses the same model: an integration
 projects its collection onto a stable Docbank directory/scope reference. The
@@ -1030,7 +1027,6 @@ Hashed top-level record schemas are:
 | `scope_chain_entry` | `vault_id:uuid`, `scope_id:uuid`, `entry_count:u64`, `previous_head:?digest`, `mutation_hash:digest` |
 | `allocation_genesis` | `vault_id:uuid`, `lineage_id:uuid`, `previous_head:?digest`, `node_id_high_water:u64`, `operation_sequence_high_water:u64`, `topology_count:u64`, `topology_digest:digest`, `attached_metadata_count:u64`, `attached_metadata_digest:digest` |
 | `allocation_entry` | `vault_id:uuid`, `lineage_id:uuid`, `previous_head:digest`, `operation_sequence:u64`, `operation_id:uuid`, `allocated_node_ids:[u64]`, `node_id_high_water:u64`, `operation_sequence_high_water:u64`, `has_audited_mutation:bool`, `mutation_hash:?digest`, `has_topology_change:bool`, `topology_delta:?digest`, `has_witness_change:bool`, `witness_change_count:u64`, `witness_change_digest:?digest`, `has_attached_metadata_change:bool`, `attached_metadata_change_count:u64`, `attached_metadata_change_digest:?digest` |
-| `preview_token` | `secret:bytes`, `vault_id:uuid`, `scope_id:uuid`, `target_node_id:u64`, `baseline_digest:digest`, `preview_generation:u64`, `operation_id:uuid`, `lineage_id:uuid`, `topology_genesis_digest:?digest`, `attached_metadata_genesis_digest:?digest` |
 
 The four `has_*` booleans are the normative allocation-entry no-change markers.
 `false` requires the paired digest absent and count zero where a count exists;
@@ -1460,20 +1456,20 @@ download/open actions; richer format-aware comparison can be added later.
 
 ### CLI and agents
 
-Planned CLI concepts are `audit enable`, `audit status`, `audit history`,
-`audit verify`, and the general `versions` command. `audit enable` previews its
-baseline inventory plus structured vault-wide metadata-retention counts and
-returns a server-issued preview token by default; a separate execution supplies
-that token and the explicit disclosure acknowledgment because enrollment is
-permanent.
-Machine output uses stable scope, node, event, and version IDs and explicit
-protection state. `audit status --json` and `audit verify --json` include the
-complete evidence bundle rather than reporting only per-scope heads. The
-`audit history` command and node-timeline API return
-`audit_not_enrolled` for a node outside every audit scope rather than presenting
-an empty timeline as complete. A refused protected mutation returns
-`audit_protected` with a list of every blocking scope rather than relying on
-prose parsing.
+`audit enable` previews its baseline inventory plus structured vault-wide
+metadata-retention counts and returns a server-issued preview token by default;
+a separate execution supplies that token and the explicit disclosure
+acknowledgment because enrollment is permanent. `audit status` reports the
+vault authority and can inspect one node's sticky membership. Machine output
+uses stable scope, node, operation, lineage, and baseline identities rather
+than asking agents to parse prose.
+
+!!! info "Planned"
+    Bounded `audit history` and independent `audit verify` commands will expose
+    event timelines and terminal verification evidence. A history lookup for a
+    node outside every scope will return `audit_not_enrolled`, and refused
+    protected destruction will identify every blocking scope in structured
+    output.
 
 ### TUI
 

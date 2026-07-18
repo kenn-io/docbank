@@ -10,7 +10,7 @@ All commands operate on the vault at `~/.docbank` (override with
 stderr and produce a non-zero exit code. Virtual paths are absolute,
 `/`-separated, and case-sensitive.
 
-Every data command below (`add`, `ls`, `tree`, `cat`, `put`, `edit`, `versions`, `version`, `refs`, `revert`, `tag`, `mv`, `rm`,
+Every data command below (`add`, `ls`, `tree`, `cat`, `put`, `edit`, `versions`, `version`, `refs`, `revert`, `tag`, `audit`, `mv`, `rm`,
 `restore`, `search`, `trash`, `gc`, `verify`, `storage`, `backup`, `jobs`) talks to the `docbank`
 daemon over its HTTP API rather than opening the vault itself; if none
 is running, the command auto-starts one in the background. `docbank
@@ -312,6 +312,39 @@ assignment change advances both the node and tag revisions. `tag nodes`
 includes live and trashed nodes, but omits a path for trash because it has no
 resolvable live coordinate. List commands return at most 1000 results per page
 and JSON output includes `total`, `limit`, and `offset`.
+
+## docbank audit
+
+```text
+docbank audit enable <path> [--agent-label <label>] [--json]
+docbank audit enable --node-id <id> [--agent-label <label>] [--json]
+docbank audit enable --run --token <preview-token> --acknowledge-permanent-retention [--json]
+docbank audit status [path] [--json]
+docbank audit status --node-id <id> [--json]
+```
+
+`audit enable` permanently protects a directory scope and all retained content
+versions beneath it. Enrollment cannot be disabled. The default invocation is
+a read-only preview that reports the exact protected set, storage impact,
+baseline digest, vault-wide permanent metadata, and a one-use token. The first
+scope permanently retains enrollment-time names, topology, tags, assignments,
+ingests, and provenance across the vault, including outside the selected scope;
+unrelated content does not become a scope member. Execution is a separate
+command that accepts only that token and the explicit permanent-retention
+acknowledgment; target selectors are deliberately absent from the execution
+command.
+
+The token expires after ten minutes, is consumed by one execution attempt, and
+does not survive daemon restart. The daemon recomputes the reviewed authority
+inside the mutation boundary. If metadata or allocator state changed, it
+returns `audit_preview_stale` without enabling the scope; run a new preview.
+
+`audit status` without a selector reports vault and scope evidence. A path or
+stable node ID additionally reports whether that node has sticky audit
+membership. The current public boundary supports the first scope in a vault;
+a later `audit enable` returns `audit_already_enabled`. See
+[Permanent Audited History](usage/audited-history.md) for supported mutations
+and maintenance behavior.
 
 ## docbank mv
 

@@ -21,6 +21,7 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 		"listTags", "resolveTagByName", "getTag", "listTagNodes", "listNodeTags",
 		"createTag", "renameTag", "deleteTag", "assignTag", "unassignTag",
 		"assignTagPath", "unassignTagPath",
+		"previewAuditEnrollment", "enableAudit", "auditStatus",
 		"search", "createNode", "moveNode", "movePath", "trashNode", "trashPath", "restoreNode",
 		"storageStatus", "storagePack", "storageRepack", "ingest", "uploadFile", "listTrash", "emptyTrash", "gc", "verify",
 		"initBackupRepository", "createBackupSnapshot", "listBackupSnapshots", "listJobs"} {
@@ -44,6 +45,15 @@ func TestOpenAPIDeclaresSecurity(t *testing.T) {
 	assert.Contains(t, doc, "X-Api-Key")
 	assert.Contains(t, doc, "scheme: bearer")
 	assert.Contains(t, doc, "security:", "document-level security requirement missing")
+}
+
+func TestOpenAPIAuditEnableDisclosesCompleteRetention(t *testing.T) {
+	doc := api.NewOfflineServer().API().OpenAPI()
+	op := doc.Paths["/api/v1/audit/enable"].Post
+	require.NotNil(t, op)
+	for _, class := range []string{"names", "topology", "tags", "assignments", "ingests", "provenance"} {
+		assert.Contains(t, op.Description, class)
+	}
 }
 
 func TestOpenAPIDeclaresDigestCheckedUpload(t *testing.T) {

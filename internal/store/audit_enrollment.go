@@ -44,33 +44,16 @@ type initialAuditValues struct {
 	cause, eventKind                         audit.Value
 }
 
-// initializeAuditAuthority creates the first audit authority. It remains
-// internal until ordinary logical mutations either extend that authority or
-// fail through the shared Go mutation boundary with useful operator guidance.
+// initializeAuditAuthority creates the first authority in one store call.
+// Public callers use the preview-bound path in audit_public.go instead.
 func (s *Store) initializeAuditAuthority(
 	ctx context.Context, targetNodeID int64, origin string, agentLabel *string,
 ) (initialAuditEnrollmentResult, error) {
-	scopeID, err := newUUIDv4()
+	input, err := newInitialAuditEnrollmentInput(targetNodeID, origin, agentLabel)
 	if err != nil {
 		return initialAuditEnrollmentResult{}, err
 	}
-	operationID, err := newUUIDv4()
-	if err != nil {
-		return initialAuditEnrollmentResult{}, err
-	}
-	lineageID, err := newUUIDv4()
-	if err != nil {
-		return initialAuditEnrollmentResult{}, err
-	}
-	return s.initializeAuditAuthorityWithInput(ctx, initialAuditEnrollmentInput{
-		targetNodeID: targetNodeID,
-		scopeID:      scopeID,
-		operationID:  operationID,
-		lineageID:    lineageID,
-		recordedAt:   nowRFC3339(),
-		origin:       origin,
-		agentLabel:   agentLabel,
-	})
+	return s.initializeAuditAuthorityWithInput(ctx, input)
 }
 
 func (s *Store) initializeAuditAuthorityWithInput(
