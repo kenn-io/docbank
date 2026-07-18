@@ -22,9 +22,17 @@ func (s *Store) Trash(ctx context.Context, id, ifRev int64) (Node, string, error
 	}
 	var trashed Node
 	var origPath string
-	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		n, err := nodeByIDTx(tx, id)
 		if err != nil {
+			return err
+		}
+		active, err := auditAuthorityActiveTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if active {
+			trashed, origPath, err = s.trashAuditedTx(ctx, tx, n, ifRev)
 			return err
 		}
 		if n.TrashedAt != nil {
@@ -37,7 +45,7 @@ func (s *Store) Trash(ctx context.Context, id, ifRev int64) (Node, string, error
 		if origPath, err = pathOf(ctx, tx, id); err != nil {
 			return err
 		}
-		if err := s.trashNodeTx(tx, n); err != nil {
+		if err := s.trashNodeTx(tx, n, nowRFC3339()); err != nil {
 			return err
 		}
 		trashed, err = nodeByIDTx(tx, id)
@@ -56,7 +64,7 @@ func (s *Store) Trash(ctx context.Context, id, ifRev int64) (Node, string, error
 func (s *Store) TrashPath(ctx context.Context, path string) (Node, string, error) {
 	var trashed Node
 	var origPath string
-	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		n, err := nodeByPath(ctx, tx, s.rootID, path)
 		if err != nil {
 			return fmt.Errorf("resolving %q: %w", path, err)
@@ -64,10 +72,20 @@ func (s *Store) TrashPath(ctx context.Context, path string) (Node, string, error
 		if n.ID == s.rootID {
 			return ErrIsRoot
 		}
+		active, err := auditAuthorityActiveTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if active {
+			trashed, origPath, err = s.trashAuditedTx(
+				ctx, tx, n, UnconditionalRev,
+			)
+			return err
+		}
 		if origPath, err = pathOf(ctx, tx, n.ID); err != nil {
 			return err
 		}
-		if err := s.trashNodeTx(tx, n); err != nil {
+		if err := s.trashNodeTx(tx, n, nowRFC3339()); err != nil {
 			return err
 		}
 		trashed, err = nodeByIDTx(tx, n.ID)
@@ -81,9 +99,8 @@ func (s *Store) TrashPath(ctx context.Context, path string) (Node, string, error
 
 // trashNodeTx trashes a live node n (pre-checked by the caller) and its live
 // subtree within the caller's transaction.
-func (s *Store) trashNodeTx(tx *sql.Tx, n Node) error {
+func (s *Store) trashNodeTx(tx *sql.Tx, n Node, now string) error {
 	id := n.ID
-	now := nowRFC3339()
 	if _, err := tx.Exec(`
 			WITH RECURSIVE subtree(id) AS (
 				SELECT id FROM nodes WHERE id = ?

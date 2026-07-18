@@ -25,7 +25,7 @@ func deriveInitialAuditMembersFromRecords(
 		return nil, err
 	}
 	target, ok := nodes[targetNodeID]
-	if !ok || target.kind != nodeKindDir || target.state != "live" {
+	if !ok || target.kind != nodeKindDir || target.state != auditNodeStateLive {
 		return nil, fmt.Errorf("audit enrollment target %d must be a live directory", targetNodeID)
 	}
 	children := make(map[uint64][]uint64)
@@ -39,7 +39,7 @@ func deriveInitialAuditMembersFromRecords(
 	for changed := true; changed; {
 		changed = false
 		for nodeID, node := range nodes {
-			if node.state != "trash" || members[nodeID] {
+			if node.state != auditNodeStateTrash || members[nodeID] {
 				continue
 			}
 			adopt := node.originParent != nil && members[*node.originParent]
@@ -124,7 +124,8 @@ func validateReplayedAuditTopology(topology []audit.Record) error {
 			return err
 		}
 		if node.parentID == nil {
-			if rootID != 0 || len(nameBytes) != 0 || node.kind != nodeKindDir || node.state != "live" {
+			if rootID != 0 || len(nameBytes) != 0 || node.kind != nodeKindDir ||
+				node.state != auditNodeStateLive {
 				return errors.New("audit topology has an invalid vault root")
 			}
 			rootID = nodeID
@@ -135,11 +136,11 @@ func validateReplayedAuditTopology(topology []audit.Record) error {
 		if err != nil || normalized != name {
 			return fmt.Errorf("audit topology node %d has invalid canonical name", nodeID)
 		}
-		if node.state != "live" {
+		if node.state != auditNodeStateLive {
 			continue
 		}
 		parent, ok := nodes[*node.parentID]
-		if !ok || parent.state != "live" || parent.kind != nodeKindDir {
+		if !ok || parent.state != auditNodeStateLive || parent.kind != nodeKindDir {
 			return fmt.Errorf("live audit topology node %d has an invalid parent", nodeID)
 		}
 		key := liveSibling{parentID: *node.parentID, name: name}
@@ -162,7 +163,7 @@ func addReplayAuditDescendants(
 	children map[uint64][]uint64, members map[uint64]bool, liveOnly bool,
 ) {
 	for _, child := range children[root] {
-		if members[child] || (liveOnly && nodes[child].state != "live") {
+		if members[child] || (liveOnly && nodes[child].state != auditNodeStateLive) {
 			continue
 		}
 		members[child] = true
@@ -324,11 +325,22 @@ func validateAuditedHistory(
 				usedTopologyDeltas, usedAttachmentDeltas, usedEvents,
 			)
 		} else {
-			err = replay.applyNodeMove(
-				vaultID, mutation, allocations[sequence], entries[sequence],
-				topologyDeltas, pathEffectLists, events,
-				usedTopologyDeltas, usedPathEffectLists, usedEvents,
-			)
+			kind, kindErr := classifyAuditedTopologyMutation(mutation.record, topologyDeltas)
+			if kindErr != nil {
+				err = kindErr
+			} else if kind == auditedTopologyTrash {
+				err = replay.applyNodeTrash(
+					vaultID, mutation, allocations[sequence], entries[sequence],
+					topologyDeltas, pathEffectLists, events,
+					usedTopologyDeltas, usedPathEffectLists, usedEvents,
+				)
+			} else {
+				err = replay.applyNodeMove(
+					vaultID, mutation, allocations[sequence], entries[sequence],
+					topologyDeltas, pathEffectLists, events,
+					usedTopologyDeltas, usedPathEffectLists, usedEvents,
+				)
+			}
 		}
 		if err != nil {
 			return fmt.Errorf("validating audit operation %d: %w", sequence, err)
@@ -365,6 +377,54 @@ func validateAuditedHistory(
 		return errors.New("audit node allocation high-water mark does not match replayed history")
 	}
 	return replay.reconcileCurrentState(ctx, tx)
+}
+
+const (
+	auditedTopologyMove  = "move"
+	auditedTopologyTrash = "trash"
+)
+
+func classifyAuditedTopologyMutation(
+	mutation audit.Record, topologyRecords map[string]storedAuditRecord,
+) (string, error) {
+	digest, err := auditDigestField(mutation, auditTopologyDeltaField)
+	if err != nil {
+		return "", err
+	}
+	delta, ok := topologyRecords[digest]
+	if !ok {
+		return "", errors.New("topology mutation lacks its topology delta")
+	}
+	changes, err := auditRecordListField(delta.record, "changes")
+	if err != nil {
+		return "", err
+	}
+	kind := auditedTopologyMove
+	for _, change := range changes {
+		pre, preErr := auditNestedField(change, "pre")
+		post, postErr := auditNestedField(change, "post")
+		if preErr != nil || postErr != nil {
+			return "", errors.New("topology mutation requires complete pre/post states")
+		}
+		preState, err := auditTextField(pre, "state")
+		if err != nil {
+			return "", err
+		}
+		postState, err := auditTextField(post, "state")
+		if err != nil {
+			return "", err
+		}
+		switch {
+		case preState == auditNodeStateLive && postState == auditNodeStateLive:
+		case preState == auditNodeStateLive && postState == auditNodeStateTrash:
+			kind = auditedTopologyTrash
+		default:
+			return "", fmt.Errorf(
+				"unsupported audited topology state transition %s to %s", preState, postState,
+			)
+		}
+	}
+	return kind, nil
 }
 
 func auditRecordsByDigest(records []storedAuditRecord) map[string]storedAuditRecord {

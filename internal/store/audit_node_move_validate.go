@@ -8,7 +8,7 @@ import (
 	"go.kenn.io/docbank/internal/audit"
 )
 
-type replayedNodeMove struct {
+type replayedTopologyMutation struct {
 	topologyDigest, pathEffectDigest string
 	postTopology                     []audit.Record
 	effects                          []audit.Record
@@ -54,15 +54,20 @@ func (replay *auditedHistoryReplay) applyNodeMove(
 	if err != nil {
 		return err
 	}
-	if err := replay.validateNodeMovePathEffects(
-		mutation.record, operationID, &move, pathEffectRecords, usedPathEffects,
+	expectedEffects, err := replay.deriveNodeMovePathEffects(move.postTopology)
+	if err != nil {
+		return err
+	}
+	if err := replay.validateTopologyPathEffects(
+		mutation.record, operationID, &move, expectedEffects,
+		pathEffectRecords, usedPathEffects,
 	); err != nil {
 		return err
 	}
-	if err := replay.validateNodeMoveStateChanges(mutation.record, move.changedIDs); err != nil {
+	if err := replay.validateTopologyStateChanges(mutation.record, move.changedIDs); err != nil {
 		return err
 	}
-	if err := replay.validateNodeMoveEvents(
+	if err := replay.validateTopologyEvents(
 		mutation.record, operationID, move, eventRecords, usedEvents,
 	); err != nil {
 		return err
@@ -81,35 +86,35 @@ func (replay *auditedHistoryReplay) applyNodeMove(
 	if err := replay.advanceScope(vaultID, mutation, scopeEntry); err != nil {
 		return err
 	}
-	if err := replay.advanceNodeMoveAllocation(
+	if err := replay.advanceTopologyAllocation(
 		vaultID, operationID, mutation, allocation, move,
 	); err != nil {
 		return err
 	}
-	return replay.applyNodeMoveState(move)
+	return replay.applyTopologyState(move)
 }
 
 func (replay *auditedHistoryReplay) validateNodeMoveTopology(
 	mutation audit.Record, operationID string,
 	topologyRecords map[string]storedAuditRecord, usedTopology map[string]bool,
-) (replayedNodeMove, error) {
+) (replayedTopologyMutation, error) {
 	digest, err := auditDigestField(mutation, auditTopologyDeltaField)
 	if err != nil {
-		return replayedNodeMove{}, err
+		return replayedTopologyMutation{}, err
 	}
 	delta, ok := topologyRecords[digest]
 	if !ok || usedTopology[digest] {
-		return replayedNodeMove{}, errors.New("node move lacks one unique topology delta")
+		return replayedTopologyMutation{}, errors.New("node move lacks one unique topology delta")
 	}
 	if err := requireAuditUUID(delta.record, auditOperationIDField, operationID); err != nil {
-		return replayedNodeMove{}, err
+		return replayedTopologyMutation{}, err
 	}
 	changes, err := auditRecordListField(delta.record, "changes")
 	if err != nil {
-		return replayedNodeMove{}, err
+		return replayedTopologyMutation{}, err
 	}
 	if len(changes) < 2 || len(changes) > 3 {
-		return replayedNodeMove{}, errors.New("in-scope move topology must change two or three nodes")
+		return replayedTopologyMutation{}, errors.New("in-scope move topology must change two or three nodes")
 	}
 	postTopology := slices.Clone(replay.topology)
 	changedIDs := make([]uint64, 0, len(changes))
@@ -117,68 +122,73 @@ func (replay *auditedHistoryReplay) validateNodeMoveTopology(
 	for _, change := range changes {
 		nodeID, err := auditUnsignedField(change, metadataNodeIDField)
 		if err != nil {
-			return replayedNodeMove{}, err
+			return replayedTopologyMutation{}, err
 		}
 		if !replay.memberSet[nodeID] {
-			return replayedNodeMove{}, fmt.Errorf("in-scope move changes unaudited node %d", nodeID)
+			return replayedTopologyMutation{}, fmt.Errorf("in-scope move changes unaudited node %d", nodeID)
 		}
 		pre, preErr := optionalAuditNestedField(change, "pre")
 		post, postErr := optionalAuditNestedField(change, "post")
 		if preErr != nil || postErr != nil || pre == nil || post == nil {
-			return replayedNodeMove{}, errors.New("in-scope move requires complete topology sides")
+			return replayedTopologyMutation{}, errors.New("in-scope move requires complete topology sides")
 		}
 		index, ok := replay.topologyIndex[nodeID]
 		if !ok || !auditRecordEqual(replay.topology[index], *pre) {
-			return replayedNodeMove{}, fmt.Errorf("node move pre-state for %d does not match replay", nodeID)
+			return replayedTopologyMutation{}, fmt.Errorf("node move pre-state for %d does not match replay", nodeID)
 		}
 		pathChanged, priorParent, resultingParent, err := validateNodeMoveTopologyChange(
 			mutation, *pre, *post,
 		)
 		if err != nil {
-			return replayedNodeMove{}, err
+			return replayedTopologyMutation{}, err
 		}
 		if pathChanged {
 			if movedID != 0 {
-				return replayedNodeMove{}, errors.New("node move topology changes multiple paths directly")
+				return replayedTopologyMutation{}, errors.New("node move topology changes multiple paths directly")
 			}
 			movedID, oldParentID, newParentID = nodeID, priorParent, resultingParent
 		}
 		postTopology[index] = *post
 		changedIDs = append(changedIDs, nodeID)
 	}
+	if !slices.IsSorted(changedIDs) {
+		return replayedTopologyMutation{}, errors.New(
+			"node move topology changes are not in canonical node order",
+		)
+	}
 	if movedID == 0 || !slices.Contains(changedIDs, oldParentID) ||
 		!slices.Contains(changedIDs, newParentID) {
-		return replayedNodeMove{}, errors.New("node move topology lacks its changed parent state")
+		return replayedTopologyMutation{}, errors.New("node move topology lacks its changed parent state")
 	}
 	wantChanges := 2
 	if oldParentID != newParentID {
 		wantChanges = 3
 	}
 	if len(changes) != wantChanges {
-		return replayedNodeMove{}, errors.New("node move topology has an unexpected changed-node set")
+		return replayedTopologyMutation{}, errors.New("node move topology has an unexpected changed-node set")
 	}
 	if err := requireLiveDirectoryTopology(postTopology, oldParentID); err != nil {
-		return replayedNodeMove{}, err
+		return replayedTopologyMutation{}, err
 	}
 	if err := requireLiveDirectoryTopology(postTopology, newParentID); err != nil {
-		return replayedNodeMove{}, err
+		return replayedTopologyMutation{}, err
 	}
 	affectsTrashOrigin, err := auditMoveAffectsTrashOrigin(
 		replay.topology, replay.memberSet, movedID,
 	)
 	if err != nil {
-		return replayedNodeMove{}, err
+		return replayedTopologyMutation{}, err
 	}
 	if affectsTrashOrigin {
-		return replayedNodeMove{}, errors.New(
+		return replayedTopologyMutation{}, errors.New(
 			"node move changes a retained trash-origin path without recording trash effects",
 		)
 	}
 	if err := validateReplayedAuditTopology(postTopology); err != nil {
-		return replayedNodeMove{}, fmt.Errorf("validating node move topology: %w", err)
+		return replayedTopologyMutation{}, fmt.Errorf("validating node move topology: %w", err)
 	}
 	usedTopology[digest] = true
-	return replayedNodeMove{
+	return replayedTopologyMutation{
 		topologyDigest: digest, postTopology: postTopology, changedIDs: changedIDs,
 	}, nil
 }
@@ -330,14 +340,15 @@ func requireLiveDirectoryTopology(topology []audit.Record, nodeID uint64) error 
 		if err := requireAuditText(node, "node_kind", nodeKindDir); err != nil {
 			return err
 		}
-		return requireAuditText(node, "state", "live")
+		return requireAuditText(node, "state", auditNodeStateLive)
 	}
 	return fmt.Errorf("node move parent %d is absent from topology", nodeID)
 }
 
-func (replay *auditedHistoryReplay) validateNodeMovePathEffects(
-	mutation audit.Record, operationID string, move *replayedNodeMove,
-	pathEffectRecords map[string]storedAuditRecord, usedPathEffects map[string]bool,
+func (replay *auditedHistoryReplay) validateTopologyPathEffects(
+	mutation audit.Record, operationID string, transition *replayedTopologyMutation,
+	expected []audit.Record, pathEffectRecords map[string]storedAuditRecord,
+	usedPathEffects map[string]bool,
 ) error {
 	digest, err := auditDigestField(mutation, "path_effect_digest")
 	if err != nil {
@@ -345,24 +356,22 @@ func (replay *auditedHistoryReplay) validateNodeMovePathEffects(
 	}
 	list, ok := pathEffectRecords[digest]
 	if !ok || usedPathEffects[digest] {
-		return errors.New("node move lacks one unique path-effect list")
+		return errors.New("topology mutation lacks one unique path-effect list")
 	}
 	if err := requireAuditUUID(list.record, auditOperationIDField, operationID); err != nil {
 		return err
 	}
-	if err := requireAuditDigest(list.record, auditTopologyDeltaField, move.topologyDigest); err != nil {
+	if err := requireAuditDigest(
+		list.record, auditTopologyDeltaField, transition.topologyDigest,
+	); err != nil {
 		return err
 	}
 	stored, err := auditRecordListField(list.record, "effects")
 	if err != nil {
 		return err
 	}
-	expected, err := replay.deriveNodeMovePathEffects(move.postTopology)
-	if err != nil {
-		return err
-	}
 	if len(expected) == 0 || !equalAuditRecordLists(stored, expected) {
-		return errors.New("node move path effects do not match replayed topology")
+		return errors.New("topology path effects do not match replayed topology")
 	}
 	if err := requireAuditUnsigned(mutation, "path_effect_count", uint64(len(expected))); err != nil {
 		return err
@@ -370,7 +379,7 @@ func (replay *auditedHistoryReplay) validateNodeMovePathEffects(
 	if err := requireAuditDigest(mutation, "path_effect_digest", digest); err != nil {
 		return err
 	}
-	move.pathEffectDigest, move.effects = digest, expected
+	transition.pathEffectDigest, transition.effects = digest, expected
 	usedPathEffects[digest] = true
 	return nil
 }
@@ -382,7 +391,7 @@ func (replay *auditedHistoryReplay) deriveNodeMovePathEffects(
 	if err != nil {
 		return nil, err
 	}
-	live, err := audit.Text("live")
+	live, err := audit.Text(auditNodeStateLive)
 	if err != nil {
 		return nil, err
 	}
@@ -431,7 +440,7 @@ func auditLivePath(
 	if err != nil {
 		return nil, false, err
 	}
-	if state != "live" {
+	if state != auditNodeStateLive {
 		return nil, false, nil
 	}
 	visited := make(map[uint64]bool)
@@ -462,7 +471,7 @@ func auditLivePath(
 			return nil, false, fmt.Errorf("audit topology node %d has missing live parent %d", id, *parentID)
 		}
 		parent := topology[parentIndex]
-		if err := requireAuditText(parent, "state", "live"); err != nil {
+		if err := requireAuditText(parent, "state", auditNodeStateLive); err != nil {
 			return nil, false, err
 		}
 		current = parent
@@ -477,7 +486,7 @@ func auditLivePath(
 	return result, true, nil
 }
 
-func (replay *auditedHistoryReplay) validateNodeMoveStateChanges(
+func (replay *auditedHistoryReplay) validateTopologyStateChanges(
 	mutation audit.Record, changedIDs []uint64,
 ) error {
 	changes, err := auditRecordListField(mutation, "member_state_changes")
@@ -485,7 +494,7 @@ func (replay *auditedHistoryReplay) validateNodeMoveStateChanges(
 		return err
 	}
 	if len(changes) != len(changedIDs) {
-		return errors.New("node move member-state changes do not match changed topology")
+		return errors.New("topology member-state changes do not match changed topology")
 	}
 	for index, nodeID := range changedIDs {
 		state := replay.states[nodeID]
@@ -514,24 +523,24 @@ func (replay *auditedHistoryReplay) validateNodeMoveStateChanges(
 	return nil
 }
 
-func (replay *auditedHistoryReplay) validateNodeMoveEvents(
-	mutation audit.Record, operationID string, move replayedNodeMove,
+func (replay *auditedHistoryReplay) validateTopologyEvents(
+	mutation audit.Record, operationID string, transition replayedTopologyMutation,
 	eventRecords map[string]storedAuditRecord, usedEvents map[string]bool,
 ) error {
 	events, err := auditRecordListField(mutation, "events")
 	if err != nil {
 		return err
 	}
-	if len(events) != len(move.effects) {
-		return errors.New("node move event set does not match its path effects")
+	if len(events) != len(transition.effects) {
+		return errors.New("topology event set does not match its path effects")
 	}
-	changed := make(map[uint64]bool, len(move.changedIDs))
-	for _, id := range move.changedIDs {
+	changed := make(map[uint64]bool, len(transition.changedIDs))
+	for _, id := range transition.changedIDs {
 		changed[id] = true
 	}
 	ordinal := uint64(0)
 	for index, event := range events {
-		effect := move.effects[index]
+		effect := transition.effects[index]
 		nodeID, err := auditUnsignedField(effect, "member_node_id")
 		if err != nil {
 			return err
@@ -572,7 +581,11 @@ func (replay *auditedHistoryReplay) validateNodeMoveEvents(
 			func() error { return requireAuditUnsigned(event, "resulting_node_revision", resultingRevision) },
 			func() error { return requireAuditOptionalUUID(event, "prior_current_version_id", current) },
 			func() error { return requireAuditOptionalUUID(event, "resulting_current_version_id", current) },
-			func() error { return requireAuditDigest(event, auditTopologyDeltaField, move.topologyDigest) },
+			func() error {
+				return requireAuditDigest(
+					event, auditTopologyDeltaField, transition.topologyDigest,
+				)
+			},
 		}
 		for _, check := range checks {
 			if err := check(); err != nil {
@@ -591,18 +604,19 @@ func (replay *auditedHistoryReplay) validateNodeMoveEvents(
 		}
 		eventPre, err := auditNestedField(event, "pre")
 		if err != nil || !auditRecordEqual(eventPre, pre) {
-			return errors.New("node move event pre-state does not match its path effect")
+			return errors.New("topology event pre-state does not match its path effect")
 		}
 		eventPost, err := auditNestedField(event, "post")
 		if err != nil || !auditRecordEqual(eventPost, post) {
-			return errors.New("node move event post-state does not match its path effect")
+			return errors.New("topology event post-state does not match its path effect")
 		}
 	}
 	return nil
 }
 
-func (replay *auditedHistoryReplay) advanceNodeMoveAllocation(
-	vaultID, operationID string, mutation, entry storedAuditRecord, move replayedNodeMove,
+func (replay *auditedHistoryReplay) advanceTopologyAllocation(
+	vaultID, operationID string, mutation, entry storedAuditRecord,
+	transition replayedTopologyMutation,
 ) error {
 	nextCount := replay.allocationCount + 1
 	auditCount, err := positiveAuditInteger("allocation entry count", nextCount)
@@ -619,7 +633,11 @@ func (replay *auditedHistoryReplay) advanceNodeMoveAllocation(
 		func() error { return requireAuditUnsigned(entry.record, "node_id_high_water", replay.nodeHighWater) },
 		func() error { return requireAuditBool(entry.record, "has_audited_mutation", true) },
 		func() error { return requireAuditBool(entry.record, "has_topology_change", true) },
-		func() error { return requireAuditDigest(entry.record, auditTopologyDeltaField, move.topologyDigest) },
+		func() error {
+			return requireAuditDigest(
+				entry.record, auditTopologyDeltaField, transition.topologyDigest,
+			)
+		},
 		func() error { return requireAuditBool(entry.record, "has_witness_change", false) },
 		func() error { return requireAuditUnsigned(entry.record, auditWitnessChangeCountField, 0) },
 		func() error { return requireAuditAbsent(entry.record, "witness_change_digest") },
@@ -637,7 +655,7 @@ func (replay *auditedHistoryReplay) advanceNodeMoveAllocation(
 		return err
 	}
 	if len(allocated) != 0 {
-		return errors.New("node move allocation cannot allocate node IDs")
+		return errors.New("topology mutation allocation cannot allocate node IDs")
 	}
 	mutationDigest, err := hashAuditRecord(mutation.record)
 	if err != nil {
@@ -650,8 +668,10 @@ func (replay *auditedHistoryReplay) advanceNodeMoveAllocation(
 	return nil
 }
 
-func (replay *auditedHistoryReplay) applyNodeMoveState(move replayedNodeMove) error {
-	for _, nodeID := range move.changedIDs {
+func (replay *auditedHistoryReplay) applyTopologyState(
+	transition replayedTopologyMutation,
+) error {
+	for _, nodeID := range transition.changedIDs {
 		state := replay.states[nodeID]
 		revision, err := auditUnsignedField(state, "node_revision")
 		if err != nil {
@@ -667,6 +687,6 @@ func (replay *auditedHistoryReplay) applyNodeMoveState(move replayedNodeMove) er
 			{Name: "current_version_id", Value: current},
 		}}
 	}
-	replay.topology = move.postTopology
+	replay.topology = transition.postTopology
 	return nil
 }
