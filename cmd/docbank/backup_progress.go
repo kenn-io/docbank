@@ -64,8 +64,8 @@ func progressModeFromFlag(command, value string) (backupProgressMode, error) {
 	case "plain":
 		return backupProgressPlain, nil
 	default:
-		return backupProgressAuto, fmt.Errorf(
-			"%s: invalid --progress value %q (want auto, bar, or plain)", command, value)
+		return backupProgressAuto, usageError(fmt.Errorf(
+			"%s: invalid --progress value %q (want auto, bar, or plain)", command, value))
 	}
 }
 

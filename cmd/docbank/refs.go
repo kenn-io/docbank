@@ -26,13 +26,13 @@ var referencesCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if _, err := packstore.ParseHash(args[0]); err != nil {
-			return errors.New("content hash must be canonical lowercase SHA-256")
+			return usageError(errors.New("content hash must be canonical lowercase SHA-256"))
 		}
 		if referencesLimit < 1 || referencesLimit > maxReferencesLimit {
-			return fmt.Errorf("--limit must be between 1 and %d", maxReferencesLimit)
+			return usageError(fmt.Errorf("--limit must be between 1 and %d", maxReferencesLimit))
 		}
 		if referencesOffset < 0 {
-			return errors.New("--offset must not be negative")
+			return usageError(errors.New("--offset must not be negative"))
 		}
 		c, err := client.Ensure(cmd.Context())
 		if err != nil {

@@ -16,6 +16,14 @@ Use the CLI for human-directed shell work and simple orchestration. Use HTTP
 for structured agent workflows, pagination, machine-readable errors, and
 revision-aware mutations.
 
+For simple shell orchestration, CLI exit codes distinguish invalid usage (`2`),
+missing vault objects (`3`), stale state (`4`), busy resources (`5`), and
+integrity findings (`6`) from general failures (`1`). Verification may emit a
+complete report before exiting `6`; never infer success merely because stdout
+contains JSON. The [CLI reference](../cli-reference.md#process-exit-codes)
+defines the full contract. Independent integrations should use the richer HTTP
+problem `code` values below.
+
 The canonical contract is generated from the running route definitions:
 
 ```bash

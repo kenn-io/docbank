@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -302,6 +303,24 @@ func TestIngestStreamRoundTrip(t *testing.T) {
 	require.Contains(t, finalStages, "ingest")
 	assert.Equal(t, int64(1), finalStages["ingest"].Done)
 	assert.Equal(t, int64(len(content)), finalStages["ingest"].BytesDone)
+}
+
+func TestProgressStreamPreservesProblemCode(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_ = json.NewEncoder(w).Encode(api.IngestEvent{Type: "error", Error: &api.Error{
+			Title: "Validation failed", Status: http.StatusUnprocessableEntity,
+			Code: "validation", Detail: "invalid ingest request",
+		}})
+	}))
+	t.Cleanup(ts.Close)
+
+	_, err := client.New(ts.URL, "key").IngestStream(
+		t.Context(), []string{"/source"}, "/inbox", nil, nil)
+	require.Error(t, err)
+	code, ok := client.ProblemCode(err)
+	assert.True(t, ok)
+	assert.Equal(t, "validation", code)
 }
 
 func TestJSONMethodsRejectInvalidUTF8BeforeRequest(t *testing.T) {
@@ -648,11 +667,13 @@ func TestVersionContentRejectsUnprovenResponses(t *testing.T) {
 			stream, err := client.New(ts.URL, "key").VersionContent(t.Context(), requestedVersion)
 			if err != nil {
 				require.ErrorContains(t, err, tt.wantError)
+				assert.ErrorIs(t, err, client.ErrIntegrity)
 				return
 			}
 			defer func() { _ = stream.Close() }()
 			_, err = stream.CopyVerified(io.Discard)
 			require.ErrorContains(t, err, tt.wantError)
+			assert.ErrorIs(t, err, client.ErrIntegrity)
 		})
 	}
 }
@@ -1005,4 +1026,26 @@ func TestWrongAPIKeyIsRejected(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "401")
 	assert.Contains(t, err.Error(), "unauthorized")
+	code, ok := client.ProblemCode(err)
+	assert.True(t, ok)
+	assert.Equal(t, "unauthorized", code)
+}
+
+func TestRestoreTargetContentionRemainsTyped(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(api.Error{
+			Title: "Conflict", Status: http.StatusConflict,
+			Code: "backup_restore_target_active", Detail: "restore target is active",
+		})
+	}))
+	t.Cleanup(ts.Close)
+
+	_, err := client.New(ts.URL, "key").TrashList(t.Context())
+	require.Error(t, err)
+	require.ErrorIs(t, err, home.ErrVaultLocked)
+	code, ok := client.ProblemCode(err)
+	assert.True(t, ok)
+	assert.Equal(t, "backup_restore_target_active", code)
 }

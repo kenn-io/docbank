@@ -31,8 +31,9 @@ var catCmd = &cobra.Command{
 		}
 		defer func() { _ = rc.Close() }()
 		if rc.VersionID != n.CurrentVersionID {
-			return fmt.Errorf("streaming %q: received content version %s, expected %s",
-				args[0], rc.VersionID, n.CurrentVersionID)
+			return integrityError(fmt.Errorf(
+				"streaming %q: received content version %s, expected %s",
+				args[0], rc.VersionID, n.CurrentVersionID))
 		}
 		if _, err := rc.CopyVerified(cmd.OutOrStdout()); err != nil {
 			return fmt.Errorf("streaming %q: %w", args[0], err)

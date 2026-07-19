@@ -43,7 +43,7 @@ func runEdit(cmd *cobra.Command, vaultPath string) (retErr error) {
 	}
 	mimeOverride, err := normalizedMIMEOverride(editMIMEType)
 	if err != nil {
-		return err
+		return usageError(err)
 	}
 	progressMode, err := progressModeFromFlag("edit", editProgress)
 	if err != nil {

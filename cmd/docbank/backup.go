@@ -157,7 +157,8 @@ var backupVerifyCmd = &cobra.Command{
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if backupVerifyAll && len(args) > 0 {
-			return errors.New("backup verify: SNAPSHOT and --all are mutually exclusive")
+			return usageError(errors.New(
+				"backup verify: SNAPSHOT and --all are mutually exclusive"))
 		}
 		repo, err := absoluteBackupRepo(backupVerifyRepo)
 		if err != nil {
@@ -197,7 +198,8 @@ var backupVerifyCmd = &cobra.Command{
 			return err
 		}
 		if len(report.Problems) > 0 {
-			return fmt.Errorf("backup verify: found %d problem(s)", len(report.Problems))
+			return integrityError(fmt.Errorf(
+				"backup verify: found %d problem(s)", len(report.Problems)))
 		}
 		return nil
 	},

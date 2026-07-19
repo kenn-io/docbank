@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -34,15 +35,17 @@ var auditEnableCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if auditEnableRun {
 			if len(args) != 0 || auditEnableNodeID != 0 || auditEnableAgentLabel != "" {
-				return errors.New("audit enable --run uses only the reviewed preview token")
+				return usageError(errors.New(
+					"audit enable --run uses only the reviewed preview token"))
 			}
 			if auditEnableToken == "" {
-				return errors.New("audit enable --run requires --token from a fresh preview")
+				return usageError(errors.New(
+					"audit enable --run requires --token from a fresh preview"))
 			}
 			if !auditEnableAcknowledge {
-				return errors.New(
+				return usageError(errors.New(
 					"audit enable --run requires --acknowledge-permanent-retention",
-				)
+				))
 			}
 			c, err := client.Ensure(cmd.Context())
 			if err != nil {
@@ -58,10 +61,18 @@ var auditEnableCmd = &cobra.Command{
 			return writeAuditEnabled(cmd.OutOrStdout(), status)
 		}
 		if auditEnableToken != "" || auditEnableAcknowledge {
-			return errors.New("--token and --acknowledge-permanent-retention require --run")
+			return usageError(errors.New(
+				"--token and --acknowledge-permanent-retention require --run"))
 		}
 		if (len(args) == 0) == (auditEnableNodeID == 0) {
-			return errors.New("audit enable preview requires exactly one path or --node-id")
+			return usageError(errors.New(
+				"audit enable preview requires exactly one path or --node-id"))
+		}
+		if auditEnableNodeID < 0 {
+			return usageError(errors.New("audit enable --node-id must be positive"))
+		}
+		if len(args) == 1 && !strings.HasPrefix(args[0], "/") {
+			return usageError(errors.New("audit enable path must be absolute"))
 		}
 		opts := client.AuditPreviewOptions{
 			NodeID: auditEnableNodeID, AgentLabel: auditEnableAgentLabel,
@@ -95,11 +106,18 @@ var auditStatusCmd = &cobra.Command{
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 1 && auditStatusNodeID != 0 {
-			return errors.New("audit status accepts either a path or --node-id, not both")
+			return usageError(errors.New(
+				"audit status accepts either a path or --node-id, not both"))
 		}
 		path := ""
 		if len(args) == 1 {
 			path = args[0]
+		}
+		if auditStatusNodeID < 0 {
+			return usageError(errors.New("audit status --node-id must be positive"))
+		}
+		if path != "" && !strings.HasPrefix(path, "/") {
+			return usageError(errors.New("audit status path must be absolute"))
 		}
 		c, err := client.Ensure(cmd.Context())
 		if err != nil {

@@ -45,6 +45,9 @@ var putCmd = &cobra.Command{
 
 		mimeType, err := putSourceMIME(source, sourcePath, putMIMEType)
 		if err != nil {
+			if putMIMEType != "" {
+				return usageError(err)
+			}
 			return err
 		}
 		mode := backupProgressAuto

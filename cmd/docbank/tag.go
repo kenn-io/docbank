@@ -296,10 +296,10 @@ func resolveTag(cmd *cobra.Command, c *client.Client, selector string) (api.Tag,
 
 func validateTagPagination(limit, offset int) error {
 	if limit < 1 || limit > maxTagLimit {
-		return fmt.Errorf("--limit must be between 1 and %d", maxTagLimit)
+		return usageError(fmt.Errorf("--limit must be between 1 and %d", maxTagLimit))
 	}
 	if offset < 0 {
-		return errors.New("--offset must not be negative")
+		return usageError(errors.New("--offset must not be negative"))
 	}
 	return nil
 }

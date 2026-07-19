@@ -65,7 +65,7 @@ var trashEmptyCmd = &cobra.Command{
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if _, err := api.ParseAge(trashOlderThan); err != nil {
-			return err
+			return usageError(err)
 		}
 		c, err := client.Ensure(cmd.Context())
 		if err != nil {

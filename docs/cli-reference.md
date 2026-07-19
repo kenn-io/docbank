@@ -18,6 +18,27 @@ daemon status` and `docbank daemon stop` never auto-start. See
 [Daemon](architecture/daemon.md) and
 [Ownership & Concurrency](architecture/locking.md).
 
+## Process exit codes
+
+CLI process codes are stable so shell automation can branch without parsing
+stderr. Human error text remains explanatory and may change.
+
+| Code | Meaning | Typical action |
+|------|---------|----------------|
+| `0` | Success, including an empty result or a dry run that found nothing | Continue |
+| `1` | General operational failure, such as local I/O, transport, daemon, or an otherwise unclassified conflict | Report or inspect stderr |
+| `2` | Invalid command usage, arguments, flag combinations, values, or request validation | Correct the invocation |
+| `3` | The daemon returned `not_found` for the requested vault object | Refresh names or identities |
+| `4` | Stale optimistic state: a revision or audit enrollment preview no longer matches | Re-read, reconsider, and retry deliberately |
+| `5` | A vault, backup repository, or physical pack resource is busy or locked | Wait or release the known owner; do not blindly force-unlock |
+| `6` | A completed verification reported integrity findings, or a content stream failed terminal size/hash/digest proof | Do not trust or publish the affected bytes |
+
+Integrity commands may write their complete human or JSON report before
+exiting `6`; the report is evidence, not a success indication. Failures that
+prevent verification from completing at all—such as an unreachable daemon—use
+`1`. HTTP clients should continue to branch on the API's problem `code` rather
+than translating process exits back into HTTP status.
+
 ## docbank add
 
 ```

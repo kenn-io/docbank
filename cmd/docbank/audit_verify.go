@@ -54,7 +54,7 @@ var auditVerifyCmd = &cobra.Command{
 			problems += len(report.EvidenceCheck.Problems)
 		}
 		if problems != 0 {
-			return fmt.Errorf("audit verification found %d problem(s)", problems)
+			return integrityError(fmt.Errorf("audit verification found %d problem(s)", problems))
 		}
 		return nil
 	},
