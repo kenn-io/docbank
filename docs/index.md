@@ -1,5 +1,5 @@
 ---
-title: docbank
+title: Keep the documents. Change the filing system.
 description: Local-first document system of record for people and agents, with stable identities, verified bytes, revision-safe automation, and proven recovery.
 ---
 
