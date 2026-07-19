@@ -66,6 +66,30 @@ func TestRunProcessDistinguishesUsageAndMissingNodes(t *testing.T) {
 	assert.Equal(t, exitNotFound, code)
 	assert.Contains(t, stderr.String(), "not found")
 
+	code = run("backup", "restore")
+	assert.Equal(t, exitUsage, code)
+	assert.Contains(t, stderr.String(), "--target is required")
+
+	code = run("audit", "status", "/", "--node-id", "0")
+	assert.Equal(t, exitUsage, code)
+	assert.Contains(t, stderr.String(), "either a path or --node-id")
+
+	code = run("audit", "status", "--node-id", "0")
+	assert.Equal(t, exitUsage, code)
+	assert.Contains(t, stderr.String(), "--node-id must be positive")
+
+	code = run("audit", "enable", "--node-id", "0")
+	assert.Equal(t, exitUsage, code)
+	assert.Contains(t, stderr.String(), "--node-id must be positive")
+
+	code = run("audit", "enable", "--run", "--node-id", "0")
+	assert.Equal(t, exitUsage, code)
+	assert.Contains(t, stderr.String(), "uses only the reviewed preview token")
+
+	code = run("audit", "history", "--node-id", "0")
+	assert.Equal(t, exitUsage, code)
+	assert.Contains(t, stderr.String(), "--node-id must be positive")
+
 	code = run("--not-a-real-flag")
 	require.Equal(t, exitUsage, code)
 	assert.Contains(t, stderr.String(), "unknown flag")

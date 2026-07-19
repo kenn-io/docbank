@@ -218,7 +218,15 @@ var (
 var backupRestoreCmd = &cobra.Command{
 	Use:   "restore [SNAPSHOT]",
 	Short: "Restore and prove a snapshot in a separate vault directory",
-	Args:  cobra.MaximumNArgs(1),
+	Args: func(cmd *cobra.Command, args []string) error {
+		if err := cobra.MaximumNArgs(1)(cmd, args); err != nil {
+			return err
+		}
+		if backupRestoreTarget == "" {
+			return errors.New("backup restore: --target is required")
+		}
+		return nil
+	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		repo, err := absoluteBackupRepo(backupRestoreRepo)
 		if err != nil {
@@ -394,7 +402,6 @@ func init() {
 		"progress output mode: auto, bar, or plain (suppressed by --json)")
 	backupRestoreCmd.Flags().StringVar(&backupRestoreRepo, "repo", "", "backup repository directory")
 	backupRestoreCmd.Flags().StringVar(&backupRestoreTarget, "target", "", "directory to restore into (required)")
-	_ = backupRestoreCmd.MarkFlagRequired("target")
 	backupRestoreCmd.Flags().BoolVar(&backupRestoreOverwrite, "overwrite", false,
 		"allow restoring into a non-empty target directory")
 	backupRestoreCmd.Flags().IntVar(&backupRestoreJobs, "jobs", 0,

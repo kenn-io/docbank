@@ -24,7 +24,8 @@ var auditHistoryCmd = &cobra.Command{
 	Short: "Read one permanently protected node's canonical event timeline",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if (len(args) == 0) == (auditHistoryNodeID == 0) {
+		nodeIDSet := cmd.Flags().Changed("node-id")
+		if (len(args) == 1) == nodeIDSet {
 			return usageError(errors.New(
 				"audit history requires exactly one path or --node-id"))
 		}
@@ -35,7 +36,7 @@ var auditHistoryCmd = &cobra.Command{
 		if len(args) == 1 {
 			path = args[0]
 		}
-		if auditHistoryNodeID < 0 {
+		if nodeIDSet && auditHistoryNodeID < 1 {
 			return usageError(errors.New("audit history --node-id must be positive"))
 		}
 		if path != "" && !strings.HasPrefix(path, "/") {

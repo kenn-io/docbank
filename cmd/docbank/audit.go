@@ -33,8 +33,9 @@ var auditEnableCmd = &cobra.Command{
 	Short: "Preview permanent retention, then explicitly enable the reviewed scope",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		nodeIDSet := cmd.Flags().Changed("node-id")
 		if auditEnableRun {
-			if len(args) != 0 || auditEnableNodeID != 0 || auditEnableAgentLabel != "" {
+			if len(args) != 0 || nodeIDSet || auditEnableAgentLabel != "" {
 				return usageError(errors.New(
 					"audit enable --run uses only the reviewed preview token"))
 			}
@@ -64,11 +65,11 @@ var auditEnableCmd = &cobra.Command{
 			return usageError(errors.New(
 				"--token and --acknowledge-permanent-retention require --run"))
 		}
-		if (len(args) == 0) == (auditEnableNodeID == 0) {
+		if (len(args) == 1) == nodeIDSet {
 			return usageError(errors.New(
 				"audit enable preview requires exactly one path or --node-id"))
 		}
-		if auditEnableNodeID < 0 {
+		if nodeIDSet && auditEnableNodeID < 1 {
 			return usageError(errors.New("audit enable --node-id must be positive"))
 		}
 		if len(args) == 1 && !strings.HasPrefix(args[0], "/") {
@@ -105,7 +106,8 @@ var auditStatusCmd = &cobra.Command{
 	Short: "Inspect vault audit authority and optional node protection",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if len(args) == 1 && auditStatusNodeID != 0 {
+		nodeIDSet := cmd.Flags().Changed("node-id")
+		if len(args) == 1 && nodeIDSet {
 			return usageError(errors.New(
 				"audit status accepts either a path or --node-id, not both"))
 		}
@@ -113,7 +115,7 @@ var auditStatusCmd = &cobra.Command{
 		if len(args) == 1 {
 			path = args[0]
 		}
-		if auditStatusNodeID < 0 {
+		if nodeIDSet && auditStatusNodeID < 1 {
 			return usageError(errors.New("audit status --node-id must be positive"))
 		}
 		if path != "" && !strings.HasPrefix(path, "/") {
