@@ -98,6 +98,14 @@ func TestRunProcessDistinguishesUsageAndMissingNodes(t *testing.T) {
 	assert.Equal(t, exitUsage, code)
 	assert.Contains(t, stderr.String(), "must be a canonical UUIDv4")
 
+	code = run("version", "not-a-version-id")
+	assert.Equal(t, exitUsage, code)
+	assert.Contains(t, stderr.String(), "must be a canonical UUIDv4")
+
+	code = run("version", "not-a-version-id", "--content")
+	assert.Equal(t, exitUsage, code)
+	assert.Contains(t, stderr.String(), "must be a canonical UUIDv4")
+
 	invalidSource := string([]byte{'b', 'a', 'd', 0xff})
 	code = run("put", invalidSource, "/document")
 	assert.Equal(t, exitUsage, code)

@@ -86,6 +86,10 @@ var versionCmd = &cobra.Command{
 		if versionJSON && versionContent {
 			return usageError(errors.New("--json and --content cannot be combined"))
 		}
+		if !client.IsCanonicalUUIDv4(args[0]) {
+			return usageError(fmt.Errorf(
+				"version ID %q must be a canonical UUIDv4", args[0]))
+		}
 		c, err := client.Ensure(cmd.Context())
 		if err != nil {
 			return err
