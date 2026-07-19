@@ -47,9 +47,13 @@ func TestOpenAPIDeclaresSecurity(t *testing.T) {
 	assert.Contains(t, doc, "security:", "document-level security requirement missing")
 }
 
-func TestBackupRestoreClearsBodyReadDeadline(t *testing.T) {
+func TestLongRunningBackupRoutesClearBodyReadDeadline(t *testing.T) {
 	doc := api.NewOfflineServer().API().OpenAPI()
 	for _, operation := range []*huma.Operation{
+		doc.Paths["/api/v1/backup/snapshots"].Post,
+		doc.Paths["/api/v1/backup/snapshots/stream"].Post,
+		doc.Paths["/api/v1/backup/verify"].Post,
+		doc.Paths["/api/v1/backup/verify/stream"].Post,
 		doc.Paths["/api/v1/backup/restore"].Post,
 		doc.Paths["/api/v1/backup/restore/stream"].Post,
 	} {
