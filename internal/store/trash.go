@@ -149,9 +149,11 @@ func nextFreeNameTx(tx *sql.Tx, parentID int64, name string) (string, error) {
 // that location is gone), re-suffixing on conflict. Descendants trashed in
 // earlier separate operations stay trashed. Unless ifRev is
 // UnconditionalRev, the mutation fails with ErrStaleRevision unless ifRev
-// matches the node's current revision.
-func (s *Store) Restore(ctx context.Context, id, ifRev int64) (Node, error) {
+// matches the node's current revision. The returned canonical path is captured
+// in the restore transaction with the returned node.
+func (s *Store) Restore(ctx context.Context, id, ifRev int64) (Node, string, error) {
 	var restored Node
+	var restoredPath string
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		n, err := nodeByIDTx(tx, id)
 		if err != nil {
@@ -163,26 +165,29 @@ func (s *Store) Restore(ctx context.Context, id, ifRev int64) (Node, error) {
 		}
 		if active {
 			restored, err = s.restoreAuditedTx(ctx, tx, n, ifRev)
-			return err
+		} else {
+			if n.TrashedAt == nil {
+				return fmt.Errorf("node %d: %w", id, ErrNotTrashed)
+			}
+			if ifRev != UnconditionalRev && n.Revision != ifRev {
+				return fmt.Errorf("node %d at revision %d, expected %d: %w",
+					id, n.Revision, ifRev, ErrStaleRevision)
+			}
+			target, targetErr := s.restoreTargetTx(tx, n)
+			if targetErr != nil {
+				return targetErr
+			}
+			restored, err = s.restoreNodeTx(tx, n, target, nowRFC3339())
 		}
-		if n.TrashedAt == nil {
-			return fmt.Errorf("node %d: %w", id, ErrNotTrashed)
+		if err == nil {
+			restoredPath, err = pathOf(ctx, tx, restored.ID)
 		}
-		if ifRev != UnconditionalRev && n.Revision != ifRev {
-			return fmt.Errorf("node %d at revision %d, expected %d: %w",
-				id, n.Revision, ifRev, ErrStaleRevision)
-		}
-		target, err := s.restoreTargetTx(tx, n)
-		if err != nil {
-			return err
-		}
-		restored, err = s.restoreNodeTx(tx, n, target, nowRFC3339())
 		return err
 	})
 	if err != nil {
-		return Node{}, err
+		return Node{}, "", err
 	}
-	return restored, nil
+	return restored, restoredPath, nil
 }
 
 type restoreTarget struct {

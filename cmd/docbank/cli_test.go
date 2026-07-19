@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -704,6 +705,39 @@ func TestRmRestoreRoundTrip(t *testing.T) {
 	out, err = runCLI(t, "ls", "/inbox")
 	require.NoError(t, err)
 	assert.Contains(t, out, "a.txt")
+}
+
+func TestTreeMutationJSONReceipts(t *testing.T) {
+	setupVaultHome(t)
+	src := writeSourceFile(t, "a.txt", "alpha")
+	_, err := runCLI(t, "add", src, "--dest", "/inbox")
+	require.NoError(t, err)
+
+	out, err := runCLI(t, "mv", "/inbox/a.txt", "/inbox/b.txt", "--json")
+	require.NoError(t, err, out)
+	var moved api.Node
+	require.NoError(t, json.Unmarshal([]byte(out), &moved))
+	assert.Equal(t, "/inbox/b.txt", moved.Path)
+	assert.Equal(t, "b.txt", moved.Name)
+	assert.Empty(t, moved.TrashedAt)
+
+	out, err = runCLI(t, "rm", "/inbox/b.txt", "--json")
+	require.NoError(t, err, out)
+	var trashed api.Node
+	require.NoError(t, json.Unmarshal([]byte(out), &trashed))
+	assert.Equal(t, moved.ID, trashed.ID)
+	assert.Equal(t, "/inbox/b.txt", trashed.Path, "trash receipt retains the pre-trash path")
+	assert.NotEmpty(t, trashed.TrashedAt)
+	assert.Greater(t, trashed.Revision, moved.Revision)
+
+	out, err = runCLI(t, "restore", strconv.FormatInt(trashed.ID, 10), "--json")
+	require.NoError(t, err, out)
+	var restored api.Node
+	require.NoError(t, json.Unmarshal([]byte(out), &restored))
+	assert.Equal(t, moved.ID, restored.ID)
+	assert.Equal(t, "/inbox/b.txt", restored.Path)
+	assert.Empty(t, restored.TrashedAt)
+	assert.Greater(t, restored.Revision, trashed.Revision)
 }
 
 func TestSearchCLI(t *testing.T) {

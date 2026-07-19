@@ -409,7 +409,7 @@ and maintenance behavior.
 ## docbank mv
 
 ```
-docbank mv <src-path> <dest-path>
+docbank mv <src-path> <dest-path> [--json]
 ```
 
 Moves or renames a node. Metadata only — bytes never move. The
@@ -424,12 +424,14 @@ destination is interpreted like POSIX `mv`:
 
 Directory moves carry the whole subtree. A move that would place a
 directory under its own descendant fails with `move would create a
-cycle`. On success prints `moved [<id>] <new-path>`.
+cycle`. On success human output prints `moved [<id>] <new-path>`; `--json`
+returns the complete resulting node, including its stable ID, revision, and
+new path.
 
 ## docbank rm
 
 ```
-docbank rm <path>
+docbank rm <path> [--json]
 ```
 
 Soft-deletes: moves the node — and, for a directory, its entire subtree —
@@ -440,6 +442,10 @@ The freed name is immediately reusable. Prints:
 trashed [15] /taxes/2024/return.pdf (restore with: docbank restore 15)
 ```
 
+`--json` returns the trashed node receipt. Its `path` is the pre-trash path
+shown for recovery context; it no longer resolves to that node. Retain the
+stable `id` and `revision` as authority.
+
 There is no hard-delete flag. GC cannot collect a trashed document because the
 trash entry remains a restorable reference. Permanent metadata deletion,
 unreachable-content collection, and packed-space reclamation are the separate
@@ -448,13 +454,14 @@ unreachable-content collection, and packed-space reclamation are the separate
 ## docbank restore
 
 ```
-docbank restore <id>
+docbank restore <id> [--json]
 ```
 
 Returns a trashed node (by ID — see `docbank trash list`) to its original
 location, re-suffixing its name if a live node now occupies it. If the
 original parent directory was itself permanently deleted, the node is
-restored under `/`. Prints `restored [<id>] <path>`.
+restored under `/`. Human output prints `restored [<id>] <path>`; `--json`
+returns the complete restored node with its resulting path and revision.
 
 ## docbank search
 

@@ -33,8 +33,9 @@ func TestTrashAndRestoreRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 
 	// Restore re-suffixes because /docs is taken again.
-	restored, err := s.Restore(ctx, docs.ID, -1)
+	restored, restoredPath, err := s.Restore(ctx, docs.ID, -1)
 	require.NoError(t, err)
+	assert.Equal(t, "/docs (2)", restoredPath)
 	assert.Equal(t, "docs (2)", restored.Name)
 	assert.Nil(t, restored.TrashedAt)
 
@@ -59,13 +60,13 @@ func TestNestedTrashRestoreKeepsEarlierTrash(t *testing.T) {
 	require.NoError(t, err)
 
 	// Restoring docs must NOT resurrect inner.
-	_, err = s.Restore(ctx, docs.ID, -1)
+	_, _, err = s.Restore(ctx, docs.ID, -1)
 	require.NoError(t, err)
 	_, err = s.NodeByPath(ctx, "/docs/inner")
 	require.ErrorIs(t, err, ErrNotFound)
 
 	// inner is still restorable on its own.
-	_, err = s.Restore(ctx, inner.ID, -1)
+	_, _, err = s.Restore(ctx, inner.ID, -1)
 	require.NoError(t, err)
 	_, err = s.NodeByPath(ctx, "/docs/inner")
 	require.NoError(t, err)
@@ -95,7 +96,7 @@ func TestRestoreFallsBackToRootWhenParentGone(t *testing.T) {
 	require.NoError(t, err)
 	deleteTrashRoot(t, s, docs.ID)
 
-	restored, err := s.Restore(ctx, f.ID, -1)
+	restored, _, err := s.Restore(ctx, f.ID, -1)
 	require.NoError(t, err)
 	p, err := s.Path(ctx, restored.ID)
 	require.NoError(t, err)
@@ -123,7 +124,7 @@ func TestTrashGuards(t *testing.T) {
 	require.NoError(t, err)
 	_, _, err = s.Trash(ctx, inner.ID, -1)
 	require.NoError(t, err)
-	_, err = s.Restore(ctx, leaf.ID, -1)
+	_, _, err = s.Restore(ctx, leaf.ID, -1)
 	assert.ErrorIs(t, err, ErrNotTrashed)
 }
 
@@ -281,7 +282,7 @@ func TestRestoreAfterParentHardDeleteNeverRetargets(t *testing.T) {
 	require.NoError(t, err)
 	d, err := s.Mkdir(ctx, s.RootID(), "D")
 	require.NoError(t, err)
-	_, err = s.Move(ctx, f.ID, d.ID, "f.txt", -1)
+	_, _, err = s.Move(ctx, f.ID, d.ID, "f.txt", -1)
 	require.NoError(t, err)
 
 	_, _, err = s.Trash(ctx, f.ID, -1) // records trash_parent = D
@@ -296,7 +297,7 @@ func TestRestoreAfterParentHardDeleteNeverRetargets(t *testing.T) {
 
 	// The original parent is gone: restore must fall back to the root, not
 	// land inside an unrelated directory occupying a reused id.
-	restored, err := s.Restore(ctx, f.ID, -1)
+	restored, _, err := s.Restore(ctx, f.ID, -1)
 	require.NoError(t, err)
 	p, err := s.Path(ctx, restored.ID)
 	require.NoError(t, err)

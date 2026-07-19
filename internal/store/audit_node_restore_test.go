@@ -21,8 +21,9 @@ func TestAuditedRestoreRecordsSubtreeAndRoundTrips(t *testing.T) {
 	trashed, _, err := s.Trash(t.Context(), work.ID, work.Revision)
 	require.NoError(t, err)
 
-	restored, err := s.Restore(t.Context(), trashed.ID, trashed.Revision)
+	restored, restoredPath, err := s.Restore(t.Context(), trashed.ID, trashed.Revision)
 	require.NoError(t, err)
+	assert.Equal(t, "/Projects/Work", restoredPath)
 	assert.Nil(t, restored.TrashedAt)
 	assert.Equal(t, work.Revision+2, restored.Revision)
 	restoredChild, err := s.NodeByPath(t.Context(), "/Projects/Work/child.txt")
@@ -70,7 +71,7 @@ func TestAuditedRestoreUsesCanonicalConflictSuffix(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	restored, err := s.Restore(t.Context(), trashed.ID, trashed.Revision)
+	restored, _, err := s.Restore(t.Context(), trashed.ID, trashed.Revision)
 	require.NoError(t, err)
 	assert.Equal(t, "report (2).txt", restored.Name)
 	stillReplacement, err := s.NodeByPath(t.Context(), "/Projects/report.txt")
@@ -93,7 +94,7 @@ func TestAuditedRestoreAllowsUnchangedRetainedTrashOriginPath(t *testing.T) {
 	trashedWork, _, err := s.Trash(t.Context(), work.ID, work.Revision)
 	require.NoError(t, err)
 
-	restored, err := s.Restore(t.Context(), trashedWork.ID, trashedWork.Revision)
+	restored, _, err := s.Restore(t.Context(), trashedWork.ID, trashedWork.Revision)
 	require.NoError(t, err)
 	assert.Equal(t, "/Projects/Work", mustNodePath(t, s, restored.ID))
 	stillTrashed, err := s.NodeByID(t.Context(), child.ID)
@@ -117,7 +118,7 @@ func TestAuditedRestoreRejectsConflictThatRetargetsTrashOrigin(t *testing.T) {
 	_, err = s.Mkdir(t.Context(), projects.ID, "Work")
 	require.NoError(t, err)
 
-	restored, err := s.Restore(t.Context(), trashedWork.ID, trashedWork.Revision)
+	restored, _, err := s.Restore(t.Context(), trashedWork.ID, trashedWork.Revision)
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
 	require.ErrorContains(t, err, "retained trash-origin paths")
 	assert.Zero(t, restored)
@@ -140,7 +141,7 @@ func TestAuditedRootScopeRestoreRecordsRootParentTouch(t *testing.T) {
 	rootAfterTrash, err := s.NodeByID(t.Context(), s.RootID())
 	require.NoError(t, err)
 
-	restored, err := s.Restore(t.Context(), trashed.ID, trashed.Revision)
+	restored, _, err := s.Restore(t.Context(), trashed.ID, trashed.Revision)
 	require.NoError(t, err)
 	assert.Equal(t, "/Empty", mustNodePath(t, s, restored.ID))
 	rootAfterRestore, err := s.NodeByID(t.Context(), s.RootID())
@@ -167,7 +168,7 @@ func TestAuditedRestoreRefusesFallbackFromTrashedOrigin(t *testing.T) {
 	_, _, err = s.Trash(t.Context(), empty.ID, empty.Revision)
 	require.NoError(t, err)
 
-	restored, err := s.Restore(t.Context(), trashedFile.ID, trashedFile.Revision)
+	restored, _, err := s.Restore(t.Context(), trashedFile.ID, trashedFile.Revision)
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
 	assert.Zero(t, restored)
 	stillTrashed, err := s.NodeByID(t.Context(), file.ID)
@@ -186,7 +187,7 @@ func TestAuditedRestoreRollsBackTreeAndHistory(t *testing.T) {
 		SELECT RAISE(ABORT, 'forced audit restore failure'); END`)
 	require.NoError(t, err)
 
-	restored, err := s.Restore(t.Context(), trashed.ID, trashed.Revision)
+	restored, _, err := s.Restore(t.Context(), trashed.ID, trashed.Revision)
 	require.ErrorContains(t, err, "forced audit restore failure")
 	assert.Zero(t, restored)
 	stillTrashed, err := s.NodeByID(t.Context(), work.ID)
@@ -210,7 +211,7 @@ func TestAuditedRestoreReplayRejectsOmittedDescendant(t *testing.T) {
 	require.NoError(t, err)
 	trashed, _, err := s.Trash(t.Context(), work.ID, work.Revision)
 	require.NoError(t, err)
-	_, err = s.Restore(t.Context(), trashed.ID, trashed.Revision)
+	_, _, err = s.Restore(t.Context(), trashed.ID, trashed.Revision)
 	require.NoError(t, err)
 
 	authority, scope, err := loadInitialAuditProjection(t.Context(), s.db)

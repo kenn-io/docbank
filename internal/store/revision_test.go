@@ -15,7 +15,7 @@ func TestStaleRevisionRejected(t *testing.T) {
 	f, err := s.CreateFile(ctx, s.RootID(), "f.txt", fakeHash("a1"), 1, "text/plain")
 	require.NoError(t, err)
 
-	_, err = s.Move(ctx, f.ID, d.ID, "f.txt", f.Revision+1)
+	_, _, err = s.Move(ctx, f.ID, d.ID, "f.txt", f.Revision+1)
 	require.ErrorIs(t, err, ErrStaleRevision)
 	_, _, err = s.Trash(ctx, f.ID, f.Revision+1)
 	require.ErrorIs(t, err, ErrStaleRevision)
@@ -28,9 +28,9 @@ func TestStaleRevisionRejected(t *testing.T) {
 	trashed, _, err := s.Trash(ctx, f.ID, f.Revision)
 	require.NoError(t, err)
 	assert.NotNil(t, trashed.TrashedAt)
-	_, err = s.Restore(ctx, f.ID, trashed.Revision+1)
+	_, _, err = s.Restore(ctx, f.ID, trashed.Revision+1)
 	require.ErrorIs(t, err, ErrStaleRevision)
-	_, err = s.Restore(ctx, f.ID, trashed.Revision)
+	_, _, err = s.Restore(ctx, f.ID, trashed.Revision)
 	require.NoError(t, err)
 }
 
@@ -39,7 +39,7 @@ func TestNegativeRevisionSkipsCheck(t *testing.T) {
 	ctx := t.Context()
 	f, err := s.CreateFile(ctx, s.RootID(), "f.txt", fakeHash("a1"), 1, "text/plain")
 	require.NoError(t, err)
-	_, err = s.Move(ctx, f.ID, s.RootID(), "g.txt", UnconditionalRev)
+	_, _, err = s.Move(ctx, f.ID, s.RootID(), "g.txt", UnconditionalRev)
 	require.NoError(t, err)
 }
 
@@ -52,7 +52,7 @@ func TestBelowSentinelRevisionFailsStale(t *testing.T) {
 	f, err := s.CreateFile(ctx, s.RootID(), "f.txt", fakeHash("a1"), 1, "text/plain")
 	require.NoError(t, err)
 
-	_, err = s.Move(ctx, f.ID, s.RootID(), "g.txt", -2)
+	_, _, err = s.Move(ctx, f.ID, s.RootID(), "g.txt", -2)
 	require.ErrorIs(t, err, ErrStaleRevision)
 	_, _, err = s.Trash(ctx, f.ID, -2)
 	require.ErrorIs(t, err, ErrStaleRevision)
@@ -63,8 +63,8 @@ func TestBelowSentinelRevisionFailsStale(t *testing.T) {
 
 	trashed, _, err := s.Trash(ctx, f.ID, f.Revision)
 	require.NoError(t, err)
-	_, err = s.Restore(ctx, f.ID, -2)
+	_, _, err = s.Restore(ctx, f.ID, -2)
 	require.ErrorIs(t, err, ErrStaleRevision)
-	_, err = s.Restore(ctx, f.ID, trashed.Revision)
+	_, _, err = s.Restore(ctx, f.ID, trashed.Revision)
 	require.NoError(t, err)
 }

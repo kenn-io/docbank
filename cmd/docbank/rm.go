@@ -8,6 +8,8 @@ import (
 	"go.kenn.io/docbank/internal/client"
 )
 
+var rmJSON bool
+
 var rmCmd = &cobra.Command{
 	Use:   "rm <path>",
 	Short: "Move a node (and its subtree) to the trash",
@@ -24,10 +26,16 @@ var rmCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if rmJSON {
+			return writeCLIJSON(cmd.OutOrStdout(), n)
+		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 			"trashed [%d] %s (restore with: docbank restore %d)\n", n.ID, args[0], n.ID)
 		return nil
 	},
 }
 
-func init() { rootCmd.AddCommand(rmCmd) }
+func init() {
+	rmCmd.Flags().BoolVar(&rmJSON, "json", false, "emit a machine-readable node receipt")
+	rootCmd.AddCommand(rmCmd)
+}

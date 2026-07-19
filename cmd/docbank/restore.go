@@ -10,6 +10,8 @@ import (
 	"go.kenn.io/docbank/internal/client"
 )
 
+var restoreJSON bool
+
 var restoreCmd = &cobra.Command{
 	Use:   "restore <id>",
 	Short: "Restore a trashed node to its original location",
@@ -34,9 +36,16 @@ var restoreCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if restoreJSON {
+			return writeCLIJSON(cmd.OutOrStdout(), restored)
+		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "restored [%d] %s\n", restored.ID, restored.Path)
 		return nil
 	},
 }
 
-func init() { rootCmd.AddCommand(restoreCmd) }
+func init() {
+	restoreCmd.Flags().BoolVar(&restoreJSON, "json", false,
+		"emit a machine-readable node receipt")
+	rootCmd.AddCommand(restoreCmd)
+}

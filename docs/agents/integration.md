@@ -24,6 +24,11 @@ contains JSON. The [CLI reference](../cli-reference.md#process-exit-codes)
 defines the full contract. Independent integrations should use the richer HTTP
 problem `code` values below.
 
+For a small shell workflow, `mv`, `rm`, and `restore` accept `--json` and
+return the daemon's complete resulting node receipt. A trash receipt's `path`
+is only its pre-trash recovery context; carry the stable `id` and `revision`
+forward instead.
+
 The canonical contract is generated from the running route definitions:
 
 ```bash

@@ -121,7 +121,7 @@ func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 	require.NoError(t, target.db.QueryRowContext(ctx,
 		`SELECT (SELECT COUNT(*) FROM blob_packs) + (SELECT COUNT(*) FROM blob_pack_index)`).Scan(&packRows))
 	assert.Zero(t, packRows, "physical pack authority is reconstructed separately")
-	restoredLostFile, err := target.Restore(ctx, lostFile.ID, UnconditionalRev)
+	restoredLostFile, _, err := target.Restore(ctx, lostFile.ID, UnconditionalRev)
 	require.NoError(t, err)
 	restoredLostPath, err := target.Path(ctx, restoredLostFile.ID)
 	require.NoError(t, err)

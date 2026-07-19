@@ -177,7 +177,7 @@ func TestTagPathAssignmentUsesCurrentTopology(t *testing.T) {
 	require.NoError(t, err)
 	left, err = s.NodeByID(t.Context(), left.ID)
 	require.NoError(t, err)
-	_, err = s.Move(t.Context(), left.ID, right.ID, "moved", left.Revision)
+	_, _, err = s.Move(t.Context(), left.ID, right.ID, "moved", left.Revision)
 	require.NoError(t, err)
 
 	path := "/api/v1/path/tags/" + tag.ID
