@@ -1,11 +1,11 @@
 # docbank
 
-> Local-first document archive with immutable content, flexible organization, verified backup and recovery, and an agent-ready HTTP API.
+> Local-first document system of record for people and agents, with stable identities, verified bytes, revision-safe automation, and proven recovery.
 
 Every documentation page is also published as raw Markdown at the same path with a `.md` suffix; the links below point at those Markdown routes.
 
 ## Overview
-- [docbank](https://docbank.ai/index.md): Local-first document archive with immutable content, flexible organization, verified backup and recovery, and an agent-ready HTTP API.
+- [Keep the documents. Change the filing system.](https://docbank.ai/index.md): Local-first document system of record for people and agents, with stable identities, verified bytes, revision-safe automation, and proven recovery.
 
 ## Start Here
 - [Setup](https://docbank.ai/setup.md): Install docbank on Linux, macOS, or Windows and create the vault.

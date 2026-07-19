@@ -1,23 +1,58 @@
 ---
-title: docbank
-description: Local-first document archive with immutable content, flexible organization, verified backup and recovery, and an agent-ready HTTP API.
+title: Keep the documents. Change the filing system.
+description: Local-first document system of record for people and agents, with stable identities, verified bytes, revision-safe automation, and proven recovery.
 ---
 
-<p class="eyebrow">LOCAL-FIRST DOCUMENT ARCHIVE</p>
+<p class="eyebrow">LOCAL-FIRST DOCUMENT SYSTEM OF RECORD</p>
 
 # Keep the documents. Change the filing system.
 
-A permanent, verifiable home for the PDFs, scans, notes, spreadsheets, and
-records you keep for life — on your own machine, in a layout you can
-inspect and prove. Content is immutable and deduplicated; the tree above it
-is yours to reshape. Use docbank as a daily archive, or embed it as the
-document store inside your own Go systems.
+Docbank gives people and agents one trustworthy place to work with documents.
+People get a permanent, verifiable home for the PDFs, scans, notes,
+spreadsheets, and records they keep for life. Agents get an authenticated
+contract with stable identities, verified bytes, conflict-safe mutations, and
+explicit lifecycle controls — without opening SQLite or interpreting a storage
+directory. Content is immutable and deduplicated; the virtual tree above it is
+yours to reshape. Run a personal archive, connect an agent over HTTP, or embed
+independently rooted vaults inside a Go system.
 
 <p class="hero-actions">
   <a class="md-button md-button--primary" href="setup/">Start your archive</a>
-  <a class="md-button" href="embedding/">Embed in your system</a>
-  <a class="md-button" href="agents/">For agents</a>
+  <a class="md-button" href="agents/">Build agent workflows</a>
+  <a class="md-button" href="embedding/">Embed in Go</a>
 </p>
+
+## Built for people. Ready for agents.
+
+An agent needs more than permission to read and write a folder. It needs to
+know which document it acted on, whether the bytes are exact, whether its view
+became stale, and what a destructive operation would do before it runs.
+Docbank makes those questions part of the product contract.
+
+<div class="feature-grid">
+  <section>
+    <h3>Identity that survives reorganization</h3>
+    <p>Stable node IDs survive moves and renames. Every immutable content version has its own UUID, SHA-256 identity, and size.</p>
+  </section>
+  <section>
+    <h3>Bytes proven, not assumed</h3>
+    <p>Remote writes declare hash and size. Reads carry recorded content authority plus a digest computed while streaming.</p>
+  </section>
+  <section>
+    <h3>Mutations that detect stale decisions</h3>
+    <p>Revisions and <code>If-Match</code> turn conflicting read-modify-write work into an explicit response instead of a silent overwrite.</p>
+  </section>
+  <section>
+    <h3>Operations made for automation</h3>
+    <p>OpenAPI, JSON output, bounded reads, structured errors, dry runs, progress events, and verified backups replace prose scraping.</p>
+  </section>
+</div>
+
+The CLI is a client of the same authenticated loopback API exposed to agents;
+it has no privileged shortcut into the vault. Generate the live contract with
+`docbank openapi --json`, read [Docbank for Agents](agents.md), or follow the
+[Agent Integration Guide](agents/integration.md) through a complete verified
+filing workflow.
 
 Install with one command (Linux and macOS; see [Setup](setup.md) for
 Windows and source builds):
