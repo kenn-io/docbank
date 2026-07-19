@@ -38,30 +38,29 @@ func (freezeCoordinator) Begin(context.Context) error { return nil }
 
 func (f freezeCoordinator) End(ctx context.Context) error { return f.end(ctx) }
 
-type malformedMetadataSource struct{}
+type rawMetadataSource struct{ metadata []byte }
 
-func (malformedMetadataSource) Format() string { return backupapp.MetadataFormat }
+func (rawMetadataSource) Format() string { return backupapp.MetadataFormat }
 
-func (malformedMetadataSource) OpenSnapshot(context.Context) (backup.MetadataSnapshot, error) {
-	return malformedMetadataSnapshot{}, nil
+func (source rawMetadataSource) OpenSnapshot(context.Context) (backup.MetadataSnapshot, error) {
+	return rawMetadataSnapshot(source), nil
 }
 
-type malformedMetadataSnapshot struct{}
+type rawMetadataSnapshot struct{ metadata []byte }
 
-func (malformedMetadataSnapshot) OpenMetadata(context.Context) (io.ReadCloser, int64, error) {
-	const metadata = "{malformed\n"
-	return io.NopCloser(strings.NewReader(metadata)), int64(len(metadata)), nil
+func (snapshot rawMetadataSnapshot) OpenMetadata(context.Context) (io.ReadCloser, int64, error) {
+	return io.NopCloser(bytes.NewReader(snapshot.metadata)), int64(len(snapshot.metadata)), nil
 }
 
-func (malformedMetadataSnapshot) ContentInfo(context.Context) (*backup.ContentInfo, error) {
+func (rawMetadataSnapshot) ContentInfo(context.Context) (*backup.ContentInfo, error) {
 	return &backup.ContentInfo{}, nil
 }
 
-func (malformedMetadataSnapshot) Stats(context.Context) (json.RawMessage, error) {
+func (rawMetadataSnapshot) Stats(context.Context) (json.RawMessage, error) {
 	return json.RawMessage(`{}`), nil
 }
 
-func (malformedMetadataSnapshot) Close() error { return nil }
+func (rawMetadataSnapshot) Close() error { return nil }
 
 func (zeroReader) Read(p []byte) (int, error) {
 	clear(p)
@@ -173,6 +172,208 @@ func TestJSONLLooseSnapshotVerifyAndRestore(t *testing.T) {
 	}
 	require.NoError(t, restoredBlobs.Close())
 	require.NoError(t, restoredStore.Close())
+}
+
+func TestAuditedIncrementalSnapshotRestoresCompleteProtectedHistory(t *testing.T) {
+	fixture := newArchiveFixture(t)
+	writeFile := func(parentID int64, name, content string) store.Node {
+		t.Helper()
+		var node store.Node
+		require.NoError(t, fixture.blobs.WithMutation(t.Context(), func() error {
+			hash, size, err := fixture.blobs.WriteContext(
+				t.Context(), strings.NewReader(content),
+			)
+			if err != nil {
+				return err
+			}
+			node, err = fixture.metadata.CreateFile(
+				t.Context(), parentID, name, hash, size, "text/plain",
+			)
+			return err
+		}))
+		return node
+	}
+
+	records, err := fixture.metadata.Mkdir(t.Context(), fixture.metadata.RootID(), "Records")
+	require.NoError(t, err)
+	document := writeFile(records.ID, "return.txt", "original tax return")
+	initialVersionID := document.CurrentVersionID
+	plan, err := fixture.metadata.PreviewInitialAudit(
+		t.Context(), records.ID, "cli", nil,
+	)
+	require.NoError(t, err)
+	initialStatus, err := fixture.metadata.EnableInitialAudit(t.Context(), plan)
+	require.NoError(t, err)
+	require.Len(t, initialStatus.Scopes, 1)
+
+	packed, err := fixture.blobs.Maintainer().Pack(t.Context(), packstore.PackOptions{})
+	require.NoError(t, err)
+	require.Equal(t, 3, packed.BlobsPacked)
+	require.Equal(t, 1, packed.PacksSealed)
+
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	baseline, err := backupapp.Create(
+		t.Context(), repo, "test-version", fixture.metadata, fixture.blobs,
+		backup.CreateOptions{Jobs: 2},
+	)
+	require.NoError(t, err)
+	assert.Empty(t, baseline.ParentID)
+
+	const replacementContent = "corrected tax return"
+	var replacement store.ContentVersion
+	require.NoError(t, fixture.blobs.WithMutation(t.Context(), func() error {
+		hash, size, writeErr := fixture.blobs.WriteContext(
+			t.Context(), strings.NewReader(replacementContent),
+		)
+		if writeErr != nil {
+			return writeErr
+		}
+		document, replacement, writeErr = fixture.metadata.ReplaceContent(
+			t.Context(), document.ID, document.Revision, hash, size, "text/plain",
+		)
+		return writeErr
+	}))
+	archive, err := fixture.metadata.Mkdir(t.Context(), records.ID, "Archive")
+	require.NoError(t, err)
+	receipt := writeFile(records.ID, "receipt.txt", "supporting receipt")
+	receiptVersionID := receipt.CurrentVersionID
+	receipt, _, err = fixture.metadata.Move(
+		t.Context(), receipt.ID, archive.ID, receipt.Name, receipt.Revision,
+	)
+	require.NoError(t, err)
+	trashedReceipt, _, err := fixture.metadata.Trash(
+		t.Context(), receipt.ID, receipt.Revision,
+	)
+	require.NoError(t, err)
+	tag, err := fixture.metadata.CreateTag(t.Context(), "filed")
+	require.NoError(t, err)
+	assignment, err := fixture.metadata.AssignTag(
+		t.Context(), tag.ID, document.ID, document.Revision,
+	)
+	require.NoError(t, err)
+	document = assignment.Node
+
+	sourceStorage, err := fixture.blobs.Stats(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, 3, int(sourceStorage.PackedBlobs))
+	assert.Equal(t, 2, sourceStorage.LooseBlobs)
+	wantMetadata := exportMetadata(t, fixture.metadata)
+	sourceAudit, err := fixture.metadata.VerifyAudit(t.Context(), nil)
+	require.NoError(t, err)
+	require.True(t, sourceAudit.Evidence.Enabled)
+	require.Len(t, sourceAudit.Evidence.Scopes, 1)
+	assert.Equal(t, initialStatus.Scopes[0].ID, sourceAudit.Evidence.Scopes[0].ID)
+	require.Len(t, sourceAudit.ProtectedBlobs, 3)
+
+	manifest, err := backupapp.Create(
+		t.Context(), repo, "test-version", fixture.metadata, fixture.blobs,
+		backup.CreateOptions{Jobs: 2},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, baseline.SnapshotID, manifest.ParentID)
+	assert.Equal(t, int64(5), manifest.Attachments.Blobs)
+	verified, err := backup.Verify(
+		t.Context(), repo, backupapp.New("test-version"),
+		backup.VerifyOptions{All: true, Jobs: 2},
+	)
+	require.NoError(t, err)
+	assert.Empty(t, verified.Problems)
+	assert.ElementsMatch(t, []string{baseline.SnapshotID, manifest.SnapshotID}, verified.Snapshots)
+
+	target := filepath.Join(t.TempDir(), "restored")
+	result, err := backupapp.Restore(
+		t.Context(), repo, "test-version",
+		backup.RestoreOptions{TargetDir: target, Jobs: 2},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, manifest.Attachments.Blobs, result.AttachmentBlobs)
+	restoredStore, err := store.Open(filepath.Join(target, "docbank.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restoredStore.Close()) })
+	assert.Equal(t, wantMetadata, exportMetadata(t, restoredStore))
+
+	restoredAudit, err := restoredStore.VerifyAudit(t.Context(), &sourceAudit.Evidence)
+	require.NoError(t, err)
+	assert.Equal(t, sourceAudit.Evidence, restoredAudit.Evidence)
+	require.NotNil(t, restoredAudit.EvidenceCheck)
+	assert.True(t, restoredAudit.EvidenceCheck.Extends)
+	assert.Empty(t, restoredAudit.EvidenceCheck.Problems)
+	assert.Equal(t, sourceAudit.ProtectedBlobs, restoredAudit.ProtectedBlobs)
+	assert.Equal(t, sourceAudit.ProtectedBytes, restoredAudit.ProtectedBytes)
+
+	restoredBlobs, err := blob.New(
+		store.NewPackCatalog(restoredStore), filepath.Join(target, "blobs"),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restoredBlobs.Close()) })
+	for versionID, want := range map[string]string{
+		initialVersionID: "original tax return",
+		replacement.ID:   replacementContent,
+		receiptVersionID: "supporting receipt",
+	} {
+		version, versionErr := restoredStore.ContentVersionByID(t.Context(), versionID)
+		require.NoError(t, versionErr)
+		stream, _, openErr := restoredBlobs.OpenStreamContext(t.Context(), version.BlobHash)
+		require.NoError(t, openErr)
+		got, readErr := io.ReadAll(stream)
+		require.NoError(t, readErr)
+		assert.True(t, stream.Verified())
+		require.NoError(t, stream.Close())
+		assert.Equal(t, want, string(got))
+	}
+
+	restoredReceipt, err := restoredStore.NodeByID(t.Context(), trashedReceipt.ID)
+	require.NoError(t, err)
+	assert.NotNil(t, restoredReceipt.TrashedAt)
+	restoredStatus, err := restoredStore.AuditStatus(t.Context(), &restoredReceipt.ID)
+	require.NoError(t, err)
+	require.NotNil(t, restoredStatus.Membership)
+	assert.True(t, restoredStatus.Membership.Protected)
+	assert.Equal(t, []string{initialStatus.Scopes[0].ID}, restoredStatus.Membership.ScopeIDs)
+	history, err := restoredStore.AuditHistory(t.Context(), restoredReceipt.ID, 100, "")
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, history.Total, 4)
+
+	_, err = restoredStore.PruneContentVersions(
+		t.Context(), document.ID, document.Revision,
+		store.VersionPruneSelector{AllPrior: true}, true,
+	)
+	require.ErrorIs(t, err, store.ErrAuditMutationUnsupported)
+	_, err = restoredStore.TrashEmpty(t.Context(), 0, true)
+	require.ErrorIs(t, err, store.ErrAuditMutationUnsupported)
+}
+
+func TestTruncatedAuditJSONLRestoreLeavesNoPublishedDatabase(t *testing.T) {
+	fixture := newArchiveFixture(t)
+	records, err := fixture.metadata.Mkdir(t.Context(), fixture.metadata.RootID(), "Records")
+	require.NoError(t, err)
+	plan, err := fixture.metadata.PreviewInitialAudit(
+		t.Context(), records.ID, "cli", nil,
+	)
+	require.NoError(t, err)
+	_, err = fixture.metadata.EnableInitialAudit(t.Context(), plan)
+	require.NoError(t, err)
+
+	metadata := bytes.TrimSuffix(exportMetadata(t, fixture.metadata), []byte("\n"))
+	lastBreak := bytes.LastIndexByte(metadata, '\n')
+	require.Positive(t, lastBreak)
+	require.Contains(t, string(metadata[lastBreak+1:]), `"type":"audit_record"`)
+	truncated := bytes.Clone(metadata[:lastBreak+1])
+
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	_, err = backup.Create(t.Context(), repo, backupapp.New("test-version"), backup.CreateOptions{
+		MetadataSource: rawMetadataSource{metadata: truncated},
+	})
+	require.NoError(t, err)
+	target := filepath.Join(t.TempDir(), "restored")
+	_, err = backupapp.Restore(
+		t.Context(), repo, "test-version", backup.RestoreOptions{TargetDir: target},
+	)
+	require.ErrorContains(t, err, "audit")
+	_, statErr := os.Stat(filepath.Join(target, "docbank.db"))
+	require.ErrorIs(t, statErr, os.ErrNotExist)
 }
 
 func TestRestoreSupportsLegacySQLitePageSnapshots(t *testing.T) {
@@ -298,7 +499,7 @@ func TestMalformedJSONLRestoreLeavesNoPublishedDatabase(t *testing.T) {
 	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
 	require.NoError(t, err)
 	_, err = backup.Create(t.Context(), repo, backupapp.New("test-version"), backup.CreateOptions{
-		MetadataSource: malformedMetadataSource{},
+		MetadataSource: rawMetadataSource{metadata: []byte("{malformed\n")},
 	})
 	require.NoError(t, err)
 
