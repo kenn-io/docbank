@@ -117,6 +117,20 @@ CREATE INDEX IF NOT EXISTS provenance_node ON provenance(node_id);
 CREATE UNIQUE INDEX IF NOT EXISTS provenance_direct_successor
     ON provenance(supersedes) WHERE supersedes IS NOT NULL;
 
+-- A watched source has two independent identities: the stable document node
+-- and the last source bytes the watcher accepted. Keeping this small cursor
+-- separate from provenance prevents an unchanged source from overwriting a
+-- later manual edit after daemon restart. The primary key is the hot restart
+-- lookup; policy decisions remain in Go.
+CREATE TABLE IF NOT EXISTS watch_sources (
+    watch_name TEXT NOT NULL,
+    source_ref TEXT NOT NULL,
+    node_id    INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    blob_hash  TEXT NOT NULL,
+    size       INTEGER NOT NULL CHECK (size >= 0),
+    PRIMARY KEY (watch_name, source_ref)
+) WITHOUT ROWID;
+
 -- Ingest and provenance facts are append-only authority. Corrections add a
 -- new provenance fact linked through supersedes; they never rewrite history.
 CREATE TRIGGER IF NOT EXISTS ingests_immutable_update

@@ -26,6 +26,7 @@ import (
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonlife"
 	"go.kenn.io/docbank/internal/home"
+	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -78,10 +79,11 @@ func runServe(ctx context.Context) (retErr error) {
 	}
 
 	background := os.Getenv(client.EnvBackgroundDaemon) == "1"
-	logger, err := buildServeLogger(layout, background)
+	logger, loggingResult, err := buildServeLogger(layout, background)
 	if err != nil {
 		return err
 	}
+	defer func() { retErr = errors.Join(retErr, loggingResult.Close()) }()
 	sigCtx, sigCancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer sigCancel()
 
@@ -100,6 +102,7 @@ func runServe(ctx context.Context) (retErr error) {
 		return err
 	}
 	jobSupervisor := jobs.New(sigCtx, logger)
+	operationGate := api.NewOperationGate()
 
 	listener, err := kitdaemon.Listen(ctx, kitdaemon.Endpoint{
 		Network: kitdaemon.NetworkTCP,
@@ -146,6 +149,18 @@ func runServe(ctx context.Context) (retErr error) {
 			retErr = errors.Join(retErr, err)
 		}
 	}()
+	for _, watchConfig := range cfg.Watches {
+		watcher, err := ingest.NewWatcher(
+			&ingest.Ingester{Store: s, Blobs: blobs}, layout.Root, watchConfig,
+			operationGate.Mutate, logger,
+		)
+		if err != nil {
+			return fmt.Errorf("configuring watch %q: %w", watchConfig.Name, err)
+		}
+		if err := jobSupervisor.Start("watch:"+watchConfig.Name, watcher.Run); err != nil {
+			return fmt.Errorf("starting watch %q: %w", watchConfig.Name, err)
+		}
+	}
 
 	var stopOnce sync.Once
 	stopCh := make(chan struct{})
@@ -155,7 +170,7 @@ func runServe(ctx context.Context) (retErr error) {
 	srv := api.NewServer(api.Deps{
 		Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Logger: logger,
 		StartedAt: time.Now(), ShutdownToken: shutdownToken, Shutdown: stop, Tracker: tracker,
-		Jobs: jobSupervisor,
+		Jobs: jobSupervisor, Gate: operationGate,
 	})
 	httpSrv := &http.Server{
 		Handler:           srv.Handler(),
@@ -163,7 +178,7 @@ func runServe(ctx context.Context) (retErr error) {
 		BaseContext:       func(net.Listener) context.Context { return ctx },
 	}
 
-	if background && cfg.Server.IdleTimeout.Std() > 0 {
+	if background && cfg.Server.IdleTimeout.Std() > 0 && len(cfg.Watches) == 0 {
 		if err := jobSupervisor.Start("daemon.idle-timeout", func(ctx context.Context) error {
 			idleWatch(ctx, tracker, cfg.Server.IdleTimeout.Std(), logger, stop)
 			return nil
@@ -220,8 +235,10 @@ func idleWatch(ctx context.Context, t *api.ActivityTracker, timeout time.Duratio
 	}
 }
 
-func buildServeLogger(layout home.Layout, background bool) (*slog.Logger, error) {
-	logger, _, err := kitlogging.NewLogger(kitlogging.Options{
+func buildServeLogger(
+	layout home.Layout, background bool,
+) (*slog.Logger, *kitlogging.Result, error) {
+	logger, result, err := kitlogging.NewLogger(kitlogging.Options{
 		Stderr:      os.Stderr,
 		EnvLevelVar: "DOCBANK_LOG_LEVEL",
 		File: kitlogging.FileOptions{
@@ -231,9 +248,9 @@ func buildServeLogger(layout home.Layout, background bool) (*slog.Logger, error)
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("building daemon logger: %w", err)
+		return nil, nil, fmt.Errorf("building daemon logger: %w", err)
 	}
-	return logger, nil
+	return logger, result, nil
 }
 
 // randomHex32 returns a fresh 32-byte value hex-encoded, used for both the

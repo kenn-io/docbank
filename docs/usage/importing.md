@@ -158,5 +158,42 @@ authority when either differs. See the [HTTP API](../architecture/http-api.md#ad
 and [Agent Integration Guide](../agents/integration.md#create-and-ingest-safely)
 for the exact contract.
 
-Docbank does not currently watch source directories or ingest changed files
-automatically; every import is an explicit CLI or API operation.
+## Continuously ingest a local inbox
+
+For directories that receive files over time, configure a daemon-owned
+`[[watch]]` entry instead of repeatedly running `docbank add`:
+
+```toml
+[[watch]]
+name = "agent-sessions"
+source = "~/agent-sessions"
+destination = "/archives/agents"
+settle_time = "30s"
+scan_interval = "5s"
+exclude = ["cache/", ".DS_Store"]
+```
+
+The daemon observes a file's filesystem identity, size, and modification time
+for a full settle window before reading it. It then verifies that the confined
+source path still names the same unchanged object. It never follows entries
+that are symlinks and never changes or deletes source data. A daemon restart
+deliberately forgets partial observations, so every file proves a complete
+settle window again.
+
+The watch name and slash-separated relative source path form a stable,
+portable provenance identity. The first stable observation creates the file
+under `destination`; later byte changes append immutable content versions to
+that same stable node. This remains true if a person or agent moves or renames
+the Docbank node after ingestion. Docbank remembers the last content accepted
+from the source independently of the node's current version, so an unchanged
+source does not overwrite a later edit or revert after daemon restart. Removing
+the source leaves the archived node alone. A renamed source-relative path is a
+new identity, not an implicit move.
+
+The destination is exact rather than collision-suffixed. If unrelated content
+already occupies the intended path, or the previously mapped node is in the
+trash, the watcher fails closed instead of guessing. `docbank jobs` reports the
+named `watch:<name>` job and any terminal error; correct the problem and restart
+the daemon. Successful additions, updates, and unchanged observations appear
+in the daemon log. See [Configuration](../configuration.md#watched-inboxes) for
+the complete field contract.

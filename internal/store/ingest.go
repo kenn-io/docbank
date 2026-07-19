@@ -190,6 +190,23 @@ func sameOriginTx(tx *sql.Tx, nodeID int64, name string, allowUnknown bool) (boo
 // applying the idempotency rule and recording provenance. Returns
 // added=false when the content is already present under a candidate name.
 func (s *Store) IngestFile(ctx context.Context, run IngestRun, parentID int64, name, blobHash string, size int64, mimeType, originalPath, originalMtime string) (Node, bool, error) {
+	return s.ingestFile(ctx, run, parentID, name, blobHash, size, mimeType,
+		originalPath, originalMtime, false)
+}
+
+// IngestFileExact imports one already-durable blob under exactly name. Unlike
+// bulk migration it never suffixes or adopts an existing same-content node;
+// a watched source needs its configured source identity to remain one-to-one.
+func (s *Store) IngestFileExact(ctx context.Context, run IngestRun, parentID int64, name, blobHash string, size int64, mimeType, originalPath, originalMtime string) (Node, error) {
+	node, _, err := s.ingestFile(ctx, run, parentID, name, blobHash, size, mimeType,
+		originalPath, originalMtime, true)
+	return node, err
+}
+
+func (s *Store) ingestFile(
+	ctx context.Context, run IngestRun, parentID int64, name, blobHash string,
+	size int64, mimeType, originalPath, originalMtime string, exact bool,
+) (Node, bool, error) {
 	name, err := NormalizeName(name)
 	if err != nil {
 		return Node{}, false, err
@@ -213,17 +230,35 @@ func (s *Store) IngestFile(ctx context.Context, run IngestRun, parentID int64, n
 		added   bool
 	)
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		finalName, existingID, skip, err := resolveIngestNameTx(tx, parentID, name, blobHash)
-		if err != nil {
-			return err
-		}
-		if skip {
-			created, err = scanNode(tx.QueryRow(
-				`SELECT `+nodeCols+` FROM `+nodeFrom+` WHERE n.id = ?`, existingID))
-			if err != nil {
-				return fmt.Errorf("reading idempotent ingest node %d: %w", existingID, err)
+		finalName := name
+		if exact {
+			var existingID int64
+			err := tx.QueryRow(
+				`SELECT id FROM nodes WHERE parent_id = ? AND name = ? AND trashed_at IS NULL`,
+				parentID, name).Scan(&existingID)
+			switch {
+			case err == nil:
+				return fmt.Errorf("creating exact ingest %q under node %d: %w",
+					name, parentID, ErrExists)
+			case errors.Is(err, sql.ErrNoRows):
+			case err != nil:
+				return fmt.Errorf("checking exact ingest name %q: %w", name, err)
 			}
-			return nil
+		} else {
+			var existingID int64
+			var skip bool
+			finalName, existingID, skip, err = resolveIngestNameTx(tx, parentID, name, blobHash)
+			if err != nil {
+				return err
+			}
+			if skip {
+				created, err = scanNode(tx.QueryRow(
+					`SELECT `+nodeCols+` FROM `+nodeFrom+` WHERE n.id = ?`, existingID))
+				if err != nil {
+					return fmt.Errorf("reading idempotent ingest node %d: %w", existingID, err)
+				}
+				return nil
+			}
 		}
 		active, err := auditAuthorityActiveTx(ctx, tx)
 		if err != nil {
@@ -275,6 +310,14 @@ func (s *Store) IngestFile(ctx context.Context, run IngestRun, parentID int64, n
 			provenance.OriginalPath, provenance.OriginalMTime, provenance.Supersedes); err != nil {
 			return fmt.Errorf("recording provenance for %q: %w", finalName, err)
 		}
+		if run.record.SourceKind == "watch" {
+			if err := insertWatchSourceTx(
+				tx, run.record.SourceDesc, provenance.OriginalPath,
+				created.ID, blobHash, size,
+			); err != nil {
+				return err
+			}
+		}
 		if active {
 			resultingParent, err := nodeByIDTx(tx, parentID)
 			if err != nil {
@@ -300,4 +343,24 @@ func (s *Store) IngestFile(ctx context.Context, run IngestRun, parentID int64, n
 		return Node{}, false, err
 	}
 	return created, added, nil
+}
+
+func insertWatchSourceTx(
+	tx *sql.Tx, watchName, sourceRef string, nodeID int64, blobHash string, size int64,
+) error {
+	record := metadataWatchSource{
+		Type: metadataWatchSourceType, WatchName: watchName, SourceRef: sourceRef,
+		NodeID: nodeID, BlobHash: blobHash, Size: size,
+	}
+	if err := validateWatchSourceRecord(record); err != nil {
+		return fmt.Errorf("validating watched source %q/%q: %w", watchName, sourceRef, err)
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO watch_sources(watch_name,source_ref,node_id,blob_hash,size)
+		 VALUES(?,?,?,?,?)`,
+		watchName, sourceRef, nodeID, blobHash, size,
+	); err != nil {
+		return fmt.Errorf("recording watched source %q/%q: %w", watchName, sourceRef, err)
+	}
+	return nil
 }

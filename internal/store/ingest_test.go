@@ -3,6 +3,8 @@ package store
 import (
 	"bytes"
 	"database/sql"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -114,6 +116,98 @@ func TestIngestFileRecordsProvenance(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, wantIdentity, identity)
+}
+
+func TestSyncWatchedContentFollowsMovedNodeWithoutOverwritingIndependentEdit(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	run, err := s.BeginIngest(ctx, "watch", "sessions")
+	require.NoError(t, err)
+	node, err := s.IngestFileExact(ctx, run, s.RootID(),
+		"session.jsonl", fakeHash("a1"), 1, "application/json", "daily/session.jsonl", "")
+	require.NoError(t, err)
+	destination, err := s.MkdirAll(ctx, "/organized")
+	require.NoError(t, err)
+	moved, _, err := s.Move(
+		ctx, node.ID, destination.ID, "renamed.jsonl", UnconditionalRev,
+	)
+	require.NoError(t, err)
+
+	updated, version, changed, err := s.SyncWatchedContent(
+		ctx, "sessions", "daily/session.jsonl",
+		fakeHash("b2"), 2, "application/json",
+	)
+	require.NoError(t, err)
+	require.True(t, changed)
+	assert.Equal(t, moved.ID, updated.ID)
+	assert.Equal(t, "renamed.jsonl", updated.Name)
+	assert.Equal(t, moved.Revision+1, updated.Revision)
+	assert.Equal(t, fakeHash("b2"), version.BlobHash)
+
+	unchanged, noVersion, changed, err := s.SyncWatchedContent(
+		ctx, "sessions", "daily/session.jsonl",
+		fakeHash("b2"), 2, "application/json",
+	)
+	require.NoError(t, err)
+	assert.False(t, changed)
+	assert.Equal(t, updated, unchanged)
+	assert.Empty(t, noVersion.ID)
+
+	manuallyEdited, _, err := s.ReplaceContent(
+		ctx, updated.ID, updated.Revision, fakeHash("c3"), 3, "application/json",
+	)
+	require.NoError(t, err)
+	unchanged, noVersion, changed, err = s.SyncWatchedContent(
+		ctx, "sessions", "daily/session.jsonl",
+		fakeHash("b2"), 2, "application/json",
+	)
+	require.NoError(t, err)
+	assert.False(t, changed)
+	assert.Equal(t, manuallyEdited, unchanged)
+	assert.Empty(t, noVersion.ID)
+}
+
+func TestWatchSourceLookupUsesPrimaryKeyAtArchiveScale(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	run, err := s.BeginIngest(ctx, "watch", "sessions")
+	require.NoError(t, err)
+	node, err := s.IngestFileExact(ctx, run, s.RootID(),
+		"session.jsonl", fakeHash("a1"), 1, "application/json", "daily/session.jsonl", "")
+	require.NoError(t, err)
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO watch_sources(watch_name,source_ref,node_id,blob_hash,size)
+		VALUES(?,?,?,?,?)`)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, stmt.Close()) }()
+	for i := range 10_000 {
+		_, err = stmt.ExecContext(
+			ctx, "archive", fmt.Sprintf("file-%05d", i), node.ID, fakeHash("a1"), 1,
+		)
+		require.NoError(t, err)
+	}
+	require.NoError(t, tx.Commit())
+
+	rows, err := s.db.QueryContext(ctx, `
+		EXPLAIN QUERY PLAN
+		SELECT node_id, blob_hash, size FROM watch_sources
+		WHERE watch_name = ? AND source_ref = ?`, "archive", "file-09999")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	var details []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+		details = append(details, detail)
+	}
+	require.NoError(t, rows.Err())
+	plan := strings.Join(details, "\n")
+	assert.Contains(t, plan, "USING PRIMARY KEY")
+	assert.NotContains(t, plan, "SCAN watch_sources")
 }
 
 func TestIngestAndProvenanceFactsAreImmutable(t *testing.T) {

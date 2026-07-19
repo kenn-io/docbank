@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -137,6 +139,15 @@ type metadataProvenance struct {
 	OriginalPath  string  `json:"original_path"`
 	OriginalMTime *string `json:"original_mtime"`
 	Supersedes    *string `json:"supersedes"`
+}
+
+type metadataWatchSource struct {
+	Type      string `json:"type"`
+	WatchName string `json:"watch_name"`
+	SourceRef string `json:"source_ref"`
+	NodeID    int64  `json:"node_id"`
+	BlobHash  string `json:"blob_hash"`
+	Size      int64  `json:"size"`
 }
 
 type metadataTag struct {
@@ -273,6 +284,9 @@ func exportMetadataSnapshot(ctx context.Context, tx metadataQuerier, w io.Writer
 		return err
 	}
 	if err := exportProvenance(ctx, tx, write); err != nil {
+		return err
+	}
+	if err := exportWatchSources(ctx, tx, write); err != nil {
 		return err
 	}
 	if err := exportTags(ctx, tx, write); err != nil {
@@ -429,6 +443,29 @@ func exportProvenance(ctx context.Context, tx metadataQuerier, write metadataWri
 	return rowsError(metadataProvenanceType, rows)
 }
 
+func exportWatchSources(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT watch_name, source_ref, node_id, blob_hash, size
+		FROM watch_sources ORDER BY watch_name, source_ref`)
+	if err != nil {
+		return fmt.Errorf("exporting watched sources: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		r := metadataWatchSource{Type: metadataWatchSourceType}
+		if err := rows.Scan(&r.WatchName, &r.SourceRef, &r.NodeID, &r.BlobHash, &r.Size); err != nil {
+			return fmt.Errorf("scanning watched source metadata: %w", err)
+		}
+		if err := validateWatchSourceRecord(r); err != nil {
+			return fmt.Errorf("validating watched source metadata for export: %w", err)
+		}
+		if err := write(r); err != nil {
+			return err
+		}
+	}
+	return rowsError(metadataWatchSourceType, rows)
+}
+
 func exportTags(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
 	rows, err := tx.QueryContext(ctx, `SELECT id, name, revision FROM tags ORDER BY id`)
 	if err != nil {
@@ -569,6 +606,7 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		  (SELECT COUNT(*) FROM nodes),
 		  (SELECT COUNT(*) FROM blobs) + (SELECT COUNT(*) FROM content_versions)
 		    + (SELECT COUNT(*) FROM ingests) + (SELECT COUNT(*) FROM provenance)
+		    + (SELECT COUNT(*) FROM watch_sources)
 		    + (SELECT COUNT(*) FROM tags) + (SELECT COUNT(*) FROM node_tags)
 		    + (SELECT COUNT(*) FROM extracted_text)
 		    + (SELECT COUNT(*) FROM audit_records)
@@ -703,6 +741,18 @@ func importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw json
 		) VALUES(?,?,?,?,?,?)`, v.Identity, v.NodeID, v.IngestID, v.OriginalPath,
 			v.OriginalMTime, v.Supersedes)
 		return err
+	case metadataWatchSourceType:
+		var v metadataWatchSource
+		if err := decodeMetadataRecord(raw, &v); err != nil {
+			return err
+		}
+		if err := validateWatchSourceRecord(v); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO watch_sources(
+			watch_name,source_ref,node_id,blob_hash,size
+		) VALUES(?,?,?,?,?)`, v.WatchName, v.SourceRef, v.NodeID, v.BlobHash, v.Size)
+		return err
 	case "tag":
 		var v metadataTag
 		if err := decodeMetadataRecord(raw, &v); err != nil {
@@ -777,6 +827,7 @@ const (
 	auditEventField                       = "event"
 	metadataIngestType                    = "ingest"
 	metadataProvenanceType                = "provenance"
+	metadataWatchSourceType               = "watch_source"
 	metadataTagRecordType                 = "tag"
 	metadataAuditAuthorityType            = "audit_authority"
 	metadataAuditScopeType                = "audit_scope"
@@ -792,6 +843,7 @@ var metadataRequiredFields = map[string][]string{
 	"content_version":           {metadataTypeField, "version_id", metadataNodeIDField, "blob_hash", "size", "mime_type", auditRecordedAtField, "node_revision", "introduced_operation_id", "transition_kind", "source_version_id"},
 	metadataIngestType:          {metadataTypeField, "ingest_id", "started_at", "source_kind", "source_desc"},
 	metadataProvenanceType:      {metadataTypeField, "identity", metadataNodeIDField, "ingest_id", "original_path", "original_mtime", "supersedes"},
+	metadataWatchSourceType:     {metadataTypeField, "watch_name", "source_ref", metadataNodeIDField, "blob_hash", "size"},
 	"tag":                       {metadataTypeField, "tag_id", "name", "revision"},
 	"node_tag":                  {metadataTypeField, metadataNodeIDField, "tag_id"},
 	"extracted_text":            {metadataTypeField, "blob_hash", "extractor", "extractor_version", "status", "error", "attempts", "text", "extracted_at"},
@@ -1071,6 +1123,27 @@ func validateProvenanceFields(v metadataProvenance) error {
 	return nil
 }
 
+func validateWatchSourceRecord(v metadataWatchSource) error {
+	if v.Type != metadataWatchSourceType || v.WatchName == "" ||
+		v.SourceRef == "" || v.NodeID <= 0 || v.Size < 0 {
+		return errors.New("invalid watched source record")
+	}
+	if err := validateUTF8Field("watched source name", v.WatchName); err != nil {
+		return err
+	}
+	if err := validateUTF8Field("watched source reference", v.SourceRef); err != nil {
+		return err
+	}
+	if v.SourceRef == "." || path.IsAbs(v.SourceRef) || v.SourceRef == ".." ||
+		strings.HasPrefix(v.SourceRef, "../") || path.Clean(v.SourceRef) != v.SourceRef {
+		return fmt.Errorf("invalid watched source reference %q", v.SourceRef)
+	}
+	if _, err := packstore.ParseHash(v.BlobHash); err != nil {
+		return fmt.Errorf("invalid watched source blob hash: %w", err)
+	}
+	return nil
+}
+
 func validateTagRecord(v metadataTag) error {
 	if v.Type != "tag" || v.Name == "" || v.Revision < 1 {
 		return errors.New("invalid tag record")
@@ -1157,6 +1230,9 @@ func validateMetadataState(ctx context.Context, tx metadataQuerier, nodeSequence
 		return fmt.Errorf("invalid vault identity: %w", err)
 	}
 	if err := validateMetadataRelations(ctx, tx); err != nil {
+		return err
+	}
+	if err := validateWatchSourceRelations(ctx, tx); err != nil {
 		return err
 	}
 	topology, err := loadAuditTopologyRows(ctx, tx)
@@ -1327,4 +1403,61 @@ func validateMetadataRelations(ctx context.Context, tx metadataQuerier) error {
 		}
 	}
 	return nil
+}
+
+type watchSourceKey struct {
+	watchName string
+	sourceRef string
+}
+
+func validateWatchSourceRelations(ctx context.Context, tx metadataQuerier) error {
+	cursors, err := loadWatchSourceNodes(ctx, tx, "cursor", `
+		SELECT watch_name, source_ref, node_id FROM watch_sources`)
+	if err != nil {
+		return err
+	}
+	provenance, err := loadWatchSourceNodes(ctx, tx, "provenance", `
+		SELECT i.source_desc, p.original_path, p.node_id
+		FROM provenance p JOIN ingests i ON i.id = p.ingest_id
+		WHERE i.source_kind = 'watch'`)
+	if err != nil {
+		return err
+	}
+	if len(cursors) != len(provenance) {
+		return errors.New("watched source cursors do not match provenance")
+	}
+	for key, nodeID := range provenance {
+		if cursors[key] != nodeID {
+			return fmt.Errorf("watched source cursor %q/%q does not match provenance",
+				key.watchName, key.sourceRef)
+		}
+	}
+	return nil
+}
+
+func loadWatchSourceNodes(
+	ctx context.Context, tx metadataQuerier, kind, query string,
+) (map[watchSourceKey]int64, error) {
+	rows, err := tx.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("reading watched source %s: %w", kind, err)
+	}
+	defer func() { _ = rows.Close() }()
+	result := make(map[watchSourceKey]int64)
+	for rows.Next() {
+		var key watchSourceKey
+		var nodeID int64
+		if err := rows.Scan(&key.watchName, &key.sourceRef, &nodeID); err != nil {
+			return nil, fmt.Errorf("scanning watched source %s: %w", kind, err)
+		}
+		if priorNode, exists := result[key]; exists && priorNode != nodeID {
+			return nil, fmt.Errorf("watched source %q/%q identifies multiple nodes",
+				key.watchName, key.sourceRef)
+		}
+		result[key] = nodeID
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating watched source %s: %w", kind, err)
+	}
+	return result, nil
 }

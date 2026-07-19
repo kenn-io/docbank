@@ -6,24 +6,32 @@ import (
 	"sync"
 )
 
-// gate serializes maintenance against regular mutations and active backup
+// OperationGate serializes maintenance against regular mutations and active backup
 // captures. Regular mutating handlers hold mu's read side and may run
 // concurrently. Maintenance holds both exclusive sides. A backup holds the
 // preservation read side for its full capture, but takes mu exclusively only
 // for Kit's short metadata freeze, so ordinary writes resume while maintenance
 // remains queued behind the snapshot's content requirements.
-type gate struct {
+type OperationGate struct {
 	mu           sync.RWMutex
 	preservation sync.RWMutex
 }
 
-func (g *gate) mutate(fn func() error) error {
+// NewOperationGate creates one daemon-wide operation coordinator. Every
+// mutating entry point, including daemon-owned jobs, must share this instance.
+func NewOperationGate() *OperationGate { return &OperationGate{} }
+
+// Mutate runs fn as an ordinary mutation, excluding maintenance while the
+// complete physical-write and metadata-publication operation is in flight.
+func (g *OperationGate) Mutate(fn func() error) error {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	return fn()
 }
 
-func (g *gate) maintain(fn func() error) error {
+func (g *OperationGate) mutate(fn func() error) error { return g.Mutate(fn) }
+
+func (g *OperationGate) maintain(fn func() error) error {
 	g.preservation.Lock()
 	defer g.preservation.Unlock()
 	g.mu.Lock()
@@ -31,7 +39,7 @@ func (g *gate) maintain(fn func() error) error {
 	return fn()
 }
 
-func (g *gate) capture(fn func() error) error {
+func (g *OperationGate) capture(fn func() error) error {
 	g.preservation.RLock()
 	defer g.preservation.RUnlock()
 	return fn()
@@ -41,9 +49,13 @@ func (g *gate) capture(fn func() error) error {
 // side only until the metadata source has pinned its deferred SQLite snapshot;
 // content streaming then proceeds while ordinary mutations resume into WAL.
 type gateFreezer struct {
-	gate *gate
+	gate *OperationGate
 	held bool
 }
+
+// gate keeps the route-local spelling compact while the daemon shares the
+// exported coordinator with background jobs.
+type gate = OperationGate
 
 func (f *gateFreezer) Begin(ctx context.Context) error {
 	if f.held {

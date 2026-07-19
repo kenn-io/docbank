@@ -131,8 +131,9 @@ match `backup create`: progress is written to stderr, and `--json` suppresses
 progress so stdout contains one typed report.
 
 Snapshots include the current virtual tree, trash state, stable content
-versions, ingest/provenance metadata, tags, and extraction records. Restoring
-rebuilds and validates that logical authority before publishing the target.
+versions, ingest/provenance metadata, watched-source cursors, tags, and
+extraction records. Restoring rebuilds and validates that logical authority
+before publishing the target.
 
 ## Restore and prove a snapshot
 
