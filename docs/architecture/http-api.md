@@ -39,7 +39,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `GET /nodes/{id}/tags` · `GET /tags/{tag_id}/nodes` · `PUT\|DELETE /nodes/{id}/tags/{tag_id}` · `PUT\|DELETE /path/tags/{tag_id}` | inspect and change tag assignments | Implemented |
 | `POST /audit/preview` · `POST /audit/enable` · `GET /audit/status` | review permanent first-scope retention, enable the exact reviewed plan, and inspect authority or membership | Implemented |
 | `GET /audit/history?path=&node_id=&limit=&cursor=` | read one audited node's canonical newest-first event timeline with a stable continuation cursor | Implemented |
-| `POST /audit/verify` | independently replay audit authority, return stable terminal evidence, and re-hash every protected blob | Implemented |
+| `POST /audit/verify` | independently replay audit authority, optionally prove recorded evidence is an exact prefix, and re-hash every protected blob | Implemented |
 | `POST /nodes/{id}/verify` | re-hash one file, bound to an inspected node revision | Implemented |
 | `GET /search?q=&limit=` | bounded name search (FTS5), with explicit `truncated` status | Implemented |
 | `POST /nodes` | create a directory (`kind: "dir"`) | Implemented |
@@ -87,6 +87,24 @@ Explicit repository paths are server filesystem paths and must be absolute.
 The CLI resolves a relative `--repo` against its own working directory before
 sending it. API clients over an SSH tunnel must reason about the daemon host's
 filesystem, not the caller's. Every endpoint requires the daemon API key.
+
+### Audit expected-evidence verification
+
+`POST /audit/verify` accepts an empty body for a fresh proof. To prove ancestry,
+send the `evidence` object from a previously successful report:
+
+```json
+{"expected":{"vault_id":"...","lineage_id":"...","operation_sequence_high_water":12,"allocation_entry_count":12,"allocation_head":"...","scopes":[{"id":"...","entry_count":9,"chain_head":"..."}]}}
+```
+
+The current vault is independently replayed before comparison. A successful
+prefix proof returns `evidence_check: {"extends":true}`. Evidence disagreement
+remains an HTTP 200 verification report so clients can inspect current terminal
+evidence and protected-byte problems together; `evidence_check.problems` uses
+the stable codes `audit_not_enabled`, `vault_mismatch`, `lineage_mismatch`,
+`allocation_shorter`, `allocation_diverged`, `scope_missing`, `scope_shorter`,
+and `scope_diverged`. Malformed expected evidence is a `422 validation` request
+error.
 
 ### Background-job status
 

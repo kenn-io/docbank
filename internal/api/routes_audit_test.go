@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -153,8 +154,16 @@ func TestAuditPreviewEnableAndStatusLifecycle(t *testing.T) {
 func TestAuditVerifyReturnsStableEvidenceAndChecksProtectedBytes(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	c := client.New(ts.URL, testAPIKey)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
+		ts.URL+"/api/v1/audit/verify", nil)
+	require.NoError(t, err)
+	req.Header.Set("X-Api-Key", testAPIKey)
+	resp, err := ts.Client().Do(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
 
-	dormant, err := c.VerifyAudit(t.Context())
+	dormant, err := c.VerifyAudit(t.Context(), nil)
 	require.NoError(t, err)
 	assert.False(t, dormant.Enabled)
 	assert.Nil(t, dormant.Evidence)
@@ -165,7 +174,7 @@ func TestAuditVerifyReturnsStableEvidenceAndChecksProtectedBytes(t *testing.T) {
 	status, err := c.EnableAudit(t.Context(), preview.PreviewToken, true)
 	require.NoError(t, err)
 
-	report, err := c.VerifyAudit(t.Context())
+	report, err := c.VerifyAudit(t.Context(), nil)
 	require.NoError(t, err)
 	assert.True(t, report.Enabled)
 	require.NotNil(t, report.Evidence)
@@ -179,10 +188,44 @@ func TestAuditVerifyReturnsStableEvidenceAndChecksProtectedBytes(t *testing.T) {
 	assert.Equal(t, 1, report.VerifiedBlobs)
 	assert.Empty(t, report.Problems)
 	assert.Empty(t, report.MetadataProblems)
+	recorded := *report.Evidence
+	invalid := recorded
+	invalid.AllocationEntryCount++
+	raw, err := json.Marshal(api.AuditVerifyRequest{Expected: &invalid})
+	require.NoError(t, err)
+	req, err = http.NewRequestWithContext(t.Context(), http.MethodPost,
+		ts.URL+"/api/v1/audit/verify", bytes.NewReader(raw))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Api-Key", testAPIKey)
+	resp, err = ts.Client().Do(req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
+	_, err = s.Mkdir(t.Context(), s.RootID(), "after-evidence")
+	require.NoError(t, err)
+	report, err = c.VerifyAudit(t.Context(), &recorded)
+	require.NoError(t, err)
+	require.NotNil(t, report.EvidenceCheck)
+	assert.True(t, report.EvidenceCheck.Extends)
+	assert.Empty(t, report.EvidenceCheck.Problems)
+
+	divergent := recorded
+	divergent.AllocationHead = testHash("divergent allocation")
+	report, err = c.VerifyAudit(t.Context(), &divergent)
+	require.NoError(t, err)
+	require.NotNil(t, report.EvidenceCheck)
+	assert.False(t, report.EvidenceCheck.Extends)
+	require.Len(t, report.EvidenceCheck.Problems, 1)
+	assert.Equal(t, "allocation_diverged", report.EvidenceCheck.Problems[0].Code)
 
 	require.NoError(t, s.Blobs.Remove(file.BlobHash))
-	report, err = c.VerifyAudit(t.Context())
+	report, err = c.VerifyAudit(t.Context(), &divergent)
 	require.NoError(t, err)
+	require.NotNil(t, report.EvidenceCheck)
+	require.Len(t, report.EvidenceCheck.Problems, 1)
+	assert.Equal(t, "allocation_diverged", report.EvidenceCheck.Problems[0].Code)
 	assert.Equal(t, 0, report.VerifiedBlobs)
 	require.Len(t, report.Problems, 1)
 	assert.Equal(t, file.BlobHash, report.Problems[0].Hash)

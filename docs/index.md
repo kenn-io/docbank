@@ -94,7 +94,7 @@ docbank backup create --repo ~/Backups/docbank # incremental snapshot
   </section>
   <section>
     <h3>Audited history</h3>
-    <p>Opt a directory into permanent, tamper-evident history, with stable evidence from <code>audit verify</code>.</p>
+    <p>Opt a directory into permanent, tamper-evident history, then prove current authority extends evidence you recorded earlier.</p>
   </section>
 </div>
 
@@ -111,7 +111,8 @@ docbank backup create --repo ~/Backups/docbank # incremental snapshot
 - **Audited history.** Opt a directory into permanent, tamper-evident
   history: every change — ingest, replacement, reversion, moves, trash and
   restore, tag changes — is recorded and `audit verify` independently replays
-  it and checks every protected blob.
+  it, checks every protected blob, and proves current authority extends a
+  previously recorded evidence bundle.
   Enroll a vault's first audit scope with `docbank audit enable` (newer
   than the v0.5.0 release; build from source to use it today); see
   [Permanent Audited History](usage/audited-history.md).

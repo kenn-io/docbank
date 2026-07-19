@@ -146,6 +146,8 @@ promise rather than a scan of unrelated vault content:
 ```bash
 docbank audit verify
 docbank audit verify --json
+docbank audit verify --json > audit-evidence.json
+docbank audit verify --expected audit-evidence.json
 ```
 
 The command independently replays canonical history against the current node,
@@ -158,9 +160,19 @@ On success, the report contains the stable vault and allocation-lineage IDs,
 the allocation entry count and head, the current operation high-water mark,
 and every scope's entry count and chain head. The JSON `evidence` object is a
 compact terminal bundle suitable for recording outside the vault. A later
-bundle that unexpectedly moves backward or changes vault/lineage identity is a
-rollback or replacement signal; keep older evidence and the corresponding
-verified backups while investigating.
+verification can prove that exact bundle is a prefix of the current authority:
+the vault and allocation-lineage identities must match, the recorded allocation
+head must still exist at its recorded count, and every recorded scope head must
+still exist at its recorded count. Equal chains pass, and chains with valid
+later operations also pass. A missing, shorter, or divergent chain makes the
+command fail with a structured evidence problem while still reporting current
+metadata and protected-byte results.
+
+`--expected` reads a successful active `audit verify --json` report, not an
+unverified hand-written head. Keep that report outside the vault and retain the
+corresponding verified backups. The proof cannot detect an attacker who can
+replace both the vault and your separately recorded evidence; the external copy
+is the trust anchor.
 
 `docbank audit verify` hashes protected content only. `docbank verify` remains
 the broader whole-vault check: it performs the same metadata and audit replay,
@@ -191,7 +203,6 @@ yet exposed. Status, mutation recording, JSONL export/import, and backup capture
 all preserve the first scope's authority.
 
 !!! info "Planned"
-    Additional scope enrollment, scope-wide history, expected-evidence prefix
-    checks, and rich TUI/web history views are not implemented yet. Backup
-    restore already revalidates the portable JSONL authority before publishing
-    a vault.
+    Additional scope enrollment, scope-wide history, and rich TUI/web history
+    views are not implemented yet. Backup restore already revalidates the
+    portable JSONL authority before publishing a vault.

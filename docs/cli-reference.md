@@ -323,7 +323,7 @@ docbank audit status [path] [--json]
 docbank audit status --node-id <id> [--json]
 docbank audit history <path> [--limit <n>] [--cursor <cursor>] [--json]
 docbank audit history --node-id <id> [--limit <n>] [--cursor <cursor>] [--json]
-docbank audit verify [--json]
+docbank audit verify [--expected <prior-json-report>] [--json]
 ```
 
 `audit enable` permanently protects a directory scope and all retained content
@@ -366,6 +366,12 @@ Human output reports the same evidence and protected-byte totals; JSON is
 suitable for external recording. Missing, corrupt, unreadable, or inconsistent
 authority exits non-zero. Use the top-level `docbank verify` when the decision
 requires every blob in the vault rather than only permanent audit content.
+
+Save a successful active JSON report outside the vault, then pass it back with
+`--expected`. Verification proves that its allocation head and every recorded
+scope head remain exact prefixes of current authority. Equal or validly extended
+chains pass; a different vault/lineage, missing scope, shorter chain, or
+divergent head is reported with a stable problem code and exits non-zero.
 
 The current public boundary supports the first scope in a vault; a later
 `audit enable` returns `audit_already_enabled`. See

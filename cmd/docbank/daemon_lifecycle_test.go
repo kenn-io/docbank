@@ -157,7 +157,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	recs, err := client.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
-	require.Equal(t, "20", recs[0].Metadata["protocol_version"])
+	require.Equal(t, "21", recs[0].Metadata["protocol_version"])
 	recs[0].Metadata["protocol_version"] = "9"
 	_, err = client.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
@@ -178,7 +178,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	recs, err = client.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
-	require.Equal(t, "20", recs[0].Metadata["protocol_version"])
+	require.Equal(t, "21", recs[0].Metadata["protocol_version"])
 	recs[0].Metadata["protocol_version"] = "7"
 	_, err = client.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
@@ -335,9 +335,9 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	historyPID := strconv.Itoa(recs[0].PID)
 	assert.NotEqual(t, auditPID, historyPID)
 
-	// Protocol 19 predates independent audit verification evidence. Replace it
-	// before the CLI asks for the new read-only verification workflow.
-	recs[0].Metadata["protocol_version"] = "19"
+	// Protocol 20 predates exact-prefix checks against externally recorded
+	// audit evidence. Replace it before any expected evidence can be ignored.
+	recs[0].Metadata["protocol_version"] = "20"
 	_, err = client.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
 	out, err = run(oldBin, "audit", "verify", "--json")
@@ -363,7 +363,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	recs, err = client.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
-	require.Equal(t, "20", recs[0].Metadata["protocol_version"])
+	require.Equal(t, "21", recs[0].Metadata["protocol_version"])
 	recs[0].Metadata["protocol_version"] = "4"
 	_, err = client.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)

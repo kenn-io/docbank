@@ -139,11 +139,23 @@ func registerAuditRoutes(
 		Summary: "Replay audit authority and verify every protected blob",
 		Description: "Returns stable vault, allocation-lineage, and scope-chain " +
 			"evidence after independently replaying canonical history against current " +
-			"metadata and re-hashing every unique blob retained by protected history.",
-	}, func(ctx context.Context, _ *struct{}) (*auditVerifyOutput, error) {
+			"metadata and re-hashing every unique blob retained by protected history. " +
+			"Optional expected evidence is proved as an exact prefix of current authority.",
+	}, func(ctx context.Context, in *struct {
+		Body *AuditVerifyRequest
+	}) (*auditVerifyOutput, error) {
+		var expected *store.AuditEvidence
+		if in.Body != nil && in.Body.Expected != nil {
+			converted := storeAuditEvidence(*in.Body.Expected)
+			if err := store.ValidateAuditEvidence(converted); err != nil {
+				return nil, NewError(http.StatusUnprocessableEntity, "validation",
+					fmt.Sprintf("invalid expected audit evidence: %v", err))
+			}
+			expected = &converted
+		}
 		out := &auditVerifyOutput{}
 		err := g.maintain(func() error {
-			verification, err := d.Store.VerifyAudit(ctx)
+			verification, err := d.Store.VerifyAudit(ctx, expected)
 			if err != nil {
 				if ctx.Err() != nil {
 					return NewError(http.StatusInternalServerError, "internal",
@@ -153,6 +165,9 @@ func registerAuditRoutes(
 				return nil
 			}
 			out.Body.Enabled = verification.Evidence.Enabled
+			if verification.EvidenceCheck != nil {
+				out.Body.EvidenceCheck = auditEvidenceCheck(*verification.EvidenceCheck)
+			}
 			if !verification.Evidence.Enabled {
 				return nil
 			}
@@ -209,6 +224,34 @@ func registerAuditRoutes(
 		}
 		return &auditHistoryOutput{Body: auditEventPage(page)}, nil
 	})
+}
+
+func storeAuditEvidence(evidence AuditEvidence) store.AuditEvidence {
+	out := store.AuditEvidence{
+		Enabled: true, VaultID: evidence.VaultID, LineageID: evidence.LineageID,
+		OperationSequenceHighWater: evidence.OperationSequenceHighWater,
+		AllocationEntryCount:       evidence.AllocationEntryCount,
+		AllocationHead:             evidence.AllocationHead,
+		Scopes:                     make([]store.AuditScopeEvidence, 0, len(evidence.Scopes)),
+	}
+	for _, scope := range evidence.Scopes {
+		out.Scopes = append(out.Scopes, store.AuditScopeEvidence{
+			ID: scope.ID, EntryCount: scope.EntryCount, ChainHead: scope.ChainHead,
+		})
+	}
+	return out
+}
+
+func auditEvidenceCheck(check store.AuditEvidenceCheck) *AuditEvidenceCheck {
+	out := &AuditEvidenceCheck{
+		Extends: check.Extends, Problems: make([]AuditEvidenceProblem, 0, len(check.Problems)),
+	}
+	for _, problem := range check.Problems {
+		out.Problems = append(out.Problems, AuditEvidenceProblem{
+			Code: problem.Code, ScopeID: problem.ScopeID, Message: problem.Message,
+		})
+	}
+	return out
 }
 
 func auditEvidence(evidence store.AuditEvidence) *AuditEvidence {
