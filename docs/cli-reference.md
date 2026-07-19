@@ -87,7 +87,7 @@ HTTP JSON endpoint, so stdout remains safe for automation.
 ## docbank ls
 
 ```
-docbank ls [path]
+docbank ls [path] [--json]
 ```
 
 Lists a virtual directory (default `/`). Columns: `ID`, `KIND`
@@ -95,15 +95,22 @@ Lists a virtual directory (default `/`). Columns: `ID`, `KIND`
 RFC 3339), `NAME`. Fails with `not a directory` when the path names a
 file.
 
+`--json` returns the resolved directory under `directory` and its complete,
+ordered child list under `items`. Empty directories produce `"items": []`.
+
 ## docbank tree
 
 ```
-docbank tree [path]
+docbank tree [path] [--json]
 ```
 
 Prints the subtree rooted at `path` (default `/`), two-space indented,
 each entry suffixed with its node ID in brackets. Fails without output if
 `path` names a file.
+
+`--json` returns the resolved root and a deterministic, pre-order `items`
+array. Each item contains the node, its absolute virtual `path`, and its
+`depth` beneath the root (direct children have depth 1).
 
 ## docbank cat
 
@@ -431,7 +438,7 @@ restored under `/`. Prints `restored [<id>] <path>`.
 ## docbank search
 
 ```
-docbank search <query>... [--limit <n>]
+docbank search <query>... [--limit <n>] [--json]
 ```
 
 Full-text search over live node names (FTS5). Every whitespace-separated
@@ -442,14 +449,17 @@ matches exist, the command says that the result is truncated rather than
 silently implying completeness. Output columns are `ID` and `PATH`; no
 matches prints `no matches`.
 
+`--json` emits the typed search report with `hits`, the applied `limit`, and
+an explicit `truncated` boolean. An empty result uses `"hits": []`.
+
 Search currently covers node names only; document-body extraction and content
 search are not available. See [Searching](usage/searching.md).
 
 ## docbank trash
 
 ```
-docbank trash list
-docbank trash empty [--older-than <age>] [--run]
+docbank trash list [--json]
+docbank trash empty [--older-than <age>] [--run] [--json]
 ```
 
 `list` shows restorable trashed nodes: `ID`, `TRASHED AT`, `NAME`. Only
@@ -461,6 +471,11 @@ default. Pass `--run` to permanently delete them; their blobs then become
 `gc` candidates unless referenced elsewhere. `--older-than` accepts Go
 durations (`12h`, `30m`) plus a day suffix (`30d`); negative ages are
 rejected. Without that filter, every trash root is eligible.
+
+`list --json` emits `{"items": [...]}`. `empty --json` emits the same typed
+dry-run or execution report as the HTTP API: `candidate_roots`, `deleted`,
+and `run`. Human status lines are suppressed so stdout contains one JSON
+document.
 
 ## docbank gc
 

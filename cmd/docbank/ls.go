@@ -6,8 +6,16 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/client"
 )
+
+var lsJSON bool
+
+type directoryListing struct {
+	Directory api.Node   `json:"directory"`
+	Items     []api.Node `json:"items"`
+}
 
 var lsCmd = &cobra.Command{
 	Use:   "ls [path]",
@@ -30,6 +38,12 @@ var lsCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if lsJSON {
+			return writeCLIJSON(cmd.OutOrStdout(), directoryListing{
+				Directory: dir,
+				Items:     kids,
+			})
+		}
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
 		_, _ = fmt.Fprintln(w, "ID\tKIND\tSIZE\tMODIFIED\tNAME")
 		for _, k := range kids {
@@ -39,4 +53,7 @@ var lsCmd = &cobra.Command{
 	},
 }
 
-func init() { rootCmd.AddCommand(lsCmd) }
+func init() {
+	lsCmd.Flags().BoolVar(&lsJSON, "json", false, "emit machine-readable JSON")
+	rootCmd.AddCommand(lsCmd)
+}

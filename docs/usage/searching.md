@@ -9,6 +9,7 @@ description: Ranked, prefix-matching search over document names with FTS5; docum
 docbank search insurance
 docbank search tax 2026
 docbank search report --limit 200
+docbank search report --json
 ```
 
 ```
@@ -30,6 +31,9 @@ ID   PATH
   accepts 1–1000, and truncation is always reported.
 - **Live nodes only.** Trashed documents don't appear; restore returns
   them to the index. Renames update the index immediately.
+
+For scripts, `--json` returns `hits`, `limit`, and `truncated` without table
+formatting. `hits` is always an array, including when nothing matches.
 
 ## What's indexed today
 

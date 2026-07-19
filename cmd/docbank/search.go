@@ -15,7 +15,10 @@ const (
 	maxSearchLimit     = 1000
 )
 
-var searchLimit int
+var (
+	searchLimit int
+	searchJSON  bool
+)
 
 var searchCmd = &cobra.Command{
 	Use:   "search <query>...",
@@ -32,6 +35,9 @@ var searchCmd = &cobra.Command{
 		rep, err := c.Search(cmd.Context(), strings.Join(args, " "), searchLimit)
 		if err != nil {
 			return err
+		}
+		if searchJSON {
+			return writeCLIJSON(cmd.OutOrStdout(), rep)
 		}
 		if len(rep.Hits) == 0 {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "no matches")
@@ -61,5 +67,6 @@ var searchCmd = &cobra.Command{
 func init() {
 	searchCmd.Flags().IntVar(&searchLimit, "limit", defaultSearchLimit,
 		"maximum results to return (1-1000)")
+	searchCmd.Flags().BoolVar(&searchJSON, "json", false, "emit machine-readable JSON")
 	rootCmd.AddCommand(searchCmd)
 }
