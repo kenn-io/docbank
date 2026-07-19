@@ -7,33 +7,51 @@
 > **Alpha software.** Docbank is pre-1.0. Keep independent copies of
 > irreplaceable material and verify backups before relying on them.
 
-Keep the documents. Change the filing system.
+**Keep the documents. Change the filing system.**
 
-Docbank is a local-first document archive for PDFs, scans, notes,
-spreadsheets, images, and other files. It stores immutable, deduplicated bytes
-by SHA-256 and gives them a virtual directory tree that can be reorganized
-without moving the underlying content.
-
-It is designed to be useful both directly and as document infrastructure for
-other software. Humans use the CLI; agents and external applications use the
-authenticated HTTP API. Go applications can instead embed independently rooted
-vaults in-process. In either mode exactly one owner holds a vault and its
-metadata, content, and maintenance authority.
+Docbank is a local-first archive for the PDFs, scans, notes, spreadsheets,
+and records you keep for life. Content is immutable and deduplicated under
+one logical SHA-256 identity, stored loose or in managed packs; above it, a
+virtual tree in SQLite supplies names and paths that can be reorganized
+without rewriting content. Documentation lives at
+[docbank.ai](https://docbank.ai).
 
 ## Why docbank?
 
-- **Organization is not storage.** Rename and move documents through metadata
-  transactions while their content identity remains stable.
-- **Import is safe to repeat.** Recursive ingestion copies rather than modifies
-  sources, records provenance, resumes cleanly, and deduplicates by content.
-- **Deletion is deliberate.** `rm` is recoverable. Emptying trash, collecting
-  unreachable content, and compacting dead packed space are separate steps.
-- **Integrity is visible.** Verify live content by hash, stream bytes with
-  transfer evidence, and create incremental snapshots that can be verified and
-  restored into a separate vault.
-- **Agents get a real contract.** Stable node IDs, revisions, bounded lists,
-  structured errors, dry-run maintenance, OpenAPI, and byte-identity proofs
-  support safe automation without direct database access.
+Ordinary folders make a document's location part of its identity, and cloud
+drives couple an archive's integrity, history, and continued existence to an
+account in good standing. Neither makes durable content identity,
+independent verification, and provider-independent retention part of its
+native contract. Docbank does: everything lives on your machine in an
+inspectable layout, imports copy and never touch sources, and integrity is
+provable on demand. One honest boundary — docbank is an archive and system
+of record, not a sync-and-share tool. It makes the copy that must survive
+trustworthy.
+
+Two ways to run it, one authority per vault:
+
+- **Standalone.** A personal archive: the CLI and a daemon on your machine.
+  Agents and scripts use the same authenticated HTTP contract the CLI uses,
+  with IDs that survive renames and revision preconditions for safe
+  read-modify-write.
+- **Embedded.** A Go module: independently rooted vaults in-process, no
+  daemon, the same storage model and lifecycle guarantees.
+
+Four commitments:
+
+- **Immutable content.** Blob writes are durable before the database ever
+  references them, and every content version keeps a verified SHA-256
+  identity you can re-check at any time with `verify`.
+- **Deliberate lifecycle.** `rm` is always recoverable trash. Emptying
+  trash, collecting unreachable content, and compacting packed space are
+  separate explicit operations — never side effects.
+- **Verified backup & restore.** Incremental snapshot repositories support
+  create, list, verify, and confined restore into a separate vault, so a
+  backup is proven before it is trusted.
+- **Audited history.** Opt a directory into permanent, tamper-evident
+  history with `docbank audit enable` (newer than the v0.5.0 release; build
+  from source to use it today); every supported change is recorded and
+  `verify` independently replays it.
 
 ## Implemented today
 
@@ -47,6 +65,8 @@ metadata, content, and maintenance authority.
   sticky retention, recorded supported mutations, status evidence, bounded
   per-node history, independent chain/protected-byte verification, exact-prefix
   checks against externally recorded evidence, and backup/restore fidelity
+  (newer than the v0.5.0 release; build from source until the next tagged
+  release ships)
 - FTS5 name search (document-body extraction and search are planned)
 - Mixed loose and packed content storage with explicit pack, GC, and repack
 - Whole-vault integrity verification
@@ -90,9 +110,9 @@ make install
 ```
 
 On Windows, build `docbank.exe` with
-`go build -tags fts5 -o docbank.exe ./cmd/docbank`; the
-[setup guide](docs/setup.md) covers the platform toolchain.
-The [setup guide](docs/setup.md) is the installation authority.
+`go build -tags fts5 -o docbank.exe ./cmd/docbank`. The
+[setup guide](docs/setup.md) is the installation authority and covers each
+platform's toolchain.
 
 ## Quick start
 
@@ -129,12 +149,14 @@ docbank backup restore --repo ~/Backups/docbank --target ~/Restores/docbank-test
 - [Using docbank](docs/usage/lifecycle.md), including backup and recovery
 - [Docbank for agents](docs/agents.md) and the detailed
   [integration guide](docs/agents/integration.md)
-- [Embedding Docbank in Go](docs/embedding.md)
+- [Embed in Go](docs/embedding.md)
 - [CLI reference](docs/cli-reference.md)
 - [Architecture overview](docs/architecture/overview.md)
 - [Internal design map](docs/internal/README.md) for contributors and coding agents
 
-Docbank belongs to the same family of personal data tools as
-[msgvault](https://msgvault.io). Msgvault preserves communications history;
-Docbank provides a durable, reorganizable home for ordinary documents and a
-safe document API for external applications.
+Docbank belongs to a family of personal data tools alongside
+[msgvault](https://msgvault.io) (communications archive) and fotobank
+(photo/video archive). Where msgvault preserves an immutable record of your
+messages, docbank manages working documents: files you still organize,
+retrieve, and build workflows around — and a safe document API for external
+applications.
