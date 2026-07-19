@@ -44,7 +44,7 @@ Docbank makes those questions part of the product contract.
   </section>
   <section>
     <h3>Operations made for automation</h3>
-    <p>OpenAPI, JSON output, bounded reads, structured errors, dry runs, progress events, audit evidence, and verified backups replace prose scraping.</p>
+    <p>OpenAPI, JSON output, bounded reads, structured errors, dry runs, progress events, and verified backups replace prose scraping.</p>
   </section>
 </div>
 
