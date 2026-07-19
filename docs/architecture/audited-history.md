@@ -9,8 +9,9 @@ description: The permanent, tamper-evident history model for protected directory
     Docbank implements permanent first-scope enrollment, sticky membership,
     mutation and allocation chains for the supported changes described below,
     JSONL backup/restore fidelity, status inspection, and bounded per-node
-    history. Additional scopes, scope-wide browsing, independent verification
-    commands, and TUI/web projections remain planned. See
+    history. Independent audit verification returns stable terminal evidence
+    and checks every protected blob. Additional scopes, scope-wide browsing,
+    expected-evidence prefix checks, and TUI/web projections remain planned. See
     [Permanent Audited History](../usage/audited-history.md) for the current
     operator workflow.
 
@@ -1474,10 +1475,19 @@ turns tag/provenance identity and pre/post records into a typed attachment
 change, rather than exposing the internal canonical encoding or dropping the
 metadata that explains the event.
 
+`audit verify` pins one metadata snapshot, exports it through the deterministic
+metadata-v1 validation boundary, and therefore independently replays every
+canonical operation before it reports evidence. While the daemon maintenance
+gate keeps that snapshot and its physical reads coherent, it derives the
+distinct blob set from sticky memberships and retained versions and re-hashes
+each object through catalog authority. The returned evidence deliberately
+contains stable identities and terminal counts/heads, not mutable paths.
+
 !!! info "Planned"
-    Scope-wide history and independent `audit verify` will expose aggregate
-    timelines and terminal verification evidence. Refused protected destruction
-    will identify every blocking scope in structured output.
+    Scope-wide history will expose aggregate timelines. Expected-evidence
+    prefix checks will prove that current terminal heads extend an externally
+    recorded bundle rather than merely differing from it. Refused protected
+    destruction will identify every blocking scope in structured output.
 
 ### TUI
 

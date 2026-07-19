@@ -150,6 +150,45 @@ func TestAuditPreviewEnableAndStatusLifecycle(t *testing.T) {
 	require.NoError(t, s.ValidateMetadata(t.Context()))
 }
 
+func TestAuditVerifyReturnsStableEvidenceAndChecksProtectedBytes(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	c := client.New(ts.URL, testAPIKey)
+
+	dormant, err := c.VerifyAudit(t.Context())
+	require.NoError(t, err)
+	assert.False(t, dormant.Enabled)
+	assert.Nil(t, dormant.Evidence)
+
+	file := createFileWithContent(t, ts, s, "/record.txt", "protected content")
+	preview, err := c.PreviewAudit(t.Context(), client.AuditPreviewOptions{NodeID: s.RootID()})
+	require.NoError(t, err)
+	status, err := c.EnableAudit(t.Context(), preview.PreviewToken, true)
+	require.NoError(t, err)
+
+	report, err := c.VerifyAudit(t.Context())
+	require.NoError(t, err)
+	assert.True(t, report.Enabled)
+	require.NotNil(t, report.Evidence)
+	assert.Equal(t, status.VaultID, report.Evidence.VaultID)
+	assert.Equal(t, status.LineageID, report.Evidence.LineageID)
+	assert.Equal(t, status.AllocationHead, report.Evidence.AllocationHead)
+	require.Len(t, report.Evidence.Scopes, 1)
+	assert.Equal(t, status.Scopes[0].ChainHead, report.Evidence.Scopes[0].ChainHead)
+	assert.Equal(t, 1, report.ProtectedBlobs)
+	assert.Equal(t, int64(len("protected content")), report.ProtectedBytes)
+	assert.Equal(t, 1, report.VerifiedBlobs)
+	assert.Empty(t, report.Problems)
+	assert.Empty(t, report.MetadataProblems)
+
+	require.NoError(t, s.Blobs.Remove(file.BlobHash))
+	report, err = c.VerifyAudit(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, 0, report.VerifiedBlobs)
+	require.Len(t, report.Problems, 1)
+	assert.Equal(t, file.BlobHash, report.Problems[0].Hash)
+	assert.Equal(t, "missing", report.Problems[0].Problem)
+}
+
 func TestAuditEnableRejectsPreviewAfterVaultMutation(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	taxes, err := s.Mkdir(t.Context(), s.RootID(), "Taxes")

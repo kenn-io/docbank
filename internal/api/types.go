@@ -213,6 +213,37 @@ type AuditStatus struct {
 	Membership                 *AuditMembershipStatus `json:"membership,omitempty"`
 }
 
+// AuditScopeEvidence is the terminal count and head of one independently
+// replayed permanent scope chain.
+type AuditScopeEvidence struct {
+	ID         string `json:"id" format:"uuid"`
+	EntryCount int64  `json:"entry_count" minimum:"1"`
+	ChainHead  string `json:"chain_head" pattern:"^[0-9a-f]{64}$"`
+}
+
+// AuditEvidence is the stable authority bundle an operator can record outside
+// the vault and compare with later verification results.
+type AuditEvidence struct {
+	VaultID                    string               `json:"vault_id" format:"uuid"`
+	LineageID                  string               `json:"lineage_id" format:"uuid"`
+	OperationSequenceHighWater int64                `json:"operation_sequence_high_water" minimum:"1"`
+	AllocationEntryCount       int64                `json:"allocation_entry_count" minimum:"1"`
+	AllocationHead             string               `json:"allocation_head" pattern:"^[0-9a-f]{64}$"`
+	Scopes                     []AuditScopeEvidence `json:"scopes" minItems:"1"`
+}
+
+// AuditVerifyReport reports independently replayed authority evidence and
+// physical verification of every unique blob retained by protected history.
+type AuditVerifyReport struct {
+	Enabled          bool            `json:"enabled"`
+	Evidence         *AuditEvidence  `json:"evidence,omitempty"`
+	ProtectedBlobs   int             `json:"protected_blobs" minimum:"0"`
+	ProtectedBytes   int64           `json:"protected_bytes" minimum:"0"` // unique raw bytes
+	VerifiedBlobs    int             `json:"verified_blobs" minimum:"0"`
+	Problems         []VerifyProblem `json:"problems,omitempty"`
+	MetadataProblems []string        `json:"metadata_problems,omitempty"`
+}
+
 // AuditEvent is one canonical, immutable event involving an audited node.
 // Optional fields are present only when that event kind carries the relation.
 type AuditEvent struct {

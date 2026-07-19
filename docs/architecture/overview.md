@@ -215,7 +215,7 @@ and which threats require independent evidence.
 | Incremental snapshots and safe publication on restore | [Backup & Recovery](backup.md) |
 | The contract shared by the CLI and agents | [HTTP API](http-api.md) |
 | What integrity checks do and do not establish | [Integrity & Trust](integrity.md) |
-| The planned permanent-retention model | [Audited History](audited-history.md) |
+| Permanent retention, history, and verification | [Audited History](audited-history.md) |
 
 The [Roadmap](../roadmap.md) gives high-level product direction. These pages
 explain implemented behavior and durable design intent; planned behavior is
