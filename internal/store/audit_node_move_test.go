@@ -21,10 +21,11 @@ func TestAuditedInScopeMoveRecordsDescendantPathsAndRoundTrips(t *testing.T) {
 	projects, err := s.NodeByPath(t.Context(), "/Projects")
 	require.NoError(t, err)
 
-	moved, err := s.Move(
+	moved, movedPath, err := s.Move(
 		t.Context(), work.ID, archive.ID, "Renamed", work.Revision,
 	)
 	require.NoError(t, err)
+	assert.Equal(t, "/Projects/Archive/Renamed", movedPath)
 	assert.Equal(t, archive.ID, *moved.ParentID)
 	assert.Equal(t, "Renamed", moved.Name)
 	assert.Equal(t, work.Revision+1, moved.Revision)
@@ -79,7 +80,7 @@ func TestAuditedInScopeRenameRecordsOnePathEffect(t *testing.T) {
 	parent, err := s.NodeByPath(t.Context(), "/Projects")
 	require.NoError(t, err)
 
-	renamed, err := s.Move(t.Context(), file.ID, parent.ID, "renamed.txt", file.Revision)
+	renamed, _, err := s.Move(t.Context(), file.ID, parent.ID, "renamed.txt", file.Revision)
 	require.NoError(t, err)
 	assert.Equal(t, "renamed.txt", renamed.Name)
 	require.NoError(t, s.ValidateMetadata(t.Context()))
@@ -99,7 +100,7 @@ func TestAuditedRootScopeRenameHandlesRootTimestampTouch(t *testing.T) {
 	require.NoError(t, err)
 	seedInitialAuditAuthority(t, s, s.RootID())
 
-	renamed, err := s.Move(
+	renamed, _, err := s.Move(
 		t.Context(), empty.ID, s.RootID(), "RenamedEmpty", empty.Revision,
 	)
 	require.NoError(t, err)
@@ -125,7 +126,7 @@ func TestAuditedMoveRejectsRetainedTrashOriginPathChange(t *testing.T) {
 	require.NoError(t, err)
 	seedInitialAuditAuthority(t, s, s.RootID())
 
-	_, err = s.Move(
+	_, _, err = s.Move(
 		t.Context(), projects.ID, s.RootID(), "RenamedProjects", projects.Revision,
 	)
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
@@ -177,7 +178,7 @@ func TestAuditedMoveRefusesMembershipAndWitnessBoundaryCrossings(t *testing.T) {
 	empty, err := s.NodeByPath(t.Context(), "/Empty")
 	require.NoError(t, err)
 
-	_, err = s.Move(t.Context(), report.ID, empty.ID, report.Name, report.Revision)
+	_, _, err = s.Move(t.Context(), report.ID, empty.ID, report.Name, report.Revision)
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
 	unchanged, err := s.NodeByID(t.Context(), report.ID)
 	require.NoError(t, err)
@@ -187,7 +188,7 @@ func TestAuditedMoveRefusesMembershipAndWitnessBoundaryCrossings(t *testing.T) {
 	require.NoError(t, err)
 	projects, err := s.NodeByPath(t.Context(), "/Projects")
 	require.NoError(t, err)
-	movedOutside, err := s.Move(
+	movedOutside, _, err := s.Move(
 		t.Context(), outside.ID, projects.ID, outside.Name, outside.Revision,
 	)
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
@@ -205,7 +206,7 @@ func TestAuditedMoveRollsBackTreeAndHistory(t *testing.T) {
 		SELECT RAISE(ABORT, 'forced audit move failure'); END`)
 	require.NoError(t, err)
 
-	moved, err := s.Move(t.Context(), work.ID, archive.ID, "failed", work.Revision)
+	moved, _, err := s.Move(t.Context(), work.ID, archive.ID, "failed", work.Revision)
 	require.ErrorContains(t, err, "forced audit move failure")
 	assert.Zero(t, moved)
 	unchanged, err := s.NodeByPath(t.Context(), "/Projects/Work/child.txt")

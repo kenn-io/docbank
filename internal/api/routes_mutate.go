@@ -102,12 +102,12 @@ func registerMutateRoutes(api huma.API, d Deps, g *gate) {
 			if parent == nil {
 				return FromStoreError(fmt.Errorf("node %d: %w", in.ID, store.ErrIsRoot))
 			}
-			n, err := d.Store.Move(ctx, in.ID, *parent, name, rev)
+			n, path, err := d.Store.Move(ctx, in.ID, *parent, name, rev)
 			if err != nil {
 				return FromStoreError(err)
 			}
-			out, err = nodeWithPath(ctx, d, n.ID)
-			return err
+			out = nodeOutputAt(n, path)
+			return nil
 		})
 		return out, err
 	})
@@ -132,12 +132,12 @@ func registerMutateRoutes(api huma.API, d Deps, g *gate) {
 		}
 		var out *nodeOutput
 		err := g.mutate(func() error {
-			n, err := d.Store.MovePath(ctx, in.Body.SrcPath, in.Body.DestPath)
+			n, path, err := d.Store.MovePath(ctx, in.Body.SrcPath, in.Body.DestPath)
 			if err != nil {
 				return FromStoreError(err)
 			}
-			out, err = nodeWithPath(ctx, d, n.ID)
-			return err
+			out = nodeOutputAt(n, path)
+			return nil
 		})
 		return out, err
 	})
@@ -218,12 +218,12 @@ func registerMutateRoutes(api huma.API, d Deps, g *gate) {
 		}
 		var out *nodeOutput
 		err = g.mutate(func() error {
-			n, err := d.Store.Restore(ctx, in.ID, rev)
+			n, path, err := d.Store.Restore(ctx, in.ID, rev)
 			if err != nil {
 				return FromStoreError(err)
 			}
-			out, err = nodeWithPath(ctx, d, n.ID)
-			return err
+			out = nodeOutputAt(n, path)
+			return nil
 		})
 		return out, err
 	})

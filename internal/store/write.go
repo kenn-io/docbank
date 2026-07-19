@@ -333,9 +333,13 @@ func isAncestorTx(tx *sql.Tx, maybeAncestor, candidate int64) (bool, error) {
 
 // Move renames and/or reparents a live node in one transaction. Unless
 // ifRev is UnconditionalRev, the mutation fails with ErrStaleRevision
-// unless ifRev matches the node's current revision.
-func (s *Store) Move(ctx context.Context, id, newParentID int64, newName string, ifRev int64) (Node, error) {
+// unless ifRev matches the node's current revision. The returned canonical
+// path is captured in the mutation transaction with the returned node.
+func (s *Store) Move(
+	ctx context.Context, id, newParentID int64, newName string, ifRev int64,
+) (Node, string, error) {
 	var moved Node
+	var movedPath string
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		active, err := auditAuthorityActiveTx(ctx, tx)
@@ -344,24 +348,29 @@ func (s *Store) Move(ctx context.Context, id, newParentID int64, newName string,
 		}
 		if active {
 			moved, err = s.moveAuditedTx(ctx, tx, id, newParentID, newName, ifRev)
-			return err
+		} else {
+			moved, err = s.moveTx(tx, id, newParentID, newName, ifRev)
 		}
-		moved, err = s.moveTx(tx, id, newParentID, newName, ifRev)
+		if err == nil {
+			movedPath, err = pathOf(ctx, tx, moved.ID)
+		}
 		return err
 	})
 	if err != nil {
-		return Node{}, err
+		return Node{}, "", err
 	}
-	return moved, nil
+	return moved, movedPath, nil
 }
 
 // MovePath resolves srcPath and destPath and moves inside one transaction,
 // so a concurrent operation cannot relocate either path between resolution
 // and mutation. A destPath naming an existing live directory means "move
 // into, keep name"; otherwise its parent must exist and its basename becomes
-// the new name.
-func (s *Store) MovePath(ctx context.Context, srcPath, destPath string) (Node, error) {
+// the new name. The returned canonical path is captured in the mutation
+// transaction with the returned node.
+func (s *Store) MovePath(ctx context.Context, srcPath, destPath string) (Node, string, error) {
 	var moved Node
+	var movedPath string
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		src, err := nodeByPath(ctx, tx, s.rootID, srcPath)
 		if err != nil {
@@ -382,15 +391,18 @@ func (s *Store) MovePath(ctx context.Context, srcPath, destPath string) (Node, e
 			moved, err = s.moveAuditedTx(
 				ctx, tx, src.ID, newParentID, newName, UnconditionalRev,
 			)
-			return err
+		} else {
+			moved, err = s.moveTx(tx, src.ID, newParentID, newName, UnconditionalRev)
 		}
-		moved, err = s.moveTx(tx, src.ID, newParentID, newName, UnconditionalRev)
+		if err == nil {
+			movedPath, err = pathOf(ctx, tx, moved.ID)
+		}
 		return err
 	})
 	if err != nil {
-		return Node{}, err
+		return Node{}, "", err
 	}
-	return moved, nil
+	return moved, movedPath, nil
 }
 
 func (s *Store) resolveMoveTargetTx(

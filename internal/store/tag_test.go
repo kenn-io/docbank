@@ -196,7 +196,7 @@ func TestTagAssignmentPathUsesCurrentTopology(t *testing.T) {
 
 	left, err = s.NodeByID(ctx, left.ID)
 	require.NoError(t, err)
-	_, err = s.Move(ctx, left.ID, right.ID, "moved", left.Revision)
+	_, _, err = s.Move(ctx, left.ID, right.ID, "moved", left.Revision)
 	require.NoError(t, err)
 	unchangedLeaf, err := s.NodeByID(ctx, leaf.ID)
 	require.NoError(t, err)

@@ -32,7 +32,7 @@ func TestAuditHistoryPagesCanonicalNodeEvents(t *testing.T) {
 		t.Context(), taxes.ID, "return.txt", fakeHash("a710"), 7, "text/plain",
 	)
 	require.NoError(t, err)
-	moved, err := s.Move(t.Context(), file.ID, destination.ID, file.Name, file.Revision)
+	moved, _, err := s.Move(t.Context(), file.ID, destination.ID, file.Name, file.Revision)
 	require.NoError(t, err)
 
 	first, err := s.AuditHistory(t.Context(), file.ID, 2, "")
@@ -100,7 +100,7 @@ func TestAuditHistoryCursorRemainsStableWhenNewEventsArrive(t *testing.T) {
 	require.Len(t, first.Items, 1)
 	require.NotEmpty(t, first.NextCursor)
 	firstID := first.Items[0].ID
-	_, err = s.Move(t.Context(), file.ID, taxes.ID, "renamed.txt", file.Revision)
+	_, _, err = s.Move(t.Context(), file.ID, taxes.ID, "renamed.txt", file.Revision)
 	require.NoError(t, err)
 
 	second, err := s.AuditHistory(t.Context(), file.ID, 10, first.NextCursor)
@@ -129,7 +129,7 @@ func TestAuditHistoryPreservesTrashAndRestoreCoordinates(t *testing.T) {
 		Path: "@trash/known/Projects/Work", State: "trash",
 	}, *trashedPath.NewPath)
 
-	_, err = s.Restore(t.Context(), trashed.ID, trashed.Revision)
+	_, _, err = s.Restore(t.Context(), trashed.ID, trashed.Revision)
 	require.NoError(t, err)
 	page, err = s.AuditHistory(t.Context(), work.ID, 10, "")
 	require.NoError(t, err)

@@ -39,7 +39,7 @@ func TestSearchPrefixAndRename(t *testing.T) {
 	require.Len(t, hits, 1)
 
 	// Rename must update the index (FTS triggers).
-	_, err = s.Move(ctx, f.ID, s.RootID(), "car-policy.pdf", -1)
+	_, _, err = s.Move(ctx, f.ID, s.RootID(), "car-policy.pdf", -1)
 	require.NoError(t, err)
 	hits, _, err = s.SearchPage(ctx, "insur", 0)
 	require.NoError(t, err)

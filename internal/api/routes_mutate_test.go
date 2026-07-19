@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -91,9 +94,9 @@ func TestMovePathAndTrashPath(t *testing.T) {
 	_, err = s.Mkdir(t.Context(), s.RootID(), "filed")
 	require.NoError(t, err)
 	f := createFileWithContent(t, ts, s, "/a.txt", "x")
-	_, err = s.Move(t.Context(), f.ID, s.RootID(), "a.txt", store.UnconditionalRev)
+	_, _, err = s.Move(t.Context(), f.ID, s.RootID(), "a.txt", store.UnconditionalRev)
 	require.NoError(t, err)
-	_, err = s.MovePath(t.Context(), "/a.txt", "/docs")
+	_, _, err = s.MovePath(t.Context(), "/a.txt", "/docs")
 	require.NoError(t, err)
 
 	resp, body := do(t, ts, http.MethodPost, "/api/v1/path/move", nil,
@@ -177,7 +180,7 @@ func TestTrashAndRestoreRoundTripHTTP(t *testing.T) {
 	_, err := s.Mkdir(t.Context(), s.RootID(), "inbox")
 	require.NoError(t, err)
 	f := createFileWithContent(t, ts, s, "/doc.txt", "x")
-	_, err = s.MovePath(t.Context(), "/doc.txt", "/inbox")
+	_, _, err = s.MovePath(t.Context(), "/doc.txt", "/inbox")
 	require.NoError(t, err)
 
 	_, etag := etagOf(t, ts, f.ID)
@@ -202,4 +205,129 @@ func TestTrashAndRestoreRoundTripHTTP(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &restored))
 	assert.Empty(t, restored.TrashedAt)
 	assert.Equal(t, "/inbox/doc.txt", restored.Path)
+}
+
+func TestMutationReceiptsRemainBoundDuringCompetingMutation(t *testing.T) {
+	t.Run("move", func(t *testing.T) {
+		ts, s := newTestServer(t, nil)
+		left, err := s.Mkdir(t.Context(), s.RootID(), "left")
+		require.NoError(t, err)
+		right, err := s.Mkdir(t.Context(), s.RootID(), "right")
+		require.NoError(t, err)
+		file := createFileWithContent(t, ts, s, "/item.txt", "x")
+		file, _, err = s.Move(
+			t.Context(), file.ID, left.ID, file.Name, store.UnconditionalRev,
+		)
+		require.NoError(t, err)
+		revision := file.Revision
+
+		for range 20 {
+			attempted := make(chan struct{})
+			competing := make(chan mutationRequestResult, 1)
+			go func(revision int64) {
+				competing <- retryMoveRequest(
+					t, ts, file.ID, revision, left.ID, attempted,
+					map[int]bool{http.StatusPreconditionFailed: true},
+				)
+			}(revision + 1)
+			<-attempted
+
+			resp, body := do(t, ts, http.MethodPatch,
+				fmt.Sprintf("/api/v1/nodes/%d", file.ID),
+				map[string]string{"If-Match": strconv.FormatInt(revision, 10)},
+				map[string]any{"new_parent_id": right.ID})
+			require.Equal(t, http.StatusOK, resp.StatusCode, body)
+			var moved api.Node
+			require.NoError(t, json.Unmarshal([]byte(body), &moved))
+			assert.Equal(t, right.ID, *moved.ParentID)
+			assert.Equal(t, "/right/item.txt", moved.Path)
+
+			result := <-competing
+			require.NoError(t, result.err)
+			require.Equal(t, http.StatusOK, result.status, result.body)
+			var returned api.Node
+			require.NoError(t, json.Unmarshal([]byte(result.body), &returned))
+			assert.Equal(t, left.ID, *returned.ParentID)
+			assert.Equal(t, "/left/item.txt", returned.Path)
+			revision = returned.Revision
+		}
+	})
+
+	t.Run("restore", func(t *testing.T) {
+		ts, s := newTestServer(t, nil)
+		left, err := s.Mkdir(t.Context(), s.RootID(), "left")
+		require.NoError(t, err)
+		right, err := s.Mkdir(t.Context(), s.RootID(), "right")
+		require.NoError(t, err)
+		file := createFileWithContent(t, ts, s, "/item.txt", "x")
+		file, _, err = s.Move(
+			t.Context(), file.ID, left.ID, file.Name, store.UnconditionalRev,
+		)
+		require.NoError(t, err)
+		trashed, _, err := s.Trash(t.Context(), file.ID, file.Revision)
+		require.NoError(t, err)
+
+		attempted := make(chan struct{})
+		competing := make(chan mutationRequestResult, 1)
+		go func() {
+			competing <- retryMoveRequest(
+				t, ts, file.ID, trashed.Revision+1, right.ID, attempted,
+				map[int]bool{http.StatusNotFound: true, http.StatusPreconditionFailed: true},
+			)
+		}()
+		<-attempted
+
+		resp, body := do(t, ts, http.MethodPost,
+			fmt.Sprintf("/api/v1/nodes/%d/restore", file.ID),
+			map[string]string{"If-Match": strconv.FormatInt(trashed.Revision, 10)}, nil)
+		require.Equal(t, http.StatusOK, resp.StatusCode, body)
+		var restored api.Node
+		require.NoError(t, json.Unmarshal([]byte(body), &restored))
+		assert.Equal(t, left.ID, *restored.ParentID)
+		assert.Equal(t, "/left/item.txt", restored.Path)
+
+		result := <-competing
+		require.NoError(t, result.err)
+		require.Equal(t, http.StatusOK, result.status, result.body)
+		var moved api.Node
+		require.NoError(t, json.Unmarshal([]byte(result.body), &moved))
+		assert.Equal(t, right.ID, *moved.ParentID)
+		assert.Equal(t, "/right/item.txt", moved.Path)
+	})
+}
+
+type mutationRequestResult struct {
+	status int
+	body   string
+	err    error
+}
+
+func retryMoveRequest(
+	t *testing.T,
+	ts *httptest.Server,
+	nodeID, revision, parentID int64,
+	attempted chan<- struct{},
+	retryable map[int]bool,
+) mutationRequestResult {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	first := true
+	for time.Now().Before(deadline) {
+		resp, body, err := try(t, ts, http.MethodPatch,
+			fmt.Sprintf("/api/v1/nodes/%d", nodeID),
+			map[string]string{"If-Match": strconv.FormatInt(revision, 10)},
+			map[string]any{"new_parent_id": parentID})
+		if first {
+			close(attempted)
+			first = false
+		}
+		if err != nil {
+			return mutationRequestResult{err: err}
+		}
+		if resp.StatusCode == http.StatusOK || !retryable[resp.StatusCode] {
+			return mutationRequestResult{status: resp.StatusCode, body: body}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return mutationRequestResult{err: fmt.Errorf("timed out waiting to move node %d", nodeID)}
 }

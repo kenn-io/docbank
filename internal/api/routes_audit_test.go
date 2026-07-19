@@ -97,7 +97,7 @@ func TestAuditPreviewEnableAndStatusLifecycle(t *testing.T) {
 	require.NotNil(t, trashHistory.Items[0].NewPath)
 	assert.Equal(t, "trash", trashHistory.Items[0].NewPath.State)
 	assert.Equal(t, "@trash/known/Taxes/2027", trashHistory.Items[0].NewPath.Path)
-	restored, err := s.Restore(t.Context(), trashed.ID, trashed.Revision)
+	restored, _, err := s.Restore(t.Context(), trashed.ID, trashed.Revision)
 	require.NoError(t, err)
 	restoreHistory, err := c.AuditHistory(t.Context(), "/Taxes/2027", 0, 10, "")
 	require.NoError(t, err)
