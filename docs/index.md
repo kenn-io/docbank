@@ -89,10 +89,11 @@ a document-level contract: stable identity across moves, retained versions,
 recoverable deletion, content verification, permanent audited scopes, and one
 authenticated interface for people and software.
 
-A NAS can be a good home for a Docbank backup repository. The distinction is
-simple: storage answers where the bytes live; Docbank records which document
-they belong to, what happened to it, and whether the vault and its backups still
-prove out.
+A NAS can be a good home for a Docbank [backup repository](usage/backup.md) when
+you protect it with filesystem permissions and encrypted storage. The
+distinction is simple: storage answers where the bytes live; Docbank records
+which document they belong to, what happened to it, and whether the vault and
+its backups still prove out.
 
 ## One authority for people and agents
 
