@@ -717,6 +717,19 @@ func (c *Client) AuditStatus(
 	return status, nil
 }
 
+// VerifyAudit independently replays audit authority and verifies every unique
+// blob retained by protected history.
+func (c *Client) VerifyAudit(ctx context.Context) (api.AuditVerifyReport, error) {
+	var report api.AuditVerifyReport
+	if err := c.do(ctx, http.MethodPost, "/api/v1/audit/verify", nil, nil, &report); err != nil {
+		return report, err
+	}
+	if err := validateAuditVerifyReport(report); err != nil {
+		return api.AuditVerifyReport{}, err
+	}
+	return report, nil
+}
+
 // AuditHistory returns one stable newest-first page of canonical events for
 // exactly one audited node selected by live path or stable ID.
 func (c *Client) AuditHistory(
@@ -1011,6 +1024,62 @@ func validateAuditStatus(status api.AuditStatus) error {
 			}
 			previousScopeID = scopeID
 		}
+	}
+	return nil
+}
+
+func validateAuditVerifyReport(report api.AuditVerifyReport) error {
+	if report.ProtectedBlobs < 0 || report.ProtectedBytes < 0 || report.VerifiedBlobs < 0 ||
+		report.VerifiedBlobs+len(report.Problems) != report.ProtectedBlobs {
+		return errors.New("audit verification has inconsistent blob totals")
+	}
+	for index, problem := range report.MetadataProblems {
+		if problem == "" {
+			return fmt.Errorf("audit verification metadata problem %d is empty", index)
+		}
+	}
+	previousHash := ""
+	for index, problem := range report.Problems {
+		if !validSHA256Hex(problem.Hash) ||
+			(problem.Problem != "missing" && problem.Problem != "corrupt" &&
+				problem.Problem != "unreadable") ||
+			(previousHash != "" && problem.Hash <= previousHash) {
+			return fmt.Errorf("audit verification blob problem %d is invalid", index)
+		}
+		previousHash = problem.Hash
+	}
+	if len(report.MetadataProblems) != 0 {
+		if report.Enabled || report.Evidence != nil || report.ProtectedBlobs != 0 ||
+			report.ProtectedBytes != 0 || report.VerifiedBlobs != 0 || len(report.Problems) != 0 {
+			return errors.New("failed audit metadata verification contains trusted evidence")
+		}
+		return nil
+	}
+	if !report.Enabled {
+		if report.Evidence != nil || report.ProtectedBlobs != 0 || report.ProtectedBytes != 0 {
+			return errors.New("dormant audit verification contains active evidence")
+		}
+		return nil
+	}
+	if report.Evidence == nil {
+		return errors.New("active audit verification lacks terminal evidence")
+	}
+	return validateAuditEvidence(*report.Evidence)
+}
+
+func validateAuditEvidence(evidence api.AuditEvidence) error {
+	if !validUUIDv4(evidence.VaultID) || !validUUIDv4(evidence.LineageID) ||
+		evidence.OperationSequenceHighWater < 1 || evidence.AllocationEntryCount < 1 ||
+		!validSHA256Hex(evidence.AllocationHead) || len(evidence.Scopes) == 0 {
+		return errors.New("audit evidence lacks complete allocation authority")
+	}
+	previousScopeID := ""
+	for index, scope := range evidence.Scopes {
+		if !validUUIDv4(scope.ID) || scope.EntryCount < 1 || !validSHA256Hex(scope.ChainHead) ||
+			(previousScopeID != "" && scope.ID <= previousScopeID) {
+			return fmt.Errorf("audit evidence scope %d is invalid", index)
+		}
+		previousScopeID = scope.ID
 	}
 	return nil
 }

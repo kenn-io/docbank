@@ -45,7 +45,8 @@ metadata, content, and maintenance authority.
   node/tag listings
 - Preview-first permanent audit enrollment for one directory scope, with
   sticky retention, recorded supported mutations, status evidence, bounded
-  per-node history, and backup/restore fidelity
+  per-node history, independent chain/protected-byte verification, and
+  backup/restore fidelity
 - FTS5 name search (document-body extraction and search are planned)
 - Mixed loose and packed content storage with explicit pack, GC, and repack
 - Whole-vault integrity verification

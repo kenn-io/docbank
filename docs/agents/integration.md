@@ -534,6 +534,22 @@ retention, and `invalid_audit_cursor` as a request error. A protected node may
 have an empty timeline when it was adopted at enrollment and has not changed;
 use status membership, not event count, to decide protection.
 
+Independently replay the authority and hash every protected blob with:
+
+```bash
+curl --fail-with-body -X POST \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  "$DOCBANK_URL/api/v1/audit/verify"
+```
+
+A successful HTTP response can still report failed verification. Require empty
+`metadata_problems` and `problems`, `verified_blobs == protected_blobs`, and a
+non-null `evidence` object when `enabled` is true. Record that stable evidence
+outside the vault when rollback detection matters: it contains vault and
+allocation-lineage identities, allocation count/head, the operation high-water
+mark, and every scope count/head. This endpoint hashes protected content only;
+the top-level `/api/v1/verify` also covers unaudited blobs.
+
 The current public boundary permits one permanent scope per vault.
 
 ## Treat destructive maintenance as a two-step decision

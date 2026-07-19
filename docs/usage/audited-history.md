@@ -138,6 +138,34 @@ A protected node adopted during first enrollment may have no node-specific
 events until its first later change. That empty timeline does not weaken its
 baseline protection; `audit status` is the membership authority.
 
+## Verify the permanent evidence
+
+Run the audit-specific verifier when you need a compact proof of the permanent
+promise rather than a scan of unrelated vault content:
+
+```bash
+docbank audit verify
+docbank audit verify --json
+```
+
+The command independently replays canonical history against the current node,
+version, membership, topology, tag, and provenance projections. It then reads
+every unique blob retained by protected history through catalog authority and
+recomputes its SHA-256. Missing, corrupt, or unreadable protected bytes make the
+command fail.
+
+On success, the report contains the stable vault and allocation-lineage IDs,
+the allocation entry count and head, the current operation high-water mark,
+and every scope's entry count and chain head. The JSON `evidence` object is a
+compact terminal bundle suitable for recording outside the vault. A later
+bundle that unexpectedly moves backward or changes vault/lineage identity is a
+rollback or replacement signal; keep older evidence and the corresponding
+verified backups while investigating.
+
+`docbank audit verify` hashes protected content only. `docbank verify` remains
+the broader whole-vault check: it performs the same metadata and audit replay,
+then hashes every cataloged blob, including content outside audit membership.
+
 ## What remains usable
 
 Protected documents remain working documents. Docbank records direct creation
@@ -163,8 +191,7 @@ yet exposed. Status, mutation recording, JSONL export/import, and backup capture
 all preserve the first scope's authority.
 
 !!! info "Planned"
-    Independent `audit verify`, additional scope enrollment, scope-wide history,
-    and rich TUI/web history views are not implemented yet. Until those arrive,
-    `docbank verify` still validates the stored metadata relations and every
-    blob, while backup restore revalidates the portable JSONL authority before
-    publishing a vault.
+    Additional scope enrollment, scope-wide history, expected-evidence prefix
+    checks, and rich TUI/web history views are not implemented yet. Backup
+    restore already revalidates the portable JSONL authority before publishing
+    a vault.

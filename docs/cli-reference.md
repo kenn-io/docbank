@@ -323,6 +323,7 @@ docbank audit status [path] [--json]
 docbank audit status --node-id <id> [--json]
 docbank audit history <path> [--limit <n>] [--cursor <cursor>] [--json]
 docbank audit history --node-id <id> [--limit <n>] [--cursor <cursor>] [--json]
+docbank audit verify [--json]
 ```
 
 `audit enable` permanently protects a directory scope and all retained content
@@ -356,6 +357,15 @@ cursor is opaque and bound to its stable node. Use `--node-id` for a moved or
 trashed node. A protected enrollment-baseline member can legitimately have no
 node-specific events until its first later mutation; use `audit status` for
 membership authority.
+
+`audit verify` independently replays canonical history against current
+metadata, then re-hashes every unique blob retained by protected versions. Its
+terminal evidence contains the stable vault and allocation-lineage identities,
+allocation count/head, operation high-water mark, and every scope count/head.
+Human output reports the same evidence and protected-byte totals; JSON is
+suitable for external recording. Missing, corrupt, unreadable, or inconsistent
+authority exits non-zero. Use the top-level `docbank verify` when the decision
+requires every blob in the vault rather than only permanent audit content.
 
 The current public boundary supports the first scope in a vault; a later
 `audit enable` returns `audit_already_enabled`. See

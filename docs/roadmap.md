@@ -107,8 +107,8 @@ scope chains, status evidence, and JSONL backup/restore validation are
 implemented. One-node canonical audit history is available by path or stable ID
 with bounded, append-stable cursor pagination.
 
-- Additional and overlapping audit scopes, scope-wide history browsing, and a
-  dedicated independent verification command
+- Additional and overlapping audit scopes, scope-wide history browsing, and
+  expected-evidence prefix checks over the implemented independent verifier
   ([current workflow](usage/audited-history.md),
   [model](architecture/audited-history.md))
 - Tag/MIME/date/path search filters; `POST /batch/move` bulk reorganization

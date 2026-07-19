@@ -94,7 +94,7 @@ docbank backup create --repo ~/Backups/docbank # incremental snapshot
   </section>
   <section>
     <h3>Audited history</h3>
-    <p>Opt a directory into permanent, tamper-evident history, independently replayed by <code>verify</code>.</p>
+    <p>Opt a directory into permanent, tamper-evident history, with stable evidence from <code>audit verify</code>.</p>
   </section>
 </div>
 
@@ -110,7 +110,8 @@ docbank backup create --repo ~/Backups/docbank # incremental snapshot
   backup is proven before it is trusted.
 - **Audited history.** Opt a directory into permanent, tamper-evident
   history: every change — ingest, replacement, reversion, moves, trash and
-  restore, tag changes — is recorded and `verify` independently replays it.
+  restore, tag changes — is recorded and `audit verify` independently replays
+  it and checks every protected blob.
   Enroll a vault's first audit scope with `docbank audit enable` (newer
   than the v0.5.0 release; build from source to use it today); see
   [Permanent Audited History](usage/audited-history.md).
@@ -136,11 +137,12 @@ and checksum-enforcing installers for Linux, macOS, and Windows on amd64
 and arm64. Implemented and tested today: the core store and ingest
 pipeline, the virtual-tree CLI, the authenticated daemon API, stable
 content versions with verified replacement, reversion, pruning, and
-lookup by content hash (`refs`), tags, loose and packed storage with
+lookup by content hash (`refs`), tags, permanent audit enrollment and node
+history with protected-content evidence, loose and packed storage with
 explicit maintenance, whole-vault integrity verification, incremental
-backup create/verify/restore, and the embedded Go API. Permanent audit
-enrollment is newer than v0.5.0 and not yet in a tagged release; it is
-available from a source build. docbank is not yet a stable 1.0; the
+backup create/verify/restore, and the embedded Go API. The public audit
+workflow is newer than v0.5.0 and not yet in a tagged release; it is available
+from a source build. docbank is not yet a stable 1.0; the
 [Roadmap](roadmap.md) gives the product direction.
 
 docbank belongs to a family of personal data tools alongside

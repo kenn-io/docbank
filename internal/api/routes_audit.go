@@ -15,6 +15,7 @@ import (
 type auditPreviewOutput struct{ Body AuditEnrollmentPreview }
 type auditStatusOutput struct{ Body AuditStatus }
 type auditHistoryOutput struct{ Body AuditEventPage }
+type auditVerifyOutput struct{ Body AuditVerifyReport }
 
 func registerAuditRoutes(
 	api huma.API, d Deps, g *gate, previews *auditPreviewRegistry,
@@ -134,6 +135,49 @@ func registerAuditRoutes(
 	})
 
 	huma.Register(api, huma.Operation{
+		OperationID: "verifyAudit", Method: http.MethodPost, Path: "/api/v1/audit/verify",
+		Summary: "Replay audit authority and verify every protected blob",
+		Description: "Returns stable vault, allocation-lineage, and scope-chain " +
+			"evidence after independently replaying canonical history against current " +
+			"metadata and re-hashing every unique blob retained by protected history.",
+	}, func(ctx context.Context, _ *struct{}) (*auditVerifyOutput, error) {
+		out := &auditVerifyOutput{}
+		err := g.maintain(func() error {
+			verification, err := d.Store.VerifyAudit(ctx)
+			if err != nil {
+				if ctx.Err() != nil {
+					return NewError(http.StatusInternalServerError, "internal",
+						fmt.Sprintf("audit verification interrupted: %v", ctx.Err()))
+				}
+				out.Body.MetadataProblems = append(out.Body.MetadataProblems, err.Error())
+				return nil
+			}
+			out.Body.Enabled = verification.Evidence.Enabled
+			if !verification.Evidence.Enabled {
+				return nil
+			}
+			out.Body.Evidence = auditEvidence(verification.Evidence)
+			out.Body.ProtectedBlobs = len(verification.ProtectedBlobs)
+			out.Body.ProtectedBytes = verification.ProtectedBytes
+			for _, blob := range verification.ProtectedBlobs {
+				if err := ctx.Err(); err != nil {
+					return NewError(http.StatusInternalServerError, "internal",
+						fmt.Sprintf("audit verification interrupted: %v", err))
+				}
+				if problem := checkBlob(ctx, d, blob.Hash); problem == "" {
+					out.Body.VerifiedBlobs++
+				} else {
+					out.Body.Problems = append(out.Body.Problems, VerifyProblem{
+						Hash: blob.Hash, Problem: problem,
+					})
+				}
+			}
+			return nil
+		})
+		return out, err
+	})
+
+	huma.Register(api, huma.Operation{
 		OperationID: "auditNodeHistory", Method: http.MethodGet,
 		Path:    "/api/v1/audit/history",
 		Summary: "Read one audited node's canonical event timeline",
@@ -165,6 +209,22 @@ func registerAuditRoutes(
 		}
 		return &auditHistoryOutput{Body: auditEventPage(page)}, nil
 	})
+}
+
+func auditEvidence(evidence store.AuditEvidence) *AuditEvidence {
+	out := &AuditEvidence{
+		VaultID: evidence.VaultID, LineageID: evidence.LineageID,
+		OperationSequenceHighWater: evidence.OperationSequenceHighWater,
+		AllocationEntryCount:       evidence.AllocationEntryCount,
+		AllocationHead:             evidence.AllocationHead,
+		Scopes:                     make([]AuditScopeEvidence, 0, len(evidence.Scopes)),
+	}
+	for _, scope := range evidence.Scopes {
+		out.Scopes = append(out.Scopes, AuditScopeEvidence{
+			ID: scope.ID, EntryCount: scope.EntryCount, ChainHead: scope.ChainHead,
+		})
+	}
+	return out
 }
 
 func auditEnrollmentPreview(
