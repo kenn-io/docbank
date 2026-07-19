@@ -1,11 +1,11 @@
 # docbank
 
-> Docbank gives the documents you keep for life one permanent home on your own machine — easy to file, easy to find, with version history, provable integrity, and verified backups.
+> Docbank gives the documents you keep for life one permanent home on your own machine: easy to file, easy to find, with version history, provable integrity, and verified backups.
 
 Every documentation page is also published as raw Markdown at the same path with a `.md` suffix; the links below point at those Markdown routes.
 
 ## Overview
-- [A permanent home for the documents of your life](https://docbank.ai/index.md): Docbank gives the documents you keep for life one permanent home on your own machine — easy to file, easy to find, with version history, provable integrity, and verified backups.
+- [A permanent home for the documents of your life](https://docbank.ai/index.md): Docbank gives the documents you keep for life one permanent home on your own machine: easy to file, easy to find, with version history, provable integrity, and verified backups.
 
 ## Start Here
 - [Setup](https://docbank.ai/setup.md): Install docbank on Linux, macOS, or Windows and create the vault.

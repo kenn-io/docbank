@@ -1,6 +1,6 @@
 ---
 title: A permanent home for the documents of your life
-description: Docbank gives the documents you keep for life one permanent home on your own machine — easy to file, easy to find, with version history, provable integrity, and verified backups.
+description: Docbank gives the documents you keep for life one permanent home on your own machine: easy to file, easy to find, with version history, provable integrity, and verified backups.
 ---
 
 <p class="eyebrow">EVERY DOCUMENT YOU KEEP FOR LIFE, ON YOUR MACHINE</p>
@@ -8,10 +8,10 @@ description: Docbank gives the documents you keep for life one permanent home on
 # A permanent home for the documents of your life
 
 Tax returns, contracts, medical records, scans of things you can't
-replace — Docbank keeps them all in one place on your own machine. File
+replace: Docbank keeps them all in one place on your own machine. File
 anything, find it again in seconds, reorganize without breaking anything,
 and go back to earlier versions when you need them. It's built so that
-decades from now, everything is still there — and you can prove it.
+decades from now everything is still there, and you can prove it.
 
 <p class="hero-actions">
   <a class="md-button md-button--primary" href="setup/">Start your archive</a>
@@ -64,10 +64,10 @@ docbank backup create --repo ~/Backups/docbank # incremental, verifiable backup
 
 Ordinary folders make a document's location its identity: move a file and
 everything pointing at it breaks; reorganize and you lose track of what
-you had. Cloud drives add a second problem — your archive's history and
-continued existence depend on an account in good standing. For records
-that outlive laptops, jobs, and subscriptions — tax filings, contracts,
-medical records, research — that is the wrong foundation.
+you had. Cloud drives add a second problem, because your archive's
+history and continued existence depend on an account in good standing.
+For records that outlive laptops, jobs, and subscriptions (tax filings,
+contracts, medical records, research), that is the wrong foundation.
 
 Docbank keeps everything on your machine in a layout you can inspect:
 your documents plus the catalog that organizes them. Importing copies
@@ -77,15 +77,15 @@ Google Drive export is safe to attempt and repeat until it is complete.
 repository you have verified and practiced restoring means your archive's
 survival no longer depends on any company's goodwill.
 
-One honest boundary: docbank is an archive, not a sync-and-share tool. It
-doesn't put files on every device or make share links — it makes the copy
-that must survive trustworthy.
+One honest boundary: docbank doesn't sync. It won't put files on every
+device or make share links. Its job is to make the copy that must survive
+trustworthy.
 
 ## Ready for your agents, too
 
 The same vault welcomes automation. Agents and scripts file, retrieve,
 reorganize, verify, and run maintenance through the same authenticated
-API the CLI uses — there is no privileged shortcut into the vault.
+API the CLI uses; there is no privileged shortcut into the vault.
 Documents keep stable IDs that survive renames, reads carry verified
 bytes, conflicting edits are detected instead of silently overwritten,
 and destructive operations offer dry runs. Read
@@ -102,7 +102,7 @@ filing workflow.
   </section>
   <section>
     <h3>Deliberate lifecycle</h3>
-    <p>Trash, permanent deletion, and space reclamation are separate, explicit decisions — never side effects.</p>
+    <p>Trash, permanent deletion, and space reclamation are separate, explicit decisions rather than side effects.</p>
   </section>
   <section>
     <h3>Verified backup &amp; restore</h3>
@@ -144,11 +144,11 @@ organize, retrieve, and build workflows around.
 
 ## Where to go next
 
-- [Setup](setup.md) — install the binary and create the vault
-- [Quickstart](quickstart.md) — a ten-minute tour of the CLI
-- [Vault Lifecycle](usage/lifecycle.md) — operate, snapshot, and recover safely
-- [Docbank for Agents](agents.md) — the automation contract
-- [Embed in Go](embedding.md) — vaults inside your own application
-- [Troubleshooting](troubleshooting.md) — diagnose failures without risking the vault
-- [CLI Reference](cli-reference.md) — every command, flag, and output format
-- [How Docbank Works](architecture/overview.md) — the architecture, guided
+- [Setup](setup.md): install the binary and create the vault
+- [Quickstart](quickstart.md): a ten-minute tour of the CLI
+- [Vault Lifecycle](usage/lifecycle.md): operate, snapshot, and recover safely
+- [Docbank for Agents](agents.md): the automation contract
+- [Embed in Go](embedding.md): vaults inside your own application
+- [Troubleshooting](troubleshooting.md): diagnose failures without risking the vault
+- [CLI Reference](cli-reference.md): every command, flag, and output format
+- [How Docbank Works](architecture/overview.md): the architecture, guided
