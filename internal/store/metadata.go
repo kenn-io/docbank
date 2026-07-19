@@ -1411,9 +1411,16 @@ type watchSourceKey struct {
 }
 
 func validateWatchSourceRelations(ctx context.Context, tx metadataQuerier) error {
+	nodeKinds, err := loadMetadataNodeKinds(ctx, tx)
+	if err != nil {
+		return err
+	}
 	cursors, err := loadWatchSourceNodes(ctx, tx, "cursor", `
 		SELECT watch_name, source_ref, node_id FROM watch_sources`)
 	if err != nil {
+		return err
+	}
+	if err := requireWatchSourceFiles("cursor", cursors, nodeKinds); err != nil {
 		return err
 	}
 	provenance, err := loadWatchSourceNodes(ctx, tx, "provenance", `
@@ -1423,6 +1430,9 @@ func validateWatchSourceRelations(ctx context.Context, tx metadataQuerier) error
 	if err != nil {
 		return err
 	}
+	if err := requireWatchSourceFiles("provenance", provenance, nodeKinds); err != nil {
+		return err
+	}
 	if len(cursors) != len(provenance) {
 		return errors.New("watched source cursors do not match provenance")
 	}
@@ -1430,6 +1440,39 @@ func validateWatchSourceRelations(ctx context.Context, tx metadataQuerier) error
 		if cursors[key] != nodeID {
 			return fmt.Errorf("watched source cursor %q/%q does not match provenance",
 				key.watchName, key.sourceRef)
+		}
+	}
+	return nil
+}
+
+func loadMetadataNodeKinds(ctx context.Context, tx metadataQuerier) (map[int64]string, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id, kind FROM nodes`)
+	if err != nil {
+		return nil, fmt.Errorf("reading metadata node kinds: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	kinds := make(map[int64]string)
+	for rows.Next() {
+		var id int64
+		var kind string
+		if err := rows.Scan(&id, &kind); err != nil {
+			return nil, fmt.Errorf("scanning metadata node kind: %w", err)
+		}
+		kinds[id] = kind
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating metadata node kinds: %w", err)
+	}
+	return kinds, nil
+}
+
+func requireWatchSourceFiles(
+	kind string, sources map[watchSourceKey]int64, nodeKinds map[int64]string,
+) error {
+	for key, nodeID := range sources {
+		if nodeKinds[nodeID] != nodeKindFile {
+			return fmt.Errorf("watched source %s %q/%q references non-file node %d",
+				kind, key.watchName, key.sourceRef, nodeID)
 		}
 	}
 	return nil

@@ -224,7 +224,7 @@ func TestImportMetadataRejectsInvalidProvenanceAuthorityAndRollsBack(t *testing.
 	}
 }
 
-func TestImportMetadataRejectsRetargetedWatchSourceAndRollsBack(t *testing.T) {
+func TestImportMetadataRejectsWatchSourceRetargetedToDirectoryAndRollsBack(t *testing.T) {
 	ctx := t.Context()
 	source := newTestStore(t)
 	run, err := source.BeginIngest(ctx, "watch", "sessions")
@@ -239,18 +239,31 @@ func TestImportMetadataRejectsRetargetedWatchSourceAndRollsBack(t *testing.T) {
 
 	lines := bytes.Split(bytes.TrimSpace(exported.Bytes()), []byte{'\n'})
 	for index, line := range lines {
-		var record metadataWatchSource
-		if err := json.Unmarshal(line, &record); err != nil || record.Type != metadataWatchSourceType {
-			continue
+		var kind struct {
+			Type string `json:"type"`
 		}
-		record.NodeID = source.RootID()
-		lines[index], err = json.Marshal(record)
-		require.NoError(t, err)
+		require.NoError(t, json.Unmarshal(line, &kind))
+		switch kind.Type {
+		case metadataWatchSourceType:
+			var record metadataWatchSource
+			require.NoError(t, json.Unmarshal(line, &record))
+			record.NodeID = source.RootID()
+			lines[index], err = json.Marshal(record)
+			require.NoError(t, err)
+		case metadataProvenanceType:
+			var record metadataProvenance
+			require.NoError(t, json.Unmarshal(line, &record))
+			record.NodeID = source.RootID()
+			record.Identity, err = provenanceIdentity(record)
+			require.NoError(t, err)
+			lines[index], err = json.Marshal(record)
+			require.NoError(t, err)
+		}
 	}
 
 	target := newTestStore(t)
 	err = target.ImportMetadata(ctx, bytes.NewReader(append(bytes.Join(lines, []byte{'\n'}), '\n')))
-	require.ErrorContains(t, err, "watched source cursor")
+	require.ErrorContains(t, err, "references non-file node")
 	var nodes, cursors int64
 	require.NoError(t, target.db.QueryRow(`
 		SELECT (SELECT COUNT(*) FROM nodes), (SELECT COUNT(*) FROM watch_sources)`,

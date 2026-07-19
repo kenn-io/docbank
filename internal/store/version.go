@@ -191,12 +191,12 @@ func (s *Store) SyncWatchedContent(
 			return fmt.Errorf("watched source %q/%q maps to trashed node %d",
 				watchName, sourceRef, n.ID)
 		}
+		if err := validateContentReplacementTarget(n, UnconditionalRev); err != nil {
+			return err
+		}
 		if cursor.blobHash == blobHash && cursor.size == size {
 			updated = n
 			return nil
-		}
-		if err := validateContentReplacementTarget(n, UnconditionalRev); err != nil {
-			return err
 		}
 		if n.BlobHash == blobHash && n.Size == size {
 			updated = n

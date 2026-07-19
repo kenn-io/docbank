@@ -8,7 +8,10 @@ import (
 	"strings"
 )
 
-const nodeKindDir = "dir"
+const (
+	nodeKindDir  = "dir"
+	nodeKindFile = "file"
+)
 
 // Node is a row of the virtual tree. IDs are canonical; paths are display.
 type Node struct {
