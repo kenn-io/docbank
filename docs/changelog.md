@@ -11,11 +11,15 @@ docbank is pre-1.0; interfaces and storage migrations may still evolve.
 
 - The store extends audited recording to filesystem ingest, content
   reversion, in-scope moves and renames, reversible trash and restore, and
-  tag creation, assignment, and rename; backup restore and JSONL import
+  tag creation, assignment, rename, and deletion; backup restore and JSONL import
   independently replay and validate that history.
 - Enrollment of a vault's first audit scope is available through
   `docbank audit enable` and `docbank audit status`, with a preview-first,
   token-acknowledged workflow; additional scopes remain unavailable.
+- Bounded per-node audit history exposes canonical path, content, tag, and
+  provenance changes, while `docbank audit verify` independently replays the
+  authority, checks protected bytes, and proves current chains extend a
+  separately recorded evidence report.
 
 ## v0.5.0 (2026-07-17)
 

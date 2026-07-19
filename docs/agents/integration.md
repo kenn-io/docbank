@@ -550,6 +550,26 @@ allocation-lineage identities, allocation count/head, the operation high-water
 mark, and every scope count/head. This endpoint hashes protected content only;
 the top-level `/api/v1/verify` also covers unaudited blobs.
 
+To check a later vault against that trusted record, send the prior successful
+report's `evidence` object as `expected`:
+
+```bash
+jq -c '{expected: .evidence}' audit-evidence.json > audit-expected-request.json
+curl --fail-with-body -X POST \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data-binary @audit-expected-request.json \
+  "$DOCBANK_URL/api/v1/audit/verify"
+```
+
+Require `evidence_check.extends: true` as well as clean metadata and blob
+results. Equal chains and valid extensions pass. Stable problem codes
+are `audit_not_enabled`, `vault_mismatch`, `lineage_mismatch`,
+`allocation_shorter`, `allocation_diverged`, `scope_missing`, `scope_shorter`,
+and `scope_diverged`. Evidence mismatch is reported in the body rather than as
+an HTTP transport error so agents can inspect the current verified evidence and
+byte state before escalating.
+
 The current public boundary permits one permanent scope per vault.
 
 ## Treat destructive maintenance as a two-step decision

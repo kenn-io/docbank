@@ -14,7 +14,7 @@ func TestVerifyAuditReturnsReplayedEvidenceAndProtectedBlobs(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
 
-	dormant, err := s.VerifyAudit(t.Context())
+	dormant, err := s.VerifyAudit(t.Context(), nil)
 	require.NoError(t, err)
 	assert.False(t, dormant.Evidence.Enabled)
 	assert.Empty(t, dormant.ProtectedBlobs)
@@ -27,7 +27,7 @@ func TestVerifyAuditReturnsReplayedEvidenceAndProtectedBlobs(t *testing.T) {
 	enabled, err := s.EnableInitialAudit(t.Context(), plan)
 	require.NoError(t, err)
 
-	verified, err := s.VerifyAudit(t.Context())
+	verified, err := s.VerifyAudit(t.Context(), nil)
 	require.NoError(t, err)
 	assert.True(t, verified.Evidence.Enabled)
 	assert.Equal(t, enabled.VaultID, verified.Evidence.VaultID)
@@ -61,7 +61,65 @@ func TestVerifyAuditRejectsAuthorityThatDoesNotMatchReplay(t *testing.T) {
 		SELECT digest FROM audit_records WHERE kind='enrollment_baseline' LIMIT 1
 	)`)
 	require.NoError(t, err)
-	_, err = s.VerifyAudit(t.Context())
+	_, err = s.VerifyAudit(t.Context(), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "audit scope authority does not match replayed history")
+}
+
+func TestVerifyAuditProvesRecordedEvidenceIsAnExactPrefix(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	seedMetadataRoundTrip(t, s)
+	projects, err := s.NodeByPath(t.Context(), "/Projects")
+	require.NoError(t, err)
+	seedInitialAuditAuthority(t, s, projects.ID)
+
+	recorded, err := s.VerifyAudit(t.Context(), nil)
+	require.NoError(t, err)
+	_, err = s.Mkdir(t.Context(), projects.ID, "Later")
+	require.NoError(t, err)
+
+	current, err := s.VerifyAudit(t.Context(), &recorded.Evidence)
+	require.NoError(t, err)
+	require.NotNil(t, current.EvidenceCheck)
+	assert.True(t, current.EvidenceCheck.Extends)
+	assert.Empty(t, current.EvidenceCheck.Problems)
+	assert.Greater(t, current.Evidence.AllocationEntryCount,
+		recorded.Evidence.AllocationEntryCount)
+	assert.Greater(t, current.Evidence.Scopes[0].EntryCount,
+		recorded.Evidence.Scopes[0].EntryCount)
+}
+
+func TestVerifyAuditReportsExpectedEvidenceDivergence(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	seedMetadataRoundTrip(t, s)
+	projects, err := s.NodeByPath(t.Context(), "/Projects")
+	require.NoError(t, err)
+	seedInitialAuditAuthority(t, s, projects.ID)
+
+	recorded, err := s.VerifyAudit(t.Context(), nil)
+	require.NoError(t, err)
+	recorded.Evidence.AllocationHead = fakeHash("deadbeef")
+	recorded.Evidence.Scopes[0].ChainHead = fakeHash("cafebabe")
+	verification, err := s.VerifyAudit(t.Context(), &recorded.Evidence)
+	require.NoError(t, err)
+	require.NotNil(t, verification.EvidenceCheck)
+	assert.False(t, verification.EvidenceCheck.Extends)
+	require.Len(t, verification.EvidenceCheck.Problems, 2)
+	assert.Equal(t, "allocation_diverged", verification.EvidenceCheck.Problems[0].Code)
+	assert.Equal(t, "scope_diverged", verification.EvidenceCheck.Problems[1].Code)
+	assert.Equal(t, recorded.Evidence.Scopes[0].ID,
+		verification.EvidenceCheck.Problems[1].ScopeID)
+}
+
+func TestVerifyAuditRejectsMalformedExpectedEvidence(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+
+	_, err = s.VerifyAudit(t.Context(), &AuditEvidence{})
+	require.ErrorContains(t, err, "invalid expected audit evidence")
 }

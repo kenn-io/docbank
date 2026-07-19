@@ -229,19 +229,40 @@ type AuditEvidence struct {
 	OperationSequenceHighWater int64                `json:"operation_sequence_high_water" minimum:"1"`
 	AllocationEntryCount       int64                `json:"allocation_entry_count" minimum:"1"`
 	AllocationHead             string               `json:"allocation_head" pattern:"^[0-9a-f]{64}$"`
-	Scopes                     []AuditScopeEvidence `json:"scopes" minItems:"1"`
+	Scopes                     []AuditScopeEvidence `json:"scopes" minItems:"1" maxItems:"1000"`
+}
+
+// AuditVerifyRequest optionally asks verification to prove that current
+// authority extends an externally recorded evidence bundle.
+type AuditVerifyRequest struct {
+	Expected *AuditEvidence `json:"expected,omitempty"`
+}
+
+// AuditEvidenceProblem is one stable reason current authority does not extend
+// externally recorded evidence.
+type AuditEvidenceProblem struct {
+	Code    string `json:"code" enum:"audit_not_enabled,vault_mismatch,lineage_mismatch,allocation_shorter,allocation_diverged,scope_missing,scope_shorter,scope_diverged"`
+	ScopeID string `json:"scope_id,omitempty" format:"uuid"`
+	Message string `json:"message"`
+}
+
+// AuditEvidenceCheck reports the exact-prefix proof requested by the caller.
+type AuditEvidenceCheck struct {
+	Extends  bool                   `json:"extends"`
+	Problems []AuditEvidenceProblem `json:"problems,omitempty"`
 }
 
 // AuditVerifyReport reports independently replayed authority evidence and
 // physical verification of every unique blob retained by protected history.
 type AuditVerifyReport struct {
-	Enabled          bool            `json:"enabled"`
-	Evidence         *AuditEvidence  `json:"evidence,omitempty"`
-	ProtectedBlobs   int             `json:"protected_blobs" minimum:"0"`
-	ProtectedBytes   int64           `json:"protected_bytes" minimum:"0"` // unique raw bytes
-	VerifiedBlobs    int             `json:"verified_blobs" minimum:"0"`
-	Problems         []VerifyProblem `json:"problems,omitempty"`
-	MetadataProblems []string        `json:"metadata_problems,omitempty"`
+	Enabled          bool                `json:"enabled"`
+	Evidence         *AuditEvidence      `json:"evidence,omitempty"`
+	EvidenceCheck    *AuditEvidenceCheck `json:"evidence_check,omitempty"`
+	ProtectedBlobs   int                 `json:"protected_blobs" minimum:"0"`
+	ProtectedBytes   int64               `json:"protected_bytes" minimum:"0"` // unique raw bytes
+	VerifiedBlobs    int                 `json:"verified_blobs" minimum:"0"`
+	Problems         []VerifyProblem     `json:"problems,omitempty"`
+	MetadataProblems []string            `json:"metadata_problems,omitempty"`
 }
 
 // AuditEvent is one canonical, immutable event involving an audited node.

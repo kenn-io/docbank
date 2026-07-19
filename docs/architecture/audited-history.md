@@ -10,8 +10,9 @@ description: The permanent, tamper-evident history model for protected directory
     mutation and allocation chains for the supported changes described below,
     JSONL backup/restore fidelity, status inspection, and bounded per-node
     history. Independent audit verification returns stable terminal evidence
-    and checks every protected blob. Additional scopes, scope-wide browsing,
-    expected-evidence prefix checks, and TUI/web projections remain planned. See
+    and checks every protected blob; supplied external evidence is proved as an
+    exact prefix of current allocation and scope chains. Additional scopes,
+    scope-wide browsing, and TUI/web projections remain planned. See
     [Permanent Audited History](../usage/audited-history.md) for the current
     operator workflow.
 
@@ -1483,10 +1484,17 @@ distinct blob set from sticky memberships and retained versions and re-hashes
 each object through catalog authority. The returned evidence deliberately
 contains stable identities and terminal counts/heads, not mutable paths.
 
+When a client supplies a previously successful report, verification uses the
+same pinned snapshot to prove exact ancestry. Vault and allocation-lineage IDs
+must match; the allocation record at the expected count must have the expected
+head; and the scope record at each expected count must have that scope's
+expected head. Current chains may be equal or longer, and future additional
+scopes do not invalidate older evidence. A missing, shorter, or divergent
+prefix is a structured verification problem, not metadata corruption, so the
+report still includes current terminal evidence and protected-byte results.
+
 !!! info "Planned"
-    Scope-wide history will expose aggregate timelines. Expected-evidence
-    prefix checks will prove that current terminal heads extend an externally
-    recorded bundle rather than merely differing from it. Refused protected
+    Scope-wide history will expose aggregate timelines. Refused protected
     destruction will identify every blocking scope in structured output.
 
 ### TUI

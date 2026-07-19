@@ -105,10 +105,11 @@ listings. Permanent first-scope audit enrollment is preview-first across the
 CLI and API. Sticky membership, supported logical mutations, allocation and
 scope chains, status evidence, and JSONL backup/restore validation are
 implemented. One-node canonical audit history is available by path or stable ID
-with bounded, append-stable cursor pagination.
+with bounded, append-stable cursor pagination. Independent verification returns
+stable terminal evidence, checks every protected blob, and can prove that
+current allocation and scope chains extend an externally recorded bundle.
 
-- Additional and overlapping audit scopes, scope-wide history browsing, and
-  expected-evidence prefix checks over the implemented independent verifier
+- Additional and overlapping audit scopes and scope-wide history browsing
   ([current workflow](usage/audited-history.md),
   [model](architecture/audited-history.md))
 - Tag/MIME/date/path search filters; `POST /batch/move` bulk reorganization

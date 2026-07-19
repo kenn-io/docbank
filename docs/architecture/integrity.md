@@ -39,7 +39,7 @@ user's privileges. Consequently:
 | A stored object is what its name claims *structurally* | `blob.Write` dedup check | Kit performs a no-follow identity check; a wrong-sized object, symlink, or special file fails closed and is left unchanged for explicit recovery |
 | Reads serve only stored blobs | `blob.Open` / `blob.Exists` | no-follow open + regular-file check on the blob itself; the vault's own directory structure above it is trusted per the boundary above (a symlinked shard dir is user-privileged relocation or tampering, not an attack docbank can meaningfully resist) |
 | Metadata and audit authority are internally consistent | `docbank verify` | relational validation plus independent replay and reconciliation of canonical audit history |
-| Permanent audit evidence and retained bytes agree | `docbank audit verify` | the same independent replay plus stable lineage/scope terminal evidence and a re-hash of every unique protected blob |
+| Permanent audit evidence and retained bytes agree | `docbank audit verify` | independent replay, an optional exact-prefix proof against externally recorded lineage/scope evidence, and a re-hash of every unique protected blob |
 | Content matches its hash *byte-for-byte* | `docbank verify`; `POST /nodes/{id}/verify` | full-vault re-hash on demand, or a revision-bound fresh read of one file through the mixed store |
 | No orphan blob file survives | `docbank gc` | reachability query for rows **plus** a directory scan for files that never gained (or lost) their row |
 | Imports read the file they classified | ingest | `O_NOFOLLOW` + fstat at open, not the earlier `Lstat`/`WalkDir` classification |

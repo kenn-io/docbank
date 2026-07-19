@@ -718,14 +718,29 @@ func (c *Client) AuditStatus(
 }
 
 // VerifyAudit independently replays audit authority and verifies every unique
-// blob retained by protected history.
-func (c *Client) VerifyAudit(ctx context.Context) (api.AuditVerifyReport, error) {
+// blob retained by protected history. When expected is non-nil, the report
+// also proves whether current authority extends that exact recorded prefix.
+func (c *Client) VerifyAudit(
+	ctx context.Context, expected *api.AuditEvidence,
+) (api.AuditVerifyReport, error) {
 	var report api.AuditVerifyReport
-	if err := c.do(ctx, http.MethodPost, "/api/v1/audit/verify", nil, nil, &report); err != nil {
+	if expected != nil {
+		if err := ValidateAuditEvidence(*expected); err != nil {
+			return report, fmt.Errorf("invalid expected audit evidence: %w", err)
+		}
+	}
+	request := api.AuditVerifyRequest{Expected: expected}
+	if err := c.do(ctx, http.MethodPost, "/api/v1/audit/verify", nil, request, &report); err != nil {
 		return report, err
 	}
 	if err := validateAuditVerifyReport(report); err != nil {
 		return api.AuditVerifyReport{}, err
+	}
+	if len(report.MetadataProblems) == 0 &&
+		(expected != nil) != (report.EvidenceCheck != nil) {
+		return api.AuditVerifyReport{}, errors.New(
+			"audit verification response omitted or invented the expected-evidence check",
+		)
 	}
 	return report, nil
 }
@@ -1048,9 +1063,15 @@ func validateAuditVerifyReport(report api.AuditVerifyReport) error {
 		}
 		previousHash = problem.Hash
 	}
+	if report.EvidenceCheck != nil {
+		if err := validateAuditEvidenceCheck(*report.EvidenceCheck); err != nil {
+			return err
+		}
+	}
 	if len(report.MetadataProblems) != 0 {
 		if report.Enabled || report.Evidence != nil || report.ProtectedBlobs != 0 ||
-			report.ProtectedBytes != 0 || report.VerifiedBlobs != 0 || len(report.Problems) != 0 {
+			report.ProtectedBytes != 0 || report.VerifiedBlobs != 0 || len(report.Problems) != 0 ||
+			report.EvidenceCheck != nil {
 			return errors.New("failed audit metadata verification contains trusted evidence")
 		}
 		return nil
@@ -1064,22 +1085,45 @@ func validateAuditVerifyReport(report api.AuditVerifyReport) error {
 	if report.Evidence == nil {
 		return errors.New("active audit verification lacks terminal evidence")
 	}
-	return validateAuditEvidence(*report.Evidence)
+	return ValidateAuditEvidence(*report.Evidence)
 }
 
-func validateAuditEvidence(evidence api.AuditEvidence) error {
+// ValidateAuditEvidence validates one externally recordable terminal bundle.
+func ValidateAuditEvidence(evidence api.AuditEvidence) error {
 	if !validUUIDv4(evidence.VaultID) || !validUUIDv4(evidence.LineageID) ||
-		evidence.OperationSequenceHighWater < 1 || evidence.AllocationEntryCount < 1 ||
-		!validSHA256Hex(evidence.AllocationHead) || len(evidence.Scopes) == 0 {
+		evidence.OperationSequenceHighWater < 1 ||
+		evidence.AllocationEntryCount != evidence.OperationSequenceHighWater ||
+		!validSHA256Hex(evidence.AllocationHead) || len(evidence.Scopes) == 0 ||
+		len(evidence.Scopes) > store.MaxAuditEvidenceScopes {
 		return errors.New("audit evidence lacks complete allocation authority")
 	}
 	previousScopeID := ""
 	for index, scope := range evidence.Scopes {
-		if !validUUIDv4(scope.ID) || scope.EntryCount < 1 || !validSHA256Hex(scope.ChainHead) ||
+		if !validUUIDv4(scope.ID) || scope.EntryCount < 1 ||
+			scope.EntryCount > evidence.AllocationEntryCount || !validSHA256Hex(scope.ChainHead) ||
 			(previousScopeID != "" && scope.ID <= previousScopeID) {
 			return fmt.Errorf("audit evidence scope %d is invalid", index)
 		}
 		previousScopeID = scope.ID
+	}
+	return nil
+}
+
+func validateAuditEvidenceCheck(check api.AuditEvidenceCheck) error {
+	if check.Extends != (len(check.Problems) == 0) {
+		return errors.New("audit evidence check has an inconsistent result")
+	}
+	for index, problem := range check.Problems {
+		scopeProblem := problem.Code == "scope_missing" || problem.Code == "scope_shorter" ||
+			problem.Code == "scope_diverged"
+		validCode := problem.Code == "audit_not_enabled" || problem.Code == "vault_mismatch" ||
+			problem.Code == "lineage_mismatch" || problem.Code == "allocation_shorter" ||
+			problem.Code == "allocation_diverged" || scopeProblem
+		if !validCode || problem.Message == "" ||
+			(scopeProblem && !validUUIDv4(problem.ScopeID)) ||
+			(!scopeProblem && problem.ScopeID != "") {
+			return fmt.Errorf("audit evidence problem %d is invalid", index)
+		}
 	}
 	return nil
 }
