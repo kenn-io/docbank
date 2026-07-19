@@ -19,13 +19,13 @@ import (
 )
 
 func TestGateFreezerBlocksMutationOnlyUntilEnd(t *testing.T) {
-	g := &gate{}
+	g := NewOperationGate()
 	freezer := &gateFreezer{gate: g}
 	require.NoError(t, freezer.Begin(t.Context()))
 
 	mutated := make(chan struct{})
 	go func() {
-		_ = g.mutate(func() error {
+		_ = g.Mutate(func() error {
 			close(mutated)
 			return nil
 		})

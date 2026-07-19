@@ -99,6 +99,18 @@ path, so retargeting the user-facing link after resolution cannot redirect the
 walk. Descendant symlinks are still skipped, while virtual naming and provenance
 retain the spelling the user supplied.
 
+Watched inboxes use a stronger traversal boundary because they run repeatedly
+without an operator supervising each scan, and accidentally entering the live
+vault would create a self-ingestion loop. A watcher pins its resolved source
+with `os.Root`, opens every descendant relative to held directory descriptors,
+rejects symlink or reparse-point components, and refuses to cross a filesystem
+mount. Linux requires a kernel-provided mount ID; it does not substitute a
+device number that would mistake a bind mount for the source mount. Before any
+ingest, the watcher also compares every descended directory with the pinned
+vault-root identity. This catches a vault physically beneath the source even
+when separate bind aliases hide that ancestry from path comparison; the same
+identity check remains active during later scans.
+
 ### Pre-release schema freedom
 
 Docbank has not yet established a public storage compatibility boundary. Until

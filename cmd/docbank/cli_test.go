@@ -532,6 +532,46 @@ func TestJobsShowsDaemonStatus(t *testing.T) {
 	assert.Empty(t, got.Items)
 }
 
+func TestConfiguredWatchIngestsStableFilesAndRemainsObservable(t *testing.T) {
+	home := t.TempDir()
+	source := t.TempDir()
+	sourcePath := filepath.Join(source, "session.jsonl")
+	record := "{\"kind\":\"assistant-session\"}\n"
+	require.NoError(t, os.WriteFile(sourcePath, []byte(record), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(
+		"[server]\nidle_timeout = \"30ms\"\n"+
+			"[[watch]]\nname = \"sessions\"\nsource = \""+filepath.ToSlash(source)+"\"\n"+
+			"destination = \"/agents\"\nsettle_time = \"50ms\"\nscan_interval = \"10ms\"\n",
+	), 0o600))
+	t.Setenv("DOCBANK_HOME", home)
+	t.Setenv(client.EnvBackgroundDaemon, "1")
+	startTestDaemon(t, home)
+
+	require.Eventually(t, func() bool {
+		out, err := runCLI(t, "cat", "/agents/session.jsonl")
+		return err == nil && out == record
+	}, 5*time.Second, 25*time.Millisecond)
+
+	out, err := runCLI(t, "jobs", "--json")
+	require.NoError(t, err)
+	var got api.JobList
+	require.NoError(t, json.Unmarshal([]byte(out), &got))
+	require.Len(t, got.Items, 1)
+	assert.Equal(t, "watch:sessions", got.Items[0].Name)
+	assert.Equal(t, "running", got.Items[0].Status)
+
+	// A configured watcher keeps a background daemon alive even when the
+	// ordinary request-idle timeout is deliberately tiny.
+	time.Sleep(100 * time.Millisecond)
+	_, _, found, err := client.Find(t.Context(), home)
+	require.NoError(t, err)
+	assert.True(t, found)
+
+	sourceBytes, err := os.ReadFile(sourcePath)
+	require.NoError(t, err)
+	assert.Equal(t, record, string(sourceBytes))
+}
+
 func TestAddRerunReportsSkips(t *testing.T) {
 	_ = setupVaultHome(t)
 	src := writeSourceFile(t, "a.txt", "alpha")

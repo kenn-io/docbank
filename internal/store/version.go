@@ -146,24 +146,8 @@ func (s *Store) ReplaceContent(
 		if err != nil {
 			return err
 		}
-		if err := validateContentReplacementTarget(n, ifRev); err != nil {
-			return err
-		}
-		audited, err := auditAuthorityActiveTx(ctx, tx)
-		if err != nil {
-			return err
-		}
-		if audited {
-			updated, version, err = installAuditedContentVersionTx(
-				ctx, tx, s, n, blobHash, size, mimeType, "content_replace", nil,
-			)
-			return err
-		}
-		if err := s.EnsureBlobTx(tx, blobHash, size); err != nil {
-			return err
-		}
-		updated, version, err = installContentVersionTx(
-			tx, n, blobHash, size, mimeType, "content_replace", nil,
+		updated, version, err = s.replaceContentTx(
+			ctx, tx, n, ifRev, blobHash, size, mimeType,
 		)
 		return err
 	})
@@ -171,6 +155,141 @@ func (s *Store) ReplaceContent(
 		return Node{}, ContentVersion{}, err
 	}
 	return updated, version, nil
+}
+
+// SyncWatchedContent resolves a watched source's stable node and compares the
+// incoming bytes with the last bytes accepted from that source. The source
+// cursor is deliberately independent of the node's selected version: a manual
+// edit or revert must survive daemon restart when the source did not change.
+func (s *Store) SyncWatchedContent(
+	ctx context.Context, watchName, sourceRef, blobHash string, size int64, mimeType string,
+) (Node, ContentVersion, bool, error) {
+	if err := validateWatchSourceRecord(metadataWatchSource{
+		Type: metadataWatchSourceType, WatchName: watchName, SourceRef: sourceRef,
+		NodeID: 1, BlobHash: blobHash, Size: size,
+	}); err != nil {
+		return Node{}, ContentVersion{}, false, err
+	}
+	if err := validateUTF8Field("content MIME type", mimeType); err != nil {
+		return Node{}, ContentVersion{}, false, err
+	}
+	var (
+		updated Node
+		version ContentVersion
+		changed bool
+	)
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		cursor, err := watchSourceTx(ctx, tx, watchName, sourceRef)
+		if err != nil {
+			return err
+		}
+		n, err := nodeByIDTx(tx, cursor.nodeID)
+		if err != nil {
+			return err
+		}
+		if n.TrashedAt != nil {
+			return fmt.Errorf("watched source %q/%q maps to trashed node %d",
+				watchName, sourceRef, n.ID)
+		}
+		if err := validateContentReplacementTarget(n, UnconditionalRev); err != nil {
+			return err
+		}
+		if cursor.blobHash == blobHash && cursor.size == size {
+			updated = n
+			return nil
+		}
+		if n.BlobHash == blobHash && n.Size == size {
+			updated = n
+			return updateWatchSourceTx(ctx, tx, watchName, sourceRef, blobHash, size)
+		}
+		updated, version, err = s.replaceContentTx(
+			ctx, tx, n, UnconditionalRev, blobHash, size, mimeType,
+		)
+		if err != nil {
+			return err
+		}
+		if err := updateWatchSourceTx(ctx, tx, watchName, sourceRef, blobHash, size); err != nil {
+			return err
+		}
+		changed = true
+		return nil
+	})
+	if err != nil {
+		return Node{}, ContentVersion{}, false, err
+	}
+	return updated, version, changed, nil
+}
+
+type watchSourceState struct {
+	nodeID   int64
+	blobHash string
+	size     int64
+}
+
+func watchSourceTx(
+	ctx context.Context, tx *sql.Tx, watchName, sourceRef string,
+) (watchSourceState, error) {
+	var state watchSourceState
+	err := tx.QueryRowContext(ctx, `
+		SELECT node_id, blob_hash, size
+		FROM watch_sources
+		WHERE watch_name = ? AND source_ref = ?`,
+		watchName, sourceRef,
+	).Scan(&state.nodeID, &state.blobHash, &state.size)
+	if errors.Is(err, sql.ErrNoRows) {
+		return watchSourceState{}, ErrNotFound
+	}
+	if err != nil {
+		return watchSourceState{}, fmt.Errorf(
+			"resolving watched source %q/%q: %w", watchName, sourceRef, err,
+		)
+	}
+	return state, nil
+}
+
+func updateWatchSourceTx(
+	ctx context.Context, tx *sql.Tx, watchName, sourceRef, blobHash string, size int64,
+) error {
+	result, err := tx.ExecContext(ctx, `
+		UPDATE watch_sources SET blob_hash = ?, size = ?
+		WHERE watch_name = ? AND source_ref = ?`,
+		blobHash, size, watchName, sourceRef,
+	)
+	if err != nil {
+		return fmt.Errorf("updating watched source %q/%q: %w", watchName, sourceRef, err)
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking watched source update %q/%q: %w", watchName, sourceRef, err)
+	}
+	if updated != 1 {
+		return fmt.Errorf("updating watched source %q/%q: %w", watchName, sourceRef, ErrNotFound)
+	}
+	return nil
+}
+
+func (s *Store) replaceContentTx(
+	ctx context.Context, tx *sql.Tx, n Node, ifRev int64,
+	blobHash string, size int64, mimeType string,
+) (Node, ContentVersion, error) {
+	if err := validateContentReplacementTarget(n, ifRev); err != nil {
+		return Node{}, ContentVersion{}, err
+	}
+	audited, err := auditAuthorityActiveTx(ctx, tx)
+	if err != nil {
+		return Node{}, ContentVersion{}, err
+	}
+	if audited {
+		return installAuditedContentVersionTx(
+			ctx, tx, s, n, blobHash, size, mimeType, "content_replace", nil,
+		)
+	}
+	if err := s.EnsureBlobTx(tx, blobHash, size); err != nil {
+		return Node{}, ContentVersion{}, err
+	}
+	return installContentVersionTx(
+		tx, n, blobHash, size, mimeType, "content_replace", nil,
+	)
 }
 
 // RevertContent creates a new immutable head with the exact content authority

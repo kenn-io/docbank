@@ -33,6 +33,13 @@ func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 	sourceVaultID := source.VaultID()
 	require.NoError(t, validateUUIDv4(sourceVaultID))
 	seedMetadataRoundTrip(t, source)
+	watchRun, err := source.BeginIngest(ctx, "watch", "sessions")
+	require.NoError(t, err)
+	watched, err := source.IngestFileExact(
+		ctx, watchRun, source.RootID(), "session.jsonl", metadataHashVersion, 9,
+		"application/json", "daily/session.jsonl", "",
+	)
+	require.NoError(t, err)
 	filesystemMTime := time.Date(2026, time.February, 3, 4, 5, 6, 120_000_000, time.UTC).
 		Format(time.RFC3339Nano)
 	ingestID, err := source.BeginIngest(ctx, "cli", "actual filesystem timestamp")
@@ -70,6 +77,7 @@ func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 		sourceVaultID+`","node_sequence":100}`)
 	assert.Contains(t, first.String(), `"original_mtime":"2026-02-03T04:05:06.12Z"`)
 	assert.Contains(t, first.String(), `"type":"provenance","identity":"`)
+	assert.Contains(t, first.String(), `{"type":"watch_source","watch_name":"sessions","source_ref":"daily/session.jsonl"`)
 	assert.Contains(t, first.String(), `"supersedes":null`)
 	assert.Contains(t, first.String(), `{"type":"node","id":7,"parent_id":1,"name":"Projects","kind":"dir"`)
 	assert.NotContains(t, first.String(), "blob_pack_index")
@@ -80,6 +88,13 @@ func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, target.Close()) })
 	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(first.Bytes())))
 	assert.Equal(t, sourceVaultID, target.VaultID())
+	restoredWatched, noVersion, changed, err := target.SyncWatchedContent(
+		ctx, "sessions", "daily/session.jsonl", metadataHashVersion, 9, "application/json",
+	)
+	require.NoError(t, err)
+	assert.False(t, changed)
+	assert.Equal(t, watched.ID, restoredWatched.ID)
+	assert.Empty(t, noVersion.ID)
 	importedTag, err := target.TagByID(ctx, metadataTagID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(7), importedTag.Revision)
@@ -207,6 +222,100 @@ func TestImportMetadataRejectsInvalidProvenanceAuthorityAndRollsBack(t *testing.
 			assert.Zero(t, provenanceRows)
 		})
 	}
+}
+
+func TestImportMetadataRejectsWatchSourceRetargetedToDirectoryAndRollsBack(t *testing.T) {
+	ctx := t.Context()
+	source := newTestStore(t)
+	run, err := source.BeginIngest(ctx, "watch", "sessions")
+	require.NoError(t, err)
+	_, err = source.IngestFileExact(
+		ctx, run, source.RootID(), "session.jsonl", metadataHashCurrent, 12,
+		"application/json", "daily/session.jsonl", "",
+	)
+	require.NoError(t, err)
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(ctx, &exported))
+
+	lines := bytes.Split(bytes.TrimSpace(exported.Bytes()), []byte{'\n'})
+	for index, line := range lines {
+		var kind struct {
+			Type string `json:"type"`
+		}
+		require.NoError(t, json.Unmarshal(line, &kind))
+		switch kind.Type {
+		case metadataWatchSourceType:
+			var record metadataWatchSource
+			require.NoError(t, json.Unmarshal(line, &record))
+			record.NodeID = source.RootID()
+			lines[index], err = json.Marshal(record)
+			require.NoError(t, err)
+		case metadataProvenanceType:
+			var record metadataProvenance
+			require.NoError(t, json.Unmarshal(line, &record))
+			record.NodeID = source.RootID()
+			record.Identity, err = provenanceIdentity(record)
+			require.NoError(t, err)
+			lines[index], err = json.Marshal(record)
+			require.NoError(t, err)
+		}
+	}
+
+	target := newTestStore(t)
+	err = target.ImportMetadata(ctx, bytes.NewReader(append(bytes.Join(lines, []byte{'\n'}), '\n')))
+	require.ErrorContains(t, err, "references non-file node")
+	var nodes, cursors int64
+	require.NoError(t, target.db.QueryRow(`
+		SELECT (SELECT COUNT(*) FROM nodes), (SELECT COUNT(*) FROM watch_sources)`,
+	).Scan(&nodes, &cursors))
+	assert.Equal(t, int64(1), nodes)
+	assert.Zero(t, cursors)
+}
+
+func TestImportMetadataRejectsWatchSourcesSharingNodeAndRollsBack(t *testing.T) {
+	ctx := t.Context()
+	source := newTestStore(t)
+	run, err := source.BeginIngest(ctx, "watch", "sessions")
+	require.NoError(t, err)
+	node, err := source.IngestFileExact(
+		ctx, run, source.RootID(), "session.jsonl", metadataHashCurrent, 12,
+		"application/json", "daily/session.jsonl", "",
+	)
+	require.NoError(t, err)
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(ctx, &exported))
+
+	err = requireWatchSourceFiles("cursor", map[watchSourceKey]int64{
+		{watchName: "sessions", sourceRef: "daily/session.jsonl"}: node.ID,
+		{watchName: "other", sourceRef: "other.jsonl"}:            node.ID,
+	}, map[int64]string{node.ID: nodeKindFile})
+	require.ErrorContains(t, err, "reference the same node")
+
+	var malformed bytes.Buffer
+	for line := range bytes.SplitSeq(bytes.TrimSpace(exported.Bytes()), []byte{'\n'}) {
+		malformed.Write(line)
+		malformed.WriteByte('\n')
+		var record metadataWatchSource
+		if err := json.Unmarshal(line, &record); err != nil || record.Type != metadataWatchSourceType {
+			continue
+		}
+		record.WatchName = "other"
+		record.SourceRef = "other.jsonl"
+		encoded, marshalErr := json.Marshal(record)
+		require.NoError(t, marshalErr)
+		malformed.Write(encoded)
+		malformed.WriteByte('\n')
+	}
+
+	target := newTestStore(t)
+	err = target.ImportMetadata(ctx, bytes.NewReader(malformed.Bytes()))
+	require.Error(t, err)
+	var nodes, cursors int64
+	require.NoError(t, target.db.QueryRow(`
+		SELECT (SELECT COUNT(*) FROM nodes), (SELECT COUNT(*) FROM watch_sources)`,
+	).Scan(&nodes, &cursors))
+	assert.Equal(t, int64(1), nodes)
+	assert.Zero(t, cursors)
 }
 
 func TestMetadataRelationsRejectProvenanceCycle(t *testing.T) {

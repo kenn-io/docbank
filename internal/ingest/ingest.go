@@ -26,6 +26,9 @@ var (
 	ErrUploadDigestMismatch = errors.New("upload digest mismatch")
 	// ErrUploadSizeMismatch is the corresponding declared-length failure.
 	ErrUploadSizeMismatch = errors.New("upload size mismatch")
+	// ErrSourceChanged reports a local file whose size or modification time
+	// changed while Docbank was reading it. No metadata authority is granted.
+	ErrSourceChanged = errors.New("source changed while being read")
 )
 
 // Ingester wires the metadata store to the blob store.
@@ -538,30 +541,116 @@ func (ing *Ingester) importFile(
 	if err := validateSourcePath(sourcePath); err != nil {
 		return false, err
 	}
-	// No-follow plus fstat, not the earlier Lstat/WalkDir classification:
-	// the file could have been swapped since, and "symlinks are skipped"
-	// must hold for the file actually read, not the one classified.
-	f, err := blob.OpenNoFollow(openPath)
+	content, err := ing.readLocalFile(ctx, openPath, sourcePath, progress, nil)
 	if err != nil {
-		return false, fmt.Errorf("opening %s: %w", sourcePath, err)
+		return false, err
+	}
+	_, added, err := ing.Store.IngestFile(ctx, ingestRun, parentID,
+		filepath.Base(sourcePath), content.hash, content.size, content.mimeType,
+		sourcePath, content.mtime)
+	if err != nil {
+		return false, fmt.Errorf("recording %s: %w", sourcePath, err)
+	}
+	return added, nil
+}
+
+type localFileContent struct {
+	hash     string
+	size     int64
+	mimeType string
+	mtime    string
+}
+
+type localFileFingerprint struct {
+	size    int64
+	modTime int64
+	info    fs.FileInfo
+}
+
+func fingerprintFileInfo(info fs.FileInfo) localFileFingerprint {
+	return localFileFingerprint{
+		size: info.Size(), modTime: info.ModTime().UnixNano(), info: info,
+	}
+}
+
+// observeLocalFileFingerprint captures identity from an opened handle. This is
+// important on Windows, where FileInfo returned by os.Stat may defer its file
+// identity lookup until os.SameFile and therefore follow a later path
+// replacement instead of describing the file that was originally observed.
+func observeLocalFileFingerprint(path string) (localFileFingerprint, error) {
+	return observeLocalFileFingerprintWith(func() (*os.File, error) {
+		return blob.OpenNoFollow(path)
+	})
+}
+
+type localFileOpener func() (*os.File, error)
+
+func observeLocalFileFingerprintWith(open localFileOpener) (localFileFingerprint, error) {
+	f, err := open()
+	if err != nil {
+		return localFileFingerprint{}, err
 	}
 	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
-		return false, fmt.Errorf("checking %s: %w", sourcePath, err)
+		return localFileFingerprint{}, err
 	}
 	if !info.Mode().IsRegular() {
-		return false, fmt.Errorf("%s: not a regular file", sourcePath)
+		return localFileFingerprint{}, errors.New("not a regular file")
+	}
+	return fingerprintFileInfo(info), nil
+}
+
+func (fingerprint localFileFingerprint) matches(other localFileFingerprint) bool {
+	return fingerprint.size == other.size &&
+		fingerprint.modTime == other.modTime &&
+		os.SameFile(fingerprint.info, other.info)
+}
+
+func (ing *Ingester) readLocalFile(
+	ctx context.Context, openPath, sourcePath string, progress *progressTracker,
+	expected *localFileFingerprint,
+) (localFileContent, error) {
+	return ing.readLocalFileWith(
+		ctx, func() (*os.File, error) { return blob.OpenNoFollow(openPath) },
+		sourcePath, progress, expected,
+	)
+}
+
+func (ing *Ingester) readLocalFileWith(
+	ctx context.Context, open localFileOpener, sourcePath string, progress *progressTracker,
+	expected *localFileFingerprint,
+) (localFileContent, error) {
+	var result localFileContent
+	// No-follow plus fstat, not the earlier Lstat/WalkDir classification:
+	// the file could have been swapped since, and "symlinks are skipped"
+	// must hold for the file actually read, not the one classified.
+	f, err := open()
+	if err != nil {
+		return result, fmt.Errorf("opening %s: %w", sourcePath, err)
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return result, fmt.Errorf("checking %s: %w", sourcePath, err)
+	}
+	if !info.Mode().IsRegular() {
+		return result, fmt.Errorf("%s: not a regular file", sourcePath)
+	}
+	initialFingerprint := fingerprintFileInfo(info)
+	if expected != nil && !initialFingerprint.matches(*expected) {
+		return result, fmt.Errorf("%s: observed file was replaced before opening: %w",
+			sourcePath, ErrSourceChanged)
 	}
 
 	head := make([]byte, 512)
 	n, err := io.ReadFull(f, head)
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
-		return false, fmt.Errorf("reading %s: %w", sourcePath, err)
+		return result, fmt.Errorf("reading %s: %w", sourcePath, err)
 	}
 	head = head[:n]
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		return false, fmt.Errorf("rewinding %s: %w", sourcePath, err)
+		return result, fmt.Errorf("rewinding %s: %w", sourcePath, err)
 	}
 
 	// Blob first: the node row must never commit before its bytes are
@@ -572,16 +661,30 @@ func (ing *Ingester) importFile(
 	if progress != nil {
 		content = progressReader{Reader: f, ctx: ctx, tracker: progress}
 	}
-	hash, size, err := ing.Blobs.WriteContext(ctx, content)
+	result.hash, result.size, err = ing.Blobs.WriteContext(ctx, content)
 	if err != nil {
-		return false, fmt.Errorf("storing content of %s: %w", sourcePath, err)
+		return result, fmt.Errorf("storing content of %s: %w", sourcePath, err)
 	}
-
-	mtime := info.ModTime().UTC().Format(time.RFC3339Nano)
-	_, added, err := ing.Store.IngestFile(ctx, ingestRun, parentID,
-		filepath.Base(sourcePath), hash, size, detectMime(sourcePath, head), sourcePath, mtime)
+	after, err := f.Stat()
 	if err != nil {
-		return false, fmt.Errorf("recording %s: %w", sourcePath, err)
+		return result, fmt.Errorf("rechecking %s: %w", sourcePath, err)
 	}
-	return added, nil
+	if result.size != info.Size() || !fingerprintFileInfo(after).matches(initialFingerprint) {
+		return result, fmt.Errorf("%s: %w", sourcePath, ErrSourceChanged)
+	}
+	if expected != nil {
+		currentFingerprint, pathErr := observeLocalFileFingerprintWith(open)
+		if pathErr != nil {
+			return result, fmt.Errorf("%s: rechecking watched path: %w",
+				sourcePath, errors.Join(ErrSourceChanged, pathErr))
+		}
+		if !currentFingerprint.matches(initialFingerprint) ||
+			!currentFingerprint.matches(*expected) {
+			return result, fmt.Errorf("%s: watched path was replaced while reading: %w",
+				sourcePath, ErrSourceChanged)
+		}
+	}
+	result.mimeType = detectMime(sourcePath, head)
+	result.mtime = info.ModTime().UTC().Format(time.RFC3339Nano)
+	return result, nil
 }

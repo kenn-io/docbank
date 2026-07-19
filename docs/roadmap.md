@@ -17,7 +17,7 @@ elsewhere only when they materially explain the design and are marked
 | 0 | Extract msgvault's pack/backup and packed-CAS engines into `go.kenn.io/kit` | **Implemented** (Docbank uses `kit` v0.10.0) |
 | 1 | Core: store, blob store, ingest pipeline, full CLI | **Implemented** |
 | 2a | Infrastructure: daemon, HTTP API, daemon-first CLI, self-update, release pipeline | **Implemented** |
-| 2b | Features: content versions, versioned editing, full audit, tags, watched inboxes, text extraction, ingest provenance | **In progress**: versions, tags, provenance, and first-scope audit authority implemented; watched inboxes and extraction remain |
+| 2b | Features: content versions, versioned editing, full audit, tags, watched inboxes, text extraction, ingest provenance | **In progress**: versions, tags, provenance, watched inboxes, and first-scope audit authority implemented; extraction remains |
 | 3 | Primary kit-ui web portal and focused operator TUI | Designed |
 | 4 | Backup commands over the kit engine | **Implemented**; representative-corpus hardening continues |
 
@@ -108,13 +108,14 @@ implemented. One-node canonical audit history is available by path or stable ID
 with bounded, append-stable cursor pagination. Independent verification returns
 stable terminal evidence, checks every protected blob, and can prove that
 current allocation and scope chains extend an externally recorded bundle.
+Daemon-owned watched inboxes recursively observe configured local directories,
+wait for stable size and modification time, preserve portable source identity,
+and append later changes to the same stable node without touching source files.
 
 - Additional and overlapping audit scopes and scope-wide history browsing
   ([current workflow](usage/audited-history.md),
   [model](architecture/audited-history.md))
 - Tag/MIME/date/path search filters; `POST /batch/move` bulk reorganization
-- Watched inbox directories with a stability window, landing imports
-  under `/inbox/<date>/`
 - Text extraction workers (PDF text layer, plain text/markdown, office
   formats) feeding content search
 - External integration surface: generalized ingest provenance —

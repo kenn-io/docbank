@@ -155,8 +155,7 @@ docbank backup restore --repo ~/Backups/docbank --target ~/Restores/docbank-test
 - [Internal design map](docs/internal/README.md) for contributors and coding agents
 
 Docbank belongs to a family of personal data tools alongside
-[msgvault](https://msgvault.io) (communications archive) and fotobank
-(photo/video archive). Where msgvault preserves an immutable record of your
-messages, docbank manages working documents: files you still organize,
-retrieve, and build workflows around — and a safe document API for external
-applications.
+[msgvault](https://msgvault.io), the communications archive. Where msgvault
+preserves an immutable record of your messages, docbank manages working
+documents: files you still organize, retrieve, and build workflows around —
+and a safe document API for external applications.

@@ -152,8 +152,9 @@ The supervisor stops accepting work as soon as shutdown begins, cancels every
 runner, and waits before SQLite and blob storage close. Runners must honor
 their context; the wait is bounded so a defective runner cannot prevent daemon
 exit forever. The background daemon's idle-timeout loop is supervised through
-this same path. Watched inboxes and scheduled maintenance are still planned,
-but must use this lifecycle rather than creating unmanaged goroutines.
+this same path. Watched inboxes use this lifecycle; scheduled maintenance
+remains planned, but must use this lifecycle rather than creating unmanaged
+goroutines.
 
 ## Logs
 

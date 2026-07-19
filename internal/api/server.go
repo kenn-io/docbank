@@ -35,6 +35,7 @@ type Deps struct {
 	Shutdown      func()           // called (async) by the shutdown route
 	Tracker       *ActivityTracker // nil → no idle tracking
 	Jobs          *jobs.Supervisor // nil → no registered background jobs
+	Gate          *OperationGate   // nil → a server-private gate
 }
 
 // Server is docbank's HTTP API: a huma-described /api/v1 surface plus a
@@ -83,7 +84,10 @@ func NewServer(d Deps) *Server {
 	cfg.Security = []map[string][]string{{"apiKey": {}}, {"bearer": {}}}
 	humaAPI := humago.New(mux, cfg)
 	s := &Server{deps: d, api: humaAPI, auditPreviews: newAuditPreviewRegistry()}
-	g := &gate{}
+	g := d.Gate
+	if g == nil {
+		g = NewOperationGate()
+	}
 
 	registerReadRoutes(humaAPI, d)      // Task 5 (stat-by-id lands in this task)
 	registerMutateRoutes(humaAPI, d, g) // Task 6

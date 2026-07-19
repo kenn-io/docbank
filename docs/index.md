@@ -154,10 +154,9 @@ create/verify/restore, and the embedded Go API. Docbank is not yet a
 stable 1.0; the [Roadmap](roadmap.md) gives the product direction.
 
 Docbank belongs to a family of personal data tools alongside
-[msgvault](https://msgvault.io) (communications archive) and fotobank
-(photo/video archive). Where msgvault preserves an immutable record of
-your messages, Docbank manages working documents: files you still
-organize, retrieve, and build workflows around.
+[msgvault](https://msgvault.io), the communications archive. Where msgvault
+preserves an immutable record of your messages, Docbank manages working
+documents: files you still organize, retrieve, and build workflows around.
 
 ## Where to go next
 

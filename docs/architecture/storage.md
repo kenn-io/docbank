@@ -67,6 +67,7 @@ content_versions(version_id UUID PRIMARY KEY, node_id, blob_hash, size,
 ingests        (id, started_at, source_kind, source_desc)
 provenance     (identity SHA-256 PRIMARY KEY, node_id, ingest_id,
                 original_path, original_mtime, supersedes)
+watch_sources  (watch_name, source_ref, node_id, last blob_hash and size)
 tags           (id UUID PRIMARY KEY, name UNIQUE, revision)
 node_tags      (node_id, tag_id)
 audit_records  (digest PRIMARY KEY, kind, operation/event/node indexes, record_json)
@@ -92,6 +93,11 @@ ingest, original-path, mtime, and optional predecessor fields. Current ingest
 creates an unsuperseded fact; SQL prevents rewriting ingest or provenance rows.
 JSONL preserves the identity and optional `supersedes` edge and rejects a
 dangling, cross-node, branching, or cyclic graph during import.
+
+`watch_sources` is a small operational cursor, not a second provenance graph.
+Its primary key is `(watch_name, source_ref)`, and it records both the stable
+node and the last source bytes accepted. Watch decisions live in Go: unchanged
+source bytes never replace an independently edited or reverted node head.
 
 The schema and metadata-v1 codec can persist one complete first audit
 enrollment: topology and attached-metadata genesis, a shared baseline, sticky

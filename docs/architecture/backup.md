@@ -29,10 +29,11 @@ Docbank also has a deterministic, versioned JSONL representation of its logical
 metadata, identified in manifests as `docbank-metadata-jsonl-v1`. It contains
 the complete virtual directory tree and file records,
 including stable IDs, content hashes, timestamps, trash coordinates, prior
-versions, ingest provenance, tags, and extracted text. It intentionally omits
-FTS rows and physical pack mappings: search indexes are rebuilt by importing
-nodes, while restore grants physical authority only after content has been
-verified and published. Import targets must be fresh current-schema databases;
+versions, ingest provenance, watched-source cursors, tags, and extracted text.
+It intentionally omits FTS rows and physical pack mappings: search indexes are
+rebuilt by importing nodes, while restore grants physical authority only after
+content has been verified and published. Import targets must be fresh
+current-schema databases;
 a malformed or referentially incomplete stream leaves the pristine target
 unchanged. Capture makes two deterministic passes over the same pinned
 transaction: the first establishes the exact artifact size and the second

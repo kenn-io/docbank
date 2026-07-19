@@ -9,6 +9,10 @@ docbank is pre-1.0; interfaces and storage migrations may still evolve.
 
 ## Unreleased
 
+- Daemon-owned watched inboxes import stable regular files without touching
+  their sources, preserve portable source identity, and append later changes
+  as versions of the same Docbank node; their lifecycle and failures are
+  visible through `docbank jobs`.
 - The store extends audited recording to filesystem ingest, content
   reversion, in-scope moves and renames, reversible trash and restore, and
   tag creation, assignment, rename, and deletion; backup restore and JSONL import

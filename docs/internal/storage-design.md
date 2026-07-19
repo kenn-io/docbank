@@ -366,10 +366,11 @@ SQLite is Docbank's runtime query and transaction engine, but its historical
 page layout is not the intended long-lived backup contract. The logical
 boundary is deterministic JSONL headed by `docbank-metadata` and an integer
 format version. Records are emitted in dependency-stable order and deterministic
-key order: blobs, nodes, ingests, node versions, provenance, tags, node tags,
-extracted text, and any audit authority. Audit projection rows precede their
-canonical records; import defers all foreign-key enforcement transaction-wide
-and validates the complete graph before commit. Nodes carry parent IDs, so
+key order: blobs, nodes, ingests, node versions, provenance, watched-source
+cursors, tags, node tags, extracted text, and any audit authority. Audit
+projection rows precede their canonical records; import defers all foreign-key
+enforcement transaction-wide and validates the complete graph before commit.
+Nodes carry parent IDs, so
 directory structure, trash
 restore coordinates, and stable external node references survive a roundtrip.
 The header carries SQLite's node `AUTOINCREMENT` high-water mark separately

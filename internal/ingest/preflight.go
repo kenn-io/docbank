@@ -117,7 +117,15 @@ func (e exclusions) match(sourceRoot, sourcePath string) bool {
 	if err != nil {
 		return false
 	}
-	name := filepath.Base(sourcePath)
+	return e.matchNameAndRelative(filepath.Base(sourcePath), rel)
+}
+
+func (e exclusions) matchRelative(rel string) bool {
+	rel = filepath.Clean(rel)
+	return e.matchNameAndRelative(filepath.Base(rel), rel)
+}
+
+func (e exclusions) matchNameAndRelative(name, rel string) bool {
 	for _, rule := range e.rules {
 		if rule.name != "" && name == rule.name {
 			return true

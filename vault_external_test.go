@@ -1,6 +1,7 @@
 package docbank_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,12 @@ import (
 
 	docbank "go.kenn.io/docbank"
 )
+
+func TestRootPackageConstructor(t *testing.T) {
+	vault, err := docbank.New(context.Background(), docbank.Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	require.NoError(t, vault.Close())
+}
 
 func TestOpenContentClassifiesPhysicalContentFailures(t *testing.T) {
 	tests := []struct {
