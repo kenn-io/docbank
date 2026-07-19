@@ -78,6 +78,12 @@ docbank tree /taxes
 docbank cat /taxes/checklist.pdf > /tmp/checklist.pdf
 ```
 
+!!! info "New version-command vocabulary"
+
+    `docbank version` and the explicit `docbank versions list|show|cat`
+    commands are newer than v0.7.0. Build from source to use them until the
+    next release is published.
+
 Every imported file also has a stable immutable content-version UUID:
 
 ```bash

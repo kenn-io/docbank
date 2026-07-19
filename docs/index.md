@@ -50,6 +50,12 @@ Windows and source builds):
 curl -fsSL https://docbank.ai/install.sh | sh
 ```
 
+!!! info "New version-command vocabulary"
+
+    `docbank version` and the explicit `docbank versions list|show|cat`
+    commands shown below are newer than v0.7.0. Build from source to use them
+    until the next release is published.
+
 The ordinary workflow stays direct:
 
 ```bash

@@ -199,6 +199,11 @@ version, and emits a warning rather than encouraging a duplicate retry.
 
 ## docbank versions
 
+!!! info "Release availability"
+
+    The explicit `versions list|show|cat` command vocabulary is newer than
+    v0.7.0. Build from source to use it until the next release is published.
+
 ```text
 docbank versions <command>
 ```
@@ -721,6 +726,11 @@ against an offline server instance and never invoked. For agents and
 API client generation; see [HTTP API](architecture/http-api.md).
 
 ## docbank version
+
+!!! info "Release availability"
+
+    This command is newer than v0.7.0. Build from source to use it until the
+    next release is published.
 
 ```
 docbank version

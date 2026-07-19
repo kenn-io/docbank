@@ -117,6 +117,10 @@ platform's toolchain.
 There is no initialization command. The first data command creates the local
 vault and starts its daemon:
 
+> **Release availability:** `docbank version` and the explicit
+> `docbank versions list|show|cat` commands are newer than v0.7.0. Build from
+> source to use them until the next release is published.
+
 ```bash
 docbank add ~/Documents --dest /archive
 docbank tree /archive

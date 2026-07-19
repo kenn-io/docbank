@@ -36,6 +36,11 @@ also creates no version.
 
 ## Read surfaces
 
+!!! info "Release availability"
+
+    The explicit `versions list|show|cat` command vocabulary is newer than
+    v0.7.0. Build from source to use it until the next release is published.
+
 ```bash
 docbank versions list /taxes/2025/return.pdf
 docbank versions show <version-id> --json
