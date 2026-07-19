@@ -25,16 +25,14 @@ var catCmd = &cobra.Command{
 		if n.Kind == "dir" {
 			return fmt.Errorf("%q: %w", args[0], store.ErrNotFile)
 		}
-		rc, err := c.Content(cmd.Context(), n.ID)
+		// Read the immutable version selected by Stat. A concurrent replacement
+		// may advance the node, but it cannot make this stream silently switch
+		// to different bytes.
+		rc, err := c.VersionContent(cmd.Context(), n.CurrentVersionID)
 		if err != nil {
 			return err
 		}
 		defer func() { _ = rc.Close() }()
-		if rc.VersionID != n.CurrentVersionID {
-			return integrityError(fmt.Errorf(
-				"streaming %q: received content version %s, expected %s",
-				args[0], rc.VersionID, n.CurrentVersionID))
-		}
 		if _, err := rc.CopyVerified(cmd.OutOrStdout()); err != nil {
 			return fmt.Errorf("streaming %q: %w", args[0], err)
 		}

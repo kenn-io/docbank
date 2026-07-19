@@ -39,6 +39,9 @@ var editCmd = &cobra.Command{
 func runEdit(cmd *cobra.Command, vaultPath string) (retErr error) {
 	editor, err := editorCommand(editEditor)
 	if err != nil {
+		if cmd.Flags().Changed("editor") {
+			return usageError(err)
+		}
 		return err
 	}
 	mimeOverride, err := normalizedMIMEOverride(editMIMEType)
