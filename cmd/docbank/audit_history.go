@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -23,12 +24,23 @@ var auditHistoryCmd = &cobra.Command{
 	Short: "Read one permanently protected node's canonical event timeline",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if (len(args) == 0) == (auditHistoryNodeID == 0) {
-			return errors.New("audit history requires exactly one path or --node-id")
+		nodeIDSet := cmd.Flags().Changed("node-id")
+		if (len(args) == 1) == nodeIDSet {
+			return usageError(errors.New(
+				"audit history requires exactly one path or --node-id"))
+		}
+		if auditHistoryLimit < 1 || auditHistoryLimit > 500 {
+			return usageError(errors.New("audit history --limit must be between 1 and 500"))
 		}
 		path := ""
 		if len(args) == 1 {
 			path = args[0]
+		}
+		if nodeIDSet && auditHistoryNodeID < 1 {
+			return usageError(errors.New("audit history --node-id must be positive"))
+		}
+		if path != "" && !strings.HasPrefix(path, "/") {
+			return usageError(errors.New("audit history path must be absolute"))
 		}
 		c, err := client.Ensure(cmd.Context())
 		if err != nil {

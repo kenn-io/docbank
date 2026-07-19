@@ -120,6 +120,9 @@ func TestDaemonStartDoesNotInitializeRestoreOwnedMissingTarget(t *testing.T) {
 	cmd.Env = append(os.Environ(), "DOCBANK_HOME="+target)
 	out, err := cmd.CombinedOutput()
 	require.Error(t, err, string(out))
+	var exitErr *exec.ExitError
+	require.ErrorAs(t, err, &exitErr)
+	assert.Equal(t, exitBusy, exitErr.ExitCode(), string(out))
 	assert.Contains(t, string(out), "vault is locked",
 		"the external bootstrap capture must preserve the child startup error")
 	_, err = os.Lstat(target)

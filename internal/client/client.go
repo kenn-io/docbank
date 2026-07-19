@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/jsontext"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -53,6 +54,36 @@ func responseStatus(err error) (int, bool) {
 		return 0, false
 	}
 	return response.status, true
+}
+
+type problemError struct {
+	code string
+	err  error
+}
+
+func (e *problemError) Error() string { return e.err.Error() }
+func (e *problemError) Unwrap() error { return e.err }
+
+// ProblemCode returns the daemon's stable RFC 7807 extension code when err
+// came from a decoded HTTP response or progress-stream error event.
+func ProblemCode(err error) (string, bool) {
+	var problem *problemError
+	if !errors.As(err, &problem) || problem.code == "" {
+		return "", false
+	}
+	return problem.code, true
+}
+
+// ErrIntegrity marks content that failed terminal size, hash, or digest proof.
+var ErrIntegrity = errors.New("content integrity verification failed")
+
+type integrityError struct{ message string }
+
+func (e *integrityError) Error() string        { return e.message }
+func (e *integrityError) Is(target error) bool { return target == ErrIntegrity }
+
+func integrityErrorf(format string, args ...any) error {
+	return &integrityError{message: fmt.Sprintf(format, args...)}
 }
 
 // ContentStream exposes the catalog identity available before a download and
@@ -92,20 +123,21 @@ func (s *ContentStream) CopyVerified(w io.Writer) (int64, error) {
 		return written, fmt.Errorf("copying content: %w", err)
 	}
 	if written != s.Size {
-		return written, fmt.Errorf("verifying content: received %d bytes, expected %d", written, s.Size)
+		return written, integrityErrorf("verifying content: received %d bytes, expected %d",
+			written, s.Size)
 	}
 	computedHash := hex.EncodeToString(hash.Sum(nil))
 	if computedHash != s.BlobHash {
-		return written, fmt.Errorf("verifying content: computed SHA-256 %s, expected %s",
+		return written, integrityErrorf("verifying content: computed SHA-256 %s, expected %s",
 			computedHash, s.BlobHash)
 	}
 	wantDigest := "sha-256=:" + base64.StdEncoding.EncodeToString(hash.Sum(nil)) + ":"
 	gotDigest := s.ContentDigest()
 	if gotDigest == "" {
-		return written, errors.New("verifying content: response lacks terminal Content-Digest")
+		return written, integrityErrorf("verifying content: response lacks terminal Content-Digest")
 	}
 	if gotDigest != wantDigest {
-		return written, fmt.Errorf("verifying content: terminal Content-Digest %q, expected %q",
+		return written, integrityErrorf("verifying content: terminal Content-Digest %q, expected %q",
 			gotDigest, wantDigest)
 	}
 	return written, nil
@@ -118,25 +150,26 @@ func New(baseURL, apiKey string) *Client {
 // codeToTypedErr preserves server problem codes that have a stable local
 // sentinel for callers using errors.Is.
 var codeToTypedErr = map[string]error{
-	"not_found":                store.ErrNotFound,
-	"exists":                   store.ErrExists,
-	"cycle":                    store.ErrCycle,
-	"stale_revision":           store.ErrStaleRevision,
-	"not_dir":                  store.ErrNotDir,
-	"not_file":                 store.ErrNotFile,
-	"invalid_name":             store.ErrInvalidName,
-	"invalid_tag":              store.ErrInvalidTag,
-	"not_trashed":              store.ErrNotTrashed,
-	"is_root":                  store.ErrIsRoot,
-	"version_node_mismatch":    store.ErrVersionNodeMismatch,
-	"version_already_current":  store.ErrVersionAlreadyCurrent,
-	"invalid_version_prune":    store.ErrInvalidVersionPrune,
-	"audit_already_enabled":    store.ErrAuditAlreadyEnabled,
-	"audit_preview_stale":      store.ErrAuditPreviewStale,
-	"audit_not_enrolled":       store.ErrAuditNotEnrolled,
-	"invalid_audit_cursor":     store.ErrInvalidAuditCursor,
-	"backup_locked":            backup.ErrRepoLocked,
-	"pack_retirement_deferred": packstore.ErrPackRetirementDeferred,
+	"not_found":                    store.ErrNotFound,
+	"exists":                       store.ErrExists,
+	"cycle":                        store.ErrCycle,
+	"stale_revision":               store.ErrStaleRevision,
+	"not_dir":                      store.ErrNotDir,
+	"not_file":                     store.ErrNotFile,
+	"invalid_name":                 store.ErrInvalidName,
+	"invalid_tag":                  store.ErrInvalidTag,
+	"not_trashed":                  store.ErrNotTrashed,
+	"is_root":                      store.ErrIsRoot,
+	"version_node_mismatch":        store.ErrVersionNodeMismatch,
+	"version_already_current":      store.ErrVersionAlreadyCurrent,
+	"invalid_version_prune":        store.ErrInvalidVersionPrune,
+	"audit_already_enabled":        store.ErrAuditAlreadyEnabled,
+	"audit_preview_stale":          store.ErrAuditPreviewStale,
+	"audit_not_enrolled":           store.ErrAuditNotEnrolled,
+	"invalid_audit_cursor":         store.ErrInvalidAuditCursor,
+	"backup_locked":                backup.ErrRepoLocked,
+	"backup_restore_target_active": home.ErrVaultLocked,
+	"pack_retirement_deferred":     packstore.ErrPackRetirementDeferred,
 }
 
 func decodeError(resp *http.Response) error {
@@ -150,10 +183,13 @@ func decodeError(resp *http.Response) error {
 }
 
 func apiProblemError(e api.Error) error {
+	var cause error
 	if target, ok := codeToTypedErr[e.Code]; ok {
-		return fmt.Errorf("%s: %w", e.Detail, target)
+		cause = fmt.Errorf("%s: %w", e.Detail, target)
+	} else {
+		cause = fmt.Errorf("daemon error (%d %s): %s", e.Status, e.Code, e.Detail)
 	}
-	return fmt.Errorf("daemon error (%d %s): %s", e.Status, e.Code, e.Detail)
+	return &problemError{code: e.Code, err: cause}
 }
 
 // do issues one JSON round-trip. Non-nil out must be a pointer; a non-2xx
@@ -295,7 +331,7 @@ func (c *Client) VersionContent(ctx context.Context, id string) (*ContentStream,
 	}
 	if stream.VersionID != id {
 		_ = stream.Close()
-		return nil, fmt.Errorf("content version %s returned version identity %s", id, stream.VersionID)
+		return nil, integrityErrorf("content version %s returned version identity %s", id, stream.VersionID)
 	}
 	return stream, nil
 }
@@ -550,18 +586,19 @@ func (c *Client) content(ctx context.Context, path, identity string) (*ContentSt
 	size, err := strconv.ParseInt(resp.Header.Get(api.BlobSizeHeader), 10, 64)
 	if err != nil || size < 0 {
 		_ = resp.Body.Close()
-		return nil, fmt.Errorf("%s returned invalid %s %q",
+		return nil, integrityErrorf("%s returned invalid %s %q",
 			identity, api.BlobSizeHeader, resp.Header.Get(api.BlobSizeHeader))
 	}
 	hash := resp.Header.Get(api.BlobHashHeader)
 	if !validSHA256Hex(hash) {
 		_ = resp.Body.Close()
-		return nil, fmt.Errorf("%s returned invalid %s %q", identity, api.BlobHashHeader, hash)
+		return nil, integrityErrorf("%s returned invalid %s %q", identity, api.BlobHashHeader, hash)
 	}
 	versionID := resp.Header.Get(api.ContentVersionHeader)
 	if !validUUIDv4(versionID) {
 		_ = resp.Body.Close()
-		return nil, fmt.Errorf("%s returned invalid %s %q", identity, api.ContentVersionHeader, versionID)
+		return nil, integrityErrorf("%s returned invalid %s %q",
+			identity, api.ContentVersionHeader, versionID)
 	}
 	return &ContentStream{ReadCloser: resp.Body, VersionID: versionID,
 		BlobHash: hash, Size: size, trailer: resp.Trailer}, nil

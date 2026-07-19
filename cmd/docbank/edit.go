@@ -39,11 +39,14 @@ var editCmd = &cobra.Command{
 func runEdit(cmd *cobra.Command, vaultPath string) (retErr error) {
 	editor, err := editorCommand(editEditor)
 	if err != nil {
+		if cmd.Flags().Changed("editor") {
+			return usageError(err)
+		}
 		return err
 	}
 	mimeOverride, err := normalizedMIMEOverride(editMIMEType)
 	if err != nil {
-		return err
+		return usageError(err)
 	}
 	progressMode, err := progressModeFromFlag("edit", editProgress)
 	if err != nil {
@@ -242,9 +245,8 @@ func stageCurrentVersion(
 			retErr = errors.Join(retErr, fmt.Errorf("closing content stream: %w", closeErr))
 		}
 	}()
-	if stream.BlobHash != node.BlobHash || stream.Size != node.Size {
-		return "", fmt.Errorf("version authority %s/%d disagrees with node authority %s/%d",
-			stream.BlobHash, stream.Size, node.BlobHash, node.Size)
+	if err := validateEditStreamAuthority(stream, node); err != nil {
+		return "", err
 	}
 
 	file, path, err := staging.createFile(node.Name)
@@ -271,6 +273,16 @@ func stageCurrentVersion(
 	}
 	file = nil
 	return path, nil
+}
+
+func validateEditStreamAuthority(stream *client.ContentStream, node api.Node) error {
+	if stream.BlobHash == node.BlobHash && stream.Size == node.Size {
+		return nil
+	}
+	return integrityError(fmt.Errorf(
+		"version authority %s/%d disagrees with node authority %s/%d",
+		stream.BlobHash, stream.Size, node.BlobHash, node.Size,
+	))
 }
 
 func editStagePattern(name string) string {

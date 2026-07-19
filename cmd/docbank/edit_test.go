@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -105,6 +106,17 @@ func TestEditStagePatternUsesOnlySafeBoundedExtensions(t *testing.T) {
 			assert.Equal(t, expected, editStagePattern(name))
 		})
 	}
+}
+
+func TestEditAuthorityMismatchIsIntegrityFailure(t *testing.T) {
+	node := api.Node{BlobHash: strings.Repeat("a", 64), Size: 12}
+	stream := &client.ContentStream{BlobHash: strings.Repeat("b", 64), Size: node.Size}
+	err := validateEditStreamAuthority(stream, node)
+	require.Error(t, err)
+	assert.Equal(t, exitIntegrity, commandExitCode(err, true))
+
+	stream.BlobHash = node.BlobHash
+	require.NoError(t, validateEditStreamAuthority(stream, node))
 }
 
 func TestEditFailureAndConcurrentReplacementDoNotOverwrite(t *testing.T) {

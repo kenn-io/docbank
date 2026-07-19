@@ -36,7 +36,13 @@ var daemonRunCmd = &cobra.Command{
 	Long: "Run the daemon in the foreground. Usually invoked by `docbank daemon start`\n" +
 		"in the background; useful directly for debugging.",
 	Args: cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, _ []string) error { return runServe(cmd.Context()) },
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		err := runServe(cmd.Context())
+		if err != nil && os.Getenv(client.EnvBackgroundDaemon) == "1" {
+			_ = client.WriteDaemonStartProblem(cmd.ErrOrStderr(), err)
+		}
+		return err
+	},
 }
 
 func runServe(ctx context.Context) (retErr error) {

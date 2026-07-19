@@ -20,6 +20,9 @@ docbank is pre-1.0; interfaces and storage migrations may still evolve.
   provenance changes, while `docbank audit verify` independently replays the
   authority, checks protected bytes, and proves current chains extend a
   separately recorded evidence report.
+- Legacy browsing and trash commands expose typed JSON, and CLI processes use
+  stable exit codes for usage, missing objects, stale state, busy resources,
+  and integrity findings.
 
 ## v0.5.0 (2026-07-17)
 

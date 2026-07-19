@@ -26,7 +26,7 @@ var searchCmd = &cobra.Command{
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if searchLimit < 1 || searchLimit > maxSearchLimit {
-			return fmt.Errorf("--limit must be between 1 and %d", maxSearchLimit)
+			return usageError(fmt.Errorf("--limit must be between 1 and %d", maxSearchLimit))
 		}
 		c, err := client.Ensure(cmd.Context())
 		if err != nil {

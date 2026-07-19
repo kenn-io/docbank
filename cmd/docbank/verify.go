@@ -31,7 +31,7 @@ var verifyCmd = &cobra.Command{
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%d blob(s) ok, %d problem(s)\n",
 			rep.OK, problemCount)
 		if problemCount > 0 {
-			return fmt.Errorf("verify found %d problem(s)", problemCount)
+			return integrityError(fmt.Errorf("verify found %d problem(s)", problemCount))
 		}
 		return nil
 	},

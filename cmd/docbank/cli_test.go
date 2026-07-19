@@ -1099,6 +1099,12 @@ func TestVerifyDetectsMissingAndCorrupt(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, out, "corrupt: "+alphaHash)
 	assert.Contains(t, out, "missing: "+betaHash)
+
+	var stdout, stderr bytes.Buffer
+	code := runProcess([]string{"verify"}, &stdout, &stderr)
+	assert.Equal(t, exitIntegrity, code)
+	assert.Contains(t, stdout.String(), "2 problem(s)")
+	assert.Contains(t, stderr.String(), "verify found 2 problem(s)")
 }
 
 // A validation failure exits before RunE, so nothing command-side can reset

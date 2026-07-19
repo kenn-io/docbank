@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -242,6 +243,9 @@ var tagNodesCmd = &cobra.Command{
 func changeTagAssignmentCLI(
 	cmd *cobra.Command, selector, path string, assign, jsonOutput bool,
 ) error {
+	if !strings.HasPrefix(path, "/") {
+		return usageError(errors.New("tag assignment path must be absolute"))
+	}
 	c, err := client.Ensure(cmd.Context())
 	if err != nil {
 		return err
@@ -296,10 +300,10 @@ func resolveTag(cmd *cobra.Command, c *client.Client, selector string) (api.Tag,
 
 func validateTagPagination(limit, offset int) error {
 	if limit < 1 || limit > maxTagLimit {
-		return fmt.Errorf("--limit must be between 1 and %d", maxTagLimit)
+		return usageError(fmt.Errorf("--limit must be between 1 and %d", maxTagLimit))
 	}
 	if offset < 0 {
-		return errors.New("--offset must not be negative")
+		return usageError(errors.New("--offset must not be negative"))
 	}
 	return nil
 }

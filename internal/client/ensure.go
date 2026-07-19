@@ -27,6 +27,33 @@ import (
 
 const ensureTimeout = 30 * time.Second
 
+const (
+	daemonStartProblemPrefix      = "DOCBANK_DAEMON_START_PROBLEM="
+	daemonStartProblemVaultLocked = "vault_locked"
+)
+
+type daemonStartError struct {
+	message string
+	cause   error
+}
+
+func (e *daemonStartError) Error() string { return e.message }
+func (e *daemonStartError) Unwrap() error { return e.cause }
+
+// WriteDaemonStartProblem records a machine-readable cause in the launcher's
+// private bootstrap output. The detached child cannot return Go error identity
+// across a process boundary, so the launcher restores the small stable subset
+// needed by callers before it returns the human error.
+func WriteDaemonStartProblem(w io.Writer, err error) error {
+	if !errors.Is(err, home.ErrVaultLocked) {
+		return nil
+	}
+	if _, err := fmt.Fprintln(w, daemonStartProblemPrefix+daemonStartProblemVaultLocked); err != nil {
+		return fmt.Errorf("writing daemon startup problem: %w", err)
+	}
+	return nil
+}
+
 func probeOptions() kitdaemon.ProbeOptions {
 	return kitdaemon.ProbeOptions{ExpectedService: Service, Timeout: 2 * time.Second}
 }
@@ -313,10 +340,30 @@ func daemonStartFailure(output *os.File, summary string) error {
 	if err != nil {
 		return fmt.Errorf("%s (reading bootstrap output: %w)", summary, err)
 	}
-	if detail := strings.TrimSpace(string(data)); detail != "" {
-		return fmt.Errorf("%s: %s", summary, detail)
+	detail, cause := parseDaemonStartOutput(string(data))
+	message := summary
+	if detail != "" {
+		message += ": " + detail
 	}
-	return errors.New(summary)
+	if cause != nil {
+		return &daemonStartError{message: message, cause: cause}
+	}
+	return errors.New(message)
+}
+
+func parseDaemonStartOutput(output string) (string, error) {
+	lines := strings.Split(output, "\n")
+	kept := lines[:0]
+	var cause error
+	for _, line := range lines {
+		switch strings.TrimSpace(line) {
+		case daemonStartProblemPrefix + daemonStartProblemVaultLocked:
+			cause = home.ErrVaultLocked
+		default:
+			kept = append(kept, line)
+		}
+	}
+	return strings.TrimSpace(strings.Join(kept, "\n")), cause
 }
 
 func discover(

@@ -13,8 +13,21 @@ var rootCmd = &cobra.Command{
 	Version:       fmt.Sprintf("%s (%s)", version.Version, version.Commit),
 	SilenceUsage:  true,
 	SilenceErrors: true,
+	// Cobra runs this only after flag parsing and positional validation, which
+	// lets the process boundary distinguish command syntax from RunE failures.
+	PersistentPreRun: func(_ *cobra.Command, _ []string) {
+		commandStarted = true
+	},
 }
 
+var commandStarted bool
+
 func Execute() error {
+	commandStarted = false
 	return rootCmd.Execute() //nolint:wrapcheck // error is user-facing CLI output; wrapping adds noise
+}
+
+func init() {
+	// Keep the root marker active if a child later adds its own persistent hook.
+	cobra.EnableTraverseRunHooks = true
 }

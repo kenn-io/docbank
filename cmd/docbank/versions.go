@@ -35,10 +35,10 @@ var versionsCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if versionsLimit < 1 || versionsLimit > maxVersionsLimit {
-			return fmt.Errorf("--limit must be between 1 and %d", maxVersionsLimit)
+			return usageError(fmt.Errorf("--limit must be between 1 and %d", maxVersionsLimit))
 		}
 		if versionsOffset < 0 {
-			return errors.New("--offset must not be negative")
+			return usageError(errors.New("--offset must not be negative"))
 		}
 		c, err := client.Ensure(cmd.Context())
 		if err != nil {
@@ -84,7 +84,11 @@ var versionCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if versionJSON && versionContent {
-			return errors.New("--json and --content cannot be combined")
+			return usageError(errors.New("--json and --content cannot be combined"))
+		}
+		if !client.IsCanonicalUUIDv4(args[0]) {
+			return usageError(fmt.Errorf(
+				"version ID %q must be a canonical UUIDv4", args[0]))
 		}
 		c, err := client.Ensure(cmd.Context())
 		if err != nil {
@@ -139,10 +143,10 @@ var versionsPruneCmd = &cobra.Command{
 			OlderThan: pruneOlderThan, AllPrior: pruneAllPrior, Run: pruneRun,
 		}
 		if cmd.Flags().Changed("keep-newest") && pruneKeepNewest < 1 {
-			return errors.New("--keep-newest must be at least 1")
+			return usageError(errors.New("--keep-newest must be at least 1"))
 		}
 		if _, err := api.ParseVersionPruneRequest(request); err != nil {
-			return err
+			return usageError(err)
 		}
 		c, err := client.Ensure(cmd.Context())
 		if err != nil {

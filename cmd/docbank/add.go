@@ -33,7 +33,8 @@ var addCmd = &cobra.Command{
 			// replace invalid source bytes with U+FFFD. Reject before any OS path
 			// normalization so the CLI cannot silently target another filename.
 			if !utf8.ValidString(a) {
-				return fmt.Errorf("ingest source path %s is not valid UTF-8", strconv.QuoteToASCII(a))
+				return usageError(fmt.Errorf(
+					"ingest source path %s is not valid UTF-8", strconv.QuoteToASCII(a)))
 			}
 			p, err := filepath.Abs(a)
 			if err != nil {
