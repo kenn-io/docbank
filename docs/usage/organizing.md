@@ -18,6 +18,11 @@ docbank tree /taxes        # whole subtree, indented, IDs in brackets
 docbank cat /taxes/w2.pdf  # stream file bytes to stdout
 ```
 
+Use `ls --json` for a directory envelope containing the resolved directory
+and its ordered children. `tree --json` returns the root plus a flat,
+deterministic pre-order list whose entries carry absolute paths and depths;
+this avoids parsing indentation when a script needs to walk a subtree.
+
 Node IDs appear everywhere deliberately: IDs are the canonical way to
 refer to a document. Paths change when you reorganize; IDs never do.
 The CLI uses IDs for trash recovery (`docbank restore <id>`), and the
@@ -89,8 +94,8 @@ those assignments are removed.
 
 ## Tips for bulk reorganization
 
-- `tree` output includes IDs, so you can script against stable
-  references while shuffling paths.
+- `tree` output includes IDs, and `tree --json` exposes them with paths and
+  depths, so scripts can retain stable references while shuffling paths.
 - Every `mv` is its own transaction: a failed move in a scripted batch
   leaves everything else applied and consistent.
 

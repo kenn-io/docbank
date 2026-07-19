@@ -31,6 +31,7 @@ restorable reference.
 
 ```bash
 docbank trash list
+docbank trash list --json
 ```
 
 ```
@@ -49,6 +50,10 @@ Trashing a subtree stamps every node with the same trash time, so a
 nested directory trashed *before* its parent keeps its own independent
 trash entry — restoring the parent doesn't resurrect things you trashed
 separately.
+
+`trash list --json` returns the roots under `items`. For maintenance
+automation, `trash empty --json` returns `candidate_roots`, `deleted`, and
+`run`; it remains a dry run unless `--run` is present.
 
 ## Stage 2: Empty the trash
 

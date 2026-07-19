@@ -141,6 +141,69 @@ func TestAddLsTreeCat(t *testing.T) {
 	assert.Equal(t, "hello vault", out)
 }
 
+func TestLegacyReadCommandsJSON(t *testing.T) {
+	_ = setupVaultHome(t)
+
+	out, err := runCLI(t, "ls", "/", "--json")
+	require.NoError(t, err)
+	var listed directoryListing
+	require.NoError(t, json.Unmarshal([]byte(out), &listed))
+	assert.Equal(t, "/", listed.Directory.Path)
+	assert.Empty(t, listed.Items)
+	assert.Contains(t, out, `"items":[]`)
+
+	out, err = runCLI(t, "tree", "/", "--json")
+	require.NoError(t, err)
+	var tree treeListing
+	require.NoError(t, json.Unmarshal([]byte(out), &tree))
+	assert.Equal(t, "/", tree.Root.Path)
+	assert.Empty(t, tree.Items)
+	assert.Contains(t, out, `"items":[]`)
+
+	src := writeSourceFile(t, "notes.txt", "searchable notes")
+	_, err = runCLI(t, "add", src, "--dest", "/inbox")
+	require.NoError(t, err)
+
+	out, err = runCLI(t, "ls", "/inbox", "--json")
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &listed))
+	require.Len(t, listed.Items, 1)
+	assert.Equal(t, "notes.txt", listed.Items[0].Name)
+
+	out, err = runCLI(t, "tree", "/", "--json")
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &tree))
+	require.Len(t, tree.Items, 2)
+	assert.Equal(t, "/inbox", tree.Items[0].Path)
+	assert.Equal(t, 1, tree.Items[0].Depth)
+	assert.Equal(t, "/inbox/notes.txt", tree.Items[1].Path)
+	assert.Equal(t, 2, tree.Items[1].Depth)
+
+	out, err = runCLI(t, "search", "notes", "--json")
+	require.NoError(t, err)
+	var search api.SearchReport
+	require.NoError(t, json.Unmarshal([]byte(out), &search))
+	require.Len(t, search.Hits, 1)
+	assert.Equal(t, "/inbox/notes.txt", search.Hits[0].Path)
+
+	_, err = runCLI(t, "rm", "/inbox/notes.txt")
+	require.NoError(t, err)
+	out, err = runCLI(t, "trash", "list", "--json")
+	require.NoError(t, err)
+	var trash trashListing
+	require.NoError(t, json.Unmarshal([]byte(out), &trash))
+	require.Len(t, trash.Items, 1)
+	assert.Equal(t, "notes.txt", trash.Items[0].Name)
+
+	out, err = runCLI(t, "trash", "empty", "--json")
+	require.NoError(t, err)
+	var empty api.TrashEmptyReport
+	require.NoError(t, json.Unmarshal([]byte(out), &empty))
+	assert.EqualValues(t, 1, empty.CandidateRoots)
+	assert.False(t, empty.Run)
+	assert.NotContains(t, out, "dry run")
+}
+
 func TestAuditEnableIsPreviewFirstAndReportsProtection(t *testing.T) {
 	_ = setupVaultHome(t)
 	source := writeSourceFile(t, "return.txt", "tax return")

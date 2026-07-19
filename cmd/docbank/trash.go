@@ -10,6 +10,12 @@ import (
 	"go.kenn.io/docbank/internal/client"
 )
 
+var trashListJSON bool
+
+type trashListing struct {
+	Items []api.Node `json:"items"`
+}
+
 var trashCmd = &cobra.Command{
 	Use:   "trash",
 	Short: "Inspect and empty the trash",
@@ -28,6 +34,9 @@ var trashListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if trashListJSON {
+			return writeCLIJSON(cmd.OutOrStdout(), trashListing{Items: roots})
+		}
 		if len(roots) == 0 {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "trash is empty")
 			return nil
@@ -44,6 +53,7 @@ var trashListCmd = &cobra.Command{
 var (
 	trashOlderThan string
 	trashRun       bool
+	trashEmptyJSON bool
 )
 
 var trashEmptyCmd = &cobra.Command{
@@ -65,6 +75,9 @@ var trashEmptyCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if trashEmptyJSON {
+			return writeCLIJSON(cmd.OutOrStdout(), rep)
+		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%d trashed root(s) eligible for permanent deletion\n",
 			rep.CandidateRoots)
 		if !rep.Run {
@@ -79,10 +92,14 @@ var trashEmptyCmd = &cobra.Command{
 }
 
 func init() {
+	trashListCmd.Flags().BoolVar(&trashListJSON, "json", false,
+		"emit machine-readable JSON")
 	trashEmptyCmd.Flags().StringVar(&trashOlderThan, "older-than", "",
 		"select only items trashed at least this long ago (e.g. 30d)")
 	trashEmptyCmd.Flags().BoolVar(&trashRun, "run", false,
 		"actually delete (default is dry-run)")
+	trashEmptyCmd.Flags().BoolVar(&trashEmptyJSON, "json", false,
+		"emit a machine-readable report")
 	trashCmd.AddCommand(trashListCmd, trashEmptyCmd)
 	rootCmd.AddCommand(trashCmd)
 }

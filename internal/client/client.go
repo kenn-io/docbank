@@ -247,7 +247,7 @@ func (c *Client) Stat(ctx context.Context, path string) (api.Node, error) {
 // a real consumer appears (YAGNI).
 func (c *Client) Children(ctx context.Context, id int64) ([]api.Node, error) {
 	const pageSize = 1000
-	var all []api.Node
+	all := []api.Node{}
 	for offset := 0; ; offset += pageSize {
 		var page struct {
 			Items []api.Node `json:"items"`
