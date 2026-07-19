@@ -1,6 +1,6 @@
 # docbank
 
-> Local-first document system of record for people and agents, with stable identities, verified bytes, revision-safe automation, and proven recovery.
+> Docbank gives the documents you keep for life one permanent home on your own machine — easy to file, easy to find, with version history, provable integrity, and verified backups.
 
 Every documentation page is also published as raw Markdown at the same path with a `.md` suffix; the links below point at those Markdown routes.
 
