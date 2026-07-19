@@ -8,6 +8,8 @@ import (
 	"go.kenn.io/docbank/internal/client"
 )
 
+var mvJSON bool
+
 var mvCmd = &cobra.Command{
 	Use:   "mv <src-path> <dest-path>",
 	Short: "Move or rename a node (metadata only; bytes never move)",
@@ -21,9 +23,15 @@ var mvCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if mvJSON {
+			return writeCLIJSON(cmd.OutOrStdout(), moved)
+		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "moved [%d] %s\n", moved.ID, moved.Path)
 		return nil
 	},
 }
 
-func init() { rootCmd.AddCommand(mvCmd) }
+func init() {
+	mvCmd.Flags().BoolVar(&mvJSON, "json", false, "emit a machine-readable node receipt")
+	rootCmd.AddCommand(mvCmd)
+}
