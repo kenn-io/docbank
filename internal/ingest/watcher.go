@@ -391,7 +391,7 @@ func (w *Watcher) openRoot(ctx context.Context) (*watchRoot, error) {
 		return nil, fmt.Errorf("identifying watch %q source mount: %w", w.config.Name, err)
 	}
 	containsVault, err := watchTreeContainsDirectory(
-		ctx, descriptor, w.sourceMount, vaultInfo,
+		ctx, descriptor, w.sourceMount, vaultInfo, w.excludes, "",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("checking watch %q backing hierarchy: %w", w.config.Name, err)
@@ -414,6 +414,7 @@ func (w *Watcher) openRoot(ctx context.Context) (*watchRoot, error) {
 // an exact vault alias and otherwise remain outside watcher traversal.
 func watchTreeContainsDirectory(
 	ctx context.Context, dir *os.Root, sourceMount watchMount, target fs.FileInfo,
+	excludes exclusions, relDir string,
 ) (bool, error) {
 	info, err := dir.Stat(".")
 	if err != nil {
@@ -434,6 +435,10 @@ func watchTreeContainsDirectory(
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
 			return false, err
+		}
+		rel := filepath.Join(relDir, entry.Name())
+		if excludes.matchRelative(rel) {
+			continue
 		}
 		entryInfo, err := dir.Lstat(entry.Name())
 		if err != nil {
@@ -457,7 +462,9 @@ func watchTreeContainsDirectory(
 			return false, errors.Join(infoErr, mountErr)
 		}
 		if sourceMount.same(childMount) {
-			contains, childErr := watchTreeContainsDirectory(ctx, child, sourceMount, target)
+			contains, childErr := watchTreeContainsDirectory(
+				ctx, child, sourceMount, target, excludes, rel,
+			)
 			_ = child.Close()
 			if childErr != nil || contains {
 				return contains, childErr

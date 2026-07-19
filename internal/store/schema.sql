@@ -125,7 +125,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS provenance_direct_successor
 CREATE TABLE IF NOT EXISTS watch_sources (
     watch_name TEXT NOT NULL,
     source_ref TEXT NOT NULL,
-    node_id    INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    node_id    INTEGER NOT NULL UNIQUE REFERENCES nodes(id) ON DELETE CASCADE,
     blob_hash  TEXT NOT NULL,
     size       INTEGER NOT NULL CHECK (size >= 0),
     PRIMARY KEY (watch_name, source_ref)

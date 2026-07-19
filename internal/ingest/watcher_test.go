@@ -291,7 +291,9 @@ func TestWatchTreeFindsVaultThroughUnrelatedAlias(t *testing.T) {
 	vaultInfo, err := os.Stat(vaultAlias)
 	require.NoError(t, err)
 
-	contains, err := watchTreeContainsDirectory(t.Context(), root, mount, vaultInfo)
+	contains, err := watchTreeContainsDirectory(
+		t.Context(), root, mount, vaultInfo, exclusions{}, "",
+	)
 	require.NoError(t, err)
 	assert.True(t, contains)
 }

@@ -1469,11 +1469,19 @@ func loadMetadataNodeKinds(ctx context.Context, tx metadataQuerier) (map[int64]s
 func requireWatchSourceFiles(
 	kind string, sources map[watchSourceKey]int64, nodeKinds map[int64]string,
 ) error {
+	claimed := make(map[int64]watchSourceKey, len(sources))
 	for key, nodeID := range sources {
 		if nodeKinds[nodeID] != nodeKindFile {
 			return fmt.Errorf("watched source %s %q/%q references non-file node %d",
 				kind, key.watchName, key.sourceRef, nodeID)
 		}
+		if prior, exists := claimed[nodeID]; exists {
+			return fmt.Errorf(
+				"watched source %s %q/%q and %q/%q reference the same node %d",
+				kind, prior.watchName, prior.sourceRef, key.watchName, key.sourceRef, nodeID,
+			)
+		}
+		claimed[nodeID] = key
 	}
 	return nil
 }

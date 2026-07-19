@@ -172,20 +172,48 @@ func TestWatchSourceLookupUsesPrimaryKeyAtArchiveScale(t *testing.T) {
 	ctx := t.Context()
 	run, err := s.BeginIngest(ctx, "watch", "sessions")
 	require.NoError(t, err)
-	node, err := s.IngestFileExact(ctx, run, s.RootID(),
+	_, err = s.IngestFileExact(ctx, run, s.RootID(),
 		"session.jsonl", fakeHash("a1"), 1, "application/json", "daily/session.jsonl", "")
 	require.NoError(t, err)
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	require.NoError(t, err)
-	stmt, err := tx.PrepareContext(ctx, `
+	nodeStmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO nodes(parent_id,name,kind,current_version_id,created_at,modified_at)
+		VALUES(?,?,'file',?,?,?)`)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, nodeStmt.Close()) }()
+	versionStmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO content_versions(
+			version_id,node_id,blob_hash,size,mime_type,recorded_at,node_revision,
+			introduced_operation_id,transition_kind,source_version_id
+		) VALUES(?,?,?,?,?,?,1,?,'content_create',NULL)`)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, versionStmt.Close()) }()
+	watchStmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO watch_sources(watch_name,source_ref,node_id,blob_hash,size)
 		VALUES(?,?,?,?,?)`)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, stmt.Close()) }()
+	defer func() { require.NoError(t, watchStmt.Close()) }()
+	stamp := nowRFC3339()
 	for i := range 10_000 {
-		_, err = stmt.ExecContext(
-			ctx, "archive", fmt.Sprintf("file-%05d", i), node.ID, fakeHash("a1"), 1,
+		versionID, idErr := newUUIDv4()
+		require.NoError(t, idErr)
+		operationID, idErr := newUUIDv4()
+		require.NoError(t, idErr)
+		name := fmt.Sprintf("file-%05d", i)
+		result, execErr := nodeStmt.ExecContext(
+			ctx, s.RootID(), name, versionID, stamp, stamp,
+		)
+		require.NoError(t, execErr)
+		nodeID, idErr := result.LastInsertId()
+		require.NoError(t, idErr)
+		_, err = versionStmt.ExecContext(
+			ctx, versionID, nodeID, fakeHash("a1"), 1, "application/octet-stream", stamp, operationID,
+		)
+		require.NoError(t, err)
+		_, err = watchStmt.ExecContext(
+			ctx, "archive", name, nodeID, fakeHash("a1"), 1,
 		)
 		require.NoError(t, err)
 	}

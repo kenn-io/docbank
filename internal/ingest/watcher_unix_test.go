@@ -47,3 +47,30 @@ func TestWatcherDoesNotFollowSwappedDirectoryAncestor(t *testing.T) {
 	_, err = ing.Store.NodeByPath(t.Context(), "/inbox/outside.txt")
 	require.ErrorIs(t, err, store.ErrNotFound)
 }
+
+func TestWatcherAliasCheckPrunesUnreadableExcludedDirectory(t *testing.T) {
+	source := t.TempDir()
+	excluded := filepath.Join(source, "private")
+	require.NoError(t, os.Mkdir(excluded, 0o700))
+	require.NoError(t, os.Chmod(excluded, 0))
+	t.Cleanup(func() { require.NoError(t, os.Chmod(excluded, 0o700)) })
+
+	f, err := os.Open(excluded)
+	if err == nil {
+		_, err = f.ReadDir(-1)
+		require.NoError(t, f.Close())
+	}
+	if err == nil {
+		t.Skip("test account can read mode-000 directories")
+	}
+
+	watcher, err := NewWatcher(newTestIngester(t), t.TempDir(), config.WatchConfig{
+		Name: "excluded-private", Source: source, Destination: "/inbox",
+		SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Second),
+		Exclude: []string{"private"},
+	}, runTestMutation, slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	root, err := watcher.openRoot(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, root.Close())
+}

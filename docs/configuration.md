@@ -149,8 +149,9 @@ The pair `(name, relative source path)` is the durable source identity. Keep a
 watch name stable when moving its machine-local `source` root: a changed file
 then becomes a new immutable version of the same Docbank node, even if that
 node was reorganized elsewhere in the virtual tree. Renaming a relative source
-path intentionally creates a new source identity. Deleting a source file never
-deletes its Docbank node.
+path intentionally creates a new source identity. Each source identity owns
+one Docbank node, and one node cannot be claimed by two watched sources.
+Deleting a source file never deletes its Docbank node.
 
 Docbank separately remembers the last bytes accepted from each source. If a
 person edits or reverts the Docbank node while the source stays unchanged, a

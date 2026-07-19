@@ -272,6 +272,52 @@ func TestImportMetadataRejectsWatchSourceRetargetedToDirectoryAndRollsBack(t *te
 	assert.Zero(t, cursors)
 }
 
+func TestImportMetadataRejectsWatchSourcesSharingNodeAndRollsBack(t *testing.T) {
+	ctx := t.Context()
+	source := newTestStore(t)
+	run, err := source.BeginIngest(ctx, "watch", "sessions")
+	require.NoError(t, err)
+	node, err := source.IngestFileExact(
+		ctx, run, source.RootID(), "session.jsonl", metadataHashCurrent, 12,
+		"application/json", "daily/session.jsonl", "",
+	)
+	require.NoError(t, err)
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(ctx, &exported))
+
+	err = requireWatchSourceFiles("cursor", map[watchSourceKey]int64{
+		{watchName: "sessions", sourceRef: "daily/session.jsonl"}: node.ID,
+		{watchName: "other", sourceRef: "other.jsonl"}:            node.ID,
+	}, map[int64]string{node.ID: nodeKindFile})
+	require.ErrorContains(t, err, "reference the same node")
+
+	var malformed bytes.Buffer
+	for line := range bytes.SplitSeq(bytes.TrimSpace(exported.Bytes()), []byte{'\n'}) {
+		malformed.Write(line)
+		malformed.WriteByte('\n')
+		var record metadataWatchSource
+		if err := json.Unmarshal(line, &record); err != nil || record.Type != metadataWatchSourceType {
+			continue
+		}
+		record.WatchName = "other"
+		record.SourceRef = "other.jsonl"
+		encoded, marshalErr := json.Marshal(record)
+		require.NoError(t, marshalErr)
+		malformed.Write(encoded)
+		malformed.WriteByte('\n')
+	}
+
+	target := newTestStore(t)
+	err = target.ImportMetadata(ctx, bytes.NewReader(malformed.Bytes()))
+	require.Error(t, err)
+	var nodes, cursors int64
+	require.NoError(t, target.db.QueryRow(`
+		SELECT (SELECT COUNT(*) FROM nodes), (SELECT COUNT(*) FROM watch_sources)`,
+	).Scan(&nodes, &cursors))
+	assert.Equal(t, int64(1), nodes)
+	assert.Zero(t, cursors)
+}
+
 func TestMetadataRelationsRejectProvenanceCycle(t *testing.T) {
 	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
