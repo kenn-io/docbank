@@ -22,7 +22,7 @@ var (
 
 var searchCmd = &cobra.Command{
 	Use:   "search <query>...",
-	Short: "Full-text search over node names",
+	Short: "Search document names and extracted text",
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if searchLimit < 1 || searchLimit > maxSearchLimit {
@@ -44,9 +44,9 @@ var searchCmd = &cobra.Command{
 			return nil
 		}
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
-		_, _ = fmt.Fprintln(w, "ID\tPATH")
+		_, _ = fmt.Fprintln(w, "ID\tMATCH\tPATH")
 		for _, h := range rep.Hits {
-			_, _ = fmt.Fprintf(w, "%d\t%s\n", h.Node.ID, h.Path)
+			_, _ = fmt.Fprintf(w, "%d\t%s\t%s\n", h.Node.ID, h.Match, h.Path)
 		}
 		if err := w.Flush(); err != nil {
 			return fmt.Errorf("writing search results: %w", err)

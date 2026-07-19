@@ -538,20 +538,23 @@ func TestJobsShowsDaemonStatus(t *testing.T) {
 	_ = setupVaultHome(t)
 	out, err := runCLI(t, "jobs")
 	require.NoError(t, err)
-	assert.Equal(t, "no background jobs\n", out)
+	assert.Contains(t, out, "extract:plain-text")
+	assert.Contains(t, out, "running")
 
 	out, err = runCLI(t, "jobs", "--json")
 	require.NoError(t, err)
 	var got api.JobList
 	require.NoError(t, json.Unmarshal([]byte(out), &got))
-	assert.Empty(t, got.Items)
+	require.Len(t, got.Items, 1)
+	assert.Equal(t, "extract:plain-text", got.Items[0].Name)
+	assert.Equal(t, "running", got.Items[0].Status)
 }
 
 func TestConfiguredWatchIngestsStableFilesAndRemainsObservable(t *testing.T) {
 	home := t.TempDir()
 	source := t.TempDir()
 	sourcePath := filepath.Join(source, "session.jsonl")
-	record := "{\"kind\":\"assistant-session\"}\n"
+	record := "{\"kind\":\"assistant-session\",\"topic\":\"quasararchive\"}\n"
 	require.NoError(t, os.WriteFile(sourcePath, []byte(record), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(
 		"[server]\nidle_timeout = \"30ms\"\n"+
@@ -566,14 +569,25 @@ func TestConfiguredWatchIngestsStableFilesAndRemainsObservable(t *testing.T) {
 		out, err := runCLI(t, "cat", "/agents/session.jsonl")
 		return err == nil && out == record
 	}, 5*time.Second, 25*time.Millisecond)
+	require.Eventually(t, func() bool {
+		out, err := runCLI(t, "search", "quasararchive", "--json")
+		if err != nil {
+			return false
+		}
+		var report api.SearchReport
+		return json.Unmarshal([]byte(out), &report) == nil && len(report.Hits) == 1 &&
+			report.Hits[0].Path == "/agents/session.jsonl" && report.Hits[0].Match == "content"
+	}, 5*time.Second, 25*time.Millisecond)
 
 	out, err := runCLI(t, "jobs", "--json")
 	require.NoError(t, err)
 	var got api.JobList
 	require.NoError(t, json.Unmarshal([]byte(out), &got))
-	require.Len(t, got.Items, 1)
-	assert.Equal(t, "watch:sessions", got.Items[0].Name)
+	require.Len(t, got.Items, 2)
+	assert.Equal(t, "extract:plain-text", got.Items[0].Name)
 	assert.Equal(t, "running", got.Items[0].Status)
+	assert.Equal(t, "watch:sessions", got.Items[1].Name)
+	assert.Equal(t, "running", got.Items[1].Status)
 
 	// A configured watcher keeps a background daemon alive even when the
 	// ordinary request-idle timeout is deliberately tiny.

@@ -131,6 +131,12 @@ func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 	assert.False(t, truncated)
 	require.Len(t, results, 1, "FTS must be rebuilt by logical node import")
 	assert.Equal(t, node.ID, results[0].Node.ID)
+	results, truncated, err = target.SearchPage(ctx, "line", 10)
+	require.NoError(t, err)
+	assert.False(t, truncated)
+	require.Len(t, results, 1, "content FTS must be rebuilt from extracted-text metadata")
+	assert.Equal(t, node.ID, results[0].Node.ID)
+	assert.Equal(t, SearchMatchContent, results[0].Match)
 
 	var packRows int64
 	require.NoError(t, target.db.QueryRowContext(ctx,

@@ -416,6 +416,9 @@ func installContentVersionWithOperationTx(
 		return Node{}, ContentVersion{}, fmt.Errorf(
 			"recording %s content version for node %d: %w", transitionKind, n.ID, err)
 	}
+	if err := queueTextExtractionTx(tx, blobHash, mimeType); err != nil {
+		return Node{}, ContentVersion{}, err
+	}
 	if _, err := tx.Exec(
 		`UPDATE nodes SET current_version_id = ?, revision = ?, modified_at = ? WHERE id = ?`,
 		operation.versionID, newRevision, operation.recordedAt, n.ID); err != nil {

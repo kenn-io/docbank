@@ -119,6 +119,13 @@ curl --fail-with-body \
 
 Search is bounded separately. Always inspect `truncated`; increase the limit
 or refine the query rather than assuming the returned array is complete.
+Each result's `match` is `name` or `content`. Name matches keep their established
+ranking and always precede content-only matches, so adding content indexing does
+not reorder an agent's filename-based workflow. Content search covers only the
+current version of verified UTF-8 plain text, Markdown, JSON, and JSONL documents
+up to 16 MiB. Extraction runs asynchronously; after a write, inspect
+`docbank jobs` or retry briefly instead of treating an immediate content miss as
+permanent. PDF, Office, image, and OCR text extraction are not implemented.
 
 ```bash
 curl --fail-with-body --get \

@@ -17,7 +17,7 @@ elsewhere only when they materially explain the design and are marked
 | 0 | Extract msgvault's pack/backup and packed-CAS engines into `go.kenn.io/kit` | **Implemented** (Docbank uses `kit` v0.10.0) |
 | 1 | Core: store, blob store, ingest pipeline, full CLI | **Implemented** |
 | 2a | Infrastructure: daemon, HTTP API, daemon-first CLI, self-update, release pipeline | **Implemented** |
-| 2b | Features: content versions, versioned editing, full audit, tags, watched inboxes, text extraction, ingest provenance | **In progress**: versions, tags, provenance, watched inboxes, and first-scope audit authority implemented; extraction remains |
+| 2b | Features: content versions, versioned editing, full audit, tags, watched inboxes, text extraction, ingest provenance | **In progress**: versions, tags, provenance, watched inboxes, first-scope audit authority, and bounded plain-text extraction implemented; PDF/Office extraction remains |
 | 3 | Primary kit-ui web portal and focused operator TUI | Designed |
 | 4 | Backup commands over the kit engine | **Implemented**; representative-corpus hardening continues |
 
@@ -29,7 +29,7 @@ elsewhere only when they materially explain the design and are marked
 - Content-addressed blob store with full fsync durability discipline
 - Idempotent, resumable bulk import with collision suffixing and
   provenance
-- FTS5 name search, ranked and operator-safe
+- FTS5 search over names and verified UTF-8 text content, ranked and operator-safe
 - Trash / restore / `trash empty`, explicit unreachable-content GC, and
   separate packed-space reclamation
 - `gc` (dry-run default) and `verify`
@@ -50,8 +50,8 @@ elsewhere only when they materially explain the design and are marked
   ([design](architecture/http-api.md))
 - Daemon background-task supervision with shared cancellation, bounded
   shutdown before storage closes, failure capture, and observable
-  `docbank jobs` / `GET /api/v1/jobs` status. Watched inbox behavior remains
-  Phase 2b work on top of this implemented lifecycle.
+  `docbank jobs` / `GET /api/v1/jobs` status. Watched inboxes and bounded text
+  extraction now run through this implemented lifecycle.
 - The vault lock becomes a single exclusive holder (the daemon) instead
   of Phase 1's per-command shared/exclusive split; an in-daemon
   maintenance gate replaces `gc`'s own exclusive acquisition
@@ -116,8 +116,8 @@ and append later changes to the same stable node without touching source files.
   ([current workflow](usage/audited-history.md),
   [model](architecture/audited-history.md))
 - Tag/MIME/date/path search filters; `POST /batch/move` bulk reorganization
-- Text extraction workers (PDF text layer, plain text/markdown, office
-  formats) feeding content search
+- Additional text extraction workers for PDF text layers and office formats;
+  bounded UTF-8 text, Markdown, JSON, and JSONL extraction is implemented
 - External integration surface: generalized ingest provenance —
   today's `provenance` table records the original filesystem path and
   mtime; `source_kind` / `source_ref` / `source_meta` fields extend it

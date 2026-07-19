@@ -50,18 +50,12 @@ Windows and source builds):
 curl -fsSL https://docbank.ai/install.sh | sh
 ```
 
-!!! info "New version-command vocabulary"
-
-    `docbank version` and the explicit `docbank versions list|show|cat`
-    commands shown below are newer than v0.7.0. Build from source to use them
-    until the next release is published.
-
 The ordinary workflow stays direct:
 
 ```bash
 docbank add ~/Documents/taxes --dest /taxes    # import a folder; sources untouched
 docbank tree /taxes                            # browse the virtual tree
-docbank search "insurance"                     # ranked document-name search
+docbank search "insurance"                     # ranked document search
 docbank put revised.pdf /taxes/2026/return.pdf # add a new immutable version
 docbank versions list /taxes/2026/return.pdf   # inspect retained history
 docbank rm /inbox/junk.pdf                     # move to recoverable trash

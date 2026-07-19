@@ -351,7 +351,9 @@ func registerReadRoutes(api huma.API, d Deps) {
 	type searchOutput struct{ Body SearchReport }
 	huma.Register(api, huma.Operation{
 		OperationID: "search", Method: http.MethodGet, Path: "/api/v1/search",
-		Summary: "Full-text search over node names, best rank first",
+		Summary: "Search live document names and extracted text",
+		Description: "Name matches retain their established BM25 order and appear first; " +
+			"content-only matches follow in their own BM25 order. Every hit names its match source.",
 	}, func(ctx context.Context, in *struct {
 		Q     string `query:"q" required:"true"`
 		Limit int    `query:"limit" default:"50" minimum:"1" maximum:"1000"`
@@ -362,7 +364,9 @@ func registerReadRoutes(api huma.API, d Deps) {
 		}
 		out := &searchOutput{Body: SearchReport{Hits: []SearchHit{}, Limit: in.Limit, Truncated: truncated}}
 		for _, h := range hits {
-			out.Body.Hits = append(out.Body.Hits, SearchHit{Node: fromStoreNode(h.Node), Path: h.Path})
+			out.Body.Hits = append(out.Body.Hits, SearchHit{
+				Node: fromStoreNode(h.Node), Path: h.Path, Match: h.Match,
+			})
 		}
 		return out, nil
 	})

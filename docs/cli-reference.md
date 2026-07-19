@@ -489,19 +489,21 @@ returns the complete restored node with its resulting path and revision.
 docbank search <query>... [--limit <n>] [--json]
 ```
 
-Full-text search over live node names (FTS5). Every whitespace-separated
-term is matched as a prefix; FTS operator syntax in the query is escaped,
-not interpreted. Results are ranked best-first (BM25, ties broken by
-name). The default limit is 50 and `--limit` accepts 1–1000. When more
-matches exist, the command says that the result is truncated rather than
-silently implying completeness. Output columns are `ID` and `PATH`; no
-matches prints `no matches`.
+Full-text search over live node names and verified extracted text (FTS5).
+Every whitespace-separated term is matched as a prefix; FTS operator syntax
+in the query is escaped, not interpreted. Name matches retain their existing
+BM25 order and appear before content-only matches, whose ranking is independent.
+The default limit is 50 and `--limit` accepts 1–1000. When more matches exist,
+the command says that the result is truncated rather than silently implying
+completeness. Output columns are `ID`, `MATCH`, and `PATH`; no matches prints
+`no matches`.
 
 `--json` emits the typed search report with `hits`, the applied `limit`, and
 an explicit `truncated` boolean. An empty result uses `"hits": []`.
 
-Search currently covers node names only; document-body extraction and content
-search are not available. See [Searching](usage/searching.md).
+The daemon indexes current UTF-8 `text/*`, JSON, and JSONL blobs up to 16 MiB
+after a terminally verified read. PDF, Office, and OCR extraction are not yet
+available. See [Searching](usage/searching.md).
 
 ## docbank trash
 
@@ -694,8 +696,8 @@ Shows daemon-owned background tasks in stable name order, including status,
 start and finish timestamps, and the bounded error recorded for a failed task.
 Running tasks have no finish timestamp; terminal task records remain visible
 until the daemon restarts. `--json` emits `{"items": [...]}` for automation.
-An empty list is normal when no configured feature has registered background
-work. See [Daemon](architecture/daemon.md).
+Every daemon registers `extract:plain-text`; configured watched inboxes add
+`watch:<name>` tasks. See [Daemon](architecture/daemon.md).
 
 ## docbank update
 

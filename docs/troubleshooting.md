@@ -78,15 +78,19 @@ it belongs in the vault.
 
 ## Search cannot find document text
 
-Search currently indexes live node names, not document contents. Try terms
-from the filename and remember that each term is a prefix match.
+Search indexes live node names and current supported text contents. Remember
+that each term is a prefix match, and inspect the extractor job:
 
 ```bash
 docbank search insur stat
+docbank jobs
 ```
 
-PDF, office-document, and plain-text extraction are not available. See
-[Searching](usage/searching.md) for the current name-search contract.
+Body indexing currently requires verified UTF-8 `text/*`, JSON, or JSONL no
+larger than 16 MiB. It is asynchronous and may take a few seconds after ingest
+or replacement. PDF, office-document, OCR, invalid-UTF-8, NUL-containing, and
+larger content is not indexed; filename search still works. See
+[Searching](usage/searching.md) for the exact contract.
 
 ## A move or restore conflicts
 

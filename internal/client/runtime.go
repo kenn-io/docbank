@@ -22,7 +22,7 @@ const (
 	metaProtocolVersion = "protocol_version"
 	// Bump whenever a newer CLI cannot safely use an older daemon's HTTP or
 	// runtime-record contract, even when both binaries report the same version.
-	daemonProtocolVersion = "21"
+	daemonProtocolVersion = "22"
 )
 
 // EnsureResult reports what EnsureDaemon found or did.

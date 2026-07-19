@@ -68,8 +68,12 @@ func TestDeleteBlobRows(t *testing.T) {
 		fakeHash("a1"), "2026-01-01T00:00:00Z")
 	require.NoError(t, err)
 	_, err = s.db.Exec(
-		`INSERT INTO extracted_text (blob_hash, extractor, extractor_version, status, extracted_at)
-		 VALUES (?, 'pdf', 1, 'ok', ?)`, fakeHash("a1"), "2026-01-01T00:00:00Z")
+		`INSERT INTO extracted_text (blob_hash, extractor, extractor_version, status, attempts, text, extracted_at)
+		 VALUES (?, 'plain-text', 1, 'ok', 1, 'searchable', ?)`,
+		fakeHash("a1"), "2026-01-01T00:00:00Z")
+	require.NoError(t, err)
+	_, err = s.db.Exec(`INSERT INTO content_fts(rowid,blob_hash,extractor,text)
+		SELECT rowid,blob_hash,extractor,text FROM extracted_text WHERE blob_hash=?`, fakeHash("a1"))
 	require.NoError(t, err)
 
 	require.NoError(t, s.DeleteBlobRows(ctx, []string{fakeHash("a1")}))
@@ -78,6 +82,8 @@ func TestDeleteBlobRows(t *testing.T) {
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM blobs`).Scan(&n))
 	assert.Equal(t, 0, n)
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM extracted_text`).Scan(&n))
+	assert.Equal(t, 0, n)
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM content_fts`).Scan(&n))
 	assert.Equal(t, 0, n)
 }
 

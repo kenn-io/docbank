@@ -25,6 +25,7 @@ func TestSearchFindsLiveNodesOnly(t *testing.T) {
 	require.Len(t, hits, 1)
 	assert.Equal(t, "tax-return-2024.pdf", hits[0].Node.Name)
 	assert.Equal(t, "/docs/tax-return-2024.pdf", hits[0].Path)
+	assert.Equal(t, SearchMatchName, hits[0].Match)
 }
 
 func TestSearchPrefixAndRename(t *testing.T) {
@@ -121,4 +122,93 @@ func TestSearchPageReportsTruncation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, hits, 3)
 	assert.False(t, truncated)
+}
+
+func TestSearchContentFollowsStableNameMatches(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+
+	nameMatch, err := s.CreateFile(
+		ctx, s.RootID(), "quarterly-forecast.md", fakeHash("a1"), 5, "text/markdown",
+	)
+	require.NoError(t, err)
+	bodyMatch, err := s.CreateFile(
+		ctx, s.RootID(), "notes.md", fakeHash("b2"), 5, "text/markdown; charset=utf-8",
+	)
+	require.NoError(t, err)
+	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+		BlobHash: nameMatch.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: "unrelated body",
+	}))
+	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+		BlobHash: bodyMatch.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: "quarterly forecast assumptions",
+	}))
+
+	hits, truncated, err := s.SearchPage(ctx, "quarterly", 10)
+	require.NoError(t, err)
+	require.Len(t, hits, 2)
+	assert.False(t, truncated)
+	assert.Equal(t, nameMatch.ID, hits[0].Node.ID)
+	assert.Equal(t, SearchMatchName, hits[0].Match)
+	assert.Equal(t, bodyMatch.ID, hits[1].Node.ID)
+	assert.Equal(t, SearchMatchContent, hits[1].Match)
+
+	// The same limit still returns the filename match first and truthfully
+	// reports that a content match remains.
+	hits, truncated, err = s.SearchPage(ctx, "quarterly", 1)
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.Equal(t, nameMatch.ID, hits[0].Node.ID)
+	assert.True(t, truncated)
+}
+
+func TestPendingAndFailedTextExtractions(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	textNode, err := s.CreateFile(
+		ctx, s.RootID(), "notes.txt", fakeHash("a1"), 10, "text/plain; charset=utf-8",
+	)
+	require.NoError(t, err)
+	jsonNode, err := s.CreateFile(
+		ctx, s.RootID(), "session.jsonl", fakeHash("b2"), 20, "application/x-ndjson",
+	)
+	require.NoError(t, err)
+	_, err = s.CreateFile(ctx, s.RootID(), "scan.pdf", fakeHash("c3"), 30, "application/pdf")
+	require.NoError(t, err)
+	oldTextHash := textNode.BlobHash
+	textNode, _, err = s.ReplaceContent(
+		ctx, textNode.ID, textNode.Revision, fakeHash("a0"), 12, "text/plain",
+	)
+	require.NoError(t, err)
+
+	_, err = s.db.Exec(`DELETE FROM text_extraction_queue`)
+	require.NoError(t, err)
+	pending, err := s.PendingTextExtractions(ctx, "plain-text", 1, 10)
+	require.NoError(t, err)
+	assert.Empty(t, pending)
+	require.NoError(t, s.SeedTextExtractionQueue(ctx, "plain-text", 1))
+
+	pending, err = s.PendingTextExtractions(ctx, "plain-text", 1, 10)
+	require.NoError(t, err)
+	require.Len(t, pending, 2)
+	assert.Equal(t, []string{textNode.BlobHash, jsonNode.BlobHash},
+		[]string{pending[0].BlobHash, pending[1].BlobHash})
+	assert.NotEqual(t, oldTextHash, textNode.BlobHash,
+		"startup discovery should seed selected versions, not retained history")
+
+	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+		BlobHash: textNode.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionFailed, Error: "not valid UTF-8",
+	}))
+	pending, err = s.PendingTextExtractions(ctx, "plain-text", 1, 10)
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	assert.Equal(t, jsonNode.BlobHash, pending[0].BlobHash)
+
+	// A future extractor implementation naturally retries the old result.
+	require.NoError(t, s.SeedTextExtractionQueue(ctx, "plain-text", 2))
+	pending, err = s.PendingTextExtractions(ctx, "plain-text", 2, 10)
+	require.NoError(t, err)
+	assert.Len(t, pending, 2)
 }

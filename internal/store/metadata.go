@@ -609,6 +609,8 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM watch_sources)
 		    + (SELECT COUNT(*) FROM tags) + (SELECT COUNT(*) FROM node_tags)
 		    + (SELECT COUNT(*) FROM extracted_text)
+		    + (SELECT COUNT(*) FROM text_extraction_queue)
+		    + (SELECT COUNT(*) FROM content_fts)
 		    + (SELECT COUNT(*) FROM audit_records)
 		    + (SELECT COUNT(*) FROM audit_authority)
 		    + (SELECT COUNT(*) FROM audit_scopes)
@@ -717,7 +719,14 @@ func importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw json
 		) VALUES(?,?,?,?,?,?,?,?,?,?)`, v.VersionID, v.NodeID, v.BlobHash, v.Size,
 			v.MIMEType, v.RecordedAt, v.NodeRevision, v.IntroducedOperationID,
 			v.TransitionKind, v.SourceVersionID)
-		return err
+		if err != nil {
+			return err
+		}
+		mimeType := ""
+		if v.MIMEType != nil {
+			mimeType = *v.MIMEType
+		}
+		return queueTextExtractionTx(tx, v.BlobHash, mimeType)
 	case metadataIngestType:
 		var v metadataIngest
 		if err := decodeMetadataRecord(raw, &v); err != nil {
@@ -784,6 +793,18 @@ func importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw json
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO extracted_text(blob_hash,extractor,extractor_version,status,error,attempts,text,extracted_at) VALUES(?,?,?,?,?,?,?,?)`,
 			v.BlobHash, v.Extractor, v.ExtractorVersion, v.Status, v.Error, v.Attempts, v.Text, v.ExtractedAt)
+		if err != nil {
+			return err
+		}
+		var text any
+		if v.Status == ExtractionOK && v.Text != nil {
+			text = *v.Text
+		}
+		if err := replaceContentFTSTx(ctx, tx, v.BlobHash, v.Extractor, text); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx,
+			`DELETE FROM text_extraction_queue WHERE blob_hash = ?`, v.BlobHash)
 		return err
 	case metadataAuditAuthorityType:
 		var v metadataAuditAuthority
@@ -1177,6 +1198,12 @@ func validateExtractedTextRecord(v metadataExtractedText) error {
 	}
 	if v.Status != "ok" && v.Status != "failed" {
 		return fmt.Errorf("invalid extraction status %q", v.Status)
+	}
+	if v.Status == ExtractionOK && (v.Text == nil || v.Error != nil) {
+		return errors.New("successful extraction requires text and no error")
+	}
+	if v.Status == ExtractionFailed && (v.Error == nil || v.Text != nil) {
+		return errors.New("failed extraction requires an error and no text")
 	}
 	if _, err := packstore.ParseHash(v.BlobHash); err != nil {
 		return fmt.Errorf("invalid extracted text blob hash: %w", err)
