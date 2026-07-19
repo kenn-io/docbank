@@ -136,6 +136,10 @@ func TestSearchContentFollowsStableNameMatches(t *testing.T) {
 		ctx, s.RootID(), "notes.md", fakeHash("b2"), 5, "text/markdown; charset=utf-8",
 	)
 	require.NoError(t, err)
+	unsupported, err := s.CreateFile(
+		ctx, s.RootID(), "scan.pdf", bodyMatch.BlobHash, 5, "application/pdf",
+	)
+	require.NoError(t, err)
 	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
 		BlobHash: nameMatch.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
 		Status: ExtractionOK, Text: "unrelated body",
@@ -153,6 +157,8 @@ func TestSearchContentFollowsStableNameMatches(t *testing.T) {
 	assert.Equal(t, SearchMatchName, hits[0].Match)
 	assert.Equal(t, bodyMatch.ID, hits[1].Node.ID)
 	assert.Equal(t, SearchMatchContent, hits[1].Match)
+	assert.NotEqual(t, unsupported.ID, hits[1].Node.ID,
+		"a shared blob does not make an unsupported current MIME searchable")
 
 	// The same limit still returns the filename match first and truthfully
 	// reports that a content match remains.
@@ -161,6 +167,19 @@ func TestSearchContentFollowsStableNameMatches(t *testing.T) {
 	require.Len(t, hits, 1)
 	assert.Equal(t, nameMatch.ID, hits[0].Node.ID)
 	assert.True(t, truncated)
+
+	// Relabeling the current bytes with an unsupported MIME must revoke the
+	// content match even though the immutable blob's derived text remains.
+	_, _, err = s.ReplaceContent(
+		ctx, bodyMatch.ID, bodyMatch.Revision, bodyMatch.BlobHash, bodyMatch.Size,
+		"application/octet-stream",
+	)
+	require.NoError(t, err)
+	hits, truncated, err = s.SearchPage(ctx, "quarterly", 10)
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.False(t, truncated)
+	assert.Equal(t, nameMatch.ID, hits[0].Node.ID)
 }
 
 func TestPendingAndFailedTextExtractions(t *testing.T) {
@@ -184,12 +203,12 @@ func TestPendingAndFailedTextExtractions(t *testing.T) {
 
 	_, err = s.db.Exec(`DELETE FROM text_extraction_queue`)
 	require.NoError(t, err)
-	pending, err := s.PendingTextExtractions(ctx, "plain-text", 1, 10)
+	pending, err := s.PendingTextExtractions(ctx, 10)
 	require.NoError(t, err)
 	assert.Empty(t, pending)
 	require.NoError(t, s.SeedTextExtractionQueue(ctx, "plain-text", 1))
 
-	pending, err = s.PendingTextExtractions(ctx, "plain-text", 1, 10)
+	pending, err = s.PendingTextExtractions(ctx, 10)
 	require.NoError(t, err)
 	require.Len(t, pending, 2)
 	assert.Equal(t, []string{textNode.BlobHash, jsonNode.BlobHash},
@@ -201,14 +220,14 @@ func TestPendingAndFailedTextExtractions(t *testing.T) {
 		BlobHash: textNode.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
 		Status: ExtractionFailed, Error: "not valid UTF-8",
 	}))
-	pending, err = s.PendingTextExtractions(ctx, "plain-text", 1, 10)
+	pending, err = s.PendingTextExtractions(ctx, 10)
 	require.NoError(t, err)
 	require.Len(t, pending, 1)
 	assert.Equal(t, jsonNode.BlobHash, pending[0].BlobHash)
 
 	// A future extractor implementation naturally retries the old result.
 	require.NoError(t, s.SeedTextExtractionQueue(ctx, "plain-text", 2))
-	pending, err = s.PendingTextExtractions(ctx, "plain-text", 2, 10)
+	pending, err = s.PendingTextExtractions(ctx, 10)
 	require.NoError(t, err)
 	assert.Len(t, pending, 2)
 }

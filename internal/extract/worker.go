@@ -28,11 +28,11 @@ const (
 	defaultInterval = 2 * time.Second
 )
 
+var errExtractionRetry = errors.New("text extraction should be retried")
+
 type catalog interface {
 	SeedTextExtractionQueue(ctx context.Context, extractor string, version int64) error
-	PendingTextExtractions(
-		ctx context.Context, extractor string, version int64, limit int,
-	) ([]store.ExtractionCandidate, error)
+	PendingTextExtractions(ctx context.Context, limit int) ([]store.ExtractionCandidate, error)
 	RecordExtraction(ctx context.Context, result store.ExtractionResult) error
 }
 
@@ -73,40 +73,59 @@ func (w *Worker) Run(ctx context.Context) error {
 	for {
 		processed, err := w.ScanOnce(ctx)
 		if err != nil {
+			if errors.Is(err, errExtractionRetry) {
+				if !w.wait(ctx) {
+					return nil
+				}
+				continue
+			}
 			return err
 		}
 		if processed == batchSize {
 			continue
 		}
-		timer := time.NewTimer(w.interval)
-		select {
-		case <-ctx.Done():
-			if !timer.Stop() {
-				<-timer.C
-			}
+		if !w.wait(ctx) {
 			return nil
-		case <-timer.C:
 		}
+	}
+}
+
+func (w *Worker) wait(ctx context.Context) bool {
+	timer := time.NewTimer(w.interval)
+	select {
+	case <-ctx.Done():
+		if !timer.Stop() {
+			<-timer.C
+		}
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 
 // ScanOnce processes one bounded batch and returns the number attempted.
 func (w *Worker) ScanOnce(ctx context.Context) (int, error) {
-	items, err := w.catalog.PendingTextExtractions(
-		ctx, TextExtractorName, TextExtractorVersion, batchSize,
-	)
+	items, err := w.catalog.PendingTextExtractions(ctx, batchSize)
 	if err != nil {
 		return 0, err
 	}
+	var retryErr error
 	for i, item := range items {
 		if err := ctx.Err(); err != nil {
 			return i, err
 		}
-		if err := w.mutate(func() error { return w.extractOne(ctx, item) }); err != nil && !errors.Is(err, store.ErrNotFound) {
+		err := w.mutate(func() error { return w.extractOne(ctx, item) })
+		switch {
+		case err == nil, errors.Is(err, store.ErrNotFound):
+		case errors.Is(err, errExtractionRetry):
+			if retryErr == nil {
+				retryErr = fmt.Errorf("extracting blob %s: %w", item.BlobHash, err)
+			}
+		default:
 			return i, fmt.Errorf("extracting blob %s: %w", item.BlobHash, err)
 		}
 	}
-	return len(items), nil
+	return len(items), retryErr
 }
 
 func (w *Worker) extractOne(ctx context.Context, item store.ExtractionCandidate) error {
@@ -119,7 +138,7 @@ func (w *Worker) extractOne(ctx context.Context, item store.ExtractionCandidate)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return w.recordFailure(ctx, item.BlobHash, err.Error())
+		return fmt.Errorf("%w: opening verified content: %w", errExtractionRetry, err)
 	}
 	data, readErr := io.ReadAll(io.LimitReader(stream, MaxTextBytes+1))
 	closeErr := stream.Close()
@@ -127,15 +146,14 @@ func (w *Worker) extractOne(ctx context.Context, item store.ExtractionCandidate)
 		return ctx.Err()
 	}
 	if int64(len(data)) > MaxTextBytes {
-		return w.recordFailure(ctx, item.BlobHash,
-			fmt.Sprintf("text exceeds the %d-byte extraction limit", MaxTextBytes))
+		return fmt.Errorf("%w: stream exceeded its bounded catalog size", errExtractionRetry)
 	}
 	if err := errors.Join(readErr, closeErr); err != nil {
-		return w.recordFailure(ctx, item.BlobHash, err.Error())
+		return fmt.Errorf("%w: reading verified content: %w", errExtractionRetry, err)
 	}
 	if streamSize != item.Size || int64(len(data)) != item.Size {
-		return w.recordFailure(ctx, item.BlobHash, fmt.Sprintf(
-			"catalog size %d, stream size %d, read %d", item.Size, streamSize, len(data)))
+		return fmt.Errorf("%w: catalog size %d, stream size %d, read %d",
+			errExtractionRetry, item.Size, streamSize, len(data))
 	}
 	data = bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf})
 	if !utf8.Valid(data) || bytes.IndexByte(data, 0) >= 0 {

@@ -92,6 +92,10 @@ or replacement. PDF, office-document, OCR, invalid-UTF-8, NUL-containing, and
 larger content is not indexed; filename search still works. See
 [Searching](usage/searching.md) for the exact contract.
 
+Transient blob open, read, and verification failures remain queued and are
+retried by the running extractor. Repair or restore unavailable content, then
+retry search after the worker has completed a verified read.
+
 ## A move or restore conflicts
 
 The CLI never overwrites a live file. Moving onto an existing file returns

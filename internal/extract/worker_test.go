@@ -1,9 +1,12 @@
 package extract
 
 import (
+	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -12,6 +15,22 @@ import (
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
 )
+
+type transientBlobReader struct {
+	delegate blobReader
+	failures int
+	calls    int
+}
+
+func (r *transientBlobReader) OpenStreamContext(
+	ctx context.Context, hash string,
+) (packstore.VerifiedReadCloser, int64, error) {
+	r.calls++
+	if r.calls <= r.failures {
+		return nil, 0, errors.New("temporary read failure")
+	}
+	return r.delegate.OpenStreamContext(ctx, hash)
+}
 
 func TestWorkerIndexesVerifiedUTF8AndUsesMutationGate(t *testing.T) {
 	dir := t.TempDir()
@@ -77,9 +96,38 @@ func TestWorkerRecordsDeterministicFailuresWithoutOpeningOversizeBlob(t *testing
 	require.NoError(t, err)
 	assert.Equal(t, 1, processed)
 
-	pending, err := s.PendingTextExtractions(
-		t.Context(), TextExtractorName, TextExtractorVersion, 10,
-	)
+	pending, err := s.PendingTextExtractions(t.Context(), 10)
 	require.NoError(t, err)
 	assert.Empty(t, pending)
+}
+
+func TestWorkerRetriesTransientOpenFailure(t *testing.T) {
+	dir := t.TempDir()
+	s, err := store.Open(filepath.Join(dir, "docbank.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	blobs, err := blob.New(store.NewPackCatalog(s), filepath.Join(dir, "blobs"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
+
+	content := "A recoverable nebula record.\n"
+	hash, size, err := blobs.Write(strings.NewReader(content))
+	require.NoError(t, err)
+	_, err = s.CreateFile(t.Context(), s.RootID(), "notes.txt", hash, size, "text/plain")
+	require.NoError(t, err)
+	reader := &transientBlobReader{delegate: blobs, failures: 1}
+	w, err := New(s, reader, nil)
+	require.NoError(t, err)
+	w.interval = 5 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx) }()
+	require.Eventually(t, func() bool {
+		hits, _, searchErr := s.SearchPage(t.Context(), "nebula", 10)
+		return searchErr == nil && len(hits) == 1
+	}, time.Second, 5*time.Millisecond)
+	cancel()
+	require.NoError(t, <-done)
+	assert.GreaterOrEqual(t, reader.calls, 2)
 }

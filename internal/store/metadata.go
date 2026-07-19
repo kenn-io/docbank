@@ -610,6 +610,7 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM tags) + (SELECT COUNT(*) FROM node_tags)
 		    + (SELECT COUNT(*) FROM extracted_text)
 		    + (SELECT COUNT(*) FROM text_extraction_queue)
+		    + (SELECT COUNT(*) FROM text_searchable_versions)
 		    + (SELECT COUNT(*) FROM content_fts)
 		    + (SELECT COUNT(*) FROM audit_records)
 		    + (SELECT COUNT(*) FROM audit_authority)
@@ -713,6 +714,10 @@ func importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw json
 		if err := validateContentVersionRecord(v); err != nil {
 			return err
 		}
+		mimeType := ""
+		if v.MIMEType != nil {
+			mimeType = *v.MIMEType
+		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO content_versions(
 			version_id,node_id,blob_hash,size,mime_type,recorded_at,node_revision,
 			introduced_operation_id,transition_kind,source_version_id
@@ -722,11 +727,7 @@ func importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw json
 		if err != nil {
 			return err
 		}
-		mimeType := ""
-		if v.MIMEType != nil {
-			mimeType = *v.MIMEType
-		}
-		return queueTextExtractionTx(tx, v.BlobHash, mimeType)
+		return queueTextExtractionTx(tx, v.VersionID, v.BlobHash, mimeType)
 	case metadataIngestType:
 		var v metadataIngest
 		if err := decodeMetadataRecord(raw, &v); err != nil {

@@ -50,7 +50,9 @@ text becomes searchable only after the complete stream reaches verified EOF.
 Extraction is bounded to 16 MiB per blob. Larger documents, invalid UTF-8, and
 text containing NUL bytes remain stored and readable but are not body-indexed.
 Newly ingested or replaced content may take a few seconds to appear while the
-daemon job reaches it. `docbank jobs` shows whether that worker is running.
+daemon job reaches it. A transient open, read, or verification error leaves the
+item queued and is retried on a bounded delay; it does not become a permanent
+extraction failure. `docbank jobs` shows whether that worker is running.
 
 PDF text layers, office formats, OCR, and tag/MIME/date/path search filters are
 not yet available. Their absence never changes name-search results or document

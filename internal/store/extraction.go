@@ -22,7 +22,6 @@ const (
 type ExtractionCandidate struct {
 	BlobHash string
 	Size     int64
-	MimeType string
 }
 
 // ExtractionResult is one complete, versioned derived-text attempt. Text is
@@ -46,16 +45,33 @@ func supportsTextExtractionMIME(value string) bool {
 		mediaType == "application/x-ndjson" || mediaType == "application/jsonl"
 }
 
-func queueTextExtractionTx(tx *sql.Tx, blobHash, mimeType string) error {
+func markTextSearchableVersionTx(tx *sql.Tx, versionID, mimeType string) (bool, error) {
 	if !supportsTextExtractionMIME(mimeType) {
-		return nil
+		return false, nil
 	}
 	if _, err := tx.Exec(`
-		INSERT INTO text_extraction_queue(blob_hash,mime_type) VALUES(?,?)
-		ON CONFLICT(blob_hash) DO NOTHING`, blobHash, mimeType); err != nil {
+		INSERT INTO text_searchable_versions(version_id) VALUES(?)
+		ON CONFLICT(version_id) DO NOTHING`, versionID); err != nil {
+		return false, fmt.Errorf("recording text-search eligibility for %s: %w", versionID, err)
+	}
+	return true, nil
+}
+
+func enqueueTextBlobTx(tx *sql.Tx, blobHash string) error {
+	if _, err := tx.Exec(`
+		INSERT INTO text_extraction_queue(blob_hash) VALUES(?)
+		ON CONFLICT(blob_hash) DO NOTHING`, blobHash); err != nil {
 		return fmt.Errorf("queueing text extraction for %s: %w", blobHash, err)
 	}
 	return nil
+}
+
+func queueTextExtractionTx(tx *sql.Tx, versionID, blobHash, mimeType string) error {
+	eligible, err := markTextSearchableVersionTx(tx, versionID, mimeType)
+	if err != nil || !eligible {
+		return err
+	}
+	return enqueueTextBlobTx(tx, blobHash)
 }
 
 // SeedTextExtractionQueue discovers supported retained content once at daemon
@@ -68,29 +84,32 @@ func (s *Store) SeedTextExtractionQueue(
 		return errors.New("extractor name and positive version are required")
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT v.blob_hash, COALESCE(v.mime_type, '')
+		SELECT v.version_id, v.blob_hash, COALESCE(v.mime_type, ''),
+		       CASE WHEN e.blob_hash IS NULL OR e.extractor_version < ? THEN 1 ELSE 0 END
 		FROM content_versions v
 		JOIN nodes n ON n.current_version_id = v.version_id
 		LEFT JOIN extracted_text e
 		  ON e.blob_hash=v.blob_hash AND e.extractor=?
-		WHERE e.blob_hash IS NULL OR e.extractor_version < ?
-		ORDER BY v.blob_hash, v.mime_type`, extractor, version)
+		ORDER BY v.version_id`, version, extractor)
 	if err != nil {
 		return fmt.Errorf("discovering text extraction work: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	type seed struct{ hash, mimeType string }
+	type seed struct {
+		versionID, hash, mimeType string
+		needsExtraction           bool
+	}
 	var seeds []seed
-	seen := make(map[string]struct{})
 	for rows.Next() {
 		var item seed
-		if err := rows.Scan(&item.hash, &item.mimeType); err != nil {
+		if err := rows.Scan(
+			&item.versionID, &item.hash, &item.mimeType, &item.needsExtraction,
+		); err != nil {
 			return fmt.Errorf("discovering text extraction work: scanning row: %w", err)
 		}
-		if _, exists := seen[item.hash]; exists || !supportsTextExtractionMIME(item.mimeType) {
+		if !supportsTextExtractionMIME(item.mimeType) {
 			continue
 		}
-		seen[item.hash] = struct{}{}
 		seeds = append(seeds, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -100,8 +119,19 @@ func (s *Store) SeedTextExtractionQueue(
 		return fmt.Errorf("discovering text extraction work: %w", err)
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		queued := make(map[string]struct{})
 		for _, item := range seeds {
-			if err := queueTextExtractionTx(tx, item.hash, item.mimeType); err != nil {
+			if _, err := markTextSearchableVersionTx(tx, item.versionID, item.mimeType); err != nil {
+				return err
+			}
+			if !item.needsExtraction {
+				continue
+			}
+			if _, exists := queued[item.hash]; exists {
+				continue
+			}
+			queued[item.hash] = struct{}{}
+			if err := enqueueTextBlobTx(tx, item.hash); err != nil {
 				return err
 			}
 		}
@@ -109,29 +139,22 @@ func (s *Store) SeedTextExtractionQueue(
 	})
 }
 
-// PendingTextExtractions returns a bounded hash-ordered batch of supported
-// text blobs without current results. Logical writes and one startup seed of
-// selected versions fill the derived queue, so steady-state polling never
-// scans the version catalog.
+// PendingTextExtractions returns a bounded hash-ordered batch from the derived
+// work queue. Logical writes and one startup seed of selected versions fill the
+// queue, so steady-state polling never scans the version catalog.
 func (s *Store) PendingTextExtractions(
-	ctx context.Context, extractor string, version int64, limit int,
+	ctx context.Context, limit int,
 ) ([]ExtractionCandidate, error) {
-	if extractor == "" || version < 1 {
-		return nil, errors.New("extractor name and positive version are required")
-	}
 	if limit < 1 || limit > 1000 {
 		return nil, errors.New("extraction batch limit must be between 1 and 1000")
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT q.blob_hash, b.size, q.mime_type
+		SELECT q.blob_hash, b.size
 		FROM text_extraction_queue q
 		JOIN blobs b ON b.hash=q.blob_hash
-		LEFT JOIN extracted_text e
-		  ON e.blob_hash = q.blob_hash AND e.extractor = ?
-		WHERE (e.blob_hash IS NULL OR e.extractor_version < ?)
-		  AND EXISTS(SELECT 1 FROM content_versions v WHERE v.blob_hash=q.blob_hash)
+		WHERE EXISTS(SELECT 1 FROM content_versions v WHERE v.blob_hash=q.blob_hash)
 		ORDER BY q.blob_hash
-		LIMIT ?`, extractor, version, limit)
+		LIMIT ?`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("listing pending text extractions: %w", err)
 	}
@@ -139,7 +162,7 @@ func (s *Store) PendingTextExtractions(
 	items := make([]ExtractionCandidate, 0)
 	for rows.Next() {
 		var item ExtractionCandidate
-		if err := rows.Scan(&item.BlobHash, &item.Size, &item.MimeType); err != nil {
+		if err := rows.Scan(&item.BlobHash, &item.Size); err != nil {
 			return nil, fmt.Errorf("listing pending text extractions: scanning row: %w", err)
 		}
 		items = append(items, item)

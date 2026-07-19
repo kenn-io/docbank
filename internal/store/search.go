@@ -78,6 +78,7 @@ func (s *Store) SearchPage(ctx context.Context, query string, limit int) ([]Sear
 		SELECT `+nodeCols+`
 		FROM `+nodeFrom+`
 		JOIN matched_blobs mb ON mb.blob_hash = cv.blob_hash
+		JOIN text_searchable_versions tsv ON tsv.version_id = cv.version_id
 		WHERE n.trashed_at IS NULL
 		ORDER BY mb.best_rank, n.name, n.id
 		LIMIT ?`, fq, remaining+len(nameHits)+1)
