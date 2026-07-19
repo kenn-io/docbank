@@ -7,7 +7,7 @@ import sys
 import tomllib
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-EXCLUDED = {".cache", ".venv", "internal", "node_modules", "scripts", "site", "superpowers"}
+EXCLUDED = {".cache", ".venv", "internal", "scripts", "site", "superpowers"}
 FORBIDDEN = ("@astrojs/starlight", "<Card", "<Aside", "<Tabs", ":::")
 ADMONITION = re.compile(r'!!!\s+[A-Za-z][\w-]*(?:\s+"(?:[^"\\]|\\.)*")?')
 TRACKER_ALLOWLIST = {pathlib.Path("changelog.md"), pathlib.Path("roadmap.md")}
@@ -39,7 +39,7 @@ def maintained_markdown() -> list[pathlib.Path]:
         path
         for path in ROOT.rglob("*.md")
         if not any(
-            part in {".cache", ".venv", "node_modules", "site"}
+            part in {".cache", ".venv", "site"}
             or part.startswith("zensical-public-docs.")
             for part in path.relative_to(ROOT).parts
         )

@@ -21,7 +21,7 @@ DEFAULT_GOLANGCI_LINT_CACHE := $(shell git rev-parse --path-format=absolute --gi
 GOLANGCI_LINT_CACHE ?= $(DEFAULT_GOLANGCI_LINT_CACHE)
 export GOLANGCI_LINT_CACHE
 
-.PHONY: build install clean test test-v fmt lint lint-ci tidy install-hooks docs-install docs-build docs-serve docs-vercel-cli docs-link docs-deploy help
+.PHONY: build install clean test test-v fmt lint lint-ci tidy install-hooks docs-install docs-build docs-serve docs-link docs-deploy help
 
 build:
 	CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS)" -o docbank ./cmd/docbank
@@ -75,23 +75,27 @@ docs-build:
 docs-serve:
 	cd docs && ./zensical-docs.sh serve
 
-# Deploys run the Vercel CLI version pinned in docs/.vercel-cli/package-lock.json,
-# never a version resolved at deploy time. The npm tree lives in a dot-directory
-# so Go's ./... walk and the docs publishing boundary both skip it.
-docs-vercel-cli:
-	cd docs/.vercel-cli && npm ci --no-audit --no-fund
+# Deploys use the operator's installed Vercel CLI; install it with
+# `npm install -g vercel` or from https://vercel.com/docs/cli.
+docs-link:
+	@if ! command -v vercel >/dev/null 2>&1; then \
+		echo "vercel CLI not found. Install: https://vercel.com/docs/cli" >&2; \
+		exit 1; \
+	fi
+	cd docs && vercel link
 
-docs-link: docs-vercel-cli
-	cd docs && ./.vercel-cli/node_modules/.bin/vercel link
-
-docs-deploy: docs-build docs-vercel-cli
+docs-deploy: docs-build
+	@if ! command -v vercel >/dev/null 2>&1; then \
+		echo "vercel CLI not found. Install: https://vercel.com/docs/cli" >&2; \
+		exit 1; \
+	fi
 	@if [ ! -f docs/.vercel/project.json ]; then \
 		echo "docs are not linked to a Vercel project yet." >&2; \
-		echo "Run: docs/.vercel-cli/node_modules/.bin/vercel login && make docs-link" >&2; \
+		echo "Run: vercel login && make docs-link" >&2; \
 		exit 1; \
 	fi
 	cp -R docs/.vercel docs/site/.vercel
-	docs/.vercel-cli/node_modules/.bin/vercel deploy docs/site --prod --yes
+	vercel deploy docs/site --prod --yes
 
 help:
 	@echo "Targets: build install clean test test-v fmt lint lint-ci tidy install-hooks docs-install docs-build docs-serve docs-link docs-deploy"

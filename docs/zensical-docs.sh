@@ -102,7 +102,6 @@ tar_excludes=(
   --exclude './README.md'
   --exclude './pyproject.toml'
   --exclude './uv.lock'
-  --exclude './.vercel-cli'
   --exclude './zensical-docs.sh'
   --exclude './zensical.toml'
 )

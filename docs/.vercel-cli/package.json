@@ -1,7 +1,0 @@
-{
-  "name": "docbank-docs-deploy",
-  "private": true,
-  "devDependencies": {
-    "vercel": "56.3.2"
-  }
-}
