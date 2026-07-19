@@ -293,10 +293,31 @@ func TestWatchTreeFindsVaultThroughUnrelatedAlias(t *testing.T) {
 	require.NoError(t, err)
 
 	contains, err := watchTreeContainsAnyDirectory(
-		t.Context(), root, mount, []fs.FileInfo{vaultInfo}, exclusions{}, "",
+		t.Context(), root, mount, []fs.FileInfo{vaultInfo}, exclusions{}, "", nil,
 	)
 	require.NoError(t, err)
 	assert.True(t, contains)
+}
+
+func TestWatcherAliasCheckIgnoresEntryRemovedDuringStartup(t *testing.T) {
+	source := writeTree(t, map[string]string{"vanishing/file.txt": "temporary"})
+	watcher, err := NewWatcher(newTestIngester(t), t.TempDir(), config.WatchConfig{
+		Name: "vanishing", Source: source, Destination: "/inbox",
+		SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Second),
+	}, runTestMutation, slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	removed := false
+	watcher.beforeDescend = func(rel string) {
+		if removed || rel != "vanishing" {
+			return
+		}
+		removed = true
+		require.NoError(t, os.RemoveAll(filepath.Join(source, rel)))
+	}
+	root, err := watcher.openRoot(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, root.Close())
+	assert.True(t, removed)
 }
 
 func TestWatchDirectoryIdentitiesIncludeDescendants(t *testing.T) {

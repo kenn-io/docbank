@@ -51,3 +51,22 @@ func TestWatcherRetriesExclusivelyOpenedFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "document.txt", node.Name)
 }
+
+func TestWatcherAliasCheckIgnoresExclusivelyOpenedDirectory(t *testing.T) {
+	source := writeTree(t, map[string]string{"private/document.txt": "ready"})
+	path16, err := windows.UTF16PtrFromString(filepath.Join(source, "private"))
+	require.NoError(t, err)
+	handle, err := windows.CreateFile(path16, windows.GENERIC_READ, 0, nil,
+		windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, windows.CloseHandle(handle)) })
+
+	watcher, err := NewWatcher(newTestIngester(t), t.TempDir(), config.WatchConfig{
+		Name: "exclusive-directory", Source: source, Destination: "/inbox",
+		SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Second),
+	}, runTestMutation, slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	root, err := watcher.openRoot(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, root.Close())
+}

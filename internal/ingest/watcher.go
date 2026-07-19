@@ -401,7 +401,7 @@ func (w *Watcher) openRoot(ctx context.Context) (*watchRoot, error) {
 		return nil, fmt.Errorf("identifying watch %q source mount: %w", w.config.Name, err)
 	}
 	containsVault, err := watchTreeContainsAnyDirectory(
-		ctx, descriptor, w.sourceMount, vaultDirs, w.excludes, "",
+		ctx, descriptor, w.sourceMount, vaultDirs, w.excludes, "", w.beforeDescend,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("checking watch %q backing hierarchy: %w", w.config.Name, err)
@@ -424,7 +424,7 @@ func (w *Watcher) openRoot(ctx context.Context) (*watchRoot, error) {
 // an exact vault alias and otherwise remain outside watcher traversal.
 func watchTreeContainsAnyDirectory(
 	ctx context.Context, dir *os.Root, sourceMount watchMount, targets []fs.FileInfo,
-	excludes exclusions, relDir string,
+	excludes exclusions, relDir string, beforeDescend func(string),
 ) (bool, error) {
 	info, err := dir.Stat(".")
 	if err != nil {
@@ -450,8 +450,14 @@ func watchTreeContainsAnyDirectory(
 		if excludes.matchRelative(rel) {
 			continue
 		}
+		if beforeDescend != nil {
+			beforeDescend(rel)
+		}
 		entryInfo, err := dir.Lstat(entry.Name())
 		if err != nil {
+			if transientWatchTraversalError(err) {
+				continue
+			}
 			return false, err
 		}
 		if entryInfo.Mode()&fs.ModeSymlink != 0 || !entryInfo.IsDir() {
@@ -459,31 +465,54 @@ func watchTreeContainsAnyDirectory(
 		}
 		child, err := openWatchDirectory(dir, entry.Name())
 		if err != nil {
+			if transientWatchTraversalError(err) {
+				continue
+			}
 			return false, err
 		}
-		childInfo, infoErr := child.Stat(".")
-		if infoErr == nil && matchesWatchDirectory(childInfo, targets) {
+		childInfo, err := child.Stat(".")
+		if err != nil {
+			_ = child.Close()
+			if transientWatchTraversalError(err) {
+				continue
+			}
+			return false, err
+		}
+		if matchesWatchDirectory(childInfo, targets) {
 			_ = child.Close()
 			return true, nil
 		}
-		childMount, mountErr := watchMountForRoot(child)
-		if infoErr != nil || mountErr != nil {
+		childMount, err := watchMountForRoot(child)
+		if err != nil {
 			_ = child.Close()
-			return false, errors.Join(infoErr, mountErr)
+			if transientWatchTraversalError(err) {
+				continue
+			}
+			return false, err
 		}
 		if sourceMount.same(childMount) {
 			contains, childErr := watchTreeContainsAnyDirectory(
-				ctx, child, sourceMount, targets, excludes, rel,
+				ctx, child, sourceMount, targets, excludes, rel, beforeDescend,
 			)
 			_ = child.Close()
-			if childErr != nil || contains {
-				return contains, childErr
+			if childErr != nil {
+				if transientWatchTraversalError(childErr) {
+					continue
+				}
+				return false, childErr
+			}
+			if contains {
+				return true, nil
 			}
 			continue
 		}
 		_ = child.Close()
 	}
 	return false, nil
+}
+
+func transientWatchTraversalError(err error) bool {
+	return errors.Is(err, ErrSourceChanged) || transientWatchObservationError(err)
 }
 
 func matchesWatchDirectory(info fs.FileInfo, targets []fs.FileInfo) bool {
