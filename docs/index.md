@@ -1,42 +1,45 @@
 ---
-title: A permanent home for the documents of your life
-description: Docbank gives the documents you keep for life one permanent home on your own machine: easy to file, easy to find, with version history, provable integrity, and verified backups.
+title: Your documents. Your system.
+description: Docbank is a self-sovereign document system for people and agents, with indexed retrieval, stable identity, verifiable content, incremental recovery, and audited history.
 ---
 
-<p class="eyebrow">EVERY DOCUMENT YOU KEEP FOR LIFE, ON YOUR MACHINE</p>
+<p class="eyebrow">A SELF-SOVEREIGN DOCUMENT SYSTEM</p>
 
-# A permanent home for the documents of your life
+# Your documents. Your system.
 
-Tax returns, contracts, medical records, scans of things you can't
-replace: Docbank keeps them all in one place on your own machine. File
-anything, find it again in seconds, reorganize without breaking anything,
-and go back to earlier versions when you need them. It's built so that
-decades from now everything is still there, and you can prove it.
+Docbank gives you one authoritative place to file, find, version, verify, and
+automate the documents you depend on. The vault and its history live on your
+own machine rather than inside a provider account. Documents keep stable
+identities as you reorganize them, every stored byte can be checked, and
+incremental backups can be verified before you rely on them. Use it for records
+you keep for decades and for working documents that people and agents organize
+every day, from the CLI, through the authenticated HTTP API, or inside a Go
+application.
 
 <p class="hero-actions">
-  <a class="md-button md-button--primary" href="setup/">Start your archive</a>
+  <a class="md-button md-button--primary" href="setup/">Start your vault</a>
   <a class="md-button" href="quickstart/">Ten-minute tour</a>
   <a class="md-button" href="agents/">Build agent workflows</a>
 </p>
 
-## What you get
+## What Docbank gives you
 
 <div class="feature-grid">
   <section>
-    <h3>Find what you filed</h3>
-    <p>Ranked search across every name in your archive, plus a tree you can browse. Filed once means findable later.</p>
+    <h3>Indexed local retrieval</h3>
+    <p>Search document names with ranked results and browse a virtual tree without putting a cloud service between you and your archive.</p>
   </section>
   <section>
-    <h3>Reorganize without fear</h3>
-    <p>Move and rename freely. Documents keep their identity, their history follows them, and nothing breaks or goes missing.</p>
+    <h3>Identity beyond the path</h3>
+    <p>Move and rename documents while stable IDs and retained version history continue to identify them.</p>
   </section>
   <section>
-    <h3>Go back to earlier versions</h3>
-    <p>Replace a file and the old versions stay until you decide otherwise. Deleting sends to trash first, never straight to gone.</p>
+    <h3>Integrity you can check</h3>
+    <p>Every content version has a SHA-256 identity, and <code>docbank verify</code> re-hashes every stored byte on demand.</p>
   </section>
   <section>
-    <h3>Backups you can actually trust</h3>
-    <p>Incremental backups you can verify and practice restoring before the day you need them.</p>
+    <h3>Recovery you can rehearse</h3>
+    <p>Incremental backups reuse unchanged content, verify independently, and restore into a separate vault for inspection.</p>
   </section>
 </div>
 
@@ -47,58 +50,71 @@ Windows and source builds):
 curl -fsSL https://docbank.ai/install.sh | sh
 ```
 
-Then filing looks like this:
+The ordinary workflow stays direct:
 
 ```bash
 docbank add ~/Documents/taxes --dest /taxes    # import a folder; sources untouched
-docbank tree /taxes                            # see what you have
-docbank search "insurance"                     # find a document by name
-docbank put revised.pdf /taxes/2026/return.pdf # newer version; the old one stays
-docbank versions /taxes/2026/return.pdf        # every version, on record
-docbank rm /inbox/junk.pdf                     # to the trash, recoverable
-docbank verify                                 # prove every stored byte is intact
-docbank backup create --repo ~/Backups/docbank # incremental, verifiable backup
+docbank tree /taxes                            # browse the virtual tree
+docbank search "insurance"                     # ranked document-name search
+docbank put revised.pdf /taxes/2026/return.pdf # add a new immutable version
+docbank versions /taxes/2026/return.pdf        # inspect retained history
+docbank rm /inbox/junk.pdf                     # move to recoverable trash
+docbank verify                                 # re-prove stored content
+docbank backup create --repo ~/Backups/docbank # incremental snapshot
 ```
 
-## Why not just folders?
+## Own the authority, not just the disk
 
-Ordinary folders make a document's location its identity: move a file and
-everything pointing at it breaks; reorganize and you lose track of what
-you had. Cloud drives add a second problem, because your archive's
-history and continued existence depend on an account in good standing.
-For records that outlive laptops, jobs, and subscriptions (tax filings,
-contracts, medical records, research), that is the wrong foundation.
+Self-sovereignty here is practical: the vault, catalog, history, and recovery
+path are under your control. Everything lives on your machine in an inspectable
+layout. Import copies files and never touches the sources, so moving a Dropbox
+or Google Drive export into Docbank is safe to attempt and repeat until it is
+complete.
 
-Docbank keeps everything on your machine in a layout you can inspect:
-your documents plus the catalog that organizes them. Importing copies
-your files and never touches the originals, so migrating a Dropbox or
-Google Drive export is safe to attempt and repeat until it is complete.
-`docbank verify` re-proves every stored byte on demand. And a backup
-repository you have verified and practiced restoring means your archive's
-survival no longer depends on any company's goodwill.
+### Why move beyond Dropbox or Google Drive?
 
-One honest boundary: docbank doesn't sync. It won't put files on every
-device or make share links. Its job is to make the copy that must survive
-trustworthy.
+Cloud drives are good at synchronization and sharing. They also make a provider
+account part of the authority for your archive: access, retained history, and
+recovery depend on the service and its policies. Docbank is built for the copy
+whose integrity and continued availability you control yourself. It does not
+sync files to every device or create share links; those are deliberate
+boundaries, not hidden omissions.
 
-## Ready for your agents, too
+### Why not just put everything on a NAS?
 
-The same vault welcomes automation. Agents and scripts file, retrieve,
-reorganize, verify, and run maintenance through the same authenticated
-API the CLI uses; there is no privileged shortcut into the vault.
-Documents keep stable IDs that survive renames, reads carry verified
-bytes, conflicting edits are detected instead of silently overwritten,
-and destructive operations offer dry runs. Read
+A NAS is useful storage, and some NAS products add checksums, snapshots, search,
+or replication. Those capabilities depend on the particular appliance and
+filesystem, and folders still make a path do too many jobs at once. Docbank adds
+a document-level contract: stable identity across moves, retained versions,
+recoverable deletion, content verification, permanent audited scopes, and one
+authenticated interface for people and software.
+
+A NAS can be a good home for a Docbank backup repository. The distinction is
+simple: storage answers where the bytes live; Docbank records which document
+they belong to, what happened to it, and whether the vault and its backups still
+prove out.
+
+## One authority for people and agents
+
+The standalone CLI, agents, and scripts use the same authenticated loopback API;
+none has a privileged shortcut into the vault. Stable IDs survive renames,
+downloads carry digest evidence, and revisions expose conflicting edits.
+Version pruning, trash emptying, and garbage collection begin with dry-run
+previews. Generate the live contract with `docbank openapi --json`, read
 [Docbank for Agents](agents.md), or follow the
-[Agent Integration Guide](agents/integration.md) through a complete
+[Agent Integration Guide](agents/integration.md) through a complete verified
 filing workflow.
 
-## The guarantees
+A Go application can instead own independently rooted vaults in-process through
+the [embedded API](embedding.md), with the same storage model and exclusive
+ownership rules.
+
+## Guarantees you can inspect
 
 <div class="feature-grid">
   <section>
     <h3>Immutable content</h3>
-    <p>Every version keeps a verified SHA-256 identity, and bytes are durable before the catalog references them.</p>
+    <p>Every retained version keeps a verified SHA-256 identity, and bytes are durable before the catalog references them.</p>
   </section>
   <section>
     <h3>Deliberate lifecycle</h3>
@@ -110,14 +126,14 @@ filing workflow.
   </section>
   <section>
     <h3>Audited history</h3>
-    <p>Opt a directory into permanent, tamper-evident history that docbank can independently re-verify. See <a href="usage/audited-history/">Permanent Audited History</a>.</p>
+    <p>Opt a directory into permanent, tamper-evident history that Docbank can independently re-verify. See <a href="usage/audited-history/">Permanent Audited History</a>.</p>
   </section>
 </div>
 
 ## Two ways to run it
 
-- **Standalone.** A personal archive: the CLI and a daemon on your
-  machine, one authority per vault. Start with the
+- **Standalone.** A local document system: the CLI and a daemon on your
+  machine, with one authority per vault. Start with the
   [Quickstart](quickstart.md).
 - **Embedded.** A Go module: independently rooted vaults in-process, with
   the same storage model and lifecycle guarantees, on CGO or pure-Go
@@ -125,7 +141,7 @@ filing workflow.
 
 ## Status
 
-docbank is alpha software. The current release is v0.6.0, with archives
+Docbank is alpha software. The current release is v0.6.0, with archives
 and checksum-enforcing installers for Linux, macOS, and Windows on amd64
 and arm64. Implemented and tested today: the core store and ingest
 pipeline, the virtual-tree CLI, the authenticated daemon API, stable
@@ -133,13 +149,13 @@ content versions with verified replacement, reversion, pruning, and
 lookup by content hash (`refs`), tags, permanent audited history with
 independent verification, loose and packed storage with explicit
 maintenance, whole-vault integrity verification, incremental backup
-create/verify/restore, and the embedded Go API. docbank is not yet a
+create/verify/restore, and the embedded Go API. Docbank is not yet a
 stable 1.0; the [Roadmap](roadmap.md) gives the product direction.
 
-docbank belongs to a family of personal data tools alongside
+Docbank belongs to a family of personal data tools alongside
 [msgvault](https://msgvault.io) (communications archive) and fotobank
 (photo/video archive). Where msgvault preserves an immutable record of
-your messages, docbank manages working documents: files you still
+your messages, Docbank manages working documents: files you still
 organize, retrieve, and build workflows around.
 
 ## Where to go next

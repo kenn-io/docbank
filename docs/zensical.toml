@@ -1,6 +1,6 @@
 [project]
 site_name = "docbank"
-site_description = "Docbank gives the documents you keep for life one permanent home on your own machine: easy to file, easy to find, with version history, provable integrity, and verified backups."
+site_description = "Docbank is a self-sovereign document system for people and agents, with indexed retrieval, stable identity, verifiable content, incremental recovery, and audited history."
 site_author = "Kenn Software LLC"
 copyright = 'Copyright &copy; 2026 <a href="https://kenn.io">Kenn Software LLC</a>.'
 docs_dir = "docs"
