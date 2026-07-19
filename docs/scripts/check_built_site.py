@@ -12,6 +12,7 @@ class PageParser(html.parser.HTMLParser):
         super().__init__()
         self.title = False
         self.description = False
+        self.metadata: dict[str, str] = {}
         self.urls: list[str] = []
         self.anchors: set[str] = set()
 
@@ -19,8 +20,12 @@ class PageParser(html.parser.HTMLParser):
         values = {key: value or "" for key, value in attrs}
         if tag == "title":
             self.title = True
-        if tag == "meta" and values.get("name") == "description" and values.get("content"):
-            self.description = True
+        if tag == "meta" and values.get("content"):
+            key = values.get("property") or values.get("name")
+            if key:
+                self.metadata[key] = values["content"]
+            if values.get("name") == "description":
+                self.description = True
         if values.get("id"):
             self.anchors.add(values["id"])
         if tag == "a" and values.get("name"):
@@ -70,7 +75,15 @@ def main() -> None:
     pages = sorted(site.rglob("*.html"))
     if not pages:
         errors.append(f"no HTML pages built under {site}")
-    forbidden = {"internal", "superpowers", "scripts", "zensical.toml", "pyproject.toml", "uv.lock"}
+    forbidden = {
+        "internal",
+        "overrides",
+        "superpowers",
+        "scripts",
+        "zensical.toml",
+        "pyproject.toml",
+        "uv.lock",
+    }
     for path in site.rglob("*"):
         if forbidden.intersection(path.relative_to(site).parts):
             errors.append(f"publishing boundary leaked {path.relative_to(site)}")
@@ -88,6 +101,31 @@ def main() -> None:
             errors.append(f"{rel}: missing title")
         if not parser.description:
             errors.append(f"{rel}: missing meta description")
+        for key in (
+            "og:title",
+            "og:description",
+            "og:type",
+            "og:url",
+            "og:site_name",
+            "twitter:card",
+            "twitter:title",
+            "twitter:description",
+        ):
+            if not parser.metadata.get(key):
+                errors.append(f"{rel}: missing {key} metadata")
+        if parser.metadata.get("og:description") != parser.metadata.get("description"):
+            errors.append(f"{rel}: Open Graph description differs from page description")
+        for field in ("title", "description"):
+            if parser.metadata.get(f"twitter:{field}") != parser.metadata.get(
+                f"og:{field}"
+            ):
+                errors.append(f"{rel}: Twitter {field} differs from Open Graph {field}")
+        if (
+            rel == pathlib.Path("index.html")
+            and parser.metadata.get("og:title")
+            != "Your documents. Your agents. One system."
+        ):
+            errors.append("index.html: social title differs from the homepage message")
         for raw in parser.urls:
             local = local_target(site, page, raw)
             if local is None:

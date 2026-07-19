@@ -93,6 +93,7 @@ tar_excludes=(
   --exclude './.env'
   --exclude './.env.*'
   --exclude './internal'
+  --exclude './overrides'
   --exclude './scripts'
   --exclude './site'
   --exclude './zensical-site.*'
