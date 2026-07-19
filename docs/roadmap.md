@@ -82,7 +82,7 @@ to publish loose blobs; startup never performs an implicit migration.
 ## Phase 2b — Features (in progress)
 
 Implemented foundation: every initial ingest/upload creates a stable UUIDv4
-content version and current node pointer. `docbank versions`, `docbank version`,
+content version and current node pointer. `docbank versions list|show|cat`,
 bounded HTTP listing, ID-addressed metadata/byte retrieval, GC reachability,
 verification evidence, and deterministic JSONL backup/restore all carry that
 identity through loose and packed storage. File-node responses expose current

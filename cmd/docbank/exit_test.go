@@ -98,11 +98,11 @@ func TestRunProcessDistinguishesUsageAndMissingNodes(t *testing.T) {
 	assert.Equal(t, exitUsage, code)
 	assert.Contains(t, stderr.String(), "must be a canonical UUIDv4")
 
-	code = run("version", "not-a-version-id")
+	code = run("versions", "show", "not-a-version-id")
 	assert.Equal(t, exitUsage, code)
 	assert.Contains(t, stderr.String(), "must be a canonical UUIDv4")
 
-	code = run("version", "not-a-version-id", "--content")
+	code = run("versions", "cat", "not-a-version-id")
 	assert.Equal(t, exitUsage, code)
 	assert.Contains(t, stderr.String(), "must be a canonical UUIDv4")
 
@@ -114,4 +114,8 @@ func TestRunProcessDistinguishesUsageAndMissingNodes(t *testing.T) {
 	code = run("--not-a-real-flag")
 	require.Equal(t, exitUsage, code)
 	assert.Contains(t, stderr.String(), "unknown flag")
+
+	code = run("--version")
+	require.Equal(t, exitUsage, code)
+	assert.Contains(t, stderr.String(), "unknown flag: --version")
 }

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/danielgtaylor/huma/v2"
+
 	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/jsontext"
 )
@@ -33,6 +35,27 @@ func timeoutExempt(path string) bool {
 		return true
 	}
 	return strings.HasPrefix(path, "/api/v1/versions/") && strings.HasSuffix(path, "/content")
+}
+
+// clearLongRunningBodyReadDeadlines keeps Huma's request-body deadline in
+// lockstep with Docbank's handler timeout policy. JSON mutation bodies have
+// already been read and text-validated by jsonBodyTextMiddleware before Huma
+// installs its deadline and dispatches them, so retaining that five-second
+// socket deadline can only cancel valid long-running handler work.
+func clearLongRunningBodyReadDeadlines(api huma.API) {
+	for path, item := range api.OpenAPI().Paths {
+		if !timeoutExempt(path) {
+			continue
+		}
+		for _, operation := range []*huma.Operation{
+			item.Get, item.Put, item.Post, item.Delete,
+			item.Options, item.Head, item.Patch, item.Trace,
+		} {
+			if operation != nil {
+				operation.BodyReadTimeout = -1
+			}
+		}
+	}
 }
 
 // auth-exempt: discovery, credential-free ownership proof, docs, and the

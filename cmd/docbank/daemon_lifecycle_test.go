@@ -218,7 +218,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	recs[0].Metadata["protocol_version"] = "10"
 	_, err = client.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
-	out, err = run(oldBin, "versions", "/inbox/preflight.txt")
+	out, err = run(oldBin, "versions", "list", "/inbox/preflight.txt")
 	require.NoError(t, err, out)
 	assert.Contains(t, out, "content_create")
 	recs, err = client.RuntimeStore(dir).List()
@@ -263,7 +263,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	// Protocol 13 predates content reversion. Replace it before the CLI sends
 	// the mutation so an older same-version daemon cannot return 404 after the
 	// operator has selected a historical source.
-	out, err = run(oldBin, "versions", "/inbox/preflight.txt", "--json")
+	out, err = run(oldBin, "versions", "list", "/inbox/preflight.txt", "--json")
 	require.NoError(t, err, out)
 	var versionPage api.ContentVersionPage
 	require.NoError(t, json.Unmarshal([]byte(out), &versionPage))

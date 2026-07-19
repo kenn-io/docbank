@@ -50,6 +50,12 @@ Windows and source builds):
 curl -fsSL https://docbank.ai/install.sh | sh
 ```
 
+!!! info "New version-command vocabulary"
+
+    `docbank version` and the explicit `docbank versions list|show|cat`
+    commands shown below are newer than v0.7.0. Build from source to use them
+    until the next release is published.
+
 The ordinary workflow stays direct:
 
 ```bash
@@ -57,7 +63,7 @@ docbank add ~/Documents/taxes --dest /taxes    # import a folder; sources untouc
 docbank tree /taxes                            # browse the virtual tree
 docbank search "insurance"                     # ranked document-name search
 docbank put revised.pdf /taxes/2026/return.pdf # add a new immutable version
-docbank versions /taxes/2026/return.pdf        # inspect retained history
+docbank versions list /taxes/2026/return.pdf   # inspect retained history
 docbank rm /inbox/junk.pdf                     # move to recoverable trash
 docbank verify                                 # re-prove stored content
 docbank backup create --repo ~/Backups/docbank # incremental snapshot
@@ -142,9 +148,9 @@ ownership rules.
 
 ## Status
 
-Docbank is alpha software. The current release is v0.6.0, with archives
-and checksum-enforcing installers for Linux, macOS, and Windows on amd64
-and arm64. Implemented and tested today: the core store and ingest
+Docbank is alpha software. The latest release includes archives and
+checksum-enforcing installers for Linux, macOS, and Windows on amd64 and
+arm64. Implemented and tested today: the core store and ingest
 pipeline, the virtual-tree CLI, the authenticated daemon API, stable
 content versions with verified replacement, reversion, pruning, and
 lookup by content hash (`refs`), tags, permanent audited history with

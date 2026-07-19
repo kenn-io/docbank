@@ -36,16 +36,21 @@ also creates no version.
 
 ## Read surfaces
 
+!!! info "Release availability"
+
+    The explicit `versions list|show|cat` command vocabulary is newer than
+    v0.7.0. Build from source to use it until the next release is published.
+
 ```bash
-docbank versions /taxes/2025/return.pdf
-docbank version <version-id> --json
-docbank version <version-id> --content > return.pdf
+docbank versions list /taxes/2025/return.pdf
+docbank versions show <version-id> --json
+docbank versions cat <version-id> > return.pdf
 docbank refs <sha256>
 ```
 
-`versions` is newest-first and bounded by `--limit` and `--offset`; `--json`
-returns the complete page envelope including `total`. `version` addresses
-metadata or bytes by UUID, independent of the node's current path.
+`versions list` is newest-first and bounded by `--limit` and `--offset`; `--json`
+returns the complete page envelope including `total`. `versions show` and
+`versions cat` address metadata or bytes by UUID, independent of the node's current path.
 `refs` performs the inverse lookup: one content hash to every stable
 node/version pair that retains it, including prior versions and trash.
 

@@ -167,7 +167,7 @@ revision as `If-Match`; if another actor moves, trashes, or replaces the node
 afterward, the operation fails with `stale_revision` rather than losing the
 concurrent update. A successful put bumps the node revision, creates a
 `content_replace` version, and leaves the older bytes reachable through
-`docbank version <id> --content`. Replacing with identical bytes still records
+`docbank versions cat <id>`. Replacing with identical bytes still records
 an explicit versioned operation while the blob itself deduplicates.
 
 ## docbank edit
@@ -199,8 +199,22 @@ version, and emits a warning rather than encouraging a duplicate retry.
 
 ## docbank versions
 
+!!! info "Release availability"
+
+    The explicit `versions list|show|cat` command vocabulary is newer than
+    v0.7.0. Build from source to use it until the next release is published.
+
 ```text
-docbank versions <path> [--limit <n>] [--offset <n>] [--json]
+docbank versions <command>
+```
+
+Groups the explicit `list`, `show`, `cat`, and `prune` operations for immutable
+document content versions.
+
+### docbank versions list
+
+```text
+docbank versions list <path> [--limit <n>] [--offset <n>] [--json]
 ```
 
 Lists the file's immutable content versions newest-first. The default limit is
@@ -212,6 +226,29 @@ complete page from a prefix.
 Every newly imported file has one revision-one `content_create` version. Each
 successful `put` adds a `content_replace` row and each `revert` adds a
 `content_revert` row naming its immutable source.
+
+### docbank versions show
+
+```text
+docbank versions show <version-id> [--json]
+```
+
+Inspects one immutable version by stable UUID, independent of the file's current
+path. The human view prints node and node-revision identity, recording time,
+transition kind, blob hash, size, media type, and any reversion source;
+`--json` emits the typed record.
+
+### docbank versions cat
+
+```text
+docbank versions cat <version-id>
+```
+
+Writes that exact version's bytes to stdout. It exits successfully only after
+the response version ID, byte count, SHA-256 identity, and terminal
+`Content-Digest` all agree. Output may already have reached stdout when
+verification fails, so scripts publishing a file should write privately and
+rename it only after a successful exit.
 
 ### docbank versions prune
 
@@ -249,23 +286,6 @@ wait for `docbank gc --run`, and dead packed payload waits for GC followed by
 `docbank storage repack`. Pruning itself never claims to reclaim disk space.
 Deleted version IDs stop resolving. Backups made afterward preserve that
 result, while snapshots made before pruning still contain their earlier state.
-
-## docbank version
-
-```text
-docbank version <version-id> [--json]
-docbank version <version-id> --content
-```
-
-Inspects one immutable version by stable UUID, independent of the file's current
-path. The human view prints node and node-revision identity, recording time,
-transition kind, blob hash, size, media type, and any reversion source;
-`--json` emits the typed record.
-`--content` writes that exact version's bytes to stdout and cannot be combined
-with `--json`. It exits successfully only after the response version ID, byte
-count, SHA-256 identity, and terminal `Content-Digest` all agree. Output may
-already have reached stdout when verification fails, so scripts publishing a
-file should write privately and rename it only after a successful exit.
 
 ## docbank refs
 
@@ -705,10 +725,15 @@ JSON. Needs no running daemon and no vault: routes are registered
 against an offline server instance and never invoked. For agents and
 API client generation; see [HTTP API](architecture/http-api.md).
 
-## docbank --version
+## docbank version
+
+!!! info "Release availability"
+
+    This command is newer than v0.7.0. Build from source to use it until the
+    next release is published.
 
 ```
-docbank --version
+docbank version
 ```
 
 Prints the build version and commit (`dev (unknown)` for untagged local

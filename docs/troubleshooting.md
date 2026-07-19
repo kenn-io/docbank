@@ -162,7 +162,10 @@ Capture the version, daemon status, failing command or request, and relevant
 log lines. Remove API keys, shutdown tokens, document contents, and private
 paths before sharing them.
 
+`docbank version` is newer than v0.7.0; use a source build until the next
+release is published.
+
 ```bash
-docbank --version
+docbank version
 docbank daemon status --json
 ```
