@@ -34,7 +34,25 @@ func TestWatcherRejectsVaultHiddenBySeparateBindAliases(t *testing.T) {
 	}, runTestMutation, nil)
 	require.NoError(t, err)
 	_, err = watcher.openRoot(t.Context())
-	require.ErrorContains(t, err, "contains the vault root through a filesystem alias")
+	require.ErrorContains(t, err, "contains vault storage through a filesystem alias")
+}
+
+func TestWatcherRejectsBindAliasToVaultDescendantAsSource(t *testing.T) {
+	vault := t.TempDir()
+	logs := filepath.Join(vault, "logs")
+	require.NoError(t, os.Mkdir(logs, 0o700))
+	aliases := t.TempDir()
+	sourceAlias := filepath.Join(aliases, "source")
+	require.NoError(t, os.Mkdir(sourceAlias, 0o700))
+	bindMountForTest(t, logs, sourceAlias)
+
+	watcher, err := NewWatcher(newTestIngester(t), vault, config.WatchConfig{
+		Name: "logs-alias", Source: sourceAlias, Destination: "/inbox",
+		SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Second),
+	}, runTestMutation, nil)
+	require.NoError(t, err)
+	_, err = watcher.openRoot(t.Context())
+	require.ErrorContains(t, err, "contains vault storage through a filesystem alias")
 }
 
 func bindMountForTest(t *testing.T, source, target string) {

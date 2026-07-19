@@ -266,7 +266,7 @@ func watchMountForRoot(root *os.Root) (watchMount, error) {
 type Watcher struct {
 	ing           *Ingester
 	vaultRoot     string
-	vaultIdentity fs.FileInfo
+	vaultDirs     []fs.FileInfo
 	config        config.WatchConfig
 	excludes      exclusions
 	mutate        func(func() error) error
@@ -364,6 +364,16 @@ func (w *Watcher) openRoot(ctx context.Context) (*watchRoot, error) {
 	if !vaultInfo.IsDir() {
 		return nil, fmt.Errorf("vault root for watch %q is not a directory", w.config.Name)
 	}
+	vaultDescriptor, err := os.OpenRoot(vaultRoot)
+	if err != nil {
+		return nil, fmt.Errorf("pinning vault hierarchy for watch %q: %w", w.config.Name, err)
+	}
+	vaultDirs, identityErr := watchDirectoryIdentities(ctx, vaultDescriptor)
+	closeErr := vaultDescriptor.Close()
+	if identityErr != nil || closeErr != nil {
+		return nil, fmt.Errorf("reading vault hierarchy for watch %q: %w",
+			w.config.Name, errors.Join(identityErr, closeErr))
+	}
 	descriptor, err := os.OpenRoot(root)
 	if err != nil {
 		return nil, fmt.Errorf("pinning watch %q source: %w", w.config.Name, err)
@@ -390,37 +400,37 @@ func (w *Watcher) openRoot(ctx context.Context) (*watchRoot, error) {
 	if err != nil {
 		return nil, fmt.Errorf("identifying watch %q source mount: %w", w.config.Name, err)
 	}
-	containsVault, err := watchTreeContainsDirectory(
-		ctx, descriptor, w.sourceMount, vaultInfo, w.excludes, "",
+	containsVault, err := watchTreeContainsAnyDirectory(
+		ctx, descriptor, w.sourceMount, vaultDirs, w.excludes, "",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("checking watch %q backing hierarchy: %w", w.config.Name, err)
 	}
 	if containsVault {
-		return nil, fmt.Errorf("watch %q source %q contains the vault root through a filesystem alias",
+		return nil, fmt.Errorf("watch %q source %q contains vault storage through a filesystem alias",
 			w.config.Name, root)
 	}
-	w.vaultIdentity = vaultInfo
+	w.vaultDirs = vaultDirs
 	success = true
 	return &watchRoot{
 		path: filepath.Clean(root), root: descriptor, identity: opened,
 	}, nil
 }
 
-// watchTreeContainsDirectory resolves directory identity through pinned
-// handles rather than pathname ancestry. Bind mounts can present a vault
-// descendant under an unrelated lexical path, so this check runs before the
+// watchTreeContainsAnyDirectory resolves directory identity through pinned
+// handles rather than pathname ancestry. Bind mounts can present any part of
+// the vault under an unrelated lexical path, so this check runs before the
 // first source file can be ingested. Cross-mount directories are checked for
 // an exact vault alias and otherwise remain outside watcher traversal.
-func watchTreeContainsDirectory(
-	ctx context.Context, dir *os.Root, sourceMount watchMount, target fs.FileInfo,
+func watchTreeContainsAnyDirectory(
+	ctx context.Context, dir *os.Root, sourceMount watchMount, targets []fs.FileInfo,
 	excludes exclusions, relDir string,
 ) (bool, error) {
 	info, err := dir.Stat(".")
 	if err != nil {
 		return false, err
 	}
-	if os.SameFile(info, target) {
+	if matchesWatchDirectory(info, targets) {
 		return true, nil
 	}
 	f, err := dir.Open(".")
@@ -452,7 +462,7 @@ func watchTreeContainsDirectory(
 			return false, err
 		}
 		childInfo, infoErr := child.Stat(".")
-		if infoErr == nil && os.SameFile(childInfo, target) {
+		if infoErr == nil && matchesWatchDirectory(childInfo, targets) {
 			_ = child.Close()
 			return true, nil
 		}
@@ -462,8 +472,8 @@ func watchTreeContainsDirectory(
 			return false, errors.Join(infoErr, mountErr)
 		}
 		if sourceMount.same(childMount) {
-			contains, childErr := watchTreeContainsDirectory(
-				ctx, child, sourceMount, target, excludes, rel,
+			contains, childErr := watchTreeContainsAnyDirectory(
+				ctx, child, sourceMount, targets, excludes, rel,
 			)
 			_ = child.Close()
 			if childErr != nil || contains {
@@ -474,6 +484,55 @@ func watchTreeContainsDirectory(
 		_ = child.Close()
 	}
 	return false, nil
+}
+
+func matchesWatchDirectory(info fs.FileInfo, targets []fs.FileInfo) bool {
+	for _, target := range targets {
+		if os.SameFile(info, target) {
+			return true
+		}
+	}
+	return false
+}
+
+func watchDirectoryIdentities(ctx context.Context, dir *os.Root) ([]fs.FileInfo, error) {
+	info, err := dir.Stat(".")
+	if err != nil {
+		return nil, err
+	}
+	result := []fs.FileInfo{info}
+	f, err := dir.Open(".")
+	if err != nil {
+		return nil, err
+	}
+	entries, readErr := f.ReadDir(-1)
+	closeErr := f.Close()
+	if readErr != nil || closeErr != nil {
+		return nil, errors.Join(readErr, closeErr)
+	}
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		entryInfo, err := dir.Lstat(entry.Name())
+		if err != nil {
+			return nil, err
+		}
+		if entryInfo.Mode()&fs.ModeSymlink != 0 || !entryInfo.IsDir() {
+			continue
+		}
+		child, err := openWatchDirectory(dir, entry.Name())
+		if err != nil {
+			return nil, err
+		}
+		children, childErr := watchDirectoryIdentities(ctx, child)
+		closeErr := child.Close()
+		if childErr != nil || closeErr != nil {
+			return nil, errors.Join(childErr, closeErr)
+		}
+		result = append(result, children...)
+	}
+	return result, nil
 }
 
 func pathsOverlap(left, right string) (bool, error) {
@@ -590,9 +649,9 @@ func (w *Watcher) scanDirectory(
 				_ = child.Close()
 				return fmt.Errorf("checking directory %q identity: %w", rel, infoErr)
 			}
-			if w.vaultIdentity != nil && os.SameFile(childInfo, w.vaultIdentity) {
+			if matchesWatchDirectory(childInfo, w.vaultDirs) {
 				_ = child.Close()
-				return fmt.Errorf("directory %q is the vault root through a filesystem alias", rel)
+				return fmt.Errorf("directory %q is vault storage through a filesystem alias", rel)
 			}
 			childMount, mountErr := watchMountForRoot(child)
 			if mountErr != nil {

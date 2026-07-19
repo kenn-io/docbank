@@ -3,6 +3,7 @@ package ingest
 import (
 	"context"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -291,11 +292,25 @@ func TestWatchTreeFindsVaultThroughUnrelatedAlias(t *testing.T) {
 	vaultInfo, err := os.Stat(vaultAlias)
 	require.NoError(t, err)
 
-	contains, err := watchTreeContainsDirectory(
-		t.Context(), root, mount, vaultInfo, exclusions{}, "",
+	contains, err := watchTreeContainsAnyDirectory(
+		t.Context(), root, mount, []fs.FileInfo{vaultInfo}, exclusions{}, "",
 	)
 	require.NoError(t, err)
 	assert.True(t, contains)
+}
+
+func TestWatchDirectoryIdentitiesIncludeDescendants(t *testing.T) {
+	vault := t.TempDir()
+	logs := filepath.Join(vault, "logs")
+	require.NoError(t, os.Mkdir(logs, 0o700))
+	root, err := os.OpenRoot(vault)
+	require.NoError(t, err)
+	identities, err := watchDirectoryIdentities(t.Context(), root)
+	require.NoError(t, err)
+	require.NoError(t, root.Close())
+	logsInfo, err := os.Stat(logs)
+	require.NoError(t, err)
+	assert.True(t, matchesWatchDirectory(logsInfo, identities))
 }
 
 func TestWatchedFileMustMatchItsSettledFingerprint(t *testing.T) {
