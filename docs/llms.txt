@@ -5,7 +5,7 @@
 Every documentation page is also published as raw Markdown at the same path with a `.md` suffix; the links below point at those Markdown routes.
 
 ## Overview
-- [Your documents. Your system.](https://docbank.ai/index.md): Docbank is a self-sovereign document system for people and agents, with indexed retrieval, stable identity, verifiable content, incremental recovery, and audited history.
+- [Your documents. Your agents. One system.](https://docbank.ai/index.md): Docbank is a self-sovereign document storage system for you and your agents, with indexed retrieval, stable identity, verifiable content, incremental recovery, and audited history.
 
 ## Start Here
 - [Setup](https://docbank.ai/setup.md): Install docbank on Linux, macOS, or Windows and create the vault.

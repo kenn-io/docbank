@@ -1,20 +1,20 @@
 ---
-title: Your documents. Your system.
-description: Docbank is a self-sovereign document system for people and agents, with indexed retrieval, stable identity, verifiable content, incremental recovery, and audited history.
+title: Your documents. Your agents. One system.
+description: Docbank is a self-sovereign document storage system for you and your agents, with indexed retrieval, stable identity, verifiable content, incremental recovery, and audited history.
 ---
 
-<p class="eyebrow">A SELF-SOVEREIGN DOCUMENT SYSTEM</p>
+<p class="eyebrow">DOCUMENT STORAGE FOR YOU AND YOUR AGENTS</p>
 
-# Your documents. Your system.
+# Your documents. Your agents. One system.
 
-Docbank gives you one authoritative place to file, find, version, verify, and
-automate the documents you depend on. The vault and its history live on your
-own machine rather than inside a provider account. Documents keep stable
-identities as you reorganize them, every stored byte can be checked, and
-incremental backups can be verified before you rely on them. Use it for records
-you keep for decades and for working documents that people and agents organize
-every day, from the CLI, through the authenticated HTTP API, or inside a Go
-application.
+Docbank gives you and your agents one authoritative place to file, find,
+organize, version, and verify the documents you depend on. You keep the
+authority: the vault and its history live on your own machine rather than
+inside a provider account. Stable identities let people and agents reorganize
+documents without losing track of them, every stored byte can be checked, and
+incremental backups can be verified before you rely on them. Work directly
+from the CLI, automate through the authenticated HTTP API, or embed Docbank in
+a Go application.
 
 <p class="hero-actions">
   <a class="md-button md-button--primary" href="setup/">Start your vault</a>
