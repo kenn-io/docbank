@@ -50,9 +50,8 @@ Four commitments:
   create, list, verify, and confined restore into a separate vault, so a
   backup is proven before it is trusted.
 - **Audited history.** Opt a directory into permanent, tamper-evident
-  history with `docbank audit enable` (newer than the v0.5.0 release; build
-  from source to use it today); every supported change is recorded and
-  `verify` independently replays it.
+  history with `docbank audit enable`; every supported change is recorded
+  and `verify` independently replays it.
 
 ## Implemented today
 
@@ -66,8 +65,6 @@ Four commitments:
   sticky retention, recorded supported mutations, status evidence, bounded
   per-node history, independent chain/protected-byte verification, exact-prefix
   checks against externally recorded evidence, and backup/restore fidelity
-  (newer than the v0.5.0 release; build from source until the next tagged
-  release ships)
 - FTS5 name search (document-body extraction and search are planned)
 - Mixed loose and packed content storage with explicit pack, GC, and repack
 - Whole-vault integrity verification
@@ -124,7 +121,7 @@ vault and starts its daemon:
 docbank add ~/Documents --dest /archive
 docbank tree /archive
 docbank search "tax return"
-docbank versions /archive/Documents/receipt.pdf
+docbank versions list /archive/Documents/receipt.pdf
 docbank refs <receipt-sha256>
 docbank tag create taxes
 docbank tag assign taxes /archive/Documents/receipt.pdf

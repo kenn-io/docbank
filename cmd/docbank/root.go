@@ -10,13 +10,22 @@ import (
 var rootCmd = &cobra.Command{
 	Use:           "docbank",
 	Short:         "Personal document archive with a virtual tree over content-addressed storage",
-	Version:       fmt.Sprintf("%s (%s)", version.Version, version.Commit),
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	// Cobra runs this only after flag parsing and positional validation, which
 	// lets the process boundary distinguish command syntax from RunE failures.
 	PersistentPreRun: func(_ *cobra.Command, _ []string) {
 		commandStarted = true
+	},
+}
+
+var programVersionCmd = &cobra.Command{
+	Use:   "version",
+	Short: "Print the installed Docbank version",
+	Args:  cobra.NoArgs,
+	Run: func(cmd *cobra.Command, _ []string) {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "docbank version %s (%s)\n",
+			version.Version, version.Commit)
 	},
 }
 
@@ -30,4 +39,5 @@ func Execute() error {
 func init() {
 	// Keep the root marker active if a child later adds its own persistent hook.
 	cobra.EnableTraverseRunHooks = true
+	rootCmd.AddCommand(programVersionCmd)
 }

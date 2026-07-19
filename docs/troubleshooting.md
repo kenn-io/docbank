@@ -163,6 +163,6 @@ log lines. Remove API keys, shutdown tokens, document contents, and private
 paths before sharing them.
 
 ```bash
-docbank --version
+docbank version
 docbank daemon status --json
 ```

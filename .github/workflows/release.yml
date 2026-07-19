@@ -70,7 +70,7 @@ jobs:
           LDFLAGS="-s -w -X go.kenn.io/docbank/internal/version.Version=${VERSION} -X go.kenn.io/docbank/internal/version.Commit=${COMMIT}"
           go build -tags fts5 -trimpath -buildvcs=false -ldflags "${LDFLAGS}" -o dist/docbank ./cmd/docbank
           file dist/docbank
-          SMOKE_OUT="$(dist/docbank --version 2>&1)"
+          SMOKE_OUT="$(dist/docbank version 2>&1)"
           echo "${SMOKE_OUT}"
           grep -Fq "docbank version ${VERSION} (${COMMIT})" <<<"${SMOKE_OUT}"
           cd dist
@@ -124,7 +124,7 @@ jobs:
           file dist/docbank
           otool -L dist/docbank
           if [[ "${GOARCH}" == "arm64" ]]; then
-            SMOKE_OUT="$(dist/docbank --version 2>&1)"
+            SMOKE_OUT="$(dist/docbank version 2>&1)"
             echo "${SMOKE_OUT}"
             grep -Fq "docbank version ${VERSION} (${COMMIT})" <<<"${SMOKE_OUT}"
           fi
@@ -203,7 +203,7 @@ jobs:
           COMMIT="$(printf '%s' "${GITHUB_SHA}" | cut -c1-8)"
           LDFLAGS="-s -w -X go.kenn.io/docbank/internal/version.Version=${VERSION} -X go.kenn.io/docbank/internal/version.Commit=${COMMIT}"
           go build -tags fts5 -trimpath -buildvcs=false -ldflags "${LDFLAGS}" -o dist/docbank.exe ./cmd/docbank
-          SMOKE_OUT="$(dist/docbank.exe --version 2>&1)"
+          SMOKE_OUT="$(dist/docbank.exe version 2>&1)"
           echo "${SMOKE_OUT}"
           grep -Fq "docbank version ${VERSION} (${COMMIT})" <<<"${SMOKE_OUT}"
 

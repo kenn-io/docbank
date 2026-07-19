@@ -20,7 +20,6 @@ var (
 	versionsOffset  int
 	versionsJSON    bool
 	versionJSON     bool
-	versionContent  bool
 	pruneVersionIDs []string
 	pruneKeepNewest int
 	pruneOlderThan  string
@@ -30,7 +29,16 @@ var (
 )
 
 var versionsCmd = &cobra.Command{
-	Use:   "versions <path>",
+	Use:   "versions",
+	Short: "Inspect and maintain immutable content versions",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		return cmd.Help()
+	},
+}
+
+var versionsListCmd = &cobra.Command{
+	Use:   "list <path>",
 	Short: "List a file's immutable content versions",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -78,32 +86,17 @@ var versionsCmd = &cobra.Command{
 	},
 }
 
-var versionCmd = &cobra.Command{
-	Use:   "version <version-id>",
-	Short: "Inspect or stream one immutable content version",
+var versionsShowCmd = &cobra.Command{
+	Use:   "show <version-id>",
+	Short: "Show one immutable content version",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if versionJSON && versionContent {
-			return usageError(errors.New("--json and --content cannot be combined"))
-		}
-		if !client.IsCanonicalUUIDv4(args[0]) {
-			return usageError(fmt.Errorf(
-				"version ID %q must be a canonical UUIDv4", args[0]))
+		if err := validateVersionID(args[0]); err != nil {
+			return err
 		}
 		c, err := client.Ensure(cmd.Context())
 		if err != nil {
 			return err
-		}
-		if versionContent {
-			stream, err := c.VersionContent(cmd.Context(), args[0])
-			if err != nil {
-				return err
-			}
-			defer func() { _ = stream.Close() }()
-			if _, err := stream.CopyVerified(cmd.OutOrStdout()); err != nil {
-				return fmt.Errorf("streaming content version %s: %w", args[0], err)
-			}
-			return nil
 		}
 		version, err := c.Version(cmd.Context(), args[0])
 		if err != nil {
@@ -127,6 +120,30 @@ var versionCmd = &cobra.Command{
 			_, _ = fmt.Fprintf(w, "Source version:\t%s\n", *version.SourceVersionID)
 		}
 		return w.Flush()
+	},
+}
+
+var versionsCatCmd = &cobra.Command{
+	Use:   "cat <version-id>",
+	Short: "Write one immutable content version to stdout",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := validateVersionID(args[0]); err != nil {
+			return err
+		}
+		c, err := client.Ensure(cmd.Context())
+		if err != nil {
+			return err
+		}
+		stream, err := c.VersionContent(cmd.Context(), args[0])
+		if err != nil {
+			return err
+		}
+		defer func() { _ = stream.Close() }()
+		if _, err := stream.CopyVerified(cmd.OutOrStdout()); err != nil {
+			return fmt.Errorf("streaming content version %s: %w", args[0], err)
+		}
+		return nil
 	},
 }
 
@@ -222,12 +239,18 @@ func writeVersionJSON(w io.Writer, value any) error {
 	return nil
 }
 
+func validateVersionID(id string) error {
+	if client.IsCanonicalUUIDv4(id) {
+		return nil
+	}
+	return usageError(fmt.Errorf("version ID %q must be a canonical UUIDv4", id))
+}
+
 func init() {
-	versionsCmd.Flags().IntVar(&versionsLimit, "limit", 100, "maximum versions to return (1-1000)")
-	versionsCmd.Flags().IntVar(&versionsOffset, "offset", 0, "number of newest versions to skip")
-	versionsCmd.Flags().BoolVar(&versionsJSON, "json", false, "emit machine-readable JSON")
-	versionCmd.Flags().BoolVar(&versionJSON, "json", false, "emit machine-readable JSON")
-	versionCmd.Flags().BoolVar(&versionContent, "content", false, "write this version's bytes to stdout")
+	versionsListCmd.Flags().IntVar(&versionsLimit, "limit", 100, "maximum versions to return (1-1000)")
+	versionsListCmd.Flags().IntVar(&versionsOffset, "offset", 0, "number of newest versions to skip")
+	versionsListCmd.Flags().BoolVar(&versionsJSON, "json", false, "emit machine-readable JSON")
+	versionsShowCmd.Flags().BoolVar(&versionJSON, "json", false, "emit machine-readable JSON")
 	versionsPruneCmd.Flags().StringArrayVar(&pruneVersionIDs, "version", nil,
 		"select one version UUID (repeatable; commas are literal)")
 	versionsPruneCmd.Flags().IntVar(&pruneKeepNewest, "keep-newest", 0,
@@ -239,6 +262,6 @@ func init() {
 	versionsPruneCmd.Flags().BoolVar(&pruneRun, "run", false,
 		"actually prune (default is dry-run)")
 	versionsPruneCmd.Flags().BoolVar(&pruneJSON, "json", false, "emit a machine-readable report")
-	versionsCmd.AddCommand(versionsPruneCmd)
-	rootCmd.AddCommand(versionsCmd, versionCmd)
+	versionsCmd.AddCommand(versionsListCmd, versionsShowCmd, versionsCatCmd, versionsPruneCmd)
+	rootCmd.AddCommand(versionsCmd)
 }

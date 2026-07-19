@@ -81,9 +81,9 @@ docbank cat /taxes/checklist.pdf > /tmp/checklist.pdf
 Every imported file also has a stable immutable content-version UUID:
 
 ```bash
-docbank versions /taxes/checklist.pdf
-docbank version <version-id> --json
-docbank version <version-id> --content > /tmp/checklist-version.pdf
+docbank versions list /taxes/checklist.pdf
+docbank versions show <version-id> --json
+docbank versions cat <version-id> > /tmp/checklist-version.pdf
 ```
 
 The version ID survives node renames and moves. Replace the current content
@@ -91,14 +91,14 @@ without changing the stable file node:
 
 ```bash
 docbank put ~/Documents/revised-checklist.pdf /taxes/checklist.pdf
-docbank versions /taxes/checklist.pdf
+docbank versions list /taxes/checklist.pdf
 ```
 
 `put` hashes the source before contacting the daemon, then inspects the target
 and uploads it, showing separate progress for both file passes. The upload
 requires that freshly observed target revision, so a concurrent change fails
 instead of being overwritten. The prior version remains available through
-`docbank version <old-version-id> --content`. Adopt it as current without
+`docbank versions cat <old-version-id>`. Adopt it as current without
 erasing the replacement:
 
 ```bash

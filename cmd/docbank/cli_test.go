@@ -102,6 +102,21 @@ func writeSourceFile(t *testing.T, name, content string) string {
 	return p
 }
 
+func TestVersionReportsInstalledProgram(t *testing.T) {
+	out, err := runCLI(t, "version")
+	require.NoError(t, err)
+	assert.Equal(t, "docbank version dev (unknown)\n", out)
+
+	_, err = runCLI(t, "--version")
+	require.ErrorContains(t, err, "unknown flag: --version")
+
+	_, err = runCLI(t, "version", "94ddbb2a-bf69-43d7-9236-c2ab9d27a79a")
+	require.ErrorContains(t, err, "unknown command")
+
+	_, err = runCLI(t, "versions", "/old-implicit-list")
+	require.ErrorContains(t, err, "unknown command")
+}
+
 func TestAddLsTreeCat(t *testing.T) {
 	_ = setupVaultHome(t)
 	src := writeSourceFile(t, "notes.txt", "hello vault")
@@ -123,21 +138,21 @@ func TestAddLsTreeCat(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "hello vault", out)
 
-	out, err = runCLI(t, "versions", "/inbox/notes.txt")
+	out, err = runCLI(t, "versions", "list", "/inbox/notes.txt")
 	require.NoError(t, err)
 	assert.Contains(t, out, "content_create")
 	versionID := regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}`).
 		FindString(out)
 	require.NotEmpty(t, versionID)
 
-	out, err = runCLI(t, "version", versionID, "--json")
+	out, err = runCLI(t, "versions", "show", versionID, "--json")
 	require.NoError(t, err)
 	var version api.ContentVersion
 	require.NoError(t, json.Unmarshal([]byte(out), &version))
 	assert.Equal(t, versionID, version.ID)
 	assert.Equal(t, "content_create", version.TransitionKind)
 
-	out, err = runCLI(t, "version", versionID, "--content")
+	out, err = runCLI(t, "versions", "cat", versionID)
 	require.NoError(t, err)
 	assert.Equal(t, "hello vault", out)
 }
@@ -271,7 +286,7 @@ func TestPutReplacesContentAndRetainsHistory(t *testing.T) {
 	_, err := runCLI(t, "add", initial, "--dest", "/inbox")
 	require.NoError(t, err)
 
-	out, err := runCLI(t, "versions", "/inbox/document.txt", "--json")
+	out, err := runCLI(t, "versions", "list", "/inbox/document.txt", "--json")
 	require.NoError(t, err)
 	var initialPage api.ContentVersionPage
 	require.NoError(t, json.Unmarshal([]byte(out), &initialPage))
@@ -289,10 +304,10 @@ func TestPutReplacesContentAndRetainsHistory(t *testing.T) {
 	out, err = runCLI(t, "cat", "/inbox/document.txt")
 	require.NoError(t, err)
 	assert.Equal(t, "replacement content", out)
-	out, err = runCLI(t, "version", initialVersion, "--content")
+	out, err = runCLI(t, "versions", "cat", initialVersion)
 	require.NoError(t, err)
 	assert.Equal(t, "initial content", out, "put must retain the prior immutable bytes")
-	out, err = runCLI(t, "versions", "/inbox/document.txt")
+	out, err = runCLI(t, "versions", "list", "/inbox/document.txt")
 	require.NoError(t, err)
 	assert.Contains(t, out, "content_replace")
 	assert.Contains(t, out, "content_create")
@@ -325,7 +340,7 @@ func TestPutReplacesContentAndRetainsHistory(t *testing.T) {
 	assert.Equal(t, initialVersion, reverted.SourceVersion.ID)
 	assert.Equal(t, "content_revert", reverted.Version.TransitionKind)
 	assert.Equal(t, int64(5), reverted.Node.Revision)
-	out, err = runCLI(t, "version", reverted.Version.ID)
+	out, err = runCLI(t, "versions", "show", reverted.Version.ID)
 	require.NoError(t, err)
 	assert.Contains(t, out, "Source version:  "+initialVersion)
 }
@@ -343,7 +358,7 @@ func TestVersionsPruneIsPreviewFirstAndKeepsCurrentContent(t *testing.T) {
 	_, err = runCLI(t, "put", third, "/inbox/document.txt", "--progress", "plain")
 	require.NoError(t, err)
 
-	out, err := runCLI(t, "versions", "/inbox/document.txt", "--json")
+	out, err := runCLI(t, "versions", "list", "/inbox/document.txt", "--json")
 	require.NoError(t, err)
 	var before api.ContentVersionPage
 	require.NoError(t, json.Unmarshal([]byte(out), &before))
@@ -360,7 +375,7 @@ func TestVersionsPruneIsPreviewFirstAndKeepsCurrentContent(t *testing.T) {
 	assert.Contains(t, out, "2 version(s) selected")
 	assert.Contains(t, out, "dry run")
 	assert.Contains(t, out, "pending gc")
-	out, err = runCLI(t, "versions", "/inbox/document.txt", "--json")
+	out, err = runCLI(t, "versions", "list", "/inbox/document.txt", "--json")
 	require.NoError(t, err)
 	var afterPreview api.ContentVersionPage
 	require.NoError(t, json.Unmarshal([]byte(out), &afterPreview))
@@ -370,7 +385,7 @@ func TestVersionsPruneIsPreviewFirstAndKeepsCurrentContent(t *testing.T) {
 		"--keep-newest", "1", "--run")
 	require.NoError(t, err, out)
 	assert.Contains(t, out, "pruned 2 version(s)")
-	out, err = runCLI(t, "versions", "/inbox/document.txt", "--json")
+	out, err = runCLI(t, "versions", "list", "/inbox/document.txt", "--json")
 	require.NoError(t, err)
 	var afterRun api.ContentVersionPage
 	require.NoError(t, json.Unmarshal([]byte(out), &afterRun))
