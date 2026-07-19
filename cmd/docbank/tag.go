@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -242,6 +243,9 @@ var tagNodesCmd = &cobra.Command{
 func changeTagAssignmentCLI(
 	cmd *cobra.Command, selector, path string, assign, jsonOutput bool,
 ) error {
+	if !strings.HasPrefix(path, "/") {
+		return usageError(errors.New("tag assignment path must be absolute"))
+	}
 	c, err := client.Ensure(cmd.Context())
 	if err != nil {
 		return err

@@ -90,6 +90,19 @@ func TestRunProcessDistinguishesUsageAndMissingNodes(t *testing.T) {
 	assert.Equal(t, exitUsage, code)
 	assert.Contains(t, stderr.String(), "--node-id must be positive")
 
+	code = run("tag", "assign", "work", "relative/path")
+	assert.Equal(t, exitUsage, code)
+	assert.Contains(t, stderr.String(), "tag assignment path must be absolute")
+
+	code = run("revert", "/document", "not-a-version-id")
+	assert.Equal(t, exitUsage, code)
+	assert.Contains(t, stderr.String(), "must be a canonical UUIDv4")
+
+	invalidSource := string([]byte{'b', 'a', 'd', 0xff})
+	code = run("put", invalidSource, "/document")
+	assert.Equal(t, exitUsage, code)
+	assert.Contains(t, stderr.String(), "is not valid UTF-8")
+
 	code = run("--not-a-real-flag")
 	require.Equal(t, exitUsage, code)
 	assert.Contains(t, stderr.String(), "unknown flag")

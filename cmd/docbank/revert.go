@@ -16,6 +16,10 @@ var revertCmd = &cobra.Command{
 	Short: "Create a new current version from an immutable prior version",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if !client.IsCanonicalUUIDv4(args[1]) {
+			return usageError(fmt.Errorf(
+				"reversion source %q must be a canonical UUIDv4", args[1]))
+		}
 		c, err := client.Ensure(cmd.Context())
 		if err != nil {
 			return err

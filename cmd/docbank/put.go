@@ -37,6 +37,9 @@ var putCmd = &cobra.Command{
 	Short: "Replace a file's content while retaining its immutable history",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := validatePutSourcePath(args[0]); err != nil {
+			return usageError(err)
+		}
 		source, sourcePath, size, err := openPutSource(args[0])
 		if err != nil {
 			return err
@@ -116,9 +119,8 @@ var putCmd = &cobra.Command{
 }
 
 func openPutSource(raw string) (*os.File, string, int64, error) {
-	if !utf8.ValidString(raw) {
-		return nil, "", 0, fmt.Errorf("replacement source path %s is not valid UTF-8",
-			strconv.QuoteToASCII(raw))
+	if err := validatePutSourcePath(raw); err != nil {
+		return nil, "", 0, err
 	}
 	path, err := filepath.Abs(raw)
 	if err != nil {
@@ -143,6 +145,14 @@ func openPutSource(raw string) (*os.File, string, int64, error) {
 			path, info.Size(), blob.MaxIngestBytes)
 	}
 	return file, path, info.Size(), nil
+}
+
+func validatePutSourcePath(raw string) error {
+	if utf8.ValidString(raw) {
+		return nil
+	}
+	return fmt.Errorf("replacement source path %s is not valid UTF-8",
+		strconv.QuoteToASCII(raw))
 }
 
 func putSourceMIME(source io.ReadSeeker, path, override string) (string, error) {
