@@ -7,14 +7,15 @@
 > **Alpha software.** Docbank is pre-1.0. Keep independent copies of
 > irreplaceable material and verify backups before relying on them.
 
-**Keep the documents. Change the filing system.**
+**Your documents. Your agents. One system.**
 
-Docbank is a local-first archive for the PDFs, scans, notes, spreadsheets,
-and records you keep for life. Content is immutable and deduplicated under
-one logical SHA-256 identity, stored loose or in managed packs; above it, a
-virtual tree in SQLite supplies names and paths that can be reorganized
-without rewriting content. Documentation lives at
-[docbank.ai](https://docbank.ai).
+Docbank gives you and your agents one authoritative place to file, find,
+organize, version, and verify the PDFs, scans, notes, spreadsheets, and records
+you depend on. You keep the authority: the vault and its history live on your
+own machine rather than inside a provider account. Content is immutable and
+deduplicated under one logical SHA-256 identity, while stable document IDs and
+a virtual tree let people and agents reorganize the archive without losing
+track of anything. Documentation lives at [docbank.ai](https://docbank.ai).
 
 ## Why docbank?
 
