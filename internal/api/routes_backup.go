@@ -232,7 +232,8 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 	type restoreOutput struct{ Body BackupRestoreReport }
 	huma.Register(api, huma.Operation{
 		OperationID: "restoreBackupSnapshot", Method: http.MethodPost, Path: "/api/v1/backup/restore",
-		Summary: "Restore and prove a snapshot in a separate vault directory",
+		Summary:         "Restore and prove a snapshot in a separate vault directory",
+		BodyReadTimeout: -1,
 	}, func(ctx context.Context, in *struct {
 		Body backupRestoreRequest
 	}) (*restoreOutput, error) {
@@ -254,8 +255,9 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 		reflect.TypeFor[BackupRestoreEvent](), true, "BackupRestoreEvent")
 	huma.Register(api, huma.Operation{
 		OperationID: "streamBackupSnapshotRestore", Method: http.MethodPost,
-		Path:    "/api/v1/backup/restore/stream",
-		Summary: "Restore and prove a snapshot while streaming structured progress",
+		Path:            "/api/v1/backup/restore/stream",
+		Summary:         "Restore and prove a snapshot while streaming structured progress",
+		BodyReadTimeout: -1,
 		Description: "Returns newline-delimited JSON. Progress events precede exactly one terminal " +
 			"result or error event; an HTTP 200 only means the stream started.",
 		Responses: map[string]*huma.Response{
