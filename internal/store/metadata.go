@@ -582,6 +582,9 @@ func (s *Store) ImportMetadata(ctx context.Context, r io.Reader) error {
 		if err := validateMetadataState(ctx, tx, header.NodeSequence); err != nil {
 			return err
 		}
+		if err := rebuildImportedTextExtractionStateTx(ctx, tx); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE sqlite_sequence SET seq = ? WHERE name = 'nodes'`, header.NodeSequence); err != nil {
 			return fmt.Errorf("restoring node ID high-water mark: %w", err)
 		}
@@ -714,10 +717,6 @@ func importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw json
 		if err := validateContentVersionRecord(v); err != nil {
 			return err
 		}
-		mimeType := ""
-		if v.MIMEType != nil {
-			mimeType = *v.MIMEType
-		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO content_versions(
 			version_id,node_id,blob_hash,size,mime_type,recorded_at,node_revision,
 			introduced_operation_id,transition_kind,source_version_id
@@ -727,7 +726,7 @@ func importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw json
 		if err != nil {
 			return err
 		}
-		return queueTextExtractionTx(tx, v.VersionID, v.BlobHash, mimeType)
+		return nil
 	case metadataIngestType:
 		var v metadataIngest
 		if err := decodeMetadataRecord(raw, &v); err != nil {
@@ -804,9 +803,7 @@ func importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw json
 		if err := replaceContentFTSTx(ctx, tx, v.BlobHash, v.Extractor, text); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx,
-			`DELETE FROM text_extraction_queue WHERE blob_hash = ?`, v.BlobHash)
-		return err
+		return nil
 	case metadataAuditAuthorityType:
 		var v metadataAuditAuthority
 		if err := decodeMetadataRecord(raw, &v); err != nil {

@@ -76,6 +76,70 @@ func queueTextExtractionTx(tx *sql.Tx, versionID, blobHash, mimeType string) err
 	return enqueueTextBlobTx(tx, blobHash)
 }
 
+// rebuildImportedTextExtractionStateTx reconstructs the derived search
+// eligibility and work queue after every authoritative metadata record has
+// been imported. Historical versions remain available for explicit version
+// reads, but only selected heads can appear in ordinary search and therefore
+// only selected heads need extraction work.
+func rebuildImportedTextExtractionStateTx(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM text_searchable_versions`); err != nil {
+		return fmt.Errorf("clearing imported text-search eligibility: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM text_extraction_queue`); err != nil {
+		return fmt.Errorf("clearing imported text-extraction queue: %w", err)
+	}
+	type seed struct {
+		versionID, hash, mimeType string
+		hasExtraction             bool
+	}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT v.version_id, v.blob_hash, COALESCE(v.mime_type, ''),
+		       EXISTS(SELECT 1 FROM extracted_text e WHERE e.blob_hash=v.blob_hash)
+		FROM content_versions v
+		JOIN nodes n ON n.current_version_id=v.version_id
+		ORDER BY v.version_id`)
+	if err != nil {
+		return fmt.Errorf("discovering imported text extraction work: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var seeds []seed
+	for rows.Next() {
+		var item seed
+		if err := rows.Scan(
+			&item.versionID, &item.hash, &item.mimeType, &item.hasExtraction,
+		); err != nil {
+			return fmt.Errorf("discovering imported text extraction work: scanning row: %w", err)
+		}
+		if supportsTextExtractionMIME(item.mimeType) {
+			seeds = append(seeds, item)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("discovering imported text extraction work: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("discovering imported text extraction work: %w", err)
+	}
+
+	queued := make(map[string]struct{})
+	for _, item := range seeds {
+		if _, err := markTextSearchableVersionTx(tx, item.versionID, item.mimeType); err != nil {
+			return err
+		}
+		if item.hasExtraction {
+			continue
+		}
+		if _, exists := queued[item.hash]; exists {
+			continue
+		}
+		queued[item.hash] = struct{}{}
+		if err := enqueueTextBlobTx(tx, item.hash); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // SeedTextExtractionQueue discovers supported selected content once at daemon
 // startup. Discovery and projection writes share one storage transaction, so a
 // concurrent deletion cannot invalidate a selected version between those steps.

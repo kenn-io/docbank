@@ -153,6 +153,44 @@ func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 	assert.Greater(t, created.ID, int64(100), "AUTOINCREMENT must not reuse any historically allocated ID")
 }
 
+func TestMetadataImportQueuesOnlyCurrentTextVersions(t *testing.T) {
+	ctx := t.Context()
+	source := newTestStore(t)
+	created, err := source.CreateFile(
+		ctx, source.RootID(), "notes.txt", fakeHash("71"), 4, "text/plain",
+	)
+	require.NoError(t, err)
+	current, _, err := source.ReplaceContent(
+		ctx, created.ID, created.Revision, fakeHash("72"), 5, "text/plain",
+	)
+	require.NoError(t, err)
+
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(ctx, &exported))
+	target := newTestStore(t)
+	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
+
+	pending, err := target.PendingTextExtractions(ctx, 10)
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	assert.Equal(t, current.BlobHash, pending[0].BlobHash)
+	assert.NotEqual(t, created.BlobHash, pending[0].BlobHash,
+		"retained historical versions must not be queued for ordinary search")
+
+	var searchable []string
+	rows, err := target.db.QueryContext(ctx,
+		`SELECT version_id FROM text_searchable_versions ORDER BY version_id`)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	for rows.Next() {
+		var versionID string
+		require.NoError(t, rows.Scan(&versionID))
+		searchable = append(searchable, versionID)
+	}
+	require.NoError(t, rows.Err())
+	assert.Equal(t, []string{current.CurrentVersionID}, searchable)
+}
+
 func TestImportMetadataRejectsInvalidProvenanceAuthorityAndRollsBack(t *testing.T) {
 	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
