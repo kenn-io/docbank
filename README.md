@@ -66,7 +66,6 @@ Four commitments:
   per-node history, independent chain/protected-byte verification, exact-prefix
   checks against externally recorded evidence, and backup/restore fidelity
 - FTS5 search over names and verified UTF-8 text/Markdown/JSON contents
-  (body search is available from source until the next tagged release)
 - Mixed loose and packed content storage with explicit pack, GC, and repack
 - Whole-vault integrity verification
 - Incremental backup repositories with create, list, verify, and confined restore
