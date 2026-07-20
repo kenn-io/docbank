@@ -38,6 +38,11 @@ Use paths when the coordinate itself is your intent, and `id:N` when you mean
 the object regardless of its current name. JSON uses numeric node IDs, and the
 [HTTP API](../architecture/http-api.md) is ID-first throughout.
 
+Live-tree commands such as `ls`, `tree`, `mv`, `rm`, `put`, `edit`, `revert`,
+version pruning, and tag assignment reject a trashed selector. Read-only
+content, version, and audit inspection remains available by stable ID while a
+node is in trash; use `restore id:N` before changing it again.
+
 ## Moving and renaming
 
 `docbank mv` follows POSIX `mv` intuition:

@@ -56,7 +56,7 @@ var versionsListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		node, err := selector.resolve(cmd.Context(), c)
+		node, err := selector.resolveIncludingTrash(cmd.Context(), c)
 		if err != nil {
 			return err
 		}

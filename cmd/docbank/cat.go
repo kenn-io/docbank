@@ -22,7 +22,7 @@ var catCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		n, err := selector.resolve(cmd.Context(), c)
+		n, err := selector.resolveIncludingTrash(cmd.Context(), c)
 		if err != nil {
 			return err
 		}

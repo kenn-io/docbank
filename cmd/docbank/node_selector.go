@@ -9,6 +9,7 @@ import (
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/store"
 )
 
 const nodeIDSelectorPrefix = "id:"
@@ -40,6 +41,19 @@ func parseNodeSelector(raw string) (nodeSelector, error) {
 }
 
 func (s nodeSelector) resolve(ctx context.Context, c *client.Client) (api.Node, error) {
+	n, err := s.resolveIncludingTrash(ctx, c)
+	if err != nil {
+		return api.Node{}, err
+	}
+	if n.TrashedAt != "" {
+		return api.Node{}, fmt.Errorf("resolving %q: node is trashed: %w", s.raw, store.ErrNotFound)
+	}
+	return n, nil
+}
+
+func (s nodeSelector) resolveIncludingTrash(
+	ctx context.Context, c *client.Client,
+) (api.Node, error) {
 	var (
 		n   api.Node
 		err error

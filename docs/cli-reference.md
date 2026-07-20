@@ -29,6 +29,10 @@ Machine-readable JSON continues to expose node IDs as numbers.
 The destination of `mv` remains an absolute path because it describes where
 the node should go. `restore` also accepts its older bare numeric form for
 compatibility, although new scripts should use the unambiguous `id:42` form.
+Commands that require a live tree entry reject trashed selectors. Read-only
+`cat`, `versions list`, audit status, and audit history can still inspect a
+trashed node by stable ID; `restore` is the mutation that returns it to the
+live tree.
 
 ## Process exit codes
 

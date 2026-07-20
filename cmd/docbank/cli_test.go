@@ -884,6 +884,50 @@ func TestRmRestoreRoundTrip(t *testing.T) {
 	assert.Contains(t, out, "a.txt")
 }
 
+func TestTrashedIDSelectorsRespectLiveCommandBoundary(t *testing.T) {
+	setupVaultHome(t)
+	src := writeSourceFile(t, "record.txt", "retained while trashed")
+	_, err := runCLI(t, "add", src, "--dest", "/archive")
+	require.NoError(t, err)
+	c, err := client.Ensure(t.Context())
+	require.NoError(t, err)
+	dir, err := c.Stat(t.Context(), "/archive")
+	require.NoError(t, err)
+	file, err := c.Stat(t.Context(), "/archive/record.txt")
+	require.NoError(t, err)
+	dirSelector := formatNodeSelector(dir.ID)
+	fileSelector := formatNodeSelector(file.ID)
+
+	_, err = runCLI(t, "rm", dirSelector)
+	require.NoError(t, err)
+
+	// Stable identity remains useful for read-only inspection in trash.
+	out, err := runCLI(t, "cat", fileSelector)
+	require.NoError(t, err, out)
+	assert.Equal(t, "retained while trashed", out)
+	out, err = runCLI(t, "versions", "list", fileSelector, "--json")
+	require.NoError(t, err, out)
+	var versions api.ContentVersionPage
+	require.NoError(t, json.Unmarshal([]byte(out), &versions))
+	assert.Equal(t, 1, versions.Total)
+
+	_, err = runCLI(t, "tag", "create", "review")
+	require.NoError(t, err)
+	for _, args := range [][]string{
+		{"ls", dirSelector},
+		{"tree", dirSelector},
+		{"mv", fileSelector, "/record.txt"},
+		{"rm", fileSelector},
+		{"edit", fileSelector, "--editor", "true"},
+		{"tag", "assign", "review", fileSelector},
+		{"versions", "prune", fileSelector, "--all-prior"},
+	} {
+		_, runErr := runCLI(t, args...)
+		require.ErrorContains(t, runErr, "node is trashed", args)
+		assert.Equal(t, exitNotFound, commandExitCode(runErr, true), args)
+	}
+}
+
 func TestTreeMutationJSONReceipts(t *testing.T) {
 	setupVaultHome(t)
 	src := writeSourceFile(t, "a.txt", "alpha")
