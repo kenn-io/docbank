@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,6 +61,40 @@ type BackupConfig struct {
 	ZstdLevel int    `toml:"zstd_level"`
 }
 
+// EmbeddingsConfig configures the optional OpenAI-compatible encoder used to
+// build Docbank's local, derived semantic-search index. An empty BaseURL and
+// Model leave embeddings disabled and ordinary lexical search unchanged.
+type EmbeddingsConfig struct {
+	BaseURL         string   `toml:"base_url"`
+	Model           string   `toml:"model"`
+	APIKey          string   `toml:"api_key"`
+	APIKeyEnv       string   `toml:"api_key_env"`
+	FingerprintSalt string   `toml:"fingerprint_salt"`
+	Dimensions      int      `toml:"dimensions"`
+	BatchSize       int      `toml:"batch_size"`
+	Concurrency     int      `toml:"concurrency"`
+	Timeout         Duration `toml:"timeout"`
+}
+
+// Enabled reports whether an embeddings endpoint is configured. Validate
+// rejects partial configuration, so callers never observe a half-enabled
+// section after successful config loading.
+func (e EmbeddingsConfig) Enabled() bool {
+	return strings.TrimSpace(e.BaseURL) != "" && strings.TrimSpace(e.Model) != ""
+}
+
+// ResolvedAPIKey returns the inline key or the value of APIKeyEnv. Environment
+// indirection keeps bearer credentials out of config.toml when desired.
+func (e EmbeddingsConfig) ResolvedAPIKey() string {
+	if e.APIKey != "" {
+		return e.APIKey
+	}
+	if e.APIKeyEnv != "" {
+		return os.Getenv(strings.TrimSpace(e.APIKeyEnv))
+	}
+	return ""
+}
+
 // WatchConfig describes one daemon-owned local inbox. Name and each relative
 // source path form the stable, portable source identity; Source itself is a
 // machine-local location and is intentionally not archive metadata.
@@ -74,10 +109,11 @@ type WatchConfig struct {
 
 // Config is the full contents of config.toml.
 type Config struct {
-	Server  ServerConfig  `toml:"server"`
-	Web     WebConfig     `toml:"web"`
-	Backup  BackupConfig  `toml:"backup"`
-	Watches []WatchConfig `toml:"watch"`
+	Server     ServerConfig     `toml:"server"`
+	Web        WebConfig        `toml:"web"`
+	Backup     BackupConfig     `toml:"backup"`
+	Embeddings EmbeddingsConfig `toml:"embeddings"`
+	Watches    []WatchConfig    `toml:"watch"`
 }
 
 // Default returns the configuration used when config.toml is absent.
@@ -88,6 +124,10 @@ func Default() Config {
 			IdleTimeout: Duration(30 * time.Minute),
 		},
 		Web: WebConfig{Enabled: true},
+		Embeddings: EmbeddingsConfig{
+			Dimensions: 768, BatchSize: 32, Concurrency: 2,
+			Timeout: Duration(30 * time.Second),
+		},
 	}
 }
 
@@ -220,6 +260,9 @@ func (c Config) Validate() error {
 			return err
 		}
 	}
+	if err := validateEmbeddings(c.Embeddings); err != nil {
+		return err
+	}
 	host := c.Server.BindAddr
 	if isLoopbackHost(host) {
 		return nil
@@ -229,6 +272,47 @@ func (c Config) Validate() error {
 	}
 	return fmt.Errorf("[server] bind_addr %q: the API is plain HTTP, so binds are "+
 		"loopback-only; reach a remote docbank through an SSH tunnel or VPN", host)
+}
+
+func validateEmbeddings(e EmbeddingsConfig) error {
+	hasBase := strings.TrimSpace(e.BaseURL) != ""
+	hasModel := strings.TrimSpace(e.Model) != ""
+	if hasBase != hasModel {
+		return errors.New("[embeddings] base_url and model must both be set or both omitted")
+	}
+	if e.APIKey != "" && strings.TrimSpace(e.APIKeyEnv) != "" {
+		return errors.New("[embeddings] api_key and api_key_env are mutually exclusive")
+	}
+	if !hasBase {
+		if e.APIKey != "" || strings.TrimSpace(e.APIKeyEnv) != "" ||
+			strings.TrimSpace(e.FingerprintSalt) != "" {
+			return errors.New("[embeddings] credentials and fingerprint_salt require base_url and model")
+		}
+		return nil
+	}
+	if e.Dimensions < 1 || e.Dimensions > 8192 {
+		return errors.New("[embeddings] dimensions must be between 1 and 8192")
+	}
+	if e.BatchSize < 1 || e.BatchSize > 1000 {
+		return errors.New("[embeddings] batch_size must be between 1 and 1000")
+	}
+	if e.Concurrency < 1 || e.Concurrency > 64 {
+		return errors.New("[embeddings] concurrency must be between 1 and 64")
+	}
+	if e.Timeout.Std() <= 0 {
+		return errors.New("[embeddings] timeout must be positive")
+	}
+	target, err := url.Parse(e.BaseURL)
+	if err != nil || target.Host == "" || (target.Scheme != "http" && target.Scheme != "https") {
+		return fmt.Errorf("[embeddings] base_url %q must be an absolute HTTP(S) URL", e.BaseURL)
+	}
+	if target.User != nil || target.RawQuery != "" || target.Fragment != "" {
+		return errors.New("[embeddings] base_url must not contain credentials, a query, or a fragment")
+	}
+	if target.Scheme == "http" && !isLoopbackHost(target.Hostname()) {
+		return errors.New("[embeddings] plaintext HTTP is allowed only for a loopback endpoint")
+	}
+	return nil
 }
 
 func validateWatch(watch WatchConfig) error {

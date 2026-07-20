@@ -42,6 +42,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `POST /audit/verify` | independently replay audit authority, optionally prove recorded evidence is an exact prefix, and re-hash every protected blob | Implemented |
 | `POST /nodes/{id}/verify` | re-hash one file, bound to an inspected node revision | Implemented |
 | `GET /search?q=&limit=` | bounded name and extracted-content search (FTS5), with match source and explicit `truncated` status | Implemented |
+| `GET /embeddings` · `POST /embeddings/build/stream` | inspect local generations / mirror verified current text and build one generation with NDJSON progress | Implemented |
 | `POST /nodes` | create a directory (`kind: "dir"`) | Implemented |
 | `POST /ingest` · `POST /ingest/stream` · `POST /ingest/preflight` | import with JSON or streamed progress / inventory server-side paths — see [addendum](#addendum-post-ingest-post-ingeststream-and-post-ingestpreflight) | Implemented |
 | `POST /uploads?parent_id=&name=` | stream one digest-checked remote file — see [addendum](#addendum-post-uploads) | Implemented |

@@ -7,7 +7,7 @@ description: Vault location, data layout, config.toml, and environment variables
 
 The only required knob is where the vault lives. `config.toml` is optional and
 controls the daemon's listen address, auth, idle behavior, default backup
-repository, and optional watched inboxes. The vault works without the file;
+repository, optional embeddings endpoint, and watched inboxes. The vault works without the file;
 backup commands require either a configured repository or their explicit
 `--repo` flag.
 
@@ -25,6 +25,7 @@ The directory layout is created on first use:
 ```
 ~/.docbank/
 ├── docbank.db           # SQLite: virtual tree, metadata, FTS index
+├── vectors.db           # optional derived embedding index; rebuildable
 ├── blobs/
 │   ├── <aa>/<sha256>    # content-addressed document bytes
 │   └── tmp/             # staging for in-flight writes
@@ -35,6 +36,9 @@ The directory layout is created on first use:
 ```
 
 `docbank.db` and `blobs/` together are the archive; back up both.
+`vectors.db` is a local derived index built from verified current text. It is
+not archive authority, is not included in Docbank snapshots, and may be deleted
+and rebuilt without losing documents or metadata.
 `config.toml` is configuration, not archive data — optional, but back it
 up if you've customized it (it can hold an `api_key`). `vault.lock` and
 `daemon.<pid>.json` are coordination/runtime state, safe to
@@ -85,6 +89,18 @@ enabled = true
 repo = ""           # no implicit repository; set a path or pass --repo
 zstd_level = 0      # 0 = Kit default; otherwise 1-19
 
+# Optional OpenAI-compatible embedding endpoint. When enabled, document text
+# is sent to this endpoint only when `docbank embeddings build` is requested.
+[embeddings]
+base_url = "http://127.0.0.1:11434/v1"
+model = "your-embedding-model"
+api_key_env = "DOCBANK_EMBEDDINGS_API_KEY"
+dimensions = 768
+batch_size = 32
+concurrency = 2
+timeout = "30s"
+# fingerprint_salt = "provider-model-revision"
+
 [[watch]]
 name = "agent-sessions"
 source = "~/agent-sessions"
@@ -119,6 +135,39 @@ exclude = [".DS_Store", "cache/"]
   Keep the repository outside the live vault in normal deployments.
 - **`[backup] zstd_level`** — repository compression level. `0` uses Kit's
   default; explicit values are limited to `1` through `19`.
+
+### Embeddings
+
+The optional `[embeddings]` section enables `docbank embeddings build`. The
+daemon sends the verified extracted text of current, live, supported documents
+to the configured OpenAI-compatible `POST /embeddings` endpoint, then stores
+normalized vectors in the local `vectors.db` sidecar. It never sends original
+binary blobs, historical versions, trashed documents, paths, tags, provenance,
+or audited-history records.
+
+`base_url` and `model` must be set together. Plain HTTP is accepted only for a
+loopback endpoint; remote endpoints require HTTPS. Set either `api_key` or
+`api_key_env`, not both. Environment indirection is preferable because it keeps
+the bearer credential out of `config.toml`. If `api_key_env` names an unset or
+empty variable, daemon startup fails rather than silently making unauthenticated
+requests.
+
+`dimensions` must exactly match the endpoint's vectors. `batch_size` controls
+the number of text chunks per request, while `concurrency` bounds parallel
+encoding work. `fingerprint_salt` distinguishes changed model weights served
+under the same model name; change it when a provider changes that underlying
+vector space without changing `model`.
+
+Configuration alone makes no external request. Build and inspect the derived
+index explicitly:
+
+```bash
+docbank embeddings build
+docbank embeddings list
+```
+
+See [Embedding Index](usage/embeddings.md) for the exact source and lifecycle
+contract.
 
 ### Watched inboxes
 

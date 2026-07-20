@@ -18,6 +18,7 @@ import (
 	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/vector"
 	"go.kenn.io/docbank/internal/version"
 )
 
@@ -36,6 +37,7 @@ type Deps struct {
 	Tracker       *ActivityTracker // nil → no idle tracking
 	Jobs          *jobs.Supervisor // nil → no registered background jobs
 	Gate          *OperationGate   // nil → a server-private gate
+	Embeddings    *vector.Service  // nil → embeddings are not configured
 }
 
 // Server is docbank's HTTP API: a huma-described /api/v1 surface plus a
@@ -94,6 +96,7 @@ func NewServer(d Deps) *Server {
 	registerOpsRoutes(humaAPI, d, g)    // Task 7
 	registerBackupRoutes(humaAPI, d, g)
 	registerJobRoutes(humaAPI, d)
+	registerEmbeddingRoutes(humaAPI, d)
 	registerUploadRoute(mux, humaAPI, d, g)
 	registerContentWriteRoute(mux, humaAPI, d, g)
 	registerContentRevertRoute(humaAPI, d, g)

@@ -97,10 +97,11 @@ func rawPathParent(path string) (string, string) {
 	return volume + parentRest, component
 }
 
-func (l Layout) DBPath() string     { return filepath.Join(l.Root, "docbank.db") }
-func (l Layout) BlobsDir() string   { return filepath.Join(l.Root, "blobs") }
-func (l Layout) BlobTmpDir() string { return filepath.Join(l.Root, "blobs", "tmp") }
-func (l Layout) LogsDir() string    { return filepath.Join(l.Root, "logs") }
+func (l Layout) DBPath() string        { return filepath.Join(l.Root, "docbank.db") }
+func (l Layout) VectorsDBPath() string { return filepath.Join(l.Root, "vectors.db") }
+func (l Layout) BlobsDir() string      { return filepath.Join(l.Root, "blobs") }
+func (l Layout) BlobTmpDir() string    { return filepath.Join(l.Root, "blobs", "tmp") }
+func (l Layout) LogsDir() string       { return filepath.Join(l.Root, "logs") }
 
 // Ensure creates the directory layout if missing and enforces the privacy
 // the design documents rather than assuming it: Unix uses 0700 directories
@@ -125,4 +126,20 @@ func (l Layout) Ensure() error {
 		return err
 	}
 	return secureOptionalConfig(filepath.Join(l.Root, "config.toml"))
+}
+
+// EnsureVectorsDB creates the optional derived vector sidecar with the same
+// owner-private boundary as the authoritative database. The daemon calls it
+// only when embeddings are configured, so lexical-only vaults never acquire
+// an unused sidecar.
+func (l Layout) EnsureVectorsDB() error {
+	db, err := os.OpenFile(l.VectorsDBPath(), os.O_CREATE|os.O_RDONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("creating %s: %w", l.VectorsDBPath(), err)
+	}
+	closeErr := db.Close()
+	if closeErr != nil {
+		return fmt.Errorf("closing %s: %w", l.VectorsDBPath(), closeErr)
+	}
+	return enforceMode(l.VectorsDBPath(), 0o600)
 }

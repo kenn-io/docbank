@@ -11,7 +11,7 @@ stderr and produce a non-zero exit code. Virtual paths are absolute,
 `/`-separated, and case-sensitive.
 
 Every data command below (`add`, `ls`, `tree`, `cat`, `put`, `edit`, `versions`, `version`, `refs`, `revert`, `tag`, `audit`, `mv`, `rm`,
-`restore`, `search`, `trash`, `gc`, `verify`, `storage`, `backup`, `jobs`) talks to the `docbank`
+`restore`, `search`, `embeddings`, `trash`, `gc`, `verify`, `storage`, `backup`, `jobs`) talks to the `docbank`
 daemon over its HTTP API rather than opening the vault itself; if none
 is running, the command auto-starts one in the background. `docbank
 daemon status` and `docbank daemon stop` never auto-start. See
@@ -534,6 +534,31 @@ an explicit `truncated` boolean. An empty result uses `"hits": []`.
 The daemon indexes current UTF-8 `text/*`, JSON, and JSONL blobs up to 16 MiB
 after a terminally verified read. PDF, Office, and OCR extraction are not yet
 available. See [Searching](usage/searching.md).
+
+## docbank embeddings
+
+```text
+docbank embeddings build [--progress auto|bar|plain] [--json]
+docbank embeddings list [--json]
+```
+
+Builds and inspects the optional local vector sidecar. `build` mirrors current,
+live, successfully extracted text, fills the generation selected by
+`[embeddings]` configuration, and activates it only after complete mirror
+coverage. It does not perform or wait for text extraction. If extraction is
+still running, inspect `docbank jobs` and rerun the resumable build later.
+
+Human mode reports progress by unique content digest. Byte-identical documents
+are encoded once. `--progress plain` selects durable
+progress lines; `--json` suppresses progress and emits the terminal report.
+`list` reports each local generation's state, model, dimensions, and embedded,
+skipped, and pending document counts. An unconfigured list succeeds and says
+that lexical search remains available; an unconfigured build returns the
+structured `embeddings_unconfigured` error.
+
+The configured endpoint receives extracted document text. The sidecar is
+derived, excluded from backup, and safe to rebuild. See
+[Embedding Index](usage/embeddings.md) and [Configuration](configuration.md#embeddings).
 
 ## docbank trash
 

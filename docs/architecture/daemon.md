@@ -6,7 +6,7 @@ description: docbank daemon run — the single process that owns the vault, and 
 # Daemon and process model
 
 `docbank daemon run` is the one process that opens the vault. Every data
-command — `add`, `ls`, `tree`, `cat`, `mv`, `rm`, `restore`, `search`,
+command — `add`, `ls`, `tree`, `cat`, `mv`, `rm`, `restore`, `search`, `embeddings`,
 `trash list`/`empty`, `gc`, `verify` — is an HTTP client of it, over the
 [HTTP API](http-api.md). `docbank openapi` is the one exception:
 it renders the API contract offline, with routes registered but never

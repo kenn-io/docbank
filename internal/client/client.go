@@ -2197,6 +2197,161 @@ func (c *Client) Jobs(ctx context.Context) ([]api.Job, error) {
 	return out.Items, err
 }
 
+// EmbeddingGenerations reports whether embeddings are configured and lists
+// every locally retained generation with current mirror coverage.
+func (c *Client) EmbeddingGenerations(
+	ctx context.Context,
+) (api.EmbeddingGenerationList, error) {
+	var out api.EmbeddingGenerationList
+	if err := c.do(ctx, http.MethodGet, "/api/v1/embeddings", nil, nil, &out); err != nil {
+		return out, err
+	}
+	if err := validateEmbeddingGenerationList(out); err != nil {
+		return api.EmbeddingGenerationList{}, err
+	}
+	return out, nil
+}
+
+// BuildEmbeddings mirrors current verified extracted text and fills the configured
+// generation while delivering structured unique-content progress.
+func (c *Client) BuildEmbeddings(
+	ctx context.Context, progress func(api.EmbeddingBuildProgress),
+) (api.EmbeddingBuildResult, error) {
+	const path = "/api/v1/embeddings/build/stream"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+path,
+		bytes.NewReader([]byte("{}")))
+	if err != nil {
+		return api.EmbeddingBuildResult{}, fmt.Errorf("building embeddings stream request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/x-ndjson")
+	if c.key != "" {
+		req.Header.Set("X-Api-Key", c.key)
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return api.EmbeddingBuildResult{}, fmt.Errorf("calling daemon (POST %s): %w", path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return api.EmbeddingBuildResult{}, decodeError(resp)
+	}
+
+	decoder := json.NewDecoder(resp.Body)
+	var result *api.EmbeddingBuildResult
+	for {
+		var event api.EmbeddingBuildEvent
+		if err := decoder.Decode(&event); err != nil {
+			if errors.Is(err, io.EOF) {
+				if result == nil {
+					return api.EmbeddingBuildResult{}, errors.New(
+						"embeddings progress stream ended without a result")
+				}
+				return *result, nil
+			}
+			return api.EmbeddingBuildResult{}, fmt.Errorf("decoding embeddings progress: %w", err)
+		}
+		if result != nil {
+			return api.EmbeddingBuildResult{}, errors.New(
+				"embeddings progress stream continued after its result")
+		}
+		switch event.Type {
+		case "progress":
+			if event.Progress == nil || event.Result != nil || event.Error != nil {
+				return api.EmbeddingBuildResult{}, errors.New(
+					"embeddings returned malformed progress event")
+			}
+			if err := validateEmbeddingBuildProgress(*event.Progress); err != nil {
+				return api.EmbeddingBuildResult{}, err
+			}
+			if progress != nil {
+				progress(*event.Progress)
+			}
+		case "result":
+			if event.Result == nil || event.Progress != nil || event.Error != nil {
+				return api.EmbeddingBuildResult{}, errors.New(
+					"embeddings returned malformed result event")
+			}
+			completed := *event.Result
+			if err := validateEmbeddingBuildResult(completed); err != nil {
+				return api.EmbeddingBuildResult{}, err
+			}
+			result = &completed
+		case "error":
+			if event.Error == nil || event.Progress != nil || event.Result != nil {
+				return api.EmbeddingBuildResult{}, errors.New(
+					"embeddings returned malformed error event")
+			}
+			return api.EmbeddingBuildResult{}, apiProblemError(*event.Error)
+		default:
+			return api.EmbeddingBuildResult{}, fmt.Errorf(
+				"embeddings returned unknown progress event type %q", event.Type)
+		}
+	}
+}
+
+func validateEmbeddingGenerationList(report api.EmbeddingGenerationList) error {
+	if !report.Configured && len(report.Items) != 0 {
+		return errors.New("embeddings response lists generations while unconfigured")
+	}
+	active := 0
+	seen := make(map[string]struct{}, len(report.Items))
+	for _, item := range report.Items {
+		if !validGenerationFingerprint(item.Fingerprint) || strings.TrimSpace(item.Model) == "" ||
+			item.Dimensions < 1 || item.Embedded < 0 || item.Skipped < 0 || item.Pending < 0 {
+			return errors.New("embeddings response contains an invalid generation")
+		}
+		if _, duplicate := seen[item.Fingerprint]; duplicate {
+			return errors.New("embeddings response contains a duplicate generation")
+		}
+		seen[item.Fingerprint] = struct{}{}
+		switch item.State {
+		case "building", "retired":
+		case "active":
+			active++
+		default:
+			return errors.New("embeddings response contains an invalid generation state")
+		}
+	}
+	if active > 1 {
+		return errors.New("embeddings response contains multiple active generations")
+	}
+	return nil
+}
+
+func validateEmbeddingBuildProgress(progress api.EmbeddingBuildProgress) error {
+	if progress.Done < 0 || progress.Total < 0 || progress.Done > progress.Total {
+		return errors.New("embeddings response contains invalid progress counts")
+	}
+	switch progress.Phase {
+	case "scanning":
+		if progress.Done != 0 || progress.Total != 0 {
+			return errors.New("embeddings response contains invalid scanning progress")
+		}
+	case "embedding":
+	default:
+		return errors.New("embeddings response contains an invalid progress phase")
+	}
+	return nil
+}
+
+func validateEmbeddingBuildResult(result api.EmbeddingBuildResult) error {
+	if !validGenerationFingerprint(result.Fingerprint) || strings.TrimSpace(result.Model) == "" ||
+		result.Dimensions < 1 || result.Mirrored < 0 || result.Removed < 0 ||
+		result.Embedded < 0 || result.Chunks < 0 || result.Skipped < 0 || result.Stale < 0 {
+		return errors.New("embeddings response contains an invalid build result")
+	}
+	return nil
+}
+
+func validGenerationFingerprint(value string) bool {
+	if len(value) != 16 {
+		return false
+	}
+	decoded, err := hex.DecodeString(value)
+	return err == nil && hex.EncodeToString(decoded) == value
+}
+
 type BackupVerifyOptions struct {
 	Repo        string
 	SnapshotID  string

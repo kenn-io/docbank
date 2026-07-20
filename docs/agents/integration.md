@@ -158,6 +158,15 @@ curl --fail-with-body --get \
   "$DOCBANK_URL/api/v1/search"
 ```
 
+When the daemon has an embeddings endpoint configured, an agent can inspect
+local generation coverage with `GET /api/v1/embeddings` and explicitly start a
+resumable build with `POST /api/v1/embeddings/build/stream`. The latter is an
+NDJSON stream: progress events are provisional, and exactly one terminal
+`result` or `error` decides the outcome. The configured external endpoint
+receives verified current extracted text, so this action requires the same
+deliberate data-disclosure decision as the human `docbank embeddings build`
+command. Semantic query is not yet part of the search API.
+
 Retrieve file bytes by ID, not path:
 
 ```bash

@@ -20,6 +20,11 @@ func TestLoadMissingFileReturnsDefaults(t *testing.T) {
 	assert.True(t, c.Web.Enabled)
 	assert.Empty(t, c.Backup.Repo)
 	assert.Zero(t, c.Backup.ZstdLevel)
+	assert.False(t, c.Embeddings.Enabled())
+	assert.Equal(t, 768, c.Embeddings.Dimensions)
+	assert.Equal(t, 32, c.Embeddings.BatchSize)
+	assert.Equal(t, 2, c.Embeddings.Concurrency)
+	assert.Equal(t, 30*time.Second, c.Embeddings.Timeout.Std())
 }
 
 func TestLoadParsesFile(t *testing.T) {
@@ -161,4 +166,36 @@ func TestValidateBackupCompressionLevel(t *testing.T) {
 		c.Backup.ZstdLevel = level
 		require.ErrorContains(t, c.Validate(), "zstd_level")
 	}
+}
+
+func TestValidateEmbeddings(t *testing.T) {
+	valid := Default()
+	valid.Embeddings.BaseURL = "http://127.0.0.1:11434/v1"
+	valid.Embeddings.Model = "nomic-embed-text"
+	require.NoError(t, valid.Validate())
+
+	for _, tc := range []struct {
+		name string
+		edit func(*EmbeddingsConfig)
+		want string
+	}{
+		{"partial", func(e *EmbeddingsConfig) { e.Model = "" }, "both be set"},
+		{"plaintext remote", func(e *EmbeddingsConfig) { e.BaseURL = "http://example.com/v1" }, "loopback"},
+		{"credentials", func(e *EmbeddingsConfig) { e.BaseURL = "https://user@example.com/v1" }, "credentials"},
+		{"key conflict", func(e *EmbeddingsConfig) { e.APIKey, e.APIKeyEnv = "x", "TOKEN" }, "mutually exclusive"},
+		{"zero dimensions", func(e *EmbeddingsConfig) { e.Dimensions = 0 }, "dimensions"},
+		{"excessive dimensions", func(e *EmbeddingsConfig) { e.Dimensions = 8193 }, "dimensions"},
+		{"zero batch", func(e *EmbeddingsConfig) { e.BatchSize = 0 }, "batch_size"},
+		{"zero concurrency", func(e *EmbeddingsConfig) { e.Concurrency = 0 }, "concurrency"},
+		{"zero timeout", func(e *EmbeddingsConfig) { e.Timeout = 0 }, "timeout"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := valid
+			tc.edit(&cfg.Embeddings)
+			require.ErrorContains(t, cfg.Validate(), tc.want)
+		})
+	}
+	disabledWithKey := Default()
+	disabledWithKey.Embeddings.APIKeyEnv = "TOKEN"
+	require.ErrorContains(t, disabledWithKey.Validate(), "require base_url")
 }

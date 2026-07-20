@@ -502,6 +502,48 @@ func TestBackupCreateStreamRoundTripAndTypedError(t *testing.T) {
 	assert.True(t, restored.Proof.SQLiteIntegrity)
 }
 
+func TestEmbeddingBuildStreamAndGenerationList(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/embeddings":
+			_ = json.NewEncoder(w).Encode(api.EmbeddingGenerationList{
+				Configured: true,
+				Items: []api.EmbeddingGeneration{{
+					Fingerprint: strings.Repeat("a", 16), Model: "model", Dimensions: 2,
+					State: "active", Embedded: 1,
+				}},
+			})
+		case "/api/v1/embeddings/build/stream":
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			_ = json.NewEncoder(w).Encode(api.EmbeddingBuildEvent{
+				Type: "progress", Progress: &api.EmbeddingBuildProgress{
+					Phase: "embedding", Done: 1, Total: 1,
+				},
+			})
+			_ = json.NewEncoder(w).Encode(api.EmbeddingBuildEvent{
+				Type: "result", Result: &api.EmbeddingBuildResult{
+					Fingerprint: strings.Repeat("a", 16), Model: "model", Dimensions: 2,
+					Embedded: 1, Chunks: 1, Activated: true,
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	c := client.New(server.URL, "key")
+	listed, err := c.EmbeddingGenerations(t.Context())
+	require.NoError(t, err)
+	require.Len(t, listed.Items, 1)
+	var progress []api.EmbeddingBuildProgress
+	result, err := c.BuildEmbeddings(t.Context(), func(event api.EmbeddingBuildProgress) {
+		progress = append(progress, event)
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Embedded)
+	assert.Equal(t, []api.EmbeddingBuildProgress{{Phase: "embedding", Done: 1, Total: 1}}, progress)
+}
+
 func TestContentIdentityAndVerificationRoundTrip(t *testing.T) {
 	c, _ := newClient(t, serverKey)
 	content := []byte("remote writer evidence")

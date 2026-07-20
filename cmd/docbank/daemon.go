@@ -25,11 +25,13 @@ import (
 	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonlife"
+	"go.kenn.io/docbank/internal/embedding"
 	"go.kenn.io/docbank/internal/extract"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
+	docvector "go.kenn.io/docbank/internal/vector"
 )
 
 var daemonRunCmd = &cobra.Command{
@@ -169,6 +171,11 @@ func runServe(ctx context.Context) (retErr error) {
 	if err := jobSupervisor.Start("extract:plain-text", textWorker.Run); err != nil {
 		return fmt.Errorf("starting text extraction: %w", err)
 	}
+	embeddings, closeEmbeddings, err := buildEmbeddingsService(sigCtx, layout, cfg, s)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, closeEmbeddings()) }()
 
 	var stopOnce sync.Once
 	stopCh := make(chan struct{})
@@ -179,6 +186,7 @@ func runServe(ctx context.Context) (retErr error) {
 		Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Logger: logger,
 		StartedAt: time.Now(), ShutdownToken: shutdownToken, Shutdown: stop, Tracker: tracker,
 		Jobs: jobSupervisor, Gate: operationGate,
+		Embeddings: embeddings,
 	})
 	httpSrv := &http.Server{
 		Handler:           srv.Handler(),
@@ -218,6 +226,53 @@ func runServe(ctx context.Context) (retErr error) {
 		return fmt.Errorf("draining daemon requests: %w", err)
 	}
 	return nil
+}
+
+func buildEmbeddingsService(
+	ctx context.Context, layout home.Layout, cfg config.Config, metadata *store.Store,
+) (*docvector.Service, func() error, error) {
+	if !cfg.Embeddings.Enabled() {
+		return nil, func() error { return nil }, nil
+	}
+	apiKey := cfg.Embeddings.ResolvedAPIKey()
+	if cfg.Embeddings.APIKeyEnv != "" && apiKey == "" {
+		return nil, func() error { return nil }, fmt.Errorf(
+			"[embeddings] api_key_env %q is unset or empty", cfg.Embeddings.APIKeyEnv)
+	}
+	encoder, err := embedding.New(embedding.Config{
+		BaseURL: cfg.Embeddings.BaseURL, Model: cfg.Embeddings.Model, APIKey: apiKey,
+		FingerprintSalt: cfg.Embeddings.FingerprintSalt,
+		Dimensions:      cfg.Embeddings.Dimensions, BatchSize: cfg.Embeddings.BatchSize,
+		Timeout: cfg.Embeddings.Timeout.Std(),
+	})
+	if err != nil {
+		return nil, func() error { return nil }, err
+	}
+	if err := layout.EnsureVectorsDB(); err != nil {
+		return nil, func() error { return nil }, err
+	}
+	index, err := docvector.Open(ctx, layout.VectorsDBPath())
+	if err != nil {
+		return nil, func() error { return nil }, err
+	}
+	source := func(ctx context.Context, afterBlobHash string, limit int) ([]docvector.Document, error) {
+		items, err := metadata.VectorDocuments(ctx, afterBlobHash, limit)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]docvector.Document, 0, len(items))
+		for _, item := range items {
+			out = append(out, docvector.Document{
+				BlobHash: item.BlobHash, ExtractorVersion: item.ExtractorVersion, Text: item.Text,
+			})
+		}
+		return out, nil
+	}
+	service := &docvector.Service{
+		Index: index, Source: source, Generation: encoder.Generation(), Encode: encoder.EncodeFunc(),
+		BatchSize: cfg.Embeddings.BatchSize, Concurrency: cfg.Embeddings.Concurrency,
+	}
+	return service, index.Close, nil
 }
 
 // idleWatch exits an auto-started daemon after a fully quiet window so

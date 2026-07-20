@@ -27,7 +27,8 @@ func timeoutExempt(path string) bool {
 		"/api/v1/storage/pack", "/api/v1/storage/repack", "/api/v1/uploads",
 		"/api/v1/backup/snapshots", "/api/v1/backup/snapshots/stream",
 		"/api/v1/backup/verify", "/api/v1/backup/verify/stream",
-		"/api/v1/backup/restore", "/api/v1/backup/restore/stream":
+		"/api/v1/backup/restore", "/api/v1/backup/restore/stream",
+		"/api/v1/embeddings/build/stream":
 		return true
 	}
 	if strings.HasPrefix(path, "/api/v1/nodes/") &&

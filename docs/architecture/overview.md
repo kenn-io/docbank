@@ -160,6 +160,21 @@ different valid representation under fresh catalog authority. See
 [Loose & Packed Content](packed-storage.md) for limits, maintenance, and the
 boundary between Docbank policy and Kit mechanics.
 
+## Search indexes are derived
+
+Lexical name and verified-text search is reconstructed from authoritative
+metadata during restore. When embeddings are configured, the daemon can also
+mirror current live extracted text into `vectors.db` and build versioned vector
+generations through Kit's SQLite vector substrate. The active generation is
+swapped only after the replacement completely covers that mirror.
+
+Neither extracted search projections nor `vectors.db` grant document
+authority. The vector sidecar is excluded from JSONL and backup snapshots; it
+can be deleted while the daemon is stopped and rebuilt from verified current
+text. Embedded applications do not import this daemon-owned vector layer and
+may continue using the root Go package with pure-Go SQLite and no CGo vector
+dependency. See [Embedding Index](../usage/embeddings.md).
+
 ## One owner, two integration modes
 
 Exactly one process owns an open vault at a time:

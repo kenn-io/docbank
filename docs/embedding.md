@@ -14,6 +14,12 @@ Use an embedded vault when the application itself should own document
 lifecycle. Use the HTTP API when independent processes need to share one
 standalone vault.
 
+The root package does not import the daemon's optional vector sidecar. An
+application that does not need semantic indexing can build with
+`CGO_ENABLED=0` and the supported pure-Go SQLite adapter without carrying the
+SQLite vector extension. Applications that need embeddings can own a separate
+derived index or use a configured standalone daemon.
+
 ## Create a vault service
 
 Each root is an independent archive. One process may open several non-overlapping

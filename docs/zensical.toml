@@ -20,6 +20,7 @@ nav = [
     {"Importing Documents" = "usage/importing.md"},
     {"Organizing & Tagging" = "usage/organizing.md"},
     {"Searching" = "usage/searching.md"},
+    {"Embedding Index" = "usage/embeddings.md"},
   ]},
   {"Protect & Operate" = [
     {"Vault Lifecycle" = "usage/lifecycle.md"},

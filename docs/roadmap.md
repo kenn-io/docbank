@@ -17,7 +17,7 @@ elsewhere only when they materially explain the design and are marked
 | 0 | Extract msgvault's pack/backup and packed-CAS engines into `go.kenn.io/kit` | **Implemented** (Docbank uses `kit` v0.10.0) |
 | 1 | Core: store, blob store, ingest pipeline, full CLI | **Implemented** |
 | 2a | Infrastructure: daemon, HTTP API, daemon-first CLI, self-update, release pipeline | **Implemented** |
-| 2b | Features: content versions, versioned editing, full audit, tags, watched inboxes, text extraction, ingest provenance | **In progress**: versions, tags, provenance, watched inboxes, first-scope audit authority, and bounded plain-text extraction implemented; PDF/Office extraction remains |
+| 2b | Features: content versions, versioned editing, full audit, tags, watched inboxes, text extraction, ingest provenance, semantic retrieval | **In progress**: versions, tags, provenance, watched inboxes, first-scope audit authority, bounded plain-text extraction, and the rebuildable embedding-generation substrate are implemented; semantic querying and PDF/Office extraction remain |
 | 3 | Primary kit-ui web portal and focused operator TUI | Designed |
 | 4 | Backup commands over the kit engine | **Implemented**; representative-corpus hardening continues |
 
@@ -118,6 +118,9 @@ and append later changes to the same stable node without touching source files.
 - Tag/MIME/date/path search filters; `POST /batch/move` bulk reorganization
 - Additional text extraction workers for PDF text layers and office formats;
   bounded UTF-8 text, Markdown, JSON, and JSONL extraction is implemented
+- Semantic and hybrid query over the implemented, rebuildable embedding
+  generations; configuration, explicit generation builds, coverage inventory,
+  and safe replacement activation are implemented
 - External integration surface: generalized ingest provenance —
   today's `provenance` table records the original filesystem path and
   mtime; `source_kind` / `source_ref` / `source_meta` fields extend it
@@ -160,6 +163,6 @@ not a missing recovery command.
 
 ## Deferred beyond v1
 
-OCR of scans, embeddings/AI tagging, at-rest encryption of the live store,
+OCR of scans, AI tagging and summarization, at-rest encryption of the live store,
 encryption for backup repositories, importing attachments out of msgvault,
 multi-user/sharing, and an MCP server wrapping the API.

@@ -6,6 +6,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -993,6 +995,64 @@ func TestSearchCLIReportsTruncation(t *testing.T) {
 	_, err = runCLI(t, "search", "report", "--limit", "0")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "between 1 and 1000")
+}
+
+func TestEmbeddingsCLIConfiguresBuildsAndListsGeneration(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DOCBANK_HOME", dir)
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/embeddings", r.URL.Path)
+		var request struct {
+			Model string   `json:"model"`
+			Input []string `json:"input"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decoding embedding request: %v", err)
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		assert.Equal(t, "test-model", request.Model)
+		assert.Equal(t, []string{"vector substrate example"}, request.Input)
+		items := make([]map[string]any, len(request.Input))
+		for i := range request.Input {
+			items[i] = map[string]any{"index": i, "embedding": []float32{1, 0}}
+		}
+		if err := json.NewEncoder(w).Encode(map[string]any{"data": items}); err != nil {
+			t.Errorf("encoding embedding response: %v", err)
+		}
+	}))
+	t.Cleanup(endpoint.Close)
+	configBody := "[embeddings]\nbase_url = " + strconv.Quote(endpoint.URL+"/v1") +
+		"\nmodel = \"test-model\"\ndimensions = 2\nbatch_size = 8\nconcurrency = 1\ntimeout = \"2s\"\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(configBody), 0o600))
+	startTestDaemon(t, dir)
+	source := writeSourceFile(t, "embedding.txt", "vector substrate example")
+	_, err := runCLI(t, "add", source, "--dest", "/inbox")
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		out, searchErr := runCLI(t, "search", "substrate", "--json")
+		if searchErr != nil {
+			return false
+		}
+		var report api.SearchReport
+		return json.Unmarshal([]byte(out), &report) == nil && len(report.Hits) == 1
+	}, 5*time.Second, 25*time.Millisecond)
+
+	out, err := runCLI(t, "embeddings", "list")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "no embedding generations")
+	out, err = runCLI(t, "embeddings", "build", "--json")
+	require.NoError(t, err, out)
+	var result api.EmbeddingBuildResult
+	require.NoError(t, json.Unmarshal([]byte(out), &result))
+	assert.Equal(t, "test-model", result.Model)
+	assert.True(t, result.Activated)
+	assert.Equal(t, 1, result.Embedded)
+	assert.Equal(t, 1, result.Chunks)
+	out, err = runCLI(t, "embeddings", "list")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "test-model")
+	assert.Contains(t, out, "active")
 }
 
 func TestTrashEmpty(t *testing.T) {

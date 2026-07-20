@@ -581,6 +581,54 @@ type JobList struct {
 	Items []Job `json:"items"`
 }
 
+// EmbeddingGeneration reports one local, rebuildable vector generation and
+// its coverage of unique content selected by current live files.
+type EmbeddingGeneration struct {
+	Fingerprint string `json:"fingerprint" pattern:"^[0-9a-f]{16}$"`
+	Model       string `json:"model"`
+	Dimensions  int    `json:"dimensions" minimum:"1"`
+	State       string `json:"state" enum:"building,active,retired"`
+	Embedded    int    `json:"embedded" minimum:"0"`
+	Skipped     int    `json:"skipped" minimum:"0"`
+	Pending     int    `json:"pending" minimum:"0"`
+}
+
+// EmbeddingGenerationList is the machine-readable embeddings inventory.
+type EmbeddingGenerationList struct {
+	Configured bool                  `json:"configured"`
+	Items      []EmbeddingGeneration `json:"items"`
+}
+
+// EmbeddingBuildProgress reports unique-content progress for one build.
+type EmbeddingBuildProgress struct {
+	Phase string `json:"phase" enum:"scanning,embedding"`
+	Done  int    `json:"done" minimum:"0"`
+	Total int    `json:"total" minimum:"0"`
+}
+
+// EmbeddingBuildResult reports one successfully completed build.
+type EmbeddingBuildResult struct {
+	Fingerprint string `json:"fingerprint" pattern:"^[0-9a-f]{16}$"`
+	Model       string `json:"model"`
+	Dimensions  int    `json:"dimensions" minimum:"1"`
+	Mirrored    int    `json:"mirrored" minimum:"0"`
+	Removed     int    `json:"removed" minimum:"0"`
+	Embedded    int    `json:"embedded" minimum:"0"`
+	Chunks      int    `json:"chunks" minimum:"0"`
+	Skipped     int    `json:"skipped" minimum:"0"`
+	Stale       int    `json:"stale" minimum:"0"`
+	Activated   bool   `json:"activated"`
+}
+
+// EmbeddingBuildEvent is one NDJSON build-stream event. Exactly one terminal
+// Result or Error follows zero or more Progress events.
+type EmbeddingBuildEvent struct {
+	Type     string                  `json:"type" enum:"progress,result,error"`
+	Progress *EmbeddingBuildProgress `json:"progress,omitempty"`
+	Result   *EmbeddingBuildResult   `json:"result,omitempty"`
+	Error    *Error                  `json:"error,omitempty"`
+}
+
 // BackupRepository identifies an initialized Kit snapshot repository.
 type BackupRepository struct {
 	ID   string `json:"id"`

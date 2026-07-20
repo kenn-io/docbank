@@ -58,6 +58,11 @@ PDF text layers, office formats, OCR, and tag/MIME/date/path search filters are
 not yet available. Their absence never changes name-search results or document
 authority.
 
+An optional [Embedding Index](embeddings.md) can encode this same verified
+current text into a disposable local vector sidecar. Building generations does
+not change the lexical results described on this page; semantic query is not
+yet exposed.
+
 Next: organize documents beyond paths with
 [Organizing & Tagging](organizing.md), or see every search flag in the
 [CLI Reference](../cli-reference.md).
