@@ -67,6 +67,14 @@ func (s *Store) DeleteBlobRows(ctx context.Context, hashes []string) error {
 			if _, err := tx.Exec(`DELETE FROM blob_pack_index WHERE blob_hash = ?`, h); err != nil {
 				return fmt.Errorf("deleting packed mapping of %s: %w", h, err)
 			}
+			if _, err := tx.Exec(`DELETE FROM text_extraction_queue WHERE blob_hash = ?`, h); err != nil {
+				return fmt.Errorf("deleting extraction queue row of %s: %w", h, err)
+			}
+			if _, err := tx.Exec(`DELETE FROM content_fts WHERE rowid IN (
+				SELECT rowid FROM extracted_text WHERE blob_hash = ?
+			)`, h); err != nil {
+				return fmt.Errorf("deleting content search rows of %s: %w", h, err)
+			}
 			if _, err := tx.Exec(`DELETE FROM extracted_text WHERE blob_hash = ?`, h); err != nil {
 				return fmt.Errorf("deleting extracted text of %s: %w", h, err)
 			}

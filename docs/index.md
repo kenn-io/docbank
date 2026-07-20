@@ -50,18 +50,18 @@ Windows and source builds):
 curl -fsSL https://docbank.ai/install.sh | sh
 ```
 
-!!! info "New version-command vocabulary"
+!!! info "Content-search availability"
 
-    `docbank version` and the explicit `docbank versions list|show|cat`
-    commands shown below are newer than v0.7.0. Build from source to use them
-    until the next release is published.
+    The current v0.8.1 installer searches document names. Verified UTF-8 body
+    search is available in source builds and will enter the installer with the
+    next tagged release.
 
 The ordinary workflow stays direct:
 
 ```bash
 docbank add ~/Documents/taxes --dest /taxes    # import a folder; sources untouched
 docbank tree /taxes                            # browse the virtual tree
-docbank search "insurance"                     # ranked document-name search
+docbank search "insurance"                     # ranked name search; source builds also search text
 docbank put revised.pdf /taxes/2026/return.pdf # add a new immutable version
 docbank versions list /taxes/2026/return.pdf   # inspect retained history
 docbank rm /inbox/junk.pdf                     # move to recoverable trash

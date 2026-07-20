@@ -148,13 +148,19 @@ process. `docbank jobs` and authenticated `GET /api/v1/jobs` expose running and
 terminal state in deterministic order. Terminal records remain until restart,
 which makes a failed task visible instead of silently disappearing.
 
+Every daemon runs `extract:plain-text`, the bounded worker that verifies and
+indexes supported current text content. Configured watched inboxes add one
+`watch:<name>` runner each. Extraction-cache writes share the ordinary mutation
+side of the daemon operation gate, so GC cannot retire a blob while the worker
+is reading and publishing its derived index.
+
 The supervisor stops accepting work as soon as shutdown begins, cancels every
 runner, and waits before SQLite and blob storage close. Runners must honor
 their context; the wait is bounded so a defective runner cannot prevent daemon
 exit forever. The background daemon's idle-timeout loop is supervised through
-this same path. Watched inboxes use this lifecycle; scheduled maintenance
-remains planned, but must use this lifecycle rather than creating unmanaged
-goroutines.
+this same path. Text extraction and watched inboxes use this lifecycle;
+scheduled maintenance remains planned, but must use this lifecycle rather than
+creating unmanaged goroutines.
 
 ## Logs
 

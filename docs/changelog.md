@@ -9,6 +9,10 @@ docbank is pre-1.0; interfaces and storage migrations may still evolve.
 
 ## Unreleased
 
+- Search covers live document names and verified UTF-8 plain text, Markdown,
+  JSON, and JSONL content. Name matches keep their established ranking and
+  precede content-only matches, while `docbank jobs` exposes the bounded
+  asynchronous extraction worker.
 - Daemon-owned watched inboxes import stable regular files without touching
   their sources, preserve portable source identity, and append later changes
   as versions of the same Docbank node; their lifecycle and failures are

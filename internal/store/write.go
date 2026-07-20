@@ -246,6 +246,9 @@ func (s *Store) createFileWithOperationTx(
 		return Node{}, ContentVersion{}, fmt.Errorf(
 			"recording initial content version for node %d: %w", id, err)
 	}
+	if err := queueTextExtractionTx(tx, operation.versionID, blobHash, mimeType); err != nil {
+		return Node{}, ContentVersion{}, err
+	}
 	if err := bumpRevisionTx(tx, parentID, operation.recordedAt); err != nil {
 		return Node{}, ContentVersion{}, err
 	}

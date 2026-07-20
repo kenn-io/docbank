@@ -380,8 +380,9 @@ type ContentReversionReceipt struct {
 
 // SearchHit pairs a matched node with its display path.
 type SearchHit struct {
-	Node Node   `json:"node"`
-	Path string `json:"path"`
+	Node  Node   `json:"node"`
+	Path  string `json:"path"`
+	Match string `json:"match" enum:"name,content"`
 }
 
 // SearchReport is one bounded search result page.

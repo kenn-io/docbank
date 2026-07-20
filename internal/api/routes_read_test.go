@@ -18,6 +18,7 @@ import (
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestStatByIDAndPath(t *testing.T) {
@@ -285,4 +286,17 @@ func TestSearch(t *testing.T) {
 	assert.Len(t, rep.Hits, 1)
 	assert.Equal(t, 1, rep.Limit)
 	assert.True(t, rep.Truncated)
+	assert.Equal(t, "name", rep.Hits[0].Match)
+
+	bodyNode := createFileWithContent(t, ts, s, "/notes.txt", "lighthouse archive")
+	require.NoError(t, s.RecordExtraction(t.Context(), store.ExtractionResult{
+		BlobHash: bodyNode.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: store.ExtractionOK, Text: "lighthouse archive",
+	}))
+	resp, body = get(t, ts, "/api/v1/search?q=lighthouse&limit=10", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NoError(t, json.Unmarshal([]byte(body), &rep))
+	require.Len(t, rep.Hits, 1)
+	assert.Equal(t, bodyNode.ID, rep.Hits[0].Node.ID)
+	assert.Equal(t, "content", rep.Hits[0].Match)
 }

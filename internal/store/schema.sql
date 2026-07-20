@@ -248,6 +248,7 @@ CREATE TABLE IF NOT EXISTS audit_memberships (
 CREATE INDEX IF NOT EXISTS audit_membership_node ON audit_memberships(node_id);
 
 CREATE TABLE IF NOT EXISTS extracted_text (
+    id                INTEGER PRIMARY KEY,
     blob_hash         TEXT NOT NULL,
     extractor         TEXT NOT NULL,
     extractor_version INTEGER NOT NULL,
@@ -256,7 +257,29 @@ CREATE TABLE IF NOT EXISTS extracted_text (
     attempts          INTEGER NOT NULL DEFAULT 0,
     text              TEXT,
     extracted_at      TEXT NOT NULL,
-    PRIMARY KEY (blob_hash, extractor)
+    UNIQUE (blob_hash, extractor)
+);
+
+-- Derived work queue. Logical writes enqueue supported text in Go; the daemon
+-- drains it after terminally verified reads. It is not portable authority.
+CREATE TABLE IF NOT EXISTS text_extraction_queue (
+    blob_hash       TEXT PRIMARY KEY REFERENCES blobs(hash) ON DELETE CASCADE,
+    next_attempt_at TEXT NOT NULL
+);
+
+-- Per-version search eligibility is derived from MIME policy in Go. Keeping
+-- this projection separate lets existing vaults adopt it without altering the
+-- authoritative content-version table.
+CREATE TABLE IF NOT EXISTS text_searchable_versions (
+    version_id TEXT PRIMARY KEY REFERENCES content_versions(version_id) ON DELETE CASCADE
+);
+
+-- Derived full-text cache. This table is rebuilt from extracted_text during
+-- portable import and is never part of document or audit authority.
+CREATE VIRTUAL TABLE IF NOT EXISTS content_fts USING fts5(
+    blob_hash UNINDEXED,
+    extractor UNINDEXED,
+    text
 );
 
 -- FTS over live node names. External-content table kept in sync by triggers;

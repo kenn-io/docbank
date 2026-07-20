@@ -1,7 +1,9 @@
 package store
 
 import (
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,6 +27,7 @@ func TestSearchFindsLiveNodesOnly(t *testing.T) {
 	require.Len(t, hits, 1)
 	assert.Equal(t, "tax-return-2024.pdf", hits[0].Node.Name)
 	assert.Equal(t, "/docs/tax-return-2024.pdf", hits[0].Path)
+	assert.Equal(t, SearchMatchName, hits[0].Match)
 }
 
 func TestSearchPrefixAndRename(t *testing.T) {
@@ -121,4 +124,161 @@ func TestSearchPageReportsTruncation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, hits, 3)
 	assert.False(t, truncated)
+}
+
+func TestSearchContentFollowsStableNameMatches(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+
+	nameMatch, err := s.CreateFile(
+		ctx, s.RootID(), "quarterly-forecast.md", fakeHash("a1"), 5, "text/markdown",
+	)
+	require.NoError(t, err)
+	bodyMatch, err := s.CreateFile(
+		ctx, s.RootID(), "notes.md", fakeHash("b2"), 5, "text/markdown; charset=utf-8",
+	)
+	require.NoError(t, err)
+	unsupported, err := s.CreateFile(
+		ctx, s.RootID(), "scan.pdf", bodyMatch.BlobHash, 5, "application/pdf",
+	)
+	require.NoError(t, err)
+	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+		BlobHash: nameMatch.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: "unrelated body",
+	}))
+	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+		BlobHash: bodyMatch.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: "quarterly forecast assumptions",
+	}))
+
+	hits, truncated, err := s.SearchPage(ctx, "quarterly", 10)
+	require.NoError(t, err)
+	require.Len(t, hits, 2)
+	assert.False(t, truncated)
+	assert.Equal(t, nameMatch.ID, hits[0].Node.ID)
+	assert.Equal(t, SearchMatchName, hits[0].Match)
+	assert.Equal(t, bodyMatch.ID, hits[1].Node.ID)
+	assert.Equal(t, SearchMatchContent, hits[1].Match)
+	assert.NotEqual(t, unsupported.ID, hits[1].Node.ID,
+		"a shared blob does not make an unsupported current MIME searchable")
+
+	// The same limit still returns the filename match first and truthfully
+	// reports that a content match remains.
+	hits, truncated, err = s.SearchPage(ctx, "quarterly", 1)
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.Equal(t, nameMatch.ID, hits[0].Node.ID)
+	assert.True(t, truncated)
+
+	// Relabeling the current bytes with an unsupported MIME must revoke the
+	// content match even though the immutable blob's derived text remains.
+	_, _, err = s.ReplaceContent(
+		ctx, bodyMatch.ID, bodyMatch.Revision, bodyMatch.BlobHash, bodyMatch.Size,
+		"application/octet-stream",
+	)
+	require.NoError(t, err)
+	hits, truncated, err = s.SearchPage(ctx, "quarterly", 10)
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.False(t, truncated)
+	assert.Equal(t, nameMatch.ID, hits[0].Node.ID)
+}
+
+func TestPendingAndFailedTextExtractions(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	textNode, err := s.CreateFile(
+		ctx, s.RootID(), "notes.txt", fakeHash("a1"), 10, "text/plain; charset=utf-8",
+	)
+	require.NoError(t, err)
+	jsonNode, err := s.CreateFile(
+		ctx, s.RootID(), "session.jsonl", fakeHash("b2"), 20, "application/x-ndjson",
+	)
+	require.NoError(t, err)
+	_, err = s.CreateFile(ctx, s.RootID(), "scan.pdf", fakeHash("c3"), 30, "application/pdf")
+	require.NoError(t, err)
+	oldTextHash := textNode.BlobHash
+	textNode, _, err = s.ReplaceContent(
+		ctx, textNode.ID, textNode.Revision, fakeHash("a0"), 12, "text/plain",
+	)
+	require.NoError(t, err)
+
+	_, err = s.db.Exec(`DELETE FROM text_extraction_queue`)
+	require.NoError(t, err)
+	pending, err := s.PendingTextExtractions(ctx, 10)
+	require.NoError(t, err)
+	assert.Empty(t, pending)
+	require.NoError(t, s.SeedTextExtractionQueue(ctx, "plain-text", 1))
+
+	pending, err = s.PendingTextExtractions(ctx, 10)
+	require.NoError(t, err)
+	require.Len(t, pending, 2)
+	assert.ElementsMatch(t, []string{textNode.BlobHash, jsonNode.BlobHash},
+		[]string{pending[0].BlobHash, pending[1].BlobHash})
+	assert.NotEqual(t, oldTextHash, textNode.BlobHash,
+		"startup discovery should seed selected versions, not retained history")
+
+	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+		BlobHash: textNode.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionFailed, Error: "not valid UTF-8",
+	}))
+	pending, err = s.PendingTextExtractions(ctx, 10)
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	assert.Equal(t, jsonNode.BlobHash, pending[0].BlobHash)
+
+	// A future extractor implementation naturally retries the old result.
+	require.NoError(t, s.SeedTextExtractionQueue(ctx, "plain-text", 2))
+	pending, err = s.PendingTextExtractions(ctx, 10)
+	require.NoError(t, err)
+	assert.Len(t, pending, 2)
+}
+
+func TestPendingTextExtractionsSkipsSupersededQueuedContent(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	created, err := s.CreateFile(
+		ctx, s.RootID(), "notes.txt", fakeHash("d1"), 10, "text/plain",
+	)
+	require.NoError(t, err)
+	current, _, err := s.ReplaceContent(
+		ctx, created.ID, created.Revision, fakeHash("d2"), 12, "text/plain",
+	)
+	require.NoError(t, err)
+
+	var queued int
+	require.NoError(t, s.db.QueryRow(
+		`SELECT COUNT(*) FROM text_extraction_queue`,
+	).Scan(&queued))
+	assert.Equal(t, 2, queued, "the stale queue hint should exercise dequeue validation")
+
+	pending, err := s.PendingTextExtractions(ctx, 10)
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	assert.Equal(t, current.BlobHash, pending[0].BlobHash)
+	assert.NotEqual(t, created.BlobHash, pending[0].BlobHash)
+}
+
+func TestTextExtractionQueueDefersFailuresBehindReadyWork(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	hashes := make([]string, 65)
+	for i := range hashes {
+		hashes[i] = fakeHash(fmt.Sprintf("%02x", i+1))
+		_, err := s.CreateFile(
+			ctx, s.RootID(), fmt.Sprintf("item-%02d.txt", i+1),
+			hashes[i], 1, "text/plain",
+		)
+		require.NoError(t, err)
+	}
+	notBefore := time.Now().UTC().Add(time.Hour)
+	for _, hash := range hashes[:64] {
+		require.NoError(t, s.DeferTextExtraction(ctx, hash, notBefore))
+	}
+
+	pending, err := s.PendingTextExtractions(ctx, 64)
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	assert.Equal(t, hashes[64], pending[0].BlobHash,
+		"deferred failures must not starve later ready work")
 }

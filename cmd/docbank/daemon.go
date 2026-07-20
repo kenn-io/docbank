@@ -25,6 +25,7 @@ import (
 	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonlife"
+	"go.kenn.io/docbank/internal/extract"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/jobs"
@@ -160,6 +161,13 @@ func runServe(ctx context.Context) (retErr error) {
 		if err := jobSupervisor.Start("watch:"+watchConfig.Name, watcher.Run); err != nil {
 			return fmt.Errorf("starting watch %q: %w", watchConfig.Name, err)
 		}
+	}
+	textWorker, err := extract.New(s, blobs, operationGate.Mutate)
+	if err != nil {
+		return fmt.Errorf("configuring text extraction: %w", err)
+	}
+	if err := jobSupervisor.Start("extract:plain-text", textWorker.Run); err != nil {
+		return fmt.Errorf("starting text extraction: %w", err)
 	}
 
 	var stopOnce sync.Once
