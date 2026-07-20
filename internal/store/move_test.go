@@ -147,6 +147,31 @@ func TestMovePath(t *testing.T) {
 	assert.ErrorIs(t, err, ErrCycle)
 }
 
+func TestMoveToPathUsesStableIdentityAndRevision(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+
+	docs, err := s.Mkdir(ctx, s.RootID(), "docs")
+	require.NoError(t, err)
+	filed, err := s.Mkdir(ctx, s.RootID(), "filed")
+	require.NoError(t, err)
+	f, err := s.CreateFile(ctx, docs.ID, "a.txt", fakeHash("a1"), 1, "text/plain")
+	require.NoError(t, err)
+
+	moved, movedPath, err := s.MoveToPath(ctx, f.ID, f.Revision, "/filed/b.txt")
+	require.NoError(t, err)
+	assert.Equal(t, f.ID, moved.ID)
+	assert.Equal(t, "b.txt", moved.Name)
+	assert.Equal(t, filed.ID, *moved.ParentID)
+	assert.Equal(t, "/filed/b.txt", movedPath)
+
+	_, _, err = s.MoveToPath(ctx, f.ID, f.Revision, "/docs")
+	require.ErrorIs(t, err, ErrStaleRevision)
+	stillMoved, err := s.NodeByPath(ctx, "/filed/b.txt")
+	require.NoError(t, err)
+	assert.Equal(t, f.ID, stillMoved.ID)
+}
+
 func TestMovePathRejectsDotSegments(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()

@@ -12,10 +12,14 @@ import (
 var revertJSON bool
 
 var revertCmd = &cobra.Command{
-	Use:   "revert <vault-path> <version-id>",
+	Use:   "revert <vault-path-or-id> <version-id>",
 	Short: "Create a new current version from an immutable prior version",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		selector, err := parseNodeSelector(args[0])
+		if err != nil {
+			return err
+		}
 		if !client.IsCanonicalUUIDv4(args[1]) {
 			return usageError(fmt.Errorf(
 				"reversion source %q must be a canonical UUIDv4", args[1]))
@@ -24,9 +28,9 @@ var revertCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		target, err := c.Stat(cmd.Context(), args[0])
+		target, err := selector.resolve(cmd.Context(), c)
 		if err != nil {
-			return fmt.Errorf("resolving %q: %w", args[0], err)
+			return err
 		}
 		if target.Kind != "file" {
 			return fmt.Errorf("%q: %w", args[0], store.ErrNotFile)
@@ -42,7 +46,7 @@ var revertCmd = &cobra.Command{
 		}
 		_, err = fmt.Fprintf(cmd.OutOrStdout(),
 			"reverted %s to source version %s as new version %s (revision %d, %s, sha256 %s)\n",
-			args[0], receipt.SourceVersion.ID, receipt.Version.ID, receipt.Node.Revision,
+			target.Path, receipt.SourceVersion.ID, receipt.Version.ID, receipt.Node.Revision,
 			formatBackupBytes(receipt.Version.Size), receipt.Version.BlobHash)
 		if err != nil {
 			return fmt.Errorf("writing reversion receipt: %w", err)

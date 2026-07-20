@@ -73,10 +73,10 @@ docbank storage repack
 ```
 
 Read each dry-run count before adding `--run`. If a document should return,
-restore its numeric trash ID before emptying:
+restore its stable selector before emptying:
 
 ```bash
-docbank restore 42
+docbank restore id:42
 ```
 
 ### On a schedule

@@ -1985,6 +1985,26 @@ func (c *Client) MovePath(ctx context.Context, srcPath, destPath string) (api.No
 	return n, err
 }
 
+// MoveToPath moves a stable node identity to an absolute virtual destination
+// under an optimistic revision precondition.
+func (c *Client) MoveToPath(
+	ctx context.Context, id, rev int64, destPath string,
+) (api.Node, error) {
+	var n api.Node
+	if id < 1 {
+		return n, errors.New("move node ID must be positive")
+	}
+	if rev < 1 {
+		return n, errors.New("move revision must be positive")
+	}
+	if !strings.HasPrefix(destPath, "/") {
+		return n, errors.New("move destination path must be absolute")
+	}
+	err := c.do(ctx, http.MethodPatch, fmt.Sprintf("/api/v1/nodes/%d", id),
+		ifMatch(rev), map[string]any{"dest_path": destPath}, &n)
+	return n, err
+}
+
 func (c *Client) Trash(ctx context.Context, id, rev int64) (api.Node, error) {
 	var n api.Node
 	err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/nodes/%d/trash", id), ifMatch(rev), nil, &n)

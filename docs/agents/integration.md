@@ -99,6 +99,19 @@ SHA-256 `blob_hash`, and raw `size`; directories omit content identity. Live
 single-node responses include the current `path`. Node and version IDs survive
 renames; use a live path only for display or a one-shot path operation.
 
+The CLI exposes the same distinction without requiring JSON parsing. Human
+listings print copyable selectors such as `id:42`, and existing-node commands
+accept either that stable selector or an absolute path:
+
+```bash
+docbank cat id:42
+docbank versions list id:42 --json
+docbank mv id:42 /review/approved.pdf --json
+```
+
+The `mv` destination stays a path because it describes a new coordinate. In
+JSON and HTTP requests, node IDs remain numeric rather than `id:` strings.
+
 Trash is the important exception. A successful trash response returns the
 node's **pre-trash path** to explain where a restore would try to put it. That
 path no longer resolves to the trashed node and may later resolve to a different

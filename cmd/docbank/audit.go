@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"strconv"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -29,7 +28,7 @@ var (
 )
 
 var auditEnableCmd = &cobra.Command{
-	Use:   "enable [path]",
+	Use:   "enable [path-or-id]",
 	Short: "Preview permanent retention, then explicitly enable the reviewed scope",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -72,14 +71,19 @@ var auditEnableCmd = &cobra.Command{
 		if nodeIDSet && auditEnableNodeID < 1 {
 			return usageError(errors.New("audit enable --node-id must be positive"))
 		}
-		if len(args) == 1 && !strings.HasPrefix(args[0], "/") {
-			return usageError(errors.New("audit enable path must be absolute"))
-		}
 		opts := client.AuditPreviewOptions{
 			NodeID: auditEnableNodeID, AgentLabel: auditEnableAgentLabel,
 		}
 		if len(args) == 1 {
-			opts.Path = args[0]
+			selector, err := parseNodeSelector(args[0])
+			if err != nil {
+				return err
+			}
+			if selector.isID() {
+				opts.NodeID = selector.id
+			} else {
+				opts.Path = selector.path
+			}
 		}
 		c, err := client.Ensure(cmd.Context())
 		if err != nil {
@@ -102,7 +106,7 @@ var (
 )
 
 var auditStatusCmd = &cobra.Command{
-	Use:   "status [path]",
+	Use:   "status [path-or-id]",
 	Short: "Inspect vault audit authority and optional node protection",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -111,21 +115,27 @@ var auditStatusCmd = &cobra.Command{
 			return usageError(errors.New(
 				"audit status accepts either a path or --node-id, not both"))
 		}
-		path := ""
-		if len(args) == 1 {
-			path = args[0]
-		}
 		if nodeIDSet && auditStatusNodeID < 1 {
 			return usageError(errors.New("audit status --node-id must be positive"))
 		}
-		if path != "" && !strings.HasPrefix(path, "/") {
-			return usageError(errors.New("audit status path must be absolute"))
+		path := ""
+		nodeID := auditStatusNodeID
+		if len(args) == 1 {
+			selector, err := parseNodeSelector(args[0])
+			if err != nil {
+				return err
+			}
+			if selector.isID() {
+				nodeID = selector.id
+			} else {
+				path = selector.path
+			}
 		}
 		c, err := client.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		status, err := c.AuditStatus(cmd.Context(), path, auditStatusNodeID)
+		status, err := c.AuditStatus(cmd.Context(), path, nodeID)
 		if err != nil {
 			return err
 		}
@@ -141,7 +151,8 @@ func writeAuditPreview(w io.Writer, preview api.AuditEnrollmentPreview) error {
 		return fmt.Errorf("writing audit preview: %w", err)
 	}
 	lines := []string{
-		fmt.Sprintf("Target: %s (node %d)", auditDisplayPath(preview.TargetPath), preview.TargetNodeID),
+		fmt.Sprintf("Target: %s (%s)", auditDisplayPath(preview.TargetPath),
+			formatNodeSelector(preview.TargetNodeID)),
 		"Permanent scope: " + preview.ScopeID,
 		fmt.Sprintf("Protected tree: %d node(s) — %d directories, %d file(s)",
 			preview.MemberCount, preview.DirectoryCount, preview.FileCount),
@@ -183,8 +194,8 @@ func writeAuditEnabled(w io.Writer, status api.AuditStatus) error {
 		path = "(target is in trash)"
 	}
 	_, err := fmt.Fprintf(w,
-		"enabled permanent audit scope %s for %s (node %d); protecting %d node(s)\n",
-		scope.ID, path, scope.TargetNodeID, scope.MemberCount)
+		"enabled permanent audit scope %s for %s (%s); protecting %d node(s)\n",
+		scope.ID, path, formatNodeSelector(scope.TargetNodeID), scope.MemberCount)
 	if err != nil {
 		return fmt.Errorf("writing audit result: %w", err)
 	}
@@ -212,9 +223,10 @@ func writeAuditStatus(w io.Writer, status api.AuditStatus) error {
 				path = "(target is in trash)"
 			}
 			if _, err := fmt.Fprintf(w,
-				"scope %s: %s (node %d), %d member(s), chain entry %d\n"+
+				"scope %s: %s (%s), %d member(s), chain entry %d\n"+
 					"  baseline: %s\n  chain head: %s\n",
-				scope.ID, path, scope.TargetNodeID, scope.MemberCount, scope.EntryCount,
+				scope.ID, path, formatNodeSelector(scope.TargetNodeID),
+				scope.MemberCount, scope.EntryCount,
 				scope.BaselineDigest, scope.ChainHead); err != nil {
 				return fmt.Errorf("writing audit status: %w", err)
 			}
@@ -224,7 +236,7 @@ func writeAuditStatus(w io.Writer, status api.AuditStatus) error {
 		member := status.Membership
 		coordinate := auditDisplayPath(member.Path)
 		if member.Trashed {
-			coordinate = fmt.Sprintf("node %d in trash", member.NodeID)
+			coordinate = formatNodeSelector(member.NodeID) + " in trash"
 		}
 		if member.Protected {
 			_, err := fmt.Fprintf(w, "%s is permanently protected by %d scope(s): %v\n",

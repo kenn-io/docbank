@@ -39,6 +39,8 @@ func TestCreateDirectory(t *testing.T) {
 
 func TestMoveRequiresIfMatch(t *testing.T) {
 	ts, s := newTestServer(t, nil)
+	_, err := s.Mkdir(t.Context(), s.RootID(), "docs")
+	require.NoError(t, err)
 	f := createFileWithContent(t, ts, s, "/a.txt", "x")
 
 	resp, body := do(t, ts, http.MethodPatch, fmt.Sprintf("/api/v1/nodes/%d", f.ID),
@@ -79,6 +81,19 @@ func TestMoveRequiresIfMatch(t *testing.T) {
 	var n api.Node
 	require.NoError(t, json.Unmarshal([]byte(body), &n))
 	assert.Equal(t, "/b.txt", n.Path)
+
+	_, etag = etagOf(t, ts, f.ID)
+	resp, body = do(t, ts, http.MethodPatch, fmt.Sprintf("/api/v1/nodes/%d", f.ID),
+		map[string]string{"If-Match": etag}, map[string]any{"dest_path": "/docs/c.txt"})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &n))
+	assert.Equal(t, "/docs/c.txt", n.Path)
+
+	_, etag = etagOf(t, ts, f.ID)
+	resp, body = do(t, ts, http.MethodPatch, fmt.Sprintf("/api/v1/nodes/%d", f.ID),
+		map[string]string{"If-Match": etag},
+		map[string]any{"dest_path": "/other", "new_name": "other"})
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 
 	// Empty patch body → 422.
 	_, etag = etagOf(t, ts, f.ID)

@@ -70,11 +70,11 @@ after preview, execution returns `audit_preview_stale` and changes nothing.
 Preview again rather than retrying the old token. Tokens are consumed by one
 execution attempt and disappear when the daemon restarts.
 
-For automation, add `--json`. A caller may preview by stable directory ID
-instead of path:
+For automation, add `--json`. A caller may preview by stable directory
+selector instead of path (the older `--node-id` form remains available):
 
 ```bash
-docbank audit enable --node-id 42 --json
+docbank audit enable id:42 --json
 ```
 
 ## Inspect protection
@@ -91,7 +91,7 @@ Supply a live path or stable node ID to inspect sticky membership:
 
 ```bash
 docbank audit status /taxes/2026/return.pdf
-docbank audit status --node-id 57 --json
+docbank audit status id:57 --json
 ```
 
 An empty timeline is not proof that a node is protected; use `audit status` and
@@ -109,7 +109,7 @@ docbank audit history /taxes/2026/return.pdf --json
 Use a stable node ID when a document has moved, or while it is in trash:
 
 ```bash
-docbank audit history --node-id 57
+docbank audit history id:57
 ```
 
 Events are newest first. Each one identifies its immutable event and operation,

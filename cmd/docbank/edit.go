@@ -28,7 +28,7 @@ var (
 )
 
 var editCmd = &cobra.Command{
-	Use:   "edit <vault-path>",
+	Use:   "edit <vault-path-or-id>",
 	Short: "Edit a file through a new immutable content version",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -37,6 +37,10 @@ var editCmd = &cobra.Command{
 }
 
 func runEdit(cmd *cobra.Command, vaultPath string) (retErr error) {
+	selector, err := parseNodeSelector(vaultPath)
+	if err != nil {
+		return err
+	}
 	editor, err := editorCommand(editEditor)
 	if err != nil {
 		if cmd.Flags().Changed("editor") {
@@ -59,9 +63,9 @@ func runEdit(cmd *cobra.Command, vaultPath string) (retErr error) {
 	if err != nil {
 		return err
 	}
-	node, err := c.Stat(cmd.Context(), vaultPath)
+	node, err := selector.resolve(cmd.Context(), c)
 	if err != nil {
-		return fmt.Errorf("resolving %q: %w", vaultPath, err)
+		return err
 	}
 	if node.Kind != "file" {
 		return fmt.Errorf("%q: %w", vaultPath, store.ErrNotFile)

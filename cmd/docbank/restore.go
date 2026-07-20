@@ -1,9 +1,7 @@
 package main
 
 import (
-	"errors"
 	"fmt"
-	"strconv"
 
 	"github.com/spf13/cobra"
 
@@ -13,16 +11,13 @@ import (
 var restoreJSON bool
 
 var restoreCmd = &cobra.Command{
-	Use:   "restore <id>",
+	Use:   "restore <node-id>",
 	Short: "Restore a trashed node to its original location",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		id, err := strconv.ParseInt(args[0], 10, 64)
-		if err != nil || id < 1 {
-			if err == nil {
-				err = errors.New("node ID must be positive")
-			}
-			return usageError(fmt.Errorf("invalid node id %q: %w", args[0], err))
+		id, err := parseRestoreNodeID(args[0])
+		if err != nil {
+			return err
 		}
 		c, err := client.Ensure(cmd.Context())
 		if err != nil {
@@ -39,7 +34,8 @@ var restoreCmd = &cobra.Command{
 		if restoreJSON {
 			return writeCLIJSON(cmd.OutOrStdout(), restored)
 		}
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "restored [%d] %s\n", restored.ID, restored.Path)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "restored [%s] %s\n",
+			formatNodeSelector(restored.ID), restored.Path)
 		return nil
 	},
 }

@@ -23,7 +23,7 @@ flowchart LR
 
 ## Stage 1: Trash (`rm`, `restore`, `trash list`)
 
-`docbank rm <path>` marks the node — and its whole subtree for
+`docbank rm <path-or-id>` marks the node — and its whole subtree for
 directories — as trashed. The tree entry disappears from `ls`, `tree`,
 and `search`; the name becomes reusable; the bytes are untouched. Running GC
 after `rm` does nothing to that content because trash remains a live,
@@ -35,13 +35,13 @@ docbank trash list --json
 ```
 
 ```
-ID   TRASHED AT                     NAME
-15   2026-07-06T21:40:11.0021Z      return.pdf
-88   2026-07-05T09:12:44.8810Z      old-drafts
+SELECTOR   TRASHED AT                     NAME
+id:15      2026-07-06T21:40:11.0021Z      return.pdf
+id:88      2026-07-05T09:12:44.8810Z      old-drafts
 ```
 
 Only trash *roots* are listed: trashing a directory produces one entry,
-and `docbank restore <id>` brings the entire subtree back to its
+and `docbank restore id:<id>` brings the entire subtree back to its
 original location. If a live node has since taken the name, the restored
 node is suffixed (`return.pdf` → `return (2).pdf`); if the original
 parent was itself permanently deleted, the node is restored under `/`.
