@@ -16,6 +16,14 @@ incremental backups can be verified before you rely on them. Work directly
 from the CLI, automate through the authenticated HTTP API, or embed Docbank in
 a Go application.
 
+Install the latest release on Linux or macOS:
+
+```bash
+curl -fsSL https://docbank.ai/install.sh | sh
+```
+
+[Windows and source-build instructions](setup.md)
+
 <p class="hero-actions">
   <a class="md-button md-button--primary" href="setup/">Start your vault</a>
   <a class="md-button" href="quickstart/">Ten-minute tour</a>
@@ -43,25 +51,12 @@ a Go application.
   </section>
 </div>
 
-Install with one command (Linux and macOS; see [Setup](setup.md) for
-Windows and source builds):
-
-```bash
-curl -fsSL https://docbank.ai/install.sh | sh
-```
-
-!!! info "Content-search availability"
-
-    The current v0.8.1 installer searches document names. Verified UTF-8 body
-    search is available in source builds and will enter the installer with the
-    next tagged release.
-
 The ordinary workflow stays direct:
 
 ```bash
 docbank add ~/Documents/taxes --dest /taxes    # import a folder; sources untouched
 docbank tree /taxes                            # browse the virtual tree
-docbank search "insurance"                     # ranked name search; source builds also search text
+docbank search "insurance"                     # ranked name and verified plain-text search
 docbank put revised.pdf /taxes/2026/return.pdf # add a new immutable version
 docbank versions list /taxes/2026/return.pdf   # inspect retained history
 docbank rm /inbox/junk.pdf                     # move to recoverable trash
