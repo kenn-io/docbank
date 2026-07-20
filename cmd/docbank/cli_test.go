@@ -128,13 +128,23 @@ func TestAddLsTreeCat(t *testing.T) {
 	out, err = runCLI(t, "ls", "/inbox")
 	require.NoError(t, err)
 	assert.Contains(t, out, "notes.txt")
+	c, err := client.Ensure(context.Background())
+	require.NoError(t, err)
+	inbox, err := c.Stat(context.Background(), "/inbox")
+	require.NoError(t, err)
+	note, err := c.Stat(context.Background(), "/inbox/notes.txt")
+	require.NoError(t, err)
+	out, err = runCLI(t, "ls", formatNodeSelector(inbox.ID))
+	require.NoError(t, err)
+	assert.Contains(t, out, formatNodeSelector(note.ID))
 
-	out, err = runCLI(t, "tree", "/")
+	out, err = runCLI(t, "tree", formatNodeSelector(1))
 	require.NoError(t, err)
 	assert.Contains(t, out, "inbox")
 	assert.Contains(t, out, "notes.txt")
+	assert.Contains(t, out, "["+formatNodeSelector(note.ID)+"]")
 
-	out, err = runCLI(t, "cat", "/inbox/notes.txt")
+	out, err = runCLI(t, "cat", formatNodeSelector(note.ID))
 	require.NoError(t, err)
 	assert.Equal(t, "hello vault", out)
 
@@ -294,6 +304,12 @@ func TestAuditEnableIsPreviewFirstAndReportsProtection(t *testing.T) {
 	source := writeSourceFile(t, "return.txt", "tax return")
 	_, err := runCLI(t, "add", source, "--dest", "/Taxes")
 	require.NoError(t, err)
+	c, err := client.Ensure(context.Background())
+	require.NoError(t, err)
+	taxes, err := c.Stat(context.Background(), "/Taxes")
+	require.NoError(t, err)
+	returnNode, err := c.Stat(context.Background(), "/Taxes/return.txt")
+	require.NoError(t, err)
 
 	out, err := runCLI(t, "audit", "status", "--json")
 	require.NoError(t, err, out)
@@ -301,7 +317,7 @@ func TestAuditEnableIsPreviewFirstAndReportsProtection(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &dormant))
 	assert.False(t, dormant.Enabled)
 
-	out, err = runCLI(t, "audit", "enable", "/Taxes", "--json")
+	out, err = runCLI(t, "audit", "enable", formatNodeSelector(taxes.ID), "--json")
 	require.NoError(t, err, out)
 	var preview api.AuditEnrollmentPreview
 	require.NoError(t, json.Unmarshal([]byte(out), &preview))
@@ -325,14 +341,14 @@ func TestAuditEnableIsPreviewFirstAndReportsProtection(t *testing.T) {
 	require.Len(t, status.Scopes, 1)
 	assert.Equal(t, preview.ScopeID, status.Scopes[0].ID)
 
-	out, err = runCLI(t, "audit", "status", "/Taxes/return.txt")
+	out, err = runCLI(t, "audit", "status", formatNodeSelector(returnNode.ID))
 	require.NoError(t, err, out)
 	assert.Contains(t, out, `"/Taxes/return.txt" is permanently protected`)
 
 	replacement := writeSourceFile(t, "replacement.txt", "amended return")
 	_, err = runCLI(t, "put", replacement, "/Taxes/return.txt", "--progress", "plain")
 	require.NoError(t, err)
-	out, err = runCLI(t, "audit", "history", "/Taxes/return.txt", "--json")
+	out, err = runCLI(t, "audit", "history", formatNodeSelector(returnNode.ID), "--json")
 	require.NoError(t, err, out)
 	var history api.AuditEventPage
 	require.NoError(t, json.Unmarshal([]byte(out), &history))
@@ -354,8 +370,13 @@ func TestPutReplacesContentAndRetainsHistory(t *testing.T) {
 	initial := writeSourceFile(t, "document.txt", "initial content")
 	_, err := runCLI(t, "add", initial, "--dest", "/inbox")
 	require.NoError(t, err)
+	c, err := client.Ensure(context.Background())
+	require.NoError(t, err)
+	document, err := c.Stat(context.Background(), "/inbox/document.txt")
+	require.NoError(t, err)
+	documentSelector := formatNodeSelector(document.ID)
 
-	out, err := runCLI(t, "versions", "list", "/inbox/document.txt", "--json")
+	out, err := runCLI(t, "versions", "list", documentSelector, "--json")
 	require.NoError(t, err)
 	var initialPage api.ContentVersionPage
 	require.NoError(t, json.Unmarshal([]byte(out), &initialPage))
@@ -363,7 +384,7 @@ func TestPutReplacesContentAndRetainsHistory(t *testing.T) {
 	initialVersion := initialPage.Items[0].ID
 
 	replacement := writeSourceFile(t, "replacement.bin", "replacement content")
-	out, err = runCLI(t, "put", replacement, "/inbox/document.txt",
+	out, err = runCLI(t, "put", replacement, documentSelector,
 		"--mime-type", "text/plain", "--progress", "plain")
 	require.NoError(t, err, out)
 	assert.Contains(t, out, "hash:")
@@ -393,7 +414,7 @@ func TestPutReplacesContentAndRetainsHistory(t *testing.T) {
 	assert.Equal(t, int64(3), receipt.Node.Revision)
 	assert.Equal(t, "application/octet-stream", receipt.Node.MimeType)
 
-	out, err = runCLI(t, "revert", "/inbox/document.txt", initialVersion)
+	out, err = runCLI(t, "revert", documentSelector, initialVersion)
 	require.NoError(t, err, out)
 	assert.Contains(t, out, "reverted /inbox/document.txt to source version "+initialVersion)
 	out, err = runCLI(t, "cat", "/inbox/document.txt")
@@ -432,6 +453,11 @@ func TestVersionsPruneIsPreviewFirstAndKeepsCurrentContent(t *testing.T) {
 	var before api.ContentVersionPage
 	require.NoError(t, json.Unmarshal([]byte(out), &before))
 	require.Len(t, before.Items, 3)
+	c, err := client.Ensure(context.Background())
+	require.NoError(t, err)
+	document, err := c.Stat(context.Background(), "/inbox/document.txt")
+	require.NoError(t, err)
+	documentSelector := formatNodeSelector(document.ID)
 	_, err = runCLI(t, "versions", "prune", "/inbox/document.txt",
 		"--version", before.Items[1].ID+","+before.Items[2].ID)
 	require.ErrorContains(t, err, "canonical UUIDv4",
@@ -450,7 +476,7 @@ func TestVersionsPruneIsPreviewFirstAndKeepsCurrentContent(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &afterPreview))
 	assert.Equal(t, 3, afterPreview.Total, "preview must retain history")
 
-	out, err = runCLI(t, "versions", "prune", "/inbox/document.txt",
+	out, err = runCLI(t, "versions", "prune", documentSelector,
 		"--keep-newest", "1", "--run")
 	require.NoError(t, err, out)
 	assert.Contains(t, out, "pruned 2 version(s)")
@@ -473,6 +499,10 @@ func TestTagCLIOrganizesNodesByNameOrStableID(t *testing.T) {
 	source := writeSourceFile(t, "return.pdf", "tax return")
 	_, err := runCLI(t, "add", source, "--dest", "/records")
 	require.NoError(t, err)
+	c, err := client.Ensure(context.Background())
+	require.NoError(t, err)
+	returnNode, err := c.Stat(context.Background(), "/records/return.pdf")
+	require.NoError(t, err)
 
 	out, err := runCLI(t, "tag", "list")
 	require.NoError(t, err)
@@ -491,7 +521,7 @@ func TestTagCLIOrganizesNodesByNameOrStableID(t *testing.T) {
 	out, err = runCLI(t, "tag", "assign", "taxes", "/records/return.pdf")
 	require.NoError(t, err, out)
 	assert.Contains(t, out, `assigned tag "taxes" to /records/return.pdf`)
-	out, err = runCLI(t, "tag", "assign", tag.ID, "/records/return.pdf")
+	out, err = runCLI(t, "tag", "assign", tag.ID, formatNodeSelector(returnNode.ID))
 	require.NoError(t, err, out)
 	assert.Contains(t, out, `already assigned tag "taxes"`)
 	out, err = runCLI(t, "tag", "nodes", "taxes", "--offset", "100")
@@ -790,6 +820,10 @@ func TestMvIntoDirAndRename(t *testing.T) {
 	// Rename in place (dest is a non-existent name in an existing dir).
 	_, err = runCLI(t, "mv", "/inbox/a.txt", "/inbox/b.txt")
 	require.NoError(t, err)
+	c, err := client.Ensure(context.Background())
+	require.NoError(t, err)
+	movedByID, err := c.Stat(context.Background(), "/inbox/b.txt")
+	require.NoError(t, err)
 
 	out, err := runCLI(t, "ls", "/inbox")
 	require.NoError(t, err)
@@ -799,7 +833,7 @@ func TestMvIntoDirAndRename(t *testing.T) {
 	seed := writeSourceFile(t, "seed.txt", "s")
 	_, err = runCLI(t, "add", seed, "--dest", "/filed")
 	require.NoError(t, err)
-	_, err = runCLI(t, "mv", "/inbox/b.txt", "/filed")
+	_, err = runCLI(t, "mv", formatNodeSelector(movedByID.ID), "/filed")
 	require.NoError(t, err)
 
 	out, err = runCLI(t, "ls", "/filed")
@@ -827,11 +861,16 @@ func TestRmRestoreRoundTrip(t *testing.T) {
 	_, err := runCLI(t, "add", src, "--dest", "/inbox")
 	require.NoError(t, err)
 
-	// rm prints "trashed [<id>] <path> ..."; parse the id for restore.
-	out, err := runCLI(t, "rm", "/inbox/a.txt")
+	c, err := client.Ensure(context.Background())
+	require.NoError(t, err)
+	node, err := c.Stat(context.Background(), "/inbox/a.txt")
+	require.NoError(t, err)
+
+	// rm prints the same copyable selector accepted by restore.
+	out, err := runCLI(t, "rm", formatNodeSelector(node.ID))
 	require.NoError(t, err)
 	assert.Contains(t, out, "trashed")
-	m := regexp.MustCompile(`\[(\d+)\]`).FindStringSubmatch(out)
+	m := regexp.MustCompile(`\[(id:\d+)\]`).FindStringSubmatch(out)
 	require.Len(t, m, 2)
 
 	out, err = runCLI(t, "trash", "list")

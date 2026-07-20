@@ -74,18 +74,36 @@ func registerMutateRoutes(api huma.API, d Deps, g *gate) {
 		Body    struct {
 			NewParentID *int64  `json:"new_parent_id,omitempty"`
 			NewName     *string `json:"new_name,omitempty"`
+			DestPath    *string `json:"dest_path,omitempty"`
 		}
 	}) (*nodeOutput, error) {
 		rev, err := parseIfMatch(in.IfMatch)
 		if err != nil {
 			return nil, err
 		}
-		if in.Body.NewParentID == nil && in.Body.NewName == nil {
+		if in.Body.DestPath != nil &&
+			(in.Body.NewParentID != nil || in.Body.NewName != nil) {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation",
-				"nothing to do: set new_parent_id and/or new_name")
+				"dest_path cannot be combined with new_parent_id or new_name")
+		}
+		if in.Body.DestPath != nil && !strings.HasPrefix(*in.Body.DestPath, "/") {
+			return nil, NewError(http.StatusUnprocessableEntity, "validation",
+				"dest_path must be absolute (start with /)")
+		}
+		if in.Body.NewParentID == nil && in.Body.NewName == nil && in.Body.DestPath == nil {
+			return nil, NewError(http.StatusUnprocessableEntity, "validation",
+				"nothing to do: set dest_path, new_parent_id, and/or new_name")
 		}
 		var out *nodeOutput
 		err = g.mutate(func() error {
+			if in.Body.DestPath != nil {
+				n, path, err := d.Store.MoveToPath(ctx, in.ID, rev, *in.Body.DestPath)
+				if err != nil {
+					return FromStoreError(err)
+				}
+				out = nodeOutputAt(n, path)
+				return nil
+			}
 			// Defaults for the omitted half come from the current node; the
 			// revision precondition inside Move catches racing changes.
 			cur, err := d.Store.NodeByID(ctx, in.ID)

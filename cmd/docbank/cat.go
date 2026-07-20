@@ -10,17 +10,21 @@ import (
 )
 
 var catCmd = &cobra.Command{
-	Use:   "cat <path>",
+	Use:   "cat <path-or-id>",
 	Short: "Write a file's content to stdout",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		selector, err := parseNodeSelector(args[0])
+		if err != nil {
+			return err
+		}
 		c, err := client.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		n, err := c.Stat(cmd.Context(), args[0])
+		n, err := selector.resolve(cmd.Context(), c)
 		if err != nil {
-			return fmt.Errorf("resolving %q: %w", args[0], err)
+			return err
 		}
 		if n.Kind == "dir" {
 			return fmt.Errorf("%q: %w", args[0], store.ErrNotFile)

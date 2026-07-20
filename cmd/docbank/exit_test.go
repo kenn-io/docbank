@@ -92,7 +92,7 @@ func TestRunProcessDistinguishesUsageAndMissingNodes(t *testing.T) {
 
 	code = run("tag", "assign", "work", "relative/path")
 	assert.Equal(t, exitUsage, code)
-	assert.Contains(t, stderr.String(), "tag assignment path must be absolute")
+	assert.Contains(t, stderr.String(), "absolute virtual path or id:<positive-decimal>")
 
 	code = run("revert", "/document", "not-a-version-id")
 	assert.Equal(t, exitUsage, code)

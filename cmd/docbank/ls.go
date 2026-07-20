@@ -18,21 +18,25 @@ type directoryListing struct {
 }
 
 var lsCmd = &cobra.Command{
-	Use:   "ls [path]",
+	Use:   "ls [path-or-id]",
 	Short: "List a virtual directory",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		path := "/"
+		raw := "/"
 		if len(args) == 1 {
-			path = args[0]
+			raw = args[0]
+		}
+		selector, err := parseNodeSelector(raw)
+		if err != nil {
+			return err
 		}
 		c, err := client.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		dir, err := c.Stat(cmd.Context(), path)
+		dir, err := selector.resolve(cmd.Context(), c)
 		if err != nil {
-			return fmt.Errorf("resolving %q: %w", path, err)
+			return err
 		}
 		kids, err := c.Children(cmd.Context(), dir.ID)
 		if err != nil {
@@ -45,9 +49,10 @@ var lsCmd = &cobra.Command{
 			})
 		}
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
-		_, _ = fmt.Fprintln(w, "ID\tKIND\tSIZE\tMODIFIED\tNAME")
+		_, _ = fmt.Fprintln(w, "SELECTOR\tKIND\tSIZE\tMODIFIED\tNAME")
 		for _, k := range kids {
-			_, _ = fmt.Fprintf(w, "%d\t%s\t%d\t%s\t%s\n", k.ID, k.Kind, k.Size, k.ModifiedAt, k.Name)
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\n",
+				formatNodeSelector(k.ID), k.Kind, k.Size, k.ModifiedAt, k.Name)
 		}
 		return w.Flush()
 	},

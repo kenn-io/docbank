@@ -18,6 +18,18 @@ daemon status` and `docbank daemon stop` never auto-start. See
 [Daemon](architecture/daemon.md) and
 [Ownership & Concurrency](architecture/locking.md).
 
+## Node selectors
+
+Commands that inspect or mutate an existing node accept either its absolute
+virtual path or a stable selector such as `id:42`. Paths are convenient live
+coordinates; `id:42` continues to name the same document after a move or
+rename. Human listings print this copyable `id:<positive-decimal>` form.
+Machine-readable JSON continues to expose node IDs as numbers.
+
+The destination of `mv` remains an absolute path because it describes where
+the node should go. `restore` also accepts its older bare numeric form for
+compatibility, although new scripts should use the unambiguous `id:42` form.
+
 ## Process exit codes
 
 CLI process codes are stable so shell automation can branch without parsing
@@ -108,10 +120,10 @@ HTTP JSON endpoint, so stdout remains safe for automation.
 ## docbank ls
 
 ```
-docbank ls [path] [--json]
+docbank ls [path-or-id] [--json]
 ```
 
-Lists a virtual directory (default `/`). Columns: `ID`, `KIND`
+Lists a virtual directory (default `/`). Columns: `SELECTOR`, `KIND`
 (`dir`/`file`), `SIZE` (bytes; 0 for directories), `MODIFIED` (UTC,
 RFC 3339), `NAME`. Fails with `not a directory` when the path names a
 file.
@@ -122,11 +134,12 @@ ordered child list under `items`. Empty directories produce `"items": []`.
 ## docbank tree
 
 ```
-docbank tree [path] [-L <depth>] [--max-entries <count>] [--all] [--json]
+docbank tree [path-or-id] [-L <depth>] [--max-entries <count>] [--all] [--json]
 ```
 
-Prints the subtree rooted at `path` (default `/`), two-space indented, each
-entry suffixed with its node ID in brackets. Output is bounded by default to
+Prints the subtree rooted at the path or stable node selector (default `/`),
+two-space indented, each entry suffixed with its `id:N` selector in brackets.
+Output is bounded by default to
 four levels and 1,000 nodes, so an exploratory command cannot flood a terminal
 or an agent's context. `-L`/`--depth` and `--max-entries` set narrower or wider
 bounds. `--all` deliberately restores an unlimited traversal and cannot be
@@ -146,7 +159,7 @@ returned at that boundary.
 ## docbank cat
 
 ```
-docbank cat <path>
+docbank cat <path-or-id>
 ```
 
 Streams the file's stored bytes to stdout. Fails with `not a file` for
@@ -155,7 +168,7 @@ directories.
 ## docbank put
 
 ```text
-docbank put <source-file> <vault-path> [--mime-type <type>] [--progress auto|bar|plain] [--json]
+docbank put <source-file> <vault-path-or-id> [--mime-type <type>] [--progress auto|bar|plain] [--json]
 ```
 
 Replaces one existing file's current content while retaining every prior
@@ -183,7 +196,7 @@ an explicit versioned operation while the blob itself deduplicates.
 ## docbank edit
 
 ```text
-docbank edit <vault-path> [--editor <command>] [--mime-type <type>] [--progress auto|bar|plain]
+docbank edit <vault-path-or-id> [--editor <command>] [--mime-type <type>] [--progress auto|bar|plain]
 ```
 
 Downloads the current immutable version into a private temporary directory,
@@ -224,7 +237,7 @@ document content versions.
 ### docbank versions list
 
 ```text
-docbank versions list <path> [--limit <n>] [--offset <n>] [--json]
+docbank versions list <path-or-id> [--limit <n>] [--offset <n>] [--json]
 ```
 
 Lists the file's immutable content versions newest-first. The default limit is
@@ -263,10 +276,10 @@ rename it only after a successful exit.
 ### docbank versions prune
 
 ```text
-docbank versions prune <path> --version <version-id> [--version <version-id>...] [--run] [--json]
-docbank versions prune <path> --keep-newest <n> [--run] [--json]
-docbank versions prune <path> --older-than <age> [--run] [--json]
-docbank versions prune <path> --all-prior [--run] [--json]
+docbank versions prune <path-or-id> --version <version-id> [--version <version-id>...] [--run] [--json]
+docbank versions prune <path-or-id> --keep-newest <n> [--run] [--json]
+docbank versions prune <path-or-id> --older-than <age> [--run] [--json]
+docbank versions prune <path-or-id> --all-prior [--run] [--json]
 ```
 
 Selects unwanted non-current history for one file. Exactly one selector is
@@ -317,7 +330,7 @@ a match; the command reports `no authoritative references`.
 ## docbank revert
 
 ```text
-docbank revert <vault-path> <version-id> [--json]
+docbank revert <vault-path-or-id> <version-id> [--json]
 ```
 
 Makes a prior version current by creating a new immutable `content_revert`
@@ -340,8 +353,8 @@ docbank tag list [--limit <n>] [--offset <n>] [--json]
 docbank tag show <name-or-id> [--json]
 docbank tag rename <name-or-id> <new-name> [--json]
 docbank tag delete <name-or-id> [--json]
-docbank tag assign <name-or-id> <path> [--json]
-docbank tag unassign <name-or-id> <path> [--json]
+docbank tag assign <name-or-id> <path-or-node-id> [--json]
+docbank tag unassign <name-or-id> <path-or-node-id> [--json]
 docbank tag nodes <name-or-id> [--limit <n>] [--offset <n>] [--json]
 ```
 
@@ -362,9 +375,10 @@ resolve the selector, then condition the mutation on that inspected revision;
 a concurrent rename or assignment change returns `stale_revision` instead of
 overwriting or deleting the newer state.
 
-Assignment commands resolve the supplied live path and update its tag inside
+Assignment by path resolves that live coordinate and updates its tag inside
 one daemon/store transaction, so moving an ancestor cannot redirect the
-operation between separate requests. Repeated assignment and unassignment are
+operation between separate requests. An `id:N` selector deliberately targets
+the stable node identity under its inspected revision. Repeated assignment and unassignment are
 idempotent and report `changed: false` without a revision bump. A real
 assignment change advances both the node and tag revisions. `tag nodes`
 includes live and trashed nodes, but omits a path for trash because it has no
@@ -374,12 +388,12 @@ and JSON output includes `total`, `limit`, and `offset`.
 ## docbank audit
 
 ```text
-docbank audit enable <path> [--agent-label <label>] [--json]
+docbank audit enable <path-or-id> [--agent-label <label>] [--json]
 docbank audit enable --node-id <id> [--agent-label <label>] [--json]
 docbank audit enable --run --token <preview-token> --acknowledge-permanent-retention [--json]
-docbank audit status [path] [--json]
+docbank audit status [path-or-id] [--json]
 docbank audit status --node-id <id> [--json]
-docbank audit history <path> [--limit <n>] [--cursor <cursor>] [--json]
+docbank audit history <path-or-id> [--limit <n>] [--cursor <cursor>] [--json]
 docbank audit history --node-id <id> [--limit <n>] [--cursor <cursor>] [--json]
 docbank audit verify [--expected <prior-json-report>] [--json]
 ```
@@ -439,7 +453,7 @@ and maintenance behavior.
 ## docbank mv
 
 ```
-docbank mv <src-path> <dest-path> [--json]
+docbank mv <source-path-or-id> <dest-path> [--json]
 ```
 
 Moves or renames a node. Metadata only — bytes never move. The
@@ -454,14 +468,14 @@ destination is interpreted like POSIX `mv`:
 
 Directory moves carry the whole subtree. A move that would place a
 directory under its own descendant fails with `move would create a
-cycle`. On success human output prints `moved [<id>] <new-path>`; `--json`
+cycle`. On success human output prints `moved [id:<id>] <new-path>`; `--json`
 returns the complete resulting node, including its stable ID, revision, and
 new path.
 
 ## docbank rm
 
 ```
-docbank rm <path> [--json]
+docbank rm <path-or-id> [--json]
 ```
 
 Soft-deletes: moves the node — and, for a directory, its entire subtree —
@@ -469,7 +483,7 @@ to the trash. Nothing is permanently removed and no bytes are reclaimed.
 The freed name is immediately reusable. Prints:
 
 ```
-trashed [15] /taxes/2024/return.pdf (restore with: docbank restore 15)
+trashed [id:15] /taxes/2024/return.pdf (restore with: docbank restore id:15)
 ```
 
 `--json` returns the trashed node receipt. Its `path` is the pre-trash path
@@ -484,13 +498,13 @@ unreachable-content collection, and packed-space reclamation are the separate
 ## docbank restore
 
 ```
-docbank restore <id> [--json]
+docbank restore <id-or-selector> [--json]
 ```
 
-Returns a trashed node (by ID — see `docbank trash list`) to its original
+Returns a trashed node (by `id:N` selector — see `docbank trash list`) to its original
 location, re-suffixing its name if a live node now occupies it. If the
 original parent directory was itself permanently deleted, the node is
-restored under `/`. Human output prints `restored [<id>] <path>`; `--json`
+restored under `/`. Human output prints `restored [id:<id>] <path>`; `--json`
 returns the complete restored node with its resulting path and revision.
 
 ## docbank search
@@ -505,7 +519,7 @@ in the query is escaped, not interpreted. Name matches retain their existing
 BM25 order and appear before content-only matches, whose ranking is independent.
 The default limit is 50 and `--limit` accepts 1–1000. When more matches exist,
 the command says that the result is truncated rather than silently implying
-completeness. Output columns are `ID`, `MATCH`, and `PATH`; no matches prints
+completeness. Output columns are `SELECTOR`, `MATCH`, and `PATH`; no matches prints
 `no matches`.
 
 `--json` emits the typed search report with `hits`, the applied `limit`, and
@@ -522,7 +536,7 @@ docbank trash list [--json]
 docbank trash empty [--older-than <age>] [--run] [--json]
 ```
 
-`list` shows restorable trashed nodes: `ID`, `TRASHED AT`, `NAME`. Only
+`list` shows restorable trashed nodes: `SELECTOR`, `TRASHED AT`, `NAME`. Only
 trash roots are listed — trashing a directory produces one entry, and
 restoring it brings the whole subtree back.
 

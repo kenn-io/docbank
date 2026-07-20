@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"strconv"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -29,7 +28,7 @@ var (
 )
 
 var auditEnableCmd = &cobra.Command{
-	Use:   "enable [path]",
+	Use:   "enable [path-or-id]",
 	Short: "Preview permanent retention, then explicitly enable the reviewed scope",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -72,14 +71,19 @@ var auditEnableCmd = &cobra.Command{
 		if nodeIDSet && auditEnableNodeID < 1 {
 			return usageError(errors.New("audit enable --node-id must be positive"))
 		}
-		if len(args) == 1 && !strings.HasPrefix(args[0], "/") {
-			return usageError(errors.New("audit enable path must be absolute"))
-		}
 		opts := client.AuditPreviewOptions{
 			NodeID: auditEnableNodeID, AgentLabel: auditEnableAgentLabel,
 		}
 		if len(args) == 1 {
-			opts.Path = args[0]
+			selector, err := parseNodeSelector(args[0])
+			if err != nil {
+				return err
+			}
+			if selector.isID() {
+				opts.NodeID = selector.id
+			} else {
+				opts.Path = selector.path
+			}
 		}
 		c, err := client.Ensure(cmd.Context())
 		if err != nil {
@@ -102,7 +106,7 @@ var (
 )
 
 var auditStatusCmd = &cobra.Command{
-	Use:   "status [path]",
+	Use:   "status [path-or-id]",
 	Short: "Inspect vault audit authority and optional node protection",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -111,21 +115,27 @@ var auditStatusCmd = &cobra.Command{
 			return usageError(errors.New(
 				"audit status accepts either a path or --node-id, not both"))
 		}
-		path := ""
-		if len(args) == 1 {
-			path = args[0]
-		}
 		if nodeIDSet && auditStatusNodeID < 1 {
 			return usageError(errors.New("audit status --node-id must be positive"))
 		}
-		if path != "" && !strings.HasPrefix(path, "/") {
-			return usageError(errors.New("audit status path must be absolute"))
+		path := ""
+		nodeID := auditStatusNodeID
+		if len(args) == 1 {
+			selector, err := parseNodeSelector(args[0])
+			if err != nil {
+				return err
+			}
+			if selector.isID() {
+				nodeID = selector.id
+			} else {
+				path = selector.path
+			}
 		}
 		c, err := client.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		status, err := c.AuditStatus(cmd.Context(), path, auditStatusNodeID)
+		status, err := c.AuditStatus(cmd.Context(), path, nodeID)
 		if err != nil {
 			return err
 		}

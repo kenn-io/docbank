@@ -379,29 +379,63 @@ func (s *Store) MovePath(ctx context.Context, srcPath, destPath string) (Node, s
 		if err != nil {
 			return fmt.Errorf("resolving %q: %w", srcPath, err)
 		}
-		if src.ID == s.rootID {
-			return ErrIsRoot
-		}
-		newParentID, newName, err := s.resolveMoveTargetTx(ctx, tx, destPath, src.Name)
-		if err != nil {
-			return err
-		}
-		active, err := auditAuthorityActiveTx(ctx, tx)
-		if err != nil {
-			return err
-		}
-		if active {
-			moved, err = s.moveAuditedTx(
-				ctx, tx, src.ID, newParentID, newName, UnconditionalRev,
-			)
-		} else {
-			moved, err = s.moveTx(tx, src.ID, newParentID, newName, UnconditionalRev)
-		}
-		if err == nil {
-			movedPath, err = pathOf(ctx, tx, moved.ID)
-		}
+		moved, movedPath, err = s.moveNodeToPathTx(
+			ctx, tx, src, UnconditionalRev, destPath,
+		)
 		return err
 	})
+	if err != nil {
+		return Node{}, "", err
+	}
+	return moved, movedPath, nil
+}
+
+// MoveToPath moves the stable live node id to destPath while resolving the
+// destination and enforcing ifRev in one transaction. Unlike MovePath, source
+// identity is unaffected by concurrent ancestor moves.
+func (s *Store) MoveToPath(
+	ctx context.Context, id, ifRev int64, destPath string,
+) (Node, string, error) {
+	var moved Node
+	var movedPath string
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		src, err := nodeByIDTx(tx, id)
+		if err != nil {
+			return err
+		}
+		moved, movedPath, err = s.moveNodeToPathTx(ctx, tx, src, ifRev, destPath)
+		return err
+	})
+	if err != nil {
+		return Node{}, "", err
+	}
+	return moved, movedPath, nil
+}
+
+func (s *Store) moveNodeToPathTx(
+	ctx context.Context, tx *sql.Tx, src Node, ifRev int64, destPath string,
+) (Node, string, error) {
+	if src.ID == s.rootID {
+		return Node{}, "", ErrIsRoot
+	}
+	newParentID, newName, err := s.resolveMoveTargetTx(ctx, tx, destPath, src.Name)
+	if err != nil {
+		return Node{}, "", err
+	}
+	active, err := auditAuthorityActiveTx(ctx, tx)
+	if err != nil {
+		return Node{}, "", err
+	}
+	var moved Node
+	if active {
+		moved, err = s.moveAuditedTx(ctx, tx, src.ID, newParentID, newName, ifRev)
+	} else {
+		moved, err = s.moveTx(tx, src.ID, newParentID, newName, ifRev)
+	}
+	if err != nil {
+		return Node{}, "", err
+	}
+	movedPath, err := pathOf(ctx, tx, moved.ID)
 	if err != nil {
 		return Node{}, "", err
 	}

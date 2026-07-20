@@ -33,12 +33,16 @@ var (
 )
 
 var putCmd = &cobra.Command{
-	Use:   "put <source-file> <vault-path>",
+	Use:   "put <source-file> <vault-path-or-id>",
 	Short: "Replace a file's content while retaining its immutable history",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := validatePutSourcePath(args[0]); err != nil {
 			return usageError(err)
+		}
+		targetSelector, err := parseNodeSelector(args[1])
+		if err != nil {
+			return err
 		}
 		source, sourcePath, size, err := openPutSource(args[0])
 		if err != nil {
@@ -84,9 +88,9 @@ var putCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		target, err := c.Stat(cmd.Context(), args[1])
+		target, err := targetSelector.resolve(cmd.Context(), c)
 		if err != nil {
-			return fmt.Errorf("resolving %q: %w", args[1], err)
+			return err
 		}
 		if target.Kind != "file" {
 			return fmt.Errorf("%q: %w", args[1], store.ErrNotFile)
@@ -109,7 +113,7 @@ var putCmd = &cobra.Command{
 		}
 		_, err = fmt.Fprintf(cmd.OutOrStdout(),
 			"updated %s to version %s (revision %d, %s, sha256 %s)\n",
-			args[1], receipt.Version.ID, receipt.Node.Revision,
+			target.Path, receipt.Version.ID, receipt.Node.Revision,
 			formatBackupBytes(receipt.ComputedSize), receipt.ComputedHash)
 		if err != nil {
 			return fmt.Errorf("writing replacement receipt: %w", err)

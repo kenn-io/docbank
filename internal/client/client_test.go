@@ -89,15 +89,30 @@ func TestRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "/docs", moved.Path)
 
+	moved, err = c.MoveToPath(ctx, moved.ID, moved.Revision, "/filed")
+	require.NoError(t, err)
+	assert.Equal(t, "/filed", moved.Path)
+
 	kids, err := c.Children(ctx, s.RootID())
 	require.NoError(t, err)
 	assert.Len(t, kids, 1)
 
-	trashed, err := c.TrashPath(ctx, "/docs")
+	trashed, err := c.TrashPath(ctx, "/filed")
 	require.NoError(t, err)
 	restored, err := c.Restore(ctx, dir.ID, trashed.Revision)
 	require.NoError(t, err)
-	assert.Equal(t, "/docs", restored.Path)
+	assert.Equal(t, "/filed", restored.Path)
+}
+
+func TestMoveToPathValidatesRequestBeforeTransport(t *testing.T) {
+	c := client.New("http://127.0.0.1:1", serverKey)
+
+	_, err := c.MoveToPath(t.Context(), 0, 1, "/filed")
+	require.ErrorContains(t, err, "node ID must be positive")
+	_, err = c.MoveToPath(t.Context(), 1, 0, "/filed")
+	require.ErrorContains(t, err, "revision must be positive")
+	_, err = c.MoveToPath(t.Context(), 1, 1, "filed")
+	require.ErrorContains(t, err, "destination path must be absolute")
 }
 
 func TestAuditStatusBindsOnlyScopeTargetToEnrollmentBaseline(t *testing.T) {

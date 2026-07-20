@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -172,7 +171,7 @@ var tagDeleteCmd = &cobra.Command{
 }
 
 var tagAssignCmd = &cobra.Command{
-	Use:   "assign <name-or-id> <path>",
+	Use:   "assign <name-or-id> <path-or-node-id>",
 	Short: "Assign a tag to a live node",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -181,7 +180,7 @@ var tagAssignCmd = &cobra.Command{
 }
 
 var tagUnassignCmd = &cobra.Command{
-	Use:   "unassign <name-or-id> <path>",
+	Use:   "unassign <name-or-id> <path-or-node-id>",
 	Short: "Remove a tag from a live node",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -223,14 +222,14 @@ var tagNodesCmd = &cobra.Command{
 			return nil
 		}
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
-		_, _ = fmt.Fprintln(w, "NODE\tREVISION\tSTATE\tPATH")
+		_, _ = fmt.Fprintln(w, "SELECTOR\tREVISION\tSTATE\tPATH")
 		for _, item := range page.Items {
 			state, path := "live", item.Path
 			if item.Node.TrashedAt != "" {
 				state, path = "trashed", "-"
 			}
-			_, _ = fmt.Fprintf(w, "%d\t%d\t%s\t%s\n",
-				item.Node.ID, item.Node.Revision, state, path)
+			_, _ = fmt.Fprintf(w, "%s\t%d\t%s\t%s\n",
+				formatNodeSelector(item.Node.ID), item.Node.Revision, state, path)
 		}
 		if err := w.Flush(); err != nil {
 			return fmt.Errorf("writing tagged nodes: %w", err)
@@ -241,24 +240,39 @@ var tagNodesCmd = &cobra.Command{
 }
 
 func changeTagAssignmentCLI(
-	cmd *cobra.Command, selector, path string, assign, jsonOutput bool,
+	cmd *cobra.Command, tagSelector, nodeOperand string, assign, jsonOutput bool,
 ) error {
-	if !strings.HasPrefix(path, "/") {
-		return usageError(errors.New("tag assignment path must be absolute"))
+	nodeSelector, err := parseNodeSelector(nodeOperand)
+	if err != nil {
+		return err
 	}
 	c, err := client.Ensure(cmd.Context())
 	if err != nil {
 		return err
 	}
-	tag, err := resolveTag(cmd, c, selector)
+	tag, err := resolveTag(cmd, c, tagSelector)
 	if err != nil {
 		return err
 	}
 	var receipt api.TagAssignmentReceipt
-	if assign {
-		receipt, err = c.AssignTagPath(cmd.Context(), tag.ID, path)
+	if nodeSelector.isID() {
+		node, resolveErr := nodeSelector.resolve(cmd.Context(), c)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		if assign {
+			receipt, err = c.AssignTag(
+				cmd.Context(), tag.ID, node.ID, node.Revision,
+			)
+		} else {
+			receipt, err = c.UnassignTag(
+				cmd.Context(), tag.ID, node.ID, node.Revision,
+			)
+		}
+	} else if assign {
+		receipt, err = c.AssignTagPath(cmd.Context(), tag.ID, nodeSelector.path)
 	} else {
-		receipt, err = c.UnassignTagPath(cmd.Context(), tag.ID, path)
+		receipt, err = c.UnassignTagPath(cmd.Context(), tag.ID, nodeSelector.path)
 	}
 	if err != nil {
 		return err

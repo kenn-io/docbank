@@ -57,7 +57,7 @@ type treeWalker struct {
 }
 
 var treeCmd = &cobra.Command{
-	Use:   "tree [path]",
+	Use:   "tree [path-or-id]",
 	Short: "Print the virtual tree",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -70,21 +70,25 @@ var treeCmd = &cobra.Command{
 		if treeAll && (cmd.Flags().Changed("depth") || cmd.Flags().Changed("max-entries")) {
 			return usageError(errors.New("tree --all cannot be combined with --depth or --max-entries"))
 		}
-		rootPath := "/"
+		raw := "/"
 		if len(args) == 1 {
-			rootPath = args[0]
+			raw = args[0]
+		}
+		selector, err := parseNodeSelector(raw)
+		if err != nil {
+			return err
 		}
 		c, err := client.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
 		ctx := cmd.Context()
-		root, err := c.Stat(ctx, rootPath)
+		root, err := selector.resolve(ctx, c)
 		if err != nil {
-			return fmt.Errorf("resolving %q: %w", rootPath, err)
+			return err
 		}
 		if root.Kind != "dir" {
-			return fmt.Errorf("%s: %w", rootPath, store.ErrNotDir)
+			return fmt.Errorf("%s: %w", raw, store.ErrNotDir)
 		}
 		walker := treeWalker{
 			client: c, maxDepth: treeDepth, maxEntries: treeMaxEntries,
@@ -179,8 +183,9 @@ func writeTree(w io.Writer, listing treeListing) error {
 		return fmt.Errorf("writing tree: %w", err)
 	}
 	for _, item := range listing.Items {
-		if _, err := fmt.Fprintf(w, "%s%s  [%d]\n",
-			strings.Repeat("  ", item.Depth), item.Node.Name, item.Node.ID); err != nil {
+		if _, err := fmt.Fprintf(w, "%s%s  [%s]\n",
+			strings.Repeat("  ", item.Depth), item.Node.Name,
+			formatNodeSelector(item.Node.ID)); err != nil {
 			return fmt.Errorf("writing tree: %w", err)
 		}
 	}

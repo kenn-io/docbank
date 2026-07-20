@@ -44,9 +44,10 @@ var searchCmd = &cobra.Command{
 			return nil
 		}
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
-		_, _ = fmt.Fprintln(w, "ID\tMATCH\tPATH")
+		_, _ = fmt.Fprintln(w, "SELECTOR\tMATCH\tPATH")
 		for _, h := range rep.Hits {
-			_, _ = fmt.Fprintf(w, "%d\t%s\t%s\n", h.Node.ID, h.Match, h.Path)
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n",
+				formatNodeSelector(h.Node.ID), h.Match, h.Path)
 		}
 		if err := w.Flush(); err != nil {
 			return fmt.Errorf("writing search results: %w", err)

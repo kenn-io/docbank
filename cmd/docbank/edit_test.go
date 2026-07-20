@@ -29,7 +29,7 @@ func TestEditCreatesVersionAndSkipsUnchangedContent(t *testing.T) {
 	initialVersion := initialNode.CurrentVersionID
 
 	setEditHelper(t, "edited text")
-	out, err := runCLI(t, "edit", "/inbox/notes.txt", "--progress", "plain")
+	out, err := runCLI(t, "edit", formatNodeSelector(initialNode.ID), "--progress", "plain")
 	require.NoError(t, err, out)
 	assert.Contains(t, out, "download:")
 	assert.Contains(t, out, "hash:")

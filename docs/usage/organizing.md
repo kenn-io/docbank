@@ -13,8 +13,8 @@ archive is one metadata update.
 ## Browsing
 
 ```bash
-docbank ls /taxes          # one directory, with IDs, sizes, timestamps
-docbank tree /taxes        # whole subtree, indented, IDs in brackets
+docbank ls /taxes          # one directory, with stable selectors, sizes, timestamps
+docbank tree /taxes        # whole subtree, with id:N selectors in brackets
 docbank cat /taxes/w2.pdf  # stream file bytes to stdout
 ```
 
@@ -23,9 +23,19 @@ and its ordered children. `tree --json` returns the root plus a flat,
 deterministic pre-order list whose entries carry absolute paths and depths;
 this avoids parsing indentation when a script needs to walk a subtree.
 
-Node IDs appear everywhere deliberately: IDs are the canonical way to
-refer to a document. Paths change when you reorganize; IDs never do.
-The CLI uses IDs for trash recovery (`docbank restore <id>`), and the
+Node selectors appear everywhere deliberately. A path is a live coordinate
+that can change during reorganization; `id:42` continues to name the same node.
+Commands that target an existing node accept either form:
+
+```bash
+docbank cat id:42
+docbank mv id:42 /taxes/2026/w2.pdf
+docbank rm id:42
+docbank restore id:42
+```
+
+Use paths when the coordinate itself is your intent, and `id:N` when you mean
+the object regardless of its current name. JSON uses numeric node IDs, and the
 [HTTP API](../architecture/http-api.md) is ID-first throughout.
 
 ## Moving and renaming

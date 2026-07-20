@@ -42,9 +42,10 @@ var trashListCmd = &cobra.Command{
 			return nil
 		}
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
-		_, _ = fmt.Fprintln(w, "ID\tTRASHED AT\tNAME")
+		_, _ = fmt.Fprintln(w, "SELECTOR\tTRASHED AT\tNAME")
 		for _, n := range roots {
-			_, _ = fmt.Fprintf(w, "%d\t%s\t%s\n", n.ID, n.TrashedAt, n.Name)
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n",
+				formatNodeSelector(n.ID), n.TrashedAt, n.Name)
 		}
 		return w.Flush()
 	},

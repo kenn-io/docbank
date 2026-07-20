@@ -45,7 +45,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `POST /nodes` | create a directory (`kind: "dir"`) | Implemented |
 | `POST /ingest` · `POST /ingest/stream` · `POST /ingest/preflight` | import with JSON or streamed progress / inventory server-side paths — see [addendum](#addendum-post-ingest-post-ingeststream-and-post-ingestpreflight) | Implemented |
 | `POST /uploads?parent_id=&name=` | stream one digest-checked remote file — see [addendum](#addendum-post-uploads) | Implemented |
-| `PATCH /nodes/{id}` | move and/or rename | Implemented |
+| `PATCH /nodes/{id}` | move and/or rename, including resolving an absolute `dest_path` transactionally | Implemented |
 | `POST /path/move` · `POST /path/trash` | move / trash by virtual path, resolved and mutated in one store transaction | Implemented |
 | `POST /nodes/{id}/trash` · `POST /nodes/{id}/restore` | soft delete / recover | Implemented |
 | `GET /trash` · `POST /trash/empty` `{run, older_than}` | list / report or hard-delete trash roots | Implemented |
@@ -64,6 +64,12 @@ its own shutdown token.
 IDs are canonical everywhere: every response carries them, and mutating
 endpoints address nodes by ID so a rename can't strand a concurrent
 client's reference.
+
+For stable-identity moves, `PATCH /nodes/{id}` accepts either the lower-level
+`new_parent_id`/`new_name` fields or one absolute `dest_path`; these forms are
+mutually exclusive. The latter resolves POSIX-style destination semantics and
+checks `If-Match` in the same transaction. `POST /path/move` remains the
+coordinate-oriented form when the source path itself is the intended target.
 
 ### Backup repository endpoints
 
@@ -146,7 +152,7 @@ and maintenance are explicit exceptions:
 
 | Endpoint | Precondition |
 |----------|--------------|
-| `PATCH /nodes/{id}` | required — target node's revision |
+| `PATCH /nodes/{id}` | required — target node's revision; an optional `dest_path` is resolved in the same transaction |
 | `PUT /nodes/{id}/content` | required — prevents a replacement from overwriting a head the caller did not inspect |
 | `POST /nodes/{id}/revert` | required — binds the selected source to the current head the caller inspected |
 | `POST /nodes/{id}/trash` | required — target node's revision |

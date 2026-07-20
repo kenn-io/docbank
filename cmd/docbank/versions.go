@@ -38,7 +38,7 @@ var versionsCmd = &cobra.Command{
 }
 
 var versionsListCmd = &cobra.Command{
-	Use:   "list <path>",
+	Use:   "list <path-or-id>",
 	Short: "List a file's immutable content versions",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -48,13 +48,17 @@ var versionsListCmd = &cobra.Command{
 		if versionsOffset < 0 {
 			return usageError(errors.New("--offset must not be negative"))
 		}
+		selector, err := parseNodeSelector(args[0])
+		if err != nil {
+			return err
+		}
 		c, err := client.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		node, err := c.Stat(cmd.Context(), args[0])
+		node, err := selector.resolve(cmd.Context(), c)
 		if err != nil {
-			return fmt.Errorf("resolving %q: %w", args[0], err)
+			return err
 		}
 		page, err := c.Versions(cmd.Context(), node.ID, versionsLimit, versionsOffset)
 		if err != nil {
@@ -148,7 +152,7 @@ var versionsCatCmd = &cobra.Command{
 }
 
 var versionsPruneCmd = &cobra.Command{
-	Use:   "prune <path>",
+	Use:   "prune <path-or-id>",
 	Short: "Preview or release selected version history",
 	Long: "Release selected immutable history while retaining the current content. " +
 		"This changes logical reachability only: run gc for loose bytes and storage repack " +
@@ -165,13 +169,17 @@ var versionsPruneCmd = &cobra.Command{
 		if _, err := api.ParseVersionPruneRequest(request); err != nil {
 			return usageError(err)
 		}
+		selector, err := parseNodeSelector(args[0])
+		if err != nil {
+			return err
+		}
 		c, err := client.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		node, err := c.Stat(cmd.Context(), args[0])
+		node, err := selector.resolve(cmd.Context(), c)
 		if err != nil {
-			return fmt.Errorf("resolving %q: %w", args[0], err)
+			return err
 		}
 		report, err := c.PruneContentVersions(
 			cmd.Context(), node.ID, node.Revision, request,

@@ -13,9 +13,9 @@ docbank search report --json
 ```
 
 ```
-ID   MATCH    PATH
-231  name     /taxes/2026/insurance-renewal.pdf
-198  content  /taxes/2026/car-insurance-notes.md
+SELECTOR   MATCH    PATH
+id:231     name     /taxes/2026/insurance-renewal.pdf
+id:198     content  /taxes/2026/car-insurance-notes.md
 ```
 
 ## Semantics
