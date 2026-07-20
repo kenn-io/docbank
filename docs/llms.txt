@@ -47,3 +47,4 @@ Every documentation page is also published as raw Markdown at the same path with
 ## Project
 - [Roadmap](https://docbank.ai/roadmap.md): What is implemented today and what each phase adds.
 - [Changelog](https://docbank.ai/changelog.md): Release history.
+- [License](https://docbank.ai/license.md): Docbank is open-source software licensed under the Apache License, Version 2.0.

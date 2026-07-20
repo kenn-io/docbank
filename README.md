@@ -161,3 +161,10 @@ Docbank belongs to a family of personal data tools alongside
 preserves an immutable record of your messages, docbank manages working
 documents: files you still organize, retrieve, and build workflows around —
 and a safe document API for external applications.
+
+## License
+
+Copyright 2026 Kenn Software LLC.
+
+Docbank is licensed under the [Apache License, Version 2.0](LICENSE). See
+[NOTICE](NOTICE) for attribution information.

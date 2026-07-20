@@ -174,3 +174,10 @@ documents: files you still organize, retrieve, and build workflows around.
 - [Troubleshooting](troubleshooting.md): diagnose failures without risking the vault
 - [CLI Reference](cli-reference.md): every command, flag, and output format
 - [How Docbank Works](architecture/overview.md): the architecture, guided
+
+## License
+
+Copyright 2026 Kenn Software LLC.
+
+Docbank is open-source software licensed under the [Apache License, Version
+2.0](license.md).
