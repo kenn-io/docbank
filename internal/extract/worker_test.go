@@ -129,6 +129,12 @@ func TestWorkerRetriesTransientOpenFailure(t *testing.T) {
 		return searchErr == nil && len(hits) == 1
 	}, time.Second, 5*time.Millisecond)
 	cancel()
-	require.NoError(t, <-done)
+	runErr := <-done
+	if runErr != nil {
+		// Cancellation can reach either the idle wait (which returns nil) or an
+		// in-flight catalog query. The daemon supervisor treats both outcomes as
+		// a clean cancelled job.
+		require.ErrorIs(t, runErr, context.Canceled)
+	}
 	assert.GreaterOrEqual(t, reader.calls, 2)
 }
