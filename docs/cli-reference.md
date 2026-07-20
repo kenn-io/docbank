@@ -324,7 +324,9 @@ Finds every immutable content version that retains the canonical lowercase
 SHA-256 identity. Live current references sort first, followed by live prior
 versions and trashed references. Each result carries the stable version and
 node IDs, node revision, current/history state, size, recording time, and the
-node's current path when it is live. Trashed nodes have no resolvable path.
+node's current path when it is live. Human output renders the node as a
+copyable `id:N` selector; JSON keeps its numeric ID. Trashed nodes have no
+resolvable path.
 
 The default limit is 100; `--limit` accepts 1–1000 and `--offset` continues a
 bounded result. `--json` emits the page envelope with `items`, `total`, `limit`,

@@ -57,7 +57,7 @@ var referencesCmd = &cobra.Command{
 			return nil
 		}
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
-		_, _ = fmt.Fprintln(w, "VERSION\tNODE\tNODE REV\tCURRENT\tSTATE\tSIZE\tRECORDED\tPATH")
+		_, _ = fmt.Fprintln(w, "VERSION\tNODE SELECTOR\tNODE REV\tCURRENT\tSTATE\tSIZE\tRECORDED\tPATH")
 		for _, ref := range page.Items {
 			current := "no"
 			if ref.IsCurrent {
@@ -67,8 +67,8 @@ var referencesCmd = &cobra.Command{
 			if ref.Node.TrashedAt != "" {
 				state, path = "trashed", "-"
 			}
-			_, _ = fmt.Fprintf(w, "%s\t%d\t%d\t%s\t%s\t%d\t%s\t%s\n",
-				ref.Version.ID, ref.Node.ID, ref.Version.NodeRevision, current,
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%d\t%s\t%s\n",
+				ref.Version.ID, formatNodeSelector(ref.Node.ID), ref.Version.NodeRevision, current,
 				state, ref.Version.Size, ref.Version.RecordedAt, path)
 		}
 		if err := w.Flush(); err != nil {

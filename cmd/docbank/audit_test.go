@@ -22,14 +22,16 @@ func TestHumanAuditOutputQuotesPaths(t *testing.T) {
 		{
 			name: "preview",
 			write: func(w io.Writer) error {
-				return writeAuditPreview(w, api.AuditEnrollmentPreview{TargetPath: unsafePath})
+				return writeAuditPreview(w, api.AuditEnrollmentPreview{
+					TargetPath: unsafePath, TargetNodeID: 42,
+				})
 			},
 		},
 		{
 			name: "enabled",
 			write: func(w io.Writer) error {
 				return writeAuditEnabled(w, api.AuditStatus{Scopes: []api.AuditScopeStatus{{
-					TargetPath: unsafePath,
+					TargetPath: unsafePath, TargetNodeID: 42,
 				}}})
 			},
 		},
@@ -38,9 +40,11 @@ func TestHumanAuditOutputQuotesPaths(t *testing.T) {
 			write: func(w io.Writer) error {
 				return writeAuditStatus(w, api.AuditStatus{
 					Enabled: true,
-					Scopes:  []api.AuditScopeStatus{{TargetPath: unsafePath}},
+					Scopes: []api.AuditScopeStatus{{
+						TargetPath: unsafePath, TargetNodeID: 42,
+					}},
 					Membership: &api.AuditMembershipStatus{
-						Path: unsafePath,
+						NodeID: 42, Path: unsafePath,
 					},
 				})
 			},
@@ -51,9 +55,30 @@ func TestHumanAuditOutputQuotesPaths(t *testing.T) {
 			var output bytes.Buffer
 			require.NoError(t, test.write(&output))
 			assert.Contains(t, output.String(), want)
+			assert.Contains(t, output.String(), "id:42")
 			assert.NotContains(t, output.String(), unsafePath)
 		})
 	}
+}
+
+func TestHumanAuditHistoryUsesCopyableNodeSelectors(t *testing.T) {
+	var output bytes.Buffer
+	require.NoError(t, writeAuditHistory(&output, api.AuditEventPage{
+		Node: api.Node{ID: 42, TrashedAt: "2026-07-20T00:00:00Z"},
+		Items: []api.AuditEvent{{
+			Kind: "tag_assign",
+			Attachment: &api.AuditAttachmentChange{
+				Kind: "tag_assignment",
+				Identity: api.AuditAttachmentIdentity{
+					TagID: "33333333-3333-4333-8333-333333333333", NodeID: 42,
+				},
+			},
+		}},
+		Total: 1,
+	}))
+	assert.Contains(t, output.String(), "audit history for id:42 in trash (id:42)")
+	assert.Contains(t, output.String(), "on id:42")
+	assert.NotContains(t, output.String(), "node 42")
 }
 
 func TestAuditRetentionDisclosureNamesEveryMetadataClass(t *testing.T) {

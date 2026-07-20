@@ -67,10 +67,10 @@ var auditHistoryCmd = &cobra.Command{
 func writeAuditHistory(w io.Writer, page api.AuditEventPage) error {
 	coordinate := auditDisplayPath(page.Path)
 	if page.Node.TrashedAt != "" {
-		coordinate = fmt.Sprintf("node %d in trash", page.Node.ID)
+		coordinate = formatNodeSelector(page.Node.ID) + " in trash"
 	}
-	if _, err := fmt.Fprintf(w, "audit history for %s (node %d): %d recorded event(s)\n",
-		coordinate, page.Node.ID, page.Total); err != nil {
+	if _, err := fmt.Fprintf(w, "audit history for %s (%s): %d recorded event(s)\n",
+		coordinate, formatNodeSelector(page.Node.ID), page.Total); err != nil {
 		return fmt.Errorf("writing audit history: %w", err)
 	}
 	if len(page.Items) == 0 {
@@ -125,8 +125,8 @@ func writeAuditAttachment(w io.Writer, change api.AuditAttachmentChange) error {
 		summary = fmt.Sprintf("tag %s: %s -> %s", change.Identity.TagID,
 			auditTagState(change.Before), auditTagState(change.After))
 	case "tag_assignment":
-		summary = fmt.Sprintf("tag %s on node %d: %s -> %s",
-			change.Identity.TagID, change.Identity.NodeID,
+		summary = fmt.Sprintf("tag %s on %s: %s -> %s",
+			change.Identity.TagID, formatNodeSelector(change.Identity.NodeID),
 			auditPresence(change.Before), auditPresence(change.After))
 	case "provenance":
 		summary = fmt.Sprintf("provenance %s: %s -> %s", change.Identity.ProvenanceID,

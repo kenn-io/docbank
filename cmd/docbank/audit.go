@@ -151,7 +151,8 @@ func writeAuditPreview(w io.Writer, preview api.AuditEnrollmentPreview) error {
 		return fmt.Errorf("writing audit preview: %w", err)
 	}
 	lines := []string{
-		fmt.Sprintf("Target: %s (node %d)", auditDisplayPath(preview.TargetPath), preview.TargetNodeID),
+		fmt.Sprintf("Target: %s (%s)", auditDisplayPath(preview.TargetPath),
+			formatNodeSelector(preview.TargetNodeID)),
 		"Permanent scope: " + preview.ScopeID,
 		fmt.Sprintf("Protected tree: %d node(s) — %d directories, %d file(s)",
 			preview.MemberCount, preview.DirectoryCount, preview.FileCount),
@@ -193,8 +194,8 @@ func writeAuditEnabled(w io.Writer, status api.AuditStatus) error {
 		path = "(target is in trash)"
 	}
 	_, err := fmt.Fprintf(w,
-		"enabled permanent audit scope %s for %s (node %d); protecting %d node(s)\n",
-		scope.ID, path, scope.TargetNodeID, scope.MemberCount)
+		"enabled permanent audit scope %s for %s (%s); protecting %d node(s)\n",
+		scope.ID, path, formatNodeSelector(scope.TargetNodeID), scope.MemberCount)
 	if err != nil {
 		return fmt.Errorf("writing audit result: %w", err)
 	}
@@ -222,9 +223,10 @@ func writeAuditStatus(w io.Writer, status api.AuditStatus) error {
 				path = "(target is in trash)"
 			}
 			if _, err := fmt.Fprintf(w,
-				"scope %s: %s (node %d), %d member(s), chain entry %d\n"+
+				"scope %s: %s (%s), %d member(s), chain entry %d\n"+
 					"  baseline: %s\n  chain head: %s\n",
-				scope.ID, path, scope.TargetNodeID, scope.MemberCount, scope.EntryCount,
+				scope.ID, path, formatNodeSelector(scope.TargetNodeID),
+				scope.MemberCount, scope.EntryCount,
 				scope.BaselineDigest, scope.ChainHead); err != nil {
 				return fmt.Errorf("writing audit status: %w", err)
 			}
@@ -234,7 +236,7 @@ func writeAuditStatus(w io.Writer, status api.AuditStatus) error {
 		member := status.Membership
 		coordinate := auditDisplayPath(member.Path)
 		if member.Trashed {
-			coordinate = fmt.Sprintf("node %d in trash", member.NodeID)
+			coordinate = formatNodeSelector(member.NodeID) + " in trash"
 		}
 		if member.Protected {
 			_, err := fmt.Fprintf(w, "%s is permanently protected by %d scope(s): %v\n",
