@@ -219,7 +219,13 @@ func (s *Store) PendingTextExtractions(
 		SELECT q.blob_hash, b.size
 		FROM text_extraction_queue q
 		JOIN blobs b ON b.hash=q.blob_hash
-		WHERE EXISTS(SELECT 1 FROM content_versions v WHERE v.blob_hash=q.blob_hash)
+		WHERE EXISTS(
+		  SELECT 1
+		  FROM content_versions v
+		  JOIN nodes n ON n.current_version_id=v.version_id
+		  JOIN text_searchable_versions sv ON sv.version_id=v.version_id
+		  WHERE v.blob_hash=q.blob_hash
+		)
 		  AND q.next_attempt_at <= ?
 		ORDER BY q.next_attempt_at, q.blob_hash
 		LIMIT ?`, nowRFC3339(), limit)

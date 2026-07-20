@@ -234,6 +234,31 @@ func TestPendingAndFailedTextExtractions(t *testing.T) {
 	assert.Len(t, pending, 2)
 }
 
+func TestPendingTextExtractionsSkipsSupersededQueuedContent(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	created, err := s.CreateFile(
+		ctx, s.RootID(), "notes.txt", fakeHash("d1"), 10, "text/plain",
+	)
+	require.NoError(t, err)
+	current, _, err := s.ReplaceContent(
+		ctx, created.ID, created.Revision, fakeHash("d2"), 12, "text/plain",
+	)
+	require.NoError(t, err)
+
+	var queued int
+	require.NoError(t, s.db.QueryRow(
+		`SELECT COUNT(*) FROM text_extraction_queue`,
+	).Scan(&queued))
+	assert.Equal(t, 2, queued, "the stale queue hint should exercise dequeue validation")
+
+	pending, err := s.PendingTextExtractions(ctx, 10)
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	assert.Equal(t, current.BlobHash, pending[0].BlobHash)
+	assert.NotEqual(t, created.BlobHash, pending[0].BlobHash)
+}
+
 func TestTextExtractionQueueDefersFailuresBehindReadyWork(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
