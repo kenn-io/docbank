@@ -108,8 +108,18 @@ a trashed node as display or recovery context rather than identity.
 
 ## Read a tree without unbounded responses
 
-Directory children are paginated and sorted with directories first, then by
-name. Use `total`, `limit`, and `offset` until the complete page set is read:
+The CLI tree view is bounded by default to four levels and 1,000 nodes. Set
+explicit limits for the task and inspect `truncated` plus `omissions` before
+assuming the result is complete:
+
+```bash
+docbank tree /taxes -L 3 --max-entries 500 --json
+```
+
+Use `--all` only when the complete subtree is known to be appropriately sized.
+For finer control, directory children are paginated and sorted with directories
+first, then by name. Use `total`, `limit`, and `offset` until the required page
+set is read:
 
 ```bash
 curl --fail-with-body \

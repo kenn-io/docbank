@@ -279,25 +279,51 @@ func (c *Client) Stat(ctx context.Context, path string) (api.Node, error) {
 	return n, err
 }
 
-// Children fetches every page. Callers that need streaming can add it when
-// a real consumer appears (YAGNI).
+// Children fetches every page. Callers that need bounded traversal should use
+// ChildrenPage.
 func (c *Client) Children(ctx context.Context, id int64) ([]api.Node, error) {
 	const pageSize = 1000
 	all := []api.Node{}
-	for offset := 0; ; offset += pageSize {
-		var page struct {
-			Items []api.Node `json:"items"`
-			Total int        `json:"total"`
-		}
-		p := fmt.Sprintf("/api/v1/nodes/%d/children?limit=%d&offset=%d", id, pageSize, offset)
-		if err := c.do(ctx, http.MethodGet, p, nil, nil, &page); err != nil {
+	for offset := 0; ; {
+		page, err := c.ChildrenPage(ctx, id, pageSize, offset)
+		if err != nil {
 			return nil, err
 		}
 		all = append(all, page.Items...)
-		if offset+pageSize >= page.Total {
+		if len(all) >= page.Total {
 			return all, nil
 		}
+		offset += len(page.Items)
 	}
+}
+
+// ChildrenPage returns one bounded page of a directory's ordered live
+// children. Recursive consumers should use this method instead of assembling
+// an unbounded sibling list through Children.
+func (c *Client) ChildrenPage(
+	ctx context.Context, id int64, limit, offset int,
+) (api.NodePage, error) {
+	var page api.NodePage
+	if id < 1 {
+		return page, errors.New("directory node ID must be positive")
+	}
+	if limit < 1 || limit > 5000 {
+		return page, errors.New("child-page limit must be between 1 and 5000")
+	}
+	if offset < 0 {
+		return page, errors.New("child-page offset must not be negative")
+	}
+	p := fmt.Sprintf("/api/v1/nodes/%d/children?limit=%d&offset=%d", id, limit, offset)
+	if err := c.do(ctx, http.MethodGet, p, nil, nil, &page); err != nil {
+		return api.NodePage{}, err
+	}
+	if page.Limit != limit || page.Offset != offset || page.Total < 0 ||
+		len(page.Items) > limit ||
+		(len(page.Items) == 0 && offset < page.Total) ||
+		(len(page.Items) > 0 && offset+len(page.Items) > page.Total) {
+		return api.NodePage{}, errors.New("children response has inconsistent pagination")
+	}
+	return page, nil
 }
 
 func (c *Client) Content(ctx context.Context, id int64) (*ContentStream, error) {

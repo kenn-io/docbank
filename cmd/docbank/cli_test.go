@@ -157,6 +157,73 @@ func TestAddLsTreeCat(t *testing.T) {
 	assert.Equal(t, "hello vault", out)
 }
 
+func TestTreeBoundsAndReportsOmissions(t *testing.T) {
+	_ = setupVaultHome(t)
+	c, err := client.Ensure(context.Background())
+	require.NoError(t, err)
+	root, err := c.Stat(context.Background(), "/")
+	require.NoError(t, err)
+
+	parent := root
+	for _, name := range []string{"one", "two", "three", "four", "five"} {
+		parent, err = c.Mkdir(context.Background(), parent.ID, name)
+		require.NoError(t, err)
+	}
+
+	out, err := runCLI(t, "tree", "/", "--json")
+	require.NoError(t, err)
+	var listing treeListing
+	require.NoError(t, json.Unmarshal([]byte(out), &listing))
+	require.Len(t, listing.Items, defaultTreeDepth)
+	assert.True(t, listing.Truncated)
+	assert.Equal(t, []treeOmission{{
+		Path: "/one/two/three/four", Reason: "depth_limit", DirectChildren: 1,
+	}}, listing.Omissions)
+
+	out, err = runCLI(t, "tree", "/", "--json", "--depth", "2")
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &listing))
+	require.Len(t, listing.Items, 2)
+	assert.Equal(t, "/one/two", listing.Items[1].Path)
+	assert.Equal(t, []treeOmission{{
+		Path: "/one/two", Reason: "depth_limit", DirectChildren: 1,
+	}}, listing.Omissions)
+
+	out, err = runCLI(t, "tree", "/", "--json", "--max-entries", "2")
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &listing))
+	require.Len(t, listing.Items, 2)
+	assert.Equal(t, []treeOmission{{
+		Path: "/one/two", Reason: "entry_limit", DirectChildren: 1,
+	}}, listing.Omissions)
+
+	out, err = runCLI(t, "tree", "/", "--all", "--json")
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &listing))
+	require.Len(t, listing.Items, 5)
+	assert.False(t, listing.Truncated)
+	assert.Empty(t, listing.Omissions)
+	assert.Contains(t, out, `"omissions":[]`)
+
+	out, err = runCLI(t, "tree", "/", "--depth", "2")
+	require.NoError(t, err)
+	assert.Contains(t, out, "... tree truncated at 1 boundary(s):")
+	assert.Contains(t, out, "/one/two: 1 direct entry hidden by depth limit")
+	assert.Contains(t, out, "use --all deliberately")
+
+	for _, args := range [][]string{
+		{"tree", "--depth", "0"},
+		{"tree", "--max-entries", "0"},
+		{"tree", "--all", "--depth", "2"},
+	} {
+		_, err = runCLI(t, args...)
+		require.Error(t, err)
+		var classified *exitError
+		require.ErrorAs(t, err, &classified)
+		assert.Equal(t, exitUsage, classified.code)
+	}
+}
+
 func TestLegacyReadCommandsJSON(t *testing.T) {
 	_ = setupVaultHome(t)
 
@@ -175,6 +242,8 @@ func TestLegacyReadCommandsJSON(t *testing.T) {
 	assert.Equal(t, "/", tree.Root.Path)
 	assert.Empty(t, tree.Items)
 	assert.Contains(t, out, `"items":[]`)
+	assert.False(t, tree.Truncated)
+	assert.Contains(t, out, `"omissions":[]`)
 
 	src := writeSourceFile(t, "notes.txt", "searchable notes")
 	_, err = runCLI(t, "add", src, "--dest", "/inbox")
