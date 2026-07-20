@@ -225,12 +225,7 @@ func registerReadRoutes(api huma.API, d Deps) {
 	})
 
 	type childrenPage struct {
-		Body struct {
-			Items  []Node `json:"items"`
-			Total  int    `json:"total"`
-			Limit  int    `json:"limit"`
-			Offset int    `json:"offset"`
-		}
+		Body NodePage
 	}
 	huma.Register(api, huma.Operation{
 		OperationID: "listChildren", Method: http.MethodGet, Path: "/api/v1/nodes/{id}/children",

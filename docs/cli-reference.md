@@ -122,16 +122,26 @@ ordered child list under `items`. Empty directories produce `"items": []`.
 ## docbank tree
 
 ```
-docbank tree [path] [--json]
+docbank tree [path] [-L <depth>] [--max-entries <count>] [--all] [--json]
 ```
 
-Prints the subtree rooted at `path` (default `/`), two-space indented,
-each entry suffixed with its node ID in brackets. Fails without output if
-`path` names a file.
+Prints the subtree rooted at `path` (default `/`), two-space indented, each
+entry suffixed with its node ID in brackets. Output is bounded by default to
+four levels and 1,000 nodes, so an exploratory command cannot flood a terminal
+or an agent's context. `-L`/`--depth` and `--max-entries` set narrower or wider
+bounds. `--all` deliberately restores an unlimited traversal and cannot be
+combined with either bound. Fails without output if `path` names a file.
+
+When a bound hides entries, human output names every truncation boundary and
+the number of direct children omitted there. Narrow the root path or increase a
+bound before using `--all` on an unfamiliar archive.
 
 `--json` returns the resolved root and a deterministic, pre-order `items`
 array. Each item contains the node, its absolute virtual `path`, and its
-`depth` beneath the root (direct children have depth 1).
+`depth` beneath the root (direct children have depth 1). Always inspect
+`truncated`; when true, `omissions` contains the affected path, the
+`depth_limit` or `entry_limit` reason, and the number of direct children not
+returned at that boundary.
 
 ## docbank cat
 

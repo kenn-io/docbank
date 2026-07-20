@@ -34,6 +34,14 @@ type Node struct {
 	Path             string `json:"path,omitempty"` // set on single-node responses only
 }
 
+// NodePage is one bounded, ordered directory-child listing.
+type NodePage struct {
+	Items  []Node `json:"items"`
+	Total  int    `json:"total"`
+	Limit  int    `json:"limit"`
+	Offset int    `json:"offset"`
+}
+
 // ContentVersion is the wire representation of an immutable version record.
 type ContentVersion struct {
 	ID                    string  `json:"id" format:"uuid"`
