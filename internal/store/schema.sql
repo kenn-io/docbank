@@ -263,7 +263,8 @@ CREATE TABLE IF NOT EXISTS extracted_text (
 -- Derived work queue. Logical writes enqueue supported text in Go; the daemon
 -- drains it after terminally verified reads. It is not portable authority.
 CREATE TABLE IF NOT EXISTS text_extraction_queue (
-    blob_hash TEXT PRIMARY KEY REFERENCES blobs(hash) ON DELETE CASCADE
+    blob_hash       TEXT PRIMARY KEY REFERENCES blobs(hash) ON DELETE CASCADE,
+    next_attempt_at TEXT NOT NULL
 );
 
 -- Per-version search eligibility is derived from MIME policy in Go. Keeping

@@ -119,6 +119,7 @@ func TestWorkerRetriesTransientOpenFailure(t *testing.T) {
 	w, err := New(s, reader, nil)
 	require.NoError(t, err)
 	w.interval = 5 * time.Millisecond
+	w.retry = 10 * time.Millisecond
 
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)

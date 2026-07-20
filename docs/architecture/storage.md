@@ -77,7 +77,7 @@ audit_baselines(digest, scope_id, target_node_id, operation_id)
 audit_memberships(scope_id, node_id, baseline_digest)
 extracted_text (blob_hash, extractor, extractor_version, status,
                 error, attempts, text, extracted_at)      -- versioned derived cache
-text_extraction_queue (blob_hash)                          -- derived daemon work
+text_extraction_queue (blob_hash, next_attempt_at)         -- derived daemon work
 text_searchable_versions (version_id)                      -- Go-derived MIME eligibility
 content_fts    -- derived FTS5 index over successful extraction rows
 nodes_fts      -- FTS5 external-content index over live node names

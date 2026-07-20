@@ -26,6 +26,7 @@ const (
 	MaxTextBytes    = int64(16 << 20)
 	batchSize       = 64
 	defaultInterval = 2 * time.Second
+	defaultRetry    = 30 * time.Second
 )
 
 var errExtractionRetry = errors.New("text extraction should be retried")
@@ -33,6 +34,7 @@ var errExtractionRetry = errors.New("text extraction should be retried")
 type catalog interface {
 	SeedTextExtractionQueue(ctx context.Context, extractor string, version int64) error
 	PendingTextExtractions(ctx context.Context, limit int) ([]store.ExtractionCandidate, error)
+	DeferTextExtraction(ctx context.Context, blobHash string, notBefore time.Time) error
 	RecordExtraction(ctx context.Context, result store.ExtractionResult) error
 }
 
@@ -50,6 +52,7 @@ type Worker struct {
 	blobs    blobReader
 	mutate   func(func() error) error
 	interval time.Duration
+	retry    time.Duration
 }
 
 func New(catalog catalog, blobs blobReader, mutate func(func() error) error) (*Worker, error) {
@@ -59,7 +62,10 @@ func New(catalog catalog, blobs blobReader, mutate func(func() error) error) (*W
 	if mutate == nil {
 		mutate = func(fn func() error) error { return fn() }
 	}
-	return &Worker{catalog: catalog, blobs: blobs, mutate: mutate, interval: defaultInterval}, nil
+	return &Worker{
+		catalog: catalog, blobs: blobs, mutate: mutate,
+		interval: defaultInterval, retry: defaultRetry,
+	}, nil
 }
 
 // Run performs an immediate scan, drains all current work in bounded batches,
@@ -73,12 +79,6 @@ func (w *Worker) Run(ctx context.Context) error {
 	for {
 		processed, err := w.ScanOnce(ctx)
 		if err != nil {
-			if errors.Is(err, errExtractionRetry) {
-				if !w.wait(ctx) {
-					return nil
-				}
-				continue
-			}
 			return err
 		}
 		if processed == batchSize {
@@ -109,23 +109,27 @@ func (w *Worker) ScanOnce(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	var retryErr error
 	for i, item := range items {
 		if err := ctx.Err(); err != nil {
 			return i, err
 		}
-		err := w.mutate(func() error { return w.extractOne(ctx, item) })
+		var extractErr error
+		err := w.mutate(func() error {
+			extractErr = w.extractOne(ctx, item)
+			if !errors.Is(extractErr, errExtractionRetry) {
+				return extractErr
+			}
+			return w.catalog.DeferTextExtraction(
+				ctx, item.BlobHash, time.Now().UTC().Add(w.retry),
+			)
+		})
 		switch {
 		case err == nil, errors.Is(err, store.ErrNotFound):
-		case errors.Is(err, errExtractionRetry):
-			if retryErr == nil {
-				retryErr = fmt.Errorf("extracting blob %s: %w", item.BlobHash, err)
-			}
 		default:
 			return i, fmt.Errorf("extracting blob %s: %w", item.BlobHash, err)
 		}
 	}
-	return len(items), retryErr
+	return len(items), nil
 }
 
 func (w *Worker) extractOne(ctx context.Context, item store.ExtractionCandidate) error {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"mime"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"go.kenn.io/kit/packstore"
@@ -59,8 +60,9 @@ func markTextSearchableVersionTx(tx *sql.Tx, versionID, mimeType string) (bool, 
 
 func enqueueTextBlobTx(tx *sql.Tx, blobHash string) error {
 	if _, err := tx.Exec(`
-		INSERT INTO text_extraction_queue(blob_hash) VALUES(?)
-		ON CONFLICT(blob_hash) DO NOTHING`, blobHash); err != nil {
+		INSERT INTO text_extraction_queue(blob_hash,next_attempt_at) VALUES(?,?)
+		ON CONFLICT(blob_hash) DO UPDATE SET next_attempt_at=excluded.next_attempt_at`,
+		blobHash, nowRFC3339()); err != nil {
 		return fmt.Errorf("queueing text extraction for %s: %w", blobHash, err)
 	}
 	return nil
@@ -74,51 +76,52 @@ func queueTextExtractionTx(tx *sql.Tx, versionID, blobHash, mimeType string) err
 	return enqueueTextBlobTx(tx, blobHash)
 }
 
-// SeedTextExtractionQueue discovers supported retained content once at daemon
-// startup. Later logical writes enqueue in Go, avoiding repeated full-catalog
-// scans while still covering vaults created by an older binary.
+// SeedTextExtractionQueue discovers supported selected content once at daemon
+// startup. Discovery and projection writes share one storage transaction, so a
+// concurrent deletion cannot invalidate a selected version between those steps.
+// Later logical writes enqueue in Go while existing vaults converge here.
 func (s *Store) SeedTextExtractionQueue(
 	ctx context.Context, extractor string, version int64,
 ) error {
 	if extractor == "" || version < 1 {
 		return errors.New("extractor name and positive version are required")
 	}
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT v.version_id, v.blob_hash, COALESCE(v.mime_type, ''),
-		       CASE WHEN e.blob_hash IS NULL OR e.extractor_version < ? THEN 1 ELSE 0 END
-		FROM content_versions v
-		JOIN nodes n ON n.current_version_id = v.version_id
-		LEFT JOIN extracted_text e
-		  ON e.blob_hash=v.blob_hash AND e.extractor=?
-		ORDER BY v.version_id`, version, extractor)
-	if err != nil {
-		return fmt.Errorf("discovering text extraction work: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
 	type seed struct {
 		versionID, hash, mimeType string
 		needsExtraction           bool
 	}
-	var seeds []seed
-	for rows.Next() {
-		var item seed
-		if err := rows.Scan(
-			&item.versionID, &item.hash, &item.mimeType, &item.needsExtraction,
-		); err != nil {
-			return fmt.Errorf("discovering text extraction work: scanning row: %w", err)
-		}
-		if !supportsTextExtractionMIME(item.mimeType) {
-			continue
-		}
-		seeds = append(seeds, item)
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("discovering text extraction work: %w", err)
-	}
-	if err := rows.Close(); err != nil {
-		return fmt.Errorf("discovering text extraction work: %w", err)
-	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, `
+			SELECT v.version_id, v.blob_hash, COALESCE(v.mime_type, ''),
+			       CASE WHEN e.blob_hash IS NULL OR e.extractor_version < ? THEN 1 ELSE 0 END
+			FROM content_versions v
+			JOIN nodes n ON n.current_version_id = v.version_id
+			LEFT JOIN extracted_text e
+			  ON e.blob_hash=v.blob_hash AND e.extractor=?
+			ORDER BY v.version_id`, version, extractor)
+		if err != nil {
+			return fmt.Errorf("discovering text extraction work: %w", err)
+		}
+		defer func() { _ = rows.Close() }()
+		var seeds []seed
+		for rows.Next() {
+			var item seed
+			if err := rows.Scan(
+				&item.versionID, &item.hash, &item.mimeType, &item.needsExtraction,
+			); err != nil {
+				return fmt.Errorf("discovering text extraction work: scanning row: %w", err)
+			}
+			if supportsTextExtractionMIME(item.mimeType) {
+				seeds = append(seeds, item)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("discovering text extraction work: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return fmt.Errorf("discovering text extraction work: %w", err)
+		}
+
 		queued := make(map[string]struct{})
 		for _, item := range seeds {
 			if _, err := markTextSearchableVersionTx(tx, item.versionID, item.mimeType); err != nil {
@@ -153,8 +156,9 @@ func (s *Store) PendingTextExtractions(
 		FROM text_extraction_queue q
 		JOIN blobs b ON b.hash=q.blob_hash
 		WHERE EXISTS(SELECT 1 FROM content_versions v WHERE v.blob_hash=q.blob_hash)
-		ORDER BY q.blob_hash
-		LIMIT ?`, limit)
+		  AND q.next_attempt_at <= ?
+		ORDER BY q.next_attempt_at, q.blob_hash
+		LIMIT ?`, nowRFC3339(), limit)
 	if err != nil {
 		return nil, fmt.Errorf("listing pending text extractions: %w", err)
 	}
@@ -171,6 +175,32 @@ func (s *Store) PendingTextExtractions(
 		return nil, fmt.Errorf("listing pending text extractions: %w", err)
 	}
 	return items, nil
+}
+
+// DeferTextExtraction leaves a retryable item queued but moves it behind work
+// that is ready now. The worker chooses the bounded delay in Go.
+func (s *Store) DeferTextExtraction(
+	ctx context.Context, blobHash string, notBefore time.Time,
+) error {
+	if _, err := packstore.ParseHash(blobHash); err != nil {
+		return fmt.Errorf("invalid deferred blob hash: %w", err)
+	}
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, `
+			UPDATE text_extraction_queue SET next_attempt_at = ? WHERE blob_hash = ?`,
+			notBefore.UTC().Format(timestampLayout), blobHash)
+		if err != nil {
+			return fmt.Errorf("deferring text extraction for %s: %w", blobHash, err)
+		}
+		updated, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("deferring text extraction for %s: %w", blobHash, err)
+		}
+		if updated == 0 {
+			return fmt.Errorf("text extraction %s: %w", blobHash, ErrNotFound)
+		}
+		return nil
+	})
 }
 
 // RecordExtraction atomically replaces one extractor's derived result and its

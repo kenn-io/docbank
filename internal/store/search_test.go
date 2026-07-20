@@ -1,7 +1,9 @@
 package store
 
 import (
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -211,7 +213,7 @@ func TestPendingAndFailedTextExtractions(t *testing.T) {
 	pending, err = s.PendingTextExtractions(ctx, 10)
 	require.NoError(t, err)
 	require.Len(t, pending, 2)
-	assert.Equal(t, []string{textNode.BlobHash, jsonNode.BlobHash},
+	assert.ElementsMatch(t, []string{textNode.BlobHash, jsonNode.BlobHash},
 		[]string{pending[0].BlobHash, pending[1].BlobHash})
 	assert.NotEqual(t, oldTextHash, textNode.BlobHash,
 		"startup discovery should seed selected versions, not retained history")
@@ -230,4 +232,28 @@ func TestPendingAndFailedTextExtractions(t *testing.T) {
 	pending, err = s.PendingTextExtractions(ctx, 10)
 	require.NoError(t, err)
 	assert.Len(t, pending, 2)
+}
+
+func TestTextExtractionQueueDefersFailuresBehindReadyWork(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	hashes := make([]string, 65)
+	for i := range hashes {
+		hashes[i] = fakeHash(fmt.Sprintf("%02x", i+1))
+		_, err := s.CreateFile(
+			ctx, s.RootID(), fmt.Sprintf("item-%02d.txt", i+1),
+			hashes[i], 1, "text/plain",
+		)
+		require.NoError(t, err)
+	}
+	notBefore := time.Now().UTC().Add(time.Hour)
+	for _, hash := range hashes[:64] {
+		require.NoError(t, s.DeferTextExtraction(ctx, hash, notBefore))
+	}
+
+	pending, err := s.PendingTextExtractions(ctx, 64)
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	assert.Equal(t, hashes[64], pending[0].BlobHash,
+		"deferred failures must not starve later ready work")
 }
