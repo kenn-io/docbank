@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -71,6 +72,36 @@ func TestVaultMoveTrashRestoreExternalAPI(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), report.Candidates)
 	require.True(t, report.DryRun)
+}
+
+func TestTreeMutationErrorsAreClassifiableOutsidePackage(t *testing.T) {
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+	created, err := vault.Put(
+		t.Context(), "/parent/child/document.txt", strings.NewReader("document\n"),
+		docbank.PutOptions{},
+	)
+	require.NoError(t, err)
+
+	_, err = vault.Restore(t.Context(), created.Node.ID, docbank.RevisionOptions{})
+	require.ErrorIs(t, err, docbank.ErrNotTrashed)
+	_, err = vault.TrashPath(t.Context(), "/", docbank.RevisionOptions{})
+	require.ErrorIs(t, err, docbank.ErrIsRoot)
+	_, err = vault.MovePath(
+		t.Context(), "/parent/child/document.txt", "/parent/../document.txt",
+		docbank.RevisionOptions{},
+	)
+	require.ErrorIs(t, err, docbank.ErrInvalidName)
+	_, err = vault.MovePath(
+		t.Context(), "/parent", "/parent/child/parent", docbank.RevisionOptions{},
+	)
+	require.ErrorIs(t, err, docbank.ErrCycle)
+
+	// Existing audited vaults can surface this sentinel through the same public
+	// methods even though first enrollment is currently daemon-owned.
+	require.ErrorIs(t, fmt.Errorf("embedded audited mutation: %w", docbank.ErrAuditMutationUnsupported), docbank.ErrAuditMutationUnsupported)
 }
 
 func TestOpenContentClassifiesPhysicalContentFailures(t *testing.T) {

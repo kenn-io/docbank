@@ -41,11 +41,16 @@ var (
 	// with different bytes, size, media type, or node kind.
 	ErrContentConflict = errors.New("docbank immutable content conflict")
 
-	ErrNotFound      = store.ErrNotFound
-	ErrExists        = store.ErrExists
-	ErrNotDirectory  = store.ErrNotDir
-	ErrNotFile       = store.ErrNotFile
-	ErrStaleRevision = store.ErrStaleRevision
+	ErrNotFound                 = store.ErrNotFound
+	ErrExists                   = store.ErrExists
+	ErrNotDirectory             = store.ErrNotDir
+	ErrNotFile                  = store.ErrNotFile
+	ErrStaleRevision            = store.ErrStaleRevision
+	ErrCycle                    = store.ErrCycle
+	ErrInvalidName              = store.ErrInvalidName
+	ErrNotTrashed               = store.ErrNotTrashed
+	ErrIsRoot                   = store.ErrIsRoot
+	ErrAuditMutationUnsupported = store.ErrAuditMutationUnsupported
 )
 
 const (

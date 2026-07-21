@@ -229,7 +229,9 @@ func TestVerifyCursorResumesPastMalformedStoredHash(t *testing.T) {
 			require.NoError(t, err)
 			for _, hash := range hashes {
 				_, err = db.ExecContext(t.Context(),
-					`INSERT INTO blobs (hash, size, created_at) VALUES (?, 1, ?)`,
+					`INSERT INTO blobs
+					 (hash, size, created_at, loose_encoding, loose_stored_size)
+					 VALUES (?, 1, ?, 'raw', 1)`,
 					hash, "2026-07-21T00:00:00.000000000Z")
 				require.NoError(t, err)
 			}
@@ -263,7 +265,9 @@ func TestVerifyCursorDistinguishesEmptyStoredKeyFromStart(t *testing.T) {
 			require.NoError(t, err)
 			for _, hash := range []string{"", strings.Repeat("f", 64)} {
 				_, err = db.ExecContext(t.Context(),
-					`INSERT INTO blobs (hash, size, created_at) VALUES (?, 1, ?)`,
+					`INSERT INTO blobs
+					 (hash, size, created_at, loose_encoding, loose_stored_size)
+					 VALUES (?, 1, ?, 'raw', 1)`,
 					hash, "2026-07-21T00:00:00.000000000Z")
 				require.NoError(t, err)
 			}
