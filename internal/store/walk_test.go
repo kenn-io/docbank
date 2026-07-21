@@ -19,6 +19,18 @@ func TestBeginWalkRejectsOversizedPage(t *testing.T) {
 	require.ErrorContains(t, err, "walk page size must be between 1 and 5000")
 }
 
+func TestBeginWalkAcceptsMaximumPageSize(t *testing.T) {
+	s := newTestStore(t)
+
+	walker, err := s.BeginWalk(t.Context(), "/", MaxWalkPageSize, false)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, walker.Close()) })
+	page, err := walker.Next(t.Context())
+	require.NoError(t, err)
+	require.Len(t, page, 1)
+	assert.Equal(t, s.RootID(), page[0].Node.ID)
+}
+
 func TestWalkOrdersDuplicatePathsByNodeIDAndOptionallyIncludesTrash(t *testing.T) {
 	s := newTestStore(t)
 	first, err := s.CreateFile(

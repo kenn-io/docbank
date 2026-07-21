@@ -189,6 +189,20 @@ func TestWalkUsesFiniteDefaultAndRejectsInvalidPageSizes(t *testing.T) {
 	}
 }
 
+func TestWalkAcceptsMaximumPageSize(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+	walker, err := vault.Walk(t.Context(), "/", WalkOptions{PageSize: MaxWalkPageSize})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, walker.Close()) })
+	page, err := walker.Next(t.Context())
+	require.NoError(t, err)
+	require.Len(t, page, 1)
+	assert.Equal(t, "/", page[0].Path)
+}
+
 func TestWalkCloseIsIdempotentAndReleasesVaultLifecycle(t *testing.T) {
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
@@ -197,27 +211,32 @@ func TestWalkCloseIsIdempotentAndReleasesVaultLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, walker.Close()) })
 
-	started := make(chan struct{})
 	closed := make(chan struct{})
 	var closeErr error
 	go func() {
-		close(started)
 		closeErr = vault.Close()
 		close(closed)
 	}()
-	<-started
-	assert.Never(t, func() bool {
-		select {
-		case <-closed:
-			return true
-		default:
+	require.Eventually(t, func() bool {
+		if vault.lifecycle.TryRLock() {
+			vault.lifecycle.RUnlock()
 			return false
 		}
-	}, 50*time.Millisecond, 5*time.Millisecond)
+		return true
+	}, time.Second, time.Millisecond, "Vault.Close never queued for the lifecycle write lock")
+	select {
+	case <-closed:
+		require.Fail(t, "Vault.Close returned while the walker still held its lifecycle lease")
+	default:
+	}
 
 	require.NoError(t, walker.Close())
 	require.NoError(t, walker.Close())
-	<-closed
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		require.Fail(t, "Vault.Close did not return after the walker released its lifecycle lease")
+	}
 	require.NoError(t, closeErr)
 	page, err := walker.Next(t.Context())
 	assert.Nil(t, page)
@@ -237,4 +256,42 @@ func TestWalkCloseReleasesReadTransaction(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, walker.Close())
 	require.NoError(t, vault.metadata.Checkpoint(t.Context()))
+}
+
+func TestWalkerConcurrentNextAndClose(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+	type nextResult struct {
+		page []WalkEntry
+		err  error
+	}
+	for range 100 {
+		walker, err := vault.Walk(t.Context(), "/", WalkOptions{PageSize: 1})
+		require.NoError(t, err)
+		start := make(chan struct{})
+		nextDone := make(chan nextResult, 1)
+		closeDone := make(chan error, 1)
+		go func() {
+			<-start
+			page, err := walker.Next(t.Context())
+			nextDone <- nextResult{page: page, err: err}
+		}()
+		go func() {
+			<-start
+			closeDone <- walker.Close()
+		}()
+		close(start)
+
+		result := <-nextDone
+		if result.err != nil {
+			assert.ErrorIs(t, result.err, io.EOF)
+			assert.Nil(t, result.page)
+		} else {
+			require.Len(t, result.page, 1)
+			assert.Equal(t, "/", result.page[0].Path)
+		}
+		require.NoError(t, <-closeDone)
+	}
 }
