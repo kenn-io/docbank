@@ -97,7 +97,7 @@ func (s *Store) bootstrapTx() error {
 		}
 		var schemaVersion int
 		if err := tx.QueryRow(`
-			SELECT vault_id, schema_version FROM vault_metadata WHERE singleton = 1`).Scan(
+			SELECT vault_uid, schema_version FROM vault_metadata WHERE singleton = 1`).Scan(
 			&s.vaultID, &schemaVersion,
 		); errors.Is(err, sql.ErrNoRows) {
 			vaultID, idErr := newUUIDv4()
@@ -105,7 +105,7 @@ func (s *Store) bootstrapTx() error {
 				return fmt.Errorf("creating vault identity: %w", idErr)
 			}
 			if _, idErr = tx.Exec(
-				`INSERT INTO vault_metadata(singleton, vault_id, schema_version)
+				`INSERT INTO vault_metadata(singleton, vault_uid, schema_version)
 				 VALUES(1, ?, ?)`, vaultID, currentStorageSchemaVersion,
 			); idErr != nil {
 				return fmt.Errorf("creating vault identity: %w", idErr)

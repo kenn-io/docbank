@@ -4,7 +4,7 @@
 -- restore. Filesystem location is deliberately not identity.
 CREATE TABLE IF NOT EXISTS vault_metadata (
     singleton      INTEGER PRIMARY KEY CHECK (singleton = 1),
-    vault_id       TEXT NOT NULL UNIQUE,
+    vault_uid      TEXT NOT NULL UNIQUE,
     schema_version INTEGER NOT NULL CHECK (schema_version >= 1)
 );
 

@@ -125,6 +125,11 @@ replacement. A v0.9.0 source is retained beside it as
 `<database>.v0.9.0.bak`; later source generations use their own identified
 recovery copy.
 
+The generation marker is paired with a physical downgrade fence: the mandatory
+identity read performed by the unversioned v0.9 binary cannot succeed against a
+newer database. This prevents an older process from ignoring an unfamiliar
+version column and mutating current storage with obsolete rules.
+
 This is intentionally not an in-place migration ledger. Unreleased development
 layouts remain disposable, while every supported released layout has an exact
 fixture and a direct-to-current end-to-end cutover test under both SQLite

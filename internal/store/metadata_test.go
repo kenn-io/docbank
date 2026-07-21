@@ -403,7 +403,7 @@ func TestImportMetadataRejectsDanglingContentAndRollsBack(t *testing.T) {
 	assert.Equal(t, targetVaultID, target.VaultID())
 	var storedVaultID string
 	require.NoError(t, target.db.QueryRow(
-		`SELECT vault_id FROM vault_metadata WHERE singleton = 1`,
+		`SELECT vault_uid FROM vault_metadata WHERE singleton = 1`,
 	).Scan(&storedVaultID))
 	assert.Equal(t, targetVaultID, storedVaultID)
 }
@@ -950,7 +950,7 @@ func TestImportMetadataRejectsUnknownVersionAndFields(t *testing.T) {
 
 func TestExportMetadataRejectsMalformedVaultIdentity(t *testing.T) {
 	source := newTestStore(t)
-	_, err := source.db.Exec(`UPDATE vault_metadata SET vault_id = 'not-a-uuid' WHERE singleton = 1`)
+	_, err := source.db.Exec(`UPDATE vault_metadata SET vault_uid = 'not-a-uuid' WHERE singleton = 1`)
 	require.NoError(t, err)
 
 	var exported bytes.Buffer

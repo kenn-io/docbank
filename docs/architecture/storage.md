@@ -108,7 +108,10 @@ adapter describes how to export that generation's logical authority and
 restore its physical blob catalog. The v0.9.0 adapter recognizes the one
 released database that predates the explicit version marker; later generations
 are selected only by their stored version. An older binary refuses a database
-from a newer generation instead of attempting to interpret it.
+from a newer generation instead of attempting to interpret it. The current
+physical identity column deliberately differs from the mandatory v0.9 startup
+query, so the unversioned released binary also fails closed rather than
+silently writing with obsolete storage rules.
 
 For a v0.9.0 source the recovery copy is `<database>.v0.9.0.bak`. It contains
 private vault metadata and inherits the vault's owner-private boundary. Keep it

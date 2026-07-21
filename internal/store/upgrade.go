@@ -39,13 +39,16 @@ var releasedStorageSchemas = []releasedStorageSchema{
 		version: 1, release: "v0.9.0", backupSuffix: v090BackupSuffix,
 		validate: validateV090Schema,
 		exportMetadata: func(ctx context.Context, source *sql.Tx, dst io.Writer) error {
-			return exportMetadataSnapshot(ctx, source, dst)
+			return exportV090MetadataSnapshot(ctx, source, dst)
 		},
 		restorePhysical: restoreV090PhysicalCatalog,
 	},
 }
 
-var renameUpgradeFile = os.Rename
+var (
+	renameUpgradeFile         = os.Rename
+	removeInvalidUpgradeStage = removeUpgradeFileSet
+)
 
 // prepareReleasedSchemaUpgrade recognizes only storage layouts that shipped in
 // a public release. Older layouts rebuild through the same deterministic JSONL
@@ -152,7 +155,7 @@ func classifyDatabaseSchema(db *sql.DB) (databaseSchema, error) {
 			)
 		}
 		if version == currentStorageSchemaVersion {
-			if err := validateCurrentSchemaColumns(blobs, packs); err != nil {
+			if err := validateCurrentSchemaColumns(blobs, packs, vaultMetadata); err != nil {
 				return databaseSchema{}, err
 			}
 			return databaseSchema{version: version, current: true}, nil
@@ -190,7 +193,7 @@ func classifyDatabaseSchema(db *sql.DB) (databaseSchema, error) {
 	)
 }
 
-func validateCurrentSchemaColumns(blobs, packs []string) error {
+func validateCurrentSchemaColumns(blobs, packs, vaultMetadata []string) error {
 	currentBlobColumns := []string{
 		metadataCreatedAtField, "hash", "loose_encoding", "loose_stored_size", "pack_eligible", "size",
 	}
@@ -198,11 +201,13 @@ func validateCurrentSchemaColumns(blobs, packs []string) error {
 		metadataCreatedAtField, "entry_count", "live_entries", "live_raw_bytes", "live_stored_bytes",
 		"max_live_raw_len", "max_live_stored_len", "pack_id", "scan_hash", "stored_bytes",
 	}
-	if !slices.Equal(blobs, currentBlobColumns) || !slices.Equal(packs, currentPackColumns) {
+	currentVaultColumns := []string{"schema_version", "singleton", "vault_uid"}
+	if !slices.Equal(blobs, currentBlobColumns) || !slices.Equal(packs, currentPackColumns) ||
+		!slices.Equal(vaultMetadata, currentVaultColumns) {
 		return fmt.Errorf(
-			"opening database: schema version %d has an unexpected layout (blobs=%s blob_packs=%s)",
+			"opening database: schema version %d has an unexpected layout (blobs=%s blob_packs=%s vault_metadata=%s)",
 			currentStorageSchemaVersion,
-			strings.Join(blobs, ","), strings.Join(packs, ","),
+			strings.Join(blobs, ","), strings.Join(packs, ","), strings.Join(vaultMetadata, ","),
 		)
 	}
 	return nil
@@ -561,11 +566,14 @@ func recoverInterruptedUpgrade(path string, driver docsqlite.Driver) error {
 		backupPath := interrupted.backup
 		stagePath := interrupted.stage
 		if err := validateUpgradeStage(stagePath, driver); err != nil {
-			if cleanupErr := removeUpgradeFileSet(stagePath); cleanupErr != nil {
-				return errors.Join(err, cleanupErr)
-			}
 			if renameErr := renameUpgradeFile(backupPath, path); renameErr != nil {
 				return errors.Join(err, renameErr)
+			}
+			if syncErr := syncUpgradeDirectory(path); syncErr != nil {
+				return errors.Join(err, syncErr)
+			}
+			if cleanupErr := removeInvalidUpgradeStage(stagePath); cleanupErr != nil {
+				return errors.Join(err, cleanupErr)
 			}
 			return syncUpgradeDirectory(path)
 		}

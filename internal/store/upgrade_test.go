@@ -122,6 +122,28 @@ func TestOpenRejectsDatabaseFromNewerStorageSchema(t *testing.T) {
 	}
 }
 
+func TestCurrentSchemaFencesReleasedV090Binary(t *testing.T) {
+	for _, test := range v090UpgradeDrivers() {
+		t.Run(test.name, func(t *testing.T) {
+			dbPath := filepath.Join(t.TempDir(), "docbank.db")
+			s, err := Open(dbPath, test.driver)
+			require.NoError(t, err)
+			require.NoError(t, s.Close())
+
+			db, err := test.driver.Open(dbPath, docsqlite.OpenOptions{
+				Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+			})
+			require.NoError(t, err)
+			_, err = db.Exec(schemaV090SQL)
+			require.NoError(t, err, "the released bootstrap applies its idempotent schema first")
+			var vaultID string
+			err = db.QueryRow(`SELECT vault_id FROM vault_metadata WHERE singleton = 1`).Scan(&vaultID)
+			require.ErrorContains(t, err, "no such column", "the released mandatory startup read must fail")
+			require.NoError(t, db.Close())
+		})
+	}
+}
+
 func TestReleasedRecoveryCopyDoesNotResurrectDeletedVault(t *testing.T) {
 	driver := DefaultSQLiteDriver()
 	dbPath := filepath.Join(t.TempDir(), "docbank.db")
@@ -174,6 +196,35 @@ func TestOpenCompletesInterruptedReleasedCutover(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist)
 	_, err = os.Stat(dbPath + sourceSchema.backupSuffix)
 	require.NoError(t, err)
+}
+
+func TestInvalidStageRestoresSourceBeforeRemovingRecoveryMarker(t *testing.T) {
+	driver := DefaultSQLiteDriver()
+	dbPath := filepath.Join(t.TempDir(), "docbank.db")
+	createV090Fixture(t, dbPath, driver)
+	sourceSchema := releasedStorageSchemas[0]
+	stagePath := upgradeStagePath(dbPath, sourceSchema.version)
+	require.NoError(t, os.WriteFile(stagePath, []byte("not a database"), 0o600))
+	require.NoError(t, os.Rename(dbPath, dbPath+sourceSchema.backupSuffix))
+
+	originalRemove := removeInvalidUpgradeStage
+	t.Cleanup(func() { removeInvalidUpgradeStage = originalRemove })
+	removeInvalidUpgradeStage = func(string) error {
+		return errors.New("injected invalid-stage cleanup failure")
+	}
+	_, err := Open(dbPath, driver)
+	require.ErrorContains(t, err, "injected invalid-stage cleanup failure")
+	_, err = os.Stat(dbPath)
+	require.NoError(t, err, "the released source is authoritative before marker cleanup")
+	_, err = os.Stat(stagePath)
+	require.NoError(t, err, "the failed cleanup leaves its interrupted-upgrade marker")
+	_, err = os.Stat(dbPath + sourceSchema.backupSuffix)
+	require.ErrorIs(t, err, os.ErrNotExist)
+
+	removeInvalidUpgradeStage = originalRemove
+	recovered, err := Open(dbPath, driver)
+	require.NoError(t, err)
+	require.NoError(t, recovered.Close())
 }
 
 func TestV090CutoverPublicationFailureRestoresReleasedDatabase(t *testing.T) {
@@ -276,7 +327,7 @@ func createV090Fixture(t *testing.T, path string, driver docsqlite.Driver) v090F
 	snapshot, err := db.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
 	require.NoError(t, err)
 	var metadata bytes.Buffer
-	require.NoError(t, exportMetadataSnapshot(t.Context(), snapshot, &metadata))
+	require.NoError(t, exportV090MetadataSnapshot(t.Context(), snapshot, &metadata))
 	require.NoError(t, snapshot.Rollback())
 	require.NoError(t, db.Close())
 	return v090Fixture{
