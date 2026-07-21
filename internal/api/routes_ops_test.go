@@ -2,7 +2,9 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,6 +22,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
+	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/pkg/sqlite"
 )
@@ -571,6 +574,44 @@ func TestVerifyEndpointReportsMalformedBlobMetadata(t *testing.T) {
 	assert.Empty(t, rep.Problems)
 	require.Len(t, rep.MetadataProblems, 1)
 	assert.Contains(t, rep.MetadataProblems[0], "size")
+}
+
+func TestVerifyEndpointReportsBlobInventoryFailureAlongsideMetadataFailure(t *testing.T) {
+	sentinel := errors.New("blob inventory unavailable")
+	var calls int
+	ts, s := newTestServer(t, func(deps *api.Deps) {
+		deps.VerifyPage = func(
+			_ context.Context, metadata *store.Store, blobs *blob.Store,
+			opts internalmaintenance.VerifyOptions,
+		) (internalmaintenance.VerifyReport, error) {
+			calls++
+			assert.NotNil(t, metadata)
+			assert.NotNil(t, blobs)
+			assert.Empty(t, opts.Budget.Cursor)
+			return internalmaintenance.VerifyReport{}, sentinel
+		}
+	})
+	created := createFileWithContent(t, ts, s, "/malformed-and-faulted.txt", "content")
+	db, err := s.SQLiteDriver().Open(s.DBPath, docsqlite.OpenOptions{
+		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+	})
+	require.NoError(t, err)
+	_, err = db.ExecContext(t.Context(), `UPDATE blobs SET size='not-an-integer' WHERE hash=?`,
+		created.BlobHash)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/verify", nil, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var report api.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	assert.Zero(t, report.OK)
+	assert.Empty(t, report.Problems)
+	assert.Equal(t, 1, calls)
+	require.Len(t, report.MetadataProblems, 2,
+		"the blob inventory failure must append to the earlier metadata report")
+	assert.Contains(t, report.MetadataProblems[0], "size")
+	assert.Contains(t, report.MetadataProblems[1], sentinel.Error())
 }
 
 func TestMaintenanceGateQueuesMutations(t *testing.T) {

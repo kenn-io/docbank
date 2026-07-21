@@ -430,21 +430,86 @@ func TestRepackStopsAfterNonSourceFailureBeforeLaterPackMutation(t *testing.T) {
 
 func TestRepackProbesWorkAfterPostRewriteRetirementError(t *testing.T) {
 	vault := newMaintenanceVault(t, nil)
-	createSparseMaintenancePacks(t, vault, 1)
-	candidates, _, err := vault.metadata.SparseRepackPage(t.Context(), "", 1,
+	createSparseMaintenancePacks(t, vault, 2)
+	candidates, _, err := vault.metadata.SparseRepackPage(t.Context(), "", 2,
 		time.Now().UTC(), time.Nanosecond, 1)
 	require.NoError(t, err)
-	require.Len(t, candidates, 1)
+	require.Len(t, candidates, 2)
 	sentinel := errors.New("retirement acknowledgement lost")
 	catalog := &repackFaultCatalog{Catalog: store.NewPackCatalog(vault.metadata),
-		retireThenErr: sentinel}
+		retirePack: candidates[1].Usage.PackID, retireThenErr: sentinel}
 
 	report, err := internalmaintenance.Repack(t.Context(), vault.metadata, vault.blobs,
-		internalmaintenance.RepackOptions{Budget: internalmaintenance.Budget{MaxObjects: 1},
+		internalmaintenance.RepackOptions{Budget: internalmaintenance.Budget{MaxObjects: 2},
 			MinAge: time.Nanosecond, MinDeadBytes: 1, Catalog: catalog})
 	require.ErrorIs(t, err, sentinel)
 	assert.Positive(t, report.BytesRepacked)
+	assert.Equal(t, 2, report.PacksRewritten, "the first canonical candidate completed before the fault")
 	assert.False(t, report.More, "the rewritten source was retired despite the returned error")
+	assert.Empty(t, report.NextCursor, "terminal error progress must not expose a continuation cursor")
+}
+
+func TestRepackPreservesMappingHighWaterAcrossDeadPackPages(t *testing.T) {
+	for _, test := range maintenanceDrivers() {
+		t.Run(test.name, func(t *testing.T) {
+			vault := newMaintenanceVault(t, test.driver)
+			createDeadMaintenancePacks(t, vault, 2)
+			createSparseMaintenancePacks(t, vault, 1)
+			putMaintenanceFilesAt(t, vault, 900, 2)
+			packed, err := vault.Pack(t.Context(), PackOptions{})
+			require.NoError(t, err)
+			require.Equal(t, 2, packed.BlobsPacked)
+
+			dead, _, err := vault.metadata.DeadPackUsagePage(t.Context(), 10)
+			require.NoError(t, err)
+			require.Len(t, dead, 2)
+			sparse, _, err := vault.metadata.SparseRepackPage(t.Context(), "", 10,
+				time.Now().UTC(), time.Nanosecond, 1)
+			require.NoError(t, err)
+			require.Len(t, sparse, 1)
+			records, err := store.NewPackCatalog(vault.metadata).ListPackRecords(t.Context())
+			require.NoError(t, err)
+			excluded := map[string]bool{sparse[0].Usage.PackID: true}
+			for _, usage := range dead {
+				excluded[usage.PackID] = true
+			}
+			var stablePackID string
+			for _, record := range records {
+				if !excluded[record.PackID] {
+					stablePackID = record.PackID
+				}
+			}
+			require.NotEmpty(t, stablePackID)
+
+			highHash := "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe"
+			insertDanglingMaintenanceMapping(t, vault, highHash, dead[0].PackID)
+			first, err := vault.Repack(t.Context(), RepackOptions{Budget: WorkBudget{MaxObjects: 2},
+				MinAge: time.Nanosecond, MinDeadBytes: 1})
+			require.NoError(t, err)
+			assert.Equal(t, int64(1), first.MappingsPruned)
+			assert.Equal(t, 1, first.PacksRemoved)
+			assert.True(t, first.More)
+			require.NotEmpty(t, first.NextCursor,
+				"dead-pack paging must retain the completed mapping phase's high-water mark")
+
+			lowHash := "0000000000000000000000000000000000000000000000000000000000000001"
+			insertDanglingMaintenanceMapping(t, vault, lowHash, stablePackID)
+			second, err := vault.Repack(t.Context(), RepackOptions{Budget: WorkBudget{
+				MaxObjects: 10, Cursor: first.NextCursor,
+			}, MinAge: time.Nanosecond, MinDeadBytes: 1})
+			require.NoError(t, err)
+			assert.Zero(t, second.MappingsPruned,
+				"a newly inserted lower mapping waits for the next empty-cursor cycle")
+			assert.False(t, second.More)
+			indexed, err := store.NewPackCatalog(vault.metadata).ListIndexed(t.Context())
+			require.NoError(t, err)
+			var lowerMappingPresent bool
+			for _, entry := range indexed {
+				lowerMappingPresent = lowerMappingPresent || entry.Hash.String() == lowHash
+			}
+			assert.True(t, lowerMappingPresent)
+		})
+	}
 }
 
 func TestMaintenanceRejectsClosedVault(t *testing.T) {
@@ -538,12 +603,26 @@ func createSparseMaintenancePacks(t *testing.T, vault *Vault, count int) {
 	require.NoError(t, err)
 }
 
+func insertDanglingMaintenanceMapping(t *testing.T, vault *Vault, hash, packID string) {
+	t.Helper()
+	db, err := vault.metadata.SQLiteDriver().Open(filepath.Join(vault.root.Name(), "docbank.db"),
+		docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
+	require.NoError(t, err)
+	_, err = db.ExecContext(t.Context(), `
+		INSERT INTO blob_pack_index
+			(blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
+		VALUES (?, ?, ?, 1, 1, 0, 0)`, hash, packID, pack.MinEntryOffset)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+}
+
 type repackFaultCatalog struct {
 	packstore.Catalog
 
 	failListPack  string
 	laterPack     string
 	listErr       error
+	retirePack    string
 	retireThenErr error
 	laterRead     bool
 }
@@ -568,6 +647,9 @@ func (c *repackFaultCatalog) DeleteEmptyPackRecord(ctx context.Context, packID s
 	deleted, err := c.Catalog.DeleteEmptyPackRecord(ctx, packID)
 	if err != nil {
 		return deleted, fmt.Errorf("deleting empty pack through fault catalog: %w", err)
+	}
+	if packID != c.retirePack {
+		return deleted, nil
 	}
 	return deleted, c.retireThenErr
 }

@@ -151,7 +151,7 @@ func decodeCursor(raw string, kind operation) (cursor, error) {
 		return cursor{}, fmt.Errorf("%w: invalid or mismatched fields", ErrInvalidCursor)
 	}
 	if decoded.Phase != "" && (kind != operationRepack ||
-		(decoded.Phase != "mappings" && decoded.Phase != "sparse")) {
+		(decoded.Phase != "mappings" && decoded.Phase != "dead" && decoded.Phase != "sparse")) {
 		return cursor{}, fmt.Errorf("%w: invalid or mismatched fields", ErrInvalidCursor)
 	}
 	return decoded, nil
@@ -358,6 +358,14 @@ func Repack(
 	now := time.Now().UTC()
 	report := RepackReport{}
 	remaining := budget.MaxObjects
+	mappingHighWater := ""
+	sparseAfter := ""
+	if phase == "dead" {
+		mappingHighWater = state.Hash
+	}
+	if phase == "sparse" {
+		sparseAfter = state.Hash
+	}
 	baseCatalog := opts.Catalog
 	if baseCatalog == nil {
 		baseCatalog = store.NewPackCatalog(metadata)
@@ -392,8 +400,8 @@ func Repack(
 			}
 			return report, nil
 		}
-		phase = "sparse"
-		state.Hash = ""
+		phase = "dead"
+		mappingHighWater = state.Hash
 	}
 
 	dead, deadMore, err := metadata.DeadPackUsagePage(ctx, remaining)
@@ -409,42 +417,47 @@ func Repack(
 		addRepackStats(&report, stats)
 		remaining -= len(dead)
 		if runErr != nil {
-			report.More, err = repackWorkRemains(ctx, metadata, state.Hash,
+			report.More, err = repackWorkRemains(ctx, metadata, sparseAfter,
 				now, minAge, minDead, false)
 			if err != nil {
 				return report, errors.Join(runErr, err)
 			}
-			if report.More && state.Hash != "" {
-				report.NextCursor = encodePhaseCursor(operationRepack, phase, state.Hash)
+			if report.More && phase == "dead" && mappingHighWater != "" {
+				report.NextCursor = encodePhaseCursor(operationRepack, "dead", mappingHighWater)
+			} else if report.More && phase == "sparse" && sparseAfter != "" {
+				report.NextCursor = encodePhaseCursor(operationRepack, "sparse", sparseAfter)
 			}
 			return report, runErr
 		}
 	}
 	if deadMore {
 		report.More = true
-		if state.Hash != "" {
-			report.NextCursor = encodePhaseCursor(operationRepack, phase, state.Hash)
+		if phase == "dead" && mappingHighWater != "" {
+			report.NextCursor = encodePhaseCursor(operationRepack, "dead", mappingHighWater)
+		} else if phase == "sparse" && sparseAfter != "" {
+			report.NextCursor = encodePhaseCursor(operationRepack, "sparse", sparseAfter)
 		}
 		return report, nil
 	}
 	if remaining == 0 {
-		report.More, err = repackWorkRemains(ctx, metadata, state.Hash,
+		report.More, err = repackWorkRemains(ctx, metadata, sparseAfter,
 			now, minAge, minDead, false)
 		if err != nil {
 			return report, err
 		}
-		if report.More && state.Hash != "" {
-			report.NextCursor = encodePhaseCursor(operationRepack, phase, state.Hash)
+		if report.More && phase == "dead" && mappingHighWater != "" {
+			report.NextCursor = encodePhaseCursor(operationRepack, "dead", mappingHighWater)
+		} else if report.More && phase == "sparse" && sparseAfter != "" {
+			report.NextCursor = encodePhaseCursor(operationRepack, "sparse", sparseAfter)
 		}
 		return report, nil
 	}
-
 	candidates, candidateMore, err := metadata.SparseRepackPage(
-		ctx, state.Hash, remaining, now, minAge, minDead)
+		ctx, sparseAfter, remaining, now, minAge, minDead)
 	if err != nil {
 		return report, err
 	}
-	last := state.Hash
+	last := sparseAfter
 	processed := 0
 	cursorBlocked := false
 	var runErr error
@@ -470,7 +483,7 @@ func Repack(
 				if err != nil {
 					return report, errors.Join(runErr, err)
 				}
-				if last != "" {
+				if report.More && last != "" {
 					report.NextCursor = encodePhaseCursor(operationRepack, "sparse", last)
 				}
 				return report, runErr

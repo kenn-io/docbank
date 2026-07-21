@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
@@ -17,11 +18,18 @@ import (
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/jobs"
+	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/internal/version"
 )
 
 const kitPingPath = kitdaemon.DefaultPingPath
+
+// VerifyPageFunc performs one bounded content-verification page. The optional
+// dependency lets embedders test legacy route error reporting at this boundary.
+type VerifyPageFunc func(
+	context.Context, *store.Store, *blob.Store, internalmaintenance.VerifyOptions,
+) (internalmaintenance.VerifyReport, error)
 
 // Deps assembles everything a Server needs to build its routes.
 type Deps struct {
@@ -36,6 +44,7 @@ type Deps struct {
 	Tracker       *ActivityTracker // nil → no idle tracking
 	Jobs          *jobs.Supervisor // nil → no registered background jobs
 	Gate          *OperationGate   // nil → a server-private gate
+	VerifyPage    VerifyPageFunc   // nil → shared bounded maintenance service
 }
 
 // Server is docbank's HTTP API: a huma-described /api/v1 surface plus a

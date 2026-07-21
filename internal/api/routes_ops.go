@@ -535,9 +535,13 @@ func runVerify(ctx context.Context, d Deps) (VerifyReport, error) {
 		}
 		report.MetadataProblems = append(report.MetadataProblems, err.Error())
 	}
+	verifyPage := d.VerifyPage
+	if verifyPage == nil {
+		verifyPage = internalmaintenance.Verify
+	}
 	var cursor string
 	for {
-		page, err := internalmaintenance.Verify(ctx, d.Store, d.Blobs,
+		page, err := verifyPage(ctx, d.Store, d.Blobs,
 			internalmaintenance.VerifyOptions{Budget: internalmaintenance.Budget{
 				MaxObjects: internalmaintenance.DefaultMaxObjects, Cursor: cursor,
 			}})
@@ -546,7 +550,8 @@ func runVerify(ctx context.Context, d Deps) (VerifyReport, error) {
 				return VerifyReport{}, NewError(http.StatusInternalServerError, "internal",
 					fmt.Sprintf("verify interrupted: %v", ctx.Err()))
 			}
-			return VerifyReport{}, FromStoreError(err)
+			report.MetadataProblems = append(report.MetadataProblems, err.Error())
+			return report, nil
 		}
 		report.OK += page.OK
 		report.MetadataProblems = append(report.MetadataProblems, page.MetadataProblems...)
