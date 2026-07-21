@@ -181,7 +181,7 @@ func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64, physical ...Bl
 	if err != nil {
 		return fmt.Errorf("recording blob %s: %w", hash, err)
 	}
-	result, err := tx.Exec(
+	_, err = tx.Exec(
 		`INSERT OR IGNORE INTO blobs
 		 (hash, size, created_at, loose_encoding, loose_stored_size, pack_eligible)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
@@ -189,28 +189,12 @@ func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64, physical ...Bl
 	if err != nil {
 		return fmt.Errorf("recording blob %s: %w", hash, err)
 	}
-	inserted, err := result.RowsAffected()
+	stored, err := requirePhysicalAuthorityTx(tx, hash)
 	if err != nil {
-		return fmt.Errorf("checking blob %s insertion: %w", hash, err)
-	}
-	var (
-		stored   int64
-		hasLoose bool
-		hasPack  bool
-	)
-	if err := tx.QueryRow(`
-		SELECT b.size, b.loose_encoding IS NOT NULL,
-		       EXISTS (SELECT 1 FROM blob_pack_index i WHERE i.blob_hash = b.hash)
-		FROM blobs b WHERE b.hash = ?`, hash,
-	).Scan(&stored, &hasLoose, &hasPack); err != nil {
 		return fmt.Errorf("verifying blob %s: %w", hash, err)
 	}
 	if stored != size {
 		return fmt.Errorf("blob %s: recorded size %d does not match caller size %d", hash, stored, size)
-	}
-	if inserted == 0 && !hasLoose && !hasPack {
-		return fmt.Errorf("blob %s: %w; repair content before adding references",
-			hash, ErrPhysicalAuthorityMissing)
 	}
 	return nil
 }

@@ -197,10 +197,16 @@ func (s *Store) SyncWatchedContent(
 			return err
 		}
 		if cursor.blobHash == blobHash && cursor.size == size {
+			if _, err := requirePhysicalAuthorityTx(tx, cursor.blobHash); err != nil {
+				return fmt.Errorf("checking unchanged watched content: %w", err)
+			}
 			updated = n
 			return nil
 		}
 		if n.BlobHash == blobHash && n.Size == size {
+			if _, err := requirePhysicalAuthorityTx(tx, n.BlobHash); err != nil {
+				return fmt.Errorf("checking watched node content: %w", err)
+			}
 			updated = n
 			return updateWatchSourceTx(ctx, tx, watchName, sourceRef, blobHash, size)
 		}
@@ -334,9 +340,8 @@ func (s *Store) RevertContent(
 			return fmt.Errorf("source version %s revision %d is not older than node %d next revision %d",
 				source.ID, source.NodeRevision, nodeID, n.Revision+1)
 		}
-		var catalogSize int64
-		if err := tx.QueryRow(`SELECT size FROM blobs WHERE hash = ?`, source.BlobHash).
-			Scan(&catalogSize); err != nil {
+		catalogSize, err := requirePhysicalAuthorityTx(tx, source.BlobHash)
+		if err != nil {
 			return fmt.Errorf("checking source blob %s: %w", source.BlobHash, err)
 		}
 		if catalogSize != source.Size {

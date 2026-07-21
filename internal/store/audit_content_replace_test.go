@@ -130,6 +130,33 @@ func TestAuditedContentRevertAdvancesPortableAuthority(t *testing.T) {
 	), "bytes do not match")
 }
 
+func TestAuditedContentRevertRejectsMissingPhysicalAuthority(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	seedMetadataRoundTrip(t, s)
+	_, err = s.db.Exec(`UPDATE blobs SET loose_encoding=NULL, loose_stored_size=NULL WHERE hash=?`,
+		metadataHashVersion)
+	require.NoError(t, err)
+	scope, err := s.NodeByPath(t.Context(), "/Projects")
+	require.NoError(t, err)
+	seedInitialAuditAuthority(t, s, scope.ID)
+	file, err := s.NodeByPath(t.Context(), "/Projects/report.txt")
+	require.NoError(t, err)
+
+	revertedNode, revertedVersion, revertedSource, err := s.RevertContent(
+		t.Context(), file.ID, file.Revision, metadataVersionOld,
+	)
+	require.ErrorIs(t, err, ErrPhysicalAuthorityMissing)
+	assert.Empty(t, revertedNode.Kind)
+	assert.Empty(t, revertedVersion.ID)
+	assert.Empty(t, revertedSource.ID)
+	unchanged, err := s.NodeByID(t.Context(), file.ID)
+	require.NoError(t, err)
+	assert.Equal(t, file.Revision, unchanged.Revision)
+	assert.Equal(t, file.CurrentVersionID, unchanged.CurrentVersionID)
+}
+
 func TestAuditedVaultRejectsRevertOutsideScope(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)

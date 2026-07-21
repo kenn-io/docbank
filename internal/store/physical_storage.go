@@ -66,6 +66,33 @@ func normalizeBlobPhysical(size int64, physical []BlobPhysical) (BlobPhysical, e
 	return result, nil
 }
 
+// requirePhysicalAuthorityTx returns the logical size only when the catalog
+// authorizes either loose or packed bytes for hash. Logical membership alone
+// is insufficient for reads or for creating another current reference.
+func requirePhysicalAuthorityTx(tx *sql.Tx, hash string) (int64, error) {
+	var (
+		size     int64
+		hasLoose bool
+		hasPack  bool
+	)
+	err := tx.QueryRow(`
+		SELECT b.size,
+		       b.loose_encoding IS NOT NULL AND b.loose_stored_size IS NOT NULL,
+		       EXISTS (SELECT 1 FROM blob_pack_index i WHERE i.blob_hash = b.hash)
+		FROM blobs b WHERE b.hash = ?`, hash,
+	).Scan(&size, &hasLoose, &hasPack)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("checking physical authority for blob %s: %w", hash, err)
+	}
+	if !hasLoose && !hasPack {
+		return 0, fmt.Errorf("blob %s: %w", hash, ErrPhysicalAuthorityMissing)
+	}
+	return size, nil
+}
+
 // PhysicalContent returns the indexed representation with current catalog
 // authority for hash.
 func (s *Store) PhysicalContent(ctx context.Context, hash string) (PhysicalContent, error) {

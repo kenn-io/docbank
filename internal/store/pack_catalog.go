@@ -13,10 +13,11 @@ import (
 	"go.kenn.io/kit/packstore"
 )
 
-// PackCatalog adapts docbank's blobs membership table and packed metadata to
-// Kit's application-neutral physical storage engine. A blobs row grants read
-// authority; nodes, versions, and future external pins decide only whether GC
-// may remove that row.
+// PackCatalog adapts docbank's blob membership and physical metadata to Kit's
+// application-neutral storage engine. A blobs row establishes logical
+// membership; indexed loose state or a pack mapping separately grants read
+// authority. Nodes, versions, and future external pins decide whether GC may
+// remove logical membership.
 type PackCatalog struct{ store *Store }
 
 // NewPackCatalog constructs a packed-storage catalog over s.
@@ -97,13 +98,17 @@ func (c *PackRestoreCatalog) ReplaceRestoredPacks(
 
 func (c *PackCatalog) Resolve(ctx context.Context, hash packstore.Hash) (packstore.Location, error) {
 	row := c.store.db.QueryRowContext(ctx, `
-		SELECT i.pack_id, i.pack_offset, i.stored_len, i.raw_len, i.flags, i.crc32c
+		SELECT b.loose_encoding, b.loose_stored_size,
+		       i.pack_id, i.pack_offset, i.stored_len, i.raw_len, i.flags, i.crc32c
 		FROM blobs b
 		LEFT JOIN blob_pack_index i ON i.blob_hash = b.hash
 		WHERE b.hash = ?`, hash.String())
-	var packID sql.NullString
+	var looseEncoding, packID sql.NullString
+	var looseStored sql.NullInt64
 	var offset, stored, raw, flags, crc sql.NullInt64
-	if err := row.Scan(&packID, &offset, &stored, &raw, &flags, &crc); err != nil {
+	if err := row.Scan(
+		&looseEncoding, &looseStored, &packID, &offset, &stored, &raw, &flags, &crc,
+	); err != nil {
 		if err == sql.ErrNoRows {
 			return packstore.Location{}, nil
 		}
@@ -111,6 +116,11 @@ func (c *PackCatalog) Resolve(ctx context.Context, hash packstore.Hash) (packsto
 	}
 	location := packstore.Location{Member: true}
 	if !packID.Valid {
+		if !looseEncoding.Valid || !looseStored.Valid {
+			return packstore.Location{}, fmt.Errorf(
+				"resolving blob %s: %w", hash, ErrPhysicalAuthorityMissing,
+			)
+		}
 		return location, nil
 	}
 	if !offset.Valid || !stored.Valid || !raw.Valid || !flags.Valid || !crc.Valid ||

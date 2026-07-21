@@ -80,6 +80,8 @@ func TestLogicalWritesRejectMissingPhysicalAuthority(t *testing.T) {
 	require.NoError(t, NewPackCatalog(s).DeleteIndexEntry(ctx, missingHash))
 	_, err = s.PhysicalContent(ctx, missingHash.String())
 	require.ErrorIs(t, err, ErrPhysicalAuthorityMissing)
+	_, err = NewPackCatalog(s).Resolve(ctx, missingHash)
+	require.ErrorIs(t, err, ErrPhysicalAuthorityMissing)
 
 	var nodesBefore, versionsBefore int64
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM nodes`).Scan(&nodesBefore))
@@ -109,6 +111,42 @@ func TestLogicalWritesRejectMissingPhysicalAuthority(t *testing.T) {
 	stillPresent, err := s.NodeByID(ctx, original.ID)
 	require.NoError(t, err)
 	assert.Equal(t, missingHash.String(), stillPresent.BlobHash)
+}
+
+func TestRevertRejectsMissingPhysicalAuthority(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	oldHash, err := packstore.ParseHash(fakeHash("cab005e"))
+	require.NoError(t, err)
+	file, err := s.CreateFile(ctx, s.RootID(), "document.txt", oldHash.String(), 20, "text/plain")
+	require.NoError(t, err)
+	oldVersionID := file.CurrentVersionID
+	file, _, err = s.ReplaceContent(
+		ctx, file.ID, file.Revision, fakeHash("face"), 9, "text/plain",
+	)
+	require.NoError(t, err)
+
+	packID := pack.NewPackID()
+	require.NoError(t, NewPackCatalog(s).RecordPack(ctx, packstore.PackRecord{
+		PackID: packID, EntryCount: 1, StoredBytes: 32,
+		CreatedAt: time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC),
+	}, []packstore.Adoption{{Entry: packstore.IndexEntry{
+		Hash: oldHash, PackID: packID, Offset: pack.MinEntryOffset,
+		StoredLen: 9, RawLen: 20,
+	}}}))
+	require.NoError(t, NewPackCatalog(s).DeleteIndexEntry(ctx, oldHash))
+
+	revertedNode, revertedVersion, revertedSource, err := s.RevertContent(
+		ctx, file.ID, file.Revision, oldVersionID,
+	)
+	require.ErrorIs(t, err, ErrPhysicalAuthorityMissing)
+	assert.Empty(t, revertedNode.Kind)
+	assert.Empty(t, revertedVersion.ID)
+	assert.Empty(t, revertedSource.ID)
+	unchanged, err := s.NodeByID(ctx, file.ID)
+	require.NoError(t, err)
+	assert.Equal(t, file.Revision, unchanged.Revision)
+	assert.Equal(t, file.CurrentVersionID, unchanged.CurrentVersionID)
 }
 
 func TestRepairBlobAuthorityPreservesReferences(t *testing.T) {

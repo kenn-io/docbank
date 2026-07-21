@@ -258,6 +258,9 @@ func (s *Store) ingestFile(
 				if err != nil {
 					return fmt.Errorf("reading idempotent ingest node %d: %w", existingID, err)
 				}
+				if _, err := requirePhysicalAuthorityTx(tx, created.BlobHash); err != nil {
+					return fmt.Errorf("checking idempotent ingest content: %w", err)
+				}
 				return nil
 			}
 		}

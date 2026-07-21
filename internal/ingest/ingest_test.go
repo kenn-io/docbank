@@ -332,6 +332,37 @@ func TestPackedDuplicateIngestRemovesLooseCopy(t *testing.T) {
 	assert.Empty(t, loose)
 }
 
+func TestIdempotentUploadRejectsMissingPhysicalAuthority(t *testing.T) {
+	ing := newTestIngesterWithOptions(t, blob.ManagedOptions())
+	content := []byte(strings.Repeat("missing packed authority\n", 512))
+	sum := sha256.Sum256(content)
+	hash := hex.EncodeToString(sum[:])
+	prepared, err := ing.PrepareUpload(
+		t.Context(), ing.Store.RootID(), "document.txt", "text/plain",
+		bytes.NewReader(content), hash, int64(len(content)),
+	)
+	require.NoError(t, err)
+	first, err := prepared.Commit(t.Context())
+	require.NoError(t, err)
+	packed, err := ing.Blobs.Maintainer().Pack(t.Context(), packstore.PackOptions{})
+	require.NoError(t, err)
+	require.Equal(t, 1, packed.BlobsPacked)
+	parsed, err := packstore.ParseHash(hash)
+	require.NoError(t, err)
+	require.NoError(t, store.NewPackCatalog(ing.Store).DeleteIndexEntry(t.Context(), parsed))
+
+	retry, err := ing.PrepareUpload(
+		t.Context(), ing.Store.RootID(), "document.txt", "text/plain",
+		bytes.NewReader(content), hash, int64(len(content)),
+	)
+	require.NoError(t, err)
+	_, err = retry.Commit(t.Context())
+	require.ErrorIs(t, err, store.ErrPhysicalAuthorityMissing)
+	unchanged, err := ing.Store.NodeByID(t.Context(), first.Node.ID)
+	require.NoError(t, err)
+	assert.Equal(t, first.Node.Revision, unchanged.Revision)
+}
+
 func TestRejectedUploadPreservesAuthorityFreeAndRemovesPackedDuplicateLooseFiles(t *testing.T) {
 	content := []byte(strings.Repeat("rejected upload content\n", 512))
 	sum := sha256.Sum256(content)

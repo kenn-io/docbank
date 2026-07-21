@@ -52,6 +52,15 @@ func TestIngestFileIdempotency(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, added)
 	assert.Equal(t, "report (3).pdf", n3.Name)
+
+	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE blobs SET loose_encoding=NULL, loose_stored_size=NULL WHERE hash=?`,
+			fakeHash("a1"))
+		return err
+	}))
+	_, _, err = s.IngestFile(ctx, ing, s.RootID(),
+		"report.pdf", fakeHash("a1"), 10, "application/pdf", "/src/docs/report.pdf", "")
+	require.ErrorIs(t, err, ErrPhysicalAuthorityMissing)
 }
 
 func TestIngestFileMatchesAcrossSuffixGap(t *testing.T) {
@@ -165,6 +174,20 @@ func TestSyncWatchedContentFollowsMovedNodeWithoutOverwritingIndependentEdit(t *
 	assert.False(t, changed)
 	assert.Equal(t, manuallyEdited, unchanged)
 	assert.Empty(t, noVersion.ID)
+
+	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE blobs SET loose_encoding=NULL, loose_stored_size=NULL WHERE hash=?`,
+			fakeHash("b2"))
+		return err
+	}))
+	missingNode, missingVersion, missingChanged, err := s.SyncWatchedContent(
+		ctx, "sessions", "daily/session.jsonl",
+		fakeHash("b2"), 2, "application/json",
+	)
+	require.ErrorIs(t, err, ErrPhysicalAuthorityMissing)
+	assert.Empty(t, missingNode.Kind)
+	assert.Empty(t, missingVersion.ID)
+	assert.False(t, missingChanged)
 }
 
 func TestWatchSourceLookupUsesPrimaryKeyAtArchiveScale(t *testing.T) {
