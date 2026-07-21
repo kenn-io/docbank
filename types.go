@@ -54,6 +54,14 @@ type PutReceipt struct {
 	Replaced bool            `json:"replaced"`
 }
 
+// RepairReceipt proves the replacement bytes and reports the resulting
+// physical authority without changing any logical node or version.
+type RepairReceipt struct {
+	Computed            ContentIdentity `json:"computed"`
+	Physical            PhysicalContent `json:"physical"`
+	ReferencesPreserved int64           `json:"references_preserved"`
+}
+
 // PhysicalContent describes the representation with current catalog
 // authority. Logical identity is always SHA-256 over decoded bytes.
 type PhysicalContent struct {

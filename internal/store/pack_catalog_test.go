@@ -60,6 +60,66 @@ func TestPackAdoptionClearsLooseAuthority(t *testing.T) {
 	assert.Equal(t, physical, after)
 }
 
+func TestRepairBlobAuthorityPreservesReferences(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	hash := fakeHash("a11ce")
+	replacementHash := fakeHash("b0b")
+	first, err := s.CreateFile(ctx, s.RootID(), "first.txt", hash, 20, "text/plain",
+		BlobPhysical{Encoding: "raw", StoredBytes: 20, PackEligible: true})
+	require.NoError(t, err)
+	_, _, err = s.ReplaceContent(ctx, first.ID, first.Revision, replacementHash, 9, "text/plain",
+		BlobPhysical{Encoding: "raw", StoredBytes: 9, PackEligible: true})
+	require.NoError(t, err)
+	_, err = s.CreateFile(ctx, s.RootID(), "second.txt", hash, 20, "text/plain")
+	require.NoError(t, err)
+
+	parsed, err := packstore.ParseHash(hash)
+	require.NoError(t, err)
+	packID := pack.NewPackID()
+	require.NoError(t, NewPackCatalog(s).RecordPack(ctx, packstore.PackRecord{
+		PackID: packID, EntryCount: 1, StoredBytes: 32,
+		CreatedAt: time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC),
+	}, []packstore.Adoption{{Entry: packstore.IndexEntry{
+		Hash: parsed, PackID: packID, Offset: pack.MinEntryOffset,
+		StoredLen: 9, RawLen: 20,
+	}}}))
+
+	_, err = s.RepairBlobAuthority(ctx, hash, 21,
+		BlobPhysical{Encoding: "zstd", StoredBytes: 8, PackEligible: true})
+	require.Error(t, err)
+	physical, err := s.PhysicalContent(ctx, hash)
+	require.NoError(t, err)
+	assert.Equal(t, "packed", physical.Kind)
+
+	references, err := s.RepairBlobAuthority(ctx, hash, 20,
+		BlobPhysical{Encoding: "zstd", StoredBytes: 8, PackEligible: true})
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), references)
+	physical, err = s.PhysicalContent(ctx, hash)
+	require.NoError(t, err)
+	assert.Equal(t, PhysicalContent{
+		Kind: "loose", Encoding: "zstd", LogicalBytes: 20,
+		StoredBytes: 8, PackEligible: true,
+	}, physical)
+
+	var versions int64
+	require.NoError(t, s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM content_versions WHERE blob_hash = ?`, hash).Scan(&versions))
+	assert.Equal(t, int64(2), versions)
+	var mappings int64
+	require.NoError(t, s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM blob_pack_index WHERE blob_hash = ?`, hash).Scan(&mappings))
+	assert.Zero(t, mappings)
+}
+
+func TestRepairBlobAuthorityRequiresExistingMembership(t *testing.T) {
+	s := newTestStore(t)
+	_, err := s.RepairBlobAuthority(t.Context(), fakeHash("missing"), 10,
+		BlobPhysical{Encoding: "raw", StoredBytes: 10, PackEligible: true})
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
 type docbankPackHarness struct {
 	t     *testing.T
 	store *Store

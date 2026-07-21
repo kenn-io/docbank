@@ -10,7 +10,11 @@ import (
 	"go.kenn.io/kit/pack"
 )
 
-const maxPackEligibleBytes int64 = 64 << 20
+const (
+	maxPackEligibleBytes int64 = 64 << 20
+	looseEncodingRaw           = "raw"
+	looseEncodingZstd          = "zstd"
+)
 
 func migrateBlobStorageTx(tx *sql.Tx) error {
 	columns, err := blobStorageColumns(tx)
@@ -108,16 +112,16 @@ func normalizeBlobPhysical(size int64, physical []BlobPhysical) (BlobPhysical, e
 		return BlobPhysical{}, errors.New("at most one physical blob receipt may be supplied")
 	}
 	if len(physical) == 0 {
-		return BlobPhysical{Encoding: "raw", StoredBytes: size, PackEligible: size <= maxPackEligibleBytes}, nil
+		return BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: size, PackEligible: size <= maxPackEligibleBytes}, nil
 	}
 	result := physical[0]
-	if result.Encoding != "raw" && result.Encoding != "zstd" {
+	if result.Encoding != looseEncodingRaw && result.Encoding != looseEncodingZstd {
 		return BlobPhysical{}, fmt.Errorf("invalid loose encoding %q", result.Encoding)
 	}
 	if result.StoredBytes < 0 {
 		return BlobPhysical{}, errors.New("loose stored bytes must not be negative")
 	}
-	if result.Encoding == "raw" && result.StoredBytes != size {
+	if result.Encoding == looseEncodingRaw && result.StoredBytes != size {
 		return BlobPhysical{}, fmt.Errorf("raw loose content stores %d bytes, want logical size %d", result.StoredBytes, size)
 	}
 	return result, nil
@@ -152,9 +156,9 @@ func (s *Store) PhysicalContent(ctx context.Context, hash string) (PhysicalConte
 			return PhysicalContent{}, fmt.Errorf("blob %s has invalid packed encoding flags", hash)
 		}
 		physical.Kind = "packed"
-		physical.Encoding = "raw"
+		physical.Encoding = looseEncodingRaw
 		if pack.BlobFlags(packedFlags.Int64)&pack.BlobCompressed != 0 {
-			physical.Encoding = "zstd"
+			physical.Encoding = looseEncodingZstd
 		}
 		physical.StoredBytes = packedStored.Int64
 		return physical, nil

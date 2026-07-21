@@ -119,6 +119,92 @@ func TestLegacyRawLooseObjectRemainsVerifiedReadable(t *testing.T) {
 	assert.Equal(t, map[string]int64{hash: int64(len(content))}, listed)
 }
 
+func TestRepairContextReplacesCorruptLooseContent(t *testing.T) {
+	tests := []struct {
+		name       string
+		options    Options
+		content    []byte
+		wantEncode packstore.LooseEncoding
+	}{
+		{
+			name:       "raw",
+			content:    []byte("trusted raw content\n"),
+			wantEncode: packstore.LooseEncodingRaw,
+		},
+		{
+			name:       "zstd",
+			options:    Options{LooseCompression: testLooseCompression()},
+			content:    []byte(strings.Repeat("trusted compressed content\n", 256)),
+			wantEncode: packstore.LooseEncodingZstd,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			bs := newTestBlobStoreWithOptions(t, test.options)
+			written, err := bs.WriteDetailedContext(t.Context(), bytes.NewReader(test.content))
+			require.NoError(t, err)
+			require.Equal(t, test.wantEncode, written.Encoding)
+
+			canonical := bs.path(written.Hash)
+			if written.Encoding == packstore.LooseEncodingZstd {
+				canonical = bs.compressedPath(written.Hash)
+			}
+			require.NoError(t, os.WriteFile(canonical, []byte("corrupt"), 0o600))
+
+			repaired, err := bs.RepairContext(t.Context(), written.Hash, written.Size,
+				bytes.NewReader(test.content))
+			require.NoError(t, err)
+			assert.Equal(t, written.Hash, repaired.Hash)
+			assert.Equal(t, written.Size, repaired.Size)
+			assert.Equal(t, test.wantEncode, repaired.Encoding)
+			assert.True(t, repaired.Created)
+			assertVerifiedBlob(t, bs, written.Hash, test.content)
+		})
+	}
+}
+
+func TestRepairContextRejectsUntrustedContentWithoutChangingCanonicalBytes(t *testing.T) {
+	bs := newTestBlobStore(t)
+	trusted := []byte("trusted content\n")
+	written, err := bs.WriteDetailedContext(t.Context(), bytes.NewReader(trusted))
+	require.NoError(t, err)
+	corrupt := []byte("corrupt content\n")
+	require.Len(t, corrupt, len(trusted))
+	require.NoError(t, os.WriteFile(bs.path(written.Hash), corrupt, 0o600))
+
+	_, err = bs.RepairContext(t.Context(), written.Hash, written.Size,
+		bytes.NewReader([]byte("different bytes\n")))
+	require.ErrorIs(t, err, packstore.ErrContentMismatch)
+	got, err := os.ReadFile(bs.path(written.Hash))
+	require.NoError(t, err)
+	assert.Equal(t, corrupt, got)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = bs.RepairContext(ctx, written.Hash, written.Size, bytes.NewReader(trusted))
+	require.ErrorIs(t, err, context.Canceled)
+	got, err = os.ReadFile(bs.path(written.Hash))
+	require.NoError(t, err)
+	assert.Equal(t, corrupt, got)
+}
+
+func TestWriteDoesNotMasqueradeAsRepair(t *testing.T) {
+	bs := newTestBlobStore(t)
+	trusted := []byte("trusted content\n")
+	written, err := bs.WriteDetailedContext(t.Context(), bytes.NewReader(trusted))
+	require.NoError(t, err)
+	corrupt := []byte("corrupt content\n")
+	require.Len(t, corrupt, len(trusted))
+	require.NoError(t, os.WriteFile(bs.path(written.Hash), corrupt, 0o600))
+
+	deduplicated, err := bs.WriteDetailedContext(t.Context(), bytes.NewReader(trusted))
+	require.NoError(t, err)
+	assert.False(t, deduplicated.Created)
+	got, err := os.ReadFile(bs.path(written.Hash))
+	require.NoError(t, err)
+	assert.Equal(t, corrupt, got)
+}
+
 func assertVerifiedBlob(t *testing.T, bs *Store, hash string, want []byte) {
 	t.Helper()
 	stream, logicalSize, err := bs.OpenStream(hash)

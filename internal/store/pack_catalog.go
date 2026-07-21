@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -180,8 +181,8 @@ func (c *PackCatalog) ListUnpacked(ctx context.Context) ([]packstore.Candidate, 
 		}
 		path := hash.String()[:2] + "/" + hash.String()
 		switch encoding {
-		case "raw":
-		case "zstd":
+		case looseEncodingRaw:
+		case looseEncodingZstd:
 			path += ".zst"
 		default:
 			return nil, fmt.Errorf("unpacked blob %s has invalid loose encoding %q", hash, encoding)
@@ -329,6 +330,54 @@ func clearLooseAuthority(ctx context.Context, tx *sql.Tx, hash packstore.Hash) e
 		return fmt.Errorf("clearing loose authority for packed blob %s: %w", hash, err)
 	}
 	return nil
+}
+
+// RepairBlobAuthority atomically makes one already-verified loose receipt the
+// physical authority for an existing blob. Logical membership, nodes, content
+// versions, and immutable pack bytes are preserved; only the packed mapping is
+// retired so maintenance can reclaim its dead bytes later.
+func (s *Store) RepairBlobAuthority(
+	ctx context.Context, hash string, size int64, physical BlobPhysical,
+) (int64, error) {
+	storage, err := normalizeBlobPhysical(size, []BlobPhysical{physical})
+	if err != nil {
+		return 0, fmt.Errorf("recording repaired blob %s: %w", hash, err)
+	}
+	var references int64
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		var recordedSize int64
+		err := tx.QueryRowContext(ctx, `SELECT size FROM blobs WHERE hash = ?`, hash).Scan(&recordedSize)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("reading repaired blob %s: %w", hash, err)
+		}
+		if recordedSize != size {
+			return fmt.Errorf("blob %s: recorded size %d does not match repaired size %d",
+				hash, recordedSize, size)
+		}
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM content_versions WHERE blob_hash = ?`, hash,
+		).Scan(&references); err != nil {
+			return fmt.Errorf("counting repaired blob references %s: %w", hash, err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM blob_pack_index WHERE blob_hash = ?`, hash); err != nil {
+			return fmt.Errorf("retiring packed authority for repaired blob %s: %w", hash, err)
+		}
+		result, err := tx.ExecContext(ctx, `
+			UPDATE blobs
+			SET loose_encoding = ?, loose_stored_size = ?, pack_eligible = ?
+			WHERE hash = ?`, storage.Encoding, storage.StoredBytes, storage.PackEligible, hash)
+		if err != nil {
+			return fmt.Errorf("recording loose authority for repaired blob %s: %w", hash, err)
+		}
+		return requireOneRow(result, "recording repaired blob "+hash)
+	})
+	if err != nil {
+		return 0, err
+	}
+	return references, nil
 }
 
 func (c *PackCatalog) DeletePackRecord(ctx context.Context, packID string) error {

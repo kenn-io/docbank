@@ -279,6 +279,70 @@ func (v *Vault) Create(
 	}, true)
 }
 
+// RepairContent replaces the physical bytes for one existing content identity
+// after fully verifying trusted against its required SHA-256 and size. All
+// nodes and historical versions keep referencing the same immutable identity.
+func (v *Vault) RepairContent(
+	ctx context.Context, identity ContentIdentity, trusted io.Reader,
+) (RepairReceipt, error) {
+	if err := v.begin(); err != nil {
+		return RepairReceipt{}, err
+	}
+	defer v.lifecycle.RUnlock()
+	if trusted == nil {
+		return RepairReceipt{}, errors.New("docbank trusted repair reader is required")
+	}
+	parsed, err := packstore.ParseHash(identity.SHA256)
+	if err != nil || parsed.String() != identity.SHA256 {
+		return RepairReceipt{}, errors.New("repair content hash must be canonical lowercase SHA-256")
+	}
+	if identity.Size < 0 {
+		return RepairReceipt{}, errors.New("repair content size must not be negative")
+	}
+
+	v.mutation.Lock()
+	defer v.mutation.Unlock()
+	var receipt RepairReceipt
+	err = v.blobs.WithMutation(ctx, func() error {
+		existing, err := v.metadata.PhysicalContent(ctx, identity.SHA256)
+		if err != nil {
+			return err
+		}
+		if existing.LogicalBytes != identity.Size {
+			return fmt.Errorf("blob %s: catalog size %d does not match repair size %d",
+				identity.SHA256, existing.LogicalBytes, identity.Size)
+		}
+		written, err := v.blobs.RepairContext(ctx, identity.SHA256, identity.Size, trusted)
+		if err != nil {
+			return err
+		}
+		physical, err := blobPhysical(written)
+		if err != nil {
+			return err
+		}
+		references, err := v.metadata.RepairBlobAuthority(
+			ctx, identity.SHA256, identity.Size, physical,
+		)
+		if err != nil {
+			return err
+		}
+		receipt = RepairReceipt{
+			Computed: identity,
+			Physical: PhysicalContent{
+				Kind: "loose", Encoding: physical.Encoding,
+				LogicalBytes: identity.Size, StoredBytes: physical.StoredBytes,
+				PackEligible: physical.PackEligible,
+			},
+			ReferencesPreserved: references,
+		}
+		return nil
+	})
+	if err != nil {
+		return RepairReceipt{}, err
+	}
+	return receipt, nil
+}
+
 func (v *Vault) write(
 	ctx context.Context, virtualPath string, content io.Reader, opts PutOptions, immutable bool,
 ) (PutReceipt, error) {

@@ -2,6 +2,7 @@ package docbank
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -153,6 +154,141 @@ func TestVaultCreateConcurrent(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 1, versions.Total)
 	})
+}
+
+func TestVaultRepairContentPreservesLogicalReferences(t *testing.T) {
+	tests := []struct {
+		name         string
+		config       func(string) Config
+		content      []byte
+		pack         bool
+		wantEncoding string
+	}{
+		{
+			name: "raw", config: func(root string) Config { return Config{Root: root} },
+			content: []byte("trusted raw content\n"), wantEncoding: "raw",
+		},
+		{
+			name: "zstd", config: func(root string) Config {
+				return Config{Root: root, LooseCompression: LooseCompressionOptions{
+					Enabled: true, MinBytes: 1024, MinSavingsPercent: 10,
+				}}
+			},
+			content: []byte(strings.Repeat("trusted compressed content\n", 256)), wantEncoding: "zstd",
+		},
+		{
+			name: "packed", config: func(root string) Config { return Config{Root: root} },
+			content: []byte("trusted packed content\n"), pack: true, wantEncoding: "raw",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			vault, err := New(t.Context(), test.config(root))
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+			first, err := vault.Put(t.Context(), "/first.txt", bytes.NewReader(test.content),
+				PutOptions{MediaType: "text/plain"})
+			require.NoError(t, err)
+			if test.pack {
+				report, err := vault.Pack(t.Context(), PackOptions{})
+				require.NoError(t, err)
+				require.Equal(t, 1, report.BlobsPacked)
+			}
+			second, err := vault.Create(t.Context(), "/second.txt", bytes.NewReader(test.content),
+				CreateOptions{MediaType: "text/plain", Expected: first.Computed})
+			require.NoError(t, err)
+			replacement := []byte("new current content\n")
+			_, err = vault.Put(t.Context(), "/first.txt", bytes.NewReader(replacement),
+				PutOptions{MediaType: "text/plain"})
+			require.NoError(t, err)
+
+			physicalBefore, err := vault.metadata.PhysicalContent(t.Context(), first.Computed.SHA256)
+			require.NoError(t, err)
+			corruptVaultBlob(t, root, first.Computed, physicalBefore.Kind)
+			assertVaultContentCorrupt(t, vault, "/second.txt")
+
+			_, err = vault.RepairContent(t.Context(), first.Computed, bytes.NewReader([]byte("wrong bytes")))
+			require.ErrorIs(t, err, packstore.ErrContentMismatch)
+			physicalAfterFailure, err := vault.metadata.PhysicalContent(t.Context(), first.Computed.SHA256)
+			require.NoError(t, err)
+			assert.Equal(t, physicalBefore, physicalAfterFailure)
+
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			_, err = vault.RepairContent(ctx, first.Computed, bytes.NewReader(test.content))
+			require.ErrorIs(t, err, context.Canceled)
+			physicalAfterCancellation, err := vault.metadata.PhysicalContent(t.Context(), first.Computed.SHA256)
+			require.NoError(t, err)
+			assert.Equal(t, physicalBefore, physicalAfterCancellation)
+
+			repaired, err := vault.RepairContent(t.Context(), first.Computed, bytes.NewReader(test.content))
+			require.NoError(t, err)
+			assert.Equal(t, first.Computed, repaired.Computed)
+			assert.Equal(t, int64(2), repaired.ReferencesPreserved)
+			assert.Equal(t, PhysicalContent{
+				Kind: "loose", Encoding: test.wantEncoding,
+				LogicalBytes: first.Computed.Size, StoredBytes: repaired.Physical.StoredBytes,
+				PackEligible: true,
+			}, repaired.Physical)
+
+			assertVaultContent(t, vault, "/second.txt", test.content)
+			historical, err := vault.OpenVersionContent(t.Context(), first.Version.ID)
+			require.NoError(t, err)
+			got, err := io.ReadAll(historical.Reader)
+			require.NoError(t, err)
+			assert.Equal(t, test.content, got)
+			require.NoError(t, historical.Reader.Close())
+			assertVaultContent(t, vault, "/first.txt", replacement)
+
+			firstVersions, err := vault.Versions(t.Context(), first.Node.ID, VersionsOptions{})
+			require.NoError(t, err)
+			assert.Equal(t, 2, firstVersions.Total)
+			secondVersions, err := vault.Versions(t.Context(), second.Node.ID, VersionsOptions{})
+			require.NoError(t, err)
+			assert.Equal(t, 1, secondVersions.Total)
+		})
+	}
+}
+
+func corruptVaultBlob(t *testing.T, root string, identity ContentIdentity, kind string) {
+	t.Helper()
+	if kind == "packed" {
+		packs, err := filepath.Glob(filepath.Join(root, "blobs", "packs", "*", "*"+packstore.PackExt))
+		require.NoError(t, err)
+		require.Len(t, packs, 1)
+		require.NoError(t, os.WriteFile(packs[0], []byte("corrupt pack"), 0o600))
+		return
+	}
+	raw := filepath.Join(root, "blobs", identity.SHA256[:2], identity.SHA256)
+	path := raw
+	if _, err := os.Stat(raw + ".zst"); err == nil {
+		path = raw + ".zst"
+	}
+	corrupt := bytes.Repeat([]byte{'x'}, int(identity.Size))
+	require.NoError(t, os.WriteFile(path, corrupt, 0o600))
+}
+
+func assertVaultContentCorrupt(t *testing.T, vault *Vault, path string) {
+	t.Helper()
+	content, err := vault.OpenContent(t.Context(), path)
+	if err != nil {
+		return
+	}
+	_, readErr := io.ReadAll(content.Reader)
+	closeErr := content.Reader.Close()
+	assert.Error(t, errors.Join(readErr, closeErr))
+}
+
+func assertVaultContent(t *testing.T, vault *Vault, path string, want []byte) {
+	t.Helper()
+	content, err := vault.OpenContent(t.Context(), path)
+	require.NoError(t, err)
+	got, err := io.ReadAll(content.Reader)
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+	require.NoError(t, content.Reader.Close())
 }
 
 type createAttempt struct {

@@ -274,11 +274,38 @@ func (s *Store) WriteDetailedContext(ctx context.Context, r io.Reader) (WriteRec
 	if err != nil {
 		return WriteReceipt{}, fmt.Errorf("writing blob: %w", err)
 	}
+	return writeReceipt(result), nil
+}
+
+// RepairContext verifies trusted bytes against one required logical identity
+// before replacing its canonical loose representation. Catalog membership and
+// packed authority remain unchanged until the caller records this receipt.
+func (s *Store) RepairContext(
+	ctx context.Context, hash string, size int64, trusted io.Reader,
+) (WriteReceipt, error) {
+	parsed, err := packstore.ParseHash(hash)
+	if err != nil {
+		return WriteReceipt{}, fmt.Errorf("blob hash %q: %w", hash, ErrInvalidHash)
+	}
+	result, err := s.loose.Repair(ctx, trusted, packstore.LooseIdentity{
+		Hash: parsed, Size: size,
+	}, packstore.RepairOptions{
+		Durability:  packstore.DurablePublication,
+		Compression: s.compression,
+		MaxBytes:    MaxIngestBytes,
+	})
+	if err != nil {
+		return WriteReceipt{}, fmt.Errorf("repairing blob %s: %w", hash, err)
+	}
+	return writeReceipt(result), nil
+}
+
+func writeReceipt(result packstore.WriteResult) WriteReceipt {
 	return WriteReceipt{
 		Hash: result.Hash.String(), Size: result.Size,
 		Encoding: result.Encoding, StoredSize: result.StoredSize,
 		Created: result.Created, PackEligible: result.Size <= MaxPackedBlobBytes,
-	}, nil
+	}
 }
 
 // Open returns catalog-authorized loose or packed content.
