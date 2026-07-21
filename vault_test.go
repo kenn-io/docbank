@@ -258,6 +258,90 @@ func TestVaultRepairContentPreservesLogicalReferences(t *testing.T) {
 	}
 }
 
+func TestVaultRepairPreservesLooseEncodingAcrossPostPublicationFailure(t *testing.T) {
+	compressed := LooseCompressionOptions{Enabled: true, MinSavingsPercent: 0}
+	tests := []struct {
+		name         string
+		create       Config
+		repair       Config
+		wantEncoding string
+	}{
+		{
+			name:   "raw authority with compression later enabled",
+			create: Config{}, repair: Config{LooseCompression: compressed},
+			wantEncoding: "raw",
+		},
+		{
+			name:   "zstd authority with compression later disabled",
+			create: Config{LooseCompression: compressed}, repair: Config{},
+			wantEncoding: "zstd",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			content := []byte(strings.Repeat("stable repair encoding\n", 512))
+			createConfig := test.create
+			createConfig.Root = root
+			vault, err := New(t.Context(), createConfig)
+			require.NoError(t, err)
+			created, err := vault.Put(
+				t.Context(), "/document.txt", bytes.NewReader(content), PutOptions{},
+			)
+			require.NoError(t, err)
+			before, err := vault.metadata.PhysicalContent(t.Context(), created.Computed.SHA256)
+			require.NoError(t, err)
+			require.Equal(t, test.wantEncoding, before.Encoding)
+			require.NoError(t, vault.Close())
+
+			repairConfig := test.repair
+			repairConfig.Root = root
+			vault, err = New(t.Context(), repairConfig)
+			require.NoError(t, err)
+			corruptVaultBlob(t, root, created.Computed, "loose")
+
+			control, err := vault.metadata.SQLiteDriver().Open(
+				filepath.Join(root, "docbank.db"), docsqlite.OpenOptions{
+					Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+				},
+			)
+			require.NoError(t, err)
+			_, err = control.Exec(`
+				CREATE TRIGGER fail_repair_authority
+				BEFORE UPDATE OF loose_encoding ON blobs
+				BEGIN SELECT RAISE(ABORT, 'forced repair authority failure'); END`)
+			require.NoError(t, err)
+
+			_, err = vault.RepairContent(
+				t.Context(), created.Computed, bytes.NewReader(content),
+			)
+			require.ErrorContains(t, err, "forced repair authority failure")
+			_, err = control.Exec(`DROP TRIGGER fail_repair_authority`)
+			require.NoError(t, err)
+			require.NoError(t, control.Close())
+			require.NoError(t, vault.Close())
+
+			vault, err = New(t.Context(), repairConfig)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, vault.Close()) })
+			after, err := vault.metadata.PhysicalContent(t.Context(), created.Computed.SHA256)
+			require.NoError(t, err)
+			assert.Equal(t, before, after)
+			assertVaultContent(t, vault, "/document.txt", content)
+			rawPath := filepath.Join(
+				root, "blobs", created.Computed.SHA256[:2], created.Computed.SHA256,
+			)
+			if test.wantEncoding == "zstd" {
+				assert.NoFileExists(t, rawPath)
+				assert.FileExists(t, rawPath+".zst")
+			} else {
+				assert.FileExists(t, rawPath)
+				assert.NoFileExists(t, rawPath+".zst")
+			}
+		})
+	}
+}
+
 func corruptVaultBlob(t *testing.T, root string, identity ContentIdentity, kind string) {
 	t.Helper()
 	if kind == "packed" {

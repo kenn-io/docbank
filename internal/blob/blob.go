@@ -311,6 +311,32 @@ func (s *Store) WriteDetailedContext(ctx context.Context, r io.Reader) (WriteRec
 func (s *Store) RepairContext(
 	ctx context.Context, hash string, size int64, trusted io.Reader,
 ) (WriteReceipt, error) {
+	return s.repairContext(ctx, hash, size, trusted, s.compression)
+}
+
+// RepairContextWithEncoding repairs a loose object without changing its
+// canonical representation. Preserving an already-authoritative loose name
+// keeps the catalog truthful if the process stops after physical publication
+// but before the caller's metadata transaction commits.
+func (s *Store) RepairContextWithEncoding(
+	ctx context.Context, hash string, size int64, trusted io.Reader,
+	encoding packstore.LooseEncoding,
+) (WriteReceipt, error) {
+	var compression packstore.LooseCompressionOptions
+	switch encoding {
+	case packstore.LooseEncodingRaw:
+	case packstore.LooseEncodingZstd:
+		compression.Enabled = true
+	default:
+		return WriteReceipt{}, fmt.Errorf("repairing blob %s: unknown loose encoding %d", hash, encoding)
+	}
+	return s.repairContext(ctx, hash, size, trusted, compression)
+}
+
+func (s *Store) repairContext(
+	ctx context.Context, hash string, size int64, trusted io.Reader,
+	compression packstore.LooseCompressionOptions,
+) (WriteReceipt, error) {
 	parsed, err := packstore.ParseHash(hash)
 	if err != nil {
 		return WriteReceipt{}, fmt.Errorf("blob hash %q: %w", hash, ErrInvalidHash)
@@ -319,7 +345,7 @@ func (s *Store) RepairContext(
 		Hash: parsed, Size: size,
 	}, packstore.RepairOptions{
 		Durability:  packstore.DurablePublication,
-		Compression: s.compression,
+		Compression: compression,
 		MaxBytes:    MaxIngestBytes,
 	})
 	if err != nil {

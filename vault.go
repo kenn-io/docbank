@@ -316,7 +316,24 @@ func (v *Vault) RepairContent(
 			return fmt.Errorf("blob %s: catalog size %d does not match repair size %d",
 				identity.SHA256, existing.LogicalBytes, identity.Size)
 		}
-		written, err := v.blobs.RepairContext(ctx, identity.SHA256, identity.Size, trusted)
+		var written blob.WriteReceipt
+		if existing.Kind == "loose" {
+			var encoding packstore.LooseEncoding
+			switch existing.Encoding {
+			case "raw":
+				encoding = packstore.LooseEncodingRaw
+			case "zstd":
+				encoding = packstore.LooseEncodingZstd
+			default:
+				return fmt.Errorf("blob %s has unknown loose encoding %q",
+					identity.SHA256, existing.Encoding)
+			}
+			written, err = v.blobs.RepairContextWithEncoding(
+				ctx, identity.SHA256, identity.Size, trusted, encoding,
+			)
+		} else {
+			written, err = v.blobs.RepairContext(ctx, identity.SHA256, identity.Size, trusted)
+		}
 		if err != nil {
 			return err
 		}

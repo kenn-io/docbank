@@ -82,8 +82,15 @@ func (s *Store) bootstrapTx() error {
 		if _, err := tx.Exec(schemaSQL); err != nil {
 			return fmt.Errorf("applying schema: %w", err)
 		}
-		if err := migrateBlobStorageTx(tx); err != nil {
-			return err
+		var ignoredEncoding, ignoredStoredSize, ignoredEligibility any
+		if err := tx.QueryRow(`
+			SELECT MAX(loose_encoding), MAX(loose_stored_size), MAX(pack_eligible)
+			FROM blobs`).Scan(
+			&ignoredEncoding, &ignoredStoredSize, &ignoredEligibility,
+		); err != nil {
+			return fmt.Errorf(
+				"obsolete pre-release database schema; recreate this development vault: %w", err,
+			)
 		}
 		if err := tx.QueryRow(`SELECT vault_id FROM vault_metadata WHERE singleton = 1`).Scan(
 			&s.vaultID,
