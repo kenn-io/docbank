@@ -253,13 +253,13 @@ func (s *Store) ingestFile(
 				return err
 			}
 			if skip {
+				if err := s.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
+					return fmt.Errorf("reconciling idempotent ingest content: %w", err)
+				}
 				created, err = scanNode(tx.QueryRow(
 					`SELECT `+nodeCols+` FROM `+nodeFrom+` WHERE n.id = ?`, existingID))
 				if err != nil {
 					return fmt.Errorf("reading idempotent ingest node %d: %w", existingID, err)
-				}
-				if _, err := requirePhysicalAuthorityTx(tx, created.BlobHash); err != nil {
-					return fmt.Errorf("checking idempotent ingest content: %w", err)
 				}
 				return nil
 			}

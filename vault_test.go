@@ -483,6 +483,65 @@ func TestVaultWriteAdoptsNewlyPublishedLooseRepresentation(t *testing.T) {
 	assertVaultContent(t, vault, "/second.txt", content)
 }
 
+func TestVaultIdempotentWriteAdoptsNewlyPublishedLooseRepresentation(t *testing.T) {
+	compressed := LooseCompressionOptions{Enabled: true, MinSavingsPercent: 0}
+	tests := []struct {
+		name            string
+		initial         LooseCompressionOptions
+		retry           LooseCompressionOptions
+		initialEncoding string
+		retryEncoding   string
+		create          bool
+	}{
+		{name: "put raw to zstd", retry: compressed, initialEncoding: "raw", retryEncoding: "zstd"},
+		{name: "put zstd to raw", initial: compressed, initialEncoding: "zstd", retryEncoding: "raw"},
+		{name: "create raw to zstd", retry: compressed, initialEncoding: "raw", retryEncoding: "zstd", create: true},
+		{name: "create zstd to raw", initial: compressed, initialEncoding: "zstd", retryEncoding: "raw", create: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			content := []byte(strings.Repeat("same-path representation handoff\n", 512))
+			vault, err := New(t.Context(), Config{Root: root, LooseCompression: test.initial})
+			require.NoError(t, err)
+			first, err := vault.Put(t.Context(), "/document.txt", bytes.NewReader(content), PutOptions{
+				MediaType: "text/plain",
+			})
+			require.NoError(t, err)
+			require.Equal(t, test.initialEncoding, first.Physical.Encoding)
+			require.NoError(t, vault.Close())
+
+			loosePath := filepath.Join(root, "blobs", first.Computed.SHA256[:2], first.Computed.SHA256)
+			if test.initialEncoding == "zstd" {
+				loosePath += ".zst"
+			}
+			require.NoError(t, os.Remove(loosePath))
+
+			vault, err = New(t.Context(), Config{Root: root, LooseCompression: test.retry})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, vault.Close()) })
+			var retried PutReceipt
+			if test.create {
+				retried, err = vault.Create(t.Context(), "/document.txt", bytes.NewReader(content), CreateOptions{
+					MediaType: "text/plain", Expected: first.Computed,
+				})
+			} else {
+				retried, err = vault.Put(t.Context(), "/document.txt", bytes.NewReader(content), PutOptions{
+					MediaType: "text/plain",
+				})
+			}
+			require.NoError(t, err)
+			assert.False(t, retried.Created)
+			assert.False(t, retried.Replaced)
+			assert.Equal(t, first.Node.ID, retried.Node.ID)
+			assert.Equal(t, first.Node.Revision, retried.Node.Revision)
+			assert.Equal(t, first.Version.ID, retried.Version.ID)
+			assert.Equal(t, test.retryEncoding, retried.Physical.Encoding)
+			assertVaultContent(t, vault, "/document.txt", content)
+		})
+	}
+}
+
 func corruptVaultBlob(t *testing.T, root string, identity ContentIdentity, kind string) {
 	t.Helper()
 	if kind == "packed" {

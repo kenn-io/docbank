@@ -51,7 +51,9 @@ const (
 	// DefaultChildrenLimit is the page size used when ChildrenOptions.Limit is zero.
 	DefaultChildrenLimit = 500
 	// MaxChildrenLimit is the largest child page one embedded call may materialize.
-	MaxChildrenLimit = 5000
+	MaxChildrenLimit      = 5000
+	looseEncodingRawName  = "raw"
+	looseEncodingZstdName = "zstd"
 )
 
 // LooseCompressionOptions controls whether eligible new loose content may use
@@ -329,9 +331,9 @@ func (v *Vault) RepairContent(
 		if existing.Kind == "loose" {
 			var encoding packstore.LooseEncoding
 			switch existing.Encoding {
-			case "raw":
+			case looseEncodingRawName:
 				encoding = packstore.LooseEncodingRaw
-			case "zstd":
+			case looseEncodingZstdName:
 				encoding = packstore.LooseEncodingZstd
 			default:
 				return fmt.Errorf("blob %s has unknown loose encoding %q",
@@ -480,12 +482,15 @@ func (v *Vault) write(
 			}
 			return fmt.Errorf("virtual path %q: %w", canonicalPath, store.ErrNotFile)
 		case existing.BlobHash == hash && existing.Size == size && existing.MimeType == opts.MediaType:
-			version, versionErr := v.metadata.ContentVersionByID(ctx, existing.CurrentVersionID)
-			if versionErr != nil {
-				return versionErr
+			confirmed, confirmErr := v.metadata.ConfirmContentWithReceipt(
+				ctx, existing.ID, existing.Revision, hash, size, opts.MediaType, physical,
+			)
+			if confirmErr != nil {
+				return confirmErr
 			}
-			receipt.Node = fromStoreNode(existing)
-			receipt.Version = fromStoreVersion(version)
+			receipt.Node = fromStoreNode(confirmed.Node)
+			receipt.Version = fromStoreVersion(confirmed.Version)
+			receipt.Physical = fromStorePhysical(confirmed.Physical)
 			return nil
 		default:
 			if immutable {

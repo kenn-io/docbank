@@ -171,6 +171,55 @@ func (s *Store) ReplaceContentWithReceipt(
 	return receipt, nil
 }
 
+// ConfirmContentWithReceipt confirms that a file still has the expected
+// immutable head while reconciling a newly published physical receipt. It is
+// the transactional completion path for an otherwise idempotent write.
+func (s *Store) ConfirmContentWithReceipt(
+	ctx context.Context, nodeID, ifRev int64, blobHash string, size int64, mimeType string,
+	physical ...BlobPhysical,
+) (ContentWriteReceipt, error) {
+	if size < 0 {
+		return ContentWriteReceipt{}, errors.New("content size must not be negative")
+	}
+	if err := validateUTF8Field("content MIME type", mimeType); err != nil {
+		return ContentWriteReceipt{}, err
+	}
+	var receipt ContentWriteReceipt
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		n, err := nodeByIDTx(tx, nodeID)
+		if err != nil {
+			return err
+		}
+		if n.TrashedAt != nil {
+			return fmt.Errorf("node %d is trashed: %w", n.ID, ErrNotFound)
+		}
+		if n.IsDir() {
+			return fmt.Errorf("node %d: %w", n.ID, ErrNotFile)
+		}
+		if n.Revision != ifRev || n.BlobHash != blobHash || n.Size != size || n.MimeType != mimeType {
+			return fmt.Errorf("node %d content changed while confirming revision %d: %w",
+				n.ID, ifRev, ErrStaleRevision)
+		}
+		if err := s.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
+			return err
+		}
+		receipt.Node = n
+		receipt.Version, err = scanContentVersion(tx.QueryRow(
+			`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = ?`,
+			n.CurrentVersionID,
+		))
+		if err != nil {
+			return fmt.Errorf("reading current version of node %d: %w", n.ID, err)
+		}
+		receipt.Physical, err = physicalContentTx(tx, blobHash)
+		return err
+	})
+	if err != nil {
+		return ContentWriteReceipt{}, err
+	}
+	return receipt, nil
+}
+
 // SyncWatchedContent resolves a watched source's stable node and compares the
 // incoming bytes with the last bytes accepted from that source. The source
 // cursor is deliberately independent of the node's selected version: a manual
@@ -210,15 +259,20 @@ func (s *Store) SyncWatchedContent(
 			return err
 		}
 		if cursor.blobHash == blobHash && cursor.size == size {
-			if _, err := requirePhysicalAuthorityTx(tx, n.BlobHash); err != nil {
-				return fmt.Errorf("checking unchanged watched content: %w", err)
+			if err := s.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
+				return fmt.Errorf("reconciling unchanged watched content: %w", err)
+			}
+			if n.BlobHash != blobHash {
+				if _, err := requirePhysicalAuthorityTx(tx, n.BlobHash); err != nil {
+					return fmt.Errorf("checking unchanged watched content: %w", err)
+				}
 			}
 			updated = n
 			return nil
 		}
 		if n.BlobHash == blobHash && n.Size == size {
-			if _, err := requirePhysicalAuthorityTx(tx, n.BlobHash); err != nil {
-				return fmt.Errorf("checking watched node content: %w", err)
+			if err := s.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
+				return fmt.Errorf("checking unchanged watched content: %w", err)
 			}
 			updated = n
 			return updateWatchSourceTx(ctx, tx, watchName, sourceRef, blobHash, size)

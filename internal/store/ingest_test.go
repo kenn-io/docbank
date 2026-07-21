@@ -45,6 +45,19 @@ func TestIngestFileIdempotency(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, added)
 	assert.Equal(t, n2.ID, skipped.ID)
+	physical, err := s.PhysicalContent(ctx, fakeHash("b2"))
+	require.NoError(t, err)
+	require.Equal(t, "raw", physical.Encoding)
+	skipped, added, err = s.IngestFile(ctx, ing, s.RootID(),
+		"report.pdf", fakeHash("b2"), 11, "application/pdf", "/other/report.pdf", "",
+		BlobPhysical{Encoding: "zstd", StoredBytes: 7, PackEligible: true, Created: true})
+	require.NoError(t, err)
+	assert.False(t, added)
+	assert.Equal(t, n2.ID, skipped.ID)
+	physical, err = s.PhysicalContent(ctx, fakeHash("b2"))
+	require.NoError(t, err)
+	assert.Equal(t, "zstd", physical.Encoding)
+	assert.Equal(t, int64(7), physical.StoredBytes)
 
 	// Third distinct content takes the next free ordinal.
 	n3, added, err := s.IngestFile(ctx, ing, s.RootID(),
@@ -156,11 +169,15 @@ func TestSyncWatchedContentFollowsMovedNodeWithoutOverwritingIndependentEdit(t *
 	unchanged, noVersion, changed, err := s.SyncWatchedContent(
 		ctx, "sessions", "daily/session.jsonl",
 		fakeHash("b2"), 2, "application/json",
+		BlobPhysical{Encoding: "zstd", StoredBytes: 1, PackEligible: true, Created: true},
 	)
 	require.NoError(t, err)
 	assert.False(t, changed)
 	assert.Equal(t, updated, unchanged)
 	assert.Empty(t, noVersion.ID)
+	physical, err := s.PhysicalContent(ctx, fakeHash("b2"))
+	require.NoError(t, err)
+	assert.Equal(t, "zstd", physical.Encoding)
 
 	manuallyEdited, _, err := s.ReplaceContent(
 		ctx, updated.ID, updated.Revision, fakeHash("c3"), 3, "application/json",
@@ -169,6 +186,7 @@ func TestSyncWatchedContentFollowsMovedNodeWithoutOverwritingIndependentEdit(t *
 	unchanged, noVersion, changed, err = s.SyncWatchedContent(
 		ctx, "sessions", "daily/session.jsonl",
 		fakeHash("b2"), 2, "application/json",
+		BlobPhysical{Encoding: "zstd", StoredBytes: 1, PackEligible: true},
 	)
 	require.NoError(t, err)
 	assert.False(t, changed)
@@ -183,6 +201,7 @@ func TestSyncWatchedContentFollowsMovedNodeWithoutOverwritingIndependentEdit(t *
 	missingNode, missingVersion, missingChanged, err := s.SyncWatchedContent(
 		ctx, "sessions", "daily/session.jsonl",
 		fakeHash("b2"), 2, "application/json",
+		BlobPhysical{Encoding: "zstd", StoredBytes: 1, PackEligible: true},
 	)
 	require.ErrorIs(t, err, ErrPhysicalAuthorityMissing)
 	assert.Empty(t, missingNode.Kind)
