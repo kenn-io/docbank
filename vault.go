@@ -51,12 +51,21 @@ const (
 	MaxChildrenLimit = 5000
 )
 
-// Config selects one private vault root and, optionally, its SQLite
-// implementation. Nil SQLite uses mattn/go-sqlite3 in CGO builds and
-// modernc.org/sqlite when CGO is disabled.
+// LooseCompressionOptions controls whether eligible new loose content may use
+// zstd physical storage. The zero value preserves the legacy raw layout.
+type LooseCompressionOptions struct {
+	Enabled           bool
+	MinBytes          int64
+	MinSavingsPercent int
+}
+
+// Config selects one private vault root, its optional SQLite implementation,
+// and physical loose-storage policy. Nil SQLite uses mattn/go-sqlite3 in CGO
+// builds and modernc.org/sqlite when CGO is disabled.
 type Config struct {
-	Root   string
-	SQLite docsqlite.Driver
+	Root             string
+	SQLite           docsqlite.Driver
+	LooseCompression LooseCompressionOptions
 }
 
 // Vault is one independently locked Docbank namespace. Separate Vault values
@@ -89,6 +98,14 @@ func New(ctx context.Context, config Config) (_ *Vault, retErr error) {
 	if config.Root == "" {
 		return nil, errors.New("docbank vault root is required")
 	}
+	blobOptions := blob.Options{LooseCompression: blob.LooseCompressionOptions{
+		Enabled:           config.LooseCompression.Enabled,
+		MinBytes:          config.LooseCompression.MinBytes,
+		MinSavingsPercent: config.LooseCompression.MinSavingsPercent,
+	}}
+	if err := blob.ValidateOptions(blobOptions); err != nil {
+		return nil, fmt.Errorf("docbank %w", err)
+	}
 	canonical, err := home.CanonicalRoot(config.Root)
 	if err != nil {
 		return nil, err
@@ -115,7 +132,7 @@ func New(ctx context.Context, config Config) (_ *Vault, retErr error) {
 			retErr = errors.Join(retErr, metadata.Close())
 		}
 	}()
-	blobs, err := blob.New(store.NewPackCatalog(metadata), layout.BlobsDir())
+	blobs, err := blob.NewWithOptions(store.NewPackCatalog(metadata), layout.BlobsDir(), blobOptions)
 	if err != nil {
 		return nil, err
 	}

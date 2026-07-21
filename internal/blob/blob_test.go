@@ -1,11 +1,14 @@
 package blob
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,12 +22,124 @@ import (
 
 func newTestBlobStore(t *testing.T) *Store {
 	t.Helper()
+	return newTestBlobStoreWithOptions(t, Options{})
+}
+
+func newTestBlobStoreWithOptions(t *testing.T, opts Options) *Store {
+	t.Helper()
 	dir := filepath.Join(t.TempDir(), "blobs")
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "tmp"), 0o700))
-	store, err := newReaderStore(alwaysMemberResolver{}, dir)
+	store, err := newReaderStoreWithOptions(alwaysMemberResolver{}, dir, opts)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	return store
+}
+
+func testLooseCompression() LooseCompressionOptions {
+	return LooseCompressionOptions{
+		Enabled:           true,
+		MinBytes:          1024,
+		MinSavingsPercent: 10,
+	}
+}
+
+func TestCompressedWriteReceiptAndVerifiedRoundTrip(t *testing.T) {
+	bs := newTestBlobStoreWithOptions(t, Options{LooseCompression: testLooseCompression()})
+	content := []byte(strings.Repeat("{\"message\":\"compress me\"}\n", 512))
+	wantHash := sha256.Sum256(content)
+	wantHex := hex.EncodeToString(wantHash[:])
+
+	receipt, err := bs.WriteDetailedContext(t.Context(), bytes.NewReader(content))
+	require.NoError(t, err)
+	assert.Equal(t, wantHex, receipt.Hash)
+	assert.Equal(t, int64(len(content)), receipt.Size)
+	assert.Equal(t, packstore.LooseEncodingZstd, receipt.Encoding)
+	assert.Less(t, receipt.StoredSize, receipt.Size)
+	assert.True(t, receipt.Created)
+	assert.True(t, receipt.PackEligible)
+
+	_, err = os.Stat(bs.path(receipt.Hash))
+	require.ErrorIs(t, err, fs.ErrNotExist)
+	info, err := os.Stat(bs.compressedPath(receipt.Hash))
+	require.NoError(t, err)
+	assert.Equal(t, receipt.StoredSize, info.Size())
+
+	assertVerifiedBlob(t, bs, receipt.Hash, content)
+
+	listed, err := bs.List()
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int64{receipt.Hash: receipt.StoredSize}, listed)
+}
+
+func TestCompressedWriteKeepsSmallObjectRaw(t *testing.T) {
+	bs := newTestBlobStoreWithOptions(t, Options{LooseCompression: testLooseCompression()})
+	content := []byte("small but repetitive")
+
+	receipt, err := bs.WriteDetailedContext(t.Context(), bytes.NewReader(content))
+	require.NoError(t, err)
+	wantHash := sha256.Sum256(content)
+	assert.Equal(t, hex.EncodeToString(wantHash[:]), receipt.Hash)
+	assert.Equal(t, int64(len(content)), receipt.Size)
+	assert.Equal(t, packstore.LooseEncodingRaw, receipt.Encoding)
+	assert.Equal(t, receipt.Size, receipt.StoredSize)
+	require.FileExists(t, bs.path(receipt.Hash))
+	require.NoFileExists(t, bs.compressedPath(receipt.Hash))
+	assertVerifiedBlob(t, bs, receipt.Hash, content)
+}
+
+func TestCompressedWriteKeepsIncompressibleObjectRaw(t *testing.T) {
+	bs := newTestBlobStoreWithOptions(t, Options{LooseCompression: testLooseCompression()})
+	content := deterministicIncompressibleBytes(8 << 10)
+
+	receipt, err := bs.WriteDetailedContext(t.Context(), bytes.NewReader(content))
+	require.NoError(t, err)
+	wantHash := sha256.Sum256(content)
+	assert.Equal(t, hex.EncodeToString(wantHash[:]), receipt.Hash)
+	assert.Equal(t, int64(len(content)), receipt.Size)
+	assert.Equal(t, packstore.LooseEncodingRaw, receipt.Encoding)
+	assert.Equal(t, receipt.Size, receipt.StoredSize)
+	require.FileExists(t, bs.path(receipt.Hash))
+	require.NoFileExists(t, bs.compressedPath(receipt.Hash))
+	assertVerifiedBlob(t, bs, receipt.Hash, content)
+}
+
+func TestLegacyRawLooseObjectRemainsVerifiedReadable(t *testing.T) {
+	bs := newTestBlobStoreWithOptions(t, Options{LooseCompression: testLooseCompression()})
+	content := []byte(strings.Repeat("legacy raw content\n", 256))
+	sum := sha256.Sum256(content)
+	hash := hex.EncodeToString(sum[:])
+	rawPath := bs.path(hash)
+	require.NoError(t, os.MkdirAll(filepath.Dir(rawPath), 0o700))
+	require.NoError(t, os.WriteFile(rawPath, content, 0o600))
+
+	assertVerifiedBlob(t, bs, hash, content)
+
+	listed, err := bs.List()
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int64{hash: int64(len(content))}, listed)
+}
+
+func assertVerifiedBlob(t *testing.T, bs *Store, hash string, want []byte) {
+	t.Helper()
+	stream, logicalSize, err := bs.OpenStream(hash)
+	require.NoError(t, err)
+	got, err := io.ReadAll(stream)
+	require.NoError(t, err)
+	assert.Equal(t, int64(len(want)), logicalSize)
+	assert.Equal(t, want, got)
+	assert.True(t, stream.Verified())
+	require.NoError(t, stream.Close())
+}
+
+func deterministicIncompressibleBytes(size int) []byte {
+	content := make([]byte, 0, size)
+	for counter := uint64(0); len(content) < size; counter++ {
+		var input [8]byte
+		binary.LittleEndian.PutUint64(input[:], counter)
+		digest := sha256.Sum256(input[:])
+		content = append(content, digest[:]...)
+	}
+	return content[:size]
 }
 
 func TestStoragePolicyKeepsBlobLimitExplicit(t *testing.T) {
@@ -36,11 +151,12 @@ func TestStoragePolicyKeepsBlobLimitExplicit(t *testing.T) {
 func TestWriteAcceptsLooseBlobAbovePackingLimit(t *testing.T) {
 	bs := newTestBlobStore(t)
 	wantSize := MaxPackedBlobBytes + 1
-	hash, size, err := bs.Write(io.LimitReader(zeroReader{}, wantSize))
+	receipt, err := bs.WriteDetailedContext(t.Context(), io.LimitReader(zeroReader{}, wantSize))
 	require.NoError(t, err)
-	assert.Equal(t, wantSize, size)
+	assert.Equal(t, wantSize, receipt.Size)
+	assert.False(t, receipt.PackEligible)
 
-	stream, gotSize, err := bs.OpenStream(hash)
+	stream, gotSize, err := bs.OpenStream(receipt.Hash)
 	require.NoError(t, err)
 	assert.Equal(t, wantSize, gotSize)
 	written, err := io.Copy(io.Discard, stream)

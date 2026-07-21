@@ -17,6 +17,52 @@ import (
 	"go.kenn.io/docbank/pkg/sqlite/modernc"
 )
 
+func TestNewConfiguresLooseCompression(t *testing.T) {
+	require := require.New(t)
+	root := t.TempDir()
+	vault, err := New(t.Context(), Config{
+		Root: root,
+		LooseCompression: LooseCompressionOptions{
+			Enabled:           true,
+			MinBytes:          1024,
+			MinSavingsPercent: 10,
+		},
+	})
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(vault.Close()) })
+
+	content := strings.Repeat("compressible document content\n", 512)
+	receipt, err := vault.Put(t.Context(), "/document.txt", strings.NewReader(content), PutOptions{})
+	require.NoError(err)
+	compressedPath := filepath.Join(root, "blobs", receipt.Computed.SHA256[:2], receipt.Computed.SHA256+".zst")
+	require.FileExists(compressedPath)
+
+	opened, err := vault.OpenContent(t.Context(), "/document.txt")
+	require.NoError(err)
+	got, err := io.ReadAll(opened.Reader)
+	require.NoError(err)
+	require.Equal(content, string(got))
+	require.NoError(opened.Reader.Close())
+}
+
+func TestNewRejectsInvalidLooseCompressionPolicy(t *testing.T) {
+	tests := []struct {
+		name string
+		opts LooseCompressionOptions
+	}{
+		{name: "negative minimum bytes", opts: LooseCompressionOptions{Enabled: true, MinBytes: -1}},
+		{name: "negative savings", opts: LooseCompressionOptions{Enabled: true, MinSavingsPercent: -1}},
+		{name: "savings above one hundred", opts: LooseCompressionOptions{Enabled: true, MinSavingsPercent: 101}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			vault, err := New(t.Context(), Config{Root: t.TempDir(), LooseCompression: test.opts})
+			require.Error(t, err)
+			require.Nil(t, vault)
+		})
+	}
+}
+
 func TestPutExpectedMismatchLeavesTreeUnchanged(t *testing.T) {
 	content := []byte("authoritative bytes\n")
 	actual := sha256.Sum256(content)

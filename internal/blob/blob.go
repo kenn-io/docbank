@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
@@ -48,10 +49,57 @@ type Store struct {
 	reader      *packstore.Store
 	maintainer  *packstore.Maintainer
 	coordinator *packstore.Coordinator
+	compression packstore.LooseCompressionOptions
+}
+
+// LooseCompressionOptions is docbank's application-neutral loose storage
+// policy. The zero value preserves the legacy raw representation.
+type LooseCompressionOptions struct {
+	Enabled           bool
+	MinBytes          int64
+	MinSavingsPercent int
+}
+
+// Options controls physical blob storage without exposing Kit policy types to
+// docbank's public package.
+type Options struct {
+	LooseCompression LooseCompressionOptions
+}
+
+// ValidateOptions checks physical policy before a caller acquires vault
+// ownership or creates storage state.
+func ValidateOptions(opts Options) error {
+	compression := opts.LooseCompression
+	if compression.MinBytes < 0 {
+		return errors.New("loose compression minimum bytes must not be negative")
+	}
+	if compression.MinSavingsPercent < 0 || compression.MinSavingsPercent > 100 {
+		return errors.New("loose compression minimum savings percent must be between 0 and 100")
+	}
+	return nil
+}
+
+// WriteReceipt describes the physical result of one logical blob write.
+type WriteReceipt struct {
+	Hash         string
+	Size         int64
+	Encoding     packstore.LooseEncoding
+	StoredSize   int64
+	Created      bool
+	PackEligible bool
 }
 
 // New constructs the daemon-owned store over catalog membership and blobsDir.
 func New(catalog packstore.Catalog, blobsDir string) (*Store, error) {
+	return NewWithOptions(catalog, blobsDir, Options{})
+}
+
+// NewWithOptions constructs the daemon-owned store with explicit physical
+// loose-storage policy.
+func NewWithOptions(catalog packstore.Catalog, blobsDir string, opts Options) (*Store, error) {
+	if err := ValidateOptions(opts); err != nil {
+		return nil, err
+	}
 	layout, err := newLayout(blobsDir)
 	if err != nil {
 		return nil, err
@@ -71,7 +119,12 @@ func New(catalog packstore.Catalog, blobsDir string) (*Store, error) {
 	}
 	return &Store{dir: blobsDir, layout: layout, catalog: catalog, loose: loose,
 		reader:     maintainer.Store(),
-		maintainer: maintainer, coordinator: coordinator}, nil
+		maintainer: maintainer, coordinator: coordinator,
+		compression: packstore.LooseCompressionOptions{
+			Enabled:           opts.LooseCompression.Enabled,
+			MinBytes:          opts.LooseCompression.MinBytes,
+			MinSavingsPercent: opts.LooseCompression.MinSavingsPercent,
+		}}, nil
 }
 
 // StorageStats describes the daemon's current physical storage inventory.
@@ -115,9 +168,14 @@ func (s *Store) Stats(ctx context.Context) (StorageStats, error) {
 	return stats, nil
 }
 
-// newReaderStore constructs a mixed reader without a maintenance catalog. It
-// is used by this package's focused physical-storage tests.
-func newReaderStore(resolver packstore.Resolver, blobsDir string) (*Store, error) {
+// newReaderStoreWithOptions constructs a mixed reader without a maintenance
+// catalog. It is used by this package's focused physical-storage tests.
+func newReaderStoreWithOptions(
+	resolver packstore.Resolver, blobsDir string, opts Options,
+) (*Store, error) {
+	if err := ValidateOptions(opts); err != nil {
+		return nil, err
+	}
 	layout, err := newLayout(blobsDir)
 	if err != nil {
 		return nil, err
@@ -130,7 +188,14 @@ func newReaderStore(resolver packstore.Resolver, blobsDir string) (*Store, error
 	if err != nil {
 		return nil, fmt.Errorf("creating test mixed blob reader: %w", err)
 	}
-	return &Store{dir: blobsDir, layout: layout, loose: loose, reader: reader}, nil
+	return &Store{
+		dir: blobsDir, layout: layout, loose: loose, reader: reader,
+		compression: packstore.LooseCompressionOptions{
+			Enabled:           opts.LooseCompression.Enabled,
+			MinBytes:          opts.LooseCompression.MinBytes,
+			MinSavingsPercent: opts.LooseCompression.MinSavingsPercent,
+		},
+	}, nil
 }
 
 func newLayout(blobsDir string) (packstore.Layout, error) {
@@ -150,6 +215,14 @@ func (s *Store) path(hash string) string {
 		return ""
 	}
 	return s.layout.LoosePath(parsed)
+}
+
+func (s *Store) compressedPath(hash string) string {
+	parsed, err := packstore.ParseHash(hash)
+	if err != nil {
+		return ""
+	}
+	return s.layout.CompressedLoosePath(parsed)
 }
 
 func validHash(hash string) bool {
@@ -184,15 +257,28 @@ func (s *Store) Write(r io.Reader) (string, int64, error) {
 
 // WriteContext is Write with cancellation.
 func (s *Store) WriteContext(ctx context.Context, r io.Reader) (string, int64, error) {
+	receipt, err := s.WriteDetailedContext(ctx, r)
+	return receipt.Hash, receipt.Size, err
+}
+
+// WriteDetailedContext writes one blob and reports its logical and physical
+// representation. The caller holds a mutation lease across the subsequent
+// metadata transaction.
+func (s *Store) WriteDetailedContext(ctx context.Context, r io.Reader) (WriteReceipt, error) {
 	result, err := s.loose.Write(ctx, r, packstore.WriteOptions{
-		Durability: packstore.DurablePublication,
-		Dedup:      packstore.VerifyTypeAndSize,
-		MaxBytes:   MaxIngestBytes,
+		Durability:  packstore.DurablePublication,
+		Dedup:       packstore.VerifyTypeAndSize,
+		MaxBytes:    MaxIngestBytes,
+		Compression: s.compression,
 	})
 	if err != nil {
-		return "", 0, fmt.Errorf("writing blob: %w", err)
+		return WriteReceipt{}, fmt.Errorf("writing blob: %w", err)
 	}
-	return result.Hash.String(), result.Size, nil
+	return WriteReceipt{
+		Hash: result.Hash.String(), Size: result.Size,
+		Encoding: result.Encoding, StoredSize: result.StoredSize,
+		Created: result.Created, PackEligible: result.Size <= MaxPackedBlobBytes,
+	}, nil
 }
 
 // Open returns catalog-authorized loose or packed content.
@@ -270,6 +356,7 @@ func (s *Store) List() (map[string]int64, error) {
 		return nil, fmt.Errorf("reading blob dir: %w", err)
 	}
 	out := map[string]int64{}
+	compressed := map[string]bool{}
 	for _, shard := range shards {
 		if !shard.IsDir() || len(shard.Name()) != 2 {
 			continue // tmp/, packs/, and anything else that is not a shard
@@ -280,14 +367,23 @@ func (s *Store) List() (map[string]int64, error) {
 		}
 		for _, entry := range entries {
 			name := entry.Name()
-			if !validHash(name) || name[:2] != shard.Name() || !entry.Type().IsRegular() {
+			isCompressed := strings.HasSuffix(name, ".zst")
+			logicalName := name
+			if isCompressed {
+				logicalName = strings.TrimSuffix(name, ".zst")
+			}
+			if !validHash(logicalName) || logicalName[:2] != shard.Name() || !entry.Type().IsRegular() {
+				continue
+			}
+			if compressed[logicalName] && !isCompressed {
 				continue
 			}
 			info, err := entry.Info()
 			if err != nil {
-				return nil, fmt.Errorf("reading blob %s: %w", name, err)
+				return nil, fmt.Errorf("reading blob %s: %w", logicalName, err)
 			}
-			out[name] = info.Size()
+			out[logicalName] = info.Size()
+			compressed[logicalName] = isCompressed
 		}
 	}
 	return out, nil
