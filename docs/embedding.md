@@ -5,20 +5,20 @@ description: Own one or more independently rooted Docbank vaults inside a Go app
 
 # Embed in Go
 
-Go applications can use Docbank as an in-process document store without
-starting or discovering a daemon. An embedded vault uses the same virtual tree,
-immutable content versions, content-addressed blob store, packed-storage
-authority, and exclusive hierarchy locking as a standalone vault.
+Go applications can use Docbank as an in-process document store without starting
+or discovering a daemon. An embedded vault uses the same virtual tree, immutable
+content versions, content-addressed blob store, packed-storage authority, and
+exclusive hierarchy locking as a standalone vault.
 
-Use an embedded vault when the application itself should own document
-lifecycle. Use the HTTP API when independent processes need to share one
-standalone vault.
+Use an embedded vault when the application itself should own document lifecycle.
+Use the HTTP API when independent processes need to share one standalone vault.
 
 ## Create a vault service
 
-Each root is an independent archive. One process may open several non-overlapping
-roots at once; overlapping roots are rejected so two owners cannot mutate the
-same storage tree.
+Each root is an independent archive. One process may open several
+non-overlapping roots at once. The same root, an ancestor, or a descendant is
+rejected while another daemon, embedded vault, or restore target owns it, even
+when a filesystem alias spells that tree differently.
 
 ```go
 package archive
@@ -81,6 +81,10 @@ receipt, err := vault.Create(ctx, "/records/immutable.jsonl", reader,
 )
 ```
 
+`ContentIdentity` always describes decoded document bytes, regardless of
+whether those bytes are stored raw, zstd-compressed, or in a pack. SHA-256 is
+the canonical logical identity, not a digest of a physical storage file.
+
 Both write receipts include `Physical`, which distinguishes logical bytes from
 their current raw, zstd, or packed representation. Most applications should
 treat that field as operational evidence rather than document identity.
@@ -93,6 +97,30 @@ verifies the complete stream before replacing physical authority. It preserves
 every node and historical version reference to that identity. Repairing packed
 content makes a verified loose copy authoritative; a later repack reclaims the
 now-dead packed bytes.
+
+### Choose loose compression
+
+New content remains loose until an explicit `Pack` call. An embedded owner may
+let Docbank automatically select zstd for eligible new loose writes and repairs:
+
+```go
+vault, err := docbank.New(ctx, docbank.Config{
+    Root: root,
+    LooseCompression: docbank.LooseCompressionOptions{
+        Enabled:           true,
+        MinBytes:          1 << 20,
+        MinSavingsPercent: 10,
+    },
+})
+```
+
+Docbank keeps zstd only when the logical size meets `MinBytes` and the completed
+encoding saves at least `MinSavingsPercent`; otherwise it publishes raw loose
+content. This policy does not rewrite existing objects. The zero value disables
+compression, preserving the unchanged raw loose layout, and mixed raw, zstd, and
+packed content remains readable through the same verified API. Receipts report
+the chosen physical encoding and stored size without changing the logical
+SHA-256 or size.
 
 `vault.ID()` returns the archive's stable UUID. JSONL backup and restore
 preserve that identity even when the restored vault has a different filesystem
@@ -111,7 +139,7 @@ disagrees with metadata. Metadata lookup failures retain their existing
 physical open can match both `context.Canceled` and `ErrContentUnavailable`, so
 callers that distinguish cancellation should check the context error first.
 
-## List and pack content
+## Traverse and mutate the tree
 
 `Children` exposes the live virtual tree without materializing an unbounded
 directory. Resolve a directory with `Stat`, then advance through its direct
@@ -141,11 +169,51 @@ for offset := 0; ; {
 }
 ```
 
-Pages contain directories first and files second, name-sorted within each
-kind. A zero limit uses `DefaultChildrenLimit`; one call cannot exceed
+Pages contain directories first and files second, name-sorted within each kind.
+A zero limit uses `DefaultChildrenLimit`; one call cannot exceed
 `MaxChildrenLimit`. The total and page come from one metadata snapshot, but a
 caller that needs a complete stable traversal must avoid concurrent tree
 mutations between page calls.
+
+Use `Walk` for a complete stable traversal. It pins one SQLite snapshot before
+returning and yields the selected root and its descendants in bounded pages:
+
+```go
+walker, err := vault.Walk(ctx, "/sessions", docbank.WalkOptions{PageSize: 500})
+if err != nil {
+    return err
+}
+defer walker.Close()
+
+for {
+    page, err := walker.Next(ctx)
+    if err == io.EOF {
+        break
+    }
+    if err != nil {
+        return err
+    }
+    for _, entry := range page {
+        // entry.Path is canonical within the pinned snapshot.
+        _ = entry
+    }
+}
+```
+
+The zero page size uses `DefaultWalkPageSize`, and no page can exceed
+`MaxWalkPageSize`. Later tree mutations do not enter the pinned snapshot.
+`Walker.Close` is required even after `io.EOF`: it idempotently releases the
+read transaction, dedicated connection, and vault lifecycle lease. A concurrent
+`Vault.Close` waits for every walker and content reader to close.
+
+`MovePath`, `TrashPath`, and `Restore` return the resulting node and canonical
+path. Their optional positive `IfRevision` rejects stale mutations;
+`IfRevision == 0` is unconditional. `EmptyTrash` previews or deletes at most a
+finite number of trash roots: a zero `MaxRoots` uses
+`DefaultTrashEmptyMaxRoots`, and `More` asks the owner to schedule another
+batch.
+
+## Maintain physical storage
 
 Ordinary `Put` calls publish loose content. Call `Pack` explicitly when the
 embedded owner is ready to move authorized loose blobs into managed immutable
@@ -156,7 +224,7 @@ report, err := vault.Pack(ctx, docbank.PackOptions{MaxBytes: 256 << 20})
 if err != nil {
     return err
 }
-if report.BudgetExhausted {
+if report.More {
     // Run another bounded pass when scheduling allows.
 }
 ```
@@ -164,9 +232,38 @@ if report.BudgetExhausted {
 `MaxBytes` is a soft committed raw-byte budget: the pass finishes the blob that
 crosses the budget, seals its pack, and stops. Zero is unlimited. The report
 includes packing, reconciliation, missing/corrupt content, and orphan cleanup
-outcomes; embedded applications should surface those fields rather than
-treating a nil error alone as a complete health report. Packing changes only
-physical representation. `OpenContent` keeps the same verified read contract.
+outcomes; embedded applications should surface those fields rather than treating
+a nil error alone as a complete health report. Packing changes only physical
+representation. `OpenContent` keeps the same verified read contract.
+
+Embedded `GarbageCollect`, `Verify`, and `Repack` calls are resumable bounded
+passes. `WorkBudget.MaxObjects == 0` uses the finite
+`DefaultMaintenanceMaxObjects`; a positive `MaxBytes` adds a soft byte bound, so
+one selected object may finish after crossing it. A zero byte bound is
+unlimited, but the object bound still limits each pass.
+
+When a report has `More`, pass a non-empty `NextCursor` back in the same
+operation's next `WorkBudget`. Treat cursors as opaque and operation-specific;
+malformed cursors and cursors from another operation return
+`ErrInvalidMaintenanceCursor`. A Repack pass can validly report more work with
+an empty cursor when completed mutations themselves reduce the candidate set;
+repeat it from an empty cursor. Cursors are continuation positions, not snapshot
+tokens: work inserted earlier in canonical order during a cycle waits for a
+later cycle started without a cursor.
+
+The bounded embedded contract is intentionally narrower than the standalone
+full-run commands. Embedded `Verify` checks a bounded page of blob bytes but
+does not perform whole-catalog metadata validation. Embedded `GarbageCollect`
+handles bounded unreachable catalog authority but does not enumerate untracked
+filesystem files. The daemon's `verify` and `gc` commands retain those full-run
+checks.
+
+These methods coordinate physical representation and reclamation; they never
+decide application-level liveness. The embedding application decides when nodes
+leave trash, when prior versions are pruned, and which logical references
+remain. Only then can GC observe a blob as unreachable. There is no background
+maintenance scheduler for embedded vaults, so the owner chooses when to resume
+these bounded passes.
 
 `LooseBacklog` reports how much indexed loose content is eligible for a pack
 pass, split into raw and compressed object counts. It is useful for scheduling;
@@ -220,12 +317,11 @@ SQLite implementations.
 
 ## Ownership boundary
 
-Do not point a daemon and an embedded application at the same root. `New`
-holds the same exclusive hierarchy lock as the daemon for the entire vault
-lifetime and fails if the requested root overlaps another active vault or
-restore target.
+Do not point a daemon and an embedded application at the same root. `New` holds
+the same exclusive hierarchy lock as the daemon for the entire vault lifetime
+and fails if the requested root overlaps another active vault or restore target.
 
 The standalone CLI remains daemon-first and never opens storage directly.
-Embedding is a distinct application ownership mode, not a second privileged
-path into a daemon-owned vault. External agents should continue to use the
+Embedding is a distinct application ownership mode, not a second privileged path
+into a daemon-owned vault. External agents should continue to use the
 [authenticated HTTP contract](agents/integration.md).
