@@ -286,7 +286,7 @@ func TestWalkerConcurrentNextAndClose(t *testing.T) {
 
 		result := <-nextDone
 		if result.err != nil {
-			assert.ErrorIs(t, result.err, io.EOF)
+			require.ErrorIs(t, result.err, io.EOF)
 			assert.Nil(t, result.page)
 		} else {
 			require.Len(t, result.page, 1)
