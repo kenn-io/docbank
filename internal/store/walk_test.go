@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -174,6 +175,59 @@ func TestWalkLiveOnlySeekUsesPartialIndexAcrossTrashedCardinality(t *testing.T) 
 	}
 }
 
+func TestWalkIncludeTrashUsesBoundedDuplicateRangeSeeksAcrossCardinality(t *testing.T) {
+	for _, driver := range walkTestDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			s := newTestStoreWithDriver(t, driver.driver)
+			query, args := walkSeekQuery(s.RootID(), true, "duplicate", 1, false)
+			plan := explainQueryPlan(t, s, query, args...)
+			assert.Contains(t, plan, "parent_id=? AND name=? AND id>?")
+			query, args = walkNextNameSeekQuery(s.RootID(), "duplicate")
+			plan = explainQueryPlan(t, s, query, args...)
+			assert.Contains(t, plan, "parent_id=? AND name>?")
+
+			for _, count := range []int{4, 4000} {
+				s := newTestStoreWithDriver(t, driver.driver)
+				duplicateIDs := insertDuplicateTrashedWalkSiblings(t, s, count)
+				zulu, err := s.Mkdir(t.Context(), s.RootID(), "zulu")
+				require.NoError(t, err)
+				walker, err := s.BeginWalk(t.Context(), "/", 2, true)
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, walker.Close()) })
+
+				wantIDs := append([]int64{s.RootID()}, duplicateIDs...)
+				wantIDs = append(wantIDs, zulu.ID)
+				pageCount := 3
+				for pageIndex := range pageCount {
+					page, err := walker.Next(t.Context())
+					require.NoError(t, err)
+					require.Len(t, page, 2)
+					for offset, entry := range page {
+						index := pageIndex*2 + offset
+						assert.Equal(t, wantIDs[index], entry.Node.ID)
+						wantPath := "/duplicate"
+						if index == 0 {
+							wantPath = "/"
+						} else if index == len(wantIDs)-1 {
+							wantPath = "/zulu"
+						}
+						assert.Equal(t, wantPath, entry.Path)
+					}
+					stats := walker.Stats()
+					assert.Equal(t, int64(2), stats.LastPageRowsExamined)
+					wantSeeks := int64(4)
+					if pageIndex == 0 {
+						wantSeeks = 3
+					} else if count == 4 && pageIndex == 2 {
+						wantSeeks = 6
+					}
+					assert.Equal(t, wantSeeks, stats.LastPageIndexedSeeks)
+				}
+			}
+		})
+	}
+}
+
 func explainQueryPlan(t *testing.T, s *Store, query string, args ...any) string {
 	t.Helper()
 	rows, err := s.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+query, args...)
@@ -206,6 +260,28 @@ func insertTrashedWalkSiblings(t *testing.T, s *Store, count int, prefix string)
 		require.NoError(t, err)
 	}
 	require.NoError(t, tx.Commit())
+}
+
+func insertDuplicateTrashedWalkSiblings(t *testing.T, s *Store, count int) []int64 {
+	t.Helper()
+	tx, err := s.db.BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	ids := make([]int64, 0, count)
+	for range count {
+		result, err := tx.ExecContext(t.Context(), `
+			INSERT INTO nodes (
+				parent_id, name, kind, created_at, modified_at, trashed_at
+			) VALUES (?, 'duplicate', 'dir', ?, ?, ?)`,
+			s.RootID(), "2026-07-21T00:00:00.000000000Z",
+			"2026-07-21T00:00:00.000000000Z", "2026-07-21T00:00:00.000000000Z")
+		require.NoError(t, err)
+		id, err := result.LastInsertId()
+		require.NoError(t, err)
+		ids = append(ids, id)
+	}
+	require.NoError(t, tx.Commit())
+	return ids
 }
 
 func walkTestDrivers() []struct {
@@ -305,6 +381,50 @@ func TestWalkEnforcesDepthAndPathBoundsIncrementally(t *testing.T) {
 		_, err = walker.Next(t.Context())
 		require.ErrorContains(t, err, "walk path exceeds 16384 bytes")
 	})
+}
+
+func TestWalkMidPageCancellationRollsBackFrontierAndStats(t *testing.T) {
+	for _, driver := range walkTestDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			s := newTestStoreWithDriver(t, driver.driver)
+			children := make([]Node, 0, 40)
+			for i := range 40 {
+				name := fmt.Sprintf("child-%02d", i)
+				child, err := s.Mkdir(t.Context(), s.RootID(), name)
+				require.NoError(t, err)
+				children = append(children, child)
+			}
+			root, err := s.NodeByID(t.Context(), s.RootID())
+			require.NoError(t, err)
+			walker, err := s.BeginWalk(t.Context(), "/", 20, false)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, walker.Close()) })
+			before := walker.Stats()
+
+			cancelCtx, cancel := context.WithCancel(t.Context())
+			walker.pageContextErr = func(ctx context.Context, rowsExamined int64) error {
+				if rowsExamined == 1 {
+					cancel()
+				}
+				return ctx.Err()
+			}
+			page, err := walker.Next(cancelCtx)
+			assert.Nil(t, page)
+			require.ErrorIs(t, err, context.Canceled)
+			assert.Equal(t, before, walker.Stats(),
+				"a rolled-back page must not publish partial work counters")
+
+			page, err = walker.Next(t.Context())
+			require.NoError(t, err)
+			require.Len(t, page, 20)
+			assert.Equal(t, WalkEntry{Path: "/", Node: root}, page[0])
+			for i := 1; i < 20; i++ {
+				assert.Equal(t, WalkEntry{
+					Path: fmt.Sprintf("/child-%02d", i-1), Node: children[i-1],
+				}, page[i])
+			}
+		})
+	}
 }
 
 func newTestStoreWithDriver(t *testing.T, driver docsqlite.Driver) *Store {

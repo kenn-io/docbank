@@ -30,7 +30,8 @@ type WalkEntry struct {
 
 // WalkStats exposes deterministic traversal work without exposing the TEMP
 // frontier implementation. RowsExamined counts frontier rows returned for the
-// last page; each returned row performs at most two indexed child/sibling seeks.
+// last page; each returned row performs at most two indexed sibling range seeks
+// and, for a directory, one indexed first-child seek.
 type WalkStats struct {
 	SetupNodeReads       int64
 	Pages                int64
@@ -48,6 +49,9 @@ type Walker struct {
 	rootID         int64
 	done           bool
 	stats          WalkStats
+	// pageContextErr is the per-frontier-entry cancellation checkpoint. It is
+	// replaceable inside this package for focused rollback fault injection.
+	pageContextErr func(context.Context, int64) error
 
 	mu        sync.Mutex
 	closeOnce sync.Once
@@ -129,14 +133,17 @@ func (s *Store) BeginWalk(
 		db: db, tx: tx, pageSize: pageSize, includeTrashed: includeTrashed,
 		rootID: root.ID,
 		stats:  WalkStats{SetupNodeReads: int64(2 * (rootDepth + 1))},
+		pageContextErr: func(ctx context.Context, _ int64) error {
+			return ctx.Err()
+		},
 	}, nil
 }
 
 // Next returns the next bounded page in canonical path then node-ID order.
 // The frontier contains only the next candidate from each explored sibling
-// iterator. Expanding one returned node performs at most one next-sibling seek
-// and, for a directory, one first-child seek. Live-only seeks use the partial
-// live_sibling_names index; include-trash seeks use nodes_parent_name_id.
+// iterator. Expanding one returned node performs at most two next-sibling range
+// seeks and, for a directory, one first-child seek. Live-only seeks use the
+// partial live_sibling_names index; include-trash seeks use nodes_parent_name_id.
 func (w *Walker) Next(ctx context.Context) ([]WalkEntry, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -154,6 +161,9 @@ func (w *Walker) Next(ctx context.Context) ([]WalkEntry, error) {
 	var rowsExamined, indexedSeeks int64
 	exhausted := false
 	for len(entries) < w.pageSize {
+		if err := w.pageContextErr(ctx, rowsExamined); err != nil {
+			return nil, w.rollbackPage(ctx, err)
+		}
 		entry, depth, err := w.popFrontier(ctx)
 		if errors.Is(err, sql.ErrNoRows) {
 			exhausted = true
@@ -166,20 +176,22 @@ func (w *Walker) Next(ctx context.Context) ([]WalkEntry, error) {
 		entries = append(entries, entry)
 
 		if entry.Node.ParentID != nil && entry.Node.ID != w.rootID {
-			indexedSeeks++
 			parentPath := "/"
 			if slash := strings.LastIndexByte(entry.Path, '/'); slash > 0 {
 				parentPath = entry.Path[:slash]
 			}
-			if err := w.seedNext(ctx, *entry.Node.ParentID, parentPath, depth,
-				entry.Node.Name, entry.Node.ID, false); err != nil {
+			seeks, err := w.seedNext(ctx, *entry.Node.ParentID, parentPath, depth,
+				entry.Node.Name, entry.Node.ID, false)
+			indexedSeeks += seeks
+			if err != nil {
 				return nil, w.rollbackPage(ctx, err)
 			}
 		}
 		if entry.Node.IsDir() {
-			indexedSeeks++
-			if err := w.seedNext(ctx, entry.Node.ID, entry.Path, depth+1, "", 0,
-				true); err != nil {
+			seeks, err := w.seedNext(ctx, entry.Node.ID, entry.Path, depth+1, "", 0,
+				true)
+			indexedSeeks += seeks
+			if err != nil {
 				return nil, w.rollbackPage(ctx, err)
 			}
 		}
@@ -232,33 +244,39 @@ func (w *Walker) popFrontier(ctx context.Context) (WalkEntry, int, error) {
 func (w *Walker) seedNext(
 	ctx context.Context, parentID int64, parentPath string, depth int,
 	afterName string, afterID int64, first bool,
-) error {
+) (int64, error) {
 	var id int64
 	var name string
 	query, args := walkSeekQuery(parentID, w.includeTrashed, afterName, afterID, first)
 	err := w.tx.QueryRowContext(ctx, query, args...).Scan(&id, &name)
+	seeks := int64(1)
+	if errors.Is(err, sql.ErrNoRows) && w.includeTrashed && !first {
+		query, args = walkNextNameSeekQuery(parentID, afterName)
+		err = w.tx.QueryRowContext(ctx, query, args...).Scan(&id, &name)
+		seeks++
+	}
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil
+		return seeks, nil
 	}
 	if err != nil {
-		return fmt.Errorf("walking tree snapshot: seeking frontier: %w", err)
+		return seeks, fmt.Errorf("walking tree snapshot: seeking frontier: %w", err)
 	}
 	if depth > MaxWalkDepth {
-		return fmt.Errorf("walking tree snapshot: walk depth exceeds %d", MaxWalkDepth)
+		return seeks, fmt.Errorf("walking tree snapshot: walk depth exceeds %d", MaxWalkDepth)
 	}
 	path := parentPath + "/" + name
 	if parentPath == "/" {
 		path = "/" + name
 	}
 	if len(path) > MaxWalkPathBytes {
-		return fmt.Errorf("walking tree snapshot: walk path exceeds %d bytes", MaxWalkPathBytes)
+		return seeks, fmt.Errorf("walking tree snapshot: walk path exceeds %d bytes", MaxWalkPathBytes)
 	}
 	if _, err := w.tx.ExecContext(ctx,
 		`INSERT INTO walk_frontier(path, node_id, depth) VALUES (?, ?, ?)`,
 		path, id, depth); err != nil {
-		return fmt.Errorf("walking tree snapshot: extending frontier: %w", err)
+		return seeks, fmt.Errorf("walking tree snapshot: extending frontier: %w", err)
 	}
-	return nil
+	return seeks, nil
 }
 
 func walkSeekQuery(
@@ -286,11 +304,22 @@ func walkSeekQuery(
 		WHERE n.parent_id = ?`
 	args := []any{parentID}
 	if !first {
-		query += ` AND (n.name > ? OR (n.name = ? AND n.id > ?))`
-		args = append(args, afterName, afterName, afterID)
+		query += ` AND n.name = ? AND n.id > ?`
+		args = append(args, afterName, afterID)
+		query += ` ORDER BY n.id LIMIT 1`
+		return query, args
 	}
 	query += ` ORDER BY n.name, n.id LIMIT 1`
 	return query, args
+}
+
+func walkNextNameSeekQuery(parentID int64, afterName string) (string, []any) {
+	return `
+		SELECT n.id, n.name
+		FROM nodes AS n INDEXED BY nodes_parent_name_id
+		WHERE n.parent_id = ? AND n.name > ?
+		ORDER BY n.name, n.id
+		LIMIT 1`, []any{parentID, afterName}
 }
 
 func (w *Walker) rollbackPage(ctx context.Context, cause error) error {
