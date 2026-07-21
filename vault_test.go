@@ -379,6 +379,77 @@ func TestVaultRepairRestoresMissingPhysicalAuthority(t *testing.T) {
 	assertVaultContent(t, vault, "/document.txt", content)
 }
 
+func TestVaultWriteCompletesReceiptAfterCallerCancellation(t *testing.T) {
+	content := []byte("committed content\n")
+	tests := []struct {
+		name  string
+		write func(context.Context, *Vault) (PutReceipt, error)
+	}{
+		{
+			name: "put",
+			write: func(ctx context.Context, vault *Vault) (PutReceipt, error) {
+				return vault.Put(ctx, "/document.txt", bytes.NewReader(content), PutOptions{})
+			},
+		},
+		{
+			name: "create",
+			write: func(ctx context.Context, vault *Vault) (PutReceipt, error) {
+				return vault.Create(ctx, "/document.txt", bytes.NewReader(content), CreateOptions{
+					Expected: contentIdentity(content),
+				})
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			vault, err := New(t.Context(), Config{Root: t.TempDir()})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+			ctx, cancel := context.WithCancel(t.Context())
+			vault.testAfterWriteCommit = cancel
+			receipt, err := test.write(ctx, vault)
+			vault.testAfterWriteCommit = nil
+			require.NoError(t, err)
+			require.ErrorIs(t, ctx.Err(), context.Canceled)
+			assert.True(t, receipt.Created)
+			assert.Equal(t, "loose", receipt.Physical.Kind)
+			assert.Equal(t, contentIdentity(content), receipt.Computed)
+			assertVaultContent(t, vault, "/document.txt", content)
+		})
+	}
+}
+
+func TestVaultWriteDoesNotReportRedundantCleanupFailure(t *testing.T) {
+	root := t.TempDir()
+	content := []byte("packed content shared by another node\n")
+	vault, err := New(t.Context(), Config{Root: root})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+	first, err := vault.Put(t.Context(), "/first.txt", bytes.NewReader(content), PutOptions{})
+	require.NoError(t, err)
+	packed, err := vault.Pack(t.Context(), PackOptions{})
+	require.NoError(t, err)
+	require.Equal(t, 1, packed.BlobsPacked)
+	loosePath := filepath.Join(root, "blobs", first.Computed.SHA256[:2], first.Computed.SHA256)
+	vault.testAfterWriteCommit = func() {
+		require.NoError(t, os.Remove(loosePath))
+		require.NoError(t, os.Mkdir(loosePath, 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(loosePath, "blocker"), []byte("x"), 0o600))
+	}
+	second, err := vault.Create(
+		t.Context(), "/second.txt", bytes.NewReader(content), CreateOptions{
+			Expected: first.Computed,
+		},
+	)
+	vault.testAfterWriteCommit = nil
+	require.NoError(t, err)
+	assert.True(t, second.Created)
+	assert.Equal(t, "packed", second.Physical.Kind)
+	assertVaultContent(t, vault, "/second.txt", content)
+}
+
 func corruptVaultBlob(t *testing.T, root string, identity ContentIdentity, kind string) {
 	t.Helper()
 	if kind == "packed" {

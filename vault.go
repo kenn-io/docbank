@@ -86,6 +86,9 @@ type Vault struct {
 	// testAfterRepairPublication exercises the non-cancelable authority handoff
 	// after durable physical publication. Production constructors leave it nil.
 	testAfterRepairPublication func()
+	// testAfterWriteCommit exercises receipt completion after a Put or Create
+	// metadata mutation commits. Production constructors leave it nil.
+	testAfterWriteCommit func()
 }
 
 // New creates or opens one embedded vault and holds its exclusive hierarchy
@@ -424,16 +427,18 @@ func (v *Vault) write(
 				resultErr = errors.Join(resultErr, v.removeUnrecordedLoose(hash))
 				return
 			}
-			authority, authorityErr := v.metadata.PhysicalContent(ctx, hash)
+			receiptCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			authority, authorityErr := v.metadata.PhysicalContent(receiptCtx, hash)
 			if authorityErr != nil {
 				resultErr = authorityErr
 				return
 			}
 			receipt.Physical = fromStorePhysical(authority)
 			if authority.Kind == "packed" {
-				if removeErr := v.blobs.Remove(hash); removeErr != nil {
-					resultErr = fmt.Errorf("removing redundant loose blob %s: %w", hash, removeErr)
-				}
+				// Metadata authority has committed. Redundant loose cleanup is
+				// maintenance and must not turn durable success into failure.
+				_ = v.blobs.Remove(hash)
 			}
 		}()
 		receipt.Computed = ContentIdentity{SHA256: hash, Size: size}
@@ -459,7 +464,14 @@ func (v *Vault) write(
 			if createErr != nil {
 				return createErr
 			}
-			version, versionErr := v.metadata.ContentVersionByID(ctx, created.CurrentVersionID)
+			if v.testAfterWriteCommit != nil {
+				v.testAfterWriteCommit()
+			}
+			receiptCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			version, versionErr := v.metadata.ContentVersionByID(
+				receiptCtx, created.CurrentVersionID,
+			)
 			if versionErr != nil {
 				return versionErr
 			}
@@ -492,6 +504,9 @@ func (v *Vault) write(
 			)
 			if replaceErr != nil {
 				return replaceErr
+			}
+			if v.testAfterWriteCommit != nil {
+				v.testAfterWriteCommit()
 			}
 			receipt.Node = fromStoreNode(updated)
 			receipt.Version = fromStoreVersion(version)
