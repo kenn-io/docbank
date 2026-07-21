@@ -177,7 +177,7 @@ func TestSyncWatchedContentFollowsMovedNodeWithoutOverwritingIndependentEdit(t *
 
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.Exec(`UPDATE blobs SET loose_encoding=NULL, loose_stored_size=NULL WHERE hash=?`,
-			fakeHash("b2"))
+			fakeHash("c3"))
 		return err
 	}))
 	missingNode, missingVersion, missingChanged, err := s.SyncWatchedContent(

@@ -427,15 +427,15 @@ func (v *Vault) write(
 				resultErr = errors.Join(resultErr, v.removeUnrecordedLoose(hash))
 				return
 			}
-			receiptCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			defer cancel()
-			authority, authorityErr := v.metadata.PhysicalContent(receiptCtx, hash)
-			if authorityErr != nil {
-				resultErr = authorityErr
-				return
+			if receipt.Physical.Kind == "" {
+				authority, authorityErr := v.metadata.PhysicalContent(ctx, hash)
+				if authorityErr != nil {
+					resultErr = authorityErr
+					return
+				}
+				receipt.Physical = fromStorePhysical(authority)
 			}
-			receipt.Physical = fromStorePhysical(authority)
-			if authority.Kind == "packed" {
+			if receipt.Physical.Kind == "packed" {
 				// Metadata authority has committed. Redundant loose cleanup is
 				// maintenance and must not turn durable success into failure.
 				_ = v.blobs.Remove(hash)
@@ -458,26 +458,19 @@ func (v *Vault) write(
 		existing, lookupErr := v.metadata.NodeByPath(ctx, canonicalPath)
 		switch {
 		case errors.Is(lookupErr, store.ErrNotFound):
-			created, createErr := v.metadata.CreateFile(
+			created, createErr := v.metadata.CreateFileWithReceipt(
 				ctx, parent.ID, name, hash, size, opts.MediaType, physical,
 			)
 			if createErr != nil {
 				return createErr
 			}
+			receipt.Node = fromStoreNode(created.Node)
+			receipt.Version = fromStoreVersion(created.Version)
+			receipt.Physical = fromStorePhysical(created.Physical)
+			receipt.Created = true
 			if v.testAfterWriteCommit != nil {
 				v.testAfterWriteCommit()
 			}
-			receiptCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			defer cancel()
-			version, versionErr := v.metadata.ContentVersionByID(
-				receiptCtx, created.CurrentVersionID,
-			)
-			if versionErr != nil {
-				return versionErr
-			}
-			receipt.Node = fromStoreNode(created)
-			receipt.Version = fromStoreVersion(version)
-			receipt.Created = true
 			return nil
 		case lookupErr != nil:
 			return lookupErr
@@ -499,18 +492,19 @@ func (v *Vault) write(
 				return fmt.Errorf("virtual path %q already has different content or media type: %w",
 					canonicalPath, ErrContentConflict)
 			}
-			updated, version, replaceErr := v.metadata.ReplaceContent(
+			updated, replaceErr := v.metadata.ReplaceContentWithReceipt(
 				ctx, existing.ID, existing.Revision, hash, size, opts.MediaType, physical,
 			)
 			if replaceErr != nil {
 				return replaceErr
 			}
+			receipt.Node = fromStoreNode(updated.Node)
+			receipt.Version = fromStoreVersion(updated.Version)
+			receipt.Physical = fromStorePhysical(updated.Physical)
+			receipt.Replaced = true
 			if v.testAfterWriteCommit != nil {
 				v.testAfterWriteCommit()
 			}
-			receipt.Node = fromStoreNode(updated)
-			receipt.Version = fromStoreVersion(version)
-			receipt.Replaced = true
 			return nil
 		}
 	})
@@ -526,7 +520,8 @@ func blobPhysical(receipt blob.WriteReceipt) (store.BlobPhysical, error) {
 		return store.BlobPhysical{}, err
 	}
 	return store.BlobPhysical{
-		Encoding: encoding, StoredBytes: receipt.StoredSize, PackEligible: receipt.PackEligible,
+		Encoding: encoding, StoredBytes: receipt.StoredSize,
+		PackEligible: receipt.PackEligible, Created: receipt.Created,
 	}, nil
 }
 

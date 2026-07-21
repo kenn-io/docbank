@@ -181,7 +181,7 @@ func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64, physical ...Bl
 	if err != nil {
 		return fmt.Errorf("recording blob %s: %w", hash, err)
 	}
-	_, err = tx.Exec(
+	result, err := tx.Exec(
 		`INSERT OR IGNORE INTO blobs
 		 (hash, size, created_at, loose_encoding, loose_stored_size, pack_eligible)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
@@ -189,12 +189,32 @@ func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64, physical ...Bl
 	if err != nil {
 		return fmt.Errorf("recording blob %s: %w", hash, err)
 	}
-	stored, err := requirePhysicalAuthorityTx(tx, hash)
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking blob %s insertion: %w", hash, err)
+	}
+	current, err := physicalContentTx(tx, hash)
 	if err != nil {
 		return fmt.Errorf("verifying blob %s: %w", hash, err)
 	}
-	if stored != size {
-		return fmt.Errorf("blob %s: recorded size %d does not match caller size %d", hash, stored, size)
+	if current.LogicalBytes != size {
+		return fmt.Errorf("blob %s: recorded size %d does not match caller size %d",
+			hash, current.LogicalBytes, size)
+	}
+	if inserted != 0 || current.Kind == "packed" ||
+		(current.Encoding == storage.Encoding && current.StoredBytes == storage.StoredBytes) {
+		return nil
+	}
+	if !storage.Created {
+		return fmt.Errorf(
+			"blob %s: loose receipt %s/%d does not match authority %s/%d; verified repair required",
+			hash, storage.Encoding, storage.StoredBytes, current.Encoding, current.StoredBytes,
+		)
+	}
+	if _, err := tx.Exec(`UPDATE blobs
+		SET loose_encoding=?, loose_stored_size=?, pack_eligible=? WHERE hash=?`,
+		storage.Encoding, storage.StoredBytes, storage.PackEligible, hash); err != nil {
+		return fmt.Errorf("adopting newly published blob %s: %w", hash, err)
 	}
 	return nil
 }
@@ -202,15 +222,15 @@ func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64, physical ...Bl
 func (s *Store) createFileTx(
 	tx *sql.Tx, parentID int64, name, blobHash string, size int64, mimeType string,
 	physical ...BlobPhysical,
-) (Node, error) {
+) (Node, ContentVersion, error) {
 	operation, err := newContentVersionOperation()
 	if err != nil {
-		return Node{}, err
+		return Node{}, ContentVersion{}, err
 	}
-	created, _, err := s.createFileWithOperationTx(
+	created, version, err := s.createFileWithOperationTx(
 		tx, parentID, name, blobHash, size, mimeType, operation, physical...,
 	)
-	return created, err
+	return created, version, err
 }
 
 func (s *Store) createFileWithOperationTx(
@@ -275,23 +295,38 @@ func (s *Store) createFileWithOperationTx(
 	return created, version, nil
 }
 
-// CreateFile creates a file node pointing at an already-durable blob.
-func (s *Store) CreateFile(
+// ContentWriteReceipt captures content authority from the transaction that
+// created or replaced a file. Callers need no fallible post-commit reads.
+type ContentWriteReceipt struct {
+	Node     Node
+	Version  ContentVersion
+	Physical PhysicalContent
+}
+
+// CreateFileWithReceipt creates a file node and returns its complete committed
+// content authority.
+func (s *Store) CreateFileWithReceipt(
 	ctx context.Context, parentID int64, name, blobHash string, size int64, mimeType string,
 	physical ...BlobPhysical,
-) (Node, error) {
+) (ContentWriteReceipt, error) {
 	name, err := NormalizeName(name)
 	if err != nil {
-		return Node{}, err
+		return ContentWriteReceipt{}, err
 	}
-	var created Node
+	var receipt ContentWriteReceipt
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		active, err := auditAuthorityActiveTx(ctx, tx)
 		if err != nil {
 			return err
 		}
 		if !active {
-			created, err = s.createFileTx(tx, parentID, name, blobHash, size, mimeType, physical...)
+			receipt.Node, receipt.Version, err = s.createFileTx(
+				tx, parentID, name, blobHash, size, mimeType, physical...,
+			)
+			if err != nil {
+				return err
+			}
+			receipt.Physical, err = physicalContentTx(tx, blobHash)
 			return err
 		}
 		priorParent, err := liveDirTx(tx, parentID)
@@ -306,8 +341,7 @@ func (s *Store) CreateFile(
 		if err != nil {
 			return err
 		}
-		var version ContentVersion
-		created, version, err = s.createFileWithOperationTx(
+		receipt.Node, receipt.Version, err = s.createFileWithOperationTx(
 			tx, parentID, name, blobHash, size, mimeType, operation, physical...,
 		)
 		if err != nil {
@@ -317,14 +351,29 @@ func (s *Store) CreateFile(
 		if err != nil {
 			return err
 		}
-		return persistAuditedNodeCreation(ctx, tx, s.vaultID, authority, scopes,
-			priorParent, resultingParent, created, version, operation.operationID,
-			operation.recordedAt, nil)
+		if err := persistAuditedNodeCreation(ctx, tx, s.vaultID, authority, scopes,
+			priorParent, resultingParent, receipt.Node, receipt.Version, operation.operationID,
+			operation.recordedAt, nil); err != nil {
+			return err
+		}
+		receipt.Physical, err = physicalContentTx(tx, blobHash)
+		return err
 	})
 	if err != nil {
-		return Node{}, err
+		return ContentWriteReceipt{}, err
 	}
-	return created, nil
+	return receipt, nil
+}
+
+// CreateFile creates a file node pointing at an already-durable blob.
+func (s *Store) CreateFile(
+	ctx context.Context, parentID int64, name, blobHash string, size int64, mimeType string,
+	physical ...BlobPhysical,
+) (Node, error) {
+	receipt, err := s.CreateFileWithReceipt(
+		ctx, parentID, name, blobHash, size, mimeType, physical...,
+	)
+	return receipt.Node, err
 }
 
 // isAncestorTx reports whether maybeAncestor is candidate itself or one of

@@ -452,6 +452,37 @@ func TestVaultWriteDoesNotReportRedundantCleanupFailure(t *testing.T) {
 	assertVaultContent(t, vault, "/second.txt", content)
 }
 
+func TestVaultWriteAdoptsNewlyPublishedLooseRepresentation(t *testing.T) {
+	root := t.TempDir()
+	content := []byte(strings.Repeat("representation handoff content\n", 512))
+	vault, err := New(t.Context(), Config{Root: root})
+	require.NoError(t, err)
+	first, err := vault.Put(t.Context(), "/first.txt", bytes.NewReader(content), PutOptions{})
+	require.NoError(t, err)
+	require.Equal(t, "raw", first.Physical.Encoding)
+	require.NoError(t, vault.Close())
+
+	rawPath := filepath.Join(root, "blobs", first.Computed.SHA256[:2], first.Computed.SHA256)
+	require.NoError(t, os.Remove(rawPath))
+	vault, err = New(t.Context(), Config{
+		Root: root,
+		LooseCompression: LooseCompressionOptions{
+			Enabled: true, MinSavingsPercent: 0,
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	second, err := vault.Put(t.Context(), "/second.txt", bytes.NewReader(content), PutOptions{})
+	require.NoError(t, err)
+	assert.True(t, second.Created)
+	assert.Equal(t, "zstd", second.Physical.Encoding)
+	physical, err := vault.metadata.PhysicalContent(t.Context(), first.Computed.SHA256)
+	require.NoError(t, err)
+	assert.Equal(t, "zstd", physical.Encoding)
+	assertVaultContent(t, vault, "/first.txt", content)
+	assertVaultContent(t, vault, "/second.txt", content)
+}
+
 func corruptVaultBlob(t *testing.T, root string, identity ContentIdentity, kind string) {
 	t.Helper()
 	if kind == "packed" {

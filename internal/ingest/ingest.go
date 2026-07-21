@@ -196,7 +196,8 @@ func physicalReceipt(receipt blob.WriteReceipt) (store.BlobPhysical, error) {
 		return store.BlobPhysical{}, err
 	}
 	return store.BlobPhysical{
-		Encoding: encoding, StoredBytes: receipt.StoredSize, PackEligible: receipt.PackEligible,
+		Encoding: encoding, StoredBytes: receipt.StoredSize,
+		PackEligible: receipt.PackEligible, Created: receipt.Created,
 	}, nil
 }
 
@@ -738,8 +739,8 @@ func (ing *Ingester) readLocalFileWith(
 	}
 
 	// Blob first: the node row must never commit before its bytes are durable.
-	// Normal skips and failures clean authority-free or packed-duplicate loose
-	// files before returning; crash leftovers remain recoverable by GC.
+	// Failures preserve authority-free bytes for exclusively serialized GC;
+	// packed duplicates may be removed once catalog authority is known.
 	var content io.Reader = f
 	if progress != nil {
 		content = progressReader{Reader: f, ctx: ctx, tracker: progress}

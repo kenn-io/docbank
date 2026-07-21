@@ -132,30 +132,43 @@ func (s *Store) ReplaceContent(
 	ctx context.Context, nodeID, ifRev int64, blobHash string, size int64, mimeType string,
 	physical ...BlobPhysical,
 ) (Node, ContentVersion, error) {
+	receipt, err := s.ReplaceContentWithReceipt(
+		ctx, nodeID, ifRev, blobHash, size, mimeType, physical...,
+	)
+	return receipt.Node, receipt.Version, err
+}
+
+// ReplaceContentWithReceipt installs a new immutable head and returns its
+// complete authority from the committing transaction.
+func (s *Store) ReplaceContentWithReceipt(
+	ctx context.Context, nodeID, ifRev int64, blobHash string, size int64, mimeType string,
+	physical ...BlobPhysical,
+) (ContentWriteReceipt, error) {
 	if size < 0 {
-		return Node{}, ContentVersion{}, errors.New("content size must not be negative")
+		return ContentWriteReceipt{}, errors.New("content size must not be negative")
 	}
 	if err := validateUTF8Field("content MIME type", mimeType); err != nil {
-		return Node{}, ContentVersion{}, err
+		return ContentWriteReceipt{}, err
 	}
-	var (
-		updated Node
-		version ContentVersion
-	)
+	var receipt ContentWriteReceipt
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		n, err := nodeByIDTx(tx, nodeID)
 		if err != nil {
 			return err
 		}
-		updated, version, err = s.replaceContentTx(
+		receipt.Node, receipt.Version, err = s.replaceContentTx(
 			ctx, tx, n, ifRev, blobHash, size, mimeType, physical...,
 		)
+		if err != nil {
+			return err
+		}
+		receipt.Physical, err = physicalContentTx(tx, blobHash)
 		return err
 	})
 	if err != nil {
-		return Node{}, ContentVersion{}, err
+		return ContentWriteReceipt{}, err
 	}
-	return updated, version, nil
+	return receipt, nil
 }
 
 // SyncWatchedContent resolves a watched source's stable node and compares the
@@ -197,7 +210,7 @@ func (s *Store) SyncWatchedContent(
 			return err
 		}
 		if cursor.blobHash == blobHash && cursor.size == size {
-			if _, err := requirePhysicalAuthorityTx(tx, cursor.blobHash); err != nil {
+			if _, err := requirePhysicalAuthorityTx(tx, n.BlobHash); err != nil {
 				return fmt.Errorf("checking unchanged watched content: %w", err)
 			}
 			updated = n

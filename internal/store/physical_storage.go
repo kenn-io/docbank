@@ -44,6 +44,9 @@ type BlobPhysical struct {
 	Encoding     string
 	StoredBytes  int64
 	PackEligible bool
+	// Created proves this write published a new, fully hashed canonical loose
+	// representation rather than deduplicating an existing file by type and size.
+	Created bool
 }
 
 func normalizeBlobPhysical(size int64, physical []BlobPhysical) (BlobPhysical, error) {
@@ -66,36 +69,13 @@ func normalizeBlobPhysical(size int64, physical []BlobPhysical) (BlobPhysical, e
 	return result, nil
 }
 
-// requirePhysicalAuthorityTx returns the logical size only when the catalog
-// authorizes either loose or packed bytes for hash. Logical membership alone
-// is insufficient for reads or for creating another current reference.
-func requirePhysicalAuthorityTx(tx *sql.Tx, hash string) (int64, error) {
-	var (
-		size     int64
-		hasLoose bool
-		hasPack  bool
-	)
-	err := tx.QueryRow(`
-		SELECT b.size,
-		       b.loose_encoding IS NOT NULL AND b.loose_stored_size IS NOT NULL,
-		       EXISTS (SELECT 1 FROM blob_pack_index i WHERE i.blob_hash = b.hash)
-		FROM blobs b WHERE b.hash = ?`, hash,
-	).Scan(&size, &hasLoose, &hasPack)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, ErrNotFound
-	}
-	if err != nil {
-		return 0, fmt.Errorf("checking physical authority for blob %s: %w", hash, err)
-	}
-	if !hasLoose && !hasPack {
-		return 0, fmt.Errorf("blob %s: %w", hash, ErrPhysicalAuthorityMissing)
-	}
-	return size, nil
-}
+const physicalContentSQL = `
+	SELECT b.size, b.loose_encoding, b.loose_stored_size, b.pack_eligible,
+	       i.stored_len, i.flags
+	FROM blobs b LEFT JOIN blob_pack_index i ON i.blob_hash = b.hash
+	WHERE b.hash = ?`
 
-// PhysicalContent returns the indexed representation with current catalog
-// authority for hash.
-func (s *Store) PhysicalContent(ctx context.Context, hash string) (PhysicalContent, error) {
+func scanPhysicalContent(row scanner, hash string) (PhysicalContent, error) {
 	var (
 		logical      int64
 		encoding     sql.NullString
@@ -104,12 +84,7 @@ func (s *Store) PhysicalContent(ctx context.Context, hash string) (PhysicalConte
 		packedStored sql.NullInt64
 		packedFlags  sql.NullInt64
 	)
-	err := s.db.QueryRowContext(ctx, `
-		SELECT b.size, b.loose_encoding, b.loose_stored_size, b.pack_eligible,
-		       i.stored_len, i.flags
-		FROM blobs b LEFT JOIN blob_pack_index i ON i.blob_hash = b.hash
-		WHERE b.hash = ?`, hash,
-	).Scan(&logical, &encoding, &looseStored, &packEligible, &packedStored, &packedFlags)
+	err := row.Scan(&logical, &encoding, &looseStored, &packEligible, &packedStored, &packedFlags)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PhysicalContent{}, ErrNotFound
 	}
@@ -136,6 +111,27 @@ func (s *Store) PhysicalContent(ctx context.Context, hash string) (PhysicalConte
 	physical.Encoding = encoding.String
 	physical.StoredBytes = looseStored.Int64
 	return physical, nil
+}
+
+func physicalContentTx(tx *sql.Tx, hash string) (PhysicalContent, error) {
+	return scanPhysicalContent(tx.QueryRow(physicalContentSQL, hash), hash)
+}
+
+// requirePhysicalAuthorityTx returns the logical size only when the catalog
+// authorizes either loose or packed bytes for hash. Logical membership alone
+// is insufficient for reads or for creating another current reference.
+func requirePhysicalAuthorityTx(tx *sql.Tx, hash string) (int64, error) {
+	physical, err := physicalContentTx(tx, hash)
+	if err != nil {
+		return 0, err
+	}
+	return physical.LogicalBytes, nil
+}
+
+// PhysicalContent returns the indexed representation with current catalog
+// authority for hash.
+func (s *Store) PhysicalContent(ctx context.Context, hash string) (PhysicalContent, error) {
+	return scanPhysicalContent(s.db.QueryRowContext(ctx, physicalContentSQL, hash), hash)
 }
 
 // LooseBacklog returns indexed packing work without walking blob directories.
