@@ -126,15 +126,19 @@ func handleUpload(w http.ResponseWriter, r *http.Request, d Deps, g *gate) {
 			}
 			if !errors.Is(nextErr, io.EOF) {
 				if nextErr == nil {
-					return fmt.Errorf("%w: upload contains more than one multipart part",
-						errInvalidUploadEnvelope)
+					return errors.Join(fmt.Errorf(
+						"%w: upload contains more than one multipart part", errInvalidUploadEnvelope,
+					), prepared.Discard())
 				}
 				var maxBytesErr *http.MaxBytesError
 				if errors.As(nextErr, &maxBytesErr) {
-					return fmt.Errorf("upload multipart body exceeded limit: %w", nextErr)
+					return errors.Join(
+						fmt.Errorf("upload multipart body exceeded limit: %w", nextErr),
+						prepared.Discard(),
+					)
 				}
-				return fmt.Errorf("%w: reading end of multipart body: %w",
-					errInvalidUploadEnvelope, nextErr)
+				return errors.Join(fmt.Errorf("%w: reading end of multipart body: %w",
+					errInvalidUploadEnvelope, nextErr), prepared.Discard())
 			}
 			result, prepareErr = prepared.Commit(r.Context())
 			return prepareErr

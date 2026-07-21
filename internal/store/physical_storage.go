@@ -16,6 +16,10 @@ const (
 	looseEncodingZstd          = "zstd"
 )
 
+// ErrPhysicalAuthorityMissing means logical blob membership exists but no
+// indexed loose representation or pack mapping currently authorizes reads.
+var ErrPhysicalAuthorityMissing = errors.New("physical blob authority is missing")
+
 // PhysicalContent describes the catalog-authorized representation of one
 // logical blob without requiring a filesystem scan.
 type PhysicalContent struct {
@@ -99,7 +103,7 @@ func (s *Store) PhysicalContent(ctx context.Context, hash string) (PhysicalConte
 		return physical, nil
 	}
 	if !encoding.Valid || !looseStored.Valid {
-		return PhysicalContent{}, fmt.Errorf("blob %s has no indexed physical authority", hash)
+		return PhysicalContent{}, fmt.Errorf("blob %s: %w", hash, ErrPhysicalAuthorityMissing)
 	}
 	physical.Kind = "loose"
 	physical.Encoding = encoding.String

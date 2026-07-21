@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -10,6 +11,22 @@ import (
 type BlobInfo struct {
 	Hash string
 	Size int64
+}
+
+// BlobInfo returns logical catalog membership independently of whether a
+// loose or packed representation currently has physical read authority.
+func (s *Store) BlobInfo(ctx context.Context, hash string) (BlobInfo, error) {
+	var info BlobInfo
+	err := s.db.QueryRowContext(ctx,
+		`SELECT hash, size FROM blobs WHERE hash = ?`, hash,
+	).Scan(&info.Hash, &info.Size)
+	if errors.Is(err, sql.ErrNoRows) {
+		return BlobInfo{}, ErrNotFound
+	}
+	if err != nil {
+		return BlobInfo{}, fmt.Errorf("reading blob membership %s: %w", hash, err)
+	}
+	return info, nil
 }
 
 // HasBlob reports whether the metadata catalog grants authority to hash.

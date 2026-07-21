@@ -36,8 +36,7 @@ type WatchResult struct {
 func (ing *Ingester) ingestWatchedFile(
 	ctx context.Context, watchName, destination, sourceRef string,
 	expected localFileFingerprint, open localFileOpener,
-) (WatchResult, error) {
-	var result WatchResult
+) (result WatchResult, retErr error) {
 	sourceRef = filepath.ToSlash(sourceRef)
 	if sourceRef == "." || sourceRef == "" || path.IsAbs(sourceRef) ||
 		sourceRef == ".." || strings.HasPrefix(sourceRef, "../") ||
@@ -55,6 +54,7 @@ func (ing *Ingester) ingestWatchedFile(
 	if err != nil {
 		return result, err
 	}
+	defer func() { retErr = errors.Join(retErr, ing.cleanupLoose(content.hash)) }()
 	existing, _, changed, err := ing.Store.SyncWatchedContent(
 		ctx, watchName, sourceRef,
 		content.hash, content.size, content.mimeType, content.physical,

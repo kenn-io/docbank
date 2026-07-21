@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/pkg/sqlite"
 	"go.kenn.io/docbank/pkg/sqlite/modernc"
 )
@@ -340,6 +341,35 @@ func TestVaultRepairPreservesLooseEncodingAcrossPostPublicationFailure(t *testin
 			}
 		})
 	}
+}
+
+func TestVaultRepairRestoresMissingPhysicalAuthority(t *testing.T) {
+	root := t.TempDir()
+	content := []byte("content whose stale pack mapping was pruned\n")
+	vault, err := New(t.Context(), Config{Root: root})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+	created, err := vault.Put(
+		t.Context(), "/document.txt", bytes.NewReader(content), PutOptions{},
+	)
+	require.NoError(t, err)
+	packed, err := vault.Pack(t.Context(), PackOptions{})
+	require.NoError(t, err)
+	require.Equal(t, 1, packed.BlobsPacked)
+	hash, err := packstore.ParseHash(created.Computed.SHA256)
+	require.NoError(t, err)
+	require.NoError(t, store.NewPackCatalog(vault.metadata).DeleteIndexEntry(t.Context(), hash))
+
+	_, err = vault.metadata.PhysicalContent(t.Context(), created.Computed.SHA256)
+	require.ErrorIs(t, err, store.ErrPhysicalAuthorityMissing)
+	repaired, err := vault.RepairContent(
+		t.Context(), created.Computed, bytes.NewReader(content),
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "loose", repaired.Physical.Kind)
+	assert.Equal(t, int64(1), repaired.ReferencesPreserved)
+	assertVaultContent(t, vault, "/document.txt", content)
 }
 
 func corruptVaultBlob(t *testing.T, root string, identity ContentIdentity, kind string) {

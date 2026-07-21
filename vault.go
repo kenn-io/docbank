@@ -308,13 +308,19 @@ func (v *Vault) RepairContent(
 	defer v.mutation.Unlock()
 	var receipt RepairReceipt
 	err = v.blobs.WithMutation(ctx, func() error {
-		existing, err := v.metadata.PhysicalContent(ctx, identity.SHA256)
+		membership, err := v.metadata.BlobInfo(ctx, identity.SHA256)
 		if err != nil {
 			return err
 		}
-		if existing.LogicalBytes != identity.Size {
+		if membership.Size != identity.Size {
 			return fmt.Errorf("blob %s: catalog size %d does not match repair size %d",
-				identity.SHA256, existing.LogicalBytes, identity.Size)
+				identity.SHA256, membership.Size, identity.Size)
+		}
+		existing, err := v.metadata.PhysicalContent(ctx, identity.SHA256)
+		if errors.Is(err, store.ErrPhysicalAuthorityMissing) {
+			existing = store.PhysicalContent{LogicalBytes: membership.Size}
+		} else if err != nil {
+			return err
 		}
 		var written blob.WriteReceipt
 		if existing.Kind == "loose" {

@@ -3,6 +3,8 @@ package ingest
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
@@ -301,6 +304,85 @@ func TestAddRerunConverges(t *testing.T) {
 	kids, err := ing.Store.Children(ctx, mustNode(t, ing, "/inbox").ID)
 	require.NoError(t, err)
 	assert.Len(t, kids, 2) // no duplicates
+}
+
+func TestPackedDuplicateIngestRemovesLooseCopy(t *testing.T) {
+	ing := newTestIngesterWithOptions(t, blob.ManagedOptions())
+	content := strings.Repeat("packed duplicate content\n", 512)
+	src := writeTree(t, map[string]string{"document.txt": content})
+	path := filepath.Join(src, "document.txt")
+
+	first, err := ing.AddPaths(t.Context(), []string{path}, "/inbox")
+	require.NoError(t, err)
+	require.Equal(t, 1, first.Added)
+	packed, err := ing.Blobs.Maintainer().Pack(t.Context(), packstore.PackOptions{})
+	require.NoError(t, err)
+	require.Equal(t, 1, packed.BlobsPacked)
+	loose, err := ing.Blobs.List()
+	require.NoError(t, err)
+	require.Empty(t, loose)
+
+	second, err := ing.AddPaths(t.Context(), []string{path}, "/inbox")
+	require.NoError(t, err)
+	assert.Equal(t, 1, second.Skipped)
+	loose, err = ing.Blobs.List()
+	require.NoError(t, err)
+	assert.Empty(t, loose)
+}
+
+func TestRejectedUploadRemovesAuthorityFreeAndPackedDuplicateLooseFiles(t *testing.T) {
+	content := []byte(strings.Repeat("rejected upload content\n", 512))
+	sum := sha256.Sum256(content)
+	hash := hex.EncodeToString(sum[:])
+	wrong := strings.Repeat("0", 64)
+
+	t.Run("authority free", func(t *testing.T) {
+		ing := newTestIngesterWithOptions(t, blob.ManagedOptions())
+		_, err := ing.PrepareUpload(
+			t.Context(), ing.Store.RootID(), "rejected.txt", "text/plain",
+			bytes.NewReader(content), wrong, int64(len(content)),
+		)
+		require.ErrorIs(t, err, ErrUploadDigestMismatch)
+		loose, err := ing.Blobs.List()
+		require.NoError(t, err)
+		assert.Empty(t, loose)
+	})
+
+	t.Run("prepared envelope abandoned", func(t *testing.T) {
+		ing := newTestIngesterWithOptions(t, blob.ManagedOptions())
+		prepared, err := ing.PrepareUpload(
+			t.Context(), ing.Store.RootID(), "abandoned.txt", "text/plain",
+			bytes.NewReader(content), hash, int64(len(content)),
+		)
+		require.NoError(t, err)
+		require.NoError(t, prepared.Discard())
+		loose, err := ing.Blobs.List()
+		require.NoError(t, err)
+		assert.Empty(t, loose)
+	})
+
+	t.Run("packed duplicate", func(t *testing.T) {
+		ing := newTestIngesterWithOptions(t, blob.ManagedOptions())
+		prepared, err := ing.PrepareUpload(
+			t.Context(), ing.Store.RootID(), "packed.txt", "text/plain",
+			bytes.NewReader(content), hash, int64(len(content)),
+		)
+		require.NoError(t, err)
+		_, err = prepared.Commit(t.Context())
+		require.NoError(t, err)
+		packed, err := ing.Blobs.Maintainer().Pack(t.Context(), packstore.PackOptions{})
+		require.NoError(t, err)
+		require.Equal(t, 1, packed.BlobsPacked)
+
+		_, err = ing.PrepareUpload(
+			t.Context(), ing.Store.RootID(), "rejected.txt", "text/plain",
+			bytes.NewReader(content), wrong, int64(len(content)),
+		)
+		require.ErrorIs(t, err, ErrUploadDigestMismatch)
+		loose, err := ing.Blobs.List()
+		require.NoError(t, err)
+		assert.Empty(t, loose)
+	})
 }
 
 func mustNode(t *testing.T, ing *Ingester, path string) store.Node {
