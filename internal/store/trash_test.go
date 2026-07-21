@@ -204,6 +204,34 @@ func TestTrashEmpty(t *testing.T) {
 	assert.Equal(t, 1, blobCount)
 }
 
+func TestVaultEmptyTrashBoundedStore(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	for _, name := range []string{"first", "second", "third"} {
+		node, err := s.Mkdir(ctx, s.RootID(), name)
+		require.NoError(t, err)
+		_, _, err = s.Trash(ctx, node.ID, node.Revision)
+		require.NoError(t, err)
+	}
+
+	dryRun, err := s.TrashEmptyBounded(ctx, 0, 2, false)
+	require.NoError(t, err)
+	assert.Equal(t, TrashEmptyResult{Candidates: 2, More: true}, dryRun)
+	roots, err := s.TrashedRoots(ctx)
+	require.NoError(t, err)
+	require.Len(t, roots, 3)
+
+	deleted, err := s.TrashEmptyBounded(ctx, 0, 2, true)
+	require.NoError(t, err)
+	assert.Equal(t, TrashEmptyResult{Candidates: 2, Deleted: 2, More: true, Run: true}, deleted)
+	remaining, err := s.TrashedRoots(ctx)
+	require.NoError(t, err)
+	require.Len(t, remaining, 1)
+
+	_, err = s.TrashEmptyBounded(ctx, 0, 0, true)
+	require.ErrorContains(t, err, "maximum trash roots must be positive")
+}
+
 func TestTrashEmptyAdvancesAffectedTagRevisionsOnce(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()

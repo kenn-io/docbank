@@ -51,9 +51,11 @@ const (
 	// DefaultChildrenLimit is the page size used when ChildrenOptions.Limit is zero.
 	DefaultChildrenLimit = 500
 	// MaxChildrenLimit is the largest child page one embedded call may materialize.
-	MaxChildrenLimit      = 5000
-	looseEncodingRawName  = "raw"
-	looseEncodingZstdName = "zstd"
+	MaxChildrenLimit = 5000
+	// DefaultTrashEmptyMaxRoots bounds one EmptyTrash call when MaxRoots is zero.
+	DefaultTrashEmptyMaxRoots = 100
+	looseEncodingRawName      = "raw"
+	looseEncodingZstdName     = "zstd"
 )
 
 // LooseCompressionOptions controls whether eligible new loose content may use
@@ -286,6 +288,129 @@ func (v *Vault) Create(
 	return v.write(ctx, virtualPath, content, PutOptions{
 		MediaType: opts.MediaType, Expected: &expected,
 	}, true)
+}
+
+// MovePath renames or reparents one live path and returns its canonical new
+// path. A positive IfRevision must match the source node exactly.
+func (v *Vault) MovePath(
+	ctx context.Context, from, to string, opts RevisionOptions,
+) (MutationReceipt, error) {
+	if err := v.begin(); err != nil {
+		return MutationReceipt{}, err
+	}
+	defer v.lifecycle.RUnlock()
+	ifRevision, err := storeRevision(opts)
+	if err != nil {
+		return MutationReceipt{}, err
+	}
+	v.mutation.Lock()
+	defer v.mutation.Unlock()
+	if err := ctx.Err(); err != nil {
+		return MutationReceipt{}, err
+	}
+	node, canonicalPath, err := v.metadata.MovePathRevision(ctx, from, to, ifRevision)
+	if err != nil {
+		return MutationReceipt{}, err
+	}
+	return MutationReceipt{Node: fromStoreNode(node), Path: canonicalPath}, nil
+}
+
+// TrashPath moves one live path and its subtree to trash, returning the
+// canonical pre-trash path. A positive IfRevision must match the root node.
+func (v *Vault) TrashPath(
+	ctx context.Context, path string, opts RevisionOptions,
+) (MutationReceipt, error) {
+	if err := v.begin(); err != nil {
+		return MutationReceipt{}, err
+	}
+	defer v.lifecycle.RUnlock()
+	ifRevision, err := storeRevision(opts)
+	if err != nil {
+		return MutationReceipt{}, err
+	}
+	v.mutation.Lock()
+	defer v.mutation.Unlock()
+	if err := ctx.Err(); err != nil {
+		return MutationReceipt{}, err
+	}
+	node, canonicalPath, err := v.metadata.TrashPathRevision(ctx, path, ifRevision)
+	if err != nil {
+		return MutationReceipt{}, err
+	}
+	return MutationReceipt{Node: fromStoreNode(node), Path: canonicalPath}, nil
+}
+
+// Restore returns a trash root to its recorded origin, or to the canonical
+// conflict-suffixed path selected by the store. A positive IfRevision must
+// match the trashed node exactly.
+func (v *Vault) Restore(
+	ctx context.Context, nodeID int64, opts RevisionOptions,
+) (MutationReceipt, error) {
+	if err := v.begin(); err != nil {
+		return MutationReceipt{}, err
+	}
+	defer v.lifecycle.RUnlock()
+	ifRevision, err := storeRevision(opts)
+	if err != nil {
+		return MutationReceipt{}, err
+	}
+	v.mutation.Lock()
+	defer v.mutation.Unlock()
+	if err := ctx.Err(); err != nil {
+		return MutationReceipt{}, err
+	}
+	node, canonicalPath, err := v.metadata.Restore(ctx, nodeID, ifRevision)
+	if err != nil {
+		return MutationReceipt{}, err
+	}
+	return MutationReceipt{Node: fromStoreNode(node), Path: canonicalPath}, nil
+}
+
+func storeRevision(opts RevisionOptions) (int64, error) {
+	if opts.IfRevision < 0 {
+		return 0, errors.New("docbank revision must not be negative")
+	}
+	if opts.IfRevision == 0 {
+		return store.UnconditionalRev, nil
+	}
+	return opts.IfRevision, nil
+}
+
+// EmptyTrash previews or hard-deletes one finite batch of eligible trash
+// roots. Subtrees cascade with their selected root; candidate and deletion
+// counts therefore describe roots, not every descendant row.
+func (v *Vault) EmptyTrash(
+	ctx context.Context, opts TrashEmptyOptions,
+) (TrashEmptyReport, error) {
+	if err := v.begin(); err != nil {
+		return TrashEmptyReport{}, err
+	}
+	defer v.lifecycle.RUnlock()
+	if opts.OlderThan < 0 {
+		return TrashEmptyReport{}, errors.New("docbank trash age must not be negative")
+	}
+	if opts.MaxRoots < 0 {
+		return TrashEmptyReport{}, errors.New("docbank maximum trash roots must not be negative")
+	}
+	maxRoots := opts.MaxRoots
+	if maxRoots == 0 {
+		maxRoots = DefaultTrashEmptyMaxRoots
+	}
+	v.mutation.Lock()
+	defer v.mutation.Unlock()
+	if err := ctx.Err(); err != nil {
+		return TrashEmptyReport{}, err
+	}
+	result, err := v.metadata.TrashEmptyBounded(ctx, opts.OlderThan, maxRoots, !opts.DryRun)
+	if err != nil {
+		return TrashEmptyReport{}, err
+	}
+	return TrashEmptyReport{
+		Candidates: result.Candidates,
+		Deleted:    result.Deleted,
+		More:       result.More,
+		DryRun:     opts.DryRun,
+	}, nil
 }
 
 // RepairContent replaces the physical bytes for one existing content identity

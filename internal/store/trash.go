@@ -62,6 +62,13 @@ func (s *Store) Trash(ctx context.Context, id, ifRev int64) (Node, string, error
 // and mutation. Returns the node that was trashed and its canonical
 // pre-trash path (see Trash).
 func (s *Store) TrashPath(ctx context.Context, path string) (Node, string, error) {
+	return s.TrashPathRevision(ctx, path, UnconditionalRev)
+}
+
+// TrashPathRevision is TrashPath with an exact optional revision precondition.
+func (s *Store) TrashPathRevision(
+	ctx context.Context, path string, ifRev int64,
+) (Node, string, error) {
 	var trashed Node
 	var origPath string
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
@@ -78,9 +85,13 @@ func (s *Store) TrashPath(ctx context.Context, path string) (Node, string, error
 		}
 		if active {
 			trashed, origPath, err = s.trashAuditedTx(
-				ctx, tx, n, UnconditionalRev,
+				ctx, tx, n, ifRev,
 			)
 			return err
+		}
+		if ifRev != UnconditionalRev && n.Revision != ifRev {
+			return fmt.Errorf("node %d at revision %d, expected %d: %w",
+				n.ID, n.Revision, ifRev, ErrStaleRevision)
 		}
 		if origPath, err = pathOf(ctx, tx, n.ID); err != nil {
 			return err
@@ -289,6 +300,7 @@ func (s *Store) TrashedRoots(ctx context.Context) ([]Node, error) {
 type TrashEmptyResult struct {
 	Candidates int64
 	Deleted    int64
+	More       bool
 	Run        bool
 }
 
@@ -297,6 +309,23 @@ type TrashEmptyResult struct {
 // a future timestamp caused by clock skew. Subtrees follow via ON DELETE
 // CASCADE.
 func (s *Store) TrashEmpty(ctx context.Context, olderThan time.Duration, run bool) (TrashEmptyResult, error) {
+	return s.trashEmpty(ctx, olderThan, 0, run)
+}
+
+// TrashEmptyBounded reports or deletes at most maxRoots eligible trash roots.
+// More reports whether another eligible root existed beyond this batch.
+func (s *Store) TrashEmptyBounded(
+	ctx context.Context, olderThan time.Duration, maxRoots int, run bool,
+) (TrashEmptyResult, error) {
+	if maxRoots <= 0 {
+		return TrashEmptyResult{}, errors.New("maximum trash roots must be positive")
+	}
+	return s.trashEmpty(ctx, olderThan, maxRoots, run)
+}
+
+func (s *Store) trashEmpty(
+	ctx context.Context, olderThan time.Duration, maxRoots int, run bool,
+) (TrashEmptyResult, error) {
 	rep := TrashEmptyResult{Run: run}
 	where := `trash_name IS NOT NULL`
 	var args []any
@@ -304,13 +333,28 @@ func (s *Store) TrashEmpty(ctx context.Context, olderThan time.Duration, run boo
 		where += ` AND trashed_at <= ?`
 		args = append(args, time.Now().UTC().Add(-olderThan).Format(timestampLayout))
 	}
+	selection := `SELECT id FROM nodes WHERE ` + where + ` ORDER BY trashed_at ASC, id ASC`
+	selectionArgs := append([]any(nil), args...)
+	if maxRoots > 0 {
+		selection += ` LIMIT ?`
+		selectionArgs = append(selectionArgs, maxRoots)
+	}
 	runTx := s.withStorageTx
 	if run {
 		runTx = s.withLogicalTx
 	}
 	err := runTx(ctx, func(tx *sql.Tx) error {
-		if err := tx.QueryRow(`SELECT COUNT(*) FROM nodes WHERE `+where, args...).Scan(&rep.Candidates); err != nil {
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM (`+selection+`)`, selectionArgs...).Scan(&rep.Candidates); err != nil {
 			return fmt.Errorf("counting trash-empty candidates: %w", err)
+		}
+		if maxRoots > 0 {
+			moreArgs := append(append([]any(nil), args...), maxRoots)
+			if err := tx.QueryRow(
+				`SELECT EXISTS(SELECT 1 FROM nodes WHERE `+where+` ORDER BY trashed_at ASC, id ASC LIMIT 1 OFFSET ?)`,
+				moreArgs...,
+			).Scan(&rep.More); err != nil {
+				return fmt.Errorf("checking for more trash-empty candidates: %w", err)
+			}
 		}
 		if !run {
 			return nil
@@ -319,18 +363,22 @@ func (s *Store) TrashEmpty(ctx context.Context, olderThan time.Duration, run boo
 		// several assignments disappear. A row-level node_tags trigger would
 		// instead expose physical cascade cardinality as revision semantics.
 		if _, err := tx.Exec(`
-			WITH RECURSIVE doomed(id) AS (
-			  SELECT id FROM nodes WHERE `+where+`
+			WITH RECURSIVE roots(id) AS (`+selection+`),
+			doomed(id) AS (
+			  SELECT id FROM roots
 			  UNION ALL
 			  SELECT n.id FROM nodes n JOIN doomed d ON n.parent_id = d.id
 			)
 			UPDATE tags SET revision = revision + 1
 			WHERE id IN (
 			  SELECT nt.tag_id FROM node_tags nt JOIN doomed d ON d.id = nt.node_id
-			)`, args...); err != nil {
+			)`, selectionArgs...); err != nil {
 			return fmt.Errorf("advancing tags affected by trash empty: %w", err)
 		}
-		res, err := tx.Exec(`DELETE FROM nodes WHERE `+where, args...)
+		res, err := tx.Exec(
+			`WITH roots(id) AS (`+selection+`) DELETE FROM nodes WHERE id IN (SELECT id FROM roots)`,
+			selectionArgs...,
+		)
 		if err != nil {
 			return fmt.Errorf("emptying trash: %w", err)
 		}

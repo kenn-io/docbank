@@ -6,12 +6,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -155,6 +157,295 @@ func TestVaultCreateConcurrent(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 1, versions.Total)
 	})
+}
+
+func TestVaultMovePathReturnsCanonicalReceipt(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	created, err := vault.Put(t.Context(), "/inbox/report.txt", strings.NewReader("report\n"), PutOptions{})
+	require.NoError(t, err)
+	_, err = vault.Put(t.Context(), "/archive/keep.txt", strings.NewReader("keep\n"), PutOptions{})
+	require.NoError(t, err)
+
+	moved, err := vault.MovePath(t.Context(), "/inbox/report.txt", "/archive/final.txt", RevisionOptions{
+		IfRevision: created.Node.Revision,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, created.Node.ID, moved.Node.ID)
+	assert.Equal(t, created.Node.Revision+1, moved.Node.Revision)
+	assert.Equal(t, "final.txt", moved.Node.Name)
+	assert.Equal(t, "/archive/final.txt", moved.Path)
+	_, err = vault.Stat(t.Context(), "/inbox/report.txt")
+	require.ErrorIs(t, err, ErrNotFound)
+	stat, err := vault.Stat(t.Context(), moved.Path)
+	require.NoError(t, err)
+	assert.Equal(t, moved.Node, stat)
+}
+
+func TestVaultMovePathRejectsDestinationConflict(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	created, err := vault.Put(t.Context(), "/source.txt", strings.NewReader("source\n"), PutOptions{})
+	require.NoError(t, err)
+	_, err = vault.Put(t.Context(), "/taken.txt", strings.NewReader("taken\n"), PutOptions{})
+	require.NoError(t, err)
+
+	_, err = vault.MovePath(t.Context(), "/source.txt", "/taken.txt", RevisionOptions{
+		IfRevision: created.Node.Revision,
+	})
+	require.ErrorIs(t, err, ErrExists)
+	stat, err := vault.Stat(t.Context(), "/source.txt")
+	require.NoError(t, err)
+	assert.Equal(t, created.Node.ID, stat.ID)
+}
+
+func TestVaultMovePathEnforcesRevision(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	created, err := vault.Put(t.Context(), "/report.txt", strings.NewReader("first\n"), PutOptions{})
+	require.NoError(t, err)
+	updated, err := vault.Put(t.Context(), "/report.txt", strings.NewReader("second\n"), PutOptions{})
+	require.NoError(t, err)
+
+	_, err = vault.MovePath(t.Context(), "/report.txt", "/stale.txt", RevisionOptions{
+		IfRevision: created.Node.Revision,
+	})
+	require.ErrorIs(t, err, ErrStaleRevision)
+	_, err = vault.MovePath(t.Context(), "/report.txt", "/invalid.txt", RevisionOptions{IfRevision: -1})
+	require.ErrorContains(t, err, "revision must not be negative")
+
+	moved, err := vault.MovePath(t.Context(), "/report.txt", "/current.txt", RevisionOptions{
+		IfRevision: updated.Node.Revision,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/current.txt", moved.Path)
+}
+
+func TestVaultMovePathConcurrentMutation(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+	for i := range 10 {
+		source := fmt.Sprintf("/source-%d.txt", i)
+		created, err := vault.Put(t.Context(), source, strings.NewReader("content\n"), PutOptions{})
+		require.NoError(t, err)
+		destinations := []string{
+			fmt.Sprintf("/left-%d.txt", i),
+			fmt.Sprintf("/right-%d.txt", i),
+		}
+		start := make(chan struct{})
+		receipts := make([]MutationReceipt, len(destinations))
+		errs := make([]error, len(destinations))
+		var done sync.WaitGroup
+		done.Add(len(destinations))
+		for attempt := range destinations {
+			go func() {
+				defer done.Done()
+				<-start
+				receipts[attempt], errs[attempt] = vault.MovePath(
+					t.Context(), source, destinations[attempt],
+					RevisionOptions{IfRevision: created.Node.Revision},
+				)
+			}()
+		}
+		close(start)
+		done.Wait()
+
+		var winner int
+		switch {
+		case errs[0] == nil && errors.Is(errs[1], ErrNotFound):
+			winner = 0
+		case errs[1] == nil && errors.Is(errs[0], ErrNotFound):
+			winner = 1
+		default:
+			require.Fail(t, "want one bound move and one missing source", "errors: %v", errs)
+		}
+		assert.Equal(t, destinations[winner], receipts[winner].Path)
+		assert.Equal(t, created.Node.ID, receipts[winner].Node.ID)
+		stat, err := vault.Stat(t.Context(), receipts[winner].Path)
+		require.NoError(t, err)
+		assert.Equal(t, receipts[winner].Node, stat)
+	}
+}
+
+func TestVaultTrashPathReturnsPreTrashReceipt(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	created, err := vault.Put(t.Context(), "/projects/report.txt", strings.NewReader("report\n"), PutOptions{})
+	require.NoError(t, err)
+
+	trashed, err := vault.TrashPath(t.Context(), "/projects/report.txt", RevisionOptions{
+		IfRevision: created.Node.Revision,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, created.Node.ID, trashed.Node.ID)
+	assert.Equal(t, created.Node.Revision+1, trashed.Node.Revision)
+	assert.NotNil(t, trashed.Node.TrashedAt)
+	assert.Equal(t, "/projects/report.txt", trashed.Path)
+	_, err = vault.Stat(t.Context(), trashed.Path)
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestVaultTrashPathEnforcesRevision(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	created, err := vault.Put(t.Context(), "/report.txt", strings.NewReader("first\n"), PutOptions{})
+	require.NoError(t, err)
+	updated, err := vault.Put(t.Context(), "/report.txt", strings.NewReader("second\n"), PutOptions{})
+	require.NoError(t, err)
+
+	_, err = vault.TrashPath(t.Context(), "/report.txt", RevisionOptions{IfRevision: created.Node.Revision})
+	require.ErrorIs(t, err, ErrStaleRevision)
+	_, err = vault.TrashPath(t.Context(), "/report.txt", RevisionOptions{IfRevision: -1})
+	require.ErrorContains(t, err, "revision must not be negative")
+
+	trashed, err := vault.TrashPath(t.Context(), "/report.txt", RevisionOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, updated.Node.Revision+1, trashed.Node.Revision)
+}
+
+func TestVaultRestoreReturnsCanonicalReceipt(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	created, err := vault.Put(t.Context(), "/report.txt", strings.NewReader("original\n"), PutOptions{})
+	require.NoError(t, err)
+	trashed, err := vault.TrashPath(t.Context(), "/report.txt", RevisionOptions{
+		IfRevision: created.Node.Revision,
+	})
+	require.NoError(t, err)
+	_, err = vault.Put(t.Context(), "/report.txt", strings.NewReader("replacement\n"), PutOptions{})
+	require.NoError(t, err)
+
+	restored, err := vault.Restore(t.Context(), trashed.Node.ID, RevisionOptions{
+		IfRevision: trashed.Node.Revision,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, created.Node.ID, restored.Node.ID)
+	assert.Equal(t, trashed.Node.Revision+1, restored.Node.Revision)
+	assert.Nil(t, restored.Node.TrashedAt)
+	assert.Equal(t, "report (2).txt", restored.Node.Name)
+	assert.Equal(t, "/report (2).txt", restored.Path)
+	stat, err := vault.Stat(t.Context(), restored.Path)
+	require.NoError(t, err)
+	assert.Equal(t, restored.Node, stat)
+}
+
+func TestVaultRestoreEnforcesRevision(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	created, err := vault.Put(t.Context(), "/report.txt", strings.NewReader("report\n"), PutOptions{})
+	require.NoError(t, err)
+	trashed, err := vault.TrashPath(t.Context(), "/report.txt", RevisionOptions{})
+	require.NoError(t, err)
+
+	_, err = vault.Restore(t.Context(), trashed.Node.ID, RevisionOptions{IfRevision: created.Node.Revision})
+	require.ErrorIs(t, err, ErrStaleRevision)
+	_, err = vault.Restore(t.Context(), trashed.Node.ID, RevisionOptions{IfRevision: -1})
+	require.ErrorContains(t, err, "revision must not be negative")
+	restored, err := vault.Restore(t.Context(), trashed.Node.ID, RevisionOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, "/report.txt", restored.Path)
+}
+
+func TestVaultTrashRestorePreservesSubtree(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	child, err := vault.Put(t.Context(), "/projects/current/report.txt", strings.NewReader("report\n"), PutOptions{})
+	require.NoError(t, err)
+	root, err := vault.Stat(t.Context(), "/projects")
+	require.NoError(t, err)
+
+	trashed, err := vault.TrashPath(t.Context(), "/projects", RevisionOptions{IfRevision: root.Revision})
+	require.NoError(t, err)
+	assert.Equal(t, root.Revision+1, trashed.Node.Revision)
+	_, err = vault.Stat(t.Context(), "/projects/current/report.txt")
+	require.ErrorIs(t, err, ErrNotFound)
+
+	restored, err := vault.Restore(t.Context(), trashed.Node.ID, RevisionOptions{
+		IfRevision: trashed.Node.Revision,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/projects", restored.Path)
+	restoredChild, err := vault.Stat(t.Context(), "/projects/current/report.txt")
+	require.NoError(t, err)
+	assert.Equal(t, child.Node.ID, restoredChild.ID)
+	assert.Equal(t, child.Node.Revision+2, restoredChild.Revision)
+}
+
+func TestVaultEmptyTrashBoundsEachBatch(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	for i := range 3 {
+		path := fmt.Sprintf("/trash-%d.txt", i)
+		_, err := vault.Put(t.Context(), path, strings.NewReader("trash\n"), PutOptions{})
+		require.NoError(t, err)
+		_, err = vault.TrashPath(t.Context(), path, RevisionOptions{})
+		require.NoError(t, err)
+	}
+
+	dryRun, err := vault.EmptyTrash(t.Context(), TrashEmptyOptions{MaxRoots: 2, DryRun: true})
+	require.NoError(t, err)
+	assert.Equal(t, TrashEmptyReport{Candidates: 2, More: true, DryRun: true}, dryRun)
+
+	first, err := vault.EmptyTrash(t.Context(), TrashEmptyOptions{MaxRoots: 2})
+	require.NoError(t, err)
+	assert.Equal(t, TrashEmptyReport{Candidates: 2, Deleted: 2, More: true}, first)
+	last, err := vault.EmptyTrash(t.Context(), TrashEmptyOptions{MaxRoots: 2, DryRun: true})
+	require.NoError(t, err)
+	assert.Equal(t, TrashEmptyReport{Candidates: 1, More: false, DryRun: true}, last)
+}
+
+func TestVaultEmptyTrashUsesFiniteDefault(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	for i := range DefaultTrashEmptyMaxRoots + 1 {
+		path := fmt.Sprintf("/default-trash-%d.txt", i)
+		_, err := vault.Put(t.Context(), path, strings.NewReader("trash\n"), PutOptions{})
+		require.NoError(t, err)
+		_, err = vault.TrashPath(t.Context(), path, RevisionOptions{})
+		require.NoError(t, err)
+	}
+
+	report, err := vault.EmptyTrash(t.Context(), TrashEmptyOptions{DryRun: true})
+	require.NoError(t, err)
+	assert.Equal(t, int64(DefaultTrashEmptyMaxRoots), report.Candidates)
+	assert.True(t, report.More)
+}
+
+func TestVaultEmptyTrashFiltersAgeAndRejectsInvalidOptions(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	_, err = vault.Put(t.Context(), "/recent.txt", strings.NewReader("recent\n"), PutOptions{})
+	require.NoError(t, err)
+	_, err = vault.TrashPath(t.Context(), "/recent.txt", RevisionOptions{})
+	require.NoError(t, err)
+
+	report, err := vault.EmptyTrash(t.Context(), TrashEmptyOptions{
+		OlderThan: time.Hour, MaxRoots: 1, DryRun: true,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, TrashEmptyReport{DryRun: true}, report)
+	_, err = vault.EmptyTrash(t.Context(), TrashEmptyOptions{MaxRoots: -1})
+	require.ErrorContains(t, err, "maximum trash roots must not be negative")
+	_, err = vault.EmptyTrash(t.Context(), TrashEmptyOptions{OlderThan: -time.Second})
+	require.ErrorContains(t, err, "trash age must not be negative")
+
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = vault.EmptyTrash(canceled, TrashEmptyOptions{})
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestVaultRepairContentPreservesLogicalReferences(t *testing.T) {
