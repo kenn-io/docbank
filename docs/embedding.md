@@ -116,11 +116,13 @@ vault, err := docbank.New(ctx, docbank.Config{
 
 Docbank keeps zstd only when the logical size meets `MinBytes` and the completed
 encoding saves at least `MinSavingsPercent`; otherwise it publishes raw loose
-content. This policy does not rewrite existing objects. The zero value disables
-compression, preserving the unchanged raw loose layout, and mixed raw, zstd, and
-packed content remains readable through the same verified API. Receipts report
-the chosen physical encoding and stored size without changing the logical
-SHA-256 or size.
+content. Enabling compression does not proactively migrate or rewrite existing
+objects. `RepairContent` is the explicit replacement path: it may select zstd
+under this policy when trusted bytes replace an object's physical authority.
+The zero value disables compression, preserving the unchanged raw loose layout,
+and mixed raw, zstd, and packed content remains readable through the same
+verified API. Receipts report the chosen physical encoding and stored size
+without changing the logical SHA-256 or size.
 
 `vault.ID()` returns the archive's stable UUID. JSONL backup and restore
 preserve that identity even when the restored vault has a different filesystem

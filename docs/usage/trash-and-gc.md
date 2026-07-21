@@ -119,11 +119,11 @@ or deletion to `MaxRoots`; zero selects the finite `DefaultTrashEmptyMaxRoots`.
 its compatible soft `MaxBytes` option and reports `More` when eligible loose
 backlog remains.
 
-If a maintenance report returns `More`, schedule another pass. Reuse a non-empty
-`NextCursor` only with the operation that issued it; cursors are opaque
-continuation positions, not stable snapshots. Repack may return `More` with no
-cursor while successful dead-pack retirement advances the work, in which case
-another empty-cursor pass continues safely.
+If a maintenance report returns `More`, schedule another pass with its non-empty
+`NextCursor`. Reuse a cursor only with the operation that issued it; cursors are
+opaque continuation positions, not stable snapshots. Repack cursors retain the
+mapping, dead-pack, or sparse-pack phase even when that phase has no blob-hash
+position, so continuation does not restart completed mapping work.
 
 Embedded GC intentionally considers only bounded unreachable catalog rows; it
 does not scan loose directories for untracked files. Embedded Verify re-hashes
