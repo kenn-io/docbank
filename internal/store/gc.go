@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"go.kenn.io/kit/packstore"
@@ -14,6 +15,16 @@ import (
 type BlobInfo struct {
 	Hash string
 	Size int64
+}
+
+func pageLimitWithSentinel(limit int) (int, error) {
+	if limit <= 0 {
+		return 0, errors.New("page limit must be positive")
+	}
+	if limit == math.MaxInt {
+		return 0, errors.New("page limit is too large")
+	}
+	return limit + 1, nil
 }
 
 // BlobInfo returns logical catalog membership independently of whether a
@@ -121,10 +132,11 @@ func (s *Store) UnreachableBlobs(ctx context.Context) ([]BlobInfo, error) {
 func (s *Store) UnreachableBlobsPageFrom(
 	ctx context.Context, after *string, limit int,
 ) (GCCandidateScanPage, error) {
-	if limit <= 0 {
-		return GCCandidateScanPage{}, errors.New("blob page limit must be positive")
+	queryLimit, err := pageLimitWithSentinel(limit)
+	if err != nil {
+		return GCCandidateScanPage{}, fmt.Errorf("blob page limit: %w", err)
 	}
-	query, args := unreachableBlobScanQuery(after, limit)
+	query, args := unreachableBlobScanQuery(after, queryLimit)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return GCCandidateScanPage{}, fmt.Errorf("finding unreachable blobs: %w", err)
@@ -134,7 +146,7 @@ func (s *Store) UnreachableBlobsPageFrom(
 		candidate GCCandidate
 		eligible  bool
 	}
-	raw := make([]scanRow, 0, limit+1)
+	raw := make([]scanRow, 0, queryLimit)
 	for rows.Next() {
 		var item scanRow
 		var looseSize sql.NullInt64
@@ -185,9 +197,9 @@ const unreachableBlobsResumePageSQL = `
 
 func unreachableBlobScanQuery(after *string, limit int) (string, []any) {
 	if after == nil {
-		return unreachableBlobsStartPageSQL, []any{limit + 1}
+		return unreachableBlobsStartPageSQL, []any{limit}
 	}
-	return unreachableBlobsResumePageSQL, []any{*after, limit + 1}
+	return unreachableBlobsResumePageSQL, []any{*after, limit}
 }
 
 // BlobsPage returns one bounded hash-keyset page of recorded blob identities.
@@ -211,16 +223,17 @@ func (s *Store) BlobHashesPage(
 func (s *Store) BlobHashesPageFrom(
 	ctx context.Context, after *string, limit int,
 ) ([]string, bool, error) {
-	if limit <= 0 {
-		return nil, false, errors.New("blob hash page limit must be positive")
+	queryLimit, err := pageLimitWithSentinel(limit)
+	if err != nil {
+		return nil, false, fmt.Errorf("blob hash page limit: %w", err)
 	}
-	query, args := blobHashesPageQuery(after, limit)
+	query, args := blobHashesPageQuery(after, queryLimit)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, false, fmt.Errorf("listing blob hashes: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	result := make([]string, 0, limit+1)
+	result := make([]string, 0, queryLimit)
 	for rows.Next() {
 		var hash string
 		if err := rows.Scan(&hash); err != nil {
@@ -243,18 +256,19 @@ const blobHashesResumePageSQL = `SELECT hash FROM blobs WHERE hash > ? ORDER BY 
 
 func blobHashesPageQuery(after *string, limit int) (string, []any) {
 	if after == nil {
-		return blobHashesStartPageSQL, []any{limit + 1}
+		return blobHashesStartPageSQL, []any{limit}
 	}
-	return blobHashesResumePageSQL, []any{*after, limit + 1}
+	return blobHashesResumePageSQL, []any{*after, limit}
 }
 
 func (s *Store) blobPage(
 	ctx context.Context, query, after string, limit int, operation string,
 ) ([]BlobInfo, bool, error) {
-	if limit <= 0 {
-		return nil, false, errors.New("blob page limit must be positive")
+	queryLimit, err := pageLimitWithSentinel(limit)
+	if err != nil {
+		return nil, false, fmt.Errorf("blob page limit: %w", err)
 	}
-	rows, err := s.db.QueryContext(ctx, query, after, limit+1)
+	rows, err := s.db.QueryContext(ctx, query, after, queryLimit)
 	if err != nil {
 		return nil, false, fmt.Errorf("%s: %w", operation, err)
 	}
@@ -313,16 +327,17 @@ func (s *Store) SparseRepackScanPage(
 	minAge time.Duration,
 	minDeadBytes int64,
 ) (RepackScanPage, error) {
-	if limit <= 0 {
-		return RepackScanPage{}, errors.New("repack page limit must be positive")
+	queryLimit, err := pageLimitWithSentinel(limit)
+	if err != nil {
+		return RepackScanPage{}, fmt.Errorf("repack page limit: %w", err)
 	}
 	rows, err := s.db.QueryContext(ctx, sparseRepackScanPageSQL,
-		afterHash, afterHash, afterPackID, limit+1)
+		afterHash, afterHash, afterPackID, queryLimit)
 	if err != nil {
 		return RepackScanPage{}, fmt.Errorf("scanning sparse repack candidates: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	result := make([]RepackCandidate, 0, limit+1)
+	result := make([]RepackCandidate, 0, queryLimit)
 	for rows.Next() {
 		var candidate RepackCandidate
 		var created string
@@ -359,10 +374,11 @@ func (s *Store) SparseRepackScanPage(
 func (s *Store) UnreferencedPackMappingsPage(
 	ctx context.Context, after *string, limit int,
 ) (StringScanPage, error) {
-	if limit <= 0 {
-		return StringScanPage{}, errors.New("pack mapping page limit must be positive")
+	queryLimit, err := pageLimitWithSentinel(limit)
+	if err != nil {
+		return StringScanPage{}, fmt.Errorf("pack mapping page limit: %w", err)
 	}
-	query, args := unreferencedMappingScanQuery(after, limit)
+	query, args := unreferencedMappingScanQuery(after, queryLimit)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return StringScanPage{}, fmt.Errorf("listing unreferenced pack mappings: %w", err)
@@ -372,7 +388,7 @@ func (s *Store) UnreferencedPackMappingsPage(
 		hash     string
 		eligible bool
 	}
-	raw := make([]scanRow, 0, limit+1)
+	raw := make([]scanRow, 0, queryLimit)
 	for rows.Next() {
 		var item scanRow
 		if err := rows.Scan(&item.hash, &item.eligible); err != nil {
@@ -419,9 +435,9 @@ const unreferencedMappingsResumePageSQL = `
 
 func unreferencedMappingScanQuery(after *string, limit int) (string, []any) {
 	if after == nil {
-		return unreferencedMappingsStartPageSQL, []any{limit + 1}
+		return unreferencedMappingsStartPageSQL, []any{limit}
 	}
-	return unreferencedMappingsResumePageSQL, []any{*after, limit + 1}
+	return unreferencedMappingsResumePageSQL, []any{*after, limit}
 }
 
 // DeleteUnreferencedPackMappings conditionally removes the named stale
@@ -462,15 +478,16 @@ const deadPackUsagePageSQL = `
 func (s *Store) DeadPackUsagePage(
 	ctx context.Context, limit int,
 ) ([]packstore.PackUsage, bool, error) {
-	if limit <= 0 {
-		return nil, false, errors.New("dead-pack page limit must be positive")
+	queryLimit, err := pageLimitWithSentinel(limit)
+	if err != nil {
+		return nil, false, fmt.Errorf("dead-pack page limit: %w", err)
 	}
-	rows, err := s.db.QueryContext(ctx, deadPackUsagePageSQL, limit+1)
+	rows, err := s.db.QueryContext(ctx, deadPackUsagePageSQL, queryLimit)
 	if err != nil {
 		return nil, false, fmt.Errorf("listing dead packs: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	result := make([]packstore.PackUsage, 0, limit+1)
+	result := make([]packstore.PackUsage, 0, queryLimit)
 	for rows.Next() {
 		var usage packstore.PackUsage
 		var created string

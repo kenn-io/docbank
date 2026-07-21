@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"testing"
@@ -11,6 +12,14 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/pack"
 )
+
+func TestPageLimitWithSentinelRejectsOverflow(t *testing.T) {
+	_, err := pageLimitWithSentinel(math.MaxInt)
+	require.ErrorContains(t, err, "too large")
+	limit, err := pageLimitWithSentinel(10)
+	require.NoError(t, err)
+	assert.Equal(t, 11, limit)
+}
 
 func TestUnreachableBlobsPageBoundsCandidatesAcrossCatalogSizes(t *testing.T) {
 	for _, liveCount := range []int{3, 300} {

@@ -114,10 +114,10 @@ Embedded applications own the same lifecycle but schedule finite passes instead
 of asking the daemon to drain a full operation. `EmptyTrash` limits one preview
 or deletion to `MaxRoots`; zero selects the finite `DefaultTrashEmptyMaxRoots`.
 `GarbageCollect`, `Verify`, and `Repack` accept a `WorkBudget`; zero
-`MaxObjects` selects the finite `DefaultMaintenanceMaxObjects`, while a positive
-`MaxBytes` is a soft limit that lets the current object finish. `Pack` retains
-its compatible soft `MaxBytes` option and reports `More` when eligible loose
-backlog remains.
+`MaxObjects` selects the finite `DefaultMaintenanceMaxObjects`, and explicit
+values are capped by `MaxMaintenanceObjects`. A positive `MaxBytes` is a soft
+limit that lets the current object finish. `Pack` retains its compatible soft
+`MaxBytes` option and reports `More` when eligible loose backlog remains.
 
 If a maintenance report returns `More`, schedule another pass with its non-empty
 `NextCursor`. Reuse a cursor only with the operation that issued it; cursors are

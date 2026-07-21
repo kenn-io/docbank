@@ -1068,3 +1068,14 @@ func TestMaintenanceNegativeBudgetsAreRejected(t *testing.T) {
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, ErrClosed)
 }
+
+func TestMaintenanceOversizedObjectBudgetsAreRejected(t *testing.T) {
+	vault := newMaintenanceVault(t, nil)
+	oversized := WorkBudget{MaxObjects: MaxMaintenanceObjects + 1}
+	_, err := vault.Verify(t.Context(), VerifyOptions{Budget: oversized})
+	require.Error(t, err)
+	_, err = vault.GarbageCollect(t.Context(), GCOptions{Budget: oversized})
+	require.Error(t, err)
+	_, err = vault.Repack(t.Context(), RepackOptions{Budget: oversized})
+	require.Error(t, err)
+}

@@ -26,6 +26,9 @@ const (
 	// DefaultMaxObjects is the finite object count used by an embedded
 	// maintenance call whose object budget is zero.
 	DefaultMaxObjects = 100
+	// MaxObjectsPerOperation caps one embedded maintenance allocation and
+	// storage page. Callers resume larger jobs with the returned cursor.
+	MaxObjectsPerOperation = 10_000
 
 	defaultRepackMinAge    = 24 * time.Hour
 	defaultRepackDeadBytes = int64(8 << 20)
@@ -128,7 +131,7 @@ type cursor struct {
 }
 
 func normalizeBudget(budget Budget) (Budget, error) {
-	if budget.MaxObjects < 0 || budget.MaxBytes < 0 {
+	if budget.MaxObjects < 0 || budget.MaxObjects > MaxObjectsPerOperation || budget.MaxBytes < 0 {
 		return Budget{}, ErrInvalidBudget
 	}
 	if budget.MaxObjects == 0 {

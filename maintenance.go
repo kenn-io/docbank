@@ -7,13 +7,17 @@ import (
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 )
 
-const DefaultMaintenanceMaxObjects = internalmaintenance.DefaultMaxObjects
+const (
+	DefaultMaintenanceMaxObjects = internalmaintenance.DefaultMaxObjects
+	MaxMaintenanceObjects        = internalmaintenance.MaxObjectsPerOperation
+)
 
 var ErrInvalidMaintenanceCursor = internalmaintenance.ErrInvalidCursor
 
 // WorkBudget bounds one embedded maintenance pass. MaxObjects zero uses
-// DefaultMaintenanceMaxObjects. MaxBytes zero is unlimited; a positive byte
-// limit is soft, so one selected object may carry the pass over the limit.
+// DefaultMaintenanceMaxObjects and values above MaxMaintenanceObjects are
+// rejected. MaxBytes zero is unlimited; a positive byte limit is soft, so one
+// selected object may carry the pass over the limit.
 type WorkBudget struct {
 	MaxObjects int
 	MaxBytes   int64

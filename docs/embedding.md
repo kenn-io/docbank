@@ -254,9 +254,10 @@ representation. `OpenContent` keeps the same verified read contract.
 
 Embedded `GarbageCollect`, `Verify`, and `Repack` calls are resumable bounded
 passes. `WorkBudget.MaxObjects == 0` uses the finite
-`DefaultMaintenanceMaxObjects`; a positive `MaxBytes` adds a soft byte bound, so
-one selected object may finish after crossing it. A zero byte bound is
-unlimited, but the object bound still limits each pass.
+`DefaultMaintenanceMaxObjects`; larger explicit budgets must not exceed
+`MaxMaintenanceObjects`. A positive `MaxBytes` adds a soft byte bound, so one
+selected object may finish after crossing it. A zero byte bound is unlimited,
+but the object bound still limits each pass.
 
 When a report has `More`, pass a non-empty `NextCursor` back in the same
 operation's next `WorkBudget`. Treat cursors as opaque and operation-specific;
