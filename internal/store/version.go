@@ -130,31 +130,94 @@ func (s *Store) ContentVersions(
 // one transaction.
 func (s *Store) ReplaceContent(
 	ctx context.Context, nodeID, ifRev int64, blobHash string, size int64, mimeType string,
+	physical ...BlobPhysical,
 ) (Node, ContentVersion, error) {
+	receipt, err := s.ReplaceContentWithReceipt(
+		ctx, nodeID, ifRev, blobHash, size, mimeType, physical...,
+	)
+	return receipt.Node, receipt.Version, err
+}
+
+// ReplaceContentWithReceipt installs a new immutable head and returns its
+// complete authority from the committing transaction.
+func (s *Store) ReplaceContentWithReceipt(
+	ctx context.Context, nodeID, ifRev int64, blobHash string, size int64, mimeType string,
+	physical ...BlobPhysical,
+) (ContentWriteReceipt, error) {
 	if size < 0 {
-		return Node{}, ContentVersion{}, errors.New("content size must not be negative")
+		return ContentWriteReceipt{}, errors.New("content size must not be negative")
 	}
 	if err := validateUTF8Field("content MIME type", mimeType); err != nil {
-		return Node{}, ContentVersion{}, err
+		return ContentWriteReceipt{}, err
 	}
-	var (
-		updated Node
-		version ContentVersion
-	)
+	var receipt ContentWriteReceipt
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		n, err := nodeByIDTx(tx, nodeID)
 		if err != nil {
 			return err
 		}
-		updated, version, err = s.replaceContentTx(
-			ctx, tx, n, ifRev, blobHash, size, mimeType,
+		receipt.Node, receipt.Version, err = s.replaceContentTx(
+			ctx, tx, n, ifRev, blobHash, size, mimeType, physical...,
 		)
+		if err != nil {
+			return err
+		}
+		receipt.Physical, err = physicalContentTx(tx, blobHash)
 		return err
 	})
 	if err != nil {
-		return Node{}, ContentVersion{}, err
+		return ContentWriteReceipt{}, err
 	}
-	return updated, version, nil
+	return receipt, nil
+}
+
+// ConfirmContentWithReceipt confirms that a file still has the expected
+// immutable head while reconciling a newly published physical receipt. It is
+// the transactional completion path for an otherwise idempotent write.
+func (s *Store) ConfirmContentWithReceipt(
+	ctx context.Context, nodeID, ifRev int64, blobHash string, size int64, mimeType string,
+	physical ...BlobPhysical,
+) (ContentWriteReceipt, error) {
+	if size < 0 {
+		return ContentWriteReceipt{}, errors.New("content size must not be negative")
+	}
+	if err := validateUTF8Field("content MIME type", mimeType); err != nil {
+		return ContentWriteReceipt{}, err
+	}
+	var receipt ContentWriteReceipt
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		n, err := nodeByIDTx(tx, nodeID)
+		if err != nil {
+			return err
+		}
+		if n.TrashedAt != nil {
+			return fmt.Errorf("node %d is trashed: %w", n.ID, ErrNotFound)
+		}
+		if n.IsDir() {
+			return fmt.Errorf("node %d: %w", n.ID, ErrNotFile)
+		}
+		if n.Revision != ifRev || n.BlobHash != blobHash || n.Size != size || n.MimeType != mimeType {
+			return fmt.Errorf("node %d content changed while confirming revision %d: %w",
+				n.ID, ifRev, ErrStaleRevision)
+		}
+		if err := s.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
+			return err
+		}
+		receipt.Node = n
+		receipt.Version, err = scanContentVersion(tx.QueryRow(
+			`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = ?`,
+			n.CurrentVersionID,
+		))
+		if err != nil {
+			return fmt.Errorf("reading current version of node %d: %w", n.ID, err)
+		}
+		receipt.Physical, err = physicalContentTx(tx, blobHash)
+		return err
+	})
+	if err != nil {
+		return ContentWriteReceipt{}, err
+	}
+	return receipt, nil
 }
 
 // SyncWatchedContent resolves a watched source's stable node and compares the
@@ -163,6 +226,7 @@ func (s *Store) ReplaceContent(
 // edit or revert must survive daemon restart when the source did not change.
 func (s *Store) SyncWatchedContent(
 	ctx context.Context, watchName, sourceRef, blobHash string, size int64, mimeType string,
+	physical ...BlobPhysical,
 ) (Node, ContentVersion, bool, error) {
 	if err := validateWatchSourceRecord(metadataWatchSource{
 		Type: metadataWatchSourceType, WatchName: watchName, SourceRef: sourceRef,
@@ -195,15 +259,26 @@ func (s *Store) SyncWatchedContent(
 			return err
 		}
 		if cursor.blobHash == blobHash && cursor.size == size {
+			if err := s.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
+				return fmt.Errorf("reconciling unchanged watched content: %w", err)
+			}
+			if n.BlobHash != blobHash {
+				if _, err := requirePhysicalAuthorityTx(tx, n.BlobHash); err != nil {
+					return fmt.Errorf("checking unchanged watched content: %w", err)
+				}
+			}
 			updated = n
 			return nil
 		}
 		if n.BlobHash == blobHash && n.Size == size {
+			if err := s.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
+				return fmt.Errorf("checking unchanged watched content: %w", err)
+			}
 			updated = n
 			return updateWatchSourceTx(ctx, tx, watchName, sourceRef, blobHash, size)
 		}
 		updated, version, err = s.replaceContentTx(
-			ctx, tx, n, UnconditionalRev, blobHash, size, mimeType,
+			ctx, tx, n, UnconditionalRev, blobHash, size, mimeType, physical...,
 		)
 		if err != nil {
 			return err
@@ -270,7 +345,7 @@ func updateWatchSourceTx(
 
 func (s *Store) replaceContentTx(
 	ctx context.Context, tx *sql.Tx, n Node, ifRev int64,
-	blobHash string, size int64, mimeType string,
+	blobHash string, size int64, mimeType string, physical ...BlobPhysical,
 ) (Node, ContentVersion, error) {
 	if err := validateContentReplacementTarget(n, ifRev); err != nil {
 		return Node{}, ContentVersion{}, err
@@ -281,10 +356,10 @@ func (s *Store) replaceContentTx(
 	}
 	if audited {
 		return installAuditedContentVersionTx(
-			ctx, tx, s, n, blobHash, size, mimeType, "content_replace", nil,
+			ctx, tx, s, n, blobHash, size, mimeType, "content_replace", nil, physical...,
 		)
 	}
-	if err := s.EnsureBlobTx(tx, blobHash, size); err != nil {
+	if err := s.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
 		return Node{}, ContentVersion{}, err
 	}
 	return installContentVersionTx(
@@ -332,9 +407,8 @@ func (s *Store) RevertContent(
 			return fmt.Errorf("source version %s revision %d is not older than node %d next revision %d",
 				source.ID, source.NodeRevision, nodeID, n.Revision+1)
 		}
-		var catalogSize int64
-		if err := tx.QueryRow(`SELECT size FROM blobs WHERE hash = ?`, source.BlobHash).
-			Scan(&catalogSize); err != nil {
+		catalogSize, err := requirePhysicalAuthorityTx(tx, source.BlobHash)
+		if err != nil {
 			return fmt.Errorf("checking source blob %s: %w", source.BlobHash, err)
 		}
 		if catalogSize != source.Size {

@@ -9,6 +9,12 @@ docbank is pre-1.0; interfaces and storage migrations may still evolve.
 
 ## Unreleased
 
+- Standalone vaults compress worthwhile new loose content with zstd while
+  preserving logical hashes, verified reads, backup portability, and explicit
+  packing. Embedded applications can opt into the same policy.
+- The embedded Go API adds immutable create-if-absent writes, verified physical
+  repair that preserves logical references, physical representation receipts,
+  and loose packing-backlog inspection.
 - Search covers live document names and verified UTF-8 plain text, Markdown,
   JSON, and JSONL content. Name matches keep their established ranking and
   precede content-only matches, while `docbank jobs` exposes the bounded

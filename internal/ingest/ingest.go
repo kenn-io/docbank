@@ -21,8 +21,8 @@ import (
 
 var (
 	// ErrUploadDigestMismatch reports bytes that do not match the identity the
-	// remote writer declared. The physical write may leave an authority-free
-	// object for GC, but no blobs row or node is committed.
+	// remote writer declared. No blob row or node is committed; authority-free
+	// loose bytes remain eligible for exclusively serialized GC.
 	ErrUploadDigestMismatch = errors.New("upload digest mismatch")
 	// ErrUploadSizeMismatch is the corresponding declared-length failure.
 	ErrUploadSizeMismatch = errors.New("upload size mismatch")
@@ -177,6 +177,7 @@ type UploadResult struct {
 	Added        bool
 	ComputedHash string
 	ComputedSize int64
+	physical     store.BlobPhysical
 }
 
 // ReplacementResult is the independently verified byte identity and the new
@@ -186,6 +187,60 @@ type ReplacementResult struct {
 	Version      store.ContentVersion
 	ComputedHash string
 	ComputedSize int64
+	physical     store.BlobPhysical
+}
+
+func physicalReceipt(receipt blob.WriteReceipt) (store.BlobPhysical, error) {
+	encoding, err := receipt.EncodingName()
+	if err != nil {
+		return store.BlobPhysical{}, err
+	}
+	return store.BlobPhysical{
+		Encoding: encoding, StoredBytes: receipt.StoredSize,
+		PackEligible: receipt.PackEligible, Created: receipt.Created,
+	}, nil
+}
+
+// cleanupLoose removes a loose duplicate only when immutable packed authority
+// already covers the hash. Existing loose authority and authority-free bytes
+// are never removed here: a shared loose path may belong to another writer
+// between physical publication and its metadata commit. Exclusively serialized
+// GC reclaims true orphans. The detached timeout lets cleanup finish after a
+// request cancellation.
+func (ing *Ingester) cleanupLoose(hash string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	authority, err := ing.Store.PhysicalContent(ctx, hash)
+	var remove bool
+	switch {
+	case err == nil:
+		remove = authority.Kind == "packed"
+	case errors.Is(err, store.ErrNotFound):
+		return nil
+	case errors.Is(err, store.ErrPhysicalAuthorityMissing):
+		// Logical membership exists without readable authority. The new loose
+		// file may be its only recoverable copy, so preserve it for repair.
+		return nil
+	default:
+		return fmt.Errorf("checking loose cleanup authority for %s: %w", hash, err)
+	}
+	if !remove {
+		return nil
+	}
+	if err := ing.Blobs.Remove(hash); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("cleaning loose blob %s: %w", hash, err)
+	}
+	return nil
+}
+
+// mutationCleanupResult keeps post-commit cleanup best-effort. Once logical
+// authority commits, returning a cleanup error would falsely report failure
+// and make a safe retry impossible under the caller's old revision.
+func mutationCleanupResult(mutationErr, cleanupErr error) error {
+	if mutationErr == nil {
+		return nil
+	}
+	return errors.Join(mutationErr, cleanupErr)
 }
 
 // PreparedUpload is a verified, authority-free remote write. The caller may
@@ -226,17 +281,24 @@ func (ing *Ingester) PrepareUpload(
 		return nil, store.ErrNotDir
 	}
 
-	result.ComputedHash, result.ComputedSize, err = ing.Blobs.WriteContext(ctx, r)
+	written, err := ing.Blobs.WriteDetailedContext(ctx, r)
 	if err != nil {
 		return nil, err
 	}
+	result.ComputedHash, result.ComputedSize = written.Hash, written.Size
+	result.physical, err = physicalReceipt(written)
+	if err != nil {
+		return nil, errors.Join(err, ing.cleanupLoose(written.Hash))
+	}
 	if result.ComputedSize != expectedSize {
-		return nil, fmt.Errorf("declared %d bytes, received %d: %w",
-			expectedSize, result.ComputedSize, ErrUploadSizeMismatch)
+		return nil, errors.Join(fmt.Errorf("declared %d bytes, received %d: %w",
+			expectedSize, result.ComputedSize, ErrUploadSizeMismatch),
+			ing.cleanupLoose(written.Hash))
 	}
 	if result.ComputedHash != expectedHash {
-		return nil, fmt.Errorf("declared SHA-256 %s, computed %s: %w",
-			expectedHash, result.ComputedHash, ErrUploadDigestMismatch)
+		return nil, errors.Join(fmt.Errorf("declared SHA-256 %s, computed %s: %w",
+			expectedHash, result.ComputedHash, ErrUploadDigestMismatch),
+			ing.cleanupLoose(written.Hash))
 	}
 	return &PreparedUpload{
 		ing: ing, parentID: parentID, name: name, mimeType: mimeType, result: result,
@@ -245,18 +307,32 @@ func (ing *Ingester) PrepareUpload(
 
 // Commit grants application authority to a prepared upload and returns the
 // stable node for either a new import or an idempotent retry.
-func (p *PreparedUpload) Commit(ctx context.Context) (UploadResult, error) {
-	result := p.result
+func (p *PreparedUpload) Commit(ctx context.Context) (result UploadResult, retErr error) {
+	result = p.result
+	defer func() {
+		retErr = mutationCleanupResult(retErr, p.ing.cleanupLoose(result.ComputedHash))
+	}()
 	ingestID, err := p.ing.Store.BeginIngest(ctx, "upload", p.name)
 	if err != nil {
 		return result, err
 	}
 	result.Node, result.Added, err = p.ing.Store.IngestFile(ctx, ingestID, p.parentID,
-		p.name, result.ComputedHash, result.ComputedSize, p.mimeType, p.name, "")
+		p.name, result.ComputedHash, result.ComputedSize, p.mimeType, p.name, "", result.physical)
 	if err != nil {
 		return result, err
 	}
 	return result, nil
+}
+
+// Discard removes a loose duplicate of already-packed authority when a
+// transport envelope is rejected before Commit. Authority-free bytes are left
+// for exclusively serialized GC because another writer may still be using the
+// same content-addressed path.
+func (p *PreparedUpload) Discard() error {
+	if p == nil {
+		return nil
+	}
+	return p.ing.cleanupLoose(p.result.ComputedHash)
 }
 
 // ReplaceContent streams a remote body into durable authority-free storage,
@@ -265,16 +341,22 @@ func (p *PreparedUpload) Commit(ctx context.Context) (UploadResult, error) {
 func (ing *Ingester) ReplaceContent(
 	ctx context.Context, nodeID, ifRev int64, mimeType string, r io.Reader,
 	expectedHash string, expectedSize int64,
-) (ReplacementResult, error) {
-	var result ReplacementResult
+) (result ReplacementResult, retErr error) {
 	if !utf8.ValidString(mimeType) {
 		return result, errors.New("MIME type is not valid UTF-8")
 	}
 	if err := ing.Store.CheckContentReplacementTarget(ctx, nodeID, ifRev); err != nil {
 		return result, err
 	}
-	var err error
-	result.ComputedHash, result.ComputedSize, err = ing.Blobs.WriteContext(ctx, r)
+	written, err := ing.Blobs.WriteDetailedContext(ctx, r)
+	if err != nil {
+		return result, err
+	}
+	result.ComputedHash, result.ComputedSize = written.Hash, written.Size
+	defer func() {
+		retErr = mutationCleanupResult(retErr, ing.cleanupLoose(written.Hash))
+	}()
+	result.physical, err = physicalReceipt(written)
 	if err != nil {
 		return result, err
 	}
@@ -287,7 +369,7 @@ func (ing *Ingester) ReplaceContent(
 			expectedHash, result.ComputedHash, ErrUploadDigestMismatch)
 	}
 	result.Node, result.Version, err = ing.Store.ReplaceContent(
-		ctx, nodeID, ifRev, result.ComputedHash, result.ComputedSize, mimeType,
+		ctx, nodeID, ifRev, result.ComputedHash, result.ComputedSize, mimeType, result.physical,
 	)
 	return result, err
 }
@@ -537,7 +619,7 @@ func (ing *Ingester) importFile(
 	parentID int64,
 	openPath, sourcePath string,
 	progress *progressTracker,
-) (bool, error) {
+) (added bool, retErr error) {
 	if err := validateSourcePath(sourcePath); err != nil {
 		return false, err
 	}
@@ -545,9 +627,12 @@ func (ing *Ingester) importFile(
 	if err != nil {
 		return false, err
 	}
-	_, added, err := ing.Store.IngestFile(ctx, ingestRun, parentID,
+	defer func() {
+		retErr = mutationCleanupResult(retErr, ing.cleanupLoose(content.hash))
+	}()
+	_, added, err = ing.Store.IngestFile(ctx, ingestRun, parentID,
 		filepath.Base(sourcePath), content.hash, content.size, content.mimeType,
-		sourcePath, content.mtime)
+		sourcePath, content.mtime, content.physical)
 	if err != nil {
 		return false, fmt.Errorf("recording %s: %w", sourcePath, err)
 	}
@@ -559,6 +644,7 @@ type localFileContent struct {
 	size     int64
 	mimeType string
 	mtime    string
+	physical store.BlobPhysical
 }
 
 type localFileFingerprint struct {
@@ -620,8 +706,7 @@ func (ing *Ingester) readLocalFile(
 func (ing *Ingester) readLocalFileWith(
 	ctx context.Context, open localFileOpener, sourcePath string, progress *progressTracker,
 	expected *localFileFingerprint,
-) (localFileContent, error) {
-	var result localFileContent
+) (result localFileContent, retErr error) {
 	// No-follow plus fstat, not the earlier Lstat/WalkDir classification:
 	// the file could have been swapped since, and "symlinks are skipped"
 	// must hold for the file actually read, not the one classified.
@@ -653,17 +738,26 @@ func (ing *Ingester) readLocalFileWith(
 		return result, fmt.Errorf("rewinding %s: %w", sourcePath, err)
 	}
 
-	// Blob first: the node row must never commit before its bytes are
-	// durable. A skip, metadata failure, or crash after this point can
-	// orphan the blob file — harmless, reclaimed by gc's untracked-file
-	// scan.
+	// Blob first: the node row must never commit before its bytes are durable.
+	// Failures preserve authority-free bytes for exclusively serialized GC;
+	// packed duplicates may be removed once catalog authority is known.
 	var content io.Reader = f
 	if progress != nil {
 		content = progressReader{Reader: f, ctx: ctx, tracker: progress}
 	}
-	result.hash, result.size, err = ing.Blobs.WriteContext(ctx, content)
+	written, err := ing.Blobs.WriteDetailedContext(ctx, content)
 	if err != nil {
 		return result, fmt.Errorf("storing content of %s: %w", sourcePath, err)
+	}
+	result.hash, result.size = written.Hash, written.Size
+	defer func() {
+		if retErr != nil {
+			retErr = errors.Join(retErr, ing.cleanupLoose(written.Hash))
+		}
+	}()
+	result.physical, err = physicalReceipt(written)
+	if err != nil {
+		return result, fmt.Errorf("recording physical content of %s: %w", sourcePath, err)
 	}
 	after, err := f.Stat()
 	if err != nil {

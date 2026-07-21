@@ -36,6 +36,9 @@ var (
 	// ErrSizeMismatch means the durable bytes did not match the caller's
 	// optional expected byte count.
 	ErrSizeMismatch = errors.New("docbank content size mismatch")
+	// ErrContentConflict means immutable creation targeted an existing path
+	// with different bytes, size, media type, or node kind.
+	ErrContentConflict = errors.New("docbank immutable content conflict")
 
 	ErrNotFound      = store.ErrNotFound
 	ErrExists        = store.ErrExists
@@ -48,15 +51,26 @@ const (
 	// DefaultChildrenLimit is the page size used when ChildrenOptions.Limit is zero.
 	DefaultChildrenLimit = 500
 	// MaxChildrenLimit is the largest child page one embedded call may materialize.
-	MaxChildrenLimit = 5000
+	MaxChildrenLimit      = 5000
+	looseEncodingRawName  = "raw"
+	looseEncodingZstdName = "zstd"
 )
 
-// Config selects one private vault root and, optionally, its SQLite
-// implementation. Nil SQLite uses mattn/go-sqlite3 in CGO builds and
-// modernc.org/sqlite when CGO is disabled.
+// LooseCompressionOptions controls whether eligible new loose content may use
+// zstd physical storage. The zero value preserves the legacy raw layout.
+type LooseCompressionOptions struct {
+	Enabled           bool
+	MinBytes          int64
+	MinSavingsPercent int
+}
+
+// Config selects one private vault root, its optional SQLite implementation,
+// and physical loose-storage policy. Nil SQLite uses mattn/go-sqlite3 in CGO
+// builds and modernc.org/sqlite when CGO is disabled.
 type Config struct {
-	Root   string
-	SQLite docsqlite.Driver
+	Root             string
+	SQLite           docsqlite.Driver
+	LooseCompression LooseCompressionOptions
 }
 
 // Vault is one independently locked Docbank namespace. Separate Vault values
@@ -70,6 +84,13 @@ type Vault struct {
 	lifecycle sync.RWMutex
 	mutation  sync.Mutex
 	closed    bool
+
+	// testAfterRepairPublication exercises the non-cancelable authority handoff
+	// after durable physical publication. Production constructors leave it nil.
+	testAfterRepairPublication func()
+	// testAfterWriteCommit exercises receipt completion after a Put or Create
+	// metadata mutation commits. Production constructors leave it nil.
+	testAfterWriteCommit func()
 }
 
 // New creates or opens one embedded vault and holds its exclusive hierarchy
@@ -88,6 +109,14 @@ func New(ctx context.Context, config Config) (_ *Vault, retErr error) {
 	}
 	if config.Root == "" {
 		return nil, errors.New("docbank vault root is required")
+	}
+	blobOptions := blob.Options{LooseCompression: blob.LooseCompressionOptions{
+		Enabled:           config.LooseCompression.Enabled,
+		MinBytes:          config.LooseCompression.MinBytes,
+		MinSavingsPercent: config.LooseCompression.MinSavingsPercent,
+	}}
+	if err := blob.ValidateOptions(blobOptions); err != nil {
+		return nil, fmt.Errorf("docbank %w", err)
 	}
 	canonical, err := home.CanonicalRoot(config.Root)
 	if err != nil {
@@ -115,7 +144,7 @@ func New(ctx context.Context, config Config) (_ *Vault, retErr error) {
 			retErr = errors.Join(retErr, metadata.Close())
 		}
 	}()
-	blobs, err := blob.New(store.NewPackCatalog(metadata), layout.BlobsDir())
+	blobs, err := blob.NewWithOptions(store.NewPackCatalog(metadata), layout.BlobsDir(), blobOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -231,11 +260,132 @@ type PutOptions struct {
 	Expected  *ContentIdentity
 }
 
+// CreateOptions controls one immutable content creation. Expected is required;
+// an existing path is idempotent only when bytes, size, and media type match.
+type CreateOptions struct {
+	MediaType string
+	Expected  ContentIdentity
+}
+
 // Put stores a reader at an absolute virtual file path. Missing parent
 // directories are created. An unchanged retry converges on the current
 // version; changed bytes create a new immutable version on the same node.
 func (v *Vault) Put(
 	ctx context.Context, virtualPath string, content io.Reader, opts PutOptions,
+) (PutReceipt, error) {
+	return v.write(ctx, virtualPath, content, opts, false)
+}
+
+// Create stores content only when virtualPath is absent. An identical retry
+// returns the existing node and version; any different existing authority
+// returns ErrContentConflict without appending history.
+func (v *Vault) Create(
+	ctx context.Context, virtualPath string, content io.Reader, opts CreateOptions,
+) (PutReceipt, error) {
+	expected := opts.Expected
+	return v.write(ctx, virtualPath, content, PutOptions{
+		MediaType: opts.MediaType, Expected: &expected,
+	}, true)
+}
+
+// RepairContent replaces the physical bytes for one existing content identity
+// after fully verifying trusted against its required SHA-256 and size. All
+// nodes and historical versions keep referencing the same immutable identity.
+func (v *Vault) RepairContent(
+	ctx context.Context, identity ContentIdentity, trusted io.Reader,
+) (RepairReceipt, error) {
+	if err := v.begin(); err != nil {
+		return RepairReceipt{}, err
+	}
+	defer v.lifecycle.RUnlock()
+	if trusted == nil {
+		return RepairReceipt{}, errors.New("docbank trusted repair reader is required")
+	}
+	parsed, err := packstore.ParseHash(identity.SHA256)
+	if err != nil || parsed.String() != identity.SHA256 {
+		return RepairReceipt{}, errors.New("repair content hash must be canonical lowercase SHA-256")
+	}
+	if identity.Size < 0 {
+		return RepairReceipt{}, errors.New("repair content size must not be negative")
+	}
+
+	v.mutation.Lock()
+	defer v.mutation.Unlock()
+	var receipt RepairReceipt
+	err = v.blobs.WithMutation(ctx, func() error {
+		membership, err := v.metadata.BlobInfo(ctx, identity.SHA256)
+		if err != nil {
+			return err
+		}
+		if membership.Size != identity.Size {
+			return fmt.Errorf("blob %s: catalog size %d does not match repair size %d",
+				identity.SHA256, membership.Size, identity.Size)
+		}
+		existing, err := v.metadata.PhysicalContent(ctx, identity.SHA256)
+		if errors.Is(err, store.ErrPhysicalAuthorityMissing) {
+			existing = store.PhysicalContent{LogicalBytes: membership.Size}
+		} else if err != nil {
+			return err
+		}
+		var written blob.WriteReceipt
+		if existing.Kind == "loose" {
+			var encoding packstore.LooseEncoding
+			switch existing.Encoding {
+			case looseEncodingRawName:
+				encoding = packstore.LooseEncodingRaw
+			case looseEncodingZstdName:
+				encoding = packstore.LooseEncodingZstd
+			default:
+				return fmt.Errorf("blob %s has unknown loose encoding %q",
+					identity.SHA256, existing.Encoding)
+			}
+			written, err = v.blobs.RepairContextWithEncoding(
+				ctx, identity.SHA256, identity.Size, trusted, encoding,
+			)
+		} else {
+			written, err = v.blobs.RepairContext(ctx, identity.SHA256, identity.Size, trusted)
+		}
+		if err != nil {
+			return err
+		}
+		if v.testAfterRepairPublication != nil {
+			v.testAfterRepairPublication()
+		}
+		physical, err := blobPhysical(written)
+		if err != nil {
+			return err
+		}
+		// Once verified bytes have replaced the canonical loose representation,
+		// finish the authority handoff even if the request disconnects. Leaving
+		// the catalog pointed at a retired representation would make valid bytes
+		// unavailable until an operator repaired them again.
+		commitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		references, err := v.metadata.RepairBlobAuthority(
+			commitCtx, identity.SHA256, identity.Size, physical,
+		)
+		if err != nil {
+			return err
+		}
+		receipt = RepairReceipt{
+			Computed: identity,
+			Physical: PhysicalContent{
+				Kind: "loose", Encoding: physical.Encoding,
+				LogicalBytes: identity.Size, StoredBytes: physical.StoredBytes,
+				PackEligible: physical.PackEligible,
+			},
+			ReferencesPreserved: references,
+		}
+		return nil
+	})
+	if err != nil {
+		return RepairReceipt{}, err
+	}
+	return receipt, nil
+}
+
+func (v *Vault) write(
+	ctx context.Context, virtualPath string, content io.Reader, opts PutOptions, immutable bool,
 ) (PutReceipt, error) {
 	if err := v.begin(); err != nil {
 		return PutReceipt{}, err
@@ -265,13 +415,32 @@ func (v *Vault) Put(
 	defer v.mutation.Unlock()
 	var receipt PutReceipt
 	err = v.blobs.WithMutation(ctx, func() (resultErr error) {
-		hash, size, writeErr := v.blobs.WriteContext(ctx, content)
+		written, writeErr := v.blobs.WriteDetailedContext(ctx, content)
 		if writeErr != nil {
 			return writeErr
+		}
+		hash, size := written.Hash, written.Size
+		physical, physicalErr := blobPhysical(written)
+		if physicalErr != nil {
+			return physicalErr
 		}
 		defer func() {
 			if resultErr != nil {
 				resultErr = errors.Join(resultErr, v.removeUnrecordedLoose(hash))
+				return
+			}
+			if receipt.Physical.Kind == "" {
+				authority, authorityErr := v.metadata.PhysicalContent(ctx, hash)
+				if authorityErr != nil {
+					resultErr = authorityErr
+					return
+				}
+				receipt.Physical = fromStorePhysical(authority)
+			}
+			if receipt.Physical.Kind == "packed" {
+				// Metadata authority has committed. Redundant loose cleanup is
+				// maintenance and must not turn durable success into failure.
+				_ = v.blobs.Remove(hash)
 			}
 		}()
 		receipt.Computed = ContentIdentity{SHA256: hash, Size: size}
@@ -291,42 +460,56 @@ func (v *Vault) Put(
 		existing, lookupErr := v.metadata.NodeByPath(ctx, canonicalPath)
 		switch {
 		case errors.Is(lookupErr, store.ErrNotFound):
-			created, createErr := v.metadata.CreateFile(
-				ctx, parent.ID, name, hash, size, opts.MediaType,
+			created, createErr := v.metadata.CreateFileWithReceipt(
+				ctx, parent.ID, name, hash, size, opts.MediaType, physical,
 			)
 			if createErr != nil {
 				return createErr
 			}
-			version, versionErr := v.metadata.ContentVersionByID(ctx, created.CurrentVersionID)
-			if versionErr != nil {
-				return versionErr
-			}
-			receipt.Node = fromStoreNode(created)
-			receipt.Version = fromStoreVersion(version)
+			receipt.Node = fromStoreNode(created.Node)
+			receipt.Version = fromStoreVersion(created.Version)
+			receipt.Physical = fromStorePhysical(created.Physical)
 			receipt.Created = true
+			if v.testAfterWriteCommit != nil {
+				v.testAfterWriteCommit()
+			}
 			return nil
 		case lookupErr != nil:
 			return lookupErr
 		case existing.IsDir():
+			if immutable {
+				return fmt.Errorf("virtual path %q names a directory: %w", canonicalPath, ErrContentConflict)
+			}
 			return fmt.Errorf("virtual path %q: %w", canonicalPath, store.ErrNotFile)
 		case existing.BlobHash == hash && existing.Size == size && existing.MimeType == opts.MediaType:
-			version, versionErr := v.metadata.ContentVersionByID(ctx, existing.CurrentVersionID)
-			if versionErr != nil {
-				return versionErr
+			confirmed, confirmErr := v.metadata.ConfirmContentWithReceipt(
+				ctx, existing.ID, existing.Revision, hash, size, opts.MediaType, physical,
+			)
+			if confirmErr != nil {
+				return confirmErr
 			}
-			receipt.Node = fromStoreNode(existing)
-			receipt.Version = fromStoreVersion(version)
+			receipt.Node = fromStoreNode(confirmed.Node)
+			receipt.Version = fromStoreVersion(confirmed.Version)
+			receipt.Physical = fromStorePhysical(confirmed.Physical)
 			return nil
 		default:
-			updated, version, replaceErr := v.metadata.ReplaceContent(
-				ctx, existing.ID, existing.Revision, hash, size, opts.MediaType,
+			if immutable {
+				return fmt.Errorf("virtual path %q already has different content or media type: %w",
+					canonicalPath, ErrContentConflict)
+			}
+			updated, replaceErr := v.metadata.ReplaceContentWithReceipt(
+				ctx, existing.ID, existing.Revision, hash, size, opts.MediaType, physical,
 			)
 			if replaceErr != nil {
 				return replaceErr
 			}
-			receipt.Node = fromStoreNode(updated)
-			receipt.Version = fromStoreVersion(version)
+			receipt.Node = fromStoreNode(updated.Node)
+			receipt.Version = fromStoreVersion(updated.Version)
+			receipt.Physical = fromStorePhysical(updated.Physical)
 			receipt.Replaced = true
+			if v.testAfterWriteCommit != nil {
+				v.testAfterWriteCommit()
+			}
 			return nil
 		}
 	})
@@ -334,6 +517,30 @@ func (v *Vault) Put(
 		return receipt, err
 	}
 	return receipt, nil
+}
+
+func blobPhysical(receipt blob.WriteReceipt) (store.BlobPhysical, error) {
+	encoding, err := receipt.EncodingName()
+	if err != nil {
+		return store.BlobPhysical{}, err
+	}
+	return store.BlobPhysical{
+		Encoding: encoding, StoredBytes: receipt.StoredSize,
+		PackEligible: receipt.PackEligible, Created: receipt.Created,
+	}, nil
+}
+
+// LooseBacklog reports indexed loose content eligible for explicit packing.
+func (v *Vault) LooseBacklog(ctx context.Context) (LooseBacklog, error) {
+	if err := v.begin(); err != nil {
+		return LooseBacklog{}, err
+	}
+	defer v.lifecycle.RUnlock()
+	backlog, err := v.metadata.LooseBacklog(ctx)
+	if err != nil {
+		return LooseBacklog{}, err
+	}
+	return fromStoreLooseBacklog(backlog), nil
 }
 
 func (v *Vault) removeUnrecordedLoose(hash string) error {
@@ -344,7 +551,13 @@ func (v *Vault) removeUnrecordedLoose(hash string) error {
 		return fmt.Errorf("checking failed put cleanup for %s: %w", hash, err)
 	}
 	if recorded {
-		return nil
+		physical, err := v.metadata.PhysicalContent(ctx, hash)
+		if err != nil {
+			return fmt.Errorf("checking failed put authority for %s: %w", hash, err)
+		}
+		if physical.Kind != "packed" {
+			return nil
+		}
 	}
 	if err := v.blobs.Remove(hash); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("cleaning failed put blob %s: %w", hash, err)

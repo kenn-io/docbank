@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	docsqlite "go.kenn.io/docbank/pkg/sqlite"
 )
 
 func newTestStore(t *testing.T) *Store {
@@ -15,6 +17,24 @@ func newTestStore(t *testing.T) *Store {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	return s
+}
+
+func TestOpenRejectsObsoletePreReleaseSchema(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "obsolete.db")
+	driver := DefaultSQLiteDriver()
+	db, err := driver.Open(dbPath, docsqlite.OpenOptions{
+		Access: docsqlite.Create, TransactionMode: docsqlite.Immediate,
+	})
+	require.NoError(t, err)
+	_, err = db.Exec(`
+		CREATE TABLE blobs (
+			hash TEXT PRIMARY KEY, size INTEGER NOT NULL, created_at TEXT NOT NULL
+		)`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	_, err = Open(dbPath, driver)
+	require.ErrorContains(t, err, "obsolete pre-release database schema; recreate this development vault")
 }
 
 func TestOpenBootstrapsRoot(t *testing.T) {

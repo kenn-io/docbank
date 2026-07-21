@@ -45,6 +45,19 @@ func TestIngestFileIdempotency(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, added)
 	assert.Equal(t, n2.ID, skipped.ID)
+	physical, err := s.PhysicalContent(ctx, fakeHash("b2"))
+	require.NoError(t, err)
+	require.Equal(t, "raw", physical.Encoding)
+	skipped, added, err = s.IngestFile(ctx, ing, s.RootID(),
+		"report.pdf", fakeHash("b2"), 11, "application/pdf", "/other/report.pdf", "",
+		BlobPhysical{Encoding: "zstd", StoredBytes: 7, PackEligible: true, Created: true})
+	require.NoError(t, err)
+	assert.False(t, added)
+	assert.Equal(t, n2.ID, skipped.ID)
+	physical, err = s.PhysicalContent(ctx, fakeHash("b2"))
+	require.NoError(t, err)
+	assert.Equal(t, "zstd", physical.Encoding)
+	assert.Equal(t, int64(7), physical.StoredBytes)
 
 	// Third distinct content takes the next free ordinal.
 	n3, added, err := s.IngestFile(ctx, ing, s.RootID(),
@@ -52,6 +65,15 @@ func TestIngestFileIdempotency(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, added)
 	assert.Equal(t, "report (3).pdf", n3.Name)
+
+	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE blobs SET loose_encoding=NULL, loose_stored_size=NULL WHERE hash=?`,
+			fakeHash("a1"))
+		return err
+	}))
+	_, _, err = s.IngestFile(ctx, ing, s.RootID(),
+		"report.pdf", fakeHash("a1"), 10, "application/pdf", "/src/docs/report.pdf", "")
+	require.ErrorIs(t, err, ErrPhysicalAuthorityMissing)
 }
 
 func TestIngestFileMatchesAcrossSuffixGap(t *testing.T) {
@@ -147,11 +169,15 @@ func TestSyncWatchedContentFollowsMovedNodeWithoutOverwritingIndependentEdit(t *
 	unchanged, noVersion, changed, err := s.SyncWatchedContent(
 		ctx, "sessions", "daily/session.jsonl",
 		fakeHash("b2"), 2, "application/json",
+		BlobPhysical{Encoding: "zstd", StoredBytes: 1, PackEligible: true, Created: true},
 	)
 	require.NoError(t, err)
 	assert.False(t, changed)
 	assert.Equal(t, updated, unchanged)
 	assert.Empty(t, noVersion.ID)
+	physical, err := s.PhysicalContent(ctx, fakeHash("b2"))
+	require.NoError(t, err)
+	assert.Equal(t, "zstd", physical.Encoding)
 
 	manuallyEdited, _, err := s.ReplaceContent(
 		ctx, updated.ID, updated.Revision, fakeHash("c3"), 3, "application/json",
@@ -160,11 +186,27 @@ func TestSyncWatchedContentFollowsMovedNodeWithoutOverwritingIndependentEdit(t *
 	unchanged, noVersion, changed, err = s.SyncWatchedContent(
 		ctx, "sessions", "daily/session.jsonl",
 		fakeHash("b2"), 2, "application/json",
+		BlobPhysical{Encoding: "zstd", StoredBytes: 1, PackEligible: true},
 	)
 	require.NoError(t, err)
 	assert.False(t, changed)
 	assert.Equal(t, manuallyEdited, unchanged)
 	assert.Empty(t, noVersion.ID)
+
+	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE blobs SET loose_encoding=NULL, loose_stored_size=NULL WHERE hash=?`,
+			fakeHash("c3"))
+		return err
+	}))
+	missingNode, missingVersion, missingChanged, err := s.SyncWatchedContent(
+		ctx, "sessions", "daily/session.jsonl",
+		fakeHash("b2"), 2, "application/json",
+		BlobPhysical{Encoding: "zstd", StoredBytes: 1, PackEligible: true},
+	)
+	require.ErrorIs(t, err, ErrPhysicalAuthorityMissing)
+	assert.Empty(t, missingNode.Kind)
+	assert.Empty(t, missingVersion.ID)
+	assert.False(t, missingChanged)
 }
 
 func TestWatchSourceLookupUsesPrimaryKeyAtArchiveScale(t *testing.T) {

@@ -1,7 +1,10 @@
 package docbank_test
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +19,21 @@ func TestRootPackageConstructor(t *testing.T) {
 	vault, err := docbank.New(context.Background(), docbank.Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	require.NoError(t, vault.Close())
+}
+
+func TestEmbeddedImmutableCreate(t *testing.T) {
+	content := []byte("immutable external content\n")
+	sum := sha256.Sum256(content)
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+	receipt, err := vault.Create(t.Context(), "/external.txt", bytes.NewReader(content), docbank.CreateOptions{
+		MediaType: "text/plain",
+		Expected:  docbank.ContentIdentity{SHA256: hex.EncodeToString(sum[:]), Size: int64(len(content))},
+	})
+	require.NoError(t, err)
+	require.True(t, receipt.Created)
 }
 
 func TestOpenContentClassifiesPhysicalContentFailures(t *testing.T) {

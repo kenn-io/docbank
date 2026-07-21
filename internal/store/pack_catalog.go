@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -12,10 +13,11 @@ import (
 	"go.kenn.io/kit/packstore"
 )
 
-// PackCatalog adapts docbank's blobs membership table and packed metadata to
-// Kit's application-neutral physical storage engine. A blobs row grants read
-// authority; nodes, versions, and future external pins decide only whether GC
-// may remove that row.
+// PackCatalog adapts docbank's blob membership and physical metadata to Kit's
+// application-neutral storage engine. A blobs row establishes logical
+// membership; indexed loose state or a pack mapping separately grants read
+// authority. Nodes, versions, and future external pins decide whether GC may
+// remove logical membership.
 type PackCatalog struct{ store *Store }
 
 // NewPackCatalog constructs a packed-storage catalog over s.
@@ -96,13 +98,17 @@ func (c *PackRestoreCatalog) ReplaceRestoredPacks(
 
 func (c *PackCatalog) Resolve(ctx context.Context, hash packstore.Hash) (packstore.Location, error) {
 	row := c.store.db.QueryRowContext(ctx, `
-		SELECT i.pack_id, i.pack_offset, i.stored_len, i.raw_len, i.flags, i.crc32c
+		SELECT b.loose_encoding, b.loose_stored_size,
+		       i.pack_id, i.pack_offset, i.stored_len, i.raw_len, i.flags, i.crc32c
 		FROM blobs b
 		LEFT JOIN blob_pack_index i ON i.blob_hash = b.hash
 		WHERE b.hash = ?`, hash.String())
-	var packID sql.NullString
+	var looseEncoding, packID sql.NullString
+	var looseStored sql.NullInt64
 	var offset, stored, raw, flags, crc sql.NullInt64
-	if err := row.Scan(&packID, &offset, &stored, &raw, &flags, &crc); err != nil {
+	if err := row.Scan(
+		&looseEncoding, &looseStored, &packID, &offset, &stored, &raw, &flags, &crc,
+	); err != nil {
 		if err == sql.ErrNoRows {
 			return packstore.Location{}, nil
 		}
@@ -110,6 +116,11 @@ func (c *PackCatalog) Resolve(ctx context.Context, hash packstore.Hash) (packsto
 	}
 	location := packstore.Location{Member: true}
 	if !packID.Valid {
+		if !looseEncoding.Valid || !looseStored.Valid {
+			return packstore.Location{}, fmt.Errorf(
+				"resolving blob %s: %w", hash, ErrPhysicalAuthorityMissing,
+			)
+		}
 		return location, nil
 	}
 	if !offset.Valid || !stored.Valid || !raw.Valid || !flags.Valid || !crc.Valid ||
@@ -156,8 +167,9 @@ func (c *PackCatalog) ListReferences(ctx context.Context) (packstore.ReferenceIn
 
 func (c *PackCatalog) ListUnpacked(ctx context.Context) ([]packstore.Candidate, error) {
 	rows, err := c.store.db.QueryContext(ctx, `
-		SELECT b.hash, b.size FROM blobs b
+		SELECT b.hash, b.size, b.loose_encoding FROM blobs b
 		WHERE NOT EXISTS (SELECT 1 FROM blob_pack_index i WHERE i.blob_hash = b.hash)
+		  AND b.pack_eligible = 1 AND b.loose_encoding IS NOT NULL
 		ORDER BY b.hash`)
 	if err != nil {
 		return nil, fmt.Errorf("listing unpacked blobs: %w", err)
@@ -166,8 +178,9 @@ func (c *PackCatalog) ListUnpacked(ctx context.Context) ([]packstore.Candidate, 
 	var result []packstore.Candidate
 	for rows.Next() {
 		var original string
+		var encoding string
 		var size int64
-		if err := rows.Scan(&original, &size); err != nil {
+		if err := rows.Scan(&original, &size, &encoding); err != nil {
 			return nil, fmt.Errorf("scanning unpacked blob: %w", err)
 		}
 		hash, err := packstore.ParseHash(original)
@@ -176,8 +189,16 @@ func (c *PackCatalog) ListUnpacked(ctx context.Context) ([]packstore.Candidate, 
 				"hash", original, "error", err)
 			continue
 		}
+		path := hash.String()[:2] + "/" + hash.String()
+		switch encoding {
+		case looseEncodingRaw:
+		case looseEncodingZstd:
+			path += ".zst"
+		default:
+			return nil, fmt.Errorf("unpacked blob %s has invalid loose encoding %q", hash, encoding)
+		}
 		result = append(result, packstore.Candidate{Hash: hash,
-			OriginalHashes: []string{original}, Paths: []string{hash.String()[:2] + "/" + hash.String()}, Size: size})
+			OriginalHashes: []string{original}, Paths: []string{path}, Size: size})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("listing unpacked blobs: %w", err)
@@ -292,7 +313,10 @@ func writeAdoption(ctx context.Context, tx *sql.Tx, entry packstore.IndexEntry, 
 		if err != nil {
 			return fmt.Errorf("adopting packed blob %s: %w", entry.Hash, err)
 		}
-		return requireOneRow(result, "adopting packed blob "+entry.Hash.String())
+		if err := requireOneRow(result, "adopting packed blob "+entry.Hash.String()); err != nil {
+			return err
+		}
+		return clearLooseAuthority(ctx, tx, entry.Hash)
 	}
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO blob_pack_index
@@ -303,7 +327,67 @@ func writeAdoption(ctx context.Context, tx *sql.Tx, entry packstore.IndexEntry, 
 	if err != nil {
 		return fmt.Errorf("recording packed blob %s: %w", entry.Hash, err)
 	}
-	return requireOneRow(result, "recording packed blob "+entry.Hash.String())
+	if err := requireOneRow(result, "recording packed blob "+entry.Hash.String()); err != nil {
+		return err
+	}
+	return clearLooseAuthority(ctx, tx, entry.Hash)
+}
+
+func clearLooseAuthority(ctx context.Context, tx *sql.Tx, hash packstore.Hash) error {
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE blobs SET loose_encoding = NULL, loose_stored_size = NULL WHERE hash = ?`,
+		hash.String()); err != nil {
+		return fmt.Errorf("clearing loose authority for packed blob %s: %w", hash, err)
+	}
+	return nil
+}
+
+// RepairBlobAuthority atomically makes one already-verified loose receipt the
+// physical authority for an existing blob. Logical membership, nodes, content
+// versions, and immutable pack bytes are preserved; only the packed mapping is
+// retired so maintenance can reclaim its dead bytes later.
+func (s *Store) RepairBlobAuthority(
+	ctx context.Context, hash string, size int64, physical BlobPhysical,
+) (int64, error) {
+	storage, err := normalizeBlobPhysical(size, []BlobPhysical{physical})
+	if err != nil {
+		return 0, fmt.Errorf("recording repaired blob %s: %w", hash, err)
+	}
+	var references int64
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		var recordedSize int64
+		err := tx.QueryRowContext(ctx, `SELECT size FROM blobs WHERE hash = ?`, hash).Scan(&recordedSize)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("reading repaired blob %s: %w", hash, err)
+		}
+		if recordedSize != size {
+			return fmt.Errorf("blob %s: recorded size %d does not match repaired size %d",
+				hash, recordedSize, size)
+		}
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM content_versions WHERE blob_hash = ?`, hash,
+		).Scan(&references); err != nil {
+			return fmt.Errorf("counting repaired blob references %s: %w", hash, err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM blob_pack_index WHERE blob_hash = ?`, hash); err != nil {
+			return fmt.Errorf("retiring packed authority for repaired blob %s: %w", hash, err)
+		}
+		result, err := tx.ExecContext(ctx, `
+			UPDATE blobs
+			SET loose_encoding = ?, loose_stored_size = ?, pack_eligible = ?
+			WHERE hash = ?`, storage.Encoding, storage.StoredBytes, storage.PackEligible, hash)
+		if err != nil {
+			return fmt.Errorf("recording loose authority for repaired blob %s: %w", hash, err)
+		}
+		return requireOneRow(result, "recording repaired blob "+hash)
+	})
+	if err != nil {
+		return 0, err
+	}
+	return references, nil
 }
 
 func (c *PackCatalog) DeletePackRecord(ctx context.Context, packID string) error {
@@ -489,6 +573,19 @@ func (c *PackCatalog) DeleteEmptyPackRecord(ctx context.Context, packID string) 
 
 func (c *PackCatalog) ClearPackMetadata(ctx context.Context) error {
 	return c.store.withStorageTx(ctx, func(tx *sql.Tx) error {
+		// Unpack has already restored every mapped object as canonical raw
+		// loose content. Re-establish that physical authority before retiring
+		// the pack catalog so status and later pack passes are immediately
+		// truthful without requiring a reopen migration.
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE blobs
+			SET loose_encoding = ?, loose_stored_size = size,
+			    pack_eligible = CASE WHEN size <= ? THEN 1 ELSE 0 END
+			WHERE EXISTS (
+				SELECT 1 FROM blob_pack_index i WHERE i.blob_hash = blobs.hash
+			)`, looseEncodingRaw, maxPackEligibleBytes); err != nil {
+			return fmt.Errorf("restoring loose authority for unpacked blobs: %w", err)
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM blob_pack_index`); err != nil {
 			return fmt.Errorf("clearing packed blob mappings: %w", err)
 		}

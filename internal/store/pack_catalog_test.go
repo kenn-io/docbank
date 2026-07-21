@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
@@ -16,6 +17,196 @@ func TestPackCatalogContract(t *testing.T) {
 		Now:       time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC),
 		NewPackID: pack.NewPackID,
 	})
+}
+
+func TestPackAdoptionClearsLooseAuthority(t *testing.T) {
+	s := newTestStore(t)
+	hash, err := packstore.ParseHash("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	require.NoError(t, err)
+	_, err = s.CreateFile(t.Context(), s.RootID(), "compressed.txt", hash.String(), 20, "text/plain",
+		BlobPhysical{Encoding: "zstd", StoredBytes: 9, PackEligible: true})
+	require.NoError(t, err)
+
+	packID := pack.NewPackID()
+	record := packstore.PackRecord{
+		PackID: packID, EntryCount: 1, StoredBytes: 32,
+		CreatedAt: time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC),
+	}
+	entry := packstore.IndexEntry{
+		Hash: hash, PackID: packID, Offset: pack.MinEntryOffset,
+		StoredLen: 9, RawLen: 20,
+	}
+	require.NoError(t, NewPackCatalog(s).RecordPack(t.Context(), record, []packstore.Adoption{{
+		Entry: entry, OriginalHashes: []string{hash.String()},
+	}}))
+
+	physical, err := s.PhysicalContent(t.Context(), hash.String())
+	require.NoError(t, err)
+	assert.Equal(t, PhysicalContent{
+		Kind: "packed", Encoding: "raw", LogicalBytes: 20, StoredBytes: 9, PackEligible: true,
+	}, physical)
+	var encoding, stored any
+	require.NoError(t, s.db.QueryRow(`SELECT loose_encoding, loose_stored_size FROM blobs WHERE hash = ?`,
+		hash.String()).Scan(&encoding, &stored))
+	assert.Nil(t, encoding)
+	assert.Nil(t, stored)
+
+	// A later logical reference through the legacy raw-default API must not
+	// overwrite the existing packed authority.
+	_, err = s.CreateFile(t.Context(), s.RootID(), "same-content.txt", hash.String(), 20, "text/plain")
+	require.NoError(t, err)
+	after, err := s.PhysicalContent(t.Context(), hash.String())
+	require.NoError(t, err)
+	assert.Equal(t, physical, after)
+}
+
+func TestLogicalWritesRejectMissingPhysicalAuthority(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	missingHash, err := packstore.ParseHash(fakeHash("deadbeef"))
+	require.NoError(t, err)
+	original, err := s.CreateFile(ctx, s.RootID(), "original.txt", missingHash.String(), 20, "text/plain",
+		BlobPhysical{Encoding: "raw", StoredBytes: 20, PackEligible: true})
+	require.NoError(t, err)
+
+	packID := pack.NewPackID()
+	require.NoError(t, NewPackCatalog(s).RecordPack(ctx, packstore.PackRecord{
+		PackID: packID, EntryCount: 1, StoredBytes: 32,
+		CreatedAt: time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC),
+	}, []packstore.Adoption{{Entry: packstore.IndexEntry{
+		Hash: missingHash, PackID: packID, Offset: pack.MinEntryOffset,
+		StoredLen: 9, RawLen: 20,
+	}}}))
+	require.NoError(t, NewPackCatalog(s).DeleteIndexEntry(ctx, missingHash))
+	_, err = s.PhysicalContent(ctx, missingHash.String())
+	require.ErrorIs(t, err, ErrPhysicalAuthorityMissing)
+	_, err = NewPackCatalog(s).Resolve(ctx, missingHash)
+	require.ErrorIs(t, err, ErrPhysicalAuthorityMissing)
+
+	var nodesBefore, versionsBefore int64
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM nodes`).Scan(&nodesBefore))
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM content_versions`).Scan(&versionsBefore))
+	_, err = s.CreateFile(ctx, s.RootID(), "duplicate.txt", missingHash.String(), 20, "text/plain",
+		BlobPhysical{Encoding: "raw", StoredBytes: 20, PackEligible: true})
+	require.ErrorIs(t, err, ErrPhysicalAuthorityMissing)
+	var nodesAfter, versionsAfter int64
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM nodes`).Scan(&nodesAfter))
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM content_versions`).Scan(&versionsAfter))
+	assert.Equal(t, nodesBefore, nodesAfter)
+	assert.Equal(t, versionsBefore, versionsAfter)
+
+	targetHash := fakeHash("replacement-target")
+	target, err := s.CreateFile(ctx, s.RootID(), "target.txt", targetHash, 7, "text/plain",
+		BlobPhysical{Encoding: "raw", StoredBytes: 7, PackEligible: true})
+	require.NoError(t, err)
+	_, _, err = s.ReplaceContent(ctx, target.ID, target.Revision, missingHash.String(), 20, "text/plain",
+		BlobPhysical{Encoding: "raw", StoredBytes: 20, PackEligible: true})
+	require.ErrorIs(t, err, ErrPhysicalAuthorityMissing)
+	unchanged, err := s.NodeByID(ctx, target.ID)
+	require.NoError(t, err)
+	assert.Equal(t, target.Revision, unchanged.Revision)
+	assert.Equal(t, targetHash, unchanged.BlobHash)
+
+	// Existing logical references remain intact for the explicit repair path.
+	stillPresent, err := s.NodeByID(ctx, original.ID)
+	require.NoError(t, err)
+	assert.Equal(t, missingHash.String(), stillPresent.BlobHash)
+}
+
+func TestRevertRejectsMissingPhysicalAuthority(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	oldHash, err := packstore.ParseHash(fakeHash("cab005e"))
+	require.NoError(t, err)
+	file, err := s.CreateFile(ctx, s.RootID(), "document.txt", oldHash.String(), 20, "text/plain")
+	require.NoError(t, err)
+	oldVersionID := file.CurrentVersionID
+	file, _, err = s.ReplaceContent(
+		ctx, file.ID, file.Revision, fakeHash("face"), 9, "text/plain",
+	)
+	require.NoError(t, err)
+
+	packID := pack.NewPackID()
+	require.NoError(t, NewPackCatalog(s).RecordPack(ctx, packstore.PackRecord{
+		PackID: packID, EntryCount: 1, StoredBytes: 32,
+		CreatedAt: time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC),
+	}, []packstore.Adoption{{Entry: packstore.IndexEntry{
+		Hash: oldHash, PackID: packID, Offset: pack.MinEntryOffset,
+		StoredLen: 9, RawLen: 20,
+	}}}))
+	require.NoError(t, NewPackCatalog(s).DeleteIndexEntry(ctx, oldHash))
+
+	revertedNode, revertedVersion, revertedSource, err := s.RevertContent(
+		ctx, file.ID, file.Revision, oldVersionID,
+	)
+	require.ErrorIs(t, err, ErrPhysicalAuthorityMissing)
+	assert.Empty(t, revertedNode.Kind)
+	assert.Empty(t, revertedVersion.ID)
+	assert.Empty(t, revertedSource.ID)
+	unchanged, err := s.NodeByID(ctx, file.ID)
+	require.NoError(t, err)
+	assert.Equal(t, file.Revision, unchanged.Revision)
+	assert.Equal(t, file.CurrentVersionID, unchanged.CurrentVersionID)
+}
+
+func TestRepairBlobAuthorityPreservesReferences(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	hash := fakeHash("a11ce")
+	replacementHash := fakeHash("b0b")
+	first, err := s.CreateFile(ctx, s.RootID(), "first.txt", hash, 20, "text/plain",
+		BlobPhysical{Encoding: "raw", StoredBytes: 20, PackEligible: true})
+	require.NoError(t, err)
+	_, _, err = s.ReplaceContent(ctx, first.ID, first.Revision, replacementHash, 9, "text/plain",
+		BlobPhysical{Encoding: "raw", StoredBytes: 9, PackEligible: true})
+	require.NoError(t, err)
+	_, err = s.CreateFile(ctx, s.RootID(), "second.txt", hash, 20, "text/plain")
+	require.NoError(t, err)
+
+	parsed, err := packstore.ParseHash(hash)
+	require.NoError(t, err)
+	packID := pack.NewPackID()
+	require.NoError(t, NewPackCatalog(s).RecordPack(ctx, packstore.PackRecord{
+		PackID: packID, EntryCount: 1, StoredBytes: 32,
+		CreatedAt: time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC),
+	}, []packstore.Adoption{{Entry: packstore.IndexEntry{
+		Hash: parsed, PackID: packID, Offset: pack.MinEntryOffset,
+		StoredLen: 9, RawLen: 20,
+	}}}))
+
+	_, err = s.RepairBlobAuthority(ctx, hash, 21,
+		BlobPhysical{Encoding: "zstd", StoredBytes: 8, PackEligible: true})
+	require.Error(t, err)
+	physical, err := s.PhysicalContent(ctx, hash)
+	require.NoError(t, err)
+	assert.Equal(t, "packed", physical.Kind)
+
+	references, err := s.RepairBlobAuthority(ctx, hash, 20,
+		BlobPhysical{Encoding: "zstd", StoredBytes: 8, PackEligible: true})
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), references)
+	physical, err = s.PhysicalContent(ctx, hash)
+	require.NoError(t, err)
+	assert.Equal(t, PhysicalContent{
+		Kind: "loose", Encoding: "zstd", LogicalBytes: 20,
+		StoredBytes: 8, PackEligible: true,
+	}, physical)
+
+	var versions int64
+	require.NoError(t, s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM content_versions WHERE blob_hash = ?`, hash).Scan(&versions))
+	assert.Equal(t, int64(2), versions)
+	var mappings int64
+	require.NoError(t, s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM blob_pack_index WHERE blob_hash = ?`, hash).Scan(&mappings))
+	assert.Zero(t, mappings)
+}
+
+func TestRepairBlobAuthorityRequiresExistingMembership(t *testing.T) {
+	s := newTestStore(t)
+	_, err := s.RepairBlobAuthority(t.Context(), fakeHash("missing"), 10,
+		BlobPhysical{Encoding: "raw", StoredBytes: 10, PackEligible: true})
+	require.ErrorIs(t, err, ErrNotFound)
 }
 
 type docbankPackHarness struct {
@@ -33,7 +224,9 @@ func (h *docbankPackHarness) Catalog() packstore.Catalog { return NewPackCatalog
 func (h *docbankPackHarness) SetMember(hash packstore.Hash, member bool) {
 	h.t.Helper()
 	if member {
-		_, err := h.store.db.Exec(`INSERT OR IGNORE INTO blobs (hash, size, created_at) VALUES (?, 13, ?)`,
+		_, err := h.store.db.Exec(`INSERT OR IGNORE INTO blobs
+			(hash, size, created_at, loose_encoding, loose_stored_size, pack_eligible)
+			VALUES (?, 13, ?, 'raw', 13, 1)`,
 			hash.String(), nowRFC3339())
 		require.NoError(h.t, err)
 		return
@@ -44,7 +237,9 @@ func (h *docbankPackHarness) SetMember(hash packstore.Hash, member bool) {
 
 func (h *docbankPackHarness) SetCandidate(candidate packstore.Candidate) {
 	h.t.Helper()
-	_, err := h.store.db.Exec(`UPDATE blobs SET size = ? WHERE hash = ?`, candidate.Size, candidate.Hash.String())
+	_, err := h.store.db.Exec(`UPDATE blobs SET size = ?, loose_stored_size = ?,
+		pack_eligible = CASE WHEN ? <= ? THEN 1 ELSE 0 END WHERE hash = ?`,
+		candidate.Size, candidate.Size, candidate.Size, maxPackEligibleBytes, candidate.Hash.String())
 	require.NoError(h.t, err)
 }
 

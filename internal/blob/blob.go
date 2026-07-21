@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
@@ -27,6 +28,12 @@ const (
 	// MaxPackedBlobBytes is docbank's policy for packing, packed reads, and
 	// packed restore. Larger admitted objects remain authoritative loose blobs.
 	MaxPackedBlobBytes int64 = 64 << 20
+
+	// ManagedLooseCompressionMinBytes and ManagedLooseCompressionMinSavingsPercent
+	// are the standalone daemon's conservative loose-storage policy. Embedded
+	// callers remain explicit: the public Config zero value keeps raw storage.
+	ManagedLooseCompressionMinBytes          int64 = 4 << 10
+	ManagedLooseCompressionMinSavingsPercent       = 10
 )
 
 // StorageLimits returns Kit's packed-read and maintenance limits with
@@ -48,10 +55,79 @@ type Store struct {
 	reader      *packstore.Store
 	maintainer  *packstore.Maintainer
 	coordinator *packstore.Coordinator
+	compression packstore.LooseCompressionOptions
+}
+
+// LooseCompressionOptions is docbank's application-neutral loose storage
+// policy. The zero value preserves the legacy raw representation.
+type LooseCompressionOptions struct {
+	Enabled           bool
+	MinBytes          int64
+	MinSavingsPercent int
+}
+
+// Options controls physical blob storage without exposing Kit policy types to
+// docbank's public package.
+type Options struct {
+	LooseCompression LooseCompressionOptions
+}
+
+// ManagedOptions returns the standalone daemon's physical storage policy.
+func ManagedOptions() Options {
+	return Options{LooseCompression: LooseCompressionOptions{
+		Enabled:           true,
+		MinBytes:          ManagedLooseCompressionMinBytes,
+		MinSavingsPercent: ManagedLooseCompressionMinSavingsPercent,
+	}}
+}
+
+// ValidateOptions checks physical policy before a caller acquires vault
+// ownership or creates storage state.
+func ValidateOptions(opts Options) error {
+	compression := opts.LooseCompression
+	if compression.MinBytes < 0 {
+		return errors.New("loose compression minimum bytes must not be negative")
+	}
+	if compression.MinSavingsPercent < 0 || compression.MinSavingsPercent > 100 {
+		return errors.New("loose compression minimum savings percent must be between 0 and 100")
+	}
+	return nil
+}
+
+// WriteReceipt describes the physical result of one logical blob write.
+type WriteReceipt struct {
+	Hash         string
+	Size         int64
+	Encoding     packstore.LooseEncoding
+	StoredSize   int64
+	Created      bool
+	PackEligible bool
+}
+
+// EncodingName returns the stable application-facing name for the published
+// loose representation.
+func (r WriteReceipt) EncodingName() (string, error) {
+	switch r.Encoding {
+	case packstore.LooseEncodingRaw:
+		return "raw", nil
+	case packstore.LooseEncodingZstd:
+		return "zstd", nil
+	default:
+		return "", fmt.Errorf("unknown loose encoding %d", r.Encoding)
+	}
 }
 
 // New constructs the daemon-owned store over catalog membership and blobsDir.
 func New(catalog packstore.Catalog, blobsDir string) (*Store, error) {
+	return NewWithOptions(catalog, blobsDir, Options{})
+}
+
+// NewWithOptions constructs the daemon-owned store with explicit physical
+// loose-storage policy.
+func NewWithOptions(catalog packstore.Catalog, blobsDir string, opts Options) (*Store, error) {
+	if err := ValidateOptions(opts); err != nil {
+		return nil, err
+	}
 	layout, err := newLayout(blobsDir)
 	if err != nil {
 		return nil, err
@@ -71,7 +147,12 @@ func New(catalog packstore.Catalog, blobsDir string) (*Store, error) {
 	}
 	return &Store{dir: blobsDir, layout: layout, catalog: catalog, loose: loose,
 		reader:     maintainer.Store(),
-		maintainer: maintainer, coordinator: coordinator}, nil
+		maintainer: maintainer, coordinator: coordinator,
+		compression: packstore.LooseCompressionOptions{
+			Enabled:           opts.LooseCompression.Enabled,
+			MinBytes:          opts.LooseCompression.MinBytes,
+			MinSavingsPercent: opts.LooseCompression.MinSavingsPercent,
+		}}, nil
 }
 
 // StorageStats describes the daemon's current physical storage inventory.
@@ -115,9 +196,14 @@ func (s *Store) Stats(ctx context.Context) (StorageStats, error) {
 	return stats, nil
 }
 
-// newReaderStore constructs a mixed reader without a maintenance catalog. It
-// is used by this package's focused physical-storage tests.
-func newReaderStore(resolver packstore.Resolver, blobsDir string) (*Store, error) {
+// newReaderStoreWithOptions constructs a mixed reader without a maintenance
+// catalog. It is used by this package's focused physical-storage tests.
+func newReaderStoreWithOptions(
+	resolver packstore.Resolver, blobsDir string, opts Options,
+) (*Store, error) {
+	if err := ValidateOptions(opts); err != nil {
+		return nil, err
+	}
 	layout, err := newLayout(blobsDir)
 	if err != nil {
 		return nil, err
@@ -130,7 +216,14 @@ func newReaderStore(resolver packstore.Resolver, blobsDir string) (*Store, error
 	if err != nil {
 		return nil, fmt.Errorf("creating test mixed blob reader: %w", err)
 	}
-	return &Store{dir: blobsDir, layout: layout, loose: loose, reader: reader}, nil
+	return &Store{
+		dir: blobsDir, layout: layout, loose: loose, reader: reader,
+		compression: packstore.LooseCompressionOptions{
+			Enabled:           opts.LooseCompression.Enabled,
+			MinBytes:          opts.LooseCompression.MinBytes,
+			MinSavingsPercent: opts.LooseCompression.MinSavingsPercent,
+		},
+	}, nil
 }
 
 func newLayout(blobsDir string) (packstore.Layout, error) {
@@ -150,6 +243,14 @@ func (s *Store) path(hash string) string {
 		return ""
 	}
 	return s.layout.LoosePath(parsed)
+}
+
+func (s *Store) compressedPath(hash string) string {
+	parsed, err := packstore.ParseHash(hash)
+	if err != nil {
+		return ""
+	}
+	return s.layout.CompressedLoosePath(parsed)
 }
 
 func validHash(hash string) bool {
@@ -184,15 +285,81 @@ func (s *Store) Write(r io.Reader) (string, int64, error) {
 
 // WriteContext is Write with cancellation.
 func (s *Store) WriteContext(ctx context.Context, r io.Reader) (string, int64, error) {
+	receipt, err := s.WriteDetailedContext(ctx, r)
+	return receipt.Hash, receipt.Size, err
+}
+
+// WriteDetailedContext writes one blob and reports its logical and physical
+// representation. The caller holds a mutation lease across the subsequent
+// metadata transaction.
+func (s *Store) WriteDetailedContext(ctx context.Context, r io.Reader) (WriteReceipt, error) {
 	result, err := s.loose.Write(ctx, r, packstore.WriteOptions{
-		Durability: packstore.DurablePublication,
-		Dedup:      packstore.VerifyTypeAndSize,
-		MaxBytes:   MaxIngestBytes,
+		Durability:  packstore.DurablePublication,
+		Dedup:       packstore.VerifyTypeAndSize,
+		MaxBytes:    MaxIngestBytes,
+		Compression: s.compression,
 	})
 	if err != nil {
-		return "", 0, fmt.Errorf("writing blob: %w", err)
+		return WriteReceipt{}, fmt.Errorf("writing blob: %w", err)
 	}
-	return result.Hash.String(), result.Size, nil
+	return writeReceipt(result), nil
+}
+
+// RepairContext verifies trusted bytes against one required logical identity
+// before replacing its canonical loose representation. Catalog membership and
+// packed authority remain unchanged until the caller records this receipt.
+func (s *Store) RepairContext(
+	ctx context.Context, hash string, size int64, trusted io.Reader,
+) (WriteReceipt, error) {
+	return s.repairContext(ctx, hash, size, trusted, s.compression)
+}
+
+// RepairContextWithEncoding repairs a loose object without changing its
+// canonical representation. Preserving an already-authoritative loose name
+// keeps the catalog truthful if the process stops after physical publication
+// but before the caller's metadata transaction commits.
+func (s *Store) RepairContextWithEncoding(
+	ctx context.Context, hash string, size int64, trusted io.Reader,
+	encoding packstore.LooseEncoding,
+) (WriteReceipt, error) {
+	var compression packstore.LooseCompressionOptions
+	switch encoding {
+	case packstore.LooseEncodingRaw:
+	case packstore.LooseEncodingZstd:
+		compression.Enabled = true
+	default:
+		return WriteReceipt{}, fmt.Errorf("repairing blob %s: unknown loose encoding %d", hash, encoding)
+	}
+	return s.repairContext(ctx, hash, size, trusted, compression)
+}
+
+func (s *Store) repairContext(
+	ctx context.Context, hash string, size int64, trusted io.Reader,
+	compression packstore.LooseCompressionOptions,
+) (WriteReceipt, error) {
+	parsed, err := packstore.ParseHash(hash)
+	if err != nil {
+		return WriteReceipt{}, fmt.Errorf("blob hash %q: %w", hash, ErrInvalidHash)
+	}
+	result, err := s.loose.Repair(ctx, trusted, packstore.LooseIdentity{
+		Hash: parsed, Size: size,
+	}, packstore.RepairOptions{
+		Durability:  packstore.DurablePublication,
+		Compression: compression,
+		MaxBytes:    MaxIngestBytes,
+	})
+	if err != nil {
+		return WriteReceipt{}, fmt.Errorf("repairing blob %s: %w", hash, err)
+	}
+	return writeReceipt(result), nil
+}
+
+func writeReceipt(result packstore.WriteResult) WriteReceipt {
+	return WriteReceipt{
+		Hash: result.Hash.String(), Size: result.Size,
+		Encoding: result.Encoding, StoredSize: result.StoredSize,
+		Created: result.Created, PackEligible: result.Size <= MaxPackedBlobBytes,
+	}
 }
 
 // Open returns catalog-authorized loose or packed content.
@@ -280,14 +447,22 @@ func (s *Store) List() (map[string]int64, error) {
 		}
 		for _, entry := range entries {
 			name := entry.Name()
-			if !validHash(name) || name[:2] != shard.Name() || !entry.Type().IsRegular() {
+			isCompressed := strings.HasSuffix(name, ".zst")
+			logicalName := name
+			if isCompressed {
+				logicalName = strings.TrimSuffix(name, ".zst")
+			}
+			if !validHash(logicalName) || logicalName[:2] != shard.Name() || !entry.Type().IsRegular() {
 				continue
 			}
 			info, err := entry.Info()
 			if err != nil {
-				return nil, fmt.Errorf("reading blob %s: %w", name, err)
+				return nil, fmt.Errorf("reading blob %s: %w", logicalName, err)
 			}
-			out[name] = info.Size()
+			// Interrupted replacement or repair can temporarily leave both
+			// representations. GC removes both, so report their complete
+			// physical footprint under the one logical hash.
+			out[logicalName] += info.Size()
 		}
 	}
 	return out, nil

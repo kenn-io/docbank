@@ -3,7 +3,11 @@ package ingest
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -13,6 +17,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
@@ -20,16 +25,41 @@ import (
 
 func newTestIngester(t *testing.T) *Ingester {
 	t.Helper()
+	return newTestIngesterWithOptions(t, blob.Options{})
+}
+
+func newTestIngesterWithOptions(t *testing.T, options blob.Options) *Ingester {
+	t.Helper()
 	home := t.TempDir()
 	blobsDir := filepath.Join(home, "blobs")
 	require.NoError(t, os.MkdirAll(filepath.Join(blobsDir, "tmp"), 0o700))
 	s, err := store.Open(filepath.Join(home, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
-	blobs, err := blob.New(store.NewPackCatalog(s), blobsDir)
+	blobs, err := blob.NewWithOptions(store.NewPackCatalog(s), blobsDir, options)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = blobs.Close() })
 	return &Ingester{Store: s, Blobs: blobs}
+}
+
+func TestAddRecordsCompressedLooseAuthority(t *testing.T) {
+	ing := newTestIngesterWithOptions(t, blob.ManagedOptions())
+	content := strings.Repeat("compressible local document\n", 512)
+	src := writeTree(t, map[string]string{"document.txt": content})
+
+	report, err := ing.AddPaths(
+		t.Context(), []string{filepath.Join(src, "document.txt")}, "/inbox",
+	)
+	require.NoError(t, err)
+	require.Equal(t, 1, report.Added)
+	node, err := ing.Store.NodeByPath(t.Context(), "/inbox/document.txt")
+	require.NoError(t, err)
+	physical, err := ing.Store.PhysicalContent(t.Context(), node.BlobHash)
+	require.NoError(t, err)
+	assert.Equal(t, "loose", physical.Kind)
+	assert.Equal(t, "zstd", physical.Encoding)
+	assert.Equal(t, int64(len(content)), physical.LogicalBytes)
+	assert.Less(t, physical.StoredBytes, physical.LogicalBytes)
 }
 
 // writeTree creates a synthetic source tree and returns its root.
@@ -276,6 +306,155 @@ func TestAddRerunConverges(t *testing.T) {
 	kids, err := ing.Store.Children(ctx, mustNode(t, ing, "/inbox").ID)
 	require.NoError(t, err)
 	assert.Len(t, kids, 2) // no duplicates
+}
+
+func TestPackedDuplicateIngestRemovesLooseCopy(t *testing.T) {
+	ing := newTestIngesterWithOptions(t, blob.ManagedOptions())
+	content := strings.Repeat("packed duplicate content\n", 512)
+	src := writeTree(t, map[string]string{"document.txt": content})
+	path := filepath.Join(src, "document.txt")
+
+	first, err := ing.AddPaths(t.Context(), []string{path}, "/inbox")
+	require.NoError(t, err)
+	require.Equal(t, 1, first.Added)
+	packed, err := ing.Blobs.Maintainer().Pack(t.Context(), packstore.PackOptions{})
+	require.NoError(t, err)
+	require.Equal(t, 1, packed.BlobsPacked)
+	loose, err := ing.Blobs.List()
+	require.NoError(t, err)
+	require.Empty(t, loose)
+
+	second, err := ing.AddPaths(t.Context(), []string{path}, "/inbox")
+	require.NoError(t, err)
+	assert.Equal(t, 1, second.Skipped)
+	loose, err = ing.Blobs.List()
+	require.NoError(t, err)
+	assert.Empty(t, loose)
+}
+
+func TestIdempotentUploadRejectsMissingPhysicalAuthority(t *testing.T) {
+	ing := newTestIngesterWithOptions(t, blob.ManagedOptions())
+	content := []byte(strings.Repeat("missing packed authority\n", 512))
+	sum := sha256.Sum256(content)
+	hash := hex.EncodeToString(sum[:])
+	prepared, err := ing.PrepareUpload(
+		t.Context(), ing.Store.RootID(), "document.txt", "text/plain",
+		bytes.NewReader(content), hash, int64(len(content)),
+	)
+	require.NoError(t, err)
+	first, err := prepared.Commit(t.Context())
+	require.NoError(t, err)
+	packed, err := ing.Blobs.Maintainer().Pack(t.Context(), packstore.PackOptions{})
+	require.NoError(t, err)
+	require.Equal(t, 1, packed.BlobsPacked)
+	parsed, err := packstore.ParseHash(hash)
+	require.NoError(t, err)
+	require.NoError(t, store.NewPackCatalog(ing.Store).DeleteIndexEntry(t.Context(), parsed))
+
+	retry, err := ing.PrepareUpload(
+		t.Context(), ing.Store.RootID(), "document.txt", "text/plain",
+		bytes.NewReader(content), hash, int64(len(content)),
+	)
+	require.NoError(t, err)
+	_, err = retry.Commit(t.Context())
+	require.ErrorIs(t, err, store.ErrPhysicalAuthorityMissing)
+	unchanged, err := ing.Store.NodeByID(t.Context(), first.Node.ID)
+	require.NoError(t, err)
+	assert.Equal(t, first.Node.Revision, unchanged.Revision)
+}
+
+func TestRejectedUploadPreservesAuthorityFreeAndRemovesPackedDuplicateLooseFiles(t *testing.T) {
+	content := []byte(strings.Repeat("rejected upload content\n", 512))
+	sum := sha256.Sum256(content)
+	hash := hex.EncodeToString(sum[:])
+	wrong := strings.Repeat("0", 64)
+
+	t.Run("authority free waits for GC", func(t *testing.T) {
+		ing := newTestIngesterWithOptions(t, blob.ManagedOptions())
+		_, err := ing.PrepareUpload(
+			t.Context(), ing.Store.RootID(), "rejected.txt", "text/plain",
+			bytes.NewReader(content), wrong, int64(len(content)),
+		)
+		require.ErrorIs(t, err, ErrUploadDigestMismatch)
+		loose, err := ing.Blobs.List()
+		require.NoError(t, err)
+		assert.Len(t, loose, 1)
+		assert.Contains(t, loose, hash)
+	})
+
+	t.Run("prepared envelope abandoned", func(t *testing.T) {
+		ing := newTestIngesterWithOptions(t, blob.ManagedOptions())
+		prepared, err := ing.PrepareUpload(
+			t.Context(), ing.Store.RootID(), "abandoned.txt", "text/plain",
+			bytes.NewReader(content), hash, int64(len(content)),
+		)
+		require.NoError(t, err)
+		require.NoError(t, prepared.Discard())
+		loose, err := ing.Blobs.List()
+		require.NoError(t, err)
+		assert.Len(t, loose, 1)
+		assert.Contains(t, loose, hash)
+	})
+
+	t.Run("packed duplicate", func(t *testing.T) {
+		ing := newTestIngesterWithOptions(t, blob.ManagedOptions())
+		prepared, err := ing.PrepareUpload(
+			t.Context(), ing.Store.RootID(), "packed.txt", "text/plain",
+			bytes.NewReader(content), hash, int64(len(content)),
+		)
+		require.NoError(t, err)
+		_, err = prepared.Commit(t.Context())
+		require.NoError(t, err)
+		packed, err := ing.Blobs.Maintainer().Pack(t.Context(), packstore.PackOptions{})
+		require.NoError(t, err)
+		require.Equal(t, 1, packed.BlobsPacked)
+
+		_, err = ing.PrepareUpload(
+			t.Context(), ing.Store.RootID(), "rejected.txt", "text/plain",
+			bytes.NewReader(content), wrong, int64(len(content)),
+		)
+		require.ErrorIs(t, err, ErrUploadDigestMismatch)
+		loose, err := ing.Blobs.List()
+		require.NoError(t, err)
+		assert.Empty(t, loose)
+	})
+}
+
+func TestRejectedUploadCannotDeleteAnotherPreparedUpload(t *testing.T) {
+	ing := newTestIngesterWithOptions(t, blob.ManagedOptions())
+	content := []byte(strings.Repeat("shared in-flight content\n", 512))
+	sum := sha256.Sum256(content)
+	hash := hex.EncodeToString(sum[:])
+
+	valid, err := ing.PrepareUpload(
+		t.Context(), ing.Store.RootID(), "valid.txt", "text/plain",
+		bytes.NewReader(content), hash, int64(len(content)),
+	)
+	require.NoError(t, err)
+	_, err = ing.PrepareUpload(
+		t.Context(), ing.Store.RootID(), "rejected.txt", "text/plain",
+		bytes.NewReader(content), strings.Repeat("0", 64), int64(len(content)),
+	)
+	require.ErrorIs(t, err, ErrUploadDigestMismatch)
+
+	result, err := valid.Commit(t.Context())
+	require.NoError(t, err)
+	assert.True(t, result.Added)
+	assert.Equal(t, hash, result.Node.BlobHash)
+	contentReader, err := ing.Blobs.Open(hash)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, contentReader.Close()) }()
+	got, err := io.ReadAll(contentReader)
+	require.NoError(t, err)
+	assert.Equal(t, content, got)
+}
+
+func TestMutationCleanupNeverMasksCommittedSuccess(t *testing.T) {
+	cleanupErr := errors.New("cleanup failed")
+	require.NoError(t, mutationCleanupResult(nil, cleanupErr))
+	mutationErr := errors.New("mutation failed")
+	require.ErrorIs(t, mutationCleanupResult(mutationErr, cleanupErr), mutationErr)
+	assert.ErrorIs(t, mutationCleanupResult(mutationErr, cleanupErr), cleanupErr)
 }
 
 func mustNode(t *testing.T, ing *Ingester, path string) store.Node {

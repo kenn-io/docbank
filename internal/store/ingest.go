@@ -189,23 +189,24 @@ func sameOriginTx(tx *sql.Tx, nodeID int64, name string, allowUnknown bool) (boo
 // IngestFile imports one already-durable blob as a node under parentID,
 // applying the idempotency rule and recording provenance. Returns
 // added=false when the content is already present under a candidate name.
-func (s *Store) IngestFile(ctx context.Context, run IngestRun, parentID int64, name, blobHash string, size int64, mimeType, originalPath, originalMtime string) (Node, bool, error) {
+func (s *Store) IngestFile(ctx context.Context, run IngestRun, parentID int64, name, blobHash string, size int64, mimeType, originalPath, originalMtime string, physical ...BlobPhysical) (Node, bool, error) {
 	return s.ingestFile(ctx, run, parentID, name, blobHash, size, mimeType,
-		originalPath, originalMtime, false)
+		originalPath, originalMtime, false, physical...)
 }
 
 // IngestFileExact imports one already-durable blob under exactly name. Unlike
 // bulk migration it never suffixes or adopts an existing same-content node;
 // a watched source needs its configured source identity to remain one-to-one.
-func (s *Store) IngestFileExact(ctx context.Context, run IngestRun, parentID int64, name, blobHash string, size int64, mimeType, originalPath, originalMtime string) (Node, error) {
+func (s *Store) IngestFileExact(ctx context.Context, run IngestRun, parentID int64, name, blobHash string, size int64, mimeType, originalPath, originalMtime string, physical ...BlobPhysical) (Node, error) {
 	node, _, err := s.ingestFile(ctx, run, parentID, name, blobHash, size, mimeType,
-		originalPath, originalMtime, true)
+		originalPath, originalMtime, true, physical...)
 	return node, err
 }
 
 func (s *Store) ingestFile(
 	ctx context.Context, run IngestRun, parentID int64, name, blobHash string,
 	size int64, mimeType, originalPath, originalMtime string, exact bool,
+	physical ...BlobPhysical,
 ) (Node, bool, error) {
 	name, err := NormalizeName(name)
 	if err != nil {
@@ -252,6 +253,9 @@ func (s *Store) ingestFile(
 				return err
 			}
 			if skip {
+				if err := s.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
+					return fmt.Errorf("reconciling idempotent ingest content: %w", err)
+				}
 				created, err = scanNode(tx.QueryRow(
 					`SELECT `+nodeCols+` FROM `+nodeFrom+` WHERE n.id = ?`, existingID))
 				if err != nil {
@@ -289,7 +293,7 @@ func (s *Store) ingestFile(
 		}
 		var version ContentVersion
 		created, version, err = s.createFileWithOperationTx(
-			tx, parentID, finalName, blobHash, size, mimeType, operation,
+			tx, parentID, finalName, blobHash, size, mimeType, operation, physical...,
 		)
 		if err != nil {
 			return err

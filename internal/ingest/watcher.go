@@ -36,8 +36,7 @@ type WatchResult struct {
 func (ing *Ingester) ingestWatchedFile(
 	ctx context.Context, watchName, destination, sourceRef string,
 	expected localFileFingerprint, open localFileOpener,
-) (WatchResult, error) {
-	var result WatchResult
+) (result WatchResult, retErr error) {
 	sourceRef = filepath.ToSlash(sourceRef)
 	if sourceRef == "." || sourceRef == "" || path.IsAbs(sourceRef) ||
 		sourceRef == ".." || strings.HasPrefix(sourceRef, "../") ||
@@ -55,9 +54,12 @@ func (ing *Ingester) ingestWatchedFile(
 	if err != nil {
 		return result, err
 	}
+	defer func() {
+		retErr = mutationCleanupResult(retErr, ing.cleanupLoose(content.hash))
+	}()
 	existing, _, changed, err := ing.Store.SyncWatchedContent(
 		ctx, watchName, sourceRef,
-		content.hash, content.size, content.mimeType,
+		content.hash, content.size, content.mimeType, content.physical,
 	)
 	switch {
 	case err == nil:
@@ -83,7 +85,7 @@ func (ing *Ingester) ingestWatchedFile(
 	}
 	result.Node, err = ing.Store.IngestFileExact(
 		ctx, run, parent.ID, path.Base(sourceRef), content.hash, content.size,
-		content.mimeType, sourceRef, content.mtime,
+		content.mimeType, sourceRef, content.mtime, content.physical,
 	)
 	if err != nil {
 		return result, fmt.Errorf("recording watched source %q: %w", sourceRef, err)
