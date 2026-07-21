@@ -94,9 +94,9 @@ each concurrent write; cancellation and failed writes remove those private
 candidates without granting metadata authority.
 
 `RepairContent` verifies trusted bytes against one existing logical SHA-256
-identity, publishes repaired loose authority, and retires any packed mapping
-without changing nodes or content versions. The immutable source pack is
-reclaimed only by a later repack pass.
+identity, publishes repaired loose authority under the configured compression
+policy, and retires any packed mapping without changing nodes or content
+versions. The immutable source pack is reclaimed only by a later repack pass.
 
 The separate limits are deliberate. The 4 GiB admission ceiling matches Kit's
 format-v1 raw-object ceiling, preserving backup eligibility for every admitted
