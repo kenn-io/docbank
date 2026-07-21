@@ -14,6 +14,10 @@ const (
 	DefaultWalkPageSize = 500
 	// MaxWalkPageSize is the largest page one Walker may materialize.
 	MaxWalkPageSize = store.MaxWalkPageSize
+	// MaxWalkDepth is the greatest absolute tree depth one Walker traverses.
+	MaxWalkDepth = store.MaxWalkDepth
+	// MaxWalkPathBytes is the largest canonical path one Walker materializes.
+	MaxWalkPathBytes = store.MaxWalkPathBytes
 )
 
 // WalkOptions controls one stable snapshot traversal.

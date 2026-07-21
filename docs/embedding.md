@@ -203,10 +203,14 @@ for {
 ```
 
 The zero page size uses `DefaultWalkPageSize`, and no page can exceed
-`MaxWalkPageSize`. Later tree mutations do not enter the pinned snapshot.
-`Walker.Close` is required even after `io.EOF`: it idempotently releases the
-read transaction, dedicated connection, and vault lifecycle lease. A concurrent
-`Vault.Close` waits for every walker and content reader to close.
+`MaxWalkPageSize`. Traversal expands an indexed ordered frontier incrementally;
+setup does not materialize the selected subtree, and each returned node requires
+at most one sibling seek and one child seek. Canonical paths are limited to
+`MaxWalkPathBytes`, and absolute hierarchy depth is limited to `MaxWalkDepth`.
+Later tree mutations do not enter the pinned snapshot. `Walker.Close` is required
+even after `io.EOF`: it idempotently releases the read transaction, dedicated
+connection, and vault lifecycle lease. A concurrent `Vault.Close` waits for every
+walker and content reader to close.
 
 `MovePath`, `TrashPath`, and `Restore` return the resulting node and canonical
 path. Their optional positive `IfRevision` rejects stale mutations;
