@@ -1,97 +1,118 @@
 #!/usr/bin/env bash
-# Generate release notes, create an annotated version tag, and push it.
+# Generate release notes, ask the operator to approve them, then tag and push.
 # Usage: ./scripts/release.sh <version> [extra_instructions] [start_tag]
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-VERSION="${1:-}"
-EXTRA_INSTRUCTIONS="${2:-}"
-START_TAG="${3:--}"
+usage() {
+  printf 'usage: %s <bare-version> [extra changelog instructions] [start tag]\n' "$0" >&2
+  printf 'example: %s 0.11.0\n' "$0" >&2
+}
 
-if [[ -z "$VERSION" ]]; then
-    echo "Usage: $0 <version> [extra_instructions] [start_tag]"
-    echo "Example: $0 0.2.0"
-    echo "Example: $0 0.2.0 \"Focus on editing and version history\""
-    echo "Example: $0 0.2.1 \"Include the unpublished release features\" v0.1.0"
-    exit 1
+version="${1:-}"
+extra_instructions="${2:-}"
+start_tag="${3:--}"
+
+if [[ -z "$version" ]]; then
+  usage
+  exit 2
+fi
+if [[ "$version" == v* ]]; then
+  printf 'version must be bare, such as 0.11.0, not %s\n' "$version" >&2
+  exit 2
+fi
+if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  printf 'version must use X.Y.Z semver shape\n' >&2
+  exit 2
 fi
 
-if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "Error: version must use X.Y.Z format (for example, 0.2.0)"
-    exit 1
+tag="v${version}"
+changelog_agent="${CHANGELOG_AGENT:-codex}"
+
+if [[ "$(git -C "$repo_root" branch --show-current)" != "main" ]]; then
+  printf 'releases must be cut from main\n' >&2
+  exit 1
 fi
 
-TAG="v$VERSION"
-
-if [[ "$(git -C "$REPO_ROOT" branch --show-current)" != "main" ]]; then
-    echo "Error: releases must be cut from main"
-    exit 1
-fi
-
-if [[ -n "$(git -C "$REPO_ROOT" status --porcelain)" ]]; then
-    echo "Error: the working tree is not clean; commit or stash changes first"
-    exit 1
+git -C "$repo_root" update-index -q --refresh
+if [[ -n "$(git -C "$repo_root" status --porcelain)" ]]; then
+  printf 'worktree is dirty; commit or stash changes before releasing\n' >&2
+  exit 1
 fi
 
 if ! command -v gh >/dev/null 2>&1; then
-    echo "Error: gh CLI is required (https://cli.github.com/)"
-    exit 1
+  printf 'gh CLI is required: https://cli.github.com/\n' >&2
+  exit 1
 fi
 if ! gh auth status >/dev/null 2>&1; then
-    echo "Error: gh CLI is not authenticated"
-    exit 1
+  printf 'gh CLI is not authenticated\n' >&2
+  exit 1
 fi
 
-git -C "$REPO_ROOT" fetch --quiet origin \
-    '+refs/heads/main:refs/remotes/origin/main' --tags
+git -C "$repo_root" fetch --quiet origin \
+  '+refs/heads/main:refs/remotes/origin/main' --tags
 
-if [[ "$(git -C "$REPO_ROOT" rev-parse HEAD)" != "$(git -C "$REPO_ROOT" rev-parse origin/main)" ]]; then
-    echo "Error: local main must exactly match origin/main"
-    exit 1
+if [[ "$(git -C "$repo_root" rev-parse HEAD)" != "$(git -C "$repo_root" rev-parse origin/main)" ]]; then
+  printf 'local main must exactly match origin/main\n' >&2
+  exit 1
+fi
+if git -C "$repo_root" rev-parse --verify "refs/tags/$tag" >/dev/null 2>&1; then
+  printf 'tag %s already exists\n' "$tag" >&2
+  exit 1
 fi
 
-if git -C "$REPO_ROOT" rev-parse --verify "refs/tags/$TAG" >/dev/null 2>&1; then
-    echo "Error: tag $TAG already exists"
-    exit 1
+case "$changelog_agent" in
+  codex)
+    printf 'Generating %s notes with Codex from the supplied git history.\n' "$tag"
+    ;;
+  claude)
+    printf 'Generating %s notes with Claude from the supplied git history.\n' "$tag"
+    ;;
+  none)
+    printf 'Generating %s notes with the deterministic git-log fallback.\n' "$tag"
+    ;;
+  *)
+    printf 'Generating %s notes with CHANGELOG_AGENT=%s; changelog.sh will validate it.\n' "$tag" "$changelog_agent"
+    ;;
+esac
+
+notes_file="$(mktemp)"
+tag_message="$(mktemp)"
+trap 'rm -f "$notes_file" "$tag_message"' EXIT
+
+"$repo_root/scripts/changelog.sh" "$version" "$start_tag" "$extra_instructions" >"$notes_file"
+if [[ ! -s "$notes_file" ]]; then
+  printf 'no release-note content was generated\n' >&2
+  exit 1
 fi
 
-CHANGELOG_FILE="$(mktemp)"
-trap 'rm -f "$CHANGELOG_FILE"' EXIT
+printf '\n==========================================\n'
+printf 'PROPOSED RELEASE NOTES FOR %s\n' "$tag"
+printf '==========================================\n'
+cat "$notes_file"
+printf '\n==========================================\n\n'
 
-"$SCRIPT_DIR/changelog.sh" "$VERSION" "$START_TAG" "$EXTRA_INSTRUCTIONS" >"$CHANGELOG_FILE"
-
-if [[ ! -s "$CHANGELOG_FILE" ]]; then
-    echo "Error: no release-note content was generated"
-    exit 1
+printf 'Accept these notes and create release %s? [y/N] ' "$tag"
+answer=""
+read -r answer || true
+printf '\n'
+if [[ "$answer" != "y" && "$answer" != "Y" && "$answer" != "yes" && "$answer" != "YES" ]]; then
+  printf 'Release cancelled.\n'
+  exit 0
 fi
 
-echo
-echo "=========================================="
-echo "PROPOSED RELEASE NOTES FOR $TAG"
-echo "=========================================="
-cat "$CHANGELOG_FILE"
-echo
-echo "=========================================="
-echo
+{
+  printf 'Release %s\n\n' "$version"
+  cat "$notes_file"
+} >"$tag_message"
 
-read -r -p "Accept these notes and create release $TAG? [y/N] " REPLY
-if [[ ! "$REPLY" =~ ^[Yy]$ ]]; then
-    echo "Release cancelled."
-    exit 0
-fi
+printf 'Creating annotated tag %s...\n' "$tag"
+git -C "$repo_root" tag -a "$tag" -F "$tag_message"
+printf 'Pushing %s to origin...\n' "$tag"
+git -C "$repo_root" push origin "$tag"
 
-echo "Creating annotated tag $TAG..."
-git -C "$REPO_ROOT" tag -a "$TAG" \
-    -m "Release $VERSION" \
-    -m "$(cat "$CHANGELOG_FILE")"
-
-echo "Pushing tag to origin..."
-git -C "$REPO_ROOT" push origin "$TAG"
-
-echo
-echo "Release $TAG tag pushed successfully."
-echo "GitHub Actions will publish the archives, checksums, and tag-message notes."
-echo "https://github.com/kenn-io/docbank/releases/tag/$TAG"
+printf '\nRelease %s tag pushed successfully.\n' "$tag"
+printf 'GitHub Actions will publish archives, checksums, and the approved notes.\n'
+printf 'https://github.com/kenn-io/docbank/releases/tag/%s\n' "$tag"
