@@ -419,6 +419,10 @@ func runRepack(
 ) (internalmaintenance.RepackReport, error) {
 	var total internalmaintenance.RepackReport
 	var cursor string
+	repackPage := d.RepackPage
+	if repackPage == nil {
+		repackPage = internalmaintenance.Repack
+	}
 	for {
 		remainingBytes := maxBytes
 		if maxBytes > 0 {
@@ -428,7 +432,7 @@ func runRepack(
 				return total, nil
 			}
 		}
-		page, err := internalmaintenance.Repack(ctx, d.Store, d.Blobs,
+		page, err := repackPage(ctx, d.Store, d.Blobs,
 			internalmaintenance.RepackOptions{
 				Budget: internalmaintenance.Budget{
 					MaxObjects: internalmaintenance.DefaultMaxObjects,

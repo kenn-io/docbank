@@ -152,19 +152,27 @@ func decodeCursor(raw string, kind operation) (cursor, error) {
 	if decoded.Version != 1 || decoded.Kind != kind || !decoded.Set {
 		return cursor{}, fmt.Errorf("%w: invalid or mismatched fields", ErrInvalidCursor)
 	}
-	if decoded.Phase != "" && (kind != operationRepack ||
-		(decoded.Phase != "mappings" && decoded.Phase != "dead" && decoded.Phase != "sparse")) {
-		return cursor{}, fmt.Errorf("%w: invalid or mismatched fields", ErrInvalidCursor)
+	if kind != operationRepack {
+		if decoded.Phase != "" || decoded.PackID != "" {
+			return cursor{}, fmt.Errorf("%w: invalid or mismatched fields", ErrInvalidCursor)
+		}
+		return decoded, nil
 	}
-	if kind == operationRepack && decoded.Hash == "" && decoded.Phase != "dead" {
-		return cursor{}, fmt.Errorf("%w: invalid or mismatched fields", ErrInvalidCursor)
-	}
-	if decoded.Phase == "sparse" {
+	switch decoded.Phase {
+	case "mappings":
+		if decoded.PackID != "" {
+			return cursor{}, fmt.Errorf("%w: invalid or mismatched fields", ErrInvalidCursor)
+		}
+	case "dead":
+		if decoded.Hash != "" || decoded.PackID != "" {
+			return cursor{}, fmt.Errorf("%w: invalid or mismatched fields", ErrInvalidCursor)
+		}
+	case "sparse":
 		parsed, err := packstore.ParseHash(decoded.Hash)
 		if err != nil || parsed.String() != decoded.Hash || !pack.IsValidPackID(decoded.PackID) {
 			return cursor{}, fmt.Errorf("%w: invalid or mismatched fields", ErrInvalidCursor)
 		}
-	} else if decoded.PackID != "" {
+	default:
 		return cursor{}, fmt.Errorf("%w: invalid or mismatched fields", ErrInvalidCursor)
 	}
 	return decoded, nil

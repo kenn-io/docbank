@@ -31,6 +31,12 @@ type VerifyPageFunc func(
 	context.Context, *store.Store, *blob.Store, internalmaintenance.VerifyOptions,
 ) (internalmaintenance.VerifyReport, error)
 
+// RepackPageFunc performs one bounded packed-maintenance page. The optional
+// dependency lets embedders exercise legacy route continuation behavior.
+type RepackPageFunc func(
+	context.Context, *store.Store, *blob.Store, internalmaintenance.RepackOptions,
+) (internalmaintenance.RepackReport, error)
+
 // Deps assembles everything a Server needs to build its routes.
 type Deps struct {
 	Store         *store.Store
@@ -45,6 +51,7 @@ type Deps struct {
 	Jobs          *jobs.Supervisor // nil → no registered background jobs
 	Gate          *OperationGate   // nil → a server-private gate
 	VerifyPage    VerifyPageFunc   // nil → shared bounded maintenance service
+	RepackPage    RepackPageFunc   // nil → shared bounded maintenance service
 }
 
 // Server is docbank's HTTP API: a huma-described /api/v1 surface plus a

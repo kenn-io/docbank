@@ -353,6 +353,27 @@ func TestMaintenanceCursorIsOpaqueAndOperationBound(t *testing.T) {
 		`{"v":1,"op":"repack","phase":"sparse","hash":"","set":true}`))
 	_, err = vault.Repack(t.Context(), RepackOptions{Budget: WorkBudget{Cursor: invalidSparseStart}})
 	require.ErrorIs(t, err, ErrInvalidMaintenanceCursor)
+	validPackID := pack.NewPackID()
+	invalidRepackCursors := map[string]string{
+		"mapping pack id": `{"v":1,"op":"repack","phase":"mappings","hash":"raw",` +
+			`"pack_id":"` + validPackID + `","set":true}`,
+		"dead hash": `{"v":1,"op":"repack","phase":"dead","hash":"raw","set":true}`,
+		"dead pack id": `{"v":1,"op":"repack","phase":"dead","hash":"",` +
+			`"pack_id":"` + validPackID + `","set":true}`,
+		"sparse missing pack id": `{"v":1,"op":"repack","phase":"sparse",` +
+			`"hash":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",` +
+			`"set":true}`,
+		"missing phase": `{"v":1,"op":"repack","hash":"raw","set":true}`,
+	}
+	for name, payload := range invalidRepackCursors {
+		t.Run(name, func(t *testing.T) {
+			encoded := base64.RawURLEncoding.EncodeToString([]byte(payload))
+			_, cursorErr := vault.Repack(t.Context(), RepackOptions{
+				Budget: WorkBudget{Cursor: encoded},
+			})
+			require.ErrorIs(t, cursorErr, ErrInvalidMaintenanceCursor)
+		})
+	}
 }
 
 func TestPackReportsIndexedLooseBacklog(t *testing.T) {
@@ -708,6 +729,53 @@ func TestRepackMappingScanAdvancesAcrossLiveOnlyWindow(t *testing.T) {
 				cursor = page.NextCursor
 			}
 			assert.Equal(t, int64(1), pruned)
+		})
+	}
+}
+
+func TestRepackMappingCursorAcceptsEmptyRawHighWater(t *testing.T) {
+	for _, test := range maintenanceDrivers() {
+		t.Run(test.name, func(t *testing.T) {
+			vault := newMaintenanceVault(t, test.driver)
+			db, err := vault.metadata.SQLiteDriver().Open(
+				filepath.Join(vault.root.Name(), "docbank.db"), docsqlite.OpenOptions{
+					Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+				})
+			require.NoError(t, err)
+			packID := pack.NewPackID()
+			_, err = db.ExecContext(t.Context(), `
+				INSERT INTO blob_packs (pack_id, entry_count, stored_bytes, created_at)
+				VALUES (?, 2, 10, ?)`, packID, "2026-01-01T00:00:00.000000000Z")
+			require.NoError(t, err)
+			for i, hash := range []string{
+				"",
+				"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+			} {
+				_, err = db.ExecContext(t.Context(), `
+					INSERT INTO blob_pack_index
+						(blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
+					VALUES (?, ?, ?, 5, 1, 0, 0)`, hash, packID,
+					pack.MinEntryOffset+int64(i)*32)
+				require.NoError(t, err)
+			}
+			require.NoError(t, db.Close())
+
+			first, err := vault.Repack(t.Context(), RepackOptions{Budget: WorkBudget{
+				MaxObjects: 1,
+			}})
+			require.NoError(t, err)
+			assert.Equal(t, int64(1), first.MappingsPruned)
+			require.True(t, first.More)
+			require.NotEmpty(t, first.NextCursor)
+
+			second, err := vault.Repack(t.Context(), RepackOptions{Budget: WorkBudget{
+				MaxObjects: 1, Cursor: first.NextCursor,
+			}})
+			require.NoError(t, err)
+			assert.Equal(t, int64(1), second.MappingsPruned)
+			require.True(t, second.More)
+			require.NotEmpty(t, second.NextCursor)
+			assert.NotEqual(t, first.NextCursor, second.NextCursor)
 		})
 	}
 }

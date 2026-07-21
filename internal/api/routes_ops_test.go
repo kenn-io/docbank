@@ -17,6 +17,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/api"
@@ -443,6 +444,46 @@ func TestStorageRepackReclaimsSparsePack(t *testing.T) {
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/storage/repack", nil,
 		map[string]any{"min_age": "1ns", "min_dead_bytes": -1})
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+}
+
+func TestStorageRepackContinuesFromEmptyMappingHighWater(t *testing.T) {
+	ts, s := newTestServer(t, func(deps *api.Deps) {
+		deps.RepackPage = func(
+			ctx context.Context, metadata *store.Store, blobs *blob.Store,
+			opts internalmaintenance.RepackOptions,
+		) (internalmaintenance.RepackReport, error) {
+			opts.Budget.MaxObjects = 1
+			return internalmaintenance.Repack(ctx, metadata, blobs, opts)
+		}
+	})
+	db, err := s.SQLiteDriver().Open(s.DBPath, docsqlite.OpenOptions{
+		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+	})
+	require.NoError(t, err)
+	packID := pack.NewPackID()
+	_, err = db.ExecContext(t.Context(), `
+		INSERT INTO blob_packs (pack_id, entry_count, stored_bytes, created_at)
+		VALUES (?, 2, 10, ?)`, packID, "2026-01-01T00:00:00.000000000Z")
+	require.NoError(t, err)
+	for i, hash := range []string{
+		"",
+		"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+	} {
+		_, err = db.ExecContext(t.Context(), `
+			INSERT INTO blob_pack_index
+				(blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
+			VALUES (?, ?, ?, 5, 1, 0, 0)`, hash, packID,
+			pack.MinEntryOffset+int64(i)*32)
+		require.NoError(t, err)
+	}
+	require.NoError(t, db.Close())
+
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/storage/repack", nil,
+		map[string]any{"max_bytes": 0})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var report api.StorageRepackReport
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	assert.Equal(t, int64(2), report.MappingsPruned)
 }
 
 func TestGCRevokesPackedBlobAuthority(t *testing.T) {
