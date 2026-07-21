@@ -71,15 +71,32 @@ func TestWalkOrdersDuplicatePathsByNodeIDAndOptionallyIncludesTrash(t *testing.T
 	}, collectStoreWalk(t, liveOnly))
 }
 
-func TestWalkSetupAndPageWorkStayBoundedAcrossSubtreeSizes(t *testing.T) {
-	drivers := []struct {
-		name   string
-		driver docsqlite.Driver
-	}{
-		{name: "build default", driver: DefaultSQLiteDriver()},
-		{name: "pure Go", driver: modernc.Driver{}},
+func TestWalkNonRootScopeNeverSeedsRequestedRootsSibling(t *testing.T) {
+	for _, driver := range walkTestDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			s := newTestStoreWithDriver(t, driver.driver)
+			scope, err := s.Mkdir(t.Context(), s.RootID(), "scope")
+			require.NoError(t, err)
+			child, err := s.Mkdir(t.Context(), scope.ID, "child")
+			require.NoError(t, err)
+			scope, err = s.NodeByID(t.Context(), scope.ID)
+			require.NoError(t, err)
+			_, err = s.Mkdir(t.Context(), s.RootID(), "zulu")
+			require.NoError(t, err)
+
+			walker, err := s.BeginWalk(t.Context(), "/scope", 1, false)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, walker.Close()) })
+			assert.Equal(t, []WalkEntry{
+				{Path: "/scope", Node: scope},
+				{Path: "/scope/child", Node: child},
+			}, collectStoreWalk(t, walker))
+		})
 	}
-	for _, driver := range drivers {
+}
+
+func TestWalkSetupAndPageWorkStayBoundedAcrossSubtreeSizes(t *testing.T) {
+	for _, driver := range walkTestDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
 			var setupReads int64
 			for _, size := range []int{8, 800} {
@@ -107,6 +124,100 @@ func TestWalkSetupAndPageWorkStayBoundedAcrossSubtreeSizes(t *testing.T) {
 				assert.LessOrEqual(t, after.LastPageIndexedSeeks, int64(2*len(page)))
 			}
 		})
+	}
+}
+
+func TestWalkLiveOnlySeekUsesPartialIndexAcrossTrashedCardinality(t *testing.T) {
+	for _, driver := range walkTestDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			for _, first := range []bool{true, false} {
+				name := "next sibling"
+				if first {
+					name = "first child"
+				}
+				t.Run(name+" plan", func(t *testing.T) {
+					s := newTestStoreWithDriver(t, driver.driver)
+					query, args := walkSeekQuery(s.RootID(), false, "middle", 1, first)
+					plan := explainQueryPlan(t, s, query, args...)
+					assert.Contains(t, plan, "USING INDEX live_sibling_names")
+				})
+			}
+
+			var baseline WalkStats
+			for _, trashed := range []int{0, 4000} {
+				s := newTestStoreWithDriver(t, driver.driver)
+				insertTrashedWalkSiblings(t, s, trashed/2, "a")
+				live, err := s.CreateFile(t.Context(), s.RootID(), "middle", fakeHash("91"), 1,
+					"text/plain")
+				require.NoError(t, err)
+				insertTrashedWalkSiblings(t, s, trashed/2, "z")
+
+				walker, err := s.BeginWalk(t.Context(), "/", 2, false)
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, walker.Close()) })
+				page, err := walker.Next(t.Context())
+				require.NoError(t, err)
+				require.Len(t, page, 2)
+				assert.Equal(t, "/", page[0].Path)
+				assert.Equal(t, WalkEntry{Path: "/middle", Node: live}, page[1])
+				stats := walker.Stats()
+				assert.Equal(t, int64(2), stats.LastPageRowsExamined)
+				assert.Equal(t, int64(2), stats.LastPageIndexedSeeks)
+				if trashed == 0 {
+					baseline = stats
+				} else {
+					assert.Equal(t, baseline.LastPageRowsExamined, stats.LastPageRowsExamined)
+					assert.Equal(t, baseline.LastPageIndexedSeeks, stats.LastPageIndexedSeeks)
+				}
+			}
+		})
+	}
+}
+
+func explainQueryPlan(t *testing.T, s *Store, query string, args ...any) string {
+	t.Helper()
+	rows, err := s.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+query, args...)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	var details []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+		details = append(details, detail)
+	}
+	require.NoError(t, rows.Err())
+	return strings.Join(details, "\n")
+}
+
+func insertTrashedWalkSiblings(t *testing.T, s *Store, count int, prefix string) {
+	t.Helper()
+	tx, err := s.db.BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	for i := range count {
+		_, err := tx.ExecContext(t.Context(), `
+			INSERT INTO nodes (
+				parent_id, name, kind, created_at, modified_at, trashed_at
+			) VALUES (?, ?, 'dir', ?, ?, ?)`,
+			s.RootID(), fmt.Sprintf("%s-%04d", prefix, i),
+			"2026-07-21T00:00:00.000000000Z", "2026-07-21T00:00:00.000000000Z",
+			"2026-07-21T00:00:00.000000000Z")
+		require.NoError(t, err)
+	}
+	require.NoError(t, tx.Commit())
+}
+
+func walkTestDrivers() []struct {
+	name   string
+	driver docsqlite.Driver
+} {
+	return []struct {
+		name   string
+		driver docsqlite.Driver
+	}{
+		{name: "build default", driver: DefaultSQLiteDriver()},
+		{name: "pure Go", driver: modernc.Driver{}},
 	}
 }
 
