@@ -502,7 +502,9 @@ func removeIfExists(path string) error {
 }
 
 func syncRegularFile(path string) error {
-	f, err := os.Open(path)
+	// Windows requires a write-capable handle for FlushFileBuffers, which backs
+	// os.File.Sync. Both database owners are closed before this point.
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
 		return fmt.Errorf("opening %s for sync: %w", path, err)
 	}
