@@ -93,7 +93,9 @@ func runServe(ctx context.Context) (retErr error) {
 		return err
 	}
 	defer func() { _ = s.Close() }()
-	blobs, err := blob.New(store.NewPackCatalog(s), layout.BlobsDir())
+	blobs, err := blob.NewWithOptions(
+		store.NewPackCatalog(s), layout.BlobsDir(), blob.ManagedOptions(),
+	)
 	if err != nil {
 		return err
 	}

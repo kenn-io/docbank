@@ -82,6 +82,10 @@ type Vault struct {
 	lifecycle sync.RWMutex
 	mutation  sync.Mutex
 	closed    bool
+
+	// testAfterRepairPublication exercises the non-cancelable authority handoff
+	// after durable physical publication. Production constructors leave it nil.
+	testAfterRepairPublication func()
 }
 
 // New creates or opens one embedded vault and holds its exclusive hierarchy
@@ -316,12 +320,21 @@ func (v *Vault) RepairContent(
 		if err != nil {
 			return err
 		}
+		if v.testAfterRepairPublication != nil {
+			v.testAfterRepairPublication()
+		}
 		physical, err := blobPhysical(written)
 		if err != nil {
 			return err
 		}
+		// Once verified bytes have replaced the canonical loose representation,
+		// finish the authority handoff even if the request disconnects. Leaving
+		// the catalog pointed at a retired representation would make valid bytes
+		// unavailable until an operator repaired them again.
+		commitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
 		references, err := v.metadata.RepairBlobAuthority(
-			ctx, identity.SHA256, identity.Size, physical,
+			commitCtx, identity.SHA256, identity.Size, physical,
 		)
 		if err != nil {
 			return err
@@ -470,14 +483,9 @@ func (v *Vault) write(
 }
 
 func blobPhysical(receipt blob.WriteReceipt) (store.BlobPhysical, error) {
-	var encoding string
-	switch receipt.Encoding {
-	case packstore.LooseEncodingRaw:
-		encoding = "raw"
-	case packstore.LooseEncodingZstd:
-		encoding = "zstd"
-	default:
-		return store.BlobPhysical{}, fmt.Errorf("unknown loose encoding %d", receipt.Encoding)
+	encoding, err := receipt.EncodingName()
+	if err != nil {
+		return store.BlobPhysical{}, err
 	}
 	return store.BlobPhysical{
 		Encoding: encoding, StoredBytes: receipt.StoredSize, PackEligible: receipt.PackEligible,

@@ -67,12 +67,32 @@ version while preserving the node ID. Supply `PutOptions.Expected` when the
 caller already knows the SHA-256 and byte count and wants Docbank to reject a
 mismatched stream before granting metadata authority.
 
+Use `Create` when an application owns an immutable key and must never replace
+different content already stored there. It requires the expected SHA-256 and
+size. An exact retry is idempotent; a different byte identity, media type, or
+node kind returns `ErrContentConflict` without appending a version:
+
+```go
+receipt, err := vault.Create(ctx, "/records/immutable.jsonl", reader,
+    docbank.CreateOptions{
+        MediaType: "application/x-ndjson",
+        Expected: docbank.ContentIdentity{SHA256: digest, Size: size},
+    },
+)
+```
+
+Both write receipts include `Physical`, which distinguishes logical bytes from
+their current raw, zstd, or packed representation. Most applications should
+treat that field as operational evidence rather than document identity.
+
 `Put` is an idempotent content write, not an integrity repair primitive. Kit's
 structural dedup can reuse an existing canonical representation without hashing
-it, and packed catalog authority can remain selected over a loose copy.
-Consumers repairing a corrupt current version must publish different bytes or
-use Docbank verify/restore; they must verify the resulting head before treating
-its bytes as authoritative.
+it, and packed catalog authority can remain selected over a loose copy. When an
+application has trusted bytes for a known SHA-256 and size, `RepairContent`
+verifies the complete stream before replacing physical authority. It preserves
+every node and historical version reference to that identity. Repairing packed
+content makes a verified loose copy authoritative; a later repack reclaims the
+now-dead packed bytes.
 
 `vault.ID()` returns the archive's stable UUID. JSONL backup and restore
 preserve that identity even when the restored vault has a different filesystem
@@ -147,6 +167,29 @@ includes packing, reconciliation, missing/corrupt content, and orphan cleanup
 outcomes; embedded applications should surface those fields rather than
 treating a nil error alone as a complete health report. Packing changes only
 physical representation. `OpenContent` keeps the same verified read contract.
+
+`LooseBacklog` reports how much indexed loose content is eligible for a pack
+pass, split into raw and compressed object counts. It is useful for scheduling;
+it does not make packing automatic.
+
+The embedded API keeps raw loose storage by default. Applications that want
+the standalone daemon's current policy can opt in explicitly:
+
+```go
+vault, err := docbank.New(ctx, docbank.Config{
+    Root: root,
+    LooseCompression: docbank.LooseCompressionOptions{
+        Enabled:           true,
+        MinBytes:          4 << 10,
+        MinSavingsPercent: 10,
+    },
+})
+```
+
+Compression changes only physical representation. SHA-256 and logical sizes
+always describe decoded bytes. An eligible write temporarily needs scratch
+space for both the raw object and its compressed candidate before Docbank
+chooses one for durable publication.
 
 ## Choose SQLite
 

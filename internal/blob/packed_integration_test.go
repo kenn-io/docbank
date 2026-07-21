@@ -165,6 +165,20 @@ func TestMixedStoreLifecyclePreservesMembershipAndBytes(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, records)
 	assertBlobContent(t, physical, fixtures[2].hash, fixtures[2].data)
+	authority, err := metadata.PhysicalContent(ctx, fixtures[2].hash)
+	require.NoError(t, err)
+	assert.Equal(t, store.PhysicalContent{
+		Kind: "loose", Encoding: "raw", LogicalBytes: int64(len(fixtures[2].data)),
+		StoredBytes: int64(len(fixtures[2].data)), PackEligible: true,
+	}, authority)
+	backlog, err := metadata.LooseBacklog(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, store.LooseBacklog{
+		EligibleObjects: 1, EligibleBytes: int64(len(fixtures[2].data)), RawObjects: 1,
+	}, backlog)
+	repackedAfterUnpack, err := physical.Maintainer().Pack(ctx, packstore.PackOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, 1, repackedAfterUnpack.BlobsPacked)
 }
 
 func TestMaintainerSharesDocbankMutationCoordinator(t *testing.T) {

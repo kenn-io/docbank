@@ -84,8 +84,9 @@ docbank gc          # dry run: candidate count and reclaimable bytes
 docbank gc --run    # remove unreachable authority and loose files
 ```
 
-For loose blobs, the reported reclaimable count is the number of bytes that GC
-can unlink immediately. A packed blob becomes logically dead when GC removes
+For loose blobs, the reported reclaimable count is the physical number of raw
+or zstd bytes that GC can unlink immediately; it is not the decoded document
+size. A packed blob becomes logically dead when GC removes
 its catalog authority, but its stored bytes remain in the immutable pack until
 repack compacts that container; GC reports those bytes separately as pending
 repack rather than claiming they were reclaimed.

@@ -223,8 +223,14 @@ func TestVaultRepairContentPreservesLogicalReferences(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, physicalBefore, physicalAfterCancellation)
 
-			repaired, err := vault.RepairContent(t.Context(), first.Computed, bytes.NewReader(test.content))
+			publishCtx, cancelAfterPublication := context.WithCancel(t.Context())
+			vault.testAfterRepairPublication = cancelAfterPublication
+			repaired, err := vault.RepairContent(
+				publishCtx, first.Computed, bytes.NewReader(test.content),
+			)
+			vault.testAfterRepairPublication = nil
 			require.NoError(t, err)
+			require.ErrorIs(t, publishCtx.Err(), context.Canceled)
 			assert.Equal(t, first.Computed, repaired.Computed)
 			assert.Equal(t, int64(2), repaired.ReferencesPreserved)
 			assert.Equal(t, PhysicalContent{

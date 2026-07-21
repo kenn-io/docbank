@@ -20,16 +20,41 @@ import (
 
 func newTestIngester(t *testing.T) *Ingester {
 	t.Helper()
+	return newTestIngesterWithOptions(t, blob.Options{})
+}
+
+func newTestIngesterWithOptions(t *testing.T, options blob.Options) *Ingester {
+	t.Helper()
 	home := t.TempDir()
 	blobsDir := filepath.Join(home, "blobs")
 	require.NoError(t, os.MkdirAll(filepath.Join(blobsDir, "tmp"), 0o700))
 	s, err := store.Open(filepath.Join(home, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
-	blobs, err := blob.New(store.NewPackCatalog(s), blobsDir)
+	blobs, err := blob.NewWithOptions(store.NewPackCatalog(s), blobsDir, options)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = blobs.Close() })
 	return &Ingester{Store: s, Blobs: blobs}
+}
+
+func TestAddRecordsCompressedLooseAuthority(t *testing.T) {
+	ing := newTestIngesterWithOptions(t, blob.ManagedOptions())
+	content := strings.Repeat("compressible local document\n", 512)
+	src := writeTree(t, map[string]string{"document.txt": content})
+
+	report, err := ing.AddPaths(
+		t.Context(), []string{filepath.Join(src, "document.txt")}, "/inbox",
+	)
+	require.NoError(t, err)
+	require.Equal(t, 1, report.Added)
+	node, err := ing.Store.NodeByPath(t.Context(), "/inbox/document.txt")
+	require.NoError(t, err)
+	physical, err := ing.Store.PhysicalContent(t.Context(), node.BlobHash)
+	require.NoError(t, err)
+	assert.Equal(t, "loose", physical.Kind)
+	assert.Equal(t, "zstd", physical.Encoding)
+	assert.Equal(t, int64(len(content)), physical.LogicalBytes)
+	assert.Less(t, physical.StoredBytes, physical.LogicalBytes)
 }
 
 // writeTree creates a synthetic source tree and returns its root.

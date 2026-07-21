@@ -28,6 +28,12 @@ const (
 	// MaxPackedBlobBytes is docbank's policy for packing, packed reads, and
 	// packed restore. Larger admitted objects remain authoritative loose blobs.
 	MaxPackedBlobBytes int64 = 64 << 20
+
+	// ManagedLooseCompressionMinBytes and ManagedLooseCompressionMinSavingsPercent
+	// are the standalone daemon's conservative loose-storage policy. Embedded
+	// callers remain explicit: the public Config zero value keeps raw storage.
+	ManagedLooseCompressionMinBytes          int64 = 4 << 10
+	ManagedLooseCompressionMinSavingsPercent       = 10
 )
 
 // StorageLimits returns Kit's packed-read and maintenance limits with
@@ -66,6 +72,15 @@ type Options struct {
 	LooseCompression LooseCompressionOptions
 }
 
+// ManagedOptions returns the standalone daemon's physical storage policy.
+func ManagedOptions() Options {
+	return Options{LooseCompression: LooseCompressionOptions{
+		Enabled:           true,
+		MinBytes:          ManagedLooseCompressionMinBytes,
+		MinSavingsPercent: ManagedLooseCompressionMinSavingsPercent,
+	}}
+}
+
 // ValidateOptions checks physical policy before a caller acquires vault
 // ownership or creates storage state.
 func ValidateOptions(opts Options) error {
@@ -87,6 +102,19 @@ type WriteReceipt struct {
 	StoredSize   int64
 	Created      bool
 	PackEligible bool
+}
+
+// EncodingName returns the stable application-facing name for the published
+// loose representation.
+func (r WriteReceipt) EncodingName() (string, error) {
+	switch r.Encoding {
+	case packstore.LooseEncodingRaw:
+		return "raw", nil
+	case packstore.LooseEncodingZstd:
+		return "zstd", nil
+	default:
+		return "", fmt.Errorf("unknown loose encoding %d", r.Encoding)
+	}
 }
 
 // New constructs the daemon-owned store over catalog membership and blobsDir.
@@ -383,7 +411,6 @@ func (s *Store) List() (map[string]int64, error) {
 		return nil, fmt.Errorf("reading blob dir: %w", err)
 	}
 	out := map[string]int64{}
-	compressed := map[string]bool{}
 	for _, shard := range shards {
 		if !shard.IsDir() || len(shard.Name()) != 2 {
 			continue // tmp/, packs/, and anything else that is not a shard
@@ -402,15 +429,14 @@ func (s *Store) List() (map[string]int64, error) {
 			if !validHash(logicalName) || logicalName[:2] != shard.Name() || !entry.Type().IsRegular() {
 				continue
 			}
-			if compressed[logicalName] && !isCompressed {
-				continue
-			}
 			info, err := entry.Info()
 			if err != nil {
 				return nil, fmt.Errorf("reading blob %s: %w", logicalName, err)
 			}
-			out[logicalName] = info.Size()
-			compressed[logicalName] = isCompressed
+			// Interrupted replacement or repair can temporarily leave both
+			// representations. GC removes both, so report their complete
+			// physical footprint under the one logical hash.
+			out[logicalName] += info.Size()
 		}
 	}
 	return out, nil

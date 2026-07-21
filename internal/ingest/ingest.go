@@ -177,6 +177,7 @@ type UploadResult struct {
 	Added        bool
 	ComputedHash string
 	ComputedSize int64
+	physical     store.BlobPhysical
 }
 
 // ReplacementResult is the independently verified byte identity and the new
@@ -186,6 +187,17 @@ type ReplacementResult struct {
 	Version      store.ContentVersion
 	ComputedHash string
 	ComputedSize int64
+	physical     store.BlobPhysical
+}
+
+func physicalReceipt(receipt blob.WriteReceipt) (store.BlobPhysical, error) {
+	encoding, err := receipt.EncodingName()
+	if err != nil {
+		return store.BlobPhysical{}, err
+	}
+	return store.BlobPhysical{
+		Encoding: encoding, StoredBytes: receipt.StoredSize, PackEligible: receipt.PackEligible,
+	}, nil
 }
 
 // PreparedUpload is a verified, authority-free remote write. The caller may
@@ -226,7 +238,12 @@ func (ing *Ingester) PrepareUpload(
 		return nil, store.ErrNotDir
 	}
 
-	result.ComputedHash, result.ComputedSize, err = ing.Blobs.WriteContext(ctx, r)
+	written, err := ing.Blobs.WriteDetailedContext(ctx, r)
+	if err != nil {
+		return nil, err
+	}
+	result.ComputedHash, result.ComputedSize = written.Hash, written.Size
+	result.physical, err = physicalReceipt(written)
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +269,7 @@ func (p *PreparedUpload) Commit(ctx context.Context) (UploadResult, error) {
 		return result, err
 	}
 	result.Node, result.Added, err = p.ing.Store.IngestFile(ctx, ingestID, p.parentID,
-		p.name, result.ComputedHash, result.ComputedSize, p.mimeType, p.name, "")
+		p.name, result.ComputedHash, result.ComputedSize, p.mimeType, p.name, "", result.physical)
 	if err != nil {
 		return result, err
 	}
@@ -273,8 +290,12 @@ func (ing *Ingester) ReplaceContent(
 	if err := ing.Store.CheckContentReplacementTarget(ctx, nodeID, ifRev); err != nil {
 		return result, err
 	}
-	var err error
-	result.ComputedHash, result.ComputedSize, err = ing.Blobs.WriteContext(ctx, r)
+	written, err := ing.Blobs.WriteDetailedContext(ctx, r)
+	if err != nil {
+		return result, err
+	}
+	result.ComputedHash, result.ComputedSize = written.Hash, written.Size
+	result.physical, err = physicalReceipt(written)
 	if err != nil {
 		return result, err
 	}
@@ -287,7 +308,7 @@ func (ing *Ingester) ReplaceContent(
 			expectedHash, result.ComputedHash, ErrUploadDigestMismatch)
 	}
 	result.Node, result.Version, err = ing.Store.ReplaceContent(
-		ctx, nodeID, ifRev, result.ComputedHash, result.ComputedSize, mimeType,
+		ctx, nodeID, ifRev, result.ComputedHash, result.ComputedSize, mimeType, result.physical,
 	)
 	return result, err
 }
@@ -547,7 +568,7 @@ func (ing *Ingester) importFile(
 	}
 	_, added, err := ing.Store.IngestFile(ctx, ingestRun, parentID,
 		filepath.Base(sourcePath), content.hash, content.size, content.mimeType,
-		sourcePath, content.mtime)
+		sourcePath, content.mtime, content.physical)
 	if err != nil {
 		return false, fmt.Errorf("recording %s: %w", sourcePath, err)
 	}
@@ -559,6 +580,7 @@ type localFileContent struct {
 	size     int64
 	mimeType string
 	mtime    string
+	physical store.BlobPhysical
 }
 
 type localFileFingerprint struct {
@@ -661,9 +683,14 @@ func (ing *Ingester) readLocalFileWith(
 	if progress != nil {
 		content = progressReader{Reader: f, ctx: ctx, tracker: progress}
 	}
-	result.hash, result.size, err = ing.Blobs.WriteContext(ctx, content)
+	written, err := ing.Blobs.WriteDetailedContext(ctx, content)
 	if err != nil {
 		return result, fmt.Errorf("storing content of %s: %w", sourcePath, err)
+	}
+	result.hash, result.size = written.Hash, written.Size
+	result.physical, err = physicalReceipt(written)
+	if err != nil {
+		return result, fmt.Errorf("recording physical content of %s: %w", sourcePath, err)
 	}
 	after, err := f.Stat()
 	if err != nil {

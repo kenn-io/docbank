@@ -57,7 +57,7 @@ func (ing *Ingester) ingestWatchedFile(
 	}
 	existing, _, changed, err := ing.Store.SyncWatchedContent(
 		ctx, watchName, sourceRef,
-		content.hash, content.size, content.mimeType,
+		content.hash, content.size, content.mimeType, content.physical,
 	)
 	switch {
 	case err == nil:
@@ -83,7 +83,7 @@ func (ing *Ingester) ingestWatchedFile(
 	}
 	result.Node, err = ing.Store.IngestFileExact(
 		ctx, run, parent.ID, path.Base(sourceRef), content.hash, content.size,
-		content.mimeType, sourceRef, content.mtime,
+		content.mimeType, sourceRef, content.mtime, content.physical,
 	)
 	if err != nil {
 		return result, fmt.Errorf("recording watched source %q: %w", sourceRef, err)

@@ -9,8 +9,10 @@ The shared engine is implemented in `go.kenn.io/kit/packstore`, and msgvault
 has adopted it without changing its pack format or migration behavior. docbank
 now uses the same engine for durable loose publication, catalog-authorized
 mixed reads, and physical lifecycle coordination. Existing vaults require no
-conversion: ordinary writes still land loose and both representations are
-valid indefinitely.
+conversion: ordinary writes still land loose, and raw loose files remain valid
+indefinitely. New loose objects of at least 4 KiB use zstd when it reduces the
+stored size by at least 10%; otherwise Docbank keeps the raw bytes. Compression
+is a managed physical choice, not a format setting exposed to standalone users.
 
 `docbank storage status` exposes loose and packed inventory through the
 authenticated daemon API, and `docbank storage pack` explicitly moves
@@ -65,8 +67,20 @@ and does not own either application's schema or garbage-collection policy.
 
 Docbank owns only its catalog adapter, daemon wiring, migration policy, and
 end-to-end verification. It does not fork Kit's reader cache, reconciliation,
-or repacker. The existing loose representation remains both the recovery path
-and the staging representation before packing.
+or repacker. Raw and zstd loose representations remain recovery paths and
+staging representations before packing. Both names identify the same logical
+SHA-256 and decoded size. Status and GC report their physical stored bytes;
+reads, backup, verification, and packing decode and verify the logical bytes
+before granting authority. Streaming reads remain bounded-memory. A caller
+that needs a seekable handle to compressed loose content may require Kit to
+create a private decoded temporary file, so sequential consumers should prefer
+the streaming API.
+
+An eligible compressed write privately stages both the complete raw object and
+its zstd candidate before choosing which one to publish. Temporary-space
+planning must therefore allow roughly the raw size plus the compressed size for
+each concurrent write; cancellation and failed writes remove those private
+candidates without granting metadata authority.
 
 The separate limits are deliberate. The 4 GiB admission ceiling matches Kit's
 format-v1 raw-object ceiling, preserving backup eligibility for every admitted

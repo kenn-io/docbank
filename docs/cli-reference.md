@@ -588,8 +588,9 @@ GC does not invoke repack, and no automatic GC/repack scheduler exists today.
 docbank storage status [--json]
 ```
 
-Reports the daemon's physical storage inventory: loose blob count and bytes,
-live packed blobs and their stored/raw bytes, pack count, and immutable packed
+Reports the daemon's physical storage inventory: logical loose blob count and
+physical loose bytes (raw and zstd files), live packed blobs and their
+stored/raw bytes, pack count, and immutable packed
 bytes pending repack. The command is read-only. `--json` emits the same fields
 as the authenticated `GET /api/v1/storage` endpoint.
 

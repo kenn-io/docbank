@@ -26,7 +26,8 @@ The directory layout is created on first use:
 ~/.docbank/
 ├── docbank.db           # SQLite: virtual tree, metadata, FTS index
 ├── blobs/
-│   ├── <aa>/<sha256>    # content-addressed document bytes
+│   ├── <aa>/<sha256>    # raw content-addressed document bytes
+│   ├── <aa>/<sha256>.zst # managed compressed loose representation
 │   └── tmp/             # staging for in-flight writes
 ├── logs/                # JSON logs from background daemons
 ├── config.toml          # optional; see below
@@ -34,7 +35,10 @@ The directory layout is created on first use:
 └── daemon.<pid>.json    # runtime record of a live daemon
 ```
 
-`docbank.db` and `blobs/` together are the archive; back up both.
+`docbank.db` and `blobs/` together are the archive; back up both. The optional
+`.zst` suffix is only a physical encoding: hashes and reported document sizes
+always describe the decoded content. Docbank chooses it for worthwhile new
+writes and continues to read existing raw files without converting them.
 `config.toml` is configuration, not archive data — optional, but back it
 up if you've customized it (it can hold an `api_key`). `vault.lock` and
 `daemon.<pid>.json` are coordination/runtime state, safe to

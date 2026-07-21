@@ -563,6 +563,19 @@ func (c *PackCatalog) DeleteEmptyPackRecord(ctx context.Context, packID string) 
 
 func (c *PackCatalog) ClearPackMetadata(ctx context.Context) error {
 	return c.store.withStorageTx(ctx, func(tx *sql.Tx) error {
+		// Unpack has already restored every mapped object as canonical raw
+		// loose content. Re-establish that physical authority before retiring
+		// the pack catalog so status and later pack passes are immediately
+		// truthful without requiring a reopen migration.
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE blobs
+			SET loose_encoding = ?, loose_stored_size = size,
+			    pack_eligible = CASE WHEN size <= ? THEN 1 ELSE 0 END
+			WHERE EXISTS (
+				SELECT 1 FROM blob_pack_index i WHERE i.blob_hash = blobs.hash
+			)`, looseEncodingRaw, maxPackEligibleBytes); err != nil {
+			return fmt.Errorf("restoring loose authority for unpacked blobs: %w", err)
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM blob_pack_index`); err != nil {
 			return fmt.Errorf("clearing packed blob mappings: %w", err)
 		}

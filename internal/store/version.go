@@ -164,6 +164,7 @@ func (s *Store) ReplaceContent(
 // edit or revert must survive daemon restart when the source did not change.
 func (s *Store) SyncWatchedContent(
 	ctx context.Context, watchName, sourceRef, blobHash string, size int64, mimeType string,
+	physical ...BlobPhysical,
 ) (Node, ContentVersion, bool, error) {
 	if err := validateWatchSourceRecord(metadataWatchSource{
 		Type: metadataWatchSourceType, WatchName: watchName, SourceRef: sourceRef,
@@ -204,7 +205,7 @@ func (s *Store) SyncWatchedContent(
 			return updateWatchSourceTx(ctx, tx, watchName, sourceRef, blobHash, size)
 		}
 		updated, version, err = s.replaceContentTx(
-			ctx, tx, n, UnconditionalRev, blobHash, size, mimeType,
+			ctx, tx, n, UnconditionalRev, blobHash, size, mimeType, physical...,
 		)
 		if err != nil {
 			return err

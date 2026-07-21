@@ -119,6 +119,19 @@ func TestLegacyRawLooseObjectRemainsVerifiedReadable(t *testing.T) {
 	assert.Equal(t, map[string]int64{hash: int64(len(content))}, listed)
 }
 
+func TestListCountsBothLooseRepresentations(t *testing.T) {
+	bs := newTestBlobStoreWithOptions(t, Options{LooseCompression: testLooseCompression()})
+	content := []byte(strings.Repeat("dual representation\n", 256))
+	receipt, err := bs.WriteDetailedContext(t.Context(), bytes.NewReader(content))
+	require.NoError(t, err)
+	require.Equal(t, packstore.LooseEncodingZstd, receipt.Encoding)
+	require.NoError(t, os.WriteFile(bs.path(receipt.Hash), content, 0o600))
+
+	listed, err := bs.List()
+	require.NoError(t, err)
+	assert.Equal(t, int64(len(content))+receipt.StoredSize, listed[receipt.Hash])
+}
+
 func TestRepairContextReplacesCorruptLooseContent(t *testing.T) {
 	tests := []struct {
 		name       string
