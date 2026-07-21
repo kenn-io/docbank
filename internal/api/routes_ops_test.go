@@ -554,6 +554,40 @@ func TestVerifyEndpoint(t *testing.T) {
 	assert.Empty(t, rep.MetadataProblems)
 }
 
+func TestVerifyEndpointContinuesPastMalformedHashAtPageBoundary(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	db, err := s.SQLiteDriver().Open(s.DBPath, docsqlite.OpenOptions{
+		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+	})
+	require.NoError(t, err)
+	for i := range internalmaintenance.DefaultMaxObjects - 1 {
+		_, err = db.ExecContext(t.Context(),
+			`INSERT INTO blobs (hash, size, created_at) VALUES (?, 1, ?)`,
+			fmt.Sprintf("%064x", i), "2026-07-21T00:00:00.000000000Z")
+		require.NoError(t, err)
+	}
+	for _, hash := range []string{
+		"1-malformed-page-boundary",
+		"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+	} {
+		_, err = db.ExecContext(t.Context(),
+			`INSERT INTO blobs (hash, size, created_at) VALUES (?, 1, ?)`,
+			hash, "2026-07-21T00:00:00.000000000Z")
+		require.NoError(t, err)
+	}
+	require.NoError(t, db.Close())
+
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/verify", nil, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var report api.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	require.Len(t, report.MetadataProblems, 1)
+	assert.Contains(t, report.MetadataProblems[0], "invalid blob hash")
+	require.Len(t, report.Problems, internalmaintenance.DefaultMaxObjects+1)
+	assert.Equal(t, "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+		report.Problems[len(report.Problems)-1].Hash)
+}
+
 func TestVerifyEndpointReportsMalformedBlobMetadata(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	created := createFileWithContent(t, ts, s, "/malformed.txt", "still verifiable")

@@ -2,6 +2,7 @@ package docbank
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -68,6 +69,22 @@ func TestGarbageCollectRemovesZeroByteLooseBlob(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, report.ReclaimedFiles)
 	assert.NoFileExists(t, blobPath)
+}
+
+func TestGarbageCollectMissingLooseFileDoesNotCountPhysicalReclamation(t *testing.T) {
+	vault := newMaintenanceVault(t, nil)
+	created, err := vault.Put(t.Context(), "/missing", strings.NewReader("missing"), PutOptions{})
+	require.NoError(t, err)
+	trashMaintenanceFiles(t, vault, []PutReceipt{created})
+	blobPath := filepath.Join(vault.root.Name(), "blobs", created.Node.BlobHash[:2], created.Node.BlobHash)
+	require.NoError(t, os.Remove(blobPath))
+
+	report, err := vault.GarbageCollect(t.Context(), GCOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.CandidateBlobs)
+	assert.Equal(t, 1, report.RemovedBlobs)
+	assert.Zero(t, report.ReclaimedFiles,
+		"only a file actually unlinked by this call is physically reclaimed")
 }
 
 func TestGarbageCollectDryRunPreservesRowsAndLooseFiles(t *testing.T) {
@@ -155,6 +172,74 @@ func TestVerifyBudgetResumesEveryCandidateExactlyOnce(t *testing.T) {
 	}
 }
 
+func TestVerifyCursorResumesPastMalformedStoredHash(t *testing.T) {
+	for _, test := range maintenanceDrivers() {
+		t.Run(test.name, func(t *testing.T) {
+			vault := newMaintenanceVault(t, test.driver)
+			hashes := []string{
+				"0000000000000000000000000000000000000000000000000000000000000001",
+				"1-malformed-boundary",
+				"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+			}
+			db, err := vault.metadata.SQLiteDriver().Open(filepath.Join(vault.root.Name(), "docbank.db"),
+				docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
+			require.NoError(t, err)
+			for _, hash := range hashes {
+				_, err = db.ExecContext(t.Context(),
+					`INSERT INTO blobs (hash, size, created_at) VALUES (?, 1, ?)`,
+					hash, "2026-07-21T00:00:00.000000000Z")
+				require.NoError(t, err)
+			}
+			require.NoError(t, db.Close())
+
+			first, err := vault.Verify(t.Context(), VerifyOptions{Budget: WorkBudget{MaxObjects: 2}})
+			require.NoError(t, err)
+			require.True(t, first.More)
+			require.NotEmpty(t, first.NextCursor)
+			assert.Equal(t, []VerifyProblem{
+				{Hash: hashes[0], Problem: "missing"},
+				{Hash: hashes[1], Problem: "unreadable"},
+			}, first.Problems)
+
+			second, err := vault.Verify(t.Context(), VerifyOptions{Budget: WorkBudget{
+				MaxObjects: 2, Cursor: first.NextCursor,
+			}})
+			require.NoError(t, err)
+			assert.False(t, second.More)
+			assert.Equal(t, []VerifyProblem{{Hash: hashes[2], Problem: "missing"}}, second.Problems)
+		})
+	}
+}
+
+func TestVerifyCursorDistinguishesEmptyStoredKeyFromStart(t *testing.T) {
+	for _, test := range maintenanceDrivers() {
+		t.Run(test.name, func(t *testing.T) {
+			vault := newMaintenanceVault(t, test.driver)
+			db, err := vault.metadata.SQLiteDriver().Open(filepath.Join(vault.root.Name(), "docbank.db"),
+				docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
+			require.NoError(t, err)
+			for _, hash := range []string{"", strings.Repeat("f", 64)} {
+				_, err = db.ExecContext(t.Context(),
+					`INSERT INTO blobs (hash, size, created_at) VALUES (?, 1, ?)`,
+					hash, "2026-07-21T00:00:00.000000000Z")
+				require.NoError(t, err)
+			}
+			require.NoError(t, db.Close())
+
+			first, err := vault.Verify(t.Context(), VerifyOptions{Budget: WorkBudget{MaxObjects: 1}})
+			require.NoError(t, err)
+			require.True(t, first.More)
+			assert.Equal(t, []VerifyProblem{{Hash: "", Problem: "unreadable"}}, first.Problems)
+			second, err := vault.Verify(t.Context(), VerifyOptions{Budget: WorkBudget{
+				MaxObjects: 1, Cursor: first.NextCursor,
+			}})
+			require.NoError(t, err)
+			assert.False(t, second.More)
+			assert.Equal(t, strings.Repeat("f", 64), second.Problems[0].Hash)
+		})
+	}
+}
+
 func TestVerifyDoesNotScaleWithUnrelatedMetadata(t *testing.T) {
 	baseline := newMaintenanceVault(t, nil)
 	_, err := baseline.Put(t.Context(), "/baseline", strings.NewReader("shared"), PutOptions{})
@@ -221,6 +306,10 @@ func TestMaintenanceCursorIsOpaqueAndOperationBound(t *testing.T) {
 		MaxObjects: 1, Cursor: "not-a-cursor",
 	}})
 	require.ErrorIs(t, err, ErrInvalidMaintenanceCursor)
+	invalidSparseStart := base64.RawURLEncoding.EncodeToString([]byte(
+		`{"v":1,"op":"repack","phase":"sparse","hash":"","set":true}`))
+	_, err = vault.Repack(t.Context(), RepackOptions{Budget: WorkBudget{Cursor: invalidSparseStart}})
+	require.ErrorIs(t, err, ErrInvalidMaintenanceCursor)
 }
 
 func TestPackReportsIndexedLooseBacklog(t *testing.T) {
@@ -286,7 +375,9 @@ func TestRepackBoundsDeadPackRetirementWithoutCursor(t *testing.T) {
 		report, err := vault.Repack(t.Context(), RepackOptions{Budget: WorkBudget{MaxObjects: 1}})
 		require.NoError(t, err)
 		assert.Equal(t, 1, report.PacksRemoved)
-		assert.Empty(t, report.NextCursor)
+		if report.More {
+			require.NotEmpty(t, report.NextCursor)
+		}
 		assert.Equal(t, call < 2, report.More)
 		removed += report.PacksRemoved
 	}
@@ -310,12 +401,60 @@ func TestRepackDeadRetirementFailureReturnsErrorAndDoesNotStarveLaterPack(t *tes
 	report, err := vault.Repack(t.Context(), RepackOptions{Budget: WorkBudget{MaxObjects: 2}})
 	require.Error(t, err)
 	assert.Equal(t, 1, report.PacksRemoved, "the later dead pack still retires")
-	assert.False(t, report.More, "removed catalog candidates cannot silently repeat")
+	assert.True(t, report.More, "the failed physical retirement remains retryable")
+	records, err = store.NewPackCatalog(vault.metadata).ListPackRecords(t.Context())
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	assert.Equal(t, filepath.Base(blockedPath), records[0].PackID+packstore.PackExt)
+
+	require.NoError(t, os.Remove(filepath.Join(blockedPath, "keep")))
+	require.NoError(t, os.Remove(blockedPath))
 
 	retry, retryErr := vault.Repack(t.Context(), RepackOptions{Budget: WorkBudget{MaxObjects: 2}})
 	require.NoError(t, retryErr)
-	assert.Zero(t, retry.PacksSelected)
+	assert.Equal(t, 1, retry.PacksRemoved)
 	assert.False(t, retry.More)
+	records, err = store.NewPackCatalog(vault.metadata).ListPackRecords(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, records)
+}
+
+func TestRepackDeadPhaseCursorDefersNewMappingsUntilFreshCycle(t *testing.T) {
+	vault := newMaintenanceVault(t, nil)
+	createDeadMaintenancePacks(t, vault, 2)
+	stable := putMaintenanceFilesAt(t, vault, 950, 1)
+	packed, err := vault.Pack(t.Context(), PackOptions{})
+	require.NoError(t, err)
+	require.Equal(t, 1, packed.BlobsPacked)
+	records, err := store.NewPackCatalog(vault.metadata).ListPackRecords(t.Context())
+	require.NoError(t, err)
+	var stablePackID string
+	for _, record := range records {
+		entries, entryErr := store.NewPackCatalog(vault.metadata).ListPackEntries(t.Context(), record.PackID)
+		require.NoError(t, entryErr)
+		if len(entries) == 1 && entries[0].Hash.String() == stable[0].Node.BlobHash {
+			stablePackID = record.PackID
+		}
+	}
+	require.NotEmpty(t, stablePackID)
+
+	first, err := vault.Repack(t.Context(), RepackOptions{Budget: WorkBudget{MaxObjects: 1}})
+	require.NoError(t, err)
+	require.True(t, first.More)
+	require.NotEmpty(t, first.NextCursor)
+
+	insertDanglingMaintenanceMapping(t, vault,
+		"0000000000000000000000000000000000000000000000000000000000000001", stablePackID)
+	second, err := vault.Repack(t.Context(), RepackOptions{Budget: WorkBudget{
+		MaxObjects: 10, Cursor: first.NextCursor,
+	}})
+	require.NoError(t, err)
+	assert.Zero(t, second.MappingsPruned,
+		"dead-phase continuation must not restart the completed mapping phase")
+
+	fresh, err := vault.Repack(t.Context(), RepackOptions{Budget: WorkBudget{MaxObjects: 10}})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), fresh.MappingsPruned)
 }
 
 func TestRepackAutomaticModeContinuesPastCorruptSparseSource(t *testing.T) {
@@ -346,8 +485,8 @@ func TestRepackAutomaticModeContinuesPastCorruptSparseSource(t *testing.T) {
 	assert.Equal(t, 1, report.PacksRewritten,
 		"automatic repack preserves Kit's source-independent failure behavior")
 	assert.True(t, report.More)
-	assert.Empty(t, report.NextCursor,
-		"the cursor cannot skip the failed lowest canonical hash")
+	require.NotEmpty(t, report.NextCursor,
+		"the explicit dead-phase cursor retries the failed lowest canonical hash")
 }
 
 func TestRepackPrunesMappingsWithinBudgetWithoutPhysicalPack(t *testing.T) {
@@ -445,8 +584,39 @@ func TestRepackProbesWorkAfterPostRewriteRetirementError(t *testing.T) {
 	require.ErrorIs(t, err, sentinel)
 	assert.Positive(t, report.BytesRepacked)
 	assert.Equal(t, 2, report.PacksRewritten, "the first canonical candidate completed before the fault")
-	assert.False(t, report.More, "the rewritten source was retired despite the returned error")
-	assert.Empty(t, report.NextCursor, "terminal error progress must not expose a continuation cursor")
+	assert.True(t, report.More, "the replacement summary still needs bounded selection scanning")
+	require.NotEmpty(t, report.NextCursor)
+
+	resumed, resumeErr := internalmaintenance.Repack(t.Context(), vault.metadata, vault.blobs,
+		internalmaintenance.RepackOptions{Budget: internalmaintenance.Budget{
+			MaxObjects: 2, Cursor: report.NextCursor,
+		}, MinAge: time.Nanosecond, MinDeadBytes: 1})
+	require.NoError(t, resumeErr)
+	assert.False(t, resumed.More)
+}
+
+func TestRepackIneligibleOnlyScanAdvancesCursor(t *testing.T) {
+	vault := newMaintenanceVault(t, nil)
+	for i := range 9 { // MaxObjects 1 examines eight summaries per deterministic scan window.
+		putMaintenanceFilesAt(t, vault, 1200+i, 1)
+		packed, err := vault.Pack(t.Context(), PackOptions{})
+		require.NoError(t, err)
+		require.Equal(t, 1, packed.BlobsPacked)
+	}
+
+	first, err := vault.Repack(t.Context(), RepackOptions{Budget: WorkBudget{MaxObjects: 1},
+		MinAge: time.Nanosecond, MinDeadBytes: 1})
+	require.NoError(t, err)
+	assert.Zero(t, first.PacksSelected)
+	require.True(t, first.More)
+	require.NotEmpty(t, first.NextCursor)
+
+	second, err := vault.Repack(t.Context(), RepackOptions{Budget: WorkBudget{
+		MaxObjects: 1, Cursor: first.NextCursor,
+	}, MinAge: time.Nanosecond, MinDeadBytes: 1})
+	require.NoError(t, err)
+	assert.Zero(t, second.PacksSelected)
+	assert.False(t, second.More)
 }
 
 func TestRepackPreservesMappingHighWaterAcrossDeadPackPages(t *testing.T) {

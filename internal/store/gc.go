@@ -42,8 +42,14 @@ type GCCandidate struct {
 // RepackCandidate binds one sparse pack to the lowest canonical live blob hash
 // that provides its stable maintenance key.
 type RepackCandidate struct {
-	Hash  string
-	Usage packstore.PackUsage
+	Hash     string
+	Usage    packstore.PackUsage
+	Eligible bool
+}
+
+type RepackScanPage struct {
+	Items []RepackCandidate
+	More  bool
 }
 
 // HasBlob reports whether the metadata catalog grants authority to hash.
@@ -97,14 +103,22 @@ func (s *Store) UnreachableBlobs(ctx context.Context) ([]BlobInfo, error) {
 func (s *Store) UnreachableBlobsPage(
 	ctx context.Context, after string, limit int,
 ) ([]GCCandidate, bool, error) {
+	return s.UnreachableBlobsPageFrom(ctx, &after, limit)
+}
+
+// UnreachableBlobsPageFrom distinguishes the beginning of an ordering from an
+// arbitrary stored key, including the empty string.
+func (s *Store) UnreachableBlobsPageFrom(
+	ctx context.Context, after *string, limit int,
+) ([]GCCandidate, bool, error) {
 	if limit <= 0 {
 		return nil, false, errors.New("blob page limit must be positive")
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT b.hash, b.loose_stored_size FROM blobs b
-		WHERE b.hash > ?
+		WHERE (? IS NULL OR b.hash > ?)
 		  AND NOT EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash = b.hash)
-		ORDER BY b.hash LIMIT ?`, after, limit+1)
+		ORDER BY b.hash LIMIT ?`, nullableKey(after), nullableKey(after), limit+1)
 	if err != nil {
 		return nil, false, fmt.Errorf("finding unreachable blobs: %w", err)
 	}
@@ -143,11 +157,20 @@ func (s *Store) BlobsPage(ctx context.Context, after string, limit int) ([]BlobI
 func (s *Store) BlobHashesPage(
 	ctx context.Context, after string, limit int,
 ) ([]string, bool, error) {
+	return s.BlobHashesPageFrom(ctx, &after, limit)
+}
+
+// BlobHashesPageFrom distinguishes the beginning of an ordering from an
+// arbitrary stored key, including the empty string.
+func (s *Store) BlobHashesPageFrom(
+	ctx context.Context, after *string, limit int,
+) ([]string, bool, error) {
 	if limit <= 0 {
 		return nil, false, errors.New("blob hash page limit must be positive")
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT hash FROM blobs WHERE hash > ? ORDER BY hash LIMIT ?`, after, limit+1)
+		`SELECT hash FROM blobs WHERE (? IS NULL OR hash > ?) ORDER BY hash LIMIT ?`,
+		nullableKey(after), nullableKey(after), limit+1)
 	if err != nil {
 		return nil, false, fmt.Errorf("listing blob hashes: %w", err)
 	}
@@ -168,6 +191,13 @@ func (s *Store) BlobHashesPage(
 		result = result[:limit]
 	}
 	return result, more, nil
+}
+
+func nullableKey(key *string) any {
+	if key == nil {
+		return nil
+	}
+	return *key
 }
 
 func (s *Store) blobPage(
@@ -201,30 +231,47 @@ func (s *Store) SparseRepackPage(
 	minAge time.Duration,
 	minDeadBytes int64,
 ) ([]RepackCandidate, bool, error) {
-	if limit <= 0 {
-		return nil, false, errors.New("repack page limit must be positive")
-	}
-	cutoff := now.UTC().Add(-minAge).Format(timestampLayout)
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT MIN(b.hash), p.pack_id, p.entry_count, p.stored_bytes, p.created_at,
-		       COUNT(b.hash),
-		       COALESCE(SUM(CASE WHEN b.hash IS NOT NULL THEN i.stored_len ELSE 0 END), 0),
-		       COALESCE(SUM(CASE WHEN b.hash IS NOT NULL THEN i.raw_len ELSE 0 END), 0),
-		       COALESCE(MAX(CASE WHEN b.hash IS NOT NULL THEN i.stored_len ELSE 0 END), 0),
-		       COALESCE(MAX(CASE WHEN b.hash IS NOT NULL THEN i.raw_len ELSE 0 END), 0)
-		FROM blob_packs p
-		LEFT JOIN blob_pack_index i ON i.pack_id = p.pack_id
-		LEFT JOIN blobs b ON b.hash = i.blob_hash
-		GROUP BY p.pack_id, p.entry_count, p.stored_bytes, p.created_at
-		HAVING COUNT(b.hash) > 0
-		   AND COUNT(b.hash) <= (p.entry_count - 1) / 2
-		   AND p.created_at <= ?
-		   AND p.stored_bytes - COALESCE(SUM(
-		       CASE WHEN b.hash IS NOT NULL THEN i.stored_len ELSE 0 END), 0) >= ?
-		   AND MIN(b.hash) > ?
-		ORDER BY MIN(b.hash) LIMIT ?`, cutoff, minDeadBytes, after, limit+1)
+	page, err := s.SparseRepackScanPage(ctx, after, "\xff", limit, now, minAge, minDeadBytes)
 	if err != nil {
-		return nil, false, fmt.Errorf("listing sparse repack candidates: %w", err)
+		return nil, false, err
+	}
+	result := make([]RepackCandidate, 0, len(page.Items))
+	for _, item := range page.Items {
+		if item.Eligible {
+			result = append(result, item)
+		}
+	}
+	return result, page.More, nil
+}
+
+const sparseRepackScanPageSQL = `
+	SELECT scan_hash, pack_id, entry_count, stored_bytes, created_at,
+	       live_entries, live_stored_bytes, live_raw_bytes,
+	       max_live_stored_len, max_live_raw_len
+	FROM blob_packs INDEXED BY blob_packs_live_scan
+	WHERE live_entries > 0
+	  AND (scan_hash > ? OR (scan_hash = ? AND pack_id > ?))
+	ORDER BY scan_hash, pack_id LIMIT ?`
+
+// SparseRepackScanPage examines at most limit persisted pack summaries. Packs
+// that do not satisfy the caller's thresholds still consume the finite scan
+// budget, so selection work is independent of total catalog cardinality.
+func (s *Store) SparseRepackScanPage(
+	ctx context.Context,
+	afterHash string,
+	afterPackID string,
+	limit int,
+	now time.Time,
+	minAge time.Duration,
+	minDeadBytes int64,
+) (RepackScanPage, error) {
+	if limit <= 0 {
+		return RepackScanPage{}, errors.New("repack page limit must be positive")
+	}
+	rows, err := s.db.QueryContext(ctx, sparseRepackScanPageSQL,
+		afterHash, afterHash, afterPackID, limit+1)
+	if err != nil {
+		return RepackScanPage{}, fmt.Errorf("scanning sparse repack candidates: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	result := make([]RepackCandidate, 0, limit+1)
@@ -236,24 +283,27 @@ func (s *Store) SparseRepackPage(
 			&candidate.Usage.LiveEntries, &candidate.Usage.LiveStoredBytes,
 			&candidate.Usage.LiveRawBytes, &candidate.Usage.MaxLiveStoredLen,
 			&candidate.Usage.MaxLiveRawLen); err != nil {
-			return nil, false, fmt.Errorf("scanning sparse repack candidate: %w", err)
+			return RepackScanPage{}, fmt.Errorf("scanning sparse repack candidate: %w", err)
 		}
 		createdAt, err := time.Parse(timestampLayout, created)
 		if err != nil {
-			return nil, false, fmt.Errorf("parsing blob pack %s creation time: %w",
+			return RepackScanPage{}, fmt.Errorf("parsing blob pack %s creation time: %w",
 				candidate.Usage.PackID, err)
 		}
 		candidate.Usage.CreatedAt = createdAt
+		candidate.Eligible = candidate.Usage.LiveEntries <= (candidate.Usage.EntryCount-1)/2 &&
+			!candidate.Usage.CreatedAt.After(now.UTC().Add(-minAge)) &&
+			candidate.Usage.StoredBytes-candidate.Usage.LiveStoredBytes >= minDeadBytes
 		result = append(result, candidate)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, false, fmt.Errorf("listing sparse repack candidates: %w", err)
+		return RepackScanPage{}, fmt.Errorf("scanning sparse repack candidates: %w", err)
 	}
 	more := len(result) > limit
 	if more {
 		result = result[:limit]
 	}
-	return result, more, nil
+	return RepackScanPage{Items: result, More: more}, nil
 }
 
 // UnreferencedPackMappingsPage returns one canonical-hash keyset page of pack
@@ -318,21 +368,21 @@ func (s *Store) DeleteUnreferencedPackMappings(ctx context.Context, hashes []str
 // DeadPackUsagePage returns a bounded set of packs with no live mappings.
 // Successful repack retirement deletes each returned candidate, so callers can
 // resume this phase without an identity cursor.
+const deadPackUsagePageSQL = `
+	SELECT pack_id, entry_count, stored_bytes, created_at,
+	       live_entries, live_stored_bytes, live_raw_bytes,
+	       max_live_stored_len, max_live_raw_len
+	FROM blob_packs INDEXED BY blob_packs_dead_scan
+	WHERE live_entries = 0
+	ORDER BY scan_hash, pack_id LIMIT ?`
+
 func (s *Store) DeadPackUsagePage(
 	ctx context.Context, limit int,
 ) ([]packstore.PackUsage, bool, error) {
 	if limit <= 0 {
 		return nil, false, errors.New("dead-pack page limit must be positive")
 	}
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT p.pack_id, p.entry_count, p.stored_bytes, p.created_at,
-		       COUNT(b.hash), 0, 0, 0, 0
-		FROM blob_packs p
-		LEFT JOIN blob_pack_index i ON i.pack_id = p.pack_id
-		LEFT JOIN blobs b ON b.hash = i.blob_hash
-		GROUP BY p.pack_id, p.entry_count, p.stored_bytes, p.created_at
-		HAVING COUNT(b.hash) = 0
-		ORDER BY p.pack_id LIMIT ?`, limit+1)
+	rows, err := s.db.QueryContext(ctx, deadPackUsagePageSQL, limit+1)
 	if err != nil {
 		return nil, false, fmt.Errorf("listing dead packs: %w", err)
 	}

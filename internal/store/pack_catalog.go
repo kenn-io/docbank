@@ -90,6 +90,11 @@ func (c *PackRestoreCatalog) ReplaceRestoredPacks(
 			return err
 		}
 	}
+	for _, record := range records {
+		if err := finalizePackScanHash(ctx, tx, record.PackID); err != nil {
+			return err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("committing restored pack catalog replacement: %w", err)
 	}
@@ -294,8 +299,24 @@ func (c *PackCatalog) writePack(ctx context.Context, record packstore.PackRecord
 				return err
 			}
 		}
-		return nil
+		return finalizePackScanHash(ctx, tx, record.PackID)
 	})
+}
+
+func finalizePackScanHash(ctx context.Context, tx *sql.Tx, packID string) error {
+	result, err := tx.ExecContext(ctx, `
+		UPDATE blob_packs
+		SET scan_hash = (SELECT MIN(blob_hash) FROM blob_pack_index WHERE pack_id = ?)
+		WHERE pack_id = ?
+		  AND EXISTS (SELECT 1 FROM blob_pack_index WHERE pack_id = ?)`,
+		packID, packID, packID)
+	if err != nil {
+		return fmt.Errorf("finalizing scan hash for blob pack %s: %w", packID, err)
+	}
+	if err := requireOneRow(result, "finalizing scan hash for blob pack "+packID); err != nil {
+		return err
+	}
+	return nil
 }
 
 func writeAdoption(ctx context.Context, tx *sql.Tx, entry packstore.IndexEntry, replace bool) error {
@@ -520,6 +541,11 @@ func (c *PackCatalog) CommitRepack(ctx context.Context, sourceIDs []string,
 				return fmt.Errorf("moving packed blob %s: %w", e.Hash, err)
 			}
 			if err := requireOneRow(result, "moving packed blob "+e.Hash.String()); err != nil {
+				return err
+			}
+		}
+		for _, record := range records {
+			if err := finalizePackScanHash(ctx, tx, record.PackID); err != nil {
 				return err
 			}
 		}

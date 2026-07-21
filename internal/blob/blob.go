@@ -268,7 +268,8 @@ func (s *Store) Maintainer() *packstore.Maintainer { return s.maintainer }
 func (s *Store) RepackWithCatalog(
 	ctx context.Context, catalog packstore.Catalog, opts packstore.RepackOptions,
 ) (stats packstore.RepackStats, retErr error) {
-	maintainer, err := packstore.NewMaintainer(catalog, s.layout, packstore.MaintainerOptions{
+	deferred := &deferredRetirementCatalog{Catalog: catalog}
+	maintainer, err := packstore.NewMaintainer(deferred, s.layout, packstore.MaintainerOptions{
 		Coordinator: s.coordinator,
 		Limits:      StorageLimits(),
 	})
@@ -277,10 +278,54 @@ func (s *Store) RepackWithCatalog(
 	}
 	defer func() { retErr = errors.Join(retErr, maintainer.Close()) }()
 	stats, err = maintainer.Repack(ctx, opts)
-	if err != nil {
-		return stats, fmt.Errorf("repacking scoped blobs: %w", err)
+	retErr = err
+	for _, packID := range deferred.attempted {
+		_, statErr := os.Lstat(s.layout.PackPath(packID))
+		if statErr == nil {
+			continue
+		}
+		if !errors.Is(statErr, fs.ErrNotExist) {
+			retErr = errors.Join(retErr,
+				fmt.Errorf("checking retired pack %s: %w", packID, statErr))
+			continue
+		}
+		deleted, deleteErr := catalog.DeleteEmptyPackRecord(ctx, packID)
+		if deleteErr != nil {
+			retErr = errors.Join(retErr, deleteErr)
+			continue
+		}
+		if !deleted {
+			retErr = errors.Join(retErr,
+				fmt.Errorf("retired pack %s still has catalog mappings", packID))
+		}
 	}
-	return stats, nil
+	if retErr != nil {
+		retErr = fmt.Errorf("repacking scoped blobs: %w", retErr)
+	}
+	return stats, retErr
+}
+
+// deferredRetirementCatalog keeps pack-record authority until Kit has
+// physically retired the immutable pack. RepackWithCatalog performs the
+// catalog deletion only after observing that the canonical path is absent.
+type deferredRetirementCatalog struct {
+	packstore.Catalog
+
+	attempted []string
+}
+
+func (c *deferredRetirementCatalog) DeleteEmptyPackRecord(
+	ctx context.Context, packID string,
+) (bool, error) {
+	entries, err := c.ListPackEntries(ctx, packID)
+	if err != nil {
+		return false, fmt.Errorf("listing pack %s before deferred retirement: %w", packID, err)
+	}
+	if len(entries) != 0 {
+		return false, nil
+	}
+	c.attempted = append(c.attempted, packID)
+	return true, nil
 }
 
 // Coordinator returns the process-local mutation/maintenance coordinator.
@@ -449,6 +494,27 @@ func (s *Store) Remove(hash string) error {
 		return fmt.Errorf("removing blob %s: %w", hash, err)
 	}
 	return nil
+}
+
+// RemoveIfExists deletes canonical loose content and reports whether at least
+// one physical representation was present before the durable removal.
+func (s *Store) RemoveIfExists(hash string) (bool, error) {
+	parsed, err := packstore.ParseHash(hash)
+	if err != nil {
+		return false, fmt.Errorf("blob hash %q: %w", hash, ErrInvalidHash)
+	}
+	present := false
+	for _, path := range []string{s.layout.LoosePath(parsed), s.layout.CompressedLoosePath(parsed)} {
+		if _, statErr := os.Lstat(path); statErr == nil {
+			present = true
+		} else if !errors.Is(statErr, fs.ErrNotExist) {
+			return false, fmt.Errorf("checking blob %s before removal: %w", hash, statErr)
+		}
+	}
+	if err := s.Remove(hash); err != nil {
+		return false, err
+	}
+	return present, nil
 }
 
 // List returns canonical loose objects only. GC uses this to find interrupted

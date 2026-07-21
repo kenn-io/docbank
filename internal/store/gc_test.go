@@ -2,6 +2,8 @@ package store
 
 import (
 	"fmt"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -184,6 +186,162 @@ func TestDeadPackUsagePageIsBounded(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, more)
 	assert.Len(t, page, 3)
+}
+
+func TestSparseRepackScanBoundsExaminedIneligiblePacks(t *testing.T) {
+	for _, total := range []int{8, 800} {
+		t.Run(fmt.Sprintf("packs=%d", total), func(t *testing.T) {
+			s := newTestStore(t)
+			for i := range total {
+				hash := fmt.Sprintf("%064x", i+1)
+				packID := pack.NewPackID()
+				_, err := s.db.ExecContext(t.Context(),
+					`INSERT INTO blobs (hash, size, created_at) VALUES (?, 1, ?)`,
+					hash, "2026-01-01T00:00:00.000000000Z")
+				require.NoError(t, err)
+				_, err = s.db.ExecContext(t.Context(), `
+					INSERT INTO blob_packs (pack_id, entry_count, stored_bytes, created_at)
+					VALUES (?, 1, 5, ?)`, packID, "2026-01-01T00:00:00.000000000Z")
+				require.NoError(t, err)
+				_, err = s.db.ExecContext(t.Context(), `
+					INSERT INTO blob_pack_index
+						(blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
+					VALUES (?, ?, ?, 5, 1, 0, 0)`, hash, packID, pack.MinEntryOffset)
+				require.NoError(t, err)
+			}
+
+			page, err := s.SparseRepackScanPage(t.Context(), "", "", 4,
+				time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC), time.Nanosecond, 1)
+			require.NoError(t, err)
+			assert.Len(t, page.Items, 4)
+			assert.True(t, page.More)
+			for _, item := range page.Items {
+				assert.False(t, item.Eligible)
+			}
+			continued, err := s.SparseRepackScanPage(t.Context(),
+				page.Items[len(page.Items)-1].Hash, page.Items[len(page.Items)-1].Usage.PackID, 4,
+				time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC), time.Nanosecond, 1)
+			require.NoError(t, err)
+			require.Len(t, continued.Items, 4)
+			assert.NotEqual(t, page.Items[0].Usage.PackID, continued.Items[0].Usage.PackID)
+			assert.Equal(t, total > 8, continued.More)
+		})
+	}
+}
+
+func TestSparseRepackScanKeyStaysStableWhenEarlierPackLosesLiveness(t *testing.T) {
+	s := newTestStore(t)
+	packIDs := []string{pack.NewPackID(), pack.NewPackID()}
+	slices.Sort(packIDs)
+	hashes := []string{
+		"1000000000000000000000000000000000000000000000000000000000000000",
+		"2000000000000000000000000000000000000000000000000000000000000000",
+	}
+	for i, packID := range packIDs {
+		_, err := s.db.ExecContext(t.Context(),
+			`INSERT INTO blobs (hash, size, created_at) VALUES (?, 1, ?)`,
+			hashes[i], "2026-01-01T00:00:00.000000000Z")
+		require.NoError(t, err)
+		_, err = s.db.ExecContext(t.Context(), `
+			INSERT INTO blob_packs (pack_id, entry_count, stored_bytes, created_at)
+			VALUES (?, 3, 30, ?)`, packID, "2026-01-01T00:00:00.000000000Z")
+		require.NoError(t, err)
+		_, err = s.db.ExecContext(t.Context(), `
+			INSERT INTO blob_pack_index
+				(blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
+			VALUES (?, ?, ?, 5, 1, 0, 0)`, hashes[i], packID, pack.MinEntryOffset)
+		require.NoError(t, err)
+	}
+
+	first, err := s.SparseRepackScanPage(t.Context(), "", "", 1,
+		time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC), time.Nanosecond, 1)
+	require.NoError(t, err)
+	require.Len(t, first.Items, 1)
+	require.True(t, first.More)
+	assert.Equal(t, packIDs[0], first.Items[0].Usage.PackID)
+	assert.Equal(t, hashes[0], first.Items[0].Hash)
+
+	_, err = s.db.ExecContext(t.Context(), `DELETE FROM blobs WHERE hash = ?`, hashes[0])
+	require.NoError(t, err)
+	var retainedScanHash string
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
+		`SELECT scan_hash FROM blob_packs WHERE pack_id = ?`, packIDs[0]).Scan(&retainedScanHash))
+	assert.Equal(t, hashes[0], retainedScanHash)
+	second, err := s.SparseRepackScanPage(t.Context(), first.Items[0].Hash,
+		first.Items[0].Usage.PackID, 1,
+		time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC), time.Nanosecond, 1)
+	require.NoError(t, err)
+	require.Len(t, second.Items, 1)
+	assert.Equal(t, packIDs[1], second.Items[0].Usage.PackID,
+		"the continuation key is immutable even when the earlier pack becomes dead")
+}
+
+func TestPackScanHashDoesNotChangeAfterPackCreation(t *testing.T) {
+	s := newTestStore(t)
+	packID := pack.NewPackID()
+	originalHash := "8000000000000000000000000000000000000000000000000000000000000000"
+	laterHash := "1000000000000000000000000000000000000000000000000000000000000000"
+	for _, hash := range []string{originalHash, laterHash} {
+		_, err := s.db.ExecContext(t.Context(),
+			`INSERT INTO blobs (hash, size, created_at) VALUES (?, 1, ?)`,
+			hash, "2026-01-01T00:00:00.000000000Z")
+		require.NoError(t, err)
+	}
+	_, err := s.db.ExecContext(t.Context(), `
+		INSERT INTO blob_packs (pack_id, entry_count, stored_bytes, created_at, scan_hash)
+		VALUES (?, 2, 10, ?, ?)`, packID, "2026-01-01T00:00:00.000000000Z", originalHash)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(t.Context(), `
+		INSERT INTO blob_pack_index
+			(blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
+		VALUES (?, ?, ?, 5, 1, 0, 0)`, originalHash, packID, pack.MinEntryOffset)
+	require.NoError(t, err)
+
+	_, err = s.db.ExecContext(t.Context(), `
+		INSERT INTO blob_pack_index
+			(blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
+		VALUES (?, ?, ?, 5, 1, 0, 0)`, laterHash, packID, pack.MinEntryOffset+32)
+	require.NoError(t, err)
+
+	var scanHash string
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
+		`SELECT scan_hash FROM blob_packs WHERE pack_id = ?`, packID).Scan(&scanHash))
+	assert.Equal(t, originalHash, scanHash,
+		"an established pack scan key remains immutable when mappings change")
+}
+
+func TestRepackSelectionQueriesUseSummaryIndexes(t *testing.T) {
+	s := newTestStore(t)
+	tests := []struct {
+		name      string
+		query     string
+		args      []any
+		wantIndex string
+	}{
+		{name: "dead", query: deadPackUsagePageSQL, args: []any{2},
+			wantIndex: "blob_packs_dead_scan"},
+		{name: "sparse", query: sparseRepackScanPageSQL, args: []any{"", "", "", 2},
+			wantIndex: "blob_packs_live_scan"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rows, err := s.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+test.query, test.args...)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, rows.Close()) }()
+			var details []string
+			for rows.Next() {
+				var id, parent, unused int
+				var detail string
+				require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+				details = append(details, detail)
+			}
+			require.NoError(t, rows.Err())
+			plan := strings.Join(details, "\n")
+			assert.Contains(t, plan, test.wantIndex)
+			assert.NotContains(t, plan, "blob_pack_index")
+			assert.NotContains(t, plan, "USE TEMP B-TREE")
+		})
+	}
 }
 
 func TestUnreachableBlobs(t *testing.T) {

@@ -29,6 +29,7 @@ const (
 
 	defaultRepackMinAge    = 24 * time.Hour
 	defaultRepackDeadBytes = int64(8 << 20)
+	repackScanMultiplier   = 8
 )
 
 var (
@@ -122,6 +123,8 @@ type cursor struct {
 	Kind    operation `json:"op"`
 	Phase   string    `json:"phase,omitempty"`
 	Hash    string    `json:"hash"`
+	PackID  string    `json:"pack_id,omitempty"`
+	Set     bool      `json:"set"`
 }
 
 func normalizeBudget(budget Budget) (Budget, error) {
@@ -146,12 +149,22 @@ func decodeCursor(raw string, kind operation) (cursor, error) {
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return cursor{}, fmt.Errorf("%w: malformed value", ErrInvalidCursor)
 	}
-	parsed, err := packstore.ParseHash(decoded.Hash)
-	if err != nil || parsed.String() != decoded.Hash || decoded.Version != 1 || decoded.Kind != kind {
+	if decoded.Version != 1 || decoded.Kind != kind || !decoded.Set {
 		return cursor{}, fmt.Errorf("%w: invalid or mismatched fields", ErrInvalidCursor)
 	}
 	if decoded.Phase != "" && (kind != operationRepack ||
 		(decoded.Phase != "mappings" && decoded.Phase != "dead" && decoded.Phase != "sparse")) {
+		return cursor{}, fmt.Errorf("%w: invalid or mismatched fields", ErrInvalidCursor)
+	}
+	if kind == operationRepack && decoded.Hash == "" && decoded.Phase != "dead" {
+		return cursor{}, fmt.Errorf("%w: invalid or mismatched fields", ErrInvalidCursor)
+	}
+	if decoded.Phase == "sparse" {
+		parsed, err := packstore.ParseHash(decoded.Hash)
+		if err != nil || parsed.String() != decoded.Hash || !pack.IsValidPackID(decoded.PackID) {
+			return cursor{}, fmt.Errorf("%w: invalid or mismatched fields", ErrInvalidCursor)
+		}
+	} else if decoded.PackID != "" {
 		return cursor{}, fmt.Errorf("%w: invalid or mismatched fields", ErrInvalidCursor)
 	}
 	return decoded, nil
@@ -162,10 +175,20 @@ func encodeCursor(kind operation, hash string) string {
 }
 
 func encodePhaseCursor(kind operation, phase, hash string) string {
-	data := []byte(`{"v":1,"op":"` + string(kind) + `","hash":"` + hash + `"}`)
-	if phase != "" {
-		data = []byte(`{"v":1,"op":"` + string(kind) + `","phase":"` + phase +
-			`","hash":"` + hash + `"}`)
+	data, err := json.Marshal(cursor{Version: 1, Kind: kind, Phase: phase, Hash: hash, Set: true})
+	if err != nil {
+		panic("maintenance cursor fields are not JSON encodable")
+	}
+	return base64.RawURLEncoding.EncodeToString(data)
+}
+
+func encodeSparseCursor(hash, packID string) string {
+	data, err := json.Marshal(cursor{
+		Version: 1, Kind: operationRepack, Phase: "sparse",
+		Hash: hash, PackID: packID, Set: true,
+	})
+	if err != nil {
+		panic("maintenance cursor fields are not JSON encodable")
 	}
 	return base64.RawURLEncoding.EncodeToString(data)
 }
@@ -184,8 +207,8 @@ func GarbageCollect(
 	if err != nil {
 		return GCReport{}, err
 	}
-	after := state.Hash
-	tracked, trackedMore, err := metadata.UnreachableBlobsPage(ctx, after, budget.MaxObjects)
+	tracked, trackedMore, err := metadata.UnreachableBlobsPageFrom(
+		ctx, cursorPosition(state), budget.MaxObjects)
 	if err != nil {
 		return GCReport{}, err
 	}
@@ -214,10 +237,13 @@ func GarbageCollect(
 		report.ReclaimableBytes += candidate.LooseStoredSize
 		processedBytes += candidate.LooseStoredSize + packedSize
 		if !opts.DryRun && candidate.Loose {
-			if err := blobs.Remove(candidate.Hash); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			removed, err := blobs.RemoveIfExists(candidate.Hash)
+			if err != nil && !errors.Is(err, fs.ErrNotExist) {
 				return report, err
 			}
-			report.ReclaimedFiles++
+			if removed {
+				report.ReclaimedFiles++
+			}
 		}
 		processed++
 	}
@@ -248,9 +274,9 @@ func Verify(
 	if err != nil {
 		return VerifyReport{}, err
 	}
-	after := state.Hash
 	report := VerifyReport{}
-	hashes, pageMore, err := metadata.BlobHashesPage(ctx, after, budget.MaxObjects)
+	hashes, pageMore, err := metadata.BlobHashesPageFrom(
+		ctx, cursorPosition(state), budget.MaxObjects)
 	if err != nil {
 		return report, err
 	}
@@ -277,6 +303,13 @@ func Verify(
 		report.NextCursor = encodeCursor(operationVerify, hashes[processed-1])
 	}
 	return report, nil
+}
+
+func cursorPosition(state cursor) *string {
+	if !state.Set {
+		return nil
+	}
+	return &state.Hash
 }
 
 func checkBlob(ctx context.Context, blobs *blob.Store, hash string) (string, int64) {
@@ -358,13 +391,11 @@ func Repack(
 	now := time.Now().UTC()
 	report := RepackReport{}
 	remaining := budget.MaxObjects
-	mappingHighWater := ""
-	sparseAfter := ""
-	if phase == "dead" {
-		mappingHighWater = state.Hash
-	}
+	sparseAfterHash := ""
+	sparseAfterPack := ""
 	if phase == "sparse" {
-		sparseAfter = state.Hash
+		sparseAfterHash = state.Hash
+		sparseAfterPack = state.PackID
 	}
 	baseCatalog := opts.Catalog
 	if baseCatalog == nil {
@@ -389,8 +420,8 @@ func Repack(
 		if mappingMore || remaining == 0 {
 			report.More = mappingMore
 			if !report.More {
-				report.More, err = repackWorkRemains(ctx, metadata, state.Hash,
-					now, minAge, minDead, true)
+				report.More, err = repackWorkRemains(
+					ctx, metadata, state.Hash, "", "", now, minAge, minDead, true)
 				if err != nil {
 					return report, err
 				}
@@ -401,7 +432,6 @@ func Repack(
 			return report, nil
 		}
 		phase = "dead"
-		mappingHighWater = state.Hash
 	}
 
 	dead, deadMore, err := metadata.DeadPackUsagePage(ctx, remaining)
@@ -417,74 +447,86 @@ func Repack(
 		addRepackStats(&report, stats)
 		remaining -= len(dead)
 		if runErr != nil {
-			report.More, err = repackWorkRemains(ctx, metadata, sparseAfter,
-				now, minAge, minDead, false)
+			report.More, err = repackWorkRemains(ctx, metadata, "",
+				sparseAfterHash, sparseAfterPack, now, minAge, minDead, false)
 			if err != nil {
 				return report, errors.Join(runErr, err)
 			}
-			if report.More && phase == "dead" && mappingHighWater != "" {
-				report.NextCursor = encodePhaseCursor(operationRepack, "dead", mappingHighWater)
-			} else if report.More && phase == "sparse" && sparseAfter != "" {
-				report.NextCursor = encodePhaseCursor(operationRepack, "sparse", sparseAfter)
+			if report.More {
+				report.NextCursor = repackPhaseCursor(phase, sparseAfterHash, sparseAfterPack)
 			}
 			return report, runErr
 		}
 	}
 	if deadMore {
 		report.More = true
-		if phase == "dead" && mappingHighWater != "" {
-			report.NextCursor = encodePhaseCursor(operationRepack, "dead", mappingHighWater)
-		} else if phase == "sparse" && sparseAfter != "" {
-			report.NextCursor = encodePhaseCursor(operationRepack, "sparse", sparseAfter)
-		}
+		report.NextCursor = repackPhaseCursor(phase, sparseAfterHash, sparseAfterPack)
 		return report, nil
 	}
 	if remaining == 0 {
-		report.More, err = repackWorkRemains(ctx, metadata, sparseAfter,
-			now, minAge, minDead, false)
+		report.More, err = repackWorkRemains(ctx, metadata, "",
+			sparseAfterHash, sparseAfterPack, now, minAge, minDead, false)
 		if err != nil {
 			return report, err
 		}
-		if report.More && phase == "dead" && mappingHighWater != "" {
-			report.NextCursor = encodePhaseCursor(operationRepack, "dead", mappingHighWater)
-		} else if report.More && phase == "sparse" && sparseAfter != "" {
-			report.NextCursor = encodePhaseCursor(operationRepack, "sparse", sparseAfter)
+		if report.More {
+			report.NextCursor = repackPhaseCursor(phase, sparseAfterHash, sparseAfterPack)
 		}
 		return report, nil
 	}
-	candidates, candidateMore, err := metadata.SparseRepackPage(
-		ctx, sparseAfter, remaining, now, minAge, minDead)
+	// Candidate thresholds can leave long runs of ineligible summaries. Scan a
+	// deterministic multiple of the caller's remaining object budget, while
+	// still allowing at most remaining eligible physical mutations.
+	scanLimit := remaining * repackScanMultiplier
+	if scanLimit/remaining != repackScanMultiplier {
+		scanLimit = int(^uint(0) >> 1)
+	}
+	scan, err := metadata.SparseRepackScanPage(
+		ctx, sparseAfterHash, sparseAfterPack, scanLimit, now, minAge, minDead)
 	if err != nil {
 		return report, err
 	}
-	last := sparseAfter
-	processed := 0
+	lastHash := sparseAfterHash
+	lastPack := sparseAfterPack
+	examined := 0
+	selected := 0
 	cursorBlocked := false
 	var runErr error
-	for _, candidate := range candidates {
-		if processed > 0 && budget.MaxBytes > 0 && report.BytesRepacked >= budget.MaxBytes {
+	for _, candidate := range scan.Items {
+		if candidate.Eligible && selected == remaining {
+			break
+		}
+		if examined > 0 && budget.MaxBytes > 0 && report.BytesRepacked >= budget.MaxBytes {
 			report.BudgetExhausted = true
 			break
 		}
 		if err := ctx.Err(); err != nil {
 			return report, err
 		}
+		if !candidate.Eligible {
+			if !cursorBlocked {
+				lastHash, lastPack = candidate.Hash, candidate.Usage.PackID
+			}
+			examined++
+			continue
+		}
 		stats, sourceErr := blobs.RepackWithCatalog(ctx,
 			&scopedCatalog{Catalog: baseCatalog, usages: []packstore.PackUsage{candidate.Usage}},
 			packstore.RepackOptions{MaxBytes: budget.MaxBytes, Now: now,
 				Selection: packstore.RepackSelection{MinAge: minAge, MinDeadStored: minDead}})
 		addRepackStats(&report, stats)
+		selected++
 		if sourceErr != nil {
 			runErr = errors.Join(runErr, sourceErr)
-			processed++
+			examined++
 			if !isRepackSourceContentError(sourceErr) || budget.MaxBytes == 0 {
-				report.More, err = repackWorkRemains(ctx, metadata, last,
-					now, minAge, minDead, false)
+				report.More, err = repackWorkRemains(ctx, metadata, "",
+					lastHash, lastPack, now, minAge, minDead, false)
 				if err != nil {
 					return report, errors.Join(runErr, err)
 				}
-				if report.More && last != "" {
-					report.NextCursor = encodePhaseCursor(operationRepack, "sparse", last)
+				if report.More {
+					report.NextCursor = repackPhaseCursor("sparse", lastHash, lastPack)
 				}
 				return report, runErr
 			}
@@ -492,24 +534,24 @@ func Repack(
 			continue
 		}
 		if !cursorBlocked {
-			last = candidate.Hash
+			lastHash, lastPack = candidate.Hash, candidate.Usage.PackID
 		}
-		processed++
+		examined++
 	}
 	if runErr != nil {
-		report.More, err = repackWorkRemains(ctx, metadata, last,
-			now, minAge, minDead, false)
+		report.More, err = repackWorkRemains(ctx, metadata, "",
+			lastHash, lastPack, now, minAge, minDead, false)
 		if err != nil {
 			return report, errors.Join(runErr, err)
 		}
-		if report.More && last != "" {
-			report.NextCursor = encodePhaseCursor(operationRepack, "sparse", last)
+		if report.More {
+			report.NextCursor = repackPhaseCursor("sparse", lastHash, lastPack)
 		}
 		return report, runErr
 	}
-	report.More = processed < len(candidates) || candidateMore
-	if report.More && last != "" {
-		report.NextCursor = encodePhaseCursor(operationRepack, "sparse", last)
+	report.More = examined < len(scan.Items) || scan.More
+	if report.More {
+		report.NextCursor = repackPhaseCursor("sparse", lastHash, lastPack)
 	}
 	return report, nil
 }
@@ -517,25 +559,34 @@ func Repack(
 func repackWorkRemains(
 	ctx context.Context,
 	metadata *store.Store,
-	after string,
+	mappingAfter string,
+	sparseAfterHash string,
+	sparseAfterPack string,
 	now time.Time,
 	minAge time.Duration,
 	minDead int64,
 	includeMappings bool,
 ) (bool, error) {
 	if includeMappings {
-		mappings, _, err := metadata.UnreferencedPackMappingsPage(ctx, after, 1)
+		mappings, _, err := metadata.UnreferencedPackMappingsPage(ctx, mappingAfter, 1)
 		if err != nil || len(mappings) > 0 {
 			return len(mappings) > 0, err
 		}
-		after = ""
 	}
 	dead, _, err := metadata.DeadPackUsagePage(ctx, 1)
 	if err != nil || len(dead) > 0 {
 		return len(dead) > 0, err
 	}
-	sparse, _, err := metadata.SparseRepackPage(ctx, after, 1, now, minAge, minDead)
-	return len(sparse) > 0, err
+	sparse, err := metadata.SparseRepackScanPage(
+		ctx, sparseAfterHash, sparseAfterPack, 1, now, minAge, minDead)
+	return len(sparse.Items) > 0, err
+}
+
+func repackPhaseCursor(phase, sparseHash, sparsePack string) string {
+	if phase == "sparse" && sparseHash != "" {
+		return encodeSparseCursor(sparseHash, sparsePack)
+	}
+	return encodePhaseCursor(operationRepack, "dead", "")
 }
 
 func isRepackSourceContentError(err error) bool {

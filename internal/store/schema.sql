@@ -58,7 +58,13 @@ CREATE TABLE IF NOT EXISTS blob_packs (
     pack_id      TEXT PRIMARY KEY,
     entry_count  INTEGER NOT NULL CHECK (entry_count >= 0),
     stored_bytes INTEGER NOT NULL CHECK (stored_bytes >= 0),
-    created_at   TEXT NOT NULL
+    created_at   TEXT NOT NULL,
+    scan_hash             TEXT NOT NULL DEFAULT '',
+    live_entries          INTEGER NOT NULL DEFAULT 0 CHECK (live_entries >= 0),
+    live_stored_bytes     INTEGER NOT NULL DEFAULT 0 CHECK (live_stored_bytes >= 0),
+    live_raw_bytes        INTEGER NOT NULL DEFAULT 0 CHECK (live_raw_bytes >= 0),
+    max_live_stored_len   INTEGER NOT NULL DEFAULT 0 CHECK (max_live_stored_len >= 0),
+    max_live_raw_len      INTEGER NOT NULL DEFAULT 0 CHECK (max_live_raw_len >= 0)
 );
 
 CREATE TABLE IF NOT EXISTS blob_pack_index (
@@ -72,7 +78,6 @@ CREATE TABLE IF NOT EXISTS blob_pack_index (
 );
 
 CREATE INDEX IF NOT EXISTS blob_pack_index_pack ON blob_pack_index(pack_id);
-
 -- A file node is stable document identity; immutable content-version rows are
 -- its byte history. Random UUIDv4 identities remain safe across JSONL
 -- round-trips and pruning because they are never allocator-derived or reused.
