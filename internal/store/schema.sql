@@ -3,8 +3,9 @@
 -- One stable logical identity follows the vault through JSONL backup and
 -- restore. Filesystem location is deliberately not identity.
 CREATE TABLE IF NOT EXISTS vault_metadata (
-    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-    vault_id  TEXT NOT NULL UNIQUE
+    singleton      INTEGER PRIMARY KEY CHECK (singleton = 1),
+    vault_id       TEXT NOT NULL UNIQUE,
+    schema_version INTEGER NOT NULL CHECK (schema_version >= 1)
 );
 
 -- AUTOINCREMENT: node ids are stored as origins (trash_parent) and will be

@@ -92,9 +92,13 @@ Instructions for autonomous coding agents working in this repository.
   atomically install it while retaining a recoverable source database. Do not
   accumulate in-place `ALTER TABLE` migration ladders or compatibility logic
   for layouts that never shipped. Every released-format cutover needs an exact
-  released-schema fixture and end-to-end coverage in both SQLite modes. Keep
-  metadata JSONL at format v1 until a released logical-format change actually
-  requires a new version.
+  released-schema fixture and direct oldest-supported-to-current coverage in
+  both SQLite modes. Every post-v0.9 layout records an explicit monotonically
+  increasing storage schema version; v0.9 is the only layout recognized by an
+  inferred structural fingerprint. Keep source-version readers available for
+  every supported release, and keep metadata JSONL at format v1 until a
+  released logical-format change actually requires a new version and a
+  deterministic import normalizer.
 
 <!-- BEGIN KATA (managed by `kata init --with-agents`) -->
 ## kata issue tracker

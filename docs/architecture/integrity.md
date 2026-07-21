@@ -116,16 +116,20 @@ identity check remains active during later scans.
 ### Released schema upgrades
 
 v0.9.0 established Docbank's first public storage compatibility boundary.
-Released vaults survive incompatible SQLite changes through a logical cutover:
-Docbank exports deterministic metadata-v1 JSONL from the old database, imports
-and validates it in a fresh current-schema database, restores physical pack
-authority, and only then publishes the replacement. The source database is
-retained beside it as `<database>.v0.9.0.bak` for recovery.
+Later layouts carry an explicit storage-schema version. Released vaults survive
+incompatible SQLite changes through one shared logical-cutover driver: Docbank
+selects the exact source-generation adapter, exports deterministic metadata-v1
+JSONL from the old database, imports and validates it in a fresh current-schema
+database, restores physical pack authority, and only then publishes the
+replacement. A v0.9.0 source is retained beside it as
+`<database>.v0.9.0.bak`; later source generations use their own identified
+recovery copy.
 
 This is intentionally not an in-place migration ledger. Unreleased development
 layouts remain disposable, while every supported released layout has an exact
-fixture and an end-to-end cutover test. Metadata remains format v1 until a
-released logical-format change requires otherwise.
+fixture and a direct-to-current end-to-end cutover test under both SQLite
+implementations. Metadata remains format v1 until a released logical-format
+change requires a deterministic version normalizer.
 
 ### One owner for an entire vault tree
 

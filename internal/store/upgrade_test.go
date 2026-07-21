@@ -37,6 +37,10 @@ func TestOpenCutsOverReleasedV090ThroughJSONL(t *testing.T) {
 
 			s, err := Open(dbPath, test.driver)
 			require.NoError(t, err)
+			var schemaVersion int
+			require.NoError(t, s.db.QueryRow(`
+				SELECT schema_version FROM vault_metadata WHERE singleton = 1`).Scan(&schemaVersion))
+			assert.Equal(t, currentStorageSchemaVersion, schemaVersion)
 			var upgraded bytes.Buffer
 			require.NoError(t, s.ExportMetadata(t.Context(), &upgraded))
 			assert.Equal(t, fixture.metadata, upgraded.Bytes(),
@@ -81,6 +85,97 @@ func TestOpenCutsOverReleasedV090ThroughJSONL(t *testing.T) {
 	}
 }
 
+func TestFreshStoresRecordCurrentStorageSchemaVersion(t *testing.T) {
+	for _, test := range v090UpgradeDrivers() {
+		t.Run(test.name, func(t *testing.T) {
+			s, err := Open(filepath.Join(t.TempDir(), "docbank.db"), test.driver)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, s.Close()) }()
+			var version int
+			require.NoError(t, s.db.QueryRow(`
+				SELECT schema_version FROM vault_metadata WHERE singleton = 1`).Scan(&version))
+			assert.Equal(t, currentStorageSchemaVersion, version)
+		})
+	}
+}
+
+func TestOpenRejectsDatabaseFromNewerStorageSchema(t *testing.T) {
+	for _, test := range v090UpgradeDrivers() {
+		t.Run(test.name, func(t *testing.T) {
+			dbPath := filepath.Join(t.TempDir(), "docbank.db")
+			s, err := Open(dbPath, test.driver)
+			require.NoError(t, err)
+			require.NoError(t, s.Close())
+
+			db, err := test.driver.Open(dbPath, docsqlite.OpenOptions{
+				Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+			})
+			require.NoError(t, err)
+			_, err = db.Exec(`UPDATE vault_metadata SET schema_version = ? WHERE singleton = 1`,
+				currentStorageSchemaVersion+1)
+			require.NoError(t, err)
+			require.NoError(t, db.Close())
+
+			_, err = Open(dbPath, test.driver)
+			require.ErrorContains(t, err, "is newer than binary schema")
+		})
+	}
+}
+
+func TestReleasedRecoveryCopyDoesNotResurrectDeletedVault(t *testing.T) {
+	driver := DefaultSQLiteDriver()
+	dbPath := filepath.Join(t.TempDir(), "docbank.db")
+	createV090Fixture(t, dbPath, driver)
+	s, err := Open(dbPath, driver)
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+	require.NoError(t, os.Remove(dbPath))
+
+	_, err = Open(dbPath, driver)
+	require.ErrorContains(t, err, "refusing to resurrect an old vault")
+	_, statErr := os.Stat(dbPath)
+	require.ErrorIs(t, statErr, os.ErrNotExist)
+	_, statErr = os.Stat(dbPath + v090BackupSuffix)
+	require.NoError(t, statErr)
+}
+
+func TestOpenCompletesInterruptedReleasedCutover(t *testing.T) {
+	driver := DefaultSQLiteDriver()
+	dbPath := filepath.Join(t.TempDir(), "docbank.db")
+	fixture := createV090Fixture(t, dbPath, driver)
+	sourceSchema := releasedStorageSchemas[0]
+	stagePath := upgradeStagePath(dbPath, sourceSchema.version)
+	jsonlPath := upgradeJSONLPath(dbPath, sourceSchema.version)
+
+	source, err := openReleasedSource(dbPath, driver, sourceSchema)
+	require.NoError(t, err)
+	snapshot, err := source.BeginTx(t.Context(), &sql.TxOptions{ReadOnly: true})
+	require.NoError(t, err)
+	require.NoError(t, writeUpgradeJSONL(snapshot, jsonlPath, sourceSchema))
+	target, err := openCurrentStore(stagePath, driver)
+	require.NoError(t, err)
+	require.NoError(t, importUpgradeJSONL(target, jsonlPath, sourceSchema))
+	require.NoError(t, sourceSchema.restorePhysical(t.Context(), snapshot, target))
+	require.NoError(t, target.ValidateMetadata(t.Context()))
+	require.NoError(t, target.Checkpoint(t.Context()))
+	require.NoError(t, target.Close())
+	require.NoError(t, snapshot.Rollback())
+	require.NoError(t, source.Close())
+	require.NoError(t, os.Remove(jsonlPath))
+	require.NoError(t, os.Rename(dbPath, dbPath+sourceSchema.backupSuffix))
+
+	recovered, err := Open(dbPath, driver)
+	require.NoError(t, err)
+	var metadata bytes.Buffer
+	require.NoError(t, recovered.ExportMetadata(t.Context(), &metadata))
+	assert.Equal(t, fixture.metadata, metadata.Bytes())
+	require.NoError(t, recovered.Close())
+	_, err = os.Stat(stagePath)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	_, err = os.Stat(dbPath + sourceSchema.backupSuffix)
+	require.NoError(t, err)
+}
+
 func TestV090CutoverPublicationFailureRestoresReleasedDatabase(t *testing.T) {
 	driver := DefaultSQLiteDriver()
 	dbPath := filepath.Join(t.TempDir(), "docbank.db")
@@ -104,7 +199,8 @@ func TestV090CutoverPublicationFailureRestoresReleasedDatabase(t *testing.T) {
 	require.NoError(t, err)
 	kind, err := classifyDatabaseSchema(db)
 	require.NoError(t, err)
-	assert.Equal(t, schemaV090, kind, "the released source is restored after publication fails")
+	assert.Equal(t, 1, kind.version, "the released source is restored after publication fails")
+	assert.NotNil(t, kind.source)
 	require.NoError(t, db.Close())
 	_, err = os.Stat(dbPath + v090BackupSuffix)
 	require.ErrorIs(t, err, os.ErrNotExist)

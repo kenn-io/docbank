@@ -91,21 +91,30 @@ nodes_fts      -- FTS5 external-content index over live node names
 
 ## Released upgrades
 
-v0.9.0 is the first storage compatibility boundary. Opening a v0.9.0 vault with
-a newer incompatible schema performs a logical cutover rather than a sequence
-of in-place SQL mutations:
+v0.9.0 is the first storage compatibility boundary. Every newer database
+records an explicit, monotonically increasing storage-schema version. Opening
+any supported older vault with a newer incompatible schema performs a logical
+cutover rather than a sequence of in-place SQL mutations:
 
 1. checkpoint and read the released database without changing its schema;
 2. export and validate deterministic metadata-v1 JSONL;
 3. import that stream into a fresh current-schema database;
 4. restore loose and packed physical authority, then validate and checkpoint;
-5. retain the source as `<database>.v0.9.0.bak` and atomically publish the new
-   database.
+5. retain a version-identified source recovery copy and atomically publish the
+   new database.
 
-The recovery copy contains private vault metadata and inherits the vault's
-owner-private boundary. Keep it until the upgraded vault and a fresh backup
-have been verified; it may then be removed while the daemon is stopped. Blob
-files are neither duplicated nor recompressed by this cutover.
+The cutover driver is shared by every released generation. A small source
+adapter describes how to export that generation's logical authority and
+restore its physical blob catalog. The v0.9.0 adapter recognizes the one
+released database that predates the explicit version marker; later generations
+are selected only by their stored version. An older binary refuses a database
+from a newer generation instead of attempting to interpret it.
+
+For a v0.9.0 source the recovery copy is `<database>.v0.9.0.bak`. It contains
+private vault metadata and inherits the vault's owner-private boundary. Keep it
+until the upgraded vault and a fresh backup have been verified; it may then be
+removed while the daemon is stopped. Blob files are neither duplicated nor
+recompressed by this cutover.
 
 File nodes and content versions cross-reference one another: a file must have a
 current version belonging to that node, while directories cannot carry one.
