@@ -132,6 +132,30 @@ func TestListCountsBothLooseRepresentations(t *testing.T) {
 	assert.Equal(t, int64(len(content))+receipt.StoredSize, listed[receipt.Hash])
 }
 
+func TestListPageBoundsCanonicalHashKeyset(t *testing.T) {
+	bs := newTestBlobStore(t)
+	hashes := []string{
+		strings.Repeat("0", 63) + "1",
+		strings.Repeat("0", 63) + "2",
+		strings.Repeat("f", 64),
+	}
+	for _, hash := range hashes {
+		path := bs.path(hash)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+		require.NoError(t, os.WriteFile(path, []byte(hash[:1]), 0o600))
+	}
+
+	first, more, err := bs.ListPage("", 2)
+	require.NoError(t, err)
+	require.True(t, more)
+	assert.Equal(t, []LooseInfo{{Hash: hashes[0], Size: 1}, {Hash: hashes[1], Size: 1}}, first)
+
+	second, more, err := bs.ListPage(first[1].Hash, 2)
+	require.NoError(t, err)
+	assert.False(t, more)
+	assert.Equal(t, []LooseInfo{{Hash: hashes[2], Size: 1}}, second)
+}
+
 func TestRepairContextReplacesCorruptLooseContent(t *testing.T) {
 	tests := []struct {
 		name       string

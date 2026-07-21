@@ -11,13 +11,13 @@ import (
 	"net/http"
 	"path/filepath"
 	"reflect"
-	"sort"
 	"strings"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
-	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/ingest"
+	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 )
 
 func registerOpsRoutes(api huma.API, d Deps, g *gate) {
@@ -55,16 +55,11 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 		}
 		out := &storageRepackOutput{}
 		err = g.maintain(func() error {
-			stats, err := d.Blobs.Maintainer().Repack(ctx, packstore.RepackOptions{
-				MaxBytes: in.Body.MaxBytes,
-				Selection: packstore.RepackSelection{
-					MinAge: minAge, MinDeadStored: in.Body.MinDeadBytes,
-				},
-			})
+			report, err := runRepack(ctx, d, in.Body.MaxBytes, minAge, in.Body.MinDeadBytes)
 			if err != nil {
 				return FromMaintenanceError(err)
 			}
-			out.Body = storageRepackReport(stats)
+			out.Body = storageRepackReport(report)
 			return nil
 		})
 		return out, err
@@ -81,11 +76,11 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 	}) (*storagePackOutput, error) {
 		out := &storagePackOutput{}
 		err := g.maintain(func() error {
-			stats, err := d.Blobs.Maintainer().Pack(ctx, packstore.PackOptions{MaxBytes: in.Body.MaxBytes})
+			report, err := internalmaintenance.Pack(ctx, d.Store, d.Blobs, in.Body.MaxBytes)
 			if err != nil {
 				return FromMaintenanceError(err)
 			}
-			out.Body = storagePackReport(stats)
+			out.Body = storagePackReport(report)
 			return nil
 		})
 		return out, err
@@ -278,34 +273,9 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 	}, func(ctx context.Context, _ *struct{}) (*verifyOutput, error) {
 		out := &verifyOutput{}
 		err := g.maintain(func() error {
-			if err := d.Store.ValidateMetadata(ctx); err != nil {
-				if ctx.Err() != nil {
-					return NewError(http.StatusInternalServerError, "internal",
-						fmt.Sprintf("verify interrupted: %v", ctx.Err()))
-				}
-				out.Body.MetadataProblems = append(out.Body.MetadataProblems, err.Error())
-			}
-			hashes, err := d.Store.AllBlobHashes(ctx)
-			if err != nil {
-				if ctx.Err() != nil {
-					return NewError(http.StatusInternalServerError, "internal",
-						fmt.Sprintf("verify interrupted: %v", ctx.Err()))
-				}
-				out.Body.MetadataProblems = append(out.Body.MetadataProblems, err.Error())
-				return nil
-			}
-			for _, hash := range hashes {
-				if err := ctx.Err(); err != nil {
-					return NewError(http.StatusInternalServerError, "internal",
-						fmt.Sprintf("verify interrupted: %v", err))
-				}
-				if problem := checkBlob(ctx, d, hash); problem == "" {
-					out.Body.OK++
-				} else {
-					out.Body.Problems = append(out.Body.Problems, VerifyProblem{Hash: hash, Problem: problem})
-				}
-			}
-			return nil
+			report, err := runVerify(ctx, d)
+			out.Body = report
+			return err
 		})
 		return out, err
 	})
@@ -417,7 +387,8 @@ func ingestSizeClass(class ingest.SizeClass) IngestSizeClass {
 	return IngestSizeClass{Files: class.Files, Bytes: class.Bytes}
 }
 
-func storagePackReport(stats packstore.PackStats) StoragePackReport {
+func storagePackReport(report internalmaintenance.PackReport) StoragePackReport {
+	stats := report.Stats
 	return StoragePackReport{
 		PacksSealed: stats.PacksSealed, BlobsPacked: stats.BlobsPacked, BytesPacked: stats.BytesPacked,
 		PacksAdopted: stats.PacksAdopted, PacksRemoved: stats.PacksRemoved,
@@ -429,10 +400,11 @@ func storagePackReport(stats packstore.PackStats) StoragePackReport {
 		LooseSwept:             stats.LooseSwept, LooseOrphansRemoved: stats.LooseOrphansRemoved,
 		LooseOrphanSweepSuppressed: stats.LooseOrphanSweepSuppressed,
 		BudgetExhausted:            stats.BudgetExhausted,
+		More:                       report.More,
 	}
 }
 
-func storageRepackReport(stats packstore.RepackStats) StorageRepackReport {
+func storageRepackReport(stats internalmaintenance.RepackReport) StorageRepackReport {
 	return StorageRepackReport{
 		MappingsPruned: stats.MappingsPruned, PacksSelected: stats.PacksSelected,
 		PacksRewritten: stats.PacksRewritten, PacksSealed: stats.PacksSealed,
@@ -442,77 +414,125 @@ func storageRepackReport(stats packstore.RepackStats) StorageRepackReport {
 	}
 }
 
+func runRepack(
+	ctx context.Context, d Deps, maxBytes int64, minAge time.Duration, minDeadBytes int64,
+) (internalmaintenance.RepackReport, error) {
+	var total internalmaintenance.RepackReport
+	var cursor string
+	for {
+		remainingBytes := maxBytes
+		if maxBytes > 0 {
+			remainingBytes -= total.BytesRepacked
+			if remainingBytes <= 0 {
+				total.BudgetExhausted = true
+				return total, nil
+			}
+		}
+		page, err := internalmaintenance.Repack(ctx, d.Store, d.Blobs,
+			internalmaintenance.RepackOptions{
+				Budget: internalmaintenance.Budget{
+					MaxObjects: internalmaintenance.DefaultMaxObjects,
+					MaxBytes:   remainingBytes,
+					Cursor:     cursor,
+				},
+				MinAge: minAge, MinDeadBytes: minDeadBytes,
+			})
+		addRepackReport(&total, page)
+		if err != nil {
+			return total, err
+		}
+		if !page.More {
+			return total, nil
+		}
+		if maxBytes > 0 && total.BytesRepacked >= maxBytes {
+			total.BudgetExhausted = true
+			return total, nil
+		}
+		if page.NextCursor != "" {
+			cursor = page.NextCursor
+		}
+	}
+}
+
+func addRepackReport(total *internalmaintenance.RepackReport, page internalmaintenance.RepackReport) {
+	total.MappingsPruned += page.MappingsPruned
+	total.PacksSelected += page.PacksSelected
+	total.PacksRewritten += page.PacksRewritten
+	total.PacksSealed += page.PacksSealed
+	total.PacksRemoved += page.PacksRemoved
+	total.PacksDeferredOversized += page.PacksDeferredOversized
+	total.BlobsRepacked += page.BlobsRepacked
+	total.BytesRepacked += page.BytesRepacked
+	total.BudgetExhausted = total.BudgetExhausted || page.BudgetExhausted
+}
+
 // runGC ports cmd/gc.go's semantics: candidates from row reachability,
 // untracked files from a shard scan (safe under the maintenance gate — no
 // concurrent ingest can be mid-write), files removed before rows so a crash
 // leaves reconcilable row-without-file state, never the reverse.
 func runGC(ctx context.Context, d Deps, run bool) (GCReport, error) {
-	candidates, err := d.Store.UnreachableBlobs(ctx)
-	if err != nil {
-		return GCReport{}, FromStoreError(err)
-	}
-	tracked, err := d.Store.AllBlobs(ctx)
-	if err != nil {
-		return GCReport{}, FromStoreError(err)
-	}
-	trackedSet := make(map[string]bool, len(tracked))
-	for _, b := range tracked {
-		trackedSet[b.Hash] = true
-	}
-	files, err := d.Blobs.List()
-	if err != nil {
-		return GCReport{}, FromStoreError(err)
-	}
-	var untracked []string
-	rep := GCReport{CandidateBlobs: len(candidates), Run: run}
-	for hash, size := range files {
-		if !trackedSet[hash] {
-			untracked = append(untracked, hash)
-			rep.ReclaimableBytes += size
-		}
-	}
-	sort.Strings(untracked)
-	rep.UntrackedFiles = len(untracked)
-	packedSizes, err := d.Store.PackedBlobStoredBytes(ctx)
-	if err != nil {
-		return GCReport{}, FromStoreError(err)
-	}
-	for _, c := range candidates {
-		if looseSize, exists := files[c.Hash]; exists {
-			rep.ReclaimableBytes += looseSize
-		}
-		if storedSize, packed := packedSizes[c.Hash]; packed {
-			rep.PendingPackedBlobs++
-			rep.PendingPackedBytes += storedSize
-		}
-	}
-	if !run {
-		return rep, nil
-	}
-	for _, h := range untracked {
-		if err := d.Blobs.Remove(h); err != nil {
+	report := GCReport{Run: run}
+	var cursor string
+	for {
+		page, err := internalmaintenance.GarbageCollect(ctx, d.Store, d.Blobs,
+			internalmaintenance.GCOptions{
+				Budget: internalmaintenance.Budget{
+					MaxObjects: internalmaintenance.DefaultMaxObjects, Cursor: cursor,
+				},
+				DryRun: !run,
+			})
+		if err != nil {
 			return GCReport{}, FromStoreError(err)
 		}
-	}
-	hashes := make([]string, 0, len(candidates))
-	for _, c := range candidates {
-		if err := d.Blobs.Remove(c.Hash); err != nil {
-			return GCReport{}, FromStoreError(err)
+		report.CandidateBlobs += page.CandidateBlobs
+		report.UntrackedFiles += page.UntrackedFiles
+		report.ReclaimableBytes += page.ReclaimableBytes
+		report.PendingPackedBlobs += page.PendingPackedBlobs
+		report.PendingPackedBytes += page.PendingPackedBytes
+		report.ReclaimedFiles += page.ReclaimedFiles
+		report.RemovedBlobs += page.RemovedBlobs
+		report.Removed += page.Removed
+		if !page.More {
+			return report, nil
 		}
-		hashes = append(hashes, c.Hash)
-	}
-	if err := d.Store.DeleteBlobRows(ctx, hashes); err != nil {
-		return GCReport{}, FromStoreError(err)
-	}
-	rep.ReclaimedFiles = len(untracked)
-	for _, c := range candidates {
-		if _, existed := files[c.Hash]; existed {
-			rep.ReclaimedFiles++
+		if page.NextCursor == "" {
+			return GCReport{}, NewError(http.StatusInternalServerError, "internal",
+				"gc made no resumable progress")
 		}
+		cursor = page.NextCursor
 	}
-	rep.RemovedBlobs = len(hashes)
-	rep.Removed = len(hashes) + len(untracked)
-	return rep, nil
+}
+
+func runVerify(ctx context.Context, d Deps) (VerifyReport, error) {
+	var report VerifyReport
+	var cursor string
+	for {
+		page, err := internalmaintenance.Verify(ctx, d.Store, d.Blobs,
+			internalmaintenance.VerifyOptions{Budget: internalmaintenance.Budget{
+				MaxObjects: internalmaintenance.DefaultMaxObjects, Cursor: cursor,
+			}})
+		if err != nil {
+			if ctx.Err() != nil {
+				return VerifyReport{}, NewError(http.StatusInternalServerError, "internal",
+					fmt.Sprintf("verify interrupted: %v", ctx.Err()))
+			}
+			return VerifyReport{}, FromStoreError(err)
+		}
+		report.OK += page.OK
+		report.MetadataProblems = append(report.MetadataProblems, page.MetadataProblems...)
+		for _, problem := range page.Problems {
+			report.Problems = append(report.Problems,
+				VerifyProblem{Hash: problem.Hash, Problem: problem.Problem})
+		}
+		if !page.More {
+			return report, nil
+		}
+		if page.NextCursor == "" {
+			return VerifyReport{}, NewError(http.StatusInternalServerError, "internal",
+				"verify made no resumable progress")
+		}
+		cursor = page.NextCursor
+	}
 }
 
 // checkBlob returns "", "missing", "corrupt", or "unreadable".

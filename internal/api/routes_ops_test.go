@@ -360,6 +360,7 @@ func TestStoragePackHonorsBudgetAndConverges(t *testing.T) {
 	assert.Equal(t, 1, report.BlobsPacked)
 	assert.Equal(t, 1, report.PacksSealed)
 	assert.True(t, report.BudgetExhausted)
+	assert.True(t, report.More)
 
 	statusResp, statusBody := get(t, ts, "/api/v1/storage", nil)
 	require.Equal(t, http.StatusOK, statusResp.StatusCode, statusBody)
@@ -374,6 +375,7 @@ func TestStoragePackHonorsBudgetAndConverges(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &report))
 	assert.Equal(t, 1, report.BlobsPacked)
 	assert.False(t, report.BudgetExhausted)
+	assert.False(t, report.More)
 
 	statusResp, statusBody = get(t, ts, "/api/v1/storage", nil)
 	require.Equal(t, http.StatusOK, statusResp.StatusCode, statusBody)

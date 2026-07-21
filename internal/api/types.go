@@ -535,6 +535,7 @@ type StoragePackReport struct {
 	LooseOrphansRemoved        int   `json:"loose_orphans_removed"`
 	LooseOrphanSweepSuppressed bool  `json:"loose_orphan_sweep_suppressed"`
 	BudgetExhausted            bool  `json:"budget_exhausted"`
+	More                       bool  `json:"more"`
 }
 
 // StorageRepackReport summarizes sparse-pack selection, rewriting, and

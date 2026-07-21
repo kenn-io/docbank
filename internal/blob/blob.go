@@ -261,6 +261,28 @@ func validHash(hash string) bool {
 // Maintainer returns the shared physical lifecycle engine.
 func (s *Store) Maintainer() *packstore.Maintainer { return s.maintainer }
 
+// RepackWithCatalog runs Kit's existing repack engine against a caller-scoped
+// catalog view. It preserves the shared coordinator, layout, limits, and raw
+// byte budget semantics while allowing a higher layer to bound source
+// selection without materializing the complete pack catalog.
+func (s *Store) RepackWithCatalog(
+	ctx context.Context, catalog packstore.Catalog, opts packstore.RepackOptions,
+) (stats packstore.RepackStats, retErr error) {
+	maintainer, err := packstore.NewMaintainer(catalog, s.layout, packstore.MaintainerOptions{
+		Coordinator: s.coordinator,
+		Limits:      StorageLimits(),
+	})
+	if err != nil {
+		return stats, fmt.Errorf("creating scoped blob maintainer: %w", err)
+	}
+	defer func() { retErr = errors.Join(retErr, maintainer.Close()) }()
+	stats, err = maintainer.Repack(ctx, opts)
+	if err != nil {
+		return stats, fmt.Errorf("repacking scoped blobs: %w", err)
+	}
+	return stats, nil
+}
+
 // Coordinator returns the process-local mutation/maintenance coordinator.
 func (s *Store) Coordinator() *packstore.Coordinator { return s.coordinator }
 
@@ -466,6 +488,71 @@ func (s *Store) List() (map[string]int64, error) {
 		}
 	}
 	return out, nil
+}
+
+// LooseInfo identifies one canonical loose object and its stored byte length.
+type LooseInfo struct {
+	Hash string
+	Size int64
+}
+
+// ListPage returns one canonical-hash keyset page of loose objects. Directory
+// entries are sorted by os.ReadDir, and the fixed 256-shard layout lets the
+// scan stop as soon as the extra-row probe is satisfied.
+func (s *Store) ListPage(after string, limit int) ([]LooseInfo, bool, error) {
+	if limit <= 0 {
+		return nil, false, errors.New("loose page limit must be positive")
+	}
+	if after != "" && !validHash(after) {
+		return nil, false, errors.New("loose page cursor must be a canonical hash")
+	}
+	result := make([]LooseInfo, 0, limit+1)
+	for shardNumber := range 256 {
+		shard := fmt.Sprintf("%02x", shardNumber)
+		if after != "" && shard < after[:2] {
+			continue
+		}
+		entries, err := os.ReadDir(filepath.Join(s.dir, shard))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, false, fmt.Errorf("reading blob shard %s: %w", shard, err)
+		}
+		var pending *LooseInfo
+		flush := func() bool {
+			if pending == nil {
+				return false
+			}
+			result = append(result, *pending)
+			pending = nil
+			return len(result) > limit
+		}
+		for _, entry := range entries {
+			name := entry.Name()
+			compressed := strings.HasSuffix(name, ".zst")
+			hash := strings.TrimSuffix(name, ".zst")
+			if !validHash(hash) || hash[:2] != shard || !entry.Type().IsRegular() || hash <= after {
+				continue
+			}
+			if pending != nil && pending.Hash != hash && flush() {
+				return result[:limit], true, nil
+			}
+			info, err := entry.Info()
+			if err != nil {
+				return nil, false, fmt.Errorf("reading blob %s: %w", hash, err)
+			}
+			if pending == nil {
+				pending = &LooseInfo{Hash: hash, Size: info.Size()}
+			} else if compressed {
+				pending.Size = info.Size()
+			}
+		}
+		if flush() {
+			return result[:limit], true, nil
+		}
+	}
+	return result, false, nil
 }
 
 // CleanTmp removes leftover loose staging files from interrupted writes.

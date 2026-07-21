@@ -20,6 +20,7 @@ import (
 
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/home"
+	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/pkg/sqlite"
 )
@@ -779,8 +780,12 @@ func (v *Vault) Pack(ctx context.Context, opts PackOptions) (PackReport, error) 
 		return PackReport{}, err
 	}
 	defer v.lifecycle.RUnlock()
-	stats, err := v.blobs.Maintainer().Pack(ctx, packstore.PackOptions{MaxBytes: opts.MaxBytes})
-	return fromPackStats(stats), err
+	v.mutation.Lock()
+	defer v.mutation.Unlock()
+	report, err := internalmaintenance.Pack(ctx, v.metadata, v.blobs, opts.MaxBytes)
+	out := fromPackStats(report.Stats)
+	out.More = report.More
+	return out, err
 }
 
 func (v *Vault) begin() error {
