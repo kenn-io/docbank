@@ -100,15 +100,17 @@ now-dead packed bytes.
 
 ### Choose loose compression
 
-New content remains loose until an explicit `Pack` call. An embedded owner may
-let Docbank automatically select zstd for eligible new loose writes and repairs:
+New content remains loose until an explicit `Pack` call. The standalone daemon
+selects zstd when a new loose object is at least 4 KiB and compression saves at
+least 10%. Embedded vaults keep raw loose storage by default; an owner can match
+the daemon policy explicitly or choose application-specific thresholds:
 
 ```go
 vault, err := docbank.New(ctx, docbank.Config{
     Root: root,
     LooseCompression: docbank.LooseCompressionOptions{
         Enabled:           true,
-        MinBytes:          1 << 20,
+        MinBytes:          4 << 10,
         MinSavingsPercent: 10,
     },
 })
@@ -123,6 +125,12 @@ The zero value disables compression, preserving the unchanged raw loose layout,
 and mixed raw, zstd, and packed content remains readable through the same
 verified API. Receipts report the chosen physical encoding and stored size
 without changing the logical SHA-256 or size.
+
+An eligible write temporarily needs scratch space for both the raw object and
+its compressed candidate before Docbank chooses one for durable publication.
+`LooseBacklog` reports how much indexed loose content remains eligible for an
+explicit pack pass, split into raw and compressed object counts. It is useful
+for scheduling; it does not make packing automatic.
 
 `vault.ID()` returns the archive's stable UUID. JSONL backup and restore
 preserve that identity even when the restored vault has a different filesystem
@@ -270,29 +278,6 @@ leave trash, when prior versions are pruned, and which logical references
 remain. Only then can GC observe a blob as unreachable. There is no background
 maintenance scheduler for embedded vaults, so the owner chooses when to resume
 these bounded passes.
-
-`LooseBacklog` reports how much indexed loose content is eligible for a pack
-pass, split into raw and compressed object counts. It is useful for scheduling;
-it does not make packing automatic.
-
-The embedded API keeps raw loose storage by default. Applications that want
-the standalone daemon's current policy can opt in explicitly:
-
-```go
-vault, err := docbank.New(ctx, docbank.Config{
-    Root: root,
-    LooseCompression: docbank.LooseCompressionOptions{
-        Enabled:           true,
-        MinBytes:          4 << 10,
-        MinSavingsPercent: 10,
-    },
-})
-```
-
-Compression changes only physical representation. SHA-256 and logical sizes
-always describe decoded bytes. An eligible write temporarily needs scratch
-space for both the raw object and its compressed candidate before Docbank
-chooses one for durable publication.
 
 ## Choose SQLite
 
