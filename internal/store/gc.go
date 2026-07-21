@@ -39,6 +39,24 @@ type GCCandidate struct {
 	LooseStoredSize int64
 }
 
+// GCCandidateScanPage reports bounded raw catalog progress independently of
+// how many rows qualify as unreachable work.
+type GCCandidateScanPage struct {
+	Items     []GCCandidate
+	Examined  int
+	HighWater string
+	More      bool
+}
+
+// StringScanPage reports bounded raw key progress for a filtered string
+// inventory such as unreferenced packed mappings.
+type StringScanPage struct {
+	Items     []string
+	Examined  int
+	HighWater string
+	More      bool
+}
+
 // RepackCandidate binds one sparse pack to the lowest canonical live blob hash
 // that provides its stable maintenance key.
 type RepackCandidate struct {
@@ -97,51 +115,79 @@ func (s *Store) UnreachableBlobs(ctx context.Context) ([]BlobInfo, error) {
 	return scanBlobInfos(rows, "finding unreachable blobs")
 }
 
-// UnreachableBlobsPage returns one hash-keyset page of blobs referenced by no
-// content version. The extra-row probe keeps memory and row scanning bounded
-// while reporting whether another page currently exists.
-func (s *Store) UnreachableBlobsPage(
-	ctx context.Context, after string, limit int,
-) ([]GCCandidate, bool, error) {
-	return s.UnreachableBlobsPageFrom(ctx, &after, limit)
-}
-
 // UnreachableBlobsPageFrom distinguishes the beginning of an ordering from an
-// arbitrary stored key, including the empty string.
+// arbitrary stored key, including the empty string. It examines a bounded raw
+// key window before filtering for unreachable work.
 func (s *Store) UnreachableBlobsPageFrom(
 	ctx context.Context, after *string, limit int,
-) ([]GCCandidate, bool, error) {
+) (GCCandidateScanPage, error) {
 	if limit <= 0 {
-		return nil, false, errors.New("blob page limit must be positive")
+		return GCCandidateScanPage{}, errors.New("blob page limit must be positive")
 	}
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT b.hash, b.loose_stored_size FROM blobs b
-		WHERE (? IS NULL OR b.hash > ?)
-		  AND NOT EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash = b.hash)
-		ORDER BY b.hash LIMIT ?`, nullableKey(after), nullableKey(after), limit+1)
+	query, args := unreachableBlobScanQuery(after, limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, false, fmt.Errorf("finding unreachable blobs: %w", err)
+		return GCCandidateScanPage{}, fmt.Errorf("finding unreachable blobs: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	result := make([]GCCandidate, 0, limit+1)
+	type scanRow struct {
+		candidate GCCandidate
+		eligible  bool
+	}
+	raw := make([]scanRow, 0, limit+1)
 	for rows.Next() {
-		var candidate GCCandidate
+		var item scanRow
 		var looseSize sql.NullInt64
-		if err := rows.Scan(&candidate.Hash, &looseSize); err != nil {
-			return nil, false, fmt.Errorf("finding unreachable blobs: scanning blob row: %w", err)
+		if err := rows.Scan(&item.candidate.Hash, &looseSize, &item.eligible); err != nil {
+			return GCCandidateScanPage{},
+				fmt.Errorf("finding unreachable blobs: scanning blob row: %w", err)
 		}
-		candidate.Loose = looseSize.Valid
-		candidate.LooseStoredSize = looseSize.Int64
-		result = append(result, candidate)
+		item.candidate.Loose = looseSize.Valid
+		item.candidate.LooseStoredSize = looseSize.Int64
+		raw = append(raw, item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, false, fmt.Errorf("finding unreachable blobs: %w", err)
+		return GCCandidateScanPage{}, fmt.Errorf("finding unreachable blobs: %w", err)
 	}
-	more := len(result) > limit
+	more := len(raw) > limit
 	if more {
-		result = result[:limit]
+		raw = raw[:limit]
 	}
-	return result, more, nil
+	page := GCCandidateScanPage{Examined: len(raw), More: more}
+	if len(raw) > 0 {
+		page.HighWater = raw[len(raw)-1].candidate.Hash
+	}
+	for _, item := range raw {
+		if item.eligible {
+			page.Items = append(page.Items, item.candidate)
+		}
+	}
+	return page, nil
+}
+
+const unreachableBlobsStartPageSQL = `
+	WITH raw_page AS MATERIALIZED (
+		SELECT hash, loose_stored_size FROM blobs
+		ORDER BY hash LIMIT ?
+	)
+	SELECT p.hash, p.loose_stored_size,
+	       NOT EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash = p.hash)
+	FROM raw_page p ORDER BY p.hash`
+
+const unreachableBlobsResumePageSQL = `
+	WITH raw_page AS MATERIALIZED (
+		SELECT hash, loose_stored_size FROM blobs
+		WHERE hash > ? ORDER BY hash LIMIT ?
+	)
+	SELECT p.hash, p.loose_stored_size,
+	       NOT EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash = p.hash)
+	FROM raw_page p ORDER BY p.hash`
+
+func unreachableBlobScanQuery(after *string, limit int) (string, []any) {
+	if after == nil {
+		return unreachableBlobsStartPageSQL, []any{limit + 1}
+	}
+	return unreachableBlobsResumePageSQL, []any{*after, limit + 1}
 }
 
 // BlobsPage returns one bounded hash-keyset page of recorded blob identities.
@@ -168,9 +214,8 @@ func (s *Store) BlobHashesPageFrom(
 	if limit <= 0 {
 		return nil, false, errors.New("blob hash page limit must be positive")
 	}
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT hash FROM blobs WHERE (? IS NULL OR hash > ?) ORDER BY hash LIMIT ?`,
-		nullableKey(after), nullableKey(after), limit+1)
+	query, args := blobHashesPageQuery(after, limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, false, fmt.Errorf("listing blob hashes: %w", err)
 	}
@@ -193,11 +238,14 @@ func (s *Store) BlobHashesPageFrom(
 	return result, more, nil
 }
 
-func nullableKey(key *string) any {
-	if key == nil {
-		return nil
+const blobHashesStartPageSQL = `SELECT hash FROM blobs ORDER BY hash LIMIT ?`
+const blobHashesResumePageSQL = `SELECT hash FROM blobs WHERE hash > ? ORDER BY hash LIMIT ?`
+
+func blobHashesPageQuery(after *string, limit int) (string, []any) {
+	if after == nil {
+		return blobHashesStartPageSQL, []any{limit + 1}
 	}
-	return *key
+	return blobHashesResumePageSQL, []any{*after, limit + 1}
 }
 
 func (s *Store) blobPage(
@@ -309,36 +357,71 @@ func (s *Store) SparseRepackScanPage(
 // UnreferencedPackMappingsPage returns one canonical-hash keyset page of pack
 // mappings whose blob authority has been revoked.
 func (s *Store) UnreferencedPackMappingsPage(
-	ctx context.Context, after string, limit int,
-) ([]string, bool, error) {
+	ctx context.Context, after *string, limit int,
+) (StringScanPage, error) {
 	if limit <= 0 {
-		return nil, false, errors.New("pack mapping page limit must be positive")
+		return StringScanPage{}, errors.New("pack mapping page limit must be positive")
 	}
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT i.blob_hash FROM blob_pack_index i
-		WHERE i.blob_hash > ?
-		  AND NOT EXISTS (SELECT 1 FROM blobs b WHERE b.hash = i.blob_hash)
-		ORDER BY i.blob_hash LIMIT ?`, after, limit+1)
+	query, args := unreferencedMappingScanQuery(after, limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, false, fmt.Errorf("listing unreferenced pack mappings: %w", err)
+		return StringScanPage{}, fmt.Errorf("listing unreferenced pack mappings: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	result := make([]string, 0, limit+1)
+	type scanRow struct {
+		hash     string
+		eligible bool
+	}
+	raw := make([]scanRow, 0, limit+1)
 	for rows.Next() {
-		var hash string
-		if err := rows.Scan(&hash); err != nil {
-			return nil, false, fmt.Errorf("scanning unreferenced pack mapping: %w", err)
+		var item scanRow
+		if err := rows.Scan(&item.hash, &item.eligible); err != nil {
+			return StringScanPage{}, fmt.Errorf("scanning unreferenced pack mapping: %w", err)
 		}
-		result = append(result, hash)
+		raw = append(raw, item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, false, fmt.Errorf("listing unreferenced pack mappings: %w", err)
+		return StringScanPage{}, fmt.Errorf("listing unreferenced pack mappings: %w", err)
 	}
-	more := len(result) > limit
+	more := len(raw) > limit
 	if more {
-		result = result[:limit]
+		raw = raw[:limit]
 	}
-	return result, more, nil
+	page := StringScanPage{Examined: len(raw), More: more}
+	if len(raw) > 0 {
+		page.HighWater = raw[len(raw)-1].hash
+	}
+	for _, item := range raw {
+		if item.eligible {
+			page.Items = append(page.Items, item.hash)
+		}
+	}
+	return page, nil
+}
+
+const unreferencedMappingsStartPageSQL = `
+	WITH raw_page AS MATERIALIZED (
+		SELECT blob_hash FROM blob_pack_index
+		ORDER BY blob_hash LIMIT ?
+	)
+	SELECT p.blob_hash,
+	       NOT EXISTS (SELECT 1 FROM blobs b WHERE b.hash = p.blob_hash)
+	FROM raw_page p ORDER BY p.blob_hash`
+
+const unreferencedMappingsResumePageSQL = `
+	WITH raw_page AS MATERIALIZED (
+		SELECT blob_hash FROM blob_pack_index
+		WHERE blob_hash > ? ORDER BY blob_hash LIMIT ?
+	)
+	SELECT p.blob_hash,
+	       NOT EXISTS (SELECT 1 FROM blobs b WHERE b.hash = p.blob_hash)
+	FROM raw_page p ORDER BY p.blob_hash`
+
+func unreferencedMappingScanQuery(after *string, limit int) (string, []any) {
+	if after == nil {
+		return unreferencedMappingsStartPageSQL, []any{limit + 1}
+	}
+	return unreferencedMappingsResumePageSQL, []any{*after, limit + 1}
 }
 
 // DeleteUnreferencedPackMappings conditionally removes the named stale

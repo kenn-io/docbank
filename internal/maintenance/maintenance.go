@@ -207,12 +207,13 @@ func GarbageCollect(
 	if err != nil {
 		return GCReport{}, err
 	}
-	tracked, trackedMore, err := metadata.UnreachableBlobsPageFrom(
+	scan, err := metadata.UnreachableBlobsPageFrom(
 		ctx, cursorPosition(state), budget.MaxObjects)
 	if err != nil {
 		return GCReport{}, err
 	}
 	report := GCReport{DryRun: opts.DryRun}
+	tracked := scan.Items
 	trackedHashes := make([]string, 0, budget.MaxObjects)
 	processedBytes := int64(0)
 	processed := 0
@@ -254,9 +255,13 @@ func GarbageCollect(
 		report.RemovedBlobs = len(trackedHashes)
 		report.Removed += len(trackedHashes)
 	}
-	report.More = processed < len(tracked) || trackedMore
-	if report.More && processed > 0 {
-		report.NextCursor = encodeCursor(operationGC, tracked[processed-1].Hash)
+	report.More = processed < len(tracked) || scan.More
+	if report.More {
+		resumeHash := scan.HighWater
+		if processed < len(tracked) {
+			resumeHash = tracked[processed-1].Hash
+		}
+		report.NextCursor = encodeCursor(operationGC, resumeHash)
 	}
 	return report, nil
 }
@@ -403,30 +408,34 @@ func Repack(
 	}
 
 	if phase == "mappings" {
-		mappings, mappingMore, pageErr := metadata.UnreferencedPackMappingsPage(
-			ctx, state.Hash, remaining)
+		mappingPage, pageErr := metadata.UnreferencedPackMappingsPage(
+			ctx, cursorPosition(state), remaining)
 		if pageErr != nil {
 			return report, pageErr
 		}
+		mappings := mappingPage.Items
 		if len(mappings) > 0 {
 			removed, deleteErr := metadata.DeleteUnreferencedPackMappings(ctx, mappings)
 			if deleteErr != nil {
 				return report, deleteErr
 			}
 			report.MappingsPruned += removed
-			remaining -= len(mappings)
-			state.Hash = mappings[len(mappings)-1]
 		}
-		if mappingMore || remaining == 0 {
-			report.More = mappingMore
+		remaining -= mappingPage.Examined
+		if mappingPage.Examined > 0 {
+			state.Hash = mappingPage.HighWater
+			state.Set = true
+		}
+		if mappingPage.More || remaining == 0 {
+			report.More = mappingPage.More
 			if !report.More {
 				report.More, err = repackWorkRemains(
-					ctx, metadata, state.Hash, "", "", now, minAge, minDead, true)
+					ctx, metadata, cursorPosition(state), "", "", now, minAge, minDead, true, true)
 				if err != nil {
 					return report, err
 				}
 			}
-			if report.More && state.Hash != "" {
+			if report.More && state.Set {
 				report.NextCursor = encodePhaseCursor(operationRepack, "mappings", state.Hash)
 			}
 			return report, nil
@@ -434,45 +443,47 @@ func Repack(
 		phase = "dead"
 	}
 
-	dead, deadMore, err := metadata.DeadPackUsagePage(ctx, remaining)
-	if err != nil {
-		return report, err
-	}
-	if len(dead) > 0 {
-		stats, runErr := blobs.RepackWithCatalog(ctx,
-			&scopedCatalog{Catalog: baseCatalog, usages: dead},
-			packstore.RepackOptions{Now: now, Selection: packstore.RepackSelection{
-				MinAge: minAge, MinDeadStored: minDead,
-			}})
-		addRepackStats(&report, stats)
-		remaining -= len(dead)
-		if runErr != nil {
-			report.More, err = repackWorkRemains(ctx, metadata, "",
-				sparseAfterHash, sparseAfterPack, now, minAge, minDead, false)
+	if phase != "sparse" {
+		dead, deadMore, err := metadata.DeadPackUsagePage(ctx, remaining)
+		if err != nil {
+			return report, err
+		}
+		if len(dead) > 0 {
+			stats, runErr := blobs.RepackWithCatalog(ctx,
+				&scopedCatalog{Catalog: baseCatalog, usages: dead},
+				packstore.RepackOptions{Now: now, Selection: packstore.RepackSelection{
+					MinAge: minAge, MinDeadStored: minDead,
+				}})
+			addRepackStats(&report, stats)
+			remaining -= len(dead)
+			if runErr != nil {
+				report.More, err = repackWorkRemains(ctx, metadata, nil,
+					sparseAfterHash, sparseAfterPack, now, minAge, minDead, false, true)
+				if err != nil {
+					return report, errors.Join(runErr, err)
+				}
+				if report.More {
+					report.NextCursor = repackPhaseCursor(phase, sparseAfterHash, sparseAfterPack)
+				}
+				return report, runErr
+			}
+		}
+		if deadMore {
+			report.More = true
+			report.NextCursor = repackPhaseCursor(phase, sparseAfterHash, sparseAfterPack)
+			return report, nil
+		}
+		if remaining == 0 {
+			report.More, err = repackWorkRemains(ctx, metadata, nil,
+				sparseAfterHash, sparseAfterPack, now, minAge, minDead, false, true)
 			if err != nil {
-				return report, errors.Join(runErr, err)
+				return report, err
 			}
 			if report.More {
 				report.NextCursor = repackPhaseCursor(phase, sparseAfterHash, sparseAfterPack)
 			}
-			return report, runErr
+			return report, nil
 		}
-	}
-	if deadMore {
-		report.More = true
-		report.NextCursor = repackPhaseCursor(phase, sparseAfterHash, sparseAfterPack)
-		return report, nil
-	}
-	if remaining == 0 {
-		report.More, err = repackWorkRemains(ctx, metadata, "",
-			sparseAfterHash, sparseAfterPack, now, minAge, minDead, false)
-		if err != nil {
-			return report, err
-		}
-		if report.More {
-			report.NextCursor = repackPhaseCursor(phase, sparseAfterHash, sparseAfterPack)
-		}
-		return report, nil
 	}
 	// Candidate thresholds can leave long runs of ineligible summaries. Scan a
 	// deterministic multiple of the caller's remaining object budget, while
@@ -520,8 +531,8 @@ func Repack(
 			runErr = errors.Join(runErr, sourceErr)
 			examined++
 			if !isRepackSourceContentError(sourceErr) || budget.MaxBytes == 0 {
-				report.More, err = repackWorkRemains(ctx, metadata, "",
-					lastHash, lastPack, now, minAge, minDead, false)
+				report.More, err = repackWorkRemains(ctx, metadata, nil,
+					lastHash, lastPack, now, minAge, minDead, false, false)
 				if err != nil {
 					return report, errors.Join(runErr, err)
 				}
@@ -539,8 +550,8 @@ func Repack(
 		examined++
 	}
 	if runErr != nil {
-		report.More, err = repackWorkRemains(ctx, metadata, "",
-			lastHash, lastPack, now, minAge, minDead, false)
+		report.More, err = repackWorkRemains(ctx, metadata, nil,
+			lastHash, lastPack, now, minAge, minDead, false, false)
 		if err != nil {
 			return report, errors.Join(runErr, err)
 		}
@@ -559,23 +570,26 @@ func Repack(
 func repackWorkRemains(
 	ctx context.Context,
 	metadata *store.Store,
-	mappingAfter string,
+	mappingAfter *string,
 	sparseAfterHash string,
 	sparseAfterPack string,
 	now time.Time,
 	minAge time.Duration,
 	minDead int64,
 	includeMappings bool,
+	includeDead bool,
 ) (bool, error) {
 	if includeMappings {
-		mappings, _, err := metadata.UnreferencedPackMappingsPage(ctx, mappingAfter, 1)
-		if err != nil || len(mappings) > 0 {
-			return len(mappings) > 0, err
+		mappings, err := metadata.UnreferencedPackMappingsPage(ctx, mappingAfter, 1)
+		if err != nil || len(mappings.Items) > 0 || mappings.More {
+			return len(mappings.Items) > 0 || mappings.More, err
 		}
 	}
-	dead, _, err := metadata.DeadPackUsagePage(ctx, 1)
-	if err != nil || len(dead) > 0 {
-		return len(dead) > 0, err
+	if includeDead {
+		dead, _, err := metadata.DeadPackUsagePage(ctx, 1)
+		if err != nil || len(dead) > 0 {
+			return len(dead) > 0, err
+		}
 	}
 	sparse, err := metadata.SparseRepackScanPage(
 		ctx, sparseAfterHash, sparseAfterPack, 1, now, minAge, minDead)

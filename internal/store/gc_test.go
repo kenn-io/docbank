@@ -36,21 +36,204 @@ func TestUnreachableBlobsPageBoundsCandidatesAcrossCatalogSizes(t *testing.T) {
 			}
 
 			var got []string
-			var after string
+			var after *string
 			for {
-				page, more, err := s.UnreachableBlobsPage(ctx, after, 3)
+				page, err := s.UnreachableBlobsPageFrom(ctx, after, 3)
 				require.NoError(t, err)
-				require.LessOrEqual(t, len(page), 3)
-				for _, candidate := range page {
+				require.LessOrEqual(t, page.Examined, 3)
+				for _, candidate := range page.Items {
 					got = append(got, candidate.Hash)
 				}
-				if !more {
+				if !page.More {
 					break
 				}
-				require.NotEmpty(t, page)
-				after = page[len(page)-1].Hash
+				require.Positive(t, page.Examined)
+				after = &page.HighWater
 			}
 			assert.Equal(t, want, got)
+		})
+	}
+}
+
+func TestBlobInventoryResumeQueriesUseIndexedHashRange(t *testing.T) {
+	s := newTestStore(t)
+	after := fmt.Sprintf("%064x", 900)
+	tests := []struct {
+		name        string
+		query       func(*string, int) (string, []any)
+		index       string
+		rangeClause string
+	}{
+		{name: "verify inventory", query: blobHashesPageQuery,
+			index: "sqlite_autoindex_blobs_1", rangeClause: "(hash>?)"},
+		{name: "unreachable inventory", query: unreachableBlobScanQuery,
+			index: "sqlite_autoindex_blobs_1", rangeClause: "(hash>?)"},
+		{name: "pack mapping inventory", query: unreferencedMappingScanQuery,
+			index: "sqlite_autoindex_blob_pack_index_1", rangeClause: "(blob_hash>?)"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			query, args := test.query(&after, 3)
+			rows, err := s.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+query, args...)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, rows.Close()) }()
+			var details []string
+			for rows.Next() {
+				var id, parent, unused int
+				var detail string
+				require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+				details = append(details, detail)
+			}
+			require.NoError(t, rows.Err())
+			plan := strings.Join(details, "\n")
+			assert.Contains(t, plan, "SEARCH")
+			assert.Contains(t, plan, test.index)
+			assert.Contains(t, plan, test.rangeClause)
+		})
+	}
+}
+
+func TestBlobHashesPageNearEndUsesResumeKey(t *testing.T) {
+	s := newTestStore(t)
+	tx, err := s.db.BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	for i := range 5000 {
+		_, err = tx.ExecContext(t.Context(),
+			`INSERT INTO blobs (hash, size, created_at) VALUES (?, 1, ?)`,
+			fmt.Sprintf("%064x", i), "2026-01-01T00:00:00.000000000Z")
+		require.NoError(t, err)
+	}
+	require.NoError(t, tx.Commit())
+
+	after := fmt.Sprintf("%064x", 4995)
+	hashes, more, err := s.BlobHashesPageFrom(t.Context(), &after, 3)
+	require.NoError(t, err)
+	assert.True(t, more)
+	assert.Equal(t, []string{
+		fmt.Sprintf("%064x", 4996),
+		fmt.Sprintf("%064x", 4997),
+		fmt.Sprintf("%064x", 4998),
+	}, hashes)
+}
+
+func TestUnreachableBlobPageDistinguishesEmptyStoredKeyFromStart(t *testing.T) {
+	s := newTestStore(t)
+	later := "1000000000000000000000000000000000000000000000000000000000000000"
+	for _, hash := range []string{"", later} {
+		_, err := s.db.ExecContext(t.Context(),
+			`INSERT INTO blobs (hash, size, created_at) VALUES (?, 1, ?)`,
+			hash, "2026-01-01T00:00:00.000000000Z")
+		require.NoError(t, err)
+	}
+
+	first, err := s.UnreachableBlobsPageFrom(t.Context(), nil, 1)
+	require.NoError(t, err)
+	require.Len(t, first.Items, 1)
+	assert.Empty(t, first.Items[0].Hash)
+	assert.Empty(t, first.HighWater)
+	require.True(t, first.More)
+
+	after := first.HighWater
+	second, err := s.UnreachableBlobsPageFrom(t.Context(), &after, 1)
+	require.NoError(t, err)
+	require.Len(t, second.Items, 1)
+	assert.Equal(t, later, second.Items[0].Hash)
+	assert.False(t, second.More)
+}
+
+func TestUnreachableBlobScanBoundsExaminedLiveRun(t *testing.T) {
+	for _, liveCount := range []int{8, 800} {
+		t.Run(fmt.Sprintf("live=%d", liveCount), func(t *testing.T) {
+			s := newTestStore(t)
+			for i := 1; i <= liveCount; i++ {
+				_, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("live-%03d", i),
+					fmt.Sprintf("%064x", i), 1, "application/octet-stream")
+				require.NoError(t, err)
+			}
+			unreachable := "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+			_, err := s.db.ExecContext(t.Context(),
+				`INSERT INTO blobs (hash, size, created_at) VALUES (?, 1, ?)`,
+				unreachable, "2026-01-01T00:00:00.000000000Z")
+			require.NoError(t, err)
+
+			page, err := s.UnreachableBlobsPageFrom(t.Context(), nil, 4)
+			require.NoError(t, err)
+			assert.Empty(t, page.Items)
+			assert.Equal(t, 4, page.Examined)
+			assert.Equal(t, fmt.Sprintf("%064x", 4), page.HighWater)
+			require.True(t, page.More)
+
+			var got []string
+			totalExamined := page.Examined
+			for page.More {
+				after := page.HighWater
+				page, err = s.UnreachableBlobsPageFrom(t.Context(), &after, 4)
+				require.NoError(t, err)
+				require.LessOrEqual(t, page.Examined, 4)
+				totalExamined += page.Examined
+				for _, candidate := range page.Items {
+					got = append(got, candidate.Hash)
+				}
+			}
+			assert.Equal(t, []string{unreachable}, got)
+			assert.Equal(t, liveCount+1, totalExamined)
+		})
+	}
+}
+
+func TestUnreferencedMappingScanBoundsExaminedLiveRun(t *testing.T) {
+	for _, liveCount := range []int{8, 800} {
+		t.Run(fmt.Sprintf("live=%d", liveCount), func(t *testing.T) {
+			s := newTestStore(t)
+			packID := pack.NewPackID()
+			_, err := s.db.ExecContext(t.Context(), `
+				INSERT INTO blob_packs (pack_id, entry_count, stored_bytes, created_at)
+				VALUES (?, ?, ?, ?)`, packID, liveCount+1, (liveCount+1)*5,
+				"2026-01-01T00:00:00.000000000Z")
+			require.NoError(t, err)
+			tx, err := s.db.BeginTx(t.Context(), nil)
+			require.NoError(t, err)
+			for i := 1; i <= liveCount; i++ {
+				hash := fmt.Sprintf("%064x", i)
+				_, err = tx.ExecContext(t.Context(),
+					`INSERT INTO blobs (hash, size, created_at) VALUES (?, 1, ?)`,
+					hash, "2026-01-01T00:00:00.000000000Z")
+				require.NoError(t, err)
+				_, err = tx.ExecContext(t.Context(), `
+					INSERT INTO blob_pack_index
+						(blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
+					VALUES (?, ?, ?, 5, 1, 0, 0)`, hash, packID,
+					pack.MinEntryOffset+int64(i-1)*32)
+				require.NoError(t, err)
+			}
+			dangling := "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+			_, err = tx.ExecContext(t.Context(), `
+				INSERT INTO blob_pack_index
+					(blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
+				VALUES (?, ?, ?, 5, 1, 0, 0)`, dangling, packID,
+				pack.MinEntryOffset+int64(liveCount)*32)
+			require.NoError(t, err)
+			require.NoError(t, tx.Commit())
+
+			page, err := s.UnreferencedPackMappingsPage(t.Context(), nil, 4)
+			require.NoError(t, err)
+			assert.Empty(t, page.Items)
+			assert.Equal(t, 4, page.Examined)
+			assert.Equal(t, fmt.Sprintf("%064x", 4), page.HighWater)
+			require.True(t, page.More)
+
+			var got []string
+			totalExamined := page.Examined
+			for page.More {
+				after := page.HighWater
+				page, err = s.UnreferencedPackMappingsPage(t.Context(), &after, 4)
+				require.NoError(t, err)
+				require.LessOrEqual(t, page.Examined, 4)
+				totalExamined += page.Examined
+				got = append(got, page.Items...)
+			}
+			assert.Equal(t, []string{dangling}, got)
+			assert.Equal(t, liveCount+1, totalExamined)
 		})
 	}
 }
@@ -152,23 +335,23 @@ func TestUnreferencedPackMappingsPageIsCanonicalAndBounded(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	first, more, err := s.UnreferencedPackMappingsPage(ctx, "", 2)
+	first, err := s.UnreferencedPackMappingsPage(ctx, nil, 2)
 	require.NoError(t, err)
-	assert.True(t, more)
-	assert.Equal(t, []string{fmt.Sprintf("%064x", 10), fmt.Sprintf("%064x", 20)}, first)
+	assert.True(t, first.More)
+	assert.Equal(t, []string{fmt.Sprintf("%064x", 10), fmt.Sprintf("%064x", 20)}, first.Items)
 
-	removed, err := s.DeleteUnreferencedPackMappings(ctx, first)
+	removed, err := s.DeleteUnreferencedPackMappings(ctx, first.Items)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), removed)
-	second, more, err := s.UnreferencedPackMappingsPage(ctx, first[1], 2)
+	second, err := s.UnreferencedPackMappingsPage(ctx, &first.HighWater, 2)
 	require.NoError(t, err)
-	assert.False(t, more)
-	assert.Equal(t, []string{fmt.Sprintf("%064x", 30), fmt.Sprintf("%064x", 40)}, second)
+	assert.False(t, second.More)
+	assert.Equal(t, []string{fmt.Sprintf("%064x", 30), fmt.Sprintf("%064x", 40)}, second.Items)
 
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO blobs (hash, size, created_at) VALUES (?, 1, ?)`, second[0], nowRFC3339())
+		`INSERT INTO blobs (hash, size, created_at) VALUES (?, 1, ?)`, second.Items[0], nowRFC3339())
 	require.NoError(t, err)
-	removed, err = s.DeleteUnreferencedPackMappings(ctx, second)
+	removed, err = s.DeleteUnreferencedPackMappings(ctx, second.Items)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), removed, "a concurrently restored authority row protects its mapping")
 }

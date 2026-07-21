@@ -87,6 +87,49 @@ func TestGarbageCollectMissingLooseFileDoesNotCountPhysicalReclamation(t *testin
 		"only a file actually unlinked by this call is physically reclaimed")
 }
 
+func TestGarbageCollectAdvancesAcrossLiveOnlyScanWindow(t *testing.T) {
+	for _, test := range maintenanceDrivers() {
+		t.Run(test.name, func(t *testing.T) {
+			vault := newMaintenanceVault(t, test.driver)
+			target := putMaintenanceFilesAt(t, vault, 7100, 1)
+			trashMaintenanceFiles(t, vault, target)
+			for i := range 8 {
+				_, err := vault.metadata.CreateFile(t.Context(), vault.metadata.RootID(),
+					fmt.Sprintf("live-window-%03d", i), fmt.Sprintf("0-live-window-%03d", i),
+					1, "application/octet-stream")
+				require.NoError(t, err)
+			}
+
+			first, err := vault.GarbageCollect(t.Context(), GCOptions{Budget: WorkBudget{
+				MaxObjects: 4,
+			}})
+			require.NoError(t, err)
+			assert.Zero(t, first.CandidateBlobs)
+			require.True(t, first.More)
+			require.NotEmpty(t, first.NextCursor,
+				"a live-only raw window still makes resumable scan progress")
+
+			cursor := first.NextCursor
+			var candidates, removed int
+			for range 3 {
+				page, pageErr := vault.GarbageCollect(t.Context(), GCOptions{Budget: WorkBudget{
+					MaxObjects: 4, Cursor: cursor,
+				}})
+				require.NoError(t, pageErr)
+				candidates += page.CandidateBlobs
+				removed += page.RemovedBlobs
+				if !page.More {
+					break
+				}
+				require.NotEmpty(t, page.NextCursor)
+				cursor = page.NextCursor
+			}
+			assert.Equal(t, 1, candidates)
+			assert.Equal(t, 1, removed)
+		})
+	}
+}
+
 func TestGarbageCollectDryRunPreservesRowsAndLooseFiles(t *testing.T) {
 	for _, test := range maintenanceDrivers() {
 		t.Run(test.name, func(t *testing.T) {
@@ -349,7 +392,7 @@ func TestRepackPreservesRawByteBudgetResumeAndCancellation(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 
 	first, err := vault.Repack(t.Context(), RepackOptions{Budget: WorkBudget{
-		MaxObjects: 1, MaxBytes: 1,
+		MaxObjects: 7, MaxBytes: 1,
 	}, MinAge: time.Nanosecond, MinDeadBytes: 1})
 	require.NoError(t, err)
 	assert.Equal(t, 1, first.PacksRewritten)
@@ -479,7 +522,7 @@ func TestRepackAutomaticModeContinuesPastCorruptSparseSource(t *testing.T) {
 	require.NoError(t, os.Truncate(corruptPath, 1))
 
 	report, err := vault.Repack(t.Context(), RepackOptions{Budget: WorkBudget{
-		MaxObjects: 2, MaxBytes: 1,
+		MaxObjects: 8, MaxBytes: 1,
 	}, MinAge: time.Nanosecond, MinDeadBytes: 1})
 	require.Error(t, err)
 	assert.Equal(t, 1, report.PacksRewritten,
@@ -560,7 +603,7 @@ func TestRepackStopsAfterNonSourceFailureBeforeLaterPackMutation(t *testing.T) {
 
 	report, err := internalmaintenance.Repack(t.Context(), vault.metadata, vault.blobs,
 		internalmaintenance.RepackOptions{Budget: internalmaintenance.Budget{
-			MaxObjects: 2, MaxBytes: 1,
+			MaxObjects: 8, MaxBytes: 1,
 		}, MinAge: time.Nanosecond, MinDeadBytes: 1, Catalog: catalog})
 	require.ErrorIs(t, err, sentinel)
 	assert.Zero(t, report.PacksRewritten)
@@ -579,7 +622,7 @@ func TestRepackProbesWorkAfterPostRewriteRetirementError(t *testing.T) {
 		retirePack: candidates[1].Usage.PackID, retireThenErr: sentinel}
 
 	report, err := internalmaintenance.Repack(t.Context(), vault.metadata, vault.blobs,
-		internalmaintenance.RepackOptions{Budget: internalmaintenance.Budget{MaxObjects: 2},
+		internalmaintenance.RepackOptions{Budget: internalmaintenance.Budget{MaxObjects: 8},
 			MinAge: time.Nanosecond, MinDeadBytes: 1, Catalog: catalog})
 	require.ErrorIs(t, err, sentinel)
 	assert.Positive(t, report.BytesRepacked)
@@ -604,7 +647,7 @@ func TestRepackIneligibleOnlyScanAdvancesCursor(t *testing.T) {
 		require.Equal(t, 1, packed.BlobsPacked)
 	}
 
-	first, err := vault.Repack(t.Context(), RepackOptions{Budget: WorkBudget{MaxObjects: 1},
+	first, err := vault.Repack(t.Context(), RepackOptions{Budget: WorkBudget{MaxObjects: 10},
 		MinAge: time.Nanosecond, MinDeadBytes: 1})
 	require.NoError(t, err)
 	assert.Zero(t, first.PacksSelected)
@@ -617,6 +660,121 @@ func TestRepackIneligibleOnlyScanAdvancesCursor(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, second.PacksSelected)
 	assert.False(t, second.More)
+}
+
+func TestRepackMappingScanAdvancesAcrossLiveOnlyWindow(t *testing.T) {
+	for _, test := range maintenanceDrivers() {
+		t.Run(test.name, func(t *testing.T) {
+			vault := newMaintenanceVault(t, test.driver)
+			putMaintenanceFilesAt(t, vault, 7200, 1)
+			packed, err := vault.Pack(t.Context(), PackOptions{})
+			require.NoError(t, err)
+			require.Equal(t, 1, packed.BlobsPacked)
+			indexed, err := store.NewPackCatalog(vault.metadata).ListIndexed(t.Context())
+			require.NoError(t, err)
+			require.Len(t, indexed, 1)
+			packID := indexed[0].PackID
+			for i := range 8 {
+				hash := fmt.Sprintf("0-live-mapping-%03d", i)
+				_, err = vault.metadata.CreateFile(t.Context(), vault.metadata.RootID(),
+					fmt.Sprintf("live-mapping-%03d", i), hash, 1, "application/octet-stream")
+				require.NoError(t, err)
+				insertDanglingMaintenanceMapping(t, vault, hash, packID)
+			}
+			dangling := "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+			insertDanglingMaintenanceMapping(t, vault, dangling, packID)
+
+			first, err := vault.Repack(t.Context(), RepackOptions{Budget: WorkBudget{
+				MaxObjects: 4,
+			}})
+			require.NoError(t, err)
+			assert.Zero(t, first.MappingsPruned)
+			require.True(t, first.More)
+			require.NotEmpty(t, first.NextCursor,
+				"a live-only raw mapping window still makes resumable scan progress")
+
+			cursor := first.NextCursor
+			var pruned int64
+			for range 3 {
+				page, pageErr := vault.Repack(t.Context(), RepackOptions{Budget: WorkBudget{
+					MaxObjects: 4, Cursor: cursor,
+				}})
+				require.NoError(t, pageErr)
+				pruned += page.MappingsPruned
+				if !page.More {
+					break
+				}
+				require.NotEmpty(t, page.NextCursor)
+				cursor = page.NextCursor
+			}
+			assert.Equal(t, int64(1), pruned)
+		})
+	}
+}
+
+func TestRepackSparseCursorSkipsDeadWorkAddedBetweenCalls(t *testing.T) {
+	for _, test := range maintenanceDrivers() {
+		t.Run(test.name, func(t *testing.T) {
+			vault := newMaintenanceVault(t, test.driver)
+			createSparseMaintenancePacks(t, vault, 2)
+
+			var first RepackReport
+			var cursor string
+			for range 20 {
+				page, err := vault.Repack(t.Context(), RepackOptions{Budget: WorkBudget{
+					MaxObjects: 1, Cursor: cursor,
+				}, MinAge: time.Nanosecond, MinDeadBytes: 1})
+				require.NoError(t, err)
+				if page.PacksRewritten > 0 {
+					first = page
+					break
+				}
+				require.True(t, page.More)
+				require.NotEmpty(t, page.NextCursor)
+				cursor = page.NextCursor
+			}
+			assert.Equal(t, 1, first.PacksRewritten)
+			require.True(t, first.More)
+			require.NotEmpty(t, first.NextCursor)
+
+			createDeadMaintenancePacks(t, vault, 1)
+			newDead, _, err := vault.metadata.DeadPackUsagePage(t.Context(), 10)
+			require.NoError(t, err)
+			require.NotEmpty(t, newDead)
+			resumed, err := vault.Repack(t.Context(), RepackOptions{Budget: WorkBudget{
+				MaxObjects: 10, Cursor: first.NextCursor,
+			}, MinAge: time.Nanosecond, MinDeadBytes: 1})
+			require.NoError(t, err)
+			assert.Positive(t, resumed.PacksRewritten,
+				"the sparse continuation still advances later sparse work")
+			records, err := store.NewPackCatalog(vault.metadata).ListPackRecords(t.Context())
+			require.NoError(t, err)
+			remainingIDs := make(map[string]bool, len(records))
+			for _, record := range records {
+				remainingIDs[record.PackID] = true
+			}
+			for _, dead := range newDead {
+				assert.True(t, remainingIDs[dead.PackID],
+					"a sparse continuation must not re-enter the completed dead phase")
+			}
+
+			fresh, err := vault.Repack(t.Context(), RepackOptions{Budget: WorkBudget{
+				MaxObjects: 10,
+			}, MinAge: time.Nanosecond, MinDeadBytes: 1})
+			require.NoError(t, err)
+			assert.Positive(t, fresh.PacksRemoved,
+				"a new empty-cursor cycle admits dead work created after the sparse cursor")
+			records, err = store.NewPackCatalog(vault.metadata).ListPackRecords(t.Context())
+			require.NoError(t, err)
+			remainingIDs = make(map[string]bool, len(records))
+			for _, record := range records {
+				remainingIDs[record.PackID] = true
+			}
+			for _, dead := range newDead {
+				assert.False(t, remainingIDs[dead.PackID])
+			}
+		})
+	}
 }
 
 func TestRepackPreservesMappingHighWaterAcrossDeadPackPages(t *testing.T) {
@@ -653,7 +811,11 @@ func TestRepackPreservesMappingHighWaterAcrossDeadPackPages(t *testing.T) {
 
 			highHash := "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe"
 			insertDanglingMaintenanceMapping(t, vault, highHash, dead[0].PackID)
-			first, err := vault.Repack(t.Context(), RepackOptions{Budget: WorkBudget{MaxObjects: 2},
+			indexed, err := store.NewPackCatalog(vault.metadata).ListIndexed(t.Context())
+			require.NoError(t, err)
+			first, err := vault.Repack(t.Context(), RepackOptions{Budget: WorkBudget{
+				MaxObjects: len(indexed) + 1,
+			},
 				MinAge: time.Nanosecond, MinDeadBytes: 1})
 			require.NoError(t, err)
 			assert.Equal(t, int64(1), first.MappingsPruned)
@@ -671,7 +833,7 @@ func TestRepackPreservesMappingHighWaterAcrossDeadPackPages(t *testing.T) {
 			assert.Zero(t, second.MappingsPruned,
 				"a newly inserted lower mapping waits for the next empty-cursor cycle")
 			assert.False(t, second.More)
-			indexed, err := store.NewPackCatalog(vault.metadata).ListIndexed(t.Context())
+			indexed, err = store.NewPackCatalog(vault.metadata).ListIndexed(t.Context())
 			require.NoError(t, err)
 			var lowerMappingPresent bool
 			for _, entry := range indexed {

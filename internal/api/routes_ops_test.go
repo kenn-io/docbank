@@ -517,6 +517,32 @@ func TestGCDryRunAndRun(t *testing.T) {
 	assert.Equal(t, int64(len("gc-me")), rep.ReclaimableBytes)
 }
 
+func TestGCEndpointAdvancesPastLiveOnlyRawPage(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	target := createFileWithContent(t, ts, s, "/bounded-gc.txt", "bounded gc target")
+	_, etag := etagOf(t, ts, target.ID)
+	resp, body := do(t, ts, http.MethodPost,
+		fmt.Sprintf("/api/v1/nodes/%d/trash", target.ID),
+		map[string]string{"If-Match": etag}, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
+		map[string]any{"run": true})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+
+	for i := range internalmaintenance.DefaultMaxObjects {
+		_, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("live-gc-%03d", i),
+			fmt.Sprintf("!live-gc-%03d", i), 1, "application/octet-stream")
+		require.NoError(t, err)
+	}
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/gc", nil, map[string]any{"run": true})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var report api.GCReport
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	assert.Equal(t, 1, report.CandidateBlobs)
+	assert.Equal(t, 1, report.RemovedBlobs)
+}
+
 func TestGCEndpointRetainsFullPhysicalOrphanReconciliation(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	hash, size, err := s.Blobs.Write(strings.NewReader("untracked physical content"))
