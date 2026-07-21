@@ -33,7 +33,7 @@ install:
 clean:
 	rm -f docbank
 
-test:
+test: release-scripts-test
 	go test -tags "$(BUILD_TAGS)" ./...
 
 test-v:
