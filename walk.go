@@ -80,8 +80,12 @@ func (w *Walker) Close() error {
 		return nil
 	}
 	w.closeOnce.Do(func() {
-		w.closeErr = w.inner.Close()
-		w.release()
+		if w.inner != nil {
+			w.closeErr = w.inner.Close()
+		}
+		if w.release != nil {
+			w.release()
+		}
 	})
 	return w.closeErr
 }

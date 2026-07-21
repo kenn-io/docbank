@@ -58,7 +58,8 @@ func (s *Store) BeginWalk(
 		}
 	}()
 
-	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	transactionContext := context.WithoutCancel(ctx)
+	tx, err := db.BeginTx(transactionContext, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, fmt.Errorf("beginning tree walk: %w", err)
 	}
@@ -75,6 +76,30 @@ func (s *Store) BeginWalk(
 	canonicalRoot, err := pathOf(ctx, tx, root.ID)
 	if err != nil {
 		return nil, fmt.Errorf("beginning tree walk at %q: %w", rootPath, err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		CREATE TEMP TABLE walk_snapshot (
+			path TEXT COLLATE BINARY NOT NULL,
+			node_id INTEGER NOT NULL,
+			PRIMARY KEY (path, node_id)
+		) WITHOUT ROWID`); err != nil {
+		return nil, fmt.Errorf("beginning tree walk at %q: creating traversal state: %w", rootPath, err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		WITH RECURSIVE tree(id, path) AS (
+			SELECT id, ? FROM nodes WHERE id = ?
+			UNION ALL
+			SELECT child.id,
+			       CASE WHEN tree.path = '/'
+			            THEN '/' || child.name
+			            ELSE tree.path || '/' || child.name END
+			FROM nodes AS child
+			JOIN tree ON child.parent_id = tree.id
+			WHERE ? OR child.trashed_at IS NULL
+		)
+		INSERT INTO walk_snapshot(path, node_id)
+		SELECT path, id FROM tree`, canonicalRoot, root.ID, includeTrashed); err != nil {
+		return nil, fmt.Errorf("beginning tree walk at %q: building traversal state: %w", rootPath, err)
 	}
 	return &Walker{
 		db: db, tx: tx, pageSize: pageSize, includeTrashed: includeTrashed,
@@ -94,27 +119,15 @@ func (w *Walker) Next(ctx context.Context) ([]WalkEntry, error) {
 	}
 
 	rows, err := w.tx.QueryContext(ctx, `
-		WITH RECURSIVE tree(id, path) AS (
-			SELECT id, ? FROM nodes WHERE id = ?
-			UNION ALL
-			SELECT child.id,
-			       CASE WHEN tree.path = '/'
-			            THEN '/' || child.name
-			            ELSE tree.path || '/' || child.name END
-			FROM nodes AS child
-			JOIN tree ON child.parent_id = tree.id
-			WHERE ? OR child.trashed_at IS NULL
-		)
-		SELECT tree.path, `+nodeCols+`
-		FROM tree
-		JOIN nodes AS n ON n.id = tree.id
+		SELECT snapshot.path, `+nodeCols+`
+		FROM walk_snapshot AS snapshot
+		JOIN nodes AS n ON n.id = snapshot.node_id
 		LEFT JOIN content_versions AS cv
 			ON cv.node_id = n.id AND cv.version_id = n.current_version_id
-		WHERE tree.path COLLATE BINARY > ? COLLATE BINARY
-		   OR (tree.path COLLATE BINARY = ? COLLATE BINARY AND n.id > ?)
-		ORDER BY tree.path COLLATE BINARY, n.id
-		LIMIT ?`, w.rootPath, w.rootID, w.includeTrashed,
-		w.lastPath, w.lastPath, w.lastID, w.pageSize)
+		WHERE snapshot.path > ?
+		   OR (snapshot.path = ? AND snapshot.node_id > ?)
+		ORDER BY snapshot.path, snapshot.node_id
+		LIMIT ?`, w.lastPath, w.lastPath, w.lastID, w.pageSize)
 	if err != nil {
 		return nil, fmt.Errorf("walking tree snapshot: %w", err)
 	}
@@ -156,11 +169,18 @@ func (w *Walker) Close() error {
 	w.closeOnce.Do(func() {
 		w.mu.Lock()
 		defer w.mu.Unlock()
-		rollbackErr := w.tx.Rollback()
+		var rollbackErr error
+		if w.tx != nil {
+			rollbackErr = w.tx.Rollback()
+		}
 		if errors.Is(rollbackErr, sql.ErrTxDone) {
 			rollbackErr = nil
 		}
-		w.closeErr = errors.Join(rollbackErr, w.db.Close())
+		var closeErr error
+		if w.db != nil {
+			closeErr = w.db.Close()
+		}
+		w.closeErr = errors.Join(rollbackErr, closeErr)
 		w.tx = nil
 		w.db = nil
 	})

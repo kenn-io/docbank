@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"io"
 	"testing"
 
@@ -62,6 +63,32 @@ func TestWalkOrdersDuplicatePathsByNodeIDAndOptionallyIncludesTrash(t *testing.T
 		{Path: "/", Node: root},
 		{Path: "/same.txt", Node: live},
 	}, collectStoreWalk(t, liveOnly))
+}
+
+func TestWalkBuildsTraversalStateOnceAndPagesOnlyThatState(t *testing.T) {
+	s := newTestStore(t)
+	for i := range 25 {
+		_, err := s.Mkdir(t.Context(), s.RootID(), fmt.Sprintf("node-%02d", i))
+		require.NoError(t, err)
+	}
+
+	walker, err := s.BeginWalk(t.Context(), "/", 3, false)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, walker.Close()) })
+
+	var snapshotted int
+	require.NoError(t, walker.tx.QueryRowContext(t.Context(),
+		`SELECT COUNT(*) FROM walk_snapshot`).Scan(&snapshotted))
+	assert.Equal(t, 26, snapshotted)
+	for range 4 {
+		page, nextErr := walker.Next(t.Context())
+		require.NoError(t, nextErr)
+		assert.Len(t, page, 3)
+	}
+	require.NoError(t, walker.tx.QueryRowContext(t.Context(),
+		`SELECT COUNT(*) FROM walk_snapshot`).Scan(&snapshotted))
+	assert.Equal(t, 26, snapshotted,
+		"page reads reuse the one materialized recursive traversal")
 }
 
 func collectStoreWalk(t *testing.T, walker *Walker) []WalkEntry {

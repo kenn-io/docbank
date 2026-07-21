@@ -141,6 +141,27 @@ func TestWalkNextHonorsCancellation(t *testing.T) {
 	assert.Equal(t, "/", page[0].Path)
 }
 
+func TestWalkOutlivesCanceledSetupContext(t *testing.T) {
+	for _, test := range maintenanceDrivers() {
+		t.Run(test.name, func(t *testing.T) {
+			vault := newMaintenanceVault(t, test.driver)
+			_, err := vault.Put(t.Context(), "/item.txt", strings.NewReader("item\n"), PutOptions{})
+			require.NoError(t, err)
+
+			setupCtx, cancel := context.WithCancel(t.Context())
+			walker, err := vault.Walk(setupCtx, "/", WalkOptions{PageSize: 1})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, walker.Close()) })
+			cancel()
+
+			page, err := walker.Next(t.Context())
+			require.NoError(t, err)
+			require.Len(t, page, 1)
+			assert.Equal(t, "/", page[0].Path)
+		})
+	}
+}
+
 func TestWalkOptionallyIncludesTrashedNodes(t *testing.T) {
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
@@ -294,4 +315,10 @@ func TestWalkerConcurrentNextAndClose(t *testing.T) {
 		}
 		require.NoError(t, <-closeDone)
 	}
+}
+
+func TestWalkerZeroValueCloseIsSafe(t *testing.T) {
+	walker := new(Walker)
+	require.NoError(t, walker.Close())
+	require.NoError(t, walker.Close())
 }
