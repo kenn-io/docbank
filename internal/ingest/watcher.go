@@ -54,7 +54,9 @@ func (ing *Ingester) ingestWatchedFile(
 	if err != nil {
 		return result, err
 	}
-	defer func() { retErr = errors.Join(retErr, ing.cleanupLoose(content.hash)) }()
+	defer func() {
+		retErr = mutationCleanupResult(retErr, ing.cleanupLoose(content.hash))
+	}()
 	existing, _, changed, err := ing.Store.SyncWatchedContent(
 		ctx, watchName, sourceRef,
 		content.hash, content.size, content.mimeType, content.physical,

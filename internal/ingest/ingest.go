@@ -21,8 +21,8 @@ import (
 
 var (
 	// ErrUploadDigestMismatch reports bytes that do not match the identity the
-	// remote writer declared. No blob row or node is committed, and the
-	// authority-free loose write is removed before the request returns.
+	// remote writer declared. No blob row or node is committed; authority-free
+	// loose bytes remain eligible for exclusively serialized GC.
 	ErrUploadDigestMismatch = errors.New("upload digest mismatch")
 	// ErrUploadSizeMismatch is the corresponding declared-length failure.
 	ErrUploadSizeMismatch = errors.New("upload size mismatch")
@@ -200,10 +200,12 @@ func physicalReceipt(receipt blob.WriteReceipt) (store.BlobPhysical, error) {
 	}, nil
 }
 
-// cleanupLoose removes an authority-free write or a loose duplicate of packed
-// authority. Existing loose authority is never removed. Callers invoke this
-// while holding the shared mutation lease; the detached timeout lets cleanup
-// finish after a request cancellation.
+// cleanupLoose removes a loose duplicate only when immutable packed authority
+// already covers the hash. Existing loose authority and authority-free bytes
+// are never removed here: a shared loose path may belong to another writer
+// between physical publication and its metadata commit. Exclusively serialized
+// GC reclaims true orphans. The detached timeout lets cleanup finish after a
+// request cancellation.
 func (ing *Ingester) cleanupLoose(hash string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -213,7 +215,7 @@ func (ing *Ingester) cleanupLoose(hash string) error {
 	case err == nil:
 		remove = authority.Kind == "packed"
 	case errors.Is(err, store.ErrNotFound):
-		remove = true
+		return nil
 	case errors.Is(err, store.ErrPhysicalAuthorityMissing):
 		// Logical membership exists without readable authority. The new loose
 		// file may be its only recoverable copy, so preserve it for repair.
@@ -228,6 +230,16 @@ func (ing *Ingester) cleanupLoose(hash string) error {
 		return fmt.Errorf("cleaning loose blob %s: %w", hash, err)
 	}
 	return nil
+}
+
+// mutationCleanupResult keeps post-commit cleanup best-effort. Once logical
+// authority commits, returning a cleanup error would falsely report failure
+// and make a safe retry impossible under the caller's old revision.
+func mutationCleanupResult(mutationErr, cleanupErr error) error {
+	if mutationErr == nil {
+		return nil
+	}
+	return errors.Join(mutationErr, cleanupErr)
 }
 
 // PreparedUpload is a verified, authority-free remote write. The caller may
@@ -296,7 +308,9 @@ func (ing *Ingester) PrepareUpload(
 // stable node for either a new import or an idempotent retry.
 func (p *PreparedUpload) Commit(ctx context.Context) (result UploadResult, retErr error) {
 	result = p.result
-	defer func() { retErr = errors.Join(retErr, p.ing.cleanupLoose(result.ComputedHash)) }()
+	defer func() {
+		retErr = mutationCleanupResult(retErr, p.ing.cleanupLoose(result.ComputedHash))
+	}()
 	ingestID, err := p.ing.Store.BeginIngest(ctx, "upload", p.name)
 	if err != nil {
 		return result, err
@@ -309,8 +323,10 @@ func (p *PreparedUpload) Commit(ctx context.Context) (result UploadResult, retEr
 	return result, nil
 }
 
-// Discard removes authority-free prepared bytes or a loose duplicate of
-// already-packed authority when a transport envelope is rejected before Commit.
+// Discard removes a loose duplicate of already-packed authority when a
+// transport envelope is rejected before Commit. Authority-free bytes are left
+// for exclusively serialized GC because another writer may still be using the
+// same content-addressed path.
 func (p *PreparedUpload) Discard() error {
 	if p == nil {
 		return nil
@@ -336,7 +352,9 @@ func (ing *Ingester) ReplaceContent(
 		return result, err
 	}
 	result.ComputedHash, result.ComputedSize = written.Hash, written.Size
-	defer func() { retErr = errors.Join(retErr, ing.cleanupLoose(written.Hash)) }()
+	defer func() {
+		retErr = mutationCleanupResult(retErr, ing.cleanupLoose(written.Hash))
+	}()
 	result.physical, err = physicalReceipt(written)
 	if err != nil {
 		return result, err
@@ -608,7 +626,9 @@ func (ing *Ingester) importFile(
 	if err != nil {
 		return false, err
 	}
-	defer func() { retErr = errors.Join(retErr, ing.cleanupLoose(content.hash)) }()
+	defer func() {
+		retErr = mutationCleanupResult(retErr, ing.cleanupLoose(content.hash))
+	}()
 	_, added, err = ing.Store.IngestFile(ctx, ingestRun, parentID,
 		filepath.Base(sourcePath), content.hash, content.size, content.mimeType,
 		sourcePath, content.mtime, content.physical)

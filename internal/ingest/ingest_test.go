@@ -5,7 +5,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -330,13 +332,13 @@ func TestPackedDuplicateIngestRemovesLooseCopy(t *testing.T) {
 	assert.Empty(t, loose)
 }
 
-func TestRejectedUploadRemovesAuthorityFreeAndPackedDuplicateLooseFiles(t *testing.T) {
+func TestRejectedUploadPreservesAuthorityFreeAndRemovesPackedDuplicateLooseFiles(t *testing.T) {
 	content := []byte(strings.Repeat("rejected upload content\n", 512))
 	sum := sha256.Sum256(content)
 	hash := hex.EncodeToString(sum[:])
 	wrong := strings.Repeat("0", 64)
 
-	t.Run("authority free", func(t *testing.T) {
+	t.Run("authority free waits for GC", func(t *testing.T) {
 		ing := newTestIngesterWithOptions(t, blob.ManagedOptions())
 		_, err := ing.PrepareUpload(
 			t.Context(), ing.Store.RootID(), "rejected.txt", "text/plain",
@@ -345,7 +347,8 @@ func TestRejectedUploadRemovesAuthorityFreeAndPackedDuplicateLooseFiles(t *testi
 		require.ErrorIs(t, err, ErrUploadDigestMismatch)
 		loose, err := ing.Blobs.List()
 		require.NoError(t, err)
-		assert.Empty(t, loose)
+		assert.Len(t, loose, 1)
+		assert.Contains(t, loose, hash)
 	})
 
 	t.Run("prepared envelope abandoned", func(t *testing.T) {
@@ -358,7 +361,8 @@ func TestRejectedUploadRemovesAuthorityFreeAndPackedDuplicateLooseFiles(t *testi
 		require.NoError(t, prepared.Discard())
 		loose, err := ing.Blobs.List()
 		require.NoError(t, err)
-		assert.Empty(t, loose)
+		assert.Len(t, loose, 1)
+		assert.Contains(t, loose, hash)
 	})
 
 	t.Run("packed duplicate", func(t *testing.T) {
@@ -383,6 +387,43 @@ func TestRejectedUploadRemovesAuthorityFreeAndPackedDuplicateLooseFiles(t *testi
 		require.NoError(t, err)
 		assert.Empty(t, loose)
 	})
+}
+
+func TestRejectedUploadCannotDeleteAnotherPreparedUpload(t *testing.T) {
+	ing := newTestIngesterWithOptions(t, blob.ManagedOptions())
+	content := []byte(strings.Repeat("shared in-flight content\n", 512))
+	sum := sha256.Sum256(content)
+	hash := hex.EncodeToString(sum[:])
+
+	valid, err := ing.PrepareUpload(
+		t.Context(), ing.Store.RootID(), "valid.txt", "text/plain",
+		bytes.NewReader(content), hash, int64(len(content)),
+	)
+	require.NoError(t, err)
+	_, err = ing.PrepareUpload(
+		t.Context(), ing.Store.RootID(), "rejected.txt", "text/plain",
+		bytes.NewReader(content), strings.Repeat("0", 64), int64(len(content)),
+	)
+	require.ErrorIs(t, err, ErrUploadDigestMismatch)
+
+	result, err := valid.Commit(t.Context())
+	require.NoError(t, err)
+	assert.True(t, result.Added)
+	assert.Equal(t, hash, result.Node.BlobHash)
+	contentReader, err := ing.Blobs.Open(hash)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, contentReader.Close()) }()
+	got, err := io.ReadAll(contentReader)
+	require.NoError(t, err)
+	assert.Equal(t, content, got)
+}
+
+func TestMutationCleanupNeverMasksCommittedSuccess(t *testing.T) {
+	cleanupErr := errors.New("cleanup failed")
+	require.NoError(t, mutationCleanupResult(nil, cleanupErr))
+	mutationErr := errors.New("mutation failed")
+	require.ErrorIs(t, mutationCleanupResult(mutationErr, cleanupErr), mutationErr)
+	assert.ErrorIs(t, mutationCleanupResult(mutationErr, cleanupErr), cleanupErr)
 }
 
 func mustNode(t *testing.T, ing *Ingester, path string) store.Node {
