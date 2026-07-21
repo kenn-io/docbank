@@ -76,6 +76,12 @@ that needs a seekable handle to compressed loose content may require Kit to
 create a private decoded temporary file, so sequential consumers should prefer
 the streaming API.
 
+An eligible compressed write privately stages both the complete raw object and
+its zstd candidate before choosing which one to publish. Temporary-space
+planning must therefore allow roughly the raw size plus the compressed size for
+each concurrent write; cancellation and failed writes remove those private
+candidates without granting metadata authority.
+
 The separate limits are deliberate. The 4 GiB admission ceiling matches Kit's
 format-v1 raw-object ceiling, preserving backup eligibility for every admitted
 object. Verified loose streaming and backup keep the measured 1 GiB workload
