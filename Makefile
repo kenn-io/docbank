@@ -21,7 +21,7 @@ DEFAULT_GOLANGCI_LINT_CACHE := $(shell git rev-parse --path-format=absolute --gi
 GOLANGCI_LINT_CACHE ?= $(DEFAULT_GOLANGCI_LINT_CACHE)
 export GOLANGCI_LINT_CACHE
 
-.PHONY: build install clean test test-v fmt lint lint-ci tidy install-hooks docs-install docs-build docs-serve docs-link docs-deploy help
+.PHONY: build install clean test test-v release-scripts-test fmt lint lint-ci tidy install-hooks docs-install docs-build docs-serve docs-link docs-deploy help
 
 build:
 	CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS)" -o docbank ./cmd/docbank
@@ -38,6 +38,9 @@ test:
 
 test-v:
 	go test -tags "$(BUILD_TAGS)" -v ./...
+
+release-scripts-test:
+	bash scripts/release_scripts_test.sh
 
 fmt:
 	go fmt ./...
@@ -98,4 +101,4 @@ docs-deploy: docs-build
 	vercel deploy docs/site --prod --yes
 
 help:
-	@echo "Targets: build install clean test test-v fmt lint lint-ci tidy install-hooks docs-install docs-build docs-serve docs-link docs-deploy"
+	@echo "Targets: build install clean test test-v release-scripts-test fmt lint lint-ci tidy install-hooks docs-install docs-build docs-serve docs-link docs-deploy"
