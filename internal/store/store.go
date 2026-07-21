@@ -42,6 +42,13 @@ func Open(path string, drivers ...docsqlite.Driver) (*Store, error) {
 	if err := docsqlite.Validate(driver); err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
+	if err := prepareReleasedSchemaUpgrade(path, driver); err != nil {
+		return nil, err
+	}
+	return openCurrentStore(path, driver)
+}
+
+func openCurrentStore(path string, driver docsqlite.Driver) (*Store, error) {
 	db, err := driver.Open(path, docsqlite.OpenOptions{
 		Access: docsqlite.Create, TransactionMode: docsqlite.Immediate,
 	})
@@ -81,16 +88,6 @@ func (s *Store) bootstrapTx() error {
 	return s.withStorageTx(context.Background(), func(tx *sql.Tx) error {
 		if _, err := tx.Exec(schemaSQL); err != nil {
 			return fmt.Errorf("applying schema: %w", err)
-		}
-		var ignoredEncoding, ignoredStoredSize, ignoredEligibility any
-		if err := tx.QueryRow(`
-			SELECT MAX(loose_encoding), MAX(loose_stored_size), MAX(pack_eligible)
-			FROM blobs`).Scan(
-			&ignoredEncoding, &ignoredStoredSize, &ignoredEligibility,
-		); err != nil {
-			return fmt.Errorf(
-				"obsolete pre-release database schema; recreate this development vault: %w", err,
-			)
 		}
 		if err := tx.QueryRow(`SELECT vault_id FROM vault_metadata WHERE singleton = 1`).Scan(
 			&s.vaultID,

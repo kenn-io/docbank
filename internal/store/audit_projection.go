@@ -120,7 +120,7 @@ func topologyRecord(row auditTopologyRow) (audit.Record, error) {
 		{Name: "node_kind", Value: kindValue},
 		{Name: auditStateField, Value: stateValue},
 		{Name: auditOriginField, Value: origin},
-		{Name: "created_at", Value: createdAt},
+		{Name: metadataCreatedAtField, Value: createdAt},
 		{Name: "modified_at", Value: modifiedAt},
 		{Name: "trashed_at", Value: trashedAt},
 	}}, nil

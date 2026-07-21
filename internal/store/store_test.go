@@ -34,7 +34,7 @@ func TestOpenRejectsObsoletePreReleaseSchema(t *testing.T) {
 	require.NoError(t, db.Close())
 
 	_, err = Open(dbPath, driver)
-	require.ErrorContains(t, err, "obsolete pre-release database schema; recreate this development vault")
+	require.ErrorContains(t, err, "unsupported schema")
 }
 
 func TestOpenBootstrapsRoot(t *testing.T) {

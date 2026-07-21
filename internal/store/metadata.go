@@ -22,6 +22,8 @@ import (
 
 const metadataFormatVersion = 1
 
+const metadataCreatedAtField = "created_at"
+
 // MetadataSnapshot owns a dedicated deferred read transaction. Store's normal
 // connections use BEGIN IMMEDIATE for mutations; using that pool here would
 // hold the writer lock for the full backup instead of only pinning a WAL view.
@@ -860,8 +862,8 @@ const (
 var metadataHeaderFields = []string{metadataTypeField, "format", "version", auditVaultIDField, "node_sequence"}
 
 var metadataRequiredFields = map[string][]string{
-	"blob":                      {metadataTypeField, "hash", "size", "created_at"},
-	"node":                      {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", "revision", "created_at", "modified_at", "trashed_at", "trash_parent", "trash_name"},
+	"blob":                      {metadataTypeField, "hash", "size", metadataCreatedAtField},
+	"node":                      {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", "revision", metadataCreatedAtField, "modified_at", "trashed_at", "trash_parent", "trash_name"},
 	"content_version":           {metadataTypeField, "version_id", metadataNodeIDField, "blob_hash", "size", "mime_type", auditRecordedAtField, "node_revision", "introduced_operation_id", "transition_kind", "source_version_id"},
 	metadataIngestType:          {metadataTypeField, "ingest_id", "started_at", "source_kind", "source_desc"},
 	metadataProvenanceType:      {metadataTypeField, "identity", metadataNodeIDField, "ingest_id", "original_path", "original_mtime", "supersedes"},

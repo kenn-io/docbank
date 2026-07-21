@@ -21,7 +21,7 @@ that exclusively owns an embedded vault can invoke the same packing and
 reconciliation pass through `Vault.Pack`; it cannot bypass the catalog or Kit's
 maintenance coordinator. `docbank storage repack` compacts eligible sparse packs
 and retires dead pack files. Embedded owners also have bounded `GarbageCollect`,
-`Verify`, and `Repack` passes. Startup never performs an implicit migration, and
+`Verify`, and `Repack` passes. Startup never implicitly rewrites blob bytes, and
 no background scheduler runs these operations.
 
 Large collections of small files are expensive to enumerate, copy, and restore.
@@ -76,11 +76,11 @@ rules have already made reachable or unreachable.
 
 ## Consequences for docbank
 
-Docbank owns only its catalog adapter, daemon wiring, migration policy, and
-end-to-end verification. It does not fork Kit's reader cache, reconciliation,
-or repacker. Raw and zstd loose representations remain recovery paths and
-staging representations before packing. Both names identify the same logical
-SHA-256 and decoded size. Status and GC report their physical stored bytes;
+Docbank owns only its catalog adapter, daemon wiring, released-schema cutover
+policy, and end-to-end verification. It does not fork Kit's reader cache,
+reconciliation, or repacker. Raw and zstd loose representations remain recovery
+paths and staging representations before packing. Both names identify the same
+logical SHA-256 and decoded size. Status and GC report their physical stored bytes;
 reads, backup, verification, and packing decode and verify the logical bytes
 before granting authority. Streaming reads remain bounded-memory. A caller
 that needs a seekable handle to compressed loose content may require Kit to

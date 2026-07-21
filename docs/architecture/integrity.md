@@ -113,17 +113,19 @@ vault-root identity. This catches a vault physically beneath the source even
 when separate bind aliases hide that ancestry from path comparison; the same
 identity check remains active during later scans.
 
-### Pre-release schema freedom
+### Released schema upgrades
 
-Docbank has not yet established a public storage compatibility boundary. Until
-the first public release, incompatible schema and JSONL changes replace the
-development shape directly while the format identifier remains version 1.
-Developer vaults created by earlier commits are disposable; do not build
-migrations, compatibility decoders, cutovers, or downgrade fences for them.
+v0.9.0 established Docbank's first public storage compatibility boundary.
+Released vaults survive incompatible SQLite changes through a logical cutover:
+Docbank exports deterministic metadata-v1 JSONL from the old database, imports
+and validates it in a fresh current-schema database, restores physical pack
+authority, and only then publishes the replacement. The source database is
+retained beside it as `<database>.v0.9.0.bak` for recovery.
 
-The first public release freezes that v1 contract. Any later incompatible
-change must begin by defining an explicit compatibility policy and real
-released-vault fixtures; that work is deliberately deferred until it is needed.
+This is intentionally not an in-place migration ledger. Unreleased development
+layouts remain disposable, while every supported released layout has an exact
+fixture and an end-to-end cutover test. Metadata remains format v1 until a
+released logical-format change requires otherwise.
 
 ### One owner for an entire vault tree
 

@@ -447,7 +447,7 @@ small-file benefit, require transient duplicate disk capacity, and leak
 physical-format selection into the product. Do not add one without a concrete
 recovery workflow that cannot be served by verified backup/restore.
 
-## Pre-release schema policy
+## Released schema policy
 
 Store startup runs the embedded idempotent schema in one immediate transaction
 and ensures the root exists. This safely creates missing compatible tables and
@@ -456,17 +456,18 @@ indexes, but it is not a general migration system.
 Metadata-v1 identity changes are vertical changes to the live store, ingest,
 reachability, and backup/restore paths. A parallel schema or codec that
 production code does not consume has no authority; shared metadata helpers
-belong here only when live paths use them. Pre-release development replaces the
-runtime shape directly rather than translating or upgrading it.
+belong here only when live paths use them.
 
-Until the first public release, incompatible schema work is allowed and the
-format identifier remains v1. Earlier development vaults and JSONL streams are
-disposable. Do not add an in-place migration ledger, compatibility decoder,
-cutover protocol, store-generation fence, or old-binary test matrix for them.
+v0.9.0 established the first storage compatibility boundary. An incompatible
+released SQLite layout is never incrementally rewritten: Docbank reads its
+deterministic metadata-v1 authority, imports and validates that authority in a
+fresh current-schema database, restores the physical pack catalog separately,
+checkpoints and syncs the replacement, then publishes it atomically. The
+released source database remains as a recovery copy.
 
-The first public release establishes the compatibility boundary. From that
-point onward, incompatible changes require an explicit policy grounded in
-actual released formats and fixtures rather than speculative migration work.
+Only schemas that actually shipped receive readers and exact fixtures.
+Unreleased development layouts are disposable; there is no speculative
+`ALTER TABLE` ledger, downgrade matrix, or compatibility decoder for them.
 
 ## Extension constraints
 

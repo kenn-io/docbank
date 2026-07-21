@@ -84,13 +84,17 @@ Instructions for autonomous coding agents working in this repository.
   sequencing, ownership, or completion criteria. `docs/roadmap.md` is the one
   high-level public product-status view; kata is the sole source of truth for
   actionable work and its status.
-- No storage compatibility boundary exists before the first public release.
-  Keep the live schema and deterministic JSONL authority at format v1, make
-  breaking pre-release changes directly, and treat vaults created by earlier
-  development commits as disposable. Do not build migrations, logical
-  cutovers, compatibility decoders, downgrade fences, or old-binary matrices
-  for unreleased layouts. After the first public release, define compatibility
-  work only when an actual released-format change requires it.
+- v0.9.0 is the first released storage compatibility boundary. Preserve vaults
+  created by every supported public release across upgrades. When a released
+  SQLite layout is incompatible with the current schema, export its logical
+  authority through deterministic JSONL, build and validate a fresh
+  current-schema database, restore physical pack authority separately, then
+  atomically install it while retaining a recoverable source database. Do not
+  accumulate in-place `ALTER TABLE` migration ladders or compatibility logic
+  for layouts that never shipped. Every released-format cutover needs an exact
+  released-schema fixture and end-to-end coverage in both SQLite modes. Keep
+  metadata JSONL at format v1 until a released logical-format change actually
+  requires a new version.
 
 <!-- BEGIN KATA (managed by `kata init --with-agents`) -->
 ## kata issue tracker
