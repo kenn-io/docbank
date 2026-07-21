@@ -36,6 +36,9 @@ var (
 	// ErrSizeMismatch means the durable bytes did not match the caller's
 	// optional expected byte count.
 	ErrSizeMismatch = errors.New("docbank content size mismatch")
+	// ErrContentConflict means immutable creation targeted an existing path
+	// with different bytes, size, media type, or node kind.
+	ErrContentConflict = errors.New("docbank immutable content conflict")
 
 	ErrNotFound      = store.ErrNotFound
 	ErrExists        = store.ErrExists
@@ -248,11 +251,36 @@ type PutOptions struct {
 	Expected  *ContentIdentity
 }
 
+// CreateOptions controls one immutable content creation. Expected is required;
+// an existing path is idempotent only when bytes, size, and media type match.
+type CreateOptions struct {
+	MediaType string
+	Expected  ContentIdentity
+}
+
 // Put stores a reader at an absolute virtual file path. Missing parent
 // directories are created. An unchanged retry converges on the current
 // version; changed bytes create a new immutable version on the same node.
 func (v *Vault) Put(
 	ctx context.Context, virtualPath string, content io.Reader, opts PutOptions,
+) (PutReceipt, error) {
+	return v.write(ctx, virtualPath, content, opts, false)
+}
+
+// Create stores content only when virtualPath is absent. An identical retry
+// returns the existing node and version; any different existing authority
+// returns ErrContentConflict without appending history.
+func (v *Vault) Create(
+	ctx context.Context, virtualPath string, content io.Reader, opts CreateOptions,
+) (PutReceipt, error) {
+	expected := opts.Expected
+	return v.write(ctx, virtualPath, content, PutOptions{
+		MediaType: opts.MediaType, Expected: &expected,
+	}, true)
+}
+
+func (v *Vault) write(
+	ctx context.Context, virtualPath string, content io.Reader, opts PutOptions, immutable bool,
 ) (PutReceipt, error) {
 	if err := v.begin(); err != nil {
 		return PutReceipt{}, err
@@ -342,6 +370,9 @@ func (v *Vault) Put(
 		case lookupErr != nil:
 			return lookupErr
 		case existing.IsDir():
+			if immutable {
+				return fmt.Errorf("virtual path %q names a directory: %w", canonicalPath, ErrContentConflict)
+			}
 			return fmt.Errorf("virtual path %q: %w", canonicalPath, store.ErrNotFile)
 		case existing.BlobHash == hash && existing.Size == size && existing.MimeType == opts.MediaType:
 			version, versionErr := v.metadata.ContentVersionByID(ctx, existing.CurrentVersionID)
@@ -352,6 +383,10 @@ func (v *Vault) Put(
 			receipt.Version = fromStoreVersion(version)
 			return nil
 		default:
+			if immutable {
+				return fmt.Errorf("virtual path %q already has different content or media type: %w",
+					canonicalPath, ErrContentConflict)
+			}
 			updated, version, replaceErr := v.metadata.ReplaceContent(
 				ctx, existing.ID, existing.Revision, hash, size, opts.MediaType, physical,
 			)

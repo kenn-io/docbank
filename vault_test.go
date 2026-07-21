@@ -4,18 +4,194 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/packstore"
 
 	docsqlite "go.kenn.io/docbank/pkg/sqlite"
 	"go.kenn.io/docbank/pkg/sqlite/modernc"
 )
+
+func TestVaultCreateIsImmutableAndIdempotent(t *testing.T) {
+	require := require.New(t)
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(vault.Close()) })
+
+	content := []byte("immutable content\n")
+	expected := contentIdentity(content)
+	created, err := vault.Create(t.Context(), "/immutable.txt", bytes.NewReader(content), CreateOptions{
+		MediaType: "text/plain", Expected: expected,
+	})
+	require.NoError(err)
+	require.True(created.Created)
+	require.False(created.Replaced)
+	require.Equal(int64(1), created.Node.Revision)
+
+	retry, err := vault.Create(t.Context(), "/immutable.txt", bytes.NewReader(content), CreateOptions{
+		MediaType: "text/plain", Expected: expected,
+	})
+	require.NoError(err)
+	require.False(retry.Created)
+	require.False(retry.Replaced)
+	require.Equal(created.Node.ID, retry.Node.ID)
+	require.Equal(created.Node.Revision, retry.Node.Revision)
+	require.Equal(created.Version.ID, retry.Version.ID)
+
+	tests := []struct {
+		name      string
+		content   []byte
+		mediaType string
+		expected  ContentIdentity
+	}{
+		{name: "different bytes", content: []byte("different\n"), mediaType: "text/plain", expected: contentIdentity([]byte("different\n"))},
+		{name: "different media type", content: content, mediaType: "application/octet-stream", expected: expected},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := vault.Create(t.Context(), "/immutable.txt", bytes.NewReader(test.content), CreateOptions{
+				MediaType: test.mediaType, Expected: test.expected,
+			})
+			require.ErrorIs(err, ErrContentConflict)
+		})
+	}
+
+	versions, err := vault.Versions(t.Context(), created.Node.ID, VersionsOptions{})
+	require.NoError(err)
+	require.Equal(1, versions.Total)
+	require.Len(versions.Items, 1)
+	after, err := vault.Stat(t.Context(), "/immutable.txt")
+	require.NoError(err)
+	require.Equal(int64(1), after.Revision)
+	require.Equal(created.Computed.SHA256, after.BlobHash)
+}
+
+func TestVaultCreateRejectsExpectedIdentityMismatch(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	content := []byte("authoritative content\n")
+	expected := contentIdentity(content)
+	other := contentIdentity([]byte("other content\n"))
+
+	tests := []struct {
+		name     string
+		expected ContentIdentity
+		wantErr  error
+	}{
+		{name: "digest", expected: ContentIdentity{SHA256: other.SHA256, Size: expected.Size}, wantErr: ErrDigestMismatch},
+		{name: "size", expected: ContentIdentity{SHA256: expected.SHA256, Size: expected.Size + 1}, wantErr: ErrSizeMismatch},
+		{name: "missing identity", expected: ContentIdentity{}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := vault.Create(t.Context(), "/missing.txt", bytes.NewReader(content), CreateOptions{
+				MediaType: "text/plain", Expected: test.expected,
+			})
+			if test.wantErr != nil {
+				require.ErrorIs(t, err, test.wantErr)
+			} else {
+				require.Error(t, err)
+			}
+			_, statErr := vault.Stat(t.Context(), "/missing.txt")
+			require.ErrorIs(t, statErr, ErrNotFound)
+		})
+	}
+}
+
+func TestVaultCreateConcurrent(t *testing.T) {
+	t.Run("identical creators converge", func(t *testing.T) {
+		vault, err := New(t.Context(), Config{Root: t.TempDir()})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, vault.Close()) })
+		content := []byte("same concurrent content\n")
+		expected := contentIdentity(content)
+		results, errs := runConcurrentCreates(t, vault, []createAttempt{
+			{content: content, expected: expected}, {content: content, expected: expected},
+		})
+		require.NoError(t, errs[0])
+		require.NoError(t, errs[1])
+		assert.Equal(t, results[0].Node.ID, results[1].Node.ID)
+		assert.Equal(t, results[0].Version.ID, results[1].Version.ID)
+		assert.ElementsMatch(t, []bool{true, false}, []bool{results[0].Created, results[1].Created})
+		versions, err := vault.Versions(t.Context(), results[0].Node.ID, VersionsOptions{})
+		require.NoError(t, err)
+		assert.Equal(t, 1, versions.Total)
+		assert.Equal(t, int64(1), results[0].Node.Revision)
+	})
+
+	t.Run("different creators produce one winner", func(t *testing.T) {
+		vault, err := New(t.Context(), Config{Root: t.TempDir()})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, vault.Close()) })
+		first := []byte("first concurrent content\n")
+		second := []byte("second concurrent content\n")
+		results, errs := runConcurrentCreates(t, vault, []createAttempt{
+			{content: first, expected: contentIdentity(first)},
+			{content: second, expected: contentIdentity(second)},
+		})
+		var winner int
+		switch {
+		case errs[0] == nil && errors.Is(errs[1], ErrContentConflict):
+			winner = 0
+		case errs[1] == nil && errors.Is(errs[0], ErrContentConflict):
+			winner = 1
+		default:
+			require.Fail(t, "want exactly one success and one content conflict", "errors: %v", errs)
+		}
+		assert.True(t, results[winner].Created)
+		assert.Equal(t, int64(1), results[winner].Node.Revision)
+		versions, err := vault.Versions(t.Context(), results[winner].Node.ID, VersionsOptions{})
+		require.NoError(t, err)
+		assert.Equal(t, 1, versions.Total)
+	})
+}
+
+type createAttempt struct {
+	content  []byte
+	expected ContentIdentity
+}
+
+func runConcurrentCreates(
+	t *testing.T, vault *Vault, attempts []createAttempt,
+) ([]PutReceipt, []error) {
+	t.Helper()
+	results := make([]PutReceipt, len(attempts))
+	errs := make([]error, len(attempts))
+	start := make(chan struct{})
+	var ready sync.WaitGroup
+	ready.Add(len(attempts))
+	var done sync.WaitGroup
+	done.Add(len(attempts))
+	for i, attempt := range attempts {
+		go func() {
+			defer done.Done()
+			ready.Done()
+			<-start
+			results[i], errs[i] = vault.Create(t.Context(), "/concurrent.txt",
+				bytes.NewReader(attempt.content), CreateOptions{
+					MediaType: "text/plain", Expected: attempt.expected,
+				})
+		}()
+	}
+	ready.Wait()
+	close(start)
+	done.Wait()
+	return results, errs
+}
+
+func contentIdentity(content []byte) ContentIdentity {
+	sum := sha256.Sum256(content)
+	return ContentIdentity{SHA256: hex.EncodeToString(sum[:]), Size: int64(len(content))}
+}
 
 func TestNewConfiguresLooseCompression(t *testing.T) {
 	require := require.New(t)
