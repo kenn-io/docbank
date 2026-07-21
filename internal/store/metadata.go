@@ -696,7 +696,10 @@ func importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw json
 		if err := validateBlobRecord(v); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO blobs(hash,size,created_at) VALUES(?,?,?)`, v.Hash, v.Size, v.CreatedAt)
+		_, err := tx.ExecContext(ctx, `INSERT INTO blobs(
+			hash,size,created_at,loose_encoding,loose_stored_size,pack_eligible
+		) VALUES(?,?,?,'raw',?,CASE WHEN ? <= ? THEN 1 ELSE 0 END)`,
+			v.Hash, v.Size, v.CreatedAt, v.Size, v.Size, maxPackEligibleBytes)
 		return err
 	case "node":
 		var v metadataNode

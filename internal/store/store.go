@@ -82,6 +82,9 @@ func (s *Store) bootstrapTx() error {
 		if _, err := tx.Exec(schemaSQL); err != nil {
 			return fmt.Errorf("applying schema: %w", err)
 		}
+		if err := migrateBlobStorageTx(tx); err != nil {
+			return err
+		}
 		if err := tx.QueryRow(`SELECT vault_id FROM vault_metadata WHERE singleton = 1`).Scan(
 			&s.vaultID,
 		); errors.Is(err, sql.ErrNoRows) {

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
@@ -16,6 +17,47 @@ func TestPackCatalogContract(t *testing.T) {
 		Now:       time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC),
 		NewPackID: pack.NewPackID,
 	})
+}
+
+func TestPackAdoptionClearsLooseAuthority(t *testing.T) {
+	s := newTestStore(t)
+	hash, err := packstore.ParseHash("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	require.NoError(t, err)
+	_, err = s.CreateFile(t.Context(), s.RootID(), "compressed.txt", hash.String(), 20, "text/plain",
+		BlobPhysical{Encoding: "zstd", StoredBytes: 9, PackEligible: true})
+	require.NoError(t, err)
+
+	packID := pack.NewPackID()
+	record := packstore.PackRecord{
+		PackID: packID, EntryCount: 1, StoredBytes: 32,
+		CreatedAt: time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC),
+	}
+	entry := packstore.IndexEntry{
+		Hash: hash, PackID: packID, Offset: pack.MinEntryOffset,
+		StoredLen: 9, RawLen: 20,
+	}
+	require.NoError(t, NewPackCatalog(s).RecordPack(t.Context(), record, []packstore.Adoption{{
+		Entry: entry, OriginalHashes: []string{hash.String()},
+	}}))
+
+	physical, err := s.PhysicalContent(t.Context(), hash.String())
+	require.NoError(t, err)
+	assert.Equal(t, PhysicalContent{
+		Kind: "packed", Encoding: "raw", LogicalBytes: 20, StoredBytes: 9, PackEligible: true,
+	}, physical)
+	var encoding, stored any
+	require.NoError(t, s.db.QueryRow(`SELECT loose_encoding, loose_stored_size FROM blobs WHERE hash = ?`,
+		hash.String()).Scan(&encoding, &stored))
+	assert.Nil(t, encoding)
+	assert.Nil(t, stored)
+
+	// A later logical reference through the legacy raw-default API must not
+	// overwrite the existing packed authority.
+	_, err = s.CreateFile(t.Context(), s.RootID(), "same-content.txt", hash.String(), 20, "text/plain")
+	require.NoError(t, err)
+	after, err := s.PhysicalContent(t.Context(), hash.String())
+	require.NoError(t, err)
+	assert.Equal(t, physical, after)
 }
 
 type docbankPackHarness struct {
@@ -33,7 +75,9 @@ func (h *docbankPackHarness) Catalog() packstore.Catalog { return NewPackCatalog
 func (h *docbankPackHarness) SetMember(hash packstore.Hash, member bool) {
 	h.t.Helper()
 	if member {
-		_, err := h.store.db.Exec(`INSERT OR IGNORE INTO blobs (hash, size, created_at) VALUES (?, 13, ?)`,
+		_, err := h.store.db.Exec(`INSERT OR IGNORE INTO blobs
+			(hash, size, created_at, loose_encoding, loose_stored_size, pack_eligible)
+			VALUES (?, 13, ?, 'raw', 13, 1)`,
 			hash.String(), nowRFC3339())
 		require.NoError(h.t, err)
 		return
@@ -44,7 +88,9 @@ func (h *docbankPackHarness) SetMember(hash packstore.Hash, member bool) {
 
 func (h *docbankPackHarness) SetCandidate(candidate packstore.Candidate) {
 	h.t.Helper()
-	_, err := h.store.db.Exec(`UPDATE blobs SET size = ? WHERE hash = ?`, candidate.Size, candidate.Hash.String())
+	_, err := h.store.db.Exec(`UPDATE blobs SET size = ?, loose_stored_size = ?,
+		pack_eligible = CASE WHEN ? <= ? THEN 1 ELSE 0 END WHERE hash = ?`,
+		candidate.Size, candidate.Size, candidate.Size, maxPackEligibleBytes, candidate.Hash.String())
 	require.NoError(h.t, err)
 }
 

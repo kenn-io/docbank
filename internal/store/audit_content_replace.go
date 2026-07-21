@@ -36,6 +36,7 @@ func auditAuthorityActiveTx(ctx context.Context, tx *sql.Tx) (bool, error) {
 func installAuditedContentVersionTx(
 	ctx context.Context, tx *sql.Tx, store *Store, node Node,
 	blobHash string, size int64, mimeType, transitionKind string, sourceVersionID *string,
+	physical ...BlobPhysical,
 ) (Node, ContentVersion, error) {
 	if transitionKind != "content_replace" && transitionKind != "content_revert" {
 		return Node{}, ContentVersion{}, fmt.Errorf(
@@ -55,7 +56,7 @@ func installAuditedContentVersionTx(
 	if err != nil {
 		return Node{}, ContentVersion{}, err
 	}
-	if err := store.EnsureBlobTx(tx, blobHash, size); err != nil {
+	if err := store.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
 		return Node{}, ContentVersion{}, err
 	}
 	prior, err := scanContentVersion(tx.QueryRowContext(ctx,

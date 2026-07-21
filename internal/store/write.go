@@ -176,10 +176,16 @@ func (s *Store) EnsureDir(ctx context.Context, parentID int64, name string) (Nod
 // means two different contents hashed to the same value, or a caller passed
 // a wrong size, either of which is a corruption signal rather than ordinary
 // dedup and must not be silently accepted.
-func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64) error {
+func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64, physical ...BlobPhysical) error {
+	storage, err := normalizeBlobPhysical(size, physical)
+	if err != nil {
+		return fmt.Errorf("recording blob %s: %w", hash, err)
+	}
 	if _, err := tx.Exec(
-		`INSERT OR IGNORE INTO blobs (hash, size, created_at) VALUES (?, ?, ?)`,
-		hash, size, nowRFC3339()); err != nil {
+		`INSERT OR IGNORE INTO blobs
+		 (hash, size, created_at, loose_encoding, loose_stored_size, pack_eligible)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		hash, size, nowRFC3339(), storage.Encoding, storage.StoredBytes, storage.PackEligible); err != nil {
 		return fmt.Errorf("recording blob %s: %w", hash, err)
 	}
 	var stored int64
@@ -192,20 +198,23 @@ func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64) error {
 	return nil
 }
 
-func (s *Store) createFileTx(tx *sql.Tx, parentID int64, name, blobHash string, size int64, mimeType string) (Node, error) {
+func (s *Store) createFileTx(
+	tx *sql.Tx, parentID int64, name, blobHash string, size int64, mimeType string,
+	physical ...BlobPhysical,
+) (Node, error) {
 	operation, err := newContentVersionOperation()
 	if err != nil {
 		return Node{}, err
 	}
 	created, _, err := s.createFileWithOperationTx(
-		tx, parentID, name, blobHash, size, mimeType, operation,
+		tx, parentID, name, blobHash, size, mimeType, operation, physical...,
 	)
 	return created, err
 }
 
 func (s *Store) createFileWithOperationTx(
 	tx *sql.Tx, parentID int64, name, blobHash string, size int64, mimeType string,
-	operation contentVersionOperation,
+	operation contentVersionOperation, physical ...BlobPhysical,
 ) (Node, ContentVersion, error) {
 	if err := validateUTF8Field("content MIME type", mimeType); err != nil {
 		return Node{}, ContentVersion{}, err
@@ -213,7 +222,7 @@ func (s *Store) createFileWithOperationTx(
 	if _, err := liveDirTx(tx, parentID); err != nil {
 		return Node{}, ContentVersion{}, err
 	}
-	if err := s.EnsureBlobTx(tx, blobHash, size); err != nil {
+	if err := s.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
 		return Node{}, ContentVersion{}, err
 	}
 	res, err := tx.Exec(
@@ -266,7 +275,10 @@ func (s *Store) createFileWithOperationTx(
 }
 
 // CreateFile creates a file node pointing at an already-durable blob.
-func (s *Store) CreateFile(ctx context.Context, parentID int64, name, blobHash string, size int64, mimeType string) (Node, error) {
+func (s *Store) CreateFile(
+	ctx context.Context, parentID int64, name, blobHash string, size int64, mimeType string,
+	physical ...BlobPhysical,
+) (Node, error) {
 	name, err := NormalizeName(name)
 	if err != nil {
 		return Node{}, err
@@ -278,7 +290,7 @@ func (s *Store) CreateFile(ctx context.Context, parentID int64, name, blobHash s
 			return err
 		}
 		if !active {
-			created, err = s.createFileTx(tx, parentID, name, blobHash, size, mimeType)
+			created, err = s.createFileTx(tx, parentID, name, blobHash, size, mimeType, physical...)
 			return err
 		}
 		priorParent, err := liveDirTx(tx, parentID)
@@ -295,7 +307,7 @@ func (s *Store) CreateFile(ctx context.Context, parentID int64, name, blobHash s
 		}
 		var version ContentVersion
 		created, version, err = s.createFileWithOperationTx(
-			tx, parentID, name, blobHash, size, mimeType, operation,
+			tx, parentID, name, blobHash, size, mimeType, operation, physical...,
 		)
 		if err != nil {
 			return err

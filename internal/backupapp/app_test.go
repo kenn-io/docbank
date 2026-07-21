@@ -174,6 +174,74 @@ func TestJSONLLooseSnapshotVerifyAndRestore(t *testing.T) {
 	require.NoError(t, restoredStore.Close())
 }
 
+func TestCompressedLooseSnapshotRestoresIndexedAuthority(t *testing.T) {
+	root := t.TempDir()
+	metadata, err := store.Open(filepath.Join(root, "docbank.db"))
+	require.NoError(t, err)
+	blobsDir := filepath.Join(root, "blobs")
+	require.NoError(t, os.MkdirAll(filepath.Join(blobsDir, "tmp"), 0o700))
+	blobs, err := blob.NewWithOptions(store.NewPackCatalog(metadata), blobsDir, blob.Options{
+		LooseCompression: blob.LooseCompressionOptions{
+			Enabled: true, MinBytes: 1024, MinSavingsPercent: 10,
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, blobs.Close())
+		require.NoError(t, metadata.Close())
+	})
+
+	content := strings.Repeat("compressible snapshot content\n", 1024)
+	var written blob.WriteReceipt
+	require.NoError(t, blobs.WithMutation(t.Context(), func() error {
+		var writeErr error
+		written, writeErr = blobs.WriteDetailedContext(t.Context(), strings.NewReader(content))
+		if writeErr != nil {
+			return writeErr
+		}
+		_, writeErr = metadata.CreateFile(t.Context(), metadata.RootID(), "compressed.txt",
+			written.Hash, written.Size, "text/plain", store.BlobPhysical{
+				Encoding: "zstd", StoredBytes: written.StoredSize, PackEligible: written.PackEligible,
+			})
+		return writeErr
+	}))
+	require.Equal(t, packstore.LooseEncodingZstd, written.Encoding)
+
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	_, err = backupapp.Create(t.Context(), repo, "test-version", metadata, blobs, backup.CreateOptions{})
+	require.NoError(t, err)
+	target := filepath.Join(t.TempDir(), "restored")
+	_, err = backupapp.Restore(t.Context(), repo, "test-version", backup.RestoreOptions{TargetDir: target})
+	require.NoError(t, err)
+
+	restoredStore, err := store.Open(filepath.Join(target, "docbank.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restoredStore.Close()) })
+	physical, err := restoredStore.PhysicalContent(t.Context(), written.Hash)
+	require.NoError(t, err)
+	assert.Equal(t, "packed", physical.Kind)
+	assert.Equal(t, "zstd", physical.Encoding)
+	assert.Equal(t, written.Size, physical.LogicalBytes)
+	assert.Less(t, physical.StoredBytes, physical.LogicalBytes)
+	assert.True(t, physical.PackEligible)
+	backlog, err := restoredStore.LooseBacklog(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, store.LooseBacklog{}, backlog)
+
+	restoredBlobs, err := blob.New(store.NewPackCatalog(restoredStore), filepath.Join(target, "blobs"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restoredBlobs.Close()) })
+	reader, size, err := restoredBlobs.OpenStreamContext(t.Context(), written.Hash)
+	require.NoError(t, err)
+	got, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	assert.Equal(t, written.Size, size)
+	assert.Equal(t, content, string(got))
+	assert.True(t, reader.Verified())
+	require.NoError(t, reader.Close())
+}
+
 func TestAuditedIncrementalSnapshotRestoresCompleteProtectedHistory(t *testing.T) {
 	fixture := newArchiveFixture(t)
 	writeFile := func(parentID int64, name, content string) store.Node {
@@ -555,6 +623,15 @@ func TestLooseAbovePackingLimitSnapshotVerifyAndRestore(t *testing.T) {
 	assert.Equal(t, size, written)
 	assert.True(t, stream.Verified())
 	require.NoError(t, stream.Close())
+	physical, err := restoredStore.PhysicalContent(t.Context(), hash)
+	require.NoError(t, err)
+	assert.Equal(t, store.PhysicalContent{
+		Kind: "loose", Encoding: "raw", LogicalBytes: size,
+		StoredBytes: size, PackEligible: false,
+	}, physical)
+	backlog, err := restoredStore.LooseBacklog(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, store.LooseBacklog{}, backlog)
 }
 
 func TestPackedSnapshotRequiresAndUsesPackedRestoreTarget(t *testing.T) {

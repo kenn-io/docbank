@@ -130,6 +130,7 @@ func (s *Store) ContentVersions(
 // one transaction.
 func (s *Store) ReplaceContent(
 	ctx context.Context, nodeID, ifRev int64, blobHash string, size int64, mimeType string,
+	physical ...BlobPhysical,
 ) (Node, ContentVersion, error) {
 	if size < 0 {
 		return Node{}, ContentVersion{}, errors.New("content size must not be negative")
@@ -147,7 +148,7 @@ func (s *Store) ReplaceContent(
 			return err
 		}
 		updated, version, err = s.replaceContentTx(
-			ctx, tx, n, ifRev, blobHash, size, mimeType,
+			ctx, tx, n, ifRev, blobHash, size, mimeType, physical...,
 		)
 		return err
 	})
@@ -270,7 +271,7 @@ func updateWatchSourceTx(
 
 func (s *Store) replaceContentTx(
 	ctx context.Context, tx *sql.Tx, n Node, ifRev int64,
-	blobHash string, size int64, mimeType string,
+	blobHash string, size int64, mimeType string, physical ...BlobPhysical,
 ) (Node, ContentVersion, error) {
 	if err := validateContentReplacementTarget(n, ifRev); err != nil {
 		return Node{}, ContentVersion{}, err
@@ -281,10 +282,10 @@ func (s *Store) replaceContentTx(
 	}
 	if audited {
 		return installAuditedContentVersionTx(
-			ctx, tx, s, n, blobHash, size, mimeType, "content_replace", nil,
+			ctx, tx, s, n, blobHash, size, mimeType, "content_replace", nil, physical...,
 		)
 	}
-	if err := s.EnsureBlobTx(tx, blobHash, size); err != nil {
+	if err := s.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
 		return Node{}, ContentVersion{}, err
 	}
 	return installContentVersionTx(

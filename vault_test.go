@@ -34,8 +34,18 @@ func TestNewConfiguresLooseCompression(t *testing.T) {
 	content := strings.Repeat("compressible document content\n", 512)
 	receipt, err := vault.Put(t.Context(), "/document.txt", strings.NewReader(content), PutOptions{})
 	require.NoError(err)
+	require.Equal(PhysicalContent{
+		Kind: "loose", Encoding: "zstd", LogicalBytes: int64(len(content)),
+		StoredBytes: receipt.Physical.StoredBytes, PackEligible: true,
+	}, receipt.Physical)
+	require.Less(receipt.Physical.StoredBytes, receipt.Physical.LogicalBytes)
 	compressedPath := filepath.Join(root, "blobs", receipt.Computed.SHA256[:2], receipt.Computed.SHA256+".zst")
 	require.FileExists(compressedPath)
+	backlog, err := vault.LooseBacklog(t.Context())
+	require.NoError(err)
+	require.Equal(LooseBacklog{
+		EligibleObjects: 1, EligibleBytes: int64(len(content)), CompressedObjects: 1,
+	}, backlog)
 
 	opened, err := vault.OpenContent(t.Context(), "/document.txt")
 	require.NoError(err)
@@ -43,6 +53,61 @@ func TestNewConfiguresLooseCompression(t *testing.T) {
 	require.NoError(err)
 	require.Equal(content, string(got))
 	require.NoError(opened.Reader.Close())
+}
+
+func TestPutPackedDuplicateRemovesRedundantLoose(t *testing.T) {
+	require := require.New(t)
+	root := t.TempDir()
+	vault, err := New(t.Context(), Config{Root: root})
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(vault.Close()) })
+
+	content := "shared packed content\n"
+	first, err := vault.Put(t.Context(), "/first.txt", strings.NewReader(content), PutOptions{})
+	require.NoError(err)
+	packed, err := vault.Pack(t.Context(), PackOptions{})
+	require.NoError(err)
+	require.Equal(1, packed.BlobsPacked)
+
+	second, err := vault.Put(t.Context(), "/second.txt", strings.NewReader(content), PutOptions{})
+	require.NoError(err)
+	require.Equal(first.Computed, second.Computed)
+	require.Equal(PhysicalContent{
+		Kind: "packed", Encoding: "raw", LogicalBytes: int64(len(content)),
+		StoredBytes: second.Physical.StoredBytes, PackEligible: true,
+	}, second.Physical)
+
+	rawPath := filepath.Join(root, "blobs", first.Computed.SHA256[:2], first.Computed.SHA256)
+	require.NoFileExists(rawPath)
+	require.NoFileExists(rawPath + ".zst")
+	backlog, err := vault.LooseBacklog(t.Context())
+	require.NoError(err)
+	require.Equal(LooseBacklog{}, backlog)
+}
+
+func TestPutPackedExpectedMismatchRemovesRedundantLoose(t *testing.T) {
+	require := require.New(t)
+	root := t.TempDir()
+	vault, err := New(t.Context(), Config{Root: root})
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(vault.Close()) })
+
+	content := "shared packed content\n"
+	first, err := vault.Put(t.Context(), "/first.txt", strings.NewReader(content), PutOptions{})
+	require.NoError(err)
+	_, err = vault.Pack(t.Context(), PackOptions{})
+	require.NoError(err)
+	other := sha256.Sum256([]byte("different content\n"))
+	_, err = vault.Put(t.Context(), "/rejected.txt", strings.NewReader(content), PutOptions{
+		Expected: &ContentIdentity{SHA256: hex.EncodeToString(other[:]), Size: int64(len(content))},
+	})
+	require.ErrorIs(err, ErrDigestMismatch)
+
+	rawPath := filepath.Join(root, "blobs", first.Computed.SHA256[:2], first.Computed.SHA256)
+	require.NoFileExists(rawPath)
+	require.NoFileExists(rawPath + ".zst")
+	_, err = vault.Stat(t.Context(), "/rejected.txt")
+	require.ErrorIs(err, ErrNotFound)
 }
 
 func TestNewRejectsInvalidLooseCompressionPolicy(t *testing.T) {

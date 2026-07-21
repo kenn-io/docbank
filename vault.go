@@ -282,13 +282,30 @@ func (v *Vault) Put(
 	defer v.mutation.Unlock()
 	var receipt PutReceipt
 	err = v.blobs.WithMutation(ctx, func() (resultErr error) {
-		hash, size, writeErr := v.blobs.WriteContext(ctx, content)
+		written, writeErr := v.blobs.WriteDetailedContext(ctx, content)
 		if writeErr != nil {
 			return writeErr
+		}
+		hash, size := written.Hash, written.Size
+		physical, physicalErr := blobPhysical(written)
+		if physicalErr != nil {
+			return physicalErr
 		}
 		defer func() {
 			if resultErr != nil {
 				resultErr = errors.Join(resultErr, v.removeUnrecordedLoose(hash))
+				return
+			}
+			authority, authorityErr := v.metadata.PhysicalContent(ctx, hash)
+			if authorityErr != nil {
+				resultErr = authorityErr
+				return
+			}
+			receipt.Physical = fromStorePhysical(authority)
+			if authority.Kind == "packed" {
+				if removeErr := v.blobs.Remove(hash); removeErr != nil {
+					resultErr = fmt.Errorf("removing redundant loose blob %s: %w", hash, removeErr)
+				}
 			}
 		}()
 		receipt.Computed = ContentIdentity{SHA256: hash, Size: size}
@@ -309,7 +326,7 @@ func (v *Vault) Put(
 		switch {
 		case errors.Is(lookupErr, store.ErrNotFound):
 			created, createErr := v.metadata.CreateFile(
-				ctx, parent.ID, name, hash, size, opts.MediaType,
+				ctx, parent.ID, name, hash, size, opts.MediaType, physical,
 			)
 			if createErr != nil {
 				return createErr
@@ -336,7 +353,7 @@ func (v *Vault) Put(
 			return nil
 		default:
 			updated, version, replaceErr := v.metadata.ReplaceContent(
-				ctx, existing.ID, existing.Revision, hash, size, opts.MediaType,
+				ctx, existing.ID, existing.Revision, hash, size, opts.MediaType, physical,
 			)
 			if replaceErr != nil {
 				return replaceErr
@@ -353,6 +370,34 @@ func (v *Vault) Put(
 	return receipt, nil
 }
 
+func blobPhysical(receipt blob.WriteReceipt) (store.BlobPhysical, error) {
+	var encoding string
+	switch receipt.Encoding {
+	case packstore.LooseEncodingRaw:
+		encoding = "raw"
+	case packstore.LooseEncodingZstd:
+		encoding = "zstd"
+	default:
+		return store.BlobPhysical{}, fmt.Errorf("unknown loose encoding %d", receipt.Encoding)
+	}
+	return store.BlobPhysical{
+		Encoding: encoding, StoredBytes: receipt.StoredSize, PackEligible: receipt.PackEligible,
+	}, nil
+}
+
+// LooseBacklog reports indexed loose content eligible for explicit packing.
+func (v *Vault) LooseBacklog(ctx context.Context) (LooseBacklog, error) {
+	if err := v.begin(); err != nil {
+		return LooseBacklog{}, err
+	}
+	defer v.lifecycle.RUnlock()
+	backlog, err := v.metadata.LooseBacklog(ctx)
+	if err != nil {
+		return LooseBacklog{}, err
+	}
+	return fromStoreLooseBacklog(backlog), nil
+}
+
 func (v *Vault) removeUnrecordedLoose(hash string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -361,7 +406,13 @@ func (v *Vault) removeUnrecordedLoose(hash string) error {
 		return fmt.Errorf("checking failed put cleanup for %s: %w", hash, err)
 	}
 	if recorded {
-		return nil
+		physical, err := v.metadata.PhysicalContent(ctx, hash)
+		if err != nil {
+			return fmt.Errorf("checking failed put authority for %s: %w", hash, err)
+		}
+		if physical.Kind != "packed" {
+			return nil
+		}
 	}
 	if err := v.blobs.Remove(hash); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("cleaning failed put blob %s: %w", hash, err)

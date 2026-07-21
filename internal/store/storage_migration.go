@@ -1,0 +1,186 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"math"
+
+	"go.kenn.io/kit/pack"
+)
+
+const maxPackEligibleBytes int64 = 64 << 20
+
+func migrateBlobStorageTx(tx *sql.Tx) error {
+	columns, err := blobStorageColumns(tx)
+	if err != nil {
+		return err
+	}
+
+	additions := []struct {
+		name string
+		sql  string
+	}{
+		{name: "loose_encoding", sql: `ALTER TABLE blobs ADD COLUMN loose_encoding TEXT CHECK (loose_encoding IN ('raw', 'zstd'))`},
+		{name: "loose_stored_size", sql: `ALTER TABLE blobs ADD COLUMN loose_stored_size INTEGER CHECK (loose_stored_size >= 0)`},
+		{name: "pack_eligible", sql: `ALTER TABLE blobs ADD COLUMN pack_eligible INTEGER NOT NULL DEFAULT 1 CHECK (pack_eligible IN (0, 1))`},
+	}
+	for _, addition := range additions {
+		if columns[addition.name] {
+			continue
+		}
+		if _, err := tx.Exec(addition.sql); err != nil {
+			return fmt.Errorf("adding blob storage column %s: %w", addition.name, err)
+		}
+	}
+	if _, err := tx.Exec(`
+		UPDATE blobs SET pack_eligible = CASE WHEN size <= ? THEN 1 ELSE 0 END;
+		UPDATE blobs SET loose_encoding = 'raw', loose_stored_size = size
+		WHERE loose_encoding IS NULL AND loose_stored_size IS NULL
+		  AND NOT EXISTS (SELECT 1 FROM blob_pack_index i WHERE i.blob_hash = blobs.hash);
+		UPDATE blobs SET loose_encoding = NULL, loose_stored_size = NULL
+		WHERE EXISTS (SELECT 1 FROM blob_pack_index i WHERE i.blob_hash = blobs.hash);
+	`, maxPackEligibleBytes); err != nil {
+		return fmt.Errorf("backfilling blob storage state: %w", err)
+	}
+	var inconsistent int64
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM blobs
+		WHERE (loose_encoding IS NULL) != (loose_stored_size IS NULL)`).Scan(&inconsistent); err != nil {
+		return fmt.Errorf("validating blob storage state: %w", err)
+	}
+	if inconsistent != 0 {
+		return fmt.Errorf("validating blob storage state: %d rows have incomplete loose authority", inconsistent)
+	}
+	return nil
+}
+
+func blobStorageColumns(tx *sql.Tx) (_ map[string]bool, retErr error) {
+	rows, err := tx.Query(`PRAGMA table_info(blobs)`)
+	if err != nil {
+		return nil, fmt.Errorf("inspecting blob storage columns: %w", err)
+	}
+	defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+	columns := make(map[string]bool)
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return nil, fmt.Errorf("scanning blob storage column: %w", err)
+		}
+		columns[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("inspecting blob storage columns: %w", err)
+	}
+	return columns, nil
+}
+
+// PhysicalContent describes the catalog-authorized representation of one
+// logical blob without requiring a filesystem scan.
+type PhysicalContent struct {
+	Kind         string
+	Encoding     string
+	LogicalBytes int64
+	StoredBytes  int64
+	PackEligible bool
+}
+
+// LooseBacklog summarizes loose content eligible for an explicit pack pass.
+type LooseBacklog struct {
+	EligibleObjects   int64
+	EligibleBytes     int64
+	RawObjects        int64
+	CompressedObjects int64
+}
+
+// BlobPhysical is the loose representation published before a metadata
+// transaction grants logical authority.
+type BlobPhysical struct {
+	Encoding     string
+	StoredBytes  int64
+	PackEligible bool
+}
+
+func normalizeBlobPhysical(size int64, physical []BlobPhysical) (BlobPhysical, error) {
+	if len(physical) > 1 {
+		return BlobPhysical{}, errors.New("at most one physical blob receipt may be supplied")
+	}
+	if len(physical) == 0 {
+		return BlobPhysical{Encoding: "raw", StoredBytes: size, PackEligible: size <= maxPackEligibleBytes}, nil
+	}
+	result := physical[0]
+	if result.Encoding != "raw" && result.Encoding != "zstd" {
+		return BlobPhysical{}, fmt.Errorf("invalid loose encoding %q", result.Encoding)
+	}
+	if result.StoredBytes < 0 {
+		return BlobPhysical{}, errors.New("loose stored bytes must not be negative")
+	}
+	if result.Encoding == "raw" && result.StoredBytes != size {
+		return BlobPhysical{}, fmt.Errorf("raw loose content stores %d bytes, want logical size %d", result.StoredBytes, size)
+	}
+	return result, nil
+}
+
+// PhysicalContent returns the indexed representation with current catalog
+// authority for hash.
+func (s *Store) PhysicalContent(ctx context.Context, hash string) (PhysicalContent, error) {
+	var (
+		logical      int64
+		encoding     sql.NullString
+		looseStored  sql.NullInt64
+		packEligible bool
+		packedStored sql.NullInt64
+		packedFlags  sql.NullInt64
+	)
+	err := s.db.QueryRowContext(ctx, `
+		SELECT b.size, b.loose_encoding, b.loose_stored_size, b.pack_eligible,
+		       i.stored_len, i.flags
+		FROM blobs b LEFT JOIN blob_pack_index i ON i.blob_hash = b.hash
+		WHERE b.hash = ?`, hash,
+	).Scan(&logical, &encoding, &looseStored, &packEligible, &packedStored, &packedFlags)
+	if errors.Is(err, sql.ErrNoRows) {
+		return PhysicalContent{}, ErrNotFound
+	}
+	if err != nil {
+		return PhysicalContent{}, fmt.Errorf("reading physical content %s: %w", hash, err)
+	}
+	physical := PhysicalContent{LogicalBytes: logical, PackEligible: packEligible}
+	if packedStored.Valid {
+		if !packedFlags.Valid || packedFlags.Int64 < 0 || packedFlags.Int64 > math.MaxUint8 {
+			return PhysicalContent{}, fmt.Errorf("blob %s has invalid packed encoding flags", hash)
+		}
+		physical.Kind = "packed"
+		physical.Encoding = "raw"
+		if pack.BlobFlags(packedFlags.Int64)&pack.BlobCompressed != 0 {
+			physical.Encoding = "zstd"
+		}
+		physical.StoredBytes = packedStored.Int64
+		return physical, nil
+	}
+	if !encoding.Valid || !looseStored.Valid {
+		return PhysicalContent{}, fmt.Errorf("blob %s has no indexed physical authority", hash)
+	}
+	physical.Kind = "loose"
+	physical.Encoding = encoding.String
+	physical.StoredBytes = looseStored.Int64
+	return physical, nil
+}
+
+// LooseBacklog returns indexed packing work without walking blob directories.
+func (s *Store) LooseBacklog(ctx context.Context) (LooseBacklog, error) {
+	var backlog LooseBacklog
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*), COALESCE(SUM(size), 0),
+		       COALESCE(SUM(CASE WHEN loose_encoding = 'raw' THEN 1 ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN loose_encoding = 'zstd' THEN 1 ELSE 0 END), 0)
+		FROM blobs
+		WHERE pack_eligible = 1 AND loose_encoding IS NOT NULL`,
+	).Scan(&backlog.EligibleObjects, &backlog.EligibleBytes,
+		&backlog.RawObjects, &backlog.CompressedObjects)
+	if err != nil {
+		return LooseBacklog{}, fmt.Errorf("reading loose backlog: %w", err)
+	}
+	return backlog, nil
+}

@@ -41,9 +41,13 @@ CREATE INDEX IF NOT EXISTS nodes_parent ON nodes(parent_id);
 CREATE INDEX IF NOT EXISTS nodes_trashed ON nodes(trashed_at) WHERE trashed_at IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS blobs (
-    hash       TEXT PRIMARY KEY,
-    size       INTEGER NOT NULL,
-    created_at TEXT NOT NULL
+    hash              TEXT PRIMARY KEY,
+    size              INTEGER NOT NULL,
+    created_at        TEXT NOT NULL,
+    loose_encoding    TEXT CHECK (loose_encoding IN ('raw', 'zstd')),
+    loose_stored_size INTEGER CHECK (loose_stored_size >= 0),
+    pack_eligible     INTEGER NOT NULL DEFAULT 1 CHECK (pack_eligible IN (0, 1)),
+    CHECK ((loose_encoding IS NULL) = (loose_stored_size IS NULL))
 );
 
 -- Physical packed-CAS metadata. blobs remains the membership authority:

@@ -156,8 +156,9 @@ func (c *PackCatalog) ListReferences(ctx context.Context) (packstore.ReferenceIn
 
 func (c *PackCatalog) ListUnpacked(ctx context.Context) ([]packstore.Candidate, error) {
 	rows, err := c.store.db.QueryContext(ctx, `
-		SELECT b.hash, b.size FROM blobs b
+		SELECT b.hash, b.size, b.loose_encoding FROM blobs b
 		WHERE NOT EXISTS (SELECT 1 FROM blob_pack_index i WHERE i.blob_hash = b.hash)
+		  AND b.pack_eligible = 1 AND b.loose_encoding IS NOT NULL
 		ORDER BY b.hash`)
 	if err != nil {
 		return nil, fmt.Errorf("listing unpacked blobs: %w", err)
@@ -166,8 +167,9 @@ func (c *PackCatalog) ListUnpacked(ctx context.Context) ([]packstore.Candidate, 
 	var result []packstore.Candidate
 	for rows.Next() {
 		var original string
+		var encoding string
 		var size int64
-		if err := rows.Scan(&original, &size); err != nil {
+		if err := rows.Scan(&original, &size, &encoding); err != nil {
 			return nil, fmt.Errorf("scanning unpacked blob: %w", err)
 		}
 		hash, err := packstore.ParseHash(original)
@@ -176,8 +178,16 @@ func (c *PackCatalog) ListUnpacked(ctx context.Context) ([]packstore.Candidate, 
 				"hash", original, "error", err)
 			continue
 		}
+		path := hash.String()[:2] + "/" + hash.String()
+		switch encoding {
+		case "raw":
+		case "zstd":
+			path += ".zst"
+		default:
+			return nil, fmt.Errorf("unpacked blob %s has invalid loose encoding %q", hash, encoding)
+		}
 		result = append(result, packstore.Candidate{Hash: hash,
-			OriginalHashes: []string{original}, Paths: []string{hash.String()[:2] + "/" + hash.String()}, Size: size})
+			OriginalHashes: []string{original}, Paths: []string{path}, Size: size})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("listing unpacked blobs: %w", err)
@@ -292,7 +302,10 @@ func writeAdoption(ctx context.Context, tx *sql.Tx, entry packstore.IndexEntry, 
 		if err != nil {
 			return fmt.Errorf("adopting packed blob %s: %w", entry.Hash, err)
 		}
-		return requireOneRow(result, "adopting packed blob "+entry.Hash.String())
+		if err := requireOneRow(result, "adopting packed blob "+entry.Hash.String()); err != nil {
+			return err
+		}
+		return clearLooseAuthority(ctx, tx, entry.Hash)
 	}
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO blob_pack_index
@@ -303,7 +316,19 @@ func writeAdoption(ctx context.Context, tx *sql.Tx, entry packstore.IndexEntry, 
 	if err != nil {
 		return fmt.Errorf("recording packed blob %s: %w", entry.Hash, err)
 	}
-	return requireOneRow(result, "recording packed blob "+entry.Hash.String())
+	if err := requireOneRow(result, "recording packed blob "+entry.Hash.String()); err != nil {
+		return err
+	}
+	return clearLooseAuthority(ctx, tx, entry.Hash)
+}
+
+func clearLooseAuthority(ctx context.Context, tx *sql.Tx, hash packstore.Hash) error {
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE blobs SET loose_encoding = NULL, loose_stored_size = NULL WHERE hash = ?`,
+		hash.String()); err != nil {
+		return fmt.Errorf("clearing loose authority for packed blob %s: %w", hash, err)
+	}
+	return nil
 }
 
 func (c *PackCatalog) DeletePackRecord(ctx context.Context, packID string) error {

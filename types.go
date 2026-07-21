@@ -49,8 +49,27 @@ type PutReceipt struct {
 	Node     Node            `json:"node"`
 	Version  ContentVersion  `json:"version"`
 	Computed ContentIdentity `json:"computed"`
+	Physical PhysicalContent `json:"physical"`
 	Created  bool            `json:"created"`
 	Replaced bool            `json:"replaced"`
+}
+
+// PhysicalContent describes the representation with current catalog
+// authority. Logical identity is always SHA-256 over decoded bytes.
+type PhysicalContent struct {
+	Kind         string `json:"kind"`
+	Encoding     string `json:"encoding"`
+	LogicalBytes int64  `json:"logical_bytes"`
+	StoredBytes  int64  `json:"stored_bytes"`
+	PackEligible bool   `json:"pack_eligible"`
+}
+
+// LooseBacklog summarizes loose content eligible for explicit packing.
+type LooseBacklog struct {
+	EligibleObjects   int64 `json:"eligible_objects"`
+	EligibleBytes     int64 `json:"eligible_bytes"`
+	RawObjects        int64 `json:"raw_objects"`
+	CompressedObjects int64 `json:"compressed_objects"`
 }
 
 // ChildrenOptions selects one bounded page of a directory's live children.
@@ -149,6 +168,21 @@ func fromStoreVersion(version store.ContentVersion) ContentVersion {
 		NodeRevision:          version.NodeRevision,
 		IntroducedOperationID: version.IntroducedOperationID,
 		TransitionKind:        version.TransitionKind, SourceVersionID: version.SourceVersionID,
+	}
+}
+
+func fromStorePhysical(physical store.PhysicalContent) PhysicalContent {
+	return PhysicalContent{
+		Kind: physical.Kind, Encoding: physical.Encoding,
+		LogicalBytes: physical.LogicalBytes, StoredBytes: physical.StoredBytes,
+		PackEligible: physical.PackEligible,
+	}
+}
+
+func fromStoreLooseBacklog(backlog store.LooseBacklog) LooseBacklog {
+	return LooseBacklog{
+		EligibleObjects: backlog.EligibleObjects, EligibleBytes: backlog.EligibleBytes,
+		RawObjects: backlog.RawObjects, CompressedObjects: backlog.CompressedObjects,
 	}
 }
 
