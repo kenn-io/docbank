@@ -339,7 +339,7 @@ func (s *Store) SparseRepackScanPage(
 				candidate.Usage.PackID, err)
 		}
 		candidate.Usage.CreatedAt = createdAt
-		candidate.Eligible = candidate.Usage.LiveEntries <= (candidate.Usage.EntryCount-1)/2 &&
+		candidate.Eligible = candidate.Usage.LiveEntries <= candidate.Usage.EntryCount/2 &&
 			!candidate.Usage.CreatedAt.After(now.UTC().Add(-minAge)) &&
 			candidate.Usage.StoredBytes-candidate.Usage.LiveStoredBytes >= minDeadBytes
 		result = append(result, candidate)

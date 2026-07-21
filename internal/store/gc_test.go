@@ -412,6 +412,32 @@ func TestSparseRepackScanBoundsExaminedIneligiblePacks(t *testing.T) {
 	}
 }
 
+func TestSparseRepackScanIncludesExactlyHalfLiveEvenPack(t *testing.T) {
+	s := newTestStore(t)
+	hash := fmt.Sprintf("%064x", 1)
+	packID := pack.NewPackID()
+	_, err := s.db.ExecContext(t.Context(),
+		`INSERT INTO blobs (hash, size, created_at) VALUES (?, 1, ?)`,
+		hash, "2026-01-01T00:00:00.000000000Z")
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(t.Context(), `
+		INSERT INTO blob_packs (pack_id, entry_count, stored_bytes, created_at)
+		VALUES (?, 2, 10, ?)`, packID, "2026-01-01T00:00:00.000000000Z")
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(t.Context(), `
+		INSERT INTO blob_pack_index
+			(blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
+		VALUES (?, ?, ?, 5, 1, 0, 0)`, hash, packID, pack.MinEntryOffset)
+	require.NoError(t, err)
+
+	page, err := s.SparseRepackScanPage(t.Context(), "", "", 1,
+		time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC), time.Nanosecond, 1)
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	assert.True(t, page.Items[0].Eligible,
+		"one live entry in a two-entry pack is exactly half live")
+}
+
 func TestSparseRepackScanKeyStaysStableWhenEarlierPackLosesLiveness(t *testing.T) {
 	s := newTestStore(t)
 	packIDs := []string{pack.NewPackID(), pack.NewPackID()}
