@@ -38,7 +38,7 @@ type MaintenanceProgress struct {
 	More       bool   `json:"more"`
 }
 
-// GCReport summarizes one bounded unreachable-content pass.
+// GCReport summarizes one bounded catalog-authority reclamation pass.
 type GCReport struct {
 	MaintenanceProgress
 
@@ -58,7 +58,8 @@ type VerifyProblem struct {
 	Problem string `json:"problem"`
 }
 
-// VerifyReport summarizes one bounded metadata and content verification pass.
+// VerifyReport summarizes one bounded content verification pass. The metadata
+// field remains for compatibility with the daemon's full verification report.
 type VerifyReport struct {
 	MaintenanceProgress
 
@@ -83,7 +84,8 @@ type RepackReport struct {
 }
 
 // GarbageCollect previews or removes one bounded canonical-hash page of
-// unreachable catalog authority and untracked loose content.
+// unreachable catalog authority. The daemon separately reconciles physical
+// orphan files for its legacy full-maintenance endpoint.
 func (v *Vault) GarbageCollect(ctx context.Context, opts GCOptions) (GCReport, error) {
 	if err := v.begin(); err != nil {
 		return GCReport{}, err
@@ -102,7 +104,7 @@ func (v *Vault) GarbageCollect(ctx context.Context, opts GCOptions) (GCReport, e
 }
 
 // Verify validates one bounded canonical-hash page of catalog-authorized
-// content. Metadata validation runs on the first page of each cycle.
+// content. Whole-catalog metadata validation remains daemon-only.
 func (v *Vault) Verify(ctx context.Context, opts VerifyOptions) (VerifyReport, error) {
 	if err := v.begin(); err != nil {
 		return VerifyReport{}, err

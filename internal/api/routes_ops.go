@@ -472,6 +472,29 @@ func addRepackReport(total *internalmaintenance.RepackReport, page internalmaint
 // leaves reconcilable row-without-file state, never the reverse.
 func runGC(ctx context.Context, d Deps, run bool) (GCReport, error) {
 	report := GCReport{Run: run}
+	loose, err := d.Blobs.List()
+	if err != nil {
+		return GCReport{}, FromStoreError(err)
+	}
+	for hash, size := range loose {
+		recorded, recordErr := d.Store.HasBlob(ctx, hash)
+		if recordErr != nil {
+			return GCReport{}, FromStoreError(recordErr)
+		}
+		if recorded {
+			continue
+		}
+		report.UntrackedFiles++
+		report.ReclaimableBytes += size
+		if run {
+			if removeErr := d.Blobs.Remove(hash); removeErr != nil &&
+				!errors.Is(removeErr, fs.ErrNotExist) {
+				return GCReport{}, FromStoreError(removeErr)
+			}
+			report.ReclaimedFiles++
+			report.Removed++
+		}
+	}
 	var cursor string
 	for {
 		page, err := internalmaintenance.GarbageCollect(ctx, d.Store, d.Blobs,
@@ -505,6 +528,13 @@ func runGC(ctx context.Context, d Deps, run bool) (GCReport, error) {
 
 func runVerify(ctx context.Context, d Deps) (VerifyReport, error) {
 	var report VerifyReport
+	if err := d.Store.ValidateMetadata(ctx); err != nil {
+		if ctx.Err() != nil {
+			return VerifyReport{}, NewError(http.StatusInternalServerError, "internal",
+				fmt.Sprintf("verify interrupted: %v", ctx.Err()))
+		}
+		report.MetadataProblems = append(report.MetadataProblems, err.Error())
+	}
 	var cursor string
 	for {
 		page, err := internalmaintenance.Verify(ctx, d.Store, d.Blobs,

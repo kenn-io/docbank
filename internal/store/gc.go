@@ -32,6 +32,13 @@ func (s *Store) BlobInfo(ctx context.Context, hash string) (BlobInfo, error) {
 	return info, nil
 }
 
+// GCCandidate is one unreachable catalog row and its indexed loose authority.
+type GCCandidate struct {
+	Hash            string
+	Loose           bool
+	LooseStoredSize int64
+}
+
 // RepackCandidate binds one sparse pack to the lowest canonical live blob hash
 // that provides its stable maintenance key.
 type RepackCandidate struct {
@@ -89,12 +96,38 @@ func (s *Store) UnreachableBlobs(ctx context.Context) ([]BlobInfo, error) {
 // while reporting whether another page currently exists.
 func (s *Store) UnreachableBlobsPage(
 	ctx context.Context, after string, limit int,
-) ([]BlobInfo, bool, error) {
-	return s.blobPage(ctx, `
-		SELECT b.hash, b.size FROM blobs b
+) ([]GCCandidate, bool, error) {
+	if limit <= 0 {
+		return nil, false, errors.New("blob page limit must be positive")
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT b.hash, b.loose_stored_size FROM blobs b
 		WHERE b.hash > ?
 		  AND NOT EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash = b.hash)
-		ORDER BY b.hash LIMIT ?`, after, limit, "finding unreachable blobs")
+		ORDER BY b.hash LIMIT ?`, after, limit+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("finding unreachable blobs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	result := make([]GCCandidate, 0, limit+1)
+	for rows.Next() {
+		var candidate GCCandidate
+		var looseSize sql.NullInt64
+		if err := rows.Scan(&candidate.Hash, &looseSize); err != nil {
+			return nil, false, fmt.Errorf("finding unreachable blobs: scanning blob row: %w", err)
+		}
+		candidate.Loose = looseSize.Valid
+		candidate.LooseStoredSize = looseSize.Int64
+		result = append(result, candidate)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("finding unreachable blobs: %w", err)
+	}
+	more := len(result) > limit
+	if more {
+		result = result[:limit]
+	}
+	return result, more, nil
 }
 
 // BlobsPage returns one bounded hash-keyset page of recorded blob identities.
@@ -221,6 +254,65 @@ func (s *Store) SparseRepackPage(
 		result = result[:limit]
 	}
 	return result, more, nil
+}
+
+// UnreferencedPackMappingsPage returns one canonical-hash keyset page of pack
+// mappings whose blob authority has been revoked.
+func (s *Store) UnreferencedPackMappingsPage(
+	ctx context.Context, after string, limit int,
+) ([]string, bool, error) {
+	if limit <= 0 {
+		return nil, false, errors.New("pack mapping page limit must be positive")
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT i.blob_hash FROM blob_pack_index i
+		WHERE i.blob_hash > ?
+		  AND NOT EXISTS (SELECT 1 FROM blobs b WHERE b.hash = i.blob_hash)
+		ORDER BY i.blob_hash LIMIT ?`, after, limit+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("listing unreferenced pack mappings: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	result := make([]string, 0, limit+1)
+	for rows.Next() {
+		var hash string
+		if err := rows.Scan(&hash); err != nil {
+			return nil, false, fmt.Errorf("scanning unreferenced pack mapping: %w", err)
+		}
+		result = append(result, hash)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("listing unreferenced pack mappings: %w", err)
+	}
+	more := len(result) > limit
+	if more {
+		result = result[:limit]
+	}
+	return result, more, nil
+}
+
+// DeleteUnreferencedPackMappings conditionally removes the named stale
+// mappings. A blob authority restored after selection protects its mapping.
+func (s *Store) DeleteUnreferencedPackMappings(ctx context.Context, hashes []string) (int64, error) {
+	var removed int64
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		for _, hash := range hashes {
+			result, err := tx.ExecContext(ctx, `
+				DELETE FROM blob_pack_index
+				WHERE blob_hash = ?
+				  AND NOT EXISTS (SELECT 1 FROM blobs b WHERE b.hash = ?)`, hash, hash)
+			if err != nil {
+				return fmt.Errorf("deleting unreferenced pack mapping %s: %w", hash, err)
+			}
+			count, err := result.RowsAffected()
+			if err != nil {
+				return fmt.Errorf("counting deleted pack mapping %s: %w", hash, err)
+			}
+			removed += count
+		}
+		return nil
+	})
+	return removed, err
 }
 
 // DeadPackUsagePage returns a bounded set of packs with no live mappings.

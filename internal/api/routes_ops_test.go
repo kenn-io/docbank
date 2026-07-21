@@ -514,6 +514,31 @@ func TestGCDryRunAndRun(t *testing.T) {
 	assert.Equal(t, int64(len("gc-me")), rep.ReclaimableBytes)
 }
 
+func TestGCEndpointRetainsFullPhysicalOrphanReconciliation(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	hash, size, err := s.Blobs.Write(strings.NewReader("untracked physical content"))
+	require.NoError(t, err)
+	path := filepath.Join(s.BlobsDir, hash[:2], hash)
+	require.FileExists(t, path)
+
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/gc", nil, map[string]any{"run": false})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var report api.GCReport
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	assert.Equal(t, 1, report.UntrackedFiles)
+	assert.Equal(t, size, report.ReclaimableBytes)
+	assert.Zero(t, report.ReclaimedFiles)
+	require.FileExists(t, path)
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/gc", nil, map[string]any{"run": true})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	assert.Equal(t, 1, report.UntrackedFiles)
+	assert.Equal(t, 1, report.ReclaimedFiles)
+	assert.Equal(t, 1, report.Removed)
+	assert.NoFileExists(t, path)
+}
+
 func TestVerifyEndpoint(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	createFileWithContent(t, ts, s, "/ok.txt", "fine")

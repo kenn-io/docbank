@@ -131,6 +131,46 @@ func TestSparseRepackPageUsesCanonicalLiveHashKeyset(t *testing.T) {
 	assert.Equal(t, fmt.Sprintf("%064x", 30), second[0].Hash)
 }
 
+func TestUnreferencedPackMappingsPageIsCanonicalAndBounded(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	packID := pack.NewPackID()
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO blob_packs (pack_id, entry_count, stored_bytes, created_at)
+		VALUES (?, 4, 40, ?)`, packID, "2026-01-01T00:00:00.000000000Z")
+	require.NoError(t, err)
+	for i, hash := range []string{
+		fmt.Sprintf("%064x", 40), fmt.Sprintf("%064x", 10),
+		fmt.Sprintf("%064x", 30), fmt.Sprintf("%064x", 20),
+	} {
+		_, err = s.db.ExecContext(ctx, `
+			INSERT INTO blob_pack_index
+				(blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
+			VALUES (?, ?, ?, 5, 1, 0, 0)`, hash, packID, pack.MinEntryOffset+int64(i)*32)
+		require.NoError(t, err)
+	}
+
+	first, more, err := s.UnreferencedPackMappingsPage(ctx, "", 2)
+	require.NoError(t, err)
+	assert.True(t, more)
+	assert.Equal(t, []string{fmt.Sprintf("%064x", 10), fmt.Sprintf("%064x", 20)}, first)
+
+	removed, err := s.DeleteUnreferencedPackMappings(ctx, first)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), removed)
+	second, more, err := s.UnreferencedPackMappingsPage(ctx, first[1], 2)
+	require.NoError(t, err)
+	assert.False(t, more)
+	assert.Equal(t, []string{fmt.Sprintf("%064x", 30), fmt.Sprintf("%064x", 40)}, second)
+
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO blobs (hash, size, created_at) VALUES (?, 1, ?)`, second[0], nowRFC3339())
+	require.NoError(t, err)
+	removed, err = s.DeleteUnreferencedPackMappings(ctx, second)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), removed, "a concurrently restored authority row protects its mapping")
+}
+
 func TestDeadPackUsagePageIsBounded(t *testing.T) {
 	s := newTestStore(t)
 	for range 4 {
