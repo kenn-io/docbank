@@ -1085,10 +1085,10 @@ func seedMetadataRoundTrip(t *testing.T, s *Store) {
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		statements := []string{
 			`UPDATE nodes SET created_at='2026-01-01T00:00:00.000000000Z', modified_at='2026-01-02T00:00:00.000000000Z' WHERE id=1`,
-			`INSERT INTO blobs(hash,size,created_at) VALUES
-			 ('` + metadataHashCurrent + `',12,'2026-01-03T00:00:00.000000000Z'),
-			 ('` + metadataHashTrashed + `',5,'2026-01-04T00:00:00.000000000Z'),
-			 ('` + metadataHashVersion + `',9,'2026-01-05T00:00:00.000000000Z')`,
+			`INSERT INTO blobs(hash,size,created_at,loose_encoding,loose_stored_size,pack_eligible) VALUES
+			 ('` + metadataHashCurrent + `',12,'2026-01-03T00:00:00.000000000Z',NULL,NULL,1),
+			 ('` + metadataHashTrashed + `',5,'2026-01-04T00:00:00.000000000Z','raw',5,1),
+			 ('` + metadataHashVersion + `',9,'2026-01-05T00:00:00.000000000Z','raw',9,1)`,
 			`INSERT INTO nodes(id,parent_id,name,kind,created_at,modified_at) VALUES
 			 (7,1,'Projects','dir','2026-01-06T00:00:00.000000000Z','2026-01-07T00:00:00.000000000Z')`,
 			`INSERT INTO nodes(id,parent_id,name,kind,created_at,modified_at) VALUES

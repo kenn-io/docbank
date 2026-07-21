@@ -56,8 +56,10 @@ func installAuditedContentVersionTx(
 	if err != nil {
 		return Node{}, ContentVersion{}, err
 	}
-	if err := store.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
-		return Node{}, ContentVersion{}, err
+	if transitionKind == "content_replace" {
+		if err := store.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
+			return Node{}, ContentVersion{}, err
+		}
 	}
 	prior, err := scanContentVersion(tx.QueryRowContext(ctx,
 		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=?`,

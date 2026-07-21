@@ -172,28 +172,45 @@ func (s *Store) EnsureDir(ctx context.Context, parentID int64, name string) (Nod
 
 // EnsureBlobTx records a blob row if missing. The blob file must already be
 // durable on disk before the enclosing transaction commits. If a blob row
-// already exists under hash, its recorded size must match size: a mismatch
-// means two different contents hashed to the same value, or a caller passed
-// a wrong size, either of which is a corruption signal rather than ordinary
-// dedup and must not be silently accepted.
+// already exists under hash, its recorded size must match size and it must
+// still have catalog-authorized loose or packed bytes. Missing physical
+// authority requires explicit verified repair; an ordinary write receipt is
+// not sufficient to adopt potentially unverified deduplicated bytes.
 func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64, physical ...BlobPhysical) error {
 	storage, err := normalizeBlobPhysical(size, physical)
 	if err != nil {
 		return fmt.Errorf("recording blob %s: %w", hash, err)
 	}
-	if _, err := tx.Exec(
+	result, err := tx.Exec(
 		`INSERT OR IGNORE INTO blobs
 		 (hash, size, created_at, loose_encoding, loose_stored_size, pack_eligible)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
-		hash, size, nowRFC3339(), storage.Encoding, storage.StoredBytes, storage.PackEligible); err != nil {
+		hash, size, nowRFC3339(), storage.Encoding, storage.StoredBytes, storage.PackEligible)
+	if err != nil {
 		return fmt.Errorf("recording blob %s: %w", hash, err)
 	}
-	var stored int64
-	if err := tx.QueryRow(`SELECT size FROM blobs WHERE hash = ?`, hash).Scan(&stored); err != nil {
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking blob %s insertion: %w", hash, err)
+	}
+	var (
+		stored   int64
+		hasLoose bool
+		hasPack  bool
+	)
+	if err := tx.QueryRow(`
+		SELECT b.size, b.loose_encoding IS NOT NULL,
+		       EXISTS (SELECT 1 FROM blob_pack_index i WHERE i.blob_hash = b.hash)
+		FROM blobs b WHERE b.hash = ?`, hash,
+	).Scan(&stored, &hasLoose, &hasPack); err != nil {
 		return fmt.Errorf("verifying blob %s: %w", hash, err)
 	}
 	if stored != size {
 		return fmt.Errorf("blob %s: recorded size %d does not match caller size %d", hash, stored, size)
+	}
+	if inserted == 0 && !hasLoose && !hasPack {
+		return fmt.Errorf("blob %s: %w; repair content before adding references",
+			hash, ErrPhysicalAuthorityMissing)
 	}
 	return nil
 }

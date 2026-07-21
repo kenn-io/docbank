@@ -363,6 +363,13 @@ func TestVaultRepairRestoresMissingPhysicalAuthority(t *testing.T) {
 
 	_, err = vault.metadata.PhysicalContent(t.Context(), created.Computed.SHA256)
 	require.ErrorIs(t, err, store.ErrPhysicalAuthorityMissing)
+	_, err = vault.Put(
+		t.Context(), "/duplicate.txt", bytes.NewReader(content), PutOptions{},
+	)
+	require.ErrorIs(t, err, store.ErrPhysicalAuthorityMissing)
+	_, err = vault.Stat(t.Context(), "/duplicate.txt")
+	require.ErrorIs(t, err, ErrNotFound)
+
 	repaired, err := vault.RepairContent(
 		t.Context(), created.Computed, bytes.NewReader(content),
 	)

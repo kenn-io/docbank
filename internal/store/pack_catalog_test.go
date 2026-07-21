@@ -60,6 +60,57 @@ func TestPackAdoptionClearsLooseAuthority(t *testing.T) {
 	assert.Equal(t, physical, after)
 }
 
+func TestLogicalWritesRejectMissingPhysicalAuthority(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	missingHash, err := packstore.ParseHash(fakeHash("deadbeef"))
+	require.NoError(t, err)
+	original, err := s.CreateFile(ctx, s.RootID(), "original.txt", missingHash.String(), 20, "text/plain",
+		BlobPhysical{Encoding: "raw", StoredBytes: 20, PackEligible: true})
+	require.NoError(t, err)
+
+	packID := pack.NewPackID()
+	require.NoError(t, NewPackCatalog(s).RecordPack(ctx, packstore.PackRecord{
+		PackID: packID, EntryCount: 1, StoredBytes: 32,
+		CreatedAt: time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC),
+	}, []packstore.Adoption{{Entry: packstore.IndexEntry{
+		Hash: missingHash, PackID: packID, Offset: pack.MinEntryOffset,
+		StoredLen: 9, RawLen: 20,
+	}}}))
+	require.NoError(t, NewPackCatalog(s).DeleteIndexEntry(ctx, missingHash))
+	_, err = s.PhysicalContent(ctx, missingHash.String())
+	require.ErrorIs(t, err, ErrPhysicalAuthorityMissing)
+
+	var nodesBefore, versionsBefore int64
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM nodes`).Scan(&nodesBefore))
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM content_versions`).Scan(&versionsBefore))
+	_, err = s.CreateFile(ctx, s.RootID(), "duplicate.txt", missingHash.String(), 20, "text/plain",
+		BlobPhysical{Encoding: "raw", StoredBytes: 20, PackEligible: true})
+	require.ErrorIs(t, err, ErrPhysicalAuthorityMissing)
+	var nodesAfter, versionsAfter int64
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM nodes`).Scan(&nodesAfter))
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM content_versions`).Scan(&versionsAfter))
+	assert.Equal(t, nodesBefore, nodesAfter)
+	assert.Equal(t, versionsBefore, versionsAfter)
+
+	targetHash := fakeHash("replacement-target")
+	target, err := s.CreateFile(ctx, s.RootID(), "target.txt", targetHash, 7, "text/plain",
+		BlobPhysical{Encoding: "raw", StoredBytes: 7, PackEligible: true})
+	require.NoError(t, err)
+	_, _, err = s.ReplaceContent(ctx, target.ID, target.Revision, missingHash.String(), 20, "text/plain",
+		BlobPhysical{Encoding: "raw", StoredBytes: 20, PackEligible: true})
+	require.ErrorIs(t, err, ErrPhysicalAuthorityMissing)
+	unchanged, err := s.NodeByID(ctx, target.ID)
+	require.NoError(t, err)
+	assert.Equal(t, target.Revision, unchanged.Revision)
+	assert.Equal(t, targetHash, unchanged.BlobHash)
+
+	// Existing logical references remain intact for the explicit repair path.
+	stillPresent, err := s.NodeByID(ctx, original.ID)
+	require.NoError(t, err)
+	assert.Equal(t, missingHash.String(), stillPresent.BlobHash)
+}
+
 func TestRepairBlobAuthorityPreservesReferences(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
