@@ -26,7 +26,9 @@ it saves at least 10%; smaller or incompressible objects remain raw. The shared
 Kit engine supports moving either loose encoding into sealed packs without
 changing identity. Reads consult the SQLite catalog and transparently use raw
 loose, compressed loose, or packed content. Existing raw-only vaults open
-without converting their content.
+without converting their content. When a released database schema needs an
+incompatible upgrade, Docbank rebuilds only the SQLite catalog through
+deterministic JSONL; loose and packed content files stay in place.
 
 **Durability discipline.** `go.kenn.io/kit/packstore` streams every write to
 `blobs/tmp/`, fsyncs the file, renames it into place, then fsyncs the shard
@@ -59,8 +61,10 @@ nodes (
     trash_parent  INTEGER,                -- original location, for restore
     trash_name    TEXT
 )
-blobs          (hash PRIMARY KEY, size, created_at)
-blob_packs     (pack_id PRIMARY KEY, entry_count, stored_bytes, created_at)
+blobs          (hash PRIMARY KEY, size, created_at, loose_encoding,
+                loose_stored_size, pack_eligible)
+blob_packs     (pack_id PRIMARY KEY, entry_count, stored_bytes, created_at,
+                bounded-maintenance summary fields)
 blob_pack_index(blob_hash PRIMARY KEY, pack_id, pack_offset,
                 stored_len, raw_len, flags, crc32c)
 content_versions(version_id UUID PRIMARY KEY, node_id, blob_hash, size,
@@ -84,6 +88,36 @@ text_searchable_versions (version_id)                      -- Go-derived MIME el
 content_fts    -- derived FTS5 index over successful extraction rows
 nodes_fts      -- FTS5 external-content index over live node names
 ```
+
+## Released upgrades
+
+v0.9.0 is the first storage compatibility boundary. Every newer database
+records an explicit, monotonically increasing storage-schema version. Opening
+any supported older vault with a newer incompatible schema performs a logical
+cutover rather than a sequence of in-place SQL mutations:
+
+1. checkpoint and read the released database without changing its schema;
+2. export and validate deterministic metadata-v1 JSONL;
+3. import that stream into a fresh current-schema database;
+4. restore loose and packed physical authority, then validate and checkpoint;
+5. retain a version-identified source recovery copy and atomically publish the
+   new database.
+
+The cutover driver is shared by every released generation. A small source
+adapter describes how to export that generation's logical authority and
+restore its physical blob catalog. The v0.9.0 adapter recognizes the one
+released database that predates the explicit version marker; later generations
+are selected only by their stored version. An older binary refuses a database
+from a newer generation instead of attempting to interpret it. The current
+physical identity column deliberately differs from the mandatory v0.9 startup
+query, so the unversioned released binary also fails closed rather than
+silently writing with obsolete storage rules.
+
+For a v0.9.0 source the recovery copy is `<database>.v0.9.0.bak`. It contains
+private vault metadata and inherits the vault's owner-private boundary. Keep it
+until the upgraded vault and a fresh backup have been verified; it may then be
+removed while the daemon is stopped. Blob files are neither duplicated nor
+recompressed by this cutover.
 
 File nodes and content versions cross-reference one another: a file must have a
 current version belonging to that node, while directories cannot carry one.

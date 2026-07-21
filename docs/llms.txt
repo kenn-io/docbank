@@ -38,7 +38,7 @@ Every documentation page is also published as raw Markdown at the same path with
 - [Storage](https://docbank.ai/architecture/storage.md): The SQLite schema, blob store layout, durability discipline, and enforced invariants.
 - [Loose & Packed Content](https://docbank.ai/architecture/packed-storage.md): The shared Kit packed-CAS layer and docbank's application-owned authority boundary.
 - [Editing & Versions](https://docbank.ai/architecture/editing-and-versions.md): Stable content-version identity, retrieval, replacement, reversion, and retention over immutable content.
-- [Ownership & Concurrency](https://docbank.ai/architecture/locking.md): How the daemon coordinates concurrent access — SQLite for data, a portable exclusive vault lock, and an in-daemon gate for maintenance.
+- [Ownership & Concurrency](https://docbank.ai/architecture/locking.md): How daemon and embedded owners coordinate concurrent access with SQLite, hierarchy locks, and owner-local operation gates.
 - [Daemon & Process Model](https://docbank.ai/architecture/daemon.md): docbank daemon run — the single process that owns the vault, and how the CLI discovers, auto-starts, and stops it.
 - [Backup & Recovery](https://docbank.ai/architecture/backup.md): Docbank's JSONL-native Kit snapshot and restore architecture.
 - [Integrity & Trust](https://docbank.ai/architecture/integrity.md): What docbank defends against, which layer owns each integrity guarantee, and the trade-offs that were considered and deliberately not taken.

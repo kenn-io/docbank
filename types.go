@@ -2,6 +2,7 @@ package docbank
 
 import (
 	"io"
+	"time"
 
 	"go.kenn.io/kit/packstore"
 
@@ -60,6 +61,35 @@ type RepairReceipt struct {
 	Computed            ContentIdentity `json:"computed"`
 	Physical            PhysicalContent `json:"physical"`
 	ReferencesPreserved int64           `json:"references_preserved"`
+}
+
+// RevisionOptions applies an optional lost-update guard to one tree mutation.
+// Zero is unconditional; a positive value must match the node's revision.
+type RevisionOptions struct {
+	IfRevision int64 `json:"if_revision,omitempty"`
+}
+
+// MutationReceipt binds the resulting node projection to the canonical path
+// captured in the same metadata transaction.
+type MutationReceipt struct {
+	Node Node   `json:"node"`
+	Path string `json:"path"`
+}
+
+// TrashEmptyOptions bounds one trash-empty preview or execution. A zero
+// MaxRoots uses DefaultTrashEmptyMaxRoots. DryRun never deletes candidates.
+type TrashEmptyOptions struct {
+	OlderThan time.Duration `json:"older_than"`
+	MaxRoots  int           `json:"max_roots,omitempty"`
+	DryRun    bool          `json:"dry_run"`
+}
+
+// TrashEmptyReport summarizes one bounded batch of eligible trash roots.
+type TrashEmptyReport struct {
+	Candidates int64 `json:"candidates"`
+	Deleted    int64 `json:"deleted"`
+	More       bool  `json:"more"`
+	DryRun     bool  `json:"dry_run"`
 }
 
 // PhysicalContent describes the representation with current catalog
@@ -138,6 +168,7 @@ type PackReport struct {
 	LooseOrphansRemoved        int   `json:"loose_orphans_removed"`
 	LooseOrphanSweepSuppressed bool  `json:"loose_orphan_sweep_suppressed"`
 	BudgetExhausted            bool  `json:"budget_exhausted"`
+	More                       bool  `json:"more"`
 }
 
 // VerifiedReadCloser is a bounded-memory content reader. A caller must reach

@@ -5,9 +5,9 @@ description: The shared Kit packed-CAS layer and docbank's application-owned aut
 
 # Loose and packed content
 
-The shared engine is implemented in `go.kenn.io/kit/packstore`, and msgvault
-has adopted it without changing its pack format or migration behavior. docbank
-now uses the same engine for durable loose publication, catalog-authorized
+The shared engine is implemented in `go.kenn.io/kit/packstore`, and msgvault has
+adopted it without changing its pack format or migration behavior. docbank uses
+the same engine for durable raw or zstd loose publication, catalog-authorized
 mixed reads, and physical lifecycle coordination. Existing vaults require no
 conversion: ordinary writes still land loose, and raw loose files remain valid
 indefinitely. New loose objects of at least 4 KiB use zstd when it reduces the
@@ -15,13 +15,14 @@ stored size by at least 10%; otherwise Docbank keeps the raw bytes. Compression
 is a managed physical choice, not a format setting exposed to standalone users.
 
 `docbank storage status` exposes loose and packed inventory through the
-authenticated daemon API, and `docbank storage pack` explicitly moves
-authorized loose content into immutable packs with an optional work budget.
-An application that exclusively owns an embedded vault can invoke the same
-packing and reconciliation pass through `Vault.Pack`; it cannot bypass the
-catalog or Kit's maintenance coordinator. `docbank storage repack` compacts
-eligible sparse packs and retires dead pack files. Startup never performs an
-implicit migration, and automatic background maintenance remains a later step.
+authenticated daemon API, and `docbank storage pack` explicitly moves authorized
+loose content into immutable packs with an optional work budget. An application
+that exclusively owns an embedded vault can invoke the same packing and
+reconciliation pass through `Vault.Pack`; it cannot bypass the catalog or Kit's
+maintenance coordinator. `docbank storage repack` compacts eligible sparse packs
+and retires dead pack files. Embedded owners also have bounded `GarbageCollect`,
+`Verify`, and `Repack` passes. Startup never implicitly rewrites blob bytes, and
+no background scheduler runs these operations.
 
 Large collections of small files are expensive to enumerate, copy, and restore.
 msgvault uses immutable pack files as the steady-state storage format for
@@ -31,11 +32,18 @@ index, reader cache, recovery state machine, and repacker.
 `kit/packstore` sits above the low-level `kit/pack` format. It provides a mixed
 loose-and-packed content-addressed store, so migration can be gradual and
 interrupted work remains recoverable. Docbank explicitly caps new loose-object
-admission at 4 GiB while keeping packing, packed reads, and packed restore at
-64 MiB. These are application policies rather than inherited Kit defaults, so
+admission at 4 GiB while keeping packing, packed reads, and packed restore at 64
+MiB. These are application policies rather than inherited Kit defaults, so
 upgrading the shared engine cannot silently raise either one. An admitted object
 above 64 MiB remains loose, readable, and eligible for backup; pack maintenance
 reports it as deferred instead of attempting to prepare it.
+
+Loose compression is a write policy, not a new content identity. When an
+embedded `Config` enables it, Docbank finishes the candidate zstd stream and
+keeps it only when the configured minimum size and savings threshold are met;
+otherwise it publishes the raw form. Existing raw objects are not rewritten. The
+catalog records the selected encoding and stored bytes, while the canonical
+identity remains SHA-256 over decoded logical bytes.
 
 ## Ownership boundary
 
@@ -58,18 +66,21 @@ Each application retains the policy that gives those mechanics meaning:
 
 This boundary matters because the applications have different reachability
 rules. msgvault derives liveness from attachment content and thumbnail
-references. In docbank, a row in `blobs` grants physical read authority.
-Current GC keeps that row while any live node, trashed node, or recorded prior
-version refers to it. Kit therefore accepts an application-supplied catalog
-and does not own either application's schema or garbage-collection policy.
+references. In docbank, a row in `blobs` grants physical read authority. Current
+GC keeps that row while any live node, trashed node, or recorded prior version
+refers to it. Kit therefore accepts an application-supplied catalog and does not
+own either application's schema or garbage-collection policy. Physical
+maintenance therefore cannot choose application-level liveness. It can only act
+on the catalog authority that docbank's tree, trash, version, and retention
+rules have already made reachable or unreachable.
 
 ## Consequences for docbank
 
-Docbank owns only its catalog adapter, daemon wiring, migration policy, and
-end-to-end verification. It does not fork Kit's reader cache, reconciliation,
-or repacker. Raw and zstd loose representations remain recovery paths and
-staging representations before packing. Both names identify the same logical
-SHA-256 and decoded size. Status and GC report their physical stored bytes;
+Docbank owns only its catalog adapter, daemon wiring, released-schema cutover
+policy, and end-to-end verification. It does not fork Kit's reader cache,
+reconciliation, or repacker. Raw and zstd loose representations remain recovery
+paths and staging representations before packing. Both names identify the same
+logical SHA-256 and decoded size. Status and GC report their physical stored bytes;
 reads, backup, verification, and packing decode and verify the logical bytes
 before granting authority. Streaming reads remain bounded-memory. A caller
 that needs a seekable handle to compressed loose content may require Kit to
@@ -81,6 +92,12 @@ its zstd candidate before choosing which one to publish. Temporary-space
 planning must therefore allow roughly the raw size plus the compressed size for
 each concurrent write; cancellation and failed writes remove those private
 candidates without granting metadata authority.
+
+`RepairContent` verifies trusted bytes against one existing logical SHA-256
+identity without changing nodes or content versions. Existing loose authority
+keeps its raw or zstd encoding so publication and catalog replacement remain
+crash-safe. Packed or missing authority follows the configured loose-compression
+policy. Retired immutable pack bytes are reclaimed only by a later repack pass.
 
 The separate limits are deliberate. The 4 GiB admission ceiling matches Kit's
 format-v1 raw-object ceiling, preserving backup eligibility for every admitted
@@ -103,9 +120,9 @@ changing physical pack authority.
 ## Why unpack is not an operator command
 
 Kit retains an unpack primitive because shared storage tests, migrations, and a
-future purpose-built recovery tool may need to materialize packed content
-loose. Docbank intentionally does not expose that primitive as a normal API or
-CLI operation.
+future purpose-built recovery tool may need to materialize packed content loose.
+Docbank intentionally does not expose that primitive as a normal API or CLI
+operation.
 
 Packing exists to avoid the enumeration, backup, and restore cost of thousands
 of small files. A general unpack command would recreate that problem, could
@@ -114,10 +131,11 @@ an implementation format that docbank should own. Recovery belongs in verified
 backup/restore or a concrete repair workflow; the existence of a low-level Kit
 operation is not by itself a product use case.
 
-Automatic storage maintenance and external content references are not current
-operator capabilities. Backup, replacement, reversion, and maintenance already
-use the catalog and content-hash boundary rather than private pack internals.
+Automatic background storage maintenance and external content references are not
+current operator capabilities. Backup, replacement, repair, reversion, and
+maintenance already use the catalog and content-hash boundary rather than
+private pack internals.
 
 Next: [Storage](storage.md) documents the schema and blob-store invariants
-beneath this layer; [Trash, GC, Repack & Verify](../usage/trash-and-gc.md)
-is the operator workflow above it.
+beneath this layer; [Trash, GC, Repack & Verify](../usage/trash-and-gc.md) is
+the operator workflow above it.

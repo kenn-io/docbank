@@ -434,6 +434,13 @@ func (s *Store) Move(
 // the new name. The returned canonical path is captured in the mutation
 // transaction with the returned node.
 func (s *Store) MovePath(ctx context.Context, srcPath, destPath string) (Node, string, error) {
+	return s.MovePathRevision(ctx, srcPath, destPath, UnconditionalRev)
+}
+
+// MovePathRevision is MovePath with an exact optional revision precondition.
+func (s *Store) MovePathRevision(
+	ctx context.Context, srcPath, destPath string, ifRev int64,
+) (Node, string, error) {
 	var moved Node
 	var movedPath string
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
@@ -442,7 +449,7 @@ func (s *Store) MovePath(ctx context.Context, srcPath, destPath string) (Node, s
 			return fmt.Errorf("resolving %q: %w", srcPath, err)
 		}
 		moved, movedPath, err = s.moveNodeToPathTx(
-			ctx, tx, src, UnconditionalRev, destPath,
+			ctx, tx, src, ifRev, destPath,
 		)
 		return err
 	})

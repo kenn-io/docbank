@@ -22,6 +22,8 @@ import (
 
 const metadataFormatVersion = 1
 
+const metadataCreatedAtField = "created_at"
+
 // MetadataSnapshot owns a dedicated deferred read transaction. Store's normal
 // connections use BEGIN IMMEDIATE for mutations; using that pool here would
 // hold the writer lock for the full backup instead of only pinning a WAL view.
@@ -248,20 +250,28 @@ type metadataQuerier interface {
 // Backup capture uses this entry point so metadata and blob membership come
 // from the same frozen transaction.
 func exportMetadataSnapshot(ctx context.Context, tx metadataQuerier, w io.Writer) error {
+	return exportMetadataSnapshotWithVaultIdentity(ctx, tx, w, false)
+}
+
+func exportV090MetadataSnapshot(ctx context.Context, tx metadataQuerier, w io.Writer) error {
+	return exportMetadataSnapshotWithVaultIdentity(ctx, tx, w, true)
+}
+
+func exportMetadataSnapshotWithVaultIdentity(
+	ctx context.Context, tx metadataQuerier, w io.Writer, legacyV090 bool,
+) error {
 	if tx == nil {
 		return errors.New("exporting metadata: nil transaction")
 	}
-	var vaultID string
-	if err := tx.QueryRowContext(ctx,
-		`SELECT vault_id FROM vault_metadata WHERE singleton = 1`,
-	).Scan(&vaultID); err != nil {
+	vaultID, err := readVaultIdentity(ctx, tx, legacyV090)
+	if err != nil {
 		return fmt.Errorf("reading vault identity: %w", err)
 	}
 	var nodeSequence int64
 	if err := tx.QueryRowContext(ctx, `SELECT seq FROM sqlite_sequence WHERE name = 'nodes'`).Scan(&nodeSequence); err != nil {
 		return fmt.Errorf("reading node ID high-water mark: %w", err)
 	}
-	if err := validateMetadataState(ctx, tx, nodeSequence); err != nil {
+	if err := validateMetadataStateWithVaultIdentity(ctx, tx, nodeSequence, legacyV090); err != nil {
 		return fmt.Errorf("validating metadata snapshot: %w", err)
 	}
 	write := newMetadataJSONWriter(w)
@@ -575,7 +585,7 @@ func (s *Store) ImportMetadata(ctx context.Context, r io.Reader) error {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE vault_metadata SET vault_id = ? WHERE singleton = 1`, header.VaultID,
+			`UPDATE vault_metadata SET vault_uid = ? WHERE singleton = 1`, header.VaultID,
 		); err != nil {
 			return fmt.Errorf("restoring vault identity: %w", err)
 		}
@@ -860,8 +870,8 @@ const (
 var metadataHeaderFields = []string{metadataTypeField, "format", "version", auditVaultIDField, "node_sequence"}
 
 var metadataRequiredFields = map[string][]string{
-	"blob":                      {metadataTypeField, "hash", "size", "created_at"},
-	"node":                      {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", "revision", "created_at", "modified_at", "trashed_at", "trash_parent", "trash_name"},
+	"blob":                      {metadataTypeField, "hash", "size", metadataCreatedAtField},
+	"node":                      {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", "revision", metadataCreatedAtField, "modified_at", "trashed_at", "trash_parent", "trash_name"},
 	"content_version":           {metadataTypeField, "version_id", metadataNodeIDField, "blob_hash", "size", "mime_type", auditRecordedAtField, "node_revision", "introduced_operation_id", "transition_kind", "source_version_id"},
 	metadataIngestType:          {metadataTypeField, "ingest_id", "started_at", "source_kind", "source_desc"},
 	metadataProvenanceType:      {metadataTypeField, "identity", metadataNodeIDField, "ingest_id", "original_path", "original_mtime", "supersedes"},
@@ -1248,10 +1258,14 @@ func validateProvenanceTime(value string) error {
 }
 
 func validateMetadataState(ctx context.Context, tx metadataQuerier, nodeSequence int64) error {
-	var vaultID string
-	if err := tx.QueryRowContext(ctx,
-		`SELECT vault_id FROM vault_metadata WHERE singleton = 1`,
-	).Scan(&vaultID); err != nil {
+	return validateMetadataStateWithVaultIdentity(ctx, tx, nodeSequence, false)
+}
+
+func validateMetadataStateWithVaultIdentity(
+	ctx context.Context, tx metadataQuerier, nodeSequence int64, legacyV090 bool,
+) error {
+	vaultID, err := readVaultIdentity(ctx, tx, legacyV090)
+	if err != nil {
 		return fmt.Errorf("reading vault identity: %w", err)
 	}
 	if err := validateUUIDv4(vaultID); err != nil {
@@ -1295,6 +1309,18 @@ func validateMetadataState(ctx context.Context, tx metadataQuerier, nodeSequence
 		return fmt.Errorf("metadata violates foreign key %s[%v] constraint %d", table, rowID, fk)
 	}
 	return rows.Err()
+}
+
+func readVaultIdentity(ctx context.Context, tx metadataQuerier, legacyV090 bool) (string, error) {
+	query := `SELECT vault_uid FROM vault_metadata WHERE singleton = 1`
+	if legacyV090 {
+		query = `SELECT vault_id FROM vault_metadata WHERE singleton = 1`
+	}
+	var vaultID string
+	if err := tx.QueryRowContext(ctx, query).Scan(&vaultID); err != nil {
+		return "", err
+	}
+	return vaultID, nil
 }
 
 func validateMetadataRelations(ctx context.Context, tx metadataQuerier) error {

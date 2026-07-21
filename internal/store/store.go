@@ -24,6 +24,12 @@ type Store struct {
 	driver  docsqlite.Driver
 }
 
+// currentStorageSchemaVersion identifies the canonical SQLite layout created
+// by this binary. It is intentionally independent of metadata JSONL's logical
+// format version: physical schema changes can rebuild through the same logical
+// format without changing that portable contract.
+const currentStorageSchemaVersion = 2
+
 // DefaultSQLiteDriver returns the build's standalone-compatible adapter: CGO
 // builds use mattn/go-sqlite3 and no-CGO builds use modernc.org/sqlite.
 func DefaultSQLiteDriver() docsqlite.Driver { return defaultSQLiteDriver() }
@@ -42,6 +48,13 @@ func Open(path string, drivers ...docsqlite.Driver) (*Store, error) {
 	if err := docsqlite.Validate(driver); err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
+	if err := prepareReleasedSchemaUpgrade(path, driver); err != nil {
+		return nil, err
+	}
+	return openCurrentStore(path, driver)
+}
+
+func openCurrentStore(path string, driver docsqlite.Driver) (*Store, error) {
 	db, err := driver.Open(path, docsqlite.OpenOptions{
 		Access: docsqlite.Create, TransactionMode: docsqlite.Immediate,
 	})
@@ -82,31 +95,30 @@ func (s *Store) bootstrapTx() error {
 		if _, err := tx.Exec(schemaSQL); err != nil {
 			return fmt.Errorf("applying schema: %w", err)
 		}
-		var ignoredEncoding, ignoredStoredSize, ignoredEligibility any
+		var schemaVersion int
 		if err := tx.QueryRow(`
-			SELECT MAX(loose_encoding), MAX(loose_stored_size), MAX(pack_eligible)
-			FROM blobs`).Scan(
-			&ignoredEncoding, &ignoredStoredSize, &ignoredEligibility,
-		); err != nil {
-			return fmt.Errorf(
-				"obsolete pre-release database schema; recreate this development vault: %w", err,
-			)
-		}
-		if err := tx.QueryRow(`SELECT vault_id FROM vault_metadata WHERE singleton = 1`).Scan(
-			&s.vaultID,
+			SELECT vault_uid, schema_version FROM vault_metadata WHERE singleton = 1`).Scan(
+			&s.vaultID, &schemaVersion,
 		); errors.Is(err, sql.ErrNoRows) {
 			vaultID, idErr := newUUIDv4()
 			if idErr != nil {
 				return fmt.Errorf("creating vault identity: %w", idErr)
 			}
 			if _, idErr = tx.Exec(
-				`INSERT INTO vault_metadata(singleton, vault_id) VALUES(1, ?)`, vaultID,
+				`INSERT INTO vault_metadata(singleton, vault_uid, schema_version)
+				 VALUES(1, ?, ?)`, vaultID, currentStorageSchemaVersion,
 			); idErr != nil {
 				return fmt.Errorf("creating vault identity: %w", idErr)
 			}
 			s.vaultID = vaultID
 		} else if err != nil {
 			return fmt.Errorf("looking up vault identity: %w", err)
+		}
+		if schemaVersion != 0 && schemaVersion != currentStorageSchemaVersion {
+			return fmt.Errorf(
+				"opening database: schema version %d does not match binary schema %d",
+				schemaVersion, currentStorageSchemaVersion,
+			)
 		}
 		if err := validateUUIDv4(s.vaultID); err != nil {
 			return fmt.Errorf("validating vault identity: %w", err)

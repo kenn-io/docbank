@@ -261,6 +261,73 @@ func validHash(hash string) bool {
 // Maintainer returns the shared physical lifecycle engine.
 func (s *Store) Maintainer() *packstore.Maintainer { return s.maintainer }
 
+// RepackWithCatalog runs Kit's existing repack engine against a caller-scoped
+// catalog view. It preserves the shared coordinator, layout, limits, and raw
+// byte budget semantics while allowing a higher layer to bound source
+// selection without materializing the complete pack catalog.
+func (s *Store) RepackWithCatalog(
+	ctx context.Context, catalog packstore.Catalog, opts packstore.RepackOptions,
+) (stats packstore.RepackStats, retErr error) {
+	deferred := &deferredRetirementCatalog{Catalog: catalog}
+	maintainer, err := packstore.NewMaintainer(deferred, s.layout, packstore.MaintainerOptions{
+		Coordinator: s.coordinator,
+		Limits:      StorageLimits(),
+	})
+	if err != nil {
+		return stats, fmt.Errorf("creating scoped blob maintainer: %w", err)
+	}
+	defer func() { retErr = errors.Join(retErr, maintainer.Close()) }()
+	stats, err = maintainer.Repack(ctx, opts)
+	retErr = err
+	for _, packID := range deferred.attempted {
+		_, statErr := os.Lstat(s.layout.PackPath(packID))
+		if statErr == nil {
+			continue
+		}
+		if !errors.Is(statErr, fs.ErrNotExist) {
+			retErr = errors.Join(retErr,
+				fmt.Errorf("checking retired pack %s: %w", packID, statErr))
+			continue
+		}
+		deleted, deleteErr := catalog.DeleteEmptyPackRecord(ctx, packID)
+		if deleteErr != nil {
+			retErr = errors.Join(retErr, deleteErr)
+			continue
+		}
+		if !deleted {
+			retErr = errors.Join(retErr,
+				fmt.Errorf("retired pack %s still has catalog mappings", packID))
+		}
+	}
+	if retErr != nil {
+		retErr = fmt.Errorf("repacking scoped blobs: %w", retErr)
+	}
+	return stats, retErr
+}
+
+// deferredRetirementCatalog keeps pack-record authority until Kit has
+// physically retired the immutable pack. RepackWithCatalog performs the
+// catalog deletion only after observing that the canonical path is absent.
+type deferredRetirementCatalog struct {
+	packstore.Catalog
+
+	attempted []string
+}
+
+func (c *deferredRetirementCatalog) DeleteEmptyPackRecord(
+	ctx context.Context, packID string,
+) (bool, error) {
+	entries, err := c.ListPackEntries(ctx, packID)
+	if err != nil {
+		return false, fmt.Errorf("listing pack %s before deferred retirement: %w", packID, err)
+	}
+	if len(entries) != 0 {
+		return false, nil
+	}
+	c.attempted = append(c.attempted, packID)
+	return true, nil
+}
+
 // Coordinator returns the process-local mutation/maintenance coordinator.
 func (s *Store) Coordinator() *packstore.Coordinator { return s.coordinator }
 
@@ -429,14 +496,43 @@ func (s *Store) Remove(hash string) error {
 	return nil
 }
 
-// List returns canonical loose objects only. GC uses this to find interrupted
-// writes that never gained a blobs row; pack files are deliberately excluded.
-func (s *Store) List() (map[string]int64, error) {
+// RemoveIfExists deletes canonical loose content and reports how many physical
+// representations were present before the durable removal.
+func (s *Store) RemoveIfExists(hash string) (int, error) {
+	parsed, err := packstore.ParseHash(hash)
+	if err != nil {
+		return 0, fmt.Errorf("blob hash %q: %w", hash, ErrInvalidHash)
+	}
+	present := 0
+	for _, path := range []string{s.layout.LoosePath(parsed), s.layout.CompressedLoosePath(parsed)} {
+		if _, statErr := os.Lstat(path); statErr == nil {
+			present++
+		} else if !errors.Is(statErr, fs.ErrNotExist) {
+			return 0, fmt.Errorf("checking blob %s before removal: %w", hash, statErr)
+		}
+	}
+	if err := s.Remove(hash); err != nil {
+		return 0, err
+	}
+	return present, nil
+}
+
+// LooseInventory records the complete physical footprint of every canonical
+// representation found for one logical hash.
+type LooseInventory struct {
+	StoredBytes int64
+	Files       int
+}
+
+// ListDetailed returns canonical loose objects only, including representation
+// multiplicity. GC uses this to find interrupted writes that never gained a
+// blobs row; pack files are deliberately excluded.
+func (s *Store) ListDetailed() (map[string]LooseInventory, error) {
 	shards, err := os.ReadDir(s.dir)
 	if err != nil {
 		return nil, fmt.Errorf("reading blob dir: %w", err)
 	}
-	out := map[string]int64{}
+	out := map[string]LooseInventory{}
 	for _, shard := range shards {
 		if !shard.IsDir() || len(shard.Name()) != 2 {
 			continue // tmp/, packs/, and anything else that is not a shard
@@ -462,8 +558,24 @@ func (s *Store) List() (map[string]int64, error) {
 			// Interrupted replacement or repair can temporarily leave both
 			// representations. GC removes both, so report their complete
 			// physical footprint under the one logical hash.
-			out[logicalName] += info.Size()
+			inventory := out[logicalName]
+			inventory.StoredBytes += info.Size()
+			inventory.Files++
+			out[logicalName] = inventory
 		}
+	}
+	return out, nil
+}
+
+// List returns the aggregate stored bytes for each logical loose hash.
+func (s *Store) List() (map[string]int64, error) {
+	detailed, err := s.ListDetailed()
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]int64, len(detailed))
+	for hash, inventory := range detailed {
+		out[hash] = inventory.StoredBytes
 	}
 	return out, nil
 }

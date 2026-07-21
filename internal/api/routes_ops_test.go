@@ -2,7 +2,9 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,11 +17,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
+	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/pkg/sqlite"
 )
@@ -360,6 +364,7 @@ func TestStoragePackHonorsBudgetAndConverges(t *testing.T) {
 	assert.Equal(t, 1, report.BlobsPacked)
 	assert.Equal(t, 1, report.PacksSealed)
 	assert.True(t, report.BudgetExhausted)
+	assert.True(t, report.More)
 
 	statusResp, statusBody := get(t, ts, "/api/v1/storage", nil)
 	require.Equal(t, http.StatusOK, statusResp.StatusCode, statusBody)
@@ -374,6 +379,7 @@ func TestStoragePackHonorsBudgetAndConverges(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &report))
 	assert.Equal(t, 1, report.BlobsPacked)
 	assert.False(t, report.BudgetExhausted)
+	assert.False(t, report.More)
 
 	statusResp, statusBody = get(t, ts, "/api/v1/storage", nil)
 	require.Equal(t, http.StatusOK, statusResp.StatusCode, statusBody)
@@ -440,6 +446,46 @@ func TestStorageRepackReclaimsSparsePack(t *testing.T) {
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 }
 
+func TestStorageRepackContinuesFromEmptyMappingHighWater(t *testing.T) {
+	ts, s := newTestServer(t, func(deps *api.Deps) {
+		deps.RepackPage = func(
+			ctx context.Context, metadata *store.Store, blobs *blob.Store,
+			opts internalmaintenance.RepackOptions,
+		) (internalmaintenance.RepackReport, error) {
+			opts.Budget.MaxObjects = 1
+			return internalmaintenance.Repack(ctx, metadata, blobs, opts)
+		}
+	})
+	db, err := s.SQLiteDriver().Open(s.DBPath, docsqlite.OpenOptions{
+		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+	})
+	require.NoError(t, err)
+	packID := pack.NewPackID()
+	_, err = db.ExecContext(t.Context(), `
+		INSERT INTO blob_packs (pack_id, entry_count, stored_bytes, created_at)
+		VALUES (?, 2, 10, ?)`, packID, "2026-01-01T00:00:00.000000000Z")
+	require.NoError(t, err)
+	for i, hash := range []string{
+		"",
+		"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+	} {
+		_, err = db.ExecContext(t.Context(), `
+			INSERT INTO blob_pack_index
+				(blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
+			VALUES (?, ?, ?, 5, 1, 0, 0)`, hash, packID,
+			pack.MinEntryOffset+int64(i)*32)
+		require.NoError(t, err)
+	}
+	require.NoError(t, db.Close())
+
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/storage/repack", nil,
+		map[string]any{"max_bytes": 0})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var report api.StorageRepackReport
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	assert.Equal(t, int64(2), report.MappingsPruned)
+}
+
 func TestGCRevokesPackedBlobAuthority(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	file := createFileWithContent(t, ts, s, "/packed.txt", "packed gc content")
@@ -486,6 +532,62 @@ func TestGCRevokesPackedBlobAuthority(t *testing.T) {
 	assert.Equal(t, 1, repacked.PacksRemoved)
 }
 
+func TestGCReconcilesCrashRetainedLooseCopiesAfterPackedAuthorityRemoval(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	content := strings.Repeat("packed content with two crash-retained loose representations\n", 128)
+	file := createFileWithContent(t, ts, s, "/packed-duplicates.txt", content)
+	packed, err := s.Blobs.Maintainer().Pack(t.Context(), packstore.PackOptions{})
+	require.NoError(t, err)
+	require.Equal(t, 1, packed.BlobsPacked)
+
+	receipt, err := s.Blobs.RepairContextWithEncoding(
+		t.Context(), file.BlobHash, int64(len(content)), strings.NewReader(content),
+		packstore.LooseEncodingZstd,
+	)
+	require.NoError(t, err)
+	rawPath := filepath.Join(s.BlobsDir, file.BlobHash[:2], file.BlobHash)
+	zstdPath := rawPath + ".zst"
+	require.NoError(t, os.WriteFile(rawPath, []byte(content), 0o600))
+	require.FileExists(t, rawPath)
+	require.FileExists(t, zstdPath)
+	wantLooseBytes := int64(len(content)) + receipt.StoredSize
+
+	_, etag := etagOf(t, ts, file.ID)
+	resp, body := do(t, ts, http.MethodPost,
+		fmt.Sprintf("/api/v1/nodes/%d/trash", file.ID),
+		map[string]string{"If-Match": etag}, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
+		map[string]any{"run": true})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/gc", nil,
+		map[string]any{"run": false})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var dry api.GCReport
+	require.NoError(t, json.Unmarshal([]byte(body), &dry))
+	assert.Equal(t, 1, dry.CandidateBlobs)
+	assert.Equal(t, 2, dry.UntrackedFiles)
+	assert.Equal(t, wantLooseBytes, dry.ReclaimableBytes)
+	assert.Zero(t, dry.ReclaimedFiles)
+	require.FileExists(t, rawPath)
+	require.FileExists(t, zstdPath)
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/gc", nil,
+		map[string]any{"run": true})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var report api.GCReport
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	assert.Equal(t, 1, report.CandidateBlobs)
+	assert.Equal(t, 2, report.UntrackedFiles)
+	assert.Equal(t, wantLooseBytes, report.ReclaimableBytes)
+	assert.Equal(t, 2, report.ReclaimedFiles)
+	assert.Equal(t, 1, report.RemovedBlobs)
+	assert.Equal(t, 1, report.Removed, "the logical blob is removed exactly once")
+	assert.NoFileExists(t, rawPath)
+	assert.NoFileExists(t, zstdPath)
+}
+
 func TestGCDryRunAndRun(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	f := createFileWithContent(t, ts, s, "/g.txt", "gc-me")
@@ -512,6 +614,57 @@ func TestGCDryRunAndRun(t *testing.T) {
 	assert.Equal(t, int64(len("gc-me")), rep.ReclaimableBytes)
 }
 
+func TestGCEndpointAdvancesPastLiveOnlyRawPage(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	target := createFileWithContent(t, ts, s, "/bounded-gc.txt", "bounded gc target")
+	_, etag := etagOf(t, ts, target.ID)
+	resp, body := do(t, ts, http.MethodPost,
+		fmt.Sprintf("/api/v1/nodes/%d/trash", target.ID),
+		map[string]string{"If-Match": etag}, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
+		map[string]any{"run": true})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+
+	for i := range internalmaintenance.DefaultMaxObjects {
+		_, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("live-gc-%03d", i),
+			fmt.Sprintf("!live-gc-%03d", i), 1, "application/octet-stream")
+		require.NoError(t, err)
+	}
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/gc", nil, map[string]any{"run": true})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var report api.GCReport
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	assert.Equal(t, 1, report.CandidateBlobs)
+	assert.Equal(t, 1, report.RemovedBlobs)
+}
+
+func TestGCEndpointRetainsFullPhysicalOrphanReconciliation(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	hash, size, err := s.Blobs.Write(strings.NewReader("untracked physical content"))
+	require.NoError(t, err)
+	path := filepath.Join(s.BlobsDir, hash[:2], hash)
+	require.FileExists(t, path)
+
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/gc", nil, map[string]any{"run": false})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var report api.GCReport
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	assert.Equal(t, 1, report.UntrackedFiles)
+	assert.Equal(t, size, report.ReclaimableBytes)
+	assert.Zero(t, report.ReclaimedFiles)
+	require.FileExists(t, path)
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/gc", nil, map[string]any{"run": true})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	assert.Equal(t, 1, report.UntrackedFiles)
+	assert.Equal(t, 1, report.ReclaimedFiles)
+	assert.Equal(t, 1, report.Removed)
+	assert.NoFileExists(t, path)
+}
+
 func TestVerifyEndpoint(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	createFileWithContent(t, ts, s, "/ok.txt", "fine")
@@ -522,6 +675,40 @@ func TestVerifyEndpoint(t *testing.T) {
 	assert.Equal(t, 1, rep.OK)
 	assert.Empty(t, rep.Problems)
 	assert.Empty(t, rep.MetadataProblems)
+}
+
+func TestVerifyEndpointContinuesPastMalformedHashAtPageBoundary(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	db, err := s.SQLiteDriver().Open(s.DBPath, docsqlite.OpenOptions{
+		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+	})
+	require.NoError(t, err)
+	for i := range internalmaintenance.DefaultMaxObjects - 1 {
+		_, err = db.ExecContext(t.Context(),
+			`INSERT INTO blobs (hash, size, created_at) VALUES (?, 1, ?)`,
+			fmt.Sprintf("%064x", i), "2026-07-21T00:00:00.000000000Z")
+		require.NoError(t, err)
+	}
+	for _, hash := range []string{
+		"1-malformed-page-boundary",
+		"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+	} {
+		_, err = db.ExecContext(t.Context(),
+			`INSERT INTO blobs (hash, size, created_at) VALUES (?, 1, ?)`,
+			hash, "2026-07-21T00:00:00.000000000Z")
+		require.NoError(t, err)
+	}
+	require.NoError(t, db.Close())
+
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/verify", nil, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var report api.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	require.Len(t, report.MetadataProblems, 1)
+	assert.Contains(t, report.MetadataProblems[0], "invalid blob hash")
+	require.Len(t, report.Problems, internalmaintenance.DefaultMaxObjects+1)
+	assert.Equal(t, "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+		report.Problems[len(report.Problems)-1].Hash)
 }
 
 func TestVerifyEndpointReportsMalformedBlobMetadata(t *testing.T) {
@@ -544,6 +731,44 @@ func TestVerifyEndpointReportsMalformedBlobMetadata(t *testing.T) {
 	assert.Empty(t, rep.Problems)
 	require.Len(t, rep.MetadataProblems, 1)
 	assert.Contains(t, rep.MetadataProblems[0], "size")
+}
+
+func TestVerifyEndpointReportsBlobInventoryFailureAlongsideMetadataFailure(t *testing.T) {
+	sentinel := errors.New("blob inventory unavailable")
+	var calls int
+	ts, s := newTestServer(t, func(deps *api.Deps) {
+		deps.VerifyPage = func(
+			_ context.Context, metadata *store.Store, blobs *blob.Store,
+			opts internalmaintenance.VerifyOptions,
+		) (internalmaintenance.VerifyReport, error) {
+			calls++
+			assert.NotNil(t, metadata)
+			assert.NotNil(t, blobs)
+			assert.Empty(t, opts.Budget.Cursor)
+			return internalmaintenance.VerifyReport{}, sentinel
+		}
+	})
+	created := createFileWithContent(t, ts, s, "/malformed-and-faulted.txt", "content")
+	db, err := s.SQLiteDriver().Open(s.DBPath, docsqlite.OpenOptions{
+		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+	})
+	require.NoError(t, err)
+	_, err = db.ExecContext(t.Context(), `UPDATE blobs SET size='not-an-integer' WHERE hash=?`,
+		created.BlobHash)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/verify", nil, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var report api.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	assert.Zero(t, report.OK)
+	assert.Empty(t, report.Problems)
+	assert.Equal(t, 1, calls)
+	require.Len(t, report.MetadataProblems, 2,
+		"the blob inventory failure must append to the earlier metadata report")
+	assert.Contains(t, report.MetadataProblems[0], "size")
+	assert.Contains(t, report.MetadataProblems[1], sentinel.Error())
 }
 
 func TestMaintenanceGateQueuesMutations(t *testing.T) {

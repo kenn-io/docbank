@@ -47,11 +47,11 @@ actually removed; packed logical death is pending repack.
 
 ### Change schema
 
-Before the first public release, change the current schema and JSONL v1
-authority directly and update synthetic fixtures; developer vaults are
-disposable. Do not build migrations or cutovers for unreleased layouts. After
-the first public release, begin any incompatible change by defining the
-compatibility policy and released-vault fixtures it requires.
+Layouts that never shipped are disposable. v0.9.0 is the first released
+compatibility boundary: incompatible SQLite changes use a tested deterministic
+JSONL cutover from an exact released-schema fixture, not an in-place migration
+ladder. Preserve the source database until the rebuilt current database has
+imported and validated logical authority and restored its physical pack catalog.
 
 ### Change daemon lifecycle
 
