@@ -250,9 +250,7 @@ func GarbageCollect(
 			if err != nil && !errors.Is(err, fs.ErrNotExist) {
 				return report, err
 			}
-			if removed {
-				report.ReclaimedFiles++
-			}
+			report.ReclaimedFiles += removed
 		}
 		processed++
 	}

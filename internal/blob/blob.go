@@ -496,35 +496,43 @@ func (s *Store) Remove(hash string) error {
 	return nil
 }
 
-// RemoveIfExists deletes canonical loose content and reports whether at least
-// one physical representation was present before the durable removal.
-func (s *Store) RemoveIfExists(hash string) (bool, error) {
+// RemoveIfExists deletes canonical loose content and reports how many physical
+// representations were present before the durable removal.
+func (s *Store) RemoveIfExists(hash string) (int, error) {
 	parsed, err := packstore.ParseHash(hash)
 	if err != nil {
-		return false, fmt.Errorf("blob hash %q: %w", hash, ErrInvalidHash)
+		return 0, fmt.Errorf("blob hash %q: %w", hash, ErrInvalidHash)
 	}
-	present := false
+	present := 0
 	for _, path := range []string{s.layout.LoosePath(parsed), s.layout.CompressedLoosePath(parsed)} {
 		if _, statErr := os.Lstat(path); statErr == nil {
-			present = true
+			present++
 		} else if !errors.Is(statErr, fs.ErrNotExist) {
-			return false, fmt.Errorf("checking blob %s before removal: %w", hash, statErr)
+			return 0, fmt.Errorf("checking blob %s before removal: %w", hash, statErr)
 		}
 	}
 	if err := s.Remove(hash); err != nil {
-		return false, err
+		return 0, err
 	}
 	return present, nil
 }
 
-// List returns canonical loose objects only. GC uses this to find interrupted
-// writes that never gained a blobs row; pack files are deliberately excluded.
-func (s *Store) List() (map[string]int64, error) {
+// LooseInventory records the complete physical footprint of every canonical
+// representation found for one logical hash.
+type LooseInventory struct {
+	StoredBytes int64
+	Files       int
+}
+
+// ListDetailed returns canonical loose objects only, including representation
+// multiplicity. GC uses this to find interrupted writes that never gained a
+// blobs row; pack files are deliberately excluded.
+func (s *Store) ListDetailed() (map[string]LooseInventory, error) {
 	shards, err := os.ReadDir(s.dir)
 	if err != nil {
 		return nil, fmt.Errorf("reading blob dir: %w", err)
 	}
-	out := map[string]int64{}
+	out := map[string]LooseInventory{}
 	for _, shard := range shards {
 		if !shard.IsDir() || len(shard.Name()) != 2 {
 			continue // tmp/, packs/, and anything else that is not a shard
@@ -550,8 +558,24 @@ func (s *Store) List() (map[string]int64, error) {
 			// Interrupted replacement or repair can temporarily leave both
 			// representations. GC removes both, so report their complete
 			// physical footprint under the one logical hash.
-			out[logicalName] += info.Size()
+			inventory := out[logicalName]
+			inventory.StoredBytes += info.Size()
+			inventory.Files++
+			out[logicalName] = inventory
 		}
+	}
+	return out, nil
+}
+
+// List returns the aggregate stored bytes for each logical loose hash.
+func (s *Store) List() (map[string]int64, error) {
+	detailed, err := s.ListDetailed()
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]int64, len(detailed))
+	for hash, inventory := range detailed {
+		out[hash] = inventory.StoredBytes
 	}
 	return out, nil
 }

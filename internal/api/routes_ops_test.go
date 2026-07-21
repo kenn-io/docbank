@@ -532,6 +532,62 @@ func TestGCRevokesPackedBlobAuthority(t *testing.T) {
 	assert.Equal(t, 1, repacked.PacksRemoved)
 }
 
+func TestGCReconcilesCrashRetainedLooseCopiesAfterPackedAuthorityRemoval(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	content := strings.Repeat("packed content with two crash-retained loose representations\n", 128)
+	file := createFileWithContent(t, ts, s, "/packed-duplicates.txt", content)
+	packed, err := s.Blobs.Maintainer().Pack(t.Context(), packstore.PackOptions{})
+	require.NoError(t, err)
+	require.Equal(t, 1, packed.BlobsPacked)
+
+	receipt, err := s.Blobs.RepairContextWithEncoding(
+		t.Context(), file.BlobHash, int64(len(content)), strings.NewReader(content),
+		packstore.LooseEncodingZstd,
+	)
+	require.NoError(t, err)
+	rawPath := filepath.Join(s.BlobsDir, file.BlobHash[:2], file.BlobHash)
+	zstdPath := rawPath + ".zst"
+	require.NoError(t, os.WriteFile(rawPath, []byte(content), 0o600))
+	require.FileExists(t, rawPath)
+	require.FileExists(t, zstdPath)
+	wantLooseBytes := int64(len(content)) + receipt.StoredSize
+
+	_, etag := etagOf(t, ts, file.ID)
+	resp, body := do(t, ts, http.MethodPost,
+		fmt.Sprintf("/api/v1/nodes/%d/trash", file.ID),
+		map[string]string{"If-Match": etag}, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
+		map[string]any{"run": true})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/gc", nil,
+		map[string]any{"run": false})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var dry api.GCReport
+	require.NoError(t, json.Unmarshal([]byte(body), &dry))
+	assert.Equal(t, 1, dry.CandidateBlobs)
+	assert.Equal(t, 2, dry.UntrackedFiles)
+	assert.Equal(t, wantLooseBytes, dry.ReclaimableBytes)
+	assert.Zero(t, dry.ReclaimedFiles)
+	require.FileExists(t, rawPath)
+	require.FileExists(t, zstdPath)
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/gc", nil,
+		map[string]any{"run": true})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var report api.GCReport
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	assert.Equal(t, 1, report.CandidateBlobs)
+	assert.Equal(t, 2, report.UntrackedFiles)
+	assert.Equal(t, wantLooseBytes, report.ReclaimableBytes)
+	assert.Equal(t, 2, report.ReclaimedFiles)
+	assert.Equal(t, 1, report.RemovedBlobs)
+	assert.Equal(t, 1, report.Removed, "the logical blob is removed exactly once")
+	assert.NoFileExists(t, rawPath)
+	assert.NoFileExists(t, zstdPath)
+}
+
 func TestGCDryRunAndRun(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	f := createFileWithContent(t, ts, s, "/g.txt", "gc-me")

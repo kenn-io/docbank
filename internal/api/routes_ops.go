@@ -18,6 +18,7 @@ import (
 
 	"go.kenn.io/docbank/internal/ingest"
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func registerOpsRoutes(api huma.API, d Deps, g *gate) {
@@ -476,27 +477,50 @@ func addRepackReport(total *internalmaintenance.RepackReport, page internalmaint
 // leaves reconcilable row-without-file state, never the reverse.
 func runGC(ctx context.Context, d Deps, run bool) (GCReport, error) {
 	report := GCReport{Run: run}
-	loose, err := d.Blobs.List()
+	loose, err := d.Blobs.ListDetailed()
 	if err != nil {
 		return GCReport{}, FromStoreError(err)
 	}
-	for hash, size := range loose {
+	unreachable, err := d.Store.UnreachableBlobs(ctx)
+	if err != nil {
+		return GCReport{}, FromStoreError(err)
+	}
+	unreachableHashes := make(map[string]struct{}, len(unreachable))
+	for _, candidate := range unreachable {
+		unreachableHashes[candidate.Hash] = struct{}{}
+	}
+	initiallyUntracked := make(map[string]struct{})
+	for hash, inventory := range loose {
 		recorded, recordErr := d.Store.HasBlob(ctx, hash)
 		if recordErr != nil {
 			return GCReport{}, FromStoreError(recordErr)
 		}
-		if recorded {
+		if !recorded {
+			initiallyUntracked[hash] = struct{}{}
+			report.UntrackedFiles += inventory.Files
+			report.ReclaimableBytes += inventory.StoredBytes
 			continue
 		}
-		report.UntrackedFiles++
-		report.ReclaimableBytes += size
-		if run {
-			if removeErr := d.Blobs.Remove(hash); removeErr != nil &&
-				!errors.Is(removeErr, fs.ErrNotExist) {
-				return GCReport{}, FromStoreError(removeErr)
-			}
-			report.ReclaimedFiles++
-			report.Removed++
+		if _, candidate := unreachableHashes[hash]; !candidate {
+			continue
+		}
+		physical, physicalErr := d.Store.PhysicalContent(ctx, hash)
+		if physicalErr != nil &&
+			!errors.Is(physicalErr, store.ErrPhysicalAuthorityMissing) {
+			return GCReport{}, FromStoreError(physicalErr)
+		}
+		if physicalErr != nil || physical.Kind != "loose" {
+			report.UntrackedFiles += inventory.Files
+			report.ReclaimableBytes += inventory.StoredBytes
+			continue
+		}
+		// Shared bounded GC already accounts for the catalog-authorized loose
+		// representation. Reconcile its indexed byte count to physical reality
+		// and count any second canonical representation as an interrupted-write
+		// orphan without double-counting the authoritative file.
+		report.ReclaimableBytes += inventory.StoredBytes - physical.StoredBytes
+		if inventory.Files > 1 {
+			report.UntrackedFiles += inventory.Files - 1
 		}
 	}
 	var cursor string
@@ -520,7 +544,7 @@ func runGC(ctx context.Context, d Deps, run bool) (GCReport, error) {
 		report.RemovedBlobs += page.RemovedBlobs
 		report.Removed += page.Removed
 		if !page.More {
-			return report, nil
+			break
 		}
 		if page.NextCursor == "" {
 			return GCReport{}, NewError(http.StatusInternalServerError, "internal",
@@ -528,6 +552,36 @@ func runGC(ctx context.Context, d Deps, run bool) (GCReport, error) {
 		}
 		cursor = page.NextCursor
 	}
+	if !run {
+		return report, nil
+	}
+
+	// Shared GC removes authoritative loose content before deleting its row.
+	// A second full daemon-only scan therefore sees only pre-existing orphans
+	// and loose copies whose packed-authority row was just removed. This order
+	// prevents double-counting ordinary loose-authoritative candidates.
+	remaining, err := d.Blobs.ListDetailed()
+	if err != nil {
+		return GCReport{}, FromStoreError(err)
+	}
+	for hash, inventory := range remaining {
+		recorded, recordErr := d.Store.HasBlob(ctx, hash)
+		if recordErr != nil {
+			return GCReport{}, FromStoreError(recordErr)
+		}
+		if recorded {
+			continue
+		}
+		if removeErr := d.Blobs.Remove(hash); removeErr != nil &&
+			!errors.Is(removeErr, fs.ErrNotExist) {
+			return GCReport{}, FromStoreError(removeErr)
+		}
+		report.ReclaimedFiles += inventory.Files
+		if _, wasUntracked := initiallyUntracked[hash]; wasUntracked {
+			report.Removed++
+		}
+	}
+	return report, nil
 }
 
 func runVerify(ctx context.Context, d Deps) (VerifyReport, error) {
