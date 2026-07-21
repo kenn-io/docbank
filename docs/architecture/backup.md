@@ -18,7 +18,7 @@ state. A restored copy is not trusted until `docbank verify` succeeds.
 
 ## Kit integration status
 
-The internal `backupapp` adapter supplies Kit v0.10.0 with Docbank's frozen logical
+The internal `backupapp` adapter supplies Kit v0.11.0 with Docbank's frozen logical
 view: every authoritative `blobs` row, representation-neutral fidelity stats,
 and mixed loose/packed content reads. A short daemon freeze opens and pins one
 deferred SQLite read transaction; the freeze then ends, writers resume into the
@@ -42,8 +42,11 @@ temporary file. The header also preserves the node-ID allocation high-water
 mark, including IDs whose rows were later deleted, so restore never reuses a
 value that an external reference may remember.
 
-Capture reads loose and packed blobs through Kit's bounded-memory stream. The
-archive may grant authority to copied bytes only after terminal EOF verifies
+Capture reads raw loose, zstd loose, and packed blobs through Kit's
+bounded-memory stream. The physical source encoding is not copied into backup
+metadata: Kit decodes and verifies the logical bytes before repository
+publication. The archive may grant authority to copied bytes only after
+terminal EOF verifies
 their stored framing, decoded length, and SHA-256 identity; opening a stream or
 closing it early is not a successful copy.
 

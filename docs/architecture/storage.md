@@ -16,15 +16,17 @@ snapshot. `docbank verify` proves a completed copy is internally consistent.
 ```
 blobs/
 ├── tmp/                      # in-flight writes
-├── <aa>/<sha256>             # loose content; aa = first two hash chars
+├── <aa>/<sha256>[.zst]       # raw or zstd loose content; aa = first two hash chars
 └── packs/<aa>/<pack>.mvpack  # sealed immutable packs
 ```
 
-Blobs are immutable and deduplicated by SHA-256. New content is first
-published loose; the shared Kit engine supports moving eligible content into
-sealed packs without changing its identity. Reads consult the SQLite catalog
-and transparently use the current loose or packed representation. Existing
-loose-only vaults open without conversion.
+Blobs are immutable and deduplicated by SHA-256 over their decoded bytes. New
+content is first published loose. Objects of at least 4 KiB use zstd only when
+it saves at least 10%; smaller or incompressible objects remain raw. The shared
+Kit engine supports moving either loose encoding into sealed packs without
+changing identity. Reads consult the SQLite catalog and transparently use raw
+loose, compressed loose, or packed content. Existing raw-only vaults open
+without conversion.
 
 **Durability discipline.** `go.kenn.io/kit/packstore` streams every write to
 `blobs/tmp/`, fsyncs the file, renames it into place, then fsyncs the shard

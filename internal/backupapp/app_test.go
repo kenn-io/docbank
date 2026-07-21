@@ -3,6 +3,8 @@ package backupapp_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"os"
@@ -109,6 +111,28 @@ func exportMetadata(t *testing.T, metadata *store.Store) []byte {
 
 func TestJSONLLooseSnapshotVerifyAndRestore(t *testing.T) {
 	fixture := newArchiveFixture(t)
+	const compressedName = "compressed-notes.txt"
+	compressedContent := strings.Repeat("a deliberately compressible backup line\n", 1024)
+	fixture.content[compressedName] = compressedContent
+	require.NoError(t, fixture.blobs.WithMutation(t.Context(), func() error {
+		hash, size, err := fixture.blobs.WriteContext(
+			t.Context(), strings.NewReader(compressedContent),
+		)
+		if err != nil {
+			return err
+		}
+		_, err = fixture.metadata.CreateFile(
+			t.Context(), fixture.metadata.RootID(), compressedName,
+			hash, size, "text/plain",
+		)
+		return err
+	}))
+	compressedSum := sha256.Sum256([]byte(compressedContent))
+	compressedHash := packstore.Hash(hex.EncodeToString(compressedSum[:]))
+	assert.FileExists(t, filepath.Join(
+		fixture.root, "blobs", compressedHash.String()[:2], compressedHash.String()+".zst",
+	))
+
 	wantMetadata := exportMetadata(t, fixture.metadata)
 	app := backupapp.New("test-version")
 	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
@@ -122,14 +146,19 @@ func TestJSONLLooseSnapshotVerifyAndRestore(t *testing.T) {
 	require.NotNil(t, manifest.Metadata)
 	assert.Equal(t, backupapp.MetadataFormat, manifest.Metadata.Format)
 	assert.Empty(t, manifest.DB.Engine)
-	assert.Equal(t, int64(2), manifest.Attachments.Rows)
-	assert.Equal(t, int64(2), manifest.Attachments.Blobs)
-	assert.Equal(t, int64(len("alpha backup")+len("bravo backup")), manifest.Attachments.BlobBytes)
+	wantBlobBytes := int64(0)
+	for _, content := range fixture.content {
+		wantBlobBytes += int64(len(content))
+	}
+	wantFiles := int64(len(fixture.content))
+	assert.Equal(t, wantFiles, manifest.Attachments.Rows)
+	assert.Equal(t, wantFiles, manifest.Attachments.Blobs)
+	assert.Equal(t, wantBlobBytes, manifest.Attachments.BlobBytes)
 	stats, err := backupapp.ParseStats(manifest.Stats)
 	require.NoError(t, err)
-	assert.Equal(t, int64(3), stats.Nodes, "root plus two files")
-	assert.Equal(t, int64(2), stats.Files)
-	assert.Equal(t, int64(2), stats.ContentVersions)
+	assert.Equal(t, wantFiles+1, stats.Nodes, "root plus files")
+	assert.Equal(t, wantFiles, stats.Files)
+	assert.Equal(t, wantFiles, stats.ContentVersions)
 	assert.Equal(t, manifest.Attachments.BlobBytes, stats.BlobBytes)
 
 	verified, err := backup.Verify(t.Context(), repo, app, backup.VerifyOptions{Jobs: 2})
@@ -147,8 +176,8 @@ func TestJSONLLooseSnapshotVerifyAndRestore(t *testing.T) {
 		TargetDir: target, Jobs: 2,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), restored.AttachmentBlobs)
-	assert.Equal(t, int64(2), restored.PackedAttachmentBlobs)
+	assert.Equal(t, wantFiles, restored.AttachmentBlobs)
+	assert.Equal(t, wantFiles, restored.PackedAttachmentBlobs)
 	assert.Zero(t, restored.LooseAttachmentBlobs)
 
 	restoredStore, err := store.Open(filepath.Join(target, "docbank.db"))

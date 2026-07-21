@@ -1,6 +1,7 @@
 package blob
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -31,6 +32,88 @@ func TestStoragePolicyKeepsBlobLimitExplicit(t *testing.T) {
 	assert.Equal(t, MaxIngestBytes, int64(1<<32))
 	assert.Equal(t, MaxPackedBlobBytes, int64(64<<20))
 	assert.Equal(t, MaxPackedBlobBytes, StorageLimits().BlobBytes)
+	assert.Equal(t, MinLooseCompressionBytes, int64(4<<10))
+	assert.Equal(t, 10, MinLooseCompressionSavingsPercent)
+	assert.Equal(t, packstore.LooseCompressionOptions{
+		Enabled: true, MinBytes: 4 << 10, MinSavingsPercent: 10,
+	}, looseCompressionPolicy())
+}
+
+func TestWriteCompressesEligibleLooseBlob(t *testing.T) {
+	bs := newTestBlobStore(t)
+	content := []byte(strings.Repeat("compressible document content\n", 1024))
+	wantHash := sha256.Sum256(content)
+	wantHex := hex.EncodeToString(wantHash[:])
+
+	hash, size, err := bs.Write(bytes.NewReader(content))
+	require.NoError(t, err)
+	assert.Equal(t, wantHex, hash)
+	assert.Equal(t, int64(len(content)), size)
+	assert.NoFileExists(t, bs.path(hash))
+	compressedPath := bs.layout.CompressedLoosePath(packstore.Hash(hash))
+	compressedInfo, err := os.Stat(compressedPath)
+	require.NoError(t, err)
+	assert.Less(t, compressedInfo.Size(), size)
+
+	listed, err := bs.List()
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int64{hash: compressedInfo.Size()}, listed)
+
+	stream, gotSize, err := bs.OpenStream(hash)
+	require.NoError(t, err)
+	assert.Equal(t, size, gotSize)
+	got, err := io.ReadAll(stream)
+	require.NoError(t, err)
+	assert.Equal(t, content, got)
+	assert.True(t, stream.Verified())
+	require.NoError(t, stream.Close())
+
+	seekable, err := bs.Open(hash)
+	require.NoError(t, err)
+	got, err = io.ReadAll(seekable)
+	require.NoError(t, err)
+	assert.Equal(t, content, got)
+	require.NoError(t, seekable.Close())
+
+	require.NoError(t, bs.Remove(hash))
+	assert.NoFileExists(t, compressedPath)
+}
+
+func TestWriteKeepsIncompressibleLooseBlobRaw(t *testing.T) {
+	bs := newTestBlobStore(t)
+	content := make([]byte, 32<<10)
+	state := uint64(0x9e3779b97f4a7c15)
+	for i := range content {
+		state ^= state << 13
+		state ^= state >> 7
+		state ^= state << 17
+		content[i] = byte(state)
+	}
+
+	hash, size, err := bs.Write(bytes.NewReader(content))
+	require.NoError(t, err)
+	assert.Equal(t, int64(len(content)), size)
+	assert.FileExists(t, bs.path(hash))
+	assert.NoFileExists(t, bs.layout.CompressedLoosePath(packstore.Hash(hash)))
+}
+
+func TestListAccountsForRawAndCompressedRepresentations(t *testing.T) {
+	bs := newTestBlobStore(t)
+	content := []byte(strings.Repeat("duplicate physical representation\n", 512))
+	hash, _, err := bs.Write(bytes.NewReader(content))
+	require.NoError(t, err)
+	compressedPath := bs.layout.CompressedLoosePath(packstore.Hash(hash))
+	compressedInfo, err := os.Stat(compressedPath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(bs.path(hash), content, 0o600))
+
+	listed, err := bs.List()
+	require.NoError(t, err)
+	assert.Equal(t, int64(len(content))+compressedInfo.Size(), listed[hash])
+
+	require.NoError(t, bs.Remove(hash))
+	assert.NoFileExists(t, bs.path(hash))
+	assert.NoFileExists(t, compressedPath)
 }
 
 func TestWriteAcceptsLooseBlobAbovePackingLimit(t *testing.T) {

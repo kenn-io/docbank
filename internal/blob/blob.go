@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
@@ -27,7 +29,22 @@ const (
 	// MaxPackedBlobBytes is docbank's policy for packing, packed reads, and
 	// packed restore. Larger admitted objects remain authoritative loose blobs.
 	MaxPackedBlobBytes int64 = 64 << 20
+
+	// MinLooseCompressionBytes avoids compression staging for tiny objects.
+	MinLooseCompressionBytes int64 = 4 << 10
+
+	// MinLooseCompressionSavingsPercent keeps zstd only when it materially
+	// reduces the physical loose representation.
+	MinLooseCompressionSavingsPercent = 10
 )
+
+func looseCompressionPolicy() packstore.LooseCompressionOptions {
+	return packstore.LooseCompressionOptions{
+		Enabled:           true,
+		MinBytes:          MinLooseCompressionBytes,
+		MinSavingsPercent: MinLooseCompressionSavingsPercent,
+	}
+}
 
 // StorageLimits returns Kit's packed-read and maintenance limits with
 // docbank's current packed-object policy.
@@ -50,6 +67,24 @@ type Store struct {
 	coordinator *packstore.Coordinator
 }
 
+type compressedLooseCatalog struct{ packstore.Catalog }
+
+func (c compressedLooseCatalog) ListUnpacked(ctx context.Context) ([]packstore.Candidate, error) {
+	candidates, err := c.Catalog.ListUnpacked(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing unpacked blobs for compressed storage: %w", err)
+	}
+	for i := range candidates {
+		if err := candidates[i].Hash.Validate(); err != nil {
+			return nil, fmt.Errorf("validating unpacked blob candidate: %w", err)
+		}
+		hash := candidates[i].Hash.String()
+		compressedPath := hash[:2] + "/" + hash + ".zst"
+		candidates[i].Paths = append([]string{compressedPath}, candidates[i].Paths...)
+	}
+	return candidates, nil
+}
+
 // New constructs the daemon-owned store over catalog membership and blobsDir.
 func New(catalog packstore.Catalog, blobsDir string) (*Store, error) {
 	layout, err := newLayout(blobsDir)
@@ -57,10 +92,11 @@ func New(catalog packstore.Catalog, blobsDir string) (*Store, error) {
 		return nil, err
 	}
 	coordinator := packstore.NewCoordinator()
-	maintainer, err := packstore.NewMaintainer(catalog, layout, packstore.MaintainerOptions{
-		Coordinator: coordinator,
-		Limits:      StorageLimits(),
-	})
+	maintainer, err := packstore.NewMaintainer(
+		compressedLooseCatalog{Catalog: catalog}, layout, packstore.MaintainerOptions{
+			Coordinator: coordinator,
+			Limits:      StorageLimits(),
+		})
 	if err != nil {
 		return nil, fmt.Errorf("creating blob maintainer: %w", err)
 	}
@@ -185,9 +221,10 @@ func (s *Store) Write(r io.Reader) (string, int64, error) {
 // WriteContext is Write with cancellation.
 func (s *Store) WriteContext(ctx context.Context, r io.Reader) (string, int64, error) {
 	result, err := s.loose.Write(ctx, r, packstore.WriteOptions{
-		Durability: packstore.DurablePublication,
-		Dedup:      packstore.VerifyTypeAndSize,
-		MaxBytes:   MaxIngestBytes,
+		Durability:  packstore.DurablePublication,
+		Dedup:       packstore.VerifyTypeAndSize,
+		MaxBytes:    MaxIngestBytes,
+		Compression: looseCompressionPolicy(),
 	})
 	if err != nil {
 		return "", 0, fmt.Errorf("writing blob: %w", err)
@@ -262,8 +299,10 @@ func (s *Store) Remove(hash string) error {
 	return nil
 }
 
-// List returns canonical loose objects only. GC uses this to find interrupted
-// writes that never gained a blobs row; pack files are deliberately excluded.
+// List returns canonical loose objects and their physical stored bytes. Raw
+// and zstd representations share one logical hash; if repair evidence leaves
+// both present, their sizes are summed so status and GC account for every byte
+// that Remove will reclaim. Pack files are deliberately excluded.
 func (s *Store) List() (map[string]int64, error) {
 	shards, err := os.ReadDir(s.dir)
 	if err != nil {
@@ -279,15 +318,22 @@ func (s *Store) List() (map[string]int64, error) {
 			return nil, fmt.Errorf("reading blob shard %s: %w", shard.Name(), err)
 		}
 		for _, entry := range entries {
-			name := entry.Name()
-			if !validHash(name) || name[:2] != shard.Name() || !entry.Type().IsRegular() {
+			filename := entry.Name()
+			hash := strings.TrimSuffix(filename, ".zst")
+			if filename != hash && filename != hash+".zst" {
+				continue
+			}
+			if !validHash(hash) || hash[:2] != shard.Name() || !entry.Type().IsRegular() {
 				continue
 			}
 			info, err := entry.Info()
 			if err != nil {
-				return nil, fmt.Errorf("reading blob %s: %w", name, err)
+				return nil, fmt.Errorf("reading blob %s: %w", filename, err)
 			}
-			out[name] = info.Size()
+			if info.Size() > math.MaxInt64-out[hash] {
+				return nil, fmt.Errorf("counting physical bytes for blob %s: size overflow", hash)
+			}
+			out[hash] += info.Size()
 		}
 	}
 	return out, nil
