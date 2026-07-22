@@ -237,7 +237,7 @@ func normalizedMIMEOverride(value string) (string, error) {
 }
 
 func stageCurrentVersion(
-	ctx context.Context, c *client.Client, node api.Node, staging *editStaging,
+	ctx context.Context, c *client.Client, node api.Node, staging *privateStaging,
 	renderer *backupProgressRenderer,
 ) (path string, retErr error) {
 	stream, err := c.VersionContent(ctx, node.CurrentVersionID)

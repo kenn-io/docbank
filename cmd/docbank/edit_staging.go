@@ -10,14 +10,14 @@ import (
 	"strings"
 )
 
-type editStaging struct {
+type privateStaging struct {
 	path       string
 	root       *os.Root
 	pin        *os.File
 	stagedName string
 }
 
-func openEditStaging(path string, pin *os.File) (*editStaging, error) {
+func openPrivateStaging(path string, pin *os.File) (*privateStaging, error) {
 	root, err := os.OpenRoot(path)
 	if err != nil {
 		var pinErr error
@@ -30,10 +30,10 @@ func openEditStaging(path string, pin *os.File) (*editStaging, error) {
 			os.RemoveAll(path),
 		)
 	}
-	return &editStaging{path: path, root: root, pin: pin}, nil
+	return &privateStaging{path: path, root: root, pin: pin}, nil
 }
 
-func (s *editStaging) createFile(vaultName string) (*os.File, string, error) {
+func (s *privateStaging) createFile(vaultName string) (*os.File, string, error) {
 	pattern := editStagePattern(vaultName)
 	for range 10 {
 		var random [16]byte
@@ -54,7 +54,7 @@ func (s *editStaging) createFile(vaultName string) (*os.File, string, error) {
 	return nil, "", errors.New("creating staged file: repeated name collisions")
 }
 
-func (s *editStaging) removeAll() error {
+func (s *privateStaging) removeAll() error {
 	var removeFileErr error
 	if s.root != nil && s.stagedName != "" {
 		removeFileErr = s.root.Remove(s.stagedName)

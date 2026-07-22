@@ -2,12 +2,19 @@
 
 package main
 
-import "os"
+import (
+	"os"
+	"path/filepath"
+)
 
-func makePrivateEditDir() (*editStaging, error) {
-	path, err := os.MkdirTemp("", "docbank-edit-*")
+func makePrivateEditDir() (*privateStaging, error) {
+	return makePrivateStagingDirAt(os.TempDir(), "docbank-edit-")
+}
+
+func makePrivateStagingDirAt(parentPath, prefix string) (*privateStaging, error) {
+	path, err := os.MkdirTemp(parentPath, prefix+"*")
 	if err != nil {
 		return nil, err
 	}
-	return openEditStaging(path, nil)
+	return openPrivateStaging(filepath.Clean(path), nil)
 }
