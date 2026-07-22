@@ -12,7 +12,10 @@ description: The permanent, tamper-evident history model for protected directory
     history. Independent audit verification returns stable terminal evidence
     and checks every protected blob; supplied external evidence is proved as an
     exact prefix of current allocation and scope chains. Scope-wide browsing is
-    available; overlapping scopes and TUI/web projections remain planned. See
+    available. A tag-definition rename or deletion whose assignments span
+    several protected scopes currently fails closed with
+    `audit_mutation_unsupported`; cross-scope attachment fan-out, overlapping
+    scopes, and TUI/web projections remain planned. See
     [Permanent Audited History](../usage/audited-history.md) for the current
     operator workflow.
 
@@ -407,6 +410,13 @@ fan-out events and audited/no-audited mutation marker. Thus an unaudited tag
 change still advances independently verifiable authority, while an omitted
 unassign/reassign or rename-away/rename-back cannot hide behind an unchanged
 final projection.
+
+!!! info "Planned cross-scope attachment fan-out"
+    The canonical model below defines how one attached-metadata change advances
+    every affected scope. The current writer and replay validator implement
+    tag-definition changes only when all audited assignments belong to one
+    scope; a rename or deletion spanning scopes fails closed until this fan-out
+    is implemented.
 
 Fan-out is derived mechanically from that simultaneous transition:
 

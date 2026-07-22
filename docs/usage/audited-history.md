@@ -244,6 +244,13 @@ permanent scopes so every valid vault can still produce one bounded terminal
 evidence bundle. Status, history, verification,
 JSONL export/import, incremental backup, and restore preserve every scope.
 
+A tag may be assigned to documents in several protected scopes. Renaming or
+deleting that shared tag currently returns `audit_mutation_unsupported` and
+changes nothing, because one definition change would need to advance every
+affected scope atomically. To reorganize it now, unassign it from all but one
+scope before renaming, or unassign it everywhere before deletion; separate tag
+definitions avoid this cross-scope coupling.
+
 !!! info "Planned"
     Overlapping scopes and rich TUI/web history views are not implemented.
     Backup restore revalidates the portable JSONL authority before publishing

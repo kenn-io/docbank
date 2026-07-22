@@ -96,7 +96,10 @@ func auditedTaggedNodesTx(
 		}
 		if scope != nil && scope.scopeID != current.scopeID {
 			_ = rows.Close()
-			return nil, nil, errors.New("tag rename across multiple audit scopes is not supported")
+			return nil, nil, fmt.Errorf(
+				"tag definition change affects multiple audit scopes: %w",
+				ErrAuditMutationUnsupported,
+			)
 		}
 		if scope == nil {
 			scope = &current

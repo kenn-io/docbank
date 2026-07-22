@@ -91,6 +91,74 @@ func TestAuditedTagRenameNoOpDoesNotAdvanceHistory(t *testing.T) {
 	require.NoError(t, s.ValidateMetadata(t.Context()))
 }
 
+func TestAuditedTagDefinitionChangesAcrossScopesFailClosed(t *testing.T) {
+	tests := map[string]func(*Store, Tag) error{
+		"rename": func(s *Store, tag Tag) error {
+			_, err := s.RenameTag(t.Context(), tag.ID, tag.Revision, "renamed")
+			return err
+		},
+		"delete": func(s *Store, tag Tag) error {
+			_, err := s.DeleteTag(t.Context(), tag.ID, tag.Revision)
+			return err
+		},
+	}
+	for name, change := range tests {
+		t.Run(name, func(t *testing.T) {
+			s, tag, first, second := newMultiScopeAuditedTagStore(t)
+			var sequence int64
+			require.NoError(t, s.db.QueryRow(
+				`SELECT operation_sequence_high_water FROM audit_authority`,
+			).Scan(&sequence))
+
+			err := change(s, tag)
+			require.ErrorIs(t, err, ErrAuditMutationUnsupported)
+			current, err := s.TagByID(t.Context(), tag.ID)
+			require.NoError(t, err)
+			assert.Equal(t, tag, current)
+			for _, prior := range []Node{first, second} {
+				node, err := s.NodeByID(t.Context(), prior.ID)
+				require.NoError(t, err)
+				assert.Equal(t, prior, node)
+			}
+			var after int64
+			require.NoError(t, s.db.QueryRow(
+				`SELECT operation_sequence_high_water FROM audit_authority`,
+			).Scan(&after))
+			assert.Equal(t, sequence, after)
+			require.NoError(t, s.ValidateMetadata(t.Context()))
+		})
+	}
+}
+
+func newMultiScopeAuditedTagStore(t *testing.T) (*Store, Tag, Node, Node) {
+	t.Helper()
+	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	seedMetadataRoundTrip(t, s)
+	tag, err := s.CreateTag(t.Context(), "shared")
+	require.NoError(t, err)
+	projects, err := s.NodeByPath(t.Context(), "/Projects")
+	require.NoError(t, err)
+	firstPlan, err := s.PreviewInitialAudit(t.Context(), projects.ID, "api", nil)
+	require.NoError(t, err)
+	_, err = s.EnableInitialAudit(t.Context(), firstPlan)
+	require.NoError(t, err)
+	empty, err := s.NodeByPath(t.Context(), "/Empty")
+	require.NoError(t, err)
+	secondPlan, err := s.PreviewInitialAudit(t.Context(), empty.ID, "api", nil)
+	require.NoError(t, err)
+	_, err = s.EnableInitialAudit(t.Context(), secondPlan)
+	require.NoError(t, err)
+	report, err := s.NodeByPath(t.Context(), "/Projects/report.txt")
+	require.NoError(t, err)
+	first, err := s.AssignTag(t.Context(), tag.ID, report.ID, report.Revision)
+	require.NoError(t, err)
+	second, err := s.AssignTag(t.Context(), tag.ID, empty.ID, empty.Revision)
+	require.NoError(t, err)
+	return s, second.Tag, first.Node, second.Node
+}
+
 func TestAuditedTagRenameRollsBackDefinitionNodesAndHistory(t *testing.T) {
 	s, tag, report := newAuditedTagStore(t)
 	assigned, err := s.AssignTag(t.Context(), tag.ID, report.ID, report.Revision)
