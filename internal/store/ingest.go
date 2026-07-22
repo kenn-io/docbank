@@ -6,7 +6,17 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 )
+
+const embeddedSourceKindPrefix = "embedded:"
+
+func publicProvenanceSourceKind(kind string) string {
+	if embedded, ok := strings.CutPrefix(kind, embeddedSourceKindPrefix); ok {
+		return embedded
+	}
+	return kind
+}
 
 // IngestRun identifies one logical import and carries the immutable metadata
 // that is published with its first imported file. Holding a run grants no
@@ -31,7 +41,13 @@ func (s *Store) BeginIngest(ctx context.Context, sourceKind, sourceDesc string) 
 func (s *Store) BeginEmbeddedIngest(
 	ctx context.Context, sourceKind, sourceDesc string,
 ) (IngestRun, error) {
-	return s.beginIngest(ctx, sourceKind, sourceDesc, false)
+	if sourceKind == "" {
+		return IngestRun{}, errors.New("embedded provenance source kind is required")
+	}
+	if err := validateUTF8Field("embedded provenance source kind", sourceKind); err != nil {
+		return IngestRun{}, err
+	}
+	return s.beginIngest(ctx, embeddedSourceKindPrefix+sourceKind, sourceDesc, false)
 }
 
 func (s *Store) beginIngest(
@@ -152,7 +168,9 @@ func ensureIngestRunTx(ctx context.Context, tx *sql.Tx, run IngestRun) (bool, er
 // auto-suffixed copy ("report (2).pdf" next to an identical "report.pdf")
 // is a distinct file, not a re-import. Otherwise returns the smallest free
 // candidate name.
-func resolveIngestNameTx(tx *sql.Tx, parentID int64, name, blobHash string) (string, int64, bool, error) {
+func resolveIngestNameTx(
+	tx *sql.Tx, parentID int64, name, blobHash, sourceKind string,
+) (string, int64, bool, error) {
 	base, ext := splitSuffix(name)
 	rows, err := tx.Query(
 		`SELECT n.id, n.name, cv.blob_hash FROM nodes AS n
@@ -188,7 +206,9 @@ func resolveIngestNameTx(tx *sql.Tx, parentID int64, name, blobHash string) (str
 		return "", 0, false, fmt.Errorf("listing siblings for %q: %w", name, err)
 	}
 	for _, candidate := range sameHash {
-		imported, err := sameOriginTx(tx, candidate.nodeID, name, candidate.inNameFamily)
+		imported, err := sameOriginTx(
+			tx, candidate.nodeID, name, candidate.inNameFamily, sourceKind,
+		)
 		if err != nil {
 			return "", 0, false, err
 		}
@@ -218,16 +238,18 @@ func resolveIngestNameTx(tx *sql.Tx, parentID int64, name, blobHash string) (str
 	}
 }
 
-// sameOriginTx reports whether node nodeID's active provenance leaf has a
-// source basename (normalized) equal to name — i.e. the incoming file is a
-// re-import of the same logical file, not a distinct source that merely
-// shares content. A node with no provenance matches only when its virtual name
-// belongs to the incoming suffix family: its origin is unknown, so the legacy
-// idempotent fallback must not suppress an unrelated same-content file.
-func sameOriginTx(tx *sql.Tx, nodeID int64, name string, allowUnknown bool) (bool, error) {
+// sameOriginTx reports whether node nodeID's active operational provenance leaf
+// has the same source kind and a basename (normalized) equal to name. Embedded
+// references are opaque and are never interpreted as filesystem paths. A node
+// with no provenance matches only when its virtual name belongs to the incoming
+// suffix family: its origin is unknown, so the legacy idempotent fallback must
+// not suppress an unrelated same-content file.
+func sameOriginTx(
+	tx *sql.Tx, nodeID int64, name string, allowUnknown bool, sourceKind string,
+) (bool, error) {
 	rows, err := tx.Query(`
-		SELECT p.original_path
-		FROM provenance AS p
+		SELECT i.source_kind, p.original_path
+		FROM provenance AS p JOIN ingests AS i ON i.id = p.ingest_id
 		WHERE p.node_id = ?
 		  AND NOT EXISTS (
 			SELECT 1 FROM provenance AS successor WHERE successor.supersedes = p.identity
@@ -240,11 +262,17 @@ func sameOriginTx(tx *sql.Tx, nodeID int64, name string, allowUnknown bool) (boo
 	sawProvenance := false
 	match := false
 	for rows.Next() {
-		var origPath string
-		if err := rows.Scan(&origPath); err != nil {
+		var storedSourceKind, origPath string
+		if err := rows.Scan(&storedSourceKind, &origPath); err != nil {
 			return false, fmt.Errorf("scanning provenance of node %d: %w", nodeID, err)
 		}
 		sawProvenance = true
+		if strings.HasPrefix(storedSourceKind, embeddedSourceKindPrefix) {
+			continue
+		}
+		if storedSourceKind != sourceKind {
+			continue
+		}
 		origName, err := NormalizeName(filepath.Base(origPath))
 		if err != nil {
 			continue // unnormalizable origin can't match a normalized name
@@ -334,7 +362,9 @@ func (s *Store) ingestFile(
 		} else {
 			var existingID int64
 			var skip bool
-			finalName, existingID, skip, err = resolveIngestNameTx(tx, parentID, name, blobHash)
+			finalName, existingID, skip, err = resolveIngestNameTx(
+				tx, parentID, name, blobHash, run.record.SourceKind,
+			)
 			if err != nil {
 				return err
 			}
