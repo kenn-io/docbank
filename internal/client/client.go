@@ -75,8 +75,13 @@ func ProblemCode(err error) (string, bool) {
 	return problem.code, true
 }
 
-// ErrIntegrity marks content that failed terminal size, hash, or digest proof.
-var ErrIntegrity = errors.New("content integrity verification failed")
+var (
+	// ErrIntegrity marks content that failed terminal size, hash, or digest proof.
+	ErrIntegrity = errors.New("content integrity verification failed")
+	// ErrMaintenanceBusy marks a mutation rejected while exclusive maintenance
+	// is running or queued. Callers may retry after the operator-visible work ends.
+	ErrMaintenanceBusy = errors.New("vault maintenance is busy")
+)
 
 type integrityError struct{ message string }
 
@@ -172,6 +177,7 @@ var codeToTypedErr = map[string]error{
 	"backup_locked":                backup.ErrRepoLocked,
 	"backup_restore_target_active": home.ErrVaultLocked,
 	"pack_retirement_deferred":     packstore.ErrPackRetirementDeferred,
+	"maintenance_busy":             ErrMaintenanceBusy,
 }
 
 func decodeError(resp *http.Response) error {

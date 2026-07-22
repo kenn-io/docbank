@@ -61,7 +61,8 @@ func commandExitCode(err error, started bool) int {
 		return exitStale
 	}
 	if errors.Is(err, home.ErrVaultLocked) || errors.Is(err, backup.ErrRepoLocked) ||
-		errors.Is(err, packstore.ErrPackRetirementDeferred) {
+		errors.Is(err, packstore.ErrPackRetirementDeferred) ||
+		errors.Is(err, client.ErrMaintenanceBusy) {
 		return exitBusy
 	}
 	if errors.Is(err, store.ErrInvalidName) || errors.Is(err, store.ErrInvalidTag) ||

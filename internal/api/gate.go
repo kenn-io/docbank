@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"net/http"
 	"sync"
 )
 
@@ -15,6 +16,8 @@ import (
 type OperationGate struct {
 	mu           sync.RWMutex
 	preservation sync.RWMutex
+	admission    sync.RWMutex
+	maintenance  int
 }
 
 // NewOperationGate creates one daemon-wide operation coordinator. Every
@@ -29,9 +32,31 @@ func (g *OperationGate) Mutate(fn func() error) error {
 	return fn()
 }
 
-func (g *OperationGate) mutate(fn func() error) error { return g.Mutate(fn) }
+func (g *OperationGate) mutate(fn func() error) error {
+	g.admission.RLock()
+	if g.maintenance > 0 {
+		g.admission.RUnlock()
+		return NewError(http.StatusServiceUnavailable, "maintenance_busy",
+			"vault maintenance is running or queued; retry this mutation after it finishes")
+	}
+	// Keep admission pinned until the shared side is held. A short backup
+	// freeze can therefore delay this mutation without being mistaken for
+	// maintenance, while newly queued maintenance cannot overtake it.
+	g.mu.RLock()
+	g.admission.RUnlock()
+	defer g.mu.RUnlock()
+	return fn()
+}
 
 func (g *OperationGate) maintain(fn func() error) error {
+	g.admission.Lock()
+	g.maintenance++
+	g.admission.Unlock()
+	defer func() {
+		g.admission.Lock()
+		g.maintenance--
+		g.admission.Unlock()
+	}()
 	g.preservation.Lock()
 	defer g.preservation.Unlock()
 	g.mu.Lock()

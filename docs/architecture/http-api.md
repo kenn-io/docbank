@@ -444,9 +444,13 @@ vault lock (held for the daemon's whole lifetime, not per-request), an
 in-process `sync.RWMutex`-shaped gate serializes them against regular
 mutations: ordinary mutating handlers (`PATCH`, trash, restore, create,
 ingest) take the read side and may run concurrently with each other;
-maintenance handlers take the write side. Requests queue rather than
-fail, and maintenance routes are exempt from the per-request timeout
-since `gc`/`verify` can legitimately run long on a large vault.
+maintenance handlers take the write side. Once maintenance is running or
+queued for that write side, a new HTTP mutation fails immediately with
+`503 maintenance_busy` instead of becoming an indistinguishable long wait.
+Daemon-owned background jobs retain blocking gate semantics so a transient
+maintenance run does not permanently fail a watcher or extraction worker.
+Maintenance routes are exempt from the per-request timeout since
+`gc`/`verify` can legitimately run long on a large vault.
 
 Backup creation uses the mutation-exclusive side only for Kit's freeze window.
 Once Docbank's deferred read transaction is pinned, ordinary mutations continue
@@ -506,6 +510,7 @@ machine-readable string clients branch on instead of parsing `detail`:
 | `loopback_only` | 403 | server-path ingest or preflight called by a non-loopback peer |
 | `digest_mismatch` / `size_mismatch` | 422 | uploaded file bytes disagree with the required declaration; no node/blob authority committed |
 | `too_large` | 413 | upload exceeded its declared size plus bounded multipart overhead |
+| `maintenance_busy` | 503 | exclusive vault maintenance is running or queued; retry the mutation after it finishes |
 | `pack_retirement_deferred` | 503 | repack authority committed but an old source pack remains physically locked; release the lock, then run `storage pack` reconciliation |
 | `unauthorized` | 401 | missing or invalid API key; bad shutdown token |
 | `internal` | 500 | unmapped error (still surfaced with a message — this is a single-user local daemon, not a hardened multi-tenant service) |
