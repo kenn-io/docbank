@@ -715,6 +715,19 @@ func TestConfiguredWatchIngestsStableFilesAndRemainsObservable(t *testing.T) {
 	assert.Equal(t, "watch:sessions", got.Items[1].Name)
 	assert.Equal(t, "running", got.Items[1].Status)
 
+	out, err = runCLI(t, "watch", "list", "--json")
+	require.NoError(t, err)
+	var watches api.WatchedInboxList
+	require.NoError(t, json.Unmarshal([]byte(out), &watches))
+	require.Len(t, watches.Items, 1)
+	assert.Equal(t, "sessions", watches.Items[0].Name)
+	assert.Equal(t, source, watches.Items[0].Source)
+	assert.Equal(t, "/agents", watches.Items[0].Destination)
+	assert.Equal(t, "50ms", watches.Items[0].SettleTime)
+	assert.Equal(t, "10ms", watches.Items[0].ScanInterval)
+	require.NotNil(t, watches.Items[0].Job)
+	assert.Equal(t, "running", watches.Items[0].Job.Status)
+
 	// A configured watcher keeps a background daemon alive even when the
 	// ordinary request-idle timeout is deliberately tiny.
 	time.Sleep(100 * time.Millisecond)

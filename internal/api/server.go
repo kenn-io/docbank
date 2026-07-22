@@ -111,6 +111,7 @@ func NewServer(d Deps) *Server {
 	registerOpsRoutes(humaAPI, d, g)    // Task 7
 	registerBackupRoutes(humaAPI, d, g)
 	registerJobRoutes(humaAPI, d)
+	registerWatchRoutes(humaAPI, d)
 	registerUploadRoute(mux, humaAPI, d, g)
 	registerContentWriteRoute(mux, humaAPI, d, g)
 	registerContentRevertRoute(humaAPI, d, g)

@@ -881,6 +881,27 @@ until the daemon restarts. `--json` emits `{"items": [...]}` for automation.
 Every daemon registers `extract:plain-text`; configured watched inboxes add
 `watch:<name>` tasks. See [Daemon](architecture/daemon.md).
 
+## docbank watch
+
+!!! info "Release availability"
+
+    `docbank watch list` is newer than v0.10.0. Build from source to use it
+    until the next release is tagged.
+
+```
+docbank watch list [--json]
+```
+
+Lists the daemon's effective watched-inbox configuration in stable name order:
+the machine-local source, virtual-tree destination, complete settle window,
+scan interval, exclusion count, and current runner state. Human output quotes
+source and destination paths so terminal control characters cannot disguise
+them. `--json` includes the complete exclusion rules and the corresponding
+job record for agents and automation.
+
+This command is inspection only. Edit `config.toml` and restart the daemon to
+change a watch.
+
 ## docbank update
 
 ```

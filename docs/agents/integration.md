@@ -41,6 +41,18 @@ placement. `DOCBANK_HOME=/path/to/another/vault docbank info --json` selects
 and confirms another independently owned archive without changing a global
 profile or opening its database directly.
 
+In source builds newer than v0.10.0, a workflow that depends on watched
+ingestion can inspect the daemon's effective configuration and runner state
+rather than assuming the local file is active:
+
+```bash
+docbank watch list --json
+```
+
+Each item reports the machine-local source, virtual destination, full settle
+window, scan interval, literal exclusions, and current job record. This is a
+read-only view; changing `config.toml` still requires a daemon restart.
+
 The canonical contract is generated from the running route definitions:
 
 ```bash
