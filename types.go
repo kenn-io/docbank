@@ -78,7 +78,7 @@ type MutationReceipt struct {
 
 // BatchMoveItem identifies one live source either by SourcePath or by stable
 // NodeID plus IfRevision. DestinationPath is an exact final coordinate
-// interpreted from the batch's initial tree.
+// whose parent is resolved in the batch's planned final tree.
 type BatchMoveItem struct {
 	SourcePath      string `json:"source_path,omitempty"`
 	NodeID          int64  `json:"node_id,omitempty"`

@@ -126,11 +126,13 @@ standard input with `-`:
 docbank mv batch reorganization.json
 ```
 
-Every source and destination is interpreted against the tree as it existed at
-the start of the transaction. Unlike ordinary `mv`, a batch destination is the
-exact final coordinate; an existing directory is not shorthand for “move into
-this directory.” To move a document into `/filed` while retaining `a.pdf`, name
-`/filed/a.pdf` explicitly. This makes file and directory swaps unambiguous.
+Every source is interpreted against the tree as it existed at the start of the
+transaction. A batch destination is the exact final coordinate; an existing
+directory is not shorthand for “move into this directory.” Destination parents
+are resolved in the planned final tree, so one item can move beneath a directory
+that another item moves in the same batch. To move a document into `/filed`
+while retaining `a.pdf`, name `/filed/a.pdf` explicitly. This makes file and
+directory swaps unambiguous.
 The complete final tree is then checked for missing parents, duplicate sibling
 names, and cycles before any row changes. If any selector, revision, or final
 coordinate is invalid, nothing moves.

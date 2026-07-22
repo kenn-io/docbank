@@ -513,10 +513,11 @@ virtual path or `id:<number>`) and an absolute `destination`:
 ]}
 ```
 
-All coordinates are interpreted from the transaction's initial tree. A batch
-destination is always the exact final coordinate: unlike ordinary `mv`, an
-existing directory does not mean “move into this directory.” Name the retained
-basename explicitly when that is the intent. The complete final tree is
+Sources are interpreted from the transaction's initial tree. A batch
+destination is always the exact final coordinate, and its parent is resolved
+in the planned final tree: unlike ordinary `mv`, an existing directory does
+not mean “move into this directory.” Name the retained basename explicitly
+when that is the intent. The complete final tree is
 validated before anything moves, which supports file and directory swaps and
 nested reorganizations without temporary user-visible names. Any missing
 source or parent, stale ID revision, collision, or cycle rejects the entire

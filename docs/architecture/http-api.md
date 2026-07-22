@@ -74,11 +74,12 @@ coordinate-oriented form when the source path itself is the intended target.
 
 `POST /batch/move` accepts `{moves:[...]}`. Each item selects its source with
 either `source_path`, or `node_id` plus the revision previously inspected by
-the caller, and supplies `destination_path`. Every selector and destination is
-resolved against one pre-transaction topology. Each destination is an exact
-final coordinate; batch requests do not apply the single-move “move into an
-existing directory” shorthand. Docbank constructs and checks the complete
-final topology in Go before applying it, so file and directory swaps and nested
+the caller, and supplies `destination_path`. Every selector resolves against
+one pre-transaction topology. Each destination is an exact final coordinate,
+and its parent resolves against the planned final topology; batch requests do
+not apply the single-move “move into an existing directory” shorthand. Docbank
+constructs and checks the complete final topology in Go before applying it, so
+file and directory swaps and nested
 reorganizations do not depend on unsafe intermediate names. A failure rejects
 the whole plan. The response preserves request order and returns each node's
 prior path plus its complete final node projection and path.

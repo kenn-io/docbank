@@ -65,6 +65,39 @@ func TestBatchMoveSupportsNestedNetChanges(t *testing.T) {
 	assert.Equal(t, "/y/b", results[1].Path)
 }
 
+func TestBatchMoveResolvesDestinationParentsInFinalTree(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	a, err := s.Mkdir(ctx, s.RootID(), "a")
+	require.NoError(t, err)
+	_, err = s.Mkdir(ctx, s.RootID(), "x")
+	require.NoError(t, err)
+	item, err := s.CreateFile(ctx, s.RootID(), "item.txt", fakeHash("item"), 4, "text/plain")
+	require.NoError(t, err)
+
+	_, err = s.BatchMove(ctx, []BatchMoveRequest{
+		{SourcePath: "/a", DestinationPath: "/x/a"},
+		{SourcePath: "/item.txt", DestinationPath: "/a/item.txt"},
+	})
+	require.ErrorIs(t, err, ErrNotFound)
+	_, err = s.NodeByPath(ctx, "/a")
+	require.NoError(t, err)
+	_, err = s.NodeByPath(ctx, "/item.txt")
+	require.NoError(t, err)
+
+	results, err := s.BatchMove(ctx, []BatchMoveRequest{
+		{SourcePath: "/a", DestinationPath: "/x/a"},
+		{SourcePath: "/item.txt", DestinationPath: "/x/a/item.txt"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/x/a", results[0].Path)
+	assert.Equal(t, "/x/a/item.txt", results[1].Path)
+	moved, err := s.NodeByPath(ctx, "/x/a/item.txt")
+	require.NoError(t, err)
+	assert.Equal(t, item.ID, moved.ID)
+	assert.Equal(t, a.ID, *moved.ParentID)
+}
+
 func TestBatchMoveSwapsDirectoryCoordinates(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -144,7 +177,7 @@ func TestBatchMoveFailureRollsBackWholePlan(t *testing.T) {
 	assert.Empty(t, children)
 }
 
-func TestBatchMoveRejectsDuplicateSourceAndFinalCycle(t *testing.T) {
+func TestBatchMoveRejectsDuplicateSourceAndMissingFinalParent(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
 	a, err := s.Mkdir(ctx, s.RootID(), "a")
@@ -164,5 +197,5 @@ func TestBatchMoveRejectsDuplicateSourceAndFinalCycle(t *testing.T) {
 		{NodeID: a.ID, IfRevision: a.Revision, DestinationPath: "/a/b/a"},
 		{NodeID: b.ID, IfRevision: b.Revision, DestinationPath: "/a/b"},
 	})
-	require.ErrorIs(t, err, ErrCycle)
+	require.ErrorIs(t, err, ErrNotFound)
 }

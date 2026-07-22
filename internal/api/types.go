@@ -44,7 +44,7 @@ type NodePage struct {
 
 // BatchMoveItem identifies a live source either by absolute virtual path or
 // by stable node identity plus revision. DestinationPath is an exact final
-// coordinate interpreted against the transaction's initial topology.
+// coordinate whose parent is resolved in the planned final topology.
 type BatchMoveItem struct {
 	SourcePath      string `json:"source_path,omitempty"`
 	NodeID          int64  `json:"node_id,omitempty" minimum:"1"`

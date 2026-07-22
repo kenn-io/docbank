@@ -164,8 +164,8 @@ func registerMutateRoutes(api huma.API, d Deps, g *gate) {
 	huma.Register(api, huma.Operation{
 		OperationID: "batchMove", Method: http.MethodPost, Path: "/api/v1/batch/move",
 		Summary: "Apply an all-or-nothing document reorganization",
-		Description: "Every source and destination is resolved against one initial tree. " +
-			"Each destination is an exact final coordinate, including when a directory initially occupies it. " +
+		Description: "Every source is resolved against one initial tree. " +
+			"Each destination is an exact final coordinate, and its parent is resolved in the planned final tree. " +
 			"The daemon validates the complete final tree before changing anything, so plans may " +
 			"perform swaps and nested reorganizations without exposing intermediate names. " +
 			"A source uses either source_path or node_id plus revision, never both.",

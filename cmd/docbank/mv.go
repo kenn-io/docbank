@@ -78,9 +78,9 @@ var mvBatchCmd = &cobra.Command{
 Each item has "source" (an absolute path or id:<number>) and an absolute
 "destination". Unlike ordinary mv, each destination is an exact final
 coordinate—even when that coordinate initially holds a directory. A dash reads
-the plan from standard input. Every destination is interpreted against the tree
-as it existed before the transaction, so a plan can safely express file or
-directory swaps and nested reorganizations.`,
+the plan from standard input. Sources resolve in the initial tree; destination
+parents resolve in the planned final tree. This lets one item move beneath a
+directory that another item moves in the same transaction.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		plan, err := readBatchMovePlan(cmd, args[0])
