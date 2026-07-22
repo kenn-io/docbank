@@ -268,10 +268,12 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case "esc", "left", "h", "backspace":
 		if m.mode == modeSearch && m.searchReturn != nil {
+			m.requestID++
 			m.restore(*m.searchReturn)
 			return m, nil
 		}
 		if len(m.stack) > 0 {
+			m.requestID++
 			m.restore(m.stack[len(m.stack)-1])
 			m.stack = m.stack[:len(m.stack)-1]
 			return m, nil

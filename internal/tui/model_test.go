@@ -159,6 +159,57 @@ func TestModelPreservesViewStateAcrossNavigation(t *testing.T) {
 	assert.Equal(t, "README.txt", model.rows[model.cursor].node.Name)
 }
 
+func TestBackIgnoresDelayedDirectoryRefresh(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+
+	model, cmd := updateModel(t, model, key(tea.KeyEnter))
+	model = runModelCommand(t, model, cmd)
+	require.Equal(t, "/docs", model.directory.Path)
+
+	model, delayedRefresh := updateModel(t, model, runeKey('r'))
+	require.NotNil(t, delayedRefresh)
+	pendingRequestID := model.requestID
+	model, cmd = updateModel(t, model, key(tea.KeyLeft))
+	require.Nil(t, cmd)
+	assert.Equal(t, "/", model.directory.Path)
+	assert.Greater(t, model.requestID, pendingRequestID)
+
+	model = runModelCommand(t, model, delayedRefresh)
+	assert.Equal(t, "/", model.directory.Path)
+	require.Len(t, model.rows, 2)
+	assert.Equal(t, "/docs", model.rows[0].path)
+}
+
+func TestLeavingSearchIgnoresDelayedRefresh(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+
+	model, _ = updateModel(t, model, runeKey('/'))
+	model.searchInput.SetValue("quarterly report")
+	model, cmd := updateModel(t, model, key(tea.KeyEnter))
+	model = runModelCommand(t, model, cmd)
+	require.Equal(t, modeSearch, model.mode)
+
+	model, delayedRefresh := updateModel(t, model, runeKey('r'))
+	require.NotNil(t, delayedRefresh)
+	pendingRequestID := model.requestID
+	model, cmd = updateModel(t, model, key(tea.KeyEscape))
+	require.Nil(t, cmd)
+	assert.Equal(t, modeBrowse, model.mode)
+	assert.Equal(t, "/", model.directory.Path)
+	assert.Greater(t, model.requestID, pendingRequestID)
+
+	model = runModelCommand(t, model, delayedRefresh)
+	assert.Equal(t, modeBrowse, model.mode)
+	assert.Equal(t, "/", model.directory.Path)
+	require.Len(t, model.rows, 2)
+}
+
 func TestDirectoryLoadsFollowStableNodeIdentity(t *testing.T) {
 	backend := newFakeBackend()
 	model, err := New(t.Context(), backend)
