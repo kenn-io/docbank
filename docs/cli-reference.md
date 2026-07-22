@@ -568,7 +568,7 @@ returns the complete restored node with its resulting path and revision.
 ## docbank search
 
 ```
-docbank search <query>... [--tag <name-or-id>] [--mime-type <type/subtype>] [--under <path-or-id>] [--limit <n>] [--json]
+docbank search <query>... [--tag <name-or-id>] [--mime-type <type/subtype>] [--under <path-or-id>] [--modified-since <timestamp>] [--modified-before <timestamp>] [--limit <n>] [--json]
 ```
 
 Full-text search over live node names and verified extracted text (FTS5).
@@ -591,11 +591,17 @@ excludes directories and retained non-current versions.
 live directory and searches its descendants. The CLI resolves paths before the
 request and the daemon uses the resulting stable directory ID. The directory
 itself is excluded; a file, missing node, or trashed directory is rejected.
+`--modified-since` and `--modified-before` accept absolute RFC3339 timestamps
+and filter the live node's current modification time. The lower bound is
+inclusive and the upper bound is exclusive. Either may be used alone; when
+both are present, the lower bound must be earlier. Inputs are normalized to
+canonical UTC before the request.
 
 `--json` emits the typed search report with `hits`, the applied `limit`, and
 an explicit `truncated` boolean. A filtered report also echoes the stable
-`tag_id`, normalized `mime_type`, and stable `under_node_id` when supplied. An
-empty result uses `"hits": []`.
+`tag_id`, normalized `mime_type`, stable `under_node_id`, and canonical
+`modified_since` / `modified_before` bounds when supplied. An empty result uses
+`"hits": []`.
 
 The daemon indexes current UTF-8 `text/*`, JSON, and JSONL blobs up to 16 MiB
 after a terminally verified read. PDF, Office, and OCR extraction are not yet

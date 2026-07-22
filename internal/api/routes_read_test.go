@@ -290,6 +290,18 @@ func TestSearch(t *testing.T) {
 	assert.True(t, rep.Truncated)
 	assert.Equal(t, "name", rep.Hits[0].Match)
 
+	resp, body = get(t, ts, "/api/v1/search?q=insurance&limit=10&"+
+		"modified_since=2000-01-01T00:00:00-05:00&modified_before=2100-01-01T00:00:00Z", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &rep))
+	require.Len(t, rep.Hits, 2)
+	assert.Equal(t, "2000-01-01T05:00:00.000000000Z", rep.ModifiedSince)
+	assert.Equal(t, "2100-01-01T00:00:00.000000000Z", rep.ModifiedBefore)
+	resp, body = get(t, ts, "/api/v1/search?q=insurance&limit=10&"+
+		"modified_since=2100-01-01T00:00:00Z&modified_before=2000-01-01T00:00:00Z", nil)
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	assert.Contains(t, body, `"code":"validation"`)
+
 	tag, err := s.CreateTag(t.Context(), "renewal")
 	require.NoError(t, err)
 	_, err = s.AssignTag(

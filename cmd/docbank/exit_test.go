@@ -66,6 +66,10 @@ func TestRunProcessDistinguishesUsageAndMissingNodes(t *testing.T) {
 	assert.Equal(t, exitUsage, code)
 	assert.Contains(t, stderr.String(), "absolute virtual path or id:")
 
+	code = run("search", "term", "--modified-since", "yesterday")
+	assert.Equal(t, exitUsage, code)
+	assert.Contains(t, stderr.String(), "absolute RFC3339 timestamp")
+
 	code = run("storage", "pack", "--max-bytes", "-1")
 	assert.Equal(t, exitUsage, code)
 	assert.Contains(t, stderr.String(), "validation")

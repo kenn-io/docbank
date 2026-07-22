@@ -125,12 +125,15 @@ func TestSearchWithOptionsUsesStableTagIdentity(t *testing.T) {
 	report, err := c.SearchWithOptions(
 		ctx, "insurance", 10, client.SearchOptions{
 			TagID: tag.ID, MIMEType: "APPLICATION/PDF", UnderNodeID: directory.ID,
+			ModifiedSince: "2000-01-01T00:00:00-05:00", ModifiedBefore: "2100-01-01T00:00:00Z",
 		},
 	)
 	require.NoError(t, err)
 	assert.Equal(t, tag.ID, report.TagID)
 	assert.Equal(t, "application/pdf", report.MIMEType)
 	assert.Equal(t, directory.ID, report.UnderNodeID)
+	assert.Equal(t, "2000-01-01T05:00:00.000000000Z", report.ModifiedSince)
+	assert.Equal(t, "2100-01-01T00:00:00.000000000Z", report.ModifiedBefore)
 	require.Len(t, report.Hits, 1)
 	assert.Equal(t, tagged.ID, report.Hits[0].Node.ID)
 
@@ -142,6 +145,10 @@ func TestSearchWithOptionsUsesStableTagIdentity(t *testing.T) {
 	require.ErrorContains(t, err, "must not include parameters")
 	_, err = c.SearchWithOptions(ctx, "insurance", 10, client.SearchOptions{UnderNodeID: -1})
 	require.ErrorContains(t, err, "directory node ID must be positive")
+	_, err = c.SearchWithOptions(ctx, "insurance", 10, client.SearchOptions{
+		ModifiedSince: "2100-01-01T00:00:00Z", ModifiedBefore: "2000-01-01T00:00:00Z",
+	})
+	require.ErrorContains(t, err, "must be earlier")
 }
 
 func TestMoveToPathValidatesRequestBeforeTransport(t *testing.T) {

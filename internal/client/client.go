@@ -670,12 +670,15 @@ func (c *Client) VerifyNodeContent(ctx context.Context, id, revision int64) (api
 	return report, err
 }
 
-// SearchOptions narrows ranked search by stable tag, current media type, and
-// one live directory's descendants.
+// SearchOptions narrows ranked search by stable tag, current media type, one
+// live directory's descendants, and an optional half-open modification-time
+// interval.
 type SearchOptions struct {
-	TagID       string
-	MIMEType    string
-	UnderNodeID int64
+	TagID          string
+	MIMEType       string
+	UnderNodeID    int64
+	ModifiedSince  string
+	ModifiedBefore string
 }
 
 func (c *Client) Search(ctx context.Context, query string, limit int) (api.SearchReport, error) {
@@ -697,6 +700,12 @@ func (c *Client) SearchWithOptions(
 	if opts.UnderNodeID < 0 {
 		return out, errors.New("search directory node ID must be positive")
 	}
+	modifiedSince, modifiedBefore, err := store.NormalizeSearchTimeBounds(
+		opts.ModifiedSince, opts.ModifiedBefore,
+	)
+	if err != nil {
+		return out, err
+	}
 	queryValues := url.Values{}
 	queryValues.Set("q", query)
 	queryValues.Set("limit", strconv.Itoa(limit))
@@ -709,10 +718,18 @@ func (c *Client) SearchWithOptions(
 	if opts.UnderNodeID != 0 {
 		queryValues.Set("under_node_id", strconv.FormatInt(opts.UnderNodeID, 10))
 	}
+	if modifiedSince != "" {
+		queryValues.Set("modified_since", modifiedSince)
+	}
+	if modifiedBefore != "" {
+		queryValues.Set("modified_before", modifiedBefore)
+	}
 	if err := c.do(ctx, http.MethodGet, "/api/v1/search?"+queryValues.Encode(), nil, nil, &out); err != nil {
 		return out, err
 	}
-	if out.TagID != opts.TagID || out.MIMEType != mimeType || out.UnderNodeID != opts.UnderNodeID {
+	if out.TagID != opts.TagID || out.MIMEType != mimeType ||
+		out.UnderNodeID != opts.UnderNodeID || out.ModifiedSince != modifiedSince ||
+		out.ModifiedBefore != modifiedBefore {
 		return api.SearchReport{}, errors.New("search response has inconsistent filter authority")
 	}
 	return out, nil

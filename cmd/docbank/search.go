@@ -17,11 +17,13 @@ const (
 )
 
 var (
-	searchLimit int
-	searchJSON  bool
-	searchTag   string
-	searchMIME  string
-	searchUnder string
+	searchLimit  int
+	searchJSON   bool
+	searchTag    string
+	searchMIME   string
+	searchUnder  string
+	searchSince  string
+	searchBefore string
 )
 
 var searchCmd = &cobra.Command{
@@ -36,6 +38,12 @@ var searchCmd = &cobra.Command{
 		if err != nil {
 			return usageError(err)
 		}
+		modifiedSince, modifiedBefore, err := store.NormalizeSearchTimeBounds(
+			searchSince, searchBefore,
+		)
+		if err != nil {
+			return usageError(err)
+		}
 		var underSelector nodeSelector
 		if searchUnder != "" {
 			underSelector, err = parseNodeSelector(searchUnder)
@@ -47,7 +55,9 @@ var searchCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		opts := client.SearchOptions{MIMEType: mimeType}
+		opts := client.SearchOptions{
+			MIMEType: mimeType, ModifiedSince: modifiedSince, ModifiedBefore: modifiedBefore,
+		}
 		var tagName string
 		if searchTag != "" {
 			tag, resolveErr := resolveTag(cmd, c, searchTag)
@@ -89,6 +99,12 @@ var searchCmd = &cobra.Command{
 			if underPath != "" {
 				filters = append(filters, fmt.Sprintf("directory %q", underPath))
 			}
+			if rep.ModifiedSince != "" {
+				filters = append(filters, fmt.Sprintf("modified since %q", rep.ModifiedSince))
+			}
+			if rep.ModifiedBefore != "" {
+				filters = append(filters, fmt.Sprintf("modified before %q", rep.ModifiedBefore))
+			}
 			if len(filters) == 0 {
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "no matches")
 			} else {
@@ -128,6 +144,10 @@ func init() {
 		"require one current parameter-free media type")
 	searchCmd.Flags().StringVar(&searchUnder, "under", "",
 		"require descendants of one live directory path or id:N")
+	searchCmd.Flags().StringVar(&searchSince, "modified-since", "",
+		"require modification at or after an absolute RFC3339 timestamp")
+	searchCmd.Flags().StringVar(&searchBefore, "modified-before", "",
+		"require modification before an absolute RFC3339 timestamp")
 	searchCmd.Flags().BoolVar(&searchJSON, "json", false, "emit machine-readable JSON")
 	rootCmd.AddCommand(searchCmd)
 }
