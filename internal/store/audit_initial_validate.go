@@ -42,6 +42,12 @@ func validateAuditAuthority(
 		}
 		return nil
 	}
+	if counts[1] > int64(MaxAuditEvidenceScopes) {
+		return fmt.Errorf(
+			"audit authority has %d permanent scopes (maximum %d): %w",
+			counts[1], MaxAuditEvidenceScopes, ErrAuditScopeLimit,
+		)
+	}
 	if counts[0] != 1 || counts[1] < 1 || counts[2] < counts[1] || counts[3] == 0 {
 		return fmt.Errorf("audit authority must contain one authority and at least one complete scope: counts=%v", counts)
 	}

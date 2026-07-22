@@ -976,7 +976,10 @@ func auditScopeRecordsByScope(
 			return nil, errors.New("audit scope projection repeats an identity")
 		}
 		projections[scope.scopeID] = scope
-		result[scope.scopeID] = make(map[int64]storedAuditRecord, scope.entryCount)
+		// entryCount comes from imported metadata and is not trusted until the
+		// observed chain records below prove it. Let the map grow only with
+		// records that actually exist instead of allocating from that claim.
+		result[scope.scopeID] = make(map[int64]storedAuditRecord)
 	}
 	for _, record := range records {
 		if record.index.scopeID == nil || record.index.entryCount == nil {
