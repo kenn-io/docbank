@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -136,6 +137,39 @@ func TestMovePathAndTrashPath(t *testing.T) {
 		map[string]any{"src_path": "relative", "dest_path": "/x"})
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 	assert.Contains(t, body, `"code":"validation"`)
+}
+
+func TestBatchMoveSwapsCoordinatesThroughTypedClient(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	left, err := s.Mkdir(t.Context(), s.RootID(), "left")
+	require.NoError(t, err)
+	right, err := s.Mkdir(t.Context(), s.RootID(), "right")
+	require.NoError(t, err)
+	first, err := s.CreateFile(t.Context(), left.ID, "first.txt", testHash("first"), 5, "text/plain")
+	require.NoError(t, err)
+	second, err := s.CreateFile(t.Context(), right.ID, "second.txt", testHash("second"), 6, "text/plain")
+	require.NoError(t, err)
+
+	c := client.New(ts.URL, testAPIKey)
+	report, err := c.BatchMove(t.Context(), []api.BatchMoveItem{
+		{SourcePath: "/left/first.txt", DestinationPath: "/right/second.txt"},
+		{NodeID: second.ID, Revision: second.Revision, DestinationPath: "/left/first.txt"},
+	})
+	require.NoError(t, err)
+	require.Len(t, report.Items, 2)
+	assert.Equal(t, first.ID, report.Items[0].Node.ID)
+	assert.Equal(t, "/left/first.txt", report.Items[0].FromPath)
+	assert.Equal(t, "/right/second.txt", report.Items[0].Node.Path)
+	assert.Equal(t, second.ID, report.Items[1].Node.ID)
+	assert.Equal(t, "/left/first.txt", report.Items[1].Node.Path)
+
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/batch/move", nil,
+		map[string]any{"moves": []map[string]any{{
+			"source_path": "/left/first.txt", "node_id": second.ID,
+			"destination_path": "/elsewhere",
+		}}})
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	assert.Contains(t, body, `"code":"invalid_batch_move"`)
 }
 
 func TestPathMutationsRejectInvalidUTF8BeforeJSONDecoding(t *testing.T) {

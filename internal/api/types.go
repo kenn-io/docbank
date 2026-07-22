@@ -42,6 +42,33 @@ type NodePage struct {
 	Offset int    `json:"offset"`
 }
 
+// BatchMoveItem identifies a live source either by absolute virtual path or
+// by stable node identity plus revision. DestinationPath is interpreted
+// against the transaction's initial topology.
+type BatchMoveItem struct {
+	SourcePath      string `json:"source_path,omitempty"`
+	NodeID          int64  `json:"node_id,omitempty" minimum:"1"`
+	Revision        int64  `json:"revision,omitempty" minimum:"1"`
+	DestinationPath string `json:"destination_path" minLength:"1"`
+}
+
+// BatchMoveRequest is one bounded all-or-nothing reorganization plan.
+type BatchMoveRequest struct {
+	Moves []BatchMoveItem `json:"moves" minItems:"1" maxItems:"1000"`
+}
+
+// BatchMoveReceipt reports one requested node's authoritative pre- and
+// post-transaction coordinates. Node.Path is the final canonical path.
+type BatchMoveReceipt struct {
+	FromPath string `json:"from_path"`
+	Node     Node   `json:"node"`
+}
+
+// BatchMoveReport preserves the plan's request order.
+type BatchMoveReport struct {
+	Items []BatchMoveReceipt `json:"items"`
+}
+
 // ContentVersion is the wire representation of an immutable version record.
 type ContentVersion struct {
 	ID                    string  `json:"id" format:"uuid"`

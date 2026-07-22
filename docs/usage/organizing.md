@@ -107,15 +107,39 @@ assignment commands intentionally address live nodes only. When `trash empty`
 permanently deletes tagged nodes, each affected tag revision advances before
 those assignments are removed.
 
-## Tips for bulk reorganization
+## Atomic bulk reorganization
 
-- `tree` output includes IDs, and `tree --json` exposes them with paths and
-  depths, so scripts can retain stable references while shuffling paths.
-- Every `mv` is its own transaction: a failed move in a scripted batch
-  leaves everything else applied and consistent.
+Use `mv batch` when a reorganization must either happen completely or leave the
+tree untouched. The command reads a bounded JSON plan from a file, or from
+standard input with `-`:
 
-Bulk all-or-nothing moves are not available. Scripts must therefore treat each
-current `mv` as an independently committed operation.
+```json
+{
+  "moves": [
+    {"source": "/inbox/final.pdf", "destination": "/filed/draft.pdf"},
+    {"source": "id:42", "destination": "/inbox/final.pdf"}
+  ]
+}
+```
+
+```bash
+docbank mv batch reorganization.json
+```
+
+Every source and destination is interpreted against the tree as it existed at
+the start of the transaction. The complete final tree is then checked for
+missing parents, duplicate sibling names, and cycles before any row changes.
+This makes swaps and nested reorganizations possible without temporary names.
+If any selector, revision, or final coordinate is invalid, nothing moves.
+
+A path source means “the node at this coordinate when the transaction runs.”
+An `id:N` source means “this exact node”; the CLI resolves it before submission
+and binds the plan to its current revision. Receipts preserve plan order and
+return each node's stable ID, prior path, final path, and resulting revision.
+Plans accept at most 1,000 moves so validation and responses remain bounded.
+
+Ordinary repeated `docbank mv` commands are still independent transactions;
+use `mv batch` when partial completion is not acceptable.
 
 Next: find what you filed with [Searching](searching.md), or manage
 deletion and recovery with [Trash, GC, Repack & Verify](trash-and-gc.md).

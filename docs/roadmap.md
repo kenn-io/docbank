@@ -101,7 +101,9 @@ refs` and `GET /content-references` resolve a SHA-256 identity to
 every retaining current, historical, or trashed node/version pair. Stable tags
 are available across the CLI, authenticated API, typed client, OpenAPI, and
 metadata-v1 backup/restore authority, including bounded forward and reverse
-listings. Permanent first-scope audit enrollment is preview-first across the
+listings. Transactional batch move validates and applies bounded swaps and
+nested reorganizations as one final-state operation across the CLI, API, typed
+client, and audited history. Permanent first-scope audit enrollment is preview-first across the
 CLI and API. Sticky membership, supported logical mutations, allocation and
 scope chains, status evidence, and JSONL backup/restore validation are
 implemented. One-node canonical audit history is available by path or stable ID
@@ -115,7 +117,7 @@ and append later changes to the same stable node without touching source files.
 - Additional and overlapping audit scopes and scope-wide history browsing
   ([current workflow](usage/audited-history.md),
   [model](architecture/audited-history.md))
-- Tag/MIME/date/path search filters; `POST /batch/move` bulk reorganization
+- Tag/MIME/date/path search filters
 - Additional text extraction workers for PDF text layers and office formats;
   bounded UTF-8 text, Markdown, JSON, and JSONL extraction is implemented
 - External integration surface: generalized ingest provenance —

@@ -47,6 +47,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `POST /uploads?parent_id=&name=` | stream one digest-checked remote file — see [addendum](#addendum-post-uploads) | Implemented |
 | `PATCH /nodes/{id}` | move and/or rename, including resolving an absolute `dest_path` transactionally | Implemented |
 | `POST /path/move` · `POST /path/trash` | move / trash by virtual path, resolved and mutated in one store transaction | Implemented |
+| `POST /batch/move` | validate and apply up to 1,000 moves as one final-state transaction | Implemented |
 | `POST /nodes/{id}/trash` · `POST /nodes/{id}/restore` | soft delete / recover | Implemented |
 | `GET /trash` · `POST /trash/empty` `{run, older_than}` | list / report or hard-delete trash roots | Implemented |
 | `POST /gc` `{run}` · `POST /verify` | reclaim unreachable blobs / validate metadata and re-hash all blobs | Implemented |
@@ -70,6 +71,15 @@ For stable-identity moves, `PATCH /nodes/{id}` accepts either the lower-level
 mutually exclusive. The latter resolves POSIX-style destination semantics and
 checks `If-Match` in the same transaction. `POST /path/move` remains the
 coordinate-oriented form when the source path itself is the intended target.
+
+`POST /batch/move` accepts `{moves:[...]}`. Each item selects its source with
+either `source_path`, or `node_id` plus the revision previously inspected by
+the caller, and supplies `destination_path`. Every selector and destination is
+resolved against one pre-transaction topology. Docbank constructs and checks
+the complete final topology in Go before applying it, so swaps and nested
+reorganizations do not depend on unsafe intermediate names. A failure rejects
+the whole plan. The response preserves request order and returns each node's
+prior path plus its complete final node projection and path.
 
 ### Backup repository endpoints
 
@@ -161,6 +171,7 @@ and maintenance are explicit exceptions:
 | `PATCH /tags/{tag_id}`, `DELETE /tags/{tag_id}` | required — tag definition/assignment-set revision |
 | `PUT\|DELETE /nodes/{id}/tags/{tag_id}` | required — target node revision; the tag revision also advances on a real assignment change |
 | `POST /path/move`, `POST /path/trash` | none — the path is resolved and mutated inside one store transaction, so there is no separate read for a revision to guard |
+| `POST /batch/move` | each path source resolves in the transaction; each stable-ID source carries its own required revision |
 | `POST /nodes` (create dir) | none — creation has no prior revision; a name collision is `409` |
 | `POST /ingest` · `POST /ingest/stream` | none — long-running bulk operations with per-path partial success; the destination directory may legitimately change while they run |
 | `POST /uploads` | none — creates or idempotently resolves one file under the stable `parent_id`; name/content collision policy is transactional |
@@ -483,6 +494,7 @@ machine-readable string clients branch on instead of parsing `detail`:
 | `audit_acknowledgment_required` | 422 | enrollment execution omitted the explicit permanent-retention acknowledgment |
 | `audit_not_enrolled` | 422 | the selected node exists but is outside every permanent audit scope |
 | `invalid_audit_cursor` | 422 | the history cursor is malformed or belongs to another stable node |
+| `invalid_batch_move` | 422 | a batch has no moves, too many moves, ambiguous selectors, or an invalid final-state plan |
 | `stale_revision` | 412 | `store.ErrStaleRevision` — `If-Match` didn't match the current revision |
 | `not_dir` / `not_file` / `invalid_name` / `invalid_tag` / `not_trashed` / `is_root` | 422 | `store.ErrNotDir` / `ErrNotFile` / `ErrInvalidName` / `ErrInvalidTag` / `ErrNotTrashed` / `ErrIsRoot` |
 | `validation` | 400, 415, or 422 | malformed request (bad `If-Match`, paths, media type, multipart envelope, or generated validation) |

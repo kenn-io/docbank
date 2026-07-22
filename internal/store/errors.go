@@ -33,6 +33,9 @@ var (
 	// ErrInvalidVersionPrune means a history-pruning selector is absent,
 	// contradictory, or otherwise unsafe to execute.
 	ErrInvalidVersionPrune = errors.New("invalid version-prune selector")
+	// ErrInvalidBatchMove means a batch is empty, oversized, repeats a source,
+	// or does not identify each source in exactly one supported way.
+	ErrInvalidBatchMove = errors.New("invalid batch move")
 	// ErrAuditMutationUnsupported means an audited vault cannot perform a
 	// logical mutation until that mutation records its audit transition.
 	ErrAuditMutationUnsupported = errors.New("mutation is not supported for an audited vault")

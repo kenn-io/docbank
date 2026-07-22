@@ -74,6 +74,28 @@ func TestVaultMoveTrashRestoreExternalAPI(t *testing.T) {
 	require.True(t, report.DryRun)
 }
 
+func TestVaultMoveBatchExternalAPI(t *testing.T) {
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	first, err := vault.Put(t.Context(), "/left/first.txt", strings.NewReader("first\n"), docbank.PutOptions{})
+	require.NoError(t, err)
+	second, err := vault.Put(t.Context(), "/right/second.txt", strings.NewReader("second\n"), docbank.PutOptions{})
+	require.NoError(t, err)
+
+	receipts, err := vault.BatchMove(t.Context(), []docbank.BatchMoveItem{
+		{SourcePath: "/left/first.txt", DestinationPath: "/right/second.txt"},
+		{NodeID: second.Node.ID, IfRevision: second.Node.Revision, DestinationPath: "/left/first.txt"},
+	})
+	require.NoError(t, err)
+	require.Len(t, receipts, 2)
+	require.Equal(t, first.Node.ID, receipts[0].Node.ID)
+	require.Equal(t, "/left/first.txt", receipts[0].FromPath)
+	require.Equal(t, "/right/second.txt", receipts[0].Path)
+	require.Equal(t, second.Node.ID, receipts[1].Node.ID)
+	require.Equal(t, "/left/first.txt", receipts[1].Path)
+}
+
 func TestTreeMutationErrorsAreClassifiableOutsidePackage(t *testing.T) {
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
 	require.NoError(t, err)

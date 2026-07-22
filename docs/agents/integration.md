@@ -443,6 +443,16 @@ they do not accept `If-Match`. Use them for a one-shot instruction tied to the
 path as it exists when the transaction runs. Use ID plus revision when an
 agent previously inspected a particular node and wants lost-update protection.
 
+For a reorganization that must not partially apply, send one bounded plan to
+`POST /api/v1/batch/move` or use `docbank mv batch`. Each source is either an
+absolute `source_path`, resolved inside the transaction, or a stable `node_id`
+with the revision the agent inspected. All `destination_path` values are
+interpreted against the initial tree, and Docbank validates the complete final
+tree before changing it. This permits swaps without temporary names. Require a
+receipt for every request item, in the same order, and reconcile its stable
+node ID, prior path, final path, and resulting revision. Any error means the
+entire plan was rejected.
+
 ## Create and ingest safely
 
 Create a directory under a known parent ID:

@@ -160,7 +160,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	recs, err := client.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
-	require.Equal(t, "24", recs[0].Metadata["protocol_version"])
+	require.Equal(t, "25", recs[0].Metadata["protocol_version"])
 	recs[0].Metadata["protocol_version"] = "9"
 	_, err = client.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
@@ -181,7 +181,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	recs, err = client.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
-	require.Equal(t, "24", recs[0].Metadata["protocol_version"])
+	require.Equal(t, "25", recs[0].Metadata["protocol_version"])
 	recs[0].Metadata["protocol_version"] = "7"
 	_, err = client.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
@@ -366,6 +366,22 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	infoPID := strconv.Itoa(recs[0].PID)
 	assert.NotEqual(t, verifyPID, infoPID)
 
+	// Protocol 24 predates transactional batch moves. Replace it before the
+	// CLI submits a plan that an older same-version daemon cannot recognize.
+	batchPlan := filepath.Join(t.TempDir(), "batch-move.json")
+	require.NoError(t, os.WriteFile(batchPlan, []byte(`{"moves":[{"source":"/inbox/preflight.txt","destination":"/inbox/protocol-batch.txt"}]}`), 0o600))
+	recs[0].Metadata["protocol_version"] = "24"
+	_, err = client.RuntimeStore(dir).Write(recs[0])
+	require.NoError(t, err)
+	out, err = run(oldBin, "mv", "batch", batchPlan)
+	require.NoError(t, err, out)
+	assert.Contains(t, out, `"/inbox/preflight.txt" -> "/inbox/protocol-batch.txt"`)
+	recs, err = client.RuntimeStore(dir).List()
+	require.NoError(t, err)
+	require.Len(t, recs, 1)
+	batchPID := strconv.Itoa(recs[0].PID)
+	assert.NotEqual(t, infoPID, batchPID)
+
 	// Initialize the repository before making the runtime record stale: the
 	// following backup create must replace that daemon before it calls the new
 	// progress-stream endpoint.
@@ -380,7 +396,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	recs, err = client.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
-	require.Equal(t, "24", recs[0].Metadata["protocol_version"])
+	require.Equal(t, "25", recs[0].Metadata["protocol_version"])
 	recs[0].Metadata["protocol_version"] = "4"
 	_, err = client.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
@@ -393,7 +409,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
 	protocolPID := strconv.Itoa(recs[0].PID)
-	assert.NotEqual(t, infoPID, protocolPID)
+	assert.NotEqual(t, batchPID, protocolPID)
 
 	// A mismatched-version start stops the stale daemon and starts its own.
 	out, err = run(newBin, "daemon", "start")

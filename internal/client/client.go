@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/packstore"
@@ -158,6 +159,7 @@ var codeToTypedErr = map[string]error{
 	"not_file":                     store.ErrNotFile,
 	"invalid_name":                 store.ErrInvalidName,
 	"invalid_tag":                  store.ErrInvalidTag,
+	"invalid_batch_move":           store.ErrInvalidBatchMove,
 	"not_trashed":                  store.ErrNotTrashed,
 	"is_root":                      store.ErrIsRoot,
 	"version_node_mismatch":        store.ErrVersionNodeMismatch,
@@ -1983,6 +1985,59 @@ func (c *Client) MovePath(ctx context.Context, srcPath, destPath string) (api.No
 	err := c.do(ctx, http.MethodPost, "/api/v1/path/move", nil,
 		map[string]any{"src_path": srcPath, "dest_path": destPath}, &n)
 	return n, err
+}
+
+// BatchMove applies one bounded all-or-nothing reorganization. Path sources
+// are resolved by the daemon inside the transaction; ID sources require the
+// caller's inspected revision.
+func (c *Client) BatchMove(
+	ctx context.Context, moves []api.BatchMoveItem,
+) (api.BatchMoveReport, error) {
+	var report api.BatchMoveReport
+	if len(moves) == 0 || len(moves) > store.MaxBatchMoves {
+		return report, fmt.Errorf("batch move requires 1-%d items: %w",
+			store.MaxBatchMoves, store.ErrInvalidBatchMove)
+	}
+	for index, move := range moves {
+		byPath, byID := move.SourcePath != "", move.NodeID != 0
+		if byPath == byID {
+			return report, fmt.Errorf("batch move item %d source must use exactly one of path or node ID: %w",
+				index, store.ErrInvalidBatchMove)
+		}
+		if byPath {
+			if !utf8.ValidString(move.SourcePath) || !strings.HasPrefix(move.SourcePath, "/") || move.Revision != 0 {
+				return report, fmt.Errorf("batch move item %d has an invalid path source: %w",
+					index, store.ErrInvalidBatchMove)
+			}
+		} else if move.NodeID < 1 || move.Revision < 1 {
+			return report, fmt.Errorf("batch move item %d requires a positive node ID and revision: %w",
+				index, store.ErrInvalidBatchMove)
+		}
+		if !utf8.ValidString(move.DestinationPath) || !strings.HasPrefix(move.DestinationPath, "/") {
+			return report, fmt.Errorf("batch move item %d destination must be an absolute UTF-8 path: %w",
+				index, store.ErrInvalidBatchMove)
+		}
+	}
+	if err := c.do(ctx, http.MethodPost, "/api/v1/batch/move", nil,
+		api.BatchMoveRequest{Moves: moves}, &report); err != nil {
+		return api.BatchMoveReport{}, err
+	}
+	if len(report.Items) != len(moves) {
+		return api.BatchMoveReport{}, fmt.Errorf(
+			"batch move receipt has %d items, expected %d", len(report.Items), len(moves))
+	}
+	for index, receipt := range report.Items {
+		if receipt.Node.ID < 1 || receipt.Node.Revision < 1 ||
+			receipt.FromPath == "" || receipt.Node.Path == "" {
+			return api.BatchMoveReport{}, fmt.Errorf("batch move receipt item %d is incomplete", index)
+		}
+		if moves[index].NodeID != 0 && receipt.Node.ID != moves[index].NodeID {
+			return api.BatchMoveReport{}, fmt.Errorf(
+				"batch move receipt item %d targets node %d, expected %d",
+				index, receipt.Node.ID, moves[index].NodeID)
+		}
+	}
+	return report, nil
 }
 
 // MoveToPath moves a stable node identity to an absolute virtual destination

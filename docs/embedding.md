@@ -229,6 +229,13 @@ finite number of trash roots: a zero `MaxRoots` uses
 `DefaultTrashEmptyMaxRoots`, and `More` asks the owner to schedule another
 batch.
 
+Use `BatchMove` for an all-or-nothing reorganization of up to
+`MaxBatchMoves` nodes. Each source is either a path resolved inside the
+transaction or a stable node ID with the revision previously inspected. All
+destinations are interpreted from one initial tree and the complete final tree
+is validated before any change, so embedded applications can express swaps and
+nested moves without temporary names or partial completion.
+
 ## Maintain physical storage
 
 Ordinary `Put` calls publish loose content. Call `Pack` explicitly when the
