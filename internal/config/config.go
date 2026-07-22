@@ -60,6 +60,14 @@ type BackupConfig struct {
 	ZstdLevel int    `toml:"zstd_level"`
 }
 
+// StorageConfig controls optional daemon-owned physical storage work. Packing
+// is non-destructive to logical document authority; GC and repack remain
+// explicit operator actions.
+type StorageConfig struct {
+	PackInterval Duration `toml:"pack_interval"`
+	PackMaxBytes int64    `toml:"pack_max_bytes"`
+}
+
 // WatchConfig describes one daemon-owned local inbox. Name and each relative
 // source path form the stable, portable source identity; Source itself is a
 // machine-local location and is intentionally not archive metadata.
@@ -78,6 +86,7 @@ type Config struct {
 	Server  ServerConfig  `toml:"server"`
 	Web     WebConfig     `toml:"web"`
 	Backup  BackupConfig  `toml:"backup"`
+	Storage StorageConfig `toml:"storage"`
 	Watches []WatchConfig `toml:"watch"`
 }
 
@@ -88,7 +97,8 @@ func Default() Config {
 			BindAddr:    "127.0.0.1",
 			IdleTimeout: Duration(30 * time.Minute),
 		},
-		Web: WebConfig{Enabled: true},
+		Web:     WebConfig{Enabled: true},
+		Storage: StorageConfig{PackMaxBytes: 256 << 20},
 	}
 }
 
@@ -215,6 +225,15 @@ func resolveBackupRepo(root string, backup *BackupConfig) error {
 func (c Config) Validate() error {
 	if c.Backup.ZstdLevel != 0 && (c.Backup.ZstdLevel < 1 || c.Backup.ZstdLevel > 19) {
 		return fmt.Errorf("[backup] zstd_level %d: want 0 or 1-19", c.Backup.ZstdLevel)
+	}
+	if c.Storage.PackMaxBytes < 0 {
+		return errors.New("[storage] pack_max_bytes must not be negative")
+	}
+	if c.Storage.PackInterval.Std() < 0 {
+		return errors.New("[storage] pack_interval must not be negative")
+	}
+	if c.Storage.PackInterval.Std() > 0 && c.Storage.PackMaxBytes == 0 {
+		return errors.New("[storage] pack_max_bytes must be positive when pack_interval is enabled")
 	}
 	for _, watch := range c.Watches {
 		if err := validateWatch(watch); err != nil {

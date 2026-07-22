@@ -32,6 +32,10 @@ func (g *OperationGate) Mutate(fn func() error) error {
 	return fn()
 }
 
+// Maintain runs daemon-owned physical maintenance with the same exclusion and
+// admission behavior as an HTTP maintenance request.
+func (g *OperationGate) Maintain(fn func() error) error { return g.maintain(fn) }
+
 func (g *OperationGate) mutate(fn func() error) error {
 	g.admission.RLock()
 	if g.maintenance > 0 {

@@ -20,13 +20,16 @@ func TestLoadMissingFileReturnsDefaults(t *testing.T) {
 	assert.True(t, c.Web.Enabled)
 	assert.Empty(t, c.Backup.Repo)
 	assert.Zero(t, c.Backup.ZstdLevel)
+	assert.Zero(t, c.Storage.PackInterval.Std())
+	assert.Equal(t, int64(256<<20), c.Storage.PackMaxBytes)
 }
 
 func TestLoadParsesFile(t *testing.T) {
 	dir := privateTestConfigDir(t)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(
 		"[server]\nbind_addr = \"127.0.0.1\"\napi_port = 8080\napi_key = \"k\"\n"+
-			"idle_timeout = \"0\"\n[web]\nenabled = false\n[backup]\nrepo = \"snapshots\"\nzstd_level = 9\n"), 0o600))
+			"idle_timeout = \"0\"\n[web]\nenabled = false\n[backup]\nrepo = \"snapshots\"\nzstd_level = 9\n"+
+			"[storage]\npack_interval = \"1h\"\npack_max_bytes = 1048576\n"), 0o600))
 	c, err := Load(dir)
 	require.NoError(t, err)
 	assert.Equal(t, 8080, c.Server.APIPort)
@@ -35,6 +38,8 @@ func TestLoadParsesFile(t *testing.T) {
 	assert.False(t, c.Web.Enabled)
 	assert.Equal(t, filepath.Join(dir, "snapshots"), c.Backup.Repo)
 	assert.Equal(t, 9, c.Backup.ZstdLevel)
+	assert.Equal(t, time.Hour, c.Storage.PackInterval.Std())
+	assert.Equal(t, int64(1<<20), c.Storage.PackMaxBytes)
 }
 
 func TestLoadExpandsBackupRepoHome(t *testing.T) {
@@ -164,5 +169,32 @@ func TestValidateBackupCompressionLevel(t *testing.T) {
 		c := Default()
 		c.Backup.ZstdLevel = level
 		require.ErrorContains(t, c.Validate(), "zstd_level")
+	}
+}
+
+func TestValidateAutomaticPacking(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		interval time.Duration
+		maxBytes int64
+		want     string
+	}{
+		{name: "disabled", maxBytes: 256 << 20},
+		{name: "enabled", interval: time.Hour, maxBytes: 1 << 20},
+		{name: "negative interval", interval: -time.Second, maxBytes: 1, want: "must not be negative"},
+		{name: "negative bytes", maxBytes: -1, want: "must not be negative"},
+		{name: "unbounded enabled", interval: time.Hour, want: "must be positive"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := Default()
+			c.Storage.PackInterval = Duration(tc.interval)
+			c.Storage.PackMaxBytes = tc.maxBytes
+			err := c.Validate()
+			if tc.want == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, tc.want)
+			}
+		})
 	}
 }

@@ -66,7 +66,8 @@ Four commitments:
   per-node history, independent chain/protected-byte verification, exact-prefix
   checks against externally recorded evidence, and backup/restore fidelity
 - FTS5 search over names and verified UTF-8 text/Markdown/JSON contents
-- Mixed loose and packed content storage with explicit pack, GC, and repack
+- Mixed loose and packed content storage with explicit pack, GC, and repack,
+  plus an opt-in bounded daemon packing schedule
 - Whole-vault integrity verification
 - Incremental backup repositories with create, list, verify, and confined restore
 - Daemon-first CLI, authenticated loopback HTTP API, and offline OpenAPI output
@@ -78,8 +79,8 @@ Four commitments:
   SHA-256 checksums and checksum-enforcing installers
 - Native vault, daemon, and recovery support on Linux, macOS, and Windows
 
-Embedded generic source provenance is newer than v0.10.1. Build from `main` to
-use it until the next release is tagged.
+Embedded generic source provenance and scheduled packing are newer than
+v0.10.1. Build from `main` to use them until the next release is tagged.
 
 See the [roadmap](docs/roadmap.md) for high-level product direction beyond the
 capabilities listed here.
