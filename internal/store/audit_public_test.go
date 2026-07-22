@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 
@@ -62,6 +63,14 @@ func TestAuditEnrollmentPreviewEnablesExactReviewedAuthority(t *testing.T) {
 	assertAuditMetadataRoundTrip(t, s)
 }
 
+func TestAdditionalAuditScopeCapacityMatchesEvidenceBound(t *testing.T) {
+	require.NoError(t, requireAdditionalAuditScopeCapacity(MaxAuditEvidenceScopes-1))
+	for _, count := range []int64{MaxAuditEvidenceScopes, MaxAuditEvidenceScopes + 1} {
+		err := requireAdditionalAuditScopeCapacity(count)
+		require.ErrorIs(t, err, ErrAuditScopeLimit)
+	}
+}
+
 func TestAuditEnrollmentPreviewRejectsChangedVaultState(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
@@ -112,7 +121,7 @@ func TestAuditEnrollmentPreviewRejectsTrashedOrDeletedTargetAsStale(t *testing.T
 	}
 }
 
-func TestAuditEnrollmentPreviewIsVaultBoundAndFirstActivationOnly(t *testing.T) {
+func TestAuditEnrollmentPreviewIsVaultBoundAndRejectsOverlap(t *testing.T) {
 	first, err := Open(filepath.Join(t.TempDir(), "first.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, first.Close()) })
@@ -131,9 +140,76 @@ func TestAuditEnrollmentPreviewIsVaultBoundAndFirstActivationOnly(t *testing.T) 
 	_, err = first.EnableInitialAudit(t.Context(), plan)
 	require.NoError(t, err)
 	_, err = first.PreviewInitialAudit(t.Context(), target.ID, "api", nil)
-	require.ErrorIs(t, err, ErrAuditAlreadyEnabled)
+	require.ErrorIs(t, err, ErrAuditScopeOverlap)
 	_, err = first.EnableInitialAudit(t.Context(), plan)
 	require.ErrorIs(t, err, ErrAuditAlreadyEnabled)
+}
+
+func TestAuditEnrollmentAddsDisjointScopeAndRoundTrips(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	seedMetadataRoundTrip(t, s)
+
+	projects, err := s.NodeByPath(t.Context(), "/Projects")
+	require.NoError(t, err)
+	first, err := s.PreviewInitialAudit(t.Context(), projects.ID, "api", nil)
+	require.NoError(t, err)
+	_, err = s.EnableInitialAudit(t.Context(), first)
+	require.NoError(t, err)
+
+	empty, err := s.NodeByPath(t.Context(), "/Empty")
+	require.NoError(t, err)
+	var before bytes.Buffer
+	require.NoError(t, s.ExportMetadata(t.Context(), &before))
+	second, err := s.PreviewInitialAudit(t.Context(), empty.ID, "api", nil)
+	require.NoError(t, err)
+	preview := second.Preview()
+	assert.False(t, preview.InitialAuthority)
+	assert.Zero(t, preview.VaultTopologyNodes)
+	assert.Zero(t, preview.VaultAttachmentRecords)
+	assert.Equal(t, 1, preview.MemberCount)
+
+	status, err := s.EnableInitialAudit(t.Context(), second)
+	require.NoError(t, err)
+	assert.Equal(t, preview.ScopeID, status.EnabledScopeID)
+	assert.Equal(t, int64(2), status.OperationSequenceHighWater)
+	require.Len(t, status.Scopes, 2)
+	var after bytes.Buffer
+	require.NoError(t, s.ExportMetadata(t.Context(), &after))
+	assert.Equal(t, int64(after.Len()-before.Len()), preview.AuthorityJSONBytes)
+
+	_, err = s.Mkdir(t.Context(), projects.ID, "first-scope-child")
+	require.NoError(t, err)
+	_, err = s.Mkdir(t.Context(), empty.ID, "second-scope-child")
+	require.NoError(t, err)
+	require.NoError(t, s.ValidateMetadata(t.Context()))
+	assertAuditMetadataRoundTrip(t, s)
+
+	incomplete := removeAuditScopeByID(t, after.Bytes(), preview.ScopeID)
+	restored, err := Open(filepath.Join(t.TempDir(), "incomplete.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restored.Close()) })
+	err = restored.ImportMetadata(t.Context(), bytes.NewReader(incomplete))
+	require.Error(t, err)
+	var auditRecords int
+	require.NoError(t, restored.db.QueryRow(`SELECT COUNT(*) FROM audit_records`).Scan(&auditRecords))
+	assert.Zero(t, auditRecords, "invalid multi-scope import must roll back")
+}
+
+func removeAuditScopeByID(t *testing.T, input []byte, scopeID string) []byte {
+	t.Helper()
+	lines := bytes.Split(bytes.TrimSpace(input), []byte{'\n'})
+	for index, line := range lines {
+		var scope metadataAuditScope
+		require.NoError(t, json.Unmarshal(line, &scope))
+		if scope.Type == metadataAuditScopeType && scope.ScopeID == scopeID {
+			lines = append(lines[:index], lines[index+1:]...)
+			return append(bytes.Join(lines, []byte{'\n'}), '\n')
+		}
+	}
+	require.FailNow(t, "audit scope not found", scopeID)
+	return nil
 }
 
 func TestAuditStatusExplainsDormantAndProtectedNodes(t *testing.T) {

@@ -24,7 +24,7 @@ func registerAuditRoutes(
 	huma.Register(api, huma.Operation{
 		OperationID: "previewAuditEnrollment", Method: http.MethodPost,
 		Path:    "/api/v1/audit/preview",
-		Summary: "Preview the permanent first audit scope without changing the vault",
+		Summary: "Preview one permanent audit scope without changing the vault",
 	}, func(ctx context.Context, in *struct {
 		Body struct {
 			Path       string `json:"path,omitempty"`
@@ -71,7 +71,7 @@ func registerAuditRoutes(
 
 	huma.Register(api, huma.Operation{
 		OperationID: "enableAudit", Method: http.MethodPost, Path: "/api/v1/audit/enable",
-		Summary: "Permanently enable the exact reviewed first audit scope",
+		Summary: "Permanently enable the exact reviewed audit scope",
 		Description: "Consumes a one-use preview token. The acknowledgment explicitly " +
 			"accepts permanent protected history plus names, topology, tags, assignments, " +
 			"ingests, and provenance " +
@@ -297,7 +297,8 @@ func auditEnrollmentPreview(
 	preview store.AuditEnrollmentPreview, token string, expiresAt time.Time,
 ) AuditEnrollmentPreview {
 	return AuditEnrollmentPreview{
-		VaultID: preview.VaultID, ScopeID: preview.ScopeID,
+		InitialAuthority: preview.InitialAuthority,
+		VaultID:          preview.VaultID, ScopeID: preview.ScopeID,
 		OperationID: preview.OperationID, TargetNodeID: preview.TargetNodeID,
 		TargetPath: preview.TargetPath, BaselineDigest: preview.BaselineDigest,
 		MemberCount: preview.MemberCount, FileCount: preview.FileCount,
@@ -314,7 +315,8 @@ func auditEnrollmentPreview(
 
 func auditStatus(status store.AuditStatus) AuditStatus {
 	out := AuditStatus{
-		Enabled: status.Enabled, VaultID: status.VaultID, LineageID: status.LineageID,
+		Enabled: status.Enabled, EnabledScopeID: status.EnabledScopeID,
+		VaultID: status.VaultID, LineageID: status.LineageID,
 		OperationSequenceHighWater: status.OperationSequenceHighWater,
 		AllocationEntryCount:       status.AllocationEntryCount,
 		AllocationHead:             status.AllocationHead, Scopes: []AuditScopeStatus{},

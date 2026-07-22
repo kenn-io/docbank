@@ -39,10 +39,16 @@ var (
 	// ErrAuditMutationUnsupported means an audited vault cannot perform a
 	// logical mutation until that mutation records its audit transition.
 	ErrAuditMutationUnsupported = errors.New("mutation is not supported for an audited vault")
-	// ErrAuditAlreadyEnabled means first-scope enrollment cannot run because
-	// this vault already has audit authority. Later scope enrollment is a
-	// separate operation with different closure semantics.
+	// ErrAuditAlreadyEnabled means a plan reviewed against dormant authority
+	// cannot run because another operation enabled audit first.
 	ErrAuditAlreadyEnabled = errors.New("audit is already enabled for this vault")
+	// ErrAuditScopeOverlap means an additional scope would share at least one
+	// sticky member with an existing scope. Disjoint scopes are supported first;
+	// overlapping and nested scopes remain fail-closed.
+	ErrAuditScopeOverlap = errors.New("audit scope overlaps existing permanent protection")
+	// ErrAuditScopeLimit means permanent enrollment has reached the maximum
+	// number of scope terminals one evidence bundle can represent.
+	ErrAuditScopeLimit = errors.New("audit scope limit reached")
 	// ErrAuditPreviewStale means enrollment no longer matches the exact
 	// metadata state reviewed by the caller.
 	ErrAuditPreviewStale = errors.New("audit enrollment preview is stale")

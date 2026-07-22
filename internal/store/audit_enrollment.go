@@ -38,6 +38,17 @@ type initialAuditEnrollmentSet struct {
 	allocationHead          string
 }
 
+type additionalAuditEnrollmentSet struct {
+	input          initialAuditEnrollmentInput
+	authority      auditAuthorityState
+	nodeSequence   int64
+	members        []uint64
+	records        []audit.Record
+	baselineDigest string
+	scopeHead      string
+	allocationHead string
+}
+
 type initialAuditValues struct {
 	vaultID, scopeID, operationID, lineageID audit.Value
 	recordedAt, origin, agentLabel           audit.Value
@@ -182,7 +193,7 @@ func buildInitialAuditEnrollment(
 	eventWrapper := audit.Record{Kind: auditEventField, Fields: []audit.Field{
 		{Name: auditEventField, Value: audit.Nested(event)},
 	}}
-	mutation := makeInitialAuditMutation(values, auditTargetNodeID, baselineDigest, event)
+	mutation := makeAuditEnrollmentMutation(values, 1, auditTargetNodeID, baselineDigest, event)
 	mutationDigest, err := hashAuditRecord(mutation)
 	if err != nil {
 		return initialAuditEnrollmentSet{}, err
@@ -218,6 +229,149 @@ func buildInitialAuditEnrollment(
 		scopeHead:               scopeHead.text,
 		allocationHead:          allocationHead.text,
 	}, nil
+}
+
+func buildAdditionalAuditEnrollment(
+	ctx context.Context, tx *sql.Tx, vaultID string, input initialAuditEnrollmentInput,
+) (additionalAuditEnrollmentSet, error) {
+	authority, nodeSequence, err := loadAuditAuthorityTx(ctx, tx)
+	if err != nil {
+		return additionalAuditEnrollmentSet{}, err
+	}
+	if input.lineageID != authority.lineageID {
+		return additionalAuditEnrollmentSet{}, errors.New("audit enrollment lineage changed")
+	}
+	values, err := makeInitialAuditValues(vaultID, input)
+	if err != nil {
+		return additionalAuditEnrollmentSet{}, err
+	}
+	if input.targetNodeID <= 0 {
+		return additionalAuditEnrollmentSet{}, fmt.Errorf(
+			"audit enrollment target %d must be positive", input.targetNodeID,
+		)
+	}
+	targetNodeID := uint64(input.targetNodeID)
+	topology, err := currentAuditTopology(ctx, tx)
+	if err != nil {
+		return additionalAuditEnrollmentSet{}, err
+	}
+	attachments, err := currentAuditAttachments(ctx, tx)
+	if err != nil {
+		return additionalAuditEnrollmentSet{}, err
+	}
+	members, err := deriveInitialAuditMembers(ctx, tx, targetNodeID)
+	if err != nil {
+		return additionalAuditEnrollmentSet{}, err
+	}
+	if err := requireDisjointAuditMembers(ctx, tx, members); err != nil {
+		return additionalAuditEnrollmentSet{}, err
+	}
+	states, err := currentAuditMemberStates(ctx, tx, members)
+	if err != nil {
+		return additionalAuditEnrollmentSet{}, err
+	}
+	versions, err := currentAuditVersions(ctx, tx, members)
+	if err != nil {
+		return additionalAuditEnrollmentSet{}, err
+	}
+	baselineAttachments, err := auditRecordsForNodes(attachments, auditMemberSet(members))
+	if err != nil {
+		return additionalAuditEnrollmentSet{}, err
+	}
+	baselineNodes, witnesses, err := initialBaselineTopology(topology, members, input.operationID)
+	if err != nil {
+		return additionalAuditEnrollmentSet{}, err
+	}
+	baseline := makeInitialAuditBaseline(values, targetNodeID, members,
+		states, versions, baselineAttachments, baselineNodes, witnesses)
+	baselineDigest, err := hashAuditRecord(baseline)
+	if err != nil {
+		return additionalAuditEnrollmentSet{}, err
+	}
+	event, err := makeInitialAuditEnrollmentEvent(values, targetNodeID, baselineDigest, states)
+	if err != nil {
+		return additionalAuditEnrollmentSet{}, err
+	}
+	eventWrapper := audit.Record{Kind: auditEventField, Fields: []audit.Field{
+		{Name: auditEventField, Value: audit.Nested(event)},
+	}}
+	operationSequence, err := nextAuditInteger("operation sequence", authority.sequence)
+	if err != nil {
+		return additionalAuditEnrollmentSet{}, err
+	}
+	auditOperationSequence, err := positiveAuditInteger("operation sequence", operationSequence)
+	if err != nil {
+		return additionalAuditEnrollmentSet{}, err
+	}
+	mutation := makeAuditEnrollmentMutation(
+		values, auditOperationSequence, targetNodeID, baselineDigest, event,
+	)
+	mutationDigest, err := hashAuditRecord(mutation)
+	if err != nil {
+		return additionalAuditEnrollmentSet{}, err
+	}
+	scopeEntry := audit.Record{Kind: "scope_chain_entry", Fields: []audit.Field{
+		{Name: auditVaultIDField, Value: values.vaultID},
+		{Name: auditScopeIDField, Value: values.scopeID},
+		{Name: "entry_count", Value: audit.Unsigned(1)},
+		{Name: "previous_head", Value: audit.Absent()},
+		{Name: "mutation_hash", Value: mutationDigest.value},
+	}}
+	scopeHead, err := hashAuditRecord(scopeEntry)
+	if err != nil {
+		return additionalAuditEnrollmentSet{}, err
+	}
+	mutationValues := auditedMutationValues{
+		vaultID: values.vaultID, lineageID: values.lineageID,
+		operationID: values.operationID, recordedAt: values.recordedAt,
+		origin: values.origin,
+	}
+	allocation, err := makeAuditAllocationEntry(
+		mutationValues, operationSequence, nodeSequence,
+		authority.allocationHead, mutationDigest.value,
+	)
+	if err != nil {
+		return additionalAuditEnrollmentSet{}, err
+	}
+	allocationHead, err := hashAuditRecord(allocation)
+	if err != nil {
+		return additionalAuditEnrollmentSet{}, err
+	}
+	return additionalAuditEnrollmentSet{
+		input: input, authority: authority, nodeSequence: nodeSequence, members: members,
+		records:        []audit.Record{baseline, eventWrapper, mutation, scopeEntry, allocation},
+		baselineDigest: baselineDigest.text, scopeHead: scopeHead.text,
+		allocationHead: allocationHead.text,
+	}, nil
+}
+
+func requireDisjointAuditMembers(
+	ctx context.Context, tx metadataQuerier, members []uint64,
+) error {
+	wanted := auditMemberSet(members)
+	rows, err := tx.QueryContext(ctx,
+		`SELECT scope_id,node_id FROM audit_memberships ORDER BY scope_id,node_id`)
+	if err != nil {
+		return fmt.Errorf("reading existing audit memberships: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var scopeID string
+		var nodeID uint64
+		if err := rows.Scan(&scopeID, &nodeID); err != nil {
+			return fmt.Errorf("scanning existing audit membership: %w", err)
+		}
+		if wanted[nodeID] {
+			return fmt.Errorf(
+				"node %d is already protected by scope %s: %w",
+				nodeID, scopeID, ErrAuditScopeOverlap,
+			)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("reading existing audit memberships: %w", err)
+	}
+	return nil
 }
 
 type auditRecordHash struct {
@@ -367,9 +521,9 @@ func makeInitialAuditEnrollmentEvent(
 	}}, nil
 }
 
-func makeInitialAuditMutation(
-	values initialAuditValues, targetNodeID uint64, baselineDigest auditRecordHash,
-	event audit.Record,
+func makeAuditEnrollmentMutation(
+	values initialAuditValues, operationSequence uint64, targetNodeID uint64,
+	baselineDigest auditRecordHash, event audit.Record,
 ) audit.Record {
 	binding := audit.Record{Kind: "baseline_binding", Fields: []audit.Field{
 		{Name: auditScopeIDField, Value: values.scopeID},
@@ -378,7 +532,7 @@ func makeInitialAuditMutation(
 	}}
 	return audit.Record{Kind: "canonical_mutation", Fields: []audit.Field{
 		{Name: auditVaultIDField, Value: values.vaultID},
-		{Name: "operation_sequence", Value: audit.Unsigned(1)},
+		{Name: "operation_sequence", Value: audit.Unsigned(operationSequence)},
 		{Name: auditOperationIDField, Value: values.operationID},
 		{Name: "grouping_id", Value: audit.Absent()},
 		{Name: auditRecordedAtField, Value: values.recordedAt},
@@ -455,6 +609,49 @@ func persistInitialAuditEnrollment(
 			input.scopeID, member, set.baselineDigest); err != nil {
 			return fmt.Errorf("creating audit membership for node %d: %w", member, err)
 		}
+	}
+	return nil
+}
+
+func persistAdditionalAuditEnrollment(
+	ctx context.Context, tx *sql.Tx, set additionalAuditEnrollmentSet,
+) error {
+	for _, record := range set.records {
+		if err := insertAuditRecord(ctx, tx, record); err != nil {
+			return err
+		}
+	}
+	input := set.input
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_scopes(
+		scope_id,target_node_id,enable_operation_id,entry_count,chain_head)
+		VALUES(?,?,?,1,?)`, input.scopeID, input.targetNodeID,
+		input.operationID, set.scopeHead); err != nil {
+		return fmt.Errorf("creating additional audit scope: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_baselines(
+		digest,scope_id,target_node_id,operation_id) VALUES(?,?,?,?)`,
+		set.baselineDigest, input.scopeID, input.targetNodeID, input.operationID); err != nil {
+		return fmt.Errorf("creating additional audit baseline projection: %w", err)
+	}
+	for _, member := range set.members {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO audit_memberships(
+			scope_id,node_id,baseline_digest) VALUES(?,?,?)`,
+			input.scopeID, member, set.baselineDigest); err != nil {
+			return fmt.Errorf("creating additional audit membership for node %d: %w", member, err)
+		}
+	}
+	nextSequence, err := nextAuditInteger("operation sequence", set.authority.sequence)
+	if err != nil {
+		return err
+	}
+	nextCount, err := nextAuditInteger("allocation entry count", set.authority.allocationCount)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE audit_authority SET
+		operation_sequence_high_water=?,allocation_entry_count=?,allocation_head=?
+		WHERE singleton=1`, nextSequence, nextCount, set.allocationHead); err != nil {
+		return fmt.Errorf("advancing audit authority for additional scope: %w", err)
 	}
 	return nil
 }

@@ -171,6 +171,8 @@ var codeToTypedErr = map[string]error{
 	"version_already_current":      store.ErrVersionAlreadyCurrent,
 	"invalid_version_prune":        store.ErrInvalidVersionPrune,
 	"audit_already_enabled":        store.ErrAuditAlreadyEnabled,
+	"audit_scope_overlap":          store.ErrAuditScopeOverlap,
+	"audit_scope_limit":            store.ErrAuditScopeLimit,
 	"audit_preview_stale":          store.ErrAuditPreviewStale,
 	"audit_not_enrolled":           store.ErrAuditNotEnrolled,
 	"invalid_audit_cursor":         store.ErrInvalidAuditCursor,
@@ -766,8 +768,8 @@ func (c *Client) SearchWithOptions(
 	return out, nil
 }
 
-// AuditPreviewOptions selects one live directory for permanent first-scope
-// enrollment. Exactly one of Path or NodeID must be supplied.
+// AuditPreviewOptions selects one live directory for permanent enrollment.
+// Exactly one of Path or NodeID must be supplied.
 type AuditPreviewOptions struct {
 	Path       string
 	NodeID     int64
@@ -832,6 +834,9 @@ func (c *Client) EnableAudit(
 	}
 	if !status.Enabled {
 		return api.AuditStatus{}, errors.New("audit enable response reports dormant authority")
+	}
+	if status.EnabledScopeID == "" {
+		return api.AuditStatus{}, errors.New("audit enable response lacks enabled scope identity")
 	}
 	return status, nil
 }
@@ -1193,7 +1198,10 @@ func validateAuditPreview(preview api.AuditEnrollmentPreview) error {
 		preview.UniqueBlobs < 0 || preview.UniqueBlobs > preview.VersionCount ||
 		preview.UniqueBlobBytes < 0 || preview.UniqueBlobBytes > preview.LogicalVersionBytes ||
 		preview.UnresolvedTrashOrigins < 0 || preview.UnresolvedTrashOrigins > preview.MemberCount ||
-		preview.VaultTopologyNodes < preview.MemberCount || preview.VaultAttachmentRecords < 0 ||
+		preview.VaultTopologyNodes < 0 || preview.VaultAttachmentRecords < 0 ||
+		(preview.InitialAuthority && preview.VaultTopologyNodes < preview.MemberCount) ||
+		(!preview.InitialAuthority && (preview.VaultTopologyNodes != 0 ||
+			preview.VaultAttachmentRecords != 0)) ||
 		preview.AuthorityJSONBytes < 1 || tokenErr != nil || len(secret) != 32 ||
 		timeErr != nil || expiresAt.Location() != time.UTC {
 		return errors.New("audit preview response has inconsistent authority or inventory")
@@ -1207,7 +1215,7 @@ func validateAuditStatus(status api.AuditStatus) error {
 		return errors.New("audit status has invalid vault identity or counters")
 	}
 	if !status.Enabled {
-		if status.LineageID != "" || status.OperationSequenceHighWater != 0 ||
+		if status.EnabledScopeID != "" || status.LineageID != "" || status.OperationSequenceHighWater != 0 ||
 			status.AllocationEntryCount != 0 || status.AllocationHead != "" || len(status.Scopes) != 0 {
 			return errors.New("dormant audit status contains active authority")
 		}
@@ -1232,6 +1240,14 @@ func validateAuditStatus(status api.AuditStatus) error {
 			targetNodeID: scope.TargetNodeID, baselineDigest: scope.BaselineDigest,
 		}
 		previousScopeID = scope.ID
+	}
+	if status.EnabledScopeID != "" {
+		if !validUUIDv4(status.EnabledScopeID) {
+			return errors.New("audit status has invalid enabled scope identity")
+		}
+		if _, ok := seen[status.EnabledScopeID]; !ok {
+			return errors.New("audit status enabled scope is absent from authority")
+		}
 	}
 	if status.Membership != nil {
 		member := status.Membership

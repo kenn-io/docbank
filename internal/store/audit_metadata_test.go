@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"math"
 	"path/filepath"
 	"testing"
 
@@ -153,6 +155,50 @@ func TestInitialAuditAuthorityImportRejectsIncompleteMembership(t *testing.T) {
 	var records int64
 	require.NoError(t, restored.db.QueryRow(`SELECT COUNT(*) FROM audit_records`).Scan(&records))
 	assert.Zero(t, records)
+}
+
+func TestAuditAuthorityImportRejectsUntrustedScopeCounts(t *testing.T) {
+	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, source.Close()) })
+	seedMetadataRoundTrip(t, source)
+	target, err := source.NodeByPath(t.Context(), "/Projects")
+	require.NoError(t, err)
+	seedInitialAuditAuthority(t, source, target.ID)
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(t.Context(), &exported))
+	original := firstAuditScopeMetadataRecord(t, exported.Bytes())
+
+	scopes := make([]any, 0, MaxAuditEvidenceScopes)
+	for index := range MaxAuditEvidenceScopes {
+		scope := original
+		scope.ScopeID = fmt.Sprintf("10000000-0000-4000-8000-%012x", index)
+		scope.EnableOperationID = fmt.Sprintf("20000000-0000-4000-8000-%012x", index)
+		scopes = append(scopes, scope)
+	}
+	input := appendMetadataRecords(t, exported.Bytes(), scopes...)
+	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restored.Close()) })
+	originalVaultID := restored.VaultID()
+
+	err = restored.ImportMetadata(t.Context(), bytes.NewReader(input))
+	require.ErrorContains(t, err, "maximum 1000")
+	assert.Equal(t, originalVaultID, restored.VaultID())
+	var nodes, scopeCount int64
+	require.NoError(t, restored.db.QueryRow(`SELECT
+		(SELECT COUNT(*) FROM nodes),
+		(SELECT COUNT(*) FROM audit_scopes)`).Scan(&nodes, &scopeCount))
+	assert.Equal(t, int64(1), nodes)
+	assert.Zero(t, scopeCount)
+}
+
+func TestAuditScopeRecordsRejectsUntrustedEntryCountWithoutPreallocation(t *testing.T) {
+	_, err := auditScopeRecordsByScope(nil, []initialAuditScope{{
+		scopeID:    "11111111-1111-4111-8111-111111111111",
+		entryCount: math.MaxInt64,
+	}})
+	require.ErrorContains(t, err, "scope chain")
 }
 
 func TestInitialAuditAuthorityImportActivatesAfterWholeStream(t *testing.T) {
@@ -460,6 +506,23 @@ func mutateAuditMetadataRecord(
 	}
 	require.FailNow(t, "metadata record not found", kind)
 	return nil
+}
+
+func firstAuditScopeMetadataRecord(t *testing.T, input []byte) metadataAuditScope {
+	t.Helper()
+	for line := range bytes.SplitSeq(bytes.TrimSpace(input), []byte{'\n'}) {
+		var header struct {
+			Type string `json:"type"`
+		}
+		require.NoError(t, json.Unmarshal(line, &header))
+		if header.Type == metadataAuditScopeType {
+			var scope metadataAuditScope
+			require.NoError(t, json.Unmarshal(line, &scope))
+			return scope
+		}
+	}
+	require.FailNow(t, "metadata lacks audit scope")
+	return metadataAuditScope{}
 }
 
 func removeFirstAuditMetadataRecord(t *testing.T, input []byte, kind string) []byte {

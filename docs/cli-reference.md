@@ -551,10 +551,11 @@ scope head remain exact prefixes of current authority. Equal or validly extended
 chains pass; a different vault/lineage, missing scope, shorter chain, or
 divergent head is reported with a stable problem code and exits non-zero.
 
-The current public boundary supports the first scope in a vault; a later
-`audit enable` returns `audit_already_enabled`. See
-[Permanent Audited History](usage/audited-history.md) for supported mutations
-and maintenance behavior.
+The first scope creates the vault-wide genesis. On main after v0.10.0, later
+`audit enable` commands can add disjoint directory scopes without duplicating
+that genesis; overlapping or nested scopes are rejected. See
+[Permanent Audited History](usage/audited-history.md) for enrollment,
+supported mutations, and maintenance behavior.
 
 ## docbank mv
 

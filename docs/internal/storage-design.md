@@ -118,7 +118,10 @@ share a blob without sharing document identity.
     record is authoritative. Enabling the first scope revalidates the preview and commits
     the preallocated operation/lineage identities, genesis, enrollment, and
     chain authority in one SQLite transaction. A crash either commits that
-    complete state or rolls it back. The shared Go mutation boundary prevents
+    complete state or rolls it back. Later disjoint scopes reuse that genesis,
+    add one enrollment operation to the shared allocation lineage, and begin
+    independent scope chains without rewriting existing authority. The shared
+    Go mutation boundary prevents
     supported store operations from bypassing audit recording; independent
     replay catches divergent state at verification and portability boundaries.
     The enable preview

@@ -12,8 +12,8 @@ import (
 )
 
 // MaxAuditEvidenceScopes bounds caller-supplied prefix work independently of
-// the HTTP body limit. Current vaults expose one scope; the bound leaves room
-// for the planned multi-scope model without allowing unbounded point lookups.
+// the HTTP body limit. Enrollment enforces the same limit so every valid vault
+// can produce a terminal evidence bundle.
 const MaxAuditEvidenceScopes = 1000
 
 // AuditScopeEvidence is one verified scope-chain terminal.

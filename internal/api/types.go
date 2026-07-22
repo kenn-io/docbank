@@ -212,9 +212,10 @@ type TagDeletionReceipt struct {
 }
 
 // AuditEnrollmentPreview is the exact permanent-retention boundary reviewed
-// before first activation. PreviewToken is daemon-local, short-lived, and
-// consumed by one enable attempt.
+// before creating one scope. InitialAuthority reports whether this scope also
+// creates the vault-wide genesis. PreviewToken is daemon-local and one-use.
 type AuditEnrollmentPreview struct {
+	InitialAuthority       bool   `json:"initial_authority"`
 	VaultID                string `json:"vault_id" format:"uuid"`
 	ScopeID                string `json:"scope_id" format:"uuid"`
 	OperationID            string `json:"operation_id" format:"uuid"`
@@ -229,7 +230,7 @@ type AuditEnrollmentPreview struct {
 	UniqueBlobs            int    `json:"unique_blobs" minimum:"0"`
 	UniqueBlobBytes        int64  `json:"unique_blob_bytes" minimum:"0"`
 	UnresolvedTrashOrigins int    `json:"unresolved_trash_origins" minimum:"0"`
-	VaultTopologyNodes     int    `json:"vault_topology_nodes" minimum:"1"`
+	VaultTopologyNodes     int    `json:"vault_topology_nodes" minimum:"0"`
 	VaultAttachmentRecords int    `json:"vault_attachment_records" minimum:"0"`
 	AuthorityJSONBytes     int64  `json:"authority_json_bytes" minimum:"1"`
 	PreviewToken           string `json:"preview_token" minLength:"43" maxLength:"43"`
@@ -264,6 +265,7 @@ type AuditMembershipStatus struct {
 // membership. Scopes is always a JSON array, including for a dormant vault.
 type AuditStatus struct {
 	Enabled                    bool                   `json:"enabled"`
+	EnabledScopeID             string                 `json:"enabled_scope_id,omitempty" format:"uuid"`
 	VaultID                    string                 `json:"vault_id" format:"uuid"`
 	LineageID                  string                 `json:"lineage_id,omitempty" format:"uuid"`
 	OperationSequenceHighWater int64                  `json:"operation_sequence_high_water" minimum:"0"`

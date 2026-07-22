@@ -261,6 +261,16 @@ type auditedHistoryReplay struct {
 	nodeHighWater    uint64
 	baselines        map[string]auditBaselineProjection
 	memberBaselines  map[uint64]string
+	scopes           map[string]*auditScopeReplay
+}
+
+type auditScopeReplay struct {
+	projection      initialAuditScope
+	members         []uint64
+	memberSet       map[uint64]bool
+	memberBaselines map[uint64]string
+	head            string
+	entryCount      int64
 }
 
 type auditBaselineProjection struct {
@@ -270,7 +280,7 @@ type auditBaselineProjection struct {
 
 func validateAuditedHistory(
 	ctx context.Context, tx metadataQuerier, vaultID string, nodeSequence int64,
-	authority initialAuditAuthority, scope initialAuditScope,
+	authority initialAuditAuthority, scopes []initialAuditScope, scope initialAuditScope,
 	records, initial map[string][]storedAuditRecord,
 ) error {
 	if err := validateStoredAuditRecordSchemas(records); err != nil {
@@ -290,7 +300,7 @@ func validateAuditedHistory(
 	if err != nil {
 		return err
 	}
-	entries, err := auditScopeRecordsByCount(records["scope_chain_entry"], scope)
+	entries, err := auditScopeRecordsByScope(records["scope_chain_entry"], scopes)
 	if err != nil {
 		return err
 	}
@@ -319,10 +329,6 @@ func validateAuditedHistory(
 			}
 			continue
 		}
-		scopeEntry, ok := entries[replay.scopeEntryCount+1]
-		if !ok {
-			return fmt.Errorf("validating audit operation %d: audit scope chain is incomplete", sequence)
-		}
 		bindings, bindingErr := auditRecordListField(mutation.record, "baselines")
 		if bindingErr != nil {
 			return fmt.Errorf("validating audit operation %d: %w", sequence, bindingErr)
@@ -330,6 +336,27 @@ func validateAuditedHistory(
 		topologyValue, topologyErr := auditField(mutation.record, auditTopologyDeltaField)
 		if topologyErr != nil {
 			return fmt.Errorf("validating audit operation %d: %w", sequence, topologyErr)
+		}
+		mutationScopeID, scopeErr := auditMutationScopeID(mutation.record)
+		if scopeErr != nil {
+			return fmt.Errorf("validating audit operation %d: %w", sequence, scopeErr)
+		}
+		if len(bindings) != 0 && topologyValue.IsAbsent() && replay.scopes[mutationScopeID] == nil {
+			err = replay.applyAdditionalScopeEnrollment(
+				vaultID, mutation, allocation, scopes, entries, baselines, events,
+				usedBaselines, usedEvents,
+			)
+			if err != nil {
+				return fmt.Errorf("validating audit operation %d: %w", sequence, err)
+			}
+			continue
+		}
+		if err := replay.activateScope(mutationScopeID); err != nil {
+			return fmt.Errorf("validating audit operation %d: %w", sequence, err)
+		}
+		scopeEntry, ok := entries[mutationScopeID][replay.scopeEntryCount+1]
+		if !ok {
+			return fmt.Errorf("validating audit operation %d: audit scope chain is incomplete", sequence)
 		}
 		if len(bindings) == 0 && topologyValue.IsAbsent() {
 			attachedCount, attachedErr := auditUnsignedField(
@@ -416,8 +443,13 @@ func validateAuditedHistory(
 	if authority.sequence != replay.allocationCount || authority.allocationHead != replay.allocationHead {
 		return errors.New("audit allocation authority does not match replayed history")
 	}
-	if scope.entryCount != replay.scopeEntryCount || scope.chainHead != replay.scopeHead {
-		return errors.New("audit scope authority does not match replayed history")
+	replay.saveActiveScope()
+	for _, projection := range scopes {
+		replayed := replay.scopes[projection.scopeID]
+		if replayed == nil || projection.entryCount != replayed.entryCount ||
+			projection.chainHead != replayed.head {
+			return errors.New("audit scope authority does not match replayed history")
+		}
 	}
 	finalNodeHighWater, err := positiveAuditNodeID(nodeSequence)
 	if err != nil {
@@ -427,6 +459,200 @@ func validateAuditedHistory(
 		return errors.New("audit node allocation high-water mark does not match replayed history")
 	}
 	return replay.reconcileCurrentState(ctx, tx)
+}
+
+func (replay *auditedHistoryReplay) applyAdditionalScopeEnrollment(
+	vaultID string, mutation, allocation storedAuditRecord,
+	projections []initialAuditScope,
+	entries map[string]map[int64]storedAuditRecord,
+	baselines map[string]storedAuditRecord,
+	events map[string]storedAuditRecord,
+	usedBaselines, usedEvents map[string]bool,
+) error {
+	bindings, err := auditRecordListField(mutation.record, "baselines")
+	if err != nil || len(bindings) != 1 {
+		return errors.New("additional audit enrollment must bind one baseline")
+	}
+	scopeID, err := auditUUIDField(bindings[0], auditScopeIDField)
+	if err != nil {
+		return err
+	}
+	var scope initialAuditScope
+	for _, candidate := range projections {
+		if candidate.scopeID == scopeID {
+			scope = candidate
+			break
+		}
+	}
+	if scope.scopeID == "" || replay.scopes[scopeID] != nil {
+		return errors.New("additional audit enrollment has an invalid scope projection")
+	}
+	baselineDigest, err := auditDigestField(bindings[0], "baseline_digest")
+	if err != nil {
+		return err
+	}
+	baseline, ok := baselines[baselineDigest]
+	if !ok || usedBaselines[baselineDigest] {
+		return errors.New("additional audit enrollment lacks one unique baseline")
+	}
+	if err := validateAuditEnrollmentBaseline(
+		vaultID, scope, baseline, replay.topology, replay.attachments,
+	); err != nil {
+		return err
+	}
+	members, err := auditUnsignedListField(baseline.record, "members")
+	if err != nil {
+		return err
+	}
+	for _, member := range members {
+		for existingScopeID, existing := range replay.scopes {
+			if existing.memberSet[member] {
+				return fmt.Errorf("additional audit scope overlaps scope %s at node %d", existingScopeID, member)
+			}
+		}
+	}
+	eventList, err := auditRecordListField(mutation.record, "events")
+	if err != nil || len(eventList) != 1 {
+		return errors.New("additional audit enrollment must contain one event")
+	}
+	eventID, err := auditDigestField(eventList[0], "event_id")
+	if err != nil {
+		return err
+	}
+	eventWrapper, ok := events[eventID]
+	if !ok || usedEvents[eventID] {
+		return errors.New("additional audit enrollment lacks one unique event wrapper")
+	}
+	wrapped, err := auditNestedField(eventWrapper.record, auditEventField)
+	if err != nil || !auditRecordEqual(wrapped, eventList[0]) {
+		return errors.New("additional audit event wrapper does not match its mutation")
+	}
+	sequence, err := positiveAuditInteger("operation sequence", *mutation.index.operationSequence)
+	if err != nil {
+		return err
+	}
+	if err := validateAuditEnrollmentMutation(
+		vaultID, scope, baseline, eventWrapper, mutation, sequence,
+	); err != nil {
+		return err
+	}
+	scopeEntry, ok := entries[scopeID][1]
+	if !ok {
+		return errors.New("additional audit scope lacks its initial chain entry")
+	}
+	if err := validateInitialScopeChain(vaultID, scope, mutation, scopeEntry); err != nil {
+		return err
+	}
+	operationID, err := auditUUIDField(mutation.record, auditOperationIDField)
+	if err != nil {
+		return err
+	}
+	if operationID != scope.operationID {
+		return errors.New("additional audit scope operation does not match its projection")
+	}
+	if err := replay.advanceAllocation(vaultID, operationID, mutation, allocation, "", 0); err != nil {
+		return err
+	}
+	states, err := auditRecordListField(baseline.record, "member_states")
+	if err != nil {
+		return err
+	}
+	versions, err := auditRecordListField(baseline.record, "versions")
+	if err != nil {
+		return err
+	}
+	memberBaselines := make(map[uint64]string, len(members))
+	for _, member := range members {
+		memberBaselines[member] = baselineDigest
+	}
+	for _, state := range states {
+		nodeID, err := auditUnsignedField(state, metadataNodeIDField)
+		if err != nil {
+			return err
+		}
+		if _, exists := replay.states[nodeID]; exists {
+			return fmt.Errorf("additional audit enrollment repeats protected node %d", nodeID)
+		}
+		replay.states[nodeID] = state
+	}
+	for _, version := range versions {
+		versionID, err := auditUUIDField(version, "version_id")
+		if err != nil {
+			return err
+		}
+		if _, exists := replay.versions[versionID]; exists {
+			return fmt.Errorf("additional audit enrollment repeats protected version %s", versionID)
+		}
+		replay.versions[versionID] = version
+	}
+	replay.baselines[baselineDigest] = auditBaselineProjection{
+		scopeID: scopeID, operationID: operationID, targetNodeID: scope.targetNodeID,
+	}
+	replay.scopes[scopeID] = &auditScopeReplay{
+		projection: scope, members: slices.Clone(members), memberSet: auditMemberSet(members),
+		memberBaselines: memberBaselines, head: scopeEntry.digest, entryCount: 1,
+	}
+	usedBaselines[baselineDigest] = true
+	usedEvents[eventID] = true
+	return replay.activateScope(scopeID)
+}
+
+func validateAuditEnrollmentBaseline(
+	vaultID string, scope initialAuditScope, baseline storedAuditRecord,
+	topology []audit.Record, attachments map[string]audit.Record,
+) error {
+	checks := []func() error{
+		func() error { return requireAuditUUID(baseline.record, auditVaultIDField, vaultID) },
+		func() error { return requireAuditUUID(baseline.record, auditScopeIDField, scope.scopeID) },
+		func() error { return requireAuditUnsigned(baseline.record, "target_node_id", scope.targetNodeID) },
+		func() error { return requireAuditUUID(baseline.record, auditOperationIDField, scope.operationID) },
+		func() error { return requireAuditText(baseline.record, "cause", "explicit") },
+	}
+	for _, check := range checks {
+		if err := check(); err != nil {
+			return err
+		}
+	}
+	members, err := auditUnsignedListField(baseline.record, "members")
+	if err != nil {
+		return err
+	}
+	expectedMembers, err := deriveInitialAuditMembersFromRecords(topology, scope.targetNodeID)
+	if err != nil {
+		return err
+	}
+	if !slices.Equal(members, expectedMembers) {
+		return errors.New("additional audit enrollment members do not match the protected closure")
+	}
+	states, err := auditRecordListField(baseline.record, "member_states")
+	if err != nil {
+		return err
+	}
+	versions, err := auditRecordListField(baseline.record, "versions")
+	if err != nil {
+		return err
+	}
+	if err := validateInitialAuditMemberProjection(members, topology, states, versions); err != nil {
+		return err
+	}
+	allAttachments := make([]audit.Record, 0, len(attachments))
+	for _, record := range attachments {
+		allAttachments = append(allAttachments, record)
+	}
+	expectedAttachments, err := auditRecordsForNodes(allAttachments, auditMemberSet(members))
+	if err != nil {
+		return err
+	}
+	storedAttachments, err := auditRecordListField(baseline.record, "attachments")
+	if err != nil {
+		return err
+	}
+	if !equalAuditRecordLists(storedAttachments, expectedAttachments) {
+		return errors.New("additional audit enrollment attachments do not match replayed metadata")
+	}
+	return validateInitialBaselineTopology(
+		baseline.record, members, scope.operationID, topology,
+	)
 }
 
 const (
@@ -572,6 +798,7 @@ func newAuditedHistoryReplay(
 			},
 		},
 		memberBaselines: make(map[uint64]string, len(members)),
+		scopes:          make(map[string]*auditScopeReplay),
 	}
 	for _, member := range members {
 		replay.memberBaselines[member] = initialBaseline.digest
@@ -614,7 +841,43 @@ func newAuditedHistoryReplay(
 		}
 		replay.topologyIndex[nodeID] = index
 	}
+	replay.saveActiveScope()
+	replay.scopes[scope.scopeID].projection = scope
 	return replay, nil
+}
+
+func (replay *auditedHistoryReplay) saveActiveScope() {
+	if replay.scopeID == "" {
+		return
+	}
+	current := replay.scopes[replay.scopeID]
+	if current == nil {
+		current = &auditScopeReplay{projection: initialAuditScope{scopeID: replay.scopeID}}
+		replay.scopes[replay.scopeID] = current
+	}
+	current.members = slices.Clone(replay.members)
+	current.memberSet = replay.memberSet
+	current.memberBaselines = replay.memberBaselines
+	current.head = replay.scopeHead
+	current.entryCount = replay.scopeEntryCount
+}
+
+func (replay *auditedHistoryReplay) activateScope(scopeID string) error {
+	if replay.scopeID == scopeID {
+		return nil
+	}
+	replay.saveActiveScope()
+	next := replay.scopes[scopeID]
+	if next == nil {
+		return fmt.Errorf("audit mutation references unknown scope %s", scopeID)
+	}
+	replay.scopeID = scopeID
+	replay.members = slices.Clone(next.members)
+	replay.memberSet = next.memberSet
+	replay.memberBaselines = next.memberBaselines
+	replay.scopeHead = next.head
+	replay.scopeEntryCount = next.entryCount
+	return nil
 }
 
 func validateGenesisProvenanceIngests(attachments []audit.Record) error {
@@ -698,6 +961,81 @@ func auditScopeRecordsByCount(
 		return nil, errors.New("audit scope chain is incomplete")
 	}
 	return result, nil
+}
+
+func auditScopeRecordsByScope(
+	records []storedAuditRecord, scopes []initialAuditScope,
+) (map[string]map[int64]storedAuditRecord, error) {
+	projections := make(map[string]initialAuditScope, len(scopes))
+	result := make(map[string]map[int64]storedAuditRecord, len(scopes))
+	for _, scope := range scopes {
+		if scope.scopeID == "" || scope.entryCount < 1 {
+			return nil, errors.New("audit scope projection has invalid identity or entry count")
+		}
+		if _, exists := projections[scope.scopeID]; exists {
+			return nil, errors.New("audit scope projection repeats an identity")
+		}
+		projections[scope.scopeID] = scope
+		// entryCount comes from imported metadata and is not trusted until the
+		// observed chain records below prove it. Let the map grow only with
+		// records that actually exist instead of allocating from that claim.
+		result[scope.scopeID] = make(map[int64]storedAuditRecord)
+	}
+	for _, record := range records {
+		if record.index.scopeID == nil || record.index.entryCount == nil {
+			return nil, errors.New("audit scope-chain record lacks relational identity")
+		}
+		scopeID, count := *record.index.scopeID, *record.index.entryCount
+		projection, ok := projections[scopeID]
+		if !ok || count < 1 || count > projection.entryCount ||
+			result[scopeID][count].record.Kind != "" {
+			return nil, errors.New("audit scope-chain record has invalid or duplicate identity")
+		}
+		result[scopeID][count] = record
+	}
+	for scopeID, projection := range projections {
+		if int64(len(result[scopeID])) != projection.entryCount {
+			return nil, fmt.Errorf("audit scope chain %s is incomplete", scopeID)
+		}
+	}
+	return result, nil
+}
+
+func auditMutationScopeID(mutation audit.Record) (string, error) {
+	var scopeID string
+	consider := func(record audit.Record) error {
+		candidate, err := auditUUIDField(record, auditScopeIDField)
+		if err != nil {
+			return err
+		}
+		if scopeID != "" && scopeID != candidate {
+			return errors.New("audit mutation spans multiple scopes")
+		}
+		scopeID = candidate
+		return nil
+	}
+	bindings, err := auditRecordListField(mutation, "baselines")
+	if err != nil {
+		return "", err
+	}
+	for _, binding := range bindings {
+		if err := consider(binding); err != nil {
+			return "", err
+		}
+	}
+	events, err := auditRecordListField(mutation, "events")
+	if err != nil {
+		return "", err
+	}
+	for _, event := range events {
+		if err := consider(event); err != nil {
+			return "", err
+		}
+	}
+	if scopeID == "" {
+		return "", errors.New("audited mutation has no scope identity")
+	}
+	return scopeID, nil
 }
 
 func auditEventRecordsByID(records []storedAuditRecord) (map[string]storedAuditRecord, error) {
@@ -1172,21 +1510,29 @@ func replaceAuditRecordField(record audit.Record, name string, value audit.Value
 func (replay *auditedHistoryReplay) reconcileCurrentState(
 	ctx context.Context, tx metadataQuerier,
 ) error {
+	replay.saveActiveScope()
 	if err := replay.reconcileMembershipProjection(ctx, tx); err != nil {
 		return err
 	}
-	currentStates, err := currentAuditMemberStates(ctx, tx, replay.members)
+	memberSet := make(map[uint64]bool)
+	for _, scope := range replay.scopes {
+		for _, member := range scope.members {
+			memberSet[member] = true
+		}
+	}
+	allMembers := sortedAuditMembers(memberSet)
+	currentStates, err := currentAuditMemberStates(ctx, tx, allMembers)
 	if err != nil {
 		return err
 	}
-	expectedStates := make([]audit.Record, len(replay.members))
-	for index, member := range replay.members {
+	expectedStates := make([]audit.Record, len(allMembers))
+	for index, member := range allMembers {
 		expectedStates[index] = replay.states[member]
 	}
 	if !equalAuditRecordLists(expectedStates, currentStates) {
 		return errors.New("replayed audit member states do not match current nodes")
 	}
-	currentVersions, err := currentAuditVersions(ctx, tx, replay.members)
+	currentVersions, err := currentAuditVersions(ctx, tx, allMembers)
 	if err != nil {
 		return err
 	}
@@ -1221,29 +1567,33 @@ func (replay *auditedHistoryReplay) reconcileCurrentState(
 func (replay *auditedHistoryReplay) reconcileMembershipProjection(
 	ctx context.Context, tx metadataQuerier,
 ) error {
-	rows, err := tx.QueryContext(ctx, `SELECT node_id,baseline_digest FROM audit_memberships
-		WHERE scope_id=? ORDER BY node_id`, replay.scopeID)
+	rows, err := tx.QueryContext(ctx, `SELECT scope_id,node_id,baseline_digest
+		FROM audit_memberships ORDER BY scope_id,node_id`)
 	if err != nil {
 		return fmt.Errorf("reading replayed audit memberships: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	var members []uint64
+	members := make(map[string][]uint64, len(replay.scopes))
 	for rows.Next() {
+		var scopeID string
 		var nodeID uint64
 		var baseline string
-		if err := rows.Scan(&nodeID, &baseline); err != nil {
+		if err := rows.Scan(&scopeID, &nodeID, &baseline); err != nil {
 			return fmt.Errorf("scanning replayed audit membership: %w", err)
 		}
-		if replay.memberBaselines[nodeID] != baseline {
+		scope := replay.scopes[scopeID]
+		if scope == nil || scope.memberBaselines[nodeID] != baseline {
 			return fmt.Errorf("audit membership for node %d does not match replayed baseline", nodeID)
 		}
-		members = append(members, nodeID)
+		members[scopeID] = append(members[scopeID], nodeID)
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("reading replayed audit memberships: %w", err)
 	}
-	if !slices.Equal(members, replay.members) {
-		return errors.New("audit membership projection does not match replayed history")
+	for scopeID, scope := range replay.scopes {
+		if !slices.Equal(members[scopeID], scope.members) {
+			return errors.New("audit membership projection does not match replayed history")
+		}
 	}
 	baselineRows, err := tx.QueryContext(ctx, `SELECT digest,scope_id,target_node_id,operation_id
 		FROM audit_baselines ORDER BY digest`)
