@@ -15,7 +15,7 @@ func TestWriteWatchedInboxesEscapesMachineAndVirtualPaths(t *testing.T) {
 	err := writeWatchedInboxes(&out, []api.WatchedInbox{{
 		Name: "sessions", Source: "/local/agent\nsessions",
 		Destination: "/archives/\x1b[31msessions", SettleTime: "1h0m0s",
-		ScanInterval: "1m0s", Exclude: []string{"cache/"},
+		MinimumAge: "168h0m0s", ScanInterval: "1m0s", Exclude: []string{"cache/"},
 		Job: &api.Job{Status: "running"},
 	}})
 	require.NoError(t, err)

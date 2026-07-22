@@ -47,6 +47,7 @@ func TestListWatchedInboxesReturnsEffectiveConfigAndRunnerState(t *testing.T) {
 			{
 				Name: "archive", Source: source, Destination: "/records",
 				SettleTime:   config.Duration(2 * time.Minute),
+				MinimumAge:   config.Duration(7 * 24 * time.Hour),
 				ScanInterval: config.Duration(15 * time.Second),
 				Exclude:      []string{"cache/", ".DS_Store"},
 			},
@@ -61,12 +62,14 @@ func TestListWatchedInboxesReturnsEffectiveConfigAndRunnerState(t *testing.T) {
 	assert.Equal(t, source, got.Items[0].Source)
 	assert.Equal(t, "/records", got.Items[0].Destination)
 	assert.Equal(t, "2m0s", got.Items[0].SettleTime)
+	assert.Equal(t, "168h0m0s", got.Items[0].MinimumAge)
 	assert.Equal(t, "15s", got.Items[0].ScanInterval)
 	assert.Equal(t, []string{"cache/", ".DS_Store"}, got.Items[0].Exclude)
 	require.NotNil(t, got.Items[0].Job)
 	assert.Equal(t, "watch:archive", got.Items[0].Job.Name)
 	assert.Equal(t, "running", got.Items[0].Job.Status)
 	assert.Equal(t, "zeta", got.Items[1].Name)
+	assert.Equal(t, "0s", got.Items[1].MinimumAge)
 	assert.Empty(t, got.Items[1].Exclude)
 	assert.Nil(t, got.Items[1].Job)
 	close(release)

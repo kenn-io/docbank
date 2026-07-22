@@ -675,6 +675,7 @@ type WatchedInbox struct {
 	Source       string   `json:"source"`
 	Destination  string   `json:"destination"`
 	SettleTime   string   `json:"settle_time"`
+	MinimumAge   string   `json:"minimum_age"`
 	ScanInterval string   `json:"scan_interval"`
 	Exclude      []string `json:"exclude"`
 	Job          *Job     `json:"job,omitempty"`

@@ -102,6 +102,7 @@ name = "agent-sessions"
 source = "~/agent-sessions"
 destination = "/archives/agents"
 settle_time = "30s"
+minimum_age = "168h" # optional; 7 days since source modification
 scan_interval = "5s"
 exclude = [".DS_Store", "cache/"]
 ```
@@ -148,10 +149,23 @@ own input.
 
 A file must remain the same filesystem object with the same size and
 modification time for the complete `settle_time` before Docbank reads its
-content. After the read, the daemon verifies that the confined source path
-still names that object and grants no node authority if it changed.
-`scan_interval` controls how often it looks for new observations. Zero values select the
-defaults shown above; explicit values must be positive.
+content. Optional `minimum_age` adds a second gate based on the source's
+modification time. For example, `"168h"` requires a file to be at least seven
+days old *and* unchanged for the complete settle window. It defaults to `"0s"`
+(disabled), and unlike the in-memory settle observation, its source timestamp
+still applies after a daemon restart. This is useful for append-heavy agent
+sessions and recording streams that may pause without being finished.
+
+After the read, the daemon verifies that the confined source path still names
+that object and grants no node authority if it changed. `scan_interval`
+controls how often it looks for new observations. Zero values select the
+defaults shown above; explicit settle and scan values must be positive.
+`minimum_age` must not be negative.
+
+Minimum age is a conservative time policy, not proof that the producing
+application explicitly closed a file. Choose a window appropriate to the
+producer, or watch a directory that receives only completed files when the
+producer offers a close/rename handoff.
 
 A file that disappears during observation, or is still held exclusively by a
 Windows producer, is treated as unsettled and retried from a fresh window.
@@ -172,9 +186,10 @@ change at the watched source appends another version.
 
 Watchers run as jobs named `watch:<name>`. In source builds newer than v0.10.0,
 `docbank watch list` and `GET /api/v1/watches` pair each runner's state with its
-effective source, destination, timing, and exclusion policy; use `--json` when
-an agent needs the complete rules. `docbank jobs` and `GET /api/v1/jobs` remain
-the all-task view.
+effective source, destination, settle window, minimum source age, scan interval,
+and exclusion policy; use `--json` when an agent needs the complete rules.
+`minimum_age` itself is newer than v0.10.1. `docbank jobs` and
+`GET /api/v1/jobs` remain the all-task view.
 A source, destination, or read failure leaves the named job in the failed state
 and records the reason. Restart the daemon after correcting the problem.
 Per-file successes are written to the daemon log. A configured watch keeps a

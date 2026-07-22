@@ -742,6 +742,7 @@ func TestConfiguredWatchIngestsStableFilesAndRemainsObservable(t *testing.T) {
 	assert.Equal(t, source, watches.Items[0].Source)
 	assert.Equal(t, "/agents", watches.Items[0].Destination)
 	assert.Equal(t, "50ms", watches.Items[0].SettleTime)
+	assert.Equal(t, "0s", watches.Items[0].MinimumAge)
 	assert.Equal(t, "10ms", watches.Items[0].ScanInterval)
 	require.NotNil(t, watches.Items[0].Job)
 	assert.Equal(t, "running", watches.Items[0].Job.Status)

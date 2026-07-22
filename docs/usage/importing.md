@@ -191,16 +191,25 @@ name = "agent-sessions"
 source = "~/agent-sessions"
 destination = "/archives/agents"
 settle_time = "30s"
+minimum_age = "168h"
 scan_interval = "5s"
 exclude = ["cache/", ".DS_Store"]
 ```
 
 The daemon observes a file's filesystem identity, size, and modification time
-for a full settle window before reading it. It then verifies that the confined
-source path still names the same unchanged object. It never follows entries
-that are symlinks and never changes or deletes source data. A daemon restart
-deliberately forgets partial observations, so every file proves a complete
-settle window again.
+for a full settle window before reading it. `minimum_age = "168h"` additionally
+requires seven days since the source's last modification, which is useful when
+an append-heavy session may pause for minutes or hours without being closed.
+The minimum-age gate survives restart; the settle observation deliberately does
+not, so every file still proves a complete unchanged window in the new daemon.
+Set `minimum_age = "0s"` or omit it for ordinary inboxes that need only the
+settle window.
+
+Docbank then verifies that the confined source path still names the same
+unchanged object. It never follows entries that are symlinks and never changes
+or deletes source data. A time window cannot prove that a producer formally
+closed a file, so use a conservative age or point the watch at a completed-file
+handoff directory when one is available.
 
 The watch name and slash-separated relative source path form a stable,
 portable provenance identity. The first stable observation creates the file
@@ -214,6 +223,9 @@ new identity, not an implicit move.
 
 Use `docbank provenance <path-or-id>` to inspect the retained watch identity,
 source-relative path, and immutable supersession history for an imported node.
+JSONL session content up to the normal extraction limit is indexed by the
+built-in plain-text worker, so ordinary `docbank search` can find archived
+session text without a vendor-specific parser.
 
 The destination is exact rather than collision-suffixed. If unrelated content
 already occupies the intended path, or the previously mapped node is in the

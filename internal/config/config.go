@@ -68,6 +68,7 @@ type WatchConfig struct {
 	Source       string   `toml:"source"`
 	Destination  string   `toml:"destination"`
 	SettleTime   Duration `toml:"settle_time"`
+	MinimumAge   Duration `toml:"minimum_age"`
 	ScanInterval Duration `toml:"scan_interval"`
 	Exclude      []string `toml:"exclude"`
 }
@@ -254,6 +255,9 @@ func validateWatch(watch WatchConfig) error {
 	}
 	if watch.SettleTime.Std() <= 0 {
 		return fmt.Errorf("[[watch]] %q settle_time must be positive", watch.Name)
+	}
+	if watch.MinimumAge.Std() < 0 {
+		return fmt.Errorf("[[watch]] %q minimum_age must not be negative", watch.Name)
 	}
 	if watch.ScanInterval.Std() <= 0 {
 		return fmt.Errorf("[[watch]] %q scan_interval must be positive", watch.Name)
