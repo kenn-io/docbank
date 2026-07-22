@@ -835,6 +835,9 @@ func (c *Client) EnableAudit(
 	if !status.Enabled {
 		return api.AuditStatus{}, errors.New("audit enable response reports dormant authority")
 	}
+	if status.EnabledScopeID == "" {
+		return api.AuditStatus{}, errors.New("audit enable response lacks enabled scope identity")
+	}
 	return status, nil
 }
 

@@ -258,6 +258,31 @@ func TestAuditStatusBindsOnlyScopeTargetToEnrollmentBaseline(t *testing.T) {
 	}
 }
 
+func TestEnableAuditRequiresEnabledScopeIdentity(t *testing.T) {
+	status := api.AuditStatus{
+		Enabled:                    true,
+		VaultID:                    "11111111-1111-4111-8111-111111111111",
+		LineageID:                  "22222222-2222-4222-8222-222222222222",
+		OperationSequenceHighWater: 1,
+		AllocationEntryCount:       1,
+		AllocationHead:             strings.Repeat("a", 64),
+		Scopes: []api.AuditScopeStatus{{
+			ID: "33333333-3333-4333-8333-333333333333", TargetNodeID: 7,
+			TargetPath:        "/Taxes",
+			EnableOperationID: "44444444-4444-4444-8444-444444444444",
+			BaselineDigest:    strings.Repeat("b", 64), MemberCount: 1,
+			EntryCount: 1, ChainHead: strings.Repeat("c", 64),
+		}},
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(status)
+	}))
+	t.Cleanup(ts.Close)
+
+	_, err := client.New(ts.URL, "key").EnableAudit(t.Context(), "preview-token", true)
+	require.ErrorContains(t, err, "lacks enabled scope identity")
+}
+
 func TestTagRoundTrip(t *testing.T) {
 	c, s := newClient(t, serverKey)
 	ctx := t.Context()
