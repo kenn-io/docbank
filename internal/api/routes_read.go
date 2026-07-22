@@ -54,21 +54,11 @@ func nodeOutputAt(n store.Node, path string) *nodeOutput {
 // nodeWithPath loads the node's display path and builds the single-node
 // response. Every single-node endpoint returns this shape.
 func nodeWithPath(ctx context.Context, d Deps, id int64) (*nodeOutput, error) {
-	n, err := d.Store.NodeByID(ctx, id)
+	view, err := d.Store.NodeViewByID(ctx, id)
 	if err != nil {
 		return nil, FromStoreError(err)
 	}
-	// A trashed node has no live virtual coordinate. In particular, its
-	// storage parent is an implementation detail and must not be presented as
-	// a path that clients can resolve later.
-	if n.TrashedAt != nil {
-		return nodeOutputAt(n, ""), nil
-	}
-	p, err := d.Store.Path(ctx, id)
-	if err != nil {
-		return nil, FromStoreError(err)
-	}
-	return nodeOutputAt(n, p), nil
+	return nodeOutputAt(view.Node, view.Path), nil
 }
 
 func contentResponses() map[string]*huma.Response {
@@ -223,11 +213,11 @@ func registerReadRoutes(api huma.API, d Deps) {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation",
 				fmt.Sprintf("path %q must be absolute (start with /)", in.Path))
 		}
-		n, err := d.Store.NodeByPath(ctx, in.Path)
+		view, err := d.Store.NodeViewByPath(ctx, in.Path)
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		return nodeWithPath(ctx, d, n.ID)
+		return nodeOutputAt(view.Node, view.Path), nil
 	})
 
 	type childrenPage struct {
