@@ -65,6 +65,59 @@ func TestBatchMoveSupportsNestedNetChanges(t *testing.T) {
 	assert.Equal(t, "/y/b", results[1].Path)
 }
 
+func TestBatchMoveSwapsDirectoryCoordinates(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	left, err := s.Mkdir(ctx, s.RootID(), "left")
+	require.NoError(t, err)
+	right, err := s.Mkdir(ctx, s.RootID(), "right")
+	require.NoError(t, err)
+	leftChild, err := s.CreateFile(ctx, left.ID, "left.txt", fakeHash("left"), 4, "text/plain")
+	require.NoError(t, err)
+	rightChild, err := s.CreateFile(ctx, right.ID, "right.txt", fakeHash("right"), 5, "text/plain")
+	require.NoError(t, err)
+
+	results, err := s.BatchMove(ctx, []BatchMoveRequest{
+		{SourcePath: "/left", DestinationPath: "/right"},
+		{SourcePath: "/right", DestinationPath: "/left"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, left.ID, results[0].Node.ID)
+	assert.Equal(t, "/right", results[0].Path)
+	assert.Equal(t, right.ID, results[1].Node.ID)
+	assert.Equal(t, "/left", results[1].Path)
+	leftResult, err := s.NodeByPath(ctx, "/right/left.txt")
+	require.NoError(t, err)
+	assert.Equal(t, leftChild.ID, leftResult.ID)
+	rightResult, err := s.NodeByPath(ctx, "/left/right.txt")
+	require.NoError(t, err)
+	assert.Equal(t, rightChild.ID, rightResult.ID)
+}
+
+func TestBatchMoveCanOccupyVacatedDirectoryCoordinate(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	archive, err := s.Mkdir(ctx, s.RootID(), "archive")
+	require.NoError(t, err)
+	slot, err := s.Mkdir(ctx, s.RootID(), "slot")
+	require.NoError(t, err)
+	item, err := s.CreateFile(ctx, s.RootID(), "item.txt", fakeHash("item"), 4, "text/plain")
+	require.NoError(t, err)
+
+	_, err = s.BatchMove(ctx, []BatchMoveRequest{
+		{SourcePath: "/slot", DestinationPath: "/archive/slot"},
+		{SourcePath: "/item.txt", DestinationPath: "/slot"},
+	})
+	require.NoError(t, err)
+	finalSlot, err := s.NodeByPath(ctx, "/slot")
+	require.NoError(t, err)
+	assert.Equal(t, item.ID, finalSlot.ID)
+	archived, err := s.NodeByPath(ctx, "/archive/slot")
+	require.NoError(t, err)
+	assert.Equal(t, slot.ID, archived.ID)
+	assert.Equal(t, archive.ID, *archived.ParentID)
+}
+
 func TestBatchMoveFailureRollsBackWholePlan(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()

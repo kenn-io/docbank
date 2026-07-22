@@ -232,9 +232,10 @@ batch.
 Use `BatchMove` for an all-or-nothing reorganization of up to
 `MaxBatchMoves` nodes. Each source is either a path resolved inside the
 transaction or a stable node ID with the revision previously inspected. All
-destinations are interpreted from one initial tree and the complete final tree
-is validated before any change, so embedded applications can express swaps and
-nested moves without temporary names or partial completion.
+destinations are exact final coordinates interpreted from one initial tree; an
+existing directory does not mean “move into.” The complete final tree is
+validated before any change, so embedded applications can express file or
+directory swaps and nested moves without temporary names or partial completion.
 
 ## Maintain physical storage
 

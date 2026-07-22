@@ -76,9 +76,11 @@ var mvBatchCmd = &cobra.Command{
 	Long: `Apply one bounded JSON plan as a single metadata transaction.
 
 Each item has "source" (an absolute path or id:<number>) and an absolute
-"destination". A dash reads the plan from standard input. Every destination
-is interpreted against the tree as it existed before the transaction, so a
-plan can safely express swaps and nested reorganizations.`,
+"destination". Unlike ordinary mv, each destination is an exact final
+coordinate—even when that coordinate initially holds a directory. A dash reads
+the plan from standard input. Every destination is interpreted against the tree
+as it existed before the transaction, so a plan can safely express file or
+directory swaps and nested reorganizations.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		plan, err := readBatchMovePlan(cmd, args[0])

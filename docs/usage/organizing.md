@@ -127,10 +127,13 @@ docbank mv batch reorganization.json
 ```
 
 Every source and destination is interpreted against the tree as it existed at
-the start of the transaction. The complete final tree is then checked for
-missing parents, duplicate sibling names, and cycles before any row changes.
-This makes swaps and nested reorganizations possible without temporary names.
-If any selector, revision, or final coordinate is invalid, nothing moves.
+the start of the transaction. Unlike ordinary `mv`, a batch destination is the
+exact final coordinate; an existing directory is not shorthand for “move into
+this directory.” To move a document into `/filed` while retaining `a.pdf`, name
+`/filed/a.pdf` explicitly. This makes file and directory swaps unambiguous.
+The complete final tree is then checked for missing parents, duplicate sibling
+names, and cycles before any row changes. If any selector, revision, or final
+coordinate is invalid, nothing moves.
 
 A path source means “the node at this coordinate when the transaction runs.”
 An `id:N` source means “this exact node”; the CLI resolves it before submission

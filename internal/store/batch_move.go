@@ -136,7 +136,7 @@ func (s *Store) planBatchMove(
 		}
 		seen[source.id] = true
 		newParentID, newName, err := resolveBatchMoveDestination(
-			request.DestinationPath, source.name, initialNodes, pathIDs,
+			request.DestinationPath, initialNodes, pathIDs,
 		)
 		if err != nil {
 			return batchMovePlan{}, fmt.Errorf("batch move item %d: %w", index, err)
@@ -242,7 +242,7 @@ func resolveBatchMoveSource(
 }
 
 func resolveBatchMoveDestination(
-	destination, keepName string, nodes map[int64]batchMoveNode, pathIDs map[string]int64,
+	destination string, nodes map[int64]batchMoveNode, pathIDs map[string]int64,
 ) (int64, string, error) {
 	if !strings.HasPrefix(destination, "/") {
 		return 0, "", fmt.Errorf("destination path must be absolute: %w", ErrInvalidBatchMove)
@@ -254,9 +254,6 @@ func resolveBatchMoveDestination(
 	segments := splitPath(canonical)
 	if id := pathIDs[canonical]; id != 0 {
 		destinationNode := nodes[id]
-		if destinationNode.kind == nodeKindDir {
-			return id, keepName, nil
-		}
 		if destinationNode.parentID == nil {
 			return 0, "", ErrIsRoot
 		}
