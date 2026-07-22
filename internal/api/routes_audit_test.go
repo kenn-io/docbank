@@ -176,6 +176,69 @@ func TestAuditPreviewEnableAndStatusLifecycle(t *testing.T) {
 	require.NoError(t, s.ValidateMetadata(t.Context()))
 }
 
+func TestAuditAddsASecondDisjointScope(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	taxes, err := s.Mkdir(t.Context(), s.RootID(), "Taxes")
+	require.NoError(t, err)
+	contracts, err := s.Mkdir(t.Context(), s.RootID(), "Contracts")
+	require.NoError(t, err)
+	c := client.New(ts.URL, testAPIKey)
+
+	first, err := c.PreviewAudit(t.Context(), client.AuditPreviewOptions{NodeID: taxes.ID})
+	require.NoError(t, err)
+	assert.True(t, first.InitialAuthority)
+	_, err = c.EnableAudit(t.Context(), first.PreviewToken, true)
+	require.NoError(t, err)
+
+	second, err := c.PreviewAudit(t.Context(), client.AuditPreviewOptions{Path: "/Contracts"})
+	require.NoError(t, err)
+	assert.False(t, second.InitialAuthority)
+	assert.Zero(t, second.VaultTopologyNodes)
+	assert.Zero(t, second.VaultAttachmentRecords)
+	status, err := c.EnableAudit(t.Context(), second.PreviewToken, true)
+	require.NoError(t, err)
+	assert.Equal(t, second.ScopeID, status.EnabledScopeID)
+	assert.Equal(t, int64(2), status.OperationSequenceHighWater)
+	require.Len(t, status.Scopes, 2)
+
+	taxesStatus, err := c.AuditStatus(t.Context(), "", taxes.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{first.ScopeID}, taxesStatus.Membership.ScopeIDs)
+	contractsStatus, err := c.AuditStatus(t.Context(), "", contracts.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{second.ScopeID}, contractsStatus.Membership.ScopeIDs)
+
+	nested, err := s.Mkdir(t.Context(), taxes.ID, "Nested")
+	require.NoError(t, err)
+	_, err = c.PreviewAudit(t.Context(), client.AuditPreviewOptions{NodeID: nested.ID})
+	require.ErrorIs(t, err, store.ErrAuditScopeOverlap)
+	_, err = c.PreviewAudit(t.Context(), client.AuditPreviewOptions{NodeID: s.RootID()})
+	require.ErrorIs(t, err, store.ErrAuditScopeOverlap)
+	_, err = c.PreviewAudit(t.Context(), client.AuditPreviewOptions{NodeID: taxes.ID})
+	require.ErrorIs(t, err, store.ErrAuditScopeOverlap)
+	require.NoError(t, s.ValidateMetadata(t.Context()))
+}
+
+func TestAdditionalAuditPreviewBecomesStaleAfterAuditedMutation(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	taxes, err := s.Mkdir(t.Context(), s.RootID(), "Taxes")
+	require.NoError(t, err)
+	contracts, err := s.Mkdir(t.Context(), s.RootID(), "Contracts")
+	require.NoError(t, err)
+	c := client.New(ts.URL, testAPIKey)
+	first, err := c.PreviewAudit(t.Context(), client.AuditPreviewOptions{NodeID: taxes.ID})
+	require.NoError(t, err)
+	_, err = c.EnableAudit(t.Context(), first.PreviewToken, true)
+	require.NoError(t, err)
+	second, err := c.PreviewAudit(t.Context(), client.AuditPreviewOptions{NodeID: contracts.ID})
+	require.NoError(t, err)
+
+	_, err = s.Mkdir(t.Context(), taxes.ID, "2027")
+	require.NoError(t, err)
+	_, err = c.EnableAudit(t.Context(), second.PreviewToken, true)
+	require.ErrorIs(t, err, store.ErrAuditPreviewStale)
+}
+
 func TestAuditVerifyReturnsStableEvidenceAndChecksProtectedBytes(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	c := client.New(ts.URL, testAPIKey)

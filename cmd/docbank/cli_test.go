@@ -313,6 +313,9 @@ func TestAuditEnableIsPreviewFirstAndReportsProtection(t *testing.T) {
 	source := writeSourceFile(t, "return.txt", "tax return")
 	_, err := runCLI(t, "add", source, "--dest", "/Taxes")
 	require.NoError(t, err)
+	contractSource := writeSourceFile(t, "contract.txt", "signed agreement")
+	_, err = runCLI(t, "add", contractSource, "--dest", "/Contracts")
+	require.NoError(t, err)
 	c, err := client.Ensure(context.Background())
 	require.NoError(t, err)
 	taxes, err := c.Stat(context.Background(), "/Taxes")
@@ -349,6 +352,21 @@ func TestAuditEnableIsPreviewFirstAndReportsProtection(t *testing.T) {
 	assert.True(t, status.Enabled)
 	require.Len(t, status.Scopes, 1)
 	assert.Equal(t, preview.ScopeID, status.Scopes[0].ID)
+
+	out, err = runCLI(t, "audit", "enable", "/Contracts", "--json")
+	require.NoError(t, err, out)
+	var secondPreview api.AuditEnrollmentPreview
+	require.NoError(t, json.Unmarshal([]byte(out), &secondPreview))
+	assert.False(t, secondPreview.InitialAuthority)
+	humanSecondPreview, err := runCLI(t, "audit", "enable", "/Contracts")
+	require.NoError(t, err, humanSecondPreview)
+	assert.Contains(t, humanSecondPreview, "this scope adds no second genesis")
+	out, err = runCLI(t, "audit", "enable", "--run", "--token", secondPreview.PreviewToken,
+		"--acknowledge-permanent-retention", "--json")
+	require.NoError(t, err, out)
+	require.NoError(t, json.Unmarshal([]byte(out), &status))
+	assert.Equal(t, secondPreview.ScopeID, status.EnabledScopeID)
+	require.Len(t, status.Scopes, 2)
 
 	out, err = runCLI(t, "audit", "status", formatNodeSelector(returnNode.ID))
 	require.NoError(t, err, out)

@@ -14,6 +14,7 @@ import (
 
 func TestHumanAuditOutputQuotesPaths(t *testing.T) {
 	const unsafePath = "/Taxes/\n\x1b[31mFORGED"
+	const scopeID = "11111111-1111-4111-8111-111111111111"
 	want := strconv.QuoteToASCII(unsafePath)
 	tests := []struct {
 		name  string
@@ -30,8 +31,8 @@ func TestHumanAuditOutputQuotesPaths(t *testing.T) {
 		{
 			name: "enabled",
 			write: func(w io.Writer) error {
-				return writeAuditEnabled(w, api.AuditStatus{Scopes: []api.AuditScopeStatus{{
-					TargetPath: unsafePath, TargetNodeID: 42,
+				return writeAuditEnabled(w, api.AuditStatus{EnabledScopeID: scopeID, Scopes: []api.AuditScopeStatus{{
+					ID: scopeID, TargetPath: unsafePath, TargetNodeID: 42,
 				}}})
 			},
 		},

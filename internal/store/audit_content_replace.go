@@ -13,6 +13,7 @@ import (
 type auditAuthorityState struct {
 	lineageID       string
 	sequence        int64
+	genesisDigest   string
 	allocationCount int64
 	allocationHead  string
 }
@@ -119,8 +120,9 @@ func loadAuditAuthorityTx(
 ) (auditAuthorityState, int64, error) {
 	var authority auditAuthorityState
 	err := tx.QueryRowContext(ctx, `SELECT lineage_id,operation_sequence_high_water,
-		allocation_entry_count,allocation_head FROM audit_authority WHERE singleton=1`).Scan(
-		&authority.lineageID, &authority.sequence,
+		allocation_genesis_digest,allocation_entry_count,allocation_head
+		FROM audit_authority WHERE singleton=1`).Scan(
+		&authority.lineageID, &authority.sequence, &authority.genesisDigest,
 		&authority.allocationCount, &authority.allocationHead,
 	)
 	if err != nil {

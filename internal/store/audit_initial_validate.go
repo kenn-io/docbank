@@ -42,14 +42,22 @@ func validateAuditAuthority(
 		}
 		return nil
 	}
-	if counts[0] != 1 || counts[1] != 1 || counts[2] < 1 || counts[3] == 0 {
-		return fmt.Errorf("audit authority must contain one authority and scope with baselines: counts=%v", counts)
+	if counts[0] != 1 || counts[1] < 1 || counts[2] < counts[1] || counts[3] == 0 {
+		return fmt.Errorf("audit authority must contain one authority and at least one complete scope: counts=%v", counts)
 	}
-	authority, scope, err := loadInitialAuditProjection(ctx, tx)
+	authority, err := loadAuditAuthorityProjection(ctx, tx)
 	if err != nil {
 		return err
 	}
 	records, err := loadInitialAuditRecords(ctx, tx)
+	if err != nil {
+		return err
+	}
+	scopes, err := loadAuditScopeProjections(ctx, tx)
+	if err != nil {
+		return err
+	}
+	scope, err := initialAuditScopeProjection(scopes, records)
 	if err != nil {
 		return err
 	}
@@ -63,7 +71,7 @@ func validateAuditAuthority(
 		return err
 	}
 	return validateAuditedHistory(
-		ctx, tx, vaultID, nodeSequence, authority, scope, records, initial,
+		ctx, tx, vaultID, nodeSequence, authority, scopes, scope, records, initial,
 	)
 }
 
@@ -85,6 +93,25 @@ func auditAuthorityCounts(ctx context.Context, tx metadataQuerier) ([5]int64, er
 func loadInitialAuditProjection(
 	ctx context.Context, tx metadataQuerier,
 ) (initialAuditAuthority, initialAuditScope, error) {
+	authority, err := loadAuditAuthorityProjection(ctx, tx)
+	if err != nil {
+		return authority, initialAuditScope{}, err
+	}
+	records, err := loadInitialAuditRecords(ctx, tx)
+	if err != nil {
+		return authority, initialAuditScope{}, err
+	}
+	scopes, err := loadAuditScopeProjections(ctx, tx)
+	if err != nil {
+		return authority, initialAuditScope{}, err
+	}
+	scope, err := initialAuditScopeProjection(scopes, records)
+	return authority, scope, err
+}
+
+func loadAuditAuthorityProjection(
+	ctx context.Context, tx metadataQuerier,
+) (initialAuditAuthority, error) {
 	var authority initialAuditAuthority
 	err := tx.QueryRowContext(ctx, `SELECT lineage_id,operation_sequence_high_water,
 		allocation_genesis_digest,allocation_entry_count,allocation_head
@@ -92,17 +119,67 @@ func loadInitialAuditProjection(
 		&authority.lineageID, &authority.sequence, &authority.genesisDigest,
 		&authority.allocationCount, &authority.allocationHead)
 	if err != nil {
-		return authority, initialAuditScope{}, fmt.Errorf("reading initial audit authority: %w", err)
+		return authority, fmt.Errorf("reading initial audit authority: %w", err)
 	}
-	var scope initialAuditScope
-	err = tx.QueryRowContext(ctx, `SELECT scope_id,target_node_id,enable_operation_id,
-		entry_count,chain_head FROM audit_scopes`).Scan(
-		&scope.scopeID, &scope.targetNodeID, &scope.operationID,
-		&scope.entryCount, &scope.chainHead)
+	return authority, nil
+}
+
+func loadAuditScopeProjections(
+	ctx context.Context, tx metadataQuerier,
+) ([]initialAuditScope, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT scope_id,target_node_id,enable_operation_id,
+		entry_count,chain_head FROM audit_scopes ORDER BY scope_id`)
 	if err != nil {
-		return authority, scope, fmt.Errorf("reading initial audit scope: %w", err)
+		return nil, fmt.Errorf("reading audit scopes: %w", err)
 	}
-	return authority, scope, nil
+	defer func() { _ = rows.Close() }()
+	var scopes []initialAuditScope
+	for rows.Next() {
+		var scope initialAuditScope
+		if err := rows.Scan(&scope.scopeID, &scope.targetNodeID, &scope.operationID,
+			&scope.entryCount, &scope.chainHead); err != nil {
+			return nil, fmt.Errorf("scanning audit scope: %w", err)
+		}
+		scopes = append(scopes, scope)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading audit scopes: %w", err)
+	}
+	return scopes, nil
+}
+
+func initialAuditScopeProjection(
+	scopes []initialAuditScope, records map[string][]storedAuditRecord,
+) (initialAuditScope, error) {
+	var operationID string
+	for _, mutation := range records["canonical_mutation"] {
+		if mutation.index.operationSequence == nil || *mutation.index.operationSequence != 1 {
+			continue
+		}
+		var err error
+		operationID, err = auditUUIDField(mutation.record, auditOperationIDField)
+		if err != nil {
+			return initialAuditScope{}, err
+		}
+		break
+	}
+	if operationID == "" {
+		return initialAuditScope{}, errors.New("audit authority lacks its initial mutation")
+	}
+	var result initialAuditScope
+	for _, scope := range scopes {
+		if scope.operationID != operationID {
+			continue
+		}
+		if result.scopeID != "" {
+			return initialAuditScope{}, errors.New("audit authority repeats its initial scope")
+		}
+		result = scope
+	}
+	if result.scopeID == "" {
+		return initialAuditScope{}, errors.New("audit authority lacks its initial scope projection")
+	}
+	return result, nil
 }
 
 func loadInitialAuditRecords(
@@ -173,8 +250,8 @@ func selectInitialAuditRecords(
 		int64(len(records["allocation_entry"])) != authority.allocationCount {
 		return nil, errors.New("audit allocation projection does not match its operation records")
 	}
-	if scope.entryCount < 1 || int64(len(records["scope_chain_entry"])) != scope.entryCount {
-		return nil, errors.New("audit scope projection does not match its chain records")
+	if scope.entryCount < 1 {
+		return nil, errors.New("initial audit scope projection has no chain records")
 	}
 	result := map[string][]storedAuditRecord{
 		"topology_genesis":          records["topology_genesis"],
@@ -473,6 +550,15 @@ func validateInitialMutation(
 	vaultID string, scope initialAuditScope, baseline, eventWrapper,
 	mutation storedAuditRecord,
 ) error {
+	return validateAuditEnrollmentMutation(
+		vaultID, scope, baseline, eventWrapper, mutation, 1,
+	)
+}
+
+func validateAuditEnrollmentMutation(
+	vaultID string, scope initialAuditScope, baseline, eventWrapper,
+	mutation storedAuditRecord, operationSequence uint64,
+) error {
 	event, err := auditNestedField(eventWrapper.record, auditEventField)
 	if err != nil {
 		return err
@@ -483,7 +569,7 @@ func validateInitialMutation(
 	if err := requireAuditUUID(mutation.record, auditVaultIDField, vaultID); err != nil {
 		return err
 	}
-	if err := requireAuditUnsigned(mutation.record, "operation_sequence", 1); err != nil {
+	if err := requireAuditUnsigned(mutation.record, "operation_sequence", operationSequence); err != nil {
 		return err
 	}
 	if err := requireAuditUUID(mutation.record, auditOperationIDField, scope.operationID); err != nil {

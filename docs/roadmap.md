@@ -17,7 +17,7 @@ elsewhere only when they materially explain the design and are marked
 | 0 | Extract msgvault's pack/backup and packed-CAS engines into `go.kenn.io/kit` | **Implemented** (Docbank uses `kit` v0.11.0) |
 | 1 | Core: store, blob store, ingest pipeline, full CLI | **Implemented** |
 | 2a | Infrastructure: daemon, HTTP API, daemon-first CLI, self-update, release pipeline | **Implemented** |
-| 2b | Features: content versions, versioned editing, full audit, tags, watched inboxes, text extraction, ingest provenance | **In progress**: versions, tags, queryable provenance, watched inboxes, first-scope audit authority, and bounded plain-text extraction implemented; PDF/Office extraction remains |
+| 2b | Features: content versions, versioned editing, full audit, tags, watched inboxes, text extraction, ingest provenance | **In progress**: versions, tags, queryable provenance, watched inboxes, disjoint audit scopes, and bounded plain-text extraction implemented; PDF/Office extraction remains |
 | 3 | Primary kit-ui web portal and focused operator TUI | Designed |
 | 4 | Backup commands over the kit engine | **Implemented**; representative-corpus hardening continues |
 
@@ -103,8 +103,9 @@ are available across the CLI, authenticated API, typed client, OpenAPI, and
 metadata-v1 backup/restore authority, including bounded forward and reverse
 listings. Transactional batch move validates and applies bounded swaps and
 nested reorganizations as one final-state operation across the CLI, API, typed
-client, and audited history. Permanent first-scope audit enrollment is preview-first across the
-CLI and API. Sticky membership, supported logical mutations, allocation and
+client, and audited history. Permanent audit enrollment is preview-first across the
+CLI and API. The first scope creates one vault-wide genesis; later disjoint
+scopes reuse it and begin independent scope chains. Sticky membership, supported logical mutations, allocation and
 scope chains, status evidence, and JSONL backup/restore validation are
 implemented. Canonical audit history is available by node path, stable node ID,
 or stable scope ID with bounded, append-stable cursor pagination. Independent verification returns

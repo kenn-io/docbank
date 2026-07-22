@@ -215,14 +215,34 @@ Execution of `trash empty --run` and `versions prune --run` is currently
 refused once audit authority exists. Their dry runs remain useful for impact
 inspection. There is deliberately no exceptional audit-destruction command.
 
-## Current boundary
+## Multiple protected directories
 
-The current public workflow enables the first audit scope in a vault. A second
-`audit enable` returns `audit_already_enabled`; adding overlapping scopes is not
-yet exposed. Status, mutation recording, JSONL export/import, and backup capture
-all preserve the first scope's authority.
+!!! note "Available on main after v0.10.0"
+    The latest tagged release supports one scope. The next release adds the
+    disjoint multi-scope workflow described here.
+
+Run the same preview-first command for each unrelated directory whose history
+must become permanent:
+
+```bash
+docbank audit enable /taxes
+docbank audit enable --run --token <preview-token> --acknowledge-permanent-retention
+docbank audit enable /contracts
+docbank audit enable --run --token <preview-token> --acknowledge-permanent-retention
+```
+
+The first scope establishes one vault-wide genesis and allocation lineage.
+Later disjoint scopes reuse that authority, start their own scope chain, and
+add only their selected directory closure. The preview says when no second
+genesis is being created and reports the exact incremental JSONL growth.
+
+Scopes cannot overlap or nest. Docbank rejects a target when any node in its
+live or retained-trash closure is already permanently protected. Moving nodes
+between scopes and other operations that would need one transaction to rewrite
+multiple scope histories remain fail-closed. Status, history, verification,
+JSONL export/import, incremental backup, and restore preserve every scope.
 
 !!! info "Planned"
-    Additional scope enrollment and rich TUI/web history views are not
-    implemented yet. Backup restore already revalidates the portable JSONL
-    authority before publishing a vault.
+    Overlapping scopes and rich TUI/web history views are not implemented.
+    Backup restore revalidates the portable JSONL authority before publishing
+    a vault.

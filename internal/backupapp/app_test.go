@@ -264,6 +264,8 @@ func TestAuditedIncrementalSnapshotRestoresCompleteProtectedHistory(t *testing.T
 
 	records, err := fixture.metadata.Mkdir(t.Context(), fixture.metadata.RootID(), "Records")
 	require.NoError(t, err)
+	contracts, err := fixture.metadata.Mkdir(t.Context(), fixture.metadata.RootID(), "Contracts")
+	require.NoError(t, err)
 	document := writeFile(records.ID, "return.txt", "original tax return")
 	initialVersionID := document.CurrentVersionID
 	plan, err := fixture.metadata.PreviewInitialAudit(
@@ -287,6 +289,15 @@ func TestAuditedIncrementalSnapshotRestoresCompleteProtectedHistory(t *testing.T
 	)
 	require.NoError(t, err)
 	assert.Empty(t, baseline.ParentID)
+	secondPlan, err := fixture.metadata.PreviewInitialAudit(
+		t.Context(), contracts.ID, "cli", nil,
+	)
+	require.NoError(t, err)
+	secondStatus, err := fixture.metadata.EnableInitialAudit(t.Context(), secondPlan)
+	require.NoError(t, err)
+	require.Len(t, secondStatus.Scopes, 2)
+	contract := writeFile(contracts.ID, "agreement.txt", "signed agreement")
+	contractVersionID := contract.CurrentVersionID
 
 	const replacementContent = "corrected tax return"
 	var replacement store.ContentVersion
@@ -325,14 +336,17 @@ func TestAuditedIncrementalSnapshotRestoresCompleteProtectedHistory(t *testing.T
 	sourceStorage, err := fixture.blobs.Stats(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, 3, int(sourceStorage.PackedBlobs))
-	assert.Equal(t, 2, sourceStorage.LooseBlobs)
+	assert.Equal(t, 3, sourceStorage.LooseBlobs)
 	wantMetadata := exportMetadata(t, fixture.metadata)
 	sourceAudit, err := fixture.metadata.VerifyAudit(t.Context(), nil)
 	require.NoError(t, err)
 	require.True(t, sourceAudit.Evidence.Enabled)
-	require.Len(t, sourceAudit.Evidence.Scopes, 1)
-	assert.Equal(t, initialStatus.Scopes[0].ID, sourceAudit.Evidence.Scopes[0].ID)
-	require.Len(t, sourceAudit.ProtectedBlobs, 3)
+	require.Len(t, sourceAudit.Evidence.Scopes, 2)
+	assert.ElementsMatch(t,
+		[]string{initialStatus.Scopes[0].ID, secondPlan.Preview().ScopeID},
+		[]string{sourceAudit.Evidence.Scopes[0].ID, sourceAudit.Evidence.Scopes[1].ID},
+	)
+	require.Len(t, sourceAudit.ProtectedBlobs, 4)
 
 	manifest, err := backupapp.Create(
 		t.Context(), repo, "test-version", fixture.metadata, fixture.blobs,
@@ -340,7 +354,7 @@ func TestAuditedIncrementalSnapshotRestoresCompleteProtectedHistory(t *testing.T
 	)
 	require.NoError(t, err)
 	assert.Equal(t, baseline.SnapshotID, manifest.ParentID)
-	assert.Equal(t, int64(5), manifest.Attachments.Blobs)
+	assert.Equal(t, int64(6), manifest.Attachments.Blobs)
 	verified, err := backup.Verify(
 		t.Context(), repo, backupapp.New("test-version"),
 		backup.VerifyOptions{All: true, Jobs: 2},
@@ -376,9 +390,10 @@ func TestAuditedIncrementalSnapshotRestoresCompleteProtectedHistory(t *testing.T
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restoredBlobs.Close()) })
 	for versionID, want := range map[string]string{
-		initialVersionID: "original tax return",
-		replacement.ID:   replacementContent,
-		receiptVersionID: "supporting receipt",
+		initialVersionID:  "original tax return",
+		replacement.ID:    replacementContent,
+		receiptVersionID:  "supporting receipt",
+		contractVersionID: "signed agreement",
 	} {
 		version, versionErr := restoredStore.ContentVersionByID(t.Context(), versionID)
 		require.NoError(t, versionErr)
@@ -399,6 +414,12 @@ func TestAuditedIncrementalSnapshotRestoresCompleteProtectedHistory(t *testing.T
 	require.NotNil(t, restoredStatus.Membership)
 	assert.True(t, restoredStatus.Membership.Protected)
 	assert.Equal(t, []string{initialStatus.Scopes[0].ID}, restoredStatus.Membership.ScopeIDs)
+	restoredContractStatus, err := restoredStore.AuditStatus(t.Context(), &contract.ID)
+	require.NoError(t, err)
+	require.NotNil(t, restoredContractStatus.Membership)
+	assert.True(t, restoredContractStatus.Membership.Protected)
+	assert.Equal(t, []string{secondPlan.Preview().ScopeID},
+		restoredContractStatus.Membership.ScopeIDs)
 	history, err := restoredStore.AuditHistory(t.Context(), restoredReceipt.ID, 100, "")
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, history.Total, 4)

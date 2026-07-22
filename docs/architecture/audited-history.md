@@ -6,13 +6,13 @@ description: The permanent, tamper-evident history model for protected directory
 # Audited history
 
 !!! info "Current implementation boundary"
-    Docbank implements permanent first-scope enrollment, sticky membership,
+    Docbank implements permanent disjoint-scope enrollment, sticky membership,
     mutation and allocation chains for the supported changes described below,
     JSONL backup/restore fidelity, status inspection, and bounded per-node
     history. Independent audit verification returns stable terminal evidence
     and checks every protected blob; supplied external evidence is proved as an
-    exact prefix of current allocation and scope chains. Additional scopes,
-    scope-wide browsing, and TUI/web projections remain planned. See
+    exact prefix of current allocation and scope chains. Scope-wide browsing is
+    available; overlapping scopes and TUI/web projections remain planned. See
     [Permanent Audited History](../usage/audited-history.md) for the current
     operator workflow.
 

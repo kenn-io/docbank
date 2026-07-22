@@ -12,8 +12,9 @@ import (
 )
 
 // AuditEnrollmentPreview is the exact retention boundary a caller reviews
-// before permanently enabling the first audit scope in a vault.
+// before permanently enabling one audit scope in a vault.
 type AuditEnrollmentPreview struct {
+	InitialAuthority       bool
 	VaultID                string
 	ScopeID                string
 	OperationID            string
@@ -39,7 +40,9 @@ type AuditEnrollmentPreview struct {
 type AuditEnrollmentPlan struct {
 	preview                 AuditEnrollmentPreview
 	input                   initialAuditEnrollmentInput
+	initial                 bool
 	allocationGenesisDigest string
+	allocationHead          string
 }
 
 // Preview returns a copy of the plan's public retention inventory.
@@ -77,6 +80,7 @@ type AuditMembershipStatus struct {
 // AuditStatus is the vault-wide audit authority plus optional node membership.
 type AuditStatus struct {
 	Enabled                    bool
+	EnabledScopeID             string
 	VaultID                    string
 	LineageID                  string
 	OperationSequenceHighWater int64
@@ -86,8 +90,8 @@ type AuditStatus struct {
 	Membership                 *AuditMembershipStatus
 }
 
-// PreviewInitialAudit derives the exact first-scope authority without writing
-// it. The returned plan is useful only for EnableInitialAudit on this vault.
+// PreviewInitialAudit derives the exact next permanent scope without writing
+// it. The first scope creates vault authority; later scopes must be disjoint.
 func (s *Store) PreviewInitialAudit(
 	ctx context.Context, targetNodeID int64, origin string, agentLabel *string,
 ) (*AuditEnrollmentPlan, error) {
@@ -96,7 +100,7 @@ func (s *Store) PreviewInitialAudit(
 	})
 }
 
-// PreviewInitialAuditPath resolves a live path and derives its exact first
+// PreviewInitialAuditPath resolves a live path and derives its exact
 // enrollment boundary in the same database snapshot.
 func (s *Store) PreviewInitialAuditPath(
 	ctx context.Context, path, origin string, agentLabel *string,
@@ -113,9 +117,6 @@ func (s *Store) previewInitialAudit(
 ) (*AuditEnrollmentPlan, error) {
 	var plan *AuditEnrollmentPlan
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		if err := requireDormantAuditAuthority(ctx, tx); err != nil {
-			return err
-		}
 		targetNodeID, err := resolveTarget(tx)
 		if err != nil {
 			return err
@@ -123,33 +124,67 @@ func (s *Store) previewInitialAudit(
 		if err := validateLiveAuditEnrollmentTarget(tx, targetNodeID); err != nil {
 			return err
 		}
-		input, err := newInitialAuditEnrollmentInput(targetNodeID, origin, agentLabel)
-		if err != nil {
-			return err
-		}
-		set, err := buildInitialAuditEnrollment(ctx, tx, s.vaultID, input)
-		if err != nil {
-			return err
-		}
 		targetPath, err := pathOf(ctx, tx, targetNodeID)
 		if err != nil {
 			return err
 		}
-		preview, err := summarizeInitialAuditEnrollment(s.vaultID, set, targetPath)
+		counts, err := auditAuthorityCounts(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if counts == [5]int64{} {
+			input, err := newInitialAuditEnrollmentInput(targetNodeID, origin, agentLabel)
+			if err != nil {
+				return err
+			}
+			set, err := buildInitialAuditEnrollment(ctx, tx, s.vaultID, input)
+			if err != nil {
+				return err
+			}
+			preview, err := summarizeInitialAuditEnrollment(s.vaultID, set, targetPath)
+			if err != nil {
+				return err
+			}
+			plan = &AuditEnrollmentPlan{
+				preview: preview, input: input, initial: true,
+				allocationGenesisDigest: set.allocationGenesisDigest,
+			}
+			return nil
+		}
+		if counts[0] != 1 || counts[1] < 1 || counts[2] < 1 || counts[3] < 1 || counts[4] < 8 {
+			return errors.New("audit authority is incomplete")
+		}
+		authority, nodeSequence, err := loadAuditAuthorityTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if err := validateAuditAuthority(ctx, tx, s.vaultID, nodeSequence); err != nil {
+			return fmt.Errorf("validating existing audit authority: %w", err)
+		}
+		input, err := newAdditionalAuditEnrollmentInput(
+			targetNodeID, origin, agentLabel, authority.lineageID,
+		)
+		if err != nil {
+			return err
+		}
+		set, err := buildAdditionalAuditEnrollment(ctx, tx, s.vaultID, input)
+		if err != nil {
+			return err
+		}
+		preview, err := summarizeAdditionalAuditEnrollment(s.vaultID, set, targetPath)
 		if err != nil {
 			return err
 		}
 		plan = &AuditEnrollmentPlan{
-			preview: preview, input: input,
-			allocationGenesisDigest: set.allocationGenesisDigest,
+			preview: preview, input: input, allocationHead: set.allocationHead,
 		}
 		return nil
 	})
 	return plan, err
 }
 
-// EnableInitialAudit commits a previously reviewed first-scope plan only when
-// its baseline and vault-wide genesis still exactly match current metadata.
+// EnableInitialAudit commits a previously reviewed scope only when its
+// baseline and allocation authority still exactly match current metadata.
 func (s *Store) EnableInitialAudit(
 	ctx context.Context, plan *AuditEnrollmentPlan,
 ) (AuditStatus, error) {
@@ -158,27 +193,49 @@ func (s *Store) EnableInitialAudit(
 	}
 	var status AuditStatus
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		if err := requireDormantAuditAuthority(ctx, tx); err != nil {
-			return err
-		}
 		if err := requireLiveAuditPreviewTarget(tx, plan.input.targetNodeID); err != nil {
 			return err
 		}
-		set, err := buildInitialAuditEnrollment(ctx, tx, s.vaultID, plan.input)
-		if err != nil {
-			return err
+		if plan.initial {
+			if err := requireDormantAuditAuthority(ctx, tx); err != nil {
+				return err
+			}
+			set, err := buildInitialAuditEnrollment(ctx, tx, s.vaultID, plan.input)
+			if err != nil {
+				return err
+			}
+			if set.baselineDigest != plan.preview.BaselineDigest ||
+				set.allocationGenesisDigest != plan.allocationGenesisDigest {
+				return ErrAuditPreviewStale
+			}
+			if err := persistInitialAuditEnrollment(ctx, tx, set); err != nil {
+				return err
+			}
+			if err := validateMetadataState(ctx, tx, set.nodeSequence); err != nil {
+				return fmt.Errorf("validating created audit authority: %w", err)
+			}
+		} else {
+			set, err := buildAdditionalAuditEnrollment(ctx, tx, s.vaultID, plan.input)
+			if err != nil {
+				if errors.Is(err, ErrAuditScopeOverlap) {
+					return ErrAuditPreviewStale
+				}
+				return err
+			}
+			if set.baselineDigest != plan.preview.BaselineDigest ||
+				set.allocationHead != plan.allocationHead {
+				return ErrAuditPreviewStale
+			}
+			if err := persistAdditionalAuditEnrollment(ctx, tx, set); err != nil {
+				return err
+			}
+			if err := validateMetadataState(ctx, tx, set.nodeSequence); err != nil {
+				return fmt.Errorf("validating additional audit scope: %w", err)
+			}
 		}
-		if set.baselineDigest != plan.preview.BaselineDigest ||
-			set.allocationGenesisDigest != plan.allocationGenesisDigest {
-			return ErrAuditPreviewStale
-		}
-		if err := persistInitialAuditEnrollment(ctx, tx, set); err != nil {
-			return err
-		}
-		if err := validateMetadataState(ctx, tx, set.nodeSequence); err != nil {
-			return fmt.Errorf("validating created audit authority: %w", err)
-		}
+		var err error
 		status, err = auditStatusTx(ctx, tx, s.vaultID, nil)
+		status.EnabledScopeID = plan.input.scopeID
 		return err
 	})
 	return status, err
@@ -269,6 +326,17 @@ func newInitialAuditEnrollmentInput(
 	}, nil
 }
 
+func newAdditionalAuditEnrollmentInput(
+	targetNodeID int64, origin string, agentLabel *string, lineageID string,
+) (initialAuditEnrollmentInput, error) {
+	input, err := newInitialAuditEnrollmentInput(targetNodeID, origin, agentLabel)
+	if err != nil {
+		return initialAuditEnrollmentInput{}, err
+	}
+	input.lineageID = lineageID
+	return input, nil
+}
+
 func requireDormantAuditAuthority(ctx context.Context, tx metadataQuerier) error {
 	counts, err := auditAuthorityCounts(ctx, tx)
 	if err != nil {
@@ -289,15 +357,6 @@ func summarizeInitialAuditEnrollment(
 	if len(set.records) != 8 {
 		return AuditEnrollmentPreview{}, errors.New("initial audit enrollment has an invalid record set")
 	}
-	baseline := set.records[3]
-	baselineNodes, err := auditRecordListField(baseline, "nodes")
-	if err != nil {
-		return AuditEnrollmentPreview{}, err
-	}
-	versions, err := auditRecordListField(baseline, "versions")
-	if err != nil {
-		return AuditEnrollmentPreview{}, err
-	}
 	topology, err := auditRecordListField(set.records[0], "nodes")
 	if err != nil {
 		return AuditEnrollmentPreview{}, err
@@ -306,20 +365,65 @@ func summarizeInitialAuditEnrollment(
 	if err != nil {
 		return AuditEnrollmentPreview{}, err
 	}
-	preview := AuditEnrollmentPreview{
-		VaultID: vaultID, ScopeID: set.input.scopeID,
-		OperationID: set.input.operationID, TargetNodeID: set.input.targetNodeID,
-		TargetPath: targetPath, BaselineDigest: set.baselineDigest,
-		MemberCount: len(set.members), VersionCount: len(versions),
-		VaultTopologyNodes: len(topology), VaultAttachmentRecords: len(attachments),
+	jsonBytes, err := initialAuditMetadataJSONBytes(set)
+	if err != nil {
+		return AuditEnrollmentPreview{}, err
 	}
-	members := auditMemberSet(set.members)
+	return summarizeAuditEnrollment(
+		vaultID, set.input, set.members, set.records[3], targetPath,
+		true, len(topology), len(attachments), jsonBytes,
+	)
+}
+
+func summarizeAdditionalAuditEnrollment(
+	vaultID string, set additionalAuditEnrollmentSet, targetPath string,
+) (AuditEnrollmentPreview, error) {
+	if len(set.records) != 5 {
+		return AuditEnrollmentPreview{}, errors.New("additional audit enrollment has an invalid record set")
+	}
+	jsonBytes, err := additionalAuditMetadataJSONBytes(set)
+	if err != nil {
+		return AuditEnrollmentPreview{}, err
+	}
+	return summarizeAuditEnrollment(
+		vaultID, set.input, set.members, set.records[0], targetPath,
+		false, 0, 0, jsonBytes,
+	)
+}
+
+func summarizeAuditEnrollment(
+	vaultID string, input initialAuditEnrollmentInput, members []uint64,
+	baseline audit.Record, targetPath string, initial bool,
+	topologyCount, attachmentCount int, jsonBytes int64,
+) (AuditEnrollmentPreview, error) {
+	baselineNodes, err := auditRecordListField(baseline, "nodes")
+	if err != nil {
+		return AuditEnrollmentPreview{}, err
+	}
+	versions, err := auditRecordListField(baseline, "versions")
+	if err != nil {
+		return AuditEnrollmentPreview{}, err
+	}
+	preview := AuditEnrollmentPreview{
+		InitialAuthority: initial,
+		VaultID:          vaultID, ScopeID: input.scopeID,
+		OperationID: input.operationID, TargetNodeID: input.targetNodeID,
+		TargetPath: targetPath, MemberCount: len(members), VersionCount: len(versions),
+		VaultTopologyNodes: topologyCount, VaultAttachmentRecords: attachmentCount,
+		AuthorityJSONBytes: jsonBytes,
+	}
+	digest, err := hashAuditRecord(baseline)
+	if err != nil {
+		return AuditEnrollmentPreview{}, err
+	}
+	preview.BaselineDigest = digest.text
+	memberSet := auditMemberSet(members)
 	for _, node := range baselineNodes {
 		nodeID, err := auditUnsignedField(node, metadataNodeIDField)
 		if err != nil {
 			return AuditEnrollmentPreview{}, err
 		}
-		if !members[nodeID] {
+		if !memberSet[nodeID] {
 			continue
 		}
 		kind, err := auditTextField(node, "node_kind")
@@ -370,10 +474,6 @@ func summarizeInitialAuditEnrollment(
 			return AuditEnrollmentPreview{}, errors.New("audit preview unique size overflows int64")
 		}
 		preview.UniqueBlobBytes += size
-	}
-	preview.AuthorityJSONBytes, err = initialAuditMetadataJSONBytes(set)
-	if err != nil {
-		return AuditEnrollmentPreview{}, err
 	}
 	return preview, nil
 }
@@ -439,6 +539,87 @@ func initialAuditMetadataJSONBytes(set initialAuditEnrollmentSet) (int64, error)
 		}
 	}
 	return counter.total, nil
+}
+
+func additionalAuditMetadataJSONBytes(set additionalAuditEnrollmentSet) (int64, error) {
+	input := set.input
+	targetNodeID, err := positiveAuditNodeID(input.targetNodeID)
+	if err != nil {
+		return 0, err
+	}
+	nextSequence, err := nextAuditInteger("operation sequence", set.authority.sequence)
+	if err != nil {
+		return 0, err
+	}
+	nextCount, err := nextAuditInteger("allocation entry count", set.authority.allocationCount)
+	if err != nil {
+		return 0, err
+	}
+	auditNextSequence, err := positiveAuditInteger("operation sequence", nextSequence)
+	if err != nil {
+		return 0, err
+	}
+	auditNextCount, err := positiveAuditInteger("allocation entry count", nextCount)
+	if err != nil {
+		return 0, err
+	}
+	if set.authority.sequence < 1 || set.authority.allocationCount < 1 {
+		return 0, errors.New("additional audit enrollment has invalid authority counters")
+	}
+	oldCounter := new(metadataByteCounter)
+	if err := newMetadataJSONWriter(oldCounter)(metadataAuditAuthority{
+		Type: metadataAuditAuthorityType, LineageID: set.authority.lineageID,
+		OperationSequenceHighWater: uint64(set.authority.sequence),
+		AllocationGenesisDigest:    set.authority.genesisDigest,
+		AllocationEntryCount:       uint64(set.authority.allocationCount),
+		AllocationHead:             set.authority.allocationHead,
+	}); err != nil {
+		return 0, err
+	}
+	counter := new(metadataByteCounter)
+	write := newMetadataJSONWriter(counter)
+	if err := write(metadataAuditAuthority{
+		Type: metadataAuditAuthorityType, LineageID: set.authority.lineageID,
+		OperationSequenceHighWater: auditNextSequence,
+		AllocationGenesisDigest:    set.authority.genesisDigest,
+		AllocationEntryCount:       auditNextCount, AllocationHead: set.allocationHead,
+	}); err != nil {
+		return 0, err
+	}
+	if err := write(metadataAuditScope{
+		Type: metadataAuditScopeType, ScopeID: input.scopeID,
+		TargetNodeID: targetNodeID, EnableOperationID: input.operationID,
+		EntryCount: 1, ChainHead: set.scopeHead,
+	}); err != nil {
+		return 0, err
+	}
+	for _, member := range set.members {
+		if err := write(metadataAuditMembership{
+			Type: metadataAuditMembershipType, ScopeID: input.scopeID,
+			NodeID: member, BaselineDigest: set.baselineDigest,
+		}); err != nil {
+			return 0, err
+		}
+	}
+	for _, record := range set.records {
+		digest, err := hashAuditRecord(record)
+		if err != nil {
+			return 0, err
+		}
+		recordJSON, err := audit.MarshalJSONRecord(record)
+		if err != nil {
+			return 0, fmt.Errorf("encoding projected %s audit record: %w", record.Kind, err)
+		}
+		if err := write(metadataAuditRecord{
+			Type: metadataAuditRecordType, Digest: digest.text, Record: recordJSON,
+		}); err != nil {
+			return 0, err
+		}
+	}
+	if counter.total <= oldCounter.total {
+		return 0, errors.New("additional audit enrollment does not grow metadata")
+	}
+	return counter.total - oldCounter.total, nil
 }
 
 func auditStatusTx(

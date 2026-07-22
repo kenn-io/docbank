@@ -159,10 +159,18 @@ func writeAuditPreview(w io.Writer, preview api.AuditEnrollmentPreview) error {
 		fmt.Sprintf("Retained versions: %d version(s), %d logical byte(s), %d unique blob(s), %d unique byte(s)",
 			preview.VersionCount, preview.LogicalVersionBytes,
 			preview.UniqueBlobs, preview.UniqueBlobBytes),
-		fmt.Sprintf("Vault-wide permanent metadata: %d topology node(s), %d attached metadata record(s)",
-			preview.VaultTopologyNodes, preview.VaultAttachmentRecords),
 		fmt.Sprintf("Projected audit JSONL growth: %d byte(s)", preview.AuthorityJSONBytes),
 		"Baseline digest: " + preview.BaselineDigest,
+	}
+	if preview.InitialAuthority {
+		lines = append(lines,
+			fmt.Sprintf("Vault-wide permanent metadata: %d topology node(s), %d attached metadata record(s)",
+				preview.VaultTopologyNodes, preview.VaultAttachmentRecords),
+		)
+	} else {
+		lines = append(lines,
+			"Existing vault-wide audit authority remains permanently retained; this scope adds no second genesis.",
+		)
 	}
 	if preview.UnresolvedTrashOrigins > 0 {
 		lines = append(lines, fmt.Sprintf("Unresolved retained trash origins: %d",
@@ -185,10 +193,19 @@ func writeAuditPreview(w io.Writer, preview api.AuditEnrollmentPreview) error {
 }
 
 func writeAuditEnabled(w io.Writer, status api.AuditStatus) error {
-	if len(status.Scopes) != 1 {
-		return errors.New("enabled audit status does not contain exactly one first scope")
+	if status.EnabledScopeID == "" {
+		return errors.New("audit enable receipt does not identify the new scope")
 	}
-	scope := status.Scopes[0]
+	var scope api.AuditScopeStatus
+	for _, candidate := range status.Scopes {
+		if candidate.ID == status.EnabledScopeID {
+			scope = candidate
+			break
+		}
+	}
+	if scope.ID == "" {
+		return errors.New("audit enable receipt omits the new scope")
+	}
 	path := auditDisplayPath(scope.TargetPath)
 	if scope.TargetTrashed {
 		path = "(target is in trash)"
