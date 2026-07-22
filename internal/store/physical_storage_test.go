@@ -29,10 +29,11 @@ func TestLooseBacklogUsesIndexedPhysicalState(t *testing.T) {
 	backlog, err := s.LooseBacklog(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, LooseBacklog{
-		EligibleObjects:   2,
-		EligibleBytes:     30,
-		RawObjects:        1,
-		CompressedObjects: 1,
+		EligibleObjects:     2,
+		EligibleBytes:       30,
+		EligibleStoredBytes: 19,
+		RawObjects:          1,
+		CompressedObjects:   1,
 	}, backlog)
 
 	candidates, err := NewPackCatalog(s).ListUnpacked(t.Context())

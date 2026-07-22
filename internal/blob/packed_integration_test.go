@@ -174,7 +174,8 @@ func TestMixedStoreLifecyclePreservesMembershipAndBytes(t *testing.T) {
 	backlog, err := metadata.LooseBacklog(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, store.LooseBacklog{
-		EligibleObjects: 1, EligibleBytes: int64(len(fixtures[2].data)), RawObjects: 1,
+		EligibleObjects: 1, EligibleBytes: int64(len(fixtures[2].data)),
+		EligibleStoredBytes: int64(len(fixtures[2].data)), RawObjects: 1,
 	}, backlog)
 	repackedAfterUnpack, err := physical.Maintainer().Pack(ctx, packstore.PackOptions{})
 	require.NoError(t, err)
