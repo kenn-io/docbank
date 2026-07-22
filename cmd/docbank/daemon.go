@@ -29,6 +29,7 @@ import (
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/jobs"
+	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -171,6 +172,24 @@ func runServe(ctx context.Context) (retErr error) {
 	if err := jobSupervisor.Start("extract:plain-text", textWorker.Run); err != nil {
 		return fmt.Errorf("starting text extraction: %w", err)
 	}
+	if cfg.Storage.PackInterval.Std() > 0 {
+		packRun := func(ctx context.Context) (internalmaintenance.PackReport, error) {
+			var report internalmaintenance.PackReport
+			err := operationGate.Maintain(func() error {
+				var err error
+				report, err = internalmaintenance.Pack(
+					ctx, s, blobs, cfg.Storage.PackMaxBytes)
+				return err
+			})
+			return report, err
+		}
+		if err := jobSupervisor.Start("storage:pack", func(ctx context.Context) error {
+			return internalmaintenance.RunPackSchedule(
+				ctx, cfg.Storage.PackInterval.Std(), packRun, logger)
+		}); err != nil {
+			return fmt.Errorf("starting automatic packing: %w", err)
+		}
+	}
 
 	var stopOnce sync.Once
 	stopCh := make(chan struct{})
@@ -188,7 +207,8 @@ func runServe(ctx context.Context) (retErr error) {
 		BaseContext:       func(net.Listener) context.Context { return ctx },
 	}
 
-	if background && cfg.Server.IdleTimeout.Std() > 0 && len(cfg.Watches) == 0 {
+	if background && cfg.Server.IdleTimeout.Std() > 0 && len(cfg.Watches) == 0 &&
+		cfg.Storage.PackInterval.Std() == 0 {
 		if err := jobSupervisor.Start("daemon.idle-timeout", func(ctx context.Context) error {
 			idleWatch(ctx, tracker, cfg.Server.IdleTimeout.Std(), logger, stop)
 			return nil

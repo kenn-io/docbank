@@ -194,6 +194,10 @@ settle_time = "30s"
 minimum_age = "168h"
 scan_interval = "5s"
 exclude = ["cache/", ".DS_Store"]
+
+[storage]
+pack_interval = "1h"
+pack_max_bytes = 268435456
 ```
 
 The daemon observes a file's filesystem identity, size, and modification time
@@ -225,7 +229,9 @@ Use `docbank provenance <path-or-id>` to inspect the retained watch identity,
 source-relative path, and immutable supersession history for an imported node.
 JSONL session content up to the normal extraction limit is indexed by the
 built-in plain-text worker, so ordinary `docbank search` can find archived
-session text without a vendor-specific parser.
+session text without a vendor-specific parser. The optional `[storage]`
+schedule packs accumulated small files with a finite per-run budget. It does
+not delete source files, prune versions, run GC, or rewrite existing packs.
 
 The destination is exact rather than collision-suffixed. If unrelated content
 already occupies the intended path, or the previously mapped node is in the
@@ -234,3 +240,6 @@ named `watch:<name>` job and any terminal error; correct the problem and restart
 the daemon. Successful additions, updates, and unchanged observations appear
 in the daemon log. See [Configuration](../configuration.md#watched-inboxes) for
 the complete field contract.
+
+Scheduled packing is newer than v0.10.1. Build from `main` to use it until the
+next release is tagged.

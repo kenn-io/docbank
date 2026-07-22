@@ -694,6 +694,49 @@ func TestJobsShowsDaemonStatus(t *testing.T) {
 	assert.Equal(t, "running", got.Items[0].Status)
 }
 
+func TestConfiguredAutomaticPackingPacksAndKeepsDaemonAlive(t *testing.T) {
+	home := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(
+		"[server]\nidle_timeout = \"30ms\"\n"+
+			"[storage]\npack_interval = \"10ms\"\npack_max_bytes = 1048576\n",
+	), 0o600))
+	t.Setenv("DOCBANK_HOME", home)
+	t.Setenv(client.EnvBackgroundDaemon, "1")
+	startTestDaemon(t, home)
+
+	_, err := runCLI(t, "mkdir", "/agents")
+	require.NoError(t, err)
+	source := writeSourceFile(t, "session.jsonl", "{\"kind\":\"session\"}\n")
+	_, err = runCLI(t, "add", source, "--dest", "/agents")
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		out, runErr := runCLI(t, "storage", "status", "--json")
+		if runErr != nil {
+			return false
+		}
+		var status api.StorageStatus
+		return json.Unmarshal([]byte(out), &status) == nil &&
+			status.LooseBlobs == 0 && status.PackedBlobs == 1
+	}, 5*time.Second, 25*time.Millisecond)
+	out, err := runCLI(t, "cat", "/agents/session.jsonl")
+	require.NoError(t, err)
+	assert.JSONEq(t, "{\"kind\":\"session\"}\n", out)
+
+	out, err = runCLI(t, "jobs", "--json")
+	require.NoError(t, err)
+	var got api.JobList
+	require.NoError(t, json.Unmarshal([]byte(out), &got))
+	require.Len(t, got.Items, 2)
+	assert.Equal(t, "extract:plain-text", got.Items[0].Name)
+	assert.Equal(t, "storage:pack", got.Items[1].Name)
+	assert.Equal(t, "running", got.Items[1].Status)
+
+	time.Sleep(100 * time.Millisecond)
+	_, _, found, err := client.Find(t.Context(), home)
+	require.NoError(t, err)
+	assert.True(t, found)
+}
+
 func TestConfiguredWatchIngestsStableFilesAndRemainsObservable(t *testing.T) {
 	home := t.TempDir()
 	source := t.TempDir()

@@ -97,6 +97,10 @@ enabled = true
 repo = ""           # no implicit repository; set a path or pass --repo
 zstd_level = 0      # 0 = Kit default; otherwise 1-19
 
+[storage]
+pack_interval = "0"        # disabled; for example, "1h"
+pack_max_bytes = 268435456  # 256 MiB soft raw-byte budget per run
+
 [[watch]]
 name = "agent-sessions"
 source = "~/agent-sessions"
@@ -132,6 +136,22 @@ exclude = [".DS_Store", "cache/"]
   Keep the repository outside the live vault in normal deployments.
 - **`[backup] zstd_level`** — repository compression level. `0` uses Kit's
   default; explicit values are limited to `1` through `19`.
+- **`[storage] pack_interval`** — schedules non-destructive packing of
+  authorized loose blobs. `"0"` disables the schedule. A configured schedule
+  runs once when the daemon starts and then at this interval.
+- **`[storage] pack_max_bytes`** — finite soft raw-byte budget for each
+  scheduled run. It must be positive when `pack_interval` is enabled. Remaining
+  loose content waits for a later run.
+
+Scheduled packing is visible as the `storage:pack` job and keeps an auto-started
+daemon alive so the schedule is meaningful. It uses the same maintenance gate
+as `docbank storage pack`: ordinary mutations may briefly receive
+`maintenance_busy` and can retry. Automatic packing does not delete logical
+content and does not run GC or repack; those reclamation operations remain
+explicit operator choices.
+
+Scheduled packing is newer than v0.10.1. Build from `main` to use it until the
+next release is tagged.
 
 ### Watched inboxes
 
@@ -205,7 +225,8 @@ Watched inboxes never modify or delete their source files. Configuration is
 machine-local and is not part of metadata-v1 backup/restore, while the stable
 watch name, relative path, stable node mapping, and last accepted content
 identity are preserved in portable metadata. The watcher does not pack content
-or run storage maintenance automatically.
+itself. Configure `[storage] pack_interval` when accumulated loose content
+should be packed automatically; GC and repack remain explicit.
 
 ### Bind validation
 
