@@ -665,6 +665,25 @@ type JobList struct {
 	Items []Job `json:"items"`
 }
 
+// WatchedInbox is the daemon's effective configuration and current runner
+// state for one local watched source. Source is intentionally machine-local;
+// Destination is a path in the Docbank virtual tree.
+type WatchedInbox struct {
+	Name         string   `json:"name"`
+	Source       string   `json:"source"`
+	Destination  string   `json:"destination"`
+	SettleTime   string   `json:"settle_time"`
+	ScanInterval string   `json:"scan_interval"`
+	Exclude      []string `json:"exclude"`
+	Job          *Job     `json:"job,omitempty"`
+}
+
+// WatchedInboxList is returned as an object so the contract can gain
+// aggregate state without changing a top-level JSON array.
+type WatchedInboxList struct {
+	Items []WatchedInbox `json:"items"`
+}
+
 // BackupRepository identifies an initialized Kit snapshot repository.
 type BackupRepository struct {
 	ID   string `json:"id"`

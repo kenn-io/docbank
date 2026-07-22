@@ -372,6 +372,13 @@ func TestJobsRoundTrip(t *testing.T) {
 	assert.Empty(t, items)
 }
 
+func TestWatchedInboxesRoundTrip(t *testing.T) {
+	c, _ := newClient(t, serverKey)
+	items, err := c.WatchedInboxes(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, items)
+}
+
 func TestStoragePackRoundTrip(t *testing.T) {
 	c, _ := newClient(t, serverKey)
 	src := filepath.Join(t.TempDir(), "pack.txt")

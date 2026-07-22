@@ -55,6 +55,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `POST /gc` `{run}` · `POST /verify` | reclaim unreachable blobs / validate metadata and re-hash all blobs | Implemented |
 | `GET /storage` · `POST /storage/pack` · `POST /storage/repack` | inspect usage / pack loose blobs / compact sparse packs | Implemented |
 | `GET /jobs` | inspect daemon-owned background tasks and terminal failures | Implemented |
+| `GET /watches` | inspect effective watched-inbox configuration and runner state | Implemented after v0.10.0 |
 | `POST /backup/init` · `POST /backup/snapshots` · `POST /backup/snapshots/stream` · `GET /backup/snapshots` | initialize a repository / create with JSON or streamed progress / list snapshots | Implemented |
 
 Root-level, outside `/api/v1` and auth-exempt: `GET /health`, `GET
@@ -143,6 +144,13 @@ error.
 `error`. Records describe this daemon run only and disappear when it restarts.
 The endpoint is observation, not control: stopping a task requires stopping or
 reconfiguring the daemon feature that owns it.
+
+`GET /watches` returns `{items: [...]}` in stable watch-name order. Each item
+joins the effective machine-local source, virtual destination, settle and scan
+durations, and literal exclusions with its current `watch:<name>` job record.
+The job is omitted only when no runner has been registered, which is not an
+ordinary live-daemon state. Configuration remains file-owned: this endpoint
+does not create, edit, or restart watches.
 
 ### Path resolution: a query parameter, not a URL segment
 

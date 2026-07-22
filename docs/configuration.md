@@ -170,11 +170,15 @@ person edits or reverts the Docbank node while the source stays unchanged, a
 daemon restart does not overwrite that working version. Only a later byte
 change at the watched source appends another version.
 
-Watchers run as jobs named `watch:<name>`. Inspect them with `docbank jobs` or
-`GET /api/v1/jobs`; a source, destination, or read failure leaves the named job
-in the failed state and records the reason. Restart the daemon after correcting
-the problem. Per-file successes are written to the daemon log. A configured
-watch keeps a background daemon alive regardless of `idle_timeout`.
+Watchers run as jobs named `watch:<name>`. In source builds newer than v0.10.0,
+`docbank watch list` and `GET /api/v1/watches` pair each runner's state with its
+effective source, destination, timing, and exclusion policy; use `--json` when
+an agent needs the complete rules. `docbank jobs` and `GET /api/v1/jobs` remain
+the all-task view.
+A source, destination, or read failure leaves the named job in the failed state
+and records the reason. Restart the daemon after correcting the problem.
+Per-file successes are written to the daemon log. A configured watch keeps a
+background daemon alive regardless of `idle_timeout`.
 
 Inspect the durable source facts attached to an imported file with
 `docbank provenance <path-or-id>` or `GET /api/v1/nodes/{id}/provenance`.

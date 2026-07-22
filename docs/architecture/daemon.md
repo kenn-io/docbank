@@ -154,6 +154,12 @@ indexes supported current text content. Configured watched inboxes add one
 side of the daemon operation gate, so GC cannot retire a blob while the worker
 is reading and publishing its derived index.
 
+`docbank watch list` and authenticated `GET /api/v1/watches` join those runner
+records to the daemon's effective watched-inbox configuration. This gives
+people and agents the source, destination, settling policy, and exclusions they
+need to diagnose an archive without turning the API into a second configuration
+authority.
+
 The supervisor stops accepting work as soon as shutdown begins, cancels every
 runner, and waits before SQLite and blob storage close. Runners must honor
 their context; the wait is bounded so a defective runner cannot prevent daemon

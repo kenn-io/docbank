@@ -160,7 +160,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	recs, err := client.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
-	require.Equal(t, "34", recs[0].Metadata["protocol_version"])
+	require.Equal(t, "35", recs[0].Metadata["protocol_version"])
 	recs[0].Metadata["protocol_version"] = "9"
 	_, err = client.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
@@ -181,7 +181,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	recs, err = client.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
-	require.Equal(t, "34", recs[0].Metadata["protocol_version"])
+	require.Equal(t, "35", recs[0].Metadata["protocol_version"])
 	recs[0].Metadata["protocol_version"] = "7"
 	_, err = client.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
@@ -393,7 +393,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	recs, err = client.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
-	require.Equal(t, "34", recs[0].Metadata["protocol_version"])
+	require.Equal(t, "35", recs[0].Metadata["protocol_version"])
 	recs[0].Metadata["protocol_version"] = "33"
 	_, err = client.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
@@ -409,6 +409,22 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	statPID := strconv.Itoa(recs[0].PID)
 	assert.NotEqual(t, batchPID, statPID)
 
+	// Protocol 34 predates effective watched-inbox inspection. Replace it
+	// before the CLI calls the new route, even when no watches are configured.
+	recs[0].Metadata["protocol_version"] = "34"
+	_, err = client.RuntimeStore(dir).Write(recs[0])
+	require.NoError(t, err)
+	out, err = run(oldBin, "watch", "list", "--json")
+	require.NoError(t, err, out)
+	var watches api.WatchedInboxList
+	require.NoError(t, json.Unmarshal([]byte(out), &watches))
+	assert.Empty(t, watches.Items)
+	recs, err = client.RuntimeStore(dir).List()
+	require.NoError(t, err)
+	require.Len(t, recs, 1)
+	watchPID := strconv.Itoa(recs[0].PID)
+	assert.NotEqual(t, statPID, watchPID)
+
 	// Initialize the repository before making the runtime record stale: the
 	// following backup create must replace that daemon before it calls the new
 	// progress-stream endpoint.
@@ -423,7 +439,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	recs, err = client.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
-	require.Equal(t, "34", recs[0].Metadata["protocol_version"])
+	require.Equal(t, "35", recs[0].Metadata["protocol_version"])
 	recs[0].Metadata["protocol_version"] = "4"
 	_, err = client.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
@@ -436,7 +452,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
 	protocolPID := strconv.Itoa(recs[0].PID)
-	assert.NotEqual(t, statPID, protocolPID)
+	assert.NotEqual(t, watchPID, protocolPID)
 
 	// A mismatched-version start stops the stale daemon and starts its own.
 	out, err = run(newBin, "daemon", "start")

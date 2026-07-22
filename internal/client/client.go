@@ -2512,6 +2512,14 @@ func (c *Client) Jobs(ctx context.Context) ([]api.Job, error) {
 	return out.Items, err
 }
 
+// WatchedInboxes returns effective watched-source configuration and current
+// runner state in stable name order.
+func (c *Client) WatchedInboxes(ctx context.Context) ([]api.WatchedInbox, error) {
+	var out api.WatchedInboxList
+	err := c.do(ctx, http.MethodGet, "/api/v1/watches", nil, nil, &out)
+	return out.Items, err
+}
+
 type BackupVerifyOptions struct {
 	Repo        string
 	SnapshotID  string
