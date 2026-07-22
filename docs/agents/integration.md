@@ -701,9 +701,10 @@ physically reclaimed.
 `POST /api/v1/verify` validates logical metadata and audit history before
 re-hashing every stored blob. It is read-only but can be expensive. Maintenance
 requests serialize against mutations and may run without the ordinary request
-timeout; agents should expose progress as “waiting” rather than assuming a
-queued request is hung. Treat either `metadata_problems` or blob `problems` as a
-failed verification.
+timeout. A new mutation submitted after maintenance is running or queued gets
+`503 maintenance_busy`; retry it after the operator-visible maintenance ends.
+This is a transient refusal, not evidence that the requested mutation committed.
+Treat either `metadata_problems` or blob `problems` as a failed verification.
 
 Use `POST /api/v1/nodes/{id}/verify` when the decision concerns one inspected
 file. Unlike the vault-wide operation it requires `If-Match`, stays bounded to
@@ -743,6 +744,7 @@ Branch on `code`, never `detail`. Useful policy groups:
   `not_dir`, `not_file`, `is_root`.
 - Reconcile desired state: `exists`, `cycle`, `not_trashed`, `not_found`.
 - Stop and surface credentials or topology: `unauthorized`, `loopback_only`.
+- Retry after the active maintenance operation ends: `maintenance_busy`.
 - Release external file locks, then run `storage pack` reconciliation:
   `pack_retirement_deferred`. The preceding repack catalog change already
   committed; never restore the retired mapping or assume rollback.

@@ -385,6 +385,24 @@ func TestProgressStreamPreservesProblemCode(t *testing.T) {
 	assert.Equal(t, "validation", code)
 }
 
+func TestMaintenanceBusyProblemIsRetryableAndTyped(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(api.Error{
+			Title: "Service Unavailable", Status: http.StatusServiceUnavailable,
+			Code: "maintenance_busy", Detail: "vault maintenance is running",
+		})
+	}))
+	t.Cleanup(ts.Close)
+
+	_, err := client.New(ts.URL, "key").Info(t.Context())
+	require.ErrorIs(t, err, client.ErrMaintenanceBusy)
+	code, ok := client.ProblemCode(err)
+	assert.True(t, ok)
+	assert.Equal(t, "maintenance_busy", code)
+}
+
 func TestJSONMethodsRejectInvalidUTF8BeforeRequest(t *testing.T) {
 	var requests atomic.Int64
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

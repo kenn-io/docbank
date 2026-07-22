@@ -107,10 +107,13 @@ maintenance sides:
 - create, ingest, move, trash, and restore take the shared side;
 - trash empty, GC, and verify take the exclusive side.
 
-Requests queue rather than returning “busy.” Maintenance is exempt from the
-ordinary request timeout because a personal archive scan may legitimately be
-long. The gate is not the vault lock; the daemon already owns that lock for
-its lifetime.
+Once maintenance is running or queued, a new HTTP mutation returns
+`503 maintenance_busy` instead of waiting indefinitely. Daemon-owned
+background jobs keep the blocking shared-side behavior so a transient
+maintenance pass does not permanently fail durable work. Maintenance is exempt
+from the ordinary request timeout because a personal archive scan may
+legitimately be long. The gate is not the vault lock; the daemon already owns
+that lock for its lifetime.
 
 Any new endpoint that changes reachability or physical content must be placed
 on the correct side of the gate. Read-only metadata and content streams do not

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"net/http"
 	"sync"
 )
 
@@ -29,7 +30,14 @@ func (g *OperationGate) Mutate(fn func() error) error {
 	return fn()
 }
 
-func (g *OperationGate) mutate(fn func() error) error { return g.Mutate(fn) }
+func (g *OperationGate) mutate(fn func() error) error {
+	if !g.mu.TryRLock() {
+		return NewError(http.StatusServiceUnavailable, "maintenance_busy",
+			"vault maintenance is running or queued; retry this mutation after it finishes")
+	}
+	defer g.mu.RUnlock()
+	return fn()
+}
 
 func (g *OperationGate) maintain(fn func() error) error {
 	g.preservation.Lock()

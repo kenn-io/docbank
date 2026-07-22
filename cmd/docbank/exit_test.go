@@ -33,6 +33,7 @@ func TestCommandExitCode(t *testing.T) {
 		{name: "vault busy", err: home.ErrVaultLocked, started: true, want: exitBusy},
 		{name: "repository busy", err: backup.ErrRepoLocked, started: true, want: exitBusy},
 		{name: "retirement busy", err: packstore.ErrPackRetirementDeferred, started: true, want: exitBusy},
+		{name: "maintenance busy", err: client.ErrMaintenanceBusy, started: true, want: exitBusy},
 		{name: "content integrity", err: client.ErrIntegrity, started: true, want: exitIntegrity},
 		{name: "reported integrity", err: integrityError(errors.New("problems")), started: true, want: exitIntegrity},
 	}

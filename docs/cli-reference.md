@@ -64,7 +64,7 @@ stderr. Human error text remains explanatory and may change.
 | `2` | Invalid command usage, arguments, flag combinations, values, or request validation | Correct the invocation |
 | `3` | The daemon returned `not_found` for the requested vault object | Refresh names or identities |
 | `4` | Stale optimistic state: a revision or audit enrollment preview no longer matches | Re-read, reconsider, and retry deliberately |
-| `5` | A vault, backup repository, or physical pack resource is busy or locked | Wait or release the known owner; do not blindly force-unlock |
+| `5` | Vault maintenance is active, or a vault, backup repository, or physical pack resource is busy or locked | Wait and retry, or release the known owner; do not blindly force-unlock |
 | `6` | A completed verification reported integrity findings, or a content stream failed terminal size/hash/digest proof | Do not trust or publish the affected bytes |
 
 Integrity commands may write their complete human or JSON report before
@@ -651,9 +651,10 @@ already reclaimed. With `--run`, loose blob files are deleted first, then their
 metadata rows; output separately reports removed blob records, reclaimed loose
 files, and reclaimed bytes. A crash mid-GC leaves
 rows without files, which the next `gc --run` reconciles and `verify`
-reports in the meantime. The daemon's maintenance gate holds off
-concurrent mutations while `gc --run` runs, so it never races a
-concurrent import (see [Ownership & Concurrency](architecture/locking.md)).
+reports in the meantime. The daemon's maintenance gate rejects new
+mutations with the retryable busy exit code `5` while `gc --run` runs, so it
+never races a concurrent import (see
+[Ownership & Concurrency](architecture/locking.md)).
 GC does not invoke repack, and no automatic GC/repack scheduler exists today.
 
 ## docbank storage status
@@ -676,7 +677,8 @@ docbank storage pack [--max-bytes <bytes>] [--json]
 
 Explicitly converts authorized loose blobs into immutable Kit pack files. The
 operation runs through the authenticated daemon and holds the vault maintenance
-gate; reads remain available, while imports and other mutations wait. Packing
+gate; reads remain available, while imports and other mutations receive the
+retryable busy exit code `5`. Packing
 does not change document identity or blob read authority, and mixed loose and
 packed storage remains valid after an interruption.
 

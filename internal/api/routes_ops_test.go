@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -800,41 +799,46 @@ func TestVerifyEndpointReportsBlobInventoryFailureAlongsideMetadataFailure(t *te
 	assert.Contains(t, report.MetadataProblems[1], sentinel.Error())
 }
 
-func TestMaintenanceGateQueuesMutations(t *testing.T) {
-	ts, s := newTestServer(t, nil)
-	// Saturate: fire a gc run and a burst of mkdirs concurrently. Every
-	// request must succeed — the gate queues, it never rejects — and the
-	// store must end up consistent (all dirs present).
-	var wg sync.WaitGroup
-	errs := make(chan error, 20)
-	for i := range 10 {
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			resp, body, err := try(t, ts, http.MethodPost, "/api/v1/gc", nil, map[string]any{"run": true})
-			if err != nil {
-				errs <- fmt.Errorf("gc: transport: %w", err)
-			} else if resp.StatusCode != http.StatusOK {
-				errs <- fmt.Errorf("gc: %d %s", resp.StatusCode, body)
-			}
-		}()
-		go func() {
-			defer wg.Done()
-			resp, body, err := try(t, ts, http.MethodPost, "/api/v1/nodes", nil,
-				map[string]any{"parent_id": s.RootID(), "name": fmt.Sprintf("dir-%d", i), "kind": "dir"})
-			if err != nil {
-				errs <- fmt.Errorf("mkdir: transport: %w", err)
-			} else if resp.StatusCode != http.StatusCreated {
-				errs <- fmt.Errorf("mkdir: %d %s", resp.StatusCode, body)
-			}
-		}()
-	}
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		t.Error(err)
-	}
-	kids, err := s.Children(t.Context(), s.RootID())
-	require.NoError(t, err)
-	assert.Len(t, kids, 10)
+func TestMaintenanceGateReportsBusyToMutations(t *testing.T) {
+	gate := api.NewOperationGate()
+	maintenanceEntered := make(chan struct{})
+	releaseMaintenance := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-releaseMaintenance:
+		default:
+			close(releaseMaintenance)
+		}
+	})
+	ts, s := newTestServer(t, func(d *api.Deps) {
+		d.Gate = gate
+		d.VerifyPage = func(
+			context.Context, *store.Store, *blob.Store, internalmaintenance.VerifyOptions,
+		) (internalmaintenance.VerifyReport, error) {
+			close(maintenanceEntered)
+			<-releaseMaintenance
+			return internalmaintenance.VerifyReport{}, nil
+		}
+	})
+
+	verifyDone := make(chan error, 1)
+	go func() {
+		resp, body, err := try(t, ts, http.MethodPost, "/api/v1/verify", nil, nil)
+		if err == nil && resp.StatusCode != http.StatusOK {
+			err = fmt.Errorf("verify: %d %s", resp.StatusCode, body)
+		}
+		verifyDone <- err
+	}()
+	<-maintenanceEntered
+
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/nodes", nil,
+		map[string]any{"parent_id": s.RootID(), "name": "during-maintenance", "kind": "dir"})
+	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode, body)
+	assert.Contains(t, body, `"code":"maintenance_busy"`)
+
+	close(releaseMaintenance)
+	require.NoError(t, <-verifyDone)
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/nodes", nil,
+		map[string]any{"parent_id": s.RootID(), "name": "after-maintenance", "kind": "dir"})
+	assert.Equal(t, http.StatusCreated, resp.StatusCode, body)
 }
