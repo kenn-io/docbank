@@ -118,13 +118,14 @@ platform's toolchain.
 There is no initialization command. The first data command creates the local
 vault and starts its daemon:
 
-> **Release availability:** tag-filtered search is newer than v0.10.0. Build
-> from source to use `docbank search --tag` until the next release is tagged.
+> **Release availability:** tag-filtered search and `docbank get` are newer
+> than v0.10.0. Build from source to use them until the next release is tagged.
 
 ```bash
 docbank add ~/Documents --dest /archive
 docbank tree /archive
 docbank search "tax return"
+docbank get /archive/Documents/receipt.pdf ./receipt.pdf
 docbank versions list /archive/Documents/receipt.pdf
 docbank refs <receipt-sha256>
 docbank tag create taxes

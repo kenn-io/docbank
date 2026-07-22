@@ -198,13 +198,26 @@ curl --fail-with-body --get \
   "$DOCBANK_URL/api/v1/search"
 ```
 
-Retrieve file bytes by ID, not path:
+For shell automation, prefer `get` when the bytes must become a local file. It
+keeps incomplete bytes private and emits a structured proof receipt only after
+the complete stream verifies and is atomically published:
+
+```bash
+docbank get id:42 ./document.bin --json
+```
+
+!!! info "Release availability"
+
+    `docbank get` is newer than v0.10.0. Build from source to use it until the
+    next release is tagged.
+
+Independent HTTP clients should retrieve file bytes by ID, not path:
 
 ```bash
 curl --fail \
   -H "X-Api-Key: $DOCBANK_API_KEY" \
   "$DOCBANK_URL/api/v1/nodes/42/content" \
-  --output document.bin
+  --output document.bin.staging
 ```
 
 The content response sends `X-Docbank-Content-Version`,
@@ -212,10 +225,12 @@ The content response sends `X-Docbank-Content-Version`,
 it sends an
 [RFC 9530](https://www.rfc-editor.org/rfc/rfc9530.html) `Content-Digest`
 trailer computed from the bytes actually streamed. A client
-that needs independent transfer proof hashes `document.bin` itself and compares
-that digest, the trailer, and the file node's `blob_hash`. Require the version
+that needs independent transfer proof writes to private staging, hashes the
+staged bytes itself, and compares that digest, the trailer, and the file node's
+`blob_hash`. Require the version
 header to equal the node's `current_version_id`; do not treat catalog headers
-alone as a fresh physical verification.
+alone as a fresh physical verification. Sync and close the staging file before
+publishing it at the caller-visible destination.
 
 List a node's immutable versions with bounded pagination, then address one
 record or byte stream without relying on its current path:

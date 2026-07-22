@@ -16,7 +16,13 @@ archive is one metadata update.
 docbank ls /taxes          # one directory, with stable selectors, sizes, timestamps
 docbank tree /taxes        # whole subtree, with id:N selectors in brackets
 docbank cat /taxes/w2.pdf  # stream file bytes to stdout
+docbank get /taxes/w2.pdf ./w2.pdf  # verify, then atomically publish a local file
 ```
+
+!!! info "Release availability"
+
+    `docbank get` is newer than v0.10.0. Build from source to use it until the
+    next release is tagged.
 
 Use `ls --json` for a directory envelope containing the resolved directory
 and its ordered children. `tree --json` returns the root plus a flat,
@@ -29,6 +35,7 @@ Commands that target an existing node accept either form:
 
 ```bash
 docbank cat id:42
+docbank get id:42 ./document.pdf
 docbank mv id:42 /taxes/2026/w2.pdf
 docbank rm id:42
 docbank restore id:42

@@ -15,11 +15,15 @@ import (
 	"go.kenn.io/docbank/internal/winsecurity"
 )
 
-func makePrivateEditDir() (*editStaging, error) {
+func makePrivateEditDir() (*privateStaging, error) {
 	return makePrivateEditDirAt(os.TempDir())
 }
 
-func makePrivateEditDirAt(parentPath string) (*editStaging, error) {
+func makePrivateEditDirAt(parentPath string) (*privateStaging, error) {
+	return makePrivateStagingDirAt(parentPath, "docbank-edit-")
+}
+
+func makePrivateStagingDirAt(parentPath, prefix string) (*privateStaging, error) {
 	parent, err := os.OpenRoot(parentPath)
 	if err != nil {
 		return nil, fmt.Errorf("opening edit staging parent: %w", err)
@@ -31,7 +35,7 @@ func makePrivateEditDirAt(parentPath string) (*editStaging, error) {
 		if _, err := rand.Read(random); err != nil {
 			return nil, fmt.Errorf("generating edit staging name: %w", err)
 		}
-		component := "docbank-edit-" + hex.EncodeToString(random)
+		component := prefix + hex.EncodeToString(random)
 		pin, err := winsecurity.MkdirPrivatePinnedAt(parent, component)
 		if err != nil {
 			if errors.Is(err, os.ErrExist) {
@@ -49,7 +53,7 @@ func makePrivateEditDirAt(parentPath string) (*editStaging, error) {
 				cleanupErr,
 			)
 		}
-		return openEditStaging(path, pin)
+		return openPrivateStaging(path, pin)
 	}
 	return nil, errors.New("creating private edit staging: repeated name collisions")
 }

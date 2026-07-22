@@ -239,6 +239,30 @@ docbank cat <path-or-id>
 Streams the file's stored bytes to stdout. Fails with `not a file` for
 directories.
 
+## docbank get
+
+!!! info "Release availability"
+
+    `docbank get` is newer than v0.10.0. Build from source to use it until the
+    next release is tagged.
+
+```text
+docbank get <path-or-id> <local-file> [--overwrite] [--progress auto|bar|plain] [--json]
+```
+
+Downloads one current document version to a local file. Docbank writes into an
+owner-private staging directory beside the destination, verifies the complete
+size, SHA-256 identity, and terminal HTTP digest, syncs and closes the file,
+then publishes it atomically. An interrupted or corrupt transfer never exposes
+a partial destination.
+
+Existing files are preserved unless `--overwrite` is explicit. Even then,
+Docbank verifies the replacement before atomically replacing the existing path;
+an existing symlink is replaced rather than followed. `--json` suppresses
+progress and returns the node ID, immutable version ID, hash, size, and absolute
+local output path. A trashed file remains retrievable by its stable `id:N`
+selector while its content version is retained.
+
 ## docbank put
 
 ```text

@@ -72,11 +72,18 @@ docbank tree /taxes
   checklist.pdf  [231]
 ```
 
-`cat` streams a file's bytes to stdout:
+`cat` streams a file's bytes to stdout. For a durable local file, `get` first
+verifies the complete download in private staging and only then publishes it:
 
 ```bash
-docbank cat /taxes/checklist.pdf > /tmp/checklist.pdf
+docbank cat /taxes/checklist.pdf
+docbank get /taxes/checklist.pdf /tmp/checklist.pdf
 ```
+
+!!! info "Release availability"
+
+    `docbank get` is newer than v0.10.0. Build from source to use it until the
+    next release is tagged.
 
 !!! info "New version-command vocabulary"
 
