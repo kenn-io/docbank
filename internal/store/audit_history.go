@@ -86,8 +86,25 @@ type AuditEventPage struct {
 	NextCursor string
 }
 
+// AuditScopeEventPage is a stable newest-first page across one audit scope.
+type AuditScopeEventPage struct {
+	Scope      AuditScopeStatus
+	Items      []AuditEvent
+	Total      int
+	Limit      int
+	Cursor     string
+	NextCursor string
+}
+
 type auditHistoryCursor struct {
 	nodeID   int64
+	sequence int64
+	ordinal  int64
+	eventID  string
+}
+
+type auditScopeHistoryCursor struct {
+	scopeID  string
 	sequence int64
 	ordinal  int64
 	eventID  string
@@ -109,6 +126,131 @@ func (s *Store) AuditHistoryPath(
 	return s.auditHistorySnapshot(ctx, limit, cursor, func(tx *sql.Tx) (Node, error) {
 		return nodeByPath(ctx, tx, s.rootID, path)
 	})
+}
+
+// AuditScopeHistory returns one bounded page across a stable audit scope.
+func (s *Store) AuditScopeHistory(
+	ctx context.Context, scopeID string, limit int, cursor string,
+) (AuditScopeEventPage, error) {
+	if limit < 1 || limit > maxAuditHistoryPage {
+		return AuditScopeEventPage{}, fmt.Errorf(
+			"audit history limit must be between 1 and %d", maxAuditHistoryPage,
+		)
+	}
+	decoded, err := decodeAuditScopeHistoryCursor(cursor, scopeID)
+	if err != nil {
+		return AuditScopeEventPage{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return AuditScopeEventPage{}, fmt.Errorf("starting audit-scope-history snapshot: %w", err)
+	}
+	page, err := auditScopeHistoryPageTx(ctx, tx, scopeID, limit, cursor, decoded)
+	if err != nil {
+		_ = tx.Rollback()
+		return AuditScopeEventPage{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return AuditScopeEventPage{}, fmt.Errorf("closing audit-scope-history snapshot: %w", err)
+	}
+	return page, nil
+}
+
+func auditScopeHistoryPageTx(
+	ctx context.Context, tx *sql.Tx, scopeID string, limit int, rawCursor string,
+	cursor auditScopeHistoryCursor,
+) (AuditScopeEventPage, error) {
+	scope, err := auditScopeStatusByIDTx(ctx, tx, scopeID)
+	if err != nil {
+		return AuditScopeEventPage{}, err
+	}
+	page := AuditScopeEventPage{
+		Scope: scope, Items: make([]AuditEvent, 0, limit), Limit: limit, Cursor: rawCursor,
+	}
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM audit_records WHERE kind='event' AND scope_id=?`, scopeID,
+	).Scan(&page.Total); err != nil {
+		return AuditScopeEventPage{}, fmt.Errorf("counting audit scope %s history: %w", scopeID, err)
+	}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT e.record_json,m.operation_sequence
+		FROM audit_records AS e
+		JOIN audit_records AS m
+		  ON m.kind='canonical_mutation' AND m.operation_id=e.operation_id
+		WHERE e.kind='event' AND e.scope_id=? AND
+		  (?=0 OR m.operation_sequence<? OR
+		   (m.operation_sequence=? AND e.event_ordinal<?) OR
+		   (m.operation_sequence=? AND e.event_ordinal=? AND e.event_id<?))
+		ORDER BY m.operation_sequence DESC,e.event_ordinal DESC,e.event_id DESC
+		LIMIT ?`, scopeID,
+		cursor.sequence, cursor.sequence,
+		cursor.sequence, cursor.ordinal,
+		cursor.sequence, cursor.ordinal, cursor.eventID,
+		limit+1,
+	)
+	if err != nil {
+		return AuditScopeEventPage{}, fmt.Errorf("listing audit scope %s history: %w", scopeID, err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var raw string
+		var sequence int64
+		if err := rows.Scan(&raw, &sequence); err != nil {
+			return AuditScopeEventPage{}, fmt.Errorf("scanning audit scope history: %w", err)
+		}
+		event, err := projectAuditEvent([]byte(raw), sequence)
+		if err != nil {
+			return AuditScopeEventPage{}, err
+		}
+		page.Items = append(page.Items, event)
+	}
+	if err := rows.Err(); err != nil {
+		return AuditScopeEventPage{}, fmt.Errorf("listing audit scope %s history: %w", scopeID, err)
+	}
+	if len(page.Items) > limit {
+		page.Items = page.Items[:limit]
+		last := page.Items[len(page.Items)-1]
+		page.NextCursor = encodeAuditScopeHistoryCursor(auditScopeHistoryCursor{
+			scopeID: scopeID, sequence: last.OperationSequence,
+			ordinal: last.Ordinal, eventID: last.ID,
+		})
+	}
+	return page, nil
+}
+
+func auditScopeStatusByIDTx(
+	ctx context.Context, tx *sql.Tx, scopeID string,
+) (AuditScopeStatus, error) {
+	var scope AuditScopeStatus
+	err := tx.QueryRowContext(ctx, `SELECT s.scope_id,s.target_node_id,
+		s.enable_operation_id,b.digest,s.entry_count,s.chain_head,COUNT(m.node_id)
+		FROM audit_scopes s
+		JOIN audit_baselines b ON b.scope_id=s.scope_id AND b.operation_id=s.enable_operation_id
+		JOIN audit_memberships m ON m.scope_id=s.scope_id
+		WHERE s.scope_id=?
+		GROUP BY s.scope_id,s.target_node_id,s.enable_operation_id,b.digest,
+			s.entry_count,s.chain_head`, scopeID).Scan(
+		&scope.ID, &scope.TargetNodeID, &scope.EnableOperationID,
+		&scope.BaselineDigest, &scope.EntryCount, &scope.ChainHead, &scope.MemberCount,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AuditScopeStatus{}, fmt.Errorf("audit scope %s: %w", scopeID, ErrNotFound)
+	}
+	if err != nil {
+		return AuditScopeStatus{}, fmt.Errorf("reading audit scope %s: %w", scopeID, err)
+	}
+	target, err := nodeByIDTx(tx, scope.TargetNodeID)
+	if err != nil {
+		return AuditScopeStatus{}, err
+	}
+	scope.TargetTrashed = target.TrashedAt != nil
+	if !scope.TargetTrashed {
+		scope.TargetPath, err = pathOf(ctx, tx, scope.TargetNodeID)
+		if err != nil {
+			return AuditScopeStatus{}, err
+		}
+	}
+	return scope, nil
 }
 
 func (s *Store) auditHistorySnapshot(
@@ -635,4 +777,42 @@ func auditEventIsAfterCursor(event AuditEvent, cursor auditHistoryCursor) bool {
 		(event.OperationSequence == cursor.sequence && event.Ordinal < cursor.ordinal) ||
 		(event.OperationSequence == cursor.sequence && event.Ordinal == cursor.ordinal &&
 			event.ID < cursor.eventID)
+}
+
+// ValidateAuditScopeHistoryCursor checks that an opaque cursor belongs to scopeID.
+func ValidateAuditScopeHistoryCursor(raw, scopeID string) error {
+	_, err := decodeAuditScopeHistoryCursor(raw, scopeID)
+	return err
+}
+
+func decodeAuditScopeHistoryCursor(raw, scopeID string) (auditScopeHistoryCursor, error) {
+	if err := validateUUIDv4(scopeID); err != nil {
+		return auditScopeHistoryCursor{}, fmt.Errorf("%w: invalid scope ID", ErrInvalidAuditCursor)
+	}
+	if raw == "" {
+		return auditScopeHistoryCursor{}, nil
+	}
+	decoded, err := base64.RawURLEncoding.Strict().DecodeString(raw)
+	if err != nil {
+		return auditScopeHistoryCursor{}, fmt.Errorf("%w: malformed encoding", ErrInvalidAuditCursor)
+	}
+	parts := strings.Split(string(decoded), ":")
+	if len(parts) != 4 {
+		return auditScopeHistoryCursor{}, fmt.Errorf("%w: malformed fields", ErrInvalidAuditCursor)
+	}
+	sequence, sequenceErr := strconv.ParseInt(parts[1], 10, 64)
+	ordinal, ordinalErr := strconv.ParseInt(parts[2], 10, 64)
+	if parts[0] != scopeID || sequenceErr != nil || ordinalErr != nil ||
+		sequence < 1 || ordinal < 0 || validateAuditDigest("history event", parts[3]) != nil {
+		return auditScopeHistoryCursor{}, fmt.Errorf("%w: invalid or mismatched fields", ErrInvalidAuditCursor)
+	}
+	return auditScopeHistoryCursor{
+		scopeID: scopeID, sequence: sequence, ordinal: ordinal, eventID: parts[3],
+	}, nil
+}
+
+func encodeAuditScopeHistoryCursor(cursor auditScopeHistoryCursor) string {
+	raw := fmt.Sprintf("%s:%d:%d:%s",
+		cursor.scopeID, cursor.sequence, cursor.ordinal, cursor.eventID)
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
 }

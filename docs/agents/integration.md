@@ -600,6 +600,20 @@ retention, and `invalid_audit_cursor` as a request error. A protected node may
 have an empty timeline when it was adopted at enrollment and has not changed;
 use status membership, not event count, to decide protection.
 
+To answer “what changed anywhere in this protected scope?”, use the stable
+scope ID returned by audit status:
+
+```bash
+curl --fail-with-body \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  "$DOCBANK_URL/api/v1/audit/scopes/<scope-id>/history?limit=50"
+```
+
+The page includes current scope evidence and events from every protected
+member. Reconcile each event's `scope_id`, retain its `node_id` as the stable
+subject, and follow `next_cursor` unchanged. Scope cursors are bound to that
+scope and remain append-stable when newer events arrive.
+
 Independently replay the authority and hash every protected blob with:
 
 ```bash

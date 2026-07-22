@@ -419,6 +419,7 @@ docbank audit status [path-or-id] [--json]
 docbank audit status --node-id <id> [--json]
 docbank audit history <path-or-id> [--limit <n>] [--cursor <cursor>] [--json]
 docbank audit history --node-id <id> [--limit <n>] [--cursor <cursor>] [--json]
+docbank audit history --scope <scope-id> [--limit <n>] [--cursor <cursor>] [--json]
 docbank audit verify [--expected <prior-json-report>] [--json]
 ```
 
@@ -453,6 +454,11 @@ cursor is opaque and bound to its stable node. Use `--node-id` for a moved or
 trashed node. A protected enrollment-baseline member can legitimately have no
 node-specific events until its first later mutation; use `audit status` for
 membership authority.
+
+`audit history --scope <scope-id>` reads the same canonical events across all
+members of one permanent scope. Human output names each event's copyable node
+selector; JSON includes the complete scope status alongside the page. Its
+cursor is bound to the stable scope rather than one node.
 
 `audit verify` independently replays canonical history against current
 metadata, then re-hashes every unique blob retained by protected versions. Its

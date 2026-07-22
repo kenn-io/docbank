@@ -15,6 +15,7 @@ import (
 type auditPreviewOutput struct{ Body AuditEnrollmentPreview }
 type auditStatusOutput struct{ Body AuditStatus }
 type auditHistoryOutput struct{ Body AuditEventPage }
+type auditScopeHistoryOutput struct{ Body AuditScopeEventPage }
 type auditVerifyOutput struct{ Body AuditVerifyReport }
 
 func registerAuditRoutes(
@@ -224,6 +225,28 @@ func registerAuditRoutes(
 		}
 		return &auditHistoryOutput{Body: auditEventPage(page)}, nil
 	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "auditScopeHistory", Method: http.MethodGet,
+		Path:    "/api/v1/audit/scopes/{scope_id}/history",
+		Summary: "Read canonical events across one permanent audit scope",
+		Description: "Returns newest-first canonical events across every member of " +
+			"one stable scope. Use next_cursor to continue without shifting when newer " +
+			"events arrive.",
+	}, func(ctx context.Context, in *struct {
+		ScopeID string `path:"scope_id" pattern:"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"`
+		Limit   int    `query:"limit" default:"50" minimum:"1" maximum:"500"`
+		Cursor  string `query:"cursor" maxLength:"256"`
+	}) (*auditScopeHistoryOutput, error) {
+		if err := store.ValidateAuditScopeHistoryCursor(in.Cursor, in.ScopeID); err != nil {
+			return nil, FromStoreError(err)
+		}
+		page, err := d.Store.AuditScopeHistory(ctx, in.ScopeID, in.Limit, in.Cursor)
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
+		return &auditScopeHistoryOutput{Body: auditScopeEventPage(page)}, nil
+	})
 }
 
 func storeAuditEvidence(evidence AuditEvidence) store.AuditEvidence {
@@ -297,12 +320,7 @@ func auditStatus(status store.AuditStatus) AuditStatus {
 		AllocationHead:             status.AllocationHead, Scopes: []AuditScopeStatus{},
 	}
 	for _, scope := range status.Scopes {
-		out.Scopes = append(out.Scopes, AuditScopeStatus{
-			ID: scope.ID, TargetNodeID: scope.TargetNodeID, TargetPath: scope.TargetPath,
-			TargetTrashed: scope.TargetTrashed, EnableOperationID: scope.EnableOperationID,
-			BaselineDigest: scope.BaselineDigest, MemberCount: scope.MemberCount,
-			EntryCount: scope.EntryCount, ChainHead: scope.ChainHead,
-		})
+		out.Scopes = append(out.Scopes, auditScopeStatus(scope))
 	}
 	if status.Membership != nil {
 		out.Membership = &AuditMembershipStatus{
@@ -318,26 +336,52 @@ func auditStatus(status store.AuditStatus) AuditStatus {
 func auditEventPage(page store.AuditEventPage) AuditEventPage {
 	out := AuditEventPage{
 		Node: fromStoreNode(page.Node), Path: page.Path,
-		Items: []AuditEvent{}, Total: page.Total, Limit: page.Limit,
+		Items: auditEvents(page.Items), Total: page.Total, Limit: page.Limit,
 		Cursor: page.Cursor, NextCursor: page.NextCursor,
 	}
-	for _, event := range page.Items {
-		out.Items = append(out.Items, AuditEvent{
-			ID: event.ID, OperationID: event.OperationID,
-			OperationSequence: event.OperationSequence, Ordinal: event.Ordinal,
-			NodeID: event.NodeID, Kind: event.Kind, ScopeID: event.ScopeID,
-			RecordedAt: event.RecordedAt, Origin: event.Origin, AgentLabel: event.AgentLabel,
-			PriorNodeRevision:         event.PriorNodeRevision,
-			ResultingNodeRevision:     event.ResultingNodeRevision,
-			PriorCurrentVersionID:     event.PriorCurrentVersionID,
-			ResultingCurrentVersionID: event.ResultingCurrentVersionID,
-			SourceVersionID:           event.SourceVersionID, TargetNodeID: event.TargetNodeID,
-			BaselineDigest: event.BaselineDigest,
-			Attachment:     auditAttachmentChange(event.Attachment),
-			OldPath:        auditPathState(event.OldPath), NewPath: auditPathState(event.NewPath),
-		})
+	return out
+}
+
+func auditScopeEventPage(page store.AuditScopeEventPage) AuditScopeEventPage {
+	return AuditScopeEventPage{
+		Scope: auditScopeStatus(page.Scope), Items: auditEvents(page.Items),
+		Total: page.Total, Limit: page.Limit,
+		Cursor: page.Cursor, NextCursor: page.NextCursor,
+	}
+}
+
+func auditScopeStatus(scope store.AuditScopeStatus) AuditScopeStatus {
+	return AuditScopeStatus{
+		ID: scope.ID, TargetNodeID: scope.TargetNodeID, TargetPath: scope.TargetPath,
+		TargetTrashed: scope.TargetTrashed, EnableOperationID: scope.EnableOperationID,
+		BaselineDigest: scope.BaselineDigest, MemberCount: scope.MemberCount,
+		EntryCount: scope.EntryCount, ChainHead: scope.ChainHead,
+	}
+}
+
+func auditEvents(events []store.AuditEvent) []AuditEvent {
+	out := make([]AuditEvent, 0, len(events))
+	for _, event := range events {
+		out = append(out, auditEvent(event))
 	}
 	return out
+}
+
+func auditEvent(event store.AuditEvent) AuditEvent {
+	return AuditEvent{
+		ID: event.ID, OperationID: event.OperationID,
+		OperationSequence: event.OperationSequence, Ordinal: event.Ordinal,
+		NodeID: event.NodeID, Kind: event.Kind, ScopeID: event.ScopeID,
+		RecordedAt: event.RecordedAt, Origin: event.Origin, AgentLabel: event.AgentLabel,
+		PriorNodeRevision:         event.PriorNodeRevision,
+		ResultingNodeRevision:     event.ResultingNodeRevision,
+		PriorCurrentVersionID:     event.PriorCurrentVersionID,
+		ResultingCurrentVersionID: event.ResultingCurrentVersionID,
+		SourceVersionID:           event.SourceVersionID, TargetNodeID: event.TargetNodeID,
+		BaselineDigest: event.BaselineDigest,
+		Attachment:     auditAttachmentChange(event.Attachment),
+		OldPath:        auditPathState(event.OldPath), NewPath: auditPathState(event.NewPath),
+	}
 }
 
 func auditPathState(value *store.AuditPathState) *AuditPathState {

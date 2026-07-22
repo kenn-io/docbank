@@ -135,6 +135,24 @@ func TestAuditPreviewEnableAndStatusLifecycle(t *testing.T) {
 	assert.Equal(t, "/source/taxes/receipt.txt",
 		*provenanceEvent.Attachment.After.OriginalPath)
 
+	scopeHistory, err := c.AuditScopeHistory(t.Context(), preview.ScopeID, 2, "")
+	require.NoError(t, err)
+	assert.Equal(t, preview.ScopeID, scopeHistory.Scope.ID)
+	assert.Equal(t, taxes.ID, scopeHistory.Scope.TargetNodeID)
+	assert.Equal(t, "/Taxes", scopeHistory.Scope.TargetPath)
+	assert.Greater(t, scopeHistory.Total, 2)
+	require.Len(t, scopeHistory.Items, 2)
+	require.NotEmpty(t, scopeHistory.NextCursor)
+	for _, event := range scopeHistory.Items {
+		assert.Equal(t, preview.ScopeID, event.ScopeID)
+	}
+	scopeHistoryNext, err := c.AuditScopeHistory(
+		t.Context(), preview.ScopeID, 2, scopeHistory.NextCursor,
+	)
+	require.NoError(t, err)
+	require.NotEmpty(t, scopeHistoryNext.Items)
+	assert.Equal(t, scopeHistory.Total, scopeHistoryNext.Total)
+
 	_, err = c.AuditHistory(t.Context(), "", s.RootID(), 10, "")
 	require.ErrorIs(t, err, store.ErrAuditNotEnrolled)
 
@@ -143,6 +161,13 @@ func TestAuditPreviewEnableAndStatusLifecycle(t *testing.T) {
 	), nil, nil)
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 	var cursorProblem api.Error
+	require.NoError(t, json.Unmarshal([]byte(raw), &cursorProblem))
+	assert.Equal(t, "invalid_audit_cursor", cursorProblem.Code)
+
+	resp, raw = do(t, ts, http.MethodGet, fmt.Sprintf(
+		"/api/v1/audit/scopes/%s/history?limit=10&cursor=bad", preview.ScopeID,
+	), nil, nil)
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 	require.NoError(t, json.Unmarshal([]byte(raw), &cursorProblem))
 	assert.Equal(t, "invalid_audit_cursor", cursorProblem.Code)
 

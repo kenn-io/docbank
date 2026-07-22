@@ -112,6 +112,67 @@ func TestAuditHistoryCursorRemainsStableWhenNewEventsArrive(t *testing.T) {
 	}
 }
 
+func TestAuditScopeHistoryPagesEveryMemberEvent(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	taxes, err := s.Mkdir(t.Context(), s.RootID(), "Taxes")
+	require.NoError(t, err)
+	plan, err := s.PreviewInitialAudit(t.Context(), taxes.ID, "cli", nil)
+	require.NoError(t, err)
+	status, err := s.EnableInitialAudit(t.Context(), plan)
+	require.NoError(t, err)
+	require.Len(t, status.Scopes, 1)
+	scopeID := status.Scopes[0].ID
+	destination, err := s.Mkdir(t.Context(), taxes.ID, "2027")
+	require.NoError(t, err)
+	file, err := s.CreateFile(
+		t.Context(), taxes.ID, "return.txt", fakeHash("a719"), 13, "text/plain",
+	)
+	require.NoError(t, err)
+	_, _, err = s.Move(t.Context(), file.ID, destination.ID, file.Name, file.Revision)
+	require.NoError(t, err)
+
+	first, err := s.AuditScopeHistory(t.Context(), scopeID, 5, "")
+	require.NoError(t, err)
+	assert.Equal(t, scopeID, first.Scope.ID)
+	assert.Equal(t, taxes.ID, first.Scope.TargetNodeID)
+	assert.Equal(t, "/Taxes", first.Scope.TargetPath)
+	assert.Greater(t, first.Total, len(first.Items))
+	require.Len(t, first.Items, 5)
+	require.NotEmpty(t, first.NextCursor)
+	require.NoError(t, ValidateAuditScopeHistoryCursor(first.NextCursor, scopeID))
+	for _, event := range first.Items {
+		assert.Equal(t, scopeID, event.ScopeID)
+	}
+	nodeIDs := map[int64]bool{}
+	for _, event := range first.Items {
+		nodeIDs[event.NodeID] = true
+	}
+	assert.GreaterOrEqual(t, len(nodeIDs), 2)
+
+	boundary := first.Items[len(first.Items)-1]
+	_, _, err = s.Move(t.Context(), file.ID, destination.ID, "amended.txt", file.Revision+1)
+	require.NoError(t, err)
+	second, err := s.AuditScopeHistory(t.Context(), scopeID, 500, first.NextCursor)
+	require.NoError(t, err)
+	assert.Equal(t, first.Total+1, second.Total)
+	for _, event := range second.Items {
+		assert.True(t,
+			event.OperationSequence < boundary.OperationSequence ||
+				(event.OperationSequence == boundary.OperationSequence && event.Ordinal < boundary.Ordinal) ||
+				(event.OperationSequence == boundary.OperationSequence && event.Ordinal == boundary.Ordinal &&
+					event.ID < boundary.ID),
+		)
+	}
+
+	otherScope := "11111111-1111-4111-8111-111111111111"
+	_, err = s.AuditScopeHistory(t.Context(), otherScope, 10, "")
+	require.ErrorIs(t, err, ErrNotFound)
+	_, err = s.AuditScopeHistory(t.Context(), otherScope, 10, first.NextCursor)
+	require.ErrorIs(t, err, ErrInvalidAuditCursor)
+}
+
 func TestAuditHistoryPreservesTrashAndRestoreCoordinates(t *testing.T) {
 	s := newAuditedMoveStore(t)
 	work, err := s.NodeByPath(t.Context(), "/Projects/Work")

@@ -13,6 +13,7 @@ import (
 
 var (
 	auditHistoryNodeID int64
+	auditHistoryScope  string
 	auditHistoryLimit  int
 	auditHistoryCursor string
 	auditHistoryJSON   bool
@@ -20,19 +21,30 @@ var (
 
 var auditHistoryCmd = &cobra.Command{
 	Use:   "history [path-or-id]",
-	Short: "Read one permanently protected node's canonical event timeline",
+	Short: "Read canonical events for one protected node or scope",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		nodeIDSet := cmd.Flags().Changed("node-id")
-		if (len(args) == 1) == nodeIDSet {
+		scopeSet := cmd.Flags().Changed("scope")
+		selectors := len(args)
+		if nodeIDSet {
+			selectors++
+		}
+		if scopeSet {
+			selectors++
+		}
+		if selectors != 1 {
 			return usageError(errors.New(
-				"audit history requires exactly one path or --node-id"))
+				"audit history requires exactly one path, --node-id, or --scope"))
 		}
 		if auditHistoryLimit < 1 || auditHistoryLimit > 500 {
 			return usageError(errors.New("audit history --limit must be between 1 and 500"))
 		}
 		if nodeIDSet && auditHistoryNodeID < 1 {
 			return usageError(errors.New("audit history --node-id must be positive"))
+		}
+		if scopeSet && !client.IsCanonicalUUIDv4(auditHistoryScope) {
+			return usageError(errors.New("audit history --scope must be a canonical UUIDv4"))
 		}
 		path := ""
 		nodeID := auditHistoryNodeID
@@ -50,6 +62,18 @@ var auditHistoryCmd = &cobra.Command{
 		c, err := client.Ensure(cmd.Context())
 		if err != nil {
 			return err
+		}
+		if scopeSet {
+			page, err := c.AuditScopeHistory(
+				cmd.Context(), auditHistoryScope, auditHistoryLimit, auditHistoryCursor,
+			)
+			if err != nil {
+				return err
+			}
+			if auditHistoryJSON {
+				return writeAuditJSON(cmd.OutOrStdout(), page)
+			}
+			return writeAuditScopeHistory(cmd.OutOrStdout(), page)
 		}
 		page, err := c.AuditHistory(
 			cmd.Context(), path, nodeID, auditHistoryLimit, auditHistoryCursor,
@@ -79,9 +103,40 @@ func writeAuditHistory(w io.Writer, page api.AuditEventPage) error {
 			return fmt.Errorf("writing audit history: %w", err)
 		}
 	}
-	for _, event := range page.Items {
-		if _, err := fmt.Fprintf(w, "%s  %s  operation %d.%d  revision %d -> %d\n",
-			event.RecordedAt, event.Kind, event.OperationSequence, event.Ordinal,
+	if err := writeAuditEvents(w, page.Items, false); err != nil {
+		return err
+	}
+	return writeAuditNextCursor(w, page.NextCursor)
+}
+
+func writeAuditScopeHistory(w io.Writer, page api.AuditScopeEventPage) error {
+	coordinate := auditDisplayPath(page.Scope.TargetPath)
+	if page.Scope.TargetTrashed {
+		coordinate = formatNodeSelector(page.Scope.TargetNodeID) + " in trash"
+	}
+	if _, err := fmt.Fprintf(w, "audit history for scope %s at %s: %d recorded event(s)\n",
+		page.Scope.ID, coordinate, page.Total); err != nil {
+		return fmt.Errorf("writing audit scope history: %w", err)
+	}
+	if len(page.Items) == 0 {
+		if _, err := fmt.Fprintln(w, "no events on this page; the scope remains permanent"); err != nil {
+			return fmt.Errorf("writing audit scope history: %w", err)
+		}
+	}
+	if err := writeAuditEvents(w, page.Items, true); err != nil {
+		return err
+	}
+	return writeAuditNextCursor(w, page.NextCursor)
+}
+
+func writeAuditEvents(w io.Writer, events []api.AuditEvent, includeNode bool) error {
+	for _, event := range events {
+		node := ""
+		if includeNode {
+			node = "  " + formatNodeSelector(event.NodeID)
+		}
+		if _, err := fmt.Fprintf(w, "%s  %s%s  operation %d.%d  revision %d -> %d\n",
+			event.RecordedAt, event.Kind, node, event.OperationSequence, event.Ordinal,
 			event.PriorNodeRevision, event.ResultingNodeRevision); err != nil {
 			return fmt.Errorf("writing audit history: %w", err)
 		}
@@ -110,8 +165,12 @@ func writeAuditHistory(w io.Writer, page api.AuditEventPage) error {
 			}
 		}
 	}
-	if page.NextCursor != "" {
-		if _, err := fmt.Fprintln(w, "next cursor: "+page.NextCursor); err != nil {
+	return nil
+}
+
+func writeAuditNextCursor(w io.Writer, cursor string) error {
+	if cursor != "" {
+		if _, err := fmt.Fprintln(w, "next cursor: "+cursor); err != nil {
 			return fmt.Errorf("writing audit history: %w", err)
 		}
 	}
@@ -175,6 +234,8 @@ func auditOptionalValue(value *string) string {
 func init() {
 	auditHistoryCmd.Flags().Int64Var(&auditHistoryNodeID, "node-id", 0,
 		"stable node ID, including a node in trash (alternative to path)")
+	auditHistoryCmd.Flags().StringVar(&auditHistoryScope, "scope", "",
+		"stable audit scope ID (alternative to a node path or ID)")
 	auditHistoryCmd.Flags().IntVar(&auditHistoryLimit, "limit", 50,
 		"maximum events to return (1-500)")
 	auditHistoryCmd.Flags().StringVar(&auditHistoryCursor, "cursor", "",

@@ -853,6 +853,37 @@ func (c *Client) AuditHistory(
 	return page, nil
 }
 
+// AuditScopeHistory returns one stable newest-first page across every member
+// of one permanent audit scope.
+func (c *Client) AuditScopeHistory(
+	ctx context.Context, scopeID string, limit int, cursor string,
+) (api.AuditScopeEventPage, error) {
+	var page api.AuditScopeEventPage
+	if !validUUIDv4(scopeID) {
+		return page, errors.New("audit scope history requires a canonical UUIDv4 scope ID")
+	}
+	if limit < 1 || limit > 500 {
+		return page, errors.New("audit scope history limit must be between 1 and 500")
+	}
+	if err := store.ValidateAuditScopeHistoryCursor(cursor, scopeID); err != nil {
+		return page, err
+	}
+	query := url.Values{}
+	query.Set("limit", strconv.Itoa(limit))
+	if cursor != "" {
+		query.Set("cursor", cursor)
+	}
+	requestPath := "/api/v1/audit/scopes/" + url.PathEscape(scopeID) +
+		"/history?" + query.Encode()
+	if err := c.do(ctx, http.MethodGet, requestPath, nil, nil, &page); err != nil {
+		return page, err
+	}
+	if err := validateAuditScopeEventPage(page, scopeID, limit, cursor); err != nil {
+		return api.AuditScopeEventPage{}, err
+	}
+	return page, nil
+}
+
 func validateAuditEventPage(page api.AuditEventPage, requestedNodeID int64, limit int, cursor string) error {
 	if page.Node.ID < 1 || (requestedNodeID != 0 && page.Node.ID != requestedNodeID) ||
 		page.Limit != limit || page.Cursor != cursor || page.Total < len(page.Items) ||
@@ -879,10 +910,43 @@ func validateAuditEventPage(page api.AuditEventPage, requestedNodeID int64, limi
 	return nil
 }
 
+func validateAuditScopeEventPage(
+	page api.AuditScopeEventPage, scopeID string, limit int, cursor string,
+) error {
+	if page.Scope.ID != scopeID || page.Limit != limit || page.Cursor != cursor ||
+		page.Total < len(page.Items) || len(page.Items) > limit {
+		return errors.New("audit scope history response has inconsistent scope or pagination")
+	}
+	if err := validateAuditScopeStatus(page.Scope); err != nil {
+		return fmt.Errorf("audit scope history response: %w", err)
+	}
+	if err := store.ValidateAuditScopeHistoryCursor(cursor, scopeID); err != nil {
+		return err
+	}
+	if err := store.ValidateAuditScopeHistoryCursor(page.NextCursor, scopeID); err != nil {
+		return err
+	}
+	if page.NextCursor != "" && len(page.Items) != limit {
+		return errors.New("audit scope history response has a premature next cursor")
+	}
+	for i, event := range page.Items {
+		if event.ScopeID != scopeID {
+			return fmt.Errorf("audit scope history item %d belongs to another scope", i)
+		}
+		if err := validateAuditEvent(event, event.NodeID); err != nil {
+			return fmt.Errorf("audit scope history item %d: %w", i, err)
+		}
+		if i > 0 && !auditEventPrecedes(page.Items[i-1], event) {
+			return errors.New("audit scope history response is not newest first")
+		}
+	}
+	return nil
+}
+
 func validateAuditEvent(event api.AuditEvent, nodeID int64) error {
 	recordedAt, timeErr := time.Parse(time.RFC3339Nano, event.RecordedAt)
 	if !validSHA256Hex(event.ID) || !validUUIDv4(event.OperationID) ||
-		event.OperationSequence < 1 || event.Ordinal < 0 || event.NodeID != nodeID ||
+		event.OperationSequence < 1 || event.Ordinal < 0 || event.NodeID < 1 || event.NodeID != nodeID ||
 		event.Kind == "" || !validUUIDv4(event.ScopeID) || event.Origin == "" ||
 		timeErr != nil || recordedAt.Location() != time.UTC ||
 		event.PriorNodeRevision < 0 || event.ResultingNodeRevision < 0 ||
@@ -1071,12 +1135,8 @@ func validateAuditStatus(status api.AuditStatus) error {
 	previousScopeID := ""
 	for index, scope := range status.Scopes {
 		_, duplicate := seen[scope.ID]
-		if !validUUIDv4(scope.ID) || duplicate ||
-			(previousScopeID != "" && scope.ID <= previousScopeID) || scope.TargetNodeID < 1 ||
-			(!scope.TargetTrashed && !strings.HasPrefix(scope.TargetPath, "/")) ||
-			(scope.TargetTrashed && scope.TargetPath != "") ||
-			!validUUIDv4(scope.EnableOperationID) || !validSHA256Hex(scope.BaselineDigest) ||
-			scope.MemberCount < 1 || scope.EntryCount < 1 || !validSHA256Hex(scope.ChainHead) {
+		if duplicate || (previousScopeID != "" && scope.ID <= previousScopeID) ||
+			validateAuditScopeStatus(scope) != nil {
 			return fmt.Errorf("audit status scope %d has invalid authority", index)
 		}
 		seen[scope.ID] = scopeMembershipAuthority{
@@ -1104,6 +1164,17 @@ func validateAuditStatus(status api.AuditStatus) error {
 			}
 			previousScopeID = scopeID
 		}
+	}
+	return nil
+}
+
+func validateAuditScopeStatus(scope api.AuditScopeStatus) error {
+	if !validUUIDv4(scope.ID) || scope.TargetNodeID < 1 ||
+		(!scope.TargetTrashed && !strings.HasPrefix(scope.TargetPath, "/")) ||
+		(scope.TargetTrashed && scope.TargetPath != "") ||
+		!validUUIDv4(scope.EnableOperationID) || !validSHA256Hex(scope.BaselineDigest) ||
+		scope.MemberCount < 1 || scope.EntryCount < 1 || !validSHA256Hex(scope.ChainHead) {
+		return errors.New("audit scope has invalid authority")
 	}
 	return nil
 }

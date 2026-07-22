@@ -371,6 +371,17 @@ type AuditEventPage struct {
 	NextCursor string       `json:"next_cursor,omitempty"`
 }
 
+// AuditScopeEventPage is a newest-first, cursor-stable timeline across one
+// permanent scope.
+type AuditScopeEventPage struct {
+	Scope      AuditScopeStatus `json:"scope"`
+	Items      []AuditEvent     `json:"items"`
+	Total      int              `json:"total" minimum:"0"`
+	Limit      int              `json:"limit" minimum:"1" maximum:"500"`
+	Cursor     string           `json:"cursor,omitempty"`
+	NextCursor string           `json:"next_cursor,omitempty"`
+}
+
 // ContentVerification binds a fresh physical read to the exact node revision
 // the caller inspected. BlobHash and Size are catalog identity; ComputedHash
 // and ComputedSize describe the bytes read through the mixed store.
