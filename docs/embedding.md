@@ -129,8 +129,10 @@ encoding and stored size without changing the logical SHA-256 or size.
 An eligible write temporarily needs scratch space for both the raw object and
 its compressed candidate before Docbank chooses one for durable publication.
 `LooseBacklog` reports how much indexed loose content remains eligible for an
-explicit pack pass, split into raw and compressed object counts. It is useful
-for scheduling; it does not make packing automatic.
+explicit pack pass, including both logical and physically stored bytes and a
+split between raw and compressed object counts. Applications can therefore
+schedule packing from physical storage growth without walking loose objects.
+The report does not make packing automatic.
 
 `vault.ID()` returns the archive's stable UUID. JSONL backup and restore
 preserve that identity even when the restored vault has a different filesystem

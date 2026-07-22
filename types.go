@@ -126,10 +126,11 @@ type PhysicalContent struct {
 
 // LooseBacklog summarizes loose content eligible for explicit packing.
 type LooseBacklog struct {
-	EligibleObjects   int64 `json:"eligible_objects"`
-	EligibleBytes     int64 `json:"eligible_bytes"`
-	RawObjects        int64 `json:"raw_objects"`
-	CompressedObjects int64 `json:"compressed_objects"`
+	EligibleObjects     int64 `json:"eligible_objects"`
+	EligibleBytes       int64 `json:"eligible_bytes"`
+	EligibleStoredBytes int64 `json:"eligible_stored_bytes"`
+	RawObjects          int64 `json:"raw_objects"`
+	CompressedObjects   int64 `json:"compressed_objects"`
 }
 
 // ChildrenOptions selects one bounded page of a directory's live children.
@@ -243,7 +244,8 @@ func fromStorePhysical(physical store.PhysicalContent) PhysicalContent {
 func fromStoreLooseBacklog(backlog store.LooseBacklog) LooseBacklog {
 	return LooseBacklog{
 		EligibleObjects: backlog.EligibleObjects, EligibleBytes: backlog.EligibleBytes,
-		RawObjects: backlog.RawObjects, CompressedObjects: backlog.CompressedObjects,
+		EligibleStoredBytes: backlog.EligibleStoredBytes,
+		RawObjects:          backlog.RawObjects, CompressedObjects: backlog.CompressedObjects,
 	}
 }
 

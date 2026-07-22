@@ -937,7 +937,8 @@ func TestNewConfiguresLooseCompression(t *testing.T) {
 	backlog, err := vault.LooseBacklog(t.Context())
 	require.NoError(err)
 	require.Equal(LooseBacklog{
-		EligibleObjects: 1, EligibleBytes: int64(len(content)), CompressedObjects: 1,
+		EligibleObjects: 1, EligibleBytes: int64(len(content)),
+		EligibleStoredBytes: receipt.Physical.StoredBytes, CompressedObjects: 1,
 	}, backlog)
 
 	opened, err := vault.OpenContent(t.Context(), "/document.txt")

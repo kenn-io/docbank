@@ -32,10 +32,11 @@ type PhysicalContent struct {
 
 // LooseBacklog summarizes loose content eligible for an explicit pack pass.
 type LooseBacklog struct {
-	EligibleObjects   int64
-	EligibleBytes     int64
-	RawObjects        int64
-	CompressedObjects int64
+	EligibleObjects     int64
+	EligibleBytes       int64
+	EligibleStoredBytes int64
+	RawObjects          int64
+	CompressedObjects   int64
 }
 
 // BlobPhysical is the loose representation published before a metadata
@@ -138,12 +139,12 @@ func (s *Store) PhysicalContent(ctx context.Context, hash string) (PhysicalConte
 func (s *Store) LooseBacklog(ctx context.Context) (LooseBacklog, error) {
 	var backlog LooseBacklog
 	err := s.db.QueryRowContext(ctx, `
-		SELECT COUNT(*), COALESCE(SUM(size), 0),
+		SELECT COUNT(*), COALESCE(SUM(size), 0), COALESCE(SUM(loose_stored_size), 0),
 		       COALESCE(SUM(CASE WHEN loose_encoding = 'raw' THEN 1 ELSE 0 END), 0),
 		       COALESCE(SUM(CASE WHEN loose_encoding = 'zstd' THEN 1 ELSE 0 END), 0)
 		FROM blobs
 		WHERE pack_eligible = 1 AND loose_encoding IS NOT NULL`,
-	).Scan(&backlog.EligibleObjects, &backlog.EligibleBytes,
+	).Scan(&backlog.EligibleObjects, &backlog.EligibleBytes, &backlog.EligibleStoredBytes,
 		&backlog.RawObjects, &backlog.CompressedObjects)
 	if err != nil {
 		return LooseBacklog{}, fmt.Errorf("reading loose backlog: %w", err)
