@@ -169,6 +169,8 @@ missing physical authority. The zero value disables compression, preserving the
 unchanged raw loose layout, and mixed raw, zstd, and packed content remains
 readable through the same verified API. Receipts report the chosen physical
 encoding and stored size without changing the logical SHA-256 or size.
+`PutReceipt.Created` reports a new logical node, while `PhysicalCreated`
+separately reports that the operation published new final loose authority.
 
 An eligible write temporarily needs scratch space for both the raw object and
 its compressed candidate before Docbank chooses one for durable publication.

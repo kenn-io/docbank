@@ -629,6 +629,7 @@ func (v *Vault) write(
 	v.mutation.Lock()
 	defer v.mutation.Unlock()
 	var receipt PutReceipt
+	var physicalCreated bool
 	err = v.blobs.WithMutation(ctx, func() (resultErr error) {
 		written, writeErr := v.blobs.WriteDetailedContext(ctx, content)
 		if writeErr != nil {
@@ -639,6 +640,7 @@ func (v *Vault) write(
 		if physicalErr != nil {
 			return physicalErr
 		}
+		physicalCreated = physical.Created
 		defer func() {
 			if resultErr != nil {
 				resultErr = errors.Join(resultErr, v.removeUnrecordedLoose(hash))
@@ -760,6 +762,7 @@ func (v *Vault) write(
 	if err != nil {
 		return receipt, err
 	}
+	receipt.PhysicalCreated = physicalCreated && receipt.Physical.Kind == "loose"
 	return receipt, nil
 }
 
