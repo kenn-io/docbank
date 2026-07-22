@@ -25,7 +25,7 @@ func TestGateFreezerBlocksMutationOnlyUntilEnd(t *testing.T) {
 
 	mutated := make(chan struct{})
 	go func() {
-		_ = g.Mutate(func() error {
+		_ = g.mutate(func() error {
 			close(mutated)
 			return nil
 		})
@@ -43,6 +43,45 @@ func TestGateFreezerBlocksMutationOnlyUntilEnd(t *testing.T) {
 		t.Fatal("mutation remained blocked after backup freeze ended")
 	}
 	require.Error(t, freezer.End(context.Background()))
+}
+
+func TestQueuedMaintenanceRejectsRouteMutation(t *testing.T) {
+	g := NewOperationGate()
+	captureEntered := make(chan struct{})
+	releaseCapture := make(chan struct{})
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(releaseCapture) }) })
+	captureDone := make(chan error, 1)
+	go func() {
+		captureDone <- g.capture(func() error {
+			close(captureEntered)
+			<-releaseCapture
+			return nil
+		})
+	}()
+	<-captureEntered
+
+	maintenanceDone := make(chan error, 1)
+	go func() {
+		maintenanceDone <- g.maintain(func() error { return nil })
+	}()
+	require.Eventually(t, func() bool {
+		g.admission.RLock()
+		defer g.admission.RUnlock()
+		return g.maintenance == 1
+	}, time.Second, time.Millisecond)
+
+	err := g.mutate(func() error {
+		t.Fatal("route mutation ran while maintenance was queued")
+		return nil
+	})
+	var apiErr *Error
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, "maintenance_busy", apiErr.Code)
+
+	releaseOnce.Do(func() { close(releaseCapture) })
+	require.NoError(t, <-captureDone)
+	require.NoError(t, <-maintenanceDone)
 }
 
 func TestBackupCaptureBlocksGCButAllowsLiveDeletion(t *testing.T) {

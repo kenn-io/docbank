@@ -820,6 +820,7 @@ func TestMaintenanceGateReportsBusyToMutations(t *testing.T) {
 			return internalmaintenance.VerifyReport{}, nil
 		}
 	})
+	created := createFileWithContent(t, ts, s, "/existing.txt", "old content")
 
 	verifyDone := make(chan error, 1)
 	go func() {
@@ -835,6 +836,21 @@ func TestMaintenanceGateReportsBusyToMutations(t *testing.T) {
 		map[string]any{"parent_id": s.RootID(), "name": "during-maintenance", "kind": "dir"})
 	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode, body)
 	assert.Contains(t, body, `"code":"maintenance_busy"`)
+
+	upload := []byte("new upload")
+	resp, body = sendUpload(t, ts.URL, ts.Client(), s.RootID(), uploadRequest{
+		name: "upload.txt", content: upload,
+		expectedHash: uploadIdentity(upload), expectedSize: int64(len(upload)),
+	})
+	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode, body)
+	assert.Contains(t, body, `"code":"maintenance_busy"`)
+
+	replacement := []byte("replacement")
+	contentResp, contentBody := sendContentReplacement(t, ts.URL, ts.Client(),
+		created.ID, created.Revision, replacement, uploadIdentity(replacement),
+		int64(len(replacement)), "text/plain")
+	assert.Equal(t, http.StatusServiceUnavailable, contentResp.StatusCode, string(contentBody))
+	assert.Contains(t, string(contentBody), `"code":"maintenance_busy"`)
 
 	close(releaseMaintenance)
 	require.NoError(t, <-verifyDone)

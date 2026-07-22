@@ -213,7 +213,10 @@ func uploadMediaType(value string) (string, error) {
 
 func uploadError(err error) *Error {
 	var maxBytesErr *http.MaxBytesError
+	var apiErr *Error
 	switch {
+	case errors.As(err, &apiErr):
+		return apiErr
 	case errors.Is(err, ingest.ErrUploadDigestMismatch):
 		return NewError(http.StatusUnprocessableEntity, "digest_mismatch", err.Error())
 	case errors.Is(err, ingest.ErrUploadSizeMismatch):
