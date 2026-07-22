@@ -351,6 +351,35 @@ func TestStorageStatusReportsLooseAndPackedUsage(t *testing.T) {
 	assert.Zero(t, status.DeadPackedBytes)
 }
 
+func TestVaultInfoIdentifiesRootAndSummarizesContents(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	docs, err := s.Mkdir(t.Context(), s.RootID(), "docs")
+	require.NoError(t, err)
+	content := "vault inventory"
+	hash, size, err := s.Blobs.Write(strings.NewReader(content))
+	require.NoError(t, err)
+	file, err := s.CreateFile(t.Context(), docs.ID, "record.txt", hash, size, "text/plain")
+	require.NoError(t, err)
+	_, _, err = s.Trash(t.Context(), file.ID, -1)
+	require.NoError(t, err)
+
+	resp, body := get(t, ts, "/api/v1/info", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var info api.VaultInfo
+	require.NoError(t, json.Unmarshal([]byte(body), &info))
+	assert.Equal(t, s.VaultID(), info.VaultID)
+	assert.Equal(t, filepath.Dir(s.DBPath), info.VaultPath)
+	assert.Zero(t, info.LiveFiles)
+	assert.Equal(t, int64(1), info.LiveDirectories)
+	assert.Equal(t, int64(1), info.TrashedNodes)
+	assert.Equal(t, int64(1), info.ContentVersions)
+	assert.Equal(t, int64(len(content)), info.LogicalVersionBytes)
+	assert.Equal(t, int64(1), info.TrackedBlobs)
+	assert.Equal(t, int64(len(content)), info.TrackedBlobBytes)
+	assert.Equal(t, 1, info.Storage.LooseBlobs)
+	assert.Equal(t, int64(len(content)), info.Storage.LooseBytes)
+}
+
 func TestStoragePackHonorsBudgetAndConverges(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	createFileWithContent(t, ts, s, "/one.txt", "one")

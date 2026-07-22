@@ -10,13 +10,31 @@ All commands operate on the vault at `~/.docbank` (override with
 stderr and produce a non-zero exit code. Virtual paths are absolute,
 `/`-separated, and case-sensitive.
 
-Every data command below (`add`, `ls`, `tree`, `cat`, `put`, `edit`, `versions`, `version`, `refs`, `revert`, `tag`, `audit`, `mv`, `rm`,
+Every data command below (`info`, `add`, `ls`, `tree`, `cat`, `put`, `edit`, `versions`, `version`, `refs`, `revert`, `tag`, `audit`, `mv`, `rm`,
 `restore`, `search`, `trash`, `gc`, `verify`, `storage`, `backup`, `jobs`) talks to the `docbank`
 daemon over its HTTP API rather than opening the vault itself; if none
 is running, the command auto-starts one in the background. `docbank
 daemon status` and `docbank daemon stop` never auto-start. See
 [Daemon](architecture/daemon.md) and
 [Ownership & Concurrency](architecture/locking.md).
+
+## docbank info
+
+```
+docbank info [--json]
+```
+
+Identifies the vault selected by `DOCBANK_HOME` and confirms that its daemon is
+reachable. Human output shows the canonical machine-local vault path, stable
+vault ID, live file and directory counts, trash size, retained version count
+and logical bytes, tracked content blobs, and physical loose/packed usage.
+The virtual root itself is not counted as a directory.
+
+`--json` exposes the same values as stable fields. Agents should record
+`vault_id` as identity and use `vault_path` only to confirm local placement:
+restoring or moving a vault changes its path without changing its ID. Tracked
+blob totals can include content awaiting garbage collection; `storage` reports
+the files and packs currently occupying physical storage.
 
 ## Node selectors
 

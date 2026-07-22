@@ -1108,6 +1108,42 @@ func TestStorageStatusHumanAndJSON(t *testing.T) {
 	assert.Equal(t, int64(5), status.LooseBytes)
 }
 
+func TestInfoHumanAndJSON(t *testing.T) {
+	home := setupVaultHome(t)
+	canonicalHome, err := filepath.EvalSymlinks(home)
+	require.NoError(t, err)
+	src := writeSourceFile(t, "identity.txt", "stable vault")
+	_, err = runCLI(t, "add", src, "--dest", "/inbox")
+	require.NoError(t, err)
+
+	out, err := runCLI(t, "info")
+	require.NoError(t, err)
+	assert.Contains(t, out, "vault: ")
+	assert.Contains(t, out, "home: "+strconv.Quote(canonicalHome))
+	assert.Contains(t, out, "live: 1 file(s), 1 folder(s)")
+	assert.Contains(t, out, "history: 1 version(s), 12 logical byte(s)")
+	assert.Contains(t, out, "blob storage: 12 stored byte(s)")
+
+	out, err = runCLI(t, "info", "--json")
+	require.NoError(t, err)
+	var info api.VaultInfo
+	require.NoError(t, json.Unmarshal([]byte(out), &info))
+	assert.Equal(t, canonicalHome, info.VaultPath)
+	assert.NotEmpty(t, info.VaultID)
+	assert.Equal(t, int64(1), info.LiveFiles)
+	assert.Equal(t, int64(1), info.LiveDirectories)
+	assert.Equal(t, int64(1), info.ContentVersions)
+	assert.Equal(t, int64(1), info.TrackedBlobs)
+	assert.Equal(t, 1, info.Storage.LooseBlobs)
+}
+
+func TestRootHelpDocumentsVaultSelection(t *testing.T) {
+	out, err := runCLI(t, "--help")
+	require.NoError(t, err)
+	assert.Contains(t, out, "DOCBANK_HOME selects the vault")
+	assert.Contains(t, out, "docbank info")
+}
+
 func TestBackupInitCreateListVerifyCLI(t *testing.T) {
 	home := t.TempDir()
 	repoPath := filepath.Join(t.TempDir(), "repo")

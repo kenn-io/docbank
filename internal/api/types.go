@@ -516,6 +516,21 @@ type StorageStatus struct {
 	DeadPackedBytes   int64 `json:"dead_packed_bytes"`
 }
 
+// VaultInfo identifies the selected vault and summarizes its logical and
+// physical contents. VaultPath is machine-local placement, not vault identity.
+type VaultInfo struct {
+	VaultID             string        `json:"vault_id" format:"uuid"`
+	VaultPath           string        `json:"vault_path"`
+	LiveFiles           int64         `json:"live_files"`
+	LiveDirectories     int64         `json:"live_directories"`
+	TrashedNodes        int64         `json:"trashed_nodes"`
+	ContentVersions     int64         `json:"content_versions"`
+	LogicalVersionBytes int64         `json:"logical_version_bytes"`
+	TrackedBlobs        int64         `json:"tracked_blobs"`
+	TrackedBlobBytes    int64         `json:"tracked_blob_bytes"`
+	Storage             StorageStatus `json:"storage"`
+}
+
 // StoragePackReport summarizes one explicit Kit packing and repair pass.
 type StoragePackReport struct {
 	PacksSealed                int   `json:"packs_sealed"`
