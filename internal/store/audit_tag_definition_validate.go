@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"go.kenn.io/docbank/internal/audit"
 )
@@ -20,7 +21,12 @@ type replayedTagDefinitionChange struct {
 	post       audit.Record
 	change     audit.Record
 	digest     string
-	candidates []uint64
+	candidates []replayedAuditedTagCandidate
+}
+
+type replayedAuditedTagCandidate struct {
+	nodeID  uint64
+	scopeID string
 }
 
 func attachedMutationKind(
@@ -106,6 +112,12 @@ func (replay *auditedHistoryReplay) applyUnscopedTagDefinitionChange(
 	if deletion {
 		transition, err := replay.validateTagDeletionDelta(
 			operationID, digest, deltaRecords, usedDeltas,
+		)
+		if err != nil {
+			return err
+		}
+		transition.candidates, err = replay.auditedTagDefinitionCandidates(
+			transition.tagID,
 		)
 		if err != nil {
 			return err
@@ -303,8 +315,13 @@ func validateReplayedTagDefinition(definition audit.Record) error {
 
 func (replay *auditedHistoryReplay) auditedTagDefinitionCandidates(
 	tagID string,
-) ([]uint64, error) {
-	seen := make(map[uint64]bool)
+) ([]replayedAuditedTagCandidate, error) {
+	scopeIDs := make([]string, 0, len(replay.scopes))
+	for scopeID := range replay.scopes {
+		scopeIDs = append(scopeIDs, scopeID)
+	}
+	slices.Sort(scopeIDs)
+	var result []replayedAuditedTagCandidate
 	for _, record := range replay.attachments {
 		if record.Kind != auditTagAssignmentKind {
 			continue
@@ -320,20 +337,29 @@ func (replay *auditedHistoryReplay) auditedTagDefinitionCandidates(
 		if err != nil {
 			return nil, err
 		}
-		if replay.memberSet[nodeID] {
-			seen[nodeID] = true
+		for _, scopeID := range scopeIDs {
+			if replay.scopes[scopeID].memberSet[nodeID] {
+				result = append(result, replayedAuditedTagCandidate{
+					nodeID: nodeID, scopeID: scopeID,
+				})
+			}
 		}
 	}
-	result := make([]uint64, 0, len(seen))
-	for nodeID := range seen {
-		result = append(result, nodeID)
-	}
-	slices.Sort(result)
+	slices.SortFunc(result, func(left, right replayedAuditedTagCandidate) int {
+		if left.nodeID < right.nodeID {
+			return -1
+		}
+		if left.nodeID > right.nodeID {
+			return 1
+		}
+		return strings.Compare(left.scopeID, right.scopeID)
+	})
 	return result, nil
 }
 
 func (replay *auditedHistoryReplay) applyTagDefinitionRename(
-	vaultID string, mutation, allocation, scopeEntry storedAuditRecord,
+	vaultID string, mutation, allocation storedAuditRecord,
+	scopeIDs []string, scopeEntries map[string]storedAuditRecord,
 	deltaRecords, eventRecords map[string]storedAuditRecord,
 	usedDeltas, usedEvents map[string]bool,
 ) error {
@@ -374,12 +400,17 @@ func (replay *auditedHistoryReplay) applyTagDefinitionRename(
 	if len(transition.candidates) == 0 {
 		return errors.New("tag rename fabricates an audited mutation without affected members")
 	}
+	if err := requireAuditedTagScopeFanout("rename", scopeIDs, transition.candidates); err != nil {
+		return err
+	}
 	if err := replay.validateTagRenameEvents(
 		mutation.record, operationID, transition, eventRecords, usedEvents,
 	); err != nil {
 		return err
 	}
-	if err := replay.validateMemberStateChanges(mutation.record, transition.candidates); err != nil {
+	if err := replay.validateMemberStateChanges(
+		mutation.record, auditedTagCandidateNodeIDs(transition.candidates),
+	); err != nil {
 		return err
 	}
 	bindings, err := auditRecordListField(mutation.record, "baselines")
@@ -409,7 +440,7 @@ func (replay *auditedHistoryReplay) applyTagDefinitionRename(
 	); err != nil {
 		return err
 	}
-	if err := replay.advanceScope(vaultID, mutation, scopeEntry); err != nil {
+	if err := replay.advanceScopes(vaultID, mutation, scopeIDs, scopeEntries); err != nil {
 		return err
 	}
 	if err := replay.advanceAllocation(
@@ -436,14 +467,14 @@ func (replay *auditedHistoryReplay) validateTagRenameEvents(
 		return err
 	}
 	ordinal := uint64(0)
-	for index, nodeID := range transition.candidates {
+	for index, candidate := range transition.candidates {
 		event := events[index]
 		if err := validateAuditEventWrapper(
 			operationID, ordinal, event, eventRecords, usedEvents,
 		); err != nil {
 			return err
 		}
-		state := replay.states[nodeID]
+		state := replay.states[candidate.nodeID]
 		revision, err := auditUnsignedField(state, "node_revision")
 		if err != nil {
 			return err
@@ -458,9 +489,9 @@ func (replay *auditedHistoryReplay) validateTagRenameEvents(
 		}
 		checks := []func() error{
 			func() error { return requireAuditUUID(event, auditOperationIDField, operationID) },
-			func() error { return requireAuditUnsigned(event, metadataNodeIDField, nodeID) },
+			func() error { return requireAuditUnsigned(event, metadataNodeIDField, candidate.nodeID) },
 			func() error { return requireAuditText(event, "event_kind", "tag_rename") },
-			func() error { return requireAuditUUID(event, auditScopeIDField, replay.scopeID) },
+			func() error { return requireAuditUUID(event, auditScopeIDField, candidate.scopeID) },
 			func() error { return requireAuditText(event, "attachment_kind", auditTagDefinitionKind) },
 			func() error { return requireAuditUnsigned(event, auditEventOrdinalField, ordinal) },
 			func() error { return requireAuditUnsigned(event, "prior_node_revision", revision) },
@@ -504,7 +535,41 @@ func (replay *auditedHistoryReplay) applyTagDefinitionState(
 	}
 	replay.attachments[key] = record
 	replay.tagDefinitionIDs[transition.tagID] = true
-	return replay.applyTagAffectedNodeState(transition.candidates, mutation)
+	return replay.applyTagAffectedNodeState(
+		auditedTagCandidateNodeIDs(transition.candidates), mutation,
+	)
+}
+
+func auditedTagCandidateNodeIDs(candidates []replayedAuditedTagCandidate) []uint64 {
+	result := make([]uint64, 0, len(candidates))
+	for _, candidate := range candidates {
+		if len(result) == 0 || result[len(result)-1] != candidate.nodeID {
+			result = append(result, candidate.nodeID)
+		}
+	}
+	return result
+}
+
+func auditedTagCandidateScopeIDs(candidates []replayedAuditedTagCandidate) []string {
+	seen := make(map[string]bool)
+	for _, candidate := range candidates {
+		seen[candidate.scopeID] = true
+	}
+	result := make([]string, 0, len(seen))
+	for scopeID := range seen {
+		result = append(result, scopeID)
+	}
+	slices.Sort(result)
+	return result
+}
+
+func requireAuditedTagScopeFanout(
+	kind string, scopeIDs []string, candidates []replayedAuditedTagCandidate,
+) error {
+	if derived := auditedTagCandidateScopeIDs(candidates); !slices.Equal(scopeIDs, derived) {
+		return fmt.Errorf("tag %s scope chains do not match assigned audited nodes", kind)
+	}
+	return nil
 }
 
 func (replay *auditedHistoryReplay) applyTagAffectedNodeState(

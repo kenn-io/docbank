@@ -178,7 +178,8 @@ func TestAuditedTagDeleteReplayRejectsOmittedAssignmentTombstone(t *testing.T) {
 	deltas[deleteDigest] = malformed
 
 	err = replay.applyTagDefinitionDelete(
-		s.vaultID, mutations[3], allocations[3], entries[3],
+		s.vaultID, mutations[3], allocations[3], []string{scope.scopeID},
+		map[string]storedAuditRecord{scope.scopeID: entries[3]},
 		deltas, events, usedDeltas, usedEvents,
 	)
 	require.ErrorContains(t, err, "complete assignment set")

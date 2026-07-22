@@ -16,7 +16,7 @@ func (s *Store) deleteAuditedTagTx(
 	if err != nil {
 		return Tag{}, err
 	}
-	priorNodes, scope, err := auditedTaggedNodesTx(ctx, tx, current.ID)
+	priorNodes, candidates, scopes, err := auditedTaggedNodesTx(ctx, tx, current.ID)
 	if err != nil {
 		return Tag{}, err
 	}
@@ -46,7 +46,7 @@ func (s *Store) deleteAuditedTagTx(
 	}
 	if err := persistAuditedTagDelete(
 		ctx, tx, s.vaultID, operationID, recordedAt, nodeSequence,
-		authority, scope, current, assignmentNodeIDs, priorNodes, resultingNodes,
+		authority, scopes, candidates, current, assignmentNodeIDs, priorNodes, resultingNodes,
 	); err != nil {
 		return Tag{}, err
 	}
@@ -79,10 +79,12 @@ func tagAssignmentNodeIDsTx(
 
 func persistAuditedTagDelete(
 	ctx context.Context, tx *sql.Tx, vaultID, operationID, recordedAt string,
-	nodeSequence int64, authority auditAuthorityState, scope *auditScopeState,
+	nodeSequence int64, authority auditAuthorityState, scopes []auditScopeState,
+	candidates []auditedTagCandidate,
 	deletedTag Tag, assignmentNodeIDs []int64, priorNodes, resultingNodes []Node,
 ) error {
-	if len(priorNodes) != len(resultingNodes) || (len(priorNodes) != 0) != (scope != nil) {
+	if len(priorNodes) != len(resultingNodes) ||
+		(len(candidates) != 0) != (len(scopes) != 0) {
 		return errors.New("audited tag delete has inconsistent affected-node authority")
 	}
 	sequence, err := nextAuditInteger("operation sequence", authority.sequence)
@@ -128,29 +130,34 @@ func persistAuditedTagDelete(
 		changeCount++
 	}
 	mutationHash := audit.Absent()
-	if len(priorNodes) != 0 {
-		events := make([]audit.Record, 0, len(priorNodes)*2)
+	if len(candidates) != 0 {
+		priorByID := nodesByID(priorNodes)
+		resultingByID := nodesByID(resultingNodes)
+		events := make([]audit.Record, 0, len(candidates)*2)
 		stateChanges := make([]audit.Record, len(priorNodes))
 		ordinal := uint64(0)
-		for index := range priorNodes {
+		for _, candidate := range candidates {
 			definitionEvent, err := makeAuditedTagDeleteEvent(
-				values, scope.scopeID, ordinal, priorNodes[index], resultingNodes[index], definition,
+				values, candidate.scopeID, ordinal, priorByID[candidate.nodeID],
+				resultingByID[candidate.nodeID], definition,
 			)
 			if err != nil {
 				return err
 			}
 			events = append(events, definitionEvent)
 			ordinal++
-			assignment := assignments[priorNodes[index].ID]
 			unassignEvent, err := makeAuditedTagAssignmentEvent(
-				values, scope.scopeID, ordinal, priorNodes[index], resultingNodes[index],
-				assignment, false,
+				values, candidate.scopeID, ordinal, priorByID[candidate.nodeID],
+				resultingByID[candidate.nodeID],
+				assignments[candidate.nodeID], false,
 			)
 			if err != nil {
 				return err
 			}
 			events = append(events, unassignEvent)
 			ordinal++
+		}
+		for index := range priorNodes {
 			stateChanges[index], err = makeAuditMemberStateChange(
 				priorNodes[index], resultingNodes[index],
 			)
@@ -189,7 +196,7 @@ func persistAuditedTagDelete(
 			return err
 		}
 		if err := advanceAuditedMutationScopes(
-			ctx, tx, values, []auditScopeState{*scope}, mutationDigest.value,
+			ctx, tx, values, scopes, mutationDigest.value,
 		); err != nil {
 			return err
 		}

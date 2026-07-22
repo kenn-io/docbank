@@ -3,7 +3,9 @@ package store
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -91,27 +93,76 @@ func TestAuditedTagRenameNoOpDoesNotAdvanceHistory(t *testing.T) {
 	require.NoError(t, s.ValidateMetadata(t.Context()))
 }
 
-func TestAuditedTagDefinitionChangesAcrossScopesFailClosed(t *testing.T) {
-	tests := map[string]func(*Store, Tag) error{
-		"rename": func(s *Store, tag Tag) error {
-			_, err := s.RenameTag(t.Context(), tag.ID, tag.Revision, "renamed")
-			return err
-		},
-		"delete": func(s *Store, tag Tag) error {
-			_, err := s.DeleteTag(t.Context(), tag.ID, tag.Revision)
-			return err
-		},
-	}
-	for name, change := range tests {
+func TestAuditedTagDefinitionChangesAdvanceEveryAffectedScope(t *testing.T) {
+	for _, name := range []string{"rename", "delete"} {
 		t.Run(name, func(t *testing.T) {
 			s, tag, first, second := newMultiScopeAuditedTagStore(t)
-			var sequence int64
+			beforeScopes := auditScopeEntryCounts(t, s)
+			var beforeSequence int64
 			require.NoError(t, s.db.QueryRow(
 				`SELECT operation_sequence_high_water FROM audit_authority`,
-			).Scan(&sequence))
+			).Scan(&beforeSequence))
 
-			err := change(s, tag)
-			require.ErrorIs(t, err, ErrAuditMutationUnsupported)
+			if name == "rename" {
+				renamed, err := s.RenameTag(t.Context(), tag.ID, tag.Revision, "renamed")
+				require.NoError(t, err)
+				assert.Equal(t, "renamed", renamed.Name)
+			} else {
+				_, err := s.DeleteTag(t.Context(), tag.ID, tag.Revision)
+				require.NoError(t, err)
+				_, err = s.TagByID(t.Context(), tag.ID)
+				require.ErrorIs(t, err, ErrNotFound)
+			}
+			for _, prior := range []Node{first, second} {
+				node, err := s.NodeByID(t.Context(), prior.ID)
+				require.NoError(t, err)
+				assert.Equal(t, prior.Revision+1, node.Revision)
+			}
+			var afterSequence int64
+			require.NoError(t, s.db.QueryRow(
+				`SELECT operation_sequence_high_water FROM audit_authority`,
+			).Scan(&afterSequence))
+			assert.Equal(t, beforeSequence+1, afterSequence)
+			afterScopes := auditScopeEntryCounts(t, s)
+			require.Len(t, afterScopes, len(beforeScopes))
+			for scopeID, before := range beforeScopes {
+				assert.Equal(t, before+1, afterScopes[scopeID])
+			}
+			events := auditEventsForSequence(t, s, afterSequence)
+			if name == "rename" {
+				require.Len(t, events, 2)
+			} else {
+				require.Len(t, events, 4)
+			}
+			assert.Equal(t, sortedStringKeys(beforeScopes), auditEventScopeIDs(t, events))
+			require.NoError(t, s.ValidateMetadata(t.Context()))
+			assertAuditMetadataRoundTrip(t, s)
+		})
+	}
+}
+
+func TestAuditedTagDefinitionChangesAcrossScopesRollBackAtomically(t *testing.T) {
+	for _, name := range []string{"rename", "delete"} {
+		t.Run(name, func(t *testing.T) {
+			s, tag, first, second := newMultiScopeAuditedTagStore(t)
+			beforeScopes := auditScopeEntryCounts(t, s)
+			scopeIDs := sortedStringKeys(beforeScopes)
+			require.Len(t, scopeIDs, 2)
+			_, err := s.db.Exec(fmt.Sprintf(`CREATE TRIGGER reject_second_scope_advance
+				BEFORE UPDATE ON audit_scopes WHEN OLD.scope_id='%s' BEGIN
+				SELECT RAISE(ABORT, 'forced second scope failure'); END`, scopeIDs[1]))
+			require.NoError(t, err)
+			var beforeSequence int64
+			require.NoError(t, s.db.QueryRow(
+				`SELECT operation_sequence_high_water FROM audit_authority`,
+			).Scan(&beforeSequence))
+
+			if name == "rename" {
+				_, err = s.RenameTag(t.Context(), tag.ID, tag.Revision, "renamed")
+			} else {
+				_, err = s.DeleteTag(t.Context(), tag.ID, tag.Revision)
+			}
+			require.ErrorContains(t, err, "forced second scope failure")
 			current, err := s.TagByID(t.Context(), tag.ID)
 			require.NoError(t, err)
 			assert.Equal(t, tag, current)
@@ -120,14 +171,68 @@ func TestAuditedTagDefinitionChangesAcrossScopesFailClosed(t *testing.T) {
 				require.NoError(t, err)
 				assert.Equal(t, prior, node)
 			}
-			var after int64
+			assert.Equal(t, beforeScopes, auditScopeEntryCounts(t, s))
+			var afterSequence int64
 			require.NoError(t, s.db.QueryRow(
 				`SELECT operation_sequence_high_water FROM audit_authority`,
-			).Scan(&after))
-			assert.Equal(t, sequence, after)
+			).Scan(&afterSequence))
+			assert.Equal(t, beforeSequence, afterSequence)
 			require.NoError(t, s.ValidateMetadata(t.Context()))
 		})
 	}
+}
+
+func TestAuditedTagDefinitionReplayRejectsOmittedScopeFanout(t *testing.T) {
+	candidates := []replayedAuditedTagCandidate{
+		{nodeID: 10, scopeID: "11111111-1111-4111-8111-111111111111"},
+		{nodeID: 20, scopeID: "22222222-2222-4222-8222-222222222222"},
+	}
+	err := requireAuditedTagScopeFanout(
+		"rename", []string{"11111111-1111-4111-8111-111111111111"}, candidates,
+	)
+	require.ErrorContains(t, err, "scope chains do not match assigned audited nodes")
+}
+
+func sortedStringKeys(values map[string]int64) []string {
+	result := make([]string, 0, len(values))
+	for value := range values {
+		result = append(result, value)
+	}
+	slices.Sort(result)
+	return result
+}
+
+func auditEventScopeIDs(t *testing.T, events []audit.Record) []string {
+	t.Helper()
+	seen := make(map[string]bool)
+	for _, event := range events {
+		scopeID, err := auditUUIDField(event, auditScopeIDField)
+		require.NoError(t, err)
+		seen[scopeID] = true
+	}
+	result := make([]string, 0, len(seen))
+	for scopeID := range seen {
+		result = append(result, scopeID)
+	}
+	slices.Sort(result)
+	return result
+}
+
+func auditScopeEntryCounts(t *testing.T, s *Store) map[string]int64 {
+	t.Helper()
+	rows, err := s.db.Query(`SELECT scope_id,entry_count FROM audit_scopes ORDER BY scope_id`)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = rows.Close() })
+	result := make(map[string]int64)
+	for rows.Next() {
+		var scopeID string
+		var count int64
+		require.NoError(t, rows.Scan(&scopeID, &count))
+		result[scopeID] = count
+	}
+	require.NoError(t, rows.Err())
+	require.NoError(t, rows.Close())
+	return result
 }
 
 func newMultiScopeAuditedTagStore(t *testing.T) (*Store, Tag, Node, Node) {
@@ -240,7 +345,8 @@ func TestAuditedTagRenameReplayRejectsOmittedMemberEffect(t *testing.T) {
 	)
 
 	err = replay.applyTagDefinitionRename(
-		s.vaultID, malformed, allocations[3], entries[3],
+		s.vaultID, malformed, allocations[3], []string{scope.scopeID},
+		map[string]storedAuditRecord{scope.scopeID: entries[3]},
 		deltas, events, usedDeltas, usedEvents,
 	)
 	require.ErrorContains(t, err, "event set does not match assigned audited nodes")
