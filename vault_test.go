@@ -78,6 +78,120 @@ func TestVaultCreateIsImmutableAndIdempotent(t *testing.T) {
 	require.Equal(created.Computed.SHA256, after.BlobHash)
 }
 
+func TestEmbeddedCreateRecordsGenericProvenance(t *testing.T) {
+	tests := []struct {
+		name   string
+		driver docsqlite.Driver
+	}{
+		{name: "build default"},
+		{name: "pure Go", driver: modernc.Driver{}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			testEmbeddedCreateRecordsGenericProvenance(t, test.driver)
+		})
+	}
+}
+
+func testEmbeddedCreateRecordsGenericProvenance(t *testing.T, driver docsqlite.Driver) {
+	t.Helper()
+	vault, err := New(t.Context(), Config{Root: t.TempDir(), SQLite: driver})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+	content := []byte("archived agent session\n")
+	modifiedAt := time.Date(2026, time.July, 20, 15, 4, 5, 123, time.FixedZone("source", -5*60*60))
+	opts := CreateOptions{
+		MediaType: "application/x-ndjson", Expected: contentIdentity(content),
+		Provenance: &ProvenanceSource{
+			Kind: "agent-session", Description: "local session archive",
+			Reference: "sessions/01K123.jsonl", ModifiedAt: &modifiedAt,
+		},
+	}
+	created, err := vault.Create(
+		t.Context(), "/sessions/01K123.jsonl", bytes.NewReader(content), opts,
+	)
+	require.NoError(t, err)
+	require.True(t, created.Created)
+
+	page, err := vault.Provenance(t.Context(), created.Node.ID, ProvenanceOptions{})
+	require.NoError(t, err)
+	require.Equal(t, created.Node, page.Node)
+	require.Equal(t, "/sessions/01K123.jsonl", page.Path)
+	require.Equal(t, 1, page.Total)
+	require.Equal(t, DefaultProvenanceLimit, page.Limit)
+	require.Len(t, page.Items, 1)
+	fact := page.Items[0]
+	require.Equal(t, created.Node.ID, fact.NodeID)
+	require.Equal(t, "agent-session", fact.SourceKind)
+	require.Equal(t, "local session archive", fact.SourceDescription)
+	require.Equal(t, "sessions/01K123.jsonl", fact.SourceReference)
+	wantModifiedAt := modifiedAt.UTC().Format(time.RFC3339Nano)
+	require.Equal(t, &wantModifiedAt, fact.SourceModifiedAt)
+	require.True(t, fact.Active)
+
+	retry, err := vault.Create(
+		t.Context(), "/sessions/01K123.jsonl", bytes.NewReader(content), opts,
+	)
+	require.NoError(t, err)
+	require.False(t, retry.Created)
+	require.Equal(t, created.Version.ID, retry.Version.ID)
+	page, err = vault.Provenance(t.Context(), created.Node.ID, ProvenanceOptions{})
+	require.NoError(t, err)
+	require.Equal(t, 1, page.Total)
+
+	different := opts
+	different.Provenance = &ProvenanceSource{
+		Kind: "agent-session", Description: "local session archive",
+		Reference: "sessions/different.jsonl", ModifiedAt: &modifiedAt,
+	}
+	_, err = vault.Create(
+		t.Context(), "/sessions/01K123.jsonl", bytes.NewReader(content), different,
+	)
+	require.ErrorIs(t, err, ErrContentConflict)
+}
+
+func TestEmbeddedAuditedCreateRecordsProvenance(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+	plan, err := vault.metadata.PreviewInitialAudit(
+		t.Context(), vault.metadata.RootID(), "api", nil,
+	)
+	require.NoError(t, err)
+	_, err = vault.metadata.EnableInitialAudit(t.Context(), plan)
+	require.NoError(t, err)
+
+	content := []byte("audited source\n")
+	_, err = vault.Create(t.Context(), "/audited.txt", bytes.NewReader(content), CreateOptions{
+		Expected: contentIdentity(content),
+		Provenance: &ProvenanceSource{
+			Kind: "archive", Description: "test archive", Reference: "objects/audited.txt",
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, vault.metadata.ValidateMetadata(t.Context()))
+}
+
+func TestEmbeddedCreateRejectsInvalidProvenanceBeforeWriting(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	content := []byte("not stored\n")
+
+	_, err = vault.Create(t.Context(), "/missing/document.txt", bytes.NewReader(content), CreateOptions{
+		Expected: contentIdentity(content),
+		Provenance: &ProvenanceSource{
+			Kind: "archive", Description: "", Reference: "objects/document.txt",
+		},
+	})
+	require.ErrorContains(t, err, "description is required")
+	_, err = vault.Stat(t.Context(), "/missing")
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
 func TestVaultCreateRejectsExpectedIdentityMismatch(t *testing.T) {
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)

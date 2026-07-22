@@ -30,6 +30,9 @@ var (
 	// ErrVersionAlreadyCurrent means a revert selected the node's current head,
 	// which is not a historical transition.
 	ErrVersionAlreadyCurrent = errors.New("content version is already current")
+	// ErrProvenanceMismatch means an immutable retry named source evidence
+	// that is not an active fact on the existing document.
+	ErrProvenanceMismatch = errors.New("provenance does not match existing content")
 	// ErrInvalidVersionPrune means a history-pruning selector is absent,
 	// contradictory, or otherwise unsafe to execute.
 	ErrInvalidVersionPrune = errors.New("invalid version-prune selector")

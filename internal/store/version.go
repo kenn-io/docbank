@@ -190,30 +190,97 @@ func (s *Store) ConfirmContentWithReceipt(
 		if err != nil {
 			return err
 		}
-		if n.TrashedAt != nil {
-			return fmt.Errorf("node %d is trashed: %w", n.ID, ErrNotFound)
-		}
-		if n.IsDir() {
-			return fmt.Errorf("node %d: %w", n.ID, ErrNotFile)
-		}
-		if n.Revision != ifRev || n.BlobHash != blobHash || n.Size != size || n.MimeType != mimeType {
-			return fmt.Errorf("node %d content changed while confirming revision %d: %w",
-				n.ID, ifRev, ErrStaleRevision)
-		}
-		if err := s.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
-			return err
-		}
-		receipt.Node = n
-		receipt.Version, err = scanContentVersion(tx.QueryRow(
-			`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = ?`,
-			n.CurrentVersionID,
-		))
-		if err != nil {
-			return fmt.Errorf("reading current version of node %d: %w", n.ID, err)
-		}
-		receipt.Physical, err = physicalContentTx(tx, blobHash)
+		receipt, err = s.confirmContentWithReceiptTx(
+			tx, n, ifRev, blobHash, size, mimeType, physical...,
+		)
 		return err
 	})
+	if err != nil {
+		return ContentWriteReceipt{}, err
+	}
+	return receipt, nil
+}
+
+// ConfirmIngestedContentWithReceipt is the idempotent completion path for an
+// embedded immutable create with provenance. It succeeds only when the
+// existing node has the same content authority and an active matching source
+// fact, so a retry cannot silently claim evidence that was never recorded.
+func (s *Store) ConfirmIngestedContentWithReceipt(
+	ctx context.Context, nodeID, ifRev int64, blobHash string, size int64, mimeType,
+	sourceKind, sourceDescription, sourceReference, sourceModifiedAt string,
+	physical ...BlobPhysical,
+) (ContentWriteReceipt, error) {
+	if size < 0 {
+		return ContentWriteReceipt{}, errors.New("content size must not be negative")
+	}
+	if err := validateUTF8Field("content MIME type", mimeType); err != nil {
+		return ContentWriteReceipt{}, err
+	}
+	if err := validateProvenanceSourceFields(
+		sourceKind, sourceDescription, sourceReference, sourceModifiedAt,
+	); err != nil {
+		return ContentWriteReceipt{}, err
+	}
+	storedSourceKind := embeddedSourceKindPrefix + sourceKind
+	var receipt ContentWriteReceipt
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		n, err := nodeByIDTx(tx, nodeID)
+		if err != nil {
+			return err
+		}
+		receipt, err = s.confirmContentWithReceiptTx(
+			tx, n, ifRev, blobHash, size, mimeType, physical...,
+		)
+		if err != nil {
+			return err
+		}
+		matched, err := activeProvenanceMatchesTx(
+			ctx, tx, nodeID, storedSourceKind, sourceDescription,
+			sourceReference, sourceModifiedAt,
+		)
+		if err != nil {
+			return err
+		}
+		if !matched {
+			return fmt.Errorf("node %d: %w", nodeID, ErrProvenanceMismatch)
+		}
+		return nil
+	})
+	if err != nil {
+		return ContentWriteReceipt{}, err
+	}
+	return receipt, nil
+}
+
+func (s *Store) confirmContentWithReceiptTx(
+	tx *sql.Tx, n Node, ifRev int64, blobHash string, size int64, mimeType string,
+	physical ...BlobPhysical,
+) (ContentWriteReceipt, error) {
+	if n.TrashedAt != nil {
+		return ContentWriteReceipt{}, fmt.Errorf("node %d is trashed: %w", n.ID, ErrNotFound)
+	}
+	if n.IsDir() {
+		return ContentWriteReceipt{}, fmt.Errorf("node %d: %w", n.ID, ErrNotFile)
+	}
+	if n.Revision != ifRev || n.BlobHash != blobHash || n.Size != size || n.MimeType != mimeType {
+		return ContentWriteReceipt{}, fmt.Errorf(
+			"node %d content changed while confirming revision %d: %w",
+			n.ID, ifRev, ErrStaleRevision,
+		)
+	}
+	if err := s.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
+		return ContentWriteReceipt{}, err
+	}
+	receipt := ContentWriteReceipt{Node: n}
+	var err error
+	receipt.Version, err = scanContentVersion(tx.QueryRow(
+		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = ?`,
+		n.CurrentVersionID,
+	))
+	if err != nil {
+		return ContentWriteReceipt{}, fmt.Errorf("reading current version of node %d: %w", n.ID, err)
+	}
+	receipt.Physical, err = physicalContentTx(tx, blobHash)
 	if err != nil {
 		return ContentWriteReceipt{}, err
 	}

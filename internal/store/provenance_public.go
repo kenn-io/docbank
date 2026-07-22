@@ -97,6 +97,7 @@ func (s *Store) NodeProvenance(
 		); err != nil {
 			return NodeProvenancePage{}, fmt.Errorf("scanning provenance for node %d: %w", nodeID, err)
 		}
+		fact.SourceKind = publicProvenanceSourceKind(fact.SourceKind)
 		fact.OriginalMTime = stringPtr(originalMTime)
 		fact.Supersedes = stringPtr(supersedes)
 		page.Items = append(page.Items, fact)

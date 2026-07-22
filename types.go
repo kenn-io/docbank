@@ -45,6 +45,53 @@ type ContentVersion struct {
 	SourceVersionID       *string `json:"source_version_id,omitempty"`
 }
 
+// ProvenanceSource describes an application-neutral origin for one immutable
+// document creation. Reference may be a URI, archive key, filesystem path, or
+// another stable source-local identifier; Docbank does not interpret it.
+type ProvenanceSource struct {
+	Kind        string     `json:"kind"`
+	Description string     `json:"description"`
+	Reference   string     `json:"reference"`
+	ModifiedAt  *time.Time `json:"modified_at,omitempty"`
+}
+
+// ProvenanceFact is one immutable statement about where a document came from.
+// Superseded facts remain visible; Active marks the current unsuperseded facts.
+type ProvenanceFact struct {
+	Identity          string  `json:"identity"`
+	NodeID            int64   `json:"node_id"`
+	IngestID          string  `json:"ingest_id"`
+	RecordedAt        string  `json:"recorded_at"`
+	SourceKind        string  `json:"source_kind"`
+	SourceDescription string  `json:"source_description"`
+	SourceReference   string  `json:"source_reference"`
+	SourceModifiedAt  *string `json:"source_modified_at,omitempty"`
+	Supersedes        *string `json:"supersedes,omitempty"`
+	Active            bool    `json:"active"`
+}
+
+const (
+	DefaultProvenanceLimit = 100
+	MaxProvenanceLimit     = store.MaxProvenancePageSize
+)
+
+// ProvenanceOptions selects one bounded newest-first provenance page.
+type ProvenanceOptions struct {
+	Limit  int
+	Offset int
+}
+
+// ProvenancePage binds origin history to a transactionally consistent node.
+// Path is empty when the node is in trash.
+type ProvenancePage struct {
+	Node   Node             `json:"node"`
+	Path   string           `json:"path,omitempty"`
+	Items  []ProvenanceFact `json:"items"`
+	Total  int              `json:"total"`
+	Limit  int              `json:"limit"`
+	Offset int              `json:"offset"`
+}
+
 // PutReceipt proves the computed identity and resulting logical authority.
 type PutReceipt struct {
 	Node     Node            `json:"node"`
@@ -230,6 +277,16 @@ func fromStoreVersion(version store.ContentVersion) ContentVersion {
 		NodeRevision:          version.NodeRevision,
 		IntroducedOperationID: version.IntroducedOperationID,
 		TransitionKind:        version.TransitionKind, SourceVersionID: version.SourceVersionID,
+	}
+}
+
+func fromStoreProvenance(fact store.ProvenanceFact) ProvenanceFact {
+	return ProvenanceFact{
+		Identity: fact.Identity, NodeID: fact.NodeID, IngestID: fact.IngestID,
+		RecordedAt: fact.IngestStartedAt, SourceKind: fact.SourceKind,
+		SourceDescription: fact.SourceDescription, SourceReference: fact.OriginalPath,
+		SourceModifiedAt: fact.OriginalMTime, Supersedes: fact.Supersedes,
+		Active: fact.Active,
 	}
 }
 

@@ -38,7 +38,7 @@ var (
 	// optional expected byte count.
 	ErrSizeMismatch = errors.New("docbank content size mismatch")
 	// ErrContentConflict means immutable creation targeted an existing path
-	// with different bytes, size, media type, or node kind.
+	// with different bytes, size, media type, provenance, or node kind.
 	ErrContentConflict = errors.New("docbank immutable content conflict")
 
 	ErrNotFound                 = store.ErrNotFound
@@ -274,6 +274,9 @@ type PutOptions struct {
 type CreateOptions struct {
 	MediaType string
 	Expected  ContentIdentity
+	// Provenance optionally records where this immutable document came from.
+	// The source fact commits atomically with a newly created node and version.
+	Provenance *ProvenanceSource
 }
 
 // Put stores a reader at an absolute virtual file path. Missing parent
@@ -282,19 +285,49 @@ type CreateOptions struct {
 func (v *Vault) Put(
 	ctx context.Context, virtualPath string, content io.Reader, opts PutOptions,
 ) (PutReceipt, error) {
-	return v.write(ctx, virtualPath, content, opts, false)
+	return v.write(ctx, virtualPath, content, opts, false, nil)
 }
 
-// Create stores content only when virtualPath is absent. An identical retry
-// returns the existing node and version; any different existing authority
-// returns ErrContentConflict without appending history.
+// Create stores content only when virtualPath is absent. An identical retry,
+// including any supplied provenance, returns the existing node and version;
+// any different existing authority returns ErrContentConflict without
+// appending history.
 func (v *Vault) Create(
 	ctx context.Context, virtualPath string, content io.Reader, opts CreateOptions,
 ) (PutReceipt, error) {
 	expected := opts.Expected
 	return v.write(ctx, virtualPath, content, PutOptions{
 		MediaType: opts.MediaType, Expected: &expected,
-	}, true)
+	}, true, opts.Provenance)
+}
+
+// Provenance returns one bounded page of immutable origin facts for a file.
+// The node, live path, count, and page come from one metadata snapshot. Path is
+// empty when nodeID is in trash.
+func (v *Vault) Provenance(
+	ctx context.Context, nodeID int64, opts ProvenanceOptions,
+) (ProvenancePage, error) {
+	if err := v.begin(); err != nil {
+		return ProvenancePage{}, err
+	}
+	defer v.lifecycle.RUnlock()
+	limit := opts.Limit
+	if limit == 0 {
+		limit = DefaultProvenanceLimit
+	}
+	page, err := v.metadata.NodeProvenance(ctx, nodeID, limit, opts.Offset)
+	if err != nil {
+		return ProvenancePage{}, err
+	}
+	result := ProvenancePage{
+		Node: fromStoreNode(page.Node), Path: page.Path,
+		Items: make([]ProvenanceFact, 0, len(page.Items)),
+		Total: page.Total, Limit: page.Limit, Offset: page.Offset,
+	}
+	for _, fact := range page.Items {
+		result.Items = append(result.Items, fromStoreProvenance(fact))
+	}
+	return result, nil
 }
 
 // MovePath renames or reparents one live path and returns its canonical new
@@ -553,6 +586,7 @@ func (v *Vault) RepairContent(
 
 func (v *Vault) write(
 	ctx context.Context, virtualPath string, content io.Reader, opts PutOptions, immutable bool,
+	provenance *ProvenanceSource,
 ) (PutReceipt, error) {
 	if err := v.begin(); err != nil {
 		return PutReceipt{}, err
@@ -563,6 +597,20 @@ func (v *Vault) write(
 	}
 	if !utf8.ValidString(opts.MediaType) {
 		return PutReceipt{}, errors.New("docbank media type is not valid UTF-8")
+	}
+	if provenance != nil {
+		snapshot := *provenance
+		if provenance.ModifiedAt != nil {
+			modifiedAt := *provenance.ModifiedAt
+			snapshot.ModifiedAt = &modifiedAt
+		}
+		provenance = &snapshot
+		if !immutable {
+			return PutReceipt{}, errors.New("docbank provenance requires immutable creation")
+		}
+		if err := validateProvenanceSource(*provenance); err != nil {
+			return PutReceipt{}, err
+		}
 	}
 	parentPath, name, canonicalPath, err := normalizeVirtualFilePath(virtualPath)
 	if err != nil {
@@ -627,9 +675,24 @@ func (v *Vault) write(
 		existing, lookupErr := v.metadata.NodeByPath(ctx, canonicalPath)
 		switch {
 		case errors.Is(lookupErr, store.ErrNotFound):
-			created, createErr := v.metadata.CreateFileWithReceipt(
-				ctx, parent.ID, name, hash, size, opts.MediaType, physical,
-			)
+			var created store.ContentWriteReceipt
+			var createErr error
+			if provenance == nil {
+				created, createErr = v.metadata.CreateFileWithReceipt(
+					ctx, parent.ID, name, hash, size, opts.MediaType, physical,
+				)
+			} else {
+				run, beginErr := v.metadata.BeginEmbeddedIngest(
+					ctx, provenance.Kind, provenance.Description,
+				)
+				if beginErr != nil {
+					return beginErr
+				}
+				created, createErr = v.metadata.IngestFileExactWithReceipt(
+					ctx, run, parent.ID, name, hash, size, opts.MediaType,
+					provenance.Reference, provenanceModifiedAt(provenance), physical,
+				)
+			}
 			if createErr != nil {
 				return createErr
 			}
@@ -649,10 +712,24 @@ func (v *Vault) write(
 			}
 			return fmt.Errorf("virtual path %q: %w", canonicalPath, store.ErrNotFile)
 		case existing.BlobHash == hash && existing.Size == size && existing.MimeType == opts.MediaType:
-			confirmed, confirmErr := v.metadata.ConfirmContentWithReceipt(
-				ctx, existing.ID, existing.Revision, hash, size, opts.MediaType, physical,
-			)
+			var confirmed store.ContentWriteReceipt
+			var confirmErr error
+			if provenance == nil {
+				confirmed, confirmErr = v.metadata.ConfirmContentWithReceipt(
+					ctx, existing.ID, existing.Revision, hash, size, opts.MediaType, physical,
+				)
+			} else {
+				confirmed, confirmErr = v.metadata.ConfirmIngestedContentWithReceipt(
+					ctx, existing.ID, existing.Revision, hash, size, opts.MediaType,
+					provenance.Kind, provenance.Description, provenance.Reference,
+					provenanceModifiedAt(provenance), physical,
+				)
+			}
 			if confirmErr != nil {
+				if errors.Is(confirmErr, store.ErrProvenanceMismatch) {
+					return fmt.Errorf("virtual path %q has different provenance: %w",
+						canonicalPath, ErrContentConflict)
+				}
 				return confirmErr
 			}
 			receipt.Node = fromStoreNode(confirmed.Node)
@@ -684,6 +761,40 @@ func (v *Vault) write(
 		return receipt, err
 	}
 	return receipt, nil
+}
+
+func validateProvenanceSource(source ProvenanceSource) error {
+	fields := []struct {
+		name  string
+		value string
+	}{
+		{name: "kind", value: source.Kind},
+		{name: "description", value: source.Description},
+		{name: "reference", value: source.Reference},
+	}
+	for _, field := range fields {
+		if field.value == "" {
+			return fmt.Errorf("docbank provenance source %s is required", field.name)
+		}
+		if !utf8.ValidString(field.value) {
+			return fmt.Errorf("docbank provenance source %s is not valid UTF-8", field.name)
+		}
+	}
+	if source.ModifiedAt != nil {
+		encoded := source.ModifiedAt.UTC().Format(time.RFC3339Nano)
+		parsed, err := time.Parse(time.RFC3339Nano, encoded)
+		if err != nil || parsed.UTC().Format(time.RFC3339Nano) != encoded {
+			return errors.New("docbank provenance source modified time is outside RFC3339Nano")
+		}
+	}
+	return nil
+}
+
+func provenanceModifiedAt(source *ProvenanceSource) string {
+	if source == nil || source.ModifiedAt == nil {
+		return ""
+	}
+	return source.ModifiedAt.UTC().Format(time.RFC3339Nano)
 }
 
 func blobPhysical(receipt blob.WriteReceipt) (store.BlobPhysical, error) {

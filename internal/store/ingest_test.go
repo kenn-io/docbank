@@ -76,6 +76,60 @@ func TestIngestFileIdempotency(t *testing.T) {
 	require.ErrorIs(t, err, ErrPhysicalAuthorityMissing)
 }
 
+func TestFilesystemIngestDoesNotAdoptEmbeddedOpaqueReference(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	embedded, err := s.BeginEmbeddedIngest(ctx, "cli", "application archive")
+	require.NoError(t, err)
+	embeddedNode, err := s.IngestFileExact(
+		ctx, embedded, s.RootID(), "archived.pdf", fakeHash("a1"), 10,
+		"application/pdf", "objects/report.pdf", "",
+	)
+	require.NoError(t, err)
+
+	filesystem, err := s.BeginIngest(ctx, "cli", "/source")
+	require.NoError(t, err)
+	imported, added, err := s.IngestFile(
+		ctx, filesystem, s.RootID(), "report.pdf", fakeHash("a1"), 10,
+		"application/pdf", "/source/report.pdf", "",
+	)
+	require.NoError(t, err)
+	require.True(t, added)
+	require.NotEqual(t, embeddedNode.ID, imported.ID)
+	require.Equal(t, "report.pdf", imported.Name)
+}
+
+func TestEmbeddedWatchKindIsPortableProvenanceNotOperationalState(t *testing.T) {
+	ctx := t.Context()
+	source := newTestStore(t)
+	run, err := source.BeginEmbeddedIngest(ctx, "watch", "application archive")
+	require.NoError(t, err)
+	node, err := source.IngestFileExact(
+		ctx, run, source.RootID(), "record.jsonl", fakeHash("a1"), 10,
+		"application/x-ndjson", "records/record.jsonl", "",
+	)
+	require.NoError(t, err)
+	require.NoError(t, source.ValidateMetadata(ctx))
+
+	page, err := source.NodeProvenance(ctx, node.ID, 10, 0)
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	require.Equal(t, "watch", page.Items[0].SourceKind)
+
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(ctx, &exported))
+	require.Contains(t, exported.String(), `"source_kind":"embedded:watch"`)
+	require.NotContains(t, exported.String(), `"type":"watch_source"`)
+
+	restored := newTestStore(t)
+	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
+	require.NoError(t, restored.ValidateMetadata(ctx))
+	restoredPage, err := restored.NodeProvenance(ctx, node.ID, 10, 0)
+	require.NoError(t, err)
+	require.Len(t, restoredPage.Items, 1)
+	require.Equal(t, "watch", restoredPage.Items[0].SourceKind)
+}
+
 func TestIngestFileMatchesAcrossSuffixGap(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
