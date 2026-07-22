@@ -63,6 +63,14 @@ func TestAuditEnrollmentPreviewEnablesExactReviewedAuthority(t *testing.T) {
 	assertAuditMetadataRoundTrip(t, s)
 }
 
+func TestAdditionalAuditScopeCapacityMatchesEvidenceBound(t *testing.T) {
+	require.NoError(t, requireAdditionalAuditScopeCapacity(MaxAuditEvidenceScopes-1))
+	for _, count := range []int64{MaxAuditEvidenceScopes, MaxAuditEvidenceScopes + 1} {
+		err := requireAdditionalAuditScopeCapacity(count)
+		require.ErrorIs(t, err, ErrAuditScopeLimit)
+	}
+}
+
 func TestAuditEnrollmentPreviewRejectsChangedVaultState(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)

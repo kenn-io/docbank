@@ -154,6 +154,9 @@ func (s *Store) previewInitialAudit(
 		if counts[0] != 1 || counts[1] < 1 || counts[2] < 1 || counts[3] < 1 || counts[4] < 8 {
 			return errors.New("audit authority is incomplete")
 		}
+		if err := requireAdditionalAuditScopeCapacity(counts[1]); err != nil {
+			return err
+		}
 		authority, nodeSequence, err := loadAuditAuthorityTx(ctx, tx)
 		if err != nil {
 			return err
@@ -181,6 +184,19 @@ func (s *Store) previewInitialAudit(
 		return nil
 	})
 	return plan, err
+}
+
+func requireAdditionalAuditScopeCapacity(scopeCount int64) error {
+	if scopeCount < 0 {
+		return errors.New("audit authority has an invalid scope count")
+	}
+	if scopeCount >= int64(MaxAuditEvidenceScopes) {
+		return fmt.Errorf(
+			"vault already has %d permanent audit scopes (maximum %d): %w",
+			scopeCount, MaxAuditEvidenceScopes, ErrAuditScopeLimit,
+		)
+	}
+	return nil
 }
 
 // EnableInitialAudit commits a previously reviewed scope only when its

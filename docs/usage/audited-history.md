@@ -239,7 +239,9 @@ genesis is being created and reports the exact incremental JSONL growth.
 Scopes cannot overlap or nest. Docbank rejects a target when any node in its
 live or retained-trash closure is already permanently protected. Moving nodes
 between scopes and other operations that would need one transaction to rewrite
-multiple scope histories remain fail-closed. Status, history, verification,
+multiple scope histories remain fail-closed. A vault accepts at most 1,000
+permanent scopes so every valid vault can still produce one bounded terminal
+evidence bundle. Status, history, verification,
 JSONL export/import, incremental backup, and restore preserve every scope.
 
 !!! info "Planned"

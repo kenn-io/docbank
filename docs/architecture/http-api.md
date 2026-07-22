@@ -525,6 +525,7 @@ machine-readable string clients branch on instead of parsing `detail`:
 | `audit_mutation_unsupported` | 409 | the audited vault does not yet record this logical mutation class |
 | `audit_already_enabled` | 409 | an initial-scope preview cannot execute because audit authority was enabled concurrently |
 | `audit_scope_overlap` | 409 | the proposed scope shares a live or retained-trash member with permanent protection |
+| `audit_scope_limit` | 409 | the vault already has the maximum 1,000 permanent scopes representable by terminal evidence |
 | `audit_preview_stale` | 409 | the one-use enrollment preview expired, was consumed, came from another daemon, or no longer matches the vault |
 | `audit_acknowledgment_required` | 422 | enrollment execution omitted the explicit permanent-retention acknowledgment |
 | `audit_not_enrolled` | 422 | the selected node exists but is outside every permanent audit scope |

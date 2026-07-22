@@ -46,6 +46,9 @@ var (
 	// sticky member with an existing scope. Disjoint scopes are supported first;
 	// overlapping and nested scopes remain fail-closed.
 	ErrAuditScopeOverlap = errors.New("audit scope overlaps existing permanent protection")
+	// ErrAuditScopeLimit means permanent enrollment has reached the maximum
+	// number of scope terminals one evidence bundle can represent.
+	ErrAuditScopeLimit = errors.New("audit scope limit reached")
 	// ErrAuditPreviewStale means enrollment no longer matches the exact
 	// metadata state reviewed by the caller.
 	ErrAuditPreviewStale = errors.New("audit enrollment preview is stale")

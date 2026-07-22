@@ -77,6 +77,7 @@ var storeErrCodes = []struct {
 	{store.ErrAuditMutationUnsupported, http.StatusConflict, "audit_mutation_unsupported"},
 	{store.ErrAuditAlreadyEnabled, http.StatusConflict, "audit_already_enabled"},
 	{store.ErrAuditScopeOverlap, http.StatusConflict, "audit_scope_overlap"},
+	{store.ErrAuditScopeLimit, http.StatusConflict, "audit_scope_limit"},
 	{store.ErrAuditPreviewStale, http.StatusConflict, "audit_preview_stale"},
 	{store.ErrAuditNotEnrolled, http.StatusUnprocessableEntity, "audit_not_enrolled"},
 	{store.ErrInvalidAuditCursor, http.StatusUnprocessableEntity, "invalid_audit_cursor"},

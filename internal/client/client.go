@@ -172,6 +172,7 @@ var codeToTypedErr = map[string]error{
 	"invalid_version_prune":        store.ErrInvalidVersionPrune,
 	"audit_already_enabled":        store.ErrAuditAlreadyEnabled,
 	"audit_scope_overlap":          store.ErrAuditScopeOverlap,
+	"audit_scope_limit":            store.ErrAuditScopeLimit,
 	"audit_preview_stale":          store.ErrAuditPreviewStale,
 	"audit_not_enrolled":           store.ErrAuditNotEnrolled,
 	"invalid_audit_cursor":         store.ErrInvalidAuditCursor,
