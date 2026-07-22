@@ -109,8 +109,10 @@ func TestSearchWithOptionsUsesStableTagIdentity(t *testing.T) {
 	ctx := t.Context()
 	tag, err := s.CreateTag(ctx, "renewal")
 	require.NoError(t, err)
+	directory, err := s.Mkdir(ctx, s.RootID(), "policies")
+	require.NoError(t, err)
 	tagged, err := s.CreateFile(
-		ctx, s.RootID(), "insurance-renewal.pdf", strings.Repeat("a", 64), 1, "application/pdf",
+		ctx, directory.ID, "insurance-renewal.pdf", strings.Repeat("a", 64), 1, "application/pdf",
 	)
 	require.NoError(t, err)
 	_, err = s.CreateFile(
@@ -122,12 +124,13 @@ func TestSearchWithOptionsUsesStableTagIdentity(t *testing.T) {
 
 	report, err := c.SearchWithOptions(
 		ctx, "insurance", 10, client.SearchOptions{
-			TagID: tag.ID, MIMEType: "APPLICATION/PDF",
+			TagID: tag.ID, MIMEType: "APPLICATION/PDF", UnderNodeID: directory.ID,
 		},
 	)
 	require.NoError(t, err)
 	assert.Equal(t, tag.ID, report.TagID)
 	assert.Equal(t, "application/pdf", report.MIMEType)
+	assert.Equal(t, directory.ID, report.UnderNodeID)
 	require.Len(t, report.Hits, 1)
 	assert.Equal(t, tagged.ID, report.Hits[0].Node.ID)
 
@@ -137,6 +140,8 @@ func TestSearchWithOptionsUsesStableTagIdentity(t *testing.T) {
 		MIMEType: "application/pdf; version=1",
 	})
 	require.ErrorContains(t, err, "must not include parameters")
+	_, err = c.SearchWithOptions(ctx, "insurance", 10, client.SearchOptions{UnderNodeID: -1})
+	require.ErrorContains(t, err, "directory node ID must be positive")
 }
 
 func TestMoveToPathValidatesRequestBeforeTransport(t *testing.T) {

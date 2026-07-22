@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"mime"
 	"strings"
@@ -17,10 +18,12 @@ type SearchHit struct {
 
 // SearchOptions narrows ranked search without changing its name-before-content
 // ordering. TagID identifies one required assignment; MIMEType selects the
-// current file version's parameter-free base media type.
+// current file version's parameter-free base media type; UnderNodeID selects
+// descendants of one live directory.
 type SearchOptions struct {
-	TagID    string
-	MIMEType string
+	TagID       string
+	MIMEType    string
+	UnderNodeID int64
 }
 
 const (
@@ -66,6 +69,22 @@ func (s *Store) SearchPageWithOptions(
 		return nil, false, err
 	}
 	opts.MIMEType = normalizedMIME
+	if opts.UnderNodeID < 0 {
+		return nil, false, errors.New("search directory node ID must be positive")
+	}
+	if opts.UnderNodeID != 0 {
+		directory, err := s.NodeByID(ctx, opts.UnderNodeID)
+		if err != nil {
+			return nil, false, fmt.Errorf("search directory node %d: %w", opts.UnderNodeID, err)
+		}
+		if directory.TrashedAt != nil {
+			return nil, false, fmt.Errorf("search directory node %d is trashed: %w",
+				opts.UnderNodeID, ErrNotFound)
+		}
+		if !directory.IsDir() {
+			return nil, false, fmt.Errorf("search scope node %d: %w", opts.UnderNodeID, ErrNotDir)
+		}
+	}
 	fq := ftsQuery(query)
 	if fq == "" {
 		return nil, false, nil
@@ -166,6 +185,18 @@ func searchFilterSQL(opts SearchOptions) (string, []any) {
 			ELSE substr(cv.mime_type, 1, instr(cv.mime_type, ';')-1)
 		END))=?`)
 		args = append(args, opts.MIMEType)
+	}
+	if opts.UnderNodeID != 0 {
+		clauses = append(clauses, `AND n.id IN (
+			WITH RECURSIVE descendants(id) AS (
+				SELECT id FROM nodes WHERE parent_id=?
+				UNION ALL
+				SELECT child.id FROM nodes child
+				JOIN descendants parent ON child.parent_id=parent.id
+			)
+			SELECT id FROM descendants
+		)`)
+		args = append(args, opts.UnderNodeID)
 	}
 	return strings.Join(clauses, "\n"), args
 }

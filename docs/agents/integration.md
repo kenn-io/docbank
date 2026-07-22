@@ -168,6 +168,11 @@ To restrict results by the current file version's format, send a valid
 parameter-free base type as `mime_type`. The response echoes its normalized
 spelling. For example, `text/plain` includes stored charset parameters but does
 not match a retained historical version or a directory.
+To restrict results to one subtree, resolve its live directory once and send
+the stable ID as `under_node_id`. The selected directory is excluded; all
+descendant name and content candidates share the same constraint. Retain the
+echoed ID as authority instead of treating the directory's mutable path as the
+filter identity.
 
 ```bash
 curl --fail-with-body --get \
@@ -175,6 +180,7 @@ curl --fail-with-body --get \
   --data-urlencode 'q=tax return' \
   --data 'tag_id=<tag-uuid>' \
   --data-urlencode 'mime_type=application/pdf' \
+  --data 'under_node_id=42' \
   --data 'limit=100' \
   "$DOCBANK_URL/api/v1/search"
 ```

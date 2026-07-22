@@ -1032,7 +1032,10 @@ func TestSearchCLI(t *testing.T) {
 	setupVaultHome(t)
 	src := writeSourceFile(t, "insurance-2026.txt", "policy")
 	other := writeSourceFile(t, "insurance-draft.txt", "draft")
+	archive := writeSourceFile(t, "insurance-archive.txt", "archive")
 	_, err := runCLI(t, "add", src, other, "--dest", "/inbox")
+	require.NoError(t, err)
+	_, err = runCLI(t, "add", archive, "--dest", "/other")
 	require.NoError(t, err)
 
 	out, err := runCLI(t, "search", "insurance")
@@ -1063,7 +1066,24 @@ func TestSearchCLI(t *testing.T) {
 	require.NoError(t, err, out)
 	require.NoError(t, json.Unmarshal([]byte(out), &report))
 	assert.Equal(t, "text/plain", report.MIMEType)
+	require.Len(t, report.Hits, 3)
+
+	out, err = runCLI(t, "ls", "/inbox", "--json")
+	require.NoError(t, err, out)
+	var inbox directoryListing
+	require.NoError(t, json.Unmarshal([]byte(out), &inbox))
+	out, err = runCLI(t, "search", "insurance", "--under", "/inbox", "--json")
+	require.NoError(t, err, out)
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	assert.Equal(t, inbox.Directory.ID, report.UnderNodeID)
 	require.Len(t, report.Hits, 2)
+	for _, hit := range report.Hits {
+		assert.Contains(t, hit.Path, "/inbox/")
+	}
+	out, err = runCLI(t, "search", "insurance", "--under",
+		formatNodeSelector(inbox.Directory.ID))
+	require.NoError(t, err, out)
+	assert.NotContains(t, out, "/other/")
 }
 
 func TestSearchCLIReportsTruncation(t *testing.T) {

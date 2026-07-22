@@ -244,6 +244,65 @@ func TestSearchPageFiltersCurrentMediaTypeWithParameters(t *testing.T) {
 	require.ErrorContains(t, err, "must not contain wildcards")
 }
 
+func TestSearchPageFiltersDescendantsByStableDirectory(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	scope, err := s.Mkdir(ctx, s.RootID(), "quarterly")
+	require.NoError(t, err)
+	nested, err := s.Mkdir(ctx, scope.ID, "2026")
+	require.NoError(t, err)
+	insidePDF, err := s.CreateFile(
+		ctx, scope.ID, "quarterly-a.pdf", fakeHash("b8"), 4, "application/pdf",
+	)
+	require.NoError(t, err)
+	insideText, err := s.CreateFile(
+		ctx, nested.ID, "quarterly-b.txt", fakeHash("c9"), 4, "text/plain",
+	)
+	require.NoError(t, err)
+	outside, err := s.CreateFile(
+		ctx, s.RootID(), "quarterly-c.pdf", fakeHash("da"), 4, "application/pdf",
+	)
+	require.NoError(t, err)
+	tag, err := s.CreateTag(ctx, "reviewed")
+	require.NoError(t, err)
+	_, err = s.AssignTag(ctx, tag.ID, insidePDF.ID, insidePDF.Revision)
+	require.NoError(t, err)
+	_, err = s.AssignTag(ctx, tag.ID, outside.ID, outside.Revision)
+	require.NoError(t, err)
+
+	hits, truncated, err := s.SearchPageWithOptions(
+		ctx, "quarterly", 10, SearchOptions{UnderNodeID: scope.ID},
+	)
+	require.NoError(t, err)
+	assert.False(t, truncated)
+	require.Len(t, hits, 2)
+	assert.ElementsMatch(t, []int64{insidePDF.ID, insideText.ID},
+		[]int64{hits[0].Node.ID, hits[1].Node.ID})
+	for _, hit := range hits {
+		assert.NotEqual(t, scope.ID, hit.Node.ID, "the selected directory is not its own descendant")
+	}
+
+	hits, _, err = s.SearchPageWithOptions(ctx, "quarterly", 10, SearchOptions{
+		TagID: tag.ID, MIMEType: "application/pdf", UnderNodeID: scope.ID,
+	})
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.Equal(t, insidePDF.ID, hits[0].Node.ID)
+
+	_, _, err = s.SearchPageWithOptions(
+		ctx, "quarterly", 10, SearchOptions{UnderNodeID: insidePDF.ID},
+	)
+	require.ErrorIs(t, err, ErrNotDir)
+	trashed, err := s.Mkdir(ctx, s.RootID(), "old-quarterly")
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, trashed.ID, trashed.Revision)
+	require.NoError(t, err)
+	_, _, err = s.SearchPageWithOptions(
+		ctx, "quarterly", 10, SearchOptions{UnderNodeID: trashed.ID},
+	)
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
 func TestSearchContentFollowsStableNameMatches(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()

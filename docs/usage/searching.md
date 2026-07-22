@@ -10,6 +10,7 @@ docbank search insurance
 docbank search tax 2026
 docbank search return --tag taxes
 docbank search report --mime-type application/pdf
+docbank search receipt --under /taxes/2026
 docbank search report --limit 200
 docbank search report --json
 ```
@@ -46,6 +47,11 @@ id:198     content  /taxes/2026/car-insurance-notes.md
   case-insensitive and ignores stored parameters, so `text/plain` also matches
   `text/plain; charset=utf-8`. The request itself must be parameter-free;
   directories and historical versions never match it.
+- **Stable directory scoping.** `--under <path-or-id>` restricts results to
+  descendants of one live directory. The CLI resolves a path or `id:N`
+  selector to its stable node ID before searching; JSON echoes that ID as
+  `under_node_id`. The selected directory itself is not a result, and moving or
+  renaming it does not change its identity.
 
 For scripts, `--json` returns `hits`, `limit`, and `truncated` without table
 formatting. `hits` is always an array, including when nothing matches.
@@ -65,7 +71,7 @@ daemon job reaches it. A transient open, read, or verification error leaves the
 item queued and is retried on a bounded delay; it does not become a permanent
 extraction failure. `docbank jobs` shows whether that worker is running.
 
-PDF text layers, office formats, OCR, and date/path search filters are not
+PDF text layers, office formats, OCR, and date search filters are not
 yet available. Their absence never changes name-search results or document authority.
 
 Next: organize documents beyond paths with

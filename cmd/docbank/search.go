@@ -21,6 +21,7 @@ var (
 	searchJSON  bool
 	searchTag   string
 	searchMIME  string
+	searchUnder string
 )
 
 var searchCmd = &cobra.Command{
@@ -34,6 +35,13 @@ var searchCmd = &cobra.Command{
 		mimeType, err := store.NormalizeSearchMIMEType(searchMIME)
 		if err != nil {
 			return usageError(err)
+		}
+		var underSelector nodeSelector
+		if searchUnder != "" {
+			underSelector, err = parseNodeSelector(searchUnder)
+			if err != nil {
+				return err
+			}
 		}
 		c, err := client.Ensure(cmd.Context())
 		if err != nil {
@@ -49,6 +57,18 @@ var searchCmd = &cobra.Command{
 			opts.TagID = tag.ID
 			tagName = tag.Name
 		}
+		var underPath string
+		if searchUnder != "" {
+			directory, resolveErr := underSelector.resolve(cmd.Context(), c)
+			if resolveErr != nil {
+				return resolveErr
+			}
+			if directory.Kind != "dir" {
+				return fmt.Errorf("search scope %q: %w", searchUnder, store.ErrNotDir)
+			}
+			opts.UnderNodeID = directory.ID
+			underPath = directory.Path
+		}
 		rep, err := c.SearchWithOptions(
 			cmd.Context(), strings.Join(args, " "), searchLimit, opts,
 		)
@@ -59,16 +79,21 @@ var searchCmd = &cobra.Command{
 			return writeCLIJSON(cmd.OutOrStdout(), rep)
 		}
 		if len(rep.Hits) == 0 {
-			switch {
-			case tagName != "" && rep.MIMEType != "":
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-					"no matches with tag %q and media type %q\n", tagName, rep.MIMEType)
-			case tagName != "":
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "no matches with tag %q\n", tagName)
-			case rep.MIMEType != "":
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "no matches with media type %q\n", rep.MIMEType)
-			default:
+			var filters []string
+			if tagName != "" {
+				filters = append(filters, fmt.Sprintf("tag %q", tagName))
+			}
+			if rep.MIMEType != "" {
+				filters = append(filters, fmt.Sprintf("media type %q", rep.MIMEType))
+			}
+			if underPath != "" {
+				filters = append(filters, fmt.Sprintf("directory %q", underPath))
+			}
+			if len(filters) == 0 {
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "no matches")
+			} else {
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(),
+					"no matches with "+strings.Join(filters, " and "))
 			}
 			return nil
 		}
@@ -101,6 +126,8 @@ func init() {
 		"require one tag by name or stable ID")
 	searchCmd.Flags().StringVar(&searchMIME, "mime-type", "",
 		"require one current parameter-free media type")
+	searchCmd.Flags().StringVar(&searchUnder, "under", "",
+		"require descendants of one live directory path or id:N")
 	searchCmd.Flags().BoolVar(&searchJSON, "json", false, "emit machine-readable JSON")
 	rootCmd.AddCommand(searchCmd)
 }
