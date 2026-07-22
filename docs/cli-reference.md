@@ -10,7 +10,7 @@ All commands operate on the vault at `~/.docbank` (override with
 stderr and produce a non-zero exit code. Virtual paths are absolute,
 `/`-separated, and case-sensitive.
 
-Every data command below (`info`, `add`, `ls`, `tree`, `cat`, `put`, `edit`, `versions`, `version`, `refs`, `revert`, `tag`, `audit`, `mv`, `rm`,
+Every data command below (`info`, `stat`, `add`, `ls`, `tree`, `cat`, `put`, `edit`, `versions`, `version`, `refs`, `revert`, `tag`, `audit`, `mv`, `rm`,
 `restore`, `search`, `trash`, `gc`, `verify`, `storage`, `backup`, `jobs`) talks to the `docbank`
 daemon over its HTTP API rather than opening the vault itself; if none
 is running, the command auto-starts one in the background. `docbank
@@ -48,9 +48,25 @@ The destination of `mv` remains an absolute path because it describes where
 the node should go. `restore` also accepts its older bare numeric form for
 compatibility, although new scripts should use the unambiguous `id:42` form.
 Commands that require a live tree entry reject trashed selectors. Read-only
-`cat`, `versions list`, audit status, and audit history can still inspect a
+`stat`, `cat`, `versions list`, audit status, and audit history can still inspect a
 trashed node by stable ID; `restore` is the mutation that returns it to the
 live tree.
+
+## docbank stat
+
+```
+docbank stat <path-or-id> [--json]
+```
+
+Inspects one document or directory. Human output shows its stable `id:N`
+selector, live or trashed state, quoted live path and name, kind, revision, and
+timestamps. Files also show the current immutable version ID, SHA-256 content
+identity, raw size, and recorded MIME type.
+
+A path resolves only a live node. A stable ID can inspect the same node after
+it is moved, renamed, or trashed; trashed output deliberately has no `path`
+because the node has no live coordinate. `--json` returns the complete
+authoritative node object used by the HTTP API.
 
 ## Process exit codes
 

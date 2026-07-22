@@ -52,6 +52,23 @@ func TestStatByIDAndPath(t *testing.T) {
 	assert.Contains(t, body, `"code":"not_found"`)
 }
 
+func TestStatTrashedNodeHasNoLivePath(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	node, err := s.Mkdir(ctx, s.RootID(), "archived")
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, node.ID, node.Revision)
+	require.NoError(t, err)
+
+	resp, body := get(t, ts, fmt.Sprintf("/api/v1/nodes/%d", node.ID), nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var got api.Node
+	require.NoError(t, json.Unmarshal([]byte(body), &got))
+	assert.Equal(t, node.ID, got.ID)
+	assert.NotEmpty(t, got.TrashedAt)
+	assert.Empty(t, got.Path)
+}
+
 func TestChildrenPagination(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	ctx := t.Context()

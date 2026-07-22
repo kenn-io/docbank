@@ -58,6 +58,12 @@ func nodeWithPath(ctx context.Context, d Deps, id int64) (*nodeOutput, error) {
 	if err != nil {
 		return nil, FromStoreError(err)
 	}
+	// A trashed node has no live virtual coordinate. In particular, its
+	// storage parent is an implementation detail and must not be presented as
+	// a path that clients can resolve later.
+	if n.TrashedAt != nil {
+		return nodeOutputAt(n, ""), nil
+	}
 	p, err := d.Store.Path(ctx, id)
 	if err != nil {
 		return nil, FromStoreError(err)
