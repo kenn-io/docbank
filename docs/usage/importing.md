@@ -123,6 +123,28 @@ Two different files arriving at the same virtual name don't conflict —
 the newcomer is suffixed (`scan.pdf` → `scan (2).pdf`). The provenance
 record preserves where each one actually came from.
 
+## Inspect where a document came from
+
+Docbank keeps provenance as durable metadata rather than leaving it hidden in
+an import log. Query a live file by virtual path or any retained file by stable
+node ID:
+
+```bash
+docbank provenance /archive/Documents/report.pdf
+docbank provenance id:42 --json
+```
+
+The bounded newest-first result identifies the ingest, its source kind and
+description, the original source path and modification time, and the immutable
+SHA-256 identity of each provenance fact. `active` means no newer fact
+supersedes it; corrections retain earlier facts instead of rewriting them.
+Because a source path can disclose machine-local names, provenance is available
+only through the same authenticated API as the document itself.
+
+This is inspection, not source management. Reading provenance neither opens nor
+changes the original file, and provenance alone does not pin a document version
+against ordinary retention or deletion policy.
+
 ## Failures don't abort the batch
 
 Unreadable files, permission errors, and non-regular files (symlinks,
@@ -189,6 +211,9 @@ from the source independently of the node's current version, so an unchanged
 source does not overwrite a later edit or revert after daemon restart. Removing
 the source leaves the archived node alone. A renamed source-relative path is a
 new identity, not an implicit move.
+
+Use `docbank provenance <path-or-id>` to inspect the retained watch identity,
+source-relative path, and immutable supersession history for an imported node.
 
 The destination is exact rather than collision-suffixed. If unrelated content
 already occupies the intended path, or the previously mapped node is in the

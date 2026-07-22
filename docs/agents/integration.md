@@ -476,6 +476,29 @@ directory swaps without temporary names. Require a receipt for every request
 item, in the same order, and reconcile its stable node ID, prior path, final
 path, and resulting revision. Any error means the entire plan was rejected.
 
+## Inspect document provenance
+
+Use the stable node ID to retrieve the immutable facts describing where a file
+was ingested from:
+
+```bash
+curl --fail-with-body \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  "$DOCBANK_URL/api/v1/nodes/42/provenance?limit=100&offset=0"
+```
+
+Do not confuse `node.path`, Docbank's current virtual coordinate, with a fact's
+`original_path`, which names an external source as it was observed by the
+ingest. Branch on `active` when the workflow needs facts that have not been
+superseded, but retain fact identities: a correction adds a successor and keeps
+the superseded record addressable. Paginate using `total`, `limit`, and
+`offset`. A trashed file is
+still inspectable by stable ID and returns an empty live path.
+
+Provenance is evidence, not ownership of the external source. Reading it does
+not open or modify that source, and it does not make a content version a
+retention root.
+
 ## Create and ingest safely
 
 Create a directory under a known parent ID:

@@ -115,6 +115,7 @@ func NewServer(d Deps) *Server {
 	registerContentWriteRoute(mux, humaAPI, d, g)
 	registerContentRevertRoute(humaAPI, d, g)
 	registerContentPruneRoute(humaAPI, d, g)
+	registerProvenanceRoutes(humaAPI, d)
 	registerTagRoutes(humaAPI, d, g)
 	registerAuditRoutes(humaAPI, d, g, s.auditPreviews)
 	clearLongRunningBodyReadDeadlines(humaAPI)

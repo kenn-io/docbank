@@ -17,7 +17,7 @@ elsewhere only when they materially explain the design and are marked
 | 0 | Extract msgvault's pack/backup and packed-CAS engines into `go.kenn.io/kit` | **Implemented** (Docbank uses `kit` v0.11.0) |
 | 1 | Core: store, blob store, ingest pipeline, full CLI | **Implemented** |
 | 2a | Infrastructure: daemon, HTTP API, daemon-first CLI, self-update, release pipeline | **Implemented** |
-| 2b | Features: content versions, versioned editing, full audit, tags, watched inboxes, text extraction, ingest provenance | **In progress**: versions, tags, provenance, watched inboxes, first-scope audit authority, and bounded plain-text extraction implemented; PDF/Office extraction remains |
+| 2b | Features: content versions, versioned editing, full audit, tags, watched inboxes, text extraction, ingest provenance | **In progress**: versions, tags, queryable provenance, watched inboxes, first-scope audit authority, and bounded plain-text extraction implemented; PDF/Office extraction remains |
 | 3 | Primary kit-ui web portal and focused operator TUI | Designed |
 | 4 | Backup commands over the kit engine | **Implemented**; representative-corpus hardening continues |
 
@@ -34,7 +34,7 @@ elsewhere only when they materially explain the design and are marked
   separate packed-space reclamation
 - `gc` (dry-run default) and `verify`
 - Inter-process vault locking (`flock` on Unix, `LockFileEx` on Windows)
-- CLI: `add`, `ls`, `tree`, `cat`, `mv`, `rm`, `restore`, `search`,
+- CLI: `add`, `provenance`, `ls`, `tree`, `cat`, `mv`, `rm`, `restore`, `search`,
   `trash`, `gc`, `verify`
 
 ## Phase 2a — Infrastructure (implemented)
@@ -120,7 +120,7 @@ and append later changes to the same stable node without touching source files.
 - Additional text extraction workers for PDF text layers and office formats;
   bounded UTF-8 text, Markdown, JSON, and JSONL extraction is implemented
 - External integration surface: generalized ingest provenance —
-  today's `provenance` table records the original filesystem path and
+  today's provenance API records and exposes the original filesystem path and
   mtime; `source_kind` / `source_ref` / `source_meta` fields extend it
   to non-file origins (a watched inbox, another application's archive)
   as generic fields, never application-specific tables. To settle before an

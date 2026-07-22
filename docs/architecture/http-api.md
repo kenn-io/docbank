@@ -33,6 +33,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `PUT /nodes/{id}/content` | replace raw content under revision, size, and digest preconditions — see [addendum](#addendum-put-nodesidcontent) | Implemented |
 | `POST /nodes/{id}/revert` | create a new head from a prior version of the same file | Implemented |
 | `GET /nodes/{id}/versions` | list immutable content versions newest-first, paginated (`limit`/`offset`) | Implemented |
+| `GET /nodes/{id}/provenance` | inspect immutable ingest-origin facts newest-first, paginated (`limit`/`offset`) | Implemented |
 | `GET /versions/{version_id}` · `GET /versions/{version_id}/content` | inspect or stream one immutable version by stable UUID | Implemented |
 | `GET /content-references?sha256=&limit=&offset=` | find every stable node/version pair retaining a content hash | Implemented |
 | `GET\|POST /tags` · `GET /tags/by-name` · `GET\|PATCH\|DELETE /tags/{tag_id}` | list, resolve, create, rename, or delete stable tag definitions | Implemented |
@@ -213,6 +214,14 @@ body themselves and compare both their digest and the trailer with the node's
 metadata globally, and its `/content` child streams that version with the same
 identity headers and digest contract. A path rename cannot strand a retained
 version reference.
+
+`GET /nodes/{id}/provenance` returns the requested file node, its live path when
+one exists, and a bounded newest-ingest-first page from one read snapshot. Each
+fact carries its canonical SHA-256 identity, active/superseded state, ingest
+identity and time, source kind and description, original path and mtime, and an
+optional superseded-fact identity. A trashed node remains inspectable by ID but
+has no live `path`. The route is observation only: it neither accesses the
+source nor changes retention authority.
 
 `GET /content-references` is the inverse identity lookup. It accepts one
 canonical lowercase SHA-256 and returns only logical `content_versions`

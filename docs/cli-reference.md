@@ -139,6 +139,25 @@ source arguments, just as it does for failures inside a directory tree.
 `--json` suppresses progress and returns the same terminal report shape as the
 HTTP JSON endpoint, so stdout remains safe for automation.
 
+## docbank provenance
+
+```
+docbank provenance <path-or-id> [--limit <n>] [--offset <n>] [--json]
+```
+
+Shows the immutable origin facts retained for one file, newest ingest first.
+Each result includes its SHA-256 identity, whether it is the active fact, the
+ingest UUID and time, source kind and description, original source path and
+modification time, and the identity it supersedes when applicable. The page is
+bounded to 1–1,000 facts; human output prints a continuation hint when more
+remain.
+
+Paths resolve live files. A stable `id:<node-id>` may also inspect a trashed
+file; in that case the response has no live virtual path and the human output
+labels it as trashed. `--json` returns the complete node, path, page authority,
+and fact objects. The command is read-only and does not access or alter the
+original source.
+
 ## docbank ls
 
 ```
