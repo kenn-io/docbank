@@ -42,45 +42,110 @@ func liveDirTx(tx *sql.Tx, id int64) (Node, error) {
 
 // Mkdir creates a directory under parentID.
 func (s *Store) Mkdir(ctx context.Context, parentID int64, name string) (Node, error) {
+	created, _, err := s.MkdirWithPath(ctx, parentID, name)
+	return created, err
+}
+
+// MkdirWithPath creates a directory under a stable parent identity and returns
+// the new node's canonical path from the same mutation transaction.
+func (s *Store) MkdirWithPath(
+	ctx context.Context, parentID int64, name string,
+) (Node, string, error) {
 	name, err := NormalizeName(name)
+	if err != nil {
+		return Node{}, "", err
+	}
+	var created Node
+	var createdPath string
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		created, err = s.mkdirNodeTx(ctx, tx, parentID, name)
+		if err != nil {
+			return err
+		}
+		createdPath, err = pathOf(ctx, tx, created.ID)
+		return err
+	})
+	if err != nil {
+		return Node{}, "", err
+	}
+	return created, createdPath, nil
+}
+
+// MkdirPath resolves the parent and creates one directory in the same
+// transaction. This is the path-coordinate form for callers whose intent is
+// tied to an exact virtual location rather than a previously resolved parent
+// identity.
+func (s *Store) MkdirPath(ctx context.Context, path string) (Node, string, error) {
+	if !strings.HasPrefix(path, "/") {
+		return Node{}, "", fmt.Errorf("directory path must be absolute: %w", ErrInvalidName)
+	}
+	segments := splitPath(path)
+	for index, segment := range segments {
+		normalized, err := NormalizeName(segment)
+		if err != nil {
+			return Node{}, "", fmt.Errorf("directory path %q: %w", path, err)
+		}
+		segments[index] = normalized
+	}
+	if len(segments) == 0 {
+		return Node{}, "", fmt.Errorf("directory path %q: %w", path, ErrExists)
+	}
+	parentPath := "/" + strings.Join(segments[:len(segments)-1], "/")
+	name := segments[len(segments)-1]
+
+	var created Node
+	var createdPath string
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		parent, err := nodeByPath(ctx, tx, s.rootID, parentPath)
+		if err != nil {
+			return fmt.Errorf("resolving directory parent %q: %w", parentPath, err)
+		}
+		created, err = s.mkdirNodeTx(ctx, tx, parent.ID, name)
+		if err != nil {
+			return err
+		}
+		createdPath, err = pathOf(ctx, tx, created.ID)
+		return err
+	})
+	if err != nil {
+		return Node{}, "", err
+	}
+	return created, createdPath, nil
+}
+
+func (s *Store) mkdirNodeTx(
+	ctx context.Context, tx *sql.Tx, parentID int64, name string,
+) (Node, error) {
+	active, err := auditAuthorityActiveTx(ctx, tx)
 	if err != nil {
 		return Node{}, err
 	}
-	var created Node
-	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		active, err := auditAuthorityActiveTx(ctx, tx)
-		if err != nil {
-			return err
-		}
-		if !active {
-			created, err = s.mkdirTx(tx, parentID, name, nowRFC3339())
-			return err
-		}
-		priorParent, err := liveDirTx(tx, parentID)
-		if err != nil {
-			return err
-		}
-		authority, scopes, _, err := loadAuditedNodeAuthority(ctx, tx, parentID)
-		if err != nil {
-			return err
-		}
-		operationID, err := newUUIDv4()
-		if err != nil {
-			return err
-		}
-		recordedAt := nowRFC3339()
-		created, err = s.mkdirTx(tx, parentID, name, recordedAt)
-		if err != nil {
-			return err
-		}
-		resultingParent, err := nodeByIDTx(tx, parentID)
-		if err != nil {
-			return err
-		}
-		return persistAuditedNodeCreation(ctx, tx, s.vaultID, authority, scopes,
-			priorParent, resultingParent, created, ContentVersion{}, operationID, recordedAt, nil)
-	})
+	if !active {
+		return s.mkdirTx(tx, parentID, name, nowRFC3339())
+	}
+	priorParent, err := liveDirTx(tx, parentID)
 	if err != nil {
+		return Node{}, err
+	}
+	authority, scopes, _, err := loadAuditedNodeAuthority(ctx, tx, parentID)
+	if err != nil {
+		return Node{}, err
+	}
+	operationID, err := newUUIDv4()
+	if err != nil {
+		return Node{}, err
+	}
+	recordedAt := nowRFC3339()
+	created, err := s.mkdirTx(tx, parentID, name, recordedAt)
+	if err != nil {
+		return Node{}, err
+	}
+	resultingParent, err := nodeByIDTx(tx, parentID)
+	if err != nil {
+		return Node{}, err
+	}
+	if err := persistAuditedNodeCreation(ctx, tx, s.vaultID, authority, scopes,
+		priorParent, resultingParent, created, ContentVersion{}, operationID, recordedAt, nil); err != nil {
 		return Node{}, err
 	}
 	return created, nil

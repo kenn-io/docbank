@@ -55,12 +55,12 @@ func registerMutateRoutes(api huma.API, d Deps, g *gate) {
 		}
 		var out *nodeOutput
 		err := g.mutate(func() error {
-			n, err := d.Store.Mkdir(ctx, in.Body.ParentID, in.Body.Name)
+			n, path, err := d.Store.MkdirWithPath(ctx, in.Body.ParentID, in.Body.Name)
 			if err != nil {
 				return FromStoreError(err)
 			}
-			out, err = nodeWithPath(ctx, d, n.ID)
-			return err
+			out = nodeOutputAt(n, path)
+			return nil
 		})
 		return out, err
 	})
@@ -121,6 +121,33 @@ func registerMutateRoutes(api huma.API, d Deps, g *gate) {
 				return FromStoreError(fmt.Errorf("node %d: %w", in.ID, store.ErrIsRoot))
 			}
 			n, path, err := d.Store.Move(ctx, in.ID, *parent, name, rev)
+			if err != nil {
+				return FromStoreError(err)
+			}
+			out = nodeOutputAt(n, path)
+			return nil
+		})
+		return out, err
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "mkdirPath", Method: http.MethodPost, Path: "/api/v1/path/mkdir",
+		Summary:       "Create one directory at an exact virtual path",
+		DefaultStatus: http.StatusCreated,
+		Description: "The parent path is resolved and the directory is created in one transaction, " +
+			"so a concurrent ancestor move cannot redirect the new directory. The parent must exist.",
+	}, func(ctx context.Context, in *struct {
+		Body struct {
+			Path string `json:"path" minLength:"1" example:"/projects/2026"`
+		}
+	}) (*nodeOutput, error) {
+		if !strings.HasPrefix(in.Body.Path, "/") {
+			return nil, NewError(http.StatusUnprocessableEntity, "validation",
+				fmt.Sprintf("path %q must be absolute (start with /)", in.Body.Path))
+		}
+		var out *nodeOutput
+		err := g.mutate(func() error {
+			n, path, err := d.Store.MkdirPath(ctx, in.Body.Path)
 			if err != nil {
 				return FromStoreError(err)
 			}

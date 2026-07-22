@@ -76,6 +76,10 @@ func TestRoundTrip(t *testing.T) {
 	dir, err := c.Mkdir(ctx, s.RootID(), "docs")
 	require.NoError(t, err)
 	assert.Equal(t, "/docs", dir.Path)
+	createdByPath, err := c.MkdirPath(ctx, "/docs/2026/")
+	require.NoError(t, err)
+	assert.Equal(t, "/docs/2026", createdByPath.Path)
+	assert.Equal(t, dir.ID, *createdByPath.ParentID)
 
 	got, err := c.Stat(ctx, "/docs")
 	require.NoError(t, err)
@@ -475,6 +479,10 @@ func TestJSONMethodsRejectInvalidUTF8BeforeRequest(t *testing.T) {
 			_, err := c.Mkdir(t.Context(), 1, invalidPath)
 			return err
 		}},
+		{name: "mkdir path", call: func() error {
+			_, err := c.MkdirPath(t.Context(), invalidPath)
+			return err
+		}},
 		{name: "move name", call: func() error {
 			_, err := c.Move(t.Context(), 2, 1, nil, &invalidPath)
 			return err
@@ -500,6 +508,32 @@ func TestJSONMethodsRejectInvalidUTF8BeforeRequest(t *testing.T) {
 			assert.Equal(t, before, requests.Load(), "invalid text must not reach JSON or HTTP")
 		})
 	}
+}
+
+func TestMkdirPathValidatesRequestAndReceipt(t *testing.T) {
+	var requests atomic.Int64
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("ETag", `"1"`)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(api.Node{
+			ID: 9, ParentID: new(int64(1)), Name: "other", Kind: "dir",
+			Revision: 1, Path: "/wrong",
+		})
+	}))
+	t.Cleanup(ts.Close)
+	c := client.New(ts.URL, "key")
+
+	_, err := c.MkdirPath(t.Context(), "relative")
+	require.ErrorContains(t, err, "must be absolute")
+	_, err = c.MkdirPath(t.Context(), "/")
+	require.ErrorContains(t, err, "must not be the vault root")
+	assert.Zero(t, requests.Load())
+
+	_, err = c.MkdirPath(t.Context(), "/expected")
+	require.ErrorContains(t, err, "inconsistent directory authority")
+	assert.Equal(t, int64(1), requests.Load())
 }
 
 func TestBackupCreateStreamRoundTripAndTypedError(t *testing.T) {

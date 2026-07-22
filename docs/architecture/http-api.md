@@ -44,7 +44,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `POST /audit/verify` | independently replay audit authority, optionally prove recorded evidence is an exact prefix, and re-hash every protected blob | Implemented |
 | `POST /nodes/{id}/verify` | re-hash one file, bound to an inspected node revision | Implemented |
 | `GET /search?q=&tag_id=&mime_type=&under_node_id=&modified_since=&modified_before=&limit=` | bounded name and extracted-content search (FTS5), optionally restricted by stable tag identity, current base media type, descendants of a live directory, and current node modification time, with match source and explicit `truncated` status | Implemented |
-| `POST /nodes` | create a directory (`kind: "dir"`) | Implemented |
+| `POST /nodes` · `POST /path/mkdir` | create a directory beneath a stable parent ID or at one exact virtual coordinate | Implemented |
 | `POST /ingest` · `POST /ingest/stream` · `POST /ingest/preflight` | import with JSON or streamed progress / inventory server-side paths — see [addendum](#addendum-post-ingest-post-ingeststream-and-post-ingestpreflight) | Implemented |
 | `POST /uploads?parent_id=&name=` | stream one digest-checked remote file — see [addendum](#addendum-post-uploads) | Implemented |
 | `PATCH /nodes/{id}` | move and/or rename, including resolving an absolute `dest_path` transactionally | Implemented |
@@ -73,6 +73,14 @@ For stable-identity moves, `PATCH /nodes/{id}` accepts either the lower-level
 mutually exclusive. The latter resolves POSIX-style destination semantics and
 checks `If-Match` in the same transaction. `POST /path/move` remains the
 coordinate-oriented form when the source path itself is the intended target.
+
+Directory creation has the same identity-versus-coordinate choice.
+`POST /nodes` accepts a previously resolved `parent_id`, so a concurrent parent
+move does not change which directory receives the child. `POST /path/mkdir`
+accepts `{"path":"/projects/2026"}` and resolves the existing parent inside
+the creation transaction, so the exact coordinate cannot be redirected between
+separate client requests. Both return the new node and its canonical path from
+that transaction; neither creates missing ancestors.
 
 `POST /batch/move` accepts `{moves:[...]}`. Each item selects its source with
 either `source_path`, or `node_id` plus the revision previously inspected by
@@ -178,6 +186,7 @@ and maintenance are explicit exceptions:
 | `POST /path/move`, `POST /path/trash` | none — the path is resolved and mutated inside one store transaction, so there is no separate read for a revision to guard |
 | `POST /batch/move` | each path source resolves in the transaction; each stable-ID source carries its own required revision |
 | `POST /nodes` (create dir) | none — creation has no prior revision; a name collision is `409` |
+| `POST /path/mkdir` | none — the exact parent coordinate resolves inside the creation transaction; a name collision is `409` |
 | `POST /ingest` · `POST /ingest/stream` | none — long-running bulk operations with per-path partial success; the destination directory may legitimately change while they run |
 | `POST /uploads` | none — creates or idempotently resolves one file under the stable `parent_id`; name/content collision policy is transactional |
 | `POST /trash/empty`, `POST /gc`, `POST /verify` | none — vault-wide maintenance, serialized by the maintenance gate |

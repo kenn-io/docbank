@@ -1772,6 +1772,57 @@ func (c *Client) Mkdir(ctx context.Context, parentID int64, name string) (api.No
 	return n, err
 }
 
+// MkdirPath creates one directory at an exact absolute virtual coordinate.
+// The daemon resolves the existing parent and performs the creation in one
+// transaction.
+func (c *Client) MkdirPath(ctx context.Context, path string) (api.Node, error) {
+	canonical, err := canonicalDirectoryPath(path)
+	if err != nil {
+		return api.Node{}, err
+	}
+	var node api.Node
+	headers, err := c.doWithHeaders(ctx, http.MethodPost, "/api/v1/path/mkdir", nil,
+		map[string]string{"path": path}, &node)
+	if err != nil {
+		return api.Node{}, err
+	}
+	expectedName := canonical[strings.LastIndex(canonical, "/")+1:]
+	if node.ID < 1 || node.ParentID == nil || node.Kind != "dir" || node.Name == "" ||
+		node.Name != expectedName || node.Path != canonical || node.Revision != 1 || node.TrashedAt != "" ||
+		node.CurrentVersionID != "" || node.BlobHash != "" || node.Size != 0 || node.MimeType != "" {
+		return api.Node{}, errors.New("mkdir response has inconsistent directory authority")
+	}
+	wantETag := fmt.Sprintf("%q", strconv.FormatInt(node.Revision, 10))
+	if headers.Get("ETag") != wantETag {
+		return api.Node{}, fmt.Errorf("mkdir response ETag %q, expected %q", headers.Get("ETag"), wantETag)
+	}
+	return node, nil
+}
+
+func canonicalDirectoryPath(path string) (string, error) {
+	if !utf8.ValidString(path) {
+		return "", errors.New("directory path is not valid UTF-8")
+	}
+	if !strings.HasPrefix(path, "/") {
+		return "", errors.New("directory path must be absolute")
+	}
+	segments := make([]string, 0)
+	for segment := range strings.SplitSeq(path, "/") {
+		if segment == "" {
+			continue
+		}
+		normalized, err := store.NormalizeName(segment)
+		if err != nil {
+			return "", fmt.Errorf("directory path %q: %w", path, err)
+		}
+		segments = append(segments, normalized)
+	}
+	if len(segments) == 0 {
+		return "", errors.New("directory path must not be the vault root")
+	}
+	return "/" + strings.Join(segments, "/"), nil
+}
+
 func (c *Client) Ingest(ctx context.Context, paths []string, dest string) (api.IngestReport, error) {
 	return c.IngestWithOptions(ctx, paths, dest, nil)
 }

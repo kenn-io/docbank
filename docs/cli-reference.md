@@ -158,6 +158,22 @@ labels it as trashed. `--json` returns the complete node, path, page authority,
 and fact objects. The command is read-only and does not access or alter the
 original source.
 
+## docbank mkdir
+
+```
+docbank mkdir <absolute-virtual-path> [--json]
+```
+
+Creates one directory at the exact virtual coordinate and prints its stable
+`id:N` selector plus quoted canonical path. The parent directory must already
+exist; this command does not recursively invent missing parents. Existing
+names, `/`, relative paths, files used as parents, and `.` or `..` path
+segments are rejected without creating anything.
+
+The daemon resolves the parent and creates the directory in one transaction,
+so a concurrent ancestor move cannot redirect a path-based request. `--json`
+returns the complete authoritative directory node.
+
 ## docbank ls
 
 ```

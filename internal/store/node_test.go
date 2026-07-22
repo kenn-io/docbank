@@ -59,6 +59,45 @@ func TestMkdirRejectsCollisionAndBadNames(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidName)
 }
 
+func TestMkdirPathCreatesOneExactDirectory(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+
+	projects, err := s.Mkdir(ctx, s.RootID(), "Projects")
+	require.NoError(t, err)
+	created, path, err := s.MkdirPath(ctx, "/Projects/Reports/")
+	require.NoError(t, err)
+	assert.Equal(t, "/Projects/Reports", path)
+	assert.Equal(t, "Reports", created.Name)
+	assert.Equal(t, projects.ID, *created.ParentID)
+
+	resolved, err := s.NodeByPath(ctx, path)
+	require.NoError(t, err)
+	assert.Equal(t, created.ID, resolved.ID)
+
+	_, _, err = s.MkdirPath(ctx, "/Projects/Reports")
+	require.ErrorIs(t, err, ErrExists)
+	_, _, err = s.MkdirPath(ctx, "/Missing/Reports")
+	require.ErrorIs(t, err, ErrNotFound)
+	_, _, err = s.MkdirPath(ctx, "/")
+	require.ErrorIs(t, err, ErrExists)
+	_, _, err = s.MkdirPath(ctx, "Projects/Relative")
+	require.ErrorIs(t, err, ErrInvalidName)
+	_, _, err = s.MkdirPath(ctx, "/Projects/../Reports")
+	require.ErrorIs(t, err, ErrInvalidName)
+}
+
+func TestMkdirPathRejectsFileParent(t *testing.T) {
+	s := newTestStore(t)
+	_, err := s.CreateFile(
+		t.Context(), s.RootID(), "document.txt", fakeHash("mkdir-parent"), 1, "text/plain",
+	)
+	require.NoError(t, err)
+
+	_, _, err = s.MkdirPath(t.Context(), "/document.txt/child")
+	require.ErrorIs(t, err, ErrNotDir)
+}
+
 func TestMkdirBumpsParentRevision(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()

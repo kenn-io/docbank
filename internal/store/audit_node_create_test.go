@@ -69,6 +69,27 @@ func TestAuditedNodeCreationInheritsMembershipAndRoundTrips(t *testing.T) {
 	assert.Equal(t, file.CurrentVersionID, restoredFile.CurrentVersionID)
 }
 
+func TestAuditedMkdirPathRecordsInheritedCreation(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	seedMetadataRoundTrip(t, s)
+	scope, err := s.NodeByPath(t.Context(), "/Projects")
+	require.NoError(t, err)
+	seedInitialAuditAuthority(t, s, scope.ID)
+
+	created, path, err := s.MkdirPath(t.Context(), "/Projects/2027")
+	require.NoError(t, err)
+	assert.Equal(t, "/Projects/2027", path)
+	require.NoError(t, s.ValidateMetadata(t.Context()))
+
+	var scopeID string
+	require.NoError(t, s.db.QueryRow(
+		`SELECT scope_id FROM audit_memberships WHERE node_id=?`, created.ID,
+	).Scan(&scopeID))
+	assert.Equal(t, testAuditScopeID, scopeID)
+}
+
 func TestAuditedNodeCreationImportRejectsMembershipRetarget(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
