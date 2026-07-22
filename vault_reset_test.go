@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/docbank/internal/home"
 	docsqlite "go.kenn.io/docbank/pkg/sqlite"
 	"go.kenn.io/docbank/pkg/sqlite/modernc"
 )
@@ -233,6 +234,10 @@ func TestResetVaultFreshInitializationFailurePreservesBothPaths(t *testing.T) {
 	vault, err := New(t.Context(), Config{Root: root, SQLite: modernc.Driver{}})
 	require.NoError(t, err)
 	require.NoError(t, vault.Close())
+	canonicalRoot, err := home.CanonicalRoot(root)
+	require.NoError(t, err)
+	canonicalDiagnostic, err := home.CanonicalRoot(diagnostic)
+	require.NoError(t, err)
 	sourceBefore := mustReadResetFile(t, filepath.Join(root, "docbank.db"))
 	openErr := errors.New("fresh sqlite open failed")
 
@@ -241,8 +246,8 @@ func TestResetVaultFreshInitializationFailurePreservesBothPaths(t *testing.T) {
 
 	assert.Nil(t, fresh)
 	require.ErrorIs(t, err, openErr)
-	require.ErrorContains(t, err, root)
-	require.ErrorContains(t, err, diagnostic)
+	require.ErrorContains(t, err, canonicalRoot)
+	require.ErrorContains(t, err, canonicalDiagnostic)
 	assert.DirExists(t, root, "failed fresh initialization must not delete its partial vault")
 	assert.DirExists(t, diagnostic)
 	assert.Equal(t, sourceBefore, mustReadResetFile(t, filepath.Join(diagnostic, "docbank.db")))
