@@ -501,7 +501,20 @@ retention root.
 
 ## Create and ingest safely
 
-Create a directory under a known parent ID:
+For a one-shot instruction tied to an exact virtual coordinate, create the
+directory by path. Its parent must already exist:
+
+```bash
+curl --fail-with-body -X POST \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{"path":"/receipts/2026"}' \
+  "$DOCBANK_URL/api/v1/path/mkdir"
+```
+
+The parent resolves inside the mutation transaction. When the workflow has
+already selected a particular stable parent identity, create beneath that ID
+instead so a concurrent parent move does not change the intended owner:
 
 ```bash
 curl --fail-with-body -X POST \

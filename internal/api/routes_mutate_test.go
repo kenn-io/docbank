@@ -38,6 +38,32 @@ func TestCreateDirectory(t *testing.T) {
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 }
 
+func TestCreateDirectoryByExactPath(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	parent, err := s.Mkdir(t.Context(), s.RootID(), "projects")
+	require.NoError(t, err)
+
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/path/mkdir", nil,
+		map[string]any{"path": "/projects/2026/"})
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	var node api.Node
+	require.NoError(t, json.Unmarshal([]byte(body), &node))
+	assert.Equal(t, "/projects/2026", node.Path)
+	assert.Equal(t, "2026", node.Name)
+	assert.Equal(t, parent.ID, *node.ParentID)
+	assert.Equal(t, `"1"`, resp.Header.Get("ETag"))
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/path/mkdir", nil,
+		map[string]any{"path": "relative"})
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	assert.Contains(t, body, `"code":"validation"`)
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/path/mkdir", nil,
+		map[string]any{"path": "/missing/child"})
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode, body)
+	assert.Contains(t, body, `"code":"not_found"`)
+}
+
 func TestMoveRequiresIfMatch(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	_, err := s.Mkdir(t.Context(), s.RootID(), "docs")

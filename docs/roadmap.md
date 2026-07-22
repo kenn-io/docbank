@@ -34,7 +34,7 @@ elsewhere only when they materially explain the design and are marked
   separate packed-space reclamation
 - `gc` (dry-run default) and `verify`
 - Inter-process vault locking (`flock` on Unix, `LockFileEx` on Windows)
-- CLI: `add`, `provenance`, `ls`, `tree`, `cat`, `mv`, `rm`, `restore`, `search`,
+- CLI: `add`, `provenance`, `mkdir`, `ls`, `tree`, `cat`, `mv`, `rm`, `restore`, `search`,
   `trash`, `gc`, `verify`
 
 ## Phase 2a — Infrastructure (implemented)
