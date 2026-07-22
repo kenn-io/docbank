@@ -433,11 +433,12 @@ type SearchHit struct {
 
 // SearchReport is one bounded search result page.
 type SearchReport struct {
-	Hits      []SearchHit `json:"hits"`
-	Limit     int         `json:"limit"`
-	Truncated bool        `json:"truncated"`
-	TagID     string      `json:"tag_id,omitempty"`
-	MIMEType  string      `json:"mime_type,omitempty"`
+	Hits        []SearchHit `json:"hits"`
+	Limit       int         `json:"limit"`
+	Truncated   bool        `json:"truncated"`
+	TagID       string      `json:"tag_id,omitempty"`
+	MIMEType    string      `json:"mime_type,omitempty"`
+	UnderNodeID int64       `json:"under_node_id,omitempty"`
 }
 
 // IngestFailure records one source path that failed to import.

@@ -307,6 +307,26 @@ func TestSearch(t *testing.T) {
 		"/api/v1/search?q=insurance&limit=10&tag_id=11111111-1111-4111-8111-111111111111", nil)
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode, body)
 
+	archive, err := s.Mkdir(t.Context(), s.RootID(), "archive")
+	require.NoError(t, err)
+	inside, err := s.CreateFile(
+		t.Context(), archive.ID, "insurance-archive.pdf", testHash("scope"), 3, "application/pdf",
+	)
+	require.NoError(t, err)
+	resp, body = get(t, ts, fmt.Sprintf(
+		"/api/v1/search?q=insurance&limit=10&under_node_id=%d", archive.ID,
+	), nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &rep))
+	require.Len(t, rep.Hits, 1)
+	assert.Equal(t, inside.ID, rep.Hits[0].Node.ID)
+	assert.Equal(t, archive.ID, rep.UnderNodeID)
+	resp, body = get(t, ts, fmt.Sprintf(
+		"/api/v1/search?q=insurance&limit=10&under_node_id=%d", inside.ID,
+	), nil)
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	assert.Contains(t, body, `"code":"not_dir"`)
+
 	bodyNode := createFileWithContent(t, ts, s, "/notes.txt", "lighthouse archive")
 	require.NoError(t, s.RecordExtraction(t.Context(), store.ExtractionResult{
 		BlobHash: bodyNode.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,

@@ -670,10 +670,12 @@ func (c *Client) VerifyNodeContent(ctx context.Context, id, revision int64) (api
 	return report, err
 }
 
-// SearchOptions narrows ranked search by stable tag and current media type.
+// SearchOptions narrows ranked search by stable tag, current media type, and
+// one live directory's descendants.
 type SearchOptions struct {
-	TagID    string
-	MIMEType string
+	TagID       string
+	MIMEType    string
+	UnderNodeID int64
 }
 
 func (c *Client) Search(ctx context.Context, query string, limit int) (api.SearchReport, error) {
@@ -692,6 +694,9 @@ func (c *Client) SearchWithOptions(
 	if err != nil {
 		return out, err
 	}
+	if opts.UnderNodeID < 0 {
+		return out, errors.New("search directory node ID must be positive")
+	}
 	queryValues := url.Values{}
 	queryValues.Set("q", query)
 	queryValues.Set("limit", strconv.Itoa(limit))
@@ -701,10 +706,13 @@ func (c *Client) SearchWithOptions(
 	if mimeType != "" {
 		queryValues.Set("mime_type", mimeType)
 	}
+	if opts.UnderNodeID != 0 {
+		queryValues.Set("under_node_id", strconv.FormatInt(opts.UnderNodeID, 10))
+	}
 	if err := c.do(ctx, http.MethodGet, "/api/v1/search?"+queryValues.Encode(), nil, nil, &out); err != nil {
 		return out, err
 	}
-	if out.TagID != opts.TagID || out.MIMEType != mimeType {
+	if out.TagID != opts.TagID || out.MIMEType != mimeType || out.UnderNodeID != opts.UnderNodeID {
 		return api.SearchReport{}, errors.New("search response has inconsistent filter authority")
 	}
 	return out, nil

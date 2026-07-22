@@ -568,7 +568,7 @@ returns the complete restored node with its resulting path and revision.
 ## docbank search
 
 ```
-docbank search <query>... [--tag <name-or-id>] [--mime-type <type/subtype>] [--limit <n>] [--json]
+docbank search <query>... [--tag <name-or-id>] [--mime-type <type/subtype>] [--under <path-or-id>] [--limit <n>] [--json]
 ```
 
 Full-text search over live node names and verified extracted text (FTS5).
@@ -587,11 +587,15 @@ resolves names before searching, so the request is bound to stable identity.
 current version's base type case-insensitively. Stored parameters do not affect
 the match: `text/plain` includes `text/plain; charset=utf-8`. MIME filtering
 excludes directories and retained non-current versions.
+`--under` accepts an absolute virtual path or stable `id:N` selector for one
+live directory and searches its descendants. The CLI resolves paths before the
+request and the daemon uses the resulting stable directory ID. The directory
+itself is excluded; a file, missing node, or trashed directory is rejected.
 
 `--json` emits the typed search report with `hits`, the applied `limit`, and
 an explicit `truncated` boolean. A filtered report also echoes the stable
-`tag_id` and normalized `mime_type` when supplied. An empty result uses
-`"hits": []`.
+`tag_id`, normalized `mime_type`, and stable `under_node_id` when supplied. An
+empty result uses `"hits": []`.
 
 The daemon indexes current UTF-8 `text/*`, JSON, and JSONL blobs up to 16 MiB
 after a terminally verified read. PDF, Office, and OCR extraction are not yet
