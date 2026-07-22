@@ -77,9 +77,47 @@ receipt, err := vault.Create(ctx, "/records/immutable.jsonl", reader,
     docbank.CreateOptions{
         MediaType: "application/x-ndjson",
         Expected: docbank.ContentIdentity{SHA256: digest, Size: size},
+        Provenance: &docbank.ProvenanceSource{
+            Kind:        "agent-session",
+            Description: "local session archive",
+            Reference:   "sessions/01K123.jsonl",
+        },
     },
 )
 ```
+
+`CreateOptions.Provenance` lets an embedded owner record where an immutable
+document came from without inventing application-specific Docbank tables. The
+kind and description identify the source system; the reference is an opaque
+source-local URI, archive key, path, or other stable identifier. An optional
+`ModifiedAt` records the source's own timestamp in canonical UTC form. Docbank
+does not interpret the reference or grant it retention authority.
+
+For a newly created document, the node, first content version, ingest record,
+and provenance fact commit as one metadata transaction. If any part fails,
+none gains authority. An exact `Create` retry succeeds only when its active
+provenance also matches, so a caller cannot accidentally claim source evidence
+that was never recorded. Use `Provenance` to inspect the bounded newest-first
+history:
+
+```go
+page, err := vault.Provenance(ctx, receipt.Node.ID, docbank.ProvenanceOptions{
+    Limit: 100,
+})
+if err != nil {
+    return err
+}
+for _, fact := range page.Items {
+    // fact.SourceReference remains the exact opaque identifier supplied above.
+    _ = fact
+}
+```
+
+The node, live path, total, and page come from one read snapshot. `Path` is
+empty for a trashed node. Provenance is evidence, not ownership: it does not
+prevent trash empty, version pruning, or garbage collection. Applications that
+need independent retention authority should keep that policy outside Docbank
+until the external-reference contract is implemented.
 
 `ContentIdentity` always describes decoded document bytes, regardless of
 whether those bytes are stored raw, zstd-compressed, or in a pack. SHA-256 is

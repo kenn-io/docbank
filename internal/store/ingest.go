@@ -12,7 +12,8 @@ import (
 // that is published with its first imported file. Holding a run grants no
 // metadata authority by itself.
 type IngestRun struct {
-	record metadataIngest
+	record           metadataIngest
+	operationalWatch bool
 }
 
 // ID returns the stable ingest identity.
@@ -22,6 +23,20 @@ func (r IngestRun) ID() string { return r.record.ID }
 // atomically with the first file that actually imports, so audited vaults never
 // contain a run whose provenance was committed in a separate transaction.
 func (s *Store) BeginIngest(ctx context.Context, sourceKind, sourceDesc string) (IngestRun, error) {
+	return s.beginIngest(ctx, sourceKind, sourceDesc, sourceKind == "watch")
+}
+
+// BeginEmbeddedIngest prepares generic provenance without interpreting any
+// source kind as daemon-owned operational state.
+func (s *Store) BeginEmbeddedIngest(
+	ctx context.Context, sourceKind, sourceDesc string,
+) (IngestRun, error) {
+	return s.beginIngest(ctx, sourceKind, sourceDesc, false)
+}
+
+func (s *Store) beginIngest(
+	ctx context.Context, sourceKind, sourceDesc string, operationalWatch bool,
+) (IngestRun, error) {
 	if err := ctx.Err(); err != nil {
 		return IngestRun{}, err
 	}
@@ -36,7 +51,65 @@ func (s *Store) BeginIngest(ctx context.Context, sourceKind, sourceDesc string) 
 	if err := validateIngestRecord(record); err != nil {
 		return IngestRun{}, fmt.Errorf("validating ingest start: %w", err)
 	}
-	return IngestRun{record: record}, nil
+	return IngestRun{record: record, operationalWatch: operationalWatch}, nil
+}
+
+func validateProvenanceSourceFields(
+	sourceKind, sourceDescription, sourceReference, sourceModifiedAt string,
+) error {
+	if sourceKind == "" || sourceDescription == "" || sourceReference == "" {
+		return errors.New("provenance source kind, description, and reference are required")
+	}
+	for name, value := range map[string]string{
+		"kind": sourceKind, "description": sourceDescription, "reference": sourceReference,
+	} {
+		if err := validateUTF8Field("provenance source "+name, value); err != nil {
+			return err
+		}
+	}
+	if sourceModifiedAt != "" {
+		if err := validateProvenanceTime(sourceModifiedAt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func activeProvenanceMatchesTx(
+	ctx context.Context, tx *sql.Tx, nodeID int64,
+	sourceKind, sourceDescription, sourceReference, sourceModifiedAt string,
+) (bool, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT i.source_kind, i.source_desc, p.original_path, p.original_mtime
+		FROM provenance AS p JOIN ingests AS i ON i.id = p.ingest_id
+		WHERE p.node_id = ?
+		  AND NOT EXISTS (
+			SELECT 1 FROM provenance AS successor WHERE successor.supersedes = p.identity
+		  )`, nodeID)
+	if err != nil {
+		return false, fmt.Errorf("reading active provenance for node %d: %w", nodeID, err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var kind, description, reference string
+		var modifiedAt sql.NullString
+		if err := rows.Scan(&kind, &description, &reference, &modifiedAt); err != nil {
+			return false, fmt.Errorf("scanning active provenance for node %d: %w", nodeID, err)
+		}
+		wantModifiedAt := sourceModifiedAt
+		gotModifiedAt := ""
+		if modifiedAt.Valid {
+			gotModifiedAt = modifiedAt.String
+		}
+		if kind == sourceKind && description == sourceDescription &&
+			reference == sourceReference && gotModifiedAt == wantModifiedAt {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("reading active provenance for node %d: %w", nodeID, err)
+	}
+	return false, nil
 }
 
 // ensureIngestRunTx publishes run once and rejects any identity collision with
@@ -190,30 +263,43 @@ func sameOriginTx(tx *sql.Tx, nodeID int64, name string, allowUnknown bool) (boo
 // applying the idempotency rule and recording provenance. Returns
 // added=false when the content is already present under a candidate name.
 func (s *Store) IngestFile(ctx context.Context, run IngestRun, parentID int64, name, blobHash string, size int64, mimeType, originalPath, originalMtime string, physical ...BlobPhysical) (Node, bool, error) {
-	return s.ingestFile(ctx, run, parentID, name, blobHash, size, mimeType,
-		originalPath, originalMtime, false, physical...)
+	receipt, added, err := s.ingestFile(ctx, run, parentID, name, blobHash, size, mimeType,
+		originalPath, originalMtime, false, false, physical...)
+	return receipt.Node, added, err
 }
 
 // IngestFileExact imports one already-durable blob under exactly name. Unlike
 // bulk migration it never suffixes or adopts an existing same-content node;
 // a watched source needs its configured source identity to remain one-to-one.
 func (s *Store) IngestFileExact(ctx context.Context, run IngestRun, parentID int64, name, blobHash string, size int64, mimeType, originalPath, originalMtime string, physical ...BlobPhysical) (Node, error) {
-	node, _, err := s.ingestFile(ctx, run, parentID, name, blobHash, size, mimeType,
-		originalPath, originalMtime, true, physical...)
-	return node, err
+	receipt, _, err := s.ingestFile(ctx, run, parentID, name, blobHash, size, mimeType,
+		originalPath, originalMtime, true, false, physical...)
+	return receipt.Node, err
+}
+
+// IngestFileExactWithReceipt is the receipt-bearing form used by embedded
+// immutable creation. File, version, provenance, ingest, and physical catalog
+// authority commit in one metadata transaction.
+func (s *Store) IngestFileExactWithReceipt(
+	ctx context.Context, run IngestRun, parentID int64, name, blobHash string,
+	size int64, mimeType, originalPath, originalMtime string, physical ...BlobPhysical,
+) (ContentWriteReceipt, error) {
+	receipt, _, err := s.ingestFile(ctx, run, parentID, name, blobHash, size, mimeType,
+		originalPath, originalMtime, true, true, physical...)
+	return receipt, err
 }
 
 func (s *Store) ingestFile(
 	ctx context.Context, run IngestRun, parentID int64, name, blobHash string,
-	size int64, mimeType, originalPath, originalMtime string, exact bool,
+	size int64, mimeType, originalPath, originalMtime string, exact, completeReceipt bool,
 	physical ...BlobPhysical,
-) (Node, bool, error) {
+) (ContentWriteReceipt, bool, error) {
 	name, err := NormalizeName(name)
 	if err != nil {
-		return Node{}, false, err
+		return ContentWriteReceipt{}, false, err
 	}
 	if err := validateIngestRecord(run.record); err != nil {
-		return Node{}, false, fmt.Errorf("validating ingest run: %w", err)
+		return ContentWriteReceipt{}, false, fmt.Errorf("validating ingest run: %w", err)
 	}
 	var recordedMtime *string
 	if originalMtime != "" {
@@ -224,10 +310,10 @@ func (s *Store) ingestFile(
 		OriginalPath: originalPath, OriginalMTime: recordedMtime,
 	}
 	if err := validateProvenanceFields(provenance); err != nil {
-		return Node{}, false, fmt.Errorf("validating ingest provenance: %w", err)
+		return ContentWriteReceipt{}, false, fmt.Errorf("validating ingest provenance: %w", err)
 	}
 	var (
-		created Node
+		receipt ContentWriteReceipt
 		added   bool
 	)
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
@@ -256,10 +342,24 @@ func (s *Store) ingestFile(
 				if err := s.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
 					return fmt.Errorf("reconciling idempotent ingest content: %w", err)
 				}
-				created, err = scanNode(tx.QueryRow(
+				receipt.Node, err = scanNode(tx.QueryRow(
 					`SELECT `+nodeCols+` FROM `+nodeFrom+` WHERE n.id = ?`, existingID))
 				if err != nil {
 					return fmt.Errorf("reading idempotent ingest node %d: %w", existingID, err)
+				}
+				if !completeReceipt {
+					return nil
+				}
+				receipt.Version, err = scanContentVersion(tx.QueryRow(
+					`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = ?`,
+					receipt.Node.CurrentVersionID,
+				))
+				if err != nil {
+					return fmt.Errorf("reading idempotent ingest version of node %d: %w", existingID, err)
+				}
+				receipt.Physical, err = physicalContentTx(tx, blobHash)
+				if err != nil {
+					return err
 				}
 				return nil
 			}
@@ -292,13 +392,14 @@ func (s *Store) ingestFile(
 			return err
 		}
 		var version ContentVersion
-		created, version, err = s.createFileWithOperationTx(
+		receipt.Node, version, err = s.createFileWithOperationTx(
 			tx, parentID, finalName, blobHash, size, mimeType, operation, physical...,
 		)
 		if err != nil {
 			return err
 		}
-		provenance.NodeID = created.ID
+		receipt.Version = version
+		provenance.NodeID = receipt.Node.ID
 		provenance.Identity, err = provenanceIdentity(provenance)
 		if err != nil {
 			return fmt.Errorf("identifying provenance for %q: %w", finalName, err)
@@ -314,10 +415,10 @@ func (s *Store) ingestFile(
 			provenance.OriginalPath, provenance.OriginalMTime, provenance.Supersedes); err != nil {
 			return fmt.Errorf("recording provenance for %q: %w", finalName, err)
 		}
-		if run.record.SourceKind == "watch" {
+		if run.operationalWatch {
 			if err := insertWatchSourceTx(
 				tx, run.record.SourceDesc, provenance.OriginalPath,
-				created.ID, blobHash, size,
+				receipt.Node.ID, blobHash, size,
 			); err != nil {
 				return err
 			}
@@ -335,8 +436,14 @@ func (s *Store) ingestFile(
 			}
 			if err := persistAuditedNodeCreation(
 				ctx, tx, s.vaultID, authority, scopes, prior, resultingParent,
-				created, version, operation.operationID, operation.recordedAt, &metadata,
+				receipt.Node, version, operation.operationID, operation.recordedAt, &metadata,
 			); err != nil {
+				return err
+			}
+		}
+		if completeReceipt {
+			receipt.Physical, err = physicalContentTx(tx, blobHash)
+			if err != nil {
 				return err
 			}
 		}
@@ -344,9 +451,9 @@ func (s *Store) ingestFile(
 		return nil
 	})
 	if err != nil {
-		return Node{}, false, err
+		return ContentWriteReceipt{}, false, err
 	}
-	return created, added, nil
+	return receipt, added, nil
 }
 
 func insertWatchSourceTx(

@@ -123,12 +123,11 @@ and authenticated API.
   [model](architecture/audited-history.md))
 - Additional text extraction workers for PDF text layers and office formats;
   bounded UTF-8 text, Markdown, JSON, and JSONL extraction is implemented
-- External integration surface: generalized ingest provenance —
-  today's provenance API records and exposes the original filesystem path and
-  mtime; `source_kind` / `source_ref` / `source_meta` fields extend it
-  to non-file origins (a watched inbox, another application's archive)
-  as generic fields, never application-specific tables. To settle before an
-  external-reference schema exists: whether external
+- External integration surface: embedded immutable creation accepts generic
+  source kind, description, opaque reference, and optional modification time,
+  and exposes those portable facts through the root Go API. Standalone local
+  ingestion still presents its source as a filesystem path. To settle before
+  an external-reference schema exists: whether external
   references pin nodes against `trash empty`/`gc`, or dangling-ref
   detection stays the referrer's job (docbank guarantees only that node
   ids are never reused)
