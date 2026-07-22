@@ -1,11 +1,15 @@
 package home
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"strings"
 
 	"go.kenn.io/kit/safefileio"
 )
@@ -29,12 +33,56 @@ var ErrVaultLocked = errors.New("vault is locked by another process")
 // single lock holder for the vault's lifetime; a second daemon (or a stale
 // holder) surfaces immediately instead of hanging.
 func (l Layout) TryLockExclusive() (*Lock, error) {
+	root, lock, err := l.OpenExistingAndLockExclusive()
+	if root != nil {
+		_ = root.Close()
+	}
+	return lock, err
+}
+
+// OpenExistingAndLockExclusive opens and exclusively owns an existing vault
+// root without creating any missing path component.
+func (l Layout) OpenExistingAndLockExclusive() (*os.Root, *Lock, error) {
 	root, err := os.OpenRoot(l.Root)
 	if err != nil {
-		return nil, fmt.Errorf("opening vault root %s: %w", l.Root, err)
+		return nil, nil, fmt.Errorf("opening vault root %s: %w", l.Root, err)
 	}
-	defer func() { _ = root.Close() }()
-	return l.TryLockExclusiveRoot(root)
+	lock, err := l.TryLockExclusiveRoot(root)
+	if err != nil {
+		_ = root.Close()
+		return nil, nil, err
+	}
+	return root, lock, nil
+}
+
+// TryLockTargetCoordinate briefly serializes lifecycle transitions for one
+// canonical vault path. Unlike hierarchy locks keyed by a directory identity,
+// this lock remains stable while reset moves the old directory away and
+// creates a new directory at the same path.
+func (l Layout) TryLockTargetCoordinate() (*Lock, error) {
+	target, err := CanonicalRoot(l.Root)
+	if err != nil {
+		return nil, err
+	}
+	registry, err := targetLockRegistryDir()
+	if err != nil {
+		return nil, err
+	}
+	coordinate := filepath.Clean(target)
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+		coordinate = strings.ToLower(coordinate)
+	}
+	digest := sha256.Sum256([]byte(coordinate))
+	name := "target-" + hex.EncodeToString(digest[:]) + ".lock"
+	f, err := openRegistryLock(registry, name)
+	if err != nil {
+		return nil, err
+	}
+	if err := lockFile(f, true); err != nil {
+		_ = f.Close()
+		return nil, classifyLockError(err, target)
+	}
+	return &Lock{files: []*os.File{f}}, nil
 }
 
 // OpenAndLockExclusive opens an existing vault root or creates a missing one

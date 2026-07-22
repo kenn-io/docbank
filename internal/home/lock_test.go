@@ -8,6 +8,32 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestTryLockTargetCoordinateIsStablePrivateAndPerCanonicalPath(t *testing.T) {
+	isolateTargetLockRegistry(t)
+	base := t.TempDir()
+	firstPath := filepath.Join(base, "customer-visible-vault-name")
+	secondPath := filepath.Join(base, "other-vault")
+	require.NoError(t, os.Mkdir(firstPath, 0o700))
+	require.NoError(t, os.Mkdir(secondPath, 0o700))
+
+	first, err := (Layout{Root: firstPath}).TryLockTargetCoordinate()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, first.Release()) })
+	_, err = (Layout{Root: firstPath}).TryLockTargetCoordinate()
+	require.ErrorIs(t, err, ErrVaultLocked)
+	second, err := (Layout{Root: secondPath}).TryLockTargetCoordinate()
+	require.NoError(t, err, "unrelated canonical targets must not serialize")
+	require.NoError(t, second.Release())
+
+	entries, err := os.ReadDir(targetLockRegistryTestBase)
+	require.NoError(t, err)
+	require.NotEmpty(t, entries)
+	for _, entry := range entries {
+		require.NotContains(t, entry.Name(), "customer-visible-vault-name",
+			"registry names must not expose user-selected path components")
+	}
+}
+
 func TestTryLockExclusive(t *testing.T) {
 	l := Layout{Root: t.TempDir()}
 	require.NoError(t, l.Ensure())

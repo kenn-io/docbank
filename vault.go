@@ -106,18 +106,41 @@ type Vault struct {
 // lock until Close. A standalone daemon or another embedded instance cannot
 // own the same or an overlapping vault concurrently.
 func New(ctx context.Context, config Config) (_ *Vault, retErr error) {
-	if err := ctx.Err(); err != nil {
+	config, blobOptions, err := normalizeVaultConfig(ctx, config)
+	if err != nil {
 		return nil, err
+	}
+	layout := home.Layout{Root: config.Root}
+	coordinate, err := layout.TryLockTargetCoordinate()
+	if err != nil {
+		return nil, err
+	}
+	vault, openErr := openVaultWithLayout(config, blobOptions, layout)
+	coordinateErr := coordinate.Release()
+	if openErr != nil || coordinateErr != nil {
+		if vault != nil {
+			coordinateErr = errors.Join(coordinateErr, vault.Close())
+		}
+		return nil, errors.Join(openErr, coordinateErr)
+	}
+	return vault, nil
+}
+
+func normalizeVaultConfig(
+	ctx context.Context, config Config,
+) (Config, blob.Options, error) {
+	if err := ctx.Err(); err != nil {
+		return Config{}, blob.Options{}, err
 	}
 	driver := config.SQLite
 	if driver == nil {
 		driver = store.DefaultSQLiteDriver()
 	}
 	if err := docsqlite.Validate(driver); err != nil {
-		return nil, err
+		return Config{}, blob.Options{}, err
 	}
 	if config.Root == "" {
-		return nil, errors.New("docbank vault root is required")
+		return Config{}, blob.Options{}, errors.New("docbank vault root is required")
 	}
 	blobOptions := blob.Options{LooseCompression: blob.LooseCompressionOptions{
 		Enabled:           config.LooseCompression.Enabled,
@@ -125,13 +148,22 @@ func New(ctx context.Context, config Config) (_ *Vault, retErr error) {
 		MinSavingsPercent: config.LooseCompression.MinSavingsPercent,
 	}}
 	if err := blob.ValidateOptions(blobOptions); err != nil {
-		return nil, fmt.Errorf("docbank %w", err)
+		return Config{}, blob.Options{}, fmt.Errorf("docbank %w", err)
 	}
 	canonical, err := home.CanonicalRoot(config.Root)
 	if err != nil {
-		return nil, err
+		return Config{}, blob.Options{}, err
 	}
-	layout := home.Layout{Root: canonical}
+	config.Root = canonical
+	config.SQLite = driver
+	return config, blobOptions, nil
+}
+
+func openVaultWithLayout(
+	config Config,
+	blobOptions blob.Options,
+	layout home.Layout,
+) (_ *Vault, retErr error) {
 	root, lock, err := layout.OpenAndLockExclusive()
 	if err != nil {
 		return nil, err
@@ -144,7 +176,7 @@ func New(ctx context.Context, config Config) (_ *Vault, retErr error) {
 	if err := layout.Ensure(); err != nil {
 		return nil, err
 	}
-	metadata, err := store.Open(layout.DBPath(), driver)
+	metadata, err := store.Open(layout.DBPath(), config.SQLite)
 	if err != nil {
 		return nil, err
 	}
