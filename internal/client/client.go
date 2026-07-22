@@ -349,6 +349,31 @@ func (c *Client) Versions(
 	return page, err
 }
 
+// Provenance returns one bounded newest-ingest-first page of immutable origin
+// facts for a stable file node.
+func (c *Client) Provenance(
+	ctx context.Context, nodeID int64, limit, offset int,
+) (api.ProvenancePage, error) {
+	var page api.ProvenancePage
+	if nodeID < 1 {
+		return page, errors.New("provenance node ID must be positive")
+	}
+	if limit < 1 || limit > store.MaxProvenancePageSize {
+		return page, fmt.Errorf("provenance limit must be between 1 and %d", store.MaxProvenancePageSize)
+	}
+	if offset < 0 {
+		return page, errors.New("provenance offset must not be negative")
+	}
+	path := fmt.Sprintf("/api/v1/nodes/%d/provenance?limit=%d&offset=%d", nodeID, limit, offset)
+	if err := c.do(ctx, http.MethodGet, path, nil, nil, &page); err != nil {
+		return api.ProvenancePage{}, err
+	}
+	if err := validateProvenancePage(page, nodeID, limit, offset); err != nil {
+		return api.ProvenancePage{}, err
+	}
+	return page, nil
+}
+
 // Version returns immutable version metadata by stable ID.
 func (c *Client) Version(ctx context.Context, id string) (api.ContentVersion, error) {
 	var version api.ContentVersion
@@ -1674,6 +1699,48 @@ func validateTaggedNodePage(page api.TaggedNodePage, limit, offset int) error {
 			return fmt.Errorf("tagged-node response item %d has inconsistent path state", i)
 		}
 		previous = item.Node.ID
+	}
+	return nil
+}
+
+func validateProvenancePage(page api.ProvenancePage, nodeID int64, limit, offset int) error {
+	if page.Node.ID != nodeID || page.Node.Kind != "file" || page.Node.Revision < 1 ||
+		(page.Node.TrashedAt == "" && !strings.HasPrefix(page.Node.Path, "/")) ||
+		(page.Node.TrashedAt != "" && page.Node.Path != "") {
+		return errors.New("provenance response has inconsistent node authority")
+	}
+	if limit < 1 || limit > store.MaxProvenancePageSize || offset < 0 ||
+		page.Limit != limit || page.Offset != offset || page.Total < 0 || len(page.Items) > limit ||
+		(len(page.Items) == 0 && offset < page.Total) ||
+		(len(page.Items) > 0 && offset+len(page.Items) > page.Total) {
+		return errors.New("provenance response has inconsistent pagination")
+	}
+	seen := make(map[string]struct{}, len(page.Items))
+	for i, fact := range page.Items {
+		startedAt, startedErr := time.Parse(time.RFC3339Nano, fact.IngestStartedAt)
+		mtimeValid := true
+		if fact.OriginalMTime != nil {
+			parsed, err := time.Parse(time.RFC3339Nano, *fact.OriginalMTime)
+			mtimeValid = err == nil && parsed.Location() == time.UTC
+		}
+		if !validSHA256Hex(fact.Identity) || fact.NodeID != nodeID ||
+			!validUUIDv4(fact.IngestID) || startedErr != nil || startedAt.Location() != time.UTC ||
+			fact.SourceKind == "" || fact.SourceDescription == "" || fact.OriginalPath == "" ||
+			!mtimeValid || (fact.Supersedes != nil && !validSHA256Hex(*fact.Supersedes)) {
+			return fmt.Errorf("provenance response item %d has invalid authority", i)
+		}
+		if _, duplicate := seen[fact.Identity]; duplicate {
+			return fmt.Errorf("provenance response repeats identity %s", fact.Identity)
+		}
+		seen[fact.Identity] = struct{}{}
+		if i > 0 {
+			prior := page.Items[i-1]
+			priorTime, _ := time.Parse(time.RFC3339Nano, prior.IngestStartedAt)
+			if priorTime.Before(startedAt) ||
+				(priorTime.Equal(startedAt) && prior.Identity <= fact.Identity) {
+				return errors.New("provenance response is not newest-ingest-first")
+			}
+		}
 	}
 	return nil
 }

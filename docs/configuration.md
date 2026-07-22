@@ -176,6 +176,12 @@ in the failed state and records the reason. Restart the daemon after correcting
 the problem. Per-file successes are written to the daemon log. A configured
 watch keeps a background daemon alive regardless of `idle_timeout`.
 
+Inspect the durable source facts attached to an imported file with
+`docbank provenance <path-or-id>` or `GET /api/v1/nodes/{id}/provenance`.
+This is distinct from job status: provenance survives daemon restarts and
+records successful ingest authority, while `docbank jobs` describes only the
+current daemon run.
+
 Watched inboxes never modify or delete their source files. Configuration is
 machine-local and is not part of metadata-v1 backup/restore, while the stable
 watch name, relative path, stable node mapping, and last accepted content

@@ -91,6 +91,31 @@ type ContentVersionPage struct {
 	Offset int              `json:"offset"`
 }
 
+// ProvenanceFact is one immutable origin statement and the ingest operation
+// that introduced it. Superseded facts remain visible as history.
+type ProvenanceFact struct {
+	Identity          string  `json:"identity" pattern:"^[0-9a-f]{64}$"`
+	NodeID            int64   `json:"node_id" minimum:"1"`
+	IngestID          string  `json:"ingest_id" format:"uuid"`
+	IngestStartedAt   string  `json:"ingest_started_at"`
+	SourceKind        string  `json:"source_kind" minLength:"1"`
+	SourceDescription string  `json:"source_description" minLength:"1"`
+	OriginalPath      string  `json:"original_path" minLength:"1"`
+	OriginalMTime     *string `json:"original_mtime,omitempty"`
+	Supersedes        *string `json:"supersedes,omitempty" pattern:"^[0-9a-f]{64}$"`
+	Active            bool    `json:"active"`
+}
+
+// ProvenancePage binds a bounded origin history to one authoritative node
+// snapshot. Node.Path is empty when the stable node is in trash.
+type ProvenancePage struct {
+	Node   Node             `json:"node"`
+	Items  []ProvenanceFact `json:"items"`
+	Total  int              `json:"total" minimum:"0"`
+	Limit  int              `json:"limit" minimum:"1" maximum:"1000"`
+	Offset int              `json:"offset" minimum:"0"`
+}
+
 // VersionPruneRequest selects one explicit history-pruning policy. Exactly one
 // of VersionIDs, KeepNewest, OlderThan, or AllPrior must be set.
 type VersionPruneRequest struct {
@@ -775,6 +800,15 @@ func fromStoreContentVersion(v store.ContentVersion) ContentVersion {
 		MimeType: v.MimeType, RecordedAt: v.RecordedAt, NodeRevision: v.NodeRevision,
 		IntroducedOperationID: v.IntroducedOperationID,
 		TransitionKind:        v.TransitionKind, SourceVersionID: v.SourceVersionID,
+	}
+}
+
+func fromStoreProvenanceFact(fact store.ProvenanceFact) ProvenanceFact {
+	return ProvenanceFact{
+		Identity: fact.Identity, NodeID: fact.NodeID, IngestID: fact.IngestID,
+		IngestStartedAt: fact.IngestStartedAt, SourceKind: fact.SourceKind,
+		SourceDescription: fact.SourceDescription, OriginalPath: fact.OriginalPath,
+		OriginalMTime: fact.OriginalMTime, Supersedes: fact.Supersedes, Active: fact.Active,
 	}
 }
 

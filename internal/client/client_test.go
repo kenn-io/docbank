@@ -104,6 +104,47 @@ func TestRoundTrip(t *testing.T) {
 	assert.Equal(t, "/filed", restored.Path)
 }
 
+func TestProvenanceReturnsStableOriginAuthority(t *testing.T) {
+	c, s := newClient(t, serverKey)
+	run, err := s.BeginIngest(t.Context(), "watch", "agent-sessions")
+	require.NoError(t, err)
+	node, added, err := s.IngestFile(t.Context(), run, s.RootID(), "session.jsonl",
+		strings.Repeat("a", 64), 7, "application/x-ndjson", "closed/session.jsonl",
+		"2026-07-21T13:14:15Z")
+	require.NoError(t, err)
+	require.True(t, added)
+
+	page, err := c.Provenance(t.Context(), node.ID, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, node.ID, page.Node.ID)
+	assert.Equal(t, "/session.jsonl", page.Node.Path)
+	assert.Equal(t, 1, page.Total)
+	require.Len(t, page.Items, 1)
+	assert.Equal(t, run.ID(), page.Items[0].IngestID)
+	assert.Equal(t, "watch", page.Items[0].SourceKind)
+	assert.Equal(t, "agent-sessions", page.Items[0].SourceDescription)
+	assert.True(t, page.Items[0].Active)
+}
+
+func TestProvenanceRejectsMalformedAuthority(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(api.ProvenancePage{
+			Node: api.Node{ID: 42, Kind: "file", Revision: 1, Path: "/session.jsonl"},
+			Items: []api.ProvenanceFact{{
+				Identity: "not-a-digest", NodeID: 42,
+				IngestID:        "11111111-1111-4111-8111-111111111111",
+				IngestStartedAt: "2026-07-21T13:14:15Z", SourceKind: "watch",
+				SourceDescription: "agent-sessions", OriginalPath: "closed/session.jsonl",
+			}},
+			Total: 1, Limit: 10, Offset: 0,
+		})
+	}))
+	t.Cleanup(ts.Close)
+
+	_, err := client.New(ts.URL, "key").Provenance(t.Context(), 42, 10, 0)
+	require.ErrorContains(t, err, "invalid authority")
+}
+
 func TestSearchWithOptionsUsesStableTagIdentity(t *testing.T) {
 	c, s := newClient(t, serverKey)
 	ctx := t.Context()
