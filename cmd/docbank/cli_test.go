@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -704,10 +705,17 @@ func TestConfiguredAutomaticPackingPacksAndKeepsDaemonAlive(t *testing.T) {
 	t.Setenv(client.EnvBackgroundDaemon, "1")
 	startTestDaemon(t, home)
 
-	_, err := runCLI(t, "mkdir", "/agents")
+	var err error
+	require.Eventually(t, func() bool {
+		_, err = runCLI(t, "mkdir", "/agents")
+		return err == nil || !errors.Is(err, client.ErrMaintenanceBusy)
+	}, 5*time.Second, 25*time.Millisecond)
 	require.NoError(t, err)
 	source := writeSourceFile(t, "session.jsonl", "{\"kind\":\"session\"}\n")
-	_, err = runCLI(t, "add", source, "--dest", "/agents")
+	require.Eventually(t, func() bool {
+		_, err = runCLI(t, "add", source, "--dest", "/agents")
+		return err == nil || !errors.Is(err, client.ErrMaintenanceBusy)
+	}, 5*time.Second, 25*time.Millisecond)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
 		out, runErr := runCLI(t, "storage", "status", "--json")

@@ -30,8 +30,6 @@ func RunPackSchedule(
 		return err
 	}
 
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
 	for {
 		report, err := run(ctx)
 		if err != nil {
@@ -46,10 +44,17 @@ func RunPackSchedule(
 				"more", report.More,
 			)
 		}
+		timer := time.NewTimer(interval)
 		select {
 		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
 			return ctx.Err()
-		case <-ticker.C:
+		case <-timer.C:
 		}
 	}
 }
