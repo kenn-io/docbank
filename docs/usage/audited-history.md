@@ -138,6 +138,26 @@ A protected node adopted during first enrollment may have no node-specific
 events until its first later change. That empty timeline does not weaken its
 baseline protection; `audit status` is the membership authority.
 
+## Read a scope's history
+
+Use the stable scope ID reported by `audit status` to read every canonical
+event across its protected members:
+
+```bash
+docbank audit history --scope <scope-id>
+docbank audit history --scope <scope-id> --limit 100 --json
+```
+
+Scope history answers “what changed anywhere under this permanent promise?”
+without walking each member separately. Each event includes its stable node ID,
+and human output prints that copyable `id:N` selector. The response also carries
+the scope target, baseline, member count, entry count, and current chain head so
+the timeline stays attached to its evidence authority.
+
+Pagination uses the same newest-first ordering as node history. A scope cursor
+is opaque, bound to that stable scope ID, and remains stable when later events
+are appended. Reusing it with another scope returns `invalid_audit_cursor`.
+
 ## Verify the permanent evidence
 
 Run the audit-specific verifier when you need a compact proof of the permanent
@@ -203,6 +223,6 @@ yet exposed. Status, mutation recording, JSONL export/import, and backup capture
 all preserve the first scope's authority.
 
 !!! info "Planned"
-    Additional scope enrollment, scope-wide history, and rich TUI/web history
-    views are not implemented yet. Backup restore already revalidates the
-    portable JSONL authority before publishing a vault.
+    Additional scope enrollment and rich TUI/web history views are not
+    implemented yet. Backup restore already revalidates the portable JSONL
+    authority before publishing a vault.

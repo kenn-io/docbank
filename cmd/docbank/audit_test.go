@@ -81,6 +81,21 @@ func TestHumanAuditHistoryUsesCopyableNodeSelectors(t *testing.T) {
 	assert.NotContains(t, output.String(), "node 42")
 }
 
+func TestHumanAuditScopeHistoryQuotesTargetAndNamesEventNodes(t *testing.T) {
+	var output bytes.Buffer
+	require.NoError(t, writeAuditScopeHistory(&output, api.AuditScopeEventPage{
+		Scope: api.AuditScopeStatus{
+			ID:           "33333333-3333-4333-8333-333333333333",
+			TargetNodeID: 7, TargetPath: "/Taxes/\n\x1b[31mFORGED",
+		},
+		Items: []api.AuditEvent{{NodeID: 42, Kind: "content_replace"}},
+		Total: 1,
+	}))
+	assert.Contains(t, output.String(), strconv.QuoteToASCII("/Taxes/\n\x1b[31mFORGED"))
+	assert.Contains(t, output.String(), "id:42")
+	assert.NotContains(t, output.String(), "/Taxes/\n\x1b[31mFORGED")
+}
+
 func TestAuditRetentionDisclosureNamesEveryMetadataClass(t *testing.T) {
 	var output bytes.Buffer
 	require.NoError(t, writeAuditPreview(&output, api.AuditEnrollmentPreview{}))

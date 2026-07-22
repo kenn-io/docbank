@@ -361,6 +361,18 @@ func TestAuditEnableIsPreviewFirstAndReportsProtection(t *testing.T) {
 	assert.Contains(t, humanHistory, "content_replace")
 	assert.Contains(t, humanHistory, `audit history for "/Taxes/return.txt"`)
 
+	out, err = runCLI(t, "audit", "history", "--scope", preview.ScopeID, "--json")
+	require.NoError(t, err, out)
+	var scopeHistory api.AuditScopeEventPage
+	require.NoError(t, json.Unmarshal([]byte(out), &scopeHistory))
+	assert.Equal(t, preview.ScopeID, scopeHistory.Scope.ID)
+	assert.Equal(t, "/Taxes", scopeHistory.Scope.TargetPath)
+	require.NotEmpty(t, scopeHistory.Items)
+	humanScopeHistory, err := runCLI(t, "audit", "history", "--scope", preview.ScopeID)
+	require.NoError(t, err, humanScopeHistory)
+	assert.Contains(t, humanScopeHistory, "audit history for scope "+preview.ScopeID)
+	assert.Contains(t, humanScopeHistory, formatNodeSelector(returnNode.ID))
+
 	_, err = runCLI(t, "audit", "enable", "--run", "--token", preview.PreviewToken,
 		"--acknowledge-permanent-retention")
 	require.ErrorIs(t, err, store.ErrAuditPreviewStale)
