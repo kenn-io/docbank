@@ -53,6 +53,10 @@ curl -fsSL https://docbank.ai/install.sh | sh
 
 The ordinary workflow stays direct:
 
+!!! note "Release availability"
+    Tag-filtered search is newer than v0.10.0. Build from source to use
+    `docbank search --tag` until the next release is tagged.
+
 ```bash
 docbank add ~/Documents/taxes --dest /taxes    # import a folder; sources untouched
 docbank tree /taxes                            # browse the virtual tree

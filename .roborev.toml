@@ -110,7 +110,11 @@ Key assumptions reviewers MUST account for:
    capability that is not yet in a tagged release must carry a release
    qualifier where users would act on it (homepage, setup). Flagging
    an unqualified unreleased capability is correct; demanding the
-   capability's documentation be removed entirely is not.
+   capability's documentation be removed entirely is not. The public
+   Zensical site is published only after the corresponding release tag
+   exists; do not require source documentation for merged next-release
+   work to be withheld from main merely because that site publication
+   has not happened yet.
 
 Do NOT flag issues that only apply to public-facing, multi-tenant, or
 internet-exposed services. Focus on bugs, logic errors, data corruption
