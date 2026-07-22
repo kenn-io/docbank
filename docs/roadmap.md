@@ -112,12 +112,13 @@ or stable scope ID with bounded, append-stable cursor pagination. Independent ve
 stable terminal evidence, checks every protected blob, and can prove that
 current allocation and scope chains extend an externally recorded bundle.
 Daemon-owned watched inboxes recursively observe configured local directories,
-wait for stable size and modification time, preserve portable source identity,
-and append later changes to the same stable node without touching source files.
-Their effective source, destination, settling policy, exclusions, and live job
-state are inspectable together through the CLI and authenticated API.
+wait for stable size and modification time plus an optional minimum source age,
+preserve portable source identity, and append later changes to the same stable
+node without touching source files. Their effective source, destination, timing
+policy, exclusions, and live job state are inspectable together through the CLI
+and authenticated API.
 
-- Additional and overlapping audit scopes
+- Overlapping audit scopes
   ([current workflow](usage/audited-history.md),
   [model](architecture/audited-history.md))
 - Additional text extraction workers for PDF text layers and office formats;

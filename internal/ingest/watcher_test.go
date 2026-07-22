@@ -170,6 +170,51 @@ func TestWatcherDoesNotCountTraversalTimeTowardSettle(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrNotFound)
 }
 
+func TestWatcherRequiresMinimumSourceAgeAfterRestart(t *testing.T) {
+	ing := newTestIngester(t)
+	source := writeTree(t, map[string]string{
+		"session.jsonl": "{\"kind\":\"closed-session\"}\n",
+	})
+	producedAt := time.Unix(1_700_000_000, 0)
+	sourcePath := filepath.Join(source, "session.jsonl")
+	require.NoError(t, os.Chtimes(sourcePath, producedAt, producedAt))
+	cfg := config.WatchConfig{
+		Name: "sessions", Source: source, Destination: "/archive",
+		SettleTime: config.Duration(10 * time.Minute),
+		MinimumAge: config.Duration(time.Hour), ScanInterval: config.Duration(time.Minute),
+	}
+	watcher, err := NewWatcher(
+		ing, t.TempDir(), cfg, runTestMutation, slog.New(slog.DiscardHandler),
+	)
+	require.NoError(t, err)
+	root := openWatcherRoot(t, watcher)
+	require.NoError(t, scanWatcherAt(t.Context(), watcher, root, producedAt))
+
+	// Restarting discards the first stability observation. Even after the new
+	// watcher proves a complete settle window, the source is not eligible until
+	// its modification time reaches the independent minimum-age boundary.
+	restarted, err := NewWatcher(
+		ing, t.TempDir(), cfg, runTestMutation, slog.New(slog.DiscardHandler),
+	)
+	require.NoError(t, err)
+	restartedRoot := openWatcherRoot(t, restarted)
+	require.NoError(t, scanWatcherAt(
+		t.Context(), restarted, restartedRoot, producedAt.Add(20*time.Minute),
+	))
+	require.NoError(t, scanWatcherAt(
+		t.Context(), restarted, restartedRoot, producedAt.Add(30*time.Minute),
+	))
+	_, err = ing.Store.NodeByPath(t.Context(), "/archive/session.jsonl")
+	require.ErrorIs(t, err, store.ErrNotFound)
+
+	require.NoError(t, scanWatcherAt(
+		t.Context(), restarted, restartedRoot, producedAt.Add(time.Hour),
+	))
+	node, err := ing.Store.NodeByPath(t.Context(), "/archive/session.jsonl")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), node.Revision)
+}
+
 func TestWatcherRetriesFileThatDisappearsBeforeIngest(t *testing.T) {
 	ing := newTestIngester(t)
 	source := writeTree(t, map[string]string{"document.txt": "ready"})

@@ -75,7 +75,7 @@ func TestLoadParsesWatchedInboxesAndAppliesDefaults(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(
 		"[[watch]]\nname = \"documents\"\nsource = \""+filepath.ToSlash(source)+"\"\n"+
 			"destination = \"/inbox/documents\"\nexclude = [\".tmp\", \"cache/\"]\n"+
-			"settle_time = \"45s\"\nscan_interval = \"3s\"\n\n"+
+			"settle_time = \"45s\"\nminimum_age = \"168h\"\nscan_interval = \"3s\"\n\n"+
 			"[[watch]]\nname = \"sessions\"\nsource = \""+relativeHomeSource+"\"\n"+
 			"destination = \"/agents/sessions\"\n"), 0o600))
 
@@ -85,12 +85,14 @@ func TestLoadParsesWatchedInboxesAndAppliesDefaults(t *testing.T) {
 	assert.Equal(t, filepath.Clean(source), c.Watches[0].Source)
 	assert.Equal(t, "/inbox/documents", c.Watches[0].Destination)
 	assert.Equal(t, 45*time.Second, c.Watches[0].SettleTime.Std())
+	assert.Equal(t, 7*24*time.Hour, c.Watches[0].MinimumAge.Std())
 	assert.Equal(t, 3*time.Second, c.Watches[0].ScanInterval.Std())
 	assert.Equal(t, []string{".tmp", "cache/"}, c.Watches[0].Exclude)
 	home, err := os.UserHomeDir()
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(home, "agent-sessions"), c.Watches[1].Source)
 	assert.Equal(t, 30*time.Second, c.Watches[1].SettleTime.Std())
+	assert.Zero(t, c.Watches[1].MinimumAge.Std())
 	assert.Equal(t, 5*time.Second, c.Watches[1].ScanInterval.Std())
 	require.NoError(t, c.Validate())
 }
@@ -104,6 +106,8 @@ func TestWatchedInboxConfigRejectsAmbiguousOrUnsafeValues(t *testing.T) {
 		{"relative source", "name='inbox'\nsource='relative'\ndestination='/inbox'", "must be absolute"},
 		{"relative destination", "name='inbox'\nsource='" + source + "'\ndestination='inbox'", "absolute virtual path"},
 		{"invalid name", "name='Bad Name'\nsource='" + source + "'\ndestination='/inbox'", "unsupported characters"},
+		{"negative minimum age", "name='inbox'\nsource='" + source +
+			"'\ndestination='/inbox'\nminimum_age='-1s'", "must not be negative"},
 		{"duplicate name", "name='same'\nsource='" + source + "'\ndestination='/one'\n" +
 			"[[watch]]\nname='same'\nsource='" + filepath.ToSlash(t.TempDir()) + "'\ndestination='/two'", "duplicated"},
 	} {

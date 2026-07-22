@@ -730,7 +730,10 @@ func (w *Watcher) scanDirectory(
 			}
 			continue
 		}
-		if observation.processed || observedAt.Sub(observation.stableSince) < w.config.SettleTime.Std() {
+		minimumAge := w.config.MinimumAge.Std()
+		if observation.processed ||
+			observedAt.Sub(observation.stableSince) < w.config.SettleTime.Std() ||
+			(minimumAge > 0 && observedAt.Sub(time.Unix(0, fingerprint.modTime)) < minimumAge) {
 			continue
 		}
 		var result WatchResult

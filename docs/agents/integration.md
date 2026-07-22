@@ -50,8 +50,11 @@ docbank watch list --json
 ```
 
 Each item reports the machine-local source, virtual destination, full settle
-window, scan interval, literal exclusions, and current job record. This is a
-read-only view; changing `config.toml` still requires a daemon restart.
+window, optional minimum source age, scan interval, literal exclusions, and
+current job record. A nonzero minimum age composes with rather than replaces
+the settle window, which is useful when append-heavy session JSONL may pause
+without being complete. This is a read-only view; changing `config.toml` still
+requires a daemon restart.
 
 The canonical contract is generated from the running route definitions:
 

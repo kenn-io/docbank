@@ -895,10 +895,11 @@ docbank watch list [--json]
 
 Lists the daemon's effective watched-inbox configuration in stable name order:
 the machine-local source, virtual-tree destination, complete settle window,
-scan interval, exclusion count, and current runner state. Human output quotes
-source and destination paths so terminal control characters cannot disguise
-them. `--json` includes the complete exclusion rules and the corresponding
-job record for agents and automation.
+minimum source age (`0s` when disabled), scan interval, exclusion count, and
+current runner state. Human output quotes source and destination paths so
+terminal control characters cannot disguise them. `--json` includes the
+complete exclusion rules and the corresponding job record for agents and
+automation. The `minimum_age` field is newer than v0.10.1.
 
 This command is inspection only. Edit `config.toml` and restart the daemon to
 change a watch.
