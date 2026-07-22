@@ -188,7 +188,10 @@ test_release_preview_and_push() {
   assert_contains "$output" "PROPOSED RELEASE NOTES FOR v0.11.0" "release preview"
   assert_contains "$output" "Release v0.11.0 tag pushed successfully" "release outcome"
   git -C "$remote" rev-parse -q --verify refs/tags/v0.11.0 >/dev/null || fail "remote tag missing"
-  assert_contains "$(git -C "$repo" tag -l v0.11.0 --format='%(contents)')" "Release 0.11.0" "annotated tag"
+  local tag_contents
+  tag_contents="$(git -C "$repo" tag -l v0.11.0 --format='%(contents)')"
+  assert_contains "$tag_contents" "Release 0.11.0" "annotated tag"
+  assert_contains "$tag_contents" "## New Features" "approved Markdown heading"
 }
 
 test_release_cancellation_creates_no_tag() {

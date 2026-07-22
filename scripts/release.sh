@@ -109,7 +109,7 @@ fi
 } >"$tag_message"
 
 printf 'Creating annotated tag %s...\n' "$tag"
-git -C "$repo_root" tag -a "$tag" -F "$tag_message"
+git -C "$repo_root" tag --cleanup=whitespace -a "$tag" -F "$tag_message"
 printf 'Pushing %s to origin...\n' "$tag"
 git -C "$repo_root" push origin "$tag"
 
