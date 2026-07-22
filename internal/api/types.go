@@ -437,6 +437,7 @@ type SearchReport struct {
 	Limit     int         `json:"limit"`
 	Truncated bool        `json:"truncated"`
 	TagID     string      `json:"tag_id,omitempty"`
+	MIMEType  string      `json:"mime_type,omitempty"`
 }
 
 // IngestFailure records one source path that failed to import.

@@ -9,6 +9,7 @@ description: Ranked, prefix-matching search over document names and verified tex
 docbank search insurance
 docbank search tax 2026
 docbank search return --tag taxes
+docbank search report --mime-type application/pdf
 docbank search report --limit 200
 docbank search report --json
 ```
@@ -40,6 +41,11 @@ id:198     content  /taxes/2026/car-insurance-notes.md
   assignment without changing name-before-content ranking. The CLI resolves a
   tag name to its stable UUID before searching; JSON echoes that UUID as
   `tag_id`, so a later rename cannot change what the request meant.
+- **Current media-type filtering.** `--mime-type <type/subtype>` requires the
+  current file version to have that base media type. The filter is
+  case-insensitive and ignores stored parameters, so `text/plain` also matches
+  `text/plain; charset=utf-8`. The request itself must be parameter-free;
+  directories and historical versions never match it.
 
 For scripts, `--json` returns `hits`, `limit`, and `truncated` without table
 formatting. `hits` is always an array, including when nothing matches.
@@ -59,7 +65,7 @@ daemon job reaches it. A transient open, read, or verification error leaves the
 item queued and is retried on a bounded delay; it does not become a permanent
 extraction failure. `docbank jobs` shows whether that worker is running.
 
-PDF text layers, office formats, OCR, and MIME/date/path search filters are not
+PDF text layers, office formats, OCR, and date/path search filters are not
 yet available. Their absence never changes name-search results or document authority.
 
 Next: organize documents beyond paths with

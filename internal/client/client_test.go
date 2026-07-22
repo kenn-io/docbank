@@ -121,15 +121,22 @@ func TestSearchWithOptionsUsesStableTagIdentity(t *testing.T) {
 	require.NoError(t, err)
 
 	report, err := c.SearchWithOptions(
-		ctx, "insurance", 10, client.SearchOptions{TagID: tag.ID},
+		ctx, "insurance", 10, client.SearchOptions{
+			TagID: tag.ID, MIMEType: "APPLICATION/PDF",
+		},
 	)
 	require.NoError(t, err)
 	assert.Equal(t, tag.ID, report.TagID)
+	assert.Equal(t, "application/pdf", report.MIMEType)
 	require.Len(t, report.Hits, 1)
 	assert.Equal(t, tagged.ID, report.Hits[0].Node.ID)
 
 	_, err = c.SearchWithOptions(ctx, "insurance", 10, client.SearchOptions{TagID: "bad"})
 	require.ErrorContains(t, err, "canonical UUIDv4")
+	_, err = c.SearchWithOptions(ctx, "insurance", 10, client.SearchOptions{
+		MIMEType: "application/pdf; version=1",
+	})
+	require.ErrorContains(t, err, "must not include parameters")
 }
 
 func TestMoveToPathValidatesRequestBeforeTransport(t *testing.T) {

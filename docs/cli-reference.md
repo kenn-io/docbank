@@ -568,7 +568,7 @@ returns the complete restored node with its resulting path and revision.
 ## docbank search
 
 ```
-docbank search <query>... [--tag <name-or-id>] [--limit <n>] [--json]
+docbank search <query>... [--tag <name-or-id>] [--mime-type <type/subtype>] [--limit <n>] [--json]
 ```
 
 Full-text search over live node names and verified extracted text (FTS5).
@@ -583,10 +583,15 @@ completeness. Output columns are `SELECTOR`, `MATCH`, and `PATH`; no matches pri
 `--tag` requires one current tag assignment. It accepts a tag's exact name or
 stable UUID using the same selector rules as `docbank tag show`; the CLI
 resolves names before searching, so the request is bound to stable identity.
+`--mime-type` accepts one valid parameter-free media type and matches the
+current version's base type case-insensitively. Stored parameters do not affect
+the match: `text/plain` includes `text/plain; charset=utf-8`. MIME filtering
+excludes directories and retained non-current versions.
 
 `--json` emits the typed search report with `hits`, the applied `limit`, and
 an explicit `truncated` boolean. A filtered report also echoes the stable
-`tag_id`. An empty result uses `"hits": []`.
+`tag_id` and normalized `mime_type` when supplied. An empty result uses
+`"hits": []`.
 
 The daemon indexes current UTF-8 `text/*`, JSON, and JSONL blobs up to 16 MiB
 after a terminally verified read. PDF, Office, and OCR extraction are not yet
