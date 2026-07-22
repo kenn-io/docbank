@@ -51,8 +51,12 @@ var lsCmd = &cobra.Command{
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
 		_, _ = fmt.Fprintln(w, "SELECTOR\tKIND\tSIZE\tMODIFIED\tNAME")
 		for _, k := range kids {
+			modifiedAt, err := formatHumanTimestamp(k.ModifiedAt)
+			if err != nil {
+				return err
+			}
 			_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\n",
-				formatNodeSelector(k.ID), k.Kind, k.Size, k.ModifiedAt, k.Name)
+				formatNodeSelector(k.ID), k.Kind, k.Size, modifiedAt, k.Name)
 		}
 		return w.Flush()
 	},

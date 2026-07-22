@@ -51,10 +51,10 @@ docbank ls /taxes
 ```
 
 ```
-ID   KIND  SIZE    MODIFIED                        NAME
-14   dir   0       2026-07-06T21:14:03.2211Z       2024
-102  dir   0       2026-07-06T21:14:05.9871Z       2025
-231  file  48211   2026-07-06T21:14:08.1298Z       checklist.pdf
+SELECTOR  KIND  SIZE   MODIFIED              NAME
+id:14     dir   0      2026-07-06T21:14:03Z  2024
+id:102    dir   0      2026-07-06T21:14:05Z  2025
+id:231    file  48211  2026-07-06T21:14:08Z  checklist.pdf
 ```
 
 `tree` prints the whole hierarchy with node IDs:

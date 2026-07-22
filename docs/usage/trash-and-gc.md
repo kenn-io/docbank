@@ -34,10 +34,13 @@ docbank trash list --json
 ```
 
 ```
-SELECTOR   TRASHED AT                     NAME
-id:15      2026-07-06T21:40:11.0021Z      return.pdf
-id:88      2026-07-05T09:12:44.8810Z      old-drafts
+SELECTOR  TRASHED AT           NAME
+id:15     2026-07-06T21:40:11Z  return.pdf
+id:88     2026-07-05T09:12:44Z  old-drafts
 ```
+
+Human output uses UTC second precision. `--json` retains the full authoritative
+timestamps for automation.
 
 Only trash *roots* are listed: trashing a directory produces one entry, and
 `docbank restore id:<id>` brings the entire subtree back to its original

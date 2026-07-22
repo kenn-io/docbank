@@ -147,11 +147,12 @@ docbank ls [path-or-id] [--json]
 
 Lists a virtual directory (default `/`). Columns: `SELECTOR`, `KIND`
 (`dir`/`file`), `SIZE` (bytes; 0 for directories), `MODIFIED` (UTC,
-RFC 3339), `NAME`. Fails with `not a directory` when the path names a
-file.
+RFC 3339 at second precision), `NAME`. Fails with `not a directory` when the
+path names a file.
 
 `--json` returns the resolved directory under `directory` and its complete,
 ordered child list under `items`. Empty directories produce `"items": []`.
+JSON preserves the authoritative full-precision timestamps.
 
 ## docbank tree
 
@@ -616,7 +617,8 @@ docbank trash empty [--older-than <age>] [--run] [--json]
 
 `list` shows restorable trashed nodes: `SELECTOR`, `TRASHED AT`, `NAME`. Only
 trash roots are listed — trashing a directory produces one entry, and
-restoring it brings the whole subtree back.
+restoring it brings the whole subtree back. Human output renders UTC seconds;
+`--json` preserves the authoritative full-precision timestamps.
 
 `empty` reports how many trash roots are eligible but does not delete by
 default. Pass `--run` to permanently delete them; their blobs then become
