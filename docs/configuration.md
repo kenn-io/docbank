@@ -20,6 +20,14 @@ environment variable:
 export DOCBANK_HOME=/Volumes/Archive/docbank
 ```
 
+Run `docbank info` after selecting a vault to see its canonical path and stable
+vault ID. This is especially useful when one machine has several independent
+Docbank archives:
+
+```bash
+DOCBANK_HOME=/Volumes/Archive/docbank docbank info
+```
+
 The directory layout is created on first use:
 
 ```

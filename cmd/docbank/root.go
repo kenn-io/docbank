@@ -8,8 +8,13 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:           "docbank",
-	Short:         "Personal document archive with a virtual tree over content-addressed storage",
+	Use:   "docbank",
+	Short: "Personal document archive with a virtual tree over content-addressed storage",
+	Long: `Docbank stores documents for you and your agents in a durable virtual tree.
+
+DOCBANK_HOME selects the vault. It defaults to ~/.docbank. Set it per command
+or in the environment to operate on a different vault, then use "docbank info"
+to confirm the selected vault's canonical path and stable identity.`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	// Cobra runs this only after flag parsing and positional validation, which

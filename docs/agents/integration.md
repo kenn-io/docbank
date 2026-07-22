@@ -29,6 +29,18 @@ return the daemon's complete resulting node receipt. A trash receipt's `path`
 is only its pre-trash recovery context; carry the stable `id` and `revision`
 forward instead.
 
+Before operating on an unfamiliar machine or switching archives, identify the
+selected vault explicitly:
+
+```bash
+docbank info --json
+```
+
+Treat `vault_id` as the durable identity and `vault_path` as machine-local
+placement. `DOCBANK_HOME=/path/to/another/vault docbank info --json` selects
+and confirms another independently owned archive without changing a global
+profile or opening its database directly.
+
 The canonical contract is generated from the running route definitions:
 
 ```bash

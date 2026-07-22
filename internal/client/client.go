@@ -2050,6 +2050,13 @@ func (c *Client) StorageStatus(ctx context.Context) (api.StorageStatus, error) {
 	return status, err
 }
 
+// Info identifies the selected vault and summarizes its logical and physical contents.
+func (c *Client) Info(ctx context.Context) (api.VaultInfo, error) {
+	var info api.VaultInfo
+	err := c.do(ctx, http.MethodGet, "/api/v1/info", nil, nil, &info)
+	return info, err
+}
+
 func (c *Client) StoragePack(ctx context.Context, maxBytes int64) (api.StoragePackReport, error) {
 	var report api.StoragePackReport
 	err := c.do(ctx, http.MethodPost, "/api/v1/storage/pack", nil,

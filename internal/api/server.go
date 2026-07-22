@@ -105,7 +105,8 @@ func NewServer(d Deps) *Server {
 		g = NewOperationGate()
 	}
 
-	registerReadRoutes(humaAPI, d)      // Task 5 (stat-by-id lands in this task)
+	registerReadRoutes(humaAPI, d) // Task 5 (stat-by-id lands in this task)
+	registerInfoRoute(humaAPI, d)
 	registerMutateRoutes(humaAPI, d, g) // Task 6
 	registerOpsRoutes(humaAPI, d, g)    // Task 7
 	registerBackupRoutes(humaAPI, d, g)
