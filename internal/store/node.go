@@ -32,6 +32,13 @@ type Node struct {
 // IsDir reports whether the node is a directory.
 func (n Node) IsDir() bool { return n.Kind == nodeKindDir }
 
+// NodeView binds one node snapshot to its live canonical path. Path is empty
+// when the snapshot marks the node as trashed.
+type NodeView struct {
+	Node Node
+	Path string
+}
+
 const nodeFrom = `nodes AS n
 	LEFT JOIN content_versions AS cv
 		ON cv.node_id = n.id AND cv.version_id = n.current_version_id`
@@ -64,6 +71,58 @@ func (s *Store) NodeByID(ctx context.Context, id int64) (Node, error) {
 		return Node{}, fmt.Errorf("node %d: %w", id, err)
 	}
 	return n, nil
+}
+
+// NodeViewByID returns a node and its live path from one read transaction.
+func (s *Store) NodeViewByID(ctx context.Context, id int64) (NodeView, error) {
+	return s.nodeView(ctx, func(tx *sql.Tx) (Node, error) {
+		return nodeByIDTx(tx, id)
+	})
+}
+
+// NodeViewByPath resolves a live path and returns its node and canonical path
+// from one read transaction.
+func (s *Store) NodeViewByPath(ctx context.Context, path string) (NodeView, error) {
+	return s.nodeView(ctx, func(tx *sql.Tx) (Node, error) {
+		return nodeByPath(ctx, tx, s.rootID, path)
+	})
+}
+
+func (s *Store) nodeView(
+	ctx context.Context,
+	resolve func(*sql.Tx) (Node, error),
+) (NodeView, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return NodeView{}, fmt.Errorf("starting node snapshot: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	node, err := resolve(tx)
+	if err != nil {
+		return NodeView{}, err
+	}
+	view, err := nodeViewForNode(ctx, tx, node)
+	if err != nil {
+		return NodeView{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return NodeView{}, fmt.Errorf("closing node snapshot: %w", err)
+	}
+	return view, nil
+}
+
+func nodeViewForNode(ctx context.Context, q rowQuerier, node Node) (NodeView, error) {
+	view := NodeView{Node: node}
+	if node.TrashedAt != nil {
+		return view, nil
+	}
+	path, err := pathOf(ctx, q, node.ID)
+	if err != nil {
+		return NodeView{}, err
+	}
+	view.Path = path
+	return view, nil
 }
 
 // splitPath turns "/a/b/" into ["a","b"]. "" and "/" yield nil (the root).

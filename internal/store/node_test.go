@@ -1,6 +1,8 @@
 package store
 
 import (
+	"context"
+	"database/sql"
 	"strings"
 	"sync"
 	"testing"
@@ -8,6 +10,41 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestNodeViewPinsNodeAndPathAcrossConcurrentTrash(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	parent, err := s.Mkdir(ctx, s.RootID(), "archive")
+	require.NoError(t, err)
+	node, err := s.Mkdir(ctx, parent.ID, "records")
+	require.NoError(t, err)
+
+	trashStarted := make(chan struct{})
+	trashed := make(chan error, 1)
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	snapshot, err := nodeByIDTx(tx, node.ID)
+	require.NoError(t, err)
+
+	go func() {
+		close(trashStarted)
+		_, _, trashErr := s.Trash(context.Background(), node.ID, node.Revision)
+		trashed <- trashErr
+	}()
+	<-trashStarted
+	view, err := nodeViewForNode(ctx, tx, snapshot)
+	require.NoError(t, err)
+	assert.Nil(t, view.Node.TrashedAt)
+	assert.Equal(t, "/archive/records", view.Path)
+	require.NoError(t, tx.Commit())
+	require.NoError(t, <-trashed)
+
+	after, err := s.NodeViewByID(ctx, node.ID)
+	require.NoError(t, err)
+	assert.NotNil(t, after.Node.TrashedAt)
+	assert.Empty(t, after.Path)
+}
 
 func TestMkdirAndLookup(t *testing.T) {
 	s := newTestStore(t)

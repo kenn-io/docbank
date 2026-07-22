@@ -116,10 +116,16 @@ listings print copyable selectors such as `id:42`, and existing-node commands
 accept either that stable selector or an absolute path:
 
 ```bash
+docbank stat id:42 --json
 docbank cat id:42
 docbank versions list id:42 --json
 docbank mv id:42 /review/approved.pdf --json
 ```
+
+Use `docbank stat` when a shell agent needs one authoritative node snapshot.
+Its JSON includes the node revision and, for files, the current version,
+SHA-256, size, and MIME type. A trashed ID remains inspectable but has no live
+`path`.
 
 The `mv` destination stays a path because it describes a new coordinate. In
 JSON and HTTP requests, node IDs remain numeric rather than `id:` strings.

@@ -16,8 +16,8 @@ const (
 	ContentVersionHeader = "X-Docbank-Content-Version"
 )
 
-// Node is the wire representation of a store.Node. Path is only populated on
-// single-node responses; list responses omit it.
+// Node is the wire representation of a store.Node. Path is populated on live
+// single-node responses; lists and trashed nodes omit it.
 type Node struct {
 	ID               int64  `json:"id"`
 	ParentID         *int64 `json:"parent_id,omitempty"`
@@ -31,7 +31,7 @@ type Node struct {
 	CreatedAt        string `json:"created_at"`
 	ModifiedAt       string `json:"modified_at"`
 	TrashedAt        string `json:"trashed_at,omitempty"`
-	Path             string `json:"path,omitempty"` // set on single-node responses only
+	Path             string `json:"path,omitempty"` // set on live single-node responses only
 }
 
 // NodePage is one bounded, ordered directory-child listing.
