@@ -14,6 +14,12 @@ type SearchHit struct {
 	Match string
 }
 
+// SearchOptions narrows ranked search without changing its name-before-content
+// ordering. TagID is the stable identity of one required tag assignment.
+type SearchOptions struct {
+	TagID string
+}
+
 const (
 	SearchMatchName    = "name"
 	SearchMatchContent = "content"
@@ -36,21 +42,39 @@ func ftsQuery(input string) string {
 // deterministic name-search contract: enabling extraction never reorders or
 // hides a filename match that the same limit returned before.
 func (s *Store) SearchPage(ctx context.Context, query string, limit int) ([]SearchHit, bool, error) {
+	return s.SearchPageWithOptions(ctx, query, limit, SearchOptions{})
+}
+
+// SearchPageWithOptions returns ranked live matches that satisfy every
+// requested filter. Filters apply equally to name and content candidates.
+func (s *Store) SearchPageWithOptions(
+	ctx context.Context, query string, limit int, opts SearchOptions,
+) ([]SearchHit, bool, error) {
 	if limit <= 0 {
 		limit = 50
+	}
+	if opts.TagID != "" {
+		if _, err := s.TagByID(ctx, opts.TagID); err != nil {
+			return nil, false, fmt.Errorf("search tag %q: %w", opts.TagID, err)
+		}
 	}
 	fq := ftsQuery(query)
 	if fq == "" {
 		return nil, false, nil
 	}
+	filterSQL, filterArgs := searchFilterSQL(opts)
+	nameArgs := []any{fq}
+	nameArgs = append(nameArgs, filterArgs...)
+	nameArgs = append(nameArgs, fq, limit+1)
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT `+nodeCols+`
 		FROM `+nodeFrom+`
 		WHERE n.id IN (SELECT rowid FROM nodes_fts WHERE nodes_fts MATCH ?)
 		  AND n.trashed_at IS NULL
+		  `+filterSQL+`
 		ORDER BY (SELECT rank FROM nodes_fts WHERE rowid = n.id AND nodes_fts MATCH ?),
 		         n.name, n.id
-		LIMIT ?`, fq, fq, limit+1)
+		LIMIT ?`, nameArgs...)
 	if err != nil {
 		return nil, false, fmt.Errorf("searching %q: %w", query, err)
 	}
@@ -69,6 +93,9 @@ func (s *Store) SearchPage(ctx context.Context, query string, limit int) ([]Sear
 	// Content may also match a node already returned by name. Over-fetch by
 	// the complete name set so duplicate filtering cannot conceal truncation.
 	remaining := limit - len(nameHits)
+	contentArgs := []any{fq}
+	contentArgs = append(contentArgs, filterArgs...)
+	contentArgs = append(contentArgs, remaining+len(nameHits)+1)
 	rows, err = s.db.QueryContext(ctx, `
 		WITH matched_blobs AS (
 		  SELECT blob_hash, MIN(rank) AS best_rank
@@ -80,8 +107,9 @@ func (s *Store) SearchPage(ctx context.Context, query string, limit int) ([]Sear
 		JOIN matched_blobs mb ON mb.blob_hash = cv.blob_hash
 		JOIN text_searchable_versions tsv ON tsv.version_id = cv.version_id
 		WHERE n.trashed_at IS NULL
+		  `+filterSQL+`
 		ORDER BY mb.best_rank, n.name, n.id
-		LIMIT ?`, fq, remaining+len(nameHits)+1)
+		LIMIT ?`, contentArgs...)
 	if err != nil {
 		return nil, false, fmt.Errorf("searching extracted content for %q: %w", query, err)
 	}
@@ -111,6 +139,15 @@ func (s *Store) SearchPage(ctx context.Context, query string, limit int) ([]Sear
 		return nil, false, err
 	}
 	return hits, truncated, nil
+}
+
+func searchFilterSQL(opts SearchOptions) (string, []any) {
+	if opts.TagID == "" {
+		return "", nil
+	}
+	return `AND EXISTS (
+		SELECT 1 FROM node_tags nt WHERE nt.node_id=n.id AND nt.tag_id=?
+	)`, []any{opts.TagID}
 }
 
 func scanSearchRows(rows *sql.Rows, match, query string) ([]SearchHit, error) {

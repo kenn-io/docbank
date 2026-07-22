@@ -436,6 +436,7 @@ type SearchReport struct {
 	Hits      []SearchHit `json:"hits"`
 	Limit     int         `json:"limit"`
 	Truncated bool        `json:"truncated"`
+	TagID     string      `json:"tag_id,omitempty"`
 }
 
 // IngestFailure records one source path that failed to import.

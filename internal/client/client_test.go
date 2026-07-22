@@ -104,6 +104,34 @@ func TestRoundTrip(t *testing.T) {
 	assert.Equal(t, "/filed", restored.Path)
 }
 
+func TestSearchWithOptionsUsesStableTagIdentity(t *testing.T) {
+	c, s := newClient(t, serverKey)
+	ctx := t.Context()
+	tag, err := s.CreateTag(ctx, "renewal")
+	require.NoError(t, err)
+	tagged, err := s.CreateFile(
+		ctx, s.RootID(), "insurance-renewal.pdf", strings.Repeat("a", 64), 1, "application/pdf",
+	)
+	require.NoError(t, err)
+	_, err = s.CreateFile(
+		ctx, s.RootID(), "insurance-draft.pdf", strings.Repeat("b", 64), 1, "application/pdf",
+	)
+	require.NoError(t, err)
+	_, err = s.AssignTag(ctx, tag.ID, tagged.ID, tagged.Revision)
+	require.NoError(t, err)
+
+	report, err := c.SearchWithOptions(
+		ctx, "insurance", 10, client.SearchOptions{TagID: tag.ID},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, tag.ID, report.TagID)
+	require.Len(t, report.Hits, 1)
+	assert.Equal(t, tagged.ID, report.Hits[0].Node.ID)
+
+	_, err = c.SearchWithOptions(ctx, "insurance", 10, client.SearchOptions{TagID: "bad"})
+	require.ErrorContains(t, err, "canonical UUIDv4")
+}
+
 func TestMoveToPathValidatesRequestBeforeTransport(t *testing.T) {
 	c := client.New("http://127.0.0.1:1", serverKey)
 

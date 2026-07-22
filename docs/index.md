@@ -57,6 +57,7 @@ The ordinary workflow stays direct:
 docbank add ~/Documents/taxes --dest /taxes    # import a folder; sources untouched
 docbank tree /taxes                            # browse the virtual tree
 docbank search "insurance"                     # ranked name and verified plain-text search
+docbank search "return" --tag taxes             # narrow the same ranking by stable tag identity
 docbank put revised.pdf /taxes/2026/return.pdf # add a new immutable version
 docbank versions list /taxes/2026/return.pdf   # inspect retained history
 docbank rm /inbox/junk.pdf                     # move to recoverable trash

@@ -18,6 +18,7 @@ const (
 var (
 	searchLimit int
 	searchJSON  bool
+	searchTag   string
 )
 
 var searchCmd = &cobra.Command{
@@ -32,7 +33,19 @@ var searchCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		rep, err := c.Search(cmd.Context(), strings.Join(args, " "), searchLimit)
+		var opts client.SearchOptions
+		var tagName string
+		if searchTag != "" {
+			tag, resolveErr := resolveTag(cmd, c, searchTag)
+			if resolveErr != nil {
+				return resolveErr
+			}
+			opts.TagID = tag.ID
+			tagName = tag.Name
+		}
+		rep, err := c.SearchWithOptions(
+			cmd.Context(), strings.Join(args, " "), searchLimit, opts,
+		)
 		if err != nil {
 			return err
 		}
@@ -40,7 +53,11 @@ var searchCmd = &cobra.Command{
 			return writeCLIJSON(cmd.OutOrStdout(), rep)
 		}
 		if len(rep.Hits) == 0 {
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "no matches")
+			if tagName == "" {
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "no matches")
+			} else {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "no matches with tag %q\n", tagName)
+			}
 			return nil
 		}
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
@@ -68,6 +85,8 @@ var searchCmd = &cobra.Command{
 func init() {
 	searchCmd.Flags().IntVar(&searchLimit, "limit", defaultSearchLimit,
 		"maximum results to return (1-1000)")
+	searchCmd.Flags().StringVar(&searchTag, "tag", "",
+		"require one tag by name or stable ID")
 	searchCmd.Flags().BoolVar(&searchJSON, "json", false, "emit machine-readable JSON")
 	rootCmd.AddCommand(searchCmd)
 }

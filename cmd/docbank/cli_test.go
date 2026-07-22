@@ -1031,12 +1031,33 @@ func TestTreeMutationJSONReceipts(t *testing.T) {
 func TestSearchCLI(t *testing.T) {
 	setupVaultHome(t)
 	src := writeSourceFile(t, "insurance-2026.txt", "policy")
-	_, err := runCLI(t, "add", src, "--dest", "/inbox")
+	other := writeSourceFile(t, "insurance-draft.txt", "draft")
+	_, err := runCLI(t, "add", src, other, "--dest", "/inbox")
 	require.NoError(t, err)
 
 	out, err := runCLI(t, "search", "insurance")
 	require.NoError(t, err)
 	assert.Contains(t, out, "/inbox/insurance-2026.txt")
+	assert.Contains(t, out, "/inbox/insurance-draft.txt")
+
+	out, err = runCLI(t, "tag", "create", "renewal", "--json")
+	require.NoError(t, err, out)
+	var tag api.Tag
+	require.NoError(t, json.Unmarshal([]byte(out), &tag))
+	_, err = runCLI(t, "tag", "assign", "renewal", "/inbox/insurance-2026.txt")
+	require.NoError(t, err)
+
+	out, err = runCLI(t, "search", "insurance", "--tag", "renewal")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "/inbox/insurance-2026.txt")
+	assert.NotContains(t, out, "/inbox/insurance-draft.txt")
+	out, err = runCLI(t, "search", "insurance", "--tag", tag.ID, "--json")
+	require.NoError(t, err, out)
+	var report api.SearchReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	assert.Equal(t, tag.ID, report.TagID)
+	require.Len(t, report.Hits, 1)
+	assert.Equal(t, "/inbox/insurance-2026.txt", report.Hits[0].Path)
 }
 
 func TestSearchCLIReportsTruncation(t *testing.T) {

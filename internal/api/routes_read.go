@@ -348,16 +348,22 @@ func registerReadRoutes(api huma.API, d Deps) {
 		OperationID: "search", Method: http.MethodGet, Path: "/api/v1/search",
 		Summary: "Search live document names and extracted text",
 		Description: "Name matches retain their established BM25 order and appear first; " +
-			"content-only matches follow in their own BM25 order. Every hit names its match source.",
+			"content-only matches follow in their own BM25 order. Every hit names its match source. " +
+			"An optional stable tag ID requires that assignment for every result.",
 	}, func(ctx context.Context, in *struct {
 		Q     string `query:"q" required:"true"`
 		Limit int    `query:"limit" default:"50" minimum:"1" maximum:"1000"`
+		TagID string `query:"tag_id" pattern:"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"`
 	}) (*searchOutput, error) {
-		hits, truncated, err := d.Store.SearchPage(ctx, in.Q, in.Limit)
+		hits, truncated, err := d.Store.SearchPageWithOptions(
+			ctx, in.Q, in.Limit, store.SearchOptions{TagID: in.TagID},
+		)
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		out := &searchOutput{Body: SearchReport{Hits: []SearchHit{}, Limit: in.Limit, Truncated: truncated}}
+		out := &searchOutput{Body: SearchReport{
+			Hits: []SearchHit{}, Limit: in.Limit, Truncated: truncated, TagID: in.TagID,
+		}}
 		for _, h := range hits {
 			out.Body.Hits = append(out.Body.Hits, SearchHit{
 				Node: fromStoreNode(h.Node), Path: h.Path, Match: h.Match,

@@ -161,11 +161,15 @@ current version of verified UTF-8 plain text, Markdown, JSON, and JSONL document
 up to 16 MiB. Extraction runs asynchronously; after a write, inspect
 `docbank jobs` or retry briefly instead of treating an immediate content miss as
 permanent. PDF, Office, image, and OCR text extraction are not implemented.
+To restrict the same ranking to one current tag assignment, send the canonical
+tag UUID as `tag_id`; retain the echoed `tag_id` as the filter authority rather
+than relying on the tag's mutable display name.
 
 ```bash
 curl --fail-with-body --get \
   -H "X-Api-Key: $DOCBANK_API_KEY" \
   --data-urlencode 'q=tax return' \
+  --data 'tag_id=<tag-uuid>' \
   --data 'limit=100' \
   "$DOCBANK_URL/api/v1/search"
 ```
