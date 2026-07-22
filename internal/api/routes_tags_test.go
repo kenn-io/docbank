@@ -165,6 +165,49 @@ func TestTagAssignmentRejectsStaleRevisionAndInvalidName(t *testing.T) {
 	assert.Contains(t, body, `"code":"invalid_tag"`)
 }
 
+func TestSharedAuditedTagDefinitionChangesHTTP(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	first, err := s.Mkdir(t.Context(), s.RootID(), "taxes")
+	require.NoError(t, err)
+	second, err := s.Mkdir(t.Context(), s.RootID(), "contracts")
+	require.NoError(t, err)
+	for _, node := range []int64{first.ID, second.ID} {
+		plan, err := s.PreviewInitialAudit(t.Context(), node, "api", nil)
+		require.NoError(t, err)
+		_, err = s.EnableInitialAudit(t.Context(), plan)
+		require.NoError(t, err)
+	}
+	tag, err := s.CreateTag(t.Context(), "records")
+	require.NoError(t, err)
+	firstAssignment, err := s.AssignTag(t.Context(), tag.ID, first.ID, first.Revision)
+	require.NoError(t, err)
+	secondAssignment, err := s.AssignTag(t.Context(), tag.ID, second.ID, second.Revision)
+	require.NoError(t, err)
+
+	resp, body := do(t, ts, http.MethodPatch, "/api/v1/tags/"+tag.ID,
+		map[string]string{"If-Match": strconv.Quote(strconv.FormatInt(
+			secondAssignment.Tag.Revision, 10,
+		))}, map[string]any{"name": "permanent records"})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var renamed api.Tag
+	require.NoError(t, json.Unmarshal([]byte(body), &renamed))
+	assert.Equal(t, "permanent records", renamed.Name)
+	firstAfter, err := s.NodeByID(t.Context(), first.ID)
+	require.NoError(t, err)
+	secondAfter, err := s.NodeByID(t.Context(), second.ID)
+	require.NoError(t, err)
+	assert.Equal(t, firstAssignment.Node.Revision+1, firstAfter.Revision)
+	assert.Equal(t, secondAssignment.Node.Revision+1, secondAfter.Revision)
+
+	resp, body = do(t, ts, http.MethodDelete, "/api/v1/tags/"+tag.ID,
+		map[string]string{"If-Match": strconv.Quote(strconv.FormatInt(renamed.Revision, 10))}, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var deleted api.TagDeletionReceipt
+	require.NoError(t, json.Unmarshal([]byte(body), &deleted))
+	assert.Equal(t, 2, deleted.RemovedAssignments)
+	require.NoError(t, s.ValidateMetadata(t.Context()))
+}
+
 func TestTagPathAssignmentUsesCurrentTopology(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	left, err := s.Mkdir(t.Context(), s.RootID(), "left")

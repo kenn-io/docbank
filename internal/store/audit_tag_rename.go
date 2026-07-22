@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 
 	"go.kenn.io/docbank/internal/audit"
 )
@@ -12,7 +14,7 @@ import (
 func (s *Store) renameAuditedTagTx(
 	ctx context.Context, tx *sql.Tx, current Tag, name string,
 ) (Tag, error) {
-	priorNodes, scope, err := auditedTaggedNodesTx(ctx, tx, current.ID)
+	priorNodes, candidates, scopes, err := auditedTaggedNodesTx(ctx, tx, current.ID)
 	if err != nil {
 		return Tag{}, err
 	}
@@ -41,11 +43,16 @@ func (s *Store) renameAuditedTagTx(
 	}
 	if err := persistAuditedTagRename(
 		ctx, tx, s.vaultID, operationID, recordedAt, nodeSequence,
-		authority, scope, current, renamed, priorNodes, resultingNodes,
+		authority, scopes, candidates, current, renamed, priorNodes, resultingNodes,
 	); err != nil {
 		return Tag{}, err
 	}
 	return renamed, nil
+}
+
+type auditedTagCandidate struct {
+	nodeID  int64
+	scopeID string
 }
 
 func touchAuditedTagDefinitionNodesTx(
@@ -70,7 +77,7 @@ func touchAuditedTagDefinitionNodesTx(
 
 func auditedTaggedNodesTx(
 	ctx context.Context, tx *sql.Tx, tagID string,
-) ([]Node, *auditScopeState, error) {
+) ([]Node, []auditedTagCandidate, []auditScopeState, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT membership.node_id,scope.scope_id,
 		scope.entry_count,scope.chain_head
 		FROM node_tags assignment
@@ -78,12 +85,13 @@ func auditedTaggedNodesTx(
 		JOIN audit_scopes scope ON scope.scope_id=membership.scope_id
 		WHERE assignment.tag_id=? ORDER BY membership.node_id,scope.scope_id`, tagID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("listing audited nodes assigned tag %s: %w", tagID, err)
+		return nil, nil, nil, fmt.Errorf("listing audited nodes assigned tag %s: %w", tagID, err)
 	}
 	defer func() { _ = rows.Close() }()
 	var (
-		nodeIDs []int64
-		scope   *auditScopeState
+		nodeIDs    []int64
+		candidates []auditedTagCandidate
+		scopeByID  = make(map[string]auditScopeState)
 	)
 	for rows.Next() {
 		var nodeID int64
@@ -92,45 +100,48 @@ func auditedTaggedNodesTx(
 			&nodeID, &current.scopeID, &current.entryCount, &current.chainHead,
 		); err != nil {
 			_ = rows.Close()
-			return nil, nil, fmt.Errorf("scanning audited tag assignment: %w", err)
+			return nil, nil, nil, fmt.Errorf("scanning audited tag assignment: %w", err)
 		}
-		if scope != nil && scope.scopeID != current.scopeID {
-			_ = rows.Close()
-			return nil, nil, fmt.Errorf(
-				"tag definition change affects multiple audit scopes: %w",
-				ErrAuditMutationUnsupported,
-			)
-		}
-		if scope == nil {
-			scope = &current
-		}
+		candidates = append(candidates, auditedTagCandidate{nodeID: nodeID, scopeID: current.scopeID})
+		scopeByID[current.scopeID] = current
 		if len(nodeIDs) == 0 || nodeIDs[len(nodeIDs)-1] != nodeID {
 			nodeIDs = append(nodeIDs, nodeID)
 		}
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
-		return nil, nil, fmt.Errorf("listing audited nodes assigned tag %s: %w", tagID, err)
+		return nil, nil, nil, fmt.Errorf("listing audited nodes assigned tag %s: %w", tagID, err)
 	}
 	if err := rows.Close(); err != nil {
-		return nil, nil, fmt.Errorf("closing audited tag assignment rows: %w", err)
+		return nil, nil, nil, fmt.Errorf("closing audited tag assignment rows: %w", err)
 	}
+	// The query is node-first for canonical event ordering, so collect scope
+	// authority independently and sort it before advancing the scope chains.
+	scopes := make([]auditScopeState, 0, len(scopeByID))
+	for _, scope := range scopeByID {
+		scopes = append(scopes, scope)
+	}
+	slices.SortFunc(scopes, func(left, right auditScopeState) int {
+		return strings.Compare(left.scopeID, right.scopeID)
+	})
 	nodes := make([]Node, len(nodeIDs))
 	for index, nodeID := range nodeIDs {
 		nodes[index], err = nodeByIDTx(tx, nodeID)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 	}
-	return nodes, scope, nil
+	return nodes, candidates, scopes, nil
 }
 
 func persistAuditedTagRename(
 	ctx context.Context, tx *sql.Tx, vaultID, operationID, recordedAt string,
-	nodeSequence int64, authority auditAuthorityState, scope *auditScopeState,
+	nodeSequence int64, authority auditAuthorityState, scopes []auditScopeState,
+	candidates []auditedTagCandidate,
 	priorTag, resultingTag Tag, priorNodes, resultingNodes []Node,
 ) error {
-	if len(priorNodes) != len(resultingNodes) || (len(priorNodes) != 0) != (scope != nil) {
+	if len(priorNodes) != len(resultingNodes) ||
+		(len(candidates) != 0) != (len(scopes) != 0) {
 		return errors.New("audited tag rename has inconsistent affected-node authority")
 	}
 	sequence, err := nextAuditInteger("operation sequence", authority.sequence)
@@ -161,17 +172,22 @@ func persistAuditedTagRename(
 		return err
 	}
 	mutationHash := audit.Absent()
-	if len(priorNodes) != 0 {
-		events := make([]audit.Record, len(priorNodes))
+	if len(candidates) != 0 {
+		priorByID := nodesByID(priorNodes)
+		resultingByID := nodesByID(resultingNodes)
+		events := make([]audit.Record, len(candidates))
 		stateChanges := make([]audit.Record, len(priorNodes))
-		for index := range priorNodes {
+		for index, candidate := range candidates {
 			events[index], err = makeAuditedTagRenameEvent(
-				values, scope.scopeID, uint64(index), priorNodes[index], resultingNodes[index],
+				values, candidate.scopeID, uint64(index), priorByID[candidate.nodeID],
+				resultingByID[candidate.nodeID],
 				priorDefinition, resultingDefinition,
 			)
 			if err != nil {
 				return err
 			}
+		}
+		for index := range priorNodes {
 			stateChanges[index], err = makeAuditMemberStateChange(
 				priorNodes[index], resultingNodes[index],
 			)
@@ -210,7 +226,7 @@ func persistAuditedTagRename(
 			return err
 		}
 		if err := advanceAuditedMutationScopes(
-			ctx, tx, values, []auditScopeState{*scope}, mutationDigest.value,
+			ctx, tx, values, scopes, mutationDigest.value,
 		); err != nil {
 			return err
 		}
@@ -227,6 +243,14 @@ func persistAuditedTagRename(
 		return err
 	}
 	return advanceAuditAuthority(ctx, tx, authority, sequence, allocation)
+}
+
+func nodesByID(nodes []Node) map[int64]Node {
+	result := make(map[int64]Node, len(nodes))
+	for _, node := range nodes {
+		result[node.ID] = node
+	}
+	return result
 }
 
 func makeAuditedTagRenameEvent(

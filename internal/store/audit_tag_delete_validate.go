@@ -13,7 +13,7 @@ type replayedTagDeletion struct {
 	definition  audit.Record
 	assignments map[uint64]audit.Record
 	allNodes    []uint64
-	candidates  []uint64
+	candidates  []replayedAuditedTagCandidate
 	digest      string
 	changeCount uint64
 }
@@ -151,9 +151,6 @@ func (replay *auditedHistoryReplay) validateTagDeletionDelta(
 				"tag deletion includes an assignment for another definition",
 			)
 		}
-		if replay.memberSet[nodeID] {
-			transition.candidates = append(transition.candidates, nodeID)
-		}
 	}
 	expectedNodes, err := replay.tagAssignmentNodes(transition.tagID)
 	if err != nil {
@@ -192,7 +189,8 @@ func (replay *auditedHistoryReplay) tagAssignmentNodes(tagID string) ([]uint64, 
 }
 
 func (replay *auditedHistoryReplay) applyTagDefinitionDelete(
-	vaultID string, mutation, allocation, scopeEntry storedAuditRecord,
+	vaultID string, mutation, allocation storedAuditRecord,
+	scopeIDs []string, scopeEntries map[string]storedAuditRecord,
 	deltaRecords, eventRecords map[string]storedAuditRecord,
 	usedDeltas, usedEvents map[string]bool,
 ) error {
@@ -223,15 +221,24 @@ func (replay *auditedHistoryReplay) applyTagDefinitionDelete(
 	if err != nil {
 		return err
 	}
+	transition.candidates, err = replay.auditedTagDefinitionCandidates(transition.tagID)
+	if err != nil {
+		return err
+	}
 	if len(transition.candidates) == 0 {
 		return errors.New("tag deletion fabricates an audited mutation without affected members")
+	}
+	if err := requireAuditedTagScopeFanout("deletion", scopeIDs, transition.candidates); err != nil {
+		return err
 	}
 	if err := replay.validateTagDeleteEvents(
 		mutation.record, operationID, transition, eventRecords, usedEvents,
 	); err != nil {
 		return err
 	}
-	if err := replay.validateMemberStateChanges(mutation.record, transition.candidates); err != nil {
+	if err := replay.validateMemberStateChanges(
+		mutation.record, auditedTagCandidateNodeIDs(transition.candidates),
+	); err != nil {
 		return err
 	}
 	bindings, err := auditRecordListField(mutation.record, "baselines")
@@ -261,7 +268,7 @@ func (replay *auditedHistoryReplay) applyTagDefinitionDelete(
 	); err != nil {
 		return err
 	}
-	if err := replay.advanceScope(vaultID, mutation, scopeEntry); err != nil {
+	if err := replay.advanceScopes(vaultID, mutation, scopeIDs, scopeEntries); err != nil {
 		return err
 	}
 	if err := replay.advanceAllocation(
@@ -284,8 +291,8 @@ func (replay *auditedHistoryReplay) validateTagDeleteEvents(
 		return errors.New("tag deletion event set does not match assigned audited nodes")
 	}
 	ordinal := uint64(0)
-	for _, nodeID := range transition.candidates {
-		state := replay.states[nodeID]
+	for _, candidate := range transition.candidates {
+		state := replay.states[candidate.nodeID]
 		revision, err := auditUnsignedField(state, "node_revision")
 		if err != nil {
 			return err
@@ -299,7 +306,7 @@ func (replay *auditedHistoryReplay) validateTagDeleteEvents(
 			attachment audit.Record
 		}{
 			{"tag_delete", transition.definition},
-			{"tag_unassign", transition.assignments[nodeID]},
+			{"tag_unassign", transition.assignments[candidate.nodeID]},
 		}
 		for _, item := range expected {
 			event := events[ordinal]
@@ -309,8 +316,8 @@ func (replay *auditedHistoryReplay) validateTagDeleteEvents(
 				return err
 			}
 			if err := validateTagDeleteEvent(
-				mutation, event, operationID, ordinal, nodeID, revision, current,
-				replay.scopeID, item.kind, item.attachment,
+				mutation, event, operationID, ordinal, candidate.nodeID, revision, current,
+				candidate.scopeID, item.kind, item.attachment,
 			); err != nil {
 				return err
 			}
@@ -378,5 +385,7 @@ func (replay *auditedHistoryReplay) applyTagDeletionState(
 		}
 		delete(replay.attachments, key)
 	}
-	return replay.applyTagAffectedNodeState(transition.candidates, mutation)
+	return replay.applyTagAffectedNodeState(
+		auditedTagCandidateNodeIDs(transition.candidates), mutation,
+	)
 }

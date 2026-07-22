@@ -337,11 +337,12 @@ func validateAuditedHistory(
 		if topologyErr != nil {
 			return fmt.Errorf("validating audit operation %d: %w", sequence, topologyErr)
 		}
-		mutationScopeID, scopeErr := auditMutationScopeID(mutation.record)
+		mutationScopeIDs, scopeErr := auditMutationScopeIDs(mutation.record)
 		if scopeErr != nil {
 			return fmt.Errorf("validating audit operation %d: %w", sequence, scopeErr)
 		}
-		if len(bindings) != 0 && topologyValue.IsAbsent() && replay.scopes[mutationScopeID] == nil {
+		if len(bindings) != 0 && topologyValue.IsAbsent() && len(mutationScopeIDs) == 1 &&
+			replay.scopes[mutationScopeIDs[0]] == nil {
 			err = replay.applyAdditionalScopeEnrollment(
 				vaultID, mutation, allocation, scopes, entries, baselines, events,
 				usedBaselines, usedEvents,
@@ -351,13 +352,24 @@ func validateAuditedHistory(
 			}
 			continue
 		}
-		if err := replay.activateScope(mutationScopeID); err != nil {
-			return fmt.Errorf("validating audit operation %d: %w", sequence, err)
+		if len(mutationScopeIDs) > 1 && (len(bindings) != 0 || !topologyValue.IsAbsent()) {
+			return fmt.Errorf(
+				"validating audit operation %d: cross-scope mutation has unsupported topology or baselines",
+				sequence,
+			)
 		}
-		scopeEntry, ok := entries[mutationScopeID][replay.scopeEntryCount+1]
-		if !ok {
-			return fmt.Errorf("validating audit operation %d: audit scope chain is incomplete", sequence)
+		scopeEntries := make(map[string]storedAuditRecord, len(mutationScopeIDs))
+		for _, scopeID := range mutationScopeIDs {
+			if err := replay.activateScope(scopeID); err != nil {
+				return fmt.Errorf("validating audit operation %d: %w", sequence, err)
+			}
+			scopeEntry, ok := entries[scopeID][replay.scopeEntryCount+1]
+			if !ok {
+				return fmt.Errorf("validating audit operation %d: audit scope chain is incomplete", sequence)
+			}
+			scopeEntries[scopeID] = scopeEntry
 		}
+		scopeEntry := scopeEntries[mutationScopeIDs[0]]
 		if len(bindings) == 0 && topologyValue.IsAbsent() {
 			attachedCount, attachedErr := auditUnsignedField(
 				mutation.record, auditAttachedMetadataChangeCountField,
@@ -370,14 +382,16 @@ func validateAuditedHistory(
 					err = kindErr
 				} else if kind == "tag_rename" {
 					err = replay.applyTagDefinitionRename(
-						vaultID, mutation, allocation, scopeEntry,
+						vaultID, mutation, allocation, mutationScopeIDs, scopeEntries,
 						attachmentDeltas, events, usedAttachmentDeltas, usedEvents,
 					)
 				} else if kind == "tag_delete" {
 					err = replay.applyTagDefinitionDelete(
-						vaultID, mutation, allocation, scopeEntry,
+						vaultID, mutation, allocation, mutationScopeIDs, scopeEntries,
 						attachmentDeltas, events, usedAttachmentDeltas, usedEvents,
 					)
+				} else if len(mutationScopeIDs) != 1 {
+					err = errors.New("cross-scope attached-metadata mutation is unsupported")
 				} else {
 					err = replay.applyTagAssignment(
 						vaultID, mutation, allocation, scopeEntry,
@@ -385,17 +399,34 @@ func validateAuditedHistory(
 					)
 				}
 			} else {
+				if len(mutationScopeIDs) != 1 {
+					return fmt.Errorf(
+						"validating audit operation %d: cross-scope content mutation is unsupported",
+						sequence,
+					)
+				}
 				err = replay.applyContentTransition(
 					vaultID, mutation, allocation, scopeEntry, events, usedEvents,
 				)
 			}
 		} else if len(bindings) != 0 {
+			if len(mutationScopeIDs) != 1 {
+				return fmt.Errorf(
+					"validating audit operation %d: cross-scope enrollment is unsupported", sequence,
+				)
+			}
 			err = replay.applyNodeCreation(
 				vaultID, mutation, allocation, scopeEntry,
 				baselines, topologyDeltas, attachmentDeltas, events, usedBaselines,
 				usedTopologyDeltas, usedAttachmentDeltas, usedEvents,
 			)
 		} else {
+			if len(mutationScopeIDs) != 1 {
+				return fmt.Errorf(
+					"validating audit operation %d: cross-scope topology mutation is unsupported",
+					sequence,
+				)
+			}
 			kind, kindErr := classifyAuditedTopologyMutation(mutation.record, topologyDeltas)
 			if kindErr != nil {
 				err = kindErr
@@ -1001,41 +1032,43 @@ func auditScopeRecordsByScope(
 	return result, nil
 }
 
-func auditMutationScopeID(mutation audit.Record) (string, error) {
-	var scopeID string
+func auditMutationScopeIDs(mutation audit.Record) ([]string, error) {
+	scopeSet := make(map[string]bool)
 	consider := func(record audit.Record) error {
 		candidate, err := auditUUIDField(record, auditScopeIDField)
 		if err != nil {
 			return err
 		}
-		if scopeID != "" && scopeID != candidate {
-			return errors.New("audit mutation spans multiple scopes")
-		}
-		scopeID = candidate
+		scopeSet[candidate] = true
 		return nil
 	}
 	bindings, err := auditRecordListField(mutation, "baselines")
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	for _, binding := range bindings {
 		if err := consider(binding); err != nil {
-			return "", err
+			return nil, err
 		}
 	}
 	events, err := auditRecordListField(mutation, "events")
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	for _, event := range events {
 		if err := consider(event); err != nil {
-			return "", err
+			return nil, err
 		}
 	}
-	if scopeID == "" {
-		return "", errors.New("audited mutation has no scope identity")
+	if len(scopeSet) == 0 {
+		return nil, errors.New("audited mutation has no scope identity")
 	}
-	return scopeID, nil
+	scopeIDs := make([]string, 0, len(scopeSet))
+	for scopeID := range scopeSet {
+		scopeIDs = append(scopeIDs, scopeID)
+	}
+	slices.Sort(scopeIDs)
+	return scopeIDs, nil
 }
 
 func auditEventRecordsByID(records []storedAuditRecord) (map[string]storedAuditRecord, error) {
@@ -1360,6 +1393,28 @@ func (replay *auditedHistoryReplay) advanceScope(
 		return err
 	}
 	replay.scopeEntryCount, replay.scopeHead = nextCount, entry.digest
+	return nil
+}
+
+func (replay *auditedHistoryReplay) advanceScopes(
+	vaultID string, mutation storedAuditRecord, scopeIDs []string,
+	entries map[string]storedAuditRecord,
+) error {
+	if len(scopeIDs) == 0 || len(scopeIDs) != len(entries) {
+		return errors.New("audited mutation has inconsistent scope-chain authority")
+	}
+	for _, scopeID := range scopeIDs {
+		if err := replay.activateScope(scopeID); err != nil {
+			return err
+		}
+		entry, ok := entries[scopeID]
+		if !ok {
+			return fmt.Errorf("audited mutation lacks scope-chain entry for %s", scopeID)
+		}
+		if err := replay.advanceScope(vaultID, mutation, entry); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
