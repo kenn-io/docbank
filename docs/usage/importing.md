@@ -225,6 +225,14 @@ source does not overwrite a later edit or revert after daemon restart. Removing
 the source leaves the archived node alone. A renamed source-relative path is a
 new identity, not an implicit move.
 
+For an agent-session archive, use the source tree itself for the organization
+you want to retain. For example,
+`~/agent-sessions/codex/project-alpha/2026/07/session-01.jsonl` becomes
+`/archives/agents/codex/project-alpha/2026/07/session-01.jsonl` with the
+configuration above. Docbank does not reinterpret a vendor's session format:
+the relative path and source facts remain exact, while each accepted byte
+change becomes an immutable version of that document.
+
 Use `docbank provenance <path-or-id>` to inspect the retained watch identity,
 source-relative path, and immutable supersession history for an imported node.
 JSONL session content up to the normal extraction limit is indexed by the
@@ -232,6 +240,8 @@ built-in plain-text worker, so ordinary `docbank search` can find archived
 session text without a vendor-specific parser. The optional `[storage]`
 schedule packs accumulated small files with a finite per-run budget. It does
 not delete source files, prune versions, run GC, or rewrite existing packs.
+Portable [backup and restore](backup.md) preserve the mirrored hierarchy,
+source provenance, every retained version, and its verified bytes.
 
 The destination is exact rather than collision-suffixed. If unrelated content
 already occupies the intended path, or the previously mapped node is in the
