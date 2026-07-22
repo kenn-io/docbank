@@ -72,6 +72,12 @@ different content already stored there. It requires the expected SHA-256 and
 size. An exact retry is idempotent; a different byte identity, media type, or
 node kind returns `ErrContentConflict` without appending a version:
 
+!!! info "Release availability"
+
+    Embedded source provenance is newer than v0.10.1. Build from `main` to use
+    `CreateOptions.Provenance` and `Vault.Provenance` until the next release is
+    tagged.
+
 ```go
 receipt, err := vault.Create(ctx, "/records/immutable.jsonl", reader,
     docbank.CreateOptions{
