@@ -173,6 +173,11 @@ the stable ID as `under_node_id`. The selected directory is excluded; all
 descendant name and content candidates share the same constraint. Retain the
 echoed ID as authority instead of treating the directory's mutable path as the
 filter identity.
+Use `modified_since` and `modified_before` for an absolute current-node time
+window. The first bound is inclusive and the second exclusive. Both accept
+RFC3339 offsets; the response echoes canonical UTC values. These fields refer
+to the live node's `modified_at`, not source-file provenance or historical
+content-version time.
 
 ```bash
 curl --fail-with-body --get \
@@ -181,6 +186,8 @@ curl --fail-with-body --get \
   --data 'tag_id=<tag-uuid>' \
   --data-urlencode 'mime_type=application/pdf' \
   --data 'under_node_id=42' \
+  --data-urlencode 'modified_since=2026-01-01T00:00:00Z' \
+  --data-urlencode 'modified_before=2026-04-01T00:00:00Z' \
   --data 'limit=100' \
   "$DOCBANK_URL/api/v1/search"
 ```

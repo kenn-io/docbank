@@ -1084,6 +1084,15 @@ func TestSearchCLI(t *testing.T) {
 		formatNodeSelector(inbox.Directory.ID))
 	require.NoError(t, err, out)
 	assert.NotContains(t, out, "/other/")
+
+	out, err = runCLI(t, "search", "insurance",
+		"--modified-since", "2000-01-01T00:00:00-05:00",
+		"--modified-before", "2100-01-01T00:00:00Z", "--json")
+	require.NoError(t, err, out)
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	assert.Equal(t, "2000-01-01T05:00:00.000000000Z", report.ModifiedSince)
+	assert.Equal(t, "2100-01-01T00:00:00.000000000Z", report.ModifiedBefore)
+	require.Len(t, report.Hits, 3)
 }
 
 func TestSearchCLIReportsTruncation(t *testing.T) {

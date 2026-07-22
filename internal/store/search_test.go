@@ -303,6 +303,65 @@ func TestSearchPageFiltersDescendantsByStableDirectory(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
+func TestSearchPageFiltersByModificationTime(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	old, err := s.CreateFile(
+		ctx, s.RootID(), "quarterly-old.txt", fakeHash("eb"), 4, "text/plain",
+	)
+	require.NoError(t, err)
+	nameMatch, err := s.CreateFile(
+		ctx, s.RootID(), "quarterly-current.txt", fakeHash("fc"), 4, "text/plain",
+	)
+	require.NoError(t, err)
+	contentMatch, err := s.CreateFile(
+		ctx, s.RootID(), "notes.txt", fakeHash("0d"), 4, "text/plain",
+	)
+	require.NoError(t, err)
+	boundary, err := s.CreateFile(
+		ctx, s.RootID(), "quarterly-boundary.txt", fakeHash("1e"), 4, "text/plain",
+	)
+	require.NoError(t, err)
+	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+		BlobHash: contentMatch.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: "quarterly notes",
+	}))
+	for id, stamp := range map[int64]string{
+		old.ID:          "2026-01-01T00:00:00.000000000Z",
+		nameMatch.ID:    "2026-01-02T00:00:00.000000000Z",
+		contentMatch.ID: "2026-01-02T12:00:00.000000000Z",
+		boundary.ID:     "2026-01-03T00:00:00.000000000Z",
+	} {
+		_, err = s.db.ExecContext(ctx, `UPDATE nodes SET modified_at=? WHERE id=?`, stamp, id)
+		require.NoError(t, err)
+	}
+
+	hits, truncated, err := s.SearchPageWithOptions(ctx, "quarterly", 10, SearchOptions{
+		ModifiedSince:  "2026-01-01T19:00:00-05:00",
+		ModifiedBefore: "2026-01-03T00:00:00Z",
+	})
+	require.NoError(t, err)
+	assert.False(t, truncated)
+	require.Len(t, hits, 2)
+	assert.Equal(t, nameMatch.ID, hits[0].Node.ID)
+	assert.Equal(t, SearchMatchName, hits[0].Match)
+	assert.Equal(t, contentMatch.ID, hits[1].Node.ID)
+	assert.Equal(t, SearchMatchContent, hits[1].Match)
+
+	since, before, err := NormalizeSearchTimeBounds(
+		"2026-01-01T19:00:00-05:00", "2026-01-03T01:00:00+01:00",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "2026-01-02T00:00:00.000000000Z", since)
+	assert.Equal(t, "2026-01-03T00:00:00.000000000Z", before)
+	_, _, err = NormalizeSearchTimeBounds("yesterday", "")
+	require.ErrorContains(t, err, "absolute RFC3339 timestamp")
+	_, _, err = NormalizeSearchTimeBounds(
+		"2026-01-03T00:00:00Z", "2026-01-03T00:00:00Z",
+	)
+	require.ErrorContains(t, err, "must be earlier")
+}
+
 func TestSearchContentFollowsStableNameMatches(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()

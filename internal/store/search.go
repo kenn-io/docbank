@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"mime"
 	"strings"
+	"time"
 )
 
 // SearchHit is a search result with its display path.
@@ -19,11 +20,14 @@ type SearchHit struct {
 // SearchOptions narrows ranked search without changing its name-before-content
 // ordering. TagID identifies one required assignment; MIMEType selects the
 // current file version's parameter-free base media type; UnderNodeID selects
-// descendants of one live directory.
+// descendants of one live directory. ModifiedSince is inclusive and
+// ModifiedBefore is exclusive; both accept absolute RFC3339 timestamps.
 type SearchOptions struct {
-	TagID       string
-	MIMEType    string
-	UnderNodeID int64
+	TagID          string
+	MIMEType       string
+	UnderNodeID    int64
+	ModifiedSince  string
+	ModifiedBefore string
 }
 
 const (
@@ -85,6 +89,14 @@ func (s *Store) SearchPageWithOptions(
 			return nil, false, fmt.Errorf("search scope node %d: %w", opts.UnderNodeID, ErrNotDir)
 		}
 	}
+	modifiedSince, modifiedBefore, err := NormalizeSearchTimeBounds(
+		opts.ModifiedSince, opts.ModifiedBefore,
+	)
+	if err != nil {
+		return nil, false, err
+	}
+	opts.ModifiedSince = modifiedSince
+	opts.ModifiedBefore = modifiedBefore
 	fq := ftsQuery(query)
 	if fq == "" {
 		return nil, false, nil
@@ -198,7 +210,44 @@ func searchFilterSQL(opts SearchOptions) (string, []any) {
 		)`)
 		args = append(args, opts.UnderNodeID)
 	}
+	if opts.ModifiedSince != "" {
+		clauses = append(clauses, `AND n.modified_at>=?`)
+		args = append(args, opts.ModifiedSince)
+	}
+	if opts.ModifiedBefore != "" {
+		clauses = append(clauses, `AND n.modified_at<?`)
+		args = append(args, opts.ModifiedBefore)
+	}
 	return strings.Join(clauses, "\n"), args
+}
+
+// NormalizeSearchTimeBounds accepts optional absolute RFC3339 timestamps and
+// returns canonical UTC bounds. The half-open interval makes adjacent searches
+// compose without duplicate boundary results.
+func NormalizeSearchTimeBounds(modifiedSince, modifiedBefore string) (string, string, error) {
+	since, err := normalizeSearchTimestamp("modified_since", modifiedSince)
+	if err != nil {
+		return "", "", err
+	}
+	before, err := normalizeSearchTimestamp("modified_before", modifiedBefore)
+	if err != nil {
+		return "", "", err
+	}
+	if since != "" && before != "" && since >= before {
+		return "", "", errors.New("modified_since must be earlier than modified_before")
+	}
+	return since, before, nil
+}
+
+func normalizeSearchTimestamp(field, value string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return "", fmt.Errorf("%s %q must be an absolute RFC3339 timestamp: %w", field, value, err)
+	}
+	return parsed.UTC().Format(timestampLayout), nil
 }
 
 // NormalizeSearchMIMEType accepts one parameter-free media type and returns

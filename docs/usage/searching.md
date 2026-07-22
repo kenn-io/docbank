@@ -11,6 +11,8 @@ docbank search tax 2026
 docbank search return --tag taxes
 docbank search report --mime-type application/pdf
 docbank search receipt --under /taxes/2026
+docbank search report --modified-since 2026-01-01T00:00:00Z
+docbank search report --modified-before 2026-04-01T00:00:00Z
 docbank search report --limit 200
 docbank search report --json
 ```
@@ -52,6 +54,13 @@ id:198     content  /taxes/2026/car-insurance-notes.md
   selector to its stable node ID before searching; JSON echoes that ID as
   `under_node_id`. The selected directory itself is not a result, and moving or
   renaming it does not change its identity.
+- **Current modification time.** `--modified-since <timestamp>` includes nodes
+  modified at or after an absolute RFC3339 timestamp;
+  `--modified-before <timestamp>` excludes that timestamp and everything after
+  it. Together they form a half-open interval, so adjacent searches do not
+  duplicate a boundary result. Inputs with an explicit offset are normalized
+  to UTC and echoed in JSON. The bounds apply to the live node's current
+  `modified_at`, not filesystem provenance or the age of retained versions.
 
 For scripts, `--json` returns `hits`, `limit`, and `truncated` without table
 formatting. `hits` is always an array, including when nothing matches.
@@ -71,8 +80,8 @@ daemon job reaches it. A transient open, read, or verification error leaves the
 item queued and is retried on a bounded delay; it does not become a permanent
 extraction failure. `docbank jobs` shows whether that worker is running.
 
-PDF text layers, office formats, OCR, and date search filters are not
-yet available. Their absence never changes name-search results or document authority.
+PDF text layers, office formats, and OCR are not yet available. Their absence
+never changes name-search results or document authority.
 
 Next: organize documents beyond paths with
 [Organizing & Tagging](organizing.md), or see every search flag in the
