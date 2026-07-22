@@ -68,6 +68,7 @@ var storeErrCodes = []struct {
 	{store.ErrNotFile, http.StatusUnprocessableEntity, "not_file"},
 	{store.ErrInvalidName, http.StatusUnprocessableEntity, "invalid_name"},
 	{store.ErrInvalidTag, http.StatusUnprocessableEntity, "invalid_tag"},
+	{store.ErrInvalidBatchMove, http.StatusUnprocessableEntity, "invalid_batch_move"},
 	{store.ErrNotTrashed, http.StatusUnprocessableEntity, "not_trashed"},
 	{store.ErrIsRoot, http.StatusUnprocessableEntity, "is_root"},
 	{store.ErrVersionNodeMismatch, http.StatusUnprocessableEntity, "version_node_mismatch"},

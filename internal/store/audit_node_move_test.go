@@ -91,6 +91,45 @@ func TestAuditedInScopeRenameRecordsOnePathEffect(t *testing.T) {
 	assert.Equal(t, int64(1), effects)
 }
 
+func TestAuditedBatchMoveRecordsOneAtomicFinalTopology(t *testing.T) {
+	s := newAuditedMoveStore(t)
+	report, err := s.NodeByPath(t.Context(), "/Projects/report.txt")
+	require.NoError(t, err)
+	child, err := s.NodeByPath(t.Context(), "/Projects/Work/child.txt")
+	require.NoError(t, err)
+
+	results, err := s.BatchMove(t.Context(), []BatchMoveRequest{
+		{NodeID: report.ID, IfRevision: report.Revision, DestinationPath: "/Projects/Work/child.txt"},
+		{NodeID: child.ID, IfRevision: child.Revision, DestinationPath: "/Projects/report.txt"},
+	})
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+	assert.Equal(t, "/Projects/Work/child.txt", results[0].Path)
+	assert.Equal(t, "/Projects/report.txt", results[1].Path)
+	require.NoError(t, s.ValidateMetadata(t.Context()))
+
+	var sequence, moveMutations int64
+	require.NoError(t, s.db.QueryRow(`SELECT
+		(SELECT operation_sequence_high_water FROM audit_authority),
+		(SELECT COUNT(*) FROM audit_records WHERE kind='canonical_mutation')`,
+	).Scan(&sequence, &moveMutations))
+	assert.Equal(t, int64(2), sequence)
+	assert.Equal(t, int64(2), moveMutations, "the complete batch must add one canonical mutation")
+
+	var exported bytes.Buffer
+	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
+	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restored.Close()) })
+	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
+	resolvedReport, err := restored.NodeByPath(t.Context(), "/Projects/Work/child.txt")
+	require.NoError(t, err)
+	assert.Equal(t, report.ID, resolvedReport.ID)
+	resolvedChild, err := restored.NodeByPath(t.Context(), "/Projects/report.txt")
+	require.NoError(t, err)
+	assert.Equal(t, child.ID, resolvedChild.ID)
+}
+
 func TestAuditedRootScopeRenameHandlesRootTimestampTouch(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)

@@ -496,6 +496,34 @@ cycle`. On success human output prints `moved [id:<id>] <new-path>`; `--json`
 returns the complete resulting node, including its stable ID, revision, and
 new path.
 
+### docbank mv batch
+
+```
+docbank mv batch <plan.json|-> [--json]
+```
+
+Applies up to 1,000 moves as one all-or-nothing metadata transaction. A dash
+reads the plan from standard input. Each plan item has `source` (an absolute
+virtual path or `id:<number>`) and an absolute `destination`:
+
+```json
+{"moves":[
+  {"source":"/inbox/a.pdf","destination":"/filed/b.pdf"},
+  {"source":"id:42","destination":"/inbox/a.pdf"}
+]}
+```
+
+Sources are interpreted from the transaction's initial tree. A batch
+destination is always the exact final coordinate, and its parent is resolved
+in the planned final tree: unlike ordinary `mv`, an existing directory does
+not mean “move into this directory.” Name the retained basename explicitly
+when that is the intent. The complete final tree is
+validated before anything moves, which supports file and directory swaps and
+nested reorganizations without temporary user-visible names. Any missing
+source or parent, stale ID revision, collision, or cycle rejects the entire
+plan. Human output reports the stable ID and quoted old/new paths in request
+order; `--json` returns the same bounded receipt set as structured data.
+
 ## docbank rm
 
 ```

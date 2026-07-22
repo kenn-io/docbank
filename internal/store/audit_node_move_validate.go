@@ -113,12 +113,13 @@ func (replay *auditedHistoryReplay) validateNodeMoveTopology(
 	if err != nil {
 		return replayedTopologyMutation{}, err
 	}
-	if len(changes) < 2 || len(changes) > 3 {
-		return replayedTopologyMutation{}, errors.New("in-scope move topology must change two or three nodes")
+	if len(changes) < 2 {
+		return replayedTopologyMutation{}, errors.New("in-scope move topology must change at least two nodes")
 	}
 	postTopology := slices.Clone(replay.topology)
 	changedIDs := make([]uint64, 0, len(changes))
-	var movedID, oldParentID, newParentID uint64
+	var movedIDs []uint64
+	requiredParents := make(map[uint64]bool)
 	for _, change := range changes {
 		nodeID, err := auditUnsignedField(change, metadataNodeIDField)
 		if err != nil {
@@ -143,10 +144,8 @@ func (replay *auditedHistoryReplay) validateNodeMoveTopology(
 			return replayedTopologyMutation{}, err
 		}
 		if pathChanged {
-			if movedID != 0 {
-				return replayedTopologyMutation{}, errors.New("node move topology changes multiple paths directly")
-			}
-			movedID, oldParentID, newParentID = nodeID, priorParent, resultingParent
+			movedIDs = append(movedIDs, nodeID)
+			requiredParents[priorParent], requiredParents[resultingParent] = true, true
 		}
 		postTopology[index] = *post
 		changedIDs = append(changedIDs, nodeID)
@@ -156,33 +155,37 @@ func (replay *auditedHistoryReplay) validateNodeMoveTopology(
 			"node move topology changes are not in canonical node order",
 		)
 	}
-	if movedID == 0 || !slices.Contains(changedIDs, oldParentID) ||
-		!slices.Contains(changedIDs, newParentID) {
-		return replayedTopologyMutation{}, errors.New("node move topology lacks its changed parent state")
+	if len(movedIDs) == 0 {
+		return replayedTopologyMutation{}, errors.New("node move topology changes no path directly")
 	}
-	wantChanges := 2
-	if oldParentID != newParentID {
-		wantChanges = 3
+	expectedChanges := make(map[uint64]bool, len(movedIDs)+len(requiredParents))
+	for _, nodeID := range movedIDs {
+		expectedChanges[nodeID] = true
 	}
-	if len(changes) != wantChanges {
+	for parentID := range requiredParents {
+		expectedChanges[parentID] = true
+		if !slices.Contains(changedIDs, parentID) {
+			return replayedTopologyMutation{}, errors.New("node move topology lacks a changed parent state")
+		}
+		if err := requireLiveDirectoryTopology(postTopology, parentID); err != nil {
+			return replayedTopologyMutation{}, err
+		}
+	}
+	if len(changes) != len(expectedChanges) {
 		return replayedTopologyMutation{}, errors.New("node move topology has an unexpected changed-node set")
 	}
-	if err := requireLiveDirectoryTopology(postTopology, oldParentID); err != nil {
-		return replayedTopologyMutation{}, err
-	}
-	if err := requireLiveDirectoryTopology(postTopology, newParentID); err != nil {
-		return replayedTopologyMutation{}, err
-	}
-	affectsTrashOrigin, err := auditMoveAffectsTrashOrigin(
-		replay.topology, replay.memberSet, movedID,
-	)
-	if err != nil {
-		return replayedTopologyMutation{}, err
-	}
-	if affectsTrashOrigin {
-		return replayedTopologyMutation{}, errors.New(
-			"node move changes a retained trash-origin path without recording trash effects",
+	for _, movedID := range movedIDs {
+		affectsTrashOrigin, err := auditMoveAffectsTrashOrigin(
+			replay.topology, replay.memberSet, movedID,
 		)
+		if err != nil {
+			return replayedTopologyMutation{}, err
+		}
+		if affectsTrashOrigin {
+			return replayedTopologyMutation{}, errors.New(
+				"node move changes a retained trash-origin path without recording trash effects",
+			)
+		}
 	}
 	if err := validateReplayedAuditTopology(postTopology); err != nil {
 		return replayedTopologyMutation{}, fmt.Errorf("validating node move topology: %w", err)

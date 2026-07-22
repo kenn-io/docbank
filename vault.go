@@ -48,6 +48,7 @@ var (
 	ErrStaleRevision            = store.ErrStaleRevision
 	ErrCycle                    = store.ErrCycle
 	ErrInvalidName              = store.ErrInvalidName
+	ErrInvalidBatchMove         = store.ErrInvalidBatchMove
 	ErrNotTrashed               = store.ErrNotTrashed
 	ErrIsRoot                   = store.ErrIsRoot
 	ErrAuditMutationUnsupported = store.ErrAuditMutationUnsupported
@@ -319,6 +320,41 @@ func (v *Vault) MovePath(
 		return MutationReceipt{}, err
 	}
 	return MutationReceipt{Node: fromStoreNode(node), Path: canonicalPath}, nil
+}
+
+// BatchMove validates and applies one final-state reorganization as a single
+// metadata transaction. Results preserve request order. Path sources resolve
+// inside the transaction; stable node sources require a positive revision.
+func (v *Vault) BatchMove(
+	ctx context.Context, moves []BatchMoveItem,
+) ([]BatchMoveReceipt, error) {
+	if err := v.begin(); err != nil {
+		return nil, err
+	}
+	defer v.lifecycle.RUnlock()
+	requests := make([]store.BatchMoveRequest, len(moves))
+	for index, move := range moves {
+		requests[index] = store.BatchMoveRequest{
+			SourcePath: move.SourcePath, NodeID: move.NodeID, IfRevision: move.IfRevision,
+			DestinationPath: move.DestinationPath,
+		}
+	}
+	v.mutation.Lock()
+	defer v.mutation.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	results, err := v.metadata.BatchMove(ctx, requests)
+	if err != nil {
+		return nil, err
+	}
+	receipts := make([]BatchMoveReceipt, len(results))
+	for index, result := range results {
+		receipts[index] = BatchMoveReceipt{
+			Node: fromStoreNode(result.Node), FromPath: result.FromPath, Path: result.Path,
+		}
+	}
+	return receipts, nil
 }
 
 // TrashPath moves one live path and its subtree to trash, returning the

@@ -65,6 +65,7 @@ func commandExitCode(err error, started bool) int {
 		return exitBusy
 	}
 	if errors.Is(err, store.ErrInvalidName) || errors.Is(err, store.ErrInvalidTag) ||
+		errors.Is(err, store.ErrInvalidBatchMove) ||
 		errors.Is(err, store.ErrInvalidVersionPrune) ||
 		errors.Is(err, store.ErrInvalidAuditCursor) {
 		return exitUsage

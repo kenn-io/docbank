@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -849,6 +850,54 @@ func TestMvIntoDirAndRename(t *testing.T) {
 	out, err = runCLI(t, "ls", "/inbox")
 	require.NoError(t, err)
 	assert.NotContains(t, out, "b.txt", "moved source must be vacated")
+}
+
+func TestMvBatchAppliesOnePlan(t *testing.T) {
+	setupVaultHome(t)
+	firstSource := writeSourceFile(t, "first.txt", "first")
+	secondSource := writeSourceFile(t, "second.txt", "second")
+	_, err := runCLI(t, "add", firstSource, "--dest", "/left")
+	require.NoError(t, err)
+	_, err = runCLI(t, "add", secondSource, "--dest", "/right")
+	require.NoError(t, err)
+	c, err := client.Ensure(context.Background())
+	require.NoError(t, err)
+	second, err := c.Stat(context.Background(), "/right/second.txt")
+	require.NoError(t, err)
+	plan := filepath.Join(t.TempDir(), "move-plan.json")
+	planBody := fmt.Sprintf(`{"moves":[
+		{"source":"/left/first.txt","destination":"/right/second.txt"},
+		{"source":"id:%d","destination":"/left/first.txt"}
+	]}`, second.ID)
+	require.NoError(t, os.WriteFile(plan, []byte(planBody), 0o600))
+
+	out, err := runCLI(t, "mv", "batch", plan)
+	require.NoError(t, err)
+	assert.Contains(t, out, `"/left/first.txt" -> "/right/second.txt"`)
+	assert.Contains(t, out, `"/right/second.txt" -> "/left/first.txt"`)
+	out, err = runCLI(t, "cat", "/right/second.txt")
+	require.NoError(t, err)
+	assert.Equal(t, "first", out)
+	out, err = runCLI(t, "cat", "/left/first.txt")
+	require.NoError(t, err)
+	assert.Equal(t, "second", out)
+}
+
+func TestMvBatchRejectsUnknownPlanFieldsBeforeDaemonStart(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("DOCBANK_HOME", home)
+	plan := filepath.Join(t.TempDir(), "move-plan.json")
+	require.NoError(t, os.WriteFile(plan, []byte(
+		`{"moves":[{"source":"/a","destination":"/b","surprise":true}]}`), 0o600))
+
+	_, err := runCLI(t, "mv", "batch", plan)
+	require.Error(t, err)
+	var classified *exitError
+	require.ErrorAs(t, err, &classified)
+	assert.Equal(t, exitUsage, classified.code)
+	records, listErr := client.RuntimeStore(home).List()
+	require.NoError(t, listErr)
+	assert.Empty(t, records)
 }
 
 func TestMvOntoSelfFails(t *testing.T) {

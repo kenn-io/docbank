@@ -76,6 +76,28 @@ type MutationReceipt struct {
 	Path string `json:"path"`
 }
 
+// BatchMoveItem identifies one live source either by SourcePath or by stable
+// NodeID plus IfRevision. DestinationPath is an exact final coordinate
+// whose parent is resolved in the batch's planned final tree.
+type BatchMoveItem struct {
+	SourcePath      string `json:"source_path,omitempty"`
+	NodeID          int64  `json:"node_id,omitempty"`
+	IfRevision      int64  `json:"if_revision,omitempty"`
+	DestinationPath string `json:"destination_path"`
+}
+
+// BatchMoveReceipt binds one request to its stable node and transactional
+// pre/post coordinates.
+type BatchMoveReceipt struct {
+	Node     Node   `json:"node"`
+	FromPath string `json:"from_path"`
+	Path     string `json:"path"`
+}
+
+// MaxBatchMoves is the largest all-or-nothing reorganization accepted by one
+// embedded or daemon operation.
+const MaxBatchMoves = store.MaxBatchMoves
+
 // TrashEmptyOptions bounds one trash-empty preview or execution. A zero
 // MaxRoots uses DefaultTrashEmptyMaxRoots. DryRun never deletes candidates.
 type TrashEmptyOptions struct {

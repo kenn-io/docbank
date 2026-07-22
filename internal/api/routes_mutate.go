@@ -160,6 +160,61 @@ func registerMutateRoutes(api huma.API, d Deps, g *gate) {
 		return out, err
 	})
 
+	type batchMoveOutput struct{ Body BatchMoveReport }
+	huma.Register(api, huma.Operation{
+		OperationID: "batchMove", Method: http.MethodPost, Path: "/api/v1/batch/move",
+		Summary: "Apply an all-or-nothing document reorganization",
+		Description: "Every source is resolved against one initial tree. " +
+			"Each destination is an exact final coordinate, and its parent is resolved in the planned final tree. " +
+			"The daemon validates the complete final tree before changing anything, so plans may " +
+			"perform swaps and nested reorganizations without exposing intermediate names. " +
+			"A source uses either source_path or node_id plus revision, never both.",
+	}, func(ctx context.Context, in *struct {
+		Body BatchMoveRequest
+	}) (*batchMoveOutput, error) {
+		moves := make([]store.BatchMoveRequest, len(in.Body.Moves))
+		for index, move := range in.Body.Moves {
+			byPath, byID := move.SourcePath != "", move.NodeID != 0
+			if byPath == byID {
+				return nil, NewError(http.StatusUnprocessableEntity, "invalid_batch_move",
+					fmt.Sprintf("move %d source must use exactly one of source_path or node_id", index))
+			}
+			if byPath {
+				if !strings.HasPrefix(move.SourcePath, "/") || move.Revision != 0 {
+					return nil, NewError(http.StatusUnprocessableEntity, "invalid_batch_move",
+						fmt.Sprintf("move %d path source must be absolute and cannot carry revision", index))
+				}
+			} else if move.NodeID < 1 || move.Revision < 1 {
+				return nil, NewError(http.StatusUnprocessableEntity, "invalid_batch_move",
+					fmt.Sprintf("move %d node source requires positive node_id and revision", index))
+			}
+			if !strings.HasPrefix(move.DestinationPath, "/") {
+				return nil, NewError(http.StatusUnprocessableEntity, "invalid_batch_move",
+					fmt.Sprintf("move %d destination_path must be absolute", index))
+			}
+			moves[index] = store.BatchMoveRequest{
+				SourcePath: move.SourcePath, NodeID: move.NodeID, IfRevision: move.Revision,
+				DestinationPath: move.DestinationPath,
+			}
+		}
+		var output *batchMoveOutput
+		err := g.mutate(func() error {
+			results, err := d.Store.BatchMove(ctx, moves)
+			if err != nil {
+				return FromStoreError(err)
+			}
+			report := BatchMoveReport{Items: make([]BatchMoveReceipt, len(results))}
+			for index, result := range results {
+				node := fromStoreNode(result.Node)
+				node.Path = result.Path
+				report.Items[index] = BatchMoveReceipt{FromPath: result.FromPath, Node: node}
+			}
+			output = &batchMoveOutput{Body: report}
+			return nil
+		})
+		return output, err
+	})
+
 	huma.Register(api, huma.Operation{
 		OperationID: "trashNode", Method: http.MethodPost, Path: "/api/v1/nodes/{id}/trash",
 		Summary: "Move a node and its subtree to the trash",
