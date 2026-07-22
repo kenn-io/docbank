@@ -179,6 +179,71 @@ func TestSearchPageFiltersNameAndContentMatchesByTag(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
+func TestSearchPageFiltersCurrentMediaTypeWithParameters(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	tag, err := s.CreateTag(ctx, "reviewed")
+	require.NoError(t, err)
+	nameMatch, err := s.CreateFile(
+		ctx, s.RootID(), "quarterly-return.txt", fakeHash("d4"), 4, "text/plain",
+	)
+	require.NoError(t, err)
+	contentMatch, err := s.CreateFile(
+		ctx, s.RootID(), "notes.bin", fakeHash("e5"), 4, "text/plain; charset=utf-8",
+	)
+	require.NoError(t, err)
+	untaggedText, err := s.CreateFile(
+		ctx, s.RootID(), "quarterly-draft.txt", fakeHash("f6"), 4, "text/plain; charset=us-ascii",
+	)
+	require.NoError(t, err)
+	_, err = s.CreateFile(
+		ctx, s.RootID(), "quarterly-scan.pdf", fakeHash("a7"), 4, "application/pdf",
+	)
+	require.NoError(t, err)
+	_, err = s.Mkdir(ctx, s.RootID(), "quarterly-folder")
+	require.NoError(t, err)
+	_, err = s.AssignTag(ctx, tag.ID, nameMatch.ID, nameMatch.Revision)
+	require.NoError(t, err)
+	_, err = s.AssignTag(ctx, tag.ID, contentMatch.ID, contentMatch.Revision)
+	require.NoError(t, err)
+	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+		BlobHash: contentMatch.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: "quarterly notes",
+	}))
+
+	hits, truncated, err := s.SearchPageWithOptions(
+		ctx, "quarterly", 10, SearchOptions{MIMEType: "TEXT/PLAIN"},
+	)
+	require.NoError(t, err)
+	assert.False(t, truncated)
+	require.Len(t, hits, 3)
+	assert.Equal(t, untaggedText.ID, hits[0].Node.ID)
+	assert.Equal(t, nameMatch.ID, hits[1].Node.ID)
+	assert.Equal(t, contentMatch.ID, hits[2].Node.ID)
+	assert.Equal(t, SearchMatchContent, hits[2].Match)
+
+	hits, _, err = s.SearchPageWithOptions(ctx, "quarterly", 10, SearchOptions{
+		TagID: tag.ID, MIMEType: "text/plain",
+	})
+	require.NoError(t, err)
+	require.Len(t, hits, 2)
+	assert.Equal(t, nameMatch.ID, hits[0].Node.ID)
+	assert.Equal(t, contentMatch.ID, hits[1].Node.ID)
+
+	_, _, err = s.SearchPageWithOptions(
+		ctx, "quarterly", 10, SearchOptions{MIMEType: "text/plain; charset=utf-8"},
+	)
+	require.ErrorContains(t, err, "must not include parameters")
+	_, _, err = s.SearchPageWithOptions(
+		ctx, "quarterly", 10, SearchOptions{MIMEType: "not a media type"},
+	)
+	require.ErrorContains(t, err, "is invalid")
+	_, _, err = s.SearchPageWithOptions(
+		ctx, "quarterly", 10, SearchOptions{MIMEType: "text/*"},
+	)
+	require.ErrorContains(t, err, "must not contain wildcards")
+}
+
 func TestSearchContentFollowsStableNameMatches(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()

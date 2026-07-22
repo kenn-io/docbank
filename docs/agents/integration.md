@@ -164,12 +164,17 @@ permanent. PDF, Office, image, and OCR text extraction are not implemented.
 To restrict the same ranking to one current tag assignment, send the canonical
 tag UUID as `tag_id`; retain the echoed `tag_id` as the filter authority rather
 than relying on the tag's mutable display name.
+To restrict results by the current file version's format, send a valid
+parameter-free base type as `mime_type`. The response echoes its normalized
+spelling. For example, `text/plain` includes stored charset parameters but does
+not match a retained historical version or a directory.
 
 ```bash
 curl --fail-with-body --get \
   -H "X-Api-Key: $DOCBANK_API_KEY" \
   --data-urlencode 'q=tax return' \
   --data 'tag_id=<tag-uuid>' \
+  --data-urlencode 'mime_type=application/pdf' \
   --data 'limit=100' \
   "$DOCBANK_URL/api/v1/search"
 ```

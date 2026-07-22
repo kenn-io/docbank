@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/store"
 )
 
 const (
@@ -19,6 +20,7 @@ var (
 	searchLimit int
 	searchJSON  bool
 	searchTag   string
+	searchMIME  string
 )
 
 var searchCmd = &cobra.Command{
@@ -29,11 +31,15 @@ var searchCmd = &cobra.Command{
 		if searchLimit < 1 || searchLimit > maxSearchLimit {
 			return usageError(fmt.Errorf("--limit must be between 1 and %d", maxSearchLimit))
 		}
+		mimeType, err := store.NormalizeSearchMIMEType(searchMIME)
+		if err != nil {
+			return usageError(err)
+		}
 		c, err := client.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		var opts client.SearchOptions
+		opts := client.SearchOptions{MIMEType: mimeType}
 		var tagName string
 		if searchTag != "" {
 			tag, resolveErr := resolveTag(cmd, c, searchTag)
@@ -53,10 +59,16 @@ var searchCmd = &cobra.Command{
 			return writeCLIJSON(cmd.OutOrStdout(), rep)
 		}
 		if len(rep.Hits) == 0 {
-			if tagName == "" {
-				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "no matches")
-			} else {
+			switch {
+			case tagName != "" && rep.MIMEType != "":
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+					"no matches with tag %q and media type %q\n", tagName, rep.MIMEType)
+			case tagName != "":
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "no matches with tag %q\n", tagName)
+			case rep.MIMEType != "":
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "no matches with media type %q\n", rep.MIMEType)
+			default:
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "no matches")
 			}
 			return nil
 		}
@@ -87,6 +99,8 @@ func init() {
 		"maximum results to return (1-1000)")
 	searchCmd.Flags().StringVar(&searchTag, "tag", "",
 		"require one tag by name or stable ID")
+	searchCmd.Flags().StringVar(&searchMIME, "mime-type", "",
+		"require one current parameter-free media type")
 	searchCmd.Flags().BoolVar(&searchJSON, "json", false, "emit machine-readable JSON")
 	rootCmd.AddCommand(searchCmd)
 }

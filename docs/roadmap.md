@@ -117,7 +117,7 @@ and append later changes to the same stable node without touching source files.
 - Additional and overlapping audit scopes
   ([current workflow](usage/audited-history.md),
   [model](architecture/audited-history.md))
-- MIME/date/path search filters; stable tag filtering is implemented
+- Date/path search filters; stable tag and current MIME filtering are implemented
 - Additional text extraction workers for PDF text layers and office formats;
   bounded UTF-8 text, Markdown, JSON, and JSONL extraction is implemented
 - External integration surface: generalized ingest provenance —

@@ -349,20 +349,27 @@ func registerReadRoutes(api huma.API, d Deps) {
 		Summary: "Search live document names and extracted text",
 		Description: "Name matches retain their established BM25 order and appear first; " +
 			"content-only matches follow in their own BM25 order. Every hit names its match source. " +
-			"An optional stable tag ID requires that assignment for every result.",
+			"An optional stable tag ID requires that assignment for every result. An optional " +
+			"parameter-free MIME type matches the current file version with or without parameters.",
 	}, func(ctx context.Context, in *struct {
-		Q     string `query:"q" required:"true"`
-		Limit int    `query:"limit" default:"50" minimum:"1" maximum:"1000"`
-		TagID string `query:"tag_id" pattern:"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"`
+		Q        string `query:"q" required:"true"`
+		Limit    int    `query:"limit" default:"50" minimum:"1" maximum:"1000"`
+		TagID    string `query:"tag_id" pattern:"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"`
+		MIMEType string `query:"mime_type" maxLength:"255"`
 	}) (*searchOutput, error) {
+		mimeType, err := store.NormalizeSearchMIMEType(in.MIMEType)
+		if err != nil {
+			return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
+		}
 		hits, truncated, err := d.Store.SearchPageWithOptions(
-			ctx, in.Q, in.Limit, store.SearchOptions{TagID: in.TagID},
+			ctx, in.Q, in.Limit, store.SearchOptions{TagID: in.TagID, MIMEType: mimeType},
 		)
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
 		out := &searchOutput{Body: SearchReport{
-			Hits: []SearchHit{}, Limit: in.Limit, Truncated: truncated, TagID: in.TagID,
+			Hits: []SearchHit{}, Limit: in.Limit, Truncated: truncated,
+			TagID: in.TagID, MIMEType: mimeType,
 		}}
 		for _, h := range hits {
 			out.Body.Hits = append(out.Body.Hits, SearchHit{

@@ -1058,6 +1058,12 @@ func TestSearchCLI(t *testing.T) {
 	assert.Equal(t, tag.ID, report.TagID)
 	require.Len(t, report.Hits, 1)
 	assert.Equal(t, "/inbox/insurance-2026.txt", report.Hits[0].Path)
+
+	out, err = runCLI(t, "search", "insurance", "--mime-type", "TEXT/PLAIN", "--json")
+	require.NoError(t, err, out)
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	assert.Equal(t, "text/plain", report.MIMEType)
+	require.Len(t, report.Hits, 2)
 }
 
 func TestSearchCLIReportsTruncation(t *testing.T) {

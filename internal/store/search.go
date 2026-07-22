@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"mime"
 	"strings"
 )
 
@@ -15,9 +16,11 @@ type SearchHit struct {
 }
 
 // SearchOptions narrows ranked search without changing its name-before-content
-// ordering. TagID is the stable identity of one required tag assignment.
+// ordering. TagID identifies one required assignment; MIMEType selects the
+// current file version's parameter-free base media type.
 type SearchOptions struct {
-	TagID string
+	TagID    string
+	MIMEType string
 }
 
 const (
@@ -58,6 +61,11 @@ func (s *Store) SearchPageWithOptions(
 			return nil, false, fmt.Errorf("search tag %q: %w", opts.TagID, err)
 		}
 	}
+	normalizedMIME, err := NormalizeSearchMIMEType(opts.MIMEType)
+	if err != nil {
+		return nil, false, err
+	}
+	opts.MIMEType = normalizedMIME
 	fq := ftsQuery(query)
 	if fq == "" {
 		return nil, false, nil
@@ -142,12 +150,46 @@ func (s *Store) SearchPageWithOptions(
 }
 
 func searchFilterSQL(opts SearchOptions) (string, []any) {
-	if opts.TagID == "" {
+	var (
+		clauses []string
+		args    []any
+	)
+	if opts.TagID != "" {
+		clauses = append(clauses, `AND EXISTS (
+			SELECT 1 FROM node_tags nt WHERE nt.node_id=n.id AND nt.tag_id=?
+		)`)
+		args = append(args, opts.TagID)
+	}
+	if opts.MIMEType != "" {
+		clauses = append(clauses, `AND lower(trim(CASE
+			WHEN instr(cv.mime_type, ';')=0 THEN cv.mime_type
+			ELSE substr(cv.mime_type, 1, instr(cv.mime_type, ';')-1)
+		END))=?`)
+		args = append(args, opts.MIMEType)
+	}
+	return strings.Join(clauses, "\n"), args
+}
+
+// NormalizeSearchMIMEType accepts one parameter-free media type and returns
+// its canonical base spelling. Stored parameters do not participate in search
+// filtering because they describe representation details, not the format.
+func NormalizeSearchMIMEType(value string) (string, error) {
+	if value == "" {
 		return "", nil
 	}
-	return `AND EXISTS (
-		SELECT 1 FROM node_tags nt WHERE nt.node_id=n.id AND nt.tag_id=?
-	)`, []any{opts.TagID}
+	mediaType, params, err := mime.ParseMediaType(value)
+	if err != nil {
+		return "", fmt.Errorf("search MIME type %q is invalid: %w", value, err)
+	}
+	if len(params) != 0 {
+		return "", fmt.Errorf(
+			"search MIME type %q must not include parameters; use %q", value, mediaType,
+		)
+	}
+	if strings.Contains(mediaType, "*") {
+		return "", fmt.Errorf("search MIME type %q must not contain wildcards", value)
+	}
+	return mediaType, nil
 }
 
 func scanSearchRows(rows *sql.Rows, match, query string) ([]SearchHit, error) {

@@ -318,4 +318,16 @@ func TestSearch(t *testing.T) {
 	require.Len(t, rep.Hits, 1)
 	assert.Equal(t, bodyNode.ID, rep.Hits[0].Node.ID)
 	assert.Equal(t, "content", rep.Hits[0].Match)
+
+	resp, body = get(t, ts, "/api/v1/search?q=lighthouse&limit=10&mime_type=TEXT%2FPLAIN", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &rep))
+	require.Len(t, rep.Hits, 1)
+	assert.Equal(t, bodyNode.ID, rep.Hits[0].Node.ID)
+	assert.Equal(t, "text/plain", rep.MIMEType)
+
+	resp, body = get(t, ts,
+		"/api/v1/search?q=lighthouse&limit=10&mime_type=text%2Fplain%3B%20charset%3Dutf-8", nil)
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	assert.Contains(t, body, `"code":"validation"`)
 }
