@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
@@ -40,7 +41,15 @@ type row struct {
 }
 
 type location struct {
-	directory api.Node
+	mode         viewMode
+	directory    api.Node
+	rows         []row
+	total        int
+	truncated    bool
+	cursor       int
+	offset       int
+	searchQuery  string
+	searchReturn *location
 }
 
 type navigationKind uint8
@@ -48,7 +57,6 @@ type navigationKind uint8
 const (
 	navigationInitial navigationKind = iota
 	navigationForward
-	navigationBack
 	navigationRefresh
 )
 
@@ -66,6 +74,12 @@ type searchLoadedMsg struct {
 	report    api.SearchReport
 	err       error
 }
+
+type spinnerTickMsg struct{}
+
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+const spinnerInterval = 80 * time.Millisecond
 
 // Model is a read-only virtual-tree and search browser. Update uses a value
 // receiver because Bubble Tea treats models as immutable values; small helper
@@ -85,14 +99,18 @@ type Model struct {
 	offset    int
 	stack     []location
 
-	searchInput textinput.Model
-	searching   bool
-	searchQuery string
+	searchInput  textinput.Model
+	searching    bool
+	searchQuery  string
+	searchReturn *location
 
-	requestID uint64
-	loading   bool
-	err       error
-	quitting  bool
+	requestID     uint64
+	loading       bool
+	err           error
+	quitting      bool
+	helpOpen      bool
+	spinnerFrame  int
+	spinnerActive bool
 
 	width  int
 	height int
@@ -112,6 +130,7 @@ func New(ctx context.Context, backend Backend) (Model, error) {
 	return Model{
 		ctx: ctx, backend: backend, loading: true,
 		searchInput: input, styles: newStyles(true), requestID: 1,
+		spinnerActive: true,
 	}, nil
 }
 
@@ -119,7 +138,7 @@ func New(ctx context.Context, backend Backend) (Model, error) {
 // background color so the palette stays legible in light and dark themes.
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(tea.RequestBackgroundColor,
-		m.loadDirectory("/", navigationInitial, m.requestID))
+		m.loadDirectory("/", navigationInitial, m.requestID), spinnerTick())
 }
 
 // Update implements tea.Model.
@@ -137,7 +156,18 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyDirectory(msg)
 	case searchLoadedMsg:
 		return m.applySearch(msg)
+	case spinnerTickMsg:
+		if !m.loading {
+			m.spinnerActive = false
+			return m, nil
+		}
+		m.spinnerFrame = (m.spinnerFrame + 1) % len(spinnerFrames)
+		return m, spinnerTick()
 	case tea.KeyPressMsg:
+		if m.helpOpen {
+			m.helpOpen = false
+			return m, nil
+		}
 		if m.searching {
 			return m.updateSearchInput(msg)
 		}
@@ -168,7 +198,7 @@ func (m Model) updateSearchInput(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.loading = true
 		m.err = nil
 		m.requestID++
-		return m, m.loadSearch(query, m.requestID)
+		return m, tea.Batch(m.startSpinner(), m.loadSearch(query, m.requestID))
 	default:
 		var cmd tea.Cmd
 		m.searchInput, cmd = m.searchInput.Update(msg)
@@ -183,20 +213,30 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.quitting = true
 		return m, tea.Quit
 	case "/":
+		if m.mode == modeBrowse {
+			state := m.snapshot()
+			m.searchReturn = &state
+		}
 		m.searching = true
 		return m, m.searchInput.Focus()
+	case "?":
+		m.helpOpen = true
+		return m, nil
 	case "r":
 		if m.mode == modeSearch && m.searchQuery != "" {
 			m.loading = true
 			m.err = nil
 			m.requestID++
-			return m, m.loadSearch(m.searchQuery, m.requestID)
+			return m, tea.Batch(m.startSpinner(), m.loadSearch(m.searchQuery, m.requestID))
 		}
 		if m.directory.Path != "" {
 			m.loading = true
 			m.err = nil
 			m.requestID++
-			return m, m.loadDirectory(m.directory.Path, navigationRefresh, m.requestID)
+			return m, tea.Batch(
+				m.startSpinner(),
+				m.loadDirectory(m.directory.Path, navigationRefresh, m.requestID),
+			)
 		}
 	case "up", "k":
 		m.moveCursor(-1)
@@ -220,22 +260,20 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.loading = true
 			m.err = nil
 			m.requestID++
-			return m, m.loadDirectory(selected.path, navigationForward, m.requestID)
+			return m, tea.Batch(
+				m.startSpinner(),
+				m.loadDirectory(selected.path, navigationForward, m.requestID),
+			)
 		}
 	case "esc", "left", "h", "backspace":
-		if m.mode == modeSearch {
-			m.loading = true
-			m.err = nil
-			m.requestID++
-			return m, m.loadDirectory(m.directory.Path, navigationInitial, m.requestID)
+		if m.mode == modeSearch && m.searchReturn != nil {
+			m.restore(*m.searchReturn)
+			return m, nil
 		}
 		if len(m.stack) > 0 {
-			m.loading = true
-			m.err = nil
-			m.requestID++
-			return m, m.loadDirectory(
-				m.stack[len(m.stack)-1].directory.Path, navigationBack, m.requestID,
-			)
+			m.restore(m.stack[len(m.stack)-1])
+			m.stack = m.stack[:len(m.stack)-1]
+			return m, nil
 		}
 	}
 	return m, nil
@@ -280,16 +318,12 @@ func (m Model) applyDirectory(msg directoryLoadedMsg) (tea.Model, tea.Cmd) {
 		m.err = msg.err
 		return m, nil
 	}
-	current := location{directory: m.directory}
+	current := m.snapshot()
 	previousCursor, previousOffset := m.cursor, m.offset
 	switch msg.kind {
 	case navigationForward:
 		if current.directory.Path != "" {
 			m.stack = append(m.stack, current)
-		}
-	case navigationBack:
-		if len(m.stack) > 0 {
-			m.stack = m.stack[:len(m.stack)-1]
 		}
 	case navigationInitial, navigationRefresh:
 	}
@@ -329,6 +363,47 @@ func (m Model) applySearch(msg searchLoadedMsg) (tea.Model, tea.Cmd) {
 	m.cursor, m.offset = 0, 0
 	m.err = nil
 	return m, nil
+}
+
+func (m Model) snapshot() location {
+	var searchReturn *location
+	if m.searchReturn != nil {
+		state := *m.searchReturn
+		searchReturn = &state
+	}
+	return location{
+		mode: m.mode, directory: m.directory, rows: append([]row(nil), m.rows...),
+		total: m.total, truncated: m.truncated, cursor: m.cursor, offset: m.offset,
+		searchQuery: m.searchQuery, searchReturn: searchReturn,
+	}
+}
+
+func (m *Model) restore(state location) {
+	m.mode = state.mode
+	m.directory = state.directory
+	m.rows = append([]row(nil), state.rows...)
+	m.total = state.total
+	m.truncated = state.truncated
+	m.cursor = state.cursor
+	m.offset = state.offset
+	m.searchQuery = state.searchQuery
+	m.searchReturn = state.searchReturn
+	m.loading = false
+	m.err = nil
+	m.clampSelection()
+}
+
+func (m *Model) startSpinner() tea.Cmd {
+	if m.spinnerActive {
+		return nil
+	}
+	m.spinnerActive = true
+	m.spinnerFrame = 0
+	return spinnerTick()
+}
+
+func spinnerTick() tea.Cmd {
+	return tea.Tick(spinnerInterval, func(time.Time) tea.Msg { return spinnerTickMsg{} })
 }
 
 func rowsForDirectory(directory api.Node, nodes []api.Node) []row {

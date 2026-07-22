@@ -100,8 +100,7 @@ func TestModelNavigatesSearchesAndReturnsToTree(t *testing.T) {
 	assert.Equal(t, "/docs/report.txt", model.rows[0].path)
 
 	model, cmd = updateModel(t, model, key(tea.KeyLeft))
-	require.NotNil(t, cmd)
-	model = runModelCommand(t, model, cmd)
+	require.Nil(t, cmd)
 	assert.Equal(t, "/", model.directory.Path)
 
 	model, _ = updateModel(t, model, runeKey('/'))
@@ -117,11 +116,81 @@ func TestModelNavigatesSearchesAndReturnsToTree(t *testing.T) {
 	assert.Equal(t, "content", model.rows[0].match)
 
 	model, cmd = updateModel(t, model, key(tea.KeyEscape))
-	require.NotNil(t, cmd)
-	model = runModelCommand(t, model, cmd)
+	require.Nil(t, cmd)
 	assert.Equal(t, modeBrowse, model.mode)
 	assert.Equal(t, "/", model.directory.Path)
 	require.Len(t, model.rows, 2)
+}
+
+func TestModelPreservesViewStateAcrossNavigation(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory("/", navigationInitial, model.requestID))
+	model.cursor = 1
+
+	model, _ = updateModel(t, model, runeKey('/'))
+	model.searchInput.SetValue("quarterly report")
+	model, cmd := updateModel(t, model, key(tea.KeyEnter))
+	model = runModelCommand(t, model, cmd)
+	require.Equal(t, modeSearch, model.mode)
+
+	model, cmd = updateModel(t, model, key(tea.KeyEscape))
+	require.Nil(t, cmd)
+	assert.Equal(t, modeBrowse, model.mode)
+	assert.Equal(t, 1, model.cursor)
+	assert.Equal(t, "README.txt", model.rows[model.cursor].node.Name)
+}
+
+func TestHelpAndSpinnerAreVisible(t *testing.T) {
+	model, err := New(t.Context(), newFakeBackend())
+	require.NoError(t, err)
+	model.width, model.height = 80, 20
+
+	model, _ = updateModel(t, model, runeKey('?'))
+	assert.True(t, model.helpOpen)
+	assert.Contains(t, model.View().Content, "Keyboard shortcuts")
+	assert.Contains(t, model.View().Content, "Press any key to close")
+	for line := range strings.SplitSeq(model.View().Content, "\n") {
+		assert.LessOrEqual(t, lipgloss.Width(line), model.width)
+	}
+
+	model, _ = updateModel(t, model, runeKey('x'))
+	assert.False(t, model.helpOpen)
+	model.loading = true
+	model, cmd := updateModel(t, model, spinnerTickMsg{})
+	require.NotNil(t, cmd)
+	assert.Equal(t, 1, model.spinnerFrame)
+	assert.Contains(t, model.View().Content, "loading")
+}
+
+func TestChromeAdaptsWithoutDroppingPrimaryContext(t *testing.T) {
+	model, err := New(t.Context(), newFakeBackend())
+	require.NoError(t, err)
+	model.width, model.height = 32, 12
+	model.directory = newFakeBackend().nodes["/"]
+	model.rows = []row{{node: api.Node{ID: 2, Kind: "dir", Name: "docs"}, path: "/docs"}}
+	model.total = 1000
+	model.loading = false
+
+	assert.Contains(t, model.renderTitleBar(), "docbank")
+	assert.Contains(t, model.renderTitleBar(), "READ ONLY")
+	assert.Contains(t, model.renderLocation(), "1000")
+	footer := model.renderFooter()
+	assert.Contains(t, footer, "↑/↓ move")
+	assert.NotContains(t, footer, "refresh", "low-priority hint should drop first")
+	assert.LessOrEqual(t, lipgloss.Width(footer), model.width)
+}
+
+func TestFitHintsDropsLowestPriorityFirst(t *testing.T) {
+	hints := []hint{
+		{text: "move", priority: 100},
+		{text: "refresh", priority: 10},
+		{text: "search", priority: 90},
+	}
+	assert.Equal(t, "move │ refresh │ search", fitHints(hints, 100))
+	narrow := fitHints(hints, len("move │ search"))
+	assert.Equal(t, "move │ search", narrow)
 }
 
 func TestModelIgnoresStaleLoadsAndShowsCurrentErrors(t *testing.T) {
@@ -156,11 +225,14 @@ func TestViewEscapesTerminalTextAndFitsResponsiveLayouts(t *testing.T) {
 	model.total = 1
 	model.loading = false
 
-	for _, size := range []struct{ width, height int }{{100, 18}, {52, 18}} {
+	for _, size := range []struct{ width, height int }{{100, 18}, {52, 18}, {24, 10}} {
 		model.width, model.height = size.width, size.height
 		content := model.View().Content
 		assert.NotContains(t, content, "\x1b[31m.txt", "raw terminal escape must not render")
-		assert.Contains(t, content, `bad\n\x1b[31m.txt`)
+		if size.width >= 52 {
+			assert.Contains(t, content, `bad\n\x1b[31m.txt`)
+		}
+		assert.Len(t, strings.Split(content, "\n"), size.height)
 		for index, line := range strings.Split(content, "\n") {
 			assert.LessOrEqual(t, lipgloss.Width(line), size.width,
 				"line %d exceeds the %d-column frame", index, size.width)

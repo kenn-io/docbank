@@ -33,6 +33,7 @@ immutable version, SHA-256 identity, raw size, and media type.
 | <kbd>←</kbd>, <kbd>Backspace</kbd>, or <kbd>Esc</kbd> | Return to the parent directory or leave search results |
 | <kbd>/</kbd> | Search live names and extracted text |
 | <kbd>r</kbd> | Refresh the current directory or search |
+| <kbd>?</kbd> | Show keyboard help |
 | <kbd>q</kbd> or <kbd>Ctrl-C</kbd> | Quit |
 
 Search has the same semantics as `docbank search`: name matches precede

@@ -21,6 +21,7 @@ Navigation:
   Left or Backspace    Return to the parent directory
   /                    Search names and extracted text
   r                    Refresh the current view
+  ?                    Show keyboard help
   q                    Quit
 
 The initial TUI is deliberately read-only. Use the ordinary CLI or HTTP API for
