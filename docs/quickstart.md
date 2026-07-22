@@ -72,6 +72,22 @@ docbank tree /taxes
   checklist.pdf  [231]
 ```
 
+For an interactive read-only view of the same tree, open the terminal browser:
+
+```bash
+docbank tui
+```
+
+Use the arrow keys or `j`/`k` to select a document, Enter to open a directory,
+and `/` to search names and extracted text. The detail pane keeps the selected
+node, revision, current version, and SHA-256 identity visible. See the
+[interactive terminal browser](usage/tui.md) guide for the complete key map.
+
+!!! info "Release availability"
+
+    `docbank tui` is newer than v0.10.1. Build from source to use it until the
+    next release is tagged.
+
 `cat` streams a file's bytes to stdout. For a durable local file, `get` first
 verifies the complete download in private staging and only then publishes it:
 

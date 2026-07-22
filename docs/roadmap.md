@@ -18,7 +18,7 @@ elsewhere only when they materially explain the design and are marked
 | 1 | Core: store, blob store, ingest pipeline, full CLI | **Implemented** |
 | 2a | Infrastructure: daemon, HTTP API, daemon-first CLI, self-update, release pipeline | **Implemented** |
 | 2b | Features: content versions, versioned editing, full audit, tags, watched inboxes, text extraction, ingest provenance | **In progress**: versions, tags, queryable provenance, watched inboxes, disjoint audit scopes, and bounded plain-text extraction implemented; PDF/Office extraction remains |
-| 3 | Primary kit-ui web portal and focused operator TUI | Designed |
+| 3 | Primary kit-ui web portal and focused operator TUI | **In progress**: read-only tree/search/detail TUI implemented; web portal designed |
 | 4 | Backup commands over the kit engine | **Implemented**; representative-corpus hardening continues |
 
 ## Implemented (Phase 1)
@@ -140,11 +140,13 @@ history timelines and comparisons, trash, storage, backup, and observable jobs.
 Application-neutral tree, timeline, diff, evidence, and job components should
 be reusable by Msgvault and later tools.
 
-The focused TUI is the terminal companion: tree navigation, search, ingest and
-job progress, metadata/evidence, move/trash/restore, storage and backup state,
-plus a compact tree/history/detail audit browser. Rich document comparison
-belongs in external tools or the web portal. Neither client has privileged
-operations — anything either does, the API can do.
+The focused TUI now has a read-only first slice for virtual-tree navigation,
+name and extracted-content search, and stable document/version/hash detail.
+Later slices add ingest and job progress, metadata/evidence,
+move/trash/restore, storage and backup state, plus a compact
+tree/history/detail audit browser. Rich document comparison belongs in
+external tools or the web portal. Neither client has privileged operations —
+anything either does, the API can do.
 
 ## Phase 4 — Backup (implemented)
 

@@ -66,6 +66,8 @@ Four commitments:
   per-node history, independent chain/protected-byte verification, exact-prefix
   checks against externally recorded evidence, and backup/restore fidelity
 - FTS5 search over names and verified UTF-8 text/Markdown/JSON contents
+- A read-only daemon-backed TUI for virtual-tree browsing, search, and stable
+  document/version identity inspection
 - Mixed loose and packed content storage with explicit pack, GC, and repack,
   plus an opt-in bounded daemon packing schedule
 - Whole-vault integrity verification
@@ -79,8 +81,9 @@ Four commitments:
   SHA-256 checksums and checksum-enforcing installers
 - Native vault, daemon, and recovery support on Linux, macOS, and Windows
 
-Embedded generic source provenance and scheduled packing are newer than
-v0.10.1. Build from `main` to use them until the next release is tagged.
+Embedded generic source provenance, scheduled packing, and `docbank tui` are
+newer than v0.10.1. Build from `main` to use them until the next release is
+tagged.
 
 See the [roadmap](docs/roadmap.md) for high-level product direction beyond the
 capabilities listed here.
@@ -129,6 +132,7 @@ vault and starts its daemon:
 ```bash
 docbank add ~/Documents --dest /archive
 docbank tree /archive
+docbank tui
 docbank search "tax return"
 docbank get /archive/Documents/receipt.pdf ./receipt.pdf
 docbank versions list /archive/Documents/receipt.pdf
@@ -155,7 +159,8 @@ docbank backup restore --repo ~/Backups/docbank --target ~/Restores/docbank-test
 ## Documentation
 
 - [Setup](docs/setup.md) and [ten-minute quickstart](docs/quickstart.md)
-- [Using docbank](docs/usage/lifecycle.md), including backup and recovery
+- [Using docbank](docs/usage/lifecycle.md), including the
+  [interactive terminal browser](docs/usage/tui.md), backup, and recovery
 - [Docbank for agents](docs/agents.md) and the detailed
   [integration guide](docs/agents/integration.md)
 - [Embed in Go](docs/embedding.md)
