@@ -23,6 +23,7 @@ const (
 // *client.Client satisfies it without exposing a direct vault path.
 type Backend interface {
 	Stat(ctx context.Context, path string) (api.Node, error)
+	Node(ctx context.Context, nodeID int64) (api.Node, error)
 	ChildrenPage(ctx context.Context, nodeID int64, limit, offset int) (api.NodePage, error)
 	Search(ctx context.Context, query string, limit int) (api.SearchReport, error)
 }
@@ -138,7 +139,7 @@ func New(ctx context.Context, backend Backend) (Model, error) {
 // background color so the palette stays legible in light and dark themes.
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(tea.RequestBackgroundColor,
-		m.loadDirectory("/", navigationInitial, m.requestID), spinnerTick())
+		m.loadDirectory(0, navigationInitial, m.requestID), spinnerTick())
 }
 
 // Update implements tea.Model.
@@ -235,7 +236,7 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.requestID++
 			return m, tea.Batch(
 				m.startSpinner(),
-				m.loadDirectory(m.directory.Path, navigationRefresh, m.requestID),
+				m.loadDirectory(m.directory.ID, navigationRefresh, m.requestID),
 			)
 		}
 	case "up", "k":
@@ -262,7 +263,7 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.requestID++
 			return m, tea.Batch(
 				m.startSpinner(),
-				m.loadDirectory(selected.path, navigationForward, m.requestID),
+				m.loadDirectory(selected.node.ID, navigationForward, m.requestID),
 			)
 		}
 	case "esc", "left", "h", "backspace":
@@ -280,18 +281,26 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) loadDirectory(
-	target string, kind navigationKind, requestID uint64,
+	nodeID int64, kind navigationKind, requestID uint64,
 ) tea.Cmd {
 	ctx, backend := m.ctx, m.backend
 	return func() tea.Msg {
-		directory, err := backend.Stat(ctx, target)
+		var (
+			directory api.Node
+			err       error
+		)
+		if nodeID == 0 {
+			directory, err = backend.Stat(ctx, "/")
+		} else {
+			directory, err = backend.Node(ctx, nodeID)
+		}
 		if err != nil {
 			return directoryLoadedMsg{requestID: requestID, kind: kind, err: err}
 		}
-		if directory.Kind != "dir" {
+		if directory.Kind != "dir" || directory.TrashedAt != "" || directory.Path == "" {
 			return directoryLoadedMsg{
 				requestID: requestID, kind: kind,
-				err: errors.New("selected node is not a directory"),
+				err: errors.New("selected node is not a live directory"),
 			}
 		}
 		page, err := backend.ChildrenPage(ctx, directory.ID, maxBrowserItems, 0)
@@ -447,9 +456,14 @@ func (m *Model) clampSelection() {
 }
 
 func (m Model) visibleRows() int {
-	headerAndFooter := 5
+	headerLines := 2
 	if m.searching {
-		headerAndFooter++
+		headerLines++
 	}
-	return max(m.height-headerAndFooter, 1)
+	bodyHeight := max(m.height-headerLines-1, 1)
+	listHeight := bodyHeight
+	if m.width < 72 {
+		listHeight = max((bodyHeight*2)/3, 1)
+	}
+	return max(listHeight-2, 1)
 }

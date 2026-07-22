@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -21,6 +22,8 @@ type fakeBackend struct {
 	err        error
 	childLimit int
 	searchMax  int
+	nodeIDs    []int64
+	statPaths  []string
 }
 
 func newFakeBackend() *fakeBackend {
@@ -52,6 +55,7 @@ func newFakeBackend() *fakeBackend {
 }
 
 func (f *fakeBackend) Stat(_ context.Context, path string) (api.Node, error) {
+	f.statPaths = append(f.statPaths, path)
 	if f.err != nil {
 		return api.Node{}, f.err
 	}
@@ -60,6 +64,19 @@ func (f *fakeBackend) Stat(_ context.Context, path string) (api.Node, error) {
 		return api.Node{}, errors.New("not found")
 	}
 	return node, nil
+}
+
+func (f *fakeBackend) Node(_ context.Context, nodeID int64) (api.Node, error) {
+	f.nodeIDs = append(f.nodeIDs, nodeID)
+	if f.err != nil {
+		return api.Node{}, f.err
+	}
+	for _, node := range f.nodes {
+		if node.ID == nodeID {
+			return node, nil
+		}
+	}
+	return api.Node{}, errors.New("not found")
 }
 
 func (f *fakeBackend) ChildrenPage(
@@ -86,7 +103,7 @@ func TestModelNavigatesSearchesAndReturnsToTree(t *testing.T) {
 	backend := newFakeBackend()
 	model, err := New(t.Context(), backend)
 	require.NoError(t, err)
-	model = runModelCommand(t, model, model.loadDirectory("/", navigationInitial, model.requestID))
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
 	assert.Equal(t, maxBrowserItems, backend.childLimit)
 	assert.Equal(t, "/", model.directory.Path)
 	require.Len(t, model.rows, 2)
@@ -126,7 +143,7 @@ func TestModelPreservesViewStateAcrossNavigation(t *testing.T) {
 	backend := newFakeBackend()
 	model, err := New(t.Context(), backend)
 	require.NoError(t, err)
-	model = runModelCommand(t, model, model.loadDirectory("/", navigationInitial, model.requestID))
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
 	model.cursor = 1
 
 	model, _ = updateModel(t, model, runeKey('/'))
@@ -140,6 +157,54 @@ func TestModelPreservesViewStateAcrossNavigation(t *testing.T) {
 	assert.Equal(t, modeBrowse, model.mode)
 	assert.Equal(t, 1, model.cursor)
 	assert.Equal(t, "README.txt", model.rows[model.cursor].node.Name)
+}
+
+func TestDirectoryLoadsFollowStableNodeIdentity(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+
+	moved := backend.nodes["/docs"]
+	moved.Path = "/archive/docs"
+	backend.nodes["/docs"] = moved
+	model, cmd := updateModel(t, model, key(tea.KeyEnter))
+	model = runModelCommand(t, model, cmd)
+	assert.Equal(t, "/archive/docs", model.directory.Path)
+	assert.Equal(t, []int64{2}, backend.nodeIDs)
+	assert.Equal(t, []string{"/"}, backend.statPaths,
+		"only initial root discovery should resolve a stored path")
+
+	moved.Path = "/renamed/docs"
+	backend.nodes["/docs"] = moved
+	model, cmd = updateModel(t, model, runeKey('r'))
+	model = runModelCommand(t, model, cmd)
+	assert.Equal(t, "/renamed/docs", model.directory.Path)
+	assert.Equal(t, []int64{2, 2}, backend.nodeIDs)
+}
+
+func TestNarrowLayoutKeepsSelectionVisible(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.width, model.height = 52, 12
+	model.directory = backend.nodes["/"]
+	for index := range 10 {
+		node := api.Node{ID: int64(index + 10), Kind: "file", Name: fmt.Sprintf("item-%02d", index)}
+		model.rows = append(model.rows, row{node: node, path: "/" + node.Name})
+	}
+	model.total = len(model.rows)
+	model.loading = false
+
+	assert.Equal(t, 4, model.visibleRows())
+	for range 5 {
+		model.moveCursor(1)
+	}
+	assert.Equal(t, 5, model.cursor)
+	assert.Equal(t, 2, model.offset)
+	assert.Contains(t, model.renderList(model.width, 6), "item-05")
+	assert.GreaterOrEqual(t, model.cursor, model.offset)
+	assert.Less(t, model.cursor, model.offset+model.visibleRows())
 }
 
 func TestHelpAndSpinnerAreVisible(t *testing.T) {
