@@ -568,7 +568,7 @@ returns the complete restored node with its resulting path and revision.
 ## docbank search
 
 ```
-docbank search <query>... [--limit <n>] [--json]
+docbank search <query>... [--tag <name-or-id>] [--limit <n>] [--json]
 ```
 
 Full-text search over live node names and verified extracted text (FTS5).
@@ -580,8 +580,13 @@ the command says that the result is truncated rather than silently implying
 completeness. Output columns are `SELECTOR`, `MATCH`, and `PATH`; no matches prints
 `no matches`.
 
+`--tag` requires one current tag assignment. It accepts a tag's exact name or
+stable UUID using the same selector rules as `docbank tag show`; the CLI
+resolves names before searching, so the request is bound to stable identity.
+
 `--json` emits the typed search report with `hits`, the applied `limit`, and
-an explicit `truncated` boolean. An empty result uses `"hits": []`.
+an explicit `truncated` boolean. A filtered report also echoes the stable
+`tag_id`. An empty result uses `"hits": []`.
 
 The daemon indexes current UTF-8 `text/*`, JSON, and JSONL blobs up to 16 MiB
 after a terminally verified read. PDF, Office, and OCR extraction are not yet

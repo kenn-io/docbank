@@ -8,6 +8,7 @@ description: Ranked, prefix-matching search over document names and verified tex
 ```bash
 docbank search insurance
 docbank search tax 2026
+docbank search return --tag taxes
 docbank search report --limit 200
 docbank search report --json
 ```
@@ -35,6 +36,10 @@ id:198     content  /taxes/2026/car-insurance-notes.md
 - **Current content only.** Retained prior versions stay available through
   `docbank versions`, but ordinary search matches the current selected version
   of each live file.
+- **Stable tag filtering.** `--tag <name-or-id>` requires one current tag
+  assignment without changing name-before-content ranking. The CLI resolves a
+  tag name to its stable UUID before searching; JSON echoes that UUID as
+  `tag_id`, so a later rename cannot change what the request meant.
 
 For scripts, `--json` returns `hits`, `limit`, and `truncated` without table
 formatting. `hits` is always an array, including when nothing matches.
@@ -54,9 +59,8 @@ daemon job reaches it. A transient open, read, or verification error leaves the
 item queued and is retried on a bounded delay; it does not become a permanent
 extraction failure. `docbank jobs` shows whether that worker is running.
 
-PDF text layers, office formats, OCR, and tag/MIME/date/path search filters are
-not yet available. Their absence never changes name-search results or document
-authority.
+PDF text layers, office formats, OCR, and MIME/date/path search filters are not
+yet available. Their absence never changes name-search results or document authority.
 
 Next: organize documents beyond paths with
 [Organizing & Tagging](organizing.md), or see every search flag in the

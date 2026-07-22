@@ -42,7 +42,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `GET /audit/scopes/{scope_id}/history?limit=&cursor=` | read canonical newest-first events across every member of one permanent scope | Implemented |
 | `POST /audit/verify` | independently replay audit authority, optionally prove recorded evidence is an exact prefix, and re-hash every protected blob | Implemented |
 | `POST /nodes/{id}/verify` | re-hash one file, bound to an inspected node revision | Implemented |
-| `GET /search?q=&limit=` | bounded name and extracted-content search (FTS5), with match source and explicit `truncated` status | Implemented |
+| `GET /search?q=&tag_id=&limit=` | bounded name and extracted-content search (FTS5), optionally restricted by stable tag identity, with match source and explicit `truncated` status | Implemented |
 | `POST /nodes` | create a directory (`kind: "dir"`) | Implemented |
 | `POST /ingest` · `POST /ingest/stream` · `POST /ingest/preflight` | import with JSON or streamed progress / inventory server-side paths — see [addendum](#addendum-post-ingest-post-ingeststream-and-post-ingestpreflight) | Implemented |
 | `POST /uploads?parent_id=&name=` | stream one digest-checked remote file — see [addendum](#addendum-post-uploads) | Implemented |

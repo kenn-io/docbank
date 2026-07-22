@@ -126,6 +126,59 @@ func TestSearchPageReportsTruncation(t *testing.T) {
 	assert.False(t, truncated)
 }
 
+func TestSearchPageFiltersNameAndContentMatchesByTag(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	tag, err := s.CreateTag(ctx, "taxes")
+	require.NoError(t, err)
+
+	nameMatch, err := s.CreateFile(
+		ctx, s.RootID(), "quarterly-return.pdf", fakeHash("a1"), 4, "application/pdf",
+	)
+	require.NoError(t, err)
+	contentMatch, err := s.CreateFile(
+		ctx, s.RootID(), "notes.md", fakeHash("b2"), 4, "text/markdown",
+	)
+	require.NoError(t, err)
+	untagged, err := s.CreateFile(
+		ctx, s.RootID(), "quarterly-draft.pdf", fakeHash("c3"), 4, "application/pdf",
+	)
+	require.NoError(t, err)
+	_, err = s.AssignTag(ctx, tag.ID, nameMatch.ID, nameMatch.Revision)
+	require.NoError(t, err)
+	_, err = s.AssignTag(ctx, tag.ID, contentMatch.ID, contentMatch.Revision)
+	require.NoError(t, err)
+	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+		BlobHash: contentMatch.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: "quarterly tax notes",
+	}))
+
+	hits, truncated, err := s.SearchPageWithOptions(
+		ctx, "quarterly", 10, SearchOptions{TagID: tag.ID},
+	)
+	require.NoError(t, err)
+	require.Len(t, hits, 2)
+	assert.False(t, truncated)
+	assert.Equal(t, nameMatch.ID, hits[0].Node.ID)
+	assert.Equal(t, SearchMatchName, hits[0].Match)
+	assert.Equal(t, contentMatch.ID, hits[1].Node.ID)
+	assert.Equal(t, SearchMatchContent, hits[1].Match)
+	assert.NotEqual(t, untagged.ID, hits[0].Node.ID)
+	assert.NotEqual(t, untagged.ID, hits[1].Node.ID)
+
+	hits, truncated, err = s.SearchPageWithOptions(
+		ctx, "quarterly", 1, SearchOptions{TagID: tag.ID},
+	)
+	require.NoError(t, err)
+	assert.Len(t, hits, 1)
+	assert.True(t, truncated)
+
+	_, _, err = s.SearchPageWithOptions(ctx, "quarterly", 10, SearchOptions{
+		TagID: "11111111-1111-4111-8111-111111111111",
+	})
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
 func TestSearchContentFollowsStableNameMatches(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()

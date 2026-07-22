@@ -275,9 +275,11 @@ func TestContentOnDirIs422(t *testing.T) {
 
 func TestSearch(t *testing.T) {
 	ts, s := newTestServer(t, nil)
+	var insuranceNodes []store.Node
 	for i, name := range []string{"insurance-a.pdf", "insurance-b.pdf"} {
-		_, err := s.CreateFile(t.Context(), s.RootID(), name, testHash(string(rune('x'+i))), 3, "application/pdf")
+		node, err := s.CreateFile(t.Context(), s.RootID(), name, testHash(string(rune('x'+i))), 3, "application/pdf")
 		require.NoError(t, err)
+		insuranceNodes = append(insuranceNodes, node)
 	}
 	resp, body := get(t, ts, "/api/v1/search?q=insurance&limit=1", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -287,6 +289,23 @@ func TestSearch(t *testing.T) {
 	assert.Equal(t, 1, rep.Limit)
 	assert.True(t, rep.Truncated)
 	assert.Equal(t, "name", rep.Hits[0].Match)
+
+	tag, err := s.CreateTag(t.Context(), "renewal")
+	require.NoError(t, err)
+	_, err = s.AssignTag(
+		t.Context(), tag.ID, insuranceNodes[1].ID, insuranceNodes[1].Revision,
+	)
+	require.NoError(t, err)
+	resp, body = get(t, ts, "/api/v1/search?q=insurance&limit=10&tag_id="+tag.ID, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NoError(t, json.Unmarshal([]byte(body), &rep))
+	require.Len(t, rep.Hits, 1)
+	assert.Equal(t, insuranceNodes[1].ID, rep.Hits[0].Node.ID)
+	assert.Equal(t, tag.ID, rep.TagID)
+
+	resp, body = get(t, ts,
+		"/api/v1/search?q=insurance&limit=10&tag_id=11111111-1111-4111-8111-111111111111", nil)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode, body)
 
 	bodyNode := createFileWithContent(t, ts, s, "/notes.txt", "lighthouse archive")
 	require.NoError(t, s.RecordExtraction(t.Context(), store.ExtractionResult{

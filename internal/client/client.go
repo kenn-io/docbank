@@ -670,11 +670,36 @@ func (c *Client) VerifyNodeContent(ctx context.Context, id, revision int64) (api
 	return report, err
 }
 
+// SearchOptions narrows ranked search by stable metadata identity.
+type SearchOptions struct {
+	TagID string
+}
+
 func (c *Client) Search(ctx context.Context, query string, limit int) (api.SearchReport, error) {
+	return c.SearchWithOptions(ctx, query, limit, SearchOptions{})
+}
+
+// SearchWithOptions returns one bounded ranked result set.
+func (c *Client) SearchWithOptions(
+	ctx context.Context, query string, limit int, opts SearchOptions,
+) (api.SearchReport, error) {
 	var out api.SearchReport
-	p := fmt.Sprintf("/api/v1/search?q=%s&limit=%d", url.QueryEscape(query), limit)
-	err := c.do(ctx, http.MethodGet, p, nil, nil, &out)
-	return out, err
+	if opts.TagID != "" && !validUUIDv4(opts.TagID) {
+		return out, errors.New("search tag ID must be a canonical UUIDv4")
+	}
+	queryValues := url.Values{}
+	queryValues.Set("q", query)
+	queryValues.Set("limit", strconv.Itoa(limit))
+	if opts.TagID != "" {
+		queryValues.Set("tag_id", opts.TagID)
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/v1/search?"+queryValues.Encode(), nil, nil, &out); err != nil {
+		return out, err
+	}
+	if out.TagID != opts.TagID {
+		return api.SearchReport{}, errors.New("search response has inconsistent tag authority")
+	}
+	return out, nil
 }
 
 // AuditPreviewOptions selects one live directory for permanent first-scope
