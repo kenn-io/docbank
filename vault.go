@@ -111,19 +111,7 @@ func New(ctx context.Context, config Config) (_ *Vault, retErr error) {
 		return nil, err
 	}
 	layout := home.Layout{Root: config.Root}
-	coordinate, err := layout.TryLockTargetCoordinate()
-	if err != nil {
-		return nil, err
-	}
-	vault, openErr := openVaultWithLayout(config, blobOptions, layout)
-	coordinateErr := coordinate.Release()
-	if openErr != nil || coordinateErr != nil {
-		if vault != nil {
-			coordinateErr = errors.Join(coordinateErr, vault.Close())
-		}
-		return nil, errors.Join(openErr, coordinateErr)
-	}
-	return vault, nil
+	return openVaultWithLayout(config, blobOptions, layout)
 }
 
 func normalizeVaultConfig(
@@ -164,7 +152,17 @@ func openVaultWithLayout(
 	blobOptions blob.Options,
 	layout home.Layout,
 ) (_ *Vault, retErr error) {
-	root, lock, err := layout.OpenAndLockExclusive()
+	return openVaultWithRootOpener(
+		config, blobOptions, layout, layout.OpenAndLockExclusive)
+}
+
+func openVaultWithRootOpener(
+	config Config,
+	blobOptions blob.Options,
+	layout home.Layout,
+	openRoot func() (*os.Root, *home.Lock, error),
+) (_ *Vault, retErr error) {
+	root, lock, err := openRoot()
 	if err != nil {
 		return nil, err
 	}

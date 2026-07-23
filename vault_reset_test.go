@@ -145,7 +145,9 @@ func TestResetVaultValidatesSourceAndDestinationWithoutMutation(t *testing.T) {
 }
 
 func TestResetVaultCoordinatesReleaseOfCurrentOwnerBeforeRename(t *testing.T) {
-	base := t.TempDir()
+	grandparent := t.TempDir()
+	base := filepath.Join(grandparent, "base")
+	require.NoError(t, os.Mkdir(base, 0o700))
 	root := filepath.Join(base, "vault")
 	diagnostic := filepath.Join(base, "vault.reset")
 	current, err := New(t.Context(), Config{Root: root, SQLite: modernc.Driver{}})
@@ -174,12 +176,20 @@ func TestResetVaultCoordinatesReleaseOfCurrentOwnerBeforeRename(t *testing.T) {
 	}()
 	<-released
 
-	contender, contenderErr := New(t.Context(), Config{Root: root, SQLite: modernc.Driver{}})
-	if contender != nil {
-		_ = contender.Close()
+	contenderErrors := make(map[string]error)
+	for name, contenderRoot := range map[string]string{
+		"exact":       root,
+		"parent":      base,
+		"grandparent": grandparent,
+		"child":       filepath.Join(root, "child"),
+	} {
+		contender, contenderErr := New(
+			t.Context(), Config{Root: contenderRoot, SQLite: modernc.Driver{}})
+		if contender != nil {
+			_ = contender.Close()
+		}
+		contenderErrors[name] = contenderErr
 	}
-	require.Error(t, contenderErr,
-		"target-coordinate ownership must exclude New after current ownership is released")
 	assert.DirExists(t, root, "reset must not rename until ReleaseCurrent returns")
 	assert.NoDirExists(t, diagnostic)
 
@@ -190,6 +200,37 @@ func TestResetVaultCoordinatesReleaseOfCurrentOwnerBeforeRename(t *testing.T) {
 	require.NoError(t, reset.vault.Close())
 	assert.DirExists(t, root)
 	assert.DirExists(t, diagnostic)
+	for name, contenderErr := range contenderErrors {
+		require.ErrorIs(t, contenderErr, home.ErrVaultLocked,
+			"reset must exclude the %s vault root after current ownership is released", name)
+	}
+}
+
+func TestNewAllowsCaseDistinctVaultRoots(t *testing.T) {
+	base := t.TempDir()
+	upperRoot := filepath.Join(base, "CaseDistinctVault")
+	lowerRoot := filepath.Join(base, "casedistinctvault")
+	require.NoError(t, os.Mkdir(upperRoot, 0o700))
+	if err := os.Mkdir(lowerRoot, 0o700); errors.Is(err, os.ErrExist) {
+		t.Skip("filesystem is case-insensitive")
+	} else {
+		require.NoError(t, err)
+	}
+	upperInfo, err := os.Stat(upperRoot)
+	require.NoError(t, err)
+	lowerInfo, err := os.Stat(lowerRoot)
+	require.NoError(t, err)
+	if os.SameFile(upperInfo, lowerInfo) {
+		t.Skip("filesystem does not provide case-distinct directory identities")
+	}
+
+	upper, err := New(t.Context(), Config{Root: upperRoot, SQLite: modernc.Driver{}})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, upper.Close()) })
+	lower, err := New(t.Context(), Config{Root: lowerRoot, SQLite: modernc.Driver{}})
+	require.NoError(t, err,
+		"case-distinct vaults on a case-sensitive filesystem must not share ownership")
+	require.NoError(t, lower.Close())
 }
 
 func TestResetVaultLockConflictLeavesActiveSourceUnmoved(t *testing.T) {

@@ -12,11 +12,11 @@ import (
 )
 
 // ResetOptions defines the explicit move-aside boundary for ResetVault.
-// ReleaseCurrent, when set, is called exactly once after reset owns the stable
-// target coordinate and validates both paths, but before it takes ordinary
-// ownership of the source directory. Embedded applications use it to hand an
-// already-open vault and any surrounding lifecycle state to reset without an
-// ownership gap.
+// ReleaseCurrent, when set, is called exactly once after reset excludes every
+// overlapping hierarchy-owner acquisition and validates both paths, but before
+// it takes ordinary ownership of the source directory. Embedded applications
+// use it to hand an already-open vault and any surrounding lifecycle state to
+// reset without an ownership gap.
 type ResetOptions struct {
 	DiagnosticRoot string
 	ReleaseCurrent func() error
@@ -58,20 +58,13 @@ func ResetVault(
 	}
 
 	sourceLayout := home.Layout{Root: sourceRoot}
-	sourceCoordinate, err := sourceLayout.TryLockTargetCoordinate()
+	transition, err := sourceLayout.TryLockOwnershipTransition()
 	if err != nil {
-		return nil, fmt.Errorf("locking docbank reset source coordinate: %w", err)
-	}
-	diagnosticCoordinate, err := (home.Layout{Root: diagnosticRoot}).TryLockTargetCoordinate()
-	if err != nil {
-		return nil, errors.Join(
-			fmt.Errorf("locking docbank reset diagnostic coordinate: %w", err),
-			sourceCoordinate.Release(),
-		)
+		return nil, fmt.Errorf("excluding docbank vault ownership during reset: %w", err)
 	}
 	moved := false
 	defer func() {
-		releaseErr := errors.Join(diagnosticCoordinate.Release(), sourceCoordinate.Release())
+		releaseErr := transition.Release()
 		if releaseErr == nil {
 			return
 		}
@@ -96,7 +89,7 @@ func ResetVault(
 		}
 	}
 
-	root, lock, err := sourceLayout.OpenExistingAndLockExclusive()
+	root, lock, err := transition.OpenExistingAndLockExclusive()
 	if err != nil {
 		return nil, fmt.Errorf("locking existing docbank vault for reset: %w", err)
 	}
@@ -117,7 +110,11 @@ func ResetVault(
 	}
 	moved = true
 
-	fresh, err = openVaultWithLayout(config, blobOptions, sourceLayout)
+	fresh, err = openVaultWithRootOpener(config, blobOptions, sourceLayout, func() (
+		*os.Root, *home.Lock, error,
+	) {
+		return transition.OpenAndLockExclusive()
+	})
 	if err != nil {
 		return nil, fmt.Errorf(
 			"opening fresh docbank vault at %s after moving the original to %s: %w",

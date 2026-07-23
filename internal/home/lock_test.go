@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestTryLockTargetCoordinateIsStablePrivateAndPerCanonicalPath(t *testing.T) {
+func TestOwnershipTransitionIsPrivateAndHierarchyWide(t *testing.T) {
 	isolateTargetLockRegistry(t)
 	base := t.TempDir()
 	firstPath := filepath.Join(base, "customer-visible-vault-name")
@@ -16,14 +16,23 @@ func TestTryLockTargetCoordinateIsStablePrivateAndPerCanonicalPath(t *testing.T)
 	require.NoError(t, os.Mkdir(firstPath, 0o700))
 	require.NoError(t, os.Mkdir(secondPath, 0o700))
 
-	first, err := (Layout{Root: firstPath}).TryLockTargetCoordinate()
+	first, err := (Layout{Root: firstPath}).TryLockOwnershipTransition()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, first.Release()) })
-	_, err = (Layout{Root: firstPath}).TryLockTargetCoordinate()
+	_, err = (Layout{Root: firstPath}).TryLockOwnershipTransition()
 	require.ErrorIs(t, err, ErrVaultLocked)
-	second, err := (Layout{Root: secondPath}).TryLockTargetCoordinate()
-	require.NoError(t, err, "unrelated canonical targets must not serialize")
-	require.NoError(t, second.Release())
+	_, err = (Layout{Root: secondPath}).TryLockOwnershipTransition()
+	require.ErrorIs(t, err, ErrVaultLocked,
+		"identity-changing transitions must exclude every ownership acquisition")
+	nestedParent := filepath.Join(firstPath, "nested")
+	require.NoError(t, os.Mkdir(nestedParent, 0o700))
+	_, err = (Layout{Root: filepath.Join(nestedParent, "vault")}).TryLockOwnershipTransition()
+	require.ErrorIs(t, err, ErrVaultLocked,
+		"overlapping transitions must coordinate through shared ancestors")
+	disjointPath := filepath.Join(t.TempDir(), "disjoint-vault")
+	disjoint, err := (Layout{Root: disjointPath}).TryLockOwnershipTransition()
+	require.NoError(t, err, "disjoint parent hierarchies must remain independent")
+	require.NoError(t, disjoint.Release())
 
 	entries, err := os.ReadDir(targetLockRegistryTestBase)
 	require.NoError(t, err)
@@ -47,6 +56,62 @@ func TestTryLockExclusive(t *testing.T) {
 	lk2, err := l.TryLockExclusive()
 	require.NoError(t, err)
 	require.NoError(t, lk2.Release())
+}
+
+func TestOwnershipTransitionExcludesOrdinaryAcquisition(t *testing.T) {
+	l := Layout{Root: t.TempDir()}
+	require.NoError(t, l.Ensure())
+
+	transition, err := l.TryLockOwnershipTransition()
+	require.NoError(t, err)
+	defer func() { _ = transition.Release() }()
+
+	root, lock, err := l.OpenAndLockExclusive()
+	if root != nil {
+		_ = root.Close()
+	}
+	if lock != nil {
+		_ = lock.Release()
+	}
+	require.ErrorIs(t, err, ErrVaultLocked,
+		"ordinary ownership entry points must honor reset transitions")
+
+	root, lock, err = l.OpenExistingAndLockExclusive()
+	if root != nil {
+		_ = root.Close()
+	}
+	if lock != nil {
+		_ = lock.Release()
+	}
+	require.ErrorIs(t, err, ErrVaultLocked,
+		"existing-root ownership must honor reset transitions")
+
+	heldRoot, err := os.OpenRoot(l.Root)
+	require.NoError(t, err)
+	defer func() { _ = heldRoot.Close() }()
+	lock, err = l.TryLockExclusiveRoot(heldRoot)
+	if lock != nil {
+		_ = lock.Release()
+	}
+	require.ErrorIs(t, err, ErrVaultLocked,
+		"pinned restore ownership must honor reset transitions")
+
+	root, lock, err = transition.OpenExistingAndLockExclusive()
+	require.NoError(t, err,
+		"the transition holder must be able to validate the existing source")
+	require.NoError(t, root.Close())
+	require.NoError(t, lock.Release())
+
+	stale := *transition
+	require.NoError(t, transition.Release())
+	root, lock, err = stale.OpenExistingAndLockExclusive()
+	if root != nil {
+		_ = root.Close()
+	}
+	if lock != nil {
+		_ = lock.Release()
+	}
+	require.Error(t, err, "a copied transition must not bypass ownership after release")
 }
 
 func TestTryLockExclusiveRejectsOverlappingTrees(t *testing.T) {
