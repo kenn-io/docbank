@@ -416,6 +416,10 @@ func (m Model) applyDirectory(msg directoryLoadedMsg) (tea.Model, tea.Cmd) {
 	case navigationInitial, navigationRefresh:
 	}
 	m.mode = modeBrowse
+	if m.sortField == sortByRelevance {
+		m.sortField = sortByName
+		m.sortDesc = false
+	}
 	m.directory = msg.directory
 	m.rows = rowsForDirectory(msg.directory, msg.page.Items)
 	m.total = msg.page.Total

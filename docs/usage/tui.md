@@ -22,7 +22,7 @@ vault's exclusive owner. Starting it reuses or starts the daemon in the normal
 way.
 
 The main view is a full-width document table. At ordinary terminal widths it
-shows each document's name, type, size, and modification time; search results
+shows each document's name, type, size, and UTC modification time; search results
 also identify the match kind when space permits. Narrow terminals progressively
 hide secondary columns so the document name remains useful.
 

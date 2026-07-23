@@ -119,6 +119,8 @@ func (m Model) renderLocation() string {
 	}
 	if m.width >= 48 {
 		right += " · " + m.sortSummary()
+	} else if !m.sortIndicatorVisible() {
+		right = m.sortSummary()
 	}
 	if m.loading {
 		right = m.styles.spinner.Render(m.spinnerIndicator()) + " loading"
@@ -222,7 +224,7 @@ func newTableLayout(width int, mode viewMode) tableLayout {
 		fixed += 2 + 9
 	}
 	if layout.showModified {
-		fixed += 2 + 16
+		fixed += 2 + 17
 	}
 	layout.document = max(width-fixed, 1)
 	return layout
@@ -246,7 +248,7 @@ func (l tableLayout) render(prefix, document, kind, match, size, modified string
 	}
 	if l.showModified {
 		line.WriteString("  ")
-		line.WriteString(pad(modified, 16))
+		line.WriteString(pad(modified, 17))
 	}
 	return pad(line.String(), l.width)
 }
@@ -276,6 +278,22 @@ func (m Model) sortSummary() string {
 		return label + "↓"
 	}
 	return label + "↑"
+}
+
+func (m Model) sortIndicatorVisible() bool {
+	layout := newTableLayout(m.width, m.mode)
+	switch m.sortField {
+	case sortByName:
+		return layout.document >= lipgloss.Width("DOCUMENT↑")
+	case sortBySize:
+		return layout.showSize
+	case sortByModified:
+		return layout.showModified
+	case sortByRelevance:
+		return false
+	default:
+		return false
+	}
 }
 
 func (m Model) renderExpandedDetail(height int) string {
@@ -501,7 +519,7 @@ func formatModified(value string) string {
 	if err != nil {
 		return value
 	}
-	return parsed.Format("2006-01-02 15:04")
+	return parsed.UTC().Format("2006-01-02 15:04Z")
 }
 
 func quoted(value string) string {

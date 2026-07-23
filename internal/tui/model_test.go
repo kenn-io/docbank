@@ -234,6 +234,25 @@ func TestDirectoryLoadsFollowStableNodeIdentity(t *testing.T) {
 	assert.Equal(t, []int64{2, 2}, backend.nodeIDs)
 }
 
+func TestOpeningDirectoryFromSearchResetsRelevanceSort(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.mode = modeSearch
+	model.sortField = sortByRelevance
+	model.sortDesc = true
+	model.rows = []row{{node: backend.nodes["/docs"], path: "/docs", rank: 0}}
+	model.total = 1
+
+	model, cmd := updateModel(t, model, key(tea.KeyEnter))
+	require.NotNil(t, cmd)
+	model = runModelCommand(t, model, cmd)
+	assert.Equal(t, modeBrowse, model.mode)
+	assert.Equal(t, sortByName, model.sortField)
+	assert.False(t, model.sortDesc)
+	assert.Equal(t, "/docs", model.directory.Path)
+}
+
 func TestNarrowLayoutKeepsSelectionVisible(t *testing.T) {
 	backend := newFakeBackend()
 	model, err := New(t.Context(), backend)
@@ -291,7 +310,7 @@ func TestAnalyticalTableSortsWithoutChangingSelection(t *testing.T) {
 	assert.Contains(t, content, "SIZE↓")
 	assert.Contains(t, content, "MODIFIED")
 	assert.Contains(t, content, "2.0 KB")
-	assert.Contains(t, content, "2026-07-22 14:00")
+	assert.Contains(t, content, "2026-07-22 14:00Z")
 	assert.NotContains(t, content, "Document authority")
 }
 
@@ -401,6 +420,14 @@ func TestChromeAdaptsWithoutDroppingPrimaryContext(t *testing.T) {
 	assert.Contains(t, footer, "↑/↓ move")
 	assert.NotContains(t, footer, "refresh", "low-priority hint should drop first")
 	assert.LessOrEqual(t, lipgloss.Width(footer), model.width)
+
+	model.sortField = sortBySize
+	assert.Contains(t, model.renderLocation(), "size↑",
+		"a hidden active sort column must remain visible")
+}
+
+func TestModifiedTimeIsRenderedAsUTC(t *testing.T) {
+	assert.Equal(t, "2026-07-22 19:00Z", formatModified("2026-07-22T14:00:00-05:00"))
 }
 
 func TestFitHintsDropsLowestPriorityFirst(t *testing.T) {
