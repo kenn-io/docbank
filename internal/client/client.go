@@ -16,6 +16,7 @@ import (
 	"math"
 	"mime"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/textproto"
 	"net/url"
@@ -37,6 +38,27 @@ type Client struct {
 	base string
 	key  string
 	hc   *http.Client
+}
+
+// WebURL returns the local portal URL with this ownership-proven client's API
+// key in the fragment. Fragments are not transmitted in HTTP requests; the
+// frontend consumes it into session storage before calling the API.
+func (c *Client) WebURL() (string, error) {
+	u, err := url.Parse(c.base)
+	if err != nil {
+		return "", fmt.Errorf("parsing daemon web URL: %w", err)
+	}
+	host := u.Hostname()
+	ip := net.ParseIP(host)
+	if u.Scheme != "http" || u.Host == "" || c.key == "" ||
+		(!strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback())) {
+		return "", errors.New("daemon client cannot produce an authenticated web URL")
+	}
+	u.Path = "/"
+	u.RawPath = ""
+	u.RawQuery = ""
+	u.Fragment = url.Values{"api_key": {c.key}}.Encode()
+	return u.String(), nil
 }
 
 // responseError distinguishes an HTTP response from transport failure while

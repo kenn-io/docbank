@@ -58,8 +58,8 @@ func clearLongRunningBodyReadDeadlines(api huma.API) {
 	}
 }
 
-// auth-exempt: discovery, credential-free ownership proof, docs, and the
-// static placeholder carry no vault data. Everything else requires the key —
+// auth-exempt: discovery, credential-free ownership proof, docs, and static
+// web assets carry no vault data. Everything else requires the key —
 // the daemon always has one; see NewServer.
 func authExempt(path string) bool {
 	switch path {
@@ -68,7 +68,8 @@ func authExempt(path string) bool {
 	}
 	return strings.HasPrefix(path, "/docs") ||
 		strings.HasPrefix(path, "/openapi") ||
-		strings.HasPrefix(path, "/schemas")
+		strings.HasPrefix(path, "/schemas") ||
+		strings.HasPrefix(path, "/assets/")
 }
 
 func writeError(w http.ResponseWriter, e *Error) {

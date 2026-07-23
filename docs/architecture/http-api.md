@@ -60,7 +60,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 
 Root-level, outside `/api/v1` and auth-exempt: `GET /health`, `GET
 /api/ping` (daemon discovery), `GET /docs` and the OpenAPI documents,
-and `/` (the placeholder web UI, when `[web] enabled`). A hidden `POST
+and `/` plus `/assets/` (the static web application, when `[web] enabled`). A hidden `POST
 /api/daemon/shutdown` (not in the OpenAPI document) backs `docbank
 daemon stop`; it isn't auth-exempt, so it requires both the API key and
 its own shutdown token.
@@ -499,8 +499,8 @@ Binds are loopback-only: the API is plain HTTP, so a non-loopback bind
 would expose the key and vault contents in cleartext, and `docbank
 daemon run` refuses to start on one — remote access goes through an SSH
 tunnel or VPN (see [Configuration](../configuration.md)). `/health`,
-`/api/ping`, `/docs`, the OpenAPI documents, and the web placeholder at
-`/` are auth-exempt; everything else, including the shutdown route,
+`/api/ping`, `/docs`, the OpenAPI documents, and the static web application at
+`/` and `/assets/` are auth-exempt; everything else, including the shutdown route,
 requires the key.
 
 ## Error mapping
@@ -545,9 +545,9 @@ machine-readable string clients branch on instead of parsing `detail`:
 
 ## Non-goals
 
-- No server-side rendering. The current root is a static placeholder; the
-  planned kit-ui portal remains an ordinary authenticated API client and gains
-  no privileged data path.
+- No server-side rendering. The kit-ui application is static public code; it
+  receives a session key from `docbank web`, and every vault read remains an
+  ordinary authenticated API request. It has no privileged data path.
 - No multi-user model: one vault, one key. Sharing is out of scope for
   v1.
 - No MCP server.

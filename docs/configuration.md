@@ -128,8 +128,10 @@ exclude = [".DS_Store", "cache/"]
 - **`idle_timeout`** — how long a background daemon waits without
   requests before exiting on its own. `"0"` disables idle shutdown.
   Foreground `docbank daemon run` ignores this and never idles out.
-- **`[web] enabled`** — serves the placeholder web page at `/`. Disabling
-  it 404s `/`; the API and `/docs` are unaffected.
+- **`[web] enabled`** — serves the embedded read-only web application at `/`.
+  `docbank web` starts or reconnects to the compatible daemon and opens an
+  authenticated browser session. Disabling it 404s `/` and `/assets/`; the API
+  and `/docs` are unaffected. See [Web application](usage/web.md).
 - **`[backup] repo`** — default immutable snapshot repository used when a
   backup command or API request omits `repo`. `~/...` expands against the
   daemon user's home; a relative path is resolved beneath `$DOCBANK_HOME`.

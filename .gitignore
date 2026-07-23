@@ -3,6 +3,12 @@
 /.superpowers/
 /docbank
 
+# Frontend dependencies and generated embed output
+node_modules/
+frontend/dist/
+internal/web/dist/*
+!internal/web/dist/.keep
+
 # docs build
 docs/.venv/
 docs/site/

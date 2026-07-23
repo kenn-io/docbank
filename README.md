@@ -68,6 +68,8 @@ Four commitments:
 - FTS5 search over names and verified UTF-8 text/Markdown/JSON contents
 - A read-only daemon-backed TUI for analytical tree browsing, search, stable
   document/version identity inspection, and permanent audited-history timelines
+- A read-only kit-ui web application for virtual-tree browsing, sortable
+  document analysis, extracted-text search, and complete current authority
 - Mixed loose and packed content storage with explicit pack, GC, and repack,
   plus an opt-in bounded daemon packing schedule
 - Whole-vault integrity verification
@@ -81,7 +83,8 @@ Four commitments:
   SHA-256 checksums and checksum-enforcing installers
 - Native vault, daemon, and recovery support on Linux, macOS, and Windows
 
-Embedded generic source provenance, scheduled packing, and `docbank tui` are
+Embedded generic source provenance, scheduled packing, `docbank tui`, and
+`docbank web` are
 newer than v0.10.1. Build from `main` to use them until the next release is
 tagged.
 
@@ -108,7 +111,7 @@ SHA-256 digest matches the release's `SHA256SUMS`. You can instead download and
 verify an archive manually from
 [GitHub Releases](https://github.com/kenn-io/docbank/releases).
 
-To build from source, install Go 1.26+, CGO, and a C compiler:
+To build from source, install Go 1.26+, CGO, a C compiler, Node 24+, and npm:
 
 ```bash
 git clone https://github.com/kenn-io/docbank.git
@@ -133,6 +136,7 @@ vault and starts its daemon:
 docbank add ~/Documents --dest /archive
 docbank tree /archive
 docbank tui
+docbank web
 docbank search "tax return"
 docbank get /archive/Documents/receipt.pdf ./receipt.pdf
 docbank versions list /archive/Documents/receipt.pdf
@@ -160,6 +164,7 @@ docbank backup restore --repo ~/Backups/docbank --target ~/Restores/docbank-test
 
 - [Setup](docs/setup.md) and [ten-minute quickstart](docs/quickstart.md)
 - [Using docbank](docs/usage/lifecycle.md), including the
+  [web application](docs/usage/web.md),
   [interactive terminal browser](docs/usage/tui.md), backup, and recovery
 - [Docbank for agents](docs/agents.md) and the detailed
   [integration guide](docs/agents/integration.md)

@@ -19,14 +19,15 @@ additionally requires:
   [mattn/go-sqlite3](https://github.com/mattn/go-sqlite3)
 - A C compiler (Xcode command-line tools on macOS, `gcc`/`clang` on Linux,
   or a MinGW-compatible compiler on Windows)
+- Node.js 24 or newer and npm — source builds compile the embedded web
+  application before the Go binary
 
 ## Install a release
 
-!!! info "Current tagged release"
-    v0.5.0 publishes Linux, macOS, and Windows archives for amd64 and arm64
-    with SHA-256 checksums. The shell and PowerShell installers select the
-    native archive and verify it against `SHA256SUMS` before installing,
-    failing rather than substituting an incompatible or unverified archive.
+Published releases include Linux, macOS, and Windows archives for amd64 and
+arm64 with SHA-256 checksums. The shell and PowerShell installers select the
+native archive and verify it against `SHA256SUMS` before installing, failing
+rather than substituting an incompatible or unverified archive.
 
 On Linux or macOS, the installer selects the native archive and installs
 `docbank` to `~/.local/bin` by default:

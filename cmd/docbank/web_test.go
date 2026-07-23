@@ -1,0 +1,69 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"net/url"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/docbank/internal/client"
+)
+
+func TestRunWebOpensAuthenticatedFragmentWithoutPrintingKey(t *testing.T) {
+	c := client.New("http://127.0.0.1:43210", "private key")
+	var opened string
+	var out bytes.Buffer
+	err := runWeb(t.Context(), &out, c, false, func(_ context.Context, rawURL string) error {
+		opened = rawURL
+		return nil
+	})
+	require.NoError(t, err)
+	assert.NotContains(t, out.String(), "private")
+	assert.Equal(t, "opened Docbank web application at http://127.0.0.1:43210/\n", out.String())
+	u, err := url.Parse(opened)
+	require.NoError(t, err)
+	values, err := url.ParseQuery(u.Fragment)
+	require.NoError(t, err)
+	assert.Equal(t, "private key", values.Get("api_key"))
+}
+
+func TestRunWebNoBrowserExplicitlyPrintsAuthenticatedURL(t *testing.T) {
+	c := client.New("http://127.0.0.1:43210", "private")
+	var out bytes.Buffer
+	err := runWeb(t.Context(), &out, c, true, func(context.Context, string) error {
+		return errors.New("must not open")
+	})
+	require.NoError(t, err)
+	assert.Contains(t, out.String(), "#api_key=private")
+}
+
+func TestValidateWebURLRejectsNonLoopbackOrMissingKey(t *testing.T) {
+	for _, rawURL := range []string{
+		"https://127.0.0.1:43210/#api_key=private",
+		"http://example.com/#api_key=private",
+		"http://127.0.0.1:43210/",
+	} {
+		require.Error(t, validateWebURL(rawURL), rawURL)
+	}
+	assert.NoError(t, validateWebURL(
+		"http://[::1]:43210/#api_key="+url.QueryEscape(strings.Repeat("x", 32)),
+	))
+}
+
+func TestRunWebRejectsNonLoopbackClientBeforeOpeningOrPrinting(t *testing.T) {
+	c := client.New("http://example.com:43210", "private")
+	var out bytes.Buffer
+	called := false
+	err := runWeb(t.Context(), &out, c, false, func(context.Context, string) error {
+		called = true
+		return nil
+	})
+	require.Error(t, err)
+	assert.False(t, called)
+	assert.Empty(t, out.String())
+}

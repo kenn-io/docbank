@@ -295,12 +295,15 @@ func TestNewServerRefusesEmptyKey(t *testing.T) {
 	})
 }
 
-func TestWebPlaceholder(t *testing.T) {
+func TestWebApplication(t *testing.T) {
 	ts, _ := newTestServer(t, nil)
 	resp, body := get(t, ts, "/", nil)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Contains(t, resp.Header.Get("Content-Type"), "text/html")
-	assert.Contains(t, body, "/docs")
+	assert.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
+	assert.Contains(t, resp.Header.Get("Content-Security-Policy"), "connect-src 'self'")
+	assert.Equal(t, "no-referrer", resp.Header.Get("Referrer-Policy"))
+	assert.Contains(t, strings.ToLower(body), "<!doctype html>")
 
 	off := func(d *api.Deps) { d.Cfg.Web.Enabled = false }
 	ts2, _ := newTestServer(t, off)

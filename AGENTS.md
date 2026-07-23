@@ -16,6 +16,10 @@ Instructions for autonomous coding agents working in this repository.
 - Linux, macOS, and Windows are supported. Windows CI runs the complete CLI,
   daemon, lock, backup, and restore suite on amd64 and arm64; do not replace
   real platform behavior with compile-only stubs.
+- The embedded web application uses Node 24+ and its dependencies are locked in
+  `frontend/package-lock.json`. Run `make frontend-test` for type, kit-ui,
+  unit, and production-build checks. Release CI builds the frontend once and
+  embeds those exact assets in all six platform archives.
 
 ## Private Data Boundary
 

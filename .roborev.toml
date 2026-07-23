@@ -1,7 +1,7 @@
 review_guidelines = """
 docbank is a single-user personal document archive: a local daemon owns
 the vault (SQLite + content-addressed blobs) and the CLI, agents, and a
-future web UI are HTTP clients of its loopback API. Not designed for
+static web UI are HTTP clients of its loopback API. Not designed for
 multi-user, multi-tenant, or internet-facing deployment.
 
 Key assumptions reviewers MUST account for:

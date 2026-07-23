@@ -18,7 +18,7 @@ elsewhere only when they materially explain the design and are marked
 | 1 | Core: store, blob store, ingest pipeline, full CLI | **Implemented** |
 | 2a | Infrastructure: daemon, HTTP API, daemon-first CLI, self-update, release pipeline | **Implemented** |
 | 2b | Features: content versions, versioned editing, full audit, tags, watched inboxes, text extraction, ingest provenance | **In progress**: versions, tags, queryable provenance, watched inboxes, disjoint audit scopes, and bounded plain-text extraction implemented; PDF/Office extraction remains |
-| 3 | Primary kit-ui web portal and focused operator TUI | **In progress**: read-only analytical tree/search/detail and audited-history TUI implemented; web portal designed |
+| 3 | Primary kit-ui web portal and focused operator TUI | **In progress**: read-only analytical tree/search/detail implemented in both; audited-history browsing implemented in the TUI |
 | 4 | Backup commands over the kit engine | **Implemented**; representative-corpus hardening continues |
 
 ## Implemented (Phase 1)
@@ -57,15 +57,16 @@ elsewhere only when they materially explain the design and are marked
   maintenance gate replaces `gc`'s own exclusive acquisition
   ([design](architecture/locking.md))
 - `config.toml` for the daemon's listen address, API key, idle timeout,
-  and web placeholder toggle ([design](configuration.md))
+  and embedded web-application toggle ([design](configuration.md))
 - `docbank update`: self-update from GitHub releases via
   `kit/selfupdate`, coordinating daemon stop/replace/restart
 - `docbank openapi`: offline OpenAPI document for agents and client
   generation
 - Tag-driven release pipeline building archives plus `SHA256SUMS` for Linux,
   macOS, and Windows on amd64 and arm64
-- A handwritten placeholder web page at `/`, naming the vault and
-  linking to `/docs`
+- A responsive kit-ui web application at `/`, launched through `docbank web`
+  with session-local authentication and read-only tree, search, sorting, and
+  current-authority inspection
 - Internal mixed loose/packed blob storage on `kit/packstore`: docbank's
   `blobs` rows remain the read-authority boundary, existing loose vaults
   open without conversion, and GC/verify operate through the shared
@@ -135,10 +136,12 @@ and authenticated API.
 ## Phase 3 — Human applications
 
 The kit-ui web portal is the primary human interface over the authenticated
-daemon API: virtual-tree browsing, search, import, metadata/provenance, audited
-history timelines and comparisons, trash, storage, backup, and observable jobs.
-Application-neutral tree, timeline, diff, evidence, and job components should
-be reusable by Msgvault and later tools.
+daemon API. Its first read-only slice implements responsive virtual-tree
+browsing, analytical sorting, name and extracted-text search, and complete
+current document authority. Future slices cover import, metadata/provenance,
+audited history timelines and comparisons, trash, storage, backup, and
+observable jobs. Application-neutral tree, timeline, diff, evidence, and job
+components should be reusable by Msgvault and later tools.
 
 The focused TUI now has a read-only first slice for virtual-tree navigation,
 name and extracted-content search, stable document/version/hash detail, and a

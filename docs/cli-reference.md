@@ -706,6 +706,27 @@ run backup and storage maintenance. See the
 [interactive terminal browser](usage/tui.md) for navigation keys and the
 capability boundary.
 
+## docbank web
+
+!!! info "Release availability"
+
+    `docbank web` is newer than v0.10.1. Build from source to use it until the
+    next release is tagged.
+
+```
+docbank web [--no-browser]
+```
+
+Starts or reconnects to the selected vault's compatible daemon and opens the
+embedded read-only web application. The authenticated URL transfers the
+effective API key in a fragment; the application removes it from the address
+bar before making authenticated API requests and keeps it only for the browser
+tab's session.
+
+`--no-browser` prints that authenticated URL instead of opening it. The output
+contains the live daemon key and must be handled as a secret. See the
+[web application guide](usage/web.md) for its capabilities and trust boundary.
+
 ## docbank trash
 
 ```

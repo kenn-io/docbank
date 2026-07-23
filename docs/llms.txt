@@ -15,6 +15,7 @@ Every documentation page is also published as raw Markdown at the same path with
 - [Importing Documents](https://docbank.ai/usage/importing.md): Bulk import semantics — recursion, idempotency, collision suffixing, and failure handling.
 - [Organizing & Tagging](https://docbank.ai/usage/organizing.md): Browsing, moving, renaming, and tagging in the virtual tree.
 - [Searching](https://docbank.ai/usage/searching.md): Ranked, prefix-matching search over document names and verified text content.
+- [Web application](https://docbank.ai/usage/web.md): Browse and search the local vault in a responsive, authenticated, read-only web interface.
 - [Interactive terminal browser](https://docbank.ai/usage/tui.md): Browse and sort documents, search names and extracted text, inspect stable identity, and read permanent audited history from a daemon-backed TUI.
 
 ## Protect & Operate
