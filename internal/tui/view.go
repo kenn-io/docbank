@@ -116,7 +116,7 @@ func (m Model) renderHistoryLocation() string {
 		right = m.styles.spinner.Render(m.spinnerIndicator()) + " loading"
 	}
 	if m.err != nil {
-		right = quoted(m.err.Error())
+		right = "history unavailable"
 	}
 	return m.styles.stats.Render(joinSides(left, right, m.width))
 }
@@ -243,10 +243,16 @@ func (m Model) renderHistoryList(height int) string {
 		message := " No recorded events"
 		if m.loading {
 			message = " Loading permanent history..."
-		} else if m.err != nil {
-			message = " " + quoted(m.err.Error())
 		}
-		lines = append(lines, m.styles.muted.Render(pad(fit(message, m.width), m.width)))
+		messages := []string{message}
+		if !m.loading && m.err != nil {
+			messages = strings.Split(ansi.Hardwrap(
+				" "+quoted(m.err.Error()), max(m.width, 1), false,
+			), "\n")
+		}
+		for _, line := range messages[:min(len(messages), visible)] {
+			lines = append(lines, m.styles.muted.Render(pad(fit(line, m.width), m.width)))
+		}
 	}
 	if ok {
 		end := min(m.historyOffset+visible, len(page.Items))

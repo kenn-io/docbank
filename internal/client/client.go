@@ -153,6 +153,18 @@ func New(baseURL, apiKey string) *Client {
 	return &Client{base: baseURL, key: apiKey, hc: &http.Client{Timeout: 0}}
 }
 
+// Close releases idle transport connections owned by this client. It is most
+// useful to long-running callers that periodically reacquire a daemon client
+// after idle shutdown or process replacement.
+func (c *Client) Close() error {
+	if c != nil && c.hc != nil && c.hc.Transport != nil {
+		if transport, ok := c.hc.Transport.(interface{ CloseIdleConnections() }); ok {
+			transport.CloseIdleConnections()
+		}
+	}
+	return nil
+}
+
 // codeToTypedErr preserves server problem codes that have a stable local
 // sentinel for callers using errors.Is.
 var codeToTypedErr = map[string]error{

@@ -19,7 +19,9 @@ docbank tui
 The TUI is a read-only view of the same authenticated daemon API used by the
 ordinary CLI. It never opens SQLite or the blob store and cannot bypass the
 vault's exclusive owner. Starting it reuses or starts the daemon in the normal
-way.
+way. A TUI session may outlive the background daemon's idle window, so each
+bounded interaction rediscovers or restarts a compatible daemon before issuing
+its request; leaving the terminal open does not pin an otherwise idle process.
 
 The main view is a full-width document table. At ordinary terminal widths it
 shows each document's name, type, size, and UTC modification time; search results
