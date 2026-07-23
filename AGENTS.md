@@ -55,6 +55,10 @@ Instructions for autonomous coding agents working in this repository.
    body only when it is novel evidence that materially informs review, such as
    a migration rehearsal, benchmark, real-vault hardening run, or compatibility
    experiment.
+7. Every pull request that changes the web app or TUI must include a screenshot
+   of the actual rendered interface in the PR description. Use only synthetic
+   data, visually inspect the image before publishing it, and never substitute a
+   mockup for the implemented UI.
 
 ## Releases
 
