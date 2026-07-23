@@ -21,17 +21,25 @@ ordinary CLI. It never opens SQLite or the blob store and cannot bypass the
 vault's exclusive owner. Starting it reuses or starts the daemon in the normal
 way.
 
-The left pane shows the current virtual directory or a bounded set of search
-results. The right pane shows the selected document's stable node selector,
-path, kind, revision, modification time, and—when it is a file—its current
-immutable version, SHA-256 identity, raw size, and media type.
+The main view is a full-width document table. At ordinary terminal widths it
+shows each document's name, type, size, and modification time; search results
+also identify the match kind when space permits. Narrow terminals progressively
+hide secondary columns so the document name remains useful.
+
+Press <kbd>i</kbd> to leave the table temporarily and inspect the selected
+document's complete stable node selector, path, revision, modification time,
+and—when it is a file—its immutable version, SHA-256 identity, exact size, and
+media type. Long authority values wrap rather than truncate.
 
 | Key | Action |
 |-----|--------|
 | <kbd>↑</kbd>/<kbd>k</kbd>, <kbd>↓</kbd>/<kbd>j</kbd> | Move between documents |
 | <kbd>Enter</kbd> or <kbd>→</kbd> | Open the selected directory |
+| <kbd>Enter</kbd> on a file, or <kbd>i</kbd> | Inspect complete document authority |
 | <kbd>←</kbd>, <kbd>Backspace</kbd>, or <kbd>Esc</kbd> | Return to the parent directory or leave search results |
 | <kbd>/</kbd> | Search live names and extracted text |
+| <kbd>s</kbd> | Cycle the sort column: name, type, size, and modification time |
+| <kbd>v</kbd> | Reverse the current sort direction |
 | <kbd>r</kbd> | Refresh the current directory or search |
 | <kbd>?</kbd> | Show keyboard help |
 | <kbd>q</kbd> or <kbd>Ctrl-C</kbd> | Quit |
@@ -39,7 +47,9 @@ immutable version, SHA-256 identity, raw size, and media type.
 Search has the same semantics as `docbank search`: name matches precede
 content-only matches, and content is available only for supported documents
 whose current bytes completed verified extraction. Results say whether the
-match came from the name or content. The first interface loads at most 1,000
+match came from the name or content. Relevance order remains the search default;
+pressing <kbd>s</kbd> opts into a column sort, and cycling through the columns
+returns to relevance. The first interface loads at most 1,000
 directory entries or search hits and says when more exist; use the CLI or HTTP
 pagination for exhaustive automation.
 

@@ -247,15 +247,90 @@ func TestNarrowLayoutKeepsSelectionVisible(t *testing.T) {
 	model.total = len(model.rows)
 	model.loading = false
 
-	assert.Equal(t, 4, model.visibleRows())
+	assert.Equal(t, 7, model.visibleRows())
 	for range 5 {
 		model.moveCursor(1)
 	}
 	assert.Equal(t, 5, model.cursor)
-	assert.Equal(t, 2, model.offset)
-	assert.Contains(t, model.renderList(model.width, 6), "item-05")
+	assert.Equal(t, 0, model.offset)
+	assert.Contains(t, model.renderList(model.width, 9), "item-05")
 	assert.GreaterOrEqual(t, model.cursor, model.offset)
 	assert.Less(t, model.cursor, model.offset+model.visibleRows())
+}
+
+func TestAnalyticalTableSortsWithoutChangingSelection(t *testing.T) {
+	model, err := New(t.Context(), newFakeBackend())
+	require.NoError(t, err)
+	model.width, model.height = 100, 12
+	model.directory = newFakeBackend().nodes["/"]
+	model.rows = []row{
+		{node: api.Node{ID: 10, Kind: "file", Name: "large.bin", Size: 2048,
+			ModifiedAt: "2026-07-22T14:00:00Z"}, path: "/large.bin"},
+		{node: api.Node{ID: 11, Kind: "dir", Name: "zeta",
+			ModifiedAt: "2026-07-20T10:00:00Z"}, path: "/zeta"},
+		{node: api.Node{ID: 12, Kind: "file", Name: "small.txt", Size: 12,
+			ModifiedAt: "2026-07-21T09:30:00Z"}, path: "/small.txt"},
+	}
+	model.total = len(model.rows)
+	model.loading = false
+	model.sortRows()
+	model.selectNode(10)
+
+	model, _ = updateModel(t, model, runeKey('s')) // type
+	model, _ = updateModel(t, model, runeKey('s')) // size
+	require.Equal(t, sortBySize, model.sortField)
+	assert.Equal(t, []int64{11, 12, 10}, rowIDs(model.rows))
+	selected, ok := model.selected()
+	require.True(t, ok)
+	assert.Equal(t, int64(10), selected.node.ID)
+
+	model, _ = updateModel(t, model, runeKey('v'))
+	assert.True(t, model.sortDesc)
+	assert.Equal(t, []int64{11, 10, 12}, rowIDs(model.rows),
+		"directories remain first while file sizes reverse")
+	content := model.View().Content
+	assert.Contains(t, content, "SIZE↓")
+	assert.Contains(t, content, "MODIFIED")
+	assert.Contains(t, content, "2.0 KB")
+	assert.Contains(t, content, "2026-07-22 14:00")
+	assert.NotContains(t, content, "Document authority")
+}
+
+func TestSearchKeepsRelevanceUntilSortChanges(t *testing.T) {
+	model, err := New(t.Context(), newFakeBackend())
+	require.NoError(t, err)
+	model.mode = modeSearch
+	model.sortField = sortByRelevance
+	model.rows = []row{
+		{node: api.Node{ID: 20, Kind: "file", Name: "zeta"}, path: "/zeta", rank: 0},
+		{node: api.Node{ID: 21, Kind: "file", Name: "alpha"}, path: "/alpha", rank: 1},
+	}
+	model.sortRows()
+	assert.Equal(t, []int64{20, 21}, rowIDs(model.rows))
+
+	model, _ = updateModel(t, model, runeKey('s'))
+	assert.Equal(t, sortByName, model.sortField)
+	assert.Equal(t, []int64{21, 20}, rowIDs(model.rows))
+
+	model.sortField = sortBySize
+	model.sortDesc = true
+	model.searchQuery = "report"
+	model.requestID = 7
+	model.selectNode(20)
+	refreshed, _ := updateModel(t, model, searchLoadedMsg{
+		requestID: 7,
+		query:     "report",
+		report: api.SearchReport{Hits: []api.SearchHit{
+			{Node: api.Node{ID: 20, Kind: "file", Name: "zeta", Size: 20}, Path: "/zeta"},
+			{Node: api.Node{ID: 21, Kind: "file", Name: "alpha", Size: 10}, Path: "/alpha"},
+		}},
+	})
+	assert.Equal(t, sortBySize, refreshed.sortField)
+	assert.True(t, refreshed.sortDesc)
+	assert.Equal(t, []int64{20, 21}, rowIDs(refreshed.rows))
+	selected, ok := refreshed.selected()
+	require.True(t, ok)
+	assert.Equal(t, int64(20), selected.node.ID)
 }
 
 func TestExpandedDetailExposesCompleteAuthority(t *testing.T) {
@@ -429,4 +504,12 @@ func key(code rune) tea.KeyPressMsg {
 
 func runeKey(value rune) tea.KeyPressMsg {
 	return tea.KeyPressMsg{Code: value, Text: string(value)}
+}
+
+func rowIDs(rows []row) []int64 {
+	ids := make([]int64, 0, len(rows))
+	for _, item := range rows {
+		ids = append(ids, item.node.ID)
+	}
+	return ids
 }

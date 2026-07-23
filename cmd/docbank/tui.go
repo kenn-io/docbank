@@ -18,8 +18,11 @@ var tuiCmd = &cobra.Command{
 Navigation:
   Up/Down or j/k       Move between documents
   Enter or Right       Open a directory
+  Enter on a file or i Inspect complete document authority
   Left or Backspace    Return to the parent directory
   /                    Search names and extracted text
+  s                    Cycle the sort column
+  v                    Reverse the sort direction
   r                    Refresh the current view
   ?                    Show keyboard help
   q                    Quit
