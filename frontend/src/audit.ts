@@ -24,24 +24,23 @@ export function auditEventLabel(kind: string): string {
 }
 
 export function auditEventSummary(event: AuditEvent): string {
-  if (event.old_path && event.new_path) {
-    return `${auditPathLabel(event.old_path)} → ${auditPathLabel(event.new_path)}`;
-  }
-  if (
-    event.prior_current_version_id !== undefined ||
-    event.resulting_current_version_id !== undefined
-  ) {
-    return `Version ${shortID(event.prior_current_version_id)} → ${shortID(event.resulting_current_version_id)}`;
-  }
-  if (event.attachment) {
-    switch (event.attachment.kind) {
-      case "tag_definition":
-        return `${tagName(event.attachment.before)} → ${tagName(event.attachment.after)}`;
-      case "tag_assignment":
-        return `Tag ${shortID(event.attachment.identity.tag_id)} on id:${event.attachment.identity.node_id ?? event.node_id}`;
-      case "provenance":
-        return provenanceSummary(event.attachment.after ?? event.attachment.before);
-    }
+  switch (event.kind) {
+    case "node_path":
+      if (event.old_path && event.new_path) {
+        return `${auditPathLabel(event.old_path)} → ${auditPathLabel(event.new_path)}`;
+      }
+      break;
+    case "content_create":
+    case "content_replace":
+    case "content_revert":
+      return `Version ${shortID(event.prior_current_version_id)} → ${shortID(event.resulting_current_version_id)}`;
+    case "tag_assign":
+    case "tag_delete":
+    case "tag_rename":
+    case "tag_unassign":
+    case "provenance_add":
+      if (event.attachment) return attachmentSummary(event);
+      break;
   }
   return `Revision ${event.prior_node_revision} → ${event.resulting_node_revision}`;
 }
@@ -62,4 +61,17 @@ function tagName(state: AuditAttachmentState | undefined): string {
 function provenanceSummary(state: AuditAttachmentState | undefined): string {
   if (!state) return "Provenance removed";
   return state.original_path || `Ingest ${shortID(state.ingest_id)}`;
+}
+
+function attachmentSummary(event: AuditEvent): string {
+  const change = event.attachment;
+  if (!change) return `Revision ${event.prior_node_revision} → ${event.resulting_node_revision}`;
+  switch (change.kind) {
+    case "tag_definition":
+      return `${tagName(change.before)} → ${tagName(change.after)}`;
+    case "tag_assignment":
+      return `Tag ${shortID(change.identity.tag_id)} on id:${change.identity.node_id ?? event.node_id}`;
+    case "provenance":
+      return provenanceSummary(change.after ?? change.before);
+  }
 }

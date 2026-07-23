@@ -57,6 +57,8 @@ describe("audit presentation", () => {
       auditEventSummary(
         event({
           kind: "tag_rename",
+          prior_current_version_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          resulting_current_version_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
           attachment: {
             kind: "tag_definition",
             identity: { tag_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc" },
@@ -66,5 +68,23 @@ describe("audit presentation", () => {
         }),
       ),
     ).toBe("draft → filed");
+
+    expect(
+      auditEventSummary(
+        event({
+          kind: "provenance_add",
+          prior_current_version_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          resulting_current_version_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          attachment: {
+            kind: "provenance",
+            identity: { provenance_id: "d".repeat(64) },
+            after: {
+              ingest_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+              original_path: "records/return.pdf",
+            },
+          },
+        }),
+      ),
+    ).toBe("records/return.pdf");
   });
 });
