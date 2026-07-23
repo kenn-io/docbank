@@ -30,7 +30,7 @@ type ResetOptions struct {
 func ResetVault(
 	ctx context.Context, config Config, opts ResetOptions,
 ) (fresh *Vault, retErr error) {
-	requestedRoot := config.Root
+	requestedRoot := filepath.Clean(config.Root)
 	config, blobOptions, err := normalizeVaultConfig(ctx, config)
 	if err != nil {
 		return nil, err

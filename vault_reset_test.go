@@ -101,25 +101,40 @@ func TestResetVaultValidatesSourceAndDestinationWithoutMutation(t *testing.T) {
 	})
 
 	t.Run("symlink source", func(t *testing.T) {
-		base := t.TempDir()
-		realRoot := filepath.Join(base, "real-vault")
-		vault, err := New(t.Context(), Config{Root: realRoot, SQLite: modernc.Driver{}})
-		require.NoError(t, err)
-		require.NoError(t, vault.Close())
-		alias := filepath.Join(base, "vault-alias")
-		if err := os.Symlink(realRoot, alias); err != nil {
-			t.Skipf("creating a symlink requires additional platform permission: %v", err)
+		for name, suffix := range map[string]string{
+			"direct":             "",
+			"trailing separator": string(os.PathSeparator),
+			"trailing dot":       string(os.PathSeparator) + ".",
+		} {
+			t.Run(name, func(t *testing.T) {
+				base := t.TempDir()
+				realRoot := filepath.Join(base, "real-vault")
+				vault, err := New(
+					t.Context(), Config{Root: realRoot, SQLite: modernc.Driver{}})
+				require.NoError(t, err)
+				require.NoError(t, vault.Close())
+				alias := filepath.Join(base, "vault-alias")
+				if err := os.Symlink(realRoot, alias); err != nil {
+					t.Skipf("creating a symlink requires additional platform permission: %v", err)
+				}
+
+				fresh, err := ResetVault(
+					t.Context(), Config{Root: alias + suffix, SQLite: modernc.Driver{}},
+					ResetOptions{DiagnosticRoot: filepath.Join(base, "vault.reset")})
+				if fresh != nil {
+					t.Cleanup(func() { _ = fresh.Close() })
+				}
+
+				assert.Nil(t, fresh)
+				require.Error(t, err)
+				require.ErrorContains(t, err, "must not be a symlink")
+				assert.DirExists(t, realRoot)
+				info, statErr := os.Lstat(alias)
+				require.NoError(t, statErr)
+				assert.NotZero(t, info.Mode()&os.ModeSymlink)
+				assert.NoDirExists(t, filepath.Join(base, "vault.reset"))
+			})
 		}
-
-		fresh, err := ResetVault(t.Context(), Config{Root: alias, SQLite: modernc.Driver{}},
-			ResetOptions{DiagnosticRoot: filepath.Join(base, "vault.reset")})
-
-		assert.Nil(t, fresh)
-		require.Error(t, err)
-		assert.DirExists(t, realRoot)
-		info, statErr := os.Lstat(alias)
-		require.NoError(t, statErr)
-		assert.NotZero(t, info.Mode()&os.ModeSymlink)
 	})
 
 	t.Run("existing diagnostic destination", func(t *testing.T) {
