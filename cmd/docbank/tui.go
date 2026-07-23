@@ -96,6 +96,12 @@ func withTUIClient[T any](
 	for attempt := range 2 {
 		c, err := backend.acquire(ctx)
 		if err != nil {
+			if attempt == 0 &&
+				errors.Is(err, client.ErrTransientDaemonAcquisition) &&
+				!errors.Is(err, context.Canceled) &&
+				!errors.Is(err, context.DeadlineExceeded) {
+				continue
+			}
 			return zero, err
 		}
 		result, requestErr := request(c)

@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -86,5 +88,57 @@ func TestTUIBackendDoesNotRetryMalformedDaemonResponses(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "decoding GET /api/v1/nodes/42 response")
 	assert.NotContains(t, err.Error(), "reconnecting")
+	assert.Equal(t, int32(1), acquires.Load())
+}
+
+func TestTUIBackendRetriesInterruptedDaemonAcquisition(t *testing.T) {
+	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(t, json.NewEncoder(w).Encode(api.Node{
+			ID: 1, Kind: "dir", Path: "/", Revision: 1,
+		}))
+	}))
+	t.Cleanup(live.Close)
+
+	var acquires atomic.Int32
+	backend := &tuiDaemonBackend{ensure: func(context.Context) (*client.Client, error) {
+		if acquires.Add(1) == 1 {
+			return nil, fmt.Errorf(
+				"ownership proof raced daemon exit: %w",
+				client.ErrTransientDaemonAcquisition,
+			)
+		}
+		return client.New(live.URL, ""), nil
+	}}
+	node, err := backend.Stat(t.Context(), "/")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), node.ID)
+	assert.Equal(t, int32(2), acquires.Load())
+}
+
+func TestTUIBackendDoesNotRetryDeterministicAcquisitionFailure(t *testing.T) {
+	deterministic := errors.New("config.toml has an unknown key")
+	var acquires atomic.Int32
+	backend := &tuiDaemonBackend{ensure: func(context.Context) (*client.Client, error) {
+		acquires.Add(1)
+		return nil, deterministic
+	}}
+	_, err := backend.Stat(t.Context(), "/")
+	require.ErrorIs(t, err, deterministic)
+	assert.Equal(t, int32(1), acquires.Load())
+}
+
+func TestTUIBackendDoesNotRetryCanceledAcquisition(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	var acquires atomic.Int32
+	backend := &tuiDaemonBackend{ensure: func(context.Context) (*client.Client, error) {
+		acquires.Add(1)
+		return nil, fmt.Errorf(
+			"%w: %w", client.ErrTransientDaemonAcquisition, context.Canceled,
+		)
+	}}
+	_, err := backend.Stat(ctx, "/")
+	require.ErrorIs(t, err, context.Canceled)
 	assert.Equal(t, int32(1), acquires.Load())
 }
