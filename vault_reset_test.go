@@ -240,6 +240,45 @@ func TestResetVaultRejectsChangedParentBeforeRename(t *testing.T) {
 	assert.NoDirExists(t, diagnostic)
 }
 
+func TestResetVaultRejectsSourceReplacementDuringOwnerRelease(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "vault")
+	parkedRoot := filepath.Join(base, "vault.original")
+	diagnostic := filepath.Join(base, "vault.reset")
+	replacementSentinel := filepath.Join(root, "replacement")
+	current, err := New(t.Context(), Config{Root: root, SQLite: modernc.Driver{}})
+	require.NoError(t, err)
+
+	fresh, err := ResetVault(
+		t.Context(),
+		Config{Root: root, SQLite: modernc.Driver{}},
+		ResetOptions{
+			DiagnosticRoot: diagnostic,
+			ReleaseCurrent: func() error {
+				if err := current.Close(); err != nil {
+					return err
+				}
+				if err := os.Rename(root, parkedRoot); err != nil {
+					return err
+				}
+				if err := os.Mkdir(root, 0o700); err != nil {
+					return err
+				}
+				return os.WriteFile(replacementSentinel, []byte("replacement"), 0o600)
+			},
+		},
+	)
+	if fresh != nil {
+		t.Cleanup(func() { _ = fresh.Close() })
+	}
+
+	assert.Nil(t, fresh)
+	require.ErrorContains(t, err, "source changed")
+	assert.DirExists(t, parkedRoot, "the original vault must remain where the callback moved it")
+	assert.Equal(t, []byte("replacement"), mustReadResetFile(t, replacementSentinel))
+	assert.NoDirExists(t, diagnostic, "reset must not move a substituted source directory")
+}
+
 func TestResetVaultCoordinatesReleaseOfCurrentOwnerBeforeRename(t *testing.T) {
 	grandparent := t.TempDir()
 	base := filepath.Join(grandparent, "base")
@@ -393,6 +432,47 @@ func TestResetVaultParentSyncFailureStopsBeforeFreshInitialization(t *testing.T)
 	assert.NoDirExists(t, root, "parent sync failure must stop before replacement creation")
 	assert.DirExists(t, diagnostic)
 	assert.Equal(t, sourceBefore, mustReadResetFile(t, filepath.Join(diagnostic, "docbank.db")))
+}
+
+func TestResetVaultFreshParentSyncFailureClosesFreshVault(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "vault")
+	diagnostic := filepath.Join(base, "vault.reset")
+	vault, err := New(t.Context(), Config{Root: root, SQLite: modernc.Driver{}})
+	require.NoError(t, err)
+	require.NoError(t, vault.Close())
+	canonicalBase, err := home.CanonicalRoot(base)
+	require.NoError(t, err)
+	syncErr := errors.New("fresh parent sync failed")
+	syncCalls := 0
+	originalSync := syncResetParentDirectory
+	syncResetParentDirectory = func(path string) error {
+		assert.Equal(t, canonicalBase, path)
+		syncCalls++
+		if syncCalls == 2 {
+			return syncErr
+		}
+		return nil
+	}
+	t.Cleanup(func() { syncResetParentDirectory = originalSync })
+
+	fresh, err := ResetVault(
+		t.Context(),
+		Config{Root: root, SQLite: modernc.Driver{}},
+		ResetOptions{DiagnosticRoot: diagnostic},
+	)
+	if fresh != nil {
+		t.Cleanup(func() { _ = fresh.Close() })
+	}
+
+	assert.Nil(t, fresh)
+	require.ErrorIs(t, err, syncErr)
+	assert.Equal(t, 2, syncCalls)
+	assert.DirExists(t, root, "a sync failure must not delete the initialized replacement")
+	assert.DirExists(t, diagnostic)
+	reopened, err := New(t.Context(), Config{Root: root, SQLite: modernc.Driver{}})
+	require.NoError(t, err, "the fresh vault must be closed before returning the sync error")
+	require.NoError(t, reopened.Close())
 }
 
 func TestResetVaultFreshInitializationFailurePreservesBothPaths(t *testing.T) {

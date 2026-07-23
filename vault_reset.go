@@ -83,6 +83,10 @@ func ResetVault(
 	if err := validateResetPaths(sourceRoot, diagnosticRoot); err != nil {
 		return nil, err
 	}
+	expectedSourceIdentity, err := os.Stat(sourceRoot)
+	if err != nil {
+		return nil, fmt.Errorf("capturing docbank reset source identity: %w", err)
+	}
 	if opts.ReleaseCurrent != nil {
 		if err := opts.ReleaseCurrent(); err != nil {
 			return nil, fmt.Errorf("releasing current docbank vault before reset: %w", err)
@@ -94,9 +98,13 @@ func ResetVault(
 		return nil, fmt.Errorf("locking existing docbank vault for reset: %w", err)
 	}
 	heldIdentity, identityErr := root.Stat(".")
+	var changedIdentityErr error
+	if identityErr == nil && !os.SameFile(expectedSourceIdentity, heldIdentity) {
+		changedIdentityErr = errors.New("docbank reset source changed while releasing current owner")
+	}
 	sourceErr := validateResetSourcePath(sourceRoot)
 	closeErr := errors.Join(root.Close(), transition.ReleaseSourceForReplacement())
-	if err := errors.Join(identityErr, sourceErr, closeErr); err != nil {
+	if err := errors.Join(identityErr, changedIdentityErr, sourceErr, closeErr); err != nil {
 		return nil, fmt.Errorf("validating existing docbank vault before reset rename: %w", err)
 	}
 	currentIdentity, err := os.Stat(sourceRoot)
@@ -126,6 +134,17 @@ func ResetVault(
 		return nil, fmt.Errorf(
 			"opening fresh docbank vault at %s after moving the original to %s: %w",
 			sourceRoot, diagnosticRoot, err,
+		)
+	}
+	if err := syncResetParentDirectory(filepath.Dir(sourceRoot)); err != nil {
+		closeErr := fresh.Close()
+		fresh = nil
+		return nil, errors.Join(
+			fmt.Errorf(
+				"syncing docbank reset parent after initializing the fresh vault at %s: %w",
+				sourceRoot, err,
+			),
+			closeErr,
 		)
 	}
 	return fresh, nil
