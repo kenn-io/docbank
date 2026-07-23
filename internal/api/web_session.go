@@ -18,7 +18,7 @@ const (
 
 // webSessionRegistry owns browser credentials for exactly one daemon
 // lifetime. Tokens are random, retained only as digests, and authorize only
-// the read routes used by the built-in document and audit-history browser.
+// the read routes used by the built-in document, audit-history, and job browser.
 type webSessionRegistry struct {
 	mu     sync.Mutex
 	tokens map[[sha256.Size]byte]struct{}
@@ -65,7 +65,7 @@ func webSessionRequestAllowed(method, path string) bool {
 	}
 	switch path {
 	case "/api/v1/path", "/api/v1/search",
-		"/api/v1/audit/status", "/api/v1/audit/history":
+		"/api/v1/audit/status", "/api/v1/audit/history", "/api/v1/jobs":
 		return true
 	}
 	const prefix = "/api/v1/nodes/"

@@ -129,6 +129,18 @@ export interface AuditEventPage {
   next_cursor?: string;
 }
 
+export interface Job {
+  name: string;
+  status: "running" | "completed" | "failed" | "cancelled";
+  started_at: string;
+  finished_at?: string;
+  error?: string;
+}
+
+export interface JobList {
+  items: Job[];
+}
+
 export interface Problem {
   status?: number;
   code?: string;
@@ -237,4 +249,9 @@ export async function auditHistory(
     `/api/v1/audit/history?${query.toString()}`,
     session,
   );
+}
+
+export async function listJobs(session: string): Promise<Job[]> {
+  const result = await requestJSON<JobList>("/api/v1/jobs", session);
+  return result.items;
 }

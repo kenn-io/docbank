@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import ActivityIcon from "@lucide/svelte/icons/activity";
   import ArrowLeftIcon from "@lucide/svelte/icons/arrow-left";
   import FileIcon from "@lucide/svelte/icons/file";
   import FolderIcon from "@lucide/svelte/icons/folder";
@@ -23,6 +24,7 @@
     type SortDirection,
   } from "@kenn-io/kit-ui";
   import AuditHistoryDrawer from "./AuditHistoryDrawer.svelte";
+  import JobsDrawer from "./JobsDrawer.svelte";
   import {
     APIError,
     auditStatusForNode,
@@ -66,6 +68,7 @@
   let auditLoading = $state(false);
   let auditError = $state("");
   let historyOpen = $state(false);
+  let jobsOpen = $state(false);
   let generation = 0;
   let auditGeneration = 0;
 
@@ -84,6 +87,7 @@
     if (cause instanceof APIError && cause.status === 401) {
       webSession = "";
       historyOpen = false;
+      jobsOpen = false;
       error = "The browser session expired or was rejected. Run `docbank web` again.";
       return;
     }
@@ -272,6 +276,7 @@
     auditLoading = false;
     auditError = "";
     historyOpen = false;
+    jobsOpen = false;
     activeQuery = "";
     searchQuery = "";
     error = "";
@@ -326,6 +331,16 @@
         </form>
       {/snippet}
       {#snippet right()}
+        <IconButton
+          size="sm"
+          ariaLabel="Background jobs"
+          onclick={() => {
+            historyOpen = false;
+            jobsOpen = true;
+          }}
+        >
+          <ActivityIcon size="14" aria-hidden="true" />
+        </IconButton>
         <ThemeToggle size="sm" />
         <IconButton size="sm" ariaLabel="Lock web session" onclick={() => void lock()}>
           <LogOutIcon size="14" aria-hidden="true" />
@@ -502,7 +517,10 @@
                   size="sm"
                   tone="info"
                   surface="soft"
-                  onclick={() => (historyOpen = true)}
+                  onclick={() => {
+                    jobsOpen = false;
+                    historyOpen = true;
+                  }}
                 >
                   <HistoryIcon size="14" aria-hidden="true" />
                   Audit history
@@ -538,6 +556,13 @@
         node={selected.node}
         path={selected.path}
         onclose={() => (historyOpen = false)}
+        onauthfailure={handleFailure}
+      />
+    {/if}
+    {#if jobsOpen}
+      <JobsDrawer
+        session={webSession}
+        onclose={() => (jobsOpen = false)}
         onauthfailure={handleFailure}
       />
     {/if}

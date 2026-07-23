@@ -17,11 +17,13 @@ the virtual tree, sort a folder by document name, size, or modification time,
 search names and extracted text, and inspect the selected document's stable
 node ID, revision, current version ID, SHA-256 identity, exact size, and media
 type. Protected documents also expose their newest-first permanent audit
-timeline and complete event authority.
+timeline and complete event authority. The activity button reports the
+daemon's supervised extraction, watched-inbox, and automatic-packing jobs.
 
 !!! note "Newer than v0.11.0"
     Permanent protection badges and audited-history browsing are available in
-    source builds newer than v0.11.0 and will ship in the next tagged release.
+    source builds newer than v0.11.0, as is background-job status. They will
+    ship in the next tagged release.
 
 The browser is another client of the authenticated HTTP API. It does not open
 SQLite or the blob store, and it has no private route that the CLI or an agent
@@ -92,6 +94,20 @@ history already being inspected. Protection status remains authoritative even
 when a page contains no events. The web application does not infer protection
 from an empty or non-empty timeline.
 
+## Inspect background work
+
+Choose the activity button in the top bar to inspect the jobs owned by the
+current daemon. Each entry identifies the stable job name, whether it is
+running, completed, failed, or cancelled, and its start and finish time.
+Terminal failures include the daemon's bounded error text so an operator can
+distinguish an idle system from a watcher, extractor, or automatic packer that
+stopped.
+
+Use refresh to request a new snapshot. The drawer does not start, stop, retry,
+or reconfigure work; use the relevant configuration, CLI, or authenticated API
+workflow after understanding the failure. Job records belong to one daemon
+lifetime and disappear when that daemon restarts.
+
 ## Browser authentication
 
 When Docbank opens the browser, it writes a small launch page beside the
@@ -111,9 +127,9 @@ The launch page carries only the read-only session in a URL fragment. Browsers
 do not include fragments in the initial HTTP request; the application removes
 it from the address bar and holds it only in page memory. Requests use
 `X-Docbank-Web-Session`, which the daemon accepts only for the tree, node,
-search, audit-status, and node-history reads used by this interface. It cannot
-enroll audit scopes, run independent verification, or call mutation, backup,
-maintenance, configuration, or general API endpoints.
+search, audit-status, node-history, and background-job reads used by this
+interface. It cannot enroll audit scopes, run independent verification, or
+call mutation, backup, maintenance, configuration, or general API endpoints.
 
 The lock button revokes the session in daemon memory and clears the page.
 Every remaining browser session and its dedicated browser origin disappear
