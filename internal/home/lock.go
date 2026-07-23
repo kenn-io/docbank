@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"go.kenn.io/kit/safefileio"
 )
@@ -102,8 +103,14 @@ func (l Layout) TryLockOwnershipTransition() (*OwnershipTransition, error) {
 	if err != nil {
 		return nil, err
 	}
-	registry, err := targetLockRegistryDir()
+	registry, err := targetLockRegistryPath()
 	if err != nil {
+		return nil, err
+	}
+	if err := validateTransitionRootOutsideRegistry(target, registry); err != nil {
+		return nil, err
+	}
+	if err := ensureTargetLockRegistryDir(registry); err != nil {
 		return nil, err
 	}
 	lock := &Lock{}
@@ -125,6 +132,45 @@ func (l Layout) TryLockOwnershipTransition() (*OwnershipTransition, error) {
 		lock:           lock,
 		parentIdentity: identities[len(identities)-1],
 	}}, nil
+}
+
+func validateTransitionRootOutsideRegistry(target, registry string) error {
+	canonicalRegistry, err := CanonicalRoot(registry)
+	if err != nil {
+		return fmt.Errorf("resolving target-lock registry: %w", err)
+	}
+	if pathContains(target, canonicalRegistry) {
+		return fmt.Errorf("vault transition root %s contains the target-lock registry", target)
+	}
+	targetInfo, err := os.Stat(target)
+	if errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("vault transition root %s no longer exists", target)
+	}
+	if err != nil {
+		return fmt.Errorf("checking vault transition root: %w", err)
+	}
+	current := canonicalRegistry
+	for {
+		info, statErr := os.Stat(current)
+		if statErr == nil && os.SameFile(info, targetInfo) {
+			return fmt.Errorf(
+				"vault transition root %s contains the target-lock registry", target)
+		}
+		if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+			return fmt.Errorf("checking target-lock registry ancestor %s: %w", current, statErr)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return nil
+		}
+		current = parent
+	}
+}
+
+func pathContains(parent, child string) bool {
+	rel, err := filepath.Rel(parent, child)
+	return err == nil && (rel == "." ||
+		(rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))))
 }
 
 // OpenExistingAndLockExclusive validates and owns an existing root while this
@@ -804,7 +850,7 @@ func directoryIdentityChain(target string) ([]string, error) {
 // those unit tests must not contend with cmd/docbank's real daemon processes.
 var targetLockRegistryTestBase string
 
-func targetLockRegistryDir() (string, error) {
+func targetLockRegistryPath() (string, error) {
 	dir := targetLockRegistryTestBase
 	if dir == "" {
 		var err error
@@ -813,8 +859,23 @@ func targetLockRegistryDir() (string, error) {
 			return "", err
 		}
 	}
+	return dir, nil
+}
+
+func ensureTargetLockRegistryDir(dir string) error {
 	if err := safefileio.EnsurePrivateDir(dir); err != nil {
-		return "", fmt.Errorf("securing target-lock registry: %w", err)
+		return fmt.Errorf("securing target-lock registry: %w", err)
+	}
+	return nil
+}
+
+func targetLockRegistryDir() (string, error) {
+	dir, err := targetLockRegistryPath()
+	if err != nil {
+		return "", err
+	}
+	if err := ensureTargetLockRegistryDir(dir); err != nil {
+		return "", err
 	}
 	return dir, nil
 }

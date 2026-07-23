@@ -9,7 +9,10 @@ import (
 	"path/filepath"
 
 	"go.kenn.io/docbank/internal/home"
+	"go.kenn.io/kit/pack"
 )
+
+var syncResetParentDirectory = pack.SyncDir
 
 // ResetOptions defines the explicit move-aside boundary for ResetVault.
 // ReleaseCurrent, when set, is called exactly once after reset excludes every
@@ -107,6 +110,12 @@ func ResetVault(
 		return nil, fmt.Errorf("moving docbank vault aside: %w", err)
 	}
 	moved = true
+	if err := syncResetParentDirectory(filepath.Dir(sourceRoot)); err != nil {
+		return nil, fmt.Errorf(
+			"syncing docbank reset parent after moving the original to %s: %w",
+			diagnosticRoot, err,
+		)
+	}
 
 	fresh, err = openVaultWithRootOpener(config, blobOptions, sourceLayout, func() (
 		*os.Root, *home.Lock, error,

@@ -26,10 +26,13 @@ func TestOwnershipTransitionIsPrivateAndHierarchyWide(t *testing.T) {
 		"identity-changing transitions must exclude every ownership acquisition")
 	nestedParent := filepath.Join(firstPath, "nested")
 	require.NoError(t, os.Mkdir(nestedParent, 0o700))
-	_, err = (Layout{Root: filepath.Join(nestedParent, "vault")}).TryLockOwnershipTransition()
+	nestedPath := filepath.Join(nestedParent, "vault")
+	require.NoError(t, os.Mkdir(nestedPath, 0o700))
+	_, err = (Layout{Root: nestedPath}).TryLockOwnershipTransition()
 	require.ErrorIs(t, err, ErrVaultLocked,
 		"overlapping transitions must coordinate through shared ancestors")
 	disjointPath := filepath.Join(t.TempDir(), "disjoint-vault")
+	require.NoError(t, os.Mkdir(disjointPath, 0o700))
 	disjoint, err := (Layout{Root: disjointPath}).TryLockOwnershipTransition()
 	require.NoError(t, err, "disjoint parent hierarchies must remain independent")
 	require.NoError(t, disjoint.Release())
@@ -112,6 +115,43 @@ func TestOwnershipTransitionExcludesOrdinaryAcquisition(t *testing.T) {
 		_ = lock.Release()
 	}
 	require.Error(t, err, "a copied transition must not bypass ownership after release")
+}
+
+func TestOwnershipTransitionRejectsRegistryInsideSource(t *testing.T) {
+	require.Empty(t, targetLockRegistryTestBase,
+		"target-lock registry tests must not run in parallel")
+	source := filepath.Join(t.TempDir(), "vault")
+	require.NoError(t, os.Mkdir(source, 0o700))
+	targetLockRegistryTestBase = filepath.Join(source, "state", "target-locks")
+	t.Cleanup(func() { targetLockRegistryTestBase = "" })
+
+	transition, err := (Layout{Root: source}).TryLockOwnershipTransition()
+	if transition != nil {
+		t.Cleanup(func() { _ = transition.Release() })
+	}
+
+	require.Nil(t, transition)
+	require.ErrorContains(t, err, "lock registry")
+	require.NoDirExists(t, targetLockRegistryTestBase,
+		"rejecting a movable registry must not mutate the source")
+}
+
+func TestOwnershipTransitionRejectsRegistryInsideMissingSource(t *testing.T) {
+	require.Empty(t, targetLockRegistryTestBase,
+		"target-lock registry tests must not run in parallel")
+	source := filepath.Join(t.TempDir(), "missing-vault")
+	targetLockRegistryTestBase = filepath.Join(source, "state", "target-locks")
+	t.Cleanup(func() { targetLockRegistryTestBase = "" })
+
+	transition, err := (Layout{Root: source}).TryLockOwnershipTransition()
+	if transition != nil {
+		t.Cleanup(func() { _ = transition.Release() })
+	}
+
+	require.Nil(t, transition)
+	require.ErrorContains(t, err, "lock registry")
+	require.NoDirExists(t, source,
+		"rejecting a movable registry must not recreate a missing source")
 }
 
 func TestOwnershipReplacementExcludesLegacyAcquisitionThroughRename(t *testing.T) {
