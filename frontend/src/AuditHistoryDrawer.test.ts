@@ -63,6 +63,28 @@ afterEach(() => {
 });
 
 describe("audited history drawer", () => {
+  it("uses the authoritative path returned with history", async () => {
+    const response = page([event({})]);
+    response.path = "/Filed/return.pdf";
+    response.node = { ...node, parent_id: 99, revision: 4 };
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify(response), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    render(AuditHistoryDrawer, {
+      session: "short-lived",
+      node,
+      path: "/Taxes/return.pdf",
+      onclose: vi.fn(),
+      onauthfailure: vi.fn(),
+    });
+
+    expect(await screen.findByText("/Filed/return.pdf")).toBeTruthy();
+  });
+
   it("does not present a failed initial load as empty history", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       new Response("history unavailable", { status: 500 }),

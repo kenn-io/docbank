@@ -51,6 +51,14 @@
   const selectedEvent = $derived(
     items.find((event) => event.id === selectedEventID),
   );
+  const historyNode = $derived(page?.node ?? node);
+  const historyPath = $derived(page ? page.path : path);
+  const historyLabel = $derived(
+    historyPath ? basename(historyPath) : `${historyNode.name} (trashed)`,
+  );
+  const historyCoordinate = $derived(
+    historyPath ?? `Trashed node · id:${historyNode.id}`,
+  );
 
   onMount(() => {
     void loadPage("", false);
@@ -102,15 +110,15 @@
 
 <DetailDrawer
   width="min(980px, 100vw)"
-  ariaLabel={`Permanent audit history for ${path}`}
+  ariaLabel={`Permanent audit history for ${historyCoordinate}`}
   {onclose}
 >
   {#snippet header()}
     <div class="drawer-heading">
       <div>
         <span>PERMANENT AUDIT HISTORY</span>
-        <strong>{basename(path)}</strong>
-        <code>{path}</code>
+        <strong>{historyLabel}</strong>
+        <code>{historyCoordinate}</code>
       </div>
       <div class="drawer-actions">
         <Chip tone="success" size="sm" dot>Protected</Chip>
