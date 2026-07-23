@@ -36,11 +36,11 @@ asks the daemon to exchange its master API authority for a random,
 daemon-lifetime browser session. The master key stays on that pinned connection
 and never enters browser storage, a URL, or a child-process argument.
 
-The daemon serves that session from a second listener on a newly selected
-loopback port. This browser origin is independent of the configured API port
-and exists for only one daemon lifetime. A process that later captures the API
-port therefore cannot leave a service worker or cached script waiting for a
-future browser session.
+The daemon serves that session from a second listener with a cryptographically
+random `.localhost` hostname and a newly selected loopback port. This browser
+origin is independent of the configured API port and unique to one daemon
+lifetime. A process that later captures either port therefore cannot leave a
+service worker or cached script waiting for a future browser session.
 
 The launch page carries only the read-only session in a URL fragment. Browsers
 do not include fragments in the initial HTTP request; the application removes

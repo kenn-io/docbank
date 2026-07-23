@@ -41,6 +41,7 @@ type testStore struct {
 // one too. mutate can override it (e.g. TestAuthRequiredWhenKeySet uses its
 // own key to prove the value itself is checked, not just its presence).
 const testAPIKey = "test-api-key"
+const testWebURL = "http://docbank-0123456789abcdef0123456789abcdef.localhost:43210/"
 
 // newTestServer builds a real store and blob dir in a temp dir and serves
 // the API over httptest (loopback client addr). Later route tasks reuse
@@ -63,7 +64,7 @@ func newTestServer(t *testing.T, mutate func(*api.Deps)) (*httptest.Server, *tes
 	t.Cleanup(func() { _ = blobs.Close() })
 	d := api.Deps{
 		Store: s, Blobs: blobs, VaultRoot: dir, Cfg: config.Default(),
-		WebURL: "http://127.0.0.1:43210/",
+		WebURL: testWebURL,
 	}
 	d.Cfg.Server.APIKey = testAPIKey
 	if mutate != nil {
@@ -329,7 +330,7 @@ func TestWebSessionIsReadOnlyRevocableAndDaemonLocal(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&issued))
 	require.NoError(t, resp.Body.Close())
 	require.NotEmpty(t, issued.Token)
-	assert.Equal(t, "http://127.0.0.1:43210/", issued.URL)
+	assert.Equal(t, testWebURL, issued.URL)
 	assert.NotEqual(t, testAPIKey, issued.Token)
 
 	webRequest := func(method, path string) *http.Response {
@@ -355,14 +356,6 @@ func TestWebSessionIsReadOnlyRevocableAndDaemonLocal(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
 
-	resp = webRequest(http.MethodDelete, "/api/daemon/web-session")
-	assert.Equal(t, http.StatusNoContent, resp.StatusCode)
-	require.NoError(t, resp.Body.Close())
-
-	resp = webRequest(http.MethodGet, "/api/v1/path?path=/")
-	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
-	require.NoError(t, resp.Body.Close())
-
 	other, _ := newTestServer(t, nil)
 	req, err = http.NewRequest(http.MethodGet, other.URL+"/api/v1/path?path=/", nil)
 	require.NoError(t, err)
@@ -370,6 +363,14 @@ func TestWebSessionIsReadOnlyRevocableAndDaemonLocal(t *testing.T) {
 	req.Header.Set(api.WebSessionHeader, issued.Token)
 	resp, err = other.Client().Do(req)
 	require.NoError(t, err)
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
+	resp = webRequest(http.MethodDelete, "/api/daemon/web-session")
+	assert.Equal(t, http.StatusNoContent, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
+	resp = webRequest(http.MethodGet, "/api/v1/path?path=/")
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
 }

@@ -15,7 +15,7 @@ import (
 
 func TestWriteBootstrapKeepsCredentialsOutOfLaunchURL(t *testing.T) {
 	root := t.TempDir()
-	authenticated := "http://127.0.0.1:43210/#web_session=private%20session"
+	authenticated := "http://docbank-0123456789abcdef.localhost:43210/#web_session=private%20session"
 	launchURL, err := WriteBootstrap(root, authenticated)
 	require.NoError(t, err)
 	assert.NotContains(t, launchURL, "private")

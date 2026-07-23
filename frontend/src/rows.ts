@@ -3,6 +3,11 @@ import type { Node } from "./api.js";
 export type SortDirection = "asc" | "desc";
 export type SortField = "relevance" | "name" | "size" | "modified";
 export type SortableRow = { node: Node; path: string };
+export type SearchView = {
+  sortField: SortField;
+  sortDirection: SortDirection;
+  selectedID: number | undefined;
+};
 
 export function orderRows<Row extends SortableRow>(
   rows: readonly Row[],
@@ -29,4 +34,23 @@ export function orderRows<Row extends SortableRow>(
     return direction === "asc" ? result : -result;
   });
   return ordered;
+}
+
+export function reconcileSearchView<Row extends SortableRow>(
+  rows: readonly Row[],
+  query: string,
+  previousQuery: string,
+  previousSortField: SortField,
+  previousSortDirection: SortDirection,
+  previousSelectedID: number | undefined,
+): SearchView {
+  const refreshing = query === previousQuery;
+  const sortField = refreshing ? previousSortField : "relevance";
+  const sortDirection = refreshing ? previousSortDirection : "asc";
+  const ordered = orderRows(rows, sortField, sortDirection, true);
+  const selectedID =
+    refreshing && rows.some((row) => row.node.id === previousSelectedID)
+      ? previousSelectedID
+      : ordered[0]?.node.id;
+  return { sortField, sortDirection, selectedID };
 }

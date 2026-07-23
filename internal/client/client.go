@@ -71,7 +71,7 @@ func (c *Client) WebSessionURL(ctx context.Context) (string, error) {
 	}
 	if u.Scheme != "http" || u.Host == "" || u.User != nil ||
 		u.Path != "/" || u.RawQuery != "" || u.Fragment != "" ||
-		!validWebAddress(u.Host) {
+		!validBrowserOriginAddress(u.Host) {
 		return "", errors.New("daemon returned an invalid browser origin")
 	}
 	if u.Host == apiURL.Host {
@@ -82,6 +82,25 @@ func (c *Client) WebSessionURL(ctx context.Context) (string, error) {
 	u.RawQuery = ""
 	u.Fragment = url.Values{"web_session": {session.Token}}.Encode()
 	return u.String(), nil
+}
+
+func validBrowserOriginAddress(address string) bool {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return false
+	}
+	portNumber, err := strconv.Atoi(port)
+	if err != nil || portNumber < 1 || portNumber > 65535 {
+		return false
+	}
+	const prefix = "docbank-"
+	const suffix = ".localhost"
+	if !strings.HasPrefix(host, prefix) || !strings.HasSuffix(host, suffix) {
+		return false
+	}
+	identity := strings.TrimSuffix(strings.TrimPrefix(host, prefix), suffix)
+	decoded, err := hex.DecodeString(identity)
+	return err == nil && len(decoded) == 16 && identity == strings.ToLower(identity)
 }
 
 // responseError distinguishes an HTTP response from transport failure while

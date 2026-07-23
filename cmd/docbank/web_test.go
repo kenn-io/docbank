@@ -22,19 +22,18 @@ import (
 
 func webSessionClient(t *testing.T, token string) (*client.Client, string) {
 	t.Helper()
-	webOrigin := httptest.NewServer(http.NotFoundHandler())
-	t.Cleanup(webOrigin.Close)
+	const webOrigin = "http://docbank-0123456789abcdef0123456789abcdef.localhost:43211"
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
 		assert.Equal(t, "/api/daemon/web-session", r.URL.Path)
 		assert.Equal(t, "private key", r.Header.Get("X-Api-Key"))
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"token": token,
-			"url":   webOrigin.URL + "/",
+			"url":   webOrigin + "/",
 		})
 	}))
 	t.Cleanup(ts.Close)
-	return client.New(ts.URL, "private key"), webOrigin.URL
+	return client.New(ts.URL, "private key"), webOrigin
 }
 
 func TestRunWebOpensReadOnlySessionWithoutPrintingMasterKey(t *testing.T) {

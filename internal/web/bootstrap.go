@@ -29,9 +29,11 @@ func WriteBootstrap(root, authenticatedURL string) (string, error) {
 	}
 	host := target.Hostname()
 	ip := net.ParseIP(host)
+	localName := strings.EqualFold(host, "localhost") ||
+		strings.HasSuffix(strings.ToLower(host), ".localhost")
 	values, queryErr := url.ParseQuery(target.Fragment)
 	if queryErr != nil || values.Get("web_session") == "" ||
-		(!strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback())) {
+		(!localName && (ip == nil || !ip.IsLoopback())) {
 		return "", errors.New("web bootstrap requires an authenticated loopback URL")
 	}
 	dir := filepath.Join(root, launchDirName)

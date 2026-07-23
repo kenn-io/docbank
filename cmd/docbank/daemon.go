@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -296,6 +297,16 @@ func listenWebOrigin(ctx context.Context, enabled bool) (net.Listener, string, e
 	if !enabled {
 		return nil, "", nil
 	}
+	identity, err := randomHex32()
+	if err != nil {
+		return nil, "", fmt.Errorf("generating web origin identity: %w", err)
+	}
+	return listenWebOriginWithIdentity(ctx, identity[:32])
+}
+
+func listenWebOriginWithIdentity(
+	ctx context.Context, identity string,
+) (net.Listener, string, error) {
 	listener, err := kitdaemon.Listen(ctx, kitdaemon.Endpoint{
 		Network: kitdaemon.NetworkTCP,
 		Address: net.JoinHostPort("127.0.0.1", "0"),
@@ -303,7 +314,17 @@ func listenWebOrigin(ctx context.Context, enabled bool) (net.Listener, string, e
 	if err != nil {
 		return nil, "", fmt.Errorf("binding web listener: %w", err)
 	}
-	return listener, "http://" + listener.Addr().String() + "/", nil
+	_, port, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		_ = listener.Close()
+		return nil, "", fmt.Errorf("reading web listener address: %w", err)
+	}
+	origin := url.URL{
+		Scheme: "http",
+		Host:   net.JoinHostPort("docbank-"+identity+".localhost", port),
+		Path:   "/",
+	}
+	return listener, origin.String(), nil
 }
 
 // idleWatch exits an auto-started daemon after a fully quiet window so

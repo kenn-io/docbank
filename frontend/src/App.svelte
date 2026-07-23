@@ -32,7 +32,7 @@
     type SearchHit,
   } from "./api.js";
   import { basename, formatBytes, formatDate } from "./format.js";
-  import { orderRows, type SortField } from "./rows.js";
+  import { orderRows, reconcileSearchView, type SortField } from "./rows.js";
 
   type Row = { node: Node; path: string; match?: "name" | "content" };
   type Snapshot = {
@@ -80,12 +80,16 @@
   }
 
   async function loadRoot(): Promise<void> {
+    const request = ++generation;
+    const session = webSession;
     loading = true;
     error = "";
     try {
-      const root = await statPath(webSession, "/");
+      const root = await statPath(session, "/");
+      if (request !== generation || session !== webSession) return;
       await loadDirectory(root.id, false);
     } catch (cause) {
+      if (request !== generation || session !== webSession) return;
       handleFailure(cause);
       loading = false;
     }
@@ -157,11 +161,19 @@
         path: hit.path,
         match: hit.match,
       }));
+      const view = reconcileSearchView(
+        rows,
+        query,
+        activeQuery,
+        sortField,
+        sortDirection,
+        selectedID,
+      );
       activeQuery = query;
       truncated = report.truncated;
-      sortField = "relevance";
-      sortDirection = "asc";
-      selectedID = orderRows(rows, sortField, sortDirection, true)[0]?.node.id;
+      sortField = view.sortField;
+      sortDirection = view.sortDirection;
+      selectedID = view.selectedID;
     } catch (cause) {
       if (request === generation) handleFailure(cause);
     } finally {
