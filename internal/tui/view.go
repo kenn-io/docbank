@@ -9,6 +9,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"go.kenn.io/docbank/internal/api"
 )
 
 type styles struct {
@@ -67,9 +69,11 @@ func (m Model) render() string {
 	if m.width <= 0 || m.height <= 0 {
 		return "Loading Docbank..."
 	}
-	lines := []string{
-		m.renderTitleBar(),
-		m.renderLocation(),
+	lines := []string{m.renderTitleBar()}
+	if m.historyOpen {
+		lines = append(lines, m.renderHistoryLocation())
+	} else {
+		lines = append(lines, m.renderLocation())
 	}
 	if m.searching {
 		lines = append(lines, fit(m.searchInput.View(), m.width))
@@ -77,8 +81,14 @@ func (m Model) render() string {
 
 	bodyHeight := max(m.height-len(lines)-1, 1)
 	body := m.renderBody(bodyHeight)
+	if m.historyOpen {
+		body = m.renderHistoryList(bodyHeight)
+	}
 	if m.detailOpen {
 		body = m.renderExpandedDetail(bodyHeight)
+	}
+	if m.historyDetail {
+		body = m.renderHistoryDetail(bodyHeight)
 	}
 	lines = append(lines, body, m.renderFooter())
 	content := strings.Join(lines, "\n")
@@ -86,6 +96,29 @@ func (m Model) render() string {
 		return m.renderHelp(content)
 	}
 	return content
+}
+
+func (m Model) renderHistoryLocation() string {
+	left := " Audit history · " + quoted(m.historyNode.path)
+	right := ""
+	if page, ok := m.currentHistoryPage(); ok {
+		start := 1
+		for index := range m.historyPage {
+			start += len(m.historyPages[index].Items)
+		}
+		end := start + len(page.Items) - 1
+		if len(page.Items) == 0 {
+			start, end = 0, 0
+		}
+		right = fmt.Sprintf("events %d-%d of %d", start, end, page.Total)
+	}
+	if m.loading {
+		right = m.styles.spinner.Render(m.spinnerIndicator()) + " loading"
+	}
+	if m.err != nil {
+		right = quoted(m.err.Error())
+	}
+	return m.styles.stats.Render(joinSides(left, right, m.width))
 }
 
 func (m Model) renderTitleBar() string {
@@ -196,6 +229,214 @@ func (m Model) renderList(width, height int) string {
 		lines = append(lines, strings.Repeat(" ", width))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (m Model) renderHistoryList(height int) string {
+	lines := make([]string, 0, height)
+	lines = append(lines, m.renderHistoryHeading())
+	if height > 1 {
+		lines = append(lines, m.styles.separator.Render(strings.Repeat("─", m.width)))
+	}
+	visible := max(height-2, 0)
+	page, ok := m.currentHistoryPage()
+	if (!ok || len(page.Items) == 0) && visible > 0 {
+		message := " No recorded events"
+		if m.loading {
+			message = " Loading permanent history..."
+		} else if m.err != nil {
+			message = " " + quoted(m.err.Error())
+		}
+		lines = append(lines, m.styles.muted.Render(pad(fit(message, m.width), m.width)))
+	}
+	if ok {
+		end := min(m.historyOffset+visible, len(page.Items))
+		for index := m.historyOffset; index < end; index++ {
+			line := m.renderHistoryRow(page.Items[index])
+			if index == m.historyCursor {
+				line = "▶" + line[1:]
+			}
+			line = pad(fit(line, m.width), m.width)
+			if index == m.historyCursor {
+				lines = append(lines, m.styles.cursor.Render(line))
+			} else if index%2 == 1 {
+				lines = append(lines, m.styles.alternate.Render(line))
+			} else {
+				lines = append(lines, line)
+			}
+		}
+	}
+	for len(lines) < height {
+		lines = append(lines, strings.Repeat(" ", m.width))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) renderHistoryHeading() string {
+	if m.width >= 72 {
+		return m.styles.heading.Render(pad("   RECORDED            EVENT                   CHANGE", m.width))
+	}
+	return m.styles.heading.Render(pad("   EVENT                   CHANGE", m.width))
+}
+
+func (m Model) renderHistoryRow(event api.AuditEvent) string {
+	prefix := "   "
+	kind := pad(quoted(event.Kind), 22)
+	change := historyEventSummary(event)
+	if m.width >= 72 {
+		return prefix + pad(formatHistoryTime(event.RecordedAt), 17) + "  " + kind + "  " + change
+	}
+	return prefix + kind + "  " + change
+}
+
+func historyEventSummary(event api.AuditEvent) string {
+	if event.OldPath != nil && event.NewPath != nil {
+		return quoted(event.OldPath.Path) + " → " + quoted(event.NewPath.Path)
+	}
+	if event.PriorCurrentVersionID != nil || event.ResultingCurrentVersionID != nil {
+		return "version " + shortAuditID(event.PriorCurrentVersionID) + " → " +
+			shortAuditID(event.ResultingCurrentVersionID)
+	}
+	if event.Attachment != nil {
+		identity := event.Attachment.Identity.TagID
+		if identity == "" {
+			identity = event.Attachment.Identity.ProvenanceID
+		}
+		return quoted(event.Attachment.Kind) + " " + shortString(identity, 12)
+	}
+	return fmt.Sprintf("revision %d → %d", event.PriorNodeRevision, event.ResultingNodeRevision)
+}
+
+func (m Model) renderHistoryDetail(height int) string {
+	lines := m.historyDetailLines(m.width)
+	maximum := max(len(lines)-height, 0)
+	offset := min(m.historyDetailOffset, maximum)
+	end := min(offset+height, len(lines))
+	visible := append([]string(nil), lines[offset:end]...)
+	for len(visible) < height {
+		visible = append(visible, strings.Repeat(" ", m.width))
+	}
+	return strings.Join(visible, "\n")
+}
+
+func (m Model) historyDetailLines(width int) []string {
+	heading := m.styles.heading.Render(pad(fit(" Complete audited event", width), width))
+	separator := m.styles.separator.Render(strings.Repeat("─", max(width, 0)))
+	lines := []string{heading, separator}
+	event, ok := m.selectedHistoryEvent()
+	if !ok {
+		return append(lines, m.styles.muted.Render(" Nothing selected"))
+	}
+	fields := []string{
+		" Event: " + event.ID,
+		" Operation: " + event.OperationID,
+		fmt.Sprintf(" Sequence: %d.%d", event.OperationSequence, event.Ordinal),
+		" Scope: " + event.ScopeID,
+		fmt.Sprintf(" Node: id:%d", event.NodeID),
+		" Kind: " + event.Kind,
+		" Recorded: " + event.RecordedAt,
+		" Origin: " + quoted(event.Origin),
+		fmt.Sprintf(" Revision: %d -> %d", event.PriorNodeRevision, event.ResultingNodeRevision),
+	}
+	if event.AgentLabel != nil {
+		fields = append(fields, " Agent: "+quoted(*event.AgentLabel))
+	}
+	if event.OldPath != nil {
+		fields = append(fields, " Before path: "+auditPathDetail(*event.OldPath))
+	}
+	if event.NewPath != nil {
+		fields = append(fields, " After path: "+auditPathDetail(*event.NewPath))
+	}
+	if event.PriorCurrentVersionID != nil {
+		fields = append(fields, " Before version: "+*event.PriorCurrentVersionID)
+	}
+	if event.ResultingCurrentVersionID != nil {
+		fields = append(fields, " After version: "+*event.ResultingCurrentVersionID)
+	}
+	if event.SourceVersionID != nil {
+		fields = append(fields, " Source version: "+*event.SourceVersionID)
+	}
+	if event.TargetNodeID != nil {
+		fields = append(fields, fmt.Sprintf(" Target node: id:%d", *event.TargetNodeID))
+	}
+	if event.BaselineDigest != nil {
+		fields = append(fields, " Baseline: "+*event.BaselineDigest)
+	}
+	fields = append(fields, auditAttachmentDetail(event.Attachment)...)
+	for _, field := range fields {
+		wrapped := ansi.Hardwrap(field, max(width, 1), false)
+		for line := range strings.SplitSeq(wrapped, "\n") {
+			lines = append(lines, pad(line, width))
+		}
+	}
+	return lines
+}
+
+func auditPathDetail(state api.AuditPathState) string {
+	return quoted(state.Path) + " (" + state.State + ")"
+}
+
+func auditAttachmentDetail(change *api.AuditAttachmentChange) []string {
+	if change == nil {
+		return nil
+	}
+	lines := []string{" Attachment: " + change.Kind}
+	if change.Identity.TagID != "" {
+		lines = append(lines, " Attachment tag: "+change.Identity.TagID)
+	}
+	if change.Identity.NodeID != 0 {
+		lines = append(lines, fmt.Sprintf(" Attachment node: id:%d", change.Identity.NodeID))
+	}
+	if change.Identity.ProvenanceID != "" {
+		lines = append(lines, " Attachment provenance: "+change.Identity.ProvenanceID)
+	}
+	lines = append(lines, auditAttachmentStateDetail("Before attachment", change.Before)...)
+	lines = append(lines, auditAttachmentStateDetail("After attachment", change.After)...)
+	return lines
+}
+
+func auditAttachmentStateDetail(label string, state *api.AuditAttachmentState) []string {
+	if state == nil {
+		return []string{" " + label + ": absent"}
+	}
+	lines := []string{" " + label + ": present"}
+	if state.TagName != "" {
+		lines = append(lines, "   Tag name: "+quoted(state.TagName))
+	}
+	if state.IngestID != "" {
+		lines = append(lines, "   Ingest: "+state.IngestID)
+	}
+	if state.OriginalPath != nil {
+		lines = append(lines, "   Original reference: "+quoted(*state.OriginalPath))
+	}
+	if state.OriginalMTime != nil {
+		lines = append(lines, "   Original modified: "+*state.OriginalMTime)
+	}
+	if state.Supersedes != nil {
+		lines = append(lines, "   Supersedes: "+*state.Supersedes)
+	}
+	return lines
+}
+
+func shortAuditID(value *string) string {
+	if value == nil {
+		return "none"
+	}
+	return shortString(*value, 8)
+}
+
+func shortString(value string, length int) string {
+	if len(value) <= length {
+		return value
+	}
+	return value[:length]
+}
+
+func formatHistoryTime(value string) string {
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return value
+	}
+	return parsed.UTC().Format("2006-01-02 15:04Z")
 }
 
 type tableLayout struct {
@@ -361,6 +602,9 @@ func (m *Model) clampDetailOffset() {
 }
 
 func (m Model) renderFooter() string {
+	if m.historyOpen {
+		return m.renderHistoryFooter()
+	}
 	if m.detailOpen {
 		return m.renderDetailFooter()
 	}
@@ -371,7 +615,10 @@ func (m Model) renderFooter() string {
 		} else {
 			hints = append(hints, hint{text: "enter inspect", priority: 85})
 		}
-		hints = append(hints, hint{text: "i inspect", priority: 65})
+		hints = append(hints,
+			hint{text: "i inspect", priority: 65},
+			hint{text: "a history", priority: 68},
+		)
 	}
 	if len(m.stack) > 0 || m.mode == modeSearch {
 		hints = append(hints, hint{text: "← back", priority: 75})
@@ -399,6 +646,41 @@ func (m Model) renderFooter() string {
 	available := max(m.width-lipgloss.Width(position)-1, 0)
 	keys := fitHints(hints, available)
 	return m.styles.footer.Render(joinSides(keys, position, m.width))
+}
+
+func (m Model) renderHistoryFooter() string {
+	if m.historyDetail {
+		lines := m.historyDetailLines(m.width)
+		viewport := m.historyViewportHeight()
+		position := ""
+		if len(lines) > viewport {
+			last := min(m.historyDetailOffset+viewport, len(lines))
+			position = fmt.Sprintf(" %d-%d/%d ", m.historyDetailOffset+1, last, len(lines))
+		}
+		hints := []hint{
+			{text: "↑/↓ scroll", priority: 100},
+			{text: "esc close", priority: 90},
+			{text: "? help", priority: 70},
+			{text: "q quit", priority: 60},
+		}
+		available := max(m.width-lipgloss.Width(position)-1, 0)
+		return m.styles.footer.Render(joinSides(fitHints(hints, available), position, m.width))
+	}
+	hints := []hint{
+		{text: "↑/↓ move", priority: 100},
+		{text: "enter inspect", priority: 90},
+		{text: "p newer", priority: 55},
+		{text: "n older", priority: 60},
+		{text: "esc back", priority: 85},
+		{text: "? help", priority: 70},
+		{text: "q quit", priority: 50},
+	}
+	position := ""
+	if page, ok := m.currentHistoryPage(); ok && len(page.Items) > 0 {
+		position = fmt.Sprintf(" %d/%d ", m.historyCursor+1, len(page.Items))
+	}
+	available := max(m.width-lipgloss.Width(position)-1, 0)
+	return m.styles.footer.Render(joinSides(fitHints(hints, available), position, m.width))
 }
 
 func (m Model) renderDetailFooter() string {
@@ -465,7 +747,58 @@ func (m Model) spinnerIndicator() string {
 }
 
 func (m Model) renderHelp(background string) string {
-	lines := []string{
+	lines := m.helpLines()
+	contentWidth := min(max(m.width-8, 1), 54)
+	maxLines := max(m.height-4, 1)
+	if len(lines) > maxLines {
+		if maxLines >= 2 {
+			lines = append(lines[:maxLines-1], lines[len(lines)-1])
+		} else {
+			lines = lines[:maxLines]
+		}
+	}
+	for index := range lines {
+		lines[index] = fit(lines[index], contentWidth)
+	}
+	if len(lines) > 0 {
+		lines[0] = m.styles.modalTitle.Render(lines[0])
+	}
+	modal := m.styles.modal.Render(strings.Join(lines, "\n"))
+	return m.overlayModal(background, modal)
+}
+
+func (m Model) helpLines() []string {
+	if m.historyDetail {
+		return []string{
+			"Audited event inspection",
+			"",
+			"↑/k, ↓/j       Scroll one line",
+			"PgUp/PgDn      Scroll one visible page",
+			"Home/End       Jump to first or last line",
+			"Enter/i/Esc    Return to the event timeline",
+			"q              Quit",
+			"",
+			"Press any key to close",
+		}
+	}
+	if m.historyOpen {
+		return []string{
+			"Audited history shortcuts",
+			"",
+			"↑/k, ↓/j       Move through recorded events",
+			"PgUp/PgDn      Move one visible page",
+			"Home/End       Jump to first or last event",
+			"Enter/i        Inspect the complete event",
+			"n/→            Load the next older page",
+			"p/←            Return to a newer page",
+			"r              Reload from the newest event",
+			"Esc            Return to documents",
+			"q              Quit",
+			"",
+			"Press any key to close",
+		}
+	}
+	return []string{
 		"Keyboard shortcuts",
 		"",
 		"↑/k, ↓/j       Move through documents",
@@ -473,6 +806,7 @@ func (m Model) renderHelp(background string) string {
 		"Home/End       Jump to first or last",
 		"Enter/→/l      Open a directory",
 		"Enter/i        Inspect complete document authority",
+		"a              Browse permanent audited history",
 		"Esc/←/h        Return to the previous view",
 		"/              Search names and extracted text",
 		"s              Cycle the sort column",
@@ -483,19 +817,6 @@ func (m Model) renderHelp(background string) string {
 		"",
 		"Press any key to close",
 	}
-	contentWidth := min(max(m.width-8, 1), 54)
-	maxLines := max(m.height-4, 1)
-	if len(lines) > maxLines {
-		lines = lines[:maxLines]
-	}
-	for index := range lines {
-		lines[index] = fit(lines[index], contentWidth)
-	}
-	if len(lines) > 0 {
-		lines[0] = m.styles.modalTitle.Render(lines[0])
-	}
-	modal := m.styles.modal.Render(strings.Join(lines, "\n"))
-	return m.overlayModal(background, modal)
 }
 
 func formatBytes(value int64) string {

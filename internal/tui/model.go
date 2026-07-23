@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"path"
 	"sort"
 	"strings"
@@ -14,22 +15,27 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/store"
 )
 
 const (
 	maxBrowserItems = 1000
 	maxSearchItems  = 1000
+	maxHistoryItems = 100
 	nodeKindDir     = "dir"
 	nodeKindFile    = "file"
 )
 
-// Backend is the bounded read surface needed by the first TUI slice.
+// Backend is the bounded read surface needed by the TUI.
 // *client.Client satisfies it without exposing a direct vault path.
 type Backend interface {
 	Stat(ctx context.Context, path string) (api.Node, error)
 	Node(ctx context.Context, nodeID int64) (api.Node, error)
 	ChildrenPage(ctx context.Context, nodeID int64, limit, offset int) (api.NodePage, error)
 	Search(ctx context.Context, query string, limit int) (api.SearchReport, error)
+	AuditHistory(
+		ctx context.Context, path string, nodeID int64, limit int, cursor string,
+	) (api.AuditEventPage, error)
 }
 
 type viewMode uint8
@@ -92,13 +98,20 @@ type searchLoadedMsg struct {
 	err       error
 }
 
+type historyLoadedMsg struct {
+	requestID uint64
+	pageIndex int
+	page      api.AuditEventPage
+	err       error
+}
+
 type spinnerTickMsg struct{}
 
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
 const spinnerInterval = 80 * time.Millisecond
 
-// Model is a read-only virtual-tree and search browser. Update uses a value
+// Model is a read-only virtual-tree, search, and audited-history browser. Update uses a value
 // receiver because Bubble Tea treats models as immutable values; small helper
 // methods mutate only the copied value before it is returned.
 //
@@ -123,15 +136,23 @@ type Model struct {
 	searchQuery  string
 	searchReturn *location
 
-	requestID     uint64
-	loading       bool
-	err           error
-	quitting      bool
-	helpOpen      bool
-	detailOpen    bool
-	detailOffset  int
-	spinnerFrame  int
-	spinnerActive bool
+	requestID           uint64
+	loading             bool
+	err                 error
+	quitting            bool
+	helpOpen            bool
+	detailOpen          bool
+	detailOffset        int
+	historyOpen         bool
+	historyNode         row
+	historyPages        []api.AuditEventPage
+	historyPage         int
+	historyCursor       int
+	historyOffset       int
+	historyDetail       bool
+	historyDetailOffset int
+	spinnerFrame        int
+	spinnerActive       bool
 
 	width  int
 	height int
@@ -170,6 +191,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.searchInput.SetWidth(max(msg.Width-4, 1))
 		m.clampSelection()
 		m.clampDetailOffset()
+		m.clampHistorySelection()
+		m.clampHistoryDetailOffset()
 		return m, nil
 	case tea.BackgroundColorMsg:
 		m.styles = newStyles(msg.IsDark())
@@ -178,6 +201,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyDirectory(msg)
 	case searchLoadedMsg:
 		return m.applySearch(msg)
+	case historyLoadedMsg:
+		return m.applyHistory(msg)
 	case spinnerTickMsg:
 		if !m.loading {
 			m.spinnerActive = false
@@ -189,6 +214,12 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.helpOpen {
 			m.helpOpen = false
 			return m, nil
+		}
+		if m.historyDetail {
+			return m.updateHistoryDetailKeys(msg)
+		}
+		if m.historyOpen {
+			return m.updateHistoryKeys(msg)
 		}
 		if m.detailOpen {
 			return m.updateDetailKeys(msg)
@@ -261,6 +292,25 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.detailOffset = 0
 		}
 		return m, nil
+	case "a":
+		selected, ok := m.selected()
+		if !ok {
+			return m, nil
+		}
+		m.historyOpen = true
+		m.historyNode = selected
+		m.historyPages = nil
+		m.historyPage = 0
+		m.historyCursor = 0
+		m.historyOffset = 0
+		m.historyDetail = false
+		m.historyDetailOffset = 0
+		m.loading = true
+		m.err = nil
+		m.requestID++
+		return m, tea.Batch(
+			m.startSpinner(), m.loadHistory(selected.node.ID, "", 0, m.requestID),
+		)
 	case "r":
 		if m.mode == modeSearch && m.searchQuery != "" {
 			m.loading = true
@@ -321,6 +371,93 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.stack = m.stack[:len(m.stack)-1]
 			return m, nil
 		}
+	}
+	return m, nil
+}
+
+func (m Model) updateHistoryKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "ctrl+c":
+		m.quitting = true
+		return m, tea.Quit
+	case "?":
+		m.helpOpen = true
+		return m, nil
+	case "esc", "backspace":
+		m.requestID++
+		m.closeHistory()
+		return m, nil
+	case "enter", "i":
+		if _, ok := m.selectedHistoryEvent(); ok {
+			m.historyDetail = true
+			m.historyDetailOffset = 0
+		}
+	case "up", "k":
+		m.moveHistoryCursor(-1)
+	case "down", "j":
+		m.moveHistoryCursor(1)
+	case "pgup":
+		m.moveHistoryCursor(-m.visibleHistoryRows())
+	case "pgdown":
+		m.moveHistoryCursor(m.visibleHistoryRows())
+	case "home", "g":
+		m.historyCursor, m.historyOffset = 0, 0
+	case "end", "G":
+		if page, ok := m.currentHistoryPage(); ok && len(page.Items) > 0 {
+			m.historyCursor = len(page.Items) - 1
+			m.clampHistorySelection()
+		}
+	case "n", "right", "l":
+		return m.openOlderHistoryPage()
+	case "p", "left", "h":
+		if m.historyPage > 0 {
+			m.historyPage--
+			m.historyCursor, m.historyOffset = 0, 0
+			m.err = nil
+		}
+	case "r":
+		m.historyPages = nil
+		m.historyPage = 0
+		m.historyCursor, m.historyOffset = 0, 0
+		m.loading = true
+		m.err = nil
+		m.requestID++
+		return m, tea.Batch(
+			m.startSpinner(), m.loadHistory(m.historyNode.node.ID, "", 0, m.requestID),
+		)
+	}
+	return m, nil
+}
+
+func (m Model) updateHistoryDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "ctrl+c":
+		m.quitting = true
+		return m, tea.Quit
+	case "?":
+		m.helpOpen = true
+		return m, nil
+	case "i", "enter", "esc", "left", "h", "backspace":
+		m.historyDetail = false
+		m.historyDetailOffset = 0
+	case "up", "k":
+		m.historyDetailOffset--
+		m.clampHistoryDetailOffset()
+	case "down", "j":
+		m.historyDetailOffset++
+		m.clampHistoryDetailOffset()
+	case "pgup":
+		m.historyDetailOffset -= m.historyViewportHeight()
+		m.clampHistoryDetailOffset()
+	case "pgdown":
+		m.historyDetailOffset += m.historyViewportHeight()
+		m.clampHistoryDetailOffset()
+	case "home", "g":
+		m.historyDetailOffset = 0
+	case "end", "G":
+		m.historyDetailOffset = max(
+			len(m.historyDetailLines(m.width))-m.historyViewportHeight(), 0,
+		)
 	}
 	return m, nil
 }
@@ -391,6 +528,18 @@ func (m Model) loadSearch(query string, requestID uint64) tea.Cmd {
 	return func() tea.Msg {
 		report, err := backend.Search(ctx, query, maxSearchItems)
 		return searchLoadedMsg{requestID: requestID, query: query, report: report, err: err}
+	}
+}
+
+func (m Model) loadHistory(
+	nodeID int64, cursor string, pageIndex int, requestID uint64,
+) tea.Cmd {
+	ctx, backend := m.ctx, m.backend
+	return func() tea.Msg {
+		page, err := backend.AuditHistory(ctx, "", nodeID, maxHistoryItems, cursor)
+		return historyLoadedMsg{
+			requestID: requestID, pageIndex: pageIndex, page: page, err: err,
+		}
 	}
 }
 
@@ -472,6 +621,129 @@ func (m Model) applySearch(msg searchLoadedMsg) (tea.Model, tea.Cmd) {
 	m.err = nil
 	m.clampSelection()
 	return m, nil
+}
+
+func (m Model) applyHistory(msg historyLoadedMsg) (tea.Model, tea.Cmd) {
+	if msg.requestID != m.requestID || !m.historyOpen {
+		return m, nil
+	}
+	m.loading = false
+	if msg.err != nil {
+		if errors.Is(msg.err, store.ErrAuditNotEnrolled) {
+			m.err = errors.New("this node is not protected by permanent audit history")
+		} else {
+			m.err = msg.err
+		}
+		return m, nil
+	}
+	if msg.pageIndex < len(m.historyPages) {
+		m.historyPages[msg.pageIndex] = msg.page
+	} else if msg.pageIndex == len(m.historyPages) {
+		m.historyPages = append(m.historyPages, msg.page)
+	} else {
+		m.err = errors.New("audit history returned an unexpected page")
+		return m, nil
+	}
+	m.historyPage = msg.pageIndex
+	m.historyNode.node = msg.page.Node
+	if msg.page.Path != "" {
+		m.historyNode.path = msg.page.Path
+	} else {
+		m.historyNode.path = fmt.Sprintf("id:%d in trash", msg.page.Node.ID)
+	}
+	m.historyCursor, m.historyOffset = 0, 0
+	m.err = nil
+	m.clampHistorySelection()
+	return m, nil
+}
+
+func (m Model) openOlderHistoryPage() (tea.Model, tea.Cmd) {
+	if m.loading {
+		return m, nil
+	}
+	if m.historyPage+1 < len(m.historyPages) {
+		m.historyPage++
+		m.historyCursor, m.historyOffset = 0, 0
+		m.err = nil
+		return m, nil
+	}
+	page, ok := m.currentHistoryPage()
+	if !ok || page.NextCursor == "" {
+		return m, nil
+	}
+	m.loading = true
+	m.err = nil
+	m.requestID++
+	return m, tea.Batch(
+		m.startSpinner(),
+		m.loadHistory(m.historyNode.node.ID, page.NextCursor, len(m.historyPages), m.requestID),
+	)
+}
+
+func (m *Model) closeHistory() {
+	m.historyOpen = false
+	m.historyNode = row{}
+	m.historyPages = nil
+	m.historyPage = 0
+	m.historyCursor, m.historyOffset = 0, 0
+	m.historyDetail = false
+	m.historyDetailOffset = 0
+	m.loading = false
+	m.err = nil
+}
+
+func (m Model) currentHistoryPage() (api.AuditEventPage, bool) {
+	if m.historyPage < 0 || m.historyPage >= len(m.historyPages) {
+		return api.AuditEventPage{}, false
+	}
+	return m.historyPages[m.historyPage], true
+}
+
+func (m Model) selectedHistoryEvent() (api.AuditEvent, bool) {
+	page, ok := m.currentHistoryPage()
+	if !ok || m.historyCursor < 0 || m.historyCursor >= len(page.Items) {
+		return api.AuditEvent{}, false
+	}
+	return page.Items[m.historyCursor], true
+}
+
+func (m *Model) moveHistoryCursor(delta int) {
+	page, ok := m.currentHistoryPage()
+	if !ok || len(page.Items) == 0 {
+		return
+	}
+	m.historyCursor = min(max(m.historyCursor+delta, 0), len(page.Items)-1)
+	m.clampHistorySelection()
+}
+
+func (m *Model) clampHistorySelection() {
+	page, ok := m.currentHistoryPage()
+	if !ok || len(page.Items) == 0 {
+		m.historyCursor, m.historyOffset = 0, 0
+		return
+	}
+	m.historyCursor = min(max(m.historyCursor, 0), len(page.Items)-1)
+	visible := m.visibleHistoryRows()
+	if m.historyCursor < m.historyOffset {
+		m.historyOffset = m.historyCursor
+	}
+	if m.historyCursor >= m.historyOffset+visible {
+		m.historyOffset = m.historyCursor - visible + 1
+	}
+	m.historyOffset = min(max(m.historyOffset, 0), max(len(page.Items)-visible, 0))
+}
+
+func (m Model) visibleHistoryRows() int {
+	return max(m.historyViewportHeight()-2, 1)
+}
+
+func (m Model) historyViewportHeight() int {
+	return max(m.height-3, 1)
+}
+
+func (m *Model) clampHistoryDetailOffset() {
+	maximum := max(len(m.historyDetailLines(m.width))-m.historyViewportHeight(), 0)
+	m.historyDetailOffset = min(max(m.historyDetailOffset, 0), maximum)
 }
 
 func (m Model) snapshot() location {
