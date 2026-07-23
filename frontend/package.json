@@ -1,0 +1,37 @@
+{
+  "name": "docbank-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": "^20.19.0 || ^22.18.0 || >=24.11.0"
+  },
+  "scripts": {
+    "dev": "vp dev",
+    "build": "vp build",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "check:kit-ui": "kit-ui-check src",
+    "test": "vp test run"
+  },
+  "dependencies": {
+    "@kenn-io/kit-ui": "git+https://github.com/kenn-io/kit-ui.git#b35e4ca7df66969f4650327d6e315986afef8716",
+    "@lucide/svelte": "1.24.0",
+    "svelte": "5.56.4"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "7.2.0",
+    "@testing-library/svelte": "5.3.1",
+    "@tsconfig/svelte": "5.0.8",
+    "@types/node": "26.0.0",
+    "jsdom": "29.1.1",
+    "svelte-check": "4.7.2",
+    "typescript": "6.0.3",
+    "vite": "npm:@voidzero-dev/vite-plus-core@0.2.4",
+    "vite-plus": "0.2.4",
+    "vitest": "4.1.10"
+  },
+  "overrides": {
+    "vite": "npm:@voidzero-dev/vite-plus-core@0.2.4"
+  },
+  "packageManager": "npm@11.17.0"
+}

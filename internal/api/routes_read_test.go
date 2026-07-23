@@ -79,12 +79,44 @@ func TestChildrenPagination(t *testing.T) {
 	resp, body := get(t, ts, fmt.Sprintf("/api/v1/nodes/%d/children?limit=2&offset=4", s.RootID()), nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var page struct {
-		Items []api.Node `json:"items"`
-		Total int        `json:"total"`
+		Directory api.Node   `json:"directory"`
+		Items     []api.Node `json:"items"`
+		Total     int        `json:"total"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(body), &page))
 	assert.Equal(t, 5, page.Total)
 	assert.Len(t, page.Items, 1) // offset 4 of 5
+	assert.Equal(t, s.RootID(), page.Directory.ID)
+	assert.Equal(t, "/", page.Directory.Path)
+}
+
+func TestChildrenRefreshReturnsCurrentDirectoryAuthority(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	dir, err := s.Mkdir(ctx, s.RootID(), "old")
+	require.NoError(t, err)
+	_, err = s.Mkdir(ctx, dir.ID, "child")
+	require.NoError(t, err)
+
+	_, _, err = s.Move(ctx, dir.ID, s.RootID(), "current", store.UnconditionalRev)
+	require.NoError(t, err)
+	resp, body := get(t, ts,
+		fmt.Sprintf("/api/v1/nodes/%d/children?limit=10&offset=0", dir.ID), nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var page api.NodePage
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	assert.Equal(t, dir.ID, page.Directory.ID)
+	assert.Equal(t, "/current", page.Directory.Path)
+	require.Len(t, page.Items, 1)
+
+	current, err := s.NodeByID(ctx, dir.ID)
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, dir.ID, current.Revision)
+	require.NoError(t, err)
+	resp, body = get(t, ts,
+		fmt.Sprintf("/api/v1/nodes/%d/children?limit=10&offset=0", dir.ID), nil)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode, body)
+	assert.Contains(t, body, `"code":"not_found"`)
 }
 
 func TestContentStreamsBlob(t *testing.T) {

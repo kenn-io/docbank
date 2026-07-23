@@ -60,10 +60,20 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 
 Root-level, outside `/api/v1` and auth-exempt: `GET /health`, `GET
 /api/ping` (daemon discovery), `GET /docs` and the OpenAPI documents,
-and `/` (the placeholder web UI, when `[web] enabled`). A hidden `POST
+and `/` plus `/assets/` (the static web application, when `[web] enabled`). A hidden `POST
 /api/daemon/shutdown` (not in the OpenAPI document) backs `docbank
 daemon stop`; it isn't auth-exempt, so it requires both the API key and
-its own shutdown token.
+its own shutdown token. The hidden `POST /api/daemon/web-session` exchanges
+that master authority for a random daemon-lifetime browser token and returns
+the fresh loopback origin dedicated to that daemon lifetime, while
+`DELETE /api/daemon/web-session` revokes the calling browser session. Those
+tokens authenticate only the read routes used by the built-in tree and search
+views; they are intentionally not another general API credential.
+
+`GET /nodes/{id}/children` binds the live directory projection—including its
+current canonical path—and the requested child page to one read transaction.
+Refresh clients therefore do not combine an earlier directory name with a
+later child listing.
 
 IDs are canonical everywhere: every response carries them, and mutating
 endpoints address nodes by ID so a rename can't strand a concurrent
@@ -499,8 +509,8 @@ Binds are loopback-only: the API is plain HTTP, so a non-loopback bind
 would expose the key and vault contents in cleartext, and `docbank
 daemon run` refuses to start on one — remote access goes through an SSH
 tunnel or VPN (see [Configuration](../configuration.md)). `/health`,
-`/api/ping`, `/docs`, the OpenAPI documents, and the web placeholder at
-`/` are auth-exempt; everything else, including the shutdown route,
+`/api/ping`, `/docs`, the OpenAPI documents, and the static web application at
+`/` and `/assets/` are auth-exempt; everything else, including the shutdown route,
 requires the key.
 
 ## Error mapping
@@ -541,14 +551,17 @@ machine-readable string clients branch on instead of parsing `detail`:
 | `maintenance_busy` | 503 | exclusive vault maintenance is running or queued; retry the mutation after it finishes |
 | `pack_retirement_deferred` | 503 | repack authority committed but an old source pack remains physically locked; release the lock, then run `storage pack` reconciliation |
 | `unauthorized` | 401 | missing or invalid API key; bad shutdown token |
+| `web_session_read_only` | 403 | a daemon-issued browser session attempted an endpoint outside its explicit read-only allowlist |
+| `web_unavailable` | 503 | this daemon is not serving compiled web assets |
 | `internal` | 500 | unmapped error (still surfaced with a message — this is a single-user local daemon, not a hardened multi-tenant service) |
 
 ## Non-goals
 
-- No server-side rendering. The current root is a static placeholder; the
-  planned kit-ui portal remains an ordinary authenticated API client and gains
-  no privileged data path.
-- No multi-user model: one vault, one key. Sharing is out of scope for
-  v1.
+- No server-side rendering. The kit-ui application is static public code; it
+  receives a daemon-lifetime read-only session from `docbank web`, and every
+  vault read remains an ordinary authenticated API request. The master API key
+  never enters the browser.
+- No multi-user model: one vault and one master authority. Browser sessions are
+  attenuated local capabilities, not accounts. Sharing is out of scope for v1.
 - No MCP server.
 - No remote-daemon mode or `[remote]` configuration.

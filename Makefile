@@ -21,17 +21,19 @@ DEFAULT_GOLANGCI_LINT_CACHE := $(shell git rev-parse --path-format=absolute --gi
 GOLANGCI_LINT_CACHE ?= $(DEFAULT_GOLANGCI_LINT_CACHE)
 export GOLANGCI_LINT_CACHE
 
-.PHONY: build install clean test test-v release-scripts-test fmt lint lint-ci tidy install-hooks docs-install docs-build docs-serve docs-link docs-deploy help
+.PHONY: build install clean test test-v release-scripts-test frontend frontend-test frontend-dev fmt lint lint-ci tidy install-hooks docs-install docs-build docs-serve docs-link docs-deploy help
 
-build:
+build: frontend
 	CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS)" -o docbank ./cmd/docbank
 
-install:
+install: frontend
 	@mkdir -p "$(HOME)/.local/bin"
 	CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS)" -o "$(HOME)/.local/bin/docbank" ./cmd/docbank
 
 clean:
 	rm -f docbank
+	find internal/web/dist -mindepth 1 ! -name .keep -exec rm -rf {} +
+	rm -rf frontend/dist
 
 test: release-scripts-test
 	go test -tags "$(BUILD_TAGS)" ./...
@@ -41,6 +43,21 @@ test-v:
 
 release-scripts-test:
 	bash scripts/release_scripts_test.sh
+
+frontend:
+	cd frontend && npm ci && npm run build
+	find internal/web/dist -mindepth 1 ! -name .keep -exec rm -rf {} +
+	cp -R frontend/dist/. internal/web/dist/
+
+frontend-test:
+	cd frontend && npm ci
+	cd frontend && npm run check
+	cd frontend && npm run check:kit-ui
+	cd frontend && npm test
+	cd frontend && npm run build
+
+frontend-dev:
+	cd frontend && npm run dev
 
 fmt:
 	go fmt ./...
@@ -101,4 +118,4 @@ docs-deploy: docs-build
 	vercel deploy docs/site --prod --yes
 
 help:
-	@echo "Targets: build install clean test test-v release-scripts-test fmt lint lint-ci tidy install-hooks docs-install docs-build docs-serve docs-link docs-deploy"
+	@echo "Targets: build install clean test test-v release-scripts-test frontend frontend-test frontend-dev fmt lint lint-ci tidy install-hooks docs-install docs-build docs-serve docs-link docs-deploy"

@@ -20,6 +20,7 @@ nav = [
     {"Importing Documents" = "usage/importing.md"},
     {"Organizing & Tagging" = "usage/organizing.md"},
     {"Searching" = "usage/searching.md"},
+    {"Web Application" = "usage/web.md"},
     {"Interactive Terminal Browser" = "usage/tui.md"},
   ]},
   {"Protect & Operate" = [

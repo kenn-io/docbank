@@ -16,6 +16,7 @@ import (
 	"math"
 	"mime"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/textproto"
 	"net/url"
@@ -37,6 +38,69 @@ type Client struct {
 	base string
 	key  string
 	hc   *http.Client
+}
+
+// WebSessionURL asks the ownership-proven daemon for a daemon-lifetime,
+// read-only browser credential and returns it in the local portal fragment.
+// The master API key stays on the client's pinned connection and never enters
+// the browser.
+func (c *Client) WebSessionURL(ctx context.Context) (string, error) {
+	apiURL, err := url.Parse(c.base)
+	if err != nil {
+		return "", fmt.Errorf("parsing daemon web URL: %w", err)
+	}
+	host := apiURL.Hostname()
+	ip := net.ParseIP(host)
+	if apiURL.Scheme != "http" || apiURL.Host == "" || c.key == "" ||
+		(!strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback())) {
+		return "", errors.New("daemon client cannot produce an authenticated web URL")
+	}
+	var session struct {
+		Token string `json:"token"`
+		URL   string `json:"url"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/api/daemon/web-session", nil, nil, &session); err != nil {
+		return "", err
+	}
+	if session.Token == "" {
+		return "", errors.New("daemon returned an empty browser session")
+	}
+	u, err := url.Parse(session.URL)
+	if err != nil {
+		return "", fmt.Errorf("parsing daemon browser origin: %w", err)
+	}
+	if u.Scheme != "http" || u.Host == "" || u.User != nil ||
+		u.Path != "/" || u.RawQuery != "" || u.Fragment != "" ||
+		!validBrowserOriginAddress(u.Host) {
+		return "", errors.New("daemon returned an invalid browser origin")
+	}
+	if u.Host == apiURL.Host {
+		return "", errors.New("daemon returned its reusable API origin for the browser")
+	}
+	u.Path = "/"
+	u.RawPath = ""
+	u.RawQuery = ""
+	u.Fragment = url.Values{"web_session": {session.Token}}.Encode()
+	return u.String(), nil
+}
+
+func validBrowserOriginAddress(address string) bool {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return false
+	}
+	portNumber, err := strconv.Atoi(port)
+	if err != nil || portNumber < 1 || portNumber > 65535 {
+		return false
+	}
+	const prefix = "docbank-"
+	const suffix = ".localhost"
+	if !strings.HasPrefix(host, prefix) || !strings.HasSuffix(host, suffix) {
+		return false
+	}
+	identity := strings.TrimSuffix(strings.TrimPrefix(host, prefix), suffix)
+	decoded, err := hex.DecodeString(identity)
+	return err == nil && len(decoded) == 16 && identity == strings.ToLower(identity)
 }
 
 // responseError distinguishes an HTTP response from transport failure while
@@ -355,6 +419,8 @@ func (c *Client) ChildrenPage(
 		return api.NodePage{}, err
 	}
 	if page.Limit != limit || page.Offset != offset || page.Total < 0 ||
+		page.Directory.ID != id || page.Directory.Kind != "dir" ||
+		page.Directory.TrashedAt != "" || !strings.HasPrefix(page.Directory.Path, "/") ||
 		len(page.Items) > limit ||
 		(len(page.Items) == 0 && offset < page.Total) ||
 		(len(page.Items) > 0 && offset+len(page.Items) > page.Total) {

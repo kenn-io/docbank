@@ -85,6 +85,15 @@ func discoverOptions(requireVersion bool) kitdaemon.DiscoverOptions {
 	}
 }
 
+func webDiscoverOptions() kitdaemon.DiscoverOptions {
+	opts := discoverOptions(true)
+	accept := opts.Accept
+	opts.Accept = func(rec kitdaemon.RuntimeRecord, info kitdaemon.PingInfo) bool {
+		return accept(rec, info) && validWebAddress(rec.Metadata[metaWebAddress])
+	}
+	return opts
+}
+
 // Find reports the live, responding docbank daemon (any version): daemon
 // discovery for status/stop. NEVER auto-starts.
 func Find(ctx context.Context, root string) (kitdaemon.RuntimeRecord, kitdaemon.PingInfo, bool, error) {
@@ -195,6 +204,29 @@ func Ensure(ctx context.Context) (*Client, error) {
 	return c, nil
 }
 
+// EnsureWeb returns an ownership-proven client for a daemon that is both
+// protocol-compatible and serving the compiled web application. A
+// fallback-only same-version daemon is replaced just like any other
+// incompatible owner.
+func EnsureWeb(ctx context.Context) (*Client, error) {
+	layout, err := home.Resolve()
+	if err != nil {
+		return nil, err
+	}
+	res, err := ensureDaemonWithOptions(ctx, layout.Root, Start, webDiscoverOptions())
+	if err != nil {
+		return nil, err
+	}
+	if !validWebAddress(res.Record.Metadata[metaWebAddress]) {
+		return nil, errors.New("started daemon does not provide the compiled web application")
+	}
+	c, err := newProvenClientFor(ctx, res.Record)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrTransientDaemonAcquisition, err)
+	}
+	return c, nil
+}
+
 // EnsureDaemon converges the vault on exactly one version- and
 // protocol-matched daemon: it returns the running daemon when it is compatible
 // with this binary, and otherwise — under the launch lock — stops it and starts
@@ -210,12 +242,21 @@ func ensureDaemon(
 	root string,
 	startFn func(context.Context, string) (kitdaemon.RuntimeRecord, error),
 ) (EnsureResult, error) {
+	return ensureDaemonWithOptions(ctx, root, startFn, discoverOptions(true))
+}
+
+func ensureDaemonWithOptions(
+	ctx context.Context,
+	root string,
+	startFn func(context.Context, string) (kitdaemon.RuntimeRecord, error),
+	opts kitdaemon.DiscoverOptions,
+) (EnsureResult, error) {
 	var res EnsureResult
 	root, err := home.CanonicalRoot(root)
 	if err != nil {
 		return res, err
 	}
-	rec, _, ok, err := discover(ctx, root, true)
+	rec, _, ok, err := discoverWithOptions(ctx, root, opts)
 	if err != nil {
 		return res, fmt.Errorf("discovering daemon: %w", err)
 	}
@@ -226,7 +267,7 @@ func ensureDaemon(
 
 	// Serialize racing starters; re-check under the lock.
 	err = WithLaunchLock(ctx, root, func() error {
-		rec, _, ok, err = discover(ctx, root, true)
+		rec, _, ok, err = discoverWithOptions(ctx, root, opts)
 		if err != nil {
 			return fmt.Errorf("discovering daemon: %w", err)
 		}

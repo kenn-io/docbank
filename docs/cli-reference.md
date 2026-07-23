@@ -706,6 +706,30 @@ run backup and storage maintenance. See the
 [interactive terminal browser](usage/tui.md) for navigation keys and the
 capability boundary.
 
+## docbank web
+
+!!! info "Release availability"
+
+    `docbank web` is newer than v0.10.1. Build from source to use it until the
+    next release is tagged.
+
+```
+docbank web [--no-browser]
+```
+
+Starts or reconnects to the selected vault's compatible daemon and opens the
+embedded read-only web application. An owner-private launch file transfers the
+daemon-issued browser session without putting it in a child-process argument.
+The master API key stays on the ownership-pinned CLI connection and never
+enters the browser. Each daemon uses a separate, ephemeral loopback origin for
+the web application even when the API port is fixed. The application removes
+its read-only session token from the address bar before making requests and
+keeps it only in page memory.
+
+`--no-browser` prints that authenticated URL instead of opening it. The output
+contains a live read-only browser session and must be handled as a secret. See the
+[web application guide](usage/web.md) for its capabilities and trust boundary.
+
 ## docbank trash
 
 ```

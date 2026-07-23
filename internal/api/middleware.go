@@ -58,8 +58,8 @@ func clearLongRunningBodyReadDeadlines(api huma.API) {
 	}
 }
 
-// auth-exempt: discovery, credential-free ownership proof, docs, and the
-// static placeholder carry no vault data. Everything else requires the key —
+// auth-exempt: discovery, credential-free ownership proof, docs, and static
+// web assets carry no vault data. Everything else requires the key —
 // the daemon always has one; see NewServer.
 func authExempt(path string) bool {
 	switch path {
@@ -68,7 +68,8 @@ func authExempt(path string) bool {
 	}
 	return strings.HasPrefix(path, "/docs") ||
 		strings.HasPrefix(path, "/openapi") ||
-		strings.HasPrefix(path, "/schemas")
+		strings.HasPrefix(path, "/schemas") ||
+		strings.HasPrefix(path, "/assets/")
 }
 
 func writeError(w http.ResponseWriter, e *Error) {
@@ -83,7 +84,7 @@ func writeError(w http.ResponseWriter, e *Error) {
 // keyless bypass: NewServer refuses to build a server with an empty key
 // (the offline OpenAPI-document path is the only caller that doesn't serve
 // requests, and it supplies a placeholder key), so key is always set here.
-func authMiddleware(next http.Handler, key string) http.Handler {
+func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if authExempt(r.URL.Path) {
 			next.ServeHTTP(w, r)
@@ -93,11 +94,22 @@ func authMiddleware(next http.Handler, key string) http.Handler {
 		if got == "" {
 			got = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		}
-		if subtle.ConstantTimeCompare([]byte(got), []byte(key)) != 1 {
-			writeError(w, NewError(http.StatusUnauthorized, "unauthorized", "missing or invalid API key"))
+		if subtle.ConstantTimeCompare([]byte(got), []byte(key)) == 1 {
+			next.ServeHTTP(w, r)
 			return
 		}
-		next.ServeHTTP(w, r)
+		webToken := r.Header.Get(WebSessionHeader)
+		if sessions != nil && sessions.valid(webToken) {
+			if !webSessionRequestAllowed(r.Method, r.URL.Path) {
+				writeError(w, NewError(http.StatusForbidden, "web_session_read_only",
+					"browser sessions cannot use this endpoint"))
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
+		writeError(w, NewError(http.StatusUnauthorized, "unauthorized",
+			"missing or invalid API key or browser session"))
 	})
 }
 

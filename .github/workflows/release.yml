@@ -6,8 +6,10 @@ on:
   pull_request:
     paths:
       - .github/workflows/release.yml
+      - frontend/**
       - go.mod
       - go.sum
+      - internal/web/**
 
 permissions:
   contents: read
@@ -17,8 +19,39 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  build-frontend:
+    name: Build web application
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run check
+          npm run check:kit-ui
+          npm test
+          npm run build
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: web-assets
+          path: frontend/dist/
+          if-no-files-found: error
+
   build-linux:
     name: Build linux/${{ matrix.goarch }}
+    needs: build-frontend
     strategy:
       fail-fast: false
       matrix:
@@ -49,6 +82,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: web-assets
+          path: internal/web/dist
 
       - name: Build and package
         env:
@@ -85,6 +123,7 @@ jobs:
 
   build-darwin:
     name: Build darwin/${{ matrix.goarch }}
+    needs: build-frontend
     strategy:
       fail-fast: false
       matrix:
@@ -101,6 +140,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: web-assets
+          path: internal/web/dist
 
       - name: Build and package
         env:
@@ -140,6 +184,7 @@ jobs:
 
   build-windows:
     name: Build windows/${{ matrix.goarch }}
+    needs: build-frontend
     strategy:
       fail-fast: false
       matrix:
@@ -161,6 +206,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: web-assets
+          path: internal/web/dist
 
       - name: Set up ARM64 C compiler
         if: matrix.goarch == 'arm64'
@@ -235,6 +285,7 @@ jobs:
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
+          pattern: docbank-*
           path: assets
           merge-multiple: true
 

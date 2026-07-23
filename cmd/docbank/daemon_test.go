@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -15,6 +17,46 @@ import (
 	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/home"
 )
+
+func TestWebOriginUsesDedicatedEphemeralLoopbackListeners(t *testing.T) {
+	first, firstURL, err := listenWebOriginWithIdentity(
+		t.Context(), "00000000000000000000000000000000")
+	require.NoError(t, err)
+	require.NoError(t, first.Close())
+	second, secondURL, err := listenWebOriginWithIdentity(
+		t.Context(), "01010101010101010101010101010101")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = second.Close() })
+
+	assert.NotEqual(t, firstURL, secondURL)
+	for _, test := range []struct {
+		listener net.Listener
+		rawURL   string
+		host     string
+	}{
+		{first, firstURL, "docbank-00000000000000000000000000000000.localhost"},
+		{second, secondURL, "docbank-01010101010101010101010101010101.localhost"},
+	} {
+		u, err := url.Parse(test.rawURL)
+		require.NoError(t, err)
+		assert.Equal(t, test.host, u.Hostname())
+		assert.Equal(t, "/", u.Path)
+		assert.Empty(t, u.RawQuery)
+		assert.Empty(t, u.Fragment)
+
+		listener := test.listener
+		host, port, err := net.SplitHostPort(listener.Addr().String())
+		require.NoError(t, err)
+		assert.Equal(t, "127.0.0.1", host)
+		assert.NotEqual(t, "0", port)
+		assert.Equal(t, port, u.Port())
+	}
+
+	disabled, disabledURL, err := listenWebOrigin(t.Context(), false)
+	require.NoError(t, err)
+	assert.Nil(t, disabled)
+	assert.Empty(t, disabledURL)
+}
 
 func TestServeLocksBeforeInitializingVault(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "restore-target")

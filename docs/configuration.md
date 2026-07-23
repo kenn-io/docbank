@@ -38,6 +38,7 @@ The directory layout is created on first use:
 │   ├── <aa>/<sha256>.zst # managed compressed loose representation
 │   └── tmp/             # staging for in-flight writes
 ├── logs/                # JSON logs from background daemons
+├── web-launch/          # owner-private browser authentication handoff
 ├── config.toml          # optional; see below
 ├── vault.lock           # advisory lock, held by a daemon or target restore
 └── daemon.<pid>.json    # runtime record of a live daemon
@@ -49,7 +50,7 @@ always describe the decoded content. Docbank chooses it for worthwhile new
 writes and continues to read existing raw files without converting them.
 `config.toml` is configuration, not archive data — optional, but back it
 up if you've customized it (it can hold an `api_key`). `vault.lock` and
-`daemon.<pid>.json` are coordination/runtime state, safe to
+`daemon.<pid>.json` and `web-launch/` are coordination/runtime state, safe to
 ignore in backups and safe to delete when no daemon or restore is running
 (`docbank daemon stop` removes its own record cleanly on graceful
 shutdown). The database
@@ -128,8 +129,11 @@ exclude = [".DS_Store", "cache/"]
 - **`idle_timeout`** — how long a background daemon waits without
   requests before exiting on its own. `"0"` disables idle shutdown.
   Foreground `docbank daemon run` ignores this and never idles out.
-- **`[web] enabled`** — serves the placeholder web page at `/`. Disabling
-  it 404s `/`; the API and `/docs` are unaffected.
+- **`[web] enabled`** — serves the embedded read-only web application at `/`.
+  `docbank web` starts or reconnects to the compatible daemon and opens an
+  authenticated browser session on a fresh per-daemon loopback origin,
+  independent of a configured `api_port`. Disabling it 404s `/` and `/assets/`;
+  the API and `/docs` are unaffected. See [Web application](usage/web.md).
 - **`[backup] repo`** — default immutable snapshot repository used when a
   backup command or API request omits `repo`. `~/...` expands against the
   daemon user's home; a relative path is resolved beneath `$DOCBANK_HOME`.

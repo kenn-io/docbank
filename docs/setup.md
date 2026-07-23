@@ -19,14 +19,15 @@ additionally requires:
   [mattn/go-sqlite3](https://github.com/mattn/go-sqlite3)
 - A C compiler (Xcode command-line tools on macOS, `gcc`/`clang` on Linux,
   or a MinGW-compatible compiler on Windows)
+- Node.js 24 or newer and npm — source builds compile the embedded web
+  application before the Go binary
 
 ## Install a release
 
-!!! info "Current tagged release"
-    v0.5.0 publishes Linux, macOS, and Windows archives for amd64 and arm64
-    with SHA-256 checksums. The shell and PowerShell installers select the
-    native archive and verify it against `SHA256SUMS` before installing,
-    failing rather than substituting an incompatible or unverified archive.
+Published releases include Linux, macOS, and Windows archives for amd64 and
+arm64 with SHA-256 checksums. The shell and PowerShell installers select the
+native archive and verify it against `SHA256SUMS` before installing, failing
+rather than substituting an incompatible or unverified archive.
 
 On Linux or macOS, the installer selects the native archive and installs
 `docbank` to `~/.local/bin` by default:
@@ -96,14 +97,26 @@ make install    # installs to ~/.local/bin
 On Windows, use a PowerShell prompt with Go and the C compiler available:
 
 ```powershell
+Push-Location frontend
+npm ci
+npm run build
+Pop-Location
+Get-ChildItem internal/web/dist -Force |
+  Where-Object Name -ne '.keep' |
+  Remove-Item -Recurse -Force
+Copy-Item -Recurse -Force frontend/dist/* internal/web/dist/
 go build -tags fts5 -o docbank.exe ./cmd/docbank
 go test -tags fts5 ./...
 ```
 
 The SQLite full-text index requires the `fts5` build tag; the Makefile
-targets set it for you. If you invoke `go` directly, pass it yourself:
+targets set it for you and build the frontend first. If you invoke `go`
+directly on Unix, prepare the embedded frontend and pass the tag yourself:
 
 ```bash
+(cd frontend && npm ci && npm run build)
+find internal/web/dist -mindepth 1 ! -name .keep -exec rm -rf {} +
+cp -R frontend/dist/. internal/web/dist/
 go build -tags fts5 ./cmd/docbank
 go test -tags fts5 ./...
 ```

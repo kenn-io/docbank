@@ -36,10 +36,11 @@ type Node struct {
 
 // NodePage is one bounded, ordered directory-child listing.
 type NodePage struct {
-	Items  []Node `json:"items"`
-	Total  int    `json:"total"`
-	Limit  int    `json:"limit"`
-	Offset int    `json:"offset"`
+	Directory Node   `json:"directory"`
+	Items     []Node `json:"items"`
+	Total     int    `json:"total"`
+	Limit     int    `json:"limit"`
+	Offset    int    `json:"offset"`
 }
 
 // BatchMoveItem identifies a live source either by absolute virtual path or

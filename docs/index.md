@@ -14,7 +14,8 @@ inside a provider account. Stable identities let people and agents reorganize
 documents without losing track of them, every stored byte can be checked, and
 incremental backups can be verified before you rely on them. Work directly
 from the CLI, automate through the authenticated HTTP API, or embed Docbank in
-a Go application.
+a Go application. People can browse the same authority in the local web
+application or focused terminal interface.
 
 Install the latest release on Linux or macOS:
 
@@ -54,12 +55,14 @@ curl -fsSL https://docbank.ai/install.sh | sh
 The ordinary workflow stays direct:
 
 !!! note "Release availability"
-    Tag-filtered search and `docbank get` are newer than v0.10.0. Build from
-    source to use them until the next release is tagged.
+    Tag-filtered search and `docbank get` are newer than v0.10.0;
+    `docbank web` is newer than v0.10.1. Build from source to use them until
+    the next release is tagged.
 
 ```bash
 docbank add ~/Documents/taxes --dest /taxes    # import a folder; sources untouched
 docbank tree /taxes                            # browse the virtual tree
+docbank web                                    # open the local read-only browser
 docbank search "insurance"                     # ranked name and verified plain-text search
 docbank search "return" --tag taxes             # narrow the same ranking by stable tag identity
 docbank get /taxes/2026/return.pdf ./return.pdf # verify, then publish a complete local file
@@ -157,7 +160,8 @@ content versions with verified replacement, reversion, pruning, and
 lookup by content hash (`refs`), tags, permanent audited history with
 independent verification, loose and packed storage with explicit
 maintenance, whole-vault integrity verification, incremental backup
-create/verify/restore, and the embedded Go API. Docbank is not yet a
+create/verify/restore, a read-only web application and TUI, and the embedded
+Go API. Docbank is not yet a
 stable 1.0; the [Roadmap](roadmap.md) gives the product direction.
 
 Docbank belongs to a family of personal data tools alongside
@@ -170,6 +174,7 @@ documents: files you still organize, retrieve, and build workflows around.
 - [Setup](setup.md): install the binary and create the vault
 - [Quickstart](quickstart.md): a ten-minute tour of the CLI
 - [Vault Lifecycle](usage/lifecycle.md): operate, snapshot, and recover safely
+- [Web Application](usage/web.md): browse and search the local vault
 - [Docbank for Agents](agents.md): the automation contract
 - [Embed in Go](embedding.md): vaults inside your own application
 - [Troubleshooting](troubleshooting.md): diagnose failures without risking the vault
