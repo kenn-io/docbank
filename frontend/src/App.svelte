@@ -32,9 +32,9 @@
     type SearchHit,
   } from "./api.js";
   import { basename, formatBytes, formatDate } from "./format.js";
+  import { orderRows, type SortField } from "./rows.js";
 
   type Row = { node: Node; path: string; match?: "name" | "content" };
-  type SortField = "name" | "size" | "modified";
   type Snapshot = {
     directory: Node;
     rows: Row[];
@@ -61,20 +61,9 @@
   let generation = 0;
 
   const selected = $derived(rows.find((row) => row.node.id === selectedID));
-  const sortedRows = $derived.by(() => {
-    const copy = [...rows];
-    copy.sort((left, right) => {
-      if (left.node.kind !== right.node.kind) return left.node.kind === "dir" ? -1 : 1;
-      let result = 0;
-      if (sortField === "size") result = left.node.size - right.node.size;
-      else if (sortField === "modified") {
-        result = left.node.modified_at.localeCompare(right.node.modified_at);
-      } else result = left.node.name.localeCompare(right.node.name);
-      if (result === 0) result = left.node.id - right.node.id;
-      return sortDirection === "asc" ? result : -result;
-    });
-    return copy;
-  });
+  const sortedRows = $derived(
+    orderRows(rows, sortField, sortDirection, activeQuery !== ""),
+  );
 
   onMount(() => {
     webSession = takeFragmentSession();
@@ -168,11 +157,11 @@
         path: hit.path,
         match: hit.match,
       }));
-      selectedID = rows[0]?.node.id;
       activeQuery = query;
       truncated = report.truncated;
-      sortField = "name";
+      sortField = "relevance";
       sortDirection = "asc";
+      selectedID = orderRows(rows, sortField, sortDirection, true)[0]?.node.id;
     } catch (cause) {
       if (request === generation) handleFailure(cause);
     } finally {

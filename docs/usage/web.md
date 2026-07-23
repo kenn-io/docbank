@@ -68,6 +68,9 @@ logs, screenshots, issue trackers, or chat.
 Folder and search views are bounded to 1,000 rows and say when more results
 exist; use the CLI or paginated HTTP API for exhaustive automation. Search has
 the same name and verified extracted-text semantics as `docbank search`.
+Results initially preserve the API's relevance ranking. Choosing Document,
+Size, or Modified changes to that explicit column order; Document compares the
+complete paths shown in search results rather than only their basenames.
 Refreshing a folder resolves its stable node ID, current canonical path, and
 children in one metadata snapshot, so a concurrent CLI or agent move cannot
 leave the browser constructing child paths beneath an obsolete name.
