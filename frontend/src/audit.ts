@@ -13,7 +13,9 @@ const eventLabels: Record<string, string> = {
   node_create: "Document created",
   node_path: "Path changed",
   provenance_add: "Provenance recorded",
+  provenance_supersede: "Provenance superseded",
   tag_assign: "Tag assigned",
+  tag_define: "Tag defined",
   tag_delete: "Tag deleted",
   tag_rename: "Tag renamed",
   tag_unassign: "Tag removed",
@@ -35,10 +37,12 @@ export function auditEventSummary(event: AuditEvent): string {
     case "content_revert":
       return `Version ${shortID(event.prior_current_version_id)} → ${shortID(event.resulting_current_version_id)}`;
     case "tag_assign":
+    case "tag_define":
     case "tag_delete":
     case "tag_rename":
     case "tag_unassign":
     case "provenance_add":
+    case "provenance_supersede":
       if (event.attachment) return attachmentSummary(event);
       break;
   }

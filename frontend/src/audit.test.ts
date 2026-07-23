@@ -86,5 +86,38 @@ describe("audit presentation", () => {
         }),
       ),
     ).toBe("records/return.pdf");
+
+    expect(
+      auditEventSummary(
+        event({
+          kind: "tag_define",
+          attachment: {
+            kind: "tag_definition",
+            identity: { tag_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" },
+            after: { tag_name: "tax" },
+          },
+        }),
+      ),
+    ).toBe("(absent) → tax");
+
+    expect(
+      auditEventSummary(
+        event({
+          kind: "provenance_supersede",
+          attachment: {
+            kind: "provenance",
+            identity: { provenance_id: "f".repeat(64) },
+            before: {
+              ingest_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+              original_path: "records/draft.pdf",
+            },
+            after: {
+              ingest_id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+              original_path: "records/final.pdf",
+            },
+          },
+        }),
+      ),
+    ).toBe("records/final.pdf");
   });
 });

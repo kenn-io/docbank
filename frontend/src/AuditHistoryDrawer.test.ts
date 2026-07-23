@@ -63,6 +63,23 @@ afterEach(() => {
 });
 
 describe("audited history drawer", () => {
+  it("does not present a failed initial load as empty history", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response("history unavailable", { status: 500 }),
+    );
+
+    render(AuditHistoryDrawer, {
+      session: "short-lived",
+      node,
+      path: "/Taxes/return.pdf",
+      onclose: vi.fn(),
+      onauthfailure: vi.fn(),
+    });
+
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(screen.queryByText("No events on this page")).toBeNull();
+  });
+
   it("paginates immutable events and exposes complete typed details", async () => {
     const pathEvent = event({});
     const tagEvent = event({

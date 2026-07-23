@@ -130,11 +130,10 @@
         </div>
       </div>
 
-      {#if error}
-        <p class="error" role="alert">{error}</p>
-      {/if}
       {#if loading}
         <div class="loading"><Spinner size={16} /> Loading permanent history…</div>
+      {:else if error && items.length === 0}
+        <p class="error" role="alert">{error}</p>
       {:else if items.length === 0}
         <EmptyState
           title="No events on this page"
@@ -143,6 +142,9 @@
           {#snippet icon()}<ShieldCheckIcon size="22" />{/snippet}
         </EmptyState>
       {:else}
+        {#if error}
+          <p class="error" role="alert">{error}</p>
+        {/if}
         <Timeline ariaLabel="Permanent document history">
           {#each items as event (event.id)}
             <TimelineItem tone={eventTone(event.kind)}>
