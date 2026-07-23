@@ -37,6 +37,7 @@ func TestVaultCreateIsImmutableAndIdempotent(t *testing.T) {
 	})
 	require.NoError(err)
 	require.True(created.Created)
+	require.True(created.PhysicalCreated)
 	require.False(created.Replaced)
 	require.Equal(int64(1), created.Node.Revision)
 
@@ -45,10 +46,20 @@ func TestVaultCreateIsImmutableAndIdempotent(t *testing.T) {
 	})
 	require.NoError(err)
 	require.False(retry.Created)
+	require.False(retry.PhysicalCreated)
 	require.False(retry.Replaced)
 	require.Equal(created.Node.ID, retry.Node.ID)
 	require.Equal(created.Node.Revision, retry.Node.Revision)
 	require.Equal(created.Version.ID, retry.Version.ID)
+
+	deduplicated, err := vault.Create(t.Context(), "/copy.txt", bytes.NewReader(content), CreateOptions{
+		MediaType: "text/plain", Expected: expected,
+	})
+	require.NoError(err)
+	require.True(deduplicated.Created)
+	require.False(deduplicated.PhysicalCreated)
+	require.Equal(created.Computed, deduplicated.Computed)
+	require.NotEqual(created.Node.ID, deduplicated.Node.ID)
 
 	tests := []struct {
 		name      string
@@ -1073,6 +1084,7 @@ func TestPutPackedDuplicateRemovesRedundantLoose(t *testing.T) {
 	content := "shared packed content\n"
 	first, err := vault.Put(t.Context(), "/first.txt", strings.NewReader(content), PutOptions{})
 	require.NoError(err)
+	require.True(first.PhysicalCreated)
 	packed, err := vault.Pack(t.Context(), PackOptions{})
 	require.NoError(err)
 	require.Equal(1, packed.BlobsPacked)
@@ -1080,6 +1092,7 @@ func TestPutPackedDuplicateRemovesRedundantLoose(t *testing.T) {
 	second, err := vault.Put(t.Context(), "/second.txt", strings.NewReader(content), PutOptions{})
 	require.NoError(err)
 	require.Equal(first.Computed, second.Computed)
+	require.False(second.PhysicalCreated)
 	require.Equal(PhysicalContent{
 		Kind: "packed", Encoding: "raw", LogicalBytes: int64(len(content)),
 		StoredBytes: second.Physical.StoredBytes, PackEligible: true,

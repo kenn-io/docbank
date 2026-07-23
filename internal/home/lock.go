@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"go.kenn.io/kit/safefileio"
 )
@@ -19,6 +20,21 @@ type Lock struct {
 	files []*os.File
 }
 
+// OwnershipTransition excludes ordinary owner acquisition through one stable
+// parent directory while a child vault root changes identity. Reset uses it
+// across the release, rename, and fresh-vault acquisition boundary.
+type OwnershipTransition struct {
+	state *ownershipTransitionState
+}
+
+type ownershipTransitionState struct {
+	layout         Layout
+	lock           *Lock
+	parentIdentity string
+	replacement    *Lock
+	parentIndex    int
+}
+
 var errLockWouldBlock = errors.New("file lock would block")
 
 // ErrVaultLocked is returned by TryLockExclusive when another process
@@ -29,21 +45,349 @@ var ErrVaultLocked = errors.New("vault is locked by another process")
 // single lock holder for the vault's lifetime; a second daemon (or a stale
 // holder) surfaces immediately instead of hanging.
 func (l Layout) TryLockExclusive() (*Lock, error) {
+	root, lock, err := l.OpenExistingAndLockExclusive()
+	if root != nil {
+		_ = root.Close()
+	}
+	return lock, err
+}
+
+// OpenExistingAndLockExclusive opens and exclusively owns an existing vault
+// root without creating any missing path component.
+func (l Layout) OpenExistingAndLockExclusive() (*os.Root, *Lock, error) {
+	acquisition, err := l.tryLockOwnershipAcquisition()
+	if err != nil {
+		return nil, nil, err
+	}
+	root, lock, openErr := l.openExistingAndLockExclusive()
+	releaseErr := acquisition.Release()
+	if releaseErr != nil {
+		if lock != nil {
+			releaseErr = errors.Join(releaseErr, lock.Release())
+		}
+		if root != nil {
+			releaseErr = errors.Join(releaseErr, root.Close())
+		}
+		return nil, nil, errors.Join(openErr, releaseErr)
+	}
+	return root, lock, openErr
+}
+
+func (l Layout) openExistingAndLockExclusive() (*os.Root, *Lock, error) {
 	root, err := os.OpenRoot(l.Root)
 	if err != nil {
-		return nil, fmt.Errorf("opening vault root %s: %w", l.Root, err)
+		return nil, nil, fmt.Errorf("opening vault root %s: %w", l.Root, err)
 	}
-	defer func() { _ = root.Close() }()
-	return l.TryLockExclusiveRoot(root)
+	lock, err := l.tryLockExclusiveRoot(root)
+	if err != nil {
+		_ = root.Close()
+		return nil, nil, err
+	}
+	return root, lock, nil
+}
+
+// TryLockOwnershipTransition exclusively owns the vault root's stable parent
+// identity. Ordinary owners briefly share its ancestors and exclusively claim
+// their deepest existing identity while taking durable hierarchy locks.
+func (l Layout) TryLockOwnershipTransition() (*OwnershipTransition, error) {
+	target, err := CanonicalRoot(l.Root)
+	if err != nil {
+		return nil, err
+	}
+	parent := filepath.Dir(target)
+	before, err := os.Stat(parent)
+	if err != nil {
+		return nil, fmt.Errorf("checking vault transition parent identity: %w", err)
+	}
+	identities, err := directoryIdentityChain(parent)
+	if err != nil {
+		return nil, err
+	}
+	registry, err := targetLockRegistryPath()
+	if err != nil {
+		return nil, err
+	}
+	if err := validateTransitionRootOutsideRegistry(target, registry); err != nil {
+		return nil, err
+	}
+	if err := ensureTargetLockRegistryDir(registry); err != nil {
+		return nil, err
+	}
+	lock := &Lock{}
+	if err := lock.lockAcquisitionIdentities(
+		registry, identities, true, target); err != nil {
+		_ = lock.Release()
+		return nil, err
+	}
+	after, err := os.Stat(parent)
+	if err != nil || !os.SameFile(before, after) {
+		_ = lock.Release()
+		if err != nil {
+			return nil, fmt.Errorf("rechecking vault transition parent identity: %w", err)
+		}
+		return nil, fmt.Errorf("vault transition parent %s changed while locking", parent)
+	}
+	return &OwnershipTransition{state: &ownershipTransitionState{
+		layout:         Layout{Root: target},
+		lock:           lock,
+		parentIdentity: identities[len(identities)-1],
+	}}, nil
+}
+
+func validateTransitionRootOutsideRegistry(target, registry string) error {
+	canonicalRegistry, err := CanonicalRoot(registry)
+	if err != nil {
+		return fmt.Errorf("resolving target-lock registry: %w", err)
+	}
+	if pathContains(target, canonicalRegistry) {
+		return fmt.Errorf("vault transition root %s contains the target-lock registry", target)
+	}
+	targetInfo, err := os.Stat(target)
+	if errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("vault transition root %s no longer exists", target)
+	}
+	if err != nil {
+		return fmt.Errorf("checking vault transition root: %w", err)
+	}
+	current := canonicalRegistry
+	for {
+		info, statErr := os.Stat(current)
+		if statErr == nil && os.SameFile(info, targetInfo) {
+			return fmt.Errorf(
+				"vault transition root %s contains the target-lock registry", target)
+		}
+		if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+			return fmt.Errorf("checking target-lock registry ancestor %s: %w", current, statErr)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return nil
+		}
+		current = parent
+	}
+}
+
+func pathContains(parent, child string) bool {
+	rel, err := filepath.Rel(parent, child)
+	return err == nil && (rel == "." ||
+		(rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))))
+}
+
+// OpenExistingAndLockExclusive validates and owns an existing root while this
+// transition keeps competing ownership acquisition excluded.
+func (t *OwnershipTransition) OpenExistingAndLockExclusive() (*os.Root, *Lock, error) {
+	if t == nil || t.state == nil || t.state.lock == nil {
+		return nil, nil, errors.New("vault ownership transition is not held")
+	}
+	return t.state.layout.openExistingAndLockExclusive()
+}
+
+// OpenAndLockExclusive opens or creates a root while this transition keeps
+// competing ownership acquisition excluded.
+func (t *OwnershipTransition) OpenAndLockExclusive() (*os.Root, *Lock, error) {
+	if t == nil || t.state == nil || t.state.lock == nil {
+		return nil, nil, errors.New("vault ownership transition is not held")
+	}
+	return t.state.layout.openAndLockExclusive()
+}
+
+// OpenExistingForReplacement owns the existing source and promotes its parent
+// identity lock to an exclusive legacy-compatible barrier. The source target
+// lock remains held while the parent lock changes mode, so a competing legacy
+// owner can only make the promotion fail, not enter the source hierarchy. A
+// legacy sibling owner necessarily prevents promotion because its ordinary
+// lifetime lock shares that parent identity; reset then fails before mutation.
+func (t *OwnershipTransition) OpenExistingForReplacement() (*os.Root, error) {
+	if t == nil || t.state == nil || t.state.lock == nil {
+		return nil, errors.New("vault ownership transition is not held")
+	}
+	if t.state.replacement != nil {
+		return nil, errors.New("vault ownership replacement is already active")
+	}
+	root, replacement, err := t.state.layout.openExistingAndLockExclusive()
+	if err != nil {
+		return nil, err
+	}
+	parentIndex := len(replacement.files) - 3
+	if parentIndex < 0 {
+		err = errors.New("vault ownership replacement has no parent hierarchy lock")
+		return nil, errors.Join(err, replacement.Release(), root.Close())
+	}
+	if err := replacement.relockAt(parentIndex, true, t.state.layout.Root); err != nil {
+		return nil, errors.Join(err, replacement.Release(), root.Close())
+	}
+	parent := filepath.Dir(t.state.layout.Root)
+	parentInfo, err := os.Stat(parent)
+	if err != nil {
+		err = fmt.Errorf("checking vault replacement parent identity: %w", err)
+		return nil, errors.Join(err, replacement.Release(), root.Close())
+	}
+	parentIdentity, err := directoryIdentity(parentInfo, parent)
+	if err != nil {
+		return nil, errors.Join(err, replacement.Release(), root.Close())
+	}
+	if parentIdentity != t.state.parentIdentity {
+		err = fmt.Errorf("vault replacement parent %s changed before rename", parent)
+		return nil, errors.Join(err, replacement.Release(), root.Close())
+	}
+	t.state.replacement = replacement
+	t.state.parentIndex = parentIndex
+	return root, nil
+}
+
+// ReleaseSourceForReplacement drops the old target identity and local vault
+// locks while retaining the promoted parent hierarchy barrier for rename.
+func (t *OwnershipTransition) ReleaseSourceForReplacement() error {
+	if t == nil || t.state == nil || t.state.replacement == nil {
+		return errors.New("vault ownership replacement is not active")
+	}
+	return t.state.replacement.releaseFrom(t.state.parentIndex + 1)
+}
+
+// OpenAndLockReplacement creates or opens the replacement beneath the held
+// parent barrier, takes its target and local locks, then downgrades the parent
+// to the shared mode retained by an ordinary vault owner.
+func (t *OwnershipTransition) OpenAndLockReplacement() (*os.Root, *Lock, error) {
+	if t == nil || t.state == nil || t.state.lock == nil ||
+		t.state.replacement == nil {
+		return nil, nil, errors.New("vault ownership replacement is not active")
+	}
+	replacement := t.state.replacement
+	if len(replacement.files) != t.state.parentIndex+1 {
+		return nil, nil, errors.New("vault ownership replacement source is still held")
+	}
+	target := t.state.layout.Root
+	parent := filepath.Dir(target)
+	component := filepath.Base(target)
+	parentInfo, err := os.Stat(parent)
+	if err != nil {
+		return nil, nil, t.failReplacement(
+			nil, fmt.Errorf("checking replacement parent identity: %w", err))
+	}
+	parentIdentity, err := directoryIdentity(parentInfo, parent)
+	if err != nil {
+		return nil, nil, t.failReplacement(nil, err)
+	}
+	if parentIdentity != t.state.parentIdentity {
+		return nil, nil, t.failReplacement(
+			nil, fmt.Errorf("vault replacement parent %s changed while held", parent))
+	}
+	parentRoot, err := os.OpenRoot(parent)
+	if err != nil {
+		return nil, nil, t.failReplacement(
+			nil, fmt.Errorf("opening replacement parent: %w", err))
+	}
+	heldParent, err := parentRoot.Stat(".")
+	if err != nil || !os.SameFile(parentInfo, heldParent) {
+		_ = parentRoot.Close()
+		if err != nil {
+			return nil, nil, t.failReplacement(
+				nil, fmt.Errorf("checking held replacement parent: %w", err))
+		}
+		return nil, nil, t.failReplacement(
+			nil, fmt.Errorf("vault replacement parent %s changed while opening", parent))
+	}
+	root, enterErr := enterVaultDir(parentRoot, component)
+	closeParentErr := parentRoot.Close()
+	if err := errors.Join(enterErr, closeParentErr); err != nil {
+		if root != nil {
+			_ = root.Close()
+		}
+		return nil, nil, t.failReplacement(
+			nil, fmt.Errorf("creating replacement vault root: %w", err))
+	}
+	fail := func(cause error) (*os.Root, *Lock, error) {
+		return nil, nil, t.failReplacement(root, cause)
+	}
+	info, err := root.Stat(".")
+	if err != nil {
+		return fail(fmt.Errorf("checking replacement vault root: %w", err))
+	}
+	identity, err := directoryIdentity(info, target)
+	if err != nil {
+		return fail(err)
+	}
+	registry, err := targetLockRegistryDir()
+	if err != nil {
+		return fail(err)
+	}
+	if err := replacement.lockIdentities(
+		registry, []string{identity}, true, target); err != nil {
+		return fail(err)
+	}
+	local, err := openRootLock(root)
+	if err != nil {
+		return fail(err)
+	}
+	if err := lockFile(local, true); err != nil {
+		_ = local.Close()
+		return fail(classifyLockError(err, target))
+	}
+	replacement.files = append(replacement.files, local)
+	if err := verifyLayoutRoot(target, root); err != nil {
+		return fail(err)
+	}
+	if err := replacement.relockAt(t.state.parentIndex, false, target); err != nil {
+		return fail(err)
+	}
+	t.state.replacement = nil
+	return root, replacement, nil
+}
+
+func (t *OwnershipTransition) failReplacement(root *os.Root, cause error) error {
+	if root != nil {
+		cause = errors.Join(cause, root.Close())
+	}
+	if t != nil && t.state != nil && t.state.replacement != nil {
+		cause = errors.Join(cause, t.state.replacement.Release())
+		t.state.replacement = nil
+	}
+	return cause
+}
+
+// Release drops the hierarchy-wide acquisition and replacement barriers.
+func (t *OwnershipTransition) Release() error {
+	if t == nil || t.state == nil {
+		return nil
+	}
+	var replacementErr, acquisitionErr error
+	if t.state.replacement != nil {
+		replacementErr = t.state.replacement.Release()
+		t.state.replacement = nil
+	}
+	if t.state.lock != nil {
+		acquisitionErr = t.state.lock.Release()
+		t.state.lock = nil
+	}
+	return errors.Join(replacementErr, acquisitionErr)
 }
 
 // OpenAndLockExclusive opens an existing vault root or creates a missing one
 // through a held parent while coordinating every existing ancestor. The
 // returned root is the same directory protected by the returned lock.
 func (l Layout) OpenAndLockExclusive() (*os.Root, *Lock, error) {
+	acquisition, err := l.tryLockOwnershipAcquisition()
+	if err != nil {
+		return nil, nil, err
+	}
+	root, lock, openErr := l.openAndLockExclusive()
+	releaseErr := acquisition.Release()
+	if releaseErr != nil {
+		if lock != nil {
+			releaseErr = errors.Join(releaseErr, lock.Release())
+		}
+		if root != nil {
+			releaseErr = errors.Join(releaseErr, root.Close())
+		}
+		return nil, nil, errors.Join(openErr, releaseErr)
+	}
+	return root, lock, openErr
+}
+
+func (l Layout) openAndLockExclusive() (*os.Root, *Lock, error) {
 	root, err := os.OpenRoot(l.Root)
 	if err == nil {
-		lk, lockErr := l.TryLockExclusiveRoot(root)
+		lk, lockErr := l.tryLockExclusiveRoot(root)
 		if lockErr != nil {
 			_ = root.Close()
 			return nil, nil, lockErr
@@ -152,6 +496,22 @@ func (l Layout) OpenLaunchOutput() (*os.File, string, error) {
 // identity make an owner conflict with restores of parent or descendant trees;
 // the target's ordinary vault.lock preserves coordination with older builds.
 func (l Layout) TryLockExclusiveRoot(root *os.Root) (*Lock, error) {
+	acquisition, err := l.tryLockOwnershipAcquisition()
+	if err != nil {
+		return nil, err
+	}
+	lock, lockErr := l.tryLockExclusiveRoot(root)
+	releaseErr := acquisition.Release()
+	if releaseErr != nil {
+		if lock != nil {
+			releaseErr = errors.Join(releaseErr, lock.Release())
+		}
+		return nil, errors.Join(lockErr, releaseErr)
+	}
+	return lock, lockErr
+}
+
+func (l Layout) tryLockExclusiveRoot(root *os.Root) (*Lock, error) {
 	target, err := filepath.Abs(l.Root)
 	if err != nil {
 		return nil, fmt.Errorf("resolving vault root %s: %w", l.Root, err)
@@ -343,6 +703,76 @@ func (lk *Lock) lockIdentities(
 	return nil
 }
 
+func (l Layout) tryLockOwnershipAcquisition() (*Lock, error) {
+	target, err := CanonicalRoot(l.Root)
+	if err != nil {
+		return nil, err
+	}
+	current := target
+	for {
+		_, err := os.Stat(current)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("checking vault acquisition ancestor: %w", err)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return nil, fmt.Errorf("vault root has no existing ancestor: %s", target)
+		}
+		current = parent
+	}
+	before, err := os.Stat(current)
+	if err != nil {
+		return nil, fmt.Errorf("checking vault acquisition ancestor identity: %w", err)
+	}
+	identities, err := directoryIdentityChain(current)
+	if err != nil {
+		return nil, err
+	}
+	registry, err := targetLockRegistryDir()
+	if err != nil {
+		return nil, err
+	}
+	lock := &Lock{}
+	if err := lock.lockAcquisitionIdentities(
+		registry, identities, true, target); err != nil {
+		_ = lock.Release()
+		return nil, err
+	}
+	after, err := os.Stat(current)
+	if err != nil || !os.SameFile(before, after) {
+		_ = lock.Release()
+		if err != nil {
+			return nil, fmt.Errorf("rechecking vault acquisition ancestor identity: %w", err)
+		}
+		return nil, fmt.Errorf("vault acquisition ancestor %s changed while locking", current)
+	}
+	return lock, nil
+}
+
+func (lk *Lock) lockAcquisitionIdentities(
+	registry string,
+	identities []string,
+	exclusiveFinal bool,
+	target string,
+) error {
+	for i, identity := range identities {
+		exclusive := exclusiveFinal && i == len(identities)-1
+		f, err := openRegistryLock(registry, "acquisition-"+identity+".lock")
+		if err != nil {
+			return err
+		}
+		if err := lockFile(f, exclusive); err != nil {
+			_ = f.Close()
+			return classifyLockError(err, target)
+		}
+		lk.files = append(lk.files, f)
+	}
+	return nil
+}
+
 func enterVaultDir(parent *os.Root, component string) (*os.Root, error) {
 	info, err := parent.Lstat(component)
 	if errors.Is(err, os.ErrNotExist) {
@@ -420,7 +850,7 @@ func directoryIdentityChain(target string) ([]string, error) {
 // those unit tests must not contend with cmd/docbank's real daemon processes.
 var targetLockRegistryTestBase string
 
-func targetLockRegistryDir() (string, error) {
+func targetLockRegistryPath() (string, error) {
 	dir := targetLockRegistryTestBase
 	if dir == "" {
 		var err error
@@ -429,8 +859,23 @@ func targetLockRegistryDir() (string, error) {
 			return "", err
 		}
 	}
+	return dir, nil
+}
+
+func ensureTargetLockRegistryDir(dir string) error {
 	if err := safefileio.EnsurePrivateDir(dir); err != nil {
-		return "", fmt.Errorf("securing target-lock registry: %w", err)
+		return fmt.Errorf("securing target-lock registry: %w", err)
+	}
+	return nil
+}
+
+func targetLockRegistryDir() (string, error) {
+	dir, err := targetLockRegistryPath()
+	if err != nil {
+		return "", err
+	}
+	if err := ensureTargetLockRegistryDir(dir); err != nil {
+		return "", err
 	}
 	return dir, nil
 }
@@ -482,10 +927,30 @@ func classifyLockError(err error, target string) error {
 	return fmt.Errorf("locking vault target tree: %w", err)
 }
 
-// Release drops the lock.
-func (lk *Lock) Release() error {
+func (lk *Lock) relockAt(index int, exclusive bool, target string) error {
+	if lk == nil || index < 0 || index >= len(lk.files) {
+		return errors.New("vault lock hierarchy entry is unavailable")
+	}
+	f := lk.files[index]
+	if err := unlockFile(f); err != nil {
+		return err
+	}
+	if err := lockFile(f, exclusive); err != nil {
+		closeErr := f.Close()
+		lk.files = append(lk.files[:index], lk.files[index+1:]...)
+		return errors.Join(classifyLockError(err, target), closeErr)
+	}
+	return nil
+}
+
+func (lk *Lock) releaseFrom(index int) error {
+	if lk == nil || index < 0 || index > len(lk.files) {
+		return errors.New("vault lock release boundary is invalid")
+	}
+	files := lk.files[index:]
+	lk.files = lk.files[:index]
 	var errs []error
-	for _, f := range slices.Backward(lk.files) {
+	for _, f := range slices.Backward(files) {
 		if err := unlockFile(f); err != nil {
 			errs = append(errs, err)
 		}
@@ -493,9 +958,16 @@ func (lk *Lock) Release() error {
 			errs = append(errs, err)
 		}
 	}
-	lk.files = nil
 	if err := errors.Join(errs...); err != nil {
 		return fmt.Errorf("releasing vault lock: %w", err)
 	}
 	return nil
+}
+
+// Release drops the lock.
+func (lk *Lock) Release() error {
+	if lk == nil {
+		return nil
+	}
+	return lk.releaseFrom(0)
 }

@@ -94,12 +94,13 @@ type ProvenancePage struct {
 
 // PutReceipt proves the computed identity and resulting logical authority.
 type PutReceipt struct {
-	Node     Node            `json:"node"`
-	Version  ContentVersion  `json:"version"`
-	Computed ContentIdentity `json:"computed"`
-	Physical PhysicalContent `json:"physical"`
-	Created  bool            `json:"created"`
-	Replaced bool            `json:"replaced"`
+	Node            Node            `json:"node"`
+	Version         ContentVersion  `json:"version"`
+	Computed        ContentIdentity `json:"computed"`
+	Physical        PhysicalContent `json:"physical"`
+	Created         bool            `json:"created"`
+	PhysicalCreated bool            `json:"physical_created"`
+	Replaced        bool            `json:"replaced"`
 }
 
 // RepairReceipt proves the replacement bytes and reports the resulting
