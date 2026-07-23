@@ -719,13 +719,13 @@ docbank web [--no-browser]
 
 Starts or reconnects to the selected vault's compatible daemon and opens the
 embedded read-only web application. An owner-private launch file transfers the
-effective API key without putting it in a child-process argument. The browser
-receives it in a fragment; the application removes it from the address bar
-before making authenticated API requests and keeps it only for the browser
-tab's session.
+daemon-issued browser session without putting it in a child-process argument.
+The master API key stays on the ownership-pinned CLI connection and never
+enters the browser. The application removes its read-only session token from
+the address bar before making requests and keeps it only in page memory.
 
 `--no-browser` prints that authenticated URL instead of opening it. The output
-contains the live daemon key and must be handled as a secret. See the
+contains a live read-only browser session and must be handled as a secret. See the
 [web application guide](usage/web.md) for its capabilities and trust boundary.
 
 ## docbank trash

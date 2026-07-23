@@ -1,15 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   APIError,
-  forgetKey,
-  rememberKey,
   requestJSON,
-  takeFragmentKey,
+  revokeSession,
+  takeFragmentSession,
 } from "./api.js";
 
 describe("browser authentication", () => {
   beforeEach(() => {
-    sessionStorage.clear();
     history.replaceState(null, "", "/");
   });
 
@@ -17,21 +15,15 @@ describe("browser authentication", () => {
     vi.restoreAllMocks();
   });
 
-  it("consumes the fragment key without sending it in the visible URL", () => {
-    history.replaceState(null, "", "/#api_key=one%20time");
-    expect(takeFragmentKey()).toBe("one time");
+  it("consumes the browser session without retaining it in web storage", () => {
+    history.replaceState(null, "", "/#web_session=one%20time");
+    expect(takeFragmentSession()).toBe("one time");
     expect(location.hash).toBe("");
-    expect(sessionStorage.getItem("docbank-api-key")).toBe("one time");
+    expect(sessionStorage.length).toBe(0);
+    expect(takeFragmentSession()).toBe("");
   });
 
-  it("keeps the exact manually supplied key only for the browser session", () => {
-    expect(rememberKey("  configured  ")).toBe("  configured  ");
-    expect(takeFragmentKey()).toBe("  configured  ");
-    forgetKey();
-    expect(takeFragmentKey()).toBe("");
-  });
-
-  it("sends the key in the authenticated header", async () => {
+  it("sends only the read-only browser session header", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ id: 1 }), {
         status: 200,
@@ -42,7 +34,22 @@ describe("browser authentication", () => {
       id: 1,
     });
     const request = fetchMock.mock.calls[0]?.[1];
-    expect(new Headers(request?.headers).get("X-Api-Key")).toBe("secret");
+    const headers = new Headers(request?.headers);
+    expect(headers.get("X-Docbank-Web-Session")).toBe("secret");
+    expect(headers.get("X-Api-Key")).toBeNull();
+  });
+
+  it("revokes the session when the interface locks", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(null, { status: 204 }),
+    );
+    await revokeSession("short-lived");
+    const [path, request] = fetchMock.mock.calls[0] ?? [];
+    expect(path).toBe("/api/daemon/web-session");
+    expect(request?.method).toBe("DELETE");
+    expect(new Headers(request?.headers).get("X-Docbank-Web-Session")).toBe(
+      "short-lived",
+    );
   });
 
   it("preserves structured daemon failures", async () => {

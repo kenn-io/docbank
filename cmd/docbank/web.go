@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/home"
 	docweb "go.kenn.io/docbank/internal/web"
 )
@@ -22,9 +23,9 @@ var webCmd = &cobra.Command{
 	Short: "Open the local web application",
 	Long: `Start or reconnect to the current vault's daemon and open its web application.
 
-The browser receives the daemon API key in a URL fragment, which is not sent
-over HTTP. The application removes it from the address bar and retains it only
-for that browser tab's session.
+The browser receives a daemon-lifetime, read-only session in a URL fragment,
+which is not sent in the initial HTTP request. The vault's master API key
+never enters the browser.
 
 With --no-browser, the authenticated URL is printed instead. It contains the
 session key: do not paste it into logs, issue trackers, or chat.`,
@@ -37,7 +38,14 @@ session key: do not paste it into logs, issue trackers, or chat.`,
 		if err != nil {
 			return err
 		}
-		c, err := client.Ensure(cmd.Context())
+		cfg, err := config.Load(layout.Root)
+		if err != nil {
+			return err
+		}
+		if !cfg.Web.Enabled {
+			return errors.New("the web application is disabled by [web] enabled = false")
+		}
+		c, err := client.EnsureWeb(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -54,7 +62,7 @@ func runWeb(
 	noBrowser bool,
 	open func(context.Context, string) error,
 ) error {
-	rawURL, err := c.WebURL()
+	rawURL, err := c.WebSessionURL(ctx)
 	if err != nil {
 		return err
 	}

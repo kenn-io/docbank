@@ -61,7 +61,10 @@ func newTestServer(t *testing.T, mutate func(*api.Deps)) (*httptest.Server, *tes
 	blobs, err := blob.New(store.NewPackCatalog(s), blobsDir)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = blobs.Close() })
-	d := api.Deps{Store: s, Blobs: blobs, VaultRoot: dir, Cfg: config.Default()}
+	d := api.Deps{
+		Store: s, Blobs: blobs, VaultRoot: dir, Cfg: config.Default(),
+		WebAvailable: true,
+	}
 	d.Cfg.Server.APIKey = testAPIKey
 	if mutate != nil {
 		mutate(&d)
@@ -309,6 +312,79 @@ func TestWebApplication(t *testing.T) {
 	ts2, _ := newTestServer(t, off)
 	resp, _ = get(t, ts2, "/", nil)
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+func TestWebSessionIsReadOnlyRevocableAndDaemonLocal(t *testing.T) {
+	ts, _ := newTestServer(t, nil)
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/daemon/web-session", nil)
+	require.NoError(t, err)
+	resp, err := ts.Client().Do(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	assert.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
+	var issued struct {
+		Token string `json:"token"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&issued))
+	require.NoError(t, resp.Body.Close())
+	require.NotEmpty(t, issued.Token)
+	assert.NotEqual(t, testAPIKey, issued.Token)
+
+	webRequest := func(method, path string) *http.Response {
+		t.Helper()
+		request, requestErr := http.NewRequest(method, ts.URL+path, nil)
+		require.NoError(t, requestErr)
+		request.Header["X-Api-Key"] = []string{""}
+		request.Header.Set(api.WebSessionHeader, issued.Token)
+		response, requestErr := ts.Client().Do(request)
+		require.NoError(t, requestErr)
+		return response
+	}
+
+	resp = webRequest(http.MethodGet, "/api/v1/path?path=/")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
+	resp = webRequest(http.MethodGet, "/api/v1/info")
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
+	resp = webRequest(http.MethodPost, "/api/v1/nodes")
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
+	resp = webRequest(http.MethodDelete, "/api/daemon/web-session")
+	assert.Equal(t, http.StatusNoContent, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
+	resp = webRequest(http.MethodGet, "/api/v1/path?path=/")
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
+	other, _ := newTestServer(t, nil)
+	req, err = http.NewRequest(http.MethodGet, other.URL+"/api/v1/path?path=/", nil)
+	require.NoError(t, err)
+	req.Header["X-Api-Key"] = []string{""}
+	req.Header.Set(api.WebSessionHeader, issued.Token)
+	resp, err = other.Client().Do(req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+}
+
+func TestWebSessionRequiresEnabledCompiledApplication(t *testing.T) {
+	for _, mutate := range []func(*api.Deps){
+		func(d *api.Deps) { d.Cfg.Web.Enabled = false },
+		func(d *api.Deps) { d.WebAvailable = false },
+	} {
+		ts, _ := newTestServer(t, mutate)
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/daemon/web-session", nil)
+		require.NoError(t, err)
+		resp, err := ts.Client().Do(req)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
+	}
 }
 
 // TestShutdownRoute proves the shutdown route now requires both the API

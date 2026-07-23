@@ -31,26 +31,29 @@ cannot use. The daemon remains loopback-only.
 
 When Docbank opens the browser, it writes a small launch page beside the
 owner-private daemon runtime record and passes only that credential-free local
-file path to the operating system. The launch page redirects the browser with
-the daemon's effective API key in the URL fragment; the key never appears in a
-child-process argument. Browsers do not include fragments in HTTP requests.
-The application consumes the key into tab-scoped session storage and
-immediately removes the fragment from the address bar before making an API
-request. Every vault read then carries the key in `X-Api-Key`.
+file path to the operating system. Before doing so, the ownership-pinned CLI
+asks the daemon to exchange its master API authority for a random,
+daemon-lifetime browser session. The master key stays on that pinned connection
+and never enters browser storage, a URL, or a child-process argument.
 
-Closing the tab ends that browser session. The lock button removes the stored
-key immediately. An ephemeral daemon key also becomes invalid when that daemon
-stops; run `docbank web` again and the ordinary daemon-first lifecycle starts
-or reconnects to the compatible owner.
+The launch page carries only the read-only session in a URL fragment. Browsers
+do not include fragments in the initial HTTP request; the application removes
+it from the address bar and holds it only in page memory. Requests use
+`X-Docbank-Web-Session`, which the daemon accepts only for the tree, node, and
+search reads used by this interface. It cannot call mutation, backup,
+maintenance, configuration, or general API endpoints.
+
+The lock button revokes the session in daemon memory and clears the page.
+Every remaining browser session disappears when that daemon stops. If another
+process later binds the same loopback port, a stale tab can reveal at most an
+already-invalid read-only token—not the persistent vault key. Run
+`docbank web` again to create a fresh session against the ownership-proven
+daemon.
 
 The launch file remains beneath `$DOCBANK_HOME/web-launch/` with the same
 owner-only Unix permissions or Windows DACL as the runtime record. It is
 runtime state, excluded from snapshots, replaced by the next launch, and
 removed when the daemon stops.
-
-For an explicitly configured `[server] api_key`, the unlock screen accepts the
-same key. It still stays in session storage rather than durable browser
-storage.
 
 Use `docbank web --no-browser` only when another local program must open the
 URL. That output contains the live session key. Do not put it in shell history,
@@ -65,4 +68,5 @@ the same name and verified extracted-text semantics as `docbank search`.
 The current web application does not import, edit, move, tag, trash, enroll
 audit scopes, or run maintenance and backup operations. Use the corresponding
 CLI or authenticated HTTP endpoint for those workflows. Future web workflows
-will remain ordinary API clients rather than gaining a privileged data path.
+will require deliberately expanded browser-session permissions rather than
+inheriting the master API key.

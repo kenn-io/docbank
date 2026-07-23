@@ -12,7 +12,7 @@ import (
 
 func TestWriteBootstrapAppliesOwnerOnlyUnixModes(t *testing.T) {
 	root := t.TempDir()
-	_, err := WriteBootstrap(root, "http://127.0.0.1:43210/#api_key=private")
+	_, err := WriteBootstrap(root, "http://127.0.0.1:43210/#web_session=private")
 	require.NoError(t, err)
 	dir := filepath.Join(root, launchDirName)
 	dirInfo, err := os.Stat(dir)

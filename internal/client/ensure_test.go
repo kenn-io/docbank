@@ -26,7 +26,7 @@ import (
 )
 
 func TestCreateTimeMatches(t *testing.T) {
-	rec := NewRecord("127.0.0.1:1", "key", "tok")
+	rec := NewRecord("127.0.0.1:1", "key", "tok", false)
 	require.Equal(t, os.Getpid(), rec.PID)
 	assert.True(t, createTimeMatches(rec), "own record must match")
 
@@ -45,7 +45,7 @@ func TestCreateTimeMatches(t *testing.T) {
 // any-version discovery used by status/stop must keep accepting it, or the
 // stale daemon could never be stopped.
 func TestEnsureDiscoveryRejectsKeylessRecords(t *testing.T) {
-	rec := NewRecord("127.0.0.1:1", "key", "tok")
+	rec := NewRecord("127.0.0.1:1", "key", "tok", false)
 	info := kitdaemon.PingInfo{Version: version.Version}
 
 	require.True(t, discoverOptions(true).Accept(rec, info))
@@ -61,7 +61,7 @@ func TestEnsureDiscoveryRejectsKeylessRecords(t *testing.T) {
 // A missing or mismatched protocol revision must therefore force replacement;
 // status/stop discovery remains permissive so the old daemon can be stopped.
 func TestEnsureDiscoveryRejectsProtocolMismatch(t *testing.T) {
-	rec := NewRecord("127.0.0.1:1", "key", "tok")
+	rec := NewRecord("127.0.0.1:1", "key", "tok", false)
 	info := kitdaemon.PingInfo{Version: version.Version}
 
 	require.True(t, discoverOptions(true).Accept(rec, info))
@@ -75,6 +75,31 @@ func TestEnsureDiscoveryRejectsProtocolMismatch(t *testing.T) {
 	rec.Metadata[metaProtocolVersion] = "0"
 	assert.False(t, discoverOptions(true).Accept(rec, info),
 		"same-version record with a mismatched protocol revision must be replaced")
+}
+
+func TestWebDiscoveryRequiresAdvertisedCapability(t *testing.T) {
+	info := kitdaemon.PingInfo{Version: version.Version}
+	fallback := NewRecord("127.0.0.1:1", "key", "tok", false)
+	enabled := NewRecord("127.0.0.1:1", "key", "tok", true)
+
+	assert.False(t, webDiscoverOptions().Accept(fallback, info),
+		"fallback-only or web-disabled daemons cannot serve docbank web")
+	assert.True(t, webDiscoverOptions().Accept(enabled, info))
+	assert.True(t, discoverOptions(true).Accept(fallback, info),
+		"ordinary data clients do not require web assets")
+}
+
+func TestEnsureWebReplacesWebIncapableDaemon(t *testing.T) {
+	root, rec := startUnresponsiveRuntime(t)
+	result, err := ensureDaemonWithOptions(t.Context(), root,
+		func(_ context.Context, _ string) (kitdaemon.RuntimeRecord, error) {
+			assert.False(t, kitdaemon.ProcessAlive(rec.PID))
+			return NewRecord("127.0.0.1:2", "new-key", "new-token", true), nil
+		}, webDiscoverOptions())
+	require.NoError(t, err)
+	require.NotNil(t, result.Replaced)
+	assert.Equal(t, rec.PID, result.Replaced.PID)
+	assert.Equal(t, "true", result.Record.Metadata[metaWebAvailable])
 }
 
 // TestEnsureStopsPinglessRuntimeBeforeReplacement models both a daemon whose
@@ -92,7 +117,7 @@ func TestEnsureStopsPinglessRuntimeBeforeReplacement(t *testing.T) {
 			assert.Equal(t, canonicalRoot, gotRoot)
 			assert.False(t, kitdaemon.ProcessAlive(rec.PID),
 				"replacement must wait for the recorded owner to exit")
-			return NewRecord("127.0.0.1:2", "new-key", "new-token"), nil
+			return NewRecord("127.0.0.1:2", "new-key", "new-token", false), nil
 		})
 	require.NoError(t, err)
 	assert.True(t, started)
@@ -131,7 +156,7 @@ func TestEnsureRejectsForgedPingWithoutSendingRuntimeSecrets(t *testing.T) {
 	result, err := ensureDaemon(t.Context(), root,
 		func(_ context.Context, _ string) (kitdaemon.RuntimeRecord, error) {
 			assert.False(t, kitdaemon.ProcessAlive(rec.PID))
-			return NewRecord("127.0.0.1:2", "new-key", "new-token"), nil
+			return NewRecord("127.0.0.1:2", "new-key", "new-token", false), nil
 		})
 	require.NoError(t, err)
 	require.NotNil(t, result.Replaced)
@@ -162,7 +187,7 @@ func TestProvenClientRefusesRedialAfterChallengeConnectionCloses(t *testing.T) {
 		})
 	}))
 	t.Cleanup(ts.Close)
-	rec := NewRecord(strings.TrimPrefix(ts.URL, "http://"), "private-api-key", token)
+	rec := NewRecord(strings.TrimPrefix(ts.URL, "http://"), "private-api-key", token, false)
 
 	c, err := newProvenClientFor(t.Context(), rec)
 	require.NoError(t, err)

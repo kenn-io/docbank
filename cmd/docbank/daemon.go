@@ -143,7 +143,8 @@ func runServe(ctx context.Context) (retErr error) {
 	cfg.Server.APIKey = apiKey
 
 	rtStore := client.RuntimeStore(layout.Root)
-	recPath, err = rtStore.Write(client.NewRecord(addr, apiKey, shutdownToken))
+	webAvailable := cfg.Web.Enabled && docweb.Available()
+	recPath, err = rtStore.Write(client.NewRecord(addr, apiKey, shutdownToken, webAvailable))
 	if err != nil {
 		_ = listener.Close()
 		return fmt.Errorf("writing daemon runtime record: %w", err)
@@ -204,7 +205,7 @@ func runServe(ctx context.Context) (retErr error) {
 	srv := api.NewServer(api.Deps{
 		Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Logger: logger,
 		StartedAt: time.Now(), ShutdownToken: shutdownToken, Shutdown: stop, Tracker: tracker,
-		Jobs: jobSupervisor, Gate: operationGate,
+		Jobs: jobSupervisor, Gate: operationGate, WebAvailable: docweb.Available(),
 	})
 	httpSrv := &http.Server{
 		Handler:           srv.Handler(),

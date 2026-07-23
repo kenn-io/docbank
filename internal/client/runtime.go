@@ -20,9 +20,10 @@ const (
 	metaShutdownToken   = "shutdown_token"
 	metaAPIKey          = "api_key"
 	metaProtocolVersion = "protocol_version"
+	metaWebAvailable    = "web_available"
 	// Bump whenever a newer CLI cannot safely use an older daemon's HTTP or
 	// runtime-record contract, even when both binaries report the same version.
-	daemonProtocolVersion = "37"
+	daemonProtocolVersion = "38"
 )
 
 // EnsureResult reports what EnsureDaemon found or did.
@@ -50,7 +51,7 @@ func RuntimeStore(root string) kitdaemon.RuntimeStore {
 // channel — the same pattern the shutdown token already uses. The protocol
 // revision prevents a same-version client from trusting an incompatible
 // daemon.
-func NewRecord(addr, apiKey, token string) kitdaemon.RuntimeRecord {
+func NewRecord(addr, apiKey, token string, webAvailable bool) kitdaemon.RuntimeRecord {
 	rec := kitdaemon.NewRuntimeRecord(Service, version.Version,
 		kitdaemon.Endpoint{Network: kitdaemon.NetworkTCP, Address: addr})
 	if rec.Metadata == nil {
@@ -59,6 +60,7 @@ func NewRecord(addr, apiKey, token string) kitdaemon.RuntimeRecord {
 	rec.Metadata[metaAPIKey] = apiKey
 	rec.Metadata[metaShutdownToken] = token
 	rec.Metadata[metaProtocolVersion] = daemonProtocolVersion
+	rec.Metadata[metaWebAvailable] = strconv.FormatBool(webAvailable)
 	if ct, ok := processCreateTimeMillis(rec.PID); ok {
 		rec.Metadata[metaCreateTime] = strconv.FormatInt(ct, 10)
 	}

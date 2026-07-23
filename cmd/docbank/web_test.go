@@ -3,7 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -17,8 +20,20 @@ import (
 	"go.kenn.io/docbank/internal/client"
 )
 
-func TestRunWebOpensAuthenticatedFragmentWithoutPrintingKey(t *testing.T) {
-	c := client.New("http://127.0.0.1:43210", "private key")
+func webSessionClient(t *testing.T, token string) *client.Client {
+	t.Helper()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/api/daemon/web-session", r.URL.Path)
+		assert.Equal(t, "private key", r.Header.Get("X-Api-Key"))
+		_ = json.NewEncoder(w).Encode(map[string]string{"token": token})
+	}))
+	t.Cleanup(ts.Close)
+	return client.New(ts.URL, "private key")
+}
+
+func TestRunWebOpensReadOnlySessionWithoutPrintingMasterKey(t *testing.T) {
+	c := webSessionClient(t, "read-only-session")
 	var opened string
 	var out bytes.Buffer
 	root := t.TempDir()
@@ -28,29 +43,31 @@ func TestRunWebOpensAuthenticatedFragmentWithoutPrintingKey(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.NotContains(t, out.String(), "private")
-	assert.Equal(t, "opened Docbank web application at http://127.0.0.1:43210/\n", out.String())
+	assert.Contains(t, out.String(), "opened Docbank web application at http://127.0.0.1:")
 	u, err := url.Parse(opened)
 	require.NoError(t, err)
 	assert.Equal(t, "file", u.Scheme)
 	assert.Empty(t, u.Fragment)
-	assert.NotContains(t, opened, "api_key")
+	assert.NotContains(t, opened, "private key")
 	path := filepath.FromSlash(u.Path)
 	if runtime.GOOS == "windows" {
 		path = strings.TrimPrefix(path, `\`)
 	}
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
-	assert.Contains(t, string(raw), "api_key=private+key")
+	assert.Contains(t, string(raw), "web_session=read-only-session")
+	assert.NotContains(t, string(raw), "private key")
 }
 
 func TestRunWebNoBrowserExplicitlyPrintsAuthenticatedURL(t *testing.T) {
-	c := client.New("http://127.0.0.1:43210", "private")
+	c := webSessionClient(t, "read-only-session")
 	var out bytes.Buffer
 	err := runWeb(t.Context(), &out, t.TempDir(), c, true, func(context.Context, string) error {
 		return errors.New("must not open")
 	})
 	require.NoError(t, err)
-	assert.Contains(t, out.String(), "#api_key=private")
+	assert.Contains(t, out.String(), "#web_session=read-only-session")
+	assert.NotContains(t, out.String(), "private key")
 }
 
 func TestValidateWebLaunchURLRejectsCredentialsAndRemoteURLs(t *testing.T) {

@@ -52,6 +52,7 @@ type Deps struct {
 	Gate          *OperationGate   // nil → a server-private gate
 	VerifyPage    VerifyPageFunc   // nil → shared bounded maintenance service
 	RepackPage    RepackPageFunc   // nil → shared bounded maintenance service
+	WebAvailable  bool             // compiled frontend is embedded in this binary
 }
 
 // Server is docbank's HTTP API: a huma-described /api/v1 surface plus a
@@ -61,6 +62,7 @@ type Server struct {
 	handler       http.Handler
 	api           huma.API
 	auditPreviews *auditPreviewRegistry
+	webSessions   *webSessionRegistry
 }
 
 // NewServer wires all routes and middleware onto a fresh mux. The handler
@@ -99,7 +101,10 @@ func NewServer(d Deps) *Server {
 	}
 	cfg.Security = []map[string][]string{{"apiKey": {}}, {"bearer": {}}}
 	humaAPI := humago.New(mux, cfg)
-	s := &Server{deps: d, api: humaAPI, auditPreviews: newAuditPreviewRegistry()}
+	s := &Server{
+		deps: d, api: humaAPI, auditPreviews: newAuditPreviewRegistry(),
+		webSessions: newWebSessionRegistry(),
+	}
 	g := d.Gate
 	if g == nil {
 		g = NewOperationGate()
@@ -128,13 +133,14 @@ func NewServer(d Deps) *Server {
 	s.registerChallenge(mux)
 	s.registerShutdown(mux)
 	registerWeb(mux, d.Cfg.Web.Enabled)
+	registerWebSession(mux, d.Cfg.Web.Enabled && d.WebAvailable, s.webSessions)
 
 	h := http.Handler(mux)
 	// Authenticate and enforce route topology before buffering small JSON
 	// envelopes, then validate their raw text before Huma's encoding/json
 	// decoder can perform lossy Unicode replacement.
 	h = jsonBodyTextMiddleware(h)
-	h = authMiddleware(h, d.Cfg.Server.APIKey)
+	h = authMiddleware(h, d.Cfg.Server.APIKey, s.webSessions)
 	h = loopbackMiddleware(h)
 	h = timeoutMiddleware(h)
 	h = recoverMiddleware(h, d.Logger)

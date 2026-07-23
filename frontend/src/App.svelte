@@ -3,7 +3,6 @@
   import ArrowLeftIcon from "@lucide/svelte/icons/arrow-left";
   import FileIcon from "@lucide/svelte/icons/file";
   import FolderIcon from "@lucide/svelte/icons/folder";
-  import KeyRoundIcon from "@lucide/svelte/icons/key-round";
   import LogOutIcon from "@lucide/svelte/icons/log-out";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import SearchIcon from "@lucide/svelte/icons/search";
@@ -18,7 +17,6 @@
     Spinner,
     Table,
     TableHeaderCell,
-    TextInput,
     ThemeToggle,
     TopBar,
     type SortDirection,
@@ -26,11 +24,10 @@
   import {
     APIError,
     children,
-    forgetKey,
-    rememberKey,
+    revokeSession,
     search,
     statPath,
-    takeFragmentKey,
+    takeFragmentSession,
     type Node,
     type SearchHit,
   } from "./api.js";
@@ -49,8 +46,7 @@
     sortDirection: SortDirection;
   };
 
-  let apiKey = $state("");
-  let keyInput = $state("");
+  let webSession = $state("");
   let directory = $state<Node | null>(null);
   let rows = $state<Row[]>([]);
   let stack = $state<Snapshot[]>([]);
@@ -81,17 +77,14 @@
   });
 
   onMount(() => {
-    apiKey = takeFragmentKey();
-    keyInput = apiKey;
-    if (apiKey) void loadRoot();
+    webSession = takeFragmentSession();
+    if (webSession) void loadRoot();
   });
 
   function handleFailure(cause: unknown): void {
     if (cause instanceof APIError && cause.status === 401) {
-      forgetKey();
-      apiKey = "";
-      keyInput = "";
-      error = "The daemon key expired or was rejected. Run `docbank web` again.";
+      webSession = "";
+      error = "The browser session expired or was rejected. Run `docbank web` again.";
       return;
     }
     error = cause instanceof Error ? cause.message : String(cause);
@@ -101,7 +94,7 @@
     loading = true;
     error = "";
     try {
-      const root = await statPath(apiKey, "/");
+      const root = await statPath(webSession, "/");
       await loadDirectory(root, "/", false);
     } catch (cause) {
       handleFailure(cause);
@@ -114,7 +107,7 @@
     loading = true;
     error = "";
     try {
-      const page = await children(apiKey, node.id);
+      const page = await children(webSession, node.id);
       if (request !== generation) return;
       if (remember && directory) {
         stack = [
@@ -158,7 +151,7 @@
     loading = true;
     error = "";
     try {
-      const report = await search(apiKey, query);
+      const report = await search(webSession, query);
       if (request !== generation) return;
       rows = report.hits.map((hit: SearchHit) => ({
         node: hit.node,
@@ -215,22 +208,10 @@
     }
   }
 
-  function unlock(): void {
-    const remembered = rememberKey(keyInput);
-    if (!remembered) {
-      error = "Enter the key printed by an explicitly configured daemon, or run `docbank web`.";
-      return;
-    }
-    apiKey = remembered;
-    error = "";
-    void loadRoot();
-  }
-
-  function lock(): void {
+  async function lock(): Promise<void> {
     generation += 1;
-    forgetKey();
-    apiKey = "";
-    keyInput = "";
+    const session = webSession;
+    webSession = "";
     directory = null;
     rows = [];
     stack = [];
@@ -238,35 +219,24 @@
     activeQuery = "";
     searchQuery = "";
     error = "";
+    try {
+      await revokeSession(session);
+    } catch {
+      // The local UI is locked even if the daemon disappeared first. Its
+      // in-memory session disappears with it.
+    }
   }
 </script>
 
-{#if !apiKey}
+{#if !webSession}
   <main class="unlock-shell">
     <Card level="raised" title="Open your Docbank" eyebrow="LOCAL VAULT">
       <div class="unlock-copy">
         <p>
-          Run <code>docbank web</code> to open an authenticated browser session automatically.
-          If your daemon has a configured API key, you can enter it here instead.
+          Run <code>docbank web</code> to create a new read-only browser session.
+          The vault API key is never stored in the browser.
         </p>
-        <label for="api-key">Daemon API key</label>
-        <TextInput
-          id="api-key"
-          type="password"
-          bind:value={keyInput}
-          block
-          autofocus
-          autocomplete="off"
-          ariaLabel="Daemon API key"
-          onkeydown={(event) => {
-            if (event.key === "Enter") unlock();
-          }}
-        />
         {#if error}<p class="error" role="alert">{error}</p>{/if}
-        <Button tone="info" surface="solid" onclick={unlock}>
-          <KeyRoundIcon size="14" aria-hidden="true" />
-          Open vault
-        </Button>
       </div>
     </Card>
   </main>
@@ -301,7 +271,7 @@
       {/snippet}
       {#snippet right()}
         <ThemeToggle size="sm" />
-        <IconButton size="sm" ariaLabel="Lock web session" onclick={lock}>
+        <IconButton size="sm" ariaLabel="Lock web session" onclick={() => void lock()}>
           <LogOutIcon size="14" aria-hidden="true" />
         </IconButton>
       {/snippet}

@@ -40,10 +40,11 @@ type Client struct {
 	hc   *http.Client
 }
 
-// WebURL returns the local portal URL with this ownership-proven client's API
-// key in the fragment. Fragments are not transmitted in HTTP requests; the
-// frontend consumes it into session storage before calling the API.
-func (c *Client) WebURL() (string, error) {
+// WebSessionURL asks the ownership-proven daemon for a daemon-lifetime,
+// read-only browser credential and returns it in the local portal fragment.
+// The master API key stays on the client's pinned connection and never enters
+// the browser.
+func (c *Client) WebSessionURL(ctx context.Context) (string, error) {
 	u, err := url.Parse(c.base)
 	if err != nil {
 		return "", fmt.Errorf("parsing daemon web URL: %w", err)
@@ -54,10 +55,19 @@ func (c *Client) WebURL() (string, error) {
 		(!strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback())) {
 		return "", errors.New("daemon client cannot produce an authenticated web URL")
 	}
+	var session struct {
+		Token string `json:"token"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/api/daemon/web-session", nil, nil, &session); err != nil {
+		return "", err
+	}
+	if session.Token == "" {
+		return "", errors.New("daemon returned an empty browser session")
+	}
 	u.Path = "/"
 	u.RawPath = ""
 	u.RawQuery = ""
-	u.Fragment = url.Values{"api_key": {c.key}}.Encode()
+	u.Fragment = url.Values{"web_session": {session.Token}}.Encode()
 	return u.String(), nil
 }
 

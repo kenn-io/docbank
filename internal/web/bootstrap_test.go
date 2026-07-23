@@ -15,11 +15,11 @@ import (
 
 func TestWriteBootstrapKeepsCredentialsOutOfLaunchURL(t *testing.T) {
 	root := t.TempDir()
-	authenticated := "http://127.0.0.1:43210/#api_key=private%20key"
+	authenticated := "http://127.0.0.1:43210/#web_session=private%20session"
 	launchURL, err := WriteBootstrap(root, authenticated)
 	require.NoError(t, err)
 	assert.NotContains(t, launchURL, "private")
-	assert.NotContains(t, launchURL, "api_key")
+	assert.NotContains(t, launchURL, "web_session")
 
 	parsed, err := url.Parse(launchURL)
 	require.NoError(t, err)
@@ -43,14 +43,14 @@ func TestWriteBootstrapKeepsCredentialsOutOfLaunchURL(t *testing.T) {
 
 func TestWriteBootstrapRejectsUnauthenticatedDestination(t *testing.T) {
 	for _, destination := range []string{
-		"https://127.0.0.1:43210/#api_key=private",
-		"http://127.0.0.1:43210/",
+		"https://127.0.0.1:43210/#web_session=private",
+		"http://127.0.0.1:43210/#api_key=private",
 		"",
 	} {
 		_, err := WriteBootstrap(t.TempDir(), destination)
 		require.Error(t, err, destination)
 	}
-	_, err := WriteBootstrap("", "http://127.0.0.1:43210/#api_key=private")
+	_, err := WriteBootstrap("", "http://127.0.0.1:43210/#web_session=private")
 	require.Error(t, err)
 }
 
@@ -76,7 +76,7 @@ func TestFallbackRemovesCredentialFragment(t *testing.T) {
 
 func TestRemoveBootstrapRemovesCredentialHandoff(t *testing.T) {
 	root := t.TempDir()
-	_, err := WriteBootstrap(root, "http://127.0.0.1:43210/#api_key=private")
+	_, err := WriteBootstrap(root, "http://127.0.0.1:43210/#web_session=private")
 	require.NoError(t, err)
 	require.NoError(t, RemoveBootstrap(root))
 	require.NoDirExists(t, filepath.Join(root, launchDirName))

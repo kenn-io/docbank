@@ -40,8 +40,6 @@ export interface Problem {
   title?: string;
 }
 
-const keyStorageName = "docbank-api-key";
-
 export class APIError extends Error {
   constructor(
     message: string,
@@ -53,31 +51,17 @@ export class APIError extends Error {
   }
 }
 
-export function takeFragmentKey(
+export function takeFragmentSession(
   location: Location = window.location,
   history: History = window.history,
 ): string {
   const params = new URLSearchParams(location.hash.replace(/^#/, ""));
-  const fragmentKey = params.get("api_key") ?? "";
-  if (fragmentKey) {
-    sessionStorage.setItem(keyStorageName, fragmentKey);
+  const session = params.get("web_session") ?? "";
+  if (session) {
     history.replaceState(null, "", `${location.pathname}${location.search}`);
-    return fragmentKey;
+    return session;
   }
-  return sessionStorage.getItem(keyStorageName) ?? "";
-}
-
-export function rememberKey(key: string): string {
-  if (key) {
-    sessionStorage.setItem(keyStorageName, key);
-  } else {
-    sessionStorage.removeItem(keyStorageName);
-  }
-  return key;
-}
-
-export function forgetKey(): void {
-  sessionStorage.removeItem(keyStorageName);
+  return "";
 }
 
 async function decodeProblem(response: Response): Promise<Problem> {
@@ -90,12 +74,12 @@ async function decodeProblem(response: Response): Promise<Problem> {
 
 export async function requestJSON<T>(
   path: string,
-  key: string,
+  session: string,
   init: RequestInit = {},
 ): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
-  headers.set("X-Api-Key", key);
+  headers.set("X-Docbank-Web-Session", session);
   const response = await fetch(path, {
     ...init,
     headers,
@@ -106,23 +90,29 @@ export async function requestJSON<T>(
     const detail = problem.detail || problem.title || `HTTP ${response.status}`;
     throw new APIError(detail, response.status, problem.code ?? "");
   }
+  if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }
 
-export async function statPath(key: string, path: string): Promise<Node> {
-  return requestJSON<Node>(`/api/v1/path?path=${encodeURIComponent(path)}`, key);
+export async function revokeSession(session: string): Promise<void> {
+  if (!session) return;
+  await requestJSON<void>("/api/daemon/web-session", session, { method: "DELETE" });
 }
 
-export async function children(key: string, nodeID: number): Promise<NodePage> {
+export async function statPath(session: string, path: string): Promise<Node> {
+  return requestJSON<Node>(`/api/v1/path?path=${encodeURIComponent(path)}`, session);
+}
+
+export async function children(session: string, nodeID: number): Promise<NodePage> {
   return requestJSON<NodePage>(
     `/api/v1/nodes/${nodeID}/children?limit=1000&offset=0`,
-    key,
+    session,
   );
 }
 
-export async function search(key: string, query: string): Promise<SearchReport> {
+export async function search(session: string, query: string): Promise<SearchReport> {
   return requestJSON<SearchReport>(
     `/api/v1/search?q=${encodeURIComponent(query)}&limit=1000`,
-    key,
+    session,
   );
 }

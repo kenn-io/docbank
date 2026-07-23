@@ -15,10 +15,10 @@ import (
 
 const launchDirName = "web-launch"
 
-// WriteBootstrap writes the credential-bearing browser handoff beneath the
-// owner-private vault root and returns a credential-free file URL suitable for
-// an OS browser launcher. The file has the same local trust boundary as the
-// daemon runtime record that already carries the effective key.
+// WriteBootstrap writes the browser-session handoff beneath the owner-private
+// vault root and returns a credential-free file URL suitable for an OS browser
+// launcher. The handoff carries only a daemon-lifetime, read-only token; the
+// vault API key never enters this file.
 func WriteBootstrap(root, authenticatedURL string) (string, error) {
 	if root == "" {
 		return "", errors.New("web bootstrap root is empty")
@@ -30,7 +30,7 @@ func WriteBootstrap(root, authenticatedURL string) (string, error) {
 	host := target.Hostname()
 	ip := net.ParseIP(host)
 	values, queryErr := url.ParseQuery(target.Fragment)
-	if queryErr != nil || values.Get("api_key") == "" ||
+	if queryErr != nil || values.Get("web_session") == "" ||
 		(!strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback())) {
 		return "", errors.New("web bootstrap requires an authenticated loopback URL")
 	}
