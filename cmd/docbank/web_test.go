@@ -20,20 +20,25 @@ import (
 	"go.kenn.io/docbank/internal/client"
 )
 
-func webSessionClient(t *testing.T, token string) *client.Client {
+func webSessionClient(t *testing.T, token string) (*client.Client, string) {
 	t.Helper()
+	webOrigin := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(webOrigin.Close)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
 		assert.Equal(t, "/api/daemon/web-session", r.URL.Path)
 		assert.Equal(t, "private key", r.Header.Get("X-Api-Key"))
-		_ = json.NewEncoder(w).Encode(map[string]string{"token": token})
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"token": token,
+			"url":   webOrigin.URL + "/",
+		})
 	}))
 	t.Cleanup(ts.Close)
-	return client.New(ts.URL, "private key")
+	return client.New(ts.URL, "private key"), webOrigin.URL
 }
 
 func TestRunWebOpensReadOnlySessionWithoutPrintingMasterKey(t *testing.T) {
-	c := webSessionClient(t, "read-only-session")
+	c, webOrigin := webSessionClient(t, "read-only-session")
 	var opened string
 	var out bytes.Buffer
 	root := t.TempDir()
@@ -43,7 +48,7 @@ func TestRunWebOpensReadOnlySessionWithoutPrintingMasterKey(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.NotContains(t, out.String(), "private")
-	assert.Contains(t, out.String(), "opened Docbank web application at http://127.0.0.1:")
+	assert.Contains(t, out.String(), "opened Docbank web application at "+webOrigin+"/")
 	u, err := url.Parse(opened)
 	require.NoError(t, err)
 	assert.Equal(t, "file", u.Scheme)
@@ -60,12 +65,13 @@ func TestRunWebOpensReadOnlySessionWithoutPrintingMasterKey(t *testing.T) {
 }
 
 func TestRunWebNoBrowserExplicitlyPrintsAuthenticatedURL(t *testing.T) {
-	c := webSessionClient(t, "read-only-session")
+	c, webOrigin := webSessionClient(t, "read-only-session")
 	var out bytes.Buffer
 	err := runWeb(t.Context(), &out, t.TempDir(), c, true, func(context.Context, string) error {
 		return errors.New("must not open")
 	})
 	require.NoError(t, err)
+	assert.Contains(t, out.String(), webOrigin+"/#")
 	assert.Contains(t, out.String(), "#web_session=read-only-session")
 	assert.NotContains(t, out.String(), "private key")
 }

@@ -231,14 +231,16 @@ func registerReadRoutes(api huma.API, d Deps) {
 		Limit  int   `query:"limit" default:"500" minimum:"1" maximum:"5000"`
 		Offset int   `query:"offset" default:"0" minimum:"0"`
 	}) (*childrenPage, error) {
-		kids, total, err := d.Store.ChildrenPage(ctx, in.ID, in.Limit, in.Offset)
+		page, err := d.Store.DirectoryChildrenPage(ctx, in.ID, in.Limit, in.Offset)
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
 		out := &childrenPage{}
-		out.Body.Total, out.Body.Limit, out.Body.Offset = total, in.Limit, in.Offset
+		out.Body.Directory = fromStoreNode(page.Directory.Node)
+		out.Body.Directory.Path = page.Directory.Path
+		out.Body.Total, out.Body.Limit, out.Body.Offset = page.Total, in.Limit, in.Offset
 		out.Body.Items = []Node{}
-		for _, child := range kids {
+		for _, child := range page.Children {
 			out.Body.Items = append(out.Body.Items, fromStoreNode(child))
 		}
 		return out, nil

@@ -39,6 +39,15 @@ type NodeView struct {
 	Path string
 }
 
+// DirectoryPageView binds a live directory and one child page to the same
+// read snapshot. Callers can render child paths without combining directory
+// authority from one point in time with children from another.
+type DirectoryPageView struct {
+	Directory NodeView
+	Children  []Node
+	Total     int
+}
+
 const nodeFrom = `nodes AS n
 	LEFT JOIN content_versions AS cv
 		ON cv.node_id = n.id AND cv.version_id = n.current_version_id`
@@ -208,74 +217,81 @@ func (s *Store) Children(ctx context.Context, dirID int64) ([]Node, error) {
 func (s *Store) ChildrenPage(
 	ctx context.Context, dirID int64, limit, offset int,
 ) ([]Node, int, error) {
+	page, err := s.DirectoryChildrenPage(ctx, dirID, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	return page.Children, page.Total, nil
+}
+
+// DirectoryChildrenPage returns a live directory's current canonical path and
+// one ordered child page from a single read transaction.
+func (s *Store) DirectoryChildrenPage(
+	ctx context.Context, dirID int64, limit, offset int,
+) (DirectoryPageView, error) {
 	if limit < 1 || limit > 5000 {
-		return nil, 0, errors.New("children limit must be between 1 and 5000")
+		return DirectoryPageView{}, errors.New("children limit must be between 1 and 5000")
 	}
 	if offset < 0 {
-		return nil, 0, errors.New("children offset must not be negative")
+		return DirectoryPageView{}, errors.New("children offset must not be negative")
 	}
-	rows, err := s.db.QueryContext(ctx, `
-		WITH target AS (
-		  SELECT kind FROM nodes WHERE id = ?
-		), totals AS (
-		  SELECT COUNT(*) AS total
-		  FROM nodes
-		  WHERE parent_id = ? AND trashed_at IS NULL
-		), page AS (
-		  SELECT n.id, n.parent_id, n.name, n.kind,
-		         COALESCE(n.current_version_id, '') AS current_version_id,
-		         COALESCE(cv.blob_hash, '') AS blob_hash,
-		         COALESCE(cv.size, 0) AS size,
-		         COALESCE(cv.mime_type, '') AS mime_type,
-		         n.revision, n.created_at, n.modified_at, n.trashed_at
-		  FROM `+nodeFrom+`
-		  WHERE n.parent_id = ? AND n.trashed_at IS NULL
-		  ORDER BY n.kind = 'file', n.name
-		  LIMIT ? OFFSET ?
-		)
-		SELECT target.kind, totals.total,
-		       COALESCE(page.id, 0), page.parent_id, COALESCE(page.name, ''),
-		       COALESCE(page.kind, ''), COALESCE(page.current_version_id, ''),
-		       COALESCE(page.blob_hash, ''), COALESCE(page.size, 0),
-		       COALESCE(page.mime_type, ''), COALESCE(page.revision, 0),
-		       COALESCE(page.created_at, ''), COALESCE(page.modified_at, ''),
-		       page.trashed_at
-		FROM target CROSS JOIN totals LEFT JOIN page ON true
-		ORDER BY page.kind = 'file', page.name`, dirID, dirID, dirID, limit, offset)
+
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing children of %d: %w", dirID, err)
+		return DirectoryPageView{}, fmt.Errorf("starting directory snapshot: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	dir, err := nodeByIDTx(tx, dirID)
+	if err != nil {
+		return DirectoryPageView{}, err
+	}
+	if dir.TrashedAt != nil {
+		return DirectoryPageView{}, fmt.Errorf("node %d: %w", dirID, ErrNotFound)
+	}
+	if !dir.IsDir() {
+		return DirectoryPageView{}, fmt.Errorf("node %d: %w", dirID, ErrNotDir)
+	}
+	view, err := nodeViewForNode(ctx, tx, dir)
+	if err != nil {
+		return DirectoryPageView{}, err
+	}
+
+	var total int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM nodes WHERE parent_id = ? AND trashed_at IS NULL`,
+		dirID,
+	).Scan(&total); err != nil {
+		return DirectoryPageView{}, fmt.Errorf("counting children of %d: %w", dirID, err)
+	}
+	rows, err := tx.QueryContext(ctx,
+		`SELECT `+nodeCols+` FROM `+nodeFrom+`
+		 WHERE n.parent_id = ? AND n.trashed_at IS NULL
+		 ORDER BY n.kind = 'file', n.name
+		 LIMIT ? OFFSET ?`, dirID, limit, offset)
+	if err != nil {
+		return DirectoryPageView{}, fmt.Errorf("listing children of %d: %w", dirID, err)
 	}
 	defer func() { _ = rows.Close() }()
 
 	children := make([]Node, 0)
-	var total int
-	found := false
 	for rows.Next() {
-		found = true
-		var targetKind string
-		var child Node
-		if err := rows.Scan(
-			&targetKind, &total, &child.ID, &child.ParentID, &child.Name,
-			&child.Kind, &child.CurrentVersionID, &child.BlobHash, &child.Size,
-			&child.MimeType, &child.Revision, &child.CreatedAt, &child.ModifiedAt,
-			&child.TrashedAt,
-		); err != nil {
-			return nil, 0, fmt.Errorf("listing children of %d: scanning page: %w", dirID, err)
+		child, err := scanNode(rows)
+		if err != nil {
+			return DirectoryPageView{}, err
 		}
-		if targetKind != nodeKindDir {
-			return nil, 0, fmt.Errorf("node %d: %w", dirID, ErrNotDir)
-		}
-		if child.ID != 0 {
-			children = append(children, child)
-		}
+		children = append(children, child)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("listing children of %d: %w", dirID, err)
+		return DirectoryPageView{}, fmt.Errorf("listing children of %d: %w", dirID, err)
 	}
-	if !found {
-		return nil, 0, fmt.Errorf("node %d: %w", dirID, ErrNotFound)
+	if err := rows.Close(); err != nil {
+		return DirectoryPageView{}, fmt.Errorf("closing children of %d: %w", dirID, err)
 	}
-	return children, total, nil
+	if err := tx.Commit(); err != nil {
+		return DirectoryPageView{}, fmt.Errorf("closing directory snapshot: %w", err)
+	}
+	return DirectoryPageView{Directory: view, Children: children, Total: total}, nil
 }
 
 // Path returns the display path of a node ("/" for the root).

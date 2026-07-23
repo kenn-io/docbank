@@ -36,6 +36,12 @@ asks the daemon to exchange its master API authority for a random,
 daemon-lifetime browser session. The master key stays on that pinned connection
 and never enters browser storage, a URL, or a child-process argument.
 
+The daemon serves that session from a second listener on a newly selected
+loopback port. This browser origin is independent of the configured API port
+and exists for only one daemon lifetime. A process that later captures the API
+port therefore cannot leave a service worker or cached script waiting for a
+future browser session.
+
 The launch page carries only the read-only session in a URL fragment. Browsers
 do not include fragments in the initial HTTP request; the application removes
 it from the address bar and holds it only in page memory. Requests use
@@ -44,11 +50,9 @@ search reads used by this interface. It cannot call mutation, backup,
 maintenance, configuration, or general API endpoints.
 
 The lock button revokes the session in daemon memory and clears the page.
-Every remaining browser session disappears when that daemon stops. If another
-process later binds the same loopback port, a stale tab can reveal at most an
-already-invalid read-only token—not the persistent vault key. Run
-`docbank web` again to create a fresh session against the ownership-proven
-daemon.
+Every remaining browser session and its dedicated browser origin disappear
+when that daemon stops. Run `docbank web` again to create a fresh origin and
+session against the ownership-proven daemon.
 
 The launch file remains beneath `$DOCBANK_HOME/web-launch/` with the same
 owner-only Unix permissions or Windows DACL as the runtime record. It is
@@ -64,6 +68,9 @@ logs, screenshots, issue trackers, or chat.
 Folder and search views are bounded to 1,000 rows and say when more results
 exist; use the CLI or paginated HTTP API for exhaustive automation. Search has
 the same name and verified extracted-text semantics as `docbank search`.
+Refreshing a folder resolves its stable node ID, current canonical path, and
+children in one metadata snapshot, so a concurrent CLI or agent move cannot
+leave the browser constructing child paths beneath an obsolete name.
 
 The current web application does not import, edit, move, tag, trash, enroll
 audit scopes, or run maintenance and backup operations. Use the corresponding

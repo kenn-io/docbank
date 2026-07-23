@@ -84,10 +84,11 @@ func webSessionRequestAllowed(method, path string) bool {
 func registerWebSession(
 	mux *http.ServeMux,
 	enabled bool,
+	webURL string,
 	sessions *webSessionRegistry,
 ) {
 	mux.HandleFunc("POST "+webSessionPath, func(w http.ResponseWriter, _ *http.Request) {
-		if !enabled {
+		if !enabled || webURL == "" {
 			writeError(w, NewError(http.StatusServiceUnavailable, "web_unavailable",
 				"this daemon is not serving the compiled web application"))
 			return
@@ -101,7 +102,8 @@ func registerWebSession(
 		w.Header().Set("Cache-Control", "no-store")
 		writeJSON(w, http.StatusCreated, struct {
 			Token string `json:"token"`
-		}{Token: token})
+			URL   string `json:"url"`
+		}{Token: token, URL: webURL})
 	})
 	mux.HandleFunc("DELETE "+webSessionPath, func(w http.ResponseWriter, r *http.Request) {
 		sessions.revoke(r.Header.Get(WebSessionHeader))

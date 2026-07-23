@@ -64,10 +64,16 @@ and `/` plus `/assets/` (the static web application, when `[web] enabled`). A hi
 /api/daemon/shutdown` (not in the OpenAPI document) backs `docbank
 daemon stop`; it isn't auth-exempt, so it requires both the API key and
 its own shutdown token. The hidden `POST /api/daemon/web-session` exchanges
-that master authority for a random daemon-lifetime browser token, while
+that master authority for a random daemon-lifetime browser token and returns
+the fresh loopback origin dedicated to that daemon lifetime, while
 `DELETE /api/daemon/web-session` revokes the calling browser session. Those
 tokens authenticate only the read routes used by the built-in tree and search
 views; they are intentionally not another general API credential.
+
+`GET /nodes/{id}/children` binds the live directory projection—including its
+current canonical path—and the requested child page to one read transaction.
+Refresh clients therefore do not combine an earlier directory name with a
+later child listing.
 
 IDs are canonical everywhere: every response carries them, and mutating
 endpoints address nodes by ID so a rename can't strand a concurrent

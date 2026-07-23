@@ -52,7 +52,7 @@ type Deps struct {
 	Gate          *OperationGate   // nil → a server-private gate
 	VerifyPage    VerifyPageFunc   // nil → shared bounded maintenance service
 	RepackPage    RepackPageFunc   // nil → shared bounded maintenance service
-	WebAvailable  bool             // compiled frontend is embedded in this binary
+	WebURL        string           // fresh per-daemon loopback origin; empty disables browser sessions
 }
 
 // Server is docbank's HTTP API: a huma-described /api/v1 surface plus a
@@ -133,7 +133,7 @@ func NewServer(d Deps) *Server {
 	s.registerChallenge(mux)
 	s.registerShutdown(mux)
 	registerWeb(mux, d.Cfg.Web.Enabled)
-	registerWebSession(mux, d.Cfg.Web.Enabled && d.WebAvailable, s.webSessions)
+	registerWebSession(mux, d.Cfg.Web.Enabled, d.WebURL, s.webSessions)
 
 	h := http.Handler(mux)
 	// Authenticate and enforce route topology before buffering small JSON

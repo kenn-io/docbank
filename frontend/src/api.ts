@@ -15,6 +15,7 @@ export interface Node {
 }
 
 export interface NodePage {
+  directory: Node;
   items: Node[];
   total: number;
   limit: number;

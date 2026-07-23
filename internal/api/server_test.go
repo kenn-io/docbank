@@ -63,7 +63,7 @@ func newTestServer(t *testing.T, mutate func(*api.Deps)) (*httptest.Server, *tes
 	t.Cleanup(func() { _ = blobs.Close() })
 	d := api.Deps{
 		Store: s, Blobs: blobs, VaultRoot: dir, Cfg: config.Default(),
-		WebAvailable: true,
+		WebURL: "http://127.0.0.1:43210/",
 	}
 	d.Cfg.Server.APIKey = testAPIKey
 	if mutate != nil {
@@ -324,10 +324,12 @@ func TestWebSessionIsReadOnlyRevocableAndDaemonLocal(t *testing.T) {
 	assert.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
 	var issued struct {
 		Token string `json:"token"`
+		URL   string `json:"url"`
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&issued))
 	require.NoError(t, resp.Body.Close())
 	require.NotEmpty(t, issued.Token)
+	assert.Equal(t, "http://127.0.0.1:43210/", issued.URL)
 	assert.NotEqual(t, testAPIKey, issued.Token)
 
 	webRequest := func(method, path string) *http.Response {
@@ -375,7 +377,7 @@ func TestWebSessionIsReadOnlyRevocableAndDaemonLocal(t *testing.T) {
 func TestWebSessionRequiresEnabledCompiledApplication(t *testing.T) {
 	for _, mutate := range []func(*api.Deps){
 		func(d *api.Deps) { d.Cfg.Web.Enabled = false },
-		func(d *api.Deps) { d.WebAvailable = false },
+		func(d *api.Deps) { d.WebURL = "" },
 	} {
 		ts, _ := newTestServer(t, mutate)
 		req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/daemon/web-session", nil)

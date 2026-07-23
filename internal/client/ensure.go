@@ -13,7 +13,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -90,7 +89,7 @@ func webDiscoverOptions() kitdaemon.DiscoverOptions {
 	opts := discoverOptions(true)
 	accept := opts.Accept
 	opts.Accept = func(rec kitdaemon.RuntimeRecord, info kitdaemon.PingInfo) bool {
-		return accept(rec, info) && rec.Metadata[metaWebAvailable] == strconv.FormatBool(true)
+		return accept(rec, info) && validWebAddress(rec.Metadata[metaWebAddress])
 	}
 	return opts
 }
@@ -218,7 +217,7 @@ func EnsureWeb(ctx context.Context) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	if res.Record.Metadata[metaWebAvailable] != strconv.FormatBool(true) {
+	if !validWebAddress(res.Record.Metadata[metaWebAddress]) {
 		return nil, errors.New("started daemon does not provide the compiled web application")
 	}
 	c, err := newProvenClientFor(ctx, res.Record)

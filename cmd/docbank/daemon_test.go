@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -15,6 +16,29 @@ import (
 	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/home"
 )
+
+func TestWebOriginUsesDedicatedEphemeralLoopbackListeners(t *testing.T) {
+	first, firstURL, err := listenWebOrigin(t.Context(), true)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = first.Close() })
+	second, secondURL, err := listenWebOrigin(t.Context(), true)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = second.Close() })
+
+	assert.NotEqual(t, first.Addr().String(), second.Addr().String())
+	assert.NotEqual(t, firstURL, secondURL)
+	for _, listener := range []net.Listener{first, second} {
+		host, port, err := net.SplitHostPort(listener.Addr().String())
+		require.NoError(t, err)
+		assert.Equal(t, "127.0.0.1", host)
+		assert.NotEqual(t, "0", port)
+	}
+
+	disabled, disabledURL, err := listenWebOrigin(t.Context(), false)
+	require.NoError(t, err)
+	assert.Nil(t, disabled)
+	assert.Empty(t, disabledURL)
+}
 
 func TestServeLocksBeforeInitializingVault(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "restore-target")

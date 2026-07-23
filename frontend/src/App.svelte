@@ -95,19 +95,19 @@
     error = "";
     try {
       const root = await statPath(webSession, "/");
-      await loadDirectory(root, "/", false);
+      await loadDirectory(root.id, false);
     } catch (cause) {
       handleFailure(cause);
       loading = false;
     }
   }
 
-  async function loadDirectory(node: Node, path: string, remember: boolean): Promise<void> {
+  async function loadDirectory(nodeID: number, remember: boolean): Promise<void> {
     const request = ++generation;
     loading = true;
     error = "";
     try {
-      const page = await children(webSession, node.id);
+      const page = await children(webSession, nodeID);
       if (request !== generation) return;
       if (remember && directory) {
         stack = [
@@ -124,7 +124,9 @@
           },
         ];
       }
-      directory = { ...node, path };
+      directory = page.directory;
+      const path = page.directory.path;
+      if (!path) throw new Error("The selected directory is no longer live.");
       rows = page.items.map((item) => ({
         node: item,
         path: path === "/" ? `/${item.name}` : `${path}/${item.name}`,
@@ -135,7 +137,15 @@
       sortField = "name";
       sortDirection = "asc";
     } catch (cause) {
-      if (request === generation) handleFailure(cause);
+      if (request === generation) {
+        if (cause instanceof APIError && cause.status === 404) {
+          rows = [];
+          selectedID = undefined;
+          error = "This directory was moved to trash or removed. Go back or reload the vault.";
+        } else {
+          handleFailure(cause);
+        }
+      }
     } finally {
       if (request === generation) loading = false;
     }
@@ -144,7 +154,7 @@
   async function runSearch(): Promise<void> {
     const query = searchQuery.trim();
     if (!query) {
-      if (directory) await loadDirectory(directory, directory.path ?? "/", false);
+      if (directory) await loadDirectory(directory.id, false);
       return;
     }
     const request = ++generation;
@@ -189,13 +199,13 @@
 
   function clearSearch(): void {
     searchQuery = "";
-    if (activeQuery && directory) void loadDirectory(directory, directory.path ?? "/", false);
+    if (activeQuery && directory) void loadDirectory(directory.id, false);
   }
 
   function activate(row: Row): void {
     selectedID = row.node.id;
     if (row.node.kind === "dir") {
-      void loadDirectory(row.node, row.path, true);
+      void loadDirectory(row.node.id, true);
     }
   }
 
@@ -301,7 +311,7 @@
               ariaLabel="Refresh current view"
               onclick={() => {
                 if (activeQuery) void runSearch();
-                else if (directory) void loadDirectory(directory, directory.path ?? "/", false);
+                else if (directory) void loadDirectory(directory.id, false);
               }}
             >
               <RefreshCwIcon size="14" aria-hidden="true" />

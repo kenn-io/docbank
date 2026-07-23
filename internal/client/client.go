@@ -45,24 +45,37 @@ type Client struct {
 // The master API key stays on the client's pinned connection and never enters
 // the browser.
 func (c *Client) WebSessionURL(ctx context.Context) (string, error) {
-	u, err := url.Parse(c.base)
+	apiURL, err := url.Parse(c.base)
 	if err != nil {
 		return "", fmt.Errorf("parsing daemon web URL: %w", err)
 	}
-	host := u.Hostname()
+	host := apiURL.Hostname()
 	ip := net.ParseIP(host)
-	if u.Scheme != "http" || u.Host == "" || c.key == "" ||
+	if apiURL.Scheme != "http" || apiURL.Host == "" || c.key == "" ||
 		(!strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback())) {
 		return "", errors.New("daemon client cannot produce an authenticated web URL")
 	}
 	var session struct {
 		Token string `json:"token"`
+		URL   string `json:"url"`
 	}
 	if err := c.do(ctx, http.MethodPost, "/api/daemon/web-session", nil, nil, &session); err != nil {
 		return "", err
 	}
 	if session.Token == "" {
 		return "", errors.New("daemon returned an empty browser session")
+	}
+	u, err := url.Parse(session.URL)
+	if err != nil {
+		return "", fmt.Errorf("parsing daemon browser origin: %w", err)
+	}
+	if u.Scheme != "http" || u.Host == "" || u.User != nil ||
+		u.Path != "/" || u.RawQuery != "" || u.Fragment != "" ||
+		!validWebAddress(u.Host) {
+		return "", errors.New("daemon returned an invalid browser origin")
+	}
+	if u.Host == apiURL.Host {
+		return "", errors.New("daemon returned its reusable API origin for the browser")
 	}
 	u.Path = "/"
 	u.RawPath = ""
@@ -387,6 +400,8 @@ func (c *Client) ChildrenPage(
 		return api.NodePage{}, err
 	}
 	if page.Limit != limit || page.Offset != offset || page.Total < 0 ||
+		page.Directory.ID != id || page.Directory.Kind != "dir" ||
+		page.Directory.TrashedAt != "" || !strings.HasPrefix(page.Directory.Path, "/") ||
 		len(page.Items) > limit ||
 		(len(page.Items) == 0 && offset < page.Total) ||
 		(len(page.Items) > 0 && offset+len(page.Items) > page.Total) {

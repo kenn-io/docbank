@@ -120,11 +120,21 @@ func runServe(ctx context.Context) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("binding API listener: %w", err)
 	}
+	defer func() { _ = listener.Close() }()
 	addr := listener.Addr().String()
+
+	webListener, webURL, err := listenWebOrigin(
+		ctx, cfg.Web.Enabled && docweb.Available(),
+	)
+	if err != nil {
+		return err
+	}
+	if webListener != nil {
+		defer func() { _ = webListener.Close() }()
+	}
 
 	shutdownToken, err := randomHex32()
 	if err != nil {
-		_ = listener.Close()
 		return fmt.Errorf("generating shutdown token: %w", err)
 	}
 
@@ -136,17 +146,18 @@ func runServe(ctx context.Context) (retErr error) {
 	if apiKey == "" {
 		apiKey, err = randomHex32()
 		if err != nil {
-			_ = listener.Close()
 			return fmt.Errorf("generating ephemeral API key: %w", err)
 		}
 	}
 	cfg.Server.APIKey = apiKey
 
 	rtStore := client.RuntimeStore(layout.Root)
-	webAvailable := cfg.Web.Enabled && docweb.Available()
-	recPath, err = rtStore.Write(client.NewRecord(addr, apiKey, shutdownToken, webAvailable))
+	webAddress := ""
+	if webListener != nil {
+		webAddress = webListener.Addr().String()
+	}
+	recPath, err = rtStore.Write(client.NewRecord(addr, apiKey, shutdownToken, webAddress))
 	if err != nil {
-		_ = listener.Close()
 		return fmt.Errorf("writing daemon runtime record: %w", err)
 	}
 	// Register the job wait after store/blob cleanup so their resources remain
@@ -205,12 +216,24 @@ func runServe(ctx context.Context) (retErr error) {
 	srv := api.NewServer(api.Deps{
 		Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Logger: logger,
 		StartedAt: time.Now(), ShutdownToken: shutdownToken, Shutdown: stop, Tracker: tracker,
-		Jobs: jobSupervisor, Gate: operationGate, WebAvailable: docweb.Available(),
+		Jobs: jobSupervisor, Gate: operationGate, WebURL: webURL,
 	})
-	httpSrv := &http.Server{
-		Handler:           srv.Handler(),
-		ReadHeaderTimeout: 10 * time.Second,
-		BaseContext:       func(net.Listener) context.Context { return ctx },
+	newHTTPServer := func() *http.Server {
+		return &http.Server{
+			Handler:           srv.Handler(),
+			ReadHeaderTimeout: 10 * time.Second,
+			BaseContext:       func(net.Listener) context.Context { return ctx },
+		}
+	}
+	type servingHTTP struct {
+		name     string
+		server   *http.Server
+		listener net.Listener
+	}
+	servers := []servingHTTP{{name: "API", server: newHTTPServer(), listener: listener}}
+	if webListener != nil {
+		servers = append(servers,
+			servingHTTP{name: "web", server: newHTTPServer(), listener: webListener})
 	}
 
 	if background && cfg.Server.IdleTimeout.Std() > 0 && len(cfg.Watches) == 0 &&
@@ -223,13 +246,27 @@ func runServe(ctx context.Context) (retErr error) {
 		}
 	}
 
-	errCh := make(chan error, 1)
-	go func() { errCh <- httpSrv.Serve(listener) }()
+	type serveResult struct {
+		name string
+		err  error
+	}
+	errCh := make(chan serveResult, len(servers))
+	for _, running := range servers {
+		go func() {
+			errCh <- serveResult{name: running.name, err: running.server.Serve(running.listener)}
+		}()
+	}
 	logger.Info("docbank daemon listening", "addr", addr, "pid", os.Getpid(), "background", background)
+	if webListener != nil {
+		logger.Info("docbank web application listening", "addr", webListener.Addr().String())
+	}
 
+	var serveErr error
 	select {
-	case err := <-errCh:
-		return fmt.Errorf("daemon API server: %w", err)
+	case result := <-errCh:
+		if !errors.Is(result.err, http.ErrServerClosed) {
+			serveErr = fmt.Errorf("daemon %s server: %w", result.name, result.err)
+		}
 	case <-sigCtx.Done():
 	case <-stopCh:
 	}
@@ -238,14 +275,35 @@ func runServe(ctx context.Context) (retErr error) {
 	shutdownCtx, cancel := context.WithTimeout(
 		context.Background(), daemonlife.HTTPDrainTimeout)
 	defer cancel()
-	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+	var shutdownErr error
+	for _, running := range servers {
+		if err := running.server.Shutdown(shutdownCtx); err != nil {
+			_ = running.server.Close()
+			shutdownErr = errors.Join(shutdownErr,
+				fmt.Errorf("draining daemon %s requests: %w", running.name, err))
+		}
+	}
+	if shutdownErr != nil {
 		// A timed-out drain means handlers may still be running. Force-close
 		// their connections before the deferred store close and lock release,
 		// and report the shutdown as unclean rather than pretending success.
-		_ = httpSrv.Close()
-		return fmt.Errorf("draining daemon requests: %w", err)
+		return shutdownErr
 	}
-	return nil
+	return serveErr
+}
+
+func listenWebOrigin(ctx context.Context, enabled bool) (net.Listener, string, error) {
+	if !enabled {
+		return nil, "", nil
+	}
+	listener, err := kitdaemon.Listen(ctx, kitdaemon.Endpoint{
+		Network: kitdaemon.NetworkTCP,
+		Address: net.JoinHostPort("127.0.0.1", "0"),
+	})
+	if err != nil {
+		return nil, "", fmt.Errorf("binding web listener: %w", err)
+	}
+	return listener, "http://" + listener.Addr().String() + "/", nil
 }
 
 // idleWatch exits an auto-started daemon after a fully quiet window so
