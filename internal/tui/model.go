@@ -2,9 +2,11 @@
 package tui
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"path"
+	"sort"
 	"strings"
 	"time"
 
@@ -17,6 +19,8 @@ import (
 const (
 	maxBrowserItems = 1000
 	maxSearchItems  = 1000
+	nodeKindDir     = "dir"
+	nodeKindFile    = "file"
 )
 
 // Backend is the bounded read surface needed by the first TUI slice.
@@ -35,10 +39,20 @@ const (
 	modeSearch
 )
 
+type sortField uint8
+
+const (
+	sortByRelevance sortField = iota
+	sortByName
+	sortBySize
+	sortByModified
+)
+
 type row struct {
 	node  api.Node
 	path  string
 	match string
+	rank  int
 }
 
 type location struct {
@@ -51,6 +65,8 @@ type location struct {
 	offset       int
 	searchQuery  string
 	searchReturn *location
+	sortField    sortField
+	sortDesc     bool
 }
 
 type navigationKind uint8
@@ -99,6 +115,8 @@ type Model struct {
 	cursor    int
 	offset    int
 	stack     []location
+	sortField sortField
+	sortDesc  bool
 
 	searchInput  textinput.Model
 	searching    bool
@@ -133,7 +151,7 @@ func New(ctx context.Context, backend Backend) (Model, error) {
 	return Model{
 		ctx: ctx, backend: backend, loading: true,
 		searchInput: input, styles: newStyles(true), requestID: 1,
-		spinnerActive: true,
+		spinnerActive: true, sortField: sortByName,
 	}, nil
 }
 
@@ -229,6 +247,14 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "?":
 		m.helpOpen = true
 		return m, nil
+	case "s":
+		m.cycleSortField()
+		m.sortRowsPreservingSelection()
+		return m, nil
+	case "v":
+		m.sortDesc = !m.sortDesc
+		m.sortRowsPreservingSelection()
+		return m, nil
 	case "i":
 		if _, ok := m.selected(); ok {
 			m.detailOpen = true
@@ -269,7 +295,7 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case "enter", "right", "l":
 		selected, ok := m.selected()
-		if ok && selected.node.Kind != "dir" {
+		if ok && selected.node.Kind != nodeKindDir {
 			m.detailOpen = true
 			m.detailOffset = 0
 			return m, nil
@@ -347,7 +373,7 @@ func (m Model) loadDirectory(
 		if err != nil {
 			return directoryLoadedMsg{requestID: requestID, kind: kind, err: err}
 		}
-		if directory.Kind != "dir" || directory.TrashedAt != "" || directory.Path == "" {
+		if directory.Kind != nodeKindDir || directory.TrashedAt != "" || directory.Path == "" {
 			return directoryLoadedMsg{
 				requestID: requestID, kind: kind,
 				err: errors.New("selected node is not a live directory"),
@@ -378,7 +404,10 @@ func (m Model) applyDirectory(msg directoryLoadedMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	current := m.snapshot()
-	previousCursor, previousOffset := m.cursor, m.offset
+	previousSelectedID, previousOffset := int64(0), m.offset
+	if selected, ok := m.selected(); ok {
+		previousSelectedID = selected.node.ID
+	}
 	switch msg.kind {
 	case navigationForward:
 		if current.directory.Path != "" {
@@ -387,13 +416,19 @@ func (m Model) applyDirectory(msg directoryLoadedMsg) (tea.Model, tea.Cmd) {
 	case navigationInitial, navigationRefresh:
 	}
 	m.mode = modeBrowse
+	if m.sortField == sortByRelevance {
+		m.sortField = sortByName
+		m.sortDesc = false
+	}
 	m.directory = msg.directory
 	m.rows = rowsForDirectory(msg.directory, msg.page.Items)
 	m.total = msg.page.Total
 	m.truncated = len(msg.page.Items) < msg.page.Total
 	m.cursor, m.offset = 0, 0
+	m.sortRows()
 	if msg.kind == navigationRefresh {
-		m.cursor, m.offset = previousCursor, previousOffset
+		m.selectNode(previousSelectedID)
+		m.offset = previousOffset
 	}
 	m.err = nil
 	m.clampSelection()
@@ -409,18 +444,33 @@ func (m Model) applySearch(msg searchLoadedMsg) (tea.Model, tea.Cmd) {
 		m.err = msg.err
 		return m, nil
 	}
+	refreshing := m.mode == modeSearch && m.searchQuery == msg.query
+	previousSelectedID, previousOffset := int64(0), m.offset
+	if selected, ok := m.selected(); ok {
+		previousSelectedID = selected.node.ID
+	}
 	m.mode = modeSearch
 	m.searchQuery = msg.query
+	if !refreshing {
+		m.sortField = sortByRelevance
+		m.sortDesc = false
+	}
 	m.rows = make([]row, 0, len(msg.report.Hits))
-	for _, hit := range msg.report.Hits {
+	for rank, hit := range msg.report.Hits {
 		node := hit.Node
 		node.Path = hit.Path
-		m.rows = append(m.rows, row{node: node, path: hit.Path, match: hit.Match})
+		m.rows = append(m.rows, row{node: node, path: hit.Path, match: hit.Match, rank: rank})
 	}
 	m.total = len(msg.report.Hits)
 	m.truncated = msg.report.Truncated
 	m.cursor, m.offset = 0, 0
+	m.sortRows()
+	if refreshing {
+		m.selectNode(previousSelectedID)
+		m.offset = previousOffset
+	}
 	m.err = nil
+	m.clampSelection()
 	return m, nil
 }
 
@@ -434,6 +484,7 @@ func (m Model) snapshot() location {
 		mode: m.mode, directory: m.directory, rows: append([]row(nil), m.rows...),
 		total: m.total, truncated: m.truncated, cursor: m.cursor, offset: m.offset,
 		searchQuery: m.searchQuery, searchReturn: searchReturn,
+		sortField: m.sortField, sortDesc: m.sortDesc,
 	}
 }
 
@@ -447,6 +498,8 @@ func (m *Model) restore(state location) {
 	m.offset = state.offset
 	m.searchQuery = state.searchQuery
 	m.searchReturn = state.searchReturn
+	m.sortField = state.sortField
+	m.sortDesc = state.sortDesc
 	m.loading = false
 	m.err = nil
 	m.clampSelection()
@@ -467,9 +520,9 @@ func spinnerTick() tea.Cmd {
 
 func rowsForDirectory(directory api.Node, nodes []api.Node) []row {
 	rows := make([]row, 0, len(nodes))
-	for _, node := range nodes {
+	for rank, node := range nodes {
 		node.Path = path.Join(directory.Path, node.Name)
-		rows = append(rows, row{node: node, path: node.Path})
+		rows = append(rows, row{node: node, path: node.Path, rank: rank})
 	}
 	return rows
 }
@@ -511,9 +564,92 @@ func (m Model) visibleRows() int {
 		headerLines++
 	}
 	bodyHeight := max(m.height-headerLines-1, 1)
-	listHeight := bodyHeight
-	if m.width < 72 {
-		listHeight = max((bodyHeight*2)/3, 1)
+	return max(bodyHeight-2, 1)
+}
+
+func (m *Model) cycleSortField() {
+	switch m.sortField {
+	case sortByRelevance:
+		m.sortField = sortByName
+	case sortByName:
+		m.sortField = sortBySize
+	case sortBySize:
+		m.sortField = sortByModified
+	case sortByModified:
+		if m.mode == modeSearch {
+			m.sortField = sortByRelevance
+		} else {
+			m.sortField = sortByName
+		}
+	default:
+		m.sortField = sortByName
 	}
-	return max(listHeight-2, 1)
+	m.sortDesc = false
+}
+
+func (m *Model) sortRowsPreservingSelection() {
+	selectedID := int64(0)
+	if selected, ok := m.selected(); ok {
+		selectedID = selected.node.ID
+	}
+	m.sortRows()
+	m.selectNode(selectedID)
+	m.clampSelection()
+}
+
+func (m *Model) sortRows() {
+	sort.SliceStable(m.rows, func(left, right int) bool {
+		return m.compareRows(m.rows[left], m.rows[right]) < 0
+	})
+}
+
+func (m *Model) selectNode(nodeID int64) {
+	if nodeID == 0 {
+		return
+	}
+	for index := range m.rows {
+		if m.rows[index].node.ID == nodeID {
+			m.cursor = index
+			return
+		}
+	}
+}
+
+func (m Model) compareRows(left, right row) int {
+	if m.sortField != sortByRelevance && left.node.Kind != right.node.Kind {
+		if left.node.Kind == nodeKindDir {
+			return -1
+		}
+		if right.node.Kind == nodeKindDir {
+			return 1
+		}
+	}
+	var comparison int
+	switch m.sortField {
+	case sortByRelevance:
+		comparison = cmp.Compare(left.rank, right.rank)
+	case sortBySize:
+		comparison = cmp.Compare(left.node.Size, right.node.Size)
+	case sortByModified:
+		comparison = cmp.Compare(left.node.ModifiedAt, right.node.ModifiedAt)
+	case sortByName:
+		fallthrough
+	default:
+		comparison = compareNames(left, right)
+	}
+	if comparison != 0 {
+		if m.sortDesc {
+			return -comparison
+		}
+		return comparison
+	}
+	return compareNames(left, right)
+}
+
+func compareNames(left, right row) int {
+	leftName, rightName := strings.ToLower(left.path), strings.ToLower(right.path)
+	if comparison := cmp.Compare(leftName, rightName); comparison != 0 {
+		return comparison
+	}
+	return cmp.Compare(left.path, right.path)
 }

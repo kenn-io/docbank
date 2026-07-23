@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -116,6 +117,11 @@ func (m Model) renderLocation() string {
 			right = fmt.Sprintf("first %d of %d", len(m.rows), m.total)
 		}
 	}
+	if m.width >= 48 {
+		right += " · " + m.sortSummary()
+	} else if !m.sortIndicatorVisible() {
+		right = m.sortSummary()
+	}
 	if m.loading {
 		right = m.styles.spinner.Render(m.spinnerIndicator()) + " loading"
 	}
@@ -126,32 +132,20 @@ func (m Model) renderLocation() string {
 }
 
 func (m Model) renderBody(height int) string {
-	if m.width < 72 {
-		listHeight := max((height*2)/3, 1)
-		detailHeight := max(height-listHeight-1, 0)
-		list := m.renderList(m.width, listHeight)
-		if detailHeight == 0 {
-			return list
-		}
-		return list + "\n" + m.styles.muted.Render(strings.Repeat("─", m.width)) + "\n" +
-			m.renderDetail(m.width, detailHeight)
-	}
-	listWidth := max((m.width*55)/100, 34)
-	detailWidth := max(m.width-listWidth-1, 1)
-	return lipgloss.JoinHorizontal(
-		lipgloss.Top,
-		m.renderList(listWidth, height),
-		m.styles.muted.Render(strings.Repeat("│\n", max(height-1, 0))+"│"),
-		m.renderDetail(detailWidth, height),
-	)
+	return m.renderList(m.width, height)
 }
 
 func (m Model) renderList(width, height int) string {
 	lines := make([]string, 0, height)
-	heading := "    TYPE  DOCUMENT"
-	if m.mode == modeSearch {
-		heading = "    TYPE  MATCH  DOCUMENT"
-	}
+	layout := newTableLayout(width, m.mode)
+	heading := layout.render(
+		"   ",
+		m.columnHeading("DOCUMENT", sortByName),
+		"TYPE",
+		"MATCH",
+		m.columnHeading("SIZE", sortBySize),
+		m.columnHeading("MODIFIED", sortByModified),
+	)
 	lines = append(lines, m.styles.heading.Render(pad(fit(heading, width), width)))
 	if height > 1 {
 		lines = append(lines, m.styles.separator.Render(strings.Repeat("─", width)))
@@ -168,7 +162,7 @@ func (m Model) renderList(width, height int) string {
 	for index := m.offset; index < end; index++ {
 		item := m.rows[index]
 		kind := "FILE"
-		if item.node.Kind == "dir" {
+		if item.node.Kind == nodeKindDir {
 			kind = "DIR "
 		}
 		label := item.path
@@ -179,12 +173,13 @@ func (m Model) renderList(width, height int) string {
 		if item.match != "" {
 			match = strings.ToUpper(item.match)
 		}
-		var line string
-		if m.mode == modeSearch {
-			line = fmt.Sprintf("  %-4s  %-7s %s", kind, match, quoted(label))
-		} else {
-			line = fmt.Sprintf("  %-4s  %s", kind, quoted(label))
+		size := "-"
+		if item.node.Kind == nodeKindFile {
+			size = formatBytes(item.node.Size)
 		}
+		line := layout.render(
+			"   ", quoted(label), kind, match, size, formatModified(item.node.ModifiedAt),
+		)
 		if index == m.cursor {
 			line = "▶" + line[1:]
 		}
@@ -203,56 +198,102 @@ func (m Model) renderList(width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m Model) renderDetail(width, height int) string {
-	lines := []string{
-		m.styles.heading.Render(pad(fit(" Document authority", width), width)),
+type tableLayout struct {
+	width        int
+	document     int
+	showKind     bool
+	showMatch    bool
+	showSize     bool
+	showModified bool
+}
+
+func newTableLayout(width int, mode viewMode) tableLayout {
+	layout := tableLayout{
+		width: width, showKind: width >= 30,
+		showSize: width >= 48, showModified: width >= 72,
+		showMatch: mode == modeSearch && width >= 90,
 	}
-	if height > 1 {
-		lines = append(lines, m.styles.separator.Render(strings.Repeat("─", width)))
+	fixed := 3
+	if layout.showKind {
+		fixed += 2 + 4
 	}
-	selected, ok := m.selected()
-	if !ok {
-		lines = append(lines, m.styles.muted.Render(" Nothing selected"))
-	} else {
-		node := selected.node
-		lines = append(lines,
-			" Path: "+quoted(selected.path),
-			fmt.Sprintf(" Selector: id:%d", node.ID),
-			" Kind: "+node.Kind,
-			fmt.Sprintf(" Revision: %d", node.Revision),
-			" Modified: "+node.ModifiedAt,
-		)
-		if node.Kind == "file" {
-			lines = append(lines,
-				" Version: "+node.CurrentVersionID,
-				" SHA-256: "+node.BlobHash,
-				fmt.Sprintf(" Size: %s (%d bytes)", formatBytes(node.Size), node.Size),
-			)
-			if node.MimeType != "" {
-				lines = append(lines, " Media type: "+quoted(node.MimeType))
-			}
-		} else {
-			lines = append(lines, " Enter: open directory")
-		}
+	if layout.showMatch {
+		fixed += 2 + 7
 	}
-	for index := range lines {
-		plain := lines[index]
-		if index == 0 {
-			plain = m.styles.heading.Render(pad(fit(" Document authority", width), width))
-		} else if index == 1 && height > 1 {
-			plain = m.styles.separator.Render(strings.Repeat("─", width))
-		} else {
-			plain = pad(fit(plain, width), width)
-		}
-		lines[index] = plain
+	if layout.showSize {
+		fixed += 2 + 9
 	}
-	if len(lines) > height {
-		lines = lines[:height]
+	if layout.showModified {
+		fixed += 2 + 17
 	}
-	for len(lines) < height {
-		lines = append(lines, strings.Repeat(" ", width))
+	layout.document = max(width-fixed, 1)
+	return layout
+}
+
+func (l tableLayout) render(prefix, document, kind, match, size, modified string) string {
+	var line strings.Builder
+	line.WriteString(fit(prefix, 3))
+	line.WriteString(pad(document, l.document))
+	if l.showKind {
+		line.WriteString("  ")
+		line.WriteString(pad(kind, 4))
 	}
-	return strings.Join(lines, "\n")
+	if l.showMatch {
+		line.WriteString("  ")
+		line.WriteString(pad(match, 7))
+	}
+	if l.showSize {
+		line.WriteString("  ")
+		line.WriteString(padLeft(size, 9))
+	}
+	if l.showModified {
+		line.WriteString("  ")
+		line.WriteString(pad(modified, 17))
+	}
+	return pad(line.String(), l.width)
+}
+
+func (m Model) columnHeading(label string, field sortField) string {
+	if m.sortField != field {
+		return label
+	}
+	if m.sortDesc {
+		return label + "↓"
+	}
+	return label + "↑"
+}
+
+func (m Model) sortSummary() string {
+	label := "name"
+	switch m.sortField {
+	case sortByRelevance:
+		label = "relevance"
+	case sortBySize:
+		label = "size"
+	case sortByModified:
+		label = "modified"
+	case sortByName:
+	}
+	if m.sortDesc {
+		return label + "↓"
+	}
+	return label + "↑"
+}
+
+func (m Model) sortIndicatorVisible() bool {
+	layout := newTableLayout(m.width, m.mode)
+	switch m.sortField {
+	case sortByName:
+		return layout.document >= lipgloss.Width("DOCUMENT↑")
+	case sortBySize:
+		return layout.showSize
+	case sortByModified:
+		return layout.showModified
+	case sortByRelevance:
+		return false
+	default:
+		return false
+	}
 }
 
 func (m Model) renderExpandedDetail(height int) string {
@@ -278,7 +319,7 @@ func (m Model) expandedDetailLines(width int) []string {
 
 	node := selected.node
 	fields := make([]string, 0, 10)
-	if node.Kind == "file" {
+	if node.Kind == nodeKindFile {
 		fields = append(fields,
 			" Version: "+node.CurrentVersionID,
 			" SHA-256: "+node.BlobHash,
@@ -291,7 +332,7 @@ func (m Model) expandedDetailLines(width int) []string {
 		fmt.Sprintf(" Revision: %d", node.Revision),
 		" Modified: "+node.ModifiedAt,
 	)
-	if node.Kind == "file" {
+	if node.Kind == nodeKindFile {
 		fields = append(fields, fmt.Sprintf(" Size: %s (%d bytes)", formatBytes(node.Size), node.Size))
 		if node.MimeType != "" {
 			fields = append(fields, " Media type: "+quoted(node.MimeType))
@@ -325,7 +366,7 @@ func (m Model) renderFooter() string {
 	}
 	hints := []hint{{text: "↑/↓ move", priority: 100}}
 	if selected, ok := m.selected(); ok {
-		if selected.node.Kind == "dir" {
+		if selected.node.Kind == nodeKindDir {
 			hints = append(hints, hint{text: "enter open", priority: 80})
 		} else {
 			hints = append(hints, hint{text: "enter inspect", priority: 85})
@@ -337,6 +378,8 @@ func (m Model) renderFooter() string {
 	}
 	hints = append(hints,
 		hint{text: "/ search", priority: 90},
+		hint{text: "s sort", priority: 85},
+		hint{text: "v reverse", priority: 25},
 		hint{text: "r refresh", priority: 20},
 		hint{text: "? help", priority: 70},
 		hint{text: "q quit", priority: 60},
@@ -432,6 +475,8 @@ func (m Model) renderHelp(background string) string {
 		"Enter/i        Inspect complete document authority",
 		"Esc/←/h        Return to the previous view",
 		"/              Search names and extracted text",
+		"s              Cycle the sort column",
+		"v              Reverse the sort direction",
 		"r              Refresh the current view",
 		"?              Open this help",
 		"q              Quit",
@@ -455,7 +500,7 @@ func (m Model) renderHelp(background string) string {
 
 func formatBytes(value int64) string {
 	if value == 0 {
-		return "-"
+		return "0 B"
 	}
 	const unit = 1024
 	if value < unit {
@@ -467,6 +512,14 @@ func formatBytes(value int64) string {
 		exponent++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(value)/float64(divisor), "KMGTPE"[exponent])
+}
+
+func formatModified(value string) string {
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return value
+	}
+	return parsed.UTC().Format("2006-01-02 15:04Z")
 }
 
 func quoted(value string) string {
@@ -500,6 +553,11 @@ func joinSides(left, right string, width int) string {
 func pad(value string, width int) string {
 	value = fit(value, width)
 	return value + strings.Repeat(" ", max(width-lipgloss.Width(value), 0))
+}
+
+func padLeft(value string, width int) string {
+	value = fit(value, width)
+	return strings.Repeat(" ", max(width-lipgloss.Width(value), 0)) + value
 }
 
 func (m Model) overlayModal(background, modal string) string {
