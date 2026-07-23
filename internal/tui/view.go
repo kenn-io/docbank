@@ -75,7 +75,11 @@ func (m Model) render() string {
 	}
 
 	bodyHeight := max(m.height-len(lines)-1, 1)
-	lines = append(lines, m.renderBody(bodyHeight), m.renderFooter())
+	body := m.renderBody(bodyHeight)
+	if m.detailOpen {
+		body = m.renderExpandedDetail(bodyHeight)
+	}
+	lines = append(lines, body, m.renderFooter())
 	content := strings.Join(lines, "\n")
 	if m.helpOpen {
 		return m.renderHelp(content)
@@ -251,10 +255,82 @@ func (m Model) renderDetail(width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
+func (m Model) renderExpandedDetail(height int) string {
+	lines := m.expandedDetailLines(m.width)
+	maxOffset := max(len(lines)-height, 0)
+	offset := min(m.detailOffset, maxOffset)
+	end := min(offset+height, len(lines))
+	visible := append([]string(nil), lines[offset:end]...)
+	for len(visible) < height {
+		visible = append(visible, strings.Repeat(" ", m.width))
+	}
+	return strings.Join(visible, "\n")
+}
+
+func (m Model) expandedDetailLines(width int) []string {
+	heading := m.styles.heading.Render(pad(fit(" Complete document authority", width), width))
+	separator := m.styles.separator.Render(strings.Repeat("─", max(width, 0)))
+	lines := []string{heading, separator}
+	selected, ok := m.selected()
+	if !ok {
+		return append(lines, m.styles.muted.Render(" Nothing selected"))
+	}
+
+	node := selected.node
+	fields := make([]string, 0, 10)
+	if node.Kind == "file" {
+		fields = append(fields,
+			" Version: "+node.CurrentVersionID,
+			" SHA-256: "+node.BlobHash,
+		)
+	}
+	fields = append(fields,
+		" Path: "+quoted(selected.path),
+		fmt.Sprintf(" Selector: id:%d", node.ID),
+		" Kind: "+node.Kind,
+		fmt.Sprintf(" Revision: %d", node.Revision),
+		" Modified: "+node.ModifiedAt,
+	)
+	if node.Kind == "file" {
+		fields = append(fields, fmt.Sprintf(" Size: %s (%d bytes)", formatBytes(node.Size), node.Size))
+		if node.MimeType != "" {
+			fields = append(fields, " Media type: "+quoted(node.MimeType))
+		}
+	}
+	for _, field := range fields {
+		wrapped := ansi.Hardwrap(field, max(width, 1), false)
+		for line := range strings.SplitSeq(wrapped, "\n") {
+			lines = append(lines, pad(line, width))
+		}
+	}
+	return lines
+}
+
+func (m Model) detailViewportHeight() int {
+	linesAboveBody := 2
+	if m.searching {
+		linesAboveBody++
+	}
+	return max(m.height-linesAboveBody-1, 1)
+}
+
+func (m *Model) clampDetailOffset() {
+	maximum := max(len(m.expandedDetailLines(m.width))-m.detailViewportHeight(), 0)
+	m.detailOffset = min(max(m.detailOffset, 0), maximum)
+}
+
 func (m Model) renderFooter() string {
+	if m.detailOpen {
+		return m.renderDetailFooter()
+	}
 	hints := []hint{{text: "↑/↓ move", priority: 100}}
-	if selected, ok := m.selected(); ok && selected.node.Kind == "dir" {
-		hints = append(hints, hint{text: "enter open", priority: 80})
+	if selected, ok := m.selected(); ok {
+		if selected.node.Kind == "dir" {
+			hints = append(hints, hint{text: "enter open", priority: 80})
+		} else {
+			hints = append(hints, hint{text: "enter inspect", priority: 85})
+		}
+		hints = append(hints, hint{text: "i inspect", priority: 65})
 	}
 	if len(m.stack) > 0 || m.mode == modeSearch {
 		hints = append(hints, hint{text: "← back", priority: 75})
@@ -280,6 +356,24 @@ func (m Model) renderFooter() string {
 	available := max(m.width-lipgloss.Width(position)-1, 0)
 	keys := fitHints(hints, available)
 	return m.styles.footer.Render(joinSides(keys, position, m.width))
+}
+
+func (m Model) renderDetailFooter() string {
+	lines := m.expandedDetailLines(m.width)
+	viewport := m.detailViewportHeight()
+	position := ""
+	if len(lines) > viewport {
+		last := min(m.detailOffset+viewport, len(lines))
+		position = fmt.Sprintf(" %d-%d/%d ", m.detailOffset+1, last, len(lines))
+	}
+	hints := []hint{
+		{text: "↑/↓ scroll", priority: 100},
+		{text: "esc close", priority: 90},
+		{text: "? help", priority: 70},
+		{text: "q quit", priority: 60},
+	}
+	available := max(m.width-lipgloss.Width(position)-1, 0)
+	return m.styles.footer.Render(joinSides(fitHints(hints, available), position, m.width))
 }
 
 type hint struct {
@@ -335,6 +429,7 @@ func (m Model) renderHelp(background string) string {
 		"PgUp/PgDn      Move one visible page",
 		"Home/End       Jump to first or last",
 		"Enter/→/l      Open a directory",
+		"Enter/i        Inspect complete document authority",
 		"Esc/←/h        Return to the previous view",
 		"/              Search names and extracted text",
 		"r              Refresh the current view",

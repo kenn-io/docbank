@@ -258,6 +258,37 @@ func TestNarrowLayoutKeepsSelectionVisible(t *testing.T) {
 	assert.Less(t, model.cursor, model.offset+model.visibleRows())
 }
 
+func TestExpandedDetailExposesCompleteAuthority(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.width, model.height = 80, 12
+	model.cursor = 1
+
+	model, cmd := updateModel(t, model, key(tea.KeyEnter))
+	require.Nil(t, cmd)
+	require.True(t, model.detailOpen)
+	selected, ok := model.selected()
+	require.True(t, ok)
+	content := model.View().Content
+	assert.Contains(t, content, selected.node.CurrentVersionID)
+	assert.Contains(t, content, selected.node.BlobHash)
+	assert.Contains(t, content, "esc close")
+
+	model.width, model.height = 24, 8
+	lines := model.expandedDetailLines(model.width)
+	compact := strings.ReplaceAll(strings.Join(lines, ""), " ", "")
+	assert.Contains(t, compact, selected.node.CurrentVersionID)
+	assert.Contains(t, compact, selected.node.BlobHash)
+	model, _ = updateModel(t, model, key(tea.KeyEnd))
+	assert.Positive(t, model.detailOffset)
+
+	model, cmd = updateModel(t, model, key(tea.KeyEscape))
+	require.Nil(t, cmd)
+	assert.False(t, model.detailOpen)
+}
+
 func TestHelpAndSpinnerAreVisible(t *testing.T) {
 	model, err := New(t.Context(), newFakeBackend())
 	require.NoError(t, err)

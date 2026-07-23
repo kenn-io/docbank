@@ -110,6 +110,8 @@ type Model struct {
 	err           error
 	quitting      bool
 	helpOpen      bool
+	detailOpen    bool
+	detailOffset  int
 	spinnerFrame  int
 	spinnerActive bool
 
@@ -149,6 +151,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		m.searchInput.SetWidth(max(msg.Width-4, 1))
 		m.clampSelection()
+		m.clampDetailOffset()
 		return m, nil
 	case tea.BackgroundColorMsg:
 		m.styles = newStyles(msg.IsDark())
@@ -168,6 +171,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.helpOpen {
 			m.helpOpen = false
 			return m, nil
+		}
+		if m.detailOpen {
+			return m.updateDetailKeys(msg)
 		}
 		if m.searching {
 			return m.updateSearchInput(msg)
@@ -223,6 +229,12 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "?":
 		m.helpOpen = true
 		return m, nil
+	case "i":
+		if _, ok := m.selected(); ok {
+			m.detailOpen = true
+			m.detailOffset = 0
+		}
+		return m, nil
 	case "r":
 		if m.mode == modeSearch && m.searchQuery != "" {
 			m.loading = true
@@ -257,7 +269,12 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case "enter", "right", "l":
 		selected, ok := m.selected()
-		if ok && selected.node.Kind == "dir" {
+		if ok && selected.node.Kind != "dir" {
+			m.detailOpen = true
+			m.detailOffset = 0
+			return m, nil
+		}
+		if ok {
 			m.loading = true
 			m.err = nil
 			m.requestID++
@@ -278,6 +295,37 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.stack = m.stack[:len(m.stack)-1]
 			return m, nil
 		}
+	}
+	return m, nil
+}
+
+func (m Model) updateDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "ctrl+c":
+		m.quitting = true
+		return m, tea.Quit
+	case "?":
+		m.helpOpen = true
+		return m, nil
+	case "i", "enter", "esc", "left", "h", "backspace":
+		m.detailOpen = false
+		m.detailOffset = 0
+	case "up", "k":
+		m.detailOffset--
+		m.clampDetailOffset()
+	case "down", "j":
+		m.detailOffset++
+		m.clampDetailOffset()
+	case "pgup":
+		m.detailOffset -= m.detailViewportHeight()
+		m.clampDetailOffset()
+	case "pgdown":
+		m.detailOffset += m.detailViewportHeight()
+		m.clampDetailOffset()
+	case "home", "g":
+		m.detailOffset = 0
+	case "end", "G":
+		m.detailOffset = max(len(m.expandedDetailLines(m.width))-m.detailViewportHeight(), 0)
 	}
 	return m, nil
 }
