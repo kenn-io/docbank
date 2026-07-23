@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -32,7 +34,11 @@ func TestRunWebOpensAuthenticatedFragmentWithoutPrintingKey(t *testing.T) {
 	assert.Equal(t, "file", u.Scheme)
 	assert.Empty(t, u.Fragment)
 	assert.NotContains(t, opened, "api_key")
-	raw, err := os.ReadFile(filepath.FromSlash(u.Path))
+	path := filepath.FromSlash(u.Path)
+	if runtime.GOOS == "windows" {
+		path = strings.TrimPrefix(path, `\`)
+	}
+	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), "api_key=private+key")
 }
