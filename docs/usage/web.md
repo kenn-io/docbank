@@ -29,16 +29,24 @@ cannot use. The daemon remains loopback-only.
 
 ## Browser authentication
 
-When Docbank opens the browser, it places the daemon's effective API key in the
-URL fragment. Browsers do not include fragments in HTTP requests. The
-application consumes the key into tab-scoped session storage and immediately
-removes the fragment from the address bar before making an API request. Every
-vault read then carries the key in `X-Api-Key`.
+When Docbank opens the browser, it writes a small launch page beside the
+owner-private daemon runtime record and passes only that credential-free local
+file path to the operating system. The launch page redirects the browser with
+the daemon's effective API key in the URL fragment; the key never appears in a
+child-process argument. Browsers do not include fragments in HTTP requests.
+The application consumes the key into tab-scoped session storage and
+immediately removes the fragment from the address bar before making an API
+request. Every vault read then carries the key in `X-Api-Key`.
 
 Closing the tab ends that browser session. The lock button removes the stored
 key immediately. An ephemeral daemon key also becomes invalid when that daemon
 stops; run `docbank web` again and the ordinary daemon-first lifecycle starts
 or reconnects to the compatible owner.
+
+The launch file remains beneath `$DOCBANK_HOME/web-launch/` with the same
+owner-only Unix permissions or Windows DACL as the runtime record. It is
+runtime state, excluded from snapshots, replaced by the next launch, and
+removed when the daemon stops.
 
 For an explicitly configured `[server] api_key`, the unlock screen accepts the
 same key. It still stays in session storage rather than durable browser

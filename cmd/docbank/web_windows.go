@@ -9,7 +9,7 @@ import (
 )
 
 func openWebBrowser(ctx context.Context, rawURL string) error {
-	if err := validateWebURL(rawURL); err != nil {
+	if err := validateWebLaunchURL(rawURL); err != nil {
 		return err
 	}
 	if err := exec.CommandContext( //nolint:gosec // validated loopback URL

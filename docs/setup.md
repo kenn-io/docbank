@@ -97,14 +97,26 @@ make install    # installs to ~/.local/bin
 On Windows, use a PowerShell prompt with Go and the C compiler available:
 
 ```powershell
+Push-Location frontend
+npm ci
+npm run build
+Pop-Location
+Get-ChildItem internal/web/dist -Force |
+  Where-Object Name -ne '.keep' |
+  Remove-Item -Recurse -Force
+Copy-Item -Recurse -Force frontend/dist/* internal/web/dist/
 go build -tags fts5 -o docbank.exe ./cmd/docbank
 go test -tags fts5 ./...
 ```
 
 The SQLite full-text index requires the `fts5` build tag; the Makefile
-targets set it for you. If you invoke `go` directly, pass it yourself:
+targets set it for you and build the frontend first. If you invoke `go`
+directly on Unix, prepare the embedded frontend and pass the tag yourself:
 
 ```bash
+(cd frontend && npm ci && npm run build)
+find internal/web/dist -mindepth 1 ! -name .keep -exec rm -rf {} +
+cp -R frontend/dist/. internal/web/dist/
 go build -tags fts5 ./cmd/docbank
 go test -tags fts5 ./...
 ```

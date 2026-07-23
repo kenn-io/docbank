@@ -112,7 +112,10 @@ func (a *App) ContentDirName() string    { return "blobs" }
 func (a *App) PackFileExtension() string { return packstore.PackExt }
 func (a *App) Version() string           { return a.version }
 func (a *App) ExcludedPaths() []string {
-	return []string{"config.toml", "logs/", "vault.lock", "launch.lock", "daemon.*.json", "blobs/tmp/"}
+	return []string{
+		"config.toml", "logs/", "vault.lock", "launch.lock", "daemon.*.json",
+		"web-launch/", "blobs/tmp/",
+	}
 }
 
 type frozenView struct{ tx rowQuerier }

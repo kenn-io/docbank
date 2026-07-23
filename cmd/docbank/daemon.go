@@ -31,6 +31,7 @@ import (
 	"go.kenn.io/docbank/internal/jobs"
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/store"
+	docweb "go.kenn.io/docbank/internal/web"
 )
 
 var daemonRunCmd = &cobra.Command{
@@ -68,6 +69,10 @@ func runServe(ctx context.Context) (retErr error) {
 	}()
 	defer func() { _ = root.Close() }()
 	defer func() { _ = lock.Release() }()
+	if err := docweb.RemoveBootstrap(layout.Root); err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, docweb.RemoveBootstrap(layout.Root)) }()
 
 	if err := layout.Ensure(); err != nil {
 		return err

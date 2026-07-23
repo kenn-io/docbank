@@ -5,13 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/url"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/home"
+	docweb "go.kenn.io/docbank/internal/web"
 )
 
 var webNoBrowser bool
@@ -29,18 +30,26 @@ With --no-browser, the authenticated URL is printed instead. It contains the
 session key: do not paste it into logs, issue trackers, or chat.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
+		if !docweb.Available() {
+			return errors.New("this binary does not contain the web application; rebuild with make build")
+		}
+		layout, err := home.Resolve()
+		if err != nil {
+			return err
+		}
 		c, err := client.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
 		defer func() { _ = c.Close() }()
-		return runWeb(cmd.Context(), cmd.OutOrStdout(), c, webNoBrowser, openWebBrowser)
+		return runWeb(cmd.Context(), cmd.OutOrStdout(), layout.Root, c, webNoBrowser, openWebBrowser)
 	},
 }
 
 func runWeb(
 	ctx context.Context,
 	out io.Writer,
+	root string,
 	c *client.Client,
 	noBrowser bool,
 	open func(context.Context, string) error,
@@ -56,7 +65,11 @@ func runWeb(
 		}
 		return nil
 	}
-	if err := open(ctx, rawURL); err != nil {
+	launchURL, err := docweb.WriteBootstrap(root, rawURL)
+	if err != nil {
+		return err
+	}
+	if err := open(ctx, launchURL); err != nil {
 		return fmt.Errorf("opening Docbank web application: %w", err)
 	}
 	base := strings.SplitN(rawURL, "#", 2)[0]
@@ -67,20 +80,14 @@ func runWeb(
 	return nil
 }
 
-func validateWebURL(rawURL string) error {
+func validateWebLaunchURL(rawURL string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return fmt.Errorf("parsing web URL: %w", err)
 	}
-	host := u.Hostname()
-	ip := net.ParseIP(host)
-	if u.Scheme != "http" || u.Host == "" ||
-		(!strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback())) {
-		return errors.New("web URL must use HTTP on a loopback address")
-	}
-	values, err := url.ParseQuery(u.Fragment)
-	if err != nil || values.Get("api_key") == "" {
-		return errors.New("web URL is missing its session key")
+	if u.Scheme != "file" || u.Host != "" || u.Path == "" ||
+		u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return errors.New("web launch URL must name a local file without credentials")
 	}
 	return nil
 }

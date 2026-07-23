@@ -119,10 +119,10 @@ cd docbank
 make install
 ```
 
-On Windows, build `docbank.exe` with
-`go build -tags fts5 -o docbank.exe ./cmd/docbank`. The
-[setup guide](docs/setup.md) is the installation authority and covers each
-platform's toolchain.
+On Windows, the [setup guide](docs/setup.md) gives the equivalent PowerShell
+steps for compiling the frontend, copying its embed assets, and building
+`docbank.exe`. It is the installation authority for every platform's
+toolchain.
 
 ## Quick start
 
