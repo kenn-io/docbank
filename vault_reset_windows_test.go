@@ -7,12 +7,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/pkg/sqlite/modernc"
+	"golang.org/x/sys/windows"
 )
 
 func TestResetVaultRejectsWindowsDirectoryReparsePoint(t *testing.T) {
@@ -89,4 +91,55 @@ func createWindowsJunction(alias, target string) error {
 		return fmt.Errorf("creating directory junction: %w: %s", err, output)
 	}
 	return nil
+}
+
+func TestRenameVaultNoReplaceSupportsWindowsExtendedLengthPaths(t *testing.T) {
+	parent := t.TempDir()
+	for len(parent) < 280 {
+		parent = filepath.Join(parent, strings.Repeat("segment", 8))
+	}
+	require.NoError(t, os.MkdirAll(parent, 0o700))
+	source := filepath.Join(parent, "vault")
+	destination := filepath.Join(parent, "vault.reset")
+	require.NoError(t, os.Mkdir(source, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(source, "sentinel"), []byte("kept"), 0o600))
+
+	require.NoError(t, renameVaultNoReplace(source, destination))
+
+	assert.NoDirExists(t, source)
+	assert.Equal(t, []byte("kept"), mustReadResetFile(t, filepath.Join(destination, "sentinel")))
+}
+
+func TestRenameVaultNoReplacePassesExtendedPathsToMoveFileW(t *testing.T) {
+	for name, paths := range map[string][4]string{
+		"dos": {
+			`C:\vault`,
+			`C:\vault.reset`,
+			`\\?\C:\vault`,
+			`\\?\C:\vault.reset`,
+		},
+		"unc": {
+			`\\server\share\vault`,
+			`\\server\share\vault.reset`,
+			`\\?\UNC\server\share\vault`,
+			`\\?\UNC\server\share\vault.reset`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var movedSource, movedDestination string
+			err := renameVaultNoReplaceWithMove(
+				paths[0],
+				paths[1],
+				func(source, destination *uint16) error {
+					movedSource = windows.UTF16PtrToString(source)
+					movedDestination = windows.UTF16PtrToString(destination)
+					return nil
+				},
+			)
+
+			require.NoError(t, err)
+			assert.Equal(t, paths[2], movedSource)
+			assert.Equal(t, paths[3], movedDestination)
+		})
+	}
 }

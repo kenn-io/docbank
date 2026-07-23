@@ -47,8 +47,8 @@ func ResetVault(
 		return nil, fmt.Errorf("resolving docbank reset diagnostic root: %w", err)
 	}
 	sourceRoot := config.Root
-	if sourceRoot == diagnosticRoot || filepath.Dir(sourceRoot) != filepath.Dir(diagnosticRoot) {
-		return nil, errors.New("docbank reset diagnostic root must be an absent sibling of the vault root")
+	if err := validateResetRootRelationship(sourceRoot, diagnosticRoot); err != nil {
+		return nil, err
 	}
 	if err := validateResetPaths(sourceRoot, diagnosticRoot); err != nil {
 		return nil, err
@@ -120,6 +120,17 @@ func ResetVault(
 		)
 	}
 	return fresh, nil
+}
+
+func validateResetRootRelationship(sourceRoot, diagnosticRoot string) error {
+	sourceParent := filepath.Dir(sourceRoot)
+	if sourceParent == sourceRoot {
+		return errors.New("docbank reset source must not be a filesystem root")
+	}
+	if sourceRoot == diagnosticRoot || sourceParent != filepath.Dir(diagnosticRoot) {
+		return errors.New("docbank reset diagnostic root must be an absent sibling of the vault root")
+	}
+	return nil
 }
 
 func validateResetPaths(sourceRoot, diagnosticRoot string) error {

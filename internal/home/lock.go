@@ -170,6 +170,20 @@ func (t *OwnershipTransition) OpenExistingForReplacement() (*os.Root, error) {
 	if err := replacement.relockAt(parentIndex, true, t.state.layout.Root); err != nil {
 		return nil, errors.Join(err, replacement.Release(), root.Close())
 	}
+	parent := filepath.Dir(t.state.layout.Root)
+	parentInfo, err := os.Stat(parent)
+	if err != nil {
+		err = fmt.Errorf("checking vault replacement parent identity: %w", err)
+		return nil, errors.Join(err, replacement.Release(), root.Close())
+	}
+	parentIdentity, err := directoryIdentity(parentInfo, parent)
+	if err != nil {
+		return nil, errors.Join(err, replacement.Release(), root.Close())
+	}
+	if parentIdentity != t.state.parentIdentity {
+		err = fmt.Errorf("vault replacement parent %s changed before rename", parent)
+		return nil, errors.Join(err, replacement.Release(), root.Close())
+	}
 	t.state.replacement = replacement
 	t.state.parentIndex = parentIndex
 	return root, nil

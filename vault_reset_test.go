@@ -100,6 +100,27 @@ func TestResetVaultValidatesSourceAndDestinationWithoutMutation(t *testing.T) {
 		assert.DirExists(t, root)
 	})
 
+	t.Run("filesystem root before release callback", func(t *testing.T) {
+		volumeRoot := filepath.VolumeName(t.TempDir()) + string(os.PathSeparator)
+		called := false
+
+		fresh, err := ResetVault(
+			t.Context(),
+			Config{Root: volumeRoot, SQLite: modernc.Driver{}},
+			ResetOptions{
+				DiagnosticRoot: filepath.Join(volumeRoot, ".docbank-reset-test"),
+				ReleaseCurrent: func() error {
+					called = true
+					return nil
+				},
+			},
+		)
+
+		assert.Nil(t, fresh)
+		require.ErrorContains(t, err, "filesystem root")
+		assert.False(t, called)
+	})
+
 	t.Run("symlink source", func(t *testing.T) {
 		for name, suffix := range map[string]string{
 			"direct":             "",
@@ -166,6 +187,57 @@ func TestValidateResetSourceAttributesRejectsDirectoryReparsePoint(t *testing.T)
 	})
 
 	require.ErrorContains(t, err, "reparse point")
+}
+
+func TestValidateResetRootRelationshipRejectsFilesystemRoot(t *testing.T) {
+	volumeRoot := filepath.VolumeName(t.TempDir()) + string(os.PathSeparator)
+
+	err := validateResetRootRelationship(
+		volumeRoot,
+		filepath.Join(volumeRoot, "vault.reset"),
+	)
+
+	require.ErrorContains(t, err, "filesystem root")
+}
+
+func TestResetVaultRejectsChangedParentBeforeRename(t *testing.T) {
+	grandparent := t.TempDir()
+	base := filepath.Join(grandparent, "base")
+	parkedBase := filepath.Join(grandparent, "base.original")
+	require.NoError(t, os.Mkdir(base, 0o700))
+	root := filepath.Join(base, "vault")
+	diagnostic := filepath.Join(base, "vault.reset")
+	current, err := New(t.Context(), Config{Root: root, SQLite: modernc.Driver{}})
+	require.NoError(t, err)
+
+	fresh, err := ResetVault(
+		t.Context(),
+		Config{Root: root, SQLite: modernc.Driver{}},
+		ResetOptions{
+			DiagnosticRoot: diagnostic,
+			ReleaseCurrent: func() error {
+				if err := current.Close(); err != nil {
+					return err
+				}
+				if err := os.Rename(base, parkedBase); err != nil {
+					return err
+				}
+				if err := os.Mkdir(base, 0o700); err != nil {
+					return err
+				}
+				return os.Rename(filepath.Join(parkedBase, "vault"), root)
+			},
+		},
+	)
+	if fresh != nil {
+		t.Cleanup(func() { _ = fresh.Close() })
+	}
+
+	assert.Nil(t, fresh)
+	require.ErrorContains(t, err, "parent")
+	require.ErrorContains(t, err, "changed")
+	assert.DirExists(t, root)
+	assert.NoDirExists(t, diagnostic)
 }
 
 func TestResetVaultCoordinatesReleaseOfCurrentOwnerBeforeRename(t *testing.T) {

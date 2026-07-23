@@ -5,19 +5,35 @@ package docbank
 import (
 	"os"
 
+	"go.kenn.io/docbank/internal/winsecurity"
 	"golang.org/x/sys/windows"
 )
 
 func renameVaultNoReplace(source, destination string) error {
-	sourceName, err := windows.UTF16PtrFromString(source)
+	return renameVaultNoReplaceWithMove(source, destination, windows.MoveFile)
+}
+
+func renameVaultNoReplaceWithMove(
+	source, destination string,
+	move func(*uint16, *uint16) error,
+) error {
+	extendedSource, err := winsecurity.ExtendedLengthPath(source)
 	if err != nil {
 		return err
 	}
-	destinationName, err := windows.UTF16PtrFromString(destination)
+	extendedDestination, err := winsecurity.ExtendedLengthPath(destination)
 	if err != nil {
 		return err
 	}
-	if err := windows.MoveFile(sourceName, destinationName); err != nil {
+	sourceName, err := windows.UTF16PtrFromString(extendedSource)
+	if err != nil {
+		return err
+	}
+	destinationName, err := windows.UTF16PtrFromString(extendedDestination)
+	if err != nil {
+		return err
+	}
+	if err := move(sourceName, destinationName); err != nil {
 		return &os.LinkError{Op: "MoveFileW", Old: source, New: destination, Err: err}
 	}
 	return nil
