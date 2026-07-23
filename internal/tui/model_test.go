@@ -13,17 +13,22 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/store"
 )
 
 type fakeBackend struct {
-	nodes      map[string]api.Node
-	children   map[int64]api.NodePage
-	search     api.SearchReport
-	err        error
-	childLimit int
-	searchMax  int
-	nodeIDs    []int64
-	statPaths  []string
+	nodes          map[string]api.Node
+	children       map[int64]api.NodePage
+	search         api.SearchReport
+	err            error
+	childLimit     int
+	searchMax      int
+	nodeIDs        []int64
+	statPaths      []string
+	history        map[string]api.AuditEventPage
+	historyErr     error
+	historyIDs     []int64
+	historyCursors []string
 }
 
 func newFakeBackend() *fakeBackend {
@@ -42,7 +47,9 @@ func newFakeBackend() *fakeBackend {
 		ModifiedAt: "2026-07-22T13:00:00Z",
 	}
 	return &fakeBackend{
-		nodes: map[string]api.Node{"/": root, "/docs": docs},
+		nodes: map[string]api.Node{
+			"/": root, "/docs": docs, "/README.txt": readme, "/docs/report.txt": report,
+		},
 		children: map[int64]api.NodePage{
 			1: {Items: []api.Node{docs, readme}, Total: 2, Limit: maxBrowserItems},
 			2: {Items: []api.Node{report}, Total: 1, Limit: maxBrowserItems},
@@ -50,6 +57,33 @@ func newFakeBackend() *fakeBackend {
 		search: api.SearchReport{
 			Hits:  []api.SearchHit{{Node: report, Path: "/docs/report.txt", Match: "content"}},
 			Limit: maxSearchItems,
+		},
+		history: map[string]api.AuditEventPage{
+			"": {
+				Node: readme, Path: "/README.txt", Total: 2, Limit: maxHistoryItems,
+				Items: []api.AuditEvent{
+					{
+						ID:                strings.Repeat("c", 64),
+						OperationID:       "33333333-3333-4333-8333-333333333333",
+						OperationSequence: 4, Ordinal: 0, NodeID: readme.ID,
+						Kind: "node_path", ScopeID: "44444444-4444-4444-8444-444444444444",
+						RecordedAt: "2026-07-22T14:00:00Z", Origin: "cli",
+						PriorNodeRevision: 1, ResultingNodeRevision: 2,
+						OldPath: &api.AuditPathState{Path: "/notes.txt", State: "live"},
+						NewPath: &api.AuditPathState{Path: "/README.txt", State: "live"},
+					},
+					{
+						ID:                strings.Repeat("d", 64),
+						OperationID:       "55555555-5555-4555-8555-555555555555",
+						OperationSequence: 3, Ordinal: 0, NodeID: readme.ID,
+						Kind: "content_replace", ScopeID: "44444444-4444-4444-8444-444444444444",
+						RecordedAt: "2026-07-22T13:00:00Z", Origin: "agent",
+						PriorNodeRevision: 1, ResultingNodeRevision: 2,
+						PriorCurrentVersionID:     new("66666666-6666-4666-8666-666666666666"),
+						ResultingCurrentVersionID: new("77777777-7777-4777-8777-777777777777"),
+					},
+				},
+			},
 		},
 	}
 }
@@ -97,6 +131,23 @@ func (f *fakeBackend) Search(
 		return api.SearchReport{}, f.err
 	}
 	return f.search, nil
+}
+
+func (f *fakeBackend) AuditHistory(
+	_ context.Context, _ string, nodeID int64, limit int, cursor string,
+) (api.AuditEventPage, error) {
+	f.historyIDs = append(f.historyIDs, nodeID)
+	f.historyCursors = append(f.historyCursors, cursor)
+	if f.historyErr != nil {
+		return api.AuditEventPage{}, f.historyErr
+	}
+	page, ok := f.history[cursor]
+	if !ok {
+		return api.AuditEventPage{}, errors.New("history page not found")
+	}
+	page.Limit = limit
+	page.Cursor = cursor
+	return page, nil
 }
 
 func TestModelNavigatesSearchesAndReturnsToTree(t *testing.T) {
@@ -157,6 +208,319 @@ func TestModelPreservesViewStateAcrossNavigation(t *testing.T) {
 	assert.Equal(t, modeBrowse, model.mode)
 	assert.Equal(t, 1, model.cursor)
 	assert.Equal(t, "README.txt", model.rows[model.cursor].node.Name)
+}
+
+func TestModelBrowsesAuditedHistoryAndReturnsToTree(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.width, model.height = 120, 24
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.selectNode(3)
+
+	model, cmd := updateModel(t, model, runeKey('a'))
+	require.NotNil(t, cmd)
+	assert.True(t, model.historyOpen)
+	model = runModelCommand(t, model, cmd)
+	require.Equal(t, []int64{3}, backend.historyIDs)
+	require.Len(t, model.historyPages, 1)
+	assert.Contains(t, model.render(), "Audit history")
+	assert.Contains(t, model.render(), "node_path")
+	assert.Contains(t, model.render(), `"/notes.txt" → "/README.txt"`)
+
+	model, cmd = updateModel(t, model, key(tea.KeyEnter))
+	require.Nil(t, cmd)
+	assert.True(t, model.historyDetail)
+	detail := model.render()
+	assert.Contains(t, detail, strings.Repeat("c", 64))
+	assert.Contains(t, detail, "33333333-3333-4333-8333-333333333333")
+	assert.Contains(t, detail, "44444444-4444-4444-8444-444444444444")
+
+	model, _ = updateModel(t, model, key(tea.KeyEscape))
+	assert.False(t, model.historyDetail)
+	model, _ = updateModel(t, model, key(tea.KeyEscape))
+	assert.False(t, model.historyOpen)
+	selected, ok := model.selected()
+	require.True(t, ok)
+	assert.Equal(t, int64(3), selected.node.ID)
+}
+
+func TestHistoryDetailShowsCompleteAttachmentTransition(t *testing.T) {
+	backend := newFakeBackend()
+	page := backend.history[""]
+	page.Items = []api.AuditEvent{{
+		ID:                strings.Repeat("f", 64),
+		OperationID:       "99999999-9999-4999-8999-999999999999",
+		OperationSequence: 5, Ordinal: 1, NodeID: page.Node.ID,
+		Kind: "tag_rename", ScopeID: "44444444-4444-4444-8444-444444444444",
+		RecordedAt: "2026-07-22T15:00:00Z", Origin: "agent",
+		PriorNodeRevision: 2, ResultingNodeRevision: 2,
+		Attachment: &api.AuditAttachmentChange{
+			Kind: "tag_definition",
+			Identity: api.AuditAttachmentIdentity{
+				TagID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+			},
+			Before: &api.AuditAttachmentState{
+				TagID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", TagName: "draft",
+			},
+			After: &api.AuditAttachmentState{
+				TagID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", TagName: "final",
+			},
+		},
+	}}
+	backend.history[""] = page
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.width, model.height = 100, 24
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.selectNode(3)
+	model, cmd := updateModel(t, model, runeKey('a'))
+	model = runModelCommand(t, model, cmd)
+	model, _ = updateModel(t, model, key(tea.KeyEnter))
+
+	detail := model.render()
+	assert.Contains(t, detail, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+	assert.Contains(t, detail, `Tag name: "draft"`)
+	assert.Contains(t, detail, `Tag name: "final"`)
+}
+
+func TestHistoryPathsRemainTerminalSafe(t *testing.T) {
+	event := api.AuditEvent{
+		OldPath: &api.AuditPathState{Path: "/old\nname", State: "live"},
+		NewPath: &api.AuditPathState{Path: "/new\x1b[31m", State: "live"},
+	}
+	summary := historyEventSummary(event)
+	assert.NotContains(t, summary, "\n")
+	assert.NotContains(t, summary, "\x1b")
+	assert.Contains(t, summary, `\n`)
+	assert.Contains(t, summary, `\x1b`)
+}
+
+func TestModelReportsUnauditedNodePlainly(t *testing.T) {
+	backend := newFakeBackend()
+	backend.historyErr = store.ErrAuditNotEnrolled
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.width, model.height = 100, 20
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.selectNode(3)
+
+	model, cmd := updateModel(t, model, runeKey('a'))
+	model = runModelCommand(t, model, cmd)
+	assert.True(t, model.historyOpen)
+	assert.Contains(t, model.render(), "not protected by permanent audit history")
+}
+
+func TestHistoryPaginatesOlderAndNewerWithoutLosingTreeState(t *testing.T) {
+	backend := newFakeBackend()
+	first := backend.history[""]
+	first.NextCursor = "older"
+	first.Total = 3
+	backend.history[""] = first
+	backend.history["older"] = api.AuditEventPage{
+		Node: first.Node, Path: first.Path, Total: 3, Limit: maxHistoryItems,
+		Items: []api.AuditEvent{{
+			ID:                strings.Repeat("e", 64),
+			OperationID:       "88888888-8888-4888-8888-888888888888",
+			OperationSequence: 1, Ordinal: 0, NodeID: first.Node.ID,
+			Kind: "audit_enroll", ScopeID: "44444444-4444-4444-8444-444444444444",
+			RecordedAt: "2026-07-22T12:00:00Z", Origin: "cli",
+		}},
+	}
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.width, model.height = 100, 20
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.selectNode(3)
+	model, cmd := updateModel(t, model, runeKey('a'))
+	model = runModelCommand(t, model, cmd)
+
+	model, cmd = updateModel(t, model, runeKey('n'))
+	require.NotNil(t, cmd)
+	model = runModelCommand(t, model, cmd)
+	assert.Equal(t, 1, model.historyPage)
+	assert.Equal(t, []string{"", "older"}, backend.historyCursors)
+	assert.Contains(t, model.render(), "audit_enroll")
+
+	model, cmd = updateModel(t, model, runeKey('p'))
+	require.Nil(t, cmd)
+	assert.Equal(t, 0, model.historyPage)
+	assert.Contains(t, model.render(), "node_path")
+}
+
+func TestHistoryPaginationKeepsInitialTimelineTotal(t *testing.T) {
+	backend := newFakeBackend()
+	first := backend.history[""]
+	first.NextCursor = "older"
+	first.Total = 3
+	backend.history[""] = first
+	older := first
+	older.Cursor = "older"
+	older.NextCursor = ""
+	older.Total = 4
+	older.Items = older.Items[:1]
+	backend.history["older"] = older
+
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.width, model.height = 100, 20
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.selectNode(3)
+	model, cmd := updateModel(t, model, runeKey('a'))
+	model = runModelCommand(t, model, cmd)
+	assert.Contains(t, model.render(), "of 3")
+
+	model, cmd = updateModel(t, model, runeKey('n'))
+	model = runModelCommand(t, model, cmd)
+	require.Equal(t, 1, model.historyPage)
+	assert.Equal(t, 3, model.historyPages[1].Total)
+	assert.Contains(t, model.render(), "of 3")
+	assert.NotContains(t, model.render(), "of 4")
+}
+
+func TestOlderHistoryLoadErrorRemainsVisibleWithCachedEvents(t *testing.T) {
+	backend := newFakeBackend()
+	first := backend.history[""]
+	first.NextCursor = "older"
+	backend.history[""] = first
+
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.width, model.height = 100, 20
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.selectNode(3)
+	model, cmd := updateModel(t, model, runeKey('a'))
+	model = runModelCommand(t, model, cmd)
+	require.Len(t, model.historyPages, 1)
+
+	applied, _ := model.applyHistory(historyLoadedMsg{
+		requestID: model.requestID,
+		pageIndex: 1,
+		err:       errors.New("synthetic older-page failure"),
+	})
+	appliedModel, ok := applied.(Model)
+	require.True(t, ok)
+	model = appliedModel
+	rendered := model.render()
+	assert.Contains(t, rendered, "synthetic older-page failure")
+	assert.Contains(t, rendered, "node_path")
+}
+
+func TestClosingHistoryInvalidatesDelayedResponse(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.selectNode(3)
+
+	model, delayed := updateModel(t, model, runeKey('a'))
+	require.NotNil(t, delayed)
+	pendingRequestID := model.requestID
+	model, _ = updateModel(t, model, key(tea.KeyEscape))
+	assert.False(t, model.historyOpen)
+	assert.Greater(t, model.requestID, pendingRequestID)
+
+	model = runModelCommand(t, model, delayed)
+	assert.False(t, model.historyOpen)
+	assert.Empty(t, model.historyPages)
+}
+
+func TestNewerHistoryNavigationInvalidatesDelayedOlderPage(t *testing.T) {
+	backend := newFakeBackend()
+	first := backend.history[""]
+	first.NextCursor = "older"
+	first.Total = 4
+	backend.history[""] = first
+	older := first
+	older.Items = older.Items[:1]
+	older.Cursor = "older"
+	older.NextCursor = "oldest"
+	backend.history["older"] = older
+	oldest := older
+	oldest.Cursor = "oldest"
+	oldest.NextCursor = ""
+	backend.history["oldest"] = oldest
+
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.selectNode(3)
+	model, cmd := updateModel(t, model, runeKey('a'))
+	model = runModelCommand(t, model, cmd)
+	model, cmd = updateModel(t, model, runeKey('n'))
+	model = runModelCommand(t, model, cmd)
+	require.Equal(t, 1, model.historyPage)
+
+	model, delayed := updateModel(t, model, runeKey('n'))
+	require.NotNil(t, delayed)
+	pendingRequestID := model.requestID
+	model, _ = updateModel(t, model, runeKey('p'))
+	assert.Equal(t, 0, model.historyPage)
+	assert.False(t, model.loading)
+	assert.Greater(t, model.requestID, pendingRequestID)
+
+	model = runModelCommand(t, model, delayed)
+	assert.Equal(t, 0, model.historyPage)
+	assert.Len(t, model.historyPages, 2)
+}
+
+func TestHistoryInspectionInvalidatesDelayedOlderPage(t *testing.T) {
+	backend := newFakeBackend()
+	first := backend.history[""]
+	first.NextCursor = "older"
+	first.Total = 3
+	backend.history[""] = first
+	backend.history["older"] = first
+
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.selectNode(3)
+	model, cmd := updateModel(t, model, runeKey('a'))
+	model = runModelCommand(t, model, cmd)
+	selectedBefore, ok := model.selectedHistoryEvent()
+	require.True(t, ok)
+
+	model, delayed := updateModel(t, model, runeKey('n'))
+	require.NotNil(t, delayed)
+	pendingRequestID := model.requestID
+	model, _ = updateModel(t, model, key(tea.KeyEnter))
+	assert.True(t, model.historyDetail)
+	assert.False(t, model.loading)
+	assert.Greater(t, model.requestID, pendingRequestID)
+
+	model = runModelCommand(t, model, delayed)
+	selectedAfter, ok := model.selectedHistoryEvent()
+	require.True(t, ok)
+	assert.True(t, model.historyDetail)
+	assert.Equal(t, 0, model.historyPage)
+	assert.Equal(t, selectedBefore.ID, selectedAfter.ID)
+}
+
+func TestInitialHistoryLoadSurvivesNavigationKeys(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.selectNode(3)
+
+	model, delayed := updateModel(t, model, runeKey('a'))
+	require.NotNil(t, delayed)
+	pendingRequestID := model.requestID
+	for _, pressed := range []tea.KeyPressMsg{
+		key(tea.KeyUp), runeKey('p'), key(tea.KeyHome),
+	} {
+		model, _ = updateModel(t, model, pressed)
+	}
+	assert.True(t, model.loading)
+	assert.Equal(t, pendingRequestID, model.requestID)
+
+	model = runModelCommand(t, model, delayed)
+	assert.False(t, model.loading)
+	require.Len(t, model.historyPages, 1)
+	event, ok := model.selectedHistoryEvent()
+	require.True(t, ok)
+	assert.Equal(t, "node_path", event.Kind)
 }
 
 func TestBackIgnoresDelayedDirectoryRefresh(t *testing.T) {

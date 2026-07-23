@@ -66,8 +66,8 @@ Four commitments:
   per-node history, independent chain/protected-byte verification, exact-prefix
   checks against externally recorded evidence, and backup/restore fidelity
 - FTS5 search over names and verified UTF-8 text/Markdown/JSON contents
-- A read-only daemon-backed TUI for virtual-tree browsing, search, and stable
-  document/version identity inspection
+- A read-only daemon-backed TUI for analytical tree browsing, search, stable
+  document/version identity inspection, and permanent audited-history timelines
 - Mixed loose and packed content storage with explicit pack, GC, and repack,
   plus an opt-in bounded daemon packing schedule
 - Whole-vault integrity verification

@@ -32,6 +32,11 @@ const (
 	daemonStartProblemVaultLocked = "vault_locked"
 )
 
+// ErrTransientDaemonAcquisition marks a daemon that disappeared after
+// discovery but before its ownership-proven client was ready. A caller may
+// safely repeat the complete discovery/start/proof sequence.
+var ErrTransientDaemonAcquisition = errors.New("daemon acquisition was interrupted")
+
 type daemonStartError struct {
 	message string
 	cause   error
@@ -183,7 +188,11 @@ func Ensure(ctx context.Context) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newProvenClientFor(ctx, res.Record)
+	c, err := newProvenClientFor(ctx, res.Record)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrTransientDaemonAcquisition, err)
+	}
+	return c, nil
 }
 
 // EnsureDaemon converges the vault on exactly one version- and
