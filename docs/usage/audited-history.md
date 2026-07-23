@@ -248,6 +248,4 @@ those changes commit or none do. Ordinary optimistic tag revisions still apply,
 so a stale rename or deletion cannot overwrite a newer assignment set.
 
 !!! info "Planned"
-    Overlapping scopes and rich TUI/web history views are not implemented.
-    Backup restore revalidates the portable JSONL authority before publishing
-    a vault.
+    Overlapping or nested scopes are not implemented.
