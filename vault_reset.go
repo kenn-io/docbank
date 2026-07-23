@@ -83,8 +83,13 @@ func ResetVault(
 	if err := validateResetPaths(sourceRoot, diagnosticRoot); err != nil {
 		return nil, err
 	}
-	expectedSourceIdentity, err := os.Stat(sourceRoot)
+	sourceIdentityRoot, err := os.OpenRoot(sourceRoot)
 	if err != nil {
+		return nil, fmt.Errorf("opening docbank reset source to capture its identity: %w", err)
+	}
+	expectedSourceIdentity, identityErr := sourceIdentityRoot.Stat(".")
+	closeIdentityErr := sourceIdentityRoot.Close()
+	if err := errors.Join(identityErr, closeIdentityErr); err != nil {
 		return nil, fmt.Errorf("capturing docbank reset source identity: %w", err)
 	}
 	if opts.ReleaseCurrent != nil {
