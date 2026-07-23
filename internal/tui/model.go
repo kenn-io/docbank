@@ -441,6 +441,9 @@ func (m *Model) cancelPendingHistoryLoad() {
 	if !m.loading {
 		return
 	}
+	if _, ok := m.currentHistoryPage(); !ok {
+		return
+	}
 	m.requestID++
 	m.loading = false
 	m.err = nil

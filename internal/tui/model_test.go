@@ -439,6 +439,32 @@ func TestHistoryInspectionInvalidatesDelayedOlderPage(t *testing.T) {
 	assert.Equal(t, selectedBefore.ID, selectedAfter.ID)
 }
 
+func TestInitialHistoryLoadSurvivesNavigationKeys(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.selectNode(3)
+
+	model, delayed := updateModel(t, model, runeKey('a'))
+	require.NotNil(t, delayed)
+	pendingRequestID := model.requestID
+	for _, pressed := range []tea.KeyPressMsg{
+		key(tea.KeyUp), runeKey('p'), key(tea.KeyHome),
+	} {
+		model, _ = updateModel(t, model, pressed)
+	}
+	assert.True(t, model.loading)
+	assert.Equal(t, pendingRequestID, model.requestID)
+
+	model = runModelCommand(t, model, delayed)
+	assert.False(t, model.loading)
+	require.Len(t, model.historyPages, 1)
+	event, ok := model.selectedHistoryEvent()
+	require.True(t, ok)
+	assert.Equal(t, "node_path", event.Kind)
+}
+
 func TestBackIgnoresDelayedDirectoryRefresh(t *testing.T) {
 	backend := newFakeBackend()
 	model, err := New(t.Context(), backend)
