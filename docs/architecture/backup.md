@@ -121,9 +121,9 @@ inside the snapshot.
 The current JSONL authority round-trips the node allocator high-water mark,
 blobs, tree and trash state, content versions and current pointers, ingests,
 provenance, tags, and extraction records. Its relational validation runs before
-a restored database is published. Enrollment is limited to a vault's first
-audit scope; the audited-history contract, including its backup and
-restore behavior, is described in
+a restored database is published. Every disjoint permanent audit scope, its
+membership, and its independent chain are preserved; the complete
+audited-history backup and restore contract is described in
 [Audited History](audited-history.md).
 
 ## Boundary with packed storage

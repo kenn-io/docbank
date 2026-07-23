@@ -154,9 +154,6 @@ as `docbank storage pack`: ordinary mutations may briefly receive
 content and does not run GC or repack; those reclamation operations remain
 explicit operator choices.
 
-Scheduled packing is newer than v0.10.1. Build from `main` to use it until the
-next release is tagged.
-
 ### Watched inboxes
 
 Each `[[watch]]` entry makes the daemon poll one local directory recursively.
@@ -208,12 +205,11 @@ person edits or reverts the Docbank node while the source stays unchanged, a
 daemon restart does not overwrite that working version. Only a later byte
 change at the watched source appends another version.
 
-Watchers run as jobs named `watch:<name>`. In source builds newer than v0.10.0,
-`docbank watch list` and `GET /api/v1/watches` pair each runner's state with its
-effective source, destination, settle window, minimum source age, scan interval,
-and exclusion policy; use `--json` when an agent needs the complete rules.
-`minimum_age` itself is newer than v0.10.1. `docbank jobs` and
-`GET /api/v1/jobs` remain the all-task view.
+Watchers run as jobs named `watch:<name>`. `docbank watch list` and
+`GET /api/v1/watches` pair each runner's state with its effective source,
+destination, settle window, minimum source age, scan interval, and exclusion
+policy; use `--json` when an agent needs the complete rules. `docbank jobs`
+and `GET /api/v1/jobs` remain the all-task view.
 A source, destination, or read failure leaves the named job in the failed state
 and records the reason. Restart the daemon after correcting the problem.
 Per-file successes are written to the daemon log. A configured watch keeps a

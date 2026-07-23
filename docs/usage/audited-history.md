@@ -217,10 +217,6 @@ inspection. There is deliberately no exceptional audit-destruction command.
 
 ## Multiple protected directories
 
-!!! note "Available on main after v0.10.0"
-    The latest tagged release supports one scope. The next release adds the
-    disjoint multi-scope workflow described here.
-
 Run the same preview-first command for each unrelated directory whose history
 must become permanent:
 

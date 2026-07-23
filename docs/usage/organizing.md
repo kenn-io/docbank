@@ -19,11 +19,6 @@ docbank cat /taxes/w2.pdf  # stream file bytes to stdout
 docbank get /taxes/w2.pdf ./w2.pdf  # verify, then atomically publish a local file
 ```
 
-!!! info "Release availability"
-
-    `docbank get` is newer than v0.10.0. Build from source to use it until the
-    next release is tagged.
-
 Use `ls --json` for a directory envelope containing the resolved directory
 and its ordered children. `tree --json` returns the root plus a flat,
 deterministic pre-order list whose entries carry absolute paths and depths;

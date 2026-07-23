@@ -80,8 +80,8 @@ daemon job reaches it. A transient open, read, or verification error leaves the
 item queued and is retried on a bounded delay; it does not become a permanent
 extraction failure. `docbank jobs` shows whether that worker is running.
 
-PDF text layers, office formats, and OCR are not yet available. Their absence
-never changes name-search results or document authority.
+PDF text layers, office formats, and OCR are unsupported. Their absence never
+changes name-search results or document authority.
 
 Next: organize documents beyond paths with
 [Organizing & Tagging](organizing.md), or see every search flag in the

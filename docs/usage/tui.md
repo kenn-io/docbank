@@ -5,11 +5,6 @@ description: Browse and sort documents, search names and extracted text, inspect
 
 # Interactive terminal browser
 
-!!! info "Release availability"
-
-    `docbank tui` is newer than v0.10.1. Build from source to use it until the
-    next release is tagged.
-
 Run:
 
 ```bash

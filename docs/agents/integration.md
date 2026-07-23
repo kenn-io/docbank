@@ -41,9 +41,8 @@ placement. `DOCBANK_HOME=/path/to/another/vault docbank info --json` selects
 and confirms another independently owned archive without changing a global
 profile or opening its database directly.
 
-In source builds newer than v0.10.0, a workflow that depends on watched
-ingestion can inspect the daemon's effective configuration and runner state
-rather than assuming the local file is active:
+A workflow that depends on watched ingestion can inspect the daemon's effective
+configuration and runner state rather than assuming the local file is active:
 
 ```bash
 docbank watch list --json
@@ -220,11 +219,6 @@ the complete stream verifies and is atomically published:
 ```bash
 docbank get id:42 ./document.bin --json
 ```
-
-!!! info "Release availability"
-
-    `docbank get` is newer than v0.10.0. Build from source to use it until the
-    next release is tagged.
 
 Independent HTTP clients should retrieve file bytes by ID, not path:
 

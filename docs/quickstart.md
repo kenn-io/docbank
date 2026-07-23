@@ -84,11 +84,6 @@ authority or `a` for the selected node's permanent audited-history timeline.
 See the
 [interactive terminal browser](usage/tui.md) guide for the complete key map.
 
-!!! info "Release availability"
-
-    `docbank tui` is newer than v0.10.1. Build from source to use it until the
-    next release is tagged.
-
 `cat` streams a file's bytes to stdout. For a durable local file, `get` first
 verifies the complete download in private staging and only then publishes it:
 
@@ -96,17 +91,6 @@ verifies the complete download in private staging and only then publishes it:
 docbank cat /taxes/checklist.pdf
 docbank get /taxes/checklist.pdf /tmp/checklist.pdf
 ```
-
-!!! info "Release availability"
-
-    `docbank get` is newer than v0.10.0. Build from source to use it until the
-    next release is tagged.
-
-!!! info "New version-command vocabulary"
-
-    `docbank version` and the explicit `docbank versions list|show|cat`
-    commands are newer than v0.7.0. Build from source to use them until the
-    next release is published.
 
 Every imported file also has a stable immutable content-version UUID:
 

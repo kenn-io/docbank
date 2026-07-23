@@ -241,11 +241,6 @@ directories.
 
 ## docbank get
 
-!!! info "Release availability"
-
-    `docbank get` is newer than v0.10.0. Build from source to use it until the
-    next release is tagged.
-
 ```text
 docbank get <path-or-id> <local-file> [--overwrite] [--progress auto|bar|plain] [--json]
 ```
@@ -319,11 +314,6 @@ update already committed, Docbank keeps the command successful, prints the new
 version, and emits a warning rather than encouraging a duplicate retry.
 
 ## docbank versions
-
-!!! info "Release availability"
-
-    The explicit `versions list|show|cat` command vocabulary is newer than
-    v0.7.0. Build from source to use it until the next release is published.
 
 ```text
 docbank versions <command>
@@ -551,9 +541,9 @@ scope head remain exact prefixes of current authority. Equal or validly extended
 chains pass; a different vault/lineage, missing scope, shorter chain, or
 divergent head is reported with a stable problem code and exits non-zero.
 
-The first scope creates the vault-wide genesis. On main after v0.10.0, later
-`audit enable` commands can add disjoint directory scopes without duplicating
-that genesis; overlapping or nested scopes are rejected. See
+The first scope creates the vault-wide genesis. Later `audit enable` commands
+can add disjoint directory scopes without duplicating that genesis; overlapping
+or nested scopes are rejected. See
 [Permanent Audited History](usage/audited-history.md) for enrollment,
 supported mutations, and maintenance behavior.
 
@@ -681,15 +671,10 @@ an explicit `truncated` boolean. A filtered report also echoes the stable
 `"hits": []`.
 
 The daemon indexes current UTF-8 `text/*`, JSON, and JSONL blobs up to 16 MiB
-after a terminally verified read. PDF, Office, and OCR extraction are not yet
-available. See [Searching](usage/searching.md).
+after a terminally verified read. PDF, Office, and OCR extraction are
+unsupported. See [Searching](usage/searching.md).
 
 ## docbank tui
-
-!!! info "Release availability"
-
-    `docbank tui` is newer than v0.10.1. Build from source to use it until the
-    next release is tagged.
 
 ```
 docbank tui
@@ -707,11 +692,6 @@ run backup and storage maintenance. See the
 capability boundary.
 
 ## docbank web
-
-!!! info "Release availability"
-
-    `docbank web` is newer than v0.10.1. Build from source to use it until the
-    next release is tagged.
 
 ```
 docbank web [--no-browser]
@@ -930,11 +910,6 @@ Every daemon registers `extract:plain-text`; configured watched inboxes add
 
 ## docbank watch
 
-!!! info "Release availability"
-
-    `docbank watch list` is newer than v0.10.0. Build from source to use it
-    until the next release is tagged.
-
 ```
 docbank watch list [--json]
 ```
@@ -945,7 +920,7 @@ minimum source age (`0s` when disabled), scan interval, exclusion count, and
 current runner state. Human output quotes source and destination paths so
 terminal control characters cannot disguise them. `--json` includes the
 complete exclusion rules and the corresponding job record for agents and
-automation. The `minimum_age` field is newer than v0.10.1.
+automation.
 
 This command is inspection only. Edit `config.toml` and restart the daemon to
 change a watch.
@@ -979,11 +954,6 @@ against an offline server instance and never invoked. For agents and
 API client generation; see [HTTP API](architecture/http-api.md).
 
 ## docbank version
-
-!!! info "Release availability"
-
-    This command is newer than v0.7.0. Build from source to use it until the
-    next release is published.
 
 ```
 docbank version
