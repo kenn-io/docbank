@@ -250,6 +250,3 @@ named `watch:<name>` job and any terminal error; correct the problem and restart
 the daemon. Successful additions, updates, and unchanged observations appear
 in the daemon log. See [Configuration](../configuration.md#watched-inboxes) for
 the complete field contract.
-
-Scheduled packing is newer than v0.10.1. Build from `main` to use it until the
-next release is tagged.

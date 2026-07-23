@@ -80,10 +80,8 @@ docbank_<version>_<goos>_<goarch>.tar.gz  # Linux and macOS
 docbank_<version>_windows_<goarch>.zip    # Windows
 ```
 
-Releases produced by the current distribution workflow publish all six
-archives. Earlier tags may contain fewer targets; an installer fails instead
-of substituting another platform. Never install an archive for a different OS
-or architecture.
+Releases publish all six archives. An installer fails instead of substituting
+another platform. Never install an archive for a different OS or architecture.
 
 ## Build and install from source
 

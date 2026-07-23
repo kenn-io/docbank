@@ -55,7 +55,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `POST /gc` `{run}` · `POST /verify` | reclaim unreachable blobs / validate metadata and re-hash all blobs | Implemented |
 | `GET /storage` · `POST /storage/pack` · `POST /storage/repack` | inspect usage / pack loose blobs / compact sparse packs | Implemented |
 | `GET /jobs` | inspect daemon-owned background tasks and terminal failures | Implemented |
-| `GET /watches` | inspect effective watched-inbox configuration and runner state | Implemented after v0.10.0 |
+| `GET /watches` | inspect effective watched-inbox configuration and runner state | Implemented |
 | `POST /backup/init` · `POST /backup/snapshots` · `POST /backup/snapshots/stream` · `GET /backup/snapshots` | initialize a repository / create with JSON or streamed progress / list snapshots | Implemented |
 
 Root-level, outside `/api/v1` and auth-exempt: `GET /health`, `GET

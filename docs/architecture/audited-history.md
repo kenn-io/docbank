@@ -1267,9 +1267,9 @@ out of ordinary agent guidance.
 
 ## JSONL, backup, and restore
 
-Deterministic JSONL is the portable metadata authority. Before the first public
-release, the one `docbank-metadata` format version 1 and backup manifest
-identifier `docbank-metadata-jsonl-v1` will directly adopt the complete model.
+Deterministic JSONL is the portable metadata authority. The
+`docbank-metadata` format version 1 and backup manifest identifier
+`docbank-metadata-jsonl-v1` contain the complete model.
 A **zero-scope v1** stream is valid: it preserves the stable vault ID,
 content versions and current-version references, and stable tag, ingest, and
 provenance identities, but contains no audit genesis, allocation lineage,

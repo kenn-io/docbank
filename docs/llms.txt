@@ -7,6 +7,9 @@ Every documentation page is also published as raw Markdown at the same path with
 ## Overview
 - [Your documents. Your agents. One system.](https://docbank.ai/index.md): Docbank is a self-sovereign document storage system for you and your agents, with indexed retrieval, stable identity, verifiable content, incremental recovery, and audited history.
 
+## Changelog
+- [Changelog](https://docbank.ai/changelog.md): Release history.
+
 ## Start Here
 - [Setup](https://docbank.ai/setup.md): Install docbank on Linux, macOS, or Windows and create the vault.
 - [Quickstart](https://docbank.ai/quickstart.md): A ten-minute tour of the docbank CLI.
@@ -48,5 +51,4 @@ Every documentation page is also published as raw Markdown at the same path with
 
 ## Project
 - [Roadmap](https://docbank.ai/roadmap.md): What is implemented today and what each phase adds.
-- [Changelog](https://docbank.ai/changelog.md): Release history.
 - [License](https://docbank.ai/license.md): Docbank is open-source software licensed under the Apache License, Version 2.0.

@@ -12,6 +12,7 @@ extra_css = ["stylesheets/extra.css"]
 use_directory_urls = true
 nav = [
   {"Overview" = "index.md"},
+  {"Changelog" = "changelog.md"},
   {"Start Here" = [
     {"Setup" = "setup.md"},
     {"Quickstart" = "quickstart.md"},
@@ -53,7 +54,6 @@ nav = [
   ]},
   {"Project" = [
     {"Roadmap" = "roadmap.md"},
-    {"Changelog" = "changelog.md"},
     {"License" = "license.md"},
   ]},
 ]

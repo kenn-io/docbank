@@ -88,6 +88,11 @@ Instructions for autonomous coding agents working in this repository.
   sequencing, ownership, or completion criteria. `docs/roadmap.md` is the one
   high-level public product-status view; kata is the sole source of truth for
   actionable work and its status.
+- Documentation is published only after releases, not continuously from
+  `main`. Keep the public docs internally consistent as a snapshot of a
+  published release: describe available behavior directly, and do not add
+  publish-from-main fences, "next release" notes, source-build availability
+  comments, or other feature-timing annotations.
 - v0.9.0 is the first released storage compatibility boundary. Preserve vaults
   created by every supported public release across upgrades. When a released
   SQLite layout is incompatible with the current schema, export its logical
