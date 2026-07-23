@@ -38,7 +38,7 @@ media type. Long authority values wrap rather than truncate.
 | <kbd>Enter</kbd> on a file, or <kbd>i</kbd> | Inspect complete document authority |
 | <kbd>←</kbd>, <kbd>Backspace</kbd>, or <kbd>Esc</kbd> | Return to the parent directory or leave search results |
 | <kbd>/</kbd> | Search live names and extracted text |
-| <kbd>s</kbd> | Cycle the sort column: name, type, size, and modification time |
+| <kbd>s</kbd> | Cycle the sort column: name, size, and modification time |
 | <kbd>v</kbd> | Reverse the current sort direction |
 | <kbd>r</kbd> | Refresh the current directory or search |
 | <kbd>?</kbd> | Show keyboard help |

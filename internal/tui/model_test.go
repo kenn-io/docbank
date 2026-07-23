@@ -276,7 +276,6 @@ func TestAnalyticalTableSortsWithoutChangingSelection(t *testing.T) {
 	model.sortRows()
 	model.selectNode(10)
 
-	model, _ = updateModel(t, model, runeKey('s')) // type
 	model, _ = updateModel(t, model, runeKey('s')) // size
 	require.Equal(t, sortBySize, model.sortField)
 	assert.Equal(t, []int64{11, 12, 10}, rowIDs(model.rows))

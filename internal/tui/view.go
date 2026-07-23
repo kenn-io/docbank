@@ -139,7 +139,7 @@ func (m Model) renderList(width, height int) string {
 	heading := layout.render(
 		"   ",
 		m.columnHeading("DOCUMENT", sortByName),
-		m.columnHeading("TYPE", sortByKind),
+		"TYPE",
 		"MATCH",
 		m.columnHeading("SIZE", sortBySize),
 		m.columnHeading("MODIFIED", sortByModified),
@@ -266,8 +266,6 @@ func (m Model) sortSummary() string {
 	switch m.sortField {
 	case sortByRelevance:
 		label = "relevance"
-	case sortByKind:
-		label = "type"
 	case sortBySize:
 		label = "size"
 	case sortByModified:

@@ -44,7 +44,6 @@ type sortField uint8
 const (
 	sortByRelevance sortField = iota
 	sortByName
-	sortByKind
 	sortBySize
 	sortByModified
 )
@@ -569,8 +568,6 @@ func (m *Model) cycleSortField() {
 	case sortByRelevance:
 		m.sortField = sortByName
 	case sortByName:
-		m.sortField = sortByKind
-	case sortByKind:
 		m.sortField = sortBySize
 	case sortBySize:
 		m.sortField = sortByModified
@@ -615,8 +612,7 @@ func (m *Model) selectNode(nodeID int64) {
 }
 
 func (m Model) compareRows(left, right row) int {
-	if m.sortField != sortByKind && m.sortField != sortByRelevance &&
-		left.node.Kind != right.node.Kind {
+	if m.sortField != sortByRelevance && left.node.Kind != right.node.Kind {
 		if left.node.Kind == nodeKindDir {
 			return -1
 		}
@@ -628,8 +624,6 @@ func (m Model) compareRows(left, right row) int {
 	switch m.sortField {
 	case sortByRelevance:
 		comparison = cmp.Compare(left.rank, right.rank)
-	case sortByKind:
-		comparison = cmp.Compare(left.node.Kind, right.node.Kind)
 	case sortBySize:
 		comparison = cmp.Compare(left.node.Size, right.node.Size)
 	case sortByModified:
