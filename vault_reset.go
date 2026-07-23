@@ -89,12 +89,12 @@ func ResetVault(
 		}
 	}
 
-	root, lock, err := transition.OpenExistingAndLockExclusive()
+	root, err := transition.OpenExistingForReplacement()
 	if err != nil {
 		return nil, fmt.Errorf("locking existing docbank vault for reset: %w", err)
 	}
 	heldIdentity, identityErr := root.Stat(".")
-	closeErr := errors.Join(root.Close(), lock.Release())
+	closeErr := errors.Join(root.Close(), transition.ReleaseSourceForReplacement())
 	if err := errors.Join(identityErr, closeErr); err != nil {
 		return nil, fmt.Errorf("releasing existing docbank vault before reset rename: %w", err)
 	}
@@ -113,7 +113,7 @@ func ResetVault(
 	fresh, err = openVaultWithRootOpener(config, blobOptions, sourceLayout, func() (
 		*os.Root, *home.Lock, error,
 	) {
-		return transition.OpenAndLockExclusive()
+		return transition.OpenAndLockReplacement()
 	})
 	if err != nil {
 		return nil, fmt.Errorf(

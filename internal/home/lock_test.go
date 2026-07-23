@@ -114,6 +114,88 @@ func TestOwnershipTransitionExcludesOrdinaryAcquisition(t *testing.T) {
 	require.Error(t, err, "a copied transition must not bypass ownership after release")
 }
 
+func TestOwnershipReplacementExcludesLegacyAcquisitionThroughRename(t *testing.T) {
+	base := t.TempDir()
+	source := filepath.Join(base, "vault")
+	diagnostic := filepath.Join(base, "vault.reset")
+	require.NoError(t, os.Mkdir(source, 0o700))
+	layout := Layout{Root: source}
+
+	transition, err := layout.TryLockOwnershipTransition()
+	require.NoError(t, err)
+	defer func() { _ = transition.Release() }()
+	root, err := transition.OpenExistingForReplacement()
+	require.NoError(t, err)
+	require.NoError(t, root.Close())
+	require.NoError(t, transition.ReleaseSourceForReplacement())
+	require.NoError(t, os.Rename(source, diagnostic))
+
+	for name, contenderPath := range map[string]string{
+		"exact":  source,
+		"parent": base,
+		"child":  filepath.Join(source, "child"),
+	} {
+		legacyRoot, legacyLock, contenderErr :=
+			(Layout{Root: contenderPath}).openAndLockExclusive()
+		if legacyRoot != nil {
+			_ = legacyRoot.Close()
+		}
+		if legacyLock != nil {
+			_ = legacyLock.Release()
+		}
+		require.ErrorIs(t, contenderErr, ErrVaultLocked,
+			"legacy %s acquisition must honor the replacement barrier", name)
+	}
+	disjointLayout := Layout{Root: filepath.Join(t.TempDir(), "vault")}
+	disjointRoot, disjointLock, err := disjointLayout.openAndLockExclusive()
+	require.NoError(t, err, "a legacy disjoint hierarchy must remain independent")
+	require.NoError(t, disjointRoot.Close())
+	require.NoError(t, disjointLock.Release())
+
+	freshRoot, freshLock, err := transition.OpenAndLockReplacement()
+	require.NoError(t, err)
+	require.NoError(t, transition.Release())
+	legacyRoot, legacyLock, err := layout.openAndLockExclusive()
+	if legacyRoot != nil {
+		_ = legacyRoot.Close()
+	}
+	if legacyLock != nil {
+		_ = legacyLock.Release()
+	}
+	require.ErrorIs(t, err, ErrVaultLocked,
+		"fresh ownership must retain the legacy target lock after transition release")
+	require.NoError(t, freshRoot.Close())
+	require.NoError(t, freshLock.Release())
+}
+
+func TestOwnershipReplacementPromotionFailureReleasesSource(t *testing.T) {
+	base := t.TempDir()
+	source := filepath.Join(base, "vault")
+	sibling := filepath.Join(base, "sibling")
+	require.NoError(t, os.Mkdir(source, 0o700))
+	require.NoError(t, os.Mkdir(sibling, 0o700))
+	siblingRoot, siblingLock, err := (Layout{Root: sibling}).openAndLockExclusive()
+	require.NoError(t, err)
+
+	layout := Layout{Root: source}
+	transition, err := layout.TryLockOwnershipTransition()
+	require.NoError(t, err)
+	root, err := transition.OpenExistingForReplacement()
+	if root != nil {
+		_ = root.Close()
+	}
+	require.ErrorIs(t, err, ErrVaultLocked,
+		"a legacy sibling's shared parent lock must fail replacement closed")
+	require.NoError(t, transition.Release())
+	require.NoError(t, siblingRoot.Close())
+	require.NoError(t, siblingLock.Release())
+
+	root, lock, err := layout.openAndLockExclusive()
+	require.NoError(t, err, "failed promotion must release the source target and local locks")
+	require.NoError(t, root.Close())
+	require.NoError(t, lock.Release())
+}
+
 func TestTryLockExclusiveRejectsOverlappingTrees(t *testing.T) {
 	base := t.TempDir()
 	parent := filepath.Join(base, "restore")
