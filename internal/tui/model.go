@@ -389,20 +389,27 @@ func (m Model) updateHistoryKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "enter", "i":
 		if _, ok := m.selectedHistoryEvent(); ok {
+			m.cancelPendingHistoryLoad()
 			m.historyDetail = true
 			m.historyDetailOffset = 0
 		}
 	case "up", "k":
+		m.cancelPendingHistoryLoad()
 		m.moveHistoryCursor(-1)
 	case "down", "j":
+		m.cancelPendingHistoryLoad()
 		m.moveHistoryCursor(1)
 	case "pgup":
+		m.cancelPendingHistoryLoad()
 		m.moveHistoryCursor(-m.visibleHistoryRows())
 	case "pgdown":
+		m.cancelPendingHistoryLoad()
 		m.moveHistoryCursor(m.visibleHistoryRows())
 	case "home", "g":
+		m.cancelPendingHistoryLoad()
 		m.historyCursor, m.historyOffset = 0, 0
 	case "end", "G":
+		m.cancelPendingHistoryLoad()
 		if page, ok := m.currentHistoryPage(); ok && len(page.Items) > 0 {
 			m.historyCursor = len(page.Items) - 1
 			m.clampHistorySelection()
@@ -410,6 +417,7 @@ func (m Model) updateHistoryKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "n", "right", "l":
 		return m.openOlderHistoryPage()
 	case "p", "left", "h":
+		m.cancelPendingHistoryLoad()
 		if m.historyPage > 0 {
 			m.historyPage--
 			m.historyCursor, m.historyOffset = 0, 0
@@ -427,6 +435,15 @@ func (m Model) updateHistoryKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		)
 	}
 	return m, nil
+}
+
+func (m *Model) cancelPendingHistoryLoad() {
+	if !m.loading {
+		return
+	}
+	m.requestID++
+	m.loading = false
+	m.err = nil
 }
 
 func (m Model) updateHistoryDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {

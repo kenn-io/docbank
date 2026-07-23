@@ -367,6 +367,78 @@ func TestClosingHistoryInvalidatesDelayedResponse(t *testing.T) {
 	assert.Empty(t, model.historyPages)
 }
 
+func TestNewerHistoryNavigationInvalidatesDelayedOlderPage(t *testing.T) {
+	backend := newFakeBackend()
+	first := backend.history[""]
+	first.NextCursor = "older"
+	first.Total = 4
+	backend.history[""] = first
+	older := first
+	older.Items = older.Items[:1]
+	older.Cursor = "older"
+	older.NextCursor = "oldest"
+	backend.history["older"] = older
+	oldest := older
+	oldest.Cursor = "oldest"
+	oldest.NextCursor = ""
+	backend.history["oldest"] = oldest
+
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.selectNode(3)
+	model, cmd := updateModel(t, model, runeKey('a'))
+	model = runModelCommand(t, model, cmd)
+	model, cmd = updateModel(t, model, runeKey('n'))
+	model = runModelCommand(t, model, cmd)
+	require.Equal(t, 1, model.historyPage)
+
+	model, delayed := updateModel(t, model, runeKey('n'))
+	require.NotNil(t, delayed)
+	pendingRequestID := model.requestID
+	model, _ = updateModel(t, model, runeKey('p'))
+	assert.Equal(t, 0, model.historyPage)
+	assert.False(t, model.loading)
+	assert.Greater(t, model.requestID, pendingRequestID)
+
+	model = runModelCommand(t, model, delayed)
+	assert.Equal(t, 0, model.historyPage)
+	assert.Len(t, model.historyPages, 2)
+}
+
+func TestHistoryInspectionInvalidatesDelayedOlderPage(t *testing.T) {
+	backend := newFakeBackend()
+	first := backend.history[""]
+	first.NextCursor = "older"
+	first.Total = 3
+	backend.history[""] = first
+	backend.history["older"] = first
+
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.selectNode(3)
+	model, cmd := updateModel(t, model, runeKey('a'))
+	model = runModelCommand(t, model, cmd)
+	selectedBefore, ok := model.selectedHistoryEvent()
+	require.True(t, ok)
+
+	model, delayed := updateModel(t, model, runeKey('n'))
+	require.NotNil(t, delayed)
+	pendingRequestID := model.requestID
+	model, _ = updateModel(t, model, key(tea.KeyEnter))
+	assert.True(t, model.historyDetail)
+	assert.False(t, model.loading)
+	assert.Greater(t, model.requestID, pendingRequestID)
+
+	model = runModelCommand(t, model, delayed)
+	selectedAfter, ok := model.selectedHistoryEvent()
+	require.True(t, ok)
+	assert.True(t, model.historyDetail)
+	assert.Equal(t, 0, model.historyPage)
+	assert.Equal(t, selectedBefore.ID, selectedAfter.ID)
+}
+
 func TestBackIgnoresDelayedDirectoryRefresh(t *testing.T) {
 	backend := newFakeBackend()
 	model, err := New(t.Context(), backend)
