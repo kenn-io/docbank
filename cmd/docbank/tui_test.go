@@ -68,3 +68,23 @@ func TestTUIBackendDoesNotRetryDaemonProblemResponses(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrNotFound)
 	assert.Equal(t, int32(1), acquires.Load())
 }
+
+func TestTUIBackendDoesNotRetryMalformedDaemonResponses(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, err := w.Write([]byte("{"))
+		assert.NoError(t, err)
+	}))
+	t.Cleanup(server.Close)
+
+	var acquires atomic.Int32
+	backend := &tuiDaemonBackend{ensure: func(context.Context) (*client.Client, error) {
+		acquires.Add(1)
+		return client.New(server.URL, ""), nil
+	}}
+	_, err := backend.Node(t.Context(), 42)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "decoding GET /api/v1/nodes/42 response")
+	assert.NotContains(t, err.Error(), "reconnecting")
+	assert.Equal(t, int32(1), acquires.Load())
+}

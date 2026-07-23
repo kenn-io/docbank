@@ -147,6 +147,7 @@ type Model struct {
 	historyNode         row
 	historyPages        []api.AuditEventPage
 	historyPage         int
+	historyTotal        int
 	historyCursor       int
 	historyOffset       int
 	historyDetail       bool
@@ -301,6 +302,7 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.historyNode = selected
 		m.historyPages = nil
 		m.historyPage = 0
+		m.historyTotal = 0
 		m.historyCursor = 0
 		m.historyOffset = 0
 		m.historyDetail = false
@@ -426,6 +428,7 @@ func (m Model) updateHistoryKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "r":
 		m.historyPages = nil
 		m.historyPage = 0
+		m.historyTotal = 0
 		m.historyCursor, m.historyOffset = 0, 0
 		m.loading = true
 		m.err = nil
@@ -659,6 +662,11 @@ func (m Model) applyHistory(msg historyLoadedMsg) (tea.Model, tea.Cmd) {
 	if msg.pageIndex < len(m.historyPages) {
 		m.historyPages[msg.pageIndex] = msg.page
 	} else if msg.pageIndex == len(m.historyPages) {
+		if msg.pageIndex == 0 {
+			m.historyTotal = msg.page.Total
+		} else {
+			msg.page.Total = m.historyTotal
+		}
 		m.historyPages = append(m.historyPages, msg.page)
 	} else {
 		m.err = errors.New("audit history returned an unexpected page")
@@ -705,6 +713,7 @@ func (m *Model) closeHistory() {
 	m.historyNode = row{}
 	m.historyPages = nil
 	m.historyPage = 0
+	m.historyTotal = 0
 	m.historyCursor, m.historyOffset = 0, 0
 	m.historyDetail = false
 	m.historyDetailOffset = 0

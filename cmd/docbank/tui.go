@@ -103,7 +103,7 @@ func withTUIClient[T any](
 		if requestErr == nil {
 			return result, nil
 		}
-		if _, ok := client.ProblemCode(requestErr); ok ||
+		if !client.IsTransportError(requestErr) ||
 			errors.Is(requestErr, context.Canceled) ||
 			errors.Is(requestErr, context.DeadlineExceeded) {
 			return zero, requestErr

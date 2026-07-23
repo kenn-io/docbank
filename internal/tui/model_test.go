@@ -348,6 +348,64 @@ func TestHistoryPaginatesOlderAndNewerWithoutLosingTreeState(t *testing.T) {
 	assert.Contains(t, model.render(), "node_path")
 }
 
+func TestHistoryPaginationKeepsInitialTimelineTotal(t *testing.T) {
+	backend := newFakeBackend()
+	first := backend.history[""]
+	first.NextCursor = "older"
+	first.Total = 3
+	backend.history[""] = first
+	older := first
+	older.Cursor = "older"
+	older.NextCursor = ""
+	older.Total = 4
+	older.Items = older.Items[:1]
+	backend.history["older"] = older
+
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.width, model.height = 100, 20
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.selectNode(3)
+	model, cmd := updateModel(t, model, runeKey('a'))
+	model = runModelCommand(t, model, cmd)
+	assert.Contains(t, model.render(), "of 3")
+
+	model, cmd = updateModel(t, model, runeKey('n'))
+	model = runModelCommand(t, model, cmd)
+	require.Equal(t, 1, model.historyPage)
+	assert.Equal(t, 3, model.historyPages[1].Total)
+	assert.Contains(t, model.render(), "of 3")
+	assert.NotContains(t, model.render(), "of 4")
+}
+
+func TestOlderHistoryLoadErrorRemainsVisibleWithCachedEvents(t *testing.T) {
+	backend := newFakeBackend()
+	first := backend.history[""]
+	first.NextCursor = "older"
+	backend.history[""] = first
+
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.width, model.height = 100, 20
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.selectNode(3)
+	model, cmd := updateModel(t, model, runeKey('a'))
+	model = runModelCommand(t, model, cmd)
+	require.Len(t, model.historyPages, 1)
+
+	applied, _ := model.applyHistory(historyLoadedMsg{
+		requestID: model.requestID,
+		pageIndex: 1,
+		err:       errors.New("synthetic older-page failure"),
+	})
+	appliedModel, ok := applied.(Model)
+	require.True(t, ok)
+	model = appliedModel
+	rendered := model.render()
+	assert.Contains(t, rendered, "synthetic older-page failure")
+	assert.Contains(t, rendered, "node_path")
+}
+
 func TestClosingHistoryInvalidatesDelayedResponse(t *testing.T) {
 	backend := newFakeBackend()
 	model, err := New(t.Context(), backend)

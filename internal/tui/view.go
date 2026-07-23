@@ -239,20 +239,23 @@ func (m Model) renderHistoryList(height int) string {
 	}
 	visible := max(height-2, 0)
 	page, ok := m.currentHistoryPage()
-	if (!ok || len(page.Items) == 0) && visible > 0 {
+	if !m.loading && m.err != nil && visible > 0 {
+		messages := strings.Split(ansi.Hardwrap(
+			" "+quoted(m.err.Error()), max(m.width, 1), false,
+		), "\n")
+		for _, line := range messages[:min(len(messages), visible)] {
+			lines = append(lines, m.styles.muted.Render(pad(fit(line, m.width), m.width)))
+		}
+		visible -= min(len(messages), visible)
+	} else if (!ok || len(page.Items) == 0) && visible > 0 {
 		message := " No recorded events"
 		if m.loading {
 			message = " Loading permanent history..."
 		}
-		messages := []string{message}
-		if !m.loading && m.err != nil {
-			messages = strings.Split(ansi.Hardwrap(
-				" "+quoted(m.err.Error()), max(m.width, 1), false,
-			), "\n")
-		}
-		for _, line := range messages[:min(len(messages), visible)] {
+		for _, line := range []string{message} {
 			lines = append(lines, m.styles.muted.Render(pad(fit(line, m.width), m.width)))
 		}
+		visible--
 	}
 	if ok {
 		end := min(m.historyOffset+visible, len(page.Items))

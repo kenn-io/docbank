@@ -57,6 +57,19 @@ func responseStatus(err error) (int, bool) {
 	return response.status, true
 }
 
+type transportError struct{ err error }
+
+func (e *transportError) Error() string { return e.err.Error() }
+func (e *transportError) Unwrap() error { return e.err }
+
+// IsTransportError reports whether an HTTP request failed before the daemon
+// returned a response. Long-lived clients may use this distinction to
+// reconnect without retrying malformed or contract-invalid responses.
+func IsTransportError(err error) bool {
+	var transport *transportError
+	return errors.As(err, &transport)
+}
+
 type problemError struct {
 	code string
 	err  error
@@ -247,7 +260,9 @@ func (c *Client) doWithHeaders(
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("calling daemon (%s %s): %w", method, path, err)
+		return nil, &transportError{err: fmt.Errorf(
+			"calling daemon (%s %s): %w", method, path, err,
+		)}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
