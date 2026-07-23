@@ -88,14 +88,16 @@ Instructions for autonomous coding agents working in this repository.
   must not carry task breakdowns, sequencing, ownership, or completion
   criteria. `docs/roadmap.md` is the one high-level public product-status view;
   kata is the sole source of truth for actionable work and its status.
-- Documentation is published only from release tags, never continuously from
-  `main`. Treat public docs on `main` as the candidate documentation for the
-  next release, not as a live view of the latest published binary. Once a
-  capability merges, describe it directly in present tense so the source tree
-  is coherent when the next tag publishes it; do not add "next release",
-  source-build availability, or other feature-timing annotations. Release
-  preparation must verify that every documented capability is present in the
-  tag; defer documentation for anything that will not ship.
+- Documentation is published only from release tags. There is no rendered
+  preview, deployment, or other public documentation build of `main`; the
+  release tag is the first publication boundary. Treat public-doc sources on
+  `main` as the candidate documentation for the next release, not as a live
+  view of the latest published binary or a separately supported publication.
+  Once a capability merges, describe it directly in present tense so the
+  source tree is coherent when the next tag publishes it; do not add "next
+  release", source-build availability, or other feature-timing annotations.
+  Release preparation must verify that every documented capability is present
+  in the tag; defer documentation for anything that will not ship.
 - v0.9.0 is the first released storage compatibility boundary. Preserve vaults
   created by every supported public release across upgrades. When a released
   SQLite layout is incompatible with the current schema, export its logical
