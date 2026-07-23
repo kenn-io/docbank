@@ -14,3 +14,11 @@ document names, paths, contents, hashes, and identifiers are synthetic.
   stable authority.
 - `web-search-results.png` shows verified extracted-text search results across
   the synthetic vault.
+
+## Pull request screenshots
+
+`screenshots/pr-136/web-background-jobs.png` was captured on 2026-07-23 from
+Docbank commit `64f72c3` at 1600 × 1000 in dark mode. It shows the actual web
+application backed by a temporary synthetic vault with extraction, automatic
+packing, and watched-inbox jobs running. The vault, document names, paths,
+contents, hashes, and identifiers are synthetic.
