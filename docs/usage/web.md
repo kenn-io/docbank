@@ -16,7 +16,12 @@ opens its local web application. It is a read-only document browser: navigate
 the virtual tree, sort a folder by document name, size, or modification time,
 search names and extracted text, and inspect the selected document's stable
 node ID, revision, current version ID, SHA-256 identity, exact size, and media
-type.
+type. Protected documents also expose their newest-first permanent audit
+timeline and complete event authority.
+
+!!! note "Newer than v0.11.0"
+    Permanent protection badges and audited-history browsing are available in
+    source builds newer than v0.11.0 and will ship in the next tagged release.
 
 The browser is another client of the authenticated HTTP API. It does not open
 SQLite or the blob store, and it has no private route that the CLI or an agent
@@ -65,6 +70,28 @@ searches names and extracted text only; use `docbank search` when you need the
 directory, tag, media-type, or modification-time filters, structured JSON, or
 another result limit.
 
+## Read permanent audited history
+
+The authority card checks the selected node's stable audit membership. A green
+**Protected** badge means ordinary deletion, version pruning, garbage
+collection, and repacking cannot erase that node's retained history.
+**Not audited** means audit authority exists in the vault but the selected node
+is outside every permanent scope. **Dormant** means no scope has been enabled.
+
+Choose **Audit history** on a protected node to open a wide timeline without
+losing the current folder, search results, or selection. The timeline is newest
+first and explains the primary change for each event: live and retained-trash
+paths, content-version transitions, tag definitions and assignments, or
+provenance. Select an event to inspect its complete immutable event, operation,
+scope, and node identities; canonical timestamp and origin; before/after
+revision, path, and version state; and typed tag or provenance payload.
+
+The first page is bounded to 50 events. **Load older events** follows the
+API's append-stable cursor, so new activity cannot shift or duplicate the
+history already being inspected. Protection status remains authoritative even
+when a page contains no events. The web application does not infer protection
+from an empty or non-empty timeline.
+
 ## Browser authentication
 
 When Docbank opens the browser, it writes a small launch page beside the
@@ -83,8 +110,9 @@ service worker or cached script waiting for a future browser session.
 The launch page carries only the read-only session in a URL fragment. Browsers
 do not include fragments in the initial HTTP request; the application removes
 it from the address bar and holds it only in page memory. Requests use
-`X-Docbank-Web-Session`, which the daemon accepts only for the tree, node, and
-search reads used by this interface. It cannot call mutation, backup,
+`X-Docbank-Web-Session`, which the daemon accepts only for the tree, node,
+search, audit-status, and node-history reads used by this interface. It cannot
+enroll audit scopes, run independent verification, or call mutation, backup,
 maintenance, configuration, or general API endpoints.
 
 The lock button revokes the session in daemon memory and clears the page.
@@ -118,10 +146,10 @@ children in one metadata snapshot, so a concurrent CLI or agent move cannot
 leave the browser constructing child paths beneath an obsolete name.
 
 The current web application does not import, edit, move, tag, trash, enroll
-audit scopes, or run maintenance and backup operations. Use the corresponding
-CLI or authenticated HTTP endpoint for those workflows. Future web workflows
-will require deliberately expanded browser-session permissions rather than
-inheriting the master API key.
+audit scopes, run independent audit verification, or run maintenance and
+backup operations. Use the corresponding CLI or authenticated HTTP endpoint
+for those workflows. Future web workflows will require deliberately expanded
+browser-session permissions rather than inheriting the master API key.
 
 If a page reports that its browser session expired or was rejected, run
 `docbank web` again. Sessions deliberately do not survive daemon restart, and

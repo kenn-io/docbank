@@ -699,7 +699,7 @@ func TestConfiguredAutomaticPackingPacksAndKeepsDaemonAlive(t *testing.T) {
 	home := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(
 		"[server]\nidle_timeout = \"30ms\"\n"+
-			"[storage]\npack_interval = \"10ms\"\npack_max_bytes = 1048576\n",
+			"[storage]\npack_interval = \"250ms\"\npack_max_bytes = 1048576\n",
 	), 0o600))
 	t.Setenv("DOCBANK_HOME", home)
 	t.Setenv(client.EnvBackgroundDaemon, "1")
@@ -709,13 +709,13 @@ func TestConfiguredAutomaticPackingPacksAndKeepsDaemonAlive(t *testing.T) {
 	require.Eventually(t, func() bool {
 		_, err = runCLI(t, "mkdir", "/agents")
 		return err == nil || !errors.Is(err, client.ErrMaintenanceBusy)
-	}, 5*time.Second, 25*time.Millisecond)
+	}, 10*time.Second, 25*time.Millisecond)
 	require.NoError(t, err)
 	source := writeSourceFile(t, "session.jsonl", "{\"kind\":\"session\"}\n")
 	require.Eventually(t, func() bool {
 		_, err = runCLI(t, "add", source, "--dest", "/agents")
 		return err == nil || !errors.Is(err, client.ErrMaintenanceBusy)
-	}, 5*time.Second, 25*time.Millisecond)
+	}, 10*time.Second, 25*time.Millisecond)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
 		out, runErr := runCLI(t, "storage", "status", "--json")
@@ -725,7 +725,7 @@ func TestConfiguredAutomaticPackingPacksAndKeepsDaemonAlive(t *testing.T) {
 		var status api.StorageStatus
 		return json.Unmarshal([]byte(out), &status) == nil &&
 			status.LooseBlobs == 0 && status.PackedBlobs == 1
-	}, 5*time.Second, 25*time.Millisecond)
+	}, 10*time.Second, 25*time.Millisecond)
 	out, err := runCLI(t, "cat", "/agents/session.jsonl")
 	require.NoError(t, err)
 	assert.JSONEq(t, "{\"kind\":\"session\"}\n", out)

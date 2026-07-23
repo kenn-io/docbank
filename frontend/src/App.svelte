@@ -6,6 +6,7 @@
   import LogOutIcon from "@lucide/svelte/icons/log-out";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import SearchIcon from "@lucide/svelte/icons/search";
+  import HistoryIcon from "@lucide/svelte/icons/history";
   import {
     Button,
     Card,
@@ -21,13 +22,16 @@
     TopBar,
     type SortDirection,
   } from "@kenn-io/kit-ui";
+  import AuditHistoryDrawer from "./AuditHistoryDrawer.svelte";
   import {
     APIError,
+    auditStatusForNode,
     children,
     revokeSession,
     search,
     statPath,
     takeFragmentSession,
+    type AuditStatus,
     type Node,
     type SearchHit,
   } from "./api.js";
@@ -58,9 +62,15 @@
   let truncated = $state(false);
   let sortField = $state<SortField>("name");
   let sortDirection = $state<SortDirection>("asc");
+  let selectedAudit = $state<AuditStatus | null>(null);
+  let auditLoading = $state(false);
+  let auditError = $state("");
+  let historyOpen = $state(false);
   let generation = 0;
+  let auditGeneration = 0;
 
   const selected = $derived(rows.find((row) => row.node.id === selectedID));
+  const membership = $derived(selectedAudit?.membership);
   const sortedRows = $derived(
     orderRows(rows, sortField, sortDirection, activeQuery !== ""),
   );
@@ -73,6 +83,7 @@
   function handleFailure(cause: unknown): void {
     if (cause instanceof APIError && cause.status === 401) {
       webSession = "";
+      historyOpen = false;
       error = "The browser session expired or was rejected. Run `docbank web` again.";
       return;
     }
@@ -124,7 +135,7 @@
         node: item,
         path: path === "/" ? `/${item.name}` : `${path}/${item.name}`,
       }));
-      selectedID = rows[0]?.node.id;
+      selectNode(rows[0]?.node.id);
       activeQuery = "";
       truncated = page.total > page.items.length;
       sortField = "name";
@@ -173,7 +184,7 @@
       truncated = report.truncated;
       sortField = view.sortField;
       sortDirection = view.sortDirection;
-      selectedID = view.selectedID;
+      selectNode(view.selectedID);
     } catch (cause) {
       if (request === generation) handleFailure(cause);
     } finally {
@@ -187,7 +198,7 @@
     if (!previous) return;
     directory = previous.directory;
     rows = previous.rows;
-    selectedID = previous.selectedID;
+    selectNode(previous.selectedID);
     stack = stack.slice(0, -1);
     activeQuery = previous.activeQuery;
     searchQuery = previous.searchQuery;
@@ -204,9 +215,38 @@
   }
 
   function activate(row: Row): void {
-    selectedID = row.node.id;
+    selectNode(row.node.id);
     if (row.node.kind === "dir") {
       void loadDirectory(row.node.id, true);
+    }
+  }
+
+  function selectNode(nodeID: number | undefined): void {
+    if (selectedID !== nodeID) historyOpen = false;
+    selectedID = nodeID;
+    selectedAudit = null;
+    auditError = "";
+    auditGeneration += 1;
+    if (nodeID !== undefined && webSession) void loadAuditStatus(nodeID);
+  }
+
+  async function loadAuditStatus(nodeID: number): Promise<void> {
+    const request = ++auditGeneration;
+    const session = webSession;
+    auditLoading = true;
+    try {
+      const status = await auditStatusForNode(session, nodeID);
+      if (request !== auditGeneration || session !== webSession || selectedID !== nodeID) return;
+      selectedAudit = status;
+    } catch (cause) {
+      if (request !== auditGeneration || session !== webSession || selectedID !== nodeID) return;
+      if (cause instanceof APIError && cause.status === 401) {
+        handleFailure(cause);
+        return;
+      }
+      auditError = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      if (request === auditGeneration) auditLoading = false;
     }
   }
 
@@ -221,12 +261,17 @@
 
   async function lock(): Promise<void> {
     generation += 1;
+    auditGeneration += 1;
     const session = webSession;
     webSession = "";
     directory = null;
     rows = [];
     stack = [];
     selectedID = undefined;
+    selectedAudit = null;
+    auditLoading = false;
+    auditError = "";
+    historyOpen = false;
     activeQuery = "";
     searchQuery = "";
     error = "";
@@ -368,7 +413,7 @@
                   tabindex="0"
                   aria-selected={row.node.id === selectedID}
                   ondblclick={() => activate(row)}
-                  onclick={() => (selectedID = row.node.id)}
+                  onclick={() => selectNode(row.node.id)}
                   onkeydown={(event) => {
                     if (event.key === "Enter") activate(row);
                   }}
@@ -431,6 +476,43 @@
                 </div>
               {/if}
             </dl>
+            <div class="audit-protection">
+              <div class="audit-protection-heading">
+                <span>Permanent audit</span>
+                {#if auditLoading}
+                  <Spinner size={14} />
+                {:else if auditError}
+                  <Chip size="xs" tone="warning">Unavailable</Chip>
+                {:else if membership?.protected}
+                  <Chip size="xs" tone="success" dot>Protected</Chip>
+                {:else if selectedAudit?.enabled}
+                  <Chip size="xs" tone="muted">Not audited</Chip>
+                {:else}
+                  <Chip size="xs" tone="muted">Dormant</Chip>
+                {/if}
+              </div>
+              {#if auditError}
+                <p>{auditError}</p>
+              {:else if membership?.protected}
+                <p>
+                  Permanently protected by {membership.scope_ids.length}
+                  scope{membership.scope_ids.length === 1 ? "" : "s"}.
+                </p>
+                <Button
+                  size="sm"
+                  tone="info"
+                  surface="soft"
+                  onclick={() => (historyOpen = true)}
+                >
+                  <HistoryIcon size="14" aria-hidden="true" />
+                  Audit history
+                </Button>
+              {:else if selectedAudit?.enabled}
+                <p>This node is outside every permanent audit scope.</p>
+              {:else if !auditLoading}
+                <p>Permanent audited history has not been enabled for this vault.</p>
+              {/if}
+            </div>
             {#if selected.node.kind === "dir"}
               <Button size="sm" onclick={() => activate(selected)}>
                 <FolderIcon size="14" aria-hidden="true" />
@@ -450,5 +532,14 @@
         {/if}
       </aside>
     </main>
+    {#if historyOpen && selected && membership?.protected}
+      <AuditHistoryDrawer
+        session={webSession}
+        node={selected.node}
+        path={selected.path}
+        onclose={() => (historyOpen = false)}
+        onauthfailure={handleFailure}
+      />
+    {/if}
   </div>
 {/if}

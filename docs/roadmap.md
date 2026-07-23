@@ -18,7 +18,7 @@ elsewhere only when they materially explain the design and are marked
 | 1 | Core: store, blob store, ingest pipeline, full CLI | **Implemented** |
 | 2a | Infrastructure: daemon, HTTP API, daemon-first CLI, self-update, release pipeline | **Implemented** |
 | 2b | Features: content versions, versioned editing, full audit, tags, watched inboxes, text extraction, ingest provenance | **In progress**: versions, tags, queryable provenance, watched inboxes, disjoint audit scopes, and bounded plain-text extraction implemented; PDF/Office extraction remains |
-| 3 | Primary kit-ui web portal and focused operator TUI | **In progress**: read-only analytical tree/search/detail implemented in both; audited-history browsing implemented in the TUI |
+| 3 | Primary kit-ui web portal and focused operator TUI | **In progress**: read-only analytical tree/search/detail and audited-history browsing implemented in both |
 | 4 | Backup commands over the kit engine | **Implemented**; representative-corpus hardening continues |
 
 ## Implemented (Phase 1)
@@ -138,10 +138,12 @@ and authenticated API.
 The kit-ui web portal is the primary human interface over the authenticated
 daemon API. Its first read-only slice implements responsive virtual-tree
 browsing, analytical sorting, name and extracted-text search, and complete
-current document authority. Future slices cover import, metadata/provenance,
-audited history timelines and comparisons, trash, storage, backup, and
-observable jobs. Application-neutral tree, timeline, diff, evidence, and job
-components should be reusable by Msgvault and later tools.
+current document authority. Protected nodes also expose their permanent
+newest-first audit timeline and the complete stable identity and before/after
+state of every event. Future slices cover import, metadata/provenance,
+historical comparison, trash, storage, backup, and observable jobs.
+Application-neutral tree, timeline, diff, evidence, and job components should
+be reusable by Msgvault and later tools.
 
 The focused TUI now has a read-only first slice for virtual-tree navigation,
 name and extracted-content search, stable document/version/hash detail, and a

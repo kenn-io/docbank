@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -316,7 +317,19 @@ func TestWebApplication(t *testing.T) {
 }
 
 func TestWebSessionIsReadOnlyRevocableAndDaemonLocal(t *testing.T) {
-	ts, _ := newTestServer(t, nil)
+	ts, s := newTestServer(t, nil)
+	taxes, err := s.Mkdir(t.Context(), s.RootID(), "Taxes")
+	require.NoError(t, err)
+	document := createFileWithContent(t, ts, s, "/return.txt", "return")
+	document, _, err = s.Move(
+		t.Context(), document.ID, taxes.ID, "return.txt", document.Revision,
+	)
+	require.NoError(t, err)
+	plan, err := s.PreviewInitialAudit(t.Context(), taxes.ID, "api", nil)
+	require.NoError(t, err)
+	_, err = s.EnableInitialAudit(t.Context(), plan)
+	require.NoError(t, err)
+
 	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/daemon/web-session", nil)
 	require.NoError(t, err)
 	resp, err := ts.Client().Do(req)
@@ -346,6 +359,20 @@ func TestWebSessionIsReadOnlyRevocableAndDaemonLocal(t *testing.T) {
 
 	resp = webRequest(http.MethodGet, "/api/v1/path?path=/")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
+	resp = webRequest(http.MethodGet,
+		"/api/v1/audit/status?node_id="+strconv.FormatInt(document.ID, 10))
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
+	resp = webRequest(http.MethodGet,
+		"/api/v1/audit/history?limit=50&node_id="+strconv.FormatInt(document.ID, 10))
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
+	resp = webRequest(http.MethodPost, "/api/v1/audit/verify")
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
 
 	resp = webRequest(http.MethodGet, "/api/v1/info")
