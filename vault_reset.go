@@ -35,10 +35,7 @@ func ResetVault(
 	if err != nil {
 		return nil, err
 	}
-	requestedInfo, err := os.Lstat(requestedRoot)
-	if err == nil && requestedInfo.Mode()&fs.ModeSymlink != 0 {
-		return nil, errors.New("docbank reset source must not be a symlink")
-	}
+	err = validateResetSourcePath(requestedRoot)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("checking requested docbank reset source: %w", err)
 	}
@@ -94,9 +91,10 @@ func ResetVault(
 		return nil, fmt.Errorf("locking existing docbank vault for reset: %w", err)
 	}
 	heldIdentity, identityErr := root.Stat(".")
+	sourceErr := validateResetSourcePath(sourceRoot)
 	closeErr := errors.Join(root.Close(), transition.ReleaseSourceForReplacement())
-	if err := errors.Join(identityErr, closeErr); err != nil {
-		return nil, fmt.Errorf("releasing existing docbank vault before reset rename: %w", err)
+	if err := errors.Join(identityErr, sourceErr, closeErr); err != nil {
+		return nil, fmt.Errorf("validating existing docbank vault before reset rename: %w", err)
 	}
 	currentIdentity, err := os.Stat(sourceRoot)
 	if err != nil || !os.SameFile(heldIdentity, currentIdentity) {
@@ -125,14 +123,10 @@ func ResetVault(
 }
 
 func validateResetPaths(sourceRoot, diagnosticRoot string) error {
-	source, err := os.Lstat(sourceRoot)
-	if err != nil {
+	if err := validateResetSourcePath(sourceRoot); err != nil {
 		return fmt.Errorf("checking docbank reset source: %w", err)
 	}
-	if source.Mode()&fs.ModeSymlink != 0 || !source.IsDir() {
-		return errors.New("docbank reset source must be one real existing directory")
-	}
-	_, err = os.Lstat(diagnosticRoot)
+	_, err := os.Lstat(diagnosticRoot)
 	if err == nil {
 		return fmt.Errorf("docbank reset diagnostic destination already exists: %s", diagnosticRoot)
 	}

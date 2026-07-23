@@ -159,6 +159,15 @@ func TestResetVaultValidatesSourceAndDestinationWithoutMutation(t *testing.T) {
 	})
 }
 
+func TestValidateResetSourceAttributesRejectsDirectoryReparsePoint(t *testing.T) {
+	err := validateResetSourceAttributes(resetSourceAttributes{
+		directory: true,
+		reparse:   true,
+	})
+
+	require.ErrorContains(t, err, "reparse point")
+}
+
 func TestResetVaultCoordinatesReleaseOfCurrentOwnerBeforeRename(t *testing.T) {
 	grandparent := t.TempDir()
 	base := filepath.Join(grandparent, "base")
