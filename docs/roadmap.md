@@ -140,8 +140,9 @@ daemon API. Its first read-only slice implements responsive virtual-tree
 browsing, analytical sorting, name and extracted-text search, and complete
 current document authority. Protected nodes also expose their permanent
 newest-first audit timeline and the complete stable identity and before/after
-state of every event. Future slices cover import, metadata/provenance,
-historical comparison, trash, storage, backup, and observable jobs.
+state of every event. The portal also reports current and terminal daemon
+background jobs. Future slices cover import, metadata/provenance, historical
+comparison, trash, storage, and backup.
 Application-neutral tree, timeline, diff, evidence, and job components should
 be reusable by Msgvault and later tools.
 

@@ -71,7 +71,7 @@ Four commitments:
 - A read-only kit-ui web application for virtual-tree browsing, sortable
   document analysis, extracted-text search, and complete current authority;
   source builds newer than v0.11.0 also expose permanent protection state and
-  full audited event timelines
+  full audited event timelines plus daemon background-job status
 - Mixed loose and packed content storage with explicit pack, GC, and repack,
   plus an opt-in bounded daemon packing schedule
 - Whole-vault integrity verification

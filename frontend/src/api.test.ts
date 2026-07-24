@@ -3,6 +3,7 @@ import {
   APIError,
   auditHistory,
   auditStatusForNode,
+  listJobs,
   requestJSON,
   revokeSession,
   takeFragmentSession,
@@ -84,5 +85,17 @@ describe("browser authentication", () => {
     expect(fetchMock.mock.calls[1]?.[0]).toBe(
       "/api/v1/audit/history?node_id=42&limit=50&cursor=cursor+%2B%2F%3D",
     );
+  });
+
+  it("reads daemon-owned background jobs through the browser session", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ items: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await expect(listJobs("session")).resolves.toEqual([]);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/jobs");
   });
 });
