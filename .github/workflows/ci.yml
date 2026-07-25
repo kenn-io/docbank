@@ -1,10 +1,15 @@
 name: CI
 
 on:
+  workflow_call:
+    inputs:
+      checkout_ref:
+        description: Git ref to check out
+        required: false
+        type: string
+        default: ""
   push:
     branches: [main]
-  pull_request:
-
 permissions:
   contents: read
 
@@ -15,11 +20,12 @@ concurrency:
 jobs:
   frontend:
     name: Web application
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'pull_request_target' || github.ref == 'refs/heads/main') && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
           persist-credentials: false
 
       - name: Set up Node.js
@@ -34,11 +40,12 @@ jobs:
 
   test:
     name: Linux tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'pull_request_target' || github.ref == 'refs/heads/main') && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
           persist-credentials: false
 
       - name: Set up Go
@@ -58,13 +65,14 @@ jobs:
 
   purego:
     name: Pure-Go SQLite
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'pull_request_target' || github.ref == 'refs/heads/main') && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
     env:
       CGO_ENABLED: "0"
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
           persist-credentials: false
 
       - name: Set up Go
@@ -81,11 +89,12 @@ jobs:
 
   lint:
     name: golangci-lint
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'pull_request_target' || github.ref == 'refs/heads/main') && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
           persist-credentials: false
 
       - name: Set up Go
@@ -107,11 +116,12 @@ jobs:
         include:
           - { runner: windows-latest, goarch: amd64 }
           - { runner: windows-11-arm, goarch: arm64 }
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ contains(fromJSON('["ubuntu-latest","ubuntu-24.04","ubuntu-22.04"]'), matrix.runner) && (github.event_name == 'pull_request_target' || github.ref == 'refs/heads/main') && 'kenn-linux-x64-public' || matrix.runner }}
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
           persist-credentials: false
 
       - name: Set up Go
