@@ -1,6 +1,7 @@
 name: release
 
 on:
+  workflow_call:
   push:
     tags: ["v*"]
   pull_request:
