@@ -18,4 +18,4 @@ jobs:
   run:
     uses: kenn-io/docbank/.github/workflows/release.yml@main
     with:
-      checkout_ref: refs/pull/${{ github.event.pull_request.number }}/merge
+      checkout_ref: ${{ github.sha }}
