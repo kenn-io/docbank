@@ -3,6 +3,7 @@ import {
   APIError,
   auditHistory,
   auditStatusForNode,
+  contentVersions,
   listJobs,
   requestJSON,
   revokeSession,
@@ -97,5 +98,19 @@ describe("browser authentication", () => {
 
     await expect(listJobs("session")).resolves.toEqual([]);
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/jobs");
+  });
+
+  it("reads immutable versions for one stable node", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ items: [], total: 0, limit: 1000, offset: 0 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await contentVersions("session", 42);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "/api/v1/nodes/42/versions?limit=1000&offset=0",
+    );
   });
 });

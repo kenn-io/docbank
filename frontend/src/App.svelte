@@ -25,6 +25,7 @@
   } from "@kenn-io/kit-ui";
   import AuditHistoryDrawer from "./AuditHistoryDrawer.svelte";
   import JobsDrawer from "./JobsDrawer.svelte";
+  import VersionHistoryDrawer from "./VersionHistoryDrawer.svelte";
   import {
     APIError,
     auditStatusForNode,
@@ -68,6 +69,7 @@
   let auditLoading = $state(false);
   let auditError = $state("");
   let historyOpen = $state(false);
+  let versionsOpen = $state(false);
   let jobsOpen = $state(false);
   let generation = 0;
   let auditGeneration = 0;
@@ -87,6 +89,7 @@
     if (cause instanceof APIError && cause.status === 401) {
       webSession = "";
       historyOpen = false;
+      versionsOpen = false;
       jobsOpen = false;
       error = "The browser session expired or was rejected. Run `docbank web` again.";
       return;
@@ -226,7 +229,10 @@
   }
 
   function selectNode(nodeID: number | undefined): void {
-    if (selectedID !== nodeID) historyOpen = false;
+    if (selectedID !== nodeID) {
+      historyOpen = false;
+      versionsOpen = false;
+    }
     selectedID = nodeID;
     selectedAudit = null;
     auditError = "";
@@ -276,6 +282,7 @@
     auditLoading = false;
     auditError = "";
     historyOpen = false;
+    versionsOpen = false;
     jobsOpen = false;
     activeQuery = "";
     searchQuery = "";
@@ -336,6 +343,7 @@
           ariaLabel="Background jobs"
           onclick={() => {
             historyOpen = false;
+            versionsOpen = false;
             jobsOpen = true;
           }}
         >
@@ -491,6 +499,21 @@
                 </div>
               {/if}
             </dl>
+            {#if selected.node.kind === "file"}
+              <Button
+                size="sm"
+                tone="info"
+                surface="soft"
+                onclick={() => {
+                  historyOpen = false;
+                  jobsOpen = false;
+                  versionsOpen = true;
+                }}
+              >
+                <HistoryIcon size="14" aria-hidden="true" />
+                Version history
+              </Button>
+            {/if}
             <div class="audit-protection">
               <div class="audit-protection-heading">
                 <span>Permanent audit</span>
@@ -519,6 +542,7 @@
                   surface="soft"
                   onclick={() => {
                     jobsOpen = false;
+                    versionsOpen = false;
                     historyOpen = true;
                   }}
                 >
@@ -556,6 +580,15 @@
         node={selected.node}
         path={selected.path}
         onclose={() => (historyOpen = false)}
+        onauthfailure={handleFailure}
+      />
+    {/if}
+    {#if versionsOpen && selected?.node.kind === "file"}
+      <VersionHistoryDrawer
+        session={webSession}
+        node={selected.node}
+        path={selected.path}
+        onclose={() => (versionsOpen = false)}
         onauthfailure={handleFailure}
       />
     {/if}

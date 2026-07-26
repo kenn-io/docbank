@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   build:
-    uses: kenn-io/docbank/.github/workflows/release.yml@main
+    uses: ./.github/workflows/release.yml
 
   publish:
     name: Publish GitHub release

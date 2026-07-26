@@ -19,11 +19,8 @@ node ID, revision, current version ID, SHA-256 identity, exact size, and media
 type. Protected documents also expose their newest-first permanent audit
 timeline and complete event authority. The activity button reports the
 daemon's supervised extraction, watched-inbox, and automatic-packing jobs.
-
-!!! note "Newer than v0.11.0"
-    Permanent protection badges and audited-history browsing are available in
-    source builds newer than v0.11.0, as is background-job status. They will
-    ship in the next tagged release.
+Every file also exposes its retained immutable content versions and the stable
+authority behind each one.
 
 The browser is another client of the authenticated HTTP API. It does not open
 SQLite or the blob store, and it has no private route that the CLI or an agent
@@ -54,6 +51,25 @@ shows its path, revision, and modification time. A selected file additionally
 shows its exact logical size, media type, immutable current-version UUID, and
 SHA-256 content identity. The copy buttons copy the complete UUID or digest
 even when the card wraps it across lines.
+
+## Inspect immutable versions
+
+Choose **Version history** on any file to inspect every retained immutable
+version without losing the current folder, search results, or selected
+document. The newest version appears first. Each entry identifies whether the
+content was created, replaced, or restored from a prior version, along with its
+recorded time, node revision, logical size, and stable version UUID.
+
+Selecting an entry exposes its complete authority: full version UUID, SHA-256
+content identity, exact byte count, media type, canonical timestamp,
+introducing operation UUID, and the source version for a revert. The current
+head is marked explicitly; a revert remains a new immutable version rather
+than erasing or relabeling the earlier one.
+
+The drawer reads at most the newest 1,000 versions and says when older history
+exists. Use `docbank versions list`, its pagination flags, or the authenticated
+HTTP API for exhaustive automation. This view does not download content,
+compare bytes, revert, or prune history.
 
 ## Search names and extracted text
 
@@ -127,9 +143,10 @@ The launch page carries only the read-only session in a URL fragment. Browsers
 do not include fragments in the initial HTTP request; the application removes
 it from the address bar and holds it only in page memory. Requests use
 `X-Docbank-Web-Session`, which the daemon accepts only for the tree, node,
-search, audit-status, node-history, and background-job reads used by this
-interface. It cannot enroll audit scopes, run independent verification, or
-call mutation, backup, maintenance, configuration, or general API endpoints.
+search, immutable-version, audit-status, audit-history, and background-job
+reads used by this interface. It cannot enroll audit scopes, run independent
+verification, or call mutation, backup, maintenance, configuration, or general
+API endpoints.
 
 The lock button revokes the session in daemon memory and clears the page.
 Every remaining browser session and its dedicated browser origin disappear
@@ -161,11 +178,12 @@ Refreshing a folder resolves its stable node ID, current canonical path, and
 children in one metadata snapshot, so a concurrent CLI or agent move cannot
 leave the browser constructing child paths beneath an obsolete name.
 
-The current web application does not import, edit, move, tag, trash, enroll
-audit scopes, run independent audit verification, or run maintenance and
-backup operations. Use the corresponding CLI or authenticated HTTP endpoint
-for those workflows. Future web workflows will require deliberately expanded
-browser-session permissions rather than inheriting the master API key.
+The current web application does not download historical content, compare
+versions, import, edit, revert, prune, move, tag, trash, enroll audit scopes,
+run independent audit verification, or run maintenance and backup operations.
+Use the corresponding CLI or authenticated HTTP endpoint for those workflows.
+Future web workflows will require deliberately expanded browser-session
+permissions rather than inheriting the master API key.
 
 If a page reports that its browser session expired or was rejected, run
 `docbank web` again. Sessions deliberately do not survive daemon restart, and
