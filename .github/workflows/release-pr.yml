@@ -17,5 +17,3 @@ permissions: read-all
 jobs:
   run:
     uses: kenn-io/docbank/.github/workflows/release.yml@main
-    with:
-      checkout_ref: ${{ github.sha }}
