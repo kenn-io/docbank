@@ -2,16 +2,10 @@ name: release
 
 on:
   workflow_call:
-    inputs:
-      use_managed_linux:
-        description: Route trusted Linux jobs to the managed runner group
-        type: boolean
-        default: true
   pull_request:
     paths:
       - .github/workflows/release.yml
       - .github/workflows/release-publish.yml
-      - .github/workflows/release-pr.yml
       - frontend/**
       - go.mod
       - go.sum
@@ -26,7 +20,7 @@ concurrency:
 jobs:
   build-frontend:
     name: Build web application
-    runs-on: ${{ inputs.use_managed_linux && github.repository == 'kenn-io/docbank' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -63,7 +57,7 @@ jobs:
         include:
           - { runner: ubuntu-latest, goarch: amd64 }
           - { runner: ubuntu-24.04-arm, goarch: arm64 }
-    runs-on: ${{ matrix.goarch == 'amd64' && inputs.use_managed_linux && github.repository == 'kenn-io/docbank' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository && 'kenn-linux-x64-public' || matrix.runner }}
+    runs-on: ${{ matrix.runner }}
     container:
       image: ubuntu:22.04
     defaults:
