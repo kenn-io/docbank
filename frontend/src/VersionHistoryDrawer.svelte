@@ -146,7 +146,7 @@
               >
                 <div class="version-summary">
                   <strong>Revision {version.node_revision}</strong>
-                  {#if version.id === node.current_version_id}
+                  {#if version.id === page.items[0]?.id}
                     <Chip size="xs" tone="success" dot>Current</Chip>
                   {/if}
                 </div>

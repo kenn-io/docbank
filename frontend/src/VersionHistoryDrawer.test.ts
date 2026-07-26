@@ -73,14 +73,16 @@ describe("version history drawer", () => {
 
     render(VersionHistoryDrawer, {
       session: "short-lived",
-      node,
+      node: { ...node, current_version_id: replacedVersionID },
       path: "/Reports/quarterly-report.txt",
       onclose: close,
       onauthfailure: vi.fn(),
     });
 
     expect(await screen.findByText("3 retained versions")).toBeTruthy();
-    expect(screen.getByText("Current")).toBeTruthy();
+    expect(
+      screen.getByText("Current").closest("button")?.getAttribute("aria-label"),
+    ).toContain("Reverted");
     expect(screen.getByText(currentVersionID)).toBeTruthy();
     expect(screen.getByText(createdVersionID)).toBeTruthy();
     expect(screen.getByText("Revert source")).toBeTruthy();
