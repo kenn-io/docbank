@@ -371,6 +371,11 @@ func TestWebSessionIsReadOnlyRevocableAndDaemonLocal(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
 
+	resp = webRequest(http.MethodGet,
+		"/api/v1/nodes/"+strconv.FormatInt(document.ID, 10)+"/versions?limit=1000&offset=0")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
 	resp = webRequest(http.MethodGet, "/api/v1/jobs")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
