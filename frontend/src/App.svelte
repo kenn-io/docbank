@@ -5,6 +5,7 @@
   import FileIcon from "@lucide/svelte/icons/file";
   import FolderIcon from "@lucide/svelte/icons/folder";
   import LogOutIcon from "@lucide/svelte/icons/log-out";
+  import MapPinIcon from "@lucide/svelte/icons/map-pin";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import SearchIcon from "@lucide/svelte/icons/search";
   import HistoryIcon from "@lucide/svelte/icons/history";
@@ -25,6 +26,7 @@
   } from "@kenn-io/kit-ui";
   import AuditHistoryDrawer from "./AuditHistoryDrawer.svelte";
   import JobsDrawer from "./JobsDrawer.svelte";
+  import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
   import VersionHistoryDrawer from "./VersionHistoryDrawer.svelte";
   import {
     APIError,
@@ -70,6 +72,7 @@
   let auditError = $state("");
   let historyOpen = $state(false);
   let versionsOpen = $state(false);
+  let provenanceOpen = $state(false);
   let jobsOpen = $state(false);
   let generation = 0;
   let auditGeneration = 0;
@@ -90,6 +93,7 @@
       webSession = "";
       historyOpen = false;
       versionsOpen = false;
+      provenanceOpen = false;
       jobsOpen = false;
       error = "The browser session expired or was rejected. Run `docbank web` again.";
       return;
@@ -232,6 +236,7 @@
     if (selectedID !== nodeID) {
       historyOpen = false;
       versionsOpen = false;
+      provenanceOpen = false;
     }
     selectedID = nodeID;
     selectedAudit = null;
@@ -283,6 +288,7 @@
     auditError = "";
     historyOpen = false;
     versionsOpen = false;
+    provenanceOpen = false;
     jobsOpen = false;
     activeQuery = "";
     searchQuery = "";
@@ -344,6 +350,7 @@
           onclick={() => {
             historyOpen = false;
             versionsOpen = false;
+            provenanceOpen = false;
             jobsOpen = true;
           }}
         >
@@ -500,19 +507,35 @@
               {/if}
             </dl>
             {#if selected.node.kind === "file"}
-              <Button
-                size="sm"
-                tone="info"
-                surface="soft"
-                onclick={() => {
-                  historyOpen = false;
-                  jobsOpen = false;
-                  versionsOpen = true;
-                }}
-              >
-                <HistoryIcon size="14" aria-hidden="true" />
-                Version history
-              </Button>
+              <div class="document-actions">
+                <Button
+                  size="sm"
+                  tone="info"
+                  surface="soft"
+                  onclick={() => {
+                    historyOpen = false;
+                    provenanceOpen = false;
+                    jobsOpen = false;
+                    versionsOpen = true;
+                  }}
+                >
+                  <HistoryIcon size="14" aria-hidden="true" />
+                  Version history
+                </Button>
+                <Button
+                  size="sm"
+                  surface="soft"
+                  onclick={() => {
+                    historyOpen = false;
+                    versionsOpen = false;
+                    jobsOpen = false;
+                    provenanceOpen = true;
+                  }}
+                >
+                  <MapPinIcon size="14" aria-hidden="true" />
+                  Provenance
+                </Button>
+              </div>
             {/if}
             <div class="audit-protection">
               <div class="audit-protection-heading">
@@ -543,6 +566,7 @@
                   onclick={() => {
                     jobsOpen = false;
                     versionsOpen = false;
+                    provenanceOpen = false;
                     historyOpen = true;
                   }}
                 >
@@ -589,6 +613,15 @@
         node={selected.node}
         path={selected.path}
         onclose={() => (versionsOpen = false)}
+        onauthfailure={handleFailure}
+      />
+    {/if}
+    {#if provenanceOpen && selected?.node.kind === "file"}
+      <ProvenanceDrawer
+        session={webSession}
+        node={selected.node}
+        path={selected.path}
+        onclose={() => (provenanceOpen = false)}
         onauthfailure={handleFailure}
       />
     {/if}

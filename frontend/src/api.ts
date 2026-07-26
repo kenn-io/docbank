@@ -45,6 +45,27 @@ export interface ContentVersionPage {
   offset: number;
 }
 
+export interface ProvenanceFact {
+  identity: string;
+  node_id: number;
+  ingest_id: string;
+  ingest_started_at: string;
+  source_kind: string;
+  source_description: string;
+  original_path: string;
+  original_mtime?: string;
+  supersedes?: string;
+  active: boolean;
+}
+
+export interface ProvenancePage {
+  node: Node;
+  items: ProvenanceFact[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface SearchHit {
   node: Node;
   path: string;
@@ -247,6 +268,16 @@ export async function contentVersions(
 ): Promise<ContentVersionPage> {
   return requestJSON<ContentVersionPage>(
     `/api/v1/nodes/${nodeID}/versions?limit=1000&offset=0`,
+    session,
+  );
+}
+
+export async function provenance(
+  session: string,
+  nodeID: number,
+): Promise<ProvenancePage> {
+  return requestJSON<ProvenancePage>(
+    `/api/v1/nodes/${nodeID}/provenance?limit=1000&offset=0`,
     session,
   );
 }
