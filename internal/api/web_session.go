@@ -79,7 +79,7 @@ func webSessionRequestAllowed(method, path string) bool {
 	if _, err := strconv.ParseInt(parts[0], 10, 64); err != nil {
 		return false
 	}
-	return len(parts) == 1 || parts[1] == "children"
+	return len(parts) == 1 || parts[1] == "children" || parts[1] == "versions"
 }
 
 func registerWebSession(

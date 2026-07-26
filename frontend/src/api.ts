@@ -22,6 +22,29 @@ export interface NodePage {
   offset: number;
 }
 
+export interface ContentVersion {
+  id: string;
+  node_id: number;
+  blob_hash: string;
+  size: number;
+  mime_type?: string;
+  recorded_at: string;
+  node_revision: number;
+  introduced_operation_id: string;
+  transition_kind:
+    | "content_create"
+    | "content_replace"
+    | "content_revert";
+  source_version_id?: string;
+}
+
+export interface ContentVersionPage {
+  items: ContentVersion[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface SearchHit {
   node: Node;
   path: string;
@@ -214,6 +237,16 @@ export async function statPath(session: string, path: string): Promise<Node> {
 export async function children(session: string, nodeID: number): Promise<NodePage> {
   return requestJSON<NodePage>(
     `/api/v1/nodes/${nodeID}/children?limit=1000&offset=0`,
+    session,
+  );
+}
+
+export async function contentVersions(
+  session: string,
+  nodeID: number,
+): Promise<ContentVersionPage> {
+  return requestJSON<ContentVersionPage>(
+    `/api/v1/nodes/${nodeID}/versions?limit=1000&offset=0`,
     session,
   );
 }
