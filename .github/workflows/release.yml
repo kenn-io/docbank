@@ -6,7 +6,7 @@ on:
       use_managed_linux:
         description: Route trusted Linux jobs to the managed runner group
         type: boolean
-        default: false
+        default: true
   pull_request:
     paths:
       - .github/workflows/release.yml
