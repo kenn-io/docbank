@@ -325,6 +325,13 @@ func TestWebSessionIsReadOnlyRevocableAndDaemonLocal(t *testing.T) {
 		t.Context(), document.ID, taxes.ID, "return.txt", document.Revision,
 	)
 	require.NoError(t, err)
+	tag, err := s.CreateTag(t.Context(), "tax")
+	require.NoError(t, err)
+	assignment, err := s.AssignTag(
+		t.Context(), tag.ID, document.ID, document.Revision,
+	)
+	require.NoError(t, err)
+	document = assignment.Node
 	plan, err := s.PreviewInitialAudit(t.Context(), taxes.ID, "api", nil)
 	require.NoError(t, err)
 	_, err = s.EnableInitialAudit(t.Context(), plan)
@@ -378,6 +385,15 @@ func TestWebSessionIsReadOnlyRevocableAndDaemonLocal(t *testing.T) {
 
 	resp = webRequest(http.MethodGet,
 		"/api/v1/nodes/"+strconv.FormatInt(document.ID, 10)+"/provenance?limit=1000&offset=0")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
+	resp = webRequest(http.MethodGet, "/api/v1/tags?limit=1000&offset=0")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
+	resp = webRequest(http.MethodGet,
+		"/api/v1/nodes/"+strconv.FormatInt(document.ID, 10)+"/tags?limit=1000&offset=0")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
 

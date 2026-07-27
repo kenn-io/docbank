@@ -135,6 +135,11 @@ code {
   white-space: nowrap;
 }
 
+.toolbar-actions .kit-select-dropdown {
+  width: min(190px, 30vw);
+  min-width: 120px;
+}
+
 .loading,
 .banner {
   display: flex;
@@ -241,6 +246,38 @@ dd {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
+}
+
+.node-tags {
+  display: grid;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-default);
+}
+
+.node-tags-heading,
+.node-tags-heading > span:first-child {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.node-tags-heading {
+  justify-content: space-between;
+}
+
+.node-tags-heading > span {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.node-tags p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
 }
 
 .audit-protection {

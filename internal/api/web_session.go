@@ -68,7 +68,8 @@ func webSessionRequestAllowed(method, path string) bool {
 	}
 	switch path {
 	case "/api/v1/path", "/api/v1/search",
-		"/api/v1/audit/status", "/api/v1/audit/history", "/api/v1/jobs":
+		"/api/v1/audit/status", "/api/v1/audit/history", "/api/v1/jobs",
+		"/api/v1/tags":
 		return true
 	}
 	const prefix = "/api/v1/nodes/"
@@ -83,7 +84,8 @@ func webSessionRequestAllowed(method, path string) bool {
 		return false
 	}
 	return len(parts) == 1 || parts[1] == "children" ||
-		parts[1] == "versions" || parts[1] == "provenance"
+		parts[1] == "versions" || parts[1] == "provenance" ||
+		parts[1] == "tags"
 }
 
 func registerWebSession(

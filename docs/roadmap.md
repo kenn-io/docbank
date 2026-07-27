@@ -18,7 +18,7 @@ elsewhere only when they materially explain the design and are marked
 | 1 | Core: store, blob store, ingest pipeline, full CLI | **Implemented** |
 | 2a | Infrastructure: daemon, HTTP API, daemon-first CLI, self-update, release pipeline | **Implemented** |
 | 2b | Features: content versions, versioned editing, full audit, tags, watched inboxes, text extraction, ingest provenance | **In progress**: versions, tags, queryable provenance, watched inboxes, disjoint audit scopes, and bounded plain-text extraction implemented; PDF/Office extraction remains |
-| 3 | Primary kit-ui web portal and focused operator TUI | **In progress**: read-only analytical tree/search/detail and audited-history browsing implemented in both; web version history, provenance, and verified current-content download implemented |
+| 3 | Primary kit-ui web portal and focused operator TUI | **In progress**: read-only analytical tree/search/detail and audited-history browsing implemented in both; web tags, version history, provenance, and verified current-content download implemented |
 | 4 | Backup commands over the kit engine | **Implemented**; representative-corpus hardening continues |
 
 ## Implemented (Phase 1)
@@ -144,11 +144,12 @@ before a one-use browser handoff, and the browser never buffers the whole
 object or receives the vault API key. Every file exposes its newest-first immutable
 version history and complete version, hash, operation, and revert-source
 authority, plus its newest-first immutable provenance facts and supersession
-history. Protected nodes also expose their permanent newest-first audit timeline
+history. Every selected node exposes its tag assignments, and text search can
+require one stable tag identity. Protected nodes also expose their permanent newest-first audit timeline
 and the complete stable identity and before/after state of every event. The
 portal also reports current and terminal daemon background jobs. Future slices
-cover import, tags and broader metadata, historical content download and
-comparison, trash, storage, and backup.
+cover import, tag mutation and broader metadata, historical content download
+and comparison, trash, storage, and backup.
 Application-neutral tree, timeline, diff, evidence, and job components should
 be reusable by Msgvault and later tools.
 

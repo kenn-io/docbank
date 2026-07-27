@@ -8,20 +8,24 @@
   import MapPinIcon from "@lucide/svelte/icons/map-pin";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import SearchIcon from "@lucide/svelte/icons/search";
+  import TagIcon from "@lucide/svelte/icons/tag";
   import HistoryIcon from "@lucide/svelte/icons/history";
   import {
     Button,
     Card,
     Chip,
+    ChipStack,
     CopyButton,
     EmptyState,
     IconButton,
     SearchInput,
+    SelectDropdown,
     Spinner,
     Table,
     TableHeaderCell,
     ThemeToggle,
     TopBar,
+    type SelectDropdownOption,
     type SortDirection,
   } from "@kenn-io/kit-ui";
   import AuditHistoryDrawer from "./AuditHistoryDrawer.svelte";
@@ -33,13 +37,16 @@
     APIError,
     auditStatusForNode,
     children,
+    nodeTags,
     revokeSession,
     search,
     statPath,
+    tags,
     takeFragmentSession,
     type AuditStatus,
     type Node,
     type SearchHit,
+    type Tag,
   } from "./api.js";
   import { basename, formatBytes, formatDate } from "./format.js";
   import { orderRows, reconcileSearchView, type SortField } from "./rows.js";
@@ -50,7 +57,9 @@
     rows: Row[];
     selectedID?: number;
     activeQuery: string;
+    activeTagID: string;
     searchQuery: string;
+    tagFilterID: string;
     truncated: boolean;
     sortField: SortField;
     sortDirection: SortDirection;
@@ -63,6 +72,14 @@
   let selectedID = $state<number | undefined>();
   let searchQuery = $state("");
   let activeQuery = $state("");
+  let tagFilterID = $state("");
+  let activeTagID = $state("");
+  let tagCatalog = $state<Tag[]>([]);
+  let tagCatalogTotal = $state(0);
+  let tagCatalogError = $state("");
+  let selectedTags = $state<Tag[]>([]);
+  let selectedTagsLoading = $state(false);
+  let selectedTagsError = $state("");
   let loading = $state(false);
   let error = $state("");
   let truncated = $state(false);
@@ -77,16 +94,29 @@
   let jobsOpen = $state(false);
   let generation = 0;
   let auditGeneration = 0;
+  let tagGeneration = 0;
 
   const selected = $derived(rows.find((row) => row.node.id === selectedID));
   const membership = $derived(selectedAudit?.membership);
+  const tagOptions = $derived<SelectDropdownOption[]>([
+    { value: "", label: "All tags" },
+    ...tagCatalog.map((tag) => ({
+      value: tag.id,
+      label: `${tag.name} (${tag.assignment_count})`,
+      triggerLabel: tag.name,
+    })),
+  ]);
+  const activeTag = $derived(tagCatalog.find((tag) => tag.id === activeTagID));
   const sortedRows = $derived(
     orderRows(rows, sortField, sortDirection, activeQuery !== ""),
   );
 
   onMount(() => {
     webSession = takeFragmentSession();
-    if (webSession) void loadRoot();
+    if (webSession) {
+      void loadRoot();
+      void loadTagCatalog();
+    }
   });
 
   function handleFailure(cause: unknown): void {
@@ -96,6 +126,8 @@
       versionsOpen = false;
       provenanceOpen = false;
       jobsOpen = false;
+      tagCatalog = [];
+      selectedTags = [];
       error = "The browser session expired or was rejected. Run `docbank web` again.";
       return;
     }
@@ -133,7 +165,9 @@
             rows,
             selectedID,
             activeQuery,
+            activeTagID,
             searchQuery,
+            tagFilterID,
             truncated,
             sortField,
             sortDirection,
@@ -149,6 +183,7 @@
       }));
       selectNode(rows[0]?.node.id);
       activeQuery = "";
+      activeTagID = "";
       truncated = page.total > page.items.length;
       sortField = "name";
       sortDirection = "asc";
@@ -174,11 +209,15 @@
       return;
     }
     const request = ++generation;
+    const requestedTagID = tagFilterID;
     loading = true;
     error = "";
     try {
-      const report = await search(webSession, query);
+      const report = await search(webSession, query, requestedTagID);
       if (request !== generation) return;
+      if ((report.tag_id ?? "") !== requestedTagID) {
+        throw new Error("Search results did not honor the selected tag filter.");
+      }
       rows = report.hits.map((hit: SearchHit) => ({
         node: hit.node,
         path: hit.path,
@@ -187,12 +226,13 @@
       const view = reconcileSearchView(
         rows,
         query,
-        activeQuery,
+        requestedTagID === activeTagID ? activeQuery : "",
         sortField,
         sortDirection,
         selectedID,
       );
       activeQuery = query;
+      activeTagID = requestedTagID;
       truncated = report.truncated;
       sortField = view.sortField;
       sortDirection = view.sortDirection;
@@ -213,7 +253,9 @@
     selectNode(previous.selectedID);
     stack = stack.slice(0, -1);
     activeQuery = previous.activeQuery;
+    activeTagID = previous.activeTagID;
     searchQuery = previous.searchQuery;
+    tagFilterID = previous.tagFilterID;
     truncated = previous.truncated;
     sortField = previous.sortField;
     sortDirection = previous.sortDirection;
@@ -224,6 +266,11 @@
   function clearSearch(): void {
     searchQuery = "";
     if (activeQuery && directory) void loadDirectory(directory.id, false);
+  }
+
+  function changeTagFilter(tagID: string): void {
+    tagFilterID = tagID;
+    if (activeQuery) void runSearch();
   }
 
   function activate(row: Row): void {
@@ -241,9 +288,55 @@
     }
     selectedID = nodeID;
     selectedAudit = null;
+    selectedTags = [];
+    selectedTagsError = "";
     auditError = "";
     auditGeneration += 1;
+    tagGeneration += 1;
     if (nodeID !== undefined && webSession) void loadAuditStatus(nodeID);
+    if (nodeID !== undefined && webSession) void loadSelectedTags(nodeID);
+  }
+
+  async function loadTagCatalog(): Promise<void> {
+    const session = webSession;
+    tagCatalogError = "";
+    try {
+      const page = await tags(session);
+      if (session !== webSession) return;
+      tagCatalog = page.items;
+      tagCatalogTotal = page.total;
+      if (tagFilterID && !page.items.some((tag) => tag.id === tagFilterID)) {
+        tagFilterID = "";
+        activeTagID = "";
+      }
+    } catch (cause) {
+      if (session !== webSession) return;
+      if (cause instanceof APIError && cause.status === 401) {
+        handleFailure(cause);
+        return;
+      }
+      tagCatalogError = cause instanceof Error ? cause.message : String(cause);
+    }
+  }
+
+  async function loadSelectedTags(nodeID: number): Promise<void> {
+    const request = ++tagGeneration;
+    const session = webSession;
+    selectedTagsLoading = true;
+    try {
+      const page = await nodeTags(session, nodeID);
+      if (request !== tagGeneration || session !== webSession || selectedID !== nodeID) return;
+      selectedTags = page.items;
+    } catch (cause) {
+      if (request !== tagGeneration || session !== webSession || selectedID !== nodeID) return;
+      if (cause instanceof APIError && cause.status === 401) {
+        handleFailure(cause);
+        return;
+      }
+      selectedTagsError = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      if (request === tagGeneration) selectedTagsLoading = false;
+    }
   }
 
   async function loadAuditStatus(nodeID: number): Promise<void> {
@@ -278,6 +371,7 @@
   async function lock(): Promise<void> {
     generation += 1;
     auditGeneration += 1;
+    tagGeneration += 1;
     const session = webSession;
     webSession = "";
     directory = null;
@@ -285,6 +379,12 @@
     stack = [];
     selectedID = undefined;
     selectedAudit = null;
+    selectedTags = [];
+    selectedTagsLoading = false;
+    selectedTagsError = "";
+    tagCatalog = [];
+    tagCatalogTotal = 0;
+    tagCatalogError = "";
     auditLoading = false;
     auditError = "";
     historyOpen = false;
@@ -292,7 +392,9 @@
     provenanceOpen = false;
     jobsOpen = false;
     activeQuery = "";
+    activeTagID = "";
     searchQuery = "";
+    tagFilterID = "";
     error = "";
     try {
       await revokeSession(session);
@@ -378,10 +480,25 @@
             </IconButton>
             <div>
               <span>{activeQuery ? "Search results" : "Current folder"}</span>
-              <strong>{activeQuery ? `“${activeQuery}”` : directory?.path ?? "/"}</strong>
+              <strong>
+                {activeQuery
+                  ? `“${activeQuery}”${activeTag ? ` · ${activeTag.name}` : ""}`
+                  : directory?.path ?? "/"}
+              </strong>
             </div>
           </div>
           <div class="toolbar-actions">
+            <SelectDropdown
+              value={tagFilterID}
+              options={tagOptions}
+              title={tagCatalogError
+                ? `Tags unavailable: ${tagCatalogError}`
+                : tagCatalogTotal > tagCatalog.length
+                  ? `Tag filter: showing ${tagCatalog.length} of ${tagCatalogTotal} tags`
+                  : "Filter search by tag"}
+              disabled={tagCatalog.length === 0}
+              onchange={changeTagFilter}
+            />
             <span>{rows.length}{truncated ? "+" : ""} item{rows.length === 1 ? "" : "s"}</span>
             <IconButton
               size="sm"
@@ -507,6 +624,42 @@
                 </div>
               {/if}
             </dl>
+            <div class="node-tags">
+              <div class="node-tags-heading">
+                <span><TagIcon size="13" aria-hidden="true" /> Tags</span>
+                {#if selectedTagsLoading}
+                  <Spinner size={13} />
+                {:else if selectedTagsError}
+                  <Chip size="xs" tone="warning">Unavailable</Chip>
+                {:else}
+                  <span>{selectedTags.length}</span>
+                {/if}
+              </div>
+              {#if selectedTagsError}
+                <p>{selectedTagsError}</p>
+              {:else if !selectedTagsLoading && selectedTags.length === 0}
+                <p>No tags are assigned to this node.</p>
+              {:else if selectedTags.length > 0}
+                <ChipStack
+                  items={selectedTags}
+                  key={(tag) => tag.id}
+                  maxVisible={6}
+                  size="sm"
+                  ariaLabel="Assigned tags"
+                >
+                  {#snippet chip(tag)}
+                    <Chip
+                      size="sm"
+                      tone="workspace"
+                      uppercase={false}
+                      title={`${tag.assignment_count} total assignment${tag.assignment_count === 1 ? "" : "s"} · ${tag.id}`}
+                    >
+                      {tag.name}
+                    </Chip>
+                  {/snippet}
+                </ChipStack>
+              {/if}
+            </div>
             {#if selected.node.kind === "file"}
               <div class="document-actions">
                 {#key selected.node.id}

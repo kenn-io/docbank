@@ -5,8 +5,11 @@ import {
   auditStatusForNode,
   contentVersions,
   listJobs,
+  nodeTags,
   requestJSON,
   revokeSession,
+  search,
+  tags,
   takeFragmentSession,
 } from "./api.js";
 
@@ -112,5 +115,24 @@ describe("browser authentication", () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
       "/api/v1/nodes/42/versions?limit=1000&offset=0",
     );
+  });
+
+  it("addresses tag authority and tag-filtered search", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(
+        JSON.stringify({ items: [], total: 0, limit: 1000, offset: 0, hits: [] }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    await tags("session");
+    await nodeTags("session", 42);
+    await search("session", "quarterly report", "11111111-1111-4111-8111-111111111111");
+
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      "/api/v1/tags?limit=1000&offset=0",
+      "/api/v1/nodes/42/tags?limit=1000&offset=0",
+      "/api/v1/search?q=quarterly+report&limit=1000&tag_id=11111111-1111-4111-8111-111111111111",
+    ]);
   });
 });
