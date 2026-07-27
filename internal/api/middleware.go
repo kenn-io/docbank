@@ -27,7 +27,8 @@ func timeoutExempt(path string) bool {
 		"/api/v1/storage/pack", "/api/v1/storage/repack", "/api/v1/uploads",
 		"/api/v1/backup/snapshots", "/api/v1/backup/snapshots/stream",
 		"/api/v1/backup/verify", "/api/v1/backup/verify/stream",
-		"/api/v1/backup/restore", "/api/v1/backup/restore/stream":
+		"/api/v1/backup/restore", "/api/v1/backup/restore/stream",
+		webDownloadPreparePath, webDownloadFilePath:
 		return true
 	}
 	if strings.HasPrefix(path, "/api/v1/nodes/") &&
@@ -63,7 +64,7 @@ func clearLongRunningBodyReadDeadlines(api huma.API) {
 // the daemon always has one; see NewServer.
 func authExempt(path string) bool {
 	switch path {
-	case "/", "/health", kitPingPath, daemonauth.ChallengePath:
+	case "/", "/health", kitPingPath, daemonauth.ChallengePath, webDownloadFilePath:
 		return true
 	}
 	return strings.HasPrefix(path, "/docs") ||
@@ -162,6 +163,9 @@ func jsonBodyTextMiddleware(next http.Handler) http.Handler {
 
 func isOpaqueBodyMutation(r *http.Request) bool {
 	if r.Method == http.MethodPost && r.URL.Path == "/api/v1/uploads" {
+		return true
+	}
+	if r.Method == http.MethodPost && r.URL.Path == webDownloadPreparePath {
 		return true
 	}
 	return r.Method == http.MethodPut &&

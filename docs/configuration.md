@@ -39,6 +39,7 @@ The directory layout is created on first use:
 │   └── tmp/             # staging for in-flight writes
 ├── logs/                # JSON logs from background daemons
 ├── web-launch/          # owner-private browser authentication handoff
+├── web-downloads/       # private, temporary verified browser downloads
 ├── config.toml          # optional; see below
 ├── vault.lock           # advisory lock, held by a daemon or target restore
 └── daemon.<pid>.json    # runtime record of a live daemon
@@ -50,8 +51,9 @@ always describe the decoded content. Docbank chooses it for worthwhile new
 writes and continues to read existing raw files without converting them.
 `config.toml` is configuration, not archive data — optional, but back it
 up if you've customized it (it can hold an `api_key`). `vault.lock` and
-`daemon.<pid>.json` and `web-launch/` are coordination/runtime state, safe to
-ignore in backups and safe to delete when no daemon or restore is running
+`daemon.<pid>.json`, `web-launch/`, and `web-downloads/` are
+coordination/runtime state, safe to ignore in backups and safe to delete when
+no daemon or restore is running
 (`docbank daemon stop` removes its own record cleanly on graceful
 shutdown). The database
 references blobs by hash, so restoring a copied `docbank.db` + `blobs/`

@@ -18,7 +18,7 @@ elsewhere only when they materially explain the design and are marked
 | 1 | Core: store, blob store, ingest pipeline, full CLI | **Implemented** |
 | 2a | Infrastructure: daemon, HTTP API, daemon-first CLI, self-update, release pipeline | **Implemented** |
 | 2b | Features: content versions, versioned editing, full audit, tags, watched inboxes, text extraction, ingest provenance | **In progress**: versions, tags, queryable provenance, watched inboxes, disjoint audit scopes, and bounded plain-text extraction implemented; PDF/Office extraction remains |
-| 3 | Primary kit-ui web portal and focused operator TUI | **In progress**: read-only analytical tree/search/detail and audited-history browsing implemented in both; web version and provenance history implemented |
+| 3 | Primary kit-ui web portal and focused operator TUI | **In progress**: read-only analytical tree/search/detail and audited-history browsing implemented in both; web version history, provenance, and verified current-content download implemented |
 | 4 | Backup commands over the kit engine | **Implemented**; representative-corpus hardening continues |
 
 ## Implemented (Phase 1)
@@ -138,14 +138,17 @@ and authenticated API.
 The kit-ui web portal is the primary human interface over the authenticated
 daemon API. Its first read-only slice implements responsive virtual-tree
 browsing, analytical sorting, name and extracted-text search, and complete
-current document authority. Every file exposes its newest-first immutable
+current document authority. A selected live file can be downloaded through
+bounded daemon staging: progress is visible, content is terminally verified
+before a one-use browser handoff, and the browser never buffers the whole
+object or receives the vault API key. Every file exposes its newest-first immutable
 version history and complete version, hash, operation, and revert-source
 authority, plus its newest-first immutable provenance facts and supersession
 history. Protected nodes also expose their permanent newest-first audit timeline
 and the complete stable identity and before/after state of every event. The
 portal also reports current and terminal daemon background jobs. Future slices
-cover import, tags and broader metadata, historical content comparison, trash,
-storage, and backup.
+cover import, tags and broader metadata, historical content download and
+comparison, trash, storage, and backup.
 Application-neutral tree, timeline, diff, evidence, and job components should
 be reusable by Msgvault and later tools.
 
