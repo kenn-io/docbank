@@ -1,4 +1,4 @@
-import { requestResponse, type Node } from "./api.js";
+import { requestResponse, type ContentVersion, type Node } from "./api.js";
 
 export interface DownloadProgress {
   received: number;
@@ -24,6 +24,15 @@ interface DownloadEvent {
   detail?: string;
 }
 
+interface DownloadAuthority {
+  nodeID: number;
+  revision: number;
+  name: string;
+  versionID: string;
+  blobHash: string;
+  size: number;
+}
+
 export async function prepareCurrentDownload(
   session: string,
   node: Node,
@@ -39,6 +48,59 @@ export async function prepareCurrentDownload(
   ) {
     throw new Error("The selected document does not have complete download authority.");
   }
+  return prepareDownload(
+    session,
+    {
+      nodeID: node.id,
+      revision: node.revision,
+      name: node.name,
+      versionID: node.current_version_id,
+      blobHash: node.blob_hash,
+      size: node.size,
+    },
+    signal,
+    onprogress,
+  );
+}
+
+export async function prepareVersionDownload(
+  session: string,
+  node: Node,
+  version: ContentVersion,
+  signal: AbortSignal,
+  onprogress: (progress: DownloadProgress) => void,
+): Promise<PreparedDownload> {
+  if (
+    node.kind !== "file" ||
+    node.revision < 1 ||
+    version.node_id !== node.id ||
+    !version.id ||
+    !version.blob_hash ||
+    version.size < 0
+  ) {
+    throw new Error("The selected version does not have complete download authority.");
+  }
+  return prepareDownload(
+    session,
+    {
+      nodeID: node.id,
+      revision: node.revision,
+      name: node.name,
+      versionID: version.id,
+      blobHash: version.blob_hash,
+      size: version.size,
+    },
+    signal,
+    onprogress,
+  );
+}
+
+async function prepareDownload(
+  session: string,
+  authority: DownloadAuthority,
+  signal: AbortSignal,
+  onprogress: (progress: DownloadProgress) => void,
+): Promise<PreparedDownload> {
   const response = await requestResponse("/api/daemon/web-download", session, {
     method: "POST",
     headers: {
@@ -46,11 +108,11 @@ export async function prepareCurrentDownload(
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      node_id: node.id,
-      revision: node.revision,
-      version_id: node.current_version_id,
-      blob_hash: node.blob_hash,
-      size: node.size,
+      node_id: authority.nodeID,
+      revision: authority.revision,
+      version_id: authority.versionID,
+      blob_hash: authority.blobHash,
+      size: authority.size,
     }),
     signal,
   });
@@ -79,13 +141,13 @@ export async function prepareCurrentDownload(
           throw new Error(event.detail || "Docbank could not verify this document.");
         }
         if (event.phase === "progress") {
-          const progress = validateProgress(event, node.size, received);
+          const progress = validateProgress(event, authority.size, received);
           received = progress.received;
           onprogress(progress);
           continue;
         }
         if (event.phase === "ready") {
-          ready = validateReady(event, node);
+          ready = validateReady(event, authority);
           onprogress({ received: ready.size, total: ready.size });
           continue;
         }
@@ -98,7 +160,7 @@ export async function prepareCurrentDownload(
       if (event.phase !== "ready" || ready) {
         throw new Error("The download response ended with an invalid progress event.");
       }
-      ready = validateReady(event, node);
+      ready = validateReady(event, authority);
       onprogress({ received: ready.size, total: ready.size });
     }
   } catch (cause) {
@@ -129,21 +191,21 @@ function validateProgress(
   return { received, total };
 }
 
-function validateReady(event: DownloadEvent, node: Node): PreparedDownload {
+function validateReady(event: DownloadEvent, authority: DownloadAuthority): PreparedDownload {
   const name = event.name;
   const versionID = event.version_id;
   const blobHash = event.blob_hash;
   const url = event.url;
   if (
-    (event.received ?? 0) !== node.size ||
-    event.total !== node.size ||
+    (event.received ?? 0) !== authority.size ||
+    event.total !== authority.size ||
     typeof name !== "string" ||
     typeof versionID !== "string" ||
     typeof blobHash !== "string" ||
     typeof url !== "string" ||
-    name !== node.name ||
-    versionID !== node.current_version_id ||
-    blobHash !== node.blob_hash ||
+    name !== authority.name ||
+    versionID !== authority.versionID ||
+    blobHash !== authority.blobHash ||
     !url?.startsWith("/api/daemon/web-download/file?ticket=")
   ) {
     throw new Error("The verified download disagreed with the selected document.");

@@ -58,7 +58,7 @@ assigned tag names. Hovering a tag shows its stable UUID and vault-wide
 assignment count; the bounded tag stack expands in place when a node carries
 more than six.
 
-## Download verified current content
+## Download verified content
 
 Choose **Download** on a file to retrieve its current version. Docbank first
 copies the object from loose or packed storage into owner-private daemon
@@ -81,10 +81,6 @@ the browser or operating system completed its final save. Use `docbank get`
 when automation needs a durable receipt after private staging, file sync,
 atomic publication, and parent-directory sync.
 
-This action downloads only the selected live document's current version.
-Historical-version download and comparison remain CLI or authenticated API
-workflows.
-
 ## Inspect immutable versions
 
 Choose **Version history** on any file to inspect every retained immutable
@@ -99,10 +95,18 @@ introducing operation UUID, and the source version for a revert. The current
 head is marked explicitly; a revert remains a new immutable version rather
 than erasing or relabeling the earlier one.
 
+Choose **Download** in the complete-version panel to retrieve that exact
+retained version through the same private staging, progress, terminal
+verification, and one-use handoff as the current-content action. The stable
+version UUID, owning node, SHA-256 identity, size, and current node revision
+must all agree before preparation begins. Historical versions do not retain a
+filename timeline, so the browser uses the live document's current name.
+Version comparison remains a CLI or authenticated API workflow.
+
 The drawer reads at most the newest 1,000 versions and says when older history
 exists. Use `docbank versions list`, its pagination flags, or the authenticated
-HTTP API for exhaustive automation. This view does not download content,
-compare bytes, revert, or prune history.
+HTTP API for exhaustive automation. This view does not compare bytes, revert,
+or prune history.
 
 ## Understand where a document came from
 
@@ -245,8 +249,8 @@ Refreshing a folder resolves its stable node ID, current canonical path, and
 children in one metadata snapshot, so a concurrent CLI or agent move cannot
 leave the browser constructing child paths beneath an obsolete name.
 
-The current web application does not download historical content, compare
-versions, import, edit, revert, prune, move, create or change tags and
+The current web application does not compare versions, import, edit, revert,
+prune, move, create or change tags and
 assignments, trash, enroll audit scopes, run independent audit verification,
 or run maintenance and backup operations.
 Use the corresponding CLI or authenticated HTTP endpoint for those workflows.

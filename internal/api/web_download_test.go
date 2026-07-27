@@ -10,6 +10,7 @@ import (
 	"mime"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -125,6 +126,74 @@ func TestWebDownloadVerifiesBeforeOneUseBrowserHandoff(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusNotFound, reusedResponse.StatusCode)
 	require.NoError(t, reusedResponse.Body.Close())
+}
+
+func TestWebDownloadPreparesOneRetainedVersion(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	const historicalContent = "synthetic first edition\n"
+	document := createFileWithContent(t, ts, s, "/report.txt", historicalContent)
+	historical, err := s.ContentVersionByID(t.Context(), document.CurrentVersionID)
+	require.NoError(t, err)
+	replacementHash, replacementSize, err := s.Blobs.Write(strings.NewReader("second edition\n"))
+	require.NoError(t, err)
+	document, _, err = s.ReplaceContent(
+		t.Context(), document.ID, document.Revision,
+		replacementHash, replacementSize, "text/plain",
+	)
+	require.NoError(t, err)
+
+	requestBody, err := json.Marshal(map[string]any{
+		"node_id": document.ID, "revision": document.Revision,
+		"version_id": historical.ID, "blob_hash": historical.BlobHash,
+		"size": historical.Size,
+	})
+	require.NoError(t, err)
+	request, err := http.NewRequest(
+		http.MethodPost, ts.URL+"/api/daemon/web-download", bytes.NewReader(requestBody),
+	)
+	require.NoError(t, err)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := ts.Client().Do(request)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, response.StatusCode)
+
+	var ready struct {
+		Phase     string `json:"phase"`
+		URL       string `json:"url"`
+		VersionID string `json:"version_id"`
+		BlobHash  string `json:"blob_hash"`
+	}
+	decoder := json.NewDecoder(response.Body)
+	for {
+		var event struct {
+			Phase     string `json:"phase"`
+			URL       string `json:"url"`
+			VersionID string `json:"version_id"`
+			BlobHash  string `json:"blob_hash"`
+		}
+		err := decoder.Decode(&event)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		require.NoError(t, err)
+		if event.Phase == "ready" {
+			ready = event
+		}
+	}
+	require.NoError(t, response.Body.Close())
+	require.NotEmpty(t, ready.URL)
+	assert.Equal(t, historical.ID, ready.VersionID)
+	assert.Equal(t, historical.BlobHash, ready.BlobHash)
+
+	download, err := ts.Client().Get(ts.URL + ready.URL)
+	require.NoError(t, err)
+	body, err := io.ReadAll(download.Body)
+	require.NoError(t, err)
+	require.NoError(t, download.Body.Close())
+	require.Equal(t, http.StatusOK, download.StatusCode)
+	assert.Equal(t, historicalContent, string(body))
+	assert.Equal(t, historical.ID, download.Header.Get(api.ContentVersionHeader))
+	assert.Equal(t, historical.BlobHash, download.Header.Get(api.BlobHashHeader))
 }
 
 func TestWebDownloadRejectsAStaleSelectionBeforeStaging(t *testing.T) {
