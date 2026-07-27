@@ -15,7 +15,8 @@ documents without losing track of them, every stored byte can be checked, and
 incremental backups can be verified before you rely on them. Work directly
 from the CLI, automate through the authenticated HTTP API, or embed Docbank in
 a Go application. People can browse the same authority in the local web
-application or focused terminal interface.
+application or focused terminal interface; the web application verifies
+current document bytes before handing them to the browser's native save.
 
 Install the latest release on Linux or macOS:
 
@@ -169,7 +170,7 @@ documents: files you still organize, retrieve, and build workflows around.
 - [Setup](setup.md): install the binary and create the vault
 - [Quickstart](quickstart.md): a ten-minute tour of the CLI
 - [Vault Lifecycle](usage/lifecycle.md): operate, snapshot, and recover safely
-- [Web Application](usage/web.md): browse and search the local vault
+- [Web Application](usage/web.md): browse, search, and download verified current content
 - [Docbank for Agents](agents.md): the automation contract
 - [Embed in Go](embedding.md): vaults inside your own application
 - [Troubleshooting](troubleshooting.md): diagnose failures without risking the vault

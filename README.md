@@ -69,9 +69,9 @@ Four commitments:
 - A read-only daemon-backed TUI for analytical tree browsing, search, stable
   document/version identity inspection, and permanent audited-history timelines
 - A read-only kit-ui web application for virtual-tree browsing, sortable
-  document analysis, extracted-text search, and complete current authority;
-  source builds newer than v0.11.0 also expose permanent protection state and
-  full audited event timelines plus daemon background-job status
+  document analysis, extracted-text search, complete current authority,
+  verified current-content download, permanent protection and event history,
+  immutable versions and provenance, and daemon background-job status
 - Mixed loose and packed content storage with explicit pack, GC, and repack,
   plus an opt-in bounded daemon packing schedule
 - Whole-vault integrity verification
@@ -84,11 +84,6 @@ Four commitments:
 - A release pipeline for Linux, macOS, and Windows on amd64 and arm64, with
   SHA-256 checksums and checksum-enforcing installers
 - Native vault, daemon, and recovery support on Linux, macOS, and Windows
-
-Embedded generic source provenance, scheduled packing, `docbank tui`, and
-`docbank web` are
-newer than v0.10.1. Build from `main` to use them until the next release is
-tagged.
 
 See the [roadmap](docs/roadmap.md) for high-level product direction beyond the
 capabilities listed here.
@@ -130,9 +125,6 @@ toolchain.
 
 There is no initialization command. The first data command creates the local
 vault and starts its daemon:
-
-> **Release availability:** tag-filtered search and `docbank get` are newer
-> than v0.10.0. Build from source to use them until the next release is tagged.
 
 ```bash
 docbank add ~/Documents --dest /archive

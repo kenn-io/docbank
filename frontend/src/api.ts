@@ -224,13 +224,13 @@ async function decodeProblem(response: Response): Promise<Problem> {
   }
 }
 
-export async function requestJSON<T>(
+export async function requestResponse(
   path: string,
   session: string,
   init: RequestInit = {},
-): Promise<T> {
+): Promise<Response> {
   const headers = new Headers(init.headers);
-  headers.set("Accept", "application/json");
+  if (!headers.has("Accept")) headers.set("Accept", "application/json");
   headers.set("X-Docbank-Web-Session", session);
   const response = await fetch(path, {
     ...init,
@@ -242,6 +242,15 @@ export async function requestJSON<T>(
     const detail = problem.detail || problem.title || `HTTP ${response.status}`;
     throw new APIError(detail, response.status, problem.code ?? "");
   }
+  return response;
+}
+
+export async function requestJSON<T>(
+  path: string,
+  session: string,
+  init: RequestInit = {},
+): Promise<T> {
+  const response = await requestResponse(path, session, init);
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }

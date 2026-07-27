@@ -25,6 +25,7 @@
     type SortDirection,
   } from "@kenn-io/kit-ui";
   import AuditHistoryDrawer from "./AuditHistoryDrawer.svelte";
+  import DownloadButton from "./DownloadButton.svelte";
   import JobsDrawer from "./JobsDrawer.svelte";
   import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
   import VersionHistoryDrawer from "./VersionHistoryDrawer.svelte";
@@ -508,6 +509,13 @@
             </dl>
             {#if selected.node.kind === "file"}
               <div class="document-actions">
+                {#key selected.node.id}
+                  <DownloadButton
+                    session={webSession}
+                    node={selected.node}
+                    onauthfailure={handleFailure}
+                  />
+                {/key}
                 <Button
                   size="sm"
                   tone="info"

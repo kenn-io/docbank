@@ -63,6 +63,7 @@ type Server struct {
 	api           huma.API
 	auditPreviews *auditPreviewRegistry
 	webSessions   *webSessionRegistry
+	webDownloads  *webDownloadRegistry
 }
 
 // NewServer wires all routes and middleware onto a fresh mux. The handler
@@ -103,7 +104,7 @@ func NewServer(d Deps) *Server {
 	humaAPI := humago.New(mux, cfg)
 	s := &Server{
 		deps: d, api: humaAPI, auditPreviews: newAuditPreviewRegistry(),
-		webSessions: newWebSessionRegistry(),
+		webSessions: newWebSessionRegistry(), webDownloads: newWebDownloadRegistry(d.VaultRoot),
 	}
 	g := d.Gate
 	if g == nil {
@@ -134,6 +135,7 @@ func NewServer(d Deps) *Server {
 	s.registerShutdown(mux)
 	registerWeb(mux, d.Cfg.Web.Enabled)
 	registerWebSession(mux, d.Cfg.Web.Enabled, d.WebURL, s.webSessions)
+	registerWebDownload(mux, d.Cfg.Web.Enabled, d, s.webDownloads)
 
 	h := http.Handler(mux)
 	// Authenticate and enforce route topology before buffering small JSON

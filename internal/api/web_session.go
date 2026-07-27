@@ -57,6 +57,9 @@ func (r *webSessionRegistry) revoke(token string) {
 }
 
 func webSessionRequestAllowed(method, path string) bool {
+	if method == http.MethodPost && path == webDownloadPreparePath {
+		return true
+	}
 	if method == http.MethodDelete && path == webSessionPath {
 		return true
 	}

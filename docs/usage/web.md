@@ -53,6 +53,33 @@ shows its exact logical size, media type, immutable current-version UUID, and
 SHA-256 content identity. The copy buttons copy the complete UUID or digest
 even when the card wraps it across lines.
 
+## Download verified current content
+
+Choose **Download** on a file to retrieve its current version. Docbank first
+copies the object from loose or packed storage into owner-private daemon
+staging while the browser shows verified byte progress. The selected node
+revision, version UUID, SHA-256 identity, and exact size must still agree before
+that work starts. A concurrent replacement, move, or trash operation therefore
+asks you to refresh instead of silently downloading a different document.
+
+Only terminally verified bytes receive a short-lived, one-use browser download
+ticket. The native browser save begins after that proof succeeds; cancellation
+or a verification failure removes the private staging file and publishes
+nothing to the browser. The ticket identifies only that prepared file, expires
+after two minutes, and cannot call any other Docbank route. It is not the vault
+API key or the browser session.
+
+Preparation streams on the daemon and does not buffer the object in browser
+memory. It temporarily needs local free space equal to the document's logical
+size. Docbank reports that verified bytes were handed to the browser, not that
+the browser or operating system completed its final save. Use `docbank get`
+when automation needs a durable receipt after private staging, file sync,
+atomic publication, and parent-directory sync.
+
+This action downloads only the selected live document's current version.
+Historical-version download and comparison remain CLI or authenticated API
+workflows.
+
 ## Inspect immutable versions
 
 Choose **Version history** on any file to inspect every retained immutable
@@ -168,10 +195,12 @@ The launch page carries only the read-only session in a URL fragment. Browsers
 do not include fragments in the initial HTTP request; the application removes
 it from the address bar and holds it only in page memory. Requests use
 `X-Docbank-Web-Session`, which the daemon accepts only for the tree, node,
-search, immutable-version, provenance, audit-status, audit-history, and
-background-job reads used by this interface. It cannot enroll audit scopes,
-run independent verification, or call mutation, backup, maintenance,
-configuration, or general API endpoints.
+search, immutable-version, provenance, audit-status, audit-history,
+background-job, and verified-download preparation used by this interface.
+Download preparation may write only owner-private temporary bytes and issue
+one exact, expiring file ticket; it cannot mutate document authority. The
+session cannot enroll audit scopes, run independent verification, or call
+mutation, backup, maintenance, configuration, or general API endpoints.
 
 The lock button revokes the session in daemon memory and clears the page.
 Every remaining browser session and its dedicated browser origin disappear
