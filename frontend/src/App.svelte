@@ -509,6 +509,7 @@
               size="sm"
               ariaLabel="Refresh current view"
               onclick={() => {
+                void loadTagCatalog();
                 if (activeQuery) void runSearch();
                 else if (directory) void loadDirectory(directory.id, false);
               }}

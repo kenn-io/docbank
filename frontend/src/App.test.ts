@@ -69,6 +69,7 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
+  let tagCatalogReads = 0;
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
     if (url === "/api/v1/path?path=%2F") return json(root);
@@ -76,13 +77,14 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
       return json({ directory: root, items: [], total: 0, limit: 1000, offset: 0 });
     }
     if (url === "/api/v1/tags?limit=1000&offset=0") {
+      tagCatalogReads += 1;
       return json({
         items: [
           {
             id: "33333333-3333-4333-8333-333333333333",
-            name: "tax",
+            name: tagCatalogReads === 1 ? "tax" : "tax records",
             revision: 1,
-            assignment_count: 1,
+            assignment_count: tagCatalogReads === 1 ? 1 : 2,
           },
         ],
         total: 1,
@@ -146,4 +148,10 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
       screen.queryByRole("cell", { name: "/Reports/quarterly-product-report.txt" }),
     ).toBeNull(),
   );
+
+  await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
+  expect(
+    await screen.findByRole("combobox", { name: "Filter search by tag: tax records" }),
+  ).toBeTruthy();
+  expect(screen.getByText("“quarterly” · tax records")).toBeTruthy();
 });
