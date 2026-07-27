@@ -93,6 +93,18 @@ export interface TagPage {
   offset: number;
 }
 
+export interface TaggedNode {
+  node: Node;
+  path?: string;
+}
+
+export interface TaggedNodePage {
+  items: TaggedNode[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface AuditScopeStatus {
   id: string;
   target_node_id: number;
@@ -336,6 +348,16 @@ export async function tags(session: string): Promise<TagPage> {
 
 export async function tagByID(session: string, tagID: string): Promise<Tag> {
   return requestJSON<Tag>(`/api/v1/tags/${encodeURIComponent(tagID)}`, session);
+}
+
+export async function taggedNodes(
+  session: string,
+  tagID: string,
+): Promise<TaggedNodePage> {
+  return requestJSON<TaggedNodePage>(
+    `/api/v1/tags/${encodeURIComponent(tagID)}/nodes?limit=1000&offset=0`,
+    session,
+  );
 }
 
 export async function nodeTags(session: string, nodeID: number): Promise<TagPage> {

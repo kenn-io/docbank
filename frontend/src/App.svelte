@@ -44,6 +44,7 @@
     search,
     statPath,
     tagByID,
+    taggedNodes,
     tags,
     takeFragmentSession,
     type AuditStatus,
@@ -63,6 +64,9 @@
     activeTagID: string;
     searchQuery: string;
     tagFilterID: string;
+    taggedInspected: number;
+    taggedTotal: number;
+    taggedTrashed: number;
     truncated: boolean;
     sortField: SortField;
     sortDirection: SortDirection;
@@ -77,6 +81,9 @@
   let activeQuery = $state("");
   let tagFilterID = $state("");
   let activeTagID = $state("");
+  let taggedInspected = $state(0);
+  let taggedTotal = $state(0);
+  let taggedTrashed = $state(0);
   let tagCatalog = $state<Tag[]>([]);
   let tagCatalogTotal = $state(0);
   let tagCatalogListed = $state(0);
@@ -115,8 +122,9 @@
     })),
   ]);
   const activeTag = $derived(tagCatalog.find((tag) => tag.id === activeTagID));
+  const tagBrowse = $derived(activeTagID !== "" && activeQuery === "");
   const sortedRows = $derived(
-    orderRows(rows, sortField, sortDirection, activeQuery !== ""),
+    orderRows(rows, sortField, sortDirection, activeQuery !== "" || tagBrowse),
   );
 
   onMount(() => {
@@ -181,6 +189,9 @@
             activeTagID,
             searchQuery,
             tagFilterID,
+            taggedInspected,
+            taggedTotal,
+            taggedTrashed,
             truncated,
             sortField,
             sortDirection,
@@ -197,6 +208,9 @@
       selectNode(rows[0]?.node.id);
       activeQuery = "";
       activeTagID = "";
+      taggedInspected = 0;
+      taggedTotal = 0;
+      taggedTrashed = 0;
       truncated = page.total > page.items.length;
       sortField = "name";
       sortDirection = "asc";
@@ -218,7 +232,8 @@
   async function runSearch(): Promise<void> {
     const query = searchQuery.trim();
     if (!query) {
-      if (directory) await loadDirectory(directory.id, false);
+      if (tagFilterID) await loadTaggedNodes(tagFilterID);
+      else if (directory) await loadDirectory(directory.id, false);
       return;
     }
     const request = ++generation;
@@ -247,6 +262,9 @@
       );
       activeQuery = query;
       activeTagID = requestedTagID;
+      taggedInspected = 0;
+      taggedTotal = 0;
+      taggedTrashed = 0;
       truncated = report.truncated;
       sortField = view.sortField;
       sortDirection = view.sortDirection;
@@ -258,6 +276,42 @@
         searchPending = false;
         loading = false;
       }
+    }
+  }
+
+  async function loadTaggedNodes(tagID: string): Promise<void> {
+    const request = ++generation;
+    const refreshing = activeQuery === "" && activeTagID === tagID;
+    const previousSelectedID = selectedID;
+    searchPending = false;
+    loading = true;
+    error = "";
+    try {
+      const page = await taggedNodes(webSession, tagID);
+      if (request !== generation) return;
+      const liveRows = page.items
+        .filter((item) => !item.node.trashed_at && item.path)
+        .map((item) => ({ node: item.node, path: item.path! }));
+      rows = liveRows;
+      activeQuery = "";
+      activeTagID = tagID;
+      taggedInspected = page.items.length;
+      taggedTotal = page.total;
+      taggedTrashed = page.items.length - liveRows.length;
+      truncated = page.total > page.items.length;
+      if (!refreshing) {
+        sortField = "name";
+        sortDirection = "asc";
+      }
+      selectNode(
+        refreshing && liveRows.some((row) => row.node.id === previousSelectedID)
+          ? previousSelectedID
+          : liveRows[0]?.node.id,
+      );
+    } catch (cause) {
+      if (request === generation) handleFailure(cause);
+    } finally {
+      if (request === generation) loading = false;
     }
   }
 
@@ -274,6 +328,9 @@
     activeTagID = previous.activeTagID;
     searchQuery = previous.searchQuery;
     tagFilterID = previous.tagFilterID;
+    taggedInspected = previous.taggedInspected;
+    taggedTotal = previous.taggedTotal;
+    taggedTrashed = previous.taggedTrashed;
     truncated = previous.truncated;
     sortField = previous.sortField;
     sortDirection = previous.sortDirection;
@@ -284,12 +341,16 @@
 
   function clearSearch(): void {
     searchQuery = "";
-    if ((activeQuery || searchPending) && directory) void loadDirectory(directory.id, false);
+    if (!activeQuery && !searchPending) return;
+    if (tagFilterID) void loadTaggedNodes(tagFilterID);
+    else if (directory) void loadDirectory(directory.id, false);
   }
 
   function changeTagFilter(tagID: string): void {
     tagFilterID = tagID;
     if (activeQuery || searchPending) void runSearch();
+    else if (tagID) void loadTaggedNodes(tagID);
+    else if (activeTagID && directory) void loadDirectory(directory.id, false);
   }
 
   function activate(row: Row): void {
@@ -352,9 +413,14 @@
       tagCatalogListed = page.items.length;
       if (selectedMissing && tagFilterID === selectedTagID) {
         const rerunSearch = Boolean(activeQuery || searchPending);
+        const leaveTagBrowse = activeQuery === "" && activeTagID === selectedTagID;
         tagFilterID = "";
         activeTagID = "";
+        taggedInspected = 0;
+        taggedTotal = 0;
+        taggedTrashed = 0;
         if (rerunSearch && searchQuery.trim()) void runSearch();
+        else if (leaveTagBrowse && directory) void loadDirectory(directory.id, false);
       }
     } catch (cause) {
       if (request !== tagCatalogGeneration || session !== webSession) return;
@@ -445,6 +511,9 @@
     storageOpen = false;
     activeQuery = "";
     activeTagID = "";
+    taggedInspected = 0;
+    taggedTotal = 0;
+    taggedTrashed = 0;
     searchPending = false;
     searchQuery = "";
     tagFilterID = "";
@@ -546,10 +615,14 @@
               <ArrowLeftIcon size="14" aria-hidden="true" />
             </IconButton>
             <div>
-              <span>{activeQuery ? "Search results" : "Current folder"}</span>
+              <span>
+                {activeQuery ? "Search results" : tagBrowse ? "Documents tagged" : "Current folder"}
+              </span>
               <strong>
                 {activeQuery
                   ? `“${activeQuery}”${activeTag ? ` · ${activeTag.name}` : ""}`
+                  : tagBrowse
+                    ? activeTag?.name ?? activeTagID
                   : directory?.path ?? "/"}
               </strong>
             </div>
@@ -561,18 +634,27 @@
               title={tagCatalogError
                 ? `Tags unavailable: ${tagCatalogError}`
                 : tagCatalogTotal > tagCatalogListed
-                  ? `Tag filter: showing ${tagCatalogListed} of ${tagCatalogTotal} tags`
-                  : "Filter search by tag"}
+                  ? `Browse or filter: showing ${tagCatalogListed} of ${tagCatalogTotal} tags`
+                  : "Browse or filter by tag"}
               disabled={tagCatalog.length === 0}
               onchange={changeTagFilter}
             />
-            <span>{rows.length}{truncated ? "+" : ""} item{rows.length === 1 ? "" : "s"}</span>
+            {#if tagBrowse}
+              <span>
+                {rows.length} live shown
+                {#if taggedTrashed > 0} · {taggedTrashed} trashed omitted{/if}
+                {#if truncated} · first {taggedInspected} of {taggedTotal} assignments{/if}
+              </span>
+            {:else}
+              <span>{rows.length}{truncated ? "+" : ""} item{rows.length === 1 ? "" : "s"}</span>
+            {/if}
             <IconButton
               size="sm"
               ariaLabel="Refresh current view"
               onclick={() => {
                 void loadTagCatalog();
                 if (activeQuery) void runSearch();
+                else if (activeTagID) void loadTaggedNodes(activeTagID);
                 else if (directory) void loadDirectory(directory.id, false);
               }}
             >
@@ -588,13 +670,27 @@
           <div class="loading"><Spinner size={16} /> Loading vault…</div>
         {:else if rows.length === 0}
           <EmptyState
-            title={activeQuery ? "No matching documents" : "This folder is empty"}
+            title={activeQuery
+              ? "No matching documents"
+              : tagBrowse
+                ? "No live documents carry this tag"
+                : "This folder is empty"}
             description={activeQuery
               ? "Try another name or phrase from extracted text."
-              : "Use the CLI, API, or an agent to file documents here."}
+              : tagBrowse
+                ? taggedTrashed > 0
+                  ? `${taggedTrashed} trashed assignment${taggedTrashed === 1 ? " is" : "s are"} omitted from this live view.`
+                  : "Choose another tag or return to the current folder."
+                : "Use the CLI, API, or an agent to file documents here."}
           >
             {#snippet icon()}
-              {#if activeQuery}<SearchIcon size="22" />{:else}<FolderIcon size="22" />{/if}
+              {#if activeQuery}
+                <SearchIcon size="22" />
+              {:else if tagBrowse}
+                <TagIcon size="22" />
+              {:else}
+                <FolderIcon size="22" />
+              {/if}
             {/snippet}
           </EmptyState>
         {:else}
@@ -641,7 +737,7 @@
                       {:else}
                         <FileIcon size="15" aria-hidden="true" />
                       {/if}
-                      <span>{activeQuery ? row.path : row.node.name}</span>
+                      <span>{activeQuery || tagBrowse ? row.path : row.node.name}</span>
                     </span>
                   </td>
                   <td>{row.node.kind === "dir" ? "Folder" : row.node.mime_type || "File"}</td>

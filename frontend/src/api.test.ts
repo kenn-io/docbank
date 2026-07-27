@@ -11,6 +11,7 @@ import {
   search,
   storageStatus,
   tagByID,
+  taggedNodes,
   tags,
   takeFragmentSession,
 } from "./api.js";
@@ -141,12 +142,14 @@ describe("browser authentication", () => {
 
     await tags("session");
     await tagByID("session", "11111111-1111-4111-8111-111111111111");
+    await taggedNodes("session", "11111111-1111-4111-8111-111111111111");
     await nodeTags("session", 42);
     await search("session", "quarterly report", "11111111-1111-4111-8111-111111111111");
 
     expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
       "/api/v1/tags?limit=1000&offset=0",
       "/api/v1/tags/11111111-1111-4111-8111-111111111111",
+      "/api/v1/tags/11111111-1111-4111-8111-111111111111/nodes?limit=1000&offset=0",
       "/api/v1/nodes/42/tags?limit=1000&offset=0",
       "/api/v1/search?q=quarterly+report&limit=1000&tag_id=11111111-1111-4111-8111-111111111111",
     ]);
