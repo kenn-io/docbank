@@ -78,6 +78,7 @@
   let tagCatalogTotal = $state(0);
   let tagCatalogError = $state("");
   let selectedTags = $state<Tag[]>([]);
+  let selectedTagsTotal = $state(0);
   let selectedTagsLoading = $state(false);
   let selectedTagsError = $state("");
   let loading = $state(false);
@@ -128,6 +129,7 @@
       jobsOpen = false;
       tagCatalog = [];
       selectedTags = [];
+      selectedTagsTotal = 0;
       error = "The browser session expired or was rejected. Run `docbank web` again.";
       return;
     }
@@ -270,7 +272,7 @@
 
   function changeTagFilter(tagID: string): void {
     tagFilterID = tagID;
-    if (activeQuery) void runSearch();
+    if (searchQuery.trim()) void runSearch();
   }
 
   function activate(row: Row): void {
@@ -289,6 +291,7 @@
     selectedID = nodeID;
     selectedAudit = null;
     selectedTags = [];
+    selectedTagsTotal = 0;
     selectedTagsError = "";
     auditError = "";
     auditGeneration += 1;
@@ -327,6 +330,7 @@
       const page = await nodeTags(session, nodeID);
       if (request !== tagGeneration || session !== webSession || selectedID !== nodeID) return;
       selectedTags = page.items;
+      selectedTagsTotal = page.total;
     } catch (cause) {
       if (request !== tagGeneration || session !== webSession || selectedID !== nodeID) return;
       if (cause instanceof APIError && cause.status === 401) {
@@ -380,6 +384,7 @@
     selectedID = undefined;
     selectedAudit = null;
     selectedTags = [];
+    selectedTagsTotal = 0;
     selectedTagsLoading = false;
     selectedTagsError = "";
     tagCatalog = [];
@@ -639,7 +644,12 @@
                   {:else if selectedTagsError}
                     <Chip size="xs" tone="warning">Unavailable</Chip>
                   {:else}
-                    <span>{selectedTags.length} assigned</span>
+                    <span>
+                      {selectedTags.length < selectedTagsTotal
+                        ? `${selectedTags.length} of ${selectedTagsTotal}`
+                        : selectedTagsTotal}
+                      assigned
+                    </span>
                   {/if}
                 </div>
                 {#if selectedTagsError}
@@ -665,6 +675,9 @@
                       </Chip>
                     {/snippet}
                   </ChipStack>
+                  {#if selectedTags.length < selectedTagsTotal}
+                    <p>Showing the first {selectedTags.length} assigned tags.</p>
+                  {/if}
                 {/if}
               </div>
               {#if selected.node.kind === "file"}

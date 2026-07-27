@@ -439,4 +439,12 @@ dd {
   .document-name {
     min-width: 150px;
   }
+
+  .document-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .document-actions > :first-child {
+    grid-column: auto;
+  }
 }
