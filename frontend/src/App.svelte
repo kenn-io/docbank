@@ -4,6 +4,7 @@
   import ArrowLeftIcon from "@lucide/svelte/icons/arrow-left";
   import FileIcon from "@lucide/svelte/icons/file";
   import FolderIcon from "@lucide/svelte/icons/folder";
+  import HardDriveIcon from "@lucide/svelte/icons/hard-drive";
   import LogOutIcon from "@lucide/svelte/icons/log-out";
   import MapPinIcon from "@lucide/svelte/icons/map-pin";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
@@ -32,6 +33,7 @@
   import DownloadButton from "./DownloadButton.svelte";
   import JobsDrawer from "./JobsDrawer.svelte";
   import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
+  import StorageDrawer from "./StorageDrawer.svelte";
   import VersionHistoryDrawer from "./VersionHistoryDrawer.svelte";
   import {
     APIError,
@@ -96,6 +98,7 @@
   let versionsOpen = $state(false);
   let provenanceOpen = $state(false);
   let jobsOpen = $state(false);
+  let storageOpen = $state(false);
   let generation = 0;
   let auditGeneration = 0;
   let tagGeneration = 0;
@@ -131,6 +134,7 @@
       versionsOpen = false;
       provenanceOpen = false;
       jobsOpen = false;
+      storageOpen = false;
       tagCatalog = [];
       tagCatalogListed = 0;
       selectedTags = [];
@@ -438,6 +442,7 @@
     versionsOpen = false;
     provenanceOpen = false;
     jobsOpen = false;
+    storageOpen = false;
     activeQuery = "";
     activeTagID = "";
     searchPending = false;
@@ -497,11 +502,25 @@
       {#snippet right()}
         <IconButton
           size="sm"
+          ariaLabel="Storage status"
+          onclick={() => {
+            historyOpen = false;
+            versionsOpen = false;
+            provenanceOpen = false;
+            jobsOpen = false;
+            storageOpen = true;
+          }}
+        >
+          <HardDriveIcon size="14" aria-hidden="true" />
+        </IconButton>
+        <IconButton
+          size="sm"
           ariaLabel="Background jobs"
           onclick={() => {
             historyOpen = false;
             versionsOpen = false;
             provenanceOpen = false;
+            storageOpen = false;
             jobsOpen = true;
           }}
         >
@@ -741,6 +760,7 @@
                       historyOpen = false;
                       provenanceOpen = false;
                       jobsOpen = false;
+                      storageOpen = false;
                       versionsOpen = true;
                     }}
                   >
@@ -754,6 +774,7 @@
                       historyOpen = false;
                       versionsOpen = false;
                       jobsOpen = false;
+                      storageOpen = false;
                       provenanceOpen = true;
                     }}
                   >
@@ -792,6 +813,7 @@
                       jobsOpen = false;
                       versionsOpen = false;
                       provenanceOpen = false;
+                      storageOpen = false;
                       historyOpen = true;
                     }}
                   >
@@ -855,6 +877,13 @@
       <JobsDrawer
         session={webSession}
         onclose={() => (jobsOpen = false)}
+        onauthfailure={handleFailure}
+      />
+    {/if}
+    {#if storageOpen}
+      <StorageDrawer
+        session={webSession}
+        onclose={() => (storageOpen = false)}
         onauthfailure={handleFailure}
       />
     {/if}

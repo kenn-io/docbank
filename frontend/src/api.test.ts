@@ -9,6 +9,7 @@ import {
   requestJSON,
   revokeSession,
   search,
+  storageStatus,
   tagByID,
   tags,
   takeFragmentSession,
@@ -102,6 +103,18 @@ describe("browser authentication", () => {
 
     await expect(listJobs("session")).resolves.toEqual([]);
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/jobs");
+  });
+
+  it("reads physical storage authority through the browser session", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ loose_blobs: 0, packs: 0 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await storageStatus("session");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/storage");
   });
 
   it("reads immutable versions for one stable node", async () => {
