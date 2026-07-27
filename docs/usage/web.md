@@ -19,8 +19,9 @@ node ID, revision, current version ID, SHA-256 identity, exact size, and media
 type. The authority card also shows every tag assigned to the selected file or
 folder, while search can require one exact tag. Protected documents expose
 their newest-first permanent audit timeline and complete event authority. The
-activity button reports the
-daemon's supervised extraction, watched-inbox, and automatic-packing jobs.
+storage button separates loose content, live packed content, pack-file payload,
+and logically dead packed bytes awaiting repack. The activity button reports
+the daemon's supervised extraction, watched-inbox, and automatic-packing jobs.
 Every file also exposes its retained immutable content versions and the stable
 authority behind each one, plus the immutable provenance Docbank recorded when
 the document entered the vault.
@@ -193,6 +194,33 @@ or reconfigure work; use the relevant configuration, CLI, or authenticated API
 workflow after understanding the failure. Job records belong to one daemon
 lifetime and disappear when that daemon restarts.
 
+## Inspect physical storage
+
+Choose the storage button in the top bar to see how the current vault occupies
+managed blob storage. The summary separates four related quantities:
+
+- **Loose content** is the physical inventory of individual raw or zstd
+  files. It can include untracked files or redundant loose copies of packed
+  objects, so it is not an authority count.
+- **Live packed content** is authoritative content stored in immutable pack
+  files. The view shows both its logical raw size and its stored size.
+- **Pack files** is the complete stored payload of every pack, including live
+  and logically dead entries.
+- **Pending repack** is logically dead payload that still occupies those
+  immutable pack files.
+
+Pending-repack bytes have not been reclaimed. This distinction matters when a
+GC report has removed unreachable catalog mappings but the vault's disk usage
+has not fallen by the same amount. The percentage beside the pending total
+shows how much of the current pack payload is dead, not a compression ratio or
+a promise that every pack is immediately eligible for compaction.
+
+This drawer is read-only and refreshes from the daemon's current catalog
+authority. It cannot pack, garbage-collect, or repack content. Use
+`docbank storage status` for structured or scripted inspection and run
+`docbank storage repack` explicitly when you intend to rewrite eligible sparse
+packs and retire their old files.
+
 ## Browser authentication
 
 When Docbank opens the browser, it writes a small launch page beside the
@@ -213,7 +241,8 @@ do not include fragments in the initial HTTP request; the application removes
 it from the address bar and holds it only in page memory. Requests use
 `X-Docbank-Web-Session`, which the daemon accepts only for the tree, node,
 search, tag-definition and assignment reads, immutable-version, provenance, audit-status, audit-history,
-background-job, and verified-download preparation used by this interface.
+background-job, physical-storage-status, and verified-download preparation
+used by this interface.
 Download preparation may write only owner-private temporary bytes and issue
 one exact, expiring file ticket; it cannot mutate document authority. The
 session cannot enroll audit scopes, run independent verification, or call

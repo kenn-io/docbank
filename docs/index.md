@@ -17,7 +17,8 @@ from the CLI, automate through the authenticated HTTP API, or embed Docbank in
 a Go application. People can browse the same authority in the local web
 application or focused terminal interface; the web application verifies
 current or retained document bytes before handing them to the browser's native save and
-keeps tag organization visible alongside document authority.
+keeps tag organization and the vault's loose-file/live-packed/dead-packed storage
+breakdown visible alongside document authority.
 
 Install the latest release on Linux or macOS:
 

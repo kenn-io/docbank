@@ -69,7 +69,7 @@ func webSessionRequestAllowed(method, path string) bool {
 	switch path {
 	case "/api/v1/path", "/api/v1/search",
 		"/api/v1/audit/status", "/api/v1/audit/history", "/api/v1/jobs",
-		"/api/v1/tags":
+		"/api/v1/storage", "/api/v1/tags":
 		return true
 	}
 	const tagPrefix = "/api/v1/tags/"

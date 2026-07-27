@@ -200,6 +200,17 @@ export interface JobList {
   items: Job[];
 }
 
+export interface StorageStatus {
+  loose_blobs: number;
+  loose_bytes: number;
+  packs: number;
+  pack_stored_bytes: number;
+  packed_blobs: number;
+  packed_raw_bytes: number;
+  packed_stored_bytes: number;
+  dead_packed_bytes: number;
+}
+
 export interface Problem {
   status?: number;
   code?: string;
@@ -363,4 +374,8 @@ export async function auditHistory(
 export async function listJobs(session: string): Promise<Job[]> {
   const result = await requestJSON<JobList>("/api/v1/jobs", session);
   return result.items;
+}
+
+export async function storageStatus(session: string): Promise<StorageStatus> {
+  return requestJSON<StorageStatus>("/api/v1/storage", session);
 }
