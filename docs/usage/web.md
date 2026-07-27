@@ -20,7 +20,8 @@ type. Protected documents also expose their newest-first permanent audit
 timeline and complete event authority. The activity button reports the
 daemon's supervised extraction, watched-inbox, and automatic-packing jobs.
 Every file also exposes its retained immutable content versions and the stable
-authority behind each one.
+authority behind each one, plus the immutable provenance Docbank recorded when
+the document entered the vault.
 
 The browser is another client of the authenticated HTTP API. It does not open
 SQLite or the blob store, and it has no private route that the CLI or an agent
@@ -70,6 +71,30 @@ The drawer reads at most the newest 1,000 versions and says when older history
 exists. Use `docbank versions list`, its pagination flags, or the authenticated
 HTTP API for exhaustive automation. This view does not download content,
 compare bytes, revert, or prune history.
+
+## Understand where a document came from
+
+Choose **Provenance** on any file to inspect the origin facts Docbank retained
+when it ingested that document. The newest ingest appears first. Each entry
+shows its source kind and description, original reference, ingest time, and
+whether it is the active origin or has been superseded by a corrected fact.
+
+Selecting an entry exposes its complete stable provenance identity, ingest
+UUID, node ID, canonical ingest timestamp, original modification time when one
+was supplied, and supersession link. The drawer adopts the node state returned
+with the provenance page, so a concurrent move displays the current canonical
+path and a trashed document is labeled explicitly rather than retaining an
+obsolete path from the table.
+
+An original reference is evidence, not a live filesystem promise. It may be a
+portable relative path from a watched inbox, a local path recorded by an
+ordinary ingest, or an opaque reference supplied by an embedded application.
+The browser does not open, validate, change, or retain that external source.
+
+The drawer reads at most the newest 1,000 facts and says when older provenance
+exists. Use `docbank provenance`, its pagination flags, or the authenticated
+HTTP API for exhaustive automation. Provenance correction and external-content
+pinning are not browser workflows.
 
 ## Search names and extracted text
 
@@ -143,10 +168,10 @@ The launch page carries only the read-only session in a URL fragment. Browsers
 do not include fragments in the initial HTTP request; the application removes
 it from the address bar and holds it only in page memory. Requests use
 `X-Docbank-Web-Session`, which the daemon accepts only for the tree, node,
-search, immutable-version, audit-status, audit-history, and background-job
-reads used by this interface. It cannot enroll audit scopes, run independent
-verification, or call mutation, backup, maintenance, configuration, or general
-API endpoints.
+search, immutable-version, provenance, audit-status, audit-history, and
+background-job reads used by this interface. It cannot enroll audit scopes,
+run independent verification, or call mutation, backup, maintenance,
+configuration, or general API endpoints.
 
 The lock button revokes the session in daemon memory and clears the page.
 Every remaining browser session and its dedicated browser origin disappear
