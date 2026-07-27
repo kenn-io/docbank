@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { prepareCurrentDownload } from "./download.js";
-import type { Node } from "./api.js";
+import { prepareCurrentDownload, prepareVersionDownload } from "./download.js";
+import type { ContentVersion, Node } from "./api.js";
 
 const node: Node = {
   id: 7,
@@ -14,6 +14,18 @@ const node: Node = {
   revision: 3,
   created_at: "2026-07-26T12:00:00Z",
   modified_at: "2026-07-26T12:00:00Z",
+};
+
+const retainedVersion: ContentVersion = {
+  id: "abcdefab-cdef-4abc-8def-abcdefabcdef",
+  node_id: node.id,
+  blob_hash: "b".repeat(64),
+  size: 12,
+  mime_type: "text/plain",
+  recorded_at: "2026-07-20T12:00:00Z",
+  node_revision: 1,
+  introduced_operation_id: "87654321-4321-4321-8321-cba987654321",
+  transition_kind: "content_create",
 };
 
 afterEach(() => {
@@ -96,5 +108,48 @@ describe("prepareCurrentDownload", () => {
         () => undefined,
       ),
     ).rejects.toThrow("disagreed with the selected document");
+  });
+
+  it("binds a retained-version request and receipt to immutable authority", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          [
+            JSON.stringify({ phase: "progress", total: retainedVersion.size }),
+            JSON.stringify({
+              phase: "ready",
+              received: retainedVersion.size,
+              total: retainedVersion.size,
+              url: "/api/daemon/web-download/file?ticket=historical",
+              name: node.name,
+              version_id: retainedVersion.id,
+              blob_hash: retainedVersion.blob_hash,
+            }),
+            "",
+          ].join("\n"),
+          { status: 200 },
+        ),
+      ),
+    );
+
+    const prepared = await prepareVersionDownload(
+      "browser-session",
+      node,
+      retainedVersion,
+      new AbortController().signal,
+      () => undefined,
+    );
+
+    expect(prepared.versionID).toBe(retainedVersion.id);
+    expect(prepared.blobHash).toBe(retainedVersion.blob_hash);
+    const [, init] = vi.mocked(fetch).mock.calls[0];
+    expect(JSON.parse(String(init?.body))).toEqual({
+      node_id: node.id,
+      revision: node.revision,
+      version_id: retainedVersion.id,
+      blob_hash: retainedVersion.blob_hash,
+      size: retainedVersion.size,
+    });
   });
 });

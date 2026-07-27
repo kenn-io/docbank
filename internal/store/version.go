@@ -25,6 +25,13 @@ type ContentVersion struct {
 	SourceVersionID       *string
 }
 
+// ContentVersionView binds a file node and one of its retained versions to the
+// same read snapshot.
+type ContentVersionView struct {
+	Node    Node
+	Version ContentVersion
+}
+
 const contentVersionCols = `version_id, node_id, blob_hash, size,
 	COALESCE(mime_type, ''), recorded_at, node_revision,
 	introduced_operation_id, transition_kind, source_version_id`
@@ -54,6 +61,41 @@ func (s *Store) ContentVersionByID(ctx context.Context, id string) (ContentVersi
 		return ContentVersion{}, fmt.Errorf("content version %q: %w", id, err)
 	}
 	return v, nil
+}
+
+// ContentVersionViewByID returns one node-owned version and its node authority
+// from a single read transaction.
+func (s *Store) ContentVersionViewByID(
+	ctx context.Context, nodeID int64, versionID string,
+) (ContentVersionView, error) {
+	if err := validateUUIDv4(versionID); err != nil {
+		return ContentVersionView{}, fmt.Errorf(
+			"content version %q: %w", versionID, ErrNotFound,
+		)
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return ContentVersionView{}, fmt.Errorf("starting content-version snapshot: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	node, err := nodeByIDTx(tx, nodeID)
+	if err != nil {
+		return ContentVersionView{}, err
+	}
+	version, err := scanContentVersion(tx.QueryRowContext(ctx,
+		`SELECT `+contentVersionCols+`
+		 FROM content_versions WHERE version_id = ? AND node_id = ?`,
+		versionID, nodeID))
+	if err != nil {
+		return ContentVersionView{}, fmt.Errorf(
+			"content version %q of node %d: %w", versionID, nodeID, err,
+		)
+	}
+	if err := tx.Commit(); err != nil {
+		return ContentVersionView{}, fmt.Errorf("closing content-version snapshot: %w", err)
+	}
+	return ContentVersionView{Node: node, Version: version}, nil
 }
 
 // ContentVersions lists one bounded page newest-first and returns the total

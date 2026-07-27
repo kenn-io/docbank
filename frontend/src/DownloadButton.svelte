@@ -3,10 +3,11 @@
   import DownloadIcon from "@lucide/svelte/icons/download";
   import XIcon from "@lucide/svelte/icons/x";
   import { Button, Chip, Spinner } from "@kenn-io/kit-ui";
-  import { APIError, type Node } from "./api.js";
+  import { APIError, type ContentVersion, type Node } from "./api.js";
   import {
     offerPreparedDownload,
     prepareCurrentDownload,
+    prepareVersionDownload,
     type DownloadProgress,
   } from "./download.js";
   import { formatBytes } from "./format.js";
@@ -14,10 +15,14 @@
   let {
     session,
     node,
+    version,
+    label = "Download",
     onauthfailure,
   }: {
     session: string;
     node: Node;
+    version?: ContentVersion;
+    label?: string;
     onauthfailure: (cause: unknown) => void;
   } = $props();
 
@@ -35,18 +40,16 @@
     }
     const active = new AbortController();
     controller = active;
-    progress = { received: 0, total: node.size };
+    progress = { received: 0, total: version?.size ?? node.size };
     outcome = "";
     failed = false;
     try {
-      const prepared = await prepareCurrentDownload(
-        session,
-        node,
-        active.signal,
-        (next) => {
-          if (controller === active) progress = next;
-        },
-      );
+      const report = (next: DownloadProgress) => {
+        if (controller === active) progress = next;
+      };
+      const prepared = version
+        ? await prepareVersionDownload(session, node, version, active.signal, report)
+        : await prepareCurrentDownload(session, node, active.signal, report);
       if (controller !== active) return;
       offerPreparedDownload(prepared);
       outcome = `Verified ${formatBytes(prepared.size)}; browser save started.`;
@@ -87,7 +90,7 @@
       Cancel
     {:else}
       <DownloadIcon size="14" aria-hidden="true" />
-      Download
+      {label}
     {/if}
   </Button>
   {#if progress}

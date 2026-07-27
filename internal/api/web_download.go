@@ -166,12 +166,15 @@ func registerWebDownload(
 			writeError(w, decodeErr)
 			return
 		}
-		view, err := d.Store.NodeViewByID(r.Context(), request.NodeID)
+		view, err := d.Store.ContentVersionViewByID(
+			r.Context(), request.NodeID, request.VersionID,
+		)
 		if err != nil {
 			writeError(w, webDownloadProblem(err))
 			return
 		}
 		node := view.Node
+		version := view.Version
 		if node.IsDir() {
 			writeError(w, NewError(http.StatusUnprocessableEntity, "not_file",
 				fmt.Sprintf("node %d is a directory", node.ID)))
@@ -183,21 +186,20 @@ func registerWebDownload(
 			return
 		}
 		if node.Revision != request.Revision ||
-			node.CurrentVersionID != request.VersionID ||
-			node.BlobHash != request.BlobHash ||
-			node.Size != request.Size {
+			version.BlobHash != request.BlobHash ||
+			version.Size != request.Size {
 			writeError(w, NewError(http.StatusConflict, "download_selection_stale",
-				"the selected document changed; refresh it before downloading"))
+				"the selected document or version changed; refresh it before downloading"))
 			return
 		}
 
-		stream, streamSize, err := d.Blobs.OpenStreamContext(r.Context(), node.BlobHash)
+		stream, streamSize, err := d.Blobs.OpenStreamContext(r.Context(), version.BlobHash)
 		if err != nil {
 			writeError(w, NewError(http.StatusInternalServerError, "internal",
 				"opening document content failed; run docbank verify"))
 			return
 		}
-		if streamSize != node.Size {
+		if streamSize != version.Size {
 			_ = stream.Close()
 			writeError(w, NewError(http.StatusInternalServerError, "internal",
 				"document size authority is inconsistent; run docbank verify"))
@@ -233,44 +235,44 @@ func registerWebDownload(
 			}
 			return nil
 		}
-		if err := report(webDownloadEvent{Phase: "progress", Total: node.Size}); err != nil {
+		if err := report(webDownloadEvent{Phase: "progress", Total: version.Size}); err != nil {
 			_ = file.Close()
 			_ = stream.Close()
 			return
 		}
 
 		progress := &webDownloadProgressWriter{
-			ctx: r.Context(), dst: file, total: node.Size, report: report,
+			ctx: r.Context(), dst: file, total: version.Size, report: report,
 		}
 		_, copyErr := io.CopyBuffer(progress, stream, make([]byte, 256<<10))
 		closeStreamErr := stream.Close()
 		closeFileErr := file.Close()
 		if err := errors.Join(copyErr, closeStreamErr, closeFileErr); err != nil ||
-			!stream.Verified() || progress.written != node.Size {
+			!stream.Verified() || progress.written != version.Size {
 			_ = report(webDownloadEvent{
-				Phase: "error", Total: node.Size,
+				Phase: "error", Total: version.Size,
 				Detail: "Docbank could not verify the complete document; run docbank verify",
 			})
 			return
 		}
 
 		ticket := webDownloadTicket{
-			path: stagedPath, name: node.Name, mediaType: node.MimeType,
-			versionID: node.CurrentVersionID, blobHash: node.BlobHash, size: node.Size,
+			path: stagedPath, name: node.Name, mediaType: version.MimeType,
+			versionID: version.ID, blobHash: version.BlobHash, size: version.Size,
 		}
 		token, err := downloads.issue(ticket)
 		if err != nil {
 			_ = report(webDownloadEvent{
-				Phase: "error", Total: node.Size,
+				Phase: "error", Total: version.Size,
 				Detail: "Docbank could not publish the verified browser download",
 			})
 			return
 		}
 		keepStaged = true
 		_ = report(webDownloadEvent{
-			Phase: "ready", Received: node.Size, Total: node.Size,
+			Phase: "ready", Received: version.Size, Total: version.Size,
 			URL:  webDownloadFilePath + "?ticket=" + token,
-			Name: node.Name, VersionID: node.CurrentVersionID, BlobHash: node.BlobHash,
+			Name: node.Name, VersionID: version.ID, BlobHash: version.BlobHash,
 		})
 	})
 

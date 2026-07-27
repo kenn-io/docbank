@@ -70,7 +70,7 @@ Four commitments:
   document/version identity inspection, and permanent audited-history timelines
 - A read-only kit-ui web application for virtual-tree browsing, sortable
   document analysis, tag-filtered extracted-text search, complete current authority,
-  verified current-content download, permanent protection and event history,
+  verified current and historical content download, permanent protection and event history,
   immutable versions and provenance, and daemon background-job status
 - Mixed loose and packed content storage with explicit pack, GC, and repack,
   plus an opt-in bounded daemon packing schedule

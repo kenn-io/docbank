@@ -86,6 +86,7 @@ describe("version history drawer", () => {
     expect(screen.getByText(currentVersionID)).toBeTruthy();
     expect(screen.getByText(createdVersionID)).toBeTruthy();
     expect(screen.getByText("Revert source")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Download this version" })).toBeTruthy();
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
       "/api/v1/nodes/42/versions?limit=1000&offset=0",
     );
@@ -97,6 +98,7 @@ describe("version history drawer", () => {
 
     expect(screen.getByText("a".repeat(64))).toBeTruthy();
     expect(screen.queryByText("Revert source")).toBeNull();
+    expect(screen.getByRole("button", { name: "Download this version" })).toBeTruthy();
 
     await fireEvent.click(
       screen.getByRole("button", { name: "Close version history" }),

@@ -21,6 +21,7 @@
     type ContentVersionPage,
     type Node,
   } from "./api.js";
+  import DownloadButton from "./DownloadButton.svelte";
   import { basename, formatBytes, formatDate } from "./format.js";
 
   interface Props {
@@ -221,6 +222,15 @@
               </div>
             {/if}
           </dl>
+          <div class="version-actions">
+            <DownloadButton
+              {session}
+              {node}
+              version={selectedVersion}
+              label="Download this version"
+              {onauthfailure}
+            />
+          </div>
         </Card>
       {:else}
         <EmptyState
@@ -366,6 +376,12 @@
     display: flex;
     align-items: flex-start;
     gap: var(--space-2);
+  }
+
+  .version-actions {
+    margin-top: var(--space-5);
+    padding-top: var(--space-4);
+    border-top: 1px solid var(--border-default);
   }
 
   code {
