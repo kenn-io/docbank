@@ -793,6 +793,8 @@ type BackupRestoreReport struct {
 	ExtrasFiles     int                     `json:"extras_files"`
 	DurationSeconds float64                 `json:"duration_seconds"`
 	Proof           BackupRestoreProof      `json:"proof"`
+	Storage         *StorageStatus          `json:"storage,omitempty"`
+	StorageWarning  string                  `json:"storage_warning,omitempty"`
 }
 
 // BackupRestoreEvent is one line of the backup-restore NDJSON stream. A report

@@ -1422,6 +1422,8 @@ func TestBackupInitCreateListVerifyCLI(t *testing.T) {
 	}
 	assert.Contains(t, out, "restored snapshot "+created.ID)
 	assert.Contains(t, out, "1 packed in 1 pack(s), 0 loose")
+	assert.Contains(t, out, "restored storage: 0 loose file(s), 1 live packed blob(s) in 1 pack(s)")
+	assert.Contains(t, out, "pending repack:")
 	assert.Contains(t, out, "proof: content verified, SQLite integrity ok, manifest stats match")
 
 	jsonRestoreTarget := filepath.Join(t.TempDir(), "json-restore")
@@ -1441,6 +1443,9 @@ func TestBackupInitCreateListVerifyCLI(t *testing.T) {
 	assert.True(t, restoreReport.Proof.ContentVerified)
 	assert.True(t, restoreReport.Proof.SQLiteIntegrity)
 	assert.True(t, restoreReport.Proof.ManifestStats)
+	require.NotNil(t, restoreReport.Storage)
+	assert.Positive(t, restoreReport.Storage.DeadPackedBytes)
+	assert.Empty(t, restoreReport.StorageWarning)
 
 	overwriteTarget := filepath.Join(t.TempDir(), "overwrite-restore")
 	require.NoError(t, os.MkdirAll(overwriteTarget, 0o700))

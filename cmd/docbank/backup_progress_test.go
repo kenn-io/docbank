@@ -111,3 +111,20 @@ func TestBackupProgressModesAndClamping(t *testing.T) {
 	assert.InDelta(t, 0, backupProgressPercent(1, 0), 0)
 	assert.InDelta(t, 100, backupProgressPercent(12, 10), 0)
 }
+
+func TestBackupRestoreReportCallsOutPendingRepack(t *testing.T) {
+	var out bytes.Buffer
+	err := writeBackupRestoreReport(&out, api.BackupRestoreReport{
+		SnapshotID: "snapshot", Target: "/restore", DatabasePath: "/restore/docbank.db",
+		Storage: &api.StorageStatus{
+			LooseBlobs: 8, PackedBlobs: 1863, Packs: 37,
+			DeadPackedBytes: 301394002,
+		},
+	})
+	require.NoError(t, err)
+	assert.Contains(t, out.String(),
+		"restored storage: 8 loose file(s), 1863 live packed blob(s) in 37 pack(s)")
+	assert.Contains(t, out.String(), "pending repack: 287.4 MiB still occupies immutable pack files")
+	assert.Contains(t, out.String(), "docbank storage repack")
+	assert.NotContains(t, out.String(), "reclaimed")
+}
