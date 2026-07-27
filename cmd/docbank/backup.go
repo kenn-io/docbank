@@ -370,9 +370,9 @@ func writeBackupRestoreReport(w io.Writer, report api.BackupRestoreReport) error
 			report.Storage.LooseBlobs, report.Storage.PackedBlobs, report.Storage.Packs))
 		if report.Storage.DeadPackedBytes > 0 {
 			lines = append(lines, fmt.Sprintf(
-				"pending repack: %s still occupies immutable pack files; inspect the restored vault with "+
-					"`docbank storage status` and run `docbank storage repack` when ready\n",
-				formatBackupBytes(report.Storage.DeadPackedBytes)))
+				"pending repack: %s still occupies immutable pack files; set DOCBANK_HOME to %q, "+
+					"then run `docbank storage status` and `docbank storage repack` when ready\n",
+				formatBackupBytes(report.Storage.DeadPackedBytes), report.Target))
 		}
 	}
 	if report.StorageWarning != "" {

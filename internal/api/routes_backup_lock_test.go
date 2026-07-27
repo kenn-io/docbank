@@ -42,6 +42,32 @@ func TestBackupRestoreCoordinatorExcludesRestoreAndDaemon(t *testing.T) {
 	assert.True(t, lockInfo.Mode().IsRegular())
 }
 
+func TestRetainedRestoreTargetCoordinatorHoldsThroughInspection(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "restore-target")
+	require.NoError(t, os.MkdirAll(target, 0o700))
+	root, err := os.OpenRoot(target)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = root.Close() })
+
+	coordinator := newRestoreTargetCoordinator(target, "", "", true)
+	require.NoError(t, coordinator.Prepare(t.Context()))
+	retained := &retainedRestoreTargetCoordinator{
+		restoreTargetCoordinator: coordinator,
+	}
+	kitLease, err := retained.AcquireRestoreTarget(t.Context(), root)
+	require.NoError(t, err)
+	require.NoError(t, kitLease.Release(), "Kit completes before inventory inspection")
+
+	_, err = (home.Layout{Root: target}).TryLockExclusive()
+	require.ErrorIs(t, err, home.ErrVaultLocked,
+		"the restored target must remain exclusive while Docbank inspects it")
+
+	require.NoError(t, retained.Release())
+	daemonLock, err := (home.Layout{Root: target}).TryLockExclusive()
+	require.NoError(t, err, "inspection completion must release target ownership")
+	require.NoError(t, daemonLock.Release())
+}
+
 func TestBackupRestoreCoordinatorPinsTargetAcrossPathSwap(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows prevents renaming the directory while its restore root is open")

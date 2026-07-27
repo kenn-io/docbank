@@ -464,16 +464,19 @@ func restoreBackupSnapshotWith(
 	if err := coordinator.Prepare(ctx); err != nil {
 		return report, err
 	}
+	retainedCoordinator := &retainedRestoreTargetCoordinator{
+		restoreTargetCoordinator: coordinator,
+	}
 	defer func() {
-		if err := coordinator.ReleasePreparation(); err != nil {
+		if err := retainedCoordinator.Release(); err != nil {
 			retErr = errors.Join(retErr, NewError(http.StatusInternalServerError, "backup_failed",
-				fmt.Sprintf("releasing backup restore target preparation: %v", err)))
+				fmt.Sprintf("releasing backup restore target coordination: %v", err)))
 		}
 	}()
 	result, err := run(ctx, repo, version.Version, backup.RestoreOptions{
 		SnapshotID: in.SnapshotID, TargetDir: target, Overwrite: true,
 		Jobs: in.Jobs, ForceUnlock: in.ForceUnlock, Progress: progress,
-		TargetCoordinator: coordinator,
+		TargetCoordinator: retainedCoordinator,
 	})
 	if err != nil {
 		return report, fromBackupError(err)

@@ -125,6 +125,7 @@ func TestBackupRestoreReportCallsOutPendingRepack(t *testing.T) {
 	assert.Contains(t, out.String(),
 		"restored storage: 8 loose file(s), 1863 live packed blob(s) in 37 pack(s)")
 	assert.Contains(t, out.String(), "pending repack: 287.4 MiB still occupies immutable pack files")
+	assert.Contains(t, out.String(), `set DOCBANK_HOME to "/restore"`)
 	assert.Contains(t, out.String(), "docbank storage repack")
 	assert.NotContains(t, out.String(), "reclaimed")
 }
