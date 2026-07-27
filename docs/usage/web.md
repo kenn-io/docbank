@@ -16,8 +16,10 @@ opens its local web application. It is a read-only document browser: navigate
 the virtual tree, sort a folder by document name, size, or modification time,
 search names and extracted text, and inspect the selected document's stable
 node ID, revision, current version ID, SHA-256 identity, exact size, and media
-type. Protected documents also expose their newest-first permanent audit
-timeline and complete event authority. The activity button reports the
+type. The authority card also shows every tag assigned to the selected file or
+folder, while search can require one exact tag. Protected documents expose
+their newest-first permanent audit timeline and complete event authority. The
+activity button reports the
 daemon's supervised extraction, watched-inbox, and automatic-packing jobs.
 Every file also exposes its retained immutable content versions and the stable
 authority behind each one, plus the immutable provenance Docbank recorded when
@@ -51,7 +53,10 @@ The browser selects the first row after loading a folder. A selected directory
 shows its path, revision, and modification time. A selected file additionally
 shows its exact logical size, media type, immutable current-version UUID, and
 SHA-256 content identity. The copy buttons copy the complete UUID or digest
-even when the card wraps it across lines.
+even when the card wraps it across lines. Every selected node also shows its
+assigned tag names. Hovering a tag shows its stable UUID and vault-wide
+assignment count; the bounded tag stack expands in place when a node carries
+more than six.
 
 ## Download verified current content
 
@@ -130,15 +135,23 @@ live document name or verified extracted text. The **Match** column identifies
 which one. Name matches retain their API relevance ranking and appear before
 content-only matches until you choose an explicit column sort.
 
+Use the tag selector in the browser toolbar to require one exact assignment
+for the search. Tag names are displayed for people, while the request is bound
+to the tag's stable UUID so a later rename does not silently change which
+definition was selected. Changing the selector reruns an active search. A text
+query remains required; choosing a tag does not turn the current folder into a
+tag-only listing.
+
 ![The Docbank web application showing extracted-text search results in a synthetic vault.](https://raw.githubusercontent.com/kenn-io/docbank/docs-assets/screenshots/v0.11.0/web-search-results.png)
 
 *Search results display complete virtual paths and keep the same authority
 inspection available from ordinary folder browsing.*
 
-Clear the search box to return to the current directory. The web application
-searches names and extracted text only; use `docbank search` when you need the
-directory, tag, media-type, or modification-time filters, structured JSON, or
-another result limit.
+Clear the search box to return to the current directory. The selector loads at
+most the first 1,000 name-sorted tag definitions and discloses when more exist.
+Use `docbank search` when you need an exhaustive tag catalog, directory,
+media-type, or modification-time filters, structured JSON, or another result
+limit.
 
 ## Read permanent audited history
 
@@ -195,7 +208,7 @@ The launch page carries only the read-only session in a URL fragment. Browsers
 do not include fragments in the initial HTTP request; the application removes
 it from the address bar and holds it only in page memory. Requests use
 `X-Docbank-Web-Session`, which the daemon accepts only for the tree, node,
-search, immutable-version, provenance, audit-status, audit-history,
+search, tag-definition and assignment reads, immutable-version, provenance, audit-status, audit-history,
 background-job, and verified-download preparation used by this interface.
 Download preparation may write only owner-private temporary bytes and issue
 one exact, expiring file ticket; it cannot mutate document authority. The
@@ -233,8 +246,9 @@ children in one metadata snapshot, so a concurrent CLI or agent move cannot
 leave the browser constructing child paths beneath an obsolete name.
 
 The current web application does not download historical content, compare
-versions, import, edit, revert, prune, move, tag, trash, enroll audit scopes,
-run independent audit verification, or run maintenance and backup operations.
+versions, import, edit, revert, prune, move, create or change tags and
+assignments, trash, enroll audit scopes, run independent audit verification,
+or run maintenance and backup operations.
 Use the corresponding CLI or authenticated HTTP endpoint for those workflows.
 Future web workflows will require deliberately expanded browser-session
 permissions rather than inheriting the master API key.

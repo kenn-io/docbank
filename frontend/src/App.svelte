@@ -8,20 +8,24 @@
   import MapPinIcon from "@lucide/svelte/icons/map-pin";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import SearchIcon from "@lucide/svelte/icons/search";
+  import TagIcon from "@lucide/svelte/icons/tag";
   import HistoryIcon from "@lucide/svelte/icons/history";
   import {
     Button,
     Card,
     Chip,
+    ChipStack,
     CopyButton,
     EmptyState,
     IconButton,
     SearchInput,
+    SelectDropdown,
     Spinner,
     Table,
     TableHeaderCell,
     ThemeToggle,
     TopBar,
+    type SelectDropdownOption,
     type SortDirection,
   } from "@kenn-io/kit-ui";
   import AuditHistoryDrawer from "./AuditHistoryDrawer.svelte";
@@ -33,13 +37,17 @@
     APIError,
     auditStatusForNode,
     children,
+    nodeTags,
     revokeSession,
     search,
     statPath,
+    tagByID,
+    tags,
     takeFragmentSession,
     type AuditStatus,
     type Node,
     type SearchHit,
+    type Tag,
   } from "./api.js";
   import { basename, formatBytes, formatDate } from "./format.js";
   import { orderRows, reconcileSearchView, type SortField } from "./rows.js";
@@ -50,7 +58,9 @@
     rows: Row[];
     selectedID?: number;
     activeQuery: string;
+    activeTagID: string;
     searchQuery: string;
+    tagFilterID: string;
     truncated: boolean;
     sortField: SortField;
     sortDirection: SortDirection;
@@ -63,7 +73,18 @@
   let selectedID = $state<number | undefined>();
   let searchQuery = $state("");
   let activeQuery = $state("");
+  let tagFilterID = $state("");
+  let activeTagID = $state("");
+  let tagCatalog = $state<Tag[]>([]);
+  let tagCatalogTotal = $state(0);
+  let tagCatalogListed = $state(0);
+  let tagCatalogError = $state("");
+  let selectedTags = $state<Tag[]>([]);
+  let selectedTagsTotal = $state(0);
+  let selectedTagsLoading = $state(false);
+  let selectedTagsError = $state("");
   let loading = $state(false);
+  let searchPending = $state(false);
   let error = $state("");
   let truncated = $state(false);
   let sortField = $state<SortField>("name");
@@ -77,16 +98,30 @@
   let jobsOpen = $state(false);
   let generation = 0;
   let auditGeneration = 0;
+  let tagGeneration = 0;
+  let tagCatalogGeneration = 0;
 
   const selected = $derived(rows.find((row) => row.node.id === selectedID));
   const membership = $derived(selectedAudit?.membership);
+  const tagOptions = $derived<SelectDropdownOption[]>([
+    { value: "", label: "All tags" },
+    ...tagCatalog.map((tag) => ({
+      value: tag.id,
+      label: `${tag.name} (${tag.assignment_count})`,
+      triggerLabel: tag.name,
+    })),
+  ]);
+  const activeTag = $derived(tagCatalog.find((tag) => tag.id === activeTagID));
   const sortedRows = $derived(
     orderRows(rows, sortField, sortDirection, activeQuery !== ""),
   );
 
   onMount(() => {
     webSession = takeFragmentSession();
-    if (webSession) void loadRoot();
+    if (webSession) {
+      void loadRoot();
+      void loadTagCatalog();
+    }
   });
 
   function handleFailure(cause: unknown): void {
@@ -96,6 +131,11 @@
       versionsOpen = false;
       provenanceOpen = false;
       jobsOpen = false;
+      tagCatalog = [];
+      tagCatalogListed = 0;
+      selectedTags = [];
+      selectedTagsTotal = 0;
+      searchPending = false;
       error = "The browser session expired or was rejected. Run `docbank web` again.";
       return;
     }
@@ -120,6 +160,7 @@
 
   async function loadDirectory(nodeID: number, remember: boolean): Promise<void> {
     const request = ++generation;
+    searchPending = false;
     loading = true;
     error = "";
     try {
@@ -133,7 +174,9 @@
             rows,
             selectedID,
             activeQuery,
+            activeTagID,
             searchQuery,
+            tagFilterID,
             truncated,
             sortField,
             sortDirection,
@@ -149,6 +192,7 @@
       }));
       selectNode(rows[0]?.node.id);
       activeQuery = "";
+      activeTagID = "";
       truncated = page.total > page.items.length;
       sortField = "name";
       sortDirection = "asc";
@@ -174,11 +218,16 @@
       return;
     }
     const request = ++generation;
+    const requestedTagID = tagFilterID;
+    searchPending = true;
     loading = true;
     error = "";
     try {
-      const report = await search(webSession, query);
+      const report = await search(webSession, query, requestedTagID);
       if (request !== generation) return;
+      if ((report.tag_id ?? "") !== requestedTagID) {
+        throw new Error("Search results did not honor the selected tag filter.");
+      }
       rows = report.hits.map((hit: SearchHit) => ({
         node: hit.node,
         path: hit.path,
@@ -187,12 +236,13 @@
       const view = reconcileSearchView(
         rows,
         query,
-        activeQuery,
+        requestedTagID === activeTagID ? activeQuery : "",
         sortField,
         sortDirection,
         selectedID,
       );
       activeQuery = query;
+      activeTagID = requestedTagID;
       truncated = report.truncated;
       sortField = view.sortField;
       sortDirection = view.sortDirection;
@@ -200,12 +250,16 @@
     } catch (cause) {
       if (request === generation) handleFailure(cause);
     } finally {
-      if (request === generation) loading = false;
+      if (request === generation) {
+        searchPending = false;
+        loading = false;
+      }
     }
   }
 
   function goBack(): void {
     generation += 1;
+    searchPending = false;
     const previous = stack.at(-1);
     if (!previous) return;
     directory = previous.directory;
@@ -213,17 +267,25 @@
     selectNode(previous.selectedID);
     stack = stack.slice(0, -1);
     activeQuery = previous.activeQuery;
+    activeTagID = previous.activeTagID;
     searchQuery = previous.searchQuery;
+    tagFilterID = previous.tagFilterID;
     truncated = previous.truncated;
     sortField = previous.sortField;
     sortDirection = previous.sortDirection;
     error = "";
     loading = false;
+    void loadTagCatalog();
   }
 
   function clearSearch(): void {
     searchQuery = "";
-    if (activeQuery && directory) void loadDirectory(directory.id, false);
+    if ((activeQuery || searchPending) && directory) void loadDirectory(directory.id, false);
+  }
+
+  function changeTagFilter(tagID: string): void {
+    tagFilterID = tagID;
+    if (activeQuery || searchPending) void runSearch();
   }
 
   function activate(row: Row): void {
@@ -241,9 +303,84 @@
     }
     selectedID = nodeID;
     selectedAudit = null;
+    selectedTags = [];
+    selectedTagsTotal = 0;
+    selectedTagsError = "";
     auditError = "";
     auditGeneration += 1;
+    tagGeneration += 1;
     if (nodeID !== undefined && webSession) void loadAuditStatus(nodeID);
+    if (nodeID !== undefined && webSession) void loadSelectedTags(nodeID);
+  }
+
+  async function loadTagCatalog(): Promise<void> {
+    const request = ++tagCatalogGeneration;
+    const session = webSession;
+    const selectedTagID = tagFilterID;
+    tagCatalogError = "";
+    try {
+      const page = await tags(session);
+      if (request !== tagCatalogGeneration || session !== webSession) return;
+      let items = page.items;
+      let selectedMissing = false;
+      if (
+        selectedTagID &&
+        selectedTagID === tagFilterID &&
+        !items.some((tag) => tag.id === selectedTagID)
+      ) {
+        if (page.total > page.items.length) {
+          try {
+            const selectedTag = await tagByID(session, selectedTagID);
+            if (request !== tagCatalogGeneration || session !== webSession) return;
+            items = [selectedTag, ...items];
+          } catch (cause) {
+            if (request !== tagCatalogGeneration || session !== webSession) return;
+            if (cause instanceof APIError && cause.status === 404) selectedMissing = true;
+            else throw cause;
+          }
+        } else {
+          selectedMissing = true;
+        }
+      }
+      if (request !== tagCatalogGeneration || session !== webSession) return;
+      tagCatalog = selectedTagID === tagFilterID ? items : page.items;
+      tagCatalogTotal = page.total;
+      tagCatalogListed = page.items.length;
+      if (selectedMissing && tagFilterID === selectedTagID) {
+        const rerunSearch = Boolean(activeQuery || searchPending);
+        tagFilterID = "";
+        activeTagID = "";
+        if (rerunSearch && searchQuery.trim()) void runSearch();
+      }
+    } catch (cause) {
+      if (request !== tagCatalogGeneration || session !== webSession) return;
+      if (cause instanceof APIError && cause.status === 401) {
+        handleFailure(cause);
+        return;
+      }
+      tagCatalogError = cause instanceof Error ? cause.message : String(cause);
+    }
+  }
+
+  async function loadSelectedTags(nodeID: number): Promise<void> {
+    const request = ++tagGeneration;
+    const session = webSession;
+    selectedTagsLoading = true;
+    try {
+      const page = await nodeTags(session, nodeID);
+      if (request !== tagGeneration || session !== webSession || selectedID !== nodeID) return;
+      selectedTags = page.items;
+      selectedTagsTotal = page.total;
+    } catch (cause) {
+      if (request !== tagGeneration || session !== webSession || selectedID !== nodeID) return;
+      if (cause instanceof APIError && cause.status === 401) {
+        handleFailure(cause);
+        return;
+      }
+      selectedTagsError = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      if (request === tagGeneration) selectedTagsLoading = false;
+    }
   }
 
   async function loadAuditStatus(nodeID: number): Promise<void> {
@@ -278,6 +415,8 @@
   async function lock(): Promise<void> {
     generation += 1;
     auditGeneration += 1;
+    tagGeneration += 1;
+    tagCatalogGeneration += 1;
     const session = webSession;
     webSession = "";
     directory = null;
@@ -285,6 +424,14 @@
     stack = [];
     selectedID = undefined;
     selectedAudit = null;
+    selectedTags = [];
+    selectedTagsTotal = 0;
+    selectedTagsLoading = false;
+    selectedTagsError = "";
+    tagCatalog = [];
+    tagCatalogTotal = 0;
+    tagCatalogListed = 0;
+    tagCatalogError = "";
     auditLoading = false;
     auditError = "";
     historyOpen = false;
@@ -292,7 +439,10 @@
     provenanceOpen = false;
     jobsOpen = false;
     activeQuery = "";
+    activeTagID = "";
+    searchPending = false;
     searchQuery = "";
+    tagFilterID = "";
     error = "";
     try {
       await revokeSession(session);
@@ -378,15 +528,31 @@
             </IconButton>
             <div>
               <span>{activeQuery ? "Search results" : "Current folder"}</span>
-              <strong>{activeQuery ? `“${activeQuery}”` : directory?.path ?? "/"}</strong>
+              <strong>
+                {activeQuery
+                  ? `“${activeQuery}”${activeTag ? ` · ${activeTag.name}` : ""}`
+                  : directory?.path ?? "/"}
+              </strong>
             </div>
           </div>
           <div class="toolbar-actions">
+            <SelectDropdown
+              value={tagFilterID}
+              options={tagOptions}
+              title={tagCatalogError
+                ? `Tags unavailable: ${tagCatalogError}`
+                : tagCatalogTotal > tagCatalogListed
+                  ? `Tag filter: showing ${tagCatalogListed} of ${tagCatalogTotal} tags`
+                  : "Filter search by tag"}
+              disabled={tagCatalog.length === 0}
+              onchange={changeTagFilter}
+            />
             <span>{rows.length}{truncated ? "+" : ""} item{rows.length === 1 ? "" : "s"}</span>
             <IconButton
               size="sm"
               ariaLabel="Refresh current view"
               onclick={() => {
+                void loadTagCatalog();
                 if (activeQuery) void runSearch();
                 else if (directory) void loadDirectory(directory.id, false);
               }}
@@ -476,123 +642,175 @@
         {#if selected}
           <Card
             level="raised"
-            eyebrow={selected.node.kind === "dir" ? "FOLDER" : "DOCUMENT AUTHORITY"}
-            title={basename(selected.path)}
-            meta={`id:${selected.node.id}`}
+            padding="sm"
+            ariaLabel={`${selected.node.kind === "dir" ? "Folder" : "Document authority"} for ${basename(selected.path)}`}
           >
-            <dl>
-              <div><dt>Path</dt><dd>{selected.path}</dd></div>
-              <div><dt>Revision</dt><dd>{selected.node.revision}</dd></div>
-              <div><dt>Modified</dt><dd>{formatDate(selected.node.modified_at)}</dd></div>
-              {#if selected.node.kind === "file"}
-                <div><dt>Size</dt><dd>{formatBytes(selected.node.size)} ({selected.node.size} bytes)</dd></div>
-                <div><dt>Media type</dt><dd>{selected.node.mime_type || "application/octet-stream"}</dd></div>
-                <div class="identity">
-                  <dt>Version</dt>
-                  <dd>
-                    <code>{selected.node.current_version_id}</code>
-                    {#if selected.node.current_version_id}
-                      <CopyButton text={selected.node.current_version_id} ariaLabel="Copy version ID" />
-                    {/if}
-                  </dd>
+            <div class="authority-content">
+              <header class="authority-header">
+                <div>
+                  <span>{selected.node.kind === "dir" ? "Folder" : "Document authority"}</span>
+                  <Chip size="xs" tone="muted" uppercase={false}>id:{selected.node.id}</Chip>
                 </div>
-                <div class="identity">
-                  <dt>SHA-256</dt>
-                  <dd>
-                    <code>{selected.node.blob_hash}</code>
-                    {#if selected.node.blob_hash}
-                      <CopyButton text={selected.node.blob_hash} ariaLabel="Copy SHA-256" />
-                    {/if}
-                  </dd>
+                <h2>{basename(selected.path)}</h2>
+              </header>
+              <dl>
+                <div class="wide-fact"><dt>Path</dt><dd>{selected.path}</dd></div>
+                <div><dt>Revision</dt><dd>{selected.node.revision}</dd></div>
+                <div><dt>Modified</dt><dd>{formatDate(selected.node.modified_at)}</dd></div>
+                {#if selected.node.kind === "file"}
+                  <div><dt>Size</dt><dd>{formatBytes(selected.node.size)} ({selected.node.size} bytes)</dd></div>
+                  <div><dt>Media type</dt><dd>{selected.node.mime_type || "application/octet-stream"}</dd></div>
+                  <div class="identity">
+                    <dt>Version</dt>
+                    <dd>
+                      <code>{selected.node.current_version_id}</code>
+                      {#if selected.node.current_version_id}
+                        <CopyButton text={selected.node.current_version_id} ariaLabel="Copy version ID" />
+                      {/if}
+                    </dd>
+                  </div>
+                  <div class="identity">
+                    <dt>SHA-256</dt>
+                    <dd>
+                      <code>{selected.node.blob_hash}</code>
+                      {#if selected.node.blob_hash}
+                        <CopyButton text={selected.node.blob_hash} ariaLabel="Copy SHA-256" />
+                      {/if}
+                    </dd>
+                  </div>
+                {/if}
+              </dl>
+              <div class="node-tags">
+                <div class="node-tags-heading">
+                  <span><TagIcon size="13" aria-hidden="true" /> Tags</span>
+                  {#if selectedTagsLoading}
+                    <Spinner size={13} />
+                  {:else if selectedTagsError}
+                    <Chip size="xs" tone="warning">Unavailable</Chip>
+                  {:else}
+                    <span>
+                      {selectedTags.length < selectedTagsTotal
+                        ? `${selectedTags.length} of ${selectedTagsTotal}`
+                        : selectedTagsTotal}
+                      assigned
+                    </span>
+                  {/if}
                 </div>
-              {/if}
-            </dl>
-            {#if selected.node.kind === "file"}
-              <div class="document-actions">
-                {#key selected.node.id}
-                  <DownloadButton
-                    session={webSession}
-                    node={selected.node}
-                    onauthfailure={handleFailure}
-                  />
-                {/key}
-                <Button
-                  size="sm"
-                  tone="info"
-                  surface="soft"
-                  onclick={() => {
-                    historyOpen = false;
-                    provenanceOpen = false;
-                    jobsOpen = false;
-                    versionsOpen = true;
-                  }}
-                >
-                  <HistoryIcon size="14" aria-hidden="true" />
-                  Version history
-                </Button>
-                <Button
-                  size="sm"
-                  surface="soft"
-                  onclick={() => {
-                    historyOpen = false;
-                    versionsOpen = false;
-                    jobsOpen = false;
-                    provenanceOpen = true;
-                  }}
-                >
-                  <MapPinIcon size="14" aria-hidden="true" />
-                  Provenance
-                </Button>
-              </div>
-            {/if}
-            <div class="audit-protection">
-              <div class="audit-protection-heading">
-                <span>Permanent audit</span>
-                {#if auditLoading}
-                  <Spinner size={14} />
-                {:else if auditError}
-                  <Chip size="xs" tone="warning">Unavailable</Chip>
-                {:else if membership?.protected}
-                  <Chip size="xs" tone="success" dot>Protected</Chip>
-                {:else if selectedAudit?.enabled}
-                  <Chip size="xs" tone="muted">Not audited</Chip>
-                {:else}
-                  <Chip size="xs" tone="muted">Dormant</Chip>
+                {#if selectedTagsError}
+                  <p>{selectedTagsError}</p>
+                {:else if !selectedTagsLoading && selectedTags.length === 0}
+                  <p>No tags are assigned to this node.</p>
+                {:else if selectedTags.length > 0}
+                  <ChipStack
+                    items={selectedTags}
+                    key={(tag) => tag.id}
+                    maxVisible={6}
+                    size="sm"
+                    ariaLabel="Assigned tags"
+                  >
+                    {#snippet chip(tag)}
+                      <Chip
+                        size="sm"
+                        tone="workspace"
+                        uppercase={false}
+                        title={`${tag.assignment_count} total assignment${tag.assignment_count === 1 ? "" : "s"} · ${tag.id}`}
+                      >
+                        {tag.name}
+                      </Chip>
+                    {/snippet}
+                  </ChipStack>
+                  {#if selectedTags.length < selectedTagsTotal}
+                    <p>Showing the first {selectedTags.length} assigned tags.</p>
+                  {/if}
                 {/if}
               </div>
-              {#if auditError}
-                <p>{auditError}</p>
-              {:else if membership?.protected}
-                <p>
-                  Permanently protected by {membership.scope_ids.length}
-                  scope{membership.scope_ids.length === 1 ? "" : "s"}.
-                </p>
-                <Button
-                  size="sm"
-                  tone="info"
-                  surface="soft"
-                  onclick={() => {
-                    jobsOpen = false;
-                    versionsOpen = false;
-                    provenanceOpen = false;
-                    historyOpen = true;
-                  }}
-                >
-                  <HistoryIcon size="14" aria-hidden="true" />
-                  Audit history
+              {#if selected.node.kind === "file"}
+                <div class="document-actions">
+                  {#key selected.node.id}
+                    <DownloadButton
+                      session={webSession}
+                      node={selected.node}
+                      onauthfailure={handleFailure}
+                    />
+                  {/key}
+                  <Button
+                    size="sm"
+                    tone="info"
+                    surface="soft"
+                    onclick={() => {
+                      historyOpen = false;
+                      provenanceOpen = false;
+                      jobsOpen = false;
+                      versionsOpen = true;
+                    }}
+                  >
+                    <HistoryIcon size="14" aria-hidden="true" />
+                    Version history
+                  </Button>
+                  <Button
+                    size="sm"
+                    surface="soft"
+                    onclick={() => {
+                      historyOpen = false;
+                      versionsOpen = false;
+                      jobsOpen = false;
+                      provenanceOpen = true;
+                    }}
+                  >
+                    <MapPinIcon size="14" aria-hidden="true" />
+                    Provenance
+                  </Button>
+                </div>
+              {/if}
+              <div class="audit-protection">
+                <div class="audit-protection-heading">
+                  <span>Permanent audit</span>
+                  {#if auditLoading}
+                    <Spinner size={14} />
+                  {:else if auditError}
+                    <Chip size="xs" tone="warning">Unavailable</Chip>
+                  {:else if membership?.protected}
+                    <Chip size="xs" tone="success" dot>Protected</Chip>
+                  {:else if selectedAudit?.enabled}
+                    <Chip size="xs" tone="muted">Not audited</Chip>
+                  {:else}
+                    <Chip size="xs" tone="muted">Dormant</Chip>
+                  {/if}
+                </div>
+                {#if auditError}
+                  <p>{auditError}</p>
+                {:else if membership?.protected}
+                  <p>
+                    Permanently protected by {membership.scope_ids.length}
+                    scope{membership.scope_ids.length === 1 ? "" : "s"}.
+                  </p>
+                  <Button
+                    size="sm"
+                    tone="info"
+                    surface="soft"
+                    onclick={() => {
+                      jobsOpen = false;
+                      versionsOpen = false;
+                      provenanceOpen = false;
+                      historyOpen = true;
+                    }}
+                  >
+                    <HistoryIcon size="14" aria-hidden="true" />
+                    Audit history
+                  </Button>
+                {:else if selectedAudit?.enabled}
+                  <p>This node is outside every permanent audit scope.</p>
+                {:else if !auditLoading}
+                  <p>No permanent audit scope has been enabled for this vault.</p>
+                {/if}
+              </div>
+              {#if selected.node.kind === "dir"}
+                <Button size="sm" onclick={() => activate(selected)}>
+                  <FolderIcon size="14" aria-hidden="true" />
+                  Open folder
                 </Button>
-              {:else if selectedAudit?.enabled}
-                <p>This node is outside every permanent audit scope.</p>
-              {:else if !auditLoading}
-                <p>Permanent audited history has not been enabled for this vault.</p>
               {/if}
             </div>
-            {#if selected.node.kind === "dir"}
-              <Button size="sm" onclick={() => activate(selected)}>
-                <FolderIcon size="14" aria-hidden="true" />
-                Open folder
-              </Button>
-            {/if}
           </Card>
         {:else}
           <Card level="raised" title="Document authority">

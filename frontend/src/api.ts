@@ -76,6 +76,21 @@ export interface SearchReport {
   hits: SearchHit[];
   limit: number;
   truncated: boolean;
+  tag_id?: string;
+}
+
+export interface Tag {
+  id: string;
+  name: string;
+  revision: number;
+  assignment_count: number;
+}
+
+export interface TagPage {
+  items: Tag[];
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 export interface AuditScopeStatus {
@@ -291,9 +306,30 @@ export async function provenance(
   );
 }
 
-export async function search(session: string, query: string): Promise<SearchReport> {
+export async function search(
+  session: string,
+  query: string,
+  tagID = "",
+): Promise<SearchReport> {
+  const params = new URLSearchParams({ q: query, limit: "1000" });
+  if (tagID) params.set("tag_id", tagID);
   return requestJSON<SearchReport>(
-    `/api/v1/search?q=${encodeURIComponent(query)}&limit=1000`,
+    `/api/v1/search?${params.toString()}`,
+    session,
+  );
+}
+
+export async function tags(session: string): Promise<TagPage> {
+  return requestJSON<TagPage>("/api/v1/tags?limit=1000&offset=0", session);
+}
+
+export async function tagByID(session: string, tagID: string): Promise<Tag> {
+  return requestJSON<Tag>(`/api/v1/tags/${encodeURIComponent(tagID)}`, session);
+}
+
+export async function nodeTags(session: string, nodeID: number): Promise<TagPage> {
+  return requestJSON<TagPage>(
+    `/api/v1/nodes/${nodeID}/tags?limit=1000&offset=0`,
     session,
   );
 }

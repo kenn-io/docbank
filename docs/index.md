@@ -16,7 +16,8 @@ incremental backups can be verified before you rely on them. Work directly
 from the CLI, automate through the authenticated HTTP API, or embed Docbank in
 a Go application. People can browse the same authority in the local web
 application or focused terminal interface; the web application verifies
-current document bytes before handing them to the browser's native save.
+current document bytes before handing them to the browser's native save and
+keeps tag organization visible alongside document authority.
 
 Install the latest release on Linux or macOS:
 

@@ -105,16 +105,16 @@ Key assumptions reviewers MUST account for:
    archive verification or make the served copy diverge from
    scripts/.
 
-12. DOCS DESCRIBE MAIN: user-facing pages document the capabilities of
-   main, which may be newer than the newest tagged release. A
-   capability that is not yet in a tagged release must carry a release
-   qualifier where users would act on it (homepage, setup). Flagging
-   an unqualified unreleased capability is correct; demanding the
-   capability's documentation be removed entirely is not. The public
-   Zensical site is published only after the corresponding release tag
-   exists; do not require source documentation for merged next-release
-   work to be withheld from main merely because that site publication
-   has not happened yet.
+12. DOCS ARE THE NEXT RELEASE SNAPSHOT: user-facing sources on main
+   describe every merged capability directly in present tense, including
+   homepage and install-adjacent copy. The public Zensical site is
+   published only from release tags, so readers cannot encounter that
+   source snapshot through docbank.ai until the corresponding binary is
+   released. Do not demand "next release", source-build-only, or newest-tag
+   qualifiers for merged capabilities; AGENTS.md explicitly forbids them.
+   DO flag release preparation that would tag documentation for behavior
+   absent from the same tag, or documentation that claims behavior absent
+   from main.
 
 Do NOT flag issues that only apply to public-facing, multi-tenant, or
 internet-exposed services. Focus on bugs, logic errors, data corruption
