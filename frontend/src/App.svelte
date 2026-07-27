@@ -275,6 +275,7 @@
     sortDirection = previous.sortDirection;
     error = "";
     loading = false;
+    void loadTagCatalog();
   }
 
   function clearSearch(): void {

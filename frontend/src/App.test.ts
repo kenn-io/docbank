@@ -81,6 +81,8 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
       headers: { "Content-Type": "application/json" },
     });
   let tagCatalogReads = 0;
+  let tagReads = 0;
+  let unfilteredSearches = 0;
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
     if (url === "/api/v1/path?path=%2F") return json(root);
@@ -123,6 +125,16 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
       });
     }
     if (url === "/api/v1/tags/33333333-3333-4333-8333-333333333333") {
+      tagReads += 1;
+      if (tagReads > 1) {
+        return new Response(
+          JSON.stringify({ status: 404, detail: "tag not found" }),
+          {
+            status: 404,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      }
       return json({
         id: "33333333-3333-4333-8333-333333333333",
         name: "tax records",
@@ -130,7 +142,21 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
         assignment_count: 2,
       });
     }
-    if (url === "/api/v1/search?q=quarterly&limit=1000") return unfiltered;
+    if (url === "/api/v1/search?q=quarterly&limit=1000") {
+      unfilteredSearches += 1;
+      if (unfilteredSearches === 1) return unfiltered;
+      return json({
+        hits: [
+          {
+            node: productReport,
+            path: "/Reports/quarterly-product-report.txt",
+            match: "name",
+          },
+        ],
+        limit: 1000,
+        truncated: false,
+      });
+    }
     if (
       url ===
       "/api/v1/search?q=quarterly&limit=1000&tag_id=33333333-3333-4333-8333-333333333333"
@@ -160,6 +186,7 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
   render(App);
   const input = await screen.findByRole("searchbox", { name: "Search documents" });
   await screen.findByRole("combobox", { name: "Filter search by tag: All tags" });
+  await screen.findByText("This folder is empty");
   await fireEvent.input(input, { target: { value: "quarterly" } });
   await fireEvent.submit(input.closest("form")!);
   await waitFor(() =>
@@ -221,4 +248,22 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
   expect(
     fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/api/v1/search?")),
   ).toHaveLength(searchCalls);
+
+  const back = screen.getByRole("button", { name: "Back to previous directory" });
+  expect(back.hasAttribute("disabled")).toBe(false);
+  await fireEvent.click(back);
+  await waitFor(() => expect(tagCatalogReads).toBe(3));
+  expect(screen.getByRole("combobox").getAttribute("aria-label")).toContain("tax records");
+  await waitFor(() => expect(tagReads).toBe(2));
+  await waitFor(() => expect(unfilteredSearches).toBe(2));
+  expect(
+    await screen.findByRole("cell", { name: "/Reports/quarterly-product-report.txt" }),
+  ).toBeTruthy();
+  expect(screen.getByText("“quarterly”")).toBeTruthy();
+  expect(screen.queryByText("“quarterly” · tax records")).toBeNull();
+  expect(
+    screen.getByRole("combobox", {
+      name: "Tag filter: showing 1 of 1001 tags: All tags",
+    }),
+  ).toBeTruthy();
 });
