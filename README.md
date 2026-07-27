@@ -34,3 +34,9 @@ from Docbank commit `b646d56` at 1440 × 950 in dark mode. It shows the actual
 daemon-served web application backed by a temporary synthetic vault containing
 one immutable origin fact. The vault, document name, path, contents, hashes,
 identifiers, source kind, and source reference are synthetic.
+
+`screenshots/web-verified-download/web-verified-download.png` was captured on
+2026-07-26 from Docbank commit `6896b86` at 1440 × 950 in dark mode. It shows
+the actual daemon-served web application after a selected synthetic report was
+terminally verified and handed to the browser's native download. The vault,
+document name, path, contents, hash, and identifiers are synthetic.
