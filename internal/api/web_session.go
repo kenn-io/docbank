@@ -72,6 +72,11 @@ func webSessionRequestAllowed(method, path string) bool {
 		"/api/v1/tags":
 		return true
 	}
+	const tagPrefix = "/api/v1/tags/"
+	if after, ok := strings.CutPrefix(path, tagPrefix); ok {
+		tagID := after
+		return tagID != "" && !strings.Contains(tagID, "/")
+	}
 	const prefix = "/api/v1/nodes/"
 	if !strings.HasPrefix(path, prefix) {
 		return false

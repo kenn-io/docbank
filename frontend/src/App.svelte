@@ -41,6 +41,7 @@
     revokeSession,
     search,
     statPath,
+    tagByID,
     tags,
     takeFragmentSession,
     type AuditStatus,
@@ -76,12 +77,14 @@
   let activeTagID = $state("");
   let tagCatalog = $state<Tag[]>([]);
   let tagCatalogTotal = $state(0);
+  let tagCatalogListed = $state(0);
   let tagCatalogError = $state("");
   let selectedTags = $state<Tag[]>([]);
   let selectedTagsTotal = $state(0);
   let selectedTagsLoading = $state(false);
   let selectedTagsError = $state("");
   let loading = $state(false);
+  let searchPending = $state(false);
   let error = $state("");
   let truncated = $state(false);
   let sortField = $state<SortField>("name");
@@ -96,6 +99,7 @@
   let generation = 0;
   let auditGeneration = 0;
   let tagGeneration = 0;
+  let tagCatalogGeneration = 0;
 
   const selected = $derived(rows.find((row) => row.node.id === selectedID));
   const membership = $derived(selectedAudit?.membership);
@@ -128,8 +132,10 @@
       provenanceOpen = false;
       jobsOpen = false;
       tagCatalog = [];
+      tagCatalogListed = 0;
       selectedTags = [];
       selectedTagsTotal = 0;
+      searchPending = false;
       error = "The browser session expired or was rejected. Run `docbank web` again.";
       return;
     }
@@ -154,6 +160,7 @@
 
   async function loadDirectory(nodeID: number, remember: boolean): Promise<void> {
     const request = ++generation;
+    searchPending = false;
     loading = true;
     error = "";
     try {
@@ -212,6 +219,7 @@
     }
     const request = ++generation;
     const requestedTagID = tagFilterID;
+    searchPending = true;
     loading = true;
     error = "";
     try {
@@ -242,12 +250,16 @@
     } catch (cause) {
       if (request === generation) handleFailure(cause);
     } finally {
-      if (request === generation) loading = false;
+      if (request === generation) {
+        searchPending = false;
+        loading = false;
+      }
     }
   }
 
   function goBack(): void {
     generation += 1;
+    searchPending = false;
     const previous = stack.at(-1);
     if (!previous) return;
     directory = previous.directory;
@@ -267,12 +279,12 @@
 
   function clearSearch(): void {
     searchQuery = "";
-    if (activeQuery && directory) void loadDirectory(directory.id, false);
+    if ((activeQuery || searchPending) && directory) void loadDirectory(directory.id, false);
   }
 
   function changeTagFilter(tagID: string): void {
     tagFilterID = tagID;
-    if (searchQuery.trim()) void runSearch();
+    if (activeQuery || searchPending) void runSearch();
   }
 
   function activate(row: Row): void {
@@ -301,19 +313,46 @@
   }
 
   async function loadTagCatalog(): Promise<void> {
+    const request = ++tagCatalogGeneration;
     const session = webSession;
+    const selectedTagID = tagFilterID;
     tagCatalogError = "";
     try {
       const page = await tags(session);
-      if (session !== webSession) return;
-      tagCatalog = page.items;
+      if (request !== tagCatalogGeneration || session !== webSession) return;
+      let items = page.items;
+      let selectedMissing = false;
+      if (
+        selectedTagID &&
+        selectedTagID === tagFilterID &&
+        !items.some((tag) => tag.id === selectedTagID)
+      ) {
+        if (page.total > page.items.length) {
+          try {
+            const selectedTag = await tagByID(session, selectedTagID);
+            if (request !== tagCatalogGeneration || session !== webSession) return;
+            items = [selectedTag, ...items];
+          } catch (cause) {
+            if (request !== tagCatalogGeneration || session !== webSession) return;
+            if (cause instanceof APIError && cause.status === 404) selectedMissing = true;
+            else throw cause;
+          }
+        } else {
+          selectedMissing = true;
+        }
+      }
+      if (request !== tagCatalogGeneration || session !== webSession) return;
+      tagCatalog = selectedTagID === tagFilterID ? items : page.items;
       tagCatalogTotal = page.total;
-      if (tagFilterID && !page.items.some((tag) => tag.id === tagFilterID)) {
+      tagCatalogListed = page.items.length;
+      if (selectedMissing && tagFilterID === selectedTagID) {
+        const rerunSearch = Boolean(activeQuery || searchPending);
         tagFilterID = "";
         activeTagID = "";
+        if (rerunSearch && searchQuery.trim()) void runSearch();
       }
     } catch (cause) {
-      if (session !== webSession) return;
+      if (request !== tagCatalogGeneration || session !== webSession) return;
       if (cause instanceof APIError && cause.status === 401) {
         handleFailure(cause);
         return;
@@ -376,6 +415,7 @@
     generation += 1;
     auditGeneration += 1;
     tagGeneration += 1;
+    tagCatalogGeneration += 1;
     const session = webSession;
     webSession = "";
     directory = null;
@@ -389,6 +429,7 @@
     selectedTagsError = "";
     tagCatalog = [];
     tagCatalogTotal = 0;
+    tagCatalogListed = 0;
     tagCatalogError = "";
     auditLoading = false;
     auditError = "";
@@ -398,6 +439,7 @@
     jobsOpen = false;
     activeQuery = "";
     activeTagID = "";
+    searchPending = false;
     searchQuery = "";
     tagFilterID = "";
     error = "";
@@ -498,8 +540,8 @@
               options={tagOptions}
               title={tagCatalogError
                 ? `Tags unavailable: ${tagCatalogError}`
-                : tagCatalogTotal > tagCatalog.length
-                  ? `Tag filter: showing ${tagCatalog.length} of ${tagCatalogTotal} tags`
+                : tagCatalogTotal > tagCatalogListed
+                  ? `Tag filter: showing ${tagCatalogListed} of ${tagCatalogTotal} tags`
                   : "Filter search by tag"}
               disabled={tagCatalog.length === 0}
               onchange={changeTagFilter}

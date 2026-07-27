@@ -64,6 +64,17 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
     current_version_id: "22222222-2222-4222-8222-222222222222",
     blob_hash: "b".repeat(64),
   };
+  const archiveDirectory = {
+    id: 5,
+    parent_id: 1,
+    name: "Archive",
+    kind: "dir",
+    size: 0,
+    revision: 1,
+    created_at: "2026-07-27T12:00:00Z",
+    modified_at: "2026-07-27T12:00:00Z",
+    path: "/Archive",
+  };
   const json = (value: unknown) =>
     new Response(JSON.stringify(value), {
       status: 200,
@@ -76,20 +87,47 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
     if (url === "/api/v1/nodes/1/children?limit=1000&offset=0") {
       return json({ directory: root, items: [], total: 0, limit: 1000, offset: 0 });
     }
+    if (url === "/api/v1/nodes/5/children?limit=1000&offset=0") {
+      return json({
+        directory: archiveDirectory,
+        items: [],
+        total: 0,
+        limit: 1000,
+        offset: 0,
+      });
+    }
     if (url === "/api/v1/tags?limit=1000&offset=0") {
       tagCatalogReads += 1;
       return json({
-        items: [
-          {
-            id: "33333333-3333-4333-8333-333333333333",
-            name: tagCatalogReads === 1 ? "tax" : "tax records",
-            revision: 1,
-            assignment_count: tagCatalogReads === 1 ? 1 : 2,
-          },
-        ],
-        total: 1,
+        items:
+          tagCatalogReads === 1
+            ? [
+                {
+                  id: "33333333-3333-4333-8333-333333333333",
+                  name: "tax",
+                  revision: 1,
+                  assignment_count: 1,
+                },
+              ]
+            : [
+                {
+                  id: "44444444-4444-4444-8444-444444444444",
+                  name: "reviewed",
+                  revision: 1,
+                  assignment_count: 7,
+                },
+              ],
+        total: tagCatalogReads === 1 ? 1 : 1001,
         limit: 1000,
         offset: 0,
+      });
+    }
+    if (url === "/api/v1/tags/33333333-3333-4333-8333-333333333333") {
+      return json({
+        id: "33333333-3333-4333-8333-333333333333",
+        name: "tax records",
+        revision: 2,
+        assignment_count: 2,
       });
     }
     if (url === "/api/v1/search?q=quarterly&limit=1000") return unfiltered;
@@ -98,16 +136,22 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
       "/api/v1/search?q=quarterly&limit=1000&tag_id=33333333-3333-4333-8333-333333333333"
     ) {
       return json({
-        hits: [{ node: taxReport, path: "/Reports/quarterly-tax-report.txt", match: "name" }],
+        hits: [
+          { node: taxReport, path: "/Reports/quarterly-tax-report.txt", match: "name" },
+          { node: archiveDirectory, path: "/Archive", match: "name" },
+        ],
         limit: 1000,
         truncated: false,
         tag_id: "33333333-3333-4333-8333-333333333333",
       });
     }
-    if (url === "/api/v1/audit/status?node_id=3") {
+    if (url === "/api/v1/audit/status?node_id=3" || url === "/api/v1/audit/status?node_id=5") {
       return json({ enabled: false, scopes: [] });
     }
-    if (url === "/api/v1/nodes/3/tags?limit=1000&offset=0") {
+    if (
+      url === "/api/v1/nodes/3/tags?limit=1000&offset=0" ||
+      url === "/api/v1/nodes/5/tags?limit=1000&offset=0"
+    ) {
       return json({ items: [], total: 0, limit: 1000, offset: 0 });
     }
     throw new Error(`unexpected request: ${url}`);
@@ -150,8 +194,31 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
   );
 
   await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
-  expect(
-    await screen.findByRole("combobox", { name: "Filter search by tag: tax records" }),
-  ).toBeTruthy();
+  await waitFor(() =>
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toContain(
+      "/api/v1/tags/33333333-3333-4333-8333-333333333333",
+    ),
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("combobox").getAttribute("aria-label")).toBe(
+      "Tag filter: showing 1 of 1001 tags: tax records",
+    ),
+  );
   expect(screen.getByText("“quarterly” · tax records")).toBeTruthy();
+
+  await fireEvent.dblClick(screen.getByRole("cell", { name: "/Archive" }));
+  expect(await screen.findByText("This folder is empty")).toBeTruthy();
+  const searchCalls = fetchMock.mock.calls.filter(([url]) =>
+    String(url).startsWith("/api/v1/search?"),
+  ).length;
+  await fireEvent.click(
+    screen.getByRole("combobox", {
+      name: "Tag filter: showing 1 of 1001 tags: tax records",
+    }),
+  );
+  await fireEvent.click(screen.getByRole("option", { name: "All tags" }));
+  expect(screen.getByText("Current folder")).toBeTruthy();
+  expect(
+    fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/api/v1/search?")),
+  ).toHaveLength(searchCalls);
 });

@@ -323,6 +323,10 @@ export async function tags(session: string): Promise<TagPage> {
   return requestJSON<TagPage>("/api/v1/tags?limit=1000&offset=0", session);
 }
 
+export async function tagByID(session: string, tagID: string): Promise<Tag> {
+  return requestJSON<Tag>(`/api/v1/tags/${encodeURIComponent(tagID)}`, session);
+}
+
 export async function nodeTags(session: string, nodeID: number): Promise<TagPage> {
   return requestJSON<TagPage>(
     `/api/v1/nodes/${nodeID}/tags?limit=1000&offset=0`,
