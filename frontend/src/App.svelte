@@ -593,159 +593,167 @@
         {#if selected}
           <Card
             level="raised"
-            eyebrow={selected.node.kind === "dir" ? "FOLDER" : "DOCUMENT AUTHORITY"}
-            title={basename(selected.path)}
-            meta={`id:${selected.node.id}`}
+            padding="sm"
+            ariaLabel={`${selected.node.kind === "dir" ? "Folder" : "Document authority"} for ${basename(selected.path)}`}
           >
-            <dl>
-              <div><dt>Path</dt><dd>{selected.path}</dd></div>
-              <div><dt>Revision</dt><dd>{selected.node.revision}</dd></div>
-              <div><dt>Modified</dt><dd>{formatDate(selected.node.modified_at)}</dd></div>
+            <div class="authority-content">
+              <header class="authority-header">
+                <div>
+                  <span>{selected.node.kind === "dir" ? "Folder" : "Document authority"}</span>
+                  <Chip size="xs" tone="muted" uppercase={false}>id:{selected.node.id}</Chip>
+                </div>
+                <h2>{basename(selected.path)}</h2>
+              </header>
+              <dl>
+                <div class="wide-fact"><dt>Path</dt><dd>{selected.path}</dd></div>
+                <div><dt>Revision</dt><dd>{selected.node.revision}</dd></div>
+                <div><dt>Modified</dt><dd>{formatDate(selected.node.modified_at)}</dd></div>
+                {#if selected.node.kind === "file"}
+                  <div><dt>Size</dt><dd>{formatBytes(selected.node.size)} ({selected.node.size} bytes)</dd></div>
+                  <div><dt>Media type</dt><dd>{selected.node.mime_type || "application/octet-stream"}</dd></div>
+                  <div class="identity">
+                    <dt>Version</dt>
+                    <dd>
+                      <code>{selected.node.current_version_id}</code>
+                      {#if selected.node.current_version_id}
+                        <CopyButton text={selected.node.current_version_id} ariaLabel="Copy version ID" />
+                      {/if}
+                    </dd>
+                  </div>
+                  <div class="identity">
+                    <dt>SHA-256</dt>
+                    <dd>
+                      <code>{selected.node.blob_hash}</code>
+                      {#if selected.node.blob_hash}
+                        <CopyButton text={selected.node.blob_hash} ariaLabel="Copy SHA-256" />
+                      {/if}
+                    </dd>
+                  </div>
+                {/if}
+              </dl>
+              <div class="node-tags">
+                <div class="node-tags-heading">
+                  <span><TagIcon size="13" aria-hidden="true" /> Tags</span>
+                  {#if selectedTagsLoading}
+                    <Spinner size={13} />
+                  {:else if selectedTagsError}
+                    <Chip size="xs" tone="warning">Unavailable</Chip>
+                  {:else}
+                    <span>{selectedTags.length} assigned</span>
+                  {/if}
+                </div>
+                {#if selectedTagsError}
+                  <p>{selectedTagsError}</p>
+                {:else if !selectedTagsLoading && selectedTags.length === 0}
+                  <p>No tags are assigned to this node.</p>
+                {:else if selectedTags.length > 0}
+                  <ChipStack
+                    items={selectedTags}
+                    key={(tag) => tag.id}
+                    maxVisible={6}
+                    size="sm"
+                    ariaLabel="Assigned tags"
+                  >
+                    {#snippet chip(tag)}
+                      <Chip
+                        size="sm"
+                        tone="workspace"
+                        uppercase={false}
+                        title={`${tag.assignment_count} total assignment${tag.assignment_count === 1 ? "" : "s"} · ${tag.id}`}
+                      >
+                        {tag.name}
+                      </Chip>
+                    {/snippet}
+                  </ChipStack>
+                {/if}
+              </div>
               {#if selected.node.kind === "file"}
-                <div><dt>Size</dt><dd>{formatBytes(selected.node.size)} ({selected.node.size} bytes)</dd></div>
-                <div><dt>Media type</dt><dd>{selected.node.mime_type || "application/octet-stream"}</dd></div>
-                <div class="identity">
-                  <dt>Version</dt>
-                  <dd>
-                    <code>{selected.node.current_version_id}</code>
-                    {#if selected.node.current_version_id}
-                      <CopyButton text={selected.node.current_version_id} ariaLabel="Copy version ID" />
-                    {/if}
-                  </dd>
-                </div>
-                <div class="identity">
-                  <dt>SHA-256</dt>
-                  <dd>
-                    <code>{selected.node.blob_hash}</code>
-                    {#if selected.node.blob_hash}
-                      <CopyButton text={selected.node.blob_hash} ariaLabel="Copy SHA-256" />
-                    {/if}
-                  </dd>
+                <div class="document-actions">
+                  {#key selected.node.id}
+                    <DownloadButton
+                      session={webSession}
+                      node={selected.node}
+                      onauthfailure={handleFailure}
+                    />
+                  {/key}
+                  <Button
+                    size="sm"
+                    tone="info"
+                    surface="soft"
+                    onclick={() => {
+                      historyOpen = false;
+                      provenanceOpen = false;
+                      jobsOpen = false;
+                      versionsOpen = true;
+                    }}
+                  >
+                    <HistoryIcon size="14" aria-hidden="true" />
+                    Version history
+                  </Button>
+                  <Button
+                    size="sm"
+                    surface="soft"
+                    onclick={() => {
+                      historyOpen = false;
+                      versionsOpen = false;
+                      jobsOpen = false;
+                      provenanceOpen = true;
+                    }}
+                  >
+                    <MapPinIcon size="14" aria-hidden="true" />
+                    Provenance
+                  </Button>
                 </div>
               {/if}
-            </dl>
-            <div class="node-tags">
-              <div class="node-tags-heading">
-                <span><TagIcon size="13" aria-hidden="true" /> Tags</span>
-                {#if selectedTagsLoading}
-                  <Spinner size={13} />
-                {:else if selectedTagsError}
-                  <Chip size="xs" tone="warning">Unavailable</Chip>
-                {:else}
-                  <span>{selectedTags.length}</span>
-                {/if}
-              </div>
-              {#if selectedTagsError}
-                <p>{selectedTagsError}</p>
-              {:else if !selectedTagsLoading && selectedTags.length === 0}
-                <p>No tags are assigned to this node.</p>
-              {:else if selectedTags.length > 0}
-                <ChipStack
-                  items={selectedTags}
-                  key={(tag) => tag.id}
-                  maxVisible={6}
-                  size="sm"
-                  ariaLabel="Assigned tags"
-                >
-                  {#snippet chip(tag)}
-                    <Chip
-                      size="sm"
-                      tone="workspace"
-                      uppercase={false}
-                      title={`${tag.assignment_count} total assignment${tag.assignment_count === 1 ? "" : "s"} · ${tag.id}`}
-                    >
-                      {tag.name}
-                    </Chip>
-                  {/snippet}
-                </ChipStack>
-              {/if}
-            </div>
-            {#if selected.node.kind === "file"}
-              <div class="document-actions">
-                {#key selected.node.id}
-                  <DownloadButton
-                    session={webSession}
-                    node={selected.node}
-                    onauthfailure={handleFailure}
-                  />
-                {/key}
-                <Button
-                  size="sm"
-                  tone="info"
-                  surface="soft"
-                  onclick={() => {
-                    historyOpen = false;
-                    provenanceOpen = false;
-                    jobsOpen = false;
-                    versionsOpen = true;
-                  }}
-                >
-                  <HistoryIcon size="14" aria-hidden="true" />
-                  Version history
-                </Button>
-                <Button
-                  size="sm"
-                  surface="soft"
-                  onclick={() => {
-                    historyOpen = false;
-                    versionsOpen = false;
-                    jobsOpen = false;
-                    provenanceOpen = true;
-                  }}
-                >
-                  <MapPinIcon size="14" aria-hidden="true" />
-                  Provenance
-                </Button>
-              </div>
-            {/if}
-            <div class="audit-protection">
-              <div class="audit-protection-heading">
-                <span>Permanent audit</span>
-                {#if auditLoading}
-                  <Spinner size={14} />
-                {:else if auditError}
-                  <Chip size="xs" tone="warning">Unavailable</Chip>
+              <div class="audit-protection">
+                <div class="audit-protection-heading">
+                  <span>Permanent audit</span>
+                  {#if auditLoading}
+                    <Spinner size={14} />
+                  {:else if auditError}
+                    <Chip size="xs" tone="warning">Unavailable</Chip>
+                  {:else if membership?.protected}
+                    <Chip size="xs" tone="success" dot>Protected</Chip>
+                  {:else if selectedAudit?.enabled}
+                    <Chip size="xs" tone="muted">Not audited</Chip>
+                  {:else}
+                    <Chip size="xs" tone="muted">Dormant</Chip>
+                  {/if}
+                </div>
+                {#if auditError}
+                  <p>{auditError}</p>
                 {:else if membership?.protected}
-                  <Chip size="xs" tone="success" dot>Protected</Chip>
+                  <p>
+                    Permanently protected by {membership.scope_ids.length}
+                    scope{membership.scope_ids.length === 1 ? "" : "s"}.
+                  </p>
+                  <Button
+                    size="sm"
+                    tone="info"
+                    surface="soft"
+                    onclick={() => {
+                      jobsOpen = false;
+                      versionsOpen = false;
+                      provenanceOpen = false;
+                      historyOpen = true;
+                    }}
+                  >
+                    <HistoryIcon size="14" aria-hidden="true" />
+                    Audit history
+                  </Button>
                 {:else if selectedAudit?.enabled}
-                  <Chip size="xs" tone="muted">Not audited</Chip>
-                {:else}
-                  <Chip size="xs" tone="muted">Dormant</Chip>
+                  <p>This node is outside every permanent audit scope.</p>
+                {:else if !auditLoading}
+                  <p>No permanent audit scope has been enabled for this vault.</p>
                 {/if}
               </div>
-              {#if auditError}
-                <p>{auditError}</p>
-              {:else if membership?.protected}
-                <p>
-                  Permanently protected by {membership.scope_ids.length}
-                  scope{membership.scope_ids.length === 1 ? "" : "s"}.
-                </p>
-                <Button
-                  size="sm"
-                  tone="info"
-                  surface="soft"
-                  onclick={() => {
-                    jobsOpen = false;
-                    versionsOpen = false;
-                    provenanceOpen = false;
-                    historyOpen = true;
-                  }}
-                >
-                  <HistoryIcon size="14" aria-hidden="true" />
-                  Audit history
+              {#if selected.node.kind === "dir"}
+                <Button size="sm" onclick={() => activate(selected)}>
+                  <FolderIcon size="14" aria-hidden="true" />
+                  Open folder
                 </Button>
-              {:else if selectedAudit?.enabled}
-                <p>This node is outside every permanent audit scope.</p>
-              {:else if !auditLoading}
-                <p>Permanent audited history has not been enabled for this vault.</p>
               {/if}
             </div>
-            {#if selected.node.kind === "dir"}
-              <Button size="sm" onclick={() => activate(selected)}>
-                <FolderIcon size="14" aria-hidden="true" />
-                Open folder
-              </Button>
-            {/if}
           </Card>
         {:else}
           <Card level="raised" title="Document authority">
