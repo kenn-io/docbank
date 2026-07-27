@@ -444,7 +444,7 @@ func restoreBackupSnapshot(
 			*backup.RestoreResult, error,
 		) {
 			return backupapp.RestoreWithDriver(ctx, repo, version, driver, opts)
-		})
+		}, driver)
 }
 
 type backupRestoreRunner func(
@@ -459,25 +459,41 @@ func restoreBackupSnapshotWith(
 	coordinator restoreTargetCoordinator,
 	progress func(backup.ProgressEvent),
 	run backupRestoreRunner,
+	driver docsqlite.Driver,
 ) (report BackupRestoreReport, retErr error) {
 	if err := coordinator.Prepare(ctx); err != nil {
 		return report, err
 	}
+	retainedCoordinator := &retainedRestoreTargetCoordinator{
+		restoreTargetCoordinator: coordinator,
+	}
 	defer func() {
-		if err := coordinator.ReleasePreparation(); err != nil {
+		if err := retainedCoordinator.Release(); err != nil {
 			retErr = errors.Join(retErr, NewError(http.StatusInternalServerError, "backup_failed",
-				fmt.Sprintf("releasing backup restore target preparation: %v", err)))
+				fmt.Sprintf("releasing backup restore target coordination: %v", err)))
 		}
 	}()
 	result, err := run(ctx, repo, version.Version, backup.RestoreOptions{
 		SnapshotID: in.SnapshotID, TargetDir: target, Overwrite: true,
 		Jobs: in.Jobs, ForceUnlock: in.ForceUnlock, Progress: progress,
-		TargetCoordinator: coordinator,
+		TargetCoordinator: retainedCoordinator,
 	})
 	if err != nil {
 		return report, fromBackupError(err)
 	}
-	return backupRestoreReport(target, result), nil
+	stats, inspectErr := backupapp.InspectRestoredStorage(
+		context.WithoutCancel(ctx), target, result.DBPath, driver)
+	if inspectErr != nil {
+		return backupRestoreReport(target, result, nil,
+			"restored physical storage inventory unavailable: "+inspectErr.Error()), nil
+	}
+	storage := StorageStatus{
+		LooseBlobs: stats.LooseBlobs, LooseBytes: stats.LooseBytes,
+		Packs: stats.Packs, PackStoredBytes: stats.PackStoredBytes,
+		PackedBlobs: stats.PackedBlobs, PackedRawBytes: stats.PackedRawBytes,
+		PackedStoredBytes: stats.PackedStoredBytes, DeadPackedBytes: stats.DeadPackedBytes,
+	}
+	return backupRestoreReport(target, result, &storage, ""), nil
 }
 
 func restoreTargetHasPayload(entries []os.DirEntry) bool {
@@ -489,7 +505,12 @@ func restoreTargetHasPayload(entries []os.DirEntry) bool {
 	return false
 }
 
-func backupRestoreReport(target string, result *backup.RestoreResult) BackupRestoreReport {
+func backupRestoreReport(
+	target string,
+	result *backup.RestoreResult,
+	storage *StorageStatus,
+	storageWarning string,
+) BackupRestoreReport {
 	fallbackCounts := make(map[string]int)
 	for _, fallback := range result.PackFallbacks {
 		fallbackCounts[string(fallback.Reason)]++
@@ -512,6 +533,7 @@ func backupRestoreReport(target string, result *backup.RestoreResult) BackupRest
 		LooseBlobs: result.LooseAttachmentBlobs, Packs: result.AttachmentPacks,
 		Fallbacks: fallbacks, ExtrasFiles: result.ExtrasFiles,
 		DurationSeconds: result.Duration.Seconds(),
+		Storage:         storage, StorageWarning: storageWarning,
 		Proof: BackupRestoreProof{
 			ContentVerified: true,
 			SQLiteIntegrity: result.DatabaseIntegrityChecked,

@@ -20,6 +20,36 @@ type restoreTargetCoordinator interface {
 	ReleasePreparation() error
 }
 
+type retainedRestoreTargetCoordinator struct {
+	restoreTargetCoordinator
+
+	targetLease backup.RestoreTargetLease
+}
+
+func (c *retainedRestoreTargetCoordinator) AcquireRestoreTarget(
+	ctx context.Context, root *os.Root,
+) (backup.RestoreTargetLease, error) {
+	lease, err := c.restoreTargetCoordinator.AcquireRestoreTarget(ctx, root)
+	if err != nil {
+		return nil, fmt.Errorf("acquiring retained restore target: %w", err)
+	}
+	c.targetLease = lease
+	return retainedRestoreTargetLease{}, nil
+}
+
+func (c *retainedRestoreTargetCoordinator) Release() error {
+	var err error
+	if c.targetLease != nil {
+		err = c.targetLease.Release()
+		c.targetLease = nil
+	}
+	return errors.Join(err, c.ReleasePreparation())
+}
+
+type retainedRestoreTargetLease struct{}
+
+func (retainedRestoreTargetLease) Release() error { return nil }
+
 func newRestoreTargetCoordinator(
 	target, repoRoot, vaultRoot string, overwrite bool,
 ) restoreTargetCoordinator {

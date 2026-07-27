@@ -10,6 +10,11 @@ import (
 )
 
 func TestBackupRestoreReportGroupsFallbacksDeterministically(t *testing.T) {
+	storage := &StorageStatus{
+		LooseBlobs: 2, LooseBytes: 21, Packs: 1, PackStoredBytes: 55,
+		PackedBlobs: 1, PackedRawBytes: 13, PackedStoredBytes: 11,
+		DeadPackedBytes: 44,
+	}
 	report := backupRestoreReport("/restore", &backup.RestoreResult{
 		SnapshotID: "snapshot", DBPath: "/restore/docbank.db", DBBytes: 12,
 		AttachmentBlobs: 3, AttachmentBytes: 34, PackedAttachmentBlobs: 1,
@@ -20,7 +25,7 @@ func TestBackupRestoreReportGroupsFallbacksDeterministically(t *testing.T) {
 			{Reason: packstore.FallbackBlobLimit},
 			{Reason: packstore.FallbackPackPublication},
 		},
-	})
+	}, storage, "")
 	assert.Equal(t, []BackupRestoreFallback{
 		{Reason: "blob_limit", Count: 1},
 		{Reason: "pack_publication", Count: 2},
@@ -29,4 +34,6 @@ func TestBackupRestoreReportGroupsFallbacksDeterministically(t *testing.T) {
 	assert.True(t, report.Proof.ContentVerified)
 	assert.True(t, report.Proof.SQLiteIntegrity)
 	assert.True(t, report.Proof.ManifestStats)
+	assert.Equal(t, storage, report.Storage)
+	assert.Empty(t, report.StorageWarning)
 }

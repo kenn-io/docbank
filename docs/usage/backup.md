@@ -181,9 +181,25 @@ Interactive restore shows metadata, document, extras, SQLite integrity, and
 manifest-statistics progress as separate stages.
 `--json` suppresses progress and returns one report containing physical layout
 counts and explicit `content_verified`, `sqlite_integrity`, and
-`manifest_stats` proof fields. A successful report means the target is a
-complete vault, but it does not automatically replace or start it. Inspect it
-under its own home first:
+`manifest_stats` proof fields. The terminal report also inspects the restored
+vault's physical inventory while its target-tree coordination is still held.
+It reports loose files, live packed blobs, pack count, and any logically dead
+packed bytes that still occupy immutable pack files. Those bytes have not been
+reclaimed. Inspect and repack the restored target explicitly, rather than the
+currently running source vault:
+
+```bash
+DOCBANK_HOME=~/Restores/docbank-test docbank storage status
+DOCBANK_HOME=~/Restores/docbank-test docbank storage repack
+```
+
+This reporting never performs maintenance automatically. If the proved
+restore succeeded but this ancillary inventory cannot be read, the report
+remains successful and carries a `storage_warning` instead of claiming that
+the committed restore failed.
+
+A successful report means the target is a complete vault, but it does not
+automatically replace or start it. Inspect it under its own home first:
 
 ```bash
 DOCBANK_HOME=~/Restores/docbank-test docbank verify

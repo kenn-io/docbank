@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/packstore"
@@ -80,6 +82,46 @@ func RestoreWithDriver(
 		return nil, fmt.Errorf("backupapp: restoring snapshot: %w", err)
 	}
 	return result, nil
+}
+
+// InspectRestoredStorage reads the physical inventory of a proved restore
+// while its caller still owns target-tree coordination. It does not run
+// maintenance or change blob authority.
+func InspectRestoredStorage(
+	ctx context.Context,
+	target, databasePath string,
+	driver docsqlite.Driver,
+) (stats blob.StorageStats, retErr error) {
+	info, err := os.Lstat(databasePath)
+	if err != nil {
+		return stats, fmt.Errorf("checking restored database: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return stats, fmt.Errorf("restored database is not a regular file: %s", databasePath)
+	}
+	metadata, err := store.Open(databasePath, driver)
+	if err != nil {
+		return stats, fmt.Errorf("opening restored metadata: %w", err)
+	}
+	defer func() {
+		if err := metadata.Close(); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("closing restored metadata: %w", err))
+		}
+	}()
+	physical, err := blob.New(store.NewPackCatalog(metadata), filepath.Join(target, "blobs"))
+	if err != nil {
+		return stats, fmt.Errorf("opening restored blob storage: %w", err)
+	}
+	defer func() {
+		if err := physical.Close(); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("closing restored blob storage: %w", err))
+		}
+	}()
+	stats, err = physical.Stats(ctx)
+	if err != nil {
+		return stats, fmt.Errorf("reading restored physical storage: %w", err)
+	}
+	return stats, nil
 }
 
 func (t *packedRestoreTarget) Limits() packstore.Limits { return t.limits }

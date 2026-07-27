@@ -364,6 +364,20 @@ func writeBackupRestoreReport(w io.Writer, report api.BackupRestoreReport) error
 	if report.ExtrasFiles > 0 {
 		lines = append(lines, fmt.Sprintf("extras: %d file(s)\n", report.ExtrasFiles))
 	}
+	if report.Storage != nil {
+		lines = append(lines, fmt.Sprintf(
+			"restored storage: %d loose file(s), %d live packed blob(s) in %d pack(s)\n",
+			report.Storage.LooseBlobs, report.Storage.PackedBlobs, report.Storage.Packs))
+		if report.Storage.DeadPackedBytes > 0 {
+			lines = append(lines, fmt.Sprintf(
+				"pending repack: %s still occupies immutable pack files; set DOCBANK_HOME to %q, "+
+					"then run `docbank storage status` and `docbank storage repack` when ready\n",
+				formatBackupBytes(report.Storage.DeadPackedBytes), report.Target))
+		}
+	}
+	if report.StorageWarning != "" {
+		lines = append(lines, "warning: "+report.StorageWarning+"\n")
+	}
 	lines = append(lines,
 		"proof: content verified, SQLite integrity ok, manifest stats match\n",
 		fmt.Sprintf("duration: %.1fs\n", report.DurationSeconds))
