@@ -46,3 +46,9 @@ commit `3c5ae56` at 1440 × 950 in dark mode. It shows the actual daemon-served
 web application after a two-result text search was narrowed to the one
 synthetic report carrying the selected stable tag. The vault, document names,
 paths, contents, hashes, tags, and identifiers are synthetic.
+
+`screenshots/web-retained-version-download/web-retained-version-download.png`
+was captured on 2026-07-27 from Docbank commit `1dd146c` at 1440 × 950 in dark
+mode. It shows the actual daemon-served web application with an older retained
+version selected and ready for verified download. The vault, document name,
+path, contents, hashes, and identifiers are synthetic.
