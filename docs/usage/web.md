@@ -199,8 +199,9 @@ lifetime and disappear when that daemon restarts.
 Choose the storage button in the top bar to see how the current vault occupies
 managed blob storage. The summary separates four related quantities:
 
-- **Loose content** is authoritative content stored as individual raw or zstd
-  files.
+- **Loose content** is the physical inventory of individual raw or zstd
+  files. It can include untracked files or redundant loose copies of packed
+  objects, so it is not an authority count.
 - **Live packed content** is authoritative content stored in immutable pack
   files. The view shows both its logical raw size and its stored size.
 - **Pack files** is the complete stored payload of every pack, including live

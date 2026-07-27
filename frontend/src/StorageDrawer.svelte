@@ -33,9 +33,6 @@
   let error = $state("");
   let generation = 0;
 
-  const authorizedObjects = $derived(
-    status ? status.loose_blobs + status.packed_blobs : 0,
-  );
   const storedPayload = $derived(
     status ? status.loose_bytes + status.pack_stored_bytes : 0,
   );
@@ -87,7 +84,8 @@
         <strong>Loose and packed content</strong>
         <small>
           {#if status}
-            {authorizedObjects} authorized object{authorizedObjects === 1 ? "" : "s"}
+            {status.loose_blobs} loose file{status.loose_blobs === 1 ? "" : "s"}
+            · {status.packed_blobs} live packed object{status.packed_blobs === 1 ? "" : "s"}
             · {formatBytes(storedPayload)} stored payload
           {:else}
             Current daemon inventory
@@ -129,8 +127,9 @@
         >
           {#snippet actions()}<HardDriveIcon size="18" aria-hidden="true" />{/snippet}
           <p>
-            {status.loose_blobs} authorized object{status.loose_blobs === 1 ? "" : "s"}
-            stored as individual raw or zstd files.
+            {status.loose_blobs} physical file{status.loose_blobs === 1 ? "" : "s"}
+            stored as raw or zstd. This inventory can include untracked or
+            redundant loose files.
           </p>
         </Card>
 

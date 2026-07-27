@@ -148,8 +148,8 @@ history. Every selected node exposes its tag assignments, and text search can
 require one stable tag identity. Protected nodes also expose their permanent newest-first audit timeline
 and the complete stable identity and before/after state of every event. The
 portal also reports current and terminal daemon background jobs and separates
-loose content, live packed content, complete pack payload, and logically dead
-payload awaiting explicit repack. Future slices
+physical loose files, live packed content, complete pack payload, and
+logically dead payload awaiting explicit repack. Future slices
 cover import, tag mutation and broader metadata, version comparison, trash,
 storage maintenance, and backup.
 Application-neutral tree, timeline, diff, evidence, and job components should

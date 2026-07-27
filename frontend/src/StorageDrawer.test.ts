@@ -39,6 +39,9 @@ describe("storage status drawer", () => {
 
     expect(await screen.findByText(/live packed content/i)).toBeTruthy();
     expect(screen.getByText(/pending repack/i)).toBeTruthy();
+    expect(screen.getByText(/3 loose files/)).toBeTruthy();
+    expect(screen.getByText(/12 live packed objects/)).toBeTruthy();
+    expect(screen.queryByText(/authorized objects/i)).toBeNull();
     expect(screen.getByText("20% of packs")).toBeTruthy();
     expect(screen.getByText(/Dead packed bytes are not reclaimed space/)).toBeTruthy();
 
