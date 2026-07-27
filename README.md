@@ -54,8 +54,8 @@ version selected and ready for verified download. The vault, document name,
 path, contents, hashes, and identifiers are synthetic.
 
 `screenshots/web-storage-status/web-storage-status.png` was captured on
-2026-07-27 from Docbank commit `c398337` at 1440 × 950 in dark mode. It shows
-the actual daemon-served web application reporting loose content, live packed
-content, and logically dead packed payload awaiting repack. The vault,
+2026-07-27 from Docbank commit `1f090fe` at 1440 × 950 in dark mode. It shows
+the actual daemon-served web application reporting physical loose files, live
+packed content, and logically dead packed payload awaiting repack. The vault,
 document names, paths, contents, hashes, identifiers, and storage history are
 synthetic.
