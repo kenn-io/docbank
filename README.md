@@ -40,3 +40,9 @@ identifiers, source kind, and source reference are synthetic.
 the actual daemon-served web application after a selected synthetic report was
 terminally verified and handed to the browser's native download. The vault,
 document name, path, contents, hash, and identifiers are synthetic.
+
+`screenshots/web-tags/web-tags.png` was captured on 2026-07-27 from Docbank
+commit `6def22a` at 1440 × 950 in dark mode. It shows the actual daemon-served
+web application after a two-result text search was narrowed to the one
+synthetic report carrying the selected stable tag. The vault, document names,
+paths, contents, hashes, tags, and identifiers are synthetic.
