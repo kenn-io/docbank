@@ -105,4 +105,52 @@ describe("version history drawer", () => {
     );
     expect(close).toHaveBeenCalledOnce();
   });
+
+  it("aborts a retained-version download when the selection changes", async () => {
+    const versions = [
+      version(currentVersionID, 3, "content_replace", "c"),
+      version(createdVersionID, 1, "content_create", "a"),
+    ];
+    let downloadSignal: AbortSignal | undefined;
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            items: versions,
+            total: versions.length,
+            limit: 1000,
+            offset: 0,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockImplementationOnce((_input, init) => {
+        downloadSignal = init?.signal ?? undefined;
+        return new Promise((_resolve, reject) => {
+          downloadSignal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("aborted", "AbortError")),
+            { once: true },
+          );
+        });
+      });
+
+    render(VersionHistoryDrawer, {
+      session: "short-lived",
+      node,
+      path: "/Reports/quarterly-report.txt",
+      onclose: vi.fn(),
+      onauthfailure: vi.fn(),
+    });
+
+    expect(await screen.findByText("2 retained versions")).toBeTruthy();
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Download this version" }),
+    );
+    await vi.waitFor(() => expect(downloadSignal).toBeTruthy());
+
+    await fireEvent.click(screen.getByText("Created").closest("button")!);
+
+    await vi.waitFor(() => expect(downloadSignal?.aborted).toBe(true));
+  });
 });

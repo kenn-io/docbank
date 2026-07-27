@@ -223,13 +223,15 @@
             {/if}
           </dl>
           <div class="version-actions">
-            <DownloadButton
-              {session}
-              {node}
-              version={selectedVersion}
-              label="Download this version"
-              {onauthfailure}
-            />
+            {#key selectedVersion.id}
+              <DownloadButton
+                {session}
+                {node}
+                version={selectedVersion}
+                label="Download this version"
+                {onauthfailure}
+              />
+            {/key}
           </div>
         </Card>
       {:else}
