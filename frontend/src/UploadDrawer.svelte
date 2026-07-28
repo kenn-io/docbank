@@ -16,6 +16,7 @@
   import {
     hashFile,
     type TransferProgress,
+    UploadChannelError,
     type UploadTransport,
   } from "./upload.js";
   import { formatBytes } from "./format.js";
@@ -43,12 +44,15 @@
   interface Props {
     channel: UploadTransport;
     directory: Node;
+    disabledReason?: string;
     onclose: () => void;
     oncomplete: () => void | Promise<void>;
     onauthfailure: (cause: unknown) => void;
   }
 
-  let { channel, directory, onclose, oncomplete, onauthfailure }: Props = $props();
+  let {
+    channel, directory, disabledReason = "", onclose, oncomplete, onauthfailure,
+  }: Props = $props();
   let input: HTMLInputElement;
   let items = $state<UploadItem[]>([]);
   let running = $state(false);
@@ -129,14 +133,16 @@
           hash,
           progress: { processed: 0, total: queued.file.size },
         });
-        transmissionStarted = true;
-        refreshNeeded = true;
         const receipt = await channel.uploadFile(
           directory.id,
           queued.file,
           hash,
           active.signal,
-          (progress) => progressFor(queued.id, progress),
+          (progress) => {
+            transmissionStarted = true;
+            refreshNeeded = true;
+            progressFor(queued.id, progress);
+          },
         );
         updateItem(queued.id, {
           state: receipt.status,
@@ -165,10 +171,19 @@
           onauthfailure(cause);
           break;
         }
+        if (transmissionStarted && !(cause instanceof APIError)) {
+          updateItem(queued.id, {
+            state: "unconfirmed",
+            error:
+              "Upload outcome is unconfirmed. Refreshing the folder; retry this file after running `docbank web` again.",
+          });
+          break;
+        }
         updateItem(queued.id, {
           state: "failed",
           error: cause instanceof Error ? cause.message : String(cause),
         });
+        if (cause instanceof UploadChannelError) break;
       }
     }
 
@@ -245,6 +260,9 @@
       over the upload channel proved by this daemon; a broken channel is never
       reconnected.
     </p>
+    {#if disabledReason}
+      <p class="channel-error" role="alert">{disabledReason}</p>
+    {/if}
 
     <input
       bind:this={input}
@@ -256,7 +274,12 @@
     />
 
     <div class="controls">
-      <Button size="sm" surface="soft" disabled={running} onclick={chooseFiles}>
+      <Button
+        size="sm"
+        surface="soft"
+        disabled={running || Boolean(disabledReason)}
+        onclick={chooseFiles}
+      >
         <FileUpIcon size="14" aria-hidden="true" />
         Choose files
       </Button>
@@ -265,7 +288,7 @@
           <XIcon size="14" aria-hidden="true" />
           Cancel current upload
         </Button>
-      {:else if pending > 0}
+      {:else if pending > 0 && !disabledReason}
         <Button size="sm" tone="info" surface="solid" onclick={() => void start()}>
           <FileUpIcon size="14" aria-hidden="true" />
           Upload {pending} file{pending === 1 ? "" : "s"}
@@ -303,7 +326,7 @@
                     ? "danger"
                     : item.state === "added" || item.state === "skipped"
                       ? "success"
-                      : item.state === "cancelled"
+                      : item.state === "cancelled" || item.state === "unconfirmed"
                         ? "warning"
                         : "neutral"}
                   uppercase={false}
@@ -446,6 +469,16 @@
     color: var(--text-secondary);
     font-size: var(--font-size-sm);
     line-height: 1.5;
+  }
+
+  .channel-error {
+    padding: var(--space-3);
+    border: 1px solid color-mix(in srgb, var(--color-danger, #dc2626) 45%, transparent);
+    border-radius: var(--radius-md);
+    margin: 0;
+    background: color-mix(in srgb, var(--color-danger, #dc2626) 10%, transparent);
+    color: var(--text-primary);
+    font-size: var(--font-size-sm);
   }
 
   .controls {

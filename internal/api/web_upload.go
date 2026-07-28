@@ -28,6 +28,7 @@ const (
 	webUploadProofDomain = "docbank-web-upload-v1\x00"
 	webUploadChunkBytes  = 1 << 20
 	webUploadAuthTimeout = 10 * time.Second
+	webUploadInactivity  = 30 * time.Second
 )
 
 var (
@@ -89,18 +90,18 @@ func registerWebUpload(
 			return // Accept writes its own handshake error.
 		}
 		conn.SetReadLimit(webUploadChunkBytes + 4096)
-		handleWebUploadConnection(conn, d, g, sessions)
+		handleWebUploadConnection(r.Context(), conn, d, g, sessions)
 	})
 }
 
 func handleWebUploadConnection(
+	ctx context.Context,
 	conn *websocket.Conn,
 	d Deps,
 	g *gate,
 	sessions *webSessionRegistry,
 ) {
 	defer func() { _ = conn.CloseNow() }()
-	ctx := context.Background()
 
 	var auth webUploadMessage
 	authCtx, cancelAuth := context.WithTimeout(ctx, webUploadAuthTimeout)
@@ -139,7 +140,10 @@ func handleWebUploadConnection(
 			continue
 		}
 
-		reader := &webUploadReader{ctx: ctx, conn: conn, requestID: request.requestID}
+		reader := &webUploadReader{
+			ctx: ctx, conn: conn, requestID: request.requestID,
+			inactivity: webUploadInactivity,
+		}
 		var result ingest.UploadResult
 		ready := false
 		uploadErr := g.mutate(func() error {
@@ -156,6 +160,7 @@ func handleWebUploadConnection(
 			result, err = executeWebUpload(ctx, d, request, reader)
 			return err
 		})
+		reader.close()
 		if uploadErr != nil {
 			problem := uploadError(uploadErr)
 			if errors.Is(uploadErr, errWebUploadCanceled) {
@@ -258,37 +263,46 @@ func executeWebUpload(
 }
 
 type webUploadReader struct {
-	ctx       context.Context
-	conn      *websocket.Conn
-	requestID string
-	current   io.Reader
-	ended     bool
+	ctx        context.Context
+	conn       *websocket.Conn
+	requestID  string
+	current    io.Reader
+	cancel     context.CancelFunc
+	inactivity time.Duration
+	ended      bool
 }
 
 func (r *webUploadReader) Read(p []byte) (int, error) {
 	for {
 		if r.current != nil {
 			n, err := r.current.Read(p)
-			if errors.Is(err, io.EOF) {
+			if err != nil {
 				r.current = nil
-				if n > 0 {
+				r.cancel()
+				r.cancel = nil
+				if errors.Is(err, io.EOF) && n > 0 {
 					return n, nil
 				}
-				continue
+				if errors.Is(err, io.EOF) {
+					continue
+				}
 			}
 			return n, err
 		}
-		messageType, next, err := r.conn.Reader(r.ctx)
+		messageType, next, cancel, err := r.nextFrame()
 		if err != nil {
-			return 0, fmt.Errorf("reading browser upload frame: %w", err)
+			return 0, err
 		}
 		switch messageType {
 		case websocket.MessageBinary:
 			r.current = next
+			r.cancel = cancel
 		case websocket.MessageText:
 			var terminal webUploadMessage
 			decoder := json.NewDecoder(io.LimitReader(next, 4096))
-			if err := decoder.Decode(&terminal); err != nil || terminal.RequestID != r.requestID {
+			err := decoder.Decode(&terminal)
+			cancel()
+			if err != nil || terminal.RequestID != r.requestID {
 				return 0, errWebUploadProtocol
 			}
 			r.ended = true
@@ -301,9 +315,30 @@ func (r *webUploadReader) Read(p []byte) (int, error) {
 				return 0, errWebUploadProtocol
 			}
 		default:
+			cancel()
 			return 0, errWebUploadProtocol
 		}
 	}
+}
+
+func (r *webUploadReader) nextFrame() (
+	websocket.MessageType, io.Reader, context.CancelFunc, error,
+) {
+	readCtx, cancel := context.WithTimeout(r.ctx, r.inactivity)
+	messageType, next, err := r.conn.Reader(readCtx)
+	if err != nil {
+		cancel()
+		return 0, nil, nil, fmt.Errorf("waiting for browser upload frame: %w", err)
+	}
+	return messageType, next, cancel, nil
+}
+
+func (r *webUploadReader) close() {
+	if r.cancel != nil {
+		r.cancel()
+		r.cancel = nil
+	}
+	r.current = nil
 }
 
 func writeWebUploadProblem(

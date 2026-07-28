@@ -143,9 +143,10 @@
       void loadRoot();
       void loadTagCatalog();
       const channel = new VerifiedUploadChannel(session, undefined, () => {
-        if (uploadChannel === channel) uploadChannel = null;
-        uploadChannelError =
-          "The verified upload channel ended. Run `docbank web` again before selecting files.";
+        if (uploadChannel === channel) {
+          uploadChannelError =
+            "The verified upload channel ended. Run `docbank web` again before selecting more files.";
+        }
       });
       void channel.connect().then(
         () => {
@@ -714,7 +715,8 @@
                 : directory?.path
                   ? `Upload files to ${directory.path}`
                   : "Upload files"}
-              disabled={!directory || loading || Boolean(activeQuery) || tagBrowse || !uploadChannel}
+              disabled={!directory || loading || Boolean(activeQuery) || tagBrowse ||
+                !uploadChannel || Boolean(uploadChannelError)}
               onclick={() => {
                 if (!directory || activeQuery || tagBrowse) return;
                 historyOpen = false;
@@ -1080,6 +1082,7 @@
       <UploadDrawer
         channel={uploadChannel}
         directory={uploadTarget}
+        disabledReason={uploadChannelError}
         onclose={() => (uploadTarget = null)}
         oncomplete={async () => {
           if (uploadTarget) await loadDirectory(uploadTarget.id, false);

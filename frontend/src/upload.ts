@@ -112,6 +112,10 @@ export interface UploadTransport {
   ): Promise<UploadReceipt>;
 }
 
+export class UploadChannelError extends Error {
+  override readonly name = "UploadChannelError";
+}
+
 type SocketFactory = (url: string) => WebSocket;
 
 function base64URLBytes(value: string): Uint8Array {
@@ -206,6 +210,7 @@ export class VerifiedUploadChannel implements UploadTransport {
     this.busy = true;
     const requestID = crypto.randomUUID();
     const name = file.name.normalize("NFC");
+    let readyForBytes = false;
     try {
       this.send({
         type: "begin",
@@ -220,6 +225,7 @@ export class VerifiedUploadChannel implements UploadTransport {
       this.requireMessage(ready, requestID);
       this.throwProblem(ready);
       if (ready.type !== "ready") throw this.protocolError();
+      readyForBytes = true;
       onprogress({ processed: 0, total: file.size });
       for (let offset = 0; offset < file.size; offset += hashChunkBytes) {
         if (signal.aborted) {
@@ -242,9 +248,16 @@ export class VerifiedUploadChannel implements UploadTransport {
         validateUploadReceipt(terminal.receipt, parentID, name, expectedHash, file.size);
       } catch (cause) {
         this.fail();
-        throw cause;
+        throw new UploadChannelError(
+          cause instanceof Error ? cause.message : String(cause),
+        );
       }
       return terminal.receipt;
+    } catch (cause) {
+      if (readyForBytes && !(cause instanceof APIError) && !this.unusable) {
+        this.fail();
+      }
+      throw cause;
     } finally {
       this.busy = false;
     }
@@ -413,11 +426,13 @@ export class VerifiedUploadChannel implements UploadTransport {
 
   private protocolError(): Error {
     this.fail();
-    return new Error("The verified upload channel returned an invalid response.");
+    return new UploadChannelError(
+      "The verified upload channel returned an invalid response.",
+    );
   }
 
   private channelError(): Error {
-    return new Error(
+    return new UploadChannelError(
       "The verified upload channel ended. Run `docbank web` again before selecting files.",
     );
   }

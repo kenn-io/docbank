@@ -103,8 +103,10 @@ describe("upload documents drawer", () => {
         _file: File,
         _expectedHash: string,
         signal: AbortSignal,
+        onprogress: (progress: upload.TransferProgress) => void,
       ) =>
         await new Promise<never>((_resolve, reject) => {
+          onprogress({ processed: 0, total: 9 });
           signal.addEventListener(
             "abort",
             () =>
@@ -201,5 +203,57 @@ describe("upload documents drawer", () => {
     expect(screen.getByText("Cancelled before upload began.")).toBeTruthy();
     expect(channel.uploadFile).not.toHaveBeenCalled();
     expect(complete).not.toHaveBeenCalled();
+  });
+
+  it("keeps a disconnected upload visible as unconfirmed and stops the queue", async () => {
+    vi.spyOn(upload, "hashFile").mockResolvedValue("a".repeat(64));
+    const channel: upload.UploadTransport = {
+      uploadFile: vi.fn(
+        async (
+          _parentID: number,
+          _file: File,
+          _expectedHash: string,
+          _signal: AbortSignal,
+          onprogress: (progress: upload.TransferProgress) => void,
+        ) => {
+          onprogress({ processed: 0, total: 9 });
+          throw new upload.UploadChannelError("verified channel ended");
+        },
+      ),
+    };
+    const complete = vi.fn();
+
+    render(UploadDrawer, {
+      channel,
+      directory: {
+        id: 3,
+        name: "Reports",
+        path: "/Reports",
+        kind: "dir",
+        size: 0,
+        revision: 1,
+        created_at: "2026-07-28T00:00:00Z",
+        modified_at: "2026-07-28T00:00:00Z",
+      },
+      onclose: vi.fn(),
+      oncomplete: complete,
+      onauthfailure: vi.fn(),
+    });
+    await fireEvent.change(screen.getByLabelText("Choose local files"), {
+      target: {
+        files: [
+          new File(["quarterly"], "quarterly.txt"),
+          new File(["appendix"], "appendix.txt"),
+        ],
+      },
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Upload 2 files" }),
+    );
+
+    expect(await screen.findByText("Unconfirmed")).toBeTruthy();
+    expect(screen.getByText(/retry this file after running/)).toBeTruthy();
+    expect(channel.uploadFile).toHaveBeenCalledOnce();
+    await waitFor(() => expect(complete).toHaveBeenCalledOnce());
   });
 });
