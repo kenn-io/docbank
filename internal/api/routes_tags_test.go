@@ -84,6 +84,15 @@ func TestTagLifecycleHTTP(t *testing.T) {
 	assert.Equal(t, node.ID, nodes.Items[0].Node.ID)
 	assert.Equal(t, "/records", nodes.Items[0].Path)
 
+	resp, body = get(t, ts,
+		"/api/v1/tags/"+tag.ID+"/nodes?limit=10&offset=0&live_only=true", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &nodes))
+	assert.Equal(t, 1, nodes.Total)
+	assert.Equal(t, 0, nodes.OmittedTrashed)
+	require.Len(t, nodes.Items, 1)
+	assert.Equal(t, "/records", nodes.Items[0].Path)
+
 	resp, body = do(t, ts, http.MethodPatch, "/api/v1/tags/"+tag.ID, nil,
 		map[string]any{"name": "tax records"})
 	assert.Equal(t, http.StatusPreconditionRequired, resp.StatusCode)

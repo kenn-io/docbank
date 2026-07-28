@@ -192,10 +192,11 @@ type TaggedNode struct {
 
 // TaggedNodePage is one bounded stable-ID-sorted reverse tag lookup.
 type TaggedNodePage struct {
-	Items  []TaggedNode `json:"items"`
-	Total  int          `json:"total"`
-	Limit  int          `json:"limit"`
-	Offset int          `json:"offset"`
+	Items          []TaggedNode `json:"items"`
+	Total          int          `json:"total"`
+	Limit          int          `json:"limit"`
+	Offset         int          `json:"offset"`
+	OmittedTrashed int          `json:"omitted_trashed,omitempty" minimum:"0"`
 }
 
 // TagAssignmentReceipt records whether an idempotent assignment request

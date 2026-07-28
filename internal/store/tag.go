@@ -499,11 +499,30 @@ func (s *Store) NodeTags(ctx context.Context, nodeID int64, limit, offset int) (
 
 // TaggedNodes lists one ID-sorted page of nodes carrying tagID.
 func (s *Store) TaggedNodes(ctx context.Context, tagID string, limit, offset int) ([]TaggedNode, int, error) {
+	nodes, total, _, err := s.taggedNodes(ctx, tagID, limit, offset, false)
+	return nodes, total, err
+}
+
+// LiveTaggedNodes lists one ID-sorted page of live nodes carrying tagID. The
+// omitted count covers trashed assignments in the same read snapshot.
+func (s *Store) LiveTaggedNodes(
+	ctx context.Context, tagID string, limit, offset int,
+) ([]TaggedNode, int, int, error) {
+	return s.taggedNodes(ctx, tagID, limit, offset, true)
+}
+
+func (s *Store) taggedNodes(
+	ctx context.Context, tagID string, limit, offset int, liveOnly bool,
+) ([]TaggedNode, int, int, error) {
 	if err := validateTagPage(limit, offset); err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	if err := validateUUIDv4(tagID); err != nil {
-		return nil, 0, fmt.Errorf("tag %q: %w", tagID, ErrNotFound)
+		return nil, 0, 0, fmt.Errorf("tag %q: %w", tagID, ErrNotFound)
+	}
+	pageFilter := ""
+	if liveOnly {
+		pageFilter = " WHERE trashed_at IS NULL"
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		WITH RECURSIVE target AS (SELECT id FROM tags WHERE id = ?),
@@ -518,8 +537,12 @@ func (s *Store) TaggedNodes(ctx context.Context, tagID string, limit, offset int
 		  WHERE nt.tag_id = ?
 		),
 		page AS (
-		  SELECT * FROM matching ORDER BY id LIMIT ? OFFSET ?
-		), totals AS (SELECT COUNT(*) AS total FROM matching),
+		  SELECT * FROM matching`+pageFilter+` ORDER BY id LIMIT ? OFFSET ?
+		), totals AS (
+		  SELECT COUNT(*) AS total,
+		         COALESCE(SUM(CASE WHEN trashed_at IS NULL THEN 1 ELSE 0 END), 0) AS live_total
+		  FROM matching
+		),
 		ancestry(node_id, id, parent_id, path) AS (
 		  SELECT id, id, parent_id, CASE WHEN name = '' THEN '/' ELSE name END
 		  FROM page WHERE trashed_at IS NULL
@@ -529,7 +552,7 @@ func (s *Store) TaggedNodes(ctx context.Context, tagID string, limit, offset int
 		  FROM nodes n JOIN ancestry a ON n.id = a.parent_id
 		  WHERE n.trashed_at IS NULL
 		), paths AS (SELECT node_id, path FROM ancestry WHERE parent_id IS NULL)
-		SELECT totals.total, COALESCE(page.id, 0), page.parent_id,
+		SELECT totals.total, totals.live_total, COALESCE(page.id, 0), page.parent_id,
 		       COALESCE(page.name, ''), COALESCE(page.kind, ''),
 		       COALESCE(page.current_version_id, ''), COALESCE(page.blob_hash, ''),
 		       COALESCE(page.size, 0), COALESCE(page.mime_type, ''),
@@ -540,33 +563,36 @@ func (s *Store) TaggedNodes(ctx context.Context, tagID string, limit, offset int
 		LEFT JOIN paths ON paths.node_id = page.id ORDER BY page.id`,
 		tagID, tagID, limit, offset)
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing nodes for tag %s: %w", tagID, err)
+		return nil, 0, 0, fmt.Errorf("listing nodes for tag %s: %w", tagID, err)
 	}
 	defer func() { _ = rows.Close() }()
 	var nodes []TaggedNode
-	var total int
+	var assignmentTotal, liveTotal int
 	found := false
 	for rows.Next() {
 		found = true
 		var tagged TaggedNode
-		if err := rows.Scan(&total, &tagged.Node.ID, &tagged.Node.ParentID,
+		if err := rows.Scan(&assignmentTotal, &liveTotal, &tagged.Node.ID, &tagged.Node.ParentID,
 			&tagged.Node.Name, &tagged.Node.Kind, &tagged.Node.CurrentVersionID,
 			&tagged.Node.BlobHash, &tagged.Node.Size, &tagged.Node.MimeType,
 			&tagged.Node.Revision, &tagged.Node.CreatedAt, &tagged.Node.ModifiedAt,
 			&tagged.Node.TrashedAt, &tagged.Path); err != nil {
-			return nil, 0, fmt.Errorf("listing nodes for tag %s: scanning page: %w", tagID, err)
+			return nil, 0, 0, fmt.Errorf("listing nodes for tag %s: scanning page: %w", tagID, err)
 		}
 		if tagged.Node.ID != 0 {
 			nodes = append(nodes, tagged)
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("listing nodes for tag %s: %w", tagID, err)
+		return nil, 0, 0, fmt.Errorf("listing nodes for tag %s: %w", tagID, err)
 	}
 	if !found {
-		return nil, 0, fmt.Errorf("tag %q: %w", tagID, ErrNotFound)
+		return nil, 0, 0, fmt.Errorf("tag %q: %w", tagID, ErrNotFound)
 	}
-	return nodes, total, nil
+	if liveOnly {
+		return nodes, liveTotal, assignmentTotal - liveTotal, nil
+	}
+	return nodes, assignmentTotal, 0, nil
 }
 
 func tagByIDTx(tx *sql.Tx, id string) (Tag, error) {

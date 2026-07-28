@@ -73,16 +73,29 @@ func registerTagRoutes(api huma.API, d Deps, g *gate) {
 		Path:    "/api/v1/tags/{tag_id}/nodes",
 		Summary: "List live and trashed nodes carrying a tag",
 	}, func(ctx context.Context, in *struct {
-		TagID  string `path:"tag_id"`
-		Limit  int    `query:"limit" default:"100" minimum:"1" maximum:"1000"`
-		Offset int    `query:"offset" default:"0" minimum:"0"`
+		TagID    string `path:"tag_id"`
+		Limit    int    `query:"limit" default:"100" minimum:"1" maximum:"1000"`
+		Offset   int    `query:"offset" default:"0" minimum:"0"`
+		LiveOnly bool   `query:"live_only" default:"false"`
 	}) (*taggedNodePageOutput, error) {
-		nodes, total, err := d.Store.TaggedNodes(ctx, in.TagID, in.Limit, in.Offset)
+		var (
+			nodes          []store.TaggedNode
+			total          int
+			omittedTrashed int
+			err            error
+		)
+		if in.LiveOnly {
+			nodes, total, omittedTrashed, err =
+				d.Store.LiveTaggedNodes(ctx, in.TagID, in.Limit, in.Offset)
+		} else {
+			nodes, total, err = d.Store.TaggedNodes(ctx, in.TagID, in.Limit, in.Offset)
+		}
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
 		out := &taggedNodePageOutput{Body: TaggedNodePage{
 			Items: []TaggedNode{}, Total: total, Limit: in.Limit, Offset: in.Offset,
+			OmittedTrashed: omittedTrashed,
 		}}
 		for _, node := range nodes {
 			item := TaggedNode{Node: fromStoreNode(node.Node), Path: node.Path}

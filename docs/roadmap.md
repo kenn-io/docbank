@@ -144,8 +144,9 @@ before a one-use browser handoff, and the browser never buffers the whole
 object or receives the vault API key. Every file exposes its newest-first immutable
 version history and complete version, hash, operation, and revert-source
 authority, plus its newest-first immutable provenance facts and supersession
-history. Every selected node exposes its tag assignments, and text search can
-require one stable tag identity. Protected nodes also expose their permanent newest-first audit timeline
+history. Every selected node exposes its tag assignments, and a stable tag
+identity can drive either a live assignment view or a text-search filter.
+Protected nodes also expose their permanent newest-first audit timeline
 and the complete stable identity and before/after state of every event. The
 portal also reports current and terminal daemon background jobs and separates
 physical loose files, live packed content, complete pack payload, and

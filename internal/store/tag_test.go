@@ -153,6 +153,18 @@ func TestTagQueriesAreBoundedAndIncludeTrashedNodes(t *testing.T) {
 	require.NotNil(t, nodes[0].Node.TrashedAt)
 	assert.Empty(t, nodes[0].Path)
 
+	live, err := s.Mkdir(ctx, s.RootID(), "live")
+	require.NoError(t, err)
+	_, err = s.AssignTag(ctx, first.ID, live.ID, live.Revision)
+	require.NoError(t, err)
+	liveNodes, liveTotal, omittedTrashed, err := s.LiveTaggedNodes(ctx, first.ID, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, liveTotal)
+	assert.Equal(t, 1, omittedTrashed)
+	require.Len(t, liveNodes, 1)
+	assert.Equal(t, live.ID, liveNodes[0].Node.ID)
+	assert.Equal(t, "/live", liveNodes[0].Path)
+
 	_, _, err = s.NodeTags(ctx, 99999, 10, 0)
 	require.ErrorIs(t, err, ErrNotFound)
 	_, _, err = s.TaggedNodes(ctx, "00000000-0000-4000-8000-000000000000", 10, 0)

@@ -1792,7 +1792,8 @@ func validateTagPage(page api.TagPage, limit, offset int) error {
 
 func validateTaggedNodePage(page api.TaggedNodePage, limit, offset int) error {
 	if limit < 1 || limit > 1000 || offset < 0 || page.Limit != limit ||
-		page.Offset != offset || page.Total < 0 || len(page.Items) > limit ||
+		page.Offset != offset || page.Total < 0 || page.OmittedTrashed < 0 ||
+		len(page.Items) > limit ||
 		(len(page.Items) == 0 && offset < page.Total) ||
 		(len(page.Items) > 0 && offset+len(page.Items) > page.Total) {
 		return errors.New("tagged-node response has inconsistent pagination")

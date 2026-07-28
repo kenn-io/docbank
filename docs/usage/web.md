@@ -17,7 +17,8 @@ the virtual tree, sort a folder by document name, size, or modification time,
 search names and extracted text, and inspect the selected document's stable
 node ID, revision, current version ID, SHA-256 identity, exact size, and media
 type. The authority card also shows every tag assigned to the selected file or
-folder, while search can require one exact tag. Protected documents expose
+folder. Selecting a tag browses its live assignments, while search can require
+the same exact tag identity. Protected documents expose
 their newest-first permanent audit timeline and complete event authority. The
 storage button separates loose content, live packed content, pack-file payload,
 and logically dead packed bytes awaiting repack. The activity button reports
@@ -133,30 +134,37 @@ exists. Use `docbank provenance`, its pagination flags, or the authenticated
 HTTP API for exhaustive automation. Provenance correction and external-content
 pinning are not browser workflows.
 
-## Search names and extracted text
+## Browse tags and search text
 
 Enter a word or phrase in the search box and press Enter. Results can match a
 live document name or verified extracted text. The **Match** column identifies
 which one. Name matches retain their API relevance ranking and appear before
 content-only matches until you choose an explicit column sort.
 
-Use the tag selector in the browser toolbar to require one exact assignment
-for the search. Tag names are displayed for people, while the request is bound
-to the tag's stable UUID so a later rename does not silently change which
-definition was selected. Changing the selector reruns an active search. A text
-query remains required; choosing a tag does not turn the current folder into a
-tag-only listing.
+Use the tag selector in the browser toolbar without a text query to browse
+up to 1,000 live items carrying one exact assignment. The bounded result is
+read in one metadata snapshot, so its node state and complete virtual paths
+cannot mix concurrent moves, trash operations, or content updates across
+pages. Trashed assignments are omitted from this live view and disclosed in
+its count; `docbank tag nodes` remains the exhaustive paginated
+live-and-trashed workflow.
+
+With text in the search box, the same selector requires that tag in addition
+to the name or content match. Tag names are displayed for people, while both
+workflows are bound to the tag's stable UUID so a later rename does not
+silently change which definition was selected. Changing the selector reruns
+the current browse or search.
 
 ![The Docbank web application showing extracted-text search results in a synthetic vault.](https://raw.githubusercontent.com/kenn-io/docbank/docs-assets/screenshots/v0.11.0/web-search-results.png)
 
 *Search results display complete virtual paths and keep the same authority
 inspection available from ordinary folder browsing.*
 
-Clear the search box to return to the current directory. The selector loads at
-most the first 1,000 name-sorted tag definitions and discloses when more exist.
-Use `docbank search` when you need an exhaustive tag catalog, directory,
-media-type, or modification-time filters, structured JSON, or another result
-limit.
+Clear the search box to return to the selected tag's assignment view, or to
+the current directory when **All tags** is selected. The selector loads at most
+the first 1,000 name-sorted tag definitions and discloses when more exist. Use
+`docbank search` when you need an exhaustive tag catalog, directory, media-type,
+or modification-time filters, structured JSON, or another result limit.
 
 ## Read permanent audited history
 
@@ -268,8 +276,8 @@ logs, screenshots, issue trackers, or chat.
 
 ## Current boundary
 
-Folder and search views are bounded to 1,000 rows and say when more results
-exist; use the CLI or paginated HTTP API for exhaustive automation. Search has
+Folder, tag, and search views are bounded to 1,000 rows and say when more
+results exist; use the CLI or paginated HTTP API for exhaustive automation. Search has
 the same name and verified extracted-text semantics as `docbank search`.
 Results initially preserve the API's relevance ranking. Choosing Document,
 Size, or Modified changes to that explicit column order; Document compares the

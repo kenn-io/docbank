@@ -329,7 +329,10 @@ Assignment receipts return `changed`, the resulting node revision/ETag, and
 the tag's current revision and assignment count. `changed: false` is a successful
 idempotent convergence, not an error. Page `GET /nodes/{id}/tags` and `GET
 /tags/{tag_id}/nodes`; the latter includes trashed nodes without pretending
-they have a live path. Rename and delete by UUID with the most recently
+they have a live path. Set `live_only=true` when one bounded response must
+contain only live nodes and paths from the same metadata snapshot;
+`omitted_trashed` reports the assignments excluded by that projection. Rename
+and delete by UUID with the most recently
 inspected tag ETag in `If-Match`; a concurrent definition or assignment change
 returns `412 stale_revision`. Deleting a tag removes assignments only, never
 nodes or document bytes.

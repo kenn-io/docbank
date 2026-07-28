@@ -69,10 +69,11 @@ Four commitments:
 - A read-only daemon-backed TUI for analytical tree browsing, search, stable
   document/version identity inspection, and permanent audited-history timelines
 - A read-only kit-ui web application for virtual-tree browsing, sortable
-  document analysis, tag-filtered extracted-text search, complete current authority,
-  verified current and historical content download, permanent protection and event history,
-  immutable versions and provenance, daemon background-job status, and an
-  honest loose-file/live-packed/dead-packed storage breakdown
+  document analysis, tag browsing, tag-filtered extracted-text search,
+  complete current authority, verified current and historical content download,
+  permanent protection and event history, immutable versions and provenance,
+  daemon background-job status, and an honest
+  loose-file/live-packed/dead-packed storage breakdown
 - Mixed loose and packed content storage with explicit pack, GC, and repack,
   plus an opt-in bounded daemon packing schedule
 - Whole-vault integrity verification
