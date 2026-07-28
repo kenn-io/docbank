@@ -277,7 +277,7 @@ func runServe(ctx context.Context) (retErr error) {
 	shutdownCtx, cancel := context.WithTimeout(
 		context.Background(), daemonlife.HTTPDrainTimeout)
 	defer cancel()
-	var shutdownErr error
+	shutdownErr := srv.Shutdown(shutdownCtx)
 	for _, running := range servers {
 		if err := running.server.Shutdown(shutdownCtx); err != nil {
 			_ = running.server.Close()

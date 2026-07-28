@@ -1,9 +1,11 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -23,8 +25,11 @@ const (
 // the deliberately limited routes used by the built-in browser. Most are
 // reads; verified upload is the one document-authority mutation.
 type webSessionRegistry struct {
-	mu     sync.Mutex
-	tokens map[[sha256.Size]byte]webSessionState
+	mu          sync.Mutex
+	tokens      map[[sha256.Size]byte]webSessionState
+	uploads     map[*websocket.Conn]struct{}
+	uploadGroup sync.WaitGroup
+	closing     bool
 }
 
 type webSessionState struct {
@@ -33,7 +38,10 @@ type webSessionState struct {
 }
 
 func newWebSessionRegistry() *webSessionRegistry {
-	return &webSessionRegistry{tokens: make(map[[sha256.Size]byte]webSessionState)}
+	return &webSessionRegistry{
+		tokens:  make(map[[sha256.Size]byte]webSessionState),
+		uploads: make(map[*websocket.Conn]struct{}),
+	}
 }
 
 func (r *webSessionRegistry) issue() (string, string, error) {
@@ -47,6 +55,10 @@ func (r *webSessionRegistry) issue() (string, string, error) {
 	}
 	token := base64.RawURLEncoding.EncodeToString(raw)
 	r.mu.Lock()
+	if r.closing {
+		r.mu.Unlock()
+		return "", "", errors.New("browser sessions are shutting down")
+	}
 	r.tokens[sha256.Sum256([]byte(token))] = webSessionState{uploadSecret: uploadSecret}
 	r.mu.Unlock()
 	return token, base64.RawURLEncoding.EncodeToString(uploadSecret[:]), nil
@@ -77,12 +89,34 @@ func (r *webSessionRegistry) bindUpload(token string, conn *websocket.Conn) bool
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	state, ok := r.tokens[digest]
-	if !ok || state.upload != nil {
+	if r.closing || !ok || state.upload != nil {
 		return false
 	}
 	state.upload = conn
 	r.tokens[digest] = state
 	return true
+}
+
+func (r *webSessionRegistry) trackUpload(conn *websocket.Conn) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closing {
+		return false
+	}
+	r.uploadGroup.Add(1)
+	r.uploads[conn] = struct{}{}
+	return true
+}
+
+func (r *webSessionRegistry) releaseTrackedUpload(conn *websocket.Conn) {
+	r.mu.Lock()
+	if _, ok := r.uploads[conn]; !ok {
+		r.mu.Unlock()
+		return
+	}
+	delete(r.uploads, conn)
+	r.mu.Unlock()
+	r.uploadGroup.Done()
 }
 
 func (r *webSessionRegistry) releaseUpload(token string, conn *websocket.Conn) {
@@ -107,18 +141,29 @@ func (r *webSessionRegistry) revoke(token string) {
 	}
 }
 
-func (r *webSessionRegistry) closeAll() {
+func (r *webSessionRegistry) closeAll(ctx context.Context) error {
 	r.mu.Lock()
-	conns := make([]*websocket.Conn, 0, len(r.tokens))
-	for digest, state := range r.tokens {
-		if state.upload != nil {
-			conns = append(conns, state.upload)
-		}
-		delete(r.tokens, digest)
+	r.closing = true
+	clear(r.tokens)
+	conns := make([]*websocket.Conn, 0, len(r.uploads))
+	for conn := range r.uploads {
+		conns = append(conns, conn)
 	}
 	r.mu.Unlock()
 	for _, conn := range conns {
 		_ = conn.CloseNow()
+	}
+
+	drained := make(chan struct{})
+	go func() {
+		r.uploadGroup.Wait()
+		close(drained)
+	}()
+	select {
+	case <-drained:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("waiting for browser upload handlers: %w", ctx.Err())
 	}
 }
 

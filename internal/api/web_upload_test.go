@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
@@ -131,4 +133,67 @@ func TestBrowserUploadUsesAuthenticatedPinnedChannel(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, reader.Close())
 	assert.Equal(t, content, stored)
+}
+
+func TestServerShutdownDrainsActiveBrowserUpload(t *testing.T) {
+	gate := api.NewOperationGate()
+	ts, s := newTestServer(t, func(d *api.Deps) {
+		d.Gate = gate
+	})
+	destination, err := s.Mkdir(t.Context(), s.RootID(), "Reports")
+	require.NoError(t, err)
+
+	request, err := http.NewRequest(
+		http.MethodPost, ts.URL+"/api/daemon/web-session", nil,
+	)
+	require.NoError(t, err)
+	response, err := ts.Client().Do(request)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, response.StatusCode)
+	var session struct {
+		Token string `json:"token"`
+	}
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&session))
+	require.NoError(t, response.Body.Close())
+
+	conn, response, err := websocket.Dial(
+		t.Context(),
+		"ws"+strings.TrimPrefix(ts.URL, "http")+"/api/daemon/web-upload",
+		&websocket.DialOptions{
+			HTTPHeader: http.Header{"Origin": {strings.TrimSuffix(testWebURL, "/")}},
+		},
+	)
+	require.NoError(t, err)
+	if response != nil && response.Body != nil {
+		require.NoError(t, response.Body.Close())
+	}
+	t.Cleanup(func() { _ = conn.CloseNow() })
+	require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{
+		"type": "authenticate", "token": session.Token,
+		"nonce": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+	}))
+	var message struct {
+		Type string `json:"type"`
+	}
+	require.NoError(t, wsjson.Read(t.Context(), conn, &message))
+	require.Equal(t, "authenticated", message.Type)
+
+	content := []byte("incomplete")
+	digest := sha256.Sum256(content)
+	require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{
+		"type":          "begin",
+		"request_id":    "shutdown-test",
+		"parent_id":     destination.ID,
+		"name":          "incomplete.txt",
+		"mime_type":     "text/plain",
+		"expected_hash": hex.EncodeToString(digest[:]),
+		"expected_size": len(content),
+	}))
+	require.NoError(t, wsjson.Read(t.Context(), conn, &message))
+	require.Equal(t, "ready", message.Type)
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	require.NoError(t, s.Server.Shutdown(shutdownCtx))
+	require.NoError(t, gate.Maintain(func() error { return nil }))
 }

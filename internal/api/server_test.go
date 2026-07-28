@@ -35,6 +35,7 @@ type testStore struct {
 	Blobs    *blob.Store
 	BlobsDir string
 	DBPath   string
+	Server   *api.Server
 }
 
 // testAPIKey is the default key newTestServer configures: production always
@@ -72,10 +73,14 @@ func newTestServer(t *testing.T, mutate func(*api.Deps)) (*httptest.Server, *tes
 	if mutate != nil {
 		mutate(&d)
 	}
-	ts := httptest.NewServer(api.NewServer(d).Handler())
+	apiServer := api.NewServer(d)
+	t.Cleanup(apiServer.Close)
+	ts := httptest.NewServer(apiServer.Handler())
 	t.Cleanup(ts.Close)
 	ts.Client().Transport = &apiKeyTransport{key: d.Cfg.Server.APIKey, next: ts.Client().Transport}
-	return ts, &testStore{Store: s, Blobs: blobs, BlobsDir: blobsDir, DBPath: dbPath}
+	return ts, &testStore{
+		Store: s, Blobs: blobs, BlobsDir: blobsDir, DBPath: dbPath, Server: apiServer,
+	}
 }
 
 // apiKeyTransport injects key as X-Api-Key on any request that doesn't

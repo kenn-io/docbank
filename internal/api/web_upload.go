@@ -90,6 +90,11 @@ func registerWebUpload(
 			return // Accept writes its own handshake error.
 		}
 		conn.SetReadLimit(webUploadChunkBytes + 4096)
+		if !sessions.trackUpload(conn) {
+			_ = conn.Close(websocket.StatusGoingAway, "daemon is shutting down")
+			return
+		}
+		defer sessions.releaseTrackedUpload(conn)
 		handleWebUploadConnection(r.Context(), conn, d, g, sessions)
 	})
 }

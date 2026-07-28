@@ -157,8 +157,22 @@ func (s *Server) Handler() http.Handler { return s.handler }
 func (s *Server) API() huma.API         { return s.api }
 
 // Close revokes daemon-lifetime browser credentials and closes their
-// hijacked upload connections. net/http shutdown does not own WebSockets.
-func (s *Server) Close() { s.webSessions.closeAll() }
+// hijacked upload connections. net/http shutdown does not own WebSockets, so
+// Close also waits for their handlers to release mutation and storage
+// resources before returning.
+func (s *Server) Close() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := s.Shutdown(ctx); err != nil {
+		s.deps.Logger.Error("browser upload shutdown did not drain", "err", err)
+	}
+}
+
+// Shutdown revokes browser credentials, closes every accepted upload
+// connection, and waits for its handler to return.
+func (s *Server) Shutdown(ctx context.Context) error {
+	return s.webSessions.closeAll(ctx)
+}
 
 // markRevisionPreconditionsRequired keeps Huma's runtime parser permissive
 // enough for parseIfMatch to return Docbank's structured 428 response while
