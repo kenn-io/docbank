@@ -3,6 +3,7 @@ package api_test
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -34,6 +35,7 @@ type testStore struct {
 	Blobs    *blob.Store
 	BlobsDir string
 	DBPath   string
+	Server   *api.Server
 }
 
 // testAPIKey is the default key newTestServer configures: production always
@@ -71,10 +73,14 @@ func newTestServer(t *testing.T, mutate func(*api.Deps)) (*httptest.Server, *tes
 	if mutate != nil {
 		mutate(&d)
 	}
-	ts := httptest.NewServer(api.NewServer(d).Handler())
+	apiServer := api.NewServer(d)
+	t.Cleanup(apiServer.Close)
+	ts := httptest.NewServer(apiServer.Handler())
 	t.Cleanup(ts.Close)
 	ts.Client().Transport = &apiKeyTransport{key: d.Cfg.Server.APIKey, next: ts.Client().Transport}
-	return ts, &testStore{Store: s, Blobs: blobs, BlobsDir: blobsDir, DBPath: dbPath}
+	return ts, &testStore{
+		Store: s, Blobs: blobs, BlobsDir: blobsDir, DBPath: dbPath, Server: apiServer,
+	}
 }
 
 // apiKeyTransport injects key as X-Api-Key on any request that doesn't
@@ -306,7 +312,8 @@ func TestWebApplication(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Contains(t, resp.Header.Get("Content-Type"), "text/html")
 	assert.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
-	assert.Contains(t, resp.Header.Get("Content-Security-Policy"), "connect-src 'self'")
+	assert.Contains(t, resp.Header.Get("Content-Security-Policy"),
+		"connect-src 'self' ws://docbank-0123456789abcdef0123456789abcdef.localhost:43210")
 	assert.Equal(t, "no-referrer", resp.Header.Get("Referrer-Policy"))
 	assert.Contains(t, strings.ToLower(body), "<!doctype html>")
 
@@ -316,7 +323,7 @@ func TestWebApplication(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
-func TestWebSessionIsReadOnlyRevocableAndDaemonLocal(t *testing.T) {
+func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	taxes, err := s.Mkdir(t.Context(), s.RootID(), "Taxes")
 	require.NoError(t, err)
@@ -344,12 +351,16 @@ func TestWebSessionIsReadOnlyRevocableAndDaemonLocal(t *testing.T) {
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
 	assert.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
 	var issued struct {
-		Token string `json:"token"`
-		URL   string `json:"url"`
+		Token        string `json:"token"`
+		UploadSecret string `json:"upload_secret"`
+		URL          string `json:"url"`
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&issued))
 	require.NoError(t, resp.Body.Close())
 	require.NotEmpty(t, issued.Token)
+	secret, err := base64.RawURLEncoding.DecodeString(issued.UploadSecret)
+	require.NoError(t, err)
+	require.Len(t, secret, sha256.Size)
 	assert.Equal(t, testWebURL, issued.URL)
 	assert.NotEqual(t, testAPIKey, issued.Token)
 
@@ -427,6 +438,11 @@ func TestWebSessionIsReadOnlyRevocableAndDaemonLocal(t *testing.T) {
 	resp = webRequest(http.MethodGet, "/api/v1/backup/snapshots?repo=")
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode,
 		"browser sessions cannot supply even an empty repository override")
+	require.NoError(t, resp.Body.Close())
+
+	resp = webRequest(http.MethodPost, "/api/v1/uploads")
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode,
+		"browser sessions cannot upload through reconnectable HTTP")
 	require.NoError(t, resp.Body.Close())
 
 	resp = webRequest(http.MethodGet,

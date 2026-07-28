@@ -148,11 +148,13 @@ history. Every selected node exposes its tag assignments, and a stable tag
 identity can drive either a live assignment view or a text-search filter.
 Protected nodes also expose their permanent newest-first audit timeline
 and the complete stable identity and before/after state of every event. The
-portal also reports current and terminal daemon background jobs and separates
-physical loose files, live packed content, complete pack payload, and
-logically dead payload awaiting explicit repack. Future slices
-cover import, tag mutation and broader metadata, version comparison, trash,
-storage maintenance, and backup.
+portal also uploads local files through the same caller-declared and
+server-verified byte-identity contract used by remote agents, lists configured
+backup recovery points, reports current and terminal daemon background jobs,
+and separates physical loose files, live packed content, complete pack payload,
+and logically dead payload awaiting explicit repack. Future slices cover tag
+mutation and broader metadata, version comparison, trash, and storage
+maintenance.
 Application-neutral tree, timeline, diff, evidence, and job components should
 be reusable by Msgvault and later tools.
 

@@ -28,7 +28,7 @@ func timeoutExempt(path string) bool {
 		"/api/v1/backup/snapshots", "/api/v1/backup/snapshots/stream",
 		"/api/v1/backup/verify", "/api/v1/backup/verify/stream",
 		"/api/v1/backup/restore", "/api/v1/backup/restore/stream",
-		webDownloadPreparePath, webDownloadFilePath:
+		webDownloadPreparePath, webDownloadFilePath, webUploadSocketPath:
 		return true
 	}
 	if strings.HasPrefix(path, "/api/v1/nodes/") &&
@@ -64,7 +64,8 @@ func clearLongRunningBodyReadDeadlines(api huma.API) {
 // the daemon always has one; see NewServer.
 func authExempt(path string) bool {
 	switch path {
-	case "/", "/health", kitPingPath, daemonauth.ChallengePath, webDownloadFilePath:
+	case "/", "/health", kitPingPath, daemonauth.ChallengePath,
+		webDownloadFilePath, webUploadSocketPath:
 		return true
 	}
 	return strings.HasPrefix(path, "/docs") ||

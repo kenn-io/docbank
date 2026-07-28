@@ -17,7 +17,7 @@ const launchDirName = "web-launch"
 
 // WriteBootstrap writes the browser-session handoff beneath the owner-private
 // vault root and returns a credential-free file URL suitable for an OS browser
-// launcher. The handoff carries only a daemon-lifetime, read-only token; the
+// launcher. The handoff carries only daemon-lifetime scoped credentials; the
 // vault API key never enters this file.
 func WriteBootstrap(root, authenticatedURL string) (string, error) {
 	if root == "" {
@@ -33,6 +33,7 @@ func WriteBootstrap(root, authenticatedURL string) (string, error) {
 		strings.HasSuffix(strings.ToLower(host), ".localhost")
 	values, queryErr := url.ParseQuery(target.Fragment)
 	if queryErr != nil || values.Get("web_session") == "" ||
+		values.Get("web_upload_secret") == "" ||
 		(!localName && (ip == nil || !ip.IsLoopback())) {
 		return "", errors.New("web bootstrap requires an authenticated loopback URL")
 	}

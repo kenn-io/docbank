@@ -28,8 +28,9 @@ func webSessionClient(t *testing.T, token string) (*client.Client, string) {
 		assert.Equal(t, "/api/daemon/web-session", r.URL.Path)
 		assert.Equal(t, "private key", r.Header.Get("X-Api-Key"))
 		_ = json.NewEncoder(w).Encode(map[string]string{
-			"token": token,
-			"url":   webOrigin + "/",
+			"token":         token,
+			"upload_secret": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+			"url":           webOrigin + "/",
 		})
 	}))
 	t.Cleanup(ts.Close)
@@ -60,6 +61,7 @@ func TestRunWebOpensReadOnlySessionWithoutPrintingMasterKey(t *testing.T) {
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), "web_session=read-only-session")
+	assert.Contains(t, string(raw), "web_upload_secret=")
 	assert.NotContains(t, string(raw), "private key")
 }
 
@@ -72,6 +74,7 @@ func TestRunWebNoBrowserExplicitlyPrintsAuthenticatedURL(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out.String(), webOrigin+"/#")
 	assert.Contains(t, out.String(), "#web_session=read-only-session")
+	assert.Contains(t, out.String(), "web_upload_secret=")
 	assert.NotContains(t, out.String(), "private key")
 }
 

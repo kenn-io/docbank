@@ -133,8 +133,9 @@ func NewServer(d Deps) *Server {
 	}))
 	s.registerChallenge(mux)
 	s.registerShutdown(mux)
-	registerWeb(mux, d.Cfg.Web.Enabled)
+	registerWeb(mux, d.Cfg.Web.Enabled, d.WebURL)
 	registerWebSession(mux, d.Cfg.Web.Enabled, d.WebURL, s.webSessions)
+	registerWebUpload(mux, d.Cfg.Web.Enabled, d.WebURL, d, g, s.webSessions)
 	registerWebDownload(mux, d.Cfg.Web.Enabled, d, s.webDownloads)
 
 	h := http.Handler(mux)
@@ -154,6 +155,24 @@ func NewServer(d Deps) *Server {
 
 func (s *Server) Handler() http.Handler { return s.handler }
 func (s *Server) API() huma.API         { return s.api }
+
+// Close revokes daemon-lifetime browser credentials and closes their
+// hijacked upload connections. net/http shutdown does not own WebSockets, so
+// Close also waits for their handlers to release mutation and storage
+// resources before returning.
+func (s *Server) Close() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := s.Shutdown(ctx); err != nil {
+		s.deps.Logger.Error("browser upload shutdown did not drain", "err", err)
+	}
+}
+
+// Shutdown revokes browser credentials, closes every accepted upload
+// connection, and waits for its handler to return.
+func (s *Server) Shutdown(ctx context.Context) error {
+	return s.webSessions.closeAll(ctx)
+}
 
 // markRevisionPreconditionsRequired keeps Huma's runtime parser permissive
 // enough for parseIfMatch to return Docbank's structured 428 response while
