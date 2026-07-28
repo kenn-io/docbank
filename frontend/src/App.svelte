@@ -12,6 +12,7 @@
   import SearchIcon from "@lucide/svelte/icons/search";
   import TagIcon from "@lucide/svelte/icons/tag";
   import HistoryIcon from "@lucide/svelte/icons/history";
+  import Trash2Icon from "@lucide/svelte/icons/trash-2";
   import UploadIcon from "@lucide/svelte/icons/upload";
   import {
     Button,
@@ -37,6 +38,7 @@
   import JobsDrawer from "./JobsDrawer.svelte";
   import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
   import StorageDrawer from "./StorageDrawer.svelte";
+  import TrashNodeModal from "./TrashNodeModal.svelte";
   import UploadDrawer from "./UploadDrawer.svelte";
   import VersionHistoryDrawer from "./VersionHistoryDrawer.svelte";
   import {
@@ -115,6 +117,7 @@
   let storageOpen = $state(false);
   let backupsOpen = $state(false);
   let uploadTarget = $state<Node | null>(null);
+  let trashTarget = $state<Row | null>(null);
   let generation = 0;
   let auditGeneration = 0;
   let tagGeneration = 0;
@@ -173,6 +176,7 @@
       storageOpen = false;
       backupsOpen = false;
       uploadTarget = null;
+      trashTarget = null;
       tagCatalog = [];
       tagCatalogListed = 0;
       selectedTags = [];
@@ -514,6 +518,13 @@
     }
   }
 
+  function refreshCurrentView(): void {
+    void loadTagCatalog();
+    if (activeQuery) void runSearch();
+    else if (activeTagID) void loadTaggedNodes(activeTagID);
+    else if (directory) void loadDirectory(directory.id, false);
+  }
+
   async function lock(): Promise<void> {
     generation += 1;
     auditGeneration += 1;
@@ -545,6 +556,7 @@
     storageOpen = false;
     backupsOpen = false;
     uploadTarget = null;
+    trashTarget = null;
     activeQuery = "";
     activeTagID = "";
     taggedInspected = 0;
@@ -963,6 +975,24 @@
                     <MapPinIcon size="14" aria-hidden="true" />
                     Provenance
                   </Button>
+                  <Button
+                    size="sm"
+                    tone="danger"
+                    surface="soft"
+                    onclick={() => {
+                      historyOpen = false;
+                      versionsOpen = false;
+                      provenanceOpen = false;
+                      jobsOpen = false;
+                      storageOpen = false;
+                      backupsOpen = false;
+                      uploadTarget = null;
+                      trashTarget = selected;
+                    }}
+                  >
+                    <Trash2Icon size="14" aria-hidden="true" />
+                    Move to trash
+                  </Button>
                 </div>
               {/if}
               <div class="audit-protection">
@@ -1011,10 +1041,30 @@
                 {/if}
               </div>
               {#if selected.node.kind === "dir"}
-                <Button size="sm" onclick={() => activate(selected)}>
-                  <FolderIcon size="14" aria-hidden="true" />
-                  Open folder
-                </Button>
+                <div class="directory-actions">
+                  <Button size="sm" onclick={() => activate(selected)}>
+                    <FolderIcon size="14" aria-hidden="true" />
+                    Open folder
+                  </Button>
+                  <Button
+                    size="sm"
+                    tone="danger"
+                    surface="soft"
+                    onclick={() => {
+                      historyOpen = false;
+                      versionsOpen = false;
+                      provenanceOpen = false;
+                      jobsOpen = false;
+                      storageOpen = false;
+                      backupsOpen = false;
+                      uploadTarget = null;
+                      trashTarget = selected;
+                    }}
+                  >
+                    <Trash2Icon size="14" aria-hidden="true" />
+                    Move to trash
+                  </Button>
+                </div>
               {/if}
             </div>
           </Card>
@@ -1086,6 +1136,20 @@
         onclose={() => (uploadTarget = null)}
         oncomplete={async () => {
           if (uploadTarget) await loadDirectory(uploadTarget.id, false);
+        }}
+        onauthfailure={handleFailure}
+      />
+    {/if}
+    {#if trashTarget}
+      <TrashNodeModal
+        session={webSession}
+        node={trashTarget.node}
+        path={trashTarget.path}
+        onclose={() => (trashTarget = null)}
+        ontrashed={(receipt) => {
+          trashTarget = null;
+          if (selectedID === receipt.id) selectNode(undefined);
+          refreshCurrentView();
         }}
         onauthfailure={handleFailure}
       />

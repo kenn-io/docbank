@@ -16,7 +16,8 @@ opens its local web application. Choose local files for verified upload,
 navigate the virtual tree, sort a folder by document name, size, or modification
 time, search names and extracted text, and inspect the selected document's stable
 node ID, revision, current version ID, SHA-256 identity, exact size, and media
-type. The authority card also shows every tag assigned to the selected file or
+type. A selected live file or folder can be moved to recoverable trash after an
+explicit confirmation. The authority card also shows every tag assigned to the selected file or
 folder. Selecting a tag browses its live assignments, while search can require
 the same exact tag identity. Protected documents expose
 their newest-first permanent audit timeline and complete event authority. The
@@ -61,6 +62,22 @@ even when the card wraps it across lines. Every selected node also shows its
 assigned tag names. Hovering a tag shows its stable UUID and vault-wide
 assignment count; the bounded tag stack expands in place when a node carries
 more than six.
+
+## Move a node to recoverable trash
+
+Choose **Move to trash** on the selected live file or folder. Docbank opens a
+confirmation that names the complete virtual path, stable node ID, and revision
+being acted upon. A folder and its live descendants move to trash together.
+
+The daemon applies the mutation only if that exact node revision is still
+current. If another person, agent, or CLI command changed the node first, the
+browser keeps the confirmation open and asks you to refresh instead of
+silently acting on stale authority. A successful receipt removes the selection
+and refreshes the current folder, search, or tag view.
+
+This action is deliberately recoverable. It does not empty trash, garbage
+collect content, reclaim packed space, or erase permanent audited history.
+Listing and restoring trash remain CLI or authenticated API workflows.
 
 ## Upload verified documents
 
@@ -307,19 +324,21 @@ in page memory. Ordinary requests use
 `X-Docbank-Web-Session`, which the daemon accepts only for the tree, node,
 search, tag-definition and assignment reads, immutable-version, provenance, audit-status, audit-history,
 background-job, physical-storage-status, configured backup-snapshot-list,
-and verified-download preparation
-used by this interface.
+verified-download preparation, and revision-bound move-to-trash request used by
+this interface.
 Download preparation may write only owner-private temporary bytes and issue
 one exact, expiring file ticket. Upload uses a separate, never-reconnecting
 WebSocket authenticated by a challenge proof over the upload secret. No file
 bytes are sent until that proof succeeds. It may create only file nodes
 beneath the stable live directory selected in the browser and must satisfy the
 same caller-declared/server-computed byte identity as every remote writer. The
-session cannot perform any other document mutation, enroll audit scopes, run
-independent verification, or call backup creation, verification, restore,
-maintenance, configuration, or general API endpoints. Its sole backup
-capability is listing the immutable snapshots in the repository already
-configured for this daemon.
+trash request can target only the stable selected node and must carry its
+current revision, so a stale browser view cannot move changed state. The
+session cannot restore or empty trash, perform any other document mutation,
+enroll audit scopes, run independent verification, or call backup creation,
+verification, restore, maintenance, configuration, or general API endpoints.
+Its sole backup capability is listing the immutable snapshots in the
+repository already configured for this daemon.
 
 The lock button revokes the session in daemon memory and clears the page.
 Every remaining browser session and its dedicated browser origin disappear
@@ -353,7 +372,7 @@ leave the browser constructing child paths beneath an obsolete name.
 
 The current web application does not compare versions, recursively import
 folders, edit, revert, prune, move, create or change tags and
-assignments, trash, enroll audit scopes, run independent audit verification,
+assignments, restore trash, enroll audit scopes, run independent audit verification,
 or run maintenance, backup, verification, or restore operations.
 Use the corresponding CLI or authenticated HTTP endpoint for those workflows.
 Future web workflows will require deliberately expanded browser-session

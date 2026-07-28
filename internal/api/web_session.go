@@ -172,6 +172,16 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	if method == http.MethodPost && path == webDownloadPreparePath {
 		return true
 	}
+	if method == http.MethodPost && r.URL.RawQuery == "" {
+		const prefix = "/api/v1/nodes/"
+		if after, ok := strings.CutPrefix(path, prefix); ok {
+			parts := strings.Split(after, "/")
+			nodeID, err := strconv.ParseInt(parts[0], 10, 64)
+			if len(parts) == 2 && parts[1] == "trash" && err == nil && nodeID > 0 {
+				return true
+			}
+		}
+	}
 	if method == http.MethodDelete && path == webSessionPath {
 		return true
 	}

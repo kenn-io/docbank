@@ -18,7 +18,7 @@ elsewhere only when they materially explain the design and are marked
 | 1 | Core: store, blob store, ingest pipeline, full CLI | **Implemented** |
 | 2a | Infrastructure: daemon, HTTP API, daemon-first CLI, self-update, release pipeline | **Implemented** |
 | 2b | Features: content versions, versioned editing, full audit, tags, watched inboxes, text extraction, ingest provenance | **In progress**: versions, tags, queryable provenance, watched inboxes, disjoint audit scopes, and bounded plain-text extraction implemented; PDF/Office extraction remains |
-| 3 | Primary kit-ui web portal and focused operator TUI | **In progress**: read-only analytical tree/search/detail, audited-history, and daemon-job inspection implemented; web tags, version history, provenance, and verified current/historical content download implemented |
+| 3 | Primary kit-ui web portal and focused operator TUI | **In progress**: analytical tree/search/detail, audited-history, daemon-job inspection, web tags, version history, provenance, verified current/historical content download, verified upload, and recoverable trash implemented |
 | 4 | Backup commands over the kit engine | **Implemented**; representative-corpus hardening continues |
 
 ## Implemented (Phase 1)
@@ -136,7 +136,7 @@ and authenticated API.
 ## Phase 3 — Human applications
 
 The kit-ui web portal is the primary human interface over the authenticated
-daemon API. Its first read-only slice implements responsive virtual-tree
+daemon API. Its browsing foundation implements responsive virtual-tree
 browsing, analytical sorting, name and extracted-text search, and complete
 current document authority. A selected live file can be downloaded through
 bounded daemon staging: progress is visible, content is terminally verified
@@ -149,11 +149,12 @@ identity can drive either a live assignment view or a text-search filter.
 Protected nodes also expose their permanent newest-first audit timeline
 and the complete stable identity and before/after state of every event. The
 portal also uploads local files through the same caller-declared and
-server-verified byte-identity contract used by remote agents, lists configured
+server-verified byte-identity contract used by remote agents, moves a selected
+revision-bound live node to recoverable trash after explicit confirmation, lists configured
 backup recovery points, reports current and terminal daemon background jobs,
 and separates physical loose files, live packed content, complete pack payload,
 and logically dead payload awaiting explicit repack. Future slices cover tag
-mutation and broader metadata, version comparison, trash, and storage
+mutation and broader metadata, version comparison, trash restoration, and storage
 maintenance.
 Application-neutral tree, timeline, diff, evidence, and job components should
 be reusable by Msgvault and later tools.

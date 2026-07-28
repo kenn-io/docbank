@@ -71,6 +71,7 @@ Four commitments:
 - A scoped kit-ui web application for verified local-file upload, virtual-tree browsing, sortable
   document analysis, tag browsing, tag-filtered extracted-text search,
   complete current authority, verified current and historical content download,
+  recoverable move-to-trash,
   permanent protection and event history, immutable versions and provenance,
   configured backup recovery points, daemon background-job status, and an honest
   loose-file/live-packed/dead-packed storage breakdown
