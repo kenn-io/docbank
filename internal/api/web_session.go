@@ -23,7 +23,8 @@ const (
 // webSessionRegistry owns browser credentials for exactly one daemon
 // lifetime. Tokens are random, retained only as digests, and authorize only
 // the deliberately limited routes used by the built-in browser. Most are
-// reads; verified upload is the one document-authority mutation.
+// reads; verified upload and revision-bound move-to-trash are the only
+// document-authority mutations.
 type webSessionRegistry struct {
 	mu          sync.Mutex
 	tokens      map[[sha256.Size]byte]webSessionState

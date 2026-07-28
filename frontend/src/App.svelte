@@ -525,6 +525,35 @@
     else if (directory) void loadDirectory(directory.id, false);
   }
 
+  function handleTrashed(receipt: Node): void {
+    trashTarget = null;
+    if (selectedID === receipt.id) selectNode(undefined);
+
+    // Cached views may contain the removed node or pre-trash parent revisions.
+    // Discard them instead of allowing Back to resurrect stale authority.
+    stack = [];
+
+    const targetPath = receipt.path;
+    const directoryPath = directory?.path;
+    if (
+      targetPath &&
+      directoryPath &&
+      (directoryPath === targetPath || directoryPath.startsWith(`${targetPath}/`))
+    ) {
+      searchQuery = "";
+      activeQuery = "";
+      tagFilterID = "";
+      activeTagID = "";
+      taggedInspected = 0;
+      taggedTotal = 0;
+      taggedTrashed = 0;
+      void loadRoot();
+      void loadTagCatalog();
+      return;
+    }
+    refreshCurrentView();
+  }
+
   async function lock(): Promise<void> {
     generation += 1;
     auditGeneration += 1;
@@ -1146,11 +1175,7 @@
         node={trashTarget.node}
         path={trashTarget.path}
         onclose={() => (trashTarget = null)}
-        ontrashed={(receipt) => {
-          trashTarget = null;
-          if (selectedID === receipt.id) selectNode(undefined);
-          refreshCurrentView();
-        }}
+        ontrashed={handleTrashed}
         onauthfailure={handleFailure}
       />
     {/if}

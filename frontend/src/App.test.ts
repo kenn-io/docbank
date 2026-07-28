@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/svelte";
 import App from "./App.svelte";
 
@@ -373,4 +374,125 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
       name: "Browse or filter: showing 1 of 1001 tags: All tags",
     }),
   ).toBeTruthy();
+});
+
+it("discards cached navigation when search trashes the current directory", async () => {
+  history.replaceState(
+    null,
+    "",
+    "/#web_session=short-lived&web_upload_secret=proof",
+  );
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
+
+  const root = {
+    id: 1,
+    name: "",
+    kind: "dir",
+    size: 0,
+    revision: 1,
+    created_at: "2026-07-28T12:00:00Z",
+    modified_at: "2026-07-28T12:00:00Z",
+    path: "/",
+  };
+  const reports = {
+    id: 2,
+    parent_id: 1,
+    name: "Reports",
+    kind: "dir",
+    size: 0,
+    revision: 1,
+    created_at: "2026-07-28T12:00:00Z",
+    modified_at: "2026-07-28T12:00:00Z",
+    path: "/Reports",
+  };
+  const json = (value: unknown) =>
+    new Response(JSON.stringify(value), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  let trashed = false;
+  let rootReads = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === "/api/v1/path?path=%2F") return json(root);
+    if (url === "/api/v1/nodes/1/children?limit=1000&offset=0") {
+      rootReads += 1;
+      return json({
+        directory: root,
+        items: trashed ? [] : [reports],
+        total: trashed ? 0 : 1,
+        limit: 1000,
+        offset: 0,
+      });
+    }
+    if (url === "/api/v1/nodes/2/children?limit=1000&offset=0") {
+      return json({
+        directory: reports,
+        items: [],
+        total: 0,
+        limit: 1000,
+        offset: 0,
+      });
+    }
+    if (url === "/api/v1/tags?limit=1000&offset=0") {
+      return json({ items: [], total: 0, limit: 1000, offset: 0 });
+    }
+    if (url === "/api/v1/audit/status?node_id=2") {
+      return json({ enabled: false, scopes: [] });
+    }
+    if (url === "/api/v1/nodes/2/tags?limit=1000&offset=0") {
+      return json({ items: [], total: 0, limit: 1000, offset: 0 });
+    }
+    if (url === "/api/v1/search?q=Reports&limit=1000") {
+      return json({
+        hits: [{ node: reports, path: "/Reports", match: "name" }],
+        limit: 1000,
+        truncated: false,
+      });
+    }
+    if (url === "/api/v1/nodes/2/trash" && init?.method === "POST") {
+      trashed = true;
+      return json({
+        ...reports,
+        revision: 2,
+        trashed_at: "2026-07-28T12:01:00Z",
+      });
+    }
+    throw new Error(`unexpected request: ${url}`);
+  });
+
+  render(App);
+  await fireEvent.dblClick(await screen.findByRole("cell", { name: "Reports" }));
+  await screen.findByText("This folder is empty");
+
+  const search = screen.getByRole("searchbox", { name: "Search documents" });
+  await fireEvent.input(search, { target: { value: "Reports" } });
+  await fireEvent.submit(search.closest("form")!);
+  await screen.findByRole("cell", { name: "/Reports" });
+
+  await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
+  const confirmation = screen.getByRole("dialog", { name: "Move Reports to trash" });
+  await fireEvent.click(
+    within(confirmation).getByRole("button", { name: "Move to trash" }),
+  );
+
+  await waitFor(() => expect(rootReads).toBe(2));
+  expect(screen.getByText("This folder is empty")).toBeTruthy();
+  expect(screen.queryByRole("cell", { name: "/Reports" })).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Back to previous directory" }).hasAttribute(
+      "disabled",
+    ),
+  ).toBe(true);
 });
