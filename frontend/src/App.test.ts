@@ -105,6 +105,7 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
     });
   let tagCatalogReads = 0;
   let tagResolutionMode: "browse" | "renamed" | "missing" = "browse";
+  let failNextTagResolution = false;
   let tagConsistencyReads = 0;
   let renamedTagResolved = false;
   let missingTagResolved = false;
@@ -152,6 +153,16 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
       });
     }
     if (url === "/api/v1/tags/33333333-3333-4333-8333-333333333333") {
+      if (failNextTagResolution) {
+        failNextTagResolution = false;
+        return new Response(
+          JSON.stringify({ status: 503, detail: "tag catalog temporarily unavailable" }),
+          {
+            status: 503,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      }
       if (tagResolutionMode === "missing") {
         missingTagResolved = true;
         return new Response(
@@ -275,6 +286,17 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
     }),
   );
   await waitFor(() => expect(screen.queryByText("Documents tagged")).toBeNull());
+
+  failNextTagResolution = true;
+  await fireEvent.click(
+    screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
+  );
+  await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
+  expect(await screen.findByText("tag catalog temporarily unavailable")).toBeTruthy();
+  expect(
+    screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
+  ).toBeTruthy();
+  expect(screen.getByText("This folder is empty")).toBeTruthy();
 
   await fireEvent.click(
     screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),

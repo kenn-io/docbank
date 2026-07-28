@@ -338,7 +338,10 @@
           : liveRows[0]?.node.id,
       );
     } catch (cause) {
-      if (request === generation) handleFailure(cause);
+      if (request === generation) {
+        tagFilterID = activeTagID;
+        handleFailure(cause);
+      }
     } finally {
       if (request === generation) loading = false;
     }
