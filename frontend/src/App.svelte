@@ -51,6 +51,7 @@
     type Node,
     type SearchHit,
     type Tag,
+    type TaggedNode,
   } from "./api.js";
   import { basename, formatBytes, formatDate } from "./format.js";
   import { orderRows, reconcileSearchView, type SortField } from "./rows.js";
@@ -287,18 +288,25 @@
     loading = true;
     error = "";
     try {
-      const page = await taggedNodes(webSession, tagID);
-      if (request !== generation) return;
-      const liveRows = page.items
+      const items: TaggedNode[] = [];
+      let total = 0;
+      do {
+        const page = await taggedNodes(webSession, tagID, items.length);
+        if (request !== generation) return;
+        total = page.total;
+        if (page.items.length === 0) break;
+        items.push(...page.items);
+      } while (items.length < total);
+      const liveRows = items
         .filter((item) => !item.node.trashed_at && item.path)
         .map((item) => ({ node: item.node, path: item.path! }));
       rows = liveRows;
       activeQuery = "";
       activeTagID = tagID;
-      taggedInspected = page.items.length;
-      taggedTotal = page.total;
-      taggedTrashed = page.items.length - liveRows.length;
-      truncated = page.total > page.items.length;
+      taggedInspected = items.length;
+      taggedTotal = total;
+      taggedTrashed = items.length - liveRows.length;
+      truncated = total > items.length;
       if (!refreshing) {
         sortField = "name";
         sortDirection = "asc";
@@ -350,7 +358,7 @@
     tagFilterID = tagID;
     if (activeQuery || searchPending) void runSearch();
     else if (tagID) void loadTaggedNodes(tagID);
-    else if (activeTagID && directory) void loadDirectory(directory.id, false);
+    else if (directory) void loadDirectory(directory.id, false);
   }
 
   function activate(row: Row): void {

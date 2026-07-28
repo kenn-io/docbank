@@ -34,6 +34,10 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
   const unfiltered = new Promise<Response>((resolve) => {
     resolveUnfiltered = resolve;
   });
+  let resolveInitialTagBrowse!: (response: Response) => void;
+  const initialTagBrowse = new Promise<Response>((resolve) => {
+    resolveInitialTagBrowse = resolve;
+  });
   const root = {
     id: 1,
     name: "",
@@ -72,6 +76,13 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
     blob_hash: "f".repeat(64),
     trashed_at: "2026-07-27T12:30:00Z",
   };
+  const olderTrashedReport = {
+    ...trashedReport,
+    id: 7,
+    name: "older-tax-report.txt",
+    current_version_id: "77777777-7777-4777-8777-777777777777",
+    blob_hash: "7".repeat(64),
+  };
   const archiveDirectory = {
     id: 5,
     parent_id: 1,
@@ -90,6 +101,7 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
     });
   let tagCatalogReads = 0;
   let tagReads = 0;
+  let tagBrowseReads = 0;
   let unfilteredSearches = 0;
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
@@ -116,7 +128,7 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
                   id: "33333333-3333-4333-8333-333333333333",
                   name: "tax",
                   revision: 1,
-                  assignment_count: 2,
+                  assignment_count: 3,
                 },
               ]
             : [
@@ -147,21 +159,31 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
         id: "33333333-3333-4333-8333-333333333333",
         name: "tax records",
         revision: 2,
-        assignment_count: 2,
+        assignment_count: 3,
       });
     }
     if (
       url ===
       "/api/v1/tags/33333333-3333-4333-8333-333333333333/nodes?limit=1000&offset=0"
     ) {
+      tagBrowseReads += 1;
+      if (tagBrowseReads === 1) return initialTagBrowse;
       return json({
-        items: [
-          { node: taxReport, path: "/Reports/quarterly-tax-report.txt" },
-          { node: trashedReport },
-        ],
-        total: 2,
+        items: [{ node: trashedReport }, { node: olderTrashedReport }],
+        total: 3,
         limit: 1000,
         offset: 0,
+      });
+    }
+    if (
+      url ===
+      "/api/v1/tags/33333333-3333-4333-8333-333333333333/nodes?limit=1000&offset=2"
+    ) {
+      return json({
+        items: [{ node: taxReport, path: "/Reports/quarterly-tax-report.txt" }],
+        total: 3,
+        limit: 1000,
+        offset: 2,
       });
     }
     if (url === "/api/v1/search?q=quarterly&limit=1000") {
@@ -213,14 +235,33 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
   await fireEvent.click(
     screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
   );
-  await fireEvent.click(screen.getByRole("option", { name: "tax (2)" }));
+  await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
+  await fireEvent.click(
+    screen.getByRole("combobox", { name: "Browse or filter by tag: tax" }),
+  );
+  await fireEvent.click(screen.getByRole("option", { name: "All tags" }));
+  await screen.findByText("This folder is empty");
+  resolveInitialTagBrowse(
+    json({
+      items: [{ node: trashedReport }, { node: olderTrashedReport }],
+      total: 3,
+      limit: 1000,
+      offset: 0,
+    }),
+  );
+  await waitFor(() => expect(screen.queryByText("Documents tagged")).toBeNull());
+
+  await fireEvent.click(
+    screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
+  );
+  await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
   expect(await screen.findByText("Documents tagged")).toBeTruthy();
   expect(screen.getByText("tax", { selector: "strong" })).toBeTruthy();
   expect(
     screen.getByRole("cell", { name: "/Reports/quarterly-tax-report.txt" }),
   ).toBeTruthy();
   expect(screen.queryByText("superseded-tax-report.txt")).toBeNull();
-  expect(screen.getByText(/1 live shown · 1 trashed omitted/)).toBeTruthy();
+  expect(screen.getByText(/1 live shown · 2 trashed omitted/)).toBeTruthy();
 
   await fireEvent.click(
     screen.getByRole("combobox", { name: "Browse or filter by tag: tax" }),
@@ -237,7 +278,7 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
   await fireEvent.click(
     screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
   );
-  await fireEvent.click(screen.getByRole("option", { name: "tax (2)" }));
+  await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
   expect(
     await screen.findByRole("cell", { name: "/Reports/quarterly-tax-report.txt" }),
   ).toBeTruthy();

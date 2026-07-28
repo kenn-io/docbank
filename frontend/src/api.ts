@@ -353,9 +353,10 @@ export async function tagByID(session: string, tagID: string): Promise<Tag> {
 export async function taggedNodes(
   session: string,
   tagID: string,
+  offset = 0,
 ): Promise<TaggedNodePage> {
   return requestJSON<TaggedNodePage>(
-    `/api/v1/tags/${encodeURIComponent(tagID)}/nodes?limit=1000&offset=0`,
+    `/api/v1/tags/${encodeURIComponent(tagID)}/nodes?limit=1000&offset=${offset}`,
     session,
   );
 }
