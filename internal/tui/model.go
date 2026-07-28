@@ -150,6 +150,7 @@ type Model struct {
 	helpOpen            bool
 	detailOpen          bool
 	detailOffset        int
+	detailNode          row
 	detailTags          []api.Tag
 	detailTagsTotal     int
 	detailTagsLoading   bool
@@ -542,6 +543,7 @@ func (m Model) openDetail() (tea.Model, tea.Cmd) {
 	}
 	m.detailOpen = true
 	m.detailOffset = 0
+	m.detailNode = selected
 	m.detailTags = nil
 	m.detailTagsTotal = 0
 	m.detailTagsLoading = true

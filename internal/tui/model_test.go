@@ -801,6 +801,42 @@ func TestClosingDetailInvalidatesDelayedTags(t *testing.T) {
 	assert.Empty(t, model.detailTags)
 }
 
+func TestDetailSnapshotSurvivesDelayedRefresh(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.cursor = 1
+
+	model, delayedTags := updateModel(t, model, key(tea.KeyEnter))
+	require.NotNil(t, delayedTags)
+	replacement := api.Node{
+		ID: 10, ParentID: new(int64(1)), Kind: "file", Name: "replacement.txt",
+		Revision: 1, CurrentVersionID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+		BlobHash: strings.Repeat("f", 64), Size: 99, ModifiedAt: "2026-07-28T12:00:00Z",
+	}
+	model, _ = updateModel(t, model, directoryLoadedMsg{
+		requestID: model.requestID,
+		kind:      navigationRefresh,
+		directory: model.directory,
+		page: api.NodePage{
+			Directory: model.directory,
+			Items:     []api.Node{replacement},
+			Total:     1,
+			Limit:     maxBrowserItems,
+		},
+	})
+	require.Equal(t, int64(10), model.rows[0].node.ID)
+
+	model = runModelCommand(t, model, delayedTags)
+	detail := strings.Join(model.expandedDetailLines(120), "\n")
+	assert.Contains(t, detail, `Path: "/README.txt"`)
+	assert.Contains(t, detail, strings.Repeat("a", 64))
+	assert.Contains(t, detail, `"reviewed"`)
+	assert.NotContains(t, detail, "replacement.txt")
+	assert.NotContains(t, detail, strings.Repeat("f", 64))
+}
+
 func TestHelpAndSpinnerAreVisible(t *testing.T) {
 	model, err := New(t.Context(), newFakeBackend())
 	require.NoError(t, err)

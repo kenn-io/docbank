@@ -562,12 +562,11 @@ func (m Model) expandedDetailLines(width int) []string {
 	heading := m.styles.heading.Render(pad(fit(" Complete document authority", width), width))
 	separator := m.styles.separator.Render(strings.Repeat("─", max(width, 0)))
 	lines := []string{heading, separator}
-	selected, ok := m.selected()
-	if !ok {
+	if m.detailNode.node.ID == 0 {
 		return append(lines, m.styles.muted.Render(" Nothing selected"))
 	}
 
-	node := selected.node
+	node := m.detailNode.node
 	fields := make([]string, 0, 10)
 	if node.Kind == nodeKindFile {
 		fields = append(fields,
@@ -576,7 +575,7 @@ func (m Model) expandedDetailLines(width int) []string {
 		)
 	}
 	fields = append(fields,
-		" Path: "+quoted(selected.path),
+		" Path: "+quoted(m.detailNode.path),
 		fmt.Sprintf(" Selector: id:%d", node.ID),
 		" Kind: "+node.Kind,
 		fmt.Sprintf(" Revision: %d", node.Revision),
