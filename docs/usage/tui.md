@@ -26,7 +26,9 @@ hide secondary columns so the document name remains useful.
 Press <kbd>i</kbd> to leave the table temporarily and inspect the selected
 document's complete stable node selector, path, revision, modification time,
 and—when it is a file—its immutable version, SHA-256 identity, exact size, and
-media type. Long authority values wrap rather than truncate.
+media type. The same authority view lists every assigned tag name with its
+stable UUID, so renames remain distinguishable from identity. Long authority
+values wrap rather than truncate.
 
 Press <kbd>a</kbd> on any selected node to open its permanent audited history.
 The timeline is newest first and shows when each event was recorded, what

@@ -33,6 +33,7 @@ type Backend interface {
 	Node(ctx context.Context, nodeID int64) (api.Node, error)
 	ChildrenPage(ctx context.Context, nodeID int64, limit, offset int) (api.NodePage, error)
 	Search(ctx context.Context, query string, limit int) (api.SearchReport, error)
+	NodeTags(ctx context.Context, nodeID int64, limit, offset int) (api.TagPage, error)
 	AuditHistory(
 		ctx context.Context, path string, nodeID int64, limit int, cursor string,
 	) (api.AuditEventPage, error)
@@ -105,9 +106,19 @@ type historyLoadedMsg struct {
 	err       error
 }
 
+type detailTagsLoadedMsg struct {
+	requestID uint64
+	page      api.TagPage
+	err       error
+}
+
 type spinnerTickMsg struct{}
 
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+var errDetailNodeChanged = errors.New(
+	"document changed while loading tags; close and inspect it again",
+)
 
 const spinnerInterval = 80 * time.Millisecond
 
@@ -143,6 +154,12 @@ type Model struct {
 	helpOpen            bool
 	detailOpen          bool
 	detailOffset        int
+	detailNode          row
+	detailTags          []api.Tag
+	detailTagsTotal     int
+	detailTagsLoading   bool
+	detailTagsErr       error
+	detailRequestID     uint64
 	historyOpen         bool
 	historyNode         row
 	historyPages        []api.AuditEventPage
@@ -204,6 +221,18 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applySearch(msg)
 	case historyLoadedMsg:
 		return m.applyHistory(msg)
+	case detailTagsLoadedMsg:
+		if !m.detailOpen || msg.requestID != m.detailRequestID {
+			return m, nil
+		}
+		m.detailTagsLoading = false
+		m.detailTagsErr = msg.err
+		if msg.err == nil {
+			m.detailTags = msg.page.Items
+			m.detailTagsTotal = msg.page.Total
+		}
+		m.clampDetailOffset()
+		return m, nil
 	case spinnerTickMsg:
 		if !m.loading {
 			m.spinnerActive = false
@@ -288,11 +317,7 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.sortRowsPreservingSelection()
 		return m, nil
 	case "i":
-		if _, ok := m.selected(); ok {
-			m.detailOpen = true
-			m.detailOffset = 0
-		}
-		return m, nil
+		return m.openDetail()
 	case "a":
 		selected, ok := m.selected()
 		if !ok {
@@ -348,9 +373,7 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "enter", "right", "l":
 		selected, ok := m.selected()
 		if ok && selected.node.Kind != nodeKindDir {
-			m.detailOpen = true
-			m.detailOffset = 0
-			return m, nil
+			return m.openDetail()
 		}
 		if ok {
 			m.loading = true
@@ -496,6 +519,7 @@ func (m Model) updateDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "i", "enter", "esc", "left", "h", "backspace":
 		m.detailOpen = false
 		m.detailOffset = 0
+		m.detailRequestID++
 	case "up", "k":
 		m.detailOffset--
 		m.clampDetailOffset()
@@ -514,6 +538,39 @@ func (m Model) updateDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.detailOffset = max(len(m.expandedDetailLines(m.width))-m.detailViewportHeight(), 0)
 	}
 	return m, nil
+}
+
+func (m Model) openDetail() (tea.Model, tea.Cmd) {
+	selected, ok := m.selected()
+	if !ok {
+		return m, nil
+	}
+	m.detailOpen = true
+	m.detailOffset = 0
+	m.detailNode = selected
+	m.detailTags = nil
+	m.detailTagsTotal = 0
+	m.detailTagsLoading = true
+	m.detailTagsErr = nil
+	m.detailRequestID++
+	return m, m.loadDetailTags(
+		selected.node.ID, selected.node.Revision, m.detailRequestID,
+	)
+}
+
+func (m Model) loadDetailTags(nodeID, revision int64, requestID uint64) tea.Cmd {
+	ctx, backend := m.ctx, m.backend
+	return func() tea.Msg {
+		page, err := backend.NodeTags(ctx, nodeID, maxBrowserItems, 0)
+		if err == nil {
+			var current api.Node
+			current, err = backend.Node(ctx, nodeID)
+			if err == nil && current.Revision != revision {
+				err = errDetailNodeChanged
+			}
+		}
+		return detailTagsLoadedMsg{requestID: requestID, page: page, err: err}
+	}
 }
 
 func (m Model) loadDirectory(

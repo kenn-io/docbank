@@ -149,6 +149,14 @@ func (b *tuiDaemonBackend) Search(
 	})
 }
 
+func (b *tuiDaemonBackend) NodeTags(
+	ctx context.Context, nodeID int64, limit, offset int,
+) (api.TagPage, error) {
+	return withTUIClient(ctx, b, func(c *client.Client) (api.TagPage, error) {
+		return c.NodeTags(ctx, nodeID, limit, offset)
+	})
+}
+
 func (b *tuiDaemonBackend) AuditHistory(
 	ctx context.Context, path string, nodeID int64, limit int, cursor string,
 ) (api.AuditEventPage, error) {

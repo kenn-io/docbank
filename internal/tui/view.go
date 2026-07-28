@@ -562,12 +562,11 @@ func (m Model) expandedDetailLines(width int) []string {
 	heading := m.styles.heading.Render(pad(fit(" Complete document authority", width), width))
 	separator := m.styles.separator.Render(strings.Repeat("─", max(width, 0)))
 	lines := []string{heading, separator}
-	selected, ok := m.selected()
-	if !ok {
+	if m.detailNode.node.ID == 0 {
 		return append(lines, m.styles.muted.Render(" Nothing selected"))
 	}
 
-	node := selected.node
+	node := m.detailNode.node
 	fields := make([]string, 0, 10)
 	if node.Kind == nodeKindFile {
 		fields = append(fields,
@@ -576,7 +575,7 @@ func (m Model) expandedDetailLines(width int) []string {
 		)
 	}
 	fields = append(fields,
-		" Path: "+quoted(selected.path),
+		" Path: "+quoted(m.detailNode.path),
 		fmt.Sprintf(" Selector: id:%d", node.ID),
 		" Kind: "+node.Kind,
 		fmt.Sprintf(" Revision: %d", node.Revision),
@@ -592,6 +591,30 @@ func (m Model) expandedDetailLines(width int) []string {
 		wrapped := ansi.Hardwrap(field, max(width, 1), false)
 		for line := range strings.SplitSeq(wrapped, "\n") {
 			lines = append(lines, pad(line, width))
+		}
+	}
+	lines = append(lines, separator)
+	switch {
+	case m.detailTagsLoading:
+		lines = append(lines, m.styles.muted.Render(pad(" Tags: loading...", width)))
+	case m.detailTagsErr != nil:
+		lines = append(lines, m.styles.error.Render(pad(
+			fit(" Tags unavailable: "+quoted(m.detailTagsErr.Error()), width), width,
+		)))
+	case len(m.detailTags) == 0:
+		lines = append(lines, m.styles.muted.Render(pad(" Tags: none", width)))
+	default:
+		label := fmt.Sprintf(" Tags (%d)", m.detailTagsTotal)
+		if m.detailTagsTotal > len(m.detailTags) {
+			label = fmt.Sprintf(" Tags (first %d of %d)", len(m.detailTags), m.detailTagsTotal)
+		}
+		lines = append(lines, m.styles.heading.Render(pad(fit(label, width), width)))
+		for _, tag := range m.detailTags {
+			field := "   " + quoted(tag.Name) + "  " + tag.ID
+			wrapped := ansi.Hardwrap(field, max(width, 1), false)
+			for line := range strings.SplitSeq(wrapped, "\n") {
+				lines = append(lines, pad(line, width))
+			}
 		}
 	}
 	return lines
