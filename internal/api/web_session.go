@@ -56,7 +56,8 @@ func (r *webSessionRegistry) revoke(token string) {
 	r.mu.Unlock()
 }
 
-func webSessionRequestAllowed(method, path string) bool {
+func webSessionRequestAllowed(r *http.Request) bool {
+	method, path := r.Method, r.URL.Path
 	if method == http.MethodPost && path == webDownloadPreparePath {
 		return true
 	}
@@ -71,6 +72,11 @@ func webSessionRequestAllowed(method, path string) bool {
 		"/api/v1/audit/status", "/api/v1/audit/history", "/api/v1/jobs",
 		"/api/v1/storage", "/api/v1/tags":
 		return true
+	case "/api/v1/backup/snapshots":
+		// Browser sessions may inspect only the repository selected by daemon
+		// configuration. An arbitrary repo query is a server-filesystem read
+		// capability and remains exclusive to the master API credential.
+		return r.URL.RawQuery == ""
 	}
 	const tagPrefix = "/api/v1/tags/"
 	if after, ok := strings.CutPrefix(path, tagPrefix); ok {

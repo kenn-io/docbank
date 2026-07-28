@@ -3,6 +3,7 @@ import {
   APIError,
   auditHistory,
   auditStatusForNode,
+  backupSnapshots,
   contentVersions,
   listJobs,
   liveTaggedNodes,
@@ -117,6 +118,18 @@ describe("browser authentication", () => {
 
     await storageStatus("session");
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/storage");
+  });
+
+  it("reads configured backup snapshots through the browser session", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({ repository: { id: "repo", path: "/backups" }, items: [] }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    await backupSnapshots("session");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/backup/snapshots");
   });
 
   it("reads immutable versions for one stable node", async () => {

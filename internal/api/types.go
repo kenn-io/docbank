@@ -715,7 +715,8 @@ type BackupSnapshot struct {
 // BackupSnapshotList is returned as an object so later pagination can be
 // added without changing a top-level JSON array contract.
 type BackupSnapshotList struct {
-	Items []BackupSnapshot `json:"items"`
+	Repository *BackupRepository `json:"repository,omitempty"`
+	Items      []BackupSnapshot  `json:"items"`
 }
 
 // BackupProgress is one structured update from a long-running backup
