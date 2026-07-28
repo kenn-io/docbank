@@ -281,6 +281,7 @@
   }
 
   async function loadTaggedNodes(tagID: string): Promise<void> {
+    if (!directory) return;
     const request = ++generation;
     const refreshing = activeQuery === "" && activeTagID === tagID;
     const previousSelectedID = selectedID;
@@ -288,15 +289,35 @@
     loading = true;
     error = "";
     try {
-      const items: TaggedNode[] = [];
+      let items: TaggedNode[] = [];
       let total = 0;
-      do {
-        const page = await taggedNodes(webSession, tagID, items.length);
+      let stable = false;
+      for (let attempt = 0; attempt < 3 && !stable; attempt += 1) {
+        const before = await tagByID(webSession, tagID);
         if (request !== generation) return;
-        total = page.total;
-        if (page.items.length === 0) break;
-        items.push(...page.items);
-      } while (items.length < total);
+        const byNodeID = new Map<number, TaggedNode>();
+        let inspected = 0;
+        total = before.assignment_count;
+        while (inspected < total) {
+          const page = await taggedNodes(webSession, tagID, inspected);
+          if (request !== generation) return;
+          total = page.total;
+          if (page.items.length === 0) break;
+          inspected += page.items.length;
+          for (const item of page.items) byNodeID.set(item.node.id, item);
+        }
+        const after = await tagByID(webSession, tagID);
+        if (request !== generation) return;
+        stable =
+          before.revision === after.revision &&
+          after.assignment_count === total &&
+          inspected >= total &&
+          byNodeID.size === total;
+        if (stable) items = [...byNodeID.values()];
+      }
+      if (!stable) {
+        throw new Error("Tag assignments changed while loading. Refresh and try again.");
+      }
       const liveRows = items
         .filter((item) => !item.node.trashed_at && item.path)
         .map((item) => ({ node: item.node, path: item.path! }));
@@ -644,7 +665,7 @@
                 : tagCatalogTotal > tagCatalogListed
                   ? `Browse or filter: showing ${tagCatalogListed} of ${tagCatalogTotal} tags`
                   : "Browse or filter by tag"}
-              disabled={tagCatalog.length === 0}
+              disabled={!directory || tagCatalog.length === 0}
               onchange={changeTagFilter}
             />
             {#if tagBrowse}

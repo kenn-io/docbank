@@ -34,6 +34,10 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
   const unfiltered = new Promise<Response>((resolve) => {
     resolveUnfiltered = resolve;
   });
+  let resolveRoot!: (response: Response) => void;
+  const initialRoot = new Promise<Response>((resolve) => {
+    resolveRoot = resolve;
+  });
   let resolveInitialTagBrowse!: (response: Response) => void;
   const initialTagBrowse = new Promise<Response>((resolve) => {
     resolveInitialTagBrowse = resolve;
@@ -100,12 +104,15 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
       headers: { "Content-Type": "application/json" },
     });
   let tagCatalogReads = 0;
-  let tagReads = 0;
+  let tagResolutionMode: "browse" | "renamed" | "missing" = "browse";
+  let tagConsistencyReads = 0;
+  let renamedTagResolved = false;
+  let missingTagResolved = false;
   let tagBrowseReads = 0;
   let unfilteredSearches = 0;
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
-    if (url === "/api/v1/path?path=%2F") return json(root);
+    if (url === "/api/v1/path?path=%2F") return initialRoot;
     if (url === "/api/v1/nodes/1/children?limit=1000&offset=0") {
       return json({ directory: root, items: [], total: 0, limit: 1000, offset: 0 });
     }
@@ -145,8 +152,8 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
       });
     }
     if (url === "/api/v1/tags/33333333-3333-4333-8333-333333333333") {
-      tagReads += 1;
-      if (tagReads > 1) {
+      if (tagResolutionMode === "missing") {
+        missingTagResolved = true;
         return new Response(
           JSON.stringify({ status: 404, detail: "tag not found" }),
           {
@@ -155,10 +162,20 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
           },
         );
       }
+      if (tagResolutionMode === "renamed") {
+        renamedTagResolved = true;
+        return json({
+          id: "33333333-3333-4333-8333-333333333333",
+          name: "tax records",
+          revision: 3,
+          assignment_count: 3,
+        });
+      }
+      tagConsistencyReads += 1;
       return json({
         id: "33333333-3333-4333-8333-333333333333",
-        name: "tax records",
-        revision: 2,
+        name: "tax",
+        revision: tagConsistencyReads >= 3 ? 2 : 1,
         assignment_count: 3,
       });
     }
@@ -169,7 +186,10 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
       tagBrowseReads += 1;
       if (tagBrowseReads === 1) return initialTagBrowse;
       return json({
-        items: [{ node: trashedReport }, { node: olderTrashedReport }],
+        items:
+          tagBrowseReads === 2
+            ? [{ node: trashedReport }, { node: trashedReport }]
+            : [{ node: trashedReport }, { node: olderTrashedReport }],
         total: 3,
         limit: 1000,
         offset: 0,
@@ -229,8 +249,13 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
 
   render(App);
   const input = await screen.findByRole("searchbox", { name: "Search documents" });
-  await screen.findByRole("combobox", { name: "Browse or filter by tag: All tags" });
+  const tagSelector = await screen.findByRole("combobox", {
+    name: "Browse or filter by tag: All tags",
+  });
+  expect(tagSelector.hasAttribute("disabled")).toBe(true);
+  resolveRoot(json(root));
   await screen.findByText("This folder is empty");
+  expect(tagSelector.hasAttribute("disabled")).toBe(false);
 
   await fireEvent.click(
     screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
@@ -302,6 +327,7 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
     ).toBeNull(),
   );
 
+  tagResolutionMode = "renamed";
   await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
   await waitFor(() =>
     expect(fetchMock.mock.calls.map(([url]) => String(url))).toContain(
@@ -313,6 +339,7 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
       "Browse or filter: showing 1 of 1001 tags: tax records",
     ),
   );
+  expect(renamedTagResolved).toBe(true);
   expect(screen.getByText("“quarterly” · tax records")).toBeTruthy();
 
   await fireEvent.dblClick(screen.getByRole("cell", { name: "/Archive" }));
@@ -333,10 +360,11 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
 
   const back = screen.getByRole("button", { name: "Back to previous directory" });
   expect(back.hasAttribute("disabled")).toBe(false);
+  tagResolutionMode = "missing";
   await fireEvent.click(back);
   await waitFor(() => expect(tagCatalogReads).toBe(3));
   expect(screen.getByRole("combobox").getAttribute("aria-label")).toContain("tax records");
-  await waitFor(() => expect(tagReads).toBe(2));
+  await waitFor(() => expect(missingTagResolved).toBe(true));
   await waitFor(() => expect(unfilteredSearches).toBe(2));
   expect(
     await screen.findByRole("cell", { name: "/Reports/quarterly-product-report.txt" }),
