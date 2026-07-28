@@ -116,6 +116,10 @@ type spinnerTickMsg struct{}
 
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
+var errDetailNodeChanged = errors.New(
+	"document changed while loading tags; close and inspect it again",
+)
+
 const spinnerInterval = 80 * time.Millisecond
 
 // Model is a read-only virtual-tree, search, and audited-history browser. Update uses a value
@@ -549,13 +553,22 @@ func (m Model) openDetail() (tea.Model, tea.Cmd) {
 	m.detailTagsLoading = true
 	m.detailTagsErr = nil
 	m.detailRequestID++
-	return m, m.loadDetailTags(selected.node.ID, m.detailRequestID)
+	return m, m.loadDetailTags(
+		selected.node.ID, selected.node.Revision, m.detailRequestID,
+	)
 }
 
-func (m Model) loadDetailTags(nodeID int64, requestID uint64) tea.Cmd {
+func (m Model) loadDetailTags(nodeID, revision int64, requestID uint64) tea.Cmd {
 	ctx, backend := m.ctx, m.backend
 	return func() tea.Msg {
 		page, err := backend.NodeTags(ctx, nodeID, maxBrowserItems, 0)
+		if err == nil {
+			var current api.Node
+			current, err = backend.Node(ctx, nodeID)
+			if err == nil && current.Revision != revision {
+				err = errDetailNodeChanged
+			}
+		}
 		return detailTagsLoadedMsg{requestID: requestID, page: page, err: err}
 	}
 }

@@ -837,6 +837,26 @@ func TestDetailSnapshotSurvivesDelayedRefresh(t *testing.T) {
 	assert.NotContains(t, detail, strings.Repeat("f", 64))
 }
 
+func TestDetailRejectsTagsAfterNodeRevisionChanges(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.cursor = 1
+
+	model, delayedTags := updateModel(t, model, key(tea.KeyEnter))
+	require.NotNil(t, delayedTags)
+	changed := backend.nodes["/README.txt"]
+	changed.Revision++
+	backend.nodes["/README.txt"] = changed
+
+	model = runModelCommand(t, model, delayedTags)
+	require.ErrorIs(t, model.detailTagsErr, errDetailNodeChanged)
+	assert.Empty(t, model.detailTags)
+	assert.Contains(t, strings.Join(model.expandedDetailLines(120), "\n"),
+		"document changed while loading tags")
+}
+
 func TestHelpAndSpinnerAreVisible(t *testing.T) {
 	model, err := New(t.Context(), newFakeBackend())
 	require.NoError(t, err)
