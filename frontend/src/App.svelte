@@ -39,19 +39,18 @@
     APIError,
     auditStatusForNode,
     children,
+    liveTaggedNodes,
     nodeTags,
     revokeSession,
     search,
     statPath,
     tagByID,
-    taggedNodes,
     tags,
     takeFragmentSession,
     type AuditStatus,
     type Node,
     type SearchHit,
     type Tag,
-    type TaggedNode,
   } from "./api.js";
   import { basename, formatBytes, formatDate } from "./format.js";
   import { orderRows, reconcileSearchView, type SortField } from "./rows.js";
@@ -289,45 +288,16 @@
     loading = true;
     error = "";
     try {
-      let items: TaggedNode[] = [];
-      let total = 0;
-      let stable = false;
-      for (let attempt = 0; attempt < 3 && !stable; attempt += 1) {
-        const before = await tagByID(webSession, tagID);
-        if (request !== generation) return;
-        const byNodeID = new Map<number, TaggedNode>();
-        let inspected = 0;
-        total = before.assignment_count;
-        while (inspected < total) {
-          const page = await taggedNodes(webSession, tagID, inspected);
-          if (request !== generation) return;
-          total = page.total;
-          if (page.items.length === 0) break;
-          inspected += page.items.length;
-          for (const item of page.items) byNodeID.set(item.node.id, item);
-        }
-        const after = await tagByID(webSession, tagID);
-        if (request !== generation) return;
-        stable =
-          before.revision === after.revision &&
-          after.assignment_count === total &&
-          inspected >= total &&
-          byNodeID.size === total;
-        if (stable) items = [...byNodeID.values()];
-      }
-      if (!stable) {
-        throw new Error("Tag assignments changed while loading. Refresh and try again.");
-      }
-      const liveRows = items
-        .filter((item) => !item.node.trashed_at && item.path)
-        .map((item) => ({ node: item.node, path: item.path! }));
+      const page = await liveTaggedNodes(webSession, tagID);
+      if (request !== generation) return;
+      const liveRows = page.items.map((item) => ({ node: item.node, path: item.path! }));
       rows = liveRows;
       activeQuery = "";
       activeTagID = tagID;
-      taggedInspected = items.length;
-      taggedTotal = total;
-      taggedTrashed = items.length - liveRows.length;
-      truncated = total > items.length;
+      taggedInspected = liveRows.length;
+      taggedTotal = page.total;
+      taggedTrashed = page.omitted_trashed ?? 0;
+      truncated = page.total > liveRows.length;
       if (!refreshing) {
         sortField = "name";
         sortDirection = "asc";

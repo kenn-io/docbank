@@ -142,10 +142,12 @@ which one. Name matches retain their API relevance ranking and appear before
 content-only matches until you choose an explicit column sort.
 
 Use the tag selector in the browser toolbar without a text query to browse
-every live item carrying one exact assignment. The result table shows complete
-virtual paths and retains the same sorting and authority inspection as search.
-Trashed assignments are omitted from this live view and disclosed in its
-count; `docbank tag nodes` remains the exhaustive live-and-trashed workflow.
+up to 1,000 live items carrying one exact assignment. The bounded result is
+read in one metadata snapshot, so its node state and complete virtual paths
+cannot mix concurrent moves, trash operations, or content updates across
+pages. Trashed assignments are omitted from this live view and disclosed in
+its count; `docbank tag nodes` remains the exhaustive paginated
+live-and-trashed workflow.
 
 With text in the search box, the same selector requires that tag in addition
 to the name or content match. Tag names are displayed for people, while both
@@ -274,8 +276,8 @@ logs, screenshots, issue trackers, or chat.
 
 ## Current boundary
 
-Folder and search views are bounded to 1,000 rows and say when more results
-exist; use the CLI or paginated HTTP API for exhaustive automation. Search has
+Folder, tag, and search views are bounded to 1,000 rows and say when more
+results exist; use the CLI or paginated HTTP API for exhaustive automation. Search has
 the same name and verified extracted-text semantics as `docbank search`.
 Results initially preserve the API's relevance ranking. Choosing Document,
 Size, or Modified changes to that explicit column order; Document compares the

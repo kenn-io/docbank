@@ -103,6 +103,7 @@ export interface TaggedNodePage {
   total: number;
   limit: number;
   offset: number;
+  omitted_trashed?: number;
 }
 
 export interface AuditScopeStatus {
@@ -357,6 +358,16 @@ export async function taggedNodes(
 ): Promise<TaggedNodePage> {
   return requestJSON<TaggedNodePage>(
     `/api/v1/tags/${encodeURIComponent(tagID)}/nodes?limit=1000&offset=${offset}`,
+    session,
+  );
+}
+
+export async function liveTaggedNodes(
+  session: string,
+  tagID: string,
+): Promise<TaggedNodePage> {
+  return requestJSON<TaggedNodePage>(
+    `/api/v1/tags/${encodeURIComponent(tagID)}/nodes?limit=1000&offset=0&live_only=true`,
     session,
   );
 }

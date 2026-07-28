@@ -449,6 +449,9 @@ its assignment set. `POST /tags`, `GET /tags`, `GET /tags/by-name`,
 and `GET|PATCH|DELETE /tags/{tag_id}` expose definition lifecycle. `GET
 /nodes/{id}/tags` and `GET /tags/{tag_id}/nodes` provide bounded forward and
 reverse listings; reverse results include a path only for live nodes.
+`live_only=true` returns a bounded live projection and `omitted_trashed` count
+from one metadata snapshot, which is suitable for an interactive live browser
+without assembling paths and trash states across pages.
 
 `PUT|DELETE /nodes/{id}/tags/{tag_id}` assign and unassign under the required
 node `If-Match` revision. Their receipt contains the resulting node and tag,
