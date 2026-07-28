@@ -594,6 +594,30 @@ func (m Model) expandedDetailLines(width int) []string {
 			lines = append(lines, pad(line, width))
 		}
 	}
+	lines = append(lines, separator)
+	switch {
+	case m.detailTagsLoading:
+		lines = append(lines, m.styles.muted.Render(pad(" Tags: loading...", width)))
+	case m.detailTagsErr != nil:
+		lines = append(lines, m.styles.error.Render(pad(
+			fit(" Tags unavailable: "+quoted(m.detailTagsErr.Error()), width), width,
+		)))
+	case len(m.detailTags) == 0:
+		lines = append(lines, m.styles.muted.Render(pad(" Tags: none", width)))
+	default:
+		label := fmt.Sprintf(" Tags (%d)", m.detailTagsTotal)
+		if m.detailTagsTotal > len(m.detailTags) {
+			label = fmt.Sprintf(" Tags (first %d of %d)", len(m.detailTags), m.detailTagsTotal)
+		}
+		lines = append(lines, m.styles.heading.Render(pad(fit(label, width), width)))
+		for _, tag := range m.detailTags {
+			field := "   " + quoted(tag.Name) + "  " + tag.ID
+			wrapped := ansi.Hardwrap(field, max(width, 1), false)
+			for line := range strings.SplitSeq(wrapped, "\n") {
+				lines = append(lines, pad(line, width))
+			}
+		}
+	}
 	return lines
 }
 

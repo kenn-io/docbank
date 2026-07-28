@@ -29,6 +29,8 @@ type fakeBackend struct {
 	historyErr     error
 	historyIDs     []int64
 	historyCursors []string
+	tags           map[int64]api.TagPage
+	tagNodeIDs     []int64
 }
 
 func newFakeBackend() *fakeBackend {
@@ -85,6 +87,21 @@ func newFakeBackend() *fakeBackend {
 				},
 			},
 		},
+		tags: map[int64]api.TagPage{
+			readme.ID: {
+				Items: []api.Tag{
+					{
+						ID:   "88888888-8888-4888-8888-888888888888",
+						Name: "reviewed", Revision: 2, AssignmentCount: 3,
+					},
+					{
+						ID:   "99999999-9999-4999-8999-999999999999",
+						Name: "tax", Revision: 4, AssignmentCount: 7,
+					},
+				},
+				Total: 2, Limit: maxBrowserItems,
+			},
+		},
 	}
 }
 
@@ -131,6 +148,19 @@ func (f *fakeBackend) Search(
 		return api.SearchReport{}, f.err
 	}
 	return f.search, nil
+}
+
+func (f *fakeBackend) NodeTags(
+	_ context.Context, nodeID int64, limit, offset int,
+) (api.TagPage, error) {
+	f.tagNodeIDs = append(f.tagNodeIDs, nodeID)
+	if f.err != nil {
+		return api.TagPage{}, f.err
+	}
+	page := f.tags[nodeID]
+	page.Limit = limit
+	page.Offset = offset
+	return page, nil
 }
 
 func (f *fakeBackend) AuditHistory(
@@ -724,14 +754,21 @@ func TestExpandedDetailExposesCompleteAuthority(t *testing.T) {
 	model.cursor = 1
 
 	model, cmd := updateModel(t, model, key(tea.KeyEnter))
-	require.Nil(t, cmd)
+	require.NotNil(t, cmd)
 	require.True(t, model.detailOpen)
+	model = runModelCommand(t, model, cmd)
+	assert.Equal(t, []int64{3}, backend.tagNodeIDs)
 	selected, ok := model.selected()
 	require.True(t, ok)
 	content := model.View().Content
 	assert.Contains(t, content, selected.node.CurrentVersionID)
 	assert.Contains(t, content, selected.node.BlobHash)
 	assert.Contains(t, content, "esc close")
+	fullDetail := strings.Join(model.expandedDetailLines(model.width), "\n")
+	assert.Contains(t, fullDetail, `"reviewed"`)
+	assert.Contains(t, fullDetail, "88888888-8888-4888-8888-888888888888")
+	assert.Contains(t, fullDetail, `"tax"`)
+	assert.Contains(t, fullDetail, "99999999-9999-4999-8999-999999999999")
 
 	model.width, model.height = 24, 8
 	lines := model.expandedDetailLines(model.width)
@@ -744,6 +781,24 @@ func TestExpandedDetailExposesCompleteAuthority(t *testing.T) {
 	model, cmd = updateModel(t, model, key(tea.KeyEscape))
 	require.Nil(t, cmd)
 	assert.False(t, model.detailOpen)
+}
+
+func TestClosingDetailInvalidatesDelayedTags(t *testing.T) {
+	model, err := New(t.Context(), newFakeBackend())
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.cursor = 1
+
+	model, delayed := updateModel(t, model, key(tea.KeyEnter))
+	require.NotNil(t, delayed)
+	pendingRequestID := model.detailRequestID
+	model, _ = updateModel(t, model, key(tea.KeyEscape))
+	assert.False(t, model.detailOpen)
+	assert.Greater(t, model.detailRequestID, pendingRequestID)
+
+	model = runModelCommand(t, model, delayed)
+	assert.False(t, model.detailOpen)
+	assert.Empty(t, model.detailTags)
 }
 
 func TestHelpAndSpinnerAreVisible(t *testing.T) {
