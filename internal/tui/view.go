@@ -70,7 +70,9 @@ func (m Model) render() string {
 		return "Loading Docbank..."
 	}
 	lines := []string{m.renderTitleBar()}
-	if m.historyOpen {
+	if m.jobsOpen {
+		lines = append(lines, m.renderJobsLocation())
+	} else if m.historyOpen {
 		lines = append(lines, m.renderHistoryLocation())
 	} else {
 		lines = append(lines, m.renderLocation())
@@ -81,7 +83,9 @@ func (m Model) render() string {
 
 	bodyHeight := max(m.height-len(lines)-1, 1)
 	body := m.renderBody(bodyHeight)
-	if m.historyOpen {
+	if m.jobsOpen {
+		body = m.renderJobsList(bodyHeight)
+	} else if m.historyOpen {
 		body = m.renderHistoryList(bodyHeight)
 	}
 	if m.detailOpen {
@@ -90,12 +94,32 @@ func (m Model) render() string {
 	if m.historyDetail {
 		body = m.renderHistoryDetail(bodyHeight)
 	}
+	if m.jobDetail {
+		body = m.renderJobDetail(bodyHeight)
+	}
 	lines = append(lines, body, m.renderFooter())
 	content := strings.Join(lines, "\n")
 	if m.helpOpen {
 		return m.renderHelp(content)
 	}
 	return content
+}
+
+func (m Model) renderJobsLocation() string {
+	left := " Daemon activity · background jobs"
+	right := fmt.Sprintf("%d running · %d total", m.jobsRunning, m.jobsTotal)
+	if m.jobsTotal > len(m.jobs) {
+		right = fmt.Sprintf(
+			"%d running · first %d of %d", m.jobsRunning, len(m.jobs), m.jobsTotal,
+		)
+	}
+	if m.jobsLoading {
+		right = m.styles.spinner.Render(m.spinnerIndicator()) + " loading"
+	}
+	if m.jobsErr != nil {
+		right = "jobs unavailable"
+	}
+	return m.styles.stats.Render(joinSides(left, right, m.width))
 }
 
 func (m Model) renderHistoryLocation() string {
@@ -166,6 +190,127 @@ func (m Model) renderLocation() string {
 
 func (m Model) renderBody(height int) string {
 	return m.renderList(m.width, height)
+}
+
+func (m Model) renderJobsList(height int) string {
+	lines := make([]string, 0, height)
+	lines = append(lines, m.renderJobsHeading())
+	if height > 1 {
+		lines = append(lines, m.styles.separator.Render(strings.Repeat("─", m.width)))
+	}
+	visible := max(height-2, 0)
+	if m.jobsErr != nil && visible > 0 {
+		wrapped := strings.Split(ansi.Hardwrap(
+			" "+quoted(m.jobsErr.Error()), max(m.width, 1), false,
+		), "\n")
+		for _, line := range wrapped[:min(len(wrapped), visible)] {
+			lines = append(lines, m.styles.error.Render(pad(fit(line, m.width), m.width)))
+		}
+		visible -= min(len(wrapped), visible)
+	} else if len(m.jobs) == 0 && visible > 0 {
+		message := " No background jobs"
+		if m.jobsLoading {
+			message = " Loading background jobs..."
+		}
+		lines = append(lines, m.styles.muted.Render(pad(fit(message, m.width), m.width)))
+		visible--
+	}
+	end := min(m.jobsOffset+visible, len(m.jobs))
+	for index := m.jobsOffset; index < end; index++ {
+		line := m.renderJobRow(m.jobs[index])
+		if index == m.jobsCursor {
+			line = "▶" + line[1:]
+		}
+		line = pad(fit(line, m.width), m.width)
+		if index == m.jobsCursor {
+			lines = append(lines, m.styles.cursor.Render(line))
+		} else if index%2 == 1 {
+			lines = append(lines, m.styles.alternate.Render(line))
+		} else {
+			lines = append(lines, line)
+		}
+	}
+	for len(lines) < height {
+		lines = append(lines, strings.Repeat(" ", m.width))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) renderJobsHeading() string {
+	switch {
+	case m.width >= 88:
+		return m.styles.heading.Render(pad(
+			"   STATUS       JOB                              STARTED            FINISHED", m.width,
+		))
+	case m.width >= 72:
+		return m.styles.heading.Render(pad(
+			"   STATUS       JOB                              STARTED", m.width,
+		))
+	default:
+		return m.styles.heading.Render(pad("   STATUS       JOB", m.width))
+	}
+}
+
+func (m Model) renderJobRow(job api.Job) string {
+	status := pad(strings.ToUpper(job.Status), 11)
+	nameWidth := max(m.width-16, 1)
+	if m.width >= 72 {
+		nameWidth = 32
+	}
+	line := "   " + status + "  " + pad(quoted(job.Name), nameWidth)
+	if m.width >= 72 {
+		line += "  " + pad(formatJobTime(job.StartedAt), 17)
+	}
+	if m.width >= 88 {
+		finished := "running"
+		if job.FinishedAt != "" {
+			finished = formatJobTime(job.FinishedAt)
+		}
+		line += "  " + finished
+	}
+	return line
+}
+
+func (m Model) renderJobDetail(height int) string {
+	lines := m.jobDetailLines(m.width)
+	maximum := max(len(lines)-height, 0)
+	offset := min(m.jobDetailOffset, maximum)
+	end := min(offset+height, len(lines))
+	visible := append([]string(nil), lines[offset:end]...)
+	for len(visible) < height {
+		visible = append(visible, strings.Repeat(" ", m.width))
+	}
+	return strings.Join(visible, "\n")
+}
+
+func (m Model) jobDetailLines(width int) []string {
+	heading := m.styles.heading.Render(pad(fit(" Complete background job", width), width))
+	separator := m.styles.separator.Render(strings.Repeat("─", max(width, 0)))
+	lines := []string{heading, separator}
+	job, ok := m.selectedJob()
+	if !ok {
+		return append(lines, m.styles.muted.Render(" Nothing selected"))
+	}
+	fields := []string{
+		" Name: " + quoted(job.Name),
+		" Status: " + job.Status,
+		" Started: " + job.StartedAt,
+	}
+	if job.FinishedAt == "" {
+		fields = append(fields, " Finished: still running")
+	} else {
+		fields = append(fields, " Finished: "+job.FinishedAt)
+	}
+	if job.Error != "" {
+		fields = append(fields, " Failure: "+quoted(job.Error))
+	}
+	for _, field := range fields {
+		wrapped := ansi.Hardwrap(field, max(width, 1), false)
+		for line := range strings.SplitSeq(wrapped, "\n") {
+			lines = append(lines, pad(line, width))
+		}
+	}
+	return lines
 }
 
 func (m Model) renderList(width, height int) string {
@@ -448,6 +593,13 @@ func formatHistoryTime(value string) string {
 	return parsed.UTC().Format("2006-01-02 15:04Z")
 }
 
+func formatJobTime(value string) string {
+	if value == "" {
+		return "-"
+	}
+	return formatHistoryTime(value)
+}
+
 type tableLayout struct {
 	width        int
 	document     int
@@ -634,6 +786,9 @@ func (m *Model) clampDetailOffset() {
 }
 
 func (m Model) renderFooter() string {
+	if m.jobsOpen {
+		return m.renderJobsFooter()
+	}
 	if m.historyOpen {
 		return m.renderHistoryFooter()
 	}
@@ -657,6 +812,7 @@ func (m Model) renderFooter() string {
 	}
 	hints = append(hints,
 		hint{text: "/ search", priority: 90},
+		hint{text: "J jobs", priority: 68},
 		hint{text: "s sort", priority: 85},
 		hint{text: "v reverse", priority: 25},
 		hint{text: "r refresh", priority: 20},
@@ -678,6 +834,40 @@ func (m Model) renderFooter() string {
 	available := max(m.width-lipgloss.Width(position)-1, 0)
 	keys := fitHints(hints, available)
 	return m.styles.footer.Render(joinSides(keys, position, m.width))
+}
+
+func (m Model) renderJobsFooter() string {
+	if m.jobDetail {
+		lines := m.jobDetailLines(m.width)
+		viewport := m.jobsViewportHeight()
+		position := ""
+		if len(lines) > viewport {
+			last := min(m.jobDetailOffset+viewport, len(lines))
+			position = fmt.Sprintf(" %d-%d/%d ", m.jobDetailOffset+1, last, len(lines))
+		}
+		hints := []hint{
+			{text: "↑/↓ scroll", priority: 100},
+			{text: "esc close", priority: 90},
+			{text: "? help", priority: 70},
+			{text: "q quit", priority: 60},
+		}
+		available := max(m.width-lipgloss.Width(position)-1, 0)
+		return m.styles.footer.Render(joinSides(fitHints(hints, available), position, m.width))
+	}
+	hints := []hint{
+		{text: "↑/↓ move", priority: 100},
+		{text: "enter inspect", priority: 90},
+		{text: "r refresh", priority: 80},
+		{text: "esc back", priority: 85},
+		{text: "? help", priority: 70},
+		{text: "q quit", priority: 60},
+	}
+	position := ""
+	if len(m.jobs) > 0 {
+		position = fmt.Sprintf(" %d/%d ", m.jobsCursor+1, len(m.jobs))
+	}
+	available := max(m.width-lipgloss.Width(position)-1, 0)
+	return m.styles.footer.Render(joinSides(fitHints(hints, available), position, m.width))
 }
 
 func (m Model) renderHistoryFooter() string {
@@ -800,6 +990,34 @@ func (m Model) renderHelp(background string) string {
 }
 
 func (m Model) helpLines() []string {
+	if m.jobsOpen {
+		if m.jobDetail {
+			return []string{
+				"Background job inspection",
+				"",
+				"↑/k, ↓/j       Scroll one line",
+				"PgUp/PgDn      Scroll one visible page",
+				"Home/End       Jump to first or last line",
+				"Enter/i/Esc    Return to daemon activity",
+				"q              Quit",
+				"",
+				"Press any key to close",
+			}
+		}
+		return []string{
+			"Daemon activity shortcuts",
+			"",
+			"↑/k, ↓/j       Move through background jobs",
+			"PgUp/PgDn      Move one visible page",
+			"Home/End       Jump to first or last job",
+			"Enter/i        Inspect complete job state",
+			"r              Refresh background jobs",
+			"Esc            Return to documents",
+			"q              Quit",
+			"",
+			"Press any key to close",
+		}
+	}
 	if m.historyDetail {
 		return []string{
 			"Audited event inspection",
@@ -839,6 +1057,7 @@ func (m Model) helpLines() []string {
 		"Enter/→/l      Open a directory",
 		"Enter/i        Inspect complete document authority",
 		"a              Browse permanent audited history",
+		"J              Inspect daemon background jobs",
 		"Esc/←/h        Return to the previous view",
 		"/              Search names and extracted text",
 		"s              Cycle the sort column",

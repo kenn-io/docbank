@@ -22,6 +22,7 @@ const (
 	maxBrowserItems = 1000
 	maxSearchItems  = 1000
 	maxHistoryItems = 100
+	maxJobItems     = 1000
 	nodeKindDir     = "dir"
 	nodeKindFile    = "file"
 )
@@ -34,6 +35,7 @@ type Backend interface {
 	ChildrenPage(ctx context.Context, nodeID int64, limit, offset int) (api.NodePage, error)
 	Search(ctx context.Context, query string, limit int) (api.SearchReport, error)
 	NodeTags(ctx context.Context, nodeID int64, limit, offset int) (api.TagPage, error)
+	Jobs(ctx context.Context) ([]api.Job, error)
 	AuditHistory(
 		ctx context.Context, path string, nodeID int64, limit int, cursor string,
 	) (api.AuditEventPage, error)
@@ -112,6 +114,12 @@ type detailTagsLoadedMsg struct {
 	err       error
 }
 
+type jobsLoadedMsg struct {
+	requestID uint64
+	items     []api.Job
+	err       error
+}
+
 type spinnerTickMsg struct{}
 
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
@@ -160,6 +168,17 @@ type Model struct {
 	detailTagsLoading   bool
 	detailTagsErr       error
 	detailRequestID     uint64
+	jobsOpen            bool
+	jobs                []api.Job
+	jobsTotal           int
+	jobsRunning         int
+	jobsCursor          int
+	jobsOffset          int
+	jobsLoading         bool
+	jobsErr             error
+	jobsRequestID       uint64
+	jobDetail           bool
+	jobDetailOffset     int
 	historyOpen         bool
 	historyNode         row
 	historyPages        []api.AuditEventPage
@@ -209,6 +228,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.searchInput.SetWidth(max(msg.Width-4, 1))
 		m.clampSelection()
 		m.clampDetailOffset()
+		m.clampJobsSelection()
+		m.clampJobDetailOffset()
 		m.clampHistorySelection()
 		m.clampHistoryDetailOffset()
 		return m, nil
@@ -233,8 +254,26 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.clampDetailOffset()
 		return m, nil
+	case jobsLoadedMsg:
+		if !m.jobsOpen || msg.requestID != m.jobsRequestID {
+			return m, nil
+		}
+		m.jobsLoading = false
+		m.jobsErr = msg.err
+		if msg.err == nil {
+			m.jobsTotal = len(msg.items)
+			m.jobsRunning = 0
+			for _, job := range msg.items {
+				if job.Status == "running" {
+					m.jobsRunning++
+				}
+			}
+			m.jobs = msg.items[:min(len(msg.items), maxJobItems)]
+			m.clampJobsSelection()
+		}
+		return m, nil
 	case spinnerTickMsg:
-		if !m.loading {
+		if !m.loading && !m.jobsLoading {
 			m.spinnerActive = false
 			return m, nil
 		}
@@ -244,6 +283,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.helpOpen {
 			m.helpOpen = false
 			return m, nil
+		}
+		if m.jobsOpen {
+			return m.updateJobsKeys(msg)
 		}
 		if m.historyDetail {
 			return m.updateHistoryDetailKeys(msg)
@@ -308,6 +350,19 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "?":
 		m.helpOpen = true
 		return m, nil
+	case "J":
+		m.jobsOpen = true
+		m.jobs = nil
+		m.jobsTotal = 0
+		m.jobsRunning = 0
+		m.jobsCursor = 0
+		m.jobsOffset = 0
+		m.jobsLoading = true
+		m.jobsErr = nil
+		m.jobDetail = false
+		m.jobDetailOffset = 0
+		m.jobsRequestID++
+		return m, tea.Batch(m.startSpinner(), m.loadJobs(m.jobsRequestID))
 	case "s":
 		m.cycleSortField()
 		m.sortRowsPreservingSelection()
@@ -396,6 +451,81 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.stack = m.stack[:len(m.stack)-1]
 			return m, nil
 		}
+	}
+	return m, nil
+}
+
+func (m Model) updateJobsKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.jobDetail {
+		return m.updateJobDetailKeys(msg)
+	}
+	switch msg.String() {
+	case "q", "ctrl+c":
+		m.quitting = true
+		return m, tea.Quit
+	case "?":
+		m.helpOpen = true
+	case "esc", "backspace", "left", "h":
+		m.jobsOpen = false
+		m.jobsLoading = false
+		m.jobsRequestID++
+	case "enter", "i":
+		if _, ok := m.selectedJob(); ok {
+			m.jobDetail = true
+			m.jobDetailOffset = 0
+		}
+	case "r":
+		m.jobsLoading = true
+		m.jobsErr = nil
+		m.jobsRequestID++
+		return m, tea.Batch(m.startSpinner(), m.loadJobs(m.jobsRequestID))
+	case "up", "k":
+		m.moveJobsCursor(-1)
+	case "down", "j":
+		m.moveJobsCursor(1)
+	case "pgup":
+		m.moveJobsCursor(-m.visibleJobRows())
+	case "pgdown":
+		m.moveJobsCursor(m.visibleJobRows())
+	case "home", "g":
+		m.jobsCursor, m.jobsOffset = 0, 0
+	case "end", "G":
+		if len(m.jobs) > 0 {
+			m.jobsCursor = len(m.jobs) - 1
+			m.clampJobsSelection()
+		}
+	}
+	return m, nil
+}
+
+func (m Model) updateJobDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "ctrl+c":
+		m.quitting = true
+		return m, tea.Quit
+	case "?":
+		m.helpOpen = true
+	case "enter", "i", "esc", "backspace", "left", "h":
+		m.jobDetail = false
+		m.jobDetailOffset = 0
+	case "up", "k":
+		m.jobDetailOffset--
+		m.clampJobDetailOffset()
+	case "down", "j":
+		m.jobDetailOffset++
+		m.clampJobDetailOffset()
+	case "pgup":
+		m.jobDetailOffset -= m.jobsViewportHeight()
+		m.clampJobDetailOffset()
+	case "pgdown":
+		m.jobDetailOffset += m.jobsViewportHeight()
+		m.clampJobDetailOffset()
+	case "home", "g":
+		m.jobDetailOffset = 0
+	case "end", "G":
+		m.jobDetailOffset = max(
+			len(m.jobDetailLines(m.width))-m.jobsViewportHeight(), 0,
+		)
 	}
 	return m, nil
 }
@@ -570,6 +700,14 @@ func (m Model) loadDetailTags(nodeID, revision int64, requestID uint64) tea.Cmd 
 			}
 		}
 		return detailTagsLoadedMsg{requestID: requestID, page: page, err: err}
+	}
+}
+
+func (m Model) loadJobs(requestID uint64) tea.Cmd {
+	ctx, backend := m.ctx, m.backend
+	return func() tea.Msg {
+		items, err := backend.Jobs(ctx)
+		return jobsLoadedMsg{requestID: requestID, items: items, err: err}
 	}
 }
 
@@ -791,6 +929,50 @@ func (m Model) selectedHistoryEvent() (api.AuditEvent, bool) {
 		return api.AuditEvent{}, false
 	}
 	return page.Items[m.historyCursor], true
+}
+
+func (m Model) selectedJob() (api.Job, bool) {
+	if m.jobsCursor < 0 || m.jobsCursor >= len(m.jobs) {
+		return api.Job{}, false
+	}
+	return m.jobs[m.jobsCursor], true
+}
+
+func (m *Model) moveJobsCursor(delta int) {
+	if len(m.jobs) == 0 {
+		return
+	}
+	m.jobsCursor = min(max(m.jobsCursor+delta, 0), len(m.jobs)-1)
+	m.clampJobsSelection()
+}
+
+func (m *Model) clampJobsSelection() {
+	if len(m.jobs) == 0 {
+		m.jobsCursor, m.jobsOffset = 0, 0
+		return
+	}
+	m.jobsCursor = min(max(m.jobsCursor, 0), len(m.jobs)-1)
+	visible := m.visibleJobRows()
+	if m.jobsCursor < m.jobsOffset {
+		m.jobsOffset = m.jobsCursor
+	}
+	if m.jobsCursor >= m.jobsOffset+visible {
+		m.jobsOffset = m.jobsCursor - visible + 1
+	}
+	m.jobsOffset = min(max(m.jobsOffset, 0), max(len(m.jobs)-visible, 0))
+}
+
+func (m Model) visibleJobRows() int {
+	return max(m.jobsViewportHeight()-2, 1)
+}
+
+func (m Model) jobsViewportHeight() int {
+	return max(m.height-3, 1)
+}
+
+func (m *Model) clampJobDetailOffset() {
+	maximum := max(len(m.jobDetailLines(m.width))-m.jobsViewportHeight(), 0)
+	m.jobDetailOffset = min(max(m.jobDetailOffset, 0), maximum)
 }
 
 func (m *Model) moveHistoryCursor(delta int) {

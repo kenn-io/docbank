@@ -157,6 +157,12 @@ func (b *tuiDaemonBackend) NodeTags(
 	})
 }
 
+func (b *tuiDaemonBackend) Jobs(ctx context.Context) ([]api.Job, error) {
+	return withTUIClient(ctx, b, func(c *client.Client) ([]api.Job, error) {
+		return c.Jobs(ctx)
+	})
+}
+
 func (b *tuiDaemonBackend) AuditHistory(
 	ctx context.Context, path string, nodeID int64, limit int, cursor string,
 ) (api.AuditEventPage, error) {

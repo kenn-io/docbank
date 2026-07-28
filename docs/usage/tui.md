@@ -1,6 +1,6 @@
 ---
 title: Interactive terminal browser
-description: Browse and sort documents, search names and extracted text, inspect stable identity, and read permanent audited history from a daemon-backed TUI.
+description: Browse documents, inspect authority and permanent history, and observe daemon background work from a read-only TUI.
 ---
 
 # Interactive terminal browser
@@ -38,12 +38,22 @@ IDs, revisions, path states, version identities, and typed tag or provenance
 details. Nodes outside an audit scope are identified plainly rather than shown
 with an empty or invented timeline.
 
+Press <kbd>J</kbd> to inspect daemon-owned background work without leaving the
+document view. The activity screen shows each stable job name, whether it is
+running, completed, failed, or cancelled, and its start and finish times.
+Inspecting a job exposes its complete terminal failure text. Refresh asks the
+current compatible daemon for a new snapshot; closing the screen returns to the
+same document selection. The current daemon contract reports lifecycle rather
+than invented percentages: workers will show numeric progress only when they
+can supply an authoritative completed and total count.
+
 | Key | Action |
 |-----|--------|
 | <kbd>↑</kbd>/<kbd>k</kbd>, <kbd>↓</kbd>/<kbd>j</kbd> | Move between documents |
 | <kbd>Enter</kbd> or <kbd>→</kbd> | Open the selected directory |
 | <kbd>Enter</kbd> on a file, or <kbd>i</kbd> | Inspect complete document authority |
 | <kbd>a</kbd> | Browse the selected node's permanent audited history |
+| <kbd>J</kbd> | Inspect daemon background jobs and failures |
 | <kbd>←</kbd>, <kbd>Backspace</kbd>, or <kbd>Esc</kbd> | Return to the parent directory or leave search results |
 | <kbd>/</kbd> | Search live names and extracted text |
 | <kbd>s</kbd> | Cycle the sort column: name, size, and modification time |

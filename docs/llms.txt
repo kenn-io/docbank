@@ -19,7 +19,7 @@ Every documentation page is also published as raw Markdown at the same path with
 - [Organizing & Tagging](https://docbank.ai/usage/organizing.md): Browsing, moving, renaming, and tagging in the virtual tree.
 - [Searching](https://docbank.ai/usage/searching.md): Ranked, prefix-matching search over document names and verified text content.
 - [Web application](https://docbank.ai/usage/web.md): Browse and search the local vault in a responsive, authenticated, read-only web interface.
-- [Interactive terminal browser](https://docbank.ai/usage/tui.md): Browse and sort documents, search names and extracted text, inspect stable identity, and read permanent audited history from a daemon-backed TUI.
+- [Interactive terminal browser](https://docbank.ai/usage/tui.md): Browse documents, inspect authority and permanent history, and observe daemon background work from a read-only TUI.
 
 ## Protect & Operate
 - [Vault Lifecycle](https://docbank.ai/usage/lifecycle.md): Operate a docbank vault safely from first import through maintenance, upgrades, snapshots, and recovery.
