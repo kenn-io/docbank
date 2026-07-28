@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -316,7 +317,7 @@ func TestWebApplication(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
-func TestWebSessionIsReadOnlyRevocableAndDaemonLocal(t *testing.T) {
+func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	taxes, err := s.Mkdir(t.Context(), s.RootID(), "Taxes")
 	require.NoError(t, err)
@@ -427,6 +428,29 @@ func TestWebSessionIsReadOnlyRevocableAndDaemonLocal(t *testing.T) {
 	resp = webRequest(http.MethodGet, "/api/v1/backup/snapshots?repo=")
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode,
 		"browser sessions cannot supply even an empty repository override")
+	require.NoError(t, resp.Body.Close())
+
+	uploadContent := []byte("browser upload")
+	uploadHash := sha256.Sum256(uploadContent)
+	var uploadBody bytes.Buffer
+	uploadWriter := multipart.NewWriter(&uploadBody)
+	uploadPart, err := uploadWriter.CreateFormFile("file", "browser.txt")
+	require.NoError(t, err)
+	_, err = uploadPart.Write(uploadContent)
+	require.NoError(t, err)
+	require.NoError(t, uploadWriter.Close())
+	uploadURL := ts.URL + "/api/v1/uploads?parent_id=" +
+		strconv.FormatInt(taxes.ID, 10) + "&name=browser.txt"
+	uploadRequest, err := http.NewRequest(http.MethodPost, uploadURL, &uploadBody)
+	require.NoError(t, err)
+	uploadRequest.Header["X-Api-Key"] = []string{""}
+	uploadRequest.Header.Set(api.WebSessionHeader, issued.Token)
+	uploadRequest.Header.Set("Content-Type", uploadWriter.FormDataContentType())
+	uploadRequest.Header.Set(api.BlobHashHeader, hex.EncodeToString(uploadHash[:]))
+	uploadRequest.Header.Set(api.BlobSizeHeader, strconv.Itoa(len(uploadContent)))
+	resp, err = ts.Client().Do(uploadRequest)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusCreated, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
 
 	resp = webRequest(http.MethodGet,

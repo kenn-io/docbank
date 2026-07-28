@@ -68,7 +68,7 @@ Four commitments:
 - FTS5 search over names and verified UTF-8 text/Markdown/JSON contents
 - A read-only daemon-backed TUI for analytical tree browsing, search, stable
   document/version identity inspection, and permanent audited-history timelines
-- A read-only kit-ui web application for virtual-tree browsing, sortable
+- A scoped kit-ui web application for verified local-file upload, virtual-tree browsing, sortable
   document analysis, tag browsing, tag-filtered extracted-text search,
   complete current authority, verified current and historical content download,
   permanent protection and event history, immutable versions and provenance,

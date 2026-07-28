@@ -131,6 +131,13 @@ export interface BackupSnapshotList {
   items: BackupSnapshot[];
 }
 
+export interface UploadReceipt {
+  status: "added" | "skipped";
+  node: Node;
+  computed_hash: string;
+  computed_size: number;
+}
+
 export interface AuditScopeStatus {
   id: string;
   target_node_id: number;

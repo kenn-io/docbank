@@ -12,6 +12,7 @@
   import SearchIcon from "@lucide/svelte/icons/search";
   import TagIcon from "@lucide/svelte/icons/tag";
   import HistoryIcon from "@lucide/svelte/icons/history";
+  import UploadIcon from "@lucide/svelte/icons/upload";
   import {
     Button,
     Card,
@@ -36,6 +37,7 @@
   import JobsDrawer from "./JobsDrawer.svelte";
   import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
   import StorageDrawer from "./StorageDrawer.svelte";
+  import UploadDrawer from "./UploadDrawer.svelte";
   import VersionHistoryDrawer from "./VersionHistoryDrawer.svelte";
   import {
     APIError,
@@ -109,6 +111,7 @@
   let jobsOpen = $state(false);
   let storageOpen = $state(false);
   let backupsOpen = $state(false);
+  let uploadTarget = $state<Node | null>(null);
   let generation = 0;
   let auditGeneration = 0;
   let tagGeneration = 0;
@@ -147,6 +150,7 @@
       jobsOpen = false;
       storageOpen = false;
       backupsOpen = false;
+      uploadTarget = null;
       tagCatalog = [];
       tagCatalogListed = 0;
       selectedTags = [];
@@ -516,6 +520,7 @@
     jobsOpen = false;
     storageOpen = false;
     backupsOpen = false;
+    uploadTarget = null;
     activeQuery = "";
     activeTagID = "";
     taggedInspected = 0;
@@ -539,7 +544,7 @@
     <Card level="raised" title="Open your Docbank" eyebrow="LOCAL VAULT">
       <div class="unlock-copy">
         <p>
-          Run <code>docbank web</code> to create a new read-only browser session.
+          Run <code>docbank web</code> to create a new scoped browser session.
           The vault API key is never stored in the browser.
         </p>
         {#if error}<p class="error" role="alert">{error}</p>{/if}
@@ -586,6 +591,7 @@
             jobsOpen = false;
             storageOpen = false;
             backupsOpen = true;
+            uploadTarget = null;
           }}
         >
           <ArchiveIcon size="14" aria-hidden="true" />
@@ -599,6 +605,7 @@
             provenanceOpen = false;
             jobsOpen = false;
             backupsOpen = false;
+            uploadTarget = null;
             storageOpen = true;
           }}
         >
@@ -613,6 +620,7 @@
             provenanceOpen = false;
             storageOpen = false;
             backupsOpen = false;
+            uploadTarget = null;
             jobsOpen = true;
           }}
         >
@@ -671,6 +679,28 @@
             {:else}
               <span>{rows.length}{truncated ? "+" : ""} item{rows.length === 1 ? "" : "s"}</span>
             {/if}
+            <IconButton
+              size="sm"
+              ariaLabel="Upload files to current folder"
+              title={activeQuery || tagBrowse
+                ? "Return to a folder before uploading"
+                : directory?.path
+                  ? `Upload files to ${directory.path}`
+                  : "Upload files"}
+              disabled={!directory || loading || Boolean(activeQuery) || tagBrowse}
+              onclick={() => {
+                if (!directory || activeQuery || tagBrowse) return;
+                historyOpen = false;
+                versionsOpen = false;
+                provenanceOpen = false;
+                jobsOpen = false;
+                storageOpen = false;
+                backupsOpen = false;
+                uploadTarget = directory;
+              }}
+            >
+              <UploadIcon size="14" aria-hidden="true" />
+            </IconButton>
             <IconButton
               size="sm"
               ariaLabel="Refresh current view"
@@ -881,6 +911,7 @@
                       jobsOpen = false;
                       storageOpen = false;
                       backupsOpen = false;
+                      uploadTarget = null;
                       versionsOpen = true;
                     }}
                   >
@@ -896,6 +927,7 @@
                       jobsOpen = false;
                       storageOpen = false;
                       backupsOpen = false;
+                      uploadTarget = null;
                       provenanceOpen = true;
                     }}
                   >
@@ -936,6 +968,7 @@
                       provenanceOpen = false;
                       storageOpen = false;
                       backupsOpen = false;
+                      uploadTarget = null;
                       historyOpen = true;
                     }}
                   >
@@ -1013,6 +1046,17 @@
       <StorageDrawer
         session={webSession}
         onclose={() => (storageOpen = false)}
+        onauthfailure={handleFailure}
+      />
+    {/if}
+    {#if uploadTarget}
+      <UploadDrawer
+        session={webSession}
+        directory={uploadTarget}
+        onclose={() => (uploadTarget = null)}
+        oncomplete={() => {
+          if (uploadTarget) void loadDirectory(uploadTarget.id, false);
+        }}
         onauthfailure={handleFailure}
       />
     {/if}

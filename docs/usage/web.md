@@ -1,6 +1,6 @@
 ---
 title: Web application
-description: Browse and search the local vault in a responsive, authenticated, read-only web interface.
+description: Upload, browse, and search the local vault in a responsive, authenticated web interface.
 ---
 
 # Web application
@@ -12,9 +12,9 @@ docbank web
 ```
 
 Docbank starts or reconnects to the selected vault's compatible daemon and
-opens its local web application. It is a read-only document browser: navigate
-the virtual tree, sort a folder by document name, size, or modification time,
-search names and extracted text, and inspect the selected document's stable
+opens its local web application. Choose local files for verified upload,
+navigate the virtual tree, sort a folder by document name, size, or modification
+time, search names and extracted text, and inspect the selected document's stable
 node ID, revision, current version ID, SHA-256 identity, exact size, and media
 type. The authority card also shows every tag assigned to the selected file or
 folder. Selecting a tag browses its live assignments, while search can require
@@ -61,6 +61,31 @@ even when the card wraps it across lines. Every selected node also shows its
 assigned tag names. Hovering a tag shows its stable UUID and vault-wide
 assignment count; the bounded tag stack expands in place when a node carries
 more than six.
+
+## Upload verified documents
+
+Choose the upload button while browsing a live folder, then select one or more
+files from this device. Upload is deliberately unavailable from search and
+tag-wide result views so the destination is never ambiguous. The drawer names
+the destination's stable directory ID and current canonical path.
+
+Docbank makes two bounded-memory passes over each selected file. The first pass
+computes the browser's declared SHA-256 while showing hashing progress. The
+second streams a multipart upload with visible byte progress through the
+ordinary `POST /api/v1/uploads` contract. The daemon independently computes
+the hash and size and grants node/blob authority only when both match. The
+browser compares that receipt again before reporting **Added** or **Already
+present**, then refreshes the destination by stable ID.
+
+Files are independent queue entries: one rejection does not make another
+success ambiguous, failed entries can be retried, and cancellation stops before
+Docbank reports authority for the current item. Name/content collisions retain
+the ordinary ingest suffix behavior rather than overwriting a document.
+Selecting a local file never changes or removes the source.
+
+This first browser import is file-granular. Folder recursion, server-filesystem
+ingest, watched-inbox configuration, and replacing an existing document remain
+CLI or authenticated API workflows.
 
 ## Download verified content
 
@@ -265,20 +290,23 @@ origin is independent of the configured API port and unique to one daemon
 lifetime. A process that later captures either port therefore cannot leave a
 service worker or cached script waiting for a future browser session.
 
-The launch page carries only the read-only session in a URL fragment. Browsers
+The launch page carries only the scoped session in a URL fragment. Browsers
 do not include fragments in the initial HTTP request; the application removes
 it from the address bar and holds it only in page memory. Requests use
 `X-Docbank-Web-Session`, which the daemon accepts only for the tree, node,
 search, tag-definition and assignment reads, immutable-version, provenance, audit-status, audit-history,
-background-job, physical-storage-status, configured backup-snapshot-list, and
-verified-download preparation
+background-job, physical-storage-status, configured backup-snapshot-list,
+verified-download preparation, and digest-checked file upload
 used by this interface.
 Download preparation may write only owner-private temporary bytes and issue
-one exact, expiring file ticket; it cannot mutate document authority. The
-session cannot enroll audit scopes, run independent verification, or call
-mutation, backup creation, verification, restore, maintenance, configuration,
-or general API endpoints. Its sole backup capability is listing the immutable
-snapshots in the repository already configured for this daemon.
+one exact, expiring file ticket. Upload may create only file nodes beneath the
+stable live directory selected in the browser and must satisfy the same
+caller-declared/server-computed byte identity as every remote writer. The
+session cannot perform any other document mutation, enroll audit scopes, run
+independent verification, or call backup creation, verification, restore,
+maintenance, configuration, or general API endpoints. Its sole backup
+capability is listing the immutable snapshots in the repository already
+configured for this daemon.
 
 The lock button revokes the session in daemon memory and clears the page.
 Every remaining browser session and its dedicated browser origin disappear
@@ -310,8 +338,8 @@ Refreshing a folder resolves its stable node ID, current canonical path, and
 children in one metadata snapshot, so a concurrent CLI or agent move cannot
 leave the browser constructing child paths beneath an obsolete name.
 
-The current web application does not compare versions, import, edit, revert,
-prune, move, create or change tags and
+The current web application does not compare versions, recursively import
+folders, edit, revert, prune, move, create or change tags and
 assignments, trash, enroll audit scopes, run independent audit verification,
 or run maintenance, backup, verification, or restore operations.
 Use the corresponding CLI or authenticated HTTP endpoint for those workflows.

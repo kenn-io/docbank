@@ -67,9 +67,9 @@ its own shutdown token. The hidden `POST /api/daemon/web-session` exchanges
 that master authority for a random daemon-lifetime browser token and returns
 the fresh loopback origin dedicated to that daemon lifetime, while
 `DELETE /api/daemon/web-session` revokes the calling browser session. Those
-tokens authenticate only the explicit read routes used by the built-in
-document, storage, job, and configured-backup views; they are intentionally
-not another general API credential.
+tokens authenticate only the explicit routes used by the built-in document,
+storage, job, configured-backup, verified-download, and digest-checked upload
+workflows; they are intentionally not another general API credential.
 
 `GET /nodes/{id}/children` binds the live directory projection—including its
 current canonical path—and the requested child page to one read transaction.
@@ -560,16 +560,16 @@ machine-readable string clients branch on instead of parsing `detail`:
 | `maintenance_busy` | 503 | exclusive vault maintenance is running or queued; retry the mutation after it finishes |
 | `pack_retirement_deferred` | 503 | repack authority committed but an old source pack remains physically locked; release the lock, then run `storage pack` reconciliation |
 | `unauthorized` | 401 | missing or invalid API key; bad shutdown token |
-| `web_session_read_only` | 403 | a daemon-issued browser session attempted an endpoint outside its explicit read-only allowlist |
+| `web_session_read_only` | 403 | a daemon-issued browser session attempted an endpoint outside its explicit attenuated allowlist |
 | `web_unavailable` | 503 | this daemon is not serving compiled web assets |
 | `internal` | 500 | unmapped error (still surfaced with a message — this is a single-user local daemon, not a hardened multi-tenant service) |
 
 ## Non-goals
 
 - No server-side rendering. The kit-ui application is static public code; it
-  receives a daemon-lifetime read-only session from `docbank web`, and every
-  vault read remains an ordinary authenticated API request. The master API key
-  never enters the browser.
+  receives a daemon-lifetime attenuated session from `docbank web`. Reads,
+  verified-download preparation, and digest-checked file upload remain ordinary
+  authenticated API requests. The master API key never enters the browser.
 - No multi-user model: one vault and one master authority. Browser sessions are
   attenuated local capabilities, not accounts. Sharing is out of scope for v1.
 - No MCP server.

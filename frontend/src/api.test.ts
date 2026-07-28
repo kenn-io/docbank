@@ -35,7 +35,7 @@ describe("browser authentication", () => {
     expect(takeFragmentSession()).toBe("");
   });
 
-  it("sends only the read-only browser session header", async () => {
+  it("sends only the scoped browser session header", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ id: 1 }), {
         status: 200,

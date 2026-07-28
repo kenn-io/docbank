@@ -18,7 +18,8 @@ const (
 
 // webSessionRegistry owns browser credentials for exactly one daemon
 // lifetime. Tokens are random, retained only as digests, and authorize only
-// the read routes used by the built-in document, audit-history, and job browser.
+// the deliberately limited routes used by the built-in browser. Most are
+// reads; verified upload is the one document-authority mutation.
 type webSessionRegistry struct {
 	mu     sync.Mutex
 	tokens map[[sha256.Size]byte]struct{}
@@ -59,6 +60,9 @@ func (r *webSessionRegistry) revoke(token string) {
 func webSessionRequestAllowed(r *http.Request) bool {
 	method, path := r.Method, r.URL.Path
 	if method == http.MethodPost && path == webDownloadPreparePath {
+		return true
+	}
+	if method == http.MethodPost && path == "/api/v1/uploads" {
 		return true
 	}
 	if method == http.MethodDelete && path == webSessionPath {
