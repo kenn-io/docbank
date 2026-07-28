@@ -41,9 +41,9 @@ type Client struct {
 }
 
 // WebSessionURL asks the ownership-proven daemon for a daemon-lifetime,
-// read-only browser credential and returns it in the local portal fragment.
-// The master API key stays on the client's pinned connection and never enters
-// the browser.
+// scoped browser credential and a daemon-lifetime upload proof secret, then
+// returns both in the local portal fragment. The master API key stays on the
+// client's pinned connection and never enters the browser.
 func (c *Client) WebSessionURL(ctx context.Context) (string, error) {
 	apiURL, err := url.Parse(c.base)
 	if err != nil {
@@ -56,14 +56,19 @@ func (c *Client) WebSessionURL(ctx context.Context) (string, error) {
 		return "", errors.New("daemon client cannot produce an authenticated web URL")
 	}
 	var session struct {
-		Token string `json:"token"`
-		URL   string `json:"url"`
+		Token        string `json:"token"`
+		UploadSecret string `json:"upload_secret"`
+		URL          string `json:"url"`
 	}
 	if err := c.do(ctx, http.MethodPost, "/api/daemon/web-session", nil, nil, &session); err != nil {
 		return "", err
 	}
 	if session.Token == "" {
 		return "", errors.New("daemon returned an empty browser session")
+	}
+	uploadSecret, err := base64.RawURLEncoding.DecodeString(session.UploadSecret)
+	if err != nil || len(uploadSecret) != sha256.Size {
+		return "", errors.New("daemon returned an invalid browser upload secret")
 	}
 	u, err := url.Parse(session.URL)
 	if err != nil {
@@ -80,7 +85,10 @@ func (c *Client) WebSessionURL(ctx context.Context) (string, error) {
 	u.Path = "/"
 	u.RawPath = ""
 	u.RawQuery = ""
-	u.Fragment = url.Values{"web_session": {session.Token}}.Encode()
+	u.Fragment = url.Values{
+		"web_session":       {session.Token},
+		"web_upload_secret": {session.UploadSecret},
+	}.Encode()
 	return u.String(), nil
 }
 

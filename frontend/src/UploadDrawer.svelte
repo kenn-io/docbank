@@ -15,8 +15,8 @@
   import { APIError, type Node, type UploadReceipt } from "./api.js";
   import {
     hashFile,
-    uploadFile,
     type TransferProgress,
+    type UploadTransport,
   } from "./upload.js";
   import { formatBytes } from "./format.js";
 
@@ -40,14 +40,14 @@
   }
 
   interface Props {
-    session: string;
+    channel: UploadTransport;
     directory: Node;
     onclose: () => void;
     oncomplete: () => void | Promise<void>;
     onauthfailure: (cause: unknown) => void;
   }
 
-  let { session, directory, onclose, oncomplete, onauthfailure }: Props = $props();
+  let { channel, directory, onclose, oncomplete, onauthfailure }: Props = $props();
   let input: HTMLInputElement;
   let items = $state<UploadItem[]>([]);
   let running = $state(false);
@@ -128,8 +128,7 @@
           progress: { processed: 0, total: queued.file.size },
         });
         refreshNeeded = true;
-        const receipt = await uploadFile(
-          session,
+        const receipt = await channel.uploadFile(
           directory.id,
           queued.file,
           hash,
@@ -230,7 +229,9 @@
     <p class="contract">
       Docbank reads each file twice: once locally to declare its SHA-256
       identity, then once to stream it. Authority is granted only when the
-      daemon independently computes the same hash and size.
+      daemon independently computes the same hash and size. Bytes travel only
+      over the upload channel proved by this daemon; a broken channel is never
+      reconnected.
     </p>
 
     <input

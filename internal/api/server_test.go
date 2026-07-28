@@ -3,11 +3,11 @@ package api_test
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
-	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -345,12 +345,16 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
 	assert.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
 	var issued struct {
-		Token string `json:"token"`
-		URL   string `json:"url"`
+		Token        string `json:"token"`
+		UploadSecret string `json:"upload_secret"`
+		URL          string `json:"url"`
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&issued))
 	require.NoError(t, resp.Body.Close())
 	require.NotEmpty(t, issued.Token)
+	secret, err := base64.RawURLEncoding.DecodeString(issued.UploadSecret)
+	require.NoError(t, err)
+	require.Len(t, secret, sha256.Size)
 	assert.Equal(t, testWebURL, issued.URL)
 	assert.NotEqual(t, testAPIKey, issued.Token)
 
@@ -430,27 +434,9 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 		"browser sessions cannot supply even an empty repository override")
 	require.NoError(t, resp.Body.Close())
 
-	uploadContent := []byte("browser upload")
-	uploadHash := sha256.Sum256(uploadContent)
-	var uploadBody bytes.Buffer
-	uploadWriter := multipart.NewWriter(&uploadBody)
-	uploadPart, err := uploadWriter.CreateFormFile("file", "browser.txt")
-	require.NoError(t, err)
-	_, err = uploadPart.Write(uploadContent)
-	require.NoError(t, err)
-	require.NoError(t, uploadWriter.Close())
-	uploadURL := ts.URL + "/api/v1/uploads?parent_id=" +
-		strconv.FormatInt(taxes.ID, 10) + "&name=browser.txt"
-	uploadRequest, err := http.NewRequest(http.MethodPost, uploadURL, &uploadBody)
-	require.NoError(t, err)
-	uploadRequest.Header["X-Api-Key"] = []string{""}
-	uploadRequest.Header.Set(api.WebSessionHeader, issued.Token)
-	uploadRequest.Header.Set("Content-Type", uploadWriter.FormDataContentType())
-	uploadRequest.Header.Set(api.BlobHashHeader, hex.EncodeToString(uploadHash[:]))
-	uploadRequest.Header.Set(api.BlobSizeHeader, strconv.Itoa(len(uploadContent)))
-	resp, err = ts.Client().Do(uploadRequest)
-	require.NoError(t, err)
-	assert.Equal(t, http.StatusCreated, resp.StatusCode)
+	resp = webRequest(http.MethodPost, "/api/v1/uploads")
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode,
+		"browser sessions cannot upload through reconnectable HTTP")
 	require.NoError(t, resp.Body.Close())
 
 	resp = webRequest(http.MethodGet,

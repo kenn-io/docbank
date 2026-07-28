@@ -219,6 +219,7 @@ func runServe(ctx context.Context) (retErr error) {
 		StartedAt: time.Now(), ShutdownToken: shutdownToken, Shutdown: stop, Tracker: tracker,
 		Jobs: jobSupervisor, Gate: operationGate, WebURL: webURL,
 	})
+	defer srv.Close()
 	newHTTPServer := func() *http.Server {
 		return &http.Server{
 			Handler:           srv.Handler(),

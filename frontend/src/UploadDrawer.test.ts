@@ -23,18 +23,25 @@ describe("upload documents drawer", () => {
         return hash;
       },
     );
-    vi.spyOn(upload, "uploadFile").mockImplementation(
-      async (_session, parentID, file, expectedHash, _signal, onprogress) => {
+    const channel: upload.UploadTransport = {
+      uploadFile: vi.fn(
+      async (
+        parentID: number,
+        file: File,
+        expectedHash: string,
+        _signal: AbortSignal,
+        onprogress: (progress: upload.TransferProgress) => void,
+      ) => {
         onprogress({ processed: file.size, total: file.size });
         return {
-          status: "added",
+          status: "added" as const,
           computed_hash: expectedHash,
           computed_size: file.size,
           node: {
             id: 8,
             parent_id: parentID,
             name: file.name,
-            kind: "file",
+            kind: "file" as const,
             blob_hash: expectedHash,
             size: file.size,
             revision: 1,
@@ -42,12 +49,12 @@ describe("upload documents drawer", () => {
             modified_at: "2026-07-28T00:00:00Z",
           },
         };
-      },
-    );
+      }),
+    };
     const complete = vi.fn();
 
     render(UploadDrawer, {
-      session: "short-lived",
+      channel,
       directory: {
         id: 3,
         name: "Reports",
@@ -77,8 +84,7 @@ describe("upload documents drawer", () => {
     expect(screen.getByText(/Created node 8, revision 1/)).toBeTruthy();
     await waitFor(() => expect(complete).toHaveBeenCalledOnce());
     expect(upload.hashFile).toHaveBeenCalledOnce();
-    expect(upload.uploadFile).toHaveBeenCalledWith(
-      "short-lived",
+    expect(channel.uploadFile).toHaveBeenCalledWith(
       3,
       file,
       hash,
@@ -90,9 +96,15 @@ describe("upload documents drawer", () => {
   it("refreshes and reports an unconfirmed outcome after cancellation", async () => {
     const hash = "a".repeat(64);
     vi.spyOn(upload, "hashFile").mockResolvedValue(hash);
-    vi.spyOn(upload, "uploadFile").mockImplementation(
-      async (_session, _parentID, _file, _expectedHash, signal) =>
-        await new Promise((_resolve, reject) => {
+    const channel: upload.UploadTransport = {
+      uploadFile: vi.fn(
+      async (
+        _parentID: number,
+        _file: File,
+        _expectedHash: string,
+        signal: AbortSignal,
+      ) =>
+        await new Promise<never>((_resolve, reject) => {
           signal.addEventListener(
             "abort",
             () =>
@@ -100,11 +112,12 @@ describe("upload documents drawer", () => {
             { once: true },
           );
         }),
-    );
+      ),
+    };
     const complete = vi.fn();
 
     render(UploadDrawer, {
-      session: "short-lived",
+      channel,
       directory: {
         id: 3,
         name: "Reports",

@@ -28,11 +28,18 @@ describe("browser authentication", () => {
   });
 
   it("consumes the browser session without retaining it in web storage", () => {
-    history.replaceState(null, "", "/#web_session=one%20time");
-    expect(takeFragmentSession()).toBe("one time");
+    history.replaceState(
+      null,
+      "",
+      "/#web_session=one%20time&web_upload_secret=proof",
+    );
+    expect(takeFragmentSession()).toEqual({
+      token: "one time",
+      uploadSecret: "proof",
+    });
     expect(location.hash).toBe("");
     expect(sessionStorage.length).toBe(0);
-    expect(takeFragmentSession()).toBe("");
+    expect(takeFragmentSession()).toBeNull();
   });
 
   it("sends only the scoped browser session header", async () => {

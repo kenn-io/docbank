@@ -58,6 +58,7 @@
   } from "./api.js";
   import { basename, formatBytes, formatDate } from "./format.js";
   import { orderRows, reconcileSearchView, type SortField } from "./rows.js";
+  import { VerifiedUploadChannel } from "./upload.js";
 
   type Row = { node: Node; path: string; match?: "name" | "content" };
   type Snapshot = {
@@ -77,6 +78,8 @@
   };
 
   let webSession = $state("");
+  let uploadChannel = $state<VerifiedUploadChannel | null>(null);
+  let uploadChannelError = $state("");
   let directory = $state<Node | null>(null);
   let rows = $state<Row[]>([]);
   let stack = $state<Snapshot[]>([]);
@@ -134,16 +137,34 @@
   );
 
   onMount(() => {
-    webSession = takeFragmentSession();
-    if (webSession) {
+    const session = takeFragmentSession();
+    if (session) {
+      webSession = session.token;
       void loadRoot();
       void loadTagCatalog();
+      const channel = new VerifiedUploadChannel(session, undefined, () => {
+        if (uploadChannel === channel) uploadChannel = null;
+        uploadChannelError =
+          "The verified upload channel ended. Run `docbank web` again before selecting files.";
+      });
+      void channel.connect().then(
+        () => {
+          if (webSession === session.token) uploadChannel = channel;
+          else channel.close();
+        },
+        (cause) => {
+          uploadChannelError = cause instanceof Error ? cause.message : String(cause);
+        },
+      );
+      return () => channel.close();
     }
   });
 
   function handleFailure(cause: unknown): void {
     if (cause instanceof APIError && cause.status === 401) {
+      uploadChannel?.close();
       webSession = "";
+      uploadChannel = null;
       historyOpen = false;
       versionsOpen = false;
       provenanceOpen = false;
@@ -498,6 +519,8 @@
     tagGeneration += 1;
     tagCatalogGeneration += 1;
     const session = webSession;
+    uploadChannel?.close();
+    uploadChannel = null;
     webSession = "";
     directory = null;
     rows = [];
@@ -684,10 +707,14 @@
               ariaLabel="Upload files to current folder"
               title={activeQuery || tagBrowse
                 ? "Return to a folder before uploading"
+                : uploadChannelError
+                  ? uploadChannelError
+                  : !uploadChannel
+                    ? "Establishing the verified upload channel"
                 : directory?.path
                   ? `Upload files to ${directory.path}`
                   : "Upload files"}
-              disabled={!directory || loading || Boolean(activeQuery) || tagBrowse}
+              disabled={!directory || loading || Boolean(activeQuery) || tagBrowse || !uploadChannel}
               onclick={() => {
                 if (!directory || activeQuery || tagBrowse) return;
                 historyOpen = false;
@@ -1049,9 +1076,9 @@
         onauthfailure={handleFailure}
       />
     {/if}
-    {#if uploadTarget}
+    {#if uploadTarget && uploadChannel}
       <UploadDrawer
-        session={webSession}
+        channel={uploadChannel}
         directory={uploadTarget}
         onclose={() => (uploadTarget = null)}
         oncomplete={async () => {

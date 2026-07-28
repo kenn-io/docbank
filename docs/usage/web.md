@@ -71,11 +71,18 @@ the destination's stable directory ID and current canonical path.
 
 Docbank makes two bounded-memory passes over each selected file. The first pass
 computes the browser's declared SHA-256 while showing hashing progress. The
-second streams a multipart upload with visible byte progress through the
-ordinary `POST /api/v1/uploads` contract. The daemon independently computes
-the hash and size and grants node/blob authority only when both match. The
-browser compares that receipt again before reporting **Added** or **Already
-present**, then refreshes the destination by stable ID.
+second streams the bytes with visible progress over a dedicated upload channel.
+Before the upload button becomes available, the daemon proves that channel
+with a random secret issued through the ownership-pinned CLI handoff. File
+bytes never use an ordinary reconnectable browser HTTP request.
+
+The channel is bound to one browser session and one daemon lifetime. If it
+breaks, the page permanently disables upload rather than reconnecting to
+whatever process now owns the loopback port; run `docbank web` again to obtain
+a newly proved channel. The daemon independently computes the hash and size
+and grants node/blob authority only when both match. The browser compares that
+receipt again before reporting **Added** or **Already present**, then refreshes
+the destination by stable ID.
 
 Files are independent queue entries: one rejection does not make another
 success ambiguous, and failed entries can be retried. Cancellation can race
@@ -293,18 +300,21 @@ origin is independent of the configured API port and unique to one daemon
 lifetime. A process that later captures either port therefore cannot leave a
 service worker or cached script waiting for a future browser session.
 
-The launch page carries only the scoped session in a URL fragment. Browsers
-do not include fragments in the initial HTTP request; the application removes
-it from the address bar and holds it only in page memory. Requests use
+The launch page carries the scoped session and its random upload-proof secret
+in a URL fragment. Browsers do not include fragments in the initial HTTP
+request; the application removes them from the address bar and holds them only
+in page memory. Ordinary requests use
 `X-Docbank-Web-Session`, which the daemon accepts only for the tree, node,
 search, tag-definition and assignment reads, immutable-version, provenance, audit-status, audit-history,
 background-job, physical-storage-status, configured backup-snapshot-list,
-verified-download preparation, and digest-checked file upload
+and verified-download preparation
 used by this interface.
 Download preparation may write only owner-private temporary bytes and issue
-one exact, expiring file ticket. Upload may create only file nodes beneath the
-stable live directory selected in the browser and must satisfy the same
-caller-declared/server-computed byte identity as every remote writer. The
+one exact, expiring file ticket. Upload uses a separate, never-reconnecting
+WebSocket authenticated by a challenge proof over the upload secret. No file
+bytes are sent until that proof succeeds. It may create only file nodes
+beneath the stable live directory selected in the browser and must satisfy the
+same caller-declared/server-computed byte identity as every remote writer. The
 session cannot perform any other document mutation, enroll audit scopes, run
 independent verification, or call backup creation, verification, restore,
 maintenance, configuration, or general API endpoints. Its sole backup
@@ -326,8 +336,8 @@ runtime state, excluded from snapshots, replaced by the next launch, and
 removed when the daemon stops.
 
 Use `docbank web --no-browser` only when another local program must open the
-URL. That output contains the live session key. Do not put it in shell history,
-logs, screenshots, issue trackers, or chat.
+URL. That output contains the live browser credentials. Do not put it in shell
+history, logs, screenshots, issue trackers, or chat.
 
 ## Current boundary
 
@@ -349,6 +359,7 @@ Use the corresponding CLI or authenticated HTTP endpoint for those workflows.
 Future web workflows will require deliberately expanded browser-session
 permissions rather than inheriting the master API key.
 
-If a page reports that its browser session expired or was rejected, run
-`docbank web` again. Sessions deliberately do not survive daemon restart, and
-the previous random `.localhost` origin is not reused.
+If a page reports that its browser session or upload channel expired, ended,
+or was rejected, run `docbank web` again. Neither credential nor the upload
+channel survives daemon restart, and the previous random `.localhost` origin
+is not reused.

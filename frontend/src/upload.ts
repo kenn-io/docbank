@@ -1,8 +1,11 @@
+import { hmac } from "@noble/hashes/hmac.js";
 import { sha256 } from "@noble/hashes/sha2.js";
-import { bytesToHex } from "@noble/hashes/utils.js";
-import { APIError, type UploadReceipt } from "./api.js";
+import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
+import { APIError, type BrowserSession, type UploadReceipt } from "./api.js";
 
 const hashChunkBytes = 1024 * 1024;
+const uploadSocketPath = "/api/daemon/web-upload";
+const uploadProofDomain = "docbank-web-upload-v1\u0000";
 
 export interface TransferProgress {
   processed: number;
@@ -57,21 +60,6 @@ export async function hashFile(
   return bytesToHex(hasher.digest());
 }
 
-function decodeUploadError(xhr: XMLHttpRequest): APIError {
-  let problem: { detail?: string; title?: string; code?: string } = {};
-  try {
-    problem = JSON.parse(xhr.responseText) as typeof problem;
-  } catch {
-    // The status remains useful when a proxy or transport did not return a
-    // Docbank problem document.
-  }
-  return new APIError(
-    problem.detail || problem.title || `HTTP ${xhr.status}`,
-    xhr.status,
-    problem.code ?? "",
-  );
-}
-
 export function validateUploadReceipt(
   receipt: UploadReceipt,
   parentID: number,
@@ -94,73 +82,269 @@ export function validateUploadReceipt(
   }
 }
 
-export function uploadFile(
-  session: string,
-  parentID: number,
-  file: File,
-  expectedHash: string,
-  signal: AbortSignal,
-  onprogress: (progress: TransferProgress) => void,
-): Promise<UploadReceipt> {
-  const name = file.name.normalize("NFC");
-  const form = new FormData();
-  form.append("file", file, name);
-  const query = new URLSearchParams({
-    parent_id: String(parentID),
-    name,
-  });
+interface UploadMessage {
+  type: string;
+  nonce?: string;
+  proof?: string;
+  request_id?: string;
+  parent_id?: number;
+  name?: string;
+  mime_type?: string;
+  expected_hash?: string;
+  expected_size?: number;
+  receipt?: UploadReceipt;
+  status?: number;
+  code?: string;
+  detail?: string;
+}
 
-  return new Promise((resolve, reject) => {
-    throwIfAborted(signal);
-    const xhr = new XMLHttpRequest();
-    const abort = () => xhr.abort();
-    const finish = (action: () => void) => {
-      signal.removeEventListener("abort", abort);
-      action();
-    };
+export interface UploadTransport {
+  uploadFile(
+    parentID: number,
+    file: File,
+    expectedHash: string,
+    signal: AbortSignal,
+    onprogress: (progress: TransferProgress) => void,
+  ): Promise<UploadReceipt>;
+}
 
-    xhr.open("POST", `/api/v1/uploads?${query.toString()}`);
-    xhr.withCredentials = true;
-    xhr.setRequestHeader("Accept", "application/json");
-    xhr.setRequestHeader("X-Docbank-Web-Session", session);
-    xhr.setRequestHeader("X-Docbank-Blob-Hash", expectedHash);
-    xhr.setRequestHeader("X-Docbank-Blob-Size", String(file.size));
-    xhr.upload.addEventListener("progress", (event) => {
-      const processed =
-        event.lengthComputable && event.total > 0
-          ? Math.round((file.size * event.loaded) / event.total)
-          : Math.min(file.size, event.loaded);
-      onprogress({ processed: Math.min(file.size, processed), total: file.size });
+type SocketFactory = (url: string) => WebSocket;
+
+function base64URLBytes(value: string): Uint8Array {
+  const padded = value.replaceAll("-", "+").replaceAll("_", "/").padEnd(
+    Math.ceil(value.length / 4) * 4,
+    "=",
+  );
+  return Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
+}
+
+function base64URL(bytes: Uint8Array): string {
+  let raw = "";
+  for (const byte of bytes) raw += String.fromCharCode(byte);
+  return btoa(raw).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+}
+
+function expectedProof(
+  secret: string,
+  token: string,
+  nonce: string,
+): string {
+  const input = utf8ToBytes(`${uploadProofDomain}${token}\u0000${nonce}`);
+  return base64URL(hmac(sha256, base64URLBytes(secret), input));
+}
+
+export class VerifiedUploadChannel implements UploadTransport {
+  private socket: WebSocket | null = null;
+  private waiter:
+    | { resolve: (message: UploadMessage) => void; reject: (cause: Error) => void }
+    | null = null;
+  private unusable = false;
+  private busy = false;
+
+  constructor(
+    private readonly session: BrowserSession,
+    private readonly socketFactory: SocketFactory = (url) => new WebSocket(url),
+    private readonly onfailure: () => void = () => {},
+  ) {}
+
+  async connect(): Promise<void> {
+    if (this.socket || this.unusable) {
+      throw new Error("The verified upload channel is unavailable. Run `docbank web` again.");
+    }
+    const scheme = location.protocol === "https:" ? "wss:" : "ws:";
+    const socket = this.socketFactory(`${scheme}//${location.host}${uploadSocketPath}`);
+    this.socket = socket;
+    socket.binaryType = "arraybuffer";
+    socket.addEventListener("message", (event) => this.receive(event));
+    socket.addEventListener("close", () => this.fail());
+    socket.addEventListener("error", () => this.fail());
+    await new Promise<void>((resolve, reject) => {
+      socket.addEventListener("open", () => resolve(), { once: true });
+      socket.addEventListener("error", () => reject(this.channelError()), { once: true });
     });
-    xhr.addEventListener("abort", () => finish(() => reject(abortError())));
-    xhr.addEventListener("error", () =>
-      finish(() => reject(new Error(`Uploading ${JSON.stringify(name)} failed.`))),
+    const nonceBytes = crypto.getRandomValues(new Uint8Array(32));
+    const nonce = base64URL(nonceBytes);
+    socket.send(JSON.stringify({
+      type: "authenticate",
+      token: this.session.token,
+      nonce,
+    }));
+    const authenticated = await this.nextMessage();
+    const proof = expectedProof(
+      this.session.uploadSecret,
+      this.session.token,
+      nonce,
     );
-    xhr.addEventListener("load", () => {
-      if (xhr.status < 200 || xhr.status > 299) {
-        finish(() => reject(decodeUploadError(xhr)));
-        return;
+    if (authenticated.type !== "authenticated" || authenticated.proof !== proof) {
+      this.fail();
+      throw new Error(
+        "The upload endpoint could not prove it is the current Docbank daemon. No file bytes were sent.",
+      );
+    }
+  }
+
+  close(): void {
+    this.unusable = true;
+    this.socket?.close(1000, "browser closed");
+    this.socket = null;
+  }
+
+  async uploadFile(
+    parentID: number,
+    file: File,
+    expectedHash: string,
+    signal: AbortSignal,
+    onprogress: (progress: TransferProgress) => void,
+  ): Promise<UploadReceipt> {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN || this.unusable) {
+      throw this.channelError();
+    }
+    if (this.busy) throw new Error("Another browser upload is already active.");
+    throwIfAborted(signal);
+    this.busy = true;
+    const requestID = crypto.randomUUID();
+    const name = file.name.normalize("NFC");
+    try {
+      this.send({
+        type: "begin",
+        request_id: requestID,
+        parent_id: parentID,
+        name,
+        mime_type: file.type || "application/octet-stream",
+        expected_hash: expectedHash,
+        expected_size: file.size,
+      });
+      const ready = await this.nextMessage();
+      this.requireMessage(ready, requestID);
+      this.throwProblem(ready);
+      if (ready.type !== "ready") throw this.protocolError();
+      onprogress({ processed: 0, total: file.size });
+      for (let offset = 0; offset < file.size; offset += hashChunkBytes) {
+        if (signal.aborted) {
+          await this.cancelUpload(requestID);
+        }
+        await this.waitForWritable();
+        const end = Math.min(file.size, offset + hashChunkBytes);
+        this.sendBinary(await file.slice(offset, end).arrayBuffer());
+        onprogress({ processed: end, total: file.size });
       }
-      let receipt: UploadReceipt;
+      if (signal.aborted) await this.cancelUpload(requestID);
+      this.send({ type: "end", request_id: requestID });
+      const terminal = await this.nextMessage();
+      this.requireMessage(terminal, requestID);
+      this.throwProblem(terminal);
+      if (terminal.type !== "receipt" || !terminal.receipt) {
+        throw this.protocolError();
+      }
       try {
-        receipt = JSON.parse(xhr.responseText) as UploadReceipt;
+        validateUploadReceipt(terminal.receipt, parentID, name, expectedHash, file.size);
       } catch (cause) {
-        finish(() =>
-          reject(new Error(`Decoding the upload receipt failed: ${String(cause)}`)),
-        );
-        return;
+        this.fail();
+        throw cause;
       }
-      try {
-        validateUploadReceipt(receipt, parentID, name, expectedHash, file.size);
-      } catch (cause) {
-        finish(() => reject(cause));
-        return;
-      }
-      onprogress({ processed: file.size, total: file.size });
-      finish(() => resolve(receipt));
+      return terminal.receipt;
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  private send(message: UploadMessage): void {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN || this.unusable) {
+      throw this.channelError();
+    }
+    this.socket.send(JSON.stringify(message));
+  }
+
+  private sendBinary(bytes: ArrayBuffer): void {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN || this.unusable) {
+      throw this.channelError();
+    }
+    this.socket.send(bytes);
+  }
+
+  private nextMessage(): Promise<UploadMessage> {
+    if (this.waiter || this.unusable) return Promise.reject(this.channelError());
+    return new Promise((resolve, reject) => {
+      this.waiter = { resolve, reject };
     });
-    signal.addEventListener("abort", abort, { once: true });
-    onprogress({ processed: 0, total: file.size });
-    xhr.send(form);
-  });
+  }
+
+  private async cancelUpload(requestID: string): Promise<never> {
+    this.send({ type: "cancel", request_id: requestID });
+    const canceled = await this.nextMessage();
+    this.requireMessage(canceled, requestID, "error");
+    throw abortError();
+  }
+
+  private async waitForWritable(): Promise<void> {
+    while (
+      this.socket &&
+      this.socket.readyState === WebSocket.OPEN &&
+      this.socket.bufferedAmount > 2 * hashChunkBytes
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN || this.unusable) {
+      throw this.channelError();
+    }
+  }
+
+  private receive(event: MessageEvent): void {
+    if (!this.waiter || typeof event.data !== "string") {
+      this.fail();
+      return;
+    }
+    let message: UploadMessage;
+    try {
+      message = JSON.parse(event.data) as UploadMessage;
+    } catch {
+      this.fail();
+      return;
+    }
+    const waiter = this.waiter;
+    this.waiter = null;
+    waiter.resolve(message);
+  }
+
+  private requireMessage(
+    message: UploadMessage,
+    requestID: string,
+    type?: string,
+  ): void {
+    if (message.request_id !== requestID || (type && message.type !== type)) {
+      throw this.protocolError();
+    }
+  }
+
+  private throwProblem(message: UploadMessage): void {
+    if (message.type === "error") {
+      throw new APIError(
+        message.detail || "Browser upload failed.",
+        message.status ?? 500,
+        message.code ?? "",
+      );
+    }
+  }
+
+  private protocolError(): Error {
+    this.fail();
+    return new Error("The verified upload channel returned an invalid response.");
+  }
+
+  private channelError(): Error {
+    return new Error(
+      "The verified upload channel ended. Run `docbank web` again before selecting files.",
+    );
+  }
+
+  private fail(): void {
+    if (this.unusable) return;
+    this.unusable = true;
+    this.socket?.close();
+    this.socket = null;
+    this.onfailure();
+    const waiter = this.waiter;
+    this.waiter = null;
+    waiter?.reject(this.channelError());
+  }
 }

@@ -17,7 +17,11 @@ afterEach(() => {
 });
 
 it("supersedes an in-flight search when its tag filter changes", async () => {
-  history.replaceState(null, "", "/#web_session=short-lived");
+  history.replaceState(
+    null,
+    "",
+    "/#web_session=short-lived&web_upload_secret=proof",
+  );
   vi.stubGlobal(
     "ResizeObserver",
     class {

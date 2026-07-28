@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/coder/websocket"
 )
 
 const (
@@ -22,23 +24,32 @@ const (
 // reads; verified upload is the one document-authority mutation.
 type webSessionRegistry struct {
 	mu     sync.Mutex
-	tokens map[[sha256.Size]byte]struct{}
+	tokens map[[sha256.Size]byte]webSessionState
+}
+
+type webSessionState struct {
+	uploadSecret [sha256.Size]byte
+	upload       *websocket.Conn
 }
 
 func newWebSessionRegistry() *webSessionRegistry {
-	return &webSessionRegistry{tokens: make(map[[sha256.Size]byte]struct{})}
+	return &webSessionRegistry{tokens: make(map[[sha256.Size]byte]webSessionState)}
 }
 
-func (r *webSessionRegistry) issue() (string, error) {
+func (r *webSessionRegistry) issue() (string, string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
-		return "", fmt.Errorf("generating browser session: %w", err)
+		return "", "", fmt.Errorf("generating browser session: %w", err)
+	}
+	var uploadSecret [sha256.Size]byte
+	if _, err := rand.Read(uploadSecret[:]); err != nil {
+		return "", "", fmt.Errorf("generating browser upload secret: %w", err)
 	}
 	token := base64.RawURLEncoding.EncodeToString(raw)
 	r.mu.Lock()
-	r.tokens[sha256.Sum256([]byte(token))] = struct{}{}
+	r.tokens[sha256.Sum256([]byte(token))] = webSessionState{uploadSecret: uploadSecret}
 	r.mu.Unlock()
-	return token, nil
+	return token, base64.RawURLEncoding.EncodeToString(uploadSecret[:]), nil
 }
 
 func (r *webSessionRegistry) valid(token string) bool {
@@ -51,18 +62,69 @@ func (r *webSessionRegistry) valid(token string) bool {
 	return ok
 }
 
-func (r *webSessionRegistry) revoke(token string) {
+func (r *webSessionRegistry) uploadSecret(token string) ([sha256.Size]byte, bool) {
+	if token == "" {
+		return [sha256.Size]byte{}, false
+	}
 	r.mu.Lock()
-	delete(r.tokens, sha256.Sum256([]byte(token)))
+	state, ok := r.tokens[sha256.Sum256([]byte(token))]
 	r.mu.Unlock()
+	return state.uploadSecret, ok
+}
+
+func (r *webSessionRegistry) bindUpload(token string, conn *websocket.Conn) bool {
+	digest := sha256.Sum256([]byte(token))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	state, ok := r.tokens[digest]
+	if !ok || state.upload != nil {
+		return false
+	}
+	state.upload = conn
+	r.tokens[digest] = state
+	return true
+}
+
+func (r *webSessionRegistry) releaseUpload(token string, conn *websocket.Conn) {
+	digest := sha256.Sum256([]byte(token))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	state, ok := r.tokens[digest]
+	if ok && state.upload == conn {
+		state.upload = nil
+		r.tokens[digest] = state
+	}
+}
+
+func (r *webSessionRegistry) revoke(token string) {
+	digest := sha256.Sum256([]byte(token))
+	r.mu.Lock()
+	state := r.tokens[digest]
+	delete(r.tokens, digest)
+	r.mu.Unlock()
+	if state.upload != nil {
+		_ = state.upload.CloseNow()
+	}
+}
+
+func (r *webSessionRegistry) closeAll() {
+	r.mu.Lock()
+	conns := make([]*websocket.Conn, 0, len(r.tokens))
+	for digest, state := range r.tokens {
+		if state.upload != nil {
+			conns = append(conns, state.upload)
+		}
+		delete(r.tokens, digest)
+	}
+	r.mu.Unlock()
+	for _, conn := range conns {
+		_ = conn.CloseNow()
+	}
 }
 
 func webSessionRequestAllowed(r *http.Request) bool {
 	method, path := r.Method, r.URL.Path
 	if method == http.MethodPost && path == webDownloadPreparePath {
-		return true
-	}
-	if method == http.MethodPost && path == "/api/v1/uploads" {
 		return true
 	}
 	if method == http.MethodDelete && path == webSessionPath {
@@ -116,7 +178,7 @@ func registerWebSession(
 				"this daemon is not serving the compiled web application"))
 			return
 		}
-		token, err := sessions.issue()
+		token, uploadSecret, err := sessions.issue()
 		if err != nil {
 			writeError(w, NewError(http.StatusInternalServerError, "internal",
 				"could not create a browser session"))
@@ -124,9 +186,10 @@ func registerWebSession(
 		}
 		w.Header().Set("Cache-Control", "no-store")
 		writeJSON(w, http.StatusCreated, struct {
-			Token string `json:"token"`
-			URL   string `json:"url"`
-		}{Token: token, URL: webURL})
+			Token        string `json:"token"`
+			UploadSecret string `json:"upload_secret"`
+			URL          string `json:"url"`
+		}{Token: token, UploadSecret: uploadSecret, URL: webURL})
 	})
 	mux.HandleFunc("DELETE "+webSessionPath, func(w http.ResponseWriter, r *http.Request) {
 		sessions.revoke(r.Header.Get(WebSessionHeader))

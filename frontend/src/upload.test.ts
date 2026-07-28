@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { UploadReceipt } from "./api.js";
-import { hashFile, validateUploadReceipt } from "./upload.js";
+import {
+  hashFile,
+  validateUploadReceipt,
+  VerifiedUploadChannel,
+} from "./upload.js";
 
 describe("verified browser upload", () => {
   it("hashes file bytes incrementally and reports terminal progress", async () => {
@@ -69,5 +73,48 @@ describe("verified browser upload", () => {
     expect(() =>
       validateUploadReceipt(receipt, 2, "report.txt", hash, 3),
     ).not.toThrow();
+  });
+
+  it("sends no file bytes when an endpoint cannot prove daemon ownership", async () => {
+    class ImpostorSocket extends EventTarget {
+      readonly sent: unknown[] = [];
+      readyState: number = WebSocket.OPEN;
+      binaryType = "blob";
+
+      constructor() {
+        super();
+        queueMicrotask(() => this.dispatchEvent(new Event("open")));
+      }
+
+      send(data: unknown): void {
+        this.sent.push(data);
+        queueMicrotask(() =>
+          this.dispatchEvent(
+            new MessageEvent("message", {
+              data: JSON.stringify({ type: "authenticated", proof: "forged" }),
+            }),
+          ),
+        );
+      }
+
+      close(): void {
+        this.readyState = WebSocket.CLOSED;
+        this.dispatchEvent(new Event("close"));
+      }
+    }
+
+    const socket = new ImpostorSocket();
+    const channel = new VerifiedUploadChannel(
+      {
+        token: "browser-session",
+        uploadSecret: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+      },
+      () => socket as unknown as WebSocket,
+    );
+
+    await expect(channel.connect()).rejects.toThrow(/No file bytes were sent/);
+    expect(socket.sent).toHaveLength(1);
+    expect(typeof socket.sent[0]).toBe("string");
+    expect(String(socket.sent[0])).not.toContain("private document");
   });
 });

@@ -23,12 +23,14 @@ var webCmd = &cobra.Command{
 	Short: "Open the local web application",
 	Long: `Start or reconnect to the current vault's daemon and open its web application.
 
-The browser receives a daemon-lifetime, read-only session in a URL fragment,
+The browser receives daemon-lifetime scoped credentials in a URL fragment,
 which is not sent in the initial HTTP request. The vault's master API key
-never enters the browser.
+never enters the browser. File bytes are sent only after a persistent upload
+channel proves that it belongs to this daemon; a broken channel is not
+reconnected.
 
 With --no-browser, the authenticated URL is printed instead. It contains the
-session key: do not paste it into logs, issue trackers, or chat.`,
+browser credentials: do not paste it into logs, issue trackers, or chat.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if !docweb.Available() {
@@ -102,6 +104,6 @@ func validateWebLaunchURL(rawURL string) error {
 
 func init() {
 	webCmd.Flags().BoolVar(&webNoBrowser, "no-browser", false,
-		"print the authenticated URL instead of opening it (contains the session key)")
+		"print the authenticated URL instead of opening it (contains browser credentials)")
 	rootCmd.AddCommand(webCmd)
 }

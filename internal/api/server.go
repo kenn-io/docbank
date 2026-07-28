@@ -135,6 +135,7 @@ func NewServer(d Deps) *Server {
 	s.registerShutdown(mux)
 	registerWeb(mux, d.Cfg.Web.Enabled)
 	registerWebSession(mux, d.Cfg.Web.Enabled, d.WebURL, s.webSessions)
+	registerWebUpload(mux, d.Cfg.Web.Enabled, d.WebURL, d, g, s.webSessions)
 	registerWebDownload(mux, d.Cfg.Web.Enabled, d, s.webDownloads)
 
 	h := http.Handler(mux)
@@ -154,6 +155,10 @@ func NewServer(d Deps) *Server {
 
 func (s *Server) Handler() http.Handler { return s.handler }
 func (s *Server) API() huma.API         { return s.api }
+
+// Close revokes daemon-lifetime browser credentials and closes their
+// hijacked upload connections. net/http shutdown does not own WebSockets.
+func (s *Server) Close() { s.webSessions.closeAll() }
 
 // markRevisionPreconditionsRequired keeps Huma's runtime parser permissive
 // enough for parseIfMatch to return Docbank's structured 428 response while

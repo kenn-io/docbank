@@ -64,12 +64,17 @@ and `/` plus `/assets/` (the static web application, when `[web] enabled`). A hi
 /api/daemon/shutdown` (not in the OpenAPI document) backs `docbank
 daemon stop`; it isn't auth-exempt, so it requires both the API key and
 its own shutdown token. The hidden `POST /api/daemon/web-session` exchanges
-that master authority for a random daemon-lifetime browser token and returns
-the fresh loopback origin dedicated to that daemon lifetime, while
+that master authority for a random daemon-lifetime browser token, an
+independent upload-proof secret, and the fresh loopback origin dedicated to
+that daemon lifetime, while
 `DELETE /api/daemon/web-session` revokes the calling browser session. Those
 tokens authenticate only the explicit routes used by the built-in document,
-storage, job, configured-backup, verified-download, and digest-checked upload
-workflows; they are intentionally not another general API credential.
+storage, job, configured-backup, and verified-download workflows; they are
+intentionally not another general API credential. Browser file bytes use the
+hidden `/api/daemon/web-upload` WebSocket instead. The page verifies a
+challenge proof over the upload secret before sending bytes, binds the socket
+to one session, and never reconnects it. An ordinary browser token is
+explicitly forbidden from `POST /api/v1/uploads`.
 
 `GET /nodes/{id}/children` binds the live directory projection—including its
 current canonical path—and the requested child page to one read transaction.
