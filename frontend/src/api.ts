@@ -106,6 +106,31 @@ export interface TaggedNodePage {
   omitted_trashed?: number;
 }
 
+export interface BackupRepository {
+  id: string;
+  path: string;
+}
+
+export interface BackupSnapshot {
+  id: string;
+  parent_id?: string;
+  created_at: string;
+  tag?: string;
+  metadata_format: string;
+  nodes: number;
+  files: number;
+  blobs: number;
+  blob_bytes: number;
+  packs_added: number;
+  bytes_added: number;
+  duration_seconds: number;
+}
+
+export interface BackupSnapshotList {
+  repository: BackupRepository;
+  items: BackupSnapshot[];
+}
+
 export interface AuditScopeStatus {
   id: string;
   target_node_id: number;
@@ -412,4 +437,10 @@ export async function listJobs(session: string): Promise<Job[]> {
 
 export async function storageStatus(session: string): Promise<StorageStatus> {
   return requestJSON<StorageStatus>("/api/v1/storage", session);
+}
+
+export async function backupSnapshots(
+  session: string,
+): Promise<BackupSnapshotList> {
+  return requestJSON<BackupSnapshotList>("/api/v1/backup/snapshots", session);
 }

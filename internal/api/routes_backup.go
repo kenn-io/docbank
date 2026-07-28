@@ -154,7 +154,10 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, fromBackupError(err)
 		}
-		out := &listOutput{Body: BackupSnapshotList{Items: make([]BackupSnapshot, 0, len(manifests))}}
+		out := &listOutput{Body: BackupSnapshotList{
+			Repository: &BackupRepository{ID: repo.Config().RepoID, Path: repo.Root()},
+			Items:      make([]BackupSnapshot, 0, len(manifests)),
+		}}
 		for _, manifest := range manifests {
 			snapshot, err := backupSnapshot(manifest)
 			if err != nil {

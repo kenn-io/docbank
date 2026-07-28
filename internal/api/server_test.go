@@ -414,6 +414,21 @@ func TestWebSessionIsReadOnlyRevocableAndDaemonLocal(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
 
+	resp = webRequest(http.MethodGet, "/api/v1/backup/snapshots")
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode,
+		"the read-only route is admitted even when no repository is configured")
+	require.NoError(t, resp.Body.Close())
+
+	resp = webRequest(http.MethodGet, "/api/v1/backup/snapshots?repo=/tmp/other")
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode,
+		"browser sessions cannot select arbitrary server filesystem paths")
+	require.NoError(t, resp.Body.Close())
+
+	resp = webRequest(http.MethodGet, "/api/v1/backup/snapshots?repo=")
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode,
+		"browser sessions cannot supply even an empty repository override")
+	require.NoError(t, resp.Body.Close())
+
 	resp = webRequest(http.MethodPost, "/api/v1/audit/verify")
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())

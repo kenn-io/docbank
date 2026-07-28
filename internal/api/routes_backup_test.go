@@ -100,6 +100,8 @@ func TestBackupInitCreateListRoundTrip(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	var listed api.BackupSnapshotList
 	require.NoError(t, json.Unmarshal([]byte(body), &listed))
+	require.NotNil(t, listed.Repository)
+	assert.Equal(t, repository, *listed.Repository)
 	require.Len(t, listed.Items, 2)
 	assert.Equal(t, snapshot.ID, listed.Items[0].ID)
 	assert.Equal(t, second.ID, listed.Items[1].ID)

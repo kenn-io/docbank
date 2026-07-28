@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import ActivityIcon from "@lucide/svelte/icons/activity";
+  import ArchiveIcon from "@lucide/svelte/icons/archive";
   import ArrowLeftIcon from "@lucide/svelte/icons/arrow-left";
   import FileIcon from "@lucide/svelte/icons/file";
   import FolderIcon from "@lucide/svelte/icons/folder";
@@ -30,6 +31,7 @@
     type SortDirection,
   } from "@kenn-io/kit-ui";
   import AuditHistoryDrawer from "./AuditHistoryDrawer.svelte";
+  import BackupDrawer from "./BackupDrawer.svelte";
   import DownloadButton from "./DownloadButton.svelte";
   import JobsDrawer from "./JobsDrawer.svelte";
   import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
@@ -106,6 +108,7 @@
   let provenanceOpen = $state(false);
   let jobsOpen = $state(false);
   let storageOpen = $state(false);
+  let backupsOpen = $state(false);
   let generation = 0;
   let auditGeneration = 0;
   let tagGeneration = 0;
@@ -143,6 +146,7 @@
       provenanceOpen = false;
       jobsOpen = false;
       storageOpen = false;
+      backupsOpen = false;
       tagCatalog = [];
       tagCatalogListed = 0;
       selectedTags = [];
@@ -511,6 +515,7 @@
     provenanceOpen = false;
     jobsOpen = false;
     storageOpen = false;
+    backupsOpen = false;
     activeQuery = "";
     activeTagID = "";
     taggedInspected = 0;
@@ -573,12 +578,27 @@
       {#snippet right()}
         <IconButton
           size="sm"
+          ariaLabel="Backup snapshots"
+          onclick={() => {
+            historyOpen = false;
+            versionsOpen = false;
+            provenanceOpen = false;
+            jobsOpen = false;
+            storageOpen = false;
+            backupsOpen = true;
+          }}
+        >
+          <ArchiveIcon size="14" aria-hidden="true" />
+        </IconButton>
+        <IconButton
+          size="sm"
           ariaLabel="Storage status"
           onclick={() => {
             historyOpen = false;
             versionsOpen = false;
             provenanceOpen = false;
             jobsOpen = false;
+            backupsOpen = false;
             storageOpen = true;
           }}
         >
@@ -592,6 +612,7 @@
             versionsOpen = false;
             provenanceOpen = false;
             storageOpen = false;
+            backupsOpen = false;
             jobsOpen = true;
           }}
         >
@@ -859,6 +880,7 @@
                       provenanceOpen = false;
                       jobsOpen = false;
                       storageOpen = false;
+                      backupsOpen = false;
                       versionsOpen = true;
                     }}
                   >
@@ -873,6 +895,7 @@
                       versionsOpen = false;
                       jobsOpen = false;
                       storageOpen = false;
+                      backupsOpen = false;
                       provenanceOpen = true;
                     }}
                   >
@@ -912,6 +935,7 @@
                       versionsOpen = false;
                       provenanceOpen = false;
                       storageOpen = false;
+                      backupsOpen = false;
                       historyOpen = true;
                     }}
                   >
@@ -975,6 +999,13 @@
       <JobsDrawer
         session={webSession}
         onclose={() => (jobsOpen = false)}
+        onauthfailure={handleFailure}
+      />
+    {/if}
+    {#if backupsOpen}
+      <BackupDrawer
+        session={webSession}
+        onclose={() => (backupsOpen = false)}
         onauthfailure={handleFailure}
       />
     {/if}

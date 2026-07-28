@@ -23,6 +23,8 @@ their newest-first permanent audit timeline and complete event authority. The
 storage button separates loose content, live packed content, pack-file payload,
 and logically dead packed bytes awaiting repack. The activity button reports
 the daemon's supervised extraction, watched-inbox, and automatic-packing jobs.
+The backup button lists immutable recovery points in the configured repository
+without running backup or restore work.
 Every file also exposes its retained immutable content versions and the stable
 authority behind each one, plus the immutable provenance Docbank recorded when
 the document entered the vault.
@@ -229,6 +231,25 @@ authority. It cannot pack, garbage-collect, or repack content. Use
 `docbank storage repack` explicitly when you intend to rewrite eligible sparse
 packs and retire their old files.
 
+## Inspect backup snapshots
+
+Choose the backup button in the top bar to inspect the immutable recovery
+points in the repository selected by `[backup] repo` in `config.toml`. The
+repository path and stable repository ID make the authority being inspected
+explicit. Snapshots appear newest first with their tag, immutable ID, creation
+time, full or incremental relationship, logical node/file/blob counts, logical
+content bytes, and the pack bytes newly added by that capture.
+
+An initialized repository with no snapshots is different from an unconfigured
+repository, and the browser reports those states separately. The browser does
+not accept an arbitrary server path, initialize a repository, create a
+snapshot, verify content, restore a vault, or delete retention history.
+
+Seeing a manifest in this list is not proof that its referenced bytes are
+still readable. Run `docbank backup verify` to independently prove repository
+integrity, and periodically restore into a separate vault to rehearse the
+complete recovery path.
+
 ## Browser authentication
 
 When Docbank opens the browser, it writes a small launch page beside the
@@ -249,12 +270,15 @@ do not include fragments in the initial HTTP request; the application removes
 it from the address bar and holds it only in page memory. Requests use
 `X-Docbank-Web-Session`, which the daemon accepts only for the tree, node,
 search, tag-definition and assignment reads, immutable-version, provenance, audit-status, audit-history,
-background-job, physical-storage-status, and verified-download preparation
+background-job, physical-storage-status, configured backup-snapshot-list, and
+verified-download preparation
 used by this interface.
 Download preparation may write only owner-private temporary bytes and issue
 one exact, expiring file ticket; it cannot mutate document authority. The
 session cannot enroll audit scopes, run independent verification, or call
-mutation, backup, maintenance, configuration, or general API endpoints.
+mutation, backup creation, verification, restore, maintenance, configuration,
+or general API endpoints. Its sole backup capability is listing the immutable
+snapshots in the repository already configured for this daemon.
 
 The lock button revokes the session in daemon memory and clears the page.
 Every remaining browser session and its dedicated browser origin disappear
@@ -289,7 +313,7 @@ leave the browser constructing child paths beneath an obsolete name.
 The current web application does not compare versions, import, edit, revert,
 prune, move, create or change tags and
 assignments, trash, enroll audit scopes, run independent audit verification,
-or run maintenance and backup operations.
+or run maintenance, backup, verification, or restore operations.
 Use the corresponding CLI or authenticated HTTP endpoint for those workflows.
 Future web workflows will require deliberately expanded browser-session
 permissions rather than inheriting the master API key.

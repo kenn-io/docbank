@@ -101,7 +101,7 @@ func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry)
 		}
 		webToken := r.Header.Get(WebSessionHeader)
 		if sessions != nil && sessions.valid(webToken) {
-			if !webSessionRequestAllowed(r.Method, r.URL.Path) {
+			if !webSessionRequestAllowed(r) {
 				writeError(w, NewError(http.StatusForbidden, "web_session_read_only",
 					"browser sessions cannot use this endpoint"))
 				return

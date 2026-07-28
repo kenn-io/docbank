@@ -67,8 +67,9 @@ its own shutdown token. The hidden `POST /api/daemon/web-session` exchanges
 that master authority for a random daemon-lifetime browser token and returns
 the fresh loopback origin dedicated to that daemon lifetime, while
 `DELETE /api/daemon/web-session` revokes the calling browser session. Those
-tokens authenticate only the read routes used by the built-in tree and search
-views; they are intentionally not another general API credential.
+tokens authenticate only the explicit read routes used by the built-in
+document, storage, job, and configured-backup views; they are intentionally
+not another general API credential.
 
 `GET /nodes/{id}/children` binds the live directory projection—including its
 current canonical path—and the requested child page to one read transaction.
@@ -120,8 +121,13 @@ parsing human text. Because response headers commit when streaming begins, an
 HTTP 200 means only that the stream started; clients must read through EOF and
 require the terminal event. The CLI uses this variant for human output and the
 single-JSON endpoint for `--json`.
-`GET /backup/snapshots?repo=...` returns `{items: [...]}` so pagination can be
-added later without changing a top-level array contract.
+`GET /backup/snapshots?repo=...` returns
+`{repository: {id, path}, items: [...]}` so clients can identify the repository
+behind the immutable manifests and pagination can be added later without
+changing a top-level array contract. A browser session may use this GET only
+without `repo`, which confines the web application to the daemon's configured
+repository; backup mutations and arbitrary server-path selection still require
+the master API authority.
 
 Explicit repository paths are server filesystem paths and must be absolute.
 The CLI resolves a relative `--repo` against its own working directory before
