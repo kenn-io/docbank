@@ -31,6 +31,9 @@ type fakeBackend struct {
 	historyCursors []string
 	tags           map[int64]api.TagPage
 	tagNodeIDs     []int64
+	jobs           []api.Job
+	jobsErr        error
+	jobCalls       int
 }
 
 func newFakeBackend() *fakeBackend {
@@ -102,6 +105,17 @@ func newFakeBackend() *fakeBackend {
 				Total: 2, Limit: maxBrowserItems,
 			},
 		},
+		jobs: []api.Job{
+			{
+				Name: "text-extraction", Status: "running",
+				StartedAt: "2026-07-22T12:00:00Z",
+			},
+			{
+				Name: "watch:inbox", Status: "failed",
+				StartedAt: "2026-07-22T11:00:00Z", FinishedAt: "2026-07-22T11:05:00Z",
+				Error: "source is temporarily unavailable; check the configured inbox path",
+			},
+		},
 	}
 }
 
@@ -161,6 +175,14 @@ func (f *fakeBackend) NodeTags(
 	page.Limit = limit
 	page.Offset = offset
 	return page, nil
+}
+
+func (f *fakeBackend) Jobs(_ context.Context) ([]api.Job, error) {
+	f.jobCalls++
+	if f.jobsErr != nil {
+		return nil, f.jobsErr
+	}
+	return append([]api.Job(nil), f.jobs...), nil
 }
 
 func (f *fakeBackend) AuditHistory(
@@ -855,6 +877,56 @@ func TestDetailRejectsTagsAfterNodeRevisionChanges(t *testing.T) {
 	assert.Empty(t, model.detailTags)
 	assert.Contains(t, strings.Join(model.expandedDetailLines(120), "\n"),
 		"document changed while loading tags")
+}
+
+func TestJobsViewShowsLifecycleAndCompleteFailure(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.width, model.height = 100, 14
+
+	model, cmd := updateModel(t, model, runeKey('J'))
+	require.NotNil(t, cmd)
+	assert.True(t, model.jobsOpen)
+	assert.True(t, model.jobsLoading)
+	model = runModelCommand(t, model, cmd)
+
+	content := model.View().Content
+	assert.Contains(t, content, "Daemon activity")
+	assert.Contains(t, content, "1 running · 2 total")
+	assert.Contains(t, content, `"text-extraction"`)
+	assert.Contains(t, content, `"watch:inbox"`)
+	assert.Equal(t, 1, backend.jobCalls)
+
+	model, _ = updateModel(t, model, key(tea.KeyDown))
+	model, _ = updateModel(t, model, key(tea.KeyEnter))
+	assert.True(t, model.jobDetail)
+	detail := strings.Join(model.jobDetailLines(model.width), "\n")
+	assert.Contains(t, detail, "Status: failed")
+	assert.Contains(t, detail,
+		"source is temporarily unavailable; check the configured inbox path")
+
+	model.width = 36
+	for line := range strings.SplitSeq(model.View().Content, "\n") {
+		assert.LessOrEqual(t, lipgloss.Width(line), model.width)
+	}
+}
+
+func TestClosingJobsInvalidatesDelayedLoad(t *testing.T) {
+	model, err := New(t.Context(), newFakeBackend())
+	require.NoError(t, err)
+
+	model, delayed := updateModel(t, model, runeKey('J'))
+	require.NotNil(t, delayed)
+	pendingRequestID := model.jobsRequestID
+	model, _ = updateModel(t, model, key(tea.KeyEscape))
+	assert.False(t, model.jobsOpen)
+	assert.Greater(t, model.jobsRequestID, pendingRequestID)
+
+	model = runModelCommand(t, model, delayed)
+	assert.False(t, model.jobsOpen)
+	assert.Empty(t, model.jobs)
 }
 
 func TestHelpAndSpinnerAreVisible(t *testing.T) {
