@@ -429,6 +429,12 @@ func TestWebSessionIsReadOnlyRevocableAndDaemonLocal(t *testing.T) {
 		"browser sessions cannot supply even an empty repository override")
 	require.NoError(t, resp.Body.Close())
 
+	resp = webRequest(http.MethodGet,
+		"/api/v1/backup/snapshots?repo=/;/../var/backups/other")
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode,
+		"browser authorization must not parse repository queries differently from Huma")
+	require.NoError(t, resp.Body.Close())
+
 	resp = webRequest(http.MethodPost, "/api/v1/audit/verify")
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())

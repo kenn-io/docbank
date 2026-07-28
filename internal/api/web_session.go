@@ -76,7 +76,7 @@ func webSessionRequestAllowed(r *http.Request) bool {
 		// Browser sessions may inspect only the repository selected by daemon
 		// configuration. An arbitrary repo query is a server-filesystem read
 		// capability and remains exclusive to the master API credential.
-		return !r.URL.Query().Has("repo")
+		return r.URL.RawQuery == ""
 	}
 	const tagPrefix = "/api/v1/tags/"
 	if after, ok := strings.CutPrefix(path, tagPrefix); ok {
