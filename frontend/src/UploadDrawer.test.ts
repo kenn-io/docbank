@@ -150,4 +150,56 @@ describe("upload documents drawer", () => {
     expect(screen.getByText(/retry this file to converge safely/)).toBeTruthy();
     await waitFor(() => expect(complete).toHaveBeenCalledOnce());
   });
+
+  it("reports hashing cancellation without claiming an upload began", async () => {
+    vi.spyOn(upload, "hashFile").mockImplementation(
+      async (_file, signal) =>
+        await new Promise<never>((_resolve, reject) => {
+          signal.addEventListener(
+            "abort",
+            () =>
+              reject(new DOMException("The operation was aborted.", "AbortError")),
+            { once: true },
+          );
+        }),
+    );
+    const channel: upload.UploadTransport = {
+      uploadFile: vi.fn(),
+    };
+    const complete = vi.fn();
+
+    render(UploadDrawer, {
+      channel,
+      directory: {
+        id: 3,
+        name: "Reports",
+        path: "/Reports",
+        kind: "dir",
+        size: 0,
+        revision: 1,
+        created_at: "2026-07-28T00:00:00Z",
+        modified_at: "2026-07-28T00:00:00Z",
+      },
+      onclose: vi.fn(),
+      oncomplete: complete,
+      onauthfailure: vi.fn(),
+    });
+
+    await fireEvent.change(screen.getByLabelText("Choose local files"), {
+      target: {
+        files: [new File(["quarterly"], "quarterly.txt", { type: "text/plain" })],
+      },
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Upload 1 file" }),
+    );
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Cancel current upload" }),
+    );
+
+    expect(await screen.findByText("Cancelled")).toBeTruthy();
+    expect(screen.getByText("Cancelled before upload began.")).toBeTruthy();
+    expect(channel.uploadFile).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+  });
 });

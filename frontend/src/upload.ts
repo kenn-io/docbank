@@ -6,6 +6,8 @@ import { APIError, type BrowserSession, type UploadReceipt } from "./api.js";
 const hashChunkBytes = 1024 * 1024;
 const uploadSocketPath = "/api/daemon/web-upload";
 const uploadProofDomain = "docbank-web-upload-v1\u0000";
+const uploadHandshakeTimeoutMs = 10_000;
+const uploadResponseTimeoutMs = 60_000;
 
 export interface TransferProgress {
   processed: number;
@@ -160,10 +162,7 @@ export class VerifiedUploadChannel implements UploadTransport {
     socket.addEventListener("message", (event) => this.receive(event));
     socket.addEventListener("close", () => this.fail());
     socket.addEventListener("error", () => this.fail());
-    await new Promise<void>((resolve, reject) => {
-      socket.addEventListener("open", () => resolve(), { once: true });
-      socket.addEventListener("error", () => reject(this.channelError()), { once: true });
-    });
+    await this.waitForOpen(socket);
     const nonceBytes = crypto.getRandomValues(new Uint8Array(32));
     const nonce = base64URL(nonceBytes);
     socket.send(JSON.stringify({
@@ -171,7 +170,10 @@ export class VerifiedUploadChannel implements UploadTransport {
       token: this.session.token,
       nonce,
     }));
-    const authenticated = await this.nextMessage();
+    const authenticated = await this.nextMessage(
+      undefined,
+      uploadHandshakeTimeoutMs,
+    );
     const proof = expectedProof(
       this.session.uploadSecret,
       this.session.token,
@@ -186,9 +188,7 @@ export class VerifiedUploadChannel implements UploadTransport {
   }
 
   close(): void {
-    this.unusable = true;
-    this.socket?.close(1000, "browser closed");
-    this.socket = null;
+    this.retire(false, 1000, "browser closed");
   }
 
   async uploadFile(
@@ -216,7 +216,7 @@ export class VerifiedUploadChannel implements UploadTransport {
         expected_hash: expectedHash,
         expected_size: file.size,
       });
-      const ready = await this.nextMessage();
+      const ready = await this.nextMessage(signal, uploadResponseTimeoutMs);
       this.requireMessage(ready, requestID);
       this.throwProblem(ready);
       if (ready.type !== "ready") throw this.protocolError();
@@ -225,14 +225,14 @@ export class VerifiedUploadChannel implements UploadTransport {
         if (signal.aborted) {
           await this.cancelUpload(requestID);
         }
-        await this.waitForWritable();
+        await this.waitForWritable(signal);
         const end = Math.min(file.size, offset + hashChunkBytes);
         this.sendBinary(await file.slice(offset, end).arrayBuffer());
         onprogress({ processed: end, total: file.size });
       }
       if (signal.aborted) await this.cancelUpload(requestID);
       this.send({ type: "end", request_id: requestID });
-      const terminal = await this.nextTerminalMessage(signal);
+      const terminal = await this.nextMessage(signal, uploadResponseTimeoutMs);
       this.requireMessage(terminal, requestID);
       this.throwProblem(terminal);
       if (terminal.type !== "receipt" || !terminal.receipt) {
@@ -264,56 +264,115 @@ export class VerifiedUploadChannel implements UploadTransport {
     this.socket.send(bytes);
   }
 
-  private nextMessage(): Promise<UploadMessage> {
+  private nextMessage(
+    signal?: AbortSignal,
+    timeoutMs = uploadResponseTimeoutMs,
+  ): Promise<UploadMessage> {
     if (this.waiter || this.unusable) return Promise.reject(this.channelError());
-    return new Promise((resolve, reject) => {
-      this.waiter = { resolve, reject };
-    });
-  }
-
-  private nextTerminalMessage(signal: AbortSignal): Promise<UploadMessage> {
-    if (signal.aborted) {
+    if (signal?.aborted) {
       this.fail();
       return Promise.reject(abortError());
     }
-    const terminal = this.nextMessage();
     return new Promise((resolve, reject) => {
-      const aborted = (): void => {
-        this.fail();
-        reject(abortError());
+      let timer = 0;
+      const cleanup = (): void => {
+        if (timer) window.clearTimeout(timer);
+        signal?.removeEventListener("abort", aborted);
       };
-      signal.addEventListener("abort", aborted, { once: true });
-      terminal.then(
-        (message) => {
-          signal.removeEventListener("abort", aborted);
-          resolve(message);
-        },
-        (cause) => {
-          signal.removeEventListener("abort", aborted);
-          reject(cause);
-        },
-      );
+      const settle = (
+        finish: (value: UploadMessage | PromiseLike<UploadMessage>) => void,
+        message: UploadMessage,
+      ): void => {
+        if (this.waiter !== waiter) return;
+        this.waiter = null;
+        cleanup();
+        finish(message);
+      };
+      const failWait = (cause: Error): void => {
+        if (this.waiter !== waiter) return;
+        this.waiter = null;
+        cleanup();
+        reject(cause);
+      };
+      const aborted = (): void => {
+        failWait(abortError());
+        this.fail();
+      };
+      const waiter = {
+        resolve: (message: UploadMessage) => settle(resolve, message),
+        reject: failWait,
+      };
+      this.waiter = waiter;
+      signal?.addEventListener("abort", aborted, { once: true });
+      timer = window.setTimeout(() => {
+        failWait(this.channelError());
+        this.fail();
+      }, timeoutMs);
     });
   }
 
   private async cancelUpload(requestID: string): Promise<never> {
     this.send({ type: "cancel", request_id: requestID });
-    const canceled = await this.nextMessage();
-    this.requireMessage(canceled, requestID, "error");
+    try {
+      const canceled = await this.nextMessage(
+        undefined,
+        uploadHandshakeTimeoutMs,
+      );
+      this.requireMessage(canceled, requestID, "error");
+    } catch {
+      this.fail();
+    }
     throw abortError();
   }
 
-  private async waitForWritable(): Promise<void> {
+  private async waitForWritable(signal: AbortSignal): Promise<void> {
+    const deadline = Date.now() + uploadResponseTimeoutMs;
     while (
       this.socket &&
       this.socket.readyState === WebSocket.OPEN &&
       this.socket.bufferedAmount > 2 * hashChunkBytes
     ) {
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      if (signal.aborted) {
+        this.fail();
+        throw abortError();
+      }
+      if (Date.now() >= deadline) {
+        this.fail();
+        throw this.channelError();
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 10));
+    }
+    if (signal.aborted) {
+      this.fail();
+      throw abortError();
     }
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN || this.unusable) {
       throw this.channelError();
     }
+  }
+
+  private waitForOpen(socket: WebSocket): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const cleanup = (): void => {
+        window.clearTimeout(timer);
+        socket.removeEventListener("open", opened);
+        socket.removeEventListener("error", failed);
+        socket.removeEventListener("close", failed);
+      };
+      const opened = (): void => {
+        cleanup();
+        resolve();
+      };
+      const failed = (): void => {
+        cleanup();
+        this.fail();
+        reject(this.channelError());
+      };
+      const timer = window.setTimeout(failed, uploadHandshakeTimeoutMs);
+      socket.addEventListener("open", opened, { once: true });
+      socket.addEventListener("error", failed, { once: true });
+      socket.addEventListener("close", failed, { once: true });
+    });
   }
 
   private receive(event: MessageEvent): void {
@@ -329,7 +388,6 @@ export class VerifiedUploadChannel implements UploadTransport {
       return;
     }
     const waiter = this.waiter;
-    this.waiter = null;
     waiter.resolve(message);
   }
 
@@ -365,13 +423,17 @@ export class VerifiedUploadChannel implements UploadTransport {
   }
 
   private fail(): void {
+    this.retire(true);
+  }
+
+  private retire(notify: boolean, code?: number, reason?: string): void {
     if (this.unusable) return;
     this.unusable = true;
-    this.socket?.close();
+    if (code !== undefined) this.socket?.close(code, reason);
+    else this.socket?.close();
     this.socket = null;
-    this.onfailure();
     const waiter = this.waiter;
-    this.waiter = null;
     waiter?.reject(this.channelError());
+    if (notify) this.onfailure();
   }
 }

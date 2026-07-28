@@ -27,6 +27,7 @@
     | "added"
     | "skipped"
     | "failed"
+    | "unconfirmed"
     | "cancelled";
 
   interface UploadItem {
@@ -56,7 +57,7 @@
 
   const pending = $derived(
     items.filter((item) =>
-      ["ready", "failed", "cancelled"].includes(item.state),
+      ["ready", "failed", "unconfirmed", "cancelled"].includes(item.state),
     ).length,
   );
   const completed = $derived(
@@ -108,8 +109,9 @@
     let authFailed = false;
 
     for (const queued of items) {
-      if (!["ready", "failed", "cancelled"].includes(queued.state)) continue;
+      if (!["ready", "failed", "unconfirmed", "cancelled"].includes(queued.state)) continue;
       if (active.signal.aborted) break;
+      let transmissionStarted = false;
       updateItem(queued.id, {
         state: "hashing",
         error: undefined,
@@ -127,6 +129,7 @@
           hash,
           progress: { processed: 0, total: queued.file.size },
         });
+        transmissionStarted = true;
         refreshNeeded = true;
         const receipt = await channel.uploadFile(
           directory.id,
@@ -142,11 +145,18 @@
         });
       } catch (cause) {
         if (cause instanceof DOMException && cause.name === "AbortError") {
-          updateItem(queued.id, {
-            state: "cancelled",
-            error:
-              "Upload outcome is unconfirmed. Refreshing the folder; retry this file to converge safely.",
-          });
+          if (transmissionStarted) {
+            updateItem(queued.id, {
+              state: "unconfirmed",
+              error:
+                "Upload outcome is unconfirmed. Refreshing the folder; retry this file to converge safely.",
+            });
+          } else {
+            updateItem(queued.id, {
+              state: "cancelled",
+              error: "Cancelled before upload began.",
+            });
+          }
           break;
         }
         if (cause instanceof APIError && cause.status === 401) {
@@ -201,6 +211,8 @@
       case "failed":
         return "Failed";
       case "cancelled":
+        return "Cancelled";
+      case "unconfirmed":
         return "Unconfirmed";
     }
   }
