@@ -18,7 +18,10 @@ import (
 )
 
 func TestBrowserUploadUsesAuthenticatedPinnedChannel(t *testing.T) {
-	ts, s := newTestServer(t, nil)
+	gate := api.NewOperationGate()
+	ts, s := newTestServer(t, func(d *api.Deps) {
+		d.Gate = gate
+	})
 	destination, err := s.Mkdir(t.Context(), s.RootID(), "Reports")
 	require.NoError(t, err)
 
@@ -54,6 +57,7 @@ func TestBrowserUploadUsesAuthenticatedPinnedChannel(t *testing.T) {
 		Type      string            `json:"type"`
 		RequestID string            `json:"request_id"`
 		Proof     string            `json:"proof"`
+		Code      string            `json:"code"`
 		Receipt   api.UploadReceipt `json:"receipt"`
 	}
 	require.NoError(t, wsjson.Read(t.Context(), conn, &message))
@@ -62,6 +66,39 @@ func TestBrowserUploadUsesAuthenticatedPinnedChannel(t *testing.T) {
 
 	content := []byte("quarterly")
 	digest := sha256.Sum256(content)
+	maintenanceHeld := make(chan struct{})
+	releaseMaintenance := make(chan struct{})
+	maintenanceDone := make(chan error, 1)
+	go func() {
+		maintenanceDone <- gate.Maintain(func() error {
+			close(maintenanceHeld)
+			<-releaseMaintenance
+			return nil
+		})
+	}()
+	<-maintenanceHeld
+	t.Cleanup(func() {
+		select {
+		case <-releaseMaintenance:
+		default:
+			close(releaseMaintenance)
+		}
+	})
+	require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{
+		"type":          "begin",
+		"request_id":    "busy-browser-test",
+		"parent_id":     destination.ID,
+		"name":          "quarterly.txt",
+		"mime_type":     "text/plain",
+		"expected_hash": hex.EncodeToString(digest[:]),
+		"expected_size": len(content),
+	}))
+	require.NoError(t, wsjson.Read(t.Context(), conn, &message))
+	require.Equal(t, "error", message.Type)
+	require.Equal(t, "maintenance_busy", message.Code)
+	close(releaseMaintenance)
+	require.NoError(t, <-maintenanceDone)
+
 	const requestID = "browser-test"
 	require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{
 		"type":          "begin",

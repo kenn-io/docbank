@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { hmac } from "@noble/hashes/hmac.js";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { utf8ToBytes } from "@noble/hashes/utils.js";
 import type { UploadReceipt } from "./api.js";
 import {
   hashFile,
@@ -47,7 +50,7 @@ describe("verified browser upload", () => {
     ).toThrow(/did not match the declared file authority/);
   });
 
-  it("accepts added and skipped receipts in the requested suffix family", () => {
+  it("accepts collision suffixes for additions and provenance matches for skips", () => {
     const hash = "a".repeat(64);
     const receipt: UploadReceipt = {
       status: "added",
@@ -70,9 +73,14 @@ describe("verified browser upload", () => {
       validateUploadReceipt(receipt, 2, "report.txt", hash, 3),
     ).not.toThrow();
     receipt.status = "skipped";
+    receipt.node.name = "renamed-quarterly-report.txt";
     expect(() =>
       validateUploadReceipt(receipt, 2, "report.txt", hash, 3),
     ).not.toThrow();
+    receipt.status = "added";
+    expect(() =>
+      validateUploadReceipt(receipt, 2, "report.txt", hash, 3),
+    ).toThrow(/did not match the declared file authority/);
   });
 
   it("sends no file bytes when an endpoint cannot prove daemon ownership", async () => {
@@ -116,5 +124,103 @@ describe("verified browser upload", () => {
     expect(socket.sent).toHaveLength(1);
     expect(typeof socket.sent[0]).toBe("string");
     expect(String(socket.sent[0])).not.toContain("private document");
+  });
+
+  it("retires the channel when cancellation races the terminal receipt", async () => {
+    const token = "browser-session";
+    const uploadSecret = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE";
+    let endUpload: (() => void) | undefined;
+    const ended = new Promise<void>((resolve) => {
+      endUpload = resolve;
+    });
+    class DaemonSocket extends EventTarget {
+      readyState: number = WebSocket.OPEN;
+      bufferedAmount = 0;
+      binaryType = "blob";
+      closed = false;
+
+      constructor() {
+        super();
+        queueMicrotask(() => this.dispatchEvent(new Event("open")));
+      }
+
+      send(data: string | ArrayBuffer): void {
+        if (typeof data !== "string") return;
+        const message = JSON.parse(data) as {
+          type: string;
+          nonce?: string;
+          request_id?: string;
+        };
+        if (message.type === "authenticate") {
+          const padded = uploadSecret.replaceAll("-", "+").replaceAll("_", "/").padEnd(
+            Math.ceil(uploadSecret.length / 4) * 4,
+            "=",
+          );
+          const secret = Uint8Array.from(
+            atob(padded),
+            (character) => character.charCodeAt(0),
+          );
+          const proofBytes = hmac(
+            sha256,
+            secret,
+            utf8ToBytes(
+              `docbank-web-upload-v1\u0000${token}\u0000${message.nonce}`,
+            ),
+          );
+          let proof = "";
+          for (const byte of proofBytes) proof += String.fromCharCode(byte);
+          proof = btoa(proof)
+            .replaceAll("+", "-")
+            .replaceAll("/", "_")
+            .replace(/=+$/, "");
+          queueMicrotask(() =>
+            this.dispatchEvent(new MessageEvent("message", {
+              data: JSON.stringify({ type: "authenticated", proof }),
+            })),
+          );
+        } else if (message.type === "begin") {
+          queueMicrotask(() =>
+            this.dispatchEvent(new MessageEvent("message", {
+              data: JSON.stringify({
+                type: "ready",
+                request_id: message.request_id,
+              }),
+            })),
+          );
+        } else if (message.type === "end") {
+          endUpload?.();
+        }
+      }
+
+      close(): void {
+        if (this.closed) return;
+        this.closed = true;
+        this.readyState = WebSocket.CLOSED;
+        this.dispatchEvent(new Event("close"));
+      }
+    }
+
+    const socket = new DaemonSocket();
+    let failed = 0;
+    const channel = new VerifiedUploadChannel(
+      { token, uploadSecret },
+      () => socket as unknown as WebSocket,
+      () => failed++,
+    );
+    await channel.connect();
+    const controller = new AbortController();
+    const upload = channel.uploadFile(
+      2,
+      new File(["abc"], "report.txt", { type: "text/plain" }),
+      "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+      controller.signal,
+      () => {},
+    );
+    await ended;
+    controller.abort();
+
+    await expect(upload).rejects.toMatchObject({ name: "AbortError" });
+    expect(socket.closed).toBe(true);
+    expect(failed).toBe(1);
   });
 });

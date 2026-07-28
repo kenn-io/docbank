@@ -131,21 +131,31 @@ func handleWebUploadConnection(
 		if err := wsjson.Read(ctx, conn, &begin); err != nil {
 			return
 		}
-		request, problem := validateWebUploadBegin(ctx, d, begin)
+		request, problem := validateWebUploadBegin(begin)
 		if problem != nil {
 			if writeWebUploadProblem(ctx, conn, begin.RequestID, problem) != nil {
 				return
 			}
 			continue
 		}
-		if err := wsjson.Write(ctx, conn, webUploadMessage{
-			Type: "ready", RequestID: request.requestID,
-		}); err != nil {
-			return
-		}
 
 		reader := &webUploadReader{ctx: ctx, conn: conn, requestID: request.requestID}
-		result, uploadErr := executeWebUpload(ctx, d, g, request, reader)
+		var result ingest.UploadResult
+		ready := false
+		uploadErr := g.mutate(func() error {
+			if problem := validateWebUploadDestination(ctx, d, request.parentID); problem != nil {
+				return problem
+			}
+			if err := wsjson.Write(ctx, conn, webUploadMessage{
+				Type: "ready", RequestID: request.requestID,
+			}); err != nil {
+				return fmt.Errorf("writing browser upload readiness: %w", err)
+			}
+			ready = true
+			var err error
+			result, err = executeWebUpload(ctx, d, request, reader)
+			return err
+		})
 		if uploadErr != nil {
 			problem := uploadError(uploadErr)
 			if errors.Is(uploadErr, errWebUploadCanceled) {
@@ -154,7 +164,7 @@ func handleWebUploadConnection(
 			if writeWebUploadProblem(ctx, conn, request.requestID, problem) != nil {
 				return
 			}
-			if !reader.ended {
+			if ready && !reader.ended {
 				_ = conn.Close(websocket.StatusPolicyViolation,
 					"upload stream ended before its terminal marker")
 				return
@@ -177,11 +187,7 @@ func handleWebUploadConnection(
 	}
 }
 
-func validateWebUploadBegin(
-	ctx context.Context,
-	d Deps,
-	begin webUploadMessage,
-) (webUploadRequest, *Error) {
+func validateWebUploadBegin(begin webUploadMessage) (webUploadRequest, *Error) {
 	if begin.Type != "begin" || begin.RequestID == "" || len(begin.RequestID) > 128 {
 		return webUploadRequest{}, NewError(http.StatusUnprocessableEntity, "validation",
 			"upload begin requires a bounded request identity")
@@ -203,49 +209,50 @@ func validateWebUploadBegin(
 	if err != nil {
 		return webUploadRequest{}, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
 	}
-	parent, err := d.Store.NodeByID(ctx, begin.ParentID)
-	switch {
-	case errors.Is(err, store.ErrNotFound) || (err == nil && parent.TrashedAt != nil):
-		return webUploadRequest{}, NewError(http.StatusNotFound, "not_found",
-			"upload destination does not exist")
-	case err != nil:
-		var problem *Error
-		if errors.As(FromStoreError(err), &problem) {
-			return webUploadRequest{}, problem
-		}
-		return webUploadRequest{}, NewError(http.StatusInternalServerError, "internal",
-			"could not inspect the upload destination")
-	case !parent.IsDir():
-		return webUploadRequest{}, NewError(http.StatusConflict, "not_dir",
-			"upload destination is not a directory")
-	}
 	return webUploadRequest{
 		requestID: begin.RequestID, parentID: begin.ParentID, name: name,
 		mimeType: mimeType, expectedHash: begin.ExpectedHash, expectedSize: begin.ExpectedSize,
 	}, nil
 }
 
+func validateWebUploadDestination(ctx context.Context, d Deps, parentID int64) *Error {
+	parent, err := d.Store.NodeByID(ctx, parentID)
+	switch {
+	case errors.Is(err, store.ErrNotFound) || (err == nil && parent.TrashedAt != nil):
+		return NewError(http.StatusNotFound, "not_found",
+			"upload destination does not exist")
+	case err != nil:
+		var problem *Error
+		if errors.As(FromStoreError(err), &problem) {
+			return problem
+		}
+		return NewError(http.StatusInternalServerError, "internal",
+			"could not inspect the upload destination")
+	case !parent.IsDir():
+		return NewError(http.StatusConflict, "not_dir",
+			"upload destination is not a directory")
+	}
+	return nil
+}
+
 func executeWebUpload(
 	ctx context.Context,
 	d Deps,
-	g *gate,
 	request webUploadRequest,
 	reader *webUploadReader,
 ) (result ingest.UploadResult, retErr error) {
-	retErr = g.mutate(func() error {
-		return d.Blobs.WithMutation(ctx, func() error {
-			limited := &io.LimitedReader{R: reader, N: request.expectedSize + 1}
-			ing := &ingest.Ingester{Store: d.Store, Blobs: d.Blobs}
-			prepared, err := ing.PrepareUpload(
-				ctx, request.parentID, request.name, request.mimeType, limited,
-				request.expectedHash, request.expectedSize,
-			)
-			if err != nil {
-				return err
-			}
-			result, err = prepared.Commit(ctx)
+	retErr = d.Blobs.WithMutation(ctx, func() error {
+		limited := &io.LimitedReader{R: reader, N: request.expectedSize + 1}
+		ing := &ingest.Ingester{Store: d.Store, Blobs: d.Blobs}
+		prepared, err := ing.PrepareUpload(
+			ctx, request.parentID, request.name, request.mimeType, limited,
+			request.expectedHash, request.expectedSize,
+		)
+		if err != nil {
 			return err
-		})
+		}
+		result, err = prepared.Commit(ctx)
+		return err
 	})
 	return result, retErr
 }

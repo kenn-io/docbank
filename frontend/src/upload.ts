@@ -72,7 +72,9 @@ export function validateUploadReceipt(
     receipt.computed_hash !== expectedHash ||
     receipt.computed_size !== expectedSize ||
     receipt.node.parent_id !== parentID ||
-    !permittedUploadName(name, receipt.node.name) ||
+    // New uploads may be collision-suffixed. An idempotent provenance match
+    // can identify the same bytes after the existing node was renamed.
+    (receipt.status === "added" && !permittedUploadName(name, receipt.node.name)) ||
     receipt.node.blob_hash !== expectedHash ||
     receipt.node.size !== expectedSize
   ) {
@@ -230,7 +232,7 @@ export class VerifiedUploadChannel implements UploadTransport {
       }
       if (signal.aborted) await this.cancelUpload(requestID);
       this.send({ type: "end", request_id: requestID });
-      const terminal = await this.nextMessage();
+      const terminal = await this.nextTerminalMessage(signal);
       this.requireMessage(terminal, requestID);
       this.throwProblem(terminal);
       if (terminal.type !== "receipt" || !terminal.receipt) {
@@ -266,6 +268,31 @@ export class VerifiedUploadChannel implements UploadTransport {
     if (this.waiter || this.unusable) return Promise.reject(this.channelError());
     return new Promise((resolve, reject) => {
       this.waiter = { resolve, reject };
+    });
+  }
+
+  private nextTerminalMessage(signal: AbortSignal): Promise<UploadMessage> {
+    if (signal.aborted) {
+      this.fail();
+      return Promise.reject(abortError());
+    }
+    const terminal = this.nextMessage();
+    return new Promise((resolve, reject) => {
+      const aborted = (): void => {
+        this.fail();
+        reject(abortError());
+      };
+      signal.addEventListener("abort", aborted, { once: true });
+      terminal.then(
+        (message) => {
+          signal.removeEventListener("abort", aborted);
+          resolve(message);
+        },
+        (cause) => {
+          signal.removeEventListener("abort", aborted);
+          reject(cause);
+        },
+      );
     });
   }
 
