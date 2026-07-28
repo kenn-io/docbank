@@ -78,10 +78,13 @@ browser compares that receipt again before reporting **Added** or **Already
 present**, then refreshes the destination by stable ID.
 
 Files are independent queue entries: one rejection does not make another
-success ambiguous, failed entries can be retried, and cancellation stops before
-Docbank reports authority for the current item. Name/content collisions retain
-the ordinary ingest suffix behavior rather than overwriting a document.
-Selecting a local file never changes or removes the source.
+success ambiguous, and failed entries can be retried. Cancellation can race
+with a daemon commit whose receipt did not reach the browser, so the drawer
+labels that item **Unconfirmed**, refreshes the destination, and directs the
+operator to retry; the idempotent upload contract then converges on the stored
+result. Name/content collisions retain the ordinary ingest suffix behavior
+rather than overwriting a document. Selecting a local file never changes or
+removes the source.
 
 This first browser import is file-granular. Folder recursion, server-filesystem
 ingest, watched-inbox configuration, and replacing an existing document remain

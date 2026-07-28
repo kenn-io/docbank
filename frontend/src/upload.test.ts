@@ -42,4 +42,32 @@ describe("verified browser upload", () => {
       validateUploadReceipt(receipt, 2, "report.txt", hash, 3),
     ).toThrow(/did not match the declared file authority/);
   });
+
+  it("accepts added and skipped receipts in the requested suffix family", () => {
+    const hash = "a".repeat(64);
+    const receipt: UploadReceipt = {
+      status: "added",
+      computed_hash: hash,
+      computed_size: 3,
+      node: {
+        id: 9,
+        parent_id: 2,
+        name: "report (2).txt",
+        kind: "file",
+        blob_hash: hash,
+        size: 3,
+        revision: 1,
+        created_at: "2026-07-28T00:00:00Z",
+        modified_at: "2026-07-28T00:00:00Z",
+      },
+    };
+
+    expect(() =>
+      validateUploadReceipt(receipt, 2, "report.txt", hash, 3),
+    ).not.toThrow();
+    receipt.status = "skipped";
+    expect(() =>
+      validateUploadReceipt(receipt, 2, "report.txt", hash, 3),
+    ).not.toThrow();
+  });
 });

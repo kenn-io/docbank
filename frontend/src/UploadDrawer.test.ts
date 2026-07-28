@@ -86,4 +86,55 @@ describe("upload documents drawer", () => {
       expect.any(Function),
     );
   });
+
+  it("refreshes and reports an unconfirmed outcome after cancellation", async () => {
+    const hash = "a".repeat(64);
+    vi.spyOn(upload, "hashFile").mockResolvedValue(hash);
+    vi.spyOn(upload, "uploadFile").mockImplementation(
+      async (_session, _parentID, _file, _expectedHash, signal) =>
+        await new Promise((_resolve, reject) => {
+          signal.addEventListener(
+            "abort",
+            () =>
+              reject(new DOMException("The operation was aborted.", "AbortError")),
+            { once: true },
+          );
+        }),
+    );
+    const complete = vi.fn();
+
+    render(UploadDrawer, {
+      session: "short-lived",
+      directory: {
+        id: 3,
+        name: "Reports",
+        path: "/Reports",
+        kind: "dir",
+        size: 0,
+        revision: 1,
+        created_at: "2026-07-28T00:00:00Z",
+        modified_at: "2026-07-28T00:00:00Z",
+      },
+      onclose: vi.fn(),
+      oncomplete: complete,
+      onauthfailure: vi.fn(),
+    });
+
+    const file = new File(["quarterly"], "quarterly.txt", {
+      type: "text/plain",
+    });
+    await fireEvent.change(screen.getByLabelText("Choose local files"), {
+      target: { files: [file] },
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Upload 1 file" }),
+    );
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Cancel current upload" }),
+    );
+
+    expect(await screen.findByText("Unconfirmed")).toBeTruthy();
+    expect(screen.getByText(/retry this file to converge safely/)).toBeTruthy();
+    await waitFor(() => expect(complete).toHaveBeenCalledOnce());
+  });
 });

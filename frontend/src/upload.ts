@@ -9,6 +9,28 @@ export interface TransferProgress {
   total: number;
 }
 
+function uploadNameParts(name: string): { base: string; extension: string } {
+  const dot = name.lastIndexOf(".");
+  if (dot <= 0) return { base: name, extension: "" };
+  return { base: name.slice(0, dot), extension: name.slice(dot) };
+}
+
+function permittedUploadName(requested: string, received: string): boolean {
+  if (received === requested) return true;
+  const { base, extension } = uploadNameParts(requested);
+  const prefix = `${base} (`;
+  const suffix = `)${extension}`;
+  if (!received.startsWith(prefix) || !received.endsWith(suffix)) return false;
+  const ordinal = received.slice(prefix.length, received.length - suffix.length);
+  if (!/^[+-]?[0-9]+$/.test(ordinal)) return false;
+  try {
+    const value = BigInt(ordinal);
+    return value >= BigInt(2) && value <= BigInt("9223372036854775807");
+  } catch {
+    return false;
+  }
+}
+
 function abortError(): DOMException {
   return new DOMException("The operation was aborted.", "AbortError");
 }
@@ -62,7 +84,7 @@ export function validateUploadReceipt(
     receipt.computed_hash !== expectedHash ||
     receipt.computed_size !== expectedSize ||
     receipt.node.parent_id !== parentID ||
-    receipt.node.name !== name ||
+    !permittedUploadName(name, receipt.node.name) ||
     receipt.node.blob_hash !== expectedHash ||
     receipt.node.size !== expectedSize
   ) {

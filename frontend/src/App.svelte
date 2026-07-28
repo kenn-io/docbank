@@ -1054,8 +1054,8 @@
         session={webSession}
         directory={uploadTarget}
         onclose={() => (uploadTarget = null)}
-        oncomplete={() => {
-          if (uploadTarget) void loadDirectory(uploadTarget.id, false);
+        oncomplete={async () => {
+          if (uploadTarget) await loadDirectory(uploadTarget.id, false);
         }}
         onauthfailure={handleFailure}
       />

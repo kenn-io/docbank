@@ -43,7 +43,7 @@
     session: string;
     directory: Node;
     onclose: () => void;
-    oncomplete: () => void;
+    oncomplete: () => void | Promise<void>;
     onauthfailure: (cause: unknown) => void;
   }
 
@@ -104,7 +104,8 @@
     const active = new AbortController();
     controller = active;
     running = true;
-    let accepted = false;
+    let refreshNeeded = false;
+    let authFailed = false;
 
     for (const queued of items) {
       if (!["ready", "failed", "cancelled"].includes(queued.state)) continue;
@@ -126,6 +127,7 @@
           hash,
           progress: { processed: 0, total: queued.file.size },
         });
+        refreshNeeded = true;
         const receipt = await uploadFile(
           session,
           directory.id,
@@ -139,17 +141,18 @@
           receipt,
           progress: { processed: queued.file.size, total: queued.file.size },
         });
-        accepted = true;
       } catch (cause) {
         if (cause instanceof DOMException && cause.name === "AbortError") {
           updateItem(queued.id, {
             state: "cancelled",
-            error: "Cancelled before Docbank granted authority.",
+            error:
+              "Upload outcome is unconfirmed. Refreshing the folder; retry this file to converge safely.",
           });
           break;
         }
         if (cause instanceof APIError && cause.status === 401) {
           updateItem(queued.id, { state: "failed", error: cause.message });
+          authFailed = true;
           onauthfailure(cause);
           break;
         }
@@ -163,7 +166,7 @@
     if (controller === active) {
       controller = null;
       running = false;
-      if (accepted) oncomplete();
+      if (refreshNeeded && !authFailed) await oncomplete();
     }
   }
 
@@ -199,7 +202,7 @@
       case "failed":
         return "Failed";
       case "cancelled":
-        return "Cancelled";
+        return "Unconfirmed";
     }
   }
 </script>
