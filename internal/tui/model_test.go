@@ -441,6 +441,15 @@ func TestTrashOverlayDoesNotCancelUnderlyingLoad(t *testing.T) {
 	assert.Empty(t, model.trashItems)
 }
 
+func TestTrashHelpShortcutOpensHelp(t *testing.T) {
+	model, err := New(t.Context(), newFakeBackend())
+	require.NoError(t, err)
+	model, _ = updateModel(t, model, runeKey('T'))
+	model, _ = updateModel(t, model, runeKey('?'))
+	assert.True(t, model.trashOpen)
+	assert.True(t, model.helpOpen)
+}
+
 func TestSuccessfulTrashPreservesBackAndSearchNavigation(t *testing.T) {
 	t.Run("nested directory", func(t *testing.T) {
 		backend := newFakeBackend()

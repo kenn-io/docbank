@@ -176,3 +176,22 @@ func TestTUIBackendDoesNotReplayMutationAfterResponseIsLost(t *testing.T) {
 	assert.Equal(t, int32(1), requests.Load())
 	assert.Equal(t, int32(1), acquires.Load())
 }
+
+func TestTUIBackendReportsTruncatedMutationReceiptAsUnconfirmed(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, err := w.Write([]byte("{"))
+		assert.NoError(t, err)
+	}))
+	t.Cleanup(server.Close)
+
+	backend := &tuiDaemonBackend{ensure: func(context.Context) (*client.Client, error) {
+		return client.New(server.URL, ""), nil
+	}}
+	_, err := backend.Trash(t.Context(), 42, 3)
+	require.ErrorContains(t, err, "trash outcome is unconfirmed")
+	assert.Equal(t, int32(1), requests.Load())
+}

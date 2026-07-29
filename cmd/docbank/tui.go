@@ -206,7 +206,7 @@ func (b *tuiDaemonBackend) Trash(
 	node, err := withTUIMutationClient(ctx, b, func(c *client.Client) (api.Node, error) {
 		return c.Trash(ctx, nodeID, revision)
 	})
-	if client.IsTransportError(err) {
+	if client.IsTransportError(err) || client.IsResponseDecodeError(err) {
 		return api.Node{}, fmt.Errorf(
 			"trash outcome is unconfirmed; refresh before retrying: %w", err,
 		)
@@ -220,7 +220,7 @@ func (b *tuiDaemonBackend) Restore(
 	node, err := withTUIMutationClient(ctx, b, func(c *client.Client) (api.Node, error) {
 		return c.Restore(ctx, nodeID, revision)
 	})
-	if client.IsTransportError(err) {
+	if client.IsTransportError(err) || client.IsResponseDecodeError(err) {
 		return api.Node{}, fmt.Errorf(
 			"restore outcome is unconfirmed; refresh before retrying: %w", err,
 		)

@@ -616,6 +616,8 @@ func (m Model) updateTrashKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "q", "ctrl+c":
 		m.quitting = true
 		return m, tea.Quit
+	case "?":
+		m.helpOpen = true
 	case "esc", "left", "h", "backspace":
 		m.trashOpen = false
 		m.trashLoading = false
