@@ -1043,9 +1043,9 @@
                       size="sm"
                       tone="info"
                       surface="soft"
-                      disabled={selectedTagsLoading || selectedTagsError !== ""}
+                      disabled={loading || selectedTagsLoading || selectedTagsError !== ""}
                       onclick={() => {
-                        if (selected) manageTagsTarget = selected;
+                        if (!loading && selected) manageTagsTarget = selected;
                       }}
                     >
                       Manage

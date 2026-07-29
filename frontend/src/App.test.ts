@@ -436,6 +436,10 @@ it.each(["browse", "search"] as const)(
     const delayedRemovalSearch = new Promise<Response>((resolve) => {
       resolveRemovalSearch = resolve;
     });
+    let resolvePreMutationRefresh!: (response: Response) => void;
+    const delayedPreMutationRefresh = new Promise<Response>((resolve) => {
+      resolvePreMutationRefresh = resolve;
+    });
     let assigned = true;
     let browseReads = 0;
     let searchReads = 0;
@@ -465,6 +469,9 @@ it.each(["browse", "search"] as const)(
       ) {
         browseReads += 1;
         if (view === "browse" && browseReads === 2) {
+          return delayedPreMutationRefresh;
+        }
+        if (view === "browse" && browseReads === 3) {
           return new Response(
             JSON.stringify({
               status: 503,
@@ -490,6 +497,9 @@ it.each(["browse", "search"] as const)(
       ) {
         searchReads += 1;
         if (view === "search" && searchReads === 2) {
+          return delayedPreMutationRefresh;
+        }
+        if (view === "search" && searchReads === 3) {
           return delayedRemovalSearch;
         }
         return json({
@@ -563,6 +573,27 @@ it.each(["browse", "search"] as const)(
     }
 
     await screen.findByText("1 assigned");
+    await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
+    const manage = screen.getByRole("button", { name: "Manage" });
+    expect(manage.hasAttribute("disabled")).toBe(true);
+    expect(screen.queryByRole("dialog", { name: /Manage tags/ })).toBeNull();
+    resolvePreMutationRefresh(
+      view === "search"
+        ? json({
+            hits: [{ node: report, path: report.path, match: "name" }],
+            limit: 1000,
+            truncated: false,
+            tag_id: tax.id,
+          })
+        : json({
+            items: [{ node: report, path: report.path }],
+            total: 1,
+            limit: 1000,
+            offset: 0,
+            omitted_trashed: 0,
+          }),
+    );
+    await waitFor(() => expect(manage.hasAttribute("disabled")).toBe(false));
     await fireEvent.click(screen.getByRole("button", { name: "Manage" }));
     await fireEvent.click(
       screen.getByRole("button", { name: "Remove tag tax" }),
@@ -576,18 +607,18 @@ it.each(["browse", "search"] as const)(
 
     if (view === "browse") {
       expect(await screen.findByText("tag view temporarily unavailable")).toBeTruthy();
-      expect(browseReads).toBe(2);
+      expect(browseReads).toBe(3);
       return;
     }
 
-    await waitFor(() => expect(searchReads).toBe(2));
+    await waitFor(() => expect(searchReads).toBe(3));
     await screen.findByText("Removed tax.");
     await fireEvent.click(
       screen.getByRole("combobox", { name: "Tag to assign: Choose a tag…" }),
     );
     await fireEvent.click(screen.getByRole("option", { name: "tax (0)" }));
     await fireEvent.click(screen.getByRole("button", { name: "Add tag" }));
-    await waitFor(() => expect(searchReads).toBe(3));
+    await waitFor(() => expect(searchReads).toBe(4));
     expect(
       await screen.findByRole("cell", { name: "/quarterly-tax-report.txt" }),
     ).toBeTruthy();
