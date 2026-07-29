@@ -438,6 +438,14 @@ func TestUnconfirmedMutationsInvalidateAuthority(t *testing.T) {
 		assert.Nil(t, model.searchReturn)
 		assert.Contains(t, model.notice, "trash outcome is unconfirmed")
 
+		backend.err = errors.New("daemon temporarily unavailable")
+		model = runModelCommand(t, model, refresh)
+		require.ErrorContains(t, model.err, "daemon temporarily unavailable")
+		assert.Empty(t, model.directory.Path)
+
+		backend.err = nil
+		model, refresh = updateModel(t, model, runeKey('r'))
+		require.NotNil(t, refresh)
 		model = runModelCommand(t, model, refresh)
 		assert.Equal(t, "/", model.directory.Path)
 		require.Len(t, model.rows, 2)

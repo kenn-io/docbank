@@ -581,6 +581,13 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.loadDirectory(m.directory.ID, navigationRefresh, m.requestID),
 			)
 		}
+		m.loading = true
+		m.err = nil
+		m.requestID++
+		return m, tea.Batch(
+			m.startSpinner(),
+			m.loadDirectory(0, navigationInitial, m.requestID),
+		)
 	case "up", "k":
 		m.moveCursor(-1)
 	case "down", "j":
