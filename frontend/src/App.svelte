@@ -11,6 +11,7 @@
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import SearchIcon from "@lucide/svelte/icons/search";
   import TagIcon from "@lucide/svelte/icons/tag";
+  import TagsIcon from "@lucide/svelte/icons/tags";
   import HistoryIcon from "@lucide/svelte/icons/history";
   import Trash2Icon from "@lucide/svelte/icons/trash-2";
   import UploadIcon from "@lucide/svelte/icons/upload";
@@ -39,6 +40,9 @@
   import ManageTagsModal from "./ManageTagsModal.svelte";
   import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
   import StorageDrawer from "./StorageDrawer.svelte";
+  import TagCatalogModal, {
+    type TagDefinitionChange,
+  } from "./TagCatalogModal.svelte";
   import TrashDrawer from "./TrashDrawer.svelte";
   import TrashNodeModal from "./TrashNodeModal.svelte";
   import UploadDrawer from "./UploadDrawer.svelte";
@@ -99,6 +103,7 @@
   let tagCatalog = $state<Tag[]>([]);
   let tagCatalogTotal = $state(0);
   let tagCatalogListed = $state(0);
+  let tagCatalogLoading = $state(false);
   let tagCatalogError = $state("");
   let selectedTags = $state<Tag[]>([]);
   let selectedTagsTotal = $state(0);
@@ -121,6 +126,7 @@
   let backupsOpen = $state(false);
   let trashOpen = $state(false);
   let manageTagsTarget = $state<Row | null>(null);
+  let tagCatalogOpen = $state(false);
   let uploadTarget = $state<Node | null>(null);
   let trashTarget = $state<Row | null>(null);
   let generation = 0;
@@ -181,10 +187,12 @@
       storageOpen = false;
       backupsOpen = false;
       trashOpen = false;
+      tagCatalogOpen = false;
       uploadTarget = null;
       trashTarget = null;
       tagCatalog = [];
       tagCatalogListed = 0;
+      tagCatalogLoading = false;
       selectedTags = [];
       selectedTagsTotal = 0;
       searchPending = false;
@@ -445,6 +453,7 @@
     const request = ++tagCatalogGeneration;
     const session = webSession;
     const selectedTagID = tagFilterID;
+    tagCatalogLoading = true;
     tagCatalogError = "";
     try {
       const page = await tags(session);
@@ -492,6 +501,8 @@
         return;
       }
       tagCatalogError = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      if (request === tagCatalogGeneration) tagCatalogLoading = false;
     }
   }
 
@@ -674,6 +685,60 @@
     }
   }
 
+  function handleTagDefinitionChanged(change: TagDefinitionChange): void {
+    const changedTag = change.tag;
+    if (change.kind === "renamed") {
+      tagCatalog = tagCatalog
+        .map((tag) => (tag.id === changedTag.id ? changedTag : tag))
+        .sort((left, right) => left.name.localeCompare(right.name));
+      selectedTags = selectedTags
+        .map((tag) => (tag.id === changedTag.id ? changedTag : tag))
+        .sort((left, right) => left.name.localeCompare(right.name));
+    } else if (change.kind === "deleted") {
+      tagCatalog = tagCatalog.filter((tag) => tag.id !== changedTag.id);
+      tagCatalogTotal = Math.max(0, tagCatalogTotal - 1);
+      tagCatalogListed = Math.min(tagCatalogListed, tagCatalog.length);
+      if (selectedTags.some((tag) => tag.id === changedTag.id)) {
+        selectedTags = selectedTags.filter((tag) => tag.id !== changedTag.id);
+        selectedTagsTotal = Math.max(0, selectedTagsTotal - 1);
+      }
+      stack = stack.map((snapshot) =>
+        snapshot.tagFilterID === changedTag.id ||
+        snapshot.activeTagID === changedTag.id
+          ? {
+              ...snapshot,
+              tagFilterID:
+                snapshot.tagFilterID === changedTag.id
+                  ? ""
+                  : snapshot.tagFilterID,
+              activeTagID:
+                snapshot.activeTagID === changedTag.id
+                  ? ""
+                  : snapshot.activeTagID,
+            }
+          : snapshot,
+      );
+    }
+
+    void loadTagCatalog();
+    if (change.kind === "created") return;
+
+    const preferredSelectedID = selectedID;
+    if (change.kind === "deleted" && activeTagID === changedTag.id) {
+      tagFilterID = "";
+      activeTagID = "";
+      taggedInspected = 0;
+      taggedTotal = 0;
+      taggedTrashed = 0;
+    }
+    if (activeQuery) void runSearch(preferredSelectedID);
+    else if (activeTagID) {
+      void loadTaggedNodes(activeTagID, preferredSelectedID);
+    } else if (directory) {
+      void loadDirectory(directory.id, false, preferredSelectedID, true);
+    }
+  }
+
   async function lock(): Promise<void> {
     generation += 1;
     auditGeneration += 1;
@@ -695,6 +760,7 @@
     tagCatalog = [];
     tagCatalogTotal = 0;
     tagCatalogListed = 0;
+    tagCatalogLoading = false;
     tagCatalogError = "";
     auditLoading = false;
     auditError = "";
@@ -706,6 +772,7 @@
     backupsOpen = false;
     trashOpen = false;
     manageTagsTarget = null;
+    tagCatalogOpen = false;
     uploadTarget = null;
     trashTarget = null;
     activeQuery = "";
@@ -877,6 +944,27 @@
               disabled={!directory || tagCatalog.length === 0}
               onchange={changeTagFilter}
             />
+            <IconButton
+              size="sm"
+              ariaLabel="Manage tag definitions"
+              title="Create, rename, or delete tag definitions"
+              disabled={loading || tagCatalogLoading}
+              onclick={() => {
+                if (loading || tagCatalogLoading) return;
+                historyOpen = false;
+                versionsOpen = false;
+                provenanceOpen = false;
+                jobsOpen = false;
+                storageOpen = false;
+                backupsOpen = false;
+                trashOpen = false;
+                manageTagsTarget = null;
+                uploadTarget = null;
+                tagCatalogOpen = true;
+              }}
+            >
+              <TagsIcon size="14" aria-hidden="true" />
+            </IconButton>
             {#if tagBrowse}
               <span>
                 {rows.length} live shown
@@ -1332,6 +1420,17 @@
         disabled={loading}
         onclose={() => (manageTagsTarget = null)}
         onchanged={handleTagChanged}
+        onauthfailure={handleFailure}
+      />
+    {/if}
+    {#if tagCatalogOpen}
+      <TagCatalogModal
+        session={webSession}
+        catalog={tagCatalog}
+        catalogTotal={tagCatalogTotal}
+        disabled={loading || tagCatalogLoading}
+        onclose={() => (tagCatalogOpen = false)}
+        onchanged={handleTagDefinitionChanged}
         onauthfailure={handleFailure}
       />
     {/if}

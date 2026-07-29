@@ -17,7 +17,7 @@ from the CLI, automate through the authenticated HTTP API, or embed Docbank in
 a Go application. People can browse the same authority in the local web
 application or focused terminal interface; the web application verifies
 current or retained document bytes before handing them to the browser's native
-save, lets people assign existing stable tags, and keeps the vault's
+save, lets people define and assign stable tags, and keeps the vault's
 loose-file/live-packed/dead-packed storage breakdown visible alongside
 document authority.
 

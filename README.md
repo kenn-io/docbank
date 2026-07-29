@@ -69,7 +69,8 @@ Four commitments:
 - A read-only daemon-backed TUI for analytical tree browsing, search, stable
   document/version identity inspection, and permanent audited-history timelines
 - A scoped kit-ui web application for verified local-file upload, virtual-tree browsing, sortable
-  document analysis, tag browsing and assignment, tag-filtered extracted-text search,
+  document analysis, tag-definition management, tag browsing and assignment,
+  tag-filtered extracted-text search,
   complete current authority, verified current and historical content download,
   recoverable move-to-trash and revision-bound restoration,
   permanent protection and event history, immutable versions and provenance,

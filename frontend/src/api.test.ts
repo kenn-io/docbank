@@ -6,10 +6,13 @@ import {
   backupSnapshots,
   changeNodeTag,
   contentVersions,
+  createTag,
+  deleteTag,
   listJobs,
   liveTaggedNodes,
   nodeTags,
   requestJSON,
+  renameTag,
   restoreNode,
   revokeSession,
   search,
@@ -180,6 +183,70 @@ describe("browser authentication", () => {
       "/api/v1/nodes/42/tags?limit=1000&offset=0",
       "/api/v1/search?q=quarterly+report&limit=1000&tag_id=11111111-1111-4111-8111-111111111111",
     ]);
+  });
+
+  it("manages tag definitions under stable revision authority", async () => {
+    const tagID = "11111111-1111-4111-8111-111111111111";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
+      async (_path, request) => {
+        const method = request?.method;
+        if (method === "POST") {
+          return new Response(
+            JSON.stringify({
+              id: tagID,
+              name: "tax",
+              revision: 1,
+              assignment_count: 0,
+            }),
+            { status: 201, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (method === "PATCH") {
+          return new Response(
+            JSON.stringify({
+              id: tagID,
+              name: "tax filing",
+              revision: 2,
+              assignment_count: 3,
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            tag: {
+              id: tagID,
+              name: "tax filing",
+              revision: 2,
+              assignment_count: 3,
+            },
+            removed_assignments: 3,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      },
+    );
+
+    await createTag("session", "tax");
+    await renameTag("session", tagID, 1, "tax filing");
+    await deleteTag("session", tagID, 2);
+
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      "/api/v1/tags",
+      `/api/v1/tags/${tagID}`,
+      `/api/v1/tags/${tagID}`,
+    ]);
+    expect(fetchMock.mock.calls.map((call) => call[1]?.method)).toEqual([
+      "POST",
+      "PATCH",
+      "DELETE",
+    ]);
+    expect(
+      new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get("If-Match"),
+    ).toBe("1");
+    expect(
+      new Headers(fetchMock.mock.calls[2]?.[1]?.headers).get("If-Match"),
+    ).toBe("2");
   });
 
   it("trashes one stable node under its inspected revision", async () => {

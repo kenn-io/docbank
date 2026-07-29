@@ -459,9 +459,59 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	assert.Equal(t, reviewedTag.ID, unassigned.Tag.ID)
 	document.Revision = unassigned.Node.Revision
 
-	resp = webRequest(http.MethodDelete, "/api/v1/tags/"+reviewedTag.ID)
+	createTagRequest, err := http.NewRequest(
+		http.MethodPost, ts.URL+"/api/v1/tags",
+		strings.NewReader(`{"name":"filing"}`),
+	)
+	require.NoError(t, err)
+	createTagRequest.Header["X-Api-Key"] = []string{""}
+	createTagRequest.Header.Set(api.WebSessionHeader, issued.Token)
+	createTagRequest.Header.Set("Content-Type", "application/json")
+	resp, err = ts.Client().Do(createTagRequest)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	var browserTag api.Tag
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&browserTag))
+	require.NoError(t, resp.Body.Close())
+	assert.Equal(t, "filing", browserTag.Name)
+	assert.EqualValues(t, 1, browserTag.Revision)
+
+	renameTagRequest, err := http.NewRequest(
+		http.MethodPatch, ts.URL+"/api/v1/tags/"+browserTag.ID,
+		strings.NewReader(`{"name":"filed"}`),
+	)
+	require.NoError(t, err)
+	renameTagRequest.Header["X-Api-Key"] = []string{""}
+	renameTagRequest.Header.Set(api.WebSessionHeader, issued.Token)
+	renameTagRequest.Header.Set("Content-Type", "application/json")
+	renameTagRequest.Header.Set("If-Match", strconv.FormatInt(browserTag.Revision, 10))
+	resp, err = ts.Client().Do(renameTagRequest)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&browserTag))
+	require.NoError(t, resp.Body.Close())
+	assert.Equal(t, "filed", browserTag.Name)
+	assert.EqualValues(t, 2, browserTag.Revision)
+
+	deleteTagRequest, err := http.NewRequest(
+		http.MethodDelete, ts.URL+"/api/v1/tags/"+browserTag.ID, nil,
+	)
+	require.NoError(t, err)
+	deleteTagRequest.Header["X-Api-Key"] = []string{""}
+	deleteTagRequest.Header.Set(api.WebSessionHeader, issued.Token)
+	deleteTagRequest.Header.Set("If-Match", strconv.FormatInt(browserTag.Revision, 10))
+	resp, err = ts.Client().Do(deleteTagRequest)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var deletedTag api.TagDeletionReceipt
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&deletedTag))
+	require.NoError(t, resp.Body.Close())
+	assert.Equal(t, browserTag.ID, deletedTag.Tag.ID)
+	assert.Zero(t, deletedTag.RemovedAssignments)
+
+	resp = webRequest(http.MethodPatch, "/api/v1/tags/"+reviewedTag.ID+"/extra")
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode,
-		"tag-assignment permission does not grant tag-definition deletion")
+		"tag-definition permission is limited to one stable tag resource")
 	require.NoError(t, resp.Body.Close())
 
 	resp = webRequest(http.MethodGet, "/api/v1/jobs")
