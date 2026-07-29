@@ -472,6 +472,11 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	require.Len(t, trashPage.Items, 1)
 	assert.Equal(t, document.ID, trashPage.Items[0].ID)
 
+	resp = webRequest(http.MethodGet, "/api/v1/trash")
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode,
+		"browser sessions cannot use the master API's unbounded trash listing")
+	require.NoError(t, resp.Body.Close())
+
 	restoreRequest, err := http.NewRequest(
 		http.MethodPost,
 		ts.URL+"/api/v1/nodes/"+strconv.FormatInt(document.ID, 10)+"/restore",

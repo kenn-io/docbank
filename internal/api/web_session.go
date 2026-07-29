@@ -191,10 +191,15 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	if method != http.MethodGet {
 		return false
 	}
+	if path == "/api/v1/trash" {
+		// The master API retains the released unbounded form, but a browser
+		// session may request only the UI's fixed bounded page.
+		return r.URL.RawQuery == "limit=1000&offset=0"
+	}
 	switch path {
 	case "/api/v1/path", "/api/v1/search",
 		"/api/v1/audit/status", "/api/v1/audit/history", "/api/v1/jobs",
-		"/api/v1/storage", "/api/v1/tags", "/api/v1/trash":
+		"/api/v1/storage", "/api/v1/tags":
 		return true
 	case "/api/v1/backup/snapshots":
 		// Browser sessions may inspect only the repository selected by daemon
