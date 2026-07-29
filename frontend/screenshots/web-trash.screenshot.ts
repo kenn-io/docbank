@@ -60,7 +60,20 @@ test.describe("Docbank web screenshots", () => {
 
     await runDocbank(["add", reports, "--dest", "/", "--progress", "plain"]);
     webURL = await runDocbank(["web", "--no-browser"]);
-    if (!webURL.startsWith("http://127.0.0.1:")) {
+    const browserURL = new URL(webURL);
+    const port = Number(browserURL.port);
+    if (
+      browserURL.protocol !== "http:" ||
+      !/^docbank-[0-9a-f]{32}\.localhost$/.test(browserURL.hostname) ||
+      !Number.isInteger(port) ||
+      port < 1 ||
+      port > 65_535 ||
+      browserURL.username !== "" ||
+      browserURL.password !== "" ||
+      browserURL.pathname !== "/" ||
+      browserURL.search !== "" ||
+      browserURL.hash === ""
+    ) {
       throw new Error("docbank web returned an unexpected browser URL");
     }
   });
