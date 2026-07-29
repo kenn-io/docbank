@@ -464,12 +464,41 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	assert.NotEmpty(t, trashed.TrashedAt)
 	assert.Equal(t, "/Taxes/return.txt", trashed.Path)
 
-	resp = webRequest(
-		http.MethodPost,
-		"/api/v1/nodes/"+strconv.FormatInt(document.ID, 10)+"/restore",
-	)
+	resp = webRequest(http.MethodGet, "/api/v1/trash?limit=1000&offset=0")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var trashPage api.TrashPage
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&trashPage))
+	require.NoError(t, resp.Body.Close())
+	require.Len(t, trashPage.Items, 1)
+	assert.Equal(t, document.ID, trashPage.Items[0].ID)
+
+	resp = webRequest(http.MethodGet, "/api/v1/trash")
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode,
-		"browser trash permission does not grant restore or other mutations")
+		"browser sessions cannot use the master API's unbounded trash listing")
+	require.NoError(t, resp.Body.Close())
+
+	restoreRequest, err := http.NewRequest(
+		http.MethodPost,
+		ts.URL+"/api/v1/nodes/"+strconv.FormatInt(document.ID, 10)+"/restore",
+		nil,
+	)
+	require.NoError(t, err)
+	restoreRequest.Header["X-Api-Key"] = []string{""}
+	restoreRequest.Header.Set(api.WebSessionHeader, issued.Token)
+	restoreRequest.Header.Set("If-Match", strconv.FormatInt(trashed.Revision, 10))
+	resp, err = ts.Client().Do(restoreRequest)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var restored api.Node
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&restored))
+	require.NoError(t, resp.Body.Close())
+	assert.Equal(t, document.ID, restored.ID)
+	assert.Empty(t, restored.TrashedAt)
+	assert.Equal(t, "/Taxes/return.txt", restored.Path)
+
+	resp = webRequest(http.MethodPost, "/api/v1/trash/empty")
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode,
+		"browser restore permission does not grant permanent deletion")
 	require.NoError(t, resp.Body.Close())
 
 	resp = webRequest(http.MethodGet,

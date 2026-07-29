@@ -9,6 +9,7 @@ import {
   liveTaggedNodes,
   nodeTags,
   requestJSON,
+  restoreNode,
   revokeSession,
   search,
   storageStatus,
@@ -17,6 +18,7 @@ import {
   tags,
   takeFragmentSession,
   trashNode,
+  trashRoots,
 } from "./api.js";
 
 describe("browser authentication", () => {
@@ -206,5 +208,43 @@ describe("browser authentication", () => {
     expect(path).toBe("/api/v1/nodes/42/trash");
     expect(request?.method).toBe("POST");
     expect(new Headers(request?.headers).get("If-Match")).toBe("7");
+  });
+
+  it("lists bounded trash and restores one inspected root", async () => {
+    const restored = {
+      id: 42,
+      parent_id: 2,
+      name: "report.txt",
+      kind: "file",
+      size: 12,
+      revision: 9,
+      created_at: "2026-07-28T12:00:00Z",
+      modified_at: "2026-07-28T12:02:00Z",
+      path: "/Reports/report (2).txt",
+    };
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+      new Response(
+        JSON.stringify(
+          String(input).startsWith("/api/v1/trash?")
+            ? { items: [], total: 0, limit: 1000, offset: 0 }
+            : restored,
+        ),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    await expect(trashRoots("session")).resolves.toMatchObject({
+      total: 0,
+      limit: 1000,
+    });
+    await expect(restoreNode("session", 42, 8)).resolves.toEqual(restored);
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "/api/v1/trash?limit=1000&offset=0",
+    );
+    const [path, request] = fetchMock.mock.calls[1] ?? [];
+    expect(path).toBe("/api/v1/nodes/42/restore");
+    expect(request?.method).toBe("POST");
+    expect(new Headers(request?.headers).get("If-Match")).toBe("8");
   });
 });

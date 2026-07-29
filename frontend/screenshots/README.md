@@ -22,7 +22,8 @@ The command builds the current frontend and Docbank binary, creates and seeds
 an owner-private temporary vault, opens the daemon-issued browser session,
 captures the requested state, stops the daemon, and removes the vault.
 Generated images are written beneath `.superpowers/screenshots/` for visual
-inspection and PR attachment; they are intentionally not committed.
+inspection and PR attachment; the current case captures both move-to-trash and
+restore confirmations. Generated images are intentionally not committed.
 
 Pass ordinary Playwright arguments after `--` to select a case:
 

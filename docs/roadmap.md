@@ -18,7 +18,7 @@ elsewhere only when they materially explain the design and are marked
 | 1 | Core: store, blob store, ingest pipeline, full CLI | **Implemented** |
 | 2a | Infrastructure: daemon, HTTP API, daemon-first CLI, self-update, release pipeline | **Implemented** |
 | 2b | Features: content versions, versioned editing, full audit, tags, watched inboxes, text extraction, ingest provenance | **In progress**: versions, tags, queryable provenance, watched inboxes, disjoint audit scopes, and bounded plain-text extraction implemented; PDF/Office extraction remains |
-| 3 | Primary kit-ui web portal and focused operator TUI | **In progress**: analytical tree/search/detail, audited-history, daemon-job inspection, web tags, version history, provenance, verified current/historical content download, verified upload, and recoverable trash implemented |
+| 3 | Primary kit-ui web portal and focused operator TUI | **In progress**: analytical tree/search/detail, audited-history, daemon-job inspection, web tags, version history, provenance, verified current/historical content download, verified upload, and recoverable trash with restoration implemented |
 | 4 | Backup commands over the kit engine | **Implemented**; representative-corpus hardening continues |
 
 ## Implemented (Phase 1)
@@ -150,11 +150,13 @@ Protected nodes also expose their permanent newest-first audit timeline
 and the complete stable identity and before/after state of every event. The
 portal also uploads local files through the same caller-declared and
 server-verified byte-identity contract used by remote agents, moves a selected
-revision-bound live node to recoverable trash after explicit confirmation, lists configured
+revision-bound live node to recoverable trash after explicit confirmation,
+lists newest-first trash roots, restores one inspected revision while
+reporting its actual collision- or fallback-resolved path, lists configured
 backup recovery points, reports current and terminal daemon background jobs,
 and separates physical loose files, live packed content, complete pack payload,
 and logically dead payload awaiting explicit repack. Future slices cover tag
-mutation and broader metadata, version comparison, trash restoration, and storage
+mutation and broader metadata, version comparison, and storage
 maintenance.
 Application-neutral tree, timeline, diff, evidence, and job components should
 be reusable by Msgvault and later tools.

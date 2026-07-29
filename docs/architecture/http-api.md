@@ -51,7 +51,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `POST /path/move` · `POST /path/trash` | move / trash by virtual path, resolved and mutated in one store transaction | Implemented |
 | `POST /batch/move` | validate and apply up to 1,000 moves as one final-state transaction | Implemented |
 | `POST /nodes/{id}/trash` · `POST /nodes/{id}/restore` | soft delete / recover | Implemented |
-| `GET /trash` · `POST /trash/empty` `{run, older_than}` | list / report or hard-delete trash roots | Implemented |
+| `GET /trash` · `POST /trash/empty` `{run, older_than}` | list (optionally paginated) / report or hard-delete trash roots | Implemented |
 | `POST /gc` `{run}` · `POST /verify` | reclaim unreachable blobs / validate metadata and re-hash all blobs | Implemented |
 | `GET /storage` · `POST /storage/pack` · `POST /storage/repack` | inspect usage / pack loose blobs / compact sparse packs | Implemented |
 | `GET /jobs` | inspect daemon-owned background tasks and terminal failures | Implemented |
@@ -69,7 +69,7 @@ independent upload-proof secret, and the fresh loopback origin dedicated to
 that daemon lifetime, while
 `DELETE /api/daemon/web-session` revokes the calling browser session. Those
 tokens authenticate only the explicit routes used by the built-in document,
-storage, job, configured-backup, and verified-download workflows; they are
+recoverable-trash, storage, job, configured-backup, and verified-download workflows; they are
 intentionally not another general API credential. Browser file bytes use the
 hidden `/api/daemon/web-upload` WebSocket instead. The page verifies a
 challenge proof over the upload secret before sending bytes, binds the socket

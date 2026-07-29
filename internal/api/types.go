@@ -43,6 +43,14 @@ type NodePage struct {
 	Offset    int    `json:"offset"`
 }
 
+// TrashPage is one newest-first page of independently restorable trash roots.
+type TrashPage struct {
+	Items  []Node `json:"items"`
+	Total  int    `json:"total"`
+	Limit  int    `json:"limit"`
+	Offset int    `json:"offset"`
+}
+
 // BatchMoveItem identifies a live source either by absolute virtual path or
 // by stable node identity plus revision. DestinationPath is an exact final
 // coordinate whose parent is resolved in the planned final topology.
