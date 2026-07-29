@@ -11,6 +11,8 @@
     "build": "vp build",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "check:kit-ui": "kit-ui-check src",
+    "screenshots": "node screenshots/run.mjs",
+    "screenshots:check": "tsc -p screenshots/tsconfig.json --noEmit",
     "test": "vp test run"
   },
   "dependencies": {
@@ -20,6 +22,7 @@
     "svelte": "5.56.4"
   },
   "devDependencies": {
+    "@playwright/test": "1.61.1",
     "@sveltejs/vite-plugin-svelte": "7.2.0",
     "@testing-library/svelte": "5.3.1",
     "@tsconfig/svelte": "5.0.8",
