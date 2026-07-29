@@ -80,6 +80,7 @@ type location struct {
 	searchReturn *location
 	sortField    sortField
 	sortDesc     bool
+	stale        bool
 }
 
 type navigationKind uint8
@@ -565,15 +566,12 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case "esc", "left", "h", "backspace":
 		if m.mode == modeSearch && m.searchReturn != nil {
-			m.requestID++
-			m.restore(*m.searchReturn)
-			return m, nil
+			return m.revisit(*m.searchReturn)
 		}
 		if len(m.stack) > 0 {
-			m.requestID++
-			m.restore(m.stack[len(m.stack)-1])
+			state := m.stack[len(m.stack)-1]
 			m.stack = m.stack[:len(m.stack)-1]
-			return m, nil
+			return m.revisit(state)
 		}
 	}
 	return m, nil
@@ -979,6 +977,29 @@ func (m Model) reloadCurrent() (tea.Model, tea.Cmd) {
 	)
 }
 
+func (m Model) revisit(state location) (tea.Model, tea.Cmd) {
+	m.requestID++
+	m.restore(state)
+	if !state.stale {
+		return m, nil
+	}
+	m.loading = true
+	m.rows = nil
+	m.total = 0
+	m.truncated = false
+	m.cursor, m.offset = 0, 0
+	if state.mode == modeSearch && state.searchQuery != "" {
+		return m, tea.Batch(
+			m.startSpinner(),
+			m.loadSearch(state.searchQuery, m.requestID),
+		)
+	}
+	return m, tea.Batch(
+		m.startSpinner(),
+		m.loadDirectory(state.directory.ID, navigationRefresh, m.requestID),
+	)
+}
+
 func (m Model) loadDirectory(
 	nodeID int64, kind navigationKind, requestID uint64,
 ) tea.Cmd {
@@ -1266,29 +1287,58 @@ func (m *Model) removeTrashedRows(target row) {
 	var removed int
 	m.rows, removed = withoutTrashedRows(m.rows, target)
 	m.total = max(m.total-removed, 0)
-	for index := range m.stack {
-		removeTrashedFromLocation(&m.stack[index], target)
-	}
-	if m.searchReturn != nil {
-		removeTrashedFromLocation(m.searchReturn, target)
-	}
+	m.invalidateSavedLocations(target)
 	m.clampSelection()
 }
 
-func removeTrashedFromLocation(state *location, target row) {
-	if state == nil {
+func (m *Model) invalidateSavedLocations(target row) {
+	stack := m.stack[:0]
+	for _, state := range m.stack {
+		sanitized, ok := sanitizeLocationAfterTrash(state, target)
+		if ok {
+			stack = append(stack, sanitized)
+		}
+	}
+	m.stack = stack
+	if m.searchReturn == nil {
 		return
 	}
-	var removed int
-	state.rows, removed = withoutTrashedRows(state.rows, target)
-	state.total = max(state.total-removed, 0)
-	if len(state.rows) == 0 {
-		state.cursor, state.offset = 0, 0
-	} else {
-		state.cursor = min(max(state.cursor, 0), len(state.rows)-1)
-		state.offset = min(max(state.offset, 0), state.cursor)
+	sanitized, ok := sanitizeLocationAfterTrash(*m.searchReturn, target)
+	if ok {
+		m.searchReturn = &sanitized
+		return
 	}
-	removeTrashedFromLocation(state.searchReturn, target)
+	if len(m.stack) > 0 {
+		sanitized = m.stack[len(m.stack)-1]
+		m.stack = m.stack[:len(m.stack)-1]
+		m.searchReturn = &sanitized
+		return
+	}
+	m.searchReturn = &location{
+		mode: modeBrowse, directory: api.Node{Kind: nodeKindDir, Path: "/"},
+		sortField: sortByName, stale: true,
+	}
+}
+
+func sanitizeLocationAfterTrash(state location, target row) (location, bool) {
+	if pathAtOrBelow(state.directory.Path, target.path) {
+		return location{}, false
+	}
+	state.stale = true
+	if state.searchReturn != nil {
+		nested, ok := sanitizeLocationAfterTrash(*state.searchReturn, target)
+		if ok {
+			state.searchReturn = &nested
+		} else {
+			state.searchReturn = nil
+		}
+	}
+	return state, true
+}
+
+func pathAtOrBelow(candidate, ancestor string) bool {
+	return ancestor != "" &&
+		(candidate == ancestor || strings.HasPrefix(candidate, ancestor+"/"))
 }
 
 func withoutTrashedRows(rows []row, target row) ([]row, int) {

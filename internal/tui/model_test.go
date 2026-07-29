@@ -221,13 +221,18 @@ func (f *fakeBackend) Trash(
 	}
 	for itemPath, node := range f.nodes {
 		if node.ID == nodeID {
+			livePath := node.Path
 			node.TrashedAt = "2026-07-22T16:00:00Z"
 			node.Path = ""
 			f.nodes[itemPath] = node
+			if node.ParentID != nil {
+				f.bumpNodeRevision(*node.ParentID)
+			}
 			for parentID, page := range f.children {
 				filtered := page.Items[:0]
 				for _, item := range page.Items {
-					if item.ID != nodeID {
+					if item.ID != nodeID &&
+						(livePath == "" || !strings.HasPrefix(item.Path, livePath+"/")) {
 						filtered = append(filtered, item)
 					}
 				}
@@ -235,10 +240,37 @@ func (f *fakeBackend) Trash(
 				page.Total = len(filtered)
 				f.children[parentID] = page
 			}
+			hits := f.search.Hits[:0]
+			for _, hit := range f.search.Hits {
+				if hit.Node.ID != nodeID &&
+					(livePath == "" || !strings.HasPrefix(hit.Path, livePath+"/")) {
+					hits = append(hits, hit)
+				}
+			}
+			f.search.Hits = hits
 			return node, nil
 		}
 	}
 	return api.Node{}, errors.New("not found")
+}
+
+func (f *fakeBackend) bumpNodeRevision(nodeID int64) {
+	for nodePath, node := range f.nodes {
+		if node.ID != nodeID {
+			continue
+		}
+		node.Revision++
+		f.nodes[nodePath] = node
+		for parentID, page := range f.children {
+			for index := range page.Items {
+				if page.Items[index].ID == nodeID {
+					page.Items[index] = node
+				}
+			}
+			f.children[parentID] = page
+		}
+		return
+	}
 }
 
 func (f *fakeBackend) Restore(
@@ -425,9 +457,15 @@ func TestSuccessfulTrashPreservesBackAndSearchNavigation(t *testing.T) {
 		model, cmd = updateModel(t, model, key(tea.KeyEnter))
 		model = runModelCommand(t, model, cmd)
 		require.Len(t, model.stack, 1)
+		assert.True(t, model.stack[0].stale)
 
-		model, _ = updateModel(t, model, key(tea.KeyLeft))
+		model, cmd = updateModel(t, model, key(tea.KeyLeft))
+		require.NotNil(t, cmd)
+		assert.True(t, model.loading)
+		model = runModelCommand(t, model, cmd)
 		assert.Equal(t, "/", model.directory.Path)
+		require.Len(t, model.rows, 2)
+		assert.Equal(t, int64(2), model.rows[0].node.Revision)
 	})
 
 	t.Run("search results", func(t *testing.T) {
@@ -447,11 +485,55 @@ func TestSuccessfulTrashPreservesBackAndSearchNavigation(t *testing.T) {
 		model, cmd = updateModel(t, model, key(tea.KeyEnter))
 		model = runModelCommand(t, model, cmd)
 		require.NotNil(t, model.searchReturn)
+		assert.True(t, model.searchReturn.stale)
 
-		model, _ = updateModel(t, model, key(tea.KeyEscape))
+		model, cmd = updateModel(t, model, key(tea.KeyEscape))
+		require.NotNil(t, cmd)
+		model = runModelCommand(t, model, cmd)
 		assert.Equal(t, modeBrowse, model.mode)
 		assert.Equal(t, "/", model.directory.Path)
+		require.Len(t, model.rows, 2)
+		assert.Equal(t, int64(2), model.rows[0].node.Revision)
 	})
+}
+
+func TestTrashAncestorFromSearchFallsBackToLiveParent(t *testing.T) {
+	backend := newFakeBackend()
+	backend.search.Hits = []api.SearchHit{{
+		Node: backend.nodes["/docs"], Path: "/docs", Match: "name",
+	}}
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(
+		0, navigationInitial, model.requestID,
+	))
+	model, cmd := updateModel(t, model, key(tea.KeyEnter))
+	model = runModelCommand(t, model, cmd)
+	assert.Equal(t, "/docs", model.directory.Path)
+	require.Len(t, model.stack, 1)
+
+	model, _ = updateModel(t, model, runeKey('/'))
+	model.searchInput.SetValue("docs")
+	model, cmd = updateModel(t, model, key(tea.KeyEnter))
+	model = runModelCommand(t, model, cmd)
+	require.NotNil(t, model.searchReturn)
+	assert.Equal(t, "/docs", model.searchReturn.directory.Path)
+
+	model, _ = updateModel(t, model, runeKey('x'))
+	model, cmd = updateModel(t, model, key(tea.KeyEnter))
+	model = runModelCommand(t, model, cmd)
+	require.NotNil(t, model.searchReturn)
+	assert.Equal(t, "/", model.searchReturn.directory.Path)
+	assert.True(t, model.searchReturn.stale)
+	assert.Empty(t, model.stack)
+
+	model, cmd = updateModel(t, model, key(tea.KeyEscape))
+	require.NotNil(t, cmd)
+	model = runModelCommand(t, model, cmd)
+	assert.Equal(t, modeBrowse, model.mode)
+	assert.Equal(t, "/", model.directory.Path)
+	require.Len(t, model.rows, 1)
+	assert.Equal(t, "/README.txt", model.rows[0].path)
 }
 
 func TestModelPreservesViewStateAcrossNavigation(t *testing.T) {
