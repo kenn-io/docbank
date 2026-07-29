@@ -22,6 +22,12 @@ const restoreScreenshotPath = path.join(
   "screenshots",
   "web-trash-restore-confirmation.png",
 );
+const tagAssignmentScreenshotPath = path.join(
+  repositoryRoot,
+  ".superpowers",
+  "screenshots",
+  "web-tag-assignment.png",
+);
 
 test.describe("Docbank web screenshots", () => {
   let workspace = "";
@@ -47,6 +53,7 @@ test.describe("Docbank web screenshots", () => {
     await mkdir(path.dirname(screenshotPath), { recursive: true, mode: 0o700 });
     await rm(screenshotPath, { force: true });
     await rm(restoreScreenshotPath, { force: true });
+    await rm(tagAssignmentScreenshotPath, { force: true });
     const reports = path.join(workspace, "synthetic", "Reports");
     await mkdir(reports, { recursive: true, mode: 0o700 });
     await writeFile(
@@ -66,6 +73,14 @@ test.describe("Docbank web screenshots", () => {
     );
 
     await runDocbank(["add", reports, "--dest", "/", "--progress", "plain"]);
+    await runDocbank(["tag", "create", "tax"]);
+    await runDocbank(["tag", "create", "reviewed"]);
+    await runDocbank([
+      "tag",
+      "assign",
+      "tax",
+      "/Reports/quarterly-tax-report.txt",
+    ]);
     webURL = await runDocbank(["web", "--no-browser"]);
     const browserURL = new URL(webURL);
     const port = Number(browserURL.port);
@@ -137,6 +152,23 @@ test.describe("Docbank web screenshots", () => {
     });
     await expect(report).toBeVisible();
     await report.click();
+
+    await page.getByRole("button", { name: "Manage" }).click();
+    const tags = page.getByRole("dialog", {
+      name: "Manage tags for quarterly-tax-report.txt",
+    });
+    await expect(tags).toContainText("tax");
+    await tags.getByRole("combobox", { name: "Tag to assign: Choose a tag…" }).click();
+    await tags.getByRole("option", { name: "reviewed (0)" }).click();
+    await tags.getByRole("button", { name: "Add tag" }).click();
+    await expect(tags).toContainText("Added reviewed.");
+    await page.screenshot({
+      path: tagAssignmentScreenshotPath,
+      fullPage: true,
+      animations: "disabled",
+    });
+    await tags.getByRole("button", { name: "Done" }).click();
+
     await page.getByRole("button", { name: "Move to trash", exact: true }).click();
 
     const confirmation = page.getByRole("dialog", {

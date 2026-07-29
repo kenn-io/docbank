@@ -334,6 +334,8 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	require.NoError(t, err)
 	tag, err := s.CreateTag(t.Context(), "tax")
 	require.NoError(t, err)
+	reviewedTag, err := s.CreateTag(t.Context(), "reviewed")
+	require.NoError(t, err)
 	assignment, err := s.AssignTag(
 		t.Context(), tag.ID, document.ID, document.Revision,
 	)
@@ -415,6 +417,51 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	resp = webRequest(http.MethodGet,
 		"/api/v1/nodes/"+strconv.FormatInt(document.ID, 10)+"/tags?limit=1000&offset=0")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
+	assignTagRequest, err := http.NewRequest(
+		http.MethodPut,
+		ts.URL+"/api/v1/nodes/"+strconv.FormatInt(document.ID, 10)+
+			"/tags/"+reviewedTag.ID,
+		nil,
+	)
+	require.NoError(t, err)
+	assignTagRequest.Header["X-Api-Key"] = []string{""}
+	assignTagRequest.Header.Set(api.WebSessionHeader, issued.Token)
+	assignTagRequest.Header.Set("If-Match", strconv.FormatInt(document.Revision, 10))
+	resp, err = ts.Client().Do(assignTagRequest)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var assigned api.TagAssignmentReceipt
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&assigned))
+	require.NoError(t, resp.Body.Close())
+	assert.True(t, assigned.Changed)
+	assert.Equal(t, reviewedTag.ID, assigned.Tag.ID)
+	document.Revision = assigned.Node.Revision
+
+	unassignTagRequest, err := http.NewRequest(
+		http.MethodDelete,
+		ts.URL+"/api/v1/nodes/"+strconv.FormatInt(document.ID, 10)+
+			"/tags/"+reviewedTag.ID,
+		nil,
+	)
+	require.NoError(t, err)
+	unassignTagRequest.Header["X-Api-Key"] = []string{""}
+	unassignTagRequest.Header.Set(api.WebSessionHeader, issued.Token)
+	unassignTagRequest.Header.Set("If-Match", strconv.FormatInt(document.Revision, 10))
+	resp, err = ts.Client().Do(unassignTagRequest)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var unassigned api.TagAssignmentReceipt
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&unassigned))
+	require.NoError(t, resp.Body.Close())
+	assert.True(t, unassigned.Changed)
+	assert.Equal(t, reviewedTag.ID, unassigned.Tag.ID)
+	document.Revision = unassigned.Node.Revision
+
+	resp = webRequest(http.MethodDelete, "/api/v1/tags/"+reviewedTag.ID)
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode,
+		"tag-assignment permission does not grant tag-definition deletion")
 	require.NoError(t, resp.Body.Close())
 
 	resp = webRequest(http.MethodGet, "/api/v1/jobs")

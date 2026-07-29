@@ -100,6 +100,12 @@ export interface TagPage {
   offset: number;
 }
 
+export interface TagAssignmentReceipt {
+  tag: Tag;
+  node: Node;
+  changed: boolean;
+}
+
 export interface TaggedNode {
   node: Node;
   path?: string;
@@ -421,6 +427,33 @@ export async function nodeTags(session: string, nodeID: number): Promise<TagPage
     `/api/v1/nodes/${nodeID}/tags?limit=1000&offset=0`,
     session,
   );
+}
+
+export async function changeNodeTag(
+  session: string,
+  nodeID: number,
+  revision: number,
+  tagID: string,
+  assign: boolean,
+): Promise<TagAssignmentReceipt> {
+  const receipt = await requestJSON<TagAssignmentReceipt>(
+    `/api/v1/nodes/${nodeID}/tags/${encodeURIComponent(tagID)}`,
+    session,
+    {
+      method: assign ? "PUT" : "DELETE",
+      headers: { "If-Match": String(revision) },
+    },
+  );
+  if (
+    receipt.node.id !== nodeID ||
+    receipt.node.revision < revision ||
+    receipt.node.trashed_at ||
+    !receipt.node.path?.startsWith("/") ||
+    receipt.tag.id !== tagID
+  ) {
+    throw new Error("The daemon returned an invalid tag-assignment receipt.");
+  }
+  return receipt;
 }
 
 export async function trashNode(

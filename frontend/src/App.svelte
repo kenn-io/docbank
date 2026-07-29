@@ -36,6 +36,7 @@
   import BackupDrawer from "./BackupDrawer.svelte";
   import DownloadButton from "./DownloadButton.svelte";
   import JobsDrawer from "./JobsDrawer.svelte";
+  import ManageTagsModal from "./ManageTagsModal.svelte";
   import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
   import StorageDrawer from "./StorageDrawer.svelte";
   import TrashDrawer from "./TrashDrawer.svelte";
@@ -58,6 +59,7 @@
     type Node,
     type SearchHit,
     type Tag,
+    type TagAssignmentReceipt,
   } from "./api.js";
   import { basename, formatBytes, formatDate } from "./format.js";
   import { orderRows, reconcileSearchView, type SortField } from "./rows.js";
@@ -118,6 +120,7 @@
   let storageOpen = $state(false);
   let backupsOpen = $state(false);
   let trashOpen = $state(false);
+  let manageTagsOpen = $state(false);
   let uploadTarget = $state<Node | null>(null);
   let trashTarget = $state<Row | null>(null);
   let generation = 0;
@@ -404,6 +407,7 @@
       historyOpen = false;
       versionsOpen = false;
       provenanceOpen = false;
+      manageTagsOpen = false;
     }
     selectedID = nodeID;
     selectedAudit = null;
@@ -572,6 +576,40 @@
     void loadTagCatalog();
   }
 
+  function handleTagChanged(
+    receipt: TagAssignmentReceipt,
+    assigned: boolean,
+  ): void {
+    if (selectedID !== receipt.node.id) return;
+    tagGeneration += 1;
+    selectedTagsLoading = false;
+    selectedTagsError = "";
+    rows = rows.map((row) =>
+      row.node.id === receipt.node.id
+        ? {
+            ...row,
+            node: receipt.node,
+            path: receipt.node.path ?? row.path,
+          }
+        : row,
+    );
+    if (assigned) {
+      selectedTags = [
+        ...selectedTags.filter((tag) => tag.id !== receipt.tag.id),
+        receipt.tag,
+      ].sort((left, right) => left.name.localeCompare(right.name));
+      if (receipt.changed) selectedTagsTotal += 1;
+    } else {
+      selectedTags = selectedTags.filter((tag) => tag.id !== receipt.tag.id);
+      if (receipt.changed) selectedTagsTotal = Math.max(0, selectedTagsTotal - 1);
+    }
+    tagCatalog = tagCatalog.map((tag) =>
+      tag.id === receipt.tag.id ? receipt.tag : tag,
+    );
+    void loadTagCatalog();
+    void loadAuditStatus(receipt.node.id);
+  }
+
   async function lock(): Promise<void> {
     generation += 1;
     auditGeneration += 1;
@@ -603,6 +641,7 @@
     storageOpen = false;
     backupsOpen = false;
     trashOpen = false;
+    manageTagsOpen = false;
     uploadTarget = null;
     trashTarget = null;
     activeQuery = "";
@@ -956,18 +995,29 @@
               <div class="node-tags">
                 <div class="node-tags-heading">
                   <span><TagIcon size="13" aria-hidden="true" /> Tags</span>
-                  {#if selectedTagsLoading}
-                    <Spinner size={13} />
-                  {:else if selectedTagsError}
-                    <Chip size="xs" tone="warning">Unavailable</Chip>
-                  {:else}
-                    <span>
-                      {selectedTags.length < selectedTagsTotal
-                        ? `${selectedTags.length} of ${selectedTagsTotal}`
-                        : selectedTagsTotal}
-                      assigned
-                    </span>
-                  {/if}
+                  <div class="node-tags-controls">
+                    {#if selectedTagsLoading}
+                      <Spinner size={13} />
+                    {:else if selectedTagsError}
+                      <Chip size="xs" tone="warning">Unavailable</Chip>
+                    {:else}
+                      <span>
+                        {selectedTags.length < selectedTagsTotal
+                          ? `${selectedTags.length} of ${selectedTagsTotal}`
+                          : selectedTagsTotal}
+                        assigned
+                      </span>
+                    {/if}
+                    <Button
+                      size="sm"
+                      tone="info"
+                      surface="soft"
+                      disabled={selectedTagsLoading || selectedTagsError !== ""}
+                      onclick={() => (manageTagsOpen = true)}
+                    >
+                      Manage
+                    </Button>
+                  </div>
                 </div>
                 {#if selectedTagsError}
                   <p>{selectedTagsError}</p>
@@ -1202,6 +1252,19 @@
         session={webSession}
         onclose={() => (trashOpen = false)}
         onrestored={handleRestored}
+        onauthfailure={handleFailure}
+      />
+    {/if}
+    {#if manageTagsOpen && selected}
+      <ManageTagsModal
+        session={webSession}
+        node={selected.node}
+        catalog={tagCatalog}
+        catalogTotal={tagCatalogTotal}
+        assignedTags={selectedTags}
+        assignedTotal={selectedTagsTotal}
+        onclose={() => (manageTagsOpen = false)}
+        onchanged={handleTagChanged}
         onauthfailure={handleFailure}
       />
     {/if}
