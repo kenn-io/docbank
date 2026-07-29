@@ -1,6 +1,6 @@
 ---
 title: Web application
-description: Upload, browse, and search the local vault in a responsive, authenticated web interface.
+description: Upload, browse, search, and organize the local vault in a responsive, authenticated web interface.
 ---
 
 # Web application
@@ -18,9 +18,11 @@ time, search names and extracted text, and inspect the selected document's stabl
 node ID, revision, current version ID, SHA-256 identity, exact size, and media
 type. A selected live file or folder can be moved to recoverable trash after an
 explicit confirmation; the trash drawer lists restorable roots and returns one
-to the live tree under its inspected revision. The authority card also shows every tag assigned to the selected file or
-folder. Selecting a tag browses its live assignments, while search can require
-the same exact tag identity. Protected documents expose
+to the live tree under its inspected revision. The authority card also shows
+every tag assigned to the selected file or folder and can add or remove an
+existing definition under the node's inspected revision. Selecting a tag
+browses its live assignments, while search can require the same exact tag
+identity. Protected documents expose
 their newest-first permanent audit timeline and complete event authority. The
 storage button separates loose content, live packed content, pack-file payload,
 and logically dead packed bytes awaiting repack. The activity button reports
@@ -63,6 +65,26 @@ even when the card wraps it across lines. Every selected node also shows its
 assigned tag names. Hovering a tag shows its stable UUID and vault-wide
 assignment count; the bounded tag stack expands in place when a node carries
 more than six.
+
+## Assign and remove tags
+
+Choose **Manage** beside the selected node's tag list. The dialog separates
+the definitions already assigned from the first 1,000 name-sorted definitions
+available in the vault. Choose one existing tag and **Add tag**, or remove an
+assigned definition individually.
+
+Every change is bound to the stable node ID and revision shown in the dialog.
+A successful receipt advances the document authority, updates the tag's
+vault-wide assignment count, and refreshes the catalog and permanent-audit
+status. If another person, agent, or CLI command changed the node first, the
+dialog keeps the failed decision visible and asks you to refresh rather than
+applying it to newer state.
+
+This surface changes only assignments on the selected live node. Creating,
+renaming, or deleting tag definitions and bulk assignment remain explicit CLI
+or master-authenticated API workflows. When the vault has more than 1,000 tag
+definitions, use those exhaustive interfaces to reach definitions outside the
+browser's catalog page.
 
 ## Move a node to recoverable trash
 
@@ -345,10 +367,11 @@ in a URL fragment. Browsers do not include fragments in the initial HTTP
 request; the application removes them from the address bar and holds them only
 in page memory. Ordinary requests use
 `X-Docbank-Web-Session`, which the daemon accepts only for the tree, node,
-search, tag-definition and assignment reads, immutable-version, provenance, audit-status, audit-history,
-background-job, physical-storage-status, configured backup-snapshot-list,
-bounded trash-list, verified-download preparation, and revision-bound
-move-to-trash and restore requests used by this interface.
+search, tag-definition and assignment reads, immutable-version, provenance,
+audit-status, audit-history, background-job, physical-storage-status,
+configured backup-snapshot-list, bounded trash-list, verified-download
+preparation, and revision-bound move-to-trash, restore, tag-assignment, and
+tag-removal requests used by this interface.
 Download preparation may write only owner-private temporary bytes and issue
 one exact, expiring file ticket. Upload uses a separate, never-reconnecting
 WebSocket authenticated by a challenge proof over the upload secret. No file
@@ -357,7 +380,9 @@ beneath the stable live directory selected in the browser and must satisfy the
 same caller-declared/server-computed byte identity as every remote writer. The
 trash and restore requests can target only the stable selected node and must
 carry its current revision, so a stale browser view cannot move changed state.
-The session cannot empty trash, perform any other document mutation,
+Tag assignment and removal have the same stable-node revision boundary and do
+not grant tag-definition lifecycle or bulk-mutation authority. The session
+cannot empty trash, perform any other document mutation,
 enroll audit scopes, run independent verification, or call backup creation,
 verification, restore, maintenance, configuration, or general API endpoints.
 Its sole backup capability is listing the immutable snapshots in the

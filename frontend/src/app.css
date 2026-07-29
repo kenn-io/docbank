@@ -334,12 +334,19 @@ dd {
   justify-content: space-between;
 }
 
-.node-tags-heading > span {
+.node-tags-heading > span,
+.node-tags-controls > span {
   color: var(--text-muted);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.node-tags-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .node-tags p {

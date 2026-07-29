@@ -36,6 +36,7 @@
   import BackupDrawer from "./BackupDrawer.svelte";
   import DownloadButton from "./DownloadButton.svelte";
   import JobsDrawer from "./JobsDrawer.svelte";
+  import ManageTagsModal from "./ManageTagsModal.svelte";
   import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
   import StorageDrawer from "./StorageDrawer.svelte";
   import TrashDrawer from "./TrashDrawer.svelte";
@@ -58,6 +59,7 @@
     type Node,
     type SearchHit,
     type Tag,
+    type TagAssignmentReceipt,
   } from "./api.js";
   import { basename, formatBytes, formatDate } from "./format.js";
   import { orderRows, reconcileSearchView, type SortField } from "./rows.js";
@@ -118,6 +120,7 @@
   let storageOpen = $state(false);
   let backupsOpen = $state(false);
   let trashOpen = $state(false);
+  let manageTagsTarget = $state<Row | null>(null);
   let uploadTarget = $state<Node | null>(null);
   let trashTarget = $state<Row | null>(null);
   let generation = 0;
@@ -207,7 +210,12 @@
     }
   }
 
-  async function loadDirectory(nodeID: number, remember: boolean): Promise<void> {
+  async function loadDirectory(
+    nodeID: number,
+    remember: boolean,
+    preferredSelectedID?: number,
+    preserveSort = false,
+  ): Promise<void> {
     const request = ++generation;
     searchPending = false;
     loading = true;
@@ -242,15 +250,21 @@
         node: item,
         path: path === "/" ? `/${item.name}` : `${path}/${item.name}`,
       }));
-      selectNode(rows[0]?.node.id);
+      selectNode(
+        rows.some((row) => row.node.id === preferredSelectedID)
+          ? preferredSelectedID
+          : rows[0]?.node.id,
+      );
       activeQuery = "";
       activeTagID = "";
       taggedInspected = 0;
       taggedTotal = 0;
       taggedTrashed = 0;
       truncated = page.total > page.items.length;
-      sortField = "name";
-      sortDirection = "asc";
+      if (!preserveSort) {
+        sortField = "name";
+        sortDirection = "asc";
+      }
     } catch (cause) {
       if (request === generation) {
         if (cause instanceof APIError && cause.status === 404) {
@@ -266,7 +280,7 @@
     }
   }
 
-  async function runSearch(): Promise<void> {
+  async function runSearch(preferredSelectedID = selectedID): Promise<void> {
     const query = searchQuery.trim();
     if (!query) {
       if (tagFilterID) await loadTaggedNodes(tagFilterID);
@@ -295,7 +309,7 @@
         requestedTagID === activeTagID ? activeQuery : "",
         sortField,
         sortDirection,
-        selectedID,
+        preferredSelectedID,
       );
       activeQuery = query;
       activeTagID = requestedTagID;
@@ -316,11 +330,14 @@
     }
   }
 
-  async function loadTaggedNodes(tagID: string): Promise<void> {
+  async function loadTaggedNodes(
+    tagID: string,
+    preferredSelectedID?: number,
+  ): Promise<void> {
     if (!directory) return;
     const request = ++generation;
     const refreshing = activeQuery === "" && activeTagID === tagID;
-    const previousSelectedID = selectedID;
+    const selectedToPreserve = preferredSelectedID ?? (refreshing ? selectedID : undefined);
     searchPending = false;
     loading = true;
     error = "";
@@ -340,8 +357,8 @@
         sortDirection = "asc";
       }
       selectNode(
-        refreshing && liveRows.some((row) => row.node.id === previousSelectedID)
-          ? previousSelectedID
+        liveRows.some((row) => row.node.id === selectedToPreserve)
+          ? selectedToPreserve
           : liveRows[0]?.node.id,
       );
     } catch (cause) {
@@ -359,23 +376,30 @@
     searchPending = false;
     const previous = stack.at(-1);
     if (!previous) return;
+    const preferredSelectedID = previous.selectedID;
+    selectNode(undefined);
     directory = previous.directory;
-    rows = previous.rows;
-    selectNode(previous.selectedID);
+    rows = [];
     stack = stack.slice(0, -1);
     activeQuery = previous.activeQuery;
     activeTagID = previous.activeTagID;
     searchQuery = previous.searchQuery;
     tagFilterID = previous.tagFilterID;
-    taggedInspected = previous.taggedInspected;
-    taggedTotal = previous.taggedTotal;
-    taggedTrashed = previous.taggedTrashed;
-    truncated = previous.truncated;
+    taggedInspected = 0;
+    taggedTotal = 0;
+    taggedTrashed = 0;
+    truncated = false;
     sortField = previous.sortField;
     sortDirection = previous.sortDirection;
     error = "";
     loading = false;
     void loadTagCatalog();
+    if (activeQuery) void runSearch(preferredSelectedID);
+    else if (activeTagID) {
+      void loadTaggedNodes(activeTagID, preferredSelectedID);
+    } else {
+      void loadDirectory(directory.id, false, preferredSelectedID, true);
+    }
   }
 
   function clearSearch(): void {
@@ -572,6 +596,84 @@
     void loadTagCatalog();
   }
 
+  function handleTagChanged(
+    receipt: TagAssignmentReceipt,
+    assigned: boolean,
+  ): void {
+    const selectedChanged = selectedID === receipt.node.id;
+    const modalChanged = manageTagsTarget?.node.id === receipt.node.id;
+    if (!selectedChanged && !modalChanged) return;
+    if (modalChanged && manageTagsTarget) {
+      manageTagsTarget = {
+        ...manageTagsTarget,
+        node: receipt.node,
+        path: receipt.node.path ?? manageTagsTarget.path,
+      };
+    }
+    if (selectedChanged) {
+      tagGeneration += 1;
+      selectedTagsLoading = false;
+      selectedTagsError = "";
+    }
+    rows = rows.map((row) =>
+      row.node.id === receipt.node.id
+        ? {
+            ...row,
+            node: receipt.node,
+            path: receipt.node.path ?? row.path,
+          }
+        : row,
+    );
+    if (selectedChanged) {
+      if (assigned) {
+        selectedTags = [
+          ...selectedTags.filter((tag) => tag.id !== receipt.tag.id),
+          receipt.tag,
+        ].sort((left, right) => left.name.localeCompare(right.name));
+        if (receipt.changed) selectedTagsTotal += 1;
+      } else {
+        selectedTags = selectedTags.filter((tag) => tag.id !== receipt.tag.id);
+        if (receipt.changed) {
+          selectedTagsTotal = Math.max(0, selectedTagsTotal - 1);
+        }
+      }
+    }
+    tagCatalog = tagCatalog.map((tag) =>
+      tag.id === receipt.tag.id ? receipt.tag : tag,
+    );
+    if (activeTagID === receipt.tag.id) {
+      if (assigned) {
+        const target = manageTagsTarget;
+        if (target && !rows.some((row) => row.node.id === receipt.node.id)) {
+          rows = [...rows, target];
+          if (!activeQuery) {
+            taggedInspected = rows.length;
+            if (receipt.changed) taggedTotal += 1;
+            taggedTotal = Math.max(rows.length, taggedTotal);
+            truncated = taggedTotal > rows.length;
+          }
+          if (selectedID === undefined) selectNode(receipt.node.id);
+        }
+      } else {
+        rows = rows.filter((row) => row.node.id !== receipt.node.id);
+        if (!activeQuery) {
+          taggedInspected = rows.length;
+          taggedTotal = Math.max(rows.length, taggedTotal - 1);
+          truncated = taggedTotal > rows.length;
+        }
+        if (selectedID === receipt.node.id) {
+          selectNode(rows[0]?.node.id);
+        }
+      }
+      if (activeQuery) void runSearch();
+      else void loadTaggedNodes(receipt.tag.id);
+    }
+    void loadTagCatalog();
+    if (selectedID === receipt.node.id) {
+      void loadAuditStatus(receipt.node.id);
+    }
+  }
+
   async function lock(): Promise<void> {
     generation += 1;
     auditGeneration += 1;
@@ -603,6 +705,7 @@
     storageOpen = false;
     backupsOpen = false;
     trashOpen = false;
+    manageTagsTarget = null;
     uploadTarget = null;
     trashTarget = null;
     activeQuery = "";
@@ -956,18 +1059,31 @@
               <div class="node-tags">
                 <div class="node-tags-heading">
                   <span><TagIcon size="13" aria-hidden="true" /> Tags</span>
-                  {#if selectedTagsLoading}
-                    <Spinner size={13} />
-                  {:else if selectedTagsError}
-                    <Chip size="xs" tone="warning">Unavailable</Chip>
-                  {:else}
-                    <span>
-                      {selectedTags.length < selectedTagsTotal
-                        ? `${selectedTags.length} of ${selectedTagsTotal}`
-                        : selectedTagsTotal}
-                      assigned
-                    </span>
-                  {/if}
+                  <div class="node-tags-controls">
+                    {#if selectedTagsLoading}
+                      <Spinner size={13} />
+                    {:else if selectedTagsError}
+                      <Chip size="xs" tone="warning">Unavailable</Chip>
+                    {:else}
+                      <span>
+                        {selectedTags.length < selectedTagsTotal
+                          ? `${selectedTags.length} of ${selectedTagsTotal}`
+                          : selectedTagsTotal}
+                        assigned
+                      </span>
+                    {/if}
+                    <Button
+                      size="sm"
+                      tone="info"
+                      surface="soft"
+                      disabled={loading || selectedTagsLoading || selectedTagsError !== ""}
+                      onclick={() => {
+                        if (!loading && selected) manageTagsTarget = selected;
+                      }}
+                    >
+                      Manage
+                    </Button>
+                  </div>
                 </div>
                 {#if selectedTagsError}
                   <p>{selectedTagsError}</p>
@@ -1202,6 +1318,20 @@
         session={webSession}
         onclose={() => (trashOpen = false)}
         onrestored={handleRestored}
+        onauthfailure={handleFailure}
+      />
+    {/if}
+    {#if manageTagsTarget}
+      <ManageTagsModal
+        session={webSession}
+        node={manageTagsTarget.node}
+        catalog={tagCatalog}
+        catalogTotal={tagCatalogTotal}
+        assignedTags={selectedTags}
+        assignedTotal={selectedTagsTotal}
+        disabled={loading}
+        onclose={() => (manageTagsTarget = null)}
+        onchanged={handleTagChanged}
         onauthfailure={handleFailure}
       />
     {/if}

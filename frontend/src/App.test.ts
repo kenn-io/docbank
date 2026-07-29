@@ -100,6 +100,7 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
   let missingTagResolved = false;
   let tagBrowseReads = 0;
   let unfilteredSearches = 0;
+  let filteredSearches = 0;
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
     if (url === "/api/v1/path?path=%2F") return initialRoot;
@@ -211,6 +212,7 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
       url ===
       "/api/v1/search?q=quarterly&limit=1000&tag_id=33333333-3333-4333-8333-333333333333"
     ) {
+      filteredSearches += 1;
       return json({
         hits: [
           { node: taxReport, path: "/Reports/quarterly-tax-report.txt", match: "name" },
@@ -358,8 +360,12 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
 
   const back = screen.getByRole("button", { name: "Back to previous directory" });
   expect(back.hasAttribute("disabled")).toBe(false);
+  const filteredSearchesBeforeBack = filteredSearches;
   tagResolutionMode = "missing";
   await fireEvent.click(back);
+  await waitFor(() =>
+    expect(filteredSearches).toBe(filteredSearchesBeforeBack + 1),
+  );
   await waitFor(() => expect(tagCatalogReads).toBe(3));
   expect(screen.getByRole("combobox").getAttribute("aria-label")).toContain("tax records");
   await waitFor(() => expect(missingTagResolved).toBe(true));
@@ -375,6 +381,361 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
     }),
   ).toBeTruthy();
 });
+
+it.each(["browse", "search"] as const)(
+  "reconciles the active tag %s across failed and superseded refreshes",
+  async (view) => {
+    history.replaceState(
+      null,
+      "",
+      "/#web_session=short-lived&web_upload_secret=proof",
+    );
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+
+    const root = {
+      id: 1,
+      name: "",
+      kind: "dir",
+      size: 0,
+      revision: 1,
+      created_at: "2026-07-28T12:00:00Z",
+      modified_at: "2026-07-28T12:00:00Z",
+      path: "/",
+    };
+    const report = {
+      id: 3,
+      parent_id: 1,
+      name: "quarterly-tax-report.txt",
+      kind: "file",
+      current_version_id: "11111111-1111-4111-8111-111111111111",
+      blob_hash: "a".repeat(64),
+      size: 74,
+      mime_type: "text/plain",
+      revision: 3,
+      created_at: "2026-07-28T12:00:00Z",
+      modified_at: "2026-07-28T12:00:00Z",
+      path: "/quarterly-tax-report.txt",
+    };
+    const tax = {
+      id: "33333333-3333-4333-8333-333333333333",
+      name: "tax",
+      revision: 1,
+      assignment_count: 1,
+    };
+    const reviewed = {
+      id: "44444444-4444-4444-8444-444444444444",
+      name: "reviewed",
+      revision: 1,
+      assignment_count: 1,
+    };
+    const json = (value: unknown) =>
+      new Response(JSON.stringify(value), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    let resolveRemovalSearch!: (response: Response) => void;
+    const delayedRemovalSearch = new Promise<Response>((resolve) => {
+      resolveRemovalSearch = resolve;
+    });
+    let resolveAddSearch!: (response: Response) => void;
+    const delayedAddSearch = new Promise<Response>((resolve) => {
+      resolveAddSearch = resolve;
+    });
+    let resolvePreMutationRefresh!: (response: Response) => void;
+    const delayedPreMutationRefresh = new Promise<Response>((resolve) => {
+      resolvePreMutationRefresh = resolve;
+    });
+    let assigned = true;
+    let reviewedAssigned = true;
+    let reviewedDeletes = 0;
+    let browseReads = 0;
+    let searchReads = 0;
+    let targetAuditReads = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === "/api/v1/path?path=%2F") return json(root);
+      if (url === "/api/v1/nodes/1/children?limit=1000&offset=0") {
+        return json({
+          directory: root,
+          items: [report],
+          total: 1,
+          limit: 1000,
+          offset: 0,
+        });
+      }
+      if (url === "/api/v1/tags?limit=1000&offset=0") {
+        return json({
+          items: [
+            { ...tax, assignment_count: assigned ? 1 : 0 },
+            { ...reviewed, assignment_count: reviewedAssigned ? 1 : 0 },
+          ],
+          total: 2,
+          limit: 1000,
+          offset: 0,
+        });
+      }
+      if (
+        url ===
+        "/api/v1/tags/33333333-3333-4333-8333-333333333333/nodes?limit=1000&offset=0&live_only=true"
+      ) {
+        browseReads += 1;
+        if (view === "browse" && browseReads === 2) {
+          return delayedPreMutationRefresh;
+        }
+        if (view === "browse" && browseReads === 3) {
+          return new Response(
+            JSON.stringify({
+              status: 503,
+              detail: "tag view temporarily unavailable",
+            }),
+            {
+              status: 503,
+              headers: { "Content-Type": "application/problem+json" },
+            },
+          );
+        }
+        if (view === "browse" && browseReads === 4) {
+          return new Response(
+            JSON.stringify({
+              status: 503,
+              detail: "re-added tag view temporarily unavailable",
+            }),
+            {
+              status: 503,
+              headers: { "Content-Type": "application/problem+json" },
+            },
+          );
+        }
+        return json({
+          items: assigned ? [{ node: report, path: report.path }] : [],
+          total: assigned ? 1 : 0,
+          limit: 1000,
+          offset: 0,
+          omitted_trashed: 0,
+        });
+      }
+      if (
+        url ===
+        "/api/v1/search?q=quarterly&limit=1000&tag_id=33333333-3333-4333-8333-333333333333"
+      ) {
+        searchReads += 1;
+        if (view === "search" && searchReads === 2) {
+          return delayedPreMutationRefresh;
+        }
+        if (view === "search" && searchReads === 3) {
+          return delayedRemovalSearch;
+        }
+        if (view === "search" && searchReads === 4) {
+          return delayedAddSearch;
+        }
+        return json({
+          hits: assigned
+            ? [{ node: report, path: report.path, match: "name" }]
+            : [],
+          limit: 1000,
+          truncated: false,
+          tag_id: tax.id,
+        });
+      }
+      if (url === "/api/v1/audit/status?node_id=3") {
+        targetAuditReads += 1;
+        return json({ enabled: false, scopes: [] });
+      }
+      if (url === "/api/v1/nodes/3/tags?limit=1000&offset=0") {
+        const items = [
+          ...(assigned ? [tax] : []),
+          ...(reviewedAssigned ? [reviewed] : []),
+        ];
+        return json({
+          items,
+          total: items.length,
+          limit: 1000,
+          offset: 0,
+        });
+      }
+      if (
+        url ===
+          "/api/v1/nodes/3/tags/33333333-3333-4333-8333-333333333333" &&
+        init?.method === "DELETE"
+      ) {
+        assigned = false;
+        return json({
+          tag: { ...tax, revision: 2, assignment_count: 0 },
+          node: {
+            ...report,
+            revision: 4,
+            modified_at: "2026-07-28T12:01:00Z",
+          },
+          changed: true,
+        });
+      }
+      if (
+        url ===
+          "/api/v1/nodes/3/tags/44444444-4444-4444-8444-444444444444" &&
+        init?.method === "DELETE"
+      ) {
+        reviewedAssigned = false;
+        reviewedDeletes += 1;
+        return json({
+          tag: { ...reviewed, revision: 2, assignment_count: 0 },
+          node: {
+            ...report,
+            revision: 6,
+            modified_at: "2026-07-28T12:03:00Z",
+          },
+          changed: true,
+        });
+      }
+      if (
+        url ===
+          "/api/v1/nodes/3/tags/33333333-3333-4333-8333-333333333333" &&
+        init?.method === "PUT"
+      ) {
+        assigned = true;
+        return json({
+          tag: { ...tax, revision: 3, assignment_count: 1 },
+          node: {
+            ...report,
+            revision: 5,
+            modified_at: "2026-07-28T12:02:00Z",
+          },
+          changed: true,
+        });
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+
+    render(App);
+    await screen.findByRole("cell", { name: "quarterly-tax-report.txt" });
+    await fireEvent.click(
+      screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
+    );
+    await fireEvent.click(screen.getByRole("option", { name: "tax (1)" }));
+    await screen.findByText("Documents tagged");
+
+    if (view === "search") {
+      const input = screen.getByRole("searchbox", { name: "Search documents" });
+      await fireEvent.input(input, { target: { value: "quarterly" } });
+      await fireEvent.submit(input.closest("form")!);
+      await screen.findByText("Search results");
+    }
+
+    await screen.findByText("2 assigned");
+    await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
+    const manage = screen.getByRole("button", { name: "Manage" });
+    expect(manage.hasAttribute("disabled")).toBe(true);
+    expect(screen.queryByRole("dialog", { name: /Manage tags/ })).toBeNull();
+    resolvePreMutationRefresh(
+      view === "search"
+        ? json({
+            hits: [{ node: report, path: report.path, match: "name" }],
+            limit: 1000,
+            truncated: false,
+            tag_id: tax.id,
+          })
+        : json({
+            items: [{ node: report, path: report.path }],
+            total: 1,
+            limit: 1000,
+            offset: 0,
+            omitted_trashed: 0,
+          }),
+    );
+    await waitFor(() => expect(manage.hasAttribute("disabled")).toBe(false));
+    await fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+    const auditReadsBeforeRemoval = targetAuditReads;
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Remove tag tax" }),
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("cell", { name: "/quarterly-tax-report.txt" }),
+      ).toBeNull(),
+    );
+
+    if (view === "browse") {
+      expect(await screen.findByText("tag view temporarily unavailable")).toBeTruthy();
+      expect(browseReads).toBe(3);
+      expect(targetAuditReads).toBe(auditReadsBeforeRemoval);
+      const tagToAssign = screen.getByRole("combobox", {
+        name: "Tag to assign: Choose a tag…",
+      });
+      await fireEvent.click(tagToAssign);
+      await fireEvent.click(screen.getByRole("option", { name: "tax (0)" }));
+      await fireEvent.click(screen.getByRole("button", { name: "Add tag" }));
+      expect(
+        await screen.findByRole("cell", { name: "/quarterly-tax-report.txt" }),
+      ).toBeTruthy();
+      expect(await screen.findByText("1 live shown")).toBeTruthy();
+      expect(
+        await screen.findByText("re-added tag view temporarily unavailable"),
+      ).toBeTruthy();
+      expect(browseReads).toBe(4);
+      return;
+    }
+
+    await waitFor(() => expect(searchReads).toBe(3));
+    await screen.findByText("Removed tax.");
+    resolveRemovalSearch(
+      json({
+        hits: [],
+        limit: 1000,
+        truncated: false,
+        tag_id: tax.id,
+      }),
+    );
+    const tagToAssign = screen.getByRole("combobox", {
+      name: "Tag to assign: Choose a tag…",
+    });
+    await waitFor(() =>
+      expect(tagToAssign.hasAttribute("disabled")).toBe(false),
+    );
+    await fireEvent.click(
+      tagToAssign,
+    );
+    await fireEvent.click(screen.getByRole("option", { name: "tax (0)" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Add tag" }));
+    await waitFor(() => expect(searchReads).toBe(4));
+    const removeReviewed = screen.getByRole("button", {
+      name: "Remove tag reviewed",
+    });
+    expect(removeReviewed.hasAttribute("disabled")).toBe(true);
+    await fireEvent.click(removeReviewed);
+    expect(reviewedDeletes).toBe(0);
+
+    resolveAddSearch(
+      json({
+        hits: [{ node: { ...report, revision: 5 }, path: report.path, match: "name" }],
+        limit: 1000,
+        truncated: false,
+        tag_id: tax.id,
+      }),
+    );
+    await waitFor(() =>
+      expect(removeReviewed.hasAttribute("disabled")).toBe(false),
+    );
+    await fireEvent.click(removeReviewed);
+    await waitFor(() => expect(reviewedDeletes).toBe(1));
+    expect(
+      await screen.findByRole("cell", { name: "/quarterly-tax-report.txt" }),
+    ).toBeTruthy();
+    await waitFor(() =>
+      expect(screen.getByText("6", { selector: "dd" })).toBeTruthy(),
+    );
+  },
+);
 
 it("returns to root when a nested child is trashed and refresh fails", async () => {
   history.replaceState(

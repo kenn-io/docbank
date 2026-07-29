@@ -4,6 +4,7 @@ import {
   auditHistory,
   auditStatusForNode,
   backupSnapshots,
+  changeNodeTag,
   contentVersions,
   listJobs,
   liveTaggedNodes,
@@ -246,5 +247,50 @@ describe("browser authentication", () => {
     expect(path).toBe("/api/v1/nodes/42/restore");
     expect(request?.method).toBe("POST");
     expect(new Headers(request?.headers).get("If-Match")).toBe("8");
+  });
+
+  it("changes one tag assignment under the inspected node revision", async () => {
+    const receipt = {
+      tag: {
+        id: "11111111-1111-4111-8111-111111111111",
+        name: "reviewed",
+        revision: 2,
+        assignment_count: 4,
+      },
+      node: {
+        id: 42,
+        name: "report.txt",
+        kind: "file",
+        size: 12,
+        revision: 8,
+        created_at: "2026-07-28T12:00:00Z",
+        modified_at: "2026-07-28T12:02:00Z",
+        path: "/Reports/report.txt",
+      },
+      changed: true,
+    };
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(receipt), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await expect(
+      changeNodeTag(
+        "session",
+        42,
+        7,
+        "11111111-1111-4111-8111-111111111111",
+        true,
+      ),
+    ).resolves.toEqual(receipt);
+
+    const [path, request] = fetchMock.mock.calls[0] ?? [];
+    expect(path).toBe(
+      "/api/v1/nodes/42/tags/11111111-1111-4111-8111-111111111111",
+    );
+    expect(request?.method).toBe("PUT");
+    expect(new Headers(request?.headers).get("If-Match")).toBe("7");
   });
 });

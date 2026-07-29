@@ -69,8 +69,9 @@ independent upload-proof secret, and the fresh loopback origin dedicated to
 that daemon lifetime, while
 `DELETE /api/daemon/web-session` revokes the calling browser session. Those
 tokens authenticate only the explicit routes used by the built-in document,
-recoverable-trash, storage, job, configured-backup, and verified-download workflows; they are
-intentionally not another general API credential. Browser file bytes use the
+tag-assignment, recoverable-trash, storage, job, configured-backup, and
+verified-download workflows; they are intentionally not another general API
+credential. Browser file bytes use the
 hidden `/api/daemon/web-upload` WebSocket instead. The page verifies a
 challenge proof over the upload secret before sending bytes, binds the socket
 to one session, and never reconnects it. An ordinary browser token is
