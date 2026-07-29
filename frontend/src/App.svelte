@@ -648,7 +648,7 @@
       else void loadTaggedNodes(receipt.tag.id);
     }
     void loadTagCatalog();
-    if (selectedChanged) {
+    if (selectedID === receipt.node.id) {
       void loadAuditStatus(receipt.node.id);
     }
   }

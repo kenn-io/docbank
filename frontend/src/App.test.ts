@@ -455,6 +455,7 @@ it.each(["browse", "search"] as const)(
     let reviewedDeletes = 0;
     let browseReads = 0;
     let searchReads = 0;
+    let targetAuditReads = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
       if (url === "/api/v1/path?path=%2F") return json(root);
@@ -542,6 +543,7 @@ it.each(["browse", "search"] as const)(
         });
       }
       if (url === "/api/v1/audit/status?node_id=3") {
+        targetAuditReads += 1;
         return json({ enabled: false, scopes: [] });
       }
       if (url === "/api/v1/nodes/3/tags?limit=1000&offset=0") {
@@ -646,6 +648,7 @@ it.each(["browse", "search"] as const)(
     );
     await waitFor(() => expect(manage.hasAttribute("disabled")).toBe(false));
     await fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+    const auditReadsBeforeRemoval = targetAuditReads;
     await fireEvent.click(
       screen.getByRole("button", { name: "Remove tag tax" }),
     );
@@ -659,6 +662,7 @@ it.each(["browse", "search"] as const)(
     if (view === "browse") {
       expect(await screen.findByText("tag view temporarily unavailable")).toBeTruthy();
       expect(browseReads).toBe(3);
+      expect(targetAuditReads).toBe(auditReadsBeforeRemoval);
       const tagToAssign = screen.getByRole("combobox", {
         name: "Tag to assign: Choose a tag…",
       });
