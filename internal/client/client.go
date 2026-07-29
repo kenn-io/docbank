@@ -2460,18 +2460,9 @@ func (c *Client) TrashPage(
 }
 
 func (c *Client) TrashList(ctx context.Context) ([]api.Node, error) {
-	const pageSize = 1000
-	var roots []api.Node
-	for offset := 0; ; offset += pageSize {
-		page, err := c.TrashPage(ctx, pageSize, offset)
-		if err != nil {
-			return nil, err
-		}
-		roots = append(roots, page.Items...)
-		if len(roots) >= page.Total || len(page.Items) == 0 {
-			return roots, nil
-		}
-	}
+	var out api.TrashPage
+	err := c.do(ctx, http.MethodGet, "/api/v1/trash", nil, nil, &out)
+	return out.Items, err
 }
 
 func (c *Client) TrashEmpty(ctx context.Context, olderThan string, run bool) (api.TrashEmptyReport, error) {
