@@ -379,6 +379,81 @@ func TestModelCancelsTrashConfirmationWithoutMutation(t *testing.T) {
 	assert.Empty(t, backend.trashed)
 }
 
+func TestTrashOverlayDoesNotCancelUnderlyingLoad(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	underlyingRequestID := model.requestID
+	delayedDirectory := model.loadDirectory(0, navigationInitial, underlyingRequestID)
+
+	model, delayedTrash := updateModel(t, model, runeKey('T'))
+	require.NotNil(t, delayedTrash)
+	assert.Equal(t, underlyingRequestID, model.requestID)
+	assert.True(t, model.loading)
+	assert.True(t, model.trashLoading)
+
+	pendingTrashRequestID := model.trashRequestID
+	model, _ = updateModel(t, model, key(tea.KeyEscape))
+	assert.False(t, model.trashOpen)
+	assert.False(t, model.trashLoading)
+	assert.True(t, model.loading)
+	assert.Greater(t, model.trashRequestID, pendingTrashRequestID)
+
+	model = runModelCommand(t, model, delayedDirectory)
+	assert.False(t, model.loading)
+	assert.Equal(t, "/", model.directory.Path)
+	require.Len(t, model.rows, 2)
+
+	model = runModelCommand(t, model, delayedTrash)
+	assert.False(t, model.trashOpen)
+	assert.Empty(t, model.trashItems)
+}
+
+func TestSuccessfulTrashPreservesBackAndSearchNavigation(t *testing.T) {
+	t.Run("nested directory", func(t *testing.T) {
+		backend := newFakeBackend()
+		model, err := New(t.Context(), backend)
+		require.NoError(t, err)
+		model = runModelCommand(t, model, model.loadDirectory(
+			0, navigationInitial, model.requestID,
+		))
+		model, cmd := updateModel(t, model, key(tea.KeyEnter))
+		model = runModelCommand(t, model, cmd)
+		require.Len(t, model.stack, 1)
+
+		model, _ = updateModel(t, model, runeKey('x'))
+		model, cmd = updateModel(t, model, key(tea.KeyEnter))
+		model = runModelCommand(t, model, cmd)
+		require.Len(t, model.stack, 1)
+
+		model, _ = updateModel(t, model, key(tea.KeyLeft))
+		assert.Equal(t, "/", model.directory.Path)
+	})
+
+	t.Run("search results", func(t *testing.T) {
+		backend := newFakeBackend()
+		model, err := New(t.Context(), backend)
+		require.NoError(t, err)
+		model = runModelCommand(t, model, model.loadDirectory(
+			0, navigationInitial, model.requestID,
+		))
+		model, _ = updateModel(t, model, runeKey('/'))
+		model.searchInput.SetValue("report")
+		model, cmd := updateModel(t, model, key(tea.KeyEnter))
+		model = runModelCommand(t, model, cmd)
+		require.NotNil(t, model.searchReturn)
+
+		model, _ = updateModel(t, model, runeKey('x'))
+		model, cmd = updateModel(t, model, key(tea.KeyEnter))
+		model = runModelCommand(t, model, cmd)
+		require.NotNil(t, model.searchReturn)
+
+		model, _ = updateModel(t, model, key(tea.KeyEscape))
+		assert.Equal(t, modeBrowse, model.mode)
+		assert.Equal(t, "/", model.directory.Path)
+	})
+}
+
 func TestModelPreservesViewStateAcrossNavigation(t *testing.T) {
 	backend := newFakeBackend()
 	model, err := New(t.Context(), backend)

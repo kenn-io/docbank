@@ -161,11 +161,11 @@ func (m Model) renderTrashLocation() string {
 	if m.trashTotal > len(m.trashItems) {
 		right = fmt.Sprintf("first %d of %d", len(m.trashItems), m.trashTotal)
 	}
-	if m.loading {
+	if m.trashLoading {
 		right = m.styles.spinner.Render(m.spinnerIndicator()) + " loading"
 	}
-	if m.err != nil {
-		return m.styles.error.Render(fit(left+" — "+quoted(m.err.Error()), m.width))
+	if m.trashErr != nil {
+		return m.styles.error.Render(fit(left+" — "+quoted(m.trashErr.Error()), m.width))
 	}
 	return m.styles.stats.Render(joinSides(left, right, m.width))
 }
@@ -412,7 +412,7 @@ func (m Model) renderTrashList(height int) string {
 	visible := max(height-2, 0)
 	if len(m.trashItems) == 0 && visible > 0 {
 		message := " Trash is empty"
-		if m.loading {
+		if m.trashLoading {
 			message = " Loading..."
 		}
 		lines = append(lines, m.styles.muted.Render(pad(fit(message, width), width)))
