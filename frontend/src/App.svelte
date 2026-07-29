@@ -120,7 +120,7 @@
   let storageOpen = $state(false);
   let backupsOpen = $state(false);
   let trashOpen = $state(false);
-  let manageTagsOpen = $state(false);
+  let manageTagsTarget = $state<Row | null>(null);
   let uploadTarget = $state<Node | null>(null);
   let trashTarget = $state<Row | null>(null);
   let generation = 0;
@@ -407,7 +407,6 @@
       historyOpen = false;
       versionsOpen = false;
       provenanceOpen = false;
-      manageTagsOpen = false;
     }
     selectedID = nodeID;
     selectedAudit = null;
@@ -580,10 +579,21 @@
     receipt: TagAssignmentReceipt,
     assigned: boolean,
   ): void {
-    if (selectedID !== receipt.node.id) return;
-    tagGeneration += 1;
-    selectedTagsLoading = false;
-    selectedTagsError = "";
+    const selectedChanged = selectedID === receipt.node.id;
+    const modalChanged = manageTagsTarget?.node.id === receipt.node.id;
+    if (!selectedChanged && !modalChanged) return;
+    if (modalChanged && manageTagsTarget) {
+      manageTagsTarget = {
+        ...manageTagsTarget,
+        node: receipt.node,
+        path: receipt.node.path ?? manageTagsTarget.path,
+      };
+    }
+    if (selectedChanged) {
+      tagGeneration += 1;
+      selectedTagsLoading = false;
+      selectedTagsError = "";
+    }
     rows = rows.map((row) =>
       row.node.id === receipt.node.id
         ? {
@@ -593,25 +603,42 @@
           }
         : row,
     );
-    if (assigned) {
-      selectedTags = [
-        ...selectedTags.filter((tag) => tag.id !== receipt.tag.id),
-        receipt.tag,
-      ].sort((left, right) => left.name.localeCompare(right.name));
-      if (receipt.changed) selectedTagsTotal += 1;
-    } else {
-      selectedTags = selectedTags.filter((tag) => tag.id !== receipt.tag.id);
-      if (receipt.changed) selectedTagsTotal = Math.max(0, selectedTagsTotal - 1);
+    if (selectedChanged) {
+      if (assigned) {
+        selectedTags = [
+          ...selectedTags.filter((tag) => tag.id !== receipt.tag.id),
+          receipt.tag,
+        ].sort((left, right) => left.name.localeCompare(right.name));
+        if (receipt.changed) selectedTagsTotal += 1;
+      } else {
+        selectedTags = selectedTags.filter((tag) => tag.id !== receipt.tag.id);
+        if (receipt.changed) {
+          selectedTagsTotal = Math.max(0, selectedTagsTotal - 1);
+        }
+      }
     }
     tagCatalog = tagCatalog.map((tag) =>
       tag.id === receipt.tag.id ? receipt.tag : tag,
     );
-    if (!assigned && activeTagID === receipt.tag.id) {
+    if (activeTagID === receipt.tag.id) {
+      if (!assigned) {
+        rows = rows.filter((row) => row.node.id !== receipt.node.id);
+        if (!activeQuery) {
+          taggedInspected = rows.length;
+          taggedTotal = Math.max(rows.length, taggedTotal - 1);
+          truncated = taggedTotal > rows.length;
+        }
+        if (selectedID === receipt.node.id) {
+          selectNode(rows[0]?.node.id);
+        }
+      }
       if (activeQuery) void runSearch();
       else void loadTaggedNodes(receipt.tag.id);
     }
     void loadTagCatalog();
-    void loadAuditStatus(receipt.node.id);
+    if (selectedID === receipt.node.id) {
+      void loadAuditStatus(receipt.node.id);
+    }
   }
 
   async function lock(): Promise<void> {
@@ -645,7 +672,7 @@
     storageOpen = false;
     backupsOpen = false;
     trashOpen = false;
-    manageTagsOpen = false;
+    manageTagsTarget = null;
     uploadTarget = null;
     trashTarget = null;
     activeQuery = "";
@@ -1017,7 +1044,9 @@
                       tone="info"
                       surface="soft"
                       disabled={selectedTagsLoading || selectedTagsError !== ""}
-                      onclick={() => (manageTagsOpen = true)}
+                      onclick={() => {
+                        if (selected) manageTagsTarget = selected;
+                      }}
                     >
                       Manage
                     </Button>
@@ -1259,15 +1288,15 @@
         onauthfailure={handleFailure}
       />
     {/if}
-    {#if manageTagsOpen && selected}
+    {#if manageTagsTarget}
       <ManageTagsModal
         session={webSession}
-        node={selected.node}
+        node={manageTagsTarget.node}
         catalog={tagCatalog}
         catalogTotal={tagCatalogTotal}
         assignedTags={selectedTags}
         assignedTotal={selectedTagsTotal}
-        onclose={() => (manageTagsOpen = false)}
+        onclose={() => (manageTagsTarget = null)}
         onchanged={handleTagChanged}
         onauthfailure={handleFailure}
       />

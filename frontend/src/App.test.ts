@@ -377,7 +377,7 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
 });
 
 it.each(["browse", "search"] as const)(
-  "reloads the active tag %s after removing its assignment",
+  "reconciles the active tag %s across failed and superseded refreshes",
   async (view) => {
     history.replaceState(
       null,
@@ -432,8 +432,13 @@ it.each(["browse", "search"] as const)(
         status: 200,
         headers: { "Content-Type": "application/json" },
       });
+    let resolveRemovalSearch!: (response: Response) => void;
+    const delayedRemovalSearch = new Promise<Response>((resolve) => {
+      resolveRemovalSearch = resolve;
+    });
     let assigned = true;
-    let activeViewReads = 0;
+    let browseReads = 0;
+    let searchReads = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
       if (url === "/api/v1/path?path=%2F") return json(root);
@@ -458,7 +463,19 @@ it.each(["browse", "search"] as const)(
         url ===
         "/api/v1/tags/33333333-3333-4333-8333-333333333333/nodes?limit=1000&offset=0&live_only=true"
       ) {
-        activeViewReads += 1;
+        browseReads += 1;
+        if (view === "browse" && browseReads === 2) {
+          return new Response(
+            JSON.stringify({
+              status: 503,
+              detail: "tag view temporarily unavailable",
+            }),
+            {
+              status: 503,
+              headers: { "Content-Type": "application/problem+json" },
+            },
+          );
+        }
         return json({
           items: assigned ? [{ node: report, path: report.path }] : [],
           total: assigned ? 1 : 0,
@@ -471,7 +488,10 @@ it.each(["browse", "search"] as const)(
         url ===
         "/api/v1/search?q=quarterly&limit=1000&tag_id=33333333-3333-4333-8333-333333333333"
       ) {
-        activeViewReads += 1;
+        searchReads += 1;
+        if (view === "search" && searchReads === 2) {
+          return delayedRemovalSearch;
+        }
         return json({
           hits: assigned
             ? [{ node: report, path: report.path, match: "name" }]
@@ -508,6 +528,22 @@ it.each(["browse", "search"] as const)(
           changed: true,
         });
       }
+      if (
+        url ===
+          "/api/v1/nodes/3/tags/33333333-3333-4333-8333-333333333333" &&
+        init?.method === "PUT"
+      ) {
+        assigned = true;
+        return json({
+          tag: { ...tax, revision: 3, assignment_count: 1 },
+          node: {
+            ...report,
+            revision: 5,
+            modified_at: "2026-07-28T12:02:00Z",
+          },
+          changed: true,
+        });
+      }
       throw new Error(`unexpected request: ${url}`);
     });
 
@@ -532,12 +568,42 @@ it.each(["browse", "search"] as const)(
       screen.getByRole("button", { name: "Remove tag tax" }),
     );
 
-    await waitFor(() => expect(activeViewReads).toBe(2));
     await waitFor(() =>
       expect(
         screen.queryByRole("cell", { name: "/quarterly-tax-report.txt" }),
       ).toBeNull(),
     );
+
+    if (view === "browse") {
+      expect(await screen.findByText("tag view temporarily unavailable")).toBeTruthy();
+      expect(browseReads).toBe(2);
+      return;
+    }
+
+    await waitFor(() => expect(searchReads).toBe(2));
+    await screen.findByText("Removed tax.");
+    await fireEvent.click(
+      screen.getByRole("combobox", { name: "Tag to assign: Choose a tag…" }),
+    );
+    await fireEvent.click(screen.getByRole("option", { name: "tax (0)" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Add tag" }));
+    await waitFor(() => expect(searchReads).toBe(3));
+    expect(
+      await screen.findByRole("cell", { name: "/quarterly-tax-report.txt" }),
+    ).toBeTruthy();
+
+    resolveRemovalSearch(
+      json({
+        hits: [],
+        limit: 1000,
+        truncated: false,
+        tag_id: tax.id,
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(
+      screen.getByRole("cell", { name: "/quarterly-tax-report.txt" }),
+    ).toBeTruthy();
   },
 );
 

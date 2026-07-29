@@ -46,6 +46,7 @@
 
   let currentNode = $state(untrack(() => node));
   let assigned = $state(untrack(() => [...assignedTags]));
+  let currentAssignedTotal = $state(untrack(() => assignedTotal));
   let selectedTagID = $state("");
   let pendingTagID = $state("");
   let failure = $state("");
@@ -86,11 +87,15 @@
           ...assigned.filter((item) => item.id !== tag.id),
           receipt.tag,
         ].sort((left, right) => left.name.localeCompare(right.name));
+        if (receipt.changed) currentAssignedTotal += 1;
         notice = receipt.changed
           ? `Added ${receipt.tag.name}.`
           : `${receipt.tag.name} was already assigned.`;
       } else {
         assigned = assigned.filter((item) => item.id !== tag.id);
+        if (receipt.changed) {
+          currentAssignedTotal = Math.max(0, currentAssignedTotal - 1);
+        }
         notice = receipt.changed
           ? `Removed ${receipt.tag.name}.`
           : `${receipt.tag.name} was already absent.`;
@@ -138,8 +143,8 @@
           <span>ASSIGNED TAGS</span>
           <strong id="assigned-tags-heading">{assigned.length} visible</strong>
         </div>
-        {#if assignedTotal > assignedTags.length}
-          <small>First {assignedTags.length} of {assignedTotal}</small>
+        {#if currentAssignedTotal > assigned.length}
+          <small>First {assigned.length} of {currentAssignedTotal}</small>
         {/if}
       </div>
       {#if assigned.length === 0}
