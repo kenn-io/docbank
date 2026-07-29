@@ -82,8 +82,9 @@ Use the arrow keys or `j`/`k` to select a document, Enter to open a directory,
 and `/` to search names and extracted text. Press `i` for complete document
 authority or `a` for the selected node's permanent audited-history timeline.
 Press `x` to review moving the selected revision to recoverable trash, or `T`
-to browse and restore trash roots. The TUI does not expose permanent deletion.
-See the
+to browse and restore trash roots. Press `O` for the read-only storage inventory
+and configured backup recovery points. The TUI does not expose permanent
+deletion or maintenance mutations. See the
 [interactive terminal browser](usage/tui.md) guide for the complete key map.
 
 `cat` streams a file's bytes to stdout. For a durable local file, `get` first

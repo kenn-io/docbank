@@ -24,8 +24,11 @@ const (
 	maxHistoryItems = 100
 	maxJobItems     = 1000
 	maxTrashItems   = 1000
+	maxBackupItems  = 1000
 	nodeKindDir     = "dir"
 	nodeKindFile    = "file"
+	keyCtrlC        = "ctrl+c"
+	keyEscape       = "esc"
 )
 
 // Backend is the bounded daemon surface needed by the TUI.
@@ -37,6 +40,8 @@ type Backend interface {
 	Search(ctx context.Context, query string, limit int) (api.SearchReport, error)
 	NodeTags(ctx context.Context, nodeID int64, limit, offset int) (api.TagPage, error)
 	Jobs(ctx context.Context) ([]api.Job, error)
+	Info(ctx context.Context) (api.VaultInfo, error)
+	BackupList(ctx context.Context) ([]api.BackupSnapshot, error)
 	TrashPage(ctx context.Context, limit, offset int) (api.TrashPage, error)
 	Trash(ctx context.Context, nodeID, revision int64) (api.Node, error)
 	Restore(ctx context.Context, nodeID, revision int64) (api.Node, error)
@@ -123,6 +128,14 @@ type jobsLoadedMsg struct {
 	requestID uint64
 	items     []api.Job
 	err       error
+}
+
+type operationsLoadedMsg struct {
+	requestID  uint64
+	info       api.VaultInfo
+	snapshots  []api.BackupSnapshot
+	storageErr error
+	backupErr  error
 }
 
 type trashLoadedMsg struct {
@@ -215,54 +228,63 @@ type Model struct {
 	searchQuery  string
 	searchReturn *location
 
-	requestID           uint64
-	loading             bool
-	err                 error
-	quitting            bool
-	helpOpen            bool
-	detailOpen          bool
-	detailOffset        int
-	detailNode          row
-	detailTags          []api.Tag
-	detailTagsTotal     int
-	detailTagsLoading   bool
-	detailTagsErr       error
-	detailRequestID     uint64
-	jobsOpen            bool
-	jobs                []api.Job
-	jobsTotal           int
-	jobsRunning         int
-	jobsCursor          int
-	jobsOffset          int
-	jobsLoading         bool
-	jobsErr             error
-	jobsRequestID       uint64
-	jobDetail           bool
-	jobDetailOffset     int
-	trashOpen           bool
-	trashItems          []api.Node
-	trashTotal          int
-	trashCursor         int
-	trashOffset         int
-	trashChanged        bool
-	trashLoading        bool
-	trashErr            error
-	trashRequestID      uint64
-	confirmation        *mutationConfirmation
-	mutationRunning     bool
-	mutationRequestID   uint64
-	notice              string
-	historyOpen         bool
-	historyNode         row
-	historyPages        []api.AuditEventPage
-	historyPage         int
-	historyTotal        int
-	historyCursor       int
-	historyOffset       int
-	historyDetail       bool
-	historyDetailOffset int
-	spinnerFrame        int
-	spinnerActive       bool
+	requestID            uint64
+	loading              bool
+	err                  error
+	quitting             bool
+	helpOpen             bool
+	detailOpen           bool
+	detailOffset         int
+	detailNode           row
+	detailTags           []api.Tag
+	detailTagsTotal      int
+	detailTagsLoading    bool
+	detailTagsErr        error
+	detailRequestID      uint64
+	jobsOpen             bool
+	jobs                 []api.Job
+	jobsTotal            int
+	jobsRunning          int
+	jobsCursor           int
+	jobsOffset           int
+	jobsLoading          bool
+	jobsErr              error
+	jobsRequestID        uint64
+	jobDetail            bool
+	jobDetailOffset      int
+	operationsOpen       bool
+	operationsInfo       api.VaultInfo
+	operationsSnapshots  []api.BackupSnapshot
+	operationsTotal      int
+	operationsOffset     int
+	operationsLoading    bool
+	operationsStorageErr error
+	operationsBackupErr  error
+	operationsRequestID  uint64
+	trashOpen            bool
+	trashItems           []api.Node
+	trashTotal           int
+	trashCursor          int
+	trashOffset          int
+	trashChanged         bool
+	trashLoading         bool
+	trashErr             error
+	trashRequestID       uint64
+	confirmation         *mutationConfirmation
+	mutationRunning      bool
+	mutationRequestID    uint64
+	notice               string
+	historyOpen          bool
+	historyNode          row
+	historyPages         []api.AuditEventPage
+	historyPage          int
+	historyTotal         int
+	historyCursor        int
+	historyOffset        int
+	historyDetail        bool
+	historyDetailOffset  int
+	spinnerFrame         int
+	spinnerActive        bool
 
 	width  int
 	height int
@@ -303,6 +325,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.clampDetailOffset()
 		m.clampJobsSelection()
 		m.clampJobDetailOffset()
+		m.clampOperationsOffset()
 		m.clampTrashSelection()
 		m.clampHistorySelection()
 		m.clampHistoryDetailOffset()
@@ -345,6 +368,27 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.jobs = msg.items[:min(len(msg.items), maxJobItems)]
 			m.clampJobsSelection()
 		}
+		return m, nil
+	case operationsLoadedMsg:
+		if !m.operationsOpen || msg.requestID != m.operationsRequestID {
+			return m, nil
+		}
+		m.operationsLoading = false
+		m.operationsInfo = msg.info
+		m.operationsStorageErr = msg.storageErr
+		m.operationsBackupErr = msg.backupErr
+		if msg.backupErr == nil {
+			snapshots := append([]api.BackupSnapshot(nil), msg.snapshots...)
+			sort.SliceStable(snapshots, func(left, right int) bool {
+				if snapshots[left].CreatedAt != snapshots[right].CreatedAt {
+					return snapshots[left].CreatedAt > snapshots[right].CreatedAt
+				}
+				return snapshots[left].ID > snapshots[right].ID
+			})
+			m.operationsTotal = len(snapshots)
+			m.operationsSnapshots = snapshots[:min(len(snapshots), maxBackupItems)]
+		}
+		m.clampOperationsOffset()
 		return m, nil
 	case trashLoadedMsg:
 		if !m.trashOpen || msg.requestID != m.trashRequestID {
@@ -431,7 +475,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.removeTrashedRows(target)
 		return m.reloadCurrent()
 	case spinnerTickMsg:
-		if !m.loading && !m.jobsLoading && !m.trashLoading && !m.mutationRunning {
+		if !m.loading && !m.jobsLoading && !m.operationsLoading &&
+			!m.trashLoading && !m.mutationRunning {
 			m.spinnerActive = false
 			return m, nil
 		}
@@ -447,6 +492,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.trashOpen {
 			return m.updateTrashKeys(msg)
+		}
+		if m.operationsOpen {
+			return m.updateOperationsKeys(msg)
 		}
 		if m.jobsOpen {
 			return m.updateJobsKeys(msg)
@@ -471,10 +519,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) updateSearchInput(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "ctrl+c":
+	case keyCtrlC:
 		m.quitting = true
 		return m, tea.Quit
-	case "esc":
+	case keyEscape:
 		m.searching = false
 		m.searchInput.Blur()
 		return m, nil
@@ -501,7 +549,7 @@ func (m Model) updateSearchInput(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	switch key {
-	case "q", "ctrl+c":
+	case "q", keyCtrlC:
 		m.quitting = true
 		return m, tea.Quit
 	case "/":
@@ -552,6 +600,19 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.jobDetailOffset = 0
 		m.jobsRequestID++
 		return m, tea.Batch(m.startSpinner(), m.loadJobs(m.jobsRequestID))
+	case "O":
+		m.operationsOpen = true
+		m.operationsInfo = api.VaultInfo{}
+		m.operationsSnapshots = nil
+		m.operationsTotal = 0
+		m.operationsOffset = 0
+		m.operationsLoading = true
+		m.operationsStorageErr = nil
+		m.operationsBackupErr = nil
+		m.operationsRequestID++
+		return m, tea.Batch(
+			m.startSpinner(), m.loadOperations(m.operationsRequestID),
+		)
 	case "s":
 		m.cycleSortField()
 		m.sortRowsPreservingSelection()
@@ -635,7 +696,7 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.loadDirectory(selected.node.ID, navigationForward, m.requestID),
 			)
 		}
-	case "esc", "left", "h", "backspace":
+	case keyEscape, "left", "h", "backspace":
 		if m.mode == modeSearch && m.searchReturn != nil {
 			return m.revisit(*m.searchReturn)
 		}
@@ -650,13 +711,13 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) updateConfirmationKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "q", "ctrl+c":
+	case "q", keyCtrlC:
 		if m.mutationRunning {
 			return m, nil
 		}
 		m.quitting = true
 		return m, tea.Quit
-	case "esc":
+	case keyEscape:
 		if !m.mutationRunning {
 			m.confirmation = nil
 		}
@@ -684,12 +745,12 @@ func (m Model) updateConfirmationKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 
 func (m Model) updateTrashKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "q", "ctrl+c":
+	case "q", keyCtrlC:
 		m.quitting = true
 		return m, tea.Quit
 	case "?":
 		m.helpOpen = true
-	case "esc", "left", "h", "backspace":
+	case keyEscape, "left", "h", "backspace":
 		m.trashOpen = false
 		m.trashLoading = false
 		m.trashErr = nil
@@ -759,12 +820,12 @@ func (m Model) updateJobsKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.updateJobDetailKeys(msg)
 	}
 	switch msg.String() {
-	case "q", "ctrl+c":
+	case "q", keyCtrlC:
 		m.quitting = true
 		return m, tea.Quit
 	case "?":
 		m.helpOpen = true
-	case "esc", "backspace", "left", "h":
+	case keyEscape, "backspace", "left", "h":
 		m.jobsOpen = false
 		m.jobsLoading = false
 		m.jobsRequestID++
@@ -797,14 +858,55 @@ func (m Model) updateJobsKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) updateJobDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateOperationsKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "q", "ctrl+c":
+	case "q", keyCtrlC:
 		m.quitting = true
 		return m, tea.Quit
 	case "?":
 		m.helpOpen = true
-	case "enter", "i", "esc", "backspace", "left", "h":
+	case keyEscape, "backspace", "left", "h":
+		m.operationsOpen = false
+		m.operationsLoading = false
+		m.operationsRequestID++
+	case "r":
+		m.operationsLoading = true
+		m.operationsStorageErr = nil
+		m.operationsBackupErr = nil
+		m.operationsRequestID++
+		return m, tea.Batch(
+			m.startSpinner(), m.loadOperations(m.operationsRequestID),
+		)
+	case "up", "k":
+		m.operationsOffset--
+		m.clampOperationsOffset()
+	case "down", "j":
+		m.operationsOffset++
+		m.clampOperationsOffset()
+	case "pgup":
+		m.operationsOffset -= m.operationsViewportHeight()
+		m.clampOperationsOffset()
+	case "pgdown":
+		m.operationsOffset += m.operationsViewportHeight()
+		m.clampOperationsOffset()
+	case "home", "g":
+		m.operationsOffset = 0
+	case "end", "G":
+		m.operationsOffset = max(
+			len(m.operationsLines(m.width))-m.operationsViewportHeight(), 0,
+		)
+	}
+	return m, nil
+}
+
+func (m Model) updateJobDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", keyCtrlC:
+		m.quitting = true
+		return m, tea.Quit
+	case "?":
+		m.helpOpen = true
+	case "enter", "i", keyEscape, "backspace", "left", "h":
 		m.jobDetail = false
 		m.jobDetailOffset = 0
 	case "up", "k":
@@ -831,13 +933,13 @@ func (m Model) updateJobDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) updateHistoryKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "q", "ctrl+c":
+	case "q", keyCtrlC:
 		m.quitting = true
 		return m, tea.Quit
 	case "?":
 		m.helpOpen = true
 		return m, nil
-	case "esc", "backspace":
+	case keyEscape, "backspace":
 		m.requestID++
 		m.closeHistory()
 		return m, nil
@@ -906,13 +1008,13 @@ func (m *Model) cancelPendingHistoryLoad() {
 
 func (m Model) updateHistoryDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "q", "ctrl+c":
+	case "q", keyCtrlC:
 		m.quitting = true
 		return m, tea.Quit
 	case "?":
 		m.helpOpen = true
 		return m, nil
-	case "i", "enter", "esc", "left", "h", "backspace":
+	case "i", "enter", keyEscape, "left", "h", "backspace":
 		m.historyDetail = false
 		m.historyDetailOffset = 0
 	case "up", "k":
@@ -939,13 +1041,13 @@ func (m Model) updateHistoryDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 
 func (m Model) updateDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "q", "ctrl+c":
+	case "q", keyCtrlC:
 		m.quitting = true
 		return m, tea.Quit
 	case "?":
 		m.helpOpen = true
 		return m, nil
-	case "i", "enter", "esc", "left", "h", "backspace":
+	case "i", "enter", keyEscape, "left", "h", "backspace":
 		m.detailOpen = false
 		m.detailOffset = 0
 		m.detailRequestID++
@@ -1007,6 +1109,18 @@ func (m Model) loadJobs(requestID uint64) tea.Cmd {
 	return func() tea.Msg {
 		items, err := backend.Jobs(ctx)
 		return jobsLoadedMsg{requestID: requestID, items: items, err: err}
+	}
+}
+
+func (m Model) loadOperations(requestID uint64) tea.Cmd {
+	ctx, backend := m.ctx, m.backend
+	return func() tea.Msg {
+		info, storageErr := backend.Info(ctx)
+		snapshots, backupErr := backend.BackupList(ctx)
+		return operationsLoadedMsg{
+			requestID: requestID, info: info, snapshots: snapshots,
+			storageErr: storageErr, backupErr: backupErr,
+		}
 	}
 }
 
@@ -1501,6 +1615,17 @@ func (m Model) visibleHistoryRows() int {
 
 func (m Model) historyViewportHeight() int {
 	return max(m.height-3, 1)
+}
+
+func (m Model) operationsViewportHeight() int {
+	return max(m.height-3, 1)
+}
+
+func (m *Model) clampOperationsOffset() {
+	maximum := max(
+		len(m.operationsLines(m.width))-m.operationsViewportHeight(), 0,
+	)
+	m.operationsOffset = min(max(m.operationsOffset, 0), maximum)
 }
 
 func (m *Model) clampHistoryDetailOffset() {
