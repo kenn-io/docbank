@@ -27,6 +27,7 @@
     catalogTotal: number;
     assignedTags: Tag[];
     assignedTotal: number;
+    disabled: boolean;
     onclose: () => void;
     onchanged: (receipt: TagAssignmentReceipt, assigned: boolean) => void;
     onauthfailure: (cause: unknown) => void;
@@ -39,6 +40,7 @@
     catalogTotal,
     assignedTags,
     assignedTotal,
+    disabled,
     onclose,
     onchanged,
     onauthfailure,
@@ -69,7 +71,7 @@
   }
 
   async function change(tag: Tag, assign: boolean): Promise<void> {
-    if (pendingTagID) return;
+    if (disabled || pendingTagID) return;
     pendingTagID = tag.id;
     failure = "";
     notice = "";
@@ -161,7 +163,7 @@
                 size="sm"
                 ariaLabel={`Remove tag ${tag.name}`}
                 title={`Remove ${tag.name}`}
-                disabled={pendingTagID !== ""}
+                disabled={disabled || pendingTagID !== ""}
                 onclick={() => void change(tag, false)}
               >
                 {#if pendingTagID === tag.id}
@@ -188,14 +190,14 @@
           value={selectedTagID}
           {options}
           title="Tag to assign"
-          disabled={pendingTagID !== "" || available.length === 0}
+          disabled={disabled || pendingTagID !== "" || available.length === 0}
           onchange={(value) => (selectedTagID = value)}
         />
         <Button
           size="sm"
           tone="info"
           surface="solid"
-          disabled={!selectedTagID || pendingTagID !== ""}
+          disabled={disabled || !selectedTagID || pendingTagID !== ""}
           onclick={addSelected}
         >
           {#if pendingTagID === selectedTagID}

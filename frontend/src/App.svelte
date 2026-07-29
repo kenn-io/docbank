@@ -1296,6 +1296,7 @@
         catalogTotal={tagCatalogTotal}
         assignedTags={selectedTags}
         assignedTotal={selectedTagsTotal}
+        disabled={loading}
         onclose={() => (manageTagsTarget = null)}
         onchanged={handleTagChanged}
         onauthfailure={handleFailure}

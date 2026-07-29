@@ -427,6 +427,12 @@ it.each(["browse", "search"] as const)(
       revision: 1,
       assignment_count: 1,
     };
+    const reviewed = {
+      id: "44444444-4444-4444-8444-444444444444",
+      name: "reviewed",
+      revision: 1,
+      assignment_count: 1,
+    };
     const json = (value: unknown) =>
       new Response(JSON.stringify(value), {
         status: 200,
@@ -436,11 +442,17 @@ it.each(["browse", "search"] as const)(
     const delayedRemovalSearch = new Promise<Response>((resolve) => {
       resolveRemovalSearch = resolve;
     });
+    let resolveAddSearch!: (response: Response) => void;
+    const delayedAddSearch = new Promise<Response>((resolve) => {
+      resolveAddSearch = resolve;
+    });
     let resolvePreMutationRefresh!: (response: Response) => void;
     const delayedPreMutationRefresh = new Promise<Response>((resolve) => {
       resolvePreMutationRefresh = resolve;
     });
     let assigned = true;
+    let reviewedAssigned = true;
+    let reviewedDeletes = 0;
     let browseReads = 0;
     let searchReads = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -457,8 +469,11 @@ it.each(["browse", "search"] as const)(
       }
       if (url === "/api/v1/tags?limit=1000&offset=0") {
         return json({
-          items: [{ ...tax, assignment_count: assigned ? 1 : 0 }],
-          total: 1,
+          items: [
+            { ...tax, assignment_count: assigned ? 1 : 0 },
+            { ...reviewed, assignment_count: reviewedAssigned ? 1 : 0 },
+          ],
+          total: 2,
           limit: 1000,
           offset: 0,
         });
@@ -502,6 +517,9 @@ it.each(["browse", "search"] as const)(
         if (view === "search" && searchReads === 3) {
           return delayedRemovalSearch;
         }
+        if (view === "search" && searchReads === 4) {
+          return delayedAddSearch;
+        }
         return json({
           hits: assigned
             ? [{ node: report, path: report.path, match: "name" }]
@@ -515,9 +533,13 @@ it.each(["browse", "search"] as const)(
         return json({ enabled: false, scopes: [] });
       }
       if (url === "/api/v1/nodes/3/tags?limit=1000&offset=0") {
+        const items = [
+          ...(assigned ? [tax] : []),
+          ...(reviewedAssigned ? [reviewed] : []),
+        ];
         return json({
-          items: assigned ? [tax] : [],
-          total: assigned ? 1 : 0,
+          items,
+          total: items.length,
           limit: 1000,
           offset: 0,
         });
@@ -534,6 +556,23 @@ it.each(["browse", "search"] as const)(
             ...report,
             revision: 4,
             modified_at: "2026-07-28T12:01:00Z",
+          },
+          changed: true,
+        });
+      }
+      if (
+        url ===
+          "/api/v1/nodes/3/tags/44444444-4444-4444-8444-444444444444" &&
+        init?.method === "DELETE"
+      ) {
+        reviewedAssigned = false;
+        reviewedDeletes += 1;
+        return json({
+          tag: { ...reviewed, revision: 2, assignment_count: 0 },
+          node: {
+            ...report,
+            revision: 6,
+            modified_at: "2026-07-28T12:03:00Z",
           },
           changed: true,
         });
@@ -572,7 +611,7 @@ it.each(["browse", "search"] as const)(
       await screen.findByText("Search results");
     }
 
-    await screen.findByText("1 assigned");
+    await screen.findByText("2 assigned");
     await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
     const manage = screen.getByRole("button", { name: "Manage" });
     expect(manage.hasAttribute("disabled")).toBe(true);
@@ -613,16 +652,6 @@ it.each(["browse", "search"] as const)(
 
     await waitFor(() => expect(searchReads).toBe(3));
     await screen.findByText("Removed tax.");
-    await fireEvent.click(
-      screen.getByRole("combobox", { name: "Tag to assign: Choose a tag…" }),
-    );
-    await fireEvent.click(screen.getByRole("option", { name: "tax (0)" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Add tag" }));
-    await waitFor(() => expect(searchReads).toBe(4));
-    expect(
-      await screen.findByRole("cell", { name: "/quarterly-tax-report.txt" }),
-    ).toBeTruthy();
-
     resolveRemovalSearch(
       json({
         hits: [],
@@ -631,10 +660,44 @@ it.each(["browse", "search"] as const)(
         tag_id: tax.id,
       }),
     );
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    const tagToAssign = screen.getByRole("combobox", {
+      name: "Tag to assign: Choose a tag…",
+    });
+    await waitFor(() =>
+      expect(tagToAssign.hasAttribute("disabled")).toBe(false),
+    );
+    await fireEvent.click(
+      tagToAssign,
+    );
+    await fireEvent.click(screen.getByRole("option", { name: "tax (0)" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Add tag" }));
+    await waitFor(() => expect(searchReads).toBe(4));
+    const removeReviewed = screen.getByRole("button", {
+      name: "Remove tag reviewed",
+    });
+    expect(removeReviewed.hasAttribute("disabled")).toBe(true);
+    await fireEvent.click(removeReviewed);
+    expect(reviewedDeletes).toBe(0);
+
+    resolveAddSearch(
+      json({
+        hits: [{ node: { ...report, revision: 5 }, path: report.path, match: "name" }],
+        limit: 1000,
+        truncated: false,
+        tag_id: tax.id,
+      }),
+    );
+    await waitFor(() =>
+      expect(removeReviewed.hasAttribute("disabled")).toBe(false),
+    );
+    await fireEvent.click(removeReviewed);
+    await waitFor(() => expect(reviewedDeletes).toBe(1));
     expect(
-      screen.getByRole("cell", { name: "/quarterly-tax-report.txt" }),
+      await screen.findByRole("cell", { name: "/quarterly-tax-report.txt" }),
     ).toBeTruthy();
+    await waitFor(() =>
+      expect(screen.getByText("6", { selector: "dd" })).toBeTruthy(),
+    );
   },
 );
 
