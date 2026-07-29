@@ -422,12 +422,26 @@ it("discards cached navigation when search trashes the current directory", async
       headers: { "Content-Type": "application/json" },
     });
   let trashed = false;
+  let failRootRefresh = true;
   let rootReads = 0;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url === "/api/v1/path?path=%2F") return json(root);
     if (url === "/api/v1/nodes/1/children?limit=1000&offset=0") {
       rootReads += 1;
+      if (trashed && failRootRefresh) {
+        failRootRefresh = false;
+        return new Response(
+          JSON.stringify({
+            status: 503,
+            detail: "root temporarily unavailable",
+          }),
+          {
+            status: 503,
+            headers: { "Content-Type": "application/problem+json" },
+          },
+        );
+      }
       return json({
         directory: root,
         items: trashed ? [] : [reports],
@@ -488,11 +502,16 @@ it("discards cached navigation when search trashes the current directory", async
   );
 
   await waitFor(() => expect(rootReads).toBe(2));
-  expect(screen.getByText("This folder is empty")).toBeTruthy();
+  expect(await screen.findByText("root temporarily unavailable")).toBeTruthy();
   expect(screen.queryByRole("cell", { name: "/Reports" })).toBeNull();
   expect(
     screen.getByRole("button", { name: "Back to previous directory" }).hasAttribute(
       "disabled",
     ),
   ).toBe(true);
+
+  await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
+  await waitFor(() => expect(rootReads).toBe(3));
+  expect(screen.getByText("This folder is empty")).toBeTruthy();
+  expect(screen.queryByRole("cell", { name: "/Reports" })).toBeNull();
 });

@@ -523,6 +523,7 @@
     if (activeQuery) void runSearch();
     else if (activeTagID) void loadTaggedNodes(activeTagID);
     else if (directory) void loadDirectory(directory.id, false);
+    else void loadRoot();
   }
 
   function handleTrashed(receipt: Node): void {
@@ -535,11 +536,19 @@
 
     const targetPath = receipt.path;
     const directoryPath = directory?.path;
+    rows = rows.filter(
+      (row) =>
+        row.node.id !== receipt.id &&
+        (!targetPath ||
+          (row.path !== targetPath && !row.path.startsWith(`${targetPath}/`))),
+    );
     if (
       targetPath &&
       directoryPath &&
       (directoryPath === targetPath || directoryPath.startsWith(`${targetPath}/`))
     ) {
+      directory = null;
+      rows = [];
       searchQuery = "";
       activeQuery = "";
       tagFilterID = "";
@@ -774,12 +783,7 @@
             <IconButton
               size="sm"
               ariaLabel="Refresh current view"
-              onclick={() => {
-                void loadTagCatalog();
-                if (activeQuery) void runSearch();
-                else if (activeTagID) void loadTaggedNodes(activeTagID);
-                else if (directory) void loadDirectory(directory.id, false);
-              }}
+              onclick={refreshCurrentView}
             >
               <RefreshCwIcon size="14" aria-hidden="true" />
             </IconButton>
