@@ -65,7 +65,7 @@ elsewhere only when they materially explain the design and are marked
 - Tag-driven release pipeline building archives plus `SHA256SUMS` for Linux,
   macOS, and Windows on amd64 and arm64
 - A responsive kit-ui web application at `/`, launched through `docbank web`
-  with session-local authentication and read-only tree, search, sorting, and
+  with session-local authentication and tree, search, sorting, and
   current-authority inspection
 - Internal mixed loose/packed blob storage on `kit/packstore`: docbank's
   `blobs` rows remain the read-authority boundary, existing loose vaults
@@ -163,15 +163,15 @@ broader metadata, version comparison, and storage maintenance.
 Application-neutral tree, timeline, diff, evidence, and job components should
 be reusable by Msgvault and later tools.
 
-The focused TUI now has a read-only first slice for virtual-tree navigation,
-name and extracted-content search, stable document/version/hash detail, and a
-compact node-focused audited-history timeline with complete event inspection.
-Its daemon-activity screen reports supervised job lifecycle, timestamps, and
+The focused TUI provides virtual-tree navigation, name and extracted-content
+search, stable document/version/hash detail, a compact node-focused
+audited-history timeline, and revision-bound recoverable trash and restore. Its
+daemon-activity screen reports supervised job lifecycle, timestamps, and
 complete terminal failures without inventing percentages where workers expose
-no authoritative total. Later slices add ingest progress, metadata/evidence,
-move/trash/restore, and storage and backup state. Rich document comparison belongs in
-external tools or the web portal. Neither client has privileged operations —
-anything either does, the API can do.
+no authoritative total. Later slices add ingest progress, broader
+metadata/evidence, and storage and backup state. Rich document comparison
+belongs in external tools or the web portal. Neither client has privileged
+operations — anything either does, the API can do.
 
 ## Phase 4 — Backup (implemented)
 

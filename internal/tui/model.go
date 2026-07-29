@@ -23,11 +23,12 @@ const (
 	maxSearchItems  = 1000
 	maxHistoryItems = 100
 	maxJobItems     = 1000
+	maxTrashItems   = 1000
 	nodeKindDir     = "dir"
 	nodeKindFile    = "file"
 )
 
-// Backend is the bounded read surface needed by the TUI.
+// Backend is the bounded daemon surface needed by the TUI.
 // *client.Client satisfies it without exposing a direct vault path.
 type Backend interface {
 	Stat(ctx context.Context, path string) (api.Node, error)
@@ -36,6 +37,9 @@ type Backend interface {
 	Search(ctx context.Context, query string, limit int) (api.SearchReport, error)
 	NodeTags(ctx context.Context, nodeID int64, limit, offset int) (api.TagPage, error)
 	Jobs(ctx context.Context) ([]api.Job, error)
+	TrashPage(ctx context.Context, limit, offset int) (api.TrashPage, error)
+	Trash(ctx context.Context, nodeID, revision int64) (api.Node, error)
+	Restore(ctx context.Context, nodeID, revision int64) (api.Node, error)
 	AuditHistory(
 		ctx context.Context, path string, nodeID int64, limit int, cursor string,
 	) (api.AuditEventPage, error)
@@ -76,6 +80,7 @@ type location struct {
 	searchReturn *location
 	sortField    sortField
 	sortDesc     bool
+	stale        bool
 }
 
 type navigationKind uint8
@@ -120,6 +125,32 @@ type jobsLoadedMsg struct {
 	err       error
 }
 
+type trashLoadedMsg struct {
+	requestID uint64
+	page      api.TrashPage
+	err       error
+}
+
+type mutationAction uint8
+
+const (
+	mutationTrash mutationAction = iota
+	mutationRestore
+)
+
+type mutationConfirmation struct {
+	action mutationAction
+	target row
+}
+
+type mutationCompletedMsg struct {
+	requestID uint64
+	action    mutationAction
+	target    row
+	node      api.Node
+	err       error
+}
+
 type spinnerTickMsg struct{}
 
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
@@ -128,11 +159,40 @@ var errDetailNodeChanged = errors.New(
 	"document changed while loading tags; close and inspect it again",
 )
 
+// ErrMutationUnconfirmed marks a mutation whose request was sent but whose
+// terminal receipt did not arrive intact. Callers must reacquire authority
+// rather than treating the operation as failed or replaying it.
+var ErrMutationUnconfirmed = errors.New("mutation outcome is unconfirmed")
+
+type mutationUnconfirmedError struct {
+	action string
+	cause  error
+}
+
+func (e *mutationUnconfirmedError) Error() string {
+	return fmt.Sprintf(
+		"%s outcome is unconfirmed; refresh before retrying: %v", e.action, e.cause,
+	)
+}
+
+func (e *mutationUnconfirmedError) Unwrap() error { return e.cause }
+
+func (e *mutationUnconfirmedError) Is(target error) bool {
+	return target == ErrMutationUnconfirmed
+}
+
+// NewMutationUnconfirmedError preserves an uncertain mutation cause for the
+// model while presenting an actionable operator message.
+func NewMutationUnconfirmedError(action string, cause error) error {
+	return &mutationUnconfirmedError{action: action, cause: cause}
+}
+
 const spinnerInterval = 80 * time.Millisecond
 
-// Model is a read-only virtual-tree, search, and audited-history browser. Update uses a value
-// receiver because Bubble Tea treats models as immutable values; small helper
-// methods mutate only the copied value before it is returned.
+// Model is a virtual-tree, search, audited-history, and recoverable-trash
+// browser. Update uses a value receiver because Bubble Tea treats models as
+// immutable values; small helper methods mutate only the copied value before
+// it is returned.
 //
 //nolint:recvcheck // intentional Bubble Tea value-model pattern
 type Model struct {
@@ -179,6 +239,19 @@ type Model struct {
 	jobsRequestID       uint64
 	jobDetail           bool
 	jobDetailOffset     int
+	trashOpen           bool
+	trashItems          []api.Node
+	trashTotal          int
+	trashCursor         int
+	trashOffset         int
+	trashChanged        bool
+	trashLoading        bool
+	trashErr            error
+	trashRequestID      uint64
+	confirmation        *mutationConfirmation
+	mutationRunning     bool
+	mutationRequestID   uint64
+	notice              string
 	historyOpen         bool
 	historyNode         row
 	historyPages        []api.AuditEventPage
@@ -230,6 +303,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.clampDetailOffset()
 		m.clampJobsSelection()
 		m.clampJobDetailOffset()
+		m.clampTrashSelection()
 		m.clampHistorySelection()
 		m.clampHistoryDetailOffset()
 		return m, nil
@@ -272,8 +346,92 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.clampJobsSelection()
 		}
 		return m, nil
+	case trashLoadedMsg:
+		if !m.trashOpen || msg.requestID != m.trashRequestID {
+			return m, nil
+		}
+		m.trashLoading = false
+		if msg.err != nil {
+			m.trashErr = msg.err
+			return m, nil
+		}
+		previousID := int64(0)
+		if selected, ok := m.selectedTrash(); ok {
+			previousID = selected.ID
+		}
+		m.trashItems = msg.page.Items
+		m.trashTotal = msg.page.Total
+		m.trashCursor, m.trashOffset = 0, 0
+		for index := range m.trashItems {
+			if m.trashItems[index].ID == previousID {
+				m.trashCursor = index
+				break
+			}
+		}
+		m.trashErr = nil
+		m.clampTrashSelection()
+		return m, nil
+	case mutationCompletedMsg:
+		if msg.requestID != m.mutationRequestID || m.confirmation == nil ||
+			msg.action != m.confirmation.action {
+			return m, nil
+		}
+		m.mutationRunning = false
+		m.confirmation = nil
+		if msg.err != nil {
+			if errors.Is(msg.err, ErrMutationUnconfirmed) {
+				m.notice = msg.err.Error()
+				if msg.action == mutationRestore {
+					m.trashChanged = true
+					m.trashErr = msg.err
+					m.trashLoading = true
+					m.trashRequestID++
+					return m, tea.Batch(
+						m.startSpinner(), m.loadTrash(m.trashRequestID),
+					)
+				}
+				m.invalidateLiveView()
+				m.loading = true
+				m.requestID++
+				return m, tea.Batch(
+					m.startSpinner(),
+					m.loadDirectory(0, navigationInitial, m.requestID),
+				)
+			}
+			if msg.action == mutationRestore {
+				m.trashErr = msg.err
+			} else {
+				m.err = msg.err
+			}
+			return m, nil
+		}
+		m.err = nil
+		if msg.action == mutationRestore {
+			m.trashChanged = true
+			m.notice = fmt.Sprintf("Restored %q to %q", msg.target.node.Name, msg.node.Path)
+			m.removeTrashItem(msg.target.node.ID)
+			m.trashLoading = true
+			m.trashRequestID++
+			return m, tea.Batch(m.startSpinner(), m.loadTrash(m.trashRequestID))
+		}
+		target := row{node: msg.node, path: msg.node.Path}
+		m.notice = fmt.Sprintf("Moved %q to recoverable trash", target.path)
+		if target.path == "" ||
+			m.directory.ID == target.node.ID ||
+			(m.mode == modeSearch && target.node.Kind == nodeKindDir) ||
+			pathAtOrBelow(m.directory.Path, target.path) {
+			m.invalidateLiveView()
+			m.loading = true
+			m.requestID++
+			return m, tea.Batch(
+				m.startSpinner(),
+				m.loadDirectory(0, navigationInitial, m.requestID),
+			)
+		}
+		m.removeTrashedRows(target)
+		return m.reloadCurrent()
 	case spinnerTickMsg:
-		if !m.loading && !m.jobsLoading {
+		if !m.loading && !m.jobsLoading && !m.trashLoading && !m.mutationRunning {
 			m.spinnerActive = false
 			return m, nil
 		}
@@ -283,6 +441,12 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.helpOpen {
 			m.helpOpen = false
 			return m, nil
+		}
+		if m.confirmation != nil {
+			return m.updateConfirmationKeys(msg)
+		}
+		if m.trashOpen {
+			return m.updateTrashKeys(msg)
 		}
 		if m.jobsOpen {
 			return m.updateJobsKeys(msg)
@@ -350,6 +514,31 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "?":
 		m.helpOpen = true
 		return m, nil
+	case "T":
+		m.trashOpen = true
+		m.trashItems = nil
+		m.trashTotal = 0
+		m.trashCursor = 0
+		m.trashOffset = 0
+		m.trashChanged = false
+		m.trashLoading = true
+		m.trashErr = nil
+		m.notice = ""
+		m.trashRequestID++
+		return m, tea.Batch(m.startSpinner(), m.loadTrash(m.trashRequestID))
+	case "x":
+		if m.loading {
+			m.notice = "Wait for the current view to finish loading"
+			return m, nil
+		}
+		selected, ok := m.selected()
+		if !ok {
+			return m, nil
+		}
+		m.err = nil
+		m.notice = ""
+		m.confirmation = &mutationConfirmation{action: mutationTrash, target: selected}
+		return m, nil
 	case "J":
 		m.jobsOpen = true
 		m.jobs = nil
@@ -409,6 +598,13 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.loadDirectory(m.directory.ID, navigationRefresh, m.requestID),
 			)
 		}
+		m.loading = true
+		m.err = nil
+		m.requestID++
+		return m, tea.Batch(
+			m.startSpinner(),
+			m.loadDirectory(0, navigationInitial, m.requestID),
+		)
 	case "up", "k":
 		m.moveCursor(-1)
 	case "down", "j":
@@ -441,18 +637,121 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case "esc", "left", "h", "backspace":
 		if m.mode == modeSearch && m.searchReturn != nil {
-			m.requestID++
-			m.restore(*m.searchReturn)
-			return m, nil
+			return m.revisit(*m.searchReturn)
 		}
 		if len(m.stack) > 0 {
-			m.requestID++
-			m.restore(m.stack[len(m.stack)-1])
+			state := m.stack[len(m.stack)-1]
 			m.stack = m.stack[:len(m.stack)-1]
-			return m, nil
+			return m.revisit(state)
 		}
 	}
 	return m, nil
+}
+
+func (m Model) updateConfirmationKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "ctrl+c":
+		if m.mutationRunning {
+			return m, nil
+		}
+		m.quitting = true
+		return m, tea.Quit
+	case "esc":
+		if !m.mutationRunning {
+			m.confirmation = nil
+		}
+		return m, nil
+	case "enter":
+		if m.mutationRunning || m.confirmation == nil {
+			return m, nil
+		}
+		m.mutationRunning = true
+		if m.confirmation.action == mutationRestore {
+			m.trashErr = nil
+		} else {
+			m.err = nil
+		}
+		m.notice = ""
+		m.mutationRequestID++
+		confirmation := *m.confirmation
+		return m, tea.Batch(
+			m.startSpinner(),
+			m.runMutation(confirmation, m.mutationRequestID),
+		)
+	}
+	return m, nil
+}
+
+func (m Model) updateTrashKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "ctrl+c":
+		m.quitting = true
+		return m, tea.Quit
+	case "?":
+		m.helpOpen = true
+	case "esc", "left", "h", "backspace":
+		m.trashOpen = false
+		m.trashLoading = false
+		m.trashErr = nil
+		m.trashRequestID++
+		if m.trashChanged {
+			m.invalidateLiveView()
+			m.notice = "Trash changes applied"
+			m.loading = true
+			m.err = nil
+			m.requestID++
+			return m, tea.Batch(
+				m.startSpinner(),
+				m.loadDirectory(0, navigationInitial, m.requestID),
+			)
+		}
+		return m, nil
+	case "r":
+		m.trashLoading = true
+		m.trashErr = nil
+		m.notice = ""
+		m.trashRequestID++
+		return m, tea.Batch(m.startSpinner(), m.loadTrash(m.trashRequestID))
+	case "up", "k":
+		m.moveTrashCursor(-1)
+	case "down", "j":
+		m.moveTrashCursor(1)
+	case "pgup":
+		m.moveTrashCursor(-m.visibleTrashRows())
+	case "pgdown":
+		m.moveTrashCursor(m.visibleTrashRows())
+	case "home", "g":
+		m.trashCursor, m.trashOffset = 0, 0
+	case "end", "G":
+		if len(m.trashItems) > 0 {
+			m.trashCursor = len(m.trashItems) - 1
+			m.clampTrashSelection()
+		}
+	case "enter":
+		selected, ok := m.selectedTrash()
+		if !ok {
+			return m, nil
+		}
+		m.trashErr = nil
+		m.notice = ""
+		m.confirmation = &mutationConfirmation{
+			action: mutationRestore,
+			target: row{node: selected},
+		}
+	}
+	return m, nil
+}
+
+func (m *Model) invalidateLiveView() {
+	m.mode = modeBrowse
+	m.directory = api.Node{}
+	m.rows = nil
+	m.total = 0
+	m.truncated = false
+	m.cursor, m.offset = 0, 0
+	m.stack = nil
+	m.searchQuery = ""
+	m.searchReturn = nil
 }
 
 func (m Model) updateJobsKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -709,6 +1008,80 @@ func (m Model) loadJobs(requestID uint64) tea.Cmd {
 		items, err := backend.Jobs(ctx)
 		return jobsLoadedMsg{requestID: requestID, items: items, err: err}
 	}
+}
+
+func (m Model) loadTrash(requestID uint64) tea.Cmd {
+	ctx, backend := m.ctx, m.backend
+	return func() tea.Msg {
+		page, err := backend.TrashPage(ctx, maxTrashItems, 0)
+		return trashLoadedMsg{requestID: requestID, page: page, err: err}
+	}
+}
+
+func (m Model) runMutation(
+	confirmation mutationConfirmation, requestID uint64,
+) tea.Cmd {
+	ctx, backend := m.ctx, m.backend
+	return func() tea.Msg {
+		var (
+			node api.Node
+			err  error
+		)
+		switch confirmation.action {
+		case mutationTrash:
+			node, err = backend.Trash(
+				ctx, confirmation.target.node.ID, confirmation.target.node.Revision,
+			)
+		case mutationRestore:
+			node, err = backend.Restore(
+				ctx, confirmation.target.node.ID, confirmation.target.node.Revision,
+			)
+		default:
+			err = errors.New("unknown TUI mutation")
+		}
+		return mutationCompletedMsg{
+			requestID: requestID, action: confirmation.action,
+			target: confirmation.target, node: node, err: err,
+		}
+	}
+}
+
+func (m Model) reloadCurrent() (tea.Model, tea.Cmd) {
+	m.loading = true
+	m.requestID++
+	if m.mode == modeSearch && m.searchQuery != "" {
+		return m, tea.Batch(
+			m.startSpinner(),
+			m.loadSearch(m.searchQuery, m.requestID),
+		)
+	}
+	return m, tea.Batch(
+		m.startSpinner(),
+		m.loadDirectory(m.directory.ID, navigationRefresh, m.requestID),
+	)
+}
+
+func (m Model) revisit(state location) (tea.Model, tea.Cmd) {
+	m.requestID++
+	m.restore(state)
+	if !state.stale {
+		return m, nil
+	}
+	m.loading = true
+	m.rows = nil
+	m.total = 0
+	m.truncated = false
+	m.cursor, m.offset = 0, 0
+	if state.mode == modeSearch && state.searchQuery != "" {
+		return m, tea.Batch(
+			m.startSpinner(),
+			m.loadSearch(state.searchQuery, m.requestID),
+		)
+	}
+	return m, tea.Batch(
+		m.startSpinner(),
+		m.loadDirectory(state.directory.ID, navigationRefresh, m.requestID),
+	)
 }
 
 func (m Model) loadDirectory(
@@ -975,6 +1348,127 @@ func (m *Model) clampJobDetailOffset() {
 	m.jobDetailOffset = min(max(m.jobDetailOffset, 0), maximum)
 }
 
+func (m Model) selectedTrash() (api.Node, bool) {
+	if m.trashCursor < 0 || m.trashCursor >= len(m.trashItems) {
+		return api.Node{}, false
+	}
+	return m.trashItems[m.trashCursor], true
+}
+
+func (m *Model) removeTrashItem(nodeID int64) {
+	for index := range m.trashItems {
+		if m.trashItems[index].ID != nodeID {
+			continue
+		}
+		m.trashItems = append(m.trashItems[:index], m.trashItems[index+1:]...)
+		m.trashTotal = max(m.trashTotal-1, 0)
+		m.clampTrashSelection()
+		return
+	}
+}
+
+func (m *Model) removeTrashedRows(target row) {
+	var removed int
+	m.rows, removed = withoutTrashedRows(m.rows, target)
+	m.total = max(m.total-removed, 0)
+	m.invalidateSavedLocations(target)
+	m.clampSelection()
+}
+
+func (m *Model) invalidateSavedLocations(target row) {
+	stack := m.stack[:0]
+	for _, state := range m.stack {
+		sanitized, ok := sanitizeLocationAfterTrash(state, target)
+		if ok {
+			stack = append(stack, sanitized)
+		}
+	}
+	m.stack = stack
+	if m.searchReturn == nil {
+		return
+	}
+	sanitized, ok := sanitizeLocationAfterTrash(*m.searchReturn, target)
+	if ok {
+		m.searchReturn = &sanitized
+		return
+	}
+	if len(m.stack) > 0 {
+		sanitized = m.stack[len(m.stack)-1]
+		m.stack = m.stack[:len(m.stack)-1]
+		m.searchReturn = &sanitized
+		return
+	}
+	m.searchReturn = &location{
+		mode: modeBrowse, directory: api.Node{Kind: nodeKindDir, Path: "/"},
+		sortField: sortByName, stale: true,
+	}
+}
+
+func sanitizeLocationAfterTrash(state location, target row) (location, bool) {
+	if pathAtOrBelow(state.directory.Path, target.path) {
+		return location{}, false
+	}
+	state.stale = true
+	if state.searchReturn != nil {
+		nested, ok := sanitizeLocationAfterTrash(*state.searchReturn, target)
+		if ok {
+			state.searchReturn = &nested
+		} else {
+			state.searchReturn = nil
+		}
+	}
+	return state, true
+}
+
+func pathAtOrBelow(candidate, ancestor string) bool {
+	return ancestor != "" &&
+		(candidate == ancestor || strings.HasPrefix(candidate, ancestor+"/"))
+}
+
+func withoutTrashedRows(rows []row, target row) ([]row, int) {
+	filtered := rows[:0]
+	for _, item := range rows {
+		if item.node.ID == target.node.ID ||
+			(target.path != "" && strings.HasPrefix(item.path, target.path+"/")) {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered, len(rows) - len(filtered)
+}
+
+func (m *Model) moveTrashCursor(delta int) {
+	if len(m.trashItems) == 0 {
+		return
+	}
+	m.trashCursor = min(max(m.trashCursor+delta, 0), len(m.trashItems)-1)
+	m.clampTrashSelection()
+}
+
+func (m *Model) clampTrashSelection() {
+	if len(m.trashItems) == 0 {
+		m.trashCursor, m.trashOffset = 0, 0
+		return
+	}
+	m.trashCursor = min(max(m.trashCursor, 0), len(m.trashItems)-1)
+	visible := m.visibleTrashRows()
+	if m.trashCursor < m.trashOffset {
+		m.trashOffset = m.trashCursor
+	}
+	if m.trashCursor >= m.trashOffset+visible {
+		m.trashOffset = m.trashCursor - visible + 1
+	}
+	m.trashOffset = min(max(m.trashOffset, 0), max(len(m.trashItems)-visible, 0))
+}
+
+func (m Model) visibleTrashRows() int {
+	noticeLines := 0
+	if m.notice != "" {
+		noticeLines = 1
+	}
+	return max(m.height-5-noticeLines, 1)
+}
+
 func (m *Model) moveHistoryCursor(delta int) {
 	page, ok := m.currentHistoryPage()
 	if !ok || len(page.Items) == 0 {
@@ -1101,6 +1595,9 @@ func (m *Model) clampSelection() {
 func (m Model) visibleRows() int {
 	headerLines := 2
 	if m.searching {
+		headerLines++
+	}
+	if m.notice != "" {
 		headerLines++
 	}
 	bodyHeight := max(m.height-headerLines-1, 1)

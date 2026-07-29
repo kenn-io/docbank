@@ -680,14 +680,16 @@ unsupported. See [Searching](usage/searching.md).
 docbank tui
 ```
 
-Opens a read-only interactive terminal browser over the authenticated daemon
-API. It navigates the live virtual tree, searches names and extracted text,
-and shows the selected node's stable identity, revision, current version,
-SHA-256, size, and media type. It loads at most 1,000 directory entries or
-search results and reports truncation rather than implying completeness.
+Opens an interactive terminal browser over the authenticated daemon API. It
+navigates the live virtual tree, searches names and extracted text, shows the
+selected node's stable authority, and can move one inspected revision to
+recoverable trash or restore one inspected trash root. It loads at most 1,000
+directory entries, search results, or trash roots and reports truncation rather
+than implying completeness.
 
-The initial TUI does not mutate documents, enroll permanent audit scopes, or
-run backup and storage maintenance. See the
+Trash and restore require explicit revision-bound confirmation. The TUI does
+not expose permanent deletion, enroll permanent audit scopes, or run backup and
+storage maintenance. See the
 [interactive terminal browser](usage/tui.md) for navigation keys and the
 capability boundary.
 

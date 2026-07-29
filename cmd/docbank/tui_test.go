@@ -16,15 +16,19 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/store"
+	doctui "go.kenn.io/docbank/internal/tui"
 )
 
-func TestTUIHelpDefinesReadOnlyInteractiveBoundary(t *testing.T) {
+func TestTUIHelpDefinesRecoverableMutationBoundary(t *testing.T) {
 	out, err := runCLI(t, "tui", "--help")
 	require.NoError(t, err)
-	assert.Contains(t, out, "Open a read-only terminal interface")
+	assert.Contains(t, out, "Open a terminal interface")
 	assert.Contains(t, out, "authenticated daemon API")
-	assert.Contains(t, out, "initial TUI is deliberately read-only")
+	assert.Contains(t, out, "explicit revision-bound confirmation")
+	assert.Contains(t, out, "outside the TUI")
 	assert.Contains(t, out, "/                    Search names and extracted text")
+	assert.Contains(t, out, "x                    Move the selected node to recoverable trash")
+	assert.Contains(t, out, "T                    Browse and restore recoverable trash")
 	assert.Contains(t, out, "a                    Browse permanent audited history")
 }
 
@@ -141,4 +145,55 @@ func TestTUIBackendDoesNotRetryCanceledAcquisition(t *testing.T) {
 	_, err := backend.Stat(ctx, "/")
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Equal(t, int32(1), acquires.Load())
+}
+
+func TestTUIBackendDoesNotReplayMutationAfterResponseIsLost(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			t.Error("test server does not support connection hijacking")
+			return
+		}
+		connection, _, err := hijacker.Hijack()
+		if err != nil {
+			t.Errorf("hijacking test connection: %v", err)
+			return
+		}
+		if err := connection.Close(); err != nil {
+			t.Errorf("closing test connection: %v", err)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	var acquires atomic.Int32
+	backend := &tuiDaemonBackend{ensure: func(context.Context) (*client.Client, error) {
+		acquires.Add(1)
+		return client.New(server.URL, ""), nil
+	}}
+	_, err := backend.Trash(t.Context(), 42, 3)
+	require.ErrorContains(t, err, "trash outcome is unconfirmed")
+	assert.Equal(t, int32(1), requests.Load())
+	assert.Equal(t, int32(1), acquires.Load())
+}
+
+func TestTUIBackendReportsTruncatedMutationReceiptAsUnconfirmed(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, err := w.Write([]byte("{"))
+		assert.NoError(t, err)
+	}))
+	t.Cleanup(server.Close)
+
+	backend := &tuiDaemonBackend{ensure: func(context.Context) (*client.Client, error) {
+		return client.New(server.URL, ""), nil
+	}}
+	_, err := backend.Trash(t.Context(), 42, 3)
+	require.ErrorContains(t, err, "trash outcome is unconfirmed")
+	require.ErrorIs(t, err, doctui.ErrMutationUnconfirmed)
+	assert.Equal(t, int32(1), requests.Load())
 }

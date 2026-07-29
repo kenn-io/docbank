@@ -142,6 +142,20 @@ func IsTransportError(err error) bool {
 	return errors.As(err, &transport)
 }
 
+type responseDecodeError struct{ err error }
+
+func (e *responseDecodeError) Error() string { return e.err.Error() }
+func (e *responseDecodeError) Unwrap() error { return e.err }
+
+// IsResponseDecodeError reports whether the daemon returned a successful HTTP
+// status but the client could not decode the response body. Mutation callers
+// must treat this as an unknown outcome because the daemon may have committed
+// before the response was truncated or malformed.
+func IsResponseDecodeError(err error) bool {
+	var decode *responseDecodeError
+	return errors.As(err, &decode)
+}
+
 type problemError struct {
 	code string
 	err  error
@@ -345,7 +359,9 @@ func (c *Client) doWithHeaders(
 		return resp.Header.Clone(), nil
 	}
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-		return nil, fmt.Errorf("decoding %s %s response: %w", method, path, err)
+		return nil, &responseDecodeError{err: fmt.Errorf(
+			"decoding %s %s response: %w", method, path, err,
+		)}
 	}
 	return resp.Header.Clone(), nil
 }
