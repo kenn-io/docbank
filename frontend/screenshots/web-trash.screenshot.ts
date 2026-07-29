@@ -28,6 +28,12 @@ const tagAssignmentScreenshotPath = path.join(
   "screenshots",
   "web-tag-assignment.png",
 );
+const tagCatalogScreenshotPath = path.join(
+  repositoryRoot,
+  ".superpowers",
+  "screenshots",
+  "web-tag-catalog.png",
+);
 
 test.describe("Docbank web screenshots", () => {
   let workspace = "";
@@ -54,6 +60,7 @@ test.describe("Docbank web screenshots", () => {
     await rm(screenshotPath, { force: true });
     await rm(restoreScreenshotPath, { force: true });
     await rm(tagAssignmentScreenshotPath, { force: true });
+    await rm(tagCatalogScreenshotPath, { force: true });
     const reports = path.join(workspace, "synthetic", "Reports");
     await mkdir(reports, { recursive: true, mode: 0o700 });
     await writeFile(
@@ -145,6 +152,22 @@ test.describe("Docbank web screenshots", () => {
       `,
     });
 
+    await page.getByRole("button", { name: "Manage tag definitions" }).click();
+    const catalog = page.getByRole("dialog", {
+      name: "Manage tag definitions",
+    });
+    await expect(catalog).toContainText("tax");
+    await expect(catalog).toContainText("reviewed");
+    await catalog.getByRole("textbox", { name: "New tag name" }).fill("archived");
+    await catalog.getByRole("button", { name: "Create" }).click();
+    await expect(catalog).toContainText("Created archived.");
+    await page.screenshot({
+      path: tagCatalogScreenshotPath,
+      fullPage: true,
+      animations: "disabled",
+    });
+    await catalog.getByRole("button", { name: "Done" }).click();
+
     await page.getByRole("cell", { name: "Reports", exact: true }).dblclick();
     const report = page.getByRole("cell", {
       name: "quarterly-tax-report.txt",
@@ -153,7 +176,7 @@ test.describe("Docbank web screenshots", () => {
     await expect(report).toBeVisible();
     await report.click();
 
-    await page.getByRole("button", { name: "Manage" }).click();
+    await page.getByRole("button", { name: "Manage", exact: true }).click();
     const tags = page.getByRole("dialog", {
       name: "Manage tags for quarterly-tax-report.txt",
     });

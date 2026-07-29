@@ -106,6 +106,11 @@ export interface TagAssignmentReceipt {
   changed: boolean;
 }
 
+export interface TagDeletionReceipt {
+  tag: Tag;
+  removed_assignments: number;
+}
+
 export interface TaggedNode {
   node: Node;
   path?: string;
@@ -399,6 +404,72 @@ export async function tags(session: string): Promise<TagPage> {
 
 export async function tagByID(session: string, tagID: string): Promise<Tag> {
   return requestJSON<Tag>(`/api/v1/tags/${encodeURIComponent(tagID)}`, session);
+}
+
+export async function createTag(session: string, name: string): Promise<Tag> {
+  const normalized = name.normalize("NFC");
+  const tag = await requestJSON<Tag>("/api/v1/tags", session, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (
+    !tag.id ||
+    tag.name !== normalized ||
+    tag.revision !== 1 ||
+    tag.assignment_count !== 0
+  ) {
+    throw new Error("The daemon returned an invalid created-tag receipt.");
+  }
+  return tag;
+}
+
+export async function renameTag(
+  session: string,
+  tagID: string,
+  revision: number,
+  name: string,
+): Promise<Tag> {
+  const normalized = name.normalize("NFC");
+  const tag = await requestJSON<Tag>(
+    `/api/v1/tags/${encodeURIComponent(tagID)}`,
+    session,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        "If-Match": String(revision),
+      },
+      body: JSON.stringify({ name }),
+    },
+  );
+  if (tag.id !== tagID || tag.name !== normalized || tag.revision < revision) {
+    throw new Error("The daemon returned an invalid renamed-tag receipt.");
+  }
+  return tag;
+}
+
+export async function deleteTag(
+  session: string,
+  tagID: string,
+  revision: number,
+): Promise<TagDeletionReceipt> {
+  const receipt = await requestJSON<TagDeletionReceipt>(
+    `/api/v1/tags/${encodeURIComponent(tagID)}`,
+    session,
+    {
+      method: "DELETE",
+      headers: { "If-Match": String(revision) },
+    },
+  );
+  if (
+    receipt.tag.id !== tagID ||
+    receipt.tag.revision !== revision ||
+    receipt.removed_assignments !== receipt.tag.assignment_count
+  ) {
+    throw new Error("The daemon returned an invalid deleted-tag receipt.");
+  }
+  return receipt;
 }
 
 export async function taggedNodes(

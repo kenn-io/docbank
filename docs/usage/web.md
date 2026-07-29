@@ -20,7 +20,9 @@ type. A selected live file or folder can be moved to recoverable trash after an
 explicit confirmation; the trash drawer lists restorable roots and returns one
 to the live tree under its inspected revision. The authority card also shows
 every tag assigned to the selected file or folder and can add or remove an
-existing definition under the node's inspected revision. Selecting a tag
+existing definition under the node's inspected revision. The toolbar's tag
+catalog also creates, renames, and deliberately deletes stable definitions.
+Selecting a tag
 browses its live assignments, while search can require the same exact tag
 identity. Protected documents expose
 their newest-first permanent audit timeline and complete event authority. The
@@ -80,11 +82,24 @@ status. If another person, agent, or CLI command changed the node first, the
 dialog keeps the failed decision visible and asks you to refresh rather than
 applying it to newer state.
 
-This surface changes only assignments on the selected live node. Creating,
-renaming, or deleting tag definitions and bulk assignment remain explicit CLI
-or master-authenticated API workflows. When the vault has more than 1,000 tag
-definitions, use those exhaustive interfaces to reach definitions outside the
-browser's catalog page.
+## Manage tag definitions
+
+Choose the tag-catalog button beside the toolbar selector to create, rename,
+or delete the vault's shared tag definitions. Creating allocates a new stable
+UUID. Renaming keeps that identity while advancing the definition revision and
+every assigned node's metadata authority. A stale rename remains visible
+instead of overwriting a definition changed by another person or agent.
+
+Deleting requires a separate confirmation that names the exact stable ID,
+revision, and current assignment count. It removes the definition and all of
+its assignments, but never deletes a document or its stored content. Reusing
+the same name later creates a different stable identity. After a rename or
+deletion, the browser reloads the active folder, search, or tag view so node
+revisions and assignment counts remain authoritative.
+
+The catalog shows the first 1,000 name-sorted definitions and discloses the
+complete count. Use `docbank tag`, the paginated HTTP API, or an embedded client
+for exhaustive definition management and bulk assignment.
 
 ## Move a node to recoverable trash
 
@@ -370,8 +385,8 @@ in page memory. Ordinary requests use
 search, tag-definition and assignment reads, immutable-version, provenance,
 audit-status, audit-history, background-job, physical-storage-status,
 configured backup-snapshot-list, bounded trash-list, verified-download
-preparation, and revision-bound move-to-trash, restore, tag-assignment, and
-tag-removal requests used by this interface.
+preparation, revision-bound move-to-trash and restore, tag assignment/removal,
+and tag-definition create/rename/delete requests used by this interface.
 Download preparation may write only owner-private temporary bytes and issue
 one exact, expiring file ticket. Upload uses a separate, never-reconnecting
 WebSocket authenticated by a challenge proof over the upload secret. No file
@@ -380,8 +395,10 @@ beneath the stable live directory selected in the browser and must satisfy the
 same caller-declared/server-computed byte identity as every remote writer. The
 trash and restore requests can target only the stable selected node and must
 carry its current revision, so a stale browser view cannot move changed state.
-Tag assignment and removal have the same stable-node revision boundary and do
-not grant tag-definition lifecycle or bulk-mutation authority. The session
+Tag assignment and removal have the same stable-node revision boundary.
+Renaming and deleting definitions require their inspected tag revision, and
+definition deletion explicitly reports how many assignments were removed.
+These permissions do not grant bulk tag mutation. The session
 cannot empty trash, perform any other document mutation,
 enroll audit scopes, run independent verification, or call backup creation,
 verification, restore, maintenance, configuration, or general API endpoints.
@@ -419,8 +436,8 @@ children in one metadata snapshot, so a concurrent CLI or agent move cannot
 leave the browser constructing child paths beneath an obsolete name.
 
 The current web application does not compare versions, recursively import
-folders, edit, revert, prune, move, create or change tags and
-assignments, empty trash, enroll audit scopes, run independent audit verification,
+folders, edit, revert, prune, move live nodes between folders, bulk-apply tags,
+empty trash, enroll audit scopes, run independent audit verification,
 or run maintenance, backup, verification, or restore operations.
 Use the corresponding CLI or authenticated HTTP endpoint for those workflows.
 Future web workflows will require deliberately expanded browser-session
