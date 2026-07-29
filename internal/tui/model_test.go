@@ -17,28 +17,29 @@ import (
 )
 
 type fakeBackend struct {
-	nodes          map[string]api.Node
-	children       map[int64]api.NodePage
-	search         api.SearchReport
-	err            error
-	childLimit     int
-	searchMax      int
-	nodeIDs        []int64
-	statPaths      []string
-	history        map[string]api.AuditEventPage
-	historyErr     error
-	historyIDs     []int64
-	historyCursors []string
-	tags           map[int64]api.TagPage
-	tagNodeIDs     []int64
-	jobs           []api.Job
-	jobsErr        error
-	jobCalls       int
-	trash          api.TrashPage
-	trashCalls     int
-	trashed        []api.Node
-	restored       []api.Node
-	mutationErr    error
+	nodes              map[string]api.Node
+	children           map[int64]api.NodePage
+	search             api.SearchReport
+	err                error
+	childLimit         int
+	searchMax          int
+	nodeIDs            []int64
+	statPaths          []string
+	history            map[string]api.AuditEventPage
+	historyErr         error
+	historyIDs         []int64
+	historyCursors     []string
+	tags               map[int64]api.TagPage
+	tagNodeIDs         []int64
+	jobs               []api.Job
+	jobsErr            error
+	jobCalls           int
+	trash              api.TrashPage
+	trashCalls         int
+	trashed            []api.Node
+	restored           []api.Node
+	mutationErr        error
+	mutationReceiptErr error
 }
 
 func newFakeBackend() *fakeBackend {
@@ -248,7 +249,7 @@ func (f *fakeBackend) Trash(
 				}
 			}
 			f.search.Hits = hits
-			return node, nil
+			return node, f.mutationReceiptErr
 		}
 	}
 	return api.Node{}, errors.New("not found")
@@ -287,7 +288,7 @@ func (f *fakeBackend) Restore(
 			node.Revision++
 			node.TrashedAt = ""
 			node.Path = "/restored/" + node.Name
-			return node, nil
+			return node, f.mutationReceiptErr
 		}
 	}
 	return api.Node{}, errors.New("not found")
@@ -409,6 +410,71 @@ func TestModelCancelsTrashConfirmationWithoutMutation(t *testing.T) {
 	model, _ = updateModel(t, model, key(tea.KeyEscape))
 	assert.Nil(t, model.confirmation)
 	assert.Empty(t, backend.trashed)
+}
+
+func TestUnconfirmedMutationsInvalidateAuthority(t *testing.T) {
+	t.Run("trash reloads live root", func(t *testing.T) {
+		backend := newFakeBackend()
+		backend.mutationReceiptErr = NewMutationUnconfirmedError(
+			"trash", errors.New("receipt was truncated"),
+		)
+		model, err := New(t.Context(), backend)
+		require.NoError(t, err)
+		model = runModelCommand(t, model, model.loadDirectory(
+			0, navigationInitial, model.requestID,
+		))
+		model, cmd := updateModel(t, model, key(tea.KeyEnter))
+		model = runModelCommand(t, model, cmd)
+		require.Len(t, model.stack, 1)
+
+		model, _ = updateModel(t, model, runeKey('x'))
+		model, mutation := updateModel(t, model, key(tea.KeyEnter))
+		require.NotNil(t, mutation)
+		model, refresh := updateModel(t, model, mutation())
+		require.NotNil(t, refresh)
+		assert.True(t, model.loading)
+		assert.Empty(t, model.rows)
+		assert.Empty(t, model.stack)
+		assert.Nil(t, model.searchReturn)
+		assert.Contains(t, model.notice, "trash outcome is unconfirmed")
+
+		model = runModelCommand(t, model, refresh)
+		assert.Equal(t, "/", model.directory.Path)
+		require.Len(t, model.rows, 2)
+		assert.Equal(t, int64(2), model.rows[0].node.Revision)
+	})
+
+	t.Run("restore refreshes trash and reloads root on close", func(t *testing.T) {
+		backend := newFakeBackend()
+		backend.mutationReceiptErr = NewMutationUnconfirmedError(
+			"restore", errors.New("receipt was truncated"),
+		)
+		model, err := New(t.Context(), backend)
+		require.NoError(t, err)
+		model = runModelCommand(t, model, model.loadDirectory(
+			0, navigationInitial, model.requestID,
+		))
+		model, trashLoad := updateModel(t, model, runeKey('T'))
+		model = runModelCommand(t, model, trashLoad)
+
+		model, _ = updateModel(t, model, key(tea.KeyEnter))
+		model, mutation := updateModel(t, model, key(tea.KeyEnter))
+		require.NotNil(t, mutation)
+		model, refresh := updateModel(t, model, mutation())
+		require.NotNil(t, refresh)
+		assert.True(t, model.trashChanged)
+		assert.True(t, model.trashLoading)
+		assert.Contains(t, model.notice, "restore outcome is unconfirmed")
+
+		model = runModelCommand(t, model, refresh)
+		assert.Empty(t, model.trashItems)
+		model, rootLoad := updateModel(t, model, key(tea.KeyEscape))
+		require.NotNil(t, rootLoad)
+		assert.Empty(t, model.rows)
+		assert.Empty(t, model.stack)
+		model = runModelCommand(t, model, rootLoad)
+		assert.Equal(t, "/", model.directory.Path)
+	})
 }
 
 func TestTrashOverlayDoesNotCancelUnderlyingLoad(t *testing.T) {

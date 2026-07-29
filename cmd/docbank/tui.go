@@ -207,9 +207,7 @@ func (b *tuiDaemonBackend) Trash(
 		return c.Trash(ctx, nodeID, revision)
 	})
 	if client.IsTransportError(err) || client.IsResponseDecodeError(err) {
-		return api.Node{}, fmt.Errorf(
-			"trash outcome is unconfirmed; refresh before retrying: %w", err,
-		)
+		return api.Node{}, doctui.NewMutationUnconfirmedError("trash", err)
 	}
 	return node, err
 }
@@ -221,9 +219,7 @@ func (b *tuiDaemonBackend) Restore(
 		return c.Restore(ctx, nodeID, revision)
 	})
 	if client.IsTransportError(err) || client.IsResponseDecodeError(err) {
-		return api.Node{}, fmt.Errorf(
-			"restore outcome is unconfirmed; refresh before retrying: %w", err,
-		)
+		return api.Node{}, doctui.NewMutationUnconfirmedError("restore", err)
 	}
 	return node, err
 }

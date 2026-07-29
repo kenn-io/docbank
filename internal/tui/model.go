@@ -159,6 +159,34 @@ var errDetailNodeChanged = errors.New(
 	"document changed while loading tags; close and inspect it again",
 )
 
+// ErrMutationUnconfirmed marks a mutation whose request was sent but whose
+// terminal receipt did not arrive intact. Callers must reacquire authority
+// rather than treating the operation as failed or replaying it.
+var ErrMutationUnconfirmed = errors.New("mutation outcome is unconfirmed")
+
+type mutationUnconfirmedError struct {
+	action string
+	cause  error
+}
+
+func (e *mutationUnconfirmedError) Error() string {
+	return fmt.Sprintf(
+		"%s outcome is unconfirmed; refresh before retrying: %v", e.action, e.cause,
+	)
+}
+
+func (e *mutationUnconfirmedError) Unwrap() error { return e.cause }
+
+func (e *mutationUnconfirmedError) Is(target error) bool {
+	return target == ErrMutationUnconfirmed
+}
+
+// NewMutationUnconfirmedError preserves an uncertain mutation cause for the
+// model while presenting an actionable operator message.
+func NewMutationUnconfirmedError(action string, cause error) error {
+	return &mutationUnconfirmedError{action: action, cause: cause}
+}
+
 const spinnerInterval = 80 * time.Millisecond
 
 // Model is a virtual-tree, search, audited-history, and recoverable-trash
@@ -351,6 +379,25 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.mutationRunning = false
 		m.confirmation = nil
 		if msg.err != nil {
+			if errors.Is(msg.err, ErrMutationUnconfirmed) {
+				m.notice = msg.err.Error()
+				if msg.action == mutationRestore {
+					m.trashChanged = true
+					m.trashErr = msg.err
+					m.trashLoading = true
+					m.trashRequestID++
+					return m, tea.Batch(
+						m.startSpinner(), m.loadTrash(m.trashRequestID),
+					)
+				}
+				m.invalidateLiveView()
+				m.loading = true
+				m.requestID++
+				return m, tea.Batch(
+					m.startSpinner(),
+					m.loadDirectory(0, navigationInitial, m.requestID),
+				)
+			}
 			if msg.action == mutationRestore {
 				m.trashErr = msg.err
 			} else {
@@ -624,8 +671,7 @@ func (m Model) updateTrashKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.trashErr = nil
 		m.trashRequestID++
 		if m.trashChanged {
-			m.stack = nil
-			m.searchReturn = nil
+			m.invalidateLiveView()
 			m.notice = "Trash changes applied"
 			m.loading = true
 			m.err = nil
@@ -670,6 +716,18 @@ func (m Model) updateTrashKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+func (m *Model) invalidateLiveView() {
+	m.mode = modeBrowse
+	m.directory = api.Node{}
+	m.rows = nil
+	m.total = 0
+	m.truncated = false
+	m.cursor, m.offset = 0, 0
+	m.stack = nil
+	m.searchQuery = ""
+	m.searchReturn = nil
 }
 
 func (m Model) updateJobsKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {

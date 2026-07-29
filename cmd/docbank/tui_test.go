@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/store"
+	doctui "go.kenn.io/docbank/internal/tui"
 )
 
 func TestTUIHelpDefinesRecoverableMutationBoundary(t *testing.T) {
@@ -193,5 +194,6 @@ func TestTUIBackendReportsTruncatedMutationReceiptAsUnconfirmed(t *testing.T) {
 	}}
 	_, err := backend.Trash(t.Context(), 42, 3)
 	require.ErrorContains(t, err, "trash outcome is unconfirmed")
+	require.ErrorIs(t, err, doctui.ErrMutationUnconfirmed)
 	assert.Equal(t, int32(1), requests.Load())
 }
