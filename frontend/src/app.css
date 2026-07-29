@@ -291,6 +291,10 @@ dd {
   grid-column: 1 / -1;
 }
 
+.document-actions > :last-child {
+  grid-column: 1 / -1;
+}
+
 .document-actions > button,
 .document-actions > .download-control,
 .document-actions > .download-control > button {
@@ -298,6 +302,17 @@ dd {
 }
 
 .document-actions > button {
+  justify-content: center;
+}
+
+.directory-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.directory-actions > button {
+  width: 100%;
   justify-content: center;
 }
 
@@ -446,5 +461,13 @@ dd {
 
   .document-actions > :first-child {
     grid-column: auto;
+  }
+
+  .document-actions > :last-child {
+    grid-column: auto;
+  }
+
+  .directory-actions {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/svelte";
 import App from "./App.svelte";
 
@@ -373,4 +374,148 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
       name: "Browse or filter: showing 1 of 1001 tags: All tags",
     }),
   ).toBeTruthy();
+});
+
+it("returns to root when a nested child is trashed and refresh fails", async () => {
+  history.replaceState(
+    null,
+    "",
+    "/#web_session=short-lived&web_upload_secret=proof",
+  );
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
+
+  const root = {
+    id: 1,
+    name: "",
+    kind: "dir",
+    size: 0,
+    revision: 1,
+    created_at: "2026-07-28T12:00:00Z",
+    modified_at: "2026-07-28T12:00:00Z",
+    path: "/",
+  };
+  const reports = {
+    id: 2,
+    parent_id: 1,
+    name: "Reports",
+    kind: "dir",
+    size: 0,
+    revision: 1,
+    created_at: "2026-07-28T12:00:00Z",
+    modified_at: "2026-07-28T12:00:00Z",
+    path: "/Reports",
+  };
+  const quarterlyReport = {
+    id: 3,
+    parent_id: 2,
+    name: "quarterly-report.txt",
+    kind: "file",
+    current_version_id: "11111111-1111-4111-8111-111111111111",
+    blob_hash: "a".repeat(64),
+    size: 74,
+    mime_type: "text/plain",
+    revision: 1,
+    created_at: "2026-07-28T12:00:00Z",
+    modified_at: "2026-07-28T12:00:00Z",
+    path: "/Reports/quarterly-report.txt",
+  };
+  const json = (value: unknown) =>
+    new Response(JSON.stringify(value), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  let trashed = false;
+  let failRootRefresh = true;
+  let rootReads = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === "/api/v1/path?path=%2F") return json(root);
+    if (url === "/api/v1/nodes/1/children?limit=1000&offset=0") {
+      rootReads += 1;
+      if (trashed && failRootRefresh) {
+        failRootRefresh = false;
+        return new Response(
+          JSON.stringify({
+            status: 503,
+            detail: "root temporarily unavailable",
+          }),
+          {
+            status: 503,
+            headers: { "Content-Type": "application/problem+json" },
+          },
+        );
+      }
+      return json({
+        directory: root,
+        items: [reports],
+        total: 1,
+        limit: 1000,
+        offset: 0,
+      });
+    }
+    if (url === "/api/v1/nodes/2/children?limit=1000&offset=0") {
+      return json({
+        directory: reports,
+        items: trashed ? [] : [quarterlyReport],
+        total: trashed ? 0 : 1,
+        limit: 1000,
+        offset: 0,
+      });
+    }
+    if (url === "/api/v1/tags?limit=1000&offset=0") {
+      return json({ items: [], total: 0, limit: 1000, offset: 0 });
+    }
+    if (url === "/api/v1/audit/status?node_id=3") {
+      return json({ enabled: false, scopes: [] });
+    }
+    if (url === "/api/v1/nodes/3/tags?limit=1000&offset=0") {
+      return json({ items: [], total: 0, limit: 1000, offset: 0 });
+    }
+    if (url === "/api/v1/nodes/3/trash" && init?.method === "POST") {
+      trashed = true;
+      return json({
+        ...quarterlyReport,
+        revision: 2,
+        trashed_at: "2026-07-28T12:01:00Z",
+      });
+    }
+    throw new Error(`unexpected request: ${url}`);
+  });
+
+  render(App);
+  await fireEvent.dblClick(await screen.findByRole("cell", { name: "Reports" }));
+  await screen.findByRole("cell", { name: "quarterly-report.txt" });
+
+  await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
+  const confirmation = screen.getByRole("dialog", {
+    name: "Move quarterly-report.txt to trash",
+  });
+  await fireEvent.click(
+    within(confirmation).getByRole("button", { name: "Move to trash" }),
+  );
+
+  await waitFor(() => expect(rootReads).toBe(2));
+  expect(await screen.findByText("root temporarily unavailable")).toBeTruthy();
+  expect(screen.queryByRole("cell", { name: "quarterly-report.txt" })).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Back to previous directory" }).hasAttribute(
+      "disabled",
+    ),
+  ).toBe(true);
+
+  await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
+  await waitFor(() => expect(rootReads).toBe(3));
+  expect(await screen.findByRole("cell", { name: "Reports" })).toBeTruthy();
+  expect(screen.queryByRole("cell", { name: "quarterly-report.txt" })).toBeNull();
 });

@@ -20,6 +20,11 @@ Instructions for autonomous coding agents working in this repository.
   `frontend/package-lock.json`. Run `make frontend-test` for type, kit-ui,
   unit, and production-build checks. Release CI builds the frontend once and
   embeds those exact assets in all six platform archives.
+- Real web screenshots use the repository-owned Playwright harness in
+  `frontend/screenshots/`. Run `make frontend-screenshots`; captures must use
+  its temporary synthetic vault and real daemon, never a developer vault or
+  mocked API data. Generated images stay under `.superpowers/screenshots/`
+  until they are visually inspected and attached to the relevant pull request.
 
 ## Private Data Boundary
 

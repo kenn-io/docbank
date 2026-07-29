@@ -445,6 +445,33 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 		"browser sessions cannot upload through reconnectable HTTP")
 	require.NoError(t, resp.Body.Close())
 
+	trashRequest, err := http.NewRequest(
+		http.MethodPost,
+		ts.URL+"/api/v1/nodes/"+strconv.FormatInt(document.ID, 10)+"/trash",
+		nil,
+	)
+	require.NoError(t, err)
+	trashRequest.Header["X-Api-Key"] = []string{""}
+	trashRequest.Header.Set(api.WebSessionHeader, issued.Token)
+	trashRequest.Header.Set("If-Match", strconv.FormatInt(document.Revision, 10))
+	resp, err = ts.Client().Do(trashRequest)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var trashed api.Node
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&trashed))
+	require.NoError(t, resp.Body.Close())
+	assert.Equal(t, document.ID, trashed.ID)
+	assert.NotEmpty(t, trashed.TrashedAt)
+	assert.Equal(t, "/Taxes/return.txt", trashed.Path)
+
+	resp = webRequest(
+		http.MethodPost,
+		"/api/v1/nodes/"+strconv.FormatInt(document.ID, 10)+"/restore",
+	)
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode,
+		"browser trash permission does not grant restore or other mutations")
+	require.NoError(t, resp.Body.Close())
+
 	resp = webRequest(http.MethodGet,
 		"/api/v1/backup/snapshots?repo=/;/../var/backups/other")
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode,

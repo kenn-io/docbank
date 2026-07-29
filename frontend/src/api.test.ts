@@ -16,6 +16,7 @@ import {
   taggedNodes,
   tags,
   takeFragmentSession,
+  trashNode,
 } from "./api.js";
 
 describe("browser authentication", () => {
@@ -176,5 +177,34 @@ describe("browser authentication", () => {
       "/api/v1/nodes/42/tags?limit=1000&offset=0",
       "/api/v1/search?q=quarterly+report&limit=1000&tag_id=11111111-1111-4111-8111-111111111111",
     ]);
+  });
+
+  it("trashes one stable node under its inspected revision", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: 42,
+          name: "report.txt",
+          kind: "file",
+          size: 12,
+          revision: 8,
+          created_at: "2026-07-28T12:00:00Z",
+          modified_at: "2026-07-28T12:00:00Z",
+          trashed_at: "2026-07-28T12:01:00Z",
+          path: "/Reports/report.txt",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    await expect(trashNode("session", 42, 7)).resolves.toMatchObject({
+      id: 42,
+      revision: 8,
+      path: "/Reports/report.txt",
+    });
+    const [path, request] = fetchMock.mock.calls[0] ?? [];
+    expect(path).toBe("/api/v1/nodes/42/trash");
+    expect(request?.method).toBe("POST");
+    expect(new Headers(request?.headers).get("If-Match")).toBe("7");
   });
 });

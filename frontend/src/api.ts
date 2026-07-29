@@ -416,6 +416,30 @@ export async function nodeTags(session: string, nodeID: number): Promise<TagPage
   );
 }
 
+export async function trashNode(
+  session: string,
+  nodeID: number,
+  revision: number,
+): Promise<Node> {
+  const node = await requestJSON<Node>(
+    `/api/v1/nodes/${nodeID}/trash`,
+    session,
+    {
+      method: "POST",
+      headers: { "If-Match": String(revision) },
+    },
+  );
+  if (
+    node.id !== nodeID ||
+    node.revision <= revision ||
+    !node.trashed_at ||
+    !node.path?.startsWith("/")
+  ) {
+    throw new Error("The daemon returned an invalid trash receipt.");
+  }
+  return node;
+}
+
 export async function auditStatusForNode(
   session: string,
   nodeID: number,

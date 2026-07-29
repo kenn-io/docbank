@@ -21,7 +21,7 @@ DEFAULT_GOLANGCI_LINT_CACHE := $(shell git rev-parse --path-format=absolute --gi
 GOLANGCI_LINT_CACHE ?= $(DEFAULT_GOLANGCI_LINT_CACHE)
 export GOLANGCI_LINT_CACHE
 
-.PHONY: build install clean test test-v release-scripts-test frontend frontend-test frontend-dev fmt lint lint-ci tidy install-hooks docs-install docs-build docs-serve docs-link docs-deploy help
+.PHONY: build install clean test test-v release-scripts-test frontend frontend-test frontend-dev frontend-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-build docs-serve docs-link docs-deploy help
 
 build: frontend
 	CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS)" -o docbank ./cmd/docbank
@@ -53,11 +53,15 @@ frontend-test:
 	cd frontend && npm ci
 	cd frontend && npm run check
 	cd frontend && npm run check:kit-ui
+	cd frontend && npm run screenshots:check
 	cd frontend && npm test
 	cd frontend && npm run build
 
 frontend-dev:
 	cd frontend && npm run dev
+
+frontend-screenshots:
+	cd frontend && npm run screenshots
 
 fmt:
 	go fmt ./...
@@ -118,4 +122,4 @@ docs-deploy: docs-build
 	vercel deploy docs/site --prod --yes
 
 help:
-	@echo "Targets: build install clean test test-v release-scripts-test frontend frontend-test frontend-dev fmt lint lint-ci tidy install-hooks docs-install docs-build docs-serve docs-link docs-deploy"
+	@echo "Targets: build install clean test test-v release-scripts-test frontend frontend-test frontend-dev frontend-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-build docs-serve docs-link docs-deploy"

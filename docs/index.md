@@ -60,7 +60,7 @@ The ordinary workflow stays direct:
 ```bash
 docbank add ~/Documents/taxes --dest /taxes    # import a folder; sources untouched
 docbank tree /taxes                            # browse the virtual tree
-docbank web                                    # open the local read-only browser
+docbank web                                    # open the scoped local browser
 docbank search "insurance"                     # ranked name and verified plain-text search
 docbank search "return" --tag taxes             # narrow the same ranking by stable tag identity
 docbank get /taxes/2026/return.pdf ./return.pdf # verify, then publish a complete local file
@@ -158,7 +158,7 @@ content versions with verified replacement, reversion, pruning, and
 lookup by content hash (`refs`), tags, permanent audited history with
 independent verification, loose and packed storage with explicit
 maintenance, whole-vault integrity verification, incremental backup
-create/verify/restore, a read-only web application and TUI, and the embedded
+create/verify/restore, a scoped web application, read-only TUI, and the embedded
 Go API. Docbank is not yet a
 stable 1.0; the [Roadmap](roadmap.md) gives the product direction.
 
