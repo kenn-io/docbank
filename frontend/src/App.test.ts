@@ -376,6 +376,171 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
   ).toBeTruthy();
 });
 
+it.each(["browse", "search"] as const)(
+  "reloads the active tag %s after removing its assignment",
+  async (view) => {
+    history.replaceState(
+      null,
+      "",
+      "/#web_session=short-lived&web_upload_secret=proof",
+    );
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+
+    const root = {
+      id: 1,
+      name: "",
+      kind: "dir",
+      size: 0,
+      revision: 1,
+      created_at: "2026-07-28T12:00:00Z",
+      modified_at: "2026-07-28T12:00:00Z",
+      path: "/",
+    };
+    const report = {
+      id: 3,
+      parent_id: 1,
+      name: "quarterly-tax-report.txt",
+      kind: "file",
+      current_version_id: "11111111-1111-4111-8111-111111111111",
+      blob_hash: "a".repeat(64),
+      size: 74,
+      mime_type: "text/plain",
+      revision: 3,
+      created_at: "2026-07-28T12:00:00Z",
+      modified_at: "2026-07-28T12:00:00Z",
+      path: "/quarterly-tax-report.txt",
+    };
+    const tax = {
+      id: "33333333-3333-4333-8333-333333333333",
+      name: "tax",
+      revision: 1,
+      assignment_count: 1,
+    };
+    const json = (value: unknown) =>
+      new Response(JSON.stringify(value), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    let assigned = true;
+    let activeViewReads = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === "/api/v1/path?path=%2F") return json(root);
+      if (url === "/api/v1/nodes/1/children?limit=1000&offset=0") {
+        return json({
+          directory: root,
+          items: [report],
+          total: 1,
+          limit: 1000,
+          offset: 0,
+        });
+      }
+      if (url === "/api/v1/tags?limit=1000&offset=0") {
+        return json({
+          items: [{ ...tax, assignment_count: assigned ? 1 : 0 }],
+          total: 1,
+          limit: 1000,
+          offset: 0,
+        });
+      }
+      if (
+        url ===
+        "/api/v1/tags/33333333-3333-4333-8333-333333333333/nodes?limit=1000&offset=0&live_only=true"
+      ) {
+        activeViewReads += 1;
+        return json({
+          items: assigned ? [{ node: report, path: report.path }] : [],
+          total: assigned ? 1 : 0,
+          limit: 1000,
+          offset: 0,
+          omitted_trashed: 0,
+        });
+      }
+      if (
+        url ===
+        "/api/v1/search?q=quarterly&limit=1000&tag_id=33333333-3333-4333-8333-333333333333"
+      ) {
+        activeViewReads += 1;
+        return json({
+          hits: assigned
+            ? [{ node: report, path: report.path, match: "name" }]
+            : [],
+          limit: 1000,
+          truncated: false,
+          tag_id: tax.id,
+        });
+      }
+      if (url === "/api/v1/audit/status?node_id=3") {
+        return json({ enabled: false, scopes: [] });
+      }
+      if (url === "/api/v1/nodes/3/tags?limit=1000&offset=0") {
+        return json({
+          items: assigned ? [tax] : [],
+          total: assigned ? 1 : 0,
+          limit: 1000,
+          offset: 0,
+        });
+      }
+      if (
+        url ===
+          "/api/v1/nodes/3/tags/33333333-3333-4333-8333-333333333333" &&
+        init?.method === "DELETE"
+      ) {
+        assigned = false;
+        return json({
+          tag: { ...tax, revision: 2, assignment_count: 0 },
+          node: {
+            ...report,
+            revision: 4,
+            modified_at: "2026-07-28T12:01:00Z",
+          },
+          changed: true,
+        });
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+
+    render(App);
+    await screen.findByRole("cell", { name: "quarterly-tax-report.txt" });
+    await fireEvent.click(
+      screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
+    );
+    await fireEvent.click(screen.getByRole("option", { name: "tax (1)" }));
+    await screen.findByText("Documents tagged");
+
+    if (view === "search") {
+      const input = screen.getByRole("searchbox", { name: "Search documents" });
+      await fireEvent.input(input, { target: { value: "quarterly" } });
+      await fireEvent.submit(input.closest("form")!);
+      await screen.findByText("Search results");
+    }
+
+    await screen.findByText("1 assigned");
+    await fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Remove tag tax" }),
+    );
+
+    await waitFor(() => expect(activeViewReads).toBe(2));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("cell", { name: "/quarterly-tax-report.txt" }),
+      ).toBeNull(),
+    );
+  },
+);
+
 it("returns to root when a nested child is trashed and refresh fails", async () => {
   history.replaceState(
     null,

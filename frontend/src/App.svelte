@@ -606,6 +606,10 @@
     tagCatalog = tagCatalog.map((tag) =>
       tag.id === receipt.tag.id ? receipt.tag : tag,
     );
+    if (!assigned && activeTagID === receipt.tag.id) {
+      if (activeQuery) void runSearch();
+      else void loadTaggedNodes(receipt.tag.id);
+    }
     void loadTagCatalog();
     void loadAuditStatus(receipt.node.id);
   }
