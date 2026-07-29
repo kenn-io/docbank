@@ -172,7 +172,7 @@ documents: files you still organize, retrieve, and build workflows around.
 - [Setup](setup.md): install the binary and create the vault
 - [Quickstart](quickstart.md): a ten-minute tour of the CLI
 - [Vault Lifecycle](usage/lifecycle.md): operate, snapshot, and recover safely
-- [Web Application](usage/web.md): browse, search, and download verified retained content
+- [Web Application](usage/web.md): browse, search, upload, download, and manage recoverable trash
 - [Docbank for Agents](agents.md): the automation contract
 - [Embed in Go](embedding.md): vaults inside your own application
 - [Troubleshooting](troubleshooting.md): diagnose failures without risking the vault

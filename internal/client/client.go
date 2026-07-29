@@ -2449,12 +2449,29 @@ func (c *Client) Restore(ctx context.Context, id, rev int64) (api.Node, error) {
 	return n, err
 }
 
+func (c *Client) TrashPage(
+	ctx context.Context, limit, offset int,
+) (api.TrashPage, error) {
+	var out api.TrashPage
+	err := c.do(ctx, http.MethodGet,
+		fmt.Sprintf("/api/v1/trash?limit=%d&offset=%d", limit, offset),
+		nil, nil, &out)
+	return out, err
+}
+
 func (c *Client) TrashList(ctx context.Context) ([]api.Node, error) {
-	var out struct {
-		Items []api.Node `json:"items"`
+	const pageSize = 1000
+	var roots []api.Node
+	for offset := 0; ; offset += pageSize {
+		page, err := c.TrashPage(ctx, pageSize, offset)
+		if err != nil {
+			return nil, err
+		}
+		roots = append(roots, page.Items...)
+		if len(roots) >= page.Total || len(page.Items) == 0 {
+			return roots, nil
+		}
 	}
-	err := c.do(ctx, http.MethodGet, "/api/v1/trash", nil, nil, &out)
-	return out.Items, err
 }
 
 func (c *Client) TrashEmpty(ctx context.Context, olderThan string, run bool) (api.TrashEmptyReport, error) {

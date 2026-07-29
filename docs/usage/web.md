@@ -17,7 +17,8 @@ navigate the virtual tree, sort a folder by document name, size, or modification
 time, search names and extracted text, and inspect the selected document's stable
 node ID, revision, current version ID, SHA-256 identity, exact size, and media
 type. A selected live file or folder can be moved to recoverable trash after an
-explicit confirmation. The authority card also shows every tag assigned to the selected file or
+explicit confirmation; the trash drawer lists restorable roots and returns one
+to the live tree under its inspected revision. The authority card also shows every tag assigned to the selected file or
 folder. Selecting a tag browses its live assignments, while search can require
 the same exact tag identity. Protected documents expose
 their newest-first permanent audit timeline and complete event authority. The
@@ -77,7 +78,29 @@ and refreshes the current folder, search, or tag view.
 
 This action is deliberately recoverable. It does not empty trash, garbage
 collect content, reclaim packed space, or erase permanent audited history.
-Listing and restoring trash remain CLI or authenticated API workflows.
+
+## Restore from recoverable trash
+
+Choose the trash button in the top bar to inspect the newest 1,000 independently
+restorable roots. Each entry shows its name, kind, stable node ID, revision,
+trash time, and logical size for files. A folder entry represents the complete
+subtree that left the live tree in that trash operation.
+
+Choose **Restore** and confirm the inspected revision. Docbank returns the same
+stable node and retained content to its original live parent when that
+directory still exists. If the parent is unavailable, restore falls back to
+the vault root; if the chosen name is already occupied, Docbank adds its normal
+collision suffix. The completed receipt shows the actual canonical path rather
+than predicting where the item should have landed.
+
+A stale revision leaves the confirmation open so the operator can refresh and
+make a new decision. A successful restore removes the item from the trash
+drawer and reacquires the live tree from root, discarding cached paths whose
+parent revisions may have changed.
+
+The browser cannot empty trash. Permanent tree-metadata deletion, subsequent
+garbage collection, and packed-space reclamation remain explicit CLI or
+master-authenticated API operations.
 
 ## Upload verified documents
 
@@ -324,17 +347,17 @@ in page memory. Ordinary requests use
 `X-Docbank-Web-Session`, which the daemon accepts only for the tree, node,
 search, tag-definition and assignment reads, immutable-version, provenance, audit-status, audit-history,
 background-job, physical-storage-status, configured backup-snapshot-list,
-verified-download preparation, and revision-bound move-to-trash request used by
-this interface.
+bounded trash-list, verified-download preparation, and revision-bound
+move-to-trash and restore requests used by this interface.
 Download preparation may write only owner-private temporary bytes and issue
 one exact, expiring file ticket. Upload uses a separate, never-reconnecting
 WebSocket authenticated by a challenge proof over the upload secret. No file
 bytes are sent until that proof succeeds. It may create only file nodes
 beneath the stable live directory selected in the browser and must satisfy the
 same caller-declared/server-computed byte identity as every remote writer. The
-trash request can target only the stable selected node and must carry its
-current revision, so a stale browser view cannot move changed state. The
-session cannot restore or empty trash, perform any other document mutation,
+trash and restore requests can target only the stable selected node and must
+carry its current revision, so a stale browser view cannot move changed state.
+The session cannot empty trash, perform any other document mutation,
 enroll audit scopes, run independent verification, or call backup creation,
 verification, restore, maintenance, configuration, or general API endpoints.
 Its sole backup capability is listing the immutable snapshots in the
@@ -360,7 +383,7 @@ history, logs, screenshots, issue trackers, or chat.
 
 ## Current boundary
 
-Folder, tag, and search views are bounded to 1,000 rows and say when more
+Folder, tag, search, and recoverable-trash views are bounded to 1,000 rows and say when more
 results exist; use the CLI or paginated HTTP API for exhaustive automation. Search has
 the same name and verified extracted-text semantics as `docbank search`.
 Results initially preserve the API's relevance ranking. Choosing Document,
@@ -372,7 +395,7 @@ leave the browser constructing child paths beneath an obsolete name.
 
 The current web application does not compare versions, recursively import
 folders, edit, revert, prune, move, create or change tags and
-assignments, restore trash, enroll audit scopes, run independent audit verification,
+assignments, empty trash, enroll audit scopes, run independent audit verification,
 or run maintenance, backup, verification, or restore operations.
 Use the corresponding CLI or authenticated HTTP endpoint for those workflows.
 Future web workflows will require deliberately expanded browser-session

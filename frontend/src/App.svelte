@@ -38,6 +38,7 @@
   import JobsDrawer from "./JobsDrawer.svelte";
   import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
   import StorageDrawer from "./StorageDrawer.svelte";
+  import TrashDrawer from "./TrashDrawer.svelte";
   import TrashNodeModal from "./TrashNodeModal.svelte";
   import UploadDrawer from "./UploadDrawer.svelte";
   import VersionHistoryDrawer from "./VersionHistoryDrawer.svelte";
@@ -116,6 +117,7 @@
   let jobsOpen = $state(false);
   let storageOpen = $state(false);
   let backupsOpen = $state(false);
+  let trashOpen = $state(false);
   let uploadTarget = $state<Node | null>(null);
   let trashTarget = $state<Row | null>(null);
   let generation = 0;
@@ -175,6 +177,7 @@
       jobsOpen = false;
       storageOpen = false;
       backupsOpen = false;
+      trashOpen = false;
       uploadTarget = null;
       trashTarget = null;
       tagCatalog = [];
@@ -548,6 +551,27 @@
     void loadTagCatalog();
   }
 
+  function handleRestored(_receipt: Node): void {
+    selectNode(undefined);
+
+    // Restore can advance an arbitrary destination parent and make every
+    // cached path snapshot stale. Keep the trash drawer's authoritative
+    // receipt visible while reacquiring the live tree from root.
+    stack = [];
+    directory = null;
+    rows = [];
+    searchQuery = "";
+    activeQuery = "";
+    tagFilterID = "";
+    activeTagID = "";
+    taggedInspected = 0;
+    taggedTotal = 0;
+    taggedTrashed = 0;
+    truncated = false;
+    void loadRoot();
+    void loadTagCatalog();
+  }
+
   async function lock(): Promise<void> {
     generation += 1;
     auditGeneration += 1;
@@ -578,6 +602,7 @@
     jobsOpen = false;
     storageOpen = false;
     backupsOpen = false;
+    trashOpen = false;
     uploadTarget = null;
     trashTarget = null;
     activeQuery = "";
@@ -642,6 +667,23 @@
       {#snippet right()}
         <IconButton
           size="sm"
+          ariaLabel="Recoverable trash"
+          onclick={() => {
+            historyOpen = false;
+            versionsOpen = false;
+            provenanceOpen = false;
+            jobsOpen = false;
+            storageOpen = false;
+            backupsOpen = false;
+            uploadTarget = null;
+            trashTarget = null;
+            trashOpen = true;
+          }}
+        >
+          <Trash2Icon size="14" aria-hidden="true" />
+        </IconButton>
+        <IconButton
+          size="sm"
           ariaLabel="Backup snapshots"
           onclick={() => {
             historyOpen = false;
@@ -649,6 +691,7 @@
             provenanceOpen = false;
             jobsOpen = false;
             storageOpen = false;
+            trashOpen = false;
             backupsOpen = true;
             uploadTarget = null;
           }}
@@ -664,6 +707,7 @@
             provenanceOpen = false;
             jobsOpen = false;
             backupsOpen = false;
+            trashOpen = false;
             uploadTarget = null;
             storageOpen = true;
           }}
@@ -679,6 +723,7 @@
             provenanceOpen = false;
             storageOpen = false;
             backupsOpen = false;
+            trashOpen = false;
             uploadTarget = null;
             jobsOpen = true;
           }}
@@ -760,6 +805,7 @@
                 jobsOpen = false;
                 storageOpen = false;
                 backupsOpen = false;
+                trashOpen = false;
                 uploadTarget = directory;
               }}
             >
@@ -970,6 +1016,7 @@
                       jobsOpen = false;
                       storageOpen = false;
                       backupsOpen = false;
+                      trashOpen = false;
                       uploadTarget = null;
                       versionsOpen = true;
                     }}
@@ -986,6 +1033,7 @@
                       jobsOpen = false;
                       storageOpen = false;
                       backupsOpen = false;
+                      trashOpen = false;
                       uploadTarget = null;
                       provenanceOpen = true;
                     }}
@@ -1004,6 +1052,7 @@
                       jobsOpen = false;
                       storageOpen = false;
                       backupsOpen = false;
+                      trashOpen = false;
                       uploadTarget = null;
                       trashTarget = selected;
                     }}
@@ -1045,6 +1094,7 @@
                       provenanceOpen = false;
                       storageOpen = false;
                       backupsOpen = false;
+                      trashOpen = false;
                       uploadTarget = null;
                       historyOpen = true;
                     }}
@@ -1075,6 +1125,7 @@
                       jobsOpen = false;
                       storageOpen = false;
                       backupsOpen = false;
+                      trashOpen = false;
                       uploadTarget = null;
                       trashTarget = selected;
                     }}
@@ -1143,6 +1194,14 @@
       <StorageDrawer
         session={webSession}
         onclose={() => (storageOpen = false)}
+        onauthfailure={handleFailure}
+      />
+    {/if}
+    {#if trashOpen}
+      <TrashDrawer
+        session={webSession}
+        onclose={() => (trashOpen = false)}
+        onrestored={handleRestored}
         onauthfailure={handleFailure}
       />
     {/if}

@@ -22,6 +22,13 @@ export interface NodePage {
   offset: number;
 }
 
+export interface TrashPage {
+  items: Node[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface ContentVersion {
   id: string;
   node_id: number;
@@ -436,6 +443,34 @@ export async function trashNode(
     !node.path?.startsWith("/")
   ) {
     throw new Error("The daemon returned an invalid trash receipt.");
+  }
+  return node;
+}
+
+export async function trashRoots(session: string): Promise<TrashPage> {
+  return requestJSON<TrashPage>("/api/v1/trash?limit=1000&offset=0", session);
+}
+
+export async function restoreNode(
+  session: string,
+  nodeID: number,
+  revision: number,
+): Promise<Node> {
+  const node = await requestJSON<Node>(
+    `/api/v1/nodes/${nodeID}/restore`,
+    session,
+    {
+      method: "POST",
+      headers: { "If-Match": String(revision) },
+    },
+  );
+  if (
+    node.id !== nodeID ||
+    node.revision <= revision ||
+    node.trashed_at ||
+    !node.path?.startsWith("/")
+  ) {
+    throw new Error("The daemon returned an invalid restore receipt.");
   }
   return node;
 }

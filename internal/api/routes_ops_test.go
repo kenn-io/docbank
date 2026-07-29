@@ -295,7 +295,19 @@ func TestTrashListAndEmpty(t *testing.T) {
 
 	resp, body := get(t, ts, "/api/v1/trash", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Contains(t, body, "old.txt")
+	var trash api.TrashPage
+	require.NoError(t, json.Unmarshal([]byte(body), &trash))
+	require.Len(t, trash.Items, 1)
+	assert.Equal(t, "old.txt", trash.Items[0].Name)
+	assert.Equal(t, 1, trash.Total)
+	assert.Zero(t, trash.Limit)
+	assert.Zero(t, trash.Offset)
+
+	resp, body = get(t, ts, "/api/v1/trash?limit=1&offset=0", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NoError(t, json.Unmarshal([]byte(body), &trash))
+	assert.Equal(t, 1, trash.Total)
+	assert.Equal(t, 1, trash.Limit)
 
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
 		map[string]any{"older_than": ""})

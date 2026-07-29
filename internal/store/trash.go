@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+const maxTrashPageSize = 1000
+
 // Trash soft-deletes a live node and its live subtree as a unit. All subtree
 // rows share one trashed_at stamp; only the top node records its original
 // location for restore. Unless ifRev is UnconditionalRev, the mutation
@@ -294,6 +296,61 @@ func (s *Store) TrashedRoots(ctx context.Context) ([]Node, error) {
 		return nil, fmt.Errorf("listing trash: %w", err)
 	}
 	return roots, nil
+}
+
+// TrashedRootsPage lists one bounded newest-first page of restorable trash
+// roots and the complete root count from the same read snapshot.
+func (s *Store) TrashedRootsPage(
+	ctx context.Context, limit, offset int,
+) ([]Node, int, error) {
+	if limit < 1 || limit > maxTrashPageSize {
+		return nil, 0, fmt.Errorf(
+			"trash limit must be between 1 and %d", maxTrashPageSize)
+	}
+	if offset < 0 {
+		return nil, 0, errors.New("trash offset must not be negative")
+	}
+
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, 0, fmt.Errorf("starting trash snapshot: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var total int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM nodes WHERE trash_name IS NOT NULL`,
+	).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("counting trash: %w", err)
+	}
+	rows, err := tx.QueryContext(ctx,
+		`SELECT `+nodeCols+` FROM `+nodeFrom+`
+		 WHERE n.trash_name IS NOT NULL
+		 ORDER BY n.trashed_at DESC, n.id DESC LIMIT ? OFFSET ?`,
+		limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing trash page: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	roots := make([]Node, 0)
+	for rows.Next() {
+		node, err := scanNode(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		roots = append(roots, node)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("listing trash page: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, 0, fmt.Errorf("closing trash page: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, 0, fmt.Errorf("closing trash snapshot: %w", err)
+	}
+	return roots, total, nil
 }
 
 // TrashEmptyResult reports one trash-empty dry run or execution.

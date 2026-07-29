@@ -194,20 +194,37 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 	})
 
 	type trashListOutput struct {
-		Body struct {
-			Items []Node `json:"items"`
-		}
+		Body TrashPage
 	}
 	huma.Register(api, huma.Operation{
 		OperationID: "listTrash", Method: http.MethodGet, Path: "/api/v1/trash",
-		Summary: "List restorable trash roots, newest first",
-	}, func(ctx context.Context, _ *struct{}) (*trashListOutput, error) {
-		roots, err := d.Store.TrashedRoots(ctx)
+		Summary: "List restorable trash roots, newest first, optionally paginated",
+	}, func(ctx context.Context, in *struct {
+		Limit  int `query:"limit" default:"0" minimum:"0" maximum:"1000"`
+		Offset int `query:"offset" default:"0" minimum:"0"`
+	}) (*trashListOutput, error) {
+		var (
+			roots []store.Node
+			total int
+			err   error
+		)
+		if in.Limit == 0 {
+			if in.Offset != 0 {
+				return nil, NewError(http.StatusUnprocessableEntity, "validation",
+					"trash offset requires a positive limit")
+			}
+			roots, err = d.Store.TrashedRoots(ctx)
+			total = len(roots)
+		} else {
+			roots, total, err = d.Store.TrashedRootsPage(ctx, in.Limit, in.Offset)
+		}
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
 		out := &trashListOutput{}
-		out.Body.Items = []Node{}
+		out.Body = TrashPage{
+			Items: []Node{}, Total: total, Limit: in.Limit, Offset: in.Offset,
+		}
 		for _, n := range roots {
 			out.Body.Items = append(out.Body.Items, fromStoreNode(n))
 		}

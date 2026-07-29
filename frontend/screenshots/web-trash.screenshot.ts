@@ -16,6 +16,12 @@ const screenshotPath = path.join(
   "screenshots",
   "web-trash-confirmation.png",
 );
+const restoreScreenshotPath = path.join(
+  repositoryRoot,
+  ".superpowers",
+  "screenshots",
+  "web-trash-restore-confirmation.png",
+);
 
 test.describe("Docbank web screenshots", () => {
   let workspace = "";
@@ -40,6 +46,7 @@ test.describe("Docbank web screenshots", () => {
     vault = path.join(workspace, "vault");
     await mkdir(path.dirname(screenshotPath), { recursive: true, mode: 0o700 });
     await rm(screenshotPath, { force: true });
+    await rm(restoreScreenshotPath, { force: true });
     const reports = path.join(workspace, "synthetic", "Reports");
     await mkdir(reports, { recursive: true, mode: 0o700 });
     await writeFile(
@@ -142,6 +149,26 @@ test.describe("Docbank web screenshots", () => {
     );
     await page.screenshot({
       path: screenshotPath,
+      fullPage: true,
+      animations: "disabled",
+    });
+
+    await confirmation.getByRole("button", { name: "Move to trash" }).click();
+    await expect(confirmation).not.toBeVisible();
+    await page.getByRole("button", { name: "Recoverable trash" }).click();
+    const trash = page.getByRole("dialog", { name: "Recoverable trash" });
+    await expect(trash).toContainText("quarterly-tax-report.txt");
+    await trash.getByRole("button", { name: "Restore" }).click();
+
+    const restore = page.getByRole("dialog", {
+      name: "Restore quarterly-tax-report.txt from trash",
+    });
+    await expect(restore).toBeVisible();
+    await expect(restore).toContainText(
+      "It does not roll back versions or alter permanent audited history.",
+    );
+    await page.screenshot({
+      path: restoreScreenshotPath,
       fullPage: true,
       animations: "disabled",
     });

@@ -23,7 +23,7 @@ const (
 // webSessionRegistry owns browser credentials for exactly one daemon
 // lifetime. Tokens are random, retained only as digests, and authorize only
 // the deliberately limited routes used by the built-in browser. Most are
-// reads; verified upload and revision-bound move-to-trash are the only
+// reads; verified upload plus revision-bound trash and restore are the only
 // document-authority mutations.
 type webSessionRegistry struct {
 	mu          sync.Mutex
@@ -178,7 +178,9 @@ func webSessionRequestAllowed(r *http.Request) bool {
 		if after, ok := strings.CutPrefix(path, prefix); ok {
 			parts := strings.Split(after, "/")
 			nodeID, err := strconv.ParseInt(parts[0], 10, 64)
-			if len(parts) == 2 && parts[1] == "trash" && err == nil && nodeID > 0 {
+			if len(parts) == 2 &&
+				(parts[1] == "trash" || parts[1] == "restore") &&
+				err == nil && nodeID > 0 {
 				return true
 			}
 		}
@@ -192,7 +194,7 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	switch path {
 	case "/api/v1/path", "/api/v1/search",
 		"/api/v1/audit/status", "/api/v1/audit/history", "/api/v1/jobs",
-		"/api/v1/storage", "/api/v1/tags":
+		"/api/v1/storage", "/api/v1/tags", "/api/v1/trash":
 		return true
 	case "/api/v1/backup/snapshots":
 		// Browser sessions may inspect only the repository selected by daemon

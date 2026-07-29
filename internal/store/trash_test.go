@@ -159,6 +159,35 @@ func TestTrashPath(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotFound)
 }
 
+func TestTrashedRootsPageIsBounded(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+
+	for _, name := range []string{"first", "second", "third"} {
+		node, err := s.Mkdir(ctx, s.RootID(), name)
+		require.NoError(t, err)
+		_, _, err = s.Trash(ctx, node.ID, node.Revision)
+		require.NoError(t, err)
+	}
+
+	first, total, err := s.TrashedRootsPage(ctx, 2, 0)
+	require.NoError(t, err)
+	require.Len(t, first, 2)
+	assert.Equal(t, 3, total)
+
+	last, total, err := s.TrashedRootsPage(ctx, 2, 2)
+	require.NoError(t, err)
+	require.Len(t, last, 1)
+	assert.Equal(t, 3, total)
+	assert.NotEqual(t, first[0].ID, last[0].ID)
+	assert.NotEqual(t, first[1].ID, last[0].ID)
+
+	_, _, err = s.TrashedRootsPage(ctx, 0, 0)
+	require.ErrorContains(t, err, "trash limit")
+	_, _, err = s.TrashedRootsPage(ctx, 1, -1)
+	require.ErrorContains(t, err, "trash offset")
+}
+
 func TestTrashEmpty(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
