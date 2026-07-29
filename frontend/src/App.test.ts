@@ -498,6 +498,18 @@ it.each(["browse", "search"] as const)(
             },
           );
         }
+        if (view === "browse" && browseReads === 4) {
+          return new Response(
+            JSON.stringify({
+              status: 503,
+              detail: "re-added tag view temporarily unavailable",
+            }),
+            {
+              status: 503,
+              headers: { "Content-Type": "application/problem+json" },
+            },
+          );
+        }
         return json({
           items: assigned ? [{ node: report, path: report.path }] : [],
           total: assigned ? 1 : 0,
@@ -647,6 +659,20 @@ it.each(["browse", "search"] as const)(
     if (view === "browse") {
       expect(await screen.findByText("tag view temporarily unavailable")).toBeTruthy();
       expect(browseReads).toBe(3);
+      const tagToAssign = screen.getByRole("combobox", {
+        name: "Tag to assign: Choose a tag…",
+      });
+      await fireEvent.click(tagToAssign);
+      await fireEvent.click(screen.getByRole("option", { name: "tax (0)" }));
+      await fireEvent.click(screen.getByRole("button", { name: "Add tag" }));
+      expect(
+        await screen.findByRole("cell", { name: "/quarterly-tax-report.txt" }),
+      ).toBeTruthy();
+      expect(await screen.findByText("1 live shown")).toBeTruthy();
+      expect(
+        await screen.findByText("re-added tag view temporarily unavailable"),
+      ).toBeTruthy();
+      expect(browseReads).toBe(4);
       return;
     }
 

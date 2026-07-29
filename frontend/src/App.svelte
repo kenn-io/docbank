@@ -621,7 +621,19 @@
       tag.id === receipt.tag.id ? receipt.tag : tag,
     );
     if (activeTagID === receipt.tag.id) {
-      if (!assigned) {
+      if (assigned) {
+        const target = manageTagsTarget;
+        if (target && !rows.some((row) => row.node.id === receipt.node.id)) {
+          rows = [...rows, target];
+          if (!activeQuery) {
+            taggedInspected = rows.length;
+            if (receipt.changed) taggedTotal += 1;
+            taggedTotal = Math.max(rows.length, taggedTotal);
+            truncated = taggedTotal > rows.length;
+          }
+          if (selectedID === undefined) selectNode(receipt.node.id);
+        }
+      } else {
         rows = rows.filter((row) => row.node.id !== receipt.node.id);
         if (!activeQuery) {
           taggedInspected = rows.length;
@@ -636,7 +648,7 @@
       else void loadTaggedNodes(receipt.tag.id);
     }
     void loadTagCatalog();
-    if (selectedID === receipt.node.id) {
+    if (selectedChanged) {
       void loadAuditStatus(receipt.node.id);
     }
   }
