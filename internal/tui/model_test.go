@@ -34,6 +34,11 @@ type fakeBackend struct {
 	jobs           []api.Job
 	jobsErr        error
 	jobCalls       int
+	trash          api.TrashPage
+	trashCalls     int
+	trashed        []api.Node
+	restored       []api.Node
+	mutationErr    error
 }
 
 func newFakeBackend() *fakeBackend {
@@ -116,6 +121,15 @@ func newFakeBackend() *fakeBackend {
 				Error: "source is temporarily unavailable; check the configured inbox path",
 			},
 		},
+		trash: api.TrashPage{
+			Items: []api.Node{
+				{
+					ID: 20, Kind: "file", Name: "old-report.txt", Revision: 4,
+					Size: 42, TrashedAt: "2026-07-22T15:00:00Z",
+				},
+			},
+			Total: 1, Limit: maxTrashItems,
+		},
 	}
 }
 
@@ -185,6 +199,68 @@ func (f *fakeBackend) Jobs(_ context.Context) ([]api.Job, error) {
 	return append([]api.Job(nil), f.jobs...), nil
 }
 
+func (f *fakeBackend) TrashPage(
+	_ context.Context, limit, offset int,
+) (api.TrashPage, error) {
+	f.trashCalls++
+	if f.err != nil {
+		return api.TrashPage{}, f.err
+	}
+	page := f.trash
+	page.Limit = limit
+	page.Offset = offset
+	return page, nil
+}
+
+func (f *fakeBackend) Trash(
+	_ context.Context, nodeID, revision int64,
+) (api.Node, error) {
+	f.trashed = append(f.trashed, api.Node{ID: nodeID, Revision: revision})
+	if f.mutationErr != nil {
+		return api.Node{}, f.mutationErr
+	}
+	for itemPath, node := range f.nodes {
+		if node.ID == nodeID {
+			node.TrashedAt = "2026-07-22T16:00:00Z"
+			node.Path = ""
+			f.nodes[itemPath] = node
+			for parentID, page := range f.children {
+				filtered := page.Items[:0]
+				for _, item := range page.Items {
+					if item.ID != nodeID {
+						filtered = append(filtered, item)
+					}
+				}
+				page.Items = filtered
+				page.Total = len(filtered)
+				f.children[parentID] = page
+			}
+			return node, nil
+		}
+	}
+	return api.Node{}, errors.New("not found")
+}
+
+func (f *fakeBackend) Restore(
+	_ context.Context, nodeID, revision int64,
+) (api.Node, error) {
+	f.restored = append(f.restored, api.Node{ID: nodeID, Revision: revision})
+	if f.mutationErr != nil {
+		return api.Node{}, f.mutationErr
+	}
+	for index, node := range f.trash.Items {
+		if node.ID == nodeID {
+			f.trash.Items = append(f.trash.Items[:index], f.trash.Items[index+1:]...)
+			f.trash.Total--
+			node.Revision++
+			node.TrashedAt = ""
+			node.Path = "/restored/" + node.Name
+			return node, nil
+		}
+	}
+	return api.Node{}, errors.New("not found")
+}
+
 func (f *fakeBackend) AuditHistory(
 	_ context.Context, _ string, nodeID int64, limit int, cursor string,
 ) (api.AuditEventPage, error) {
@@ -240,6 +316,67 @@ func TestModelNavigatesSearchesAndReturnsToTree(t *testing.T) {
 	assert.Equal(t, modeBrowse, model.mode)
 	assert.Equal(t, "/", model.directory.Path)
 	require.Len(t, model.rows, 2)
+}
+
+func TestModelConfirmsRevisionBoundTrashAndRestore(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.width, model.height = 100, 16
+	model.cursor = 1
+
+	model, cmd := updateModel(t, model, runeKey('x'))
+	require.Nil(t, cmd)
+	require.NotNil(t, model.confirmation)
+	assert.Equal(t, mutationTrash, model.confirmation.action)
+	assert.Contains(t, model.View().Content, "Move to recoverable trash?")
+	assert.Contains(t, model.View().Content, "Bound revision: 2")
+	assert.Empty(t, backend.trashed)
+
+	model, cmd = updateModel(t, model, key(tea.KeyEnter))
+	require.NotNil(t, cmd)
+	model = runModelCommand(t, model, cmd)
+	require.Len(t, backend.trashed, 1)
+	assert.Equal(t, api.Node{ID: 3, Revision: 2}, backend.trashed[0])
+	assert.Nil(t, model.confirmation)
+	assert.Contains(t, model.notice, "recoverable trash")
+	assert.NotContains(t, rowIDs(model.rows), int64(3))
+
+	model, cmd = updateModel(t, model, runeKey('T'))
+	require.NotNil(t, cmd)
+	model = runModelCommand(t, model, cmd)
+	assert.True(t, model.trashOpen)
+	require.Len(t, model.trashItems, 1)
+	assert.Contains(t, model.View().Content, `"old-report.txt"`)
+
+	model, cmd = updateModel(t, model, key(tea.KeyEnter))
+	require.Nil(t, cmd)
+	require.NotNil(t, model.confirmation)
+	assert.Equal(t, mutationRestore, model.confirmation.action)
+	assert.Contains(t, model.View().Content, "Restore this node?")
+	assert.Contains(t, model.View().Content, "Bound revision: 4")
+
+	model, cmd = updateModel(t, model, key(tea.KeyEnter))
+	require.NotNil(t, cmd)
+	model = runModelCommand(t, model, cmd)
+	require.Len(t, backend.restored, 1)
+	assert.Equal(t, api.Node{ID: 20, Revision: 4}, backend.restored[0])
+	assert.Contains(t, model.notice, `/restored/old-report.txt`)
+	assert.Empty(t, model.trashItems)
+}
+
+func TestModelCancelsTrashConfirmationWithoutMutation(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+
+	model, _ = updateModel(t, model, runeKey('x'))
+	require.NotNil(t, model.confirmation)
+	model, _ = updateModel(t, model, key(tea.KeyEscape))
+	assert.Nil(t, model.confirmation)
+	assert.Empty(t, backend.trashed)
 }
 
 func TestModelPreservesViewStateAcrossNavigation(t *testing.T) {
@@ -961,7 +1098,7 @@ func TestChromeAdaptsWithoutDroppingPrimaryContext(t *testing.T) {
 	model.loading = false
 
 	assert.Contains(t, model.renderTitleBar(), "docbank")
-	assert.Contains(t, model.renderTitleBar(), "READ ONLY")
+	assert.Contains(t, model.renderTitleBar(), "RECOVERABLE")
 	assert.Contains(t, model.renderLocation(), "1000")
 	footer := model.renderFooter()
 	assert.Contains(t, footer, "↑/↓ move")

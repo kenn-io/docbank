@@ -17,12 +17,14 @@ import (
 var tuiCmd = &cobra.Command{
 	Use:   "tui",
 	Short: "Browse and search the vault interactively",
-	Long: `Open a read-only terminal interface backed by the authenticated daemon API.
+	Long: `Open a terminal interface backed by the authenticated daemon API.
 
 Navigation:
   Up/Down or j/k       Move between documents
   Enter or Right       Open a directory
   Enter on a file or i Inspect complete document authority
+  x                    Move the selected node to recoverable trash
+  T                    Browse and restore recoverable trash
   a                    Browse permanent audited history
   Left or Backspace    Return to the parent directory
   /                    Search names and extracted text
@@ -32,8 +34,9 @@ Navigation:
   ?                    Show keyboard help
   q                    Quit
 
-The initial TUI is deliberately read-only. Use the ordinary CLI or HTTP API for
-mutations, storage maintenance, backup, and permanent-audit enrollment.`,
+Trash and restore require an explicit revision-bound confirmation. Permanent
+deletion, storage maintenance, backup, and permanent-audit enrollment remain
+outside the TUI.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		c, err := client.Ensure(cmd.Context())
@@ -121,6 +124,32 @@ func withTUIClient[T any](
 	return zero, errors.New("reconnecting to docbank daemon failed")
 }
 
+// withTUIMutationClient retries only daemon acquisition. Once a mutation is
+// sent, a lost response is an unconfirmed outcome rather than permission to
+// send the revision-bound operation again.
+func withTUIMutationClient[T any](
+	ctx context.Context, backend *tuiDaemonBackend,
+	request func(*client.Client) (T, error),
+) (T, error) {
+	var zero T
+	for attempt := range 2 {
+		c, err := backend.acquire(ctx)
+		if err != nil {
+			if attempt == 0 &&
+				errors.Is(err, client.ErrTransientDaemonAcquisition) &&
+				!errors.Is(err, context.Canceled) &&
+				!errors.Is(err, context.DeadlineExceeded) {
+				continue
+			}
+			return zero, err
+		}
+		result, requestErr := request(c)
+		_ = c.Close()
+		return result, requestErr
+	}
+	return zero, errors.New("acquiring docbank daemon failed")
+}
+
 func (b *tuiDaemonBackend) Stat(ctx context.Context, path string) (api.Node, error) {
 	return withTUIClient(ctx, b, func(c *client.Client) (api.Node, error) {
 		return c.Stat(ctx, path)
@@ -161,6 +190,42 @@ func (b *tuiDaemonBackend) Jobs(ctx context.Context) ([]api.Job, error) {
 	return withTUIClient(ctx, b, func(c *client.Client) ([]api.Job, error) {
 		return c.Jobs(ctx)
 	})
+}
+
+func (b *tuiDaemonBackend) TrashPage(
+	ctx context.Context, limit, offset int,
+) (api.TrashPage, error) {
+	return withTUIClient(ctx, b, func(c *client.Client) (api.TrashPage, error) {
+		return c.TrashPage(ctx, limit, offset)
+	})
+}
+
+func (b *tuiDaemonBackend) Trash(
+	ctx context.Context, nodeID, revision int64,
+) (api.Node, error) {
+	node, err := withTUIMutationClient(ctx, b, func(c *client.Client) (api.Node, error) {
+		return c.Trash(ctx, nodeID, revision)
+	})
+	if client.IsTransportError(err) {
+		return api.Node{}, fmt.Errorf(
+			"trash outcome is unconfirmed; refresh before retrying: %w", err,
+		)
+	}
+	return node, err
+}
+
+func (b *tuiDaemonBackend) Restore(
+	ctx context.Context, nodeID, revision int64,
+) (api.Node, error) {
+	node, err := withTUIMutationClient(ctx, b, func(c *client.Client) (api.Node, error) {
+		return c.Restore(ctx, nodeID, revision)
+	})
+	if client.IsTransportError(err) {
+		return api.Node{}, fmt.Errorf(
+			"restore outcome is unconfirmed; refresh before retrying: %w", err,
+		)
+	}
+	return node, err
 }
 
 func (b *tuiDaemonBackend) AuditHistory(

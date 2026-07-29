@@ -72,6 +72,8 @@ func (m Model) render() string {
 	lines := []string{m.renderTitleBar()}
 	if m.jobsOpen {
 		lines = append(lines, m.renderJobsLocation())
+	} else if m.trashOpen {
+		lines = append(lines, m.renderTrashLocation())
 	} else if m.historyOpen {
 		lines = append(lines, m.renderHistoryLocation())
 	} else {
@@ -80,11 +82,16 @@ func (m Model) render() string {
 	if m.searching {
 		lines = append(lines, fit(m.searchInput.View(), m.width))
 	}
+	if m.notice != "" {
+		lines = append(lines, m.styles.stats.Render(fit(" "+m.notice, m.width)))
+	}
 
 	bodyHeight := max(m.height-len(lines)-1, 1)
 	body := m.renderBody(bodyHeight)
 	if m.jobsOpen {
 		body = m.renderJobsList(bodyHeight)
+	} else if m.trashOpen {
+		body = m.renderTrashList(bodyHeight)
 	} else if m.historyOpen {
 		body = m.renderHistoryList(bodyHeight)
 	}
@@ -101,6 +108,9 @@ func (m Model) render() string {
 	content := strings.Join(lines, "\n")
 	if m.helpOpen {
 		return m.renderHelp(content)
+	}
+	if m.confirmation != nil {
+		return m.renderConfirmation(content)
 	}
 	return content
 }
@@ -145,13 +155,28 @@ func (m Model) renderHistoryLocation() string {
 	return m.styles.stats.Render(joinSides(left, right, m.width))
 }
 
+func (m Model) renderTrashLocation() string {
+	left := " Recoverable trash · newest first"
+	right := fmt.Sprintf("%d restorable root(s)", m.trashTotal)
+	if m.trashTotal > len(m.trashItems) {
+		right = fmt.Sprintf("first %d of %d", len(m.trashItems), m.trashTotal)
+	}
+	if m.loading {
+		right = m.styles.spinner.Render(m.spinnerIndicator()) + " loading"
+	}
+	if m.err != nil {
+		return m.styles.error.Render(fit(left+" — "+quoted(m.err.Error()), m.width))
+	}
+	return m.styles.stats.Render(joinSides(left, right, m.width))
+}
+
 func (m Model) renderTitleBar() string {
 	if m.width < 3 {
 		return fit("docbank", m.width)
 	}
 	contentWidth := max(m.width-2, 1)
 	left := "docbank  documents for you and your agents"
-	right := "READ ONLY"
+	right := "RECOVERABLE CHANGES"
 	if lipgloss.Width(left)+lipgloss.Width(right)+2 > contentWidth {
 		left = "docbank"
 	}
@@ -317,7 +342,6 @@ func (m Model) renderList(width, height int) string {
 	lines := make([]string, 0, height)
 	layout := newTableLayout(width, m.mode)
 	heading := layout.render(
-		"   ",
 		m.columnHeading("DOCUMENT", sortByName),
 		"TYPE",
 		"MATCH",
@@ -356,13 +380,58 @@ func (m Model) renderList(width, height int) string {
 			size = formatBytes(item.node.Size)
 		}
 		line := layout.render(
-			"   ", quoted(label), kind, match, size, formatModified(item.node.ModifiedAt),
+			quoted(label), kind, match, size, formatModified(item.node.ModifiedAt),
 		)
 		if index == m.cursor {
 			line = "▶" + line[1:]
 		}
 		line = pad(fit(line, width), width)
 		if index == m.cursor {
+			lines = append(lines, m.styles.cursor.Render(line))
+		} else if index%2 == 1 {
+			lines = append(lines, m.styles.alternate.Render(line))
+		} else {
+			lines = append(lines, line)
+		}
+	}
+	for len(lines) < height {
+		lines = append(lines, strings.Repeat(" ", width))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) renderTrashList(height int) string {
+	width := max(m.width, 1)
+	lines := make([]string, 0, height)
+	layout := newTableLayout(width, modeBrowse)
+	heading := layout.render("DOCUMENT", "TYPE", "", "SIZE", "TRASHED")
+	lines = append(lines, m.styles.heading.Render(pad(fit(heading, width), width)))
+	if height > 1 {
+		lines = append(lines, m.styles.separator.Render(strings.Repeat("─", width)))
+	}
+	visible := max(height-2, 0)
+	if len(m.trashItems) == 0 && visible > 0 {
+		message := " Trash is empty"
+		if m.loading {
+			message = " Loading..."
+		}
+		lines = append(lines, m.styles.muted.Render(pad(fit(message, width), width)))
+	}
+	end := min(m.trashOffset+visible, len(m.trashItems))
+	for index := m.trashOffset; index < end; index++ {
+		node := m.trashItems[index]
+		kind, size := "FILE", formatBytes(node.Size)
+		if node.Kind == nodeKindDir {
+			kind, size = "DIR ", "-"
+		}
+		line := layout.render(
+			quoted(node.Name), kind, "", size, formatModified(node.TrashedAt),
+		)
+		if index == m.trashCursor {
+			line = "▶" + line[1:]
+		}
+		line = pad(fit(line, width), width)
+		if index == m.trashCursor {
 			lines = append(lines, m.styles.cursor.Render(line))
 		} else if index%2 == 1 {
 			lines = append(lines, m.styles.alternate.Render(line))
@@ -632,9 +701,9 @@ func newTableLayout(width int, mode viewMode) tableLayout {
 	return layout
 }
 
-func (l tableLayout) render(prefix, document, kind, match, size, modified string) string {
+func (l tableLayout) render(document, kind, match, size, modified string) string {
 	var line strings.Builder
-	line.WriteString(fit(prefix, 3))
+	line.WriteString("   ")
 	line.WriteString(pad(document, l.document))
 	if l.showKind {
 		line.WriteString("  ")
@@ -792,6 +861,9 @@ func (m Model) renderFooter() string {
 	if m.historyOpen {
 		return m.renderHistoryFooter()
 	}
+	if m.trashOpen {
+		return m.renderTrashFooter()
+	}
 	if m.detailOpen {
 		return m.renderDetailFooter()
 	}
@@ -805,6 +877,7 @@ func (m Model) renderFooter() string {
 		hints = append(hints,
 			hint{text: "i inspect", priority: 65},
 			hint{text: "a history", priority: 68},
+			hint{text: "x trash", priority: 72},
 		)
 	}
 	if len(m.stack) > 0 || m.mode == modeSearch {
@@ -812,6 +885,7 @@ func (m Model) renderFooter() string {
 	}
 	hints = append(hints,
 		hint{text: "/ search", priority: 90},
+		hint{text: "T recover", priority: 74},
 		hint{text: "J jobs", priority: 68},
 		hint{text: "s sort", priority: 85},
 		hint{text: "v reverse", priority: 25},
@@ -834,6 +908,23 @@ func (m Model) renderFooter() string {
 	available := max(m.width-lipgloss.Width(position)-1, 0)
 	keys := fitHints(hints, available)
 	return m.styles.footer.Render(joinSides(keys, position, m.width))
+}
+
+func (m Model) renderTrashFooter() string {
+	hints := []hint{
+		{text: "↑/↓ move", priority: 100},
+		{text: "enter restore", priority: 95},
+		{text: "r refresh", priority: 70},
+		{text: "esc back", priority: 90},
+		{text: "? help", priority: 75},
+		{text: "q quit", priority: 60},
+	}
+	position := ""
+	if len(m.trashItems) > 0 {
+		position = fmt.Sprintf(" %d/%d ", m.trashCursor+1, m.trashTotal)
+	}
+	available := max(m.width-lipgloss.Width(position)-1, 0)
+	return m.styles.footer.Render(joinSides(fitHints(hints, available), position, m.width))
 }
 
 func (m Model) renderJobsFooter() string {
@@ -989,7 +1080,66 @@ func (m Model) renderHelp(background string) string {
 	return m.overlayModal(background, modal)
 }
 
+func (m Model) renderConfirmation(background string) string {
+	confirmation := m.confirmation
+	if confirmation == nil {
+		return background
+	}
+	node := confirmation.target.node
+	title := "Move to recoverable trash?"
+	action := "Move"
+	subject := confirmation.target.path
+	detail := []string{"The node remains restorable. No content bytes are reclaimed."}
+	if confirmation.action == mutationRestore {
+		title = "Restore this node?"
+		action = "Restore"
+		subject = node.Name
+		detail = []string{
+			"Docbank reports the actual restored path after resolving",
+			"name collisions or missing origin parents.",
+		}
+	}
+	status := "Enter " + strings.ToLower(action) + " · Esc cancel"
+	if m.mutationRunning {
+		status = m.styles.spinner.Render(m.spinnerIndicator()) + " " +
+			strings.ToLower(action) + " in progress"
+	}
+	contentWidth := min(max(m.width-10, 1), 68)
+	lines := []string{
+		title,
+		"",
+		" " + quoted(subject),
+		fmt.Sprintf(" Stable selector: id:%d", node.ID),
+		fmt.Sprintf(" Bound revision: %d", node.Revision),
+		"",
+	}
+	lines = append(lines, detail...)
+	lines = append(lines, "", status)
+	for index := range lines {
+		lines[index] = fit(lines[index], contentWidth)
+	}
+	lines[0] = m.styles.modalTitle.Render(lines[0])
+	modal := m.styles.modal.Render(strings.Join(lines, "\n"))
+	return m.overlayModal(background, modal)
+}
+
 func (m Model) helpLines() []string {
+	if m.trashOpen {
+		return []string{
+			"Recoverable trash shortcuts",
+			"",
+			"↑/k, ↓/j       Move through restorable roots",
+			"PgUp/PgDn      Move one visible page",
+			"Home/End       Jump to first or last root",
+			"Enter          Review and restore this revision",
+			"r              Refresh recoverable trash",
+			"Esc            Return to documents",
+			"q              Quit",
+			"",
+			"Permanent deletion is not available here.",
+			"Press any key to close",
+		}
+	}
 	if m.jobsOpen {
 		if m.jobDetail {
 			return []string{
@@ -1056,6 +1206,8 @@ func (m Model) helpLines() []string {
 		"Home/End       Jump to first or last",
 		"Enter/→/l      Open a directory",
 		"Enter/i        Inspect complete document authority",
+		"x              Review moving the node to trash",
+		"T              Browse and restore recoverable trash",
 		"a              Browse permanent audited history",
 		"J              Inspect daemon background jobs",
 		"Esc/←/h        Return to the previous view",

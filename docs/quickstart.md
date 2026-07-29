@@ -72,7 +72,7 @@ docbank tree /taxes
   checklist.pdf  [231]
 ```
 
-For an interactive read-only view of the same tree, open the terminal browser:
+For an interactive view of the same tree, open the terminal browser:
 
 ```bash
 docbank tui
@@ -81,6 +81,8 @@ docbank tui
 Use the arrow keys or `j`/`k` to select a document, Enter to open a directory,
 and `/` to search names and extracted text. Press `i` for complete document
 authority or `a` for the selected node's permanent audited-history timeline.
+Press `x` to review moving the selected revision to recoverable trash, or `T`
+to browse and restore trash roots. The TUI does not expose permanent deletion.
 See the
 [interactive terminal browser](usage/tui.md) guide for the complete key map.
 

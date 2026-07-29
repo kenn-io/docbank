@@ -66,8 +66,9 @@ Four commitments:
   per-node history, independent chain/protected-byte verification, exact-prefix
   checks against externally recorded evidence, and backup/restore fidelity
 - FTS5 search over names and verified UTF-8 text/Markdown/JSON contents
-- A read-only daemon-backed TUI for analytical tree browsing, search, stable
-  document/version identity inspection, and permanent audited-history timelines
+- A daemon-backed TUI for analytical tree browsing, search, stable
+  document/version identity inspection, permanent audited-history timelines,
+  and revision-bound recoverable trash and restore
 - A scoped kit-ui web application for verified local-file upload, virtual-tree browsing, sortable
   document analysis, tag-definition management, tag browsing and assignment,
   tag-filtered extracted-text search,

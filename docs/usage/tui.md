@@ -1,6 +1,6 @@
 ---
 title: Interactive terminal browser
-description: Browse documents, inspect authority and permanent history, and observe daemon background work from a read-only TUI.
+description: Browse documents, inspect authority and permanent history, and safely move or restore recoverable trash from the TUI.
 ---
 
 # Interactive terminal browser
@@ -11,12 +11,12 @@ Run:
 docbank tui
 ```
 
-The TUI is a read-only view of the same authenticated daemon API used by the
-ordinary CLI. It never opens SQLite or the blob store and cannot bypass the
-vault's exclusive owner. Starting it reuses or starts the daemon in the normal
-way. A TUI session may outlive the background daemon's idle window, so each
-bounded interaction rediscovers or restarts a compatible daemon before issuing
-its request; leaving the terminal open does not pin an otherwise idle process.
+The TUI uses the same authenticated daemon API as the ordinary CLI. It never
+opens SQLite or the blob store and cannot bypass the vault's exclusive owner.
+Starting it reuses or starts the daemon in the normal way. A TUI session may
+outlive the background daemon's idle window, so each bounded interaction
+rediscovers or restarts a compatible daemon before issuing its request; leaving
+the terminal open does not pin an otherwise idle process.
 
 The main view is a full-width document table. At ordinary terminal widths it
 shows each document's name, type, size, and UTC modification time; search results
@@ -47,11 +47,27 @@ same document selection. The current daemon contract reports lifecycle rather
 than invented percentages: workers will show numeric progress only when they
 can supply an authoritative completed and total count.
 
+Press <kbd>x</kbd> to review moving the selected live node to recoverable
+trash. The confirmation names the escaped path, stable node ID, and exact
+revision that will be changed; a concurrent change is rejected rather than
+silently targeting newer state. The dialog also says plainly that the node
+remains restorable and no content bytes are reclaimed.
+
+Press <kbd>T</kbd> to browse independently restorable trash roots, newest
+first. Enter opens a second revision-bound confirmation. A successful restore
+reports the actual live path selected by the daemon after collision suffixing
+or origin-parent fallback. Restoration does not guess or promise the old path.
+Permanent deletion and physical reclamation are deliberately absent from the
+TUI; use the preview-first CLI or authenticated HTTP workflows when that is
+really intended.
+
 | Key | Action |
 |-----|--------|
 | <kbd>↑</kbd>/<kbd>k</kbd>, <kbd>↓</kbd>/<kbd>j</kbd> | Move between documents |
 | <kbd>Enter</kbd> or <kbd>→</kbd> | Open the selected directory |
 | <kbd>Enter</kbd> on a file, or <kbd>i</kbd> | Inspect complete document authority |
+| <kbd>x</kbd> | Review moving the selected revision to recoverable trash |
+| <kbd>T</kbd> | Browse and restore recoverable trash roots |
 | <kbd>a</kbd> | Browse the selected node's permanent audited history |
 | <kbd>J</kbd> | Inspect daemon background jobs and failures |
 | <kbd>←</kbd>, <kbd>Backspace</kbd>, or <kbd>Esc</kbd> | Return to the parent directory or leave search results |
@@ -76,7 +92,6 @@ returns to relevance. The first interface loads at most 1,000
 directory entries or search hits and says when more exist; use the CLI or HTTP
 pagination for exhaustive automation.
 
-Mutations, permanent-audit enrollment and independent verification, backup,
-and storage maintenance remain outside this interface. Use their
-ordinary CLI commands or authenticated HTTP endpoints. Later TUI work can add
-those workflows without creating a privileged path into the vault.
+Other mutations, permanent deletion, permanent-audit enrollment and independent
+verification, backup, and storage maintenance remain outside this interface.
+Use their ordinary CLI commands or authenticated HTTP endpoints.

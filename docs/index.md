@@ -159,8 +159,8 @@ content versions with verified replacement, reversion, pruning, and
 lookup by content hash (`refs`), tags, permanent audited history with
 independent verification, loose and packed storage with explicit
 maintenance, whole-vault integrity verification, incremental backup
-create/verify/restore, a scoped web application, read-only TUI, and the embedded
-Go API. Docbank is not yet a
+create/verify/restore, a scoped web application, a TUI with recoverable
+trash and restore, and the embedded Go API. Docbank is not yet a
 stable 1.0; the [Roadmap](roadmap.md) gives the product direction.
 
 Docbank belongs to a family of personal data tools alongside
