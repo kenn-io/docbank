@@ -526,41 +526,26 @@
     else void loadRoot();
   }
 
-  function handleTrashed(receipt: Node): void {
+  function handleTrashed(_receipt: Node): void {
     trashTarget = null;
-    if (selectedID === receipt.id) selectNode(undefined);
+    selectNode(undefined);
 
     // Cached views may contain the removed node or pre-trash parent revisions.
-    // Discard them instead of allowing Back to resurrect stale authority.
+    // Return to a freshly loaded root rather than leaving the current view
+    // stranded without a valid Back destination.
     stack = [];
-
-    const targetPath = receipt.path;
-    const directoryPath = directory?.path;
-    rows = rows.filter(
-      (row) =>
-        row.node.id !== receipt.id &&
-        (!targetPath ||
-          (row.path !== targetPath && !row.path.startsWith(`${targetPath}/`))),
-    );
-    if (
-      targetPath &&
-      directoryPath &&
-      (directoryPath === targetPath || directoryPath.startsWith(`${targetPath}/`))
-    ) {
-      directory = null;
-      rows = [];
-      searchQuery = "";
-      activeQuery = "";
-      tagFilterID = "";
-      activeTagID = "";
-      taggedInspected = 0;
-      taggedTotal = 0;
-      taggedTrashed = 0;
-      void loadRoot();
-      void loadTagCatalog();
-      return;
-    }
-    refreshCurrentView();
+    directory = null;
+    rows = [];
+    searchQuery = "";
+    activeQuery = "";
+    tagFilterID = "";
+    activeTagID = "";
+    taggedInspected = 0;
+    taggedTotal = 0;
+    taggedTrashed = 0;
+    truncated = false;
+    void loadRoot();
+    void loadTagCatalog();
   }
 
   async function lock(): Promise<void> {

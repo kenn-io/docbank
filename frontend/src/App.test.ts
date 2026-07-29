@@ -376,7 +376,7 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
   ).toBeTruthy();
 });
 
-it("discards cached navigation when search trashes the current directory", async () => {
+it("returns to root when a nested child is trashed and refresh fails", async () => {
   history.replaceState(
     null,
     "",
@@ -416,6 +416,20 @@ it("discards cached navigation when search trashes the current directory", async
     modified_at: "2026-07-28T12:00:00Z",
     path: "/Reports",
   };
+  const quarterlyReport = {
+    id: 3,
+    parent_id: 2,
+    name: "quarterly-report.txt",
+    kind: "file",
+    current_version_id: "11111111-1111-4111-8111-111111111111",
+    blob_hash: "a".repeat(64),
+    size: 74,
+    mime_type: "text/plain",
+    revision: 1,
+    created_at: "2026-07-28T12:00:00Z",
+    modified_at: "2026-07-28T12:00:00Z",
+    path: "/Reports/quarterly-report.txt",
+  };
   const json = (value: unknown) =>
     new Response(JSON.stringify(value), {
       status: 200,
@@ -444,8 +458,8 @@ it("discards cached navigation when search trashes the current directory", async
       }
       return json({
         directory: root,
-        items: trashed ? [] : [reports],
-        total: trashed ? 0 : 1,
+        items: [reports],
+        total: 1,
         limit: 1000,
         offset: 0,
       });
@@ -453,8 +467,8 @@ it("discards cached navigation when search trashes the current directory", async
     if (url === "/api/v1/nodes/2/children?limit=1000&offset=0") {
       return json({
         directory: reports,
-        items: [],
-        total: 0,
+        items: trashed ? [] : [quarterlyReport],
+        total: trashed ? 0 : 1,
         limit: 1000,
         offset: 0,
       });
@@ -462,23 +476,16 @@ it("discards cached navigation when search trashes the current directory", async
     if (url === "/api/v1/tags?limit=1000&offset=0") {
       return json({ items: [], total: 0, limit: 1000, offset: 0 });
     }
-    if (url === "/api/v1/audit/status?node_id=2") {
+    if (url === "/api/v1/audit/status?node_id=3") {
       return json({ enabled: false, scopes: [] });
     }
-    if (url === "/api/v1/nodes/2/tags?limit=1000&offset=0") {
+    if (url === "/api/v1/nodes/3/tags?limit=1000&offset=0") {
       return json({ items: [], total: 0, limit: 1000, offset: 0 });
     }
-    if (url === "/api/v1/search?q=Reports&limit=1000") {
-      return json({
-        hits: [{ node: reports, path: "/Reports", match: "name" }],
-        limit: 1000,
-        truncated: false,
-      });
-    }
-    if (url === "/api/v1/nodes/2/trash" && init?.method === "POST") {
+    if (url === "/api/v1/nodes/3/trash" && init?.method === "POST") {
       trashed = true;
       return json({
-        ...reports,
+        ...quarterlyReport,
         revision: 2,
         trashed_at: "2026-07-28T12:01:00Z",
       });
@@ -488,22 +495,19 @@ it("discards cached navigation when search trashes the current directory", async
 
   render(App);
   await fireEvent.dblClick(await screen.findByRole("cell", { name: "Reports" }));
-  await screen.findByText("This folder is empty");
-
-  const search = screen.getByRole("searchbox", { name: "Search documents" });
-  await fireEvent.input(search, { target: { value: "Reports" } });
-  await fireEvent.submit(search.closest("form")!);
-  await screen.findByRole("cell", { name: "/Reports" });
+  await screen.findByRole("cell", { name: "quarterly-report.txt" });
 
   await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
-  const confirmation = screen.getByRole("dialog", { name: "Move Reports to trash" });
+  const confirmation = screen.getByRole("dialog", {
+    name: "Move quarterly-report.txt to trash",
+  });
   await fireEvent.click(
     within(confirmation).getByRole("button", { name: "Move to trash" }),
   );
 
   await waitFor(() => expect(rootReads).toBe(2));
   expect(await screen.findByText("root temporarily unavailable")).toBeTruthy();
-  expect(screen.queryByRole("cell", { name: "/Reports" })).toBeNull();
+  expect(screen.queryByRole("cell", { name: "quarterly-report.txt" })).toBeNull();
   expect(
     screen.getByRole("button", { name: "Back to previous directory" }).hasAttribute(
       "disabled",
@@ -512,6 +516,6 @@ it("discards cached navigation when search trashes the current directory", async
 
   await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
   await waitFor(() => expect(rootReads).toBe(3));
-  expect(screen.getByText("This folder is empty")).toBeTruthy();
-  expect(screen.queryByRole("cell", { name: "/Reports" })).toBeNull();
+  expect(await screen.findByRole("cell", { name: "Reports" })).toBeTruthy();
+  expect(screen.queryByRole("cell", { name: "quarterly-report.txt" })).toBeNull();
 });
