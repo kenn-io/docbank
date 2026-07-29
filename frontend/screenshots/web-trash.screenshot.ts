@@ -38,6 +38,8 @@ test.describe("Docbank web screenshots", () => {
   test.beforeAll(async () => {
     workspace = await mkdtemp(path.join(tmpdir(), "docbank-screenshot-"));
     vault = path.join(workspace, "vault");
+    await mkdir(path.dirname(screenshotPath), { recursive: true, mode: 0o700 });
+    await rm(screenshotPath, { force: true });
     const reports = path.join(workspace, "synthetic", "Reports");
     await mkdir(reports, { recursive: true, mode: 0o700 });
     await writeFile(
@@ -61,15 +63,32 @@ test.describe("Docbank web screenshots", () => {
     if (!webURL.startsWith("http://127.0.0.1:")) {
       throw new Error("docbank web returned an unexpected browser URL");
     }
-    await mkdir(path.dirname(screenshotPath), { recursive: true, mode: 0o700 });
   });
 
   test.afterAll(async () => {
     if (vault) {
-      try {
-        await runDocbank(["daemon", "stop"]);
-      } catch {
-        // Cleanup below removes only this synthetic workspace.
+      let stopped = false;
+      let stopError: unknown;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          await runDocbank(["daemon", "stop"]);
+          const status = JSON.parse(
+            await runDocbank(["daemon", "status", "--json"]),
+          ) as { running?: unknown };
+          if (status.running !== false) {
+            throw new Error("synthetic Docbank daemon is still running");
+          }
+          stopped = true;
+          break;
+        } catch (cause) {
+          stopError = cause;
+        }
+      }
+      if (!stopped) {
+        throw new Error(
+          `could not stop the synthetic Docbank daemon; workspace retained at ${workspace}`,
+          { cause: stopError },
+        );
       }
     }
     if (workspace) await rm(workspace, { recursive: true, force: true });

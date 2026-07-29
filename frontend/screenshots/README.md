@@ -8,7 +8,8 @@ Install Chromium once:
 
 ```sh
 cd frontend
-npx playwright install chromium
+npm ci
+node node_modules/@playwright/test/cli.js install chromium
 ```
 
 Then run from the repository root:
