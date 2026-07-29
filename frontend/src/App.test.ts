@@ -100,6 +100,7 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
   let missingTagResolved = false;
   let tagBrowseReads = 0;
   let unfilteredSearches = 0;
+  let filteredSearches = 0;
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
     if (url === "/api/v1/path?path=%2F") return initialRoot;
@@ -211,6 +212,7 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
       url ===
       "/api/v1/search?q=quarterly&limit=1000&tag_id=33333333-3333-4333-8333-333333333333"
     ) {
+      filteredSearches += 1;
       return json({
         hits: [
           { node: taxReport, path: "/Reports/quarterly-tax-report.txt", match: "name" },
@@ -358,8 +360,12 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
 
   const back = screen.getByRole("button", { name: "Back to previous directory" });
   expect(back.hasAttribute("disabled")).toBe(false);
+  const filteredSearchesBeforeBack = filteredSearches;
   tagResolutionMode = "missing";
   await fireEvent.click(back);
+  await waitFor(() =>
+    expect(filteredSearches).toBe(filteredSearchesBeforeBack + 1),
+  );
   await waitFor(() => expect(tagCatalogReads).toBe(3));
   expect(screen.getByRole("combobox").getAttribute("aria-label")).toContain("tax records");
   await waitFor(() => expect(missingTagResolved).toBe(true));

@@ -210,7 +210,12 @@
     }
   }
 
-  async function loadDirectory(nodeID: number, remember: boolean): Promise<void> {
+  async function loadDirectory(
+    nodeID: number,
+    remember: boolean,
+    preferredSelectedID?: number,
+    preserveSort = false,
+  ): Promise<void> {
     const request = ++generation;
     searchPending = false;
     loading = true;
@@ -245,15 +250,21 @@
         node: item,
         path: path === "/" ? `/${item.name}` : `${path}/${item.name}`,
       }));
-      selectNode(rows[0]?.node.id);
+      selectNode(
+        rows.some((row) => row.node.id === preferredSelectedID)
+          ? preferredSelectedID
+          : rows[0]?.node.id,
+      );
       activeQuery = "";
       activeTagID = "";
       taggedInspected = 0;
       taggedTotal = 0;
       taggedTrashed = 0;
       truncated = page.total > page.items.length;
-      sortField = "name";
-      sortDirection = "asc";
+      if (!preserveSort) {
+        sortField = "name";
+        sortDirection = "asc";
+      }
     } catch (cause) {
       if (request === generation) {
         if (cause instanceof APIError && cause.status === 404) {
@@ -269,7 +280,7 @@
     }
   }
 
-  async function runSearch(): Promise<void> {
+  async function runSearch(preferredSelectedID = selectedID): Promise<void> {
     const query = searchQuery.trim();
     if (!query) {
       if (tagFilterID) await loadTaggedNodes(tagFilterID);
@@ -298,7 +309,7 @@
         requestedTagID === activeTagID ? activeQuery : "",
         sortField,
         sortDirection,
-        selectedID,
+        preferredSelectedID,
       );
       activeQuery = query;
       activeTagID = requestedTagID;
@@ -319,11 +330,14 @@
     }
   }
 
-  async function loadTaggedNodes(tagID: string): Promise<void> {
+  async function loadTaggedNodes(
+    tagID: string,
+    preferredSelectedID?: number,
+  ): Promise<void> {
     if (!directory) return;
     const request = ++generation;
     const refreshing = activeQuery === "" && activeTagID === tagID;
-    const previousSelectedID = selectedID;
+    const selectedToPreserve = preferredSelectedID ?? (refreshing ? selectedID : undefined);
     searchPending = false;
     loading = true;
     error = "";
@@ -343,8 +357,8 @@
         sortDirection = "asc";
       }
       selectNode(
-        refreshing && liveRows.some((row) => row.node.id === previousSelectedID)
-          ? previousSelectedID
+        liveRows.some((row) => row.node.id === selectedToPreserve)
+          ? selectedToPreserve
           : liveRows[0]?.node.id,
       );
     } catch (cause) {
@@ -362,23 +376,30 @@
     searchPending = false;
     const previous = stack.at(-1);
     if (!previous) return;
+    const preferredSelectedID = previous.selectedID;
+    selectNode(undefined);
     directory = previous.directory;
-    rows = previous.rows;
-    selectNode(previous.selectedID);
+    rows = [];
     stack = stack.slice(0, -1);
     activeQuery = previous.activeQuery;
     activeTagID = previous.activeTagID;
     searchQuery = previous.searchQuery;
     tagFilterID = previous.tagFilterID;
-    taggedInspected = previous.taggedInspected;
-    taggedTotal = previous.taggedTotal;
-    taggedTrashed = previous.taggedTrashed;
-    truncated = previous.truncated;
+    taggedInspected = 0;
+    taggedTotal = 0;
+    taggedTrashed = 0;
+    truncated = false;
     sortField = previous.sortField;
     sortDirection = previous.sortDirection;
     error = "";
     loading = false;
     void loadTagCatalog();
+    if (activeQuery) void runSearch(preferredSelectedID);
+    else if (activeTagID) {
+      void loadTaggedNodes(activeTagID, preferredSelectedID);
+    } else {
+      void loadDirectory(directory.id, false, preferredSelectedID, true);
+    }
   }
 
   function clearSearch(): void {
