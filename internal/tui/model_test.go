@@ -222,7 +222,7 @@ func (f *fakeBackend) Trash(
 	}
 	for itemPath, node := range f.nodes {
 		if node.ID == nodeID {
-			livePath := node.Path
+			livePath := itemPath
 			node.TrashedAt = "2026-07-22T16:00:00Z"
 			node.Path = ""
 			f.nodes[itemPath] = node
@@ -249,7 +249,9 @@ func (f *fakeBackend) Trash(
 				}
 			}
 			f.search.Hits = hits
-			return node, f.mutationReceiptErr
+			receipt := node
+			receipt.Path = livePath
+			return receipt, f.mutationReceiptErr
 		}
 	}
 	return api.Node{}, errors.New("not found")
@@ -410,6 +412,68 @@ func TestModelCancelsTrashConfirmationWithoutMutation(t *testing.T) {
 	model, _ = updateModel(t, model, key(tea.KeyEscape))
 	assert.Nil(t, model.confirmation)
 	assert.Empty(t, backend.trashed)
+}
+
+func TestTrashWaitsForNavigationAndUsesAuthoritativeReceiptPath(t *testing.T) {
+	backend := newFakeBackend()
+	backend.search.Hits = []api.SearchHit{{
+		Node: backend.nodes["/docs"], Path: "/docs", Match: "name",
+	}}
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(
+		0, navigationInitial, model.requestID,
+	))
+	model, cmd := updateModel(t, model, key(tea.KeyEnter))
+	model = runModelCommand(t, model, cmd)
+	assert.Equal(t, "/docs", model.directory.Path)
+
+	model, delayedRefresh := updateModel(t, model, runeKey('r'))
+	require.NotNil(t, delayedRefresh)
+	model, _ = updateModel(t, model, runeKey('x'))
+	assert.Nil(t, model.confirmation)
+	assert.Contains(t, model.notice, "finish loading")
+	model = runModelCommand(t, model, delayedRefresh)
+
+	model, _ = updateModel(t, model, runeKey('/'))
+	model.searchInput.SetValue("docs")
+	model, cmd = updateModel(t, model, key(tea.KeyEnter))
+	model = runModelCommand(t, model, cmd)
+	model, _ = updateModel(t, model, runeKey('x'))
+	require.NotNil(t, model.confirmation)
+	assert.Equal(t, "/docs", model.confirmation.target.path)
+
+	docs := backend.nodes["/docs"]
+	report := backend.nodes["/docs/report.txt"]
+	delete(backend.nodes, "/docs")
+	delete(backend.nodes, "/docs/report.txt")
+	docs.Name = "documents"
+	docs.Path = "/documents"
+	docs.Revision++
+	report.Path = "/documents/report.txt"
+	backend.nodes["/documents"] = docs
+	backend.nodes["/documents/report.txt"] = report
+	backend.children[1] = api.NodePage{
+		Items: []api.Node{docs, backend.nodes["/README.txt"]},
+		Total: 2, Limit: maxBrowserItems,
+	}
+	backend.children[2] = api.NodePage{
+		Items: []api.Node{report}, Total: 1, Limit: maxBrowserItems,
+	}
+
+	model, mutation := updateModel(t, model, key(tea.KeyEnter))
+	model, rootLoad := updateModel(t, model, mutation())
+	require.NotNil(t, rootLoad)
+	assert.Contains(t, model.notice, `"/documents"`)
+	assert.NotContains(t, model.notice, `"/docs"`)
+	assert.Empty(t, model.rows)
+	assert.Empty(t, model.stack)
+	assert.Nil(t, model.searchReturn)
+
+	model = runModelCommand(t, model, rootLoad)
+	assert.Equal(t, "/", model.directory.Path)
+	require.Len(t, model.rows, 1)
+	assert.Equal(t, "/README.txt", model.rows[0].path)
 }
 
 func TestUnconfirmedMutationsInvalidateAuthority(t *testing.T) {
@@ -604,15 +668,11 @@ func TestTrashAncestorFromSearchFallsBackToLiveParent(t *testing.T) {
 
 	model, _ = updateModel(t, model, runeKey('x'))
 	model, cmd = updateModel(t, model, key(tea.KeyEnter))
-	model = runModelCommand(t, model, cmd)
-	require.NotNil(t, model.searchReturn)
-	assert.Equal(t, "/", model.searchReturn.directory.Path)
-	assert.True(t, model.searchReturn.stale)
+	model, rootLoad := updateModel(t, model, cmd())
+	require.NotNil(t, rootLoad)
+	assert.Nil(t, model.searchReturn)
 	assert.Empty(t, model.stack)
-
-	model, cmd = updateModel(t, model, key(tea.KeyEscape))
-	require.NotNil(t, cmd)
-	model = runModelCommand(t, model, cmd)
+	model = runModelCommand(t, model, rootLoad)
 	assert.Equal(t, modeBrowse, model.mode)
 	assert.Equal(t, "/", model.directory.Path)
 	require.Len(t, model.rows, 1)

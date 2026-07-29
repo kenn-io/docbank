@@ -414,8 +414,21 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.trashRequestID++
 			return m, tea.Batch(m.startSpinner(), m.loadTrash(m.trashRequestID))
 		}
-		m.notice = fmt.Sprintf("Moved %q to recoverable trash", msg.target.path)
-		m.removeTrashedRows(msg.target)
+		target := row{node: msg.node, path: msg.node.Path}
+		m.notice = fmt.Sprintf("Moved %q to recoverable trash", target.path)
+		if target.path == "" ||
+			m.directory.ID == target.node.ID ||
+			(m.mode == modeSearch && target.node.Kind == nodeKindDir) ||
+			pathAtOrBelow(m.directory.Path, target.path) {
+			m.invalidateLiveView()
+			m.loading = true
+			m.requestID++
+			return m, tea.Batch(
+				m.startSpinner(),
+				m.loadDirectory(0, navigationInitial, m.requestID),
+			)
+		}
+		m.removeTrashedRows(target)
 		return m.reloadCurrent()
 	case spinnerTickMsg:
 		if !m.loading && !m.jobsLoading && !m.trashLoading && !m.mutationRunning {
@@ -514,6 +527,10 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.trashRequestID++
 		return m, tea.Batch(m.startSpinner(), m.loadTrash(m.trashRequestID))
 	case "x":
+		if m.loading {
+			m.notice = "Wait for the current view to finish loading"
+			return m, nil
+		}
 		selected, ok := m.selected()
 		if !ok {
 			return m, nil
