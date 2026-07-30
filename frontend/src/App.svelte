@@ -10,6 +10,7 @@
   import MapPinIcon from "@lucide/svelte/icons/map-pin";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import SearchIcon from "@lucide/svelte/icons/search";
+  import ShieldCheckIcon from "@lucide/svelte/icons/shield-check";
   import TagIcon from "@lucide/svelte/icons/tag";
   import TagsIcon from "@lucide/svelte/icons/tags";
   import HistoryIcon from "@lucide/svelte/icons/history";
@@ -33,6 +34,7 @@
     type SelectDropdownOption,
     type SortDirection,
   } from "@kenn-io/kit-ui";
+  import AuditEvidenceDrawer from "./AuditEvidenceDrawer.svelte";
   import AuditHistoryDrawer from "./AuditHistoryDrawer.svelte";
   import BackupDrawer from "./BackupDrawer.svelte";
   import DownloadButton from "./DownloadButton.svelte";
@@ -122,6 +124,7 @@
   let versionsOpen = $state(false);
   let provenanceOpen = $state(false);
   let jobsOpen = $state(false);
+  let auditEvidenceOpen = $state(false);
   let storageOpen = $state(false);
   let backupsOpen = $state(false);
   let trashOpen = $state(false);
@@ -184,6 +187,7 @@
       versionsOpen = false;
       provenanceOpen = false;
       jobsOpen = false;
+      auditEvidenceOpen = false;
       storageOpen = false;
       backupsOpen = false;
       trashOpen = false;
@@ -768,6 +772,7 @@
     versionsOpen = false;
     provenanceOpen = false;
     jobsOpen = false;
+    auditEvidenceOpen = false;
     storageOpen = false;
     backupsOpen = false;
     trashOpen = false;
@@ -843,6 +848,7 @@
             versionsOpen = false;
             provenanceOpen = false;
             jobsOpen = false;
+            auditEvidenceOpen = false;
             storageOpen = false;
             backupsOpen = false;
             uploadTarget = null;
@@ -860,6 +866,7 @@
             versionsOpen = false;
             provenanceOpen = false;
             jobsOpen = false;
+            auditEvidenceOpen = false;
             storageOpen = false;
             trashOpen = false;
             backupsOpen = true;
@@ -876,6 +883,7 @@
             versionsOpen = false;
             provenanceOpen = false;
             jobsOpen = false;
+            auditEvidenceOpen = false;
             backupsOpen = false;
             trashOpen = false;
             uploadTarget = null;
@@ -891,6 +899,7 @@
             historyOpen = false;
             versionsOpen = false;
             provenanceOpen = false;
+            auditEvidenceOpen = false;
             storageOpen = false;
             backupsOpen = false;
             trashOpen = false;
@@ -899,6 +908,24 @@
           }}
         >
           <ActivityIcon size="14" aria-hidden="true" />
+        </IconButton>
+        <IconButton
+          size="sm"
+          ariaLabel="Verify permanent audit evidence"
+          onclick={() => {
+            historyOpen = false;
+            versionsOpen = false;
+            provenanceOpen = false;
+            jobsOpen = false;
+            storageOpen = false;
+            backupsOpen = false;
+            trashOpen = false;
+            uploadTarget = null;
+            trashTarget = null;
+            auditEvidenceOpen = true;
+          }}
+        >
+          <ShieldCheckIcon size="14" aria-hidden="true" />
         </IconButton>
         <ThemeToggle size="sm" />
         <IconButton size="sm" ariaLabel="Lock web session" onclick={() => void lock()}>
@@ -955,6 +982,7 @@
                 versionsOpen = false;
                 provenanceOpen = false;
                 jobsOpen = false;
+                auditEvidenceOpen = false;
                 storageOpen = false;
                 backupsOpen = false;
                 trashOpen = false;
@@ -994,6 +1022,7 @@
                 versionsOpen = false;
                 provenanceOpen = false;
                 jobsOpen = false;
+                auditEvidenceOpen = false;
                 storageOpen = false;
                 backupsOpen = false;
                 trashOpen = false;
@@ -1218,6 +1247,7 @@
                       historyOpen = false;
                       provenanceOpen = false;
                       jobsOpen = false;
+                      auditEvidenceOpen = false;
                       storageOpen = false;
                       backupsOpen = false;
                       trashOpen = false;
@@ -1235,6 +1265,7 @@
                       historyOpen = false;
                       versionsOpen = false;
                       jobsOpen = false;
+                      auditEvidenceOpen = false;
                       storageOpen = false;
                       backupsOpen = false;
                       trashOpen = false;
@@ -1254,6 +1285,7 @@
                       versionsOpen = false;
                       provenanceOpen = false;
                       jobsOpen = false;
+                      auditEvidenceOpen = false;
                       storageOpen = false;
                       backupsOpen = false;
                       trashOpen = false;
@@ -1296,6 +1328,7 @@
                       jobsOpen = false;
                       versionsOpen = false;
                       provenanceOpen = false;
+                      auditEvidenceOpen = false;
                       storageOpen = false;
                       backupsOpen = false;
                       trashOpen = false;
@@ -1327,6 +1360,7 @@
                       versionsOpen = false;
                       provenanceOpen = false;
                       jobsOpen = false;
+                      auditEvidenceOpen = false;
                       storageOpen = false;
                       backupsOpen = false;
                       trashOpen = false;
@@ -1384,6 +1418,13 @@
       <JobsDrawer
         session={webSession}
         onclose={() => (jobsOpen = false)}
+        onauthfailure={handleFailure}
+      />
+    {/if}
+    {#if auditEvidenceOpen}
+      <AuditEvidenceDrawer
+        session={webSession}
+        onclose={() => (auditEvidenceOpen = false)}
         onauthfailure={handleFailure}
       />
     {/if}

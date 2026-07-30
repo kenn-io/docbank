@@ -173,6 +173,10 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	if method == http.MethodPost && path == webDownloadPreparePath {
 		return true
 	}
+	if method == http.MethodPost && path == "/api/v1/audit/verify" &&
+		r.URL.RawQuery == "" {
+		return true
+	}
 	if method == http.MethodPost && path == "/api/v1/tags" &&
 		r.URL.RawQuery == "" {
 		return true
