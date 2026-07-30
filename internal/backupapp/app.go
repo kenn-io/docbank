@@ -162,7 +162,7 @@ func restoredContentPaths(ctx context.Context, db *sql.DB, allowPackedRestore bo
 	if !allowPackedRestore {
 		var packed bool
 		if err := db.QueryRowContext(ctx, `
-			SELECT EXISTS(SELECT 1 FROM blob_pack_index)
+			SELECT EXISTS(SELECT 1 FROM blob_pack_entries)
 			    OR EXISTS(SELECT 1 FROM blob_packs)`).Scan(&packed); err != nil {
 			return nil, fmt.Errorf("backupapp: checking restored pack authority: %w", err)
 		}

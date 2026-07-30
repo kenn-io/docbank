@@ -725,7 +725,7 @@ func TestVaultRepairPreservesLooseEncodingAcrossPostPublicationFailure(t *testin
 			require.NoError(t, err)
 			_, err = control.Exec(`
 				CREATE TRIGGER fail_repair_authority
-				BEFORE UPDATE OF loose_encoding ON blobs
+				BEFORE UPDATE OF encoding ON blob_locations
 				BEGIN SELECT RAISE(ABORT, 'forced repair authority failure'); END`)
 			require.NoError(t, err)
 
@@ -1409,7 +1409,7 @@ func TestEmbeddedVersionContentRejectsSizeMismatch(t *testing.T) {
 	require.NoError(os.WriteFile(blobPath, []byte("short"), 0o600))
 
 	_, err = vault.OpenVersionContent(t.Context(), first.Version.ID)
-	require.ErrorContains(err, "catalog size 5 does not match version size 6")
+	require.ErrorIs(err, packstore.ErrPhysicalCorrupt)
 }
 
 func TestEmbeddedVersionContentRejectsSameSizeCorruption(t *testing.T) {

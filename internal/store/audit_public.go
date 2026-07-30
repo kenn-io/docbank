@@ -467,7 +467,7 @@ func summarizeAuditEnrollment(
 	}
 	unique := make(map[string]int64)
 	for _, version := range versions {
-		size, err := auditUnsignedField(version, "size")
+		size, err := auditUnsignedField(version, metadataSizeField)
 		if err != nil || size > math.MaxInt64 {
 			return AuditEnrollmentPreview{}, errors.New("audit preview contains invalid version size")
 		}

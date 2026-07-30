@@ -329,6 +329,9 @@ func cursorPosition(state cursor) *string {
 func checkBlob(ctx context.Context, blobs *blob.Store, hash string) (string, int64) {
 	reader, _, err := blobs.OpenStreamContext(ctx, hash)
 	if err != nil {
+		if isContentCorruption(err) {
+			return "corrupt", 0
+		}
 		if errors.Is(err, fs.ErrNotExist) {
 			return "missing", 0
 		}
@@ -350,7 +353,8 @@ func checkBlob(ctx context.Context, blobs *blob.Store, hash string) (string, int
 }
 
 func isContentCorruption(err error) bool {
-	return errors.Is(err, packstore.ErrContentMismatch) ||
+	return errors.Is(err, packstore.ErrPhysicalCorrupt) ||
+		errors.Is(err, packstore.ErrContentMismatch) ||
 		errors.Is(err, pack.ErrTruncated) ||
 		errors.Is(err, pack.ErrChecksum) ||
 		errors.Is(err, pack.ErrCorrupt) ||

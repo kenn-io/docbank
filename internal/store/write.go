@@ -247,16 +247,19 @@ func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64, physical ...Bl
 		return fmt.Errorf("recording blob %s: %w", hash, err)
 	}
 	result, err := tx.Exec(
-		`INSERT OR IGNORE INTO blobs
-		 (hash, size, created_at, loose_encoding, loose_stored_size, pack_eligible)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		hash, size, nowRFC3339(), storage.Encoding, storage.StoredBytes, storage.PackEligible)
+		`INSERT OR IGNORE INTO blobs(hash, size, created_at) VALUES (?, ?, ?)`,
+		hash, size, nowRFC3339())
 	if err != nil {
 		return fmt.Errorf("recording blob %s: %w", hash, err)
 	}
 	inserted, err := result.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("checking blob %s insertion: %w", hash, err)
+	}
+	if inserted != 0 {
+		return writeLooseLocationTx(
+			context.Background(), tx, s.primaryStoreID, hash, storage,
+		)
 	}
 	current, err := physicalContentTx(tx, hash)
 	if err != nil {
@@ -266,7 +269,7 @@ func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64, physical ...Bl
 		return fmt.Errorf("blob %s: recorded size %d does not match caller size %d",
 			hash, current.LogicalBytes, size)
 	}
-	if inserted != 0 || current.Kind == "packed" ||
+	if current.Kind == "packed" ||
 		(current.Encoding == storage.Encoding && current.StoredBytes == storage.StoredBytes) {
 		return nil
 	}
@@ -276,12 +279,9 @@ func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64, physical ...Bl
 			hash, storage.Encoding, storage.StoredBytes, current.Encoding, current.StoredBytes,
 		)
 	}
-	if _, err := tx.Exec(`UPDATE blobs
-		SET loose_encoding=?, loose_stored_size=?, pack_eligible=? WHERE hash=?`,
-		storage.Encoding, storage.StoredBytes, storage.PackEligible, hash); err != nil {
-		return fmt.Errorf("adopting newly published blob %s: %w", hash, err)
-	}
-	return nil
+	return writeLooseLocationTx(
+		context.Background(), tx, s.primaryStoreID, hash, storage,
+	)
 }
 
 func (s *Store) createFileTx(

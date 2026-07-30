@@ -171,13 +171,8 @@ func TestPruneContentVersionsReportsPackedAndSharedConsequences(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.CreateFile(ctx, s.RootID(), "shared.txt", created.BlobHash, created.Size, "text/plain")
 	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO blob_packs(pack_id,entry_count,stored_bytes,created_at)
-		VALUES('pack-test',1,17,?)`, nowRFC3339())
-	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO blob_pack_index(
-		blob_hash,pack_id,pack_offset,stored_len,raw_len,flags,crc32c
-	) VALUES(?, 'pack-test', 0, 17, ?, 0, 0)`, packedVersion.BlobHash, packedVersion.Size)
-	require.NoError(t, err)
+	addTestPack(t, s, "pack-test", 1, 17, nowRFC3339())
+	addTestPackEntry(t, s, packedVersion.BlobHash, "pack-test", 0, 17, packedVersion.Size)
 
 	preview, err := s.PruneContentVersions(ctx, created.ID, replaced.Revision,
 		VersionPruneSelector{KeepNewest: 1}, false)

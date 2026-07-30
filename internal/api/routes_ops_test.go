@@ -501,18 +501,21 @@ func TestStorageRepackContinuesFromEmptyMappingHighWater(t *testing.T) {
 	})
 	require.NoError(t, err)
 	packID := pack.NewPackID()
+	primary, err := s.PrimaryBlobStore(t.Context())
+	require.NoError(t, err)
 	_, err = db.ExecContext(t.Context(), `
-		INSERT INTO blob_packs (pack_id, entry_count, stored_bytes, created_at)
-		VALUES (?, 2, 10, ?)`, packID, "2026-01-01T00:00:00.000000000Z")
+		INSERT INTO blob_packs (store_id, pack_id, entry_count, stored_bytes, created_at)
+		VALUES (?, ?, 2, 10, ?)`,
+		primary.ID, packID, "2026-01-01T00:00:00.000000000Z")
 	require.NoError(t, err)
 	for i, hash := range []string{
 		"",
 		"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
 	} {
 		_, err = db.ExecContext(t.Context(), `
-			INSERT INTO blob_pack_index
-				(blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
-			VALUES (?, ?, ?, 5, 1, 0, 0)`, hash, packID,
+			INSERT INTO blob_pack_entries
+				(blob_hash, store_id, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
+			VALUES (?, ?, ?, ?, 5, 1, 0, 0)`, hash, primary.ID, packID,
 			pack.MinEntryOffset+int64(i)*32)
 		require.NoError(t, err)
 	}
@@ -759,7 +762,9 @@ func TestVerifyEndpointReportsMalformedBlobMetadata(t *testing.T) {
 		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
 	})
 	require.NoError(t, err)
-	_, err = db.ExecContext(t.Context(), `UPDATE blobs SET size='not-an-integer' WHERE hash=?`, created.BlobHash)
+	_, err = db.ExecContext(t.Context(), `
+		UPDATE content_versions SET recorded_at='not-a-timestamp' WHERE blob_hash=?`,
+		created.BlobHash)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
 
@@ -770,7 +775,7 @@ func TestVerifyEndpointReportsMalformedBlobMetadata(t *testing.T) {
 	assert.Equal(t, 1, rep.OK)
 	assert.Empty(t, rep.Problems)
 	require.Len(t, rep.MetadataProblems, 1)
-	assert.Contains(t, rep.MetadataProblems[0], "size")
+	assert.Contains(t, rep.MetadataProblems[0], "creation")
 }
 
 func TestVerifyEndpointReportsBlobInventoryFailureAlongsideMetadataFailure(t *testing.T) {

@@ -17,18 +17,19 @@ var schemaSQL string
 
 // Store is the single access path to the docbank database.
 type Store struct {
-	db      *sql.DB
-	path    string
-	rootID  int64
-	vaultID string
-	driver  docsqlite.Driver
+	db             *sql.DB
+	path           string
+	rootID         int64
+	vaultID        string
+	primaryStoreID string
+	driver         docsqlite.Driver
 }
 
 // currentStorageSchemaVersion identifies the canonical SQLite layout created
 // by this binary. It is intentionally independent of metadata JSONL's logical
 // format version: physical schema changes can rebuild through the same logical
 // format without changing that portable contract.
-const currentStorageSchemaVersion = 2
+const currentStorageSchemaVersion = 3
 
 // DefaultSQLiteDriver returns the build's standalone-compatible adapter: CGO
 // builds use mattn/go-sqlite3 and no-CGO builds use modernc.org/sqlite.
@@ -123,6 +124,11 @@ func (s *Store) bootstrapTx() error {
 		if err := validateUUIDv4(s.vaultID); err != nil {
 			return fmt.Errorf("validating vault identity: %w", err)
 		}
+		primary, err := ensurePrimaryBlobStoreTx(tx)
+		if err != nil {
+			return err
+		}
+		s.primaryStoreID = primary.ID
 		now := nowRFC3339()
 		if _, err := tx.Exec(
 			`INSERT INTO nodes (parent_id, name, kind, created_at, modified_at)
@@ -145,6 +151,10 @@ func (s *Store) RootID() int64 { return s.rootID }
 // VaultID returns the stable logical identity preserved by metadata export,
 // backup, and restore. Moving or restoring a vault does not change it.
 func (s *Store) VaultID() string { return s.vaultID }
+
+// PrimaryBlobStoreID returns the stable catalog identity of the built-in
+// filesystem store.
+func (s *Store) PrimaryBlobStoreID() string { return s.primaryStoreID }
 
 // SQLiteDriver returns the exact adapter used by this store. Backup snapshots
 // and embedded lifecycle helpers reuse it for every auxiliary connection.

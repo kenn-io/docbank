@@ -411,7 +411,9 @@ func versionPruneBlobStatsBatchTx(
 			       COALESCE(p.stored_len, 0)
 			FROM content_versions v
 			JOIN blobs b ON b.hash = v.blob_hash
-			LEFT JOIN blob_pack_index p ON p.blob_hash = v.blob_hash
+			LEFT JOIN blob_pack_entries p
+			  ON p.blob_hash = v.blob_hash
+			 AND p.store_id = (SELECT store_id FROM blob_stores WHERE role = 'primary')
 			WHERE v.blob_hash IN (`+placeholders(len(hashes))+`)
 			GROUP BY v.blob_hash, b.size, p.blob_hash, p.stored_len`, args...)
 	if err != nil {

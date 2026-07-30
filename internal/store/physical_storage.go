@@ -8,6 +8,7 @@ import (
 	"math"
 
 	"go.kenn.io/kit/pack"
+	"go.kenn.io/kit/packstore"
 )
 
 const (
@@ -18,7 +19,7 @@ const (
 
 // ErrPhysicalAuthorityMissing means logical blob membership exists but no
 // indexed loose representation or pack mapping currently authorizes reads.
-var ErrPhysicalAuthorityMissing = errors.New("physical blob authority is missing")
+var ErrPhysicalAuthorityMissing = packstore.ErrPhysicalAuthorityMissing
 
 // PhysicalContent describes the catalog-authorized representation of one
 // logical blob without requiring a filesystem scan.
@@ -71,9 +72,14 @@ func normalizeBlobPhysical(size int64, physical []BlobPhysical) (BlobPhysical, e
 }
 
 const physicalContentSQL = `
-	SELECT b.size, b.loose_encoding, b.loose_stored_size, b.pack_eligible,
+	SELECT b.size, l.encoding, l.stored_size, l.pack_eligible,
 	       i.stored_len, i.flags
-	FROM blobs b LEFT JOIN blob_pack_index i ON i.blob_hash = b.hash
+	FROM blobs b
+	LEFT JOIN blob_locations l
+	  ON l.blob_hash = b.hash
+	 AND l.store_id = (SELECT store_id FROM blob_stores WHERE role = 'primary')
+	LEFT JOIN blob_pack_entries i
+	  ON i.blob_hash = l.blob_hash AND i.store_id = l.store_id
 	WHERE b.hash = ?`
 
 func scanPhysicalContent(row scanner, hash string) (PhysicalContent, error) {
@@ -81,7 +87,7 @@ func scanPhysicalContent(row scanner, hash string) (PhysicalContent, error) {
 		logical      int64
 		encoding     sql.NullString
 		looseStored  sql.NullInt64
-		packEligible bool
+		packEligible sql.NullBool
 		packedStored sql.NullInt64
 		packedFlags  sql.NullInt64
 	)
@@ -92,7 +98,10 @@ func scanPhysicalContent(row scanner, hash string) (PhysicalContent, error) {
 	if err != nil {
 		return PhysicalContent{}, fmt.Errorf("reading physical content %s: %w", hash, err)
 	}
-	physical := PhysicalContent{LogicalBytes: logical, PackEligible: packEligible}
+	physical := PhysicalContent{
+		LogicalBytes: logical,
+		PackEligible: packEligible.Valid && packEligible.Bool,
+	}
 	if packedStored.Valid {
 		if !packedFlags.Valid || packedFlags.Int64 < 0 || packedFlags.Int64 > math.MaxUint8 {
 			return PhysicalContent{}, fmt.Errorf("blob %s has invalid packed encoding flags", hash)
@@ -139,11 +148,12 @@ func (s *Store) PhysicalContent(ctx context.Context, hash string) (PhysicalConte
 func (s *Store) LooseBacklog(ctx context.Context) (LooseBacklog, error) {
 	var backlog LooseBacklog
 	err := s.db.QueryRowContext(ctx, `
-		SELECT COUNT(*), COALESCE(SUM(size), 0), COALESCE(SUM(loose_stored_size), 0),
-		       COALESCE(SUM(CASE WHEN loose_encoding = 'raw' THEN 1 ELSE 0 END), 0),
-		       COALESCE(SUM(CASE WHEN loose_encoding = 'zstd' THEN 1 ELSE 0 END), 0)
-		FROM blobs
-		WHERE pack_eligible = 1 AND loose_encoding IS NOT NULL`,
+		SELECT COUNT(*), COALESCE(SUM(b.size), 0), COALESCE(SUM(l.stored_size), 0),
+		       COALESCE(SUM(CASE WHEN l.encoding = 'raw' THEN 1 ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN l.encoding = 'zstd' THEN 1 ELSE 0 END), 0)
+		FROM blob_locations l JOIN blobs b ON b.hash = l.blob_hash
+		WHERE l.store_id = ? AND l.kind = ? AND l.pack_eligible = 1`,
+		s.primaryStoreID, blobLocationKindLoose,
 	).Scan(&backlog.EligibleObjects, &backlog.EligibleBytes, &backlog.EligibleStoredBytes,
 		&backlog.RawObjects, &backlog.CompressedObjects)
 	if err != nil {

@@ -53,9 +53,25 @@ type Store struct {
 	catalog     packstore.Catalog
 	loose       *packstore.LooseStore
 	reader      *packstore.Store
+	readBackend *packstore.FilesystemBackend
 	maintainer  *packstore.Maintainer
 	coordinator *packstore.Coordinator
 	compression packstore.LooseCompressionOptions
+}
+
+type primaryLocationCatalog interface {
+	packstore.Catalog
+	packstore.LocationResolver
+	PrimaryStoreID() packstore.StoreID
+}
+
+type primaryBackendRegistry struct {
+	id      packstore.StoreID
+	backend packstore.ReadBackend
+}
+
+func (r primaryBackendRegistry) Backend(id packstore.StoreID) (packstore.ReadBackend, bool) {
+	return r.backend, id == r.id
 }
 
 // LooseCompressionOptions is docbank's application-neutral loose storage
@@ -145,8 +161,29 @@ func NewWithOptions(catalog packstore.Catalog, blobsDir string, opts Options) (*
 		_ = maintainer.Close()
 		return nil, fmt.Errorf("creating loose blob store: %w", err)
 	}
+	reader := maintainer.Store()
+	var readBackend *packstore.FilesystemBackend
+	if locations, ok := catalog.(primaryLocationCatalog); ok {
+		readBackend, err = packstore.NewFilesystemBackend(
+			layout, packstore.FilesystemBackendOptions{Limits: StorageLimits()},
+		)
+		if err != nil {
+			_ = maintainer.Close()
+			return nil, fmt.Errorf("creating primary filesystem backend: %w", err)
+		}
+		reader, err = packstore.NewMultiStore(
+			locations,
+			primaryBackendRegistry{id: locations.PrimaryStoreID(), backend: readBackend},
+			packstore.MultiStoreOptions{Limits: StorageLimits()},
+		)
+		if err != nil {
+			_ = readBackend.Close()
+			_ = maintainer.Close()
+			return nil, fmt.Errorf("creating multi-location blob reader: %w", err)
+		}
+	}
 	return &Store{dir: blobsDir, layout: layout, catalog: catalog, loose: loose,
-		reader:     maintainer.Store(),
+		reader: reader, readBackend: readBackend,
 		maintainer: maintainer, coordinator: coordinator,
 		compression: packstore.LooseCompressionOptions{
 			Enabled:           opts.LooseCompression.Enabled,
@@ -603,16 +640,20 @@ func (s *Store) CleanTmp() error {
 
 // Close releases the daemon's cached pack readers.
 func (s *Store) Close() error {
+	var closeErr error
+	if s.readBackend != nil {
+		closeErr = s.readBackend.Close()
+	}
 	if s.maintainer != nil {
 		if err := s.maintainer.Close(); err != nil {
-			return fmt.Errorf("closing blob maintainer: %w", err)
+			closeErr = errors.Join(closeErr, fmt.Errorf("closing blob maintainer: %w", err))
 		}
-		return nil
+		return closeErr
 	}
 	if s.reader != nil {
 		if err := s.reader.Close(); err != nil {
-			return fmt.Errorf("closing mixed blob reader: %w", err)
+			closeErr = errors.Join(closeErr, fmt.Errorf("closing mixed blob reader: %w", err))
 		}
 	}
-	return nil
+	return closeErr
 }

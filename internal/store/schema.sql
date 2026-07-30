@@ -43,21 +43,45 @@ CREATE INDEX IF NOT EXISTS nodes_parent_name_id ON nodes(parent_id, name, id);
 CREATE INDEX IF NOT EXISTS nodes_trashed ON nodes(trashed_at) WHERE trashed_at IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS blobs (
-    hash              TEXT PRIMARY KEY,
-    size              INTEGER NOT NULL,
-    created_at        TEXT NOT NULL,
-    loose_encoding    TEXT CHECK (loose_encoding IN ('raw', 'zstd')),
-    loose_stored_size INTEGER CHECK (loose_stored_size >= 0),
-    pack_eligible     INTEGER NOT NULL DEFAULT 1 CHECK (pack_eligible IN (0, 1)),
-    CHECK ((loose_encoding IS NULL) = (loose_stored_size IS NULL))
+    hash       TEXT PRIMARY KEY,
+    size       INTEGER NOT NULL CHECK (size >= 0),
+    created_at TEXT NOT NULL
 );
 
--- Physical packed-CAS metadata. blobs remains the membership authority:
--- deleting a blob row revokes reads, while maintenance later prunes any stale
--- mapping and reclaims dead bytes from the immutable pack. Pack rows remain
--- until their files have been retired so the table is a truthful inventory.
+-- Physical placement authority is store-scoped. The logical blobs table says
+-- which content Docbank retains; these rows say where verified bytes live.
+-- Lifecycle and placement policy stay in Go.
+CREATE TABLE IF NOT EXISTS blob_stores (
+    store_id        TEXT PRIMARY KEY,
+    name            TEXT NOT NULL UNIQUE,
+    kind            TEXT NOT NULL,
+    role            TEXT NOT NULL,
+    lifecycle       TEXT NOT NULL,
+    binding         TEXT NOT NULL,
+    ownership_epoch TEXT NOT NULL,
+    created_at      TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS one_primary_blob_store
+    ON blob_stores((1)) WHERE role = 'primary';
+
+CREATE TABLE IF NOT EXISTS blob_locations (
+    blob_hash    TEXT NOT NULL REFERENCES blobs(hash) ON DELETE CASCADE,
+    store_id     TEXT NOT NULL REFERENCES blob_stores(store_id),
+    generation   TEXT NOT NULL,
+    kind         TEXT NOT NULL,
+    encoding     TEXT,
+    stored_size  INTEGER NOT NULL CHECK (stored_size >= 0),
+    pack_eligible INTEGER NOT NULL CHECK (pack_eligible IN (0, 1)),
+    PRIMARY KEY (blob_hash, store_id)
+);
+
+CREATE INDEX IF NOT EXISTS blob_locations_store
+    ON blob_locations(store_id, blob_hash);
+
 CREATE TABLE IF NOT EXISTS blob_packs (
-    pack_id      TEXT PRIMARY KEY,
+    store_id     TEXT NOT NULL REFERENCES blob_stores(store_id),
+    pack_id      TEXT NOT NULL,
     entry_count  INTEGER NOT NULL CHECK (entry_count >= 0),
     stored_bytes INTEGER NOT NULL CHECK (stored_bytes >= 0),
     created_at   TEXT NOT NULL,
@@ -66,26 +90,34 @@ CREATE TABLE IF NOT EXISTS blob_packs (
     live_stored_bytes     INTEGER NOT NULL DEFAULT 0 CHECK (live_stored_bytes >= 0),
     live_raw_bytes        INTEGER NOT NULL DEFAULT 0 CHECK (live_raw_bytes >= 0),
     max_live_stored_len   INTEGER NOT NULL DEFAULT 0 CHECK (max_live_stored_len >= 0),
-    max_live_raw_len      INTEGER NOT NULL DEFAULT 0 CHECK (max_live_raw_len >= 0)
+    max_live_raw_len      INTEGER NOT NULL DEFAULT 0 CHECK (max_live_raw_len >= 0),
+    PRIMARY KEY (store_id, pack_id)
 );
 
-CREATE TABLE IF NOT EXISTS blob_pack_index (
-    blob_hash   TEXT PRIMARY KEY,
-    pack_id     TEXT NOT NULL REFERENCES blob_packs(pack_id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS blob_pack_entries (
+    blob_hash   TEXT NOT NULL,
+    store_id    TEXT NOT NULL,
+    pack_id     TEXT NOT NULL,
     pack_offset INTEGER NOT NULL CHECK (pack_offset >= 0),
     stored_len  INTEGER NOT NULL CHECK (stored_len >= 0),
     raw_len     INTEGER NOT NULL CHECK (raw_len >= 0),
     flags       INTEGER NOT NULL CHECK (flags BETWEEN 0 AND 255),
-    crc32c      INTEGER NOT NULL CHECK (crc32c BETWEEN 0 AND 4294967295)
+    crc32c      INTEGER NOT NULL CHECK (crc32c BETWEEN 0 AND 4294967295),
+    PRIMARY KEY (blob_hash, store_id),
+    FOREIGN KEY (store_id, pack_id)
+        REFERENCES blob_packs(store_id, pack_id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS blob_pack_index_pack ON blob_pack_index(pack_id);
+CREATE INDEX IF NOT EXISTS blob_pack_entries_pack
+    ON blob_pack_entries(store_id, pack_id, blob_hash);
+CREATE INDEX IF NOT EXISTS blob_pack_entries_store_hash
+    ON blob_pack_entries(store_id, blob_hash);
 
 -- Bounded maintenance reads pack summaries instead of rescanning every mapping.
 -- These triggers maintain physical catalog projections only; document liveness
 -- remains Go-owned and is expressed by inserting or deleting blobs rows.
 CREATE TRIGGER IF NOT EXISTS blob_pack_summary_mapping_insert
-AFTER INSERT ON blob_pack_index
+AFTER INSERT ON blob_pack_entries
 WHEN EXISTS (SELECT 1 FROM blobs WHERE hash=NEW.blob_hash)
 BEGIN
     UPDATE blob_packs SET
@@ -95,11 +127,11 @@ BEGIN
         live_raw_bytes=live_raw_bytes+NEW.raw_len,
         max_live_stored_len=MAX(max_live_stored_len, NEW.stored_len),
         max_live_raw_len=MAX(max_live_raw_len, NEW.raw_len)
-    WHERE pack_id=NEW.pack_id;
+    WHERE store_id=NEW.store_id AND pack_id=NEW.pack_id;
 END;
 
 CREATE TRIGGER IF NOT EXISTS blob_pack_summary_mapping_delete
-AFTER DELETE ON blob_pack_index
+AFTER DELETE ON blob_pack_entries
 WHEN EXISTS (SELECT 1 FROM blobs WHERE hash=OLD.blob_hash)
 BEGIN
     UPDATE blob_packs SET
@@ -107,29 +139,33 @@ BEGIN
         live_stored_bytes=live_stored_bytes-OLD.stored_len,
         live_raw_bytes=live_raw_bytes-OLD.raw_len,
         max_live_stored_len=CASE WHEN max_live_stored_len=OLD.stored_len
-            THEN COALESCE((SELECT MAX(i.stored_len) FROM blob_pack_index i
-                JOIN blobs b ON b.hash=i.blob_hash WHERE i.pack_id=OLD.pack_id),0)
+            THEN COALESCE((SELECT MAX(i.stored_len) FROM blob_pack_entries i
+                JOIN blobs b ON b.hash=i.blob_hash
+                WHERE i.store_id=OLD.store_id AND i.pack_id=OLD.pack_id),0)
             ELSE max_live_stored_len END,
         max_live_raw_len=CASE WHEN max_live_raw_len=OLD.raw_len
-            THEN COALESCE((SELECT MAX(i.raw_len) FROM blob_pack_index i
-                JOIN blobs b ON b.hash=i.blob_hash WHERE i.pack_id=OLD.pack_id),0)
+            THEN COALESCE((SELECT MAX(i.raw_len) FROM blob_pack_entries i
+                JOIN blobs b ON b.hash=i.blob_hash
+                WHERE i.store_id=OLD.store_id AND i.pack_id=OLD.pack_id),0)
             ELSE max_live_raw_len END
-    WHERE pack_id=OLD.pack_id;
+    WHERE store_id=OLD.store_id AND pack_id=OLD.pack_id;
 END;
 
 CREATE TRIGGER IF NOT EXISTS blob_pack_summary_mapping_update
-AFTER UPDATE ON blob_pack_index
+AFTER UPDATE ON blob_pack_entries
 WHEN EXISTS (SELECT 1 FROM blobs WHERE hash=OLD.blob_hash)
 BEGIN
     UPDATE blob_packs SET
         live_entries=live_entries-1,
         live_stored_bytes=live_stored_bytes-OLD.stored_len,
         live_raw_bytes=live_raw_bytes-OLD.raw_len,
-        max_live_stored_len=COALESCE((SELECT MAX(i.stored_len) FROM blob_pack_index i
-            JOIN blobs b ON b.hash=i.blob_hash WHERE i.pack_id=OLD.pack_id),0),
-        max_live_raw_len=COALESCE((SELECT MAX(i.raw_len) FROM blob_pack_index i
-            JOIN blobs b ON b.hash=i.blob_hash WHERE i.pack_id=OLD.pack_id),0)
-    WHERE pack_id=OLD.pack_id;
+        max_live_stored_len=COALESCE((SELECT MAX(i.stored_len) FROM blob_pack_entries i
+            JOIN blobs b ON b.hash=i.blob_hash
+            WHERE i.store_id=OLD.store_id AND i.pack_id=OLD.pack_id),0),
+        max_live_raw_len=COALESCE((SELECT MAX(i.raw_len) FROM blob_pack_entries i
+            JOIN blobs b ON b.hash=i.blob_hash
+            WHERE i.store_id=OLD.store_id AND i.pack_id=OLD.pack_id),0)
+    WHERE store_id=OLD.store_id AND pack_id=OLD.pack_id;
     UPDATE blob_packs SET
         scan_hash=CASE WHEN scan_hash='' THEN NEW.blob_hash ELSE scan_hash END,
         live_entries=live_entries+1,
@@ -137,43 +173,69 @@ BEGIN
         live_raw_bytes=live_raw_bytes+NEW.raw_len,
         max_live_stored_len=MAX(max_live_stored_len, NEW.stored_len),
         max_live_raw_len=MAX(max_live_raw_len, NEW.raw_len)
-    WHERE pack_id=NEW.pack_id;
+    WHERE store_id=NEW.store_id AND pack_id=NEW.pack_id;
 END;
 
 CREATE TRIGGER IF NOT EXISTS blob_pack_summary_blob_delete
 AFTER DELETE ON blobs
-WHEN EXISTS (SELECT 1 FROM blob_pack_index WHERE blob_hash=OLD.hash)
+WHEN EXISTS (SELECT 1 FROM blob_pack_entries WHERE blob_hash=OLD.hash)
 BEGIN
     UPDATE blob_packs SET
         live_entries=live_entries-1,
-        live_stored_bytes=live_stored_bytes-(SELECT stored_len FROM blob_pack_index WHERE blob_hash=OLD.hash),
-        live_raw_bytes=live_raw_bytes-(SELECT raw_len FROM blob_pack_index WHERE blob_hash=OLD.hash),
-        max_live_stored_len=COALESCE((SELECT MAX(i.stored_len) FROM blob_pack_index i
-            JOIN blobs b ON b.hash=i.blob_hash WHERE i.pack_id=blob_packs.pack_id),0),
-        max_live_raw_len=COALESCE((SELECT MAX(i.raw_len) FROM blob_pack_index i
-            JOIN blobs b ON b.hash=i.blob_hash WHERE i.pack_id=blob_packs.pack_id),0)
-    WHERE pack_id=(SELECT pack_id FROM blob_pack_index WHERE blob_hash=OLD.hash);
+        live_stored_bytes=live_stored_bytes-(
+            SELECT stored_len FROM blob_pack_entries
+            WHERE blob_hash=OLD.hash AND store_id=blob_packs.store_id
+        ),
+        live_raw_bytes=live_raw_bytes-(
+            SELECT raw_len FROM blob_pack_entries
+            WHERE blob_hash=OLD.hash AND store_id=blob_packs.store_id
+        ),
+        max_live_stored_len=COALESCE((SELECT MAX(i.stored_len) FROM blob_pack_entries i
+            JOIN blobs b ON b.hash=i.blob_hash
+            WHERE i.store_id=blob_packs.store_id AND i.pack_id=blob_packs.pack_id),0),
+        max_live_raw_len=COALESCE((SELECT MAX(i.raw_len) FROM blob_pack_entries i
+            JOIN blobs b ON b.hash=i.blob_hash
+            WHERE i.store_id=blob_packs.store_id AND i.pack_id=blob_packs.pack_id),0)
+    WHERE EXISTS (
+        SELECT 1 FROM blob_pack_entries i
+        WHERE i.blob_hash=OLD.hash
+          AND i.store_id=blob_packs.store_id
+          AND i.pack_id=blob_packs.pack_id
+    );
 END;
 
 CREATE TRIGGER IF NOT EXISTS blob_pack_summary_blob_insert
 AFTER INSERT ON blobs
-WHEN EXISTS (SELECT 1 FROM blob_pack_index WHERE blob_hash=NEW.hash)
+WHEN EXISTS (SELECT 1 FROM blob_pack_entries WHERE blob_hash=NEW.hash)
 BEGIN
     UPDATE blob_packs SET
         live_entries=live_entries+1,
-        live_stored_bytes=live_stored_bytes+(SELECT stored_len FROM blob_pack_index WHERE blob_hash=NEW.hash),
-        live_raw_bytes=live_raw_bytes+(SELECT raw_len FROM blob_pack_index WHERE blob_hash=NEW.hash),
+        live_stored_bytes=live_stored_bytes+(
+            SELECT stored_len FROM blob_pack_entries
+            WHERE blob_hash=NEW.hash AND store_id=blob_packs.store_id
+        ),
+        live_raw_bytes=live_raw_bytes+(
+            SELECT raw_len FROM blob_pack_entries
+            WHERE blob_hash=NEW.hash AND store_id=blob_packs.store_id
+        ),
         max_live_stored_len=MAX(max_live_stored_len,
-            (SELECT stored_len FROM blob_pack_index WHERE blob_hash=NEW.hash)),
+            (SELECT stored_len FROM blob_pack_entries
+             WHERE blob_hash=NEW.hash AND store_id=blob_packs.store_id)),
         max_live_raw_len=MAX(max_live_raw_len,
-            (SELECT raw_len FROM blob_pack_index WHERE blob_hash=NEW.hash))
-    WHERE pack_id=(SELECT pack_id FROM blob_pack_index WHERE blob_hash=NEW.hash);
+            (SELECT raw_len FROM blob_pack_entries
+             WHERE blob_hash=NEW.hash AND store_id=blob_packs.store_id))
+    WHERE EXISTS (
+        SELECT 1 FROM blob_pack_entries i
+        WHERE i.blob_hash=NEW.hash
+          AND i.store_id=blob_packs.store_id
+          AND i.pack_id=blob_packs.pack_id
+    );
 END;
 
 CREATE INDEX IF NOT EXISTS blob_packs_dead_scan
-ON blob_packs(scan_hash, pack_id) WHERE live_entries=0;
+ON blob_packs(store_id, scan_hash, pack_id) WHERE live_entries=0;
 CREATE INDEX IF NOT EXISTS blob_packs_live_scan
-ON blob_packs(scan_hash, pack_id) WHERE live_entries>0;
+ON blob_packs(store_id, scan_hash, pack_id) WHERE live_entries>0;
 
 -- A file node is stable document identity; immutable content-version rows are
 -- its byte history. Random UUIDv4 identities remain safe across JSONL

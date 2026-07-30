@@ -24,6 +24,21 @@ type PackCatalog struct{ store *Store }
 func NewPackCatalog(s *Store) *PackCatalog { return &PackCatalog{store: s} }
 
 var _ packstore.Catalog = (*PackCatalog)(nil)
+var _ packstore.LocationResolver = (*PackCatalog)(nil)
+
+// ResolveLocations exposes the store-scoped physical authority used by Kit's
+// multi-location reader. Maintenance still uses the released single-layout
+// Catalog surface as a thin adapter over the same rows.
+func (c *PackCatalog) ResolveLocations(
+	ctx context.Context, hash packstore.Hash,
+) (packstore.Resolution, error) {
+	return c.store.ResolveBlobLocations(ctx, hash)
+}
+
+// PrimaryStoreID identifies the built-in filesystem backend.
+func (c *PackCatalog) PrimaryStoreID() packstore.StoreID {
+	return packstore.StoreID(c.store.primaryStoreID)
+}
 
 // PackRestoreCatalog grants packed authority in an unpublished restored
 // database. It deliberately accepts a *sql.DB rather than a Store because Kit
@@ -71,7 +86,11 @@ func (c *PackRestoreCatalog) ReplaceRestoredPacks(
 		return fmt.Errorf("beginning restored pack catalog replacement: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM blob_pack_index`); err != nil {
+	primary, err := primaryBlobStoreTx(tx)
+	if err != nil {
+		return fmt.Errorf("reading restored primary blob store: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM blob_pack_entries`); err != nil {
 		return fmt.Errorf("clearing restored packed blob mappings: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM blob_packs`); err != nil {
@@ -79,19 +98,19 @@ func (c *PackRestoreCatalog) ReplaceRestoredPacks(
 	}
 	for _, record := range records {
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO blob_packs (pack_id, entry_count, stored_bytes, created_at)
-			VALUES (?, ?, ?, ?)`, record.PackID, record.EntryCount, record.StoredBytes,
+			INSERT INTO blob_packs (store_id, pack_id, entry_count, stored_bytes, created_at)
+			VALUES (?, ?, ?, ?, ?)`, primary.ID, record.PackID, record.EntryCount, record.StoredBytes,
 			record.CreatedAt.UTC().Format(timestampLayout)); err != nil {
 			return fmt.Errorf("recording restored blob pack %s: %w", record.PackID, err)
 		}
 	}
 	for _, adoption := range adoptions {
-		if err := writeAdoption(ctx, tx, adoption.Entry, false); err != nil {
+		if err := writeAdoption(ctx, tx, primary.ID, adoption.Entry, false); err != nil {
 			return err
 		}
 	}
 	for _, record := range records {
-		if err := finalizePackScanHash(ctx, tx, record.PackID); err != nil {
+		if err := finalizePackScanHash(ctx, tx, primary.ID, record.PackID); err != nil {
 			return err
 		}
 	}
@@ -103,11 +122,14 @@ func (c *PackRestoreCatalog) ReplaceRestoredPacks(
 
 func (c *PackCatalog) Resolve(ctx context.Context, hash packstore.Hash) (packstore.Location, error) {
 	row := c.store.db.QueryRowContext(ctx, `
-		SELECT b.loose_encoding, b.loose_stored_size,
+		SELECT l.encoding, l.stored_size,
 		       i.pack_id, i.pack_offset, i.stored_len, i.raw_len, i.flags, i.crc32c
 		FROM blobs b
-		LEFT JOIN blob_pack_index i ON i.blob_hash = b.hash
-		WHERE b.hash = ?`, hash.String())
+		LEFT JOIN blob_locations l
+		  ON l.blob_hash = b.hash AND l.store_id = ?
+		LEFT JOIN blob_pack_entries i
+		  ON i.blob_hash = l.blob_hash AND i.store_id = l.store_id
+		WHERE b.hash = ?`, c.store.primaryStoreID, hash.String())
 	var looseEncoding, packID sql.NullString
 	var looseStored sql.NullInt64
 	var offset, stored, raw, flags, crc sql.NullInt64
@@ -172,10 +194,10 @@ func (c *PackCatalog) ListReferences(ctx context.Context) (packstore.ReferenceIn
 
 func (c *PackCatalog) ListUnpacked(ctx context.Context) ([]packstore.Candidate, error) {
 	rows, err := c.store.db.QueryContext(ctx, `
-		SELECT b.hash, b.size, b.loose_encoding FROM blobs b
-		WHERE NOT EXISTS (SELECT 1 FROM blob_pack_index i WHERE i.blob_hash = b.hash)
-		  AND b.pack_eligible = 1 AND b.loose_encoding IS NOT NULL
-		ORDER BY b.hash`)
+		SELECT b.hash, b.size, l.encoding
+		FROM blobs b JOIN blob_locations l ON l.blob_hash = b.hash
+		WHERE l.store_id = ? AND l.kind = ? AND l.pack_eligible = 1
+		ORDER BY b.hash`, c.store.primaryStoreID, blobLocationKindLoose)
 	if err != nil {
 		return nil, fmt.Errorf("listing unpacked blobs: %w", err)
 	}
@@ -214,12 +236,15 @@ func (c *PackCatalog) ListUnpacked(ctx context.Context) ([]packstore.Candidate, 
 func (c *PackCatalog) ListIndexed(ctx context.Context) ([]packstore.IndexEntry, error) {
 	return c.listEntries(ctx, `
 		SELECT blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c
-		FROM blob_pack_index ORDER BY blob_hash`)
+		FROM blob_pack_entries WHERE store_id = ? ORDER BY blob_hash`,
+		c.store.primaryStoreID)
 }
 
 func (c *PackCatalog) ListPackRecords(ctx context.Context) ([]packstore.PackRecord, error) {
 	rows, err := c.store.db.QueryContext(ctx, `
-		SELECT pack_id, entry_count, stored_bytes, created_at FROM blob_packs ORDER BY created_at, pack_id`)
+		SELECT pack_id, entry_count, stored_bytes, created_at
+		FROM blob_packs WHERE store_id = ? ORDER BY created_at, pack_id`,
+		c.store.primaryStoreID)
 	if err != nil {
 		return nil, fmt.Errorf("listing blob packs: %w", err)
 	}
@@ -241,13 +266,17 @@ func (c *PackCatalog) ListPackRecords(ctx context.Context) ([]packstore.PackReco
 func (c *PackCatalog) ListPackEntries(ctx context.Context, packID string) ([]packstore.IndexEntry, error) {
 	return c.listEntries(ctx, `
 		SELECT blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c
-		FROM blob_pack_index WHERE pack_id = ? ORDER BY blob_hash`, packID)
+		FROM blob_pack_entries
+		WHERE store_id = ? AND pack_id = ? ORDER BY blob_hash`,
+		c.store.primaryStoreID, packID)
 }
 
 func (c *PackCatalog) HasPackRecord(ctx context.Context, packID string) (bool, error) {
 	var exists bool
 	if err := c.store.db.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM blob_packs WHERE pack_id = ?)`, packID).Scan(&exists); err != nil {
+		`SELECT EXISTS(
+			SELECT 1 FROM blob_packs WHERE store_id = ? AND pack_id = ?
+		)`, c.store.primaryStoreID, packID).Scan(&exists); err != nil {
 		return false, fmt.Errorf("checking blob pack %s: %w", packID, err)
 	}
 	return exists, nil
@@ -255,8 +284,11 @@ func (c *PackCatalog) HasPackRecord(ctx context.Context, packID string) (bool, e
 
 func (c *PackCatalog) PruneUnreferenced(ctx context.Context) (int64, error) {
 	result, err := c.store.db.ExecContext(ctx, `
-		DELETE FROM blob_pack_index
-		WHERE NOT EXISTS (SELECT 1 FROM blobs b WHERE b.hash = blob_pack_index.blob_hash)`)
+		DELETE FROM blob_pack_entries
+		WHERE store_id = ?
+		  AND NOT EXISTS (
+			SELECT 1 FROM blobs b WHERE b.hash = blob_pack_entries.blob_hash
+		  )`, c.store.primaryStoreID)
 	if err != nil {
 		return 0, fmt.Errorf("pruning unreferenced pack mappings: %w", err)
 	}
@@ -282,8 +314,9 @@ func (c *PackCatalog) writePack(ctx context.Context, record packstore.PackRecord
 	}
 	return c.store.withStorageTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO blob_packs (pack_id, entry_count, stored_bytes, created_at)
-			VALUES (?, ?, ?, ?)`, record.PackID, record.EntryCount, record.StoredBytes,
+			INSERT INTO blob_packs (store_id, pack_id, entry_count, stored_bytes, created_at)
+			VALUES (?, ?, ?, ?, ?)`, c.store.primaryStoreID, record.PackID,
+			record.EntryCount, record.StoredBytes,
 			record.CreatedAt.UTC().Format(timestampLayout)); err != nil {
 			return fmt.Errorf("recording blob pack %s: %w", record.PackID, err)
 		}
@@ -295,21 +328,30 @@ func (c *PackCatalog) writePack(ctx context.Context, record packstore.PackRecord
 				return fmt.Errorf("pack entry %s names %s, expected %s",
 					adoption.Entry.Hash, adoption.Entry.PackID, record.PackID)
 			}
-			if err := writeAdoption(ctx, tx, adoption.Entry, replace); err != nil {
+			if err := writeAdoption(
+				ctx, tx, c.store.primaryStoreID, adoption.Entry, replace,
+			); err != nil {
 				return err
 			}
 		}
-		return finalizePackScanHash(ctx, tx, record.PackID)
+		return finalizePackScanHash(ctx, tx, c.store.primaryStoreID, record.PackID)
 	})
 }
 
-func finalizePackScanHash(ctx context.Context, tx *sql.Tx, packID string) error {
+func finalizePackScanHash(
+	ctx context.Context,
+	tx *sql.Tx,
+	storeID string,
+	packID string,
+) error {
 	result, err := tx.ExecContext(ctx, `
 		UPDATE blob_packs
-		SET scan_hash = (SELECT MIN(blob_hash) FROM blob_pack_index WHERE pack_id = ?)
-		WHERE pack_id = ?
-		  AND EXISTS (SELECT 1 FROM blob_pack_index WHERE pack_id = ?)`,
-		packID, packID, packID)
+		SET scan_hash = COALESCE((
+			SELECT MIN(blob_hash) FROM blob_pack_entries
+			WHERE store_id = ? AND pack_id = ?
+		), '')
+		WHERE store_id = ? AND pack_id = ?`,
+		storeID, packID, storeID, packID)
 	if err != nil {
 		return fmt.Errorf("finalizing scan hash for blob pack %s: %w", packID, err)
 	}
@@ -319,46 +361,68 @@ func finalizePackScanHash(ctx context.Context, tx *sql.Tx, packID string) error 
 	return nil
 }
 
-func writeAdoption(ctx context.Context, tx *sql.Tx, entry packstore.IndexEntry, replace bool) error {
+func writeAdoption(
+	ctx context.Context,
+	tx *sql.Tx,
+	storeID string,
+	entry packstore.IndexEntry,
+	replace bool,
+) error {
+	generation, err := blobLocationGeneration()
+	if err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `
+		INSERT INTO blob_locations(
+			blob_hash, store_id, generation, kind, encoding, stored_size, pack_eligible
+		)
+		SELECT ?, ?, ?, ?, NULL, ?, CASE WHEN ? <= ? THEN 1 ELSE 0 END
+		WHERE EXISTS (SELECT 1 FROM blobs WHERE hash = ?)
+		ON CONFLICT(blob_hash, store_id) DO UPDATE SET
+			generation=excluded.generation,
+			kind=excluded.kind,
+			encoding=NULL,
+			stored_size=excluded.stored_size,
+			pack_eligible=excluded.pack_eligible`,
+		entry.Hash.String(), storeID, generation, blobLocationKindPacked,
+		entry.StoredLen, entry.RawLen, maxPackEligibleBytes, entry.Hash.String(),
+	)
+	if err != nil {
+		return fmt.Errorf("recording packed blob location %s: %w", entry.Hash, err)
+	}
+	if err := requireOneRow(result, "recording packed blob location "+entry.Hash.String()); err != nil {
+		return err
+	}
 	if replace {
-		result, err := tx.ExecContext(ctx, `
-			INSERT INTO blob_pack_index
-				(blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
-			SELECT ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM blobs WHERE hash = ?)
-			ON CONFLICT(blob_hash) DO UPDATE SET
+		result, err = tx.ExecContext(ctx, `
+			INSERT INTO blob_pack_entries
+				(blob_hash, store_id, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(blob_hash, store_id) DO UPDATE SET
 				pack_id=excluded.pack_id, pack_offset=excluded.pack_offset,
 				stored_len=excluded.stored_len, raw_len=excluded.raw_len,
 				flags=excluded.flags, crc32c=excluded.crc32c`,
-			entry.Hash.String(), entry.PackID, entry.Offset, entry.StoredLen, entry.RawLen,
-			entry.Flags, entry.CRC32C, entry.Hash.String())
+			entry.Hash.String(), storeID, entry.PackID, entry.Offset, entry.StoredLen,
+			entry.RawLen, entry.Flags, entry.CRC32C)
 		if err != nil {
 			return fmt.Errorf("adopting packed blob %s: %w", entry.Hash, err)
 		}
 		if err := requireOneRow(result, "adopting packed blob "+entry.Hash.String()); err != nil {
 			return err
 		}
-		return clearLooseAuthority(ctx, tx, entry.Hash)
+		return nil
 	}
-	result, err := tx.ExecContext(ctx, `
-		INSERT INTO blob_pack_index
-			(blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
-		SELECT ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM blobs WHERE hash = ?)`,
-		entry.Hash.String(), entry.PackID, entry.Offset, entry.StoredLen, entry.RawLen,
-		entry.Flags, entry.CRC32C, entry.Hash.String())
+	result, err = tx.ExecContext(ctx, `
+		INSERT INTO blob_pack_entries
+			(blob_hash, store_id, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		entry.Hash.String(), storeID, entry.PackID, entry.Offset, entry.StoredLen,
+		entry.RawLen, entry.Flags, entry.CRC32C)
 	if err != nil {
 		return fmt.Errorf("recording packed blob %s: %w", entry.Hash, err)
 	}
 	if err := requireOneRow(result, "recording packed blob "+entry.Hash.String()); err != nil {
 		return err
-	}
-	return clearLooseAuthority(ctx, tx, entry.Hash)
-}
-
-func clearLooseAuthority(ctx context.Context, tx *sql.Tx, hash packstore.Hash) error {
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE blobs SET loose_encoding = NULL, loose_stored_size = NULL WHERE hash = ?`,
-		hash.String()); err != nil {
-		return fmt.Errorf("clearing loose authority for packed blob %s: %w", hash, err)
 	}
 	return nil
 }
@@ -393,17 +457,12 @@ func (s *Store) RepairBlobAuthority(
 		).Scan(&references); err != nil {
 			return fmt.Errorf("counting repaired blob references %s: %w", hash, err)
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM blob_pack_index WHERE blob_hash = ?`, hash); err != nil {
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM blob_pack_entries WHERE blob_hash = ? AND store_id = ?`,
+			hash, s.primaryStoreID); err != nil {
 			return fmt.Errorf("retiring packed authority for repaired blob %s: %w", hash, err)
 		}
-		result, err := tx.ExecContext(ctx, `
-			UPDATE blobs
-			SET loose_encoding = ?, loose_stored_size = ?, pack_eligible = ?
-			WHERE hash = ?`, storage.Encoding, storage.StoredBytes, storage.PackEligible, hash)
-		if err != nil {
-			return fmt.Errorf("recording loose authority for repaired blob %s: %w", hash, err)
-		}
-		return requireOneRow(result, "recording repaired blob "+hash)
+		return writeLooseLocationTx(ctx, tx, s.primaryStoreID, hash, storage)
 	})
 	if err != nil {
 		return 0, err
@@ -412,18 +471,29 @@ func (s *Store) RepairBlobAuthority(
 }
 
 func (c *PackCatalog) DeletePackRecord(ctx context.Context, packID string) error {
-	if _, err := c.store.db.ExecContext(ctx, `DELETE FROM blob_packs WHERE pack_id = ?`, packID); err != nil {
+	if _, err := c.store.db.ExecContext(ctx, `
+		DELETE FROM blob_packs WHERE store_id = ? AND pack_id = ?`,
+		c.store.primaryStoreID, packID); err != nil {
 		return fmt.Errorf("deleting blob pack %s: %w", packID, err)
 	}
 	return nil
 }
 
 func (c *PackCatalog) DeleteIndexEntry(ctx context.Context, hash packstore.Hash) error {
-	if _, err := c.store.db.ExecContext(ctx,
-		`DELETE FROM blob_pack_index WHERE blob_hash = ?`, hash.String()); err != nil {
-		return fmt.Errorf("deleting packed blob mapping %s: %w", hash, err)
-	}
-	return nil
+	return c.store.withStorageTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM blob_pack_entries WHERE blob_hash = ? AND store_id = ?`,
+			hash.String(), c.store.primaryStoreID); err != nil {
+			return fmt.Errorf("deleting packed blob mapping %s: %w", hash, err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM blob_locations
+			WHERE blob_hash = ? AND store_id = ? AND kind = ?`,
+			hash.String(), c.store.primaryStoreID, blobLocationKindPacked); err != nil {
+			return fmt.Errorf("revoking packed blob location %s: %w", hash, err)
+		}
+		return nil
+	})
 }
 
 func (c *PackCatalog) ListPackUsage(ctx context.Context) ([]packstore.PackUsage, error) {
@@ -435,10 +505,12 @@ func (c *PackCatalog) ListPackUsage(ctx context.Context) ([]packstore.PackUsage,
 		       COALESCE(MAX(CASE WHEN b.hash IS NOT NULL THEN i.stored_len ELSE 0 END), 0),
 		       COALESCE(MAX(CASE WHEN b.hash IS NOT NULL THEN i.raw_len ELSE 0 END), 0)
 		FROM blob_packs p
-		LEFT JOIN blob_pack_index i ON i.pack_id = p.pack_id
+		LEFT JOIN blob_pack_entries i
+		  ON i.store_id = p.store_id AND i.pack_id = p.pack_id
 		LEFT JOIN blobs b ON b.hash = i.blob_hash
-		GROUP BY p.pack_id, p.entry_count, p.stored_bytes, p.created_at
-		ORDER BY p.created_at, p.pack_id`)
+		WHERE p.store_id = ?
+		GROUP BY p.store_id, p.pack_id, p.entry_count, p.stored_bytes, p.created_at
+		ORDER BY p.created_at, p.pack_id`, c.store.primaryStoreID)
 	if err != nil {
 		return nil, fmt.Errorf("listing blob pack usage: %w", err)
 	}
@@ -468,8 +540,9 @@ func (c *PackCatalog) ListPackUsage(ctx context.Context) ([]packstore.PackUsage,
 func (c *PackCatalog) ListLivePackEntries(ctx context.Context, packID string) ([]packstore.IndexEntry, error) {
 	return c.listEntries(ctx, `
 		SELECT i.blob_hash, i.pack_id, i.pack_offset, i.stored_len, i.raw_len, i.flags, i.crc32c
-		FROM blob_pack_index i JOIN blobs b ON b.hash = i.blob_hash
-		WHERE i.pack_id = ? ORDER BY i.blob_hash`, packID)
+		FROM blob_pack_entries i JOIN blobs b ON b.hash = i.blob_hash
+		WHERE i.store_id = ? AND i.pack_id = ? ORDER BY i.blob_hash`,
+		c.store.primaryStoreID, packID)
 }
 
 func (c *PackCatalog) CommitRepack(ctx context.Context, sourceIDs []string,
@@ -508,7 +581,7 @@ func (c *PackCatalog) CommitRepack(ctx context.Context, sourceIDs []string,
 		expected[move.NewEntry.Hash] = move.OldPackID
 	}
 	return c.store.withStorageTx(ctx, func(tx *sql.Tx) error {
-		actual, err := liveMappingsForPacks(ctx, tx, sourceIDs)
+		actual, err := liveMappingsForPacks(ctx, tx, c.store.primaryStoreID, sourceIDs)
 		if err != nil {
 			return err
 		}
@@ -522,30 +595,46 @@ func (c *PackCatalog) CommitRepack(ctx context.Context, sourceIDs []string,
 		}
 		for _, record := range records {
 			if _, err := tx.ExecContext(ctx, `
-				INSERT INTO blob_packs (pack_id, entry_count, stored_bytes, created_at)
-				VALUES (?, ?, ?, ?)`, record.PackID, record.EntryCount, record.StoredBytes,
+				INSERT INTO blob_packs (
+					store_id, pack_id, entry_count, stored_bytes, created_at
+				) VALUES (?, ?, ?, ?, ?)`,
+				c.store.primaryStoreID, record.PackID, record.EntryCount, record.StoredBytes,
 				record.CreatedAt.UTC().Format(timestampLayout)); err != nil {
 				return fmt.Errorf("recording replacement pack %s: %w", record.PackID, err)
 			}
 		}
 		for _, move := range moves {
 			e := move.NewEntry
+			generation, err := blobLocationGeneration()
+			if err != nil {
+				return err
+			}
 			result, err := tx.ExecContext(ctx, `
-				UPDATE blob_pack_index
+				UPDATE blob_pack_entries
 				SET pack_id = ?, pack_offset = ?, stored_len = ?, raw_len = ?, flags = ?, crc32c = ?
-				WHERE blob_hash = ? AND pack_id = ?
+				WHERE blob_hash = ? AND store_id = ? AND pack_id = ?
 				  AND EXISTS (SELECT 1 FROM blobs WHERE hash = ?)`,
 				e.PackID, e.Offset, e.StoredLen, e.RawLen, e.Flags, e.CRC32C,
-				e.Hash.String(), move.OldPackID, e.Hash.String())
+				e.Hash.String(), c.store.primaryStoreID, move.OldPackID, e.Hash.String())
 			if err != nil {
 				return fmt.Errorf("moving packed blob %s: %w", e.Hash, err)
 			}
 			if err := requireOneRow(result, "moving packed blob "+e.Hash.String()); err != nil {
 				return err
 			}
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE blob_locations
+				SET generation = ?, stored_size = ?
+				WHERE blob_hash = ? AND store_id = ?`,
+				generation, e.StoredLen, e.Hash.String(), c.store.primaryStoreID,
+			); err != nil {
+				return fmt.Errorf("advancing repacked blob %s generation: %w", e.Hash, err)
+			}
 		}
 		for _, record := range records {
-			if err := finalizePackScanHash(ctx, tx, record.PackID); err != nil {
+			if err := finalizePackScanHash(
+				ctx, tx, c.store.primaryStoreID, record.PackID,
+			); err != nil {
 				return err
 			}
 		}
@@ -553,16 +642,23 @@ func (c *PackCatalog) CommitRepack(ctx context.Context, sourceIDs []string,
 	})
 }
 
-func liveMappingsForPacks(ctx context.Context, tx *sql.Tx, packIDs []string) (map[packstore.Hash]string, error) {
+func liveMappingsForPacks(
+	ctx context.Context,
+	tx *sql.Tx,
+	storeID string,
+	packIDs []string,
+) (map[packstore.Hash]string, error) {
 	if len(packIDs) == 0 {
 		return map[packstore.Hash]string{}, nil
 	}
-	args := make([]any, len(packIDs))
-	for i, id := range packIDs {
-		args[i] = id
+	args := make([]any, 0, len(packIDs)+1)
+	args = append(args, storeID)
+	for _, id := range packIDs {
+		args = append(args, id)
 	}
-	query := `SELECT i.blob_hash, i.pack_id FROM blob_pack_index i
-		JOIN blobs b ON b.hash = i.blob_hash WHERE i.pack_id IN (` + placeholders(len(packIDs)) + `)`
+	query := `SELECT i.blob_hash, i.pack_id FROM blob_pack_entries i
+		JOIN blobs b ON b.hash = i.blob_hash
+		WHERE i.store_id = ? AND i.pack_id IN (` + placeholders(len(packIDs)) + `)`
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("checking repack mappings: %w", err)
@@ -585,8 +681,11 @@ func liveMappingsForPacks(ctx context.Context, tx *sql.Tx, packIDs []string) (ma
 
 func (c *PackCatalog) DeleteEmptyPackRecord(ctx context.Context, packID string) (bool, error) {
 	result, err := c.store.db.ExecContext(ctx, `
-		DELETE FROM blob_packs WHERE pack_id = ?
-		  AND NOT EXISTS (SELECT 1 FROM blob_pack_index WHERE pack_id = ?)`, packID, packID)
+		DELETE FROM blob_packs WHERE store_id = ? AND pack_id = ?
+		  AND NOT EXISTS (
+			SELECT 1 FROM blob_pack_entries WHERE store_id = ? AND pack_id = ?
+		  )`,
+		c.store.primaryStoreID, packID, c.store.primaryStoreID, packID)
 	if err != nil {
 		return false, fmt.Errorf("deleting empty blob pack %s: %w", packID, err)
 	}
@@ -603,23 +702,63 @@ func (c *PackCatalog) ClearPackMetadata(ctx context.Context) error {
 		// loose content. Re-establish that physical authority before retiring
 		// the pack catalog so status and later pack passes are immediately
 		// truthful without requiring a reopen migration.
+		unpacked, err := unpackedBlobAuthority(ctx, tx, c.store.primaryStoreID)
+		if err != nil {
+			return err
+		}
+		for _, item := range unpacked {
+			if err := writeLooseLocationTx(
+				ctx, tx, c.store.primaryStoreID, item.hash,
+				BlobPhysical{
+					Encoding: looseEncodingRaw, StoredBytes: item.size,
+					PackEligible: item.size <= maxPackEligibleBytes,
+				},
+			); err != nil {
+				return err
+			}
+		}
 		if _, err := tx.ExecContext(ctx, `
-			UPDATE blobs
-			SET loose_encoding = ?, loose_stored_size = size,
-			    pack_eligible = CASE WHEN size <= ? THEN 1 ELSE 0 END
-			WHERE EXISTS (
-				SELECT 1 FROM blob_pack_index i WHERE i.blob_hash = blobs.hash
-			)`, looseEncodingRaw, maxPackEligibleBytes); err != nil {
+			DELETE FROM blob_pack_entries WHERE store_id = ?`,
+			c.store.primaryStoreID); err != nil {
 			return fmt.Errorf("restoring loose authority for unpacked blobs: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM blob_pack_index`); err != nil {
-			return fmt.Errorf("clearing packed blob mappings: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM blob_packs`); err != nil {
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM blob_packs WHERE store_id = ?`,
+			c.store.primaryStoreID); err != nil {
 			return fmt.Errorf("clearing blob pack records: %w", err)
 		}
 		return nil
 	})
+}
+
+type unpackedBlob struct {
+	hash string
+	size int64
+}
+
+func unpackedBlobAuthority(
+	ctx context.Context, tx *sql.Tx, storeID string,
+) ([]unpackedBlob, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT e.blob_hash, b.size
+		FROM blob_pack_entries e JOIN blobs b ON b.hash = e.blob_hash
+		WHERE e.store_id = ?`, storeID)
+	if err != nil {
+		return nil, fmt.Errorf("listing unpacked blob authority: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var unpacked []unpackedBlob
+	for rows.Next() {
+		var item unpackedBlob
+		if err := rows.Scan(&item.hash, &item.size); err != nil {
+			return nil, fmt.Errorf("scanning unpacked blob authority: %w", err)
+		}
+		unpacked = append(unpacked, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("listing unpacked blob authority: %w", err)
+	}
+	return unpacked, nil
 }
 
 func (c *PackCatalog) listEntries(ctx context.Context, query string, args ...any) ([]packstore.IndexEntry, error) {

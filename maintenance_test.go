@@ -227,12 +227,17 @@ func TestVerifyCursorResumesPastMalformedStoredHash(t *testing.T) {
 			db, err := vault.metadata.SQLiteDriver().Open(filepath.Join(vault.root.Name(), "docbank.db"),
 				docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
 			require.NoError(t, err)
+			primary := maintenancePrimaryStoreID(t, vault)
 			for _, hash := range hashes {
 				_, err = db.ExecContext(t.Context(),
-					`INSERT INTO blobs
-					 (hash, size, created_at, loose_encoding, loose_stored_size)
-					 VALUES (?, 1, ?, 'raw', 1)`,
+					`INSERT INTO blobs(hash, size, created_at) VALUES (?, 1, ?)`,
 					hash, "2026-07-21T00:00:00.000000000Z")
+				require.NoError(t, err)
+				_, err = db.ExecContext(t.Context(), `
+					INSERT INTO blob_locations(
+						blob_hash, store_id, generation, kind, encoding, stored_size, pack_eligible
+					) VALUES(?, ?, 'test-generation', 'loose', 'raw', 1, 1)`,
+					hash, primary)
 				require.NoError(t, err)
 			}
 			require.NoError(t, db.Close())
@@ -263,12 +268,17 @@ func TestVerifyCursorDistinguishesEmptyStoredKeyFromStart(t *testing.T) {
 			db, err := vault.metadata.SQLiteDriver().Open(filepath.Join(vault.root.Name(), "docbank.db"),
 				docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
 			require.NoError(t, err)
+			primary := maintenancePrimaryStoreID(t, vault)
 			for _, hash := range []string{"", strings.Repeat("f", 64)} {
 				_, err = db.ExecContext(t.Context(),
-					`INSERT INTO blobs
-					 (hash, size, created_at, loose_encoding, loose_stored_size)
-					 VALUES (?, 1, ?, 'raw', 1)`,
+					`INSERT INTO blobs(hash, size, created_at) VALUES (?, 1, ?)`,
 					hash, "2026-07-21T00:00:00.000000000Z")
+				require.NoError(t, err)
+				_, err = db.ExecContext(t.Context(), `
+					INSERT INTO blob_locations(
+						blob_hash, store_id, generation, kind, encoding, stored_size, pack_eligible
+					) VALUES(?, ?, 'test-generation', 'loose', 'raw', 1, 1)`,
+					hash, primary)
 				require.NoError(t, err)
 			}
 			require.NoError(t, db.Close())
@@ -305,7 +315,8 @@ func TestVerifyDoesNotScaleWithUnrelatedMetadata(t *testing.T) {
 	db, err := large.metadata.SQLiteDriver().Open(filepath.Join(large.root.Name(), "docbank.db"),
 		docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
 	require.NoError(t, err)
-	_, err = db.ExecContext(t.Context(), `UPDATE blobs SET size='malformed' WHERE hash=?`, hash)
+	_, err = db.ExecContext(t.Context(), `
+		UPDATE content_versions SET mime_type=char(0) WHERE blob_hash=?`, hash)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
 
@@ -564,14 +575,17 @@ func TestRepackPrunesMappingsWithinBudgetWithoutPhysicalPack(t *testing.T) {
 	require.NoError(t, err)
 	packID := pack.NewPackID()
 	hash := fmt.Sprintf("%064x", 99)
+	primary := maintenancePrimaryStoreID(t, vault)
 	_, err = db.ExecContext(t.Context(), `
-		INSERT INTO blob_packs (pack_id, entry_count, stored_bytes, created_at)
-		VALUES (?, 1, 20, ?)`, packID, "2026-01-01T00:00:00.000000000Z")
+		INSERT INTO blob_packs (store_id, pack_id, entry_count, stored_bytes, created_at)
+		VALUES (?, ?, 1, 20, ?)`,
+		primary, packID, "2026-01-01T00:00:00.000000000Z")
 	require.NoError(t, err)
 	_, err = db.ExecContext(t.Context(), `
-		INSERT INTO blob_pack_index
-			(blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
-		VALUES (?, ?, ?, 1, 1, 0, 0)`, hash, packID, pack.MinEntryOffset)
+		INSERT INTO blob_pack_entries
+			(blob_hash, store_id, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
+		VALUES (?, ?, ?, ?, 1, 1, 0, 0)`,
+		hash, primary, packID, pack.MinEntryOffset)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
 
@@ -747,18 +761,20 @@ func TestRepackMappingCursorAcceptsEmptyRawHighWater(t *testing.T) {
 				})
 			require.NoError(t, err)
 			packID := pack.NewPackID()
+			primary := maintenancePrimaryStoreID(t, vault)
 			_, err = db.ExecContext(t.Context(), `
-				INSERT INTO blob_packs (pack_id, entry_count, stored_bytes, created_at)
-				VALUES (?, 2, 10, ?)`, packID, "2026-01-01T00:00:00.000000000Z")
+				INSERT INTO blob_packs (store_id, pack_id, entry_count, stored_bytes, created_at)
+				VALUES (?, ?, 2, 10, ?)`,
+				primary, packID, "2026-01-01T00:00:00.000000000Z")
 			require.NoError(t, err)
 			for i, hash := range []string{
 				"",
 				"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
 			} {
 				_, err = db.ExecContext(t.Context(), `
-					INSERT INTO blob_pack_index
-						(blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
-					VALUES (?, ?, ?, 5, 1, 0, 0)`, hash, packID,
+					INSERT INTO blob_pack_entries
+						(blob_hash, store_id, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
+					VALUES (?, ?, ?, ?, 5, 1, 0, 0)`, hash, primary, packID,
 					pack.MinEntryOffset+int64(i)*32)
 				require.NoError(t, err)
 			}
@@ -1012,12 +1028,21 @@ func insertDanglingMaintenanceMapping(t *testing.T, vault *Vault, hash, packID s
 	db, err := vault.metadata.SQLiteDriver().Open(filepath.Join(vault.root.Name(), "docbank.db"),
 		docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
 	require.NoError(t, err)
+	primary := maintenancePrimaryStoreID(t, vault)
 	_, err = db.ExecContext(t.Context(), `
-		INSERT INTO blob_pack_index
-			(blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
-		VALUES (?, ?, ?, 1, 1, 0, 0)`, hash, packID, pack.MinEntryOffset)
+		INSERT INTO blob_pack_entries
+			(blob_hash, store_id, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
+		VALUES (?, ?, ?, ?, 1, 1, 0, 0)`,
+		hash, primary, packID, pack.MinEntryOffset)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
+}
+
+func maintenancePrimaryStoreID(t *testing.T, vault *Vault) string {
+	t.Helper()
+	primary, err := vault.metadata.PrimaryBlobStore(t.Context())
+	require.NoError(t, err)
+	return primary.ID
 }
 
 type repackFaultCatalog struct {
