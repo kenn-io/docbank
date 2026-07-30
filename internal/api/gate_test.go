@@ -84,6 +84,40 @@ func TestQueuedMaintenanceRejectsRouteMutation(t *testing.T) {
 	require.NoError(t, <-maintenanceDone)
 }
 
+func TestCanceledQueuedMaintenanceStopsRejectingRouteMutation(t *testing.T) {
+	g := NewOperationGate()
+	captureEntered := make(chan struct{})
+	releaseCapture := make(chan struct{})
+	go func() {
+		_ = g.capture(func() error {
+			close(captureEntered)
+			<-releaseCapture
+			return nil
+		})
+	}()
+	<-captureEntered
+	t.Cleanup(func() { close(releaseCapture) })
+
+	ctx, cancel := context.WithCancel(t.Context())
+	maintenanceDone := make(chan error, 1)
+	go func() {
+		maintenanceDone <- g.maintainContext(ctx, func() error {
+			t.Error("canceled maintenance entered")
+			return nil
+		})
+	}()
+	require.Eventually(t, func() bool {
+		g.admission.RLock()
+		defer g.admission.RUnlock()
+		return g.maintenance == 1
+	}, time.Second, time.Millisecond)
+
+	cancel()
+	require.ErrorIs(t, <-maintenanceDone, context.Canceled)
+	require.NoError(t, g.mutate(func() error { return nil }),
+		"canceled maintenance must stop rejecting mutations before backup completes")
+}
+
 func TestBackupCaptureBlocksGCButAllowsLiveDeletion(t *testing.T) {
 	ctx := t.Context()
 	root := t.TempDir()
@@ -111,7 +145,7 @@ func TestBackupCaptureBlocksGCButAllowsLiveDeletion(t *testing.T) {
 
 	repo, err := backup.Init(filepath.Join(root, "backup"))
 	require.NoError(t, err)
-	g := &gate{}
+	g := NewOperationGate()
 	d := Deps{Store: metadata, Blobs: blobs}
 	metadataCaptured := make(chan struct{})
 	resumeBackup := make(chan struct{})

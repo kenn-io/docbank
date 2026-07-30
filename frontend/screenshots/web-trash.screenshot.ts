@@ -34,6 +34,12 @@ const tagCatalogScreenshotPath = path.join(
   "screenshots",
   "web-tag-catalog.png",
 );
+const auditEvidenceScreenshotPath = path.join(
+  repositoryRoot,
+  ".superpowers",
+  "screenshots",
+  "web-audit-evidence.png",
+);
 
 test.describe("Docbank web screenshots", () => {
   let workspace = "";
@@ -61,6 +67,7 @@ test.describe("Docbank web screenshots", () => {
     await rm(restoreScreenshotPath, { force: true });
     await rm(tagAssignmentScreenshotPath, { force: true });
     await rm(tagCatalogScreenshotPath, { force: true });
+    await rm(auditEvidenceScreenshotPath, { force: true });
     const reports = path.join(workspace, "synthetic", "Reports");
     await mkdir(reports, { recursive: true, mode: 0o700 });
     await writeFile(
@@ -87,6 +94,24 @@ test.describe("Docbank web screenshots", () => {
       "assign",
       "tax",
       "/Reports/quarterly-tax-report.txt",
+    ]);
+    const preview = JSON.parse(
+      await runDocbank(["audit", "enable", "/Reports", "--json"]),
+    ) as { preview_token?: unknown };
+    if (
+      typeof preview.preview_token !== "string" ||
+      preview.preview_token === ""
+    ) {
+      throw new Error("audit enrollment preview omitted its token");
+    }
+    await runDocbank([
+      "audit",
+      "enable",
+      "--run",
+      "--token",
+      preview.preview_token,
+      "--acknowledge-permanent-retention",
+      "--json",
     ]);
     webURL = await runDocbank(["web", "--no-browser"]);
     const browserURL = new URL(webURL);
@@ -151,6 +176,25 @@ test.describe("Docbank web screenshots", () => {
         }
       `,
     });
+
+    await page
+      .getByRole("button", { name: "Verify permanent audit evidence" })
+      .click();
+    const auditEvidence = page.getByRole("dialog", {
+      name: "Permanent audit verification",
+    });
+    await expect(auditEvidence).toContainText(
+      "Protected history and content agree",
+    );
+    await expect(auditEvidence).toContainText("1 protected scope");
+    await page.screenshot({
+      path: auditEvidenceScreenshotPath,
+      fullPage: true,
+      animations: "disabled",
+    });
+    await auditEvidence
+      .getByRole("button", { name: "Close permanent audit verification" })
+      .click();
 
     await page.getByRole("button", { name: "Manage tag definitions" }).click();
     const catalog = page.getByRole("dialog", {

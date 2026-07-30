@@ -189,6 +189,36 @@ export interface AuditStatus {
   membership?: AuditMembershipStatus;
 }
 
+export interface AuditScopeEvidence {
+  id: string;
+  entry_count: number;
+  chain_head: string;
+}
+
+export interface AuditEvidence {
+  vault_id: string;
+  lineage_id: string;
+  operation_sequence_high_water: number;
+  allocation_entry_count: number;
+  allocation_head: string;
+  scopes: AuditScopeEvidence[];
+}
+
+export interface VerifyProblem {
+  hash: string;
+  problem: "missing" | "corrupt" | "unreadable";
+}
+
+export interface AuditVerifyReport {
+  enabled: boolean;
+  evidence?: AuditEvidence;
+  protected_blobs: number;
+  protected_bytes: number;
+  verified_blobs: number;
+  problems?: VerifyProblem[];
+  metadata_problems?: string[];
+}
+
 export interface AuditPathState {
   path: string;
   state: "live" | "trash";
@@ -603,6 +633,18 @@ export async function auditHistory(
     `/api/v1/audit/history?${query.toString()}`,
     session,
   );
+}
+
+export async function verifyAudit(
+  session: string,
+  signal?: AbortSignal,
+): Promise<AuditVerifyReport> {
+  return requestJSON<AuditVerifyReport>("/api/v1/audit/verify", session, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+    signal,
+  });
 }
 
 export async function listJobs(session: string): Promise<Job[]> {

@@ -26,6 +26,8 @@ Selecting a tag
 browses its live assignments, while search can require the same exact tag
 identity. Protected documents expose
 their newest-first permanent audit timeline and complete event authority. The
+audit-verification button independently replays permanent history, hashes every
+protected blob, and exposes the current allocation and scope-chain evidence. The
 storage button separates loose content, live packed content, pack-file payload,
 and logically dead packed bytes awaiting repack. The activity button reports
 the daemon's supervised extraction, watched-inbox, and automatic-packing jobs.
@@ -302,6 +304,29 @@ history already being inspected. Protection status remains authoritative even
 when a page contains no events. The web application does not infer protection
 from an empty or non-empty timeline.
 
+## Verify permanent audit evidence
+
+Choose the shield-check button in the top bar to run the vault-wide permanent
+audit verifier. This is more than reading stored status: Docbank independently
+replays canonical audit history against the current node, version, membership,
+topology, tag, and provenance projections, then reads and recomputes SHA-256 for
+every unique blob retained by protected history.
+
+A successful result reports the protected and verified blob totals, unique raw
+bytes, vault and allocation-lineage identities, operation high-water mark,
+allocation entry count and head, and each scope's terminal entry count and chain
+head. Copy buttons preserve the complete identities even when they wrap. A
+dormant vault is reported separately from a failed verification; metadata,
+missing-content, corruption, and unreadable-content problems remain visible
+with the affected hash.
+
+This drawer runs only a fresh proof of current authority. It does not accept a
+previous evidence bundle, enroll a scope, or change protected state. Record
+`docbank audit verify --json` outside the vault and later use
+`docbank audit verify --expected` when that external copy must act as a rollback
+trust anchor. Closing the drawer cancels its active request; maintenance
+contention or interruption remains visible and can be retried deliberately.
+
 ## Inspect background work
 
 Choose the activity button in the top bar to inspect the jobs owned by the
@@ -383,10 +408,11 @@ request; the application removes them from the address bar and holds them only
 in page memory. Ordinary requests use
 `X-Docbank-Web-Session`, which the daemon accepts only for the tree, node,
 search, tag-definition and assignment reads, immutable-version, provenance,
-audit-status, audit-history, background-job, physical-storage-status,
-configured backup-snapshot-list, bounded trash-list, verified-download
-preparation, revision-bound move-to-trash and restore, tag assignment/removal,
-and tag-definition create/rename/delete requests used by this interface.
+audit-status, audit-history, vault-wide audit verification, background-job,
+physical-storage-status, configured backup-snapshot-list, bounded trash-list,
+verified-download preparation, revision-bound move-to-trash and restore, tag
+assignment/removal, and tag-definition create/rename/delete requests used by
+this interface.
 Download preparation may write only owner-private temporary bytes and issue
 one exact, expiring file ticket. Upload uses a separate, never-reconnecting
 WebSocket authenticated by a challenge proof over the upload secret. No file
@@ -400,8 +426,9 @@ Renaming and deleting definitions require their inspected tag revision, and
 definition deletion explicitly reports how many assignments were removed.
 These permissions do not grant bulk tag mutation. The session
 cannot empty trash, perform any other document mutation,
-enroll audit scopes, run independent verification, or call backup creation,
-verification, restore, maintenance, configuration, or general API endpoints.
+enroll audit scopes, run general metadata/content or backup verification, or
+call backup creation, restore, maintenance, configuration, or general API
+endpoints.
 Its sole backup capability is listing the immutable snapshots in the
 repository already configured for this daemon.
 
@@ -437,8 +464,9 @@ leave the browser constructing child paths beneath an obsolete name.
 
 The current web application does not compare versions, recursively import
 folders, edit, revert, prune, move live nodes between folders, bulk-apply tags,
-empty trash, enroll audit scopes, run independent audit verification,
-or run maintenance, backup, verification, or restore operations.
+empty trash, enroll audit scopes, or run maintenance, backup creation,
+backup verification, general metadata/content verification, or restore
+operations.
 Use the corresponding CLI or authenticated HTTP endpoint for those workflows.
 Future web workflows will require deliberately expanded browser-session
 permissions rather than inheriting the master API key.

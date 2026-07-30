@@ -55,7 +55,7 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
 		}
 		out := &storageRepackOutput{}
-		err = g.maintain(func() error {
+		err = g.maintainContext(ctx, func() error {
 			report, err := runRepack(ctx, d, in.Body.MaxBytes, minAge, in.Body.MinDeadBytes)
 			if err != nil {
 				return FromMaintenanceError(err)
@@ -76,7 +76,7 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 		}
 	}) (*storagePackOutput, error) {
 		out := &storagePackOutput{}
-		err := g.maintain(func() error {
+		err := g.maintainContext(ctx, func() error {
 			report, err := internalmaintenance.Pack(ctx, d.Store, d.Blobs, in.Body.MaxBytes)
 			if err != nil {
 				return FromMaintenanceError(err)
@@ -246,7 +246,7 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
 		}
 		out := &emptyOutput{}
-		err = g.maintain(func() error {
+		err = g.maintainContext(ctx, func() error {
 			rep, err := d.Store.TrashEmpty(ctx, age, in.Body.Run)
 			if err != nil {
 				return FromStoreError(err)
@@ -271,7 +271,7 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 		}
 	}) (*gcOutput, error) {
 		out := &gcOutput{}
-		err := g.maintain(func() error {
+		err := g.maintainContext(ctx, func() error {
 			return d.Blobs.WithMutation(ctx, func() error {
 				rep, err := runGC(ctx, d, in.Body.Run)
 				if err != nil {
@@ -290,7 +290,7 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 		Summary: "Validate metadata and re-hash every stored blob",
 	}, func(ctx context.Context, _ *struct{}) (*verifyOutput, error) {
 		out := &verifyOutput{}
-		err := g.maintain(func() error {
+		err := g.maintainContext(ctx, func() error {
 			report, err := runVerify(ctx, d)
 			out.Body = report
 			return err

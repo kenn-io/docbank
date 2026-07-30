@@ -605,7 +605,8 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 
 	resp = webRequest(http.MethodPost, "/api/v1/audit/verify")
-	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, resp.StatusCode,
+		"browser sessions may run the read-only permanent-audit verifier")
 	require.NoError(t, resp.Body.Close())
 
 	resp = webRequest(http.MethodGet, "/api/v1/info")

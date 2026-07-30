@@ -24,7 +24,8 @@ captures the requested state, stops the daemon, and removes the vault.
 Generated images are written beneath `.superpowers/screenshots/` for visual
 inspection and PR attachment; the current case captures both move-to-trash and
 restore confirmations, the tag-definition catalog, and a completed tag
-assignment. Generated images are intentionally not committed.
+assignment, plus independently verified permanent-audit evidence. Generated
+images are intentionally not committed.
 
 Pass ordinary Playwright arguments after `--` to select a case:
 

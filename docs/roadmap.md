@@ -151,7 +151,9 @@ and a stable tag identity can drive either a live assignment view or a
 text-search filter.
 Protected nodes also expose their permanent newest-first audit timeline
 and the complete stable identity and before/after state of every event. The
-portal also uploads local files through the same caller-declared and
+portal can independently replay permanent authority, verify every protected
+blob, and present the terminal allocation and scope-chain evidence. It also
+uploads local files through the same caller-declared and
 server-verified byte-identity contract used by remote agents, moves a selected
 revision-bound live node to recoverable trash after explicit confirmation,
 lists newest-first trash roots, restores one inspected revision while
