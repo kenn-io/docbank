@@ -1423,7 +1423,8 @@ func TestOperationsViewShowsStorageAndRecoveryPoints(t *testing.T) {
 	model, cmd := updateModel(t, model, runeKey('O'))
 	require.NotNil(t, cmd)
 	assert.True(t, model.operationsOpen)
-	assert.True(t, model.operationsLoading)
+	assert.True(t, model.operationsInfoBusy)
+	assert.True(t, model.operationsBackupBusy)
 	model = runModelCommand(t, model, cmd)
 
 	content := model.View().Content
@@ -1436,6 +1437,26 @@ func TestOperationsViewShowsStorageAndRecoveryPoints(t *testing.T) {
 	assert.Less(t, strings.Index(content, `"weekly"`), strings.Index(content, `"baseline"`))
 	assert.Equal(t, 1, backend.infoCalls)
 	assert.Equal(t, 1, backend.backupCalls)
+}
+
+func TestOperationsStorageRendersWhileBackupsAreLoading(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.width, model.height = 100, 20
+
+	model, _ = updateModel(t, model, runeKey('O'))
+	model = runModelCommand(
+		t, model, model.loadOperationsInfo(model.operationsRequestID),
+	)
+
+	content := model.View().Content
+	assert.False(t, model.operationsInfoBusy)
+	assert.True(t, model.operationsBackupBusy)
+	assert.Contains(t, content, "Loose inventory: 5 files")
+	assert.Contains(t, content, "Loading backup recovery points...")
+	assert.Equal(t, 1, backend.infoCalls)
+	assert.Equal(t, 0, backend.backupCalls)
 }
 
 func TestClosingOperationsInvalidatesDelayedLoad(t *testing.T) {

@@ -130,12 +130,16 @@ type jobsLoadedMsg struct {
 	err       error
 }
 
-type operationsLoadedMsg struct {
-	requestID  uint64
-	info       api.VaultInfo
-	snapshots  []api.BackupSnapshot
-	storageErr error
-	backupErr  error
+type operationsInfoLoadedMsg struct {
+	requestID uint64
+	info      api.VaultInfo
+	err       error
+}
+
+type operationsBackupsLoadedMsg struct {
+	requestID uint64
+	snapshots []api.BackupSnapshot
+	err       error
 }
 
 type trashLoadedMsg struct {
@@ -257,7 +261,8 @@ type Model struct {
 	operationsSnapshots  []api.BackupSnapshot
 	operationsTotal      int
 	operationsOffset     int
-	operationsLoading    bool
+	operationsInfoBusy   bool
+	operationsBackupBusy bool
 	operationsStorageErr error
 	operationsBackupErr  error
 	operationsRequestID  uint64
@@ -369,15 +374,22 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.clampJobsSelection()
 		}
 		return m, nil
-	case operationsLoadedMsg:
+	case operationsInfoLoadedMsg:
 		if !m.operationsOpen || msg.requestID != m.operationsRequestID {
 			return m, nil
 		}
-		m.operationsLoading = false
+		m.operationsInfoBusy = false
 		m.operationsInfo = msg.info
-		m.operationsStorageErr = msg.storageErr
-		m.operationsBackupErr = msg.backupErr
-		if msg.backupErr == nil {
+		m.operationsStorageErr = msg.err
+		m.clampOperationsOffset()
+		return m, nil
+	case operationsBackupsLoadedMsg:
+		if !m.operationsOpen || msg.requestID != m.operationsRequestID {
+			return m, nil
+		}
+		m.operationsBackupBusy = false
+		m.operationsBackupErr = msg.err
+		if msg.err == nil {
 			snapshots := append([]api.BackupSnapshot(nil), msg.snapshots...)
 			sort.SliceStable(snapshots, func(left, right int) bool {
 				if snapshots[left].CreatedAt != snapshots[right].CreatedAt {
@@ -475,7 +487,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.removeTrashedRows(target)
 		return m.reloadCurrent()
 	case spinnerTickMsg:
-		if !m.loading && !m.jobsLoading && !m.operationsLoading &&
+		if !m.loading && !m.jobsLoading &&
+			!m.operationsInfoBusy && !m.operationsBackupBusy &&
 			!m.trashLoading && !m.mutationRunning {
 			m.spinnerActive = false
 			return m, nil
@@ -606,12 +619,15 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.operationsSnapshots = nil
 		m.operationsTotal = 0
 		m.operationsOffset = 0
-		m.operationsLoading = true
+		m.operationsInfoBusy = true
+		m.operationsBackupBusy = true
 		m.operationsStorageErr = nil
 		m.operationsBackupErr = nil
 		m.operationsRequestID++
 		return m, tea.Batch(
-			m.startSpinner(), m.loadOperations(m.operationsRequestID),
+			m.startSpinner(),
+			m.loadOperationsInfo(m.operationsRequestID),
+			m.loadOperationsBackups(m.operationsRequestID),
 		)
 	case "s":
 		m.cycleSortField()
@@ -867,15 +883,19 @@ func (m Model) updateOperationsKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.helpOpen = true
 	case keyEscape, "backspace", "left", "h":
 		m.operationsOpen = false
-		m.operationsLoading = false
+		m.operationsInfoBusy = false
+		m.operationsBackupBusy = false
 		m.operationsRequestID++
 	case "r":
-		m.operationsLoading = true
+		m.operationsInfoBusy = true
+		m.operationsBackupBusy = true
 		m.operationsStorageErr = nil
 		m.operationsBackupErr = nil
 		m.operationsRequestID++
 		return m, tea.Batch(
-			m.startSpinner(), m.loadOperations(m.operationsRequestID),
+			m.startSpinner(),
+			m.loadOperationsInfo(m.operationsRequestID),
+			m.loadOperationsBackups(m.operationsRequestID),
 		)
 	case "up", "k":
 		m.operationsOffset--
@@ -1112,14 +1132,20 @@ func (m Model) loadJobs(requestID uint64) tea.Cmd {
 	}
 }
 
-func (m Model) loadOperations(requestID uint64) tea.Cmd {
+func (m Model) loadOperationsInfo(requestID uint64) tea.Cmd {
 	ctx, backend := m.ctx, m.backend
 	return func() tea.Msg {
-		info, storageErr := backend.Info(ctx)
-		snapshots, backupErr := backend.BackupList(ctx)
-		return operationsLoadedMsg{
-			requestID: requestID, info: info, snapshots: snapshots,
-			storageErr: storageErr, backupErr: backupErr,
+		info, err := backend.Info(ctx)
+		return operationsInfoLoadedMsg{requestID: requestID, info: info, err: err}
+	}
+}
+
+func (m Model) loadOperationsBackups(requestID uint64) tea.Cmd {
+	ctx, backend := m.ctx, m.backend
+	return func() tea.Msg {
+		snapshots, err := backend.BackupList(ctx)
+		return operationsBackupsLoadedMsg{
+			requestID: requestID, snapshots: snapshots, err: err,
 		}
 	}
 }

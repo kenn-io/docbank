@@ -145,8 +145,15 @@ func (m Model) renderOperationsLocation() string {
 			len(m.operationsSnapshots), m.operationsTotal,
 		)
 	}
-	if m.operationsLoading {
-		right = m.styles.spinner.Render(m.spinnerIndicator()) + " loading"
+	if m.operationsInfoBusy || m.operationsBackupBusy {
+		switch {
+		case m.operationsInfoBusy && m.operationsBackupBusy:
+			right = m.styles.spinner.Render(m.spinnerIndicator()) + " loading"
+		case m.operationsInfoBusy:
+			right = m.styles.spinner.Render(m.spinnerIndicator()) + " loading storage"
+		default:
+			right = m.styles.spinner.Render(m.spinnerIndicator()) + " loading backups"
+		}
 	} else if m.operationsStorageErr != nil && m.operationsBackupErr != nil {
 		right = "status unavailable"
 	} else if m.operationsStorageErr != nil || m.operationsBackupErr != nil {
@@ -302,11 +309,11 @@ func (m Model) operationsLines(width int) []string {
 		m.styles.heading.Render(pad(fit(" Storage inventory", width), width)),
 		separator,
 	}
-	if m.operationsLoading && m.operationsInfo.VaultID == "" &&
-		len(m.operationsSnapshots) == 0 {
-		return append(lines, m.styles.muted.Render(pad(" Loading vault operations...", width)))
-	}
-	if m.operationsStorageErr != nil {
+	if m.operationsInfoBusy && m.operationsInfo.VaultID == "" {
+		lines = append(lines, m.styles.muted.Render(pad(
+			" Loading storage inventory...", width,
+		)))
+	} else if m.operationsStorageErr != nil {
 		lines = appendWrapped(lines, " Storage unavailable: "+
 			quoted(m.operationsStorageErr.Error()), width, m.styles.error)
 	} else {
@@ -349,6 +356,10 @@ func (m Model) operationsLines(width int) []string {
 		separator,
 	)
 	switch {
+	case m.operationsBackupBusy && len(m.operationsSnapshots) == 0:
+		lines = append(lines, m.styles.muted.Render(pad(
+			" Loading backup recovery points...", width,
+		)))
 	case m.operationsBackupErr != nil:
 		lines = appendWrapped(lines, " Backup repository unavailable: "+
 			quoted(m.operationsBackupErr.Error()), width, m.styles.error)
