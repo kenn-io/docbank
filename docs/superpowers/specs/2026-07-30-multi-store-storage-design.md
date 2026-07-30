@@ -44,7 +44,8 @@ It must preserve these properties:
   than false catalog authority;
 - deduplicated content moves only when every logical reference permits source
   retirement;
-- a successful backup contains every live blob;
+- a successful backup contains every blob represented by the pinned metadata
+  snapshot, including unreachable content still inside the GC regret window;
 - a restore does not require recreating the source machine's store topology;
 - machine paths, endpoints, and credentials never enter logical JSONL or
   portable backup metadata; and
@@ -798,8 +799,11 @@ The lease blocks location revocation, pack/repack mapping changes, GC, and
 physical retirement for captured content. Logical document mutations may
 continue through SQLite's WAL.
 
-For each live hash, backup reads one usable candidate through terminal
-verification. It does not download every redundant location.
+For every `blobs` membership row in the pinned metadata snapshot, backup reads
+one usable candidate through terminal verification. This deliberately includes
+unreachable content that remains inside the GC regret window, so the metadata
+JSONL and captured bytes describe the same archive. Backup does not download
+every redundant location.
 
 If no candidate verifies:
 
@@ -1051,8 +1055,13 @@ Conformance must exercise:
 - mixed exhausted-candidate outcomes and precedence;
 - process-local demotion and generation invalidation;
 - complete backup from local and remote-only populations;
+- backup and restore of unreachable blob membership retained inside the GC
+  regret window;
 - unavailable-sole-location backup failure;
 - default local restore and explicit remap;
+- rejection of unsafe restore mapping files before any backend is contacted,
+  including non-regular, redirected, non-owner-private, or wrong-owner files on
+  Unix and final reparse points or non-owner-private DACLs on Windows;
 - in-place restore adoption and repair of a bad existing object;
 - exact released-schema cutovers;
 - downgrade fencing; and
@@ -1080,7 +1089,9 @@ The complete design reduces to these rules:
 9. Reference-aware policy decides whether a source may retire.
 10. Permanent audit prevents Docbank-authorized deletion but does not promise
     continuous availability or control external storage actors.
-11. A successful backup contains every live blob.
+11. A successful backup contains every blob represented by its pinned metadata
+    snapshot, including unreachable content retained inside the GC regret
+    window.
 12. Restore grants fresh target authority and does not inherit deployment
     secrets or ownership accidentally.
 13. Kit owns byte mechanics; Docbank owns product policy.
