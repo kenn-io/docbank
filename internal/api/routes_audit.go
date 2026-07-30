@@ -155,7 +155,7 @@ func registerAuditRoutes(
 			expected = &converted
 		}
 		out := &auditVerifyOutput{}
-		err := g.maintain(func() error {
+		err := g.maintainContext(ctx, func() error {
 			verification, err := d.Store.VerifyAudit(ctx, expected)
 			if err != nil {
 				if ctx.Err() != nil {

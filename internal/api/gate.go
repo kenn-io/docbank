@@ -3,9 +3,14 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
+
+	"golang.org/x/sync/semaphore"
 )
+
+const operationGateExclusiveWeight int64 = 1 << 30
 
 // OperationGate serializes maintenance against regular mutations and active backup
 // captures. Regular mutating handlers hold mu's read side and may run
@@ -14,27 +19,36 @@ import (
 // for Kit's short metadata freeze, so ordinary writes resume while maintenance
 // remains queued behind the snapshot's content requirements.
 type OperationGate struct {
-	mu           sync.RWMutex
-	preservation sync.RWMutex
+	mu           *semaphore.Weighted
+	preservation *semaphore.Weighted
 	admission    sync.RWMutex
 	maintenance  int
 }
 
 // NewOperationGate creates one daemon-wide operation coordinator. Every
 // mutating entry point, including daemon-owned jobs, must share this instance.
-func NewOperationGate() *OperationGate { return &OperationGate{} }
+func NewOperationGate() *OperationGate {
+	return &OperationGate{
+		mu:           semaphore.NewWeighted(operationGateExclusiveWeight),
+		preservation: semaphore.NewWeighted(operationGateExclusiveWeight),
+	}
+}
 
 // Mutate runs fn as an ordinary mutation, excluding maintenance while the
 // complete physical-write and metadata-publication operation is in flight.
 func (g *OperationGate) Mutate(fn func() error) error {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
+	if err := g.mu.Acquire(context.Background(), 1); err != nil {
+		return fmt.Errorf("acquiring mutation gate: %w", err)
+	}
+	defer g.mu.Release(1)
 	return fn()
 }
 
 // Maintain runs daemon-owned physical maintenance with the same exclusion and
 // admission behavior as an HTTP maintenance request.
-func (g *OperationGate) Maintain(fn func() error) error { return g.maintain(fn) }
+func (g *OperationGate) Maintain(fn func() error) error {
+	return g.maintainContext(context.Background(), fn)
+}
 
 func (g *OperationGate) mutate(fn func() error) error {
 	g.admission.RLock()
@@ -46,13 +60,20 @@ func (g *OperationGate) mutate(fn func() error) error {
 	// Keep admission pinned until the shared side is held. A short backup
 	// freeze can therefore delay this mutation without being mistaken for
 	// maintenance, while newly queued maintenance cannot overtake it.
-	g.mu.RLock()
+	err := g.mu.Acquire(context.Background(), 1)
 	g.admission.RUnlock()
-	defer g.mu.RUnlock()
+	if err != nil {
+		return fmt.Errorf("acquiring route mutation gate: %w", err)
+	}
+	defer g.mu.Release(1)
 	return fn()
 }
 
 func (g *OperationGate) maintain(fn func() error) error {
+	return g.maintainContext(context.Background(), fn)
+}
+
+func (g *OperationGate) maintainContext(ctx context.Context, fn func() error) error {
 	g.admission.Lock()
 	g.maintenance++
 	g.admission.Unlock()
@@ -61,16 +82,22 @@ func (g *OperationGate) maintain(fn func() error) error {
 		g.maintenance--
 		g.admission.Unlock()
 	}()
-	g.preservation.Lock()
-	defer g.preservation.Unlock()
-	g.mu.Lock()
-	defer g.mu.Unlock()
+	if err := g.preservation.Acquire(ctx, operationGateExclusiveWeight); err != nil {
+		return fmt.Errorf("acquiring maintenance preservation gate: %w", err)
+	}
+	defer g.preservation.Release(operationGateExclusiveWeight)
+	if err := g.mu.Acquire(ctx, operationGateExclusiveWeight); err != nil {
+		return fmt.Errorf("acquiring maintenance mutation gate: %w", err)
+	}
+	defer g.mu.Release(operationGateExclusiveWeight)
 	return fn()
 }
 
 func (g *OperationGate) capture(fn func() error) error {
-	g.preservation.RLock()
-	defer g.preservation.RUnlock()
+	if err := g.preservation.Acquire(context.Background(), 1); err != nil {
+		return fmt.Errorf("acquiring backup preservation gate: %w", err)
+	}
+	defer g.preservation.Release(1)
 	return fn()
 }
 
@@ -93,10 +120,8 @@ func (f *gateFreezer) Begin(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	f.gate.mu.Lock()
-	if err := ctx.Err(); err != nil {
-		f.gate.mu.Unlock()
-		return err
+	if err := f.gate.mu.Acquire(ctx, operationGateExclusiveWeight); err != nil {
+		return fmt.Errorf("acquiring backup freeze gate: %w", err)
 	}
 	f.held = true
 	return nil
@@ -107,6 +132,6 @@ func (f *gateFreezer) End(context.Context) error {
 		return errors.New("backup freeze is not held")
 	}
 	f.held = false
-	f.gate.mu.Unlock()
+	f.gate.mu.Release(operationGateExclusiveWeight)
 	return nil
 }
