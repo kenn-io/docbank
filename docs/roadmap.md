@@ -18,7 +18,7 @@ elsewhere only when they materially explain the design and are marked
 | 1 | Core: store, blob store, ingest pipeline, full CLI | **Implemented** |
 | 2a | Infrastructure: daemon, HTTP API, daemon-first CLI, self-update, release pipeline | **Implemented** |
 | 2b | Features: content versions, versioned editing, full audit, tags, watched inboxes, text extraction, ingest provenance | **In progress**: versions, tags, queryable provenance, watched inboxes, disjoint audit scopes, and bounded plain-text extraction implemented; PDF/Office extraction remains |
-| 3 | Primary kit-ui web portal and focused operator TUI | **In progress**: analytical tree/search/detail, audited-history, daemon-job inspection, web tag definition/browsing/assignment workflows, version history, provenance, verified current/historical content download, verified upload, and recoverable trash with restoration implemented |
+| 3 | Primary kit-ui web portal and focused operator TUI | **In progress**: analytical tree/search/detail, audited-history, daemon-job and storage/backup inspection, web tag definition/browsing/assignment workflows, version history, provenance, verified current/historical content download, verified upload, and recoverable trash with restoration implemented |
 | 4 | Backup commands over the kit engine | **Implemented**; representative-corpus hardening continues |
 
 ## Implemented (Phase 1)
@@ -168,10 +168,12 @@ search, stable document/version/hash detail, a compact node-focused
 audited-history timeline, and revision-bound recoverable trash and restore. Its
 daemon-activity screen reports supervised job lifecycle, timestamps, and
 complete terminal failures without inventing percentages where workers expose
-no authoritative total. Later slices add ingest progress, broader
-metadata/evidence, and storage and backup state. Rich document comparison
-belongs in external tools or the web portal. Neither client has privileged
-operations — anything either does, the API can do.
+no authoritative total. A read-only operations screen separates logical
+authority from loose and packed inventory and lists the configured repository's
+backup recovery points. Later slices add ingest progress and broader
+metadata/evidence. Rich document comparison belongs in external tools or the
+web portal. Neither client has privileged operations — anything either does,
+the API can do.
 
 ## Phase 4 — Backup (implemented)
 

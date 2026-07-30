@@ -72,6 +72,8 @@ func (m Model) render() string {
 	lines := []string{m.renderTitleBar()}
 	if m.jobsOpen {
 		lines = append(lines, m.renderJobsLocation())
+	} else if m.operationsOpen {
+		lines = append(lines, m.renderOperationsLocation())
 	} else if m.trashOpen {
 		lines = append(lines, m.renderTrashLocation())
 	} else if m.historyOpen {
@@ -86,10 +88,12 @@ func (m Model) render() string {
 		lines = append(lines, m.styles.stats.Render(fit(" "+m.notice, m.width)))
 	}
 
-	bodyHeight := max(m.height-len(lines)-1, 1)
+	bodyHeight := m.bodyViewportHeight()
 	body := m.renderBody(bodyHeight)
 	if m.jobsOpen {
 		body = m.renderJobsList(bodyHeight)
+	} else if m.operationsOpen {
+		body = m.renderOperations(bodyHeight)
 	} else if m.trashOpen {
 		body = m.renderTrashList(bodyHeight)
 	} else if m.historyOpen {
@@ -115,6 +119,17 @@ func (m Model) render() string {
 	return content
 }
 
+func (m Model) bodyViewportHeight() int {
+	linesAboveBody := 2
+	if m.searching {
+		linesAboveBody++
+	}
+	if m.notice != "" {
+		linesAboveBody++
+	}
+	return max(m.height-linesAboveBody-1, 1)
+}
+
 func (m Model) renderJobsLocation() string {
 	left := " Daemon activity · background jobs"
 	right := fmt.Sprintf("%d running · %d total", m.jobsRunning, m.jobsTotal)
@@ -128,6 +143,32 @@ func (m Model) renderJobsLocation() string {
 	}
 	if m.jobsErr != nil {
 		right = "jobs unavailable"
+	}
+	return m.styles.stats.Render(joinSides(left, right, m.width))
+}
+
+func (m Model) renderOperationsLocation() string {
+	left := " Vault operations · read-only"
+	right := fmt.Sprintf("%d recovery point(s)", m.operationsTotal)
+	if m.operationsTotal > len(m.operationsSnapshots) {
+		right = fmt.Sprintf(
+			"first %d of %d recovery points",
+			len(m.operationsSnapshots), m.operationsTotal,
+		)
+	}
+	if m.operationsInfoBusy || m.operationsBackupBusy {
+		switch {
+		case m.operationsInfoBusy && m.operationsBackupBusy:
+			right = m.styles.spinner.Render(m.spinnerIndicator()) + " loading"
+		case m.operationsInfoBusy:
+			right = m.styles.spinner.Render(m.spinnerIndicator()) + " loading storage"
+		default:
+			right = m.styles.spinner.Render(m.spinnerIndicator()) + " loading backups"
+		}
+	} else if m.operationsStorageErr != nil && m.operationsBackupErr != nil {
+		right = "status unavailable"
+	} else if m.operationsStorageErr != nil || m.operationsBackupErr != nil {
+		right = "partial status"
 	}
 	return m.styles.stats.Render(joinSides(left, right, m.width))
 }
@@ -259,6 +300,125 @@ func (m Model) renderJobsList(height int) string {
 		lines = append(lines, strings.Repeat(" ", m.width))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (m Model) renderOperations(height int) string {
+	lines := m.operationsLines(m.width)
+	maxOffset := max(len(lines)-height, 0)
+	offset := min(m.operationsOffset, maxOffset)
+	end := min(offset+height, len(lines))
+	visible := append([]string(nil), lines[offset:end]...)
+	for len(visible) < height {
+		visible = append(visible, strings.Repeat(" ", m.width))
+	}
+	return strings.Join(visible, "\n")
+}
+
+func (m Model) operationsLines(width int) []string {
+	separator := m.styles.separator.Render(strings.Repeat("─", max(width, 0)))
+	lines := []string{
+		m.styles.heading.Render(pad(fit(" Storage inventory", width), width)),
+		separator,
+	}
+	if m.operationsInfoBusy && m.operationsInfo.VaultID == "" {
+		lines = append(lines, m.styles.muted.Render(pad(
+			" Loading storage inventory...", width,
+		)))
+	} else if m.operationsStorageErr != nil {
+		lines = appendWrapped(lines, " Storage unavailable: "+
+			quoted(m.operationsStorageErr.Error()), width, m.styles.error)
+	} else {
+		info, storage := m.operationsInfo, m.operationsInfo.Storage
+		lines = appendWrapped(lines, " Vault: "+info.VaultID, width, lipgloss.NewStyle())
+		lines = appendWrapped(lines, " Logical authority: "+
+			countLabel(info.LiveFiles, "live file", "live files")+" · "+
+			countLabel(info.LiveDirectories, "directory", "directories")+" · "+
+			countLabel(info.ContentVersions, "version", "versions"),
+			width, lipgloss.NewStyle())
+		lines = appendWrapped(lines, fmt.Sprintf(
+			" Tracked content: %s · %s",
+			countLabel(info.TrackedBlobs, "blob", "blobs"),
+			formatBytes(info.TrackedBlobBytes),
+		), width, lipgloss.NewStyle())
+		lines = appendWrapped(lines, fmt.Sprintf(
+			" Loose inventory: %s · %s",
+			countLabel(int64(storage.LooseBlobs), "file", "files"),
+			formatBytes(storage.LooseBytes),
+		), width, lipgloss.NewStyle())
+		lines = appendWrapped(lines, fmt.Sprintf(
+			" Pack inventory: %s · %s stored",
+			countLabel(int64(storage.Packs), "pack", "packs"),
+			formatBytes(storage.PackStoredBytes),
+		), width, lipgloss.NewStyle())
+		lines = appendWrapped(lines, fmt.Sprintf(
+			" Live packed content: %s · %s raw · %s stored",
+			countLabel(storage.PackedBlobs, "blob", "blobs"),
+			formatBytes(storage.PackedRawBytes),
+			formatBytes(storage.PackedStoredBytes),
+		), width, lipgloss.NewStyle())
+		lines = appendWrapped(lines, fmt.Sprintf(
+			" Dead packed payload: %s awaiting explicit repack",
+			formatBytes(storage.DeadPackedBytes),
+		), width, lipgloss.NewStyle())
+	}
+
+	lines = append(lines, separator,
+		m.styles.heading.Render(pad(fit(" Backup recovery points", width), width)),
+		separator,
+	)
+	switch {
+	case m.operationsBackupBusy && len(m.operationsSnapshots) == 0:
+		lines = append(lines, m.styles.muted.Render(pad(
+			" Loading backup recovery points...", width,
+		)))
+	case m.operationsBackupErr != nil:
+		lines = appendWrapped(lines, " Backup repository unavailable: "+
+			quoted(m.operationsBackupErr.Error()), width, m.styles.error)
+	case len(m.operationsSnapshots) == 0:
+		lines = append(lines, m.styles.muted.Render(pad(
+			" No snapshots in the configured backup repository", width,
+		)))
+	default:
+		for _, snapshot := range m.operationsSnapshots {
+			tag := snapshot.Tag
+			if tag == "" {
+				tag = "untagged"
+			}
+			lines = appendWrapped(lines, fmt.Sprintf(
+				" %s · %s · %s · +%s",
+				formatModified(snapshot.CreatedAt), quoted(tag),
+				countLabel(snapshot.Files, "file", "files"),
+				formatBytes(snapshot.BytesAdded),
+			), width, lipgloss.NewStyle())
+			lines = appendWrapped(lines, "   Snapshot: "+snapshot.ID,
+				width, m.styles.muted)
+		}
+		if m.operationsTotal > len(m.operationsSnapshots) {
+			lines = append(lines, m.styles.muted.Render(pad(fmt.Sprintf(
+				" Showing the first %d of %d recovery points",
+				len(m.operationsSnapshots), m.operationsTotal,
+			), width)))
+		}
+	}
+	return lines
+}
+
+func appendWrapped(
+	lines []string, value string, width int, style lipgloss.Style,
+) []string {
+	wrapped := ansi.Hardwrap(value, max(width, 1), false)
+	for line := range strings.SplitSeq(wrapped, "\n") {
+		lines = append(lines, style.Render(pad(line, width)))
+	}
+	return lines
+}
+
+func countLabel(value int64, singular, plural string) string {
+	label := plural
+	if value == 1 {
+		label = singular
+	}
+	return fmt.Sprintf("%d %s", value, label)
 }
 
 func (m Model) renderJobsHeading() string {
@@ -858,6 +1018,9 @@ func (m Model) renderFooter() string {
 	if m.jobsOpen {
 		return m.renderJobsFooter()
 	}
+	if m.operationsOpen {
+		return m.renderOperationsFooter()
+	}
 	if m.historyOpen {
 		return m.renderHistoryFooter()
 	}
@@ -887,6 +1050,7 @@ func (m Model) renderFooter() string {
 		hint{text: "/ search", priority: 90},
 		hint{text: "T recover", priority: 74},
 		hint{text: "J jobs", priority: 68},
+		hint{text: "O operations", priority: 66},
 		hint{text: "s sort", priority: 85},
 		hint{text: "v reverse", priority: 25},
 		hint{text: "r refresh", priority: 20},
@@ -908,6 +1072,25 @@ func (m Model) renderFooter() string {
 	available := max(m.width-lipgloss.Width(position)-1, 0)
 	keys := fitHints(hints, available)
 	return m.styles.footer.Render(joinSides(keys, position, m.width))
+}
+
+func (m Model) renderOperationsFooter() string {
+	lines := m.operationsLines(m.width)
+	viewport := m.operationsViewportHeight()
+	position := ""
+	if len(lines) > viewport {
+		last := min(m.operationsOffset+viewport, len(lines))
+		position = fmt.Sprintf(" %d-%d/%d ", m.operationsOffset+1, last, len(lines))
+	}
+	hints := []hint{
+		{text: "↑/↓ scroll", priority: 100},
+		{text: "r refresh", priority: 80},
+		{text: "esc back", priority: 90},
+		{text: "? help", priority: 70},
+		{text: "q quit", priority: 60},
+	}
+	available := max(m.width-lipgloss.Width(position)-1, 0)
+	return m.styles.footer.Render(joinSides(fitHints(hints, available), position, m.width))
 }
 
 func (m Model) renderTrashFooter() string {
@@ -1124,6 +1307,22 @@ func (m Model) renderConfirmation(background string) string {
 }
 
 func (m Model) helpLines() []string {
+	if m.operationsOpen {
+		return []string{
+			"Vault operations shortcuts",
+			"",
+			"↑/k, ↓/j       Scroll one line",
+			"PgUp/PgDn      Scroll one visible page",
+			"Home/End       Jump to first or last line",
+			"r              Refresh storage and backups",
+			"Esc            Return to documents",
+			"q              Quit",
+			"",
+			"Packing, repacking, backup creation, and restore",
+			"remain deliberate CLI or API operations.",
+			"Press any key to close",
+		}
+	}
 	if m.trashOpen {
 		return []string{
 			"Recoverable trash shortcuts",

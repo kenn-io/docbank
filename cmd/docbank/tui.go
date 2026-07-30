@@ -26,6 +26,7 @@ Navigation:
   x                    Move the selected node to recoverable trash
   T                    Browse and restore recoverable trash
   a                    Browse permanent audited history
+  O                    Inspect storage and backup state
   Left or Backspace    Return to the parent directory
   /                    Search names and extracted text
   s                    Cycle the sort column
@@ -35,8 +36,8 @@ Navigation:
   q                    Quit
 
 Trash and restore require an explicit revision-bound confirmation. Permanent
-deletion, storage maintenance, backup, and permanent-audit enrollment remain
-outside the TUI.`,
+deletion, storage maintenance, backup creation/restore, and permanent-audit
+enrollment remain outside the TUI.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		c, err := client.Ensure(cmd.Context())
@@ -189,6 +190,20 @@ func (b *tuiDaemonBackend) NodeTags(
 func (b *tuiDaemonBackend) Jobs(ctx context.Context) ([]api.Job, error) {
 	return withTUIClient(ctx, b, func(c *client.Client) ([]api.Job, error) {
 		return c.Jobs(ctx)
+	})
+}
+
+func (b *tuiDaemonBackend) Info(ctx context.Context) (api.VaultInfo, error) {
+	return withTUIClient(ctx, b, func(c *client.Client) (api.VaultInfo, error) {
+		return c.Info(ctx)
+	})
+}
+
+func (b *tuiDaemonBackend) BackupList(
+	ctx context.Context,
+) ([]api.BackupSnapshot, error) {
+	return withTUIClient(ctx, b, func(c *client.Client) ([]api.BackupSnapshot, error) {
+		return c.BackupList(ctx, "")
 	})
 }
 

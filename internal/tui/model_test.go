@@ -34,6 +34,12 @@ type fakeBackend struct {
 	jobs               []api.Job
 	jobsErr            error
 	jobCalls           int
+	info               api.VaultInfo
+	infoErr            error
+	infoCalls          int
+	snapshots          []api.BackupSnapshot
+	backupErr          error
+	backupCalls        int
 	trash              api.TrashPage
 	trashCalls         int
 	trashed            []api.Node
@@ -122,6 +128,29 @@ func newFakeBackend() *fakeBackend {
 				Error: "source is temporarily unavailable; check the configured inbox path",
 			},
 		},
+		info: api.VaultInfo{
+			VaultID:   "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+			LiveFiles: 12, LiveDirectories: 4, ContentVersions: 19,
+			TrackedBlobs: 15, TrackedBlobBytes: 3_000_000,
+			Storage: api.StorageStatus{
+				LooseBlobs: 5, LooseBytes: 1_000_000,
+				Packs: 2, PackStoredBytes: 900_000,
+				PackedBlobs: 10, PackedRawBytes: 2_000_000,
+				PackedStoredBytes: 800_000, DeadPackedBytes: 100_000,
+			},
+		},
+		snapshots: []api.BackupSnapshot{
+			{
+				ID:        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+				CreatedAt: "2026-07-22T14:30:00+02:00", Tag: "baseline",
+				Files: 10, BytesAdded: 700_000,
+			},
+			{
+				ID:        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+				CreatedAt: "2026-07-22T13:00:00Z", Tag: "weekly",
+				Files: 12, BytesAdded: 750_000,
+			},
+		},
 		trash: api.TrashPage{
 			Items: []api.Node{
 				{
@@ -198,6 +227,24 @@ func (f *fakeBackend) Jobs(_ context.Context) ([]api.Job, error) {
 		return nil, f.jobsErr
 	}
 	return append([]api.Job(nil), f.jobs...), nil
+}
+
+func (f *fakeBackend) Info(_ context.Context) (api.VaultInfo, error) {
+	f.infoCalls++
+	if f.infoErr != nil {
+		return api.VaultInfo{}, f.infoErr
+	}
+	return f.info, nil
+}
+
+func (f *fakeBackend) BackupList(
+	_ context.Context,
+) ([]api.BackupSnapshot, error) {
+	f.backupCalls++
+	if f.backupErr != nil {
+		return nil, f.backupErr
+	}
+	return append([]api.BackupSnapshot(nil), f.snapshots...), nil
 }
 
 func (f *fakeBackend) TrashPage(
@@ -1364,6 +1411,88 @@ func TestClosingJobsInvalidatesDelayedLoad(t *testing.T) {
 	model = runModelCommand(t, model, delayed)
 	assert.False(t, model.jobsOpen)
 	assert.Empty(t, model.jobs)
+}
+
+func TestOperationsViewShowsStorageAndRecoveryPoints(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.width, model.height = 100, 20
+
+	model, cmd := updateModel(t, model, runeKey('O'))
+	require.NotNil(t, cmd)
+	assert.True(t, model.operationsOpen)
+	assert.True(t, model.operationsInfoBusy)
+	assert.True(t, model.operationsBackupBusy)
+	model = runModelCommand(t, model, cmd)
+
+	content := model.View().Content
+	assert.Contains(t, content, "Vault operations")
+	assert.Contains(t, content, "Loose inventory: 5 files")
+	assert.Contains(t, content, "Dead packed payload: 97.7 KB")
+	assert.Contains(t, content, "Backup recovery points")
+	assert.Contains(t, content, `"weekly"`)
+	assert.Contains(t, content, strings.Repeat("b", 64))
+	assert.Less(t, strings.Index(content, `"weekly"`), strings.Index(content, `"baseline"`))
+	assert.Equal(t, 1, backend.infoCalls)
+	assert.Equal(t, 1, backend.backupCalls)
+}
+
+func TestOperationsStorageRendersWhileBackupsAreLoading(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.width, model.height = 100, 20
+
+	model, _ = updateModel(t, model, runeKey('O'))
+	model = runModelCommand(
+		t, model, model.loadOperationsInfo(model.operationsRequestID),
+	)
+
+	content := model.View().Content
+	assert.False(t, model.operationsInfoBusy)
+	assert.True(t, model.operationsBackupBusy)
+	assert.Contains(t, content, "Loose inventory: 5 files")
+	assert.Contains(t, content, "Loading backup recovery points...")
+	assert.Equal(t, 1, backend.infoCalls)
+	assert.Equal(t, 0, backend.backupCalls)
+}
+
+func TestOperationsEndReachesLastLineWithNotice(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.width, model.height = 100, 10
+	model.notice = "Trash changes applied"
+
+	model, _ = updateModel(t, model, runeKey('O'))
+	model = runModelCommand(
+		t, model, model.loadOperationsInfo(model.operationsRequestID),
+	)
+	model = runModelCommand(
+		t, model, model.loadOperationsBackups(model.operationsRequestID),
+	)
+	model, _ = updateModel(t, model, runeKey('G'))
+
+	assert.Contains(t, model.View().Content, strings.Repeat("c", 64))
+}
+
+func TestClosingOperationsInvalidatesDelayedLoad(t *testing.T) {
+	model, err := New(t.Context(), newFakeBackend())
+	require.NoError(t, err)
+
+	model, delayed := updateModel(t, model, runeKey('O'))
+	require.NotNil(t, delayed)
+	pendingRequestID := model.operationsRequestID
+	model, _ = updateModel(t, model, key(tea.KeyEscape))
+	assert.False(t, model.operationsOpen)
+	assert.Greater(t, model.operationsRequestID, pendingRequestID)
+
+	model = runModelCommand(t, model, delayed)
+	assert.False(t, model.operationsOpen)
+	assert.Empty(t, model.operationsInfo.VaultID)
+	assert.Empty(t, model.operationsSnapshots)
 }
 
 func TestHelpAndSpinnerAreVisible(t *testing.T) {

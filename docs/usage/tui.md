@@ -1,6 +1,6 @@
 ---
 title: Interactive terminal browser
-description: Browse documents, inspect authority and permanent history, and safely move or restore recoverable trash from the TUI.
+description: Browse documents, inspect authority, storage, backups, and permanent history, and safely move or restore recoverable trash from the TUI.
 ---
 
 # Interactive terminal browser
@@ -47,6 +47,14 @@ same document selection. The current daemon contract reports lifecycle rather
 than invented percentages: workers will show numeric progress only when they
 can supply an authoritative completed and total count.
 
+Press <kbd>O</kbd> for a read-only operational summary. It separates logical
+catalog authority from physical loose-file and pack inventory, including live
+packed content and dead packed payload awaiting an explicit repack. The same
+screen lists the configured backup repository's recovery points with their
+creation time, tag, snapshot ID, file count, and newly added bytes. Storage
+status remains useful when no backup repository is configured; the two
+independent results report their own errors.
+
 Press <kbd>x</kbd> to review moving the selected live node to recoverable
 trash. The confirmation names the escaped path, stable node ID, and exact
 revision that will be changed; a concurrent change is rejected rather than
@@ -70,6 +78,7 @@ really intended.
 | <kbd>T</kbd> | Browse and restore recoverable trash roots |
 | <kbd>a</kbd> | Browse the selected node's permanent audited history |
 | <kbd>J</kbd> | Inspect daemon background jobs and failures |
+| <kbd>O</kbd> | Inspect storage inventory and backup recovery points |
 | <kbd>←</kbd>, <kbd>Backspace</kbd>, or <kbd>Esc</kbd> | Return to the parent directory or leave search results |
 | <kbd>/</kbd> | Search live names and extracted text |
 | <kbd>s</kbd> | Cycle the sort column: name, size, and modification time |
@@ -92,6 +101,7 @@ returns to relevance. The first interface loads at most 1,000
 directory entries or search hits and says when more exist; use the CLI or HTTP
 pagination for exhaustive automation.
 
-Other mutations, permanent deletion, permanent-audit enrollment and independent
-verification, backup, and storage maintenance remain outside this interface.
-Use their ordinary CLI commands or authenticated HTTP endpoints.
+Other mutations, permanent deletion, permanent-audit enrollment, independent
+verification, backup creation/verification/restore, and storage maintenance
+remain outside this interface. Use their ordinary CLI commands or authenticated
+HTTP endpoints.
