@@ -392,8 +392,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			snapshots := append([]api.BackupSnapshot(nil), msg.snapshots...)
 			sort.SliceStable(snapshots, func(left, right int) bool {
-				if snapshots[left].CreatedAt != snapshots[right].CreatedAt {
-					return snapshots[left].CreatedAt > snapshots[right].CreatedAt
+				leftTime, _ := time.Parse(time.RFC3339Nano, snapshots[left].CreatedAt)
+				rightTime, _ := time.Parse(time.RFC3339Nano, snapshots[right].CreatedAt)
+				if !leftTime.Equal(rightTime) {
+					return leftTime.After(rightTime)
 				}
 				return snapshots[left].ID > snapshots[right].ID
 			})
@@ -1644,7 +1646,7 @@ func (m Model) historyViewportHeight() int {
 }
 
 func (m Model) operationsViewportHeight() int {
-	return max(m.height-3, 1)
+	return m.bodyViewportHeight()
 }
 
 func (m *Model) clampOperationsOffset() {
@@ -1744,15 +1746,7 @@ func (m *Model) clampSelection() {
 }
 
 func (m Model) visibleRows() int {
-	headerLines := 2
-	if m.searching {
-		headerLines++
-	}
-	if m.notice != "" {
-		headerLines++
-	}
-	bodyHeight := max(m.height-headerLines-1, 1)
-	return max(bodyHeight-2, 1)
+	return max(m.bodyViewportHeight()-2, 1)
 }
 
 func (m *Model) cycleSortField() {

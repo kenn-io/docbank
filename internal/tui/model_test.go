@@ -142,12 +142,12 @@ func newFakeBackend() *fakeBackend {
 		snapshots: []api.BackupSnapshot{
 			{
 				ID:        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-				CreatedAt: "2026-07-21T14:00:00Z", Tag: "baseline",
+				CreatedAt: "2026-07-22T14:30:00+02:00", Tag: "baseline",
 				Files: 10, BytesAdded: 700_000,
 			},
 			{
 				ID:        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-				CreatedAt: "2026-07-22T14:00:00Z", Tag: "weekly",
+				CreatedAt: "2026-07-22T13:00:00Z", Tag: "weekly",
 				Files: 12, BytesAdded: 750_000,
 			},
 		},
@@ -1457,6 +1457,25 @@ func TestOperationsStorageRendersWhileBackupsAreLoading(t *testing.T) {
 	assert.Contains(t, content, "Loading backup recovery points...")
 	assert.Equal(t, 1, backend.infoCalls)
 	assert.Equal(t, 0, backend.backupCalls)
+}
+
+func TestOperationsEndReachesLastLineWithNotice(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.width, model.height = 100, 10
+	model.notice = "Trash changes applied"
+
+	model, _ = updateModel(t, model, runeKey('O'))
+	model = runModelCommand(
+		t, model, model.loadOperationsInfo(model.operationsRequestID),
+	)
+	model = runModelCommand(
+		t, model, model.loadOperationsBackups(model.operationsRequestID),
+	)
+	model, _ = updateModel(t, model, runeKey('G'))
+
+	assert.Contains(t, model.View().Content, strings.Repeat("c", 64))
 }
 
 func TestClosingOperationsInvalidatesDelayedLoad(t *testing.T) {

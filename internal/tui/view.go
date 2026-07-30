@@ -88,7 +88,7 @@ func (m Model) render() string {
 		lines = append(lines, m.styles.stats.Render(fit(" "+m.notice, m.width)))
 	}
 
-	bodyHeight := max(m.height-len(lines)-1, 1)
+	bodyHeight := m.bodyViewportHeight()
 	body := m.renderBody(bodyHeight)
 	if m.jobsOpen {
 		body = m.renderJobsList(bodyHeight)
@@ -117,6 +117,17 @@ func (m Model) render() string {
 		return m.renderConfirmation(content)
 	}
 	return content
+}
+
+func (m Model) bodyViewportHeight() int {
+	linesAboveBody := 2
+	if m.searching {
+		linesAboveBody++
+	}
+	if m.notice != "" {
+		linesAboveBody++
+	}
+	return max(m.height-linesAboveBody-1, 1)
 }
 
 func (m Model) renderJobsLocation() string {
