@@ -10,7 +10,7 @@ One Docbank vault may use several independently located blob stores while
 retaining one authoritative local metadata catalog. The initial product
 supports:
 
-- the existing writable local filesystem store as an immutable primary;
+- the existing writable local filesystem store as the fixed primary;
 - secondary mounted-filesystem stores;
 - secondary native S3-compatible stores;
 - pack-oriented secondary storage with loose-object fallback;
@@ -614,11 +614,17 @@ Docbank retains:
 Kit source, documentation, APIs, and tests remain application-neutral and do
 not name Docbank.
 
+Kit is an independently released public module, and its single-layout API is
+already consumed by applications including Msgvault. Forcing every consumer
+through a lockstep breaking migration would add downstream work without
+improving the storage model.
+
 Kit's released single-layout `Catalog`, `Layout`, `Store`, and `Maintainer`
-interfaces remain supported. Multi-location behavior is added through new
-interfaces and adapters rather than breaking existing Kit consumers. Docbank
-moves to the new substrate after an independently released Kit version is
-available.
+interfaces therefore remain supported as thin adapters over the new
+multi-location substrate. The adapters translate one catalog and layout into
+one backend and candidate set. They do not preserve a second storage engine,
+parallel maintenance path, or duplicated lifecycle logic. Docbank moves to the
+new substrate after an independently released Kit version is available.
 
 ## Kit backend mechanics
 
@@ -839,6 +845,11 @@ ordinary placement.
 
 The mapping file is local daemon input. It is never placed in an HTTP request
 body, backup, log, or target logical metadata.
+
+Before reading it, the daemon opens the file without following a final
+redirection and validates that it is a regular owner-private file under the
+platform's ownership and permission model. An unsafe mapping file is rejected
+before any target store is contacted.
 
 ### In-place adoption
 
