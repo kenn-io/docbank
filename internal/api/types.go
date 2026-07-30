@@ -586,14 +586,54 @@ type GCReport struct {
 // StorageStatus reports physical loose inventory and catalog-authorized pack
 // usage. PackStoredBytes includes both live and logically dead payload bytes.
 type StorageStatus struct {
-	LooseBlobs        int   `json:"loose_blobs"`
-	LooseBytes        int64 `json:"loose_bytes"`
-	Packs             int   `json:"packs"`
-	PackStoredBytes   int64 `json:"pack_stored_bytes"`
-	PackedBlobs       int64 `json:"packed_blobs"`
-	PackedRawBytes    int64 `json:"packed_raw_bytes"`
-	PackedStoredBytes int64 `json:"packed_stored_bytes"`
-	DeadPackedBytes   int64 `json:"dead_packed_bytes"`
+	LooseBlobs        int                  `json:"loose_blobs"`
+	LooseBytes        int64                `json:"loose_bytes"`
+	Packs             int                  `json:"packs"`
+	PackStoredBytes   int64                `json:"pack_stored_bytes"`
+	PackedBlobs       int64                `json:"packed_blobs"`
+	PackedRawBytes    int64                `json:"packed_raw_bytes"`
+	PackedStoredBytes int64                `json:"packed_stored_bytes"`
+	DeadPackedBytes   int64                `json:"dead_packed_bytes"`
+	Stores            []StorageStoreStatus `json:"stores"`
+}
+
+// StorageStoreStatus is the non-secret physical authority and health summary
+// safe for both master-key and read-only browser clients.
+type StorageStoreStatus struct {
+	ID                   string `json:"id" format:"uuid"`
+	Name                 string `json:"name"`
+	Kind                 string `json:"kind"`
+	Role                 string `json:"role"`
+	Lifecycle            string `json:"lifecycle"`
+	State                string `json:"state"`
+	Priority             int    `json:"priority"`
+	AuthoritativeObjects int64  `json:"authoritative_objects"`
+	LogicalBytes         int64  `json:"logical_bytes"`
+	StoredBytes          int64  `json:"stored_bytes"`
+	PackCount            int64  `json:"pack_count"`
+	DeadPackedBytes      int64  `json:"dead_packed_bytes"`
+	ObservedAt           string `json:"observed_at,omitempty"`
+}
+
+// BlobStore exposes one catalog identity to authenticated storage
+// administration. Binding is a config profile name, never its path, endpoint,
+// or credentials.
+type BlobStore struct {
+	StorageStoreStatus
+
+	Binding        string `json:"binding"`
+	OwnershipEpoch string `json:"ownership_epoch" format:"uuid"`
+	Detail         string `json:"detail,omitempty"`
+	CreatedAt      string `json:"created_at"`
+}
+
+// BlobStorePreview is a short-lived exact registration plan.
+type BlobStorePreview struct {
+	Store        BlobStore `json:"store"`
+	MarkerAction string    `json:"marker_action"`
+	Takeover     bool      `json:"takeover"`
+	PreviewToken string    `json:"preview_token"`
+	ExpiresAt    string    `json:"expires_at"`
 }
 
 // VaultInfo identifies the selected vault and summarizes its logical and

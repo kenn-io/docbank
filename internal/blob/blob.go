@@ -57,21 +57,13 @@ type Store struct {
 	maintainer  *packstore.Maintainer
 	coordinator *packstore.Coordinator
 	compression packstore.LooseCompressionOptions
+	registry    *Registry
 }
 
 type primaryLocationCatalog interface {
 	packstore.Catalog
 	packstore.LocationResolver
 	PrimaryStoreID() packstore.StoreID
-}
-
-type primaryBackendRegistry struct {
-	id      packstore.StoreID
-	backend packstore.ReadBackend
-}
-
-func (r primaryBackendRegistry) Backend(id packstore.StoreID) (packstore.ReadBackend, bool) {
-	return r.backend, id == r.id
 }
 
 // LooseCompressionOptions is docbank's application-neutral loose storage
@@ -86,6 +78,9 @@ type LooseCompressionOptions struct {
 // docbank's public package.
 type Options struct {
 	LooseCompression LooseCompressionOptions
+	// Registry supplies daemon-loaded secondary bindings. Nil preserves the
+	// embedded single-primary default.
+	Registry *Registry
 }
 
 // ManagedOptions returns the standalone daemon's physical storage policy.
@@ -172,8 +167,14 @@ func NewWithOptions(catalog packstore.Catalog, blobsDir string, opts Options) (*
 			return nil, fmt.Errorf("creating primary filesystem backend: %w", err)
 		}
 		reader, err = packstore.NewMultiStore(
-			locations,
-			primaryBackendRegistry{id: locations.PrimaryStoreID(), backend: readBackend},
+			orderedResolver{
+				resolver: locations, primaryID: locations.PrimaryStoreID(),
+				registry: opts.Registry,
+			},
+			orderedRegistry{
+				primaryID: locations.PrimaryStoreID(), primary: readBackend,
+				secondaries: opts.Registry,
+			},
 			packstore.MultiStoreOptions{Limits: StorageLimits()},
 		)
 		if err != nil {
@@ -185,6 +186,7 @@ func NewWithOptions(catalog packstore.Catalog, blobsDir string, opts Options) (*
 	return &Store{dir: blobsDir, layout: layout, catalog: catalog, loose: loose,
 		reader: reader, readBackend: readBackend,
 		maintainer: maintainer, coordinator: coordinator,
+		registry: opts.Registry,
 		compression: packstore.LooseCompressionOptions{
 			Enabled:           opts.LooseCompression.Enabled,
 			MinBytes:          opts.LooseCompression.MinBytes,
@@ -648,11 +650,15 @@ func (s *Store) Close() error {
 		if err := s.maintainer.Close(); err != nil {
 			closeErr = errors.Join(closeErr, fmt.Errorf("closing blob maintainer: %w", err))
 		}
-		return closeErr
 	}
-	if s.reader != nil {
+	if s.reader != nil && (s.maintainer == nil || s.readBackend != nil) {
 		if err := s.reader.Close(); err != nil {
 			closeErr = errors.Join(closeErr, fmt.Errorf("closing mixed blob reader: %w", err))
+		}
+	}
+	if s.registry != nil {
+		if err := s.registry.Close(); err != nil {
+			closeErr = errors.Join(closeErr, fmt.Errorf("closing secondary blob registry: %w", err))
 		}
 	}
 	return closeErr

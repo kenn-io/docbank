@@ -2500,6 +2500,51 @@ func (c *Client) StorageStatus(ctx context.Context) (api.StorageStatus, error) {
 	return status, err
 }
 
+// PreviewBlobStore prepares one short-lived, exact secondary registration.
+func (c *Client) PreviewBlobStore(
+	ctx context.Context, name, binding string, takeover bool,
+) (api.BlobStorePreview, error) {
+	var preview api.BlobStorePreview
+	err := c.do(ctx, http.MethodPost, "/api/v1/storage/stores/preview", nil,
+		map[string]any{"name": name, "binding": binding, "takeover": takeover}, &preview)
+	return preview, err
+}
+
+// RegisterBlobStore consumes one preview token after operator review.
+func (c *Client) RegisterBlobStore(
+	ctx context.Context, previewToken string,
+) (api.BlobStore, error) {
+	var result api.BlobStore
+	err := c.do(ctx, http.MethodPost, "/api/v1/storage/stores", nil,
+		map[string]any{"preview_token": previewToken}, &result)
+	return result, err
+}
+
+// BlobStores lists physical-store identities and bounded runtime health.
+func (c *Client) BlobStores(ctx context.Context, refresh bool) ([]api.BlobStore, error) {
+	var stores []api.BlobStore
+	path := "/api/v1/storage/stores"
+	if refresh {
+		path += "?refresh=true"
+	}
+	err := c.do(ctx, http.MethodGet, path, nil, nil, &stores)
+	return stores, err
+}
+
+// DetachBlobStore removes one empty secondary from runtime admission.
+func (c *Client) DetachBlobStore(ctx context.Context, selector string) (api.BlobStore, error) {
+	var result api.BlobStore
+	err := c.do(ctx, http.MethodPost,
+		"/api/v1/storage/stores/"+url.PathEscape(selector)+"/detach", nil, nil, &result)
+	return result, err
+}
+
+// UnregisterBlobStore forgets one detached and empty secondary identity.
+func (c *Client) UnregisterBlobStore(ctx context.Context, selector string) error {
+	return c.do(ctx, http.MethodDelete,
+		"/api/v1/storage/stores/"+url.PathEscape(selector), nil, nil, nil)
+}
+
 // Info identifies the selected vault and summarizes its logical and physical contents.
 func (c *Client) Info(ctx context.Context) (api.VaultInfo, error) {
 	var info api.VaultInfo

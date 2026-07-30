@@ -60,6 +60,13 @@ var (
 	// ErrInvalidAuditCursor means an audit-history cursor is malformed or belongs
 	// to a different stable node or scope.
 	ErrInvalidAuditCursor = errors.New("invalid audit history cursor")
+	// ErrBlobStorePrimary means an operation would detach, drain, or remove the
+	// fixed built-in primary.
+	ErrBlobStorePrimary = errors.New("operation not allowed on primary blob store")
+	// ErrBlobStoreNotEmpty means a store still carries physical authority.
+	ErrBlobStoreNotEmpty = errors.New("blob store still contains authoritative locations")
+	// ErrBlobStoreState means the requested lifecycle transition is invalid.
+	ErrBlobStoreState = errors.New("invalid blob-store lifecycle transition")
 )
 
 // UnconditionalRev is the only ifRev value that skips the revision

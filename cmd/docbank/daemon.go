@@ -100,10 +100,29 @@ func runServe(ctx context.Context) (retErr error) {
 		return err
 	}
 	defer func() { _ = s.Close() }()
+	catalogStores, err := s.BlobStores(sigCtx)
+	if err != nil {
+		return err
+	}
+	storeSpecs := make([]blob.StoreSpec, 0, len(catalogStores)-1)
+	for _, catalogStore := range catalogStores {
+		if catalogStore.Role == "primary" {
+			continue
+		}
+		storeSpecs = append(storeSpecs, blob.StoreSpec{
+			ID: catalogStore.ID, Kind: catalogStore.Kind, Role: catalogStore.Role,
+			Lifecycle: catalogStore.Lifecycle, Binding: catalogStore.Binding,
+			OwnershipEpoch: catalogStore.OwnershipEpoch,
+		})
+	}
+	blobRegistry := blob.NewRegistry(sigCtx, s.VaultID(), cfg.StoreBindings, storeSpecs)
+	blobOptions := blob.ManagedOptions()
+	blobOptions.Registry = blobRegistry
 	blobs, err := blob.NewWithOptions(
-		store.NewPackCatalog(s), layout.BlobsDir(), blob.ManagedOptions(),
+		store.NewPackCatalog(s), layout.BlobsDir(), blobOptions,
 	)
 	if err != nil {
+		_ = blobRegistry.Close()
 		return err
 	}
 	defer func() { _ = blobs.Close() }()
@@ -217,7 +236,7 @@ func runServe(ctx context.Context) (retErr error) {
 	srv := api.NewServer(api.Deps{
 		Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Logger: logger,
 		StartedAt: time.Now(), ShutdownToken: shutdownToken, Shutdown: stop, Tracker: tracker,
-		Jobs: jobSupervisor, Gate: operationGate, WebURL: webURL,
+		Jobs: jobSupervisor, Gate: operationGate, WebURL: webURL, BlobRegistry: blobRegistry,
 	})
 	defer srv.Close()
 	newHTTPServer := func() *http.Server {

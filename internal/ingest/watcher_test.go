@@ -292,7 +292,7 @@ func TestPathsOverlapUsesFilesystemIdentityForAliases(t *testing.T) {
 	assert.False(t, pathContains(vaultRoot, aliasedChild),
 		"the test must exercise identity rather than lexical containment")
 
-	overlaps, err := pathsOverlap(vaultRoot, aliasedChild)
+	overlaps, err := PathsOverlap(vaultRoot, aliasedChild)
 	require.NoError(t, err)
 	assert.True(t, overlaps)
 }
@@ -313,7 +313,7 @@ func TestPathsOverlapUsesFilesystemIdentityForCaseAliases(t *testing.T) {
 		t.Skip("case variant does not identify the same directory")
 	}
 
-	overlaps, err := pathsOverlap(vaultRoot, alias)
+	overlaps, err := PathsOverlap(vaultRoot, alias)
 	require.NoError(t, err)
 	assert.True(t, overlaps)
 }

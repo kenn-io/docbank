@@ -31,11 +31,16 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
+		stores, err := storageStoreStatuses(ctx, d)
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
 		return &storageStatusOutput{Body: StorageStatus{
 			LooseBlobs: stats.LooseBlobs, LooseBytes: stats.LooseBytes,
 			Packs: stats.Packs, PackStoredBytes: stats.PackStoredBytes,
 			PackedBlobs: stats.PackedBlobs, PackedRawBytes: stats.PackedRawBytes,
 			PackedStoredBytes: stats.PackedStoredBytes, DeadPackedBytes: stats.DeadPackedBytes,
+			Stores: stores,
 		}}, nil
 	})
 

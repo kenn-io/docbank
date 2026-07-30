@@ -1318,6 +1318,40 @@ func TestStorageStatusHumanAndJSON(t *testing.T) {
 	assert.Equal(t, int64(5), status.LooseBytes)
 }
 
+func TestStorageAddListDetachAndUnregister(t *testing.T) {
+	home := t.TempDir()
+	namespace := filepath.Join(t.TempDir(), "archive")
+	t.Setenv("DOCBANK_HOME", home)
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(
+		"[store_bindings.archive_nas]\nkind = \"filesystem\"\npath = "+
+			strconv.Quote(filepath.ToSlash(namespace))+"\npriority = 25\n",
+	), 0o600))
+	startTestDaemon(t, home)
+
+	out, err := runCLI(t, "storage", "add", "archive",
+		"--binding", "archive_nas", "--json")
+	require.NoError(t, err)
+	var preview api.BlobStorePreview
+	require.NoError(t, json.Unmarshal([]byte(out), &preview))
+	assert.Equal(t, "create", preview.MarkerAction)
+
+	out, err = runCLI(t, "storage", "add", "--run", "--token", preview.PreviewToken)
+	require.NoError(t, err)
+	assert.Contains(t, out, `attached store "archive"`)
+
+	out, err = runCLI(t, "storage", "list", "--refresh", "--json")
+	require.NoError(t, err)
+	var stores []api.BlobStore
+	require.NoError(t, json.Unmarshal([]byte(out), &stores))
+	require.Len(t, stores, 2)
+	assert.Equal(t, "online", stores[1].State)
+
+	_, err = runCLI(t, "storage", "detach", stores[1].ID)
+	require.NoError(t, err)
+	_, err = runCLI(t, "storage", "unregister", stores[1].ID)
+	require.NoError(t, err)
+}
+
 func TestInfoHumanAndJSON(t *testing.T) {
 	home := setupVaultHome(t)
 	canonicalHome, err := filepath.EvalSymlinks(home)

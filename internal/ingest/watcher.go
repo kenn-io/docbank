@@ -351,7 +351,7 @@ func (w *Watcher) openRoot(ctx context.Context) (*watchRoot, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolving vault root for watch %q: %w", w.config.Name, err)
 	}
-	overlaps, err := pathsOverlap(root, vaultRoot)
+	overlaps, err := PathsOverlap(root, vaultRoot)
 	if err != nil {
 		return nil, fmt.Errorf("checking watch %q source against the vault: %w", w.config.Name, err)
 	}
@@ -566,7 +566,10 @@ func watchDirectoryIdentities(ctx context.Context, dir *os.Root) ([]fs.FileInfo,
 	return result, nil
 }
 
-func pathsOverlap(left, right string) (bool, error) {
+// PathsOverlap reports lexical or filesystem-identity ancestry. Storage and
+// watched-inbox admission share this check so an aliased vault directory
+// cannot become its own input or secondary namespace.
+func PathsOverlap(left, right string) (bool, error) {
 	if pathContains(left, right) || pathContains(right, left) {
 		return true, nil
 	}

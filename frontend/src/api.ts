@@ -302,6 +302,23 @@ export interface StorageStatus {
   packed_raw_bytes: number;
   packed_stored_bytes: number;
   dead_packed_bytes: number;
+  stores: StorageStoreStatus[];
+}
+
+export interface StorageStoreStatus {
+  id: string;
+  name: string;
+  kind: string;
+  role: string;
+  lifecycle: string;
+  state: string;
+  priority: number;
+  authoritative_objects: number;
+  logical_bytes: number;
+  stored_bytes: number;
+  pack_count: number;
+  dead_packed_bytes: number;
+  observed_at?: string;
 }
 
 export interface Problem {

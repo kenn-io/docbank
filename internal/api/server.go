@@ -53,6 +53,7 @@ type Deps struct {
 	VerifyPage    VerifyPageFunc   // nil → shared bounded maintenance service
 	RepackPage    RepackPageFunc   // nil → shared bounded maintenance service
 	WebURL        string           // fresh per-daemon loopback origin; empty disables browser sessions
+	BlobRegistry  *blob.Registry   // nil keeps storage-registry routes read-only to the primary
 }
 
 // Server is docbank's HTTP API: a huma-described /api/v1 surface plus a
@@ -115,6 +116,7 @@ func NewServer(d Deps) *Server {
 	registerInfoRoute(humaAPI, d)
 	registerMutateRoutes(humaAPI, d, g) // Task 6
 	registerOpsRoutes(humaAPI, d, g)    // Task 7
+	registerStorageRegistryRoutes(humaAPI, d, g)
 	registerBackupRoutes(humaAPI, d, g)
 	registerJobRoutes(humaAPI, d)
 	registerWatchRoutes(humaAPI, d)
