@@ -63,6 +63,7 @@
     controller = active;
     const request = ++generation;
     loading = true;
+    report = null;
     error = "";
     try {
       const next = await verifyAudit(session, active.signal);
@@ -132,6 +133,26 @@
         <p role="alert">{error}</p>
         <Button size="sm" onclick={() => void refresh()}>Try again</Button>
       </div>
+    {:else if report && metadataProblems.length > 0 && !evidence}
+      <section class="result-heading" aria-live="polite">
+        <div class="failed">
+          <TriangleAlertIcon size="24" aria-hidden="true" />
+          <div>
+            <span>PROBLEMS FOUND</span>
+            <strong>Protected authority needs attention</strong>
+          </div>
+        </div>
+        <Chip size="sm" tone="danger" dot>Failed</Chip>
+      </section>
+      <section class="problems" aria-label="Audit verification problems">
+        <div class="section-heading">
+          <span>VERIFICATION PROBLEMS</span>
+          <strong>{metadataProblems.length} issue{metadataProblems.length === 1 ? "" : "s"}</strong>
+        </div>
+        {#each metadataProblems as problem}
+          <p><strong>Metadata</strong> {problem}</p>
+        {/each}
+      </section>
     {:else if report && !report.enabled}
       {#if error}<p class="error" role="alert">{error}</p>{/if}
       <EmptyState
