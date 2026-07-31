@@ -573,6 +573,18 @@ func PathsOverlap(left, right string) (bool, error) {
 	if pathContains(left, right) || pathContains(right, left) {
 		return true, nil
 	}
+	resolvedLeft, err := resolveExistingPathPrefix(left)
+	if err != nil {
+		return false, fmt.Errorf("resolving path %q: %w", left, err)
+	}
+	resolvedRight, err := resolveExistingPathPrefix(right)
+	if err != nil {
+		return false, fmt.Errorf("resolving path %q: %w", right, err)
+	}
+	if pathContains(resolvedLeft, resolvedRight) ||
+		pathContains(resolvedRight, resolvedLeft) {
+		return true, nil
+	}
 	var missingErr error
 	for _, pair := range [][2]string{{left, right}, {right, left}} {
 		overlaps, err := existingAncestorMatches(pair[0], pair[1])
@@ -590,6 +602,35 @@ func PathsOverlap(left, right string) (bool, error) {
 		}
 	}
 	return false, missingErr
+}
+
+// resolveExistingPathPrefix resolves aliases in the nearest existing prefix
+// while retaining any missing suffix for containment comparisons.
+func resolveExistingPathPrefix(pathname string) (string, error) {
+	absolute, err := filepath.Abs(pathname)
+	if err != nil {
+		return "", err
+	}
+	current := filepath.Clean(absolute)
+	var missing []string
+	for {
+		resolved, resolveErr := filepath.EvalSymlinks(current)
+		if resolveErr == nil {
+			for _, v := range slices.Backward(missing) {
+				resolved = filepath.Join(resolved, v)
+			}
+			return filepath.Clean(resolved), nil
+		}
+		if !errors.Is(resolveErr, fs.ErrNotExist) {
+			return "", resolveErr
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", resolveErr
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
 }
 
 // WatchBindingOverlap reports whether one filesystem store binding can expose
