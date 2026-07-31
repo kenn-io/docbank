@@ -1402,24 +1402,16 @@ func validateAuditScopeStatus(scope api.AuditScopeStatus) error {
 }
 
 func validateAuditVerifyReport(report api.AuditVerifyReport) error {
-	if report.ProtectedBlobs < 0 || report.ProtectedBytes < 0 || report.VerifiedBlobs < 0 ||
-		report.VerifiedBlobs+len(report.Problems) != report.ProtectedBlobs {
+	if report.ProtectedBlobs < 0 || report.ProtectedBytes < 0 || report.VerifiedBlobs < 0 {
 		return errors.New("audit verification has inconsistent blob totals")
+	}
+	if err := validateAuditVerifyBlobProblems(report); err != nil {
+		return err
 	}
 	for index, problem := range report.MetadataProblems {
 		if problem == "" {
 			return fmt.Errorf("audit verification metadata problem %d is empty", index)
 		}
-	}
-	previousHash := ""
-	for index, problem := range report.Problems {
-		if !validSHA256Hex(problem.Hash) ||
-			(problem.Problem != "missing" && problem.Problem != "corrupt" &&
-				problem.Problem != "unreadable") ||
-			(previousHash != "" && problem.Hash <= previousHash) {
-			return fmt.Errorf("audit verification blob problem %d is invalid", index)
-		}
-		previousHash = problem.Hash
 	}
 	if report.EvidenceCheck != nil {
 		if err := validateAuditEvidenceCheck(*report.EvidenceCheck); err != nil {
@@ -1444,6 +1436,37 @@ func validateAuditVerifyReport(report api.AuditVerifyReport) error {
 		return errors.New("active audit verification lacks terminal evidence")
 	}
 	return ValidateAuditEvidence(*report.Evidence)
+}
+
+func validateAuditVerifyBlobProblems(report api.AuditVerifyReport) error {
+	affected := 0
+	previousHash := ""
+	seenLocations := make(map[string]struct{}, len(report.Problems))
+	for index, problem := range report.Problems {
+		if !validSHA256Hex(problem.Hash) ||
+			(problem.StoreID != "" && !validUUIDv4(problem.StoreID)) ||
+			(problem.Problem != "missing" && problem.Problem != "corrupt" &&
+				problem.Problem != "unreadable") ||
+			(previousHash != "" && problem.Hash < previousHash) {
+			return fmt.Errorf("audit verification blob problem %d is invalid", index)
+		}
+		locationKey := problem.Hash + "\x00" + problem.StoreID
+		if _, duplicate := seenLocations[locationKey]; duplicate {
+			return fmt.Errorf(
+				"audit verification blob problem %d duplicates location evidence",
+				index,
+			)
+		}
+		seenLocations[locationKey] = struct{}{}
+		if problem.Hash != previousHash {
+			affected++
+			previousHash = problem.Hash
+		}
+	}
+	if report.VerifiedBlobs+affected != report.ProtectedBlobs {
+		return errors.New("audit verification has inconsistent blob totals")
+	}
+	return nil
 }
 
 // ValidateAuditEvidence validates one externally recordable terminal bundle.
