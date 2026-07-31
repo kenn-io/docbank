@@ -16,7 +16,7 @@ import (
 
 const storageOperationRetention = 30 * 24 * time.Hour
 
-var errStorageCleanupDeferred = errors.New("storage cleanup deferred for retry")
+var errStorageOperationDeferred = errors.New("storage operation deferred for retry")
 
 type PlacementObjectResult struct {
 	Hash                  string `json:"hash"`
@@ -71,7 +71,7 @@ func (r PlacementRunner) Start(
 	return supervisor.Start("storage:"+operationID, func(ctx context.Context) error {
 		for {
 			err := r.Run(ctx, operationID)
-			if !errors.Is(err, errStorageCleanupDeferred) {
+			if !errors.Is(err, errStorageOperationDeferred) {
 				return err
 			}
 			delay := r.RetryDelay
@@ -154,7 +154,7 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 		return r.deferCleanup(ctx, operationID, errors.Join(cleanupErr, progressErr))
 	}
 	if progressErr != nil {
-		return progressErr
+		return retryStorageOperation(ctx, progressErr)
 	}
 	if err := requireScratchSpace(
 		remainingPlacementScratch(plan, operation.CompletedObjects),
@@ -197,10 +197,7 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 		if err := r.persistPlacementProgress(
 			ctx, operationID, item.Hash, &receipt,
 		); err != nil {
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return ctxErr
-			}
-			return err
+			return retryStorageOperation(ctx, err)
 		}
 		cleanupErr := r.retirePending(ctx, operationID)
 		progressErr := r.persistPlacementProgress(
@@ -210,7 +207,7 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 			return r.deferCleanup(ctx, operationID, errors.Join(cleanupErr, progressErr))
 		}
 		if progressErr != nil {
-			return progressErr
+			return retryStorageOperation(ctx, progressErr)
 		}
 	}
 	if operation.Kind == "evacuate" {
@@ -237,7 +234,7 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 		if err := r.persistCurrentPlacementProgress(
 			ctx, operationID, &receipt,
 		); err != nil {
-			return err
+			return retryStorageOperation(ctx, err)
 		}
 		cleanupErr := r.retirePending(ctx, operationID)
 		progressErr := r.persistCurrentPlacementProgress(
@@ -247,7 +244,7 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 			return r.deferCleanup(ctx, operationID, errors.Join(cleanupErr, progressErr))
 		}
 		if progressErr != nil {
-			return progressErr
+			return retryStorageOperation(ctx, progressErr)
 		}
 		if !finalized.Detached {
 			err = r.commit(func() error {
@@ -273,10 +270,10 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 	if err != nil {
 		return r.fail(ctx, operationID, fmt.Errorf("encode placement receipt: %w", err))
 	}
-	return r.Metadata.FinishStorageOperation(
+	return retryStorageOperation(ctx, r.Metadata.FinishStorageOperation(
 		ctx, operationID, store.StorageOperationCompleted, string(encoded), "",
 		time.Now().Add(storageOperationRetention),
-	)
+	))
 }
 
 func (r PlacementRunner) deferCleanup(
@@ -288,7 +285,17 @@ func (r PlacementRunner) deferCleanup(
 	deferErr := r.Metadata.DeferStorageOperation(
 		context.WithoutCancel(ctx), operationID, failure,
 	)
-	return errors.Join(errStorageCleanupDeferred, failure, deferErr)
+	return errors.Join(errStorageOperationDeferred, failure, deferErr)
+}
+
+func retryStorageOperation(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	return errors.Join(errStorageOperationDeferred, err)
 }
 
 func remainingPlacementScratch(plan store.PlacementPlan, completed int64) int64 {
@@ -403,13 +410,38 @@ func (r PlacementRunner) runRecovery(
 				Identity:    packstore.BlobIdentity{Hash: hash, Size: plan.Size},
 			},
 		)
-		if err != nil {
+		if err != nil && (errors.Is(err, packstore.ErrPhysicalCorrupt) ||
+			errors.Is(err, packstore.ErrContentMismatch)) {
+			repair, ok := r.Blobs.RepairBackend(
+				packstore.StoreID(plan.Destination),
+			)
+			if !ok {
+				return r.fail(ctx, operation.ID, fmt.Errorf(
+					"salvage destination cannot replace corrupt content: %w", err,
+				))
+			}
+			repaired, repairErr := repairOne(
+				ctx, readBackendOnly{ReadBackend: source}, repair,
+				hash, sourceLocation, plan.Size,
+			)
+			if repairErr != nil {
+				return r.fail(ctx, operation.ID, errors.Join(err, repairErr))
+			}
+			location = packstore.ReadLocation{
+				StoreID:    packstore.StoreID(plan.Destination),
+				Generation: repaired.Generation, Loose: &repaired.Location,
+			}
+		} else if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return ctxErr
 			}
 			return r.fail(ctx, operation.ID, err)
+		} else if !moved.Verified {
+			return r.fail(ctx, operation.ID,
+				errors.New("salvage destination publication lacks verification"))
+		} else {
+			location = moved.Destination
 		}
-		location = moved.Destination
 	}
 	receipt := StorageRecoveryReceipt{
 		OperationID: operation.ID, PlanDigest: plan.Digest,
@@ -470,7 +502,44 @@ func repairOne(
 	if err := stream.Verify(); err != nil {
 		return packstore.LooseReceipt{}, fmt.Errorf("verifying repair source: %w", err)
 	}
+	if err := verifyRepairedLoose(ctx, destination, hash, size, repaired); err != nil {
+		return packstore.LooseReceipt{}, err
+	}
 	return repaired, nil
+}
+
+func verifyRepairedLoose(
+	ctx context.Context,
+	destination packstore.ReadBackend,
+	hash packstore.Hash,
+	size int64,
+	repaired packstore.LooseReceipt,
+) (resultErr error) {
+	stream, readbackSize, err := destination.OpenLoose(ctx, hash, repaired.Location)
+	if err != nil {
+		return fmt.Errorf("opening repaired destination: %w", err)
+	}
+	defer func() { resultErr = errors.Join(resultErr, stream.Close()) }()
+	if readbackSize != size {
+		return fmt.Errorf(
+			"%w: repaired destination size %d does not match %d",
+			packstore.ErrPhysicalCorrupt, readbackSize, size,
+		)
+	}
+	written, err := io.Copy(io.Discard, stream)
+	if err != nil {
+		return fmt.Errorf("reading repaired destination: %w", err)
+	}
+	if written != size {
+		return fmt.Errorf(
+			"%w: repaired destination produced %d bytes, expected %d",
+			packstore.ErrPhysicalCorrupt, written, size,
+		)
+	}
+	if err := stream.Verify(); err != nil {
+		return fmt.Errorf("verifying repaired destination: %w", err)
+	}
+	return nil
 }
 
 func closePlacementBackend(backend packstore.Backend) error {
@@ -723,6 +792,9 @@ func (r PlacementRunner) fail(ctx context.Context, id string, failure error) err
 		context.WithoutCancel(ctx), id, store.StorageOperationFailed, "",
 		failure.Error(), time.Now().Add(storageOperationRetention),
 	)
+	if finishErr != nil {
+		return errors.Join(failure, retryStorageOperation(ctx, finishErr))
+	}
 	return errors.Join(failure, finishErr)
 }
 
@@ -733,10 +805,10 @@ func (r PlacementRunner) cancel(
 	if err != nil {
 		return r.fail(ctx, id, err)
 	}
-	return r.Metadata.FinishStorageOperation(
+	return retryStorageOperation(ctx, r.Metadata.FinishStorageOperation(
 		context.WithoutCancel(ctx), id, store.StorageOperationCancelled,
 		string(encoded), "", time.Now().Add(storageOperationRetention),
-	)
+	))
 }
 
 func (r PlacementRunner) cancelRecovery(
@@ -754,8 +826,8 @@ func (r PlacementRunner) cancelRecovery(
 	if err != nil {
 		return r.fail(ctx, operation.ID, err)
 	}
-	return r.Metadata.FinishStorageOperation(
+	return retryStorageOperation(ctx, r.Metadata.FinishStorageOperation(
 		context.WithoutCancel(ctx), operation.ID, store.StorageOperationCancelled,
 		string(encoded), "", time.Now().Add(storageOperationRetention),
-	)
+	))
 }

@@ -34,6 +34,7 @@ func registerJobRoutes(api huma.API, d Deps) {
 		Summary: "List daemon background jobs and their current status",
 	}, func(ctx context.Context, _ *struct{}) (*output, error) {
 		out := &output{Body: JobList{Items: []Job{}}}
+		redactErrors := browserSessionRequest(ctx)
 		operationNames := make(map[string]struct{})
 		if d.Store != nil {
 			operations, err := d.Store.StorageOperations(ctx, 1000)
@@ -43,10 +44,14 @@ func registerJobRoutes(api huma.API, d Deps) {
 			for _, operation := range operations {
 				name := "storage:" + operation.ID
 				operationNames[name] = struct{}{}
+				errorDetail := operation.Error
+				if redactErrors && errorDetail != "" {
+					errorDetail = "storage operation failed; inspect with the Docbank CLI for details"
+				}
 				out.Body.Items = append(out.Body.Items, Job{
 					Name: name, Status: string(operation.State),
 					StartedAt: operation.CreatedAt.Format(time.RFC3339Nano),
-					Error:     operation.Error, OperationID: operation.ID, Kind: operation.Kind,
+					Error:     errorDetail, OperationID: operation.ID, Kind: operation.Kind,
 					CompletedObjects: operation.CompletedObjects,
 					TotalObjects:     operation.TotalObjects,
 					FinishedAt:       storageOperationAPI(operation).FinishedAt,
@@ -58,7 +63,11 @@ func registerJobRoutes(api huma.API, d Deps) {
 				if _, durable := operationNames[snapshot.Name]; durable {
 					continue
 				}
-				out.Body.Items = append(out.Body.Items, observableJob(snapshot))
+				job := observableJob(snapshot)
+				if redactErrors && job.Error != "" {
+					job.Error = "background job failed; inspect with the Docbank CLI for details"
+				}
+				out.Body.Items = append(out.Body.Items, job)
 			}
 		}
 		slices.SortFunc(out.Body.Items, func(a, b Job) int {

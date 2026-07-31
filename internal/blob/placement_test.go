@@ -59,6 +59,60 @@ func TestPlacementRunnerCopiesVerifiesAndRetiresLooseSource(t *testing.T) {
 	assert.Equal(t, content, got)
 }
 
+func TestPlacementRunnerRetriesFinalPersistenceFailure(t *testing.T) {
+	metadata, blobs, runner, destination, root := placementTestVaultWithSecondaries(
+		t, "archive",
+	)
+	file, _ := placementTestFile(t, metadata, blobs, []byte("retry final receipt"))
+	plan, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+		TargetNodeID: file.ID, SourceStoreID: metadata.PrimaryBlobStoreID(),
+		DestinationStoreID: destination[0].ID,
+	})
+	require.NoError(t, err)
+	operationID := createPlacementOperation(t, metadata, plan)
+
+	db, err := metadata.SQLiteDriver().Open(filepath.Join(root, "metadata.db"),
+		docsqlite.OpenOptions{
+			Access:          docsqlite.ReadWriteExisting,
+			TransactionMode: docsqlite.Immediate,
+		})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	_, err = db.ExecContext(t.Context(), `
+		CREATE TRIGGER reject_storage_operation_completion
+		BEFORE UPDATE OF state ON storage_operations
+		WHEN NEW.state='completed'
+		BEGIN SELECT RAISE(ABORT, 'synthetic completion persistence failure'); END`)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	supervisor := jobs.New(ctx, nil)
+	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
+	runner.RetryDelay = 10 * time.Millisecond
+	require.NoError(t, runner.Start(supervisor, operationID))
+	require.Eventually(t, func() bool {
+		operation, readErr := metadata.StorageOperation(t.Context(), operationID)
+		if readErr != nil || operation.State != store.StorageOperationRunning ||
+			operation.CompletedObjects != 1 {
+			return false
+		}
+		snapshots := supervisor.Snapshot()
+		return len(snapshots) == 1 && snapshots[0].Status == jobs.StatusRunning
+	}, 3*time.Second, 10*time.Millisecond)
+
+	_, err = db.ExecContext(t.Context(), `DROP TRIGGER reject_storage_operation_completion`)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		operation, readErr := metadata.StorageOperation(t.Context(), operationID)
+		if readErr != nil || operation.State != store.StorageOperationCompleted {
+			return false
+		}
+		snapshots := supervisor.Snapshot()
+		return len(snapshots) == 1 && snapshots[0].Status == jobs.StatusCompleted
+	}, 3*time.Second, 10*time.Millisecond)
+}
+
 func TestPlacementRunnerRevokesPackedSourceAuthority(t *testing.T) {
 	metadata, blobs, runner, destination := placementTestVault(t)
 	content := []byte("packed source placement")
@@ -199,7 +253,7 @@ func TestPlacementRunnerEvacuatesPackedSecondaryAfterPlacementRevokesMappings(
 	failing := &failOnceRetireBackend{Backend: backend, failed: make(chan struct{})}
 	failing.failAt.Store(2)
 	blobs.registry.backends[packstore.StoreID(secondary.ID)] = failing
-	require.ErrorIs(t, runner.Run(t.Context(), evacuationID), errStorageCleanupDeferred)
+	require.ErrorIs(t, runner.Run(t.Context(), evacuationID), errStorageOperationDeferred)
 	operation, err := metadata.StorageOperation(t.Context(), evacuationID)
 	require.NoError(t, err)
 	var progress PlacementReceipt
@@ -329,7 +383,7 @@ func TestPlacementRunnerRecordsCommittedProgressBeforeCleanupRetry(t *testing.T)
 	operationID := createPlacementOperation(t, metadata, retirePlan)
 
 	err = runner.Run(t.Context(), operationID)
-	require.ErrorIs(t, err, errStorageCleanupDeferred)
+	require.ErrorIs(t, err, errStorageOperationDeferred)
 	operation, err := metadata.StorageOperation(t.Context(), operationID)
 	require.NoError(t, err)
 	assert.Equal(t, store.StorageOperationQueued, operation.State)
@@ -714,6 +768,55 @@ func TestPlacementRunnerRepairsDamagedSecondaryFromVerifiedPrimary(t *testing.T)
 	assert.Equal(t, []byte("repair authority"), got)
 }
 
+type corruptAfterRepairBackend struct {
+	packstore.RepairBackend
+
+	path string
+}
+
+func (b corruptAfterRepairBackend) RepairLoose(
+	ctx context.Context,
+	hash packstore.Hash,
+	content io.Reader,
+	options packstore.PublishOptions,
+) (packstore.LooseReceipt, error) {
+	receipt, err := b.RepairBackend.RepairLoose(ctx, hash, content, options)
+	if err != nil {
+		return packstore.LooseReceipt{}, fmt.Errorf("repairing through test backend: %w", err)
+	}
+	if err := os.WriteFile(b.path, []byte("corrupted after publication"), 0o600); err != nil {
+		return packstore.LooseReceipt{}, err
+	}
+	return receipt, nil
+}
+
+func TestRepairOneRejectsCorruptDestinationReadback(t *testing.T) {
+	metadata, blobs, _, secondary := placementTestVault(t)
+	_, hash := placementTestFile(t, metadata, blobs, []byte("verify repaired destination"))
+	parsed := packstore.Hash(hash)
+	sourceLocation, err := metadata.ResolveBlobLocations(t.Context(), parsed)
+	require.NoError(t, err)
+	require.NotEmpty(t, sourceLocation.Candidates)
+	source, ok := blobs.ReadBackend(sourceLocation.Candidates[0].StoreID)
+	require.True(t, ok)
+	destination, ok := blobs.RepairBackend(packstore.StoreID(secondary.ID))
+	require.True(t, ok)
+	writable, ok := blobs.WritableBackend(packstore.StoreID(secondary.ID))
+	require.True(t, ok)
+	filesystem, ok := writable.(*packstore.FilesystemBackend)
+	require.True(t, ok)
+
+	_, err = repairOne(
+		t.Context(), source,
+		corruptAfterRepairBackend{
+			RepairBackend: destination,
+			path:          filesystem.Layout().LoosePath(parsed),
+		},
+		parsed, sourceLocation.Candidates[0], int64(len("verify repaired destination")),
+	)
+	require.ErrorIs(t, err, packstore.ErrPhysicalCorrupt)
+}
+
 func TestPlacementRunnerRepairFallsBackToAnotherVerifiedSource(t *testing.T) {
 	metadata, blobs, runner, secondaries, _ := placementTestVaultWithSecondaries(
 		t, "archive", "mirror",
@@ -763,7 +866,7 @@ func TestPlacementRunnerRepairFallsBackToAnotherVerifiedSource(t *testing.T) {
 	assert.Equal(t, content, got)
 }
 
-func TestPlacementRunnerSalvagesVerifiedBytesFromFencedSecondary(t *testing.T) {
+func TestPlacementRunnerSalvagesVerifiedBytesOverCorruptPrimary(t *testing.T) {
 	metadata, blobs, runner, secondary := placementTestVault(t)
 	file, hash := placementTestFile(t, metadata, blobs, []byte("salvage authority"))
 	placement, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
@@ -783,6 +886,9 @@ func TestPlacementRunnerSalvagesVerifiedBytesFromFencedSecondary(t *testing.T) {
 	require.NoError(t, backend.ReplaceOwnership(t.Context(), taken, &prior))
 	observation := blobs.RefreshStore(t.Context(), secondary.ID)
 	assert.Equal(t, StoreFenced, observation.State)
+	require.NoError(t, os.WriteFile(
+		blobs.layout.LoosePath(packstore.Hash(hash)), []byte("corrupt primary"), 0o600,
+	))
 
 	plan, err := metadata.PlanStorageRecovery(
 		t.Context(), "salvage", hash, secondary.ID,
