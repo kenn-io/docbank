@@ -85,6 +85,7 @@ func TestStorageRegistrationRejectsVaultOverlap(t *testing.T) {
 
 func TestStorageRegistrationRejectsUnmarkedNonemptyNamespace(t *testing.T) {
 	namespace := t.TempDir()
+	require.NoError(t, blob.EnsureFilesystemNamespace(namespace))
 	require.NoError(t, os.WriteFile(
 		filepath.Join(namespace, "operator-note.txt"), []byte("preserve"), 0o600,
 	))

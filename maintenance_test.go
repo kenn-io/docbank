@@ -161,6 +161,7 @@ func TestGarbageCollectRetiresSecondaryLooseAuthority(t *testing.T) {
 	ctx := t.Context()
 	root := t.TempDir()
 	secondaryRoot := t.TempDir()
+	require.NoError(t, internalblob.EnsureFilesystemNamespace(secondaryRoot))
 	metadata, err := store.Open(filepath.Join(root, "docbank.db"))
 	require.NoError(t, err)
 	secondary, err := metadata.PrepareSecondaryBlobStore(

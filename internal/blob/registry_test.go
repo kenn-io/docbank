@@ -30,6 +30,7 @@ func TestRegistryClassifiesBindingsAndOwnership(t *testing.T) {
 		epoch   = "30000000-0000-4000-8000-000000000001"
 	)
 	root := t.TempDir()
+	require.NoError(t, EnsureFilesystemNamespace(root))
 	expected := packstore.Ownership{
 		Format: packstore.OwnershipFormatV1, Vault: vaultID,
 		Store: storeID, Epoch: epoch,
@@ -67,6 +68,7 @@ func TestRegistryKeepsAcquiredBackendUsableAcrossConcurrentRefresh(t *testing.T)
 		epoch   = "30000000-0000-4000-8000-000000000001"
 	)
 	root := t.TempDir()
+	require.NoError(t, EnsureFilesystemNamespace(root))
 	expected := packstore.Ownership{
 		Format: packstore.OwnershipFormatV1, Vault: vaultID,
 		Store: storeID, Epoch: epoch,
