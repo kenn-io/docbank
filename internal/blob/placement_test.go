@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -15,6 +17,7 @@ import (
 
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/store"
+	docsqlite "go.kenn.io/docbank/pkg/sqlite"
 )
 
 func TestPlacementRunnerCopiesVerifiesAndRetiresLooseSource(t *testing.T) {
@@ -81,6 +84,108 @@ func TestPlacementRunnerRevokesPackedSourceAuthority(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, resolution.Candidates, 1)
 	assert.Equal(t, packstore.StoreID(destination.ID), resolution.Candidates[0].StoreID)
+}
+
+func TestPlacementRunnerEvacuatesPackedSecondaryAfterPlacementRevokesMappings(
+	t *testing.T,
+) {
+	metadata, blobs, runner, secondaries, root := placementTestVaultWithSecondaries(
+		t, "archive",
+	)
+	secondary := secondaries[0]
+	file, hash := placementTestFile(
+		t, metadata, blobs, []byte("packed secondary evacuation"),
+	)
+	packed, err := blobs.Maintainer().Pack(t.Context(), packstore.PackOptions{})
+	require.NoError(t, err)
+	require.Equal(t, 1, packed.BlobsPacked)
+	catalog := store.NewPackCatalog(metadata)
+	records, err := catalog.ListPackRecords(t.Context())
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	entries, err := catalog.ListPackEntries(t.Context(), records[0].PackID)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+
+	backend, ok := blobs.WritableBackend(packstore.StoreID(secondary.ID))
+	require.True(t, ok)
+	filesystem, ok := backend.(*packstore.FilesystemBackend)
+	require.True(t, ok)
+	source, err := os.Open(blobs.layout.PackPath(records[0].PackID))
+	require.NoError(t, err)
+	published, publishErr := backend.PublishPack(
+		t.Context(), records[0].PackID, source, packstore.PublishOptions{
+			ExpectedSize: records[0].StoredBytes, SizeKnown: true,
+		},
+	)
+	require.NoError(t, errors.Join(publishErr, source.Close()))
+
+	db, err := metadata.SQLiteDriver().Open(filepath.Join(root, "metadata.db"),
+		docsqlite.OpenOptions{
+			Access:          docsqlite.ReadWriteExisting,
+			TransactionMode: docsqlite.Immediate,
+		})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	_, err = db.ExecContext(t.Context(), `
+		INSERT INTO blob_packs(
+			store_id,pack_id,entry_count,stored_bytes,created_at
+		) VALUES(?,?,?,?,?)`,
+		secondary.ID, records[0].PackID, records[0].EntryCount,
+		records[0].StoredBytes, records[0].CreatedAt.UTC().Format(time.RFC3339Nano),
+	)
+	require.NoError(t, err)
+	entry := entries[0]
+	_, err = db.ExecContext(t.Context(), `
+		INSERT INTO blob_pack_entries(
+			blob_hash,store_id,pack_id,pack_offset,stored_len,raw_len,flags,crc32c
+		) VALUES(?,?,?,?,?,?,?,?)`,
+		entry.Hash.String(), secondary.ID, entry.PackID, entry.Offset,
+		entry.StoredLen, entry.RawLen, entry.Flags, entry.CRC32C,
+	)
+	require.NoError(t, err)
+	_, err = db.ExecContext(t.Context(), `
+		INSERT INTO blob_locations(
+			blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
+		) VALUES(?,?,?,'packed',NULL,?,1)`,
+		hash, secondary.ID, published.Generation, entry.StoredLen,
+	)
+	require.NoError(t, err)
+
+	placement, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+		TargetNodeID: file.ID, SourceStoreID: secondary.ID,
+		DestinationStoreID: metadata.PrimaryBlobStoreID(), RetireSource: true,
+	})
+	require.NoError(t, err)
+	require.NoError(t, runner.Run(
+		t.Context(), createPlacementOperation(t, metadata, placement),
+	))
+	var remainingMappings int
+	require.NoError(t, db.QueryRowContext(t.Context(), `
+		SELECT COUNT(*) FROM blob_pack_entries WHERE store_id=?`,
+		secondary.ID,
+	).Scan(&remainingMappings))
+	assert.Zero(t, remainingMappings)
+	require.FileExists(t, filesystem.Layout().PackPath(records[0].PackID))
+
+	evacuation, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+		TargetNodeID: metadata.RootID(), SourceStoreID: secondary.ID,
+		DestinationStoreID: metadata.PrimaryBlobStoreID(),
+		RetireSource:       true, Evacuate: true,
+	})
+	require.NoError(t, err)
+	require.Empty(t, evacuation.Hashes)
+	require.NoError(t, metadata.BeginBlobStoreEvacuation(t.Context(), secondary.ID))
+	evacuationID := createStorageOperation(t, metadata, "evacuate", evacuation)
+	require.NoError(t, runner.Run(t.Context(), evacuationID))
+
+	require.NoFileExists(t, filesystem.Layout().PackPath(records[0].PackID))
+	cleanups, err := metadata.StorageOperationCleanups(t.Context(), evacuationID)
+	require.NoError(t, err)
+	assert.Empty(t, cleanups)
+	evacuated, err := metadata.BlobStoreBySelector(t.Context(), secondary.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "detached", evacuated.Lifecycle)
 }
 
 func TestPlacementRunnerResumesAfterCatalogCommitBeforeProgress(t *testing.T) {
@@ -374,7 +479,7 @@ func TestPlacementRunnerRepairsDamagedSecondaryFromVerifiedPrimary(t *testing.T)
 }
 
 func TestPlacementRunnerRepairFallsBackToAnotherVerifiedSource(t *testing.T) {
-	metadata, blobs, runner, secondaries := placementTestVaultWithSecondaries(
+	metadata, blobs, runner, secondaries, _ := placementTestVaultWithSecondaries(
 		t, "archive", "mirror",
 	)
 	archive, mirror := secondaries[0], secondaries[1]
@@ -530,13 +635,13 @@ func placementTestVault(
 	t *testing.T,
 ) (*store.Store, *Store, PlacementRunner, store.BlobStore) {
 	t.Helper()
-	metadata, blobs, runner, secondaries := placementTestVaultWithSecondaries(t, "archive")
+	metadata, blobs, runner, secondaries, _ := placementTestVaultWithSecondaries(t, "archive")
 	return metadata, blobs, runner, secondaries[0]
 }
 
 func placementTestVaultWithSecondaries(
 	t *testing.T, names ...string,
-) (*store.Store, *Store, PlacementRunner, []store.BlobStore) {
+) (*store.Store, *Store, PlacementRunner, []store.BlobStore, string) {
 	t.Helper()
 	root := t.TempDir()
 	metadata, err := store.Open(filepath.Join(root, "metadata.db"))
@@ -576,7 +681,7 @@ func placementTestVaultWithSecondaries(
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
-	return metadata, blobs, PlacementRunner{Metadata: metadata, Blobs: blobs}, secondaries
+	return metadata, blobs, PlacementRunner{Metadata: metadata, Blobs: blobs}, secondaries, root
 }
 
 func placementTestFile(
