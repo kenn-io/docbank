@@ -183,51 +183,40 @@ func TestApplyRestorePlacementRejectsCaseInsensitiveFilesystemAliasClaim(t *test
 		require.NoError(t, err)
 	}
 
-	target := filepath.Join(root, "restore")
-	require.NoError(t, os.Mkdir(target, 0o700))
-	databasePath := filepath.Join(target, "docbank.db")
-	metadata, err := store.Open(databasePath)
-	require.NoError(t, err)
-	require.NoError(t, metadata.Close())
-
-	manifest := placementManifest{Stores: []placementStore{
-		{ID: "10000000-0000-4000-8000-000000000001"},
-		{ID: "10000000-0000-4000-8000-000000000002"},
-	}}
-	mapping := RestoreStoreMap{
-		Version: RestoreStoreMapVersion,
-		Stores: []RestoreStoreMapping{
-			{
-				SourceID: manifest.Stores[0].ID, Name: "first", Binding: "first",
-			},
-			{
-				SourceID: manifest.Stores[1].ID, Name: "second",
-				Binding: "second", Takeover: true,
-			},
-		},
+	first := store.BlobStore{
+		ID:             "10000000-0000-4000-8000-000000000001",
+		Name:           "first",
+		OwnershipEpoch: "20000000-0000-4000-8000-000000000001",
 	}
-	err = applyRestorePlacement(
-		t.Context(), target, databasePath, store.DefaultSQLiteDriver(), manifest,
-		RestorePlacementOptions{
-			Map: &mapping,
-			Bindings: map[string]config.StoreBindingConfig{
-				"first": {
-					Kind: "filesystem", Path: filepath.Join(root, "Archive"),
-				},
-				"second": {
-					Kind: "filesystem", Path: filepath.Join(root, "archive"),
-				},
-			},
+	second := store.BlobStore{
+		ID:             "10000000-0000-4000-8000-000000000002",
+		Name:           "second",
+		OwnershipEpoch: "20000000-0000-4000-8000-000000000002",
+	}
+	claims := make(map[packstore.Ownership]string)
+	firstBackend, err := claimRestoreBackend(
+		t.Context(), "30000000-0000-4000-8000-000000000001", first,
+		config.StoreBindingConfig{
+			Kind: "filesystem", Path: filepath.Join(root, "Archive"),
 		},
+		false, claims,
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if closer, ok := firstBackend.(interface{ Close() error }); ok {
+			require.NoError(t, closer.Close())
+		}
+	})
+
+	_, err = claimRestoreBackend(
+		t.Context(), "30000000-0000-4000-8000-000000000001", second,
+		config.StoreBindingConfig{
+			Kind: "filesystem", Path: filepath.Join(root, "archive"),
+		},
+		true, claims,
 	)
 	require.ErrorContains(t, err, "already claimed by target store")
 
-	restored, err := store.Open(databasePath)
-	require.NoError(t, err)
-	first, err := restored.BlobStoreBySelector(t.Context(), "first")
-	require.NoError(t, err)
-	vaultID := restored.VaultID()
-	require.NoError(t, restored.Close())
 	claimed, err := blob.NewFilesystemBackend(
 		filepath.Join(root, "Archive"), nil,
 	)
@@ -236,8 +225,9 @@ func TestApplyRestorePlacementRejectsCaseInsensitiveFilesystemAliasClaim(t *test
 	require.NoError(t, err)
 	asserted := packstore.Ownership{
 		Format: packstore.OwnershipFormatV1,
-		Vault:  vaultID, Store: packstore.StoreID(first.ID),
-		Epoch: first.OwnershipEpoch,
+		Vault:  "30000000-0000-4000-8000-000000000001",
+		Store:  packstore.StoreID(first.ID),
+		Epoch:  first.OwnershipEpoch,
 	}
 	require.Equal(t, asserted, actual)
 	require.NoError(t, claimed.Close())
