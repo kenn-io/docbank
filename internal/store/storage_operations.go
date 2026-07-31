@@ -206,7 +206,7 @@ func pruneExpiredStorageOperationsTx(
 }
 
 func activeStorageOperationsForStoreTx(
-	ctx context.Context, tx *sql.Tx, storeID string,
+	ctx context.Context, tx *sql.Tx, storeID, excludedOperationID string,
 ) (int, error) {
 	var active int
 	err := tx.QueryRowContext(ctx, `
@@ -214,8 +214,10 @@ func activeStorageOperationsForStoreTx(
 		FROM storage_operation_stores reference
 		JOIN storage_operations operation
 		  ON operation.operation_id=reference.operation_id
-		WHERE reference.store_id=? AND operation.state IN (?,?)`,
+		WHERE reference.store_id=? AND operation.state IN (?,?)
+		  AND operation.operation_id<>?`,
 		storeID, StorageOperationQueued, StorageOperationRunning,
+		excludedOperationID,
 	).Scan(&active)
 	if err != nil {
 		return 0, fmt.Errorf("checking active storage operations: %w", err)

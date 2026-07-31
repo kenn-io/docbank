@@ -386,6 +386,93 @@ func TestBlobStoreEvacuationRequiresVerifiedDestinationCoverage(t *testing.T) {
 	assert.Equal(t, "detached", detached.Lifecycle)
 }
 
+func TestBlobStoreEvacuationBeginRejectsActiveDestinationOperation(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	primary, err := s.PrimaryBlobStore(ctx)
+	require.NoError(t, err)
+	secondary, err := s.PrepareSecondaryBlobStore(
+		"archive", "filesystem", "archive_nas",
+	)
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(ctx, secondary))
+	operation, err := s.CreateStorageOperation(ctx, StorageOperationCreate{
+		Kind: "repair", StoreReferences: []StorageOperationStoreReference{
+			{StoreID: primary.ID, Role: "source"},
+			{StoreID: secondary.ID, Role: "destination"},
+		},
+		RequestDigest: fakeHash("ee"), RequestJSON: `{}`, PlanJSON: `{}`,
+	})
+	require.NoError(t, err)
+
+	require.ErrorIs(
+		t, s.BeginBlobStoreEvacuation(ctx, secondary.ID), ErrBlobStoreState,
+	)
+	active, err := s.BlobStoreBySelector(ctx, secondary.ID)
+	require.NoError(t, err)
+	assert.Equal(t, blobStoreLifecycleActive, active.Lifecycle)
+
+	require.NoError(t, s.FinishStorageOperation(
+		ctx, operation.ID, StorageOperationCompleted, `{}`, "",
+		time.Now().Add(time.Hour),
+	))
+	require.NoError(t, s.BeginBlobStoreEvacuation(ctx, secondary.ID))
+	draining, err := s.BlobStoreBySelector(ctx, secondary.ID)
+	require.NoError(t, err)
+	assert.Equal(t, blobStoreLifecycleDraining, draining.Lifecycle)
+}
+
+func TestBlobStoreEvacuationFinalizationRejectsActiveSourceOperation(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	primary, err := s.PrimaryBlobStore(ctx)
+	require.NoError(t, err)
+	secondary, err := s.PrepareSecondaryBlobStore(
+		"archive", "filesystem", "archive_nas",
+	)
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(ctx, secondary))
+	require.NoError(t, s.BeginBlobStoreEvacuation(ctx, secondary.ID))
+	evacuation, err := s.CreateStorageOperation(ctx, StorageOperationCreate{
+		Kind: storageOperationKindEvacuate, SourceStoreID: secondary.ID,
+		StoreReferences: []StorageOperationStoreReference{{
+			StoreID: primary.ID, Role: "destination",
+		}},
+		RequestDigest: fakeHash("ef"), RequestJSON: `{}`, PlanJSON: `{}`,
+	})
+	require.NoError(t, err)
+	_, err = s.ClaimStorageOperation(ctx, evacuation.ID)
+	require.NoError(t, err)
+	other, err := s.CreateStorageOperation(ctx, StorageOperationCreate{
+		Kind: "repair", StoreReferences: []StorageOperationStoreReference{
+			{StoreID: secondary.ID, Role: "source"},
+			{StoreID: primary.ID, Role: "destination"},
+		},
+		RequestDigest: fakeHash("f0"), RequestJSON: `{}`, PlanJSON: `{}`,
+	})
+	require.NoError(t, err)
+	_, err = s.ClaimStorageOperation(ctx, other.ID)
+	require.NoError(t, err)
+
+	_, err = s.FinalizeBlobStoreEvacuation(
+		ctx, evacuation.ID, secondary.ID, primary.ID,
+	)
+	require.ErrorIs(t, err, ErrBlobStoreState)
+	draining, err := s.BlobStoreBySelector(ctx, secondary.ID)
+	require.NoError(t, err)
+	assert.Equal(t, blobStoreLifecycleDraining, draining.Lifecycle)
+
+	require.NoError(t, s.FinishStorageOperation(
+		ctx, other.ID, StorageOperationCompleted, `{}`, "",
+		time.Now().Add(time.Hour),
+	))
+	finalized, err := s.FinalizeBlobStoreEvacuation(
+		ctx, evacuation.ID, secondary.ID, primary.ID,
+	)
+	require.NoError(t, err)
+	assert.True(t, finalized.Detached)
+}
+
 func TestEmptyBlobStoreEvacuationFinalizationRejectsCancellation(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()

@@ -267,6 +267,20 @@ func (s *Store) BeginBlobStoreEvacuation(ctx context.Context, selector string) e
 			return fmt.Errorf("blob store %s is %s: %w",
 				store.ID, store.Lifecycle, ErrBlobStoreState)
 		}
+		activeOperations, err := activeStorageOperationsForStoreTx(
+			ctx, tx, store.ID, "",
+		)
+		if err != nil {
+			return fmt.Errorf(
+				"checking active operations for blob store %s: %w", store.ID, err,
+			)
+		}
+		if activeOperations != 0 {
+			return fmt.Errorf(
+				"blob store %s has %d active operation(s): %w",
+				store.ID, activeOperations, ErrBlobStoreState,
+			)
+		}
 		_, err = tx.ExecContext(ctx,
 			`UPDATE blob_stores SET lifecycle=? WHERE store_id=?`,
 			blobStoreLifecycleDraining, store.ID,
@@ -327,6 +341,20 @@ func (s *Store) FinalizeBlobStoreEvacuation(
 		}
 		if source.Role == blobStoreRolePrimary {
 			return ErrBlobStorePrimary
+		}
+		activeOperations, err := activeStorageOperationsForStoreTx(
+			ctx, tx, source.ID, operationID,
+		)
+		if err != nil {
+			return fmt.Errorf(
+				"checking active operations for blob store %s: %w", source.ID, err,
+			)
+		}
+		if activeOperations != 0 {
+			return fmt.Errorf(
+				"blob store %s has %d active operation(s): %w",
+				source.ID, activeOperations, ErrBlobStoreState,
+			)
 		}
 		if source.Lifecycle == blobStoreLifecycleDetached {
 			if err := markStorageOperationFinalizingTx(
@@ -550,7 +578,7 @@ func (s *Store) DetachBlobStore(ctx context.Context, selector string) error {
 		if store.Lifecycle == blobStoreLifecycleDetached {
 			return nil
 		}
-		activeOperations, err := activeStorageOperationsForStoreTx(ctx, tx, store.ID)
+		activeOperations, err := activeStorageOperationsForStoreTx(ctx, tx, store.ID, "")
 		if err != nil {
 			return fmt.Errorf(
 				"checking active operations for blob store %s: %w", store.ID, err,
@@ -601,7 +629,7 @@ func (s *Store) UnregisterBlobStore(ctx context.Context, selector string) error 
 			return fmt.Errorf("blob store %s is %s: %w",
 				store.ID, store.Lifecycle, ErrBlobStoreState)
 		}
-		activeOperations, err := activeStorageOperationsForStoreTx(ctx, tx, store.ID)
+		activeOperations, err := activeStorageOperationsForStoreTx(ctx, tx, store.ID, "")
 		if err != nil {
 			return fmt.Errorf(
 				"checking active operations for blob store %s: %w", store.ID, err,
