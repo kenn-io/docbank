@@ -83,6 +83,30 @@ func TestPrepareRestoreMappingsRejectsOverlappingFilesystemNamespaces(t *testing
 	require.ErrorContains(t, err, "overlaps")
 }
 
+func TestPrepareRestoreMappingsRejectsInvalidAndPrimaryStoreNames(t *testing.T) {
+	manifest := placementManifest{Stores: []placementStore{{
+		ID: "10000000-0000-4000-8000-000000000001",
+	}}}
+	for _, name := range []string{"bad\nname", "primary"} {
+		t.Run(name, func(t *testing.T) {
+			mapping := RestoreStoreMap{
+				Version: RestoreStoreMapVersion,
+				Stores: []RestoreStoreMapping{{
+					SourceID: manifest.Stores[0].ID,
+					Name:     name, Binding: "archive",
+				}},
+			}
+			_, err := prepareRestoreMappings(
+				t.TempDir(), mapping, manifest,
+				map[string]config.StoreBindingConfig{
+					"archive": {Kind: "filesystem", Path: t.TempDir()},
+				}, nil,
+			)
+			require.Error(t, err)
+		})
+	}
+}
+
 func TestPrepareRestoreMappingsRejectsOverlappingS3Prefixes(t *testing.T) {
 	manifest := placementManifest{Stores: []placementStore{
 		{ID: "10000000-0000-4000-8000-000000000001"},

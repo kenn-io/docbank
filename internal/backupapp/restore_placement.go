@@ -75,8 +75,11 @@ func validateRestoreStoreMap(
 				index, mapped.SourceID,
 			)
 		}
-		if mapped.Name == "" || mapped.Binding == "" {
-			return fmt.Errorf("backupapp: store-map entry %d requires name and binding", index)
+		if err := store.ValidateSecondaryBlobStoreName(mapped.Name); err != nil {
+			return fmt.Errorf("backupapp: store-map entry %d target name: %w", index, err)
+		}
+		if mapped.Binding == "" {
+			return fmt.Errorf("backupapp: store-map entry %d requires a binding", index)
 		}
 		if _, duplicate := seenSource[mapped.SourceID]; duplicate {
 			return fmt.Errorf("backupapp: source store %s is mapped more than once", mapped.SourceID)

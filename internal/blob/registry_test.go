@@ -179,6 +179,57 @@ func TestRegistryRefreshDoesNotBlockBackendLookup(t *testing.T) {
 	assert.Equal(t, StoreOnline, (<-refreshed).State)
 }
 
+func TestRegistryRefreshCallerCancellationPreservesHealthyBackend(t *testing.T) {
+	const (
+		vaultID = "10000000-0000-4000-8000-000000000001"
+		storeID = "20000000-0000-4000-8000-000000000001"
+		epoch   = "30000000-0000-4000-8000-000000000001"
+	)
+	root := t.TempDir()
+	require.NoError(t, EnsureFilesystemNamespace(root))
+	expected := packstore.Ownership{
+		Format: packstore.OwnershipFormatV1, Vault: vaultID,
+		Store: storeID, Epoch: epoch,
+	}
+	unattached, err := NewFilesystemBackend(root, nil)
+	require.NoError(t, err)
+	require.NoError(t, unattached.ReplaceOwnership(t.Context(), expected, nil))
+	require.NoError(t, unattached.Close())
+	probeStarted := make(chan struct{})
+	releaseProbe := make(chan struct{})
+	registry := newRegistry(t.Context(), vaultID,
+		map[string]config.StoreBindingConfig{
+			"archive": {Kind: storeKindFilesystem, Path: root},
+		}, []StoreSpec{{
+			ID: storeID, Kind: storeKindFilesystem, Role: "secondary",
+			Lifecycle: "active", Binding: "archive", OwnershipEpoch: epoch,
+		}}, func(
+			ctx context.Context,
+			binding config.StoreBindingConfig,
+			ownership *packstore.Ownership,
+		) (packstore.Backend, error) {
+			backend, openErr := NewConfiguredBackend(ctx, binding, ownership)
+			if openErr != nil {
+				return nil, openErr
+			}
+			return &blockingOwnershipBackend{
+				Backend: backend, probeStarted: probeStarted, releaseProbe: releaseProbe,
+			}, nil
+		})
+	t.Cleanup(func() { require.NoError(t, registry.Close()) })
+
+	ctx, cancel := context.WithCancel(t.Context())
+	refreshed := make(chan StoreObservation, 1)
+	go func() { refreshed <- registry.Refresh(ctx, storeID) }()
+	<-probeStarted
+	cancel()
+	observation := <-refreshed
+	assert.Equal(t, StoreOnline, observation.State)
+	_, admitted := registry.Backend(storeID)
+	assert.True(t, admitted)
+	close(releaseProbe)
+}
+
 func TestRegistryRefreshReturnsWhenOwnershipProbeIgnoresContext(t *testing.T) {
 	const (
 		vaultID = "10000000-0000-4000-8000-000000000001"
@@ -216,7 +267,7 @@ func TestRegistryRefreshReturnsWhenOwnershipProbeIgnoresContext(t *testing.T) {
 	<-probeStarted
 	select {
 	case observation := <-refreshed:
-		assert.Equal(t, StoreUnavailable, observation.State)
+		assert.Equal(t, StoreOnline, observation.State)
 	case <-time.After(500 * time.Millisecond):
 		close(releaseProbe)
 		<-refreshed
@@ -258,13 +309,13 @@ func TestRegistryCoalescesRetriesWhileProbeRemainsBlocked(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
 	first := registry.Refresh(ctx, storeID)
 	cancel()
-	assert.Equal(t, StoreUnavailable, first.State)
+	assert.Equal(t, StoreOnline, first.State)
 	assert.Equal(t, int64(2), backend.calls.Load())
 
 	retryCtx, cancelRetry := context.WithTimeout(t.Context(), 25*time.Millisecond)
 	retry := registry.Refresh(retryCtx, storeID)
 	cancelRetry()
-	assert.Equal(t, StoreUnavailable, retry.State)
+	assert.Equal(t, StoreOnline, retry.State)
 	assert.Equal(t, int64(2), backend.calls.Load(), "retry started a duplicate blocked probe")
 	close(releaseProbe)
 	require.Eventually(t, func() bool {

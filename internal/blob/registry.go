@@ -38,6 +38,8 @@ const (
 
 var errStoreOwnershipUnavailable = errors.New("store ownership is unavailable")
 
+var errRegistryProbeTimeout = errors.New("store ownership probe timed out")
+
 const registryProbeTimeout = 5 * time.Second
 
 // StoreSpec is the catalog authority needed to bind one runtime backend.
@@ -187,7 +189,9 @@ func (r *Registry) Observation(id string) StoreObservation {
 
 // Refresh performs a fresh marker check for one cataloged store.
 func (r *Registry) Refresh(ctx context.Context, id string) StoreObservation {
-	probeCtx, cancel := context.WithTimeout(ctx, registryProbeTimeout)
+	probeCtx, cancel := context.WithTimeoutCause(
+		ctx, registryProbeTimeout, errRegistryProbeTimeout,
+	)
 	defer cancel()
 	return r.refresh(probeCtx, id)
 }
@@ -196,7 +200,9 @@ func (r *Registry) Refresh(ctx context.Context, id string) StoreObservation {
 func (r *Registry) RefreshStores(
 	ctx context.Context, ids []string,
 ) map[string]StoreObservation {
-	probeCtx, cancel := context.WithTimeout(ctx, registryProbeTimeout)
+	probeCtx, cancel := context.WithTimeoutCause(
+		ctx, registryProbeTimeout, errRegistryProbeTimeout,
+	)
 	defer cancel()
 	observations := make(map[string]StoreObservation, len(ids))
 	var mu sync.Mutex
@@ -302,11 +308,12 @@ type registryRefresh struct {
 }
 
 type registryProbe struct {
-	backend   packstore.Backend
-	keepPrior bool
-	state     StoreState
-	detail    string
-	priority  int
+	backend       packstore.Backend
+	keepPrior     bool
+	preservePrior bool
+	state         StoreState
+	detail        string
+	priority      int
 }
 
 func (r *Registry) beginRefresh(id packstore.StoreID) (registryRefresh, bool) {
@@ -368,6 +375,9 @@ func (r *Registry) probeStore(ctx context.Context, refresh registryRefresh) regi
 			}
 		}
 		if err != nil {
+			if callerCancelledRegistryProbe(ctx) {
+				return registryProbe{preservePrior: true}
+			}
 			var mismatch *packstore.OwnershipMismatchError
 			if errors.As(err, &mismatch) || errors.Is(err, packstore.ErrStoreFenced) {
 				return registryProbe{state: StoreFenced, detail: err.Error(), priority: refresh.priority}
@@ -424,10 +434,17 @@ func (r *Registry) probeStoreBounded(
 		return probed
 	case <-ctx.Done():
 		close(abandoned)
+		if refresh.prior != nil && callerCancelledRegistryProbe(ctx) {
+			return registryProbe{preservePrior: true}
+		}
 		return registryProbe{
 			state: StoreUnavailable, detail: ctx.Err().Error(), priority: refresh.priority,
 		}
 	}
+}
+
+func callerCancelledRegistryProbe(ctx context.Context) bool {
+	return ctx.Err() != nil && !errors.Is(context.Cause(ctx), errRegistryProbeTimeout)
 }
 
 func (r *Registry) finishProbe(id packstore.StoreID, generation uint64) {
@@ -449,6 +466,12 @@ func (r *Registry) installProbe(
 		observation := r.observations[id]
 		r.mu.Unlock()
 		_ = closeBackend(closeAfter)
+		return observation
+	}
+	if result.preservePrior {
+		observation := r.observations[id]
+		r.mu.Unlock()
+		_ = closeBackend(result.backend)
 		return observation
 	}
 	if !result.keepPrior {

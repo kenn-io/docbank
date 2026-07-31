@@ -154,7 +154,7 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 		ctx, operationID, operation.Cursor, &receipt,
 	)
 	if cleanupErr != nil {
-		return r.deferCleanup(ctx, operationID, errors.Join(cleanupErr, progressErr))
+		return r.deferOperation(ctx, operationID, errors.Join(cleanupErr, progressErr))
 	}
 	if progressErr != nil {
 		return retryStorageOperation(ctx, progressErr)
@@ -207,7 +207,7 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 			ctx, operationID, item.Hash, &receipt,
 		)
 		if cleanupErr != nil {
-			return r.deferCleanup(ctx, operationID, errors.Join(cleanupErr, progressErr))
+			return r.deferOperation(ctx, operationID, errors.Join(cleanupErr, progressErr))
 		}
 		if progressErr != nil {
 			return retryStorageOperation(ctx, progressErr)
@@ -230,6 +230,11 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return ctxErr
 			}
+			if errors.Is(err, store.ErrBlobStoreState) {
+				return r.deferOperation(ctx, operationID, fmt.Errorf(
+					"finalizing evacuation: %w", err,
+				))
+			}
 			return r.fail(ctx, operationID, fmt.Errorf("finalizing evacuation: %w", err))
 		}
 		receipt.SourceRevoked += finalized.RevokedLocations
@@ -247,7 +252,7 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 			ctx, operationID, &receipt,
 		)
 		if cleanupErr != nil {
-			return r.deferCleanup(ctx, operationID, errors.Join(cleanupErr, progressErr))
+			return r.deferOperation(ctx, operationID, errors.Join(cleanupErr, progressErr))
 		}
 		if progressErr != nil {
 			return retryStorageOperation(ctx, progressErr)
@@ -264,6 +269,14 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 			if err != nil {
 				if errors.Is(err, store.ErrStorageOperationCancelled) {
 					return r.cancel(ctx, operationID, receipt)
+				}
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return ctxErr
+				}
+				if errors.Is(err, store.ErrBlobStoreState) {
+					return r.deferOperation(ctx, operationID, fmt.Errorf(
+						"detaching evacuated store after cleanup: %w", err,
+					))
 				}
 				return r.fail(ctx, operationID, fmt.Errorf(
 					"detaching evacuated store after cleanup: %w", err,
@@ -285,7 +298,7 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 	))
 }
 
-func (r PlacementRunner) deferCleanup(
+func (r PlacementRunner) deferOperation(
 	ctx context.Context, operationID string, failure error,
 ) error {
 	if ctxErr := ctx.Err(); ctxErr != nil {

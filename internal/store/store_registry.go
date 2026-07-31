@@ -42,8 +42,8 @@ type BlobStoreEvacuationFinalization struct {
 // that must be published to the physical namespace before RegisterBlobStore
 // grants catalog authority.
 func (s *Store) PrepareSecondaryBlobStore(name, kind, binding string) (BlobStore, error) {
-	if !blobStoreNamePattern.MatchString(name) {
-		return BlobStore{}, errors.New("blob-store name must be 1-200 printable characters")
+	if err := ValidateSecondaryBlobStoreName(name); err != nil {
+		return BlobStore{}, err
 	}
 	if kind != blobStoreKindFilesystem && kind != blobStoreKindS3 {
 		return BlobStore{}, fmt.Errorf("blob-store kind %q must be filesystem or s3", kind)
@@ -64,6 +64,18 @@ func (s *Store) PrepareSecondaryBlobStore(name, kind, binding string) (BlobStore
 		Lifecycle: blobStoreLifecycleActive, Binding: binding,
 		OwnershipEpoch: epoch, CreatedAt: parseStoredTime(nowRFC3339()),
 	}, nil
+}
+
+// ValidateSecondaryBlobStoreName rejects names that cannot coexist with the
+// fixed built-in primary. Callers use it before touching an external namespace.
+func ValidateSecondaryBlobStoreName(name string) error {
+	if !blobStoreNamePattern.MatchString(name) {
+		return errors.New("blob-store name must be 1-200 printable characters")
+	}
+	if name == primaryBlobStoreName {
+		return fmt.Errorf("blob-store name %q is reserved for the built-in primary", name)
+	}
+	return nil
 }
 
 // RegisterBlobStore records a namespace only after its ownership marker has
@@ -679,8 +691,8 @@ func validateBlobStore(store BlobStore) error {
 	if err := validateUUIDv4(store.OwnershipEpoch); err != nil {
 		return fmt.Errorf("invalid blob-store ownership epoch: %w", err)
 	}
-	if !blobStoreNamePattern.MatchString(store.Name) {
-		return errors.New("blob-store name must be 1-200 printable characters")
+	if err := ValidateSecondaryBlobStoreName(store.Name); err != nil {
+		return err
 	}
 	if store.Kind != blobStoreKindFilesystem && store.Kind != blobStoreKindS3 {
 		return fmt.Errorf("invalid blob-store kind %q", store.Kind)

@@ -562,6 +562,47 @@ func TestPlacementRunnerEvacuatesSecondaryToPrimaryAndDetachesIt(t *testing.T) {
 	assert.Equal(t, []byte("bring this home"), got)
 }
 
+func TestPlacementRunnerDefersEvacuationWhileAnotherOperationUsesSource(t *testing.T) {
+	metadata, _, runner, secondary := placementTestVault(t)
+	plan, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+		TargetNodeID: metadata.RootID(), SourceStoreID: secondary.ID,
+		DestinationStoreID: metadata.PrimaryBlobStoreID(), RetireSource: true,
+		Evacuate: true,
+	})
+	require.NoError(t, err)
+	require.NoError(t, metadata.BeginBlobStoreEvacuation(t.Context(), secondary.ID))
+	evacuationID := createStorageOperation(t, metadata, "evacuate", plan)
+	conflict, err := metadata.CreateStorageOperation(t.Context(), store.StorageOperationCreate{
+		Kind: "repair", StoreReferences: []store.StorageOperationStoreReference{
+			{StoreID: secondary.ID, Role: "source"},
+			{StoreID: metadata.PrimaryBlobStoreID(), Role: "destination"},
+		},
+		RequestDigest: "abababababababababababababababababababababababababababababababab",
+		RequestJSON:   `{}`, PlanJSON: `{}`,
+	})
+	require.NoError(t, err)
+	_, err = metadata.ClaimStorageOperation(t.Context(), conflict.ID)
+	require.NoError(t, err)
+
+	err = runner.Run(t.Context(), evacuationID)
+	require.ErrorIs(t, err, errStorageOperationDeferred)
+	evacuation, err := metadata.StorageOperation(t.Context(), evacuationID)
+	require.NoError(t, err)
+	assert.Equal(t, store.StorageOperationQueued, evacuation.State)
+
+	require.NoError(t, metadata.FinishStorageOperation(
+		t.Context(), conflict.ID, store.StorageOperationCompleted, `{}`, "",
+		time.Now().Add(time.Hour),
+	))
+	require.NoError(t, runner.Run(t.Context(), evacuationID))
+	evacuation, err = metadata.StorageOperation(t.Context(), evacuationID)
+	require.NoError(t, err)
+	assert.Equal(t, store.StorageOperationCompleted, evacuation.State)
+	detached, err := metadata.BlobStoreBySelector(t.Context(), secondary.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "detached", detached.Lifecycle)
+}
+
 func TestPlacementRunnerEvacuatesRetainedBlobWithoutVersionReferences(t *testing.T) {
 	t.Run("missing primary is restored before source retirement", func(t *testing.T) {
 		metadata, blobs, runner, secondary := placementTestVault(t)
