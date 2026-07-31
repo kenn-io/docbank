@@ -790,6 +790,27 @@ func (b corruptAfterRepairBackend) RepairLoose(
 	return receipt, nil
 }
 
+type cancelAfterRepairBackend struct {
+	packstore.Backend
+
+	repair packstore.RepairBackend
+	cancel context.CancelFunc
+}
+
+func (b cancelAfterRepairBackend) RepairLoose(
+	ctx context.Context,
+	hash packstore.Hash,
+	content io.Reader,
+	options packstore.PublishOptions,
+) (packstore.LooseReceipt, error) {
+	receipt, err := b.repair.RepairLoose(ctx, hash, content, options)
+	if err != nil {
+		return packstore.LooseReceipt{}, fmt.Errorf("repairing before cancellation: %w", err)
+	}
+	b.cancel()
+	return receipt, nil
+}
+
 func TestRepairOneRejectsCorruptDestinationReadback(t *testing.T) {
 	metadata, blobs, _, secondary := placementTestVault(t)
 	_, hash := placementTestFile(t, metadata, blobs, []byte("verify repaired destination"))
@@ -916,20 +937,45 @@ func TestSalvageCancellationLeavesRecoveryResumable(t *testing.T) {
 	require.NoError(t, runner.Run(
 		t.Context(), createPlacementOperation(t, metadata, placement),
 	))
+	backend, ok := blobs.WritableBackend(packstore.StoreID(secondary.ID))
+	require.True(t, ok)
+	prior, err := backend.Ownership(t.Context())
+	require.NoError(t, err)
+	taken := prior
+	taken.Epoch = "50000000-0000-4000-8000-000000000002"
+	require.NoError(t, backend.ReplaceOwnership(t.Context(), taken, &prior))
+	observation := blobs.RefreshStore(t.Context(), secondary.ID)
+	require.Equal(t, StoreFenced, observation.State)
+	require.NoError(t, os.WriteFile(
+		blobs.layout.LoosePath(packstore.Hash(hash)), []byte("corrupt primary"), 0o600,
+	))
+
 	plan, err := metadata.PlanStorageRecovery(
 		t.Context(), "salvage", hash, secondary.ID,
 	)
 	require.NoError(t, err)
 	operationID := createRecoveryOperation(t, metadata, plan)
-	_, err = metadata.ClaimStorageOperation(t.Context(), operationID)
-	require.NoError(t, err)
 	cancelled, cancel := context.WithCancel(t.Context())
-	cancel()
+	originalReadBackend := blobs.readBackend
+	primaryID := packstore.StoreID(metadata.PrimaryBlobStoreID())
+	primary, ok := blobs.WritableBackend(primaryID)
+	require.True(t, ok)
+	repair, ok := blobs.RepairBackend(primaryID)
+	require.True(t, ok)
+	blobs.readBackend = nil
+	blobs.registry.mu.Lock()
+	blobs.registry.backends[primaryID] = cancelAfterRepairBackend{
+		Backend: primary, repair: repair, cancel: cancel,
+	}
+	blobs.registry.mu.Unlock()
+	t.Cleanup(func() {
+		blobs.registry.mu.Lock()
+		delete(blobs.registry.backends, primaryID)
+		blobs.registry.mu.Unlock()
+		blobs.readBackend = originalReadBackend
+	})
 
-	err = runner.failRecoveryUnlessCancelled(
-		cancelled, operationID,
-		errors.Join(packstore.ErrPhysicalCorrupt, context.Canceled),
-	)
+	err = runner.Run(cancelled, operationID)
 	require.ErrorIs(t, err, context.Canceled)
 	operation, err := metadata.StorageOperation(t.Context(), operationID)
 	require.NoError(t, err)
