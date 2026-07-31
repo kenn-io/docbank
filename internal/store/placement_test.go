@@ -307,6 +307,33 @@ func TestPlacementExistingS3PackReportsVerificationEgressAndScratch(t *testing.T
 	assert.Equal(t, int64(8192), plan.ScratchBytes)
 }
 
+func TestPlacementExistingS3LooseReportsPhysicalVerificationEgress(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	hash := fakeHash("f9")
+	_, err := s.CreateFile(ctx, s.RootID(), "compressed.txt", hash, 100, "text/plain")
+	require.NoError(t, err)
+	secondary, err := s.PrepareSecondaryBlobStore("cold", blobStoreKindS3, "cold")
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(ctx, secondary))
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO blob_locations(
+			blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
+		) VALUES(?,?,?,'loose','zstd',25,1)`,
+		hash, secondary.ID, "40000000-0000-4000-8000-000000000008",
+	)
+	require.NoError(t, err)
+
+	plan, err := s.PlanPlacement(ctx, PlacementRequest{
+		TargetNodeID: s.RootID(), SourceStoreID: s.primaryStoreID,
+		DestinationStoreID: secondary.ID,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(100), plan.AlreadyPresentBytes)
+	assert.Equal(t, int64(100), plan.ReadBackBytes)
+	assert.Equal(t, int64(25), plan.RemoteEgressBytes)
+}
+
 func placementHashesByID(items []PlacementHash) map[string]PlacementHash {
 	result := make(map[string]PlacementHash, len(items))
 	for _, item := range items {

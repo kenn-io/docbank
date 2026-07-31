@@ -161,6 +161,8 @@ func (s *Store) PlanPlacement(
 					}
 					item.ScratchBytes = destinationReadBytes
 					plan.ScratchBytes = max(plan.ScratchBytes, destinationReadBytes)
+				} else if destination.Loose != nil {
+					destinationReadBytes = destination.Loose.StoredSize
 				}
 				plan.RemoteEgressBytes += destinationReadBytes
 			}
