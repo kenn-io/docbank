@@ -803,29 +803,31 @@ func (r PlacementRunner) retirePendingObject(
 		}
 		defer release()
 	}
-	retire, err := r.Metadata.PrepareStorageOperationCleanup(
-		context.WithoutCancel(ctx), operationID, cleanup,
-	)
-	if err != nil {
-		return err
-	}
-	if !retire {
+	return r.Blobs.withMaintenance(ctx, func() error {
+		retire, err := r.Metadata.PrepareStorageOperationCleanup(
+			context.WithoutCancel(ctx), operationID, cleanup,
+		)
+		if err != nil {
+			return err
+		}
+		if !retire {
+			return nil
+		}
+		backend, ok := r.Blobs.WritableBackend(packstore.StoreID(cleanup.StoreID))
+		if !ok {
+			return fmt.Errorf("%w: cleanup store %s is not bound",
+				packstore.ErrStoreUnavailable, cleanup.StoreID)
+		}
+		if err := backend.Retire(ctx, cleanup.Ref); err != nil {
+			return fmt.Errorf("retiring storage operation object: %w", err)
+		}
+		if err := r.Metadata.CompleteStorageOperationCleanup(
+			context.WithoutCancel(ctx), operationID, cleanup,
+		); err != nil {
+			return err
+		}
 		return nil
-	}
-	backend, ok := r.Blobs.WritableBackend(packstore.StoreID(cleanup.StoreID))
-	if !ok {
-		return fmt.Errorf("%w: cleanup store %s is not bound",
-			packstore.ErrStoreUnavailable, cleanup.StoreID)
-	}
-	if err := backend.Retire(ctx, cleanup.Ref); err != nil {
-		return fmt.Errorf("retiring storage operation object: %w", err)
-	}
-	if err := r.Metadata.CompleteStorageOperationCleanup(
-		context.WithoutCancel(ctx), operationID, cleanup,
-	); err != nil {
-		return err
-	}
-	return nil
+	})
 }
 
 func (r PlacementRunner) currentLocation(

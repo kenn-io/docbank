@@ -512,12 +512,6 @@ func (s *Store) CommitPlacement(
 	if err := destination.Validate(); err != nil {
 		return PlacementCommit{}, fmt.Errorf("validating placement destination: %w", err)
 	}
-	if planned.Destination != nil &&
-		!sameReadLocation(*planned.Destination, destination) {
-		return PlacementCommit{}, fmt.Errorf(
-			"placement destination changed after preview: %w", ErrStaleRevision,
-		)
-	}
 	var committed PlacementCommit
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		destinationStore, err := blobStoreBySelectorTx(
@@ -551,11 +545,18 @@ func (s *Store) CommitPlacement(
 			return fmt.Errorf("placement identity changed for %s: %w",
 				planned.Hash, packstore.ErrPhysicalCorrupt)
 		}
-		_, currentDestination, err := placementLocationsTx(
+		source, currentDestination, err := placementLocationsTx(
 			ctx, tx, planned.Hash, request.SourceStoreID, request.DestinationStoreID,
 		)
 		if err != nil {
 			return err
+		}
+		if planned.Destination != nil &&
+			!sameReadLocation(*planned.Destination, destination) &&
+			source.StoreID != "" {
+			return fmt.Errorf(
+				"placement destination changed after preview: %w", ErrStaleRevision,
+			)
 		}
 		if currentDestination.StoreID != "" {
 			if !sameReadLocation(currentDestination, destination) {
@@ -594,12 +595,6 @@ func (s *Store) CommitPlacement(
 		}
 		committed.DestinationAuthorized = true
 
-		source, _, err := placementLocationsTx(
-			ctx, tx, planned.Hash, request.SourceStoreID, request.DestinationStoreID,
-		)
-		if err != nil {
-			return err
-		}
 		if source.StoreID == "" {
 			committed.SourceRevoked = planned.RetireSource
 			return nil

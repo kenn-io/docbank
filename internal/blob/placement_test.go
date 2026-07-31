@@ -313,6 +313,136 @@ func TestPlacementRunnerResumesAfterCatalogCommitBeforeProgress(t *testing.T) {
 	assert.Equal(t, int64(1), receipt.SourceRevoked)
 }
 
+func TestPlacementRunnerCleanupRetryWaitsForConcurrentIngestPublication(t *testing.T) {
+	metadata, blobs, runner, destination := placementTestVault(t)
+	content := []byte("reauthorize while cleanup waits")
+	file, hash := placementTestFile(t, metadata, blobs, content)
+	plan, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+		TargetNodeID: file.ID, SourceStoreID: metadata.PrimaryBlobStoreID(),
+		DestinationStoreID: destination.ID, RetireSource: true,
+	})
+	require.NoError(t, err)
+	operationID := createPlacementOperation(t, metadata, plan)
+	_, err = metadata.ClaimStorageOperation(t.Context(), operationID)
+	require.NoError(t, err)
+	_, err = runner.placeOne(t.Context(), operationID, plan.Request, plan.Hashes[0])
+	require.NoError(t, err)
+	cleanups, err := metadata.StorageOperationCleanups(t.Context(), operationID)
+	require.NoError(t, err)
+	require.Len(t, cleanups, 1)
+	primary, ok := blobs.WritableBackend(packstore.StoreID(metadata.PrimaryBlobStoreID()))
+	require.True(t, ok)
+	require.NoError(t, primary.Retire(t.Context(), cleanups[0].Ref))
+
+	written := make(chan WriteReceipt, 1)
+	publish := make(chan struct{})
+	ingestDone := make(chan error, 1)
+	go func() {
+		ingestDone <- blobs.WithMutation(t.Context(), func() error {
+			receipt, writeErr := blobs.WriteDetailedContext(
+				t.Context(), bytes.NewReader(content),
+			)
+			if writeErr != nil {
+				return writeErr
+			}
+			written <- receipt
+			<-publish
+			encoding, encodingErr := receipt.EncodingName()
+			if encodingErr != nil {
+				return encodingErr
+			}
+			_, createErr := metadata.CreateFile(
+				t.Context(), metadata.RootID(), "reauthorized.txt",
+				receipt.Hash, receipt.Size, "text/plain", store.BlobPhysical{
+					Encoding: encoding, StoredBytes: receipt.StoredSize,
+					PackEligible: receipt.PackEligible, Created: receipt.Created,
+				},
+			)
+			return createErr
+		})
+	}()
+	republished := <-written
+	require.True(t, republished.Created)
+
+	cleanupDone := make(chan error, 1)
+	go func() { cleanupDone <- runner.Run(t.Context(), operationID) }()
+	maintenanceQueued := false
+	deadline := time.After(time.Second)
+	for !maintenanceQueued {
+		select {
+		case <-deadline:
+			t.Fatal("cleanup did not wait behind the active ingest mutation")
+		default:
+		}
+		probeCtx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+		probeErr := blobs.WithMutation(probeCtx, func() error { return nil })
+		cancel()
+		maintenanceQueued = errors.Is(probeErr, context.DeadlineExceeded)
+	}
+	close(publish)
+	require.NoError(t, <-ingestDone)
+	require.NoError(t, <-cleanupDone)
+
+	cleanups, err = metadata.StorageOperationCleanups(t.Context(), operationID)
+	require.NoError(t, err)
+	assert.Empty(t, cleanups)
+	primaryLocation, err := runner.currentLocation(
+		t.Context(), hash, metadata.PrimaryBlobStoreID(),
+	)
+	require.NoError(t, err)
+	_, err = blobs.VerifyLocation(t.Context(), hash, primaryLocation)
+	require.NoError(t, err)
+}
+
+func TestPlacementRunnerResumesAfterCommittedDestinationRepair(t *testing.T) {
+	metadata, blobs, runner, secondaries, _ := placementTestVaultWithSecondaries(
+		t, "archive", "mirror",
+	)
+	archive, mirror := secondaries[0], secondaries[1]
+	file, hash := placementTestFile(t, metadata, blobs, []byte("repair then resume"))
+	for _, destination := range []store.BlobStore{archive, mirror} {
+		plan, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+			TargetNodeID: file.ID, SourceStoreID: metadata.PrimaryBlobStoreID(),
+			DestinationStoreID: destination.ID,
+		})
+		require.NoError(t, err)
+		require.NoError(t, runner.Run(
+			t.Context(), createPlacementOperation(t, metadata, plan),
+		))
+	}
+
+	plan, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+		TargetNodeID: file.ID, SourceStoreID: metadata.PrimaryBlobStoreID(),
+		DestinationStoreID: archive.ID, RetireSource: true,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, plan.Hashes[0].Destination)
+	operationID := createPlacementOperation(t, metadata, plan)
+	_, err = metadata.ClaimStorageOperation(t.Context(), operationID)
+	require.NoError(t, err)
+	result, err := runner.placeOne(
+		t.Context(), operationID, plan.Request, plan.Hashes[0],
+	)
+	require.NoError(t, err)
+	require.True(t, result.SourceRevoked)
+
+	recovery, err := metadata.PlanStorageRecovery(t.Context(), "repair", hash, archive.ID)
+	require.NoError(t, err)
+	require.NoError(t, runner.Run(
+		t.Context(), createRecoveryOperation(t, metadata, recovery),
+	))
+	repaired, err := runner.currentLocation(t.Context(), hash, archive.ID)
+	require.NoError(t, err)
+	require.NotEqual(t, plan.Hashes[0].Destination.Generation, repaired.Generation)
+
+	require.NoError(t, runner.Run(t.Context(), operationID))
+	operation, err := metadata.StorageOperation(t.Context(), operationID)
+	require.NoError(t, err)
+	assert.Equal(t, store.StorageOperationCompleted, operation.State)
+	_, err = blobs.VerifyLocation(t.Context(), hash, repaired)
+	require.NoError(t, err)
+}
+
 func TestPlacementRunnerReschedulesFailedPhysicalCleanup(t *testing.T) {
 	metadata, blobs, runner, secondary := placementTestVault(t)
 	file, _ := placementTestFile(t, metadata, blobs, []byte("retry cleanup"))
