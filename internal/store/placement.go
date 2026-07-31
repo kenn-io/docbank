@@ -129,7 +129,6 @@ func (s *Store) PlanPlacement(
 			(!item.AuditPinned || request.SourceStoreID != s.primaryStoreID ||
 				request.AllowAuditedRemoteOnly)
 		if item.RetireSource && source.Pack != nil {
-			item.RetireSource = false
 			item.PackRepackRequired = true
 		}
 		plan.SelectedVersions += item.SelectedReferences
@@ -159,6 +158,8 @@ func (s *Store) PlanPlacement(
 			}
 		}
 		switch {
+		case item.PackRepackRequired:
+			plan.PackBlockedBytes += item.Size
 		case item.RetireSource:
 			plan.RetirableBytes += item.Size
 		case item.SharedReference:
@@ -166,8 +167,6 @@ func (s *Store) PlanPlacement(
 		case item.AuditPinned && request.SourceStoreID == s.primaryStoreID &&
 			!request.AllowAuditedRemoteOnly:
 			plan.AuditPinnedBytes += item.Size
-		case item.PackRepackRequired:
-			plan.PackBlockedBytes += item.Size
 		}
 		plan.Hashes = append(plan.Hashes, *item)
 	}
@@ -567,6 +566,50 @@ func (s *Store) CommitPlacement(
 		}
 		if source.Pack != nil {
 			committed.PackRepackRequired = true
+			entryResult, err := tx.ExecContext(ctx, `
+				DELETE FROM blob_pack_entries
+				WHERE blob_hash=? AND store_id=? AND pack_id=?`,
+				planned.Hash, request.SourceStoreID, source.Pack.PackID,
+			)
+			if err != nil {
+				return fmt.Errorf(
+					"revoking packed placement source %s: %w", planned.Hash, err,
+				)
+			}
+			entryRows, err := entryResult.RowsAffected()
+			if err != nil {
+				return fmt.Errorf(
+					"reading packed placement source revocation: %w", err,
+				)
+			}
+			if entryRows != 1 {
+				committed.ReferenceDrift = true
+				return nil
+			}
+			locationResult, err := tx.ExecContext(ctx, `
+				DELETE FROM blob_locations
+				WHERE blob_hash=? AND store_id=? AND generation=? AND kind=?`,
+				planned.Hash, request.SourceStoreID,
+				source.Generation, blobLocationKindPacked,
+			)
+			if err != nil {
+				return fmt.Errorf(
+					"revoking packed placement location %s: %w", planned.Hash, err,
+				)
+			}
+			locationRows, err := locationResult.RowsAffected()
+			if err != nil {
+				return fmt.Errorf(
+					"reading packed placement location revocation: %w", err,
+				)
+			}
+			if locationRows != 1 {
+				return fmt.Errorf(
+					"packed placement location %s changed during revocation: %w",
+					planned.Hash, ErrStaleRevision,
+				)
+			}
+			committed.SourceRevoked = true
 			return nil
 		}
 		result, err := tx.ExecContext(ctx, `

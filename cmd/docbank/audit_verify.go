@@ -67,7 +67,13 @@ func writeAuditVerification(w io.Writer, report api.AuditVerifyReport) error {
 		}
 	}
 	for _, problem := range report.Problems {
-		if _, err := fmt.Fprintf(w, "%s: %s\n", problem.Problem, problem.Hash); err != nil {
+		location := ""
+		if problem.StoreID != "" {
+			location = " (store " + problem.StoreID + ")"
+		}
+		if _, err := fmt.Fprintf(
+			w, "%s: %s%s\n", problem.Problem, problem.Hash, location,
+		); err != nil {
 			return fmt.Errorf("writing audit verification: %w", err)
 		}
 	}

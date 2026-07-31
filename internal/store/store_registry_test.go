@@ -65,6 +65,33 @@ func TestBlobStoreRemovalRequiresEmptyDetachedSecondary(t *testing.T) {
 	require.ErrorIs(t, s.DetachBlobStore(t.Context(), secondary.ID), ErrBlobStoreNotEmpty)
 }
 
+func TestBlobStoreDetachRequiresCompletedPhysicalCleanup(t *testing.T) {
+	s := newTestStore(t)
+	secondary, err := s.PrepareSecondaryBlobStore(
+		"archive", "filesystem", "archive_nas",
+	)
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(t.Context(), secondary))
+	operation, err := s.CreateStorageOperation(
+		t.Context(), StorageOperationCreate{
+			Kind: "place", RequestDigest: fakeHash("91"),
+			RequestJSON: `{}`, PlanJSON: `{}`,
+		},
+	)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(t.Context(), `
+		INSERT INTO storage_operation_cleanup(
+			operation_id,store_id,loose_hash,loose_encoding,pack_id
+		) VALUES(?,?,?,?,'')`,
+		operation.ID, secondary.ID, fakeHash("92"), packstore.LooseEncodingRaw,
+	)
+	require.NoError(t, err)
+
+	require.ErrorIs(
+		t, s.DetachBlobStore(t.Context(), secondary.ID), ErrBlobStoreNotEmpty,
+	)
+}
+
 func TestBlobStoreInventoryReportsSoleAuthorityAndAffectedDocuments(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()

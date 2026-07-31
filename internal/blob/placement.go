@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	"go.kenn.io/kit/packstore"
@@ -500,10 +501,17 @@ func (r PlacementRunner) placeOne(
 		copied = moved.Created
 	} else if err != nil {
 		return PlacementObjectResult{}, err
-	} else if item.Destination == nil {
-		// A resumed operation may observe the destination it verified and
-		// cataloged immediately before a process stop, before progress advanced.
-		copied = true
+	} else {
+		if err := r.verifyPlacementDestination(
+			ctx, hash, item.Size, destination,
+		); err != nil {
+			return PlacementObjectResult{}, err
+		}
+		if item.Destination == nil {
+			// A resumed operation may observe the destination it verified and
+			// cataloged immediately before a process stop, before progress advanced.
+			copied = true
+		}
 	}
 	var committed store.PlacementCommit
 	err = r.commit(func() error {
@@ -524,6 +532,49 @@ func (r PlacementRunner) placeOne(
 		PackRepackRequired: committed.PackRepackRequired,
 	}
 	return result, nil
+}
+
+func (r PlacementRunner) verifyPlacementDestination(
+	ctx context.Context,
+	hash packstore.Hash,
+	size int64,
+	location packstore.ReadLocation,
+) (resultErr error) {
+	if location.StoreID != packstore.StoreID(r.Metadata.PrimaryBlobStoreID()) {
+		observation := r.Blobs.RefreshStore(ctx, string(location.StoreID))
+		if observation.State != StoreOnline {
+			sentinel := packstore.ErrStoreUnavailable
+			if observation.State == StoreFenced {
+				sentinel = packstore.ErrStoreFenced
+			}
+			return fmt.Errorf(
+				"%w: destination store %s is %s: %s",
+				sentinel, location.StoreID, observation.State, observation.Detail,
+			)
+		}
+	}
+	backend, ok := r.Blobs.ReadBackend(location.StoreID)
+	if !ok {
+		return fmt.Errorf(
+			"%w: destination store %s is not bound",
+			packstore.ErrStoreUnavailable, location.StoreID,
+		)
+	}
+	stream, logicalSize, err := openRecoverySource(ctx, backend, hash, location)
+	if err != nil {
+		return fmt.Errorf("opening placement destination: %w", err)
+	}
+	defer func() { resultErr = errors.Join(resultErr, stream.Close()) }()
+	if logicalSize != size {
+		return packstore.ErrPhysicalCorrupt
+	}
+	if _, err := io.Copy(io.Discard, stream); err != nil {
+		return fmt.Errorf("reading placement destination: %w", err)
+	}
+	if err := stream.Verify(); err != nil {
+		return fmt.Errorf("verifying placement destination: %w", err)
+	}
+	return nil
 }
 
 func (r PlacementRunner) retirePending(ctx context.Context, operationID string) error {

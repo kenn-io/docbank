@@ -9,6 +9,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -180,12 +181,24 @@ func registerAuditRoutes(
 					return NewError(http.StatusInternalServerError, "internal",
 						fmt.Sprintf("audit verification interrupted: %v", err))
 				}
-				if problem := checkBlob(ctx, d, blob.Hash); problem == "" {
+				problems, _, err := internalmaintenance.VerifyBlobLocations(
+					ctx, d.Store, d.Blobs, blob.Hash,
+				)
+				if err != nil {
+					out.Body.MetadataProblems = append(
+						out.Body.MetadataProblems, err.Error(),
+					)
+					continue
+				}
+				if len(problems) == 0 {
 					out.Body.VerifiedBlobs++
 				} else {
-					out.Body.Problems = append(out.Body.Problems, VerifyProblem{
-						Hash: blob.Hash, Problem: problem,
-					})
+					for _, problem := range problems {
+						out.Body.Problems = append(out.Body.Problems, VerifyProblem{
+							Hash: problem.Hash, StoreID: problem.StoreID,
+							Problem: problem.Problem,
+						})
+					}
 				}
 			}
 			return nil

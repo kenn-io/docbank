@@ -669,6 +669,59 @@ func (s *Store) OpenStreamContext(
 	return reader, size, nil
 }
 
+// VerifyLocation independently re-hashes one exact catalog candidate. It does
+// not fall back to another store, so maintenance can report damaged redundant
+// copies instead of hiding them behind one healthy location.
+func (s *Store) VerifyLocation(
+	ctx context.Context, hash string, location packstore.ReadLocation,
+) (bytesRead int64, resultErr error) {
+	parsed, err := packstore.ParseHash(hash)
+	if err != nil {
+		return 0, fmt.Errorf("blob hash %q: %w", hash, ErrInvalidHash)
+	}
+	if err := location.Validate(); err != nil {
+		return 0, fmt.Errorf("validating blob location: %w", err)
+	}
+	backend, ok := s.ReadBackend(location.StoreID)
+	if !ok {
+		return 0, fmt.Errorf(
+			"%w: store %s is not available",
+			packstore.ErrStoreUnavailable, location.StoreID,
+		)
+	}
+	var stream packstore.VerifiedReadCloser
+	var logicalSize int64
+	if location.Loose != nil {
+		stream, logicalSize, err = backend.OpenLoose(ctx, parsed, *location.Loose)
+	} else {
+		stream, logicalSize, err = backend.OpenPack(ctx, parsed, *location.Pack)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("opening exact blob location: %w", err)
+	}
+	defer func() { resultErr = errors.Join(resultErr, stream.Close()) }()
+	var expectedSize int64
+	if location.Loose != nil {
+		expectedSize = location.Loose.LogicalSize
+	} else {
+		expectedSize = location.Pack.RawLen
+	}
+	if logicalSize != expectedSize {
+		return 0, packstore.ErrPhysicalCorrupt
+	}
+	bytesRead, err = io.Copy(io.Discard, stream)
+	if err != nil {
+		return bytesRead, err
+	}
+	if bytesRead != expectedSize {
+		return bytesRead, packstore.ErrPhysicalCorrupt
+	}
+	if err := stream.Verify(); err != nil {
+		return bytesRead, fmt.Errorf("verifying exact blob location: %w", err)
+	}
+	return bytesRead, nil
+}
+
 // Exists reports whether catalog-authorized content can be opened.
 func (s *Store) Exists(hash string) (bool, error) {
 	reader, err := s.Open(hash)

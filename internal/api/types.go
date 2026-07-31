@@ -743,6 +743,7 @@ type StorageRepackReport struct {
 // VerifyProblem flags one blob whose content didn't check out.
 type VerifyProblem struct {
 	Hash    string `json:"hash"`
+	StoreID string `json:"store_id,omitempty" format:"uuid"`
 	Problem string `json:"problem" enum:"missing,corrupt,unreadable"`
 }
 

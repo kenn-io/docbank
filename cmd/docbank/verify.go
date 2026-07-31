@@ -22,7 +22,14 @@ var verifyCmd = &cobra.Command{
 			return err
 		}
 		for _, p := range rep.Problems {
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", p.Problem, p.Hash)
+			if p.StoreID == "" {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", p.Problem, p.Hash)
+			} else {
+				_, _ = fmt.Fprintf(
+					cmd.OutOrStdout(), "%s: %s (store %s)\n",
+					p.Problem, p.Hash, p.StoreID,
+				)
+			}
 		}
 		for _, problem := range rep.MetadataProblems {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "metadata: %s\n", problem)

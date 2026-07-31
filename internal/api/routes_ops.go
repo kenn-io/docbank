@@ -2,11 +2,8 @@ package api
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"net/http"
 	"path/filepath"
@@ -637,7 +634,10 @@ func runVerify(ctx context.Context, d Deps) (VerifyReport, error) {
 		report.MetadataProblems = append(report.MetadataProblems, page.MetadataProblems...)
 		for _, problem := range page.Problems {
 			report.Problems = append(report.Problems,
-				VerifyProblem{Hash: problem.Hash, Problem: problem.Problem})
+				VerifyProblem{
+					Hash: problem.Hash, StoreID: problem.StoreID,
+					Problem: problem.Problem,
+				})
 		}
 		if !page.More {
 			return report, nil
@@ -648,27 +648,4 @@ func runVerify(ctx context.Context, d Deps) (VerifyReport, error) {
 		}
 		cursor = page.NextCursor
 	}
-}
-
-// checkBlob returns "", "missing", "corrupt", or "unreadable".
-func checkBlob(ctx context.Context, d Deps, hash string) string {
-	f, _, err := d.Blobs.OpenStreamContext(ctx, hash)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return "missing"
-		}
-		return "unreadable"
-	}
-	defer func() { _ = f.Close() }()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		if isContentCorruption(err) {
-			return "corrupt"
-		}
-		return "unreadable"
-	}
-	if hex.EncodeToString(h.Sum(nil)) != hash {
-		return "corrupt"
-	}
-	return ""
 }

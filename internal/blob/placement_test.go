@@ -52,6 +52,37 @@ func TestPlacementRunnerCopiesVerifiesAndRetiresLooseSource(t *testing.T) {
 	assert.Equal(t, content, got)
 }
 
+func TestPlacementRunnerRevokesPackedSourceAuthority(t *testing.T) {
+	metadata, blobs, runner, destination := placementTestVault(t)
+	content := []byte("packed source placement")
+	file, hash := placementTestFile(t, metadata, blobs, content)
+	packed, err := blobs.Maintainer().Pack(t.Context(), packstore.PackOptions{})
+	require.NoError(t, err)
+	require.Equal(t, 1, packed.BlobsPacked)
+
+	plan, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+		TargetNodeID: file.ID, SourceStoreID: metadata.PrimaryBlobStoreID(),
+		DestinationStoreID: destination.ID, RetireSource: true,
+	})
+	require.NoError(t, err)
+	require.Len(t, plan.Hashes, 1)
+	require.NotNil(t, plan.Hashes[0].Source.Pack)
+	assert.True(t, plan.Hashes[0].RetireSource)
+	assert.True(t, plan.Hashes[0].PackRepackRequired)
+	assert.Equal(t, int64(len(content)), plan.PackBlockedBytes)
+
+	require.NoError(t, runner.Run(
+		t.Context(), createPlacementOperation(t, metadata, plan),
+	))
+
+	resolution, err := metadata.ResolveBlobLocations(
+		t.Context(), packstore.Hash(hash),
+	)
+	require.NoError(t, err)
+	require.Len(t, resolution.Candidates, 1)
+	assert.Equal(t, packstore.StoreID(destination.ID), resolution.Candidates[0].StoreID)
+}
+
 func TestPlacementRunnerResumesAfterCatalogCommitBeforeProgress(t *testing.T) {
 	metadata, blobs, runner, destination := placementTestVault(t)
 	file, _ := placementTestFile(t, metadata, blobs, []byte("resume me"))
@@ -86,6 +117,62 @@ func TestPlacementRunnerResumesAfterCatalogCommitBeforeProgress(t *testing.T) {
 	assert.Equal(t, int64(1), receipt.Completed)
 	assert.Equal(t, int64(1), receipt.Copied)
 	assert.Equal(t, int64(1), receipt.SourceRevoked)
+}
+
+func TestPlacementRunnerVerifiesExistingDestinationBeforeRetiringSource(t *testing.T) {
+	metadata, blobs, runner, destination := placementTestVault(t)
+	content := []byte("keep the last healthy authority")
+	file, hash := placementTestFile(t, metadata, blobs, content)
+	copyPlan, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+		TargetNodeID: file.ID, SourceStoreID: metadata.PrimaryBlobStoreID(),
+		DestinationStoreID: destination.ID,
+	})
+	require.NoError(t, err)
+	require.NoError(t, runner.Run(
+		t.Context(), createPlacementOperation(t, metadata, copyPlan),
+	))
+	backend, ok := blobs.WritableBackend(packstore.StoreID(destination.ID))
+	require.True(t, ok)
+	filesystem, ok := backend.(*packstore.FilesystemBackend)
+	require.True(t, ok)
+	require.NoError(t, os.WriteFile(
+		filesystem.Layout().LoosePath(packstore.Hash(hash)), []byte("damaged"), 0o600,
+	))
+
+	retirePlan, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+		TargetNodeID: file.ID, SourceStoreID: metadata.PrimaryBlobStoreID(),
+		DestinationStoreID: destination.ID, RetireSource: true,
+	})
+	require.NoError(t, err)
+	err = runner.Run(
+		t.Context(), createPlacementOperation(t, metadata, retirePlan),
+	)
+	require.ErrorIs(t, err, packstore.ErrPhysicalCorrupt)
+
+	resolution, err := metadata.ResolveBlobLocations(
+		t.Context(), packstore.Hash(hash),
+	)
+	require.NoError(t, err)
+	require.Len(t, resolution.Candidates, 2)
+	var primary packstore.ReadLocation
+	for _, candidate := range resolution.Candidates {
+		if candidate.StoreID == packstore.StoreID(metadata.PrimaryBlobStoreID()) {
+			primary = candidate
+		}
+	}
+	require.NotEmpty(t, primary.StoreID)
+	primaryBackend, ok := blobs.ReadBackend(primary.StoreID)
+	require.True(t, ok)
+	stream, size, err := openRecoverySource(
+		t.Context(), primaryBackend, packstore.Hash(hash), primary,
+	)
+	require.NoError(t, err)
+	got, err := io.ReadAll(stream)
+	require.NoError(t, err)
+	require.NoError(t, stream.Verify())
+	require.NoError(t, stream.Close())
+	assert.Equal(t, int64(len(content)), size)
+	assert.Equal(t, content, got)
 }
 
 func TestPlacementCommitRejectsDetachedDestination(t *testing.T) {

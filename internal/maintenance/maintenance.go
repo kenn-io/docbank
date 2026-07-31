@@ -4,13 +4,10 @@ package maintenance
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"time"
@@ -74,6 +71,7 @@ type VerifyOptions struct{ Budget Budget }
 
 type VerifyProblem struct {
 	Hash    string
+	StoreID string
 	Problem string
 }
 
@@ -372,12 +370,17 @@ func Verify(
 		if err := ctx.Err(); err != nil {
 			return report, err
 		}
-		problem, bytesRead := checkBlob(ctx, blobs, hash)
+		problems, bytesRead, err := VerifyBlobLocations(
+			ctx, metadata, blobs, hash,
+		)
+		if err != nil {
+			return report, err
+		}
 		processedBytes += bytesRead
-		if problem == "" {
+		if len(problems) == 0 {
 			report.OK++
 		} else {
-			report.Problems = append(report.Problems, VerifyProblem{Hash: hash, Problem: problem})
+			report.Problems = append(report.Problems, problems...)
 		}
 		processed++
 	}
@@ -388,6 +391,47 @@ func Verify(
 	return report, nil
 }
 
+// VerifyBlobLocations independently checks every catalog-authorized physical
+// candidate for one logical blob. A healthy redundant copy never hides a
+// missing, corrupt, fenced, or unavailable peer.
+func VerifyBlobLocations(
+	ctx context.Context,
+	metadata *store.Store,
+	blobs *blob.Store,
+	hash string,
+) ([]VerifyProblem, int64, error) {
+	parsed, err := packstore.ParseHash(hash)
+	if err != nil {
+		// Metadata validation owns the malformed identity detail; verification
+		// must still advance past that row and report its bytes as unreadable.
+		return []VerifyProblem{{Hash: hash, Problem: "unreadable"}}, 0, nil //nolint:nilerr
+	}
+	resolution, err := metadata.ResolveBlobLocations(ctx, parsed)
+	if err != nil {
+		return nil, 0, err
+	}
+	if !resolution.Member {
+		return nil, 0, store.ErrNotFound
+	}
+	if len(resolution.Candidates) == 0 {
+		return []VerifyProblem{{Hash: hash, Problem: "missing"}}, 0, nil
+	}
+	problems := make([]VerifyProblem, 0)
+	var totalRead int64
+	for _, location := range resolution.Candidates {
+		read, err := blobs.VerifyLocation(ctx, hash, location)
+		totalRead += read
+		if err == nil {
+			continue
+		}
+		problems = append(problems, VerifyProblem{
+			Hash: hash, StoreID: string(location.StoreID),
+			Problem: classifyBlobProblem(err),
+		})
+	}
+	return problems, totalRead, nil
+}
+
 func cursorPosition(state cursor) *string {
 	if !state.Set {
 		return nil
@@ -395,30 +439,14 @@ func cursorPosition(state cursor) *string {
 	return &state.Hash
 }
 
-func checkBlob(ctx context.Context, blobs *blob.Store, hash string) (string, int64) {
-	reader, _, err := blobs.OpenStreamContext(ctx, hash)
-	if err != nil {
-		if isContentCorruption(err) {
-			return "corrupt", 0
-		}
-		if errors.Is(err, fs.ErrNotExist) {
-			return "missing", 0
-		}
-		return "unreadable", 0
+func classifyBlobProblem(err error) string {
+	if isContentCorruption(err) {
+		return "corrupt"
 	}
-	defer func() { _ = reader.Close() }()
-	digest := sha256.New()
-	read, err := io.Copy(digest, reader)
-	if err != nil {
-		if isContentCorruption(err) {
-			return "corrupt", read
-		}
-		return "unreadable", read
+	if errors.Is(err, packstore.ErrPhysicalMissing) || errors.Is(err, fs.ErrNotExist) {
+		return "missing"
 	}
-	if hex.EncodeToString(digest.Sum(nil)) != hash {
-		return "corrupt", read
-	}
-	return "", read
+	return "unreadable"
 }
 
 func isContentCorruption(err error) bool {

@@ -497,18 +497,21 @@ func (s *Store) DetachBlobStore(ctx context.Context, selector string) error {
 		if store.Lifecycle == blobStoreLifecycleDetached {
 			return nil
 		}
-		var locations, packs int
+		var locations, packs, cleanups int
 		if err := tx.QueryRowContext(ctx, `
 			SELECT
 				(SELECT COUNT(*) FROM blob_locations WHERE store_id = ?),
-				(SELECT COUNT(*) FROM blob_packs WHERE store_id = ?)`,
-			store.ID, store.ID,
-		).Scan(&locations, &packs); err != nil {
+				(SELECT COUNT(*) FROM blob_packs WHERE store_id = ?),
+				(SELECT COUNT(*) FROM storage_operation_cleanup WHERE store_id = ?)`,
+			store.ID, store.ID, store.ID,
+		).Scan(&locations, &packs, &cleanups); err != nil {
 			return fmt.Errorf("checking blob store %s contents: %w", store.ID, err)
 		}
-		if locations != 0 || packs != 0 {
-			return fmt.Errorf("blob store %s has %d location(s) and %d pack(s): %w",
-				store.ID, locations, packs, ErrBlobStoreNotEmpty)
+		if locations != 0 || packs != 0 || cleanups != 0 {
+			return fmt.Errorf(
+				"blob store %s has %d location(s), %d pack(s), and %d pending cleanup(s): %w",
+				store.ID, locations, packs, cleanups, ErrBlobStoreNotEmpty,
+			)
 		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE blob_stores SET lifecycle = ? WHERE store_id = ?`,
