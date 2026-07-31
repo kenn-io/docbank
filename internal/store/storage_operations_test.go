@@ -49,7 +49,7 @@ func TestStorageOperationPersistsProgressAndCancellation(t *testing.T) {
 func TestStorageOperationClaimResumesInterruptedWork(t *testing.T) {
 	s := newTestStore(t)
 	created, err := s.CreateStorageOperation(t.Context(), StorageOperationCreate{
-		Kind: "evacuate", RequestDigest: fakeHash("b6"),
+		Kind: "place", RequestDigest: fakeHash("b6"),
 		RequestJSON: `{"version":1}`, PlanJSON: `{"hashes":[]}`,
 	})
 	require.NoError(t, err)
@@ -64,6 +64,39 @@ func TestStorageOperationClaimResumesInterruptedWork(t *testing.T) {
 	claimed, err := s.ClaimStorageOperation(t.Context(), created.ID)
 	require.NoError(t, err)
 	assert.Equal(t, StorageOperationRunning, claimed.State)
+}
+
+func TestStorageOperationRejectsConcurrentEvacuationsForOneStore(t *testing.T) {
+	s := newTestStore(t)
+	secondary, err := s.PrepareSecondaryBlobStore(
+		"archive", "filesystem", "archive_nas",
+	)
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(t.Context(), secondary))
+
+	first, err := s.CreateStorageOperation(t.Context(), StorageOperationCreate{
+		Kind: storageOperationKindEvacuate, SourceStoreID: secondary.ID,
+		RequestDigest: fakeHash("b7"),
+		RequestJSON:   `{"version":1}`, PlanJSON: `{"hashes":[]}`,
+	})
+	require.NoError(t, err)
+	_, err = s.CreateStorageOperation(t.Context(), StorageOperationCreate{
+		Kind: storageOperationKindEvacuate, SourceStoreID: secondary.ID,
+		RequestDigest: fakeHash("b8"),
+		RequestJSON:   `{"version":1}`, PlanJSON: `{"hashes":[]}`,
+	})
+	require.ErrorIs(t, err, ErrBlobStoreState)
+
+	require.NoError(t, s.FinishStorageOperation(
+		t.Context(), first.ID, StorageOperationCompleted, `{}`, "",
+		time.Now().Add(24*time.Hour),
+	))
+	_, err = s.CreateStorageOperation(t.Context(), StorageOperationCreate{
+		Kind: storageOperationKindEvacuate, SourceStoreID: secondary.ID,
+		RequestDigest: fakeHash("b9"),
+		RequestJSON:   `{"version":1}`, PlanJSON: `{"hashes":[]}`,
+	})
+	require.NoError(t, err)
 }
 
 func TestStorageOperationRejectsCancellationAfterTerminalState(t *testing.T) {

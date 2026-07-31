@@ -181,6 +181,13 @@ func writeLooseLocationTx(
 	if err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM blob_pack_entries
+		WHERE blob_hash=? AND store_id=?`,
+		hash, storeID,
+	); err != nil {
+		return fmt.Errorf("retiring packed mapping for loose blob %s: %w", hash, err)
+	}
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO blob_locations(
 			blob_hash, store_id, generation, kind, encoding, stored_size, pack_eligible

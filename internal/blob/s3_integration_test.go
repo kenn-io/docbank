@@ -240,6 +240,12 @@ func createS3PlacementOperation(
 	operation, err := metadata.CreateStorageOperation(
 		t.Context(), store.StorageOperationCreate{
 			Kind: kind, RequestDigest: plan.Digest,
+			SourceStoreID: func() string {
+				if kind == "evacuate" {
+					return plan.Request.SourceStoreID
+				}
+				return ""
+			}(),
 			RequestJSON: string(requestJSON), PlanJSON: string(planJSON),
 			TotalObjects: int64(len(plan.Hashes)),
 		},

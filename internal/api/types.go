@@ -661,14 +661,14 @@ type StoragePlacementPreview struct {
 }
 
 type StorageRecoveryPreview struct {
-	Kind               string `json:"kind"`
-	PlanDigest         string `json:"plan_digest"`
-	Hash               string `json:"hash"`
-	Bytes              int64  `json:"bytes"`
-	SourceStoreID      string `json:"source_store_id" format:"uuid"`
-	DestinationStoreID string `json:"destination_store_id" format:"uuid"`
-	PreviewToken       string `json:"preview_token"`
-	ExpiresAt          string `json:"expires_at"`
+	Kind               string   `json:"kind"`
+	PlanDigest         string   `json:"plan_digest"`
+	Hash               string   `json:"hash"`
+	Bytes              int64    `json:"bytes"`
+	SourceStoreIDs     []string `json:"source_store_ids"`
+	DestinationStoreID string   `json:"destination_store_id" format:"uuid"`
+	PreviewToken       string   `json:"preview_token"`
+	ExpiresAt          string   `json:"expires_at"`
 }
 
 type StorageOperation struct {

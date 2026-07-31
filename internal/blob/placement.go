@@ -269,16 +269,24 @@ func (r PlacementRunner) runRecovery(
 	if err != nil {
 		return r.fail(ctx, operation.ID, err)
 	}
+	release, err := r.Blobs.acquireLocation(
+		ctx, packstore.StoreID(plan.Destination), hash,
+	)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if err := r.Metadata.BeginStorageRecoveryPublication(
+		ctx, operation.ID, plan,
+	); err != nil {
+		if errors.Is(err, store.ErrStorageOperationCancelled) {
+			return r.cancelRecovery(ctx, operation, plan)
+		}
+		return r.fail(ctx, operation.ID, err)
+	}
 	var location packstore.ReadLocation
 	switch plan.Kind {
 	case "repair":
-		source, ok := r.Blobs.ReadBackend(plan.Source.StoreID)
-		if !ok {
-			return r.fail(ctx, operation.ID, fmt.Errorf(
-				"%w: source store %s is not bound",
-				packstore.ErrStoreUnavailable, plan.Source.StoreID,
-			))
-		}
 		destination, ok := r.Blobs.RepairBackend(
 			packstore.StoreID(plan.Destination),
 		)
@@ -288,21 +296,40 @@ func (r PlacementRunner) runRecovery(
 				packstore.ErrStoreUnavailable, plan.Destination,
 			))
 		}
-		repaired, err := repairOne(
-			ctx, source, destination, hash, plan.Source, plan.Size,
-		)
-		if err != nil {
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return ctxErr
+		var sourceErrors error
+		for _, candidate := range plan.Sources {
+			source, ok := r.Blobs.ReadBackend(candidate.StoreID)
+			if !ok {
+				sourceErrors = errors.Join(sourceErrors, fmt.Errorf(
+					"%w: source store %s is not bound",
+					packstore.ErrStoreUnavailable, candidate.StoreID,
+				))
+				continue
 			}
-			return r.fail(ctx, operation.ID, err)
+			repaired, repairErr := repairOne(
+				ctx, source, destination, hash, candidate, plan.Size,
+			)
+			if repairErr != nil {
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return ctxErr
+				}
+				sourceErrors = errors.Join(sourceErrors, repairErr)
+				continue
+			}
+			location = packstore.ReadLocation{
+				StoreID:    packstore.StoreID(plan.Destination),
+				Generation: repaired.Generation, Loose: &repaired.Location,
+			}
+			break
 		}
-		location = packstore.ReadLocation{
-			StoreID:    packstore.StoreID(plan.Destination),
-			Generation: repaired.Generation, Loose: &repaired.Location,
+		if location.StoreID == "" {
+			return r.fail(ctx, operation.ID, fmt.Errorf(
+				"all storage recovery sources failed: %w", sourceErrors,
+			))
 		}
 	case "salvage":
-		source, err := r.Blobs.SalvageBackend(ctx, plan.Source.StoreID)
+		sourceLocation := plan.Sources[0]
+		source, err := r.Blobs.SalvageBackend(ctx, sourceLocation.StoreID)
 		if err != nil {
 			return r.fail(ctx, operation.ID, err)
 		}
@@ -316,7 +343,7 @@ func (r PlacementRunner) runRecovery(
 		moved, err := packstore.Move(
 			ctx, readBackendOnly{ReadBackend: source}, destination,
 			packstore.MoveRequest{
-				Source:      plan.Source,
+				Source:      sourceLocation,
 				Destination: packstore.StoreID(plan.Destination),
 				Identity:    packstore.BlobIdentity{Hash: hash, Size: plan.Size},
 			},
@@ -329,18 +356,15 @@ func (r PlacementRunner) runRecovery(
 		}
 		location = moved.Destination
 	}
-	current, err := r.Metadata.StorageOperation(ctx, operation.ID)
-	if err != nil {
-		return err
-	}
-	if current.CancelRequested {
-		return r.cancelRecovery(ctx, current, plan)
-	}
 	if err := r.commit(func() error {
-		return r.Metadata.CommitStorageRecovery(ctx, operation.ID, plan, location)
+		return r.Metadata.CommitStorageRecovery(
+			context.WithoutCancel(ctx), operation.ID, plan, location,
+		)
 	}); err != nil {
 		if errors.Is(err, store.ErrStorageOperationCancelled) {
-			current, readErr := r.Metadata.StorageOperation(ctx, operation.ID)
+			current, readErr := r.Metadata.StorageOperation(
+				context.WithoutCancel(ctx), operation.ID,
+			)
 			if readErr != nil {
 				return errors.Join(err, readErr)
 			}
@@ -438,6 +462,20 @@ func (r PlacementRunner) placeOne(
 	ctx context.Context, operationID string,
 	request store.PlacementRequest, item store.PlacementHash,
 ) (PlacementObjectResult, error) {
+	hash, err := packstore.ParseHash(item.Hash)
+	if err != nil {
+		return PlacementObjectResult{}, fmt.Errorf(
+			"parsing placement blob hash: %w", err,
+		)
+	}
+	release, err := r.Blobs.acquireLocation(
+		ctx, packstore.StoreID(request.DestinationStoreID), hash,
+	)
+	if err != nil {
+		return PlacementObjectResult{}, err
+	}
+	defer release()
+
 	destination, err := r.currentLocation(ctx, item.Hash, request.DestinationStoreID)
 	copied := false
 	if errors.Is(err, store.ErrNotFound) {
@@ -456,12 +494,6 @@ func (r PlacementRunner) placeOne(
 			return PlacementObjectResult{}, fmt.Errorf(
 				"%w: destination store %s is not bound",
 				packstore.ErrStoreUnavailable, request.DestinationStoreID,
-			)
-		}
-		hash, parseErr := packstore.ParseHash(item.Hash)
-		if parseErr != nil {
-			return PlacementObjectResult{}, fmt.Errorf(
-				"parsing placement blob hash: %w", parseErr,
 			)
 		}
 		moved, moveErr := packstore.Move(ctx, source, target, packstore.MoveRequest{

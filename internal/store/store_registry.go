@@ -244,18 +244,27 @@ func (s *Store) FinalizeBlobStoreEvacuation(
 	}
 	var result BlobStoreEvacuationFinalization
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		var operationState, operationCursor string
+		var operationKind, operationSource, operationState, operationCursor string
 		var cancelRequested bool
 		if err := tx.QueryRowContext(ctx, `
-			SELECT state,cancel_requested,cursor
+			SELECT kind,COALESCE(source_store_id,''),state,cancel_requested,cursor
 			FROM storage_operations
 			WHERE operation_id=?`,
 			operationID,
-		).Scan(&operationState, &cancelRequested, &operationCursor); err != nil {
+		).Scan(
+			&operationKind, &operationSource, &operationState,
+			&cancelRequested, &operationCursor,
+		); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return fmt.Errorf("storage operation %s: %w", operationID, ErrNotFound)
 			}
 			return fmt.Errorf("reading evacuation operation %s: %w", operationID, err)
+		}
+		if operationKind != storageOperationKindEvacuate || operationSource != sourceID {
+			return fmt.Errorf(
+				"storage operation %s does not evacuate blob store %s: %w",
+				operationID, sourceID, ErrBlobStoreState,
+			)
 		}
 		if cancelRequested && operationCursor != storageOperationFinalizingCursor {
 			return ErrStorageOperationCancelled
@@ -347,8 +356,8 @@ func (s *Store) FinalizeBlobStoreEvacuation(
 		var pendingCleanup int64
 		if err := tx.QueryRowContext(ctx, `
 			SELECT COUNT(*) FROM storage_operation_cleanup
-			WHERE operation_id=? AND store_id=?`,
-			operationID, source.ID,
+			WHERE store_id=?`,
+			source.ID,
 		).Scan(&pendingCleanup); err != nil {
 			return fmt.Errorf("checking evacuated cleanup for %s: %w", source.ID, err)
 		}

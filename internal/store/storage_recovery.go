@@ -15,14 +15,14 @@ import (
 // StorageRecoveryPlan binds one explicit repair or fenced-store salvage to
 // immutable content identity and the exact physical candidates reviewed.
 type StorageRecoveryPlan struct {
-	Version     int                     `json:"version"`
-	Kind        string                  `json:"kind"`
-	Digest      string                  `json:"digest"`
-	Hash        string                  `json:"hash"`
-	Size        int64                   `json:"size"`
-	Source      packstore.ReadLocation  `json:"source"`
-	Destination string                  `json:"destination"`
-	Prior       *packstore.ReadLocation `json:"prior,omitempty"`
+	Version     int                      `json:"version"`
+	Kind        string                   `json:"kind"`
+	Digest      string                   `json:"digest"`
+	Hash        string                   `json:"hash"`
+	Size        int64                    `json:"size"`
+	Sources     []packstore.ReadLocation `json:"sources"`
+	Destination string                   `json:"destination"`
+	Prior       *packstore.ReadLocation  `json:"prior,omitempty"`
 }
 
 func (s *Store) PlanStorageRecovery(
@@ -88,7 +88,7 @@ func (s *Store) PlanStorageRecovery(
 		return StorageRecoveryPlan{}, fmt.Errorf("reading recovery locations: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	var source packstore.ReadLocation
+	var sources []packstore.ReadLocation
 	var prior *packstore.ReadLocation
 	for rows.Next() {
 		location, present, err := scanBlobReadLocation(rows, parsed)
@@ -103,15 +103,14 @@ func (s *Store) PlanStorageRecovery(
 			prior = &priorLocation
 			continue
 		}
-		if source.StoreID == "" &&
-			(requiredSource == "" || string(location.StoreID) == requiredSource) {
-			source = location
+		if requiredSource == "" || string(location.StoreID) == requiredSource {
+			sources = append(sources, location)
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return StorageRecoveryPlan{}, fmt.Errorf("reading recovery locations: %w", err)
 	}
-	if source.StoreID == "" {
+	if len(sources) == 0 {
 		return StorageRecoveryPlan{}, packstore.ErrPhysicalAuthorityMissing
 	}
 	if kind == "repair" && prior == nil {
@@ -122,7 +121,7 @@ func (s *Store) PlanStorageRecovery(
 	}
 	plan := StorageRecoveryPlan{
 		Version: 1, Kind: kind, Hash: hash, Size: size,
-		Source: source, Destination: destination.ID, Prior: prior,
+		Sources: sources, Destination: destination.ID, Prior: prior,
 	}
 	digest, err := storageRecoveryDigest(plan)
 	if err != nil {
@@ -143,8 +142,21 @@ func ValidateStorageRecoveryPlan(plan StorageRecoveryPlan) error {
 	if _, err := packstore.ParseHash(plan.Hash); err != nil {
 		return fmt.Errorf("parsing storage recovery plan hash: %w", err)
 	}
-	if err := plan.Source.Validate(); err != nil {
-		return fmt.Errorf("validating storage recovery source: %w", err)
+	if len(plan.Sources) == 0 {
+		return errors.New("storage recovery plan has no sources")
+	}
+	seenSources := make(map[packstore.StoreID]bool, len(plan.Sources))
+	for _, source := range plan.Sources {
+		if err := source.Validate(); err != nil {
+			return fmt.Errorf("validating storage recovery source: %w", err)
+		}
+		if source.StoreID == packstore.StoreID(plan.Destination) || seenSources[source.StoreID] {
+			return errors.New("storage recovery plan has invalid source stores")
+		}
+		seenSources[source.StoreID] = true
+	}
+	if plan.Kind == "salvage" && len(plan.Sources) != 1 {
+		return errors.New("salvage plan must name exactly one fenced source")
 	}
 	if plan.Kind == "repair" && plan.Prior == nil {
 		return errors.New("repair plan lacks prior destination authority")
@@ -169,6 +181,50 @@ func storageRecoveryDigest(plan StorageRecoveryPlan) (string, error) {
 	return hex.EncodeToString(digest[:]), nil
 }
 
+// BeginStorageRecoveryPublication rejects a stale preview and makes the
+// operation non-cancellable before physical replacement. The runner holds the
+// destination location lock across this transition and catalog publication.
+func (s *Store) BeginStorageRecoveryPublication(
+	ctx context.Context, operationID string, plan StorageRecoveryPlan,
+) error {
+	if err := ValidateStorageRecoveryPlan(plan); err != nil {
+		return err
+	}
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		var kind, digest, state, cursor string
+		var cancelRequested bool
+		if err := tx.QueryRowContext(ctx, `
+			SELECT kind,request_digest,state,cursor,cancel_requested
+			FROM storage_operations WHERE operation_id=?`,
+			operationID,
+		).Scan(&kind, &digest, &state, &cursor, &cancelRequested); err != nil {
+			return fmt.Errorf("reading storage recovery operation: %w", err)
+		}
+		if kind != plan.Kind || digest != plan.Digest {
+			return fmt.Errorf(
+				"storage recovery operation does not bind this plan: %w",
+				ErrStaleRevision,
+			)
+		}
+		if StorageOperationState(state) != StorageOperationRunning {
+			return fmt.Errorf(
+				"storage operation %s is not publishable: %w",
+				operationID, ErrStorageOperationTerminal,
+			)
+		}
+		if err := validateStorageRecoveryPriorTx(tx, plan); err != nil {
+			return err
+		}
+		if cursor == storageOperationFinalizingCursor {
+			return nil
+		}
+		if cancelRequested {
+			return ErrStorageOperationCancelled
+		}
+		return markStorageOperationFinalizingTx(ctx, tx, operationID)
+	})
+}
+
 // CommitStorageRecovery grants the fully verified replacement generation.
 func (s *Store) CommitStorageRecovery(
 	ctx context.Context, operationID string,
@@ -188,22 +244,29 @@ func (s *Store) CommitStorageRecovery(
 		return fmt.Errorf("validating storage recovery receipt: %w", err)
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		var state string
+		var kind, digest, state, cursor string
 		var cancelRequested bool
 		if err := tx.QueryRowContext(ctx, `
-			SELECT state,cancel_requested
+			SELECT kind,request_digest,state,cursor,cancel_requested
 			FROM storage_operations WHERE operation_id=?`,
 			operationID,
-		).Scan(&state, &cancelRequested); err != nil {
+		).Scan(&kind, &digest, &state, &cursor, &cancelRequested); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return fmt.Errorf("storage operation %s: %w", operationID, ErrNotFound)
 			}
 			return fmt.Errorf("reading storage operation before recovery commit: %w", err)
 		}
-		if cancelRequested {
+		if kind != plan.Kind || digest != plan.Digest {
+			return fmt.Errorf(
+				"storage recovery operation does not bind this plan: %w",
+				ErrStaleRevision,
+			)
+		}
+		if cancelRequested && cursor != storageOperationFinalizingCursor {
 			return ErrStorageOperationCancelled
 		}
-		if StorageOperationState(state) != StorageOperationRunning {
+		if StorageOperationState(state) != StorageOperationRunning ||
+			cursor != storageOperationFinalizingCursor {
 			return fmt.Errorf(
 				"storage operation %s is %s: %w",
 				operationID, state, ErrStorageOperationTerminal,
@@ -217,6 +280,9 @@ func (s *Store) CommitStorageRecovery(
 		}
 		if size != plan.Size || receipt.Loose.LogicalSize != plan.Size {
 			return packstore.ErrPhysicalCorrupt
+		}
+		if err := validateStorageRecoveryPriorTx(tx, plan); err != nil {
+			return err
 		}
 		encoding, err := looseEncodingName(receipt.Loose.Encoding)
 		if err != nil {
@@ -246,4 +312,49 @@ func (s *Store) CommitStorageRecovery(
 		}
 		return nil
 	})
+}
+
+func validateStorageRecoveryPriorTx(tx *sql.Tx, plan StorageRecoveryPlan) error {
+	hash, err := packstore.ParseHash(plan.Hash)
+	if err != nil {
+		return fmt.Errorf("parsing recovery target hash: %w", err)
+	}
+	current, present, err := blobReadLocationTx(tx, hash, plan.Destination)
+	if err != nil {
+		return err
+	}
+	if plan.Prior == nil {
+		if present {
+			return fmt.Errorf("storage recovery destination changed: %w", ErrStaleRevision)
+		}
+		return nil
+	}
+	if !present || !sameReadLocation(current, *plan.Prior) {
+		return fmt.Errorf("storage recovery destination changed: %w", ErrStaleRevision)
+	}
+	return nil
+}
+
+func blobReadLocationTx(
+	tx *sql.Tx, hash packstore.Hash, storeID string,
+) (packstore.ReadLocation, bool, error) {
+	location, present, err := scanBlobReadLocation(tx.QueryRow(`
+		SELECT b.size,l.store_id,l.generation,l.kind,l.encoding,
+		       l.stored_size,l.pack_eligible,
+		       e.pack_id,e.pack_offset,e.stored_len,e.raw_len,e.flags,e.crc32c
+		FROM blobs b
+		LEFT JOIN blob_locations l
+		  ON l.blob_hash=b.hash AND l.store_id=?
+		LEFT JOIN blob_pack_entries e
+		  ON e.blob_hash=l.blob_hash AND e.store_id=l.store_id
+		WHERE b.hash=?`,
+		storeID, hash.String(),
+	), hash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return packstore.ReadLocation{}, false, nil
+	}
+	if err != nil {
+		return packstore.ReadLocation{}, false, err
+	}
+	return location, present, nil
 }

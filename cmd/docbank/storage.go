@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -477,7 +478,7 @@ func newStorageRecoveryCommand(
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 				"Blob %s (%d byte(s)): %s → %s\n",
 				preview.Hash, preview.Bytes,
-				preview.SourceStoreID, preview.DestinationStoreID)
+				strings.Join(preview.SourceStoreIDs, ", "), preview.DestinationStoreID)
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 				"To start exactly this %s:\n  docbank storage %s --run --token %s\n",
 				kind, kind, preview.PreviewToken)

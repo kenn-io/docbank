@@ -119,6 +119,7 @@ CREATE INDEX IF NOT EXISTS blob_pack_entries_store_hash
 CREATE TABLE IF NOT EXISTS storage_operations (
     operation_id      TEXT PRIMARY KEY,
     kind              TEXT NOT NULL,
+    source_store_id   TEXT REFERENCES blob_stores(store_id),
     request_version   INTEGER NOT NULL CHECK (request_version > 0),
     request_digest    TEXT NOT NULL,
     request_json      TEXT NOT NULL,
@@ -143,6 +144,9 @@ CREATE INDEX IF NOT EXISTS storage_operations_state
 CREATE INDEX IF NOT EXISTS storage_operations_retention
     ON storage_operations(retention_until)
     WHERE retention_until IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS one_active_evacuation_per_store
+    ON storage_operations(source_store_id)
+    WHERE kind = 'evacuate' AND state IN ('queued', 'running');
 
 CREATE TABLE IF NOT EXISTS storage_operation_cleanup (
     operation_id  TEXT NOT NULL REFERENCES storage_operations(operation_id) ON DELETE CASCADE,

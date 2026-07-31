@@ -271,10 +271,17 @@ func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64, physical ...Bl
 	}
 	current, err := physicalContentTx(tx, hash)
 	if err != nil {
-		if errors.Is(err, ErrPhysicalAuthorityMissing) && storage.Created {
-			return writeLooseLocationTx(
-				context.Background(), tx, s.primaryStoreID, hash, storage,
-			)
+		if errors.Is(err, ErrPhysicalAuthorityMissing) {
+			if storage.Created {
+				return writeLooseLocationTx(
+					context.Background(), tx, s.primaryStoreID, hash, storage,
+				)
+			}
+			if _, authorityErr := requirePhysicalAuthorityTx(tx, hash); authorityErr == nil {
+				return nil
+			} else if !errors.Is(authorityErr, ErrPhysicalAuthorityMissing) {
+				return fmt.Errorf("verifying blob %s: %w", hash, authorityErr)
+			}
 		}
 		return fmt.Errorf("verifying blob %s: %w", hash, err)
 	}

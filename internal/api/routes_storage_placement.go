@@ -168,7 +168,7 @@ func registerStorageRecoveryRoutes(
 			return nil, FromStoreError(err)
 		}
 		if kind == "salvage" {
-			observation := d.Blobs.RefreshStore(ctx, string(plan.Source.StoreID))
+			observation := d.Blobs.RefreshStore(ctx, string(plan.Sources[0].StoreID))
 			if observation.State != blob.StoreFenced {
 				return nil, NewError(
 					http.StatusConflict, "store_not_fenced",
@@ -176,13 +176,17 @@ func registerStorageRecoveryRoutes(
 				)
 			}
 		}
+		sourceStoreIDs := make([]string, 0, len(plan.Sources))
+		for _, source := range plan.Sources {
+			sourceStoreIDs = append(sourceStoreIDs, string(source.StoreID))
+		}
 		token, expiresAt, err := previews.issueRecovery(plan)
 		if err != nil {
 			return nil, NewError(http.StatusInternalServerError, "internal", err.Error())
 		}
 		return &previewOutput{Body: StorageRecoveryPreview{
 			Kind: kind, PlanDigest: plan.Digest, Hash: plan.Hash, Bytes: plan.Size,
-			SourceStoreID:      string(plan.Source.StoreID),
+			SourceStoreIDs:     sourceStoreIDs,
 			DestinationStoreID: plan.Destination,
 			PreviewToken:       token, ExpiresAt: expiresAt.Format(time.RFC3339Nano),
 		}}, nil
@@ -262,6 +266,12 @@ func createPlacementOperation(
 	}
 	operation, err := metadata.CreateStorageOperation(ctx, store.StorageOperationCreate{
 		Kind: kind, RequestDigest: plan.Digest,
+		SourceStoreID: func() string {
+			if kind == "evacuate" {
+				return plan.Request.SourceStoreID
+			}
+			return ""
+		}(),
 		RequestJSON: string(requestJSON), PlanJSON: string(planJSON),
 		TotalObjects: int64(len(plan.Hashes)),
 	})

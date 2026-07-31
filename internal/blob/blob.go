@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
@@ -58,6 +59,51 @@ type Store struct {
 	coordinator *packstore.Coordinator
 	compression packstore.LooseCompressionOptions
 	registry    *Registry
+
+	locationLocksMu sync.Mutex
+	locationLocks   map[string]*locationLock
+}
+
+type locationLock struct {
+	token chan struct{}
+	refs  int
+}
+
+func (s *Store) acquireLocation(
+	ctx context.Context, storeID packstore.StoreID, hash packstore.Hash,
+) (func(), error) {
+	key := string(storeID) + "\x00" + hash.String()
+	s.locationLocksMu.Lock()
+	if s.locationLocks == nil {
+		s.locationLocks = make(map[string]*locationLock)
+	}
+	lock := s.locationLocks[key]
+	if lock == nil {
+		lock = &locationLock{token: make(chan struct{}, 1)}
+		s.locationLocks[key] = lock
+	}
+	lock.refs++
+	s.locationLocksMu.Unlock()
+
+	select {
+	case lock.token <- struct{}{}:
+	case <-ctx.Done():
+		s.releaseLocationRef(key, lock)
+		return nil, ctx.Err()
+	}
+	return func() {
+		<-lock.token
+		s.releaseLocationRef(key, lock)
+	}, nil
+}
+
+func (s *Store) releaseLocationRef(key string, lock *locationLock) {
+	s.locationLocksMu.Lock()
+	defer s.locationLocksMu.Unlock()
+	lock.refs--
+	if lock.refs == 0 {
+		delete(s.locationLocks, key)
+	}
 }
 
 // ReadBackend returns one runtime-bound physical backend by stable store ID.

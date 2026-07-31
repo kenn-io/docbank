@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -134,8 +135,9 @@ func TestBlobStoreEvacuationRequiresVerifiedDestinationCoverage(t *testing.T) {
 	require.ErrorIs(t, s.BeginBlobStoreEvacuation(ctx, primary.ID), ErrBlobStorePrimary)
 	require.NoError(t, s.BeginBlobStoreEvacuation(ctx, secondary.ID))
 	operation, err := s.CreateStorageOperation(ctx, StorageOperationCreate{
-		Kind: "evacuate", RequestDigest: fakeHash("e9"),
-		RequestJSON: `{"version":1}`, PlanJSON: `{"hashes":[]}`, TotalObjects: 1,
+		Kind: storageOperationKindEvacuate, RequestDigest: fakeHash("e9"),
+		SourceStoreID: secondary.ID,
+		RequestJSON:   `{"version":1}`, PlanJSON: `{"hashes":[]}`, TotalObjects: 1,
 	})
 	require.NoError(t, err)
 	operation, err = s.ClaimStorageOperation(ctx, operation.ID)
@@ -205,6 +207,31 @@ func TestBlobStoreEvacuationRequiresVerifiedDestinationCoverage(t *testing.T) {
 	assert.Equal(t, "draining", draining.Lifecycle)
 	require.NoError(t, s.CompleteStorageOperationCleanup(ctx, operation.ID, cleanups[0]))
 
+	otherOperation, err := s.CreateStorageOperation(ctx, StorageOperationCreate{
+		Kind: "place", RequestDigest: fakeHash("ec"),
+		RequestJSON: `{"version":1}`, PlanJSON: `{"hashes":[]}`,
+	})
+	require.NoError(t, err)
+	otherRef := packstore.ObjectRef{
+		LooseHash:     packstore.Hash(fakeHash("ed")),
+		LooseEncoding: packstore.LooseEncodingRaw,
+	}
+	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		return recordStorageOperationCleanupTx(
+			ctx, tx, otherOperation.ID, secondary.ID, []packstore.ObjectRef{otherRef},
+		)
+	}))
+	finalized, err = s.FinalizeBlobStoreEvacuation(
+		ctx, operation.ID, secondary.ID, primary.ID,
+	)
+	require.NoError(t, err)
+	assert.False(t, finalized.Detached)
+	require.NoError(t, s.CompleteStorageOperationCleanup(
+		ctx, otherOperation.ID, StorageOperationCleanup{
+			StoreID: secondary.ID, Ref: otherRef,
+		},
+	))
+
 	finalized, err = s.FinalizeBlobStoreEvacuation(
 		ctx, operation.ID, secondary.ID, primary.ID,
 	)
@@ -227,8 +254,9 @@ func TestEmptyBlobStoreEvacuationFinalizationRejectsCancellation(t *testing.T) {
 	require.NoError(t, s.RegisterBlobStore(ctx, secondary))
 	require.NoError(t, s.BeginBlobStoreEvacuation(ctx, secondary.ID))
 	operation, err := s.CreateStorageOperation(ctx, StorageOperationCreate{
-		Kind: "evacuate", RequestDigest: fakeHash("ea"),
-		RequestJSON: `{"version":1}`, PlanJSON: `{"hashes":[]}`,
+		Kind: storageOperationKindEvacuate, RequestDigest: fakeHash("ea"),
+		SourceStoreID: secondary.ID,
+		RequestJSON:   `{"version":1}`, PlanJSON: `{"hashes":[]}`,
 	})
 	require.NoError(t, err)
 	_, err = s.ClaimStorageOperation(ctx, operation.ID)
@@ -255,8 +283,9 @@ func TestDetachedBlobStoreEvacuationFinalizationRejectsCancellation(t *testing.T
 	require.NoError(t, s.RegisterBlobStore(ctx, secondary))
 	require.NoError(t, s.DetachBlobStore(ctx, secondary.ID))
 	operation, err := s.CreateStorageOperation(ctx, StorageOperationCreate{
-		Kind: "evacuate", RequestDigest: fakeHash("eb"),
-		RequestJSON: `{"version":1}`, PlanJSON: `{"hashes":[]}`,
+		Kind: storageOperationKindEvacuate, RequestDigest: fakeHash("eb"),
+		SourceStoreID: secondary.ID,
+		RequestJSON:   `{"version":1}`, PlanJSON: `{"hashes":[]}`,
 	})
 	require.NoError(t, err)
 	_, err = s.ClaimStorageOperation(ctx, operation.ID)

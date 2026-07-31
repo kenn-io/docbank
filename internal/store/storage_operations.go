@@ -18,6 +18,8 @@ var ErrStorageOperationCancelled = errors.New("storage operation cancellation wa
 const storageOperationFinalizingCursor = "@finalizing"
 
 const (
+	storageOperationKindEvacuate = "evacuate"
+
 	StorageOperationQueued    StorageOperationState = "queued"
 	StorageOperationRunning   StorageOperationState = "running"
 	StorageOperationCompleted StorageOperationState = "completed"
@@ -27,6 +29,7 @@ const (
 
 type StorageOperationCreate struct {
 	Kind          string
+	SourceStoreID string
 	RequestDigest string
 	RequestJSON   string
 	PlanJSON      string
@@ -36,6 +39,7 @@ type StorageOperationCreate struct {
 type StorageOperation struct {
 	ID               string
 	Kind             string
+	SourceStoreID    string
 	RequestVersion   int64
 	RequestDigest    string
 	RequestJSON      string
@@ -71,25 +75,61 @@ func (s *Store) CreateStorageOperation(
 		return StorageOperation{}, fmt.Errorf("creating storage operation identity: %w", err)
 	}
 	now := nowRFC3339()
-	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO storage_operations(
-			operation_id,kind,request_version,request_digest,request_json,plan_json,
-			state,total_objects,created_at,updated_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?)`,
-		id, input.Kind, 1, input.RequestDigest, input.RequestJSON, input.PlanJSON,
-		StorageOperationQueued, input.TotalObjects, now, now,
-	)
-	if err != nil {
-		return StorageOperation{}, fmt.Errorf("creating storage operation: %w", err)
+	sourceStoreID := sql.NullString{
+		String: input.SourceStoreID,
+		Valid:  input.SourceStoreID != "",
 	}
-	return s.StorageOperation(ctx, id)
+	var created StorageOperation
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		if input.Kind == storageOperationKindEvacuate {
+			var active int
+			if err := tx.QueryRowContext(ctx, `
+				SELECT COUNT(*) FROM storage_operations
+				WHERE source_store_id=? AND kind='evacuate'
+				  AND state IN (?,?)`,
+				input.SourceStoreID, StorageOperationQueued, StorageOperationRunning,
+			).Scan(&active); err != nil {
+				return fmt.Errorf("checking active evacuation: %w", err)
+			}
+			if active != 0 {
+				return fmt.Errorf(
+					"blob store %s already has an active evacuation: %w",
+					input.SourceStoreID, ErrBlobStoreState,
+				)
+			}
+		}
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO storage_operations(
+				operation_id,kind,source_store_id,request_version,request_digest,
+				request_json,plan_json,state,total_objects,created_at,updated_at
+			) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+			id, input.Kind, sourceStoreID, 1, input.RequestDigest,
+			input.RequestJSON, input.PlanJSON, StorageOperationQueued,
+			input.TotalObjects, now, now,
+		)
+		if err != nil {
+			return fmt.Errorf("creating storage operation: %w", err)
+		}
+		created, err = scanStorageOperation(tx.QueryRowContext(
+			ctx, storageOperationSelect+` WHERE operation_id=?`, id,
+		))
+		return err
+	})
+	return created, err
 }
 
 func validateStorageOperationCreate(input StorageOperationCreate) error {
 	switch input.Kind {
-	case "place", "evacuate", "repair", "salvage":
+	case "place", storageOperationKindEvacuate, "repair", "salvage":
 	default:
 		return fmt.Errorf("unsupported storage operation kind %q", input.Kind)
+	}
+	if input.Kind == storageOperationKindEvacuate {
+		if err := validateUUIDv4(input.SourceStoreID); err != nil {
+			return fmt.Errorf("evacuation source store ID is invalid: %w", err)
+		}
+	} else if input.SourceStoreID != "" {
+		return errors.New("only evacuation operations may bind a source store")
 	}
 	if len(input.RequestDigest) != 64 {
 		return errors.New("storage operation request digest must be a SHA-256 identity")
@@ -364,7 +404,8 @@ func (s *Store) CompleteStorageOperationCleanup(
 }
 
 const storageOperationSelect = `
-	SELECT operation_id,kind,request_version,request_digest,request_json,plan_json,
+	SELECT operation_id,kind,COALESCE(source_store_id,''),request_version,
+	       request_digest,request_json,plan_json,
 	       state,cursor,total_objects,completed_objects,copied_objects,copied_bytes,
 	       cancel_requested,error,receipt_json,created_at,updated_at,finished_at,retention_until
 	FROM storage_operations`
@@ -391,7 +432,7 @@ func scanStorageOperation(row scanner) (StorageOperation, error) {
 	var createdAt, updatedAt string
 	var finishedAt, retentionUntil sql.NullString
 	err := row.Scan(
-		&operation.ID, &operation.Kind, &operation.RequestVersion,
+		&operation.ID, &operation.Kind, &operation.SourceStoreID, &operation.RequestVersion,
 		&operation.RequestDigest, &operation.RequestJSON, &operation.PlanJSON,
 		&state, &operation.Cursor, &operation.TotalObjects,
 		&operation.CompletedObjects, &operation.CopiedObjects, &operation.CopiedBytes,

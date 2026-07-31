@@ -230,6 +230,55 @@ func TestPlacementRunnerRepairsDamagedSecondaryFromVerifiedPrimary(t *testing.T)
 	assert.Equal(t, []byte("repair authority"), got)
 }
 
+func TestPlacementRunnerRepairFallsBackToAnotherVerifiedSource(t *testing.T) {
+	metadata, blobs, runner, secondaries := placementTestVaultWithSecondaries(
+		t, "archive", "mirror",
+	)
+	archive, mirror := secondaries[0], secondaries[1]
+	content := []byte("fallback repair authority")
+	file, hash := placementTestFile(t, metadata, blobs, content)
+	for _, destination := range []store.BlobStore{archive, mirror} {
+		plan, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+			TargetNodeID: file.ID, SourceStoreID: metadata.PrimaryBlobStoreID(),
+			DestinationStoreID: destination.ID,
+		})
+		require.NoError(t, err)
+		require.NoError(t, runner.Run(
+			t.Context(), createPlacementOperation(t, metadata, plan),
+		))
+	}
+	archiveBackend, ok := blobs.WritableBackend(packstore.StoreID(archive.ID))
+	require.True(t, ok)
+	archiveFilesystem, ok := archiveBackend.(*packstore.FilesystemBackend)
+	require.True(t, ok)
+	require.NoError(t, os.WriteFile(
+		archiveFilesystem.Layout().LoosePath(packstore.Hash(hash)),
+		[]byte("damaged archive"), 0o600,
+	))
+	require.NoError(t, os.WriteFile(
+		blobs.layout.LoosePath(packstore.Hash(hash)), []byte("damaged primary"), 0o600,
+	))
+
+	plan, err := metadata.PlanStorageRecovery(
+		t.Context(), "repair", hash, archive.ID,
+	)
+	require.NoError(t, err)
+	require.NoError(t, runner.Run(
+		t.Context(), createRecoveryOperation(t, metadata, plan),
+	))
+
+	location, err := runner.currentLocation(t.Context(), hash, archive.ID)
+	require.NoError(t, err)
+	stream, _, err := archiveBackend.OpenLoose(
+		t.Context(), packstore.Hash(hash), *location.Loose,
+	)
+	require.NoError(t, err)
+	got, err := io.ReadAll(stream)
+	require.NoError(t, err)
+	require.NoError(t, stream.Close())
+	assert.Equal(t, content, got)
+}
+
 func TestPlacementRunnerSalvagesVerifiedBytesFromFencedSecondary(t *testing.T) {
 	metadata, blobs, runner, secondary := placementTestVault(t)
 	file, hash := placementTestFile(t, metadata, blobs, []byte("salvage authority"))
@@ -290,7 +339,7 @@ func TestPlacementRunnerHonorsRecoveryCancellationBeforePublication(t *testing.T
 	assert.Equal(t, store.StorageOperationCancelled, operation.State)
 }
 
-func TestPlacementRunnerHonorsRecoveryCancellationAtCatalogCommit(t *testing.T) {
+func TestPlacementRunnerCompletesRecoveryAfterPhysicalPublication(t *testing.T) {
 	metadata, blobs, runner, secondary := placementTestVault(t)
 	file, hash := placementTestFile(t, metadata, blobs, []byte("cancel recovery commit"))
 	placement, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
@@ -307,16 +356,16 @@ func TestPlacementRunnerHonorsRecoveryCancellationAtCatalogCommit(t *testing.T) 
 	require.NoError(t, err)
 	operationID := createRecoveryOperation(t, metadata, plan)
 	runner.Commit = func(fn func() error) error {
-		require.NoError(t, metadata.RequestStorageOperationCancel(
+		require.ErrorIs(t, metadata.RequestStorageOperationCancel(
 			t.Context(), operationID,
-		))
+		), store.ErrStorageOperationTerminal)
 		return fn()
 	}
 
 	require.NoError(t, runner.Run(t.Context(), operationID))
 	operation, err := metadata.StorageOperation(t.Context(), operationID)
 	require.NoError(t, err)
-	assert.Equal(t, store.StorageOperationCancelled, operation.State)
+	assert.Equal(t, store.StorageOperationCompleted, operation.State)
 }
 
 func TestRemainingPlacementScratchSkipsCompletedObjects(t *testing.T) {
@@ -331,38 +380,53 @@ func placementTestVault(
 	t *testing.T,
 ) (*store.Store, *Store, PlacementRunner, store.BlobStore) {
 	t.Helper()
+	metadata, blobs, runner, secondaries := placementTestVaultWithSecondaries(t, "archive")
+	return metadata, blobs, runner, secondaries[0]
+}
+
+func placementTestVaultWithSecondaries(
+	t *testing.T, names ...string,
+) (*store.Store, *Store, PlacementRunner, []store.BlobStore) {
+	t.Helper()
 	root := t.TempDir()
 	metadata, err := store.Open(filepath.Join(root, "metadata.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, metadata.Close()) })
-	destination, err := metadata.PrepareSecondaryBlobStore(
-		"archive", "filesystem", "archive",
-	)
-	require.NoError(t, err)
-	destinationPath := filepath.Join(root, "archive")
-	backend, err := NewFilesystemBackend(destinationPath, nil)
-	require.NoError(t, err)
-	require.NoError(t, backend.ReplaceOwnership(t.Context(), packstore.Ownership{
-		Format: packstore.OwnershipFormatV1, Vault: metadata.VaultID(),
-		Store: packstore.StoreID(destination.ID), Epoch: destination.OwnershipEpoch,
-	}, nil))
-	require.NoError(t, backend.Close())
-	require.NoError(t, metadata.RegisterBlobStore(t.Context(), destination))
-	bindings := map[string]config.StoreBindingConfig{
-		"archive": {Kind: "filesystem", Path: destinationPath, Priority: 20},
+	bindings := make(map[string]config.StoreBindingConfig, len(names))
+	specs := make([]StoreSpec, 0, len(names))
+	secondaries := make([]store.BlobStore, 0, len(names))
+	for index, name := range names {
+		destination, err := metadata.PrepareSecondaryBlobStore(
+			name, "filesystem", name,
+		)
+		require.NoError(t, err)
+		destinationPath := filepath.Join(root, name)
+		backend, err := NewFilesystemBackend(destinationPath, nil)
+		require.NoError(t, err)
+		require.NoError(t, backend.ReplaceOwnership(t.Context(), packstore.Ownership{
+			Format: packstore.OwnershipFormatV1, Vault: metadata.VaultID(),
+			Store: packstore.StoreID(destination.ID), Epoch: destination.OwnershipEpoch,
+		}, nil))
+		require.NoError(t, backend.Close())
+		require.NoError(t, metadata.RegisterBlobStore(t.Context(), destination))
+		bindings[name] = config.StoreBindingConfig{
+			Kind: "filesystem", Path: destinationPath, Priority: 20 + index,
+		}
+		specs = append(specs, StoreSpec{
+			ID: destination.ID, Kind: destination.Kind, Role: destination.Role,
+			Lifecycle: destination.Lifecycle, Binding: destination.Binding,
+			OwnershipEpoch: destination.OwnershipEpoch,
+		})
+		secondaries = append(secondaries, destination)
 	}
-	registry := NewRegistry(t.Context(), metadata.VaultID(), bindings, []StoreSpec{{
-		ID: destination.ID, Kind: destination.Kind, Role: destination.Role,
-		Lifecycle: destination.Lifecycle, Binding: destination.Binding,
-		OwnershipEpoch: destination.OwnershipEpoch,
-	}})
+	registry := NewRegistry(t.Context(), metadata.VaultID(), bindings, specs)
 	options := Options{Registry: registry}
 	blobs, err := NewWithOptions(
 		store.NewPackCatalog(metadata), filepath.Join(root, "blobs"), options,
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
-	return metadata, blobs, PlacementRunner{Metadata: metadata, Blobs: blobs}, destination
+	return metadata, blobs, PlacementRunner{Metadata: metadata, Blobs: blobs}, secondaries
 }
 
 func placementTestFile(
@@ -401,6 +465,12 @@ func createStorageOperation(
 	require.NoError(t, err)
 	operation, err := metadata.CreateStorageOperation(t.Context(), store.StorageOperationCreate{
 		Kind: kind, RequestDigest: plan.Digest, RequestJSON: string(requestJSON),
+		SourceStoreID: func() string {
+			if kind == "evacuate" {
+				return plan.Request.SourceStoreID
+			}
+			return ""
+		}(),
 		PlanJSON: string(planJSON), TotalObjects: int64(len(plan.Hashes)),
 	})
 	require.NoError(t, err)
