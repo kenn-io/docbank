@@ -2,6 +2,7 @@ package blob
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"os"
@@ -192,6 +193,61 @@ func TestPlacementRunnerHonorsCancellationAtEvacuationFinalization(t *testing.T)
 	assert.Equal(t, "draining", remaining.Lifecycle)
 }
 
+func TestPlacementRunnerEvacuationAdoptsPendingSourceCleanup(t *testing.T) {
+	metadata, blobs, runner, secondary := placementTestVault(t)
+	file, _ := placementTestFile(t, metadata, blobs, []byte("cleanup handoff"))
+	outbound, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+		TargetNodeID: file.ID, SourceStoreID: metadata.PrimaryBlobStoreID(),
+		DestinationStoreID: secondary.ID,
+	})
+	require.NoError(t, err)
+	require.NoError(t, runner.Run(
+		t.Context(), createPlacementOperation(t, metadata, outbound),
+	))
+
+	retire, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+		TargetNodeID: file.ID, SourceStoreID: secondary.ID,
+		DestinationStoreID: metadata.PrimaryBlobStoreID(), RetireSource: true,
+	})
+	require.NoError(t, err)
+	retireOperationID := createPlacementOperation(t, metadata, retire)
+	cancelled, cancel := context.WithCancel(t.Context())
+	interrupted := runner
+	interrupted.Commit = func(fn func() error) error {
+		err := fn()
+		cancel()
+		return err
+	}
+	require.ErrorIs(t, interrupted.Run(cancelled, retireOperationID), context.Canceled)
+	cleanups, err := metadata.StorageOperationCleanups(
+		t.Context(), retireOperationID,
+	)
+	require.NoError(t, err)
+	require.Len(t, cleanups, 1)
+
+	evacuation, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+		TargetNodeID: metadata.RootID(), SourceStoreID: secondary.ID,
+		DestinationStoreID: metadata.PrimaryBlobStoreID(),
+		RetireSource:       true, Evacuate: true,
+	})
+	require.NoError(t, err)
+	require.NoError(t, metadata.BeginBlobStoreEvacuation(t.Context(), secondary.ID))
+	evacuationID := createStorageOperation(
+		t, metadata, "evacuate", evacuation,
+	)
+	require.NoError(t, runner.Run(t.Context(), evacuationID))
+
+	operation, err := metadata.StorageOperation(t.Context(), evacuationID)
+	require.NoError(t, err)
+	assert.Equal(t, store.StorageOperationCompleted, operation.State)
+	evacuated, err := metadata.BlobStoreBySelector(t.Context(), secondary.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "detached", evacuated.Lifecycle)
+	cleanups, err = metadata.StorageOperationCleanups(t.Context(), retireOperationID)
+	require.NoError(t, err)
+	assert.Empty(t, cleanups)
+}
+
 func TestPlacementRunnerRepairsDamagedSecondaryFromVerifiedPrimary(t *testing.T) {
 	metadata, blobs, runner, secondary := placementTestVault(t)
 	file, hash := placementTestFile(t, metadata, blobs, []byte("repair authority"))
@@ -359,7 +415,14 @@ func TestPlacementRunnerCompletesRecoveryAfterPhysicalPublication(t *testing.T) 
 		require.ErrorIs(t, metadata.RequestStorageOperationCancel(
 			t.Context(), operationID,
 		), store.ErrStorageOperationTerminal)
-		return fn()
+		require.NoError(t, fn())
+		current, err := metadata.StorageOperation(t.Context(), operationID)
+		require.NoError(t, err)
+		assert.Equal(t, store.StorageOperationCompleted, current.State)
+		require.ErrorIs(t, metadata.RequestStorageOperationCancel(
+			t.Context(), operationID,
+		), store.ErrStorageOperationTerminal)
+		return nil
 	}
 
 	require.NoError(t, runner.Run(t.Context(), operationID))

@@ -356,9 +356,18 @@ func (r PlacementRunner) runRecovery(
 		}
 		location = moved.Destination
 	}
+	receipt := StorageRecoveryReceipt{
+		OperationID: operation.ID, PlanDigest: plan.Digest,
+		Hash: plan.Hash, Kind: plan.Kind, Completed: true,
+	}
+	encoded, err := json.Marshal(receipt)
+	if err != nil {
+		return r.fail(ctx, operation.ID, err)
+	}
 	if err := r.commit(func() error {
 		return r.Metadata.CommitStorageRecovery(
 			context.WithoutCancel(ctx), operation.ID, plan, location,
+			string(encoded), time.Now().Add(storageOperationRetention),
 		)
 	}); err != nil {
 		if errors.Is(err, store.ErrStorageOperationCancelled) {
@@ -375,26 +384,7 @@ func (r PlacementRunner) runRecovery(
 		}
 		return r.fail(ctx, operation.ID, err)
 	}
-	receipt := StorageRecoveryReceipt{
-		OperationID: operation.ID, PlanDigest: plan.Digest,
-		Hash: plan.Hash, Kind: plan.Kind, Completed: true,
-	}
-	encoded, err := json.Marshal(receipt)
-	if err != nil {
-		return r.fail(ctx, operation.ID, err)
-	}
-	if err := r.Metadata.AdvanceStorageOperation(
-		ctx, operation.ID, plan.Hash, 1, 1, plan.Size, string(encoded),
-	); err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return ctxErr
-		}
-		return err
-	}
-	return r.Metadata.FinishStorageOperation(
-		ctx, operation.ID, store.StorageOperationCompleted,
-		string(encoded), "", time.Now().Add(storageOperationRetention),
-	)
+	return nil
 }
 
 func repairOne(

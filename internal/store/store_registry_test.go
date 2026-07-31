@@ -226,8 +226,16 @@ func TestBlobStoreEvacuationRequiresVerifiedDestinationCoverage(t *testing.T) {
 	)
 	require.NoError(t, err)
 	assert.False(t, finalized.Detached)
+	otherCleanups, err := s.StorageOperationCleanups(ctx, otherOperation.ID)
+	require.NoError(t, err)
+	assert.Empty(t, otherCleanups)
+	evacuationCleanups, err := s.StorageOperationCleanups(ctx, operation.ID)
+	require.NoError(t, err)
+	require.Equal(t, []StorageOperationCleanup{{
+		StoreID: secondary.ID, Ref: otherRef,
+	}}, evacuationCleanups)
 	require.NoError(t, s.CompleteStorageOperationCleanup(
-		ctx, otherOperation.ID, StorageOperationCleanup{
+		ctx, operation.ID, StorageOperationCleanup{
 			StoreID: secondary.ID, Ref: otherRef,
 		},
 	))

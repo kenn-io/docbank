@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/packstore"
@@ -64,6 +65,6 @@ func TestStorageRecoveryRejectsDestinationAuthorityChangedDuringPublication(
 			LogicalSize: 4,
 			StoredSize:  4,
 		},
-	})
+	}, `{"completed":true}`, time.Now().Add(24*time.Hour))
 	require.ErrorIs(t, err, ErrStaleRevision)
 }

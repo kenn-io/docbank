@@ -328,6 +328,11 @@ func (s *Store) FinalizeBlobStoreEvacuation(
 		); err != nil {
 			return err
 		}
+		if err := adoptBlobStoreCleanupTx(
+			ctx, tx, operationID, source.ID,
+		); err != nil {
+			return err
+		}
 		if err := markStorageOperationFinalizingTx(
 			ctx, tx, operationID,
 		); err != nil {
@@ -374,6 +379,33 @@ func (s *Store) FinalizeBlobStoreEvacuation(
 		return nil
 	})
 	return result, err
+}
+
+// adoptBlobStoreCleanupTx gives the finalizing evacuation ownership of every
+// already-authorized retirement against its source. The evacuation runner can
+// then finish those physical deletions before detaching the binding.
+func adoptBlobStoreCleanupTx(
+	ctx context.Context, tx *sql.Tx, operationID, storeID string,
+) error {
+	if _, err := tx.ExecContext(ctx, `
+		INSERT OR IGNORE INTO storage_operation_cleanup(
+			operation_id,store_id,loose_hash,loose_encoding,pack_id
+		)
+		SELECT ?,store_id,loose_hash,loose_encoding,pack_id
+		FROM storage_operation_cleanup
+		WHERE store_id=? AND operation_id<>?`,
+		operationID, storeID, operationID,
+	); err != nil {
+		return fmt.Errorf("adopting blob store cleanup for %s: %w", storeID, err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM storage_operation_cleanup
+		WHERE store_id=? AND operation_id<>?`,
+		storeID, operationID,
+	); err != nil {
+		return fmt.Errorf("transferring blob store cleanup for %s: %w", storeID, err)
+	}
+	return nil
 }
 
 func markStorageOperationFinalizingTx(

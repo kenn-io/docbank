@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"go.kenn.io/kit/packstore"
 )
@@ -229,6 +230,7 @@ func (s *Store) BeginStorageRecoveryPublication(
 func (s *Store) CommitStorageRecovery(
 	ctx context.Context, operationID string,
 	plan StorageRecoveryPlan, receipt packstore.ReadLocation,
+	operationReceiptJSON string, retentionUntil time.Time,
 ) error {
 	if err := validateUUIDv4(operationID); err != nil {
 		return fmt.Errorf("invalid storage operation ID: %w", err)
@@ -242,6 +244,9 @@ func (s *Store) CommitStorageRecovery(
 	}
 	if err := receipt.Validate(); err != nil {
 		return fmt.Errorf("validating storage recovery receipt: %w", err)
+	}
+	if operationReceiptJSON == "" {
+		return errors.New("storage recovery operation receipt is empty")
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var kind, digest, state, cursor string
@@ -310,7 +315,20 @@ func (s *Store) CommitStorageRecovery(
 		); err != nil {
 			return fmt.Errorf("retiring damaged packed mapping %s: %w", plan.Hash, err)
 		}
-		return nil
+		now := nowRFC3339()
+		result, err := tx.ExecContext(ctx, `
+			UPDATE storage_operations
+			SET state=?,cursor=?,completed_objects=1,copied_objects=1,copied_bytes=?,
+			    receipt_json=?,updated_at=?,finished_at=?,retention_until=?
+			WHERE operation_id=? AND state=? AND cursor=?`,
+			StorageOperationCompleted, plan.Hash, plan.Size,
+			operationReceiptJSON, now, now,
+			retentionUntil.UTC().Format(timestampLayout),
+			operationID, StorageOperationRunning, storageOperationFinalizingCursor,
+		)
+		return requireOneStorageOperationRow(
+			result, err, operationID, "completing recovery",
+		)
 	})
 }
 
