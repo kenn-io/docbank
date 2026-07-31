@@ -647,11 +647,40 @@ func claimRestoreBackend(
 	if actual != next {
 		return closeOnError(errors.New("target ownership marker failed read-back"))
 	}
-	if err := blob.ProbeConfiguredBackend(ctx, backend); err != nil {
-		return closeOnError(err)
+	if closer, ok := backend.(io.Closer); ok {
+		if err := closer.Close(); err != nil {
+			return nil, err
+		}
+	}
+	fenced, err := blob.NewConfiguredBackend(ctx, binding, &next)
+	if err != nil {
+		return nil, err
+	}
+	closeFencedOnError := func(err error) (packstore.Backend, error) {
+		if closer, ok := fenced.(io.Closer); ok {
+			_ = closer.Close()
+		}
+		return nil, err
+	}
+	actual, err = fenced.Ownership(ctx)
+	if err != nil {
+		return closeFencedOnError(err)
+	}
+	if actual != next {
+		return closeFencedOnError(errors.New(
+			"target ownership marker changed after restore claim",
+		))
+	}
+	if err := blob.ProbeConfiguredBackend(ctx, fenced); err != nil {
+		return closeFencedOnError(err)
+	}
+	if fenced.StoreID() != next.Store {
+		return closeFencedOnError(errors.New(
+			"target restore backend is not fenced to its claimed store",
+		))
 	}
 	claimedNamespaces[next] = candidate.Name
-	return backend, nil
+	return fenced, nil
 }
 
 func requireEmptyRestoreNamespace(

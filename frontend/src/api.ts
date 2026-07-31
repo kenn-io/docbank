@@ -672,8 +672,12 @@ export async function listJobs(session: string): Promise<Job[]> {
   return result.items;
 }
 
-export async function storageStatus(session: string): Promise<StorageStatus> {
-  return requestJSON<StorageStatus>("/api/v1/storage", session);
+export async function storageStatus(
+  session: string,
+  refresh = false,
+): Promise<StorageStatus> {
+  const suffix = refresh ? "?refresh=true" : "";
+  return requestJSON<StorageStatus>(`/api/v1/storage${suffix}`, session);
 }
 
 export async function backupSnapshots(

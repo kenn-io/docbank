@@ -54,6 +54,26 @@ func TestStorageRegistrationPreviewApplyAndRemoval(t *testing.T) {
 	require.Len(t, stores, 2)
 	assert.Equal(t, "primary", stores[0].Role)
 	assert.Equal(t, registered.ID, stores[1].ID)
+	inspector, err := blob.NewFilesystemBackend(namespace, nil)
+	require.NoError(t, err)
+	current, err := inspector.Ownership(t.Context())
+	require.NoError(t, err)
+	taken := current
+	taken.Epoch = "50000000-0000-4000-8000-000000000011"
+	require.NoError(t, inspector.ReplaceOwnership(t.Context(), taken, &current))
+	require.NoError(t, inspector.Close())
+
+	resp, body = get(t, ts, "/api/v1/storage", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var status api.StorageStatus
+	require.NoError(t, json.Unmarshal([]byte(body), &status))
+	require.Len(t, status.Stores, 2)
+	assert.Equal(t, "online", status.Stores[1].State)
+	resp, body = get(t, ts, "/api/v1/storage?refresh=true", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &status))
+	require.Len(t, status.Stores, 2)
+	assert.Equal(t, "fenced", status.Stores[1].State)
 
 	resp, body = do(t, ts, http.MethodPost,
 		"/api/v1/storage/stores/"+registered.ID+"/detach", nil, nil)
@@ -61,7 +81,7 @@ func TestStorageRegistrationPreviewApplyAndRemoval(t *testing.T) {
 	resp, body = do(t, ts, http.MethodDelete,
 		"/api/v1/storage/stores/"+registered.ID, nil, nil)
 	require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
-	_, err := live.BlobStoreBySelector(t.Context(), registered.ID)
+	_, err = live.BlobStoreBySelector(t.Context(), registered.ID)
 	require.Error(t, err)
 }
 

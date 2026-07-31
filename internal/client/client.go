@@ -2540,9 +2540,15 @@ func (c *Client) GC(ctx context.Context, run bool) (api.GCReport, error) {
 	return rep, err
 }
 
-func (c *Client) StorageStatus(ctx context.Context) (api.StorageStatus, error) {
+func (c *Client) StorageStatus(
+	ctx context.Context, refresh bool,
+) (api.StorageStatus, error) {
 	var status api.StorageStatus
-	err := c.do(ctx, http.MethodGet, "/api/v1/storage", nil, nil, &status)
+	path := "/api/v1/storage"
+	if refresh {
+		path += "?refresh=true"
+	}
+	err := c.do(ctx, http.MethodGet, path, nil, nil, &status)
 	return status, err
 }
 

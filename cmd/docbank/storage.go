@@ -47,7 +47,7 @@ var storageStatusCmd = &cobra.Command{
 			}
 			return writeBlobStore(cmd, selected)
 		}
-		status, err := c.StorageStatus(cmd.Context())
+		status, err := c.StorageStatus(cmd.Context(), storageStatusRefresh)
 		if err != nil {
 			return err
 		}

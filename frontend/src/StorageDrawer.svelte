@@ -57,7 +57,7 @@
     loading = true;
     error = "";
     try {
-      const next = await storageStatus(session);
+      const next = await storageStatus(session, true);
       if (request !== generation) return;
       status = next;
     } catch (cause) {

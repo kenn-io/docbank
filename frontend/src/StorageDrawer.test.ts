@@ -14,7 +14,7 @@ afterEach(() => {
 
 describe("storage status drawer", () => {
   it("separates dead packed payload from live physical authority", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       new Response(
         JSON.stringify({
           loose_blobs: 3,
@@ -74,6 +74,7 @@ describe("storage status drawer", () => {
     });
 
     expect(await screen.findByText(/live packed content/i)).toBeTruthy();
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/storage?refresh=true");
     expect(screen.getByText(/pending repack/i)).toBeTruthy();
     expect(screen.getByText(/3 loose files/)).toBeTruthy();
     expect(screen.getByText(/12 live packed objects/)).toBeTruthy();

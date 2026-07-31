@@ -427,8 +427,10 @@ func closeStorageBackend(backend packstore.Backend) error {
 	return nil
 }
 
-func storageStoreStatuses(ctx context.Context, d Deps) ([]StorageStoreStatus, error) {
-	stores, err := readBlobStores(ctx, d, false)
+func storageStoreStatuses(
+	ctx context.Context, d Deps, refresh bool,
+) ([]StorageStoreStatus, error) {
+	stores, err := readBlobStores(ctx, d, refresh)
 	if err != nil {
 		return nil, err
 	}

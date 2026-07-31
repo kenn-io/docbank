@@ -1,6 +1,7 @@
 package backupapp
 
 import (
+	"bytes"
 	"errors"
 	"io/fs"
 	"os"
@@ -14,6 +15,41 @@ import (
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/store"
 )
+
+func TestClaimRestoreBackendFencesPostClaimPublication(t *testing.T) {
+	namespace := filepath.Join(t.TempDir(), "archive")
+	binding := config.StoreBindingConfig{Kind: "filesystem", Path: namespace}
+	candidate := store.BlobStore{
+		ID: "10000000-0000-4000-8000-000000000009", Name: "archive",
+		OwnershipEpoch: "20000000-0000-4000-8000-000000000009",
+	}
+	backend, err := claimRestoreBackend(
+		t.Context(), "30000000-0000-4000-8000-000000000009",
+		candidate, binding, false, make(map[packstore.Ownership]string),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if closer, ok := backend.(interface{ Close() error }); ok {
+			require.NoError(t, closer.Close())
+		}
+	})
+	inspector, err := blob.NewFilesystemBackend(namespace, nil)
+	require.NoError(t, err)
+	current, err := inspector.Ownership(t.Context())
+	require.NoError(t, err)
+	taken := current
+	taken.Epoch = "20000000-0000-4000-8000-000000000010"
+	require.NoError(t, inspector.ReplaceOwnership(t.Context(), taken, &current))
+	require.NoError(t, inspector.Close())
+
+	_, err = backend.PublishLoose(
+		t.Context(),
+		packstore.Hash("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+		bytes.NewReader([]byte("x")),
+		packstore.PublishOptions{ExpectedSize: 1, SizeKnown: true},
+	)
+	require.ErrorIs(t, err, packstore.ErrStoreFenced)
+}
 
 func TestPrepareRestoreMappingsRejectsOverlappingFilesystemNamespaces(t *testing.T) {
 	root := t.TempDir()

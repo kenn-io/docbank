@@ -21,7 +21,7 @@ func registerInfoRoute(api huma.API, d Deps) {
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		stores, err := storageStoreStatuses(ctx, d)
+		stores, err := storageStoreStatuses(ctx, d, false)
 		if err != nil {
 			return nil, FromStoreError(err)
 		}

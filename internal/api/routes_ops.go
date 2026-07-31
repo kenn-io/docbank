@@ -23,12 +23,14 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 	huma.Register(api, huma.Operation{
 		OperationID: "storageStatus", Method: http.MethodGet, Path: "/api/v1/storage",
 		Summary: "Report loose and packed physical storage usage",
-	}, func(ctx context.Context, _ *struct{}) (*storageStatusOutput, error) {
+	}, func(ctx context.Context, in *struct {
+		Refresh bool `query:"refresh"`
+	}) (*storageStatusOutput, error) {
 		stats, err := d.Blobs.Stats(ctx)
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		stores, err := storageStoreStatuses(ctx, d)
+		stores, err := storageStoreStatuses(ctx, d, in.Refresh)
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
