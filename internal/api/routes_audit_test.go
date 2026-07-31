@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/store"
+	docsqlite "go.kenn.io/docbank/pkg/sqlite"
 )
 
 func TestAuditPreviewEnableAndStatusLifecycle(t *testing.T) {
@@ -318,6 +319,38 @@ func TestAuditVerifyReturnsStableEvidenceAndChecksProtectedBytes(t *testing.T) {
 	require.Len(t, report.Problems, 1)
 	assert.Equal(t, file.BlobHash, report.Problems[0].Hash)
 	assert.Equal(t, "missing", report.Problems[0].Problem)
+}
+
+func TestAuditVerifyReturnsOnlyMetadataProblemsForMalformedPhysicalAuthority(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	c := client.New(ts.URL, testAPIKey)
+	file := createFileWithContent(t, ts, s, "/record.txt", "protected content")
+	preview, err := c.PreviewAudit(t.Context(), client.AuditPreviewOptions{
+		NodeID: s.RootID(),
+	})
+	require.NoError(t, err)
+	_, err = c.EnableAudit(t.Context(), preview.PreviewToken, true)
+	require.NoError(t, err)
+
+	db, err := s.SQLiteDriver().Open(s.DBPath, docsqlite.OpenOptions{
+		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+	})
+	require.NoError(t, err)
+	_, err = db.ExecContext(t.Context(), `
+		UPDATE blob_locations SET kind='malformed' WHERE blob_hash=?`, file.BlobHash)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	report, err := c.VerifyAudit(t.Context(), nil)
+	require.NoError(t, err)
+	assert.False(t, report.Enabled)
+	assert.Nil(t, report.Evidence)
+	assert.Zero(t, report.ProtectedBlobs)
+	assert.Zero(t, report.ProtectedBytes)
+	assert.Zero(t, report.VerifiedBlobs)
+	assert.Empty(t, report.Problems)
+	require.Len(t, report.MetadataProblems, 1)
+	assert.Contains(t, report.MetadataProblems[0], "unknown location kind")
 }
 
 func TestAuditEnableRejectsPreviewAfterVaultMutation(t *testing.T) {

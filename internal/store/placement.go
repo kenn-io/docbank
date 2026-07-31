@@ -104,6 +104,12 @@ func (s *Store) PlanPlacement(
 	if err != nil {
 		return PlacementPlan{}, err
 	}
+	if request.Evacuate {
+		hashes, err = evacuationHashesTx(ctx, tx, request.SourceStoreID, hashes)
+		if err != nil {
+			return PlacementPlan{}, err
+		}
+	}
 	plan.Hashes = make([]PlacementHash, 0, len(hashes))
 	for index := range hashes {
 		item := &hashes[index]
@@ -339,6 +345,48 @@ func placementHashesTx(
 	return result, nil
 }
 
+func evacuationHashesTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	sourceStoreID string,
+	referenced []PlacementHash,
+) ([]PlacementHash, error) {
+	byHash := make(map[string]PlacementHash, len(referenced))
+	for _, item := range referenced {
+		byHash[item.Hash] = item
+	}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT blob.hash,blob.size
+		FROM blobs blob
+		JOIN blob_locations location ON location.blob_hash=blob.hash
+		WHERE location.store_id=?
+		ORDER BY blob.hash`, sourceStoreID)
+	if err != nil {
+		return nil, fmt.Errorf("reading evacuation source authority: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	result := make([]PlacementHash, 0, len(referenced))
+	for rows.Next() {
+		var hash string
+		var size int64
+		if err := rows.Scan(&hash, &size); err != nil {
+			return nil, fmt.Errorf("scanning evacuation source authority: %w", err)
+		}
+		item, ok := byHash[hash]
+		if ok && item.Size != size {
+			return nil, fmt.Errorf("blob %s has inconsistent evacuation size", hash)
+		}
+		if !ok {
+			item = PlacementHash{Hash: hash, Size: size}
+		}
+		result = append(result, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading evacuation source authority: %w", err)
+	}
+	return result, nil
+}
+
 func placementLocationsTx(
 	ctx context.Context, tx *sql.Tx, hash, sourceID, destinationID string,
 ) (packstore.ReadLocation, packstore.ReadLocation, error) {
@@ -516,37 +564,6 @@ func (s *Store) CommitPlacement(
 		}
 		committed.DestinationAuthorized = true
 
-		members, err := placementMembersTx(ctx, tx, request.TargetNodeID)
-		if err != nil {
-			committed.ReferenceDrift = true
-			// A target moved out of the selectable topology after preview. The
-			// verified destination remains an additional safe copy, while the
-			// source stays authoritative.
-			return nil //nolint:nilerr
-		}
-		selected := make(map[int64]bool, len(members))
-		for _, id := range members {
-			selected[id] = true
-		}
-		currentHashes, err := placementHashesTx(ctx, tx, selected)
-		if err != nil {
-			return err
-		}
-		var current *PlacementHash
-		for index := range currentHashes {
-			if currentHashes[index].Hash == planned.Hash {
-				current = &currentHashes[index]
-				break
-			}
-		}
-		if current == nil {
-			committed.ReferenceDrift = true
-			return nil
-		}
-		committed.ReferenceDrift = current.TotalReferences > current.SelectedReferences
-		committed.AuditPinned = current.AuditPinned &&
-			request.SourceStoreID == s.primaryStoreID &&
-			!request.AllowAuditedRemoteOnly
 		source, _, err := placementLocationsTx(
 			ctx, tx, planned.Hash, request.SourceStoreID, request.DestinationStoreID,
 		)
@@ -557,9 +574,42 @@ func (s *Store) CommitPlacement(
 			committed.SourceRevoked = planned.RetireSource
 			return nil
 		}
-		if source.Generation != planned.Source.Generation {
+		if !sameReadLocation(source, planned.Source) {
 			committed.ReferenceDrift = true
 			return nil
+		}
+		if !request.Evacuate {
+			members, err := placementMembersTx(ctx, tx, request.TargetNodeID)
+			if err != nil {
+				committed.ReferenceDrift = true
+				// A target moved out of the selectable topology after preview. The
+				// verified destination remains an additional safe copy, while the
+				// source stays authoritative.
+				return nil //nolint:nilerr
+			}
+			selected := make(map[int64]bool, len(members))
+			for _, id := range members {
+				selected[id] = true
+			}
+			currentHashes, err := placementHashesTx(ctx, tx, selected)
+			if err != nil {
+				return err
+			}
+			var current *PlacementHash
+			for index := range currentHashes {
+				if currentHashes[index].Hash == planned.Hash {
+					current = &currentHashes[index]
+					break
+				}
+			}
+			if current == nil {
+				committed.ReferenceDrift = true
+				return nil
+			}
+			committed.ReferenceDrift = current.TotalReferences > current.SelectedReferences
+			committed.AuditPinned = current.AuditPinned &&
+				request.SourceStoreID == s.primaryStoreID &&
+				!request.AllowAuditedRemoteOnly
 		}
 		if !request.RetireSource || committed.ReferenceDrift || committed.AuditPinned {
 			return nil

@@ -127,6 +127,42 @@ func TestEvacuationPlansOnlyAuthorityHeldBySource(t *testing.T) {
 	assert.Equal(t, firstHash, plan.Hashes[0].Hash)
 }
 
+func TestEvacuationPlansRetainedBlobsWithoutVersionReferences(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	hash := fakeHash("ab")
+	secondary, err := s.PrepareSecondaryBlobStore(
+		"archive", "filesystem", "archive",
+	)
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(ctx, secondary))
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO blobs(hash,size,created_at) VALUES(?,12,?)`,
+		hash, nowRFC3339(),
+	)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO blob_locations(
+			blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
+		) VALUES(?,?,?,'loose','raw',12,1)`,
+		hash, secondary.ID,
+		"40000000-0000-4000-8000-000000000012",
+	)
+	require.NoError(t, err)
+
+	plan, err := s.PlanPlacement(ctx, PlacementRequest{
+		TargetNodeID: s.RootID(), SourceStoreID: secondary.ID,
+		DestinationStoreID: s.primaryStoreID, RetireSource: true,
+		Evacuate: true,
+	})
+	require.NoError(t, err)
+	require.Len(t, plan.Hashes, 1)
+	assert.Equal(t, hash, plan.Hashes[0].Hash)
+	assert.Zero(t, plan.Hashes[0].SelectedReferences)
+	assert.Zero(t, plan.Hashes[0].TotalReferences)
+	assert.True(t, plan.Hashes[0].RetireSource)
+}
+
 func TestS3PackedPlacementReportsContainerScratchAndEgress(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()

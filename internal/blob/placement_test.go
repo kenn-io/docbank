@@ -272,6 +272,52 @@ func TestPlacementRunnerReschedulesFailedPhysicalCleanup(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
+func TestPlacementRunnerRecordsCommittedProgressBeforeCleanupRetry(t *testing.T) {
+	metadata, blobs, runner, secondary := placementTestVault(t)
+	file, _ := placementTestFile(t, metadata, blobs, []byte("durable progress"))
+	copyPlan, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+		TargetNodeID: file.ID, SourceStoreID: metadata.PrimaryBlobStoreID(),
+		DestinationStoreID: secondary.ID,
+	})
+	require.NoError(t, err)
+	require.NoError(t, runner.Run(
+		t.Context(), createPlacementOperation(t, metadata, copyPlan),
+	))
+
+	backend, ok := blobs.registry.backends[packstore.StoreID(secondary.ID)]
+	require.True(t, ok)
+	failing := &failOnceRetireBackend{Backend: backend, failed: make(chan struct{})}
+	failing.fail.Store(true)
+	blobs.registry.backends[packstore.StoreID(secondary.ID)] = failing
+	retirePlan, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+		TargetNodeID: file.ID, SourceStoreID: secondary.ID,
+		DestinationStoreID: metadata.PrimaryBlobStoreID(), RetireSource: true,
+	})
+	require.NoError(t, err)
+	operationID := createPlacementOperation(t, metadata, retirePlan)
+
+	err = runner.Run(t.Context(), operationID)
+	require.ErrorIs(t, err, errStorageCleanupDeferred)
+	operation, err := metadata.StorageOperation(t.Context(), operationID)
+	require.NoError(t, err)
+	assert.Equal(t, store.StorageOperationQueued, operation.State)
+	assert.Equal(t, int64(1), operation.CompletedObjects)
+	var progress PlacementReceipt
+	require.NoError(t, json.Unmarshal([]byte(operation.ReceiptJSON), &progress))
+	assert.Equal(t, int64(1), progress.Completed)
+	assert.Equal(t, int64(1), progress.SourceRevoked)
+
+	require.NoError(t, metadata.RequestStorageOperationCancel(t.Context(), operationID))
+	require.NoError(t, runner.Run(t.Context(), operationID))
+	operation, err = metadata.StorageOperation(t.Context(), operationID)
+	require.NoError(t, err)
+	assert.Equal(t, store.StorageOperationCompleted, operation.State)
+	var receipt PlacementReceipt
+	require.NoError(t, json.Unmarshal([]byte(operation.ReceiptJSON), &receipt))
+	assert.Equal(t, int64(1), receipt.Completed)
+	assert.Equal(t, int64(1), receipt.SourceRevoked)
+}
+
 type failOnceRetireBackend struct {
 	packstore.Backend
 
@@ -411,6 +457,84 @@ func TestPlacementRunnerEvacuatesSecondaryToPrimaryAndDetachesIt(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, stream.Close())
 	assert.Equal(t, []byte("bring this home"), got)
+}
+
+func TestPlacementRunnerEvacuatesRetainedBlobWithoutVersionReferences(t *testing.T) {
+	t.Run("missing primary is restored before source retirement", func(t *testing.T) {
+		metadata, blobs, runner, secondary := placementTestVault(t)
+		content := []byte("retained during the GC regret window")
+		file, hash := placementTestFile(t, metadata, blobs, content)
+		outbound, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+			TargetNodeID: file.ID, SourceStoreID: metadata.PrimaryBlobStoreID(),
+			DestinationStoreID: secondary.ID, RetireSource: true,
+		})
+		require.NoError(t, err)
+		require.NoError(t, runner.Run(
+			t.Context(), createPlacementOperation(t, metadata, outbound),
+		))
+		deletePlacementTestNode(t, metadata, file)
+
+		plan, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+			TargetNodeID: metadata.RootID(), SourceStoreID: secondary.ID,
+			DestinationStoreID: metadata.PrimaryBlobStoreID(), RetireSource: true,
+			Evacuate: true,
+		})
+		require.NoError(t, err)
+		require.Len(t, plan.Hashes, 1)
+		assert.Equal(t, hash, plan.Hashes[0].Hash)
+		require.NoError(t, metadata.BeginBlobStoreEvacuation(t.Context(), secondary.ID))
+		operationID := createStorageOperation(t, metadata, "evacuate", plan)
+		require.NoError(t, runner.Run(t.Context(), operationID))
+
+		resolution, err := metadata.ResolveBlobLocations(
+			t.Context(), packstore.Hash(hash),
+		)
+		require.NoError(t, err)
+		require.Len(t, resolution.Candidates, 1)
+		assert.Equal(t, packstore.StoreID(metadata.PrimaryBlobStoreID()),
+			resolution.Candidates[0].StoreID)
+		stream, _, err := blobs.OpenStreamContext(t.Context(), hash)
+		require.NoError(t, err)
+		got, err := io.ReadAll(stream)
+		require.NoError(t, err)
+		require.NoError(t, stream.Close())
+		assert.Equal(t, content, got)
+	})
+
+	t.Run("corrupt primary never authorizes source retirement", func(t *testing.T) {
+		metadata, blobs, runner, secondary := placementTestVault(t)
+		file, hash := placementTestFile(t, metadata, blobs, []byte("healthy source"))
+		outbound, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+			TargetNodeID: file.ID, SourceStoreID: metadata.PrimaryBlobStoreID(),
+			DestinationStoreID: secondary.ID,
+		})
+		require.NoError(t, err)
+		require.NoError(t, runner.Run(
+			t.Context(), createPlacementOperation(t, metadata, outbound),
+		))
+		deletePlacementTestNode(t, metadata, file)
+		require.NoError(t, os.WriteFile(
+			blobs.layout.LoosePath(packstore.Hash(hash)), []byte("damaged"), 0o600,
+		))
+
+		plan, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+			TargetNodeID: metadata.RootID(), SourceStoreID: secondary.ID,
+			DestinationStoreID: metadata.PrimaryBlobStoreID(), RetireSource: true,
+			Evacuate: true,
+		})
+		require.NoError(t, err)
+		require.NoError(t, metadata.BeginBlobStoreEvacuation(t.Context(), secondary.ID))
+		operationID := createStorageOperation(t, metadata, "evacuate", plan)
+		err = runner.Run(t.Context(), operationID)
+		require.ErrorIs(t, err, packstore.ErrPhysicalCorrupt)
+
+		resolution, err := metadata.ResolveBlobLocations(
+			t.Context(), packstore.Hash(hash),
+		)
+		require.NoError(t, err)
+		require.Len(t, resolution.Candidates, 2)
+		assert.Equal(t, packstore.StoreID(secondary.ID), resolution.Candidates[1].StoreID)
+	})
 }
 
 func TestPlacementRunnerHonorsCancellationAtEvacuationFinalization(t *testing.T) {
@@ -769,6 +893,15 @@ func placementTestFile(
 	)
 	require.NoError(t, err)
 	return file, written.Hash
+}
+
+func deletePlacementTestNode(t *testing.T, metadata *store.Store, node store.Node) {
+	t.Helper()
+	_, _, err := metadata.Trash(t.Context(), node.ID, node.Revision)
+	require.NoError(t, err)
+	result, err := metadata.TrashEmpty(t.Context(), 0, true)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), result.Deleted)
 }
 
 func createPlacementOperation(

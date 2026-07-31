@@ -186,10 +186,10 @@ func registerAuditRoutes(
 				}
 				problems, _, err := locationVerifier.Verify(ctx, blob.Hash)
 				if err != nil {
-					out.Body.MetadataProblems = append(
-						out.Body.MetadataProblems, err.Error(),
-					)
-					continue
+					out.Body = AuditVerifyReport{
+						MetadataProblems: []string{err.Error()},
+					}
+					return nil //nolint:nilerr // malformed authority is the report, not a transport failure
 				}
 				if len(problems) == 0 {
 					out.Body.VerifiedBlobs++

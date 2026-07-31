@@ -175,9 +175,6 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 			}
 			return r.fail(ctx, operationID, fmt.Errorf("placing blob %s: %w", item.Hash, err))
 		}
-		if err := r.retirePending(ctx, operationID); err != nil {
-			return r.deferCleanup(ctx, operationID, err)
-		}
 		receipt.Objects = append(receipt.Objects, result)
 		receipt.Completed++
 		if result.Copied {
@@ -202,6 +199,9 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 				return ctxErr
 			}
 			return err
+		}
+		if err := r.retirePending(ctx, operationID); err != nil {
+			return r.deferCleanup(ctx, operationID, err)
 		}
 	}
 	if operation.Kind == "evacuate" {
