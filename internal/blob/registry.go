@@ -26,6 +26,8 @@ import (
 type StoreState string
 
 const (
+	storeKindFilesystem = "filesystem"
+
 	StoreOnline        StoreState = "online"
 	StoreUnavailable   StoreState = "unavailable"
 	StoreFenced        StoreState = "fenced"
@@ -78,7 +80,20 @@ func NewRegistry(
 	bindings map[string]config.StoreBindingConfig,
 	stores []StoreSpec,
 ) *Registry {
-	return newRegistry(ctx, vaultID, bindings, stores, NewConfiguredBackend)
+	return newRegistry(ctx, vaultID, bindings, stores, newAttachedConfiguredBackend)
+}
+
+func newAttachedConfiguredBackend(
+	ctx context.Context,
+	binding config.StoreBindingConfig,
+	expected *packstore.Ownership,
+) (packstore.Backend, error) {
+	if binding.Kind == storeKindFilesystem {
+		if err := EnsureFilesystemNamespace(binding.Path); err != nil {
+			return nil, fmt.Errorf("secure filesystem store namespace: %w", err)
+		}
+	}
+	return NewConfiguredBackend(ctx, binding, expected)
 }
 
 type configuredBackendFactory func(
@@ -413,7 +428,7 @@ func newConfiguredBackend(
 	allowInsecureTransport bool,
 ) (packstore.Backend, error) {
 	switch binding.Kind {
-	case "filesystem":
+	case storeKindFilesystem:
 		return NewFilesystemBackend(binding.Path, expected)
 	case "s3":
 		if err := validateS3Transport(binding.Endpoint, allowInsecureTransport); err != nil {

@@ -844,7 +844,7 @@ func placementTestVaultWithSecondaries(
 	secondaries := make([]store.BlobStore, 0, len(names))
 	for index, name := range names {
 		destination, err := metadata.PrepareSecondaryBlobStore(
-			name, "filesystem", name,
+			name, storeKindFilesystem, name,
 		)
 		require.NoError(t, err)
 		destinationPath := filepath.Join(root, name)
@@ -858,7 +858,7 @@ func placementTestVaultWithSecondaries(
 		require.NoError(t, backend.Close())
 		require.NoError(t, metadata.RegisterBlobStore(t.Context(), destination))
 		bindings[name] = config.StoreBindingConfig{
-			Kind: "filesystem", Path: destinationPath, Priority: 20 + index,
+			Kind: storeKindFilesystem, Path: destinationPath, Priority: 20 + index,
 		}
 		specs = append(specs, StoreSpec{
 			ID: destination.ID, Kind: destination.Kind, Role: destination.Role,

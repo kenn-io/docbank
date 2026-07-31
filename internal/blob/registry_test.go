@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/packstore"
+	"go.kenn.io/kit/safefileio"
 
 	"go.kenn.io/docbank/internal/config"
 )
@@ -41,12 +44,12 @@ func TestRegistryClassifiesBindingsAndOwnership(t *testing.T) {
 	require.NoError(t, unattached.Close())
 
 	spec := StoreSpec{
-		ID: storeID, Kind: "filesystem", Role: "secondary",
+		ID: storeID, Kind: storeKindFilesystem, Role: "secondary",
 		Lifecycle: "active", Binding: "archive", OwnershipEpoch: epoch,
 	}
 	registry := NewRegistry(t.Context(), vaultID,
 		map[string]config.StoreBindingConfig{
-			"archive": {Kind: "filesystem", Path: root, Priority: 25},
+			"archive": {Kind: storeKindFilesystem, Path: root, Priority: 25},
 		}, []StoreSpec{spec})
 	t.Cleanup(func() { require.NoError(t, registry.Close()) })
 	assert.Equal(t, StoreOnline, registry.Observation(storeID).State)
@@ -80,9 +83,9 @@ func TestRegistryKeepsAcquiredBackendUsableAcrossConcurrentRefresh(t *testing.T)
 	var opened []*closeObservedBackend
 	registry := newRegistry(t.Context(), vaultID,
 		map[string]config.StoreBindingConfig{
-			"archive": {Kind: "filesystem", Path: root, Priority: 25},
+			"archive": {Kind: storeKindFilesystem, Path: root, Priority: 25},
 		}, []StoreSpec{{
-			ID: storeID, Kind: "filesystem", Role: "secondary",
+			ID: storeID, Kind: storeKindFilesystem, Role: "secondary",
 			Lifecycle: "active", Binding: "archive", OwnershipEpoch: epoch,
 		}}, func(
 			ctx context.Context,
@@ -117,10 +120,43 @@ func TestRegistryKeepsAcquiredBackendUsableAcrossConcurrentRefresh(t *testing.T)
 	assert.False(t, opened[0].closed.Load())
 }
 
+func TestRegistrySecuresOwnedFilesystemScaffoldingOnAttachment(t *testing.T) {
+	const (
+		vaultID = "10000000-0000-4000-8000-000000000001"
+		storeID = "20000000-0000-4000-8000-000000000001"
+		epoch   = "30000000-0000-4000-8000-000000000001"
+	)
+	root := filepath.Join(t.TempDir(), "archive")
+	require.NoError(t, EnsureFilesystemNamespace(root))
+	backend, err := NewFilesystemBackend(root, nil)
+	require.NoError(t, err)
+	require.NoError(t, backend.ReplaceOwnership(t.Context(), packstore.Ownership{
+		Format: packstore.OwnershipFormatV1,
+		Vault:  vaultID,
+		Store:  storeID,
+		Epoch:  epoch,
+	}, nil))
+	require.NoError(t, backend.Close())
+	shard := filepath.Join(root, "aa")
+	require.NoError(t, os.MkdirAll(shard, 0o755))
+	require.NoError(t, os.Chmod(shard, 0o755))
+
+	registry := NewRegistry(t.Context(), vaultID,
+		map[string]config.StoreBindingConfig{
+			"archive": {Kind: storeKindFilesystem, Path: root},
+		}, []StoreSpec{{
+			ID: storeID, Kind: storeKindFilesystem, Role: "secondary",
+			Lifecycle: "active", Binding: "archive", OwnershipEpoch: epoch,
+		}})
+	t.Cleanup(func() { require.NoError(t, registry.Close()) })
+	assert.Equal(t, StoreOnline, registry.Observation(storeID).State)
+	require.NoError(t, safefileio.ValidatePrivateDir(shard))
+}
+
 func TestRegistryKeepsUnboundStoreDegraded(t *testing.T) {
 	spec := StoreSpec{
 		ID:   "20000000-0000-4000-8000-000000000001",
-		Kind: "filesystem", Role: "secondary", Lifecycle: "active",
+		Kind: storeKindFilesystem, Role: "secondary", Lifecycle: "active",
 		Binding: "missing", OwnershipEpoch: "30000000-0000-4000-8000-000000000001",
 	}
 	registry := NewRegistry(t.Context(),
