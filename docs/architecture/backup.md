@@ -18,12 +18,21 @@ state. A restored copy is not trusted until `docbank verify` succeeds.
 
 ## Kit integration status
 
-The internal `backupapp` adapter supplies Kit v0.11.0 with Docbank's frozen logical
+The internal `backupapp` adapter supplies Kit with Docbank's frozen logical
 view: every authoritative `blobs` row, representation-neutral fidelity stats,
 and mixed loose/packed content reads. A short daemon freeze opens and pins one
 deferred SQLite read transaction; the freeze then ends, writers resume into the
 WAL, and metadata, content membership, and fidelity statistics continue to see
 the same point-in-time state.
+
+The same pinned transaction emits a separate deterministic
+`docbank-placement-v1` artifact. It names source store UUIDs, display names,
+backend kinds, roles, per-hash store UUIDs, and aggregate counts and bytes.
+Deployment bindings, paths, endpoints, bucket coordinates, credentials,
+ownership epochs, encodings, and pack coordinates are excluded. Placement
+authority changes take the preservation side exclusively for their short
+catalog commit, so the logical membership and placement artifact cannot
+describe different authority handoffs.
 
 Docbank also has a deterministic, versioned JSONL representation of its logical
 metadata, identified in manifests as `docbank-metadata-jsonl-v1`. It contains
@@ -60,6 +69,15 @@ target so callers cannot accidentally separate those policies. Integration
 coverage proves logical JSONL equality, loose and packed source capture,
 packed publication, large loose-object fallback, and reads every restored blob
 through the same mixed store used by a live vault.
+
+Default restore treats the placement artifact as informational and collapses
+all content into a fresh fixed primary. Explicit store mapping first restores
+and proves a complete local copy, then claims fresh target store identities,
+publishes or adopts immutable destination objects, reads every object back,
+and records mapped authority while target-tree coordination remains held.
+Remote-only retirement occurs only after destination authority commits;
+audit-protected bytes retain the primary unless the mapping includes the
+explicit remote-only acknowledgement.
 
 Earlier development snapshots used Kit's SQLite page-map metadata.
 They remain restorable through the same wrapper. New captures always use JSONL;

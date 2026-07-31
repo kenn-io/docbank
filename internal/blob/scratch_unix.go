@@ -3,7 +3,6 @@
 package blob
 
 import (
-	"errors"
 	"fmt"
 	"math"
 
@@ -18,9 +17,6 @@ func availableScratchBytes(path string) (int64, error) {
 	available := stat.Bavail * uint64(stat.Bsize)
 	if available > math.MaxInt64 {
 		return math.MaxInt64, nil
-	}
-	if available == 0 {
-		return 0, errors.New("temporary filesystem reports no available space")
 	}
 	return int64(available), nil
 }

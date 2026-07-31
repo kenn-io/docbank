@@ -1309,6 +1309,8 @@ func TestStorageStatusHumanAndJSON(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "loose: 1 blob(s), 5 byte(s)")
 	assert.Contains(t, out, "packed: 0 live blob(s) in 0 pack(s)")
+	assert.Contains(t, out, `store "primary"`)
+	assert.Contains(t, out, "1 object(s), 5 stored byte(s)")
 
 	out, err = runCLI(t, "storage", "status", "--json")
 	require.NoError(t, err)
@@ -1316,6 +1318,9 @@ func TestStorageStatusHumanAndJSON(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &status))
 	assert.Equal(t, 1, status.LooseBlobs)
 	assert.Equal(t, int64(5), status.LooseBytes)
+	require.Len(t, status.Stores, 1)
+	assert.Equal(t, int64(1), status.Stores[0].SoleAuthorityObjects)
+	assert.Equal(t, int64(1), status.Stores[0].AffectedDocuments)
 }
 
 func TestStorageAddListDetachAndUnregister(t *testing.T) {

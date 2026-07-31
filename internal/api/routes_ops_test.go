@@ -346,6 +346,12 @@ func TestStorageStatusReportsLooseAndPackedUsage(t *testing.T) {
 	assert.Equal(t, 1, status.LooseBlobs)
 	assert.Equal(t, int64(len("packed storage status")), status.LooseBytes)
 	assert.Zero(t, status.Packs)
+	require.Len(t, status.Stores, 1)
+	assert.Equal(t, "primary", status.Stores[0].Role)
+	assert.Equal(t, "online", status.Stores[0].State)
+	assert.Equal(t, int64(1), status.Stores[0].SoleAuthorityObjects)
+	assert.Equal(t, int64(1), status.Stores[0].AffectedDocuments)
+	assert.Zero(t, status.Stores[0].UnreadableObjects)
 
 	packed, err := s.Blobs.Maintainer().Pack(t.Context(), packstore.PackOptions{})
 	require.NoError(t, err)
@@ -389,6 +395,10 @@ func TestVaultInfoIdentifiesRootAndSummarizesContents(t *testing.T) {
 	assert.Equal(t, int64(len(content)), info.TrackedBlobBytes)
 	assert.Equal(t, 1, info.Storage.LooseBlobs)
 	assert.Equal(t, int64(len(content)), info.Storage.LooseBytes)
+	require.Len(t, info.Storage.Stores, 1)
+	assert.Equal(t, int64(1), info.Storage.Stores[0].SoleAuthorityObjects)
+	assert.Zero(t, info.Storage.Stores[0].AffectedDocuments,
+		"the sole blob belongs only to a trashed document")
 }
 
 func TestStoragePackHonorsBudgetAndConverges(t *testing.T) {

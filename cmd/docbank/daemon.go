@@ -140,7 +140,9 @@ func runServe(ctx context.Context) (retErr error) {
 		}
 	}()
 	operationGate := api.NewOperationGate()
-	placementRunner := blob.PlacementRunner{Metadata: s, Blobs: blobs}
+	placementRunner := blob.PlacementRunner{
+		Metadata: s, Blobs: blobs, Commit: operationGate.PhysicalMutate,
+	}
 	if err := placementRunner.Resume(sigCtx, jobSupervisor); err != nil {
 		return fmt.Errorf("resuming durable storage operations: %w", err)
 	}

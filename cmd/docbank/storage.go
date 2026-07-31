@@ -657,10 +657,12 @@ func writeStorageJSON(cmd *cobra.Command, value any) error {
 func writeBlobStore(cmd *cobra.Command, item api.BlobStore) error {
 	_, err := fmt.Fprintf(cmd.OutOrStdout(),
 		"%q %s\n  id: %s\n  kind: %s\n  role: %s\n  lifecycle: %s\n"+
-			"  binding: %s\n  state: %s\n  authority: %d object(s), %d logical byte(s), %d stored byte(s)\n",
+			"  binding: %s\n  state: %s\n  authority: %d object(s), %d logical byte(s), %d stored byte(s)\n"+
+			"  sole authority: %d object(s), %d affected live document(s), %d unreadable object(s)\n",
 		item.Name, item.State, item.ID, item.Kind, item.Role, item.Lifecycle,
 		item.Binding, item.State, item.AuthoritativeObjects,
-		item.LogicalBytes, item.StoredBytes)
+		item.LogicalBytes, item.StoredBytes, item.SoleAuthorityObjects,
+		item.AffectedDocuments, item.UnreadableObjects)
 	if err != nil {
 		return fmt.Errorf("writing blob-store status: %w", err)
 	}

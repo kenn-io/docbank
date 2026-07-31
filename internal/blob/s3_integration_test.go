@@ -163,12 +163,13 @@ func TestS3PlacementLifecycle(t *testing.T) {
 	require.NoError(t, reclaim.ReplaceOwnership(t.Context(), ownership, &taken))
 	require.NoError(t, closeBackend(reclaim))
 	assert.Equal(t, StoreOnline, blobs.RefreshStore(t.Context(), secondary.ID).State)
-	require.NoError(t, metadata.BeginBlobStoreEvacuation(t.Context(), secondary.ID))
 	evacuation, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
 		TargetNodeID: metadata.RootID(), SourceStoreID: secondary.ID,
 		DestinationStoreID: metadata.PrimaryBlobStoreID(), RetireSource: true,
+		Evacuate: true,
 	})
 	require.NoError(t, err)
+	require.NoError(t, metadata.BeginBlobStoreEvacuation(t.Context(), secondary.ID))
 	require.NoError(t, runner.Run(
 		t.Context(), createS3PlacementOperation(t, metadata, "evacuate", evacuation),
 	))

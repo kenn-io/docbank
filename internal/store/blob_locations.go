@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"math"
 
@@ -197,4 +198,129 @@ func writeLooseLocationTx(
 		return fmt.Errorf("recording loose blob location %s: %w", hash, err)
 	}
 	return nil
+}
+
+// AddRestoredBlobLocation grants authority to bytes independently verified
+// during an explicit restore remap. The source primary remains authoritative
+// until the complete mapped copy set has committed.
+func (s *Store) AddRestoredBlobLocation(
+	ctx context.Context,
+	hash string,
+	destination packstore.ReadLocation,
+) error {
+	if _, err := packstore.ParseHash(hash); err != nil {
+		return fmt.Errorf("parsing restored blob hash: %w", err)
+	}
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		var size int64
+		if err := tx.QueryRowContext(
+			ctx, `SELECT size FROM blobs WHERE hash=?`, hash,
+		).Scan(&size); err != nil {
+			return fmt.Errorf("reading restored blob %s: %w", hash, err)
+		}
+		var lifecycle string
+		if err := tx.QueryRowContext(ctx, `
+			SELECT lifecycle FROM blob_stores WHERE store_id=?`,
+			destination.StoreID,
+		).Scan(&lifecycle); err != nil {
+			return fmt.Errorf("reading restored destination %s: %w", destination.StoreID, err)
+		}
+		if lifecycle != blobStoreLifecycleActive {
+			return fmt.Errorf(
+				"restored destination %s is %s: %w",
+				destination.StoreID, lifecycle, ErrBlobStoreState,
+			)
+		}
+		if destination.Loose == nil {
+			return errors.New("restored placement currently requires loose destination authority")
+		}
+		if err := destination.Validate(); err != nil {
+			return fmt.Errorf("validating restored destination: %w", err)
+		}
+		if destination.Loose.LogicalSize != size {
+			return fmt.Errorf(
+				"restored destination size %d does not match logical size %d",
+				destination.Loose.LogicalSize, size,
+			)
+		}
+		if destination.Loose.StoredSize < 0 {
+			return errors.New("restored loose destination has negative stored size")
+		}
+		encoding, err := looseEncodingName(destination.Loose.Encoding)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO blob_locations(
+				blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
+			) VALUES(?,?,?,'loose',?,?,?)
+			ON CONFLICT(blob_hash,store_id) DO UPDATE SET
+				generation=excluded.generation,
+				kind=excluded.kind,
+				encoding=excluded.encoding,
+				stored_size=excluded.stored_size,
+				pack_eligible=excluded.pack_eligible`,
+			hash, destination.StoreID, destination.Generation, encoding,
+			destination.Loose.StoredSize, size <= maxPackEligibleBytes,
+		)
+		if err != nil {
+			return fmt.Errorf("recording restored location for %s: %w", hash, err)
+		}
+		return nil
+	})
+}
+
+// RetireRestoredPrimary revokes the temporary local restore copy only after a
+// verified secondary is authoritative. Audited bytes remain primary-pinned
+// unless the restore mapping explicitly acknowledges remote-only retention.
+func (s *Store) RetireRestoredPrimary(
+	ctx context.Context, hash string, allowAuditedRemoteOnly bool,
+) error {
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		var secondaryCount int
+		if err := tx.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM blob_locations
+			WHERE blob_hash=? AND store_id<>?`,
+			hash, s.primaryStoreID,
+		).Scan(&secondaryCount); err != nil {
+			return fmt.Errorf("checking restored secondary authority for %s: %w", hash, err)
+		}
+		if secondaryCount == 0 {
+			return fmt.Errorf("blob %s has no restored secondary authority", hash)
+		}
+		var primaryKind string
+		if err := tx.QueryRowContext(ctx, `
+			SELECT kind FROM blob_locations WHERE blob_hash=? AND store_id=?`,
+			hash, s.primaryStoreID,
+		).Scan(&primaryKind); err != nil {
+			return fmt.Errorf("reading restored primary authority for %s: %w", hash, err)
+		}
+		if primaryKind != blobLocationKindLoose {
+			return fmt.Errorf("restored primary authority for %s is not loose", hash)
+		}
+		if !allowAuditedRemoteOnly {
+			var audited bool
+			if err := tx.QueryRowContext(ctx, `
+				SELECT EXISTS(
+					SELECT 1
+					FROM content_versions version
+					JOIN audit_memberships membership
+					  ON membership.node_id=version.node_id
+					WHERE version.blob_hash=?
+				)`, hash).Scan(&audited); err != nil {
+				return fmt.Errorf("checking restored audit retention for %s: %w", hash, err)
+			}
+			if audited {
+				return nil
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM blob_locations
+			WHERE blob_hash=? AND store_id=? AND kind='loose'`,
+			hash, s.primaryStoreID,
+		); err != nil {
+			return fmt.Errorf("retiring restored primary location for %s: %w", hash, err)
+		}
+		return nil
+	})
 }

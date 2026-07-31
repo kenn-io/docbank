@@ -45,6 +45,43 @@ func TestGateFreezerBlocksMutationOnlyUntilEnd(t *testing.T) {
 	require.Error(t, freezer.End(context.Background()))
 }
 
+func TestBackupCaptureBlocksPlacementAuthorityCommit(t *testing.T) {
+	g := NewOperationGate()
+	captureStarted := make(chan struct{})
+	releaseCapture := make(chan struct{})
+	captureDone := make(chan error, 1)
+	go func() {
+		captureDone <- g.capture(func() error {
+			close(captureStarted)
+			<-releaseCapture
+			return nil
+		})
+	}()
+	<-captureStarted
+
+	commitStarted := make(chan struct{})
+	commitDone := make(chan error, 1)
+	go func() {
+		commitDone <- g.PhysicalMutate(func() error {
+			close(commitStarted)
+			return nil
+		})
+	}()
+	select {
+	case <-commitStarted:
+		t.Fatal("placement authority commit started during backup capture")
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(releaseCapture)
+	require.NoError(t, <-captureDone)
+	select {
+	case <-commitStarted:
+	case <-time.After(time.Second):
+		t.Fatal("placement authority commit did not resume after backup capture")
+	}
+	require.NoError(t, <-commitDone)
+}
+
 func TestQueuedMaintenanceRejectsRouteMutation(t *testing.T) {
 	g := NewOperationGate()
 	captureEntered := make(chan struct{})

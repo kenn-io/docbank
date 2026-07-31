@@ -432,6 +432,10 @@ func blobStoreAPI(
 	if !observation.ObservedAt.IsZero() {
 		observedAt = observation.ObservedAt.Format(time.RFC3339Nano)
 	}
+	unreadableObjects := int64(0)
+	if observation.State != blob.StoreOnline {
+		unreadableObjects = stats.SoleAuthorityObjects
+	}
 	return BlobStore{
 		StorageStoreStatus: StorageStoreStatus{
 			ID: item.ID, Name: item.Name, Kind: item.Kind, Role: item.Role,
@@ -440,7 +444,10 @@ func blobStoreAPI(
 			AuthoritativeObjects: stats.AuthoritativeObjects,
 			LogicalBytes:         stats.LogicalBytes, StoredBytes: stats.StoredBytes,
 			PackCount: stats.PackCount, DeadPackedBytes: stats.DeadPackedBytes,
-			ObservedAt: observedAt,
+			SoleAuthorityObjects: stats.SoleAuthorityObjects,
+			AffectedDocuments:    stats.AffectedDocuments,
+			UnreadableObjects:    unreadableObjects,
+			ObservedAt:           observedAt,
 		},
 		Binding: item.Binding, OwnershipEpoch: item.OwnershipEpoch,
 		Detail: observation.Detail, CreatedAt: item.CreatedAt.Format(time.RFC3339Nano),

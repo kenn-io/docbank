@@ -318,6 +318,9 @@ export interface StorageStoreStatus {
   stored_bytes: number;
   pack_count: number;
   dead_packed_bytes: number;
+  sole_authority_objects: number;
+  affected_documents: number;
+  unreadable_objects: number;
   observed_at?: string;
 }
 

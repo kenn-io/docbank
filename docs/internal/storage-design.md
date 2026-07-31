@@ -14,8 +14,9 @@ Four layers answer different questions:
    one blob hash, size, media type, and stable version UUID.
 3. A `blobs` row says a content hash is an authorized member of the physical
    store and may be read through docbank.
-4. The pack catalog says where those authorized bytes currently live: loose,
-   packed, or in a lifecycle transition coordinated by Kit.
+4. Store-scoped location rows say which verified filesystem or S3-compatible
+   stores may satisfy the blob, and whether each representation is loose or
+   packed. Kit owns the physical mechanics; Docbank owns placement authority.
 
 These layers must not be collapsed. Node reachability is product policy; blob
 membership is docbank's physical authority boundary; offsets, reader caches,
@@ -24,6 +25,35 @@ and repacking are storage mechanics.
 Stable node IDs are document identity. Paths are derived from parent/name rows
 and can change or be reused. Blob hashes are content identity. Two nodes may
 share a blob without sharing document identity.
+
+## Multi-store physical authority
+
+The built-in filesystem primary is fixed for the first multi-store release and
+receives every ingest before any secondary policy applies. `blob_stores`
+records stable store identity, kind, role, lifecycle, binding-profile name, and
+ownership epoch. `blob_locations` grants per-hash authority under a store and
+generation. Pack and pack-entry identity is `(store_id, pack_id)`, so one
+logical hash may be loose in one store and packed in another.
+
+Binding profiles remain machine-local `config.toml` data. Catalog rows never
+contain filesystem paths, S3 endpoints, buckets, prefixes, or credentials.
+Runtime health is also observation rather than authority: missing bindings,
+offline endpoints, corruption, and ownership mismatch affect candidate
+ordering and typed findings without silently rewriting catalog rows.
+
+Every secondary namespace carries a Kit ownership marker with vault ID, store
+ID, and epoch. A fresh marker check gates destructive work. Explicit takeover
+writes a new epoch before catalog adoption, fencing a restored clone or former
+owner. Filesystem path comparison is only a fast-fail convenience; the marker
+is the authority boundary.
+
+Placement copies and read-back verifies bytes outside SQLite, then performs a
+short revalidating Go-owned catalog transaction. It never holds a database
+transaction across network I/O. Backup holds a preservation lease for the
+complete capture; placement, repair, salvage, and evacuation commits take its
+exclusive side so logical JSONL membership and the deterministic placement
+artifact share one authority boundary. SQL triggers remain limited to
+mechanical pack aggregate projections, never placement policy.
 
 !!! info "Planned — full-audit authority"
     Full-audit policy adds a fourth logical authority: sticky membership and

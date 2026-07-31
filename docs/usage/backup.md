@@ -140,6 +140,7 @@ before publishing the target.
 ```bash
 docbank backup restore [SNAPSHOT] --target DIR [--repo DIR] [--overwrite]
                        [--jobs N] [--force-unlock]
+                       [--store-map OWNER_PRIVATE_FILE]
                        [--progress auto|bar|plain] [--json]
 ```
 
@@ -176,6 +177,22 @@ granted catalog authority by default. A pack or object that exceeds Docbank's
 current storage policy is restored as a verified loose blob instead; the
 result reports the loose count and grouped fallback reasons. This is a
 representation choice, not an integrity failure.
+
+Snapshots also carry a non-secret `docbank-placement-v1` description of source
+store identities and per-hash placement. Default restore deliberately ignores
+that topology and rebuilds every verified blob under a fresh local primary
+store ID and ownership epoch. No source path, endpoint, credential, bucket,
+binding, or ownership epoch is inherited.
+
+`--store-map` explicitly maps source store IDs to binding profiles already
+loaded from the target daemon's `config.toml`. The TOML file must be an
+owner-private regular file and may select a new empty namespace or an explicit
+takeover. Mapped bytes are independently read back before target authority is
+recorded. Unmapped bytes remain local. Audited bytes also remain local unless
+the mapping explicitly selects both `remote_only` and
+`allow_audited_remote_only`. See
+[Multi-store Storage](storage.md#backup-and-restore) for the file format and
+trust boundary.
 
 Interactive restore shows metadata, document, extras, SQLite integrity, and
 manifest-statistics progress as separate stages.

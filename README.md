@@ -81,6 +81,9 @@ Four commitments:
   loose-file/live-packed/dead-packed storage breakdown
 - Mixed loose and packed content storage with explicit pack, GC, and repack,
   plus an opt-in bounded daemon packing schedule
+- Local-first multi-store placement across configured filesystem and
+  S3-compatible secondaries, with fenced ownership, preview-first movement,
+  repair and salvage, complete backup, and topology-independent restore
 - Whole-vault integrity verification
 - Incremental backup repositories with create, list, verify, and confined restore
 - Daemon-first CLI, authenticated loopback HTTP API, and offline OpenAPI output
@@ -167,6 +170,7 @@ docbank backup restore --repo ~/Backups/docbank --target ~/Restores/docbank-test
 - [Using docbank](docs/usage/lifecycle.md), including the
   [web application](docs/usage/web.md),
   [interactive terminal browser](docs/usage/tui.md), backup, and recovery
+- [Multi-store storage](docs/usage/storage.md)
 - [Docbank for agents](docs/agents.md) and the detailed
   [integration guide](docs/agents/integration.md)
 - [Embed in Go](docs/embedding.md)

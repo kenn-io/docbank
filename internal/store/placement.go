@@ -19,6 +19,7 @@ type PlacementRequest struct {
 	SourceStoreID          string `json:"source_store_id"`
 	DestinationStoreID     string `json:"destination_store_id"`
 	RetireSource           bool   `json:"retire_source"`
+	Evacuate               bool   `json:"evacuate,omitempty"`
 	AllowAuditedRemoteOnly bool   `json:"allow_audited_remote_only"`
 }
 
@@ -34,6 +35,7 @@ type PlacementHash struct {
 	RetireSource        bool                    `json:"retire_source"`
 	PackRepackRequired  bool                    `json:"pack_repack_required"`
 	UnavailableAtSource bool                    `json:"unavailable_at_source"`
+	ScratchBytes        int64                   `json:"scratch_bytes,omitempty"`
 }
 
 type PlacementPlan struct {
@@ -81,6 +83,14 @@ func (s *Store) PlanPlacement(
 	if err != nil {
 		return PlacementPlan{}, err
 	}
+	if request.Evacuate &&
+		(!request.RetireSource || request.TargetNodeID != s.rootID ||
+			sourceStore.Role == blobStoreRolePrimary ||
+			destinationStore.Role != blobStoreRolePrimary) {
+		return PlacementPlan{}, errors.New(
+			"evacuation requires the vault root, a secondary source, the primary destination, and source retirement",
+		)
+	}
 	members, err := placementMembersTx(ctx, tx, request.TargetNodeID)
 	if err != nil {
 		return PlacementPlan{}, err
@@ -103,10 +113,9 @@ func (s *Store) PlanPlacement(
 		if err != nil {
 			return PlacementPlan{}, err
 		}
-		// Evacuation owns only authority currently recorded in the draining
-		// source. Unrelated vault membership must not become transfer work.
-		if sourceStore.Lifecycle == blobStoreLifecycleDraining &&
-			source.StoreID == "" {
+		// Evacuation owns only authority currently recorded in its source.
+		// Preview happens before the source transitions to draining.
+		if request.Evacuate && source.StoreID == "" {
 			continue
 		}
 		item.Source = source
@@ -140,6 +149,7 @@ func (s *Store) PlanPlacement(
 					if err != nil {
 						return PlacementPlan{}, err
 					}
+					item.ScratchBytes = sourceReadBytes
 					plan.ScratchBytes = max(plan.ScratchBytes, sourceReadBytes)
 				}
 				plan.RemoteEgressBytes += sourceReadBytes
@@ -392,6 +402,9 @@ func ValidatePlacementPlan(plan PlacementPlan) error {
 	for index := range plan.Hashes {
 		if index > 0 && plan.Hashes[index-1].Hash >= plan.Hashes[index].Hash {
 			return errors.New("placement plan hashes are not strictly ordered")
+		}
+		if plan.Hashes[index].ScratchBytes < 0 {
+			return errors.New("placement plan scratch requirement is negative")
 		}
 		if _, err := packstore.ParseHash(plan.Hashes[index].Hash); err != nil {
 			return fmt.Errorf("placement plan hash: %w", err)

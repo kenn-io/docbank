@@ -213,6 +213,7 @@ var (
 	backupRestoreForceUnlock bool
 	backupRestoreJSON        bool
 	backupRestoreProgress    string
+	backupRestoreStoreMap    string
 )
 
 var backupRestoreCmd = &cobra.Command{
@@ -236,6 +237,16 @@ var backupRestoreCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		storeMap := ""
+		if backupRestoreStoreMap != "" {
+			storeMap, err = filepath.Abs(backupRestoreStoreMap)
+			if err != nil {
+				return usageError(fmt.Errorf(
+					"resolving restore store map %q: %w", backupRestoreStoreMap, err,
+				))
+			}
+			storeMap = filepath.Clean(storeMap)
+		}
 		c, err := client.Ensure(cmd.Context())
 		if err != nil {
 			return err
@@ -243,6 +254,7 @@ var backupRestoreCmd = &cobra.Command{
 		opts := client.BackupRestoreOptions{
 			Repo: repo, Target: target, Overwrite: backupRestoreOverwrite,
 			Jobs: backupRestoreJobs, ForceUnlock: backupRestoreForceUnlock,
+			StoreMap: storeMap,
 		}
 		if len(args) == 1 {
 			opts.SnapshotID = args[0]
@@ -425,6 +437,8 @@ func init() {
 	backupRestoreCmd.Flags().BoolVar(&backupRestoreJSON, "json", false, "machine-readable output")
 	backupRestoreCmd.Flags().StringVar(&backupRestoreProgress, "progress", "auto",
 		"progress output mode: auto, bar, or plain (suppressed by --json)")
+	backupRestoreCmd.Flags().StringVar(&backupRestoreStoreMap, "store-map", "",
+		"owner-private TOML mapping from source store IDs to configured target bindings")
 	backupCmd.AddCommand(backupInitCmd, backupCreateCmd, backupListCmd, backupVerifyCmd,
 		backupRestoreCmd)
 	rootCmd.AddCommand(backupCmd)

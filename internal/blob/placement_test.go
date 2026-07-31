@@ -126,12 +126,13 @@ func TestPlacementRunnerEvacuatesSecondaryToPrimaryAndDetachesIt(t *testing.T) {
 		t.Context(), createPlacementOperation(t, metadata, outbound),
 	))
 
-	require.NoError(t, metadata.BeginBlobStoreEvacuation(t.Context(), secondary.ID))
 	inbound, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
 		TargetNodeID: metadata.RootID(), SourceStoreID: secondary.ID,
 		DestinationStoreID: metadata.PrimaryBlobStoreID(), RetireSource: true,
+		Evacuate: true,
 	})
 	require.NoError(t, err)
+	require.NoError(t, metadata.BeginBlobStoreEvacuation(t.Context(), secondary.ID))
 	operationID := createStorageOperation(t, metadata, "evacuate", inbound)
 
 	require.NoError(t, runner.Run(t.Context(), operationID))
@@ -247,6 +248,43 @@ func TestPlacementRunnerHonorsRecoveryCancellationBeforePublication(t *testing.T
 	operation, err := metadata.StorageOperation(t.Context(), operationID)
 	require.NoError(t, err)
 	assert.Equal(t, store.StorageOperationCancelled, operation.State)
+}
+
+func TestPlacementRunnerHonorsRecoveryCancellationAtCatalogCommit(t *testing.T) {
+	metadata, blobs, runner, secondary := placementTestVault(t)
+	file, hash := placementTestFile(t, metadata, blobs, []byte("cancel recovery commit"))
+	placement, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+		TargetNodeID: file.ID, SourceStoreID: metadata.PrimaryBlobStoreID(),
+		DestinationStoreID: secondary.ID,
+	})
+	require.NoError(t, err)
+	require.NoError(t, runner.Run(
+		t.Context(), createPlacementOperation(t, metadata, placement),
+	))
+	plan, err := metadata.PlanStorageRecovery(
+		t.Context(), "repair", hash, secondary.ID,
+	)
+	require.NoError(t, err)
+	operationID := createRecoveryOperation(t, metadata, plan)
+	runner.Commit = func(fn func() error) error {
+		require.NoError(t, metadata.RequestStorageOperationCancel(
+			t.Context(), operationID,
+		))
+		return fn()
+	}
+
+	require.NoError(t, runner.Run(t.Context(), operationID))
+	operation, err := metadata.StorageOperation(t.Context(), operationID)
+	require.NoError(t, err)
+	assert.Equal(t, store.StorageOperationCancelled, operation.State)
+}
+
+func TestRemainingPlacementScratchSkipsCompletedObjects(t *testing.T) {
+	plan := store.PlacementPlan{Hashes: []store.PlacementHash{{
+		Hash:         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ScratchBytes: 4096,
+	}}}
+	assert.Zero(t, remainingPlacementScratch(plan, 1))
 }
 
 func placementTestVault(

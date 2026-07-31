@@ -13,6 +13,8 @@ import (
 
 type StorageOperationState string
 
+var ErrStorageOperationCancelled = errors.New("storage operation cancellation was requested")
+
 const (
 	StorageOperationQueued    StorageOperationState = "queued"
 	StorageOperationRunning   StorageOperationState = "running"

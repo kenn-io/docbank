@@ -61,6 +61,22 @@ func RestoreWithDriver(
 	driver docsqlite.Driver,
 	opts backup.RestoreOptions,
 ) (*backup.RestoreResult, error) {
+	return RestoreWithPlacement(
+		ctx, repo, version, driver, opts, RestorePlacementOptions{},
+	)
+}
+
+// RestoreWithPlacement restores through one SQLite adapter and optionally
+// reconstructs explicitly mapped source placement while the caller retains
+// target coordination.
+func RestoreWithPlacement(
+	ctx context.Context,
+	repo *backup.Repo,
+	version string,
+	driver docsqlite.Driver,
+	opts backup.RestoreOptions,
+	placement RestorePlacementOptions,
+) (*backup.RestoreResult, error) {
 	if opts.PackedContent != nil {
 		return nil, errors.New("backupapp: restore options must not supply packed content policy")
 	}
@@ -70,16 +86,31 @@ func RestoreWithDriver(
 	if opts.SQLiteOpener != nil {
 		return nil, errors.New("backupapp: restore options must not supply a SQLite opener")
 	}
+	if opts.AuxiliaryTarget != nil {
+		return nil, errors.New("backupapp: restore options must not supply an auxiliary target")
+	}
 	if err := docsqlite.Validate(driver); err != nil {
 		return nil, fmt.Errorf("backupapp: restore SQLite driver: %w", err)
 	}
 	opts.SQLiteOpener = SQLiteOpener(driver)
-	opts.PackedContent = newPackedRestoreTarget()
 	opts.MetadataRestorer = metadataRestorer{driver: driver}
-	app := &packedRestoreApp{App: New(version)}
+	var sourcePlacement placementManifest
+	opts.AuxiliaryTarget = placementRestoreTarget{manifest: &sourcePlacement}
+	var app backup.App = New(version)
+	if placement.Map == nil {
+		opts.PackedContent = newPackedRestoreTarget()
+		app = &packedRestoreApp{App: New(version)}
+	}
 	result, err := backup.Restore(ctx, repo, app, opts)
 	if err != nil {
 		return nil, fmt.Errorf("backupapp: restoring snapshot: %w", err)
+	}
+	if placement.Map != nil {
+		if err := applyRestorePlacement(
+			ctx, opts.TargetDir, result.DBPath, driver, sourcePlacement, placement,
+		); err != nil {
+			return nil, fmt.Errorf("backupapp: applying restore placement: %w", err)
+		}
 	}
 	return result, nil
 }

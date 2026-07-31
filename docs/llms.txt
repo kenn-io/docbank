@@ -25,6 +25,7 @@ Every documentation page is also published as raw Markdown at the same path with
 - [Vault Lifecycle](https://docbank.ai/usage/lifecycle.md): Operate a docbank vault safely from first import through maintenance, upgrades, snapshots, and recovery.
 - [Permanent Audited History](https://docbank.ai/usage/audited-history.md): Permanently retain every version and recorded change beneath a reviewed directory scope.
 - [Trash, GC, Repack & Verify](https://docbank.ai/usage/trash-and-gc.md): The explicit deletion and physical-reclamation lifecycle.
+- [Multi-store Storage](https://docbank.ai/usage/storage.md): Keep document bytes local-first, add filesystem or S3-compatible stores, and move verified authority deliberately.
 - [Backup & Restore](https://docbank.ai/usage/backup.md): Create incremental, verifiable snapshots in an immutable repository.
 - [Troubleshooting](https://docbank.ai/troubleshooting.md): Diagnose docbank startup, daemon, import, integrity, update, and HTTP API failures without risking the vault.
 

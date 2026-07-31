@@ -2902,6 +2902,7 @@ type BackupRestoreOptions struct {
 	Overwrite   bool
 	Jobs        int
 	ForceUnlock bool
+	StoreMap    string
 }
 
 func (c *Client) BackupRestore(
@@ -2995,6 +2996,7 @@ func backupRestoreRequest(opts BackupRestoreOptions) map[string]any {
 	return map[string]any{
 		"repo": opts.Repo, "target": opts.Target, "snapshot_id": opts.SnapshotID,
 		"overwrite": opts.Overwrite, "jobs": opts.Jobs, "force_unlock": opts.ForceUnlock,
+		"store_map": opts.StoreMap,
 	}
 }
 

@@ -230,6 +230,21 @@ identity are preserved in portable metadata. The watcher does not pack content
 itself. Configure `[storage] pack_interval` when accumulated loose content
 should be packed automatically; GC and repack remain explicit.
 
+### Store bindings
+
+`[store_bindings.<name>]` profiles describe machine-local filesystem or
+S3-compatible secondary storage. Filesystem profiles use `kind = "filesystem"`
+and an absolute `path`. S3 profiles use `kind = "s3"`, `endpoint`, `region`,
+`bucket`, optional `prefix`, `credential_profile`, and `force_path_style`.
+`priority` controls read preference after current health; lower values are
+preferred. The complete workflow and examples are in
+[Multi-store Storage](usage/storage.md).
+
+Bindings are loaded once when the daemon starts. They are deliberately absent
+from logical metadata, audit evidence, and backups. Restart after editing a
+profile; Docbank reports a typed stale-configuration error rather than
+hot-reloading credentials or paths underneath active jobs.
+
 ### Bind validation
 
 Validated once, at daemon startup — a misconfiguration fails `docbank

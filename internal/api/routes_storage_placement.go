@@ -14,7 +14,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func registerStoragePlacementRoutes(api huma.API, d Deps) {
+func registerStoragePlacementRoutes(api huma.API, d Deps, g *gate) {
 	previews := newPlacementPreviewRegistry()
 	type previewOutput struct{ Body StoragePlacementPreview }
 	huma.Register(api, huma.Operation{
@@ -67,7 +67,9 @@ func registerStoragePlacementRoutes(api huma.API, d Deps) {
 		if err != nil {
 			return nil, err
 		}
-		runner := blob.PlacementRunner{Metadata: d.Store, Blobs: d.Blobs}
+		runner := blob.PlacementRunner{
+			Metadata: d.Store, Blobs: d.Blobs, Commit: g.PhysicalMutate,
+		}
 		if err := runner.Start(d.Jobs, operation.ID); err != nil {
 			return nil, NewError(http.StatusServiceUnavailable,
 				"storage_job_unavailable",
@@ -98,7 +100,7 @@ func registerStoragePlacementRoutes(api huma.API, d Deps) {
 		}
 		plan, err := d.Store.PlanPlacement(ctx, store.PlacementRequest{
 			TargetNodeID: d.Store.RootID(), SourceStoreID: source.ID,
-			DestinationStoreID: primary.ID, RetireSource: true,
+			DestinationStoreID: primary.ID, RetireSource: true, Evacuate: true,
 		})
 		if err != nil {
 			return nil, FromStoreError(err)
@@ -130,7 +132,9 @@ func registerStoragePlacementRoutes(api huma.API, d Deps) {
 		if err != nil {
 			return nil, err
 		}
-		runner := blob.PlacementRunner{Metadata: d.Store, Blobs: d.Blobs}
+		runner := blob.PlacementRunner{
+			Metadata: d.Store, Blobs: d.Blobs, Commit: g.PhysicalMutate,
+		}
 		if err := runner.Start(d.Jobs, operation.ID); err != nil {
 			return nil, NewError(http.StatusServiceUnavailable,
 				"storage_job_unavailable",
@@ -138,12 +142,12 @@ func registerStoragePlacementRoutes(api huma.API, d Deps) {
 		}
 		return &operationOutput{Body: storageOperationAPI(operation)}, nil
 	})
-	registerStorageRecoveryRoutes(api, d, previews, "repair")
-	registerStorageRecoveryRoutes(api, d, previews, "salvage")
+	registerStorageRecoveryRoutes(api, d, g, previews, "repair")
+	registerStorageRecoveryRoutes(api, d, g, previews, "salvage")
 }
 
 func registerStorageRecoveryRoutes(
-	api huma.API, d Deps, previews *placementPreviewRegistry, kind string,
+	api huma.API, d Deps, g *gate, previews *placementPreviewRegistry, kind string,
 ) {
 	type previewOutput struct{ Body StorageRecoveryPreview }
 	huma.Register(api, huma.Operation{
@@ -203,7 +207,9 @@ func registerStorageRecoveryRoutes(
 		if err != nil {
 			return nil, err
 		}
-		runner := blob.PlacementRunner{Metadata: d.Store, Blobs: d.Blobs}
+		runner := blob.PlacementRunner{
+			Metadata: d.Store, Blobs: d.Blobs, Commit: g.PhysicalMutate,
+		}
 		if err := runner.Start(d.Jobs, operation.ID); err != nil {
 			return nil, NewError(http.StatusServiceUnavailable,
 				"storage_job_unavailable",

@@ -44,6 +44,16 @@ type PlacementReceipt struct {
 type PlacementRunner struct {
 	Metadata *store.Store
 	Blobs    *Store
+	// Commit serializes short catalog-authority transitions with backup
+	// preservation. nil is intended only for direct embedded/test execution.
+	Commit func(func() error) error
+}
+
+func (r PlacementRunner) commit(fn func() error) error {
+	if r.Commit == nil {
+		return fn()
+	}
+	return r.Commit(fn)
 }
 
 func (r PlacementRunner) Start(
@@ -98,9 +108,6 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 	if err := store.ValidatePlacementPlan(plan); err != nil {
 		return r.fail(ctx, operationID, err)
 	}
-	if err := requireScratchSpace(plan.ScratchBytes); err != nil {
-		return r.fail(ctx, operationID, err)
-	}
 	receipt := PlacementReceipt{
 		OperationID: operationID, PlanDigest: plan.Digest,
 		Completed: operation.CompletedObjects, Copied: operation.CopiedObjects,
@@ -119,6 +126,11 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 	}
 	if operation.CompletedObjects > int64(len(plan.Hashes)) {
 		return r.fail(ctx, operationID, errors.New("storage operation cursor exceeds its plan"))
+	}
+	if err := requireScratchSpace(
+		remainingPlacementScratch(plan, operation.CompletedObjects),
+	); err != nil {
+		return r.fail(ctx, operationID, err)
 	}
 	for index := operation.CompletedObjects; index < int64(len(plan.Hashes)); index++ {
 		current, err := r.Metadata.StorageOperation(ctx, operationID)
@@ -171,9 +183,15 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 		}
 	}
 	if operation.Kind == "evacuate" {
-		finalized, err := r.Metadata.FinalizeBlobStoreEvacuation(
-			ctx, operationID, plan.Request.SourceStoreID, plan.Request.DestinationStoreID,
-		)
+		var finalized store.BlobStoreEvacuationFinalization
+		err := r.commit(func() error {
+			var finalizeErr error
+			finalized, finalizeErr = r.Metadata.FinalizeBlobStoreEvacuation(
+				ctx, operationID, plan.Request.SourceStoreID,
+				plan.Request.DestinationStoreID,
+			)
+			return finalizeErr
+		})
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return ctxErr
@@ -185,6 +203,22 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 		if err := r.retirePending(ctx, operationID); err != nil {
 			return err
 		}
+		if !finalized.Detached {
+			err = r.commit(func() error {
+				var finalizeErr error
+				finalized, finalizeErr = r.Metadata.FinalizeBlobStoreEvacuation(
+					ctx, operationID, plan.Request.SourceStoreID,
+					plan.Request.DestinationStoreID,
+				)
+				return finalizeErr
+			})
+			if err != nil {
+				return r.fail(ctx, operationID, fmt.Errorf(
+					"detaching evacuated store after cleanup: %w", err,
+				))
+			}
+			receipt.Evacuated = finalized.Detached
+		}
 	}
 	encoded, err := json.Marshal(receipt)
 	if err != nil {
@@ -194,6 +228,14 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 		ctx, operationID, store.StorageOperationCompleted, string(encoded), "",
 		time.Now().Add(storageOperationRetention),
 	)
+}
+
+func remainingPlacementScratch(plan store.PlacementPlan, completed int64) int64 {
+	var required int64
+	for index := completed; index < int64(len(plan.Hashes)); index++ {
+		required = max(required, plan.Hashes[index].ScratchBytes)
+	}
+	return required
 }
 
 type StorageRecoveryReceipt struct {
@@ -288,7 +330,16 @@ func (r PlacementRunner) runRecovery(
 	if current.CancelRequested {
 		return r.cancelRecovery(ctx, current, plan)
 	}
-	if err := r.Metadata.CommitStorageRecovery(ctx, plan, location); err != nil {
+	if err := r.commit(func() error {
+		return r.Metadata.CommitStorageRecovery(ctx, operation.ID, plan, location)
+	}); err != nil {
+		if errors.Is(err, store.ErrStorageOperationCancelled) {
+			current, readErr := r.Metadata.StorageOperation(ctx, operation.ID)
+			if readErr != nil {
+				return errors.Join(err, readErr)
+			}
+			return r.cancelRecovery(ctx, current, plan)
+		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
@@ -426,9 +477,14 @@ func (r PlacementRunner) placeOne(
 		// cataloged immediately before a process stop, before progress advanced.
 		copied = true
 	}
-	committed, err := r.Metadata.CommitPlacement(
-		ctx, operationID, request, item, destination,
-	)
+	var committed store.PlacementCommit
+	err = r.commit(func() error {
+		var commitErr error
+		committed, commitErr = r.Metadata.CommitPlacement(
+			ctx, operationID, request, item, destination,
+		)
+		return commitErr
+	})
 	if err != nil {
 		return PlacementObjectResult{}, err
 	}

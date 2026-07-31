@@ -612,6 +612,9 @@ type StorageStoreStatus struct {
 	StoredBytes          int64  `json:"stored_bytes"`
 	PackCount            int64  `json:"pack_count"`
 	DeadPackedBytes      int64  `json:"dead_packed_bytes"`
+	SoleAuthorityObjects int64  `json:"sole_authority_objects"`
+	AffectedDocuments    int64  `json:"affected_documents"`
+	UnreadableObjects    int64  `json:"unreadable_objects"`
 	ObservedAt           string `json:"observed_at,omitempty"`
 }
 

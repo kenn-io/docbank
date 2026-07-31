@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/kit/backup"
 
 	"go.kenn.io/docbank/internal/backupapp"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/version"
 	docsqlite "go.kenn.io/docbank/pkg/sqlite"
 )
@@ -47,6 +48,7 @@ type backupRestoreRequest struct {
 	Overwrite   bool   `json:"overwrite,omitempty"`
 	Jobs        int    `json:"jobs,omitempty" minimum:"0"`
 	ForceUnlock bool   `json:"force_unlock,omitempty"`
+	StoreMap    string `json:"store_map,omitempty"`
 }
 
 func registerBackupRoutes(api huma.API, d Deps, g *gate) {
@@ -246,7 +248,8 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 		coordinator := newRestoreTargetCoordinator(
 			target, repo.Root(), d.VaultRoot, in.Body.Overwrite)
 		report, err := restoreBackupSnapshot(
-			ctx, repo, target, in.Body, coordinator, nil, d.Store.SQLiteDriver())
+			ctx, repo, target, in.Body, coordinator, nil, d.Store.SQLiteDriver(),
+			d.Cfg.StoreBindings)
 		if err != nil {
 			return nil, err
 		}
@@ -290,7 +293,7 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 					stream.send(BackupRestoreEvent{
 						Type: "progress", Progress: backupProgress(event),
 					})
-				}, d.Store.SQLiteDriver())
+				}, d.Store.SQLiteDriver(), d.Cfg.StoreBindings)
 			if stream.err() != nil {
 				return
 			}
@@ -440,13 +443,33 @@ func restoreBackupSnapshot(
 	coordinator restoreTargetCoordinator,
 	progress func(backup.ProgressEvent),
 	driver docsqlite.Driver,
+	bindings map[string]config.StoreBindingConfig,
 ) (BackupRestoreReport, error) {
+	var placement backupapp.RestorePlacementOptions
+	if in.StoreMap != "" {
+		if !filepath.IsAbs(in.StoreMap) {
+			return BackupRestoreReport{}, NewError(
+				http.StatusUnprocessableEntity, "restore_store_map_invalid",
+				"restore store-map path must be absolute",
+			)
+		}
+		mapping, err := backupapp.LoadRestoreStoreMap(in.StoreMap)
+		if err != nil {
+			return BackupRestoreReport{}, NewError(
+				http.StatusUnprocessableEntity, "restore_store_map_invalid", err.Error(),
+			)
+		}
+		placement.Map = &mapping
+		placement.Bindings = bindings
+	}
 	return restoreBackupSnapshotWith(
 		ctx, repo, target, in, coordinator, progress,
 		func(ctx context.Context, repo *backup.Repo, version string, opts backup.RestoreOptions) (
 			*backup.RestoreResult, error,
 		) {
-			return backupapp.RestoreWithDriver(ctx, repo, version, driver, opts)
+			return backupapp.RestoreWithPlacement(
+				ctx, repo, version, driver, opts, placement,
+			)
 		}, driver)
 }
 

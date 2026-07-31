@@ -171,8 +171,12 @@ func storageRecoveryDigest(plan StorageRecoveryPlan) (string, error) {
 
 // CommitStorageRecovery grants the fully verified replacement generation.
 func (s *Store) CommitStorageRecovery(
-	ctx context.Context, plan StorageRecoveryPlan, receipt packstore.ReadLocation,
+	ctx context.Context, operationID string,
+	plan StorageRecoveryPlan, receipt packstore.ReadLocation,
 ) error {
+	if err := validateUUIDv4(operationID); err != nil {
+		return fmt.Errorf("invalid storage operation ID: %w", err)
+	}
 	if err := ValidateStorageRecoveryPlan(plan); err != nil {
 		return err
 	}
@@ -184,6 +188,27 @@ func (s *Store) CommitStorageRecovery(
 		return fmt.Errorf("validating storage recovery receipt: %w", err)
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		var state string
+		var cancelRequested bool
+		if err := tx.QueryRowContext(ctx, `
+			SELECT state,cancel_requested
+			FROM storage_operations WHERE operation_id=?`,
+			operationID,
+		).Scan(&state, &cancelRequested); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("storage operation %s: %w", operationID, ErrNotFound)
+			}
+			return fmt.Errorf("reading storage operation before recovery commit: %w", err)
+		}
+		if cancelRequested {
+			return ErrStorageOperationCancelled
+		}
+		if StorageOperationState(state) != StorageOperationRunning {
+			return fmt.Errorf(
+				"storage operation %s is %s: %w",
+				operationID, state, ErrStorageOperationTerminal,
+			)
+		}
 		var size int64
 		if err := tx.QueryRowContext(ctx,
 			`SELECT size FROM blobs WHERE hash=?`, plan.Hash,

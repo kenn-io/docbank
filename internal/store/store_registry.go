@@ -26,6 +26,8 @@ type BlobStoreStats struct {
 	StoredBytes          int64
 	PackCount            int64
 	DeadPackedBytes      int64
+	SoleAuthorityObjects int64
+	AffectedDocuments    int64
 }
 
 // BlobStoreEvacuationFinalization is the catalog result of revoking an empty
@@ -137,7 +139,20 @@ func (s *Store) BlobStoreInventory(
 		           ELSE 0 END), 0),
 		       (SELECT COUNT(*) FROM blob_packs p WHERE p.store_id = s.store_id),
 		       COALESCE((SELECT SUM(MAX(p.stored_bytes - p.live_stored_bytes, 0))
-		                 FROM blob_packs p WHERE p.store_id = s.store_id), 0)
+		                 FROM blob_packs p WHERE p.store_id = s.store_id), 0),
+		       (SELECT COUNT(*) FROM blob_locations sole
+		        WHERE sole.store_id = s.store_id
+		          AND (SELECT COUNT(*) FROM blob_locations peers
+		               WHERE peers.blob_hash = sole.blob_hash) = 1),
+		       (SELECT COUNT(DISTINCT n.id)
+		        FROM nodes n
+		        JOIN content_versions v
+		          ON v.node_id = n.id AND v.version_id = n.current_version_id
+		        JOIN blob_locations sole ON sole.blob_hash = v.blob_hash
+		        WHERE n.trashed_at IS NULL
+		          AND sole.store_id = s.store_id
+		          AND (SELECT COUNT(*) FROM blob_locations peers
+		               WHERE peers.blob_hash = sole.blob_hash) = 1)
 		FROM blob_stores s
 		LEFT JOIN blob_locations l ON l.store_id = s.store_id
 		LEFT JOIN blobs b ON b.hash = l.blob_hash
@@ -155,7 +170,8 @@ func (s *Store) BlobStoreInventory(
 		var stats BlobStoreStats
 		if err := rows.Scan(
 			&id, &stats.AuthoritativeObjects, &stats.LogicalBytes, &stats.StoredBytes,
-			&stats.PackCount, &stats.DeadPackedBytes,
+			&stats.PackCount, &stats.DeadPackedBytes, &stats.SoleAuthorityObjects,
+			&stats.AffectedDocuments,
 		); err != nil {
 			return nil, fmt.Errorf("scanning blob-store inventory: %w", err)
 		}
@@ -216,9 +232,9 @@ func (s *Store) BeginBlobStoreEvacuation(ctx context.Context, selector string) e
 	})
 }
 
-// FinalizeBlobStoreEvacuation atomically proves complete destination coverage,
-// revokes every source location, and detaches the source. The returned refs
-// remain physical cleanup work; catalog authority no longer depends on them.
+// FinalizeBlobStoreEvacuation atomically proves complete destination coverage
+// and revokes every source location. A source remains draining while durable
+// physical cleanup is pending, then a repeated call detaches it.
 func (s *Store) FinalizeBlobStoreEvacuation(
 	ctx context.Context, operationID, sourceID, destinationID string,
 ) (BlobStoreEvacuationFinalization, error) {
@@ -296,14 +312,24 @@ func (s *Store) FinalizeBlobStoreEvacuation(
 		); err != nil {
 			return fmt.Errorf("revoking evacuated locations for %s: %w", source.ID, err)
 		}
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE blob_stores SET lifecycle=? WHERE store_id=?`,
-			blobStoreLifecycleDetached, source.ID,
-		); err != nil {
-			return fmt.Errorf("detaching evacuated blob store %s: %w", source.ID, err)
+		var pendingCleanup int64
+		if err := tx.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM storage_operation_cleanup
+			WHERE operation_id=? AND store_id=?`,
+			operationID, source.ID,
+		).Scan(&pendingCleanup); err != nil {
+			return fmt.Errorf("checking evacuated cleanup for %s: %w", source.ID, err)
+		}
+		if pendingCleanup == 0 {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE blob_stores SET lifecycle=? WHERE store_id=?`,
+				blobStoreLifecycleDetached, source.ID,
+			); err != nil {
+				return fmt.Errorf("detaching evacuated blob store %s: %w", source.ID, err)
+			}
+			result.Detached = true
 		}
 		result.Retire = refs
-		result.Detached = true
 		return nil
 	})
 	return result, err

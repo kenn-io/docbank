@@ -64,6 +64,39 @@ func TestBlobStoreRemovalRequiresEmptyDetachedSecondary(t *testing.T) {
 	require.ErrorIs(t, s.DetachBlobStore(t.Context(), secondary.ID), ErrBlobStoreNotEmpty)
 }
 
+func TestBlobStoreInventoryReportsSoleAuthorityAndAffectedDocuments(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	primary, err := s.PrimaryBlobStore(ctx)
+	require.NoError(t, err)
+	secondary, err := s.PrepareSecondaryBlobStore(
+		"archive", "filesystem", "archive_nas",
+	)
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(ctx, secondary))
+
+	sharedHash := fakeHash("31")
+	soleHash := fakeHash("32")
+	_, err = s.CreateFile(ctx, s.RootID(), "shared.txt", sharedHash, 7, "text/plain")
+	require.NoError(t, err)
+	_, err = s.CreateFile(ctx, s.RootID(), "sole.txt", soleHash, 9, "text/plain")
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO blob_locations(
+			blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
+		) VALUES(?,?,?,'loose','raw',7,1)`,
+		sharedHash, secondary.ID, "31000000-0000-4000-8000-000000000001",
+	)
+	require.NoError(t, err)
+
+	inventory, err := s.BlobStoreInventory(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), inventory[primary.ID].SoleAuthorityObjects)
+	assert.Equal(t, int64(1), inventory[primary.ID].AffectedDocuments)
+	assert.Zero(t, inventory[secondary.ID].SoleAuthorityObjects)
+	assert.Zero(t, inventory[secondary.ID].AffectedDocuments)
+}
+
 func TestBlobStoreRegistrationRejectsConflicts(t *testing.T) {
 	s := newTestStore(t)
 	first, err := s.PrepareSecondaryBlobStore("archive", "filesystem", "archive_nas")
@@ -144,11 +177,21 @@ func TestBlobStoreEvacuationRequiresVerifiedDestinationCoverage(t *testing.T) {
 	assert.Equal(t, []packstore.ObjectRef{{
 		LooseHash: packstore.Hash(hash), LooseEncoding: packstore.LooseEncodingRaw,
 	}}, finalized.Retire)
-	assert.True(t, finalized.Detached)
+	assert.False(t, finalized.Detached)
 	cleanups, err := s.StorageOperationCleanups(ctx, operation.ID)
 	require.NoError(t, err)
 	require.Len(t, cleanups, 1)
 
+	draining, err = s.BlobStoreBySelector(ctx, secondary.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "draining", draining.Lifecycle)
+	require.NoError(t, s.CompleteStorageOperationCleanup(ctx, operation.ID, cleanups[0]))
+
+	finalized, err = s.FinalizeBlobStoreEvacuation(
+		ctx, operation.ID, secondary.ID, primary.ID,
+	)
+	require.NoError(t, err)
+	assert.True(t, finalized.Detached)
 	detached, err := s.BlobStoreBySelector(ctx, secondary.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "detached", detached.Lifecycle)

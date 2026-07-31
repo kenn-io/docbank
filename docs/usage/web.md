@@ -356,6 +356,14 @@ managed blob storage. The summary separates four related quantities:
 - **Pending repack** is logically dead payload that still occupies those
   immutable pack files.
 
+Below the aggregate cards, **Content stores** lists each fixed primary or
+configured secondary with its filesystem/S3 kind, observed online,
+unavailable, fenced, or unbound state, catalog-authorized objects, logical and
+stored bytes, pack count, sole copies, and affected live documents. When an
+unhealthy store is the only authority for an object, the drawer says how many
+objects currently have no readable alternative. It never exposes binding
+paths, endpoints, buckets, credential profiles, or ownership epochs.
+
 Pending-repack bytes have not been reclaimed. This distinction matters when a
 GC report has removed unreachable catalog mappings but the vault's disk usage
 has not fallen by the same amount. The percentage beside the pending total
@@ -364,7 +372,8 @@ a promise that every pack is immediately eligible for compaction.
 
 This drawer is read-only and refreshes from the daemon's current catalog
 authority. It cannot pack, garbage-collect, or repack content. Use
-`docbank storage status` for structured or scripted inspection and run
+`docbank storage status` for structured or scripted inspection, see
+[Multi-store Storage](storage.md) for repair and placement, and run
 `docbank storage repack` explicitly when you intend to rewrite eligible sparse
 packs and retire their old files.
 

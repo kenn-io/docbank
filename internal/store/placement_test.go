@@ -116,11 +116,11 @@ func TestEvacuationPlansOnlyAuthorityHeldBySource(t *testing.T) {
 		firstHash, secondary.ID, "40000000-0000-4000-8000-000000000004",
 	)
 	require.NoError(t, err)
-	require.NoError(t, s.BeginBlobStoreEvacuation(ctx, secondary.ID))
 
 	plan, err := s.PlanPlacement(ctx, PlacementRequest{
 		TargetNodeID: s.RootID(), SourceStoreID: secondary.ID,
 		DestinationStoreID: s.primaryStoreID, RetireSource: true,
+		Evacuate: true,
 	})
 	require.NoError(t, err)
 	require.Len(t, plan.Hashes, 1)
@@ -164,11 +164,10 @@ func TestS3PackedPlacementReportsContainerScratchAndEgress(t *testing.T) {
 		hash, s.primaryStoreID,
 	)
 	require.NoError(t, err)
-	require.NoError(t, s.BeginBlobStoreEvacuation(ctx, secondary.ID))
-
 	plan, err := s.PlanPlacement(ctx, PlacementRequest{
 		TargetNodeID: s.RootID(), SourceStoreID: secondary.ID,
 		DestinationStoreID: s.primaryStoreID, RetireSource: true,
+		Evacuate: true,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, int64(7), plan.TransferBytes)
