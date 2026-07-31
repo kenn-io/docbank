@@ -7,7 +7,6 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -252,7 +251,7 @@ func applyStorageRegistration(
 		}
 	}
 	if plan.binding.Kind == "filesystem" {
-		if err := os.MkdirAll(plan.binding.Path, 0o700); err != nil {
+		if err := blob.EnsureFilesystemNamespace(plan.binding.Path); err != nil {
 			return BlobStore{}, NewError(http.StatusServiceUnavailable,
 				"store_unavailable", fmt.Sprintf("preparing storage namespace: %v", err))
 		}

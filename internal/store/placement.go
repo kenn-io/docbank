@@ -129,6 +129,12 @@ func (s *Store) PlanPlacement(
 			item.Destination = &destination
 		}
 		item.UnavailableAtSource = source.StoreID == ""
+		if item.UnavailableAtSource && item.Destination == nil {
+			return PlacementPlan{}, fmt.Errorf(
+				"placement blob %s is absent from both requested stores: %w",
+				item.Hash, packstore.ErrPhysicalAuthorityMissing,
+			)
+		}
 		item.SharedReference = item.TotalReferences > item.SelectedReferences
 		item.RetireSource = request.RetireSource && !item.UnavailableAtSource &&
 			!item.SharedReference &&

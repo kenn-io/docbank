@@ -554,6 +554,11 @@ func claimRestoreBackend(
 	takeover bool,
 	claimedNamespaces map[packstore.Ownership]string,
 ) (packstore.Backend, error) {
+	if binding.Kind == restoreStoreKindFilesystem {
+		if err := blob.EnsureFilesystemNamespace(binding.Path); err != nil {
+			return nil, fmt.Errorf("prepare private restore store: %w", err)
+		}
+	}
 	backend, err := blob.NewConfiguredBackend(ctx, binding, nil)
 	if err != nil {
 		return nil, err

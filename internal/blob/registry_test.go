@@ -2,6 +2,9 @@ package blob
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -57,6 +60,61 @@ func TestRegistryClassifiesBindingsAndOwnership(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestRegistryKeepsAcquiredBackendUsableAcrossConcurrentRefresh(t *testing.T) {
+	const (
+		vaultID = "10000000-0000-4000-8000-000000000001"
+		storeID = "20000000-0000-4000-8000-000000000001"
+		epoch   = "30000000-0000-4000-8000-000000000001"
+	)
+	root := t.TempDir()
+	expected := packstore.Ownership{
+		Format: packstore.OwnershipFormatV1, Vault: vaultID,
+		Store: storeID, Epoch: epoch,
+	}
+	unattached, err := NewFilesystemBackend(root, nil)
+	require.NoError(t, err)
+	require.NoError(t, unattached.ReplaceOwnership(t.Context(), expected, nil))
+	require.NoError(t, unattached.Close())
+	var opened []*closeObservedBackend
+	registry := newRegistry(t.Context(), vaultID,
+		map[string]config.StoreBindingConfig{
+			"archive": {Kind: "filesystem", Path: root, Priority: 25},
+		}, []StoreSpec{{
+			ID: storeID, Kind: "filesystem", Role: "secondary",
+			Lifecycle: "active", Binding: "archive", OwnershipEpoch: epoch,
+		}}, func(
+			ctx context.Context,
+			binding config.StoreBindingConfig,
+			ownership *packstore.Ownership,
+		) (packstore.Backend, error) {
+			backend, err := NewConfiguredBackend(ctx, binding, ownership)
+			if err != nil {
+				return nil, err
+			}
+			observed := &closeObservedBackend{Backend: backend}
+			opened = append(opened, observed)
+			return observed, nil
+		})
+	t.Cleanup(func() { require.NoError(t, registry.Close()) })
+	backend, ok := registry.WritableBackend(storeID)
+	require.True(t, ok)
+	ready := make(chan struct{})
+	release := make(chan struct{})
+	result := make(chan error, 1)
+	go func() {
+		close(ready)
+		<-release
+		_, err := backend.Ownership(t.Context())
+		result <- err
+	}()
+	<-ready
+	assert.Equal(t, StoreOnline, registry.Refresh(t.Context(), storeID).State)
+	close(release)
+	require.NoError(t, <-result)
+	require.Len(t, opened, 1)
+	assert.False(t, opened[0].closed.Load())
+}
+
 func TestRegistryKeepsUnboundStoreDegraded(t *testing.T) {
 	spec := StoreSpec{
 		ID:   "20000000-0000-4000-8000-000000000001",
@@ -105,6 +163,28 @@ func TestUnboundSecondaryReadReportsStoreUnavailable(t *testing.T) {
 
 type staticLocationResolver struct {
 	resolution packstore.Resolution
+}
+
+type closeObservedBackend struct {
+	packstore.Backend
+
+	closed atomic.Bool
+}
+
+func (b *closeObservedBackend) Ownership(ctx context.Context) (packstore.Ownership, error) {
+	if b.closed.Load() {
+		return packstore.Ownership{}, errors.New("backend was closed")
+	}
+	ownership, err := b.Backend.Ownership(ctx)
+	if err != nil {
+		return packstore.Ownership{}, fmt.Errorf("reading observed backend ownership: %w", err)
+	}
+	return ownership, nil
+}
+
+func (b *closeObservedBackend) Close() error {
+	b.closed.Store(true)
+	return closeBackend(b.Backend)
 }
 
 func (r staticLocationResolver) ResolveLocations(

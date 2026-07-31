@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/pack"
+	"go.kenn.io/kit/packstore"
 )
 
 func TestPlacementPlanUsesRetainedSubtreeAndCompleteReferenceClosure(t *testing.T) {
@@ -89,6 +90,27 @@ func TestPlacementPlanPinsAuditedContentToPrimaryByDefault(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.True(t, remoteOnly.Hashes[0].RetireSource)
+}
+
+func TestPlacementPlanRejectsContentMissingFromBothRequestedStores(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	file, err := s.CreateFile(
+		ctx, s.RootID(), "elsewhere.txt", fakeHash("ac"), 9, "text/plain",
+	)
+	require.NoError(t, err)
+	first, err := s.PrepareSecondaryBlobStore("first", "filesystem", "first")
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(ctx, first))
+	second, err := s.PrepareSecondaryBlobStore("second", "filesystem", "second")
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(ctx, second))
+
+	_, err = s.PlanPlacement(ctx, PlacementRequest{
+		TargetNodeID: file.ID, SourceStoreID: first.ID,
+		DestinationStoreID: second.ID,
+	})
+	require.ErrorIs(t, err, packstore.ErrPhysicalAuthorityMissing)
 }
 
 func TestEvacuationPlansOnlyAuthorityHeldBySource(t *testing.T) {

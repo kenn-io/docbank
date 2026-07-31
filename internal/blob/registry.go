@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -14,6 +16,7 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"go.kenn.io/kit/packstore"
 	"go.kenn.io/kit/packstore/s3store"
+	"go.kenn.io/kit/safefileio"
 
 	"go.kenn.io/docbank/internal/config"
 )
@@ -53,12 +56,16 @@ type StoreObservation struct {
 // A missing or bad binding degrades only that store; it never prevents the
 // local metadata catalog or other stores from opening.
 type Registry struct {
-	mu           sync.RWMutex
-	vaultID      string
-	bindings     map[string]config.StoreBindingConfig
-	openBackend  configuredBackendFactory
-	specs        map[packstore.StoreID]StoreSpec
-	backends     map[packstore.StoreID]packstore.Backend
+	mu          sync.RWMutex
+	vaultID     string
+	bindings    map[string]config.StoreBindingConfig
+	openBackend configuredBackendFactory
+	specs       map[packstore.StoreID]StoreSpec
+	backends    map[packstore.StoreID]packstore.Backend
+	// Kit's backend registry has no release callback. Once a backend has been
+	// handed to a reader, keep a fenced or detached instance alive until daemon
+	// shutdown while immediately removing it from admission for new work.
+	retired      []packstore.Backend
 	observations map[packstore.StoreID]StoreObservation
 }
 
@@ -174,10 +181,7 @@ func (r *Registry) RemoveSpec(id string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	key := packstore.StoreID(id)
-	if backend := r.backends[key]; backend != nil {
-		_ = closeBackend(backend)
-	}
-	delete(r.backends, key)
+	r.retireBackendLocked(key)
 	delete(r.specs, key)
 	delete(r.observations, key)
 }
@@ -189,29 +193,27 @@ func (r *Registry) Binding(name string) (config.StoreBindingConfig, bool) {
 }
 
 func (r *Registry) refreshLocked(ctx context.Context, id packstore.StoreID) {
-	if prior := r.backends[id]; prior != nil {
-		if closer, ok := prior.(io.Closer); ok {
-			_ = closer.Close()
-		}
-		delete(r.backends, id)
-	}
 	spec, ok := r.specs[id]
 	if !ok {
+		r.retireBackendLocked(id)
 		r.observe(id, StoreUnbound, "store is not cataloged", 0)
 		return
 	}
 	if spec.Lifecycle == "detached" {
+		r.retireBackendLocked(id)
 		r.observe(id, StoreDetached, "store is detached", 0)
 		return
 	}
 	binding, ok := r.bindings[spec.Binding]
 	if !ok {
+		r.retireBackendLocked(id)
 		r.observe(id, StoreUnbound,
 			fmt.Sprintf("binding profile %q is not loaded; restart after updating config.toml", spec.Binding),
 			0)
 		return
 	}
 	if binding.Kind != spec.Kind {
+		r.retireBackendLocked(id)
 		r.observe(id, StoreMisconfigured,
 			fmt.Sprintf("binding %q has kind %q, catalog expects %q",
 				spec.Binding, binding.Kind, spec.Kind),
@@ -221,6 +223,27 @@ func (r *Registry) refreshLocked(ctx context.Context, id packstore.StoreID) {
 	expected := packstore.Ownership{
 		Format: packstore.OwnershipFormatV1, Vault: r.vaultID,
 		Store: id, Epoch: spec.OwnershipEpoch,
+	}
+	if prior := r.backends[id]; prior != nil {
+		actual, err := prior.Ownership(ctx)
+		if err == nil && actual == expected {
+			r.observe(id, StoreOnline, "", binding.Priority)
+			return
+		}
+		r.retireBackendLocked(id)
+		if err != nil {
+			var mismatch *packstore.OwnershipMismatchError
+			if errors.As(err, &mismatch) || errors.Is(err, packstore.ErrStoreFenced) {
+				r.observe(id, StoreFenced, err.Error(), binding.Priority)
+			} else {
+				r.observe(id, StoreUnavailable, err.Error(), binding.Priority)
+			}
+			return
+		}
+		r.observe(id, StoreFenced,
+			fmt.Sprintf("ownership marker names store %s epoch %q", actual.Store, actual.Epoch),
+			binding.Priority)
+		return
 	}
 	backend, err := r.openBackend(ctx, binding, &expected)
 	if err != nil {
@@ -249,6 +272,13 @@ func (r *Registry) refreshLocked(ctx context.Context, id packstore.StoreID) {
 	r.observe(id, StoreOnline, "", binding.Priority)
 }
 
+func (r *Registry) retireBackendLocked(id packstore.StoreID) {
+	if backend := r.backends[id]; backend != nil {
+		r.retired = append(r.retired, backend)
+		delete(r.backends, id)
+	}
+}
+
 func (r *Registry) observe(id packstore.StoreID, state StoreState, detail string, priority int) {
 	r.observations[id] = StoreObservation{
 		State: state, Detail: detail, Priority: priority, ObservedAt: time.Now().UTC(),
@@ -264,6 +294,10 @@ func (r *Registry) Close() error {
 		result = errors.Join(result, closeBackend(backend))
 		delete(r.backends, id)
 	}
+	for _, backend := range r.retired {
+		result = errors.Join(result, closeBackend(backend))
+	}
+	r.retired = nil
 	return result
 }
 
@@ -286,6 +320,9 @@ func NewFilesystemBackend(
 	if err != nil {
 		return nil, fmt.Errorf("create filesystem blob layout: %w", err)
 	}
+	if err := validateFilesystemNamespace(layout.Root()); err != nil {
+		return nil, fmt.Errorf("validate private filesystem blob layout: %w", err)
+	}
 	backend, err := packstore.NewFilesystemBackend(layout, packstore.FilesystemBackendOptions{
 		ExpectedOwnership: expected,
 		Limits:            StorageLimits(),
@@ -294,6 +331,68 @@ func NewFilesystemBackend(
 		return nil, fmt.Errorf("create filesystem blob backend: %w", err)
 	}
 	return backend, nil
+}
+
+// EnsureFilesystemNamespace securely creates or repairs one filesystem store
+// before registration or restore changes its ownership marker.
+func EnsureFilesystemNamespace(path string) error {
+	layout, err := packstore.NewLayout(path, packstore.LayoutOptions{
+		Staging: packstore.StagingStoreDirectory, StagingDir: "tmp",
+	})
+	if err != nil {
+		return fmt.Errorf("create filesystem blob layout: %w", err)
+	}
+	root := layout.Root()
+	if err := safefileio.EnsurePrivateDir(root); err != nil {
+		return fmt.Errorf("secure filesystem store root: %w", err)
+	}
+	return checkFilesystemScaffolding(root, safefileio.EnsurePrivateDir)
+}
+
+func validateFilesystemNamespace(root string) error {
+	if _, err := os.Lstat(root); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if err := safefileio.ValidatePrivateDir(root); err != nil {
+		return fmt.Errorf("validate filesystem store root: %w", err)
+	}
+	return checkFilesystemScaffolding(root, safefileio.ValidatePrivateDir)
+}
+
+func checkFilesystemScaffolding(root string, check func(string) error) error {
+	secureChildren := func(parent string) error {
+		entries, err := os.ReadDir(parent)
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			path := filepath.Join(parent, entry.Name())
+			if entry.Type()&os.ModeSymlink != 0 {
+				return fmt.Errorf("filesystem store scaffolding %s is a symlink", path)
+			}
+			if entry.IsDir() {
+				if err := check(path); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	if err := secureChildren(root); err != nil {
+		return err
+	}
+	packs := filepath.Join(root, "packs")
+	if info, err := os.Lstat(packs); err == nil && info.IsDir() {
+		if err := secureChildren(packs); err != nil {
+			return err
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 // NewConfiguredBackend constructs one deployment backend without granting
