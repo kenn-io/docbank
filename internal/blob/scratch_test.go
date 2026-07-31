@@ -2,11 +2,18 @@ package blob
 
 import (
 	"errors"
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestScratchCapacityBytes(t *testing.T) {
+	assert.Equal(t, int64(16_384), scratchCapacityBytes(4, 4_096))
+	assert.Equal(t, int64(math.MaxInt64), scratchCapacityBytes(math.MaxUint64, 4_096))
+	assert.Equal(t, int64(math.MaxInt64), scratchCapacityBytes(math.MaxInt64, 2))
+}
 
 func TestScratchPreflightRejectsInsufficientSpace(t *testing.T) {
 	original := inspectScratchSpace

@@ -3,6 +3,8 @@ package blob
 import (
 	"errors"
 	"fmt"
+	"math"
+	"math/bits"
 	"os"
 )
 
@@ -23,6 +25,14 @@ func (e *ScratchSpaceError) Error() string {
 func (e *ScratchSpaceError) Unwrap() error { return ErrInsufficientScratch }
 
 var inspectScratchSpace = availableScratchBytes
+
+func scratchCapacityBytes(blocks, blockSize uint64) int64 {
+	high, low := bits.Mul64(blocks, blockSize)
+	if high != 0 || low > math.MaxInt64 {
+		return math.MaxInt64
+	}
+	return int64(low)
+}
 
 func requireScratchSpace(required int64) error {
 	if required <= 0 {
