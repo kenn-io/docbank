@@ -148,6 +148,22 @@ func (s *Store) PlanPlacement(
 		switch {
 		case item.Destination != nil:
 			plan.AlreadyPresentBytes += item.Size
+			plan.ReadBackBytes += item.Size
+			if destinationStore.Kind == blobStoreKindS3 {
+				destinationReadBytes := item.Size
+				if destination.Pack != nil {
+					destinationReadBytes, err = blobPackStoredBytesTx(
+						ctx, tx, request.DestinationStoreID,
+						destination.Pack.PackID,
+					)
+					if err != nil {
+						return PlacementPlan{}, err
+					}
+					item.ScratchBytes = destinationReadBytes
+					plan.ScratchBytes = max(plan.ScratchBytes, destinationReadBytes)
+				}
+				plan.RemoteEgressBytes += destinationReadBytes
+			}
 		case !item.UnavailableAtSource:
 			plan.TransferBytes += item.Size
 			plan.ReadBackBytes += item.Size

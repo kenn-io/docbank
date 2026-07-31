@@ -234,6 +234,79 @@ func TestS3PackedPlacementReportsContainerScratchAndEgress(t *testing.T) {
 	assert.Equal(t, int64(4096), plan.ScratchBytes)
 }
 
+func TestPlacementExistingLocalDestinationReportsVerificationRead(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	hash := fakeHash("f7")
+	_, err := s.CreateFile(ctx, s.RootID(), "present.txt", hash, 11, "text/plain")
+	require.NoError(t, err)
+	secondary, err := s.PrepareSecondaryBlobStore(
+		"archive", blobStoreKindFilesystem, "archive",
+	)
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(ctx, secondary))
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO blob_locations(
+			blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
+		) VALUES(?,?,?,'loose','raw',11,1)`,
+		hash, secondary.ID, "40000000-0000-4000-8000-000000000006",
+	)
+	require.NoError(t, err)
+
+	plan, err := s.PlanPlacement(ctx, PlacementRequest{
+		TargetNodeID: s.RootID(), SourceStoreID: secondary.ID,
+		DestinationStoreID: s.primaryStoreID,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(11), plan.AlreadyPresentBytes)
+	assert.Equal(t, int64(11), plan.ReadBackBytes)
+	assert.Zero(t, plan.TransferBytes)
+	assert.Zero(t, plan.RemoteEgressBytes)
+}
+
+func TestPlacementExistingS3PackReportsVerificationEgressAndScratch(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	hash := fakeHash("f8")
+	_, err := s.CreateFile(ctx, s.RootID(), "remote.txt", hash, 13, "text/plain")
+	require.NoError(t, err)
+	secondary, err := s.PrepareSecondaryBlobStore("cold", blobStoreKindS3, "cold")
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(ctx, secondary))
+	packID := pack.NewPackID()
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO blob_packs(store_id,pack_id,entry_count,stored_bytes,created_at)
+		VALUES(?,?,1,8192,?)`,
+		secondary.ID, packID, nowRFC3339(),
+	)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO blob_pack_entries(
+			blob_hash,store_id,pack_id,pack_offset,stored_len,raw_len,flags,crc32c
+		) VALUES(?,?,?,?,13,13,0,0)`,
+		hash, secondary.ID, packID, pack.MinEntryOffset,
+	)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO blob_locations(
+			blob_hash,store_id,generation,kind,stored_size,pack_eligible
+		) VALUES(?,?,?,'packed',13,1)`,
+		hash, secondary.ID, "40000000-0000-4000-8000-000000000007",
+	)
+	require.NoError(t, err)
+
+	plan, err := s.PlanPlacement(ctx, PlacementRequest{
+		TargetNodeID: s.RootID(), SourceStoreID: s.primaryStoreID,
+		DestinationStoreID: secondary.ID,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(13), plan.AlreadyPresentBytes)
+	assert.Equal(t, int64(13), plan.ReadBackBytes)
+	assert.Zero(t, plan.TransferBytes)
+	assert.Equal(t, int64(8192), plan.RemoteEgressBytes)
+	assert.Equal(t, int64(8192), plan.ScratchBytes)
+}
+
 func placementHashesByID(items []PlacementHash) map[string]PlacementHash {
 	result := make(map[string]PlacementHash, len(items))
 	for _, item := range items {

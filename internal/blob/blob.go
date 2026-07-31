@@ -167,6 +167,12 @@ func (s *Store) RefreshStore(ctx context.Context, id string) StoreObservation {
 	return s.registry.Refresh(ctx, id)
 }
 
+func (s *Store) detachRuntimeStore(id string) {
+	if s.registry != nil {
+		s.registry.DetachSpec(id)
+	}
+}
+
 // SalvageBackend opens a fenced secondary only for explicit verified
 // recovery. The caller owns and must close the returned backend.
 func (s *Store) SalvageBackend(

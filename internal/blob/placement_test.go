@@ -548,6 +548,11 @@ func TestPlacementRunnerEvacuatesSecondaryToPrimaryAndDetachesIt(t *testing.T) {
 	evacuated, err := metadata.BlobStoreBySelector(t.Context(), secondary.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "detached", evacuated.Lifecycle)
+	assert.Equal(t, StoreDetached, blobs.registry.Observation(secondary.ID).State)
+	_, readable := blobs.ReadBackend(packstore.StoreID(secondary.ID))
+	assert.False(t, readable)
+	_, writable := blobs.WritableBackend(packstore.StoreID(secondary.ID))
+	assert.False(t, writable)
 
 	stream, _, err := blobs.OpenStreamContext(t.Context(), inbound.Hashes[0].Hash)
 	require.NoError(t, err)

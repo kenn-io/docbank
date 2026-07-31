@@ -145,3 +145,66 @@ func TestStorageOperationCleanupPersistsUntilCompleted(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, items)
 }
+
+func TestPruneExpiredStorageOperationsPreservesPendingCleanup(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	now := time.Now().UTC()
+	createTerminal := func() StorageOperation {
+		created, err := s.CreateStorageOperation(ctx, StorageOperationCreate{
+			Kind: "place", RequestDigest: fakeHash("fa"),
+			RequestJSON: `{"version":1}`, PlanJSON: `{"hashes":[]}`,
+		})
+		require.NoError(t, err)
+		require.NoError(t, s.FinishStorageOperation(
+			ctx, created.ID, StorageOperationCompleted, `{}`, "", now.Add(24*time.Hour),
+		))
+		return created
+	}
+	expired := createTerminal()
+	atBoundary := createTerminal()
+	future := createTerminal()
+	protected := createTerminal()
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE storage_operations
+		SET retention_until=CASE operation_id
+			WHEN ? THEN ? WHEN ? THEN ? WHEN ? THEN ? WHEN ? THEN ? END
+		WHERE operation_id IN (?,?,?,?)`,
+		expired.ID, now.Add(-time.Hour).Format(timestampLayout),
+		atBoundary.ID, now.Format(timestampLayout),
+		future.ID, now.Add(time.Hour).Format(timestampLayout),
+		protected.ID, now.Add(-time.Hour).Format(timestampLayout),
+		expired.ID, atBoundary.ID, future.ID, protected.ID,
+	)
+	require.NoError(t, err)
+	ref := packstore.ObjectRef{
+		LooseHash:     packstore.Hash(fakeHash("fb")),
+		LooseEncoding: packstore.LooseEncodingRaw,
+	}
+	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		return recordStorageOperationCleanupTx(
+			ctx, tx, protected.ID, s.primaryStoreID, []packstore.ObjectRef{ref},
+		)
+	}))
+
+	pruned, err := s.PruneExpiredStorageOperations(ctx, now)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), pruned)
+	_, err = s.StorageOperation(ctx, expired.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+	_, err = s.StorageOperation(ctx, atBoundary.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+	_, err = s.StorageOperation(ctx, future.ID)
+	require.NoError(t, err)
+	_, err = s.StorageOperation(ctx, protected.ID)
+	require.NoError(t, err)
+
+	require.NoError(t, s.CompleteStorageOperationCleanup(
+		ctx, protected.ID, StorageOperationCleanup{StoreID: s.primaryStoreID, Ref: ref},
+	))
+	pruned, err = s.PruneExpiredStorageOperations(ctx, now)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), pruned)
+	_, err = s.StorageOperation(ctx, protected.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+}

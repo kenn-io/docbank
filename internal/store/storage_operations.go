@@ -81,6 +81,11 @@ func (s *Store) CreateStorageOperation(
 	}
 	var created StorageOperation
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		if _, pruneErr := pruneExpiredStorageOperationsTx(
+			ctx, tx, time.Now().UTC(),
+		); pruneErr != nil {
+			return pruneErr
+		}
 		if input.Kind == storageOperationKindEvacuate {
 			var active int
 			if err := tx.QueryRowContext(ctx, `
@@ -116,6 +121,49 @@ func (s *Store) CreateStorageOperation(
 		return err
 	})
 	return created, err
+}
+
+// PruneExpiredStorageOperations removes terminal operation receipts after
+// their retention boundary while preserving every operation that still owns
+// pending physical cleanup.
+func (s *Store) PruneExpiredStorageOperations(
+	ctx context.Context, now time.Time,
+) (int64, error) {
+	if now.IsZero() {
+		return 0, errors.New("storage operation prune time is required")
+	}
+	var pruned int64
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		pruned, err = pruneExpiredStorageOperationsTx(ctx, tx, now.UTC())
+		return err
+	})
+	return pruned, err
+}
+
+func pruneExpiredStorageOperationsTx(
+	ctx context.Context, tx *sql.Tx, now time.Time,
+) (int64, error) {
+	result, err := tx.ExecContext(ctx, `
+		DELETE FROM storage_operations
+		WHERE state IN (?,?,?)
+		  AND retention_until IS NOT NULL
+		  AND retention_until<=?
+		  AND NOT EXISTS (
+			SELECT 1 FROM storage_operation_cleanup cleanup
+			WHERE cleanup.operation_id=storage_operations.operation_id
+		  )`,
+		StorageOperationCompleted, StorageOperationFailed,
+		StorageOperationCancelled, now.Format(timestampLayout),
+	)
+	if err != nil {
+		return 0, fmt.Errorf("pruning expired storage operations: %w", err)
+	}
+	pruned, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("reading expired storage operation prune result: %w", err)
+	}
+	return pruned, nil
 }
 
 func validateStorageOperationCreate(input StorageOperationCreate) error {

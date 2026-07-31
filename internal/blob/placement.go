@@ -92,6 +92,9 @@ func (r PlacementRunner) Start(
 func (r PlacementRunner) Resume(
 	ctx context.Context, supervisor *jobs.Supervisor,
 ) error {
+	if _, err := r.Metadata.PruneExpiredStorageOperations(ctx, time.Now()); err != nil {
+		return fmt.Errorf("pruning expired storage operations: %w", err)
+	}
 	operations, err := r.Metadata.ResumableStorageOperations(ctx)
 	if err != nil {
 		return err
@@ -231,6 +234,9 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 		}
 		receipt.SourceRevoked += finalized.RevokedLocations
 		receipt.Evacuated = finalized.Detached
+		if finalized.Detached {
+			r.Blobs.detachRuntimeStore(plan.Request.SourceStoreID)
+		}
 		if err := r.persistCurrentPlacementProgress(
 			ctx, operationID, &receipt,
 		); err != nil {
@@ -264,6 +270,9 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 				))
 			}
 			receipt.Evacuated = finalized.Detached
+			if finalized.Detached {
+				r.Blobs.detachRuntimeStore(plan.Request.SourceStoreID)
+			}
 		}
 	}
 	encoded, err := json.Marshal(receipt)

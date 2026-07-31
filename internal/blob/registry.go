@@ -258,6 +258,23 @@ func (r *Registry) AttachSpec(ctx context.Context, spec StoreSpec) StoreObservat
 	return r.Refresh(ctx, spec.ID)
 }
 
+// DetachSpec immediately withdraws one catalog-detached store from runtime
+// admission. Existing leased backends remain alive until daemon shutdown.
+func (r *Registry) DetachSpec(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := packstore.StoreID(id)
+	spec, ok := r.specs[key]
+	if !ok {
+		return
+	}
+	spec.Lifecycle = "detached"
+	r.specs[key] = spec
+	r.refreshes[key]++
+	r.retireBackendLocked(key)
+	r.observe(key, StoreDetached, "store is detached", 0)
+}
+
 // RemoveSpec drops one unregistered store from runtime admission.
 func (r *Registry) RemoveSpec(id string) {
 	r.mu.Lock()
