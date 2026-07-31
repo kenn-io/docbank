@@ -179,6 +179,162 @@ func TestRegistryRefreshDoesNotBlockBackendLookup(t *testing.T) {
 	assert.Equal(t, StoreOnline, (<-refreshed).State)
 }
 
+func TestRegistryRefreshReturnsWhenOwnershipProbeIgnoresContext(t *testing.T) {
+	const (
+		vaultID = "10000000-0000-4000-8000-000000000001"
+		storeID = "20000000-0000-4000-8000-000000000001"
+		epoch   = "30000000-0000-4000-8000-000000000001"
+	)
+	expected := packstore.Ownership{
+		Format: packstore.OwnershipFormatV1, Vault: vaultID,
+		Store: storeID, Epoch: epoch,
+	}
+	probeStarted := make(chan struct{})
+	releaseProbe := make(chan struct{})
+	backend := &contextIgnoringOwnershipBackend{
+		ownership: expected, probeStarted: probeStarted, releaseProbe: releaseProbe,
+	}
+	registry := newRegistry(t.Context(), vaultID,
+		map[string]config.StoreBindingConfig{
+			"archive": {Kind: storeKindFilesystem},
+		}, []StoreSpec{{
+			ID: storeID, Kind: storeKindFilesystem, Role: "secondary",
+			Lifecycle: "active", Binding: "archive", OwnershipEpoch: epoch,
+		}}, func(
+			context.Context,
+			config.StoreBindingConfig,
+			*packstore.Ownership,
+		) (packstore.Backend, error) {
+			return backend, nil
+		})
+	t.Cleanup(func() { require.NoError(t, registry.Close()) })
+
+	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
+	defer cancel()
+	refreshed := make(chan StoreObservation, 1)
+	go func() { refreshed <- registry.Refresh(ctx, storeID) }()
+	<-probeStarted
+	select {
+	case observation := <-refreshed:
+		assert.Equal(t, StoreUnavailable, observation.State)
+	case <-time.After(500 * time.Millisecond):
+		close(releaseProbe)
+		<-refreshed
+		t.Fatal("refresh did not return after its context deadline")
+	}
+	close(releaseProbe)
+}
+
+func TestRegistryClosesBackendOpenedAfterProbeDeadline(t *testing.T) {
+	const (
+		vaultID = "10000000-0000-4000-8000-000000000001"
+		storeID = "20000000-0000-4000-8000-000000000001"
+		epoch   = "30000000-0000-4000-8000-000000000001"
+	)
+	expected := packstore.Ownership{
+		Format: packstore.OwnershipFormatV1, Vault: vaultID,
+		Store: storeID, Epoch: epoch,
+	}
+	probeStarted := make(chan struct{})
+	releaseProbe := make(chan struct{})
+	backend := &closeObservedBackend{Backend: &staticOwnershipBackend{ownership: expected}}
+	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
+	defer cancel()
+	registryReady := make(chan *Registry, 1)
+	go func() {
+		registryReady <- newRegistry(ctx, vaultID,
+			map[string]config.StoreBindingConfig{
+				"archive": {Kind: storeKindFilesystem},
+			}, []StoreSpec{{
+				ID: storeID, Kind: storeKindFilesystem, Role: "secondary",
+				Lifecycle: "active", Binding: "archive", OwnershipEpoch: epoch,
+			}}, func(
+				context.Context,
+				config.StoreBindingConfig,
+				*packstore.Ownership,
+			) (packstore.Backend, error) {
+				close(probeStarted)
+				<-releaseProbe
+				return backend, nil
+			})
+	}()
+	<-probeStarted
+	var registry *Registry
+	select {
+	case registry = <-registryReady:
+		assert.Equal(t, StoreUnavailable, registry.Observation(storeID).State)
+	case <-time.After(500 * time.Millisecond):
+		close(releaseProbe)
+		registry = <-registryReady
+		require.NoError(t, registry.Close())
+		t.Fatal("registry construction did not return after its context deadline")
+	}
+	t.Cleanup(func() { require.NoError(t, registry.Close()) })
+	close(releaseProbe)
+	require.Eventually(t, backend.closed.Load, time.Second, time.Millisecond)
+}
+
+func TestRegistryRefreshStoresRunsContextIgnoringProbesConcurrently(t *testing.T) {
+	const vaultID = "10000000-0000-4000-8000-000000000001"
+	storeIDs := []string{
+		"20000000-0000-4000-8000-000000000001",
+		"20000000-0000-4000-8000-000000000002",
+	}
+	epochs := []string{
+		"30000000-0000-4000-8000-000000000001",
+		"30000000-0000-4000-8000-000000000002",
+	}
+	bindings := make(map[string]config.StoreBindingConfig, len(storeIDs))
+	backends := make(map[string]*contextIgnoringOwnershipBackend, len(storeIDs))
+	stores := make([]StoreSpec, 0, len(storeIDs))
+	releaseProbes := make(chan struct{})
+	for i, storeID := range storeIDs {
+		bindingName := fmt.Sprintf("archive-%d", i)
+		bindings[bindingName] = config.StoreBindingConfig{
+			Kind: storeKindFilesystem, Path: storeID,
+		}
+		backends[storeID] = &contextIgnoringOwnershipBackend{
+			ownership: packstore.Ownership{
+				Format: packstore.OwnershipFormatV1, Vault: vaultID,
+				Store: packstore.StoreID(storeID), Epoch: epochs[i],
+			},
+			probeStarted: make(chan struct{}), releaseProbe: releaseProbes,
+		}
+		stores = append(stores, StoreSpec{
+			ID: storeID, Kind: storeKindFilesystem, Role: "secondary",
+			Lifecycle: "active", Binding: bindingName, OwnershipEpoch: epochs[i],
+		})
+	}
+	registry := newRegistry(t.Context(), vaultID, bindings, stores, func(
+		_ context.Context,
+		binding config.StoreBindingConfig,
+		_ *packstore.Ownership,
+	) (packstore.Backend, error) {
+		return backends[binding.Path], nil
+	})
+	t.Cleanup(func() { require.NoError(t, registry.Close()) })
+
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	refreshed := make(chan map[string]StoreObservation, 1)
+	go func() { refreshed <- registry.RefreshStores(ctx, storeIDs) }()
+	for _, storeID := range storeIDs {
+		select {
+		case <-backends[storeID].probeStarted:
+		case <-time.After(250 * time.Millisecond):
+			close(releaseProbes)
+			<-refreshed
+			t.Fatalf("probe for store %s did not start concurrently", storeID)
+		}
+	}
+	close(releaseProbes)
+	observations := <-refreshed
+	require.Len(t, observations, len(storeIDs))
+	for _, storeID := range storeIDs {
+		assert.Equal(t, StoreOnline, observations[storeID].State)
+	}
+}
+
 func TestRegistrySecuresOwnedFilesystemScaffoldingOnAttachment(t *testing.T) {
 	const (
 		vaultID = "10000000-0000-4000-8000-000000000001"
@@ -319,6 +475,33 @@ type closeObservedBackend struct {
 	packstore.Backend
 
 	closed atomic.Bool
+}
+
+type staticOwnershipBackend struct {
+	packstore.Backend
+
+	ownership packstore.Ownership
+}
+
+func (b *staticOwnershipBackend) Ownership(context.Context) (packstore.Ownership, error) {
+	return b.ownership, nil
+}
+
+type contextIgnoringOwnershipBackend struct {
+	packstore.Backend
+
+	ownership    packstore.Ownership
+	probeStarted chan struct{}
+	releaseProbe chan struct{}
+	calls        atomic.Int64
+}
+
+func (b *contextIgnoringOwnershipBackend) Ownership(context.Context) (packstore.Ownership, error) {
+	if b.calls.Add(1) > 1 {
+		close(b.probeStarted)
+		<-b.releaseProbe
+	}
+	return b.ownership, nil
 }
 
 type blockingOwnershipBackend struct {

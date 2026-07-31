@@ -148,11 +148,11 @@ func newRegistry(
 		id := packstore.StoreID(spec.ID)
 		registry.specs[id] = spec
 	}
-	var wait sync.WaitGroup
+	ids := make([]string, 0, len(stores))
 	for _, spec := range stores {
-		wait.Go(func() { registry.Refresh(ctx, spec.ID) })
+		ids = append(ids, spec.ID)
 	}
-	wait.Wait()
+	registry.RefreshStores(ctx, ids)
 	return registry
 }
 
@@ -185,14 +185,39 @@ func (r *Registry) Observation(id string) StoreObservation {
 
 // Refresh performs a fresh marker check for one cataloged store.
 func (r *Registry) Refresh(ctx context.Context, id string) StoreObservation {
+	probeCtx, cancel := context.WithTimeout(ctx, registryProbeTimeout)
+	defer cancel()
+	return r.refresh(probeCtx, id)
+}
+
+// RefreshStores performs fresh marker checks concurrently under one deadline.
+func (r *Registry) RefreshStores(
+	ctx context.Context, ids []string,
+) map[string]StoreObservation {
+	probeCtx, cancel := context.WithTimeout(ctx, registryProbeTimeout)
+	defer cancel()
+	observations := make(map[string]StoreObservation, len(ids))
+	var mu sync.Mutex
+	var wait sync.WaitGroup
+	for _, id := range ids {
+		wait.Go(func() {
+			observation := r.refresh(probeCtx, id)
+			mu.Lock()
+			observations[id] = observation
+			mu.Unlock()
+		})
+	}
+	wait.Wait()
+	return observations
+}
+
+func (r *Registry) refresh(ctx context.Context, id string) StoreObservation {
 	key := packstore.StoreID(id)
 	snapshot, ready := r.beginRefresh(key)
 	if !ready {
 		return r.Observation(id)
 	}
-	probeCtx, cancel := context.WithTimeout(ctx, registryProbeTimeout)
-	defer cancel()
-	result := r.probeStore(probeCtx, snapshot)
+	result := r.probeStoreBounded(ctx, snapshot)
 	return r.installProbe(key, snapshot, result)
 }
 
@@ -353,6 +378,30 @@ func (r *Registry) probeStore(ctx context.Context, refresh registryRefresh) regi
 		return registryProbe{backend: backend, state: StoreFenced, priority: refresh.priority, detail: fmt.Sprintf("ownership marker names store %s epoch %q", actual.Store, actual.Epoch)}
 	}
 	return registryProbe{backend: backend, state: StoreOnline, priority: refresh.priority}
+}
+
+func (r *Registry) probeStoreBounded(
+	ctx context.Context, refresh registryRefresh,
+) registryProbe {
+	result := make(chan registryProbe)
+	abandoned := make(chan struct{})
+	go func() {
+		probed := r.probeStore(ctx, refresh)
+		select {
+		case result <- probed:
+		case <-abandoned:
+			_ = closeBackend(probed.backend)
+		}
+	}()
+	select {
+	case probed := <-result:
+		return probed
+	case <-ctx.Done():
+		close(abandoned)
+		return registryProbe{
+			state: StoreUnavailable, detail: ctx.Err().Error(), priority: refresh.priority,
+		}
+	}
 }
 
 func (r *Registry) installProbe(

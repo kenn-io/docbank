@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"net/http"
 	"time"
 
@@ -460,12 +461,18 @@ func readBlobStores(
 	}
 	observations := make(map[string]blob.StoreObservation, len(stores))
 	online := make(map[string]bool, len(stores))
+	refreshIDs := make([]string, 0, len(stores))
 	for _, item := range stores {
-		observation := storageObservation(d, item)
+		observations[item.ID] = storageObservation(d, item)
 		if refresh && d.BlobRegistry != nil && item.Role != "primary" {
-			observation = d.BlobRegistry.Refresh(ctx, item.ID)
+			refreshIDs = append(refreshIDs, item.ID)
 		}
-		observations[item.ID] = observation
+	}
+	if len(refreshIDs) > 0 {
+		maps.Copy(observations, d.BlobRegistry.RefreshStores(ctx, refreshIDs))
+	}
+	for _, item := range stores {
+		observation := observations[item.ID]
 		online[item.ID] = observation.State == blob.StoreOnline
 	}
 	unreadable, err := d.Store.BlobStoreUnreadableObjects(ctx, online)
