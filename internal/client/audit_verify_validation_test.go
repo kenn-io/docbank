@@ -27,3 +27,23 @@ func TestValidateAuditVerifyBlobProblemsCountsAffectedBlobs(t *testing.T) {
 	report.Problems = append(report.Problems, report.Problems[len(report.Problems)-1])
 	require.Error(t, validateAuditVerifyBlobProblems(report))
 }
+
+func TestValidateAuditVerifyBlobProblemsRejectsContradictoryStorelessEvidence(
+	t *testing.T,
+) {
+	hash := "1111111111111111111111111111111111111111111111111111111111111111"
+	storeID := "10000000-0000-4000-8000-000000000001"
+	report := api.AuditVerifyReport{
+		ProtectedBlobs: 1,
+		Problems: []api.VerifyProblem{{
+			Hash: hash, Problem: "corrupt",
+		}},
+	}
+	require.Error(t, validateAuditVerifyBlobProblems(report))
+
+	report.Problems = []api.VerifyProblem{
+		{Hash: hash, Problem: "missing"},
+		{Hash: hash, StoreID: storeID, Problem: "corrupt"},
+	}
+	require.Error(t, validateAuditVerifyBlobProblems(report))
+}

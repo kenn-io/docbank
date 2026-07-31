@@ -1442,6 +1442,8 @@ func validateAuditVerifyBlobProblems(report api.AuditVerifyReport) error {
 	affected := 0
 	previousHash := ""
 	seenLocations := make(map[string]struct{}, len(report.Problems))
+	storelessHashes := make(map[string]bool)
+	scopedHashes := make(map[string]bool)
 	for index, problem := range report.Problems {
 		if !validSHA256Hex(problem.Hash) ||
 			(problem.StoreID != "" && !validUUIDv4(problem.StoreID)) ||
@@ -1458,6 +1460,23 @@ func validateAuditVerifyBlobProblems(report api.AuditVerifyReport) error {
 			)
 		}
 		seenLocations[locationKey] = struct{}{}
+		if problem.StoreID == "" {
+			if problem.Problem != "missing" || scopedHashes[problem.Hash] {
+				return fmt.Errorf(
+					"audit verification blob problem %d has contradictory storeless evidence",
+					index,
+				)
+			}
+			storelessHashes[problem.Hash] = true
+		} else {
+			if storelessHashes[problem.Hash] {
+				return fmt.Errorf(
+					"audit verification blob problem %d mixes storeless and scoped evidence",
+					index,
+				)
+			}
+			scopedHashes[problem.Hash] = true
+		}
 		if problem.Hash != previousHash {
 			affected++
 			previousHash = problem.Hash
