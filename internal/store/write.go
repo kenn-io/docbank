@@ -407,7 +407,7 @@ func (s *Store) CreateFileWithReceipt(
 			if err != nil {
 				return err
 			}
-			receipt.Physical, err = physicalContentTx(tx, blobHash)
+			receipt.Physical, err = authorizedPhysicalContentTx(tx, blobHash)
 			return err
 		}
 		priorParent, err := liveDirTx(tx, parentID)
@@ -437,7 +437,7 @@ func (s *Store) CreateFileWithReceipt(
 			operation.recordedAt, nil); err != nil {
 			return err
 		}
-		receipt.Physical, err = physicalContentTx(tx, blobHash)
+		receipt.Physical, err = authorizedPhysicalContentTx(tx, blobHash)
 		return err
 	})
 	if err != nil {

@@ -333,6 +333,47 @@ func TestEnsureBlobTxPreservesSecondaryAuthorityForDeduplicatedPrimary(t *testin
 	assert.Equal(t, packstore.StoreID(secondary.ID), resolution.Candidates[0].StoreID)
 }
 
+func TestReplaceContentReceiptAcceptsDeduplicatedSecondaryAuthority(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	target, err := s.CreateFile(ctx, s.RootID(), "target.txt", fakeHash("a5"), 3, "text/plain")
+	require.NoError(t, err)
+	remoteHash := fakeHash("b5")
+	_, err = s.CreateFile(ctx, s.RootID(), "remote.txt", remoteHash, 4, "text/plain")
+	require.NoError(t, err)
+	secondary, err := s.PrepareSecondaryBlobStore(
+		"archive", "filesystem", "archive",
+	)
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(ctx, secondary))
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO blob_locations(
+			blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
+		) VALUES(?,?,?,'loose','raw',4,1)`,
+		remoteHash, secondary.ID, "30000000-0000-4000-8000-000000000004",
+	)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx,
+		`DELETE FROM blob_locations WHERE blob_hash=? AND store_id=?`,
+		remoteHash, s.primaryStoreID,
+	)
+	require.NoError(t, err)
+
+	receipt, err := s.ReplaceContentWithReceipt(
+		ctx, target.ID, target.Revision, remoteHash, 4, "text/plain",
+		BlobPhysical{
+			Encoding: looseEncodingRaw, StoredBytes: 4,
+			PackEligible: true, Created: false,
+		},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, remoteHash, receipt.Node.BlobHash)
+	assert.Equal(t, PhysicalContent{
+		Kind: "loose", Encoding: looseEncodingRaw,
+		LogicalBytes: 4, StoredBytes: 4, PackEligible: true,
+	}, receipt.Physical)
+}
+
 func TestEnsureBlobTxRetiresDeadPackMappingBeforeLooseReingest(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()

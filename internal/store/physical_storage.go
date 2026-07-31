@@ -82,6 +82,23 @@ const physicalContentSQL = `
 	  ON i.blob_hash = l.blob_hash AND i.store_id = l.store_id
 	WHERE b.hash = ?`
 
+const authorizedPhysicalContentSQL = `
+	SELECT b.size, l.encoding, l.stored_size, l.pack_eligible,
+	       i.stored_len, i.flags
+	FROM blobs b
+	JOIN blob_locations l ON l.blob_hash = b.hash
+	LEFT JOIN blob_pack_entries i
+	  ON i.blob_hash = l.blob_hash AND i.store_id = l.store_id
+	WHERE b.hash = ?
+	  AND (
+	    (l.kind = 'loose' AND l.encoding IN ('raw', 'zstd'))
+	    OR (l.kind = 'packed' AND i.blob_hash IS NOT NULL)
+	  )
+	ORDER BY CASE WHEN l.store_id = (
+	  SELECT store_id FROM blob_stores WHERE role = 'primary'
+	) THEN 0 ELSE 1 END, l.store_id
+	LIMIT 1`
+
 func scanPhysicalContent(row scanner, hash string) (PhysicalContent, error) {
 	var (
 		logical      int64
@@ -125,6 +142,21 @@ func scanPhysicalContent(row scanner, hash string) (PhysicalContent, error) {
 
 func physicalContentTx(tx *sql.Tx, hash string) (PhysicalContent, error) {
 	return scanPhysicalContent(tx.QueryRow(physicalContentSQL, hash), hash)
+}
+
+// authorizedPhysicalContentTx returns the deterministic preferred catalog
+// representation for a mutation receipt. Unlike physicalContentTx, which is
+// intentionally primary-specific for local packing and repair, this accepts a
+// secondary-only blob after EnsureBlobTx has validated its authority.
+func authorizedPhysicalContentTx(tx *sql.Tx, hash string) (PhysicalContent, error) {
+	if _, err := requirePhysicalAuthorityTx(tx, hash); err != nil {
+		return PhysicalContent{}, err
+	}
+	physical, err := scanPhysicalContent(tx.QueryRow(authorizedPhysicalContentSQL, hash), hash)
+	if errors.Is(err, ErrNotFound) {
+		return PhysicalContent{}, fmt.Errorf("blob %s: %w", hash, ErrPhysicalAuthorityMissing)
+	}
+	return physical, err
 }
 
 // requirePhysicalAuthorityTx returns the logical size only when the catalog

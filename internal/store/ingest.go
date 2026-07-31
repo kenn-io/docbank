@@ -387,7 +387,7 @@ func (s *Store) ingestFile(
 				if err != nil {
 					return fmt.Errorf("reading idempotent ingest version of node %d: %w", existingID, err)
 				}
-				receipt.Physical, err = physicalContentTx(tx, blobHash)
+				receipt.Physical, err = authorizedPhysicalContentTx(tx, blobHash)
 				if err != nil {
 					return err
 				}
@@ -472,7 +472,7 @@ func (s *Store) ingestFile(
 			}
 		}
 		if completeReceipt {
-			receipt.Physical, err = physicalContentTx(tx, blobHash)
+			receipt.Physical, err = authorizedPhysicalContentTx(tx, blobHash)
 			if err != nil {
 				return err
 			}

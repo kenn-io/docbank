@@ -204,7 +204,7 @@ func (s *Store) ReplaceContentWithReceipt(
 		if err != nil {
 			return err
 		}
-		receipt.Physical, err = physicalContentTx(tx, blobHash)
+		receipt.Physical, err = authorizedPhysicalContentTx(tx, blobHash)
 		return err
 	})
 	if err != nil {
@@ -322,7 +322,7 @@ func (s *Store) confirmContentWithReceiptTx(
 	if err != nil {
 		return ContentWriteReceipt{}, fmt.Errorf("reading current version of node %d: %w", n.ID, err)
 	}
-	receipt.Physical, err = physicalContentTx(tx, blobHash)
+	receipt.Physical, err = authorizedPhysicalContentTx(tx, blobHash)
 	if err != nil {
 		return ContentWriteReceipt{}, err
 	}
