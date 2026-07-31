@@ -225,6 +225,58 @@ func TestRegistryRefreshReturnsWhenOwnershipProbeIgnoresContext(t *testing.T) {
 	close(releaseProbe)
 }
 
+func TestRegistryCoalescesRetriesWhileProbeRemainsBlocked(t *testing.T) {
+	const (
+		vaultID = "10000000-0000-4000-8000-000000000001"
+		storeID = "20000000-0000-4000-8000-000000000001"
+		epoch   = "30000000-0000-4000-8000-000000000001"
+	)
+	expected := packstore.Ownership{
+		Format: packstore.OwnershipFormatV1, Vault: vaultID,
+		Store: storeID, Epoch: epoch,
+	}
+	probeStarted := make(chan struct{})
+	releaseProbe := make(chan struct{})
+	backend := &contextIgnoringOwnershipBackend{
+		ownership: expected, probeStarted: probeStarted, releaseProbe: releaseProbe,
+	}
+	registry := newRegistry(t.Context(), vaultID,
+		map[string]config.StoreBindingConfig{
+			"archive": {Kind: storeKindFilesystem},
+		}, []StoreSpec{{
+			ID: storeID, Kind: storeKindFilesystem, Role: "secondary",
+			Lifecycle: "active", Binding: "archive", OwnershipEpoch: epoch,
+		}}, func(
+			context.Context,
+			config.StoreBindingConfig,
+			*packstore.Ownership,
+		) (packstore.Backend, error) {
+			return backend, nil
+		})
+	t.Cleanup(func() { require.NoError(t, registry.Close()) })
+
+	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
+	first := registry.Refresh(ctx, storeID)
+	cancel()
+	assert.Equal(t, StoreUnavailable, first.State)
+	assert.Equal(t, int64(2), backend.calls.Load())
+
+	retryCtx, cancelRetry := context.WithTimeout(t.Context(), 25*time.Millisecond)
+	retry := registry.Refresh(retryCtx, storeID)
+	cancelRetry()
+	assert.Equal(t, StoreUnavailable, retry.State)
+	assert.Equal(t, int64(2), backend.calls.Load(), "retry started a duplicate blocked probe")
+	close(releaseProbe)
+	require.Eventually(t, func() bool {
+		registry.mu.RLock()
+		defer registry.mu.RUnlock()
+		_, probing := registry.probes[storeID]
+		return !probing
+	}, time.Second, time.Millisecond)
+	assert.Equal(t, StoreOnline, registry.Refresh(t.Context(), storeID).State)
+	assert.Equal(t, int64(3), backend.calls.Load())
+}
+
 func TestRegistryClosesBackendOpenedAfterProbeDeadline(t *testing.T) {
 	const (
 		vaultID = "10000000-0000-4000-8000-000000000001"
@@ -497,8 +549,11 @@ type contextIgnoringOwnershipBackend struct {
 }
 
 func (b *contextIgnoringOwnershipBackend) Ownership(context.Context) (packstore.Ownership, error) {
-	if b.calls.Add(1) > 1 {
-		close(b.probeStarted)
+	call := b.calls.Add(1)
+	if call > 1 {
+		if call == 2 {
+			close(b.probeStarted)
+		}
 		<-b.releaseProbe
 	}
 	return b.ownership, nil

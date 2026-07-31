@@ -74,6 +74,7 @@ type Registry struct {
 	retired      []packstore.Backend
 	observations map[packstore.StoreID]StoreObservation
 	refreshes    map[packstore.StoreID]uint64
+	probes       map[packstore.StoreID]uint64
 	closed       bool
 }
 
@@ -143,6 +144,7 @@ func newRegistry(
 		backends:     make(map[packstore.StoreID]packstore.Backend, len(stores)),
 		observations: make(map[packstore.StoreID]StoreObservation, len(stores)),
 		refreshes:    make(map[packstore.StoreID]uint64, len(stores)),
+		probes:       make(map[packstore.StoreID]uint64, len(stores)),
 	}
 	for _, spec := range stores {
 		id := packstore.StoreID(spec.ID)
@@ -217,7 +219,7 @@ func (r *Registry) refresh(ctx context.Context, id string) StoreObservation {
 	if !ready {
 		return r.Observation(id)
 	}
-	result := r.probeStoreBounded(ctx, snapshot)
+	result := r.probeStoreBounded(ctx, key, snapshot)
 	return r.installProbe(key, snapshot, result)
 }
 
@@ -296,6 +298,9 @@ func (r *Registry) beginRefresh(id packstore.StoreID) (registryRefresh, bool) {
 	if r.closed {
 		return registryRefresh{}, false
 	}
+	if _, probing := r.probes[id]; probing {
+		return registryRefresh{}, false
+	}
 	r.refreshes[id]++
 	generation := r.refreshes[id]
 	spec, ok := r.specs[id]
@@ -329,10 +334,12 @@ func (r *Registry) beginRefresh(id packstore.StoreID) (registryRefresh, bool) {
 		Format: packstore.OwnershipFormatV1, Vault: r.vaultID,
 		Store: id, Epoch: spec.OwnershipEpoch,
 	}
-	return registryRefresh{
+	refresh := registryRefresh{
 		spec: spec, binding: binding, prior: r.backends[id], expected: expected,
 		generation: generation, priority: binding.Priority,
-	}, true
+	}
+	r.probes[id] = generation
+	return refresh, true
 }
 
 func (r *Registry) probeStore(ctx context.Context, refresh registryRefresh) registryProbe {
@@ -381,7 +388,7 @@ func (r *Registry) probeStore(ctx context.Context, refresh registryRefresh) regi
 }
 
 func (r *Registry) probeStoreBounded(
-	ctx context.Context, refresh registryRefresh,
+	ctx context.Context, id packstore.StoreID, refresh registryRefresh,
 ) registryProbe {
 	result := make(chan registryProbe)
 	abandoned := make(chan struct{})
@@ -391,16 +398,26 @@ func (r *Registry) probeStoreBounded(
 		case result <- probed:
 		case <-abandoned:
 			_ = closeBackend(probed.backend)
+			r.finishProbe(id, refresh.generation)
 		}
 	}()
 	select {
 	case probed := <-result:
+		r.finishProbe(id, refresh.generation)
 		return probed
 	case <-ctx.Done():
 		close(abandoned)
 		return registryProbe{
 			state: StoreUnavailable, detail: ctx.Err().Error(), priority: refresh.priority,
 		}
+	}
+}
+
+func (r *Registry) finishProbe(id packstore.StoreID, generation uint64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.probes[id] == generation {
+		delete(r.probes, id)
 	}
 }
 
