@@ -1379,6 +1379,9 @@ func TestStoragePlacementPreviewRunAndDurableReceipt(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &preview))
 	assert.Equal(t, int64(1), preview.Objects)
 	assert.Equal(t, int64(len("placed and still readable")), preview.TransferBytes)
+	assert.Equal(t, preview.TransferBytes, preview.ReadBackBytes)
+	assert.Zero(t, preview.RemoteEgressBytes)
+	assert.Zero(t, preview.ScratchBytes)
 	assert.Zero(t, preview.RetirableBytes)
 
 	out, err = runCLI(t, "storage", "place", "--run", "--token",

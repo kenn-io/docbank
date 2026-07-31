@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/pack"
 )
 
 func TestPlacementPlanUsesRetainedSubtreeAndCompleteReferenceClosure(t *testing.T) {
@@ -124,6 +125,56 @@ func TestEvacuationPlansOnlyAuthorityHeldBySource(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, plan.Hashes, 1)
 	assert.Equal(t, firstHash, plan.Hashes[0].Hash)
+}
+
+func TestS3PackedPlacementReportsContainerScratchAndEgress(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	hash := fakeHash("f6")
+	_, err := s.CreateFile(
+		ctx, s.RootID(), "packed.txt", hash, 7, "text/plain",
+	)
+	require.NoError(t, err)
+	secondary, err := s.PrepareSecondaryBlobStore("cold", "s3", "cold")
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(ctx, secondary))
+	packID := pack.NewPackID()
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO blob_packs(store_id,pack_id,entry_count,stored_bytes,created_at)
+		VALUES(?,?,1,4096,?)`,
+		secondary.ID, packID, nowRFC3339(),
+	)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO blob_pack_entries(
+			blob_hash,store_id,pack_id,pack_offset,stored_len,raw_len,flags,crc32c
+		) VALUES(?,?,?,?,7,7,0,0)`,
+		hash, secondary.ID, packID, pack.MinEntryOffset,
+	)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO blob_locations(
+			blob_hash,store_id,generation,kind,stored_size,pack_eligible
+		) VALUES(?,?,?,'packed',7,1)`,
+		hash, secondary.ID, "40000000-0000-4000-8000-000000000005",
+	)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx,
+		`DELETE FROM blob_locations WHERE blob_hash=? AND store_id=?`,
+		hash, s.primaryStoreID,
+	)
+	require.NoError(t, err)
+	require.NoError(t, s.BeginBlobStoreEvacuation(ctx, secondary.ID))
+
+	plan, err := s.PlanPlacement(ctx, PlacementRequest{
+		TargetNodeID: s.RootID(), SourceStoreID: secondary.ID,
+		DestinationStoreID: s.primaryStoreID, RetireSource: true,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(7), plan.TransferBytes)
+	assert.Equal(t, int64(7), plan.ReadBackBytes)
+	assert.Equal(t, int64(4096), plan.RemoteEgressBytes)
+	assert.Equal(t, int64(4096), plan.ScratchBytes)
 }
 
 func placementHashesByID(items []PlacementHash) map[string]PlacementHash {

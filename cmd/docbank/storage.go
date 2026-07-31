@@ -298,6 +298,12 @@ var storagePlaceCmd = &cobra.Command{
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 			"Transfer: %d byte(s); already present: %d byte(s)\n",
 			preview.TransferBytes, preview.AlreadyPresentBytes)
+		if preview.ReadBackBytes > 0 || preview.RemoteEgressBytes > 0 ||
+			preview.ScratchBytes > 0 {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+				"Verification read-back: %d byte(s); remote egress: %d byte(s); local scratch: %d byte(s)\n",
+				preview.ReadBackBytes, preview.RemoteEgressBytes, preview.ScratchBytes)
+		}
 		if storagePlaceMove {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 				"Source retirement: %d byte(s) eligible; %d shared, %d audit-pinned, %d pack-blocked\n",
@@ -375,6 +381,12 @@ var storageEvacuateCmd = &cobra.Command{
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 			"Move %d object(s), %d byte(s), into the fixed primary\n",
 			preview.Objects, preview.TransferBytes)
+		if preview.ReadBackBytes > 0 || preview.RemoteEgressBytes > 0 ||
+			preview.ScratchBytes > 0 {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+				"Verification read-back: %d byte(s); remote egress: %d byte(s); local scratch: %d byte(s)\n",
+				preview.ReadBackBytes, preview.RemoteEgressBytes, preview.ScratchBytes)
+		}
 		if preview.PackBlockedBytes > 0 {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 				"%d packed byte(s) retire only after complete store handoff\n",

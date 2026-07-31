@@ -98,6 +98,9 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 	if err := store.ValidatePlacementPlan(plan); err != nil {
 		return r.fail(ctx, operationID, err)
 	}
+	if err := requireScratchSpace(plan.ScratchBytes); err != nil {
+		return r.fail(ctx, operationID, err)
+	}
 	receipt := PlacementReceipt{
 		OperationID: operationID, PlanDigest: plan.Digest,
 		Completed: operation.CompletedObjects, Copied: operation.CopiedObjects,

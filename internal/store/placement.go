@@ -132,7 +132,17 @@ func (s *Store) PlanPlacement(
 			plan.TransferBytes += item.Size
 			plan.ReadBackBytes += item.Size
 			if sourceStore.Kind == blobStoreKindS3 {
-				plan.RemoteEgressBytes += item.Size
+				sourceReadBytes := item.Size
+				if source.Pack != nil {
+					sourceReadBytes, err = blobPackStoredBytesTx(
+						ctx, tx, request.SourceStoreID, source.Pack.PackID,
+					)
+					if err != nil {
+						return PlacementPlan{}, err
+					}
+					plan.ScratchBytes = max(plan.ScratchBytes, sourceReadBytes)
+				}
+				plan.RemoteEgressBytes += sourceReadBytes
 			}
 			if destinationStore.Kind == blobStoreKindS3 {
 				plan.RemoteEgressBytes += item.Size
@@ -160,6 +170,23 @@ func (s *Store) PlanPlacement(
 		return PlacementPlan{}, fmt.Errorf("committing placement preview snapshot: %w", err)
 	}
 	return plan, nil
+}
+
+func blobPackStoredBytesTx(
+	ctx context.Context, tx *sql.Tx, storeID, packID string,
+) (int64, error) {
+	var storedBytes int64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT stored_bytes FROM blob_packs
+		WHERE store_id=? AND pack_id=?`,
+		storeID, packID,
+	).Scan(&storedBytes); err != nil {
+		return 0, fmt.Errorf("reading placement source pack %s: %w", packID, err)
+	}
+	if storedBytes < 0 {
+		return 0, fmt.Errorf("placement source pack %s has invalid size", packID)
+	}
+	return storedBytes, nil
 }
 
 func placementStoresTx(
@@ -393,10 +420,9 @@ func (s *Store) CommitPlacement(
 	if err := validateUUIDv4(operationID); err != nil {
 		return PlacementCommit{}, fmt.Errorf("invalid storage operation ID: %w", err)
 	}
-	if destination.StoreID != packstore.StoreID(request.DestinationStoreID) ||
-		destination.Loose == nil || destination.Pack != nil {
+	if destination.StoreID != packstore.StoreID(request.DestinationStoreID) {
 		return PlacementCommit{}, errors.New(
-			"placement destination receipt must be one loose location in the requested store",
+			"placement destination receipt must name the requested store",
 		)
 	}
 	if err := destination.Validate(); err != nil {
@@ -425,28 +451,56 @@ func (s *Store) CommitPlacement(
 		if err != nil {
 			return fmt.Errorf("rechecking placement membership %s: %w", planned.Hash, err)
 		}
-		if size != planned.Size || destination.Loose.LogicalSize != size {
+		var destinationSize int64
+		if destination.Loose != nil {
+			destinationSize = destination.Loose.LogicalSize
+		} else {
+			destinationSize = destination.Pack.RawLen
+		}
+		if size != planned.Size || destinationSize != size {
 			return fmt.Errorf("placement identity changed for %s: %w",
 				planned.Hash, packstore.ErrPhysicalCorrupt)
 		}
-		encoding, err := looseEncodingName(destination.Loose.Encoding)
+		_, currentDestination, err := placementLocationsTx(
+			ctx, tx, planned.Hash, request.SourceStoreID, request.DestinationStoreID,
+		)
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `
-			INSERT INTO blob_locations(
-				blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
-			) VALUES(?,?,?,?,?,?,?)
-			ON CONFLICT(blob_hash,store_id) DO UPDATE SET
-				generation=excluded.generation,kind=excluded.kind,
-				encoding=excluded.encoding,stored_size=excluded.stored_size,
-				pack_eligible=excluded.pack_eligible`,
-			planned.Hash, request.DestinationStoreID, destination.Generation,
-			blobLocationKindLoose, encoding, destination.Loose.StoredSize,
-			size <= maxPackEligibleBytes,
-		)
-		if err != nil {
-			return fmt.Errorf("authorizing placement destination %s: %w", planned.Hash, err)
+		if currentDestination.StoreID != "" {
+			if !sameReadLocation(currentDestination, destination) {
+				return fmt.Errorf("placement destination authority changed for %s: %w",
+					planned.Hash, ErrStaleRevision)
+			}
+		} else {
+			if destination.Loose == nil || destination.Pack != nil ||
+				destination.Loose.LogicalSize != size {
+				return fmt.Errorf(
+					"new placement destination must be one verified loose location: %w",
+					packstore.ErrPhysicalCorrupt,
+				)
+			}
+			encoding, err := looseEncodingName(destination.Loose.Encoding)
+			if err != nil {
+				return err
+			}
+			_, err = tx.ExecContext(ctx, `
+				INSERT INTO blob_locations(
+					blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
+				) VALUES(?,?,?,?,?,?,?)
+				ON CONFLICT(blob_hash,store_id) DO UPDATE SET
+					generation=excluded.generation,kind=excluded.kind,
+					encoding=excluded.encoding,stored_size=excluded.stored_size,
+					pack_eligible=excluded.pack_eligible`,
+				planned.Hash, request.DestinationStoreID, destination.Generation,
+				blobLocationKindLoose, encoding, destination.Loose.StoredSize,
+				size <= maxPackEligibleBytes,
+			)
+			if err != nil {
+				return fmt.Errorf(
+					"authorizing placement destination %s: %w", planned.Hash, err,
+				)
+			}
 		}
 		committed.DestinationAuthorized = true
 
@@ -531,6 +585,18 @@ func (s *Store) CommitPlacement(
 		return nil
 	})
 	return committed, err
+}
+
+func sameReadLocation(first, second packstore.ReadLocation) bool {
+	if first.StoreID != second.StoreID || first.Generation != second.Generation ||
+		(first.Loose == nil) != (second.Loose == nil) ||
+		(first.Pack == nil) != (second.Pack == nil) {
+		return false
+	}
+	if first.Loose != nil && *first.Loose != *second.Loose {
+		return false
+	}
+	return first.Pack == nil || *first.Pack == *second.Pack
 }
 
 func looseEncodingName(value packstore.LooseEncoding) (string, error) {

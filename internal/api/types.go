@@ -645,6 +645,9 @@ type StoragePlacementPreview struct {
 	Versions            int64  `json:"versions"`
 	LogicalBytes        int64  `json:"logical_bytes"`
 	TransferBytes       int64  `json:"transfer_bytes"`
+	ReadBackBytes       int64  `json:"read_back_bytes"`
+	RemoteEgressBytes   int64  `json:"remote_egress_bytes"`
+	ScratchBytes        int64  `json:"scratch_bytes"`
 	AlreadyPresentBytes int64  `json:"already_present_bytes"`
 	RetirableBytes      int64  `json:"retirable_bytes"`
 	SharedBytes         int64  `json:"shared_bytes"`
