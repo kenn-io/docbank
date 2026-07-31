@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -118,6 +119,64 @@ func TestRegistryKeepsAcquiredBackendUsableAcrossConcurrentRefresh(t *testing.T)
 	require.NoError(t, <-result)
 	require.Len(t, opened, 1)
 	assert.False(t, opened[0].closed.Load())
+}
+
+func TestRegistryRefreshDoesNotBlockBackendLookup(t *testing.T) {
+	const (
+		vaultID = "10000000-0000-4000-8000-000000000001"
+		storeID = "20000000-0000-4000-8000-000000000001"
+		epoch   = "30000000-0000-4000-8000-000000000001"
+	)
+	root := t.TempDir()
+	require.NoError(t, EnsureFilesystemNamespace(root))
+	expected := packstore.Ownership{
+		Format: packstore.OwnershipFormatV1, Vault: vaultID,
+		Store: storeID, Epoch: epoch,
+	}
+	unattached, err := NewFilesystemBackend(root, nil)
+	require.NoError(t, err)
+	require.NoError(t, unattached.ReplaceOwnership(t.Context(), expected, nil))
+	require.NoError(t, unattached.Close())
+
+	probeStarted := make(chan struct{})
+	releaseProbe := make(chan struct{})
+	registry := newRegistry(t.Context(), vaultID,
+		map[string]config.StoreBindingConfig{
+			"archive": {Kind: storeKindFilesystem, Path: root},
+		}, []StoreSpec{{
+			ID: storeID, Kind: storeKindFilesystem, Role: "secondary",
+			Lifecycle: "active", Binding: "archive", OwnershipEpoch: epoch,
+		}}, func(
+			ctx context.Context,
+			binding config.StoreBindingConfig,
+			ownership *packstore.Ownership,
+		) (packstore.Backend, error) {
+			backend, openErr := NewConfiguredBackend(ctx, binding, ownership)
+			if openErr != nil {
+				return nil, openErr
+			}
+			return &blockingOwnershipBackend{
+				Backend: backend, probeStarted: probeStarted, releaseProbe: releaseProbe,
+			}, nil
+		})
+	t.Cleanup(func() { require.NoError(t, registry.Close()) })
+
+	refreshed := make(chan StoreObservation, 1)
+	go func() { refreshed <- registry.Refresh(t.Context(), storeID) }()
+	<-probeStarted
+	lookup := make(chan bool, 1)
+	go func() {
+		_, ok := registry.Backend(storeID)
+		lookup <- ok
+	}()
+	select {
+	case ok := <-lookup:
+		assert.True(t, ok)
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("backend lookup blocked behind remote ownership probe")
+	}
+	close(releaseProbe)
+	assert.Equal(t, StoreOnline, (<-refreshed).State)
 }
 
 func TestRegistrySecuresOwnedFilesystemScaffoldingOnAttachment(t *testing.T) {
@@ -260,6 +319,30 @@ type closeObservedBackend struct {
 	packstore.Backend
 
 	closed atomic.Bool
+}
+
+type blockingOwnershipBackend struct {
+	packstore.Backend
+
+	probeStarted chan struct{}
+	releaseProbe chan struct{}
+	calls        atomic.Int64
+}
+
+func (b *blockingOwnershipBackend) Ownership(ctx context.Context) (packstore.Ownership, error) {
+	if b.calls.Add(1) > 1 {
+		close(b.probeStarted)
+		select {
+		case <-ctx.Done():
+			return packstore.Ownership{}, ctx.Err()
+		case <-b.releaseProbe:
+		}
+	}
+	ownership, err := b.Backend.Ownership(ctx)
+	if err != nil {
+		return packstore.Ownership{}, fmt.Errorf("reading blocking backend ownership: %w", err)
+	}
+	return ownership, nil
 }
 
 func (b *closeObservedBackend) Ownership(ctx context.Context) (packstore.Ownership, error) {

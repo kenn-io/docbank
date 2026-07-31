@@ -1139,12 +1139,18 @@ func TestContentVersionPruneRejectsUnprovenReceipt(t *testing.T) {
 		ReleasableBytes: 12, LooseBlobsPendingGC: 1, LooseBytesPendingGC: 12,
 	}
 	tests := map[string]func(*api.VersionPruneReport){
-		"node":      func(r *api.VersionPruneReport) { r.Node.ID++ },
-		"revision":  func(r *api.VersionPruneReport) { r.Node.Revision++ },
-		"current":   func(r *api.VersionPruneReport) { r.Node.CurrentVersionID = oldID },
-		"logical":   func(r *api.VersionPruneReport) { r.LogicalBytes++ },
-		"unique":    func(r *api.VersionPruneReport) { r.UniqueBlobs++ },
-		"negative":  func(r *api.VersionPruneReport) { r.ReleasableBytes = -1 },
+		"node":     func(r *api.VersionPruneReport) { r.Node.ID++ },
+		"revision": func(r *api.VersionPruneReport) { r.Node.Revision++ },
+		"current":  func(r *api.VersionPruneReport) { r.Node.CurrentVersionID = oldID },
+		"logical":  func(r *api.VersionPruneReport) { r.LogicalBytes++ },
+		"unique":   func(r *api.VersionPruneReport) { r.UniqueBlobs++ },
+		"negative": func(r *api.VersionPruneReport) { r.ReleasableBytes = -1 },
+		"negative mixed": func(r *api.VersionPruneReport) {
+			r.MixedBlobsPendingMaintenance = -1
+		},
+		"impossible mixed": func(r *api.VersionPruneReport) {
+			r.MixedBlobsPendingMaintenance = 1
+		},
 		"duplicate": func(r *api.VersionPruneReport) { r.DependencyRetained = r.Candidates },
 		"etag":      func(_ *api.VersionPruneReport) {},
 	}

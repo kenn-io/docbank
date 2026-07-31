@@ -450,8 +450,11 @@ candidate IDs through `version_ids`.
 
 The receipt separates logical history bytes from physical consequences. Shared
 blobs remain reachable, authority-free loose blobs await GC, and dead packed
-payload awaits GC followed by repack. Pruning itself does not claim physical
-space reclamation.
+payload awaits GC followed by repack. Loose and packed counts may overlap when
+one blob has both representations across stores; the receipt reports that
+intersection as `mixed_blobs_pending_maintenance`, and its physical byte totals
+cover all affected authoritative locations. Pruning itself does not claim
+physical space reclamation.
 
 ## Addendum: tags
 

@@ -38,6 +38,8 @@ const (
 
 var errStoreOwnershipUnavailable = errors.New("store ownership is unavailable")
 
+const registryProbeTimeout = 5 * time.Second
+
 // StoreSpec is the catalog authority needed to bind one runtime backend.
 type StoreSpec struct {
 	ID             string
@@ -71,6 +73,8 @@ type Registry struct {
 	// shutdown while immediately removing it from admission for new work.
 	retired      []packstore.Backend
 	observations map[packstore.StoreID]StoreObservation
+	refreshes    map[packstore.StoreID]uint64
+	closed       bool
 }
 
 // NewRegistry binds every active secondary that can prove its expected
@@ -138,12 +142,17 @@ func newRegistry(
 		specs:        make(map[packstore.StoreID]StoreSpec, len(stores)),
 		backends:     make(map[packstore.StoreID]packstore.Backend, len(stores)),
 		observations: make(map[packstore.StoreID]StoreObservation, len(stores)),
+		refreshes:    make(map[packstore.StoreID]uint64, len(stores)),
 	}
 	for _, spec := range stores {
 		id := packstore.StoreID(spec.ID)
 		registry.specs[id] = spec
-		registry.refreshLocked(ctx, id)
 	}
+	var wait sync.WaitGroup
+	for _, spec := range stores {
+		wait.Go(func() { registry.Refresh(ctx, spec.ID) })
+	}
+	wait.Wait()
 	return registry
 }
 
@@ -176,10 +185,15 @@ func (r *Registry) Observation(id string) StoreObservation {
 
 // Refresh performs a fresh marker check for one cataloged store.
 func (r *Registry) Refresh(ctx context.Context, id string) StoreObservation {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.refreshLocked(ctx, packstore.StoreID(id))
-	return r.observations[packstore.StoreID(id)]
+	key := packstore.StoreID(id)
+	snapshot, ready := r.beginRefresh(key)
+	if !ready {
+		return r.Observation(id)
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, registryProbeTimeout)
+	defer cancel()
+	result := r.probeStore(probeCtx, snapshot)
+	return r.installProbe(key, snapshot, result)
 }
 
 // SalvageBackend opens a fenced namespace for explicit verified read-only
@@ -210,11 +224,11 @@ func (r *Registry) SalvageBackend(
 // without reloading deployment configuration.
 func (r *Registry) AttachSpec(ctx context.Context, spec StoreSpec) StoreObservation {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	id := packstore.StoreID(spec.ID)
 	r.specs[id] = spec
-	r.refreshLocked(ctx, id)
-	return r.observations[id]
+	r.refreshes[id]++
+	r.mu.Unlock()
+	return r.Refresh(ctx, spec.ID)
 }
 
 // RemoveSpec drops one unregistered store from runtime admission.
@@ -222,6 +236,7 @@ func (r *Registry) RemoveSpec(id string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	key := packstore.StoreID(id)
+	r.refreshes[key]++
 	r.retireBackendLocked(key)
 	delete(r.specs, key)
 	delete(r.observations, key)
@@ -233,17 +248,41 @@ func (r *Registry) Binding(name string) (config.StoreBindingConfig, bool) {
 	return binding, ok
 }
 
-func (r *Registry) refreshLocked(ctx context.Context, id packstore.StoreID) {
+type registryRefresh struct {
+	spec       StoreSpec
+	binding    config.StoreBindingConfig
+	prior      packstore.Backend
+	expected   packstore.Ownership
+	generation uint64
+	priority   int
+}
+
+type registryProbe struct {
+	backend   packstore.Backend
+	keepPrior bool
+	state     StoreState
+	detail    string
+	priority  int
+}
+
+func (r *Registry) beginRefresh(id packstore.StoreID) (registryRefresh, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return registryRefresh{}, false
+	}
+	r.refreshes[id]++
+	generation := r.refreshes[id]
 	spec, ok := r.specs[id]
 	if !ok {
 		r.retireBackendLocked(id)
 		r.observe(id, StoreUnbound, "store is not cataloged", 0)
-		return
+		return registryRefresh{}, false
 	}
 	if spec.Lifecycle == "detached" {
 		r.retireBackendLocked(id)
 		r.observe(id, StoreDetached, "store is detached", 0)
-		return
+		return registryRefresh{}, false
 	}
 	binding, ok := r.bindings[spec.Binding]
 	if !ok {
@@ -251,7 +290,7 @@ func (r *Registry) refreshLocked(ctx context.Context, id packstore.StoreID) {
 		r.observe(id, StoreUnbound,
 			fmt.Sprintf("binding profile %q is not loaded; restart after updating config.toml", spec.Binding),
 			0)
-		return
+		return registryRefresh{}, false
 	}
 	if binding.Kind != spec.Kind {
 		r.retireBackendLocked(id)
@@ -259,64 +298,90 @@ func (r *Registry) refreshLocked(ctx context.Context, id packstore.StoreID) {
 			fmt.Sprintf("binding %q has kind %q, catalog expects %q",
 				spec.Binding, binding.Kind, spec.Kind),
 			binding.Priority)
-		return
+		return registryRefresh{}, false
 	}
 	expected := packstore.Ownership{
 		Format: packstore.OwnershipFormatV1, Vault: r.vaultID,
 		Store: id, Epoch: spec.OwnershipEpoch,
 	}
-	if prior := r.backends[id]; prior != nil {
+	return registryRefresh{
+		spec: spec, binding: binding, prior: r.backends[id], expected: expected,
+		generation: generation, priority: binding.Priority,
+	}, true
+}
+
+func (r *Registry) probeStore(ctx context.Context, refresh registryRefresh) registryProbe {
+	if prior := refresh.prior; prior != nil {
 		actual, err := prior.Ownership(ctx)
-		if err == nil && actual == expected {
-			r.observe(id, StoreOnline, "", binding.Priority)
-			return
+		if err == nil && actual == refresh.expected {
+			return registryProbe{
+				keepPrior: true, state: StoreOnline, priority: refresh.priority,
+			}
 		}
-		r.retireBackendLocked(id)
 		if err != nil {
 			var mismatch *packstore.OwnershipMismatchError
 			if errors.As(err, &mismatch) || errors.Is(err, packstore.ErrStoreFenced) {
-				r.observe(id, StoreFenced, err.Error(), binding.Priority)
-			} else {
-				r.observe(id, StoreUnavailable, err.Error(), binding.Priority)
+				return registryProbe{state: StoreFenced, detail: err.Error(), priority: refresh.priority}
 			}
-			return
+			return registryProbe{state: StoreUnavailable, detail: err.Error(), priority: refresh.priority}
 		}
-		r.observe(id, StoreFenced,
-			fmt.Sprintf("ownership marker names store %s epoch %q", actual.Store, actual.Epoch),
-			binding.Priority)
-		return
+		return registryProbe{state: StoreFenced, priority: refresh.priority, detail: fmt.Sprintf("ownership marker names store %s epoch %q", actual.Store, actual.Epoch)}
 	}
-	backend, err := r.openBackend(ctx, binding, &expected)
+	backend, err := r.openBackend(ctx, refresh.binding, &refresh.expected)
 	if err != nil {
 		if errors.Is(err, packstore.ErrStoreFenced) {
-			r.observe(id, StoreFenced, err.Error(), binding.Priority)
-		} else if errors.Is(err, errStoreOwnershipUnavailable) {
-			r.observe(id, StoreUnavailable, err.Error(), binding.Priority)
-		} else {
-			r.observe(id, StoreMisconfigured, err.Error(), binding.Priority)
+			return registryProbe{state: StoreFenced, detail: err.Error(), priority: refresh.priority}
+		} else if errors.Is(err, errStoreOwnershipUnavailable) ||
+			errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return registryProbe{state: StoreUnavailable, detail: err.Error(), priority: refresh.priority}
 		}
-		return
+		return registryProbe{state: StoreMisconfigured, detail: err.Error(), priority: refresh.priority}
 	}
 	actual, err := backend.Ownership(ctx)
 	if err != nil {
 		var mismatch *packstore.OwnershipMismatchError
 		if errors.As(err, &mismatch) || errors.Is(err, packstore.ErrStoreFenced) {
-			r.observe(id, StoreFenced, err.Error(), binding.Priority)
-		} else {
-			r.observe(id, StoreUnavailable, err.Error(), binding.Priority)
+			return registryProbe{
+				backend: backend, state: StoreFenced, detail: err.Error(), priority: refresh.priority,
+			}
 		}
-		_ = closeBackend(backend)
-		return
+		return registryProbe{
+			backend: backend, state: StoreUnavailable, detail: err.Error(), priority: refresh.priority,
+		}
 	}
-	if actual != expected {
-		r.observe(id, StoreFenced,
-			fmt.Sprintf("ownership marker names store %s epoch %q", actual.Store, actual.Epoch),
-			binding.Priority)
-		_ = closeBackend(backend)
-		return
+	if actual != refresh.expected {
+		return registryProbe{backend: backend, state: StoreFenced, priority: refresh.priority, detail: fmt.Sprintf("ownership marker names store %s epoch %q", actual.Store, actual.Epoch)}
 	}
-	r.backends[id] = backend
-	r.observe(id, StoreOnline, "", binding.Priority)
+	return registryProbe{backend: backend, state: StoreOnline, priority: refresh.priority}
+}
+
+func (r *Registry) installProbe(
+	id packstore.StoreID, refresh registryRefresh, result registryProbe,
+) StoreObservation {
+	var closeAfter packstore.Backend
+	r.mu.Lock()
+	currentSpec, known := r.specs[id]
+	if r.closed || !known || currentSpec != refresh.spec || r.refreshes[id] != refresh.generation {
+		closeAfter = result.backend
+		observation := r.observations[id]
+		r.mu.Unlock()
+		_ = closeBackend(closeAfter)
+		return observation
+	}
+	if !result.keepPrior {
+		r.retireBackendLocked(id)
+		if result.state == StoreOnline {
+			r.backends[id] = result.backend
+			result.backend = nil
+		} else {
+			closeAfter = result.backend
+		}
+	}
+	r.observe(id, result.state, result.detail, result.priority)
+	observation := r.observations[id]
+	r.mu.Unlock()
+	_ = closeBackend(closeAfter)
+	return observation
 }
 
 func (r *Registry) retireBackendLocked(id packstore.StoreID) {
@@ -336,6 +401,7 @@ func (r *Registry) observe(id packstore.StoreID, state StoreState, detail string
 func (r *Registry) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.closed = true
 	var result error
 	for id, backend := range r.backends {
 		result = errors.Join(result, closeBackend(backend))

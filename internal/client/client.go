@@ -592,11 +592,15 @@ func validateVersionPruneCounts(report api.VersionPruneReport, run bool) error {
 		report.ReleasableBlobs < 0 || report.ReleasableBytes < 0 ||
 		report.LooseBlobsPendingGC < 0 || report.LooseBytesPendingGC < 0 ||
 		report.PackedBlobsPendingRepack < 0 || report.PackedBytesPendingRepack < 0 ||
+		report.MixedBlobsPendingMaintenance < 0 ||
 		report.DeletedVersions < 0 {
 		return errors.New("version-prune receipt contains negative counts")
 	}
 	if report.UniqueBlobs != report.SharedBlobs+report.ReleasableBlobs ||
-		report.ReleasableBlobs != report.LooseBlobsPendingGC+report.PackedBlobsPendingRepack {
+		report.ReleasableBlobs != report.LooseBlobsPendingGC+
+			report.PackedBlobsPendingRepack-report.MixedBlobsPendingMaintenance ||
+		report.MixedBlobsPendingMaintenance > report.LooseBlobsPendingGC ||
+		report.MixedBlobsPendingMaintenance > report.PackedBlobsPendingRepack {
 		return errors.New("version-prune receipt has inconsistent blob counts")
 	}
 	return nil

@@ -394,7 +394,11 @@ batches when applying a larger exact set.
 Human and JSON reports separate selected versions and logical bytes from
 physical consequences: shared blobs remain reachable, loose unreferenced blobs
 wait for `docbank gc --run`, and dead packed payload waits for GC followed by
-`docbank storage repack`. Pruning itself never claims to reclaim disk space.
+`docbank storage repack`. When the same blob has loose and packed locations in
+different stores, the report includes both consequences and identifies the
+overlap rather than counting the blob twice as releasable. Physical byte totals
+cover every affected authoritative location. Pruning itself never claims to
+reclaim disk space.
 Deleted version IDs stop resolving. Backups made afterward preserve that
 result, while snapshots made before pruning still contain their earlier state.
 

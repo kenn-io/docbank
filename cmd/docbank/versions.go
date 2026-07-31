@@ -224,6 +224,11 @@ func writeVersionPruneReport(cmd *cobra.Command, report api.VersionPruneReport) 
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%d packed blob(s), %d stored byte(s) pending gc then repack\n",
 			report.PackedBlobsPendingRepack, report.PackedBytesPendingRepack)
 	}
+	if report.MixedBlobsPendingMaintenance > 0 {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+			"%d blob(s) have both loose copies pending gc and packed copies pending repack\n",
+			report.MixedBlobsPendingMaintenance)
+	}
 	if !report.Run {
 		if len(report.Candidates) > 0 {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "dry run — pass --run to prune")

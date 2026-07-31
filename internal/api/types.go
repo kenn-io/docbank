@@ -138,24 +138,25 @@ type VersionPruneRequest struct {
 // VersionPruneReport distinguishes released logical history from physical
 // bytes that only a later GC/repack can reclaim.
 type VersionPruneReport struct {
-	Node                     Node             `json:"node"`
-	Candidates               []ContentVersion `json:"candidates"`
-	DependencyRetained       []ContentVersion `json:"dependency_retained"`
-	Checkpoint               *ContentVersion  `json:"checkpoint,omitempty"`
-	Cutoff                   string           `json:"cutoff,omitempty"`
-	LogicalBytes             int64            `json:"logical_bytes" minimum:"0"`
-	UniqueBlobs              int              `json:"unique_blobs" minimum:"0"`
-	SharedBlobs              int              `json:"shared_blobs" minimum:"0"`
-	ReleasableBlobs          int              `json:"releasable_blobs" minimum:"0"`
-	ReleasableBytes          int64            `json:"releasable_bytes" minimum:"0"`
-	LooseBlobsPendingGC      int              `json:"loose_blobs_pending_gc" minimum:"0"`
-	LooseBytesPendingGC      int64            `json:"loose_bytes_pending_gc" minimum:"0"`
-	PackedBlobsPendingRepack int              `json:"packed_blobs_pending_repack" minimum:"0"`
-	PackedBytesPendingRepack int64            `json:"packed_bytes_pending_repack" minimum:"0"`
-	DeletedVersions          int              `json:"deleted_versions" minimum:"0"`
-	CheckpointRequired       bool             `json:"checkpoint_required"`
-	Changed                  bool             `json:"changed"`
-	Run                      bool             `json:"run"`
+	Node                         Node             `json:"node"`
+	Candidates                   []ContentVersion `json:"candidates"`
+	DependencyRetained           []ContentVersion `json:"dependency_retained"`
+	Checkpoint                   *ContentVersion  `json:"checkpoint,omitempty"`
+	Cutoff                       string           `json:"cutoff,omitempty"`
+	LogicalBytes                 int64            `json:"logical_bytes" minimum:"0"`
+	UniqueBlobs                  int              `json:"unique_blobs" minimum:"0"`
+	SharedBlobs                  int              `json:"shared_blobs" minimum:"0"`
+	ReleasableBlobs              int              `json:"releasable_blobs" minimum:"0"`
+	ReleasableBytes              int64            `json:"releasable_bytes" minimum:"0"`
+	LooseBlobsPendingGC          int              `json:"loose_blobs_pending_gc" minimum:"0"`
+	LooseBytesPendingGC          int64            `json:"loose_bytes_pending_gc" minimum:"0"`
+	PackedBlobsPendingRepack     int              `json:"packed_blobs_pending_repack" minimum:"0"`
+	PackedBytesPendingRepack     int64            `json:"packed_bytes_pending_repack" minimum:"0"`
+	MixedBlobsPendingMaintenance int              `json:"mixed_blobs_pending_maintenance" minimum:"0"`
+	DeletedVersions              int              `json:"deleted_versions" minimum:"0"`
+	CheckpointRequired           bool             `json:"checkpoint_required"`
+	Changed                      bool             `json:"changed"`
+	Run                          bool             `json:"run"`
 }
 
 // ContentReference identifies one stable node/version pair that retains a
@@ -950,14 +951,15 @@ func fromStoreVersionPruneResult(result store.VersionPruneResult) VersionPruneRe
 		DependencyRetained: []ContentVersion{}, Cutoff: result.Cutoff,
 		LogicalBytes: result.LogicalBytes, UniqueBlobs: result.UniqueBlobs,
 		SharedBlobs: result.SharedBlobs, ReleasableBlobs: result.ReleasableBlobs,
-		ReleasableBytes:          result.ReleasableBytes,
-		LooseBlobsPendingGC:      result.LooseBlobsPendingGC,
-		LooseBytesPendingGC:      result.LooseBytesPendingGC,
-		PackedBlobsPendingRepack: result.PackedBlobsPendingRepack,
-		PackedBytesPendingRepack: result.PackedBytesPendingRepack,
-		DeletedVersions:          result.DeletedVersions,
-		CheckpointRequired:       result.CheckpointRequired,
-		Changed:                  result.Changed, Run: result.Run,
+		ReleasableBytes:              result.ReleasableBytes,
+		LooseBlobsPendingGC:          result.LooseBlobsPendingGC,
+		LooseBytesPendingGC:          result.LooseBytesPendingGC,
+		PackedBlobsPendingRepack:     result.PackedBlobsPendingRepack,
+		PackedBytesPendingRepack:     result.PackedBytesPendingRepack,
+		MixedBlobsPendingMaintenance: result.MixedBlobsPendingMaintenance,
+		DeletedVersions:              result.DeletedVersions,
+		CheckpointRequired:           result.CheckpointRequired,
+		Changed:                      result.Changed, Run: result.Run,
 	}
 	for _, version := range result.Candidates {
 		report.Candidates = append(report.Candidates, fromStoreContentVersion(version))
