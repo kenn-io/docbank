@@ -135,8 +135,10 @@ func TestBlobStoreEvacuationRequiresVerifiedDestinationCoverage(t *testing.T) {
 	require.NoError(t, s.BeginBlobStoreEvacuation(ctx, secondary.ID))
 	operation, err := s.CreateStorageOperation(ctx, StorageOperationCreate{
 		Kind: "evacuate", RequestDigest: fakeHash("e9"),
-		RequestJSON: `{"version":1}`, PlanJSON: `{"hashes":[]}`,
+		RequestJSON: `{"version":1}`, PlanJSON: `{"hashes":[]}`, TotalObjects: 1,
 	})
+	require.NoError(t, err)
+	operation, err = s.ClaimStorageOperation(ctx, operation.ID)
 	require.NoError(t, err)
 
 	draining, err := s.BlobStoreBySelector(ctx, secondary.ID)
@@ -170,6 +172,20 @@ func TestBlobStoreEvacuationRequiresVerifiedDestinationCoverage(t *testing.T) {
 	)
 	require.NoError(t, err)
 
+	require.NoError(t, s.RequestStorageOperationCancel(ctx, operation.ID))
+	_, err = s.FinalizeBlobStoreEvacuation(
+		ctx, operation.ID, secondary.ID, primary.ID,
+	)
+	require.ErrorIs(t, err, ErrStorageOperationCancelled)
+	remaining, err := s.ResolveBlobLocations(ctx, packstore.Hash(hash))
+	require.NoError(t, err)
+	require.Len(t, remaining.Candidates, 2)
+
+	_, err = s.db.Exec(
+		`UPDATE storage_operations SET cancel_requested=0 WHERE operation_id=?`,
+		operation.ID,
+	)
+	require.NoError(t, err)
 	finalized, err := s.FinalizeBlobStoreEvacuation(
 		ctx, operation.ID, secondary.ID, primary.ID,
 	)
@@ -181,6 +197,8 @@ func TestBlobStoreEvacuationRequiresVerifiedDestinationCoverage(t *testing.T) {
 	cleanups, err := s.StorageOperationCleanups(ctx, operation.ID)
 	require.NoError(t, err)
 	require.Len(t, cleanups, 1)
+	err = s.RequestStorageOperationCancel(ctx, operation.ID)
+	require.ErrorIs(t, err, ErrStorageOperationTerminal)
 
 	draining, err = s.BlobStoreBySelector(ctx, secondary.ID)
 	require.NoError(t, err)

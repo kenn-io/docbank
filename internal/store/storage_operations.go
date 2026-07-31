@@ -15,6 +15,8 @@ type StorageOperationState string
 
 var ErrStorageOperationCancelled = errors.New("storage operation cancellation was requested")
 
+const storageOperationFinalizingCursor = "@finalizing"
+
 const (
 	StorageOperationQueued    StorageOperationState = "queued"
 	StorageOperationRunning   StorageOperationState = "running"
@@ -158,8 +160,9 @@ func (s *Store) AdvanceStorageOperation(
 func (s *Store) RequestStorageOperationCancel(ctx context.Context, id string) error {
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE storage_operations SET cancel_requested=1,updated_at=?
-		WHERE operation_id=? AND state IN (?,?)`,
+		WHERE operation_id=? AND state IN (?,?) AND cursor<>?`,
 		nowRFC3339(), id, StorageOperationQueued, StorageOperationRunning,
+		storageOperationFinalizingCursor,
 	)
 	if err != nil {
 		return fmt.Errorf("requesting cancellation for storage operation %s: %w", id, err)
@@ -171,15 +174,22 @@ func (s *Store) RequestStorageOperationCancel(ctx context.Context, id string) er
 	if affected == 1 {
 		return nil
 	}
-	var state string
+	var state, cursor string
 	err = s.db.QueryRowContext(ctx,
-		`SELECT state FROM storage_operations WHERE operation_id=?`, id,
-	).Scan(&state)
+		`SELECT state,cursor FROM storage_operations WHERE operation_id=?`, id,
+	).Scan(&state, &cursor)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("storage operation %s: %w", id, ErrNotFound)
 	}
 	if err != nil {
 		return fmt.Errorf("reading storage operation %s after cancellation: %w", id, err)
+	}
+	if StorageOperationState(state) == StorageOperationRunning &&
+		cursor == storageOperationFinalizingCursor {
+		return fmt.Errorf(
+			"storage operation %s is finalizing and no longer cancellable: %w",
+			id, ErrStorageOperationTerminal,
+		)
 	}
 	return fmt.Errorf("storage operation %s is %s: %w",
 		id, state, ErrStorageOperationTerminal)

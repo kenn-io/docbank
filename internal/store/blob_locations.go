@@ -275,8 +275,8 @@ func (s *Store) AddRestoredBlobLocation(
 // unless the restore mapping explicitly acknowledges remote-only retention.
 func (s *Store) RetireRestoredPrimary(
 	ctx context.Context, hash string, allowAuditedRemoteOnly bool,
-) error {
-	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+) (ref packstore.ObjectRef, retired bool, err error) {
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var secondaryCount int
 		if err := tx.QueryRowContext(ctx, `
 			SELECT COUNT(*) FROM blob_locations
@@ -288,16 +288,28 @@ func (s *Store) RetireRestoredPrimary(
 		if secondaryCount == 0 {
 			return fmt.Errorf("blob %s has no restored secondary authority", hash)
 		}
-		var primaryKind string
+		var primaryKind, primaryEncoding string
 		if err := tx.QueryRowContext(ctx, `
-			SELECT kind FROM blob_locations WHERE blob_hash=? AND store_id=?`,
+			SELECT kind,encoding FROM blob_locations WHERE blob_hash=? AND store_id=?`,
 			hash, s.primaryStoreID,
-		).Scan(&primaryKind); err != nil {
+		).Scan(&primaryKind, &primaryEncoding); err != nil {
 			return fmt.Errorf("reading restored primary authority for %s: %w", hash, err)
 		}
 		if primaryKind != blobLocationKindLoose {
 			return fmt.Errorf("restored primary authority for %s is not loose", hash)
 		}
+		switch primaryEncoding {
+		case looseEncodingRaw:
+			ref.LooseEncoding = packstore.LooseEncodingRaw
+		case looseEncodingZstd:
+			ref.LooseEncoding = packstore.LooseEncodingZstd
+		default:
+			return fmt.Errorf(
+				"restored primary authority for %s has invalid encoding %q",
+				hash, primaryEncoding,
+			)
+		}
+		ref.LooseHash = packstore.Hash(hash)
 		if !allowAuditedRemoteOnly {
 			var audited bool
 			if err := tx.QueryRowContext(ctx, `
@@ -321,6 +333,8 @@ func (s *Store) RetireRestoredPrimary(
 		); err != nil {
 			return fmt.Errorf("retiring restored primary location for %s: %w", hash, err)
 		}
+		retired = true
 		return nil
 	})
+	return ref, retired, err
 }

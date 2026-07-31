@@ -193,6 +193,9 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 			return finalizeErr
 		})
 		if err != nil {
+			if errors.Is(err, store.ErrStorageOperationCancelled) {
+				return r.cancel(ctx, operationID, receipt)
+			}
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return ctxErr
 			}
@@ -213,6 +216,9 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 				return finalizeErr
 			})
 			if err != nil {
+				if errors.Is(err, store.ErrStorageOperationCancelled) {
+					return r.cancel(ctx, operationID, receipt)
+				}
 				return r.fail(ctx, operationID, fmt.Errorf(
 					"detaching evacuated store after cleanup: %w", err,
 				))

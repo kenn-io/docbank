@@ -6,13 +6,18 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
+	"net/url"
+	"path"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/pkg/sqlite"
 )
@@ -40,6 +45,11 @@ type RestoreStoreMapping struct {
 type RestorePlacementOptions struct {
 	Map      *RestoreStoreMap
 	Bindings map[string]config.StoreBindingConfig
+}
+
+type preparedRestoreMapping struct {
+	mapping RestoreStoreMapping
+	binding config.StoreBindingConfig
 }
 
 func validateRestoreStoreMap(
@@ -82,6 +92,219 @@ func validateRestoreStoreMap(
 	return nil
 }
 
+func prepareRestoreMappings(
+	target string,
+	mapping RestoreStoreMap,
+	manifest placementManifest,
+	bindings map[string]config.StoreBindingConfig,
+) ([]preparedRestoreMapping, error) {
+	if err := validateRestoreStoreMap(mapping, manifest); err != nil {
+		return nil, err
+	}
+	prepared := make([]preparedRestoreMapping, 0, len(mapping.Stores))
+	for _, mapped := range mapping.Stores {
+		binding, ok := bindings[mapped.Binding]
+		if !ok {
+			return nil, fmt.Errorf(
+				"backupapp: restore binding %q is not loaded; update config.toml and restart the daemon",
+				mapped.Binding,
+			)
+		}
+		if err := validateRestoreBinding(mapped.Binding, binding); err != nil {
+			return nil, err
+		}
+		prepared = append(prepared, preparedRestoreMapping{
+			mapping: mapped,
+			binding: binding,
+		})
+	}
+	if err := validateRestoreNamespaces(target, prepared); err != nil {
+		return nil, err
+	}
+	return prepared, nil
+}
+
+func validateRestoreBinding(name string, binding config.StoreBindingConfig) error {
+	switch binding.Kind {
+	case "filesystem":
+		if binding.Path == "" || !filepath.IsAbs(binding.Path) {
+			return fmt.Errorf(
+				"backupapp: filesystem binding %q requires an absolute path", name,
+			)
+		}
+	case "s3":
+		if binding.Bucket == "" {
+			return fmt.Errorf("backupapp: S3 binding %q requires a bucket", name)
+		}
+		if _, err := canonicalS3Endpoint(binding.Endpoint); err != nil {
+			return fmt.Errorf("backupapp: S3 binding %q endpoint: %w", name, err)
+		}
+		if binding.Prefix != "" &&
+			(strings.HasPrefix(binding.Prefix, "/") ||
+				strings.Contains(binding.Prefix, `\`) ||
+				strings.Contains(binding.Prefix, "//") ||
+				path.Clean(binding.Prefix) != binding.Prefix ||
+				binding.Prefix == "." || binding.Prefix == ".." ||
+				strings.HasPrefix(binding.Prefix, "../")) {
+			return fmt.Errorf(
+				"backupapp: S3 binding %q prefix %q is not canonical",
+				name, binding.Prefix,
+			)
+		}
+	default:
+		return fmt.Errorf(
+			"backupapp: restore binding %q has unsupported kind %q", name, binding.Kind,
+		)
+	}
+	return nil
+}
+
+type restoreNamespace struct {
+	name     string
+	kind     string
+	path     string
+	endpoint string
+	bucket   string
+	prefix   string
+}
+
+func validateRestoreNamespaces(
+	target string, prepared []preparedRestoreMapping,
+) error {
+	primary, err := canonicalFilesystemNamespace(target)
+	if err != nil {
+		return fmt.Errorf("backupapp: resolving restored primary namespace: %w", err)
+	}
+	namespaces := []restoreNamespace{{
+		name: "restored vault", kind: "filesystem", path: primary,
+	}}
+	for _, item := range prepared {
+		namespace := restoreNamespace{
+			name: item.mapping.Name, kind: item.binding.Kind,
+		}
+		switch item.binding.Kind {
+		case "filesystem":
+			namespace.path, err = canonicalFilesystemNamespace(item.binding.Path)
+			if err != nil {
+				return fmt.Errorf(
+					"backupapp: resolving restore binding %q: %w",
+					item.mapping.Binding, err,
+				)
+			}
+		case "s3":
+			namespace.endpoint, err = canonicalS3Endpoint(item.binding.Endpoint)
+			if err != nil {
+				return fmt.Errorf(
+					"backupapp: resolving restore binding %q endpoint: %w",
+					item.mapping.Binding, err,
+				)
+			}
+			namespace.bucket = item.binding.Bucket
+			namespace.prefix = item.binding.Prefix
+		}
+		for _, prior := range namespaces {
+			overlaps, overlapErr := restoreNamespacesOverlap(prior, namespace)
+			if overlapErr != nil {
+				return fmt.Errorf(
+					"backupapp: comparing target store %q with %q: %w",
+					namespace.name, prior.name, overlapErr,
+				)
+			}
+			if overlaps {
+				return fmt.Errorf(
+					"backupapp: target store %q overlaps %q",
+					namespace.name, prior.name,
+				)
+			}
+		}
+		namespaces = append(namespaces, namespace)
+	}
+	return nil
+}
+
+func canonicalFilesystemNamespace(path string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	current := filepath.Clean(absolute)
+	var missing []string
+	for {
+		resolved, resolveErr := filepath.EvalSymlinks(current)
+		if resolveErr == nil {
+			for _, name := range slices.Backward(missing) {
+				resolved = filepath.Join(resolved, name)
+			}
+			return filepath.Clean(resolved), nil
+		}
+		if !errors.Is(resolveErr, fs.ErrNotExist) {
+			return "", resolveErr
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", resolveErr
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
+}
+
+func canonicalS3Endpoint(raw string) (string, error) {
+	if raw == "" {
+		return "aws", nil
+	}
+	endpoint, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("parse endpoint %q: %w", raw, err)
+	}
+	if endpoint.Scheme == "" || endpoint.Host == "" {
+		return "", fmt.Errorf("endpoint %q must include scheme and host", raw)
+	}
+	if endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+		return "", fmt.Errorf("endpoint %q must not include user info, query, or fragment", raw)
+	}
+	endpoint.Scheme = strings.ToLower(endpoint.Scheme)
+	host := strings.ToLower(endpoint.Hostname())
+	port := endpoint.Port()
+	if (endpoint.Scheme == "https" && port == "443") ||
+		(endpoint.Scheme == "http" && port == "80") {
+		port = ""
+	}
+	if port == "" {
+		if strings.Contains(host, ":") {
+			endpoint.Host = "[" + host + "]"
+		} else {
+			endpoint.Host = host
+		}
+	} else {
+		endpoint.Host = net.JoinHostPort(host, port)
+	}
+	endpoint.Path = strings.TrimSuffix(endpoint.Path, "/")
+	return endpoint.String(), nil
+}
+
+func restoreNamespacesOverlap(first, second restoreNamespace) (bool, error) {
+	if first.kind != second.kind {
+		return false, nil
+	}
+	if first.kind == "filesystem" {
+		overlaps, err := ingest.PathsOverlap(first.path, second.path)
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		return overlaps, err
+	}
+	if first.endpoint != second.endpoint || first.bucket != second.bucket {
+		return false, nil
+	}
+	return s3PrefixContains(first.prefix, second.prefix) ||
+		s3PrefixContains(second.prefix, first.prefix), nil
+}
+
+func s3PrefixContains(parent, child string) bool {
+	return parent == "" || parent == child || strings.HasPrefix(child, parent+"/")
+}
+
 func applyRestorePlacement(
 	ctx context.Context,
 	target string,
@@ -93,7 +316,10 @@ func applyRestorePlacement(
 	if options.Map == nil {
 		return nil
 	}
-	if err := validateRestoreStoreMap(*options.Map, manifest); err != nil {
+	prepared, err := prepareRestoreMappings(
+		target, *options.Map, manifest, options.Bindings,
+	)
+	if err != nil {
 		return err
 	}
 	metadata, err := store.Open(databasePath, driver)
@@ -120,6 +346,10 @@ func applyRestorePlacement(
 	if !ok {
 		return errors.New("backupapp: restored primary backend is unavailable")
 	}
+	primaryBackend, ok := physical.WritableBackend(packstore.StoreID(primary.ID))
+	if !ok {
+		return errors.New("backupapp: restored primary retirement backend is unavailable")
+	}
 
 	locationsBySource := make(map[string][]string)
 	for _, location := range manifest.Locations {
@@ -129,14 +359,9 @@ func applyRestorePlacement(
 	}
 	remoteOnly := make(map[string]bool)
 	allowAuditedRemoteOnly := make(map[string]bool)
-	for _, mapped := range options.Map.Stores {
-		binding, ok := options.Bindings[mapped.Binding]
-		if !ok {
-			return fmt.Errorf(
-				"backupapp: restore binding %q is not loaded; update config.toml and restart the daemon",
-				mapped.Binding,
-			)
-		}
+	for _, item := range prepared {
+		mapped := item.mapping
+		binding := item.binding
 		candidate, err := metadata.PrepareSecondaryBlobStore(
 			mapped.Name, binding.Kind, mapped.Binding,
 		)
@@ -214,10 +439,16 @@ func applyRestorePlacement(
 		}
 	}
 	for hash := range remoteOnly {
-		if err := metadata.RetireRestoredPrimary(
+		ref, retired, err := metadata.RetireRestoredPrimary(
 			ctx, hash, allowAuditedRemoteOnly[hash],
-		); err != nil {
+		)
+		if err != nil {
 			return err
+		}
+		if retired {
+			if err := primaryBackend.Retire(ctx, ref); err != nil {
+				return fmt.Errorf("backupapp: retiring restored primary blob %s: %w", hash, err)
+			}
 		}
 	}
 	return nil

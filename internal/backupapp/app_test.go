@@ -352,10 +352,45 @@ func TestRestoreStoreMapRebuildsRemoteOnlyPlacementWithFreshIdentity(t *testing.
 		require.NoError(t, resolveErr)
 		require.Len(t, resolution.Candidates, 1)
 		assert.Equal(t, packstore.StoreID(stores[1].ID), resolution.Candidates[0].StoreID)
+		layout, layoutErr := packstore.NewLayout(
+			filepath.Join(target, "blobs"), packstore.LayoutOptions{
+				Staging: packstore.StagingStoreDirectory, StagingDir: "tmp",
+			},
+		)
+		require.NoError(t, layoutErr)
+		assert.NoFileExists(t, layout.LoosePath(parsed))
 	}
 	repaired, err := os.ReadFile(archiveLayout.LoosePath(corruptHash))
 	require.NoError(t, err)
 	assert.Equal(t, corruptContent, string(repaired))
+}
+
+func TestRestoreStoreMapFailureLeavesTargetDatabaseUnpublished(t *testing.T) {
+	fixture := newArchiveFixture(t)
+	sourcePrimary, err := fixture.metadata.PrimaryBlobStore(t.Context())
+	require.NoError(t, err)
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	_, err = backupapp.Create(
+		t.Context(), repo, "test-version", fixture.metadata, fixture.blobs,
+		backup.CreateOptions{Jobs: 1},
+	)
+	require.NoError(t, err)
+
+	target := filepath.Join(t.TempDir(), "restored")
+	mapping := backupapp.RestoreStoreMap{
+		Version: backupapp.RestoreStoreMapVersion,
+		Stores: []backupapp.RestoreStoreMapping{{
+			SourceID: sourcePrimary.ID, Name: "missing", Binding: "missing",
+		}},
+	}
+	_, err = backupapp.RestoreWithPlacement(
+		t.Context(), repo, "test-version", store.DefaultSQLiteDriver(),
+		backup.RestoreOptions{TargetDir: target, Jobs: 1},
+		backupapp.RestorePlacementOptions{Map: &mapping},
+	)
+	require.ErrorContains(t, err, "is not loaded")
+	assert.NoFileExists(t, filepath.Join(target, "docbank.db"))
 }
 
 func TestLoadRestoreStoreMapReadsOwnerPrivateBindingNames(t *testing.T) {

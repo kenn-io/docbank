@@ -89,6 +89,9 @@ func RestoreWithPlacement(
 	if opts.AuxiliaryTarget != nil {
 		return nil, errors.New("backupapp: restore options must not supply an auxiliary target")
 	}
+	if opts.BeforePublication != nil {
+		return nil, errors.New("backupapp: restore options must not supply a publication callback")
+	}
 	if err := docsqlite.Validate(driver); err != nil {
 		return nil, fmt.Errorf("backupapp: restore SQLite driver: %w", err)
 	}
@@ -100,17 +103,19 @@ func RestoreWithPlacement(
 	if placement.Map == nil {
 		opts.PackedContent = newPackedRestoreTarget()
 		app = &packedRestoreApp{App: New(version)}
+	} else {
+		opts.BeforePublication = func(
+			hookCtx context.Context, staged backup.RestorePublicationTarget,
+		) error {
+			return applyRestorePlacement(
+				hookCtx, staged.TargetDir, staged.DBPath,
+				driver, sourcePlacement, placement,
+			)
+		}
 	}
 	result, err := backup.Restore(ctx, repo, app, opts)
 	if err != nil {
 		return nil, fmt.Errorf("backupapp: restoring snapshot: %w", err)
-	}
-	if placement.Map != nil {
-		if err := applyRestorePlacement(
-			ctx, opts.TargetDir, result.DBPath, driver, sourcePlacement, placement,
-		); err != nil {
-			return nil, fmt.Errorf("backupapp: applying restore placement: %w", err)
-		}
 	}
 	return result, nil
 }

@@ -5,7 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/url"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -312,7 +315,8 @@ func NewConfiguredBackend(
 			Endpoint: binding.Endpoint, Region: binding.Region,
 			Bucket: binding.Bucket, Prefix: binding.Prefix,
 			Credentials: loaded.Credentials, ForcePathStyle: binding.ForcePathStyle,
-			ExpectedOwnership: expected, Limits: StorageLimits(),
+			AllowInsecureTransport: allowInsecureLoopbackEndpoint(binding.Endpoint),
+			ExpectedOwnership:      expected, Limits: StorageLimits(),
 		})
 		if err != nil {
 			return nil, fmt.Errorf("create S3 blob backend: %w", err)
@@ -321,6 +325,19 @@ func NewConfiguredBackend(
 	default:
 		return nil, fmt.Errorf("unsupported backend kind %q", binding.Kind)
 	}
+}
+
+func allowInsecureLoopbackEndpoint(raw string) bool {
+	endpoint, err := url.Parse(raw)
+	if err != nil || !strings.EqualFold(endpoint.Scheme, "http") {
+		return false
+	}
+	host := endpoint.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	address := net.ParseIP(host)
+	return address != nil && address.IsLoopback()
 }
 
 // ProbeConfiguredBackend validates behavior that cannot be inferred from

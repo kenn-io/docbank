@@ -244,6 +244,28 @@ func (s *Store) FinalizeBlobStoreEvacuation(
 	}
 	var result BlobStoreEvacuationFinalization
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		var operationState, operationCursor string
+		var cancelRequested bool
+		if err := tx.QueryRowContext(ctx, `
+			SELECT state,cancel_requested,cursor
+			FROM storage_operations
+			WHERE operation_id=?`,
+			operationID,
+		).Scan(&operationState, &cancelRequested, &operationCursor); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("storage operation %s: %w", operationID, ErrNotFound)
+			}
+			return fmt.Errorf("reading evacuation operation %s: %w", operationID, err)
+		}
+		if cancelRequested && operationCursor != storageOperationFinalizingCursor {
+			return ErrStorageOperationCancelled
+		}
+		if StorageOperationState(operationState) != StorageOperationRunning {
+			return fmt.Errorf(
+				"storage operation %s is %s: %w",
+				operationID, operationState, ErrStorageOperationTerminal,
+			)
+		}
 		source, err := blobStoreBySelectorTx(ctx, tx, sourceID)
 		if err != nil {
 			return err
@@ -328,6 +350,18 @@ func (s *Store) FinalizeBlobStoreEvacuation(
 				return fmt.Errorf("detaching evacuated blob store %s: %w", source.ID, err)
 			}
 			result.Detached = true
+		} else {
+			update, err := tx.ExecContext(ctx, `
+				UPDATE storage_operations SET cursor=?,updated_at=?
+				WHERE operation_id=? AND state=?`,
+				storageOperationFinalizingCursor, nowRFC3339(),
+				operationID, StorageOperationRunning,
+			)
+			if err := requireOneStorageOperationRow(
+				update, err, operationID, "marking finalizing",
+			); err != nil {
+				return err
+			}
 		}
 		result.Retire = refs
 		return nil

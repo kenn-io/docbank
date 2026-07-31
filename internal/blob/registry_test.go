@@ -11,6 +11,14 @@ import (
 	"go.kenn.io/docbank/internal/config"
 )
 
+func TestInsecureS3TransportIsLimitedToLoopback(t *testing.T) {
+	assert.True(t, allowInsecureLoopbackEndpoint("http://127.0.0.1:9000"))
+	assert.True(t, allowInsecureLoopbackEndpoint("http://[::1]:9000"))
+	assert.True(t, allowInsecureLoopbackEndpoint("http://localhost:9000"))
+	assert.False(t, allowInsecureLoopbackEndpoint("http://objects.example:9000"))
+	assert.False(t, allowInsecureLoopbackEndpoint("https://127.0.0.1:9000"))
+}
+
 func TestRegistryClassifiesBindingsAndOwnership(t *testing.T) {
 	const (
 		vaultID = "10000000-0000-4000-8000-000000000001"

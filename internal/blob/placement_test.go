@@ -152,6 +152,46 @@ func TestPlacementRunnerEvacuatesSecondaryToPrimaryAndDetachesIt(t *testing.T) {
 	assert.Equal(t, []byte("bring this home"), got)
 }
 
+func TestPlacementRunnerHonorsCancellationAtEvacuationFinalization(t *testing.T) {
+	metadata, blobs, runner, secondary := placementTestVault(t)
+	file, _ := placementTestFile(t, metadata, blobs, []byte("keep secondary"))
+	outbound, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+		TargetNodeID: file.ID, SourceStoreID: metadata.PrimaryBlobStoreID(),
+		DestinationStoreID: secondary.ID, RetireSource: true,
+	})
+	require.NoError(t, err)
+	require.NoError(t, runner.Run(
+		t.Context(), createPlacementOperation(t, metadata, outbound),
+	))
+
+	inbound, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+		TargetNodeID: metadata.RootID(), SourceStoreID: secondary.ID,
+		DestinationStoreID: metadata.PrimaryBlobStoreID(), RetireSource: true,
+		Evacuate: true,
+	})
+	require.NoError(t, err)
+	require.NoError(t, metadata.BeginBlobStoreEvacuation(t.Context(), secondary.ID))
+	operationID := createStorageOperation(t, metadata, "evacuate", inbound)
+	commits := 0
+	runner.Commit = func(fn func() error) error {
+		commits++
+		if commits == 2 {
+			require.NoError(t, metadata.RequestStorageOperationCancel(
+				t.Context(), operationID,
+			))
+		}
+		return fn()
+	}
+
+	require.NoError(t, runner.Run(t.Context(), operationID))
+	operation, err := metadata.StorageOperation(t.Context(), operationID)
+	require.NoError(t, err)
+	assert.Equal(t, store.StorageOperationCancelled, operation.State)
+	remaining, err := metadata.BlobStoreBySelector(t.Context(), secondary.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "draining", remaining.Lifecycle)
+}
+
 func TestPlacementRunnerRepairsDamagedSecondaryFromVerifiedPrimary(t *testing.T) {
 	metadata, blobs, runner, secondary := placementTestVault(t)
 	file, hash := placementTestFile(t, metadata, blobs, []byte("repair authority"))
