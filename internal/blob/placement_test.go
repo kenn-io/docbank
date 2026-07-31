@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/config"
@@ -170,6 +171,20 @@ func TestPlacementRunnerEvacuatesPackedSecondaryAfterPlacementRevokesMappings(
 	).Scan(&remainingMappings))
 	assert.Zero(t, remainingMappings)
 	require.FileExists(t, filesystem.Layout().PackPath(records[0].PackID))
+	secondPackID := pack.NewPackID()
+	packBytes, err := os.ReadFile(filesystem.Layout().PackPath(records[0].PackID))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(
+		filesystem.Layout().PackPath(secondPackID), packBytes, 0o600,
+	))
+	_, err = db.ExecContext(t.Context(), `
+		INSERT INTO blob_packs(
+			store_id,pack_id,entry_count,stored_bytes,created_at
+		) VALUES(?,?,1,?,?)`,
+		secondary.ID, secondPackID, int64(len(packBytes)),
+		time.Now().UTC().Format(time.RFC3339Nano),
+	)
+	require.NoError(t, err)
 
 	evacuation, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
 		TargetNodeID: metadata.RootID(), SourceStoreID: secondary.ID,
@@ -182,7 +197,7 @@ func TestPlacementRunnerEvacuatesPackedSecondaryAfterPlacementRevokesMappings(
 	evacuationID := createStorageOperation(t, metadata, "evacuate", evacuation)
 	backend = blobs.registry.backends[packstore.StoreID(secondary.ID)]
 	failing := &failOnceRetireBackend{Backend: backend, failed: make(chan struct{})}
-	failing.fail.Store(true)
+	failing.failAt.Store(2)
 	blobs.registry.backends[packstore.StoreID(secondary.ID)] = failing
 	require.ErrorIs(t, runner.Run(t.Context(), evacuationID), errStorageCleanupDeferred)
 	operation, err := metadata.StorageOperation(t.Context(), evacuationID)
@@ -194,6 +209,7 @@ func TestPlacementRunnerEvacuatesPackedSecondaryAfterPlacementRevokesMappings(
 	require.NoError(t, runner.Run(t.Context(), evacuationID))
 
 	require.NoFileExists(t, filesystem.Layout().PackPath(records[0].PackID))
+	require.NoFileExists(t, filesystem.Layout().PackPath(secondPackID))
 	cleanups, err := metadata.StorageOperationCleanups(t.Context(), evacuationID)
 	require.NoError(t, err)
 	assert.Empty(t, cleanups)
@@ -343,14 +359,20 @@ func TestPlacementRunnerRecordsCommittedProgressBeforeCleanupRetry(t *testing.T)
 type failOnceRetireBackend struct {
 	packstore.Backend
 
-	fail   atomic.Bool
-	failed chan struct{}
+	fail     atomic.Bool
+	failAt   atomic.Int64
+	attempts atomic.Int64
+	failed   chan struct{}
 }
 
 func (b *failOnceRetireBackend) Retire(
 	ctx context.Context, ref packstore.ObjectRef,
 ) error {
 	if b.fail.Swap(false) {
+		close(b.failed)
+		return errors.New("synthetic cleanup failure")
+	}
+	if failAt := b.failAt.Load(); failAt > 0 && b.attempts.Add(1) == failAt {
 		close(b.failed)
 		return errors.New("synthetic cleanup failure")
 	}

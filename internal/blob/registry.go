@@ -36,6 +36,8 @@ const (
 	StoreDetached      StoreState = "detached"
 )
 
+var errStoreOwnershipUnavailable = errors.New("store ownership is unavailable")
+
 // StoreSpec is the catalog authority needed to bind one runtime backend.
 type StoreSpec struct {
 	ID             string
@@ -98,8 +100,14 @@ func newAttachedConfiguredBackend(
 		}
 		actual, ownershipErr := inspector.Ownership(ctx)
 		closeErr := closeBackend(inspector)
-		if ownershipErr != nil || closeErr != nil {
-			return nil, errors.Join(ownershipErr, closeErr)
+		if ownershipErr != nil {
+			return nil, fmt.Errorf(
+				"inspect filesystem store ownership: %w",
+				errors.Join(errStoreOwnershipUnavailable, ownershipErr, closeErr),
+			)
+		}
+		if closeErr != nil {
+			return nil, closeErr
 		}
 		if actual != *expected {
 			return nil, fmt.Errorf(
@@ -282,6 +290,8 @@ func (r *Registry) refreshLocked(ctx context.Context, id packstore.StoreID) {
 	if err != nil {
 		if errors.Is(err, packstore.ErrStoreFenced) {
 			r.observe(id, StoreFenced, err.Error(), binding.Priority)
+		} else if errors.Is(err, errStoreOwnershipUnavailable) {
+			r.observe(id, StoreUnavailable, err.Error(), binding.Priority)
 		} else {
 			r.observe(id, StoreMisconfigured, err.Error(), binding.Priority)
 		}

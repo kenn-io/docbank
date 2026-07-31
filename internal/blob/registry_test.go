@@ -186,6 +186,26 @@ func TestRegistryDoesNotRepairMismatchedFilesystemNamespace(t *testing.T) {
 	require.Error(t, safefileio.ValidatePrivateDir(shard))
 }
 
+func TestRegistryClassifiesMissingOwnershipMarkerAsUnavailable(t *testing.T) {
+	const (
+		vaultID = "10000000-0000-4000-8000-000000000001"
+		storeID = "20000000-0000-4000-8000-000000000001"
+		epoch   = "30000000-0000-4000-8000-000000000001"
+	)
+	root := filepath.Join(t.TempDir(), "archive")
+	require.NoError(t, EnsureFilesystemNamespace(root))
+
+	registry := NewRegistry(t.Context(), vaultID,
+		map[string]config.StoreBindingConfig{
+			"archive": {Kind: storeKindFilesystem, Path: root},
+		}, []StoreSpec{{
+			ID: storeID, Kind: storeKindFilesystem, Role: "secondary",
+			Lifecycle: "active", Binding: "archive", OwnershipEpoch: epoch,
+		}})
+	t.Cleanup(func() { require.NoError(t, registry.Close()) })
+	assert.Equal(t, StoreUnavailable, registry.Observation(storeID).State)
+}
+
 func TestRegistryKeepsUnboundStoreDegraded(t *testing.T) {
 	spec := StoreSpec{
 		ID:   "20000000-0000-4000-8000-000000000001",

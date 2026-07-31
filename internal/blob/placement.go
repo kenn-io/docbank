@@ -120,9 +120,6 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 	if operation.Kind == "repair" || operation.Kind == "salvage" {
 		return r.runRecovery(ctx, operation)
 	}
-	if err := r.retirePending(ctx, operationID); err != nil {
-		return r.deferCleanup(ctx, operationID, err)
-	}
 	var plan store.PlacementPlan
 	if err := json.Unmarshal([]byte(operation.PlanJSON), &plan); err != nil {
 		return r.fail(ctx, operationID, fmt.Errorf("decode placement plan: %w", err))
@@ -146,13 +143,18 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 			return r.fail(ctx, operationID, errors.New("placement progress receipt is inconsistent"))
 		}
 	}
-	if err := r.persistPlacementProgress(
-		ctx, operationID, operation.Cursor, &receipt,
-	); err != nil {
-		return err
-	}
 	if operation.CompletedObjects > int64(len(plan.Hashes)) {
 		return r.fail(ctx, operationID, errors.New("storage operation cursor exceeds its plan"))
+	}
+	cleanupErr := r.retirePending(ctx, operationID)
+	progressErr := r.persistPlacementProgress(
+		ctx, operationID, operation.Cursor, &receipt,
+	)
+	if cleanupErr != nil {
+		return r.deferCleanup(ctx, operationID, errors.Join(cleanupErr, progressErr))
+	}
+	if progressErr != nil {
+		return progressErr
 	}
 	if err := requireScratchSpace(
 		remainingPlacementScratch(plan, operation.CompletedObjects),
@@ -200,13 +202,15 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 			}
 			return err
 		}
-		if err := r.retirePending(ctx, operationID); err != nil {
-			return r.deferCleanup(ctx, operationID, err)
-		}
-		if err := r.persistPlacementProgress(
+		cleanupErr := r.retirePending(ctx, operationID)
+		progressErr := r.persistPlacementProgress(
 			ctx, operationID, item.Hash, &receipt,
-		); err != nil {
-			return err
+		)
+		if cleanupErr != nil {
+			return r.deferCleanup(ctx, operationID, errors.Join(cleanupErr, progressErr))
+		}
+		if progressErr != nil {
+			return progressErr
 		}
 	}
 	if operation.Kind == "evacuate" {
@@ -235,13 +239,15 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 		); err != nil {
 			return err
 		}
-		if err := r.retirePending(ctx, operationID); err != nil {
-			return r.deferCleanup(ctx, operationID, err)
-		}
-		if err := r.persistCurrentPlacementProgress(
+		cleanupErr := r.retirePending(ctx, operationID)
+		progressErr := r.persistCurrentPlacementProgress(
 			ctx, operationID, &receipt,
-		); err != nil {
-			return err
+		)
+		if cleanupErr != nil {
+			return r.deferCleanup(ctx, operationID, errors.Join(cleanupErr, progressErr))
+		}
+		if progressErr != nil {
+			return progressErr
 		}
 		if !finalized.Detached {
 			err = r.commit(func() error {
