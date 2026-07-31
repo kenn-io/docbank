@@ -565,9 +565,30 @@ func TestUnreachableBlobs(t *testing.T) {
 func TestDeleteBlobRows(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
+	packID := pack.NewPackID()
 
 	_, err := s.db.Exec(`INSERT INTO blobs (hash, size, created_at) VALUES (?, 1, ?)`,
 		fakeHash("a1"), "2026-01-01T00:00:00Z")
+	require.NoError(t, err)
+	_, err = s.db.Exec(`
+		INSERT INTO blob_packs(store_id,pack_id,entry_count,stored_bytes,created_at)
+		VALUES(?,?,1,32,?)`,
+		s.primaryStoreID, packID, "2026-01-01T00:00:00Z",
+	)
+	require.NoError(t, err)
+	_, err = s.db.Exec(`
+		INSERT INTO blob_pack_entries(
+			blob_hash,store_id,pack_id,pack_offset,stored_len,raw_len,flags,crc32c
+		) VALUES(?,?,?,?,1,1,0,0)`,
+		fakeHash("a1"), s.primaryStoreID, packID, pack.MinEntryOffset,
+	)
+	require.NoError(t, err)
+	_, err = s.db.Exec(`
+		INSERT INTO blob_locations(
+			blob_hash,store_id,generation,kind,stored_size,pack_eligible
+		) VALUES(?,?,?,'packed',1,1)`,
+		fakeHash("a1"), s.primaryStoreID, "30000000-0000-4000-8000-000000000001",
+	)
 	require.NoError(t, err)
 	_, err = s.db.Exec(
 		`INSERT INTO extracted_text (blob_hash, extractor, extractor_version, status, attempts, text, extracted_at)
@@ -587,6 +608,17 @@ func TestDeleteBlobRows(t *testing.T) {
 	assert.Equal(t, 0, n)
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM content_fts`).Scan(&n))
 	assert.Equal(t, 0, n)
+	require.NoError(t, s.db.QueryRow(
+		`SELECT COUNT(*) FROM blob_pack_entries WHERE blob_hash=?`,
+		fakeHash("a1"),
+	).Scan(&n))
+	assert.Equal(t, 1, n, "dead packed entries remain cataloged until repack")
+	var liveEntries int64
+	require.NoError(t, s.db.QueryRow(`
+		SELECT live_entries FROM blob_packs WHERE store_id=? AND pack_id=?`,
+		s.primaryStoreID, packID,
+	).Scan(&liveEntries))
+	assert.Zero(t, liveEntries)
 }
 
 func TestAllBlobs(t *testing.T) {

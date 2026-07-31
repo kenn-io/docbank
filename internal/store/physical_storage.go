@@ -131,11 +131,35 @@ func physicalContentTx(tx *sql.Tx, hash string) (PhysicalContent, error) {
 // authorizes either loose or packed bytes for hash. Logical membership alone
 // is insufficient for reads or for creating another current reference.
 func requirePhysicalAuthorityTx(tx *sql.Tx, hash string) (int64, error) {
-	physical, err := physicalContentTx(tx, hash)
-	if err != nil {
-		return 0, err
+	var (
+		size     int64
+		location bool
+	)
+	err := tx.QueryRow(`
+		SELECT b.size, EXISTS(
+			SELECT 1
+			FROM blob_locations l
+			LEFT JOIN blob_pack_entries e
+			  ON e.blob_hash=l.blob_hash AND e.store_id=l.store_id
+			WHERE l.blob_hash=b.hash
+			  AND (
+			    (l.kind='loose' AND l.encoding IN ('raw','zstd'))
+			    OR (l.kind='packed' AND e.blob_hash IS NOT NULL)
+			  )
+		)
+		FROM blobs b WHERE b.hash=?`,
+		hash,
+	).Scan(&size, &location)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
 	}
-	return physical.LogicalBytes, nil
+	if err != nil {
+		return 0, fmt.Errorf("checking physical authority for %s: %w", hash, err)
+	}
+	if !location {
+		return 0, fmt.Errorf("blob %s: %w", hash, ErrPhysicalAuthorityMissing)
+	}
+	return size, nil
 }
 
 // PhysicalContent returns the indexed representation with current catalog

@@ -226,6 +226,10 @@ func GarbageCollect(
 	report := GCReport{DryRun: opts.DryRun}
 	tracked := scan.Items
 	trackedHashes := make([]string, 0, budget.MaxObjects)
+	primary, err := metadata.PrimaryBlobStore(ctx)
+	if err != nil {
+		return report, err
+	}
 	processedBytes := int64(0)
 	processed := 0
 	for _, candidate := range tracked {
@@ -236,9 +240,23 @@ func GarbageCollect(
 		if err := ctx.Err(); err != nil {
 			return report, err
 		}
-		packedSize, packed, err := metadata.PackedBlobStoredByte(ctx, candidate.Hash)
+		hash, err := packstore.ParseHash(candidate.Hash)
+		if err != nil {
+			return report, fmt.Errorf("parsing GC candidate hash %s: %w", candidate.Hash, err)
+		}
+		resolution, err := metadata.ResolveBlobLocations(ctx, hash)
 		if err != nil {
 			return report, err
+		}
+		var looseSize, packedSize int64
+		var packed bool
+		for _, location := range resolution.Candidates {
+			if location.Loose != nil {
+				looseSize += location.Loose.StoredSize
+			} else if location.Pack != nil {
+				packed = true
+				packedSize += location.Pack.StoredLen
+			}
 		}
 		report.CandidateBlobs++
 		trackedHashes = append(trackedHashes, candidate.Hash)
@@ -246,10 +264,12 @@ func GarbageCollect(
 			report.PendingPackedBlobs++
 			report.PendingPackedBytes += packedSize
 		}
-		report.ReclaimableBytes += candidate.LooseStoredSize
-		processedBytes += candidate.LooseStoredSize + packedSize
-		if !opts.DryRun && candidate.Loose {
-			removed, err := blobs.RemoveIfExists(candidate.Hash)
+		report.ReclaimableBytes += looseSize
+		processedBytes += looseSize + packedSize
+		if !opts.DryRun {
+			removed, err := retireUnreachableLooseLocations(
+				ctx, blobs, primary.ID, hash, resolution,
+			)
 			if err != nil && !errors.Is(err, fs.ErrNotExist) {
 				return report, err
 			}
@@ -273,6 +293,55 @@ func GarbageCollect(
 		report.NextCursor = encodeCursor(operationGC, resumeHash)
 	}
 	return report, nil
+}
+
+func retireUnreachableLooseLocations(
+	ctx context.Context,
+	blobs *blob.Store,
+	primaryStoreID string,
+	hash packstore.Hash,
+	resolution packstore.Resolution,
+) (int, error) {
+	backends := make(map[packstore.StoreID]packstore.Backend)
+	primaryLoose := false
+	for _, location := range resolution.Candidates {
+		if location.Loose == nil {
+			continue
+		}
+		if location.StoreID == packstore.StoreID(primaryStoreID) {
+			primaryLoose = true
+			continue
+		}
+		backend, ok := blobs.WritableBackend(location.StoreID)
+		if !ok {
+			return 0, fmt.Errorf(
+				"%w: gc cleanup store %s is not writable",
+				packstore.ErrStoreUnavailable, location.StoreID,
+			)
+		}
+		backends[location.StoreID] = backend
+	}
+	retired := 0
+	for _, location := range resolution.Candidates {
+		if location.Loose == nil ||
+			location.StoreID == packstore.StoreID(primaryStoreID) {
+			continue
+		}
+		if err := backends[location.StoreID].Retire(ctx, packstore.ObjectRef{
+			LooseHash: hash, LooseEncoding: location.Loose.Encoding,
+		}); err != nil {
+			return 0, fmt.Errorf(
+				"retiring unreachable blob %s from store %s: %w",
+				hash, location.StoreID, err,
+			)
+		}
+		retired++
+	}
+	if !primaryLoose {
+		return retired, nil
+	}
+	primaryRemoved, err := blobs.RemoveIfExists(hash.String())
+	return retired + primaryRemoved, err
 }
 
 // Verify re-hashes one bounded canonical-hash page of catalog-authorized

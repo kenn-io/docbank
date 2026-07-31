@@ -261,13 +261,22 @@ func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64, physical ...Bl
 			context.Background(), tx, s.primaryStoreID, hash, storage,
 		)
 	}
+	var recordedSize int64
+	if err := tx.QueryRow(`SELECT size FROM blobs WHERE hash=?`, hash).Scan(&recordedSize); err != nil {
+		return fmt.Errorf("reading blob %s: %w", hash, err)
+	}
+	if recordedSize != size {
+		return fmt.Errorf("blob %s: recorded size %d does not match caller size %d",
+			hash, recordedSize, size)
+	}
 	current, err := physicalContentTx(tx, hash)
 	if err != nil {
+		if errors.Is(err, ErrPhysicalAuthorityMissing) && storage.Created {
+			return writeLooseLocationTx(
+				context.Background(), tx, s.primaryStoreID, hash, storage,
+			)
+		}
 		return fmt.Errorf("verifying blob %s: %w", hash, err)
-	}
-	if current.LogicalBytes != size {
-		return fmt.Errorf("blob %s: recorded size %d does not match caller size %d",
-			hash, current.LogicalBytes, size)
 	}
 	if current.Kind == "packed" ||
 		(current.Encoding == storage.Encoding && current.StoredBytes == storage.StoredBytes) {

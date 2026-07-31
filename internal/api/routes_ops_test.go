@@ -568,7 +568,9 @@ func TestGCRevokesPackedBlobAuthority(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist)
 	entries, err := store.NewPackCatalog(s.Store).ListIndexed(t.Context())
 	require.NoError(t, err)
-	assert.Empty(t, entries, "GC removes packed authority in the blob-row transaction")
+	require.Len(t, entries, 1,
+		"GC preserves dead pack accounting until reader-safe retirement")
+	assert.Equal(t, file.BlobHash, entries[0].Hash.String())
 	records, err := store.NewPackCatalog(s.Store).ListPackRecords(t.Context())
 	require.NoError(t, err)
 	require.Len(t, records, 1, "physical inventory remains until reader-safe retirement")

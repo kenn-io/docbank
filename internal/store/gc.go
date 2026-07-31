@@ -528,16 +528,13 @@ func (s *Store) DeadPackUsagePage(
 	return result, more, nil
 }
 
-// DeleteBlobRows removes the metadata rows for reclaimed blobs. Callers
-// must hold the exclusive vault lock (see UnreachableBlobs) and delete the
-// blob files first; a crash in between leaves rows without files, which a
-// gc re-run reconciles.
+// DeleteBlobRows removes logical membership and derived metadata for reclaimed
+// blobs. Callers must hold the exclusive vault lock (see UnreachableBlobs) and
+// retire every loose location first. Packed entries remain as dead physical
+// accounting until repack retires their immutable container.
 func (s *Store) DeleteBlobRows(ctx context.Context, hashes []string) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		for _, h := range hashes {
-			if _, err := tx.Exec(`DELETE FROM blob_pack_entries WHERE blob_hash = ?`, h); err != nil {
-				return fmt.Errorf("deleting packed mapping of %s: %w", h, err)
-			}
 			if _, err := tx.Exec(`DELETE FROM text_extraction_queue WHERE blob_hash = ?`, h); err != nil {
 				return fmt.Errorf("deleting extraction queue row of %s: %w", h, err)
 			}
