@@ -97,6 +97,7 @@ func TestLoadResolvesStoreBindings(t *testing.T) {
 }
 
 func TestStoreBindingsRejectAmbiguousDefinitions(t *testing.T) {
+	archive := filepath.Join(t.TempDir(), "archive")
 	for _, tc := range []struct {
 		name    string
 		binding StoreBindingConfig
@@ -112,7 +113,7 @@ func TestStoreBindingsRejectAmbiguousDefinitions(t *testing.T) {
 		{
 			name: "filesystem with s3 fields",
 			binding: StoreBindingConfig{
-				Kind: "filesystem", Path: "/archive", Bucket: "documents",
+				Kind: "filesystem", Path: archive, Bucket: "documents",
 			},
 			want: "does not accept S3",
 		},
@@ -126,7 +127,7 @@ func TestStoreBindingsRejectAmbiguousDefinitions(t *testing.T) {
 		{
 			name: "invalid priority",
 			binding: StoreBindingConfig{
-				Kind: "filesystem", Path: "/archive", Priority: -1,
+				Kind: "filesystem", Path: archive, Priority: -1,
 			},
 			want: "priority",
 		},
