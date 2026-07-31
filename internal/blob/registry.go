@@ -298,11 +298,6 @@ func (r *Registry) beginRefresh(id packstore.StoreID) (registryRefresh, bool) {
 	if r.closed {
 		return registryRefresh{}, false
 	}
-	if _, probing := r.probes[id]; probing {
-		return registryRefresh{}, false
-	}
-	r.refreshes[id]++
-	generation := r.refreshes[id]
 	spec, ok := r.specs[id]
 	if !ok {
 		r.retireBackendLocked(id)
@@ -330,6 +325,11 @@ func (r *Registry) beginRefresh(id packstore.StoreID) (registryRefresh, bool) {
 			binding.Priority)
 		return registryRefresh{}, false
 	}
+	if probeGeneration, probing := r.probes[id]; probing && probeGeneration == r.refreshes[id] {
+		return registryRefresh{}, false
+	}
+	r.refreshes[id]++
+	generation := r.refreshes[id]
 	expected := packstore.Ownership{
 		Format: packstore.OwnershipFormatV1, Vault: r.vaultID,
 		Store: id, Epoch: spec.OwnershipEpoch,

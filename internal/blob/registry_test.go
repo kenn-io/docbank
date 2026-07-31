@@ -277,6 +277,49 @@ func TestRegistryCoalescesRetriesWhileProbeRemainsBlocked(t *testing.T) {
 	assert.Equal(t, int64(3), backend.calls.Load())
 }
 
+func TestRegistryDetachSupersedesBlockedProbe(t *testing.T) {
+	const (
+		vaultID = "10000000-0000-4000-8000-000000000001"
+		storeID = "20000000-0000-4000-8000-000000000001"
+		epoch   = "30000000-0000-4000-8000-000000000001"
+	)
+	expected := packstore.Ownership{
+		Format: packstore.OwnershipFormatV1, Vault: vaultID,
+		Store: storeID, Epoch: epoch,
+	}
+	probeStarted := make(chan struct{})
+	releaseProbe := make(chan struct{})
+	backend := &contextIgnoringOwnershipBackend{
+		ownership: expected, probeStarted: probeStarted, releaseProbe: releaseProbe,
+	}
+	spec := StoreSpec{
+		ID: storeID, Kind: storeKindFilesystem, Role: "secondary",
+		Lifecycle: "active", Binding: "archive", OwnershipEpoch: epoch,
+	}
+	registry := newRegistry(t.Context(), vaultID,
+		map[string]config.StoreBindingConfig{
+			"archive": {Kind: storeKindFilesystem},
+		}, []StoreSpec{spec}, func(
+			context.Context,
+			config.StoreBindingConfig,
+			*packstore.Ownership,
+		) (packstore.Backend, error) {
+			return backend, nil
+		})
+	t.Cleanup(func() { require.NoError(t, registry.Close()) })
+
+	refreshResult := make(chan StoreObservation, 1)
+	go func() { refreshResult <- registry.Refresh(t.Context(), storeID) }()
+	<-probeStarted
+	spec.Lifecycle = "detached"
+	observation := registry.AttachSpec(t.Context(), spec)
+	assert.Equal(t, StoreDetached, observation.State)
+	_, admitted := registry.Backend(storeID)
+	assert.False(t, admitted)
+	close(releaseProbe)
+	assert.Equal(t, StoreDetached, (<-refreshResult).State)
+}
+
 func TestRegistryClosesBackendOpenedAfterProbeDeadline(t *testing.T) {
 	const (
 		vaultID = "10000000-0000-4000-8000-000000000001"
