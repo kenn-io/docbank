@@ -344,6 +344,19 @@ func TestRestoreStoreMapRebuildsRemoteOnlyPlacementWithFreshIdentity(t *testing.
 	assert.Equal(t, "restored archive", stores[1].Name)
 	assert.NotEqual(t, sourcePrimary.ID, stores[1].ID)
 	assert.NotEqual(t, sourcePrimary.OwnershipEpoch, stores[1].OwnershipEpoch)
+	restoredConfig, err := config.Load(target)
+	require.NoError(t, err)
+	require.Equal(t, binding, restoredConfig.StoreBindings["archive"])
+	reopenedRegistry := blob.NewRegistry(
+		t.Context(), restored.VaultID(), restoredConfig.StoreBindings,
+		[]blob.StoreSpec{{
+			ID: stores[1].ID, Kind: stores[1].Kind, Role: stores[1].Role,
+			Lifecycle: stores[1].Lifecycle, Binding: stores[1].Binding,
+			OwnershipEpoch: stores[1].OwnershipEpoch,
+		}},
+	)
+	t.Cleanup(func() { require.NoError(t, reopenedRegistry.Close()) })
+	assert.Equal(t, blob.StoreOnline, reopenedRegistry.Observation(stores[1].ID).State)
 	for _, content := range fixture.content {
 		hash := fmt.Sprintf("%x", sha256.Sum256([]byte(content)))
 		parsed, parseErr := packstore.ParseHash(hash)

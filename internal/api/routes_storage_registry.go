@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/storenamespace"
 )
 
 func registerStorageRegistryRoutes(api huma.API, d Deps, g *gate) {
@@ -54,7 +55,7 @@ func registerStorageRegistryRoutes(api huma.API, d Deps, g *gate) {
 			output = &previewOutput{Body: BlobStorePreview{
 				Store: blobStoreAPI(
 					plan.store, store.BlobStoreStats{},
-					blob.StoreObservation{State: blob.StoreUnbound},
+					blob.StoreObservation{State: blob.StoreUnbound}, 0,
 				),
 				MarkerAction: plan.markerAction, Takeover: plan.takeover,
 				PreviewToken: token, ExpiresAt: expiresAt.Format(time.RFC3339Nano),
@@ -98,17 +99,15 @@ func registerStorageRegistryRoutes(api huma.API, d Deps, g *gate) {
 	}, func(ctx context.Context, in *struct {
 		Refresh bool `query:"refresh"`
 	}) (*storesOutput, error) {
-		stores, inventory, err := readBlobStores(ctx, d)
+		stores, err := readBlobStores(ctx, d, in.Refresh)
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
 		result := make([]BlobStore, 0, len(stores))
 		for _, item := range stores {
-			observation := storageObservation(d, item)
-			if in.Refresh && d.BlobRegistry != nil && item.Role != "primary" {
-				observation = d.BlobRegistry.Refresh(ctx, item.ID)
-			}
-			result = append(result, blobStoreAPI(item, inventory[item.ID], observation))
+			result = append(result, blobStoreAPI(
+				item.store, item.stats, item.observation, item.unreadable,
+			))
 		}
 		return &storesOutput{Body: result}, nil
 	})
@@ -133,7 +132,9 @@ func registerStorageRegistryRoutes(api huma.API, d Deps, g *gate) {
 			if d.BlobRegistry != nil {
 				observation = d.BlobRegistry.AttachSpec(ctx, blobStoreSpec(item))
 			}
-			output = &storeOutput{Body: blobStoreAPI(item, store.BlobStoreStats{}, observation)}
+			output = &storeOutput{Body: blobStoreAPI(
+				item, store.BlobStoreStats{}, observation, 0,
+			)}
 			return nil
 		})
 		return output, err
@@ -301,7 +302,7 @@ func applyStorageRegistration(
 		return BlobStore{}, FromStoreError(err)
 	}
 	observation := d.BlobRegistry.AttachSpec(ctx, blobStoreSpec(plan.store))
-	return blobStoreAPI(plan.store, store.BlobStoreStats{}, observation), nil
+	return blobStoreAPI(plan.store, store.BlobStoreStats{}, observation, 0), nil
 }
 
 func requireEmptyUnmarkedNamespace(
@@ -333,23 +334,22 @@ func validateStorageNamespace(
 	binding config.StoreBindingConfig,
 	stores []store.BlobStore,
 ) error {
-	if binding.Kind != "filesystem" {
-		return nil
-	}
-	overlap, err := ingest.PathsOverlap(binding.Path, d.VaultRoot)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return NewError(
-			http.StatusUnprocessableEntity, "storage_binding_invalid", err.Error(),
-		)
-	}
-	if overlap {
-		return NewError(
-			http.StatusConflict, "storage_namespace_overlap",
-			fmt.Sprintf("binding %q overlaps the live vault root", bindingName),
-		)
+	if binding.Kind == "filesystem" {
+		overlap, err := ingest.PathsOverlap(binding.Path, d.VaultRoot)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return NewError(
+				http.StatusUnprocessableEntity, "storage_binding_invalid", err.Error(),
+			)
+		}
+		if overlap {
+			return NewError(
+				http.StatusConflict, "storage_namespace_overlap",
+				fmt.Sprintf("binding %q overlaps the live vault root", bindingName),
+			)
+		}
 	}
 	for _, existing := range stores {
-		if existing.Role == "primary" || existing.Kind != "filesystem" ||
+		if existing.Role == "primary" || existing.Kind != binding.Kind ||
 			existing.Lifecycle == "detached" {
 			continue
 		}
@@ -363,7 +363,13 @@ func validateStorageNamespace(
 				),
 			)
 		}
-		overlap, err := ingest.PathsOverlap(binding.Path, existingBinding.Path)
+		var overlap bool
+		var err error
+		if binding.Kind == "filesystem" {
+			overlap, err = ingest.PathsOverlap(binding.Path, existingBinding.Path)
+		} else {
+			overlap, err = storenamespace.S3Overlaps(binding, existingBinding)
+		}
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return NewError(
 				http.StatusUnprocessableEntity, "storage_binding_invalid", err.Error(),
@@ -390,27 +396,59 @@ func closeStorageBackend(backend packstore.Backend) error {
 }
 
 func storageStoreStatuses(ctx context.Context, d Deps) ([]StorageStoreStatus, error) {
-	stores, inventory, err := readBlobStores(ctx, d)
+	stores, err := readBlobStores(ctx, d, false)
 	if err != nil {
 		return nil, err
 	}
 	result := make([]StorageStoreStatus, 0, len(stores))
 	for _, item := range stores {
-		result = append(result,
-			blobStoreAPI(item, inventory[item.ID], storageObservation(d, item)).StorageStoreStatus)
+		result = append(result, blobStoreAPI(
+			item.store, item.stats, item.observation, item.unreadable,
+		).StorageStoreStatus)
 	}
 	return result, nil
 }
 
+type blobStoreSnapshot struct {
+	store       store.BlobStore
+	stats       store.BlobStoreStats
+	observation blob.StoreObservation
+	unreadable  int64
+}
+
 func readBlobStores(
-	ctx context.Context, d Deps,
-) ([]store.BlobStore, map[string]store.BlobStoreStats, error) {
+	ctx context.Context, d Deps, refresh bool,
+) ([]blobStoreSnapshot, error) {
 	stores, err := d.Store.BlobStores(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	inventory, err := d.Store.BlobStoreInventory(ctx)
-	return stores, inventory, err
+	if err != nil {
+		return nil, err
+	}
+	observations := make(map[string]blob.StoreObservation, len(stores))
+	online := make(map[string]bool, len(stores))
+	for _, item := range stores {
+		observation := storageObservation(d, item)
+		if refresh && d.BlobRegistry != nil && item.Role != "primary" {
+			observation = d.BlobRegistry.Refresh(ctx, item.ID)
+		}
+		observations[item.ID] = observation
+		online[item.ID] = observation.State == blob.StoreOnline
+	}
+	unreadable, err := d.Store.BlobStoreUnreadableObjects(ctx, online)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]blobStoreSnapshot, 0, len(stores))
+	for _, item := range stores {
+		result = append(result, blobStoreSnapshot{
+			store: item, stats: inventory[item.ID], observation: observations[item.ID],
+			unreadable: unreadable[item.ID],
+		})
+	}
+	return result, nil
 }
 
 func storageObservation(d Deps, item store.BlobStore) blob.StoreObservation {
@@ -427,14 +465,11 @@ func blobStoreAPI(
 	item store.BlobStore,
 	stats store.BlobStoreStats,
 	observation blob.StoreObservation,
+	unreadableObjects int64,
 ) BlobStore {
 	observedAt := ""
 	if !observation.ObservedAt.IsZero() {
 		observedAt = observation.ObservedAt.Format(time.RFC3339Nano)
-	}
-	unreadableObjects := int64(0)
-	if observation.State != blob.StoreOnline {
-		unreadableObjects = stats.SoleAuthorityObjects
 	}
 	return BlobStore{
 		StorageStoreStatus: StorageStoreStatus{

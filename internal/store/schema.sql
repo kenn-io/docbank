@@ -119,7 +119,7 @@ CREATE INDEX IF NOT EXISTS blob_pack_entries_store_hash
 CREATE TABLE IF NOT EXISTS storage_operations (
     operation_id      TEXT PRIMARY KEY,
     kind              TEXT NOT NULL,
-    source_store_id   TEXT REFERENCES blob_stores(store_id),
+    source_store_id   TEXT REFERENCES blob_stores(store_id) ON DELETE SET NULL,
     request_version   INTEGER NOT NULL CHECK (request_version > 0),
     request_digest    TEXT NOT NULL,
     request_json      TEXT NOT NULL,

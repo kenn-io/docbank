@@ -40,6 +40,12 @@ priority = 40
 force_path_style = true
 ```
 
+S3 endpoints must use HTTPS, including services reached through loopback.
+Docbank has no production switch for plaintext S3 because a TCP port does not
+prove which local process received the ownership marker or document bytes.
+Use the service's authenticated TLS endpoint or an owner-confined,
+authenticated proxy.
+
 Restart the daemon after editing `config.toml`. Binding configuration is read
 once at startup; a running daemon fails with `storage_configuration_stale`
 rather than guessing about newly edited settings.
@@ -67,6 +73,19 @@ Use `--takeover` only when deliberately transferring an already marked
 namespace from another vault instance. Takeover writes a fresh ownership epoch
 and fences the former owner. It is not a way to share one prefix between two
 live vaults.
+
+Each active secondary must own a disjoint namespace. Filesystem paths may not
+overlap the vault or another active filesystem store. S3 stores may not use
+equal or nested prefixes under the same canonical endpoint and bucket. The
+ownership marker is the authoritative fence; path and prefix comparisons reject
+obvious aliases before Docbank contacts the backend.
+
+`storage list` and `storage status` separate catalog authority from observed
+availability. `authoritative_objects` counts verified locations recorded for a
+store. `unreadable_objects` counts objects for which every authorized location
+is currently offline, so two unavailable replicas do not misleadingly look
+readable. Missing, corrupt, fenced, unavailable, and unbound states remain
+distinct because their recovery actions differ.
 
 ## Place retained content
 
@@ -120,6 +139,12 @@ Salvage never restores ordinary authority to the fenced store. Every operation
 has a durable ID; inspect interrupted or uncertain work with `docbank jobs`
 and `docbank jobs show <operation-id>`.
 
+Physical deletion happens after catalog authority has moved. If that cleanup
+temporarily fails, the operation returns to the durable queue with the failure
+visible and the daemon retries it; it is never left looking actively running
+after its worker has stopped. The already verified destination remains
+authoritative while retry proceeds.
+
 ## Evacuate and remove
 
 ```bash
@@ -172,3 +197,11 @@ stricter. Windows requires an owner-restricted DACL. Docbank refuses a final
 symlink/reparse point and validates the complete map before contacting a
 backend. Target stores receive fresh IDs and epochs. Existing identical
 objects may be adopted only after full read-back verification.
+
+Mapped filesystem namespaces must also be disjoint from the running source
+vault and the backup repository. Before the restored vault is published,
+Docbank writes a minimal owner-private `config.toml` containing the selected
+target bindings. If the target already has a configuration file, Docbank
+requires those bindings to match and never rewrites it. A `remote_only`
+restore therefore cannot retire the restored primary and then reopen with its
+only authoritative stores unbound.

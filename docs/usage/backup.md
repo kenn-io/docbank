@@ -185,7 +185,7 @@ store ID and ownership epoch. No source path, endpoint, credential, bucket,
 binding, or ownership epoch is inherited.
 
 `--store-map` explicitly maps source store IDs to binding profiles already
-loaded from the target daemon's `config.toml`. The TOML file must be an
+loaded by the daemon performing the restore. The TOML file must be an
 owner-private regular file and may select a new empty namespace or an explicit
 takeover. Mapped bytes are independently read back before target authority is
 recorded. Unmapped bytes remain local. Audited bytes also remain local unless
@@ -193,6 +193,13 @@ the mapping explicitly selects both `remote_only` and
 `allow_audited_remote_only`. See
 [Multi-store Storage](storage.md#backup-and-restore) for the file format and
 trust boundary.
+
+Restore also verifies that mapped filesystem stores do not overlap the live
+source vault or backup repository. Before publication it gives an otherwise
+empty target a minimal owner-private `config.toml` containing the mapped
+binding profiles, so the restored vault can prove and read remote-only
+authority after restart. An existing target configuration is preserved and
+must already define the same mappings exactly.
 
 Interactive restore shows metadata, document, extras, SQLite integrity, and
 manifest-statistics progress as separate stages.

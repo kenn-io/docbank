@@ -53,7 +53,13 @@ func TestS3PlacementLifecycle(t *testing.T) {
 		"archive", "s3", "archive_s3",
 	)
 	require.NoError(t, err)
-	unattached, err := NewConfiguredBackend(t.Context(), binding, nil)
+	openBackend := func(
+		ctx context.Context, binding docconfig.StoreBindingConfig,
+		expected *packstore.Ownership,
+	) (packstore.Backend, error) {
+		return newConfiguredBackend(ctx, binding, expected, true)
+	}
+	unattached, err := openBackend(t.Context(), binding, nil)
 	require.NoError(t, err)
 	inspector, ok := unattached.(packstore.NamespaceInspector)
 	require.True(t, ok)
@@ -69,14 +75,14 @@ func TestS3PlacementLifecycle(t *testing.T) {
 	require.NoError(t, closeBackend(unattached))
 	require.NoError(t, metadata.RegisterBlobStore(t.Context(), secondary))
 
-	registry := NewRegistry(
+	registry := newRegistry(
 		t.Context(), metadata.VaultID(),
 		map[string]docconfig.StoreBindingConfig{"archive_s3": binding},
 		[]StoreSpec{{
 			ID: secondary.ID, Kind: secondary.Kind, Role: secondary.Role,
 			Lifecycle: secondary.Lifecycle, Binding: secondary.Binding,
 			OwnershipEpoch: secondary.OwnershipEpoch,
-		}},
+		}}, openBackend,
 	)
 	options := Options{Registry: registry}
 	blobs, err := NewWithOptions(
@@ -158,7 +164,7 @@ func TestS3PlacementLifecycle(t *testing.T) {
 	))
 	assertBlobContent(t, blobs, remoteHash, []byte("remote-only content"))
 
-	reclaim, err := NewConfiguredBackend(t.Context(), binding, nil)
+	reclaim, err := openBackend(t.Context(), binding, nil)
 	require.NoError(t, err)
 	require.NoError(t, reclaim.ReplaceOwnership(t.Context(), ownership, &taken))
 	require.NoError(t, closeBackend(reclaim))

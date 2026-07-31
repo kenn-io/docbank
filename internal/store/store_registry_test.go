@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -148,6 +149,44 @@ func TestBlobStoreInventoryReportsSoleAuthorityAndAffectedDocuments(t *testing.T
 	assert.Equal(t, int64(1), inventory[primary.ID].AffectedDocuments)
 	assert.Zero(t, inventory[secondary.ID].SoleAuthorityObjects)
 	assert.Zero(t, inventory[secondary.ID].AffectedDocuments)
+}
+
+func TestBlobStoreUnreadableObjectsAccountsForUnavailableReplicaSet(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	primary, err := s.PrimaryBlobStore(ctx)
+	require.NoError(t, err)
+	first, err := s.PrepareSecondaryBlobStore("first", "filesystem", "first")
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(ctx, first))
+	second, err := s.PrepareSecondaryBlobStore("second", "filesystem", "second")
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(ctx, second))
+
+	hash := fakeHash("41")
+	_, err = s.CreateFile(ctx, s.RootID(), "remote.txt", hash, 7, "text/plain")
+	require.NoError(t, err)
+	for index, storeID := range []string{first.ID, second.ID} {
+		_, err = s.db.ExecContext(ctx, `
+			INSERT INTO blob_locations(
+				blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
+			) VALUES(?,?,?,'loose','raw',7,1)`,
+			hash, storeID, fmt.Sprintf("41000000-0000-4000-8000-%012d", index+1),
+		)
+		require.NoError(t, err)
+	}
+	_, err = s.db.ExecContext(ctx,
+		`DELETE FROM blob_locations WHERE blob_hash=? AND store_id=?`, hash, primary.ID)
+	require.NoError(t, err)
+
+	unreadable, err := s.BlobStoreUnreadableObjects(ctx, nil)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), unreadable[first.ID])
+	assert.Equal(t, int64(1), unreadable[second.ID])
+
+	unreadable, err = s.BlobStoreUnreadableObjects(ctx, map[string]bool{first.ID: true})
+	require.NoError(t, err)
+	assert.Empty(t, unreadable)
 }
 
 func TestBlobStoreRegistrationRejectsConflicts(t *testing.T) {

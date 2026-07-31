@@ -145,6 +145,20 @@ func TestStoreBindingsRejectAmbiguousDefinitions(t *testing.T) {
 	}
 }
 
+func TestStoreBindingsRejectPlainHTTPS3Endpoint(t *testing.T) {
+	cfg := Default()
+	cfg.StoreBindings = map[string]StoreBindingConfig{
+		"archive": {
+			Kind: "s3", Endpoint: "http://127.0.0.1:9000", Region: "us-east-1",
+			Bucket: "documents", CredentialProfile: "test", ForcePathStyle: true,
+		},
+	}
+
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "HTTPS")
+}
+
 func TestLoadParsesWatchedInboxesAndAppliesDefaults(t *testing.T) {
 	dir := privateTestConfigDir(t)
 	source := t.TempDir()

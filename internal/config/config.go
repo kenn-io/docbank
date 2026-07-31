@@ -346,6 +346,9 @@ func validateStoreBindings(bindings map[string]StoreBindingConfig) error {
 				if err != nil || endpoint.Scheme == "" || endpoint.Host == "" {
 					return fmt.Errorf("%s endpoint %q must be an absolute URL", prefix, binding.Endpoint)
 				}
+				if !strings.EqualFold(endpoint.Scheme, "https") {
+					return fmt.Errorf("%s endpoint %q must use HTTPS", prefix, binding.Endpoint)
+				}
 			}
 		default:
 			return fmt.Errorf("%s kind %q must be filesystem or s3", prefix, binding.Kind)

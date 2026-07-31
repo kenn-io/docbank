@@ -776,7 +776,9 @@ docbank storage place --run --token <preview-token>
 docbank storage evacuate <store>
 docbank storage evacuate --run --token <preview-token>
 docbank storage repair <sha256> --store <store>
+docbank storage repair --run --token <preview-token>
 docbank storage salvage <sha256> --store <store>
+docbank storage salvage --run --token <preview-token>
 docbank storage detach <store>
 docbank storage unregister <store>
 ```
@@ -799,7 +801,8 @@ physical loose bytes (raw and zstd files), live packed blobs and their
 stored/raw bytes, pack count, and immutable packed
 bytes pending repack. It also reports each store's role, kind, observed state,
 catalog-authorized objects, sole copies, affected live documents, and objects
-without a readable alternative. The command is read-only. `--json` emits the same fields
+whose every authorized location is currently offline. The command is read-only.
+`--json` emits the same fields
 as the authenticated `GET /api/v1/storage` endpoint.
 
 ## docbank storage pack

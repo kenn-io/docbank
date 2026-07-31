@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/pkg/sqlite"
 )
@@ -222,6 +225,71 @@ func TestPlacementRunnerResumesAfterCatalogCommitBeforeProgress(t *testing.T) {
 	assert.Equal(t, int64(1), receipt.Completed)
 	assert.Equal(t, int64(1), receipt.Copied)
 	assert.Equal(t, int64(1), receipt.SourceRevoked)
+}
+
+func TestPlacementRunnerReschedulesFailedPhysicalCleanup(t *testing.T) {
+	metadata, blobs, runner, secondary := placementTestVault(t)
+	file, _ := placementTestFile(t, metadata, blobs, []byte("retry cleanup"))
+	copyPlan, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+		TargetNodeID: file.ID, SourceStoreID: metadata.PrimaryBlobStoreID(),
+		DestinationStoreID: secondary.ID,
+	})
+	require.NoError(t, err)
+	require.NoError(t, runner.Run(
+		t.Context(), createPlacementOperation(t, metadata, copyPlan),
+	))
+
+	backend, ok := blobs.registry.backends[packstore.StoreID(secondary.ID)]
+	require.True(t, ok)
+	failing := &failOnceRetireBackend{Backend: backend, failed: make(chan struct{})}
+	failing.fail.Store(true)
+	blobs.registry.backends[packstore.StoreID(secondary.ID)] = failing
+
+	retirePlan, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+		TargetNodeID: file.ID, SourceStoreID: secondary.ID,
+		DestinationStoreID: metadata.PrimaryBlobStoreID(), RetireSource: true,
+	})
+	require.NoError(t, err)
+	operationID := createPlacementOperation(t, metadata, retirePlan)
+	runner.RetryDelay = 100 * time.Millisecond
+	supervisor := jobs.New(t.Context(), nil)
+	t.Cleanup(supervisor.Stop)
+	require.NoError(t, runner.Start(supervisor, operationID))
+
+	select {
+	case <-failing.failed:
+	case <-time.After(time.Second):
+		t.Fatal("cleanup failure was not observed")
+	}
+	require.Eventually(t, func() bool {
+		operation, operationErr := metadata.StorageOperation(t.Context(), operationID)
+		return operationErr == nil && operation.State == store.StorageOperationQueued &&
+			operation.Error != ""
+	}, time.Second, time.Millisecond)
+	require.Eventually(t, func() bool {
+		operation, operationErr := metadata.StorageOperation(t.Context(), operationID)
+		return operationErr == nil && operation.State == store.StorageOperationCompleted
+	}, time.Second, 10*time.Millisecond)
+}
+
+type failOnceRetireBackend struct {
+	packstore.Backend
+
+	fail   atomic.Bool
+	failed chan struct{}
+}
+
+func (b *failOnceRetireBackend) Retire(
+	ctx context.Context, ref packstore.ObjectRef,
+) error {
+	if b.fail.Swap(false) {
+		close(b.failed)
+		return errors.New("synthetic cleanup failure")
+	}
+	if err := b.Backend.Retire(ctx, ref); err != nil {
+		return fmt.Errorf("retiring through test backend: %w", err)
+	}
+	return nil
 }
 
 func TestPlacementRunnerVerifiesExistingDestinationBeforeRetiringSource(t *testing.T) {

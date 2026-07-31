@@ -134,6 +134,39 @@ func TestStorageRegistrationRejectsOverlappingSecondaries(t *testing.T) {
 	assert.Contains(t, body, `"code":"storage_namespace_overlap"`)
 }
 
+func TestStorageRegistrationRejectsOverlappingS3Prefixes(t *testing.T) {
+	ts, _ := newTestServer(t, func(d *api.Deps) {
+		d.Cfg.StoreBindings = map[string]config.StoreBindingConfig{
+			"outer": {
+				Kind: "s3", Endpoint: "https://objects.example", Region: "us-east-1",
+				Bucket: "archive", Prefix: "docbank", CredentialProfile: "test",
+			},
+			"inner": {
+				Kind: "s3", Endpoint: "https://OBJECTS.EXAMPLE/", Region: "us-east-1",
+				Bucket: "archive", Prefix: "docbank/nested", CredentialProfile: "test",
+			},
+		}
+		existing, err := d.Store.PrepareSecondaryBlobStore("outer", "s3", "outer")
+		require.NoError(t, err)
+		require.NoError(t, d.Store.RegisterBlobStore(t.Context(), existing))
+		d.BlobRegistry = blob.NewRegistry(
+			t.Context(), d.Store.VaultID(), d.Cfg.StoreBindings,
+			[]blob.StoreSpec{{
+				ID: existing.ID, Kind: existing.Kind, Role: existing.Role,
+				Lifecycle: existing.Lifecycle, Binding: existing.Binding,
+				OwnershipEpoch: existing.OwnershipEpoch,
+			}},
+		)
+		t.Cleanup(func() { require.NoError(t, d.BlobRegistry.Close()) })
+	})
+
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/storage/stores/preview", nil,
+		map[string]any{"name": "inner", "binding": "inner"})
+
+	assert.Equal(t, http.StatusConflict, resp.StatusCode, body)
+	assert.Contains(t, body, `"code":"storage_namespace_overlap"`)
+}
+
 func TestStorageRegistrationRejectsCatalogChangeBeforeMarkerHandoff(t *testing.T) {
 	namespace := filepath.Join(t.TempDir(), "archive")
 	ts, live := newTestServer(t, func(d *api.Deps) {
@@ -215,4 +248,8 @@ func TestStorageEvacuationPreviewRunsAndDetachesEmptySecondary(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &stores))
 	require.Len(t, stores, 2)
 	assert.Equal(t, "detached", stores[1].Lifecycle)
+
+	resp, body = do(t, ts, http.MethodDelete,
+		"/api/v1/storage/stores/"+registered.ID, nil, nil)
+	require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
 }

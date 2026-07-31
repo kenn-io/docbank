@@ -147,17 +147,31 @@ repacking is worthwhile. [Editing & Versions](editing-and-versions.md) and
 [Trash, GC, Repack & Verify](../usage/trash-and-gc.md) give the command-level
 contracts.
 
-## Loose and packed bytes are one content store
+## One logical content store can use several physical locations
 
 New content is published as a loose, digest-named file. Packing later combines
 eligible small blobs into sealed immutable pack files, reducing filesystem
 enumeration and backup overhead. The catalog changes representation without
 changing the blob digest, version identity, or document path.
 
-Readers therefore do not care whether content is loose or packed. Backup also
-captures logical content, not the source pack layout, and restore may publish a
-different valid representation under fresh catalog authority. See
-[Loose & Packed Content](packed-storage.md) for limits, maintenance, and the
+Every ingest first lands in the vault's fixed local filesystem primary. A vault
+may also authorize verified copies in secondary filesystem or S3-compatible
+stores. Paths, endpoints, buckets, credentials, and observed availability stay
+outside portable document metadata; the catalog records stable store identity
+and which locations have been independently verified for each SHA-256 object.
+
+Readers therefore do not care whether content is loose or packed, local or
+remote. They select a currently usable catalog-authorized candidate and verify
+the complete decoded identity. A failed stream is never silently continued
+from another location because bytes from the first candidate are not yet
+trusted; a later retry can select a different healthy copy.
+
+Placement is explicit capacity management, not synchronization or backup.
+Backup captures every logical blob from one verified candidate, not the source
+topology, and default restore rebuilds a fresh local primary. See
+[Multi-store Storage](../usage/storage.md) for registration, placement,
+fencing, repair, and restore mapping, and
+[Loose & Packed Content](packed-storage.md) for representation limits and the
 boundary between Docbank policy and Kit mechanics.
 
 ## One owner, two integration modes

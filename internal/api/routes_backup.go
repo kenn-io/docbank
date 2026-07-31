@@ -249,7 +249,7 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 			target, repo.Root(), d.VaultRoot, in.Body.Overwrite)
 		report, err := restoreBackupSnapshot(
 			ctx, repo, target, in.Body, coordinator, nil, d.Store.SQLiteDriver(),
-			d.Cfg.StoreBindings)
+			d.Cfg.StoreBindings, []string{d.VaultRoot, repo.Root()})
 		if err != nil {
 			return nil, err
 		}
@@ -293,7 +293,8 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 					stream.send(BackupRestoreEvent{
 						Type: "progress", Progress: backupProgress(event),
 					})
-				}, d.Store.SQLiteDriver(), d.Cfg.StoreBindings)
+				}, d.Store.SQLiteDriver(), d.Cfg.StoreBindings,
+				[]string{d.VaultRoot, repo.Root()})
 			if stream.err() != nil {
 				return
 			}
@@ -444,6 +445,7 @@ func restoreBackupSnapshot(
 	progress func(backup.ProgressEvent),
 	driver docsqlite.Driver,
 	bindings map[string]config.StoreBindingConfig,
+	protectedFilesystemRoots []string,
 ) (BackupRestoreReport, error) {
 	var placement backupapp.RestorePlacementOptions
 	if in.StoreMap != "" {
@@ -461,6 +463,7 @@ func restoreBackupSnapshot(
 		}
 		placement.Map = &mapping
 		placement.Bindings = bindings
+		placement.ProtectedFilesystemRoots = protectedFilesystemRoots
 	}
 	return restoreBackupSnapshotWith(
 		ctx, repo, target, in, coordinator, progress,

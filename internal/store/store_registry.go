@@ -182,6 +182,53 @@ func (s *Store) BlobStoreInventory(
 	return inventory, nil
 }
 
+// BlobStoreUnreadableObjects counts each retained object against every store
+// that holds it when none of its catalog locations are currently online.
+// Runtime observations stay in Go and never rewrite durable authority.
+func (s *Store) BlobStoreUnreadableObjects(
+	ctx context.Context, online map[string]bool,
+) (map[string]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT blob_hash,store_id
+		FROM blob_locations
+		ORDER BY blob_hash,store_id`)
+	if err != nil {
+		return nil, fmt.Errorf("reading blob locations for health: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	result := make(map[string]int64)
+	var currentHash string
+	var stores []string
+	readable := false
+	flush := func() {
+		if currentHash == "" || readable {
+			return
+		}
+		for _, storeID := range stores {
+			result[storeID]++
+		}
+	}
+	for rows.Next() {
+		var hash, storeID string
+		if err := rows.Scan(&hash, &storeID); err != nil {
+			return nil, fmt.Errorf("scanning blob location health: %w", err)
+		}
+		if currentHash != "" && hash != currentHash {
+			flush()
+			stores = stores[:0]
+			readable = false
+		}
+		currentHash = hash
+		stores = append(stores, storeID)
+		readable = readable || online[storeID]
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading blob location health: %w", err)
+	}
+	flush()
+	return result, nil
+}
+
 // BlobStoreBySelector resolves canonical UUIDv4 selectors exclusively as IDs;
 // all other selectors are names.
 func (s *Store) BlobStoreBySelector(ctx context.Context, selector string) (BlobStore, error) {

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/url"
 	"sort"
 	"strings"
@@ -57,6 +56,7 @@ type Registry struct {
 	mu           sync.RWMutex
 	vaultID      string
 	bindings     map[string]config.StoreBindingConfig
+	openBackend  configuredBackendFactory
 	specs        map[packstore.StoreID]StoreSpec
 	backends     map[packstore.StoreID]packstore.Backend
 	observations map[packstore.StoreID]StoreObservation
@@ -71,8 +71,22 @@ func NewRegistry(
 	bindings map[string]config.StoreBindingConfig,
 	stores []StoreSpec,
 ) *Registry {
+	return newRegistry(ctx, vaultID, bindings, stores, NewConfiguredBackend)
+}
+
+type configuredBackendFactory func(
+	context.Context, config.StoreBindingConfig, *packstore.Ownership,
+) (packstore.Backend, error)
+
+func newRegistry(
+	ctx context.Context,
+	vaultID string,
+	bindings map[string]config.StoreBindingConfig,
+	stores []StoreSpec,
+	openBackend configuredBackendFactory,
+) *Registry {
 	registry := &Registry{
-		vaultID: vaultID, bindings: bindings,
+		vaultID: vaultID, bindings: bindings, openBackend: openBackend,
 		specs:        make(map[packstore.StoreID]StoreSpec, len(stores)),
 		backends:     make(map[packstore.StoreID]packstore.Backend, len(stores)),
 		observations: make(map[packstore.StoreID]StoreObservation, len(stores)),
@@ -141,7 +155,7 @@ func (r *Registry) SalvageBackend(
 	if !bound || binding.Kind != spec.Kind {
 		return nil, fmt.Errorf("salvage store %s has no usable binding", id)
 	}
-	return NewConfiguredBackend(ctx, binding, nil)
+	return r.openBackend(ctx, binding, nil)
 }
 
 // AttachSpec makes a newly committed catalog store available to this daemon
@@ -208,7 +222,7 @@ func (r *Registry) refreshLocked(ctx context.Context, id packstore.StoreID) {
 		Format: packstore.OwnershipFormatV1, Vault: r.vaultID,
 		Store: id, Epoch: spec.OwnershipEpoch,
 	}
-	backend, err := NewConfiguredBackend(ctx, binding, &expected)
+	backend, err := r.openBackend(ctx, binding, &expected)
 	if err != nil {
 		r.observe(id, StoreMisconfigured, err.Error(), binding.Priority)
 		return
@@ -290,10 +304,22 @@ func NewConfiguredBackend(
 	binding config.StoreBindingConfig,
 	expected *packstore.Ownership,
 ) (packstore.Backend, error) {
+	return newConfiguredBackend(ctx, binding, expected, false)
+}
+
+func newConfiguredBackend(
+	ctx context.Context,
+	binding config.StoreBindingConfig,
+	expected *packstore.Ownership,
+	allowInsecureTransport bool,
+) (packstore.Backend, error) {
 	switch binding.Kind {
 	case "filesystem":
 		return NewFilesystemBackend(binding.Path, expected)
 	case "s3":
+		if err := validateS3Transport(binding.Endpoint, allowInsecureTransport); err != nil {
+			return nil, err
+		}
 		loadOptions := []func(*awsconfig.LoadOptions) error{}
 		if binding.Region != "" {
 			loadOptions = append(loadOptions, awsconfig.WithRegion(binding.Region))
@@ -315,7 +341,7 @@ func NewConfiguredBackend(
 			Endpoint: binding.Endpoint, Region: binding.Region,
 			Bucket: binding.Bucket, Prefix: binding.Prefix,
 			Credentials: loaded.Credentials, ForcePathStyle: binding.ForcePathStyle,
-			AllowInsecureTransport: allowInsecureLoopbackEndpoint(binding.Endpoint),
+			AllowInsecureTransport: allowInsecureTransport,
 			ExpectedOwnership:      expected, Limits: StorageLimits(),
 		})
 		if err != nil {
@@ -327,17 +353,19 @@ func NewConfiguredBackend(
 	}
 }
 
-func allowInsecureLoopbackEndpoint(raw string) bool {
+func validateS3Transport(raw string, allowInsecure bool) error {
+	if raw == "" {
+		return nil
+	}
 	endpoint, err := url.Parse(raw)
-	if err != nil || !strings.EqualFold(endpoint.Scheme, "http") {
-		return false
+	if err != nil {
+		return fmt.Errorf("parse S3 endpoint: %w", err)
 	}
-	host := endpoint.Hostname()
-	if strings.EqualFold(host, "localhost") {
-		return true
+	if strings.EqualFold(endpoint.Scheme, "https") ||
+		(allowInsecure && strings.EqualFold(endpoint.Scheme, "http")) {
+		return nil
 	}
-	address := net.ParseIP(host)
-	return address != nil && address.IsLoopback()
+	return errors.New("S3 endpoint must use authenticated HTTPS transport")
 }
 
 // ProbeConfiguredBackend validates behavior that cannot be inferred from

@@ -6,25 +6,26 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"net"
-	"net/url"
 	"path"
 	"path/filepath"
 	"slices"
 	"strings"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/storenamespace"
 	docsqlite "go.kenn.io/docbank/pkg/sqlite"
 )
 
-const RestoreStoreMapVersion = 1
+const (
+	RestoreStoreMapVersion     = 1
+	restoreStoreKindFilesystem = "filesystem"
+	restoreStoreKindS3         = "s3"
+)
 
 // RestoreStoreMap maps portable source placement identities to daemon-loaded
 // target bindings. Binding definitions and secrets remain outside the file.
@@ -45,8 +46,9 @@ type RestoreStoreMapping struct {
 // RestorePlacementOptions enables explicit placement reconstruction after Kit
 // has independently restored every byte to the target's fresh local primary.
 type RestorePlacementOptions struct {
-	Map      *RestoreStoreMap
-	Bindings map[string]config.StoreBindingConfig
+	Map                      *RestoreStoreMap
+	Bindings                 map[string]config.StoreBindingConfig
+	ProtectedFilesystemRoots []string
 }
 
 type preparedRestoreMapping struct {
@@ -99,6 +101,7 @@ func prepareRestoreMappings(
 	mapping RestoreStoreMap,
 	manifest placementManifest,
 	bindings map[string]config.StoreBindingConfig,
+	protectedFilesystemRoots []string,
 ) ([]preparedRestoreMapping, error) {
 	if err := validateRestoreStoreMap(mapping, manifest); err != nil {
 		return nil, err
@@ -120,7 +123,7 @@ func prepareRestoreMappings(
 			binding: binding,
 		})
 	}
-	if err := validateRestoreNamespaces(target, prepared); err != nil {
+	if err := validateRestoreNamespaces(target, prepared, protectedFilesystemRoots); err != nil {
 		return nil, err
 	}
 	return prepared, nil
@@ -128,13 +131,13 @@ func prepareRestoreMappings(
 
 func validateRestoreBinding(name string, binding config.StoreBindingConfig) error {
 	switch binding.Kind {
-	case "filesystem":
+	case restoreStoreKindFilesystem:
 		if binding.Path == "" || !filepath.IsAbs(binding.Path) {
 			return fmt.Errorf(
 				"backupapp: filesystem binding %q requires an absolute path", name,
 			)
 		}
-	case "s3":
+	case restoreStoreKindS3:
 		if binding.Bucket == "" {
 			return fmt.Errorf("backupapp: S3 binding %q requires a bucket", name)
 		}
@@ -171,21 +174,35 @@ type restoreNamespace struct {
 }
 
 func validateRestoreNamespaces(
-	target string, prepared []preparedRestoreMapping,
+	target string,
+	prepared []preparedRestoreMapping,
+	protectedFilesystemRoots []string,
 ) error {
 	primary, err := canonicalFilesystemNamespace(target)
 	if err != nil {
 		return fmt.Errorf("backupapp: resolving restored primary namespace: %w", err)
 	}
 	namespaces := []restoreNamespace{{
-		name: "restored vault", kind: "filesystem", path: primary,
+		name: "restored vault", kind: restoreStoreKindFilesystem, path: primary,
 	}}
+	for _, protected := range protectedFilesystemRoots {
+		if protected == "" {
+			continue
+		}
+		canonical, canonicalErr := canonicalFilesystemNamespace(protected)
+		if canonicalErr != nil {
+			return fmt.Errorf("backupapp: resolving protected storage: %w", canonicalErr)
+		}
+		namespaces = append(namespaces, restoreNamespace{
+			name: "protected storage", kind: restoreStoreKindFilesystem, path: canonical,
+		})
+	}
 	for _, item := range prepared {
 		namespace := restoreNamespace{
 			name: item.mapping.Name, kind: item.binding.Kind,
 		}
 		switch item.binding.Kind {
-		case "filesystem":
+		case restoreStoreKindFilesystem:
 			namespace.path, err = canonicalFilesystemNamespace(item.binding.Path)
 			if err != nil {
 				return fmt.Errorf(
@@ -193,7 +210,7 @@ func validateRestoreNamespaces(
 					item.mapping.Binding, err,
 				)
 			}
-		case "s3":
+		case restoreStoreKindS3:
 			namespace.endpoint, err = canonicalS3Endpoint(
 				item.binding.Endpoint, item.binding.Region,
 			)
@@ -254,90 +271,14 @@ func canonicalFilesystemNamespace(path string) (string, error) {
 }
 
 func canonicalS3Endpoint(raw, region string) (string, error) {
-	if region == "" {
-		// Match Kit's S3 backend default before comparing deployment bindings.
-		region = "us-east-1"
-	}
-	if raw == "" {
-		return awsS3Partition(region)
-	}
-	endpoint, err := url.Parse(raw)
-	if err != nil {
-		return "", fmt.Errorf("parse endpoint %q: %w", raw, err)
-	}
-	if endpoint.Scheme == "" || endpoint.Host == "" {
-		return "", fmt.Errorf("endpoint %q must include scheme and host", raw)
-	}
-	if endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {
-		return "", fmt.Errorf("endpoint %q must not include user info, query, or fragment", raw)
-	}
-	endpoint.Scheme = strings.ToLower(endpoint.Scheme)
-	host := strings.ToLower(endpoint.Hostname())
-	port := endpoint.Port()
-	if (endpoint.Scheme == "https" && port == "443") ||
-		(endpoint.Scheme == "http" && port == "80") {
-		port = ""
-	}
-	if port == "" {
-		if strings.Contains(host, ":") {
-			endpoint.Host = "[" + host + "]"
-		} else {
-			endpoint.Host = host
-		}
-	} else {
-		endpoint.Host = net.JoinHostPort(host, port)
-	}
-	endpoint.Path = strings.TrimSuffix(endpoint.Path, "/")
-	if partition, ok := canonicalAWSS3Partition(endpoint, region); ok {
-		return partition, nil
-	}
-	return endpoint.String(), nil
-}
-
-func canonicalAWSS3Partition(endpoint *url.URL, region string) (string, bool) {
-	if endpoint.Port() != "" || endpoint.Path != "" || region == "" {
-		return "", false
-	}
-	resolver := awss3.NewDefaultEndpointResolver()
-	variants := []awss3.EndpointResolverOptions{
-		{},
-		{UseFIPSEndpoint: aws.FIPSEndpointStateEnabled},
-		{UseDualStackEndpoint: aws.DualStackEndpointStateEnabled},
-		{
-			UseFIPSEndpoint:      aws.FIPSEndpointStateEnabled,
-			UseDualStackEndpoint: aws.DualStackEndpointStateEnabled,
-		},
-	}
-	for _, options := range variants {
-		resolved, err := resolver.ResolveEndpoint(region, options)
-		if err != nil {
-			continue
-		}
-		resolvedURL, err := url.Parse(resolved.URL)
-		if err == nil && strings.EqualFold(
-			endpoint.Hostname(), resolvedURL.Hostname(),
-		) {
-			return resolved.PartitionID, true
-		}
-	}
-	return "", false
-}
-
-func awsS3Partition(region string) (string, error) {
-	resolved, err := awss3.NewDefaultEndpointResolver().ResolveEndpoint(
-		region, awss3.EndpointResolverOptions{},
-	)
-	if err != nil {
-		return "", fmt.Errorf("resolve AWS S3 region %q: %w", region, err)
-	}
-	return resolved.PartitionID, nil
+	return storenamespace.CanonicalS3Endpoint(raw, region)
 }
 
 func restoreNamespacesOverlap(first, second restoreNamespace) (bool, error) {
 	if first.kind != second.kind {
 		return false, nil
 	}
-	if first.kind == "filesystem" {
+	if first.kind == restoreStoreKindFilesystem {
 		overlaps, err := ingest.PathsOverlap(first.path, second.path)
 		if errors.Is(err, fs.ErrNotExist) {
 			return false, nil
@@ -368,9 +309,17 @@ func applyRestorePlacement(
 	}
 	prepared, err := prepareRestoreMappings(
 		target, *options.Map, manifest, options.Bindings,
+		options.ProtectedFilesystemRoots,
 	)
 	if err != nil {
 		return err
+	}
+	restoreBindings := make(map[string]config.StoreBindingConfig, len(prepared))
+	for _, item := range prepared {
+		restoreBindings[item.mapping.Binding] = item.binding
+	}
+	if err := config.EnsureStoreBindings(target, restoreBindings); err != nil {
+		return fmt.Errorf("backupapp: provisioning restored store bindings: %w", err)
 	}
 	metadata, err := store.Open(databasePath, driver)
 	if err != nil {

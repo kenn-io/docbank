@@ -16,6 +16,8 @@ import (
 
 const storageOperationRetention = 30 * 24 * time.Hour
 
+var errStorageCleanupDeferred = errors.New("storage cleanup deferred for retry")
+
 type PlacementObjectResult struct {
 	Hash                  string `json:"hash"`
 	Copied                bool   `json:"copied"`
@@ -48,6 +50,9 @@ type PlacementRunner struct {
 	// Commit serializes short catalog-authority transitions with backup
 	// preservation. nil is intended only for direct embedded/test execution.
 	Commit func(func() error) error
+	// RetryDelay controls durable physical-cleanup retries. Zero uses the
+	// daemon default; tests may shorten it without changing production policy.
+	RetryDelay time.Duration
 }
 
 func (r PlacementRunner) commit(fn func() error) error {
@@ -64,7 +69,23 @@ func (r PlacementRunner) Start(
 		return errors.New("placement runner requires a job supervisor")
 	}
 	return supervisor.Start("storage:"+operationID, func(ctx context.Context) error {
-		return r.Run(ctx, operationID)
+		for {
+			err := r.Run(ctx, operationID)
+			if !errors.Is(err, errStorageCleanupDeferred) {
+				return err
+			}
+			delay := r.RetryDelay
+			if delay <= 0 {
+				delay = time.Second
+			}
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+		}
 	})
 }
 
@@ -100,7 +121,7 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 		return r.runRecovery(ctx, operation)
 	}
 	if err := r.retirePending(ctx, operationID); err != nil {
-		return err
+		return r.deferCleanup(ctx, operationID, err)
 	}
 	var plan store.PlacementPlan
 	if err := json.Unmarshal([]byte(operation.PlanJSON), &plan); err != nil {
@@ -155,7 +176,7 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 			return r.fail(ctx, operationID, fmt.Errorf("placing blob %s: %w", item.Hash, err))
 		}
 		if err := r.retirePending(ctx, operationID); err != nil {
-			return err
+			return r.deferCleanup(ctx, operationID, err)
 		}
 		receipt.Objects = append(receipt.Objects, result)
 		receipt.Completed++
@@ -205,7 +226,7 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 		receipt.SourceRevoked += finalized.RevokedLocations
 		receipt.Evacuated = finalized.Detached
 		if err := r.retirePending(ctx, operationID); err != nil {
-			return err
+			return r.deferCleanup(ctx, operationID, err)
 		}
 		if !finalized.Detached {
 			err = r.commit(func() error {
@@ -235,6 +256,18 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 		ctx, operationID, store.StorageOperationCompleted, string(encoded), "",
 		time.Now().Add(storageOperationRetention),
 	)
+}
+
+func (r PlacementRunner) deferCleanup(
+	ctx context.Context, operationID string, failure error,
+) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	deferErr := r.Metadata.DeferStorageOperation(
+		context.WithoutCancel(ctx), operationID, failure,
+	)
+	return errors.Join(errStorageCleanupDeferred, failure, deferErr)
 }
 
 func remainingPlacementScratch(plan store.PlacementPlan, completed int64) int64 {

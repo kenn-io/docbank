@@ -42,7 +42,7 @@ func TestPrepareRestoreMappingsRejectsOverlappingFilesystemNamespaces(t *testing
 	}
 
 	_, err := prepareRestoreMappings(
-		filepath.Join(root, "restore"), mapping, manifest, bindings,
+		filepath.Join(root, "restore"), mapping, manifest, bindings, nil,
 	)
 	require.ErrorContains(t, err, "overlaps")
 }
@@ -74,7 +74,7 @@ func TestPrepareRestoreMappingsRejectsOverlappingS3Prefixes(t *testing.T) {
 		},
 	}
 
-	_, err := prepareRestoreMappings(t.TempDir(), mapping, manifest, bindings)
+	_, err := prepareRestoreMappings(t.TempDir(), mapping, manifest, bindings, nil)
 	require.ErrorContains(t, err, "overlaps")
 }
 
@@ -105,8 +105,38 @@ func TestPrepareRestoreMappingsRejectsImplicitAndExplicitAWSEndpoints(t *testing
 		},
 	}
 
-	_, err := prepareRestoreMappings(t.TempDir(), mapping, manifest, bindings)
+	_, err := prepareRestoreMappings(t.TempDir(), mapping, manifest, bindings, nil)
 	require.ErrorContains(t, err, "overlaps")
+}
+
+func TestPrepareRestoreMappingsRejectsProtectedFilesystemNamespaces(t *testing.T) {
+	root := t.TempDir()
+	manifest := placementManifest{Stores: []placementStore{{
+		ID: "10000000-0000-4000-8000-000000000001",
+	}}}
+	mapping := RestoreStoreMap{
+		Version: RestoreStoreMapVersion,
+		Stores: []RestoreStoreMapping{{
+			SourceID: manifest.Stores[0].ID, Name: "archive", Binding: "archive",
+		}},
+	}
+	for _, protected := range []string{
+		filepath.Join(root, "live-vault"), filepath.Join(root, "backup-repository"),
+	} {
+		t.Run(filepath.Base(protected), func(t *testing.T) {
+			bindings := map[string]config.StoreBindingConfig{
+				"archive": {Kind: "filesystem", Path: filepath.Join(protected, "secondary")},
+			}
+			_, err := prepareRestoreMappings(
+				filepath.Join(root, "restore"), mapping, manifest, bindings,
+				[]string{
+					filepath.Join(root, "live-vault"),
+					filepath.Join(root, "backup-repository"),
+				},
+			)
+			require.ErrorContains(t, err, "protected storage")
+		})
+	}
 }
 
 func TestCanonicalS3EndpointUsesAWSSDKPartitions(t *testing.T) {

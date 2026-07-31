@@ -245,6 +245,15 @@ from logical metadata, audit evidence, and backups. Restart after editing a
 profile; Docbank reports a typed stale-configuration error rather than
 hot-reloading credentials or paths underneath active jobs.
 
+S3 binding endpoints must use authenticated HTTPS, including loopback
+services. Plain HTTP is rejected because a loopback TCP port does not prove
+which process received an ownership marker or document bytes. Active stores
+must also have disjoint namespaces: filesystem roots may not overlap the vault
+or another filesystem store, and S3 prefixes may not be equal or nested under
+the same canonical endpoint and bucket. A store's ownership marker and epoch
+remain the authoritative fence against aliases that path comparison cannot
+recognize.
+
 ### Bind validation
 
 Validated once, at daemon startup — a misconfiguration fails `docbank

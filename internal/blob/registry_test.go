@@ -11,12 +11,13 @@ import (
 	"go.kenn.io/docbank/internal/config"
 )
 
-func TestInsecureS3TransportIsLimitedToLoopback(t *testing.T) {
-	assert.True(t, allowInsecureLoopbackEndpoint("http://127.0.0.1:9000"))
-	assert.True(t, allowInsecureLoopbackEndpoint("http://[::1]:9000"))
-	assert.True(t, allowInsecureLoopbackEndpoint("http://localhost:9000"))
-	assert.False(t, allowInsecureLoopbackEndpoint("http://objects.example:9000"))
-	assert.False(t, allowInsecureLoopbackEndpoint("https://127.0.0.1:9000"))
+func TestConfiguredS3BackendRejectsPlainHTTP(t *testing.T) {
+	_, err := NewConfiguredBackend(t.Context(), config.StoreBindingConfig{
+		Kind: "s3", Endpoint: "http://127.0.0.1:9000", Region: "us-east-1",
+		Bucket: "documents", CredentialProfile: "test", ForcePathStyle: true,
+	}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "HTTPS")
 }
 
 func TestRegistryClassifiesBindingsAndOwnership(t *testing.T) {

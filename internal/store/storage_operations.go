@@ -152,7 +152,7 @@ func (s *Store) ClaimStorageOperation(
 	}
 	now := nowRFC3339()
 	result, err := s.db.ExecContext(ctx, `
-		UPDATE storage_operations SET state=?,updated_at=?
+		UPDATE storage_operations SET state=?,error='',updated_at=?
 		WHERE operation_id=? AND state IN (?,?)`,
 		StorageOperationRunning, now, id,
 		StorageOperationQueued, StorageOperationRunning,
@@ -168,6 +168,27 @@ func (s *Store) ClaimStorageOperation(
 		return StorageOperation{}, fmt.Errorf("storage operation %s is not resumable: %w", id, ErrStaleRevision)
 	}
 	return s.StorageOperation(ctx, id)
+}
+
+// DeferStorageOperation records a retryable worker failure and returns the
+// operation to the durable queue without presenting it as actively running.
+func (s *Store) DeferStorageOperation(ctx context.Context, id string, failure error) error {
+	if failure == nil {
+		return errors.New("deferred storage operation requires a failure")
+	}
+	message := failure.Error()
+	if len(message) > 4096 {
+		message = message[:4096]
+		for !utf8.ValidString(message) {
+			message = message[:len(message)-1]
+		}
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE storage_operations SET state=?,error=?,updated_at=?
+		WHERE operation_id=? AND state=?`,
+		StorageOperationQueued, message, nowRFC3339(), id, StorageOperationRunning,
+	)
+	return requireOneStorageOperationRow(result, err, id, "deferring")
 }
 
 func (s *Store) AdvanceStorageOperation(
