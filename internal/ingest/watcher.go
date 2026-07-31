@@ -680,7 +680,10 @@ func existingPathPrefixMatchesWatch(pathname string, watch config.WatchConfig) (
 		}
 		parent := filepath.Dir(current)
 		if parent == current {
-			return false, err
+			// Windows drive and UNC roots can be unavailable while their
+			// configured stores remain active but offline. With no observable
+			// prefix, there is no filesystem identity to compare to the watch.
+			return false, nil
 		}
 		current = parent
 	}
