@@ -113,6 +113,37 @@ CREATE INDEX IF NOT EXISTS blob_pack_entries_pack
 CREATE INDEX IF NOT EXISTS blob_pack_entries_store_hash
     ON blob_pack_entries(store_id, blob_hash);
 
+-- Durable storage work is resumable deployment state. Request and receipt
+-- shapes are versioned and validated in Go; SQLite owns only atomic progress
+-- and bounded lifecycle bookkeeping.
+CREATE TABLE IF NOT EXISTS storage_operations (
+    operation_id      TEXT PRIMARY KEY,
+    kind              TEXT NOT NULL,
+    request_version   INTEGER NOT NULL CHECK (request_version > 0),
+    request_digest    TEXT NOT NULL,
+    request_json      TEXT NOT NULL,
+    plan_json         TEXT NOT NULL,
+    state             TEXT NOT NULL,
+    cursor            TEXT NOT NULL DEFAULT '',
+    total_objects     INTEGER NOT NULL DEFAULT 0 CHECK (total_objects >= 0),
+    completed_objects INTEGER NOT NULL DEFAULT 0 CHECK (completed_objects >= 0),
+    copied_objects    INTEGER NOT NULL DEFAULT 0 CHECK (copied_objects >= 0),
+    copied_bytes      INTEGER NOT NULL DEFAULT 0 CHECK (copied_bytes >= 0),
+    cancel_requested  INTEGER NOT NULL DEFAULT 0 CHECK (cancel_requested IN (0, 1)),
+    error             TEXT NOT NULL DEFAULT '',
+    receipt_json      TEXT NOT NULL DEFAULT '',
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    finished_at       TEXT,
+    retention_until   TEXT
+);
+
+CREATE INDEX IF NOT EXISTS storage_operations_state
+    ON storage_operations(state, created_at, operation_id);
+CREATE INDEX IF NOT EXISTS storage_operations_retention
+    ON storage_operations(retention_until)
+    WHERE retention_until IS NOT NULL;
+
 -- Bounded maintenance reads pack summaries instead of rescanning every mapping.
 -- These triggers maintain physical catalog projections only; document liveness
 -- remains Go-owned and is expressed by inserting or deleting blobs rows.

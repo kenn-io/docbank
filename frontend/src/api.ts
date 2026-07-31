@@ -283,7 +283,7 @@ export interface AuditEventPage {
 
 export interface Job {
   name: string;
-  status: "running" | "completed" | "failed" | "cancelled";
+  status: "queued" | "running" | "completed" | "failed" | "cancelled";
   started_at: string;
   finished_at?: string;
   error?: string;

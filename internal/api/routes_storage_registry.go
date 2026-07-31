@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -189,28 +190,32 @@ func previewStorageRegistration(
 	plan := storageRegistrationPlan{
 		store: candidate, binding: binding, markerAction: "create", takeover: takeover,
 	}
-	if binding.Kind != "filesystem" {
-		return storageRegistrationPlan{}, NewError(http.StatusNotImplemented,
-			"storage_backend_unavailable", "S3 registration is not active in this build")
+	if binding.Kind == "filesystem" {
+		overlap, err := ingest.PathsOverlap(binding.Path, d.VaultRoot)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return storageRegistrationPlan{}, NewError(http.StatusUnprocessableEntity,
+				"storage_binding_invalid", err.Error())
+		}
+		if overlap {
+			return storageRegistrationPlan{}, NewError(http.StatusConflict,
+				"storage_namespace_overlap",
+				fmt.Sprintf("binding %q overlaps the live vault root", bindingName))
+		}
 	}
-	overlap, err := ingest.PathsOverlap(binding.Path, d.VaultRoot)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return storageRegistrationPlan{}, NewError(http.StatusUnprocessableEntity,
-			"storage_binding_invalid", err.Error())
-	}
-	if overlap {
-		return storageRegistrationPlan{}, NewError(http.StatusConflict,
-			"storage_namespace_overlap",
-			fmt.Sprintf("binding %q overlaps the live vault root", bindingName))
-	}
-	backend, err := blob.NewFilesystemBackend(binding.Path, nil)
+	backend, err := blob.NewConfiguredBackend(ctx, binding, nil)
 	if err != nil {
 		return storageRegistrationPlan{}, NewError(http.StatusUnprocessableEntity,
 			"storage_binding_invalid", err.Error())
 	}
-	defer func() { _ = backend.Close() }()
+	defer func() { _ = closeStorageBackend(backend) }()
+	if err := blob.ProbeConfiguredBackend(ctx, backend); err != nil {
+		return storageRegistrationPlan{}, NewError(
+			http.StatusUnprocessableEntity, "storage_capability_missing", err.Error(),
+		)
+	}
 	current, markerErr := backend.Ownership(ctx)
-	if errors.Is(markerErr, fs.ErrNotExist) {
+	if errors.Is(markerErr, fs.ErrNotExist) ||
+		errors.Is(markerErr, packstore.ErrPhysicalMissing) {
 		return plan, nil
 	}
 	if markerErr != nil {
@@ -243,10 +248,6 @@ func previewStorageRegistration(
 func applyStorageRegistration(
 	ctx context.Context, d Deps, plan storageRegistrationPlan,
 ) (BlobStore, error) {
-	if plan.binding.Kind != "filesystem" {
-		return BlobStore{}, NewError(http.StatusNotImplemented,
-			"storage_backend_unavailable", "S3 registration is not active in this build")
-	}
 	stores, err := d.Store.BlobStores(ctx)
 	if err != nil {
 		return BlobStore{}, FromStoreError(err)
@@ -257,25 +258,27 @@ func applyStorageRegistration(
 				"the catalog changed after preview; preview the registration again")
 		}
 	}
-	if err := os.MkdirAll(plan.binding.Path, 0o700); err != nil {
-		return BlobStore{}, NewError(http.StatusServiceUnavailable,
-			"store_unavailable", fmt.Sprintf("preparing storage namespace: %v", err))
+	if plan.binding.Kind == "filesystem" {
+		if err := os.MkdirAll(plan.binding.Path, 0o700); err != nil {
+			return BlobStore{}, NewError(http.StatusServiceUnavailable,
+				"store_unavailable", fmt.Sprintf("preparing storage namespace: %v", err))
+		}
+		overlap, err := ingest.PathsOverlap(plan.binding.Path, d.VaultRoot)
+		if err != nil {
+			return BlobStore{}, NewError(http.StatusUnprocessableEntity,
+				"storage_binding_invalid", err.Error())
+		}
+		if overlap {
+			return BlobStore{}, NewError(http.StatusConflict, "storage_namespace_overlap",
+				"storage namespace now overlaps the live vault root; preview again")
+		}
 	}
-	overlap, err := ingest.PathsOverlap(plan.binding.Path, d.VaultRoot)
+	backend, err := blob.NewConfiguredBackend(ctx, plan.binding, nil)
 	if err != nil {
 		return BlobStore{}, NewError(http.StatusUnprocessableEntity,
 			"storage_binding_invalid", err.Error())
 	}
-	if overlap {
-		return BlobStore{}, NewError(http.StatusConflict, "storage_namespace_overlap",
-			"storage namespace now overlaps the live vault root; preview again")
-	}
-	backend, err := blob.NewFilesystemBackend(plan.binding.Path, nil)
-	if err != nil {
-		return BlobStore{}, NewError(http.StatusUnprocessableEntity,
-			"storage_binding_invalid", err.Error())
-	}
-	defer func() { _ = backend.Close() }()
+	defer func() { _ = closeStorageBackend(backend) }()
 	next := packstore.Ownership{
 		Format: packstore.OwnershipFormatV1, Vault: d.Store.VaultID(),
 		Store: packstore.StoreID(plan.store.ID), Epoch: plan.store.OwnershipEpoch,
@@ -297,6 +300,13 @@ func applyStorageRegistration(
 	}
 	observation := d.BlobRegistry.AttachSpec(ctx, blobStoreSpec(plan.store))
 	return blobStoreAPI(plan.store, store.BlobStoreStats{}, observation), nil
+}
+
+func closeStorageBackend(backend packstore.Backend) error {
+	if closer, ok := backend.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
 }
 
 func storageStoreStatuses(ctx context.Context, d Deps) ([]StorageStoreStatus, error) {

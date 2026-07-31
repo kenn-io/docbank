@@ -67,6 +67,9 @@ var (
 	ErrBlobStoreNotEmpty = errors.New("blob store still contains authoritative locations")
 	// ErrBlobStoreState means the requested lifecycle transition is invalid.
 	ErrBlobStoreState = errors.New("invalid blob-store lifecycle transition")
+	// ErrStorageOperationTerminal means a completed, failed, or cancelled
+	// operation can no longer accept cancellation or progress.
+	ErrStorageOperationTerminal = errors.New("storage operation is already terminal")
 )
 
 // UnconditionalRev is the only ifRev value that skips the revision

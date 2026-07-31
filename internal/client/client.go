@@ -2545,6 +2545,91 @@ func (c *Client) UnregisterBlobStore(ctx context.Context, selector string) error
 		"/api/v1/storage/stores/"+url.PathEscape(selector), nil, nil, nil)
 }
 
+type StoragePlacementOptions struct {
+	NodeID                 int64
+	Source                 string
+	Destination            string
+	RetireSource           bool
+	AllowAuditedRemoteOnly bool
+}
+
+func (c *Client) PreviewStoragePlacement(
+	ctx context.Context, options StoragePlacementOptions,
+) (api.StoragePlacementPreview, error) {
+	var preview api.StoragePlacementPreview
+	err := c.do(ctx, http.MethodPost, "/api/v1/storage/place/preview", nil,
+		map[string]any{
+			"node_id": options.NodeID, "source": options.Source,
+			"destination":               options.Destination,
+			"retire_source":             options.RetireSource,
+			"allow_audited_remote_only": options.AllowAuditedRemoteOnly,
+		}, &preview)
+	return preview, err
+}
+
+func (c *Client) StartStoragePlacement(
+	ctx context.Context, previewToken string,
+) (api.StorageOperation, error) {
+	var operation api.StorageOperation
+	err := c.do(ctx, http.MethodPost, "/api/v1/storage/place", nil,
+		map[string]any{"preview_token": previewToken}, &operation)
+	return operation, err
+}
+
+func (c *Client) PreviewStorageEvacuation(
+	ctx context.Context, selector string,
+) (api.StoragePlacementPreview, error) {
+	var preview api.StoragePlacementPreview
+	err := c.do(ctx, http.MethodPost, "/api/v1/storage/evacuate/preview", nil,
+		map[string]any{"store": selector}, &preview)
+	return preview, err
+}
+
+func (c *Client) StartStorageEvacuation(
+	ctx context.Context, previewToken string,
+) (api.StorageOperation, error) {
+	var operation api.StorageOperation
+	err := c.do(ctx, http.MethodPost, "/api/v1/storage/evacuate", nil,
+		map[string]any{"preview_token": previewToken}, &operation)
+	return operation, err
+}
+
+func (c *Client) PreviewStorageRecovery(
+	ctx context.Context, kind, hash, store string,
+) (api.StorageRecoveryPreview, error) {
+	var preview api.StorageRecoveryPreview
+	err := c.do(ctx, http.MethodPost, "/api/v1/storage/"+kind+"/preview", nil,
+		map[string]any{"hash": hash, "store": store}, &preview)
+	return preview, err
+}
+
+func (c *Client) StartStorageRecovery(
+	ctx context.Context, kind, previewToken string,
+) (api.StorageOperation, error) {
+	var operation api.StorageOperation
+	err := c.do(ctx, http.MethodPost, "/api/v1/storage/"+kind, nil,
+		map[string]any{"preview_token": previewToken}, &operation)
+	return operation, err
+}
+
+func (c *Client) StorageOperation(
+	ctx context.Context, operationID string,
+) (api.StorageOperation, error) {
+	var operation api.StorageOperation
+	err := c.do(ctx, http.MethodGet,
+		"/api/v1/jobs/"+url.PathEscape(operationID), nil, nil, &operation)
+	return operation, err
+}
+
+func (c *Client) CancelStorageOperation(
+	ctx context.Context, operationID string,
+) (api.StorageOperation, error) {
+	var operation api.StorageOperation
+	err := c.do(ctx, http.MethodPost,
+		"/api/v1/jobs/"+url.PathEscape(operationID)+"/cancel", nil, nil, &operation)
+	return operation, err
+}
+
 // Info identifies the selected vault and summarizes its logical and physical contents.
 func (c *Client) Info(ctx context.Context) (api.VaultInfo, error) {
 	var info api.VaultInfo

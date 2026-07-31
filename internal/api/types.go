@@ -636,6 +636,52 @@ type BlobStorePreview struct {
 	ExpiresAt    string    `json:"expires_at"`
 }
 
+type StoragePlacementPreview struct {
+	PlanDigest          string `json:"plan_digest"`
+	TargetNodeID        int64  `json:"target_node_id"`
+	SourceStoreID       string `json:"source_store_id" format:"uuid"`
+	DestinationStoreID  string `json:"destination_store_id" format:"uuid"`
+	Objects             int64  `json:"objects"`
+	Versions            int64  `json:"versions"`
+	LogicalBytes        int64  `json:"logical_bytes"`
+	TransferBytes       int64  `json:"transfer_bytes"`
+	AlreadyPresentBytes int64  `json:"already_present_bytes"`
+	RetirableBytes      int64  `json:"retirable_bytes"`
+	SharedBytes         int64  `json:"shared_bytes"`
+	AuditPinnedBytes    int64  `json:"audit_pinned_bytes"`
+	PackBlockedBytes    int64  `json:"pack_blocked_bytes"`
+	PreviewToken        string `json:"preview_token"`
+	ExpiresAt           string `json:"expires_at"`
+}
+
+type StorageRecoveryPreview struct {
+	Kind               string `json:"kind"`
+	PlanDigest         string `json:"plan_digest"`
+	Hash               string `json:"hash"`
+	Bytes              int64  `json:"bytes"`
+	SourceStoreID      string `json:"source_store_id" format:"uuid"`
+	DestinationStoreID string `json:"destination_store_id" format:"uuid"`
+	PreviewToken       string `json:"preview_token"`
+	ExpiresAt          string `json:"expires_at"`
+}
+
+type StorageOperation struct {
+	ID               string `json:"id" format:"uuid"`
+	Kind             string `json:"kind"`
+	State            string `json:"state"`
+	PlanDigest       string `json:"plan_digest"`
+	TotalObjects     int64  `json:"total_objects"`
+	CompletedObjects int64  `json:"completed_objects"`
+	CopiedObjects    int64  `json:"copied_objects"`
+	CopiedBytes      int64  `json:"copied_bytes"`
+	CancelRequested  bool   `json:"cancel_requested"`
+	Error            string `json:"error,omitempty"`
+	Receipt          any    `json:"receipt,omitempty"`
+	CreatedAt        string `json:"created_at"`
+	UpdatedAt        string `json:"updated_at"`
+	FinishedAt       string `json:"finished_at,omitempty"`
+}
+
 // VaultInfo identifies the selected vault and summarizes its logical and
 // physical contents. VaultPath is machine-local placement, not vault identity.
 type VaultInfo struct {
@@ -704,11 +750,15 @@ type VerifyReport struct {
 // Job is the observable state of one daemon-owned background task. Names are
 // stable within a daemon run and terminal records remain visible until restart.
 type Job struct {
-	Name       string `json:"name"`
-	Status     string `json:"status" enum:"running,completed,failed,cancelled"`
-	StartedAt  string `json:"started_at"`
-	FinishedAt string `json:"finished_at,omitempty"`
-	Error      string `json:"error,omitempty"`
+	Name             string `json:"name"`
+	Status           string `json:"status" enum:"queued,running,completed,failed,cancelled"`
+	StartedAt        string `json:"started_at"`
+	FinishedAt       string `json:"finished_at,omitempty"`
+	Error            string `json:"error,omitempty"`
+	OperationID      string `json:"operation_id,omitempty" format:"uuid"`
+	Kind             string `json:"kind,omitempty"`
+	CompletedObjects int64  `json:"completed_objects,omitempty"`
+	TotalObjects     int64  `json:"total_objects,omitempty"`
 }
 
 // JobList is returned as an object so the contract can gain aggregate state

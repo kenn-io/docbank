@@ -60,10 +60,99 @@ type Store struct {
 	registry    *Registry
 }
 
+// ReadBackend returns one runtime-bound physical backend by stable store ID.
+func (s *Store) ReadBackend(id packstore.StoreID) (packstore.ReadBackend, bool) {
+	if catalog, ok := s.catalog.(primaryLocationCatalog); ok &&
+		id == catalog.PrimaryStoreID() && s.readBackend != nil {
+		// The built-in primary has implicit vault ownership rather than an
+		// external namespace marker. Hide FilesystemBackend.StoreID (empty)
+		// while retaining the complete verified read surface.
+		return readBackendOnly{ReadBackend: s.readBackend}, true
+	}
+	if s.registry == nil {
+		return nil, false
+	}
+	return s.registry.Backend(id)
+}
+
+type readBackendOnly struct{ packstore.ReadBackend }
+
+// WritableBackend returns one runtime-bound destination by stable store ID.
+func (s *Store) WritableBackend(id packstore.StoreID) (packstore.Backend, bool) {
+	if catalog, ok := s.catalog.(primaryLocationCatalog); ok &&
+		id == catalog.PrimaryStoreID() && s.readBackend != nil {
+		return identifiedBackend{Backend: s.readBackend, id: id}, true
+	}
+	if s.registry == nil {
+		return nil, false
+	}
+	return s.registry.WritableBackend(id)
+}
+
+// RepairBackend returns one freshly fenced backend that supports deliberate
+// verified replacement of a damaged canonical loose object.
+func (s *Store) RepairBackend(
+	id packstore.StoreID,
+) (packstore.RepairBackend, bool) {
+	backend, ok := s.WritableBackend(id)
+	if !ok {
+		return nil, false
+	}
+	repair, ok := backend.(packstore.RepairBackend)
+	if ok {
+		return repair, true
+	}
+	if identified, ok := backend.(identifiedBackend); ok {
+		repair, ok := identified.Backend.(packstore.RepairBackend)
+		if ok {
+			return identifiedRepairBackend{
+				RepairBackend: repair, id: identified.id,
+			}, true
+		}
+	}
+	return nil, false
+}
+
+// RefreshStore performs a fresh secondary ownership observation.
+func (s *Store) RefreshStore(ctx context.Context, id string) StoreObservation {
+	if s.registry == nil {
+		return StoreObservation{State: StoreUnbound, Detail: "store registry is unavailable"}
+	}
+	return s.registry.Refresh(ctx, id)
+}
+
+// SalvageBackend opens a fenced secondary only for explicit verified
+// recovery. The caller owns and must close the returned backend.
+func (s *Store) SalvageBackend(
+	ctx context.Context, id packstore.StoreID,
+) (packstore.Backend, error) {
+	if s.registry == nil {
+		return nil, fmt.Errorf("%w: store registry is unavailable", packstore.ErrStoreUnavailable)
+	}
+	return s.registry.SalvageBackend(ctx, id)
+}
+
+type identifiedBackend struct {
+	packstore.Backend
+
+	id packstore.StoreID
+}
+
+func (b identifiedBackend) StoreID() packstore.StoreID { return b.id }
+
+type identifiedRepairBackend struct {
+	packstore.RepairBackend
+
+	id packstore.StoreID
+}
+
+func (b identifiedRepairBackend) StoreID() packstore.StoreID { return b.id }
+
 type primaryLocationCatalog interface {
 	packstore.Catalog
 	packstore.LocationResolver
 	PrimaryStoreID() packstore.StoreID
+	PrimaryOwnership() packstore.Ownership
 }
 
 // LooseCompressionOptions is docbank's application-neutral loose storage
@@ -159,12 +248,36 @@ func NewWithOptions(catalog packstore.Catalog, blobsDir string, opts Options) (*
 	reader := maintainer.Store()
 	var readBackend *packstore.FilesystemBackend
 	if locations, ok := catalog.(primaryLocationCatalog); ok {
+		ownership := locations.PrimaryOwnership()
+		if err := ownership.Validate(); err != nil {
+			_ = maintainer.Close()
+			return nil, fmt.Errorf("reading primary filesystem ownership: %w", err)
+		}
 		readBackend, err = packstore.NewFilesystemBackend(
-			layout, packstore.FilesystemBackendOptions{Limits: StorageLimits()},
+			layout, packstore.FilesystemBackendOptions{
+				ExpectedOwnership: &ownership, Limits: StorageLimits(),
+			},
 		)
 		if err != nil {
 			_ = maintainer.Close()
 			return nil, fmt.Errorf("creating primary filesystem backend: %w", err)
+		}
+		actual, ownershipErr := readBackend.Ownership(context.Background())
+		switch {
+		case errors.Is(ownershipErr, fs.ErrNotExist):
+			ownershipErr = readBackend.ReplaceOwnership(
+				context.Background(), ownership, nil,
+			)
+		case ownershipErr == nil && actual != ownership:
+			ownershipErr = fmt.Errorf(
+				"%w: primary filesystem marker does not match catalog authority",
+				packstore.ErrStoreFenced,
+			)
+		}
+		if ownershipErr != nil {
+			_ = readBackend.Close()
+			_ = maintainer.Close()
+			return nil, fmt.Errorf("attaching primary filesystem backend: %w", ownershipErr)
 		}
 		reader, err = packstore.NewMultiStore(
 			orderedResolver{

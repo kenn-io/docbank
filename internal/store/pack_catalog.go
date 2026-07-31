@@ -40,6 +40,22 @@ func (c *PackCatalog) PrimaryStoreID() packstore.StoreID {
 	return packstore.StoreID(c.store.primaryStoreID)
 }
 
+// PrimaryOwnership is the fixed local namespace identity. Unlike secondary
+// bindings its location is implicit in the vault, but Kit still uses the
+// marker to fence destructive physical work.
+func (c *PackCatalog) PrimaryOwnership() packstore.Ownership {
+	primary, err := c.store.PrimaryBlobStore(context.Background())
+	if err != nil {
+		return packstore.Ownership{}
+	}
+	return packstore.Ownership{
+		Format: packstore.OwnershipFormatV1,
+		Vault:  c.store.VaultID(),
+		Store:  packstore.StoreID(primary.ID),
+		Epoch:  primary.OwnershipEpoch,
+	}
+}
+
 // PackRestoreCatalog grants packed authority in an unpublished restored
 // database. It deliberately accepts a *sql.DB rather than a Store because Kit
 // owns the staged database lifecycle until restore publication.

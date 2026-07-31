@@ -9,7 +9,9 @@ import (
 	"sync"
 	"time"
 
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"go.kenn.io/kit/packstore"
+	"go.kenn.io/kit/packstore/s3store"
 
 	"go.kenn.io/docbank/internal/config"
 )
@@ -115,6 +117,30 @@ func (r *Registry) Refresh(ctx context.Context, id string) StoreObservation {
 	return r.observations[packstore.StoreID(id)]
 }
 
+// SalvageBackend opens a fenced namespace for explicit verified read-only
+// recovery. It never admits publication, retirement, or ordinary reads.
+func (r *Registry) SalvageBackend(
+	ctx context.Context, id packstore.StoreID,
+) (packstore.Backend, error) {
+	r.mu.RLock()
+	spec, known := r.specs[id]
+	observation := r.observations[id]
+	binding, bound := r.bindings[spec.Binding]
+	r.mu.RUnlock()
+	if !known {
+		return nil, fmt.Errorf("salvage store %s is not cataloged", id)
+	}
+	if observation.State != StoreFenced {
+		return nil, fmt.Errorf(
+			"salvage store %s is %s, not fenced", id, observation.State,
+		)
+	}
+	if !bound || binding.Kind != spec.Kind {
+		return nil, fmt.Errorf("salvage store %s has no usable binding", id)
+	}
+	return NewConfiguredBackend(ctx, binding, nil)
+}
+
 // AttachSpec makes a newly committed catalog store available to this daemon
 // without reloading deployment configuration.
 func (r *Registry) AttachSpec(ctx context.Context, spec StoreSpec) StoreObservation {
@@ -179,16 +205,7 @@ func (r *Registry) refreshLocked(ctx context.Context, id packstore.StoreID) {
 		Format: packstore.OwnershipFormatV1, Vault: r.vaultID,
 		Store: id, Epoch: spec.OwnershipEpoch,
 	}
-	var backend packstore.Backend
-	var err error
-	switch binding.Kind {
-	case "filesystem":
-		backend, err = NewFilesystemBackend(binding.Path, &expected)
-	case "s3":
-		err = errors.New("S3 backend activation is not available")
-	default:
-		err = fmt.Errorf("unsupported backend kind %q", binding.Kind)
-	}
+	backend, err := NewConfiguredBackend(ctx, binding, &expected)
 	if err != nil {
 		r.observe(id, StoreMisconfigured, err.Error(), binding.Priority)
 		return
@@ -260,6 +277,64 @@ func NewFilesystemBackend(
 		return nil, fmt.Errorf("create filesystem blob backend: %w", err)
 	}
 	return backend, nil
+}
+
+// NewConfiguredBackend constructs one deployment backend without granting
+// catalog authority. Expected ownership enables destructive work; nil is
+// reserved for registration and explicit fenced-store salvage.
+func NewConfiguredBackend(
+	ctx context.Context,
+	binding config.StoreBindingConfig,
+	expected *packstore.Ownership,
+) (packstore.Backend, error) {
+	switch binding.Kind {
+	case "filesystem":
+		return NewFilesystemBackend(binding.Path, expected)
+	case "s3":
+		loadOptions := []func(*awsconfig.LoadOptions) error{}
+		if binding.Region != "" {
+			loadOptions = append(loadOptions, awsconfig.WithRegion(binding.Region))
+		}
+		if binding.CredentialProfile != "" {
+			loadOptions = append(
+				loadOptions,
+				awsconfig.WithSharedConfigProfile(binding.CredentialProfile),
+			)
+		}
+		loaded, err := awsconfig.LoadDefaultConfig(ctx, loadOptions...)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"load S3 credential profile %q: %w",
+				binding.CredentialProfile, err,
+			)
+		}
+		backend, err := s3store.New(ctx, s3store.Config{
+			Endpoint: binding.Endpoint, Region: binding.Region,
+			Bucket: binding.Bucket, Prefix: binding.Prefix,
+			Credentials: loaded.Credentials, ForcePathStyle: binding.ForcePathStyle,
+			ExpectedOwnership: expected, Limits: StorageLimits(),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("create S3 blob backend: %w", err)
+		}
+		return backend, nil
+	default:
+		return nil, fmt.Errorf("unsupported backend kind %q", binding.Kind)
+	}
+}
+
+// ProbeConfiguredBackend validates behavior that cannot be inferred from
+// static configuration. Filesystem semantics are exercised by construction;
+// S3-compatible services must pass Kit's live capability probe.
+func ProbeConfiguredBackend(
+	ctx context.Context, backend packstore.Backend,
+) error {
+	if remote, ok := backend.(*s3store.Backend); ok {
+		if _, err := remote.Probe(ctx); err != nil {
+			return fmt.Errorf("probe S3-compatible backend: %w", err)
+		}
+	}
+	return nil
 }
 
 type orderedRegistry struct {

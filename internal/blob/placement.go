@@ -1,0 +1,483 @@
+package blob
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"go.kenn.io/kit/packstore"
+
+	"go.kenn.io/docbank/internal/jobs"
+	"go.kenn.io/docbank/internal/store"
+)
+
+const storageOperationRetention = 30 * 24 * time.Hour
+
+type PlacementObjectResult struct {
+	Hash                  string `json:"hash"`
+	Copied                bool   `json:"copied"`
+	DestinationAuthorized bool   `json:"destination_authorized"`
+	SourceRevoked         bool   `json:"source_revoked"`
+	ReferenceDrift        bool   `json:"reference_drift"`
+	AuditPinned           bool   `json:"audit_pinned"`
+	PackRepackRequired    bool   `json:"pack_repack_required"`
+	CleanupPending        bool   `json:"cleanup_pending"`
+}
+
+type PlacementReceipt struct {
+	OperationID    string                  `json:"operation_id"`
+	PlanDigest     string                  `json:"plan_digest"`
+	Completed      int64                   `json:"completed"`
+	Copied         int64                   `json:"copied"`
+	CopiedBytes    int64                   `json:"copied_bytes"`
+	SourceRevoked  int64                   `json:"source_revoked"`
+	CleanupPending int64                   `json:"cleanup_pending"`
+	Evacuated      bool                    `json:"evacuated,omitempty"`
+	Objects        []PlacementObjectResult `json:"objects"`
+}
+
+// PlacementRunner executes one persisted plan without holding the daemon
+// mutation gate across byte transfer. Each verified object crosses a short
+// revalidating catalog transaction before source retirement.
+type PlacementRunner struct {
+	Metadata *store.Store
+	Blobs    *Store
+}
+
+func (r PlacementRunner) Start(
+	supervisor *jobs.Supervisor, operationID string,
+) error {
+	if supervisor == nil {
+		return errors.New("placement runner requires a job supervisor")
+	}
+	return supervisor.Start("storage:"+operationID, func(ctx context.Context) error {
+		return r.Run(ctx, operationID)
+	})
+}
+
+func (r PlacementRunner) Resume(
+	ctx context.Context, supervisor *jobs.Supervisor,
+) error {
+	operations, err := r.Metadata.ResumableStorageOperations(ctx)
+	if err != nil {
+		return err
+	}
+	for _, operation := range operations {
+		if operation.Kind != "place" && operation.Kind != "evacuate" &&
+			operation.Kind != "repair" && operation.Kind != "salvage" {
+			continue
+		}
+		if err := r.Start(supervisor, operation.ID); err != nil &&
+			!errors.Is(err, jobs.ErrDuplicate) {
+			return fmt.Errorf("resuming storage operation %s: %w", operation.ID, err)
+		}
+	}
+	return nil
+}
+
+func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr error) {
+	if r.Metadata == nil || r.Blobs == nil {
+		return errors.New("placement runner dependencies are incomplete")
+	}
+	operation, err := r.Metadata.ClaimStorageOperation(ctx, operationID)
+	if err != nil {
+		return err
+	}
+	if operation.Kind == "repair" || operation.Kind == "salvage" {
+		return r.runRecovery(ctx, operation)
+	}
+	var plan store.PlacementPlan
+	if err := json.Unmarshal([]byte(operation.PlanJSON), &plan); err != nil {
+		return r.fail(ctx, operationID, fmt.Errorf("decode placement plan: %w", err))
+	}
+	if err := store.ValidatePlacementPlan(plan); err != nil {
+		return r.fail(ctx, operationID, err)
+	}
+	receipt := PlacementReceipt{
+		OperationID: operationID, PlanDigest: plan.Digest,
+		Completed: operation.CompletedObjects, Copied: operation.CopiedObjects,
+		CopiedBytes: operation.CopiedBytes,
+	}
+	if operation.ReceiptJSON != "" {
+		if err := json.Unmarshal([]byte(operation.ReceiptJSON), &receipt); err != nil {
+			return r.fail(ctx, operationID, fmt.Errorf("decode placement progress receipt: %w", err))
+		}
+		if receipt.OperationID != operationID || receipt.PlanDigest != plan.Digest ||
+			receipt.Completed != operation.CompletedObjects ||
+			receipt.Copied != operation.CopiedObjects ||
+			receipt.CopiedBytes != operation.CopiedBytes {
+			return r.fail(ctx, operationID, errors.New("placement progress receipt is inconsistent"))
+		}
+	}
+	if operation.CompletedObjects > int64(len(plan.Hashes)) {
+		return r.fail(ctx, operationID, errors.New("storage operation cursor exceeds its plan"))
+	}
+	for index := operation.CompletedObjects; index < int64(len(plan.Hashes)); index++ {
+		current, err := r.Metadata.StorageOperation(ctx, operationID)
+		if err != nil {
+			return err
+		}
+		if current.CancelRequested {
+			return r.cancel(ctx, operationID, receipt)
+		}
+		if err := ctx.Err(); err != nil {
+			// Daemon shutdown is not an operator cancellation. Leave the
+			// durable operation resumable so the next daemon can reclaim it.
+			return err
+		}
+		item := plan.Hashes[index]
+		result, err := r.placeOne(ctx, plan.Request, item)
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			return r.fail(ctx, operationID, fmt.Errorf("placing blob %s: %w", item.Hash, err))
+		}
+		receipt.Objects = append(receipt.Objects, result)
+		receipt.Completed++
+		if result.Copied {
+			receipt.Copied++
+			receipt.CopiedBytes += item.Size
+		}
+		if result.SourceRevoked {
+			receipt.SourceRevoked++
+		}
+		if result.CleanupPending {
+			receipt.CleanupPending++
+		}
+		progress, err := json.Marshal(receipt)
+		if err != nil {
+			return r.fail(ctx, operationID, fmt.Errorf("encode placement progress: %w", err))
+		}
+		if err := r.Metadata.AdvanceStorageOperation(
+			ctx, operationID, item.Hash, receipt.Completed,
+			receipt.Copied, receipt.CopiedBytes, string(progress),
+		); err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			return err
+		}
+	}
+	if operation.Kind == "evacuate" {
+		finalized, err := r.Metadata.FinalizeBlobStoreEvacuation(
+			ctx, plan.Request.SourceStoreID, plan.Request.DestinationStoreID,
+		)
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			return r.fail(ctx, operationID, fmt.Errorf("finalizing evacuation: %w", err))
+		}
+		receipt.SourceRevoked += finalized.RevokedLocations
+		receipt.Evacuated = finalized.Detached
+		if len(finalized.Retire) != 0 {
+			source, ok := r.Blobs.WritableBackend(
+				packstore.StoreID(plan.Request.SourceStoreID),
+			)
+			for _, ref := range finalized.Retire {
+				if !ok || source.Retire(ctx, ref) != nil {
+					receipt.CleanupPending++
+				}
+			}
+		}
+	}
+	encoded, err := json.Marshal(receipt)
+	if err != nil {
+		return r.fail(ctx, operationID, fmt.Errorf("encode placement receipt: %w", err))
+	}
+	return r.Metadata.FinishStorageOperation(
+		ctx, operationID, store.StorageOperationCompleted, string(encoded), "",
+		time.Now().Add(storageOperationRetention),
+	)
+}
+
+type StorageRecoveryReceipt struct {
+	OperationID string `json:"operation_id"`
+	PlanDigest  string `json:"plan_digest"`
+	Hash        string `json:"hash"`
+	Kind        string `json:"kind"`
+	Completed   bool   `json:"completed"`
+}
+
+func (r PlacementRunner) runRecovery(
+	ctx context.Context, operation store.StorageOperation,
+) error {
+	var plan store.StorageRecoveryPlan
+	if err := json.Unmarshal([]byte(operation.PlanJSON), &plan); err != nil {
+		return r.fail(ctx, operation.ID, fmt.Errorf("decode storage recovery plan: %w", err))
+	}
+	if err := store.ValidateStorageRecoveryPlan(plan); err != nil {
+		return r.fail(ctx, operation.ID, err)
+	}
+	hash, err := packstore.ParseHash(plan.Hash)
+	if err != nil {
+		return r.fail(ctx, operation.ID, err)
+	}
+	var location packstore.ReadLocation
+	switch plan.Kind {
+	case "repair":
+		source, ok := r.Blobs.ReadBackend(plan.Source.StoreID)
+		if !ok {
+			return r.fail(ctx, operation.ID, fmt.Errorf(
+				"%w: source store %s is not bound",
+				packstore.ErrStoreUnavailable, plan.Source.StoreID,
+			))
+		}
+		destination, ok := r.Blobs.RepairBackend(
+			packstore.StoreID(plan.Destination),
+		)
+		if !ok {
+			return r.fail(ctx, operation.ID, fmt.Errorf(
+				"%w: destination store %s cannot repair loose content",
+				packstore.ErrStoreUnavailable, plan.Destination,
+			))
+		}
+		repaired, err := repairOne(
+			ctx, source, destination, hash, plan.Source, plan.Size,
+		)
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			return r.fail(ctx, operation.ID, err)
+		}
+		location = packstore.ReadLocation{
+			StoreID:    packstore.StoreID(plan.Destination),
+			Generation: repaired.Generation, Loose: &repaired.Location,
+		}
+	case "salvage":
+		source, err := r.Blobs.SalvageBackend(ctx, plan.Source.StoreID)
+		if err != nil {
+			return r.fail(ctx, operation.ID, err)
+		}
+		defer func() { _ = closePlacementBackend(source) }()
+		destination, ok := r.Blobs.WritableBackend(
+			packstore.StoreID(plan.Destination),
+		)
+		if !ok {
+			return r.fail(ctx, operation.ID, packstore.ErrStoreUnavailable)
+		}
+		moved, err := packstore.Move(
+			ctx, readBackendOnly{ReadBackend: source}, destination,
+			packstore.MoveRequest{
+				Source:      plan.Source,
+				Destination: packstore.StoreID(plan.Destination),
+				Identity:    packstore.BlobIdentity{Hash: hash, Size: plan.Size},
+			},
+		)
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			return r.fail(ctx, operation.ID, err)
+		}
+		location = moved.Destination
+	}
+	if err := r.Metadata.CommitStorageRecovery(ctx, plan, location); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		return r.fail(ctx, operation.ID, err)
+	}
+	receipt := StorageRecoveryReceipt{
+		OperationID: operation.ID, PlanDigest: plan.Digest,
+		Hash: plan.Hash, Kind: plan.Kind, Completed: true,
+	}
+	encoded, err := json.Marshal(receipt)
+	if err != nil {
+		return r.fail(ctx, operation.ID, err)
+	}
+	if err := r.Metadata.AdvanceStorageOperation(
+		ctx, operation.ID, plan.Hash, 1, 1, plan.Size, string(encoded),
+	); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		return err
+	}
+	return r.Metadata.FinishStorageOperation(
+		ctx, operation.ID, store.StorageOperationCompleted,
+		string(encoded), "", time.Now().Add(storageOperationRetention),
+	)
+}
+
+func repairOne(
+	ctx context.Context,
+	source packstore.ReadBackend,
+	destination packstore.RepairBackend,
+	hash packstore.Hash,
+	location packstore.ReadLocation,
+	size int64,
+) (receipt packstore.LooseReceipt, resultErr error) {
+	stream, sourceSize, err := openRecoverySource(ctx, source, hash, location)
+	if err != nil {
+		return packstore.LooseReceipt{}, fmt.Errorf("opening repair source: %w", err)
+	}
+	defer func() { resultErr = errors.Join(resultErr, stream.Close()) }()
+	if sourceSize != size {
+		return packstore.LooseReceipt{}, packstore.ErrPhysicalCorrupt
+	}
+	repaired, err := destination.RepairLoose(
+		ctx, hash, stream, packstore.PublishOptions{
+			ExpectedSize: size, SizeKnown: true,
+			Durability: packstore.DurablePublication, MaxBytes: size,
+		},
+	)
+	if err != nil {
+		return packstore.LooseReceipt{}, fmt.Errorf("publishing repaired loose object: %w", err)
+	}
+	if err := stream.Verify(); err != nil {
+		return packstore.LooseReceipt{}, fmt.Errorf("verifying repair source: %w", err)
+	}
+	return repaired, nil
+}
+
+func closePlacementBackend(backend packstore.Backend) error {
+	if closer, ok := backend.(interface{ Close() error }); ok {
+		return closer.Close()
+	}
+	return nil
+}
+
+func openRecoverySource(
+	ctx context.Context,
+	backend packstore.ReadBackend,
+	hash packstore.Hash,
+	location packstore.ReadLocation,
+) (packstore.VerifiedReadCloser, int64, error) {
+	if location.Loose != nil {
+		stream, size, err := backend.OpenLoose(ctx, hash, *location.Loose)
+		if err != nil {
+			return nil, 0, fmt.Errorf("opening loose recovery source: %w", err)
+		}
+		return stream, size, nil
+	}
+	if location.Pack != nil {
+		stream, size, err := backend.OpenPack(ctx, hash, *location.Pack)
+		if err != nil {
+			return nil, 0, fmt.Errorf("opening packed recovery source: %w", err)
+		}
+		return stream, size, nil
+	}
+	return nil, 0, packstore.ErrPhysicalAuthorityMissing
+}
+
+func (r PlacementRunner) placeOne(
+	ctx context.Context, request store.PlacementRequest, item store.PlacementHash,
+) (PlacementObjectResult, error) {
+	destination, err := r.currentLocation(ctx, item.Hash, request.DestinationStoreID)
+	copied := false
+	if errors.Is(err, store.ErrNotFound) {
+		if item.Source.StoreID == "" {
+			return PlacementObjectResult{}, packstore.ErrPhysicalAuthorityMissing
+		}
+		source, ok := r.Blobs.ReadBackend(item.Source.StoreID)
+		if !ok {
+			return PlacementObjectResult{}, fmt.Errorf(
+				"%w: source store %s is not bound",
+				packstore.ErrStoreUnavailable, item.Source.StoreID,
+			)
+		}
+		target, ok := r.Blobs.WritableBackend(packstore.StoreID(request.DestinationStoreID))
+		if !ok {
+			return PlacementObjectResult{}, fmt.Errorf(
+				"%w: destination store %s is not bound",
+				packstore.ErrStoreUnavailable, request.DestinationStoreID,
+			)
+		}
+		hash, parseErr := packstore.ParseHash(item.Hash)
+		if parseErr != nil {
+			return PlacementObjectResult{}, fmt.Errorf(
+				"parsing placement blob hash: %w", parseErr,
+			)
+		}
+		moved, moveErr := packstore.Move(ctx, source, target, packstore.MoveRequest{
+			Source: item.Source, Destination: packstore.StoreID(request.DestinationStoreID),
+			Identity: packstore.BlobIdentity{Hash: hash, Size: item.Size},
+		})
+		if moveErr != nil {
+			return PlacementObjectResult{}, fmt.Errorf("moving placement blob: %w", moveErr)
+		}
+		if !moved.Verified {
+			return PlacementObjectResult{}, errors.New("destination publication lacks verification")
+		}
+		destination = moved.Destination
+		copied = moved.Created
+	} else if err != nil {
+		return PlacementObjectResult{}, err
+	} else if item.Destination == nil {
+		// A resumed operation may observe the destination it verified and
+		// cataloged immediately before a process stop, before progress advanced.
+		copied = true
+	}
+	committed, err := r.Metadata.CommitPlacement(ctx, request, item, destination)
+	if err != nil {
+		return PlacementObjectResult{}, err
+	}
+	result := PlacementObjectResult{
+		Hash: item.Hash, Copied: copied,
+		DestinationAuthorized: committed.DestinationAuthorized,
+		SourceRevoked:         committed.SourceRevoked,
+		ReferenceDrift:        committed.ReferenceDrift, AuditPinned: committed.AuditPinned,
+		PackRepackRequired: committed.PackRepackRequired,
+	}
+	if committed.Retire != nil {
+		source, ok := r.Blobs.WritableBackend(packstore.StoreID(request.SourceStoreID))
+		if !ok {
+			result.CleanupPending = true
+			return result, nil
+		}
+		if err := source.Retire(ctx, *committed.Retire); err != nil {
+			result.CleanupPending = true
+		}
+	}
+	return result, nil
+}
+
+func (r PlacementRunner) currentLocation(
+	ctx context.Context, hash, storeID string,
+) (packstore.ReadLocation, error) {
+	parsed, err := packstore.ParseHash(hash)
+	if err != nil {
+		return packstore.ReadLocation{}, fmt.Errorf(
+			"parsing current location blob hash: %w", err,
+		)
+	}
+	resolution, err := r.Metadata.ResolveBlobLocations(ctx, parsed)
+	if err != nil {
+		return packstore.ReadLocation{}, err
+	}
+	if !resolution.Member {
+		return packstore.ReadLocation{}, store.ErrNotFound
+	}
+	for _, candidate := range resolution.Candidates {
+		if candidate.StoreID == packstore.StoreID(storeID) {
+			return candidate, nil
+		}
+	}
+	return packstore.ReadLocation{}, store.ErrNotFound
+}
+
+func (r PlacementRunner) fail(ctx context.Context, id string, failure error) error {
+	finishErr := r.Metadata.FinishStorageOperation(
+		context.WithoutCancel(ctx), id, store.StorageOperationFailed, "",
+		failure.Error(), time.Now().Add(storageOperationRetention),
+	)
+	return errors.Join(failure, finishErr)
+}
+
+func (r PlacementRunner) cancel(
+	ctx context.Context, id string, receipt PlacementReceipt,
+) error {
+	encoded, err := json.Marshal(receipt)
+	if err != nil {
+		return r.fail(ctx, id, err)
+	}
+	return r.Metadata.FinishStorageOperation(
+		context.WithoutCancel(ctx), id, store.StorageOperationCancelled,
+		string(encoded), "", time.Now().Add(storageOperationRetention),
+	)
+}

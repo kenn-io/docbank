@@ -9,11 +9,12 @@ import (
 )
 
 const (
-	blobStoreKindFilesystem  = "filesystem"
-	blobStoreRolePrimary     = "primary"
-	blobStoreLifecycleActive = "active"
-	primaryBlobStoreName     = "primary"
-	primaryBlobStoreBinding  = "builtin-primary"
+	blobStoreKindFilesystem    = "filesystem"
+	blobStoreRolePrimary       = "primary"
+	blobStoreLifecycleActive   = "active"
+	blobStoreLifecycleDraining = "draining"
+	primaryBlobStoreName       = "primary"
+	primaryBlobStoreBinding    = "builtin-primary"
 )
 
 // BlobStore is one stable physical-store identity in the local placement

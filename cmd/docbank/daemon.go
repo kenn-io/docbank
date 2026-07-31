@@ -132,6 +132,10 @@ func runServe(ctx context.Context) (retErr error) {
 	}
 	jobSupervisor := jobs.New(sigCtx, logger)
 	operationGate := api.NewOperationGate()
+	placementRunner := blob.PlacementRunner{Metadata: s, Blobs: blobs}
+	if err := placementRunner.Resume(sigCtx, jobSupervisor); err != nil {
+		return fmt.Errorf("resuming durable storage operations: %w", err)
+	}
 
 	listener, err := kitdaemon.Listen(ctx, kitdaemon.Endpoint{
 		Network: kitdaemon.NetworkTCP,

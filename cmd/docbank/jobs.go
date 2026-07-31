@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"text/tabwriter"
@@ -31,6 +32,65 @@ var jobsCmd = &cobra.Command{
 			return writeJobsJSON(cmd.OutOrStdout(), items)
 		}
 		return writeJobs(cmd.OutOrStdout(), items)
+	},
+}
+
+var jobsShowJSON bool
+
+var jobsShowCmd = &cobra.Command{
+	Use:   "show <operation-id>",
+	Short: "Show one durable storage operation and its receipt",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if !client.IsCanonicalUUIDv4(args[0]) {
+			return usageError(errors.New("operation ID must be a canonical UUIDv4"))
+		}
+		c, err := client.Ensure(cmd.Context())
+		if err != nil {
+			return err
+		}
+		operation, err := c.StorageOperation(cmd.Context(), args[0])
+		if err != nil {
+			return err
+		}
+		if jobsShowJSON {
+			encoder := json.NewEncoder(cmd.OutOrStdout())
+			encoder.SetIndent("", "  ")
+			if err := encoder.Encode(operation); err != nil {
+				return fmt.Errorf("writing storage operation JSON: %w", err)
+			}
+			return nil
+		}
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+			"%s %s: %d/%d object(s), %d byte(s) copied\n",
+			operation.Kind, operation.State, operation.CompletedObjects,
+			operation.TotalObjects, operation.CopiedBytes)
+		if operation.Error != "" {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "error: %s\n", operation.Error)
+		}
+		return nil
+	},
+}
+
+var jobsCancelCmd = &cobra.Command{
+	Use:   "cancel <operation-id>",
+	Short: "Request cancellation at the next durable object boundary",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if !client.IsCanonicalUUIDv4(args[0]) {
+			return usageError(errors.New("operation ID must be a canonical UUIDv4"))
+		}
+		c, err := client.Ensure(cmd.Context())
+		if err != nil {
+			return err
+		}
+		operation, err := c.CancelStorageOperation(cmd.Context(), args[0])
+		if err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+			"cancellation requested for %s (%s)\n", operation.ID, operation.State)
+		return nil
 	},
 }
 
@@ -75,5 +135,7 @@ func writeJobs(w io.Writer, items []api.Job) error {
 
 func init() {
 	jobsCmd.Flags().BoolVar(&jobsJSON, "json", false, "emit machine-readable JSON")
+	jobsShowCmd.Flags().BoolVar(&jobsShowJSON, "json", false, "emit machine-readable JSON")
+	jobsCmd.AddCommand(jobsShowCmd, jobsCancelCmd)
 	rootCmd.AddCommand(jobsCmd)
 }

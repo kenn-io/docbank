@@ -1352,6 +1352,137 @@ func TestStorageAddListDetachAndUnregister(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestStoragePlacementPreviewRunAndDurableReceipt(t *testing.T) {
+	home := t.TempDir()
+	namespace := filepath.Join(t.TempDir(), "archive")
+	t.Setenv("DOCBANK_HOME", home)
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(
+		"[store_bindings.archive_nas]\nkind = \"filesystem\"\npath = "+
+			strconv.Quote(filepath.ToSlash(namespace))+"\npriority = 25\n",
+	), 0o600))
+	startTestDaemon(t, home)
+	out, err := runCLI(t, "storage", "add", "archive",
+		"--binding", "archive_nas", "--json")
+	require.NoError(t, err)
+	var registration api.BlobStorePreview
+	require.NoError(t, json.Unmarshal([]byte(out), &registration))
+	_, err = runCLI(t, "storage", "add", "--run", "--token", registration.PreviewToken)
+	require.NoError(t, err)
+
+	src := writeSourceFile(t, "record.txt", "placed and still readable")
+	_, err = runCLI(t, "add", src, "--dest", "/inbox")
+	require.NoError(t, err)
+	out, err = runCLI(t, "storage", "place", "/inbox/record.txt",
+		"--to", "archive", "--json")
+	require.NoError(t, err)
+	var preview api.StoragePlacementPreview
+	require.NoError(t, json.Unmarshal([]byte(out), &preview))
+	assert.Equal(t, int64(1), preview.Objects)
+	assert.Equal(t, int64(len("placed and still readable")), preview.TransferBytes)
+	assert.Zero(t, preview.RetirableBytes)
+
+	out, err = runCLI(t, "storage", "place", "--run", "--token",
+		preview.PreviewToken, "--json")
+	require.NoError(t, err)
+	var started api.StorageOperation
+	require.NoError(t, json.Unmarshal([]byte(out), &started))
+	require.NoError(t, waitForStorageOperation(t, started.ID))
+
+	out, err = runCLI(t, "jobs", "show", started.ID, "--json")
+	require.NoError(t, err)
+	var completed api.StorageOperation
+	require.NoError(t, json.Unmarshal([]byte(out), &completed))
+	assert.Equal(t, "completed", completed.State)
+	assert.Equal(t, int64(1), completed.CompletedObjects)
+	assert.Equal(t, int64(1), completed.CopiedObjects)
+
+	contentHash := sha256.Sum256([]byte("placed and still readable"))
+	hash := hex.EncodeToString(contentHash[:])
+	layout, err := packstore.NewLayout(namespace, packstore.LayoutOptions{
+		Staging: packstore.StagingStoreDirectory, StagingDir: "tmp",
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(
+		layout.LoosePath(packstore.Hash(hash)), []byte("damaged"), 0o600,
+	))
+	out, err = runCLI(t, "storage", "repair", hash,
+		"--store", "archive", "--json")
+	require.NoError(t, err)
+	var recovery api.StorageRecoveryPreview
+	require.NoError(t, json.Unmarshal([]byte(out), &recovery))
+	out, err = runCLI(t, "storage", "repair", "--run", "--token",
+		recovery.PreviewToken, "--json")
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &started))
+	require.NoError(t, waitForStorageOperation(t, started.ID))
+	repaired, err := os.ReadFile(layout.LoosePath(packstore.Hash(hash)))
+	require.NoError(t, err)
+	assert.Equal(t, "placed and still readable", string(repaired))
+
+	out, err = runCLI(t, "storage", "place", "/inbox/record.txt",
+		"--to", "archive", "--move", "--json")
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &preview))
+	assert.Zero(t, preview.TransferBytes)
+	assert.Equal(t, int64(len("placed and still readable")), preview.RetirableBytes)
+	out, err = runCLI(t, "storage", "place", "--run", "--token",
+		preview.PreviewToken, "--json")
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &started))
+	require.NoError(t, waitForStorageOperation(t, started.ID))
+
+	outputPath := filepath.Join(t.TempDir(), "record.txt")
+	_, err = runCLI(t, "get", "/inbox/record.txt", outputPath)
+	require.NoError(t, err)
+	got, err := os.ReadFile(outputPath)
+	require.NoError(t, err)
+	assert.Equal(t, "placed and still readable", string(got))
+
+	out, err = runCLI(t, "storage", "evacuate", "archive", "--json")
+	require.NoError(t, err)
+	var evacuation api.StoragePlacementPreview
+	require.NoError(t, json.Unmarshal([]byte(out), &evacuation))
+	assert.Equal(t, int64(1), evacuation.Objects)
+	assert.Equal(t, int64(len("placed and still readable")), evacuation.TransferBytes)
+	out, err = runCLI(t, "storage", "evacuate", "--run", "--token",
+		evacuation.PreviewToken, "--json")
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &started))
+	require.NoError(t, waitForStorageOperation(t, started.ID))
+
+	out, err = runCLI(t, "storage", "status", "archive", "--json")
+	require.NoError(t, err)
+	var evacuated api.BlobStore
+	require.NoError(t, json.Unmarshal([]byte(out), &evacuated))
+	assert.Equal(t, "detached", evacuated.Lifecycle)
+	secondOutput := filepath.Join(t.TempDir(), "record.txt")
+	_, err = runCLI(t, "get", "/inbox/record.txt", secondOutput)
+	require.NoError(t, err)
+}
+
+func waitForStorageOperation(t *testing.T, id string) error {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		out, err := runCLI(t, "jobs", "show", id, "--json")
+		if err != nil {
+			return err
+		}
+		var operation api.StorageOperation
+		if err := json.Unmarshal([]byte(out), &operation); err != nil {
+			return err
+		}
+		switch operation.State {
+		case "completed":
+			return nil
+		case "failed", "cancelled":
+			return fmt.Errorf("storage operation ended %s: %s", operation.State, operation.Error)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return fmt.Errorf("storage operation %s did not finish", id)
+}
+
 func TestInfoHumanAndJSON(t *testing.T) {
 	home := setupVaultHome(t)
 	canonicalHome, err := filepath.EvalSymlinks(home)

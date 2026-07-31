@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
+
+	"go.kenn.io/kit/packstore"
 )
 
 const (
@@ -23,6 +26,15 @@ type BlobStoreStats struct {
 	StoredBytes          int64
 	PackCount            int64
 	DeadPackedBytes      int64
+}
+
+// BlobStoreEvacuationFinalization is the catalog result of revoking an empty
+// source after every location has verified destination coverage. Physical
+// retirement happens afterward through Kit's reader-safe backend.
+type BlobStoreEvacuationFinalization struct {
+	Retire           []packstore.ObjectRef
+	RevokedLocations int64
+	Detached         bool
 }
 
 // PrepareSecondaryBlobStore allocates the stable identity and ownership epoch
@@ -172,6 +184,181 @@ func (s *Store) BlobStoreBySelector(ctx context.Context, selector string) (BlobS
 		return BlobStore{}, fmt.Errorf("reading blob store %q: %w", selector, err)
 	}
 	return store, nil
+}
+
+// BeginBlobStoreEvacuation makes one secondary read-only for new placement
+// destinations while keeping its current locations readable during copying.
+func (s *Store) BeginBlobStoreEvacuation(ctx context.Context, selector string) error {
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		store, err := blobStoreBySelectorTx(ctx, tx, selector)
+		if err != nil {
+			return err
+		}
+		if store.Role == blobStoreRolePrimary {
+			return ErrBlobStorePrimary
+		}
+		switch store.Lifecycle {
+		case blobStoreLifecycleDraining:
+			return nil
+		case blobStoreLifecycleActive:
+		default:
+			return fmt.Errorf("blob store %s is %s: %w",
+				store.ID, store.Lifecycle, ErrBlobStoreState)
+		}
+		_, err = tx.ExecContext(ctx,
+			`UPDATE blob_stores SET lifecycle=? WHERE store_id=?`,
+			blobStoreLifecycleDraining, store.ID,
+		)
+		if err != nil {
+			return fmt.Errorf("beginning evacuation of blob store %s: %w", store.ID, err)
+		}
+		return nil
+	})
+}
+
+// FinalizeBlobStoreEvacuation atomically proves complete destination coverage,
+// revokes every source location, and detaches the source. The returned refs
+// remain physical cleanup work; catalog authority no longer depends on them.
+func (s *Store) FinalizeBlobStoreEvacuation(
+	ctx context.Context, sourceID, destinationID string,
+) (BlobStoreEvacuationFinalization, error) {
+	var result BlobStoreEvacuationFinalization
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		source, err := blobStoreBySelectorTx(ctx, tx, sourceID)
+		if err != nil {
+			return err
+		}
+		if source.Role == blobStoreRolePrimary {
+			return ErrBlobStorePrimary
+		}
+		if source.Lifecycle == blobStoreLifecycleDetached {
+			result.Detached = true
+			return nil
+		}
+		if source.Lifecycle != blobStoreLifecycleDraining {
+			return fmt.Errorf("blob store %s is %s: %w",
+				source.ID, source.Lifecycle, ErrBlobStoreState)
+		}
+		destination, err := blobStoreBySelectorTx(ctx, tx, destinationID)
+		if err != nil {
+			return err
+		}
+		if destination.Lifecycle != blobStoreLifecycleActive {
+			return fmt.Errorf("destination blob store %s is %s: %w",
+				destination.ID, destination.Lifecycle, ErrBlobStoreState)
+		}
+		var uncovered int64
+		if err := tx.QueryRowContext(ctx, `
+			SELECT COUNT(*)
+			FROM blob_locations source
+			LEFT JOIN blob_locations destination
+			  ON destination.blob_hash=source.blob_hash
+			 AND destination.store_id=?
+			WHERE source.store_id=? AND destination.blob_hash IS NULL`,
+			destination.ID, source.ID,
+		).Scan(&uncovered); err != nil {
+			return fmt.Errorf("checking evacuation coverage for %s: %w", source.ID, err)
+		}
+		if uncovered != 0 {
+			return fmt.Errorf("blob store %s has %d uncovered location(s): %w",
+				source.ID, uncovered, ErrBlobStoreNotEmpty)
+		}
+		refs, err := blobStoreObjectRefsTx(ctx, tx, source.ID)
+		if err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM blob_locations WHERE store_id=?`, source.ID,
+		).Scan(&result.RevokedLocations); err != nil {
+			return fmt.Errorf("counting evacuated locations for %s: %w", source.ID, err)
+		}
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM blob_pack_entries WHERE store_id=?`, source.ID,
+		); err != nil {
+			return fmt.Errorf("revoking evacuated pack entries for %s: %w", source.ID, err)
+		}
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM blob_packs WHERE store_id=?`, source.ID,
+		); err != nil {
+			return fmt.Errorf("revoking evacuated packs for %s: %w", source.ID, err)
+		}
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM blob_locations WHERE store_id=?`, source.ID,
+		); err != nil {
+			return fmt.Errorf("revoking evacuated locations for %s: %w", source.ID, err)
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE blob_stores SET lifecycle=? WHERE store_id=?`,
+			blobStoreLifecycleDetached, source.ID,
+		); err != nil {
+			return fmt.Errorf("detaching evacuated blob store %s: %w", source.ID, err)
+		}
+		result.Retire = refs
+		result.Detached = true
+		return nil
+	})
+	return result, err
+}
+
+func blobStoreObjectRefsTx(
+	ctx context.Context, tx *sql.Tx, storeID string,
+) ([]packstore.ObjectRef, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT l.blob_hash,l.kind,l.encoding,e.pack_id
+		FROM blob_locations l
+		LEFT JOIN blob_pack_entries e
+		  ON e.blob_hash=l.blob_hash AND e.store_id=l.store_id
+		WHERE l.store_id=?
+		ORDER BY CASE l.kind WHEN 'loose' THEN 0 ELSE 1 END,l.blob_hash,e.pack_id`,
+		storeID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("reading evacuated physical objects: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var refs []packstore.ObjectRef
+	packs := make(map[string]bool)
+	for rows.Next() {
+		var hash, kind string
+		var encoding, packID sql.NullString
+		if err := rows.Scan(&hash, &kind, &encoding, &packID); err != nil {
+			return nil, fmt.Errorf("scanning evacuated physical object: %w", err)
+		}
+		switch kind {
+		case blobLocationKindLoose:
+			var value packstore.LooseEncoding
+			switch encoding.String {
+			case looseEncodingRaw:
+				value = packstore.LooseEncodingRaw
+			case looseEncodingZstd:
+				value = packstore.LooseEncodingZstd
+			default:
+				return nil, fmt.Errorf("invalid loose encoding %q", encoding.String)
+			}
+			refs = append(refs, packstore.ObjectRef{
+				LooseHash: packstore.Hash(hash), LooseEncoding: value,
+			})
+		case blobLocationKindPacked:
+			if !packID.Valid || packID.String == "" {
+				return nil, fmt.Errorf("packed location %s has no pack", hash)
+			}
+			packs[packID.String] = true
+		default:
+			return nil, fmt.Errorf("invalid location kind %q", kind)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading evacuated physical objects: %w", err)
+	}
+	packIDs := make([]string, 0, len(packs))
+	for packID := range packs {
+		packIDs = append(packIDs, packID)
+	}
+	sort.Strings(packIDs)
+	for _, packID := range packIDs {
+		refs = append(refs, packstore.ObjectRef{PackID: packID})
+	}
+	return refs, nil
 }
 
 // DetachBlobStore removes an empty secondary from ordinary backend admission

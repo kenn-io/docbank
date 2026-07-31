@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/packstore"
 )
 
 func TestSecondaryBlobStoreLifecycle(t *testing.T) {
@@ -85,4 +86,58 @@ func TestBlobStoreRegistrationRejectsConflicts(t *testing.T) {
 	} {
 		require.ErrorIs(t, s.RegisterBlobStore(t.Context(), candidate), ErrExists)
 	}
+}
+
+func TestBlobStoreEvacuationRequiresVerifiedDestinationCoverage(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	primary, err := s.PrimaryBlobStore(ctx)
+	require.NoError(t, err)
+	secondary, err := s.PrepareSecondaryBlobStore(
+		"archive", "filesystem", "archive_nas",
+	)
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(ctx, secondary))
+	require.ErrorIs(t, s.BeginBlobStoreEvacuation(ctx, primary.ID), ErrBlobStorePrimary)
+	require.NoError(t, s.BeginBlobStoreEvacuation(ctx, secondary.ID))
+
+	draining, err := s.BlobStoreBySelector(ctx, secondary.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "draining", draining.Lifecycle)
+
+	hash := fakeHash("d8")
+	_, err = s.db.Exec(
+		`INSERT INTO blobs(hash,size,created_at) VALUES(?,4,?)`,
+		hash, nowRFC3339(),
+	)
+	require.NoError(t, err)
+	_, err = s.db.Exec(`
+		INSERT INTO blob_locations(
+			blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
+		) VALUES(?,?,?,'loose','raw',4,1)`,
+		hash, secondary.ID, "40000000-0000-4000-8000-000000000001",
+	)
+	require.NoError(t, err)
+
+	_, err = s.FinalizeBlobStoreEvacuation(ctx, secondary.ID, primary.ID)
+	require.ErrorIs(t, err, ErrBlobStoreNotEmpty)
+
+	_, err = s.db.Exec(`
+		INSERT INTO blob_locations(
+			blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
+		) VALUES(?,?,?,'loose','raw',4,1)`,
+		hash, primary.ID, "40000000-0000-4000-8000-000000000002",
+	)
+	require.NoError(t, err)
+
+	finalized, err := s.FinalizeBlobStoreEvacuation(ctx, secondary.ID, primary.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []packstore.ObjectRef{{
+		LooseHash: packstore.Hash(hash), LooseEncoding: packstore.LooseEncodingRaw,
+	}}, finalized.Retire)
+	assert.True(t, finalized.Detached)
+
+	detached, err := s.BlobStoreBySelector(ctx, secondary.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "detached", detached.Lifecycle)
 }
