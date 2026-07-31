@@ -46,6 +46,13 @@ prove which local process received the ownership marker or document bytes.
 Use the service's authenticated TLS endpoint or an owner-confined,
 authenticated proxy.
 
+!!! warning "Secondary stores contain readable document bytes"
+    Docbank verifies secondary objects but does not encrypt them. Anyone with
+    raw read access to a filesystem store or S3 prefix can decode the documents
+    without the daemon API key. Restrict that access to the vault owner and use
+    independently controlled filesystem, bucket, or KMS encryption when the
+    storage operator is outside the intended trust boundary.
+
 Restart the daemon after editing `config.toml`. Binding configuration is read
 once at startup; a running daemon fails with `storage_configuration_stale`
 rather than guessing about newly edited settings.
@@ -75,10 +82,10 @@ and fences the former owner. It is not a way to share one prefix between two
 live vaults.
 
 Each active secondary must own a disjoint namespace. Filesystem paths may not
-overlap the vault or another active filesystem store. S3 stores may not use
-equal or nested prefixes under the same canonical endpoint and bucket. The
-ownership marker is the authoritative fence; path and prefix comparisons reject
-obvious aliases before Docbank contacts the backend.
+overlap the vault, a watched inbox, or another active filesystem store. S3
+stores may not use equal or nested prefixes under the same canonical endpoint
+and bucket. The ownership marker is the authoritative fence; path and prefix
+comparisons reject obvious aliases before Docbank contacts the backend.
 
 `storage list` and `storage status` separate catalog authority from observed
 availability. `authoritative_objects` counts verified locations recorded for a

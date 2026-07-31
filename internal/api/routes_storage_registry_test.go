@@ -103,6 +103,28 @@ func TestStorageRegistrationRejectsVaultOverlap(t *testing.T) {
 	assert.Contains(t, body, `"code":"storage_namespace_overlap"`)
 }
 
+func TestStorageRegistrationRejectsWatchOverlap(t *testing.T) {
+	watchRoot := t.TempDir()
+	ts, _ := newTestServer(t, func(d *api.Deps) {
+		d.Cfg.Watches = []config.WatchConfig{{
+			Name: "inbox", Source: watchRoot, Destination: "/inbox",
+		}}
+		d.Cfg.StoreBindings = map[string]config.StoreBindingConfig{
+			"watched": {Kind: "filesystem", Path: watchRoot},
+		}
+		d.BlobRegistry = blob.NewRegistry(
+			t.Context(), d.Store.VaultID(), d.Cfg.StoreBindings, nil,
+		)
+		t.Cleanup(func() { require.NoError(t, d.BlobRegistry.Close()) })
+	})
+
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/storage/stores/preview", nil,
+		map[string]any{"name": "unsafe", "binding": "watched"})
+
+	assert.Equal(t, http.StatusConflict, resp.StatusCode, body)
+	assert.Contains(t, body, `"code":"storage_namespace_overlap"`)
+}
+
 func TestStorageRegistrationRejectsUnmarkedNonemptyNamespace(t *testing.T) {
 	namespace := t.TempDir()
 	require.NoError(t, blob.EnsureFilesystemNamespace(namespace))

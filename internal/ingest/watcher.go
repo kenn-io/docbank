@@ -585,6 +585,29 @@ func PathsOverlap(left, right string) (bool, error) {
 	return false, nil
 }
 
+// WatchBindingOverlap reports whether one filesystem store binding can expose
+// its managed objects through a configured watched inbox.
+func WatchBindingOverlap(
+	watches []config.WatchConfig, binding config.StoreBindingConfig,
+) (string, bool, error) {
+	if binding.Kind != "filesystem" {
+		return "", false, nil
+	}
+	for _, watch := range watches {
+		overlap, err := PathsOverlap(watch.Source, binding.Path)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return watch.Name, false, err
+		}
+		if overlap {
+			return watch.Name, true, nil
+		}
+	}
+	return "", false, nil
+}
+
 // existingAncestorMatches supplements filepath.Rel with filesystem identity.
 // It catches case, normalization, and mount aliases whose lexical paths do
 // not reveal that one directory is inside the other.

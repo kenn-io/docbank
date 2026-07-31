@@ -98,6 +98,12 @@ Four commitments:
 See the [roadmap](docs/roadmap.md) for high-level product direction beyond the
 capabilities listed here.
 
+Secondary stores are a deployment trust boundary: Docbank verifies their
+objects but does not encrypt them. Anyone with raw access to a configured
+filesystem root or S3 prefix can decode document content, so those namespaces
+must be owner-controlled or protected by independently managed storage
+encryption and access policy.
+
 ## Installation
 
 Docbank supports Linux, macOS, and 64-bit Windows on amd64 and arm64. On Linux

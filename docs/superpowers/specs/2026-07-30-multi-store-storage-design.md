@@ -682,6 +682,13 @@ S3 publication:
 4. verifies framing and every adopted blob's decoded size and SHA-256; and
 5. permits catalog authority only after verification.
 
+S3 and filesystem secondaries preserve Kit's physical encoding and do not add
+Docbank-managed encryption. Raw namespace readers can therefore decode stored
+documents and are inside the deployment trust boundary. Operators must use
+storage access controls and independently controlled filesystem, bucket, or KMS
+encryption when the storage provider itself is not trusted; native live-store
+encryption remains separate product scope.
+
 Provider checksums and ETags are transport evidence, not content identity.
 Multipart ETags are never treated as hashes.
 

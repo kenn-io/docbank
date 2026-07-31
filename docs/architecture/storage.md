@@ -112,6 +112,13 @@ authority. The catalog keeps only the profile name and a fenced ownership
 epoch. See [Multi-store Storage](../usage/storage.md) for the operator model and
 the sections below for the complete authority boundary.
 
+The API key protects daemon access, not direct physical-store access. Loose
+objects and packs in secondary filesystem and S3 namespaces are encoded and
+content-verified but not encrypted by Docbank; raw store readers are inside the
+deployment trust boundary. Provider/filesystem encryption and access control
+remain external responsibilities, while native live-store encryption is
+deferred product scope.
+
 ## Released upgrades
 
 v0.9.0 is the first storage compatibility boundary. Every newer database

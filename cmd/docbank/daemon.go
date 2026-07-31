@@ -104,6 +104,9 @@ func runServe(ctx context.Context) (retErr error) {
 	if err != nil {
 		return err
 	}
+	if err := validateConfiguredWatchStores(cfg, catalogStores); err != nil {
+		return err
+	}
 	storeSpecs := make([]blob.StoreSpec, 0, len(catalogStores)-1)
 	for _, catalogStore := range catalogStores {
 		if catalogStore.Role == "primary" {
@@ -315,6 +318,34 @@ func runServe(ctx context.Context) (retErr error) {
 		return shutdownErr
 	}
 	return serveErr
+}
+
+func validateConfiguredWatchStores(
+	cfg config.Config, stores []store.BlobStore,
+) error {
+	for _, item := range stores {
+		if item.Role == "primary" || item.Lifecycle == "detached" ||
+			item.Kind != "filesystem" {
+			continue
+		}
+		binding, ok := cfg.StoreBindings[item.Binding]
+		if !ok {
+			continue
+		}
+		watchName, overlap, err := ingest.WatchBindingOverlap(cfg.Watches, binding)
+		if err != nil {
+			return fmt.Errorf(
+				"checking watch sources against filesystem store %q: %w", item.Name, err,
+			)
+		}
+		if overlap {
+			return fmt.Errorf(
+				"watch %q source overlaps filesystem store %q binding %q",
+				watchName, item.Name, item.Binding,
+			)
+		}
+	}
+	return nil
 }
 
 func listenWebOrigin(ctx context.Context, enabled bool) (net.Listener, string, error) {

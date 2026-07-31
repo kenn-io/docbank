@@ -268,7 +268,7 @@ func GarbageCollect(
 			removed, err := retireUnreachableLooseLocations(
 				ctx, blobs, primary.ID, hash, resolution,
 			)
-			if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			if err != nil {
 				return report, err
 			}
 			report.ReclaimedFiles += removed
@@ -319,27 +319,48 @@ func retireUnreachableLooseLocations(
 		}
 		backends[location.StoreID] = backend
 	}
-	retired := 0
+	secondary := make([]packstore.ReadLocation, 0, len(resolution.Candidates))
 	for _, location := range resolution.Candidates {
 		if location.Loose == nil ||
 			location.StoreID == packstore.StoreID(primaryStoreID) {
 			continue
 		}
-		if err := backends[location.StoreID].Retire(ctx, packstore.ObjectRef{
-			LooseHash: hash, LooseEncoding: location.Loose.Encoding,
-		}); err != nil {
-			return 0, fmt.Errorf(
-				"retiring unreachable blob %s from store %s: %w",
-				hash, location.StoreID, err,
-			)
-		}
-		retired++
+		secondary = append(secondary, location)
+	}
+	retired, err := retireLooseCandidates(
+		secondary, func(location packstore.ReadLocation) error {
+			return backends[location.StoreID].Retire(ctx, packstore.ObjectRef{
+				LooseHash: hash, LooseEncoding: location.Loose.Encoding,
+			})
+		},
+	)
+	if err != nil {
+		return 0, fmt.Errorf("retiring unreachable blob %s: %w", hash, err)
 	}
 	if !primaryLoose {
 		return retired, nil
 	}
 	primaryRemoved, err := blobs.RemoveIfExists(hash.String())
 	return retired + primaryRemoved, err
+}
+
+func retireLooseCandidates(
+	locations []packstore.ReadLocation,
+	retire func(packstore.ReadLocation) error,
+) (int, error) {
+	retired := 0
+	for _, location := range locations {
+		err := retire(location)
+		if errors.Is(err, fs.ErrNotExist) ||
+			errors.Is(err, packstore.ErrPhysicalMissing) {
+			continue
+		}
+		if err != nil {
+			return retired, fmt.Errorf("store %s: %w", location.StoreID, err)
+		}
+		retired++
+	}
+	return retired, nil
 }
 
 // Verify re-hashes one bounded canonical-hash page of catalog-authorized

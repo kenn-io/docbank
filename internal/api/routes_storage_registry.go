@@ -386,6 +386,22 @@ func validateStorageNamespace(
 				fmt.Sprintf("binding %q overlaps the live vault root", bindingName),
 			)
 		}
+		watchName, watchOverlap, err := ingest.WatchBindingOverlap(
+			d.Cfg.Watches, binding,
+		)
+		if err != nil {
+			return NewError(
+				http.StatusUnprocessableEntity, "storage_binding_invalid", err.Error(),
+			)
+		}
+		if watchOverlap {
+			return NewError(
+				http.StatusConflict, "storage_namespace_overlap",
+				fmt.Sprintf(
+					"binding %q overlaps configured watch %q", bindingName, watchName,
+				),
+			)
+		}
 	}
 	for _, existing := range stores {
 		if existing.Role == "primary" || existing.Kind != binding.Kind ||

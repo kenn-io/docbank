@@ -248,11 +248,17 @@ hot-reloading credentials or paths underneath active jobs.
 S3 binding endpoints must use authenticated HTTPS, including loopback
 services. Plain HTTP is rejected because a loopback TCP port does not prove
 which process received an ownership marker or document bytes. Active stores
-must also have disjoint namespaces: filesystem roots may not overlap the vault
-or another filesystem store, and S3 prefixes may not be equal or nested under
-the same canonical endpoint and bucket. A store's ownership marker and epoch
-remain the authoritative fence against aliases that path comparison cannot
-recognize.
+must also have disjoint namespaces: filesystem roots may not overlap the vault,
+a watched inbox, or another filesystem store, and S3 prefixes may not be equal
+or nested under the same canonical endpoint and bucket. A store's ownership
+marker and epoch remain the authoritative fence against aliases that path
+comparison cannot recognize.
+
+Secondary objects are verified but not encrypted by Docbank. Raw readers of a
+filesystem root or S3 prefix can decode document content without the daemon API
+key. Store profiles therefore belong only on owner-controlled storage, or on
+storage protected by independently controlled filesystem, bucket, or KMS
+encryption and access policy.
 
 ### Bind validation
 
