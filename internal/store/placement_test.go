@@ -57,6 +57,105 @@ func TestPlacementPlanUsesRetainedSubtreeAndCompleteReferenceClosure(t *testing.
 	assert.True(t, byHash[fakeHash("c3")].RetireSource)
 }
 
+func TestPlacementCommitCannotExpandRetirementBeyondPreview(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	archive, err := s.Mkdir(ctx, s.RootID(), "archive")
+	require.NoError(t, err)
+	hash := fakeHash("a2")
+	_, err = s.CreateFile(ctx, archive.ID, "selected.txt", hash, 5, "text/plain")
+	require.NoError(t, err)
+	outside, err := s.CreateFile(ctx, s.RootID(), "outside.txt", hash, 5, "text/plain")
+	require.NoError(t, err)
+	destination, err := s.PrepareSecondaryBlobStore("archive-store", "filesystem", "archive")
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(ctx, destination))
+	plan, err := s.PlanPlacement(ctx, PlacementRequest{
+		TargetNodeID: archive.ID, SourceStoreID: s.primaryStoreID,
+		DestinationStoreID: destination.ID, RetireSource: true,
+	})
+	require.NoError(t, err)
+	require.Len(t, plan.Hashes, 1)
+	assert.False(t, plan.Hashes[0].RetireSource)
+	_, _, err = s.Trash(ctx, outside.ID, outside.Revision)
+	require.NoError(t, err)
+	_, err = s.TrashEmpty(ctx, 0, true)
+	require.NoError(t, err)
+	operation, err := s.CreateStorageOperation(ctx, StorageOperationCreate{
+		Kind: storageOperationKindPlace, StoreReferences: []StorageOperationStoreReference{
+			{StoreID: s.primaryStoreID, Role: storageOperationRoleSource},
+			{StoreID: destination.ID, Role: storageOperationRoleDestination},
+		},
+		RequestDigest: plan.Digest, RequestJSON: `{}`, PlanJSON: `{}`,
+		TotalObjects: 1,
+	})
+	require.NoError(t, err)
+	_, err = s.ClaimStorageOperation(ctx, operation.ID)
+	require.NoError(t, err)
+	receipt := packstore.ReadLocation{
+		StoreID:    packstore.StoreID(destination.ID),
+		Generation: "40000000-0000-4000-8000-000000000011",
+		Loose: &packstore.LooseLocation{
+			Encoding: packstore.LooseEncodingRaw, LogicalSize: 5, StoredSize: 5,
+		},
+	}
+	committed, err := s.CommitPlacement(
+		ctx, operation.ID, plan.Request, plan.Hashes[0], receipt,
+	)
+	require.NoError(t, err)
+	assert.False(t, committed.SourceRevoked)
+	resolution, err := s.ResolveBlobLocations(ctx, packstore.Hash(hash))
+	require.NoError(t, err)
+	require.Len(t, resolution.Candidates, 2)
+}
+
+func TestPlacementCommitRejectsPlannedDestinationDrift(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	hash := fakeHash("a3")
+	file, err := s.CreateFile(ctx, s.RootID(), "document.txt", hash, 7, "text/plain")
+	require.NoError(t, err)
+	destination, err := s.PrepareSecondaryBlobStore("archive-store", "filesystem", "archive")
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(ctx, destination))
+	const firstGeneration = "40000000-0000-4000-8000-000000000012"
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO blob_locations(
+			blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
+		) VALUES(?,?,?,'loose','raw',7,1)`,
+		hash, destination.ID, firstGeneration,
+	)
+	require.NoError(t, err)
+	plan, err := s.PlanPlacement(ctx, PlacementRequest{
+		TargetNodeID: file.ID, SourceStoreID: s.primaryStoreID,
+		DestinationStoreID: destination.ID,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, plan.Hashes[0].Destination)
+	const secondGeneration = "40000000-0000-4000-8000-000000000013"
+	_, err = s.db.ExecContext(ctx, `
+		UPDATE blob_locations SET generation=?
+		WHERE blob_hash=? AND store_id=?`,
+		secondGeneration, hash, destination.ID,
+	)
+	require.NoError(t, err)
+	operation, err := s.CreateStorageOperation(ctx, StorageOperationCreate{
+		Kind: storageOperationKindPlace, StoreReferences: []StorageOperationStoreReference{
+			{StoreID: s.primaryStoreID, Role: storageOperationRoleSource},
+			{StoreID: destination.ID, Role: storageOperationRoleDestination},
+		},
+		RequestDigest: plan.Digest, RequestJSON: `{}`, PlanJSON: `{}`,
+		TotalObjects: 1,
+	})
+	require.NoError(t, err)
+	_, err = s.ClaimStorageOperation(ctx, operation.ID)
+	require.NoError(t, err)
+	actual := *plan.Hashes[0].Destination
+	actual.Generation = secondGeneration
+	_, err = s.CommitPlacement(ctx, operation.ID, plan.Request, plan.Hashes[0], actual)
+	require.ErrorIs(t, err, ErrStaleRevision)
+}
+
 func TestPlacementPlanPinsAuditedContentToPrimaryByDefault(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()

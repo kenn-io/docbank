@@ -19,7 +19,10 @@ var ErrStorageOperationCancelled = errors.New("storage operation cancellation wa
 const storageOperationFinalizingCursor = "@finalizing"
 
 const (
-	storageOperationKindEvacuate = "evacuate"
+	storageOperationKindPlace       = "place"
+	storageOperationKindEvacuate    = "evacuate"
+	storageOperationRoleSource      = "source"
+	storageOperationRoleDestination = "destination"
 
 	StorageOperationQueued    StorageOperationState = "queued"
 	StorageOperationRunning   StorageOperationState = "running"
@@ -120,7 +123,7 @@ func (s *Store) CreateStorageOperation(
 				)
 			}
 			allowed := store.Lifecycle == blobStoreLifecycleActive ||
-				(reference.Role == "source" &&
+				(reference.Role == storageOperationRoleSource &&
 					store.Lifecycle == blobStoreLifecycleDraining)
 			if !allowed {
 				return fmt.Errorf(
@@ -229,7 +232,7 @@ func validateStorageOperationCreate(
 	input StorageOperationCreate,
 ) ([]StorageOperationStoreReference, error) {
 	switch input.Kind {
-	case "place", storageOperationKindEvacuate, "repair", "salvage":
+	case storageOperationKindPlace, storageOperationKindEvacuate, "repair", "salvage":
 	default:
 		return nil, fmt.Errorf("unsupported storage operation kind %q", input.Kind)
 	}
@@ -253,7 +256,7 @@ func validateStorageOperationCreate(
 	references := append([]StorageOperationStoreReference(nil), input.StoreReferences...)
 	if input.SourceStoreID != "" {
 		references = append(references, StorageOperationStoreReference{
-			StoreID: input.SourceStoreID, Role: "source",
+			StoreID: input.SourceStoreID, Role: storageOperationRoleSource,
 		})
 	}
 	byStore := make(map[string]string, len(references))
@@ -262,7 +265,8 @@ func validateStorageOperationCreate(
 		if err := validateUUIDv4(reference.StoreID); err != nil {
 			return nil, fmt.Errorf("storage operation store ID is invalid: %w", err)
 		}
-		if reference.Role != "source" && reference.Role != "destination" {
+		if reference.Role != storageOperationRoleSource &&
+			reference.Role != storageOperationRoleDestination {
 			return nil, fmt.Errorf("storage operation store role %q is invalid", reference.Role)
 		}
 		if prior, exists := byStore[reference.StoreID]; exists {
@@ -561,6 +565,81 @@ func (s *Store) CompleteStorageOperationCleanup(
 		return fmt.Errorf("storage cleanup no longer exists: %w", ErrNotFound)
 	}
 	return nil
+}
+
+// PrepareStorageOperationCleanup determines whether a retired physical object
+// is still safe to remove. If the exact object has become authoritative again,
+// it atomically consumes the stale cleanup item and returns false.
+func (s *Store) PrepareStorageOperationCleanup(
+	ctx context.Context, operationID string, item StorageOperationCleanup,
+) (bool, error) {
+	var retire bool
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		var exists int
+		if err := tx.QueryRowContext(ctx, `
+			SELECT EXISTS(
+				SELECT 1 FROM storage_operation_cleanup
+				WHERE operation_id=? AND store_id=? AND loose_hash=?
+				  AND loose_encoding=? AND pack_id=?
+			)`,
+			operationID, item.StoreID, item.Ref.LooseHash.String(),
+			item.Ref.LooseEncoding, item.Ref.PackID,
+		).Scan(&exists); err != nil {
+			return fmt.Errorf("checking storage operation cleanup: %w", err)
+		}
+		if exists == 0 {
+			return fmt.Errorf("storage cleanup no longer exists: %w", ErrNotFound)
+		}
+
+		var authorized int
+		if item.Ref.LooseHash != "" {
+			encoding, err := looseEncodingName(item.Ref.LooseEncoding)
+			if err != nil {
+				return err
+			}
+			if err := tx.QueryRowContext(ctx, `
+				SELECT EXISTS(
+					SELECT 1 FROM blob_locations
+					WHERE blob_hash=? AND store_id=? AND kind=? AND encoding=?
+				)`,
+				item.Ref.LooseHash.String(), item.StoreID,
+				blobLocationKindLoose, encoding,
+			).Scan(&authorized); err != nil {
+				return fmt.Errorf("checking loose cleanup authority: %w", err)
+			}
+		} else {
+			if err := tx.QueryRowContext(ctx, `
+				SELECT EXISTS(
+					SELECT 1 FROM blob_packs WHERE store_id=? AND pack_id=?
+				)`, item.StoreID, item.Ref.PackID,
+			).Scan(&authorized); err != nil {
+				return fmt.Errorf("checking pack cleanup authority: %w", err)
+			}
+		}
+		if authorized != 0 {
+			result, err := tx.ExecContext(ctx, `
+				DELETE FROM storage_operation_cleanup
+				WHERE operation_id=? AND store_id=? AND loose_hash=?
+				  AND loose_encoding=? AND pack_id=?`,
+				operationID, item.StoreID, item.Ref.LooseHash.String(),
+				item.Ref.LooseEncoding, item.Ref.PackID,
+			)
+			if err != nil {
+				return fmt.Errorf("discarding reauthorized storage cleanup: %w", err)
+			}
+			affected, err := result.RowsAffected()
+			if err != nil {
+				return fmt.Errorf("reading reauthorized cleanup discard: %w", err)
+			}
+			if affected != 1 {
+				return fmt.Errorf("storage cleanup changed during preparation: %w", ErrStaleRevision)
+			}
+			return nil
+		}
+		retire = true
+		return nil
+	})
+	return retire, err
 }
 
 const storageOperationSelect = `

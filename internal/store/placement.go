@@ -236,8 +236,8 @@ func placementStoresTx(
 		role string
 		id   string
 	}{
-		{role: "source", id: request.SourceStoreID},
-		{role: "destination", id: request.DestinationStoreID},
+		{role: storageOperationRoleSource, id: request.SourceStoreID},
+		{role: storageOperationRoleDestination, id: request.DestinationStoreID},
 	} {
 		store, err := blobStoreBySelectorTx(ctx, tx, candidate.id)
 		if err != nil {
@@ -251,13 +251,13 @@ func placementStoresTx(
 			)
 		}
 		validLifecycle := store.Lifecycle == blobStoreLifecycleActive ||
-			(candidate.role == "source" &&
+			(candidate.role == storageOperationRoleSource &&
 				store.Lifecycle == blobStoreLifecycleDraining)
 		if !validLifecycle {
 			return BlobStore{}, BlobStore{}, fmt.Errorf("%s blob store is %s: %w",
 				candidate.role, store.Lifecycle, ErrBlobStoreState)
 		}
-		if candidate.role == "source" {
+		if candidate.role == storageOperationRoleSource {
 			source = store
 		} else {
 			destination = store
@@ -512,6 +512,12 @@ func (s *Store) CommitPlacement(
 	if err := destination.Validate(); err != nil {
 		return PlacementCommit{}, fmt.Errorf("validating placement destination: %w", err)
 	}
+	if planned.Destination != nil &&
+		!sameReadLocation(*planned.Destination, destination) {
+		return PlacementCommit{}, fmt.Errorf(
+			"placement destination changed after preview: %w", ErrStaleRevision,
+		)
+	}
 	var committed PlacementCommit
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		destinationStore, err := blobStoreBySelectorTx(
@@ -635,7 +641,8 @@ func (s *Store) CommitPlacement(
 				request.SourceStoreID == s.primaryStoreID &&
 				!request.AllowAuditedRemoteOnly
 		}
-		if !request.RetireSource || committed.ReferenceDrift || committed.AuditPinned {
+		if !planned.RetireSource || !request.RetireSource ||
+			committed.ReferenceDrift || committed.AuditPinned {
 			return nil
 		}
 		if source.Pack != nil {

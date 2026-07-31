@@ -410,6 +410,54 @@ func TestPlacementRunnerRecordsCommittedProgressBeforeCleanupRetry(t *testing.T)
 	assert.False(t, receipt.Objects[0].CleanupPending)
 }
 
+func TestPlacementRunnerDoesNotRetireInverseMoveDestination(t *testing.T) {
+	metadata, blobs, runner, secondary := placementTestVault(t)
+	content := []byte("inverse move authority")
+	file, hash := placementTestFile(t, metadata, blobs, content)
+	copyPlan, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+		TargetNodeID: file.ID, SourceStoreID: metadata.PrimaryBlobStoreID(),
+		DestinationStoreID: secondary.ID,
+	})
+	require.NoError(t, err)
+	require.NoError(t, runner.Run(
+		t.Context(), createPlacementOperation(t, metadata, copyPlan),
+	))
+
+	toPrimary, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+		TargetNodeID: file.ID, SourceStoreID: secondary.ID,
+		DestinationStoreID: metadata.PrimaryBlobStoreID(), RetireSource: true,
+	})
+	require.NoError(t, err)
+	primaryOperation := createPlacementOperation(t, metadata, toPrimary)
+	backend := blobs.registry.backends[packstore.StoreID(secondary.ID)]
+	failing := &failOnceRetireBackend{Backend: backend, failed: make(chan struct{})}
+	failing.fail.Store(true)
+	blobs.registry.backends[packstore.StoreID(secondary.ID)] = failing
+
+	err = runner.Run(t.Context(), primaryOperation)
+	require.ErrorIs(t, err, errStorageOperationDeferred)
+	toSecondary, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+		TargetNodeID: file.ID, SourceStoreID: metadata.PrimaryBlobStoreID(),
+		DestinationStoreID: secondary.ID, RetireSource: true,
+	})
+	require.NoError(t, err)
+	secondaryOperation := createPlacementOperation(t, metadata, toSecondary)
+	require.NoError(t, runner.Run(t.Context(), secondaryOperation))
+	require.NoError(t, runner.Run(t.Context(), primaryOperation))
+
+	resolution, err := metadata.ResolveBlobLocations(t.Context(), packstore.Hash(hash))
+	require.NoError(t, err)
+	require.Len(t, resolution.Candidates, 1)
+	assert.Equal(t, packstore.StoreID(secondary.ID), resolution.Candidates[0].StoreID)
+	stream, size, err := blobs.OpenStreamContext(t.Context(), hash)
+	require.NoError(t, err)
+	got, err := io.ReadAll(stream)
+	require.NoError(t, err)
+	require.NoError(t, stream.Close())
+	assert.Equal(t, int64(len(content)), size)
+	assert.Equal(t, content, got)
+}
+
 type failOnceRetireBackend struct {
 	packstore.Backend
 
