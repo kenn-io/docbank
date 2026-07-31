@@ -28,13 +28,14 @@ func TestVerifyReportsDamagedRedundantLocation(t *testing.T) {
 	secondaryPath := filepath.Join(root, "archive")
 	secondaryBackend, err := blob.NewFilesystemBackend(secondaryPath, nil)
 	require.NoError(t, err)
+	ownership := packstore.Ownership{
+		Format: packstore.OwnershipFormatV1,
+		Vault:  metadata.VaultID(),
+		Store:  packstore.StoreID(secondary.ID),
+		Epoch:  secondary.OwnershipEpoch,
+	}
 	require.NoError(t, secondaryBackend.ReplaceOwnership(
-		t.Context(), packstore.Ownership{
-			Format: packstore.OwnershipFormatV1,
-			Vault:  metadata.VaultID(),
-			Store:  packstore.StoreID(secondary.ID),
-			Epoch:  secondary.OwnershipEpoch,
-		}, nil,
+		t.Context(), ownership, nil,
 	))
 	require.NoError(t, secondaryBackend.Close())
 	require.NoError(t, metadata.RegisterBlobStore(t.Context(), secondary))
@@ -108,4 +109,24 @@ func TestVerifyReportsDamagedRedundantLocation(t *testing.T) {
 	assert.Equal(t, written.Hash, report.Problems[0].Hash)
 	assert.Equal(t, secondary.ID, report.Problems[0].StoreID)
 	assert.Equal(t, "corrupt", report.Problems[0].Problem)
+
+	takeoverBackend, err := blob.NewFilesystemBackend(secondaryPath, nil)
+	require.NoError(t, err)
+	taken := ownership
+	taken.Epoch = "50000000-0000-4000-8000-000000000001"
+	require.NoError(t, takeoverBackend.ReplaceOwnership(
+		t.Context(), taken, &ownership,
+	))
+	require.NoError(t, takeoverBackend.Close())
+
+	report, err = Verify(
+		t.Context(), metadata, blobs,
+		VerifyOptions{Budget: Budget{MaxObjects: 1}},
+	)
+	require.NoError(t, err)
+	assert.Zero(t, report.OK)
+	require.Len(t, report.Problems, 1)
+	assert.Equal(t, written.Hash, report.Problems[0].Hash)
+	assert.Equal(t, secondary.ID, report.Problems[0].StoreID)
+	assert.Equal(t, "unreadable", report.Problems[0].Problem)
 }

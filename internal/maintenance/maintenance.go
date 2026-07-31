@@ -361,6 +361,7 @@ func Verify(
 	if err != nil {
 		return report, err
 	}
+	locationVerifier := NewBlobLocationVerifier(metadata, blobs)
 	processedBytes := int64(0)
 	processed := 0
 	for _, hash := range hashes {
@@ -370,9 +371,7 @@ func Verify(
 		if err := ctx.Err(); err != nil {
 			return report, err
 		}
-		problems, bytesRead, err := VerifyBlobLocations(
-			ctx, metadata, blobs, hash,
-		)
+		problems, bytesRead, err := locationVerifier.Verify(ctx, hash)
 		if err != nil {
 			return report, err
 		}
@@ -391,14 +390,30 @@ func Verify(
 	return report, nil
 }
 
-// VerifyBlobLocations independently checks every catalog-authorized physical
-// candidate for one logical blob. A healthy redundant copy never hides a
-// missing, corrupt, fenced, or unavailable peer.
-func VerifyBlobLocations(
-	ctx context.Context,
-	metadata *store.Store,
-	blobs *blob.Store,
-	hash string,
+// BlobLocationVerifier independently checks every catalog-authorized physical
+// candidate while refreshing each secondary's ownership once per verification
+// run. A healthy redundant copy never hides a damaged or fenced peer.
+type BlobLocationVerifier struct {
+	metadata     *store.Store
+	blobs        *blob.Store
+	primaryID    string
+	observations map[string]blob.StoreObservation
+}
+
+// NewBlobLocationVerifier starts one bounded verification observation set.
+func NewBlobLocationVerifier(
+	metadata *store.Store, blobs *blob.Store,
+) *BlobLocationVerifier {
+	return &BlobLocationVerifier{
+		metadata: metadata, blobs: blobs,
+		primaryID:    metadata.PrimaryBlobStoreID(),
+		observations: make(map[string]blob.StoreObservation),
+	}
+}
+
+// Verify checks every current physical candidate for one logical blob.
+func (v *BlobLocationVerifier) Verify(
+	ctx context.Context, hash string,
 ) ([]VerifyProblem, int64, error) {
 	parsed, err := packstore.ParseHash(hash)
 	if err != nil {
@@ -406,7 +421,7 @@ func VerifyBlobLocations(
 		// must still advance past that row and report its bytes as unreadable.
 		return []VerifyProblem{{Hash: hash, Problem: "unreadable"}}, 0, nil //nolint:nilerr
 	}
-	resolution, err := metadata.ResolveBlobLocations(ctx, parsed)
+	resolution, err := v.metadata.ResolveBlobLocations(ctx, parsed)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -419,13 +434,27 @@ func VerifyBlobLocations(
 	problems := make([]VerifyProblem, 0)
 	var totalRead int64
 	for _, location := range resolution.Candidates {
-		read, err := blobs.VerifyLocation(ctx, hash, location)
+		storeID := string(location.StoreID)
+		if storeID != v.primaryID {
+			observation, observed := v.observations[storeID]
+			if !observed {
+				observation = v.blobs.RefreshStore(ctx, storeID)
+				v.observations[storeID] = observation
+			}
+			if observation.State != blob.StoreOnline {
+				problems = append(problems, VerifyProblem{
+					Hash: hash, StoreID: storeID, Problem: "unreadable",
+				})
+				continue
+			}
+		}
+		read, err := v.blobs.VerifyLocation(ctx, hash, location)
 		totalRead += read
 		if err == nil {
 			continue
 		}
 		problems = append(problems, VerifyProblem{
-			Hash: hash, StoreID: string(location.StoreID),
+			Hash: hash, StoreID: storeID,
 			Problem: classifyBlobProblem(err),
 		})
 	}

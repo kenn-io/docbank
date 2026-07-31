@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"sort"
 
 	"go.kenn.io/kit/packstore"
 )
@@ -426,12 +425,10 @@ func blobStoreObjectRefsTx(
 	ctx context.Context, tx *sql.Tx, storeID string,
 ) ([]packstore.ObjectRef, error) {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT l.blob_hash,l.kind,l.encoding,e.pack_id
+		SELECT l.blob_hash,l.kind,l.encoding
 		FROM blob_locations l
-		LEFT JOIN blob_pack_entries e
-		  ON e.blob_hash=l.blob_hash AND e.store_id=l.store_id
 		WHERE l.store_id=?
-		ORDER BY CASE l.kind WHEN 'loose' THEN 0 ELSE 1 END,l.blob_hash,e.pack_id`,
+		ORDER BY CASE l.kind WHEN 'loose' THEN 0 ELSE 1 END,l.blob_hash`,
 		storeID,
 	)
 	if err != nil {
@@ -439,11 +436,10 @@ func blobStoreObjectRefsTx(
 	}
 	defer func() { _ = rows.Close() }()
 	var refs []packstore.ObjectRef
-	packs := make(map[string]bool)
 	for rows.Next() {
 		var hash, kind string
-		var encoding, packID sql.NullString
-		if err := rows.Scan(&hash, &kind, &encoding, &packID); err != nil {
+		var encoding sql.NullString
+		if err := rows.Scan(&hash, &kind, &encoding); err != nil {
 			return nil, fmt.Errorf("scanning evacuated physical object: %w", err)
 		}
 		switch kind {
@@ -461,10 +457,8 @@ func blobStoreObjectRefsTx(
 				LooseHash: packstore.Hash(hash), LooseEncoding: value,
 			})
 		case blobLocationKindPacked:
-			if !packID.Valid || packID.String == "" {
-				return nil, fmt.Errorf("packed location %s has no pack", hash)
-			}
-			packs[packID.String] = true
+			// Pack containers are enumerated independently below. Their
+			// per-blob mappings may already have been revoked by placement.
 		default:
 			return nil, fmt.Errorf("invalid location kind %q", kind)
 		}
@@ -472,13 +466,25 @@ func blobStoreObjectRefsTx(
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("reading evacuated physical objects: %w", err)
 	}
-	packIDs := make([]string, 0, len(packs))
-	for packID := range packs {
-		packIDs = append(packIDs, packID)
+	packRows, err := tx.QueryContext(ctx, `
+		SELECT pack_id FROM blob_packs
+		WHERE store_id=?
+		ORDER BY pack_id`,
+		storeID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("reading evacuated pack objects: %w", err)
 	}
-	sort.Strings(packIDs)
-	for _, packID := range packIDs {
+	defer func() { _ = packRows.Close() }()
+	for packRows.Next() {
+		var packID string
+		if err := packRows.Scan(&packID); err != nil {
+			return nil, fmt.Errorf("scanning evacuated pack object: %w", err)
+		}
 		refs = append(refs, packstore.ObjectRef{PackID: packID})
+	}
+	if err := packRows.Err(); err != nil {
+		return nil, fmt.Errorf("reading evacuated pack objects: %w", err)
 	}
 	return refs, nil
 }

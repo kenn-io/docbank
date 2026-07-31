@@ -176,14 +176,15 @@ func registerAuditRoutes(
 			out.Body.Evidence = auditEvidence(verification.Evidence)
 			out.Body.ProtectedBlobs = len(verification.ProtectedBlobs)
 			out.Body.ProtectedBytes = verification.ProtectedBytes
+			locationVerifier := internalmaintenance.NewBlobLocationVerifier(
+				d.Store, d.Blobs,
+			)
 			for _, blob := range verification.ProtectedBlobs {
 				if err := ctx.Err(); err != nil {
 					return NewError(http.StatusInternalServerError, "internal",
 						fmt.Sprintf("audit verification interrupted: %v", err))
 				}
-				problems, _, err := internalmaintenance.VerifyBlobLocations(
-					ctx, d.Store, d.Blobs, blob.Hash,
-				)
+				problems, _, err := locationVerifier.Verify(ctx, blob.Hash)
 				if err != nil {
 					out.Body.MetadataProblems = append(
 						out.Body.MetadataProblems, err.Error(),

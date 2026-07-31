@@ -92,6 +92,31 @@ func TestBlobStoreDetachRequiresCompletedPhysicalCleanup(t *testing.T) {
 	)
 }
 
+func TestEvacuationCleanupIncludesPackAfterMappingsAreRevoked(t *testing.T) {
+	s := newTestStore(t)
+	secondary, err := s.PrepareSecondaryBlobStore(
+		"archive", "filesystem", "archive_nas",
+	)
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(t.Context(), secondary))
+	_, err = s.db.ExecContext(t.Context(), `
+		INSERT INTO blob_packs(
+			store_id,pack_id,entry_count,stored_bytes,created_at
+		) VALUES(?,?,1,100,?)`,
+		secondary.ID, "pack-after-mapping-revocation", nowRFC3339(),
+	)
+	require.NoError(t, err)
+	tx, err := s.db.BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+
+	refs, err := blobStoreObjectRefsTx(t.Context(), tx, secondary.ID)
+	require.NoError(t, err)
+	require.Equal(t, []packstore.ObjectRef{{
+		PackID: "pack-after-mapping-revocation",
+	}}, refs)
+}
+
 func TestBlobStoreInventoryReportsSoleAuthorityAndAffectedDocuments(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
