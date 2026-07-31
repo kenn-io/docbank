@@ -214,3 +214,59 @@ func TestBlobStoreEvacuationRequiresVerifiedDestinationCoverage(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "detached", detached.Lifecycle)
 }
+
+func TestEmptyBlobStoreEvacuationFinalizationRejectsCancellation(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	primary, err := s.PrimaryBlobStore(ctx)
+	require.NoError(t, err)
+	secondary, err := s.PrepareSecondaryBlobStore(
+		"archive", "filesystem", "archive_nas",
+	)
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(ctx, secondary))
+	require.NoError(t, s.BeginBlobStoreEvacuation(ctx, secondary.ID))
+	operation, err := s.CreateStorageOperation(ctx, StorageOperationCreate{
+		Kind: "evacuate", RequestDigest: fakeHash("ea"),
+		RequestJSON: `{"version":1}`, PlanJSON: `{"hashes":[]}`,
+	})
+	require.NoError(t, err)
+	_, err = s.ClaimStorageOperation(ctx, operation.ID)
+	require.NoError(t, err)
+
+	finalized, err := s.FinalizeBlobStoreEvacuation(
+		ctx, operation.ID, secondary.ID, primary.ID,
+	)
+	require.NoError(t, err)
+	assert.True(t, finalized.Detached)
+	err = s.RequestStorageOperationCancel(ctx, operation.ID)
+	require.ErrorIs(t, err, ErrStorageOperationTerminal)
+}
+
+func TestDetachedBlobStoreEvacuationFinalizationRejectsCancellation(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	primary, err := s.PrimaryBlobStore(ctx)
+	require.NoError(t, err)
+	secondary, err := s.PrepareSecondaryBlobStore(
+		"archive", "filesystem", "archive_nas",
+	)
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(ctx, secondary))
+	require.NoError(t, s.DetachBlobStore(ctx, secondary.ID))
+	operation, err := s.CreateStorageOperation(ctx, StorageOperationCreate{
+		Kind: "evacuate", RequestDigest: fakeHash("eb"),
+		RequestJSON: `{"version":1}`, PlanJSON: `{"hashes":[]}`,
+	})
+	require.NoError(t, err)
+	_, err = s.ClaimStorageOperation(ctx, operation.ID)
+	require.NoError(t, err)
+
+	finalized, err := s.FinalizeBlobStoreEvacuation(
+		ctx, operation.ID, secondary.ID, primary.ID,
+	)
+	require.NoError(t, err)
+	assert.True(t, finalized.Detached)
+	err = s.RequestStorageOperationCancel(ctx, operation.ID)
+	require.ErrorIs(t, err, ErrStorageOperationTerminal)
+}

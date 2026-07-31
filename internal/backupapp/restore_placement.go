@@ -13,6 +13,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/blob"
@@ -136,7 +138,7 @@ func validateRestoreBinding(name string, binding config.StoreBindingConfig) erro
 		if binding.Bucket == "" {
 			return fmt.Errorf("backupapp: S3 binding %q requires a bucket", name)
 		}
-		if _, err := canonicalS3Endpoint(binding.Endpoint); err != nil {
+		if _, err := canonicalS3Endpoint(binding.Endpoint, binding.Region); err != nil {
 			return fmt.Errorf("backupapp: S3 binding %q endpoint: %w", name, err)
 		}
 		if binding.Prefix != "" &&
@@ -192,7 +194,9 @@ func validateRestoreNamespaces(
 				)
 			}
 		case "s3":
-			namespace.endpoint, err = canonicalS3Endpoint(item.binding.Endpoint)
+			namespace.endpoint, err = canonicalS3Endpoint(
+				item.binding.Endpoint, item.binding.Region,
+			)
 			if err != nil {
 				return fmt.Errorf(
 					"backupapp: resolving restore binding %q endpoint: %w",
@@ -249,9 +253,13 @@ func canonicalFilesystemNamespace(path string) (string, error) {
 	}
 }
 
-func canonicalS3Endpoint(raw string) (string, error) {
+func canonicalS3Endpoint(raw, region string) (string, error) {
+	if region == "" {
+		// Match Kit's S3 backend default before comparing deployment bindings.
+		region = "us-east-1"
+	}
 	if raw == "" {
-		return "aws", nil
+		return awsS3Partition(region)
 	}
 	endpoint, err := url.Parse(raw)
 	if err != nil {
@@ -280,7 +288,49 @@ func canonicalS3Endpoint(raw string) (string, error) {
 		endpoint.Host = net.JoinHostPort(host, port)
 	}
 	endpoint.Path = strings.TrimSuffix(endpoint.Path, "/")
+	if partition, ok := canonicalAWSS3Partition(endpoint, region); ok {
+		return partition, nil
+	}
 	return endpoint.String(), nil
+}
+
+func canonicalAWSS3Partition(endpoint *url.URL, region string) (string, bool) {
+	if endpoint.Port() != "" || endpoint.Path != "" || region == "" {
+		return "", false
+	}
+	resolver := awss3.NewDefaultEndpointResolver()
+	variants := []awss3.EndpointResolverOptions{
+		{},
+		{UseFIPSEndpoint: aws.FIPSEndpointStateEnabled},
+		{UseDualStackEndpoint: aws.DualStackEndpointStateEnabled},
+		{
+			UseFIPSEndpoint:      aws.FIPSEndpointStateEnabled,
+			UseDualStackEndpoint: aws.DualStackEndpointStateEnabled,
+		},
+	}
+	for _, options := range variants {
+		resolved, err := resolver.ResolveEndpoint(region, options)
+		if err != nil {
+			continue
+		}
+		resolvedURL, err := url.Parse(resolved.URL)
+		if err == nil && strings.EqualFold(
+			endpoint.Hostname(), resolvedURL.Hostname(),
+		) {
+			return resolved.PartitionID, true
+		}
+	}
+	return "", false
+}
+
+func awsS3Partition(region string) (string, error) {
+	resolved, err := awss3.NewDefaultEndpointResolver().ResolveEndpoint(
+		region, awss3.EndpointResolverOptions{},
+	)
+	if err != nil {
+		return "", fmt.Errorf("resolve AWS S3 region %q: %w", region, err)
+	}
+	return resolved.PartitionID, nil
 }
 
 func restoreNamespacesOverlap(first, second restoreNamespace) (bool, error) {
@@ -359,6 +409,7 @@ func applyRestorePlacement(
 	}
 	remoteOnly := make(map[string]bool)
 	allowAuditedRemoteOnly := make(map[string]bool)
+	claimedNamespaces := make(map[packstore.Ownership]string, len(prepared))
 	for _, item := range prepared {
 		mapped := item.mapping
 		binding := item.binding
@@ -370,6 +421,7 @@ func applyRestorePlacement(
 		}
 		backend, err := claimRestoreBackend(
 			ctx, metadata.VaultID(), candidate, binding, mapped.Takeover,
+			claimedNamespaces,
 		)
 		if err != nil {
 			return fmt.Errorf("backupapp: mapping source store %s: %w", mapped.SourceID, err)
@@ -551,6 +603,7 @@ func claimRestoreBackend(
 	candidate store.BlobStore,
 	binding config.StoreBindingConfig,
 	takeover bool,
+	claimedNamespaces map[packstore.Ownership]string,
 ) (packstore.Backend, error) {
 	backend, err := blob.NewConfiguredBackend(ctx, binding, nil)
 	if err != nil {
@@ -564,6 +617,14 @@ func claimRestoreBackend(
 	}
 	var prior *packstore.Ownership
 	current, markerErr := backend.Ownership(ctx)
+	if markerErr == nil {
+		if claimedBy, claimed := claimedNamespaces[current]; claimed {
+			return closeOnError(fmt.Errorf(
+				"target namespace was already claimed by target store %q",
+				claimedBy,
+			))
+		}
+	}
 	switch {
 	case errors.Is(markerErr, fs.ErrNotExist),
 		errors.Is(markerErr, packstore.ErrPhysicalMissing):
@@ -612,5 +673,6 @@ func claimRestoreBackend(
 	if err := blob.ProbeConfiguredBackend(ctx, backend); err != nil {
 		return closeOnError(err)
 	}
+	claimedNamespaces[next] = candidate.Name
 	return backend, nil
 }

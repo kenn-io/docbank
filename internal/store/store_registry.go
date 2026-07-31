@@ -274,6 +274,11 @@ func (s *Store) FinalizeBlobStoreEvacuation(
 			return ErrBlobStorePrimary
 		}
 		if source.Lifecycle == blobStoreLifecycleDetached {
+			if err := markStorageOperationFinalizingTx(
+				ctx, tx, operationID,
+			); err != nil {
+				return err
+			}
 			result.Detached = true
 			return nil
 		}
@@ -314,6 +319,11 @@ func (s *Store) FinalizeBlobStoreEvacuation(
 		); err != nil {
 			return err
 		}
+		if err := markStorageOperationFinalizingTx(
+			ctx, tx, operationID,
+		); err != nil {
+			return err
+		}
 		if err := tx.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM blob_locations WHERE store_id=?`, source.ID,
 		).Scan(&result.RevokedLocations); err != nil {
@@ -350,23 +360,25 @@ func (s *Store) FinalizeBlobStoreEvacuation(
 				return fmt.Errorf("detaching evacuated blob store %s: %w", source.ID, err)
 			}
 			result.Detached = true
-		} else {
-			update, err := tx.ExecContext(ctx, `
-				UPDATE storage_operations SET cursor=?,updated_at=?
-				WHERE operation_id=? AND state=?`,
-				storageOperationFinalizingCursor, nowRFC3339(),
-				operationID, StorageOperationRunning,
-			)
-			if err := requireOneStorageOperationRow(
-				update, err, operationID, "marking finalizing",
-			); err != nil {
-				return err
-			}
 		}
 		result.Retire = refs
 		return nil
 	})
 	return result, err
+}
+
+func markStorageOperationFinalizingTx(
+	ctx context.Context, tx *sql.Tx, operationID string,
+) error {
+	update, err := tx.ExecContext(ctx, `
+		UPDATE storage_operations SET cursor=?,updated_at=?
+		WHERE operation_id=? AND state=?`,
+		storageOperationFinalizingCursor, nowRFC3339(),
+		operationID, StorageOperationRunning,
+	)
+	return requireOneStorageOperationRow(
+		update, err, operationID, "marking finalizing",
+	)
 }
 
 func blobStoreObjectRefsTx(
