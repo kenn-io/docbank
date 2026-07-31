@@ -412,11 +412,14 @@ func (r PlacementRunner) runRecovery(
 		)
 		if err != nil && (errors.Is(err, packstore.ErrPhysicalCorrupt) ||
 			errors.Is(err, packstore.ErrContentMismatch)) {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
 			repair, ok := r.Blobs.RepairBackend(
 				packstore.StoreID(plan.Destination),
 			)
 			if !ok {
-				return r.fail(ctx, operation.ID, fmt.Errorf(
+				return r.failRecoveryUnlessCancelled(ctx, operation.ID, fmt.Errorf(
 					"salvage destination cannot replace corrupt content: %w", err,
 				))
 			}
@@ -425,7 +428,9 @@ func (r PlacementRunner) runRecovery(
 				hash, sourceLocation, plan.Size,
 			)
 			if repairErr != nil {
-				return r.fail(ctx, operation.ID, errors.Join(err, repairErr))
+				return r.failRecoveryUnlessCancelled(
+					ctx, operation.ID, errors.Join(err, repairErr),
+				)
 			}
 			location = packstore.ReadLocation{
 				StoreID:    packstore.StoreID(plan.Destination),
@@ -472,6 +477,15 @@ func (r PlacementRunner) runRecovery(
 		return r.fail(ctx, operation.ID, err)
 	}
 	return nil
+}
+
+func (r PlacementRunner) failRecoveryUnlessCancelled(
+	ctx context.Context, operationID string, failure error,
+) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	return r.fail(ctx, operationID, failure)
 }
 
 func repairOne(

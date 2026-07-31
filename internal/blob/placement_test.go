@@ -905,6 +905,38 @@ func TestPlacementRunnerSalvagesVerifiedBytesOverCorruptPrimary(t *testing.T) {
 	assert.Equal(t, []byte("salvage authority"), got)
 }
 
+func TestSalvageCancellationLeavesRecoveryResumable(t *testing.T) {
+	metadata, blobs, runner, secondary := placementTestVault(t)
+	file, hash := placementTestFile(t, metadata, blobs, []byte("cancel salvage repair"))
+	placement, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+		TargetNodeID: file.ID, SourceStoreID: metadata.PrimaryBlobStoreID(),
+		DestinationStoreID: secondary.ID, RetireSource: true,
+	})
+	require.NoError(t, err)
+	require.NoError(t, runner.Run(
+		t.Context(), createPlacementOperation(t, metadata, placement),
+	))
+	plan, err := metadata.PlanStorageRecovery(
+		t.Context(), "salvage", hash, secondary.ID,
+	)
+	require.NoError(t, err)
+	operationID := createRecoveryOperation(t, metadata, plan)
+	_, err = metadata.ClaimStorageOperation(t.Context(), operationID)
+	require.NoError(t, err)
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	err = runner.failRecoveryUnlessCancelled(
+		cancelled, operationID,
+		errors.Join(packstore.ErrPhysicalCorrupt, context.Canceled),
+	)
+	require.ErrorIs(t, err, context.Canceled)
+	operation, err := metadata.StorageOperation(t.Context(), operationID)
+	require.NoError(t, err)
+	assert.Equal(t, store.StorageOperationRunning, operation.State)
+	assert.Empty(t, operation.Error)
+}
+
 func TestPlacementRunnerHonorsRecoveryCancellationBeforePublication(t *testing.T) {
 	metadata, blobs, runner, secondary := placementTestVault(t)
 	file, hash := placementTestFile(t, metadata, blobs, []byte("cancel recovery"))
