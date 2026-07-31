@@ -55,6 +55,26 @@ func TestWatcherRejectsBindAliasToVaultDescendantAsSource(t *testing.T) {
 	require.ErrorContains(t, err, "contains vault storage through a filesystem alias")
 }
 
+func TestWatchBindingOverlapRejectsMissingPathThroughBindAliasToDescendant(t *testing.T) {
+	watchSource := t.TempDir()
+	protected := filepath.Join(watchSource, "documents")
+	require.NoError(t, os.Mkdir(protected, 0o700))
+	alias := filepath.Join(t.TempDir(), "documents-alias")
+	require.NoError(t, os.Mkdir(alias, 0o700))
+	bindMountForTest(t, protected, alias)
+	bindingPath := filepath.Join(alias, "archive")
+	require.False(t, pathContains(watchSource, bindingPath),
+		"the bind alias must hide lexical ancestry")
+
+	watchName, overlaps, err := WatchBindingOverlap(
+		[]config.WatchConfig{{Name: "inbox", Source: watchSource}},
+		config.StoreBindingConfig{Kind: "filesystem", Path: bindingPath},
+	)
+	require.NoError(t, err)
+	require.Equal(t, "inbox", watchName)
+	require.True(t, overlaps)
+}
+
 func bindMountForTest(t *testing.T, source, target string) {
 	t.Helper()
 	err := unix.Mount(source, target, "", unix.MS_BIND, "")

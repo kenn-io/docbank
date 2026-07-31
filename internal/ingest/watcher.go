@@ -643,17 +643,68 @@ func WatchBindingOverlap(
 	}
 	for _, watch := range watches {
 		overlap, err := PathsOverlap(watch.Source, binding.Path)
-		if errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
-		if err != nil {
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return watch.Name, false, err
+		}
+		if !overlap {
+			overlap, err = existingPathPrefixMatchesWatch(binding.Path, watch)
+			if err != nil {
+				return watch.Name, false, err
+			}
 		}
 		if overlap {
 			return watch.Name, true, nil
 		}
 	}
 	return "", false, nil
+}
+
+// existingPathPrefixMatchesWatch catches mount aliases that pathname
+// resolution cannot expose. It uses the watcher's confined traversal so an
+// unrelated mounted tree is not recursively searched. The whole configured
+// watch root remains protected even when an exclusion currently hides part of
+// it; removing an exclusion must not turn an existing store into watcher input.
+func existingPathPrefixMatchesWatch(pathname string, watch config.WatchConfig) (bool, error) {
+	current, err := filepath.Abs(pathname)
+	if err != nil {
+		return false, err
+	}
+	var prefixInfo fs.FileInfo
+	for {
+		prefixInfo, err = os.Stat(current)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return false, fmt.Errorf("checking path prefix %q: %w", current, err)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return false, err
+		}
+		current = parent
+	}
+	if !prefixInfo.IsDir() {
+		return false, nil
+	}
+	root, err := os.OpenRoot(watch.Source)
+	if err != nil {
+		return false, fmt.Errorf("opening watch %q source %q: %w", watch.Name, watch.Source, err)
+	}
+	mount, mountErr := watchMountForRoot(root)
+	if mountErr != nil {
+		_ = root.Close()
+		return false, fmt.Errorf("identifying watch %q source mount: %w", watch.Name, mountErr)
+	}
+	contains, traversalErr := watchTreeContainsAnyDirectory(
+		context.Background(), root, mount, []fs.FileInfo{prefixInfo}, exclusions{}, "", nil,
+	)
+	closeErr := root.Close()
+	if traversalErr != nil || closeErr != nil {
+		return false, fmt.Errorf("reading watch %q source tree: %w",
+			watch.Name, errors.Join(traversalErr, closeErr))
+	}
+	return contains, nil
 }
 
 // existingAncestorMatches supplements filepath.Rel with filesystem identity.
