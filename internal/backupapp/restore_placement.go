@@ -554,6 +554,52 @@ func claimRestoreBackend(
 	takeover bool,
 	claimedNamespaces map[packstore.Ownership]string,
 ) (packstore.Backend, error) {
+	inspector, err := blob.NewInspectionBackend(ctx, binding)
+	if err != nil {
+		return nil, err
+	}
+	closeInspector := func() error {
+		if closer, ok := inspector.(io.Closer); ok {
+			return closer.Close()
+		}
+		return nil
+	}
+	closeInspectorOnError := func(err error) (packstore.Backend, error) {
+		return nil, errors.Join(err, closeInspector())
+	}
+	var prior *packstore.Ownership
+	current, markerErr := inspector.Ownership(ctx)
+	if markerErr == nil {
+		if claimedBy, claimed := claimedNamespaces[current]; claimed {
+			return closeInspectorOnError(fmt.Errorf(
+				"target namespace was already claimed by target store %q",
+				claimedBy,
+			))
+		}
+	}
+	switch {
+	case errors.Is(markerErr, fs.ErrNotExist),
+		errors.Is(markerErr, packstore.ErrPhysicalMissing):
+		if takeover {
+			return closeInspectorOnError(errors.New(
+				"takeover was requested but the target namespace has no ownership marker",
+			))
+		}
+		if err := requireEmptyRestoreNamespace(ctx, inspector); err != nil {
+			return closeInspectorOnError(err)
+		}
+	case markerErr != nil:
+		return closeInspectorOnError(markerErr)
+	case !takeover:
+		return closeInspectorOnError(errors.New(
+			"target namespace is already owned; explicit takeover is required",
+		))
+	default:
+		prior = &current
+	}
+	if err := closeInspector(); err != nil {
+		return nil, err
+	}
 	if binding.Kind == restoreStoreKindFilesystem {
 		if err := blob.EnsureFilesystemNamespace(binding.Path); err != nil {
 			return nil, fmt.Errorf("prepare private restore store: %w", err)
@@ -569,45 +615,22 @@ func claimRestoreBackend(
 		}
 		return nil, err
 	}
-	var prior *packstore.Ownership
-	current, markerErr := backend.Ownership(ctx)
-	if markerErr == nil {
-		if claimedBy, claimed := claimedNamespaces[current]; claimed {
-			return closeOnError(fmt.Errorf(
-				"target namespace was already claimed by target store %q",
-				claimedBy,
-			))
+	revalidated, revalidateErr := backend.Ownership(ctx)
+	if prior == nil {
+		if !errors.Is(revalidateErr, fs.ErrNotExist) &&
+			!errors.Is(revalidateErr, packstore.ErrPhysicalMissing) {
+			if revalidateErr == nil {
+				revalidateErr = errors.New("target ownership marker changed during restore preflight")
+			}
+			return closeOnError(revalidateErr)
 		}
-	}
-	switch {
-	case errors.Is(markerErr, fs.ErrNotExist),
-		errors.Is(markerErr, packstore.ErrPhysicalMissing):
-		if takeover {
-			return closeOnError(errors.New(
-				"takeover was requested but the target namespace has no ownership marker",
-			))
-		}
-		inspector, ok := backend.(packstore.NamespaceInspector)
-		if !ok {
-			return closeOnError(errors.New(
-				"target backend cannot prove an unmarked namespace is empty",
-			))
-		}
-		empty, err := inspector.NamespaceEmpty(ctx)
-		if err != nil {
+		if err := requireEmptyRestoreNamespace(ctx, backend); err != nil {
 			return closeOnError(err)
 		}
-		if !empty {
-			return closeOnError(errors.New("unmarked target namespace is not empty"))
-		}
-	case markerErr != nil:
-		return closeOnError(markerErr)
-	case !takeover:
+	} else if revalidateErr != nil || revalidated != *prior {
 		return closeOnError(errors.New(
-			"target namespace is already owned; explicit takeover is required",
+			"target ownership marker changed during restore preflight",
 		))
-	default:
-		prior = &current
 	}
 	next := packstore.Ownership{
 		Format: packstore.OwnershipFormatV1,
@@ -629,4 +652,21 @@ func claimRestoreBackend(
 	}
 	claimedNamespaces[next] = candidate.Name
 	return backend, nil
+}
+
+func requireEmptyRestoreNamespace(
+	ctx context.Context, backend packstore.Backend,
+) error {
+	inspector, ok := backend.(packstore.NamespaceInspector)
+	if !ok {
+		return errors.New("target backend cannot prove an unmarked namespace is empty")
+	}
+	empty, err := inspector.NamespaceEmpty(ctx)
+	if err != nil {
+		return fmt.Errorf("inspect target namespace: %w", err)
+	}
+	if !empty {
+		return errors.New("unmarked target namespace is not empty")
+	}
+	return nil
 }

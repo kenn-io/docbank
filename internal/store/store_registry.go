@@ -589,6 +589,22 @@ func (s *Store) UnregisterBlobStore(ctx context.Context, selector string) error 
 			return fmt.Errorf("blob store %s is %s: %w",
 				store.ID, store.Lifecycle, ErrBlobStoreState)
 		}
+		var activeOperations int
+		if err := tx.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM storage_operations
+			WHERE source_store_id=? AND state IN (?,?)`,
+			store.ID, StorageOperationQueued, StorageOperationRunning,
+		).Scan(&activeOperations); err != nil {
+			return fmt.Errorf(
+				"checking active operations for blob store %s: %w", store.ID, err,
+			)
+		}
+		if activeOperations != 0 {
+			return fmt.Errorf(
+				"blob store %s has %d active operation(s): %w",
+				store.ID, activeOperations, ErrBlobStoreState,
+			)
+		}
 		result, err := tx.ExecContext(ctx, `DELETE FROM blob_stores WHERE store_id = ?`, store.ID)
 		if err != nil {
 			return fmt.Errorf("unregistering blob store %s: %w", store.ID, err)

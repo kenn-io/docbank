@@ -196,7 +196,7 @@ func previewStorageRegistration(
 	); err != nil {
 		return storageRegistrationPlan{}, err
 	}
-	backend, err := blob.NewConfiguredBackend(ctx, binding, nil)
+	backend, err := blob.NewInspectionBackend(ctx, binding)
 	if err != nil {
 		return storageRegistrationPlan{}, NewError(http.StatusUnprocessableEntity,
 			"storage_binding_invalid", err.Error())
@@ -250,16 +250,19 @@ func applyStorageRegistration(
 				"the catalog changed after preview; preview the registration again")
 		}
 	}
+	if err := validateStorageNamespace(
+		d, plan.store.Binding, plan.binding, stores,
+	); err != nil {
+		return BlobStore{}, err
+	}
+	if err := revalidateStorageRegistrationTarget(ctx, plan); err != nil {
+		return BlobStore{}, err
+	}
 	if plan.binding.Kind == "filesystem" {
 		if err := blob.EnsureFilesystemNamespace(plan.binding.Path); err != nil {
 			return BlobStore{}, NewError(http.StatusServiceUnavailable,
 				"store_unavailable", fmt.Sprintf("preparing storage namespace: %v", err))
 		}
-	}
-	if err := validateStorageNamespace(
-		d, plan.store.Binding, plan.binding, stores,
-	); err != nil {
-		return BlobStore{}, err
 	}
 	backend, err := blob.NewConfiguredBackend(ctx, plan.binding, nil)
 	if err != nil {
@@ -302,6 +305,35 @@ func applyStorageRegistration(
 	}
 	observation := d.BlobRegistry.AttachSpec(ctx, blobStoreSpec(plan.store))
 	return blobStoreAPI(plan.store, store.BlobStoreStats{}, observation, 0), nil
+}
+
+func revalidateStorageRegistrationTarget(
+	ctx context.Context, plan storageRegistrationPlan,
+) error {
+	backend, err := blob.NewInspectionBackend(ctx, plan.binding)
+	if err != nil {
+		return NewError(http.StatusUnprocessableEntity,
+			"storage_binding_invalid", err.Error())
+	}
+	defer func() { _ = closeStorageBackend(backend) }()
+	current, markerErr := backend.Ownership(ctx)
+	if plan.expected == nil {
+		if errors.Is(markerErr, fs.ErrNotExist) ||
+			errors.Is(markerErr, packstore.ErrPhysicalMissing) {
+			return requireEmptyUnmarkedNamespace(ctx, backend)
+		}
+		if markerErr != nil {
+			return NewError(http.StatusServiceUnavailable,
+				"store_unavailable", markerErr.Error())
+		}
+		return NewError(http.StatusConflict, "storage_preview_stale",
+			"the storage ownership marker changed after preview")
+	}
+	if markerErr != nil || current != *plan.expected {
+		return NewError(http.StatusConflict, "storage_preview_stale",
+			"the storage ownership marker changed after preview")
+	}
+	return nil
 }
 
 func requireEmptyUnmarkedNamespace(

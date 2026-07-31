@@ -153,6 +153,39 @@ func TestRegistrySecuresOwnedFilesystemScaffoldingOnAttachment(t *testing.T) {
 	require.NoError(t, safefileio.ValidatePrivateDir(shard))
 }
 
+func TestRegistryDoesNotRepairMismatchedFilesystemNamespace(t *testing.T) {
+	const (
+		vaultID = "10000000-0000-4000-8000-000000000001"
+		storeID = "20000000-0000-4000-8000-000000000001"
+		epoch   = "30000000-0000-4000-8000-000000000001"
+	)
+	root := filepath.Join(t.TempDir(), "archive")
+	require.NoError(t, EnsureFilesystemNamespace(root))
+	backend, err := NewFilesystemBackend(root, nil)
+	require.NoError(t, err)
+	require.NoError(t, backend.ReplaceOwnership(t.Context(), packstore.Ownership{
+		Format: packstore.OwnershipFormatV1,
+		Vault:  "10000000-0000-4000-8000-000000000099",
+		Store:  storeID,
+		Epoch:  epoch,
+	}, nil))
+	require.NoError(t, backend.Close())
+	shard := filepath.Join(root, "aa")
+	require.NoError(t, os.Mkdir(shard, 0o700))
+	makeFilesystemNamespaceInsecure(t, shard)
+
+	registry := NewRegistry(t.Context(), vaultID,
+		map[string]config.StoreBindingConfig{
+			"archive": {Kind: storeKindFilesystem, Path: root},
+		}, []StoreSpec{{
+			ID: storeID, Kind: storeKindFilesystem, Role: "secondary",
+			Lifecycle: "active", Binding: "archive", OwnershipEpoch: epoch,
+		}})
+	t.Cleanup(func() { require.NoError(t, registry.Close()) })
+	assert.Equal(t, StoreFenced, registry.Observation(storeID).State)
+	require.Error(t, safefileio.ValidatePrivateDir(shard))
+}
+
 func TestRegistryKeepsUnboundStoreDegraded(t *testing.T) {
 	spec := StoreSpec{
 		ID:   "20000000-0000-4000-8000-000000000001",

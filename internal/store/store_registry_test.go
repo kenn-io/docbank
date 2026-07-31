@@ -38,6 +38,27 @@ func TestSecondaryBlobStoreLifecycle(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
+func TestBlobStoreUnregisterRejectsActiveOperation(t *testing.T) {
+	s := newTestStore(t)
+	secondary, err := s.PrepareSecondaryBlobStore("archive", "filesystem", "archive_nas")
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(t.Context(), secondary))
+	operation, err := s.CreateStorageOperation(t.Context(), StorageOperationCreate{
+		Kind: "evacuate", SourceStoreID: secondary.ID,
+		RequestDigest: fakeHash("91"), RequestJSON: `{}`, PlanJSON: `{}`,
+	})
+	require.NoError(t, err)
+	require.NoError(t, s.DetachBlobStore(t.Context(), secondary.ID))
+
+	require.ErrorIs(t, s.UnregisterBlobStore(t.Context(), secondary.ID), ErrBlobStoreState)
+	_, err = s.BlobStoreBySelector(t.Context(), secondary.ID)
+	require.NoError(t, err)
+
+	_, err = s.ClaimStorageOperation(t.Context(), operation.ID)
+	require.NoError(t, err)
+	require.ErrorIs(t, s.UnregisterBlobStore(t.Context(), secondary.ID), ErrBlobStoreState)
+}
+
 func TestBlobStoreRemovalRequiresEmptyDetachedSecondary(t *testing.T) {
 	s := newTestStore(t)
 	primary, err := s.PrimaryBlobStore(t.Context())

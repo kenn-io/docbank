@@ -146,6 +146,11 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 			return r.fail(ctx, operationID, errors.New("placement progress receipt is inconsistent"))
 		}
 	}
+	if err := r.persistPlacementProgress(
+		ctx, operationID, operation.Cursor, &receipt,
+	); err != nil {
+		return err
+	}
 	if operation.CompletedObjects > int64(len(plan.Hashes)) {
 		return r.fail(ctx, operationID, errors.New("storage operation cursor exceeds its plan"))
 	}
@@ -187,13 +192,8 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 		if result.CleanupPending {
 			receipt.CleanupPending++
 		}
-		progress, err := json.Marshal(receipt)
-		if err != nil {
-			return r.fail(ctx, operationID, fmt.Errorf("encode placement progress: %w", err))
-		}
-		if err := r.Metadata.AdvanceStorageOperation(
-			ctx, operationID, item.Hash, receipt.Completed,
-			receipt.Copied, receipt.CopiedBytes, string(progress),
+		if err := r.persistPlacementProgress(
+			ctx, operationID, item.Hash, &receipt,
 		); err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return ctxErr
@@ -202,6 +202,11 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 		}
 		if err := r.retirePending(ctx, operationID); err != nil {
 			return r.deferCleanup(ctx, operationID, err)
+		}
+		if err := r.persistPlacementProgress(
+			ctx, operationID, item.Hash, &receipt,
+		); err != nil {
+			return err
 		}
 	}
 	if operation.Kind == "evacuate" {
@@ -225,8 +230,18 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 		}
 		receipt.SourceRevoked += finalized.RevokedLocations
 		receipt.Evacuated = finalized.Detached
+		if err := r.persistCurrentPlacementProgress(
+			ctx, operationID, &receipt,
+		); err != nil {
+			return err
+		}
 		if err := r.retirePending(ctx, operationID); err != nil {
 			return r.deferCleanup(ctx, operationID, err)
+		}
+		if err := r.persistCurrentPlacementProgress(
+			ctx, operationID, &receipt,
+		); err != nil {
+			return err
 		}
 		if !finalized.Detached {
 			err = r.commit(func() error {
@@ -563,8 +578,48 @@ func (r PlacementRunner) placeOne(
 		SourceRevoked:         committed.SourceRevoked,
 		ReferenceDrift:        committed.ReferenceDrift, AuditPinned: committed.AuditPinned,
 		PackRepackRequired: committed.PackRepackRequired,
+		CleanupPending:     committed.Retire != nil,
 	}
 	return result, nil
+}
+
+func (r PlacementRunner) persistPlacementProgress(
+	ctx context.Context, operationID, cursor string, receipt *PlacementReceipt,
+) error {
+	cleanups, err := r.Metadata.StorageOperationCleanups(ctx, operationID)
+	if err != nil {
+		return err
+	}
+	pendingLoose := make(map[string]bool, len(cleanups))
+	for _, cleanup := range cleanups {
+		if cleanup.Ref.LooseHash != "" {
+			pendingLoose[cleanup.Ref.LooseHash.String()] = true
+		}
+	}
+	receipt.CleanupPending = int64(len(cleanups))
+	for index := range receipt.Objects {
+		receipt.Objects[index].CleanupPending = pendingLoose[receipt.Objects[index].Hash]
+	}
+	progress, err := json.Marshal(receipt)
+	if err != nil {
+		return r.fail(ctx, operationID, fmt.Errorf("encode placement progress: %w", err))
+	}
+	return r.Metadata.AdvanceStorageOperation(
+		ctx, operationID, cursor, receipt.Completed,
+		receipt.Copied, receipt.CopiedBytes, string(progress),
+	)
+}
+
+func (r PlacementRunner) persistCurrentPlacementProgress(
+	ctx context.Context, operationID string, receipt *PlacementReceipt,
+) error {
+	operation, err := r.Metadata.StorageOperation(ctx, operationID)
+	if err != nil {
+		return err
+	}
+	return r.persistPlacementProgress(
+		ctx, operationID, operation.Cursor, receipt,
+	)
 }
 
 func (r PlacementRunner) verifyPlacementDestination(

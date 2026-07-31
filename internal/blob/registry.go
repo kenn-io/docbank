@@ -88,7 +88,25 @@ func newAttachedConfiguredBackend(
 	binding config.StoreBindingConfig,
 	expected *packstore.Ownership,
 ) (packstore.Backend, error) {
+	if expected == nil {
+		return NewInspectionBackend(ctx, binding)
+	}
 	if binding.Kind == storeKindFilesystem {
+		inspector, err := NewInspectionBackend(ctx, binding)
+		if err != nil {
+			return nil, err
+		}
+		actual, ownershipErr := inspector.Ownership(ctx)
+		closeErr := closeBackend(inspector)
+		if ownershipErr != nil || closeErr != nil {
+			return nil, errors.Join(ownershipErr, closeErr)
+		}
+		if actual != *expected {
+			return nil, fmt.Errorf(
+				"%w: ownership marker names vault %s store %s epoch %q",
+				packstore.ErrStoreFenced, actual.Vault, actual.Store, actual.Epoch,
+			)
+		}
 		if err := EnsureFilesystemNamespace(binding.Path); err != nil {
 			return nil, fmt.Errorf("secure filesystem store namespace: %w", err)
 		}
@@ -262,7 +280,11 @@ func (r *Registry) refreshLocked(ctx context.Context, id packstore.StoreID) {
 	}
 	backend, err := r.openBackend(ctx, binding, &expected)
 	if err != nil {
-		r.observe(id, StoreMisconfigured, err.Error(), binding.Priority)
+		if errors.Is(err, packstore.ErrStoreFenced) {
+			r.observe(id, StoreFenced, err.Error(), binding.Priority)
+		} else {
+			r.observe(id, StoreMisconfigured, err.Error(), binding.Priority)
+		}
 		return
 	}
 	actual, err := backend.Ownership(ctx)
@@ -329,14 +351,22 @@ func closeBackend(backend packstore.Backend) error {
 func NewFilesystemBackend(
 	path string, expected *packstore.Ownership,
 ) (*packstore.FilesystemBackend, error) {
+	return newFilesystemBackend(path, expected, true)
+}
+
+func newFilesystemBackend(
+	path string, expected *packstore.Ownership, validate bool,
+) (*packstore.FilesystemBackend, error) {
 	layout, err := packstore.NewLayout(path, packstore.LayoutOptions{
 		Staging: packstore.StagingStoreDirectory, StagingDir: "tmp",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create filesystem blob layout: %w", err)
 	}
-	if err := validateFilesystemNamespace(layout.Root()); err != nil {
-		return nil, fmt.Errorf("validate private filesystem blob layout: %w", err)
+	if validate {
+		if err := validateFilesystemNamespace(layout.Root()); err != nil {
+			return nil, fmt.Errorf("validate private filesystem blob layout: %w", err)
+		}
 	}
 	backend, err := packstore.NewFilesystemBackend(layout, packstore.FilesystemBackendOptions{
 		ExpectedOwnership: expected,
@@ -346,6 +376,18 @@ func NewFilesystemBackend(
 		return nil, fmt.Errorf("create filesystem blob backend: %w", err)
 	}
 	return backend, nil
+}
+
+// NewInspectionBackend opens a configured namespace without repairing it or
+// granting catalog authority. Admission previews and restore preflight use it
+// only to inspect ownership and emptiness before any local mutation.
+func NewInspectionBackend(
+	ctx context.Context, binding config.StoreBindingConfig,
+) (packstore.Backend, error) {
+	if binding.Kind == storeKindFilesystem {
+		return newFilesystemBackend(binding.Path, nil, false)
+	}
+	return NewConfiguredBackend(ctx, binding, nil)
 }
 
 // EnsureFilesystemNamespace securely creates or repairs one filesystem store

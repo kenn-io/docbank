@@ -111,6 +111,7 @@ func TestVerifyReportsDamagedRedundantLocation(t *testing.T) {
 	assert.Equal(t, secondary.ID, report.Problems[0].StoreID)
 	assert.Equal(t, "corrupt", report.Problems[0].Problem)
 
+	require.NoError(t, blob.EnsureFilesystemNamespace(secondaryPath))
 	takeoverBackend, err := blob.NewFilesystemBackend(secondaryPath, nil)
 	require.NoError(t, err)
 	taken := ownership

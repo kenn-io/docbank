@@ -15,6 +15,20 @@ func TestFilesystemBackendSecuresExistingNamespaceDirectories(t *testing.T) {
 	root := t.TempDir()
 	shard := filepath.Join(root, "aa")
 	require.NoError(t, safefileio.EnsurePrivateDir(shard))
+	makeFilesystemNamespaceInsecure(t, root, shard)
+
+	_, err := NewFilesystemBackend(root, nil)
+	require.Error(t, err)
+	require.NoError(t, EnsureFilesystemNamespace(root))
+	backend, err := NewFilesystemBackend(root, nil)
+	require.NoError(t, err)
+	require.NoError(t, backend.Close())
+	require.NoError(t, safefileio.ValidatePrivateDir(root))
+	require.NoError(t, safefileio.ValidatePrivateDir(shard))
+}
+
+func makeFilesystemNamespaceInsecure(t *testing.T, paths ...string) {
+	t.Helper()
 	everyone, err := windows.CreateWellKnownSid(windows.WinWorldSid)
 	require.NoError(t, err)
 	dacl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{{
@@ -28,20 +42,11 @@ func TestFilesystemBackendSecuresExistingNamespaceDirectories(t *testing.T) {
 		},
 	}}, nil)
 	require.NoError(t, err)
-	for _, path := range []string{root, shard} {
+	for _, path := range paths {
 		require.NoError(t, windows.SetNamedSecurityInfo(
 			path, windows.SE_FILE_OBJECT,
 			windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
 			nil, nil, dacl, nil,
 		))
 	}
-
-	_, err = NewFilesystemBackend(root, nil)
-	require.Error(t, err)
-	require.NoError(t, EnsureFilesystemNamespace(root))
-	backend, err := NewFilesystemBackend(root, nil)
-	require.NoError(t, err)
-	require.NoError(t, backend.Close())
-	require.NoError(t, safefileio.ValidatePrivateDir(root))
-	require.NoError(t, safefileio.ValidatePrivateDir(shard))
 }

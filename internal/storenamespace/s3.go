@@ -79,7 +79,10 @@ func CanonicalS3Endpoint(raw, region string) (string, error) {
 		return "", fmt.Errorf("endpoint %q must not include user info, query, or fragment", raw)
 	}
 	endpoint.Scheme = strings.ToLower(endpoint.Scheme)
-	host := strings.ToLower(endpoint.Hostname())
+	host := strings.ToLower(strings.TrimSuffix(endpoint.Hostname(), "."))
+	if parsed := net.ParseIP(host); parsed != nil {
+		host = parsed.String()
+	}
 	port := endpoint.Port()
 	if (endpoint.Scheme == "https" && port == "443") ||
 		(endpoint.Scheme == "http" && port == "80") {

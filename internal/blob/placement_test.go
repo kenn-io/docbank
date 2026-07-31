@@ -180,6 +180,17 @@ func TestPlacementRunnerEvacuatesPackedSecondaryAfterPlacementRevokesMappings(
 	require.Empty(t, evacuation.Hashes)
 	require.NoError(t, metadata.BeginBlobStoreEvacuation(t.Context(), secondary.ID))
 	evacuationID := createStorageOperation(t, metadata, "evacuate", evacuation)
+	backend = blobs.registry.backends[packstore.StoreID(secondary.ID)]
+	failing := &failOnceRetireBackend{Backend: backend, failed: make(chan struct{})}
+	failing.fail.Store(true)
+	blobs.registry.backends[packstore.StoreID(secondary.ID)] = failing
+	require.ErrorIs(t, runner.Run(t.Context(), evacuationID), errStorageCleanupDeferred)
+	operation, err := metadata.StorageOperation(t.Context(), evacuationID)
+	require.NoError(t, err)
+	var progress PlacementReceipt
+	require.NoError(t, json.Unmarshal([]byte(operation.ReceiptJSON), &progress))
+	assert.Equal(t, int64(1), progress.CleanupPending)
+
 	require.NoError(t, runner.Run(t.Context(), evacuationID))
 
 	require.NoFileExists(t, filesystem.Layout().PackPath(records[0].PackID))
@@ -189,6 +200,11 @@ func TestPlacementRunnerEvacuatesPackedSecondaryAfterPlacementRevokesMappings(
 	evacuated, err := metadata.BlobStoreBySelector(t.Context(), secondary.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "detached", evacuated.Lifecycle)
+	operation, err = metadata.StorageOperation(t.Context(), evacuationID)
+	require.NoError(t, err)
+	var receipt PlacementReceipt
+	require.NoError(t, json.Unmarshal([]byte(operation.ReceiptJSON), &receipt))
+	assert.Zero(t, receipt.CleanupPending)
 }
 
 func TestPlacementRunnerResumesAfterCatalogCommitBeforeProgress(t *testing.T) {
@@ -306,6 +322,9 @@ func TestPlacementRunnerRecordsCommittedProgressBeforeCleanupRetry(t *testing.T)
 	require.NoError(t, json.Unmarshal([]byte(operation.ReceiptJSON), &progress))
 	assert.Equal(t, int64(1), progress.Completed)
 	assert.Equal(t, int64(1), progress.SourceRevoked)
+	assert.Equal(t, int64(1), progress.CleanupPending)
+	require.Len(t, progress.Objects, 1)
+	assert.True(t, progress.Objects[0].CleanupPending)
 
 	require.NoError(t, metadata.RequestStorageOperationCancel(t.Context(), operationID))
 	require.NoError(t, runner.Run(t.Context(), operationID))
@@ -316,6 +335,9 @@ func TestPlacementRunnerRecordsCommittedProgressBeforeCleanupRetry(t *testing.T)
 	require.NoError(t, json.Unmarshal([]byte(operation.ReceiptJSON), &receipt))
 	assert.Equal(t, int64(1), receipt.Completed)
 	assert.Equal(t, int64(1), receipt.SourceRevoked)
+	assert.Zero(t, receipt.CleanupPending)
+	require.Len(t, receipt.Objects, 1)
+	assert.False(t, receipt.Objects[0].CleanupPending)
 }
 
 type failOnceRetireBackend struct {
