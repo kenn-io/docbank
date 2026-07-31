@@ -573,8 +573,15 @@ func PathsOverlap(left, right string) (bool, error) {
 	if pathContains(left, right) || pathContains(right, left) {
 		return true, nil
 	}
+	var missingErr error
 	for _, pair := range [][2]string{{left, right}, {right, left}} {
 		overlaps, err := existingAncestorMatches(pair[0], pair[1])
+		if errors.Is(err, fs.ErrNotExist) {
+			if missingErr == nil {
+				missingErr = err
+			}
+			continue
+		}
 		if err != nil {
 			return false, err
 		}
@@ -582,7 +589,7 @@ func PathsOverlap(left, right string) (bool, error) {
 			return true, nil
 		}
 	}
-	return false, nil
+	return false, missingErr
 }
 
 // WatchBindingOverlap reports whether one filesystem store binding can expose

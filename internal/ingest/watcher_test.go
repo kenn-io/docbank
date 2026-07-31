@@ -297,6 +297,25 @@ func TestPathsOverlapUsesFilesystemIdentityForAliases(t *testing.T) {
 	assert.True(t, overlaps)
 }
 
+func TestWatchBindingOverlapRejectsMissingPathThroughAlias(t *testing.T) {
+	watchSource := t.TempDir()
+	alias := filepath.Join(t.TempDir(), "watch-alias")
+	if err := os.Symlink(watchSource, alias); err != nil {
+		t.Skipf("creating a directory alias: %v", err)
+	}
+	bindingPath := filepath.Join(alias, "archive")
+	assert.False(t, pathContains(watchSource, bindingPath),
+		"the test must exercise identity rather than lexical containment")
+
+	watchName, overlaps, err := WatchBindingOverlap(
+		[]config.WatchConfig{{Name: "inbox", Source: watchSource}},
+		config.StoreBindingConfig{Kind: "filesystem", Path: bindingPath},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "inbox", watchName)
+	assert.True(t, overlaps)
+}
+
 func TestPathsOverlapUsesFilesystemIdentityForCaseAliases(t *testing.T) {
 	parent := t.TempDir()
 	vaultRoot := filepath.Join(parent, "CaseSensitiveWatch")
