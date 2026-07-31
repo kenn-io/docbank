@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 	"unicode/utf8"
 
@@ -28,12 +29,18 @@ const (
 )
 
 type StorageOperationCreate struct {
-	Kind          string
-	SourceStoreID string
-	RequestDigest string
-	RequestJSON   string
-	PlanJSON      string
-	TotalObjects  int64
+	Kind            string
+	SourceStoreID   string
+	StoreReferences []StorageOperationStoreReference
+	RequestDigest   string
+	RequestJSON     string
+	PlanJSON        string
+	TotalObjects    int64
+}
+
+type StorageOperationStoreReference struct {
+	StoreID string
+	Role    string
 }
 
 type StorageOperation struct {
@@ -67,7 +74,8 @@ type StorageOperationCleanup struct {
 func (s *Store) CreateStorageOperation(
 	ctx context.Context, input StorageOperationCreate,
 ) (StorageOperation, error) {
-	if err := validateStorageOperationCreate(input); err != nil {
+	storeReferences, err := validateStorageOperationCreate(input)
+	if err != nil {
 		return StorageOperation{}, err
 	}
 	id, err := newUUIDv4()
@@ -103,6 +111,25 @@ func (s *Store) CreateStorageOperation(
 				)
 			}
 		}
+		for _, reference := range storeReferences {
+			store, err := blobStoreBySelectorTx(ctx, tx, reference.StoreID)
+			if err != nil {
+				return fmt.Errorf(
+					"reading storage operation %s store %s: %w",
+					reference.Role, reference.StoreID, err,
+				)
+			}
+			allowed := store.Lifecycle == blobStoreLifecycleActive ||
+				(reference.Role == "source" &&
+					store.Lifecycle == blobStoreLifecycleDraining)
+			if !allowed {
+				return fmt.Errorf(
+					"storage operation %s store %s is %s: %w",
+					reference.Role, reference.StoreID, store.Lifecycle,
+					ErrBlobStoreState,
+				)
+			}
+		}
 		_, err = tx.ExecContext(ctx, `
 			INSERT INTO storage_operations(
 				operation_id,kind,source_store_id,request_version,request_digest,
@@ -114,6 +141,18 @@ func (s *Store) CreateStorageOperation(
 		)
 		if err != nil {
 			return fmt.Errorf("creating storage operation: %w", err)
+		}
+		for _, reference := range storeReferences {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO storage_operation_stores(operation_id,store_id,role)
+				VALUES(?,?,?)`,
+				id, reference.StoreID, reference.Role,
+			); err != nil {
+				return fmt.Errorf(
+					"recording storage operation %s %s store %s: %w",
+					id, reference.Role, reference.StoreID, err,
+				)
+			}
 		}
 		created, err = scanStorageOperation(tx.QueryRowContext(
 			ctx, storageOperationSelect+` WHERE operation_id=?`, id,
@@ -166,30 +205,80 @@ func pruneExpiredStorageOperationsTx(
 	return pruned, nil
 }
 
-func validateStorageOperationCreate(input StorageOperationCreate) error {
+func activeStorageOperationsForStoreTx(
+	ctx context.Context, tx *sql.Tx, storeID string,
+) (int, error) {
+	var active int
+	err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM storage_operation_stores reference
+		JOIN storage_operations operation
+		  ON operation.operation_id=reference.operation_id
+		WHERE reference.store_id=? AND operation.state IN (?,?)`,
+		storeID, StorageOperationQueued, StorageOperationRunning,
+	).Scan(&active)
+	if err != nil {
+		return 0, fmt.Errorf("checking active storage operations: %w", err)
+	}
+	return active, nil
+}
+
+func validateStorageOperationCreate(
+	input StorageOperationCreate,
+) ([]StorageOperationStoreReference, error) {
 	switch input.Kind {
 	case "place", storageOperationKindEvacuate, "repair", "salvage":
 	default:
-		return fmt.Errorf("unsupported storage operation kind %q", input.Kind)
+		return nil, fmt.Errorf("unsupported storage operation kind %q", input.Kind)
 	}
 	if input.Kind == storageOperationKindEvacuate {
 		if err := validateUUIDv4(input.SourceStoreID); err != nil {
-			return fmt.Errorf("evacuation source store ID is invalid: %w", err)
+			return nil, fmt.Errorf("evacuation source store ID is invalid: %w", err)
 		}
 	} else if input.SourceStoreID != "" {
-		return errors.New("only evacuation operations may bind a source store")
+		return nil, errors.New("only evacuation operations may bind a source store")
 	}
 	if len(input.RequestDigest) != 64 {
-		return errors.New("storage operation request digest must be a SHA-256 identity")
+		return nil, errors.New("storage operation request digest must be a SHA-256 identity")
 	}
 	if input.TotalObjects < 0 {
-		return errors.New("storage operation total must not be negative")
+		return nil, errors.New("storage operation total must not be negative")
 	}
 	if !utf8.ValidString(input.RequestJSON) || !utf8.ValidString(input.PlanJSON) ||
 		input.RequestJSON == "" || input.PlanJSON == "" {
-		return errors.New("storage operation request and plan must be nonempty UTF-8 JSON")
+		return nil, errors.New("storage operation request and plan must be nonempty UTF-8 JSON")
 	}
-	return nil
+	references := append([]StorageOperationStoreReference(nil), input.StoreReferences...)
+	if input.SourceStoreID != "" {
+		references = append(references, StorageOperationStoreReference{
+			StoreID: input.SourceStoreID, Role: "source",
+		})
+	}
+	byStore := make(map[string]string, len(references))
+	unique := references[:0]
+	for _, reference := range references {
+		if err := validateUUIDv4(reference.StoreID); err != nil {
+			return nil, fmt.Errorf("storage operation store ID is invalid: %w", err)
+		}
+		if reference.Role != "source" && reference.Role != "destination" {
+			return nil, fmt.Errorf("storage operation store role %q is invalid", reference.Role)
+		}
+		if prior, exists := byStore[reference.StoreID]; exists {
+			if prior != reference.Role {
+				return nil, fmt.Errorf(
+					"storage operation store %s cannot be both %s and %s",
+					reference.StoreID, prior, reference.Role,
+				)
+			}
+			continue
+		}
+		byStore[reference.StoreID] = reference.Role
+		unique = append(unique, reference)
+	}
+	sort.Slice(unique, func(i, j int) bool {
+		return unique[i].StoreID < unique[j].StoreID
+	})
+	return unique, nil
 }
 
 func (s *Store) ClaimStorageOperation(

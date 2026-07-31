@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+
+	"go.kenn.io/docbank/internal/storenamespace"
 )
 
 // Duration is a time.Duration that unmarshals from a TOML string such as
@@ -349,6 +351,14 @@ func validateStoreBindings(bindings map[string]StoreBindingConfig) error {
 				if !strings.EqualFold(endpoint.Scheme, "https") {
 					return fmt.Errorf("%s endpoint %q must use HTTPS", prefix, binding.Endpoint)
 				}
+			}
+			if _, err := storenamespace.CanonicalS3(storenamespace.S3Binding{
+				Endpoint: binding.Endpoint,
+				Region:   binding.Region,
+				Bucket:   binding.Bucket,
+				Prefix:   binding.Prefix,
+			}); err != nil {
+				return fmt.Errorf("%s namespace is invalid: %w", prefix, err)
 			}
 		default:
 			return fmt.Errorf("%s kind %q must be filesystem or s3", prefix, binding.Kind)

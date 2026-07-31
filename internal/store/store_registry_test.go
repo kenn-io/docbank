@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -38,18 +39,36 @@ func TestSecondaryBlobStoreLifecycle(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
-func TestBlobStoreUnregisterRejectsActiveOperation(t *testing.T) {
+func TestBlobStoreRemovalRejectsActiveDestinationOperation(t *testing.T) {
 	s := newTestStore(t)
 	secondary, err := s.PrepareSecondaryBlobStore("archive", "filesystem", "archive_nas")
 	require.NoError(t, err)
 	require.NoError(t, s.RegisterBlobStore(t.Context(), secondary))
 	operation, err := s.CreateStorageOperation(t.Context(), StorageOperationCreate{
-		Kind: "evacuate", SourceStoreID: secondary.ID,
+		Kind: "place", StoreReferences: []StorageOperationStoreReference{{
+			StoreID: secondary.ID, Role: "destination",
+		}},
 		RequestDigest: fakeHash("91"), RequestJSON: `{}`, PlanJSON: `{}`,
 	})
 	require.NoError(t, err)
-	require.NoError(t, s.DetachBlobStore(t.Context(), secondary.ID))
+	require.ErrorIs(t, s.DetachBlobStore(t.Context(), secondary.ID), ErrBlobStoreState)
+	require.NoError(t, s.FinishStorageOperation(
+		t.Context(), operation.ID, StorageOperationCompleted, `{}`, "",
+		time.Now().Add(time.Hour),
+	))
 
+	operation, err = s.CreateStorageOperation(t.Context(), StorageOperationCreate{
+		Kind: "repair", StoreReferences: []StorageOperationStoreReference{{
+			StoreID: secondary.ID, Role: "destination",
+		}},
+		RequestDigest: fakeHash("92"), RequestJSON: `{}`, PlanJSON: `{}`,
+	})
+	require.NoError(t, err)
+	_, err = s.db.Exec(
+		`UPDATE blob_stores SET lifecycle=? WHERE store_id=?`,
+		blobStoreLifecycleDetached, secondary.ID,
+	)
+	require.NoError(t, err)
 	require.ErrorIs(t, s.UnregisterBlobStore(t.Context(), secondary.ID), ErrBlobStoreState)
 	_, err = s.BlobStoreBySelector(t.Context(), secondary.ID)
 	require.NoError(t, err)
@@ -57,6 +76,11 @@ func TestBlobStoreUnregisterRejectsActiveOperation(t *testing.T) {
 	_, err = s.ClaimStorageOperation(t.Context(), operation.ID)
 	require.NoError(t, err)
 	require.ErrorIs(t, s.UnregisterBlobStore(t.Context(), secondary.ID), ErrBlobStoreState)
+	require.NoError(t, s.FinishStorageOperation(
+		t.Context(), operation.ID, StorageOperationCompleted, `{}`, "",
+		time.Now().Add(time.Hour),
+	))
+	require.NoError(t, s.UnregisterBlobStore(t.Context(), secondary.ID))
 }
 
 func TestBlobStoreRemovalRequiresEmptyDetachedSecondary(t *testing.T) {
@@ -401,7 +425,6 @@ func TestDetachedBlobStoreEvacuationFinalizationRejectsCancellation(t *testing.T
 	)
 	require.NoError(t, err)
 	require.NoError(t, s.RegisterBlobStore(ctx, secondary))
-	require.NoError(t, s.DetachBlobStore(ctx, secondary.ID))
 	operation, err := s.CreateStorageOperation(ctx, StorageOperationCreate{
 		Kind: storageOperationKindEvacuate, RequestDigest: fakeHash("eb"),
 		SourceStoreID: secondary.ID,
@@ -409,6 +432,11 @@ func TestDetachedBlobStoreEvacuationFinalizationRejectsCancellation(t *testing.T
 	})
 	require.NoError(t, err)
 	_, err = s.ClaimStorageOperation(ctx, operation.ID)
+	require.NoError(t, err)
+	_, err = s.db.Exec(
+		`UPDATE blob_stores SET lifecycle=? WHERE store_id=?`,
+		blobStoreLifecycleDetached, secondary.ID,
+	)
 	require.NoError(t, err)
 
 	finalized, err := s.FinalizeBlobStoreEvacuation(

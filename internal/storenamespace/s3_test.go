@@ -4,8 +4,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-
-	"go.kenn.io/docbank/internal/config"
 )
 
 func TestS3OverlapsCanonicalEndpointHostAliases(t *testing.T) {
@@ -28,11 +26,11 @@ func TestS3OverlapsCanonicalEndpointHostAliases(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			overlaps, err := S3Overlaps(
-				config.StoreBindingConfig{
-					Kind: "s3", Endpoint: test.first, Bucket: "archive", Prefix: "docbank",
+				S3Binding{
+					Endpoint: test.first, Bucket: "archive", Prefix: "docbank",
 				},
-				config.StoreBindingConfig{
-					Kind: "s3", Endpoint: test.other, Bucket: "archive", Prefix: "docbank/nested",
+				S3Binding{
+					Endpoint: test.other, Bucket: "archive", Prefix: "docbank/nested",
 				},
 			)
 			require.NoError(t, err)

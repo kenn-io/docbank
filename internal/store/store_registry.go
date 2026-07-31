@@ -550,6 +550,18 @@ func (s *Store) DetachBlobStore(ctx context.Context, selector string) error {
 		if store.Lifecycle == blobStoreLifecycleDetached {
 			return nil
 		}
+		activeOperations, err := activeStorageOperationsForStoreTx(ctx, tx, store.ID)
+		if err != nil {
+			return fmt.Errorf(
+				"checking active operations for blob store %s: %w", store.ID, err,
+			)
+		}
+		if activeOperations != 0 {
+			return fmt.Errorf(
+				"blob store %s has %d active operation(s): %w",
+				store.ID, activeOperations, ErrBlobStoreState,
+			)
+		}
 		var locations, packs, cleanups int
 		if err := tx.QueryRowContext(ctx, `
 			SELECT
@@ -589,12 +601,8 @@ func (s *Store) UnregisterBlobStore(ctx context.Context, selector string) error 
 			return fmt.Errorf("blob store %s is %s: %w",
 				store.ID, store.Lifecycle, ErrBlobStoreState)
 		}
-		var activeOperations int
-		if err := tx.QueryRowContext(ctx, `
-			SELECT COUNT(*) FROM storage_operations
-			WHERE source_store_id=? AND state IN (?,?)`,
-			store.ID, StorageOperationQueued, StorageOperationRunning,
-		).Scan(&activeOperations); err != nil {
+		activeOperations, err := activeStorageOperationsForStoreTx(ctx, tx, store.ID)
+		if err != nil {
 			return fmt.Errorf(
 				"checking active operations for blob store %s: %w", store.ID, err,
 			)

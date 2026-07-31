@@ -366,6 +366,13 @@ func validateStorageNamespace(
 	binding config.StoreBindingConfig,
 	stores []store.BlobStore,
 ) error {
+	if binding.Kind == "s3" {
+		if _, err := storenamespace.CanonicalS3(storageS3Binding(binding)); err != nil {
+			return NewError(
+				http.StatusUnprocessableEntity, "storage_binding_invalid", err.Error(),
+			)
+		}
+	}
 	if binding.Kind == "filesystem" {
 		overlap, err := ingest.PathsOverlap(binding.Path, d.VaultRoot)
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -400,7 +407,9 @@ func validateStorageNamespace(
 		if binding.Kind == "filesystem" {
 			overlap, err = ingest.PathsOverlap(binding.Path, existingBinding.Path)
 		} else {
-			overlap, err = storenamespace.S3Overlaps(binding, existingBinding)
+			overlap, err = storenamespace.S3Overlaps(
+				storageS3Binding(binding), storageS3Binding(existingBinding),
+			)
 		}
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return NewError(
@@ -418,6 +427,15 @@ func validateStorageNamespace(
 		}
 	}
 	return nil
+}
+
+func storageS3Binding(binding config.StoreBindingConfig) storenamespace.S3Binding {
+	return storenamespace.S3Binding{
+		Endpoint: binding.Endpoint,
+		Region:   binding.Region,
+		Bucket:   binding.Bucket,
+		Prefix:   binding.Prefix,
+	}
 }
 
 func closeStorageBackend(backend packstore.Backend) error {

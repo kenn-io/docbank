@@ -232,9 +232,19 @@ func createRecoveryOperation(
 			http.StatusInternalServerError, "internal", err.Error(),
 		)
 	}
+	storeReferences := make([]store.StorageOperationStoreReference, 0, len(plan.Sources)+1)
+	for _, source := range plan.Sources {
+		storeReferences = append(storeReferences, store.StorageOperationStoreReference{
+			StoreID: string(source.StoreID), Role: "source",
+		})
+	}
+	storeReferences = append(storeReferences, store.StorageOperationStoreReference{
+		StoreID: plan.Destination, Role: "destination",
+	})
 	operation, err := metadata.CreateStorageOperation(ctx, store.StorageOperationCreate{
 		Kind: plan.Kind, RequestDigest: plan.Digest,
-		RequestJSON: string(encoded), PlanJSON: string(encoded), TotalObjects: 1,
+		StoreReferences: storeReferences, RequestJSON: string(encoded),
+		PlanJSON: string(encoded), TotalObjects: 1,
 	})
 	if err != nil {
 		return store.StorageOperation{}, FromStoreError(err)
@@ -272,6 +282,10 @@ func createPlacementOperation(
 			}
 			return ""
 		}(),
+		StoreReferences: []store.StorageOperationStoreReference{
+			{StoreID: plan.Request.SourceStoreID, Role: "source"},
+			{StoreID: plan.Request.DestinationStoreID, Role: "destination"},
+		},
 		RequestJSON: string(requestJSON), PlanJSON: string(planJSON),
 		TotalObjects: int64(len(plan.Hashes)),
 	})

@@ -12,9 +12,15 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
-
-	"go.kenn.io/docbank/internal/config"
 )
+
+// S3Binding contains the non-secret fields that identify an S3 namespace.
+type S3Binding struct {
+	Endpoint string
+	Region   string
+	Bucket   string
+	Prefix   string
+}
 
 // S3 identifies one canonical S3-compatible object namespace.
 type S3 struct {
@@ -24,7 +30,7 @@ type S3 struct {
 }
 
 // CanonicalS3 validates and canonicalizes one configured S3 namespace.
-func CanonicalS3(binding config.StoreBindingConfig) (S3, error) {
+func CanonicalS3(binding S3Binding) (S3, error) {
 	endpoint, err := CanonicalS3Endpoint(binding.Endpoint, binding.Region)
 	if err != nil {
 		return S3{}, err
@@ -43,7 +49,7 @@ func CanonicalS3(binding config.StoreBindingConfig) (S3, error) {
 }
 
 // S3Overlaps reports whether two bindings can address any of the same keys.
-func S3Overlaps(first, second config.StoreBindingConfig) (bool, error) {
+func S3Overlaps(first, second S3Binding) (bool, error) {
 	left, err := CanonicalS3(first)
 	if err != nil {
 		return false, err

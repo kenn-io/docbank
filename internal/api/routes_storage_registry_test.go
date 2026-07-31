@@ -188,6 +188,27 @@ func TestStorageRegistrationRejectsOverlappingS3Prefixes(t *testing.T) {
 	assert.Contains(t, body, `"code":"storage_namespace_overlap"`)
 }
 
+func TestStorageRegistrationRejectsInvalidFirstS3Namespace(t *testing.T) {
+	ts, _ := newTestServer(t, func(d *api.Deps) {
+		d.Cfg.StoreBindings = map[string]config.StoreBindingConfig{
+			"invalid": {
+				Kind: "s3", Region: "us-east-1", Bucket: "archive",
+				Prefix: "../other-vault", CredentialProfile: "test",
+			},
+		}
+		d.BlobRegistry = blob.NewRegistry(
+			t.Context(), d.Store.VaultID(), d.Cfg.StoreBindings, nil,
+		)
+		t.Cleanup(func() { require.NoError(t, d.BlobRegistry.Close()) })
+	})
+
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/storage/stores/preview", nil,
+		map[string]any{"name": "archive", "binding": "invalid"})
+
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	assert.Contains(t, body, `"code":"storage_binding_invalid"`)
+}
+
 func TestStorageRegistrationRejectsCatalogChangeBeforeMarkerHandoff(t *testing.T) {
 	namespace := filepath.Join(t.TempDir(), "archive")
 	ts, live := newTestServer(t, func(d *api.Deps) {

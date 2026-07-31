@@ -125,6 +125,14 @@ func TestStoreBindingsRejectAmbiguousDefinitions(t *testing.T) {
 			want: "credential_profile",
 		},
 		{
+			name: "s3 with noncanonical prefix",
+			binding: StoreBindingConfig{
+				Kind: "s3", Bucket: "documents", Prefix: "../other-vault",
+				CredentialProfile: "archive",
+			},
+			want: "namespace is invalid",
+		},
+		{
 			name: "invalid priority",
 			binding: StoreBindingConfig{
 				Kind: "filesystem", Path: archive, Priority: -1,

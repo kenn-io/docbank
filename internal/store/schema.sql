@@ -148,6 +148,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS one_active_evacuation_per_store
     ON storage_operations(source_store_id)
     WHERE kind = 'evacuate' AND state IN ('queued', 'running');
 
+CREATE TABLE IF NOT EXISTS storage_operation_stores (
+    operation_id TEXT NOT NULL REFERENCES storage_operations(operation_id) ON DELETE CASCADE,
+    store_id     TEXT NOT NULL REFERENCES blob_stores(store_id) ON DELETE CASCADE,
+    role         TEXT NOT NULL CHECK (role IN ('source', 'destination')),
+    PRIMARY KEY (operation_id, store_id)
+);
+
+CREATE INDEX IF NOT EXISTS storage_operation_stores_store
+    ON storage_operation_stores(store_id, operation_id);
+
 CREATE TABLE IF NOT EXISTS storage_operation_cleanup (
     operation_id  TEXT NOT NULL REFERENCES storage_operations(operation_id) ON DELETE CASCADE,
     store_id      TEXT NOT NULL REFERENCES blob_stores(store_id),
