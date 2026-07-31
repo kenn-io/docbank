@@ -848,6 +848,7 @@ func placementTestVaultWithSecondaries(
 		)
 		require.NoError(t, err)
 		destinationPath := filepath.Join(root, name)
+		require.NoError(t, EnsureFilesystemNamespace(destinationPath))
 		backend, err := NewFilesystemBackend(destinationPath, nil)
 		require.NoError(t, err)
 		require.NoError(t, backend.ReplaceOwnership(t.Context(), packstore.Ownership{

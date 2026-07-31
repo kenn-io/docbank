@@ -26,6 +26,7 @@ func TestVerifyReportsDamagedRedundantLocation(t *testing.T) {
 	)
 	require.NoError(t, err)
 	secondaryPath := filepath.Join(root, "archive")
+	require.NoError(t, blob.EnsureFilesystemNamespace(secondaryPath))
 	secondaryBackend, err := blob.NewFilesystemBackend(secondaryPath, nil)
 	require.NoError(t, err)
 	ownership := packstore.Ownership{
