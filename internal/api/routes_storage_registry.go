@@ -14,6 +14,7 @@ import (
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/blob"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -190,17 +191,10 @@ func previewStorageRegistration(
 	plan := storageRegistrationPlan{
 		store: candidate, binding: binding, markerAction: "create", takeover: takeover,
 	}
-	if binding.Kind == "filesystem" {
-		overlap, err := ingest.PathsOverlap(binding.Path, d.VaultRoot)
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return storageRegistrationPlan{}, NewError(http.StatusUnprocessableEntity,
-				"storage_binding_invalid", err.Error())
-		}
-		if overlap {
-			return storageRegistrationPlan{}, NewError(http.StatusConflict,
-				"storage_namespace_overlap",
-				fmt.Sprintf("binding %q overlaps the live vault root", bindingName))
-		}
+	if err := validateStorageNamespace(
+		d, bindingName, binding, existingStores,
+	); err != nil {
+		return storageRegistrationPlan{}, err
 	}
 	backend, err := blob.NewConfiguredBackend(ctx, binding, nil)
 	if err != nil {
@@ -208,14 +202,12 @@ func previewStorageRegistration(
 			"storage_binding_invalid", err.Error())
 	}
 	defer func() { _ = closeStorageBackend(backend) }()
-	if err := blob.ProbeConfiguredBackend(ctx, backend); err != nil {
-		return storageRegistrationPlan{}, NewError(
-			http.StatusUnprocessableEntity, "storage_capability_missing", err.Error(),
-		)
-	}
 	current, markerErr := backend.Ownership(ctx)
 	if errors.Is(markerErr, fs.ErrNotExist) ||
 		errors.Is(markerErr, packstore.ErrPhysicalMissing) {
+		if err := requireEmptyUnmarkedNamespace(ctx, backend); err != nil {
+			return storageRegistrationPlan{}, err
+		}
 		return plan, nil
 	}
 	if markerErr != nil {
@@ -263,15 +255,11 @@ func applyStorageRegistration(
 			return BlobStore{}, NewError(http.StatusServiceUnavailable,
 				"store_unavailable", fmt.Sprintf("preparing storage namespace: %v", err))
 		}
-		overlap, err := ingest.PathsOverlap(plan.binding.Path, d.VaultRoot)
-		if err != nil {
-			return BlobStore{}, NewError(http.StatusUnprocessableEntity,
-				"storage_binding_invalid", err.Error())
-		}
-		if overlap {
-			return BlobStore{}, NewError(http.StatusConflict, "storage_namespace_overlap",
-				"storage namespace now overlaps the live vault root; preview again")
-		}
+	}
+	if err := validateStorageNamespace(
+		d, plan.store.Binding, plan.binding, stores,
+	); err != nil {
+		return BlobStore{}, err
 	}
 	backend, err := blob.NewConfiguredBackend(ctx, plan.binding, nil)
 	if err != nil {
@@ -279,6 +267,11 @@ func applyStorageRegistration(
 			"storage_binding_invalid", err.Error())
 	}
 	defer func() { _ = closeStorageBackend(backend) }()
+	if plan.markerAction == "create" {
+		if err := requireEmptyUnmarkedNamespace(ctx, backend); err != nil {
+			return BlobStore{}, err
+		}
+	}
 	next := packstore.Ownership{
 		Format: packstore.OwnershipFormatV1, Vault: d.Store.VaultID(),
 		Store: packstore.StoreID(plan.store.ID), Epoch: plan.store.OwnershipEpoch,
@@ -295,11 +288,98 @@ func applyStorageRegistration(
 		return BlobStore{}, NewError(http.StatusServiceUnavailable, "store_unavailable",
 			fmt.Sprintf("ownership marker read-back failed: %v", err))
 	}
+	// Capability probes are mutating operations against an owned temporary
+	// key. Run them only after the marker handoff, while catalog authority is
+	// still absent. A failed probe leaves a fenced, authority-free namespace
+	// that the same registration workflow can safely reclaim.
+	if err := blob.ProbeConfiguredBackend(ctx, backend); err != nil {
+		return BlobStore{}, NewError(
+			http.StatusUnprocessableEntity, "storage_capability_missing", err.Error(),
+		)
+	}
 	if err := d.Store.RegisterBlobStore(ctx, plan.store); err != nil {
 		return BlobStore{}, FromStoreError(err)
 	}
 	observation := d.BlobRegistry.AttachSpec(ctx, blobStoreSpec(plan.store))
 	return blobStoreAPI(plan.store, store.BlobStoreStats{}, observation), nil
+}
+
+func requireEmptyUnmarkedNamespace(
+	ctx context.Context, backend packstore.Backend,
+) error {
+	inspector, ok := backend.(packstore.NamespaceInspector)
+	if !ok {
+		return NewError(
+			http.StatusUnprocessableEntity, "storage_capability_missing",
+			"storage backend cannot prove an unmarked namespace is empty",
+		)
+	}
+	empty, err := inspector.NamespaceEmpty(ctx)
+	if err != nil {
+		return NewError(http.StatusServiceUnavailable, "store_unavailable", err.Error())
+	}
+	if !empty {
+		return NewError(
+			http.StatusConflict, "storage_namespace_not_empty",
+			"unmarked storage namespace contains data; use an empty namespace or explicitly recover it",
+		)
+	}
+	return nil
+}
+
+func validateStorageNamespace(
+	d Deps,
+	bindingName string,
+	binding config.StoreBindingConfig,
+	stores []store.BlobStore,
+) error {
+	if binding.Kind != "filesystem" {
+		return nil
+	}
+	overlap, err := ingest.PathsOverlap(binding.Path, d.VaultRoot)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return NewError(
+			http.StatusUnprocessableEntity, "storage_binding_invalid", err.Error(),
+		)
+	}
+	if overlap {
+		return NewError(
+			http.StatusConflict, "storage_namespace_overlap",
+			fmt.Sprintf("binding %q overlaps the live vault root", bindingName),
+		)
+	}
+	for _, existing := range stores {
+		if existing.Role == "primary" || existing.Kind != "filesystem" ||
+			existing.Lifecycle == "detached" {
+			continue
+		}
+		existingBinding, ok := d.BlobRegistry.Binding(existing.Binding)
+		if !ok {
+			return NewError(
+				http.StatusConflict, "storage_configuration_stale",
+				fmt.Sprintf(
+					"cannot prove namespace separation while binding %q is not loaded; restore it or detach store %s",
+					existing.Binding, existing.ID,
+				),
+			)
+		}
+		overlap, err := ingest.PathsOverlap(binding.Path, existingBinding.Path)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return NewError(
+				http.StatusUnprocessableEntity, "storage_binding_invalid", err.Error(),
+			)
+		}
+		if overlap {
+			return NewError(
+				http.StatusConflict, "storage_namespace_overlap",
+				fmt.Sprintf(
+					"binding %q overlaps registered store %q",
+					bindingName, existing.Name,
+				),
+			)
+		}
+	}
+	return nil
 }
 
 func closeStorageBackend(backend packstore.Backend) error {

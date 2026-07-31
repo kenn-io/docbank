@@ -487,12 +487,27 @@ func (s *Store) RepairBlobAuthority(
 }
 
 func (c *PackCatalog) DeletePackRecord(ctx context.Context, packID string) error {
-	if _, err := c.store.db.ExecContext(ctx, `
-		DELETE FROM blob_packs WHERE store_id = ? AND pack_id = ?`,
-		c.store.primaryStoreID, packID); err != nil {
-		return fmt.Errorf("deleting blob pack %s: %w", packID, err)
-	}
-	return nil
+	return c.store.withStorageTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM blob_locations
+			WHERE store_id=? AND kind=?
+			  AND blob_hash IN (
+			    SELECT blob_hash FROM blob_pack_entries
+			    WHERE store_id=? AND pack_id=?
+			  )`,
+			c.store.primaryStoreID, blobLocationKindPacked,
+			c.store.primaryStoreID, packID,
+		); err != nil {
+			return fmt.Errorf("revoking blob pack %s locations: %w", packID, err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM blob_packs WHERE store_id = ? AND pack_id = ?`,
+			c.store.primaryStoreID, packID,
+		); err != nil {
+			return fmt.Errorf("deleting blob pack %s: %w", packID, err)
+		}
+		return nil
+	})
 }
 
 func (c *PackCatalog) DeleteIndexEntry(ctx context.Context, hash packstore.Hash) error {

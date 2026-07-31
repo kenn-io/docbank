@@ -1,11 +1,13 @@
 package store
 
 import (
+	"database/sql"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/packstore"
 )
 
 func TestStorageOperationPersistsProgressAndCancellation(t *testing.T) {
@@ -78,4 +80,35 @@ func TestStorageOperationRejectsCancellationAfterTerminalState(t *testing.T) {
 
 	err = s.RequestStorageOperationCancel(t.Context(), created.ID)
 	require.ErrorIs(t, err, ErrStorageOperationTerminal)
+}
+
+func TestStorageOperationCleanupPersistsUntilCompleted(t *testing.T) {
+	s := newTestStore(t)
+	created, err := s.CreateStorageOperation(t.Context(), StorageOperationCreate{
+		Kind: "place", RequestDigest: fakeHash("d8"),
+		RequestJSON: `{"version":1}`, PlanJSON: `{"hashes":[]}`,
+	})
+	require.NoError(t, err)
+	ref := packstore.ObjectRef{
+		LooseHash:     packstore.Hash(fakeHash("e9")),
+		LooseEncoding: packstore.LooseEncodingRaw,
+	}
+	err = s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		return recordStorageOperationCleanupTx(
+			t.Context(), tx, created.ID, s.primaryStoreID, []packstore.ObjectRef{ref},
+		)
+	})
+	require.NoError(t, err)
+
+	items, err := s.StorageOperationCleanups(t.Context(), created.ID)
+	require.NoError(t, err)
+	require.Equal(t, []StorageOperationCleanup{{
+		StoreID: s.primaryStoreID, Ref: ref,
+	}}, items)
+	require.NoError(t, s.CompleteStorageOperationCleanup(
+		t.Context(), created.ID, items[0],
+	))
+	items, err = s.StorageOperationCleanups(t.Context(), created.ID)
+	require.NoError(t, err)
+	assert.Empty(t, items)
 }

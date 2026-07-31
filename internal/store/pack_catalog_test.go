@@ -64,6 +64,31 @@ func TestPackAdoptionClearsLooseAuthority(t *testing.T) {
 	assert.Equal(t, physical, after)
 }
 
+func TestDeletingPackRevokesItsPackedLocations(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	hash, err := packstore.ParseHash(fakeHash("d1"))
+	require.NoError(t, err)
+	_, err = s.CreateFile(ctx, s.RootID(), "packed.txt", hash.String(), 20, "text/plain")
+	require.NoError(t, err)
+	packID := pack.NewPackID()
+	catalog := NewPackCatalog(s)
+	require.NoError(t, catalog.RecordPack(ctx, packstore.PackRecord{
+		PackID: packID, EntryCount: 1, StoredBytes: 32,
+		CreatedAt: time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC),
+	}, []packstore.Adoption{{Entry: packstore.IndexEntry{
+		Hash: hash, PackID: packID, Offset: pack.MinEntryOffset,
+		StoredLen: 9, RawLen: 20,
+	}}}))
+
+	require.NoError(t, catalog.DeletePackRecord(ctx, packID))
+
+	_, err = s.PhysicalContent(ctx, hash.String())
+	require.ErrorIs(t, err, ErrPhysicalAuthorityMissing)
+	_, err = catalog.Resolve(ctx, hash)
+	require.ErrorIs(t, err, ErrPhysicalAuthorityMissing)
+}
+
 func TestLogicalWritesRejectMissingPhysicalAuthority(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()

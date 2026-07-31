@@ -45,6 +45,9 @@ type PlacementPlan struct {
 	SelectedVersions    int64            `json:"selected_versions"`
 	LogicalBytes        int64            `json:"logical_bytes"`
 	TransferBytes       int64            `json:"transfer_bytes"`
+	ReadBackBytes       int64            `json:"read_back_bytes"`
+	RemoteEgressBytes   int64            `json:"remote_egress_bytes"`
+	ScratchBytes        int64            `json:"scratch_bytes"`
 	AlreadyPresentBytes int64            `json:"already_present_bytes"`
 	RetirableBytes      int64            `json:"retirable_bytes"`
 	SharedBytes         int64            `json:"shared_bytes"`
@@ -74,7 +77,8 @@ func (s *Store) PlanPlacement(
 		return PlacementPlan{}, fmt.Errorf("pinning placement preview: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := validatePlacementStoresTx(ctx, tx, request); err != nil {
+	sourceStore, destinationStore, err := placementStoresTx(ctx, tx, request)
+	if err != nil {
 		return PlacementPlan{}, err
 	}
 	members, err := placementMembersTx(ctx, tx, request.TargetNodeID)
@@ -90,14 +94,20 @@ func (s *Store) PlanPlacement(
 	if err != nil {
 		return PlacementPlan{}, err
 	}
-	plan.Hashes = hashes
-	for index := range plan.Hashes {
-		item := &plan.Hashes[index]
+	plan.Hashes = make([]PlacementHash, 0, len(hashes))
+	for index := range hashes {
+		item := &hashes[index]
 		source, destination, err := placementLocationsTx(
 			ctx, tx, item.Hash, request.SourceStoreID, request.DestinationStoreID,
 		)
 		if err != nil {
 			return PlacementPlan{}, err
+		}
+		// Evacuation owns only authority currently recorded in the draining
+		// source. Unrelated vault membership must not become transfer work.
+		if sourceStore.Lifecycle == blobStoreLifecycleDraining &&
+			source.StoreID == "" {
+			continue
 		}
 		item.Source = source
 		if destination.StoreID != "" {
@@ -120,6 +130,13 @@ func (s *Store) PlanPlacement(
 			plan.AlreadyPresentBytes += item.Size
 		case !item.UnavailableAtSource:
 			plan.TransferBytes += item.Size
+			plan.ReadBackBytes += item.Size
+			if sourceStore.Kind == blobStoreKindS3 {
+				plan.RemoteEgressBytes += item.Size
+			}
+			if destinationStore.Kind == blobStoreKindS3 {
+				plan.RemoteEgressBytes += item.Size
+			}
 		}
 		switch {
 		case item.RetireSource:
@@ -132,6 +149,7 @@ func (s *Store) PlanPlacement(
 		case item.PackRepackRequired:
 			plan.PackBlockedBytes += item.Size
 		}
+		plan.Hashes = append(plan.Hashes, *item)
 	}
 	digest, err := placementPlanDigest(plan)
 	if err != nil {
@@ -144,9 +162,10 @@ func (s *Store) PlanPlacement(
 	return plan, nil
 }
 
-func validatePlacementStoresTx(
+func placementStoresTx(
 	ctx context.Context, tx *sql.Tx, request PlacementRequest,
-) error {
+) (BlobStore, BlobStore, error) {
+	var source, destination BlobStore
 	for _, candidate := range []struct {
 		role string
 		id   string
@@ -156,20 +175,29 @@ func validatePlacementStoresTx(
 	} {
 		store, err := blobStoreBySelectorTx(ctx, tx, candidate.id)
 		if err != nil {
-			return fmt.Errorf("%s blob store: %w", candidate.role, err)
+			return BlobStore{}, BlobStore{}, fmt.Errorf(
+				"%s blob store: %w", candidate.role, err,
+			)
 		}
 		if store.ID != candidate.id {
-			return fmt.Errorf("%s blob store selector must be a stable ID", candidate.role)
+			return BlobStore{}, BlobStore{}, fmt.Errorf(
+				"%s blob store selector must be a stable ID", candidate.role,
+			)
 		}
 		validLifecycle := store.Lifecycle == blobStoreLifecycleActive ||
 			(candidate.role == "source" &&
 				store.Lifecycle == blobStoreLifecycleDraining)
 		if !validLifecycle {
-			return fmt.Errorf("%s blob store is %s: %w",
+			return BlobStore{}, BlobStore{}, fmt.Errorf("%s blob store is %s: %w",
 				candidate.role, store.Lifecycle, ErrBlobStoreState)
 		}
+		if candidate.role == "source" {
+			source = store
+		} else {
+			destination = store
+		}
 	}
-	return nil
+	return source, destination, nil
 }
 
 func placementMembersTx(
@@ -357,10 +385,14 @@ func ValidatePlacementPlan(plan PlacementPlan) error {
 // same short catalog transaction. Network I/O belongs before this boundary.
 func (s *Store) CommitPlacement(
 	ctx context.Context,
+	operationID string,
 	request PlacementRequest,
 	planned PlacementHash,
 	destination packstore.ReadLocation,
 ) (PlacementCommit, error) {
+	if err := validateUUIDv4(operationID); err != nil {
+		return PlacementCommit{}, fmt.Errorf("invalid storage operation ID: %w", err)
+	}
 	if destination.StoreID != packstore.StoreID(request.DestinationStoreID) ||
 		destination.Loose == nil || destination.Pack != nil {
 		return PlacementCommit{}, errors.New(
@@ -372,8 +404,19 @@ func (s *Store) CommitPlacement(
 	}
 	var committed PlacementCommit
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		destinationStore, err := blobStoreBySelectorTx(
+			ctx, tx, request.DestinationStoreID,
+		)
+		if err != nil {
+			return fmt.Errorf("rechecking placement destination: %w", err)
+		}
+		if destinationStore.ID != request.DestinationStoreID ||
+			destinationStore.Lifecycle != blobStoreLifecycleActive {
+			return fmt.Errorf("placement destination store %s is %s: %w",
+				destinationStore.ID, destinationStore.Lifecycle, ErrBlobStoreState)
+		}
 		var size int64
-		err := tx.QueryRowContext(ctx,
+		err = tx.QueryRowContext(ctx,
 			`SELECT size FROM blobs WHERE hash=?`, planned.Hash,
 		).Scan(&size)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -475,10 +518,15 @@ func (s *Store) CommitPlacement(
 			committed.ReferenceDrift = true
 			return nil
 		}
-		committed.SourceRevoked = true
 		ref := packstore.ObjectRef{
 			LooseHash: packstore.Hash(planned.Hash), LooseEncoding: source.Loose.Encoding,
 		}
+		if err := recordStorageOperationCleanupTx(
+			ctx, tx, operationID, request.SourceStoreID, []packstore.ObjectRef{ref},
+		); err != nil {
+			return err
+		}
+		committed.SourceRevoked = true
 		committed.Retire = &ref
 		return nil
 	})

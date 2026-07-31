@@ -131,6 +131,14 @@ func runServe(ctx context.Context) (retErr error) {
 		return err
 	}
 	jobSupervisor := jobs.New(sigCtx, logger)
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(
+			context.Background(), daemonlife.JobDrainTimeout)
+		defer cancel()
+		if err := jobSupervisor.Shutdown(shutdownCtx); err != nil {
+			retErr = errors.Join(retErr, err)
+		}
+	}()
 	operationGate := api.NewOperationGate()
 	placementRunner := blob.PlacementRunner{Metadata: s, Blobs: blobs}
 	if err := placementRunner.Resume(sigCtx, jobSupervisor); err != nil {
@@ -184,16 +192,6 @@ func runServe(ctx context.Context) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("writing daemon runtime record: %w", err)
 	}
-	// Register the job wait after store/blob cleanup so their resources remain
-	// open until runners return. The earlier runtime cleanup remains last.
-	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(
-			context.Background(), daemonlife.JobDrainTimeout)
-		defer cancel()
-		if err := jobSupervisor.Shutdown(shutdownCtx); err != nil {
-			retErr = errors.Join(retErr, err)
-		}
-	}()
 	for _, watchConfig := range cfg.Watches {
 		watcher, err := ingest.NewWatcher(
 			&ingest.Ingester{Store: s, Blobs: blobs}, layout.Root, watchConfig,

@@ -583,8 +583,9 @@ Prior terminal evidence remains historical and is not shown as current after
 an incomplete or violated attempt.
 
 Full audit verification reads every protected catalog location and may incur
-full S3 egress. Backup needs one verified candidate per live hash, not every
-redundant location.
+full S3 egress. Backup needs one verified candidate for every blob membership
+in the pinned metadata snapshot, including unreachable content still inside
+the GC regret window, not every redundant location.
 
 ## Kit boundary
 
@@ -1060,8 +1061,9 @@ Conformance must exercise:
 - unavailable-sole-location backup failure;
 - default local restore and explicit remap;
 - rejection of unsafe restore mapping files before any backend is contacted,
-  including non-regular, redirected, non-owner-private, or wrong-owner files on
-  Unix and final reparse points or non-owner-private DACLs on Windows;
+  including non-regular, redirected, non-owner-private, or wrong-owner files
+  on Unix and non-regular, wrong-owner, final-reparse-point, or
+  non-owner-private-DACL files on Windows;
 - in-place restore adoption and repair of a bad existing object;
 - exact released-schema cutovers;
 - downgrade fencing; and

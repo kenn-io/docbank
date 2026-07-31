@@ -90,6 +90,42 @@ func TestPlacementPlanPinsAuditedContentToPrimaryByDefault(t *testing.T) {
 	assert.True(t, remoteOnly.Hashes[0].RetireSource)
 }
 
+func TestEvacuationPlansOnlyAuthorityHeldBySource(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	firstHash := fakeHash("d4")
+	secondHash := fakeHash("e5")
+	_, err := s.CreateFile(
+		ctx, s.RootID(), "first.txt", firstHash, 4, "text/plain",
+	)
+	require.NoError(t, err)
+	_, err = s.CreateFile(
+		ctx, s.RootID(), "second.txt", secondHash, 5, "text/plain",
+	)
+	require.NoError(t, err)
+	secondary, err := s.PrepareSecondaryBlobStore(
+		"archive", "filesystem", "archive",
+	)
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(ctx, secondary))
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO blob_locations(
+			blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
+		) VALUES(?,?,?,'loose','raw',4,1)`,
+		firstHash, secondary.ID, "40000000-0000-4000-8000-000000000004",
+	)
+	require.NoError(t, err)
+	require.NoError(t, s.BeginBlobStoreEvacuation(ctx, secondary.ID))
+
+	plan, err := s.PlanPlacement(ctx, PlacementRequest{
+		TargetNodeID: s.RootID(), SourceStoreID: secondary.ID,
+		DestinationStoreID: s.primaryStoreID, RetireSource: true,
+	})
+	require.NoError(t, err)
+	require.Len(t, plan.Hashes, 1)
+	assert.Equal(t, firstHash, plan.Hashes[0].Hash)
+}
+
 func placementHashesByID(items []PlacementHash) map[string]PlacementHash {
 	result := make(map[string]PlacementHash, len(items))
 	for _, item := range items {

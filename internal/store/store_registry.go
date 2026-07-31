@@ -220,8 +220,12 @@ func (s *Store) BeginBlobStoreEvacuation(ctx context.Context, selector string) e
 // revokes every source location, and detaches the source. The returned refs
 // remain physical cleanup work; catalog authority no longer depends on them.
 func (s *Store) FinalizeBlobStoreEvacuation(
-	ctx context.Context, sourceID, destinationID string,
+	ctx context.Context, operationID, sourceID, destinationID string,
 ) (BlobStoreEvacuationFinalization, error) {
+	if err := validateUUIDv4(operationID); err != nil {
+		return BlobStoreEvacuationFinalization{},
+			fmt.Errorf("invalid storage operation ID: %w", err)
+	}
 	var result BlobStoreEvacuationFinalization
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		source, err := blobStoreBySelectorTx(ctx, tx, sourceID)
@@ -265,6 +269,11 @@ func (s *Store) FinalizeBlobStoreEvacuation(
 		}
 		refs, err := blobStoreObjectRefsTx(ctx, tx, source.ID)
 		if err != nil {
+			return err
+		}
+		if err := recordStorageOperationCleanupTx(
+			ctx, tx, operationID, source.ID, refs,
+		); err != nil {
 			return err
 		}
 		if err := tx.QueryRowContext(ctx,

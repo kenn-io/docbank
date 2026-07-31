@@ -144,6 +144,15 @@ CREATE INDEX IF NOT EXISTS storage_operations_retention
     ON storage_operations(retention_until)
     WHERE retention_until IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS storage_operation_cleanup (
+    operation_id  TEXT NOT NULL REFERENCES storage_operations(operation_id) ON DELETE CASCADE,
+    store_id      TEXT NOT NULL REFERENCES blob_stores(store_id),
+    loose_hash    TEXT NOT NULL DEFAULT '',
+    loose_encoding INTEGER NOT NULL DEFAULT 0,
+    pack_id       TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (operation_id, store_id, loose_hash, loose_encoding, pack_id)
+);
+
 -- Bounded maintenance reads pack summaries instead of rescanning every mapping.
 -- These triggers maintain physical catalog projections only; document liveness
 -- remains Go-owned and is expressed by inserting or deleting blobs rows.

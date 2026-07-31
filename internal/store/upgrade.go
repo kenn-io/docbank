@@ -669,6 +669,23 @@ func restoreReleasedPackMappings(
 		if err != nil {
 			return err
 		}
+		var member bool
+		if err := tx.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM blobs WHERE hash=?)`,
+			entry.Hash.String(),
+		).Scan(&member); err != nil {
+			return fmt.Errorf(
+				"checking %s packed blob %s membership: %w",
+				release, entry.Hash, err,
+			)
+		}
+		if !member {
+			// Released layouts permitted stale pack mappings after logical
+			// membership disappeared. The immutable pack record remains useful
+			// dead-byte inventory, but the mapping cannot become authority in
+			// the rebuilt catalog.
+			continue
+		}
 		if err := writeAdoption(ctx, tx, storeID, entry, false); err != nil {
 			return fmt.Errorf("restoring %s packed blob %s: %w", release, entry.Hash, err)
 		}

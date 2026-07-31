@@ -88,6 +88,9 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 	if operation.Kind == "repair" || operation.Kind == "salvage" {
 		return r.runRecovery(ctx, operation)
 	}
+	if err := r.retirePending(ctx, operationID); err != nil {
+		return err
+	}
 	var plan store.PlacementPlan
 	if err := json.Unmarshal([]byte(operation.PlanJSON), &plan); err != nil {
 		return r.fail(ctx, operationID, fmt.Errorf("decode placement plan: %w", err))
@@ -128,12 +131,15 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 			return err
 		}
 		item := plan.Hashes[index]
-		result, err := r.placeOne(ctx, plan.Request, item)
+		result, err := r.placeOne(ctx, operationID, plan.Request, item)
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return ctxErr
 			}
 			return r.fail(ctx, operationID, fmt.Errorf("placing blob %s: %w", item.Hash, err))
+		}
+		if err := r.retirePending(ctx, operationID); err != nil {
+			return err
 		}
 		receipt.Objects = append(receipt.Objects, result)
 		receipt.Completed++
@@ -163,7 +169,7 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 	}
 	if operation.Kind == "evacuate" {
 		finalized, err := r.Metadata.FinalizeBlobStoreEvacuation(
-			ctx, plan.Request.SourceStoreID, plan.Request.DestinationStoreID,
+			ctx, operationID, plan.Request.SourceStoreID, plan.Request.DestinationStoreID,
 		)
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
@@ -173,15 +179,8 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 		}
 		receipt.SourceRevoked += finalized.RevokedLocations
 		receipt.Evacuated = finalized.Detached
-		if len(finalized.Retire) != 0 {
-			source, ok := r.Blobs.WritableBackend(
-				packstore.StoreID(plan.Request.SourceStoreID),
-			)
-			for _, ref := range finalized.Retire {
-				if !ok || source.Retire(ctx, ref) != nil {
-					receipt.CleanupPending++
-				}
-			}
+		if err := r.retirePending(ctx, operationID); err != nil {
+			return err
 		}
 	}
 	encoded, err := json.Marshal(receipt)
@@ -211,6 +210,9 @@ func (r PlacementRunner) runRecovery(
 	}
 	if err := store.ValidateStorageRecoveryPlan(plan); err != nil {
 		return r.fail(ctx, operation.ID, err)
+	}
+	if operation.CancelRequested {
+		return r.cancelRecovery(ctx, operation, plan)
 	}
 	hash, err := packstore.ParseHash(plan.Hash)
 	if err != nil {
@@ -275,6 +277,13 @@ func (r PlacementRunner) runRecovery(
 			return r.fail(ctx, operation.ID, err)
 		}
 		location = moved.Destination
+	}
+	current, err := r.Metadata.StorageOperation(ctx, operation.ID)
+	if err != nil {
+		return err
+	}
+	if current.CancelRequested {
+		return r.cancelRecovery(ctx, current, plan)
 	}
 	if err := r.Metadata.CommitStorageRecovery(ctx, plan, location); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -366,7 +375,8 @@ func openRecoverySource(
 }
 
 func (r PlacementRunner) placeOne(
-	ctx context.Context, request store.PlacementRequest, item store.PlacementHash,
+	ctx context.Context, operationID string,
+	request store.PlacementRequest, item store.PlacementHash,
 ) (PlacementObjectResult, error) {
 	destination, err := r.currentLocation(ctx, item.Hash, request.DestinationStoreID)
 	copied := false
@@ -413,7 +423,9 @@ func (r PlacementRunner) placeOne(
 		// cataloged immediately before a process stop, before progress advanced.
 		copied = true
 	}
-	committed, err := r.Metadata.CommitPlacement(ctx, request, item, destination)
+	committed, err := r.Metadata.CommitPlacement(
+		ctx, operationID, request, item, destination,
+	)
 	if err != nil {
 		return PlacementObjectResult{}, err
 	}
@@ -424,17 +436,30 @@ func (r PlacementRunner) placeOne(
 		ReferenceDrift:        committed.ReferenceDrift, AuditPinned: committed.AuditPinned,
 		PackRepackRequired: committed.PackRepackRequired,
 	}
-	if committed.Retire != nil {
-		source, ok := r.Blobs.WritableBackend(packstore.StoreID(request.SourceStoreID))
+	return result, nil
+}
+
+func (r PlacementRunner) retirePending(ctx context.Context, operationID string) error {
+	cleanups, err := r.Metadata.StorageOperationCleanups(ctx, operationID)
+	if err != nil {
+		return err
+	}
+	for _, cleanup := range cleanups {
+		backend, ok := r.Blobs.WritableBackend(packstore.StoreID(cleanup.StoreID))
 		if !ok {
-			result.CleanupPending = true
-			return result, nil
+			return fmt.Errorf("%w: cleanup store %s is not bound",
+				packstore.ErrStoreUnavailable, cleanup.StoreID)
 		}
-		if err := source.Retire(ctx, *committed.Retire); err != nil {
-			result.CleanupPending = true
+		if err := backend.Retire(ctx, cleanup.Ref); err != nil {
+			return fmt.Errorf("retiring storage operation object: %w", err)
+		}
+		if err := r.Metadata.CompleteStorageOperationCleanup(
+			context.WithoutCancel(ctx), operationID, cleanup,
+		); err != nil {
+			return err
 		}
 	}
-	return result, nil
+	return nil
 }
 
 func (r PlacementRunner) currentLocation(
@@ -478,6 +503,27 @@ func (r PlacementRunner) cancel(
 	}
 	return r.Metadata.FinishStorageOperation(
 		context.WithoutCancel(ctx), id, store.StorageOperationCancelled,
+		string(encoded), "", time.Now().Add(storageOperationRetention),
+	)
+}
+
+func (r PlacementRunner) cancelRecovery(
+	ctx context.Context,
+	operation store.StorageOperation,
+	plan store.StorageRecoveryPlan,
+) error {
+	receipt := StorageRecoveryReceipt{
+		OperationID: operation.ID,
+		PlanDigest:  plan.Digest,
+		Hash:        plan.Hash,
+		Kind:        plan.Kind,
+	}
+	encoded, err := json.Marshal(receipt)
+	if err != nil {
+		return r.fail(ctx, operation.ID, err)
+	}
+	return r.Metadata.FinishStorageOperation(
+		context.WithoutCancel(ctx), operation.ID, store.StorageOperationCancelled,
 		string(encoded), "", time.Now().Add(storageOperationRetention),
 	)
 }

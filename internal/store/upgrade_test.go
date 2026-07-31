@@ -355,14 +355,15 @@ func createV090Fixture(t *testing.T, path string, driver docsqlite.Driver) v090F
 	_, err = tx.Exec(`PRAGMA defer_foreign_keys = ON`)
 	require.NoError(t, err)
 	const (
-		timestamp  = "2026-07-19T12:00:00.000000000Z"
-		vaultID    = "10000000-0000-4000-8000-000000000001"
-		looseHash  = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-		packedHash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-		looseVer   = "20000000-0000-4000-8000-000000000001"
-		packedVer  = "20000000-0000-4000-8000-000000000002"
-		looseOp    = "30000000-0000-4000-8000-000000000001"
-		packedOp   = "30000000-0000-4000-8000-000000000002"
+		timestamp    = "2026-07-19T12:00:00.000000000Z"
+		vaultID      = "10000000-0000-4000-8000-000000000001"
+		looseHash    = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		packedHash   = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		danglingHash = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+		looseVer     = "20000000-0000-4000-8000-000000000001"
+		packedVer    = "20000000-0000-4000-8000-000000000002"
+		looseOp      = "30000000-0000-4000-8000-000000000001"
+		packedOp     = "30000000-0000-4000-8000-000000000002"
 	)
 	packID := pack.NewPackID()
 	deadPackID := pack.NewPackID()
@@ -397,6 +398,9 @@ func createV090Fixture(t *testing.T, path string, driver docsqlite.Driver) v090F
 		{`INSERT INTO blob_pack_index(blob_hash, pack_id, pack_offset, stored_len,
 			raw_len, flags, crc32c) VALUES(?, ?, ?, 7, 7, 0, 0)`,
 			[]any{packedHash, packID, pack.MinEntryOffset}},
+		{`INSERT INTO blob_pack_index(blob_hash, pack_id, pack_offset, stored_len,
+			raw_len, flags, crc32c) VALUES(?, ?, ?, 9, 9, 0, 0)`,
+			[]any{danglingHash, deadPackID, pack.MinEntryOffset}},
 	}
 	for _, statement := range statements {
 		_, err := tx.Exec(statement.query, statement.args...)

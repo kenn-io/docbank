@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 	"unicode/utf8"
+
+	"go.kenn.io/kit/packstore"
 )
 
 type StorageOperationState string
@@ -47,6 +49,11 @@ type StorageOperation struct {
 	UpdatedAt        time.Time
 	FinishedAt       *time.Time
 	RetentionUntil   *time.Time
+}
+
+type StorageOperationCleanup struct {
+	StoreID string
+	Ref     packstore.ObjectRef
 }
 
 func (s *Store) CreateStorageOperation(
@@ -249,6 +256,99 @@ func (s *Store) ResumableStorageOperations(ctx context.Context) ([]StorageOperat
 		return nil, fmt.Errorf("listing resumable storage operations: %w", err)
 	}
 	return scanStorageOperations(rows)
+}
+
+func recordStorageOperationCleanupTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	operationID, storeID string,
+	refs []packstore.ObjectRef,
+) error {
+	for _, ref := range refs {
+		if (ref.LooseHash == "") == (ref.PackID == "") {
+			return errors.New("storage cleanup must name exactly one loose object or pack")
+		}
+		if ref.LooseHash != "" {
+			if err := ref.LooseHash.Validate(); err != nil {
+				return fmt.Errorf("validating cleanup blob hash: %w", err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT OR IGNORE INTO storage_operation_cleanup(
+				operation_id,store_id,loose_hash,loose_encoding,pack_id
+			) VALUES(?,?,?,?,?)`,
+			operationID, storeID, ref.LooseHash.String(), ref.LooseEncoding, ref.PackID,
+		); err != nil {
+			return fmt.Errorf("recording storage cleanup: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *Store) StorageOperationCleanups(
+	ctx context.Context, operationID string,
+) ([]StorageOperationCleanup, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT store_id,loose_hash,loose_encoding,pack_id
+		FROM storage_operation_cleanup
+		WHERE operation_id=?
+		ORDER BY store_id,pack_id,loose_hash,loose_encoding`,
+		operationID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("listing storage operation cleanup: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var result []StorageOperationCleanup
+	for rows.Next() {
+		var item StorageOperationCleanup
+		var hash, packID string
+		var encoding int
+		if err := rows.Scan(&item.StoreID, &hash, &encoding, &packID); err != nil {
+			return nil, fmt.Errorf("scanning storage operation cleanup: %w", err)
+		}
+		if hash != "" {
+			parsed, err := packstore.ParseHash(hash)
+			if err != nil {
+				return nil, fmt.Errorf("parsing storage cleanup blob hash: %w", err)
+			}
+			if encoding != int(packstore.LooseEncodingRaw) &&
+				encoding != int(packstore.LooseEncodingZstd) {
+				return nil, fmt.Errorf("invalid storage cleanup encoding %d", encoding)
+			}
+			item.Ref.LooseHash = parsed
+			item.Ref.LooseEncoding = packstore.LooseEncoding(encoding)
+		} else {
+			item.Ref.PackID = packID
+		}
+		result = append(result, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("listing storage operation cleanup: %w", err)
+	}
+	return result, nil
+}
+
+func (s *Store) CompleteStorageOperationCleanup(
+	ctx context.Context, operationID string, item StorageOperationCleanup,
+) error {
+	result, err := s.db.ExecContext(ctx, `
+		DELETE FROM storage_operation_cleanup
+		WHERE operation_id=? AND store_id=? AND loose_hash=? AND loose_encoding=? AND pack_id=?`,
+		operationID, item.StoreID, item.Ref.LooseHash.String(),
+		item.Ref.LooseEncoding, item.Ref.PackID,
+	)
+	if err != nil {
+		return fmt.Errorf("completing storage operation cleanup: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("reading storage cleanup completion: %w", err)
+	}
+	if affected != 1 {
+		return fmt.Errorf("storage cleanup no longer exists: %w", ErrNotFound)
+	}
+	return nil
 }
 
 const storageOperationSelect = `

@@ -100,6 +100,11 @@ func TestBlobStoreEvacuationRequiresVerifiedDestinationCoverage(t *testing.T) {
 	require.NoError(t, s.RegisterBlobStore(ctx, secondary))
 	require.ErrorIs(t, s.BeginBlobStoreEvacuation(ctx, primary.ID), ErrBlobStorePrimary)
 	require.NoError(t, s.BeginBlobStoreEvacuation(ctx, secondary.ID))
+	operation, err := s.CreateStorageOperation(ctx, StorageOperationCreate{
+		Kind: "evacuate", RequestDigest: fakeHash("e9"),
+		RequestJSON: `{"version":1}`, PlanJSON: `{"hashes":[]}`,
+	})
+	require.NoError(t, err)
 
 	draining, err := s.BlobStoreBySelector(ctx, secondary.ID)
 	require.NoError(t, err)
@@ -119,7 +124,9 @@ func TestBlobStoreEvacuationRequiresVerifiedDestinationCoverage(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	_, err = s.FinalizeBlobStoreEvacuation(ctx, secondary.ID, primary.ID)
+	_, err = s.FinalizeBlobStoreEvacuation(
+		ctx, operation.ID, secondary.ID, primary.ID,
+	)
 	require.ErrorIs(t, err, ErrBlobStoreNotEmpty)
 
 	_, err = s.db.Exec(`
@@ -130,12 +137,17 @@ func TestBlobStoreEvacuationRequiresVerifiedDestinationCoverage(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	finalized, err := s.FinalizeBlobStoreEvacuation(ctx, secondary.ID, primary.ID)
+	finalized, err := s.FinalizeBlobStoreEvacuation(
+		ctx, operation.ID, secondary.ID, primary.ID,
+	)
 	require.NoError(t, err)
 	assert.Equal(t, []packstore.ObjectRef{{
 		LooseHash: packstore.Hash(hash), LooseEncoding: packstore.LooseEncodingRaw,
 	}}, finalized.Retire)
 	assert.True(t, finalized.Detached)
+	cleanups, err := s.StorageOperationCleanups(ctx, operation.ID)
+	require.NoError(t, err)
+	require.Len(t, cleanups, 1)
 
 	detached, err := s.BlobStoreBySelector(ctx, secondary.ID)
 	require.NoError(t, err)

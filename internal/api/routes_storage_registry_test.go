@@ -3,6 +3,7 @@ package api_test
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -78,6 +79,57 @@ func TestStorageRegistrationRejectsVaultOverlap(t *testing.T) {
 	})
 	resp, body := do(t, ts, http.MethodPost, "/api/v1/storage/stores/preview", nil,
 		map[string]any{"name": "unsafe", "binding": "inside"})
+	assert.Equal(t, http.StatusConflict, resp.StatusCode, body)
+	assert.Contains(t, body, `"code":"storage_namespace_overlap"`)
+}
+
+func TestStorageRegistrationRejectsUnmarkedNonemptyNamespace(t *testing.T) {
+	namespace := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(namespace, "operator-note.txt"), []byte("preserve"), 0o600,
+	))
+	ts, _ := newTestServer(t, func(d *api.Deps) {
+		d.Cfg.StoreBindings = map[string]config.StoreBindingConfig{
+			"occupied": {Kind: "filesystem", Path: namespace},
+		}
+		d.BlobRegistry = blob.NewRegistry(
+			t.Context(), d.Store.VaultID(), d.Cfg.StoreBindings, nil,
+		)
+		t.Cleanup(func() { require.NoError(t, d.BlobRegistry.Close()) })
+	})
+
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/storage/stores/preview", nil,
+		map[string]any{"name": "archive", "binding": "occupied"})
+
+	assert.Equal(t, http.StatusConflict, resp.StatusCode, body)
+	assert.Contains(t, body, `"code":"storage_namespace_not_empty"`)
+}
+
+func TestStorageRegistrationRejectsOverlappingSecondaries(t *testing.T) {
+	outer := filepath.Join(t.TempDir(), "archive")
+	inner := filepath.Join(outer, "nested")
+	ts, _ := newTestServer(t, func(d *api.Deps) {
+		d.Cfg.StoreBindings = map[string]config.StoreBindingConfig{
+			"outer": {Kind: "filesystem", Path: outer},
+			"inner": {Kind: "filesystem", Path: inner},
+		}
+		d.BlobRegistry = blob.NewRegistry(
+			t.Context(), d.Store.VaultID(), d.Cfg.StoreBindings, nil,
+		)
+		t.Cleanup(func() { require.NoError(t, d.BlobRegistry.Close()) })
+	})
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/storage/stores/preview", nil,
+		map[string]any{"name": "outer", "binding": "outer"})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var preview api.BlobStorePreview
+	require.NoError(t, json.Unmarshal([]byte(body), &preview))
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/storage/stores", nil,
+		map[string]any{"preview_token": preview.PreviewToken})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/storage/stores/preview", nil,
+		map[string]any{"name": "inner", "binding": "inner"})
+
 	assert.Equal(t, http.StatusConflict, resp.StatusCode, body)
 	assert.Contains(t, body, `"code":"storage_namespace_overlap"`)
 }
