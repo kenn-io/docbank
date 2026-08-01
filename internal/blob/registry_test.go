@@ -65,6 +65,54 @@ func TestRegistryClassifiesBindingsAndOwnership(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestRegistryReopensFencedStoreAgainstObservedOwnershipForSalvage(t *testing.T) {
+	const (
+		vaultID = "10000000-0000-4000-8000-000000000001"
+		storeID = "20000000-0000-4000-8000-000000000001"
+		epoch   = "30000000-0000-4000-8000-000000000001"
+	)
+	taken := packstore.Ownership{
+		Format: packstore.OwnershipFormatV1,
+		Vault:  "10000000-0000-4000-8000-000000000099",
+		Store:  storeID,
+		Epoch:  "30000000-0000-4000-8000-000000000099",
+	}
+	var openings []*packstore.Ownership
+	registry := newRegistry(t.Context(), vaultID,
+		map[string]config.StoreBindingConfig{
+			"archive": {Kind: storeKindFilesystem, Path: t.TempDir()},
+		}, []StoreSpec{{
+			ID: storeID, Kind: storeKindFilesystem, Role: "secondary",
+			Lifecycle: "active", Binding: "archive", OwnershipEpoch: epoch,
+		}}, func(
+			_ context.Context,
+			_ config.StoreBindingConfig,
+			expected *packstore.Ownership,
+		) (packstore.Backend, error) {
+			if expected == nil {
+				openings = append(openings, nil)
+			} else {
+				expectedOwnership := *expected
+				openings = append(openings, &expectedOwnership)
+			}
+			return &staticOwnershipBackend{ownership: taken}, nil
+		})
+	t.Cleanup(func() { require.NoError(t, registry.Close()) })
+	require.Equal(t, StoreFenced, registry.Observation(storeID).State)
+
+	salvage, err := registry.SalvageBackend(t.Context(), storeID)
+	require.NoError(t, err)
+	_, exposesWrites := salvage.(packstore.Backend)
+	assert.False(t, exposesWrites)
+	require.Len(t, openings, 3)
+	assert.Nil(t, openings[1])
+	require.NotNil(t, openings[2])
+	assert.Equal(t, taken, *openings[2])
+	closer, ok := salvage.(interface{ Close() error })
+	require.True(t, ok)
+	require.NoError(t, closer.Close())
+}
+
 func TestRegistryKeepsAcquiredBackendUsableAcrossConcurrentRefresh(t *testing.T) {
 	const (
 		vaultID = "10000000-0000-4000-8000-000000000001"

@@ -177,7 +177,7 @@ func (s *Store) detachRuntimeStore(id string) {
 // recovery. The caller owns and must close the returned backend.
 func (s *Store) SalvageBackend(
 	ctx context.Context, id packstore.StoreID,
-) (packstore.Backend, error) {
+) (packstore.ReadBackend, error) {
 	if s.registry == nil {
 		return nil, fmt.Errorf("%w: store registry is unavailable", packstore.ErrStoreUnavailable)
 	}

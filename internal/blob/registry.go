@@ -233,7 +233,7 @@ func (r *Registry) refresh(ctx context.Context, id string) StoreObservation {
 // recovery. It never admits publication, retirement, or ordinary reads.
 func (r *Registry) SalvageBackend(
 	ctx context.Context, id packstore.StoreID,
-) (packstore.Backend, error) {
+) (packstore.ReadBackend, error) {
 	r.mu.RLock()
 	spec, known := r.specs[id]
 	observation := r.observations[id]
@@ -250,8 +250,34 @@ func (r *Registry) SalvageBackend(
 	if !bound || binding.Kind != spec.Kind {
 		return nil, fmt.Errorf("salvage store %s has no usable binding", id)
 	}
-	return r.openBackend(ctx, binding, nil)
+	inspector, err := r.openBackend(ctx, binding, nil)
+	if err != nil {
+		return nil, fmt.Errorf("open salvage store %s for inspection: %w", id, err)
+	}
+	actual, ownershipErr := inspector.Ownership(ctx)
+	closeErr := closeBackend(inspector)
+	if ownershipErr != nil || closeErr != nil {
+		return nil, fmt.Errorf(
+			"inspect salvage store %s ownership: %w",
+			id, errors.Join(ownershipErr, closeErr),
+		)
+	}
+	backend, err := r.openBackend(ctx, binding, &actual)
+	if err != nil {
+		return nil, fmt.Errorf("open salvage store %s for verified reads: %w", id, err)
+	}
+	return salvageReadBackend{ReadBackend: backend, backend: backend}, nil
 }
+
+// salvageReadBackend deliberately withholds publication and retirement from
+// fenced-store recovery while retaining ownership of the underlying reader.
+type salvageReadBackend struct {
+	packstore.ReadBackend
+
+	backend packstore.Backend
+}
+
+func (b salvageReadBackend) Close() error { return closeBackend(b.backend) }
 
 // AttachSpec makes a newly committed catalog store available to this daemon
 // without reloading deployment configuration.
