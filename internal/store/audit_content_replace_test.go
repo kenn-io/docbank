@@ -135,8 +135,7 @@ func TestAuditedContentRevertRejectsMissingPhysicalAuthority(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
-	_, err = s.db.Exec(`UPDATE blobs SET loose_encoding=NULL, loose_stored_size=NULL WHERE hash=?`,
-		metadataHashVersion)
+	_, err = s.db.Exec(`DELETE FROM blob_locations WHERE blob_hash=?`, metadataHashVersion)
 	require.NoError(t, err)
 	scope, err := s.NodeByPath(t.Context(), "/Projects")
 	require.NoError(t, err)

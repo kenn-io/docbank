@@ -116,6 +116,18 @@ Key assumptions reviewers MUST account for:
    absent from the same tag, or documentation that claims behavior absent
    from main.
 
+13. EXTERNAL STORE CONFIDENTIALITY IS A DOCUMENTED DEPLOYMENT BOUNDARY:
+   filesystem and S3 secondary objects preserve Kit's physical encoding and
+   are not client-side encrypted by Docbank. Raw namespace readers are
+   explicitly inside the storage trust boundary; users must restrict access
+   and may use independently controlled filesystem, bucket, or KMS encryption.
+   Native live-store encryption is deliberately deferred in docs/roadmap.md.
+   Do not re-flag the absence of client-side encryption as an API-key bypass:
+   the API key protects daemon access, not direct access to operator-configured
+   physical storage. DO flag documentation claiming those objects are
+   encrypted, any path that exposes storage credentials, or any weakening of
+   configured storage transport or authentication.
+
 Do NOT flag issues that only apply to public-facing, multi-tenant, or
 internet-exposed services. Focus on bugs, logic errors, data corruption
 risks, and code quality issues.

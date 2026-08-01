@@ -592,11 +592,15 @@ func validateVersionPruneCounts(report api.VersionPruneReport, run bool) error {
 		report.ReleasableBlobs < 0 || report.ReleasableBytes < 0 ||
 		report.LooseBlobsPendingGC < 0 || report.LooseBytesPendingGC < 0 ||
 		report.PackedBlobsPendingRepack < 0 || report.PackedBytesPendingRepack < 0 ||
+		report.MixedBlobsPendingMaintenance < 0 ||
 		report.DeletedVersions < 0 {
 		return errors.New("version-prune receipt contains negative counts")
 	}
 	if report.UniqueBlobs != report.SharedBlobs+report.ReleasableBlobs ||
-		report.ReleasableBlobs != report.LooseBlobsPendingGC+report.PackedBlobsPendingRepack {
+		report.ReleasableBlobs != report.LooseBlobsPendingGC+
+			report.PackedBlobsPendingRepack-report.MixedBlobsPendingMaintenance ||
+		report.MixedBlobsPendingMaintenance > report.LooseBlobsPendingGC ||
+		report.MixedBlobsPendingMaintenance > report.PackedBlobsPendingRepack {
 		return errors.New("version-prune receipt has inconsistent blob counts")
 	}
 	return nil
@@ -1402,24 +1406,16 @@ func validateAuditScopeStatus(scope api.AuditScopeStatus) error {
 }
 
 func validateAuditVerifyReport(report api.AuditVerifyReport) error {
-	if report.ProtectedBlobs < 0 || report.ProtectedBytes < 0 || report.VerifiedBlobs < 0 ||
-		report.VerifiedBlobs+len(report.Problems) != report.ProtectedBlobs {
+	if report.ProtectedBlobs < 0 || report.ProtectedBytes < 0 || report.VerifiedBlobs < 0 {
 		return errors.New("audit verification has inconsistent blob totals")
+	}
+	if err := validateAuditVerifyBlobProblems(report); err != nil {
+		return err
 	}
 	for index, problem := range report.MetadataProblems {
 		if problem == "" {
 			return fmt.Errorf("audit verification metadata problem %d is empty", index)
 		}
-	}
-	previousHash := ""
-	for index, problem := range report.Problems {
-		if !validSHA256Hex(problem.Hash) ||
-			(problem.Problem != "missing" && problem.Problem != "corrupt" &&
-				problem.Problem != "unreadable") ||
-			(previousHash != "" && problem.Hash <= previousHash) {
-			return fmt.Errorf("audit verification blob problem %d is invalid", index)
-		}
-		previousHash = problem.Hash
 	}
 	if report.EvidenceCheck != nil {
 		if err := validateAuditEvidenceCheck(*report.EvidenceCheck); err != nil {
@@ -1444,6 +1440,56 @@ func validateAuditVerifyReport(report api.AuditVerifyReport) error {
 		return errors.New("active audit verification lacks terminal evidence")
 	}
 	return ValidateAuditEvidence(*report.Evidence)
+}
+
+func validateAuditVerifyBlobProblems(report api.AuditVerifyReport) error {
+	affected := 0
+	previousHash := ""
+	seenLocations := make(map[string]struct{}, len(report.Problems))
+	storelessHashes := make(map[string]bool)
+	scopedHashes := make(map[string]bool)
+	for index, problem := range report.Problems {
+		if !validSHA256Hex(problem.Hash) ||
+			(problem.StoreID != "" && !validUUIDv4(problem.StoreID)) ||
+			(problem.Problem != "missing" && problem.Problem != "corrupt" &&
+				problem.Problem != "unreadable") ||
+			(previousHash != "" && problem.Hash < previousHash) {
+			return fmt.Errorf("audit verification blob problem %d is invalid", index)
+		}
+		locationKey := problem.Hash + "\x00" + problem.StoreID
+		if _, duplicate := seenLocations[locationKey]; duplicate {
+			return fmt.Errorf(
+				"audit verification blob problem %d duplicates location evidence",
+				index,
+			)
+		}
+		seenLocations[locationKey] = struct{}{}
+		if problem.StoreID == "" {
+			if problem.Problem != "missing" || scopedHashes[problem.Hash] {
+				return fmt.Errorf(
+					"audit verification blob problem %d has contradictory storeless evidence",
+					index,
+				)
+			}
+			storelessHashes[problem.Hash] = true
+		} else {
+			if storelessHashes[problem.Hash] {
+				return fmt.Errorf(
+					"audit verification blob problem %d mixes storeless and scoped evidence",
+					index,
+				)
+			}
+			scopedHashes[problem.Hash] = true
+		}
+		if problem.Hash != previousHash {
+			affected++
+			previousHash = problem.Hash
+		}
+	}
+	if report.VerifiedBlobs+affected != report.ProtectedBlobs {
+		return errors.New("audit verification has inconsistent blob totals")
+	}
+	return nil
 }
 
 // ValidateAuditEvidence validates one externally recordable terminal bundle.
@@ -2494,10 +2540,146 @@ func (c *Client) GC(ctx context.Context, run bool) (api.GCReport, error) {
 	return rep, err
 }
 
-func (c *Client) StorageStatus(ctx context.Context) (api.StorageStatus, error) {
+func (c *Client) StorageStatus(
+	ctx context.Context, refresh bool,
+) (api.StorageStatus, error) {
 	var status api.StorageStatus
-	err := c.do(ctx, http.MethodGet, "/api/v1/storage", nil, nil, &status)
+	path := "/api/v1/storage"
+	if refresh {
+		path += "?refresh=true"
+	}
+	err := c.do(ctx, http.MethodGet, path, nil, nil, &status)
 	return status, err
+}
+
+// PreviewBlobStore prepares one short-lived, exact secondary registration.
+func (c *Client) PreviewBlobStore(
+	ctx context.Context, name, binding string, takeover bool,
+) (api.BlobStorePreview, error) {
+	var preview api.BlobStorePreview
+	err := c.do(ctx, http.MethodPost, "/api/v1/storage/stores/preview", nil,
+		map[string]any{"name": name, "binding": binding, "takeover": takeover}, &preview)
+	return preview, err
+}
+
+// RegisterBlobStore consumes one preview token after operator review.
+func (c *Client) RegisterBlobStore(
+	ctx context.Context, previewToken string,
+) (api.BlobStore, error) {
+	var result api.BlobStore
+	err := c.do(ctx, http.MethodPost, "/api/v1/storage/stores", nil,
+		map[string]any{"preview_token": previewToken}, &result)
+	return result, err
+}
+
+// BlobStores lists physical-store identities and bounded runtime health.
+func (c *Client) BlobStores(ctx context.Context, refresh bool) ([]api.BlobStore, error) {
+	var stores []api.BlobStore
+	path := "/api/v1/storage/stores"
+	if refresh {
+		path += "?refresh=true"
+	}
+	err := c.do(ctx, http.MethodGet, path, nil, nil, &stores)
+	return stores, err
+}
+
+// DetachBlobStore removes one empty secondary from runtime admission.
+func (c *Client) DetachBlobStore(ctx context.Context, selector string) (api.BlobStore, error) {
+	var result api.BlobStore
+	err := c.do(ctx, http.MethodPost,
+		"/api/v1/storage/stores/"+url.PathEscape(selector)+"/detach", nil, nil, &result)
+	return result, err
+}
+
+// UnregisterBlobStore forgets one detached and empty secondary identity.
+func (c *Client) UnregisterBlobStore(ctx context.Context, selector string) error {
+	return c.do(ctx, http.MethodDelete,
+		"/api/v1/storage/stores/"+url.PathEscape(selector), nil, nil, nil)
+}
+
+type StoragePlacementOptions struct {
+	NodeID                 int64
+	Source                 string
+	Destination            string
+	RetireSource           bool
+	AllowAuditedRemoteOnly bool
+}
+
+func (c *Client) PreviewStoragePlacement(
+	ctx context.Context, options StoragePlacementOptions,
+) (api.StoragePlacementPreview, error) {
+	var preview api.StoragePlacementPreview
+	err := c.do(ctx, http.MethodPost, "/api/v1/storage/place/preview", nil,
+		map[string]any{
+			"node_id": options.NodeID, "source": options.Source,
+			"destination":               options.Destination,
+			"retire_source":             options.RetireSource,
+			"allow_audited_remote_only": options.AllowAuditedRemoteOnly,
+		}, &preview)
+	return preview, err
+}
+
+func (c *Client) StartStoragePlacement(
+	ctx context.Context, previewToken string,
+) (api.StorageOperation, error) {
+	var operation api.StorageOperation
+	err := c.do(ctx, http.MethodPost, "/api/v1/storage/place", nil,
+		map[string]any{"preview_token": previewToken}, &operation)
+	return operation, err
+}
+
+func (c *Client) PreviewStorageEvacuation(
+	ctx context.Context, selector string,
+) (api.StoragePlacementPreview, error) {
+	var preview api.StoragePlacementPreview
+	err := c.do(ctx, http.MethodPost, "/api/v1/storage/evacuate/preview", nil,
+		map[string]any{"store": selector}, &preview)
+	return preview, err
+}
+
+func (c *Client) StartStorageEvacuation(
+	ctx context.Context, previewToken string,
+) (api.StorageOperation, error) {
+	var operation api.StorageOperation
+	err := c.do(ctx, http.MethodPost, "/api/v1/storage/evacuate", nil,
+		map[string]any{"preview_token": previewToken}, &operation)
+	return operation, err
+}
+
+func (c *Client) PreviewStorageRecovery(
+	ctx context.Context, kind, hash, store string,
+) (api.StorageRecoveryPreview, error) {
+	var preview api.StorageRecoveryPreview
+	err := c.do(ctx, http.MethodPost, "/api/v1/storage/"+kind+"/preview", nil,
+		map[string]any{"hash": hash, "store": store}, &preview)
+	return preview, err
+}
+
+func (c *Client) StartStorageRecovery(
+	ctx context.Context, kind, previewToken string,
+) (api.StorageOperation, error) {
+	var operation api.StorageOperation
+	err := c.do(ctx, http.MethodPost, "/api/v1/storage/"+kind, nil,
+		map[string]any{"preview_token": previewToken}, &operation)
+	return operation, err
+}
+
+func (c *Client) StorageOperation(
+	ctx context.Context, operationID string,
+) (api.StorageOperation, error) {
+	var operation api.StorageOperation
+	err := c.do(ctx, http.MethodGet,
+		"/api/v1/jobs/"+url.PathEscape(operationID), nil, nil, &operation)
+	return operation, err
+}
+
+func (c *Client) CancelStorageOperation(
+	ctx context.Context, operationID string,
+) (api.StorageOperation, error) {
+	var operation api.StorageOperation
+	err := c.do(ctx, http.MethodPost,
+		"/api/v1/jobs/"+url.PathEscape(operationID)+"/cancel", nil, nil, &operation)
+	return operation, err
 }
 
 // Info identifies the selected vault and summarizes its logical and physical contents.
@@ -2772,6 +2954,7 @@ type BackupRestoreOptions struct {
 	Overwrite   bool
 	Jobs        int
 	ForceUnlock bool
+	StoreMap    string
 }
 
 func (c *Client) BackupRestore(
@@ -2865,6 +3048,7 @@ func backupRestoreRequest(opts BackupRestoreOptions) map[string]any {
 	return map[string]any{
 		"repo": opts.Repo, "target": opts.Target, "snapshot_id": opts.SnapshotID,
 		"overwrite": opts.Overwrite, "jobs": opts.Jobs, "force_unlock": opts.ForceUnlock,
+		"store_map": opts.StoreMap,
 	}
 }
 

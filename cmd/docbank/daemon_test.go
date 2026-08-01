@@ -13,9 +13,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	kitdaemon "go.kenn.io/kit/daemon"
+	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/home"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestWebOriginUsesDedicatedEphemeralLoopbackListeners(t *testing.T) {
@@ -73,6 +77,62 @@ func TestServeLocksBeforeInitializingVault(t *testing.T) {
 	require.Len(t, entries, 1)
 	assert.Equal(t, "vault.lock", entries[0].Name(),
 		"daemon startup must not initialize a restore-owned target")
+}
+
+func TestServeRecoversInterruptedRestoreBeforeInitializingVault(t *testing.T) {
+	dir := t.TempDir()
+	digest := ""
+	handoff, err := blob.NewPrimaryRestoreHandoff(
+		filepath.Join(dir, "blobs"),
+		packstore.Ownership{
+			Format: packstore.OwnershipFormatV1,
+			Vault:  "50000000-0000-4000-8000-000000000001",
+			Store:  "50000000-0000-4000-8000-000000000002",
+			Epoch:  "50000000-0000-4000-8000-000000000003",
+		},
+		&digest,
+	)
+	require.NoError(t, err)
+	require.NoError(t, handoff.Prepare(t.Context()))
+	t.Setenv("DOCBANK_HOME", dir)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runServe(ctx) }()
+	require.Eventually(t, func() bool {
+		records, listErr := client.RuntimeStore(dir).List()
+		return listErr == nil && len(records) == 1
+	}, 10*time.Second, 50*time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("daemon did not shut down")
+	}
+	pending, err := blob.PrimaryRestoreHandoffPending(filepath.Join(dir, "blobs"))
+	require.NoError(t, err)
+	assert.False(t, pending)
+}
+
+func TestConfiguredWatchStoresRejectOverlapBeforeDaemonStartup(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Default()
+	cfg.Watches = []config.WatchConfig{{
+		Name: "inbox", Source: root, Destination: "/inbox",
+	}}
+	cfg.StoreBindings = map[string]config.StoreBindingConfig{
+		"archive": {Kind: "filesystem", Path: root},
+	}
+	stores := []store.BlobStore{{
+		ID:   "10000000-0000-4000-8000-000000000001",
+		Name: "archive", Kind: "filesystem", Role: "secondary",
+		Lifecycle: "active", Binding: "archive",
+	}}
+
+	err := validateConfiguredWatchStores(cfg, stores)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "overlaps filesystem store")
 }
 
 func TestServeLocksExistingAncestorBeforeCreatingVault(t *testing.T) {

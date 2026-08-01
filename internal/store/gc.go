@@ -92,6 +92,22 @@ func (s *Store) HasBlob(ctx context.Context, hash string) (bool, error) {
 	return recorded, nil
 }
 
+// HasPrimaryLooseAuthority reports whether the built-in primary catalog still
+// authorizes a canonical loose representation for hash. Physical scans use
+// this narrower question so redundant files left by packing, placement, or a
+// remote-only restore can be reclaimed without deleting logical membership.
+func (s *Store) HasPrimaryLooseAuthority(ctx context.Context, hash string) (bool, error) {
+	var recorded bool
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM blob_locations
+			WHERE blob_hash=? AND store_id=? AND kind='loose'
+		)`, hash, s.primaryStoreID).Scan(&recorded); err != nil {
+		return false, fmt.Errorf("checking primary loose authority for %s: %w", hash, err)
+	}
+	return recorded, nil
+}
+
 func scanBlobInfos(rows *sql.Rows, op string) ([]BlobInfo, error) {
 	defer func() { _ = rows.Close() }()
 	var out []BlobInfo
@@ -179,8 +195,13 @@ func (s *Store) UnreachableBlobsPageFrom(
 
 const unreachableBlobsStartPageSQL = `
 	WITH raw_page AS MATERIALIZED (
-		SELECT hash, loose_stored_size FROM blobs
-		ORDER BY hash LIMIT ?
+		SELECT b.hash, l.stored_size AS loose_stored_size
+		FROM blobs b
+		LEFT JOIN blob_locations l
+		  ON l.blob_hash = b.hash
+		 AND l.store_id = (SELECT store_id FROM blob_stores WHERE role = 'primary')
+		 AND l.kind = 'loose'
+		ORDER BY b.hash LIMIT ?
 	)
 	SELECT p.hash, p.loose_stored_size,
 	       NOT EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash = p.hash)
@@ -188,8 +209,13 @@ const unreachableBlobsStartPageSQL = `
 
 const unreachableBlobsResumePageSQL = `
 	WITH raw_page AS MATERIALIZED (
-		SELECT hash, loose_stored_size FROM blobs
-		WHERE hash > ? ORDER BY hash LIMIT ?
+		SELECT b.hash, l.stored_size AS loose_stored_size
+		FROM blobs b
+		LEFT JOIN blob_locations l
+		  ON l.blob_hash = b.hash
+		 AND l.store_id = (SELECT store_id FROM blob_stores WHERE role = 'primary')
+		 AND l.kind = 'loose'
+		WHERE b.hash > ? ORDER BY b.hash LIMIT ?
 	)
 	SELECT p.hash, p.loose_stored_size,
 	       NOT EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash = p.hash)
@@ -311,7 +337,8 @@ const sparseRepackScanPageSQL = `
 	       live_entries, live_stored_bytes, live_raw_bytes,
 	       max_live_stored_len, max_live_raw_len
 	FROM blob_packs INDEXED BY blob_packs_live_scan
-	WHERE live_entries > 0
+	WHERE store_id = (SELECT store_id FROM blob_stores WHERE role = 'primary')
+	  AND live_entries > 0
 	  AND (scan_hash > ? OR (scan_hash = ? AND pack_id > ?))
 	ORDER BY scan_hash, pack_id LIMIT ?`
 
@@ -417,7 +444,8 @@ func (s *Store) UnreferencedPackMappingsPage(
 
 const unreferencedMappingsStartPageSQL = `
 	WITH raw_page AS MATERIALIZED (
-		SELECT blob_hash FROM blob_pack_index
+		SELECT blob_hash FROM blob_pack_entries
+		WHERE store_id = (SELECT store_id FROM blob_stores WHERE role = 'primary')
 		ORDER BY blob_hash LIMIT ?
 	)
 	SELECT p.blob_hash,
@@ -426,8 +454,9 @@ const unreferencedMappingsStartPageSQL = `
 
 const unreferencedMappingsResumePageSQL = `
 	WITH raw_page AS MATERIALIZED (
-		SELECT blob_hash FROM blob_pack_index
-		WHERE blob_hash > ? ORDER BY blob_hash LIMIT ?
+		SELECT blob_hash FROM blob_pack_entries
+		WHERE store_id = (SELECT store_id FROM blob_stores WHERE role = 'primary')
+		  AND blob_hash > ? ORDER BY blob_hash LIMIT ?
 	)
 	SELECT p.blob_hash,
 	       NOT EXISTS (SELECT 1 FROM blobs b WHERE b.hash = p.blob_hash)
@@ -447,8 +476,9 @@ func (s *Store) DeleteUnreferencedPackMappings(ctx context.Context, hashes []str
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		for _, hash := range hashes {
 			result, err := tx.ExecContext(ctx, `
-				DELETE FROM blob_pack_index
+				DELETE FROM blob_pack_entries
 				WHERE blob_hash = ?
+				  AND store_id = (SELECT store_id FROM blob_stores WHERE role = 'primary')
 				  AND NOT EXISTS (SELECT 1 FROM blobs b WHERE b.hash = ?)`, hash, hash)
 			if err != nil {
 				return fmt.Errorf("deleting unreferenced pack mapping %s: %w", hash, err)
@@ -472,7 +502,8 @@ const deadPackUsagePageSQL = `
 	       live_entries, live_stored_bytes, live_raw_bytes,
 	       max_live_stored_len, max_live_raw_len
 	FROM blob_packs INDEXED BY blob_packs_dead_scan
-	WHERE live_entries = 0
+	WHERE store_id = (SELECT store_id FROM blob_stores WHERE role = 'primary')
+	  AND live_entries = 0
 	ORDER BY scan_hash, pack_id LIMIT ?`
 
 func (s *Store) DeadPackUsagePage(
@@ -513,16 +544,13 @@ func (s *Store) DeadPackUsagePage(
 	return result, more, nil
 }
 
-// DeleteBlobRows removes the metadata rows for reclaimed blobs. Callers
-// must hold the exclusive vault lock (see UnreachableBlobs) and delete the
-// blob files first; a crash in between leaves rows without files, which a
-// gc re-run reconciles.
+// DeleteBlobRows removes logical membership and derived metadata for reclaimed
+// blobs. Callers must hold the exclusive vault lock (see UnreachableBlobs) and
+// retire every loose location first. Packed entries remain as dead physical
+// accounting until repack retires their immutable container.
 func (s *Store) DeleteBlobRows(ctx context.Context, hashes []string) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		for _, h := range hashes {
-			if _, err := tx.Exec(`DELETE FROM blob_pack_index WHERE blob_hash = ?`, h); err != nil {
-				return fmt.Errorf("deleting packed mapping of %s: %w", h, err)
-			}
 			if _, err := tx.Exec(`DELETE FROM text_extraction_queue WHERE blob_hash = ?`, h); err != nil {
 				return fmt.Errorf("deleting extraction queue row of %s: %w", h, err)
 			}
@@ -578,7 +606,9 @@ func (s *Store) AllBlobHashes(ctx context.Context) ([]string, error) {
 // packed blob. GC uses it to distinguish bytes unlinked immediately from dead
 // immutable-pack space that requires a later repack.
 func (s *Store) PackedBlobStoredBytes(ctx context.Context) (map[string]int64, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT blob_hash, stored_len FROM blob_pack_index`)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT blob_hash, stored_len FROM blob_pack_entries
+		WHERE store_id = ?`, s.primaryStoreID)
 	if err != nil {
 		return nil, fmt.Errorf("listing packed blob sizes: %w", err)
 	}
@@ -602,7 +632,9 @@ func (s *Store) PackedBlobStoredBytes(ctx context.Context) (map[string]int64, er
 func (s *Store) PackedBlobStoredByte(ctx context.Context, hash string) (int64, bool, error) {
 	var size int64
 	err := s.db.QueryRowContext(ctx,
-		`SELECT stored_len FROM blob_pack_index WHERE blob_hash = ?`, hash).Scan(&size)
+		`SELECT stored_len FROM blob_pack_entries
+		 WHERE blob_hash = ? AND store_id = ?`,
+		hash, s.primaryStoreID).Scan(&size)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
 	}

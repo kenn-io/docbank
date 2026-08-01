@@ -8,12 +8,16 @@ import (
 	"fmt"
 	"io/fs"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
+
+	"go.kenn.io/docbank/internal/storenamespace"
 )
 
 // Duration is a time.Duration that unmarshals from a TOML string such as
@@ -68,6 +72,21 @@ type StorageConfig struct {
 	PackMaxBytes int64    `toml:"pack_max_bytes"`
 }
 
+// StoreBindingConfig names one machine-local physical storage namespace.
+// Credentials, endpoints, and filesystem paths remain deployment
+// configuration and never enter portable vault metadata.
+type StoreBindingConfig struct {
+	Kind              string `toml:"kind"`
+	Path              string `toml:"path"`
+	Endpoint          string `toml:"endpoint"`
+	Region            string `toml:"region"`
+	Bucket            string `toml:"bucket"`
+	Prefix            string `toml:"prefix"`
+	CredentialProfile string `toml:"credential_profile"`
+	Priority          int    `toml:"priority"`
+	ForcePathStyle    bool   `toml:"force_path_style"`
+}
+
 // WatchConfig describes one daemon-owned local inbox. Name and each relative
 // source path form the stable, portable source identity; Source itself is a
 // machine-local location and is intentionally not archive metadata.
@@ -83,11 +102,12 @@ type WatchConfig struct {
 
 // Config is the full contents of config.toml.
 type Config struct {
-	Server  ServerConfig  `toml:"server"`
-	Web     WebConfig     `toml:"web"`
-	Backup  BackupConfig  `toml:"backup"`
-	Storage StorageConfig `toml:"storage"`
-	Watches []WatchConfig `toml:"watch"`
+	Server        ServerConfig                  `toml:"server"`
+	Web           WebConfig                     `toml:"web"`
+	Backup        BackupConfig                  `toml:"backup"`
+	Storage       StorageConfig                 `toml:"storage"`
+	StoreBindings map[string]StoreBindingConfig `toml:"store_bindings"`
+	Watches       []WatchConfig                 `toml:"watch"`
 }
 
 // Default returns the configuration used when config.toml is absent.
@@ -128,10 +148,45 @@ func Load(root string) (Config, error) {
 	if err := resolveBackupRepo(root, &c.Backup); err != nil {
 		return Config{}, fmt.Errorf("loading %s: %w", path, err)
 	}
+	if err := resolveStoreBindings(root, &c); err != nil {
+		return Config{}, fmt.Errorf("loading %s: %w", path, err)
+	}
 	if err := resolveWatches(&c); err != nil {
 		return Config{}, fmt.Errorf("loading %s: %w", path, err)
 	}
 	return c, nil
+}
+
+func resolveStoreBindings(root string, c *Config) error {
+	home, homeErr := os.UserHomeDir()
+	for name, binding := range c.StoreBindings {
+		if binding.Kind != "filesystem" || binding.Path == "" {
+			continue
+		}
+		path := binding.Path
+		if path == "~" || strings.HasPrefix(path, "~/") || strings.HasPrefix(path, `~\`) {
+			if homeErr != nil {
+				return fmt.Errorf("resolving [store_bindings.%s] path %q: %w",
+					name, path, homeErr)
+			}
+			if path == "~" {
+				path = home
+			} else {
+				path = filepath.Join(home, strings.TrimLeft(path[1:], `/\`))
+			}
+		}
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(root, path)
+		}
+		absolute, err := filepath.Abs(path)
+		if err != nil {
+			return fmt.Errorf("resolving [store_bindings.%s] path %q: %w",
+				name, binding.Path, err)
+		}
+		binding.Path = filepath.Clean(absolute)
+		c.StoreBindings[name] = binding
+	}
+	return nil
 }
 
 const (
@@ -235,6 +290,9 @@ func (c Config) Validate() error {
 	if c.Storage.PackInterval.Std() > 0 && c.Storage.PackMaxBytes == 0 {
 		return errors.New("[storage] pack_max_bytes must be positive when pack_interval is enabled")
 	}
+	if err := validateStoreBindings(c.StoreBindings); err != nil {
+		return err
+	}
 	for _, watch := range c.Watches {
 		if err := validateWatch(watch); err != nil {
 			return err
@@ -249,6 +307,64 @@ func (c Config) Validate() error {
 	}
 	return fmt.Errorf("[server] bind_addr %q: the API is plain HTTP, so binds are "+
 		"loopback-only; reach a remote docbank through an SSH tunnel or VPN", host)
+}
+
+var storeBindingNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
+
+func validateStoreBindings(bindings map[string]StoreBindingConfig) error {
+	for name, binding := range bindings {
+		prefix := fmt.Sprintf("[store_bindings.%s]", name)
+		if !storeBindingNamePattern.MatchString(name) {
+			return fmt.Errorf("%s name must start with a lowercase letter and contain only lowercase letters, digits, _ or -", prefix)
+		}
+		if binding.Priority < 0 || binding.Priority > 1_000_000 {
+			return fmt.Errorf("%s priority must be between 0 and 1000000", prefix)
+		}
+		switch binding.Kind {
+		case "filesystem":
+			if binding.Path == "" {
+				return fmt.Errorf("%s path is required", prefix)
+			}
+			if !filepath.IsAbs(binding.Path) {
+				return fmt.Errorf("%s path %q must be absolute", prefix, binding.Path)
+			}
+			if binding.Endpoint != "" || binding.Region != "" || binding.Bucket != "" ||
+				binding.Prefix != "" || binding.CredentialProfile != "" ||
+				binding.ForcePathStyle {
+				return fmt.Errorf("%s filesystem binding does not accept S3 fields", prefix)
+			}
+		case "s3":
+			if binding.Path != "" {
+				return fmt.Errorf("%s S3 binding does not accept path", prefix)
+			}
+			if binding.Bucket == "" {
+				return fmt.Errorf("%s bucket is required", prefix)
+			}
+			if binding.CredentialProfile == "" {
+				return fmt.Errorf("%s credential_profile is required", prefix)
+			}
+			if binding.Endpoint != "" {
+				endpoint, err := url.ParseRequestURI(binding.Endpoint)
+				if err != nil || endpoint.Scheme == "" || endpoint.Host == "" {
+					return fmt.Errorf("%s endpoint %q must be an absolute URL", prefix, binding.Endpoint)
+				}
+				if !strings.EqualFold(endpoint.Scheme, "https") {
+					return fmt.Errorf("%s endpoint %q must use HTTPS", prefix, binding.Endpoint)
+				}
+			}
+			if _, err := storenamespace.CanonicalS3(storenamespace.S3Binding{
+				Endpoint: binding.Endpoint,
+				Region:   binding.Region,
+				Bucket:   binding.Bucket,
+				Prefix:   binding.Prefix,
+			}); err != nil {
+				return fmt.Errorf("%s namespace is invalid: %w", prefix, err)
+			}
+		default:
+			return fmt.Errorf("%s kind %q must be filesystem or s3", prefix, binding.Kind)
+		}
+	}
+	return nil
 }
 
 func validateWatch(watch WatchConfig) error {

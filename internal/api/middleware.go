@@ -20,6 +20,13 @@ import (
 
 const requestTimeout = 60 * time.Second
 
+type authenticationContextKey struct{}
+
+func browserSessionRequest(ctx context.Context) bool {
+	authentication, _ := ctx.Value(authenticationContextKey{}).(string)
+	return authentication == "browser"
+}
+
 // timeout-exempt: long-running maintenance, integrity reads, and bulk ingest.
 func timeoutExempt(path string) bool {
 	switch path {
@@ -107,7 +114,8 @@ func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry)
 					"browser sessions cannot use this endpoint"))
 				return
 			}
-			next.ServeHTTP(w, r)
+			ctx := context.WithValue(r.Context(), authenticationContextKey{}, "browser")
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 		writeError(w, NewError(http.StatusUnauthorized, "unauthorized",

@@ -161,7 +161,9 @@ reporting its actual collision- or fallback-resolved path, lists configured
 backup recovery points, reports current and terminal daemon background jobs,
 and separates physical loose files, live packed content, complete pack payload,
 and logically dead payload awaiting explicit repack. Future slices cover
-broader metadata, version comparison, and storage maintenance.
+broader metadata and version comparison. Store health and per-store authority
+are read-only in the portal; placement mutations remain operator/agent API
+workflows.
 Application-neutral tree, timeline, diff, evidence, and job components should
 be reusable by Msgvault and later tools.
 
@@ -172,7 +174,8 @@ daemon-activity screen reports supervised job lifecycle, timestamps, and
 complete terminal failures without inventing percentages where workers expose
 no authoritative total. A read-only operations screen separates logical
 authority from loose and packed inventory and lists the configured repository's
-backup recovery points. Later slices add ingest progress and broader
+backup recovery points. It also distinguishes each physical store's role,
+health, sole authority, affected documents, and stored bytes. Later slices add ingest progress and broader
 metadata/evidence. Rich document comparison belongs in external tools or the
 web portal. Neither client has privileged operations — anything either does,
 the API can do.
@@ -192,6 +195,18 @@ API and CLI orchestration for repository initialization, snapshot creation,
 listing, verification, and confined packed restore are implemented. Remaining
 Phase 4 work is representative-corpus hardening and eventual retention policy,
 not a missing recovery command.
+
+## Multi-store placement (implemented)
+
+New content remains local-first in one fixed filesystem primary. Operators can
+attach fenced filesystem or S3-compatible secondaries, preview and execute
+verified placement or evacuation, repair a damaged location, salvage immutable
+bytes from a fenced store, and resume uncertain work through durable job IDs.
+Backup reads one verified candidate for every retained blob, captures a
+non-secret deterministic placement artifact, restores locally by default, and
+can explicitly remap source stores through owner-private deployment bindings.
+Automatic replication targets, primary succession, lifecycle-policy
+management, and browser/TUI mutation controls are deliberately deferred.
 
 ## Deferred beyond v1
 

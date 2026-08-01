@@ -73,6 +73,100 @@ func TestLoadPartialFileKeepsDefaults(t *testing.T) {
 	assert.True(t, c.Web.Enabled)
 }
 
+func TestLoadResolvesStoreBindings(t *testing.T) {
+	dir := privateTestConfigDir(t)
+	secondary := filepath.Join(dir, "secondary")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(
+		"[store_bindings.archive]\n"+
+			"kind = \"filesystem\"\npath = \"secondary\"\npriority = 25\n\n"+
+			"[store_bindings.cold]\nkind = \"s3\"\nendpoint = \"https://objects.example.invalid\"\n"+
+			"region = \"us-east-1\"\nbucket = \"documents\"\nprefix = \"vaults/main\"\n"+
+			"credential_profile = \"archive\"\npriority = 100\n"), 0o600))
+
+	cfg, err := Load(dir)
+	require.NoError(t, err)
+	require.NoError(t, cfg.Validate())
+	assert.Equal(t, StoreBindingConfig{
+		Kind: "filesystem", Path: secondary, Priority: 25,
+	}, cfg.StoreBindings["archive"])
+	assert.Equal(t, StoreBindingConfig{
+		Kind: "s3", Endpoint: "https://objects.example.invalid",
+		Region: "us-east-1", Bucket: "documents", Prefix: "vaults/main",
+		CredentialProfile: "archive", Priority: 100,
+	}, cfg.StoreBindings["cold"])
+}
+
+func TestStoreBindingsRejectAmbiguousDefinitions(t *testing.T) {
+	archive := filepath.Join(t.TempDir(), "archive")
+	for _, tc := range []struct {
+		name    string
+		binding StoreBindingConfig
+		want    string
+	}{
+		{
+			name: "relative filesystem path",
+			binding: StoreBindingConfig{
+				Kind: "filesystem", Path: "relative",
+			},
+			want: "must be absolute",
+		},
+		{
+			name: "filesystem with s3 fields",
+			binding: StoreBindingConfig{
+				Kind: "filesystem", Path: archive, Bucket: "documents",
+			},
+			want: "does not accept S3",
+		},
+		{
+			name: "s3 without credentials",
+			binding: StoreBindingConfig{
+				Kind: "s3", Bucket: "documents",
+			},
+			want: "credential_profile",
+		},
+		{
+			name: "s3 with noncanonical prefix",
+			binding: StoreBindingConfig{
+				Kind: "s3", Bucket: "documents", Prefix: "../other-vault",
+				CredentialProfile: "archive",
+			},
+			want: "namespace is invalid",
+		},
+		{
+			name: "invalid priority",
+			binding: StoreBindingConfig{
+				Kind: "filesystem", Path: archive, Priority: -1,
+			},
+			want: "priority",
+		},
+		{
+			name:    "unknown kind",
+			binding: StoreBindingConfig{Kind: "tape"},
+			want:    "kind",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := Default()
+			cfg.StoreBindings = map[string]StoreBindingConfig{"archive": tc.binding}
+			require.ErrorContains(t, cfg.Validate(), tc.want)
+		})
+	}
+}
+
+func TestStoreBindingsRejectPlainHTTPS3Endpoint(t *testing.T) {
+	cfg := Default()
+	cfg.StoreBindings = map[string]StoreBindingConfig{
+		"archive": {
+			Kind: "s3", Endpoint: "http://127.0.0.1:9000", Region: "us-east-1",
+			Bucket: "documents", CredentialProfile: "test", ForcePathStyle: true,
+		},
+	}
+
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "HTTPS")
+}
+
 func TestLoadParsesWatchedInboxesAndAppliesDefaults(t *testing.T) {
 	dir := privateTestConfigDir(t)
 	source := t.TempDir()

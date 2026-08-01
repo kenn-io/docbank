@@ -67,8 +67,7 @@ func TestIngestFileIdempotency(t *testing.T) {
 	assert.Equal(t, "report (3).pdf", n3.Name)
 
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.Exec(`UPDATE blobs SET loose_encoding=NULL, loose_stored_size=NULL WHERE hash=?`,
-			fakeHash("a1"))
+		_, err := tx.Exec(`DELETE FROM blob_locations WHERE blob_hash=?`, fakeHash("a1"))
 		return err
 	}))
 	_, _, err = s.IngestFile(ctx, ing, s.RootID(),
@@ -248,8 +247,7 @@ func TestSyncWatchedContentFollowsMovedNodeWithoutOverwritingIndependentEdit(t *
 	assert.Empty(t, noVersion.ID)
 
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.Exec(`UPDATE blobs SET loose_encoding=NULL, loose_stored_size=NULL WHERE hash=?`,
-			fakeHash("c3"))
+		_, err := tx.Exec(`DELETE FROM blob_locations WHERE blob_hash=?`, fakeHash("c3"))
 		return err
 	}))
 	missingNode, missingVersion, missingChanged, err := s.SyncWatchedContent(

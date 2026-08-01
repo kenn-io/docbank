@@ -81,6 +81,14 @@ var storeErrCodes = []struct {
 	{store.ErrAuditPreviewStale, http.StatusConflict, "audit_preview_stale"},
 	{store.ErrAuditNotEnrolled, http.StatusUnprocessableEntity, "audit_not_enrolled"},
 	{store.ErrInvalidAuditCursor, http.StatusUnprocessableEntity, "invalid_audit_cursor"},
+	{store.ErrBlobStorePrimary, http.StatusConflict, "blob_store_primary"},
+	{store.ErrBlobStoreNotEmpty, http.StatusConflict, "blob_store_not_empty"},
+	{store.ErrBlobStoreState, http.StatusConflict, "blob_store_state"},
+	{packstore.ErrStoreFenced, http.StatusServiceUnavailable, "store_fenced"},
+	{packstore.ErrStoreUnavailable, http.StatusServiceUnavailable, "store_unavailable"},
+	{packstore.ErrPhysicalMissing, http.StatusServiceUnavailable, "content_missing"},
+	{packstore.ErrPhysicalCorrupt, http.StatusInternalServerError, "content_corrupt"},
+	{packstore.ErrPhysicalAuthorityMissing, http.StatusInternalServerError, "physical_authority_missing"},
 }
 
 // FromStoreError maps the store's typed errors onto the wire envelope; an
@@ -89,6 +97,14 @@ var storeErrCodes = []struct {
 func FromStoreError(err error) error {
 	if err == nil {
 		return nil
+	}
+	var exhausted *packstore.ExhaustedError
+	if errors.As(err, &exhausted) && exhausted.Headline != nil {
+		for _, m := range storeErrCodes {
+			if errors.Is(exhausted.Headline, m.target) {
+				return NewError(m.status, m.code, err.Error())
+			}
+		}
 	}
 	for _, m := range storeErrCodes {
 		if errors.Is(err, m.target) {

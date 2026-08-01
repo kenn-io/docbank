@@ -81,6 +81,9 @@ Four commitments:
   loose-file/live-packed/dead-packed storage breakdown
 - Mixed loose and packed content storage with explicit pack, GC, and repack,
   plus an opt-in bounded daemon packing schedule
+- Local-first multi-store placement across configured filesystem and
+  S3-compatible secondaries, with fenced ownership, preview-first movement,
+  repair and salvage, complete backup, and topology-independent restore
 - Whole-vault integrity verification
 - Incremental backup repositories with create, list, verify, and confined restore
 - Daemon-first CLI, authenticated loopback HTTP API, and offline OpenAPI output
@@ -94,6 +97,12 @@ Four commitments:
 
 See the [roadmap](docs/roadmap.md) for high-level product direction beyond the
 capabilities listed here.
+
+Secondary stores are a deployment trust boundary: Docbank verifies their
+objects but does not encrypt them. Anyone with raw access to a configured
+filesystem root or S3 prefix can decode document content, so those namespaces
+must be owner-controlled or protected by independently managed storage
+encryption and access policy.
 
 ## Installation
 
@@ -167,6 +176,7 @@ docbank backup restore --repo ~/Backups/docbank --target ~/Restores/docbank-test
 - [Using docbank](docs/usage/lifecycle.md), including the
   [web application](docs/usage/web.md),
   [interactive terminal browser](docs/usage/tui.md), backup, and recovery
+- [Multi-store storage](docs/usage/storage.md)
 - [Docbank for agents](docs/agents.md) and the detailed
   [integration guide](docs/agents/integration.md)
 - [Embed in Go](docs/embedding.md)

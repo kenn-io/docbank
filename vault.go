@@ -18,7 +18,9 @@ import (
 
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/blob"
+	internalconfig "go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/home"
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/store"
@@ -80,6 +82,21 @@ type Config struct {
 	Root             string
 	SQLite           docsqlite.Driver
 	LooseCompression LooseCompressionOptions
+	StoreBindings    map[string]StoreBinding
+}
+
+// StoreBinding configures one embedded secondary namespace without exposing
+// Kit backend types through Docbank's public API.
+type StoreBinding struct {
+	Kind              string
+	Path              string
+	Endpoint          string
+	Region            string
+	Bucket            string
+	Prefix            string
+	CredentialProfile string
+	Priority          int
+	ForcePathStyle    bool
 }
 
 // Vault is one independently locked Docbank namespace. Separate Vault values
@@ -144,6 +161,20 @@ func normalizeVaultConfig(
 	}
 	config.Root = canonical
 	config.SQLite = driver
+	bindings := make(map[string]internalconfig.StoreBindingConfig, len(config.StoreBindings))
+	for name, binding := range config.StoreBindings {
+		bindings[name] = internalconfig.StoreBindingConfig{
+			Kind: binding.Kind, Path: binding.Path, Endpoint: binding.Endpoint,
+			Region: binding.Region, Bucket: binding.Bucket, Prefix: binding.Prefix,
+			CredentialProfile: binding.CredentialProfile, Priority: binding.Priority,
+			ForcePathStyle: binding.ForcePathStyle,
+		}
+	}
+	bindingConfig := internalconfig.Default()
+	bindingConfig.StoreBindings = bindings
+	if err := bindingConfig.Validate(); err != nil {
+		return Config{}, blob.Options{}, fmt.Errorf("docbank %w", err)
+	}
 	return config, blobOptions, nil
 }
 
@@ -171,6 +202,11 @@ func openVaultWithRootOpener(
 			retErr = errors.Join(retErr, lock.Release(), root.Close())
 		}
 	}()
+	if err := backupapp.RecoverInterruptedPrimaryHandoff(
+		context.Background(), layout.Root, config.SQLite,
+	); err != nil {
+		return nil, err
+	}
 	if err := layout.Ensure(); err != nil {
 		return nil, err
 	}
@@ -183,8 +219,32 @@ func openVaultWithRootOpener(
 			retErr = errors.Join(retErr, metadata.Close())
 		}
 	}()
+	catalogStores, err := metadata.BlobStores(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	specs := make([]blob.StoreSpec, 0, len(catalogStores)-1)
+	for _, item := range catalogStores {
+		if item.Role != "primary" {
+			specs = append(specs, blob.StoreSpec{
+				ID: item.ID, Kind: item.Kind, Role: item.Role, Lifecycle: item.Lifecycle,
+				Binding: item.Binding, OwnershipEpoch: item.OwnershipEpoch,
+			})
+		}
+	}
+	bindings := make(map[string]internalconfig.StoreBindingConfig, len(config.StoreBindings))
+	for name, binding := range config.StoreBindings {
+		bindings[name] = internalconfig.StoreBindingConfig{
+			Kind: binding.Kind, Path: binding.Path, Endpoint: binding.Endpoint,
+			Region: binding.Region, Bucket: binding.Bucket, Prefix: binding.Prefix,
+			CredentialProfile: binding.CredentialProfile, Priority: binding.Priority,
+			ForcePathStyle: binding.ForcePathStyle,
+		}
+	}
+	blobOptions.Registry = blob.NewRegistry(context.Background(), metadata.VaultID(), bindings, specs)
 	blobs, err := blob.NewWithOptions(store.NewPackCatalog(metadata), layout.BlobsDir(), blobOptions)
 	if err != nil {
+		_ = blobOptions.Registry.Close()
 		return nil, err
 	}
 	defer func() {

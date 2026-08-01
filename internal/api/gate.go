@@ -50,6 +50,18 @@ func (g *OperationGate) Maintain(fn func() error) error {
 	return g.maintainContext(context.Background(), fn)
 }
 
+// PhysicalMutate serializes a short physical-authority commit with backup
+// preservation without blocking unrelated logical document mutations.
+func (g *OperationGate) PhysicalMutate(fn func() error) error {
+	if err := g.preservation.Acquire(
+		context.Background(), operationGateExclusiveWeight,
+	); err != nil {
+		return fmt.Errorf("acquiring physical-authority gate: %w", err)
+	}
+	defer g.preservation.Release(operationGateExclusiveWeight)
+	return fn()
+}
+
 func (g *OperationGate) mutate(fn func() error) error {
 	g.admission.RLock()
 	if g.maintenance > 0 {

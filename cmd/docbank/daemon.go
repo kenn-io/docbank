@@ -22,6 +22,7 @@ import (
 	kitlogging "go.kenn.io/kit/logging"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/config"
@@ -75,6 +76,11 @@ func runServe(ctx context.Context) (retErr error) {
 	}
 	defer func() { retErr = errors.Join(retErr, docweb.RemoveBootstrap(layout.Root)) }()
 
+	if err := backupapp.RecoverInterruptedPrimaryHandoff(
+		ctx, layout.Root, store.DefaultSQLiteDriver(),
+	); err != nil {
+		return err
+	}
 	if err := layout.Ensure(); err != nil {
 		return err
 	}
@@ -100,10 +106,32 @@ func runServe(ctx context.Context) (retErr error) {
 		return err
 	}
 	defer func() { _ = s.Close() }()
+	catalogStores, err := s.BlobStores(sigCtx)
+	if err != nil {
+		return err
+	}
+	if err := validateConfiguredWatchStores(cfg, catalogStores); err != nil {
+		return err
+	}
+	storeSpecs := make([]blob.StoreSpec, 0, len(catalogStores)-1)
+	for _, catalogStore := range catalogStores {
+		if catalogStore.Role == "primary" {
+			continue
+		}
+		storeSpecs = append(storeSpecs, blob.StoreSpec{
+			ID: catalogStore.ID, Kind: catalogStore.Kind, Role: catalogStore.Role,
+			Lifecycle: catalogStore.Lifecycle, Binding: catalogStore.Binding,
+			OwnershipEpoch: catalogStore.OwnershipEpoch,
+		})
+	}
+	blobRegistry := blob.NewRegistry(sigCtx, s.VaultID(), cfg.StoreBindings, storeSpecs)
+	blobOptions := blob.ManagedOptions()
+	blobOptions.Registry = blobRegistry
 	blobs, err := blob.NewWithOptions(
-		store.NewPackCatalog(s), layout.BlobsDir(), blob.ManagedOptions(),
+		store.NewPackCatalog(s), layout.BlobsDir(), blobOptions,
 	)
 	if err != nil {
+		_ = blobRegistry.Close()
 		return err
 	}
 	defer func() { _ = blobs.Close() }()
@@ -112,7 +140,21 @@ func runServe(ctx context.Context) (retErr error) {
 		return err
 	}
 	jobSupervisor := jobs.New(sigCtx, logger)
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(
+			context.Background(), daemonlife.JobDrainTimeout)
+		defer cancel()
+		if err := jobSupervisor.Shutdown(shutdownCtx); err != nil {
+			retErr = errors.Join(retErr, err)
+		}
+	}()
 	operationGate := api.NewOperationGate()
+	placementRunner := blob.PlacementRunner{
+		Metadata: s, Blobs: blobs, Commit: operationGate.PhysicalMutate,
+	}
+	if err := placementRunner.Resume(sigCtx, jobSupervisor); err != nil {
+		return fmt.Errorf("resuming durable storage operations: %w", err)
+	}
 
 	listener, err := kitdaemon.Listen(ctx, kitdaemon.Endpoint{
 		Network: kitdaemon.NetworkTCP,
@@ -161,16 +203,6 @@ func runServe(ctx context.Context) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("writing daemon runtime record: %w", err)
 	}
-	// Register the job wait after store/blob cleanup so their resources remain
-	// open until runners return. The earlier runtime cleanup remains last.
-	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(
-			context.Background(), daemonlife.JobDrainTimeout)
-		defer cancel()
-		if err := jobSupervisor.Shutdown(shutdownCtx); err != nil {
-			retErr = errors.Join(retErr, err)
-		}
-	}()
 	for _, watchConfig := range cfg.Watches {
 		watcher, err := ingest.NewWatcher(
 			&ingest.Ingester{Store: s, Blobs: blobs}, layout.Root, watchConfig,
@@ -217,7 +249,7 @@ func runServe(ctx context.Context) (retErr error) {
 	srv := api.NewServer(api.Deps{
 		Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Logger: logger,
 		StartedAt: time.Now(), ShutdownToken: shutdownToken, Shutdown: stop, Tracker: tracker,
-		Jobs: jobSupervisor, Gate: operationGate, WebURL: webURL,
+		Jobs: jobSupervisor, Gate: operationGate, WebURL: webURL, BlobRegistry: blobRegistry,
 	})
 	defer srv.Close()
 	newHTTPServer := func() *http.Server {
@@ -292,6 +324,34 @@ func runServe(ctx context.Context) (retErr error) {
 		return shutdownErr
 	}
 	return serveErr
+}
+
+func validateConfiguredWatchStores(
+	cfg config.Config, stores []store.BlobStore,
+) error {
+	for _, item := range stores {
+		if item.Role == "primary" || item.Lifecycle == "detached" ||
+			item.Kind != "filesystem" {
+			continue
+		}
+		binding, ok := cfg.StoreBindings[item.Binding]
+		if !ok {
+			continue
+		}
+		watchName, overlap, err := ingest.WatchBindingOverlap(cfg.Watches, binding)
+		if err != nil {
+			return fmt.Errorf(
+				"checking watch sources against filesystem store %q: %w", item.Name, err,
+			)
+		}
+		if overlap {
+			return fmt.Errorf(
+				"watch %q source overlaps filesystem store %q binding %q",
+				watchName, item.Name, item.Binding,
+			)
+		}
+	}
+	return nil
 }
 
 func listenWebOrigin(ctx context.Context, enabled bool) (net.Listener, string, error) {

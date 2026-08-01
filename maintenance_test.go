@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
 
+	internalblob "go.kenn.io/docbank/internal/blob"
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/pkg/sqlite"
@@ -156,6 +157,104 @@ func TestGarbageCollectDryRunPreservesRowsAndLooseFiles(t *testing.T) {
 	}
 }
 
+func TestGarbageCollectRetiresSecondaryLooseAuthority(t *testing.T) {
+	ctx := t.Context()
+	root := t.TempDir()
+	secondaryRoot := t.TempDir()
+	require.NoError(t, internalblob.EnsureFilesystemNamespace(secondaryRoot))
+	metadata, err := store.Open(filepath.Join(root, "docbank.db"))
+	require.NoError(t, err)
+	secondary, err := metadata.PrepareSecondaryBlobStore(
+		"archive", "filesystem", "archive",
+	)
+	require.NoError(t, err)
+	backend, err := internalblob.NewFilesystemBackend(secondaryRoot, nil)
+	require.NoError(t, err)
+	require.NoError(t, backend.ReplaceOwnership(ctx, packstore.Ownership{
+		Format: packstore.OwnershipFormatV1,
+		Vault:  metadata.VaultID(), Store: packstore.StoreID(secondary.ID),
+		Epoch: secondary.OwnershipEpoch,
+	}, nil))
+	require.NoError(t, backend.Close())
+	require.NoError(t, metadata.RegisterBlobStore(ctx, secondary))
+	require.NoError(t, metadata.Close())
+
+	vault, err := New(ctx, Config{
+		Root: root,
+		StoreBindings: map[string]StoreBinding{
+			"archive": {Kind: "filesystem", Path: secondaryRoot},
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	const content = "secondary gc content"
+	created, err := vault.Put(
+		ctx, "/secondary.txt", strings.NewReader(content), PutOptions{},
+	)
+	require.NoError(t, err)
+	hash, err := packstore.ParseHash(created.Node.BlobHash)
+	require.NoError(t, err)
+	secondaryBackend, ok := vault.blobs.WritableBackend(packstore.StoreID(secondary.ID))
+	require.True(t, ok)
+	published, err := secondaryBackend.PublishLoose(
+		ctx, hash, strings.NewReader(content), packstore.PublishOptions{
+			Durability: packstore.DurablePublication, Dedup: packstore.VerifyFullHash,
+			ExpectedSize: int64(len(content)), SizeKnown: true,
+		},
+	)
+	require.NoError(t, err)
+	require.NoError(t, vault.metadata.AddRestoredBlobLocation(
+		ctx, created.Node.BlobHash, packstore.ReadLocation{
+			StoreID: published.StoreID, Generation: published.Generation,
+			Loose: &published.Location,
+		},
+	))
+	trashMaintenanceFiles(t, vault, []PutReceipt{created})
+
+	report, err := vault.GarbageCollect(ctx, GCOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, int64(len(content)*2), report.ReclaimableBytes)
+	assert.Equal(t, 2, report.ReclaimedFiles)
+	reader, _, err := secondaryBackend.OpenLoose(ctx, hash, published.Location)
+	require.ErrorIs(t, err, packstore.ErrPhysicalMissing)
+	assert.Nil(t, reader)
+	recorded, err := vault.metadata.HasBlob(ctx, created.Node.BlobHash)
+	require.NoError(t, err)
+	assert.False(t, recorded)
+}
+
+func TestGarbageCollectPreservesCatalogWhenSecondaryCleanupIsUnavailable(t *testing.T) {
+	vault := newMaintenanceVault(t, nil)
+	ctx := t.Context()
+	secondary, err := vault.metadata.PrepareSecondaryBlobStore(
+		"archive", "filesystem", "archive",
+	)
+	require.NoError(t, err)
+	require.NoError(t, vault.metadata.RegisterBlobStore(ctx, secondary))
+	const content = "unavailable secondary"
+	created, err := vault.Put(
+		ctx, "/unavailable.txt", strings.NewReader(content), PutOptions{},
+	)
+	require.NoError(t, err)
+	require.NoError(t, vault.metadata.AddRestoredBlobLocation(
+		ctx, created.Node.BlobHash, packstore.ReadLocation{
+			StoreID:    packstore.StoreID(secondary.ID),
+			Generation: "30000000-0000-4000-8000-000000000003",
+			Loose: &packstore.LooseLocation{
+				Encoding:    packstore.LooseEncodingRaw,
+				LogicalSize: int64(len(content)), StoredSize: int64(len(content)),
+			},
+		},
+	))
+	trashMaintenanceFiles(t, vault, []PutReceipt{created})
+
+	_, err = vault.GarbageCollect(ctx, GCOptions{})
+	require.ErrorIs(t, err, packstore.ErrStoreUnavailable)
+	recorded, err := vault.metadata.HasBlob(ctx, created.Node.BlobHash)
+	require.NoError(t, err)
+	assert.True(t, recorded, "failed physical cleanup must preserve retry authority")
+}
+
 func TestGarbageCollectDoesNotScaleWithSingleShardPhysicalOrphans(t *testing.T) {
 	var reports []GCReport
 	for _, count := range []int{3, 500} {
@@ -227,12 +326,17 @@ func TestVerifyCursorResumesPastMalformedStoredHash(t *testing.T) {
 			db, err := vault.metadata.SQLiteDriver().Open(filepath.Join(vault.root.Name(), "docbank.db"),
 				docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
 			require.NoError(t, err)
+			primary := maintenancePrimaryStoreID(t, vault)
 			for _, hash := range hashes {
 				_, err = db.ExecContext(t.Context(),
-					`INSERT INTO blobs
-					 (hash, size, created_at, loose_encoding, loose_stored_size)
-					 VALUES (?, 1, ?, 'raw', 1)`,
+					`INSERT INTO blobs(hash, size, created_at) VALUES (?, 1, ?)`,
 					hash, "2026-07-21T00:00:00.000000000Z")
+				require.NoError(t, err)
+				_, err = db.ExecContext(t.Context(), `
+					INSERT INTO blob_locations(
+						blob_hash, store_id, generation, kind, encoding, stored_size, pack_eligible
+					) VALUES(?, ?, 'test-generation', 'loose', 'raw', 1, 1)`,
+					hash, primary)
 				require.NoError(t, err)
 			}
 			require.NoError(t, db.Close())
@@ -263,12 +367,17 @@ func TestVerifyCursorDistinguishesEmptyStoredKeyFromStart(t *testing.T) {
 			db, err := vault.metadata.SQLiteDriver().Open(filepath.Join(vault.root.Name(), "docbank.db"),
 				docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
 			require.NoError(t, err)
+			primary := maintenancePrimaryStoreID(t, vault)
 			for _, hash := range []string{"", strings.Repeat("f", 64)} {
 				_, err = db.ExecContext(t.Context(),
-					`INSERT INTO blobs
-					 (hash, size, created_at, loose_encoding, loose_stored_size)
-					 VALUES (?, 1, ?, 'raw', 1)`,
+					`INSERT INTO blobs(hash, size, created_at) VALUES (?, 1, ?)`,
 					hash, "2026-07-21T00:00:00.000000000Z")
+				require.NoError(t, err)
+				_, err = db.ExecContext(t.Context(), `
+					INSERT INTO blob_locations(
+						blob_hash, store_id, generation, kind, encoding, stored_size, pack_eligible
+					) VALUES(?, ?, 'test-generation', 'loose', 'raw', 1, 1)`,
+					hash, primary)
 				require.NoError(t, err)
 			}
 			require.NoError(t, db.Close())
@@ -305,7 +414,8 @@ func TestVerifyDoesNotScaleWithUnrelatedMetadata(t *testing.T) {
 	db, err := large.metadata.SQLiteDriver().Open(filepath.Join(large.root.Name(), "docbank.db"),
 		docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
 	require.NoError(t, err)
-	_, err = db.ExecContext(t.Context(), `UPDATE blobs SET size='malformed' WHERE hash=?`, hash)
+	_, err = db.ExecContext(t.Context(), `
+		UPDATE content_versions SET mime_type=char(0) WHERE blob_hash=?`, hash)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
 
@@ -438,18 +548,24 @@ func TestRepackBoundsDeadPackRetirementWithoutCursor(t *testing.T) {
 	vault := newMaintenanceVault(t, nil)
 	createDeadMaintenancePacks(t, vault, 3)
 
-	var removed int
-	for call := range 3 {
+	var removed, mappings int64
+	for range 10 {
 		report, err := vault.Repack(t.Context(), RepackOptions{Budget: WorkBudget{MaxObjects: 1}})
 		require.NoError(t, err)
-		assert.Equal(t, 1, report.PacksRemoved)
+		assert.LessOrEqual(t, report.PacksRemoved, 1)
+		assert.LessOrEqual(t, report.MappingsPruned, int64(1))
 		if report.More {
 			require.NotEmpty(t, report.NextCursor)
 		}
-		assert.Equal(t, call < 2, report.More)
-		removed += report.PacksRemoved
+		removed += int64(report.PacksRemoved)
+		mappings += report.MappingsPruned
+		if !report.More {
+			break
+		}
 	}
-	assert.Equal(t, 3, removed)
+	assert.Equal(t, int64(1), mappings,
+		"later Pack calls already prune mappings for prior dead packs")
+	assert.Equal(t, int64(3), removed)
 }
 
 func TestRepackDeadRetirementFailureReturnsErrorAndDoesNotStarveLaterPack(t *testing.T) {
@@ -458,13 +574,23 @@ func TestRepackDeadRetirementFailureReturnsErrorAndDoesNotStarveLaterPack(t *tes
 	records, err := store.NewPackCatalog(vault.metadata).ListPackRecords(t.Context())
 	require.NoError(t, err)
 	require.Len(t, records, 2)
-	sort.Slice(records, func(i, j int) bool { return records[i].PackID < records[j].PackID })
+	sort.Slice(records, func(i, j int) bool {
+		if !records[i].CreatedAt.Equal(records[j].CreatedAt) {
+			return records[i].CreatedAt.Before(records[j].CreatedAt)
+		}
+		return records[i].PackID < records[j].PackID
+	})
 	blockedPath := filepath.Join(vault.root.Name(), "blobs", "packs", records[0].PackID[:2],
 		records[0].PackID+packstore.PackExt)
 	require.NoError(t, os.Remove(blockedPath))
 	require.NoError(t, os.Mkdir(blockedPath, 0o700),
 		"a directory at the pack path makes file retirement fail on every supported platform")
 	require.NoError(t, os.WriteFile(filepath.Join(blockedPath, "keep"), []byte("occupied"), 0o600))
+
+	pruned, err := vault.Repack(t.Context(), RepackOptions{Budget: WorkBudget{MaxObjects: 1}})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), pruned.MappingsPruned)
+	assert.True(t, pruned.More)
 
 	report, err := vault.Repack(t.Context(), RepackOptions{Budget: WorkBudget{MaxObjects: 2}})
 	require.Error(t, err)
@@ -564,14 +690,17 @@ func TestRepackPrunesMappingsWithinBudgetWithoutPhysicalPack(t *testing.T) {
 	require.NoError(t, err)
 	packID := pack.NewPackID()
 	hash := fmt.Sprintf("%064x", 99)
+	primary := maintenancePrimaryStoreID(t, vault)
 	_, err = db.ExecContext(t.Context(), `
-		INSERT INTO blob_packs (pack_id, entry_count, stored_bytes, created_at)
-		VALUES (?, 1, 20, ?)`, packID, "2026-01-01T00:00:00.000000000Z")
+		INSERT INTO blob_packs (store_id, pack_id, entry_count, stored_bytes, created_at)
+		VALUES (?, ?, 1, 20, ?)`,
+		primary, packID, "2026-01-01T00:00:00.000000000Z")
 	require.NoError(t, err)
 	_, err = db.ExecContext(t.Context(), `
-		INSERT INTO blob_pack_index
-			(blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
-		VALUES (?, ?, ?, 1, 1, 0, 0)`, hash, packID, pack.MinEntryOffset)
+		INSERT INTO blob_pack_entries
+			(blob_hash, store_id, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
+		VALUES (?, ?, ?, ?, 1, 1, 0, 0)`,
+		hash, primary, packID, pack.MinEntryOffset)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
 
@@ -747,18 +876,20 @@ func TestRepackMappingCursorAcceptsEmptyRawHighWater(t *testing.T) {
 				})
 			require.NoError(t, err)
 			packID := pack.NewPackID()
+			primary := maintenancePrimaryStoreID(t, vault)
 			_, err = db.ExecContext(t.Context(), `
-				INSERT INTO blob_packs (pack_id, entry_count, stored_bytes, created_at)
-				VALUES (?, 2, 10, ?)`, packID, "2026-01-01T00:00:00.000000000Z")
+				INSERT INTO blob_packs (store_id, pack_id, entry_count, stored_bytes, created_at)
+				VALUES (?, ?, 2, 10, ?)`,
+				primary, packID, "2026-01-01T00:00:00.000000000Z")
 			require.NoError(t, err)
 			for i, hash := range []string{
 				"",
 				"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
 			} {
 				_, err = db.ExecContext(t.Context(), `
-					INSERT INTO blob_pack_index
-						(blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
-					VALUES (?, ?, ?, 5, 1, 0, 0)`, hash, packID,
+					INSERT INTO blob_pack_entries
+						(blob_hash, store_id, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
+					VALUES (?, ?, ?, ?, 5, 1, 0, 0)`, hash, primary, packID,
 					pack.MinEntryOffset+int64(i)*32)
 				require.NoError(t, err)
 			}
@@ -1012,12 +1143,21 @@ func insertDanglingMaintenanceMapping(t *testing.T, vault *Vault, hash, packID s
 	db, err := vault.metadata.SQLiteDriver().Open(filepath.Join(vault.root.Name(), "docbank.db"),
 		docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
 	require.NoError(t, err)
+	primary := maintenancePrimaryStoreID(t, vault)
 	_, err = db.ExecContext(t.Context(), `
-		INSERT INTO blob_pack_index
-			(blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
-		VALUES (?, ?, ?, 1, 1, 0, 0)`, hash, packID, pack.MinEntryOffset)
+		INSERT INTO blob_pack_entries
+			(blob_hash, store_id, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
+		VALUES (?, ?, ?, ?, 1, 1, 0, 0)`,
+		hash, primary, packID, pack.MinEntryOffset)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
+}
+
+func maintenancePrimaryStoreID(t *testing.T, vault *Vault) string {
+	t.Helper()
+	primary, err := vault.metadata.PrimaryBlobStore(t.Context())
+	require.NoError(t, err)
+	return primary.ID
 }
 
 type repackFaultCatalog struct {

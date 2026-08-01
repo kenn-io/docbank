@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/pack"
+	"go.kenn.io/kit/packstore"
 )
 
 // fakeHash returns a deterministic 64-char hex-looking hash for tests.
@@ -217,6 +219,198 @@ func TestRevertContentCreatesNewHeadFromPriorAuthority(t *testing.T) {
 	var blobCount int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM blobs`).Scan(&blobCount))
 	assert.Equal(t, 2, blobCount, "reversion must not create or copy a blob")
+}
+
+func TestRevertContentAcceptsSecondaryOnlyAuthority(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	oldHash := fakeHash("a2")
+	created, err := s.CreateFile(
+		ctx, s.RootID(), "report.txt", oldHash, 3, "text/plain",
+	)
+	require.NoError(t, err)
+	replaced, _, err := s.ReplaceContent(
+		ctx, created.ID, created.Revision, fakeHash("b3"), 4, "text/markdown",
+	)
+	require.NoError(t, err)
+	secondary, err := s.PrepareSecondaryBlobStore(
+		"archive", "filesystem", "archive",
+	)
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(ctx, secondary))
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO blob_locations(
+			blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
+		) VALUES(?,?,?,'loose','raw',3,1)`,
+		oldHash, secondary.ID, "30000000-0000-4000-8000-000000000001",
+	)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx,
+		`DELETE FROM blob_locations WHERE blob_hash=? AND store_id=?`,
+		oldHash, s.primaryStoreID,
+	)
+	require.NoError(t, err)
+
+	reverted, version, _, err := s.RevertContent(
+		ctx, created.ID, replaced.Revision, created.CurrentVersionID,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, oldHash, reverted.BlobHash)
+	assert.Equal(t, oldHash, version.BlobHash)
+}
+
+func TestEnsureBlobTxAdoptsVerifiedPrimaryForSecondaryOnlyBlob(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	hash := fakeHash("a3")
+	_, err := s.CreateFile(ctx, s.RootID(), "report.txt", hash, 3, "text/plain")
+	require.NoError(t, err)
+	secondary, err := s.PrepareSecondaryBlobStore(
+		"archive", "filesystem", "archive",
+	)
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(ctx, secondary))
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO blob_locations(
+			blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
+		) VALUES(?,?,?,'loose','raw',3,1)`,
+		hash, secondary.ID, "30000000-0000-4000-8000-000000000002",
+	)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx,
+		`DELETE FROM blob_locations WHERE blob_hash=? AND store_id=?`,
+		hash, s.primaryStoreID,
+	)
+	require.NoError(t, err)
+
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		return s.EnsureBlobTx(tx, hash, 3, BlobPhysical{
+			Encoding: looseEncodingRaw, StoredBytes: 3,
+			PackEligible: true, Created: true,
+		})
+	})
+	require.NoError(t, err)
+	resolution, err := s.ResolveBlobLocations(ctx, packstore.Hash(hash))
+	require.NoError(t, err)
+	require.Len(t, resolution.Candidates, 2)
+	assert.Equal(t, packstore.StoreID(s.primaryStoreID), resolution.Candidates[0].StoreID)
+}
+
+func TestEnsureBlobTxPreservesSecondaryAuthorityForDeduplicatedPrimary(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	hash := fakeHash("a4")
+	_, err := s.CreateFile(ctx, s.RootID(), "report.txt", hash, 3, "text/plain")
+	require.NoError(t, err)
+	secondary, err := s.PrepareSecondaryBlobStore(
+		"archive", "filesystem", "archive",
+	)
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(ctx, secondary))
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO blob_locations(
+			blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
+		) VALUES(?,?,?,'loose','raw',3,1)`,
+		hash, secondary.ID, "30000000-0000-4000-8000-000000000003",
+	)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx,
+		`DELETE FROM blob_locations WHERE blob_hash=? AND store_id=?`,
+		hash, s.primaryStoreID,
+	)
+	require.NoError(t, err)
+
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		return s.EnsureBlobTx(tx, hash, 3, BlobPhysical{
+			Encoding: looseEncodingRaw, StoredBytes: 3,
+			PackEligible: true, Created: false,
+		})
+	})
+	require.NoError(t, err)
+	resolution, err := s.ResolveBlobLocations(ctx, packstore.Hash(hash))
+	require.NoError(t, err)
+	require.Len(t, resolution.Candidates, 1)
+	assert.Equal(t, packstore.StoreID(secondary.ID), resolution.Candidates[0].StoreID)
+}
+
+func TestReplaceContentReceiptAcceptsDeduplicatedSecondaryAuthority(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	target, err := s.CreateFile(ctx, s.RootID(), "target.txt", fakeHash("a5"), 3, "text/plain")
+	require.NoError(t, err)
+	remoteHash := fakeHash("b5")
+	_, err = s.CreateFile(ctx, s.RootID(), "remote.txt", remoteHash, 4, "text/plain")
+	require.NoError(t, err)
+	secondary, err := s.PrepareSecondaryBlobStore(
+		"archive", "filesystem", "archive",
+	)
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(ctx, secondary))
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO blob_locations(
+			blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
+		) VALUES(?,?,?,'loose','raw',4,1)`,
+		remoteHash, secondary.ID, "30000000-0000-4000-8000-000000000004",
+	)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx,
+		`DELETE FROM blob_locations WHERE blob_hash=? AND store_id=?`,
+		remoteHash, s.primaryStoreID,
+	)
+	require.NoError(t, err)
+
+	receipt, err := s.ReplaceContentWithReceipt(
+		ctx, target.ID, target.Revision, remoteHash, 4, "text/plain",
+		BlobPhysical{
+			Encoding: looseEncodingRaw, StoredBytes: 4,
+			PackEligible: true, Created: false,
+		},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, remoteHash, receipt.Node.BlobHash)
+	assert.Equal(t, PhysicalContent{
+		Kind: "loose", Encoding: looseEncodingRaw,
+		LogicalBytes: 4, StoredBytes: 4, PackEligible: true,
+	}, receipt.Physical)
+}
+
+func TestEnsureBlobTxRetiresDeadPackMappingBeforeLooseReingest(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	hash := fakeHash("a5")
+	packID := pack.NewPackID()
+	_, err := s.db.Exec(`
+		INSERT INTO blob_packs(
+			store_id,pack_id,entry_count,stored_bytes,created_at
+		) VALUES(?,?,1,32,?)`,
+		s.primaryStoreID, packID, nowRFC3339(),
+	)
+	require.NoError(t, err)
+	_, err = s.db.Exec(`
+		INSERT INTO blob_pack_entries(
+			blob_hash,store_id,pack_id,pack_offset,stored_len,raw_len,flags,crc32c
+		) VALUES(?,?,?,?,3,3,0,0)`,
+		hash, s.primaryStoreID, packID, pack.MinEntryOffset,
+	)
+	require.NoError(t, err)
+
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		return s.EnsureBlobTx(tx, hash, 3, BlobPhysical{
+			Encoding: looseEncodingRaw, StoredBytes: 3,
+			PackEligible: true, Created: true,
+		})
+	})
+	require.NoError(t, err)
+	var mappings int
+	require.NoError(t, s.db.QueryRow(`
+		SELECT COUNT(*) FROM blob_pack_entries
+		WHERE blob_hash=? AND store_id=?`,
+		hash, s.primaryStoreID,
+	).Scan(&mappings))
+	assert.Zero(t, mappings)
+	physical, err := s.PhysicalContent(ctx, hash)
+	require.NoError(t, err)
+	assert.Equal(t, "loose", physical.Kind)
 }
 
 func TestRevertContentRejectsInvalidSourceAndTarget(t *testing.T) {

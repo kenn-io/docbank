@@ -8,6 +8,7 @@ import (
 	"math"
 
 	"go.kenn.io/kit/pack"
+	"go.kenn.io/kit/packstore"
 )
 
 const (
@@ -18,7 +19,7 @@ const (
 
 // ErrPhysicalAuthorityMissing means logical blob membership exists but no
 // indexed loose representation or pack mapping currently authorizes reads.
-var ErrPhysicalAuthorityMissing = errors.New("physical blob authority is missing")
+var ErrPhysicalAuthorityMissing = packstore.ErrPhysicalAuthorityMissing
 
 // PhysicalContent describes the catalog-authorized representation of one
 // logical blob without requiring a filesystem scan.
@@ -71,17 +72,39 @@ func normalizeBlobPhysical(size int64, physical []BlobPhysical) (BlobPhysical, e
 }
 
 const physicalContentSQL = `
-	SELECT b.size, b.loose_encoding, b.loose_stored_size, b.pack_eligible,
+	SELECT b.size, l.encoding, l.stored_size, l.pack_eligible,
 	       i.stored_len, i.flags
-	FROM blobs b LEFT JOIN blob_pack_index i ON i.blob_hash = b.hash
+	FROM blobs b
+	LEFT JOIN blob_locations l
+	  ON l.blob_hash = b.hash
+	 AND l.store_id = (SELECT store_id FROM blob_stores WHERE role = 'primary')
+	LEFT JOIN blob_pack_entries i
+	  ON i.blob_hash = l.blob_hash AND i.store_id = l.store_id
 	WHERE b.hash = ?`
+
+const authorizedPhysicalContentSQL = `
+	SELECT b.size, l.encoding, l.stored_size, l.pack_eligible,
+	       i.stored_len, i.flags
+	FROM blobs b
+	JOIN blob_locations l ON l.blob_hash = b.hash
+	LEFT JOIN blob_pack_entries i
+	  ON i.blob_hash = l.blob_hash AND i.store_id = l.store_id
+	WHERE b.hash = ?
+	  AND (
+	    (l.kind = 'loose' AND l.encoding IN ('raw', 'zstd'))
+	    OR (l.kind = 'packed' AND i.blob_hash IS NOT NULL)
+	  )
+	ORDER BY CASE WHEN l.store_id = (
+	  SELECT store_id FROM blob_stores WHERE role = 'primary'
+	) THEN 0 ELSE 1 END, l.store_id
+	LIMIT 1`
 
 func scanPhysicalContent(row scanner, hash string) (PhysicalContent, error) {
 	var (
 		logical      int64
 		encoding     sql.NullString
 		looseStored  sql.NullInt64
-		packEligible bool
+		packEligible sql.NullBool
 		packedStored sql.NullInt64
 		packedFlags  sql.NullInt64
 	)
@@ -92,7 +115,10 @@ func scanPhysicalContent(row scanner, hash string) (PhysicalContent, error) {
 	if err != nil {
 		return PhysicalContent{}, fmt.Errorf("reading physical content %s: %w", hash, err)
 	}
-	physical := PhysicalContent{LogicalBytes: logical, PackEligible: packEligible}
+	physical := PhysicalContent{
+		LogicalBytes: logical,
+		PackEligible: packEligible.Valid && packEligible.Bool,
+	}
 	if packedStored.Valid {
 		if !packedFlags.Valid || packedFlags.Int64 < 0 || packedFlags.Int64 > math.MaxUint8 {
 			return PhysicalContent{}, fmt.Errorf("blob %s has invalid packed encoding flags", hash)
@@ -118,15 +144,54 @@ func physicalContentTx(tx *sql.Tx, hash string) (PhysicalContent, error) {
 	return scanPhysicalContent(tx.QueryRow(physicalContentSQL, hash), hash)
 }
 
+// authorizedPhysicalContentTx returns the deterministic preferred catalog
+// representation for a mutation receipt. Unlike physicalContentTx, which is
+// intentionally primary-specific for local packing and repair, this accepts a
+// secondary-only blob after EnsureBlobTx has validated its authority.
+func authorizedPhysicalContentTx(tx *sql.Tx, hash string) (PhysicalContent, error) {
+	if _, err := requirePhysicalAuthorityTx(tx, hash); err != nil {
+		return PhysicalContent{}, err
+	}
+	physical, err := scanPhysicalContent(tx.QueryRow(authorizedPhysicalContentSQL, hash), hash)
+	if errors.Is(err, ErrNotFound) {
+		return PhysicalContent{}, fmt.Errorf("blob %s: %w", hash, ErrPhysicalAuthorityMissing)
+	}
+	return physical, err
+}
+
 // requirePhysicalAuthorityTx returns the logical size only when the catalog
 // authorizes either loose or packed bytes for hash. Logical membership alone
 // is insufficient for reads or for creating another current reference.
 func requirePhysicalAuthorityTx(tx *sql.Tx, hash string) (int64, error) {
-	physical, err := physicalContentTx(tx, hash)
-	if err != nil {
-		return 0, err
+	var (
+		size     int64
+		location bool
+	)
+	err := tx.QueryRow(`
+		SELECT b.size, EXISTS(
+			SELECT 1
+			FROM blob_locations l
+			LEFT JOIN blob_pack_entries e
+			  ON e.blob_hash=l.blob_hash AND e.store_id=l.store_id
+			WHERE l.blob_hash=b.hash
+			  AND (
+			    (l.kind='loose' AND l.encoding IN ('raw','zstd'))
+			    OR (l.kind='packed' AND e.blob_hash IS NOT NULL)
+			  )
+		)
+		FROM blobs b WHERE b.hash=?`,
+		hash,
+	).Scan(&size, &location)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
 	}
-	return physical.LogicalBytes, nil
+	if err != nil {
+		return 0, fmt.Errorf("checking physical authority for %s: %w", hash, err)
+	}
+	if !location {
+		return 0, fmt.Errorf("blob %s: %w", hash, ErrPhysicalAuthorityMissing)
+	}
+	return size, nil
 }
 
 // PhysicalContent returns the indexed representation with current catalog
@@ -139,11 +204,12 @@ func (s *Store) PhysicalContent(ctx context.Context, hash string) (PhysicalConte
 func (s *Store) LooseBacklog(ctx context.Context) (LooseBacklog, error) {
 	var backlog LooseBacklog
 	err := s.db.QueryRowContext(ctx, `
-		SELECT COUNT(*), COALESCE(SUM(size), 0), COALESCE(SUM(loose_stored_size), 0),
-		       COALESCE(SUM(CASE WHEN loose_encoding = 'raw' THEN 1 ELSE 0 END), 0),
-		       COALESCE(SUM(CASE WHEN loose_encoding = 'zstd' THEN 1 ELSE 0 END), 0)
-		FROM blobs
-		WHERE pack_eligible = 1 AND loose_encoding IS NOT NULL`,
+		SELECT COUNT(*), COALESCE(SUM(b.size), 0), COALESCE(SUM(l.stored_size), 0),
+		       COALESCE(SUM(CASE WHEN l.encoding = 'raw' THEN 1 ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN l.encoding = 'zstd' THEN 1 ELSE 0 END), 0)
+		FROM blob_locations l JOIN blobs b ON b.hash = l.blob_hash
+		WHERE l.store_id = ? AND l.kind = ? AND l.pack_eligible = 1`,
+		s.primaryStoreID, blobLocationKindLoose,
 	).Scan(&backlog.EligibleObjects, &backlog.EligibleBytes, &backlog.EligibleStoredBytes,
 		&backlog.RawObjects, &backlog.CompressedObjects)
 	if err != nil {

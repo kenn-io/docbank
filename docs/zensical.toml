@@ -28,6 +28,7 @@ nav = [
     {"Vault Lifecycle" = "usage/lifecycle.md"},
     {"Permanent Audited History" = "usage/audited-history.md"},
     {"Trash, GC, Repack & Verify" = "usage/trash-and-gc.md"},
+    {"Multi-store Storage" = "usage/storage.md"},
     {"Backup & Restore" = "usage/backup.md"},
     {"Troubleshooting" = "troubleshooting.md"},
   ]},

@@ -52,8 +52,41 @@ jobs:
       - name: Vet
         run: go vet -tags fts5 ./...
 
+      - name: Start S3-compatible test service
+        env:
+          MINIO_ROOT_USER: docbank-test
+          MINIO_ROOT_PASSWORD: docbank-test-secret
+        run: |
+          set -eu
+          name="docbank-minio-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker run --rm -d --name "$name" \
+            -p 127.0.0.1::9000 \
+            -e MINIO_ROOT_USER -e MINIO_ROOT_PASSWORD \
+            minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
+            server /data >/dev/null
+          port="$(docker port "$name" 9000/tcp | head -1 | awk -F: '{print $NF}')"
+          endpoint="http://127.0.0.1:${port}"
+          for _ in $(seq 1 30); do
+            if curl --fail --silent "${endpoint}/minio/health/live" >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          curl --fail --silent "${endpoint}/minio/health/live" >/dev/null
+          echo "DOCBANK_MINIO_CONTAINER=$name" >> "$GITHUB_ENV"
+          echo "DOCBANK_S3_TEST_ENDPOINT=$endpoint" >> "$GITHUB_ENV"
+          echo "DOCBANK_S3_TEST_ACCESS_KEY=$MINIO_ROOT_USER" >> "$GITHUB_ENV"
+          echo "DOCBANK_S3_TEST_SECRET_KEY=$MINIO_ROOT_PASSWORD" >> "$GITHUB_ENV"
+
       - name: Test
         run: make test
+
+      - name: Stop S3-compatible test service
+        if: always()
+        run: |
+          if [ -n "${DOCBANK_MINIO_CONTAINER:-}" ]; then
+            docker rm -f "$DOCBANK_MINIO_CONTAINER" >/dev/null 2>&1 || true
+          fi
 
   purego:
     name: Pure-Go SQLite

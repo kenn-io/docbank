@@ -297,7 +297,7 @@ func contentVersionAuditRecord(
 		{Name: "version_id", Value: versionValue},
 		{Name: metadataNodeIDField, Value: audit.Unsigned(nodeID)},
 		{Name: "blob_hash", Value: blobValue},
-		{Name: "size", Value: audit.Unsigned(size)},
+		{Name: metadataSizeField, Value: audit.Unsigned(size)},
 		{Name: "media_type", Value: mediaValue},
 		{Name: auditRecordedAtField, Value: recordedValue},
 		{Name: "node_revision", Value: audit.Unsigned(revision)},

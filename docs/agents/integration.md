@@ -488,9 +488,11 @@ executed change, require `deleted_versions` to equal the candidate count,
 `changed:true`, and exactly one revision advance. When
 `checkpoint_required:true`, execution must return a source-free
 `content_replace` checkpoint installed as the current version. Blob counts must
-partition into shared versus releasable, and releasable into loose pending GC
-versus packed pending repack. These are future maintenance candidates, not
-bytes reclaimed by pruning.
+partition into shared versus releasable. A releasable blob may have loose
+locations pending GC, packed locations pending repack, or both;
+`mixed_blobs_pending_maintenance` reports that overlap. The byte totals cover
+every authoritative location across every store. These are future maintenance
+candidates, not bytes reclaimed by pruning.
 
 Path mutations are intentionally different. `POST /api/v1/path/move` and
 `POST /api/v1/path/trash` resolve and mutate inside one store transaction, so

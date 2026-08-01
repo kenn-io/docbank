@@ -19,7 +19,9 @@ application or focused terminal interface; the web application verifies
 current or retained document bytes before handing them to the browser's native
 save, lets people define and assign stable tags, and keeps the vault's
 loose-file/live-packed/dead-packed storage breakdown visible alongside
-document authority.
+document authority. Local-first placement can also move verified content into
+configured filesystem or S3-compatible stores without turning those stores
+into the document catalog.
 
 Install the latest release on Linux or macOS:
 
@@ -53,6 +55,10 @@ curl -fsSL https://docbank.ai/install.sh | sh
   <section>
     <h3>Recovery you can rehearse</h3>
     <p>Incremental backups reuse unchanged content, verify independently, and restore into a separate vault for inspection.</p>
+  </section>
+  <section>
+    <h3>Storage you can place</h3>
+    <p>Keep ingest local-first, then deliberately place verified content in filesystem or S3-compatible stores without changing document identity.</p>
   </section>
 </div>
 

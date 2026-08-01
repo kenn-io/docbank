@@ -2,9 +2,13 @@ package backupapp
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -28,6 +32,39 @@ var _ backup.PackedContentTarget = (*packedRestoreTarget)(nil)
 type packedRestoreApp struct{ *App }
 
 var _ backup.App = (*packedRestoreApp)(nil)
+
+type retainedRestoreCoordinator struct {
+	backup.RestoreTargetCoordinator
+
+	lease backup.RestoreTargetLease
+}
+
+func (c *retainedRestoreCoordinator) AcquireRestoreTarget(
+	ctx context.Context, root *os.Root,
+) (backup.RestoreTargetLease, error) {
+	lease, err := c.RestoreTargetCoordinator.AcquireRestoreTarget(ctx, root)
+	if err != nil {
+		return nil, fmt.Errorf("backupapp: retaining restore target: %w", err)
+	}
+	c.lease = lease
+	return retainedRestoreLease{}, nil
+}
+
+func (c *retainedRestoreCoordinator) release() error {
+	if c.lease == nil {
+		return nil
+	}
+	err := c.lease.Release()
+	c.lease = nil
+	if err != nil {
+		return fmt.Errorf("backupapp: releasing retained restore target: %w", err)
+	}
+	return nil
+}
+
+type retainedRestoreLease struct{}
+
+func (retainedRestoreLease) Release() error { return nil }
 
 func (a *packedRestoreApp) RestoredContentPaths(
 	ctx context.Context, db *sql.DB,
@@ -61,6 +98,22 @@ func RestoreWithDriver(
 	driver docsqlite.Driver,
 	opts backup.RestoreOptions,
 ) (*backup.RestoreResult, error) {
+	return RestoreWithPlacement(
+		ctx, repo, version, driver, opts, RestorePlacementOptions{},
+	)
+}
+
+// RestoreWithPlacement restores through one SQLite adapter and optionally
+// reconstructs explicitly mapped source placement while the caller retains
+// target coordination.
+func RestoreWithPlacement(
+	ctx context.Context,
+	repo *backup.Repo,
+	version string,
+	driver docsqlite.Driver,
+	opts backup.RestoreOptions,
+	placement RestorePlacementOptions,
+) (*backup.RestoreResult, error) {
 	if opts.PackedContent != nil {
 		return nil, errors.New("backupapp: restore options must not supply packed content policy")
 	}
@@ -70,18 +123,202 @@ func RestoreWithDriver(
 	if opts.SQLiteOpener != nil {
 		return nil, errors.New("backupapp: restore options must not supply a SQLite opener")
 	}
+	if opts.AuxiliaryTarget != nil {
+		return nil, errors.New("backupapp: restore options must not supply an auxiliary target")
+	}
+	if opts.BeforePublication != nil {
+		return nil, errors.New("backupapp: restore options must not supply a publication callback")
+	}
 	if err := docsqlite.Validate(driver); err != nil {
 		return nil, fmt.Errorf("backupapp: restore SQLite driver: %w", err)
 	}
+	var retainedCoordinator *retainedRestoreCoordinator
+	if opts.TargetCoordinator != nil {
+		retainedCoordinator = &retainedRestoreCoordinator{
+			RestoreTargetCoordinator: opts.TargetCoordinator,
+		}
+		opts.TargetCoordinator = retainedCoordinator
+	}
 	opts.SQLiteOpener = SQLiteOpener(driver)
-	opts.PackedContent = newPackedRestoreTarget()
 	opts.MetadataRestorer = metadataRestorer{driver: driver}
-	app := &packedRestoreApp{App: New(version)}
-	result, err := backup.Restore(ctx, repo, app, opts)
-	if err != nil {
-		return nil, fmt.Errorf("backupapp: restoring snapshot: %w", err)
+	var sourcePlacement placementManifest
+	var app backup.App = New(version)
+	var primaryHandoff *blob.PrimaryRestoreHandoff
+	if placement.Map == nil {
+		opts.PackedContent = newPackedRestoreTarget()
+		app = &packedRestoreApp{App: New(version)}
+	} else {
+		var err error
+		snapshotID := opts.SnapshotID
+		if snapshotID == "" {
+			latest, latestErr := repo.LatestSnapshot()
+			if latestErr != nil {
+				return nil, fmt.Errorf(
+					"backupapp: selecting latest restore snapshot: %w", latestErr,
+				)
+			}
+			if latest == nil {
+				return nil, errors.New("backupapp: repository has no snapshots to restore")
+			}
+			snapshotID = latest.SnapshotID
+		}
+		sourcePlacement, opts.SnapshotID, err = loadPlacementManifest(
+			ctx, repo, snapshotID, app.PackFileExtension(),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("backupapp: loading restore placement: %w", err)
+		}
+	}
+	opts.AuxiliaryTarget = placementRestoreTarget{}
+	opts.BeforePublication = func(
+		hookCtx context.Context, staged backup.RestorePublicationTarget,
+	) error {
+		blobsDir := filepath.Join(staged.TargetDir, "blobs")
+		if err := RecoverInterruptedPrimaryHandoff(
+			hookCtx, staged.TargetDir, driver,
+		); err != nil {
+			return err
+		}
+		next, err := restoredPrimaryOwnership(hookCtx, staged.DBPath, driver)
+		if err != nil {
+			return err
+		}
+		priorDatabaseDigest, err := restoreDatabaseDigest(
+			filepath.Join(staged.TargetDir, "docbank.db"),
+		)
+		if err != nil {
+			return err
+		}
+		primaryHandoff, err = blob.NewPrimaryRestoreHandoff(
+			blobsDir, next, &priorDatabaseDigest,
+		)
+		if err != nil {
+			return err
+		}
+		if err := primaryHandoff.Prepare(hookCtx); err != nil {
+			return err
+		}
+		if placement.Map == nil {
+			return nil
+		}
+		return applyRestorePlacement(
+			hookCtx, staged.TargetDir, staged.DBPath,
+			driver, sourcePlacement, placement,
+		)
+	}
+	result, restoreErr := backup.Restore(ctx, repo, app, opts)
+	if restoreErr != nil {
+		if primaryHandoff != nil {
+			restoreErr = errors.Join(
+				restoreErr, primaryHandoff.Rollback(context.WithoutCancel(ctx)),
+			)
+		}
+	} else if primaryHandoff != nil {
+		if err := primaryHandoff.Commit(context.WithoutCancel(ctx)); err != nil {
+			restoreErr = fmt.Errorf("backupapp: completing primary restore handoff: %w", err)
+		}
+	}
+	if retainedCoordinator != nil {
+		restoreErr = errors.Join(restoreErr, retainedCoordinator.release())
+	}
+	if restoreErr != nil {
+		if result == nil {
+			return nil, fmt.Errorf("backupapp: restoring snapshot: %w", restoreErr)
+		}
+		return result, restoreErr
 	}
 	return result, nil
+}
+
+// RecoverInterruptedPrimaryHandoff resolves a durable restore marker against
+// the database publication boundary before any caller opens SQLite mutably.
+// The caller must hold the vault's exclusive hierarchy lock.
+func RecoverInterruptedPrimaryHandoff(
+	ctx context.Context, target string, driver docsqlite.Driver,
+) error {
+	blobsDir := filepath.Join(target, "blobs")
+	pending, err := blob.PrimaryRestoreHandoffPending(blobsDir)
+	if err != nil || !pending {
+		return err
+	}
+	var published *packstore.Ownership
+	databasePath := filepath.Join(target, "docbank.db")
+	databaseDigest, err := restoreDatabaseDigest(databasePath)
+	if err != nil {
+		return err
+	}
+	ownership, ownershipErr := restoredPrimaryOwnership(ctx, databasePath, driver)
+	if ownershipErr == nil {
+		published = &ownership
+	}
+	if err := blob.RecoverPrimaryRestoreHandoff(
+		ctx, blobsDir, published, &databaseDigest,
+	); err != nil {
+		return errors.Join(
+			fmt.Errorf("backupapp: recovering interrupted primary handoff: %w", err),
+			ownershipErr,
+		)
+	}
+	return nil
+}
+
+func restoredPrimaryOwnership(
+	ctx context.Context, databasePath string, driver docsqlite.Driver,
+) (ownership packstore.Ownership, resultErr error) {
+	db, err := driver.Open(databasePath, docsqlite.OpenOptions{
+		Access: docsqlite.ReadOnlyImmutable,
+	})
+	if err != nil {
+		return ownership, fmt.Errorf("backupapp: opening restored primary authority: %w", err)
+	}
+	defer func() {
+		resultErr = errors.Join(resultErr, db.Close())
+	}()
+	ownership.Format = packstore.OwnershipFormatV1
+	if err := db.QueryRowContext(ctx, `
+		SELECT v.vault_uid, b.store_id, b.ownership_epoch
+		FROM vault_metadata AS v
+		JOIN blob_stores AS b ON b.role = 'primary'
+		WHERE v.singleton = 1`).Scan(
+		&ownership.Vault, &ownership.Store, &ownership.Epoch,
+	); err != nil {
+		return packstore.Ownership{},
+			fmt.Errorf("backupapp: reading restored primary authority: %w", err)
+	}
+	if err := ownership.Validate(); err != nil {
+		return packstore.Ownership{}, fmt.Errorf(
+			"backupapp: validating restored primary ownership: %w", err,
+		)
+	}
+	if err := ctx.Err(); err != nil {
+		return packstore.Ownership{}, err
+	}
+	return ownership, nil
+}
+
+func restoreDatabaseDigest(databasePath string) (digest string, resultErr error) {
+	file, err := os.Open(databasePath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("backupapp: opening restore database discriminator: %w", err)
+	}
+	defer func() {
+		resultErr = errors.Join(resultErr, file.Close())
+	}()
+	info, err := file.Stat()
+	if err != nil {
+		return "", fmt.Errorf("backupapp: inspecting restore database discriminator: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", errors.New("backupapp: restore database discriminator is not a regular file")
+	}
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", fmt.Errorf("backupapp: hashing restore database discriminator: %w", err)
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 // InspectRestoredStorage reads the physical inventory of a proved restore

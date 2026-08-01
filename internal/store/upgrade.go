@@ -16,7 +16,10 @@ import (
 	docsqlite "go.kenn.io/docbank/pkg/sqlite"
 )
 
-const v090BackupSuffix = ".v0.9.0.bak"
+const (
+	v090BackupSuffix = ".v0.9.0.bak"
+	v2BackupSuffix   = ".schema-v2.bak"
+)
 
 type databaseSchema struct {
 	version int
@@ -42,6 +45,14 @@ var releasedStorageSchemas = []releasedStorageSchema{
 			return exportV090MetadataSnapshot(ctx, source, dst)
 		},
 		restorePhysical: restoreV090PhysicalCatalog,
+	},
+	{
+		version: 2, release: "schema v2 (v0.10.0–v0.11.0)", backupSuffix: v2BackupSuffix,
+		validate: validateV2Schema,
+		exportMetadata: func(ctx context.Context, source *sql.Tx, dst io.Writer) error {
+			return exportMetadataSnapshot(ctx, source, dst)
+		},
+		restorePhysical: restoreV2PhysicalCatalog,
 	},
 }
 
@@ -155,7 +166,7 @@ func classifyDatabaseSchema(db *sql.DB) (databaseSchema, error) {
 			)
 		}
 		if version == currentStorageSchemaVersion {
-			if err := validateCurrentSchemaColumns(blobs, packs, vaultMetadata); err != nil {
+			if err := validateCurrentSchemaColumns(db, blobs, packs, vaultMetadata); err != nil {
 				return databaseSchema{}, err
 			}
 			return databaseSchema{version: version, current: true}, nil
@@ -193,13 +204,16 @@ func classifyDatabaseSchema(db *sql.DB) (databaseSchema, error) {
 	)
 }
 
-func validateCurrentSchemaColumns(blobs, packs, vaultMetadata []string) error {
+func validateCurrentSchemaColumns(
+	db *sql.DB,
+	blobs, packs, vaultMetadata []string,
+) error {
 	currentBlobColumns := []string{
-		metadataCreatedAtField, "hash", "loose_encoding", "loose_stored_size", "pack_eligible", "size",
+		metadataCreatedAtField, "hash", metadataSizeField,
 	}
 	currentPackColumns := []string{
 		metadataCreatedAtField, "entry_count", "live_entries", "live_raw_bytes", "live_stored_bytes",
-		"max_live_raw_len", "max_live_stored_len", "pack_id", "scan_hash", "stored_bytes",
+		"max_live_raw_len", "max_live_stored_len", "pack_id", "scan_hash", "store_id", "stored_bytes",
 	}
 	currentVaultColumns := []string{"schema_version", "singleton", "vault_uid"}
 	if !slices.Equal(blobs, currentBlobColumns) || !slices.Equal(packs, currentPackColumns) ||
@@ -210,11 +224,63 @@ func validateCurrentSchemaColumns(blobs, packs, vaultMetadata []string) error {
 			strings.Join(blobs, ","), strings.Join(packs, ","), strings.Join(vaultMetadata, ","),
 		)
 	}
+	wantTables := map[string][]string{
+		"blob_stores": {
+			"binding", metadataCreatedAtField, "kind", "lifecycle", "name",
+			"ownership_epoch", "role", "store_id",
+		},
+		"blob_locations": {
+			"blob_hash", "encoding", "generation", "kind", "pack_eligible",
+			"store_id", "stored_size",
+		},
+		"blob_pack_entries": {
+			"blob_hash", "crc32c", "flags", "pack_id", "pack_offset",
+			"raw_len", "store_id", "stored_len",
+		},
+	}
+	for table, want := range wantTables {
+		got, err := tableColumns(db, table)
+		if err != nil {
+			return err
+		}
+		if !slices.Equal(got, want) {
+			return fmt.Errorf(
+				"opening database: schema version %d has an unexpected %s layout (%s)",
+				currentStorageSchemaVersion, table, strings.Join(got, ","),
+			)
+		}
+	}
 	return nil
 }
 
+func validateV2Schema(db *sql.DB, blobs, packs []string) error {
+	v2BlobColumns := []string{
+		metadataCreatedAtField, "hash", "loose_encoding", "loose_stored_size",
+		"pack_eligible", metadataSizeField,
+	}
+	v2PackColumns := []string{
+		metadataCreatedAtField, "entry_count", "live_entries", "live_raw_bytes",
+		"live_stored_bytes", "max_live_raw_len", "max_live_stored_len", "pack_id",
+		"scan_hash", "stored_bytes",
+	}
+	if !slices.Equal(blobs, v2BlobColumns) || !slices.Equal(packs, v2PackColumns) {
+		return errors.New("not a released schema-v2 database")
+	}
+	index, err := tableColumns(db, "blob_pack_index")
+	if err != nil {
+		return err
+	}
+	wantIndex := []string{
+		"blob_hash", "crc32c", "flags", "pack_id", "pack_offset", "raw_len", "stored_len",
+	}
+	if !slices.Equal(index, wantIndex) {
+		return errors.New("not a released schema-v2 database")
+	}
+	return requireV090Tables(db)
+}
+
 func validateV090Schema(db *sql.DB, blobs, packs []string) error {
-	v090BlobColumns := []string{metadataCreatedAtField, "hash", "size"}
+	v090BlobColumns := []string{metadataCreatedAtField, "hash", metadataSizeField}
 	v090PackColumns := []string{metadataCreatedAtField, "entry_count", "pack_id", "stored_bytes"}
 	if !slices.Equal(blobs, v090BlobColumns) || !slices.Equal(packs, v090PackColumns) {
 		return errors.New("not the released v0.9.0 schema")
@@ -416,15 +482,29 @@ func importUpgradeJSONL(target *Store, path string, sourceSchema releasedStorage
 
 func restoreV090PhysicalCatalog(ctx context.Context, source metadataQuerier, target *Store) error {
 	return target.withStorageTx(ctx, func(tx *sql.Tx) error {
-		packIDs, err := restoreV090PackRecords(ctx, source, tx)
+		if err := resetImportedPhysicalCatalog(ctx, tx); err != nil {
+			return err
+		}
+		if err := restoreV090LooseLocations(
+			ctx, source, tx, target.primaryStoreID,
+		); err != nil {
+			return err
+		}
+		packIDs, err := restoreReleasedPackRecords(
+			ctx, source, tx, target.primaryStoreID, "v0.9.0",
+		)
 		if err != nil {
 			return err
 		}
-		if err := restoreV090PackMappings(ctx, source, tx); err != nil {
+		if err := restoreReleasedPackMappings(
+			ctx, source, tx, target.primaryStoreID, "v0.9.0",
+		); err != nil {
 			return err
 		}
 		for _, packID := range packIDs {
-			if err := finalizeV090PackScanHash(ctx, tx, packID); err != nil {
+			if err := finalizePackScanHash(
+				ctx, tx, target.primaryStoreID, packID,
+			); err != nil {
 				return err
 			}
 		}
@@ -432,27 +512,121 @@ func restoreV090PhysicalCatalog(ctx context.Context, source metadataQuerier, tar
 	})
 }
 
-func finalizeV090PackScanHash(ctx context.Context, tx *sql.Tx, packID string) error {
-	result, err := tx.ExecContext(ctx, `
-		UPDATE blob_packs
-		SET scan_hash = COALESCE((
-			SELECT MIN(blob_hash) FROM blob_pack_index WHERE pack_id = ?
-		), '')
-		WHERE pack_id = ?`, packID, packID)
-	if err != nil {
-		return fmt.Errorf("finalizing restored v0.9.0 pack %s: %w", packID, err)
-	}
-	return requireOneRow(result, "finalizing restored v0.9.0 pack "+packID)
+func restoreV2PhysicalCatalog(ctx context.Context, source metadataQuerier, target *Store) error {
+	return target.withStorageTx(ctx, func(tx *sql.Tx) error {
+		if err := resetImportedPhysicalCatalog(ctx, tx); err != nil {
+			return err
+		}
+		if err := restoreV2LooseLocations(
+			ctx, source, tx, target.primaryStoreID,
+		); err != nil {
+			return err
+		}
+		packIDs, err := restoreReleasedPackRecords(
+			ctx, source, tx, target.primaryStoreID, "schema-v2",
+		)
+		if err != nil {
+			return err
+		}
+		if err := restoreReleasedPackMappings(
+			ctx, source, tx, target.primaryStoreID, "schema-v2",
+		); err != nil {
+			return err
+		}
+		for _, packID := range packIDs {
+			if err := finalizePackScanHash(
+				ctx, tx, target.primaryStoreID, packID,
+			); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
-func restoreV090PackRecords(
-	ctx context.Context, source metadataQuerier, tx *sql.Tx,
+func resetImportedPhysicalCatalog(ctx context.Context, tx *sql.Tx) error {
+	for _, table := range []string{"blob_pack_entries", "blob_packs", "blob_locations"} {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM `+table); err != nil {
+			return fmt.Errorf("resetting imported %s: %w", table, err)
+		}
+	}
+	return nil
+}
+
+func restoreV090LooseLocations(
+	ctx context.Context,
+	source metadataQuerier,
+	tx *sql.Tx,
+	storeID string,
+) error {
+	rows, err := source.QueryContext(ctx, `
+		SELECT b.hash, b.size
+		FROM blobs b
+		WHERE NOT EXISTS (
+			SELECT 1 FROM blob_pack_index i WHERE i.blob_hash = b.hash
+		)
+		ORDER BY b.hash`)
+	if err != nil {
+		return fmt.Errorf("reading v0.9.0 loose authority: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var hash string
+		var size int64
+		if err := rows.Scan(&hash, &size); err != nil {
+			return fmt.Errorf("scanning v0.9.0 loose authority: %w", err)
+		}
+		if err := writeLooseLocationTx(ctx, tx, storeID, hash, BlobPhysical{
+			Encoding: looseEncodingRaw, StoredBytes: size,
+			PackEligible: size <= maxPackEligibleBytes,
+		}); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+func restoreV2LooseLocations(
+	ctx context.Context,
+	source metadataQuerier,
+	tx *sql.Tx,
+	storeID string,
+) error {
+	rows, err := source.QueryContext(ctx, `
+		SELECT hash, size, loose_encoding, loose_stored_size, pack_eligible
+		FROM blobs WHERE loose_encoding IS NOT NULL ORDER BY hash`)
+	if err != nil {
+		return fmt.Errorf("reading schema-v2 loose authority: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var hash, encoding string
+		var size, stored int64
+		var eligible bool
+		if err := rows.Scan(&hash, &size, &encoding, &stored, &eligible); err != nil {
+			return fmt.Errorf("scanning schema-v2 loose authority: %w", err)
+		}
+		if err := writeLooseLocationTx(ctx, tx, storeID, hash, BlobPhysical{
+			Encoding: encoding, StoredBytes: stored, PackEligible: eligible,
+		}); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+func restoreReleasedPackRecords(
+	ctx context.Context,
+	source metadataQuerier,
+	tx *sql.Tx,
+	storeID string,
+	release string,
 ) ([]string, error) {
 	rows, err := source.QueryContext(ctx, `
 		SELECT pack_id, entry_count, stored_bytes, created_at
 		FROM blob_packs ORDER BY created_at, pack_id`)
 	if err != nil {
-		return nil, fmt.Errorf("reading v0.9.0 pack records: %w", err)
+		return nil, fmt.Errorf("reading %s pack records: %w", release, err)
 	}
 	defer func() { _ = rows.Close() }()
 	var packIDs []string
@@ -462,25 +636,32 @@ func restoreV090PackRecords(
 			return nil, err
 		}
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO blob_packs(pack_id, entry_count, stored_bytes, created_at)
-			VALUES(?, ?, ?, ?)`, record.PackID, record.EntryCount, record.StoredBytes,
+			INSERT INTO blob_packs(store_id, pack_id, entry_count, stored_bytes, created_at)
+			VALUES(?, ?, ?, ?, ?)`,
+			storeID, record.PackID, record.EntryCount, record.StoredBytes,
 			record.CreatedAt.UTC().Format(timestampLayout)); err != nil {
-			return nil, fmt.Errorf("restoring v0.9.0 pack %s: %w", record.PackID, err)
+			return nil, fmt.Errorf("restoring %s pack %s: %w", release, record.PackID, err)
 		}
 		packIDs = append(packIDs, record.PackID)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("reading v0.9.0 pack records: %w", err)
+		return nil, fmt.Errorf("reading %s pack records: %w", release, err)
 	}
 	return packIDs, nil
 }
 
-func restoreV090PackMappings(ctx context.Context, source metadataQuerier, tx *sql.Tx) error {
+func restoreReleasedPackMappings(
+	ctx context.Context,
+	source metadataQuerier,
+	tx *sql.Tx,
+	storeID string,
+	release string,
+) error {
 	rows, err := source.QueryContext(ctx, `
 		SELECT blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c
 		FROM blob_pack_index ORDER BY blob_hash`)
 	if err != nil {
-		return fmt.Errorf("reading v0.9.0 pack mappings: %w", err)
+		return fmt.Errorf("reading %s pack mappings: %w", release, err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
@@ -488,12 +669,29 @@ func restoreV090PackMappings(ctx context.Context, source metadataQuerier, tx *sq
 		if err != nil {
 			return err
 		}
-		if err := writeAdoption(ctx, tx, entry, false); err != nil {
-			return fmt.Errorf("restoring v0.9.0 packed blob %s: %w", entry.Hash, err)
+		var member bool
+		if err := tx.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM blobs WHERE hash=?)`,
+			entry.Hash.String(),
+		).Scan(&member); err != nil {
+			return fmt.Errorf(
+				"checking %s packed blob %s membership: %w",
+				release, entry.Hash, err,
+			)
+		}
+		if !member {
+			// Released layouts permitted stale pack mappings after logical
+			// membership disappeared. The immutable pack record remains useful
+			// dead-byte inventory, but the mapping cannot become authority in
+			// the rebuilt catalog.
+			continue
+		}
+		if err := writeAdoption(ctx, tx, storeID, entry, false); err != nil {
+			return fmt.Errorf("restoring %s packed blob %s: %w", release, entry.Hash, err)
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("reading v0.9.0 pack mappings: %w", err)
+		return fmt.Errorf("reading %s pack mappings: %w", release, err)
 	}
 	return nil
 }

@@ -3,6 +3,7 @@
   import ArchiveIcon from "@lucide/svelte/icons/archive";
   import DatabaseIcon from "@lucide/svelte/icons/database";
   import HardDriveIcon from "@lucide/svelte/icons/hard-drive";
+  import ServerIcon from "@lucide/svelte/icons/server";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import XIcon from "@lucide/svelte/icons/x";
   import {
@@ -42,6 +43,7 @@
       ? Math.round((deadPackedBytes * 100) / status.pack_stored_bytes)
       : 0,
   );
+  const stores = $derived(status?.stores ?? []);
 
   onMount(() => {
     void refresh();
@@ -55,7 +57,7 @@
     loading = true;
     error = "";
     try {
-      const next = await storageStatus(session);
+      const next = await storageStatus(session, true);
       if (request !== generation) return;
       status = next;
     } catch (cause) {
@@ -183,6 +185,62 @@
         </Card>
       </div>
 
+      <section class="stores" aria-label="Content stores">
+        <div class="section-heading">
+          <div>
+            <span>CONTENT STORES</span>
+            <strong>{stores.length} physical location{stores.length === 1 ? "" : "s"}</strong>
+          </div>
+          <ServerIcon size="18" aria-hidden="true" />
+        </div>
+        {#if stores.length === 0}
+          <p class="empty">No store authority was reported.</p>
+        {:else}
+          <div class="store-list">
+            {#each stores as store (store.id)}
+              <article class="store">
+                <div class="store-title">
+                  <div>
+                    <strong>{store.name}</strong>
+                    <span>{store.role} · {store.kind}</span>
+                  </div>
+                  <Chip
+                    size="xs"
+                    tone={store.state === "online" ? "success" : store.state === "fenced" ? "danger" : "warning"}
+                  >
+                    {store.state}
+                  </Chip>
+                </div>
+                <dl>
+                  <div>
+                    <dt>Authority</dt>
+                    <dd>{store.authoritative_objects} objects · {formatBytes(store.logical_bytes)}</dd>
+                  </div>
+                  <div>
+                    <dt>Stored</dt>
+                    <dd>{formatBytes(store.stored_bytes)} · {store.pack_count} packs</dd>
+                  </div>
+                  <div>
+                    <dt>Sole copies</dt>
+                    <dd>{store.sole_authority_objects}</dd>
+                  </div>
+                  <div>
+                    <dt>Live documents</dt>
+                    <dd>{store.affected_documents}</dd>
+                  </div>
+                </dl>
+                {#if store.unreadable_objects > 0}
+                  <p class="store-warning">
+                    {store.unreadable_objects} object{store.unreadable_objects === 1 ? "" : "s"}
+                    currently have no readable alternative.
+                  </p>
+                {/if}
+              </article>
+            {/each}
+          </div>
+        {/if}
+      </section>
+
       <aside class="maintenance-note">
         <strong>This view never changes storage.</strong>
         <p>
@@ -306,6 +364,81 @@
     border: 1px solid color-mix(in srgb, var(--accent-amber) 35%, var(--border-default));
     border-radius: var(--radius-md);
     background: color-mix(in srgb, var(--accent-amber) 7%, var(--bg-surface));
+  }
+
+  .stores {
+    display: grid;
+    gap: var(--space-3);
+    margin-top: var(--space-5);
+  }
+
+  .section-heading,
+  .store-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+
+  .section-heading > div,
+  .store-title > div {
+    display: grid;
+    min-width: 0;
+  }
+
+  .section-heading span,
+  .store-title span,
+  .store dt {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .store-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-3);
+  }
+
+  .store {
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    padding: var(--space-4);
+  }
+
+  .store dl {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-3);
+    margin: var(--space-4) 0 0;
+  }
+
+  .store dl div {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  .store dd {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: var(--font-size-sm);
+  }
+
+  .store-warning {
+    margin: var(--space-3) 0 0;
+    color: var(--color-warning-text, var(--text-primary));
+    font-size: var(--font-size-sm);
+  }
+
+  .empty {
+    color: var(--text-muted);
+  }
+
+  @media (max-width: 640px) {
+    .store-list,
+    .store dl {
+      grid-template-columns: 1fr;
+    }
   }
 
   .maintenance-note strong {

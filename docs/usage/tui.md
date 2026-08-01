@@ -105,3 +105,10 @@ Other mutations, permanent deletion, permanent-audit enrollment, independent
 verification, backup creation/verification/restore, and storage maintenance
 remain outside this interface. Use their ordinary CLI commands or authenticated
 HTTP endpoints.
+
+The <kbd>O</kbd> operations screen keeps storage and backup loading
+independent. Its storage section lists every physical store's role, backend
+kind, observed health, authoritative object count, logical and stored bytes,
+affected live documents, and any sole-authority objects without a readable
+alternative. It is read-only and does not expose binding paths, endpoints,
+credentials, ownership epochs, takeover, repair, or placement controls.

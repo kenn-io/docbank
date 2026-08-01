@@ -140,6 +140,7 @@ before publishing the target.
 ```bash
 docbank backup restore [SNAPSHOT] --target DIR [--repo DIR] [--overwrite]
                        [--jobs N] [--force-unlock]
+                       [--store-map OWNER_PRIVATE_FILE]
                        [--progress auto|bar|plain] [--json]
 ```
 
@@ -169,13 +170,44 @@ until all repository content has been read and verified, the replacement
 database passes `integrity_check`, and its logical statistics match the
 manifest. Only then is the database published. A failed or cancelled restore
 does not publish `docbank.db` for a new target and does not replace an existing
-database.
+database. The built-in primary's ownership marker follows the same boundary:
+ordinary failures restore the prior marker, and an interrupted handoff is
+reconciled against a durable fingerprint of the prior database and the
+validated identity of whichever database was actually published when the vault
+is opened or the restore is retried. An unrelated file named `docbank.db` is
+never opened for mutation merely to decide which side won.
 
 Compatible repository packs are copied, verified, durably published, and
 granted catalog authority by default. A pack or object that exceeds Docbank's
 current storage policy is restored as a verified loose blob instead; the
 result reports the loose count and grouped fallback reasons. This is a
 representation choice, not an integrity failure.
+
+Snapshots also carry a non-secret `docbank-placement-v1` description of source
+store identities and per-hash placement. Default restore deliberately ignores
+that topology and rebuilds every verified blob under a fresh local primary
+store ID and ownership epoch. No source path, endpoint, credential, bucket,
+binding, or ownership epoch is inherited.
+
+`--store-map` explicitly maps source store IDs to binding profiles already
+loaded by the daemon performing the restore. The TOML file must be an
+owner-private regular file and may select a new empty namespace or an explicit
+takeover. Mapped bytes are independently read back before target authority is
+recorded. Unmapped bytes remain local. A `remote_only` restore revokes primary
+catalog authority in the staged database but leaves its physical staging files
+for garbage collection after that database is published, so a failed overwrite
+cannot damage the existing vault. Audited bytes also retain primary authority
+unless the mapping explicitly selects both `remote_only` and
+`allow_audited_remote_only`. See
+[Multi-store Storage](storage.md#backup-and-restore) for the file format and
+trust boundary.
+
+Restore also verifies that mapped filesystem stores do not overlap the live
+source vault or backup repository. Before publication it gives an otherwise
+empty target a minimal owner-private `config.toml` containing the mapped
+binding profiles, so the restored vault can prove and read remote-only
+authority after restart. An existing target configuration is preserved and
+must already define the same mappings exactly.
 
 Interactive restore shows metadata, document, extras, SQLite integrity, and
 manifest-statistics progress as separate stages.

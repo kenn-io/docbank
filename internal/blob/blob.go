@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
@@ -53,9 +54,157 @@ type Store struct {
 	catalog     packstore.Catalog
 	loose       *packstore.LooseStore
 	reader      *packstore.Store
+	readBackend *packstore.FilesystemBackend
 	maintainer  *packstore.Maintainer
 	coordinator *packstore.Coordinator
 	compression packstore.LooseCompressionOptions
+	registry    *Registry
+
+	locationLocksMu sync.Mutex
+	locationLocks   map[string]*locationLock
+}
+
+type locationLock struct {
+	token chan struct{}
+	refs  int
+}
+
+func (s *Store) acquireLocation(
+	ctx context.Context, storeID packstore.StoreID, hash packstore.Hash,
+) (func(), error) {
+	key := string(storeID) + "\x00" + hash.String()
+	s.locationLocksMu.Lock()
+	if s.locationLocks == nil {
+		s.locationLocks = make(map[string]*locationLock)
+	}
+	lock := s.locationLocks[key]
+	if lock == nil {
+		lock = &locationLock{token: make(chan struct{}, 1)}
+		s.locationLocks[key] = lock
+	}
+	lock.refs++
+	s.locationLocksMu.Unlock()
+
+	select {
+	case lock.token <- struct{}{}:
+	case <-ctx.Done():
+		s.releaseLocationRef(key, lock)
+		return nil, ctx.Err()
+	}
+	return func() {
+		<-lock.token
+		s.releaseLocationRef(key, lock)
+	}, nil
+}
+
+func (s *Store) releaseLocationRef(key string, lock *locationLock) {
+	s.locationLocksMu.Lock()
+	defer s.locationLocksMu.Unlock()
+	lock.refs--
+	if lock.refs == 0 {
+		delete(s.locationLocks, key)
+	}
+}
+
+// ReadBackend returns one runtime-bound physical backend by stable store ID.
+func (s *Store) ReadBackend(id packstore.StoreID) (packstore.ReadBackend, bool) {
+	if catalog, ok := s.catalog.(primaryLocationCatalog); ok &&
+		id == catalog.PrimaryStoreID() && s.readBackend != nil {
+		// The built-in primary has implicit vault ownership rather than an
+		// external namespace marker. Hide FilesystemBackend.StoreID (empty)
+		// while retaining the complete verified read surface.
+		return readBackendOnly{ReadBackend: s.readBackend}, true
+	}
+	if s.registry == nil {
+		return nil, false
+	}
+	return s.registry.Backend(id)
+}
+
+type readBackendOnly struct{ packstore.ReadBackend }
+
+// WritableBackend returns one runtime-bound destination by stable store ID.
+func (s *Store) WritableBackend(id packstore.StoreID) (packstore.Backend, bool) {
+	if catalog, ok := s.catalog.(primaryLocationCatalog); ok &&
+		id == catalog.PrimaryStoreID() && s.readBackend != nil {
+		return identifiedBackend{Backend: s.readBackend, id: id}, true
+	}
+	if s.registry == nil {
+		return nil, false
+	}
+	return s.registry.WritableBackend(id)
+}
+
+// RepairBackend returns one freshly fenced backend that supports deliberate
+// verified replacement of a damaged canonical loose object.
+func (s *Store) RepairBackend(
+	id packstore.StoreID,
+) (packstore.RepairBackend, bool) {
+	backend, ok := s.WritableBackend(id)
+	if !ok {
+		return nil, false
+	}
+	repair, ok := backend.(packstore.RepairBackend)
+	if ok {
+		return repair, true
+	}
+	if identified, ok := backend.(identifiedBackend); ok {
+		repair, ok := identified.Backend.(packstore.RepairBackend)
+		if ok {
+			return identifiedRepairBackend{
+				RepairBackend: repair, id: identified.id,
+			}, true
+		}
+	}
+	return nil, false
+}
+
+// RefreshStore performs a fresh secondary ownership observation.
+func (s *Store) RefreshStore(ctx context.Context, id string) StoreObservation {
+	if s.registry == nil {
+		return StoreObservation{State: StoreUnbound, Detail: "store registry is unavailable"}
+	}
+	return s.registry.Refresh(ctx, id)
+}
+
+func (s *Store) detachRuntimeStore(id string) {
+	if s.registry != nil {
+		s.registry.DetachSpec(id)
+	}
+}
+
+// SalvageBackend opens a fenced secondary only for explicit verified
+// recovery. The caller owns and must close the returned backend.
+func (s *Store) SalvageBackend(
+	ctx context.Context, id packstore.StoreID,
+) (packstore.Backend, error) {
+	if s.registry == nil {
+		return nil, fmt.Errorf("%w: store registry is unavailable", packstore.ErrStoreUnavailable)
+	}
+	return s.registry.SalvageBackend(ctx, id)
+}
+
+type identifiedBackend struct {
+	packstore.Backend
+
+	id packstore.StoreID
+}
+
+func (b identifiedBackend) StoreID() packstore.StoreID { return b.id }
+
+type identifiedRepairBackend struct {
+	packstore.RepairBackend
+
+	id packstore.StoreID
+}
+
+func (b identifiedRepairBackend) StoreID() packstore.StoreID { return b.id }
+
+type primaryLocationCatalog interface {
+	packstore.Catalog
+	packstore.LocationResolver
+	PrimaryStoreID() packstore.StoreID
+	PrimaryOwnership() packstore.Ownership
 }
 
 // LooseCompressionOptions is docbank's application-neutral loose storage
@@ -70,6 +219,9 @@ type LooseCompressionOptions struct {
 // docbank's public package.
 type Options struct {
 	LooseCompression LooseCompressionOptions
+	// Registry supplies daemon-loaded secondary bindings. Nil preserves the
+	// embedded single-primary default.
+	Registry *Registry
 }
 
 // ManagedOptions returns the standalone daemon's physical storage policy.
@@ -132,6 +284,19 @@ func NewWithOptions(catalog packstore.Catalog, blobsDir string, opts Options) (*
 	if err != nil {
 		return nil, err
 	}
+	var locations primaryLocationCatalog
+	if catalogLocations, ok := catalog.(primaryLocationCatalog); ok {
+		locations = catalogLocations
+		ownership := locations.PrimaryOwnership()
+		if err := ownership.Validate(); err != nil {
+			return nil, fmt.Errorf("reading primary filesystem ownership: %w", err)
+		}
+		if err := RecoverPrimaryRestoreHandoff(
+			context.Background(), blobsDir, &ownership, nil,
+		); err != nil {
+			return nil, fmt.Errorf("recovering primary restore ownership: %w", err)
+		}
+	}
 	coordinator := packstore.NewCoordinator()
 	maintainer, err := packstore.NewMaintainer(catalog, layout, packstore.MaintainerOptions{
 		Coordinator: coordinator,
@@ -145,9 +310,57 @@ func NewWithOptions(catalog packstore.Catalog, blobsDir string, opts Options) (*
 		_ = maintainer.Close()
 		return nil, fmt.Errorf("creating loose blob store: %w", err)
 	}
+	reader := maintainer.Store()
+	var readBackend *packstore.FilesystemBackend
+	if locations != nil {
+		ownership := locations.PrimaryOwnership()
+		readBackend, err = packstore.NewFilesystemBackend(
+			layout, packstore.FilesystemBackendOptions{
+				ExpectedOwnership: &ownership, Limits: StorageLimits(),
+			},
+		)
+		if err != nil {
+			_ = maintainer.Close()
+			return nil, fmt.Errorf("creating primary filesystem backend: %w", err)
+		}
+		actual, ownershipErr := readBackend.Ownership(context.Background())
+		switch {
+		case errors.Is(ownershipErr, fs.ErrNotExist):
+			ownershipErr = readBackend.ReplaceOwnership(
+				context.Background(), ownership, nil,
+			)
+		case ownershipErr == nil && actual != ownership:
+			ownershipErr = fmt.Errorf(
+				"%w: primary filesystem marker does not match catalog authority",
+				packstore.ErrStoreFenced,
+			)
+		}
+		if ownershipErr != nil {
+			_ = readBackend.Close()
+			_ = maintainer.Close()
+			return nil, fmt.Errorf("attaching primary filesystem backend: %w", ownershipErr)
+		}
+		reader, err = packstore.NewMultiStore(
+			orderedResolver{
+				resolver: locations, primaryID: locations.PrimaryStoreID(),
+				registry: opts.Registry,
+			},
+			orderedRegistry{
+				primaryID: locations.PrimaryStoreID(), primary: readBackend,
+				secondaries: opts.Registry,
+			},
+			packstore.MultiStoreOptions{Limits: StorageLimits()},
+		)
+		if err != nil {
+			_ = readBackend.Close()
+			_ = maintainer.Close()
+			return nil, fmt.Errorf("creating multi-location blob reader: %w", err)
+		}
+	}
 	return &Store{dir: blobsDir, layout: layout, catalog: catalog, loose: loose,
-		reader:     maintainer.Store(),
+		reader: reader, readBackend: readBackend,
 		maintainer: maintainer, coordinator: coordinator,
+		registry: opts.Registry,
 		compression: packstore.LooseCompressionOptions{
 			Enabled:           opts.LooseCompression.Enabled,
 			MinBytes:          opts.LooseCompression.MinBytes,
@@ -344,6 +557,19 @@ func (s *Store) WithMutation(ctx context.Context, fn func() error) error {
 	return errors.Join(fn(), lease.Release())
 }
 
+// withMaintenance excludes every mutation lease across one physical cleanup.
+// Callers must acquire any location lock before entering this boundary.
+func (s *Store) withMaintenance(ctx context.Context, fn func() error) error {
+	if s.coordinator == nil {
+		return fn()
+	}
+	lease, err := s.coordinator.AcquireMaintenance(ctx)
+	if err != nil {
+		return fmt.Errorf("acquiring blob maintenance lease: %w", err)
+	}
+	return errors.Join(fn(), lease.Release())
+}
+
 // Write streams r into durable canonical loose storage. The caller holds a
 // mutation lease across the subsequent metadata transaction.
 func (s *Store) Write(r io.Reader) (string, int64, error) {
@@ -469,6 +695,59 @@ func (s *Store) OpenStreamContext(
 		return nil, 0, fmt.Errorf("opening blob stream %s: %w", hash, err)
 	}
 	return reader, size, nil
+}
+
+// VerifyLocation independently re-hashes one exact catalog candidate. It does
+// not fall back to another store, so maintenance can report damaged redundant
+// copies instead of hiding them behind one healthy location.
+func (s *Store) VerifyLocation(
+	ctx context.Context, hash string, location packstore.ReadLocation,
+) (bytesRead int64, resultErr error) {
+	parsed, err := packstore.ParseHash(hash)
+	if err != nil {
+		return 0, fmt.Errorf("blob hash %q: %w", hash, ErrInvalidHash)
+	}
+	if err := location.Validate(); err != nil {
+		return 0, fmt.Errorf("validating blob location: %w", err)
+	}
+	backend, ok := s.ReadBackend(location.StoreID)
+	if !ok {
+		return 0, fmt.Errorf(
+			"%w: store %s is not available",
+			packstore.ErrStoreUnavailable, location.StoreID,
+		)
+	}
+	var stream packstore.VerifiedReadCloser
+	var logicalSize int64
+	if location.Loose != nil {
+		stream, logicalSize, err = backend.OpenLoose(ctx, parsed, *location.Loose)
+	} else {
+		stream, logicalSize, err = backend.OpenPack(ctx, parsed, *location.Pack)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("opening exact blob location: %w", err)
+	}
+	defer func() { resultErr = errors.Join(resultErr, stream.Close()) }()
+	var expectedSize int64
+	if location.Loose != nil {
+		expectedSize = location.Loose.LogicalSize
+	} else {
+		expectedSize = location.Pack.RawLen
+	}
+	if logicalSize != expectedSize {
+		return 0, packstore.ErrPhysicalCorrupt
+	}
+	bytesRead, err = io.Copy(io.Discard, stream)
+	if err != nil {
+		return bytesRead, err
+	}
+	if bytesRead != expectedSize {
+		return bytesRead, packstore.ErrPhysicalCorrupt
+	}
+	if err := stream.Verify(); err != nil {
+		return bytesRead, fmt.Errorf("verifying exact blob location: %w", err)
+	}
+	return bytesRead, nil
 }
 
 // Exists reports whether catalog-authorized content can be opened.
@@ -603,16 +882,24 @@ func (s *Store) CleanTmp() error {
 
 // Close releases the daemon's cached pack readers.
 func (s *Store) Close() error {
+	var closeErr error
+	if s.readBackend != nil {
+		closeErr = s.readBackend.Close()
+	}
 	if s.maintainer != nil {
 		if err := s.maintainer.Close(); err != nil {
-			return fmt.Errorf("closing blob maintainer: %w", err)
+			closeErr = errors.Join(closeErr, fmt.Errorf("closing blob maintainer: %w", err))
 		}
-		return nil
 	}
-	if s.reader != nil {
+	if s.reader != nil && (s.maintainer == nil || s.readBackend != nil) {
 		if err := s.reader.Close(); err != nil {
-			return fmt.Errorf("closing mixed blob reader: %w", err)
+			closeErr = errors.Join(closeErr, fmt.Errorf("closing mixed blob reader: %w", err))
 		}
 	}
-	return nil
+	if s.registry != nil {
+		if err := s.registry.Close(); err != nil {
+			closeErr = errors.Join(closeErr, fmt.Errorf("closing secondary blob registry: %w", err))
+		}
+	}
+	return closeErr
 }

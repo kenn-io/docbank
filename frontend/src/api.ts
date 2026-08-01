@@ -283,7 +283,7 @@ export interface AuditEventPage {
 
 export interface Job {
   name: string;
-  status: "running" | "completed" | "failed" | "cancelled";
+  status: "queued" | "running" | "completed" | "failed" | "cancelled";
   started_at: string;
   finished_at?: string;
   error?: string;
@@ -302,6 +302,26 @@ export interface StorageStatus {
   packed_raw_bytes: number;
   packed_stored_bytes: number;
   dead_packed_bytes: number;
+  stores: StorageStoreStatus[];
+}
+
+export interface StorageStoreStatus {
+  id: string;
+  name: string;
+  kind: string;
+  role: string;
+  lifecycle: string;
+  state: string;
+  priority: number;
+  authoritative_objects: number;
+  logical_bytes: number;
+  stored_bytes: number;
+  pack_count: number;
+  dead_packed_bytes: number;
+  sole_authority_objects: number;
+  affected_documents: number;
+  unreadable_objects: number;
+  observed_at?: string;
 }
 
 export interface Problem {
@@ -652,8 +672,12 @@ export async function listJobs(session: string): Promise<Job[]> {
   return result.items;
 }
 
-export async function storageStatus(session: string): Promise<StorageStatus> {
-  return requestJSON<StorageStatus>("/api/v1/storage", session);
+export async function storageStatus(
+  session: string,
+  refresh = false,
+): Promise<StorageStatus> {
+  const suffix = refresh ? "?refresh=true" : "";
+  return requestJSON<StorageStatus>(`/api/v1/storage${suffix}`, session);
 }
 
 export async function backupSnapshots(

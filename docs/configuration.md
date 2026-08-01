@@ -230,6 +230,36 @@ identity are preserved in portable metadata. The watcher does not pack content
 itself. Configure `[storage] pack_interval` when accumulated loose content
 should be packed automatically; GC and repack remain explicit.
 
+### Store bindings
+
+`[store_bindings.<name>]` profiles describe machine-local filesystem or
+S3-compatible secondary storage. Filesystem profiles use `kind = "filesystem"`
+and an absolute `path`. S3 profiles use `kind = "s3"`, `endpoint`, `region`,
+`bucket`, optional `prefix`, `credential_profile`, and `force_path_style`.
+`priority` controls read preference after current health; lower values are
+preferred. The complete workflow and examples are in
+[Multi-store Storage](usage/storage.md).
+
+Bindings are loaded once when the daemon starts. They are deliberately absent
+from logical metadata, audit evidence, and backups. Restart after editing a
+profile; Docbank reports a typed stale-configuration error rather than
+hot-reloading credentials or paths underneath active jobs.
+
+S3 binding endpoints must use authenticated HTTPS, including loopback
+services. Plain HTTP is rejected because a loopback TCP port does not prove
+which process received an ownership marker or document bytes. Active stores
+must also have disjoint namespaces: filesystem roots may not overlap the vault,
+a watched inbox, or another filesystem store, and S3 prefixes may not be equal
+or nested under the same canonical endpoint and bucket. A store's ownership
+marker and epoch remain the authoritative fence against aliases that path
+comparison cannot recognize.
+
+Secondary objects are verified but not encrypted by Docbank. Raw readers of a
+filesystem root or S3 prefix can decode document content without the daemon API
+key. Store profiles therefore belong only on owner-controlled storage, or on
+storage protected by independently controlled filesystem, bucket, or KMS
+encryption and access policy.
+
 ### Bind validation
 
 Validated once, at daemon startup — a misconfiguration fails `docbank

@@ -21,12 +21,27 @@ import (
 //go:embed testdata/schema-v0.9.0.sql
 var schemaV090SQL string
 
+//go:embed testdata/schema-v0.10.0-physical.sql
+var schemaV0100PhysicalSQL string
+
+//go:embed testdata/schema-v0.11.0-addition.sql
+var schemaV0110AdditionSQL string
+
 type v090Fixture struct {
 	looseHash  string
 	packedHash string
 	packID     string
 	deadPackID string
 	metadata   []byte
+}
+
+type v2Fixture struct {
+	rawHash     string
+	zstdHash    string
+	packedHash  string
+	missingHash string
+	packID      string
+	metadata    []byte
 }
 
 func TestOpenCutsOverReleasedV090ThroughJSONL(t *testing.T) {
@@ -57,7 +72,7 @@ func TestOpenCutsOverReleasedV090ThroughJSONL(t *testing.T) {
 			assert.Equal(t, "packed", packed.Kind)
 			var restoredPackID string
 			require.NoError(t, s.db.QueryRow(`
-				SELECT pack_id FROM blob_pack_index WHERE blob_hash = ?`,
+				SELECT pack_id FROM blob_pack_entries WHERE blob_hash = ?`,
 				fixture.packedHash).Scan(&restoredPackID))
 			assert.Equal(t, fixture.packID, restoredPackID)
 			var deadLiveEntries int64
@@ -96,6 +111,71 @@ func TestFreshStoresRecordCurrentStorageSchemaVersion(t *testing.T) {
 				SELECT schema_version FROM vault_metadata WHERE singleton = 1`).Scan(&version))
 			assert.Equal(t, currentStorageSchemaVersion, version)
 		})
+	}
+}
+
+func TestOpenCutsOverEveryReleasedSchemaV2LayoutThroughJSONL(t *testing.T) {
+	layouts := []struct {
+		name     string
+		addition string
+	}{
+		{name: "v0.10.0"},
+		{name: "v0.10.1-v0.11.0", addition: schemaV0110AdditionSQL},
+	}
+	for _, driver := range v090UpgradeDrivers() {
+		for _, layout := range layouts {
+			t.Run(driver.name+"/"+layout.name, func(t *testing.T) {
+				dbPath := filepath.Join(t.TempDir(), "docbank.db")
+				fixture := createV2Fixture(t, dbPath, driver.driver, layout.addition)
+
+				s, err := Open(dbPath, driver.driver)
+				require.NoError(t, err)
+				var upgraded bytes.Buffer
+				require.NoError(t, s.ExportMetadata(t.Context(), &upgraded))
+				assert.Equal(t, fixture.metadata, upgraded.Bytes(),
+					"released logical authority survives byte-for-byte")
+
+				primary, err := s.PrimaryBlobStore(t.Context())
+				require.NoError(t, err)
+				assert.Equal(t, "filesystem", primary.Kind)
+				assert.Equal(t, "primary", primary.Role)
+				assert.NotEqual(t, "10000000-0000-4000-8000-000000000001", primary.ID)
+				require.NoError(t, validateUUIDv4(primary.ID))
+				require.NoError(t, validateUUIDv4(primary.OwnershipEpoch))
+
+				assertPhysicalContent(t, s, fixture.rawHash, PhysicalContent{
+					Kind: "loose", Encoding: "raw", LogicalBytes: 5, StoredBytes: 5,
+					PackEligible: true,
+				})
+				assertPhysicalContent(t, s, fixture.zstdHash, PhysicalContent{
+					Kind: "loose", Encoding: "zstd", LogicalBytes: 9, StoredBytes: 6,
+					PackEligible: false,
+				})
+				packed, err := s.PhysicalContent(t.Context(), fixture.packedHash)
+				require.NoError(t, err)
+				assert.Equal(t, "packed", packed.Kind)
+				_, err = s.PhysicalContent(t.Context(), fixture.missingHash)
+				require.ErrorIs(t, err, ErrPhysicalAuthorityMissing)
+
+				var storeID string
+				require.NoError(t, s.db.QueryRow(`
+					SELECT store_id FROM blob_pack_entries WHERE blob_hash = ?`,
+					fixture.packedHash).Scan(&storeID))
+				assert.Equal(t, primary.ID, storeID)
+				require.NoError(t, s.Close())
+
+				backupPath := dbPath + v2BackupSuffix
+				backup, err := driver.driver.Open(backupPath, docsqlite.OpenOptions{
+					Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred,
+				})
+				require.NoError(t, err)
+				kind, err := classifyDatabaseSchema(backup)
+				require.NoError(t, err)
+				assert.Equal(t, 2, kind.version)
+				assert.NotNil(t, kind.source)
+				require.NoError(t, backup.Close())
+			})
+		}
 	}
 }
 
@@ -275,14 +355,15 @@ func createV090Fixture(t *testing.T, path string, driver docsqlite.Driver) v090F
 	_, err = tx.Exec(`PRAGMA defer_foreign_keys = ON`)
 	require.NoError(t, err)
 	const (
-		timestamp  = "2026-07-19T12:00:00.000000000Z"
-		vaultID    = "10000000-0000-4000-8000-000000000001"
-		looseHash  = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-		packedHash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-		looseVer   = "20000000-0000-4000-8000-000000000001"
-		packedVer  = "20000000-0000-4000-8000-000000000002"
-		looseOp    = "30000000-0000-4000-8000-000000000001"
-		packedOp   = "30000000-0000-4000-8000-000000000002"
+		timestamp    = "2026-07-19T12:00:00.000000000Z"
+		vaultID      = "10000000-0000-4000-8000-000000000001"
+		looseHash    = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		packedHash   = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		danglingHash = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+		looseVer     = "20000000-0000-4000-8000-000000000001"
+		packedVer    = "20000000-0000-4000-8000-000000000002"
+		looseOp      = "30000000-0000-4000-8000-000000000001"
+		packedOp     = "30000000-0000-4000-8000-000000000002"
 	)
 	packID := pack.NewPackID()
 	deadPackID := pack.NewPackID()
@@ -317,6 +398,9 @@ func createV090Fixture(t *testing.T, path string, driver docsqlite.Driver) v090F
 		{`INSERT INTO blob_pack_index(blob_hash, pack_id, pack_offset, stored_len,
 			raw_len, flags, crc32c) VALUES(?, ?, ?, 7, 7, 0, 0)`,
 			[]any{packedHash, packID, pack.MinEntryOffset}},
+		{`INSERT INTO blob_pack_index(blob_hash, pack_id, pack_offset, stored_len,
+			raw_len, flags, crc32c) VALUES(?, ?, ?, 9, 9, 0, 0)`,
+			[]any{danglingHash, deadPackID, pack.MinEntryOffset}},
 	}
 	for _, statement := range statements {
 		_, err := tx.Exec(statement.query, statement.args...)
@@ -334,6 +418,83 @@ func createV090Fixture(t *testing.T, path string, driver docsqlite.Driver) v090F
 		looseHash: looseHash, packedHash: packedHash, packID: packID,
 		deadPackID: deadPackID, metadata: metadata.Bytes(),
 	}
+}
+
+func createV2Fixture(
+	t *testing.T, path string, driver docsqlite.Driver, layoutAddition string,
+) v2Fixture {
+	t.Helper()
+	db, err := driver.Open(path, docsqlite.OpenOptions{
+		Access: docsqlite.Create, TransactionMode: docsqlite.Immediate,
+	})
+	require.NoError(t, err)
+	_, err = db.Exec(schemaV090SQL)
+	require.NoError(t, err)
+	_, err = db.Exec(schemaV0100PhysicalSQL)
+	require.NoError(t, err)
+	if layoutAddition != "" {
+		_, err = db.Exec(layoutAddition)
+		require.NoError(t, err)
+	}
+	tx, err := db.BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	_, err = tx.Exec(`PRAGMA defer_foreign_keys = ON`)
+	require.NoError(t, err)
+	const (
+		timestamp   = "2026-07-19T12:00:00.000000000Z"
+		vaultID     = "10000000-0000-4000-8000-000000000001"
+		rawHash     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		zstdHash    = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		packedHash  = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+		missingHash = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+	)
+	packID := pack.NewPackID()
+	statements := []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO vault_metadata(singleton, vault_uid, schema_version) VALUES(1, ?, 2)`,
+			[]any{vaultID}},
+		{`INSERT INTO nodes(id, parent_id, name, kind, current_version_id, revision,
+			created_at, modified_at) VALUES(1, NULL, '', 'dir', NULL, 1, ?, ?)`,
+			[]any{timestamp, timestamp}},
+		{`INSERT INTO blobs(hash, size, created_at, loose_encoding, loose_stored_size,
+			pack_eligible) VALUES(?, 5, ?, 'raw', 5, 1)`, []any{rawHash, timestamp}},
+		{`INSERT INTO blobs(hash, size, created_at, loose_encoding, loose_stored_size,
+			pack_eligible) VALUES(?, 9, ?, 'zstd', 6, 0)`, []any{zstdHash, timestamp}},
+		{`INSERT INTO blobs(hash, size, created_at, pack_eligible)
+			VALUES(?, 7, ?, 1)`, []any{packedHash, timestamp}},
+		{`INSERT INTO blobs(hash, size, created_at, pack_eligible)
+			VALUES(?, 11, ?, 1)`, []any{missingHash, timestamp}},
+		{`INSERT INTO blob_packs(pack_id, entry_count, stored_bytes, created_at)
+			VALUES(?, 1, 7, ?)`, []any{packID, timestamp}},
+		{`INSERT INTO blob_pack_index(blob_hash, pack_id, pack_offset, stored_len,
+			raw_len, flags, crc32c) VALUES(?, ?, ?, 7, 7, 0, 0)`,
+			[]any{packedHash, packID, pack.MinEntryOffset}},
+	}
+	for _, statement := range statements {
+		_, err := tx.Exec(statement.query, statement.args...)
+		require.NoError(t, err)
+	}
+	require.NoError(t, tx.Commit())
+
+	snapshot, err := db.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
+	require.NoError(t, err)
+	var metadata bytes.Buffer
+	require.NoError(t, exportMetadataSnapshot(t.Context(), snapshot, &metadata))
+	require.NoError(t, snapshot.Rollback())
+	require.NoError(t, db.Close())
+	return v2Fixture{
+		rawHash: rawHash, zstdHash: zstdHash, packedHash: packedHash,
+		missingHash: missingHash, packID: packID, metadata: metadata.Bytes(),
+	}
+}
+
+func assertPhysicalContent(t *testing.T, s *Store, hash string, want PhysicalContent) {
+	t.Helper()
+	got, err := s.PhysicalContent(t.Context(), hash)
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
 }
 
 func v090UpgradeDrivers() []struct {

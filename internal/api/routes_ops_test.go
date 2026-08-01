@@ -346,6 +346,12 @@ func TestStorageStatusReportsLooseAndPackedUsage(t *testing.T) {
 	assert.Equal(t, 1, status.LooseBlobs)
 	assert.Equal(t, int64(len("packed storage status")), status.LooseBytes)
 	assert.Zero(t, status.Packs)
+	require.Len(t, status.Stores, 1)
+	assert.Equal(t, "primary", status.Stores[0].Role)
+	assert.Equal(t, "online", status.Stores[0].State)
+	assert.Equal(t, int64(1), status.Stores[0].SoleAuthorityObjects)
+	assert.Equal(t, int64(1), status.Stores[0].AffectedDocuments)
+	assert.Zero(t, status.Stores[0].UnreadableObjects)
 
 	packed, err := s.Blobs.Maintainer().Pack(t.Context(), packstore.PackOptions{})
 	require.NoError(t, err)
@@ -389,6 +395,10 @@ func TestVaultInfoIdentifiesRootAndSummarizesContents(t *testing.T) {
 	assert.Equal(t, int64(len(content)), info.TrackedBlobBytes)
 	assert.Equal(t, 1, info.Storage.LooseBlobs)
 	assert.Equal(t, int64(len(content)), info.Storage.LooseBytes)
+	require.Len(t, info.Storage.Stores, 1)
+	assert.Equal(t, int64(1), info.Storage.Stores[0].SoleAuthorityObjects)
+	assert.Zero(t, info.Storage.Stores[0].AffectedDocuments,
+		"the sole blob belongs only to a trashed document")
 }
 
 func TestStoragePackHonorsBudgetAndConverges(t *testing.T) {
@@ -501,18 +511,21 @@ func TestStorageRepackContinuesFromEmptyMappingHighWater(t *testing.T) {
 	})
 	require.NoError(t, err)
 	packID := pack.NewPackID()
+	primary, err := s.PrimaryBlobStore(t.Context())
+	require.NoError(t, err)
 	_, err = db.ExecContext(t.Context(), `
-		INSERT INTO blob_packs (pack_id, entry_count, stored_bytes, created_at)
-		VALUES (?, 2, 10, ?)`, packID, "2026-01-01T00:00:00.000000000Z")
+		INSERT INTO blob_packs (store_id, pack_id, entry_count, stored_bytes, created_at)
+		VALUES (?, ?, 2, 10, ?)`,
+		primary.ID, packID, "2026-01-01T00:00:00.000000000Z")
 	require.NoError(t, err)
 	for i, hash := range []string{
 		"",
 		"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
 	} {
 		_, err = db.ExecContext(t.Context(), `
-			INSERT INTO blob_pack_index
-				(blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
-			VALUES (?, ?, ?, 5, 1, 0, 0)`, hash, packID,
+			INSERT INTO blob_pack_entries
+				(blob_hash, store_id, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
+			VALUES (?, ?, ?, ?, 5, 1, 0, 0)`, hash, primary.ID, packID,
 			pack.MinEntryOffset+int64(i)*32)
 		require.NoError(t, err)
 	}
@@ -555,7 +568,9 @@ func TestGCRevokesPackedBlobAuthority(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist)
 	entries, err := store.NewPackCatalog(s.Store).ListIndexed(t.Context())
 	require.NoError(t, err)
-	assert.Empty(t, entries, "GC removes packed authority in the blob-row transaction")
+	require.Len(t, entries, 1,
+		"GC preserves dead pack accounting until reader-safe retirement")
+	assert.Equal(t, file.BlobHash, entries[0].Hash.String())
 	records, err := store.NewPackCatalog(s.Store).ListPackRecords(t.Context())
 	require.NoError(t, err)
 	require.Len(t, records, 1, "physical inventory remains until reader-safe retirement")
@@ -705,6 +720,53 @@ func TestGCEndpointRetainsFullPhysicalOrphanReconciliation(t *testing.T) {
 	assert.NoFileExists(t, path)
 }
 
+func TestGCEndpointReclaimsPublishedRemoteOnlyRestoreFiles(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	content := "remote-only restored content"
+	file := createFileWithContent(t, ts, s, "/remote-only.txt", content)
+	path := filepath.Join(s.BlobsDir, file.BlobHash[:2], file.BlobHash)
+	require.FileExists(t, path)
+
+	secondary, err := s.PrepareSecondaryBlobStore("archive", "filesystem", "archive")
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(t.Context(), secondary))
+	require.NoError(t, s.AddRestoredBlobLocation(
+		t.Context(), file.BlobHash, packstore.ReadLocation{
+			StoreID:    packstore.StoreID(secondary.ID),
+			Generation: "30000000-0000-4000-8000-000000000003",
+			Loose: &packstore.LooseLocation{
+				Encoding:    packstore.LooseEncodingRaw,
+				LogicalSize: file.Size, StoredSize: file.Size,
+			},
+		},
+	))
+	retired, err := s.RetireRestoredPrimary(t.Context(), file.BlobHash, false)
+	require.NoError(t, err)
+	require.True(t, retired)
+	require.FileExists(t, path, "catalog retirement precedes physical cleanup")
+
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/gc", nil,
+		map[string]any{"run": false})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var preview api.GCReport
+	require.NoError(t, json.Unmarshal([]byte(body), &preview))
+	assert.Equal(t, 1, preview.UntrackedFiles)
+	assert.Equal(t, int64(len(content)), preview.ReclaimableBytes)
+	require.FileExists(t, path)
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/gc", nil,
+		map[string]any{"run": true})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var report api.GCReport
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	assert.Equal(t, 1, report.UntrackedFiles)
+	assert.Equal(t, 1, report.ReclaimedFiles)
+	assert.NoFileExists(t, path)
+	recorded, err := s.HasBlob(t.Context(), file.BlobHash)
+	require.NoError(t, err)
+	assert.True(t, recorded, "physical cleanup must preserve remote logical membership")
+}
+
 func TestVerifyEndpoint(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	createFileWithContent(t, ts, s, "/ok.txt", "fine")
@@ -759,7 +821,9 @@ func TestVerifyEndpointReportsMalformedBlobMetadata(t *testing.T) {
 		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
 	})
 	require.NoError(t, err)
-	_, err = db.ExecContext(t.Context(), `UPDATE blobs SET size='not-an-integer' WHERE hash=?`, created.BlobHash)
+	_, err = db.ExecContext(t.Context(), `
+		UPDATE content_versions SET recorded_at='not-a-timestamp' WHERE blob_hash=?`,
+		created.BlobHash)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
 
@@ -770,7 +834,7 @@ func TestVerifyEndpointReportsMalformedBlobMetadata(t *testing.T) {
 	assert.Equal(t, 1, rep.OK)
 	assert.Empty(t, rep.Problems)
 	require.Len(t, rep.MetadataProblems, 1)
-	assert.Contains(t, rep.MetadataProblems[0], "size")
+	assert.Contains(t, rep.MetadataProblems[0], "creation")
 }
 
 func TestVerifyEndpointReportsBlobInventoryFailureAlongsideMetadataFailure(t *testing.T) {

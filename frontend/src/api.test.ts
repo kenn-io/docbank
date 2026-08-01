@@ -130,8 +130,8 @@ describe("browser authentication", () => {
       }),
     );
 
-    await storageStatus("session");
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/storage");
+    await storageStatus("session", true);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/storage?refresh=true");
   });
 
   it("reads configured backup snapshots through the browser session", async () => {

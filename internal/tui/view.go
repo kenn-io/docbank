@@ -360,6 +360,32 @@ func (m Model) operationsLines(width int) []string {
 			" Dead packed payload: %s awaiting explicit repack",
 			formatBytes(storage.DeadPackedBytes),
 		), width, lipgloss.NewStyle())
+		if len(storage.Stores) > 0 {
+			lines = append(lines, separator,
+				m.styles.heading.Render(pad(fit(" Content stores", width), width)),
+				separator,
+			)
+			for _, physicalStore := range storage.Stores {
+				state := physicalStore.State
+				if physicalStore.UnreadableObjects > 0 {
+					state += fmt.Sprintf(
+						" · %s without readable alternative",
+						countLabel(physicalStore.UnreadableObjects, "object", "objects"),
+					)
+				}
+				lines = appendWrapped(lines, fmt.Sprintf(
+					" %s [%s · %s] %s",
+					physicalStore.Name, physicalStore.Role, physicalStore.Kind, state,
+				), width, lipgloss.NewStyle())
+				lines = appendWrapped(lines, fmt.Sprintf(
+					"   %s authoritative · %s logical · %s stored · %s affected",
+					countLabel(physicalStore.AuthoritativeObjects, "object", "objects"),
+					formatBytes(physicalStore.LogicalBytes),
+					formatBytes(physicalStore.StoredBytes),
+					countLabel(physicalStore.AffectedDocuments, "document", "documents"),
+				), width, m.styles.muted)
+			}
+		}
 	}
 
 	lines = append(lines, separator,

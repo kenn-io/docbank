@@ -29,33 +29,38 @@ type VersionPruneSelector struct {
 // VersionPruneResult is the complete dry-run inventory or execution receipt.
 // LogicalBytes counts version references and may count a deduplicated blob
 // more than once. ReleasableBytes counts unique blobs that become eligible for
-// a later GC; pruning itself never reports physical bytes as reclaimed.
+// a later GC; pruning itself never reports physical bytes as reclaimed. Loose
+// and packed maintenance counts may overlap when one blob has both location
+// kinds across stores; MixedBlobsPendingMaintenance names that intersection.
 type VersionPruneResult struct {
-	Node                     Node
-	Candidates               []ContentVersion
-	DependencyRetained       []ContentVersion
-	Checkpoint               *ContentVersion
-	Cutoff                   string
-	LogicalBytes             int64
-	UniqueBlobs              int
-	SharedBlobs              int
-	ReleasableBlobs          int
-	ReleasableBytes          int64
-	LooseBlobsPendingGC      int
-	LooseBytesPendingGC      int64
-	PackedBlobsPendingRepack int
-	PackedBytesPendingRepack int64
-	DeletedVersions          int
-	CheckpointRequired       bool
-	Changed                  bool
-	Run                      bool
+	Node                         Node
+	Candidates                   []ContentVersion
+	DependencyRetained           []ContentVersion
+	Checkpoint                   *ContentVersion
+	Cutoff                       string
+	LogicalBytes                 int64
+	UniqueBlobs                  int
+	SharedBlobs                  int
+	ReleasableBlobs              int
+	ReleasableBytes              int64
+	LooseBlobsPendingGC          int
+	LooseBytesPendingGC          int64
+	PackedBlobsPendingRepack     int
+	PackedBytesPendingRepack     int64
+	MixedBlobsPendingMaintenance int
+	DeletedVersions              int
+	CheckpointRequired           bool
+	Changed                      bool
+	Run                          bool
 }
 
 type pruneBlobStats struct {
-	refs      int
-	size      int64
-	packed    bool
-	storedLen int64
+	refs            int
+	size            int64
+	looseLocations  int
+	looseStored     int64
+	packedLocations int
+	packedStored    int64
 }
 
 // PruneContentVersions previews or removes selected non-current history under
@@ -369,18 +374,27 @@ func populateVersionPruneBlobStats(
 			return errors.New("releasable content-version bytes exceed the reportable range")
 		}
 		result.ReleasableBytes += item.size
-		if item.packed {
-			result.PackedBlobsPendingRepack++
-			if item.storedLen > math.MaxInt64-result.PackedBytesPendingRepack {
-				return errors.New("packed content-version bytes exceed the reportable range")
-			}
-			result.PackedBytesPendingRepack += item.storedLen
-		} else {
+		hasLoose := item.looseLocations > 0
+		hasPacked := item.packedLocations > 0
+		if !hasLoose && !hasPacked {
+			return fmt.Errorf("candidate content blob %s lacks physical authority", hash)
+		}
+		if hasLoose {
 			result.LooseBlobsPendingGC++
-			if item.size > math.MaxInt64-result.LooseBytesPendingGC {
+			if item.looseStored > math.MaxInt64-result.LooseBytesPendingGC {
 				return errors.New("loose content-version bytes exceed the reportable range")
 			}
-			result.LooseBytesPendingGC += item.size
+			result.LooseBytesPendingGC += item.looseStored
+		}
+		if hasPacked {
+			result.PackedBlobsPendingRepack++
+			if item.packedStored > math.MaxInt64-result.PackedBytesPendingRepack {
+				return errors.New("packed content-version bytes exceed the reportable range")
+			}
+			result.PackedBytesPendingRepack += item.packedStored
+		}
+		if hasLoose && hasPacked {
+			result.MixedBlobsPendingMaintenance++
 		}
 	}
 	return nil
@@ -406,14 +420,11 @@ func versionPruneBlobStatsBatchTx(
 		args[index] = hash
 	}
 	rows, err := tx.Query(`
-			SELECT v.blob_hash, COUNT(*), b.size,
-			       CASE WHEN p.blob_hash IS NULL THEN 0 ELSE 1 END,
-			       COALESCE(p.stored_len, 0)
+			SELECT v.blob_hash, COUNT(*), b.size
 			FROM content_versions v
 			JOIN blobs b ON b.hash = v.blob_hash
-			LEFT JOIN blob_pack_index p ON p.blob_hash = v.blob_hash
 			WHERE v.blob_hash IN (`+placeholders(len(hashes))+`)
-			GROUP BY v.blob_hash, b.size, p.blob_hash, p.stored_len`, args...)
+			GROUP BY v.blob_hash, b.size`, args...)
 	if err != nil {
 		return fmt.Errorf("inventorying version-prune blobs: %w", err)
 	}
@@ -421,13 +432,72 @@ func versionPruneBlobStatsBatchTx(
 	for rows.Next() {
 		var hash string
 		var item pruneBlobStats
-		if err := rows.Scan(&hash, &item.refs, &item.size, &item.packed, &item.storedLen); err != nil {
+		if err := rows.Scan(&hash, &item.refs, &item.size); err != nil {
 			return fmt.Errorf("inventorying version-prune blobs: %w", err)
 		}
 		stats[hash] = item
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("inventorying version-prune blobs: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("closing version-prune blob inventory: %w", err)
+	}
+	return inventoryVersionPruneLocationsTx(tx, hashes, stats)
+}
+
+func inventoryVersionPruneLocationsTx(
+	tx *sql.Tx, hashes []string, stats map[string]pruneBlobStats,
+) error {
+	args := make([]any, len(hashes))
+	for index, hash := range hashes {
+		args[index] = hash
+	}
+	rows, err := tx.Query(`
+		SELECT l.blob_hash, l.kind, l.stored_size, p.stored_len
+		FROM blob_locations l
+		LEFT JOIN blob_pack_entries p
+		  ON p.blob_hash = l.blob_hash AND p.store_id = l.store_id
+		WHERE l.blob_hash IN (`+placeholders(len(hashes))+`)
+		ORDER BY l.blob_hash, l.store_id`, args...)
+	if err != nil {
+		return fmt.Errorf("inventorying version-prune locations: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var hash, kind string
+		var storedSize int64
+		var packStored sql.NullInt64
+		if err := rows.Scan(&hash, &kind, &storedSize, &packStored); err != nil {
+			return fmt.Errorf("inventorying version-prune locations: %w", err)
+		}
+		item, ok := stats[hash]
+		if !ok {
+			return fmt.Errorf("version-prune location names unselected blob %s", hash)
+		}
+		switch kind {
+		case blobLocationKindLoose:
+			item.looseLocations++
+			if storedSize > math.MaxInt64-item.looseStored {
+				return errors.New("loose content-version bytes exceed the reportable range")
+			}
+			item.looseStored += storedSize
+		case blobLocationKindPacked:
+			if !packStored.Valid {
+				return fmt.Errorf("inventorying version-prune blob %s: packed location lacks store-scoped pack entry", hash)
+			}
+			item.packedLocations++
+			if packStored.Int64 > math.MaxInt64-item.packedStored {
+				return errors.New("packed content-version bytes exceed the reportable range")
+			}
+			item.packedStored += packStored.Int64
+		default:
+			return fmt.Errorf("inventorying version-prune blob %s: invalid location kind %q", hash, kind)
+		}
+		stats[hash] = item
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("inventorying version-prune locations: %w", err)
 	}
 	return nil
 }

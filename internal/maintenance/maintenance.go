@@ -4,13 +4,10 @@ package maintenance
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"time"
@@ -74,6 +71,7 @@ type VerifyOptions struct{ Budget Budget }
 
 type VerifyProblem struct {
 	Hash    string
+	StoreID string
 	Problem string
 }
 
@@ -226,6 +224,10 @@ func GarbageCollect(
 	report := GCReport{DryRun: opts.DryRun}
 	tracked := scan.Items
 	trackedHashes := make([]string, 0, budget.MaxObjects)
+	primary, err := metadata.PrimaryBlobStore(ctx)
+	if err != nil {
+		return report, err
+	}
 	processedBytes := int64(0)
 	processed := 0
 	for _, candidate := range tracked {
@@ -236,9 +238,23 @@ func GarbageCollect(
 		if err := ctx.Err(); err != nil {
 			return report, err
 		}
-		packedSize, packed, err := metadata.PackedBlobStoredByte(ctx, candidate.Hash)
+		hash, err := packstore.ParseHash(candidate.Hash)
+		if err != nil {
+			return report, fmt.Errorf("parsing GC candidate hash %s: %w", candidate.Hash, err)
+		}
+		resolution, err := metadata.ResolveBlobLocations(ctx, hash)
 		if err != nil {
 			return report, err
+		}
+		var looseSize, packedSize int64
+		var packed bool
+		for _, location := range resolution.Candidates {
+			if location.Loose != nil {
+				looseSize += location.Loose.StoredSize
+			} else if location.Pack != nil {
+				packed = true
+				packedSize += location.Pack.StoredLen
+			}
 		}
 		report.CandidateBlobs++
 		trackedHashes = append(trackedHashes, candidate.Hash)
@@ -246,11 +262,13 @@ func GarbageCollect(
 			report.PendingPackedBlobs++
 			report.PendingPackedBytes += packedSize
 		}
-		report.ReclaimableBytes += candidate.LooseStoredSize
-		processedBytes += candidate.LooseStoredSize + packedSize
-		if !opts.DryRun && candidate.Loose {
-			removed, err := blobs.RemoveIfExists(candidate.Hash)
-			if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		report.ReclaimableBytes += looseSize
+		processedBytes += looseSize + packedSize
+		if !opts.DryRun {
+			removed, err := retireUnreachableLooseLocations(
+				ctx, blobs, primary.ID, hash, resolution,
+			)
+			if err != nil {
 				return report, err
 			}
 			report.ReclaimedFiles += removed
@@ -275,6 +293,76 @@ func GarbageCollect(
 	return report, nil
 }
 
+func retireUnreachableLooseLocations(
+	ctx context.Context,
+	blobs *blob.Store,
+	primaryStoreID string,
+	hash packstore.Hash,
+	resolution packstore.Resolution,
+) (int, error) {
+	backends := make(map[packstore.StoreID]packstore.Backend)
+	primaryLoose := false
+	for _, location := range resolution.Candidates {
+		if location.Loose == nil {
+			continue
+		}
+		if location.StoreID == packstore.StoreID(primaryStoreID) {
+			primaryLoose = true
+			continue
+		}
+		backend, ok := blobs.WritableBackend(location.StoreID)
+		if !ok {
+			return 0, fmt.Errorf(
+				"%w: gc cleanup store %s is not writable",
+				packstore.ErrStoreUnavailable, location.StoreID,
+			)
+		}
+		backends[location.StoreID] = backend
+	}
+	secondary := make([]packstore.ReadLocation, 0, len(resolution.Candidates))
+	for _, location := range resolution.Candidates {
+		if location.Loose == nil ||
+			location.StoreID == packstore.StoreID(primaryStoreID) {
+			continue
+		}
+		secondary = append(secondary, location)
+	}
+	retired, err := retireLooseCandidates(
+		secondary, func(location packstore.ReadLocation) error {
+			return backends[location.StoreID].Retire(ctx, packstore.ObjectRef{
+				LooseHash: hash, LooseEncoding: location.Loose.Encoding,
+			})
+		},
+	)
+	if err != nil {
+		return 0, fmt.Errorf("retiring unreachable blob %s: %w", hash, err)
+	}
+	if !primaryLoose {
+		return retired, nil
+	}
+	primaryRemoved, err := blobs.RemoveIfExists(hash.String())
+	return retired + primaryRemoved, err
+}
+
+func retireLooseCandidates(
+	locations []packstore.ReadLocation,
+	retire func(packstore.ReadLocation) error,
+) (int, error) {
+	retired := 0
+	for _, location := range locations {
+		err := retire(location)
+		if errors.Is(err, fs.ErrNotExist) ||
+			errors.Is(err, packstore.ErrPhysicalMissing) {
+			continue
+		}
+		if err != nil {
+			return retired, fmt.Errorf("store %s: %w", location.StoreID, err)
+		}
+		retired++
+	}
+	return retired, nil
+}
+
 // Verify re-hashes one bounded canonical-hash page of catalog-authorized
 // content. Whole-catalog metadata verification remains daemon-only.
 func Verify(
@@ -294,6 +382,7 @@ func Verify(
 	if err != nil {
 		return report, err
 	}
+	locationVerifier := NewBlobLocationVerifier(metadata, blobs)
 	processedBytes := int64(0)
 	processed := 0
 	for _, hash := range hashes {
@@ -303,12 +392,15 @@ func Verify(
 		if err := ctx.Err(); err != nil {
 			return report, err
 		}
-		problem, bytesRead := checkBlob(ctx, blobs, hash)
+		problems, bytesRead, err := locationVerifier.Verify(ctx, hash)
+		if err != nil {
+			return report, err
+		}
 		processedBytes += bytesRead
-		if problem == "" {
+		if len(problems) == 0 {
 			report.OK++
 		} else {
-			report.Problems = append(report.Problems, VerifyProblem{Hash: hash, Problem: problem})
+			report.Problems = append(report.Problems, problems...)
 		}
 		processed++
 	}
@@ -319,6 +411,77 @@ func Verify(
 	return report, nil
 }
 
+// BlobLocationVerifier independently checks every catalog-authorized physical
+// candidate while refreshing each secondary's ownership once per verification
+// run. A healthy redundant copy never hides a damaged or fenced peer.
+type BlobLocationVerifier struct {
+	metadata     *store.Store
+	blobs        *blob.Store
+	primaryID    string
+	observations map[string]blob.StoreObservation
+}
+
+// NewBlobLocationVerifier starts one bounded verification observation set.
+func NewBlobLocationVerifier(
+	metadata *store.Store, blobs *blob.Store,
+) *BlobLocationVerifier {
+	return &BlobLocationVerifier{
+		metadata: metadata, blobs: blobs,
+		primaryID:    metadata.PrimaryBlobStoreID(),
+		observations: make(map[string]blob.StoreObservation),
+	}
+}
+
+// Verify checks every current physical candidate for one logical blob.
+func (v *BlobLocationVerifier) Verify(
+	ctx context.Context, hash string,
+) ([]VerifyProblem, int64, error) {
+	parsed, err := packstore.ParseHash(hash)
+	if err != nil {
+		// Metadata validation owns the malformed identity detail; verification
+		// must still advance past that row and report its bytes as unreadable.
+		return []VerifyProblem{{Hash: hash, Problem: "unreadable"}}, 0, nil //nolint:nilerr
+	}
+	resolution, err := v.metadata.ResolveBlobLocations(ctx, parsed)
+	if err != nil {
+		return nil, 0, err
+	}
+	if !resolution.Member {
+		return nil, 0, store.ErrNotFound
+	}
+	if len(resolution.Candidates) == 0 {
+		return []VerifyProblem{{Hash: hash, Problem: "missing"}}, 0, nil
+	}
+	problems := make([]VerifyProblem, 0)
+	var totalRead int64
+	for _, location := range resolution.Candidates {
+		storeID := string(location.StoreID)
+		if storeID != v.primaryID {
+			observation, observed := v.observations[storeID]
+			if !observed {
+				observation = v.blobs.RefreshStore(ctx, storeID)
+				v.observations[storeID] = observation
+			}
+			if observation.State != blob.StoreOnline {
+				problems = append(problems, VerifyProblem{
+					Hash: hash, StoreID: storeID, Problem: "unreadable",
+				})
+				continue
+			}
+		}
+		read, err := v.blobs.VerifyLocation(ctx, hash, location)
+		totalRead += read
+		if err == nil {
+			continue
+		}
+		problems = append(problems, VerifyProblem{
+			Hash: hash, StoreID: storeID,
+			Problem: classifyBlobProblem(err),
+		})
+	}
+	return problems, totalRead, nil
+}
+
 func cursorPosition(state cursor) *string {
 	if !state.Set {
 		return nil
@@ -326,31 +489,19 @@ func cursorPosition(state cursor) *string {
 	return &state.Hash
 }
 
-func checkBlob(ctx context.Context, blobs *blob.Store, hash string) (string, int64) {
-	reader, _, err := blobs.OpenStreamContext(ctx, hash)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return "missing", 0
-		}
-		return "unreadable", 0
+func classifyBlobProblem(err error) string {
+	if isContentCorruption(err) {
+		return "corrupt"
 	}
-	defer func() { _ = reader.Close() }()
-	digest := sha256.New()
-	read, err := io.Copy(digest, reader)
-	if err != nil {
-		if isContentCorruption(err) {
-			return "corrupt", read
-		}
-		return "unreadable", read
+	if errors.Is(err, packstore.ErrPhysicalMissing) || errors.Is(err, fs.ErrNotExist) {
+		return "missing"
 	}
-	if hex.EncodeToString(digest.Sum(nil)) != hash {
-		return "corrupt", read
-	}
-	return "", read
+	return "unreadable"
 }
 
 func isContentCorruption(err error) bool {
-	return errors.Is(err, packstore.ErrContentMismatch) ||
+	return errors.Is(err, packstore.ErrPhysicalCorrupt) ||
+		errors.Is(err, packstore.ErrContentMismatch) ||
 		errors.Is(err, pack.ErrTruncated) ||
 		errors.Is(err, pack.ErrChecksum) ||
 		errors.Is(err, pack.ErrCorrupt) ||

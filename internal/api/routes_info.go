@@ -21,6 +21,10 @@ func registerInfoRoute(api huma.API, d Deps) {
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
+		stores, err := storageStoreStatuses(ctx, d, false)
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
 		return &infoOutput{Body: VaultInfo{
 			VaultID: logical.VaultID, VaultPath: d.VaultRoot,
 			LiveFiles: logical.LiveFiles, LiveDirectories: logical.LiveDirectories,
@@ -33,6 +37,7 @@ func registerInfoRoute(api huma.API, d Deps) {
 				PackedBlobs: physical.PackedBlobs, PackedRawBytes: physical.PackedRawBytes,
 				PackedStoredBytes: physical.PackedStoredBytes,
 				DeadPackedBytes:   physical.DeadPackedBytes,
+				Stores:            stores,
 			},
 		}}, nil
 	})

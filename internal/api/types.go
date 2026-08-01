@@ -138,24 +138,25 @@ type VersionPruneRequest struct {
 // VersionPruneReport distinguishes released logical history from physical
 // bytes that only a later GC/repack can reclaim.
 type VersionPruneReport struct {
-	Node                     Node             `json:"node"`
-	Candidates               []ContentVersion `json:"candidates"`
-	DependencyRetained       []ContentVersion `json:"dependency_retained"`
-	Checkpoint               *ContentVersion  `json:"checkpoint,omitempty"`
-	Cutoff                   string           `json:"cutoff,omitempty"`
-	LogicalBytes             int64            `json:"logical_bytes" minimum:"0"`
-	UniqueBlobs              int              `json:"unique_blobs" minimum:"0"`
-	SharedBlobs              int              `json:"shared_blobs" minimum:"0"`
-	ReleasableBlobs          int              `json:"releasable_blobs" minimum:"0"`
-	ReleasableBytes          int64            `json:"releasable_bytes" minimum:"0"`
-	LooseBlobsPendingGC      int              `json:"loose_blobs_pending_gc" minimum:"0"`
-	LooseBytesPendingGC      int64            `json:"loose_bytes_pending_gc" minimum:"0"`
-	PackedBlobsPendingRepack int              `json:"packed_blobs_pending_repack" minimum:"0"`
-	PackedBytesPendingRepack int64            `json:"packed_bytes_pending_repack" minimum:"0"`
-	DeletedVersions          int              `json:"deleted_versions" minimum:"0"`
-	CheckpointRequired       bool             `json:"checkpoint_required"`
-	Changed                  bool             `json:"changed"`
-	Run                      bool             `json:"run"`
+	Node                         Node             `json:"node"`
+	Candidates                   []ContentVersion `json:"candidates"`
+	DependencyRetained           []ContentVersion `json:"dependency_retained"`
+	Checkpoint                   *ContentVersion  `json:"checkpoint,omitempty"`
+	Cutoff                       string           `json:"cutoff,omitempty"`
+	LogicalBytes                 int64            `json:"logical_bytes" minimum:"0"`
+	UniqueBlobs                  int              `json:"unique_blobs" minimum:"0"`
+	SharedBlobs                  int              `json:"shared_blobs" minimum:"0"`
+	ReleasableBlobs              int              `json:"releasable_blobs" minimum:"0"`
+	ReleasableBytes              int64            `json:"releasable_bytes" minimum:"0"`
+	LooseBlobsPendingGC          int              `json:"loose_blobs_pending_gc" minimum:"0"`
+	LooseBytesPendingGC          int64            `json:"loose_bytes_pending_gc" minimum:"0"`
+	PackedBlobsPendingRepack     int              `json:"packed_blobs_pending_repack" minimum:"0"`
+	PackedBytesPendingRepack     int64            `json:"packed_bytes_pending_repack" minimum:"0"`
+	MixedBlobsPendingMaintenance int              `json:"mixed_blobs_pending_maintenance" minimum:"0"`
+	DeletedVersions              int              `json:"deleted_versions" minimum:"0"`
+	CheckpointRequired           bool             `json:"checkpoint_required"`
+	Changed                      bool             `json:"changed"`
+	Run                          bool             `json:"run"`
 }
 
 // ContentReference identifies one stable node/version pair that retains a
@@ -586,14 +587,106 @@ type GCReport struct {
 // StorageStatus reports physical loose inventory and catalog-authorized pack
 // usage. PackStoredBytes includes both live and logically dead payload bytes.
 type StorageStatus struct {
-	LooseBlobs        int   `json:"loose_blobs"`
-	LooseBytes        int64 `json:"loose_bytes"`
-	Packs             int   `json:"packs"`
-	PackStoredBytes   int64 `json:"pack_stored_bytes"`
-	PackedBlobs       int64 `json:"packed_blobs"`
-	PackedRawBytes    int64 `json:"packed_raw_bytes"`
-	PackedStoredBytes int64 `json:"packed_stored_bytes"`
-	DeadPackedBytes   int64 `json:"dead_packed_bytes"`
+	LooseBlobs        int                  `json:"loose_blobs"`
+	LooseBytes        int64                `json:"loose_bytes"`
+	Packs             int                  `json:"packs"`
+	PackStoredBytes   int64                `json:"pack_stored_bytes"`
+	PackedBlobs       int64                `json:"packed_blobs"`
+	PackedRawBytes    int64                `json:"packed_raw_bytes"`
+	PackedStoredBytes int64                `json:"packed_stored_bytes"`
+	DeadPackedBytes   int64                `json:"dead_packed_bytes"`
+	Stores            []StorageStoreStatus `json:"stores"`
+}
+
+// StorageStoreStatus is the non-secret physical authority and health summary
+// safe for both master-key and read-only browser clients.
+type StorageStoreStatus struct {
+	ID                   string `json:"id" format:"uuid"`
+	Name                 string `json:"name"`
+	Kind                 string `json:"kind"`
+	Role                 string `json:"role"`
+	Lifecycle            string `json:"lifecycle"`
+	State                string `json:"state"`
+	Priority             int    `json:"priority"`
+	AuthoritativeObjects int64  `json:"authoritative_objects"`
+	LogicalBytes         int64  `json:"logical_bytes"`
+	StoredBytes          int64  `json:"stored_bytes"`
+	PackCount            int64  `json:"pack_count"`
+	DeadPackedBytes      int64  `json:"dead_packed_bytes"`
+	SoleAuthorityObjects int64  `json:"sole_authority_objects"`
+	AffectedDocuments    int64  `json:"affected_documents"`
+	UnreadableObjects    int64  `json:"unreadable_objects"`
+	ObservedAt           string `json:"observed_at,omitempty"`
+}
+
+// BlobStore exposes one catalog identity to authenticated storage
+// administration. Binding is a config profile name, never its path, endpoint,
+// or credentials.
+type BlobStore struct {
+	StorageStoreStatus
+
+	Binding        string `json:"binding"`
+	OwnershipEpoch string `json:"ownership_epoch" format:"uuid"`
+	Detail         string `json:"detail,omitempty"`
+	CreatedAt      string `json:"created_at"`
+}
+
+// BlobStorePreview is a short-lived exact registration plan.
+type BlobStorePreview struct {
+	Store        BlobStore `json:"store"`
+	MarkerAction string    `json:"marker_action"`
+	Takeover     bool      `json:"takeover"`
+	PreviewToken string    `json:"preview_token"`
+	ExpiresAt    string    `json:"expires_at"`
+}
+
+type StoragePlacementPreview struct {
+	PlanDigest          string `json:"plan_digest"`
+	TargetNodeID        int64  `json:"target_node_id"`
+	SourceStoreID       string `json:"source_store_id" format:"uuid"`
+	DestinationStoreID  string `json:"destination_store_id" format:"uuid"`
+	Objects             int64  `json:"objects"`
+	Versions            int64  `json:"versions"`
+	LogicalBytes        int64  `json:"logical_bytes"`
+	TransferBytes       int64  `json:"transfer_bytes"`
+	ReadBackBytes       int64  `json:"read_back_bytes"`
+	RemoteEgressBytes   int64  `json:"remote_egress_bytes"`
+	ScratchBytes        int64  `json:"scratch_bytes"`
+	AlreadyPresentBytes int64  `json:"already_present_bytes"`
+	RetirableBytes      int64  `json:"retirable_bytes"`
+	SharedBytes         int64  `json:"shared_bytes"`
+	AuditPinnedBytes    int64  `json:"audit_pinned_bytes"`
+	PackBlockedBytes    int64  `json:"pack_blocked_bytes"`
+	PreviewToken        string `json:"preview_token"`
+	ExpiresAt           string `json:"expires_at"`
+}
+
+type StorageRecoveryPreview struct {
+	Kind               string   `json:"kind"`
+	PlanDigest         string   `json:"plan_digest"`
+	Hash               string   `json:"hash"`
+	Bytes              int64    `json:"bytes"`
+	SourceStoreIDs     []string `json:"source_store_ids"`
+	DestinationStoreID string   `json:"destination_store_id" format:"uuid"`
+	PreviewToken       string   `json:"preview_token"`
+	ExpiresAt          string   `json:"expires_at"`
+}
+
+type StorageOperation struct {
+	ID               string `json:"id" format:"uuid"`
+	Kind             string `json:"kind"`
+	State            string `json:"state"`
+	PlanDigest       string `json:"plan_digest"`
+	TotalObjects     int64  `json:"total_objects"`
+	CompletedObjects int64  `json:"completed_objects"`
+	CopiedObjects    int64  `json:"copied_objects"`
+	CopiedBytes      int64  `json:"copied_bytes"`
+	CancelRequested  bool   `json:"cancel_requested"`
+	Error            string `json:"error,omitempty"`
+	Receipt          any    `json:"receipt,omitempty"`
+	CreatedAt        string `json:"created_at"`
+	UpdatedAt        string `json:"updated_at"`
+	FinishedAt       string `json:"finished_at,omitempty"`
 }
 
 // VaultInfo identifies the selected vault and summarizes its logical and
@@ -651,6 +744,7 @@ type StorageRepackReport struct {
 // VerifyProblem flags one blob whose content didn't check out.
 type VerifyProblem struct {
 	Hash    string `json:"hash"`
+	StoreID string `json:"store_id,omitempty" format:"uuid"`
 	Problem string `json:"problem" enum:"missing,corrupt,unreadable"`
 }
 
@@ -664,11 +758,15 @@ type VerifyReport struct {
 // Job is the observable state of one daemon-owned background task. Names are
 // stable within a daemon run and terminal records remain visible until restart.
 type Job struct {
-	Name       string `json:"name"`
-	Status     string `json:"status" enum:"running,completed,failed,cancelled"`
-	StartedAt  string `json:"started_at"`
-	FinishedAt string `json:"finished_at,omitempty"`
-	Error      string `json:"error,omitempty"`
+	Name             string `json:"name"`
+	Status           string `json:"status" enum:"queued,running,completed,failed,cancelled"`
+	StartedAt        string `json:"started_at"`
+	FinishedAt       string `json:"finished_at,omitempty"`
+	Error            string `json:"error,omitempty"`
+	OperationID      string `json:"operation_id,omitempty" format:"uuid"`
+	Kind             string `json:"kind,omitempty"`
+	CompletedObjects int64  `json:"completed_objects,omitempty"`
+	TotalObjects     int64  `json:"total_objects,omitempty"`
 }
 
 // JobList is returned as an object so the contract can gain aggregate state
@@ -853,14 +951,15 @@ func fromStoreVersionPruneResult(result store.VersionPruneResult) VersionPruneRe
 		DependencyRetained: []ContentVersion{}, Cutoff: result.Cutoff,
 		LogicalBytes: result.LogicalBytes, UniqueBlobs: result.UniqueBlobs,
 		SharedBlobs: result.SharedBlobs, ReleasableBlobs: result.ReleasableBlobs,
-		ReleasableBytes:          result.ReleasableBytes,
-		LooseBlobsPendingGC:      result.LooseBlobsPendingGC,
-		LooseBytesPendingGC:      result.LooseBytesPendingGC,
-		PackedBlobsPendingRepack: result.PackedBlobsPendingRepack,
-		PackedBytesPendingRepack: result.PackedBytesPendingRepack,
-		DeletedVersions:          result.DeletedVersions,
-		CheckpointRequired:       result.CheckpointRequired,
-		Changed:                  result.Changed, Run: result.Run,
+		ReleasableBytes:              result.ReleasableBytes,
+		LooseBlobsPendingGC:          result.LooseBlobsPendingGC,
+		LooseBytesPendingGC:          result.LooseBytesPendingGC,
+		PackedBlobsPendingRepack:     result.PackedBlobsPendingRepack,
+		PackedBytesPendingRepack:     result.PackedBytesPendingRepack,
+		MixedBlobsPendingMaintenance: result.MixedBlobsPendingMaintenance,
+		DeletedVersions:              result.DeletedVersions,
+		CheckpointRequired:           result.CheckpointRequired,
+		Changed:                      result.Changed, Run: result.Run,
 	}
 	for _, version := range result.Candidates {
 		report.Candidates = append(report.Candidates, fromStoreContentVersion(version))

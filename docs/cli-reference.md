@@ -394,7 +394,11 @@ batches when applying a larger exact set.
 Human and JSON reports separate selected versions and logical bytes from
 physical consequences: shared blobs remain reachable, loose unreferenced blobs
 wait for `docbank gc --run`, and dead packed payload waits for GC followed by
-`docbank storage repack`. Pruning itself never claims to reclaim disk space.
+`docbank storage repack`. When the same blob has loose and packed locations in
+different stores, the report includes both consequences and identifies the
+overlap rather than counting the blob twice as releasable. Physical byte totals
+cover every affected authoritative location. Pruning itself never claims to
+reclaim disk space.
 Deleted version IDs stop resolving. Backups made afterward preserve that
 result, while snapshots made before pruning still contain their earlier state.
 
@@ -764,16 +768,45 @@ never races a concurrent import (see
 [Ownership & Concurrency](architecture/locking.md)).
 GC does not invoke repack, and no automatic GC/repack scheduler exists today.
 
+## docbank storage
+
+```text
+docbank storage list [--refresh] [--json]
+docbank storage status [store] [--refresh] [--json]
+docbank storage add <name> --binding <profile> [--takeover]
+docbank storage add --run --token <preview-token>
+docbank storage place <path|id:N> --to <store> [--from <store>] [--move]
+docbank storage place --run --token <preview-token>
+docbank storage evacuate <store>
+docbank storage evacuate --run --token <preview-token>
+docbank storage repair <sha256> --store <store>
+docbank storage repair --run --token <preview-token>
+docbank storage salvage <sha256> --store <store>
+docbank storage salvage --run --token <preview-token>
+docbank storage detach <store>
+docbank storage unregister <store>
+```
+
+Secondary-store registration, placement, evacuation, repair, and salvage use
+preview tokens before starting durable jobs. Canonical UUID selectors are
+identity-exclusive. Bindings come from daemon-startup configuration and never
+expose paths, endpoints, credentials, or ownership epochs to browser sessions.
+See [Multi-store Storage](usage/storage.md) for lifecycle, fencing, audit
+pinning, remote-only acknowledgement, and recovery behavior.
+
 ## docbank storage status
 
 ```
-docbank storage status [--json]
+docbank storage status [store] [--refresh] [--json]
 ```
 
 Reports the daemon's physical storage inventory: logical loose blob count and
 physical loose bytes (raw and zstd files), live packed blobs and their
 stored/raw bytes, pack count, and immutable packed
-bytes pending repack. The command is read-only. `--json` emits the same fields
+bytes pending repack. It also reports each store's role, kind, observed state,
+catalog-authorized objects, sole copies, affected live documents, and objects
+whose every authorized location is currently offline. The command is read-only.
+`--json` emits the same fields
 as the authenticated `GET /api/v1/storage` endpoint.
 
 ## docbank storage pack
@@ -848,6 +881,7 @@ docbank backup list [--repo <dir>] [--json]
 docbank backup verify [snapshot] [--repo <dir>] [--all] [--quick] [--jobs <n>]
                       [--force-unlock] [--progress auto|bar|plain] [--json]
 docbank backup restore [snapshot] --target <dir> [--repo <dir>] [--overwrite]
+                       [--store-map <owner-private-file>]
                        [--jobs <n>] [--force-unlock]
                        [--progress auto|bar|plain] [--json]
 ```

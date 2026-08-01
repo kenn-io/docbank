@@ -1309,11 +1309,11 @@ func (replay *auditedHistoryReplay) validateContentTransitionSource(
 	if err := requireAuditDigest(post, "blob_hash", sourceHash); err != nil {
 		return errors.New("content revert bytes do not match its source")
 	}
-	sourceSize, err := auditUnsignedField(source, "size")
+	sourceSize, err := auditUnsignedField(source, metadataSizeField)
 	if err != nil {
 		return err
 	}
-	if err := requireAuditUnsigned(post, "size", sourceSize); err != nil {
+	if err := requireAuditUnsigned(post, metadataSizeField, sourceSize); err != nil {
 		return errors.New("content revert size does not match its source")
 	}
 	sourceMIME, err := auditField(source, "media_type")

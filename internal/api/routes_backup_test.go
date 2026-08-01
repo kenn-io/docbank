@@ -374,4 +374,12 @@ func TestBackupRestoreProgressProofAndConfinement(t *testing.T) {
 		map[string]any{"target": "relative-target"})
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 	assert.Contains(t, body, `"code":"validation"`)
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/restore", nil,
+		map[string]any{
+			"target": target, "snapshot_id": snapshot.ID,
+			"overwrite": true, "store_map": "relative-map.toml",
+		})
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+	assert.Contains(t, body, `"code":"restore_store_map_invalid"`)
 }

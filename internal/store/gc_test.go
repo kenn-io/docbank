@@ -78,7 +78,7 @@ func TestBlobInventoryResumeQueriesUseIndexedHashRange(t *testing.T) {
 		{name: "unreachable inventory", query: unreachableBlobScanQuery,
 			index: "sqlite_autoindex_blobs_1", rangeClause: "(hash>?)"},
 		{name: "pack mapping inventory", query: unreferencedMappingScanQuery,
-			index: "sqlite_autoindex_blob_pack_index_1", rangeClause: "(blob_hash>?)"},
+			index: "blob_pack_entries_store_hash", rangeClause: "(store_id=? AND blob_hash>?)"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -195,11 +195,8 @@ func TestUnreferencedMappingScanBoundsExaminedLiveRun(t *testing.T) {
 		t.Run(fmt.Sprintf("live=%d", liveCount), func(t *testing.T) {
 			s := newTestStore(t)
 			packID := pack.NewPackID()
-			_, err := s.db.ExecContext(t.Context(), `
-				INSERT INTO blob_packs (pack_id, entry_count, stored_bytes, created_at)
-				VALUES (?, ?, ?, ?)`, packID, liveCount+1, (liveCount+1)*5,
+			addTestPack(t, s, packID, int64(liveCount+1), int64((liveCount+1)*5),
 				"2026-01-01T00:00:00.000000000Z")
-			require.NoError(t, err)
 			tx, err := s.db.BeginTx(t.Context(), nil)
 			require.NoError(t, err)
 			for i := 1; i <= liveCount; i++ {
@@ -209,17 +206,17 @@ func TestUnreferencedMappingScanBoundsExaminedLiveRun(t *testing.T) {
 					hash, "2026-01-01T00:00:00.000000000Z")
 				require.NoError(t, err)
 				_, err = tx.ExecContext(t.Context(), `
-					INSERT INTO blob_pack_index
-						(blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
-					VALUES (?, ?, ?, 5, 1, 0, 0)`, hash, packID,
+					INSERT INTO blob_pack_entries
+						(blob_hash, store_id, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
+					VALUES (?, ?, ?, ?, 5, 1, 0, 0)`, hash, s.primaryStoreID, packID,
 					pack.MinEntryOffset+int64(i-1)*32)
 				require.NoError(t, err)
 			}
 			dangling := "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 			_, err = tx.ExecContext(t.Context(), `
-				INSERT INTO blob_pack_index
-					(blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
-				VALUES (?, ?, ?, 5, 1, 0, 0)`, dangling, packID,
+				INSERT INTO blob_pack_entries
+					(blob_hash, store_id, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
+				VALUES (?, ?, ?, ?, 5, 1, 0, 0)`, dangling, s.primaryStoreID, packID,
 				pack.MinEntryOffset+int64(liveCount)*32)
 			require.NoError(t, err)
 			require.NoError(t, tx.Commit())
@@ -298,15 +295,8 @@ func TestSparseRepackPageUsesCanonicalLiveHashKeyset(t *testing.T) {
 			hash, "2026-01-01T00:00:00Z")
 		require.NoError(t, err)
 		packID := pack.NewPackID()
-		_, err = s.db.ExecContext(ctx, `
-			INSERT INTO blob_packs (pack_id, entry_count, stored_bytes, created_at)
-			VALUES (?, 3, 30, ?)`, packID, "2026-01-01T00:00:00.000000000Z")
-		require.NoError(t, err)
-		_, err = s.db.ExecContext(ctx, `
-			INSERT INTO blob_pack_index
-				(blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
-			VALUES (?, ?, ?, 5, 1, 0, 0)`, hash, packID, pack.MinEntryOffset+int64(i)*32)
-		require.NoError(t, err)
+		addTestPack(t, s, packID, 3, 30, "2026-01-01T00:00:00.000000000Z")
+		addTestPackEntry(t, s, hash, packID, pack.MinEntryOffset+int64(i)*32, 5, 1)
 	}
 
 	first, more, err := s.SparseRepackPage(ctx, "", 2,
@@ -329,19 +319,12 @@ func TestUnreferencedPackMappingsPageIsCanonicalAndBounded(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
 	packID := pack.NewPackID()
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO blob_packs (pack_id, entry_count, stored_bytes, created_at)
-		VALUES (?, 4, 40, ?)`, packID, "2026-01-01T00:00:00.000000000Z")
-	require.NoError(t, err)
+	addTestPack(t, s, packID, 4, 40, "2026-01-01T00:00:00.000000000Z")
 	for i, hash := range []string{
 		fmt.Sprintf("%064x", 40), fmt.Sprintf("%064x", 10),
 		fmt.Sprintf("%064x", 30), fmt.Sprintf("%064x", 20),
 	} {
-		_, err = s.db.ExecContext(ctx, `
-			INSERT INTO blob_pack_index
-				(blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
-			VALUES (?, ?, ?, 5, 1, 0, 0)`, hash, packID, pack.MinEntryOffset+int64(i)*32)
-		require.NoError(t, err)
+		addTestPackEntry(t, s, hash, packID, pack.MinEntryOffset+int64(i)*32, 5, 1)
 	}
 
 	first, err := s.UnreferencedPackMappingsPage(ctx, nil, 2)
@@ -368,10 +351,7 @@ func TestUnreferencedPackMappingsPageIsCanonicalAndBounded(t *testing.T) {
 func TestDeadPackUsagePageIsBounded(t *testing.T) {
 	s := newTestStore(t)
 	for range 4 {
-		_, err := s.db.ExecContext(t.Context(), `
-			INSERT INTO blob_packs (pack_id, entry_count, stored_bytes, created_at)
-			VALUES (?, 1, 20, ?)`, pack.NewPackID(), "2026-01-01T00:00:00.000000000Z")
-		require.NoError(t, err)
+		addTestPack(t, s, pack.NewPackID(), 1, 20, "2026-01-01T00:00:00.000000000Z")
 	}
 
 	page, more, err := s.DeadPackUsagePage(t.Context(), 3)
@@ -391,15 +371,8 @@ func TestSparseRepackScanBoundsExaminedIneligiblePacks(t *testing.T) {
 					`INSERT INTO blobs (hash, size, created_at) VALUES (?, 1, ?)`,
 					hash, "2026-01-01T00:00:00.000000000Z")
 				require.NoError(t, err)
-				_, err = s.db.ExecContext(t.Context(), `
-					INSERT INTO blob_packs (pack_id, entry_count, stored_bytes, created_at)
-					VALUES (?, 1, 5, ?)`, packID, "2026-01-01T00:00:00.000000000Z")
-				require.NoError(t, err)
-				_, err = s.db.ExecContext(t.Context(), `
-					INSERT INTO blob_pack_index
-						(blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
-					VALUES (?, ?, ?, 5, 1, 0, 0)`, hash, packID, pack.MinEntryOffset)
-				require.NoError(t, err)
+				addTestPack(t, s, packID, 1, 5, "2026-01-01T00:00:00.000000000Z")
+				addTestPackEntry(t, s, hash, packID, pack.MinEntryOffset, 5, 1)
 			}
 
 			page, err := s.SparseRepackScanPage(t.Context(), "", "", 4,
@@ -429,15 +402,8 @@ func TestSparseRepackScanIncludesExactlyHalfLiveEvenPack(t *testing.T) {
 		`INSERT INTO blobs (hash, size, created_at) VALUES (?, 1, ?)`,
 		hash, "2026-01-01T00:00:00.000000000Z")
 	require.NoError(t, err)
-	_, err = s.db.ExecContext(t.Context(), `
-		INSERT INTO blob_packs (pack_id, entry_count, stored_bytes, created_at)
-		VALUES (?, 2, 10, ?)`, packID, "2026-01-01T00:00:00.000000000Z")
-	require.NoError(t, err)
-	_, err = s.db.ExecContext(t.Context(), `
-		INSERT INTO blob_pack_index
-			(blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
-		VALUES (?, ?, ?, 5, 1, 0, 0)`, hash, packID, pack.MinEntryOffset)
-	require.NoError(t, err)
+	addTestPack(t, s, packID, 2, 10, "2026-01-01T00:00:00.000000000Z")
+	addTestPackEntry(t, s, hash, packID, pack.MinEntryOffset, 5, 1)
 
 	page, err := s.SparseRepackScanPage(t.Context(), "", "", 1,
 		time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC), time.Nanosecond, 1)
@@ -460,15 +426,8 @@ func TestSparseRepackScanKeyStaysStableWhenEarlierPackLosesLiveness(t *testing.T
 			`INSERT INTO blobs (hash, size, created_at) VALUES (?, 1, ?)`,
 			hashes[i], "2026-01-01T00:00:00.000000000Z")
 		require.NoError(t, err)
-		_, err = s.db.ExecContext(t.Context(), `
-			INSERT INTO blob_packs (pack_id, entry_count, stored_bytes, created_at)
-			VALUES (?, 3, 30, ?)`, packID, "2026-01-01T00:00:00.000000000Z")
-		require.NoError(t, err)
-		_, err = s.db.ExecContext(t.Context(), `
-			INSERT INTO blob_pack_index
-				(blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
-			VALUES (?, ?, ?, 5, 1, 0, 0)`, hashes[i], packID, pack.MinEntryOffset)
-		require.NoError(t, err)
+		addTestPack(t, s, packID, 3, 30, "2026-01-01T00:00:00.000000000Z")
+		addTestPackEntry(t, s, hashes[i], packID, pack.MinEntryOffset, 5, 1)
 	}
 
 	first, err := s.SparseRepackScanPage(t.Context(), "", "", 1,
@@ -505,21 +464,9 @@ func TestPackScanHashDoesNotChangeAfterPackCreation(t *testing.T) {
 			hash, "2026-01-01T00:00:00.000000000Z")
 		require.NoError(t, err)
 	}
-	_, err := s.db.ExecContext(t.Context(), `
-		INSERT INTO blob_packs (pack_id, entry_count, stored_bytes, created_at, scan_hash)
-		VALUES (?, 2, 10, ?, ?)`, packID, "2026-01-01T00:00:00.000000000Z", originalHash)
-	require.NoError(t, err)
-	_, err = s.db.ExecContext(t.Context(), `
-		INSERT INTO blob_pack_index
-			(blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
-		VALUES (?, ?, ?, 5, 1, 0, 0)`, originalHash, packID, pack.MinEntryOffset)
-	require.NoError(t, err)
-
-	_, err = s.db.ExecContext(t.Context(), `
-		INSERT INTO blob_pack_index
-			(blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
-		VALUES (?, ?, ?, 5, 1, 0, 0)`, laterHash, packID, pack.MinEntryOffset+32)
-	require.NoError(t, err)
+	addTestPack(t, s, packID, 2, 10, "2026-01-01T00:00:00.000000000Z", originalHash)
+	addTestPackEntry(t, s, originalHash, packID, pack.MinEntryOffset, 5, 1)
+	addTestPackEntry(t, s, laterHash, packID, pack.MinEntryOffset+32, 5, 1)
 
 	var scanHash string
 	require.NoError(t, s.db.QueryRowContext(t.Context(),
@@ -556,7 +503,7 @@ func TestRepackSelectionQueriesUseSummaryIndexes(t *testing.T) {
 			require.NoError(t, rows.Err())
 			plan := strings.Join(details, "\n")
 			assert.Contains(t, plan, test.wantIndex)
-			assert.NotContains(t, plan, "blob_pack_index")
+			assert.NotContains(t, plan, "blob_pack_entries")
 			assert.NotContains(t, plan, "USE TEMP B-TREE")
 		})
 	}
@@ -618,9 +565,30 @@ func TestUnreachableBlobs(t *testing.T) {
 func TestDeleteBlobRows(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
+	packID := pack.NewPackID()
 
 	_, err := s.db.Exec(`INSERT INTO blobs (hash, size, created_at) VALUES (?, 1, ?)`,
 		fakeHash("a1"), "2026-01-01T00:00:00Z")
+	require.NoError(t, err)
+	_, err = s.db.Exec(`
+		INSERT INTO blob_packs(store_id,pack_id,entry_count,stored_bytes,created_at)
+		VALUES(?,?,1,32,?)`,
+		s.primaryStoreID, packID, "2026-01-01T00:00:00Z",
+	)
+	require.NoError(t, err)
+	_, err = s.db.Exec(`
+		INSERT INTO blob_pack_entries(
+			blob_hash,store_id,pack_id,pack_offset,stored_len,raw_len,flags,crc32c
+		) VALUES(?,?,?,?,1,1,0,0)`,
+		fakeHash("a1"), s.primaryStoreID, packID, pack.MinEntryOffset,
+	)
+	require.NoError(t, err)
+	_, err = s.db.Exec(`
+		INSERT INTO blob_locations(
+			blob_hash,store_id,generation,kind,stored_size,pack_eligible
+		) VALUES(?,?,?,'packed',1,1)`,
+		fakeHash("a1"), s.primaryStoreID, "30000000-0000-4000-8000-000000000001",
+	)
 	require.NoError(t, err)
 	_, err = s.db.Exec(
 		`INSERT INTO extracted_text (blob_hash, extractor, extractor_version, status, attempts, text, extracted_at)
@@ -640,6 +608,17 @@ func TestDeleteBlobRows(t *testing.T) {
 	assert.Equal(t, 0, n)
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM content_fts`).Scan(&n))
 	assert.Equal(t, 0, n)
+	require.NoError(t, s.db.QueryRow(
+		`SELECT COUNT(*) FROM blob_pack_entries WHERE blob_hash=?`,
+		fakeHash("a1"),
+	).Scan(&n))
+	assert.Equal(t, 1, n, "dead packed entries remain cataloged until repack")
+	var liveEntries int64
+	require.NoError(t, s.db.QueryRow(`
+		SELECT live_entries FROM blob_packs WHERE store_id=? AND pack_id=?`,
+		s.primaryStoreID, packID,
+	).Scan(&liveEntries))
+	assert.Zero(t, liveEntries)
 }
 
 func TestAllBlobs(t *testing.T) {

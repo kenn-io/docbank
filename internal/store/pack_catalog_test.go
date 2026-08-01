@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 
@@ -45,11 +46,14 @@ func TestPackAdoptionClearsLooseAuthority(t *testing.T) {
 	assert.Equal(t, PhysicalContent{
 		Kind: "packed", Encoding: "raw", LogicalBytes: 20, StoredBytes: 9, PackEligible: true,
 	}, physical)
-	var encoding, stored any
-	require.NoError(t, s.db.QueryRow(`SELECT loose_encoding, loose_stored_size FROM blobs WHERE hash = ?`,
-		hash.String()).Scan(&encoding, &stored))
+	var kind string
+	var encoding any
+	require.NoError(t, s.db.QueryRow(`
+		SELECT kind, encoding FROM blob_locations
+		WHERE blob_hash = ? AND store_id = ?`,
+		hash.String(), s.primaryStoreID).Scan(&kind, &encoding))
+	assert.Equal(t, blobLocationKindPacked, kind)
 	assert.Nil(t, encoding)
-	assert.Nil(t, stored)
 
 	// A later logical reference through the legacy raw-default API must not
 	// overwrite the existing packed authority.
@@ -58,6 +62,31 @@ func TestPackAdoptionClearsLooseAuthority(t *testing.T) {
 	after, err := s.PhysicalContent(t.Context(), hash.String())
 	require.NoError(t, err)
 	assert.Equal(t, physical, after)
+}
+
+func TestDeletingPackRevokesItsPackedLocations(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	hash, err := packstore.ParseHash(fakeHash("d1"))
+	require.NoError(t, err)
+	_, err = s.CreateFile(ctx, s.RootID(), "packed.txt", hash.String(), 20, "text/plain")
+	require.NoError(t, err)
+	packID := pack.NewPackID()
+	catalog := NewPackCatalog(s)
+	require.NoError(t, catalog.RecordPack(ctx, packstore.PackRecord{
+		PackID: packID, EntryCount: 1, StoredBytes: 32,
+		CreatedAt: time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC),
+	}, []packstore.Adoption{{Entry: packstore.IndexEntry{
+		Hash: hash, PackID: packID, Offset: pack.MinEntryOffset,
+		StoredLen: 9, RawLen: 20,
+	}}}))
+
+	require.NoError(t, catalog.DeletePackRecord(ctx, packID))
+
+	_, err = s.PhysicalContent(ctx, hash.String())
+	require.ErrorIs(t, err, ErrPhysicalAuthorityMissing)
+	_, err = catalog.Resolve(ctx, hash)
+	require.ErrorIs(t, err, ErrPhysicalAuthorityMissing)
 }
 
 func TestLogicalWritesRejectMissingPhysicalAuthority(t *testing.T) {
@@ -198,7 +227,7 @@ func TestRepairBlobAuthorityPreservesReferences(t *testing.T) {
 	assert.Equal(t, int64(2), versions)
 	var mappings int64
 	require.NoError(t, s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM blob_pack_index WHERE blob_hash = ?`, hash).Scan(&mappings))
+		`SELECT COUNT(*) FROM blob_pack_entries WHERE blob_hash = ?`, hash).Scan(&mappings))
 	assert.Zero(t, mappings)
 }
 
@@ -224,10 +253,12 @@ func (h *docbankPackHarness) Catalog() packstore.Catalog { return NewPackCatalog
 func (h *docbankPackHarness) SetMember(hash packstore.Hash, member bool) {
 	h.t.Helper()
 	if member {
-		_, err := h.store.db.Exec(`INSERT OR IGNORE INTO blobs
-			(hash, size, created_at, loose_encoding, loose_stored_size, pack_eligible)
-			VALUES (?, 13, ?, 'raw', 13, 1)`,
-			hash.String(), nowRFC3339())
+		err := h.store.withStorageTx(h.t.Context(), func(tx *sql.Tx) error {
+			return h.store.EnsureBlobTx(tx, hash.String(), 13, BlobPhysical{
+				Encoding: looseEncodingRaw, StoredBytes: 13, PackEligible: true,
+				Created: true,
+			})
+		})
 		require.NoError(h.t, err)
 		return
 	}
@@ -237,26 +268,25 @@ func (h *docbankPackHarness) SetMember(hash packstore.Hash, member bool) {
 
 func (h *docbankPackHarness) SetCandidate(candidate packstore.Candidate) {
 	h.t.Helper()
-	_, err := h.store.db.Exec(`UPDATE blobs SET size = ?, loose_stored_size = ?,
-		pack_eligible = CASE WHEN ? <= ? THEN 1 ELSE 0 END WHERE hash = ?`,
-		candidate.Size, candidate.Size, candidate.Size, maxPackEligibleBytes, candidate.Hash.String())
+	_, err := h.store.db.Exec(`UPDATE blobs SET size = ? WHERE hash = ?`,
+		candidate.Size, candidate.Hash.String())
+	require.NoError(h.t, err)
+	_, err = h.store.db.Exec(`
+		UPDATE blob_locations
+		SET stored_size = ?, pack_eligible = CASE WHEN ? <= ? THEN 1 ELSE 0 END
+		WHERE blob_hash = ? AND store_id = ?`,
+		candidate.Size, candidate.Size, maxPackEligibleBytes,
+		candidate.Hash.String(), h.store.primaryStoreID)
 	require.NoError(h.t, err)
 }
 
 func (h *docbankPackHarness) PutPack(record packstore.PackRecord, entries []packstore.IndexEntry) {
 	h.t.Helper()
-	_, err := h.store.db.Exec(`
-		INSERT INTO blob_packs (pack_id, entry_count, stored_bytes, created_at) VALUES (?, ?, ?, ?)`,
-		record.PackID, record.EntryCount, record.StoredBytes, record.CreatedAt.UTC().Format(timestampLayout))
-	require.NoError(h.t, err)
+	adoptions := make([]packstore.Adoption, 0, len(entries))
 	for _, entry := range entries {
-		_, err := h.store.db.Exec(`
-			INSERT INTO blob_pack_index
-				(blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
-			VALUES (?, ?, ?, ?, ?, ?, ?)`, entry.Hash.String(), entry.PackID, entry.Offset,
-			entry.StoredLen, entry.RawLen, entry.Flags, entry.CRC32C)
-		require.NoError(h.t, err)
+		adoptions = append(adoptions, packstore.Adoption{Entry: entry})
 	}
+	require.NoError(h.t, NewPackCatalog(h.store).RecordPack(h.t.Context(), record, adoptions))
 }
 
 func (h *docbankPackHarness) Snapshot() packstoretest.CatalogState {

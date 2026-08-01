@@ -630,7 +630,9 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM audit_scopes)
 		    + (SELECT COUNT(*) FROM audit_baselines)
 		    + (SELECT COUNT(*) FROM audit_memberships),
-		  (SELECT COUNT(*) FROM blob_packs) + (SELECT COUNT(*) FROM blob_pack_index)
+		  (SELECT COUNT(*) FROM blob_locations)
+		    + (SELECT COUNT(*) FROM blob_packs)
+		    + (SELECT COUNT(*) FROM blob_pack_entries)
 	`).Scan(&nodes, &other, &packs); err != nil {
 		return fmt.Errorf("checking metadata import target: %w", err)
 	}
@@ -706,10 +708,25 @@ func importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw json
 		if err := validateBlobRecord(v); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO blobs(
-			hash,size,created_at,loose_encoding,loose_stored_size,pack_eligible
-		) VALUES(?,?,?,'raw',?,CASE WHEN ? <= ? THEN 1 ELSE 0 END)`,
-			v.Hash, v.Size, v.CreatedAt, v.Size, v.Size, maxPackEligibleBytes)
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO blobs(hash,size,created_at) VALUES(?,?,?)`,
+			v.Hash, v.Size, v.CreatedAt,
+		); err != nil {
+			return err
+		}
+		generation, err := blobLocationGeneration()
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO blob_locations(
+				blob_hash, store_id, generation, kind, encoding, stored_size, pack_eligible
+			)
+			SELECT ?, store_id, ?, ?, ?, ?, CASE WHEN ? <= ? THEN 1 ELSE 0 END
+			FROM blob_stores WHERE role = ?`,
+			v.Hash, generation, blobLocationKindLoose, looseEncodingRaw, v.Size,
+			v.Size, maxPackEligibleBytes, blobStoreRolePrimary,
+		)
 		return err
 	case "node":
 		var v metadataNode
@@ -849,6 +866,7 @@ func importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw json
 const (
 	metadataTypeField                     = "type"
 	metadataNodeIDField                   = "node_id"
+	metadataSizeField                     = "size"
 	auditVaultIDField                     = "vault_id"
 	auditOperationIDField                 = "operation_id"
 	auditScopeIDField                     = "scope_id"
@@ -870,12 +888,12 @@ const (
 var metadataHeaderFields = []string{metadataTypeField, "format", "version", auditVaultIDField, "node_sequence"}
 
 var metadataRequiredFields = map[string][]string{
-	"blob":                      {metadataTypeField, "hash", "size", metadataCreatedAtField},
+	"blob":                      {metadataTypeField, "hash", metadataSizeField, metadataCreatedAtField},
 	"node":                      {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", "revision", metadataCreatedAtField, "modified_at", "trashed_at", "trash_parent", "trash_name"},
-	"content_version":           {metadataTypeField, "version_id", metadataNodeIDField, "blob_hash", "size", "mime_type", auditRecordedAtField, "node_revision", "introduced_operation_id", "transition_kind", "source_version_id"},
+	"content_version":           {metadataTypeField, "version_id", metadataNodeIDField, "blob_hash", metadataSizeField, "mime_type", auditRecordedAtField, "node_revision", "introduced_operation_id", "transition_kind", "source_version_id"},
 	metadataIngestType:          {metadataTypeField, "ingest_id", "started_at", "source_kind", "source_desc"},
 	metadataProvenanceType:      {metadataTypeField, "identity", metadataNodeIDField, "ingest_id", "original_path", "original_mtime", "supersedes"},
-	metadataWatchSourceType:     {metadataTypeField, "watch_name", "source_ref", metadataNodeIDField, "blob_hash", "size"},
+	metadataWatchSourceType:     {metadataTypeField, "watch_name", "source_ref", metadataNodeIDField, "blob_hash", metadataSizeField},
 	"tag":                       {metadataTypeField, "tag_id", "name", "revision"},
 	"node_tag":                  {metadataTypeField, metadataNodeIDField, "tag_id"},
 	"extracted_text":            {metadataTypeField, "blob_hash", "extractor", "extractor_version", "status", "error", "attempts", "text", "extracted_at"},

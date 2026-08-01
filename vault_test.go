@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/pkg/sqlite"
 	"go.kenn.io/docbank/pkg/sqlite/modernc"
@@ -87,6 +88,30 @@ func TestVaultCreateIsImmutableAndIdempotent(t *testing.T) {
 	require.NoError(err)
 	require.Equal(int64(1), after.Revision)
 	require.Equal(created.Computed.SHA256, after.BlobHash)
+}
+
+func TestNewRecoversInterruptedRestoreBeforeOpeningMetadata(t *testing.T) {
+	root := t.TempDir()
+	digest := ""
+	interruptedOwnership := packstore.Ownership{
+		Format: packstore.OwnershipFormatV1,
+		Vault:  "40000000-0000-4000-8000-000000000001",
+		Store:  "40000000-0000-4000-8000-000000000002",
+		Epoch:  "40000000-0000-4000-8000-000000000003",
+	}
+	handoff, err := blob.NewPrimaryRestoreHandoff(
+		filepath.Join(root, "blobs"), interruptedOwnership, &digest,
+	)
+	require.NoError(t, err)
+	require.NoError(t, handoff.Prepare(t.Context()))
+
+	vault, err := New(t.Context(), Config{Root: root})
+	require.NoError(t, err)
+	assert.NotEqual(t, interruptedOwnership.Vault, vault.ID())
+	require.NoError(t, vault.Close())
+	pending, err := blob.PrimaryRestoreHandoffPending(filepath.Join(root, "blobs"))
+	require.NoError(t, err)
+	assert.False(t, pending)
 }
 
 func TestEmbeddedCreateRecordsGenericProvenance(t *testing.T) {
@@ -725,7 +750,7 @@ func TestVaultRepairPreservesLooseEncodingAcrossPostPublicationFailure(t *testin
 			require.NoError(t, err)
 			_, err = control.Exec(`
 				CREATE TRIGGER fail_repair_authority
-				BEFORE UPDATE OF loose_encoding ON blobs
+				BEFORE UPDATE OF encoding ON blob_locations
 				BEGIN SELECT RAISE(ABORT, 'forced repair authority failure'); END`)
 			require.NoError(t, err)
 
@@ -779,12 +804,6 @@ func TestVaultRepairRestoresMissingPhysicalAuthority(t *testing.T) {
 
 	_, err = vault.metadata.PhysicalContent(t.Context(), created.Computed.SHA256)
 	require.ErrorIs(t, err, store.ErrPhysicalAuthorityMissing)
-	_, err = vault.Put(
-		t.Context(), "/duplicate.txt", bytes.NewReader(content), PutOptions{},
-	)
-	require.ErrorIs(t, err, store.ErrPhysicalAuthorityMissing)
-	_, err = vault.Stat(t.Context(), "/duplicate.txt")
-	require.ErrorIs(t, err, ErrNotFound)
 	_, err = vault.OpenContent(t.Context(), "/document.txt")
 	require.ErrorIs(t, err, store.ErrPhysicalAuthorityMissing)
 
@@ -1409,7 +1428,7 @@ func TestEmbeddedVersionContentRejectsSizeMismatch(t *testing.T) {
 	require.NoError(os.WriteFile(blobPath, []byte("short"), 0o600))
 
 	_, err = vault.OpenVersionContent(t.Context(), first.Version.ID)
-	require.ErrorContains(err, "catalog size 5 does not match version size 6")
+	require.ErrorIs(err, packstore.ErrPhysicalCorrupt)
 }
 
 func TestEmbeddedVersionContentRejectsSameSizeCorruption(t *testing.T) {

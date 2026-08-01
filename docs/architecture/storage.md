@@ -6,8 +6,9 @@ description: The SQLite schema, blob store layout, durability discipline, and en
 # Storage
 
 A standalone vault normally lives under `~/.docbank/`: one SQLite database and
-one blob directory. The pair is the archive, but they must come from one
-coherent point in time. Do not copy a running vault as a backup; use
+one built-in primary blob directory. The pair remains the minimum complete
+archive. Optional secondary stores add verified physical locations without
+becoming a second document catalog. Do not copy a running vault as a backup; use
 `docbank backup create`, or stop the daemon before taking a manual filesystem
 snapshot. `docbank verify` proves a completed copy is internally consistent.
 
@@ -21,14 +22,15 @@ blobs/
 ```
 
 Blobs are immutable and deduplicated by SHA-256 over their decoded bytes. New
-content is first published loose. Objects of at least 4 KiB use zstd only when
+content is first published loose in the fixed local primary. Objects of at
+least 4 KiB use zstd only when
 it saves at least 10%; smaller or incompressible objects remain raw. The shared
 Kit engine supports moving either loose encoding into sealed packs without
 changing identity. Reads consult the SQLite catalog and transparently use raw
-loose, compressed loose, or packed content. Existing raw-only vaults open
-without converting their content. When a released database schema needs an
-incompatible upgrade, Docbank rebuilds only the SQLite catalog through
-deterministic JSONL; loose and packed content files stay in place.
+loose, compressed loose, or packed content from an authorized filesystem or
+S3-compatible location. When a released database schema needs an incompatible
+upgrade, Docbank rebuilds the SQLite catalog through deterministic JSONL and
+translates existing physical authority without rewriting content bytes.
 
 **Durability discipline.** `go.kenn.io/kit/packstore` streams every write to
 `blobs/tmp/`, fsyncs the file, renames it into place, then fsyncs the shard
@@ -61,12 +63,21 @@ nodes (
     trash_parent  INTEGER,                -- original location, for restore
     trash_name    TEXT
 )
-blobs          (hash PRIMARY KEY, size, created_at, loose_encoding,
-                loose_stored_size, pack_eligible)
-blob_packs     (pack_id PRIMARY KEY, entry_count, stored_bytes, created_at,
-                bounded-maintenance summary fields)
-blob_pack_index(blob_hash PRIMARY KEY, pack_id, pack_offset,
-                stored_len, raw_len, flags, crc32c)
+blobs          (hash PRIMARY KEY, size, created_at)
+blob_stores    (store_id UUID PRIMARY KEY, name UNIQUE, kind, role, lifecycle,
+                binding profile, ownership epoch, created_at)
+blob_locations(blob_hash, store_id, generation, loose/pack kind, encoding,
+                stored_size, pack eligibility,
+                PRIMARY KEY (blob_hash, store_id))
+blob_packs     (store_id, pack_id, entry_count, stored_bytes, created_at,
+                bounded-maintenance summary fields,
+                PRIMARY KEY (store_id, pack_id))
+blob_pack_entries(blob_hash, store_id, pack_id, pack_offset,
+                  stored_len, raw_len, flags, crc32c,
+                  PRIMARY KEY (blob_hash, store_id))
+storage_operations(operation_id UUID PRIMARY KEY, kind, source store,
+                   versioned request/plan, progress, state, error, receipt,
+                   retention)
 content_versions(version_id UUID PRIMARY KEY, node_id, blob_hash, size,
                  mime_type, recorded_at, node_revision,
                  introduced_operation_id, transition_kind, source_version_id)
@@ -88,6 +99,25 @@ text_searchable_versions (version_id)                      -- Go-derived MIME el
 content_fts    -- derived FTS5 index over successful extraction rows
 nodes_fts      -- FTS5 external-content index over live node names
 ```
+
+`blobs` is logical membership: a row says Docbank retains that content
+identity. `blob_locations` is physical authority: each row says a specific
+store has a verified representation that may satisfy reads. Runtime health is
+observed separately and never rewrites those durable rows. Pack identity is
+store-scoped, so the same immutable pack may legitimately exist in more than
+one store.
+
+Store bindings are machine-local `config.toml` profiles rather than portable
+authority. The catalog keeps only the profile name and a fenced ownership
+epoch. See [Multi-store Storage](../usage/storage.md) for the operator model and
+the sections below for the complete authority boundary.
+
+The API key protects daemon access, not direct physical-store access. Loose
+objects and packs in secondary filesystem and S3 namespaces are encoded and
+content-verified but not encrypted by Docbank; raw store readers are inside the
+deployment trust boundary. Provider/filesystem encryption and access control
+remain external responsibilities, while native live-store encryption is
+deferred product scope.
 
 ## Released upgrades
 

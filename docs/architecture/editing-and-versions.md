@@ -197,9 +197,11 @@ the advanced node revision before each subsequent batch.
 
 Pruning deletes version authority, not bytes. Its report distinguishes logical
 bytes, shared blobs that remain reachable, loose blobs that become eligible for
-`gc`, and packed payload that needs `gc` followed by `storage repack`. A run
-that deletes versions advances the node revision exactly once; an empty
-selection is a no-op. There is no automatic retention policy.
+`gc`, and packed payload that needs `gc` followed by `storage repack`. A blob
+with loose and packed locations across different stores appears in both
+physical-maintenance classes, with the overlap reported explicitly. A run that
+deletes versions advances the node revision exactly once; an empty selection is
+a no-op. There is no automatic retention policy.
 
 ```mermaid
 flowchart LR

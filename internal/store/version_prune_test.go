@@ -171,12 +171,12 @@ func TestPruneContentVersionsReportsPackedAndSharedConsequences(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.CreateFile(ctx, s.RootID(), "shared.txt", created.BlobHash, created.Size, "text/plain")
 	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO blob_packs(pack_id,entry_count,stored_bytes,created_at)
-		VALUES('pack-test',1,17,?)`, nowRFC3339())
-	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO blob_pack_index(
-		blob_hash,pack_id,pack_offset,stored_len,raw_len,flags,crc32c
-	) VALUES(?, 'pack-test', 0, 17, ?, 0, 0)`, packedVersion.BlobHash, packedVersion.Size)
+	addTestPack(t, s, "pack-test", 1, 17, nowRFC3339())
+	addTestPackEntry(t, s, packedVersion.BlobHash, "pack-test", 0, 17, packedVersion.Size)
+	_, err = s.db.Exec(`
+		UPDATE blob_locations
+		SET kind='packed',encoding=NULL,stored_size=17
+		WHERE blob_hash=? AND store_id=?`, packedVersion.BlobHash, s.primaryStoreID)
 	require.NoError(t, err)
 
 	preview, err := s.PruneContentVersions(ctx, created.ID, replaced.Revision,
@@ -189,6 +189,52 @@ func TestPruneContentVersionsReportsPackedAndSharedConsequences(t *testing.T) {
 	assert.Equal(t, 1, preview.PackedBlobsPendingRepack)
 	assert.Equal(t, int64(17), preview.PackedBytesPendingRepack)
 	assert.Zero(t, preview.LooseBytesPendingGC)
+}
+
+func TestPruneContentVersionsReportsMixedLocationsAcrossStores(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	created, err := s.CreateFile(ctx, s.RootID(), "mixed.txt", fakeHash("d7"), 60, "text/plain")
+	require.NoError(t, err)
+	replaced, historical, err := s.ReplaceContent(
+		ctx, created.ID, created.Revision, fakeHash("e8"), 70, "text/plain",
+	)
+	require.NoError(t, err)
+	current, _, err := s.ReplaceContent(
+		ctx, created.ID, replaced.Revision, fakeHash("f9"), 80, "text/plain",
+	)
+	require.NoError(t, err)
+
+	addTestPack(t, s, "mixed-pack", 1, 17, nowRFC3339())
+	addTestPackEntry(t, s, historical.BlobHash, "mixed-pack", 0, 17, historical.Size)
+	_, err = s.db.Exec(`
+		UPDATE blob_locations
+		SET kind='packed',encoding=NULL,stored_size=17
+		WHERE blob_hash=? AND store_id=?`, historical.BlobHash, s.primaryStoreID)
+	require.NoError(t, err)
+	const secondaryID = "40000000-0000-4000-8000-000000000001"
+	_, err = s.db.Exec(`
+		INSERT INTO blob_stores(
+			store_id,name,kind,role,lifecycle,binding,ownership_epoch,created_at
+		) VALUES(?, 'archive', 'filesystem', 'secondary', 'active', 'archive', ?, ?)`,
+		secondaryID, "40000000-0000-4000-8000-000000000002", nowRFC3339())
+	require.NoError(t, err)
+	_, err = s.db.Exec(`
+		INSERT INTO blob_locations(
+			blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
+		) VALUES(?, ?, ?, 'loose', 'zstd', 11, 1)`, historical.BlobHash, secondaryID,
+		"40000000-0000-4000-8000-000000000003")
+	require.NoError(t, err)
+
+	preview, err := s.PruneContentVersions(ctx, created.ID, current.Revision,
+		VersionPruneSelector{VersionIDs: []string{historical.ID}}, false)
+	require.NoError(t, err)
+	assert.Equal(t, 1, preview.ReleasableBlobs)
+	assert.Equal(t, 1, preview.LooseBlobsPendingGC)
+	assert.Equal(t, int64(11), preview.LooseBytesPendingGC)
+	assert.Equal(t, 1, preview.PackedBlobsPendingRepack)
+	assert.Equal(t, int64(17), preview.PackedBytesPendingRepack)
+	assert.Equal(t, 1, preview.MixedBlobsPendingMaintenance)
 }
 
 func TestPruneContentVersionsValidatesSelectorsAndTargets(t *testing.T) {

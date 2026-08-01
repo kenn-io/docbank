@@ -63,6 +63,8 @@
 
   function statusTone(status: Job["status"]): ChipTone {
     switch (status) {
+      case "queued":
+        return "neutral";
       case "running":
         return "info";
       case "completed":

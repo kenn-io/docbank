@@ -80,7 +80,7 @@ func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 	assert.Contains(t, first.String(), `{"type":"watch_source","watch_name":"sessions","source_ref":"daily/session.jsonl"`)
 	assert.Contains(t, first.String(), `"supersedes":null`)
 	assert.Contains(t, first.String(), `{"type":"node","id":7,"parent_id":1,"name":"Projects","kind":"dir"`)
-	assert.NotContains(t, first.String(), "blob_pack_index")
+	assert.NotContains(t, first.String(), "blob_pack_entries")
 	assert.NotContains(t, first.String(), "metadata-pack")
 
 	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
@@ -140,7 +140,8 @@ func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 
 	var packRows int64
 	require.NoError(t, target.db.QueryRowContext(ctx,
-		`SELECT (SELECT COUNT(*) FROM blob_packs) + (SELECT COUNT(*) FROM blob_pack_index)`).Scan(&packRows))
+		`SELECT (SELECT COUNT(*) FROM blob_packs)
+		      + (SELECT COUNT(*) FROM blob_pack_entries)`).Scan(&packRows))
 	assert.Zero(t, packRows, "physical pack authority is reconstructed separately")
 	restoredLostFile, _, err := target.Restore(ctx, lostFile.ID, UnconditionalRev)
 	require.NoError(t, err)
@@ -1085,10 +1086,20 @@ func seedMetadataRoundTrip(t *testing.T, s *Store) {
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		statements := []string{
 			`UPDATE nodes SET created_at='2026-01-01T00:00:00.000000000Z', modified_at='2026-01-02T00:00:00.000000000Z' WHERE id=1`,
-			`INSERT INTO blobs(hash,size,created_at,loose_encoding,loose_stored_size,pack_eligible) VALUES
-			 ('` + metadataHashCurrent + `',12,'2026-01-03T00:00:00.000000000Z',NULL,NULL,1),
-			 ('` + metadataHashTrashed + `',5,'2026-01-04T00:00:00.000000000Z','raw',5,1),
-			 ('` + metadataHashVersion + `',9,'2026-01-05T00:00:00.000000000Z','raw',9,1)`,
+			`INSERT INTO blobs(hash,size,created_at) VALUES
+			 ('` + metadataHashCurrent + `',12,'2026-01-03T00:00:00.000000000Z'),
+			 ('` + metadataHashTrashed + `',5,'2026-01-04T00:00:00.000000000Z'),
+			 ('` + metadataHashVersion + `',9,'2026-01-05T00:00:00.000000000Z')`,
+			`INSERT INTO blob_locations(
+				blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
+			)
+			SELECT '` + metadataHashTrashed + `',store_id,
+			       '40000000-0000-4000-8000-000000000001','loose','raw',5,1
+			FROM blob_stores WHERE role='primary'
+			UNION ALL
+			SELECT '` + metadataHashVersion + `',store_id,
+			       '40000000-0000-4000-8000-000000000002','loose','raw',9,1
+			FROM blob_stores WHERE role='primary'`,
 			`INSERT INTO nodes(id,parent_id,name,kind,created_at,modified_at) VALUES
 			 (7,1,'Projects','dir','2026-01-06T00:00:00.000000000Z','2026-01-07T00:00:00.000000000Z')`,
 			`INSERT INTO nodes(id,parent_id,name,kind,created_at,modified_at) VALUES
@@ -1118,10 +1129,20 @@ func seedMetadataRoundTrip(t *testing.T, s *Store) {
 			`INSERT INTO node_tags(node_id,tag_id) VALUES(10,'` + metadataTagID + `')`,
 			`INSERT INTO extracted_text(blob_hash,extractor,extractor_version,status,error,attempts,text,extracted_at)
 			 VALUES('` + metadataHashCurrent + `','plain',2,'ok',NULL,1,'line one\nline two','2026-01-13T00:00:00.000000000Z')`,
-			`INSERT INTO blob_packs(pack_id,entry_count,stored_bytes,created_at)
-			 VALUES('metadata-pack',1,12,'2026-01-14T00:00:00.000000000Z')`,
-			`INSERT INTO blob_pack_index(blob_hash,pack_id,pack_offset,stored_len,raw_len,flags,crc32c)
-			 VALUES('` + metadataHashCurrent + `','metadata-pack',16,12,12,0,42)`,
+			`INSERT INTO blob_packs(store_id,pack_id,entry_count,stored_bytes,created_at)
+			 SELECT store_id,'metadata-pack',1,12,'2026-01-14T00:00:00.000000000Z'
+			 FROM blob_stores WHERE role='primary'`,
+			`INSERT INTO blob_locations(
+				blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
+			)
+			SELECT '` + metadataHashCurrent + `',store_id,
+			       '40000000-0000-4000-8000-000000000003','packed',NULL,12,1
+			FROM blob_stores WHERE role='primary'`,
+			`INSERT INTO blob_pack_entries(
+				blob_hash,store_id,pack_id,pack_offset,stored_len,raw_len,flags,crc32c
+			)
+			SELECT '` + metadataHashCurrent + `',store_id,'metadata-pack',16,12,12,0,42
+			FROM blob_stores WHERE role='primary'`,
 			`INSERT INTO nodes(id,parent_id,name,kind,created_at,modified_at)
 			 VALUES(50,1,'historical-high-water','dir','2026-01-15T00:00:00.000000000Z','2026-01-15T00:00:00.000000000Z')`,
 			`DELETE FROM nodes WHERE id=50`,
