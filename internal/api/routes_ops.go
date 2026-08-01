@@ -511,13 +511,21 @@ func runGC(ctx context.Context, d Deps, run bool) (GCReport, error) {
 		unreachableHashes[candidate.Hash] = struct{}{}
 	}
 	initiallyUntracked := make(map[string]struct{})
+	initiallyLogical := make(map[string]struct{})
 	for hash, inventory := range loose {
-		recorded, recordErr := d.Store.HasBlob(ctx, hash)
+		recorded, recordErr := d.Store.HasPrimaryLooseAuthority(ctx, hash)
 		if recordErr != nil {
 			return GCReport{}, FromStoreError(recordErr)
 		}
 		if !recorded {
 			initiallyUntracked[hash] = struct{}{}
+			logical, logicalErr := d.Store.HasBlob(ctx, hash)
+			if logicalErr != nil {
+				return GCReport{}, FromStoreError(logicalErr)
+			}
+			if logical {
+				initiallyLogical[hash] = struct{}{}
+			}
 			report.UntrackedFiles += inventory.Files
 			report.ReclaimableBytes += inventory.StoredBytes
 			continue
@@ -586,7 +594,7 @@ func runGC(ctx context.Context, d Deps, run bool) (GCReport, error) {
 		return GCReport{}, FromStoreError(err)
 	}
 	for hash, inventory := range remaining {
-		recorded, recordErr := d.Store.HasBlob(ctx, hash)
+		recorded, recordErr := d.Store.HasPrimaryLooseAuthority(ctx, hash)
 		if recordErr != nil {
 			return GCReport{}, FromStoreError(recordErr)
 		}
@@ -599,7 +607,18 @@ func runGC(ctx context.Context, d Deps, run bool) (GCReport, error) {
 		}
 		report.ReclaimedFiles += inventory.Files
 		if _, wasUntracked := initiallyUntracked[hash]; wasUntracked {
-			report.Removed++
+			_, wasLogical := initiallyLogical[hash]
+			if !wasLogical {
+				report.Removed++
+				continue
+			}
+			logical, logicalErr := d.Store.HasBlob(ctx, hash)
+			if logicalErr != nil {
+				return GCReport{}, FromStoreError(logicalErr)
+			}
+			if logical {
+				report.Removed++
+			}
 		}
 	}
 	return report, nil

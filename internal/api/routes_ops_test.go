@@ -720,6 +720,53 @@ func TestGCEndpointRetainsFullPhysicalOrphanReconciliation(t *testing.T) {
 	assert.NoFileExists(t, path)
 }
 
+func TestGCEndpointReclaimsPublishedRemoteOnlyRestoreFiles(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	content := "remote-only restored content"
+	file := createFileWithContent(t, ts, s, "/remote-only.txt", content)
+	path := filepath.Join(s.BlobsDir, file.BlobHash[:2], file.BlobHash)
+	require.FileExists(t, path)
+
+	secondary, err := s.PrepareSecondaryBlobStore("archive", "filesystem", "archive")
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(t.Context(), secondary))
+	require.NoError(t, s.AddRestoredBlobLocation(
+		t.Context(), file.BlobHash, packstore.ReadLocation{
+			StoreID:    packstore.StoreID(secondary.ID),
+			Generation: "30000000-0000-4000-8000-000000000003",
+			Loose: &packstore.LooseLocation{
+				Encoding:    packstore.LooseEncodingRaw,
+				LogicalSize: file.Size, StoredSize: file.Size,
+			},
+		},
+	))
+	retired, err := s.RetireRestoredPrimary(t.Context(), file.BlobHash, false)
+	require.NoError(t, err)
+	require.True(t, retired)
+	require.FileExists(t, path, "catalog retirement precedes physical cleanup")
+
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/gc", nil,
+		map[string]any{"run": false})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var preview api.GCReport
+	require.NoError(t, json.Unmarshal([]byte(body), &preview))
+	assert.Equal(t, 1, preview.UntrackedFiles)
+	assert.Equal(t, int64(len(content)), preview.ReclaimableBytes)
+	require.FileExists(t, path)
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/gc", nil,
+		map[string]any{"run": true})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var report api.GCReport
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	assert.Equal(t, 1, report.UntrackedFiles)
+	assert.Equal(t, 1, report.ReclaimedFiles)
+	assert.NoFileExists(t, path)
+	recorded, err := s.HasBlob(t.Context(), file.BlobHash)
+	require.NoError(t, err)
+	assert.True(t, recorded, "physical cleanup must preserve remote logical membership")
+}
+
 func TestVerifyEndpoint(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	createFileWithContent(t, ts, s, "/ok.txt", "fine")

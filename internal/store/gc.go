@@ -92,6 +92,22 @@ func (s *Store) HasBlob(ctx context.Context, hash string) (bool, error) {
 	return recorded, nil
 }
 
+// HasPrimaryLooseAuthority reports whether the built-in primary catalog still
+// authorizes a canonical loose representation for hash. Physical scans use
+// this narrower question so redundant files left by packing, placement, or a
+// remote-only restore can be reclaimed without deleting logical membership.
+func (s *Store) HasPrimaryLooseAuthority(ctx context.Context, hash string) (bool, error) {
+	var recorded bool
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM blob_locations
+			WHERE blob_hash=? AND store_id=? AND kind='loose'
+		)`, hash, s.primaryStoreID).Scan(&recorded); err != nil {
+		return false, fmt.Errorf("checking primary loose authority for %s: %w", hash, err)
+	}
+	return recorded, nil
+}
+
 func scanBlobInfos(rows *sql.Rows, op string) ([]BlobInfo, error) {
 	defer func() { _ = rows.Close() }()
 	var out []BlobInfo
