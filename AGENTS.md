@@ -97,16 +97,22 @@ Instructions for autonomous coding agents working in this repository.
   must not carry task breakdowns, sequencing, ownership, or completion
   criteria. `docs/roadmap.md` is the one high-level public product-status view;
   kata is the sole source of truth for actionable work and its status.
-- Documentation is published only from release tags. There is no rendered
-  preview, deployment, or other public documentation build of `main`; the
-  release tag is the first publication boundary. Treat public-doc sources on
-  `main` as the candidate documentation for the next release, not as a live
-  view of the latest published binary or a separately supported publication.
-  Once a capability merges, describe it directly in present tense so the
-  source tree is coherent when the next tag publishes it; do not add "next
-  release", source-build availability, or other feature-timing annotations.
-  Release preparation must verify that every documented capability is present
-  in the tag; defer documentation for anything that will not ship.
+- Public documentation deployment is gated by the corresponding software
+  release tag. There is no rendered preview or public deployment of candidate
+  feature documentation before that binary is tagged. Treat public-doc sources
+  on `main` as the candidate documentation for the next release, not as a live
+  view of an unreleased binary. Once a capability merges, describe it directly
+  in present tense; do not add "next release", source-build availability, or
+  other feature-timing annotations. Release preparation must verify that every
+  documented capability is present in the tag and defer documentation for
+  anything that will not ship.
+- The release's own changelog entry is intentionally added after the tag and
+  GitHub release exist, in a documentation-only follow-up PR using the final
+  published notes and date. Wording-only corrections found during that pass may
+  ship with it. The website is then deployed from the resulting `main` commit.
+  That post-tag documentation commit is not expected to be contained in the
+  software tag and does not require a second patch release, provided it does
+  not advertise product behavior absent from the released binary.
 - v0.9.0 is the first released storage compatibility boundary. Preserve vaults
   created by every supported public release across upgrades. When a released
   SQLite layout is incompatible with the current schema, export its logical
