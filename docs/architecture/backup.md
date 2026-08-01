@@ -81,10 +81,12 @@ explicit remote-only acknowledgement.
 
 The restored database and its built-in primary marker change ownership as one
 recoverable publication. Before replacing the database, Docbank durably records
-the prior and restored marker identities, installs and reads back the restored
-marker, and rolls it back if publication fails. If the process stops between
-those steps, the next restore or vault open reconciles the marker against the
-database that actually became visible before permitting storage access.
+the prior database fingerprint and both marker identities, installs and reads
+back the restored marker, and rolls it back if publication fails. If the process
+stops between those steps, the next restore compares the visible database with
+that fingerprint without opening unknown files for mutation; a normal vault
+open reconciles its validated catalog identity. Storage access begins only
+after the marker agrees with the database that actually became visible.
 
 Earlier development snapshots used Kit's SQLite page-map metadata.
 They remain restorable through the same wrapper. New captures always use JSONL;

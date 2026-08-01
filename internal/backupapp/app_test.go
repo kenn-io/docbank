@@ -323,6 +323,50 @@ func TestFailedMappedOverwriteRestoresPrimaryOwnershipAndCanRetry(t *testing.T) 
 	require.NoError(t, restoredMetadata.Close())
 }
 
+func TestOverwriteRestoreRecoversInterruptedHandoffOverOpaqueDatabase(t *testing.T) {
+	fixture := newArchiveFixture(t)
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	_, err = backupapp.Create(
+		t.Context(), repo, "test-version", fixture.metadata, fixture.blobs,
+		backup.CreateOptions{Jobs: 1},
+	)
+	require.NoError(t, err)
+
+	target := filepath.Join(t.TempDir(), "opaque-target")
+	require.NoError(t, os.MkdirAll(target, 0o700))
+	opaqueDatabase := []byte("not a docbank database")
+	databasePath := filepath.Join(target, "docbank.db")
+	require.NoError(t, os.WriteFile(databasePath, opaqueDatabase, 0o600))
+	digest := fmt.Sprintf("%x", sha256.Sum256(opaqueDatabase))
+	handoff, err := blob.NewPrimaryRestoreHandoff(
+		filepath.Join(target, "blobs"),
+		packstore.Ownership{
+			Format: packstore.OwnershipFormatV1,
+			Vault:  "30000000-0000-4000-8000-000000000001",
+			Store:  "30000000-0000-4000-8000-000000000002",
+			Epoch:  "30000000-0000-4000-8000-000000000003",
+		},
+		&digest,
+	)
+	require.NoError(t, err)
+	require.NoError(t, handoff.Prepare(t.Context()))
+
+	_, err = backupapp.Restore(
+		t.Context(), repo, "test-version",
+		backup.RestoreOptions{TargetDir: target, Overwrite: true, Jobs: 1},
+	)
+	require.NoError(t, err)
+	restoredMetadata, err := store.Open(databasePath)
+	require.NoError(t, err)
+	restoredBlobs, err := blob.New(
+		store.NewPackCatalog(restoredMetadata), filepath.Join(target, "blobs"),
+	)
+	require.NoError(t, err)
+	require.NoError(t, restoredBlobs.Close())
+	require.NoError(t, restoredMetadata.Close())
+}
+
 func TestPlacementArtifactUsesPinnedCatalogAuthority(t *testing.T) {
 	fixture := newArchiveFixture(t)
 	archiveStore, err := fixture.metadata.PrepareSecondaryBlobStore(

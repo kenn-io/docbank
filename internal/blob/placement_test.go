@@ -315,51 +315,68 @@ func TestPlacementRunnerResumesAfterCatalogCommitBeforeProgress(t *testing.T) {
 }
 
 func TestPlacementRunnerCompletesCleanupWhenRetiredObjectIsAlreadyMissing(t *testing.T) {
-	for name, missingErr := range map[string]error{
-		"filesystem not found": fs.ErrNotExist,
-		"physical missing":     packstore.ErrPhysicalMissing,
-	} {
-		t.Run(name, func(t *testing.T) {
-			metadata, blobs, runner, secondary := placementTestVault(t)
-			file, _ := placementTestFile(t, metadata, blobs, []byte("retired before replay"))
-			copyPlan, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
-				TargetNodeID: file.ID, SourceStoreID: metadata.PrimaryBlobStoreID(),
-				DestinationStoreID: secondary.ID,
-			})
-			require.NoError(t, err)
-			require.NoError(t, runner.Run(
-				t.Context(), createPlacementOperation(t, metadata, copyPlan),
-			))
-			plan, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
-				TargetNodeID: file.ID, SourceStoreID: secondary.ID,
-				DestinationStoreID: metadata.PrimaryBlobStoreID(), RetireSource: true,
-			})
-			require.NoError(t, err)
-			operationID := createPlacementOperation(t, metadata, plan)
-			_, err = metadata.ClaimStorageOperation(t.Context(), operationID)
-			require.NoError(t, err)
+	metadata, blobs, runner, secondaryID, operationID := pendingCleanupReplay(t)
+	backend := blobs.registry.backends[packstore.StoreID(secondaryID)]
+	blobs.registry.backends[packstore.StoreID(secondaryID)] =
+		&missingRetireBackend{Backend: backend, err: packstore.ErrPhysicalMissing}
 
-			result, err := runner.placeOne(
-				t.Context(), operationID, plan.Request, plan.Hashes[0],
-			)
-			require.NoError(t, err)
-			assert.True(t, result.SourceRevoked)
-			cleanups, err := metadata.StorageOperationCleanups(t.Context(), operationID)
-			require.NoError(t, err)
-			require.Len(t, cleanups, 1)
-			backend := blobs.registry.backends[packstore.StoreID(secondary.ID)]
-			blobs.registry.backends[packstore.StoreID(secondary.ID)] =
-				&missingRetireBackend{Backend: backend, err: missingErr}
+	require.NoError(t, runner.Run(t.Context(), operationID))
+	cleanups, err := metadata.StorageOperationCleanups(t.Context(), operationID)
+	require.NoError(t, err)
+	assert.Empty(t, cleanups)
+	operation, err := metadata.StorageOperation(t.Context(), operationID)
+	require.NoError(t, err)
+	assert.Equal(t, store.StorageOperationCompleted, operation.State)
+}
 
-			require.NoError(t, runner.Run(t.Context(), operationID))
-			cleanups, err = metadata.StorageOperationCleanups(t.Context(), operationID)
-			require.NoError(t, err)
-			assert.Empty(t, cleanups)
-			operation, err := metadata.StorageOperation(t.Context(), operationID)
-			require.NoError(t, err)
-			assert.Equal(t, store.StorageOperationCompleted, operation.State)
-		})
-	}
+func TestPlacementRunnerRetriesCleanupWhenStoreRootIsUnavailable(t *testing.T) {
+	metadata, blobs, runner, secondaryID, operationID := pendingCleanupReplay(t)
+	backend := blobs.registry.backends[packstore.StoreID(secondaryID)]
+	blobs.registry.backends[packstore.StoreID(secondaryID)] =
+		&missingRetireBackend{Backend: backend, err: fs.ErrNotExist}
+
+	err := runner.Run(t.Context(), operationID)
+	require.ErrorIs(t, err, fs.ErrNotExist)
+	cleanups, cleanupErr := metadata.StorageOperationCleanups(t.Context(), operationID)
+	require.NoError(t, cleanupErr)
+	assert.Len(t, cleanups, 1)
+	operation, operationErr := metadata.StorageOperation(t.Context(), operationID)
+	require.NoError(t, operationErr)
+	assert.Equal(t, store.StorageOperationQueued, operation.State)
+}
+
+func pendingCleanupReplay(
+	t *testing.T,
+) (*store.Store, *Store, PlacementRunner, string, string) {
+	t.Helper()
+	metadata, blobs, runner, secondary := placementTestVault(t)
+	file, _ := placementTestFile(t, metadata, blobs, []byte("retired before replay"))
+	copyPlan, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+		TargetNodeID: file.ID, SourceStoreID: metadata.PrimaryBlobStoreID(),
+		DestinationStoreID: secondary.ID,
+	})
+	require.NoError(t, err)
+	require.NoError(t, runner.Run(
+		t.Context(), createPlacementOperation(t, metadata, copyPlan),
+	))
+	plan, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+		TargetNodeID: file.ID, SourceStoreID: secondary.ID,
+		DestinationStoreID: metadata.PrimaryBlobStoreID(), RetireSource: true,
+	})
+	require.NoError(t, err)
+	operationID := createPlacementOperation(t, metadata, plan)
+	_, err = metadata.ClaimStorageOperation(t.Context(), operationID)
+	require.NoError(t, err)
+
+	result, err := runner.placeOne(
+		t.Context(), operationID, plan.Request, plan.Hashes[0],
+	)
+	require.NoError(t, err)
+	assert.True(t, result.SourceRevoked)
+	cleanups, err := metadata.StorageOperationCleanups(t.Context(), operationID)
+	require.NoError(t, err)
+	require.Len(t, cleanups, 1)
+	return metadata, blobs, runner, secondary.ID, operationID
 }
 
 func TestPlacementRunnerCleanupRetryWaitsForConcurrentIngestPublication(t *testing.T) {

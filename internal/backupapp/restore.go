@@ -2,9 +2,12 @@ package backupapp
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -159,7 +162,15 @@ func RestoreWithPlacement(
 		if err != nil {
 			return err
 		}
-		primaryHandoff, err = blob.NewPrimaryRestoreHandoff(blobsDir, next)
+		priorDatabaseDigest, err := restoreDatabaseDigest(
+			filepath.Join(staged.TargetDir, "docbank.db"),
+		)
+		if err != nil {
+			return err
+		}
+		primaryHandoff, err = blob.NewPrimaryRestoreHandoff(
+			blobsDir, next, &priorDatabaseDigest,
+		)
 		if err != nil {
 			return err
 		}
@@ -207,17 +218,21 @@ func recoverInterruptedPrimaryHandoff(
 	}
 	var published *packstore.Ownership
 	databasePath := filepath.Join(target, "docbank.db")
-	if _, err := os.Lstat(databasePath); err == nil {
-		ownership, ownershipErr := restoredPrimaryOwnership(ctx, databasePath, driver)
-		if ownershipErr != nil {
-			return fmt.Errorf("backupapp: reading published primary ownership: %w", ownershipErr)
-		}
-		published = &ownership
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("backupapp: checking published restore database: %w", err)
+	databaseDigest, err := restoreDatabaseDigest(databasePath)
+	if err != nil {
+		return err
 	}
-	if err := blob.RecoverPrimaryRestoreHandoff(ctx, blobsDir, published); err != nil {
-		return fmt.Errorf("backupapp: recovering interrupted primary handoff: %w", err)
+	ownership, ownershipErr := restoredPrimaryOwnership(ctx, databasePath, driver)
+	if ownershipErr == nil {
+		published = &ownership
+	}
+	if err := blob.RecoverPrimaryRestoreHandoff(
+		ctx, blobsDir, published, &databaseDigest,
+	); err != nil {
+		return errors.Join(
+			fmt.Errorf("backupapp: recovering interrupted primary handoff: %w", err),
+			ownershipErr,
+		)
 	}
 	return nil
 }
@@ -225,14 +240,26 @@ func recoverInterruptedPrimaryHandoff(
 func restoredPrimaryOwnership(
 	ctx context.Context, databasePath string, driver docsqlite.Driver,
 ) (ownership packstore.Ownership, resultErr error) {
-	metadata, err := store.Open(databasePath, driver)
+	db, err := driver.Open(databasePath, docsqlite.OpenOptions{
+		Access: docsqlite.ReadOnlyImmutable,
+	})
 	if err != nil {
-		return ownership, fmt.Errorf("backupapp: opening restored primary catalog: %w", err)
+		return ownership, fmt.Errorf("backupapp: opening restored primary authority: %w", err)
 	}
 	defer func() {
-		resultErr = errors.Join(resultErr, metadata.Close())
+		resultErr = errors.Join(resultErr, db.Close())
 	}()
-	ownership = store.NewPackCatalog(metadata).PrimaryOwnership()
+	ownership.Format = packstore.OwnershipFormatV1
+	if err := db.QueryRowContext(ctx, `
+		SELECT v.vault_uid, b.store_id, b.ownership_epoch
+		FROM vault_metadata AS v
+		JOIN blob_stores AS b ON b.role = 'primary'
+		WHERE v.singleton = 1`).Scan(
+		&ownership.Vault, &ownership.Store, &ownership.Epoch,
+	); err != nil {
+		return packstore.Ownership{},
+			fmt.Errorf("backupapp: reading restored primary authority: %w", err)
+	}
 	if err := ownership.Validate(); err != nil {
 		return packstore.Ownership{}, fmt.Errorf(
 			"backupapp: validating restored primary ownership: %w", err,
@@ -242,6 +269,31 @@ func restoredPrimaryOwnership(
 		return packstore.Ownership{}, err
 	}
 	return ownership, nil
+}
+
+func restoreDatabaseDigest(databasePath string) (digest string, resultErr error) {
+	file, err := os.Open(databasePath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("backupapp: opening restore database discriminator: %w", err)
+	}
+	defer func() {
+		resultErr = errors.Join(resultErr, file.Close())
+	}()
+	info, err := file.Stat()
+	if err != nil {
+		return "", fmt.Errorf("backupapp: inspecting restore database discriminator: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", errors.New("backupapp: restore database discriminator is not a regular file")
+	}
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", fmt.Errorf("backupapp: hashing restore database discriminator: %w", err)
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 // InspectRestoredStorage reads the physical inventory of a proved restore

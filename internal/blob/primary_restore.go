@@ -23,9 +23,10 @@ const (
 )
 
 type primaryRestoreHandoffRecord struct {
-	Format uint32               `json:"format"`
-	Prior  *packstore.Ownership `json:"prior,omitempty"`
-	Next   packstore.Ownership  `json:"next"`
+	Format              uint32               `json:"format"`
+	Prior               *packstore.Ownership `json:"prior,omitempty"`
+	PriorDatabaseDigest *string              `json:"prior_database_digest"`
+	Next                packstore.Ownership  `json:"next"`
 }
 
 // PrimaryRestoreHandoff coordinates the built-in primary marker with one
@@ -39,10 +40,13 @@ type PrimaryRestoreHandoff struct {
 
 // NewPrimaryRestoreHandoff prepares a handoff value without changing storage.
 func NewPrimaryRestoreHandoff(
-	blobsDir string, next packstore.Ownership,
+	blobsDir string, next packstore.Ownership, priorDatabaseDigest *string,
 ) (*PrimaryRestoreHandoff, error) {
 	if err := next.Validate(); err != nil {
 		return nil, fmt.Errorf("validating restored primary ownership: %w", err)
+	}
+	if priorDatabaseDigest == nil {
+		return nil, errors.New("prior restore database discriminator is required")
 	}
 	layout, err := newLayout(blobsDir)
 	if err != nil {
@@ -51,8 +55,9 @@ func NewPrimaryRestoreHandoff(
 	return &PrimaryRestoreHandoff{
 		blobsDir: layout.Root(),
 		record: primaryRestoreHandoffRecord{
-			Format: primaryRestoreHandoffFormat,
-			Next:   next,
+			Format:              primaryRestoreHandoffFormat,
+			PriorDatabaseDigest: new(*priorDatabaseDigest),
+			Next:                next,
 		},
 	}, nil
 }
@@ -122,7 +127,10 @@ func PrimaryRestoreHandoffPending(blobsDir string) (bool, error) {
 // RecoverPrimaryRestoreHandoff reconciles an interrupted marker transition
 // against the ownership recorded by the database that is currently published.
 func RecoverPrimaryRestoreHandoff(
-	ctx context.Context, blobsDir string, published *packstore.Ownership,
+	ctx context.Context,
+	blobsDir string,
+	published *packstore.Ownership,
+	publishedDatabaseDigest *string,
 ) error {
 	record, exists, err := readPrimaryRestoreHandoff(blobsDir)
 	if err != nil || !exists {
@@ -135,15 +143,17 @@ func RecoverPrimaryRestoreHandoff(
 	}
 	var desired *packstore.Ownership
 	switch {
-	case published == nil:
+	case publishedDatabaseDigest != nil &&
+		stringPointerEqual(publishedDatabaseDigest, record.PriorDatabaseDigest):
 		desired = record.Prior
-	case *published == record.Next:
+	case published != nil && *published == record.Next:
 		desired = &record.Next
-	case record.Prior != nil && *published == *record.Prior:
+	case publishedDatabaseDigest == nil && published != nil &&
+		record.Prior != nil && *published == *record.Prior:
 		desired = record.Prior
 	default:
 		return fmt.Errorf(
-			"%w: published database ownership matches neither side of the restore handoff",
+			"%w: published database matches neither side of the restore handoff",
 			packstore.ErrStoreFenced,
 		)
 	}
@@ -331,6 +341,13 @@ func validatePrimaryRestoreHandoff(record primaryRestoreHandoffRecord) error {
 	if err := record.Next.Validate(); err != nil {
 		return fmt.Errorf("invalid next primary ownership: %w", err)
 	}
+	if record.PriorDatabaseDigest == nil {
+		return errors.New("primary restore handoff has no prior database discriminator")
+	}
+	if *record.PriorDatabaseDigest != "" &&
+		!isCanonicalSHA256(*record.PriorDatabaseDigest) {
+		return errors.New("primary restore handoff has an invalid prior database digest")
+	}
 	if record.Prior != nil {
 		if err := record.Prior.Validate(); err != nil {
 			return fmt.Errorf("invalid prior primary ownership: %w", err)
@@ -380,5 +397,25 @@ func ownershipPointerEqual(left, right *packstore.Ownership) bool {
 
 func samePrimaryRestoreHandoff(left, right primaryRestoreHandoffRecord) bool {
 	return left.Format == right.Format && left.Next == right.Next &&
-		ownershipPointerEqual(left.Prior, right.Prior)
+		ownershipPointerEqual(left.Prior, right.Prior) &&
+		stringPointerEqual(left.PriorDatabaseDigest, right.PriorDatabaseDigest)
+}
+
+func stringPointerEqual(left, right *string) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
+func isCanonicalSHA256(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, b := range []byte(value) {
+		if (b < '0' || b > '9') && (b < 'a' || b > 'f') {
+			return false
+		}
+	}
+	return true
 }

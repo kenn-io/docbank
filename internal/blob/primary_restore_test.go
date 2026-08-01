@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -15,25 +16,31 @@ func TestPrimaryRestoreHandoffRecoversBothPublicationSides(t *testing.T) {
 	blobsDir := filepath.Join(t.TempDir(), "blobs")
 	prior := testOwnership("10000000-0000-4000-8000-000000000001")
 	next := testOwnership("20000000-0000-4000-8000-000000000002")
+	priorDatabaseDigest := testDatabaseDigest('1')
 	backend, _, err := openPrimaryOwnershipBackend(t.Context(), blobsDir)
 	require.NoError(t, err)
 	require.NoError(t, backend.ReplaceOwnership(t.Context(), prior, nil))
 	require.NoError(t, backend.Close())
 
-	handoff, err := NewPrimaryRestoreHandoff(blobsDir, next)
+	handoff, err := NewPrimaryRestoreHandoff(blobsDir, next, &priorDatabaseDigest)
 	require.NoError(t, err)
 	require.NoError(t, handoff.Prepare(t.Context()))
 	assertPrimaryOwnership(t, blobsDir, next)
-	require.NoError(t, RecoverPrimaryRestoreHandoff(t.Context(), blobsDir, &prior))
+	require.NoError(t, RecoverPrimaryRestoreHandoff(
+		t.Context(), blobsDir, &prior, &priorDatabaseDigest,
+	))
 	assertPrimaryOwnership(t, blobsDir, prior)
 	pending, err := PrimaryRestoreHandoffPending(blobsDir)
 	require.NoError(t, err)
 	assert.False(t, pending)
 
-	handoff, err = NewPrimaryRestoreHandoff(blobsDir, next)
+	handoff, err = NewPrimaryRestoreHandoff(blobsDir, next, &priorDatabaseDigest)
 	require.NoError(t, err)
 	require.NoError(t, handoff.Prepare(t.Context()))
-	require.NoError(t, RecoverPrimaryRestoreHandoff(t.Context(), blobsDir, &next))
+	nextDatabaseDigest := testDatabaseDigest('2')
+	require.NoError(t, RecoverPrimaryRestoreHandoff(
+		t.Context(), blobsDir, &next, &nextDatabaseDigest,
+	))
 	assertPrimaryOwnership(t, blobsDir, next)
 	pending, err = PrimaryRestoreHandoffPending(blobsDir)
 	require.NoError(t, err)
@@ -43,15 +50,22 @@ func TestPrimaryRestoreHandoffRecoversBothPublicationSides(t *testing.T) {
 func TestPrimaryRestoreHandoffRecoversUnpublishedNewVault(t *testing.T) {
 	blobsDir := filepath.Join(t.TempDir(), "blobs")
 	next := testOwnership("20000000-0000-4000-8000-000000000002")
-	handoff, err := NewPrimaryRestoreHandoff(blobsDir, next)
+	priorDatabaseDigest := ""
+	handoff, err := NewPrimaryRestoreHandoff(blobsDir, next, &priorDatabaseDigest)
 	require.NoError(t, err)
 	require.NoError(t, handoff.Prepare(t.Context()))
 
-	require.NoError(t, RecoverPrimaryRestoreHandoff(t.Context(), blobsDir, nil))
+	require.NoError(t, RecoverPrimaryRestoreHandoff(
+		t.Context(), blobsDir, nil, &priorDatabaseDigest,
+	))
 	layout, err := newLayout(blobsDir)
 	require.NoError(t, err)
 	_, err = os.Stat(layout.OwnershipPath())
 	require.ErrorIs(t, err, fs.ErrNotExist)
+}
+
+func testDatabaseDigest(value byte) string {
+	return strings.Repeat(string(value), 64)
 }
 
 func testOwnership(storeID string) packstore.Ownership {

@@ -172,8 +172,10 @@ manifest. Only then is the database published. A failed or cancelled restore
 does not publish `docbank.db` for a new target and does not replace an existing
 database. The built-in primary's ownership marker follows the same boundary:
 ordinary failures restore the prior marker, and an interrupted handoff is
-reconciled against whichever database was actually published when the vault is
-opened or the restore is retried.
+reconciled against a durable fingerprint of the prior database and the
+validated identity of whichever database was actually published when the vault
+is opened or the restore is retried. An unrelated file named `docbank.db` is
+never opened for mutation merely to decide which side won.
 
 Compatible repository packs are copied, verified, durably published, and
 granted catalog authority by default. A pack or object that exceeds Docbank's

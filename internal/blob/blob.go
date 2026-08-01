@@ -292,7 +292,7 @@ func NewWithOptions(catalog packstore.Catalog, blobsDir string, opts Options) (*
 			return nil, fmt.Errorf("reading primary filesystem ownership: %w", err)
 		}
 		if err := RecoverPrimaryRestoreHandoff(
-			context.Background(), blobsDir, &ownership,
+			context.Background(), blobsDir, &ownership, nil,
 		); err != nil {
 			return nil, fmt.Errorf("recovering primary restore ownership: %w", err)
 		}
