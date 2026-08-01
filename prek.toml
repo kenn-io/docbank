@@ -10,3 +10,10 @@ language = "system"
 entry = "make fmt lint"
 pass_filenames = false
 always_run = true
+
+[[repos.hooks]]
+id = "forbid-superpowers-artifacts"
+name = "forbid-superpowers-artifacts"
+language = "fail"
+entry = ".superpowers is temporary workspace output; publish inspected screenshots to docs-assets instead"
+files = "^\\.superpowers/"
