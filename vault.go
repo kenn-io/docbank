@@ -202,12 +202,12 @@ func openVaultWithRootOpener(
 			retErr = errors.Join(retErr, lock.Release(), root.Close())
 		}
 	}()
-	if err := layout.Ensure(); err != nil {
-		return nil, err
-	}
 	if err := backupapp.RecoverInterruptedPrimaryHandoff(
 		context.Background(), layout.Root, config.SQLite,
 	); err != nil {
+		return nil, err
+	}
+	if err := layout.Ensure(); err != nil {
 		return nil, err
 	}
 	metadata, err := store.Open(layout.DBPath(), config.SQLite)

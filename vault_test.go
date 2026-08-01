@@ -92,9 +92,7 @@ func TestVaultCreateIsImmutableAndIdempotent(t *testing.T) {
 
 func TestNewRecoversInterruptedRestoreBeforeOpeningMetadata(t *testing.T) {
 	root := t.TempDir()
-	databasePath := filepath.Join(root, "docbank.db")
-	require.NoError(t, os.WriteFile(databasePath, nil, 0o600))
-	digest := hex.EncodeToString(sha256.New().Sum(nil))
+	digest := ""
 	interruptedOwnership := packstore.Ownership{
 		Format: packstore.OwnershipFormatV1,
 		Vault:  "40000000-0000-4000-8000-000000000001",

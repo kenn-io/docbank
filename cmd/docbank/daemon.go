@@ -76,6 +76,11 @@ func runServe(ctx context.Context) (retErr error) {
 	}
 	defer func() { retErr = errors.Join(retErr, docweb.RemoveBootstrap(layout.Root)) }()
 
+	if err := backupapp.RecoverInterruptedPrimaryHandoff(
+		ctx, layout.Root, store.DefaultSQLiteDriver(),
+	); err != nil {
+		return err
+	}
 	if err := layout.Ensure(); err != nil {
 		return err
 	}
@@ -84,11 +89,6 @@ func runServe(ctx context.Context) (retErr error) {
 		return err
 	}
 	if err := cfg.Validate(); err != nil {
-		return err
-	}
-	if err := backupapp.RecoverInterruptedPrimaryHandoff(
-		ctx, layout.Root, store.DefaultSQLiteDriver(),
-	); err != nil {
 		return err
 	}
 
