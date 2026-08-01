@@ -13,8 +13,10 @@ description: The permanent, tamper-evident history model for protected directory
     and checks every protected blob; supplied external evidence is proved as an
     exact prefix of current allocation and scope chains. Scope-wide browsing is
     available. A shared tag-definition rename or deletion advances every
-    affected disjoint scope atomically. Overlapping scopes, cross-scope
-    topology changes, and TUI/web projections remain planned. See
+    affected disjoint scope atomically. The web application exposes read-only
+    protection status, node history, and independent verification evidence;
+    the TUI exposes node history. Overlapping scopes and cross-scope topology
+    changes remain planned. See
     [Permanent Audited History](../usage/audited-history.md) for the current
     operator workflow.
 

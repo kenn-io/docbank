@@ -164,9 +164,11 @@ The supervisor stops accepting work as soon as shutdown begins, cancels every
 runner, and waits before SQLite and blob storage close. Runners must honor
 their context; the wait is bounded so a defective runner cannot prevent daemon
 exit forever. The background daemon's idle-timeout loop is supervised through
-this same path. Text extraction and watched inboxes use this lifecycle;
-scheduled maintenance remains planned, but must use this lifecycle rather than
-creating unmanaged goroutines.
+this same path. Text extraction, watched inboxes, and configured automatic
+packing use this lifecycle. Scheduled packing appears as the `storage:pack`
+job, waits the configured interval after each completed run, and uses the same
+maintenance gate as explicit packing rather than creating an unmanaged
+goroutine. Garbage collection and repacking remain explicit operator actions.
 
 ## Logs
 
