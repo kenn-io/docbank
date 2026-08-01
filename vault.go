@@ -18,6 +18,7 @@ import (
 
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/blob"
 	internalconfig "go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/home"
@@ -202,6 +203,11 @@ func openVaultWithRootOpener(
 		}
 	}()
 	if err := layout.Ensure(); err != nil {
+		return nil, err
+	}
+	if err := backupapp.RecoverInterruptedPrimaryHandoff(
+		context.Background(), layout.Root, config.SQLite,
+	); err != nil {
 		return nil, err
 	}
 	metadata, err := store.Open(layout.DBPath(), config.SQLite)

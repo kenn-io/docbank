@@ -153,8 +153,8 @@ func RestoreWithPlacement(
 		hookCtx context.Context, staged backup.RestorePublicationTarget,
 	) error {
 		blobsDir := filepath.Join(staged.TargetDir, "blobs")
-		if err := recoverInterruptedPrimaryHandoff(
-			hookCtx, staged.TargetDir, blobsDir, driver,
+		if err := RecoverInterruptedPrimaryHandoff(
+			hookCtx, staged.TargetDir, driver,
 		); err != nil {
 			return err
 		}
@@ -209,9 +209,13 @@ func RestoreWithPlacement(
 	return result, nil
 }
 
-func recoverInterruptedPrimaryHandoff(
-	ctx context.Context, target, blobsDir string, driver docsqlite.Driver,
+// RecoverInterruptedPrimaryHandoff resolves a durable restore marker against
+// the database publication boundary before any caller opens SQLite mutably.
+// The caller must hold the vault's exclusive hierarchy lock.
+func RecoverInterruptedPrimaryHandoff(
+	ctx context.Context, target string, driver docsqlite.Driver,
 ) error {
+	blobsDir := filepath.Join(target, "blobs")
 	pending, err := blob.PrimaryRestoreHandoffPending(blobsDir)
 	if err != nil || !pending {
 		return err

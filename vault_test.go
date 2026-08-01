@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/pkg/sqlite"
 	"go.kenn.io/docbank/pkg/sqlite/modernc"
@@ -87,6 +88,32 @@ func TestVaultCreateIsImmutableAndIdempotent(t *testing.T) {
 	require.NoError(err)
 	require.Equal(int64(1), after.Revision)
 	require.Equal(created.Computed.SHA256, after.BlobHash)
+}
+
+func TestNewRecoversInterruptedRestoreBeforeOpeningMetadata(t *testing.T) {
+	root := t.TempDir()
+	databasePath := filepath.Join(root, "docbank.db")
+	require.NoError(t, os.WriteFile(databasePath, nil, 0o600))
+	digest := hex.EncodeToString(sha256.New().Sum(nil))
+	interruptedOwnership := packstore.Ownership{
+		Format: packstore.OwnershipFormatV1,
+		Vault:  "40000000-0000-4000-8000-000000000001",
+		Store:  "40000000-0000-4000-8000-000000000002",
+		Epoch:  "40000000-0000-4000-8000-000000000003",
+	}
+	handoff, err := blob.NewPrimaryRestoreHandoff(
+		filepath.Join(root, "blobs"), interruptedOwnership, &digest,
+	)
+	require.NoError(t, err)
+	require.NoError(t, handoff.Prepare(t.Context()))
+
+	vault, err := New(t.Context(), Config{Root: root})
+	require.NoError(t, err)
+	assert.NotEqual(t, interruptedOwnership.Vault, vault.ID())
+	require.NoError(t, vault.Close())
+	pending, err := blob.PrimaryRestoreHandoffPending(filepath.Join(root, "blobs"))
+	require.NoError(t, err)
+	assert.False(t, pending)
 }
 
 func TestEmbeddedCreateRecordsGenericProvenance(t *testing.T) {

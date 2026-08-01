@@ -22,6 +22,7 @@ import (
 	kitlogging "go.kenn.io/kit/logging"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/config"
@@ -83,6 +84,11 @@ func runServe(ctx context.Context) (retErr error) {
 		return err
 	}
 	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	if err := backupapp.RecoverInterruptedPrimaryHandoff(
+		ctx, layout.Root, store.DefaultSQLiteDriver(),
+	); err != nil {
 		return err
 	}
 
