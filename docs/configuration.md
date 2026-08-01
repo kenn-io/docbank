@@ -65,9 +65,9 @@ retained blob has authority in the primary. A vault with remote-only content
 also needs its configured secondary stores; copying `config.toml` preserves
 binding coordinates but does not copy those bytes. Prefer `docbank backup
 create`: it reads one verified location for every logical blob and produces a
-topology-independent recovery point. Stop the daemon before taking a manual
+topology-independent recovery point. Stop the daemon before taking a local-state
 filesystem snapshot; see
-[Vault Lifecycle](usage/lifecycle.md#take-a-coherent-manual-snapshot).
+[Vault Lifecycle](usage/lifecycle.md#take-a-coherent-backup).
 
 Docbank also keeps persistent per-user coordination files under
 `~/.local/state/docbank/target-locks`, using the home directory from the

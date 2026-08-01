@@ -111,36 +111,41 @@ For unattended installation, use `docbank update --yes`; do not use `--force`
 as a routine upgrade flag. It exists to bypass cached release metadata and to
 allow replacing an unversioned development build.
 
-## Take a coherent manual snapshot
+## Take a coherent backup
 
 Docbank provides `backup init`, `backup create`, `backup list`, `backup
 verify`, and `backup restore` for incremental capture and proved recovery from
 an immutable Kit repository; see [Backup](backup.md). Those repositories are
 compressed but **not encrypted**.
 
-A stopped-vault copy remains a simple alternative when every retained blob has
-authority in the built-in primary. Prove that condition from the machine-readable
-reports before relying on this path:
+A stopped-vault copy captures the SQLite database and built-in primary as a
+coherent local-state snapshot. It is not a topology-independent backup: any
+blob held only by a secondary store is absent. The live reports can help
+diagnose primary coverage:
 
 ```bash
 docbank info --json
 docbank storage list --json
 ```
 
-Find the store whose `role` is `primary`. Its `authoritative_objects` must equal
-`tracked_blobs` from `docbank info`; only that equality proves every tracked
-blob has a primary location. Do not infer completeness from
-`sole_authority_objects`: a blob held by two secondaries and absent from the
-primary is not a sole copy in either store. If the counts differ or you cannot
-establish the equality, use `docbank backup create` instead. It reads one
-verified candidate for every logical blob and produces a complete,
-topology-independent recovery point. Merely copying `config.toml` preserves
-binding coordinates, not secondary bytes. See
-[Prove primary completeness](storage.md#prove-primary-completeness) for the
-count invariant.
+Find the store whose `role` is `primary`. Its `authoritative_objects` can be
+compared with `tracked_blobs` from `docbank info`, but the reports are separate
+live snapshots. Watches, ingests, clients, and storage jobs can change either
+count between requests and before daemon shutdown, so matching values are not
+a backup-completeness proof. `sole_authority_objects` is weaker still: a blob
+held by two secondaries and absent from the primary is not a sole copy in
+either store.
 
-For a primary-complete vault, stop the daemon before copying so the SQLite
-database and blob catalog cannot change during the copy.
+Use `docbank backup create` for a complete recovery point. It reads one
+verified candidate for every logical blob and fails rather than publishing a
+partial snapshot. Merely copying `config.toml` preserves binding coordinates,
+not secondary bytes. See [Understand primary coverage](storage.md#understand-primary-coverage)
+for the reporting boundary.
+
+If you deliberately need a local-state snapshot, first stop every producer,
+watch, storage job, and client, then stop the daemon before copying so the
+SQLite database and primary catalog cannot change during the copy. Do not use
+this procedure as a complete backup when the vault has used secondary storage.
 
 ```bash
 vault="${DOCBANK_HOME:-$HOME/.docbank}"

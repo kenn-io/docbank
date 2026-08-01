@@ -8,9 +8,9 @@ description: Docbank's JSONL-native Kit snapshot and restore architecture.
 `docbank backup init`, `backup create`, `backup list`, `backup verify`, and
 `backup restore` are implemented over the authenticated daemon API; see the
 [Backup user guide](../usage/backup.md).
-A coherent manual filesystem snapshot remains available by stopping the daemon
-before copying the vault; see
-[Vault Lifecycle](../usage/lifecycle.md#take-a-coherent-manual-snapshot).
+A coherent local-state filesystem snapshot remains available by stopping the
+daemon before copying the vault, but it is not a topology-independent backup;
+see [Vault Lifecycle](../usage/lifecycle.md#take-a-coherent-backup).
 
 The database plus built-in `blobs/` directory is a complete manual archive only
 while every retained blob has primary authority. A vault may deliberately keep
