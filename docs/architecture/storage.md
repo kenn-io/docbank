@@ -6,11 +6,15 @@ description: The SQLite schema, blob store layout, durability discipline, and en
 # Storage
 
 A standalone vault normally lives under `~/.docbank/`: one SQLite database and
-one built-in primary blob directory. The pair remains the minimum complete
-archive. Optional secondary stores add verified physical locations without
-becoming a second document catalog. Do not copy a running vault as a backup; use
-`docbank backup create`, or stop the daemon before taking a manual filesystem
-snapshot. `docbank verify` proves a completed copy is internally consistent.
+one built-in primary blob directory. That pair is a complete manual archive
+only while every retained blob has authority in the primary. Optional
+secondary stores add verified physical locations without becoming a second
+document catalog, and a vault may deliberately keep its sole verified copy in
+one of them. `docbank backup create` is therefore the topology-independent
+backup path: it reads one verified location for every logical blob or fails
+without publishing a partial snapshot. A stopped filesystem copy remains valid
+for a primary-complete vault; never copy a running vault. `docbank verify`
+proves a completed copy is internally consistent.
 
 ## Blob store
 
