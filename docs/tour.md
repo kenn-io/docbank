@@ -16,7 +16,7 @@ node's current path, stable ID, revision, immutable version, SHA-256 identity,
 tags, provenance, and permanent-audit status. The browser receives scoped,
 daemon-lifetime credentials rather than the daemon's master API key.
 
-![The Docbank web application browsing a synthetic vault and showing the selected document's stable authority.](https://raw.githubusercontent.com/kenn-io/docbank/docs-assets/screenshots/v0.11.0/web-vault-browser.png)
+![The Docbank web application browsing a synthetic vault and showing the selected document's stable authority.](https://raw.githubusercontent.com/kenn-io/docbank/docs-assets/screenshots/v0.12.0/web-vault-browser.png)
 
 ## Organize independently of folders
 
