@@ -660,20 +660,22 @@ func (r PlacementRunner) placeOne(
 		copied = moved.Created
 	} else if err != nil {
 		return PlacementObjectResult{}, err
-	} else {
-		if err := r.verifyPlacementDestination(
-			ctx, hash, item.Size, destination,
-		); err != nil {
-			return PlacementObjectResult{}, err
-		}
-		if item.Destination == nil {
-			// A resumed operation may observe the destination it verified and
-			// cataloged immediately before a process stop, before progress advanced.
-			copied = true
-		}
+	} else if item.Destination == nil {
+		// A resumed operation may observe the destination it verified and
+		// cataloged immediately before a process stop, before progress advanced.
+		copied = true
 	}
 	var committed store.PlacementCommit
 	err = r.commit(func() error {
+		// Publication happens outside the daemon gate so remote transfers do
+		// not block unrelated writes. Re-verify under the physical-authority
+		// exclusion: GC cannot remove this still-untracked destination between
+		// the proof and the catalog transaction that grants it authority.
+		if verifyErr := r.verifyPlacementDestination(
+			ctx, hash, item.Size, destination,
+		); verifyErr != nil {
+			return verifyErr
+		}
 		var commitErr error
 		committed, commitErr = r.Metadata.CommitPlacement(
 			ctx, operationID, request, item, destination,

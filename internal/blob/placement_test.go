@@ -60,6 +60,53 @@ func TestPlacementRunnerCopiesVerifiesAndRetiresLooseSource(t *testing.T) {
 	assert.Equal(t, content, got)
 }
 
+func TestPlacementRunnerRejectsDestinationRemovedBeforeCatalogCommit(t *testing.T) {
+	metadata, blobs, runner, secondary := placementTestVault(t)
+	content := []byte("destination must survive through catalog commit")
+	file, hash := placementTestFile(t, metadata, blobs, content)
+
+	toSecondary, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+		TargetNodeID: file.ID, SourceStoreID: metadata.PrimaryBlobStoreID(),
+		DestinationStoreID: secondary.ID, RetireSource: true,
+	})
+	require.NoError(t, err)
+	require.NoError(t, runner.Run(
+		t.Context(), createPlacementOperation(t, metadata, toSecondary),
+	))
+
+	toPrimary, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+		TargetNodeID: file.ID, SourceStoreID: secondary.ID,
+		DestinationStoreID: metadata.PrimaryBlobStoreID(), RetireSource: true,
+	})
+	require.NoError(t, err)
+	operationID := createPlacementOperation(t, metadata, toPrimary)
+	commitReached := make(chan struct{})
+	cleanupDone := make(chan struct{})
+	runner.Commit = func(commit func() error) error {
+		close(commitReached)
+		<-cleanupDone
+		return commit()
+	}
+
+	runDone := make(chan error, 1)
+	go func() { runDone <- runner.Run(t.Context(), operationID) }()
+	<-commitReached
+	// This is the physical action GC took in the reported race after it
+	// classified the newly published primary file as untracked.
+	require.NoError(t, blobs.Remove(hash))
+	close(cleanupDone)
+
+	err = <-runDone
+	require.ErrorIs(t, err, packstore.ErrPhysicalMissing)
+	resolution, err := metadata.ResolveBlobLocations(
+		t.Context(), packstore.Hash(hash),
+	)
+	require.NoError(t, err)
+	require.Len(t, resolution.Candidates, 1)
+	assert.Equal(t, packstore.StoreID(secondary.ID), resolution.Candidates[0].StoreID,
+		"failed destination verification must preserve the only valid source")
+}
+
 func TestPlacementRunnerRetriesFinalPersistenceFailure(t *testing.T) {
 	metadata, blobs, runner, destination, root := placementTestVaultWithSecondaries(
 		t, "archive",
