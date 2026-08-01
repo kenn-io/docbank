@@ -22,7 +22,8 @@ reconciliation pass through `Vault.Pack`; it cannot bypass the catalog or Kit's
 maintenance coordinator. `docbank storage repack` compacts eligible sparse packs
 and retires dead pack files. Embedded owners also have bounded `GarbageCollect`,
 `Verify`, and `Repack` passes. Startup never implicitly rewrites blob bytes, and
-no background scheduler runs these operations.
+configured daemon scheduling applies only to bounded packing. Garbage
+collection, verification, and repacking remain explicit operator actions.
 
 Large collections of small files are expensive to enumerate, copy, and restore.
 msgvault uses immutable pack files as the steady-state storage format for
