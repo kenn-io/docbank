@@ -43,7 +43,7 @@ The web view is deliberately read-only: it separates logical authority,
 physical inventory, store health, sole copies, and live-document impact without
 exposing deployment paths or credentials.
 
-![The Docbank web application showing the primary and a secondary physical store for a synthetic vault.](https://raw.githubusercontent.com/kenn-io/docbank/f1475f1a97d4d2d5b2bb2625ff2f5f97150a9625/.superpowers/screenshots/web-multi-store-storage.png)
+![The Docbank web application showing the primary and a secondary physical store for a synthetic vault.](https://raw.githubusercontent.com/kenn-io/docbank/docs-assets/screenshots/multi-store-storage/web-multi-store-storage.png)
 
 ## Operate from a terminal
 
