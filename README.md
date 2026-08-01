@@ -15,6 +15,20 @@ document names, paths, contents, hashes, and identifiers are synthetic.
 - `web-search-results.png` shows verified extracted-text search results across
   the synthetic vault.
 
+## v0.12.0 multi-store storage
+
+The screenshots in `screenshots/multi-store-storage/` were captured on
+2026-08-01 from Docbank v0.12.0 (`f1475f1`) using the repository-owned real
+daemon harness and a temporary synthetic vault. The web capture is 1440 × 960
+in dark mode; the TUI capture is 1280 × 800. The vault, document names,
+paths, contents, hashes, identifiers, store names, and placement history are
+synthetic.
+
+- `web-multi-store-storage.png` shows the storage drawer with the fixed local
+  primary and an online filesystem secondary that holds one sole copy.
+- `tui-multi-store-storage.png` shows the same two stores in the read-only
+  operations screen.
+
 ## Pull request screenshots
 
 `screenshots/pr-136/web-background-jobs.png` was captured on 2026-07-23 from
