@@ -3,6 +3,20 @@
 Binary documentation assets live on this orphan branch so the main source
 history stays small.
 
+## v0.12.0 web application
+
+The screenshots in `screenshots/v0.12.0/` were captured on 2026-08-01 from
+the v0.12.0 interface with the repository-owned Playwright harness at
+1440 × 960 in dark mode. The harness ran the real daemon against an
+owner-private temporary vault and waited for tag, permanent-audit, and verified
+text-extraction state before capture. The vault, document names, paths,
+contents, hashes, identifiers, tags, and audit history are synthetic.
+
+- `web-vault-browser.png` shows a selected audited report with its stable
+  authority, tag, and available document actions.
+- `web-search-results.png` shows three content-only matches from verified text
+  extraction.
+
 ## v0.11.0 web application
 
 The screenshots in `screenshots/v0.11.0/` were captured on 2026-07-23 from
