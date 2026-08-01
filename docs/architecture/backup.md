@@ -79,6 +79,13 @@ Remote-only retirement occurs only after destination authority commits;
 audit-protected bytes retain the primary unless the mapping includes the
 explicit remote-only acknowledgement.
 
+The restored database and its built-in primary marker change ownership as one
+recoverable publication. Before replacing the database, Docbank durably records
+the prior and restored marker identities, installs and reads back the restored
+marker, and rolls it back if publication fails. If the process stops between
+those steps, the next restore or vault open reconciles the marker against the
+database that actually became visible before permitting storage access.
+
 Earlier development snapshots used Kit's SQLite page-map metadata.
 They remain restorable through the same wrapper. New captures always use JSONL;
 the legacy path is a reader compatibility boundary, not an alternative format

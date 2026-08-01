@@ -335,23 +335,35 @@ func applyRestorePlacement(
 	if err != nil {
 		return err
 	}
-	physical, err := blob.New(
-		store.NewPackCatalog(metadata), filepath.Join(target, "blobs"),
+	primaryOwnership := store.NewPackCatalog(metadata).PrimaryOwnership()
+	layout, err := packstore.NewLayout(
+		filepath.Join(target, "blobs"), packstore.LayoutOptions{
+			Staging: packstore.StagingStoreDirectory, StagingDir: "tmp",
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("backupapp: opening restored primary layout: %w", err)
+	}
+	primaryBackend, err := packstore.NewFilesystemBackend(
+		layout, packstore.FilesystemBackendOptions{
+			ExpectedOwnership: &primaryOwnership,
+			Limits:            blob.StorageLimits(),
+		},
 	)
 	if err != nil {
 		return fmt.Errorf("backupapp: opening restored primary: %w", err)
 	}
 	defer func() {
-		retErr = errors.Join(retErr, physical.Close())
+		retErr = errors.Join(retErr, primaryBackend.Close())
 	}()
-	sourceBackend, ok := physical.ReadBackend(packstore.StoreID(primary.ID))
-	if !ok {
-		return errors.New("backupapp: restored primary backend is unavailable")
+	actual, err := primaryBackend.Ownership(ctx)
+	if err != nil || actual != primaryOwnership {
+		return errors.Join(
+			errors.New("backupapp: restored primary ownership does not match staged catalog"),
+			err,
+		)
 	}
-	primaryBackend, ok := physical.WritableBackend(packstore.StoreID(primary.ID))
-	if !ok {
-		return errors.New("backupapp: restored primary retirement backend is unavailable")
-	}
+	var sourceBackend packstore.ReadBackend = primaryBackend
 
 	locationsBySource := make(map[string][]string)
 	for _, location := range manifest.Locations {

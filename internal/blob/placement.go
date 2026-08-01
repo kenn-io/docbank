@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"time"
 
 	"go.kenn.io/kit/packstore"
@@ -818,7 +819,9 @@ func (r PlacementRunner) retirePendingObject(
 			return fmt.Errorf("%w: cleanup store %s is not bound",
 				packstore.ErrStoreUnavailable, cleanup.StoreID)
 		}
-		if err := backend.Retire(ctx, cleanup.Ref); err != nil {
+		if err := backend.Retire(ctx, cleanup.Ref); err != nil &&
+			!errors.Is(err, fs.ErrNotExist) &&
+			!errors.Is(err, packstore.ErrPhysicalMissing) {
 			return fmt.Errorf("retiring storage operation object: %w", err)
 		}
 		if err := r.Metadata.CompleteStorageOperationCleanup(

@@ -111,6 +111,21 @@ func newArchiveFixture(t *testing.T) *archiveFixture {
 	return fixture
 }
 
+func seedOwnedVault(t *testing.T, target string) packstore.Ownership {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(filepath.Join(target, "blobs", "tmp"), 0o700))
+	metadata, err := store.Open(filepath.Join(target, "docbank.db"))
+	require.NoError(t, err)
+	blobs, err := blob.New(
+		store.NewPackCatalog(metadata), filepath.Join(target, "blobs"),
+	)
+	require.NoError(t, err)
+	ownership := store.NewPackCatalog(metadata).PrimaryOwnership()
+	require.NoError(t, blobs.Close())
+	require.NoError(t, metadata.Close())
+	return ownership
+}
+
 func exportMetadata(t *testing.T, metadata *store.Store) []byte {
 	t.Helper()
 	var dst bytes.Buffer
@@ -204,6 +219,108 @@ func TestJSONLLooseSnapshotVerifyAndRestore(t *testing.T) {
 	}
 	require.NoError(t, restoredBlobs.Close())
 	require.NoError(t, restoredStore.Close())
+}
+
+func TestOverwriteRestorePublishesMatchingPrimaryOwnership(t *testing.T) {
+	fixture := newArchiveFixture(t)
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	_, err = backupapp.Create(
+		t.Context(), repo, "test-version", fixture.metadata, fixture.blobs,
+		backup.CreateOptions{Jobs: 1},
+	)
+	require.NoError(t, err)
+
+	target := filepath.Join(t.TempDir(), "existing-vault")
+	priorOwnership := seedOwnedVault(t, target)
+
+	_, err = backupapp.Restore(
+		t.Context(), repo, "test-version",
+		backup.RestoreOptions{TargetDir: target, Overwrite: true, Jobs: 1},
+	)
+	require.NoError(t, err)
+
+	restoredMetadata, err := store.Open(filepath.Join(target, "docbank.db"))
+	require.NoError(t, err)
+	defer func() { require.NoError(t, restoredMetadata.Close()) }()
+	restoredOwnership := store.NewPackCatalog(restoredMetadata).PrimaryOwnership()
+	assert.NotEqual(t, priorOwnership, restoredOwnership)
+	restoredBlobs, err := blob.New(
+		store.NewPackCatalog(restoredMetadata), filepath.Join(target, "blobs"),
+	)
+	require.NoError(t, err)
+	require.NoError(t, restoredBlobs.Close())
+}
+
+func TestFailedMappedOverwriteRestoresPrimaryOwnershipAndCanRetry(t *testing.T) {
+	fixture := newArchiveFixture(t)
+	sourcePrimary, err := fixture.metadata.PrimaryBlobStore(t.Context())
+	require.NoError(t, err)
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	_, err = backupapp.Create(
+		t.Context(), repo, "test-version", fixture.metadata, fixture.blobs,
+		backup.CreateOptions{Jobs: 1},
+	)
+	require.NoError(t, err)
+
+	target := filepath.Join(t.TempDir(), "existing-vault")
+	priorOwnership := seedOwnedVault(t, target)
+	claimedPath := filepath.Join(t.TempDir(), "claimed-store")
+	claimedBinding := config.StoreBindingConfig{Kind: "filesystem", Path: claimedPath}
+	claimed, err := blob.NewConfiguredBackend(t.Context(), claimedBinding, nil)
+	require.NoError(t, err)
+	require.NoError(t, claimed.ReplaceOwnership(t.Context(), packstore.Ownership{
+		Format: packstore.OwnershipFormatV1,
+		Vault:  "20000000-0000-4000-8000-000000000001",
+		Store:  "20000000-0000-4000-8000-000000000002",
+		Epoch:  "20000000-0000-4000-8000-000000000003",
+	}, nil))
+	if closer, ok := claimed.(io.Closer); ok {
+		require.NoError(t, closer.Close())
+	}
+	mapping := backupapp.RestoreStoreMap{
+		Version: backupapp.RestoreStoreMapVersion,
+		Stores: []backupapp.RestoreStoreMapping{{
+			SourceID: sourcePrimary.ID, Name: "claimed",
+			Binding: "claimed",
+		}},
+	}
+	_, err = backupapp.RestoreWithPlacement(
+		t.Context(), repo, "test-version", store.DefaultSQLiteDriver(),
+		backup.RestoreOptions{TargetDir: target, Overwrite: true, Jobs: 1},
+		backupapp.RestorePlacementOptions{
+			Map: &mapping,
+			Bindings: map[string]config.StoreBindingConfig{
+				"claimed": claimedBinding,
+			},
+		},
+	)
+	require.ErrorContains(t, err, "explicit takeover is required")
+
+	priorMetadata, err := store.Open(filepath.Join(target, "docbank.db"))
+	require.NoError(t, err)
+	assert.Equal(t, priorOwnership, store.NewPackCatalog(priorMetadata).PrimaryOwnership())
+	priorBlobs, err := blob.New(
+		store.NewPackCatalog(priorMetadata), filepath.Join(target, "blobs"),
+	)
+	require.NoError(t, err)
+	require.NoError(t, priorBlobs.Close())
+	require.NoError(t, priorMetadata.Close())
+
+	_, err = backupapp.Restore(
+		t.Context(), repo, "test-version",
+		backup.RestoreOptions{TargetDir: target, Overwrite: true, Jobs: 1},
+	)
+	require.NoError(t, err)
+	restoredMetadata, err := store.Open(filepath.Join(target, "docbank.db"))
+	require.NoError(t, err)
+	restoredBlobs, err := blob.New(
+		store.NewPackCatalog(restoredMetadata), filepath.Join(target, "blobs"),
+	)
+	require.NoError(t, err)
+	require.NoError(t, restoredBlobs.Close())
+	require.NoError(t, restoredMetadata.Close())
 }
 
 func TestPlacementArtifactUsesPinnedCatalogAuthority(t *testing.T) {

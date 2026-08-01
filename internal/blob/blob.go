@@ -284,6 +284,19 @@ func NewWithOptions(catalog packstore.Catalog, blobsDir string, opts Options) (*
 	if err != nil {
 		return nil, err
 	}
+	var locations primaryLocationCatalog
+	if catalogLocations, ok := catalog.(primaryLocationCatalog); ok {
+		locations = catalogLocations
+		ownership := locations.PrimaryOwnership()
+		if err := ownership.Validate(); err != nil {
+			return nil, fmt.Errorf("reading primary filesystem ownership: %w", err)
+		}
+		if err := RecoverPrimaryRestoreHandoff(
+			context.Background(), blobsDir, &ownership,
+		); err != nil {
+			return nil, fmt.Errorf("recovering primary restore ownership: %w", err)
+		}
+	}
 	coordinator := packstore.NewCoordinator()
 	maintainer, err := packstore.NewMaintainer(catalog, layout, packstore.MaintainerOptions{
 		Coordinator: coordinator,
@@ -299,12 +312,8 @@ func NewWithOptions(catalog packstore.Catalog, blobsDir string, opts Options) (*
 	}
 	reader := maintainer.Store()
 	var readBackend *packstore.FilesystemBackend
-	if locations, ok := catalog.(primaryLocationCatalog); ok {
+	if locations != nil {
 		ownership := locations.PrimaryOwnership()
-		if err := ownership.Validate(); err != nil {
-			_ = maintainer.Close()
-			return nil, fmt.Errorf("reading primary filesystem ownership: %w", err)
-		}
 		readBackend, err = packstore.NewFilesystemBackend(
 			layout, packstore.FilesystemBackendOptions{
 				ExpectedOwnership: &ownership, Limits: StorageLimits(),
