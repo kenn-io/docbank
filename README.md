@@ -34,7 +34,7 @@ document names, paths, contents, hashes, and identifiers are synthetic.
 The screenshots in `screenshots/multi-store-storage/` were captured on
 2026-08-01 from Docbank v0.12.0 (`f1475f1`) using the repository-owned real
 daemon harness and a temporary synthetic vault. The web capture is 1440 × 960
-in dark mode; the TUI capture is 1280 × 800. The vault, document names,
+in dark mode; the TUI capture is 1280 × 792. The vault, document names,
 paths, contents, hashes, identifiers, store names, and placement history are
 synthetic.
 
@@ -76,14 +76,14 @@ synthetic report carrying the selected stable tag. The vault, document names,
 paths, contents, hashes, tags, and identifiers are synthetic.
 
 `screenshots/web-retained-version-download/web-retained-version-download.png`
-was captured on 2026-07-27 from Docbank commit `1dd146c` at 1440 × 950 in dark
-mode. It shows the actual daemon-served web application with an older retained
-version selected and ready for verified download. The vault, document name,
-path, contents, hashes, and identifiers are synthetic.
+was recaptured on 2026-08-01 from the v0.12.0 interface at 1440 × 960 in dark
+mode. It shows the actual daemon-served web application with Revision 1 visibly
+selected and ready for verified download. The vault, document name, path,
+contents, hashes, and identifiers are synthetic.
 
 `screenshots/web-storage-status/web-storage-status.png` was captured on
-2026-07-27 from Docbank commit `1f090fe` at 1440 × 950 in dark mode. It shows
-the actual daemon-served web application reporting physical loose files, live
-packed content, and logically dead packed payload awaiting repack. The vault,
-document names, paths, contents, hashes, identifiers, and storage history are
-synthetic.
+2026-08-01 from the v0.12.0 interface at 1440 × 960 in dark mode. It shows the
+actual daemon-served web application reporting one primary pack and the same
+content's secondary-store authority, with singular pack copy rendered
+correctly. The vault, document names, paths, contents, hashes, identifiers, and
+storage history are synthetic.
