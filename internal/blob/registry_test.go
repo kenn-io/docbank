@@ -562,7 +562,7 @@ func TestRegistrySecuresOwnedFilesystemScaffoldingOnAttachment(t *testing.T) {
 	require.NoError(t, safefileio.ValidatePrivateDir(shard))
 }
 
-func TestRegistryDoesNotRepairMismatchedFilesystemNamespace(t *testing.T) {
+func TestRegistryDoesNotRepairFencedFilesystemNamespace(t *testing.T) {
 	const (
 		vaultID = "10000000-0000-4000-8000-000000000001"
 		storeID = "20000000-0000-4000-8000-000000000001"
@@ -592,6 +592,12 @@ func TestRegistryDoesNotRepairMismatchedFilesystemNamespace(t *testing.T) {
 		}})
 	t.Cleanup(func() { require.NoError(t, registry.Close()) })
 	assert.Equal(t, StoreFenced, registry.Observation(storeID).State)
+	require.Error(t, safefileio.ValidatePrivateDir(shard))
+	salvage, err := registry.SalvageBackend(t.Context(), storeID)
+	require.NoError(t, err)
+	closer, ok := salvage.(interface{ Close() error })
+	require.True(t, ok)
+	require.NoError(t, closer.Close())
 	require.Error(t, safefileio.ValidatePrivateDir(shard))
 }
 
