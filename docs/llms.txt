@@ -13,6 +13,8 @@ Every documentation page is also published as raw Markdown at the same path with
 ## Start Here
 - [Setup](https://docbank.ai/setup.md): Install docbank on Linux, macOS, or Windows and create the vault.
 - [Quickstart](https://docbank.ai/quickstart.md): A ten-minute tour of the docbank CLI.
+- [Capabilities](https://docbank.ai/capabilities.md): What Docbank does for people, agents, applications, recovery, and physical storage.
+- [Visual Tour](https://docbank.ai/tour.md): See Docbank's real web and terminal interfaces running against synthetic document vaults.
 
 ## Work with Documents
 - [Importing Documents](https://docbank.ai/usage/importing.md): Bulk import semantics — recursion, idempotency, collision suffixing, and failure handling.

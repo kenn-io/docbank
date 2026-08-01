@@ -252,6 +252,8 @@ replaced. See [Backup & Restore](usage/backup.md) for progress modes, snapshot
 selection, overwrite rules, and the exact proof returned by restore.
 
 That is the core document workflow. Continue with
+[Capabilities](capabilities.md) for the complete product map, see the real
+interfaces in the [Visual Tour](tour.md), continue with
 [Vault Lifecycle](usage/lifecycle.md) for maintenance and upgrades, explore
 [Docbank for Agents](agents.md) for automation, or use the
 [CLI Reference](cli-reference.md) for exact command semantics.

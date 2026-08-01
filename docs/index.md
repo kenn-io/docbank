@@ -8,20 +8,17 @@ description: Docbank is a self-sovereign document storage system for you and you
 # Your documents. Your agents. One system.
 
 Docbank gives you and your agents one authoritative place to file, find,
-organize, version, and verify the documents you depend on. You keep the
-authority: the vault and its history live on your own machine rather than
-inside a provider account. Stable identities let people and agents reorganize
-documents without losing track of them, every stored byte can be checked, and
-incremental backups can be verified before you rely on them. Work directly
-from the CLI, automate through the authenticated HTTP API, or embed Docbank in
-a Go application. People can browse the same authority in the local web
-application or focused terminal interface; the web application verifies
-current or retained document bytes before handing them to the browser's native
-save, lets people define and assign stable tags, and keeps the vault's
-loose-file/live-packed/dead-packed storage breakdown visible alongside
-document authority. Local-first placement can also move verified content into
-configured filesystem or S3-compatible stores without turning those stores
-into the document catalog.
+organize, version, and verify the documents you depend on. Stable identities
+survive reorganization, every stored byte can be checked, and incremental
+backups can be proved before you rely on them. The catalog and history remain
+under your control instead of inside a provider account; verified content may
+stay in the built-in local primary or be deliberately placed in fenced
+filesystem and S3-compatible stores.
+
+Work directly from the CLI, browse through the local web application or TUI,
+automate through the authenticated HTTP API, or embed independently rooted
+vaults in a Go application. Every surface sees the same nodes, revisions,
+immutable versions, and content authority.
 
 Install the latest release on Linux or macOS:
 
@@ -36,6 +33,10 @@ curl -fsSL https://docbank.ai/install.sh | sh
   <a class="md-button" href="quickstart/">Ten-minute tour</a>
   <a class="md-button" href="agents/">Build agent workflows</a>
 </p>
+
+![The Docbank web application browsing a synthetic vault and showing the selected document's stable authority.](https://raw.githubusercontent.com/kenn-io/docbank/docs-assets/screenshots/v0.11.0/web-vault-browser.png)
+
+<p class="image-caption">A real synthetic vault in the local web application. <a href="tour/">See the visual tour.</a></p>
 
 ## What Docbank gives you
 
@@ -60,6 +61,10 @@ curl -fsSL https://docbank.ai/install.sh | sh
     <h3>Storage you can place</h3>
     <p>Keep ingest local-first, then deliberately place verified content in filesystem or S3-compatible stores without changing document identity.</p>
   </section>
+  <section>
+    <h3>Automation that fails clearly</h3>
+    <p>Stable IDs, revision preconditions, bounded pages, typed errors, and digest receipts give agents evidence instead of optimistic success.</p>
+  </section>
 </div>
 
 The ordinary workflow stays direct:
@@ -80,11 +85,12 @@ docbank backup create --repo ~/Backups/docbank # incremental snapshot
 
 ## Own the authority, not just the disk
 
-Self-sovereignty here is practical: the vault, catalog, history, and recovery
-path are under your control. Everything lives on your machine in an inspectable
-layout. Import copies files and never touches the sources, so moving a Dropbox
-or Google Drive export into Docbank is safe to attempt and repeat until it is
-complete.
+Self-sovereignty here is practical: the vault catalog, history, placement
+policy, and recovery path are under your control. The built-in primary is an
+inspectable local layout. Optional secondary stores hold verified physical
+copies but never become an independent document catalog. Import copies files
+and never touches the sources, so moving a Dropbox or Google Drive export into
+Docbank is safe to attempt and repeat until it is complete.
 
 ### Why move beyond Dropbox or Google Drive?
 
@@ -157,17 +163,11 @@ ownership rules.
 
 ## Status
 
-Docbank is alpha software. The latest release includes archives and
-checksum-enforcing installers for Linux, macOS, and Windows on amd64 and
-arm64. Implemented and tested today: the core store and ingest
-pipeline, the virtual-tree CLI, the authenticated daemon API, stable
-content versions with verified replacement, reversion, pruning, and
-lookup by content hash (`refs`), tags, permanent audited history with
-independent verification, loose and packed storage with explicit
-maintenance, whole-vault integrity verification, incremental backup
-create/verify/restore, a scoped web application, a TUI with recoverable
-trash and restore, and the embedded Go API. Docbank is not yet a
-stable 1.0; the [Roadmap](roadmap.md) gives the product direction.
+Docbank is alpha software, not yet a stable 1.0. Release archives and
+checksum-enforcing installers cover Linux, macOS, and Windows on amd64 and
+arm64. The [Capabilities](capabilities.md) page is the current product map;
+the [Roadmap](roadmap.md) describes high-level direction rather than acting as
+an implementation tracker.
 
 Docbank belongs to a family of personal data tools alongside
 [msgvault](https://msgvault.io), the communications archive. Where msgvault
@@ -178,6 +178,8 @@ documents: files you still organize, retrieve, and build workflows around.
 
 - [Setup](setup.md): install the binary and create the vault
 - [Quickstart](quickstart.md): a ten-minute tour of the CLI
+- [Capabilities](capabilities.md): the complete human-readable product map
+- [Visual Tour](tour.md): real web and terminal interfaces on synthetic data
 - [Vault Lifecycle](usage/lifecycle.md): operate, snapshot, and recover safely
 - [Web Application](usage/web.md): browse, search, upload, download, and manage recoverable trash
 - [Docbank for Agents](agents.md): the automation contract

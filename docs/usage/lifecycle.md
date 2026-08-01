@@ -118,8 +118,21 @@ verify`, and `backup restore` for incremental capture and proved recovery from
 an immutable Kit repository; see [Backup](backup.md). Those repositories are
 compressed but **not encrypted**.
 
-A stopped-vault copy remains a simple alternative. Stop the daemon before
-copying so the SQLite database and blob catalog cannot change during the copy.
+A stopped-vault copy remains a simple alternative when every retained blob has
+authority in the built-in primary. Check placement before relying on this path:
+
+```bash
+docbank storage list
+docbank storage status
+```
+
+If any content is held only by a secondary, use `docbank backup create` instead;
+it reads one verified candidate for every logical blob and produces a complete,
+topology-independent recovery point. Merely copying `config.toml` preserves
+binding coordinates, not secondary bytes.
+
+For a primary-complete vault, stop the daemon before copying so the SQLite
+database and blob catalog cannot change during the copy.
 
 ```bash
 vault="${DOCBANK_HOME:-$HOME/.docbank}"
@@ -128,9 +141,9 @@ tar -C "$(dirname "$vault")" -czf "docbank-$(date +%F).tar.gz" "$(basename "$vau
 docbank daemon start
 ```
 
-The whole directory is the simplest snapshot. The essential archive state is
-`docbank.db` plus `blobs/`; `config.toml` is worth retaining when customized.
-Logs, lock files, and stale runtime records are not archive data.
+The whole directory is the simplest primary-complete snapshot. Its archive
+state is `docbank.db` plus `blobs/`; `config.toml` is worth retaining when
+customized. Logs, lock files, and stale runtime records are not archive data.
 
 Protect the snapshot like the vault itself: document contents and a configured
 API key may both be present. Test restoration into a separate
@@ -158,16 +171,25 @@ store through its normal daemon boundary.
 
 ## Move a vault
 
-1. Stop the source daemon.
-2. Copy the complete vault directory while it is stopped.
-3. Point `DOCBANK_HOME` at the copy on the destination machine.
+The portable path is a verified backup restore:
+
+1. Create and verify a snapshot repository.
+2. Restore into a separate target on the destination machine.
+3. Point `DOCBANK_HOME` at that target.
 4. Run `docbank verify`, then `docbank tree /`.
 5. Start using the destination only after both checks succeed.
 
-The database refers to content by hash rather than absolute filesystem path,
-so no path rewriting is required. Linux, macOS, and Windows can open the same
-logical vault format. When moving between filesystems, copy while stopped and
-run both verification commands before treating the destination as authoritative.
+Default restore collapses every source location into a fresh local primary, so
+the destination does not inherit source paths, endpoints, credentials, or
+ownership epochs. Use an owner-private store mapping only when deliberately
+reconstructing selected placement; see
+[Multi-store Storage](storage.md#backup-and-restore).
+
+For a primary-complete vault, a stopped directory copy is also valid: stop the
+source daemon, copy the complete vault directory, and run the same two checks.
+Linux, macOS, and Windows share the logical vault format. A copied customized
+`config.toml` may contain machine-specific watched paths, secondary bindings,
+or credential profiles; review it before starting the destination daemon.
 
 ## When something looks wrong
 

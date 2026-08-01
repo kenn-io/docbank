@@ -4,125 +4,76 @@
 [![CI](https://github.com/kenn-io/docbank/actions/workflows/ci.yml/badge.svg)](https://github.com/kenn-io/docbank/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/kenn-io/docbank?include_prereleases)](https://github.com/kenn-io/docbank/releases)
 
-> **Alpha software.** Docbank is pre-1.0. Keep independent copies of
-> irreplaceable material and verify backups before relying on them.
+> **Alpha software.** Keep independent copies of irreplaceable material and
+> verify backups before relying on them.
 
 **Your documents. Your agents. One system.**
 
-Docbank gives you and your agents one authoritative place to file, find,
-organize, version, and verify the PDFs, scans, notes, spreadsheets, and records
-you depend on. You keep the authority: the vault and its history live on your
-own machine rather than inside a provider account. Content is immutable and
-deduplicated under one logical SHA-256 identity, while stable document IDs and
-a virtual tree let people and agents reorganize the archive without losing
-track of anything. Documentation lives at [docbank.ai](https://docbank.ai).
+Docbank is a self-sovereign document system for the records you and your
+agents need to keep, find, change, and prove. It combines a familiar virtual
+tree with stable document IDs, immutable content versions, indexed retrieval,
+recoverable deletion, verified backup, and optional permanent audited history.
+The vault catalog stays under your control instead of inside a provider
+account.
 
-## Why docbank?
+![The Docbank web application browsing a synthetic vault and showing the selected document's stable authority.](https://raw.githubusercontent.com/kenn-io/docbank/docs-assets/screenshots/v0.11.0/web-vault-browser.png)
 
-Ordinary folders make a document's location part of its identity, and cloud
-drives couple an archive's integrity, history, and continued existence to an
-account in good standing. Neither makes durable content identity,
-independent verification, and provider-independent retention part of its
-native contract. Docbank does: everything lives on your machine in an
-inspectable layout, imports copy and never touch sources, and integrity is
-provable on demand. One honest boundary — docbank is an archive and system
-of record, not a sync-and-share tool. It makes the copy that must survive
-trustworthy.
+The standalone CLI, web application, TUI, scripts, and agents all use the same
+authenticated daemon contract. Go applications can instead embed independently
+rooted vaults in-process through the public module at `go.kenn.io/docbank`.
 
-Two ways to run it, one authority per vault:
+## Why Docbank?
 
-- **Standalone.** A personal archive: the CLI and a daemon on your machine.
-  Agents and scripts use the same authenticated HTTP contract the CLI uses,
-  with IDs that survive renames and revision preconditions for safe
-  read-modify-write.
-- **Embedded.** A Go module: independently rooted vaults in-process, no
-  daemon, the same storage model and lifecycle guarantees.
+A path is a useful place to find a file, but a poor long-term identity. Cloud
+drives also make account access and provider policy part of the authority for
+your archive. Docbank separates those concerns:
 
-Four commitments:
+- a stable node ID continues to identify a document after moves and renames;
+- every content version is immutable and named by a verifiable SHA-256 digest;
+- revisions turn stale automation into explicit conflicts instead of silent
+  overwrites;
+- trash, permanent deletion, garbage collection, and pack reclamation are
+  separate decisions;
+- incremental backups are verified before restore results are published; and
+- physical content can be placed in fenced filesystem or S3-compatible stores
+  without making those stores the document catalog.
 
-- **Immutable content.** Blob writes are durable before the database ever
-  references them, and every content version keeps a verified SHA-256
-  identity you can re-check at any time with `verify`.
-- **Deliberate lifecycle.** `rm` is always recoverable trash. Emptying
-  trash, collecting unreachable content, and compacting packed space are
-  separate explicit operations — never side effects.
-- **Verified backup & restore.** Incremental snapshot repositories support
-  create, list, verify, and confined restore into a separate vault, so a
-  backup is proven before it is trusted.
-- **Audited history.** Opt a directory into permanent, tamper-evident
-  history with `docbank audit enable`; every supported change is recorded
-  and `verify` independently replays it.
+Docbank is an archive and system of record, not a sync-and-share service. It
+does not mirror a working folder across devices or create public share links.
 
-## Implemented today
+## What you can do
 
-- Virtual folders with listing, tree browsing, rename, move, trash, and restore
-- Resumable bulk import and verified multipart upload
-- Stable content-version UUIDs, verified replacement and reversion, bounded
-  history listing, ID-addressed retrieval, and lookup by content hash
-- Stable tags with define, rename, assign, unassign, delete, and bounded
-  node/tag listings
-- Preview-first permanent audit enrollment for one directory scope, with
-  sticky retention, recorded supported mutations, status evidence, bounded
-  per-node history, independent chain/protected-byte verification, exact-prefix
-  checks against externally recorded evidence, and backup/restore fidelity
-- FTS5 search over names and verified UTF-8 text/Markdown/JSON contents
-- A daemon-backed TUI for analytical tree browsing, search, stable
-  document/version identity inspection, permanent audited-history timelines,
-  revision-bound recoverable trash and restore, and read-only storage and
-  backup inspection
-- A scoped kit-ui web application for verified local-file upload, virtual-tree browsing, sortable
-  document analysis, tag-definition management, tag browsing and assignment,
-  tag-filtered extracted-text search,
-  complete current authority, verified current and historical content download,
-  recoverable move-to-trash and revision-bound restoration,
-  permanent protection, event history, and vault-wide verification evidence,
-  immutable versions and provenance,
-  configured backup recovery points, daemon background-job status, and an honest
-  loose-file/live-packed/dead-packed storage breakdown
-- Mixed loose and packed content storage with explicit pack, GC, and repack,
-  plus an opt-in bounded daemon packing schedule
-- Local-first multi-store placement across configured filesystem and
-  S3-compatible secondaries, with fenced ownership, preview-first movement,
-  repair and salvage, complete backup, and topology-independent restore
-- Whole-vault integrity verification
-- Incremental backup repositories with create, list, verify, and confined restore
-- Daemon-first CLI, authenticated loopback HTTP API, and offline OpenAPI output
-- An embedded Go API with exclusive non-overlapping roots, immutable create,
-  generic source provenance, verified blob repair, stable bounded tree walks,
-  optional automatic loose zstd storage, resumable maintenance, and selectable
-  CGO or pure-Go SQLite
-- A release pipeline for Linux, macOS, and Windows on amd64 and arm64, with
-  SHA-256 checksums and checksum-enforcing installers
-- Native vault, daemon, and recovery support on Linux, macOS, and Windows
+| Need | Docbank capability |
+| --- | --- |
+| File and find records | Recursive import, verified upload, virtual folders, tags, ranked name and extracted-text search |
+| Keep identity through change | Stable node IDs, immutable version UUIDs, verified replacement, reversion, and explicit version pruning |
+| Work safely with agents | Authenticated HTTP and OpenAPI, bounded listings, structured errors, revision preconditions, and digest receipts |
+| Recover from mistakes | Recoverable trash, revision-bound restore, explicit GC and repack, whole-vault verification |
+| Prove recovery | Incremental snapshot repositories, complete content verification, topology-independent restore |
+| Retain a permanent record | Preview-first audited scopes with sticky retention and independently replayed evidence |
+| Manage physical capacity | Loose and packed storage, automatic bounded packing, and deliberate multi-store placement, repair, salvage, and evacuation |
 
-See the [roadmap](docs/roadmap.md) for high-level product direction beyond the
-capabilities listed here.
+See the [capability guide](docs/capabilities.md) for the full product map and
+the [visual tour](docs/tour.md) for the current web and terminal interfaces.
 
-Secondary stores are a deployment trust boundary: Docbank verifies their
-objects but does not encrypt them. Anyone with raw access to a configured
-filesystem root or S3 prefix can decode document content, so those namespaces
-must be owner-controlled or protected by independently managed storage
-encryption and access policy.
+## Install
 
-## Installation
-
-Docbank supports Linux, macOS, and 64-bit Windows on amd64 and arm64. On Linux
-or macOS, install the latest release with:
+Linux or macOS:
 
 ```bash
 curl -fsSL https://docbank.ai/install.sh | sh
 ```
 
-On Windows, run this in PowerShell:
+Windows PowerShell:
 
 ```powershell
 irm https://docbank.ai/install.ps1 | iex
 ```
 
-Both installers select the native archive and refuse to install it unless its
-SHA-256 digest matches the release's `SHA256SUMS`. You can instead download and
-verify an archive manually from
-[GitHub Releases](https://github.com/kenn-io/docbank/releases).
+The installers select the native Linux, macOS, or Windows archive for amd64 or
+arm64 and refuse to install it unless its digest matches the release's
+`SHA256SUMS`. [GitHub Releases](https://github.com/kenn-io/docbank/releases)
+also provides the archives for manual verification.
 
 To build from source, install Go 1.26+, CGO, a C compiler, Node 24+, and npm:
 
@@ -132,36 +83,32 @@ cd docbank
 make install
 ```
 
-On Windows, the [setup guide](docs/setup.md) gives the equivalent PowerShell
-steps for compiling the frontend, copying its embed assets, and building
-`docbank.exe`. It is the installation authority for every platform's
-toolchain.
+The [setup guide](docs/setup.md) is the toolchain authority for every platform.
 
-## Quick start
+## Start a vault
 
-There is no initialization command. The first data command creates the local
-vault and starts its daemon:
+There is no initialization ceremony. The first data command creates the vault
+and starts its daemon:
 
 ```bash
 docbank add ~/Documents --dest /archive
 docbank tree /archive
-docbank tui
-docbank web
 docbank search "tax return"
+docbank web
+```
+
+Retrieve a complete file only after Docbank verifies it, then inspect or change
+the same stable document without rewriting prior content:
+
+```bash
 docbank get /archive/Documents/receipt.pdf ./receipt.pdf
 docbank versions list /archive/Documents/receipt.pdf
-docbank refs <receipt-sha256>
-docbank tag create taxes
-docbank tag assign taxes /archive/Documents/receipt.pdf
-docbank search receipt --tag taxes
 docbank put revised-receipt.pdf /archive/Documents/receipt.pdf
-docbank edit /archive/Documents/notes.md
-docbank revert /archive/Documents/receipt.pdf <prior-version-id>
 docbank mv /archive/Documents/receipt.pdf /archive/Documents/receipt-2026.pdf
 docbank verify
 ```
 
-Create and prove an incremental backup repository:
+Create and prove an incremental recovery point:
 
 ```bash
 docbank backup init --repo ~/Backups/docbank
@@ -170,25 +117,38 @@ docbank backup verify --repo ~/Backups/docbank
 docbank backup restore --repo ~/Backups/docbank --target ~/Restores/docbank-test
 ```
 
+The [ten-minute quickstart](docs/quickstart.md) walks through versions, tags,
+search, recoverable trash, maintenance, and restore.
+
+## Deployment and trust boundaries
+
+- **Standalone:** one daemon owns a vault; every CLI, browser, TUI, script, and
+  external agent goes through its loopback-authenticated API.
+- **Embedded:** one Go application owns each independently rooted vault
+  in-process, with selectable CGO or pure-Go SQLite.
+- **Secondary storage:** Docbank verifies content in configured filesystem and
+  S3-compatible stores but does not encrypt it. Protect those namespaces with
+  owner access controls and storage encryption appropriate to their operator.
+- **Backup:** a stopped copy of the local database and primary blob directory
+  is complete only when every retained blob still has primary authority.
+  `docbank backup create` remains complete across remote-only placement and is
+  the preferred portable recovery path.
+
 ## Documentation
 
-- [Setup](docs/setup.md) and [ten-minute quickstart](docs/quickstart.md)
-- [Using docbank](docs/usage/lifecycle.md), including the
-  [web application](docs/usage/web.md),
-  [interactive terminal browser](docs/usage/tui.md), backup, and recovery
-- [Multi-store storage](docs/usage/storage.md)
-- [Docbank for agents](docs/agents.md) and the detailed
-  [integration guide](docs/agents/integration.md)
+- [Documentation homepage](https://docbank.ai) and [visual tour](docs/tour.md)
+- [Setup](docs/setup.md) and [quickstart](docs/quickstart.md)
+- [Capabilities](docs/capabilities.md) and [vault lifecycle](docs/usage/lifecycle.md)
+- [Web application](docs/usage/web.md) and [terminal browser](docs/usage/tui.md)
+- [Multi-store storage](docs/usage/storage.md) and [backup & restore](docs/usage/backup.md)
+- [Docbank for agents](docs/agents.md) and [integration guide](docs/agents/integration.md)
 - [Embed in Go](docs/embedding.md)
-- [CLI reference](docs/cli-reference.md)
-- [Architecture overview](docs/architecture/overview.md)
-- [Internal design map](docs/internal/README.md) for contributors and coding agents
+- [CLI reference](docs/cli-reference.md) and [architecture overview](docs/architecture/overview.md)
 
 Docbank belongs to a family of personal data tools alongside
-[msgvault](https://msgvault.io), the communications archive. Where msgvault
-preserves an immutable record of your messages, docbank manages working
-documents: files you still organize, retrieve, and build workflows around —
-and a safe document API for external applications.
+[msgvault](https://msgvault.io), the communications archive. Msgvault
+preserves an immutable record of messages; Docbank manages working documents
+that people and agents still organize, retrieve, version, and use.
 
 ## License
 

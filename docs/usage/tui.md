@@ -18,6 +18,8 @@ outlive the background daemon's idle window, so each bounded interaction
 rediscovers or restarts a compatible daemon before issuing its request; leaving
 the terminal open does not pin an otherwise idle process.
 
+![The Docbank TUI showing physical storage inventory and two synthetic backup recovery points.](https://raw.githubusercontent.com/kenn-io/docbank/docs-assets/screenshots/tui-storage-backup/tui-storage-backup.png)
+
 The main view is a full-width document table. At ordinary terminal widths it
 shows each document's name, type, size, and UTC modification time; search results
 also identify the match kind when space permits. Narrow terminals progressively
