@@ -156,7 +156,7 @@
         >
           {#snippet actions()}<DatabaseIcon size="18" aria-hidden="true" />{/snippet}
           <p>
-            {status.packs} immutable pack{status.packs === 1 ? "" : "s"} contain
+            {status.packs} immutable pack{status.packs === 1 ? "" : "s"} contain{status.packs === 1 ? "s" : ""}
             live and logically dead stored payload.
           </p>
         </Card>

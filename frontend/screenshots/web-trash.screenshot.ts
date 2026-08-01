@@ -52,6 +52,30 @@ const tuiStorageScreenshotPath = path.join(
   "screenshots",
   "tui-multi-store-storage.png",
 );
+const vaultBrowserScreenshotPath = path.join(
+  repositoryRoot,
+  ".superpowers",
+  "screenshots",
+  "web-vault-browser.png",
+);
+const searchResultsScreenshotPath = path.join(
+  repositoryRoot,
+  ".superpowers",
+  "screenshots",
+  "web-search-results.png",
+);
+const retainedVersionScreenshotPath = path.join(
+  repositoryRoot,
+  ".superpowers",
+  "screenshots",
+  "web-retained-version-download.png",
+);
+const packedStorageScreenshotPath = path.join(
+  repositoryRoot,
+  ".superpowers",
+  "screenshots",
+  "web-storage-status.png",
+);
 
 test.describe("Docbank web screenshots", () => {
   let workspace = "";
@@ -126,6 +150,10 @@ test.describe("Docbank web screenshots", () => {
     await rm(auditEvidenceScreenshotPath, { force: true });
     await rm(storageScreenshotPath, { force: true });
     await rm(tuiStorageScreenshotPath, { force: true });
+    await rm(vaultBrowserScreenshotPath, { force: true });
+    await rm(searchResultsScreenshotPath, { force: true });
+    await rm(retainedVersionScreenshotPath, { force: true });
+    await rm(packedStorageScreenshotPath, { force: true });
     const archive = path.join(workspace, "archive-store");
     await mkdir(vault, { recursive: true, mode: 0o700 });
     await mkdir(archive, { recursive: true, mode: 0o700 });
@@ -223,6 +251,35 @@ test.describe("Docbank web screenshots", () => {
       "--acknowledge-permanent-retention",
       "--json",
     ]);
+    let extractionReady = false;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const report = JSON.parse(
+        await runDocbank(["search", "Synthetic", "--json"]),
+      ) as { hits?: unknown[] };
+      if ((report.hits?.length ?? 0) > 0) {
+        extractionReady = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    if (!extractionReady) {
+      throw new Error("synthetic text extraction did not complete");
+    }
+    const revisedReport = path.join(
+      workspace,
+      "synthetic",
+      "revised-quarterly-tax-report.txt",
+    );
+    await writeFile(
+      revisedReport,
+      "Synthetic quarterly tax report with reviewed totals.\n",
+      { mode: 0o600 },
+    );
+    await runDocbank([
+      "put",
+      revisedReport,
+      "/Reports/quarterly-tax-report.txt",
+    ]);
     webURL = await runDocbank(["web", "--no-browser"]);
     const browserURL = new URL(webURL);
     const port = Number(browserURL.port);
@@ -287,6 +344,60 @@ test.describe("Docbank web screenshots", () => {
       `,
     });
 
+    await page.getByRole("cell", { name: "Reports", exact: true }).dblclick();
+    const report = page.getByRole("cell", {
+      name: "quarterly-tax-report.txt",
+      exact: true,
+    });
+    await expect(report).toBeVisible();
+    await report.click();
+    await expect(page.getByText("tax", { exact: true })).toBeVisible();
+    await expect(page.getByText("Protected", { exact: true })).toBeVisible();
+    await page.screenshot({
+      path: vaultBrowserScreenshotPath,
+      fullPage: true,
+      animations: "disabled",
+    });
+
+    await page.getByRole("button", { name: "Version history" }).click();
+    const versions = page.getByRole("dialog", {
+      name: "Immutable version history for /Reports/quarterly-tax-report.txt",
+    });
+    await expect(versions).toContainText("2 retained versions");
+    await versions.getByRole("button", { name: /Created at/ }).click();
+    await expect(
+      versions
+        .getByLabel("Complete version authority")
+        .getByText("Revision 1", { exact: true }),
+    ).toBeVisible();
+    await page.screenshot({
+      path: retainedVersionScreenshotPath,
+      fullPage: true,
+      animations: "disabled",
+    });
+    await versions
+      .getByRole("button", { name: "Close version history" })
+      .click();
+
+    const search = page.getByPlaceholder("Search names and extracted text");
+    await search.fill("Synthetic");
+    await search.press("Enter");
+    await expect(
+      page.getByRole("cell", { name: "content", exact: true }).first(),
+    ).toBeVisible();
+    await page.screenshot({
+      path: searchResultsScreenshotPath,
+      fullPage: true,
+      animations: "disabled",
+    });
+    await search.fill("");
+    await search.press("Enter");
+    await expect(report).toBeVisible();
+    await page.getByRole("button", { name: "Back to previous directory" }).click();
+    await expect(
+      page.getByRole("cell", { name: "Reports", exact: true }),
+    ).toBeVisible();
+
     await page.getByRole("button", { name: "Storage status" }).click();
     const storage = page.getByRole("dialog", {
       name: "Physical storage status",
@@ -300,6 +411,21 @@ test.describe("Docbank web screenshots", () => {
       animations: "disabled",
     });
     await storage
+      .getByRole("button", { name: "Close storage status" })
+      .click();
+
+    await runDocbank(["storage", "pack", "--json"]);
+    await page.getByRole("button", { name: "Storage status" }).click();
+    const packedStorage = page.getByRole("dialog", {
+      name: "Physical storage status",
+    });
+    await expect(packedStorage).toContainText("1 immutable pack contains");
+    await page.screenshot({
+      path: packedStorageScreenshotPath,
+      fullPage: true,
+      animations: "disabled",
+    });
+    await packedStorage
       .getByRole("button", { name: "Close storage status" })
       .click();
 
@@ -339,12 +465,12 @@ test.describe("Docbank web screenshots", () => {
     await catalog.getByRole("button", { name: "Done" }).click();
 
     await page.getByRole("cell", { name: "Reports", exact: true }).dblclick();
-    const report = page.getByRole("cell", {
+    const selectedReport = page.getByRole("cell", {
       name: "quarterly-tax-report.txt",
       exact: true,
     });
-    await expect(report).toBeVisible();
-    await report.click();
+    await expect(selectedReport).toBeVisible();
+    await selectedReport.click();
 
     await page.getByRole("button", { name: "Manage", exact: true }).click();
     const tags = page.getByRole("dialog", {
