@@ -10,6 +10,26 @@ from the annotated release tags. Docbank remains pre-1.0, so public interfaces
 may still evolve, but vaults created by v0.9.0 and later are within the
 [storage compatibility boundary](architecture/storage.md#released-upgrades).
 
+## [v0.12.0](https://github.com/kenn-io/docbank/tree/v0.12.0) — 2026-08-01
+
+### New features
+
+- Add verified multi-store storage with configurable local filesystem and
+  S3-compatible blob placement.
+- Upload new documents and download current or retained historical versions
+  through the web application with integrity verification.
+- Inspect document history, provenance, permanent audit records, background
+  jobs, backups, and physical storage in the web application.
+- Browse tags, assign them to documents, and manage tag definitions in the web
+  application.
+- Manage recoverable trash in the web application and TUI.
+- Inspect tags, background jobs, backups, and physical storage in the TUI.
+
+### Improvements
+
+- Report packed storage left behind after a restore so operators can see what
+  still awaits reclamation.
+
 ## [v0.11.0](https://github.com/kenn-io/docbank/tree/v0.11.0) — 2026-07-23
 
 ### New features

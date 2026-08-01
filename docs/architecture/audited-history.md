@@ -13,8 +13,10 @@ description: The permanent, tamper-evident history model for protected directory
     and checks every protected blob; supplied external evidence is proved as an
     exact prefix of current allocation and scope chains. Scope-wide browsing is
     available. A shared tag-definition rename or deletion advances every
-    affected disjoint scope atomically. Overlapping scopes, cross-scope
-    topology changes, and TUI/web projections remain planned. See
+    affected disjoint scope atomically. The web application exposes read-only
+    protection status, node history, and independent verification evidence;
+    the TUI exposes node history. Overlapping scopes and cross-scope topology
+    changes remain planned. See
     [Permanent Audited History](../usage/audited-history.md) for the current
     operator workflow.
 
@@ -1439,33 +1441,36 @@ workflow. The ordinary overwrite form of `docbank backup restore` rejects it.
 
 ## One history model, several clients
 
-The daemon API owns one bounded, cursor-paginated representation for audit
-scope status, events, content versions, comparisons, and chain verification.
-CLI, agents, TUI, and web clients consume that same model; none opens SQLite or
-the blob store directly. Status and terminal verification proofs expose the
-stable vault ID, every scope count/head, and allocation-lineage count/head as one
-evidence bundle suitable for external recording and later expected-state checks.
+The daemon API owns the current audit status, bounded node-history, and
+independent verification representations. CLI, agents, TUI, and web clients
+consume those models; none opens SQLite or the blob store directly. Status and
+terminal verification proofs expose the stable vault ID, every scope
+count/head, and allocation-lineage count/head as one evidence bundle suitable
+for external recording and later expected-state checks.
 
-The event order is canonical and total, while clients project it in three
-useful ways:
+The event order is canonical and total. The model supports three projections,
+with current client availability described below:
 
 - a **scope timeline** aggregates changes to every sticky member;
 - a **node timeline** follows one stable document or directory across paths;
   and
 - a **version history** filters to content heads and reversions.
 
-Interactive clients show newest first by default, but cursors preserve stable
-forward/backward traversal and chain verification reads canonical order.
+Interactive node-history clients show newest first by default, but cursors
+preserve stable forward/backward traversal and chain verification reads
+canonical order.
 Events committed in one metadata transaction share an operation identity. A
 multi-transaction command such as recursive ingest shares only its grouping ID;
 clients may visually group either level without collapsing individual node
 events or presenting the group as one atomic mutation.
 
-Comparison is type-aware but never invents semantic equivalence. Plain text
-and canonical metadata can render inline or side by side. Images and PDFs may
-render side by side when a safe viewer is available. Office and unknown binary
-formats start with hash, size, media type, and metadata changes plus verified
-download/open actions; richer format-aware comparison can be added later.
+!!! info "Planned"
+    Scope timelines and version comparison will use the same canonical event
+    model. Comparison will be type-aware without inventing semantic
+    equivalence: plain text and canonical metadata may render inline or side by
+    side, while images, PDFs, Office documents, and unknown binary formats will
+    begin with identity and metadata changes plus verified download/open
+    actions.
 
 ### CLI and agents
 
@@ -1509,49 +1514,35 @@ report still includes current terminal evidence and protected-byte results.
 
 ### TUI
 
-The TUI is a focused operator browser with three coordinated panes:
+The TUI opens a bounded, newest-first history screen for the selected node.
+Each row summarizes the recorded event, and event inspection exposes complete
+stable event, operation, scope, node, revision, path-state, version, tag, and
+provenance authority without truncating identities. Cursor pagination loads
+older pages while preserving the underlying document selection. Nodes outside
+the permanent audit boundary are identified plainly rather than presented with
+an invented empty history.
 
-1. the virtual tree with audited-scope and sticky-membership badges;
-2. the selected scope/node's ordered changes and content versions; and
-3. event detail showing path transitions, metadata, hashes, and verification.
-
-```text
-┌─ Tree ─────────────┐ ┌─ History ──────────┐ ┌─ Event / Version ─────────┐
-│ ▾ taxes       [A]  │ │ content replaced   │ │ 2026-07-14T09:42:11Z      │
-│   ▾ 2025      [A]  │ │ moved              │ │ /inbox/w2.pdf → /taxes/… │
-│     w2.pdf     [A]  │ │ baseline enrolled  │ │ sha256:…  verified       │
-│     return.pdf [A]  │ │                    │ │ compare · open · verify  │
-└────────────────────┘ └────────────────────┘ └───────────────────────────┘
-```
-
-Selection in the tree drives the history pane; selecting an event or version
-drives detail. Scope and node views are switchable without losing the selected
-stable node. Filtering, comparison, external open, and chain verification are
-first-class actions. Policy enablement shows the dry-run baseline inventory and
-vault-wide metadata-retention disclosure, then requires the separate explicit
-confirmation backed by the preview token; exceptional destruction is absent.
-
-It can render concise text or metadata differences. Rich PDF, office, image,
-and binary comparison opens an external tool or directs the operator to the web
-portal rather than overloading a terminal UI.
+!!! info "Planned"
+    Scope-wide timelines, comparison actions, audited-scope badges in the tree,
+    independent verification, and permanent enrollment remain outside the TUI.
+    Future terminal comparison should keep rich PDF, Office, image, and binary
+    rendering in an external viewer rather than overloading the TUI.
 
 ### Web portal and kit-ui
 
-The web portal is the primary human history experience. It adds filterable
-timelines, side-by-side version and metadata comparison, scope/member views,
-chain and backup evidence, and progress for verification or restore jobs.
-Reusable tree, timeline, diff, evidence, and job components belong in kit-ui
-when they are application-neutral enough for Msgvault and later tools.
+The web portal shows the selected node's permanent-protection status and opens
+its bounded, newest-first event timeline without losing the current directory,
+search result, or selection. Event detail exposes complete canonical identities,
+revision and path transitions, content versions, and typed tag or provenance
+changes. A separate read-only evidence drawer independently replays the current
+history and hashes protected content before reporting allocation and scope-chain
+heads. It does not accept earlier evidence, enroll a scope, or mutate policy.
 
-The primary layout keeps the virtual tree and current document context visible
-while a history workspace supplies filters, compare selection, and an evidence
-drawer. A scope dashboard summarizes enrolled nodes, protected current and
-historical bytes, chain status, latest verification, and snapshots known to
-contain the scope. Enabling audit is a reviewed workflow: preview the baseline
-inventory, storage impact, and vault-wide metadata-retention disclosure; review
-the target's current path and stable IDs; then acknowledge both retention
-boundaries and confirm enrollment. V1 has no separate scope-name field.
-The confirmation consumes the server-issued preview token and must refresh the
-inventory if relevant vault state changed.
+!!! info "Planned"
+    Filterable scope timelines, side-by-side version and metadata comparison,
+    scope/member dashboards, backup-evidence correlation, and permanent audit
+    enrollment remain outside the web application. Reusable timeline, diff,
+    and evidence components belong in kit-ui only when they are sufficiently
+    application-neutral.
 
 Neither UI presents exceptional audit destruction as an ordinary action.

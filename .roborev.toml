@@ -105,16 +105,19 @@ Key assumptions reviewers MUST account for:
    archive verification or make the served copy diverge from
    scripts/.
 
-12. DOCS ARE THE NEXT RELEASE SNAPSHOT: user-facing sources on main
-   describe every merged capability directly in present tense, including
-   homepage and install-adjacent copy. The public Zensical site is
-   published only from release tags, so readers cannot encounter that
-   source snapshot through docbank.ai until the corresponding binary is
-   released. Do not demand "next release", source-build-only, or newest-tag
-   qualifiers for merged capabilities; AGENTS.md explicitly forbids them.
-   DO flag release preparation that would tag documentation for behavior
-   absent from the same tag, or documentation that claims behavior absent
-   from main.
+12. DOCS FOLLOW THE RELEASE BOUNDARY: user-facing sources on main describe
+   every merged capability directly in present tense, including homepage and
+   install-adjacent copy. The public Zensical site is not deployed until the
+   corresponding binary release is tagged, so do not demand "next release",
+   source-build-only, or newest-tag qualifiers for merged capabilities.
+   Release preparation must ensure capability documentation matches the binary
+   being tagged. After the tag and GitHub release exist, the finalized release
+   notes and date are intentionally added to docs/changelog.md in a docs-only
+   follow-up PR, and the website is deployed from the resulting main commit.
+   That changelog commit is necessarily absent from the preceding software tag;
+   DO NOT report that absence or demand another release tag. DO flag a
+   post-release docs change that advertises behavior absent from the released
+   binary, or a pre-release deployment that exposes unreleased behavior.
 
 13. EXTERNAL STORE CONFIDENTIALITY IS A DOCUMENTED DEPLOYMENT BOUNDARY:
    filesystem and S3 secondary objects preserve Kit's physical encoding and

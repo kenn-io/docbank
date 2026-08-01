@@ -22,7 +22,8 @@ reconciliation pass through `Vault.Pack`; it cannot bypass the catalog or Kit's
 maintenance coordinator. `docbank storage repack` compacts eligible sparse packs
 and retires dead pack files. Embedded owners also have bounded `GarbageCollect`,
 `Verify`, and `Repack` passes. Startup never implicitly rewrites blob bytes, and
-no background scheduler runs these operations.
+configured daemon scheduling applies only to bounded packing. Garbage
+collection, verification, and repacking remain explicit operator actions.
 
 Large collections of small files are expensive to enumerate, copy, and restore.
 msgvault uses immutable pack files as the steady-state storage format for
@@ -131,10 +132,12 @@ an implementation format that docbank should own. Recovery belongs in verified
 backup/restore or a concrete repair workflow; the existence of a low-level Kit
 operation is not by itself a product use case.
 
-Automatic background storage maintenance and external content references are not
-current operator capabilities. Backup, replacement, repair, reversion, and
-maintenance already use the catalog and content-hash boundary rather than
-private pack internals.
+Configured automatic packing is a current daemon capability. It applies a
+finite byte budget through the same maintenance gate as explicit packing;
+garbage collection and repacking remain deliberate operator actions. External
+content references are not a current operator capability. Backup, replacement,
+repair, reversion, and maintenance use the catalog and content-hash boundary
+rather than private pack internals.
 
 Next: [Storage](storage.md) documents the schema and blob-store invariants
 beneath this layer; [Trash, GC, Repack & Verify](../usage/trash-and-gc.md) is
