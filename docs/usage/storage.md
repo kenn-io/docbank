@@ -100,6 +100,24 @@ is currently offline, so two unavailable replicas do not misleadingly look
 readable. Missing, corrupt, fenced, unavailable, and unbound states remain
 distinct because their recovery actions differ.
 
+### Prove primary completeness
+
+A stopped copy of the local database and built-in blob directory is complete
+only when every tracked blob has a primary location. Compare two typed reports:
+
+```bash
+docbank info --json
+docbank storage list --json
+```
+
+The `authoritative_objects` value for the store whose `role` is `primary` must
+equal `tracked_blobs` from `docbank info`. A primary has at most one location
+for each tracked SHA-256 identity, so equality proves complete primary
+coverage. A lower count requires `docbank backup create` for a complete
+topology-independent recovery point. `sole_authority_objects` cannot prove
+primary completeness because two secondary replicas can make neither one a
+sole copy while the primary still has no location.
+
 ## Place retained content
 
 Preview a copy while keeping the primary:

@@ -119,17 +119,25 @@ an immutable Kit repository; see [Backup](backup.md). Those repositories are
 compressed but **not encrypted**.
 
 A stopped-vault copy remains a simple alternative when every retained blob has
-authority in the built-in primary. Check placement before relying on this path:
+authority in the built-in primary. Prove that condition from the machine-readable
+reports before relying on this path:
 
 ```bash
-docbank storage list
-docbank storage status
+docbank info --json
+docbank storage list --json
 ```
 
-If any content is held only by a secondary, use `docbank backup create` instead;
-it reads one verified candidate for every logical blob and produces a complete,
+Find the store whose `role` is `primary`. Its `authoritative_objects` must equal
+`tracked_blobs` from `docbank info`; only that equality proves every tracked
+blob has a primary location. Do not infer completeness from
+`sole_authority_objects`: a blob held by two secondaries and absent from the
+primary is not a sole copy in either store. If the counts differ or you cannot
+establish the equality, use `docbank backup create` instead. It reads one
+verified candidate for every logical blob and produces a complete,
 topology-independent recovery point. Merely copying `config.toml` preserves
-binding coordinates, not secondary bytes.
+binding coordinates, not secondary bytes. See
+[Prove primary completeness](storage.md#prove-primary-completeness) for the
+count invariant.
 
 For a primary-complete vault, stop the daemon before copying so the SQLite
 database and blob catalog cannot change during the copy.
