@@ -7,9 +7,10 @@ description: Vault location, data layout, config.toml, and environment variables
 
 The only required knob is where the vault lives. `config.toml` is optional and
 controls the daemon's listen address, auth, idle behavior, default backup
-repository, and optional watched inboxes. The vault works without the file;
-backup commands require either a configured repository or their explicit
-`--repo` flag.
+repository, watched inboxes, and deployment bindings for secondary stores. A
+primary-only vault works without the file; every registered secondary needs a
+matching configured binding after restart. Backup commands require either a
+configured repository or their explicit `--repo` flag.
 
 ## Vault location
 
@@ -45,21 +46,28 @@ The directory layout is created on first use:
 └── daemon.<pid>.json    # runtime record of a live daemon
 ```
 
-`docbank.db` and `blobs/` together are the archive; back up both. The optional
-`.zst` suffix is only a physical encoding: hashes and reported document sizes
+`docbank.db` and `blobs/` are the local catalog and built-in primary. The
+optional `.zst` suffix is only a physical encoding: hashes and reported
+document sizes
 always describe the decoded content. Docbank chooses it for worthwhile new
 writes and continues to read existing raw files without converting them.
 `config.toml` is configuration, not archive data — optional, but back it
-up if you've customized it (it can hold an `api_key`). `vault.lock` and
+up if you've customized it (it can hold an `api_key`, filesystem paths, S3
+coordinates, and credential-profile names). `vault.lock` and
 `daemon.<pid>.json`, `web-launch/`, and `web-downloads/` are
 coordination/runtime state, safe to ignore in backups and safe to delete when
 no daemon or restore is running
 (`docbank daemon stop` removes its own record cleanly on graceful
-shutdown). The database
-references blobs by hash, so restoring a copied `docbank.db` + `blobs/`
-pair onto any machine yields a working vault — `docbank verify` proves
-the pair is consistent. Stop the daemon before taking a manual filesystem
-snapshot; see [Vault Lifecycle](usage/lifecycle.md#take-a-coherent-manual-snapshot).
+shutdown).
+
+A stopped copy of `docbank.db` plus `blobs/` is complete only when every
+retained blob has authority in the primary. A vault with remote-only content
+also needs its configured secondary stores; copying `config.toml` preserves
+binding coordinates but does not copy those bytes. Prefer `docbank backup
+create`: it reads one verified location for every logical blob and produces a
+topology-independent recovery point. Stop the daemon before taking a local-state
+filesystem snapshot; see
+[Vault Lifecycle](usage/lifecycle.md#take-a-coherent-backup).
 
 Docbank also keeps persistent per-user coordination files under
 `~/.local/state/docbank/target-locks`, using the home directory from the
@@ -69,8 +77,9 @@ vault trees, including simultaneous restores whose target trees overlap, and
 to serialize daemon launch before the launcher owns or creates the vault root.
 
 !!! warning
-    Don't edit or prune `blobs/` by hand. Blob files are referenced by
-    the database (including as prior document versions); use
+    Don't edit or prune `blobs/` or a secondary namespace by hand. Physical
+    files are authorized by the database (including for prior document
+    versions); use
     `docbank trash empty --run`, `docbank gc --run`, and (for dead packed
     payload) `docbank storage repack` to reclaim space; use `docbank verify` to
     check integrity.

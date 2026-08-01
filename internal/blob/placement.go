@@ -425,7 +425,7 @@ func (r PlacementRunner) runRecovery(
 			return r.fail(ctx, operation.ID, packstore.ErrStoreUnavailable)
 		}
 		moved, err := packstore.Move(
-			ctx, readBackendOnly{ReadBackend: source}, destination,
+			ctx, source, destination,
 			packstore.MoveRequest{
 				Source:      sourceLocation,
 				Destination: packstore.StoreID(plan.Destination),
@@ -578,7 +578,7 @@ func verifyRepairedLoose(
 	return nil
 }
 
-func closePlacementBackend(backend packstore.Backend) error {
+func closePlacementBackend(backend packstore.ReadBackend) error {
 	if closer, ok := backend.(interface{ Close() error }); ok {
 		return closer.Close()
 	}

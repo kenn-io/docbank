@@ -80,6 +80,8 @@ Tags organize documents independently of their current paths. Each tag has a
 stable UUID; its name can change without breaking assignments or agent-held
 references.
 
+![The Docbank web application managing a synthetic vault's stable tag catalog.](https://raw.githubusercontent.com/kenn-io/docbank/docs-assets/screenshots/web-tag-catalog/web-tag-catalog.png)
+
 ```bash
 docbank tag create taxes
 docbank tag assign taxes /taxes/2026/w2.pdf

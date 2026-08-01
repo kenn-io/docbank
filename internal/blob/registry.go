@@ -68,6 +68,7 @@ type Registry struct {
 	vaultID     string
 	bindings    map[string]config.StoreBindingConfig
 	openBackend configuredBackendFactory
+	openSalvage configuredBackendFactory
 	specs       map[packstore.StoreID]StoreSpec
 	backends    map[packstore.StoreID]packstore.Backend
 	// Kit's backend registry has no release callback. Once a backend has been
@@ -89,7 +90,10 @@ func NewRegistry(
 	bindings map[string]config.StoreBindingConfig,
 	stores []StoreSpec,
 ) *Registry {
-	return newRegistry(ctx, vaultID, bindings, stores, newAttachedConfiguredBackend)
+	return newRegistryWithFactories(
+		ctx, vaultID, bindings, stores,
+		newAttachedConfiguredBackend, newSalvageConfiguredBackend,
+	)
 }
 
 func newAttachedConfiguredBackend(
@@ -140,8 +144,22 @@ func newRegistry(
 	stores []StoreSpec,
 	openBackend configuredBackendFactory,
 ) *Registry {
+	return newRegistryWithFactories(
+		ctx, vaultID, bindings, stores, openBackend, openBackend,
+	)
+}
+
+func newRegistryWithFactories(
+	ctx context.Context,
+	vaultID string,
+	bindings map[string]config.StoreBindingConfig,
+	stores []StoreSpec,
+	openBackend configuredBackendFactory,
+	openSalvage configuredBackendFactory,
+) *Registry {
 	registry := &Registry{
-		vaultID: vaultID, bindings: bindings, openBackend: openBackend,
+		vaultID: vaultID, bindings: bindings,
+		openBackend: openBackend, openSalvage: openSalvage,
 		specs:        make(map[packstore.StoreID]StoreSpec, len(stores)),
 		backends:     make(map[packstore.StoreID]packstore.Backend, len(stores)),
 		observations: make(map[packstore.StoreID]StoreObservation, len(stores)),
@@ -233,7 +251,7 @@ func (r *Registry) refresh(ctx context.Context, id string) StoreObservation {
 // recovery. It never admits publication, retirement, or ordinary reads.
 func (r *Registry) SalvageBackend(
 	ctx context.Context, id packstore.StoreID,
-) (packstore.Backend, error) {
+) (packstore.ReadBackend, error) {
 	r.mu.RLock()
 	spec, known := r.specs[id]
 	observation := r.observations[id]
@@ -250,8 +268,34 @@ func (r *Registry) SalvageBackend(
 	if !bound || binding.Kind != spec.Kind {
 		return nil, fmt.Errorf("salvage store %s has no usable binding", id)
 	}
-	return r.openBackend(ctx, binding, nil)
+	inspector, err := r.openBackend(ctx, binding, nil)
+	if err != nil {
+		return nil, fmt.Errorf("open salvage store %s for inspection: %w", id, err)
+	}
+	actual, ownershipErr := inspector.Ownership(ctx)
+	closeErr := closeBackend(inspector)
+	if ownershipErr != nil || closeErr != nil {
+		return nil, fmt.Errorf(
+			"inspect salvage store %s ownership: %w",
+			id, errors.Join(ownershipErr, closeErr),
+		)
+	}
+	backend, err := r.openSalvage(ctx, binding, &actual)
+	if err != nil {
+		return nil, fmt.Errorf("open salvage store %s for verified reads: %w", id, err)
+	}
+	return salvageReadBackend{ReadBackend: backend, backend: backend}, nil
 }
+
+// salvageReadBackend deliberately withholds publication and retirement from
+// fenced-store recovery while retaining ownership of the underlying reader.
+type salvageReadBackend struct {
+	packstore.ReadBackend
+
+	backend packstore.Backend
+}
+
+func (b salvageReadBackend) Close() error { return closeBackend(b.backend) }
 
 // AttachSpec makes a newly committed catalog store available to this daemon
 // without reloading deployment configuration.
@@ -572,6 +616,20 @@ func NewInspectionBackend(
 	return NewConfiguredBackend(ctx, binding, nil)
 }
 
+func newSalvageConfiguredBackend(
+	ctx context.Context,
+	binding config.StoreBindingConfig,
+	expected *packstore.Ownership,
+) (packstore.Backend, error) {
+	if expected == nil {
+		return nil, errors.New("salvage backend requires observed ownership")
+	}
+	if binding.Kind == storeKindFilesystem {
+		return newFilesystemBackend(binding.Path, expected, false)
+	}
+	return NewConfiguredBackend(ctx, binding, expected)
+}
+
 // EnsureFilesystemNamespace securely creates or repairs one filesystem store
 // before registration or restore changes its ownership marker.
 func EnsureFilesystemNamespace(path string) error {
@@ -636,7 +694,7 @@ func checkFilesystemScaffolding(root string, check func(string) error) error {
 
 // NewConfiguredBackend constructs one deployment backend without granting
 // catalog authority. Expected ownership enables destructive work; nil is
-// reserved for registration and explicit fenced-store salvage.
+// reserved for registration and ownership inspection.
 func NewConfiguredBackend(
 	ctx context.Context,
 	binding config.StoreBindingConfig,

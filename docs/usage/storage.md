@@ -16,6 +16,12 @@ records which verified stores may satisfy each retained SHA-256 identity, but
 it does not mirror arbitrary filesystem changes, manage bucket lifecycle
 rules, or replace a complete [backup](backup.md).
 
+![The Docbank web application showing the primary and a secondary physical store for a synthetic vault.](https://raw.githubusercontent.com/kenn-io/docbank/f1475f1a97d4d2d5b2bb2625ff2f5f97150a9625/.superpowers/screenshots/web-multi-store-storage.png)
+
+The web application and TUI expose this inventory read-only. Registration,
+placement, repair, takeover, evacuation, and removal remain explicit CLI or
+master-key API operations.
+
 ## Configure a binding
 
 Bindings are machine-local deployment configuration. Paths, endpoints,
@@ -93,6 +99,26 @@ store. `unreadable_objects` counts objects for which every authorized location
 is currently offline, so two unavailable replicas do not misleadingly look
 readable. Missing, corrupt, fenced, unavailable, and unbound states remain
 distinct because their recovery actions differ.
+
+### Understand primary coverage
+
+Two typed reports expose the counts used to diagnose primary coverage:
+
+```bash
+docbank info --json
+docbank storage list --json
+```
+
+The `authoritative_objects` value for the store whose `role` is `primary` can
+be compared with `tracked_blobs` from `docbank info`. A lower primary count is
+a warning that content is held elsewhere. Matching counts are not an atomic
+proof: the endpoints use separate live snapshots, and watches, ingests,
+clients, or storage jobs can change placement before shutdown.
+`sole_authority_objects` cannot establish coverage either because two
+secondary replicas can make neither one a sole copy while the primary still
+has no location. Use `docbank backup create` for a complete,
+topology-independent recovery point; it verifies one authorized location for
+every logical blob or fails without publishing a partial backup.
 
 ## Place retained content
 

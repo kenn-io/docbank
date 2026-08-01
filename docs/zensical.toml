@@ -16,6 +16,8 @@ nav = [
   {"Start Here" = [
     {"Setup" = "setup.md"},
     {"Quickstart" = "quickstart.md"},
+    {"Capabilities" = "capabilities.md"},
+    {"Visual Tour" = "tour.md"},
   ]},
   {"Work with Documents" = [
     {"Importing Documents" = "usage/importing.md"},

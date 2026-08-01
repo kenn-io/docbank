@@ -78,6 +78,10 @@ non-goals.
    repack reclaims physical packed space.
 6. **Dry run before policy-changing maintenance.** Preview destructive work,
    evaluate the result, then make the separate explicit run request.
+7. **Placement is authority, not a copy hint.** A successful storage operation
+   may change which store is allowed to satisfy reads. Bind the preview token
+   to the reviewed plan, follow its durable job ID, and inspect an uncertain
+   result rather than replaying the move blindly.
 
 ## Common agent workflows
 
@@ -104,6 +108,10 @@ non-goals.
 - **Protect a workflow boundary:** create a tagged incremental snapshot, follow
   structured progress to a terminal result, and verify the repository on the
   schedule appropriate for its storage medium.
+- **Manage capacity without losing authority:** inspect store health, preview
+  placement or evacuation, execute the one-use token, and reconcile the durable
+  job receipt. Treat unavailable, fenced, missing, and corrupt locations as
+  different outcomes with different recovery actions.
 
 ## Start integrating
 

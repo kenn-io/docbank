@@ -109,6 +109,19 @@
   margin: 1.4rem 0 2rem;
 }
 
+.md-typeset .image-caption {
+  margin: -0.65rem 0 2rem;
+  color: var(--db-muted);
+  font-size: 0.72rem;
+  text-align: center;
+}
+
+.md-typeset img {
+  border: 1px solid var(--db-border);
+  border-radius: 4px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+}
+
 .md-typeset .md-button {
   border-color: var(--db-border-strong);
   border-radius: 2px;
