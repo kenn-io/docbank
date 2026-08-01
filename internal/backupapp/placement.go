@@ -11,6 +11,7 @@ import (
 	"slices"
 
 	"go.kenn.io/kit/backup"
+	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
 )
 
@@ -141,15 +142,35 @@ type placementRestoreTarget struct {
 
 var _ backup.AuxiliaryTarget = placementRestoreTarget{}
 
-func (target placementRestoreTarget) RestoreAuxiliary(
+func (target placementRestoreTarget) StageAuxiliary(
 	_ context.Context, artifacts []backup.RestoredAuxiliary,
-) error {
+) (backup.AuxiliaryRestore, error) {
+	manifest, err := decodePlacementArtifacts(artifacts)
+	if err != nil {
+		return nil, err
+	}
+	if target.manifest != nil {
+		*target.manifest = manifest
+	}
+	return placementAuxiliaryRestore{}, nil
+}
+
+type placementAuxiliaryRestore struct{}
+
+func (placementAuxiliaryRestore) Commit(context.Context) error   { return nil }
+func (placementAuxiliaryRestore) Rollback(context.Context) error { return nil }
+
+func decodePlacementArtifacts(
+	artifacts []backup.RestoredAuxiliary,
+) (placementManifest, error) {
 	if len(artifacts) != 1 {
-		return fmt.Errorf("backupapp: expected one placement artifact, got %d", len(artifacts))
+		return placementManifest{}, fmt.Errorf(
+			"backupapp: expected one placement artifact, got %d", len(artifacts),
+		)
 	}
 	artifact := artifacts[0]
 	if artifact.Name != placementName || artifact.Format != PlacementFormat {
-		return fmt.Errorf(
+		return placementManifest{}, fmt.Errorf(
 			"backupapp: unsupported auxiliary artifact %q (%s)",
 			artifact.Name, artifact.Format,
 		)
@@ -158,15 +179,79 @@ func (target placementRestoreTarget) RestoreAuxiliary(
 	decoder := json.NewDecoder(bytes.NewReader(artifact.Data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&manifest); err != nil {
-		return fmt.Errorf("backupapp: decoding placement manifest: %w", err)
+		return placementManifest{}, fmt.Errorf("backupapp: decoding placement manifest: %w", err)
 	}
 	if err := validatePlacementManifest(manifest); err != nil {
-		return err
+		return placementManifest{}, err
 	}
-	if target.manifest != nil {
-		*target.manifest = manifest
+	return manifest, nil
+}
+
+func loadPlacementManifest(
+	ctx context.Context, repo *backup.Repo, snapshotID, packExtension string,
+) (placementManifest, string, error) {
+	manifest, err := repo.LoadManifest(snapshotID)
+	if err != nil {
+		return placementManifest{}, "", fmt.Errorf(
+			"backupapp: loading snapshot manifest: %w", err,
+		)
 	}
-	return nil
+	if len(manifest.Auxiliary) != 1 {
+		return placementManifest{}, "", fmt.Errorf(
+			"backupapp: expected one placement artifact, got %d", len(manifest.Auxiliary),
+		)
+	}
+	artifact := manifest.Auxiliary[0]
+	id, err := pack.ParseBlobID(artifact.Blob)
+	if err != nil {
+		return placementManifest{}, "", fmt.Errorf(
+			"backupapp: placement artifact identity: %w", err,
+		)
+	}
+	known, err := repo.LoadBlobIndex()
+	if err != nil {
+		return placementManifest{}, "", fmt.Errorf(
+			"backupapp: loading repository blob index: %w", err,
+		)
+	}
+	stream, err := repo.OpenBlob(ctx, known, id, nil, packExtension)
+	if err != nil {
+		return placementManifest{}, "", fmt.Errorf(
+			"backupapp: opening placement artifact: %w", err,
+		)
+	}
+	data, err := readPlacementArtifact(stream, artifact.Bytes)
+	if err != nil {
+		return placementManifest{}, "", err
+	}
+	placement, err := decodePlacementArtifacts([]backup.RestoredAuxiliary{{
+		Name: artifact.Name, Format: artifact.Format,
+		SHA256: artifact.SHA256, Data: data,
+	}})
+	if err != nil {
+		return placementManifest{}, "", err
+	}
+	return placement, manifest.SnapshotID, nil
+}
+
+func readPlacementArtifact(
+	stream *backup.BlobStream, expectedSize int64,
+) (data []byte, resultErr error) {
+	defer func() { resultErr = errors.Join(resultErr, stream.Close()) }()
+	if stream.Size() != expectedSize {
+		return nil, fmt.Errorf(
+			"backupapp: placement artifact size is %d, expected %d",
+			stream.Size(), expectedSize,
+		)
+	}
+	data, err := io.ReadAll(stream)
+	if err != nil {
+		return nil, fmt.Errorf("backupapp: reading placement artifact: %w", err)
+	}
+	if err := stream.Verify(); err != nil {
+		return nil, fmt.Errorf("backupapp: verifying placement artifact: %w", err)
+	}
+	return data, nil
 }
 
 func validatePlacementManifest(manifest placementManifest) error {

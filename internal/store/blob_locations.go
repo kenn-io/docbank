@@ -277,12 +277,14 @@ func (s *Store) AddRestoredBlobLocation(
 	})
 }
 
-// RetireRestoredPrimary revokes the temporary local restore copy only after a
-// verified secondary is authoritative. Audited bytes remain primary-pinned
-// unless the restore mapping explicitly acknowledges remote-only retention.
+// RetireRestoredPrimary revokes temporary local catalog authority only after a
+// verified secondary is authoritative. The physical file remains until the
+// restored database is published and ordinary garbage collection removes it.
+// Audited bytes remain primary-pinned unless the restore mapping explicitly
+// acknowledges remote-only retention.
 func (s *Store) RetireRestoredPrimary(
 	ctx context.Context, hash string, allowAuditedRemoteOnly bool,
-) (ref packstore.ObjectRef, retired bool, err error) {
+) (retired bool, err error) {
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var secondaryCount int
 		if err := tx.QueryRowContext(ctx, `
@@ -295,28 +297,6 @@ func (s *Store) RetireRestoredPrimary(
 		if secondaryCount == 0 {
 			return fmt.Errorf("blob %s has no restored secondary authority", hash)
 		}
-		var primaryKind, primaryEncoding string
-		if err := tx.QueryRowContext(ctx, `
-			SELECT kind,encoding FROM blob_locations WHERE blob_hash=? AND store_id=?`,
-			hash, s.primaryStoreID,
-		).Scan(&primaryKind, &primaryEncoding); err != nil {
-			return fmt.Errorf("reading restored primary authority for %s: %w", hash, err)
-		}
-		if primaryKind != blobLocationKindLoose {
-			return fmt.Errorf("restored primary authority for %s is not loose", hash)
-		}
-		switch primaryEncoding {
-		case looseEncodingRaw:
-			ref.LooseEncoding = packstore.LooseEncodingRaw
-		case looseEncodingZstd:
-			ref.LooseEncoding = packstore.LooseEncodingZstd
-		default:
-			return fmt.Errorf(
-				"restored primary authority for %s has invalid encoding %q",
-				hash, primaryEncoding,
-			)
-		}
-		ref.LooseHash = packstore.Hash(hash)
 		if !allowAuditedRemoteOnly {
 			var audited bool
 			if err := tx.QueryRowContext(ctx, `
@@ -343,5 +323,5 @@ func (s *Store) RetireRestoredPrimary(
 		retired = true
 		return nil
 	})
-	return ref, retired, err
+	return retired, err
 }

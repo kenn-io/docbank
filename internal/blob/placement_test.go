@@ -172,9 +172,11 @@ func TestPlacementRunnerEvacuatesPackedSecondaryAfterPlacementRevokesMappings(
 	require.True(t, ok)
 	source, err := os.Open(blobs.layout.PackPath(records[0].PackID))
 	require.NoError(t, err)
+	packInfo, err := source.Stat()
+	require.NoError(t, err)
 	published, publishErr := backend.PublishPack(
 		t.Context(), records[0].PackID, source, packstore.PublishOptions{
-			ExpectedSize: records[0].StoredBytes, SizeKnown: true,
+			ExpectedSize: packInfo.Size(), SizeKnown: true,
 		},
 	)
 	require.NoError(t, errors.Join(publishErr, source.Close()))

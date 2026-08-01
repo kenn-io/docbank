@@ -142,13 +142,34 @@ func RestoreWithPlacement(
 	opts.SQLiteOpener = SQLiteOpener(driver)
 	opts.MetadataRestorer = metadataRestorer{driver: driver}
 	var sourcePlacement placementManifest
-	opts.AuxiliaryTarget = placementRestoreTarget{manifest: &sourcePlacement}
 	var app backup.App = New(version)
 	var primaryHandoff *blob.PrimaryRestoreHandoff
 	if placement.Map == nil {
 		opts.PackedContent = newPackedRestoreTarget()
 		app = &packedRestoreApp{App: New(version)}
+	} else {
+		var err error
+		snapshotID := opts.SnapshotID
+		if snapshotID == "" {
+			latest, latestErr := repo.LatestSnapshot()
+			if latestErr != nil {
+				return nil, fmt.Errorf(
+					"backupapp: selecting latest restore snapshot: %w", latestErr,
+				)
+			}
+			if latest == nil {
+				return nil, errors.New("backupapp: repository has no snapshots to restore")
+			}
+			snapshotID = latest.SnapshotID
+		}
+		sourcePlacement, opts.SnapshotID, err = loadPlacementManifest(
+			ctx, repo, snapshotID, app.PackFileExtension(),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("backupapp: loading restore placement: %w", err)
+		}
 	}
+	opts.AuxiliaryTarget = placementRestoreTarget{}
 	opts.BeforePublication = func(
 		hookCtx context.Context, staged backup.RestorePublicationTarget,
 	) error {

@@ -53,11 +53,19 @@ type rawMetadataSnapshot struct{ metadata []byte }
 
 type auxiliaryTargetFunc func(context.Context, []backup.RestoredAuxiliary) error
 
-func (f auxiliaryTargetFunc) RestoreAuxiliary(
+func (f auxiliaryTargetFunc) StageAuxiliary(
 	ctx context.Context, artifacts []backup.RestoredAuxiliary,
-) error {
-	return f(ctx, artifacts)
+) (backup.AuxiliaryRestore, error) {
+	if err := f(ctx, artifacts); err != nil {
+		return nil, err
+	}
+	return testAuxiliaryRestore{}, nil
 }
+
+type testAuxiliaryRestore struct{}
+
+func (testAuxiliaryRestore) Commit(context.Context) error   { return nil }
+func (testAuxiliaryRestore) Rollback(context.Context) error { return nil }
 
 func (snapshot rawMetadataSnapshot) OpenMetadata(context.Context) (io.ReadCloser, int64, error) {
 	return io.NopCloser(bytes.NewReader(snapshot.metadata)), int64(len(snapshot.metadata)), nil
@@ -532,7 +540,8 @@ func TestRestoreStoreMapRebuildsRemoteOnlyPlacementWithFreshIdentity(t *testing.
 			},
 		)
 		require.NoError(t, layoutErr)
-		assert.NoFileExists(t, layout.LoosePath(parsed))
+		assert.FileExists(t, layout.LoosePath(parsed),
+			"remote-only restore leaves untracked primary bytes for post-publication GC")
 	}
 	repaired, err := os.ReadFile(archiveLayout.LoosePath(corruptHash))
 	require.NoError(t, err)

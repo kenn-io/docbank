@@ -455,16 +455,11 @@ func applyRestorePlacement(
 		}
 	}
 	for hash := range remoteOnly {
-		ref, retired, err := metadata.RetireRestoredPrimary(
+		_, err := metadata.RetireRestoredPrimary(
 			ctx, hash, allowAuditedRemoteOnly[hash],
 		)
 		if err != nil {
 			return err
-		}
-		if retired {
-			if err := primaryBackend.Retire(ctx, ref); err != nil {
-				return fmt.Errorf("backupapp: retiring restored primary blob %s: %w", hash, err)
-			}
 		}
 	}
 	return nil

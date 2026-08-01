@@ -193,8 +193,11 @@ binding, or ownership epoch is inherited.
 loaded by the daemon performing the restore. The TOML file must be an
 owner-private regular file and may select a new empty namespace or an explicit
 takeover. Mapped bytes are independently read back before target authority is
-recorded. Unmapped bytes remain local. Audited bytes also remain local unless
-the mapping explicitly selects both `remote_only` and
+recorded. Unmapped bytes remain local. A `remote_only` restore revokes primary
+catalog authority in the staged database but leaves its physical staging files
+for garbage collection after that database is published, so a failed overwrite
+cannot damage the existing vault. Audited bytes also retain primary authority
+unless the mapping explicitly selects both `remote_only` and
 `allow_audited_remote_only`. See
 [Multi-store Storage](storage.md#backup-and-restore) for the file format and
 trust boundary.

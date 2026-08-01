@@ -75,9 +75,12 @@ all content into a fresh fixed primary. Explicit store mapping first restores
 and proves a complete local copy, then claims fresh target store identities,
 publishes or adopts immutable destination objects, reads every object back,
 and records mapped authority while target-tree coordination remains held.
-Remote-only retirement occurs only after destination authority commits;
-audit-protected bytes retain the primary unless the mapping includes the
-explicit remote-only acknowledgement.
+A remote-only database is published without primary catalog authority, but
+restore leaves the now-untracked primary files intact until publication
+succeeds; ordinary garbage collection may reclaim them afterward. A failed
+restore therefore cannot remove bytes still owned by the database it was meant
+to replace. Audit-protected bytes retain primary authority unless the mapping
+includes the explicit remote-only acknowledgement.
 
 The restored database and its built-in primary marker change ownership as one
 recoverable publication. Before replacing the database, Docbank durably records
