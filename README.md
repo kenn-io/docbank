@@ -1,8 +1,14 @@
-# docbank
+<p align="center">
+  <img src=".github/assets/docbank-mark.svg" width="160" height="160" alt="docbank logo">
+</p>
 
-[![Go 1.26+](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go)](https://go.dev)
-[![CI](https://github.com/kenn-io/docbank/actions/workflows/ci.yml/badge.svg)](https://github.com/kenn-io/docbank/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/kenn-io/docbank?include_prereleases)](https://github.com/kenn-io/docbank/releases)
+<h1 align="center">docbank</h1>
+
+<p align="center">
+  <a href="https://go.dev"><img src="https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go" alt="Go 1.26+"></a>
+  <a href="https://github.com/kenn-io/docbank/actions/workflows/ci.yml"><img src="https://github.com/kenn-io/docbank/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/kenn-io/docbank/releases"><img src="https://img.shields.io/github/v/release/kenn-io/docbank?include_prereleases" alt="Release"></a>
+</p>
 
 > **Alpha software.** Keep independent copies of irreplaceable material and
 > verify backups before relying on them.
