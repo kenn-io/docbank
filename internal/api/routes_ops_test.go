@@ -24,7 +24,7 @@ import (
 	"go.kenn.io/docbank/internal/config"
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/store"
-	docsqlite "go.kenn.io/docbank/pkg/sqlite"
+	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
 func TestIngestEndpoint(t *testing.T) {

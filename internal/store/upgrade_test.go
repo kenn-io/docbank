@@ -14,8 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/pack"
 
-	docsqlite "go.kenn.io/docbank/pkg/sqlite"
-	"go.kenn.io/docbank/pkg/sqlite/modernc"
+	docsqlite "go.kenn.io/docbank/sqlite"
+	"go.kenn.io/docbank/sqlite/modernc"
 )
 
 //go:embed testdata/schema-v0.9.0.sql

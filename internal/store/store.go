@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"time"
 
-	docsqlite "go.kenn.io/docbank/pkg/sqlite"
+	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
 //go:embed schema.sql
