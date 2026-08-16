@@ -231,6 +231,21 @@ checksums remain inputs to `NormalizedDocument.Checksum`. A later
 `EmbeddingPlan` can merge or resplit normalized evidence under its own version
 without changing normalization version 2.
 
+### Parser dependencies
+
+The baseline normalizer directly depends on:
+
+- `github.com/yuin/goldmark` and `github.com/yuin/goldmark/extension` from
+  Goldmark `v1.7.17`; and
+- `golang.org/x/net/html` from `golang.org/x/net v0.56.0`.
+
+Docbank will add those module versions as direct requirements when the code
+moves. Parser behavior is part of normalization version 2 because it can
+change canonical text and every downstream checksum. A later dependency
+upgrade may remain version 2 only when the complete normalization suite and
+the frozen compatibility bundle remain byte-identical. Any output change
+requires normalization version 3.
+
 ## Package `document/mistral`
 
 ### Candidate formats and local detection
@@ -276,8 +291,11 @@ verify that method offline:
 
 - `provider_request` records `FixtureUnits`, `BoundRequestedUnits`, and
   `BoundUnitsProcessed`. Validation requires
-  `0 < BoundRequestedUnits < FixtureUnits` and exact equality between requested
-  and processed units.
+  `0 < BoundRequestedUnits < FixtureUnits < CapabilityManifest.MaxUnits`, exact
+  equality between requested and bound-test processed units, and
+  `FixtureUnits == UnitCount == UnitsProcessed` for the ordinary request. The
+  ordinary full-range request therefore observes the complete fixture instead
+  of trusting a declared fixture count.
 - `local_exact` records `LocalUnits`. Validation requires `LocalUnits` to equal
   the ordinary `UnitsProcessed` observation.
 - `none` records no bound observations.
@@ -363,16 +381,36 @@ type PolicyConfig struct {
 	NormalizePolicy  document.NormalizePolicy
 }
 
+type PolicyValues struct {
+	Provider         string
+	Endpoint         string
+	Region           string
+	Model            string
+	Retention        string
+	Training         string
+	MaxDocumentBytes int64
+	MaxResponseBytes int64
+	MaxUnits         int
+	ExtractHeader    bool
+	ExtractFooter    bool
+	Normalization    document.NormalizePolicyIdentity
+}
+
 func NewPolicy(PolicyConfig) (Policy, error)
+func (Policy) Values() PolicyValues
 func (Policy) CanonicalJSON(CapabilityManifest) ([]byte, error)
 func (Policy) Fingerprint(CapabilityManifest) (string, error)
 func (Policy) Authorize(CapabilityManifest, string) (FormatAuthorization, error)
 ```
 
 `Policy` is opaque. The endpoint is derived from the pinned region; callers
-cannot supply an endpoint, host allowlist, or media-type allowlist. Unknown
-retention or training posture is invalid and cannot be serialized or
-fingerprinted.
+cannot supply an endpoint, host allowlist, or media-type allowlist. `Values`
+returns a read-only copy of every reusable effective value, including the
+derived endpoint. Mutating the copy cannot change the policy. Canonical JSON,
+the private values-only digest, and Msgvault's legacy wrapper all read this
+view, so the wrapper does not duplicate the region-to-endpoint mapping or any
+other shared constant. Unknown retention or training posture is invalid and
+cannot be serialized or fingerprinted.
 
 Canonical JSON is self-describing and includes `provider: "mistral"`, the
 derived target, retention and training posture, document/response/unit bounds,
@@ -400,6 +438,12 @@ The request fingerprint remains version 2 and hashes the baseline payload:
 ```text
 {version, endpoint, model, candidate, options}
 ```
+
+The now-private options value retains the exact baseline fingerprint JSON
+shape and struct-field order: `pages`, `extract_header`, then `extract_footer`.
+`pages` does not use `omitempty`, so a non-page-bounded format encodes
+`"pages":""`. The `mistral_request_fingerprint_v2` compatibility section
+guards this private representation as observable behavior.
 
 The `pages` option is literal and therefore requires two distinct comparisons:
 
@@ -525,9 +569,13 @@ func (*Client) Process(
 ```
 
 `NewClient` performs no network request. It validates operational settings
-against package hard caps. The initial caps follow existing application and
-retry behavior: timeout at most 30 minutes, at most 10 retries, and retry delay
-at most 60 seconds. Defaults remain five minutes, three retries, and 30 seconds.
+against package hard caps. The timeout cap of 30 minutes and retry-count cap of
+10 move the existing Msgvault application bounds into the reusable client.
+The 60-second retry-delay cap is new package enforcement chosen to match the
+existing retry helper's maximum exponential fallback. Defaults remain five
+minutes, three retries, and 30 seconds. As in the baseline client, a negative
+retry count is invalid, zero selects the default of three, and values 1 through
+10 are explicit. Version 1 does not represent an explicit zero-retry mode.
 These values are reusable client configuration, not policy identity.
 
 There is no public request `Options`, media-type allowlist, raw path, provider
@@ -657,6 +705,7 @@ Both repositories will contain a byte-identical immutable fixture named
 - its bundle schema and fixture ID;
 - `source_pr: kenn-io/msgvault#616`;
 - `baseline_commit: 73d6c0b33f74c1fd072a7c0258f1cf1e80054698`;
+- `generated_by: msgvault@73d6c0b33f74c1fd072a7c0258f1cf1e80054698`;
 - an explicit section ownership map; and
 - synthetic inputs and exact expected values.
 
@@ -665,6 +714,14 @@ The sections are:
 - `normalization_v2`, owned by Docbank;
 - `mistral_request_fingerprint_v2`, owned by Docbank; and
 - `msgvault_profile_policy_v1`, owned by Msgvault.
+
+Version-1 expected values are generated before code motion by a throwaway
+package-local generator run against the Msgvault baseline commit. It calls the
+baseline production `documentindex.NormalizeDocument`, Mistral
+`requestFingerprint`, and `DocumentsConfig.ProfilePolicyJSON` implementations.
+The moved Docbank implementation never generates or rewrites the expected
+values it is tested against. This provenance makes the bundle an independent
+compatibility oracle rather than a self-consistency fixture.
 
 Each repository pins the same lowercase SHA-256 literal for the entire raw
 file and rehashes the file bytes before decoding. Tests do not hash a
