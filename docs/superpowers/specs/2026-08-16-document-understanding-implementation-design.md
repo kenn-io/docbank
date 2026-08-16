@@ -287,10 +287,10 @@ Before each request, `Process` rejects:
 - every redirect, including when the caller supplied the HTTP client.
 
 `NewClient` shallow-copies the supplied client before replacing its redirect
-policy. If the injected client's timeout is zero or greater than the configured
-attempt timeout, the clone uses the configured bound. The package does not
-mutate caller-owned configuration, and injection cannot create an unbounded or
-overlong attempt. Each retry reopens and rehashes the staged file.
+policy. If the injected client's timeout is non-positive or greater than the
+configured attempt timeout, the clone uses the configured bound. The package
+does not mutate caller-owned configuration, and injection cannot create an
+unbounded or overlong attempt. Each retry reopens and rehashes the staged file.
 
 `ErrPermanentResponse` and `ErrResponseTooLarge` never retry. Only
 `ErrTransientResponse` retries. Retry-After accepts bounded integer seconds,
