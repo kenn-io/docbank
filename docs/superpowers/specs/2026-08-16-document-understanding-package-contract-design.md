@@ -578,6 +578,12 @@ retry count is invalid, zero selects the default of three, and values 1 through
 10 are explicit. Version 1 does not represent an explicit zero-retry mode.
 These values are reusable client configuration, not policy identity.
 
+`NewClient` shallow-copies the supplied `HTTPClient`, or a package default, and
+replaces its redirect policy so every redirect is rejected. A redirect must
+never replay document bytes to an origin other than the exact endpoint derived
+from policy. The package does not mutate a caller-owned client, and an injected
+client cannot relax this boundary.
+
 There is no public request `Options`, media-type allowlist, raw path, provider
 page type, or generic processor interface. Request fields derive only from the
 policy and authorization. Msgvault may define a consumer-side interface over
@@ -586,14 +592,18 @@ policy and authorization. Msgvault may define a consumer-side interface over
 Before every request attempt, `Process` checks context, release state,
 regular-file identity, permissions, size, and SHA-256. It rejects a private
 policy-digest mismatch and a detected-format/authorization mismatch before
-upload.
+upload. It also requires the prepared size to be no greater than the client
+policy's `MaxDocumentBytes`, even when another policy originally prepared the
+document. Preparation cannot therefore carry a larger byte allowance into a
+stricter processing policy.
 
 For `local_exact`, `Process` requires the counter recorded during preparation
 and rejects a count above `Policy.MaxUnits` before upload. Provider-reported
-units above the local count after upload are a capability-contract breach. For
-`provider_request`, production sends the bounded page range and treats a
-post-response unit excess as the same kind of drift. These are the only runtime
-signals that provider semantics departed from probe evidence.
+units must equal the local count after upload; either a smaller or larger count
+is a capability-contract breach. For `provider_request`, production sends the
+bounded page range and treats a post-response unit excess as the same kind of
+drift. These are the only runtime signals that provider semantics departed
+from probe evidence.
 
 Private wire structs validate model equality, complete and contiguous unit
 indices, response size, processed-unit consistency, byte accounting, and
@@ -780,9 +790,11 @@ Implementation evidence must verify behavior rather than source-file motion:
 - `Prepare` closes its source on every path, `Release` is idempotent, and
   cleanup/scavenging remove only package-created files;
 - production re-verifies immutable bytes before every retry and rejects policy
-  or format mismatch before upload;
-- provider-request and local-exact post-response unit excess both return
-  `ErrCapabilityContract`;
+  or format mismatch and a client-policy byte excess before upload;
+- default and injected HTTP clients both reject redirects without replaying
+  document bytes;
+- provider-request post-response unit excess and either direction of a
+  local-exact count mismatch return `ErrCapabilityContract`;
 - request accounting survives classified failure and retry cancellation;
 - package dependency inspection confirms that `document` and
   `document/mistral` import no vault, daemon, database, queue, or application
