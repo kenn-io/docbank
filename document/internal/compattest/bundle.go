@@ -13,7 +13,7 @@ import (
 )
 
 // BundleSHA256 is the expected digest of the raw compatibility bundle.
-const BundleSHA256 = "cfeb37f6427a557d0fb5218e9de92c2397e2faa3020c7f688e144ffdf298c51d"
+const BundleSHA256 = "2f968cce51b67ff5969bab6e5502d5792f815d7cd6c416802ee16ba0f8e36b89"
 
 //go:embed testdata/document-compat-v1.json
 var bundleJSON []byte

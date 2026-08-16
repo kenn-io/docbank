@@ -315,10 +315,10 @@ func (w *canonicalHTMLWriter) writeText(value string) {
 			w.output.WriteByte('\n')
 			w.preFenceOpen = false
 		}
-		w.output.WriteString(stripUnsafeControls(value, true))
+		w.output.WriteString(stripUnsafeControls(value))
 		return
 	}
-	value = stripUnsafeControls(value, false)
+	value = stripUnsafeControls(value)
 	for _, character := range value {
 		if unicode.IsSpace(character) {
 			w.pendingSpace = true
@@ -347,9 +347,9 @@ func (w *canonicalHTMLWriter) block() {
 	}
 }
 
-func stripUnsafeControls(value string, preserveNewlines bool) string {
+func stripUnsafeControls(value string) string {
 	return strings.Map(func(character rune) rune {
-		if character == '\n' && preserveNewlines || character == '\t' {
+		if character == '\n' || character == '\t' {
 			return character
 		}
 		if unicode.IsControl(character) || character == '\u2028' || character == '\u2029' ||

@@ -203,6 +203,17 @@ func TestNormalizeDocumentPreservesInlineAdjacencyAndTaskState(t *testing.T) {
 	assert.Contains(text, "- [ ] pending")
 }
 
+func TestNormalizeDocumentPreservesSoftBreakSeparation(t *testing.T) {
+	policy := testNormalizePolicy(t, 10_000)
+	source := SourceDocument{Family: "text", UnitKind: "section", Units: []SourceUnit{{
+		Index: 0, Markdown: "alpha\nbeta",
+	}}}
+
+	normalized, err := NormalizeDocument(source, policy)
+	require.NoError(t, err)
+	assert.Equal(t, "alpha beta", normalized.Units[0].Text)
+}
+
 func TestNormalizeDocumentHeadingMetadataIgnoresCodeAndBoundsSource(t *testing.T) {
 	assert := assert.New(t)
 	policy := testNormalizePolicy(t, 10_000)

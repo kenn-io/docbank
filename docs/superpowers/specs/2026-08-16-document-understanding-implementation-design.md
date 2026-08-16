@@ -39,13 +39,16 @@ upload methods that lack capability authorization.
 - Msgvault remains read-only source. Temporary exports of the pinned commit are
   used for compatibility generation and downstream verification.
 - No committed test or production code imports across repositories.
-- The complete `document-compat-v1.json` bundle lands once and never changes.
+- The corrected pre-release `document-compat-v1.json` bundle freezes at merge
+  and never changes afterward.
 - No live capability manifest is committed. Capability evidence is generated
   by an operator using their credential and deployment target.
 - Docbank does not own application consent, scheduling, queues, persistence,
   run budgets, or search serving.
-- Existing normalization, request-fingerprint, capability-fingerprint, and
-  Msgvault legacy profile-fingerprint bytes remain unchanged.
+- Normalization preserves baseline behavior except for the approved
+  pre-release soft-break separator correction. Existing request-fingerprint,
+  capability-fingerprint, and Msgvault legacy profile-fingerprint bytes remain
+  unchanged.
 - `internal/extract` adoption is a later, separately scoped change.
 
 ## Pull request 1: package `document`
@@ -57,9 +60,10 @@ The bundle is generated before normalization is implemented in Docbank:
 1. Export Msgvault commit
    `73d6c0b33f74c1fd072a7c0258f1cf1e80054698` into an owner-private temporary
    directory.
-2. Add a throwaway package-local generator inside that export so it can call
-   baseline `documentindex.NormalizeDocument`, the unexported Mistral
-   `requestFingerprint`, and `DocumentsConfig.ProfilePolicyJSON`.
+2. Apply the explicit soft-break separator correction to the exported
+   normalizer. Add a throwaway package-local generator inside that export so it
+   can call the corrected `documentindex.NormalizeDocument`, the unmodified
+   Mistral `requestFingerprint`, and `DocumentsConfig.ProfilePolicyJSON`.
 3. Generate the complete three-section bundle and hash its raw file bytes with
    SHA-256.
 4. Record the exact generator source, invocation, baseline commit, and output
@@ -72,7 +76,7 @@ The bundle metadata records:
 
 - `source_pr: kenn-io/msgvault#616`;
 - `baseline_commit: 73d6c0b33f74c1fd072a7c0258f1cf1e80054698`;
-- `generated_by: msgvault@73d6c0b33f74c1fd072a7c0258f1cf1e80054698`;
+- `generated_by: msgvault@73d6c0b33f74c1fd072a7c0258f1cf1e80054698+soft-break-separation`;
   and
 - the ownership of `normalization_v2`,
   `mistral_request_fingerprint_v2`, and
@@ -122,6 +126,8 @@ module tidy diff is reviewed with those pins.
   constructor where the baseline tests vary structural limits.
 - Add package `document_test` coverage that constructs the policy, normalizes a
   source document, and inspects results using only the public API.
+- Verify that a Markdown soft break remains a separating space instead of
+  joining adjacent words.
 - Rehash the raw compatibility bundle before decoding it.
 - Execute production normalization against every `normalization_v2` expected
   value rather than regenerating expectations.

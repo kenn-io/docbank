@@ -45,9 +45,10 @@ The contract must:
 
 - provide one authoritative implementation of deterministic normalization,
   headings, spans, baseline chunks, truncation, and checksums;
-- preserve normalization policy version 2 and all baseline normalization,
+- preserve normalization policy version 2, fix the baseline soft-break
+  separator defect before release, and preserve all other normalization,
   request-fingerprint, capability-fingerprint, and Msgvault legacy profile
-  fingerprint bytes;
+  fingerprint behavior;
 - expose validated provider output only as provider-neutral source units;
 - prevent production uploads for formats without passing probe evidence and
   an enforceable unit bound;
@@ -243,8 +244,8 @@ Docbank will add those module versions as direct requirements when the code
 moves. Parser behavior is part of normalization version 2 because it can
 change canonical text and every downstream checksum. A later dependency
 upgrade may remain version 2 only when the complete normalization suite and
-the frozen compatibility bundle remain byte-identical. Any output change
-requires normalization version 3.
+the frozen compatibility bundle remain byte-identical. After version 2 first
+ships, any output change requires normalization version 3.
 
 ## Package `document/mistral`
 
@@ -737,7 +738,7 @@ Both repositories will contain a byte-identical immutable fixture named
 - its bundle schema and fixture ID;
 - `source_pr: kenn-io/msgvault#616`;
 - `baseline_commit: 73d6c0b33f74c1fd072a7c0258f1cf1e80054698`;
-- `generated_by: msgvault@73d6c0b33f74c1fd072a7c0258f1cf1e80054698`;
+- `generated_by: msgvault@73d6c0b33f74c1fd072a7c0258f1cf1e80054698+soft-break-separation`;
 - an explicit section ownership map; and
 - synthetic inputs and exact expected values.
 
@@ -748,12 +749,14 @@ The sections are:
 - `msgvault_profile_policy_v1`, owned by Msgvault.
 
 Version-1 expected values are generated before code motion by a throwaway
-package-local generator run against the Msgvault baseline commit. It calls the
-baseline production `documentindex.NormalizeDocument`, Mistral
-`requestFingerprint`, and `DocumentsConfig.ProfilePolicyJSON` implementations.
-The moved Docbank implementation never generates or rewrites the expected
-values it is tested against. This provenance makes the bundle an independent
-compatibility oracle rather than a self-consistency fixture.
+package-local generator run against the Msgvault baseline commit. The export
+applies the approved soft-break separator correction to the baseline
+normalizer, then calls `documentindex.NormalizeDocument`. It calls the
+unmodified Mistral `requestFingerprint` and
+`DocumentsConfig.ProfilePolicyJSON` implementations. The moved Docbank
+implementation never generates or rewrites the expected values it is tested
+against. This provenance makes the bundle an independent compatibility oracle
+rather than a self-consistency fixture.
 
 Each repository pins the same lowercase SHA-256 literal for the entire raw
 file and rehashes the file bytes before decoding. Tests do not hash a
@@ -763,9 +766,10 @@ executes its production legacy serializer against its exact JSON and
 fingerprint section. Unowned sections stay in the file for traceability but
 need not be asserted by that repository.
 
-The bundle is copied once and never synchronized by tooling. Any correction or
-new contract adds a new file; v1 is never edited. There is no cross-repository
-test import, network fetch, CI artifact dependency, or exported compatibility
+The corrected pre-release bundle is frozen when the package first merges and
+is never synchronized by tooling. Any later correction or new contract adds a
+new file; the merged v1 file is never edited. There is no cross-repository test
+import, network fetch, CI artifact dependency, or exported compatibility
 package.
 
 The probe fixture contract-2 change does not alter the request-fingerprint

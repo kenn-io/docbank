@@ -3,7 +3,7 @@
   "fixture_id": "document-compat-v1",
   "source_pr": "kenn-io/msgvault#616",
   "baseline_commit": "73d6c0b33f74c1fd072a7c0258f1cf1e80054698",
-  "generated_by": "msgvault@73d6c0b33f74c1fd072a7c0258f1cf1e80054698",
+  "generated_by": "msgvault@73d6c0b33f74c1fd072a7c0258f1cf1e80054698+soft-break-separation",
   "sections": {
     "mistral_request_fingerprint_v2": {
       "owner": "go.kenn.io/docbank/document/mistral",
@@ -445,7 +445,7 @@
                 "Index": 0,
                 "SourceKey": "page:000000",
                 "Kind": "page",
-                "Text": "Warehouse A\n\n# Damage report\nThe carton was crushed. Safe (https://example.test/report?id=42)and unsafe.\nPhoto evidence\nItem | Count\nCarton | 3\nPallet | 1\n## Inspection\n- First edge\n- Second edge\n```go\npackage synthetic\n```\n\nPage 1",
+                "Text": "Warehouse A\n\n# Damage report\nThe carton was crushed. Safe (https://example.test/report?id=42) and unsafe.\nPhoto evidence\nItem | Count\nCarton | 3\nPallet | 1\n## Inspection\n- First edge\n- Second edge\n```go\npackage synthetic\n```\n\nPage 1",
                 "Header": "Warehouse A",
                 "Footer": "Page 1",
                 "Dimensions": {
@@ -453,8 +453,8 @@
                   "Height": 2200,
                   "Width": 1700
                 },
-                "CharCount": 231,
-                "Checksum": "f9b021723f3c37ae0e777b6e3e6d1a9de0b80f65f11978de3c3d3871f14daba9",
+                "CharCount": 232,
+                "Checksum": "f69068f504196b492564d1c659ba82f169617a3d424d7bd23cd68dfda10ee11d",
                 "Truncated": false,
                 "HeadingMarks": [
                   {
@@ -464,7 +464,7 @@
                     ]
                   },
                   {
-                    "CharOffset": 155,
+                    "CharOffset": 156,
                     "Path": [
                       "Damage report",
                       "Inspection"
@@ -475,23 +475,23 @@
             ],
             "Chunks": [
               {
-                "Key": "page:000000:000000-000231",
+                "Key": "page:000000:000000-000232",
                 "Ordinal": 0,
-                "Text": "Warehouse A\n\n# Damage report\nThe carton was crushed. Safe (https://example.test/report?id=42)and unsafe.\nPhoto evidence\nItem | Count\nCarton | 3\nPallet | 1\n## Inspection\n- First edge\n- Second edge\n```go\npackage synthetic\n```\n\nPage 1",
+                "Text": "Warehouse A\n\n# Damage report\nThe carton was crushed. Safe (https://example.test/report?id=42) and unsafe.\nPhoto evidence\nItem | Count\nCarton | 3\nPallet | 1\n## Inspection\n- First edge\n- Second edge\n```go\npackage synthetic\n```\n\nPage 1",
                 "HeadingPath": null,
-                "CharCount": 231,
-                "Checksum": "7e5f2a2d44f080d3b4a9d61c214b2a4b2c409a0a39d282dcbd3d72723d22e007",
+                "CharCount": 232,
+                "Checksum": "59974e33f785b5129aae632b63eaaf929916af1aaef78fb264855612e382fec5",
                 "Truncated": false,
                 "Spans": [
                   {
                     "UnitIndex": 0,
                     "CharStart": 0,
-                    "CharEnd": 231
+                    "CharEnd": 232
                   }
                 ]
               }
             ],
-            "Checksum": "ef8ea1899f80869b7660c084c267f67429ba3405e19878c0666e50c31f3a95ee",
+            "Checksum": "85e11d30f19d56af4198c4acd96c37efa01508f17fbb32be7befde632bba4e24",
             "Truncated": false
           }
         },
