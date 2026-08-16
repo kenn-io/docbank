@@ -10,6 +10,15 @@ from the annotated release tags. Docbank remains pre-1.0, so public interfaces
 may still evolve, but vaults created by v0.9.0 and later are within the
 [storage compatibility boundary](architecture/storage.md#released-upgrades).
 
+## Unreleased
+
+### Breaking changes
+
+- Move the public SQLite driver imports from `go.kenn.io/docbank/pkg/sqlite`
+  to `go.kenn.io/docbank/sqlite`, including the `mattn` and `modernc`
+  subpackages. Embedded applications must update these imports when upgrading;
+  driver APIs and behavior are unchanged.
+
 ## [v0.12.0](https://github.com/kenn-io/docbank/tree/v0.12.0) — 2026-08-01
 
 ### New features
