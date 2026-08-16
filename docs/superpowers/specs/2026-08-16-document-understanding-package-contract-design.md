@@ -687,6 +687,28 @@ text, filenames, raw responses, provider error bodies, credentials, user URLs,
 or full fixture hashes. `ProbeFixtureSentinel` remains public for synthetic
 fixture generation.
 
+## Amendments from implementation brainstorming
+
+The `e9jz` implementation design extends the frozen public contract with these
+approved additions:
+
+- `Policy.NormalizePolicy() document.NormalizePolicy` returns the executable
+  normalization policy covered by the Mistral policy identity. This makes the
+  safe production flow direct: the authorized provider result is normalized
+  with the policy that authorized it.
+- `FixtureOptions` and `WriteProbeFixtures` provide one public deterministic
+  fixture writer for Docbank and downstream applications. The writer
+  synthesizes 21 formats and copies validated operator seeds for `doc`, `ppt`,
+  `xls`, `numbers`, and `msg`, avoiding either duplicate fixture bytes or a
+  dependency on a Docbank executable.
+- Capability-manifest input is capped at 1 MiB before strict decoding. This
+  makes the operator-supplied recovery path explicitly bounded as well as
+  structurally validated.
+
+The fixture writer performs no network request and requires no credential. It
+publishes only a complete fixture-contract-2 directory; the five native seed
+digests remain operator-specific.
+
 ## Consent and application ownership
 
 Local configuration, policy construction, manifest decoding and validation,
