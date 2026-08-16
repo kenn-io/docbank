@@ -31,6 +31,9 @@ func NormalizeDocument(source SourceDocument, policy NormalizePolicy) (Normalize
 	if err := policy.validate(); err != nil {
 		return NormalizedDocument{}, err
 	}
+	if err := validateSourceUnits(source.Units); err != nil {
+		return NormalizedDocument{}, err
+	}
 
 	result := NormalizedDocument{
 		PolicyVersion: normalizationPolicyVersion, Family: source.Family, UnitKind: source.UnitKind,
@@ -38,13 +41,6 @@ func NormalizeDocument(source SourceDocument, policy NormalizePolicy) (Normalize
 	}
 	remaining := policy.maxDocumentChars
 	for i, unit := range source.Units {
-		if unit.Index != i {
-			return NormalizedDocument{}, fmt.Errorf("document source unit %d has noncontiguous index %d", i, unit.Index)
-		}
-		if unit.Dimensions.DPI < 0 || unit.Dimensions.Height < 0 || unit.Dimensions.Width < 0 ||
-			unit.Dimensions.DPI > 100_000 || unit.Dimensions.Height > 10_000_000 || unit.Dimensions.Width > 10_000_000 {
-			return NormalizedDocument{}, fmt.Errorf("document source unit %d has invalid dimensions", i)
-		}
 		text, headings, sourceTruncated, err := canonicalMarkdown(
 			unit.Markdown, policy.maxLinkChars, policy.maxSourceUnitBytes,
 		)
@@ -109,6 +105,28 @@ func NormalizeDocument(source SourceDocument, policy NormalizePolicy) (Normalize
 	}
 	result.Checksum = checksumStrings(checksumParts...)
 	return result, nil
+}
+
+func validateSourceUnits(units []SourceUnit) error {
+	for i, unit := range units {
+		if unit.Index != i {
+			return fmt.Errorf("document source unit %d has noncontiguous index %d", i, unit.Index)
+		}
+		if unit.Dimensions.DPI < 0 || unit.Dimensions.Height < 0 || unit.Dimensions.Width < 0 ||
+			unit.Dimensions.DPI > 100_000 || unit.Dimensions.Height > 10_000_000 || unit.Dimensions.Width > 10_000_000 {
+			return fmt.Errorf("document source unit %d has invalid dimensions", i)
+		}
+		if !utf8.ValidString(unit.Markdown) {
+			return fmt.Errorf("normalize document source unit %d: provider Markdown is invalid UTF-8", i)
+		}
+		if !utf8.ValidString(unit.Header) {
+			return fmt.Errorf("normalize document source unit %d header: provider Markdown is invalid UTF-8", i)
+		}
+		if !utf8.ValidString(unit.Footer) {
+			return fmt.Errorf("normalize document source unit %d footer: provider Markdown is invalid UTF-8", i)
+		}
+	}
+	return nil
 }
 
 func joinDocumentUnitEvidence(header, body, footer string) (string, int) {

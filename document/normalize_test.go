@@ -145,6 +145,31 @@ func TestNormalizeDocumentBoundsUnicodeAndRejectsImpossibleUnits(t *testing.T) {
 	require.ErrorContains(t, err, "invalid dimensions")
 }
 
+func TestNormalizeDocumentValidatesUnitsAfterCharacterBudget(t *testing.T) {
+	policy := testNormalizePolicy(t, 1)
+	tests := []struct {
+		name    string
+		invalid SourceUnit
+		want    string
+	}{
+		{name: "index", invalid: SourceUnit{Index: 3, Markdown: "z"}, want: "noncontiguous index"},
+		{name: "dimensions", invalid: SourceUnit{Index: 2, Markdown: "z", Dimensions: UnitDimensions{Width: -1}}, want: "invalid dimensions"},
+		{name: "UTF-8", invalid: SourceUnit{Index: 2, Markdown: string([]byte{0xff})}, want: "invalid UTF-8"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			source := SourceDocument{Family: "text", UnitKind: "page", Units: []SourceUnit{
+				{Index: 0, Markdown: "x"},
+				{Index: 1, Markdown: "y"},
+				test.invalid,
+			}}
+
+			_, err := NormalizeDocument(source, policy)
+			require.ErrorContains(t, err, test.want)
+		})
+	}
+}
+
 func TestNormalizeDocumentCapsChunksWithoutInventingSpans(t *testing.T) {
 	assert := assert.New(t)
 	policy := testNormalizePolicy(t, 100_000)
