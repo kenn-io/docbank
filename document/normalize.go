@@ -296,16 +296,22 @@ func (w *canonicalHTMLWriter) endTag(tag string) {
 		w.block()
 	case "code":
 		if !w.inPre {
+			w.flushPendingSpace()
 			w.output.WriteByte('`')
 		}
 	case "a":
+		w.flushPendingSpace()
 		if len(w.links) == 0 {
 			return
 		}
 		link := w.links[len(w.links)-1]
 		w.links = w.links[:len(w.links)-1]
 		if link != "" {
-			w.output.WriteString(" (" + link + ")")
+			if w.output.Len() > 0 &&
+				!strings.HasSuffix(w.output.String(), "\n") && !strings.HasSuffix(w.output.String(), " ") {
+				w.output.WriteByte(' ')
+			}
+			w.output.WriteString("(" + link + ")")
 		}
 	}
 }

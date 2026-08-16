@@ -225,6 +225,29 @@ func TestNormalizeDocumentPreservesSpaceBeforeInlineCode(t *testing.T) {
 	assert.Equal(t, "Use `name` now.", normalized.Units[0].Text)
 }
 
+func TestNormalizeDocumentKeepsPunctuationAfterInlineElements(t *testing.T) {
+	policy := testNormalizePolicy(t, 10_000)
+	tests := []struct {
+		name     string
+		markdown string
+		want     string
+	}{
+		{name: "code", markdown: "`value `.", want: "`value `."},
+		{name: "link", markdown: "[value ](https://example.com).", want: "value (https://example.com)."},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			source := SourceDocument{Family: "text", UnitKind: "page", Units: []SourceUnit{{
+				Index: 0, Markdown: test.markdown,
+			}}}
+
+			normalized, err := NormalizeDocument(source, policy)
+			require.NoError(t, err)
+			assert.Equal(t, test.want, normalized.Units[0].Text)
+		})
+	}
+}
+
 func TestNormalizeDocumentHeadingMetadataIgnoresCodeAndBoundsSource(t *testing.T) {
 	assert := assert.New(t)
 	policy := testNormalizePolicy(t, 10_000)
