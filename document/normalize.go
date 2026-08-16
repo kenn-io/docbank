@@ -235,6 +235,7 @@ func (w *canonicalHTMLWriter) startTag(token html.Token) {
 			w.output.WriteByte('\n')
 			w.preFenceOpen = false
 		} else if !w.inPre {
+			w.flushPendingSpace()
 			w.output.WriteByte('`')
 		}
 	case "img":
@@ -324,13 +325,17 @@ func (w *canonicalHTMLWriter) writeText(value string) {
 			w.pendingSpace = true
 			continue
 		}
-		if w.pendingSpace && w.output.Len() > 0 &&
-			!strings.HasSuffix(w.output.String(), "\n") && !strings.HasSuffix(w.output.String(), " ") {
-			w.output.WriteByte(' ')
-		}
-		w.pendingSpace = false
+		w.flushPendingSpace()
 		w.output.WriteRune(character)
 	}
+}
+
+func (w *canonicalHTMLWriter) flushPendingSpace() {
+	if w.pendingSpace && w.output.Len() > 0 &&
+		!strings.HasSuffix(w.output.String(), "\n") && !strings.HasSuffix(w.output.String(), " ") {
+		w.output.WriteByte(' ')
+	}
+	w.pendingSpace = false
 }
 
 func (w *canonicalHTMLWriter) line() {

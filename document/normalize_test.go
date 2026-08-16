@@ -214,6 +214,17 @@ func TestNormalizeDocumentPreservesSoftBreakSeparation(t *testing.T) {
 	assert.Equal(t, "alpha beta", normalized.Units[0].Text)
 }
 
+func TestNormalizeDocumentPreservesSpaceBeforeInlineCode(t *testing.T) {
+	policy := testNormalizePolicy(t, 10_000)
+	source := SourceDocument{Family: "text", UnitKind: "page", Units: []SourceUnit{{
+		Index: 0, Markdown: "Use `name` now.",
+	}}}
+
+	normalized, err := NormalizeDocument(source, policy)
+	require.NoError(t, err)
+	assert.Equal(t, "Use `name` now.", normalized.Units[0].Text)
+}
+
 func TestNormalizeDocumentHeadingMetadataIgnoresCodeAndBoundsSource(t *testing.T) {
 	assert := assert.New(t)
 	policy := testNormalizePolicy(t, 10_000)
