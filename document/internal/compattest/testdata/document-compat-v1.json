@@ -1,0 +1,593 @@
+{
+  "bundle_schema": 1,
+  "fixture_id": "document-compat-v1",
+  "source_pr": "kenn-io/msgvault#616",
+  "baseline_commit": "73d6c0b33f74c1fd072a7c0258f1cf1e80054698",
+  "generated_by": "msgvault@73d6c0b33f74c1fd072a7c0258f1cf1e80054698",
+  "sections": {
+    "mistral_request_fingerprint_v2": {
+      "owner": "go.kenn.io/docbank/document/mistral",
+      "cases": [
+        {
+          "format_id": "pdf",
+          "candidate": {
+            "id": "pdf",
+            "family": "pdf",
+            "media_type": "application/pdf",
+            "unit_kind": "page"
+          },
+          "options": {
+            "pages": "0-499",
+            "extract_header": true,
+            "extract_footer": true
+          },
+          "fingerprint": "b93829e3f4ccc8e890b4a999ae155cfa30b40e64def51115bc4b809b5623e788"
+        },
+        {
+          "format_id": "docx",
+          "candidate": {
+            "id": "docx",
+            "family": "word",
+            "media_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "unit_kind": "page"
+          },
+          "options": {
+            "pages": "",
+            "extract_header": true,
+            "extract_footer": true
+          },
+          "fingerprint": "9ccde804f16d819351485e0ece8316f286590efee008e5aed654ec2ebb6126ed"
+        },
+        {
+          "format_id": "doc",
+          "candidate": {
+            "id": "doc",
+            "family": "word",
+            "media_type": "application/msword",
+            "unit_kind": "page"
+          },
+          "options": {
+            "pages": "",
+            "extract_header": true,
+            "extract_footer": true
+          },
+          "fingerprint": "fb5b4cf745fb6d2b2e661728caa8cc83bf24b8eacda861d947e4a910235027ec"
+        },
+        {
+          "format_id": "odt",
+          "candidate": {
+            "id": "odt",
+            "family": "word",
+            "media_type": "application/vnd.oasis.opendocument.text",
+            "unit_kind": "page"
+          },
+          "options": {
+            "pages": "",
+            "extract_header": true,
+            "extract_footer": true
+          },
+          "fingerprint": "afc377ef803839e6215cb90d0e8680ae08bf9fa25afcb51c8d7885368a48cdb7"
+        },
+        {
+          "format_id": "rtf",
+          "candidate": {
+            "id": "rtf",
+            "family": "word",
+            "media_type": "application/rtf",
+            "unit_kind": "page"
+          },
+          "options": {
+            "pages": "",
+            "extract_header": true,
+            "extract_footer": true
+          },
+          "fingerprint": "9965faa2549bf7e2b59740c0e2349de7071404e72eeba0df965297c64beacbac"
+        },
+        {
+          "format_id": "pptx",
+          "candidate": {
+            "id": "pptx",
+            "family": "presentation",
+            "media_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "unit_kind": "slide"
+          },
+          "options": {
+            "pages": "",
+            "extract_header": true,
+            "extract_footer": true
+          },
+          "fingerprint": "c3bbb745cf927fc1a4c341eb21353e2901084f24817c8ce5c5d7f1ac89f6d604"
+        },
+        {
+          "format_id": "ppt",
+          "candidate": {
+            "id": "ppt",
+            "family": "presentation",
+            "media_type": "application/vnd.ms-powerpoint",
+            "unit_kind": "slide"
+          },
+          "options": {
+            "pages": "",
+            "extract_header": true,
+            "extract_footer": true
+          },
+          "fingerprint": "b51eb7b6f0af59b81b66d74475dc9a7b20b9a980c347401da63407611a126182"
+        },
+        {
+          "format_id": "xlsx",
+          "candidate": {
+            "id": "xlsx",
+            "family": "spreadsheet",
+            "media_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "unit_kind": "sheet"
+          },
+          "options": {
+            "pages": "",
+            "extract_header": true,
+            "extract_footer": true
+          },
+          "fingerprint": "af1a9e59cb099d6b07187dd72523ebf30eca35b6876a1359f9f6662e54faeebe"
+        },
+        {
+          "format_id": "xls",
+          "candidate": {
+            "id": "xls",
+            "family": "spreadsheet",
+            "media_type": "application/vnd.ms-excel",
+            "unit_kind": "sheet"
+          },
+          "options": {
+            "pages": "",
+            "extract_header": true,
+            "extract_footer": true
+          },
+          "fingerprint": "2a98da38bd0706e1f36aef463a4f108663957354612797540ccd39ecc998ad43"
+        },
+        {
+          "format_id": "ods",
+          "candidate": {
+            "id": "ods",
+            "family": "spreadsheet",
+            "media_type": "application/vnd.oasis.opendocument.spreadsheet",
+            "unit_kind": "sheet"
+          },
+          "options": {
+            "pages": "",
+            "extract_header": true,
+            "extract_footer": true
+          },
+          "fingerprint": "e73ea9df1715600d7b51f8f33d44a7f1106aff5a3c94fe4c102ad5caba8b9a67"
+        },
+        {
+          "format_id": "numbers",
+          "candidate": {
+            "id": "numbers",
+            "family": "spreadsheet",
+            "media_type": "application/vnd.apple.numbers",
+            "unit_kind": "sheet"
+          },
+          "options": {
+            "pages": "",
+            "extract_header": true,
+            "extract_footer": true
+          },
+          "fingerprint": "efb45e648b32de8747e5f6733229bc6f61e08b4ab472d0faf719a01b456a1c6f"
+        },
+        {
+          "format_id": "csv",
+          "candidate": {
+            "id": "csv",
+            "family": "spreadsheet",
+            "media_type": "text/csv",
+            "unit_kind": "record"
+          },
+          "options": {
+            "pages": "",
+            "extract_header": true,
+            "extract_footer": true
+          },
+          "fingerprint": "4746a5d061bbff9d52c3cd78043731249ee4d7a449bc3dfb38e5c2d954ddf764"
+        },
+        {
+          "format_id": "epub",
+          "candidate": {
+            "id": "epub",
+            "family": "ebook",
+            "media_type": "application/epub+zip",
+            "unit_kind": "spine"
+          },
+          "options": {
+            "pages": "",
+            "extract_header": true,
+            "extract_footer": true
+          },
+          "fingerprint": "3a69fed6297ee569eaedf6f75c30af5aeff448741f9ed547aa9b252c5ad63099"
+        },
+        {
+          "format_id": "txt",
+          "candidate": {
+            "id": "txt",
+            "family": "text",
+            "media_type": "text/plain",
+            "unit_kind": "section"
+          },
+          "options": {
+            "pages": "",
+            "extract_header": true,
+            "extract_footer": true
+          },
+          "fingerprint": "51fc55e04ef41b705bfe6ea441f4fd502ba3209641da3489cf9689718644cd39"
+        },
+        {
+          "format_id": "markdown",
+          "candidate": {
+            "id": "markdown",
+            "family": "text",
+            "media_type": "text/markdown",
+            "unit_kind": "section"
+          },
+          "options": {
+            "pages": "",
+            "extract_header": true,
+            "extract_footer": true
+          },
+          "fingerprint": "031ffdfa34378964a48ca380012c7ef13ddbfa6032fe741bd6853922b0bb29f0"
+        },
+        {
+          "format_id": "rst",
+          "candidate": {
+            "id": "rst",
+            "family": "text",
+            "media_type": "text/x-rst",
+            "unit_kind": "section"
+          },
+          "options": {
+            "pages": "",
+            "extract_header": true,
+            "extract_footer": true
+          },
+          "fingerprint": "a3b89c013d46d80cb3187edb065861394a9ad61ff6520d76a5166c89cacc998a"
+        },
+        {
+          "format_id": "latex",
+          "candidate": {
+            "id": "latex",
+            "family": "text",
+            "media_type": "application/x-tex",
+            "unit_kind": "section"
+          },
+          "options": {
+            "pages": "",
+            "extract_header": true,
+            "extract_footer": true
+          },
+          "fingerprint": "938fb82a4311dbda02eafec3e1b4a4d82788ffad08b2fccd3ea48b4ff41c2051"
+        },
+        {
+          "format_id": "json",
+          "candidate": {
+            "id": "json",
+            "family": "structured",
+            "media_type": "application/json",
+            "unit_kind": "record"
+          },
+          "options": {
+            "pages": "",
+            "extract_header": true,
+            "extract_footer": true
+          },
+          "fingerprint": "ab58e7842d531e10c9eda2fee3da12a00317548020617477674a075f261f4e18"
+        },
+        {
+          "format_id": "jsonl",
+          "candidate": {
+            "id": "jsonl",
+            "family": "structured",
+            "media_type": "application/x-ndjson",
+            "unit_kind": "record"
+          },
+          "options": {
+            "pages": "",
+            "extract_header": true,
+            "extract_footer": true
+          },
+          "fingerprint": "e0b13c0997ff9c5d648088d07fc479b42517537b6f83e2a5684be55696b4fb18"
+        },
+        {
+          "format_id": "xml",
+          "candidate": {
+            "id": "xml",
+            "family": "structured",
+            "media_type": "application/xml",
+            "unit_kind": "record"
+          },
+          "options": {
+            "pages": "",
+            "extract_header": true,
+            "extract_footer": true
+          },
+          "fingerprint": "4a63cfa1c36fb4ace7cc013fb4107c5d1ae809158a8145654f89552c941985b2"
+        },
+        {
+          "format_id": "yaml",
+          "candidate": {
+            "id": "yaml",
+            "family": "structured",
+            "media_type": "application/yaml",
+            "unit_kind": "record"
+          },
+          "options": {
+            "pages": "",
+            "extract_header": true,
+            "extract_footer": true
+          },
+          "fingerprint": "d66d2f150216529ca393e0f8c36239eaa836b8a8ad1dd1e92eed00dac5fc72b4"
+        },
+        {
+          "format_id": "go",
+          "candidate": {
+            "id": "go",
+            "family": "source",
+            "media_type": "text/x-go",
+            "unit_kind": "section"
+          },
+          "options": {
+            "pages": "",
+            "extract_header": true,
+            "extract_footer": true
+          },
+          "fingerprint": "675be2eb17d735ff1d433c9b402d1678148543fb924e1d5db23b23cf388ad130"
+        },
+        {
+          "format_id": "python",
+          "candidate": {
+            "id": "python",
+            "family": "source",
+            "media_type": "text/x-python",
+            "unit_kind": "section"
+          },
+          "options": {
+            "pages": "",
+            "extract_header": true,
+            "extract_footer": true
+          },
+          "fingerprint": "3ea50ee331cccae309e8c623810c126f348d909a4ff386048c70c3b20f0f09a9"
+        },
+        {
+          "format_id": "javascript",
+          "candidate": {
+            "id": "javascript",
+            "family": "source",
+            "media_type": "text/javascript",
+            "unit_kind": "section"
+          },
+          "options": {
+            "pages": "",
+            "extract_header": true,
+            "extract_footer": true
+          },
+          "fingerprint": "9f99e2191bb929ba319eb0b1e0b03354c0c75d08df6d2573fbbc4003b00866fe"
+        },
+        {
+          "format_id": "eml",
+          "candidate": {
+            "id": "eml",
+            "family": "mail",
+            "media_type": "message/rfc822",
+            "unit_kind": "message"
+          },
+          "options": {
+            "pages": "",
+            "extract_header": true,
+            "extract_footer": true
+          },
+          "fingerprint": "784c81bf46616af9b0a061484ab65cd296252b3c9bef05a4a4dd834ec8b7dc63"
+        },
+        {
+          "format_id": "msg",
+          "candidate": {
+            "id": "msg",
+            "family": "mail",
+            "media_type": "application/vnd.ms-outlook",
+            "unit_kind": "message"
+          },
+          "options": {
+            "pages": "",
+            "extract_header": true,
+            "extract_footer": true
+          },
+          "fingerprint": "e7706f5c41c4a7cd8cd13c6cc49db8ea7f8948e9ddcc9640f931a6c5eb224587"
+        }
+      ]
+    },
+    "msgvault_profile_policy_v1": {
+      "owner": "go.kenn.io/msgvault/internal/documentindex",
+      "cases": [
+        {
+          "allowed_media_types": [
+            "application/pdf",
+            "text/csv"
+          ],
+          "policy_json": "{\"version\":1,\"provider\":\"mistral\",\"endpoint\":\"https://api.mistral.ai/v1/ocr\",\"model\":\"mistral-ocr-4-0\",\"retention\":\"unknown\",\"training\":\"unknown\",\"max_file_bytes\":52428800,\"max_pages_per_document\":500,\"max_response_bytes\":67108864,\"max_normalized_chars\":25000000,\"max_spool_bytes\":536870912,\"min_free_space_bytes\":1073741824,\"request_timeout_nanos\":300000000000,\"max_retries\":3,\"max_pages_per_run\":10000,\"max_estimated_cost_usd_per_run\":50,\"message_types\":[\"chat\",\"email\"],\"allowed_media_types\":[\"application/pdf\",\"text/csv\"],\"lexical\":true,\"store_chunk_text\":true,\"extract_header\":true,\"extract_footer\":true,\"normalization_version\":2,\"max_unit_chars\":1000000,\"max_source_unit_bytes\":4000000,\"max_metadata_source_bytes\":65536,\"max_link_chars\":2048,\"max_chunk_runes\":4000,\"chunk_overlap\":200,\"max_chunks\":20000}",
+          "fingerprint": "a4900f4266793ad0a4d65dbb9c1bf5926b733d1c249b2bfd87dc34727768b077"
+        }
+      ]
+    },
+    "normalization_v2": {
+      "owner": "go.kenn.io/docbank/document",
+      "cases": [
+        {
+          "name": "rich_markdown_evidence",
+          "max_document_chars": 100000,
+          "source": {
+            "Family": "pdf",
+            "UnitKind": "page",
+            "Units": [
+              {
+                "Index": 0,
+                "Markdown": "# Damage report\n\nThe carton was **crushed**. [Safe](https://example.test/report?id=42)\nand [unsafe](javascript:alert(1)).\n\n![Photo evidence](data:image/png;base64,AAAA)\n\n| Item | Count |\n| --- | ---: |\n| Carton | 3 |\n| Pallet | 1 |\n\n\u003cscript\u003eprivate_executable_marker()\u003c/script\u003e\n\u003cstyle\u003e.hidden { display: none }\u003c/style\u003e\n\n## Inspection\n\n- First edge\n- Second edge\n\n~~~go\npackage synthetic\n~~~\n",
+                "Header": "Warehouse **A**",
+                "Footer": "Page 1",
+                "Dimensions": {
+                  "DPI": 200,
+                  "Height": 2200,
+                  "Width": 1700
+                }
+              }
+            ]
+          },
+          "expected": {
+            "PolicyVersion": 2,
+            "Family": "pdf",
+            "UnitKind": "page",
+            "Units": [
+              {
+                "Index": 0,
+                "SourceKey": "page:000000",
+                "Kind": "page",
+                "Text": "Warehouse A\n\n# Damage report\nThe carton was crushed. Safe (https://example.test/report?id=42)and unsafe.\nPhoto evidence\nItem | Count\nCarton | 3\nPallet | 1\n## Inspection\n- First edge\n- Second edge\n```go\npackage synthetic\n```\n\nPage 1",
+                "Header": "Warehouse A",
+                "Footer": "Page 1",
+                "Dimensions": {
+                  "DPI": 200,
+                  "Height": 2200,
+                  "Width": 1700
+                },
+                "CharCount": 231,
+                "Checksum": "f9b021723f3c37ae0e777b6e3e6d1a9de0b80f65f11978de3c3d3871f14daba9",
+                "Truncated": false,
+                "HeadingMarks": [
+                  {
+                    "CharOffset": 13,
+                    "Path": [
+                      "Damage report"
+                    ]
+                  },
+                  {
+                    "CharOffset": 155,
+                    "Path": [
+                      "Damage report",
+                      "Inspection"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "Chunks": [
+              {
+                "Key": "page:000000:000000-000231",
+                "Ordinal": 0,
+                "Text": "Warehouse A\n\n# Damage report\nThe carton was crushed. Safe (https://example.test/report?id=42)and unsafe.\nPhoto evidence\nItem | Count\nCarton | 3\nPallet | 1\n## Inspection\n- First edge\n- Second edge\n```go\npackage synthetic\n```\n\nPage 1",
+                "HeadingPath": null,
+                "CharCount": 231,
+                "Checksum": "7e5f2a2d44f080d3b4a9d61c214b2a4b2c409a0a39d282dcbd3d72723d22e007",
+                "Truncated": false,
+                "Spans": [
+                  {
+                    "UnitIndex": 0,
+                    "CharStart": 0,
+                    "CharEnd": 231
+                  }
+                ]
+              }
+            ],
+            "Checksum": "ef8ea1899f80869b7660c084c267f67429ba3405e19878c0666e50c31f3a95ee",
+            "Truncated": false
+          }
+        },
+        {
+          "name": "default_chunk_boundary",
+          "max_document_chars": 100000,
+          "source": {
+            "Family": "text",
+            "UnitKind": "section",
+            "Units": [
+              {
+                "Index": 0,
+                "Markdown": "# Boundary evidence\n\nbounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. ",
+                "Header": "",
+                "Footer": "",
+                "Dimensions": {
+                  "DPI": 0,
+                  "Height": 0,
+                  "Width": 0
+                }
+              }
+            ]
+          },
+          "expected": {
+            "PolicyVersion": 2,
+            "Family": "text",
+            "UnitKind": "section",
+            "Units": [
+              {
+                "Index": 0,
+                "SourceKey": "section:000000",
+                "Kind": "section",
+                "Text": "# Boundary evidence\nbounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence.",
+                "Header": "",
+                "Footer": "",
+                "Dimensions": {
+                  "DPI": 0,
+                  "Height": 0,
+                  "Width": 0
+                },
+                "CharCount": 4879,
+                "Checksum": "b4659737be7532941d951e0d53958904ce3f854aeb62d8da4de5f1acd0314b9e",
+                "Truncated": false,
+                "HeadingMarks": [
+                  {
+                    "CharOffset": 0,
+                    "Path": [
+                      "Boundary evidence"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "Chunks": [
+              {
+                "Key": "section:000000:000000-003997",
+                "Ordinal": 0,
+                "Text": "# Boundary evidence\nbounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded ",
+                "HeadingPath": [
+                  "Boundary evidence"
+                ],
+                "CharCount": 3997,
+                "Checksum": "80074d480028c30ac71abfe57f84b01ee8514120f96be1ef4d008dd99150e3eb",
+                "Truncated": false,
+                "Spans": [
+                  {
+                    "UnitIndex": 0,
+                    "CharStart": 0,
+                    "CharEnd": 3997
+                  }
+                ]
+              },
+              {
+                "Key": "section:000000:003797-004879",
+                "Ordinal": 1,
+                "Text": "e. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence. bounded evidence sentence.",
+                "HeadingPath": [
+                  "Boundary evidence"
+                ],
+                "CharCount": 1082,
+                "Checksum": "289eb0b057dc5fc8a790d8c7a45cde0057eb7975f9c1b40d96306fa1bc782e45",
+                "Truncated": false,
+                "Spans": [
+                  {
+                    "UnitIndex": 0,
+                    "CharStart": 3797,
+                    "CharEnd": 4879
+                  }
+                ]
+              }
+            ],
+            "Checksum": "e1b4ad8a0a814e2f52b12d621c06aaec3019b6557a48a0d5f938296ddc0ffd72",
+            "Truncated": false
+          }
+        }
+      ]
+    }
+  }
+}
