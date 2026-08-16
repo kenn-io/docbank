@@ -9,6 +9,8 @@
 **Public contract:**
 `2026-08-16-document-understanding-package-contract-design.md`
 
+**Public contract revision:** `d27bf28`
+
 **Compatibility source:** `kenn-io/msgvault#616` at
 `73d6c0b33f74c1fd072a7c0258f1cf1e80054698`
 
@@ -63,8 +65,8 @@ The bundle is generated before normalization is implemented in Docbank:
 4. Record the exact generator source, invocation, baseline commit, and output
    digest as evidence on `e9jz`.
 5. Copy only the generated bundle into
-   `document/testdata/document-compat-v1.json`, then remove the temporary
-   export.
+   `document/internal/compattest/testdata/document-compat-v1.json`, then remove
+   the temporary export.
 
 The bundle metadata records:
 
@@ -80,6 +82,12 @@ Pull request 1 pins the complete raw-file digest and asserts only
 `normalization_v2`, the section owned by the package landing in that pull
 request. Pull request 2 adds the `mistral_request_fingerprint_v2` assertion.
 Docbank never asserts the Msgvault legacy profile-policy section.
+
+The internal test-support package `document/internal/compattest` embeds the
+bundle and owns the one pinned digest constant plus the rehash-then-decode
+loader. Tests in both `document` and `document/mistral` import that internal
+package, so the raw-byte guard and schema decoding exist once without adding a
+public test-only API.
 
 ### Package contents
 
@@ -279,8 +287,10 @@ Before each request, `Process` rejects:
 - every redirect, including when the caller supplied the HTTP client.
 
 `NewClient` shallow-copies the supplied client before replacing its redirect
-policy. It does not mutate caller-owned configuration. Each retry reopens and
-rehashes the staged file.
+policy. If the injected client's timeout is zero or greater than the configured
+attempt timeout, the clone uses the configured bound. The package does not
+mutate caller-owned configuration, and injection cannot create an unbounded or
+overlong attempt. Each retry reopens and rehashes the staged file.
 
 `ErrPermanentResponse` and `ErrResponseTooLarge` never retry. Only
 `ErrTransientResponse` retries. Retry-After accepts bounded integer seconds,
