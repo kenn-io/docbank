@@ -30,8 +30,8 @@ constraints, and implementation seams.
 - **Internal design:** current mechanics and rationale for agents and
   developers, including consequences and constraints.
 - **Roadmap:** one high-level public product-status view.
-- **Kata:** the sole home for work items, ordering, ownership, blockers, and
-  completion state.
+- **Work tracking:** lives outside this design tree and owns work items,
+  ordering, ownership, blockers, and completion state.
 
 There is no separate decision ledger. If the design changes, revise the
 relevant living page so a new contributor can learn the current system without

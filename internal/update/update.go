@@ -25,13 +25,10 @@ func NewClient(cacheDir string) selfupdate.Client {
 		CurrentVersion: version.Version,
 		CacheDir:       cacheDir,
 		GitHubToken:    selfupdate.EnvironmentGitHubToken(),
-		// Deliberate for now: the only attacker who could swap release
-		// assets can compromise the repository itself, and a CI-held
-		// signing key signs whatever that attacker releases — no gain
-		// until there's an offline/protected signing key. Tracked as a
-		// kata issue ("Sign releases for docbank update") to revisit
-		// before the repo goes public; kit/selfupdate already supports
-		// ed25519 verification via TrustedPublicKeys.
+		// A signing key held by the same CI and repository authority would
+		// sign any substituted release and add no independent trust boundary.
+		// kit/selfupdate supports Ed25519 verification through
+		// TrustedPublicKeys when releases use an offline or protected key.
 		AllowUnsignedChecksums: true,
 	}
 }
