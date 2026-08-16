@@ -344,7 +344,7 @@ An application may select either adapter explicitly:
 ```go
 import (
     "go.kenn.io/docbank"
-    "go.kenn.io/docbank/pkg/sqlite/modernc"
+    "go.kenn.io/docbank/sqlite/modernc"
 )
 
 vault, err := docbank.New(ctx, docbank.Config{

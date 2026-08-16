@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	docsqlite "go.kenn.io/docbank/pkg/sqlite"
-	"go.kenn.io/docbank/pkg/sqlite/modernc"
+	docsqlite "go.kenn.io/docbank/sqlite"
+	"go.kenn.io/docbank/sqlite/modernc"
 )
 
 func TestBeginWalkRejectsOversizedPage(t *testing.T) {

@@ -20,8 +20,8 @@ import (
 	internalblob "go.kenn.io/docbank/internal/blob"
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/store"
-	docsqlite "go.kenn.io/docbank/pkg/sqlite"
-	"go.kenn.io/docbank/pkg/sqlite/modernc"
+	docsqlite "go.kenn.io/docbank/sqlite"
+	"go.kenn.io/docbank/sqlite/modernc"
 )
 
 func TestGarbageCollectBudgetResumesEveryCandidateExactlyOnce(t *testing.T) {

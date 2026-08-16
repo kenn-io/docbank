@@ -13,8 +13,8 @@ import (
 
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/store"
-	docsqlite "go.kenn.io/docbank/pkg/sqlite"
-	"go.kenn.io/docbank/pkg/sqlite/modernc"
+	docsqlite "go.kenn.io/docbank/sqlite"
+	"go.kenn.io/docbank/sqlite/modernc"
 )
 
 type recordingDriver struct {

@@ -102,11 +102,11 @@ func (l Layout) BlobsDir() string   { return filepath.Join(l.Root, "blobs") }
 func (l Layout) BlobTmpDir() string { return filepath.Join(l.Root, "blobs", "tmp") }
 func (l Layout) LogsDir() string    { return filepath.Join(l.Root, "logs") }
 
-// Ensure creates the directory layout if missing and enforces the privacy
-// the design documents rather than assuming it: Unix uses 0700 directories
-// and a 0600 database; Windows applies an owner-restricted DACL. MkdirAll alone
-// would trust a pre-existing public root. Pre-creating the private database
-// also makes SQLite's WAL and SHM siblings inherit the vault's protection.
+// Ensure creates the directory layout if missing and enforces owner-private
+// storage: Unix uses 0700 directories and a 0600 database; Windows applies an
+// owner-restricted DACL. MkdirAll alone would trust a pre-existing public root.
+// Pre-creating the private database also makes SQLite's WAL and SHM siblings
+// inherit the vault's protection.
 func (l Layout) Ensure() error {
 	for _, dir := range []string{l.Root, l.BlobsDir(), l.BlobTmpDir(), l.LogsDir()} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {

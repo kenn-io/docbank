@@ -72,8 +72,9 @@ For every material design change:
 
 Do not add a historical decision ledger. Git records prior versions; the
 working tree should let a new contributor understand the current system without
-replaying them. Track work, ordering, blockers, and acceptance state in kata;
-documentation carries the resulting capability and durable rationale.
+replaying them. Keep work, ordering, blockers, and acceptance state outside
+the design documentation; these pages carry resulting capability and durable
+rationale.
 
 ## Verification contract
 

@@ -233,5 +233,4 @@ and which threats require independent evidence.
 
 The [Roadmap](../roadmap.md) gives high-level product direction. These pages
 explain implemented behavior and durable design intent; planned behavior is
-marked explicitly. Kata, rather than the documentation, is the authority for
-implementation work and status.
+marked explicitly. They do not track implementation work or status.

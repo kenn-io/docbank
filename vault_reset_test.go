@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/home"
-	docsqlite "go.kenn.io/docbank/pkg/sqlite"
-	"go.kenn.io/docbank/pkg/sqlite/modernc"
+	docsqlite "go.kenn.io/docbank/sqlite"
+	"go.kenn.io/docbank/sqlite/modernc"
 )
 
 func TestResetVaultRecoversCorruptCatalogWithoutDeletingDiagnosticVault(t *testing.T) {

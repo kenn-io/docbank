@@ -12,7 +12,7 @@ import (
 	"go.kenn.io/kit/backup"
 
 	"go.kenn.io/docbank/internal/store"
-	docsqlite "go.kenn.io/docbank/pkg/sqlite"
+	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
 // MetadataFormat is the stable Kit manifest identifier for Docbank's

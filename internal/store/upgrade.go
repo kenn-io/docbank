@@ -13,7 +13,7 @@ import (
 
 	"go.kenn.io/kit/pack"
 
-	docsqlite "go.kenn.io/docbank/pkg/sqlite"
+	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
 const (

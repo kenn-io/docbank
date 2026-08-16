@@ -16,7 +16,7 @@ import (
 	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/store"
-	docsqlite "go.kenn.io/docbank/pkg/sqlite"
+	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
 func TestAuditPreviewEnableAndStatusLifecycle(t *testing.T) {

@@ -17,7 +17,7 @@ import (
 
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
-	docsqlite "go.kenn.io/docbank/pkg/sqlite"
+	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
 // packedRestoreTarget supplies docbank's storage policy and catalog adapter to

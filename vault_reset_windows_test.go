@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"go.kenn.io/docbank/pkg/sqlite/modernc"
+	"go.kenn.io/docbank/sqlite/modernc"
 	"golang.org/x/sys/windows"
 )
 
