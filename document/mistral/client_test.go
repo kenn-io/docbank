@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -21,7 +22,7 @@ import (
 )
 
 func TestClientProcessStreamsVerifiedDocumentAndReturnsNeutralEvidence(t *testing.T) {
-	content := []byte("%PDF-1.7\nsynthetic")
+	content := testPDF("synthetic")
 	policy := testPolicy(t, 1024, 10)
 	prepared := prepareTestDocument(t, policy, content)
 	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
@@ -37,7 +38,7 @@ func TestClientProcessStreamsVerifiedDocumentAndReturnsNeutralEvidence(t *testin
 		assert.NoError(t, readErr)
 		assert.Equal(t, request.ContentLength, int64(len(requestBody)))
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		_, writeErr := io.WriteString(w, `{"model":"mistral-ocr-4-0","pages":[{"index":0,"markdown":"# Synthetic","header":"Header","footer":"Footer","dimensions":{"dpi":144,"height":792,"width":612}}],"usage_info":{"pages_processed":1,"doc_size_bytes":18}}`)
+		_, writeErr := fmt.Fprintf(w, `{"model":"mistral-ocr-4-0","pages":[{"index":0,"markdown":"# Synthetic","header":"Header","footer":"Footer","dimensions":{"dpi":144,"height":792,"width":612}}],"usage_info":{"pages_processed":1,"doc_size_bytes":%d}}`, len(content))
 		assert.NoError(t, writeErr)
 	}))
 	defer server.Close()
@@ -95,25 +96,25 @@ func TestClientRejectsChangedReleasedAndCrossPolicyDocumentsBeforeUpload(t *test
 	}
 	client := clientWithoutRequests(policy)
 
-	changed := prepareTestDocument(t, policy, []byte("%PDF-1.7\nfirst"))
-	require.NoError(t, os.WriteFile(changed.path, []byte("%PDF-1.7\nother"), 0o600))
+	changed := prepareTestDocument(t, policy, testPDF("first"))
+	require.NoError(t, os.WriteFile(changed.path, testPDF("other"), 0o600))
 	_, err = client.Process(t.Context(), changed, authorization)
 	require.ErrorContains(t, err, "hash mismatch")
 
 	if runtime.GOOS != "windows" {
-		public := prepareTestDocument(t, policy, []byte("%PDF-1.7\nprivate"))
+		public := prepareTestDocument(t, policy, testPDF("private"))
 		require.NoError(t, os.Chmod(public.path, 0o644))
 		_, err = client.Process(t.Context(), public, authorization)
 		require.ErrorContains(t, err, "permissions must be private")
 	}
 
-	released := prepareTestDocument(t, policy, []byte("%PDF-1.7\nrelease"))
+	released := prepareTestDocument(t, policy, testPDF("release"))
 	require.NoError(t, released.Release())
 	_, err = client.Process(t.Context(), released, authorization)
 	require.ErrorContains(t, err, "released")
 
 	otherPolicy := testPolicy(t, 1024, 9)
-	_, err = client.Process(t.Context(), prepareTestDocument(t, policy, []byte("%PDF-1.7\npolicy")), FormatAuthorization{
+	_, err = client.Process(t.Context(), prepareTestDocument(t, policy, testPDF("policy")), FormatAuthorization{
 		format: authorization.format, method: authorization.method,
 		policyFingerprint: authorization.policyFingerprint, policyDigest: otherPolicy.digest,
 	})
@@ -121,7 +122,7 @@ func TestClientRejectsChangedReleasedAndCrossPolicyDocumentsBeforeUpload(t *test
 
 	smallPolicy := testPolicy(t, 8, 10)
 	client = clientWithoutRequests(smallPolicy)
-	_, err = client.Process(t.Context(), prepareTestDocument(t, policy, []byte("%PDF-1.7\nlarge")), FormatAuthorization{
+	_, err = client.Process(t.Context(), prepareTestDocument(t, policy, testPDF("large")), FormatAuthorization{
 		format: authorization.format, method: authorization.method,
 		policyFingerprint: authorization.policyFingerprint, policyDigest: smallPolicy.digest,
 	})
@@ -130,7 +131,7 @@ func TestClientRejectsChangedReleasedAndCrossPolicyDocumentsBeforeUpload(t *test
 
 func TestClientClassifiesResponsesAndDoesNotFollowRedirects(t *testing.T) {
 	policy := testPolicy(t, 1024, 10)
-	prepared := prepareTestDocument(t, policy, []byte("%PDF-1.7\nx"))
+	prepared := prepareTestDocument(t, policy, testPDF("x"))
 	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
 	require.NoError(t, err)
 
@@ -144,7 +145,9 @@ func TestClientClassifiesResponsesAndDoesNotFollowRedirects(t *testing.T) {
 	}{
 		{name: "permanent", status: http.StatusBadRequest, response: "private response body", wantError: ErrPermanentResponse.Error()},
 		{name: "too large", status: http.StatusOK, response: strings.Repeat("x", 65), contentType: "application/json", maxBytes: 64, wantError: ErrResponseTooLarge.Error()},
+		{name: "empty pages", status: http.StatusOK, response: `{"model":"mistral-ocr-4-0","pages":[],"usage_info":{"pages_processed":0}}`, contentType: "application/json", wantError: "returned no pages"},
 		{name: "missing index", status: http.StatusOK, response: `{"model":"mistral-ocr-4-0","pages":[{}],"usage_info":{"pages_processed":1}}`, contentType: "application/json", wantError: "invalid index"},
+		{name: "invalid dimensions", status: http.StatusOK, response: `{"model":"mistral-ocr-4-0","pages":[{"index":0,"dimensions":{"dpi":-1}}],"usage_info":{"pages_processed":1}}`, contentType: "application/json", wantError: "invalid dimensions"},
 		{name: "usage mismatch", status: http.StatusOK, response: `{"model":"mistral-ocr-4-0","pages":[{"index":0}],"usage_info":{"pages_processed":0}}`, contentType: "application/json", wantError: "processed 0 units but returned 1"},
 	}
 	for _, test := range tests {
@@ -191,7 +194,7 @@ func TestClientClassifiesResponsesAndDoesNotFollowRedirects(t *testing.T) {
 
 func TestClientRetriesOnlyTransientWorkAndReverifiesEveryAttempt(t *testing.T) {
 	policy := testPolicy(t, 1024, 10)
-	prepared := prepareTestDocument(t, policy, []byte("%PDF-1.7\noriginal"))
+	prepared := prepareTestDocument(t, policy, testPDF("original"))
 	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
 	require.NoError(t, err)
 	requests := 0
@@ -205,7 +208,7 @@ func TestClientRetriesOnlyTransientWorkAndReverifiesEveryAttempt(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, writeErr := io.WriteString(w, `{"model":"mistral-ocr-4-0","pages":[],"usage_info":{"pages_processed":0}}`)
+		_, writeErr := io.WriteString(w, testSuccessfulResponse)
 		assert.NoError(t, writeErr)
 	}))
 	defer server.Close()
@@ -221,7 +224,7 @@ func TestClientRetriesOnlyTransientWorkAndReverifiesEveryAttempt(t *testing.T) {
 		requests++
 		_, copyErr := io.Copy(io.Discard, request.Body)
 		assert.NoError(t, copyErr)
-		assert.NoError(t, os.WriteFile(prepared.path, []byte("%PDF-1.7\nmodified"), 0o600))
+		assert.NoError(t, os.WriteFile(prepared.path, testPDF("modified"), 0o600))
 		w.Header().Set("Retry-After", "0")
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
@@ -233,7 +236,7 @@ func TestClientRetriesOnlyTransientWorkAndReverifiesEveryAttempt(t *testing.T) {
 }
 
 func TestClientUploadsVerifiedSnapshot(t *testing.T) {
-	content := []byte("%PDF-1.7\noriginal")
+	content := testPDF("original")
 	policy := testPolicy(t, 1024, 10)
 	prepared := prepareTestDocument(t, policy, content)
 	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
@@ -241,7 +244,7 @@ func TestClientUploadsVerifiedSnapshot(t *testing.T) {
 	client, err := NewClient(policy, ClientConfig{
 		APIKey: "synthetic-key",
 		HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-			require.NoError(t, os.WriteFile(prepared.path, []byte("%PDF-1.7\nmodified"), 0o600))
+			require.NoError(t, os.WriteFile(prepared.path, testPDF("modified"), 0o600))
 			body, readErr := io.ReadAll(request.Body)
 			require.NoError(t, readErr)
 			var input struct {
@@ -258,7 +261,7 @@ func TestClientUploadsVerifiedSnapshot(t *testing.T) {
 				StatusCode: http.StatusOK,
 				Header:     http.Header{"Content-Type": []string{"application/json"}},
 				Body: io.NopCloser(strings.NewReader(
-					`{"model":"mistral-ocr-4-0","pages":[],"usage_info":{"pages_processed":0}}`,
+					testSuccessfulResponse,
 				)),
 				Request: request,
 			}, nil
@@ -271,7 +274,7 @@ func TestClientUploadsVerifiedSnapshot(t *testing.T) {
 
 func TestClientPreservesAccountingWhenRetriesExhaustOrWaitIsCanceled(t *testing.T) {
 	policy := testPolicy(t, 1024, 10)
-	prepared := prepareTestDocument(t, policy, []byte("%PDF-1.7\nx"))
+	prepared := prepareTestDocument(t, policy, testPDF("x"))
 	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
 	require.NoError(t, err)
 
@@ -316,7 +319,7 @@ func TestClientPreservesAccountingWhenRetriesExhaustOrWaitIsCanceled(t *testing.
 
 func TestClientRejectsProviderUnitContractDrift(t *testing.T) {
 	policy := testPolicy(t, 1024, 3)
-	prepared := prepareTestDocument(t, policy, []byte("%PDF-1.7\nx"))
+	prepared := prepareTestDocument(t, policy, testPDF("x"))
 	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
 	require.NoError(t, err)
 	for _, test := range []struct {
@@ -342,7 +345,7 @@ func TestClientRejectsProviderUnitContractDrift(t *testing.T) {
 
 func TestLocalExactRequiresProviderEquality(t *testing.T) {
 	policy := testPolicy(t, 1024, 10)
-	prepared := prepareTestDocument(t, policy, []byte("%PDF-1.7\nx"))
+	prepared := prepareTestDocument(t, policy, testPDF("x"))
 	prepared.localUnits = 2
 	format, found := CandidateFormatByID("pdf")
 	require.True(t, found)

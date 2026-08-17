@@ -257,7 +257,10 @@ func DetectFormat(io.ReaderAt, int64, string) (CandidateFormat, error)
 
 `CandidateFormats` returns a defensive copy in stable order. A constructed or
 detected `CandidateFormat` is descriptive only and cannot authorize an upload.
-Detection is local and performs no credential lookup or network request.
+Detection is local and performs no credential lookup or network request. PDF
+detection requires a valid version header, final end marker, startxref offset,
+and bounded traditional or stream cross-reference structure; a `%PDF-` prefix
+alone is not sufficient.
 
 ### Capability evidence
 

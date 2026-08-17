@@ -5,7 +5,10 @@ import (
 	"slices"
 )
 
-const mediaTypePDF = "application/pdf"
+const (
+	mediaTypeJSON = "application/json"
+	mediaTypePDF  = "application/pdf"
+)
 
 // CandidateFormat describes one locally detectable document format. A
 // candidate does not authorize an upload.
@@ -34,7 +37,7 @@ var candidateFormats = []CandidateFormat{
 	{ID: "markdown", Family: "text", MediaType: "text/markdown", UnitKind: "section"},
 	{ID: "rst", Family: "text", MediaType: "text/x-rst", UnitKind: "section"},
 	{ID: "latex", Family: "text", MediaType: "application/x-tex", UnitKind: "section"},
-	{ID: "json", Family: "structured", MediaType: "application/json", UnitKind: "record"},
+	{ID: "json", Family: "structured", MediaType: mediaTypeJSON, UnitKind: "record"},
 	{ID: "jsonl", Family: "structured", MediaType: "application/x-ndjson", UnitKind: "record"},
 	{ID: "xml", Family: "structured", MediaType: "application/xml", UnitKind: "record"},
 	{ID: "yaml", Family: "structured", MediaType: "application/yaml", UnitKind: "record"},

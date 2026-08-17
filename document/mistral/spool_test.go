@@ -18,7 +18,7 @@ import (
 )
 
 func TestPrepareCreatesPrivateDetectedFileAndReleaseRemovesIt(t *testing.T) {
-	content := []byte("%PDF-1.7\nsynthetic")
+	content := testPDF("synthetic")
 	digest := sha256.Sum256(content)
 	directory := filepath.Join(t.TempDir(), "spool")
 	makePrivateDirectory(t, directory)
@@ -51,7 +51,7 @@ func TestPrepareCreatesPrivateDetectedFileAndReleaseRemovesIt(t *testing.T) {
 }
 
 func TestPrepareFailsClosedAndRemovesPartialFile(t *testing.T) {
-	content := []byte("%PDF-1.7\nsynthetic")
+	content := testPDF("synthetic")
 	digest := sha256.Sum256(content)
 	policy := testPolicy(t, 1024, 10)
 
@@ -105,7 +105,7 @@ func TestPrepareDoesNotReadAgainAfterCopyFailure(t *testing.T) {
 }
 
 func TestPrepareClassifiesCapacityRefusals(t *testing.T) {
-	content := []byte("%PDF-1.7\nsynthetic")
+	content := testPDF("synthetic")
 	digest := sha256.Sum256(content)
 	policy := testPolicy(t, 1024, 10)
 	directory := filepath.Join(t.TempDir(), "spool")
@@ -131,7 +131,7 @@ func TestPrepareRejectsPublicReservationLock(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix mode-bit behavior")
 	}
-	content := []byte("%PDF-1.7\nsynthetic")
+	content := testPDF("synthetic")
 	digest := sha256.Sum256(content)
 	policy := testPolicy(t, 1024, 10)
 	directory := filepath.Join(t.TempDir(), "spool")

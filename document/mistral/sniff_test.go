@@ -26,7 +26,7 @@ func TestDetectFormatRecognizesBoundedDocumentFamilies(t *testing.T) {
 		mediaType string
 		wantID    string
 	}{
-		{name: "PDF", content: []byte("%PDF-1.7\nsynthetic"), mediaType: "application/pdf", wantID: "pdf"},
+		{name: "PDF", content: testPDF("synthetic"), mediaType: "application/pdf", wantID: "pdf"},
 		{name: "DOCX", content: docx, mediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", wantID: "docx"},
 		{name: "EPUB", content: epub, mediaType: "application/epub+zip", wantID: "epub"},
 		{name: "legacy DOC", content: compound, mediaType: "application/msword", wantID: "doc"},
@@ -50,9 +50,17 @@ func TestDetectFormatRecognizesBoundedDocumentFamilies(t *testing.T) {
 
 func TestDetectFormatRejectsMismatchUnsafeZIPAndAmbiguousCompound(t *testing.T) {
 	require := require.New(t)
-	pdf := []byte("%PDF-1.7\nsynthetic")
+	pdf := testPDF("synthetic")
 	_, err := DetectFormat(bytes.NewReader(pdf), int64(len(pdf)), "text/plain")
 	require.ErrorContains(err, "not declared")
+
+	malformedPDF := []byte("%PDF-1.7\nsynthetic")
+	_, err = DetectFormat(bytes.NewReader(malformedPDF), int64(len(malformedPDF)), "application/pdf")
+	require.ErrorContains(err, "PDF end marker")
+
+	polyglotPDF := append(testPDF("polyglot"), []byte("PK\x03\x04synthetic")...)
+	_, err = DetectFormat(bytes.NewReader(polyglotPDF), int64(len(polyglotPDF)), "application/pdf")
+	require.ErrorContains(err, "not final")
 
 	unsafe := documentZIP(t, map[string]string{
 		ooxmlContentTypesName: docxContentTypes("application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"), "word/document.xml": "<document/>", "../escape": "x",

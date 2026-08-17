@@ -14,6 +14,7 @@ import (
 	"net/mail"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -25,6 +26,8 @@ const (
 	maxZIPCentralDirectory   = uint32(16 << 20)
 	maxZIPExpandedBytes      = uint64(500 << 20)
 	maxZIPSingleExpandedByte = uint64(100 << 20)
+	maxPDFTailBytes          = int64(64 << 10)
+	maxPDFXRefBytes          = int64(4 << 10)
 	ooxmlContentTypesName    = "[Content_Types].xml"
 )
 
@@ -59,7 +62,9 @@ func DetectFormat(reader io.ReaderAt, size int64, declaredMediaType string) (Can
 	var detected CandidateFormat
 	switch {
 	case bytes.HasPrefix(prefix, []byte("%PDF-")):
-		detected, _ = CandidateFormatByID("pdf")
+		if err = validatePDFStructure(reader, size, prefix); err == nil {
+			detected, _ = CandidateFormatByID("pdf")
+		}
 	case bytes.HasPrefix(prefix, []byte(`{\rtf`)):
 		detected, _ = CandidateFormatByID("rtf")
 	case bytes.HasPrefix(prefix, compoundFileMagic):
@@ -83,6 +88,118 @@ func DetectFormat(reader io.ReaderAt, size int64, declaredMediaType string) (Can
 		return CandidateFormat{}, fmt.Errorf("document bytes are %s, not declared %s", detected.MediaType, mediaType)
 	}
 	return detected, nil
+}
+
+func validatePDFStructure(reader io.ReaderAt, size int64, prefix []byte) error {
+	if len(prefix) < 9 || !validPDFVersion(prefix[5:8]) || !isPDFWhitespace(prefix[8]) {
+		return errors.New("PDF header is invalid")
+	}
+	tailLength := min(size, maxPDFTailBytes)
+	tailOffset := size - tailLength
+	tail := make([]byte, tailLength)
+	read, err := reader.ReadAt(tail, tailOffset)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("read PDF trailer: %w", err)
+	}
+	if int64(read) != tailLength {
+		return errors.New("document bytes changed during PDF trailer read")
+	}
+	eofIndex := bytes.LastIndex(tail, []byte("%%EOF"))
+	if eofIndex < 0 || len(trimPDFWhitespace(tail[eofIndex+len("%%EOF"):])) != 0 {
+		return errors.New("PDF end marker is missing or not final")
+	}
+	beforeEOF := tail[:eofIndex]
+	startXRefIndex := bytes.LastIndex(beforeEOF, []byte("startxref"))
+	if startXRefIndex < 0 {
+		return errors.New("PDF startxref is missing")
+	}
+	offsetText := trimPDFWhitespace(beforeEOF[startXRefIndex+len("startxref"):])
+	digitEnd := 0
+	for digitEnd < len(offsetText) && offsetText[digitEnd] >= '0' && offsetText[digitEnd] <= '9' {
+		digitEnd++
+	}
+	if digitEnd == 0 || len(trimPDFWhitespace(offsetText[digitEnd:])) != 0 {
+		return errors.New("PDF startxref offset is invalid")
+	}
+	xrefOffset, err := strconv.ParseInt(string(offsetText[:digitEnd]), 10, 64)
+	if err != nil || xrefOffset <= 0 || xrefOffset >= tailOffset+int64(eofIndex) {
+		return errors.New("PDF startxref offset is outside the document")
+	}
+	xrefLength := min(size-xrefOffset, maxPDFXRefBytes)
+	xref := make([]byte, xrefLength)
+	read, err = reader.ReadAt(xref, xrefOffset)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("read PDF cross-reference data: %w", err)
+	}
+	if int64(read) != xrefLength {
+		return errors.New("document bytes changed during PDF cross-reference read")
+	}
+	if validPDFTableXRef(xref, beforeEOF[:startXRefIndex]) || validPDFStreamXRef(xref) {
+		return nil
+	}
+	return errors.New("PDF cross-reference data is invalid")
+}
+
+func validPDFVersion(version []byte) bool {
+	return len(version) == 3 && version[1] == '.' &&
+		((version[0] == '1' && version[2] >= '0' && version[2] <= '7') ||
+			(version[0] == '2' && version[2] == '0'))
+}
+
+func validPDFTableXRef(xref, beforeStartXRef []byte) bool {
+	if !bytes.HasPrefix(xref, []byte("xref")) || (len(xref) > 4 && !isPDFWhitespace(xref[4])) {
+		return false
+	}
+	trailerIndex := bytes.LastIndex(beforeStartXRef, []byte("trailer"))
+	if trailerIndex < 0 {
+		return false
+	}
+	trailer := compactPDFWhitespace(beforeStartXRef[trailerIndex+len("trailer"):])
+	return bytes.Contains(trailer, []byte("/Size")) && bytes.Contains(trailer, []byte("/Root"))
+}
+
+func validPDFStreamXRef(xref []byte) bool {
+	fields := bytes.Fields(xref)
+	if len(fields) < 3 || string(fields[2]) != "obj" {
+		return false
+	}
+	if _, err := strconv.ParseUint(string(fields[0]), 10, 64); err != nil {
+		return false
+	}
+	if _, err := strconv.ParseUint(string(fields[1]), 10, 64); err != nil {
+		return false
+	}
+	dictionary := xref
+	if streamIndex := bytes.Index(dictionary, []byte("stream")); streamIndex >= 0 {
+		dictionary = dictionary[:streamIndex]
+	}
+	dictionary = compactPDFWhitespace(dictionary)
+	return bytes.Contains(dictionary, []byte("/Type/XRef")) &&
+		bytes.Contains(dictionary, []byte("/Size")) && bytes.Contains(dictionary, []byte("/Root"))
+}
+
+func compactPDFWhitespace(value []byte) []byte {
+	compacted := make([]byte, 0, len(value))
+	for _, char := range value {
+		if !isPDFWhitespace(char) {
+			compacted = append(compacted, char)
+		}
+	}
+	return compacted
+}
+
+func trimPDFWhitespace(value []byte) []byte {
+	for len(value) > 0 && isPDFWhitespace(value[0]) {
+		value = value[1:]
+	}
+	for len(value) > 0 && isPDFWhitespace(value[len(value)-1]) {
+		value = value[:len(value)-1]
+	}
+	return value
+}
+
+func isPDFWhitespace(char byte) bool {
+	return char == 0 || char == '\t' || char == '\n' || char == '\f' || char == '\r' || char == ' '
 }
 
 func detectCompoundFormat(reader io.ReaderAt, size int64) (CandidateFormat, error) {

@@ -19,7 +19,7 @@ import (
 )
 
 func TestPrepareCreatesRestrictedWindowsFile(t *testing.T) {
-	prepared := prepareTestDocument(t, testPolicy(t, 1024, 10), []byte("%PDF-1.7\nprivate"))
+	prepared := prepareTestDocument(t, testPolicy(t, 1024, 10), testPDF("private"))
 	file, err := winsecurity.OpenRestrictedCurrentUserFile(prepared.path)
 	require.NoError(t, err)
 	require.NoError(t, file.Close())
@@ -27,7 +27,7 @@ func TestPrepareCreatesRestrictedWindowsFile(t *testing.T) {
 
 func TestPrepareAndProcessRejectBroadWindowsDACLs(t *testing.T) {
 	policy := testPolicy(t, 1024, 10)
-	content := []byte("%PDF-1.7\nprivate")
+	content := testPDF("private")
 	digest := sha256.Sum256(content)
 	directory := filepath.Join(t.TempDir(), "spool")
 	makePrivateDirectory(t, directory)
@@ -56,7 +56,7 @@ func TestPrepareAndProcessRejectBroadWindowsDACLs(t *testing.T) {
 
 func TestPrepareRejectsBroadWindowsReservationLockDACL(t *testing.T) {
 	policy := testPolicy(t, 1024, 10)
-	content := []byte("%PDF-1.7\nprivate")
+	content := testPDF("private")
 	digest := sha256.Sum256(content)
 	directory := filepath.Join(t.TempDir(), "spool")
 	makePrivateDirectory(t, directory)

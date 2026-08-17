@@ -27,6 +27,9 @@ const (
 	hardMaxTimeout       = 30 * time.Minute
 	hardMaxRetries       = 10
 	hardMaxRetryDelay    = 60 * time.Second
+	maxSourceUnitDPI     = 100_000
+	maxSourceUnitHeight  = 10_000_000
+	maxSourceUnitWidth   = 10_000_000
 )
 
 var (
@@ -273,7 +276,7 @@ func (c *Client) processOnce(
 		return Result{}, "", false, 0, fmt.Errorf("build Mistral OCR request: %w", err)
 	}
 	request.ContentLength = encodedLength
-	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Content-Type", mediaTypeJSON)
 	request.Header.Set("Authorization", "Bearer "+c.apiKey)
 
 	started := time.Now()
@@ -297,7 +300,7 @@ func (c *Client) processOnce(
 		return Result{}, "", true, latency, fmt.Errorf("mistral OCR unexpected HTTP %d", response.StatusCode)
 	}
 	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
-	if err != nil || mediaType != "application/json" {
+	if err != nil || mediaType != mediaTypeJSON {
 		return Result{}, "", true, latency, errors.New("mistral OCR returned non-JSON content type")
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, c.policy.values.MaxResponseBytes+1))
@@ -483,6 +486,9 @@ func validateWireResult(
 	if result.Pages == nil {
 		return errors.New("mistral OCR response omitted pages")
 	}
+	if len(result.Pages) == 0 {
+		return errors.New("mistral OCR response returned no pages")
+	}
 	if len(result.Pages) > maxUnits {
 		if method == UnitBoundProviderRequest || method == UnitBoundLocalExact {
 			return fmt.Errorf("provider returned %d units above authorized limit %d: %w",
@@ -493,6 +499,11 @@ func validateWireResult(
 	for index, page := range result.Pages {
 		if !page.indexPresent || page.Index != index {
 			return fmt.Errorf("mistral OCR response unit %d has invalid index %d", index, page.Index)
+		}
+		if page.Dimensions.DPI < 0 || page.Dimensions.DPI > maxSourceUnitDPI ||
+			page.Dimensions.Height < 0 || page.Dimensions.Height > maxSourceUnitHeight ||
+			page.Dimensions.Width < 0 || page.Dimensions.Width > maxSourceUnitWidth {
+			return fmt.Errorf("mistral OCR response unit %d has invalid dimensions", index)
 		}
 	}
 	if result.UsageInfo == nil || !result.UsageInfo.pagesProcessedPresent {

@@ -254,6 +254,7 @@ prepared local count in both directions. A provider that may omit empty units
 cannot use `local_exact`; a less-than-or-equal method requires a separate
 contract and probe observation.
 
-Private wire data is checked for model equality, response size, complete and
-contiguous unit indices, processed-unit consistency, byte accounting, and
-policy bounds before conversion to `document.SourceDocument`.
+Private wire data is checked for model equality, response size, a nonempty page
+set, complete and contiguous unit indices, source-unit dimension bounds,
+processed-unit consistency, byte accounting, and policy bounds before
+conversion to `document.SourceDocument`.

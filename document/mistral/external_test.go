@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"path/filepath"
 	"testing"
@@ -28,7 +29,7 @@ func TestPublicLocalWorkflow(t *testing.T) {
 	assert.Equal(t, normalization.Identity(), policy.NormalizePolicy().Identity())
 	require.Len(t, mistral.CandidateFormats(), 26)
 
-	content := []byte("%PDF-1.7\nsynthetic")
+	content := externalTestPDF()
 	digest := sha256.Sum256(content)
 	directory := filepath.Join(t.TempDir(), "spool")
 	require.NoError(t, safefileio.EnsurePrivateDir(directory))
@@ -40,4 +41,26 @@ func TestPublicLocalWorkflow(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "pdf", prepared.Format().ID)
 	require.NoError(t, prepared.Release())
+}
+
+func externalTestPDF() []byte {
+	objects := []string{
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+	}
+	var output bytes.Buffer
+	output.WriteString("%PDF-1.4\n")
+	offsets := make([]int, len(objects))
+	for index, object := range objects {
+		offsets[index] = output.Len()
+		_, _ = fmt.Fprintf(&output, "%d 0 obj\n%s\nendobj\n", index+1, object)
+	}
+	xref := output.Len()
+	_, _ = fmt.Fprintf(&output, "xref\n0 %d\n0000000000 65535 f \n", len(objects)+1)
+	for _, offset := range offsets {
+		_, _ = fmt.Fprintf(&output, "%010d 00000 n \n", offset)
+	}
+	_, _ = fmt.Fprintf(&output, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, xref)
+	return output.Bytes()
 }
