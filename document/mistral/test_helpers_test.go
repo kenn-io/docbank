@@ -105,9 +105,13 @@ func newProbeFixtureDestination(t *testing.T, name string) string {
 }
 
 type errorReader struct {
-	err error
+	err   error
+	reads *int
 }
 
 func (r errorReader) Read([]byte) (int, error) {
+	if r.reads != nil {
+		(*r.reads)++
+	}
 	return 0, r.err
 }

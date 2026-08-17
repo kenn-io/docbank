@@ -97,6 +97,10 @@ supply its manifest.
 `Policy` exposes both a serializable identity and the executable normalization
 policy:
 
+`MaxUnits` must be between 2 and 5,000. The lower bound is required because the
+capability probe must request fewer units than its multi-unit PDF fixture to
+demonstrate provider-side enforcement before any production upload is allowed.
+
 ```go
 func (Policy) Values() PolicyValues
 func (Policy) NormalizePolicy() document.NormalizePolicy

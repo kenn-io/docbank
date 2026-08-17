@@ -85,6 +85,25 @@ func TestPrepareFailsClosedAndRemovesPartialFile(t *testing.T) {
 	}
 }
 
+func TestPrepareDoesNotReadAgainAfterCopyFailure(t *testing.T) {
+	copyErr := errors.New("synthetic copy failure")
+	reads := 0
+	source := &observedReadCloser{Reader: errorReader{err: copyErr, reads: &reads}}
+	policy := testPolicy(t, 1024, 10)
+	directory := filepath.Join(t.TempDir(), "spool")
+	makePrivateDirectory(t, directory)
+
+	_, err := Prepare(t.Context(), source, policy, PrepareOptions{
+		Directory: directory, DeclaredMediaType: mediaTypePDF,
+		ExpectedSize: 1, ExpectedSHA256: stringsOfZero(64),
+		MaxSpoolBytes: 2048, MinFreeBytes: 1,
+	})
+	require.ErrorIs(t, err, copyErr)
+	assert.Equal(t, 1, reads)
+	assert.True(t, source.closed)
+	requireOnlySpoolReservationFile(t, directory)
+}
+
 func TestPrepareClassifiesCapacityRefusals(t *testing.T) {
 	content := []byte("%PDF-1.7\nsynthetic")
 	digest := sha256.Sum256(content)

@@ -197,13 +197,15 @@ func Prepare(
 	contextSource := &contextReader{ctx: ctx, reader: source}
 	limited := io.LimitReader(contextSource, options.ExpectedSize)
 	written, err := io.Copy(io.MultiWriter(file, hash), limited)
+	if err != nil {
+		closeSourceErr := source.Close()
+		sourceClosed = true
+		return nil, wrapSpoolIOError("copy Mistral OCR spool", errors.Join(err, closeSourceErr))
+	}
 	var extra [1]byte
 	extraBytes, extraErr := io.ReadFull(contextSource, extra[:])
 	closeSourceErr := source.Close()
 	sourceClosed = true
-	if err != nil {
-		return nil, wrapSpoolIOError("copy Mistral OCR spool", err)
-	}
 	if extraErr != nil && !errors.Is(extraErr, io.EOF) {
 		return nil, fmt.Errorf("verify Mistral OCR source length: %w", extraErr)
 	}

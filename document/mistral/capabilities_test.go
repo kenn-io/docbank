@@ -58,6 +58,13 @@ func TestPolicyRejectsUnknownPrivacyPostureAndMismatchedProbePolicy(t *testing.T
 	})
 	require.ErrorContains(t, err, "retention posture")
 
+	_, err = NewPolicy(PolicyConfig{
+		Region: defaultRegion, Model: defaultModel, Retention: "zdr", Training: "opted-out",
+		MaxDocumentBytes: 1 << 20, MaxResponseBytes: 1 << 20, MaxUnits: 1,
+		NormalizePolicy: normalization,
+	})
+	require.ErrorContains(t, err, "processing bounds")
+
 	policy := testPolicy(t, 1<<20, 500)
 	manifest := syntheticManifest(t, policy, true)
 	manifest.Results[0].RequestFingerprint = strings.Repeat("0", 64)
