@@ -185,6 +185,49 @@ func TestPrepareCancellationDuringCopyRemovesPartialFileAndClosesSource(t *testi
 	requireOnlySpoolReservationFile(t, directory)
 }
 
+func TestPrepareCancellationClosesBlockedSourceRead(t *testing.T) {
+	policy := testPolicy(t, 1024, 10)
+	directory := filepath.Join(t.TempDir(), "spool")
+	makePrivateDirectory(t, directory)
+	ctx, cancel := context.WithCancel(t.Context())
+	source, writer := io.Pipe()
+	t.Cleanup(func() {
+		_ = source.Close()
+		_ = writer.Close()
+	})
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := Prepare(ctx, source, policy, PrepareOptions{
+			Directory: directory, DeclaredMediaType: mediaTypePDF,
+			ExpectedSize: 1, ExpectedSHA256: stringsOfZero(64),
+			MaxSpoolBytes: 2048, MinFreeBytes: 1,
+		})
+		result <- err
+	}()
+	require.Eventually(t, func() bool {
+		matches, err := filepath.Glob(filepath.Join(directory, spoolFilenamePrefix+"*"))
+		if err != nil {
+			return false
+		}
+		for _, match := range matches {
+			if filepath.Base(match) != spoolReservationFile {
+				return true
+			}
+		}
+		return false
+	}, time.Second, time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-result:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("Prepare did not return after cancellation closed its blocked source")
+	}
+	requireOnlySpoolReservationFile(t, directory)
+}
+
 func TestPrepareSerializesQuotaReservations(t *testing.T) {
 	content := testPDF("serialized")
 	digest := sha256.Sum256(content)

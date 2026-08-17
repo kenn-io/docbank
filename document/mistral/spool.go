@@ -145,18 +145,26 @@ func Prepare(
 	if source == nil {
 		return nil, errors.New("mistral OCR staging requires a source")
 	}
-	sourceClosed := false
+	var closeSourceOnce sync.Once
+	var closeSourceErr error
+	closeSource := func() error {
+		closeSourceOnce.Do(func() {
+			closeSourceErr = source.Close()
+		})
+		return closeSourceErr
+	}
 	defer func() {
-		if sourceClosed {
-			return
-		}
-		if closeErr := source.Close(); err == nil && closeErr != nil {
+		if closeErr := closeSource(); err == nil && closeErr != nil {
 			err = fmt.Errorf("close Mistral OCR source: %w", closeErr)
 		}
 	}()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	stopCloseOnCancel := context.AfterFunc(ctx, func() {
+		_ = closeSource()
+	})
+	defer stopCloseOnCancel()
 	if policy.digest == "" {
 		return nil, errors.New("mistral policy is invalid; use NewPolicy")
 	}
@@ -221,19 +229,23 @@ func Prepare(
 	limited := io.LimitReader(contextSource, options.ExpectedSize)
 	written, err := io.Copy(io.MultiWriter(file, hash), limited)
 	if err != nil {
-		closeSourceErr := source.Close()
-		sourceClosed = true
-		return nil, wrapSpoolIOError("copy Mistral OCR spool", errors.Join(err, closeSourceErr))
+		closeErr := closeSource()
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, wrapSpoolIOError("copy Mistral OCR spool", errors.Join(err, closeErr))
 	}
 	var extra [1]byte
 	extraBytes, extraErr := io.ReadFull(contextSource, extra[:])
-	closeSourceErr := source.Close()
-	sourceClosed = true
+	sourceCloseErr := closeSource()
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
 	if extraErr != nil && !errors.Is(extraErr, io.EOF) {
 		return nil, fmt.Errorf("verify Mistral OCR source length: %w", extraErr)
 	}
-	if closeSourceErr != nil {
-		return nil, fmt.Errorf("close Mistral OCR source: %w", closeSourceErr)
+	if sourceCloseErr != nil {
+		return nil, fmt.Errorf("close Mistral OCR source: %w", sourceCloseErr)
 	}
 	if written != options.ExpectedSize || extraBytes != 0 {
 		return nil, errors.New("mistral OCR source size mismatch")
