@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -177,7 +178,7 @@ type canonicalHTMLWriter struct {
 	output       strings.Builder
 	maxLinkChars int
 	inPre        bool
-	skipDepth    int
+	skipTags     []string
 	cellIndex    int
 	links        []string
 	preFenceOpen bool
@@ -194,12 +195,13 @@ func (w *canonicalHTMLWriter) consume(reader io.Reader) error {
 			}
 			return fmt.Errorf("tokenize normalized document HTML: %w", tokenizer.Err())
 		case html.TextToken:
-			if w.skipDepth == 0 {
+			if len(w.skipTags) == 0 {
 				w.writeText(string(tokenizer.Text()))
 			}
-		case html.StartTagToken, html.SelfClosingTagToken:
-			token := tokenizer.Token()
-			w.startTag(token)
+		case html.StartTagToken:
+			w.startTag(tokenizer.Token(), false)
+		case html.SelfClosingTagToken:
+			w.startTag(tokenizer.Token(), true)
 		case html.EndTagToken:
 			w.endTag(tokenizer.Token().Data)
 		case html.CommentToken, html.DoctypeToken:
@@ -208,14 +210,18 @@ func (w *canonicalHTMLWriter) consume(reader io.Reader) error {
 	}
 }
 
-func (w *canonicalHTMLWriter) startTag(token html.Token) {
+func (w *canonicalHTMLWriter) startTag(token html.Token, selfClosing bool) {
 	tag := token.Data
-	if w.skipDepth > 0 {
-		w.skipDepth++
+	if len(w.skipTags) > 0 {
+		if !selfClosing && !isHTMLVoidElement(tag) {
+			w.skipTags = append(w.skipTags, tag)
+		}
 		return
 	}
 	if tag == "script" || tag == "style" || tag == "svg" {
-		w.skipDepth = 1
+		if !selfClosing && !isHTMLVoidElement(tag) {
+			w.skipTags = append(w.skipTags, tag)
+		}
 		return
 	}
 	switch tag {
@@ -224,8 +230,6 @@ func (w *canonicalHTMLWriter) startTag(token html.Token) {
 		level := int(tag[1] - '0')
 		_, _ = fmt.Fprintf(&w.output, "%cH%d%c", headingSentinelStart, level, headingSentinelEnd)
 		w.output.WriteString(strings.Repeat("#", level) + " ")
-	case "p", "div", "section", "blockquote", "ul", "ol", "table":
-		w.block()
 	case "li":
 		w.line()
 		w.output.WriteString("- ")
@@ -294,16 +298,25 @@ func (w *canonicalHTMLWriter) startTag(token html.Token) {
 			}
 		}
 		w.links = append(w.links, link)
+	default:
+		if isHTMLBlockElement(tag) {
+			w.block()
+		}
 	}
 }
 
 func (w *canonicalHTMLWriter) endTag(tag string) {
-	if w.skipDepth > 0 {
-		w.skipDepth--
+	if len(w.skipTags) > 0 {
+		for index, v := range slices.Backward(w.skipTags) {
+			if v == tag {
+				w.skipTags = w.skipTags[:index]
+				break
+			}
+		}
 		return
 	}
 	switch tag {
-	case "h1", "h2", "h3", "h4", "h5", "h6", "p", "div", "section", "blockquote", "ul", "ol", "table":
+	case "h1", "h2", "h3", "h4", "h5", "h6":
 		w.block()
 	case "li", "tr":
 		w.line()
@@ -335,6 +348,28 @@ func (w *canonicalHTMLWriter) endTag(tag string) {
 			}
 			w.output.WriteString("(" + link + ")")
 		}
+	default:
+		if isHTMLBlockElement(tag) {
+			w.block()
+		}
+	}
+}
+
+func isHTMLVoidElement(tag string) bool {
+	switch tag {
+	case "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr":
+		return true
+	default:
+		return false
+	}
+}
+
+func isHTMLBlockElement(tag string) bool {
+	switch tag {
+	case "address", "article", "aside", "blockquote", "body", "caption", "center", "colgroup", "dd", "details", "dialog", "dir", "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form", "header", "hgroup", "hr", "html", "main", "menu", "nav", "ol", "p", "search", "section", "summary", "table", "tbody", "tfoot", "thead", "ul":
+		return true
+	default:
+		return false
 	}
 }
 

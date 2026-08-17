@@ -259,6 +259,9 @@ func TestNormalizeDocumentPreservesInertRawHTMLText(t *testing.T) {
 	}{
 		{name: "line break", markdown: "alpha<br>beta", want: "alpha\nbeta"},
 		{name: "block container", markdown: "<div>alpha <strong>beta</strong></div>", want: "alpha beta"},
+		{name: "content after self-closing SVG child", markdown: "<svg><path/></svg>after", want: "after"},
+		{name: "content after void SVG child", markdown: "<svg><br></svg>after", want: "after"},
+		{name: "adjacent definition blocks", markdown: "<dl><dt>Term</dt><dd>Definition</dd></dl>", want: "Term\nDefinition"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
