@@ -654,7 +654,19 @@ func detectTextFormat(content []byte, mediaType string) (CandidateFormat, error)
 	case "csv":
 		csvReader := csv.NewReader(bytes.NewReader(content))
 		csvReader.FieldsPerRecord = -1
-		if records, err := csvReader.ReadAll(); err != nil || len(records) == 0 {
+		csvReader.ReuseRecord = true
+		records := 0
+		for {
+			_, readErr := csvReader.Read()
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			if readErr != nil {
+				return CandidateFormat{}, errors.New("declared CSV document is invalid")
+			}
+			records++
+		}
+		if records == 0 {
 			return CandidateFormat{}, errors.New("declared CSV document is invalid")
 		}
 	case "latex":

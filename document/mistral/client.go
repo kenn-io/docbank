@@ -317,6 +317,9 @@ func (c *Client) processOnce(
 	if !utf8.Valid(body) {
 		return Result{}, "", true, latency, errors.New("mistral OCR response contains invalid UTF-8")
 	}
+	if err := rejectDuplicateJSONKeys(body, "mistral OCR response"); err != nil {
+		return Result{}, "", true, latency, fmt.Errorf("decode Mistral OCR response: %w", err)
+	}
 	var wire wireResult
 	if err := json.Unmarshal(body, &wire); err != nil {
 		return Result{}, "", true, latency, fmt.Errorf("decode Mistral OCR response: %w", err)
@@ -551,6 +554,7 @@ func providerNeutralResult(result wireResult, format CandidateFormat) Result {
 }
 
 func (p *wirePage) UnmarshalJSON(data []byte) error {
+	*p = wirePage{}
 	type pageJSON struct {
 		Index      *int           `json:"index"`
 		Markdown   string         `json:"markdown"`
@@ -574,6 +578,7 @@ func (p *wirePage) UnmarshalJSON(data []byte) error {
 }
 
 func (u *wireUsage) UnmarshalJSON(data []byte) error {
+	*u = wireUsage{}
 	type usageJSON struct {
 		PagesProcessed *int   `json:"pages_processed"`
 		DocSizeBytes   *int64 `json:"doc_size_bytes"`

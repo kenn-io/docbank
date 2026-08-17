@@ -87,6 +87,10 @@ func TestDetectFormatRejectsMismatchUnsafeZIPAndAmbiguousCompound(t *testing.T) 
 	_, err = DetectFormat(bytes.NewReader(invalidJSON), int64(len(invalidJSON)), "application/json")
 	require.ErrorContains(err, "invalid")
 
+	invalidCSV := []byte("name,value\n\"unterminated,42\n")
+	_, err = DetectFormat(bytes.NewReader(invalidCSV), int64(len(invalidCSV)), "text/csv")
+	require.ErrorContains(err, "invalid")
+
 	macroEnabled := documentZIP(t, map[string]string{
 		ooxmlContentTypesName: docxContentTypes("application/vnd.ms-word.document.macroEnabled.main+xml"),
 		"word/document.xml":   "<document/>",

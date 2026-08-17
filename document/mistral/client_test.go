@@ -149,6 +149,7 @@ func TestClientClassifiesResponsesAndDoesNotFollowRedirects(t *testing.T) {
 		{name: "missing index", status: http.StatusOK, response: `{"model":"mistral-ocr-4-0","pages":[{}],"usage_info":{"pages_processed":1}}`, contentType: "application/json", wantError: "invalid index"},
 		{name: "invalid dimensions", status: http.StatusOK, response: `{"model":"mistral-ocr-4-0","pages":[{"index":0,"dimensions":{"dpi":-1}}],"usage_info":{"pages_processed":1}}`, contentType: "application/json", wantError: "invalid dimensions"},
 		{name: "usage mismatch", status: http.StatusOK, response: `{"model":"mistral-ocr-4-0","pages":[{"index":0}],"usage_info":{"pages_processed":0}}`, contentType: "application/json", wantError: "processed 0 units but returned 1"},
+		{name: "duplicate usage", status: http.StatusOK, response: `{"model":"mistral-ocr-4-0","pages":[{"index":0}],"usage_info":{"pages_processed":1},"usage_info":{}}`, contentType: "application/json", wantError: `duplicate JSON object key "usage_info"`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

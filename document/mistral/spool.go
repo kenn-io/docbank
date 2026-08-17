@@ -187,12 +187,25 @@ func Prepare(
 	}
 	path := file.Name()
 	success := false
+	fileOpen := true
 	defer func() {
 		if success {
 			return
 		}
-		_ = file.Close()
-		_ = os.Remove(path)
+		var cleanupErr error
+		if fileOpen {
+			if closeErr := file.Close(); closeErr != nil {
+				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("close partial Mistral OCR spool: %w", closeErr))
+			}
+		}
+		if removeErr := os.Remove(path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf(
+				"remove partial Mistral OCR spool %s: %w", filepath.Base(path), removeErr,
+			))
+		}
+		if cleanupErr != nil {
+			err = errors.Join(err, cleanupErr)
+		}
 	}()
 	if err := secureCreatedFile(file); err != nil {
 		return nil, wrapSpoolIOError("secure Mistral OCR spool", err)
@@ -238,8 +251,10 @@ func Prepare(
 	if err != nil {
 		return nil, fmt.Errorf("count local Mistral OCR units: %w", err)
 	}
-	if err := file.Close(); err != nil {
-		return nil, wrapSpoolIOError("close Mistral OCR spool", err)
+	closeErr := file.Close()
+	fileOpen = false
+	if closeErr != nil {
+		return nil, wrapSpoolIOError("close Mistral OCR spool", closeErr)
 	}
 
 	success = true

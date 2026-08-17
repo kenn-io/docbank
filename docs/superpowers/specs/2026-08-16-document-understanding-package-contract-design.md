@@ -261,7 +261,8 @@ Detection is local and performs no credential lookup or network request. PDF
 detection requires a valid version header, final end marker, startxref offset,
 and bounded traditional or stream cross-reference structure; a `%PDF-` prefix
 alone is not sufficient. All formats share the policy's 500 MiB hard input cap;
-container metadata and allocation tables are bounded before allocation.
+container metadata and allocation tables are bounded before allocation, and
+CSV syntax is checked record by record without retaining the full record set.
 
 ### Capability evidence
 
@@ -522,7 +523,8 @@ refuses symlinks and unsafe entries, takes the reservation lock, enforces
 aggregate quota and free-space reserve, writes a package-prefixed file with
 owner-only Unix permissions or a restricted Windows DACL, verifies expected
 size and lowercase SHA-256 while copying, detects the format from the same
-bytes, syncs, and closes the file before returning.
+bytes, syncs, and closes the file before returning. Any close or removal error
+while cleaning up failed staging is joined into the returned error.
 
 `Policy.MaxDocumentBytes` is the one file-byte bound. `PrepareOptions` cannot
 widen it. Disk quota and free-space reserve are reusable staging inputs but are
@@ -622,9 +624,10 @@ bounded page range and treats a post-response unit excess as the same kind of
 drift. These are the only runtime signals that provider semantics departed
 from probe evidence.
 
-Private wire structs validate model equality, complete and contiguous unit
-indices, response size, processed-unit consistency, byte accounting, and
-policy bounds before conversion. `Process` then returns only:
+Private wire structs reject duplicate JSON object keys and validate model
+equality, complete and contiguous unit indices, response size, processed-unit
+consistency, byte accounting, and policy bounds before conversion. `Process`
+then returns only:
 
 ```go
 type Result struct {

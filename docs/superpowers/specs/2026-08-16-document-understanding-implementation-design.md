@@ -226,7 +226,8 @@ identities before staging them for a probe.
 copying, syncing, securing, or closing the staged file use the same
 classification. Unsafe directory entries, unrelated filesystem I/O failures,
 and size, hash, format, or permission failures are terminal. Failure and
-cancellation remove the partial file created by that call.
+cancellation remove the partial file created by that call; close or removal
+failures are joined into the returned error rather than discarded.
 `Release` takes the spool reservation lock, is idempotent, and makes its
 prepared document unprocessable.
 
@@ -262,6 +263,6 @@ cannot use `local_exact`; a less-than-or-equal method requires a separate
 contract and probe observation.
 
 Private wire data is checked for model equality, response size, a nonempty page
-set, complete and contiguous unit indices, source-unit dimension bounds,
-processed-unit consistency, byte accounting, and policy bounds before
-conversion to `document.SourceDocument`.
+set, duplicate JSON object keys, complete and contiguous unit indices,
+source-unit dimension bounds, processed-unit consistency, byte accounting, and
+policy bounds before conversion to `document.SourceDocument`.

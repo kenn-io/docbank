@@ -211,7 +211,7 @@ func DecodeCapabilityManifest(reader io.Reader) (CapabilityManifest, error) {
 	if int64(len(data)) > maxManifestBytes {
 		return CapabilityManifest{}, errors.New("mistral capability manifest is too large")
 	}
-	if err := rejectDuplicateJSONKeys(data); err != nil {
+	if err := rejectDuplicateJSONKeys(data, "mistral capability manifest"); err != nil {
 		return CapabilityManifest{}, fmt.Errorf("decode Mistral capability manifest: %w", err)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -229,14 +229,14 @@ func DecodeCapabilityManifest(reader io.Reader) (CapabilityManifest, error) {
 	return manifest, nil
 }
 
-func rejectDuplicateJSONKeys(data []byte) error {
+func rejectDuplicateJSONKeys(data []byte, subject string) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	return scanJSONValue(decoder, 0)
+	return scanJSONValue(decoder, 0, subject)
 }
 
-func scanJSONValue(decoder *json.Decoder, depth int) error {
+func scanJSONValue(decoder *json.Decoder, depth int, subject string) error {
 	if depth > 64 {
-		return errors.New("mistral capability manifest JSON is too deeply nested")
+		return fmt.Errorf("%s JSON is too deeply nested", subject)
 	}
 	token, err := decoder.Token()
 	if err != nil {
@@ -256,16 +256,16 @@ func scanJSONValue(decoder *json.Decoder, depth int) error {
 			}
 			key, ok := keyToken.(string)
 			if !ok {
-				return errors.New("mistral capability manifest has a non-string object key")
+				return fmt.Errorf("%s has a non-string JSON object key", subject)
 			}
 			if !canonicalJSONKey(key) {
-				return fmt.Errorf("mistral capability manifest JSON object key %q must use lowercase ASCII", key)
+				return fmt.Errorf("%s JSON object key %q must use lowercase ASCII", subject, key)
 			}
 			if _, exists := keys[key]; exists {
-				return fmt.Errorf("mistral capability manifest has duplicate JSON object key %q", key)
+				return fmt.Errorf("%s has duplicate JSON object key %q", subject, key)
 			}
 			keys[key] = struct{}{}
-			if err := scanJSONValue(decoder, depth+1); err != nil {
+			if err := scanJSONValue(decoder, depth+1, subject); err != nil {
 				return err
 			}
 		}
@@ -273,14 +273,14 @@ func scanJSONValue(decoder *json.Decoder, depth int) error {
 		return err
 	case '[':
 		for decoder.More() {
-			if err := scanJSONValue(decoder, depth+1); err != nil {
+			if err := scanJSONValue(decoder, depth+1, subject); err != nil {
 				return err
 			}
 		}
 		_, err = decoder.Token()
 		return err
 	default:
-		return errors.New("mistral capability manifest has an unexpected JSON delimiter")
+		return fmt.Errorf("%s has an unexpected JSON delimiter", subject)
 	}
 }
 
