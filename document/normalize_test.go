@@ -239,6 +239,17 @@ func TestNormalizeDocumentPreservesSoftBreakSeparation(t *testing.T) {
 	assert.Equal(t, "alpha beta", normalized.Units[0].Text)
 }
 
+func TestNormalizeDocumentPreservesUnicodeWhitespaceSeparation(t *testing.T) {
+	policy := testNormalizePolicy(t, 10_000)
+	source := SourceDocument{Family: "text", UnitKind: "page", Units: []SourceUnit{{
+		Index: 0, Markdown: "alpha\u2028beta\u2029gamma\u0085delta\fepsilon\u00a0zeta",
+	}}}
+
+	normalized, err := NormalizeDocument(source, policy)
+	require.NoError(t, err)
+	assert.Equal(t, "alpha beta gamma delta epsilon zeta", normalized.Units[0].Text)
+}
+
 func TestNormalizeDocumentPreservesSpaceBeforeInlineCode(t *testing.T) {
 	policy := testNormalizePolicy(t, 10_000)
 	source := SourceDocument{Family: "text", UnitKind: "page", Units: []SourceUnit{{
@@ -269,6 +280,41 @@ func TestNormalizeDocumentKeepsPunctuationAfterInlineElements(t *testing.T) {
 			normalized, err := NormalizeDocument(source, policy)
 			require.NoError(t, err)
 			assert.Equal(t, test.want, normalized.Units[0].Text)
+		})
+	}
+}
+
+func TestNormalizeDocumentBoundsHeadingPathsByLevel(t *testing.T) {
+	tests := []struct {
+		name     string
+		markdown string
+		limit    int
+		want     []HeadingMark
+	}{
+		{
+			name: "truncated child title retains parent", markdown: "# Parent\n\n## Child title\n\nbody", limit: 11,
+			want: []HeadingMark{{CharOffset: 0, Path: []string{"Parent"}}, {CharOffset: 9, Path: []string{"Parent"}}},
+		},
+		{
+			name: "empty top-level heading resets path", markdown: "# Parent\n\n## Child\n\n#\n\nafter", limit: 10_000,
+			want: []HeadingMark{
+				{CharOffset: 0, Path: []string{"Parent"}},
+				{CharOffset: 9, Path: []string{"Parent", "Child"}},
+				{CharOffset: 18, Path: []string{}},
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			policy := testNormalizePolicy(t, test.limit)
+			policy.maxUnitChars = test.limit
+			source := SourceDocument{Family: "text", UnitKind: "page", Units: []SourceUnit{{
+				Index: 0, Markdown: test.markdown,
+			}}}
+
+			normalized, err := NormalizeDocument(source, policy)
+			require.NoError(t, err)
+			assert.Equal(t, test.want, normalized.Units[0].HeadingMarks)
 		})
 	}
 }

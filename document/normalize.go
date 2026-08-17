@@ -79,11 +79,11 @@ func NormalizeDocument(source SourceDocument, policy NormalizePolicy) (Normalize
 			break
 		}
 		remaining -= combinedChars
-		headings = boundHeadingMarks(text, headings)
+		boundedHeadings := boundHeadingMarks(text, headings)
 		normalized := NormalizedUnit{
 			Index: unit.Index, SourceKey: fmt.Sprintf("%s:%06d", source.UnitKind, unit.Index), Kind: source.UnitKind,
 			Text: text, Header: header, Footer: footer, Dimensions: unit.Dimensions,
-			CharCount: utf8.RuneCountInString(text), Truncated: unitTruncated, HeadingMarks: headings,
+			CharCount: utf8.RuneCountInString(text), Truncated: unitTruncated, HeadingMarks: boundedHeadings,
 		}
 		normalized.Checksum = checksumStrings(normalized.SourceKey, normalized.Text, normalized.Header, normalized.Footer)
 		result.Units = append(result.Units, normalized)
@@ -148,7 +148,7 @@ func joinDocumentUnitEvidence(header, body, footer string) (string, int) {
 	return strings.Join(parts, "\n\n"), bodyOffset
 }
 
-func canonicalMarkdown(markdown string, maxLinkChars, maxSourceBytes int) (string, []HeadingMark, bool, error) {
+func canonicalMarkdown(markdown string, maxLinkChars, maxSourceBytes int) (string, []canonicalHeadingMark, bool, error) {
 	if markdown == "" {
 		return "", nil, false, nil
 	}
@@ -378,11 +378,16 @@ func (w *canonicalHTMLWriter) block() {
 
 func stripUnsafeControls(value string) string {
 	return strings.Map(func(character rune) rune {
-		if character == '\n' || character == '\t' {
+		switch character {
+		case '\n', '\t':
 			return character
+		case '\f', '\v', '\u0085', '\u2028', '\u2029':
+			return '\n'
 		}
-		if unicode.IsControl(character) || character == '\u2028' || character == '\u2029' ||
-			character == headingSentinelStart || character == headingSentinelEnd {
+		if unicode.IsSpace(character) {
+			return ' '
+		}
+		if unicode.IsControl(character) || character == headingSentinelStart || character == headingSentinelEnd {
 			return -1
 		}
 		return character
@@ -400,11 +405,15 @@ func safeStoredLink(value string, maxChars int) string {
 	return parsed.String()
 }
 
-func canonicalWhitespace(value string) (string, []HeadingMark) {
+type canonicalHeadingMark struct {
+	CharOffset int
+	Level      int
+}
+
+func canonicalWhitespace(value string) (string, []canonicalHeadingMark) {
 	lines := strings.Split(strings.ReplaceAll(value, "\r\n", "\n"), "\n")
 	var output strings.Builder
-	headings := make([]HeadingMark, 0)
-	headingPath := make([]string, 0, 6)
+	headings := make([]canonicalHeadingMark, 0)
 	blank := false
 	endsWithNewline := false
 	runeOffset := 0
@@ -441,25 +450,18 @@ func canonicalWhitespace(value string) (string, []HeadingMark) {
 		runeOffset += utf8.RuneCountInString(line)
 		endsWithNewline = false
 		if level > 0 {
-			for len(headingPath) < level {
-				headingPath = append(headingPath, "")
-			}
-			headingPath = headingPath[:level]
-			headingPath[level-1] = strings.TrimSpace(strings.TrimLeft(line, "#"))
-			headings = append(headings, HeadingMark{
-				CharOffset: offset,
-				Path:       append([]string(nil), compactHeadingPath(headingPath)...),
-			})
+			headings = append(headings, canonicalHeadingMark{CharOffset: offset, Level: level})
 		}
 	}
 	return strings.TrimRight(output.String(), "\n"), headings
 }
 
-func boundHeadingMarks(text string, headings []HeadingMark) []HeadingMark {
+func boundHeadingMarks(text string, headings []canonicalHeadingMark) []HeadingMark {
 	textRunes := []rune(text)
 	bounded := make([]HeadingMark, 0, len(headings))
+	headingPath := make([]string, 0, 6)
 	for _, heading := range headings {
-		if heading.CharOffset < 0 || heading.CharOffset >= len(textRunes) || len(heading.Path) == 0 {
+		if heading.CharOffset < 0 || heading.CharOffset >= len(textRunes) || heading.Level < 1 || heading.Level > 6 {
 			continue
 		}
 		end := heading.CharOffset
@@ -467,9 +469,15 @@ func boundHeadingMarks(text string, headings []HeadingMark) []HeadingMark {
 			end++
 		}
 		title := strings.TrimSpace(strings.TrimLeft(string(textRunes[heading.CharOffset:end]), "#"))
-		path := append([]string(nil), heading.Path...)
-		path[len(path)-1] = title
-		bounded = append(bounded, HeadingMark{CharOffset: heading.CharOffset, Path: path})
+		for len(headingPath) < heading.Level {
+			headingPath = append(headingPath, "")
+		}
+		headingPath = headingPath[:heading.Level]
+		headingPath[heading.Level-1] = title
+		bounded = append(bounded, HeadingMark{
+			CharOffset: heading.CharOffset,
+			Path:       compactHeadingPath(headingPath),
+		})
 	}
 	return bounded
 }
