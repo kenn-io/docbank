@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/url"
-	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -22,6 +21,7 @@ import (
 const (
 	headingSentinelStart = '\ue000'
 	headingSentinelEnd   = '\ue001'
+	headingMarkerClose   = "\ue000E\ue001"
 )
 
 // NormalizeDocument converts transient provider Markdown into deterministic,
@@ -69,6 +69,7 @@ func NormalizeDocument(source SourceDocument, policy NormalizePolicy) (Normalize
 		text, bodyOffset := joinDocumentUnitEvidence(header, text, footer)
 		for headingIndex := range headings {
 			headings[headingIndex].CharOffset += bodyOffset
+			headings[headingIndex].EndOffset += bodyOffset
 		}
 		text, truncated = truncateRunes(text, min(policy.maxUnitChars, remaining))
 		unitTruncated = unitTruncated || truncated
@@ -177,7 +178,8 @@ type canonicalHTMLWriter struct {
 	output       strings.Builder
 	maxLinkChars int
 	inPre        bool
-	skipTags     []string
+	skipTag      string
+	skipDepth    int
 	cellIndex    int
 	links        []string
 	preFenceOpen bool
@@ -194,7 +196,7 @@ func (w *canonicalHTMLWriter) consume(reader io.Reader) error {
 			}
 			return fmt.Errorf("tokenize normalized document HTML: %w", tokenizer.Err())
 		case html.TextToken:
-			if len(w.skipTags) == 0 {
+			if w.skipDepth == 0 {
 				w.writeText(string(tokenizer.Text()))
 			}
 		case html.StartTagToken:
@@ -211,19 +213,21 @@ func (w *canonicalHTMLWriter) consume(reader io.Reader) error {
 
 func (w *canonicalHTMLWriter) startTag(token html.Token, selfClosing bool) {
 	tag := token.Data
-	if len(w.skipTags) > 0 {
-		if !selfClosing && !isHTMLVoidElement(tag) {
-			w.skipTags = append(w.skipTags, tag)
+	if w.skipDepth > 0 {
+		if tag == w.skipTag && !selfClosing {
+			w.skipDepth++
 		}
 		return
 	}
 	if tag == "script" || tag == "style" {
-		w.skipTags = append(w.skipTags, tag)
+		w.skipTag = tag
+		w.skipDepth = 1
 		return
 	}
 	if tag == "svg" {
 		if !selfClosing {
-			w.skipTags = append(w.skipTags, tag)
+			w.skipTag = tag
+			w.skipDepth = 1
 		}
 		return
 	}
@@ -309,17 +313,19 @@ func (w *canonicalHTMLWriter) startTag(token html.Token, selfClosing bool) {
 }
 
 func (w *canonicalHTMLWriter) endTag(tag string) {
-	if len(w.skipTags) > 0 {
-		for index, v := range slices.Backward(w.skipTags) {
-			if v == tag {
-				w.skipTags = w.skipTags[:index]
-				break
+	if w.skipDepth > 0 {
+		if tag == w.skipTag {
+			w.skipDepth--
+			if w.skipDepth == 0 {
+				w.skipTag = ""
 			}
 		}
 		return
 	}
 	switch tag {
 	case "h1", "h2", "h3", "h4", "h5", "h6":
+		w.flushPendingSpace()
+		w.output.WriteString(headingMarkerClose)
 		w.block()
 	case "li", "tr":
 		w.line()
@@ -372,15 +378,6 @@ func safeCodeLanguage(language string) string {
 		return ""
 	}
 	return language
-}
-
-func isHTMLVoidElement(tag string) bool {
-	switch tag {
-	case "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr":
-		return true
-	default:
-		return false
-	}
 }
 
 func isHTMLBlockElement(tag string) bool {
@@ -465,6 +462,7 @@ func safeStoredLink(value string, maxChars int) string {
 
 type canonicalHeadingMark struct {
 	CharOffset int
+	EndOffset  int
 	Level      int
 }
 
@@ -472,6 +470,7 @@ func canonicalWhitespace(value string) (string, []canonicalHeadingMark) {
 	lines := strings.Split(strings.ReplaceAll(value, "\r\n", "\n"), "\n")
 	var output strings.Builder
 	headings := make([]canonicalHeadingMark, 0)
+	activeHeadings := make([]int, 0, 1)
 	blank := false
 	endsWithNewline := false
 	runeOffset := 0
@@ -480,16 +479,17 @@ func canonicalWhitespace(value string) (string, []canonicalHeadingMark) {
 		endsWithNewline = true
 		runeOffset++
 	}
-	for _, line := range lines {
-		line = strings.TrimRight(line, " \t")
-		if line == "" {
-			if output.Len() == 0 || blank {
-				continue
+	closeHeadings := func(count int) {
+		for range count {
+			if len(activeHeadings) == 0 {
+				return
 			}
-			blank = true
-			writeNewline()
-			continue
+			index := activeHeadings[len(activeHeadings)-1]
+			activeHeadings = activeHeadings[:len(activeHeadings)-1]
+			headings[index].EndOffset = runeOffset
 		}
+	}
+	for _, line := range lines {
 		level := 0
 		prefix := string(headingSentinelStart) + "H"
 		if strings.HasPrefix(line, prefix) {
@@ -499,17 +499,34 @@ func canonicalWhitespace(value string) (string, []canonicalHeadingMark) {
 				line = line[end+utf8.RuneLen(headingSentinelEnd):]
 			}
 		}
+		closedHeadings := strings.Count(line, headingMarkerClose)
+		line = strings.ReplaceAll(line, headingMarkerClose, "")
+		line = strings.TrimRight(line, " \t")
+		if line == "" {
+			closeHeadings(closedHeadings)
+			if output.Len() == 0 || blank {
+				continue
+			}
+			blank = true
+			writeNewline()
+			continue
+		}
 		blank = false
 		if output.Len() > 0 && !endsWithNewline {
 			writeNewline()
 		}
 		offset := runeOffset
+		if level > 0 {
+			headings = append(headings, canonicalHeadingMark{CharOffset: offset, Level: level})
+			activeHeadings = append(activeHeadings, len(headings)-1)
+		}
 		output.WriteString(line)
 		runeOffset += utf8.RuneCountInString(line)
 		endsWithNewline = false
-		if level > 0 {
-			headings = append(headings, canonicalHeadingMark{CharOffset: offset, Level: level})
-		}
+		closeHeadings(closedHeadings)
+	}
+	for _, index := range activeHeadings {
+		headings[index].EndOffset = runeOffset
 	}
 	return strings.TrimRight(output.String(), "\n"), headings
 }
@@ -522,11 +539,8 @@ func boundHeadingMarks(text string, headings []canonicalHeadingMark) []HeadingMa
 		if heading.CharOffset < 0 || heading.CharOffset >= len(textRunes) || heading.Level < 1 || heading.Level > 6 {
 			continue
 		}
-		end := heading.CharOffset
-		for end < len(textRunes) && textRunes[end] != '\n' {
-			end++
-		}
-		title := strings.TrimSpace(strings.TrimLeft(string(textRunes[heading.CharOffset:end]), "#"))
+		end := min(max(heading.EndOffset, heading.CharOffset), len(textRunes))
+		title := strings.Join(strings.Fields(strings.TrimLeft(string(textRunes[heading.CharOffset:end]), "#")), " ")
 		for len(headingPath) < heading.Level {
 			headingPath = append(headingPath, "")
 		}

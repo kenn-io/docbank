@@ -296,6 +296,19 @@ func TestNormalizeDocumentPreservesInertRawHTMLText(t *testing.T) {
 	}
 }
 
+func TestNormalizeDocumentHandlesDeepMalformedExcludedHTML(t *testing.T) {
+	policy := testNormalizePolicy(t, 100_000)
+	markdown := "<svg>" + strings.Repeat("<g>", 4_096) +
+		strings.Repeat("</missing>", 4_096) + "</svg>after"
+	source := SourceDocument{Family: "text", UnitKind: "page", Units: []SourceUnit{{
+		Index: 0, Markdown: markdown,
+	}}}
+
+	normalized, err := NormalizeDocument(source, policy)
+	require.NoError(t, err)
+	assert.Equal(t, "after", normalized.Units[0].Text)
+}
+
 func TestNormalizeDocumentPreservesSpaceBeforeInlineCode(t *testing.T) {
 	policy := testNormalizePolicy(t, 10_000)
 	source := SourceDocument{Family: "text", UnitKind: "page", Units: []SourceUnit{{
@@ -363,6 +376,20 @@ func TestNormalizeDocumentBoundsHeadingPathsByLevel(t *testing.T) {
 			assert.Equal(t, test.want, normalized.Units[0].HeadingMarks)
 		})
 	}
+}
+
+func TestNormalizeDocumentPreservesHeadingTextAcrossEmbeddedBreaks(t *testing.T) {
+	policy := testNormalizePolicy(t, 10_000)
+	source := SourceDocument{Family: "text", UnitKind: "page", Units: []SourceUnit{{
+		Index: 0, Markdown: "# Alpha<br>Beta\n\nbody",
+	}}}
+
+	normalized, err := NormalizeDocument(source, policy)
+	require.NoError(t, err)
+	require.Len(t, normalized.Units[0].HeadingMarks, 1)
+	assert.Equal(t, []string{"Alpha Beta"}, normalized.Units[0].HeadingMarks[0].Path)
+	require.NotEmpty(t, normalized.Chunks)
+	assert.Equal(t, []string{"Alpha Beta"}, normalized.Chunks[0].HeadingPath)
 }
 
 func TestNormalizeDocumentHeadingMetadataIgnoresCodeAndBoundsSource(t *testing.T) {
