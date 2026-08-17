@@ -21,7 +21,7 @@ func TestPrepareCreatesPrivateDetectedFileAndReleaseRemovesIt(t *testing.T) {
 	content := []byte("%PDF-1.7\nsynthetic")
 	digest := sha256.Sum256(content)
 	directory := filepath.Join(t.TempDir(), "spool")
-	require.NoError(t, os.Mkdir(directory, 0o700))
+	makePrivateDirectory(t, directory)
 	source := &observedReadCloser{Reader: bytes.NewReader(content)}
 	policy := testPolicy(t, 1024, 10)
 
@@ -65,13 +65,14 @@ func TestPrepareFailsClosedAndRemovesPartialFile(t *testing.T) {
 	}{
 		{name: "hash", source: &observedReadCloser{Reader: bytes.NewReader(content)}, size: int64(len(content)), hash: stringsOfZero(64), mediaType: mediaTypePDF, wantError: "hash mismatch"},
 		{name: "size", source: &observedReadCloser{Reader: bytes.NewReader(content)}, size: int64(len(content) + 1), hash: hex.EncodeToString(digest[:]), mediaType: mediaTypePDF, wantError: "size mismatch"},
+		{name: "source exceeds reservation", source: &observedReadCloser{Reader: bytes.NewReader(content)}, size: int64(len(content) - 1), hash: hex.EncodeToString(digest[:]), mediaType: mediaTypePDF, wantError: "size mismatch"},
 		{name: "close", source: &observedReadCloser{Reader: bytes.NewReader(content), closeErr: errors.New("synthetic close")}, size: int64(len(content)), hash: hex.EncodeToString(digest[:]), mediaType: mediaTypePDF, wantError: "close Mistral OCR source"},
 		{name: "type", source: &observedReadCloser{Reader: bytes.NewReader(content)}, size: int64(len(content)), hash: hex.EncodeToString(digest[:]), mediaType: "text/plain", wantError: "not declared"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			directory := filepath.Join(t.TempDir(), "spool")
-			require.NoError(t, os.Mkdir(directory, 0o700))
+			makePrivateDirectory(t, directory)
 			_, err := Prepare(t.Context(), test.source, policy, PrepareOptions{
 				Directory: directory, DeclaredMediaType: test.mediaType,
 				ExpectedSize: test.size, ExpectedSHA256: test.hash,
@@ -91,7 +92,7 @@ func TestPrepareClassifiesCapacityRefusals(t *testing.T) {
 	digest := sha256.Sum256(content)
 	policy := testPolicy(t, 1024, 10)
 	directory := filepath.Join(t.TempDir(), "spool")
-	require.NoError(t, os.Mkdir(directory, 0o700))
+	makePrivateDirectory(t, directory)
 	require.NoError(t, os.WriteFile(filepath.Join(directory, "unrelated"), bytes.Repeat([]byte{'x'}, 1010), 0o600))
 	options := PrepareOptions{
 		Directory: directory, DeclaredMediaType: mediaTypePDF,
@@ -111,7 +112,7 @@ func TestPrepareClassifiesCapacityRefusals(t *testing.T) {
 
 func TestScavengeSpoolDirectoryRemovesOnlyStalePackageFilesAndFailsClosed(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "spool")
-	require.NoError(t, os.Mkdir(directory, 0o700))
+	makePrivateDirectory(t, directory)
 	stale := filepath.Join(directory, spoolFilenamePrefix+"stale")
 	live := filepath.Join(directory, spoolFilenamePrefix+"live")
 	unrelated := filepath.Join(directory, "operator-owned")

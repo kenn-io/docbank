@@ -506,9 +506,10 @@ func Prepare(
 `Prepare` always closes the supplied source, including every failure and
 cancellation path. It requires an existing private dedicated directory,
 refuses symlinks and unsafe entries, takes the reservation lock, enforces
-aggregate quota and free-space reserve, writes a package-prefixed 0600 file,
-verifies expected size and lowercase SHA-256 while copying, detects the format
-from the same bytes, syncs, and closes the file before returning.
+aggregate quota and free-space reserve, writes a package-prefixed file with
+owner-only Unix permissions or a restricted Windows DACL, verifies expected
+size and lowercase SHA-256 while copying, detects the format from the same
+bytes, syncs, and closes the file before returning.
 
 `Policy.MaxDocumentBytes` is the one file-byte bound. `PrepareOptions` cannot
 widen it. Disk quota and free-space reserve are reusable staging inputs but are
@@ -582,12 +583,12 @@ policy and authorization. Msgvault may define a consumer-side interface over
 `Process` for worker tests or inject an `HTTPClient` backed by `httptest`.
 
 Before every request attempt, `Process` checks context, release state,
-regular-file identity, permissions, size, and SHA-256. It rejects a private
-policy-digest mismatch and a detected-format/authorization mismatch before
-upload. It also requires the prepared size to be no greater than the client
-policy's `MaxDocumentBytes`, even when another policy originally prepared the
-document. Preparation cannot therefore carry a larger byte allowance into a
-stricter processing policy.
+regular-file identity, Unix permissions or Windows DACL, size, and SHA-256. It
+rejects a private policy-digest mismatch and a detected-format/authorization
+mismatch before upload. It also requires the prepared size to be no greater
+than the client policy's `MaxDocumentBytes`, even when another policy
+originally prepared the document. Preparation cannot therefore carry a larger
+byte allowance into a stricter processing policy.
 
 For `local_exact`, `Process` requires the counter recorded during preparation
 and rejects a count above `Policy.MaxUnits` before upload. Provider-reported

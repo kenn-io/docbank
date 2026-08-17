@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -146,7 +145,7 @@ func generatedProbeFixtureConfig(t *testing.T) ProbeFixtureConfig {
 		SeedDirectory: writeNativeSeeds(t),
 	}))
 	spoolDirectory := filepath.Join(t.TempDir(), "spool")
-	require.NoError(t, os.Mkdir(spoolDirectory, 0o700))
+	makePrivateDirectory(t, spoolDirectory)
 	return ProbeFixtureConfig{
 		FixtureDirectory: fixtureDirectory, SpoolDirectory: spoolDirectory,
 		MaxSpoolBytes: 32 << 20, MinFreeBytes: 1,

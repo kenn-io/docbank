@@ -13,7 +13,6 @@ import (
 	"mime"
 	"net/http"
 	"os"
-	"runtime"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -124,6 +123,9 @@ type Client struct {
 func NewClient(policy Policy, config ClientConfig) (*Client, error) {
 	if policy.digest == "" {
 		return nil, errors.New("mistral policy is invalid; use NewPolicy")
+	}
+	if config.APIKey == "" || config.APIKey != strings.TrimSpace(config.APIKey) {
+		return nil, errors.New("mistral OCR API key is required and must not contain surrounding whitespace")
 	}
 	if config.Timeout == 0 {
 		config.Timeout = defaultTimeout
@@ -269,9 +271,7 @@ func (c *Client) processOnce(
 	}
 	request.ContentLength = encodedLength
 	request.Header.Set("Content-Type", "application/json")
-	if c.apiKey != "" {
-		request.Header.Set("Authorization", "Bearer "+c.apiKey)
-	}
+	request.Header.Set("Authorization", "Bearer "+c.apiKey)
 
 	started := time.Now()
 	response, err := c.http.Do(request)
@@ -387,20 +387,7 @@ func openVerifiedDocument(snapshot preparedSnapshot) (*os.File, error) {
 	if _, err := hex.DecodeString(snapshot.sha256); err != nil {
 		return nil, errors.New("invalid Mistral OCR prepared document SHA-256")
 	}
-	info, err := os.Lstat(snapshot.path)
-	if err != nil {
-		return nil, fmt.Errorf("inspect Mistral OCR spool: %w", err)
-	}
-	if !info.Mode().IsRegular() {
-		return nil, errors.New("mistral OCR spool must be a regular file")
-	}
-	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
-		return nil, errors.New("mistral OCR spool permissions must be private")
-	}
-	if info.Size() != snapshot.size {
-		return nil, errors.New("mistral OCR spool size changed")
-	}
-	file, err := os.Open(snapshot.path)
+	file, err := openPrivateFile(snapshot.path)
 	if err != nil {
 		return nil, fmt.Errorf("open Mistral OCR spool: %w", err)
 	}
@@ -409,9 +396,9 @@ func openVerifiedDocument(snapshot preparedSnapshot) (*os.File, error) {
 		_ = file.Close()
 		return nil, fmt.Errorf("inspect opened Mistral OCR spool: %w", err)
 	}
-	if !openedInfo.Mode().IsRegular() || !os.SameFile(info, openedInfo) {
+	if openedInfo.Size() != snapshot.size {
 		_ = file.Close()
-		return nil, errors.New("mistral OCR spool changed while opening")
+		return nil, errors.New("mistral OCR spool size changed")
 	}
 	hash := sha256.New()
 	written, err := io.Copy(hash, file)

@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -190,25 +189,28 @@ func Prepare(
 		_ = file.Close()
 		_ = os.Remove(path)
 	}()
-	if err := file.Chmod(0o600); err != nil {
+	if err := secureCreatedFile(file); err != nil {
 		return nil, fmt.Errorf("secure Mistral OCR spool: %w", err)
 	}
 
 	hash := sha256.New()
-	limited := io.LimitReader(&contextReader{ctx: ctx, reader: source}, maxDocumentBytes+1)
+	contextSource := &contextReader{ctx: ctx, reader: source}
+	limited := io.LimitReader(contextSource, options.ExpectedSize)
 	written, err := io.Copy(io.MultiWriter(file, hash), limited)
+	var extra [1]byte
+	extraBytes, extraErr := io.ReadFull(contextSource, extra[:])
 	closeSourceErr := source.Close()
 	sourceClosed = true
 	if err != nil {
 		return nil, fmt.Errorf("copy Mistral OCR spool: %w", err)
 	}
+	if extraErr != nil && !errors.Is(extraErr, io.EOF) {
+		return nil, fmt.Errorf("verify Mistral OCR source length: %w", extraErr)
+	}
 	if closeSourceErr != nil {
 		return nil, fmt.Errorf("close Mistral OCR source: %w", closeSourceErr)
 	}
-	if written > maxDocumentBytes {
-		return nil, errors.New("mistral OCR spool exceeds byte limit")
-	}
-	if written != options.ExpectedSize {
+	if written != options.ExpectedSize || extraBytes != 0 {
 		return nil, errors.New("mistral OCR source size mismatch")
 	}
 	actualHash := hex.EncodeToString(hash.Sum(nil))
@@ -238,17 +240,6 @@ func Prepare(
 		path: path, format: format, size: written, sha256: actualHash,
 		mediaType: format.MediaType, localUnits: localUnits,
 	}, nil
-}
-
-func validatePrivateDirectory(directory string) error {
-	info, err := os.Lstat(directory)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("mistral OCR spool directory must already exist")
-	}
-	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
-		return errors.New("mistral OCR spool directory permissions must be private")
-	}
-	return nil
 }
 
 func countLocalUnits(format CandidateFormat, reader io.ReaderAt, size int64) (int, error) {

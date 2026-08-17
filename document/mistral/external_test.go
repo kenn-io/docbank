@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -13,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/mistral"
+	"go.kenn.io/kit/safefileio"
 )
 
 func TestPublicLocalWorkflow(t *testing.T) {
@@ -31,7 +31,7 @@ func TestPublicLocalWorkflow(t *testing.T) {
 	content := []byte("%PDF-1.7\nsynthetic")
 	digest := sha256.Sum256(content)
 	directory := filepath.Join(t.TempDir(), "spool")
-	require.NoError(t, os.Mkdir(directory, 0o700))
+	require.NoError(t, safefileio.EnsurePrivateDir(directory))
 	prepared, err := mistral.Prepare(t.Context(), io.NopCloser(bytes.NewReader(content)), policy, mistral.PrepareOptions{
 		Directory: directory, DeclaredMediaType: "application/pdf",
 		ExpectedSize: int64(len(content)), ExpectedSHA256: hex.EncodeToString(digest[:]),

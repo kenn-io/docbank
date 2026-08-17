@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"go.kenn.io/kit/safefileio"
 )
 
 const maxSeedBytes = int64(50 << 20)
@@ -51,6 +53,7 @@ func WriteProbeFixtures(ctx context.Context, destination string, options Fixture
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("inspect Mistral probe fixture destination: %w", err)
 	}
+	var seedRoot *os.Root
 	if options.SeedDirectory != "" {
 		info, err := os.Lstat(options.SeedDirectory)
 		if err != nil {
@@ -58,6 +61,19 @@ func WriteProbeFixtures(ctx context.Context, destination string, options Fixture
 		}
 		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			return errors.New("mistral probe seed path must be a real directory")
+		}
+		seedRoot, err = os.OpenRoot(options.SeedDirectory)
+		if err != nil {
+			return fmt.Errorf("open Mistral probe seed directory: %w", err)
+		}
+		defer func() {
+			if seedRoot != nil {
+				err = errors.Join(err, seedRoot.Close())
+			}
+		}()
+		openedInfo, err := seedRoot.Lstat(".")
+		if err != nil || !os.SameFile(info, openedInfo) {
+			return errors.New("mistral probe seed directory changed while opening")
 		}
 	}
 
@@ -75,9 +91,15 @@ func WriteProbeFixtures(ctx context.Context, destination string, options Fixture
 	if err := os.Chmod(temporary, 0o700); err != nil { // #nosec G302 -- private directories require owner execute bits.
 		return fmt.Errorf("secure Mistral probe fixture directory: %w", err)
 	}
-	missing, err := buildProbeFixtureDirectory(ctx, temporary, options.SeedDirectory)
+	missing, err := buildProbeFixtureDirectory(ctx, temporary, seedRoot)
 	if err != nil {
 		return err
+	}
+	if seedRoot != nil {
+		if err := seedRoot.Close(); err != nil {
+			return fmt.Errorf("close Mistral probe seed directory: %w", err)
+		}
+		seedRoot = nil
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf(
@@ -100,7 +122,7 @@ func WriteProbeFixtures(ctx context.Context, destination string, options Fixture
 	return nil
 }
 
-func buildProbeFixtureDirectory(ctx context.Context, directory, seedDirectory string) ([]string, error) {
+func buildProbeFixtureDirectory(ctx context.Context, directory string, seedRoot *os.Root) ([]string, error) {
 	missing := make([]string, 0, len(nativeSeedFormats))
 	for _, candidate := range candidateFormats {
 		if err := ctx.Err(); err != nil {
@@ -108,18 +130,17 @@ func buildProbeFixtureDirectory(ctx context.Context, directory, seedDirectory st
 		}
 		target := filepath.Join(directory, candidate.ID)
 		if slices.Contains(nativeSeedFormats, candidate.ID) {
-			if seedDirectory == "" {
+			if seedRoot == nil {
 				missing = append(missing, candidate.ID)
 				continue
 			}
-			seed := filepath.Join(seedDirectory, candidate.ID)
-			if _, err := os.Lstat(seed); errors.Is(err, os.ErrNotExist) {
+			if _, err := seedRoot.Lstat(candidate.ID); errors.Is(err, os.ErrNotExist) {
 				missing = append(missing, candidate.ID)
 				continue
 			} else if err != nil {
 				return nil, fmt.Errorf("inspect fixture seed %q: %w", candidate.ID, err)
 			}
-			if err := copyFixture(ctx, seed, target); err != nil {
+			if err := copyFixture(ctx, seedRoot, candidate.ID, target); err != nil {
 				return nil, fmt.Errorf("copy fixture seed %q: %w", candidate.ID, err)
 			}
 		} else {
@@ -142,19 +163,23 @@ func buildProbeFixtureDirectory(ctx context.Context, directory, seedDirectory st
 	return missing, nil
 }
 
-func copyFixture(ctx context.Context, source, target string) error {
-	info, err := os.Lstat(source)
+func copyFixture(ctx context.Context, root *os.Root, name, target string) error {
+	info, err := root.Lstat(name)
 	if err != nil {
 		return err
 	}
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() <= 0 || info.Size() > maxSeedBytes {
 		return errors.New("fixture seed must be a bounded regular non-symlink file")
 	}
-	file, err := os.Open(source)
+	file, err := safefileio.OpenCurrentUserFile(filepath.Join(root.Name(), name))
 	if err != nil {
-		return err
+		return fmt.Errorf("open fixture seed without following links: %w", err)
 	}
 	defer func() { _ = file.Close() }()
+	openedInfo, err := file.Stat()
+	if err != nil || !os.SameFile(info, openedInfo) {
+		return errors.New("fixture seed changed while opening")
+	}
 	return writeNewPrivateFile(target, io.LimitReader(&contextReader{ctx: ctx, reader: file}, maxSeedBytes+1), info.Size())
 }
 

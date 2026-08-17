@@ -85,7 +85,7 @@ func TestClientRejectsChangedReleasedAndCrossPolicyDocumentsBeforeUpload(t *test
 	authorization, err := policy.Authorize(manifest, "pdf")
 	require.NoError(t, err)
 	clientWithoutRequests := func(policy Policy) *Client {
-		client, clientErr := NewClient(policy, ClientConfig{HTTPClient: &http.Client{
+		client, clientErr := NewClient(policy, ClientConfig{APIKey: "synthetic-key", HTTPClient: &http.Client{
 			Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 				return nil, errors.New("unexpected provider request")
 			}),
@@ -326,6 +326,9 @@ func TestLocalExactRequiresProviderEquality(t *testing.T) {
 
 func newServerClient(t *testing.T, server *httptest.Server, policy Policy, config ClientConfig) *Client {
 	t.Helper()
+	if config.APIKey == "" {
+		config.APIKey = "synthetic-key"
+	}
 	target, err := url.Parse(server.URL)
 	require.NoError(t, err)
 	base := server.Client()
@@ -339,6 +342,11 @@ func newServerClient(t *testing.T, server *httptest.Server, policy Policy, confi
 	client, err := NewClient(policy, config)
 	require.NoError(t, err)
 	return client
+}
+
+func TestNewClientRequiresAPIKey(t *testing.T) {
+	_, err := NewClient(testPolicy(t, 1024, 10), ClientConfig{})
+	require.ErrorContains(t, err, "API key is required")
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

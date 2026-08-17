@@ -5,12 +5,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
-	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/kit/safefileio"
 )
 
 func testPolicy(t *testing.T, maxDocumentBytes int64, maxUnits int) Policy {
@@ -72,7 +72,7 @@ func prepareTestDocument(
 	t.Helper()
 	digest := sha256.Sum256(content)
 	directory := filepath.Join(t.TempDir(), "spool")
-	require.NoError(t, os.Mkdir(directory, 0o700))
+	makePrivateDirectory(t, directory)
 	prepared, err := Prepare(t.Context(), io.NopCloser(bytes.NewReader(content)), policy, PrepareOptions{
 		Directory: directory, DeclaredMediaType: mediaTypePDF, ExpectedSize: int64(len(content)),
 		ExpectedSHA256: hex.EncodeToString(digest[:]), MaxSpoolBytes: policy.values.MaxDocumentBytes,
@@ -81,4 +81,9 @@ func prepareTestDocument(
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, prepared.Release()) })
 	return prepared
+}
+
+func makePrivateDirectory(t *testing.T, directory string) {
+	t.Helper()
+	require.NoError(t, safefileio.EnsurePrivateDir(directory))
 }

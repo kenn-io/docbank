@@ -223,7 +223,7 @@ Before every request, `Process` rejects:
 - a client-policy or authorization-policy digest mismatch;
 - a sniffed-format and authorization mismatch;
 - a prepared size above the client policy's `MaxDocumentBytes`;
-- changed size, identity, permissions, or SHA-256; and
+- changed size, identity, Unix permissions or Windows DACL, or SHA-256; and
 - every redirect, including when the caller supplies the HTTP client.
 
 An injected HTTP client is shallow-copied. Its timeout is replaced when it is

@@ -92,13 +92,28 @@ func TestWriteProbeFixturesMissingOrInvalidSeedsLeavesNoDestination(t *testing.T
 	assert.NoDirExists(t, destination)
 }
 
+func TestWriteProbeFixturesRefusesSymlinkSeed(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires optional Windows developer mode")
+	}
+	destination := filepath.Join(t.TempDir(), "fixtures")
+	seeds := writeNativeSeeds(t)
+	target := filepath.Join(seeds, "doc-target")
+	require.NoError(t, os.Rename(filepath.Join(seeds, "doc"), target))
+	require.NoError(t, os.Symlink(target, filepath.Join(seeds, "doc")))
+
+	err := WriteProbeFixtures(t.Context(), destination, FixtureOptions{SeedDirectory: seeds})
+	require.ErrorContains(t, err, `copy fixture seed "doc"`)
+	assert.NoDirExists(t, destination)
+}
+
 func TestValidateProbeFixturesIsLocalAndCleansItsSpool(t *testing.T) {
 	fixtureDirectory := filepath.Join(t.TempDir(), "fixtures")
 	require.NoError(t, WriteProbeFixtures(t.Context(), fixtureDirectory, FixtureOptions{
 		SeedDirectory: writeNativeSeeds(t),
 	}))
 	spoolDirectory := filepath.Join(t.TempDir(), "spool")
-	require.NoError(t, os.Mkdir(spoolDirectory, 0o700))
+	makePrivateDirectory(t, spoolDirectory)
 	policy := testPolicy(t, 1<<20, 10)
 	require.NoError(t, ValidateProbeFixtures(t.Context(), policy, ProbeFixtureConfig{
 		FixtureDirectory: fixtureDirectory, SpoolDirectory: spoolDirectory,
