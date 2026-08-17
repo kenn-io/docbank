@@ -285,6 +285,7 @@ func (w *canonicalHTMLWriter) startTag(token html.Token, selfClosing bool) {
 			}
 		}
 		if isCheckbox {
+			w.flushPendingSpace()
 			if checked {
 				w.output.WriteString("[x] ")
 			} else {
