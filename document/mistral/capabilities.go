@@ -258,6 +258,9 @@ func scanJSONValue(decoder *json.Decoder, depth int) error {
 			if !ok {
 				return errors.New("mistral capability manifest has a non-string object key")
 			}
+			if !canonicalJSONKey(key) {
+				return fmt.Errorf("mistral capability manifest JSON object key %q must use lowercase ASCII", key)
+			}
 			if _, exists := keys[key]; exists {
 				return fmt.Errorf("mistral capability manifest has duplicate JSON object key %q", key)
 			}
@@ -279,6 +282,19 @@ func scanJSONValue(decoder *json.Decoder, depth int) error {
 	default:
 		return errors.New("mistral capability manifest has an unexpected JSON delimiter")
 	}
+}
+
+func canonicalJSONKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	for index := range len(key) {
+		char := key[index]
+		if char >= 'A' && char <= 'Z' || char >= 0x80 {
+			return false
+		}
+	}
+	return true
 }
 
 type requestOptions struct {

@@ -173,7 +173,7 @@ func Prepare(
 	}
 	defer releaseLock()
 	if capacityErr := checkSpoolCapacity(options, maxDocumentBytes); capacityErr != nil {
-		return nil, fmt.Errorf("%w: %w", ErrSpoolCapacity, capacityErr)
+		return nil, capacityErr
 	}
 
 	file, err := os.CreateTemp(options.Directory, spoolFilenamePrefix+"*")
@@ -323,19 +323,19 @@ func checkSpoolCapacity(options PrepareOptions, maxDocumentBytes int64) error {
 			return errors.New("mistral OCR spool directory contains an unsafe entry")
 		}
 		if used > options.MaxSpoolBytes-info.Size() {
-			return errors.New("mistral OCR spool quota is exhausted")
+			return fmt.Errorf("%w: mistral OCR spool quota is exhausted", ErrSpoolCapacity)
 		}
 		used += info.Size()
 	}
 	if used > options.MaxSpoolBytes-options.ExpectedSize || options.ExpectedSize > maxDocumentBytes {
-		return errors.New("mistral OCR spool quota is exhausted")
+		return fmt.Errorf("%w: mistral OCR spool quota is exhausted", ErrSpoolCapacity)
 	}
 	available, err := availableDiskBytes(options.Directory)
 	if err != nil {
 		return fmt.Errorf("inspect Mistral OCR spool free space: %w", err)
 	}
 	if available < options.ExpectedSize || available-options.ExpectedSize < options.MinFreeBytes {
-		return errors.New("mistral OCR spool free-space reserve would be crossed")
+		return fmt.Errorf("%w: mistral OCR spool free-space reserve would be crossed", ErrSpoolCapacity)
 	}
 	return nil
 }

@@ -219,8 +219,9 @@ identities before staging them for a probe.
 `Prepare` always closes its source. Quota and free-space refusals return
 `ErrSpoolCapacity`. Platform disk-full and disk-quota failures while creating,
 copying, syncing, securing, or closing the staged file use the same
-classification. Size, hash, format, and permission failures are terminal.
-Failure and cancellation remove the partial file created by that call.
+classification. Unsafe directory entries, unrelated filesystem I/O failures,
+and size, hash, format, or permission failures are terminal. Failure and
+cancellation remove the partial file created by that call.
 `Release` is idempotent and makes its prepared document unprocessable.
 
 `ScavengeSpoolDirectory` uses a verified persistent lock inside the private

@@ -102,6 +102,12 @@ func TestCapabilityManifestDecodingIsStrictAndBounded(t *testing.T) {
 	_, err = DecodeCapabilityManifest(strings.NewReader(duplicateFormatID))
 	require.ErrorContains(t, err, `duplicate JSON object key "format_id"`)
 
+	caseFoldedFormatID := strings.Replace(
+		string(compact), `"format_id":"pdf"`, `"format_id":"docx","FORMAT_ID":"pdf"`, 1,
+	)
+	_, err = DecodeCapabilityManifest(strings.NewReader(caseFoldedFormatID))
+	require.ErrorContains(t, err, `JSON object key "FORMAT_ID" must use lowercase ASCII`)
+
 	_, err = DecodeCapabilityManifest(strings.NewReader(strings.Repeat("x", int(maxManifestBytes)+1)))
 	require.ErrorContains(t, err, "too large")
 

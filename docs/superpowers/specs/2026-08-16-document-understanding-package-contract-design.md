@@ -521,7 +521,8 @@ widen it. Disk quota and free-space reserve are reusable staging inputs but are
 application-owned and excluded from semantic identity. Platform disk-full and
 disk-quota failures during staged-file creation, copying, syncing, securing, or
 closing are classified as `ErrSpoolCapacity` so applications may reschedule
-them.
+them. Unsafe directory structure and unrelated filesystem I/O failures remain
+terminal.
 
 Local counters are static code capabilities keyed by candidate format ID.
 `Prepare` runs a counter whenever one exists and stores the count privately;

@@ -125,6 +125,12 @@ func TestPrepareClassifiesCapacityRefusals(t *testing.T) {
 	_, err = Prepare(t.Context(), io.NopCloser(bytes.NewReader(content)), policy, options)
 	require.ErrorIs(t, err, ErrSpoolCapacity)
 	require.ErrorContains(t, err, "free-space reserve")
+
+	options.MinFreeBytes = 1
+	require.NoError(t, os.Mkdir(filepath.Join(directory, "unsafe"), 0o700))
+	_, err = Prepare(t.Context(), io.NopCloser(bytes.NewReader(content)), policy, options)
+	require.ErrorContains(t, err, "unsafe entry")
+	require.NotErrorIs(t, err, ErrSpoolCapacity)
 }
 
 func TestPrepareRejectsPublicReservationLock(t *testing.T) {
