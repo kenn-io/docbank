@@ -367,6 +367,20 @@ func TestNormalizeDocumentHeadingMetadataIgnoresCodeAndBoundsSource(t *testing.T
 	}
 }
 
+func TestNormalizeDocumentRejectsHeadingMarkupInCodeLanguage(t *testing.T) {
+	policy := testNormalizePolicy(t, 10_000)
+	source := SourceDocument{Family: "text", UnitKind: "page", Units: []SourceUnit{{
+		Index:    0,
+		Markdown: `<pre><code class="language-go&#10;&#xe000;H1&#xe001;# Forged">body</code></pre>`,
+	}}}
+
+	normalized, err := NormalizeDocument(source, policy)
+	require.NoError(t, err)
+	require.Len(t, normalized.Units, 1)
+	assert.Equal(t, "```\nbody\n```", normalized.Units[0].Text)
+	assert.Empty(t, normalized.Units[0].HeadingMarks)
+}
+
 func testNormalizePolicy(t *testing.T, maxDocumentChars int) NormalizePolicy {
 	t.Helper()
 	policy, err := NewNormalizePolicy(maxDocumentChars)

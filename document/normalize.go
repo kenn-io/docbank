@@ -252,8 +252,7 @@ func (w *canonicalHTMLWriter) startTag(token html.Token, selfClosing bool) {
 		if w.inPre && w.preFenceOpen {
 			for _, attribute := range token.Attr {
 				if attribute.Key == "class" && strings.HasPrefix(attribute.Val, "language-") {
-					language := strings.TrimPrefix(attribute.Val, "language-")
-					if language != "" && len(language) <= 64 {
+					if language := safeCodeLanguage(strings.TrimPrefix(attribute.Val, "language-")); language != "" {
 						w.output.WriteString(language)
 					}
 				}
@@ -353,6 +352,22 @@ func (w *canonicalHTMLWriter) endTag(tag string) {
 			w.block()
 		}
 	}
+}
+
+func safeCodeLanguage(language string) string {
+	if language == "" || len(language) > 64 {
+		return ""
+	}
+	for _, character := range language {
+		if (character >= 'a' && character <= 'z') ||
+			(character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') ||
+			strings.ContainsRune("+#-_.", character) {
+			continue
+		}
+		return ""
+	}
+	return language
 }
 
 func isHTMLVoidElement(tag string) bool {
