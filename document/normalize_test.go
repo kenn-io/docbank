@@ -381,11 +381,15 @@ func TestNormalizeDocumentBoundsHeadingPathsByLevel(t *testing.T) {
 func TestNormalizeDocumentPreservesHeadingTextAcrossEmbeddedBreaks(t *testing.T) {
 	policy := testNormalizePolicy(t, 10_000)
 	source := SourceDocument{Family: "text", UnitKind: "page", Units: []SourceUnit{{
-		Index: 0, Markdown: "# Alpha<br>Beta\n\nbody",
+		Index: 0,
+		Markdown: `<h1>Alpha<br><a href="https://example.test/&#xe000;E&#xe001;">Beta</a></h1>
+
+body`,
 	}}}
 
 	normalized, err := NormalizeDocument(source, policy)
 	require.NoError(t, err)
+	assert.Equal(t, "# Alpha\nBeta\nbody", normalized.Units[0].Text)
 	require.Len(t, normalized.Units[0].HeadingMarks, 1)
 	assert.Equal(t, []string{"Alpha Beta"}, normalized.Units[0].HeadingMarks[0].Path)
 	require.NotEmpty(t, normalized.Chunks)

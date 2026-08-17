@@ -450,7 +450,8 @@ func stripUnsafeControls(value string) string {
 }
 
 func safeStoredLink(value string, maxChars int) string {
-	if utf8.RuneCountInString(value) > maxChars {
+	if utf8.RuneCountInString(value) > maxChars ||
+		strings.ContainsRune(value, headingSentinelStart) || strings.ContainsRune(value, headingSentinelEnd) {
 		return ""
 	}
 	parsed, err := url.Parse(value)
