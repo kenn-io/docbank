@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"net/mail"
 	"os"
@@ -150,45 +151,375 @@ func validPDFVersion(version []byte) bool {
 }
 
 func validPDFTableXRef(xref, beforeStartXRef []byte) bool {
-	if !bytes.HasPrefix(xref, []byte("xref")) || (len(xref) > 4 && !isPDFWhitespace(xref[4])) {
+	position := 0
+	line, ok := nextPDFLine(xref, &position)
+	if !ok || !bytes.Equal(trimPDFWhitespace(line), []byte("xref")) {
 		return false
 	}
-	trailerIndex := bytes.LastIndex(beforeStartXRef, []byte("trailer"))
-	if trailerIndex < 0 {
+	header, ok := nextNonemptyPDFLine(xref, &position)
+	if !ok {
 		return false
 	}
-	trailer := compactPDFWhitespace(beforeStartXRef[trailerIndex+len("trailer"):])
-	return bytes.Contains(trailer, []byte("/Size")) && bytes.Contains(trailer, []byte("/Root"))
+	headerFields := bytes.Fields(header)
+	if len(headerFields) != 2 {
+		return false
+	}
+	first, firstErr := strconv.ParseUint(string(headerFields[0]), 10, 64)
+	count, countErr := strconv.ParseUint(string(headerFields[1]), 10, 64)
+	if firstErr != nil || countErr != nil || count == 0 || first > math.MaxUint64-count {
+		return false
+	}
+	validatedRecords := uint64(0)
+	for validatedRecords < count {
+		record, ok := nextPDFLine(xref, &position)
+		if !ok {
+			break
+		}
+		if !validPDFXRefRecord(record) {
+			if position == len(xref) {
+				break
+			}
+			return false
+		}
+		validatedRecords++
+	}
+	if validatedRecords == 0 {
+		return false
+	}
+
+	return validPDFTrailer(beforeStartXRef, first, count)
 }
 
 func validPDFStreamXRef(xref []byte) bool {
-	fields := bytes.Fields(xref)
-	if len(fields) < 3 || string(fields[2]) != "obj" {
+	streamIndex := firstPDFKeyword(xref, "stream")
+	if streamIndex < 0 {
 		return false
 	}
-	if _, err := strconv.ParseUint(string(fields[0]), 10, 64); err != nil {
+	tokens, ok := tokenizePDF(xref[:streamIndex])
+	if !ok || len(tokens) < 5 || tokens[2] != "obj" {
 		return false
 	}
-	if _, err := strconv.ParseUint(string(fields[1]), 10, 64); err != nil {
+	objectNumber, err := strconv.ParseUint(tokens[0], 10, 64)
+	if err != nil || objectNumber == 0 {
 		return false
 	}
-	dictionary := xref
-	if streamIndex := bytes.Index(dictionary, []byte("stream")); streamIndex >= 0 {
-		dictionary = dictionary[:streamIndex]
+	generation, err := strconv.ParseUint(tokens[1], 10, 64)
+	if err != nil || generation > 65_535 {
+		return false
 	}
-	dictionary = compactPDFWhitespace(dictionary)
-	return bytes.Contains(dictionary, []byte("/Type/XRef")) &&
-		bytes.Contains(dictionary, []byte("/Size")) && bytes.Contains(dictionary, []byte("/Root"))
+	dictionary, next, ok := parsePDFDictionaryTokens(tokens, 3, 0)
+	if !ok || next != len(tokens) {
+		return false
+	}
+	_, sizeOK := pdfPositiveInteger(dictionary["Size"])
+	return sizeOK && len(dictionary["Type"]) == 1 && dictionary["Type"][0] == "/XRef" &&
+		validPDFRootReference(dictionary["Root"]) && validPDFWidths(dictionary["W"]) &&
+		validPDFStreamLength(dictionary["Length"])
 }
 
-func compactPDFWhitespace(value []byte) []byte {
-	compacted := make([]byte, 0, len(value))
-	for _, char := range value {
-		if !isPDFWhitespace(char) {
-			compacted = append(compacted, char)
+func validPDFTrailer(data []byte, first, count uint64) bool {
+	for end := len(data); end > 0; {
+		trailerIndex := lastPDFKeyword(data[:end], "trailer")
+		if trailerIndex < 0 {
+			return false
+		}
+		trailer, ok := parsePDFDictionary(data[trailerIndex+len("trailer"):])
+		if ok {
+			if !validPDFRootReference(trailer["Root"]) {
+				return false
+			}
+			size, sizeOK := pdfPositiveInteger(trailer["Size"])
+			return sizeOK && first+count <= size
+		}
+		end = trailerIndex
+	}
+	return false
+}
+
+func nextPDFLine(data []byte, position *int) ([]byte, bool) {
+	if *position >= len(data) {
+		return nil, false
+	}
+	start := *position
+	for *position < len(data) && data[*position] != '\n' && data[*position] != '\r' {
+		*position++
+	}
+	line := data[start:*position]
+	if *position < len(data) && data[*position] == '\r' {
+		*position++
+	}
+	if *position < len(data) && data[*position] == '\n' {
+		*position++
+	}
+	return line, true
+}
+
+func nextNonemptyPDFLine(data []byte, position *int) ([]byte, bool) {
+	for {
+		line, ok := nextPDFLine(data, position)
+		if !ok {
+			return nil, false
+		}
+		if line = trimPDFWhitespace(line); len(line) != 0 {
+			return line, true
 		}
 	}
-	return compacted
+}
+
+func validPDFXRefRecord(line []byte) bool {
+	fields := bytes.Fields(line)
+	if len(fields) != 3 || len(fields[0]) != 10 || len(fields[1]) != 5 || len(fields[2]) != 1 ||
+		(fields[2][0] != 'n' && fields[2][0] != 'f') {
+		return false
+	}
+	return decimalBytes(fields[0]) && decimalBytes(fields[1])
+}
+
+func decimalBytes(value []byte) bool {
+	if len(value) == 0 {
+		return false
+	}
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func lastPDFKeyword(data []byte, keyword string) int {
+	for end := len(data); end > 0; {
+		index := bytes.LastIndex(data[:end], []byte(keyword))
+		if index < 0 {
+			return -1
+		}
+		beforeOK := index == 0 || isPDFTokenBoundary(data[index-1])
+		after := index + len(keyword)
+		afterOK := after == len(data) || isPDFTokenBoundary(data[after])
+		if beforeOK && afterOK {
+			return index
+		}
+		end = index
+	}
+	return -1
+}
+
+func firstPDFKeyword(data []byte, keyword string) int {
+	for start := 0; start < len(data); {
+		relative := bytes.Index(data[start:], []byte(keyword))
+		if relative < 0 {
+			return -1
+		}
+		index := start + relative
+		beforeOK := index == 0 || isPDFTokenBoundary(data[index-1])
+		after := index + len(keyword)
+		afterOK := after == len(data) || isPDFTokenBoundary(data[after])
+		if beforeOK && afterOK {
+			return index
+		}
+		start = index + 1
+	}
+	return -1
+}
+
+func isPDFTokenBoundary(char byte) bool {
+	return isPDFWhitespace(char) || strings.ContainsRune("()<>[]{}/%", rune(char))
+}
+
+func tokenizePDF(data []byte) ([]string, bool) {
+	tokens := make([]string, 0, 32)
+	for position := 0; position < len(data); {
+		char := data[position]
+		if isPDFWhitespace(char) {
+			position++
+			continue
+		}
+		if char == '%' {
+			for position < len(data) && data[position] != '\r' && data[position] != '\n' {
+				position++
+			}
+			continue
+		}
+		if position+1 < len(data) && (string(data[position:position+2]) == "<<" ||
+			string(data[position:position+2]) == ">>") {
+			tokens = append(tokens, string(data[position:position+2]))
+			position += 2
+			continue
+		}
+		if char == '(' {
+			start, depth, escaped := position, 0, false
+			for ; position < len(data); position++ {
+				current := data[position]
+				if escaped {
+					escaped = false
+					continue
+				}
+				if current == '\\' {
+					escaped = true
+					continue
+				}
+				if current == '(' {
+					depth++
+				} else if current == ')' {
+					depth--
+					if depth == 0 {
+						position++
+						break
+					}
+				}
+			}
+			if depth != 0 {
+				return nil, false
+			}
+			tokens = append(tokens, string(data[start:position]))
+			continue
+		}
+		if char == '<' {
+			start := position
+			position++
+			for position < len(data) && data[position] != '>' {
+				position++
+			}
+			if position == len(data) {
+				return nil, false
+			}
+			position++
+			tokens = append(tokens, string(data[start:position]))
+			continue
+		}
+		if strings.ContainsRune("[]{}", rune(char)) {
+			tokens = append(tokens, string(char))
+			position++
+			continue
+		}
+		start := position
+		if char == '/' {
+			position++
+		}
+		for position < len(data) && !isPDFTokenBoundary(data[position]) {
+			position++
+		}
+		if position == start || (position == start+1 && char == '/') {
+			return nil, false
+		}
+		tokens = append(tokens, string(data[start:position]))
+	}
+	return tokens, true
+}
+
+func parsePDFDictionary(data []byte) (map[string][]string, bool) {
+	tokens, ok := tokenizePDF(data)
+	if !ok {
+		return nil, false
+	}
+	dictionary, next, ok := parsePDFDictionaryTokens(tokens, 0, 0)
+	return dictionary, ok && next == len(tokens)
+}
+
+func parsePDFDictionaryTokens(
+	tokens []string,
+	position int,
+	depth int,
+) (map[string][]string, int, bool) {
+	if depth > 32 || position >= len(tokens) || tokens[position] != "<<" {
+		return nil, position, false
+	}
+	position++
+	dictionary := make(map[string][]string)
+	for position < len(tokens) && tokens[position] != ">>" {
+		key := tokens[position]
+		if len(key) < 2 || key[0] != '/' {
+			return nil, position, false
+		}
+		key = key[1:]
+		if _, exists := dictionary[key]; exists {
+			return nil, position, false
+		}
+		position++
+		valueStart := position
+		var ok bool
+		position, ok = skipPDFObject(tokens, position, depth+1)
+		if !ok {
+			return nil, position, false
+		}
+		dictionary[key] = tokens[valueStart:position]
+	}
+	if position >= len(tokens) || tokens[position] != ">>" {
+		return nil, position, false
+	}
+	return dictionary, position + 1, true
+}
+
+func skipPDFObject(tokens []string, position, depth int) (int, bool) {
+	if depth > 32 || position >= len(tokens) {
+		return position, false
+	}
+	switch tokens[position] {
+	case "<<":
+		_, next, ok := parsePDFDictionaryTokens(tokens, position, depth)
+		return next, ok
+	case "[":
+		position++
+		for position < len(tokens) && tokens[position] != "]" {
+			var ok bool
+			position, ok = skipPDFObject(tokens, position, depth+1)
+			if !ok {
+				return position, false
+			}
+		}
+		return position + 1, position < len(tokens)
+	case ">>", "]":
+		return position, false
+	default:
+		if position+2 < len(tokens) && decimalString(tokens[position]) &&
+			decimalString(tokens[position+1]) && tokens[position+2] == "R" {
+			return position + 3, true
+		}
+		return position + 1, true
+	}
+}
+
+func pdfPositiveInteger(value []string) (uint64, bool) {
+	if len(value) != 1 || !decimalString(value[0]) {
+		return 0, false
+	}
+	parsed, err := strconv.ParseUint(value[0], 10, 64)
+	return parsed, err == nil && parsed > 0
+}
+
+func validPDFRootReference(value []string) bool {
+	if len(value) != 3 || value[2] != "R" {
+		return false
+	}
+	objectNumber, objectErr := strconv.ParseUint(value[0], 10, 64)
+	generation, generationErr := strconv.ParseUint(value[1], 10, 64)
+	return objectErr == nil && objectNumber > 0 && generationErr == nil && generation <= 65_535
+}
+
+func validPDFWidths(value []string) bool {
+	if len(value) != 5 || value[0] != "[" || value[4] != "]" {
+		return false
+	}
+	total := uint64(0)
+	for _, width := range value[1:4] {
+		parsed, err := strconv.ParseUint(width, 10, 64)
+		if err != nil || parsed > 8 {
+			return false
+		}
+		total += parsed
+	}
+	return total > 0
+}
+
+func validPDFStreamLength(value []string) bool {
+	if _, ok := pdfPositiveInteger(value); ok {
+		return true
+	}
+	return validPDFRootReference(value)
+}
+
+func decimalString(value string) bool {
+	return decimalBytes([]byte(value))
 }
 
 func trimPDFWhitespace(value []byte) []byte {

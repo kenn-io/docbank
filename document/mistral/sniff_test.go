@@ -27,6 +27,7 @@ func TestDetectFormatRecognizesBoundedDocumentFamilies(t *testing.T) {
 		wantID    string
 	}{
 		{name: "PDF", content: testPDF("synthetic"), mediaType: "application/pdf", wantID: "pdf"},
+		{name: "PDF xref stream", content: testPDFXRefStream(), mediaType: "application/pdf", wantID: "pdf"},
 		{name: "DOCX", content: docx, mediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", wantID: "docx"},
 		{name: "EPUB", content: epub, mediaType: "application/epub+zip", wantID: "epub"},
 		{name: "legacy DOC", content: compound, mediaType: "application/msword", wantID: "doc"},
@@ -57,6 +58,22 @@ func TestDetectFormatRejectsMismatchUnsafeZIPAndAmbiguousCompound(t *testing.T) 
 	malformedPDF := []byte("%PDF-1.7\nsynthetic")
 	_, err = DetectFormat(bytes.NewReader(malformedPDF), int64(len(malformedPDF)), "application/pdf")
 	require.ErrorContains(err, "PDF end marker")
+
+	malformedXRef := bytes.Replace(testPDF("malformed-xref"), []byte("xref\n"), []byte("xref garbage\n"), 1)
+	_, err = DetectFormat(bytes.NewReader(malformedXRef), int64(len(malformedXRef)), "application/pdf")
+	require.ErrorContains(err, "cross-reference data")
+
+	malformedRecord := bytes.Replace(testPDF("malformed-record"), []byte("0000000000 65535 f"), []byte("000000000X 65535 f"), 1)
+	_, err = DetectFormat(bytes.NewReader(malformedRecord), int64(len(malformedRecord)), "application/pdf")
+	require.ErrorContains(err, "cross-reference data")
+
+	prefixKeys := bytes.Replace(testPDF("prefix-keys"), []byte("/Size 4 /Root "), []byte("/SizeFoo 4 /Rootkit "), 1)
+	_, err = DetectFormat(bytes.NewReader(prefixKeys), int64(len(prefixKeys)), "application/pdf")
+	require.ErrorContains(err, "cross-reference data")
+
+	prefixStreamType := bytes.Replace(testPDFXRefStream(), []byte("/Type /XRef "), []byte("/Type /XRefish "), 1)
+	_, err = DetectFormat(bytes.NewReader(prefixStreamType), int64(len(prefixStreamType)), "application/pdf")
+	require.ErrorContains(err, "cross-reference data")
 
 	polyglotPDF := append(testPDF("polyglot"), []byte("PK\x03\x04synthetic")...)
 	_, err = DetectFormat(bytes.NewReader(polyglotPDF), int64(len(polyglotPDF)), "application/pdf")

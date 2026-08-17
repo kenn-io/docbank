@@ -129,6 +129,16 @@ func testPDF(label string) []byte {
 	return output.Bytes()
 }
 
+func testPDFXRefStream() []byte {
+	var output bytes.Buffer
+	output.WriteString("%PDF-1.5\n")
+	xref := output.Len()
+	_, _ = fmt.Fprintf(&output, "1 0 obj\n<< /Type /XRef /Size 2 /Root 2 0 R /W [1 2 1] /Length 4 >>\nstream\n")
+	output.Write([]byte{0, 0, 0, 0})
+	_, _ = fmt.Fprintf(&output, "\nendstream\nendobj\nstartxref\n%d\n%%%%EOF\n", xref)
+	return output.Bytes()
+}
+
 type errorReader struct {
 	err   error
 	reads *int
