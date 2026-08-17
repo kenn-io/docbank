@@ -227,7 +227,9 @@ copying, syncing, securing, or closing the staged file use the same
 classification. Unsafe directory entries, unrelated filesystem I/O failures,
 and size, hash, format, or permission failures are terminal. Failure and
 cancellation remove the partial file created by that call; close or removal
-failures are joined into the returned error rather than discarded.
+failures are joined into the returned error rather than discarded. Cancellation
+is checked through sync, format inspection, local counting, and final
+publication, and lengthy reads observe the same context.
 `Release` takes the spool reservation lock, is idempotent, and makes its
 prepared document unprocessable.
 

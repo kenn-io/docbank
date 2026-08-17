@@ -237,22 +237,45 @@ func Prepare(
 	if actualHash != options.ExpectedSHA256 {
 		return nil, errors.New("mistral OCR source hash mismatch")
 	}
-	if err := file.Sync(); err != nil {
-		return nil, wrapSpoolIOError("sync Mistral OCR spool", err)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	syncErr := file.Sync()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if syncErr != nil {
+		return nil, wrapSpoolIOError("sync Mistral OCR spool", syncErr)
 	}
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return nil, fmt.Errorf("rewind Mistral OCR spool: %w", err)
 	}
-	format, err := DetectFormat(file, written, options.DeclaredMediaType)
+	contextFile := &contextReaderAt{ctx: ctx, reader: file}
+	format, err := DetectFormat(contextFile, written, options.DeclaredMediaType)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		return nil, err
 	}
-	localUnits, err := countLocalUnits(format, file, written)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	localUnits, err := countLocalUnits(format, contextFile, written)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		return nil, fmt.Errorf("count local Mistral OCR units: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	closeErr := file.Close()
 	fileOpen = false
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if closeErr != nil {
 		return nil, wrapSpoolIOError("close Mistral OCR spool", closeErr)
 	}
@@ -392,6 +415,18 @@ func acquireSpoolReservationLock(ctx context.Context, directory string) (func(),
 type contextReader struct {
 	ctx    context.Context
 	reader io.Reader
+}
+
+type contextReaderAt struct {
+	ctx    context.Context
+	reader io.ReaderAt
+}
+
+func (r *contextReaderAt) ReadAt(buffer []byte, offset int64) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.ReadAt(buffer, offset)
 }
 
 func (r *contextReader) Read(buffer []byte) (int, error) {

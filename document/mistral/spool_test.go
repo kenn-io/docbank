@@ -2,6 +2,7 @@ package mistral
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -131,6 +132,26 @@ func TestPrepareDoesNotReadAgainAfterCopyFailure(t *testing.T) {
 	})
 	require.ErrorIs(t, err, copyErr)
 	assert.Equal(t, 1, reads)
+	assert.True(t, source.closed)
+	requireOnlySpoolReservationFile(t, directory)
+}
+
+func TestPrepareDoesNotPublishAfterCancellationFollowingCopy(t *testing.T) {
+	content := testPDF("cancel-after-copy")
+	digest := sha256.Sum256(content)
+	policy := testPolicy(t, 1024, 10)
+	directory := filepath.Join(t.TempDir(), "spool")
+	makePrivateDirectory(t, directory)
+	ctx, cancel := context.WithCancel(t.Context())
+	source := &observedReadCloser{Reader: bytes.NewReader(content), onClose: cancel}
+
+	prepared, err := Prepare(ctx, source, policy, PrepareOptions{
+		Directory: directory, DeclaredMediaType: mediaTypePDF,
+		ExpectedSize: int64(len(content)), ExpectedSHA256: hex.EncodeToString(digest[:]),
+		MaxSpoolBytes: 2048, MinFreeBytes: 1,
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Nil(t, prepared)
 	assert.True(t, source.closed)
 	requireOnlySpoolReservationFile(t, directory)
 }

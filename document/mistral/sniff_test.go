@@ -246,10 +246,14 @@ type observedReadCloser struct {
 
 	closed   bool
 	closeErr error
+	onClose  func()
 }
 
 func (r *observedReadCloser) Close() error {
 	r.closed = true
+	if r.onClose != nil {
+		r.onClose()
+	}
 	return r.closeErr
 }
 
