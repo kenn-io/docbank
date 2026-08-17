@@ -232,6 +232,43 @@ func TestClientRetriesOnlyTransientWorkAndReverifiesEveryAttempt(t *testing.T) {
 	assert.Equal(t, 1, requests)
 }
 
+func TestClientUploadsVerifiedSnapshot(t *testing.T) {
+	content := []byte("%PDF-1.7\noriginal")
+	policy := testPolicy(t, 1024, 10)
+	prepared := prepareTestDocument(t, policy, content)
+	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
+	require.NoError(t, err)
+	client, err := NewClient(policy, ClientConfig{
+		APIKey: "synthetic-key",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			require.NoError(t, os.WriteFile(prepared.path, []byte("%PDF-1.7\nmodified"), 0o600))
+			body, readErr := io.ReadAll(request.Body)
+			require.NoError(t, readErr)
+			var input struct {
+				Document struct {
+					URL string `json:"document_url"`
+				} `json:"document"`
+			}
+			require.NoError(t, json.Unmarshal(body, &input))
+			encoded := strings.TrimPrefix(input.Document.URL, "data:"+mediaTypePDF+";base64,")
+			uploaded, decodeErr := base64.StdEncoding.DecodeString(encoded)
+			require.NoError(t, decodeErr)
+			assert.Equal(t, content, uploaded)
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body: io.NopCloser(strings.NewReader(
+					`{"model":"mistral-ocr-4-0","pages":[],"usage_info":{"pages_processed":0}}`,
+				)),
+				Request: request,
+			}, nil
+		})},
+	})
+	require.NoError(t, err)
+	_, err = client.Process(t.Context(), prepared, authorization)
+	require.NoError(t, err)
+}
+
 func TestClientPreservesAccountingWhenRetriesExhaustOrWaitIsCanceled(t *testing.T) {
 	policy := testPolicy(t, 1024, 10)
 	prepared := prepareTestDocument(t, policy, []byte("%PDF-1.7\nx"))
@@ -282,15 +319,25 @@ func TestClientRejectsProviderUnitContractDrift(t *testing.T) {
 	prepared := prepareTestDocument(t, policy, []byte("%PDF-1.7\nx"))
 	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
 	require.NoError(t, err)
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, writeErr := io.WriteString(w, `{"model":"mistral-ocr-4-0","pages":[{"index":0},{"index":1},{"index":2},{"index":3}],"usage_info":{"pages_processed":4}}`)
-		assert.NoError(t, writeErr)
-	}))
-	defer server.Close()
-	client := newServerClient(t, server, policy, ClientConfig{})
-	_, err = client.Process(t.Context(), prepared, authorization)
-	require.ErrorIs(t, err, ErrCapabilityContract)
+	for _, test := range []struct {
+		name string
+		body string
+	}{
+		{name: "returned pages", body: `{"model":"mistral-ocr-4-0","pages":[{"index":0},{"index":1},{"index":2},{"index":3}],"usage_info":{"pages_processed":4}}`},
+		{name: "reported usage", body: `{"model":"mistral-ocr-4-0","pages":[{"index":0},{"index":1},{"index":2}],"usage_info":{"pages_processed":4}}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, writeErr := io.WriteString(w, test.body)
+				assert.NoError(t, writeErr)
+			}))
+			defer server.Close()
+			client := newServerClient(t, server, policy, ClientConfig{})
+			_, processErr := client.Process(t.Context(), prepared, authorization)
+			require.ErrorIs(t, processErr, ErrCapabilityContract)
+		})
+	}
 }
 
 func TestLocalExactRequiresProviderEquality(t *testing.T) {

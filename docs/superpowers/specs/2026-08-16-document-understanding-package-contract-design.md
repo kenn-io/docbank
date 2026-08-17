@@ -533,9 +533,10 @@ func (*PreparedDocument) Release() error
 
 `Release` is idempotent. A released document is unprocessable. Cleanup removes
 only the exact package-created file. `ScavengeSpoolDirectory` remains public,
-uses the same reservation lock, and removes only stale regular files with the
-package prefix; unrelated regular files remain and count toward quota, while
-unexpected file types fail closed.
+uses a verified reservation lock inside the private spool directory, and
+removes only stale regular files with the package prefix. The persistent lock
+and unrelated regular files remain and count toward quota, while unexpected
+file types fail closed.
 
 ```go
 func ScavengeSpoolDirectory(string, time.Time) (int, error)
@@ -583,12 +584,14 @@ policy and authorization. Msgvault may define a consumer-side interface over
 `Process` for worker tests or inject an `HTTPClient` backed by `httptest`.
 
 Before every request attempt, `Process` checks context, release state,
-regular-file identity, Unix permissions or Windows DACL, size, and SHA-256. It
-rejects a private policy-digest mismatch and a detected-format/authorization
-mismatch before upload. It also requires the prepared size to be no greater
-than the client policy's `MaxDocumentBytes`, even when another policy
-originally prepared the document. Preparation cannot therefore carry a larger
-byte allowance into a stricter processing policy.
+regular-file identity, Unix permissions or Windows DACL, size, and SHA-256
+while copying the bytes into a request-local immutable buffer. The provider
+request reads only that verified snapshot. `Process` rejects a private
+policy-digest mismatch and a detected-format/authorization mismatch before
+upload. It also requires the prepared size to be no greater than the client
+policy's `MaxDocumentBytes`, even when another policy originally prepared the
+document. Preparation cannot therefore carry a larger byte allowance into a
+stricter processing policy.
 
 For `local_exact`, `Process` requires the counter recorded during preparation
 and rejects a count above `Policy.MaxUnits` before upload. Provider-reported

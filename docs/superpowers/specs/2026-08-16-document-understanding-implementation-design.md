@@ -213,9 +213,11 @@ publication. Cleanup removes only paths created by the generator.
 Failure and cancellation remove the partial file created by that call.
 `Release` is idempotent and makes its prepared document unprocessable.
 
-`ScavengeSpoolDirectory` removes only stale package-prefixed regular files.
-Unrelated regular files remain and continue to count toward quota. A symlink or
-other non-regular entry stops scavenging before any stale file is removed.
+`ScavengeSpoolDirectory` uses a verified persistent lock inside the private
+spool directory and removes only stale package-prefixed regular files. The lock
+and unrelated regular files remain and continue to count toward quota. A
+symlink or other non-regular entry stops scavenging before any stale file is
+removed.
 
 Before every request, `Process` rejects:
 
@@ -228,7 +230,8 @@ Before every request, `Process` rejects:
 
 An injected HTTP client is shallow-copied. Its timeout is replaced when it is
 non-positive or greater than the configured attempt timeout. Each retry reopens
-and rehashes the staged file.
+the staged file and copies it into a request-local immutable buffer while
+verifying its hash. Only that snapshot is streamed to the provider.
 
 `ErrPermanentResponse` and `ErrResponseTooLarge` do not retry. Only
 `ErrTransientResponse` retries. Retry-After accepts bounded integer seconds,

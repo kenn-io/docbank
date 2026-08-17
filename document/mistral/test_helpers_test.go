@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -86,4 +87,12 @@ func prepareTestDocument(
 func makePrivateDirectory(t *testing.T, directory string) {
 	t.Helper()
 	require.NoError(t, safefileio.EnsurePrivateDir(directory))
+}
+
+func requireOnlySpoolReservationFile(t *testing.T, directory string) {
+	t.Helper()
+	entries, err := os.ReadDir(directory)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, spoolReservationFile, entries[0].Name())
 }

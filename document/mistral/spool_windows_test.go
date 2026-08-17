@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -51,6 +52,24 @@ func TestPrepareAndProcessRejectBroadWindowsDACLs(t *testing.T) {
 	require.NoError(t, err)
 	_, err = client.Process(t.Context(), prepared, authorization)
 	require.ErrorContains(t, err, "unexpected principal")
+}
+
+func TestPrepareRejectsBroadWindowsReservationLockDACL(t *testing.T) {
+	policy := testPolicy(t, 1024, 10)
+	content := []byte("%PDF-1.7\nprivate")
+	digest := sha256.Sum256(content)
+	directory := filepath.Join(t.TempDir(), "spool")
+	makePrivateDirectory(t, directory)
+	lockPath := filepath.Join(directory, spoolReservationFile)
+	require.NoError(t, os.WriteFile(lockPath, nil, 0o600))
+	require.NoError(t, setEveryoneDACL(lockPath))
+
+	_, err := Prepare(t.Context(), io.NopCloser(bytes.NewReader(content)), policy, PrepareOptions{
+		Directory: directory, DeclaredMediaType: mediaTypePDF,
+		ExpectedSize: int64(len(content)), ExpectedSHA256: hex.EncodeToString(digest[:]),
+		MaxSpoolBytes: 1024, MinFreeBytes: 1,
+	})
+	require.ErrorContains(t, err, "reservation lock")
 }
 
 func setEveryoneDACL(path string) error {

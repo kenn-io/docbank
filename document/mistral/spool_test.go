@@ -80,9 +80,7 @@ func TestPrepareFailsClosedAndRemovesPartialFile(t *testing.T) {
 			})
 			require.ErrorContains(t, err, test.wantError)
 			assert.True(t, test.source.closed)
-			entries, readErr := os.ReadDir(directory)
-			require.NoError(t, readErr)
-			assert.Empty(t, entries)
+			requireOnlySpoolReservationFile(t, directory)
 		})
 	}
 }
@@ -110,6 +108,27 @@ func TestPrepareClassifiesCapacityRefusals(t *testing.T) {
 	require.ErrorContains(t, err, "free-space reserve")
 }
 
+func TestPrepareRejectsPublicReservationLock(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix mode-bit behavior")
+	}
+	content := []byte("%PDF-1.7\nsynthetic")
+	digest := sha256.Sum256(content)
+	policy := testPolicy(t, 1024, 10)
+	directory := filepath.Join(t.TempDir(), "spool")
+	makePrivateDirectory(t, directory)
+	lockPath := filepath.Join(directory, spoolReservationFile)
+	require.NoError(t, os.WriteFile(lockPath, nil, 0o600))
+	require.NoError(t, os.Chmod(lockPath, 0o644))
+
+	_, err := Prepare(t.Context(), io.NopCloser(bytes.NewReader(content)), policy, PrepareOptions{
+		Directory: directory, DeclaredMediaType: mediaTypePDF,
+		ExpectedSize: int64(len(content)), ExpectedSHA256: hex.EncodeToString(digest[:]),
+		MaxSpoolBytes: 1024, MinFreeBytes: 1,
+	})
+	require.ErrorContains(t, err, "reservation lock")
+}
+
 func TestScavengeSpoolDirectoryRemovesOnlyStalePackageFilesAndFailsClosed(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "spool")
 	makePrivateDirectory(t, directory)
@@ -128,6 +147,7 @@ func TestScavengeSpoolDirectoryRemovesOnlyStalePackageFilesAndFailsClosed(t *tes
 	assert.NoFileExists(t, stale)
 	assert.FileExists(t, live)
 	assert.FileExists(t, unrelated)
+	assert.FileExists(t, filepath.Join(directory, spoolReservationFile))
 
 	require.NoError(t, os.Mkdir(filepath.Join(directory, "unsafe"), 0o700))
 	_, err = ScavengeSpoolDirectory(directory, time.Now().UTC())

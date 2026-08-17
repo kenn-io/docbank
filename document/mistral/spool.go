@@ -18,7 +18,7 @@ import (
 
 const (
 	spoolFilenamePrefix    = ".mistral-ocr-"
-	spoolReservationSuffix = ".mistral-ocr-reservations.lock"
+	spoolReservationFile   = ".mistral-ocr-reservations.lock"
 	spoolLockRetryInterval = 50 * time.Millisecond
 )
 
@@ -280,6 +280,9 @@ func ScavengeSpoolDirectory(directory string, staleBefore time.Time) (int, error
 		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 			return 0, errors.New("mistral OCR spool directory contains an unsafe entry")
 		}
+		if entry.Name() == spoolReservationFile {
+			continue
+		}
 		if !strings.HasPrefix(entry.Name(), spoolFilenamePrefix) || !info.ModTime().Before(staleBefore) {
 			continue
 		}
@@ -328,7 +331,7 @@ func checkSpoolCapacity(options PrepareOptions, maxDocumentBytes int64) error {
 }
 
 func acquireSpoolReservationLock(ctx context.Context, directory string) (func(), error) {
-	lockPath := filepath.Join(filepath.Dir(directory), "."+filepath.Base(directory)+spoolReservationSuffix)
+	lockPath := filepath.Join(directory, spoolReservationFile)
 	lock := flock.New(lockPath, flock.SetPermissions(0o600))
 	locked, err := lock.TryLockContext(ctx, spoolLockRetryInterval)
 	if err != nil {
@@ -336,6 +339,22 @@ func acquireSpoolReservationLock(ctx context.Context, directory string) (func(),
 	}
 	if !locked {
 		return nil, errors.New("mistral OCR spool reservation lock was not acquired")
+	}
+	lockInfo, err := lock.Stat()
+	if err != nil {
+		_ = lock.Unlock()
+		return nil, fmt.Errorf("inspect Mistral OCR spool reservation lock: %w", err)
+	}
+	verified, err := openPrivateFile(lockPath)
+	if err != nil {
+		_ = lock.Unlock()
+		return nil, fmt.Errorf("verify Mistral OCR spool reservation lock: %w", err)
+	}
+	verifiedInfo, statErr := verified.Stat()
+	closeErr := verified.Close()
+	if statErr != nil || closeErr != nil || !os.SameFile(lockInfo, verifiedInfo) {
+		_ = lock.Unlock()
+		return nil, errors.New("mistral OCR spool reservation lock changed while opening")
 	}
 	return func() { _ = lock.Unlock() }, nil
 }

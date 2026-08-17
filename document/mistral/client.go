@@ -1,6 +1,7 @@
 package mistral
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -12,7 +13,6 @@ import (
 	"math"
 	"mime"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -257,13 +257,13 @@ func (c *Client) processOnce(
 	method UnitBoundMethod,
 	maxUnits int,
 ) (Result, string, bool, time.Duration, error) {
-	file, err := openVerifiedDocument(snapshot)
+	documentBytes, err := readVerifiedDocument(ctx, snapshot)
 	if err != nil {
 		return Result{}, "", false, 0, err
 	}
-	defer func() { _ = file.Close() }()
+	defer clear(documentBytes)
 
-	reader := streamRequest(file, snapshot.size, prefix, suffix)
+	reader := streamRequest(documentBytes, prefix, suffix)
 	defer func() { _ = reader.Close() }()
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.policy.values.Endpoint, reader)
 	if err != nil {
@@ -355,7 +355,7 @@ func waitContext(ctx context.Context, delay time.Duration) error {
 	}
 }
 
-func streamRequest(file *os.File, size int64, prefix, suffix []byte) *io.PipeReader {
+func streamRequest(documentBytes, prefix, suffix []byte) *io.PipeReader {
 	reader, writer := io.Pipe()
 	go func() {
 		if _, err := writer.Write(prefix); err != nil {
@@ -363,12 +363,9 @@ func streamRequest(file *os.File, size int64, prefix, suffix []byte) *io.PipeRea
 			return
 		}
 		encoder := base64.NewEncoder(base64.StdEncoding, writer)
-		written, err := io.Copy(encoder, file)
+		_, err := io.Copy(encoder, bytes.NewReader(documentBytes))
 		if closeErr := encoder.Close(); err == nil {
 			err = closeErr
-		}
-		if err == nil && written != size {
-			err = errors.New("mistral OCR spool size changed during request")
 		}
 		if err == nil {
 			_, err = writer.Write(suffix)
@@ -378,7 +375,7 @@ func streamRequest(file *os.File, size int64, prefix, suffix []byte) *io.PipeRea
 	return reader
 }
 
-func openVerifiedDocument(snapshot preparedSnapshot) (*os.File, error) {
+func readVerifiedDocument(ctx context.Context, snapshot preparedSnapshot) ([]byte, error) {
 	if snapshot.path == "" || snapshot.size < 0 || snapshot.format.ID == "" ||
 		snapshot.mediaType != snapshot.format.MediaType || len(snapshot.sha256) != sha256.Size*2 ||
 		strings.ToLower(snapshot.sha256) != snapshot.sha256 {
@@ -391,30 +388,35 @@ func openVerifiedDocument(snapshot preparedSnapshot) (*os.File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open Mistral OCR spool: %w", err)
 	}
+	defer func() { _ = file.Close() }()
 	openedInfo, err := file.Stat()
 	if err != nil {
-		_ = file.Close()
 		return nil, fmt.Errorf("inspect opened Mistral OCR spool: %w", err)
 	}
 	if openedInfo.Size() != snapshot.size {
-		_ = file.Close()
 		return nil, errors.New("mistral OCR spool size changed")
 	}
-	hash := sha256.New()
-	written, err := io.Copy(hash, file)
-	if err != nil {
-		_ = file.Close()
+	if snapshot.size > hardMaxDocumentBytes {
+		return nil, errors.New("mistral OCR spool exceeds package byte limit")
+	}
+	contents := make([]byte, int(snapshot.size))
+	contextFile := &contextReader{ctx: ctx, reader: file}
+	if _, err := io.ReadFull(contextFile, contents); err != nil {
 		return nil, fmt.Errorf("verify Mistral OCR spool: %w", err)
 	}
-	if written != snapshot.size || hex.EncodeToString(hash.Sum(nil)) != snapshot.sha256 {
-		_ = file.Close()
+	var extra [1]byte
+	extraBytes, extraErr := io.ReadFull(contextFile, extra[:])
+	if extraErr != nil && !errors.Is(extraErr, io.EOF) {
+		return nil, fmt.Errorf("verify Mistral OCR spool length: %w", extraErr)
+	}
+	if extraBytes != 0 {
+		return nil, errors.New("mistral OCR spool size changed")
+	}
+	digest := sha256.Sum256(contents)
+	if hex.EncodeToString(digest[:]) != snapshot.sha256 {
 		return nil, errors.New("mistral OCR spool hash mismatch")
 	}
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		_ = file.Close()
-		return nil, fmt.Errorf("rewind Mistral OCR spool: %w", err)
-	}
-	return file, nil
+	return contents, nil
 }
 
 func requestEnvelope(
@@ -495,6 +497,15 @@ func validateWireResult(
 		(result.UsageInfo.DocSizeBytes != nil && *result.UsageInfo.DocSizeBytes < 0) {
 		return errors.New("mistral OCR response has invalid usage")
 	}
+	if result.UsageInfo.PagesProcessed > maxUnits &&
+		(method == UnitBoundProviderRequest || method == UnitBoundLocalExact) {
+		return fmt.Errorf("provider processed %d units above authorized limit %d: %w",
+			result.UsageInfo.PagesProcessed, maxUnits, ErrCapabilityContract)
+	}
+	if method == UnitBoundLocalExact && result.UsageInfo.PagesProcessed != snapshot.localUnits {
+		return fmt.Errorf("provider processed %d units, local exact count %d: %w",
+			result.UsageInfo.PagesProcessed, snapshot.localUnits, ErrCapabilityContract)
+	}
 	if result.UsageInfo.PagesProcessed != len(result.Pages) {
 		return fmt.Errorf("mistral OCR response processed %d units but returned %d",
 			result.UsageInfo.PagesProcessed, len(result.Pages))
@@ -502,10 +513,6 @@ func validateWireResult(
 	if result.UsageInfo.DocSizeBytes != nil && *result.UsageInfo.DocSizeBytes != snapshot.size {
 		return fmt.Errorf("mistral OCR response accounted for %d document bytes, expected %d",
 			*result.UsageInfo.DocSizeBytes, snapshot.size)
-	}
-	if method == UnitBoundLocalExact && result.UsageInfo.PagesProcessed != snapshot.localUnits {
-		return fmt.Errorf("provider processed %d units, local exact count %d: %w",
-			result.UsageInfo.PagesProcessed, snapshot.localUnits, ErrCapabilityContract)
 	}
 	return nil
 }

@@ -119,9 +119,7 @@ func TestValidateProbeFixturesIsLocalAndCleansItsSpool(t *testing.T) {
 		FixtureDirectory: fixtureDirectory, SpoolDirectory: spoolDirectory,
 		MaxSpoolBytes: 32 << 20, MinFreeBytes: 1,
 	}))
-	entries, err := os.ReadDir(spoolDirectory)
-	require.NoError(t, err)
-	assert.Empty(t, entries)
+	requireOnlySpoolReservationFile(t, spoolDirectory)
 }
 
 func writeNativeSeeds(t *testing.T) string {
