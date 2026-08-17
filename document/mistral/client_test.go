@@ -237,6 +237,39 @@ func TestClientRetriesOnlyTransientWorkAndReverifiesEveryAttempt(t *testing.T) {
 	assert.Equal(t, 1, requests)
 }
 
+func TestClientDoesNotRetryReleasedDocument(t *testing.T) {
+	policy := testPolicy(t, 1024, 10)
+	prepared := prepareTestDocument(t, policy, testPDF("release-during-backoff"))
+	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
+	require.NoError(t, err)
+	firstResponse := make(chan struct{})
+	requests := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		requests++
+		_, copyErr := io.Copy(io.Discard, request.Body)
+		assert.NoError(t, copyErr)
+		w.Header().Set("Retry-After", "60")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		if requests == 1 {
+			close(firstResponse)
+		}
+	}))
+	defer server.Close()
+	client := newServerClient(t, server, policy, ClientConfig{MaxRetryDelay: 500 * time.Millisecond})
+	done := make(chan error, 1)
+	go func() {
+		_, processErr := client.Process(t.Context(), prepared, authorization)
+		done <- processErr
+	}()
+
+	<-firstResponse
+	require.NoError(t, prepared.Release())
+	err = <-done
+	require.ErrorContains(t, err, "released")
+	assert.Equal(t, 1, requests)
+	assert.Equal(t, 1, MetricsFromError(err).Requests)
+}
+
 func TestClientUploadsVerifiedSnapshot(t *testing.T) {
 	content := testPDF("original")
 	policy := testPolicy(t, 1024, 10)

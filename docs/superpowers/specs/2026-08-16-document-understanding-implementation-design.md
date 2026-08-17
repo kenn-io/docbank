@@ -248,9 +248,10 @@ Before every request, `Process` rejects:
 
 An injected HTTP client is shallow-copied. Its timeout is replaced when it is
 non-positive or greater than the configured attempt timeout. Each retry reopens
-the staged file and copies it into a request-local immutable buffer while
-verifying its hash. Only that snapshot is streamed to the provider. A successful
-response is accepted only after the complete request stream has been consumed.
+the staged file, rechecks that it has not been released, and copies it into a
+request-local immutable buffer while verifying its hash. Only that snapshot is
+streamed to the provider. A successful response is accepted only after the
+complete request stream has been consumed.
 
 `ErrPermanentResponse` and `ErrResponseTooLarge` do not retry. Only
 `ErrTransientResponse` retries. Retry-After accepts bounded integer seconds,

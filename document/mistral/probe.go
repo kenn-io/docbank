@@ -70,7 +70,7 @@ func RunCapabilityProbe(
 			UnitKind: candidate.UnitKind, FixtureDigest: fixtureDigest,
 			RequestFingerprint: requestFingerprint(candidate, options), UnitBoundMethod: UnitBoundNone,
 		}
-		response, processErr := client.process(ctx, snapshot, options, UnitBoundNone, manifest.MaxUnits)
+		response, processErr := client.process(ctx, fixture.snapshot, options, UnitBoundNone, manifest.MaxUnits)
 		if processErr != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return CapabilityManifest{}, ctxErr
@@ -134,12 +134,7 @@ func observeUnitBound(
 			ExtractHeader: client.policy.values.ExtractHeader,
 			ExtractFooter: client.policy.values.ExtractFooter,
 		}
-		snapshot, err := fixture.snapshot()
-		if err != nil {
-			result.ReasonCode = reasonBoundUnverified
-			return
-		}
-		bounded, err := client.process(ctx, snapshot, options, UnitBoundProviderRequest, requested)
+		bounded, err := client.process(ctx, fixture.snapshot, options, UnitBoundProviderRequest, requested)
 		if err != nil || bounded.UnitsProcessed != requested || len(bounded.Document.Units) != requested {
 			result.ReasonCode = reasonBoundUnverified
 			return

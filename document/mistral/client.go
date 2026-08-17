@@ -181,49 +181,52 @@ func (c *Client) Process(
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
-	snapshot, err := prepared.snapshot()
-	if err != nil {
-		return Result{}, err
-	}
 	if authorization.policyDigest == "" || authorization.policyDigest != c.policy.digest {
 		return Result{}, errors.New("mistral OCR authorization belongs to a different policy")
 	}
-	if authorization.format.ID == "" || snapshot.format.ID != authorization.format.ID {
-		return Result{}, errors.New("mistral OCR detected format does not match authorization")
-	}
-	if snapshot.size > c.policy.values.MaxDocumentBytes {
-		return Result{}, fmt.Errorf("mistral OCR document is %d bytes, policy limit %d",
-			snapshot.size, c.policy.values.MaxDocumentBytes)
-	}
-	if authorization.method == UnitBoundLocalExact {
-		if snapshot.localUnits <= 0 || snapshot.localUnits > c.policy.values.MaxUnits {
-			return Result{}, fmt.Errorf("mistral OCR local unit count exceeds authorized limit: %w", ErrCapabilityContract)
-		}
+	if authorization.format.ID == "" {
+		return Result{}, errors.New("mistral OCR authorization has no format")
 	}
 	options := probeRequestOptions(
-		snapshot.format, c.policy.values.MaxUnits,
+		authorization.format, c.policy.values.MaxUnits,
 		c.policy.values.ExtractHeader, c.policy.values.ExtractFooter,
 	)
-	return c.process(ctx, snapshot, options, authorization.method, c.policy.values.MaxUnits)
+	snapshotForAttempt := func() (preparedSnapshot, error) {
+		snapshot, err := prepared.snapshot()
+		if err != nil {
+			return preparedSnapshot{}, err
+		}
+		if err := c.validatePreparedSnapshot(snapshot, authorization); err != nil {
+			return preparedSnapshot{}, err
+		}
+		return snapshot, nil
+	}
+	return c.process(
+		ctx, snapshotForAttempt, options, authorization.method, c.policy.values.MaxUnits,
+	)
 }
 
 func (c *Client) process(
 	ctx context.Context,
-	snapshot preparedSnapshot,
+	snapshotForAttempt func() (preparedSnapshot, error),
 	options requestOptions,
 	method UnitBoundMethod,
 	maxUnits int,
 ) (Result, error) {
-	prefix, suffix, encodedLength, err := requestEnvelope(
-		c.policy.values.Model, snapshot.mediaType, snapshot.size, options,
-	)
-	if err != nil {
-		return Result{}, err
-	}
 	requests := 0
 	var providerLatency time.Duration
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
 		if err := ctx.Err(); err != nil {
+			return Result{}, newProcessError(err, requests, providerLatency)
+		}
+		snapshot, err := snapshotForAttempt()
+		if err != nil {
+			return Result{}, newProcessError(err, requests, providerLatency)
+		}
+		prefix, suffix, encodedLength, err := requestEnvelope(
+			c.policy.values.Model, snapshot.mediaType, snapshot.size, options,
+		)
+		if err != nil {
 			return Result{}, newProcessError(err, requests, providerLatency)
 		}
 		result, retryHeader, requested, latency, processErr := c.processOnce(
@@ -250,6 +253,24 @@ func (c *Client) process(
 		}
 	}
 	return Result{}, ErrTransientResponse
+}
+
+func (c *Client) validatePreparedSnapshot(
+	snapshot preparedSnapshot,
+	authorization FormatAuthorization,
+) error {
+	if snapshot.format.ID != authorization.format.ID {
+		return errors.New("mistral OCR detected format does not match authorization")
+	}
+	if snapshot.size > c.policy.values.MaxDocumentBytes {
+		return fmt.Errorf("mistral OCR document is %d bytes, policy limit %d",
+			snapshot.size, c.policy.values.MaxDocumentBytes)
+	}
+	if authorization.method == UnitBoundLocalExact &&
+		(snapshot.localUnits <= 0 || snapshot.localUnits > c.policy.values.MaxUnits) {
+		return fmt.Errorf("mistral OCR local unit count exceeds authorized limit: %w", ErrCapabilityContract)
+	}
+	return nil
 }
 
 func (c *Client) processOnce(
