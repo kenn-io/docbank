@@ -4,12 +4,6 @@
 
 **Date:** 2026-08-16
 
-**Kata:** `w30d`
-
-**Parent epic:** `rz07`
-
-**Implementation stage:** `e9jz`
-
 **Compatibility source:** `kenn-io/msgvault#616` at
 `73d6c0b33f74c1fd072a7c0258f1cf1e80054698`
 
@@ -36,18 +30,16 @@ manifest concepts. Provider-specific behavior begins in
 second concrete provider implementation proves the common contract; a second
 provider initially copies the small behavior it needs.
 
-This design freezes the public contract only. Work on `e9jz` requires a new
-`superpowers:brainstorming` gate before implementation.
-
 ## Goals
 
 The contract must:
 
 - provide one authoritative implementation of deterministic normalization,
   headings, spans, baseline chunks, truncation, and checksums;
-- preserve normalization policy version 2 and all baseline normalization,
+- preserve normalization policy version 2, fix the baseline soft-break
+  separator defect before release, and preserve all other normalization,
   request-fingerprint, capability-fingerprint, and Msgvault legacy profile
-  fingerprint bytes;
+  fingerprint behavior;
 - expose validated provider output only as provider-neutral source units;
 - prevent production uploads for formats without passing probe evidence and
   an enforceable unit bound;
@@ -243,8 +235,8 @@ Docbank will add those module versions as direct requirements when the code
 moves. Parser behavior is part of normalization version 2 because it can
 change canonical text and every downstream checksum. A later dependency
 upgrade may remain version 2 only when the complete normalization suite and
-the frozen compatibility bundle remain byte-identical. Any output change
-requires normalization version 3.
+the frozen compatibility bundle remain byte-identical. After version 2 first
+ships, any output change requires normalization version 3.
 
 ## Package `document/mistral`
 
@@ -687,6 +679,27 @@ text, filenames, raw responses, provider error bodies, credentials, user URLs,
 or full fixture hashes. `ProbeFixtureSentinel` remains public for synthetic
 fixture generation.
 
+## Additional public surface
+
+The public contract includes these additions:
+
+- `Policy.NormalizePolicy() document.NormalizePolicy` returns the executable
+  normalization policy covered by the Mistral policy identity. This makes the
+  safe production flow direct: the authorized provider result is normalized
+  with the policy that authorized it.
+- `FixtureOptions` and `WriteProbeFixtures` provide one public deterministic
+  fixture writer for Docbank and downstream applications. The writer
+  synthesizes 21 formats and copies validated operator seeds for `doc`, `ppt`,
+  `xls`, `numbers`, and `msg`, avoiding either duplicate fixture bytes or a
+  dependency on a Docbank executable.
+- Capability-manifest input is capped at 1 MiB before strict decoding. This
+  makes the operator-supplied recovery path explicitly bounded as well as
+  structurally validated.
+
+The fixture writer performs no network request and requires no credential. It
+publishes only a complete fixture-contract-2 directory; the five native seed
+digests remain operator-specific.
+
 ## Consent and application ownership
 
 Local configuration, policy construction, manifest decoding and validation,
@@ -715,7 +728,7 @@ Both repositories will contain a byte-identical immutable fixture named
 - its bundle schema and fixture ID;
 - `source_pr: kenn-io/msgvault#616`;
 - `baseline_commit: 73d6c0b33f74c1fd072a7c0258f1cf1e80054698`;
-- `generated_by: msgvault@73d6c0b33f74c1fd072a7c0258f1cf1e80054698`;
+- `generated_by: msgvault@73d6c0b33f74c1fd072a7c0258f1cf1e80054698+soft-break-separation`;
 - an explicit section ownership map; and
 - synthetic inputs and exact expected values.
 
@@ -726,12 +739,14 @@ The sections are:
 - `msgvault_profile_policy_v1`, owned by Msgvault.
 
 Version-1 expected values are generated before code motion by a throwaway
-package-local generator run against the Msgvault baseline commit. It calls the
-baseline production `documentindex.NormalizeDocument`, Mistral
-`requestFingerprint`, and `DocumentsConfig.ProfilePolicyJSON` implementations.
-The moved Docbank implementation never generates or rewrites the expected
-values it is tested against. This provenance makes the bundle an independent
-compatibility oracle rather than a self-consistency fixture.
+package-local generator run against the Msgvault baseline commit. The export
+applies the approved soft-break separator correction to the baseline
+normalizer, then calls `documentindex.NormalizeDocument`. It calls the
+unmodified Mistral `requestFingerprint` and
+`DocumentsConfig.ProfilePolicyJSON` implementations. The moved Docbank
+implementation never generates or rewrites the expected values it is tested
+against. This provenance makes the bundle an independent compatibility oracle
+rather than a self-consistency fixture.
 
 Each repository pins the same lowercase SHA-256 literal for the entire raw
 file and rehashes the file bytes before decoding. Tests do not hash a
@@ -741,70 +756,15 @@ executes its production legacy serializer against its exact JSON and
 fingerprint section. Unowned sections stay in the file for traceability but
 need not be asserted by that repository.
 
-The bundle is copied once and never synchronized by tooling. Any correction or
-new contract adds a new file; v1 is never edited. There is no cross-repository
-test import, network fetch, CI artifact dependency, or exported compatibility
+The corrected pre-release bundle is frozen when the package first merges and
+is never synchronized by tooling. Any later correction or new contract adds a
+new file; the merged v1 file is never edited. There is no cross-repository test
+import, network fetch, CI artifact dependency, or exported compatibility
 package.
 
 The probe fixture contract-2 change does not alter the request-fingerprint
 section because request fingerprints depend on the candidate and request
 options, not fixture bytes. Fixture digests remain capability-manifest data.
-
-## Migration sequence
-
-1. Complete the focused top-level SQLite import migration, documentation
-   update, changelog entry, and `pkg/` removal without aliases.
-2. Invoke `superpowers:brainstorming` for `e9jz`; approval of this document is
-   not approval to implement that issue.
-3. Add and pin the frozen compatibility bundle before moving behavior.
-4. Move normalization behavior and its production behavior tests into
-   `document` without changing version-2 outputs.
-5. Move Mistral formats, manifests, policy, staging, transport, private retry
-   behavior, probes, and their tests into `document/mistral` while applying
-   this contract's closed-construction boundaries.
-6. Update Msgvault to import the public packages. Retain only its legacy policy
-   wrapper and application-owned behavior listed in the non-goals.
-7. Let Docbank's existing extractor adopt `document` in a separately scoped
-   change when it needs the shared normalization output.
-
-## Verification
-
-Implementation evidence must verify behavior rather than source-file motion:
-
-- normalization version, canonical text, headings, spans, all eight chunk
-  fields, unit/chunk/document checksums, and truncation are exact;
-- `NormalizeDocument` rejects `NormalizePolicy{}` and all invalid policies;
-- canonical Mistral policy JSON is deterministic and its fingerprint covers
-  only approved semantic identity;
-- Msgvault legacy policy JSON and fingerprint remain byte-for-byte exact;
-- ordinary request fingerprints remain exact when reconstructed with manifest
-  options, while smaller production ranges remain authorized within manifest
-  unit authority;
-- manifests reject incomplete, reordered, target-mismatched, old-contract,
-  malformed, or arithmetically invalid evidence;
-- an unverified bound produces a valid result with `UnitBoundNone` and
-  `bound_unverified`, and cannot produce a `FormatAuthorization`;
-- `ValidateProbeFixtures` performs no HTTP and requires no credential;
-- production cannot accept a fixture, and probing cannot accept a prepared user
-  document;
-- `Prepare` closes its source on every path, `Release` is idempotent, and
-  cleanup/scavenging remove only package-created files;
-- production re-verifies immutable bytes before every retry and rejects policy
-  or format mismatch and a client-policy byte excess before upload;
-- default and injected HTTP clients both reject redirects without replaying
-  document bytes;
-- provider-request post-response unit excess and either direction of a
-  local-exact count mismatch return `ErrCapabilityContract`;
-- request accounting survives classified failure and retry cancellation;
-- package dependency inspection confirms that `document` and
-  `document/mistral` import no vault, daemon, database, queue, or application
-  internals; and
-- `go test -tags fts5 ./...` passes with both `CGO_ENABLED=1` and
-  `CGO_ENABLED=0`, followed by repository lint, documentation, and commit-hook
-  gates required for the affected changes.
-
-Live authenticated probes are explicit operator evidence. They are not part of
-ordinary automated tests or local fixture validation.
 
 ## Approved decision summary
 
@@ -818,10 +778,9 @@ ordinary automated tests or local fixture validation.
    settings do not enter it; Msgvault keeps an exact legacy wrapper.
 6. Opaque `FormatAuthorization` represents capability authority, while consent
    remains application-owned.
-7. Mistral keeps a private copy of the small retry helper and its behavior
-   tests.
+7. Mistral keeps its retry behavior private to the provider package.
 8. Both repositories carry one byte-identical immutable compatibility bundle.
 9. Normalization version 2 is opaque with `MaxDocumentChars` as its only public
    input.
-10. Public packages are top-level `document` and `document/mistral`; `pkg/` is
-    removed first without compatibility aliases.
+10. Public packages are top-level `document` and `document/mistral`, without
+    compatibility aliases under `pkg/`.
