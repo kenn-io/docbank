@@ -90,6 +90,10 @@ document/mistral  --->  document
                 no imports from Docbank application internals
 ```
 
+The provider package may reuse the low-level platform permission helper in
+`internal/winsecurity` to enforce owner-only Windows files. It must not import
+vault, daemon, database, queue, or other application behavior.
+
 ## Package `document`
 
 ### Source evidence
@@ -344,8 +348,9 @@ Expected bound methods live in an unexported table keyed by format ID. They do
 not appear in `CandidateFormat` and grant no authority. If ordinary extraction
 passes but the extra bound observation fails, the result remains visibly
 `passed`, records `UnitBoundNone`, and records reason code
-`bound_unverified`. The manifest remains structurally valid and explains why
-the format cannot be authorized.
+`bound_request_failed`, `bound_units_mismatch`, or
+`bound_fixture_out_of_range`. The manifest remains structurally valid and
+explains why the format cannot be authorized.
 
 The capability schema increments from 2 to 3 for the new fields. The probe fixture
 contract increments from 1 to 2 because the PDF fixture must contain more units
@@ -365,6 +370,15 @@ evidence. It validates observation arithmetic without network access.
 ### Reusable Mistral policy
 
 ```go
+const (
+	RegionEU              = "eu"
+	DefaultModel          = "mistral-ocr-4-0"
+	RetentionStandard     = "standard"
+	RetentionZDR          = "zdr"
+	TrainingDefaultOptOut = "default-opt-out"
+	TrainingOptedOut      = "opted-out"
+)
+
 type PolicyConfig struct {
 	Region           string
 	Model            string
@@ -615,6 +629,10 @@ upload. It also requires the prepared size to be no greater than the client
 policy's `MaxDocumentBytes`, even when another policy originally prepared the
 document. Preparation cannot therefore carry a larger byte allowance into a
 stricter processing policy.
+
+Each request attempt holds one complete verified snapshot in memory, bounded
+by `MaxDocumentBytes`. Applications must include that per-call allocation when
+they choose processing concurrency.
 
 For `local_exact`, `Process` requires the counter recorded during preparation
 and rejects a count above `Policy.MaxUnits` before upload. Provider-reported

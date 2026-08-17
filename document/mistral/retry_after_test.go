@@ -16,14 +16,12 @@ func TestRetryAfterBoundsProviderDelay(t *testing.T) {
 		maximum time.Duration
 		want    time.Duration
 	}{
-		{name: "negative falls back", header: "-1", attempt: 2, maximum: providerMaxRetryAfter, want: 4 * time.Second},
-		{name: "valid long value within provider cap", header: "600", maximum: providerMaxRetryAfter, want: 10 * time.Minute},
-		{name: "valid value above provider cap", header: "3600", maximum: providerMaxRetryAfter, want: providerMaxRetryAfter},
-		{name: "beeper cap", header: "120", maximum: defaultMaxRetryAfter, want: defaultMaxRetryAfter},
-		{name: "duration overflow falls back", header: "9223372037", attempt: 5, maximum: providerMaxRetryAfter, want: 32 * time.Second},
-		{name: "uint64 overflow falls back", header: "18446744073709551616", attempt: 4, maximum: providerMaxRetryAfter, want: 16 * time.Second},
-		{name: "malformed falls back", header: "1s", attempt: 3, maximum: providerMaxRetryAfter, want: 8 * time.Second},
-		{name: "zero is immediate", header: "0", attempt: 4, maximum: providerMaxRetryAfter, want: 0},
+		{name: "negative falls back", header: "-1", attempt: 2, maximum: defaultMaxRetryAfter, want: 4 * time.Second},
+		{name: "valid value above cap", header: "120", maximum: defaultMaxRetryAfter, want: defaultMaxRetryAfter},
+		{name: "duration overflow falls back", header: "9223372037", attempt: 5, maximum: defaultMaxRetryAfter, want: 32 * time.Second},
+		{name: "uint64 overflow falls back", header: "18446744073709551616", attempt: 4, maximum: defaultMaxRetryAfter, want: 16 * time.Second},
+		{name: "malformed falls back", header: "1s", attempt: 3, maximum: defaultMaxRetryAfter, want: 8 * time.Second},
+		{name: "zero is immediate", header: "0", attempt: 4, maximum: defaultMaxRetryAfter, want: 0},
 		{name: "positive value honors subsecond maximum", header: "1", maximum: 10 * time.Millisecond, want: 10 * time.Millisecond},
 		{name: "zero maximum uses safe default", header: "120", want: defaultMaxRetryAfter},
 		{name: "negative maximum uses safe default", header: "120", maximum: -time.Second, want: defaultMaxRetryAfter},
@@ -51,7 +49,7 @@ func TestRetryAfterFallbackAttemptBounds(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(strconv.Itoa(tt.attempt), func(t *testing.T) {
-			assert.Equal(t, tt.want, retryAfter("", tt.attempt, providerMaxRetryAfter))
+			assert.Equal(t, tt.want, retryAfter("", tt.attempt, defaultMaxRetryAfter))
 		})
 	}
 }

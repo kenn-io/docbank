@@ -177,7 +177,7 @@ func Prepare(
 		return nil, err
 	}
 	defer releaseLock()
-	if capacityErr := checkSpoolCapacity(options, maxDocumentBytes); capacityErr != nil {
+	if capacityErr := checkSpoolCapacity(options); capacityErr != nil {
 		return nil, capacityErr
 	}
 
@@ -351,7 +351,7 @@ func ScavengeSpoolDirectory(directory string, staleBefore time.Time) (int, error
 	return removed, nil
 }
 
-func checkSpoolCapacity(options PrepareOptions, maxDocumentBytes int64) error {
+func checkSpoolCapacity(options PrepareOptions) error {
 	entries, err := os.ReadDir(options.Directory)
 	if err != nil {
 		return fmt.Errorf("read Mistral OCR spool usage: %w", err)
@@ -370,7 +370,7 @@ func checkSpoolCapacity(options PrepareOptions, maxDocumentBytes int64) error {
 		}
 		used += info.Size()
 	}
-	if used > options.MaxSpoolBytes-options.ExpectedSize || options.ExpectedSize > maxDocumentBytes {
+	if used > options.MaxSpoolBytes-options.ExpectedSize {
 		return fmt.Errorf("%w: mistral OCR spool quota is exhausted", ErrSpoolCapacity)
 	}
 	available, err := availableDiskBytes(options.Directory)

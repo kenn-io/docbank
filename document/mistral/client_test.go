@@ -113,6 +113,22 @@ func TestClientRejectsChangedReleasedAndCrossPolicyDocumentsBeforeUpload(t *test
 	_, err = client.Process(t.Context(), released, authorization)
 	require.ErrorContains(t, err, "released")
 
+	docx, found := CandidateFormatByID("docx")
+	require.True(t, found)
+	_, err = client.Process(t.Context(), prepareTestDocument(t, policy, testPDF("format")), FormatAuthorization{
+		format: docx, method: UnitBoundProviderRequest,
+		policyFingerprint: authorization.policyFingerprint, policyDigest: policy.digest,
+	})
+	require.ErrorContains(t, err, "detected format does not match authorization")
+
+	localOverflow := prepareTestDocument(t, policy, testPDF("local-overflow"))
+	localOverflow.localUnits = policy.values.MaxUnits + 1
+	_, err = client.Process(t.Context(), localOverflow, FormatAuthorization{
+		format: authorization.format, method: UnitBoundLocalExact,
+		policyFingerprint: authorization.policyFingerprint, policyDigest: policy.digest,
+	})
+	require.ErrorContains(t, err, "local unit count")
+
 	otherPolicy := testPolicy(t, 1024, 9)
 	_, err = client.Process(t.Context(), prepareTestDocument(t, policy, testPDF("policy")), FormatAuthorization{
 		format: authorization.format, method: authorization.method,
@@ -461,6 +477,44 @@ func newServerClient(t *testing.T, server *httptest.Server, policy Policy, confi
 func TestNewClientRequiresAPIKey(t *testing.T) {
 	_, err := NewClient(testPolicy(t, 1024, 10), ClientConfig{})
 	require.ErrorContains(t, err, "API key is required")
+}
+
+func TestNewClientValidatesAndAppliesTransportBounds(t *testing.T) {
+	policy := testPolicy(t, 1024, 10)
+	tests := []struct {
+		name   string
+		config ClientConfig
+		want   string
+	}{
+		{name: "negative timeout", config: ClientConfig{Timeout: -time.Second}, want: "timeout"},
+		{name: "timeout above cap", config: ClientConfig{Timeout: hardMaxTimeout + time.Second}, want: "timeout"},
+		{name: "negative retries", config: ClientConfig{MaxRetries: -1}, want: "max retries"},
+		{name: "retries above cap", config: ClientConfig{MaxRetries: hardMaxRetries + 1}, want: "max retries"},
+		{name: "negative retry delay", config: ClientConfig{MaxRetryDelay: -time.Second}, want: "retry delay"},
+		{name: "retry delay above cap", config: ClientConfig{MaxRetryDelay: hardMaxRetryDelay + time.Second}, want: "retry delay"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			test.config.APIKey = "synthetic-key"
+			_, err := NewClient(policy, test.config)
+			require.ErrorContains(t, err, test.want)
+		})
+	}
+
+	client, err := NewClient(policy, ClientConfig{
+		APIKey: "synthetic-key", HTTPClient: &http.Client{},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, defaultMaxRetries, client.maxRetries)
+	assert.Equal(t, defaultMaxRetryDelay, client.maxRetryDelay)
+	assert.Equal(t, defaultTimeout, client.http.Timeout)
+
+	client, err = NewClient(policy, ClientConfig{
+		APIKey: "synthetic-key", Timeout: time.Minute,
+		HTTPClient: &http.Client{Timeout: 10 * time.Minute},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, time.Minute, client.http.Timeout)
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

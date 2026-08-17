@@ -156,6 +156,67 @@ func TestPrepareDoesNotPublishAfterCancellationFollowingCopy(t *testing.T) {
 	requireOnlySpoolReservationFile(t, directory)
 }
 
+func TestPrepareCancellationDuringCopyRemovesPartialFileAndClosesSource(t *testing.T) {
+	content := testPDF("cancel-during-copy")
+	digest := sha256.Sum256(content)
+	policy := testPolicy(t, 1024, 10)
+	directory := filepath.Join(t.TempDir(), "spool")
+	makePrivateDirectory(t, directory)
+	ctx, cancel := context.WithCancel(t.Context())
+	source := &observedReadCloser{Reader: &cancelingReader{content: content, cancel: cancel}}
+
+	prepared, err := Prepare(ctx, source, policy, PrepareOptions{
+		Directory: directory, DeclaredMediaType: mediaTypePDF,
+		ExpectedSize: int64(len(content)), ExpectedSHA256: hex.EncodeToString(digest[:]),
+		MaxSpoolBytes: 2048, MinFreeBytes: 1,
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Nil(t, prepared)
+	assert.True(t, source.closed)
+	requireOnlySpoolReservationFile(t, directory)
+}
+
+func TestPrepareSerializesQuotaReservations(t *testing.T) {
+	content := testPDF("serialized")
+	digest := sha256.Sum256(content)
+	directory := filepath.Join(t.TempDir(), "spool")
+	makePrivateDirectory(t, directory)
+	policy := testPolicy(t, int64(len(content)), 10)
+	options := PrepareOptions{
+		Directory: directory, DeclaredMediaType: mediaTypePDF,
+		ExpectedSize: int64(len(content)), ExpectedSHA256: hex.EncodeToString(digest[:]),
+		MaxSpoolBytes: int64(len(content)), MinFreeBytes: 1,
+	}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	firstResult := make(chan prepareCallResult, 1)
+	go func() {
+		prepared, err := Prepare(t.Context(), &gatedReadCloser{
+			Reader: bytes.NewReader(content), entered: entered, release: release,
+		}, policy, options)
+		firstResult <- prepareCallResult{prepared: prepared, err: err}
+	}()
+	<-entered
+	secondResult := make(chan prepareCallResult, 1)
+	go func() {
+		prepared, err := Prepare(t.Context(), io.NopCloser(bytes.NewReader(content)), policy, options)
+		secondResult <- prepareCallResult{prepared: prepared, err: err}
+	}()
+	select {
+	case result := <-secondResult:
+		close(release)
+		t.Fatalf("second preparation returned before the first reservation completed: %v", result.err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	first := <-firstResult
+	require.NoError(t, first.err)
+	t.Cleanup(func() { require.NoError(t, first.prepared.Release()) })
+	second := <-secondResult
+	require.ErrorIs(t, second.err, ErrSpoolCapacity)
+	assert.Nil(t, second.prepared)
+}
+
 func TestPrepareClassifiesCapacityRefusals(t *testing.T) {
 	content := testPDF("synthetic")
 	digest := sha256.Sum256(content)
@@ -231,4 +292,44 @@ func TestScavengeSpoolDirectoryRemovesOnlyStalePackageFilesAndFailsClosed(t *tes
 	require.ErrorContains(t, err, "unsafe entry")
 	assert.FileExists(t, live)
 	assert.FileExists(t, unrelated)
+}
+
+type cancelingReader struct {
+	content []byte
+	cancel  context.CancelFunc
+	read    bool
+}
+
+func (reader *cancelingReader) Read(buffer []byte) (int, error) {
+	if reader.read {
+		return 0, io.EOF
+	}
+	reader.read = true
+	buffer[0] = reader.content[0]
+	reader.cancel()
+	return 1, nil
+}
+
+type gatedReadCloser struct {
+	io.Reader
+
+	entered chan<- struct{}
+	release <-chan struct{}
+	once    bool
+}
+
+func (reader *gatedReadCloser) Read(buffer []byte) (int, error) {
+	if !reader.once {
+		reader.once = true
+		close(reader.entered)
+		<-reader.release
+	}
+	return reader.Reader.Read(buffer)
+}
+
+func (*gatedReadCloser) Close() error { return nil }
+
+type prepareCallResult struct {
+	prepared *PreparedDocument
+	err      error
 }

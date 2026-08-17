@@ -8,6 +8,7 @@ import (
 const (
 	mediaTypeJSON = "application/json"
 	mediaTypePDF  = "application/pdf"
+	formatIDPDF   = "pdf"
 )
 
 // CandidateFormat describes one locally detectable document format. A
@@ -20,7 +21,7 @@ type CandidateFormat struct {
 }
 
 var candidateFormats = []CandidateFormat{
-	{ID: "pdf", Family: "pdf", MediaType: mediaTypePDF, UnitKind: "page"},
+	{ID: formatIDPDF, Family: formatIDPDF, MediaType: mediaTypePDF, UnitKind: "page"},
 	{ID: "docx", Family: "word", MediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", UnitKind: "page"},
 	{ID: "doc", Family: "word", MediaType: "application/msword", UnitKind: "page"},
 	{ID: "odt", Family: "word", MediaType: "application/vnd.oasis.opendocument.text", UnitKind: "page"},

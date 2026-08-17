@@ -6,14 +6,9 @@ import (
 	"time"
 )
 
-const (
-	// defaultMaxRetryAfter caps exponential retry delays and is the safe
-	// default for callers that do not provide a provider-specific cap.
-	defaultMaxRetryAfter = 60 * time.Second
-	// providerMaxRetryAfter is the finite cap for providers that can return
-	// meaningful throttling windows longer than one minute.
-	providerMaxRetryAfter = 15 * time.Minute
-)
+// defaultMaxRetryAfter caps exponential retry delays and is the safe default
+// for callers that do not provide a smaller cap.
+const defaultMaxRetryAfter = 60 * time.Second
 
 const maxDuration = time.Duration(1<<63 - 1)
 

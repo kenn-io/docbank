@@ -67,7 +67,7 @@ func DetectFormat(reader io.ReaderAt, size int64, declaredMediaType string) (Can
 	switch {
 	case bytes.HasPrefix(prefix, []byte("%PDF-")):
 		if err = validatePDFStructure(reader, size, prefix); err == nil {
-			detected, _ = CandidateFormatByID("pdf")
+			detected, _ = CandidateFormatByID(formatIDPDF)
 		}
 	case bytes.HasPrefix(prefix, []byte(`{\rtf`)):
 		detected, _ = CandidateFormatByID("rtf")

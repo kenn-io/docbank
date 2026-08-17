@@ -20,7 +20,8 @@ func TestPublicLocalWorkflow(t *testing.T) {
 	normalization, err := document.NewNormalizePolicy(100_000)
 	require.NoError(t, err)
 	policy, err := mistral.NewPolicy(mistral.PolicyConfig{
-		Region: "eu", Model: "mistral-ocr-4-0", Retention: "zdr", Training: "opted-out",
+		Region: mistral.RegionEU, Model: mistral.DefaultModel,
+		Retention: mistral.RetentionZDR, Training: mistral.TrainingOptedOut,
 		MaxDocumentBytes: 1024, MaxResponseBytes: 1 << 20, MaxUnits: 10,
 		ExtractHeader: true, ExtractFooter: true, NormalizePolicy: normalization,
 	})
@@ -28,6 +29,8 @@ func TestPublicLocalWorkflow(t *testing.T) {
 	assert.Equal(t, "https://api.eu.mistral.ai/v1/ocr", policy.Values().Endpoint)
 	assert.Equal(t, normalization.Identity(), policy.NormalizePolicy().Identity())
 	require.Len(t, mistral.CandidateFormats(), 26)
+	_, err = policy.Authorize(mistral.CapabilityManifest{}, "pdf")
+	require.ErrorContains(t, err, "run the authenticated capability probe and supply its manifest")
 
 	content := externalTestPDF()
 	digest := sha256.Sum256(content)

@@ -127,3 +127,72 @@ func TestCapabilityManifestDecodingIsStrictAndBounded(t *testing.T) {
 	unsafe.Results[1].UnitsProcessed = 0
 	require.ErrorContains(t, unsafe.ValidateComplete(), "not scrubbed")
 }
+
+func TestCapabilityManifestRejectsInvalidAuthorityEvidence(t *testing.T) {
+	policy := testPolicy(t, 1<<20, 10)
+	tests := []struct {
+		name   string
+		mutate func(*CapabilityManifest)
+		want   string
+	}{
+		{name: "old schema", mutate: func(manifest *CapabilityManifest) { manifest.SchemaVersion-- }, want: "schema must be"},
+		{name: "old fixture contract", mutate: func(manifest *CapabilityManifest) { manifest.ProbeFixtureContract-- }, want: "fixture contract must be"},
+		{name: "future observation", mutate: func(manifest *CapabilityManifest) { manifest.ObservedOn = "2999-01-01" }, want: "invalid observation date"},
+		{name: "target mismatch", mutate: func(manifest *CapabilityManifest) { manifest.Endpoint = "https://example.invalid/v1/ocr" }, want: "not pinned"},
+		{name: "unit limit", mutate: func(manifest *CapabilityManifest) { manifest.MaxUnits = 1 }, want: "invalid unit limit"},
+		{name: "partial matrix", mutate: func(manifest *CapabilityManifest) { manifest.Results = manifest.Results[:len(manifest.Results)-1] }, want: "results"},
+		{name: "reordered matrix", mutate: func(manifest *CapabilityManifest) {
+			manifest.Results[0], manifest.Results[1] = manifest.Results[1], manifest.Results[0]
+		}, want: "does not match"},
+		{name: "fixture count mismatch", mutate: func(manifest *CapabilityManifest) { manifest.Results[0].FixtureUnits++ }, want: "provider-request bound evidence"},
+		{name: "zero requested units", mutate: func(manifest *CapabilityManifest) { manifest.Results[0].BoundRequestedUnits = 0 }, want: "provider-request bound evidence"},
+		{name: "request not below fixture", mutate: func(manifest *CapabilityManifest) {
+			manifest.Results[0].BoundRequestedUnits = manifest.Results[0].FixtureUnits
+		}, want: "provider-request bound evidence"},
+		{name: "fixture reaches authority", mutate: func(manifest *CapabilityManifest) {
+			manifest.Results[0].FixtureUnits = manifest.MaxUnits
+			manifest.Results[0].UnitCount = manifest.MaxUnits
+			manifest.Results[0].UnitsProcessed = manifest.MaxUnits
+		}, want: "provider-request bound evidence"},
+		{name: "processed bound mismatch", mutate: func(manifest *CapabilityManifest) { manifest.Results[0].BoundUnitsProcessed++ }, want: "provider-request bound evidence"},
+		{name: "local exact without claim", mutate: func(manifest *CapabilityManifest) {
+			manifest.Results[1].UnitBoundMethod = UnitBoundLocalExact
+			manifest.Results[1].LocalUnits = manifest.Results[1].UnitsProcessed
+		}, want: "local-exact bound evidence"},
+		{name: "provider bound without claim", mutate: func(manifest *CapabilityManifest) {
+			manifest.Results[1].UnitBoundMethod = UnitBoundProviderRequest
+			manifest.Results[1].FixtureUnits = 2
+			manifest.Results[1].UnitCount = 2
+			manifest.Results[1].UnitsProcessed = 2
+			manifest.Results[1].BoundRequestedUnits = 1
+			manifest.Results[1].BoundUnitsProcessed = 1
+		}, want: "provider-request bound evidence"},
+		{name: "none with observations", mutate: func(manifest *CapabilityManifest) {
+			manifest.Results[0].UnitBoundMethod = UnitBoundNone
+			manifest.Results[0].ReasonCode = reasonBoundUnitsMismatch
+		}, want: "observations without a unit bound"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			manifest := syntheticManifest(t, policy, true)
+			test.mutate(&manifest)
+			require.ErrorContains(t, manifest.ValidateComplete(), test.want)
+		})
+	}
+}
+
+func TestPolicyRejectsIdentityBeyondManifestAuthority(t *testing.T) {
+	policy := testPolicy(t, 1<<20, 10)
+	manifestPolicy := testPolicy(t, 1<<20, 9)
+	manifest := syntheticManifest(t, manifestPolicy, true)
+
+	_, err := policy.CanonicalJSON(manifest)
+	require.ErrorContains(t, err, "unit limit 10 exceeds capability manifest authority 9")
+	_, err = policy.Authorize(manifest, "pdf")
+	require.ErrorContains(t, err, "unit limit 10 exceeds capability manifest authority 9")
+	assert.NotContains(t, err.Error(), "run the authenticated capability probe")
+
+	_, err = policy.Authorize(syntheticManifest(t, policy, true), "unknown")
+	require.ErrorContains(t, err, `format "unknown" is unknown`)
+	assert.NotContains(t, err.Error(), "run the authenticated capability probe")
+}

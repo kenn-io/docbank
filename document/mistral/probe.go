@@ -125,7 +125,7 @@ func observeUnitBound(
 		return
 	case UnitBoundProviderRequest:
 		if result.UnitCount <= 1 || result.UnitCount >= client.policy.values.MaxUnits {
-			result.ReasonCode = reasonBoundUnverified
+			result.ReasonCode = reasonBoundFixtureOutOfRange
 			return
 		}
 		requested := result.UnitCount - 1
@@ -135,8 +135,16 @@ func observeUnitBound(
 			ExtractFooter: client.policy.values.ExtractFooter,
 		}
 		bounded, err := client.process(ctx, fixture.snapshot, options, UnitBoundProviderRequest, requested)
-		if err != nil || bounded.UnitsProcessed != requested || len(bounded.Document.Units) != requested {
-			result.ReasonCode = reasonBoundUnverified
+		if err != nil {
+			if errors.Is(err, ErrCapabilityContract) {
+				result.ReasonCode = reasonBoundUnitsMismatch
+			} else {
+				result.ReasonCode = reasonBoundRequestFailed
+			}
+			return
+		}
+		if bounded.UnitsProcessed != requested || len(bounded.Document.Units) != requested {
+			result.ReasonCode = reasonBoundUnitsMismatch
 			return
 		}
 		result.UnitBoundMethod = UnitBoundProviderRequest
@@ -145,8 +153,12 @@ func observeUnitBound(
 		result.BoundUnitsProcessed = bounded.UnitsProcessed
 	case UnitBoundLocalExact:
 		snapshot, err := fixture.snapshot()
-		if err != nil || snapshot.localUnits <= 0 || snapshot.localUnits != result.UnitsProcessed {
-			result.ReasonCode = reasonBoundUnverified
+		if err != nil {
+			result.ReasonCode = reasonBoundRequestFailed
+			return
+		}
+		if snapshot.localUnits <= 0 || snapshot.localUnits != result.UnitsProcessed {
+			result.ReasonCode = reasonBoundUnitsMismatch
 			return
 		}
 		result.UnitBoundMethod = UnitBoundLocalExact

@@ -12,10 +12,25 @@ import (
 )
 
 const (
-	defaultProvider = "mistral"
-	defaultRegion   = "eu"
-	defaultEndpoint = "https://api.eu.mistral.ai/v1/ocr"
-	defaultModel    = "mistral-ocr-4-0"
+	defaultProvider        = "mistral"
+	defaultEndpoint        = "https://api.eu.mistral.ai/v1/ocr"
+	canonicalPolicyVersion = 1
+
+	// RegionEU is the supported Mistral processing region.
+	RegionEU = "eu"
+	// DefaultModel is the package-pinned Mistral OCR model.
+	DefaultModel = "mistral-ocr-4-0"
+	// RetentionStandard identifies Mistral's standard retention posture.
+	RetentionStandard = "standard"
+	// RetentionZDR identifies Mistral's zero-data-retention posture.
+	RetentionZDR = "zdr"
+	// TrainingDefaultOptOut identifies Mistral's default training opt-out posture.
+	TrainingDefaultOptOut = "default-opt-out"
+	// TrainingOptedOut identifies an explicit training opt-out posture.
+	TrainingOptedOut = "opted-out"
+
+	defaultRegion = RegionEU
+	defaultModel  = DefaultModel
 
 	hardMaxDocumentBytes = int64(500 << 20)
 	hardMaxResponseBytes = int64(512 << 20)
@@ -65,10 +80,10 @@ func NewPolicy(config PolicyConfig) (Policy, error) {
 	if !available {
 		return Policy{}, fmt.Errorf("mistral OCR model %q is unavailable in region %q", config.Model, config.Region)
 	}
-	if !slices.Contains([]string{"standard", "zdr"}, config.Retention) {
+	if !slices.Contains([]string{RetentionStandard, RetentionZDR}, config.Retention) {
 		return Policy{}, errors.New("mistral policy retention posture must be known")
 	}
-	if !slices.Contains([]string{"default-opt-out", "opted-out"}, config.Training) {
+	if !slices.Contains([]string{TrainingDefaultOptOut, TrainingOptedOut}, config.Training) {
 		return Policy{}, errors.New("mistral policy training posture must be known")
 	}
 	if config.MaxDocumentBytes <= 0 || config.MaxDocumentBytes > hardMaxDocumentBytes ||
@@ -146,10 +161,15 @@ func (p Policy) CanonicalJSON(manifest CapabilityManifest) ([]byte, error) {
 		manifest.RequestedModel != p.values.Model {
 		return nil, errors.New("mistral policy and capability target differ")
 	}
+	if p.values.MaxUnits > manifest.MaxUnits {
+		return nil, fmt.Errorf(
+			"mistral policy unit limit %d exceeds capability manifest authority %d",
+			p.values.MaxUnits, manifest.MaxUnits,
+		)
+	}
 	authorities := make([]capabilityIdentity, 0, len(manifest.Results))
 	for index, result := range manifest.Results {
-		if result.Status != ProbeStatusPassed || result.UnitBoundMethod == UnitBoundNone ||
-			p.values.MaxUnits > manifest.MaxUnits {
+		if result.Status != ProbeStatusPassed || result.UnitBoundMethod == UnitBoundNone {
 			continue
 		}
 		candidate := candidateFormats[index]
@@ -174,7 +194,7 @@ func (p Policy) CanonicalJSON(manifest CapabilityManifest) ([]byte, error) {
 		return 0
 	})
 	return json.Marshal(canonicalPolicy{
-		Version: 1, Provider: p.values.Provider, Endpoint: p.values.Endpoint, Region: p.values.Region,
+		Version: canonicalPolicyVersion, Provider: p.values.Provider, Endpoint: p.values.Endpoint, Region: p.values.Region,
 		Model: p.values.Model, Retention: p.values.Retention, Training: p.values.Training,
 		MaxDocumentBytes: p.values.MaxDocumentBytes, MaxResponseBytes: p.values.MaxResponseBytes,
 		MaxUnits: p.values.MaxUnits, ExtractHeader: p.values.ExtractHeader, ExtractFooter: p.values.ExtractFooter,
@@ -218,11 +238,17 @@ func (p Policy) Authorize(manifest CapabilityManifest, formatID string) (FormatA
 	}
 	candidate, ok := CandidateFormatByID(formatID)
 	if !ok {
-		return FormatAuthorization{}, noUploadAuthority(fmt.Errorf("unknown format %q", formatID))
+		return FormatAuthorization{}, fmt.Errorf("mistral format %q is unknown", formatID)
 	}
 	if manifest.Endpoint != p.values.Endpoint || manifest.Region != p.values.Region ||
-		manifest.RequestedModel != p.values.Model || p.values.MaxUnits > manifest.MaxUnits {
-		return FormatAuthorization{}, noUploadAuthority(errors.New("policy exceeds the manifest target or unit authority"))
+		manifest.RequestedModel != p.values.Model {
+		return FormatAuthorization{}, errors.New("mistral policy target differs from capability manifest")
+	}
+	if p.values.MaxUnits > manifest.MaxUnits {
+		return FormatAuthorization{}, fmt.Errorf(
+			"mistral policy unit limit %d exceeds capability manifest authority %d",
+			p.values.MaxUnits, manifest.MaxUnits,
+		)
 	}
 	var result CapabilityResult
 	for _, candidateResult := range manifest.Results {

@@ -1,6 +1,7 @@
 package mistral
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
@@ -15,14 +16,14 @@ import (
 
 var generatedFixtureDigests = map[string]string{
 	"pdf":        "37dfbd5a319fb1a314fbf6f792799cb37cc43940cdbf6d73e1fa6657204f0385",
-	"docx":       "864408fffca736097f97ea6c721f577f4140228a55d600b9ecf5843f13ebddb6",
-	"odt":        "20e2fb2083a4123bf8066eeacee47c1d99a40aae8366ac0facc89270c2c2c85e",
+	"docx":       "515d4d11ec9277822a9f69da288abe893ecb3503fe64f7bd90d1d669a3ce52fb",
+	"odt":        "175ef7a4d447c7103acac3b6764b982f18b296e8994f24aba8f9120fa3a9cede",
 	"rtf":        "48c33dd0eac495ef688eb8d90ae07d55cc6e5af63a6d4f03bef58bc502101fba",
-	"pptx":       "db6243fd2f4a02aeecd1c30d59fdab6d576702f8cf234145ebbbecc93fac3522",
-	"xlsx":       "cf9950bc9c55f311ae2f734e6f40a4d70579d068de193add2f029d63ad370180",
-	"ods":        "05319a38862c4e5b0cecf4901c28eee710cb58d8510cd5b201ba8bf431a6451e",
+	"pptx":       "8f149d53017fe6c67b77b5ec0c93902789021a6fb886903dc429843764bfd410",
+	"xlsx":       "d3c1315115fe13eb442f4d0f0ae6ba78f79ce8396b5c51e85e88173ca1638c95",
+	"ods":        "3560ad90cf19b840fb61e80a13dff89447062dbd8be7d14b8f758fb799579648",
 	"csv":        "45f98e97a73320c3c81264e33ab99372946b2462003ffc3e3fc1961f9c796447",
-	"epub":       "5e56ec7771e11aef7cd34b53fd97af1a902b14276ad8522c551c609aa9f66c54",
+	"epub":       "5571a2f59a50d0ab2278ea38115df578652d05aca6c3c81170b1460253cb9065",
 	"txt":        "347eafb267551bfd505b02f14ea30b5a20ce755144e0d611dff2e84205b3da91",
 	"markdown":   "523f4d9f98dfa8d0e57368f47c0d0d6178b9649b7ac335c97ccaea6859312352",
 	"rst":        "42741fb7dc5f89a2129fbf5fe4007c0e2f6e16b395cedab491341f8f28b24dc5",
@@ -69,6 +70,12 @@ func TestWriteProbeFixturesPublishesCompleteDeterministicMatrix(t *testing.T) {
 			firstDigest := fileDigest(firstPath)
 			assert.Equal(t, generatedFixtureDigests[candidate.ID], firstDigest, candidate.ID)
 			assert.Equal(t, firstDigest, fileDigest(secondPath), candidate.ID)
+		} else {
+			seed, err := os.ReadFile(filepath.Join(seeds, candidate.ID))
+			require.NoError(t, err)
+			copied, err := os.ReadFile(firstPath)
+			require.NoError(t, err)
+			assert.Equal(t, seed, copied, candidate.ID)
 		}
 	}
 	if runtime.GOOS != "windows" {
@@ -106,6 +113,16 @@ func TestWriteProbeFixturesRefusesSymlinkSeed(t *testing.T) {
 
 	err := WriteProbeFixtures(t.Context(), destination, FixtureOptions{SeedDirectory: seeds})
 	require.ErrorContains(t, err, `copy fixture seed "doc"`)
+	assert.NoDirExists(t, destination)
+}
+
+func TestWriteProbeFixturesCancellationLeavesNoDestination(t *testing.T) {
+	destination := newProbeFixtureDestination(t, "fixtures")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	err := WriteProbeFixtures(ctx, destination, FixtureOptions{SeedDirectory: writeNativeSeeds(t)})
+	require.ErrorIs(t, err, context.Canceled)
 	assert.NoDirExists(t, destination)
 }
 

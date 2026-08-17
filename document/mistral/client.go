@@ -169,7 +169,9 @@ func NewClient(policy Policy, config ClientConfig) (*Client, error) {
 }
 
 // Process verifies an opaque staged document and its capability authorization
-// before sending bytes.
+// before sending bytes. Each request attempt holds one immutable in-memory copy
+// up to PolicyValues.MaxDocumentBytes, so applications must bound concurrent
+// calls according to their memory budget.
 func (c *Client) Process(
 	ctx context.Context,
 	prepared *PreparedDocument,
@@ -530,9 +532,6 @@ func readVerifiedDocument(ctx context.Context, snapshot preparedSnapshot) ([]byt
 	}
 	if openedInfo.Size() != snapshot.size {
 		return nil, errors.New("mistral OCR spool size changed")
-	}
-	if snapshot.size > hardMaxDocumentBytes {
-		return nil, errors.New("mistral OCR spool exceeds package byte limit")
 	}
 	contents := make([]byte, int(snapshot.size))
 	contextFile := &contextReader{ctx: ctx, reader: file}

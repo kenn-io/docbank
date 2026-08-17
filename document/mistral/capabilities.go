@@ -39,7 +39,17 @@ const (
 	ProbeStatusFailed   ProbeStatus = "probe_failed"
 )
 
-const reasonBoundUnverified = "bound_unverified"
+const (
+	reasonBoundFixtureOutOfRange = "bound_fixture_out_of_range"
+	reasonBoundRequestFailed     = "bound_request_failed"
+	reasonBoundUnitsMismatch     = "bound_units_mismatch"
+)
+
+var boundUnverifiedReasonCodes = []string{
+	reasonBoundFixtureOutOfRange,
+	reasonBoundRequestFailed,
+	reasonBoundUnitsMismatch,
+}
 
 var failureReasonCodes = []string{
 	"empty_output",
@@ -51,7 +61,7 @@ var failureReasonCodes = []string{
 }
 
 var expectedUnitBounds = map[string]UnitBoundMethod{
-	"pdf": UnitBoundProviderRequest,
+	formatIDPDF: UnitBoundProviderRequest,
 }
 
 func expectedUnitBound(formatID string) UnitBoundMethod {
@@ -179,7 +189,7 @@ func validateCapabilityResult(manifest CapabilityManifest, candidate CandidateFo
 		if expectedMethod == UnitBoundNone && result.ReasonCode != "" {
 			return fmt.Errorf("mistral capability manifest result %q has an unexpected reason", candidate.ID)
 		}
-		if expectedMethod != UnitBoundNone && result.ReasonCode != reasonBoundUnverified {
+		if expectedMethod != UnitBoundNone && !slices.Contains(boundUnverifiedReasonCodes, result.ReasonCode) {
 			return fmt.Errorf("mistral capability manifest result %q does not explain its unverified bound", candidate.ID)
 		}
 	default:
@@ -334,7 +344,7 @@ func requestFingerprintForTarget(
 
 func probeRequestOptions(candidate CandidateFormat, maxUnits int, extractHeader, extractFooter bool) requestOptions {
 	options := requestOptions{ExtractHeader: extractHeader, ExtractFooter: extractFooter}
-	if candidate.Family == "pdf" {
+	if candidate.Family == formatIDPDF {
 		options.Pages = fmt.Sprintf("0-%d", maxUnits-1)
 	}
 	return options

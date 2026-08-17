@@ -28,9 +28,8 @@ const openDocumentStyles = `<office:document-styles xmlns:office="urn:oasis:name
 var nativeSeedFormats = []string{"doc", "ppt", "xls", "numbers", "msg"}
 
 type zipEntry struct {
-	name   string
-	value  string
-	stored bool
+	name  string
+	value string
 }
 
 // FixtureOptions identifies the optional directory containing synthetic native
@@ -244,7 +243,7 @@ func generatedFixture(id string) ([]byte, bool, error) {
 	}
 	xmlSentinel := escapeXML(sentinel)
 	switch id {
-	case "pdf":
+	case formatIDPDF:
 		return pdfFixture(sentinel), true, nil
 	case "docx":
 		return zipFixture([]zipEntry{
@@ -254,7 +253,7 @@ func generatedFixture(id string) ([]byte, bool, error) {
 		})
 	case "odt":
 		return zipFixture([]zipEntry{
-			{name: "mimetype", value: "application/vnd.oasis.opendocument.text", stored: true},
+			{name: "mimetype", value: "application/vnd.oasis.opendocument.text"},
 			{name: "META-INF/manifest.xml", value: `<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.3"><manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.text"/><manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/><manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/></manifest:manifest>`},
 			{name: "content.xml", value: `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.3"><office:body><office:text><text:p>` + xmlSentinel + `</text:p></office:text></office:body></office:document-content>`},
 			{name: "styles.xml", value: openDocumentStyles},
@@ -279,7 +278,7 @@ func generatedFixture(id string) ([]byte, bool, error) {
 		})
 	case "ods":
 		return zipFixture([]zipEntry{
-			{name: "mimetype", value: "application/vnd.oasis.opendocument.spreadsheet", stored: true},
+			{name: "mimetype", value: "application/vnd.oasis.opendocument.spreadsheet"},
 			{name: "META-INF/manifest.xml", value: `<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.3"><manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.spreadsheet"/><manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/><manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/></manifest:manifest>`},
 			{name: "content.xml", value: `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.3"><office:body><office:spreadsheet><table:table table:name="Probe"><table:table-row><table:table-cell office:value-type="string"><text:p>` + xmlSentinel + `</text:p></table:table-cell></table:table-row></table:table></office:spreadsheet></office:body></office:document-content>`},
 			{name: "styles.xml", value: openDocumentStyles},
@@ -288,7 +287,7 @@ func generatedFixture(id string) ([]byte, bool, error) {
 		return []byte("kind,value\nprobe,\"" + sentinel + "\"\n"), true, nil
 	case "epub":
 		return zipFixture([]zipEntry{
-			{name: "mimetype", value: "application/epub+zip", stored: true},
+			{name: "mimetype", value: "application/epub+zip"},
 			{name: "META-INF/container.xml", value: `<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`},
 			{name: "OEBPS/content.opf", value: `<?xml version="1.0"?><package version="3.0" unique-identifier="id" xmlns="http://www.idpf.org/2007/opf"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">urn:uuid:00000000-0000-0000-0000-000000000001</dc:identifier><dc:title>Probe</dc:title><dc:language>en</dc:language></metadata><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>`},
 			{name: "OEBPS/chapter.xhtml", value: `<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Probe</title></head><body><p>` + xmlSentinel + `</p></body></html>`},
@@ -330,25 +329,16 @@ func zipFixture(entries []zipEntry) ([]byte, bool, error) {
 	for _, entry := range entries {
 		header := &zip.FileHeader{
 			Name:         entry.name,
-			Method:       zip.Deflate,
+			Method:       zip.Store,
 			ModifiedDate: zipEpochDate,
 		}
 		value := []byte(entry.value)
-		if entry.stored {
-			header.Method = zip.Store
-			header.CRC32 = crc32.ChecksumIEEE(value)
-			header.CompressedSize64 = uint64(len(value))
-			header.UncompressedSize64 = uint64(len(value))
-		}
-		var part io.Writer
-		var err error
-		if entry.stored {
-			// CreateRaw avoids a data descriptor and keeps package-mandated
-			// first mimetype entries stored with no extra fields.
-			part, err = writer.CreateRaw(header)
-		} else {
-			part, err = writer.CreateHeader(header)
-		}
+		header.CRC32 = crc32.ChecksumIEEE(value)
+		header.CompressedSize64 = uint64(len(value))
+		header.UncompressedSize64 = uint64(len(value))
+		// CreateRaw avoids data descriptors and keeps fixture bytes independent
+		// of the standard library's compression implementation.
+		part, err := writer.CreateRaw(header)
 		if err != nil {
 			return nil, false, fmt.Errorf("create fixture ZIP entry %q: %w", entry.name, err)
 		}

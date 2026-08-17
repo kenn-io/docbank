@@ -59,7 +59,7 @@ func syntheticManifest(t *testing.T, policy Policy, pdfBound bool) CapabilityMan
 				result.BoundRequestedUnits = 1
 				result.BoundUnitsProcessed = 1
 			} else {
-				result.ReasonCode = reasonBoundUnverified
+				result.ReasonCode = reasonBoundUnitsMismatch
 			}
 		}
 		manifest.Results = append(manifest.Results, result)

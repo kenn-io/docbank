@@ -143,7 +143,8 @@ Unit-bound methods are:
 
 Each non-`none` value is backed by recorded probe observations. An unverified
 bound claim may retain successful extraction evidence while recording `none`
-and `bound_unverified`; it cannot produce an authorization.
+and a sanitized `bound_request_failed`, `bound_units_mismatch`, or
+`bound_fixture_out_of_range` reason; it cannot produce an authorization.
 
 Version 1 authorizes at most PDF because PDF has a provider-request page bound.
 Other formats may extract successfully during a probe but remain unauthorized
@@ -252,8 +253,10 @@ An injected HTTP client is shallow-copied. Its timeout is replaced when it is
 non-positive or greater than the configured attempt timeout. Each retry reopens
 the staged file, rechecks that it has not been released, and copies it into a
 request-local immutable buffer while verifying its hash. Only that snapshot is
-streamed to the provider. A successful response is accepted only after the
-complete request stream has been consumed.
+streamed to the provider. The buffer can be as large as `MaxDocumentBytes`, so
+applications include one such allocation per concurrent request in their
+memory budget. A successful response is accepted only after the complete
+request stream has been consumed.
 
 `ErrPermanentResponse` and `ErrResponseTooLarge` do not retry. Only
 `ErrTransientResponse` retries. Retry-After accepts bounded integer seconds,
