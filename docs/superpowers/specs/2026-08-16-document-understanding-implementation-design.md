@@ -249,7 +249,8 @@ Before every request, `Process` rejects:
 An injected HTTP client is shallow-copied. Its timeout is replaced when it is
 non-positive or greater than the configured attempt timeout. Each retry reopens
 the staged file and copies it into a request-local immutable buffer while
-verifying its hash. Only that snapshot is streamed to the provider.
+verifying its hash. Only that snapshot is streamed to the provider. A successful
+response is accepted only after the complete request stream has been consumed.
 
 `ErrPermanentResponse` and `ErrResponseTooLarge` do not retry. Only
 `ErrTransientResponse` retries. Retry-After accepts bounded integer seconds,
@@ -265,4 +266,6 @@ contract and probe observation.
 Private wire data is checked for model equality, response size, a nonempty page
 set, duplicate JSON object keys, complete and contiguous unit indices,
 source-unit dimension bounds, processed-unit consistency, byte accounting, and
-policy bounds before conversion to `document.SourceDocument`.
+policy bounds before conversion to `document.SourceDocument`. Pages are decoded
+incrementally and decoding stops before allocating or parsing an entry beyond
+the authorized unit limit.

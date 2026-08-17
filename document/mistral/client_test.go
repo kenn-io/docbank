@@ -150,6 +150,7 @@ func TestClientClassifiesResponsesAndDoesNotFollowRedirects(t *testing.T) {
 		{name: "invalid dimensions", status: http.StatusOK, response: `{"model":"mistral-ocr-4-0","pages":[{"index":0,"dimensions":{"dpi":-1}}],"usage_info":{"pages_processed":1}}`, contentType: "application/json", wantError: "invalid dimensions"},
 		{name: "usage mismatch", status: http.StatusOK, response: `{"model":"mistral-ocr-4-0","pages":[{"index":0}],"usage_info":{"pages_processed":0}}`, contentType: "application/json", wantError: "processed 0 units but returned 1"},
 		{name: "duplicate usage", status: http.StatusOK, response: `{"model":"mistral-ocr-4-0","pages":[{"index":0}],"usage_info":{"pages_processed":1},"usage_info":{}}`, contentType: "application/json", wantError: `duplicate JSON object key "usage_info"`},
+		{name: "duplicate page field", status: http.StatusOK, response: `{"model":"mistral-ocr-4-0","pages":[{"index":0,"index":1}],"usage_info":{"pages_processed":1}}`, contentType: "application/json", wantError: `duplicate JSON object key "index"`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -273,6 +274,35 @@ func TestClientUploadsVerifiedSnapshot(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestClientRejectsSuccessfulResponseForIncompleteUpload(t *testing.T) {
+	policy := testPolicy(t, 1024, 10)
+	prepared := prepareTestDocument(t, policy, testPDF("incomplete"))
+	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
+	require.NoError(t, err)
+	requests := 0
+	client, err := NewClient(policy, ClientConfig{
+		APIKey:     "synthetic-key",
+		MaxRetries: 1,
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			requests++
+			require.NoError(t, request.Body.Close())
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(testSuccessfulResponse)),
+				Request:    request,
+			}, nil
+		})},
+	})
+	require.NoError(t, err)
+
+	_, err = client.Process(t.Context(), prepared, authorization)
+	require.ErrorIs(t, err, ErrTransientResponse)
+	require.ErrorContains(t, err, "stream Mistral OCR request")
+	assert.Equal(t, 2, requests)
+	assert.Equal(t, 2, MetricsFromError(err).Requests)
+}
+
 func TestClientPreservesAccountingWhenRetriesExhaustOrWaitIsCanceled(t *testing.T) {
 	policy := testPolicy(t, 1024, 10)
 	prepared := prepareTestDocument(t, policy, testPDF("x"))
@@ -327,7 +357,7 @@ func TestClientRejectsProviderUnitContractDrift(t *testing.T) {
 		name string
 		body string
 	}{
-		{name: "returned pages", body: `{"model":"mistral-ocr-4-0","pages":[{"index":0},{"index":1},{"index":2},{"index":3}],"usage_info":{"pages_processed":4}}`},
+		{name: "returned pages", body: `{"model":"mistral-ocr-4-0","pages":[{"index":0},{"index":1},{"index":2},{"index":"not-decoded"}],"usage_info":{"pages_processed":4}}`},
 		{name: "reported usage", body: `{"model":"mistral-ocr-4-0","pages":[{"index":0},{"index":1},{"index":2}],"usage_info":{"pages_processed":4}}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {

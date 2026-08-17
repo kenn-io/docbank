@@ -266,9 +266,18 @@ func (c *Client) processOnce(
 	}
 
 	reader, streamDone := streamRequest(documentBytes, prefix, suffix)
+	var streamErr error
+	streamFinished := false
+	waitForStream := func() error {
+		if !streamFinished {
+			streamErr = <-streamDone
+			streamFinished = true
+		}
+		return streamErr
+	}
 	defer func() {
 		_ = reader.Close()
-		<-streamDone
+		_ = waitForStream()
 		clear(documentBytes)
 	}()
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.policy.values.Endpoint, reader)
@@ -299,6 +308,11 @@ func (c *Client) processOnce(
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return Result{}, "", true, latency, fmt.Errorf("mistral OCR unexpected HTTP %d", response.StatusCode)
 	}
+	if err := waitForStream(); err != nil {
+		return Result{}, "", true, latency, &transientError{
+			cause: fmt.Errorf("stream Mistral OCR request: %w", err),
+		}
+	}
 	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	if err != nil || mediaType != mediaTypeJSON {
 		return Result{}, "", true, latency, errors.New("mistral OCR returned non-JSON content type")
@@ -317,11 +331,8 @@ func (c *Client) processOnce(
 	if !utf8.Valid(body) {
 		return Result{}, "", true, latency, errors.New("mistral OCR response contains invalid UTF-8")
 	}
-	if err := rejectDuplicateJSONKeys(body, "mistral OCR response"); err != nil {
-		return Result{}, "", true, latency, fmt.Errorf("decode Mistral OCR response: %w", err)
-	}
-	var wire wireResult
-	if err := json.Unmarshal(body, &wire); err != nil {
+	wire, err := decodeWireResult(body, method, maxUnits)
+	if err != nil {
 		return Result{}, "", true, latency, fmt.Errorf("decode Mistral OCR response: %w", err)
 	}
 	if err := validateWireResult(wire, c.policy.values.Model, snapshot, method, maxUnits); err != nil {
@@ -364,26 +375,118 @@ func waitContext(ctx context.Context, delay time.Duration) error {
 	}
 }
 
-func streamRequest(documentBytes, prefix, suffix []byte) (*io.PipeReader, <-chan struct{}) {
+func streamRequest(documentBytes, prefix, suffix []byte) (*io.PipeReader, <-chan error) {
 	reader, writer := io.Pipe()
-	done := make(chan struct{})
+	done := make(chan error, 1)
 	go func() {
-		defer close(done)
-		if _, err := writer.Write(prefix); err != nil {
-			_ = writer.CloseWithError(err)
+		var streamErr error
+		defer func() {
+			_ = writer.CloseWithError(streamErr)
+			done <- streamErr
+			close(done)
+		}()
+		if _, streamErr = writer.Write(prefix); streamErr != nil {
 			return
 		}
 		encoder := base64.NewEncoder(base64.StdEncoding, writer)
-		_, err := io.Copy(encoder, bytes.NewReader(documentBytes))
-		if closeErr := encoder.Close(); err == nil {
-			err = closeErr
+		_, streamErr = io.Copy(encoder, bytes.NewReader(documentBytes))
+		if closeErr := encoder.Close(); streamErr == nil {
+			streamErr = closeErr
 		}
-		if err == nil {
-			_, err = writer.Write(suffix)
+		if streamErr == nil {
+			_, streamErr = writer.Write(suffix)
 		}
-		_ = writer.CloseWithError(err)
 	}()
 	return reader, done
+}
+
+func decodeWireResult(data []byte, method UnitBoundMethod, maxUnits int) (wireResult, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	opening, err := decoder.Token()
+	if err != nil {
+		return wireResult{}, err
+	}
+	if opening != json.Delim('{') {
+		return wireResult{}, errors.New("mistral OCR response must be a JSON object")
+	}
+
+	var result wireResult
+	keys := make(map[string]struct{})
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			return wireResult{}, err
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return wireResult{}, errors.New("mistral OCR response has a non-string JSON object key")
+		}
+		if !canonicalJSONKey(key) {
+			return wireResult{}, fmt.Errorf(
+				"mistral OCR response JSON object key %q must use lowercase ASCII", key,
+			)
+		}
+		if _, exists := keys[key]; exists {
+			return wireResult{}, fmt.Errorf("mistral OCR response has duplicate JSON object key %q", key)
+		}
+		keys[key] = struct{}{}
+		switch key {
+		case "model":
+			err = decoder.Decode(&result.Model)
+		case "pages":
+			result.Pages, err = decodeWirePages(decoder, method, maxUnits)
+		case "usage_info":
+			err = decoder.Decode(&result.UsageInfo)
+		default:
+			err = scanJSONValue(decoder, 1, "mistral OCR response")
+		}
+		if err != nil {
+			return wireResult{}, err
+		}
+	}
+	if _, err := decoder.Token(); err != nil {
+		return wireResult{}, err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return wireResult{}, errors.New("mistral OCR response has trailing JSON")
+	}
+	return result, nil
+}
+
+func decodeWirePages(
+	decoder *json.Decoder,
+	method UnitBoundMethod,
+	maxUnits int,
+) ([]wirePage, error) {
+	opening, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	if opening == nil {
+		return nil, nil
+	}
+	if opening != json.Delim('[') {
+		return nil, errors.New("mistral OCR response pages must be an array")
+	}
+	pages := make([]wirePage, 0, min(maxUnits, 16))
+	for decoder.More() {
+		if len(pages) == maxUnits {
+			if method == UnitBoundProviderRequest || method == UnitBoundLocalExact {
+				return nil, fmt.Errorf("provider returned more than %d authorized units: %w",
+					maxUnits, ErrCapabilityContract)
+			}
+			return nil, fmt.Errorf("mistral OCR response exceeds unit limit %d", maxUnits)
+		}
+		var page wirePage
+		if err := decoder.Decode(&page); err != nil {
+			return nil, err
+		}
+		pages = append(pages, page)
+	}
+	if _, err := decoder.Token(); err != nil {
+		return nil, err
+	}
+	return pages, nil
 }
 
 func readVerifiedDocument(ctx context.Context, snapshot preparedSnapshot) ([]byte, error) {
@@ -555,6 +658,9 @@ func providerNeutralResult(result wireResult, format CandidateFormat) Result {
 
 func (p *wirePage) UnmarshalJSON(data []byte) error {
 	*p = wirePage{}
+	if err := rejectDuplicateJSONKeys(data, "mistral OCR response"); err != nil {
+		return err
+	}
 	type pageJSON struct {
 		Index      *int           `json:"index"`
 		Markdown   string         `json:"markdown"`
@@ -579,6 +685,9 @@ func (p *wirePage) UnmarshalJSON(data []byte) error {
 
 func (u *wireUsage) UnmarshalJSON(data []byte) error {
 	*u = wireUsage{}
+	if err := rejectDuplicateJSONKeys(data, "mistral OCR response"); err != nil {
+		return err
+	}
 	type usageJSON struct {
 		PagesProcessed *int   `json:"pages_processed"`
 		DocSizeBytes   *int64 `json:"doc_size_bytes"`
