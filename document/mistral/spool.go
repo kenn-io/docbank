@@ -93,6 +93,11 @@ func (d *PreparedDocument) Release() error {
 	if d.path == "" {
 		return nil
 	}
+	releaseLock, err := acquireSpoolReservationLock(context.Background(), filepath.Dir(d.path))
+	if err != nil {
+		return err
+	}
+	defer releaseLock()
 	if err := os.Remove(d.path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove Mistral OCR spool %s: %w", filepath.Base(d.path), err)
 	}

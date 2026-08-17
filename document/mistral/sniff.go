@@ -50,6 +50,9 @@ func DetectFormat(reader io.ReaderAt, size int64, declaredMediaType string) (Can
 	if reader == nil || size <= 0 {
 		return CandidateFormat{}, errors.New("document format detection requires nonempty bytes")
 	}
+	if size > hardMaxDocumentBytes {
+		return CandidateFormat{}, errors.New("document exceeds the format-detection byte limit")
+	}
 	mediaType, parameters, err := mime.ParseMediaType(declaredMediaType)
 	if err != nil || len(parameters) != 0 || mediaType != strings.ToLower(mediaType) {
 		return CandidateFormat{}, errors.New("document format detection requires a canonical media type")
@@ -256,11 +259,13 @@ func compoundDirectoryNames(reader io.ReaderAt, size int64) (map[string]bool, er
 	if sectorCount <= 0 || size%sectorSize != 0 {
 		return nil, errors.New("compound document size is invalid")
 	}
+	fatEntriesPerSector := sectorSize / 4
+	maxFATSectors := int((sectorCount + fatEntriesPerSector - 1) / fatEntriesPerSector)
 	numFAT := int(binary.LittleEndian.Uint32(header[44:48]))
 	firstDirectory := binary.LittleEndian.Uint32(header[48:52])
 	firstDIFAT := binary.LittleEndian.Uint32(header[68:72])
 	numDIFAT := int(binary.LittleEndian.Uint32(header[72:76]))
-	if numFAT <= 0 || numFAT > int(sectorCount) || numDIFAT > maxDIFATSectors {
+	if numFAT <= 0 || numFAT > maxFATSectors || numDIFAT > maxDIFATSectors {
 		return nil, errors.New("compound document allocation table exceeds limits")
 	}
 	fatSectors := make([]uint32, 0, numFAT)

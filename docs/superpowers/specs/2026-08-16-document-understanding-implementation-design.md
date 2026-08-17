@@ -111,6 +111,11 @@ func (Policy) NormalizePolicy() document.NormalizePolicy
 `NormalizePolicy()` returns the policy that must normalize the provider result
 authorized by the same Mistral policy.
 
+The pinned `eu` policy target is
+`https://api.eu.mistral.ai/v1/ocr`. Policy construction accepts only the
+package-pinned regional model, and a successful authenticated capability probe
+provides the live availability evidence before any format can be authorized.
+
 `Policy.Authorize` combines policy limits with a validated capability
 manifest and returns an opaque, non-serializable `FormatAuthorization`. The
 value attests only that probe evidence and enforceable bounds authorize a
@@ -222,7 +227,8 @@ copying, syncing, securing, or closing the staged file use the same
 classification. Unsafe directory entries, unrelated filesystem I/O failures,
 and size, hash, format, or permission failures are terminal. Failure and
 cancellation remove the partial file created by that call.
-`Release` is idempotent and makes its prepared document unprocessable.
+`Release` takes the spool reservation lock, is idempotent, and makes its
+prepared document unprocessable.
 
 `ScavengeSpoolDirectory` uses a verified persistent lock inside the private
 spool directory and removes only stale package-prefixed regular files. The lock

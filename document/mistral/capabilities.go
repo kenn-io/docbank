@@ -312,8 +312,17 @@ type requestFingerprintPayload struct {
 }
 
 func requestFingerprint(candidate CandidateFormat, options requestOptions) string {
+	return requestFingerprintForTarget(defaultEndpoint, defaultModel, candidate, options)
+}
+
+func requestFingerprintForTarget(
+	endpoint string,
+	model string,
+	candidate CandidateFormat,
+	options requestOptions,
+) string {
 	payload, err := json.Marshal(requestFingerprintPayload{
-		Version: requestFingerprintVersion, Endpoint: defaultEndpoint, Model: defaultModel,
+		Version: requestFingerprintVersion, Endpoint: endpoint, Model: model,
 		Candidate: candidate, Options: options,
 	})
 	if err != nil {

@@ -114,6 +114,20 @@ func TestDetectFormatRejectsMismatchUnsafeZIPAndAmbiguousCompound(t *testing.T) 
 	}
 }
 
+func TestDetectFormatBoundsCompoundAllocationBeforeReadingSectors(t *testing.T) {
+	_, err := DetectFormat(bytes.NewReader([]byte("x")), hardMaxDocumentBytes+1, "text/plain")
+	require.ErrorContains(t, err, "format-detection byte limit")
+
+	header := make([]byte, 512)
+	copy(header, compoundFileMagic)
+	binary.LittleEndian.PutUint16(header[26:28], 3)
+	binary.LittleEndian.PutUint16(header[28:30], 0xfffe)
+	binary.LittleEndian.PutUint16(header[30:32], 9)
+	binary.LittleEndian.PutUint32(header[44:48], ^uint32(0))
+	_, err = compoundDirectoryNames(bytes.NewReader(header), hardMaxDocumentBytes)
+	require.ErrorContains(t, err, "allocation table exceeds limits")
+}
+
 func TestValidateZIPEndRecordRejectsUnboundedDirectory(t *testing.T) {
 	archive := documentZIP(t, map[string]string{
 		ooxmlContentTypesName: docxContentTypes("application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"), "word/document.xml": "<document/>",

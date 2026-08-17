@@ -260,7 +260,8 @@ detected `CandidateFormat` is descriptive only and cannot authorize an upload.
 Detection is local and performs no credential lookup or network request. PDF
 detection requires a valid version header, final end marker, startxref offset,
 and bounded traditional or stream cross-reference structure; a `%PDF-` prefix
-alone is not sufficient.
+alone is not sufficient. All formats share the policy's 500 MiB hard input cap;
+container metadata and allocation tables are bounded before allocation.
 
 ### Capability evidence
 
@@ -398,14 +399,18 @@ func (Policy) Fingerprint(CapabilityManifest) (string, error)
 func (Policy) Authorize(CapabilityManifest, string) (FormatAuthorization, error)
 ```
 
-`Policy` is opaque. The endpoint is derived from the pinned region; callers
-cannot supply an endpoint, host allowlist, or media-type allowlist. `Values`
-returns a read-only copy of every reusable effective value, including the
-derived endpoint. Mutating the copy cannot change the policy. Canonical JSON,
-the private values-only digest, and Msgvault's legacy wrapper all read this
-view, so the wrapper does not duplicate the region-to-endpoint mapping or any
-other shared constant. Unknown retention or training posture is invalid and
-cannot be serialized or fingerprinted. `MaxUnits` must be between 3 and 5,000;
+`Policy` is opaque. The pinned `eu` region maps to Mistral's dedicated
+`https://api.eu.mistral.ai/v1/ocr` endpoint; callers cannot supply an endpoint,
+host allowlist, or media-type allowlist. Policy construction accepts only a
+package-pinned region/model pair, while the authenticated capability probe
+provides the live evidence that the model is available at that regional
+endpoint. `Values` returns a read-only copy of every reusable effective value,
+including the derived endpoint. Mutating the copy cannot change the policy.
+Canonical JSON, the private values-only digest, and Msgvault's legacy wrapper
+all read this view, so the wrapper does not duplicate the region-to-endpoint
+mapping or any other shared constant. Unknown retention or training posture is
+invalid and cannot be serialized or fingerprinted. `MaxUnits` must be between
+3 and 5,000;
 the lower bound keeps the two-unit PDF fixture strictly below the policy limit
 while the one-unit bound request establishes provider-side enforcement.
 
@@ -440,7 +445,10 @@ The now-private options value retains the exact baseline fingerprint JSON
 shape and struct-field order: `pages`, `extract_header`, then `extract_footer`.
 `pages` does not use `omitempty`, so a non-page-bounded format encodes
 `"pages":""`. The `mistral_request_fingerprint_v2` compatibility section
-guards this private representation as observable behavior.
+guards this private representation and the baseline global-endpoint cases as
+observable behavior. Production fingerprints use the pinned EU endpoint as
+the endpoint payload value, so existing global-endpoint evidence cannot be
+reused as EU authority.
 
 The `pages` option is literal and therefore requires two distinct comparisons:
 
@@ -523,6 +531,10 @@ disk-quota failures during staged-file creation, copying, syncing, securing, or
 closing are classified as `ErrSpoolCapacity` so applications may reschedule
 them. Unsafe directory structure and unrelated filesystem I/O failures remain
 terminal.
+
+`Release` takes the same reservation lock before deleting a prepared file, so
+capacity accounting, scavenging, and explicit cleanup cannot race over an
+enumerated package entry.
 
 Local counters are static code capabilities keyed by candidate format ID.
 `Prepare` runs a counter whenever one exists and stores the count privately;

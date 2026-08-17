@@ -25,7 +25,7 @@ func TestPublicLocalWorkflow(t *testing.T) {
 		ExtractHeader: true, ExtractFooter: true, NormalizePolicy: normalization,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "https://api.mistral.ai/v1/ocr", policy.Values().Endpoint)
+	assert.Equal(t, "https://api.eu.mistral.ai/v1/ocr", policy.Values().Endpoint)
 	assert.Equal(t, normalization.Identity(), policy.NormalizePolicy().Identity())
 	require.Len(t, mistral.CandidateFormats(), 26)
 

@@ -50,6 +50,37 @@ func TestPrepareCreatesPrivateDetectedFileAndReleaseRemovesIt(t *testing.T) {
 	require.ErrorContains(t, err, "released")
 }
 
+func TestReleaseWaitsForSpoolReservation(t *testing.T) {
+	prepared := prepareTestDocument(t, testPolicy(t, 1024, 10), testPDF("release-lock"))
+	releaseLock, err := acquireSpoolReservationLock(t.Context(), filepath.Dir(prepared.path))
+	require.NoError(t, err)
+	locked := true
+	defer func() {
+		if locked {
+			releaseLock()
+		}
+	}()
+
+	started := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		close(started)
+		done <- prepared.Release()
+	}()
+	<-started
+	select {
+	case err := <-done:
+		releaseLock()
+		locked = false
+		t.Fatalf("Release completed while the spool reservation was held: %v", err)
+	case <-time.After(2 * spoolLockRetryInterval):
+	}
+
+	releaseLock()
+	locked = false
+	require.NoError(t, <-done)
+}
+
 func TestPrepareFailsClosedAndRemovesPartialFile(t *testing.T) {
 	content := testPDF("synthetic")
 	digest := sha256.Sum256(content)

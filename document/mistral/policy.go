@@ -14,7 +14,7 @@ import (
 const (
 	defaultProvider = "mistral"
 	defaultRegion   = "eu"
-	defaultEndpoint = "https://api.mistral.ai/v1/ocr"
+	defaultEndpoint = "https://api.eu.mistral.ai/v1/ocr"
 	defaultModel    = "mistral-ocr-4-0"
 
 	hardMaxDocumentBytes = int64(500 << 20)
@@ -61,11 +61,9 @@ type Policy struct {
 
 // NewPolicy validates and constructs an immutable policy.
 func NewPolicy(config PolicyConfig) (Policy, error) {
-	if config.Region != defaultRegion {
-		return Policy{}, fmt.Errorf("mistral policy region must be %q", defaultRegion)
-	}
-	if config.Model != defaultModel {
-		return Policy{}, fmt.Errorf("mistral policy model must be %q", defaultModel)
+	endpoint, available := regionalOCREndpoint(config.Region, config.Model)
+	if !available {
+		return Policy{}, fmt.Errorf("mistral OCR model %q is unavailable in region %q", config.Model, config.Region)
 	}
 	if !slices.Contains([]string{"standard", "zdr"}, config.Retention) {
 		return Policy{}, errors.New("mistral policy retention posture must be known")
@@ -83,7 +81,7 @@ func NewPolicy(config PolicyConfig) (Policy, error) {
 		return Policy{}, errors.New("mistral policy normalization is invalid; use document.NewNormalizePolicy")
 	}
 	values := PolicyValues{
-		Provider: defaultProvider, Endpoint: defaultEndpoint, Region: config.Region, Model: config.Model,
+		Provider: defaultProvider, Endpoint: endpoint, Region: config.Region, Model: config.Model,
 		Retention: config.Retention, Training: config.Training,
 		MaxDocumentBytes: config.MaxDocumentBytes, MaxResponseBytes: config.MaxResponseBytes,
 		MaxUnits: config.MaxUnits, ExtractHeader: config.ExtractHeader, ExtractFooter: config.ExtractFooter,
@@ -94,6 +92,15 @@ func NewPolicy(config PolicyConfig) (Policy, error) {
 		return Policy{}, err
 	}
 	return Policy{values: values, normalizePolicy: config.NormalizePolicy, digest: digest}, nil
+}
+
+// regionalOCREndpoint is the package-pinned region and model allowlist. Live
+// availability must also be demonstrated by an authenticated capability probe.
+func regionalOCREndpoint(region, model string) (string, bool) {
+	if region == defaultRegion && model == defaultModel {
+		return defaultEndpoint, true
+	}
+	return "", false
 }
 
 // Values returns a copy of every effective policy value.
