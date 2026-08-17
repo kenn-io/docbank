@@ -88,20 +88,25 @@ func (d *PreparedDocument) Release() error {
 		return nil
 	}
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	d.released = true
-	if d.path == "" {
+	path := d.path
+	d.mu.Unlock()
+	if path == "" {
 		return nil
 	}
-	releaseLock, err := acquireSpoolReservationLock(context.Background(), filepath.Dir(d.path))
+	releaseLock, err := acquireSpoolReservationLock(context.Background(), filepath.Dir(path))
 	if err != nil {
 		return err
 	}
 	defer releaseLock()
-	if err := os.Remove(d.path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("remove Mistral OCR spool %s: %w", filepath.Base(d.path), err)
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove Mistral OCR spool %s: %w", filepath.Base(path), err)
 	}
-	d.path = ""
+	d.mu.Lock()
+	if d.path == path {
+		d.path = ""
+	}
+	d.mu.Unlock()
 	return nil
 }
 

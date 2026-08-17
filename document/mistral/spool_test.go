@@ -51,7 +51,7 @@ func TestPrepareCreatesPrivateDetectedFileAndReleaseRemovesIt(t *testing.T) {
 	require.ErrorContains(t, err, "released")
 }
 
-func TestReleaseWaitsForSpoolReservation(t *testing.T) {
+func TestReleaseDoesNotBlockSnapshotWhileWaitingForSpoolReservation(t *testing.T) {
 	prepared := prepareTestDocument(t, testPolicy(t, 1024, 10), testPDF("release-lock"))
 	releaseLock, err := acquireSpoolReservationLock(t.Context(), filepath.Dir(prepared.path))
 	require.NoError(t, err)
@@ -69,6 +69,15 @@ func TestReleaseWaitsForSpoolReservation(t *testing.T) {
 		done <- prepared.Release()
 	}()
 	<-started
+	require.Eventually(t, func() bool {
+		if !prepared.mu.TryLock() {
+			return false
+		}
+		defer prepared.mu.Unlock()
+		return prepared.released
+	}, time.Second, time.Millisecond)
+	_, err = prepared.snapshot()
+	require.ErrorContains(t, err, "released")
 	select {
 	case err := <-done:
 		releaseLock()
