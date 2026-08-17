@@ -402,9 +402,9 @@ derived endpoint. Mutating the copy cannot change the policy. Canonical JSON,
 the private values-only digest, and Msgvault's legacy wrapper all read this
 view, so the wrapper does not duplicate the region-to-endpoint mapping or any
 other shared constant. Unknown retention or training posture is invalid and
-cannot be serialized or fingerprinted. `MaxUnits` must be between 2 and 5,000;
-the lower bound is necessary for the over-range probe that establishes
-provider-side enforcement.
+cannot be serialized or fingerprinted. `MaxUnits` must be between 3 and 5,000;
+the lower bound keeps the two-unit PDF fixture strictly below the policy limit
+while the one-unit bound request establishes provider-side enforcement.
 
 Canonical JSON is self-describing and includes `provider: "mistral"`, the
 derived target, retention and training posture, document/response/unit bounds,

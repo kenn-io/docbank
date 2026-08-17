@@ -60,7 +60,7 @@ func TestPolicyRejectsUnknownPrivacyPostureAndMismatchedProbePolicy(t *testing.T
 
 	_, err = NewPolicy(PolicyConfig{
 		Region: defaultRegion, Model: defaultModel, Retention: "zdr", Training: "opted-out",
-		MaxDocumentBytes: 1 << 20, MaxResponseBytes: 1 << 20, MaxUnits: 1,
+		MaxDocumentBytes: 1 << 20, MaxResponseBytes: 1 << 20, MaxUnits: 2,
 		NormalizePolicy: normalization,
 	})
 	require.ErrorContains(t, err, "processing bounds")
@@ -89,6 +89,18 @@ func TestCapabilityManifestDecodingIsStrictAndBounded(t *testing.T) {
 	require.NoError(t, err)
 	_, err = DecodeCapabilityManifest(bytes.NewReader(unknown))
 	require.ErrorContains(t, err, "unknown field")
+
+	compact, err := json.Marshal(manifest)
+	require.NoError(t, err)
+	duplicateResults := strings.Replace(string(compact), `"results":[`, `"results":[],"results":[`, 1)
+	_, err = DecodeCapabilityManifest(strings.NewReader(duplicateResults))
+	require.ErrorContains(t, err, `duplicate JSON object key "results"`)
+
+	duplicateFormatID := strings.Replace(
+		string(compact), `"format_id":"pdf"`, `"format_id":"docx","format_id":"pdf"`, 1,
+	)
+	_, err = DecodeCapabilityManifest(strings.NewReader(duplicateFormatID))
+	require.ErrorContains(t, err, `duplicate JSON object key "format_id"`)
 
 	_, err = DecodeCapabilityManifest(strings.NewReader(strings.Repeat("x", int(maxManifestBytes)+1)))
 	require.ErrorContains(t, err, "too large")

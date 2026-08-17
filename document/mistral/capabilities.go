@@ -211,6 +211,9 @@ func DecodeCapabilityManifest(reader io.Reader) (CapabilityManifest, error) {
 	if int64(len(data)) > maxManifestBytes {
 		return CapabilityManifest{}, errors.New("mistral capability manifest is too large")
 	}
+	if err := rejectDuplicateJSONKeys(data); err != nil {
+		return CapabilityManifest{}, fmt.Errorf("decode Mistral capability manifest: %w", err)
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	var manifest CapabilityManifest
@@ -224,6 +227,58 @@ func DecodeCapabilityManifest(reader io.Reader) (CapabilityManifest, error) {
 		return CapabilityManifest{}, err
 	}
 	return manifest, nil
+}
+
+func rejectDuplicateJSONKeys(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	return scanJSONValue(decoder, 0)
+}
+
+func scanJSONValue(decoder *json.Decoder, depth int) error {
+	if depth > 64 {
+		return errors.New("mistral capability manifest JSON is too deeply nested")
+	}
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delimiter {
+	case '{':
+		keys := make(map[string]struct{})
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return errors.New("mistral capability manifest has a non-string object key")
+			}
+			if _, exists := keys[key]; exists {
+				return fmt.Errorf("mistral capability manifest has duplicate JSON object key %q", key)
+			}
+			keys[key] = struct{}{}
+			if err := scanJSONValue(decoder, depth+1); err != nil {
+				return err
+			}
+		}
+		_, err = decoder.Token()
+		return err
+	case '[':
+		for decoder.More() {
+			if err := scanJSONValue(decoder, depth+1); err != nil {
+				return err
+			}
+		}
+		_, err = decoder.Token()
+		return err
+	default:
+		return errors.New("mistral capability manifest has an unexpected JSON delimiter")
+	}
 }
 
 type requestOptions struct {

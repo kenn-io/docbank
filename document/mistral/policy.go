@@ -75,7 +75,7 @@ func NewPolicy(config PolicyConfig) (Policy, error) {
 	}
 	if config.MaxDocumentBytes <= 0 || config.MaxDocumentBytes > hardMaxDocumentBytes ||
 		config.MaxResponseBytes <= 0 || config.MaxResponseBytes > hardMaxResponseBytes ||
-		config.MaxUnits <= 1 || config.MaxUnits > hardMaxUnits {
+		config.MaxUnits < 3 || config.MaxUnits > hardMaxUnits {
 		return Policy{}, errors.New("mistral policy processing bounds are invalid")
 	}
 	normalization := config.NormalizePolicy.Identity()
