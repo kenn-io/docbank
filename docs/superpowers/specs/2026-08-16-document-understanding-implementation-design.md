@@ -5,8 +5,7 @@
 ## Purpose
 
 Docbank's document-understanding architecture separates reusable behavior into
-two top-level packages. The provider-neutral package is current; the Mistral
-package is explicitly planned below.
+two top-level packages.
 
 - `go.kenn.io/docbank/document` defines provider-neutral source evidence,
   deterministic normalization, headings, spans, and baseline chunks.
@@ -82,187 +81,166 @@ evidence or use a new normalization version.
 
 ## Mistral package
 
-!!! info "Planned"
+`document/mistral` forms one upload-safety boundary. It owns format detection,
+capability evidence, canonical policy identity, opaque authorization,
+immutable private staging, bounded transport, deterministic fixtures, local
+validation, and authenticated probes.
 
-    `document/mistral` will form one upload-safety boundary. The package will
-    include format detection, capability evidence, canonical policy identity,
-    opaque authorization, immutable private staging, bounded transport,
-    deterministic fixtures, local validation, and authenticated probes.
-
-    The library will ship no live capability manifest. A manifest is dated
-    evidence for an operator's endpoint, model, fixture contract, and
-    credentialed probe. Without a complete validated manifest, production
-    upload authorization fails closed and explains that the operator must run
-    the authenticated probe and supply its manifest.
+The library ships no live capability manifest. A manifest is dated evidence
+for an operator's endpoint, model, fixture contract, and credentialed probe.
+Without a complete validated manifest, production upload authorization fails
+closed and explains that the operator must run the authenticated probe and
+supply its manifest.
 
 ### Policy and authorization
 
-!!! info "Planned"
+`Policy` exposes both a serializable identity and the executable normalization
+policy:
 
-    `Policy` will expose both a serializable identity and the executable
-    normalization policy:
+```go
+func (Policy) Values() PolicyValues
+func (Policy) NormalizePolicy() document.NormalizePolicy
+```
 
-    ```go
-    func (Policy) Values() PolicyValues
-    func (Policy) NormalizePolicy() document.NormalizePolicy
-    ```
+`PolicyValues.Normalization` carries the read-only normalization identity.
+`NormalizePolicy()` returns the policy that must normalize the provider result
+authorized by the same Mistral policy.
 
-    `PolicyValues.Normalization` will carry the read-only normalization
-    identity. `NormalizePolicy()` will return the policy that must normalize
-    the provider result authorized by the same Mistral policy.
+`Policy.Authorize` combines policy limits with a validated capability
+manifest and returns an opaque, non-serializable `FormatAuthorization`. The
+value attests only that probe evidence and enforceable bounds authorize a
+format under the policy. It does not attest consent.
 
-    `Policy.Authorize` will combine policy limits with a validated capability
-    manifest. It will return an opaque, non-serializable
-    `FormatAuthorization`. The value will attest only that probe evidence and
-    enforceable bounds authorize a format under the policy. It will not attest
-    consent.
-
-    The authorization will carry a private values-only policy digest and the
-    public full fingerprint. `Process` will compare the private digest with its
-    client policy without requiring the client to retain the manifest. The
-    application will compare its consent record with the public fingerprint.
+The authorization carries a private values-only policy digest and the public
+full fingerprint. `Process` compares the private digest with its client policy
+without requiring the client to retain the manifest. The application compares
+its consent record with the public fingerprint.
 
 ### Capability evidence
 
-!!! info "Planned"
+A capability manifest records the target, model, fixture contract, detected
+format, request fingerprint, fixture digest, ordinary extraction observations,
+and unit-bound observations. Input is limited to 1 MiB and decoded strictly.
+Validation rejects partial, duplicated, reordered, target-mismatched,
+old-contract, malformed, privacy-unsafe, or arithmetically inconsistent
+evidence.
 
-    A capability manifest will record the target, model, fixture contract,
-    detected format, request fingerprint, fixture digest, ordinary extraction
-    observations, and unit-bound observations. Input will be limited to 1 MiB
-    and decoded strictly. Validation will reject partial, duplicated,
-    reordered, target-mismatched, old-contract, malformed, or arithmetically
-    inconsistent evidence.
+Unit-bound methods are:
 
-    Unit-bound methods will be:
+- `provider_request`, where the provider request limits processed units;
+- `local_exact`, where a local counter must equal the provider count; and
+- `none`, which grants no production upload authority.
 
-    - `provider_request`, where the provider request limits processed units;
-    - `local_exact`, where a local counter must equal the provider count; and
-    - `none`, which grants no production upload authority.
+Each non-`none` value is backed by recorded probe observations. An unverified
+bound claim may retain successful extraction evidence while recording `none`
+and `bound_unverified`; it cannot produce an authorization.
 
-    Each non-`none` value will be backed by recorded probe observations. An
-    unverified bound claim may retain successful extraction evidence while
-    recording `none` and `bound_unverified`; it cannot produce an
-    authorization.
-
-    Version 1 will authorize at most PDF because PDF has a provider-request
-    page bound. Other formats may extract successfully during a probe but will
-    remain unauthorized until they have an enforceable, observed bound.
+Version 1 authorizes at most PDF because PDF has a provider-request page bound.
+Other formats may extract successfully during a probe but remain unauthorized
+until they have an enforceable, observed bound.
 
 ### Operator evidence flow
 
-!!! info "Planned"
+```text
+WriteProbeFixtures
+        -> ValidateProbeFixtures
+           local; no credential or HTTP
 
-    ```text
-    WriteProbeFixtures
-            -> ValidateProbeFixtures
-               local; no credential or HTTP
+Client(APIKey) + validated fixtures
+        -> RunCapabilityProbe
+        -> CapabilityManifest
+        -> operator reviews and supplies or commits it
+        -> Policy.Authorize
+```
 
-    Client(APIKey) + validated fixtures
-            -> RunCapabilityProbe
-            -> CapabilityManifest
-            -> operator reviews and supplies or commits it
-            -> Policy.Authorize
-    ```
-
-    Credentials will enter only when the application explicitly constructs a
-    client. Policy construction, manifest decoding, authorization, fixture
-    generation, fixture validation, format detection, and staging will perform
-    no provider request.
+Credentials enter only when the application explicitly constructs a client.
+Policy construction, manifest decoding, authorization, fixture generation,
+fixture validation, format detection, and staging perform no provider request.
 
 ### Production flow
 
-!!! info "Planned"
+```text
+Policy + validated manifest
+        -> authorize declared format
+        -> application verifies consent against auth.PolicyFingerprint()
+        -> Prepare source
+        -> Process rechecks sniffed format, policy, and immutable bytes
+        -> Result.Document + policy.NormalizePolicy()
+        -> document.NormalizeDocument
+        -> prepared.Release() on success or failure
+```
 
-    ```text
-    Policy + validated manifest
-            -> authorize declared format
-            -> application verifies consent against auth.PolicyFingerprint()
-            -> Prepare source
-            -> Process rechecks sniffed format, policy, and immutable bytes
-            -> Result.Document + policy.NormalizePolicy()
-            -> document.NormalizeDocument
-            -> prepared.Release() on success or failure
-    ```
-
-    Authorization precedes staging so refused formats do not consume spool
-    space. `Process` will still compare the sniffed format with the opaque
-    authorization. Docbank will expose the policy fingerprint needed by
-    application consent but will not verify or store consent itself.
+Authorization precedes staging so refused formats do not consume spool space.
+`Process` still compares the sniffed format with the opaque authorization.
+Docbank exposes the policy fingerprint needed by application consent but does
+not verify or store consent itself.
 
 ### Fixture generation
 
-!!! info "Planned"
+The public generator is:
 
-    The public generator will be:
+```go
+type FixtureOptions struct {
+    SeedDirectory string
+}
 
-    ```go
-    type FixtureOptions struct {
-        SeedDirectory string
-    }
+func WriteProbeFixtures(
+    context.Context,
+    string,
+    FixtureOptions,
+) error
+```
 
-    func WriteProbeFixtures(
-        context.Context,
-        string,
-        FixtureOptions,
-    ) error
-    ```
+It synthesizes 21 candidate formats deterministically. ZIP timestamps,
+identifiers, entry ordering, and sentinel content are fixed. The contract-2
+PDF fixture contains two pages so a smaller provider-request range can
+demonstrate a bound.
 
-    It will synthesize 21 candidate formats deterministically. ZIP timestamps,
-    identifiers, entry ordering, and sentinel content will be fixed. The
-    contract-2 PDF fixture will contain at least two pages so a smaller
-    provider-request range can demonstrate a bound.
+Five native formats require operator-supplied synthetic seeds: `doc`, `ppt`,
+`xls`, `numbers`, and `msg`. The generator copies only regular, non-symlink
+files with the expected names and validates their detected formats. Their
+manifest digests are operator-specific.
 
-    Five native formats will require operator-supplied synthetic seeds: `doc`,
-    `ppt`, `xls`, `numbers`, and `msg`. The generator will copy only regular,
-    non-symlink files with the expected names and will validate their detected
-    formats. Their manifest digests will be operator-specific.
-
-    The destination must not exist. Generation will use a temporary sibling
-    directory with mode 0700 and files with mode 0600. Missing seeds will be
-    reported together. Any missing, mislabeled, unsafe, failed, or cancelled
-    input will prevent publication. Cleanup will remove only paths created by
-    the generator.
+The destination must not exist. Generation uses a temporary sibling directory
+with mode 0700 and files with mode 0600. Missing seeds are reported together.
+Any missing, mislabeled, unsafe, failed, or cancelled input prevents
+publication. Cleanup removes only paths created by the generator.
 
 ### Staging and transport safety
 
-!!! info "Planned"
+`Prepare` always closes its source. Quota and free-space refusals return
+`ErrSpoolCapacity`; size, hash, format, and permission failures are terminal.
+Failure and cancellation remove the partial file created by that call.
+`Release` is idempotent and makes its prepared document unprocessable.
 
-    `Prepare` will always close its source. Quota and free-space refusals will
-    return `ErrSpoolCapacity`; size, hash, format, and permission failures will
-    be terminal. Failure and cancellation will remove the partial file created
-    by that call. `Release` will be idempotent and will make its prepared
-    document unprocessable.
+`ScavengeSpoolDirectory` removes only stale package-prefixed regular files.
+Unrelated regular files remain and continue to count toward quota. A symlink or
+other non-regular entry stops scavenging before any stale file is removed.
 
-    `ScavengeSpoolDirectory` will remove only stale package-prefixed regular
-    files. Unrelated regular files will remain and continue to count toward
-    quota. A symlink or other non-regular entry will stop scavenging with an
-    error.
+Before every request, `Process` rejects:
 
-    Before every request, `Process` will reject:
+- a released prepared document;
+- a client-policy or authorization-policy digest mismatch;
+- a sniffed-format and authorization mismatch;
+- a prepared size above the client policy's `MaxDocumentBytes`;
+- changed size, identity, permissions, or SHA-256; and
+- every redirect, including when the caller supplies the HTTP client.
 
-    - a released prepared document;
-    - a client-policy or authorization-policy digest mismatch;
-    - a sniffed-format and authorization mismatch;
-    - a prepared size above the client policy's `MaxDocumentBytes`;
-    - changed size, identity, permissions, or SHA-256; and
-    - every redirect, including when the caller supplies the HTTP client.
+An injected HTTP client is shallow-copied. Its timeout is replaced when it is
+non-positive or greater than the configured attempt timeout. Each retry reopens
+and rehashes the staged file.
 
-    An injected HTTP client will be shallow-copied. Its timeout will be
-    replaced when it is non-positive or greater than the configured attempt
-    timeout. Each retry will reopen and rehash the staged file.
+`ErrPermanentResponse` and `ErrResponseTooLarge` do not retry. Only
+`ErrTransientResponse` retries. Retry-After accepts bounded integer seconds,
+rejects overflow, and otherwise uses a capped exponential fallback.
+Cancellation during an attempt or wait preserves request accounting.
 
-    `ErrPermanentResponse` and `ErrResponseTooLarge` will not retry. Only
-    `ErrTransientResponse` will retry. Retry-After will accept bounded integer
-    seconds, reject overflow, and otherwise use a capped exponential fallback.
-    Cancellation during an attempt or wait will preserve request accounting.
+Provider units above a `provider_request` bound return
+`ErrCapabilityContract`. Under `local_exact`, the provider count must equal the
+prepared local count in both directions. A provider that may omit empty units
+cannot use `local_exact`; a less-than-or-equal method requires a separate
+contract and probe observation.
 
-    Provider units above a `provider_request` bound will return
-    `ErrCapabilityContract`. Under `local_exact`, the provider count must equal
-    the prepared local count in both directions. A provider that may omit empty
-    units cannot use `local_exact`; a less-than-or-equal method would require a
-    separate contract and probe observation.
-
-    Private wire data will be checked for model equality, response size,
-    complete and contiguous unit indices, processed-unit consistency, byte
-    accounting, and policy bounds before conversion to
-    `document.SourceDocument`.
+Private wire data is checked for model equality, response size, complete and
+contiguous unit indices, processed-unit consistency, byte accounting, and
+policy bounds before conversion to `document.SourceDocument`.
