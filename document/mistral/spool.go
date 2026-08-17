@@ -178,7 +178,7 @@ func Prepare(
 
 	file, err := os.CreateTemp(options.Directory, spoolFilenamePrefix+"*")
 	if err != nil {
-		return nil, fmt.Errorf("create Mistral OCR spool: %w", err)
+		return nil, wrapSpoolIOError("create Mistral OCR spool", err)
 	}
 	path := file.Name()
 	success := false
@@ -190,7 +190,7 @@ func Prepare(
 		_ = os.Remove(path)
 	}()
 	if err := secureCreatedFile(file); err != nil {
-		return nil, fmt.Errorf("secure Mistral OCR spool: %w", err)
+		return nil, wrapSpoolIOError("secure Mistral OCR spool", err)
 	}
 
 	hash := sha256.New()
@@ -202,7 +202,7 @@ func Prepare(
 	closeSourceErr := source.Close()
 	sourceClosed = true
 	if err != nil {
-		return nil, fmt.Errorf("copy Mistral OCR spool: %w", err)
+		return nil, wrapSpoolIOError("copy Mistral OCR spool", err)
 	}
 	if extraErr != nil && !errors.Is(extraErr, io.EOF) {
 		return nil, fmt.Errorf("verify Mistral OCR source length: %w", extraErr)
@@ -218,7 +218,7 @@ func Prepare(
 		return nil, errors.New("mistral OCR source hash mismatch")
 	}
 	if err := file.Sync(); err != nil {
-		return nil, fmt.Errorf("sync Mistral OCR spool: %w", err)
+		return nil, wrapSpoolIOError("sync Mistral OCR spool", err)
 	}
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return nil, fmt.Errorf("rewind Mistral OCR spool: %w", err)
@@ -232,7 +232,7 @@ func Prepare(
 		return nil, fmt.Errorf("count local Mistral OCR units: %w", err)
 	}
 	if err := file.Close(); err != nil {
-		return nil, fmt.Errorf("close Mistral OCR spool: %w", err)
+		return nil, wrapSpoolIOError("close Mistral OCR spool", err)
 	}
 
 	success = true
@@ -240,6 +240,14 @@ func Prepare(
 		path: path, format: format, size: written, sha256: actualHash,
 		mediaType: format.MediaType, localUnits: localUnits,
 	}, nil
+}
+
+func wrapSpoolIOError(operation string, err error) error {
+	operationError := fmt.Errorf("%s: %w", operation, err)
+	if isSpoolCapacityError(err) {
+		return fmt.Errorf("%w: %w", ErrSpoolCapacity, operationError)
+	}
+	return operationError
 }
 
 func countLocalUnits(format CandidateFormat, reader io.ReaderAt, size int64) (int, error) {

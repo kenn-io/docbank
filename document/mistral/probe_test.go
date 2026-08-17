@@ -140,7 +140,7 @@ func (transport *probeTransport) RoundTrip(request *http.Request) (*http.Respons
 
 func generatedProbeFixtureConfig(t *testing.T) ProbeFixtureConfig {
 	t.Helper()
-	fixtureDirectory := filepath.Join(t.TempDir(), "fixtures")
+	fixtureDirectory := newProbeFixtureDestination(t, "fixtures")
 	require.NoError(t, WriteProbeFixtures(t.Context(), fixtureDirectory, FixtureOptions{
 		SeedDirectory: writeNativeSeeds(t),
 	}))

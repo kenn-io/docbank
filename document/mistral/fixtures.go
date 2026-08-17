@@ -66,42 +66,63 @@ func loadProbeFixtures(
 		config.MaxSpoolBytes < policy.values.MaxDocumentBytes || config.MinFreeBytes <= 0 {
 		return nil, errors.New("mistral probe fixtures require directories and valid staging bounds")
 	}
-	fixtureDirectoryInfo, err := os.Lstat(config.FixtureDirectory)
+	fixtureRoot, err := openPrivateFixtureRoot(config.FixtureDirectory)
 	if err != nil {
-		return nil, fmt.Errorf("inspect Mistral probe fixture directory: %w", err)
+		return nil, err
 	}
-	if !fixtureDirectoryInfo.IsDir() || fixtureDirectoryInfo.Mode()&os.ModeSymlink != 0 {
-		return nil, errors.New("mistral probe fixture path must be a real directory")
-	}
+	defer func() { _ = fixtureRoot.Close() }()
 	if err := validatePrivateDirectory(config.SpoolDirectory); err != nil {
 		return nil, err
 	}
 
 	fixtures := make(map[string]probeFixture, len(candidateFormats))
-	fail := func(loadErr error) (map[string]probeFixture, error) {
-		return nil, errors.Join(loadErr, releaseProbeFixtures(fixtures))
+	fail := func(loadErr error) error {
+		return errors.Join(loadErr, releaseProbeFixtures(fixtures))
 	}
 	for _, candidate := range candidateFormats {
 		if err := ctx.Err(); err != nil {
-			return fail(err)
+			return nil, fail(err)
 		}
-		fixture, err := loadProbeFixture(ctx, policy, config, candidate)
+		fixture, err := loadProbeFixture(ctx, policy, config, fixtureRoot, candidate)
 		if err != nil {
-			return fail(fmt.Errorf("load Mistral probe fixture %q: %w", candidate.ID, err))
+			return nil, fail(fmt.Errorf("load Mistral probe fixture %q: %w", candidate.ID, err))
 		}
 		fixtures[candidate.ID] = fixture
 	}
 	return fixtures, nil
 }
 
+func openPrivateFixtureRoot(directory string) (*os.Root, error) {
+	info, err := os.Lstat(directory)
+	if err != nil {
+		return nil, fmt.Errorf("inspect Mistral probe fixture directory: %w", err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("mistral probe fixture path must be a real directory")
+	}
+	if err := validatePrivateFixtureDirectory(directory); err != nil {
+		return nil, err
+	}
+	root, err := os.OpenRoot(directory)
+	if err != nil {
+		return nil, fmt.Errorf("open Mistral probe fixture directory: %w", err)
+	}
+	openedInfo, err := root.Lstat(".")
+	if err != nil || !os.SameFile(info, openedInfo) {
+		_ = root.Close()
+		return nil, errors.New("mistral probe fixture directory changed while opening")
+	}
+	return root, nil
+}
+
 func loadProbeFixture(
 	ctx context.Context,
 	policy Policy,
 	config ProbeFixtureConfig,
+	fixtureRoot *os.Root,
 	candidate CandidateFormat,
 ) (probeFixture, error) {
-	fixturePath := filepath.Join(config.FixtureDirectory, candidate.ID)
-	pathInfo, err := os.Lstat(fixturePath)
+	pathInfo, err := fixtureRoot.Lstat(candidate.ID)
 	if err != nil {
 		return probeFixture{}, fmt.Errorf("inspect fixture: %w", err)
 	}
@@ -109,7 +130,7 @@ func loadProbeFixture(
 		pathInfo.Size() <= 0 || pathInfo.Size() > policy.values.MaxDocumentBytes {
 		return probeFixture{}, errors.New("fixture must be a bounded regular non-symlink file")
 	}
-	file, err := os.Open(fixturePath)
+	file, err := openPrivateFile(filepath.Join(fixtureRoot.Name(), candidate.ID))
 	if err != nil {
 		return probeFixture{}, fmt.Errorf("open fixture: %w", err)
 	}

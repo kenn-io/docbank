@@ -40,7 +40,8 @@ type FixtureOptions struct {
 }
 
 // WriteProbeFixtures creates one complete fixture-contract directory without
-// credentials or network access. The destination must not exist.
+// credentials or network access. The destination must not exist, and its
+// parent must already be private.
 func WriteProbeFixtures(ctx context.Context, destination string, options FixtureOptions) (err error) {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -52,6 +53,10 @@ func WriteProbeFixtures(ctx context.Context, destination string, options Fixture
 		return errors.New("mistral probe fixture destination already exists")
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("inspect Mistral probe fixture destination: %w", err)
+	}
+	parent := filepath.Dir(destination)
+	if err := validatePrivateFixtureDirectory(parent); err != nil {
+		return fmt.Errorf("validate Mistral probe fixture destination parent: %w", err)
 	}
 	var seedRoot *os.Root
 	if options.SeedDirectory != "" {
@@ -77,7 +82,6 @@ func WriteProbeFixtures(ctx context.Context, destination string, options Fixture
 		}
 	}
 
-	parent := filepath.Dir(destination)
 	temporary, err := os.MkdirTemp(parent, "."+filepath.Base(destination)+"-tmp-*")
 	if err != nil {
 		return fmt.Errorf("create Mistral probe fixture directory: %w", err)
@@ -88,7 +92,7 @@ func WriteProbeFixtures(ctx context.Context, destination string, options Fixture
 			err = errors.Join(err, os.RemoveAll(temporary))
 		}
 	}()
-	if err := os.Chmod(temporary, 0o700); err != nil { // #nosec G302 -- private directories require owner execute bits.
+	if err := safefileio.EnsurePrivateDir(temporary); err != nil {
 		return fmt.Errorf("secure Mistral probe fixture directory: %w", err)
 	}
 	missing, err := buildProbeFixtureDirectory(ctx, temporary, seedRoot)
@@ -188,6 +192,11 @@ func writeNewPrivateFile(target string, reader io.Reader, expectedSize int64) er
 	if err != nil {
 		return err
 	}
+	if err := secureCreatedFile(file); err != nil {
+		_ = file.Close()
+		_ = os.Remove(target)
+		return fmt.Errorf("secure fixture file: %w", err)
+	}
 	written, copyErr := io.Copy(file, reader)
 	closeErr := file.Close()
 	if copyErr != nil || closeErr != nil || written != expectedSize {
@@ -209,11 +218,15 @@ func validateFixture(path string, candidate CandidateFormat) error {
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() <= 0 || info.Size() > maxSeedBytes {
 		return errors.New("fixture must be a bounded regular non-symlink file")
 	}
-	file, err := os.Open(path)
+	file, err := openPrivateFile(path)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = file.Close() }()
+	openedInfo, err := file.Stat()
+	if err != nil || !os.SameFile(info, openedInfo) {
+		return errors.New("fixture changed while opening")
+	}
 	detected, err := DetectFormat(file, info.Size(), candidate.MediaType)
 	if err != nil {
 		return err

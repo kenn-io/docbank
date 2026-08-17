@@ -39,10 +39,12 @@ var generatedFixtureDigests = map[string]string{
 
 func TestWriteProbeFixturesPublishesCompleteDeterministicMatrix(t *testing.T) {
 	seeds := writeNativeSeeds(t)
-	first := filepath.Join(t.TempDir(), "fixtures-first")
-	second := filepath.Join(t.TempDir(), "fixtures-second")
+	first := newProbeFixtureDestination(t, "fixtures-first")
+	second := newProbeFixtureDestination(t, "fixtures-second")
 	require.NoError(t, WriteProbeFixtures(t.Context(), first, FixtureOptions{SeedDirectory: seeds}))
 	require.NoError(t, WriteProbeFixtures(t.Context(), second, FixtureOptions{SeedDirectory: seeds}))
+	require.NoError(t, validatePrivateFixtureDirectory(first))
+	require.NoError(t, validatePrivateFixtureDirectory(second))
 	fileDigest := func(path string) string {
 		content, err := os.ReadFile(path)
 		require.NoError(t, err)
@@ -80,7 +82,7 @@ func TestWriteProbeFixturesPublishesCompleteDeterministicMatrix(t *testing.T) {
 }
 
 func TestWriteProbeFixturesMissingOrInvalidSeedsLeavesNoDestination(t *testing.T) {
-	destination := filepath.Join(t.TempDir(), "fixtures")
+	destination := newProbeFixtureDestination(t, "fixtures")
 	err := WriteProbeFixtures(t.Context(), destination, FixtureOptions{})
 	require.ErrorContains(t, err, "doc, msg, numbers, ppt, xls")
 	assert.NoDirExists(t, destination)
@@ -96,7 +98,7 @@ func TestWriteProbeFixturesRefusesSymlinkSeed(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink creation requires optional Windows developer mode")
 	}
-	destination := filepath.Join(t.TempDir(), "fixtures")
+	destination := newProbeFixtureDestination(t, "fixtures")
 	seeds := writeNativeSeeds(t)
 	target := filepath.Join(seeds, "doc-target")
 	require.NoError(t, os.Rename(filepath.Join(seeds, "doc"), target))
@@ -108,7 +110,7 @@ func TestWriteProbeFixturesRefusesSymlinkSeed(t *testing.T) {
 }
 
 func TestValidateProbeFixturesIsLocalAndCleansItsSpool(t *testing.T) {
-	fixtureDirectory := filepath.Join(t.TempDir(), "fixtures")
+	fixtureDirectory := newProbeFixtureDestination(t, "fixtures")
 	require.NoError(t, WriteProbeFixtures(t.Context(), fixtureDirectory, FixtureOptions{
 		SeedDirectory: writeNativeSeeds(t),
 	}))

@@ -261,10 +261,13 @@ func (c *Client) processOnce(
 	if err != nil {
 		return Result{}, "", false, 0, err
 	}
-	defer clear(documentBytes)
 
-	reader := streamRequest(documentBytes, prefix, suffix)
-	defer func() { _ = reader.Close() }()
+	reader, streamDone := streamRequest(documentBytes, prefix, suffix)
+	defer func() {
+		_ = reader.Close()
+		<-streamDone
+		clear(documentBytes)
+	}()
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.policy.values.Endpoint, reader)
 	if err != nil {
 		return Result{}, "", false, 0, fmt.Errorf("build Mistral OCR request: %w", err)
@@ -355,9 +358,11 @@ func waitContext(ctx context.Context, delay time.Duration) error {
 	}
 }
 
-func streamRequest(documentBytes, prefix, suffix []byte) *io.PipeReader {
+func streamRequest(documentBytes, prefix, suffix []byte) (*io.PipeReader, <-chan struct{}) {
 	reader, writer := io.Pipe()
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		if _, err := writer.Write(prefix); err != nil {
 			_ = writer.CloseWithError(err)
 			return
@@ -372,7 +377,7 @@ func streamRequest(documentBytes, prefix, suffix []byte) *io.PipeReader {
 		}
 		_ = writer.CloseWithError(err)
 	}()
-	return reader
+	return reader, done
 }
 
 func readVerifiedDocument(ctx context.Context, snapshot preparedSnapshot) ([]byte, error) {

@@ -96,3 +96,18 @@ func requireOnlySpoolReservationFile(t *testing.T, directory string) {
 	require.Len(t, entries, 1)
 	require.Equal(t, spoolReservationFile, entries[0].Name())
 }
+
+func newProbeFixtureDestination(t *testing.T, name string) string {
+	t.Helper()
+	parent := filepath.Join(t.TempDir(), "fixture-output")
+	makePrivateDirectory(t, parent)
+	return filepath.Join(parent, name)
+}
+
+type errorReader struct {
+	err error
+}
+
+func (r errorReader) Read([]byte) (int, error) {
+	return 0, r.err
+}

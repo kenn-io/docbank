@@ -4,6 +4,7 @@ package mistral
 
 import (
 	"errors"
+	"fmt"
 	"os"
 
 	"go.kenn.io/docbank/internal/winsecurity"
@@ -11,8 +12,16 @@ import (
 )
 
 func validatePrivateDirectory(directory string) error {
+	return validatePrivateDirectoryFor(directory, "mistral OCR spool")
+}
+
+func validatePrivateFixtureDirectory(directory string) error {
+	return validatePrivateDirectoryFor(directory, "mistral probe fixture")
+}
+
+func validatePrivateDirectoryFor(directory, purpose string) error {
 	if err := safefileio.ValidatePrivateDir(directory); err != nil {
-		return errors.New("mistral OCR spool directory must already exist and have a restricted DACL")
+		return fmt.Errorf("%s directory must already exist and have a restricted DACL", purpose)
 	}
 	return nil
 }

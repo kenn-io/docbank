@@ -4,14 +4,23 @@ package mistral
 
 import (
 	"errors"
+	"fmt"
 	"os"
 
 	"go.kenn.io/kit/safefileio"
 )
 
 func validatePrivateDirectory(directory string) error {
+	return validatePrivateDirectoryFor(directory, "mistral OCR spool")
+}
+
+func validatePrivateFixtureDirectory(directory string) error {
+	return validatePrivateDirectoryFor(directory, "mistral probe fixture")
+}
+
+func validatePrivateDirectoryFor(directory, purpose string) error {
 	if err := safefileio.ValidatePrivateDir(directory); err != nil {
-		return errors.New("mistral OCR spool directory must already exist and be private")
+		return fmt.Errorf("%s directory must already exist and be private", purpose)
 	}
 	return nil
 }

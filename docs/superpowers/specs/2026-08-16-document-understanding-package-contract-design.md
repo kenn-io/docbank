@@ -513,7 +513,10 @@ bytes, syncs, and closes the file before returning.
 
 `Policy.MaxDocumentBytes` is the one file-byte bound. `PrepareOptions` cannot
 widen it. Disk quota and free-space reserve are reusable staging inputs but are
-application-owned and excluded from semantic identity.
+application-owned and excluded from semantic identity. Platform disk-full and
+disk-quota failures during staged-file creation, copying, syncing, securing, or
+closing are classified as `ErrSpoolCapacity` so applications may reschedule
+them.
 
 Local counters are static code capabilities keyed by candidate format ID.
 `Prepare` runs a counter whenever one exists and stores the count privately;
@@ -700,9 +703,12 @@ The public contract includes these additions:
   makes the operator-supplied recovery path explicitly bounded as well as
   structurally validated.
 
-The fixture writer performs no network request and requires no credential. It
-publishes only a complete fixture-contract-2 directory; the five native seed
-digests remain operator-specific.
+The fixture writer performs no network request and requires no credential. Its
+destination parent must already be private. It publishes only a complete,
+private fixture-contract-2 directory, using owner-only Unix permissions or
+restricted current-user Windows DACLs. Fixture loading revalidates and pins the
+directory and files before staging them. The five native seed digests remain
+operator-specific.
 
 ## Consent and application ownership
 

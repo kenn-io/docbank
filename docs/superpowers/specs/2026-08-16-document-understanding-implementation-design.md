@@ -201,15 +201,20 @@ Five native formats require operator-supplied synthetic seeds: `doc`, `ppt`,
 files with the expected names and validates their detected formats. Their
 manifest digests are operator-specific.
 
-The destination must not exist. Generation uses a temporary sibling directory
-with mode 0700 and files with mode 0600. Missing seeds are reported together.
-Any missing, mislabeled, unsafe, failed, or cancelled input prevents
-publication. Cleanup removes only paths created by the generator.
+The destination must not exist and its parent must already be private.
+Generation uses a private temporary sibling directory and private files: mode
+0700 and 0600 on Unix, and restricted current-user DACLs on Windows. Missing
+seeds are reported together. Any missing, mislabeled, unsafe, failed, or
+cancelled input prevents publication. Cleanup removes only paths created by the
+generator. Loading revalidates the fixture directory and files and pins their
+identities before staging them for a probe.
 
 ### Staging and transport safety
 
 `Prepare` always closes its source. Quota and free-space refusals return
-`ErrSpoolCapacity`; size, hash, format, and permission failures are terminal.
+`ErrSpoolCapacity`. Platform disk-full and disk-quota failures while creating,
+copying, syncing, securing, or closing the staged file use the same
+classification. Size, hash, format, and permission failures are terminal.
 Failure and cancellation remove the partial file created by that call.
 `Release` is idempotent and makes its prepared document unprocessable.
 
