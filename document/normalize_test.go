@@ -170,6 +170,23 @@ func TestNormalizeDocumentValidatesUnitsAfterCharacterBudget(t *testing.T) {
 	}
 }
 
+func TestNormalizeDocumentRetainsEmptyUnitAtExactCharacterBudget(t *testing.T) {
+	dimensions := UnitDimensions{DPI: 200, Height: 1200, Width: 800}
+	source := SourceDocument{Family: "pdf", UnitKind: "page", Units: []SourceUnit{
+		{Index: 0, Markdown: "x"},
+		{Index: 1, Dimensions: dimensions},
+	}}
+
+	normalized, err := NormalizeDocument(source, testNormalizePolicy(t, 1))
+	require.NoError(t, err)
+	assert.False(t, normalized.Truncated)
+	require.Len(t, normalized.Units, 2)
+	assert.Equal(t, "page:000001", normalized.Units[1].SourceKey)
+	assert.Equal(t, dimensions, normalized.Units[1].Dimensions)
+	assert.Empty(t, normalized.Units[1].Text)
+	assert.False(t, normalized.Units[1].Truncated)
+}
+
 func TestNormalizeDocumentCapsChunksWithoutInventingSpans(t *testing.T) {
 	assert := assert.New(t)
 	policy := testNormalizePolicy(t, 100_000)

@@ -76,8 +76,7 @@ func NormalizeDocument(source SourceDocument, policy NormalizePolicy) (Normalize
 			result.Truncated = true
 		}
 		combinedChars := utf8.RuneCountInString(text)
-		if combinedChars == 0 && remaining == 0 {
-			result.Truncated = true
+		if combinedChars == 0 && remaining == 0 && truncated {
 			break
 		}
 		remaining -= combinedChars
