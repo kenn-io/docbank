@@ -218,8 +218,12 @@ func (w *canonicalHTMLWriter) startTag(token html.Token, selfClosing bool) {
 		}
 		return
 	}
-	if tag == "script" || tag == "style" || tag == "svg" {
-		if !selfClosing && !isHTMLVoidElement(tag) {
+	if tag == "script" || tag == "style" {
+		w.skipTags = append(w.skipTags, tag)
+		return
+	}
+	if tag == "svg" {
+		if !selfClosing {
 			w.skipTags = append(w.skipTags, tag)
 		}
 		return

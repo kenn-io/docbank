@@ -261,6 +261,8 @@ func TestNormalizeDocumentPreservesInertRawHTMLText(t *testing.T) {
 		{name: "block container", markdown: "<div>alpha <strong>beta</strong></div>", want: "alpha beta"},
 		{name: "content after self-closing SVG child", markdown: "<svg><path/></svg>after", want: "after"},
 		{name: "content after void SVG child", markdown: "<svg><br></svg>after", want: "after"},
+		{name: "self-closing script syntax", markdown: "<script/>payload</script>safe", want: "safe"},
+		{name: "self-closing style syntax", markdown: "<style/>payload</style>safe", want: "safe"},
 		{name: "adjacent definition blocks", markdown: "<dl><dt>Term</dt><dd>Definition</dd></dl>", want: "Term\nDefinition"},
 	}
 	for _, test := range tests {
