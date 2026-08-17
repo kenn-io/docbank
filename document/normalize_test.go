@@ -250,6 +250,29 @@ func TestNormalizeDocumentPreservesUnicodeWhitespaceSeparation(t *testing.T) {
 	assert.Equal(t, "alpha beta gamma delta epsilon zeta", normalized.Units[0].Text)
 }
 
+func TestNormalizeDocumentPreservesInertRawHTMLText(t *testing.T) {
+	policy := testNormalizePolicy(t, 10_000)
+	tests := []struct {
+		name     string
+		markdown string
+		want     string
+	}{
+		{name: "line break", markdown: "alpha<br>beta", want: "alpha\nbeta"},
+		{name: "block container", markdown: "<div>alpha <strong>beta</strong></div>", want: "alpha beta"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			source := SourceDocument{Family: "text", UnitKind: "page", Units: []SourceUnit{{
+				Index: 0, Markdown: test.markdown,
+			}}}
+
+			normalized, err := NormalizeDocument(source, policy)
+			require.NoError(t, err)
+			assert.Equal(t, test.want, normalized.Units[0].Text)
+		})
+	}
+}
+
 func TestNormalizeDocumentPreservesSpaceBeforeInlineCode(t *testing.T) {
 	policy := testNormalizePolicy(t, 10_000)
 	source := SourceDocument{Family: "text", UnitKind: "page", Units: []SourceUnit{{

@@ -14,6 +14,7 @@ import (
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
+	goldmarkhtml "github.com/yuin/goldmark/renderer/html"
 	"golang.org/x/net/html"
 )
 
@@ -156,7 +157,10 @@ func canonicalMarkdown(markdown string, maxLinkChars, maxSourceBytes int) (strin
 		return "", nil, false, errors.New("provider Markdown is invalid UTF-8")
 	}
 	markdown, sourceTruncated := truncateUTF8Bytes(markdown, maxSourceBytes)
-	parser := goldmark.New(goldmark.WithExtensions(extension.GFM))
+	parser := goldmark.New(
+		goldmark.WithExtensions(extension.GFM),
+		goldmark.WithRendererOptions(goldmarkhtml.WithUnsafe()),
+	)
 	var rendered bytes.Buffer
 	if err := parser.Convert([]byte(markdown), &rendered); err != nil {
 		return "", nil, false, fmt.Errorf("parse provider Markdown: %w", err)
