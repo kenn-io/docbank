@@ -51,7 +51,7 @@ func DetectFormat(reader io.ReaderAt, size int64, declaredMediaType string) (Can
 	if reader == nil || size <= 0 {
 		return CandidateFormat{}, errors.New("document format detection requires nonempty bytes")
 	}
-	if size > hardMaxDocumentBytes {
+	if size > MaxDocumentBytes {
 		return CandidateFormat{}, errors.New("document exceeds the format-detection byte limit")
 	}
 	mediaType, parameters, err := mime.ParseMediaType(declaredMediaType)
