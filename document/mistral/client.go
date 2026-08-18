@@ -331,25 +331,67 @@ func (c *Client) processOnce(
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return Result{}, "", true, latency, fmt.Errorf("mistral OCR unexpected HTTP %d", response.StatusCode)
 	}
-	if err := waitForStream(); err != nil {
-		return Result{}, "", true, latency, &transientError{
-			cause: fmt.Errorf("stream Mistral OCR request: %w", err),
-		}
-	}
 	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	if err != nil || mediaType != mediaTypeJSON {
 		return Result{}, "", true, latency, errors.New("mistral OCR returned non-JSON content type")
 	}
-	body, err := io.ReadAll(io.LimitReader(response.Body, c.policy.values.MaxResponseBytes+1))
-	latency = time.Since(started)
-	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
+	type bodyResult struct {
+		body []byte
+		err  error
+	}
+	// A provider can send response headers before the transport finishes the
+	// request body. Read both sides concurrently so neither blocks the other.
+	bodyDone := make(chan bodyResult, 1)
+	go func() {
+		body, readErr := io.ReadAll(io.LimitReader(response.Body, c.policy.values.MaxResponseBytes+1))
+		bodyDone <- bodyResult{body: body, err: readErr}
+	}()
+	streamResults := streamDone
+	bodyResults := bodyDone
+	var body []byte
+	bodyFinished := false
+	for !streamFinished || !bodyFinished {
+		select {
+		case streamErr = <-streamResults:
+			streamFinished = true
+			streamResults = nil
+			if streamErr != nil {
+				latency = time.Since(started)
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return Result{}, "", true, latency, ctxErr
+				}
+				return Result{}, "", true, latency, &transientError{
+					cause: fmt.Errorf("stream Mistral OCR request: %w", streamErr),
+				}
+			}
+		case result := <-bodyResults:
+			bodyFinished = true
+			bodyResults = nil
+			body = result.body
+			if result.err != nil {
+				latency = time.Since(started)
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return Result{}, "", true, latency, ctxErr
+				}
+				return Result{}, "", true, latency, &transientError{
+					cause: fmt.Errorf("read Mistral OCR response: %w", result.err),
+				}
+			}
+			if int64(len(body)) > c.policy.values.MaxResponseBytes {
+				latency = time.Since(started)
+				return Result{}, "", true, latency, ErrResponseTooLarge
+			}
+		case <-ctx.Done():
+			ctxErr := ctx.Err()
+			_ = reader.CloseWithError(ctxErr)
+			_ = response.Body.Close()
+			latency = time.Since(started)
 			return Result{}, "", true, latency, ctxErr
 		}
-		return Result{}, "", true, latency, &transientError{cause: fmt.Errorf("read Mistral OCR response: %w", err)}
 	}
-	if int64(len(body)) > c.policy.values.MaxResponseBytes {
-		return Result{}, "", true, latency, ErrResponseTooLarge
+	latency = time.Since(started)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return Result{}, "", true, latency, ctxErr
 	}
 	if !utf8.Valid(body) {
 		return Result{}, "", true, latency, errors.New("mistral OCR response contains invalid UTF-8")

@@ -352,6 +352,80 @@ func TestClientRejectsSuccessfulResponseForIncompleteUpload(t *testing.T) {
 	assert.Equal(t, 2, MetricsFromError(err).Requests)
 }
 
+func TestClientReadsEarlySuccessResponseWhileUploadContinues(t *testing.T) {
+	policy := testPolicy(t, 1024, 10)
+	prepared := prepareTestDocument(t, policy, testPDF("early-response"))
+	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
+	require.NoError(t, err)
+	bridgeDone := make(chan error, 1)
+	client, err := NewClient(policy, ClientConfig{
+		APIKey: "synthetic-key",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			responseReader, responseWriter := io.Pipe()
+			go func() {
+				_, responseErr := io.WriteString(responseWriter, testSuccessfulResponse)
+				_, uploadErr := io.Copy(io.Discard, request.Body)
+				closeErr := responseWriter.CloseWithError(errors.Join(responseErr, uploadErr))
+				bridgeDone <- errors.Join(responseErr, uploadErr, closeErr)
+			}()
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       responseReader,
+				Request:    request,
+			}, nil
+		})},
+	})
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	_, err = client.Process(ctx, prepared, authorization)
+	require.NoError(t, err)
+	require.NoError(t, <-bridgeDone)
+}
+
+func TestClientCancellationStopsEarlyResponseAndUpload(t *testing.T) {
+	policy := testPolicy(t, 1024, 10)
+	prepared := prepareTestDocument(t, policy, testPDF("cancel-early-response"))
+	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
+	require.NoError(t, err)
+	requestStarted := make(chan struct{})
+	responseReader, responseWriter := io.Pipe()
+	t.Cleanup(func() {
+		_ = responseReader.Close()
+		_ = responseWriter.Close()
+	})
+	client, err := NewClient(policy, ClientConfig{
+		APIKey: "synthetic-key",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			close(requestStarted)
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       responseReader,
+				Request:    request,
+			}, nil
+		})},
+	})
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	result := make(chan error, 1)
+	go func() {
+		_, processErr := client.Process(ctx, prepared, authorization)
+		result <- processErr
+	}()
+	<-requestStarted
+	cancel()
+
+	select {
+	case err := <-result:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("Process did not return after cancellation closed its request pipe")
+	}
+}
+
 func TestClientPreservesAccountingWhenRetriesExhaustOrWaitIsCanceled(t *testing.T) {
 	policy := testPolicy(t, 1024, 10)
 	prepared := prepareTestDocument(t, policy, testPDF("x"))
