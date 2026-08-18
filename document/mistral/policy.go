@@ -28,13 +28,17 @@ const (
 	TrainingDefaultOptOut = "default-opt-out"
 	// TrainingOptedOut identifies an explicit training opt-out posture.
 	TrainingOptedOut = "opted-out"
+	// MaxDocumentBytes is the largest document accepted by Policy.
+	MaxDocumentBytes = int64(500 << 20)
+	// MaxResponseBytes is the largest provider response accepted by Policy.
+	MaxResponseBytes = int64(512 << 20)
+	// MinUnits is the smallest per-document unit limit accepted by Policy.
+	MinUnits = 3
+	// MaxUnits is the largest per-document unit limit accepted by Policy.
+	MaxUnits = 5_000
 
 	defaultRegion = RegionEU
 	defaultModel  = DefaultModel
-
-	hardMaxDocumentBytes = int64(500 << 20)
-	hardMaxResponseBytes = int64(512 << 20)
-	hardMaxUnits         = 5_000
 )
 
 // PolicyConfig contains reusable processing and privacy policy.
@@ -86,9 +90,9 @@ func NewPolicy(config PolicyConfig) (Policy, error) {
 	if !slices.Contains([]string{TrainingDefaultOptOut, TrainingOptedOut}, config.Training) {
 		return Policy{}, errors.New("mistral policy training posture must be known")
 	}
-	if config.MaxDocumentBytes <= 0 || config.MaxDocumentBytes > hardMaxDocumentBytes ||
-		config.MaxResponseBytes <= 0 || config.MaxResponseBytes > hardMaxResponseBytes ||
-		config.MaxUnits < 3 || config.MaxUnits > hardMaxUnits {
+	if config.MaxDocumentBytes <= 0 || config.MaxDocumentBytes > MaxDocumentBytes ||
+		config.MaxResponseBytes <= 0 || config.MaxResponseBytes > MaxResponseBytes ||
+		config.MaxUnits < MinUnits || config.MaxUnits > MaxUnits {
 		return Policy{}, errors.New("mistral policy processing bounds are invalid")
 	}
 	normalization := config.NormalizePolicy.Identity()

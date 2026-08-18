@@ -561,11 +561,11 @@ func TestNewClientValidatesAndAppliesTransportBounds(t *testing.T) {
 		want   string
 	}{
 		{name: "negative timeout", config: ClientConfig{Timeout: -time.Second}, want: "timeout"},
-		{name: "timeout above cap", config: ClientConfig{Timeout: hardMaxTimeout + time.Second}, want: "timeout"},
+		{name: "timeout above cap", config: ClientConfig{Timeout: MaxTimeout + time.Second}, want: "timeout"},
 		{name: "negative retries", config: ClientConfig{MaxRetries: -1}, want: "max retries"},
-		{name: "retries above cap", config: ClientConfig{MaxRetries: hardMaxRetries + 1}, want: "max retries"},
+		{name: "retries above cap", config: ClientConfig{MaxRetries: MaxRetries + 1}, want: "max retries"},
 		{name: "negative retry delay", config: ClientConfig{MaxRetryDelay: -time.Second}, want: "retry delay"},
-		{name: "retry delay above cap", config: ClientConfig{MaxRetryDelay: hardMaxRetryDelay + time.Second}, want: "retry delay"},
+		{name: "retry delay above cap", config: ClientConfig{MaxRetryDelay: MaxRetryDelay + time.Second}, want: "retry delay"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -579,9 +579,9 @@ func TestNewClientValidatesAndAppliesTransportBounds(t *testing.T) {
 		APIKey: "synthetic-key", HTTPClient: &http.Client{},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, defaultMaxRetries, client.maxRetries)
-	assert.Equal(t, defaultMaxRetryDelay, client.maxRetryDelay)
-	assert.Equal(t, defaultTimeout, client.http.Timeout)
+	assert.Equal(t, DefaultMaxRetries, client.maxRetries)
+	assert.Equal(t, DefaultMaxRetryDelay, client.maxRetryDelay)
+	assert.Equal(t, DefaultTimeout, client.http.Timeout)
 
 	client, err = NewClient(policy, ClientConfig{
 		APIKey: "synthetic-key", Timeout: time.Minute,

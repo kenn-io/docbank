@@ -11,13 +11,14 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"go.kenn.io/docbank/document/mistral/internal/probecontract"
 )
 
 const (
-	CapabilitySchemaVersion   = 3
-	probeFixtureContract      = 2
-	requestFingerprintVersion = 2
-	maxManifestBytes          = int64(1 << 20)
+	CapabilitySchemaVersion = 3
+	probeFixtureContract    = probecontract.FixtureVersion
+	maxManifestBytes        = int64(1 << 20)
 )
 
 // UnitBoundMethod identifies how a format's per-document unit limit is
@@ -42,7 +43,7 @@ const (
 const (
 	reasonBoundFixtureOutOfRange = "bound_fixture_out_of_range"
 	reasonBoundRequestFailed     = "bound_request_failed"
-	reasonBoundUnitsMismatch     = "bound_units_mismatch"
+	reasonBoundUnitsMismatch     = probecontract.ReasonBoundUnitsMismatch
 )
 
 var boundUnverifiedReasonCodes = []string{
@@ -121,7 +122,7 @@ func (m CapabilityManifest) ValidateComplete() error {
 	if m.Endpoint != defaultEndpoint || m.Region != defaultRegion || m.RequestedModel != defaultModel {
 		return errors.New("mistral capability manifest endpoint, region, or model is not pinned")
 	}
-	if m.MaxUnits <= 1 || m.MaxUnits > hardMaxUnits {
+	if m.MaxUnits < MinUnits || m.MaxUnits > MaxUnits {
 		return errors.New("mistral capability manifest has invalid unit limit")
 	}
 	if len(m.Results) != len(candidateFormats) {
@@ -307,19 +308,7 @@ func canonicalJSONKey(key string) bool {
 	return true
 }
 
-type requestOptions struct {
-	Pages         string `json:"pages"`
-	ExtractHeader bool   `json:"extract_header"`
-	ExtractFooter bool   `json:"extract_footer"`
-}
-
-type requestFingerprintPayload struct {
-	Version   int             `json:"version"`
-	Endpoint  string          `json:"endpoint"`
-	Model     string          `json:"model"`
-	Candidate CandidateFormat `json:"candidate"`
-	Options   requestOptions  `json:"options"`
-}
+type requestOptions = probecontract.RequestOptions
 
 func requestFingerprint(candidate CandidateFormat, options requestOptions) string {
 	return requestFingerprintForTarget(defaultEndpoint, defaultModel, candidate, options)
@@ -331,15 +320,10 @@ func requestFingerprintForTarget(
 	candidate CandidateFormat,
 	options requestOptions,
 ) string {
-	payload, err := json.Marshal(requestFingerprintPayload{
-		Version: requestFingerprintVersion, Endpoint: endpoint, Model: model,
-		Candidate: candidate, Options: options,
-	})
-	if err != nil {
-		panic(err)
-	}
-	digest := sha256.Sum256(payload)
-	return hex.EncodeToString(digest[:])
+	return probecontract.Fingerprint(endpoint, model, probecontract.Candidate{
+		ID: candidate.ID, Family: candidate.Family, MediaType: candidate.MediaType,
+		UnitKind: candidate.UnitKind,
+	}, options)
 }
 
 func probeRequestOptions(candidate CandidateFormat, maxUnits int, extractHeader, extractFooter bool) requestOptions {

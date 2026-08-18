@@ -21,15 +21,21 @@ import (
 )
 
 const (
-	defaultTimeout       = 5 * time.Minute
-	defaultMaxRetries    = 3
-	defaultMaxRetryDelay = 30 * time.Second
-	hardMaxTimeout       = 30 * time.Minute
-	hardMaxRetries       = 10
-	hardMaxRetryDelay    = 60 * time.Second
-	maxSourceUnitDPI     = 100_000
-	maxSourceUnitHeight  = 10_000_000
-	maxSourceUnitWidth   = 10_000_000
+	// DefaultTimeout is used when ClientConfig.Timeout is zero.
+	DefaultTimeout = 5 * time.Minute
+	// DefaultMaxRetries is used when ClientConfig.MaxRetries is zero.
+	DefaultMaxRetries = 3
+	// DefaultMaxRetryDelay is used when ClientConfig.MaxRetryDelay is zero.
+	DefaultMaxRetryDelay = 30 * time.Second
+	// MaxTimeout is the largest per-attempt timeout accepted by NewClient.
+	MaxTimeout = 30 * time.Minute
+	// MaxRetries is the largest retry count accepted by NewClient.
+	MaxRetries = 10
+	// MaxRetryDelay is the largest retry delay accepted by NewClient.
+	MaxRetryDelay       = 60 * time.Second
+	maxSourceUnitDPI    = 100_000
+	maxSourceUnitHeight = 10_000_000
+	maxSourceUnitWidth  = 10_000_000
 )
 
 var (
@@ -131,21 +137,21 @@ func NewClient(policy Policy, config ClientConfig) (*Client, error) {
 		return nil, errors.New("mistral OCR API key is required and must not contain surrounding whitespace")
 	}
 	if config.Timeout == 0 {
-		config.Timeout = defaultTimeout
+		config.Timeout = DefaultTimeout
 	}
-	if config.Timeout < 0 || config.Timeout > hardMaxTimeout {
+	if config.Timeout < 0 || config.Timeout > MaxTimeout {
 		return nil, errors.New("mistral OCR timeout is outside package bounds")
 	}
-	if config.MaxRetries < 0 || config.MaxRetries > hardMaxRetries {
+	if config.MaxRetries < 0 || config.MaxRetries > MaxRetries {
 		return nil, errors.New("mistral OCR max retries is outside package bounds")
 	}
 	if config.MaxRetries == 0 {
-		config.MaxRetries = defaultMaxRetries
+		config.MaxRetries = DefaultMaxRetries
 	}
 	if config.MaxRetryDelay == 0 {
-		config.MaxRetryDelay = defaultMaxRetryDelay
+		config.MaxRetryDelay = DefaultMaxRetryDelay
 	}
-	if config.MaxRetryDelay < 0 || config.MaxRetryDelay > hardMaxRetryDelay {
+	if config.MaxRetryDelay < 0 || config.MaxRetryDelay > MaxRetryDelay {
 		return nil, errors.New("mistral OCR retry delay is outside package bounds")
 	}
 

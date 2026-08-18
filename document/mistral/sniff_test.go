@@ -136,7 +136,7 @@ func TestDetectFormatRejectsMismatchUnsafeZIPAndAmbiguousCompound(t *testing.T) 
 }
 
 func TestDetectFormatBoundsCompoundAllocationBeforeReadingSectors(t *testing.T) {
-	_, err := DetectFormat(bytes.NewReader([]byte("x")), hardMaxDocumentBytes+1, "text/plain")
+	_, err := DetectFormat(bytes.NewReader([]byte("x")), MaxDocumentBytes+1, "text/plain")
 	require.ErrorContains(t, err, "format-detection byte limit")
 
 	header := make([]byte, 512)
@@ -145,7 +145,7 @@ func TestDetectFormatBoundsCompoundAllocationBeforeReadingSectors(t *testing.T) 
 	binary.LittleEndian.PutUint16(header[28:30], 0xfffe)
 	binary.LittleEndian.PutUint16(header[30:32], 9)
 	binary.LittleEndian.PutUint32(header[44:48], ^uint32(0))
-	_, err = compoundDirectoryNames(bytes.NewReader(header), hardMaxDocumentBytes)
+	_, err = compoundDirectoryNames(bytes.NewReader(header), MaxDocumentBytes)
 	require.ErrorContains(t, err, "allocation table exceeds limits")
 }
 
