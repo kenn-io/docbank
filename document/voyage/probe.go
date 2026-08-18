@@ -27,8 +27,8 @@ const (
 	// text-plus-media input and the media alone that still counts as the
 	// text contributing.
 	contributionThreshold = 0.9999
-	// clusterThreshold is the smallest cosine similarity between two
-	// embeddings of the same fixture in one batch.
+	// clusterThreshold is the smallest cosine similarity between a batch
+	// result and the independently embedded reference of the same fixture.
 	clusterThreshold = 0.99
 )
 
@@ -311,6 +311,12 @@ func (r *probeRunner) probeBatch(ctx context.Context) (probeObservation, error) 
 		return probeObservation{}, err
 	}
 	observation := probeObservation{fixtureDigest: fixtureDigest(red.Bytes, blue.Bytes)}
+	// References are embedded outside the batch so a consistent permutation
+	// of results inside the batch cannot pass as correct ordering.
+	redReference, blueReference, err := r.referenceDocuments(ctx)
+	if err != nil {
+		return observation, err
+	}
 	size := r.client.policy.values.MaxBatchItems
 	inputs := make([]Input, size)
 	for index := range inputs {
@@ -324,15 +330,14 @@ func (r *probeRunner) probeBatch(ctx context.Context) (probeObservation, error) 
 	if err != nil {
 		return observation, err
 	}
-	if size >= 2 {
-		for index := range result.Vectors {
-			same := result.Vectors[index%2]
-			other := result.Vectors[(index+1)%2]
-			if cosine(result.Vectors[index], same) < clusterThreshold ||
-				cosine(result.Vectors[index], same) <= cosine(result.Vectors[index], other) {
-				observation.reason = ReasonOrderNotObserved
-				return observation, nil
-			}
+	for index, vector := range result.Vectors {
+		expected, other := redReference, blueReference
+		if index%2 == 1 {
+			expected, other = blueReference, redReference
+		}
+		if cosine(vector, expected) < clusterThreshold || cosine(vector, expected) <= cosine(vector, other) {
+			observation.reason = ReasonOrderNotObserved
+			return observation, nil
 		}
 	}
 	observation.tokens = usageTokens(result.Usage)

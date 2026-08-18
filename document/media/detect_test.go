@@ -27,17 +27,22 @@ func TestDetectBytesRecognizesSupportedContainers(t *testing.T) {
 		height     int64
 		frames     int
 		duration   int64
+		known      bool
 		animated   bool
 	}{
-		{name: "jpeg", data: mediatest.JPEG(3, 2, nil), declared: "text/plain", wantFormat: media.FormatJPEG, wantKind: media.KindImage, wantType: "image/jpeg", width: 3, height: 2},
-		{name: "png", data: mediatest.PNG(4, 3, nil), declared: "image/png", wantFormat: media.FormatPNG, wantKind: media.KindImage, wantType: "image/png", width: 4, height: 3},
-		{name: "webp vp8x", data: mediatest.WebP(5, 4), declared: "image/webp", wantFormat: media.FormatWebP, wantKind: media.KindImage, wantType: "image/webp", width: 5, height: 4},
-		{name: "webp vp8l", data: webPLossless(7, 6), declared: "", wantFormat: media.FormatWebP, wantKind: media.KindImage, wantType: "image/webp", width: 7, height: 6},
-		{name: "webp vp8", data: webPLossy(9, 8), declared: "", wantFormat: media.FormatWebP, wantKind: media.KindImage, wantType: "image/webp", width: 9, height: 8},
+		{name: "jpeg", data: mediatest.JPEG(3, 2, nil), declared: "text/plain", wantFormat: media.FormatJPEG, wantKind: media.KindImage, wantType: "image/jpeg", width: 3, height: 2, frames: 1},
+		{name: "png", data: mediatest.PNG(4, 3, nil), declared: "image/png", wantFormat: media.FormatPNG, wantKind: media.KindImage, wantType: "image/png", width: 4, height: 3, frames: 1},
+		{name: "webp vp8x", data: mediatest.WebP(5, 4), declared: "image/webp", wantFormat: media.FormatWebP, wantKind: media.KindImage, wantType: "image/webp", width: 5, height: 4, frames: 1},
+		{name: "webp vp8l", data: webPLossless(7, 6), declared: "", wantFormat: media.FormatWebP, wantKind: media.KindImage, wantType: "image/webp", width: 7, height: 6, frames: 1},
+		{name: "webp vp8", data: webPLossy(9, 8), declared: "", wantFormat: media.FormatWebP, wantKind: media.KindImage, wantType: "image/webp", width: 9, height: 8, frames: 1},
 		{name: "still gif", data: mediatest.GIF(2, 2, 1), declared: "image/gif", wantFormat: media.FormatGIF, wantKind: media.KindImage, wantType: "image/gif", width: 2, height: 2, frames: 1},
 		{name: "animated gif", data: mediatest.GIF(2, 2, 3), declared: "image/gif", wantFormat: media.FormatGIF, wantKind: media.KindImage, wantType: "image/gif", width: 2, height: 2, frames: 3, animated: true},
-		{name: "mp4 v0", data: mediatest.MP4(640, 360, 1250), declared: "video/quicktime", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 640, height: 360, duration: 1250},
-		{name: "mp4 v1", data: mp4Version1(320, 240, 90_000, 30), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 320, height: 240, duration: 30000},
+		{name: "webp animated", data: webPAnimated(6, 5, 3), declared: "image/webp", wantFormat: media.FormatWebP, wantKind: media.KindImage, wantType: "image/webp", width: 6, height: 5, frames: 3, animated: true},
+		{name: "apng", data: apng(mediatest.PNG(4, 3, nil), 2), declared: "image/png", wantFormat: media.FormatPNG, wantKind: media.KindImage, wantType: "image/png", width: 4, height: 3, frames: 2, animated: true},
+		{name: "mp4 v0", data: mediatest.MP4(640, 360, 1250), declared: "video/quicktime", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 640, height: 360, duration: 1250, known: true},
+		{name: "mp4 v1", data: mp4Version1(320, 240, 90_000, 30), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 320, height: 240, duration: 30000, known: true},
+		{name: "mp4 unknown duration", data: mediatest.MP4(640, 360, 0), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 640, height: 360},
+		{name: "mp4 audio track first", data: mp4AudioTrackFirst(640, 360, 700), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 640, height: 360, duration: 700, known: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -52,6 +57,7 @@ func TestDetectBytesRecognizesSupportedContainers(t *testing.T) {
 			assert.Equal(t, tt.height, got.Height)
 			assert.Equal(t, tt.frames, got.FrameCount)
 			assert.Equal(t, tt.duration, got.DurationMS)
+			assert.Equal(t, tt.known, got.DurationKnown)
 			assert.Equal(t, tt.animated, got.Animated)
 			assert.Equal(t, tt.width*tt.height, got.Pixels())
 		})
@@ -73,6 +79,9 @@ func TestDetectBytesRejectsUnsupportedAndMalformedInput(t *testing.T) {
 		{name: "truncated jpeg", data: []byte("\xff\xd8\xff"), want: media.ErrMalformedMedia},
 		{name: "truncated webp", data: []byte("RIFF\x00\x00\x00\x00WEBPVP8X"), want: media.ErrMalformedMedia},
 		{name: "unknown webp chunk", data: append([]byte("RIFF\x16\x00\x00\x00WEBPALPH"), make([]byte, 14)...), want: media.ErrMalformedMedia},
+		{name: "animated webp without frames", data: webPAnimated(6, 5, 0), want: media.ErrMalformedMedia},
+		{name: "apng zero frames", data: apng(mediatest.PNG(4, 3, nil), 0), want: media.ErrMalformedMedia},
+		{name: "mp4 audio only", data: mp4AudioTrackFirst(0, 0, 700), want: media.ErrMalformedMedia},
 		{name: "gif without trailer", data: []byte("GIF89a\x02\x00\x02\x00\x00\x00\x00"), want: media.ErrMalformedMedia},
 		{name: "gif zero width", data: []byte("GIF89a\x00\x00\x02\x00\x00\x00\x00;"), want: media.ErrMalformedMedia},
 		{name: "mp4 without moov", data: mediatest.Box("ftyp", append([]byte("isom"), make([]byte, 12)...)), want: media.ErrMalformedMedia},
@@ -150,5 +159,46 @@ func mp4Version1(width, height int, timescale uint32, seconds uint64) []byte {
 	binary.BigEndian.PutUint32(tkhd[76:80], uint32(width<<16))
 	binary.BigEndian.PutUint32(tkhd[80:84], uint32(height<<16))
 	moov := mediatest.Box("moov", append(mediatest.Box("mvhd", mvhd), mediatest.Box("trak", mediatest.Box("tkhd", tkhd))...))
+	return append(mediatest.Box("ftyp", append([]byte("isom"), make([]byte, 12)...)), moov...)
+}
+
+// webPAnimated returns a VP8X WebP with the animation flag and the given
+// number of ANMF chunks; zero frames yields a flagged container with none.
+func webPAnimated(width, height, frames int) []byte {
+	data := mediatest.WebP(width, height)
+	data[20] |= 0x02
+	for range frames {
+		chunk := make([]byte, 8+16)
+		copy(chunk[0:4], "ANMF")
+		binary.LittleEndian.PutUint32(chunk[4:8], 16)
+		data = append(data, chunk...)
+	}
+	binary.LittleEndian.PutUint32(data[4:8], uint32(len(data)-8))
+	return data
+}
+
+// apng inserts an acTL chunk after IHDR of a PNG.
+func apng(png []byte, frames int) []byte {
+	ihdrEnd := 8 + 12 + 13
+	actl := make([]byte, 12+8)
+	binary.BigEndian.PutUint32(actl[0:4], 8)
+	copy(actl[4:8], "acTL")
+	binary.BigEndian.PutUint32(actl[8:12], uint32(frames))
+	out := append([]byte(nil), png[:ihdrEnd]...)
+	out = append(out, actl...)
+	return append(out, png[ihdrEnd:]...)
+}
+
+// mp4AudioTrackFirst places a zero-dimension track before the picture track.
+func mp4AudioTrackFirst(width, height int, durationMS int64) []byte {
+	mvhd := make([]byte, 20)
+	binary.BigEndian.PutUint32(mvhd[12:16], 1000)
+	binary.BigEndian.PutUint32(mvhd[16:20], uint32(durationMS))
+	audio := mediatest.Box("trak", mediatest.Box("tkhd", make([]byte, 84)))
+	tkhd := make([]byte, 84)
+	binary.BigEndian.PutUint32(tkhd[76:80], uint32(width<<16))
+	binary.BigEndian.PutUint32(tkhd[80:84], uint32(height<<16))
+	video := mediatest.Box("trak", mediatest.Box("tkhd", tkhd))
+	moov := mediatest.Box("moov", append(append(mediatest.Box("mvhd", mvhd), audio...), video...))
 	return append(mediatest.Box("ftyp", append([]byte("isom"), make([]byte, 12)...)), moov...)
 }

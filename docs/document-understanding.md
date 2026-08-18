@@ -93,11 +93,13 @@ outside the reusable packages and their policy identity.
 ## Detect and bound visual attachments
 
 `media.Detect` sniffs JPEG, PNG, WebP, GIF, and MP4 containers and reads only
-the metadata needed to bound provider input: dimensions, GIF frame count, and
-MP4 duration. It never decodes pixels and never trusts the declared media type.
-`media.Evaluate` applies a policy of byte, pixel, and duration caps and
+the metadata needed to bound provider input: dimensions, frame count
+(including animated WebP and APNG), and MP4 duration when the container
+declares one. It never decodes pixels and never trusts the declared media
+type. `media.Evaluate` applies a policy of byte, pixel, and duration caps and
 still, animated, and video toggles, returning a stable reason such as
 `too_many_pixels` or `animated_not_allowed` that an application can record.
+Under a duration cap, video whose duration cannot be measured is refused.
 
 ```go
 metadata, reason, err := media.Inspect(reader, size, "image/png", media.DefaultPolicy())
@@ -145,13 +147,17 @@ Policy.AuthorizeAll(validated manifest)
   -> Client.EmbedDocuments(inputs, authorizations)
 ```
 
-`EmbedDocuments` re-detects every media part so metadata cannot misdescribe
-bytes, requires an authorization for the part's format and animation state,
-requires the interleaved capability for text-plus-media inputs and the batch
-capability for more than one input, and refuses requests over the policy's
-item and byte limits before allocation. Provider bodies never appear in
-errors; `IsRetryable`, `RetryAfter`, and `MetricsFromError` support the
-application's own scheduling.
+`EmbedDocuments` accepts only the probed input shapes, `[media]` and
+`[text, media]`. It re-detects every media part and serializes from the
+detected metadata so caller metadata cannot misdescribe bytes, requires an
+authorization for the part's format and animation state, requires the
+interleaved capability for `[text, media]` and the batch capability for more
+than one input, and refuses requests over the policy's item and byte limits
+before allocation. An image query needs both the image-query capability and
+the capability for the image's own format. The client never follows
+redirects, so media and credentials cannot leave the pinned endpoint.
+Provider bodies never appear in errors; `IsRetryable`, `RetryAfter`, and
+`MetricsFromError` support the application's own scheduling.
 
 The importing application remains responsible for credentials, human consent,
 spending and scheduling limits, durable manifests, job orchestration, vector

@@ -57,8 +57,8 @@ var capabilities = []Capability{
 	{ID: CapabilityVideoMP4, Kind: CapabilityKindDocument, Format: media.FormatMP4, InputType: inputTypeDocument, Description: "an MP4 document embeds"},
 	{ID: CapabilityQueryText, Kind: CapabilityKindQuery, InputType: inputTypeQuery, Description: "a text query embeds and ranks its matching document first"},
 	{ID: CapabilityQueryImage, Kind: CapabilityKindQuery, Format: media.FormatPNG, InputType: inputTypeQuery, Description: "an image query embeds and ranks its matching document first"},
-	{ID: CapabilityInterleaved, Kind: CapabilityKindRequest, InputType: inputTypeDocument, Description: "a text-then-media document embeds and respects part order"},
-	{ID: CapabilityBatchLimits, Kind: CapabilityKindRequest, InputType: inputTypeDocument, Description: "a batch at the policy limit embeds and preserves index order"},
+	{ID: CapabilityInterleaved, Kind: CapabilityKindRequest, InputType: inputTypeDocument, Description: "a text-then-media document embeds and the text contributes"},
+	{ID: CapabilityBatchLimits, Kind: CapabilityKindRequest, InputType: inputTypeDocument, Description: "a batch at the policy limit embeds and each result matches its input"},
 }
 
 // Capabilities returns every capability in manifest order.

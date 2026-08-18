@@ -103,10 +103,14 @@ func NewClient(policy Policy, config ClientConfig) (*Client, error) {
 		config.MaxRetries > MaxRetries || config.RetryBaseDelay < 0 {
 		return nil, errors.New("voyage client operational bounds are invalid")
 	}
-	httpClient := config.HTTPClient
-	if httpClient == nil {
-		httpClient = &http.Client{Timeout: config.Timeout}
+	// Never follow redirects: a redirect could replay media bytes and the
+	// bearer credential to a host outside the pinned endpoint.
+	httpClient := &http.Client{Timeout: config.Timeout}
+	if config.HTTPClient != nil {
+		clone := *config.HTTPClient
+		httpClient = &clone
 	}
+	httpClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	return &Client{
 		policy: policy, apiKey: config.APIKey, timeout: config.Timeout, maxRetries: config.MaxRetries,
 		retryBaseDelay: config.RetryBaseDelay, http: httpClient, now: time.Now,
@@ -185,39 +189,37 @@ func (c *Client) authorizationSet(authorizations []Authorization) (map[string]bo
 }
 
 func (c *Client) documentContent(input Input, authorized map[string]bool, mediaPolicy media.Policy) ([]wireContentPart, error) {
-	if len(input.Parts) == 0 {
-		return nil, fmt.Errorf("%w: document has no parts", ErrInvalidInput)
+	// Only the probed shapes are accepted: [media] or [text, media].
+	var textPart, mediaPart *Part
+	switch len(input.Parts) {
+	case 1:
+		mediaPart = &input.Parts[0]
+	case 2:
+		textPart, mediaPart = &input.Parts[0], &input.Parts[1]
+	default:
+		return nil, fmt.Errorf("%w: document must be [media] or [text, media]", ErrInvalidInput)
 	}
-	content := make([]wireContentPart, 0, len(input.Parts))
-	mediaCount, textCount := 0, 0
-	for _, part := range input.Parts {
-		switch {
-		case part.Media != nil && part.Text != "":
-			return nil, fmt.Errorf("%w: part cannot contain text and media", ErrInvalidInput)
-		case part.Media != nil:
-			mediaCount++
-			capability, err := c.verifyMedia(part.Media, mediaPolicy)
-			if err != nil {
-				return nil, err
-			}
-			if !authorized[capability.ID] {
-				return nil, fmt.Errorf("%w: media requires %s", ErrCapabilityContract, capability.ID)
-			}
-			content = append(content, mediaPart(part.Media))
-		case strings.TrimSpace(part.Text) != "":
-			textCount++
-			content = append(content, wireContentPart{Type: "text", Text: part.Text})
-		default:
-			return nil, fmt.Errorf("%w: part is empty", ErrInvalidInput)
+	if mediaPart.Media == nil || mediaPart.Text != "" {
+		return nil, fmt.Errorf("%w: document must end with exactly one media part", ErrInvalidInput)
+	}
+	content := make([]wireContentPart, 0, 2)
+	if textPart != nil {
+		if textPart.Media != nil || strings.TrimSpace(textPart.Text) == "" {
+			return nil, fmt.Errorf("%w: text part must precede the media part and be non-empty", ErrInvalidInput)
 		}
+		if !authorized[CapabilityInterleaved] {
+			return nil, fmt.Errorf("%w: text with media requires %s", ErrCapabilityContract, CapabilityInterleaved)
+		}
+		content = append(content, wireContentPart{Type: "text", Text: textPart.Text})
 	}
-	if mediaCount != 1 {
-		return nil, fmt.Errorf("%w: document requires exactly one media part", ErrInvalidInput)
+	detected, capability, err := c.verifyMedia(mediaPart.Media, mediaPolicy)
+	if err != nil {
+		return nil, err
 	}
-	if textCount > 0 && !authorized[CapabilityInterleaved] {
-		return nil, fmt.Errorf("%w: text with media requires %s", ErrCapabilityContract, CapabilityInterleaved)
+	if !authorized[capability.ID] {
+		return nil, fmt.Errorf("%w: media requires %s", ErrCapabilityContract, capability.ID)
 	}
-	return content, nil
+	return append(content, wireMediaPart(detected, mediaPart.Media.Bytes)), nil
 }
 
 func (c *Client) queryContent(input Input, authorized map[string]bool, mediaPolicy media.Policy) ([]wireContentPart, error) {
@@ -229,16 +231,19 @@ func (c *Client) queryContent(input Input, authorized map[string]bool, mediaPoli
 			return nil, fmt.Errorf("%w: part cannot contain text and media", ErrInvalidInput)
 		case part.Media != nil:
 			mediaCount++
-			if _, err := c.verifyMedia(part.Media, mediaPolicy); err != nil {
+			detected, capability, err := c.verifyMedia(part.Media, mediaPolicy)
+			if err != nil {
 				return nil, err
 			}
-			if part.Media.Metadata.Kind != media.KindImage || part.Media.Metadata.Animated {
+			if detected.Kind != media.KindImage || detected.Animated {
 				return nil, fmt.Errorf("%w: query media must be a still image", ErrInvalidInput)
 			}
-			if !authorized[CapabilityQueryImage] {
-				return nil, fmt.Errorf("%w: image queries require %s", ErrCapabilityContract, CapabilityQueryImage)
+			// An image query needs the query mode and the format itself to be
+			// probed; the query probe alone uses one format.
+			if !authorized[CapabilityQueryImage] || !authorized[capability.ID] {
+				return nil, fmt.Errorf("%w: image queries require %s and %s", ErrCapabilityContract, CapabilityQueryImage, capability.ID)
 			}
-			content = append(content, mediaPart(part.Media))
+			content = append(content, wireMediaPart(detected, part.Media.Bytes))
 		case strings.TrimSpace(part.Text) != "":
 			textCount++
 			if !authorized[CapabilityQueryText] {
@@ -256,24 +261,26 @@ func (c *Client) queryContent(input Input, authorized map[string]bool, mediaPoli
 }
 
 // verifyMedia re-detects the bytes so callers cannot pass metadata that does
-// not describe them, then applies the policy media bounds.
-func (c *Client) verifyMedia(part *Media, mediaPolicy media.Policy) (Capability, error) {
+// not describe them, applies the policy media bounds, and returns the detected
+// metadata that every request is serialized from.
+func (c *Client) verifyMedia(part *Media, mediaPolicy media.Policy) (media.Metadata, Capability, error) {
 	if len(part.Bytes) == 0 {
-		return Capability{}, fmt.Errorf("%w: media bytes are required", ErrInvalidInput)
+		return media.Metadata{}, Capability{}, fmt.Errorf("%w: media bytes are required", ErrInvalidInput)
 	}
 	detected, reason := media.InspectBytes(part.Bytes, part.Metadata.DeclaredMediaType, mediaPolicy)
 	if reason != media.ReasonEligible {
-		return Capability{}, fmt.Errorf("%w: media is %s under the policy", ErrInvalidInput, reason)
+		return media.Metadata{}, Capability{}, fmt.Errorf("%w: media is %s under the policy", ErrInvalidInput, reason)
 	}
-	if detected.Format != part.Metadata.Format || detected.Animated != part.Metadata.Animated ||
+	if detected.Format != part.Metadata.Format || detected.Kind != part.Metadata.Kind ||
+		detected.MediaType != part.Metadata.MediaType || detected.Animated != part.Metadata.Animated ||
 		detected.Width != part.Metadata.Width || detected.Height != part.Metadata.Height {
-		return Capability{}, fmt.Errorf("%w: media metadata does not describe its bytes", ErrInvalidInput)
+		return media.Metadata{}, Capability{}, fmt.Errorf("%w: media metadata does not describe its bytes", ErrInvalidInput)
 	}
 	capability, ok := documentCapabilityFor(detected)
 	if !ok {
-		return Capability{}, fmt.Errorf("%w: media format %s has no capability", ErrInvalidInput, detected.Format)
+		return media.Metadata{}, Capability{}, fmt.Errorf("%w: media format %s (animated=%t) has no capability", ErrInvalidInput, detected.Format, detected.Animated)
 	}
-	return capability, nil
+	return detected, capability, nil
 }
 
 type wireRequest struct {
@@ -305,24 +312,38 @@ type wireResponse struct {
 	} `json:"usage"`
 }
 
-func mediaPart(part *Media) wireContentPart {
-	dataURL := "data:" + part.Metadata.MediaType + ";base64," + base64.StdEncoding.EncodeToString(part.Bytes)
-	if part.Metadata.Kind == media.KindVideo {
+func wireMediaPart(detected media.Metadata, data []byte) wireContentPart {
+	dataURL := "data:" + detected.MediaType + ";base64," + base64.StdEncoding.EncodeToString(data)
+	if detected.Kind == media.KindVideo {
 		return wireContentPart{Type: "video_base64", VideoBase64: dataURL}
 	}
 	return wireContentPart{Type: "image_base64", ImageBase64: dataURL}
 }
 
-// estimatedRequestBytes bounds the encoded request before base64 or JSON
-// allocation. The fixed allowance covers keys, escaping, and model metadata;
-// the marshaled length remains the final authority.
+const (
+	// requestOverheadBytes covers the request envelope: model, input type,
+	// truncation, and dimension keys.
+	requestOverheadBytes = 512
+	// partOverheadBytes covers one content part's keys, quotes, separators,
+	// and data-URL prefix.
+	partOverheadBytes = 96
+	// textEscapeFactor is the worst-case JSON expansion of one text byte
+	// (\uXXXX).
+	textEscapeFactor = 6
+)
+
+// estimatedRequestBytes is an upper bound on the encoded request, computed
+// before any base64 or JSON allocation so oversized batches are refused
+// without allocating them. Text is charged at its worst-case escaped size and
+// media at its exact base64 size.
 func estimatedRequestBytes(inputs []Input) int64 {
-	total := int64(512 + len(inputs)*128)
+	total := int64(requestOverheadBytes)
 	for _, input := range inputs {
+		total += partOverheadBytes
 		for _, part := range input.Parts {
-			total += int64(len(part.Text)) * 2
+			total += partOverheadBytes + int64(len(part.Text))*textEscapeFactor
 			if part.Media != nil {
-				total += int64(base64.StdEncoding.EncodedLen(len(part.Media.Bytes))) + 128
+				total += int64(base64.StdEncoding.EncodedLen(len(part.Media.Bytes)))
 			}
 		}
 	}

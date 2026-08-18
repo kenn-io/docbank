@@ -38,11 +38,13 @@ type Metadata struct {
 	// Width and Height are pixel dimensions.
 	Width  int64 `json:"width"`
 	Height int64 `json:"height"`
-	// FrameCount is the number of image descriptors in a GIF; zero otherwise.
+	// FrameCount is the number of image frames; zero for video.
 	FrameCount int `json:"frame_count,omitempty"`
-	// DurationMS is the video duration in milliseconds; zero for images or
-	// when the container declares no duration.
+	// DurationMS is the video duration in milliseconds when DurationKnown.
 	DurationMS int64 `json:"duration_ms,omitempty"`
+	// DurationKnown reports that the container declared a measurable
+	// duration. Fragmented or header-only video leaves it false.
+	DurationKnown bool `json:"duration_known,omitempty"`
 	// Animated reports a multi-frame image.
 	Animated bool `json:"animated,omitempty"`
 }

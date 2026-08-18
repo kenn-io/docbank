@@ -15,7 +15,9 @@ func TestEvaluateReturnsStableReasons(t *testing.T) {
 	still := media.Metadata{Format: media.FormatPNG, Kind: media.KindImage, MediaType: "image/png", Size: 100, Width: 4, Height: 3}
 	animated := still
 	animated.Format, animated.MediaType, animated.FrameCount, animated.Animated = media.FormatGIF, "image/gif", 2, true
-	video := media.Metadata{Format: media.FormatMP4, Kind: media.KindVideo, MediaType: "video/mp4", Size: 100, Width: 640, Height: 360, DurationMS: 5000}
+	video := media.Metadata{Format: media.FormatMP4, Kind: media.KindVideo, MediaType: "video/mp4", Size: 100, Width: 640, Height: 360, DurationMS: 5000, DurationKnown: true}
+	unmeasured := video
+	unmeasured.DurationMS, unmeasured.DurationKnown = 0, false
 	allowAll := media.Policy{AllowStill: true, AllowAnimated: true, AllowVideo: true}
 
 	tests := []struct {
@@ -36,6 +38,8 @@ func TestEvaluateReturnsStableReasons(t *testing.T) {
 		{name: "product at cap", metadata: still, policy: media.Policy{MaxPixels: 12, AllowStill: true}, want: media.ReasonEligible},
 		{name: "too long", metadata: video, policy: media.Policy{MaxDurationMS: 4999, AllowVideo: true}, want: media.ReasonTooLong},
 		{name: "duration at cap", metadata: video, policy: media.Policy{MaxDurationMS: 5000, AllowVideo: true}, want: media.ReasonEligible},
+		{name: "unknown duration under cap", metadata: unmeasured, policy: media.Policy{MaxDurationMS: 5000, AllowVideo: true}, want: media.ReasonTooLong},
+		{name: "unknown duration without cap", metadata: unmeasured, policy: media.Policy{AllowVideo: true}, want: media.ReasonEligible},
 		{name: "unknown kind", metadata: media.Metadata{Size: 1, Width: 1, Height: 1}, policy: allowAll, want: media.ReasonUnsupportedMedia},
 		{name: "missing dimensions", metadata: media.Metadata{Kind: media.KindImage, Size: 1}, policy: allowAll, want: media.ReasonMalformedMedia},
 	}

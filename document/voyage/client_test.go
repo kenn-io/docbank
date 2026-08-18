@@ -156,7 +156,7 @@ func TestEmbedDocumentsSendsOrderedInputsAndRestoresIndices(t *testing.T) {
 	result, err := client.EmbedDocuments(t.Context(), []voyage.Input{
 		{Parts: []voyage.Part{{Text: "first context"}, {Media: jpeg}}},
 		{Parts: []voyage.Part{{Media: png}}},
-		{Parts: []voyage.Part{{Media: mp4}, {Text: "trailing context"}}},
+		{Parts: []voyage.Part{{Text: "video context"}, {Media: mp4}}},
 	}, fullAuthorizations(t, policy))
 	require.NoError(t, err)
 	require.Len(t, result.Vectors, 3)
@@ -176,8 +176,8 @@ func TestEmbedDocumentsSendsOrderedInputsAndRestoresIndices(t *testing.T) {
 	assert.Equal(t, "first context", seen.Inputs[0].Content[0].Text)
 	assert.Equal(t, "image_base64", seen.Inputs[0].Content[1].Type)
 	assert.True(t, strings.HasPrefix(seen.Inputs[0].Content[1].ImageBase64, "data:image/jpeg;base64,"))
-	assert.Equal(t, "video_base64", seen.Inputs[2].Content[0].Type)
-	assert.True(t, strings.HasPrefix(seen.Inputs[2].Content[0].VideoBase64, "data:video/mp4;base64,"))
+	assert.Equal(t, "video_base64", seen.Inputs[2].Content[1].Type)
+	assert.True(t, strings.HasPrefix(seen.Inputs[2].Content[1].VideoBase64, "data:video/mp4;base64,"))
 	decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(seen.Inputs[1].Content[0].ImageBase64, "data:image/png;base64,"))
 	require.NoError(t, err)
 	assert.Equal(t, png.Bytes, decoded)
@@ -216,6 +216,8 @@ func TestEmbedDocumentsEnforcesCapabilityAuthorization(t *testing.T) {
 		{name: "no authorizations", inputs: []voyage.Input{{Parts: []voyage.Part{{Media: png}}}}, want: voyage.ErrCapabilityContract},
 		{name: "no media part", inputs: []voyage.Input{{Parts: []voyage.Part{{Text: "only text"}}}}, authorizations: fullAuthorizations(t, policy), want: voyage.ErrInvalidInput, wantText: "exactly one media"},
 		{name: "two media parts", inputs: []voyage.Input{{Parts: []voyage.Part{{Media: png}, {Media: png}}}}, authorizations: fullAuthorizations(t, policy), want: voyage.ErrInvalidInput},
+		{name: "media before text is not a probed shape", inputs: []voyage.Input{{Parts: []voyage.Part{{Media: png}, {Text: "after"}}}}, authorizations: fullAuthorizations(t, policy), want: voyage.ErrInvalidInput},
+		{name: "three parts", inputs: []voyage.Input{{Parts: []voyage.Part{{Text: "a"}, {Text: "b"}, {Media: png}}}}, authorizations: fullAuthorizations(t, policy), want: voyage.ErrInvalidInput},
 		{name: "empty part", inputs: []voyage.Input{{Parts: []voyage.Part{{}, {Media: png}}}}, authorizations: fullAuthorizations(t, policy), want: voyage.ErrInvalidInput},
 		{name: "text and media in one part", inputs: []voyage.Input{{Parts: []voyage.Part{{Text: "x", Media: png}}}}, authorizations: fullAuthorizations(t, policy), want: voyage.ErrInvalidInput},
 		{name: "no parts", inputs: []voyage.Input{{}}, authorizations: fullAuthorizations(t, policy), want: voyage.ErrInvalidInput},
@@ -252,6 +254,11 @@ func TestEmbedDocumentsRejectsMismatchedMetadataAndForeignAuthorizations(t *test
 	require.ErrorIs(t, err, voyage.ErrInvalidInput)
 	require.ErrorContains(t, err, "does not describe its bytes")
 
+	relabeled := mediaInput(t, mediatest.PNG(4, 4, color.White))
+	relabeled.Metadata.Kind, relabeled.Metadata.MediaType = media.KindVideo, "video/mp4"
+	_, err = client.EmbedDocuments(t.Context(), []voyage.Input{{Parts: []voyage.Part{{Media: relabeled}}}}, authorizations)
+	require.ErrorIs(t, err, voyage.ErrInvalidInput, "kind and media type must match the detected container")
+
 	empty := &voyage.Media{Metadata: lying.Metadata}
 	_, err = client.EmbedDocuments(t.Context(), []voyage.Input{{Parts: []voyage.Part{{Media: empty}}}}, authorizations)
 	require.ErrorIs(t, err, voyage.ErrInvalidInput)
@@ -281,7 +288,8 @@ func TestEmbedQuerySupportsTextImageAndCombinedInputs(t *testing.T) {
 	png := mediaInput(t, mediatest.PNG(4, 4, color.White))
 	all := fullAuthorizations(t, policy)
 	textOnly := fullAuthorizations(t, policy, voyage.CapabilityQueryText)
-	imageOnly := fullAuthorizations(t, policy, voyage.CapabilityQueryImage)
+	imageOnly := fullAuthorizations(t, policy, voyage.CapabilityQueryImage, voyage.CapabilityImagePNG)
+	queryModeOnly := fullAuthorizations(t, policy, voyage.CapabilityQueryImage)
 
 	vector, usage, err := client.EmbedQuery(t.Context(), voyage.Input{Parts: []voyage.Part{{Text: "red square"}}}, textOnly...)
 	require.NoError(t, err)
@@ -301,6 +309,10 @@ func TestEmbedQuerySupportsTextImageAndCombinedInputs(t *testing.T) {
 
 	_, _, err = client.EmbedQuery(t.Context(), voyage.Input{Parts: []voyage.Part{{Media: png}}}, textOnly...)
 	require.ErrorIs(t, err, voyage.ErrCapabilityContract)
+	_, _, err = client.EmbedQuery(t.Context(), voyage.Input{Parts: []voyage.Part{{Media: png}}}, queryModeOnly...)
+	require.ErrorIs(t, err, voyage.ErrCapabilityContract, "the query image's own format must be probed too")
+	_, _, err = client.EmbedQuery(t.Context(), voyage.Input{Parts: []voyage.Part{{Media: mediaInput(t, mediatest.JPEG(4, 4, color.White))}}}, imageOnly...)
+	require.ErrorIs(t, err, voyage.ErrCapabilityContract, "png authorization does not cover a jpeg query")
 	_, _, err = client.EmbedQuery(t.Context(), voyage.Input{Parts: []voyage.Part{{Text: "red"}}}, imageOnly...)
 	require.ErrorIs(t, err, voyage.ErrCapabilityContract)
 	_, _, err = client.EmbedQuery(t.Context(), voyage.Input{}, all...)
@@ -493,4 +505,26 @@ func TestTimeoutAndCancellation(t *testing.T) {
 		require.ErrorIs(t, err, context.Canceled)
 		assert.False(t, voyage.IsRetryable(err))
 	})
+}
+
+func TestClientNeverFollowsRedirects(t *testing.T) {
+	policy := testPolicy(t)
+	var targetCalled atomic.Bool
+	target := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { targetCalled.Store(true) }))
+	defer target.Close()
+	redirect := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Redirect(w, &http.Request{URL: &url.URL{}}, target.URL+"/v1/multimodalembeddings", http.StatusTemporaryRedirect)
+	}))
+	defer redirect.Close()
+	client := newServerClient(t, redirect, policy, voyage.ClientConfig{MaxRetries: 1})
+	png := mediaInput(t, mediatest.PNG(2, 2, nil))
+	_, err := client.EmbedDocuments(t.Context(), []voyage.Input{{Parts: []voyage.Part{{Media: png}}}}, fullAuthorizations(t, policy))
+	require.Error(t, err)
+	assert.False(t, targetCalled.Load(), "media and credentials must never follow a redirect off the pinned endpoint")
+
+	provided := &http.Client{Timeout: time.Second}
+	configured, err := voyage.NewClient(policy, voyage.ClientConfig{APIKey: "k", HTTPClient: provided})
+	require.NoError(t, err)
+	require.NotNil(t, configured)
+	assert.Nil(t, provided.CheckRedirect, "the caller's client is cloned, not mutated")
 }
