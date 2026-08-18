@@ -20,15 +20,15 @@ type NormalizePolicy struct {
 
 // NormalizePolicyIdentity is a read-only copy of every effective policy value.
 type NormalizePolicyIdentity struct {
-	Version                int
-	MaxDocumentChars       int
-	MaxUnitChars           int
-	MaxSourceUnitBytes     int
-	MaxMetadataSourceBytes int
-	MaxLinkChars           int
-	MaxChunkRunes          int
-	ChunkOverlap           int
-	MaxChunks              int
+	Version                int `json:"version"`
+	MaxDocumentChars       int `json:"max_document_chars"`
+	MaxUnitChars           int `json:"max_unit_chars"`
+	MaxSourceUnitBytes     int `json:"max_source_unit_bytes"`
+	MaxMetadataSourceBytes int `json:"max_metadata_source_bytes"`
+	MaxLinkChars           int `json:"max_link_chars"`
+	MaxChunkRunes          int `json:"max_chunk_runes"`
+	ChunkOverlap           int `json:"chunk_overlap"`
+	MaxChunks              int `json:"max_chunks"`
 }
 
 // NewNormalizePolicy returns the fixed version-2 policy for a document limit.

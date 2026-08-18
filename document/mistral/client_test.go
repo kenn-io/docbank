@@ -1,0 +1,598 @@
+package mistral
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"os"
+	"runtime"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestClientProcessStreamsVerifiedDocumentAndReturnsNeutralEvidence(t *testing.T) {
+	content := testPDF("synthetic")
+	policy := testPolicy(t, 1024, 10)
+	prepared := prepareTestDocument(t, policy, content)
+	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
+	require.NoError(t, err)
+
+	var requestBody []byte
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		assert.Equal(t, http.MethodPost, request.Method)
+		assert.Equal(t, "/v1/ocr", request.URL.Path)
+		assert.Equal(t, "Bearer synthetic-key", request.Header.Get("Authorization"))
+		var readErr error
+		requestBody, readErr = io.ReadAll(request.Body)
+		assert.NoError(t, readErr)
+		assert.Equal(t, request.ContentLength, int64(len(requestBody)))
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, writeErr := fmt.Fprintf(w, `{"model":"mistral-ocr-4-0","pages":[{"index":0,"markdown":"# Synthetic","header":"Header","footer":"Footer","dimensions":{"dpi":144,"height":792,"width":612}}],"usage_info":{"pages_processed":1,"doc_size_bytes":%d}}`, len(content))
+		assert.NoError(t, writeErr)
+	}))
+	defer server.Close()
+	client := newServerClient(t, server, policy, ClientConfig{APIKey: "synthetic-key"})
+
+	result, err := client.Process(t.Context(), prepared, authorization)
+	require.NoError(t, err)
+	assert.Equal(t, "mistral-ocr-4-0", result.ReturnedModel)
+	assert.Equal(t, 1, result.UnitsProcessed)
+	require.NotNil(t, result.ProviderBytes)
+	assert.Equal(t, int64(len(content)), *result.ProviderBytes)
+	assert.Equal(t, "pdf", result.Document.Family)
+	assert.Equal(t, "page", result.Document.UnitKind)
+	require.Len(t, result.Document.Units, 1)
+	assert.Equal(t, "# Synthetic", result.Document.Units[0].Markdown)
+	assert.Equal(t, 144, result.Document.Units[0].Dimensions.DPI)
+	assert.Equal(t, RequestMetrics{Requests: 1, Retries: 0, Latency: result.Metrics.Latency}, result.Metrics)
+	assert.Positive(t, result.Metrics.Latency)
+
+	var decoded struct {
+		Model    string `json:"model"`
+		Document struct {
+			Type string `json:"type"`
+			URL  string `json:"document_url"`
+		} `json:"document"`
+		ExtractHeader bool   `json:"extract_header"`
+		ExtractFooter bool   `json:"extract_footer"`
+		Pages         string `json:"pages"`
+	}
+	require.NoError(t, json.Unmarshal(requestBody, &decoded))
+	assert.Equal(t, defaultModel, decoded.Model)
+	assert.Equal(t, "document_url", decoded.Document.Type)
+	assert.True(t, decoded.ExtractHeader)
+	assert.True(t, decoded.ExtractFooter)
+	assert.Equal(t, "0-9", decoded.Pages)
+	encoded := strings.TrimPrefix(decoded.Document.URL, "data:"+mediaTypePDF+";base64,")
+	uploaded, err := base64.StdEncoding.DecodeString(encoded)
+	require.NoError(t, err)
+	assert.Equal(t, content, uploaded)
+}
+
+func TestClientRejectsChangedReleasedAndCrossPolicyDocumentsBeforeUpload(t *testing.T) {
+	policy := testPolicy(t, 1024, 10)
+	manifest := syntheticManifest(t, policy, true)
+	authorization, err := policy.Authorize(manifest, "pdf")
+	require.NoError(t, err)
+	clientWithoutRequests := func(policy Policy) *Client {
+		client, clientErr := NewClient(policy, ClientConfig{APIKey: "synthetic-key", HTTPClient: &http.Client{
+			Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return nil, errors.New("unexpected provider request")
+			}),
+		}})
+		require.NoError(t, clientErr)
+		return client
+	}
+	client := clientWithoutRequests(policy)
+
+	changed := prepareTestDocument(t, policy, testPDF("first"))
+	require.NoError(t, os.WriteFile(changed.path, testPDF("other"), 0o600))
+	_, err = client.Process(t.Context(), changed, authorization)
+	require.ErrorContains(t, err, "hash mismatch")
+
+	if runtime.GOOS != "windows" {
+		public := prepareTestDocument(t, policy, testPDF("private"))
+		require.NoError(t, os.Chmod(public.path, 0o644))
+		_, err = client.Process(t.Context(), public, authorization)
+		require.ErrorContains(t, err, "permissions must be private")
+	}
+
+	released := prepareTestDocument(t, policy, testPDF("release"))
+	require.NoError(t, released.Release())
+	_, err = client.Process(t.Context(), released, authorization)
+	require.ErrorContains(t, err, "released")
+
+	docx, found := CandidateFormatByID("docx")
+	require.True(t, found)
+	_, err = client.Process(t.Context(), prepareTestDocument(t, policy, testPDF("format")), FormatAuthorization{
+		format: docx, method: UnitBoundProviderRequest,
+		policyFingerprint: authorization.policyFingerprint, policyDigest: policy.digest,
+	})
+	require.ErrorContains(t, err, "detected format does not match authorization")
+
+	localOverflow := prepareTestDocument(t, policy, testPDF("local-overflow"))
+	localOverflow.localUnits = policy.values.MaxUnits + 1
+	_, err = client.Process(t.Context(), localOverflow, FormatAuthorization{
+		format: authorization.format, method: UnitBoundLocalExact,
+		policyFingerprint: authorization.policyFingerprint, policyDigest: policy.digest,
+	})
+	require.ErrorContains(t, err, "local unit count")
+
+	otherPolicy := testPolicy(t, 1024, 9)
+	_, err = client.Process(t.Context(), prepareTestDocument(t, policy, testPDF("policy")), FormatAuthorization{
+		format: authorization.format, method: authorization.method,
+		policyFingerprint: authorization.policyFingerprint, policyDigest: otherPolicy.digest,
+	})
+	require.ErrorContains(t, err, "different policy")
+
+	smallPolicy := testPolicy(t, 8, 10)
+	client = clientWithoutRequests(smallPolicy)
+	_, err = client.Process(t.Context(), prepareTestDocument(t, policy, testPDF("large")), FormatAuthorization{
+		format: authorization.format, method: authorization.method,
+		policyFingerprint: authorization.policyFingerprint, policyDigest: smallPolicy.digest,
+	})
+	require.ErrorContains(t, err, "policy limit 8")
+}
+
+func TestClientClassifiesResponsesAndDoesNotFollowRedirects(t *testing.T) {
+	policy := testPolicy(t, 1024, 10)
+	prepared := prepareTestDocument(t, policy, testPDF("x"))
+	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
+	require.NoError(t, err)
+
+	tests := []struct {
+		name        string
+		status      int
+		response    string
+		contentType string
+		maxBytes    int64
+		wantError   string
+	}{
+		{name: "permanent", status: http.StatusBadRequest, response: "private response body", wantError: ErrPermanentResponse.Error()},
+		{name: "too large", status: http.StatusOK, response: strings.Repeat("x", 65), contentType: "application/json", maxBytes: 64, wantError: ErrResponseTooLarge.Error()},
+		{name: "empty pages", status: http.StatusOK, response: `{"model":"mistral-ocr-4-0","pages":[],"usage_info":{"pages_processed":0}}`, contentType: "application/json", wantError: "returned no pages"},
+		{name: "missing index", status: http.StatusOK, response: `{"model":"mistral-ocr-4-0","pages":[{}],"usage_info":{"pages_processed":1}}`, contentType: "application/json", wantError: "invalid index"},
+		{name: "invalid dimensions", status: http.StatusOK, response: `{"model":"mistral-ocr-4-0","pages":[{"index":0,"dimensions":{"dpi":-1}}],"usage_info":{"pages_processed":1}}`, contentType: "application/json", wantError: "invalid dimensions"},
+		{name: "usage mismatch", status: http.StatusOK, response: `{"model":"mistral-ocr-4-0","pages":[{"index":0}],"usage_info":{"pages_processed":0}}`, contentType: "application/json", wantError: "processed 0 units but returned 1"},
+		{name: "duplicate usage", status: http.StatusOK, response: `{"model":"mistral-ocr-4-0","pages":[{"index":0}],"usage_info":{"pages_processed":1},"usage_info":{}}`, contentType: "application/json", wantError: `duplicate JSON object key "usage_info"`},
+		{name: "duplicate page field", status: http.StatusOK, response: `{"model":"mistral-ocr-4-0","pages":[{"index":0,"index":1}],"usage_info":{"pages_processed":1}}`, contentType: "application/json", wantError: `duplicate JSON object key "index"`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if test.contentType != "" {
+					w.Header().Set("Content-Type", test.contentType)
+				}
+				w.WriteHeader(test.status)
+				_, writeErr := io.WriteString(w, test.response)
+				assert.NoError(t, writeErr)
+			}))
+			defer server.Close()
+			casePolicy := policy
+			caseAuthorization := authorization
+			if test.maxBytes > 0 {
+				values := policy.Values()
+				casePolicy = testPolicy(t, values.MaxDocumentBytes, values.MaxUnits)
+				casePolicy.values.MaxResponseBytes = test.maxBytes
+				casePolicy.digest, err = policyValuesDigest(casePolicy.values)
+				require.NoError(t, err)
+				caseAuthorization.policyDigest = casePolicy.digest
+			}
+			client := newServerClient(t, server, casePolicy, ClientConfig{})
+			_, err := client.Process(t.Context(), prepared, caseAuthorization)
+			require.ErrorContains(t, err, test.wantError)
+			assert.NotContains(t, err.Error(), "private response body")
+		})
+	}
+
+	targetCalled := false
+	target := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { targetCalled = true }))
+	defer target.Close()
+	redirect := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", target.URL)
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	defer redirect.Close()
+	client := newServerClient(t, redirect, policy, ClientConfig{})
+	_, err = client.Process(t.Context(), prepared, authorization)
+	require.ErrorContains(t, err, "unexpected HTTP 307")
+	assert.False(t, targetCalled)
+}
+
+func TestClientRetriesOnlyTransientWorkAndReverifiesEveryAttempt(t *testing.T) {
+	policy := testPolicy(t, 1024, 10)
+	prepared := prepareTestDocument(t, policy, testPDF("original"))
+	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
+	require.NoError(t, err)
+	requests := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		requests++
+		_, copyErr := io.Copy(io.Discard, request.Body)
+		assert.NoError(t, copyErr)
+		if requests == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, writeErr := io.WriteString(w, testSuccessfulResponse)
+		assert.NoError(t, writeErr)
+	}))
+	defer server.Close()
+	client := newServerClient(t, server, policy, ClientConfig{MaxRetryDelay: time.Millisecond})
+	result, err := client.Process(t.Context(), prepared, authorization)
+	require.NoError(t, err)
+	assert.Equal(t, 2, requests)
+	assert.Equal(t, 2, result.Metrics.Requests)
+	assert.Equal(t, 1, result.Metrics.Retries)
+
+	requests = 0
+	mutating := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		requests++
+		_, copyErr := io.Copy(io.Discard, request.Body)
+		assert.NoError(t, copyErr)
+		assert.NoError(t, os.WriteFile(prepared.path, testPDF("modified"), 0o600))
+		w.Header().Set("Retry-After", "0")
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer mutating.Close()
+	client = newServerClient(t, mutating, policy, ClientConfig{MaxRetryDelay: time.Millisecond})
+	_, err = client.Process(t.Context(), prepared, authorization)
+	require.ErrorContains(t, err, "hash mismatch")
+	assert.Equal(t, 1, requests)
+}
+
+func TestClientDoesNotRetryReleasedDocument(t *testing.T) {
+	policy := testPolicy(t, 1024, 10)
+	prepared := prepareTestDocument(t, policy, testPDF("release-during-backoff"))
+	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
+	require.NoError(t, err)
+	firstResponse := make(chan struct{})
+	requests := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		requests++
+		_, copyErr := io.Copy(io.Discard, request.Body)
+		assert.NoError(t, copyErr)
+		w.Header().Set("Retry-After", "60")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		if requests == 1 {
+			close(firstResponse)
+		}
+	}))
+	defer server.Close()
+	client := newServerClient(t, server, policy, ClientConfig{MaxRetryDelay: 500 * time.Millisecond})
+	done := make(chan error, 1)
+	go func() {
+		_, processErr := client.Process(t.Context(), prepared, authorization)
+		done <- processErr
+	}()
+
+	<-firstResponse
+	require.NoError(t, prepared.Release())
+	err = <-done
+	require.ErrorContains(t, err, "released")
+	assert.Equal(t, 1, requests)
+	assert.Equal(t, 1, MetricsFromError(err).Requests)
+}
+
+func TestClientUploadsVerifiedSnapshot(t *testing.T) {
+	content := testPDF("original")
+	policy := testPolicy(t, 1024, 10)
+	prepared := prepareTestDocument(t, policy, content)
+	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
+	require.NoError(t, err)
+	client, err := NewClient(policy, ClientConfig{
+		APIKey: "synthetic-key",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			require.NoError(t, os.WriteFile(prepared.path, testPDF("modified"), 0o600))
+			body, readErr := io.ReadAll(request.Body)
+			require.NoError(t, readErr)
+			var input struct {
+				Document struct {
+					URL string `json:"document_url"`
+				} `json:"document"`
+			}
+			require.NoError(t, json.Unmarshal(body, &input))
+			encoded := strings.TrimPrefix(input.Document.URL, "data:"+mediaTypePDF+";base64,")
+			uploaded, decodeErr := base64.StdEncoding.DecodeString(encoded)
+			require.NoError(t, decodeErr)
+			assert.Equal(t, content, uploaded)
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body: io.NopCloser(strings.NewReader(
+					testSuccessfulResponse,
+				)),
+				Request: request,
+			}, nil
+		})},
+	})
+	require.NoError(t, err)
+	_, err = client.Process(t.Context(), prepared, authorization)
+	require.NoError(t, err)
+}
+
+func TestClientRejectsSuccessfulResponseForIncompleteUpload(t *testing.T) {
+	policy := testPolicy(t, 1024, 10)
+	prepared := prepareTestDocument(t, policy, testPDF("incomplete"))
+	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
+	require.NoError(t, err)
+	requests := 0
+	client, err := NewClient(policy, ClientConfig{
+		APIKey:     "synthetic-key",
+		MaxRetries: 1,
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			requests++
+			require.NoError(t, request.Body.Close())
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(testSuccessfulResponse)),
+				Request:    request,
+			}, nil
+		})},
+	})
+	require.NoError(t, err)
+
+	_, err = client.Process(t.Context(), prepared, authorization)
+	require.ErrorIs(t, err, ErrTransientResponse)
+	require.ErrorContains(t, err, "stream Mistral OCR request")
+	assert.Equal(t, 2, requests)
+	assert.Equal(t, 2, MetricsFromError(err).Requests)
+}
+
+func TestClientReadsEarlySuccessResponseWhileUploadContinues(t *testing.T) {
+	policy := testPolicy(t, 1024, 10)
+	prepared := prepareTestDocument(t, policy, testPDF("early-response"))
+	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
+	require.NoError(t, err)
+	bridgeDone := make(chan error, 1)
+	client, err := NewClient(policy, ClientConfig{
+		APIKey: "synthetic-key",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			responseReader, responseWriter := io.Pipe()
+			go func() {
+				_, responseErr := io.WriteString(responseWriter, testSuccessfulResponse)
+				_, uploadErr := io.Copy(io.Discard, request.Body)
+				closeErr := responseWriter.CloseWithError(errors.Join(responseErr, uploadErr))
+				bridgeDone <- errors.Join(responseErr, uploadErr, closeErr)
+			}()
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       responseReader,
+				Request:    request,
+			}, nil
+		})},
+	})
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	_, err = client.Process(ctx, prepared, authorization)
+	require.NoError(t, err)
+	require.NoError(t, <-bridgeDone)
+}
+
+func TestClientCancellationStopsEarlyResponseAndUpload(t *testing.T) {
+	policy := testPolicy(t, 1024, 10)
+	prepared := prepareTestDocument(t, policy, testPDF("cancel-early-response"))
+	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
+	require.NoError(t, err)
+	requestStarted := make(chan struct{})
+	responseReader, responseWriter := io.Pipe()
+	t.Cleanup(func() {
+		_ = responseReader.Close()
+		_ = responseWriter.Close()
+	})
+	client, err := NewClient(policy, ClientConfig{
+		APIKey: "synthetic-key",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			close(requestStarted)
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       responseReader,
+				Request:    request,
+			}, nil
+		})},
+	})
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	result := make(chan error, 1)
+	go func() {
+		_, processErr := client.Process(ctx, prepared, authorization)
+		result <- processErr
+	}()
+	<-requestStarted
+	cancel()
+
+	select {
+	case err := <-result:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("Process did not return after cancellation closed its request pipe")
+	}
+}
+
+func TestClientPreservesAccountingWhenRetriesExhaustOrWaitIsCanceled(t *testing.T) {
+	policy := testPolicy(t, 1024, 10)
+	prepared := prepareTestDocument(t, policy, testPDF("x"))
+	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
+	require.NoError(t, err)
+
+	requests := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		requests++
+		_, copyErr := io.Copy(io.Discard, request.Body)
+		assert.NoError(t, copyErr)
+		w.Header().Set("Retry-After", "0")
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	client := newServerClient(t, server, policy, ClientConfig{MaxRetries: 1, MaxRetryDelay: time.Millisecond})
+	_, err = client.Process(t.Context(), prepared, authorization)
+	require.ErrorIs(t, err, ErrTransientResponse)
+	assert.Equal(t, 2, requests)
+	metrics := MetricsFromError(err)
+	assert.Equal(t, 2, metrics.Requests)
+	assert.Equal(t, 1, metrics.Retries)
+	assert.Positive(t, metrics.Latency)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	requests = 0
+	canceling := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		requests++
+		_, copyErr := io.Copy(io.Discard, request.Body)
+		assert.NoError(t, copyErr)
+		w.Header().Set("Retry-After", "60")
+		w.WriteHeader(http.StatusTooManyRequests)
+		cancel()
+	}))
+	defer canceling.Close()
+	client = newServerClient(t, canceling, policy, ClientConfig{})
+	_, err = client.Process(ctx, prepared, authorization)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, 1, requests)
+	metrics = MetricsFromError(err)
+	assert.Equal(t, 1, metrics.Requests)
+	assert.Equal(t, 0, metrics.Retries)
+	assert.Positive(t, metrics.Latency)
+}
+
+func TestClientRejectsProviderUnitContractDrift(t *testing.T) {
+	policy := testPolicy(t, 1024, 3)
+	prepared := prepareTestDocument(t, policy, testPDF("x"))
+	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
+	require.NoError(t, err)
+	for _, test := range []struct {
+		name string
+		body string
+	}{
+		{name: "returned pages", body: `{"model":"mistral-ocr-4-0","pages":[{"index":0},{"index":1},{"index":2},{"index":"not-decoded"}],"usage_info":{"pages_processed":4}}`},
+		{name: "reported usage", body: `{"model":"mistral-ocr-4-0","pages":[{"index":0},{"index":1},{"index":2}],"usage_info":{"pages_processed":4}}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, writeErr := io.WriteString(w, test.body)
+				assert.NoError(t, writeErr)
+			}))
+			defer server.Close()
+			client := newServerClient(t, server, policy, ClientConfig{})
+			_, processErr := client.Process(t.Context(), prepared, authorization)
+			require.ErrorIs(t, processErr, ErrCapabilityContract)
+		})
+	}
+}
+
+func TestLocalExactRequiresProviderEquality(t *testing.T) {
+	policy := testPolicy(t, 1024, 10)
+	prepared := prepareTestDocument(t, policy, testPDF("x"))
+	prepared.localUnits = 2
+	format, found := CandidateFormatByID("pdf")
+	require.True(t, found)
+	authorization := FormatAuthorization{format: format, method: UnitBoundLocalExact, policyDigest: policy.digest}
+	for _, processed := range []int{1, 3} {
+		t.Run(strconv.Itoa(processed), func(t *testing.T) {
+			pages := make([]map[string]int, processed)
+			for index := range pages {
+				pages[index] = map[string]int{"index": index}
+			}
+			body, err := json.Marshal(map[string]any{
+				"model": defaultModel, "pages": pages,
+				"usage_info": map[string]int{"pages_processed": processed},
+			})
+			require.NoError(t, err)
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, writeErr := w.Write(body)
+				assert.NoError(t, writeErr)
+			}))
+			defer server.Close()
+			client := newServerClient(t, server, policy, ClientConfig{})
+			_, err = client.Process(t.Context(), prepared, authorization)
+			require.ErrorIs(t, err, ErrCapabilityContract)
+		})
+	}
+}
+
+func newServerClient(t *testing.T, server *httptest.Server, policy Policy, config ClientConfig) *Client {
+	t.Helper()
+	if config.APIKey == "" {
+		config.APIKey = "synthetic-key"
+	}
+	target, err := url.Parse(server.URL)
+	require.NoError(t, err)
+	base := server.Client()
+	transport := base.Transport
+	config.HTTPClient = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		clone := request.Clone(request.Context())
+		clone.URL.Scheme = target.Scheme
+		clone.URL.Host = target.Host
+		return transport.RoundTrip(clone)
+	})}
+	client, err := NewClient(policy, config)
+	require.NoError(t, err)
+	return client
+}
+
+func TestNewClientRequiresAPIKey(t *testing.T) {
+	_, err := NewClient(testPolicy(t, 1024, 10), ClientConfig{})
+	require.ErrorContains(t, err, "API key is required")
+}
+
+func TestNewClientValidatesAndAppliesTransportBounds(t *testing.T) {
+	policy := testPolicy(t, 1024, 10)
+	tests := []struct {
+		name   string
+		config ClientConfig
+		want   string
+	}{
+		{name: "negative timeout", config: ClientConfig{Timeout: -time.Second}, want: "timeout"},
+		{name: "timeout above cap", config: ClientConfig{Timeout: hardMaxTimeout + time.Second}, want: "timeout"},
+		{name: "negative retries", config: ClientConfig{MaxRetries: -1}, want: "max retries"},
+		{name: "retries above cap", config: ClientConfig{MaxRetries: hardMaxRetries + 1}, want: "max retries"},
+		{name: "negative retry delay", config: ClientConfig{MaxRetryDelay: -time.Second}, want: "retry delay"},
+		{name: "retry delay above cap", config: ClientConfig{MaxRetryDelay: hardMaxRetryDelay + time.Second}, want: "retry delay"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			test.config.APIKey = "synthetic-key"
+			_, err := NewClient(policy, test.config)
+			require.ErrorContains(t, err, test.want)
+		})
+	}
+
+	client, err := NewClient(policy, ClientConfig{
+		APIKey: "synthetic-key", HTTPClient: &http.Client{},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, defaultMaxRetries, client.maxRetries)
+	assert.Equal(t, defaultMaxRetryDelay, client.maxRetryDelay)
+	assert.Equal(t, defaultTimeout, client.http.Timeout)
+
+	client, err = NewClient(policy, ClientConfig{
+		APIKey: "synthetic-key", Timeout: time.Minute,
+		HTTPClient: &http.Client{Timeout: 10 * time.Minute},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, time.Minute, client.http.Timeout)
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return function(request)
+}
