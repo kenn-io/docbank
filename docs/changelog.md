@@ -12,6 +12,16 @@ may still evolve, but vaults created by v0.9.0 and later are within the
 
 ## Unreleased
 
+## [v0.13.0](https://github.com/kenn-io/docbank/tree/v0.13.0) — 2026-08-18
+
+### New features
+
+- Add storage-neutral Go packages for deterministic document normalization,
+  including normalized units, headings, spans, chunks, and checksums.
+- Add bounded Mistral OCR processing with format detection, private staging,
+  capability manifests, authenticated probes, retry handling, and fail-closed
+  upload authorization.
+
 ### Breaking changes
 
 - Move the public SQLite driver imports from `go.kenn.io/docbank/pkg/sqlite`
