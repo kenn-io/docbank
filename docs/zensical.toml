@@ -38,6 +38,7 @@ nav = [
     {"Docbank for Agents" = "agents.md"},
     {"Agent Integration Guide" = "agents/integration.md"},
     {"Embed in Go" = "embedding.md"},
+    {"Document Understanding in Go" = "document-understanding.md"},
   ]},
   {"Reference" = [
     {"CLI Reference" = "cli-reference.md"},

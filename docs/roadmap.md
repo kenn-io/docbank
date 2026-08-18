@@ -6,10 +6,9 @@ description: What is implemented today and what each phase adds.
 # Roadmap
 
 docbank ships in independently useful increments. This page is a high-level
-public view of current capability and product direction, not an execution
-ledger. The repository's kata ledger is the source of truth for actionable
-work, ordering, blockers, and completion state. Durable future contracts appear
-elsewhere only when they materially explain the design and are marked
+public view of current capability and product direction. It does not track
+tasks, ordering, blockers, or completion criteria. Durable future contracts
+appear elsewhere only when they materially explain the design and are marked
 "Planned."
 
 | Phase | Scope | Status |
@@ -17,7 +16,7 @@ elsewhere only when they materially explain the design and are marked
 | 0 | Extract msgvault's pack/backup and packed-CAS engines into `go.kenn.io/kit` | **Implemented** (Docbank uses Kit's shared backup and multi-location packstore engines) |
 | 1 | Core: store, blob store, ingest pipeline, full CLI | **Implemented** |
 | 2a | Infrastructure: daemon, HTTP API, daemon-first CLI, self-update, release pipeline | **Implemented** |
-| 2b | Features: content versions, versioned editing, full audit, tags, watched inboxes, text extraction, ingest provenance | **In progress**: versions, tags, queryable provenance, watched inboxes, disjoint audit scopes, and bounded plain-text extraction implemented; PDF/Office extraction remains |
+| 2b | Features: content versions, versioned editing, full audit, tags, watched inboxes, text extraction, ingest provenance | **In progress**: versions, tags, queryable provenance, watched inboxes, disjoint audit scopes, and bounded plain-text extraction implemented; reusable document normalization and Mistral OCR packages are available, while automatic PDF/Office extraction into a Docbank vault remains |
 | 3 | Primary kit-ui web portal and focused operator TUI | **In progress**: analytical tree/search/detail, audited-history, daemon-job and storage/backup inspection, web tag definition/browsing/assignment workflows, version history, provenance, verified current/historical content download, verified upload, and recoverable trash with restoration implemented |
 | 4 | Backup commands over the kit engine | **Implemented**; representative-corpus hardening continues |
 
@@ -210,6 +209,6 @@ management, and browser/TUI mutation controls are deliberately deferred.
 
 ## Deferred beyond v1
 
-OCR of scans, embeddings/AI tagging, at-rest encryption of the live store,
+Automatic OCR of scans within a Docbank vault, embeddings/AI tagging, at-rest encryption of the live store,
 encryption for backup repositories, importing attachments out of msgvault,
 multi-user/sharing, and an MCP server wrapping the API.
