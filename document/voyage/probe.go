@@ -179,7 +179,7 @@ func (r *probeRunner) probe(ctx context.Context, capability Capability) (probeOb
 func (r *probeRunner) embedFixtures(ctx context.Context, inputs []Input) (Result, error) {
 	wireInputs := make([]wireInput, len(inputs))
 	for index, input := range inputs {
-		content, err := r.client.documentContent(input, r.authorized(), r.mediaPolicy())
+		content, err := r.client.documentContent(input, r.authorized(), r.mediaPolicy(), len(inputs) > 1)
 		if err != nil {
 			return Result{}, err
 		}

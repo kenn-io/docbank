@@ -125,10 +125,10 @@ Voyage uploads fail closed until an operator has produced and supplied a
 validated capability manifest for the pinned endpoint, model, and dimension.
 Docbank ships no live manifest. Each capability is authorized separately:
 JPEG, PNG, WebP, still GIF, animated GIF, and MP4 documents; text queries;
-JPEG, PNG, WebP, and still GIF image queries; text-then-image queries;
-text-then-media documents; and batches at the policy limit. Whether animated
-GIF, video, or a given query shape may be sent is decided by recorded probe
-evidence, not by assumption.
+JPEG, PNG, WebP, and still GIF image queries; text-then-PNG queries;
+text-then-PNG documents; and media-only PNG batches at the policy limit.
+Whether animated GIF, video, or a given query shape may be sent is decided by
+recorded probe evidence, not by assumption.
 
 The operator flow is:
 
@@ -159,12 +159,13 @@ Policy.AuthorizeAll(validated manifest)
 `EmbedDocuments` accepts only the probed input shapes, `[media]` and
 `[text, media]`. It re-detects every media part and serializes from the
 detected metadata so caller metadata cannot misdescribe bytes, requires an
-authorization for the part's format and animation state, requires the
-interleaved capability for `[text, media]` and the batch capability for more
-than one input, and refuses requests over the policy's item and byte limits
-before allocation. `EmbedQuery` accepts `[text]`, `[image]`, or
-`[text, image]`, each needing its own probed capability, with image queries
-authorized per format. Provider responses are strictly decoded: every vector
+authorization for the part's format and animation state, limits `[text,
+media]` to PNG under the interleaved capability, limits batches to media-only
+PNG inputs under the batch capability, and refuses requests over the policy's
+item and byte limits before allocation. `EmbedQuery` accepts `[text]`,
+`[image]`, or `[text, image]`, each needing its own probed capability, with
+image queries authorized per format and the combined shape limited to PNG.
+Provider responses are strictly decoded: every vector
 must carry a unique index and the exact dimension. The client never follows
 redirects, so media and credentials cannot leave the pinned endpoint.
 Provider bodies never appear in errors; `IsRetryable`, `RetryAfter`, and

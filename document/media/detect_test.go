@@ -59,6 +59,8 @@ func TestDetectBytesRecognizesSupportedContainers(t *testing.T) {
 		{name: "mp4 v1 track duration wins", data: mp4WithV1Track(320, 240, 500, 7000), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 320, height: 240, duration: 7000, known: true},
 		{name: "mp4 fragmented is unknown duration", data: mp4Fragmented(320, 240, 500), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 320, height: 240},
 		{name: "mp4 duration rounds up", data: mp4WithRawDuration(320, 240, 3, 1), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 320, height: 240, duration: 334, known: true},
+		{name: "mp4 edit list duration wins", data: mp4WithEditListDuration(320, 240, 500, 1500), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 320, height: 240, duration: 1500, known: true},
+		{name: "mp4 version one edit list duration wins", data: mp4WithEditListPayload(320, 240, 500, mp4EditList(1, 1, 500, 1000)), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 320, height: 240, duration: 1500, known: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -123,6 +125,10 @@ func TestDetectBytesRejectsUnsupportedAndMalformedInput(t *testing.T) {
 		{name: "mp4 composition sample count mismatch", data: mp4WithCTTS(0, 2, 1000), want: media.ErrMalformedMedia},
 		{name: "mp4 unsupported composition timing version", data: mp4WithCTTS(2, 1, 1000), want: media.ErrMalformedMedia},
 		{name: "mp4 misplaced composition timing", data: mp4MisplacedCTTS(), want: media.ErrMalformedMedia},
+		{name: "mp4 unsupported edit list version", data: mp4WithEditListVersion(2), want: media.ErrMalformedMedia},
+		{name: "mp4 unsupported edit list rate", data: mp4WithEditListRate(0), want: media.ErrMalformedMedia},
+		{name: "mp4 invalid negative edit media time", data: mp4WithInvalidEditMediaTime(), want: media.ErrMalformedMedia},
+		{name: "mp4 misplaced edit list", data: mp4MisplacedELST(), want: media.ErrMalformedMedia},
 		{name: "mp4 unknown visual sample entry", data: mp4WithUnknownVisualSample(320, 240), want: media.ErrMalformedMedia},
 		{name: "mp4 zero-presentation unknown video track", data: mp4WithUnknownVideoTrack(), want: media.ErrMalformedMedia},
 		{name: "mp4 duplicate mvhd", data: mp4DuplicateMVHD(), want: media.ErrMalformedMedia},
@@ -164,6 +170,18 @@ func TestDetectBoundsDecodableMP4FromCodecAndSampleTiming(t *testing.T) {
 		metadata, err := media.DetectBytes(data, "")
 		require.NoError(t, err)
 		assert.False(t, metadata.DurationKnown)
+		_, reason := media.InspectBytes(data, "", media.Policy{
+			MaxBytes: media.MaxBytes, MaxPixels: media.DefaultMaxPixels, MaxDurationMS: 1000, AllowVideo: true,
+		})
+		assert.Equal(t, media.ReasonTooLong, reason)
+	})
+
+	t.Run("edit list presentation duration enforces the policy cap", func(t *testing.T) {
+		data := mp4WithEditListDuration(16, 16, 500, 1500)
+
+		metadata, err := media.DetectBytes(data, "")
+		require.NoError(t, err)
+		assert.Equal(t, int64(1500), metadata.DurationMS)
 		_, reason := media.InspectBytes(data, "", media.Policy{
 			MaxBytes: media.MaxBytes, MaxPixels: media.DefaultMaxPixels, MaxDurationMS: 1000, AllowVideo: true,
 		})
@@ -748,6 +766,57 @@ func mp4MisplacedCTTS() []byte {
 	binary.BigEndian.PutUint32(ctts[4:8], 1)
 	binary.BigEndian.PutUint32(ctts[8:12], 1)
 	return append(mediatest.MP4(16, 16, 500), mediatest.Box("ctts", ctts)...)
+}
+
+func mp4WithEditListDuration(width, height int, movieMS, editMS int64) []byte {
+	return mp4WithEditListPayload(width, height, movieMS, mp4EditList(0, 1, uint64(editMS)))
+}
+
+func mp4WithEditListVersion(version byte) []byte {
+	return mp4WithEditListPayload(16, 16, 500, mp4EditList(version, 1, 500))
+}
+
+func mp4WithEditListRate(rate int16) []byte {
+	return mp4WithEditListPayload(16, 16, 500, mp4EditList(0, rate, 500))
+}
+
+func mp4WithInvalidEditMediaTime() []byte {
+	elst := mp4EditList(0, 1, 500)
+	binary.BigEndian.PutUint32(elst[12:16], math.MaxUint32-1)
+	return mp4WithEditListPayload(16, 16, 500, elst)
+}
+
+func mp4WithEditListPayload(width, height int, movieMS int64, elst []byte) []byte {
+	ftyp, mvhd, trak := mp4Parts(width, height, movieMS)
+	trackPayload := slices.Concat(trak[8:], mediatest.Box("edts", mediatest.Box("elst", elst)))
+	return append(ftyp, mediatest.Box("moov", append(mvhd, mediatest.Box("trak", trackPayload)...))...)
+}
+
+func mp4EditList(version byte, rate int16, durations ...uint64) []byte {
+	entrySize := 12
+	if version == 1 {
+		entrySize = 20
+	}
+	payload := make([]byte, 8+len(durations)*entrySize)
+	payload[0] = version
+	binary.BigEndian.PutUint32(payload[4:8], uint32(len(durations)))
+	for index, duration := range durations {
+		offset := 8 + index*entrySize
+		if version == 1 {
+			binary.BigEndian.PutUint64(payload[offset:offset+8], duration)
+			binary.BigEndian.PutUint64(payload[offset+8:offset+16], 0)
+			binary.BigEndian.PutUint16(payload[offset+16:offset+18], uint16(rate))
+		} else {
+			binary.BigEndian.PutUint32(payload[offset:offset+4], uint32(duration))
+			binary.BigEndian.PutUint32(payload[offset+4:offset+8], 0)
+			binary.BigEndian.PutUint16(payload[offset+8:offset+10], uint16(rate))
+		}
+	}
+	return payload
+}
+
+func mp4MisplacedELST() []byte {
+	return append(mediatest.MP4(16, 16, 500), mediatest.Box("elst", mp4EditList(0, 1, 500))...)
 }
 
 func mp4WithHEVCDimensions(visibleWidth, visibleHeight, codedWidth, codedHeight int) []byte {

@@ -42,7 +42,7 @@ type Capability struct {
 	ID string
 	// Kind groups the capability.
 	Kind CapabilityKind
-	// Format is the media format for document and image-query capabilities.
+	// Format is the media format covered by the probe, when applicable.
 	Format media.Format
 	// Animated marks the animated-image capability.
 	Animated bool
@@ -64,9 +64,9 @@ var capabilities = []Capability{
 	{ID: CapabilityQueryImagePNG, Kind: CapabilityKindQuery, Format: media.FormatPNG, InputType: inputTypeQuery, Description: "a PNG query ranks its own document embedding first"},
 	{ID: CapabilityQueryImageWebP, Kind: CapabilityKindQuery, Format: media.FormatWebP, InputType: inputTypeQuery, Description: "a WebP query ranks its own document embedding first"},
 	{ID: CapabilityQueryImageGIF, Kind: CapabilityKindQuery, Format: media.FormatGIF, InputType: inputTypeQuery, Description: "a still GIF query ranks its own document embedding first"},
-	{ID: CapabilityQueryTextImage, Kind: CapabilityKindQuery, InputType: inputTypeQuery, Description: "a text-then-image query embeds and ranks its matching document first"},
-	{ID: CapabilityInterleaved, Kind: CapabilityKindRequest, InputType: inputTypeDocument, Description: "a text-then-media document embeds and the text contributes"},
-	{ID: CapabilityBatchLimits, Kind: CapabilityKindRequest, InputType: inputTypeDocument, Description: "a batch at the policy limit embeds and each result matches its input"},
+	{ID: CapabilityQueryTextImage, Kind: CapabilityKindQuery, Format: media.FormatPNG, InputType: inputTypeQuery, Description: "a text-then-PNG query embeds and both parts contribute"},
+	{ID: CapabilityInterleaved, Kind: CapabilityKindRequest, Format: media.FormatPNG, InputType: inputTypeDocument, Description: "a text-then-PNG document embeds and both parts contribute"},
+	{ID: CapabilityBatchLimits, Kind: CapabilityKindRequest, Format: media.FormatPNG, InputType: inputTypeDocument, Description: "a media-only PNG batch at the policy limit embeds and each result matches its input"},
 }
 
 // Capabilities returns every capability in manifest order.

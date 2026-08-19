@@ -124,8 +124,9 @@ func (c *Client) Policy() Policy { return c.policy }
 
 // EmbedDocuments embeds a batch of documents. Every media part must be
 // covered by an authorization from this client's policy; a batch of more than
-// one input requires the batch capability and a text-then-media input
-// requires the interleaved capability.
+// one input is limited to media-only PNG documents and requires the batch
+// capability. Text-then-media is limited to PNG and requires the interleaved
+// capability.
 func (c *Client) EmbedDocuments(ctx context.Context, inputs []Input, authorizations []Authorization) (Result, error) {
 	if len(inputs) == 0 {
 		return Result{}, nil
@@ -145,7 +146,7 @@ func (c *Client) EmbedDocuments(ctx context.Context, inputs []Input, authorizati
 	}
 	wireInputs := make([]wireInput, len(inputs))
 	for index, input := range inputs {
-		content, err := c.documentContent(input, authorized, c.policy.values.Media)
+		content, err := c.documentContent(input, authorized, c.policy.values.Media, len(inputs) > 1)
 		if err != nil {
 			return Result{}, fmt.Errorf("voyage document %d: %w", index, err)
 		}
@@ -160,8 +161,8 @@ func (c *Client) EmbedDocuments(ctx context.Context, inputs []Input, authorizati
 
 // EmbedQuery embeds one query shaped [text], [image], or [text, image]. Text
 // needs the text-query capability, an image needs the query capability for
-// its own format, and the combined shape also needs the text-and-image
-// capability.
+// its own format, and the combined shape is limited to PNG and also needs the
+// text-and-image capability.
 func (c *Client) EmbedQuery(ctx context.Context, input Input, authorizations ...Authorization) ([]float32, Usage, error) {
 	authorized, err := c.authorizationSet(authorizations)
 	if err != nil {
@@ -192,7 +193,7 @@ func (c *Client) authorizationSet(authorizations []Authorization) (map[string]bo
 	return authorized, nil
 }
 
-func (c *Client) documentContent(input Input, authorized map[string]bool, mediaPolicy media.Policy) ([]wireContentPart, error) {
+func (c *Client) documentContent(input Input, authorized map[string]bool, mediaPolicy media.Policy, batch bool) ([]wireContentPart, error) {
 	// Only the probed shapes are accepted: [media] or [text, media].
 	var textPart, mediaPart *Part
 	switch len(input.Parts) {
@@ -211,9 +212,6 @@ func (c *Client) documentContent(input Input, authorized map[string]bool, mediaP
 		if textPart.Media != nil || strings.TrimSpace(textPart.Text) == "" {
 			return nil, fmt.Errorf("%w: text part must precede the media part and be non-empty", ErrInvalidInput)
 		}
-		if !authorized[CapabilityInterleaved] {
-			return nil, fmt.Errorf("%w: text with media requires %s", ErrCapabilityContract, CapabilityInterleaved)
-		}
 		content = append(content, wireContentPart{Type: "text", Text: textPart.Text})
 	}
 	detected, capability, err := c.verifyMedia(mediaPart.Media, mediaPolicy)
@@ -222,6 +220,17 @@ func (c *Client) documentContent(input Input, authorized map[string]bool, mediaP
 	}
 	if !authorized[capability.ID] {
 		return nil, fmt.Errorf("%w: media requires %s", ErrCapabilityContract, capability.ID)
+	}
+	if batch && (textPart != nil || detected.Format != media.FormatPNG) {
+		return nil, fmt.Errorf("%w: %s is only probed with media-only png inputs", ErrCapabilityContract, CapabilityBatchLimits)
+	}
+	if textPart != nil {
+		if !authorized[CapabilityInterleaved] {
+			return nil, fmt.Errorf("%w: text with media requires %s", ErrCapabilityContract, CapabilityInterleaved)
+		}
+		if detected.Format != media.FormatPNG {
+			return nil, fmt.Errorf("%w: %s is only probed with png media", ErrCapabilityContract, CapabilityInterleaved)
+		}
 	}
 	return append(content, wireMediaPart(detected, mediaPart.Media.Bytes)), nil
 }
@@ -269,10 +278,15 @@ func (c *Client) queryContent(input Input, authorized map[string]bool, mediaPoli
 		if !authorized[capability.ID] {
 			return nil, fmt.Errorf("%w: %s queries require %s", ErrCapabilityContract, detected.Format, capability.ID)
 		}
+		if textPart != nil {
+			if !authorized[CapabilityQueryTextImage] {
+				return nil, fmt.Errorf("%w: text-and-image queries require %s", ErrCapabilityContract, CapabilityQueryTextImage)
+			}
+			if detected.Format != media.FormatPNG {
+				return nil, fmt.Errorf("%w: %s is only probed with png media", ErrCapabilityContract, CapabilityQueryTextImage)
+			}
+		}
 		content = append(content, wireMediaPart(detected, imagePart.Media.Bytes))
-	}
-	if textPart != nil && imagePart != nil && !authorized[CapabilityQueryTextImage] {
-		return nil, fmt.Errorf("%w: text-and-image queries require %s", ErrCapabilityContract, CapabilityQueryTextImage)
 	}
 	return content, nil
 }

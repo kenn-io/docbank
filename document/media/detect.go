@@ -436,13 +436,15 @@ func mp4Metadata(data []byte) (mp4Info, bool) {
 const maxMP4Depth = 6
 
 type mp4TrackInfo struct {
-	tkhdCount, hdlrCount, mdhdCount                  int
+	tkhdCount, edtsCount, elstCount                  int
+	hdlrCount, mdhdCount                             int
 	stsdCount, sttsCount, cttsCount, sampleSizeCount int
 	handlerType                                      string
 	presentationWidth, presentationHeight            int64
 	codedWidth, codedHeight                          int64
 	mediaTimescale, mediaDuration                    uint64
 	sampleDuration                                   uint64
+	editDuration                                     uint64
 	timedSamples, compositionSamples                 uint64
 	sampleCount                                      uint64
 	hasVisualSamples                                 bool
@@ -508,6 +510,14 @@ func scanMP4Boxes(data []byte, info *mp4Info, track *mp4TrackInfo, parent string
 			if !scanMP4Boxes(payload, info, track, kind, depth+1) {
 				return false
 			}
+		case kind == "edts" && parent == "trak":
+			if track == nil {
+				return false
+			}
+			track.edtsCount++
+			if track.edtsCount > 1 || !scanMP4Boxes(payload, info, track, kind, depth+1) {
+				return false
+			}
 		case kind == "minf" && parent == "mdia":
 			if !scanMP4Boxes(payload, info, track, kind, depth+1) {
 				return false
@@ -541,6 +551,10 @@ func scanMP4Boxes(data []byte, info *mp4Info, track *mp4TrackInfo, parent string
 			if track == nil || !parseCTTS(payload, info, track) {
 				return false
 			}
+		case kind == "elst" && parent == "edts":
+			if track == nil || !parseELST(payload, track) {
+				return false
+			}
 		case (kind == "stsz" || kind == "stz2") && parent == "stbl":
 			if track == nil || !parseSampleSize(kind, payload, track) {
 				return false
@@ -553,7 +567,7 @@ func scanMP4Boxes(data []byte, info *mp4Info, track *mp4TrackInfo, parent string
 			if track == nil || !parseMDHD(payload, info, track) {
 				return false
 			}
-		case kind == "moov" || kind == "trak" || kind == "mdia" || kind == "minf" ||
+		case kind == "moov" || kind == "trak" || kind == "edts" || kind == "elst" || kind == "mdia" || kind == "minf" ||
 			kind == "stbl" || kind == "stsd" || kind == "stts" || kind == "ctts" || kind == "stsz" || kind == "stz2" || kind == "mvhd" ||
 			kind == "tkhd" || kind == "hdlr" || kind == "mdhd":
 			// A structural header outside its authoritative position is not a
@@ -762,6 +776,51 @@ func parseCTTS(payload []byte, info *mp4Info, track *mp4TrackInfo) bool {
 	return true
 }
 
+// parseELST validates an edit list and records its total presentation length.
+// Segment durations use the movie timescale, so they can be compared directly
+// with mvhd and tkhd after the track is complete.
+func parseELST(payload []byte, track *mp4TrackInfo) bool {
+	if len(payload) < 8 || payload[0] > 1 || payload[1] != 0 || payload[2] != 0 || payload[3] != 0 {
+		return false
+	}
+	track.elstCount++
+	if track.elstCount > 1 {
+		return false
+	}
+	count := binary.BigEndian.Uint32(payload[4:8])
+	entrySize := 12
+	if payload[0] == 1 {
+		entrySize = 20
+	}
+	if count == 0 || count > math.MaxInt32 || len(payload) != 8+int(count)*entrySize {
+		return false
+	}
+	var total uint64
+	for offset := 8; offset < len(payload); offset += entrySize {
+		var duration uint64
+		var validMediaTime bool
+		var rateOffset int
+		if payload[0] == 1 {
+			duration = binary.BigEndian.Uint64(payload[offset : offset+8])
+			mediaTime := binary.BigEndian.Uint64(payload[offset+8 : offset+16])
+			validMediaTime = mediaTime <= math.MaxInt64 || mediaTime == math.MaxUint64
+			rateOffset = offset + 16
+		} else {
+			duration = uint64(binary.BigEndian.Uint32(payload[offset : offset+4]))
+			mediaTime := binary.BigEndian.Uint32(payload[offset+4 : offset+8])
+			validMediaTime = mediaTime <= math.MaxInt32 || mediaTime == math.MaxUint32
+			rateOffset = offset + 8
+		}
+		if duration == 0 || !validMediaTime || binary.BigEndian.Uint16(payload[rateOffset:rateOffset+2]) != 1 ||
+			binary.BigEndian.Uint16(payload[rateOffset+2:rateOffset+4]) != 0 || math.MaxUint64-total < duration {
+			return false
+		}
+		total += duration
+	}
+	track.editDuration = total
+	return true
+}
+
 func parseSampleSize(kind string, payload []byte, track *mp4TrackInfo) bool {
 	if len(payload) < 12 || payload[0] != 0 {
 		return false
@@ -830,8 +889,12 @@ func isVisualSampleEntry(kind string) bool {
 func (track *mp4TrackInfo) finish(info *mp4Info) bool {
 	if track.tkhdCount != 1 || track.hdlrCount != 1 || track.mdhdCount != 1 || track.sttsCount != 1 ||
 		track.sampleSizeCount != 1 || track.timedSamples != track.sampleCount ||
+		track.edtsCount != track.elstCount ||
 		track.cttsCount == 1 && track.compositionSamples != track.sampleCount {
 		return false
+	}
+	if track.editDuration > 0 {
+		info.trackDurations = append(info.trackDurations, track.editDuration)
 	}
 	info.mediaDurations = append(info.mediaDurations,
 		mp4Duration{value: track.mediaDuration, timescale: track.mediaTimescale},

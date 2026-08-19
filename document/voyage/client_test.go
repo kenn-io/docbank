@@ -2,7 +2,6 @@ package voyage_test
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"image/color"
@@ -153,13 +152,11 @@ func TestEmbedDocumentsSendsOrderedInputsAndRestoresIndices(t *testing.T) {
 	defer server.Close()
 	client := newServerClient(t, server, policy, voyage.ClientConfig{})
 
-	jpeg := mediaInput(t, mediatest.JPEG(4, 4, color.White))
 	png := mediaInput(t, mediatest.PNG(4, 4, color.White))
-	mp4 := mediaInput(t, mediatest.MP4(64, 48, 900))
 	result, err := client.EmbedDocuments(t.Context(), []voyage.Input{
-		{Parts: []voyage.Part{{Text: "first context"}, {Media: jpeg}}},
 		{Parts: []voyage.Part{{Media: png}}},
-		{Parts: []voyage.Part{{Text: "video context"}, {Media: mp4}}},
+		{Parts: []voyage.Part{{Media: png}}},
+		{Parts: []voyage.Part{{Media: png}}},
 	}, fullAuthorizations(t, policy))
 	require.NoError(t, err)
 	require.Len(t, result.Vectors, 3)
@@ -175,15 +172,48 @@ func TestEmbedDocumentsSendsOrderedInputsAndRestoresIndices(t *testing.T) {
 	assert.Equal(t, "document", seen.InputType)
 	assert.False(t, seen.Truncation)
 	assert.Equal(t, voyage.DefaultDimension, seen.OutputDimension)
-	assert.Equal(t, "text", seen.Inputs[0].Content[0].Type)
-	assert.Equal(t, "first context", seen.Inputs[0].Content[0].Text)
-	assert.Equal(t, "image_base64", seen.Inputs[0].Content[1].Type)
-	assert.True(t, strings.HasPrefix(seen.Inputs[0].Content[1].ImageBase64, "data:image/jpeg;base64,"))
-	assert.Equal(t, "video_base64", seen.Inputs[2].Content[1].Type)
-	assert.True(t, strings.HasPrefix(seen.Inputs[2].Content[1].VideoBase64, "data:video/mp4;base64,"))
-	decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(seen.Inputs[1].Content[0].ImageBase64, "data:image/png;base64,"))
-	require.NoError(t, err)
-	assert.Equal(t, png.Bytes, decoded)
+	for _, input := range seen.Inputs {
+		require.Len(t, input.Content, 1)
+		assert.Equal(t, "image_base64", input.Content[0].Type)
+		assert.True(t, strings.HasPrefix(input.Content[0].ImageBase64, "data:image/png;base64,"))
+	}
+}
+
+func TestEmbedDocumentsSerializesIndividuallyProbedFormats(t *testing.T) {
+	policy := testPolicy(t)
+	var seen wireRequest
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = decodeRequest(t, r)
+		writeVectors(t, w, [][]float32{unitVector(0, 1)}, 1)
+	}))
+	defer server.Close()
+	client := newServerClient(t, server, policy, voyage.ClientConfig{})
+
+	tests := []struct {
+		name, text, wireType, prefix string
+		media                        *voyage.Media
+	}{
+		{name: "jpeg", media: mediaInput(t, mediatest.JPEG(4, 4, color.White)), wireType: "image_base64", prefix: "data:image/jpeg;base64,"},
+		{name: "interleaved png", text: "context", media: mediaInput(t, mediatest.PNG(4, 4, color.White)), wireType: "image_base64", prefix: "data:image/png;base64,"},
+		{name: "mp4", media: mediaInput(t, mediatest.MP4(64, 48, 900)), wireType: "video_base64", prefix: "data:video/mp4;base64,"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parts := []voyage.Part{{Media: tt.media}}
+			if tt.text != "" {
+				parts = []voyage.Part{{Text: tt.text}, {Media: tt.media}}
+			}
+			_, err := client.EmbedDocuments(t.Context(), []voyage.Input{{Parts: parts}}, fullAuthorizations(t, policy))
+			require.NoError(t, err)
+			mediaPart := seen.Inputs[0].Content[len(seen.Inputs[0].Content)-1]
+			assert.Equal(t, tt.wireType, mediaPart.Type)
+			encoded := mediaPart.ImageBase64
+			if tt.wireType == "video_base64" {
+				encoded = mediaPart.VideoBase64
+			}
+			assert.True(t, strings.HasPrefix(encoded, tt.prefix))
+		})
+	}
 }
 
 func TestEmbedDocumentsEnforcesCapabilityAuthorization(t *testing.T) {
@@ -201,6 +231,7 @@ func TestEmbedDocumentsEnforcesCapabilityAuthorization(t *testing.T) {
 	defer server.Close()
 	client := newServerClient(t, server, policy, voyage.ClientConfig{})
 	png := mediaInput(t, mediatest.PNG(4, 4, color.White))
+	mp4 := mediaInput(t, mediatest.MP4(64, 48, 100))
 	gif := mediaInput(t, mediatest.GIF(4, 4, 3))
 	pngOnly := fullAuthorizations(t, policy, voyage.CapabilityImagePNG)
 
@@ -215,7 +246,10 @@ func TestEmbedDocumentsEnforcesCapabilityAuthorization(t *testing.T) {
 		{name: "unauthorized format", inputs: []voyage.Input{{Parts: []voyage.Part{{Media: mediaInput(t, mediatest.JPEG(4, 4, nil))}}}}, authorizations: pngOnly, want: voyage.ErrCapabilityContract, wantText: "image_jpeg"},
 		{name: "animated needs its own capability", inputs: []voyage.Input{{Parts: []voyage.Part{{Media: gif}}}}, authorizations: fullAuthorizations(t, policy, voyage.CapabilityImageGIFStill), want: voyage.ErrInvalidInput, wantText: "animated_not_allowed"},
 		{name: "text needs interleaved", inputs: []voyage.Input{{Parts: []voyage.Part{{Text: "context"}, {Media: png}}}}, authorizations: pngOnly, want: voyage.ErrCapabilityContract, wantText: voyage.CapabilityInterleaved},
+		{name: "interleaved video was not probed", inputs: []voyage.Input{{Parts: []voyage.Part{{Text: "context"}, {Media: mp4}}}}, authorizations: fullAuthorizations(t, policy), want: voyage.ErrCapabilityContract, wantText: "only probed with png"},
 		{name: "batch needs batch capability", inputs: []voyage.Input{{Parts: []voyage.Part{{Media: png}}}, {Parts: []voyage.Part{{Media: png}}}}, authorizations: pngOnly, want: voyage.ErrCapabilityContract, wantText: voyage.CapabilityBatchLimits},
+		{name: "video batch was not probed", inputs: []voyage.Input{{Parts: []voyage.Part{{Media: mp4}}}, {Parts: []voyage.Part{{Media: mp4}}}}, authorizations: fullAuthorizations(t, policy), want: voyage.ErrCapabilityContract, wantText: "only probed with media-only png"},
+		{name: "interleaved batch was not probed", inputs: []voyage.Input{{Parts: []voyage.Part{{Text: "context"}, {Media: png}}}, {Parts: []voyage.Part{{Media: png}}}}, authorizations: fullAuthorizations(t, policy), want: voyage.ErrCapabilityContract, wantText: "only probed with media-only png"},
 		{name: "no authorizations", inputs: []voyage.Input{{Parts: []voyage.Part{{Media: png}}}}, want: voyage.ErrCapabilityContract},
 		{name: "no media part", inputs: []voyage.Input{{Parts: []voyage.Part{{Text: "only text"}}}}, authorizations: fullAuthorizations(t, policy), want: voyage.ErrInvalidInput, wantText: "exactly one media"},
 		{name: "two media parts", inputs: []voyage.Input{{Parts: []voyage.Part{{Media: png}, {Media: png}}}}, authorizations: fullAuthorizations(t, policy), want: voyage.ErrInvalidInput},
@@ -282,13 +316,16 @@ func TestEmbedDocumentsRejectsMismatchedMetadataAndForeignAuthorizations(t *test
 func TestEmbedQuerySupportsTextImageAndCombinedInputs(t *testing.T) {
 	policy := testPolicy(t)
 	var seen wireRequest
+	var calls atomic.Int32
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
 		seen = decodeRequest(t, r)
 		writeVectors(t, w, [][]float32{unitVector(3, 0.5)}, 7)
 	}))
 	defer server.Close()
 	client := newServerClient(t, server, policy, voyage.ClientConfig{})
 	png := mediaInput(t, mediatest.PNG(4, 4, color.White))
+	jpeg := mediaInput(t, mediatest.JPEG(4, 4, color.White))
 	all := fullAuthorizations(t, policy)
 	textOnly := fullAuthorizations(t, policy, voyage.CapabilityQueryText)
 	imageOnly := fullAuthorizations(t, policy, voyage.CapabilityQueryImagePNG)
@@ -306,6 +343,8 @@ func TestEmbedQuerySupportsTextImageAndCombinedInputs(t *testing.T) {
 	_, _, err = client.EmbedQuery(t.Context(), voyage.Input{Parts: []voyage.Part{{Media: png}}}, imageOnly...)
 	require.NoError(t, err)
 	assert.Equal(t, "image_base64", seen.Inputs[0].Content[0].Type)
+	_, _, err = client.EmbedQuery(t.Context(), voyage.Input{Parts: []voyage.Part{{Media: jpeg}}}, all...)
+	require.NoError(t, err, "an individually probed JPEG query remains authorized")
 
 	_, _, err = client.EmbedQuery(t.Context(), voyage.Input{Parts: []voyage.Part{{Text: "red"}, {Media: png}}}, all...)
 	require.NoError(t, err)
@@ -317,6 +356,11 @@ func TestEmbedQuerySupportsTextImageAndCombinedInputs(t *testing.T) {
 	_, _, err = client.EmbedQuery(t.Context(), voyage.Input{Parts: []voyage.Part{{Text: "red"}, {Media: png}}}, imageAndCombined...)
 	require.ErrorIs(t, err, voyage.ErrCapabilityContract, "combined queries still require the text-query capability")
 	require.ErrorContains(t, err, voyage.CapabilityQueryText)
+	before := calls.Load()
+	_, _, err = client.EmbedQuery(t.Context(), voyage.Input{Parts: []voyage.Part{{Text: "red"}, {Media: jpeg}}}, all...)
+	require.ErrorIs(t, err, voyage.ErrCapabilityContract, "the combined query probe covers PNG only")
+	require.ErrorContains(t, err, "only probed with png")
+	assert.Equal(t, before, calls.Load(), "an unprobed composite must not reach the provider")
 	_, _, err = client.EmbedQuery(t.Context(), voyage.Input{Parts: []voyage.Part{{Media: png}, {Text: "red"}}}, all...)
 	require.ErrorIs(t, err, voyage.ErrInvalidInput, "image-then-text is not a probed shape")
 
