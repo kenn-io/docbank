@@ -342,8 +342,11 @@ func TestResponseValidationRejectsMalformedVectors(t *testing.T) {
 		{name: "duplicate index", body: `{"data":[{"embedding":` + vectorJSON() + `,"index":0},{"embedding":` + vectorJSON() + `,"index":0}]}`},
 		{name: "not json", body: `<html>`},
 		{name: "missing index", body: `{"data":[{"embedding":` + vectorJSON() + `}]}`},
+		{name: "null element", body: `{"data":[{"embedding":` + strings.Replace(vectorJSON(), "[0.25", "[null", 1) + `,"index":0}]}`},
+		{name: "string element", body: `{"data":[{"embedding":` + strings.Replace(vectorJSON(), "[0.25", `["0"`, 1) + `,"index":0}]}`},
+		{name: "zero vector", body: `{"data":[{"embedding":` + zeroVectorJSON() + `,"index":0}]}`},
 		{name: "duplicate keys", body: `{"data":[{"embedding":` + vectorJSON() + `,"index":0,"index":0}]}`},
-		{name: "nan", body: `{"data":[{"embedding":` + strings.Replace(vectorJSON(), "[0", "[NaN", 1) + `,"index":0}]}`},
+		{name: "nan", body: `{"data":[{"embedding":` + strings.Replace(vectorJSON(), "[0.25", "[NaN", 1) + `,"index":0}]}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -371,6 +374,15 @@ func TestResponseValidationRejectsMalformedVectors(t *testing.T) {
 }
 
 func vectorJSON() string {
+	parts := make([]string, voyage.DefaultDimension)
+	for index := range parts {
+		parts[index] = "0"
+	}
+	parts[0] = "0.25"
+	return "[" + strings.Join(parts, ",") + "]"
+}
+
+func zeroVectorJSON() string {
 	parts := make([]string, voyage.DefaultDimension)
 	for index := range parts {
 		parts[index] = "0"

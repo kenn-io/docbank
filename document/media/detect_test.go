@@ -48,6 +48,8 @@ func TestDetectBytesRecognizesSupportedContainers(t *testing.T) {
 		{name: "mp4 largesize moov", data: mp4WithLargesizeMoov(320, 240, 500), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 320, height: 240, duration: 500, known: true},
 		{name: "mp4 longest track duration wins", data: mp4WithTrackDuration(320, 240, 500, 9000, false), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 320, height: 240, duration: 9000, known: true},
 		{name: "mp4 unknown track duration", data: mp4WithTrackDuration(320, 240, 500, 0, true), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 320, height: 240},
+		{name: "mp4 v1 track duration wins", data: mp4WithV1Track(320, 240, 500, 7000), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 320, height: 240, duration: 7000, known: true},
+		{name: "mp4 fragmented is unknown duration", data: mp4Fragmented(320, 240, 500), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 320, height: 240},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -88,6 +90,8 @@ func TestDetectBytesRejectsUnsupportedAndMalformedInput(t *testing.T) {
 		{name: "apng zero frames", data: apng(mediatest.PNG(4, 3, nil), 0), want: media.ErrMalformedMedia},
 		{name: "mp4 audio only", data: mp4AudioTrackFirst(0, 0, 700), want: media.ErrMalformedMedia},
 		{name: "mp4 mvhd outside moov", data: mp4MisplacedMVHD(), want: media.ErrMalformedMedia},
+		{name: "mp4 unsupported tkhd version", data: mp4WithTKHDVersion(7), want: media.ErrMalformedMedia},
+		{name: "mp4 unsupported mvhd version", data: mp4WithMVHDVersion(2), want: media.ErrMalformedMedia},
 		{name: "mp4 duplicate mvhd", data: mp4DuplicateMVHD(), want: media.ErrMalformedMedia},
 		{name: "mp4 duplicate moov", data: append(mediatest.MP4(320, 240, 1), mediatest.Box("moov", nil)...), want: media.ErrMalformedMedia},
 		{name: "mp4 largesize truncated", data: append(mediatest.Box("ftyp", append([]byte("isom"), make([]byte, 12)...)), 0, 0, 0, 1, 'm', 'o', 'o', 'v', 0, 0, 0, 0), want: media.ErrMalformedMedia},
@@ -271,9 +275,9 @@ func mp4WithTrackDuration(width, height int, movieMS, trackMS int64, unknown boo
 	ftyp, mvhd, trak := mp4Parts(width, height, movieMS)
 	tkhd := trak[16:] // strip trak and tkhd headers
 	if unknown {
-		binary.BigEndian.PutUint32(tkhd[16:20], 0xFFFFFFFF)
+		binary.BigEndian.PutUint32(tkhd[20:24], 0xFFFFFFFF)
 	} else {
-		binary.BigEndian.PutUint32(tkhd[16:20], uint32(trackMS))
+		binary.BigEndian.PutUint32(tkhd[20:24], uint32(trackMS))
 	}
 	return append(ftyp, mediatest.Box("moov", append(mvhd, trak...))...)
 }
@@ -286,4 +290,33 @@ func mp4MisplacedMVHD() []byte {
 func mp4DuplicateMVHD() []byte {
 	ftyp, mvhd, trak := mp4Parts(320, 240, 500)
 	return append(ftyp, mediatest.Box("moov", append(append(mvhd, mvhd...), trak...))...)
+}
+
+func mp4WithV1Track(width, height int, movieMS, trackMS int64) []byte {
+	ftyp, mvhd, _ := mp4Parts(width, height, movieMS)
+	tkhd := make([]byte, 96)
+	tkhd[0] = 1
+	binary.BigEndian.PutUint64(tkhd[28:36], uint64(trackMS))
+	binary.BigEndian.PutUint32(tkhd[88:92], uint32(width<<16))
+	binary.BigEndian.PutUint32(tkhd[92:96], uint32(height<<16))
+	trak := mediatest.Box("trak", mediatest.Box("tkhd", tkhd))
+	return append(ftyp, mediatest.Box("moov", append(mvhd, trak...))...)
+}
+
+func mp4Fragmented(width, height int, movieMS int64) []byte {
+	ftyp, mvhd, trak := mp4Parts(width, height, movieMS)
+	mvex := mediatest.Box("mvex", mediatest.Box("trex", make([]byte, 24)))
+	return append(ftyp, mediatest.Box("moov", append(append(mvhd, trak...), mvex...))...)
+}
+
+func mp4WithTKHDVersion(version byte) []byte {
+	ftyp, mvhd, trak := mp4Parts(320, 240, 500)
+	trak[16] = version
+	return append(ftyp, mediatest.Box("moov", append(mvhd, trak...))...)
+}
+
+func mp4WithMVHDVersion(version byte) []byte {
+	ftyp, mvhd, trak := mp4Parts(320, 240, 500)
+	mvhd[8] = version
+	return append(ftyp, mediatest.Box("moov", append(mvhd, trak...))...)
 }

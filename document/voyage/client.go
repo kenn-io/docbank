@@ -10,6 +10,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -319,12 +320,29 @@ type wireContentPart struct {
 
 type wireResponse struct {
 	Data []struct {
-		Embedding []float32 `json:"embedding"`
-		Index     *int      `json:"index"`
+		Embedding []strictFloat `json:"embedding"`
+		Index     *int          `json:"index"`
 	} `json:"data"`
 	Usage struct {
 		TotalTokens *int64 `json:"total_tokens"`
 	} `json:"usage"`
+}
+
+// strictFloat accepts only finite JSON numbers; null and non-numeric
+// elements are malformed rather than silently zero.
+type strictFloat float32
+
+func (f *strictFloat) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 || data[0] == 'n' || data[0] == '"' || data[0] == '[' || data[0] == '{' ||
+		data[0] == 't' || data[0] == 'f' {
+		return errors.New("embedding element must be a number")
+	}
+	value, err := strconv.ParseFloat(string(data), 32)
+	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
+		return errors.New("embedding element must be a finite number")
+	}
+	*f = strictFloat(value)
+	return nil
 }
 
 func wireMediaPart(detected media.Metadata, data []byte) wireContentPart {
@@ -500,13 +518,19 @@ func (c *Client) decodeResponse(response wireResponse, want int) ([][]float32, U
 			len(item.Embedding) != c.policy.values.Dimension {
 			return nil, Usage{}, false
 		}
-		for _, value := range item.Embedding {
-			if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
-				return nil, Usage{}, false
-			}
+		vector := make([]float32, len(item.Embedding))
+		var norm float64
+		for index, value := range item.Embedding {
+			vector[index] = float32(value)
+			norm += float64(value) * float64(value)
+		}
+		// A zero vector is not an embedding; it would compare as equidistant
+		// to everything and cannot be evidence of anything.
+		if norm == 0 {
+			return nil, Usage{}, false
 		}
 		seen[*item.Index] = true
-		vectors[*item.Index] = item.Embedding
+		vectors[*item.Index] = vector
 	}
 	usage := Usage{}
 	if response.Usage.TotalTokens != nil && *response.Usage.TotalTokens >= 0 {

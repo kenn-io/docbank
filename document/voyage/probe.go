@@ -229,7 +229,7 @@ func (r *probeRunner) probeAnimated(ctx context.Context) (probeObservation, erro
 	if err != nil {
 		return observation, err
 	}
-	if cosine(result.Vectors[0], reference) >= motionThreshold {
+	if values, ok := similarities(result.Vectors[0], reference); !ok || values[0] >= motionThreshold {
 		observation.reason = ReasonMotionNotObserved
 		return observation, nil
 	}
@@ -294,7 +294,7 @@ func (r *probeRunner) probeTextQuery(ctx context.Context) (probeObservation, err
 	if err != nil {
 		return observation, err
 	}
-	if cosine(vector, red) <= cosine(vector, blue) {
+	if values, ok := similarities(vector, red, blue); !ok || values[0] <= values[1] {
 		observation.reason = ReasonRankingNotObserved
 		return observation, nil
 	}
@@ -326,7 +326,12 @@ func (r *probeRunner) probeImageQuery(ctx context.Context, documentCapability, f
 	if err != nil {
 		return observation, err
 	}
-	toSame, toRed, toBlue := cosine(vector, same), cosine(vector, red), cosine(vector, blue)
+	values, ok := similarities(vector, same, red, blue)
+	if !ok {
+		observation.reason = ReasonRankingNotObserved
+		return observation, nil
+	}
+	toSame, toRed, toBlue := values[0], values[1], values[2]
 	if toSame < toRed || toSame < toBlue || toSame <= min(toRed, toBlue) {
 		observation.reason = ReasonRankingNotObserved
 		return observation, nil
@@ -351,7 +356,7 @@ func (r *probeRunner) probeTextImageQuery(ctx context.Context) (probeObservation
 	if err != nil {
 		return observation, err
 	}
-	if cosine(vector, red) <= cosine(vector, blue) {
+	if values, ok := similarities(vector, red, blue); !ok || values[0] <= values[1] {
 		observation.reason = ReasonRankingNotObserved
 		return observation, nil
 	}
@@ -373,7 +378,7 @@ func (r *probeRunner) probeInterleaved(ctx context.Context) (probeObservation, e
 	if err != nil {
 		return observation, err
 	}
-	if cosine(result.Vectors[0], blueOnly) >= contributionThreshold {
+	if values, ok := similarities(result.Vectors[0], blueOnly); !ok || values[0] >= contributionThreshold {
 		observation.reason = ReasonOrderNotObserved
 		return observation, nil
 	}
@@ -415,7 +420,8 @@ func (r *probeRunner) probeBatch(ctx context.Context) (probeObservation, error) 
 		if index%2 == 1 {
 			expected, other = blueReference, redReference
 		}
-		if cosine(vector, expected) < clusterThreshold || cosine(vector, expected) <= cosine(vector, other) {
+		values, ok := similarities(vector, expected, other)
+		if !ok || values[0] < clusterThreshold || values[0] <= values[1] {
 			observation.reason = ReasonOrderNotObserved
 			return observation, nil
 		}
@@ -444,9 +450,12 @@ func fixtureDigest(inputs ...[]byte) string {
 	return hex.EncodeToString(hasher.Sum(nil)[:fixtureDigestLen/2])
 }
 
-func cosine(left, right []float32) float64 {
+// cosine returns the cosine similarity of two vectors, or false when either
+// is empty, mismatched, or zero-norm; callers treat false as failed evidence
+// rather than as any particular similarity.
+func cosine(left, right []float32) (float64, bool) {
 	if len(left) != len(right) || len(left) == 0 {
-		return 0
+		return 0, false
 	}
 	var dot, leftNorm, rightNorm float64
 	for index := range left {
@@ -455,7 +464,21 @@ func cosine(left, right []float32) float64 {
 		rightNorm += float64(right[index]) * float64(right[index])
 	}
 	if leftNorm == 0 || rightNorm == 0 {
-		return 0
+		return 0, false
 	}
-	return dot / (math.Sqrt(leftNorm) * math.Sqrt(rightNorm))
+	return dot / (math.Sqrt(leftNorm) * math.Sqrt(rightNorm)), true
+}
+
+// similarities returns the cosine of probe against each reference, or false
+// when any pair is not comparable.
+func similarities(probe []float32, references ...[]float32) ([]float64, bool) {
+	out := make([]float64, len(references))
+	for index, reference := range references {
+		value, ok := cosine(probe, reference)
+		if !ok {
+			return nil, false
+		}
+		out[index] = value
+	}
+	return out, true
 }

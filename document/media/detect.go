@@ -371,6 +371,10 @@ func scanMP4Boxes(data []byte, info *mp4Info, parent string, depth int) bool {
 			if info.mvhdCount > 1 || !parseMVHD(payload, info) {
 				return false
 			}
+		case kind == "mvex" && parent == "moov":
+			// Fragmented MP4: the movie header does not describe the fragments
+			// that follow, so the timeline is indeterminate.
+			info.unknownTrackDuration = true
 		case kind == "tkhd" && parent == "trak":
 			if !parseTKHD(payload, info) {
 				return false
@@ -389,17 +393,22 @@ func parseMVHD(payload []byte, info *mp4Info) bool {
 	if len(payload) < 20 {
 		return false
 	}
-	if payload[0] == 1 {
+	// Full box: version(1) flags(3) creation modification timescale duration.
+	switch payload[0] {
+	case 0:
+		info.timescale = uint64(binary.BigEndian.Uint32(payload[12:16]))
+		info.movieDuration = uint64(binary.BigEndian.Uint32(payload[16:20]))
+		return true
+	case 1:
 		if len(payload) < 32 {
 			return false
 		}
 		info.timescale = uint64(binary.BigEndian.Uint32(payload[20:24]))
 		info.movieDuration = binary.BigEndian.Uint64(payload[24:32])
 		return true
+	default:
+		return false
 	}
-	info.timescale = uint64(binary.BigEndian.Uint32(payload[12:16]))
-	info.movieDuration = uint64(binary.BigEndian.Uint32(payload[16:20]))
-	return true
 }
 
 // parseTKHD records a track's duration in movie-timescale units and, for
@@ -407,23 +416,23 @@ func parseMVHD(payload []byte, info *mp4Info) bool {
 // track cannot hide a large one from the pixel bound. Audio, subtitle, and
 // hint tracks carry zero dimensions.
 func parseTKHD(payload []byte, info *mp4Info) bool {
-	if len(payload) < 84 {
-		return false
-	}
+	// Full box: version(1) flags(3) creation modification track_ID reserved
+	// duration ... width height. Duration sits at 20 (v0, 32-bit) or 28 (v1,
+	// 64-bit); width and height are the last eight bytes.
 	var duration uint64
-	if payload[0] == 1 {
-		if len(payload) < 96 {
-			return false
-		}
-		duration = binary.BigEndian.Uint64(payload[24:32])
-		if duration == math.MaxUint64 {
-			info.unknownTrackDuration = true
-		}
-	} else {
-		duration = uint64(binary.BigEndian.Uint32(payload[16:20]))
+	switch {
+	case len(payload) >= 84 && payload[0] == 0:
+		duration = uint64(binary.BigEndian.Uint32(payload[20:24]))
 		if duration == math.MaxUint32 {
 			info.unknownTrackDuration = true
 		}
+	case len(payload) >= 96 && payload[0] == 1:
+		duration = binary.BigEndian.Uint64(payload[28:36])
+		if duration == math.MaxUint64 {
+			info.unknownTrackDuration = true
+		}
+	default:
+		return false
 	}
 	info.trackDurations = append(info.trackDurations, duration)
 	width := int64(binary.BigEndian.Uint32(payload[len(payload)-8:len(payload)-4]) >> 16)
@@ -435,9 +444,9 @@ func parseTKHD(payload []byte, info *mp4Info) bool {
 }
 
 // resolveDuration converts the longest declared duration — the movie header
-// or any track — into milliseconds. Without a movie timescale, or with a
-// track that declares its duration unknown, the duration stays unknown so a
-// duration cap refuses the file.
+// or any track — into milliseconds. Without a movie timescale, with a track
+// that declares its duration unknown, or with a fragmented layout, the
+// duration stays unknown so a duration cap refuses the file.
 func (info *mp4Info) resolveDuration() {
 	if info.timescale == 0 || info.unknownTrackDuration {
 		return

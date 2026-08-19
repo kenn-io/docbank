@@ -93,6 +93,7 @@ type fakeProvider struct {
 	rejects   map[string]int // fixture name -> HTTP status
 	frozenGIF bool           // animated GIF returns the still-frame vector
 	swapPairs bool           // multi-item batches return neighbors' vectors
+	zeroAll   bool           // every embedding is the zero vector
 	calls     int
 }
 
@@ -183,6 +184,11 @@ func (f *fakeProvider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		vectors[index] = vector
+	}
+	if f.zeroAll {
+		for index := range vectors {
+			vectors[index] = make([]float32, fakeDimension)
+		}
 	}
 	if f.swapPairs && len(vectors) > 1 {
 		for index := 0; index+1 < len(vectors); index += 2 {
@@ -367,4 +373,21 @@ func TestRunCapabilityProbeSupportsSingleItemBatchPolicy(t *testing.T) {
 	for _, result := range manifest.Results {
 		assert.Equal(t, voyage.ProbeStatusPassed, result.Status, result.CapabilityID)
 	}
+}
+
+func TestRunCapabilityProbeRejectsZeroVectorsAsEvidence(t *testing.T) {
+	policy := testPolicy(t)
+	dir := writeFixtures(t)
+	provider := &fakeProvider{t: t, fixtures: loadFixtures(t, dir), zeroAll: true}
+	server := httptest.NewTLSServer(provider)
+	defer server.Close()
+	client := newServerClient(t, server, policy, voyage.ClientConfig{MaxRetries: 1})
+	manifest, err := voyage.RunCapabilityProbe(t.Context(), client, voyage.ProbeConfig{Fixtures: voyage.ProbeFixtureConfig{FixtureDirectory: dir}})
+	require.NoError(t, err)
+	for _, result := range manifest.Results {
+		assert.NotEqual(t, voyage.ProbeStatusPassed, result.Status, "%s must not pass on zero vectors", result.CapabilityID)
+	}
+	authorizations, err := policy.AuthorizeAll(manifest)
+	require.NoError(t, err)
+	assert.Empty(t, authorizations)
 }
