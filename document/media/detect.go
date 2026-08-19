@@ -527,17 +527,20 @@ func parseMVHD(payload []byte, info *mp4Info) bool {
 // hint tracks carry zero dimensions.
 func parseTKHD(payload []byte, info *mp4Info, track *mp4TrackInfo) bool {
 	// Full box: version(1) flags(3) creation modification track_ID reserved
-	// duration ... width height. Duration sits at 20 (v0, 32-bit) or 28 (v1,
-	// 64-bit); width and height are the last eight bytes.
+	// duration ... width height. Reject trailing payload so dimensions can only
+	// come from the canonical offsets for the declared version.
 	var duration uint64
+	var widthOffset int
 	switch {
-	case len(payload) >= 84 && payload[0] == 0:
+	case len(payload) == 84 && payload[0] == 0:
 		duration = uint64(binary.BigEndian.Uint32(payload[20:24]))
+		widthOffset = 76
 		if duration == math.MaxUint32 {
 			info.unknownTrackDuration = true
 		}
-	case len(payload) >= 96 && payload[0] == 1:
+	case len(payload) == 96 && payload[0] == 1:
 		duration = binary.BigEndian.Uint64(payload[28:36])
+		widthOffset = 88
 		if duration == math.MaxUint64 {
 			info.unknownTrackDuration = true
 		}
@@ -549,8 +552,8 @@ func parseTKHD(payload []byte, info *mp4Info, track *mp4TrackInfo) bool {
 		return false
 	}
 	info.trackDurations = append(info.trackDurations, duration)
-	width := int64(binary.BigEndian.Uint32(payload[len(payload)-8:len(payload)-4]) >> 16)
-	height := int64(binary.BigEndian.Uint32(payload[len(payload)-4:]) >> 16)
+	width := int64(binary.BigEndian.Uint32(payload[widthOffset:widthOffset+4]) >> 16)
+	height := int64(binary.BigEndian.Uint32(payload[widthOffset+4:widthOffset+8]) >> 16)
 	track.presentationWidth, track.presentationHeight = width, height
 	return true
 }

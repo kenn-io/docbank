@@ -291,6 +291,7 @@ func TestEmbedQuerySupportsTextImageAndCombinedInputs(t *testing.T) {
 	textOnly := fullAuthorizations(t, policy, voyage.CapabilityQueryText)
 	imageOnly := fullAuthorizations(t, policy, voyage.CapabilityQueryImagePNG)
 	textAndImage := fullAuthorizations(t, policy, voyage.CapabilityQueryText, voyage.CapabilityQueryImagePNG)
+	imageAndCombined := fullAuthorizations(t, policy, voyage.CapabilityQueryImagePNG, voyage.CapabilityQueryTextImage)
 
 	vector, usage, err := client.EmbedQuery(t.Context(), voyage.Input{Parts: []voyage.Part{{Text: "red square"}}}, textOnly...)
 	require.NoError(t, err)
@@ -311,6 +312,9 @@ func TestEmbedQuerySupportsTextImageAndCombinedInputs(t *testing.T) {
 	assert.Equal(t, "image_base64", seen.Inputs[0].Content[1].Type)
 	_, _, err = client.EmbedQuery(t.Context(), voyage.Input{Parts: []voyage.Part{{Text: "red"}, {Media: png}}}, textAndImage...)
 	require.ErrorIs(t, err, voyage.ErrCapabilityContract, "text-and-image queries are a separately probed shape")
+	_, _, err = client.EmbedQuery(t.Context(), voyage.Input{Parts: []voyage.Part{{Text: "red"}, {Media: png}}}, imageAndCombined...)
+	require.ErrorIs(t, err, voyage.ErrCapabilityContract, "combined queries still require the text-query capability")
+	require.ErrorContains(t, err, voyage.CapabilityQueryText)
 	_, _, err = client.EmbedQuery(t.Context(), voyage.Input{Parts: []voyage.Part{{Media: png}, {Text: "red"}}}, all...)
 	require.ErrorIs(t, err, voyage.ErrInvalidInput, "image-then-text is not a probed shape")
 

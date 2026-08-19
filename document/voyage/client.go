@@ -160,7 +160,8 @@ func (c *Client) EmbedDocuments(ctx context.Context, inputs []Input, authorizati
 
 // EmbedQuery embeds one query shaped [text], [image], or [text, image]. Text
 // needs the text-query capability, an image needs the query capability for
-// its own format, and the combined shape needs the text-and-image capability.
+// its own format, and the combined shape also needs the text-and-image
+// capability.
 func (c *Client) EmbedQuery(ctx context.Context, input Input, authorizations ...Authorization) ([]float32, Usage, error) {
 	authorized, err := c.authorizationSet(authorizations)
 	if err != nil {
@@ -245,6 +246,9 @@ func (c *Client) queryContent(input Input, authorized map[string]bool, mediaPoli
 		if textPart.Media != nil || strings.TrimSpace(textPart.Text) == "" {
 			return nil, fmt.Errorf("%w: query text part must be non-empty text", ErrInvalidInput)
 		}
+		if !authorized[CapabilityQueryText] {
+			return nil, fmt.Errorf("%w: text queries require %s", ErrCapabilityContract, CapabilityQueryText)
+		}
 		content = append(content, wireContentPart{Type: "text", Text: textPart.Text})
 	}
 	if imagePart != nil {
@@ -267,11 +271,8 @@ func (c *Client) queryContent(input Input, authorized map[string]bool, mediaPoli
 		}
 		content = append(content, wireMediaPart(detected, imagePart.Media.Bytes))
 	}
-	switch {
-	case textPart != nil && imagePart != nil && !authorized[CapabilityQueryTextImage]:
+	if textPart != nil && imagePart != nil && !authorized[CapabilityQueryTextImage] {
 		return nil, fmt.Errorf("%w: text-and-image queries require %s", ErrCapabilityContract, CapabilityQueryTextImage)
-	case textPart != nil && imagePart == nil && !authorized[CapabilityQueryText]:
-		return nil, fmt.Errorf("%w: text queries require %s", ErrCapabilityContract, CapabilityQueryText)
 	}
 	return content, nil
 }

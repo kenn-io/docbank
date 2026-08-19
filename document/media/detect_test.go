@@ -98,6 +98,8 @@ func TestDetectBytesRejectsUnsupportedAndMalformedInput(t *testing.T) {
 		{name: "mp4 audio only", data: mp4AudioTrackFirst(0, 0, 700), want: media.ErrMalformedMedia},
 		{name: "mp4 mvhd outside moov", data: mp4MisplacedMVHD(), want: media.ErrMalformedMedia},
 		{name: "mp4 unsupported tkhd version", data: mp4WithTKHDVersion(7), want: media.ErrMalformedMedia},
+		{name: "mp4 version zero tkhd with trailing payload", data: mp4WithTrailingTKHD(0), want: media.ErrMalformedMedia},
+		{name: "mp4 version one tkhd with trailing payload", data: mp4WithTrailingTKHD(1), want: media.ErrMalformedMedia},
 		{name: "mp4 unsupported mvhd version", data: mp4WithMVHDVersion(2), want: media.ErrMalformedMedia},
 		{name: "mp4 missing coded dimensions", data: mp4WithoutCodedDimensions(320, 240, 500), want: media.ErrMalformedMedia},
 		{name: "mp4 partial coded dimensions", data: mp4WithCodedDimensions(320, 240, 320, 0), want: media.ErrMalformedMedia},
@@ -484,6 +486,22 @@ func mp4WithRawDuration(width, height int, timescale, duration uint32) []byte {
 func mp4WithTKHDVersion(version byte) []byte {
 	ftyp, mvhd, trak := mp4Parts(320, 240, 500)
 	trak[16] = version
+	return append(ftyp, mediatest.Box("moov", append(mvhd, trak...))...)
+}
+
+func mp4WithTrailingTKHD(version byte) []byte {
+	ftyp, mvhd, _ := mp4Parts(16, 16, 500)
+	payloadSize, widthOffset := 92, 76
+	if version == 1 {
+		payloadSize, widthOffset = 104, 88
+	}
+	tkhd := make([]byte, payloadSize)
+	tkhd[0] = version
+	binary.BigEndian.PutUint32(tkhd[widthOffset:widthOffset+4], uint32(4096<<16))
+	binary.BigEndian.PutUint32(tkhd[widthOffset+4:widthOffset+8], uint32(2160<<16))
+	binary.BigEndian.PutUint32(tkhd[payloadSize-8:payloadSize-4], uint32(16<<16))
+	binary.BigEndian.PutUint32(tkhd[payloadSize-4:], uint32(16<<16))
+	trak := mediatest.Box("trak", append(mediatest.Box("tkhd", tkhd), mp4SampleTable(16, 16)...))
 	return append(ftyp, mediatest.Box("moov", append(mvhd, trak...))...)
 }
 
