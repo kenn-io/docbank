@@ -132,6 +132,32 @@ func TestDetectBytesRejectsUnsupportedAndMalformedInput(t *testing.T) {
 }
 
 func TestDetectBoundsDecodableMP4FromCodecAndSampleTiming(t *testing.T) {
+	t.Run("fractional presentation dimensions round up", func(t *testing.T) {
+		data := mediatest.MP4(16, 16, 500)
+		tkhd := mp4TestBoxPayload(t, data, "tkhd")
+		binary.BigEndian.PutUint32(tkhd[76:80], 16<<16|1)
+		binary.BigEndian.PutUint32(tkhd[80:84], 16<<16|1)
+
+		metadata, err := media.DetectBytes(data, "")
+		require.NoError(t, err)
+		assert.Equal(t, int64(17), metadata.Width)
+		assert.Equal(t, int64(17), metadata.Height)
+		_, reason := media.InspectBytes(data, "", media.Policy{MaxBytes: media.MaxBytes, MaxPixels: 256, AllowVideo: true})
+		assert.Equal(t, media.ReasonTooManyPixels, reason)
+	})
+
+	t.Run("missing movie timescale leaves duration unknown", func(t *testing.T) {
+		data := mp4WithoutMovieHeader(9000)
+
+		metadata, err := media.DetectBytes(data, "")
+		require.NoError(t, err)
+		assert.False(t, metadata.DurationKnown)
+		_, reason := media.InspectBytes(data, "", media.Policy{
+			MaxBytes: media.MaxBytes, MaxPixels: media.DefaultMaxPixels, MaxDurationMS: 1000, AllowVideo: true,
+		})
+		assert.Equal(t, media.ReasonTooLong, reason)
+	})
+
 	t.Run("cropped AVC bounds the uncropped coded frame", func(t *testing.T) {
 		metadata, err := media.DetectBytes(mediatest.MP4(18, 18, 500), "")
 		require.NoError(t, err)
@@ -601,6 +627,13 @@ func mp4Parts(width, height int, durationMS int64) (ftyp, mvhd, trak []byte) {
 	binary.BigEndian.PutUint32(tkhd[80:84], uint32(height<<16))
 	trak = mediatest.Box("trak", append(mediatest.Box("tkhd", tkhd), mp4SampleTableDuration(width, height, durationMS)...))
 	return ftyp, mvhd, trak
+}
+
+func mp4WithoutMovieHeader(trackMS int64) []byte {
+	ftyp, _, trak := mp4Parts(16, 16, 500)
+	tkhd := trak[16:] // strip trak and tkhd headers
+	binary.BigEndian.PutUint32(tkhd[20:24], uint32(trackMS))
+	return append(ftyp, mediatest.Box("moov", trak)...)
 }
 
 func mp4WithSizeZeroMoov(width, height int, durationMS int64) []byte {

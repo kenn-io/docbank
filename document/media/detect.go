@@ -573,10 +573,18 @@ func parseTKHD(payload []byte, info *mp4Info, track *mp4TrackInfo) bool {
 		return false
 	}
 	info.trackDurations = append(info.trackDurations, duration)
-	width := int64(binary.BigEndian.Uint32(payload[widthOffset:widthOffset+4]) >> 16)
-	height := int64(binary.BigEndian.Uint32(payload[widthOffset+4:widthOffset+8]) >> 16)
+	width := mp4Fixed1616Ceil(binary.BigEndian.Uint32(payload[widthOffset : widthOffset+4]))
+	height := mp4Fixed1616Ceil(binary.BigEndian.Uint32(payload[widthOffset+4 : widthOffset+8]))
 	track.presentationWidth, track.presentationHeight = width, height
 	return true
+}
+
+func mp4Fixed1616Ceil(value uint32) int64 {
+	result := int64(value >> 16)
+	if value&math.MaxUint16 != 0 {
+		result++
+	}
+	return result
 }
 
 // parseSTSD reads coded dimensions from visual sample entries. The entry
@@ -786,18 +794,16 @@ func isNonVisualHandler(handler string) bool {
 // duration unknown or a fragmented layout keeps the result unknown so a
 // duration cap refuses the file.
 func (info *mp4Info) resolveDuration() {
-	if info.unknownTrackDuration {
+	if info.unknownTrackDuration || info.timescale == 0 {
 		return
 	}
 	var milliseconds int64
-	if info.timescale > 0 {
-		for _, duration := range append([]uint64{info.movieDuration}, info.trackDurations...) {
-			value, ok := mp4DurationMilliseconds(duration, info.timescale)
-			if !ok {
-				return
-			}
-			milliseconds = max(milliseconds, value)
+	for _, duration := range append([]uint64{info.movieDuration}, info.trackDurations...) {
+		value, ok := mp4DurationMilliseconds(duration, info.timescale)
+		if !ok {
+			return
 		}
+		milliseconds = max(milliseconds, value)
 	}
 	for _, duration := range info.mediaDurations {
 		value, ok := mp4DurationMilliseconds(duration.value, duration.timescale)
