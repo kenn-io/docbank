@@ -40,6 +40,7 @@ func TestEvaluateReturnsStableReasons(t *testing.T) {
 		{name: "too long", metadata: video, policy: media.Policy{MaxDurationMS: 4999, AllowVideo: true}, want: media.ReasonTooLong},
 		{name: "duration at cap", metadata: video, policy: media.Policy{MaxDurationMS: 5000, AllowVideo: true}, want: media.ReasonEligible},
 		{name: "unknown duration under cap", metadata: unmeasured, policy: media.Policy{MaxDurationMS: 5000, AllowVideo: true}, want: media.ReasonTooLong},
+		{name: "negative duration cap refuses video", metadata: video, policy: media.Policy{MaxDurationMS: -1, AllowVideo: true}, want: media.ReasonTooLong},
 		{name: "unknown duration without cap", metadata: unmeasured, policy: media.Policy{AllowVideo: true}, want: media.ReasonEligible},
 		{name: "unknown kind", metadata: media.Metadata{Size: 1, Width: 1, Height: 1}, policy: allowAll, want: media.ReasonUnsupportedMedia},
 		{name: "missing dimensions", metadata: media.Metadata{Kind: media.KindImage, Size: 1}, policy: allowAll, want: media.ReasonMalformedMedia},

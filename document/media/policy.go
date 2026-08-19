@@ -17,8 +17,9 @@ type Policy struct {
 	MaxBytes int64 `json:"max_bytes"`
 	// MaxPixels bounds width, height, and their product.
 	MaxPixels int64 `json:"max_pixels"`
-	// MaxDurationMS bounds video duration; zero applies no cap. Under a cap,
-	// video whose duration cannot be measured is refused as too long.
+	// MaxDurationMS bounds video duration; zero applies no cap and a negative
+	// value refuses all video. Under a cap, video whose duration cannot be
+	// measured is refused as too long.
 	MaxDurationMS int64 `json:"max_duration_ms,omitempty"`
 	// AllowStill admits single-frame images.
 	AllowStill bool `json:"allow_still"`
@@ -99,7 +100,8 @@ func Evaluate(metadata Metadata, policy Policy) Reason {
 		if !policy.AllowVideo {
 			return ReasonVideoNotAllowed
 		}
-		if policy.MaxDurationMS > 0 && (!metadata.DurationKnown || metadata.DurationMS > policy.MaxDurationMS) {
+		if policy.MaxDurationMS != 0 &&
+			(policy.MaxDurationMS < 0 || !metadata.DurationKnown || metadata.DurationMS > policy.MaxDurationMS) {
 			return ReasonTooLong
 		}
 	default:

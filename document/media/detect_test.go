@@ -58,6 +58,9 @@ func TestDetectBytesRecognizesSupportedContainers(t *testing.T) {
 		{name: "mp4 unknown track duration", data: mp4WithTrackDuration(320, 240, 500, 0, true), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 320, height: 240},
 		{name: "mp4 v1 track duration wins", data: mp4WithV1Track(320, 240, 500, 7000), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 320, height: 240, duration: 7000, known: true},
 		{name: "mp4 fragmented is unknown duration", data: mp4Fragmented(320, 240, 500), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 320, height: 240},
+		{name: "mp4 moof fragment is unknown duration", data: mp4WithMoof(320, 240, 500), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 320, height: 240},
+		{name: "mp4 v0 sentinel movie duration is unknown", data: mp4WithRawDuration(320, 240, 1000, math.MaxUint32), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 320, height: 240},
+		{name: "mp4 v1 sentinel movie duration is unknown", data: mp4V1SentinelDuration(320, 240), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 320, height: 240},
 		{name: "mp4 duration rounds up", data: mp4WithRawDuration(320, 240, 3, 1), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 320, height: 240, duration: 334, known: true},
 		{name: "mp4 edit list duration wins", data: mp4WithEditListDuration(320, 240, 500, 1500), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 320, height: 240, duration: 1500, known: true},
 		{name: "mp4 version one edit list duration wins", data: mp4WithEditListPayload(320, 240, 500, mp4EditList(1, 1, 500, 1000)), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 320, height: 240, duration: 1500, known: true},
@@ -931,6 +934,20 @@ func mp4Fragmented(width, height int, movieMS int64) []byte {
 	ftyp, mvhd, trak := mp4Parts(width, height, movieMS)
 	mvex := mediatest.Box("mvex", mediatest.Box("trex", make([]byte, 24)))
 	return append(ftyp, mediatest.Box("moov", append(append(mvhd, trak...), mvex...))...)
+}
+
+func mp4WithMoof(width, height int, movieMS int64) []byte {
+	ftyp, mvhd, trak := mp4Parts(width, height, movieMS)
+	moov := mediatest.Box("moov", append(mvhd, trak...))
+	moof := mediatest.Box("moof", mediatest.Box("mfhd", make([]byte, 8)))
+	return append(ftyp, append(moov, moof...)...)
+}
+
+func mp4V1SentinelDuration(width, height int) []byte {
+	data := mp4Version1(width, height, 1000, 1)
+	payload := data[bytes.Index(data, []byte("mvhd"))+4:]
+	binary.BigEndian.PutUint64(payload[24:32], math.MaxUint64)
+	return data
 }
 
 func mp4WithRawDuration(width, height int, timescale, duration uint32) []byte {

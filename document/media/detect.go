@@ -416,7 +416,7 @@ type mp4Info struct {
 	movieDuration        uint64
 	trackDurations       []uint64
 	mediaDurations       []mp4Duration
-	unknownTrackDuration bool
+	unknownDuration bool
 }
 
 type mp4Duration struct {
@@ -531,10 +531,11 @@ func scanMP4Boxes(data []byte, info *mp4Info, track *mp4TrackInfo, parent string
 			if info.mvhdCount > 1 || !parseMVHD(payload, info) {
 				return false
 			}
-		case kind == "mvex" && parent == "moov":
-			// Fragmented MP4: the movie header does not describe the fragments
-			// that follow, so the timeline is indeterminate.
-			info.unknownTrackDuration = true
+		case kind == "mvex" && parent == "moov", kind == "moof":
+			// Fragmented MP4: fragments extend the timeline beyond what the
+			// movie header declares, so any fragment marker leaves the
+			// duration indeterminate.
+			info.unknownDuration = true
 		case kind == "tkhd" && parent == "trak":
 			if track == nil || !parseTKHD(payload, info, track) {
 				return false
@@ -588,6 +589,9 @@ func parseMVHD(payload []byte, info *mp4Info) bool {
 	case 0:
 		info.timescale = uint64(binary.BigEndian.Uint32(payload[12:16]))
 		info.movieDuration = uint64(binary.BigEndian.Uint32(payload[16:20]))
+		if info.movieDuration == math.MaxUint32 {
+			info.unknownDuration = true
+		}
 		return info.timescale > 0
 	case 1:
 		if len(payload) < 32 {
@@ -595,6 +599,9 @@ func parseMVHD(payload []byte, info *mp4Info) bool {
 		}
 		info.timescale = uint64(binary.BigEndian.Uint32(payload[20:24]))
 		info.movieDuration = binary.BigEndian.Uint64(payload[24:32])
+		if info.movieDuration == math.MaxUint64 {
+			info.unknownDuration = true
+		}
 		return info.timescale > 0
 	default:
 		return false
@@ -615,13 +622,13 @@ func parseTKHD(payload []byte, info *mp4Info, track *mp4TrackInfo) bool {
 		duration = uint64(binary.BigEndian.Uint32(payload[20:24]))
 		widthOffset = 76
 		if duration == math.MaxUint32 {
-			info.unknownTrackDuration = true
+			info.unknownDuration = true
 		}
 	case len(payload) == 96 && payload[0] == 1:
 		duration = binary.BigEndian.Uint64(payload[28:36])
 		widthOffset = 88
 		if duration == math.MaxUint64 {
-			info.unknownTrackDuration = true
+			info.unknownDuration = true
 		}
 	default:
 		return false
@@ -698,13 +705,13 @@ func parseMDHD(payload []byte, info *mp4Info, track *mp4TrackInfo) bool {
 		track.mediaTimescale = uint64(binary.BigEndian.Uint32(payload[12:16]))
 		track.mediaDuration = uint64(binary.BigEndian.Uint32(payload[16:20]))
 		if track.mediaDuration == math.MaxUint32 {
-			info.unknownTrackDuration = true
+			info.unknownDuration = true
 		}
 	case len(payload) == 36 && payload[0] == 1:
 		track.mediaTimescale = uint64(binary.BigEndian.Uint32(payload[20:24]))
 		track.mediaDuration = binary.BigEndian.Uint64(payload[24:32])
 		if track.mediaDuration == math.MaxUint64 {
-			info.unknownTrackDuration = true
+			info.unknownDuration = true
 		}
 	default:
 		return false
@@ -772,7 +779,7 @@ func parseCTTS(payload []byte, info *mp4Info, track *mp4TrackInfo) bool {
 		samples += sampleCount
 	}
 	track.compositionSamples = samples
-	info.unknownTrackDuration = true
+	info.unknownDuration = true
 	return true
 }
 
@@ -931,7 +938,7 @@ func isNonVisualHandler(handler string) bool {
 // duration unknown or a fragmented layout keeps the result unknown so a
 // duration cap refuses the file.
 func (info *mp4Info) resolveDuration() {
-	if info.unknownTrackDuration || info.timescale == 0 {
+	if info.unknownDuration || info.timescale == 0 {
 		return
 	}
 	var milliseconds int64
