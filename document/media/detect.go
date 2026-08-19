@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"image"
 	"io"
 	"math"
@@ -309,56 +310,94 @@ func littleEndianUint24(data []byte) int64 {
 	return int64(data[0]) | int64(data[1])<<8 | int64(data[2])<<16
 }
 
-// apngFrames verifies that an APNG's declared frame count matches its actual
-// frame-control chunks, or returns one for a complete non-animated PNG.
+// apngFrames validates PNG chunk integrity and APNG control/data sequencing,
+// or returns one for a complete non-animated PNG.
 func apngFrames(data []byte, canvasWidth, canvasHeight int64) (int, bool) {
 	offset := 8
 	declared, controls := 0, 0
-	hasAnimation, sawImageData := false, false
+	sequence := uint64(0)
+	hasAnimation, sawIHDR, sawIDAT, idatEnded := false, false, false, false
+	frameOpen, frameUsesIDAT := false, false
+	frameDataBytes, idatDataBytes := uint64(0), uint64(0)
 	for offset+12 <= len(data) {
-		size := int(binary.BigEndian.Uint32(data[offset : offset+4]))
-		kind := string(data[offset+4 : offset+8])
-		if size < 0 || offset+12+size > len(data) {
+		size64 := uint64(binary.BigEndian.Uint32(data[offset : offset+4]))
+		end64 := uint64(offset) + 12 + size64 // #nosec G115 -- offset is non-negative and bounded by len(data).
+		if end64 > uint64(len(data)) {        // #nosec G115 -- len(data) is non-negative.
 			return 0, false
 		}
+		size := int(size64) // #nosec G115 -- end64 is bounded by the in-memory input length.
+		end := int(end64)   // #nosec G115 -- end64 is bounded by the in-memory input length.
+		kind := string(data[offset+4 : offset+8])
+		payload := data[offset+8 : offset+8+size]
+		if crc32.ChecksumIEEE(data[offset+4:offset+8+size]) != binary.BigEndian.Uint32(data[offset+8+size:end]) {
+			return 0, false
+		}
+		if sawIDAT && kind != "IDAT" {
+			idatEnded = true
+		}
 		switch kind {
-		case "acTL":
-			if hasAnimation || sawImageData || size != 8 {
+		case "IHDR":
+			if sawIHDR || offset != 8 || size != 13 {
 				return 0, false
 			}
-			declared = int(binary.BigEndian.Uint32(data[offset+8 : offset+12]))
-			if declared <= 0 {
+			sawIHDR = true
+		case "acTL":
+			if !sawIHDR || hasAnimation || sawIDAT || size != 8 {
+				return 0, false
+			}
+			declared = int(binary.BigEndian.Uint32(payload[0:4]))
+			if declared <= 0 || controls > declared {
 				return 0, false
 			}
 			hasAnimation = true
 		case "fcTL":
-			if !hasAnimation || size != 26 {
+			if size != 26 || frameOpen && frameDataBytes == 0 ||
+				uint64(binary.BigEndian.Uint32(payload[0:4])) != sequence ||
+				!hasAnimation && (sawIDAT || controls != 0) || hasAnimation && controls >= declared {
 				return 0, false
 			}
-			width := int64(binary.BigEndian.Uint32(data[offset+12 : offset+16]))
-			height := int64(binary.BigEndian.Uint32(data[offset+16 : offset+20]))
-			x := int64(binary.BigEndian.Uint32(data[offset+20 : offset+24]))
-			y := int64(binary.BigEndian.Uint32(data[offset+24 : offset+28]))
-			if width <= 0 || height <= 0 || x+width > canvasWidth || y+height > canvasHeight {
+			sequence++
+			width := int64(binary.BigEndian.Uint32(payload[4:8]))
+			height := int64(binary.BigEndian.Uint32(payload[8:12]))
+			x := int64(binary.BigEndian.Uint32(payload[12:16]))
+			y := int64(binary.BigEndian.Uint32(payload[16:20]))
+			frameUsesIDAT = !sawIDAT && controls == 0
+			if width <= 0 || height <= 0 || x+width > canvasWidth || y+height > canvasHeight ||
+				frameUsesIDAT && (width != canvasWidth || height != canvasHeight || x != 0 || y != 0) ||
+				payload[24] > 2 || payload[25] > 1 {
 				return 0, false
 			}
 			controls++
+			frameOpen, frameDataBytes = true, 0
 		case "fdAT":
-			if !hasAnimation {
+			if !hasAnimation || size < 4 || !frameOpen || frameUsesIDAT ||
+				uint64(binary.BigEndian.Uint32(payload[0:4])) != sequence {
 				return 0, false
 			}
+			sequence++
+			frameDataBytes += uint64(size - 4) // #nosec G115 -- size is non-negative and bounded by the input.
 		case "IDAT":
-			sawImageData = true
+			if !sawIHDR || idatEnded || frameOpen && !frameUsesIDAT || controls > 1 {
+				return 0, false
+			}
+			sawIDAT = true
+			idatDataBytes += size64
+			if frameOpen {
+				frameDataBytes += size64
+			}
 		case "IEND":
-			if size != 0 || offset+12 != len(data) {
+			if size != 0 || end != len(data) || !sawIHDR || !sawIDAT || idatDataBytes == 0 {
 				return 0, false
 			}
 			if !hasAnimation {
+				if controls != 0 {
+					return 0, false
+				}
 				return 1, true
 			}
-			return declared, controls == declared
+			return declared, controls == declared && frameOpen && frameDataBytes > 0
 		}
-		offset += 12 + size
+		offset = end
 	}
 	return 0, false
 }

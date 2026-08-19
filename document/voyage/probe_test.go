@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -19,11 +20,19 @@ import (
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/voyage"
+	"go.kenn.io/kit/safefileio"
 )
+
+func privateTempDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	require.NoError(t, safefileio.EnsurePrivateDir(dir))
+	return dir
+}
 
 func writeSeeds(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir := privateTempDir(t)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, voyage.FixtureWebP), mediatest.WebP(64, 64), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, voyage.FixtureMP4), mediatest.MP4(64, 64, 2000), 0o600))
 	return dir
@@ -31,7 +40,7 @@ func writeSeeds(t *testing.T) string {
 
 func writeFixtures(t *testing.T) string {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), "fixtures")
+	dir := filepath.Join(privateTempDir(t), "fixtures")
 	require.NoError(t, voyage.WriteProbeFixtures(t.Context(), dir, voyage.FixtureOptions{SeedDirectory: writeSeeds(t)}))
 	return dir
 }
@@ -39,8 +48,8 @@ func writeFixtures(t *testing.T) string {
 func TestWriteProbeFixturesIsDeterministicAndRequiresSeeds(t *testing.T) {
 	require := require.New(t)
 	seeds := writeSeeds(t)
-	first := filepath.Join(t.TempDir(), "one")
-	second := filepath.Join(t.TempDir(), "two")
+	first := filepath.Join(privateTempDir(t), "one")
+	second := filepath.Join(privateTempDir(t), "two")
 	require.NoError(voyage.WriteProbeFixtures(t.Context(), first, voyage.FixtureOptions{SeedDirectory: seeds}))
 	require.NoError(voyage.WriteProbeFixtures(t.Context(), second, voyage.FixtureOptions{SeedDirectory: seeds}))
 	for _, name := range []string{
@@ -56,12 +65,83 @@ func TestWriteProbeFixturesIsDeterministicAndRequiresSeeds(t *testing.T) {
 
 	require.ErrorContains(voyage.WriteProbeFixtures(t.Context(), filepath.Join(t.TempDir(), "x"), voyage.FixtureOptions{}), "seed directory")
 	require.ErrorContains(voyage.WriteProbeFixtures(t.Context(), "", voyage.FixtureOptions{SeedDirectory: seeds}), "destination")
-	require.ErrorContains(voyage.WriteProbeFixtures(t.Context(), filepath.Join(t.TempDir(), "x"), voyage.FixtureOptions{SeedDirectory: t.TempDir()}), "read Voyage probe seed")
+	missingDestination := filepath.Join(privateTempDir(t), "x")
+	require.ErrorContains(voyage.WriteProbeFixtures(t.Context(), missingDestination, voyage.FixtureOptions{SeedDirectory: privateTempDir(t)}), "read Voyage probe seed")
+	assert.NoDirExists(t, missingDestination)
 
-	wrong := t.TempDir()
+	wrong := privateTempDir(t)
 	require.NoError(os.WriteFile(filepath.Join(wrong, voyage.FixtureWebP), mediatest.PNG(8, 8, nil), 0o600))
 	require.NoError(os.WriteFile(filepath.Join(wrong, voyage.FixtureMP4), mediatest.MP4(8, 8, 1), 0o600))
-	require.ErrorContains(voyage.WriteProbeFixtures(t.Context(), filepath.Join(t.TempDir(), "x"), voyage.FixtureOptions{SeedDirectory: wrong}), "must be webp")
+	require.ErrorContains(voyage.WriteProbeFixtures(t.Context(), filepath.Join(privateTempDir(t), "x"), voyage.FixtureOptions{SeedDirectory: wrong}), "must be webp")
+}
+
+func TestWriteProbeFixturesRejectsSymlinksWithoutClobbering(t *testing.T) {
+	t.Run("seed", func(t *testing.T) {
+		seeds := writeSeeds(t)
+		target := filepath.Join(seeds, "webp-target")
+		require.NoError(t, os.Rename(filepath.Join(seeds, voyage.FixtureWebP), target))
+		if err := os.Symlink(target, filepath.Join(seeds, voyage.FixtureWebP)); err != nil {
+			t.Skipf("creating a symlink requires additional platform permission: %v", err)
+		}
+		destination := filepath.Join(privateTempDir(t), "fixtures")
+
+		err := voyage.WriteProbeFixtures(t.Context(), destination, voyage.FixtureOptions{SeedDirectory: seeds})
+		require.ErrorContains(t, err, "regular non-symlink")
+		assert.NoDirExists(t, destination)
+	})
+
+	t.Run("existing destination", func(t *testing.T) {
+		victim := filepath.Join(privateTempDir(t), "victim")
+		require.NoError(t, os.WriteFile(victim, []byte("preserve me"), 0o600))
+		destination := filepath.Join(privateTempDir(t), "fixtures")
+		require.NoError(t, os.Mkdir(destination, 0o700))
+		if err := os.Symlink(victim, filepath.Join(destination, voyage.FixtureJPEG)); err != nil {
+			t.Skipf("creating a symlink requires additional platform permission: %v", err)
+		}
+
+		err := voyage.WriteProbeFixtures(t.Context(), destination, voyage.FixtureOptions{SeedDirectory: writeSeeds(t)})
+		require.ErrorContains(t, err, "destination already exists")
+		contents, readErr := os.ReadFile(victim)
+		require.NoError(t, readErr)
+		assert.Equal(t, []byte("preserve me"), contents)
+	})
+}
+
+func TestProbeFixturesRequirePrivateDirectoriesAndRegularFiles(t *testing.T) {
+	policy := testPolicy(t)
+	t.Run("fixture symlink", func(t *testing.T) {
+		dir := writeFixtures(t)
+		target := filepath.Join(dir, "jpeg-target")
+		require.NoError(t, os.Rename(filepath.Join(dir, voyage.FixtureJPEG), target))
+		if err := os.Symlink(target, filepath.Join(dir, voyage.FixtureJPEG)); err != nil {
+			t.Skipf("creating a symlink requires additional platform permission: %v", err)
+		}
+
+		err := voyage.ValidateProbeFixtures(t.Context(), policy, voyage.ProbeFixtureConfig{FixtureDirectory: dir})
+		require.ErrorContains(t, err, "regular non-symlink")
+	})
+
+	if runtime.GOOS == "windows" {
+		return
+	}
+	t.Run("fixture directory permissions", func(t *testing.T) {
+		dir := writeFixtures(t)
+		require.NoError(t, os.Chmod(dir, 0o755))
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+		err := voyage.ValidateProbeFixtures(t.Context(), policy, voyage.ProbeFixtureConfig{FixtureDirectory: dir})
+		require.ErrorContains(t, err, "private")
+	})
+	t.Run("seed directory permissions", func(t *testing.T) {
+		seeds := writeSeeds(t)
+		require.NoError(t, os.Chmod(seeds, 0o755))
+		t.Cleanup(func() { _ = os.Chmod(seeds, 0o700) })
+		destination := filepath.Join(privateTempDir(t), "fixtures")
+
+		err := voyage.WriteProbeFixtures(t.Context(), destination, voyage.FixtureOptions{SeedDirectory: seeds})
+		require.ErrorContains(t, err, "private")
+		assert.NoDirExists(t, destination)
+	})
 }
 
 func TestValidateProbeFixturesRejectsIncompleteOrTamperedSets(t *testing.T) {
@@ -359,7 +439,7 @@ func TestRunCapabilityProbeAbortsOnAuthorizationFailureAndTransientExhaustion(t 
 		require.ErrorContains(t, err, "requires a client")
 		client, err := voyage.NewClient(policy, voyage.ClientConfig{APIKey: "k"})
 		require.NoError(t, err)
-		_, err = voyage.RunCapabilityProbe(t.Context(), client, voyage.ProbeConfig{Fixtures: voyage.ProbeFixtureConfig{FixtureDirectory: t.TempDir()}})
+		_, err = voyage.RunCapabilityProbe(t.Context(), client, voyage.ProbeConfig{Fixtures: voyage.ProbeFixtureConfig{FixtureDirectory: privateTempDir(t)}})
 		require.ErrorContains(t, err, "read Voyage probe fixture")
 	})
 }

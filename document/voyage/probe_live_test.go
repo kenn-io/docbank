@@ -28,7 +28,7 @@ func TestLiveCapabilityProbe(t *testing.T) {
 
 	policy, err := voyage.NewPolicy(voyage.PolicyConfig{Media: media.DefaultPolicy()})
 	require.NoError(t, err)
-	fixtures := filepath.Join(t.TempDir(), "fixtures")
+	fixtures := filepath.Join(privateTempDir(t), "fixtures")
 	require.NoError(t, voyage.WriteProbeFixtures(t.Context(), fixtures, voyage.FixtureOptions{SeedDirectory: seeds}))
 	require.NoError(t, voyage.ValidateProbeFixtures(t.Context(), policy, voyage.ProbeFixtureConfig{FixtureDirectory: fixtures}))
 

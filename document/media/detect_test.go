@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
+	"hash/crc32"
 	"image/color"
 	"io"
 	"slices"
@@ -41,6 +42,9 @@ func TestDetectBytesRecognizesSupportedContainers(t *testing.T) {
 		{name: "animated gif", data: mediatest.GIF(2, 2, 3), declared: "image/gif", wantFormat: media.FormatGIF, wantKind: media.KindImage, wantType: "image/gif", width: 2, height: 2, frames: 3, animated: true},
 		{name: "webp animated", data: webPAnimated(6, 5, 3), declared: "image/webp", wantFormat: media.FormatWebP, wantKind: media.KindImage, wantType: "image/webp", width: 6, height: 5, frames: 3, animated: true},
 		{name: "apng", data: apng(mediatest.PNG(4, 3, nil), 2), declared: "image/png", wantFormat: media.FormatPNG, wantKind: media.KindImage, wantType: "image/png", width: 4, height: 3, frames: 2, animated: true},
+		{name: "apng frame control before animation control", data: apngFCTLBeforeACTL(mediatest.PNG(4, 3, nil)), declared: "image/png", wantFormat: media.FormatPNG, wantKind: media.KindImage, wantType: "image/png", width: 4, height: 3, frames: 2, animated: true},
+		{name: "apng split by empty idat", data: apngWithEmptyIDATChunk(mediatest.PNG(4, 3, nil)), declared: "image/png", wantFormat: media.FormatPNG, wantKind: media.KindImage, wantType: "image/png", width: 4, height: 3, frames: 2, animated: true},
+		{name: "apng split by empty fdat", data: apngWithEmptyFDATChunk(mediatest.PNG(4, 3, nil)), declared: "image/png", wantFormat: media.FormatPNG, wantKind: media.KindImage, wantType: "image/png", width: 4, height: 3, frames: 2, animated: true},
 		{name: "mp4 v0", data: mediatest.MP4(640, 360, 1250), declared: "video/quicktime", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 640, height: 368, duration: 1250, known: true},
 		{name: "mp4 v1", data: mp4Version1(320, 240, 90_000, 30), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 320, height: 240, duration: 30000, known: true},
 		{name: "mp4 unknown duration", data: mediatest.MP4(640, 360, 0), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 640, height: 368},
@@ -97,6 +101,10 @@ func TestDetectBytesRejectsUnsupportedAndMalformedInput(t *testing.T) {
 		{name: "apng zero frames", data: apng(mediatest.PNG(4, 3, nil), 0), want: media.ErrMalformedMedia},
 		{name: "apng declared frame count mismatch", data: apngWithFrameCounts(mediatest.PNG(4, 3, nil), 1, 2), want: media.ErrMalformedMedia},
 		{name: "apng frame outside canvas", data: apngOutsideCanvas(mediatest.PNG(4, 3, nil)), want: media.ErrMalformedMedia},
+		{name: "apng default frame smaller than canvas", data: apngIDATGeometryMismatch(mediatest.PNG(4, 3, nil)), want: media.ErrMalformedMedia},
+		{name: "apng bad chunk crc", data: apngBadCRC(mediatest.PNG(4, 3, nil)), want: media.ErrMalformedMedia},
+		{name: "apng out of order sequence", data: apngOutOfOrderSequence(mediatest.PNG(4, 3, nil)), want: media.ErrMalformedMedia},
+		{name: "apng frame without data", data: apngFrameWithoutData(mediatest.PNG(4, 3, nil)), want: media.ErrMalformedMedia},
 		{name: "mp4 audio only", data: mp4AudioTrackFirst(0, 0, 700), want: media.ErrMalformedMedia},
 		{name: "mp4 mvhd outside moov", data: mp4MisplacedMVHD(), want: media.ErrMalformedMedia},
 		{name: "mp4 unsupported tkhd version", data: mp4WithTKHDVersion(7), want: media.ErrMalformedMedia},
@@ -397,27 +405,132 @@ func apng(png []byte, frames int) []byte {
 
 func apngWithFrameCounts(png []byte, declared, actual int) []byte {
 	ihdrEnd := 8 + 12 + 13
-	actl := make([]byte, 12+8)
-	binary.BigEndian.PutUint32(actl[0:4], 8)
-	copy(actl[4:8], "acTL")
-	binary.BigEndian.PutUint32(actl[8:12], uint32(declared))
+	actlData := make([]byte, 8)
+	binary.BigEndian.PutUint32(actlData[0:4], uint32(declared))
 	out := append([]byte(nil), png[:ihdrEnd]...)
-	out = append(out, actl...)
-	for range actual {
-		fctl := make([]byte, 12+26)
-		binary.BigEndian.PutUint32(fctl[0:4], 26)
-		copy(fctl[4:8], "fcTL")
-		copy(fctl[12:20], png[16:24])
-		out = append(out, fctl...)
+	out = append(out, pngTestChunk("acTL", actlData)...)
+	idat := pngTestChunkPayloads(png, "IDAT")
+	sequence := uint32(0)
+	for frame := range actual {
+		fctlData := make([]byte, 26)
+		binary.BigEndian.PutUint32(fctlData[0:4], sequence)
+		sequence++
+		copy(fctlData[4:12], png[16:24])
+		out = append(out, pngTestChunk("fcTL", fctlData)...)
+		if frame == 0 {
+			for _, payload := range idat {
+				out = append(out, pngTestChunk("IDAT", payload)...)
+			}
+			continue
+		}
+		for _, payload := range idat {
+			fdatData := binary.BigEndian.AppendUint32(nil, sequence)
+			sequence++
+			fdatData = append(fdatData, payload...)
+			out = append(out, pngTestChunk("fdAT", fdatData)...)
+		}
 	}
-	return append(out, png[ihdrEnd:]...)
+	return append(out, pngTestChunk("IEND", nil)...)
 }
 
 func apngOutsideCanvas(png []byte) []byte {
 	out := apng(png, 1)
 	index := bytes.Index(out, []byte("fcTL"))
 	binary.BigEndian.PutUint32(out[index+8:index+12], binary.BigEndian.Uint32(png[16:20])+1)
+	pngRewriteChunkCRC(out, index)
 	return out
+}
+
+func apngIDATGeometryMismatch(png []byte) []byte {
+	out := apng(png, 2)
+	index := bytes.Index(out, []byte("fcTL"))
+	binary.BigEndian.PutUint32(out[index+8:index+12], binary.BigEndian.Uint32(png[16:20])-1)
+	pngRewriteChunkCRC(out, index)
+	return out
+}
+
+func apngFCTLBeforeACTL(png []byte) []byte {
+	out := apng(png, 2)
+	actl := pngTestChunkRange(out, "acTL")
+	fctl := pngTestChunkRange(out, "fcTL")
+	return slices.Concat(out[:actl[0]], out[fctl[0]:fctl[1]], out[actl[0]:actl[1]], out[fctl[1]:])
+}
+
+func apngWithEmptyIDATChunk(png []byte) []byte {
+	out := apng(png, 2)
+	idat := pngTestChunkRange(out, "IDAT")
+	return slices.Concat(out[:idat[0]], pngTestChunk("IDAT", nil), out[idat[0]:])
+}
+
+func apngWithEmptyFDATChunk(png []byte) []byte {
+	out := apng(png, 2)
+	fdat := pngTestChunkRange(out, "fdAT")
+	kindOffset := fdat[0] + 4
+	sequence := binary.BigEndian.Uint32(out[kindOffset+4 : kindOffset+8])
+	binary.BigEndian.PutUint32(out[kindOffset+4:kindOffset+8], sequence+1)
+	pngRewriteChunkCRC(out, kindOffset)
+	emptyData := binary.BigEndian.AppendUint32(nil, sequence)
+	return slices.Concat(out[:fdat[0]], pngTestChunk("fdAT", emptyData), out[fdat[0]:])
+}
+
+func apngBadCRC(png []byte) []byte {
+	out := apng(png, 2)
+	index := bytes.Index(out, []byte("fcTL"))
+	size := int(binary.BigEndian.Uint32(out[index-4 : index]))
+	out[index+4+size] ^= 1
+	return out
+}
+
+func apngOutOfOrderSequence(png []byte) []byte {
+	out := apng(png, 2)
+	index := bytes.Index(out, []byte("fdAT"))
+	binary.BigEndian.PutUint32(out[index+4:index+8], 0)
+	pngRewriteChunkCRC(out, index)
+	return out
+}
+
+func apngFrameWithoutData(png []byte) []byte {
+	out := apng(png, 2)
+	index := bytes.Index(out, []byte("IDAT"))
+	start := index - 4
+	size := int(binary.BigEndian.Uint32(out[start:index]))
+	return slices.Concat(out[:start], out[start+12+size:])
+}
+
+func pngTestChunk(kind string, payload []byte) []byte {
+	chunk := make([]byte, 12+len(payload))
+	binary.BigEndian.PutUint32(chunk[:4], uint32(len(payload)))
+	copy(chunk[4:8], kind)
+	copy(chunk[8:], payload)
+	binary.BigEndian.PutUint32(chunk[8+len(payload):], crc32.ChecksumIEEE(chunk[4:8+len(payload)]))
+	return chunk
+}
+
+func pngTestChunkPayloads(png []byte, want string) [][]byte {
+	var payloads [][]byte
+	for offset := 8; offset+12 <= len(png); {
+		size := int(binary.BigEndian.Uint32(png[offset : offset+4]))
+		if string(png[offset+4:offset+8]) == want {
+			payloads = append(payloads, append([]byte(nil), png[offset+8:offset+8+size]...))
+		}
+		offset += 12 + size
+	}
+	return payloads
+}
+
+func pngTestChunkRange(png []byte, want string) [2]int {
+	kindOffset := bytes.Index(png, []byte(want))
+	if kindOffset < 4 {
+		panic("PNG test chunk not found: " + want)
+	}
+	start := kindOffset - 4
+	size := int(binary.BigEndian.Uint32(png[start:kindOffset]))
+	return [2]int{start, start + 12 + size}
+}
+
+func pngRewriteChunkCRC(png []byte, kindOffset int) {
+	size := int(binary.BigEndian.Uint32(png[kindOffset-4 : kindOffset]))
+	binary.BigEndian.PutUint32(png[kindOffset+4+size:], crc32.ChecksumIEEE(png[kindOffset:kindOffset+4+size]))
 }
 
 // mp4AudioTrackFirst places a zero-dimension track before the picture track.
