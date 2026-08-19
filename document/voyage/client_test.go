@@ -120,6 +120,7 @@ func TestNewClientValidatesOperationalBounds(t *testing.T) {
 		"negative retries":  {APIKey: "k", MaxRetries: -1},
 		"retries above cap": {APIKey: "k", MaxRetries: voyage.MaxRetries + 1},
 		"negative delay":    {APIKey: "k", RetryBaseDelay: -time.Second},
+		"delay above cap":   {APIKey: "k", RetryBaseDelay: time.Hour + time.Nanosecond},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := voyage.NewClient(policy, config)
@@ -425,9 +426,12 @@ func TestHTTPFailureClassificationRetryAndSanitization(t *testing.T) {
 		wantDelay  bool
 	}{
 		{name: "unauthorized", statuses: []int{401}, body: `{"detail":"secret-token-echo"}`, want: voyage.ErrUnauthorized, wantCalls: 1},
+		{name: "unauthorized oversized body", statuses: []int{401}, body: strings.Repeat("x", 5000), want: voyage.ErrUnauthorized, wantCalls: 1},
 		{name: "forbidden", statuses: []int{403}, want: voyage.ErrUnauthorized, wantCalls: 1},
 		{name: "size rejection", statuses: []int{400}, body: `{"detail":"input is too large"}`, want: voyage.ErrBatchTooLarge, wantCalls: 1},
+		{name: "payload too large", statuses: []int{413}, want: voyage.ErrBatchTooLarge, wantCalls: 1},
 		{name: "other 400", statuses: []int{400}, body: `{"detail":"bad model"}`, want: voyage.ErrPermanentResponse, wantCalls: 1},
+		{name: "oversized 400", statuses: []int{400}, body: strings.Repeat("x", 5000), want: voyage.ErrPermanentResponse, wantCalls: 1},
 		{name: "422", statuses: []int{422}, want: voyage.ErrPermanentResponse, wantCalls: 1},
 		{name: "rate limited then ok", statuses: []int{429, 200}, retryAfter: "0", wantCalls: 2, wantDelay: true},
 		{name: "server error exhausted", statuses: []int{500, 502, 503}, want: voyage.ErrTransientResponse, wantCalls: 3, retryable: true},
@@ -467,6 +471,54 @@ func TestHTTPFailureClassificationRetryAndSanitization(t *testing.T) {
 			var providerErr *voyage.ProviderError
 			require.ErrorAs(t, err, &providerErr)
 			assert.Equal(t, tt.statuses[len(tt.statuses)-1], providerErr.StatusCode)
+		})
+	}
+}
+
+type unreadableBody struct {
+	reads *atomic.Int32
+}
+
+func (b unreadableBody) Read([]byte) (int, error) {
+	b.reads.Add(1)
+	return 0, errors.New("synthetic body read failure")
+}
+
+func (unreadableBody) Close() error { return nil }
+
+func TestHTTPFailureClassificationDoesNotDependOnBodyReadability(t *testing.T) {
+	policy := testPolicy(t)
+	tests := []struct {
+		name      string
+		status    int
+		want      error
+		wantReads int32
+	}{
+		{name: "unauthorized", status: http.StatusUnauthorized, want: voyage.ErrUnauthorized},
+		{name: "forbidden", status: http.StatusForbidden, want: voyage.ErrUnauthorized},
+		{name: "payload too large", status: http.StatusRequestEntityTooLarge, want: voyage.ErrBatchTooLarge},
+		{name: "ambiguous bad request", status: http.StatusBadRequest, want: voyage.ErrPermanentResponse, wantReads: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var reads atomic.Int32
+			transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: tt.status,
+					Header:     make(http.Header),
+					Body:       unreadableBody{reads: &reads},
+					Request:    request,
+				}, nil
+			})
+			client, err := voyage.NewClient(policy, voyage.ClientConfig{
+				APIKey: "synthetic-key", MaxRetries: 3, RetryBaseDelay: time.Millisecond,
+				HTTPClient: &http.Client{Transport: transport},
+			})
+			require.NoError(t, err)
+			png := mediaInput(t, mediatest.PNG(2, 2, nil))
+			_, err = client.EmbedDocuments(t.Context(), []voyage.Input{{Parts: []voyage.Part{{Media: png}}}}, fullAuthorizations(t, policy))
+			require.ErrorIs(t, err, tt.want)
+			assert.Equal(t, tt.wantReads, reads.Load())
 		})
 	}
 }

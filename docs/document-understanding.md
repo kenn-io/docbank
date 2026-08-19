@@ -93,11 +93,12 @@ outside the reusable packages and their policy identity.
 ## Detect and bound visual attachments
 
 `media.Detect` sniffs JPEG, PNG, WebP, GIF, and MP4 containers and reads only
-the metadata needed to bound provider input: dimensions (the largest picture
-track for MP4, every frame inside the logical screen for GIF), frame count
-(including animated WebP and APNG), and MP4 duration as the longest of the
-movie and track headers when the container declares them. It never decodes pixels and never trusts the declared media
-type. `media.Evaluate` applies a policy of byte, pixel, and duration caps and
+the metadata needed to bound provider input: dimensions (the largest coded or
+presentation size for MP4, every frame inside the logical screen for GIF),
+verified frame count (including animated WebP and APNG), and MP4 duration as
+the longest of the movie and track headers when the container declares them.
+It never decodes pixels and never trusts the declared media type.
+`media.Evaluate` applies a policy of byte, pixel, and duration caps and
 still, animated, and video toggles, returning a stable reason such as
 `too_many_pixels` or `animated_not_allowed` that an application can record.
 Under a duration cap, video whose duration cannot be measured is refused.

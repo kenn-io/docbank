@@ -102,7 +102,7 @@ func NewClient(policy Policy, config ClientConfig) (*Client, error) {
 		config.RetryBaseDelay = defaultRetryBaseDelay
 	}
 	if config.Timeout < 0 || config.Timeout > MaxTimeout || config.MaxRetries < 1 ||
-		config.MaxRetries > MaxRetries || config.RetryBaseDelay < 0 {
+		config.MaxRetries > MaxRetries || config.RetryBaseDelay < 0 || config.RetryBaseDelay > maxRetryAfter {
 		return nil, errors.New("voyage client operational bounds are invalid")
 	}
 	// Never follow redirects: a redirect could replay media bytes and the
@@ -166,12 +166,12 @@ func (c *Client) EmbedQuery(ctx context.Context, input Input, authorizations ...
 	if err != nil {
 		return nil, Usage{}, err
 	}
+	if estimatedRequestBytes([]Input{input}) > c.policy.values.MaxRequestBytes {
+		return nil, Usage{}, &ProviderError{Kind: ErrBatchTooLarge}
+	}
 	content, err := c.queryContent(input, authorized, c.policy.values.Media)
 	if err != nil {
 		return nil, Usage{}, err
-	}
-	if estimatedRequestBytes([]Input{input}) > c.policy.values.MaxRequestBytes {
-		return nil, Usage{}, &ProviderError{Kind: ErrBatchTooLarge}
 	}
 	vectors, usage, _, err := c.embed(ctx, []wireInput{{Content: content}}, inputTypeQuery)
 	if err != nil {
@@ -417,7 +417,7 @@ func (c *Client) embed(ctx context.Context, inputs []wireInput, inputType string
 			return nil, Usage{}, metrics, providerErr
 		}
 		metrics.Retries++
-		delay := c.retryBaseDelay * time.Duration(1<<min(attempt-1, maxBackoffShift))
+		delay := retryBackoffDelay(c.retryBaseDelay, attempt)
 		if providerErr.RetrySet {
 			delay = providerErr.RetryAfter
 		}
@@ -425,6 +425,14 @@ func (c *Client) embed(ctx context.Context, inputs []wireInput, inputType string
 			return nil, Usage{}, metrics, err
 		}
 	}
+}
+
+func retryBackoffDelay(base time.Duration, attempt int) time.Duration {
+	multiplier := int64(1 << min(attempt-1, maxBackoffShift))
+	if base >= time.Duration(int64(maxRetryAfter)/multiplier) {
+		return maxRetryAfter
+	}
+	return time.Duration(int64(base) * multiplier)
 }
 
 func sleepContext(ctx context.Context, delay time.Duration) error {
@@ -467,24 +475,23 @@ func (c *Client) doOnce(ctx context.Context, body []byte, want int) ([][]float32
 	defer func() { _ = response.Body.Close() }()
 
 	switch {
+	case response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden:
+		return nil, Usage{}, &ProviderError{Kind: ErrUnauthorized, StatusCode: response.StatusCode}
+	case response.StatusCode == http.StatusRequestEntityTooLarge:
+		return nil, Usage{}, &ProviderError{Kind: ErrBatchTooLarge, StatusCode: response.StatusCode}
 	case response.StatusCode == http.StatusTooManyRequests:
 		retryAfter, retrySet := parseRetryAfter(response.Header.Get("Retry-After"), c.now())
 		return nil, Usage{}, &ProviderError{Kind: ErrTransientResponse, StatusCode: response.StatusCode, RetryAfter: retryAfter, RetrySet: retrySet}
 	case response.StatusCode >= http.StatusInternalServerError:
 		return nil, Usage{}, &ProviderError{Kind: ErrTransientResponse, StatusCode: response.StatusCode}
-	case response.StatusCode >= http.StatusBadRequest:
+	case response.StatusCode == http.StatusBadRequest:
 		limited, readErr := readBounded(response.Body, maxErrorBodyBytes)
-		if readErr != nil {
-			return nil, Usage{}, &ProviderError{Kind: ErrTransientResponse, StatusCode: response.StatusCode, cause: readErr}
-		}
-		switch {
-		case response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden:
-			return nil, Usage{}, &ProviderError{Kind: ErrUnauthorized, StatusCode: response.StatusCode}
-		case response.StatusCode == http.StatusBadRequest && sizeRejection(limited):
+		if readErr == nil && sizeRejection(limited) {
 			return nil, Usage{}, &ProviderError{Kind: ErrBatchTooLarge, StatusCode: response.StatusCode}
-		default:
-			return nil, Usage{}, &ProviderError{Kind: ErrPermanentResponse, StatusCode: response.StatusCode}
 		}
+		return nil, Usage{}, &ProviderError{Kind: ErrPermanentResponse, StatusCode: response.StatusCode}
+	case response.StatusCode >= http.StatusBadRequest:
+		return nil, Usage{}, &ProviderError{Kind: ErrPermanentResponse, StatusCode: response.StatusCode}
 	case response.StatusCode != http.StatusOK:
 		return nil, Usage{}, &ProviderError{Kind: ErrMalformedResponse, StatusCode: response.StatusCode}
 	}

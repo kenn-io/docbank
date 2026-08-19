@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"image/color"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -88,8 +89,11 @@ func WriteProbeFixtures(ctx context.Context, destination string, options Fixture
 		}
 		var data []byte
 		if spec.seed {
-			seed, err := os.ReadFile(filepath.Join(options.SeedDirectory, spec.name))
+			seed, err := readFixtureFile(filepath.Join(options.SeedDirectory, spec.name), media.DefaultPolicy().MaxBytes)
 			if err != nil {
+				if errors.Is(err, media.ErrTooLarge) {
+					return fixtureEligibilityError(spec, media.ReasonTooLarge)
+				}
 				return fmt.Errorf("read Voyage probe seed %s: %w", spec.name, err)
 			}
 			data = seed
@@ -134,8 +138,11 @@ func loadProbeFixtures(ctx context.Context, policy Policy, config ProbeFixtureCo
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		data, err := os.ReadFile(filepath.Join(config.FixtureDirectory, spec.name))
+		data, err := readFixtureFile(filepath.Join(config.FixtureDirectory, spec.name), policy.values.Media.MaxBytes)
 		if err != nil {
+			if errors.Is(err, media.ErrTooLarge) {
+				return nil, fixtureEligibilityError(spec, media.ReasonTooLarge)
+			}
 			return nil, fmt.Errorf("read Voyage probe fixture %s: %w", spec.name, err)
 		}
 		if err := checkFixtureBytes(spec, data, policy.values.Media); err != nil {
@@ -149,11 +156,38 @@ func loadProbeFixtures(ctx context.Context, policy Policy, config ProbeFixtureCo
 	return fixtures, nil
 }
 
+func readFixtureFile(path string, limit int64) ([]byte, error) {
+	file, err := os.Open(path) // #nosec G304 -- fixed fixture names under an operator-selected directory.
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+	stat, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if limit < 0 || stat.Size() > limit {
+		return nil, media.ErrTooLarge
+	}
+	data, err := io.ReadAll(io.LimitReader(file, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, media.ErrTooLarge
+	}
+	return data, nil
+}
+
+func fixtureEligibilityError(spec fixtureSpec, reason media.Reason) error {
+	return fmt.Errorf("voyage probe fixture %s is %s under the policy media bounds", spec.name, reason)
+}
+
 func checkFixtureBytes(spec fixtureSpec, data []byte, policy media.Policy) error {
 	policy.AllowStill, policy.AllowAnimated, policy.AllowVideo = true, true, true
 	metadata, reason := media.InspectBytes(data, "", policy)
 	if reason != media.ReasonEligible {
-		return fmt.Errorf("voyage probe fixture %s is %s under the policy media bounds", spec.name, reason)
+		return fixtureEligibilityError(spec, reason)
 	}
 	if metadata.Format != spec.format || metadata.Animated != spec.animated {
 		return fmt.Errorf("voyage probe fixture %s must be %s (animated=%t), detected %s (animated=%t)",

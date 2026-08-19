@@ -69,18 +69,14 @@ func sniff(data []byte) (Metadata, error) {
 		if err != nil {
 			return Metadata{}, err
 		}
-		frames, ok := apngFrames(data)
+		frames, ok := apngFrames(data, metadata.Width, metadata.Height)
 		if !ok {
 			return Metadata{}, ErrMalformedMedia
 		}
 		metadata.FrameCount, metadata.Animated = frames, frames > 1
 		return metadata, nil
 	case len(data) >= 12 && string(data[:4]) == "RIFF" && string(data[8:12]) == "WEBP":
-		width, height, ok := webPDimensions(data)
-		if !ok {
-			return Metadata{}, ErrMalformedMedia
-		}
-		frames, ok := webPFrames(data)
+		width, height, frames, ok := webPMetadata(data)
 		if !ok {
 			return Metadata{}, ErrMalformedMedia
 		}
@@ -200,68 +196,126 @@ func skipSubBlocks(data []byte, index int) (int, bool) {
 	}
 }
 
-func webPDimensions(data []byte) (int64, int64, bool) {
-	if len(data) < 21 {
-		return 0, 0, false
+func webPMetadata(data []byte) (int64, int64, int, bool) {
+	if len(data) < 20 || uint64(binary.LittleEndian.Uint32(data[4:8]))+8 != uint64(len(data)) {
+		return 0, 0, 0, false
 	}
-	switch string(data[12:16]) {
-	case "VP8X":
-		if len(data) < 30 {
-			return 0, 0, false
+	kind, payload, offset, ok := nextWebPChunk(data, 12)
+	if !ok {
+		return 0, 0, 0, false
+	}
+	if kind != "VP8X" {
+		width, height, ok := webPCodedDimensions(kind, payload)
+		if !ok || offset != len(data) {
+			return 0, 0, 0, false
 		}
-		width := 1 + int64(data[24]) + int64(data[25])<<8 + int64(data[26])<<16
-		height := 1 + int64(data[27]) + int64(data[28])<<8 + int64(data[29])<<16
-		return width, height, true
+		return width, height, 1, true
+	}
+	if len(payload) != 10 || payload[0]&0xc1 != 0 {
+		return 0, 0, 0, false
+	}
+	width := 1 + littleEndianUint24(payload[4:7])
+	height := 1 + littleEndianUint24(payload[7:10])
+	animated := payload[0]&0x02 != 0
+	frames, images := 0, 0
+	for offset < len(data) {
+		kind, payload, next, ok := nextWebPChunk(data, offset)
+		if !ok {
+			return 0, 0, 0, false
+		}
+		switch kind {
+		case "ANMF":
+			if !animated || !validWebPAnimationFrame(payload, width, height) {
+				return 0, 0, 0, false
+			}
+			frames++
+		case "VP8 ", "VP8L":
+			codedWidth, codedHeight, ok := webPCodedDimensions(kind, payload)
+			if animated || !ok || codedWidth > width || codedHeight > height {
+				return 0, 0, 0, false
+			}
+			images++
+		}
+		offset = next
+	}
+	if animated {
+		return width, height, frames, frames > 0 && images == 0
+	}
+	return width, height, 1, images == 1 && frames == 0
+}
+
+func nextWebPChunk(data []byte, offset int) (string, []byte, int, bool) {
+	if offset+8 > len(data) {
+		return "", nil, 0, false
+	}
+	size := int(binary.LittleEndian.Uint32(data[offset+4 : offset+8]))
+	next := offset + 8 + size + size%2
+	if size < 0 || next < offset || next > len(data) {
+		return "", nil, 0, false
+	}
+	return string(data[offset : offset+4]), data[offset+8 : offset+8+size], next, true
+}
+
+func webPCodedDimensions(kind string, payload []byte) (int64, int64, bool) {
+	switch kind {
 	case "VP8L":
-		if len(data) < 25 || data[20] != 0x2f {
+		if len(payload) < 5 || payload[0] != 0x2f {
 			return 0, 0, false
 		}
-		packed := binary.LittleEndian.Uint32(data[21:25])
+		packed := binary.LittleEndian.Uint32(payload[1:5])
 		return int64(packed&0x3fff) + 1, int64((packed>>14)&0x3fff) + 1, true
 	case "VP8 ":
-		if len(data) < 30 || !bytes.Equal(data[23:26], []byte{0x9d, 0x01, 0x2a}) {
+		if len(payload) < 10 || !bytes.Equal(payload[3:6], []byte{0x9d, 0x01, 0x2a}) {
 			return 0, 0, false
 		}
-		width := binary.LittleEndian.Uint16(data[26:28]) & 0x3fff
-		height := binary.LittleEndian.Uint16(data[28:30]) & 0x3fff
+		width := binary.LittleEndian.Uint16(payload[6:8]) & 0x3fff
+		height := binary.LittleEndian.Uint16(payload[8:10]) & 0x3fff
 		return int64(width), int64(height), width > 0 && height > 0
 	default:
 		return 0, 0, false
 	}
 }
 
-// webPFrames counts ANMF chunks when the VP8X animation flag is set. A still
-// WebP reports one frame. It fails on a truncated or unwalkable chunk list.
-func webPFrames(data []byte) (int, bool) {
-	if string(data[12:16]) != "VP8X" {
-		return 1, true
+func validWebPAnimationFrame(payload []byte, canvasWidth, canvasHeight int64) bool {
+	if len(payload) < 24 {
+		return false
 	}
-	if len(data) < 21 || data[20]&0x02 == 0 {
-		return 1, true
+	x := littleEndianUint24(payload[0:3]) * 2
+	y := littleEndianUint24(payload[3:6]) * 2
+	width := littleEndianUint24(payload[6:9]) + 1
+	height := littleEndianUint24(payload[9:12]) + 1
+	if x+width > canvasWidth || y+height > canvasHeight {
+		return false
 	}
-	frames := 0
-	offset := 12
-	for offset+8 <= len(data) {
-		size := int(binary.LittleEndian.Uint32(data[offset+4 : offset+8]))
-		if size < 0 || offset+8+size > len(data) {
-			return 0, false
+	images := 0
+	for offset := 16; offset < len(payload); {
+		kind, image, next, ok := nextWebPChunk(payload, offset)
+		if !ok {
+			return false
 		}
-		if string(data[offset:offset+4]) == "ANMF" {
-			frames++
+		if kind == "VP8 " || kind == "VP8L" {
+			codedWidth, codedHeight, ok := webPCodedDimensions(kind, image)
+			if !ok || codedWidth > width || codedHeight > height {
+				return false
+			}
+			images++
 		}
-		offset += 8 + size + size%2
+		offset = next
 	}
-	if frames == 0 {
-		return 0, false
-	}
-	return frames, true
+	return images == 1
 }
 
-// apngFrames returns the acTL frame count of an APNG, or one when the PNG has
-// no animation control chunk before its first image data.
-func apngFrames(data []byte) (int, bool) {
+func littleEndianUint24(data []byte) int64 {
+	return int64(data[0]) | int64(data[1])<<8 | int64(data[2])<<16
+}
+
+// apngFrames verifies that an APNG's declared frame count matches its actual
+// frame-control chunks, or returns one for a complete non-animated PNG.
+func apngFrames(data []byte, canvasWidth, canvasHeight int64) (int, bool) {
 	offset := 8
-	for offset+8 <= len(data) {
+	declared, controls := 0, 0
+	hasAnimation, sawImageData := false, false
+	for offset+12 <= len(data) {
 		size := int(binary.BigEndian.Uint32(data[offset : offset+4]))
 		kind := string(data[offset+4 : offset+8])
 		if size < 0 || offset+12+size > len(data) {
@@ -269,16 +323,40 @@ func apngFrames(data []byte) (int, bool) {
 		}
 		switch kind {
 		case "acTL":
-			if size < 8 {
+			if hasAnimation || sawImageData || size != 8 {
 				return 0, false
 			}
-			frames := int(binary.BigEndian.Uint32(data[offset+8 : offset+12]))
-			if frames <= 0 {
+			declared = int(binary.BigEndian.Uint32(data[offset+8 : offset+12]))
+			if declared <= 0 {
 				return 0, false
 			}
-			return frames, true
-		case "IDAT", "IEND":
-			return 1, true
+			hasAnimation = true
+		case "fcTL":
+			if !hasAnimation || size != 26 {
+				return 0, false
+			}
+			width := int64(binary.BigEndian.Uint32(data[offset+12 : offset+16]))
+			height := int64(binary.BigEndian.Uint32(data[offset+16 : offset+20]))
+			x := int64(binary.BigEndian.Uint32(data[offset+20 : offset+24]))
+			y := int64(binary.BigEndian.Uint32(data[offset+24 : offset+28]))
+			if width <= 0 || height <= 0 || x+width > canvasWidth || y+height > canvasHeight {
+				return 0, false
+			}
+			controls++
+		case "fdAT":
+			if !hasAnimation {
+				return 0, false
+			}
+		case "IDAT":
+			sawImageData = true
+		case "IEND":
+			if size != 0 || offset+12 != len(data) {
+				return 0, false
+			}
+			if !hasAnimation {
+				return 1, true
+			}
+			return declared, controls == declared
 		}
 		offset += 12 + size
 	}
@@ -292,6 +370,7 @@ func isMP4(data []byte) bool {
 type mp4Info struct {
 	width, height, durationMS int64
 	durationKnown             bool
+	pictureTracks             int
 
 	moovCount, mvhdCount int
 	timescale            uint64
@@ -302,15 +381,24 @@ type mp4Info struct {
 
 func mp4Metadata(data []byte) (mp4Info, bool) {
 	var info mp4Info
-	if !scanMP4Boxes(data, &info, "", 0) || info.moovCount != 1 || info.mvhdCount > 1 ||
-		info.width <= 0 || info.height <= 0 {
+	if !scanMP4Boxes(data, &info, nil, "", 0) || info.moovCount != 1 || info.mvhdCount > 1 ||
+		info.pictureTracks == 0 || info.width <= 0 || info.height <= 0 {
 		return mp4Info{}, false
 	}
 	info.resolveDuration()
 	return info, true
 }
 
-const maxMP4Depth = 4
+const maxMP4Depth = 6
+
+type mp4TrackInfo struct {
+	tkhdCount, hdlrCount, stsdCount       int
+	handlerType                           string
+	presentationWidth, presentationHeight int64
+	codedWidth, codedHeight               int64
+	hasVisualSamples                      bool
+	unknownSampleEntries                  int
+}
 
 // mp4BoxHeader returns the header length and total size of the box at offset,
 // supporting the 64-bit largesize form (size 1) and the to-end-of-parent form
@@ -345,7 +433,7 @@ func mp4BoxHeader(data []byte, offset int) (headerLen, size int, ok bool) {
 // under moov, and mvhd and tkhd headers within them. Structural boxes are
 // only recognized in their authoritative position so a misplaced header
 // cannot override the real one.
-func scanMP4Boxes(data []byte, info *mp4Info, parent string, depth int) bool {
+func scanMP4Boxes(data []byte, info *mp4Info, track *mp4TrackInfo, parent string, depth int) bool {
 	if depth > maxMP4Depth {
 		return false
 	}
@@ -359,11 +447,24 @@ func scanMP4Boxes(data []byte, info *mp4Info, parent string, depth int) bool {
 		switch {
 		case kind == "moov" && parent == "":
 			info.moovCount++
-			if info.moovCount > 1 || !scanMP4Boxes(payload, info, kind, depth+1) {
+			if info.moovCount > 1 || !scanMP4Boxes(payload, info, nil, kind, depth+1) {
 				return false
 			}
 		case kind == "trak" && parent == "moov":
-			if !scanMP4Boxes(payload, info, kind, depth+1) {
+			trackInfo := &mp4TrackInfo{}
+			if !scanMP4Boxes(payload, info, trackInfo, kind, depth+1) || !trackInfo.finish(info) {
+				return false
+			}
+		case kind == "mdia" && parent == "trak":
+			if !scanMP4Boxes(payload, info, track, kind, depth+1) {
+				return false
+			}
+		case kind == "minf" && parent == "mdia":
+			if !scanMP4Boxes(payload, info, track, kind, depth+1) {
+				return false
+			}
+		case kind == "stbl" && parent == "minf":
+			if !scanMP4Boxes(payload, info, track, kind, depth+1) {
 				return false
 			}
 		case kind == "mvhd" && parent == "moov":
@@ -376,10 +477,19 @@ func scanMP4Boxes(data []byte, info *mp4Info, parent string, depth int) bool {
 			// that follow, so the timeline is indeterminate.
 			info.unknownTrackDuration = true
 		case kind == "tkhd" && parent == "trak":
-			if !parseTKHD(payload, info) {
+			if track == nil || !parseTKHD(payload, info, track) {
 				return false
 			}
-		case kind == "moov" || kind == "mvhd" || kind == "tkhd":
+		case kind == "stsd" && parent == "stbl":
+			if track == nil || !parseSTSD(payload, track) {
+				return false
+			}
+		case kind == "hdlr" && parent == "mdia":
+			if track == nil || !parseHDLR(payload, track) {
+				return false
+			}
+		case kind == "moov" || kind == "trak" || kind == "mdia" || kind == "minf" ||
+			kind == "stbl" || kind == "stsd" || kind == "mvhd" || kind == "tkhd" || kind == "hdlr":
 			// A structural header outside its authoritative position is not a
 			// file this package can bound.
 			return false
@@ -415,7 +525,7 @@ func parseMVHD(payload []byte, info *mp4Info) bool {
 // picture tracks, keeps the largest area, enabled or not, so a small leading
 // track cannot hide a large one from the pixel bound. Audio, subtitle, and
 // hint tracks carry zero dimensions.
-func parseTKHD(payload []byte, info *mp4Info) bool {
+func parseTKHD(payload []byte, info *mp4Info, track *mp4TrackInfo) bool {
 	// Full box: version(1) flags(3) creation modification track_ID reserved
 	// duration ... width height. Duration sits at 20 (v0, 32-bit) or 28 (v1,
 	// 64-bit); width and height are the last eight bytes.
@@ -434,13 +544,114 @@ func parseTKHD(payload []byte, info *mp4Info) bool {
 	default:
 		return false
 	}
+	track.tkhdCount++
+	if track.tkhdCount > 1 {
+		return false
+	}
 	info.trackDurations = append(info.trackDurations, duration)
 	width := int64(binary.BigEndian.Uint32(payload[len(payload)-8:len(payload)-4]) >> 16)
 	height := int64(binary.BigEndian.Uint32(payload[len(payload)-4:]) >> 16)
-	if width > 0 && height > 0 && width*height > info.width*info.height {
+	track.presentationWidth, track.presentationHeight = width, height
+	return true
+}
+
+// parseSTSD reads coded dimensions from visual sample entries. The entry
+// payload follows ISO/IEC 14496-12 VisualSampleEntry: width and height are
+// 16-bit integers at offsets 24 and 26 after the sample-entry box header.
+func parseSTSD(payload []byte, track *mp4TrackInfo) bool {
+	if len(payload) < 8 || payload[0] != 0 {
+		return false
+	}
+	track.stsdCount++
+	if track.stsdCount > 1 {
+		return false
+	}
+	want := binary.BigEndian.Uint32(payload[4:8])
+	entries := payload[8:]
+	var seen uint32
+	for offset := 0; offset < len(entries); {
+		headerLen, size, ok := mp4BoxHeader(entries, offset)
+		if !ok || seen == math.MaxUint32 {
+			return false
+		}
+		seen++
+		kind := string(entries[offset+4 : offset+8])
+		entry := entries[offset+headerLen : offset+size]
+		if isVisualSampleEntry(kind) {
+			if len(entry) < 28 {
+				return false
+			}
+			width := int64(binary.BigEndian.Uint16(entry[24:26]))
+			height := int64(binary.BigEndian.Uint16(entry[26:28]))
+			if width <= 0 || height <= 0 {
+				return false
+			}
+			track.hasVisualSamples = true
+			if width*height > track.codedWidth*track.codedHeight {
+				track.codedWidth, track.codedHeight = width, height
+			}
+		} else {
+			track.unknownSampleEntries++
+		}
+		offset += size
+	}
+	return seen == want
+}
+
+func parseHDLR(payload []byte, track *mp4TrackInfo) bool {
+	if len(payload) < 12 || payload[0] != 0 {
+		return false
+	}
+	track.hdlrCount++
+	if track.hdlrCount > 1 {
+		return false
+	}
+	track.handlerType = string(payload[8:12])
+	return true
+}
+
+func isVisualSampleEntry(kind string) bool {
+	switch kind {
+	case "avc1", "avc2", "avc3", "avc4", "hvc1", "hev1", "vp08", "vp09", "av01", "mp4v":
+		return true
+	default:
+		return false
+	}
+}
+
+func (track *mp4TrackInfo) finish(info *mp4Info) bool {
+	if track.tkhdCount != 1 || track.hdlrCount != 1 {
+		return false
+	}
+	presentation := track.presentationWidth > 0 && track.presentationHeight > 0
+	if (track.presentationWidth > 0) != (track.presentationHeight > 0) {
+		return false
+	}
+	if track.handlerType != "vide" {
+		return isNonVisualHandler(track.handlerType) && !presentation && !track.hasVisualSamples
+	}
+	if !presentation || !track.hasVisualSamples || track.stsdCount != 1 || track.unknownSampleEntries != 0 ||
+		track.codedWidth <= 0 || track.codedHeight <= 0 {
+		return false
+	}
+	info.pictureTracks++
+	width, height := track.presentationWidth, track.presentationHeight
+	if track.codedWidth*track.codedHeight > width*height {
+		width, height = track.codedWidth, track.codedHeight
+	}
+	if width*height > info.width*info.height {
 		info.width, info.height = width, height
 	}
 	return true
+}
+
+func isNonVisualHandler(handler string) bool {
+	switch handler {
+	case "soun", "hint", "subt", "text", "sbtl", "clcp", "meta", "tmcd":
+		return true
+	default:
+		return false
+	}
 }
 
 // resolveDuration converts the longest declared duration — the movie header
@@ -463,8 +674,11 @@ func (info *mp4Info) resolveDuration() {
 		return
 	}
 	high, low := bits.Mul64(longest%info.timescale, 1000)
-	fractional, _ := bits.Div64(high, low, info.timescale)
+	fractional, remainder := bits.Div64(high, low, info.timescale)
 	milliseconds := whole*1000 + fractional
+	if remainder > 0 {
+		milliseconds++
+	}
 	if milliseconds <= math.MaxInt64 {
 		info.durationMS = int64(milliseconds)
 		info.durationKnown = true

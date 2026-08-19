@@ -56,9 +56,9 @@ func GIF(width, height, frames int) []byte {
 
 // WebP returns a minimal VP8X WebP header declaring the given canvas size.
 func WebP(width, height int) []byte {
-	data := make([]byte, 30)
+	data := make([]byte, 44)
 	copy(data[0:4], "RIFF")
-	binary.LittleEndian.PutUint32(data[4:8], 22)
+	binary.LittleEndian.PutUint32(data[4:8], uint32(len(data)-8)) //nolint:gosec // synthetic fixture is small
 	copy(data[8:12], "WEBP")
 	copy(data[12:16], "VP8X")
 	binary.LittleEndian.PutUint32(data[16:20], 10)
@@ -66,11 +66,15 @@ func WebP(width, height int) []byte {
 	h := height - 1
 	data[24], data[25], data[26] = byte(w), byte(w>>8), byte(w>>16) //nolint:gosec // synthetic canvas sizes are small
 	data[27], data[28], data[29] = byte(h), byte(h>>8), byte(h>>16) //nolint:gosec // synthetic canvas sizes are small
+	copy(data[30:34], "VP8L")
+	binary.LittleEndian.PutUint32(data[34:38], 5)
+	data[38] = 0x2f
+	binary.LittleEndian.PutUint32(data[39:43], uint32(width-1)|uint32(height-1)<<14) //nolint:gosec // synthetic dimensions are small
 	return data
 }
 
-// MP4 returns a minimal ISO base media file with ftyp, mvhd, and tkhd boxes
-// declaring the given dimensions and duration.
+// MP4 returns a minimal ISO base media file with movie, track, and visual
+// sample-description boxes declaring the given dimensions and duration.
 func MP4(width, height int, durationMS int64) []byte {
 	ftypPayload := append([]byte("isom"), make([]byte, 12)...)
 	mvhd := make([]byte, 20)
@@ -79,9 +83,22 @@ func MP4(width, height int, durationMS int64) []byte {
 	tkhd := make([]byte, 84)
 	binary.BigEndian.PutUint32(tkhd[len(tkhd)-8:len(tkhd)-4], uint32(width<<16)) //nolint:gosec // synthetic fixture dimensions are small
 	binary.BigEndian.PutUint32(tkhd[len(tkhd)-4:], uint32(height<<16))           //nolint:gosec // synthetic fixture dimensions are small
-	trak := Box("trak", Box("tkhd", tkhd))
+	trak := Box("trak", append(Box("tkhd", tkhd), visualSampleTable(width, height)...))
 	moov := Box("moov", append(Box("mvhd", mvhd), trak...))
 	return append(Box("ftyp", ftypPayload), moov...)
+}
+
+func visualSampleTable(width, height int) []byte {
+	entry := make([]byte, 28)
+	binary.BigEndian.PutUint16(entry[24:26], uint16(width))  //nolint:gosec // synthetic dimensions are small
+	binary.BigEndian.PutUint16(entry[26:28], uint16(height)) //nolint:gosec // synthetic dimensions are small
+	stsd := make([]byte, 0, 8+8+len(entry))
+	stsd = append(stsd, make([]byte, 8)...)
+	binary.BigEndian.PutUint32(stsd[4:8], 1)
+	stsd = append(stsd, Box("avc1", entry)...)
+	handler := make([]byte, 12)
+	copy(handler[8:12], "vide")
+	return Box("mdia", append(Box("hdlr", handler), Box("minf", Box("stbl", Box("stsd", stsd)))...))
 }
 
 // Box wraps payload in an ISO base media box of the given four-character kind.
