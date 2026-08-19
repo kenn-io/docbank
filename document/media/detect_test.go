@@ -44,6 +44,10 @@ func TestDetectBytesRecognizesSupportedContainers(t *testing.T) {
 		{name: "mp4 unknown duration", data: mediatest.MP4(640, 360, 0), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 640, height: 360},
 		{name: "mp4 audio track first", data: mp4AudioTrackFirst(640, 360, 700), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 640, height: 360, duration: 700, known: true},
 		{name: "mp4 largest picture track wins", data: mp4TwoPictureTracks(16, 16, 4096, 2160), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 4096, height: 2160},
+		{name: "mp4 moov to end of file", data: mp4WithSizeZeroMoov(320, 240, 500), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 320, height: 240, duration: 500, known: true},
+		{name: "mp4 largesize moov", data: mp4WithLargesizeMoov(320, 240, 500), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 320, height: 240, duration: 500, known: true},
+		{name: "mp4 longest track duration wins", data: mp4WithTrackDuration(320, 240, 500, 9000, false), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 320, height: 240, duration: 9000, known: true},
+		{name: "mp4 unknown track duration", data: mp4WithTrackDuration(320, 240, 500, 0, true), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 320, height: 240},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -83,6 +87,12 @@ func TestDetectBytesRejectsUnsupportedAndMalformedInput(t *testing.T) {
 		{name: "animated webp without frames", data: webPAnimated(6, 5, 0), want: media.ErrMalformedMedia},
 		{name: "apng zero frames", data: apng(mediatest.PNG(4, 3, nil), 0), want: media.ErrMalformedMedia},
 		{name: "mp4 audio only", data: mp4AudioTrackFirst(0, 0, 700), want: media.ErrMalformedMedia},
+		{name: "mp4 mvhd outside moov", data: mp4MisplacedMVHD(), want: media.ErrMalformedMedia},
+		{name: "mp4 duplicate mvhd", data: mp4DuplicateMVHD(), want: media.ErrMalformedMedia},
+		{name: "mp4 duplicate moov", data: append(mediatest.MP4(320, 240, 1), mediatest.Box("moov", nil)...), want: media.ErrMalformedMedia},
+		{name: "mp4 largesize truncated", data: append(mediatest.Box("ftyp", append([]byte("isom"), make([]byte, 12)...)), 0, 0, 0, 1, 'm', 'o', 'o', 'v', 0, 0, 0, 0), want: media.ErrMalformedMedia},
+		{name: "gif frame outside screen", data: gifWithFrameSize(mediatest.GIF(2, 2, 1), 9, 2), want: media.ErrMalformedMedia},
+		{name: "gif zero frame", data: gifWithFrameSize(mediatest.GIF(2, 2, 1), 0, 2), want: media.ErrMalformedMedia},
 		{name: "gif without trailer", data: []byte("GIF89a\x02\x00\x02\x00\x00\x00\x00"), want: media.ErrMalformedMedia},
 		{name: "gif zero width", data: []byte("GIF89a\x00\x00\x02\x00\x00\x00\x00;"), want: media.ErrMalformedMedia},
 		{name: "mp4 without moov", data: mediatest.Box("ftyp", append([]byte("isom"), make([]byte, 12)...)), want: media.ErrMalformedMedia},
@@ -214,4 +224,66 @@ func mp4TwoPictureTracks(w1, h1, w2, h2 int) []byte {
 	}
 	moov := mediatest.Box("moov", append(track(w1, h1), track(w2, h2)...))
 	return append(mediatest.Box("ftyp", append([]byte("isom"), make([]byte, 12)...)), moov...)
+}
+
+// gifWithFrameSize rewrites the first image descriptor's frame width and
+// height without touching the logical screen size.
+func gifWithFrameSize(gif []byte, width, height int) []byte {
+	out := append([]byte(nil), gif...)
+	index := bytes.IndexByte(out[13:], 0x2c) + 13
+	binary.LittleEndian.PutUint16(out[index+5:index+7], uint16(width))
+	binary.LittleEndian.PutUint16(out[index+7:index+9], uint16(height))
+	return out
+}
+
+func mp4Parts(width, height int, durationMS int64) (ftyp, mvhd, trak []byte) {
+	ftyp = mediatest.Box("ftyp", append([]byte("isom"), make([]byte, 12)...))
+	mvhdPayload := make([]byte, 20)
+	binary.BigEndian.PutUint32(mvhdPayload[12:16], 1000)
+	binary.BigEndian.PutUint32(mvhdPayload[16:20], uint32(durationMS))
+	mvhd = mediatest.Box("mvhd", mvhdPayload)
+	tkhd := make([]byte, 84)
+	binary.BigEndian.PutUint32(tkhd[76:80], uint32(width<<16))
+	binary.BigEndian.PutUint32(tkhd[80:84], uint32(height<<16))
+	trak = mediatest.Box("trak", mediatest.Box("tkhd", tkhd))
+	return ftyp, mvhd, trak
+}
+
+func mp4WithSizeZeroMoov(width, height int, durationMS int64) []byte {
+	ftyp, mvhd, trak := mp4Parts(width, height, durationMS)
+	moov := mediatest.Box("moov", append(mvhd, trak...))
+	binary.BigEndian.PutUint32(moov[:4], 0)
+	return append(ftyp, moov...)
+}
+
+func mp4WithLargesizeMoov(width, height int, durationMS int64) []byte {
+	ftyp, mvhd, trak := mp4Parts(width, height, durationMS)
+	payload := append(mvhd, trak...)
+	moov := make([]byte, 16+len(payload))
+	binary.BigEndian.PutUint32(moov[:4], 1)
+	copy(moov[4:8], "moov")
+	binary.BigEndian.PutUint64(moov[8:16], uint64(len(moov)))
+	copy(moov[16:], payload)
+	return append(ftyp, moov...)
+}
+
+func mp4WithTrackDuration(width, height int, movieMS, trackMS int64, unknown bool) []byte {
+	ftyp, mvhd, trak := mp4Parts(width, height, movieMS)
+	tkhd := trak[16:] // strip trak and tkhd headers
+	if unknown {
+		binary.BigEndian.PutUint32(tkhd[16:20], 0xFFFFFFFF)
+	} else {
+		binary.BigEndian.PutUint32(tkhd[16:20], uint32(trackMS))
+	}
+	return append(ftyp, mediatest.Box("moov", append(mvhd, trak...))...)
+}
+
+func mp4MisplacedMVHD() []byte {
+	ftyp, mvhd, trak := mp4Parts(320, 240, 500)
+	return append(append(ftyp, mvhd...), mediatest.Box("moov", trak)...)
+}
+
+func mp4DuplicateMVHD() []byte {
+	ftyp, mvhd, trak := mp4Parts(320, 240, 500)
+	return append(ftyp, mediatest.Box("moov", append(append(mvhd, mvhd...), trak...))...)
 }
