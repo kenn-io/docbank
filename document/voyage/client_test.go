@@ -288,8 +288,8 @@ func TestEmbedQuerySupportsTextImageAndCombinedInputs(t *testing.T) {
 	png := mediaInput(t, mediatest.PNG(4, 4, color.White))
 	all := fullAuthorizations(t, policy)
 	textOnly := fullAuthorizations(t, policy, voyage.CapabilityQueryText)
-	imageOnly := fullAuthorizations(t, policy, voyage.CapabilityQueryImage, voyage.CapabilityImagePNG)
-	queryModeOnly := fullAuthorizations(t, policy, voyage.CapabilityQueryImage)
+	imageOnly := fullAuthorizations(t, policy, voyage.CapabilityQueryImagePNG)
+	textAndImage := fullAuthorizations(t, policy, voyage.CapabilityQueryText, voyage.CapabilityQueryImagePNG)
 
 	vector, usage, err := client.EmbedQuery(t.Context(), voyage.Input{Parts: []voyage.Part{{Text: "red square"}}}, textOnly...)
 	require.NoError(t, err)
@@ -306,13 +306,19 @@ func TestEmbedQuerySupportsTextImageAndCombinedInputs(t *testing.T) {
 	_, _, err = client.EmbedQuery(t.Context(), voyage.Input{Parts: []voyage.Part{{Text: "red"}, {Media: png}}}, all...)
 	require.NoError(t, err)
 	require.Len(t, seen.Inputs[0].Content, 2)
+	assert.Equal(t, "text", seen.Inputs[0].Content[0].Type)
+	assert.Equal(t, "image_base64", seen.Inputs[0].Content[1].Type)
+	_, _, err = client.EmbedQuery(t.Context(), voyage.Input{Parts: []voyage.Part{{Text: "red"}, {Media: png}}}, textAndImage...)
+	require.ErrorIs(t, err, voyage.ErrCapabilityContract, "text-and-image queries are a separately probed shape")
+	_, _, err = client.EmbedQuery(t.Context(), voyage.Input{Parts: []voyage.Part{{Media: png}, {Text: "red"}}}, all...)
+	require.ErrorIs(t, err, voyage.ErrInvalidInput, "image-then-text is not a probed shape")
 
 	_, _, err = client.EmbedQuery(t.Context(), voyage.Input{Parts: []voyage.Part{{Media: png}}}, textOnly...)
 	require.ErrorIs(t, err, voyage.ErrCapabilityContract)
-	_, _, err = client.EmbedQuery(t.Context(), voyage.Input{Parts: []voyage.Part{{Media: png}}}, queryModeOnly...)
-	require.ErrorIs(t, err, voyage.ErrCapabilityContract, "the query image's own format must be probed too")
 	_, _, err = client.EmbedQuery(t.Context(), voyage.Input{Parts: []voyage.Part{{Media: mediaInput(t, mediatest.JPEG(4, 4, color.White))}}}, imageOnly...)
-	require.ErrorIs(t, err, voyage.ErrCapabilityContract, "png authorization does not cover a jpeg query")
+	require.ErrorIs(t, err, voyage.ErrCapabilityContract, "png query authorization does not cover a jpeg query")
+	_, _, err = client.EmbedQuery(t.Context(), voyage.Input{Parts: []voyage.Part{{Media: mediaInput(t, mediatest.GIF(4, 4, 3))}}}, all...)
+	require.ErrorIs(t, err, voyage.ErrInvalidInput, "animated queries are never a probed shape")
 	_, _, err = client.EmbedQuery(t.Context(), voyage.Input{Parts: []voyage.Part{{Text: "red"}}}, imageOnly...)
 	require.ErrorIs(t, err, voyage.ErrCapabilityContract)
 	_, _, err = client.EmbedQuery(t.Context(), voyage.Input{}, all...)
@@ -335,6 +341,8 @@ func TestResponseValidationRejectsMalformedVectors(t *testing.T) {
 		{name: "index out of range", body: `{"data":[{"embedding":` + vectorJSON() + `,"index":5}]}`},
 		{name: "duplicate index", body: `{"data":[{"embedding":` + vectorJSON() + `,"index":0},{"embedding":` + vectorJSON() + `,"index":0}]}`},
 		{name: "not json", body: `<html>`},
+		{name: "missing index", body: `{"data":[{"embedding":` + vectorJSON() + `}]}`},
+		{name: "duplicate keys", body: `{"data":[{"embedding":` + vectorJSON() + `,"index":0,"index":0}]}`},
 		{name: "nan", body: `{"data":[{"embedding":` + strings.Replace(vectorJSON(), "[0", "[NaN", 1) + `,"index":0}]}`},
 	}
 	for _, tt := range tests {

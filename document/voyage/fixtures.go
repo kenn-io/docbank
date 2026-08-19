@@ -23,7 +23,6 @@ const (
 	FixtureMP4         = "video_mp4.mp4"
 	FixtureRed         = "probe_red.png"
 	FixtureBlue        = "probe_blue.png"
-	FixtureQueryImage  = "query_image.png"
 
 	// ProbeQueryText is the text query the probe ranks against the red and
 	// blue reference documents.
@@ -31,9 +30,8 @@ const (
 	// ProbeInterleavedText is the text part of the interleaved probe document.
 	ProbeInterleavedText = "a solid red square"
 
-	fixtureSide      = 64
-	queryFixtureSide = 32
-	animatedFrames   = 4
+	fixtureSide    = 64
+	animatedFrames = 4
 )
 
 // SeedFixtureNames lists the fixtures an operator must supply as synthetic
@@ -62,7 +60,6 @@ var fixtureSpecs = []fixtureSpec{
 	{name: FixtureMP4, format: media.FormatMP4, seed: true},
 	{name: FixtureRed, format: media.FormatPNG, generate: func() []byte { return mediatest.PNG(fixtureSide, fixtureSide, fixtureRed) }},
 	{name: FixtureBlue, format: media.FormatPNG, generate: func() []byte { return mediatest.PNG(fixtureSide, fixtureSide, fixtureBlue) }},
-	{name: FixtureQueryImage, format: media.FormatPNG, generate: func() []byte { return mediatest.PNG(queryFixtureSide, queryFixtureSide, fixtureRed) }},
 }
 
 // FixtureOptions controls probe fixture generation.

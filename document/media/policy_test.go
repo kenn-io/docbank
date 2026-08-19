@@ -2,6 +2,7 @@ package media_test
 
 import (
 	"bytes"
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -51,15 +52,35 @@ func TestEvaluateReturnsStableReasons(t *testing.T) {
 }
 
 func TestPolicyDefaultsAndValidation(t *testing.T) {
-	assert := assert.New(t)
 	normalized := media.Policy{AllowStill: true}.Normalized()
-	assert.Equal(media.MaxBytes, normalized.MaxBytes)
-	assert.Equal(media.DefaultMaxPixels, normalized.MaxPixels)
-	assert.Zero(normalized.MaxDurationMS)
+	assert.Equal(t, media.MaxBytes, normalized.MaxBytes)
+	assert.Equal(t, media.DefaultMaxPixels, normalized.MaxPixels)
+	assert.Zero(t, normalized.MaxDurationMS)
 
 	require.NoError(t, media.DefaultPolicy().Validate())
 	require.Error(t, media.Policy{MaxBytes: media.MaxBytes + 1, AllowStill: true}.Validate())
 	require.Error(t, media.Policy{}.Validate(), "a policy admitting nothing is unusable")
+	for name, policy := range map[string]media.Policy{
+		"negative bytes":    {MaxBytes: -1, AllowStill: true},
+		"negative pixels":   {MaxPixels: -1, AllowStill: true},
+		"negative duration": {MaxDurationMS: -1, AllowVideo: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.ErrorContains(t, policy.Validate(), "negative")
+			normalized := policy.Normalized()
+			assert.True(t, normalized.MaxBytes < 0 || normalized.MaxPixels < 0 || normalized.MaxDurationMS < 0,
+				"negative limits are not silently replaced by defaults")
+		})
+	}
+	still := media.Metadata{Format: media.FormatPNG, Kind: media.KindImage, Size: 10, Width: 2, Height: 2}
+	assert.Equal(t, media.ReasonTooLarge, media.Evaluate(still, media.Policy{MaxBytes: -1, AllowStill: true}))
+	assert.Equal(t, media.ReasonTooManyPixels, media.Evaluate(still, media.Policy{MaxPixels: -1, AllowStill: true}))
+	huge := still
+	huge.Width, huge.Height = 1<<40, 1<<40
+	assert.Equal(t, media.ReasonTooManyPixels, media.Evaluate(huge, media.Policy{MaxPixels: 1 << 62, AllowStill: true}),
+		"overflowing products stay ineligible")
+	assert.Equal(t, int64(1<<62), media.Metadata{Width: 1 << 31, Height: 1 << 31}.Pixels())
+	assert.Equal(t, int64(math.MaxInt64), huge.Pixels())
 }
 
 func TestInspectMapsDetectionOutcomesToReasons(t *testing.T) {

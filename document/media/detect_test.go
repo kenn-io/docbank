@@ -43,6 +43,7 @@ func TestDetectBytesRecognizesSupportedContainers(t *testing.T) {
 		{name: "mp4 v1", data: mp4Version1(320, 240, 90_000, 30), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 320, height: 240, duration: 30000, known: true},
 		{name: "mp4 unknown duration", data: mediatest.MP4(640, 360, 0), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 640, height: 360},
 		{name: "mp4 audio track first", data: mp4AudioTrackFirst(640, 360, 700), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 640, height: 360, duration: 700, known: true},
+		{name: "mp4 largest picture track wins", data: mp4TwoPictureTracks(16, 16, 4096, 2160), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 4096, height: 2160},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -200,5 +201,17 @@ func mp4AudioTrackFirst(width, height int, durationMS int64) []byte {
 	binary.BigEndian.PutUint32(tkhd[80:84], uint32(height<<16))
 	video := mediatest.Box("trak", mediatest.Box("tkhd", tkhd))
 	moov := mediatest.Box("moov", append(append(mediatest.Box("mvhd", mvhd), audio...), video...))
+	return append(mediatest.Box("ftyp", append([]byte("isom"), make([]byte, 12)...)), moov...)
+}
+
+// mp4TwoPictureTracks places a small picture track before a large one.
+func mp4TwoPictureTracks(w1, h1, w2, h2 int) []byte {
+	track := func(width, height int) []byte {
+		tkhd := make([]byte, 84)
+		binary.BigEndian.PutUint32(tkhd[76:80], uint32(width<<16))
+		binary.BigEndian.PutUint32(tkhd[80:84], uint32(height<<16))
+		return mediatest.Box("trak", mediatest.Box("tkhd", tkhd))
+	}
+	moov := mediatest.Box("moov", append(track(w1, h1), track(w2, h2)...))
 	return append(mediatest.Box("ftyp", append([]byte("isom"), make([]byte, 12)...)), moov...)
 }

@@ -45,7 +45,7 @@ func TestWriteProbeFixturesIsDeterministicAndRequiresSeeds(t *testing.T) {
 	require.NoError(voyage.WriteProbeFixtures(t.Context(), second, voyage.FixtureOptions{SeedDirectory: seeds}))
 	for _, name := range []string{
 		voyage.FixtureJPEG, voyage.FixturePNG, voyage.FixtureWebP, voyage.FixtureGIFStill, voyage.FixtureGIFAnimated,
-		voyage.FixtureMP4, voyage.FixtureRed, voyage.FixtureBlue, voyage.FixtureQueryImage,
+		voyage.FixtureMP4, voyage.FixtureRed, voyage.FixtureBlue,
 	} {
 		left, err := os.ReadFile(filepath.Join(first, name))
 		require.NoError(err, name)
@@ -92,6 +92,7 @@ type fakeProvider struct {
 	fixtures  map[string][]byte
 	rejects   map[string]int // fixture name -> HTTP status
 	frozenGIF bool           // animated GIF returns the still-frame vector
+	swapPairs bool           // multi-item batches return neighbors' vectors
 	calls     int
 }
 
@@ -124,7 +125,7 @@ func (f *fakeProvider) classify(data []byte) string {
 			continue
 		}
 		switch name {
-		case voyage.FixtureRed, voyage.FixtureJPEG, voyage.FixtureQueryImage:
+		case voyage.FixtureRed, voyage.FixtureJPEG:
 			return "red"
 		case voyage.FixtureBlue, voyage.FixturePNG:
 			return "blue"
@@ -182,6 +183,11 @@ func (f *fakeProvider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		vectors[index] = vector
+	}
+	if f.swapPairs && len(vectors) > 1 {
+		for index := 0; index+1 < len(vectors); index += 2 {
+			vectors[index], vectors[index+1] = vectors[index+1], vectors[index]
+		}
 	}
 	items := make([]wireItem, len(vectors))
 	for index, vector := range vectors {
@@ -275,6 +281,9 @@ func TestRunCapabilityProbeRecordsScrubbedFailures(t *testing.T) {
 	assert.Equal(voyage.ReasonMotionNotObserved, byID[voyage.CapabilityImageGIFAnimated].ReasonCode)
 	assert.Equal(voyage.ProbeStatusPassed, byID[voyage.CapabilityImageGIFStill].Status)
 	assert.Equal(voyage.ProbeStatusPassed, byID[voyage.CapabilityQueryText].Status)
+	assert.Equal(voyage.ProbeStatusPassed, byID[voyage.CapabilityQueryImagePNG].Status)
+	assert.Equal(voyage.ProbeStatusRejected, byID[voyage.CapabilityQueryImageWebP].Status, "a rejected format cannot pass as a query either")
+	assert.Equal(voyage.ProbeStatusPassed, byID[voyage.CapabilityQueryTextImage].Status)
 	assert.Equal(voyage.ProbeStatusPassed, byID[voyage.CapabilityBatchLimits].Status)
 
 	_, err = policy.Authorize(manifest, voyage.CapabilityImageWebP)
@@ -323,4 +332,39 @@ func TestRunCapabilityProbeAbortsOnAuthorizationFailureAndTransientExhaustion(t 
 		_, err = voyage.RunCapabilityProbe(t.Context(), client, voyage.ProbeConfig{Fixtures: voyage.ProbeFixtureConfig{FixtureDirectory: t.TempDir()}})
 		require.ErrorContains(t, err, "read Voyage probe fixture")
 	})
+}
+
+func TestRunCapabilityProbeDetectsConsistentBatchSwaps(t *testing.T) {
+	policy, err := voyage.NewPolicy(voyage.PolicyConfig{Media: media.DefaultPolicy(), MaxBatchItems: 4})
+	require.NoError(t, err)
+	dir := writeFixtures(t)
+	provider := &fakeProvider{t: t, fixtures: loadFixtures(t, dir), swapPairs: true}
+	server := httptest.NewTLSServer(provider)
+	defer server.Close()
+	client := newServerClient(t, server, policy, voyage.ClientConfig{})
+	manifest, err := voyage.RunCapabilityProbe(t.Context(), client, voyage.ProbeConfig{Fixtures: voyage.ProbeFixtureConfig{FixtureDirectory: dir}})
+	require.NoError(t, err)
+	for _, result := range manifest.Results {
+		if result.CapabilityID == voyage.CapabilityBatchLimits {
+			assert.Equal(t, voyage.ProbeStatusFailed, result.Status)
+			assert.Equal(t, voyage.ReasonOrderNotObserved, result.ReasonCode)
+		} else {
+			assert.Equal(t, voyage.ProbeStatusPassed, result.Status, result.CapabilityID)
+		}
+	}
+}
+
+func TestRunCapabilityProbeSupportsSingleItemBatchPolicy(t *testing.T) {
+	policy, err := voyage.NewPolicy(voyage.PolicyConfig{Media: media.DefaultPolicy(), MaxBatchItems: 1})
+	require.NoError(t, err)
+	dir := writeFixtures(t)
+	provider := &fakeProvider{t: t, fixtures: loadFixtures(t, dir)}
+	server := httptest.NewTLSServer(provider)
+	defer server.Close()
+	client := newServerClient(t, server, policy, voyage.ClientConfig{})
+	manifest, err := voyage.RunCapabilityProbe(t.Context(), client, voyage.ProbeConfig{Fixtures: voyage.ProbeFixtureConfig{FixtureDirectory: dir}})
+	require.NoError(t, err)
+	for _, result := range manifest.Results {
+		assert.Equal(t, voyage.ProbeStatusPassed, result.Status, result.CapabilityID)
+	}
 }

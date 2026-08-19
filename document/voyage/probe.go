@@ -154,13 +154,17 @@ func (r *probeRunner) probe(ctx context.Context, capability Capability) (probeOb
 	case CapabilityVideoMP4:
 		return r.probeDocument(ctx, capability.ID, FixtureMP4)
 	case CapabilityQueryText:
-		return r.probeQuery(ctx, Input{Parts: []Part{{Text: ProbeQueryText}}}, []byte(ProbeQueryText))
-	case CapabilityQueryImage:
-		query, err := r.fixtures.media(FixtureQueryImage)
-		if err != nil {
-			return probeObservation{}, err
-		}
-		return r.probeQuery(ctx, Input{Parts: []Part{{Media: query}}}, query.Bytes)
+		return r.probeTextQuery(ctx)
+	case CapabilityQueryImageJPEG:
+		return r.probeImageQuery(ctx, CapabilityImageJPEG, FixtureJPEG)
+	case CapabilityQueryImagePNG:
+		return r.probeImageQuery(ctx, CapabilityImagePNG, FixturePNG)
+	case CapabilityQueryImageWebP:
+		return r.probeImageQuery(ctx, CapabilityImageWebP, FixtureWebP)
+	case CapabilityQueryImageGIF:
+		return r.probeImageQuery(ctx, CapabilityImageGIFStill, FixtureGIFStill)
+	case CapabilityQueryTextImage:
+		return r.probeTextImageQuery(ctx)
 	case CapabilityInterleaved:
 		return r.probeInterleaved(ctx)
 	case CapabilityBatchLimits:
@@ -233,45 +237,121 @@ func (r *probeRunner) probeAnimated(ctx context.Context) (probeObservation, erro
 	return observation, nil
 }
 
+// referenceDocuments embeds the red and blue reference fixtures, each in its
+// own one-item request so no batch ordering assumption leaks into the
+// references other probes compare against.
 func (r *probeRunner) referenceDocuments(ctx context.Context) ([]float32, []float32, error) {
-	red, ok := r.references[FixtureRed]
-	blue, ok2 := r.references[FixtureBlue]
-	if ok && ok2 {
-		return red, blue, nil
-	}
-	redMedia, err := r.fixtures.media(FixtureRed)
+	red, err := r.reference(ctx, FixtureRed)
 	if err != nil {
 		return nil, nil, err
 	}
-	blueMedia, err := r.fixtures.media(FixtureBlue)
+	blue, err := r.reference(ctx, FixtureBlue)
 	if err != nil {
 		return nil, nil, err
 	}
-	result, err := r.embedFixtures(ctx, []Input{
-		{Parts: []Part{{Media: redMedia}}}, {Parts: []Part{{Media: blueMedia}}},
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-	r.references[FixtureRed], r.references[FixtureBlue] = result.Vectors[0], result.Vectors[1]
-	return result.Vectors[0], result.Vectors[1], nil
+	return red, blue, nil
 }
 
-func (r *probeRunner) probeQuery(ctx context.Context, query Input, digestInput []byte) (probeObservation, error) {
-	observation := probeObservation{fixtureDigest: fixtureDigest(digestInput, r.fixtures[FixtureRed], r.fixtures[FixtureBlue])}
+// reference returns the cached one-item document embedding of a fixture,
+// embedding it on first use.
+func (r *probeRunner) reference(ctx context.Context, fixture string) ([]float32, error) {
+	if vector, ok := r.references[fixture]; ok {
+		return vector, nil
+	}
+	part, err := r.fixtures.media(fixture)
+	if err != nil {
+		return nil, err
+	}
+	result, err := r.embedFixtures(ctx, []Input{{Parts: []Part{{Media: part}}}})
+	if err != nil {
+		return nil, err
+	}
+	r.references[fixture] = result.Vectors[0]
+	return result.Vectors[0], nil
+}
+
+func (r *probeRunner) embedQuery(ctx context.Context, query Input) ([]float32, Usage, error) {
+	content, err := r.client.queryContent(query, r.authorized(), r.mediaPolicy())
+	if err != nil {
+		return nil, Usage{}, err
+	}
+	vectors, usage, _, err := r.client.embed(ctx, []wireInput{{Content: content}}, inputTypeQuery)
+	if err != nil {
+		return nil, Usage{}, err
+	}
+	return vectors[0], usage, nil
+}
+
+// probeTextQuery checks that the red-square text query ranks the red
+// reference above the blue one.
+func (r *probeRunner) probeTextQuery(ctx context.Context) (probeObservation, error) {
+	observation := probeObservation{fixtureDigest: fixtureDigest([]byte(ProbeQueryText), r.fixtures[FixtureRed], r.fixtures[FixtureBlue])}
 	red, blue, err := r.referenceDocuments(ctx)
 	if err != nil {
 		return observation, err
 	}
-	content, err := r.client.queryContent(query, r.authorized(), r.mediaPolicy())
+	vector, usage, err := r.embedQuery(ctx, Input{Parts: []Part{{Text: ProbeQueryText}}})
 	if err != nil {
 		return observation, err
 	}
-	vectors, usage, _, err := r.client.embed(ctx, []wireInput{{Content: content}}, inputTypeQuery)
+	if cosine(vector, red) <= cosine(vector, blue) {
+		observation.reason = ReasonRankingNotObserved
+		return observation, nil
+	}
+	observation.tokens = usageTokens(usage)
+	return observation, nil
+}
+
+// probeImageQuery embeds one format's document fixture as a query and checks
+// that its own document embedding is at least tied for the closest reference
+// and strictly closer than the farther one.
+func (r *probeRunner) probeImageQuery(ctx context.Context, documentCapability, fixture string) (probeObservation, error) {
+	part, err := r.fixtures.media(fixture)
+	if err != nil {
+		return probeObservation{}, err
+	}
+	observation := probeObservation{fixtureDigest: fixtureDigest(part.Bytes, r.fixtures[FixtureRed], r.fixtures[FixtureBlue])}
+	red, blue, err := r.referenceDocuments(ctx)
 	if err != nil {
 		return observation, err
 	}
-	if cosine(vectors[0], red) <= cosine(vectors[0], blue) {
+	same, ok := r.references[documentCapability]
+	if !ok {
+		same, err = r.reference(ctx, fixture)
+		if err != nil {
+			return observation, err
+		}
+	}
+	vector, usage, err := r.embedQuery(ctx, Input{Parts: []Part{{Media: part}}})
+	if err != nil {
+		return observation, err
+	}
+	toSame, toRed, toBlue := cosine(vector, same), cosine(vector, red), cosine(vector, blue)
+	if toSame < toRed || toSame < toBlue || toSame <= min(toRed, toBlue) {
+		observation.reason = ReasonRankingNotObserved
+		return observation, nil
+	}
+	observation.tokens = usageTokens(usage)
+	return observation, nil
+}
+
+// probeTextImageQuery checks that a red text plus red JPEG query ranks the
+// red reference above the blue one.
+func (r *probeRunner) probeTextImageQuery(ctx context.Context) (probeObservation, error) {
+	image, err := r.fixtures.media(FixtureJPEG)
+	if err != nil {
+		return probeObservation{}, err
+	}
+	observation := probeObservation{fixtureDigest: fixtureDigest([]byte(ProbeQueryText), image.Bytes, r.fixtures[FixtureRed], r.fixtures[FixtureBlue])}
+	red, blue, err := r.referenceDocuments(ctx)
+	if err != nil {
+		return observation, err
+	}
+	vector, usage, err := r.embedQuery(ctx, Input{Parts: []Part{{Text: ProbeQueryText}, {Media: image}}})
+	if err != nil {
+		return observation, err
+	}
+	if cosine(vector, red) <= cosine(vector, blue) {
 		observation.reason = ReasonRankingNotObserved
 		return observation, nil
 	}

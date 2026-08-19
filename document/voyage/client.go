@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/docbank/document/internal/manifestjson"
 	"go.kenn.io/docbank/document/media"
 )
 
@@ -156,8 +157,9 @@ func (c *Client) EmbedDocuments(ctx context.Context, inputs []Input, authorizati
 	return Result{Vectors: vectors, Usage: usage, Metrics: metrics}, nil
 }
 
-// EmbedQuery embeds one query of text, one still image, or both. Text needs
-// the text-query capability and an image needs the image-query capability.
+// EmbedQuery embeds one query shaped [text], [image], or [text, image]. Text
+// needs the text-query capability, an image needs the query capability for
+// its own format, and the combined shape needs the text-and-image capability.
 func (c *Client) EmbedQuery(ctx context.Context, input Input, authorizations ...Authorization) ([]float32, Usage, error) {
 	authorized, err := c.authorizationSet(authorizations)
 	if err != nil {
@@ -223,39 +225,52 @@ func (c *Client) documentContent(input Input, authorized map[string]bool, mediaP
 }
 
 func (c *Client) queryContent(input Input, authorized map[string]bool, mediaPolicy media.Policy) ([]wireContentPart, error) {
-	content := make([]wireContentPart, 0, 2)
-	textCount, mediaCount := 0, 0
-	for _, part := range input.Parts {
-		switch {
-		case part.Media != nil && part.Text != "":
-			return nil, fmt.Errorf("%w: part cannot contain text and media", ErrInvalidInput)
-		case part.Media != nil:
-			mediaCount++
-			detected, capability, err := c.verifyMedia(part.Media, mediaPolicy)
-			if err != nil {
-				return nil, err
-			}
-			if detected.Kind != media.KindImage || detected.Animated {
-				return nil, fmt.Errorf("%w: query media must be a still image", ErrInvalidInput)
-			}
-			// An image query needs the query mode and the format itself to be
-			// probed; the query probe alone uses one format.
-			if !authorized[CapabilityQueryImage] || !authorized[capability.ID] {
-				return nil, fmt.Errorf("%w: image queries require %s and %s", ErrCapabilityContract, CapabilityQueryImage, capability.ID)
-			}
-			content = append(content, wireMediaPart(detected, part.Media.Bytes))
-		case strings.TrimSpace(part.Text) != "":
-			textCount++
-			if !authorized[CapabilityQueryText] {
-				return nil, fmt.Errorf("%w: text queries require %s", ErrCapabilityContract, CapabilityQueryText)
-			}
-			content = append(content, wireContentPart{Type: "text", Text: part.Text})
-		default:
-			return nil, fmt.Errorf("%w: part is empty", ErrInvalidInput)
+	// Only the probed shapes are accepted: [text], [image], or [text, image].
+	var textPart, imagePart *Part
+	switch len(input.Parts) {
+	case 1:
+		if input.Parts[0].Media != nil {
+			imagePart = &input.Parts[0]
+		} else {
+			textPart = &input.Parts[0]
 		}
+	case 2:
+		textPart, imagePart = &input.Parts[0], &input.Parts[1]
+	default:
+		return nil, fmt.Errorf("%w: query must be [text], [image], or [text, image]", ErrInvalidInput)
 	}
-	if textCount > 1 || mediaCount > 1 || textCount+mediaCount == 0 {
-		return nil, fmt.Errorf("%w: query requires text, one still image, or both", ErrInvalidInput)
+	content := make([]wireContentPart, 0, 2)
+	if textPart != nil {
+		if textPart.Media != nil || strings.TrimSpace(textPart.Text) == "" {
+			return nil, fmt.Errorf("%w: query text part must be non-empty text", ErrInvalidInput)
+		}
+		content = append(content, wireContentPart{Type: "text", Text: textPart.Text})
+	}
+	if imagePart != nil {
+		if imagePart.Media == nil || imagePart.Text != "" {
+			return nil, fmt.Errorf("%w: query image part must be media only", ErrInvalidInput)
+		}
+		detected, _, err := c.verifyMedia(imagePart.Media, mediaPolicy)
+		if err != nil {
+			return nil, err
+		}
+		if detected.Kind != media.KindImage || detected.Animated {
+			return nil, fmt.Errorf("%w: query media must be a still image", ErrInvalidInput)
+		}
+		capability, ok := queryCapabilityFor(detected.Format)
+		if !ok {
+			return nil, fmt.Errorf("%w: query image format %s has no capability", ErrInvalidInput, detected.Format)
+		}
+		if !authorized[capability.ID] {
+			return nil, fmt.Errorf("%w: %s queries require %s", ErrCapabilityContract, detected.Format, capability.ID)
+		}
+		content = append(content, wireMediaPart(detected, imagePart.Media.Bytes))
+	}
+	switch {
+	case textPart != nil && imagePart != nil && !authorized[CapabilityQueryTextImage]:
+		return nil, fmt.Errorf("%w: text-and-image queries require %s", ErrCapabilityContract, CapabilityQueryTextImage)
+	case textPart != nil && imagePart == nil && !authorized[CapabilityQueryText]:
+		return nil, fmt.Errorf("%w: text queries require %s", ErrCapabilityContract, CapabilityQueryText)
 	}
 	return content, nil
 }
@@ -305,7 +320,7 @@ type wireContentPart struct {
 type wireResponse struct {
 	Data []struct {
 		Embedding []float32 `json:"embedding"`
-		Index     int       `json:"index"`
+		Index     *int      `json:"index"`
 	} `json:"data"`
 	Usage struct {
 		TotalTokens *int64 `json:"total_tokens"`
@@ -460,6 +475,9 @@ func (c *Client) doOnce(ctx context.Context, body []byte, want int) ([][]float32
 	if err != nil {
 		return nil, Usage{}, &ProviderError{Kind: ErrMalformedResponse, StatusCode: response.StatusCode, cause: err}
 	}
+	if err := manifestjson.RejectDuplicateKeys(payload, "voyage response"); err != nil {
+		return nil, Usage{}, &ProviderError{Kind: ErrMalformedResponse, StatusCode: response.StatusCode}
+	}
 	var decoded wireResponse
 	if err := json.Unmarshal(payload, &decoded); err != nil {
 		return nil, Usage{}, &ProviderError{Kind: ErrMalformedResponse, StatusCode: response.StatusCode}
@@ -478,7 +496,8 @@ func (c *Client) decodeResponse(response wireResponse, want int) ([][]float32, U
 	vectors := make([][]float32, want)
 	seen := make([]bool, want)
 	for _, item := range response.Data {
-		if item.Index < 0 || item.Index >= want || seen[item.Index] || len(item.Embedding) != c.policy.values.Dimension {
+		if item.Index == nil || *item.Index < 0 || *item.Index >= want || seen[*item.Index] ||
+			len(item.Embedding) != c.policy.values.Dimension {
 			return nil, Usage{}, false
 		}
 		for _, value := range item.Embedding {
@@ -486,8 +505,8 @@ func (c *Client) decodeResponse(response wireResponse, want int) ([][]float32, U
 				return nil, Usage{}, false
 			}
 		}
-		seen[item.Index] = true
-		vectors[item.Index] = item.Embedding
+		seen[*item.Index] = true
+		vectors[*item.Index] = item.Embedding
 	}
 	usage := Usage{}
 	if response.Usage.TotalTokens != nil && *response.Usage.TotalTokens >= 0 {

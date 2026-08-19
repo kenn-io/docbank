@@ -34,16 +34,15 @@ func DefaultPolicy() Policy {
 	return Policy{MaxBytes: MaxBytes, MaxPixels: DefaultMaxPixels, AllowStill: true, AllowVideo: true}
 }
 
-// Normalized returns the policy with defaults applied.
+// Normalized returns the policy with defaults applied to zero limits.
+// Negative limits are left as they are: Validate rejects them and Evaluate
+// treats them as admitting nothing.
 func (p Policy) Normalized() Policy {
-	if p.MaxBytes <= 0 {
+	if p.MaxBytes == 0 {
 		p.MaxBytes = MaxBytes
 	}
-	if p.MaxPixels <= 0 {
+	if p.MaxPixels == 0 {
 		p.MaxPixels = DefaultMaxPixels
-	}
-	if p.MaxDurationMS < 0 {
-		p.MaxDurationMS = 0
 	}
 	return p
 }
@@ -51,6 +50,9 @@ func (p Policy) Normalized() Policy {
 // Validate reports whether the policy is usable.
 func (p Policy) Validate() error {
 	p = p.Normalized()
+	if p.MaxBytes < 0 || p.MaxPixels < 0 || p.MaxDurationMS < 0 {
+		return errors.New("media: policy limits must not be negative")
+	}
 	if p.MaxBytes > MaxBytes {
 		return fmt.Errorf("media: policy max bytes %d exceeds %d", p.MaxBytes, MaxBytes)
 	}
@@ -103,11 +105,20 @@ func Evaluate(metadata Metadata, policy Policy) Reason {
 	default:
 		return ReasonUnsupportedMedia
 	}
-	if metadata.Width > policy.MaxPixels || metadata.Height > policy.MaxPixels ||
-		metadata.Width*metadata.Height > policy.MaxPixels {
+	if !withinPixels(metadata.Width, metadata.Height, policy.MaxPixels) {
 		return ReasonTooManyPixels
 	}
 	return ReasonEligible
+}
+
+// withinPixels reports width, height, and their product at or under limit
+// without multiplying, so oversized dimensions cannot overflow into
+// eligibility.
+func withinPixels(width, height, limit int64) bool {
+	if width <= 0 || height <= 0 || limit <= 0 {
+		return false
+	}
+	return width <= limit && height <= limit && width <= limit/height
 }
 
 // Inspect detects and evaluates one input. Detection failures become the

@@ -1,6 +1,9 @@
 package media
 
-import "errors"
+import (
+	"errors"
+	"math"
+)
 
 // Format identifies a detected media container.
 type Format string
@@ -49,10 +52,14 @@ type Metadata struct {
 	Animated bool `json:"animated,omitempty"`
 }
 
-// Pixels returns the total pixel count, or zero when dimensions are unknown.
+// Pixels returns the total pixel count, zero when dimensions are unknown, or
+// math.MaxInt64 when the product would overflow.
 func (m Metadata) Pixels() int64 {
 	if m.Width <= 0 || m.Height <= 0 {
 		return 0
+	}
+	if m.Width > math.MaxInt64/m.Height {
+		return math.MaxInt64
 	}
 	return m.Width * m.Height
 }

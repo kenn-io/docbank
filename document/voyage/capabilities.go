@@ -27,7 +27,11 @@ const (
 	CapabilityImageGIFAnimated = "image_gif_animated"
 	CapabilityVideoMP4         = "video_mp4"
 	CapabilityQueryText        = "query_text"
-	CapabilityQueryImage       = "query_image"
+	CapabilityQueryImageJPEG   = "query_image_jpeg"
+	CapabilityQueryImagePNG    = "query_image_png"
+	CapabilityQueryImageWebP   = "query_image_webp"
+	CapabilityQueryImageGIF    = "query_image_gif"
+	CapabilityQueryTextImage   = "query_text_image"
 	CapabilityInterleaved      = "interleaved_text_media"
 	CapabilityBatchLimits      = "batch_limits"
 )
@@ -56,7 +60,11 @@ var capabilities = []Capability{
 	{ID: CapabilityImageGIFAnimated, Kind: CapabilityKindDocument, Format: media.FormatGIF, Animated: true, InputType: inputTypeDocument, Description: "a multi-frame GIF embeds and differs from its first frame"},
 	{ID: CapabilityVideoMP4, Kind: CapabilityKindDocument, Format: media.FormatMP4, InputType: inputTypeDocument, Description: "an MP4 document embeds"},
 	{ID: CapabilityQueryText, Kind: CapabilityKindQuery, InputType: inputTypeQuery, Description: "a text query embeds and ranks its matching document first"},
-	{ID: CapabilityQueryImage, Kind: CapabilityKindQuery, Format: media.FormatPNG, InputType: inputTypeQuery, Description: "an image query embeds and ranks its matching document first"},
+	{ID: CapabilityQueryImageJPEG, Kind: CapabilityKindQuery, Format: media.FormatJPEG, InputType: inputTypeQuery, Description: "a JPEG query ranks its own document embedding first"},
+	{ID: CapabilityQueryImagePNG, Kind: CapabilityKindQuery, Format: media.FormatPNG, InputType: inputTypeQuery, Description: "a PNG query ranks its own document embedding first"},
+	{ID: CapabilityQueryImageWebP, Kind: CapabilityKindQuery, Format: media.FormatWebP, InputType: inputTypeQuery, Description: "a WebP query ranks its own document embedding first"},
+	{ID: CapabilityQueryImageGIF, Kind: CapabilityKindQuery, Format: media.FormatGIF, InputType: inputTypeQuery, Description: "a still GIF query ranks its own document embedding first"},
+	{ID: CapabilityQueryTextImage, Kind: CapabilityKindQuery, InputType: inputTypeQuery, Description: "a text-then-image query embeds and ranks its matching document first"},
 	{ID: CapabilityInterleaved, Kind: CapabilityKindRequest, InputType: inputTypeDocument, Description: "a text-then-media document embeds and the text contributes"},
 	{ID: CapabilityBatchLimits, Kind: CapabilityKindRequest, InputType: inputTypeDocument, Description: "a batch at the policy limit embeds and each result matches its input"},
 }
@@ -86,6 +94,16 @@ func documentCapabilityFor(metadata media.Metadata) (Capability, bool) {
 			continue
 		}
 		if capability.Animated == metadata.Animated {
+			return capability, true
+		}
+	}
+	return Capability{}, false
+}
+
+// queryCapabilityFor returns the still-image query capability for a format.
+func queryCapabilityFor(format media.Format) (Capability, bool) {
+	for _, capability := range capabilities {
+		if capability.Kind == CapabilityKindQuery && capability.Format == format && capability.ID != CapabilityQueryTextImage {
 			return capability, true
 		}
 	}

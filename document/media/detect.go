@@ -314,12 +314,13 @@ func scanMP4Boxes(data []byte, info *mp4Info, depth int) bool {
 		case "mvhd":
 			parseMVHD(payload, info)
 		case "tkhd":
-			// Audio, subtitle, and hint tracks carry zero dimensions; keep the
-			// first track that declares a real picture size.
-			if len(payload) >= 8 && info.width <= 0 && info.height <= 0 {
+			// Audio, subtitle, and hint tracks carry zero dimensions. Among
+			// picture tracks keep the largest area, enabled or not, so a small
+			// leading track cannot hide a large one from the pixel bound.
+			if len(payload) >= 8 {
 				width := int64(binary.BigEndian.Uint32(payload[len(payload)-8:len(payload)-4]) >> 16)
 				height := int64(binary.BigEndian.Uint32(payload[len(payload)-4:]) >> 16)
-				if width > 0 && height > 0 {
+				if width > 0 && height > 0 && width*height > info.width*info.height {
 					info.width, info.height = width, height
 				}
 			}
