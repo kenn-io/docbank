@@ -88,13 +88,16 @@ func TestValidateProbeFixturesRejectsIncompleteOrTamperedSets(t *testing.T) {
 // semantic content of the deterministic fixtures, so the probe's ranking,
 // motion, contribution, and batch checks are meaningful.
 type fakeProvider struct {
-	t         *testing.T
-	fixtures  map[string][]byte
-	rejects   map[string]int // fixture name -> HTTP status
-	frozenGIF bool           // animated GIF returns the still-frame vector
-	swapPairs bool           // multi-item batches return neighbors' vectors
-	zeroAll   bool           // every embedding is the zero vector
-	calls     int
+	t                    *testing.T
+	fixtures             map[string][]byte
+	rejects              map[string]int // fixture name -> HTTP status
+	frozenGIF            bool           // animated GIF returns the still-frame vector
+	swapPairs            bool           // multi-item batches return neighbors' vectors
+	zeroAll              bool           // every embedding is the zero vector
+	ignoreCompositeText  bool           // composite requests consume only their media part
+	ignoreCompositeMedia bool           // composite requests consume only their text part
+	formatOnlyComposite  bool           // composite media consumes only its container format
+	calls                int
 }
 
 const fakeDimension = voyage.DefaultDimension
@@ -114,6 +117,10 @@ func (f *fakeProvider) vectorFor(kind string) []float32 {
 		vector[4] = 1
 	case "mp4":
 		vector[5] = 1
+	case "png-format":
+		vector[6] = 1
+	case "jpeg-format":
+		vector[7] = 1
 	default:
 		vector[9] = 1
 	}
@@ -161,13 +168,22 @@ func (f *fakeProvider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	vectors := make([][]float32, len(request.Inputs))
 	for index, input := range request.Inputs {
 		vector := make([]float32, fakeDimension)
+		composite := len(input.Content) > 1
 		for _, part := range input.Content {
 			switch part.Type {
 			case "text":
+				if composite && f.ignoreCompositeText {
+					continue
+				}
 				if strings.Contains(part.Text, "red") {
 					add(vector, f.vectorFor("red"), 0.5)
+				} else if strings.Contains(part.Text, "blue") {
+					add(vector, f.vectorFor("blue"), 0.5)
 				}
 			case "image_base64", "video_base64":
+				if composite && f.ignoreCompositeMedia {
+					continue
+				}
 				payload := part.ImageBase64
 				if payload == "" {
 					payload = part.VideoBase64
@@ -179,6 +195,14 @@ func (f *fakeProvider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					w.WriteHeader(status)
 					_, _ = io.WriteString(w, `{"detail":"synthetic rejection"}`)
 					return
+				}
+				if composite && f.formatOnlyComposite {
+					format := "jpeg-format"
+					if strings.HasPrefix(payload, "data:image/png;") {
+						format = "png-format"
+					}
+					add(vector, f.vectorFor(format), 1)
+					continue
 				}
 				add(vector, f.vectorFor(f.classify(data)), 1)
 			}
@@ -357,6 +381,43 @@ func TestRunCapabilityProbeDetectsConsistentBatchSwaps(t *testing.T) {
 		} else {
 			assert.Equal(t, voyage.ProbeStatusPassed, result.Status, result.CapabilityID)
 		}
+	}
+}
+
+func TestRunCapabilityProbeRequiresBothCompositeComponents(t *testing.T) {
+	policy, err := voyage.NewPolicy(voyage.PolicyConfig{Media: media.DefaultPolicy(), MaxBatchItems: 4})
+	require.NoError(t, err)
+	for _, tt := range []struct {
+		name                 string
+		ignoreCompositeText  bool
+		ignoreCompositeMedia bool
+		formatOnlyComposite  bool
+	}{
+		{name: "ignored text", ignoreCompositeText: true},
+		{name: "ignored media", ignoreCompositeMedia: true},
+		{name: "format sensitive but pixel blind", formatOnlyComposite: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := writeFixtures(t)
+			provider := &fakeProvider{
+				t: t, fixtures: loadFixtures(t, dir),
+				ignoreCompositeText: tt.ignoreCompositeText, ignoreCompositeMedia: tt.ignoreCompositeMedia,
+				formatOnlyComposite: tt.formatOnlyComposite,
+			}
+			server := httptest.NewTLSServer(provider)
+			defer server.Close()
+			client := newServerClient(t, server, policy, voyage.ClientConfig{})
+			manifest, err := voyage.RunCapabilityProbe(t.Context(), client, voyage.ProbeConfig{
+				Fixtures: voyage.ProbeFixtureConfig{FixtureDirectory: dir},
+			})
+			require.NoError(t, err)
+			byID := make(map[string]voyage.CapabilityResult, len(manifest.Results))
+			for _, result := range manifest.Results {
+				byID[result.CapabilityID] = result
+			}
+			assert.Equal(t, voyage.ProbeStatusFailed, byID[voyage.CapabilityQueryTextImage].Status)
+			assert.Equal(t, voyage.ProbeStatusFailed, byID[voyage.CapabilityInterleaved].Status)
+		})
 	}
 }
 

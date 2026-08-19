@@ -376,7 +376,12 @@ type mp4Info struct {
 	timescale            uint64
 	movieDuration        uint64
 	trackDurations       []uint64
+	mediaDurations       []mp4Duration
 	unknownTrackDuration bool
+}
+
+type mp4Duration struct {
+	value, timescale uint64
 }
 
 func mp4Metadata(data []byte) (mp4Info, bool) {
@@ -392,10 +397,14 @@ func mp4Metadata(data []byte) (mp4Info, bool) {
 const maxMP4Depth = 6
 
 type mp4TrackInfo struct {
-	tkhdCount, hdlrCount, stsdCount       int
+	tkhdCount, hdlrCount, mdhdCount       int
+	stsdCount, sttsCount, sampleSizeCount int
 	handlerType                           string
 	presentationWidth, presentationHeight int64
 	codedWidth, codedHeight               int64
+	mediaTimescale, mediaDuration         uint64
+	sampleDuration                        uint64
+	timedSamples, sampleCount             uint64
 	hasVisualSamples                      bool
 	unknownSampleEntries                  int
 }
@@ -484,12 +493,25 @@ func scanMP4Boxes(data []byte, info *mp4Info, track *mp4TrackInfo, parent string
 			if track == nil || !parseSTSD(payload, track) {
 				return false
 			}
+		case kind == "stts" && parent == "stbl":
+			if track == nil || !parseSTTS(payload, track) {
+				return false
+			}
+		case (kind == "stsz" || kind == "stz2") && parent == "stbl":
+			if track == nil || !parseSampleSize(kind, payload, track) {
+				return false
+			}
 		case kind == "hdlr" && parent == "mdia":
 			if track == nil || !parseHDLR(payload, track) {
 				return false
 			}
+		case kind == "mdhd" && parent == "mdia":
+			if track == nil || !parseMDHD(payload, info, track) {
+				return false
+			}
 		case kind == "moov" || kind == "trak" || kind == "mdia" || kind == "minf" ||
-			kind == "stbl" || kind == "stsd" || kind == "mvhd" || kind == "tkhd" || kind == "hdlr":
+			kind == "stbl" || kind == "stsd" || kind == "stts" || kind == "stsz" || kind == "stz2" || kind == "mvhd" ||
+			kind == "tkhd" || kind == "hdlr" || kind == "mdhd":
 			// A structural header outside its authoritative position is not a
 			// file this package can bound.
 			return false
@@ -508,23 +530,22 @@ func parseMVHD(payload []byte, info *mp4Info) bool {
 	case 0:
 		info.timescale = uint64(binary.BigEndian.Uint32(payload[12:16]))
 		info.movieDuration = uint64(binary.BigEndian.Uint32(payload[16:20]))
-		return true
+		return info.timescale > 0
 	case 1:
 		if len(payload) < 32 {
 			return false
 		}
 		info.timescale = uint64(binary.BigEndian.Uint32(payload[20:24]))
 		info.movieDuration = binary.BigEndian.Uint64(payload[24:32])
-		return true
+		return info.timescale > 0
 	default:
 		return false
 	}
 }
 
-// parseTKHD records a track's duration in movie-timescale units and, for
-// picture tracks, keeps the largest area, enabled or not, so a small leading
-// track cannot hide a large one from the pixel bound. Audio, subtitle, and
-// hint tracks carry zero dimensions.
+// parseTKHD records a track's duration in movie-timescale units and its
+// presentation dimensions. Audio, subtitle, and hint tracks carry zero
+// dimensions.
 func parseTKHD(payload []byte, info *mp4Info, track *mp4TrackInfo) bool {
 	// Full box: version(1) flags(3) creation modification track_ID reserved
 	// duration ... width height. Reject trailing payload so dimensions can only
@@ -581,24 +602,127 @@ func parseSTSD(payload []byte, track *mp4TrackInfo) bool {
 		kind := string(entries[offset+4 : offset+8])
 		entry := entries[offset+headerLen : offset+size]
 		if isVisualSampleEntry(kind) {
-			if len(entry) < 28 {
+			if len(entry) < 78 {
 				return false
 			}
 			width := int64(binary.BigEndian.Uint16(entry[24:26]))
 			height := int64(binary.BigEndian.Uint16(entry[26:28]))
-			if width <= 0 || height <= 0 {
+			codecWidth, codecHeight, ok := visualCodecDimensions(kind, entry)
+			if width <= 0 || height <= 0 || !ok {
 				return false
 			}
 			track.hasVisualSamples = true
-			if width*height > track.codedWidth*track.codedHeight {
-				track.codedWidth, track.codedHeight = width, height
-			}
+			track.codedWidth = max(track.codedWidth, width, codecWidth)
+			track.codedHeight = max(track.codedHeight, height, codecHeight)
 		} else {
 			track.unknownSampleEntries++
 		}
 		offset += size
 	}
 	return seen == want
+}
+
+func parseMDHD(payload []byte, info *mp4Info, track *mp4TrackInfo) bool {
+	track.mdhdCount++
+	if track.mdhdCount > 1 {
+		return false
+	}
+	switch {
+	case len(payload) == 24 && payload[0] == 0:
+		track.mediaTimescale = uint64(binary.BigEndian.Uint32(payload[12:16]))
+		track.mediaDuration = uint64(binary.BigEndian.Uint32(payload[16:20]))
+		if track.mediaDuration == math.MaxUint32 {
+			info.unknownTrackDuration = true
+		}
+	case len(payload) == 36 && payload[0] == 1:
+		track.mediaTimescale = uint64(binary.BigEndian.Uint32(payload[20:24]))
+		track.mediaDuration = binary.BigEndian.Uint64(payload[24:32])
+		if track.mediaDuration == math.MaxUint64 {
+			info.unknownTrackDuration = true
+		}
+	default:
+		return false
+	}
+	return track.mediaTimescale > 0
+}
+
+func parseSTTS(payload []byte, track *mp4TrackInfo) bool {
+	if len(payload) < 8 || payload[0] != 0 {
+		return false
+	}
+	track.sttsCount++
+	if track.sttsCount > 1 {
+		return false
+	}
+	count := binary.BigEndian.Uint32(payload[4:8])
+	if count > math.MaxInt32 || len(payload) != 8+int(count)*8 {
+		return false
+	}
+	var total uint64
+	var samples uint64
+	for offset := 8; offset < len(payload); offset += 8 {
+		sampleCount := uint64(binary.BigEndian.Uint32(payload[offset : offset+4]))
+		sampleDelta := uint64(binary.BigEndian.Uint32(payload[offset+4 : offset+8]))
+		if sampleCount == 0 || sampleDelta == 0 {
+			return false
+		}
+		high, low := bits.Mul64(sampleCount, sampleDelta)
+		if high != 0 || math.MaxUint64-total < low {
+			return false
+		}
+		total += low
+		if math.MaxUint64-samples < sampleCount {
+			return false
+		}
+		samples += sampleCount
+	}
+	track.sampleDuration = total
+	track.timedSamples = samples
+	return true
+}
+
+func parseSampleSize(kind string, payload []byte, track *mp4TrackInfo) bool {
+	if len(payload) < 12 || payload[0] != 0 {
+		return false
+	}
+	track.sampleSizeCount++
+	if track.sampleSizeCount > 1 {
+		return false
+	}
+	count := binary.BigEndian.Uint32(payload[8:12])
+	if count > math.MaxInt32 {
+		return false
+	}
+	samples := int(count) // #nosec G115 -- capped at MaxInt32 above.
+	switch kind {
+	case "stsz":
+		if binary.BigEndian.Uint32(payload[4:8]) == 0 {
+			if len(payload) != 12+samples*4 {
+				return false
+			}
+		} else if len(payload) != 12 {
+			return false
+		}
+	case "stz2":
+		var tableBytes int
+		switch payload[7] {
+		case 4:
+			tableBytes = (samples + 1) / 2
+		case 8:
+			tableBytes = samples
+		case 16:
+			tableBytes = samples * 2
+		default:
+			return false
+		}
+		if len(payload) != 12+tableBytes {
+			return false
+		}
+	default:
+		return false
+	}
+	track.sampleCount = uint64(count)
+	return true
 }
 
 func parseHDLR(payload []byte, track *mp4TrackInfo) bool {
@@ -623,9 +747,14 @@ func isVisualSampleEntry(kind string) bool {
 }
 
 func (track *mp4TrackInfo) finish(info *mp4Info) bool {
-	if track.tkhdCount != 1 || track.hdlrCount != 1 {
+	if track.tkhdCount != 1 || track.hdlrCount != 1 || track.mdhdCount != 1 || track.sttsCount != 1 ||
+		track.sampleSizeCount != 1 || track.timedSamples != track.sampleCount {
 		return false
 	}
+	info.mediaDurations = append(info.mediaDurations,
+		mp4Duration{value: track.mediaDuration, timescale: track.mediaTimescale},
+		mp4Duration{value: track.sampleDuration, timescale: track.mediaTimescale},
+	)
 	presentation := track.presentationWidth > 0 && track.presentationHeight > 0
 	if (track.presentationWidth > 0) != (track.presentationHeight > 0) {
 		return false
@@ -638,13 +767,8 @@ func (track *mp4TrackInfo) finish(info *mp4Info) bool {
 		return false
 	}
 	info.pictureTracks++
-	width, height := track.presentationWidth, track.presentationHeight
-	if track.codedWidth*track.codedHeight > width*height {
-		width, height = track.codedWidth, track.codedHeight
-	}
-	if width*height > info.width*info.height {
-		info.width, info.height = width, height
-	}
+	info.width = max(info.width, track.presentationWidth, track.codedWidth)
+	info.height = max(info.height, track.presentationHeight, track.codedHeight)
 	return true
 }
 
@@ -657,33 +781,56 @@ func isNonVisualHandler(handler string) bool {
 	}
 }
 
-// resolveDuration converts the longest declared duration — the movie header
-// or any track — into milliseconds. Without a movie timescale, with a track
-// that declares its duration unknown, or with a fragmented layout, the
-// duration stays unknown so a duration cap refuses the file.
+// resolveDuration converts every movie, track, media, and sample-table duration
+// into milliseconds and retains the longest. A track that declares its
+// duration unknown or a fragmented layout keeps the result unknown so a
+// duration cap refuses the file.
 func (info *mp4Info) resolveDuration() {
-	if info.timescale == 0 || info.unknownTrackDuration {
+	if info.unknownTrackDuration {
 		return
 	}
-	longest := info.movieDuration
-	for _, duration := range info.trackDurations {
-		longest = max(longest, duration)
+	var milliseconds int64
+	if info.timescale > 0 {
+		for _, duration := range append([]uint64{info.movieDuration}, info.trackDurations...) {
+			value, ok := mp4DurationMilliseconds(duration, info.timescale)
+			if !ok {
+				return
+			}
+			milliseconds = max(milliseconds, value)
+		}
 	}
-	if longest == 0 {
-		return
+	for _, duration := range info.mediaDurations {
+		value, ok := mp4DurationMilliseconds(duration.value, duration.timescale)
+		if !ok {
+			return
+		}
+		milliseconds = max(milliseconds, value)
 	}
-	whole := longest / info.timescale
+	if milliseconds > 0 {
+		info.durationMS = milliseconds
+		info.durationKnown = true
+	}
+}
+
+func mp4DurationMilliseconds(duration, timescale uint64) (int64, bool) {
+	if duration == 0 {
+		return 0, true
+	}
+	if timescale == 0 {
+		return 0, false
+	}
+	whole := duration / timescale
 	if whole > math.MaxInt64/1000 {
-		return
+		return 0, false
 	}
-	high, low := bits.Mul64(longest%info.timescale, 1000)
-	fractional, remainder := bits.Div64(high, low, info.timescale)
+	high, low := bits.Mul64(duration%timescale, 1000)
+	fractional, remainder := bits.Div64(high, low, timescale)
 	milliseconds := whole*1000 + fractional
 	if remainder > 0 {
 		milliseconds++
 	}
-	if milliseconds <= math.MaxInt64 {
-		info.durationMS = int64(milliseconds)
-		info.durationKnown = true
+	if milliseconds > math.MaxInt64 {
+		return 0, false
 	}
+	return int64(milliseconds), true
 }

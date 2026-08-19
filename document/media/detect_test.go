@@ -2,10 +2,12 @@ package media_test
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"image/color"
 	"io"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -39,10 +41,10 @@ func TestDetectBytesRecognizesSupportedContainers(t *testing.T) {
 		{name: "animated gif", data: mediatest.GIF(2, 2, 3), declared: "image/gif", wantFormat: media.FormatGIF, wantKind: media.KindImage, wantType: "image/gif", width: 2, height: 2, frames: 3, animated: true},
 		{name: "webp animated", data: webPAnimated(6, 5, 3), declared: "image/webp", wantFormat: media.FormatWebP, wantKind: media.KindImage, wantType: "image/webp", width: 6, height: 5, frames: 3, animated: true},
 		{name: "apng", data: apng(mediatest.PNG(4, 3, nil), 2), declared: "image/png", wantFormat: media.FormatPNG, wantKind: media.KindImage, wantType: "image/png", width: 4, height: 3, frames: 2, animated: true},
-		{name: "mp4 v0", data: mediatest.MP4(640, 360, 1250), declared: "video/quicktime", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 640, height: 360, duration: 1250, known: true},
+		{name: "mp4 v0", data: mediatest.MP4(640, 360, 1250), declared: "video/quicktime", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 640, height: 368, duration: 1250, known: true},
 		{name: "mp4 v1", data: mp4Version1(320, 240, 90_000, 30), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 320, height: 240, duration: 30000, known: true},
-		{name: "mp4 unknown duration", data: mediatest.MP4(640, 360, 0), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 640, height: 360},
-		{name: "mp4 audio track first", data: mp4AudioTrackFirst(640, 360, 700), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 640, height: 360, duration: 700, known: true},
+		{name: "mp4 unknown duration", data: mediatest.MP4(640, 360, 0), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 640, height: 368},
+		{name: "mp4 audio track first", data: mp4AudioTrackFirst(640, 360, 700), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 640, height: 368, duration: 700, known: true},
 		{name: "mp4 largest picture track wins", data: mp4TwoPictureTracks(16, 16, 4096, 2160), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 4096, height: 2160},
 		{name: "mp4 coded dimensions exceed presentation", data: mp4WithCodedDimensions(320, 180, 4096, 2160), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 4096, height: 2160, duration: 500, known: true},
 		{name: "mp4 moov to end of file", data: mp4WithSizeZeroMoov(320, 240, 500), declared: "video/mp4", wantFormat: media.FormatMP4, wantKind: media.KindVideo, wantType: "video/mp4", width: 320, height: 240, duration: 500, known: true},
@@ -103,6 +105,12 @@ func TestDetectBytesRejectsUnsupportedAndMalformedInput(t *testing.T) {
 		{name: "mp4 unsupported mvhd version", data: mp4WithMVHDVersion(2), want: media.ErrMalformedMedia},
 		{name: "mp4 missing coded dimensions", data: mp4WithoutCodedDimensions(320, 240, 500), want: media.ErrMalformedMedia},
 		{name: "mp4 partial coded dimensions", data: mp4WithCodedDimensions(320, 240, 320, 0), want: media.ErrMalformedMedia},
+		{name: "mp4 missing codec configuration", data: mp4WithRenamedBox("avcC"), want: media.ErrMalformedMedia},
+		{name: "mp4 missing media header", data: mp4WithRenamedBox("mdhd"), want: media.ErrMalformedMedia},
+		{name: "mp4 missing sample timing", data: mp4WithRenamedBox("stts"), want: media.ErrMalformedMedia},
+		{name: "mp4 missing sample count", data: mp4WithRenamedBox("stsz"), want: media.ErrMalformedMedia},
+		{name: "mp4 sample count mismatch", data: mp4WithSampleCountMismatch(), want: media.ErrMalformedMedia},
+		{name: "mp4 zero sample delta", data: mp4WithZeroSampleDelta(), want: media.ErrMalformedMedia},
 		{name: "mp4 unknown visual sample entry", data: mp4WithUnknownVisualSample(320, 240), want: media.ErrMalformedMedia},
 		{name: "mp4 zero-presentation unknown video track", data: mp4WithUnknownVideoTrack(), want: media.ErrMalformedMedia},
 		{name: "mp4 duplicate mvhd", data: mp4DuplicateMVHD(), want: media.ErrMalformedMedia},
@@ -121,6 +129,109 @@ func TestDetectBytesRejectsUnsupportedAndMalformedInput(t *testing.T) {
 			require.ErrorIs(t, err, tt.want)
 		})
 	}
+}
+
+func TestDetectBoundsDecodableMP4FromCodecAndSampleTiming(t *testing.T) {
+	t.Run("cropped AVC bounds the uncropped coded frame", func(t *testing.T) {
+		metadata, err := media.DetectBytes(mediatest.MP4(18, 18, 500), "")
+		require.NoError(t, err)
+		assert.Equal(t, int64(32), metadata.Width)
+		assert.Equal(t, int64(32), metadata.Height)
+	})
+
+	t.Run("cropped HEVC bounds the uncropped coded frame", func(t *testing.T) {
+		metadata, err := media.DetectBytes(mp4WithHEVCDimensions(18, 18, 32, 32), "")
+		require.NoError(t, err)
+		assert.Equal(t, int64(32), metadata.Width)
+		assert.Equal(t, int64(32), metadata.Height)
+	})
+
+	t.Run("codec dimensions override smaller summaries", func(t *testing.T) {
+		data := decodableAVCMP4(t)
+		tkhd := mp4TestBoxPayload(t, data, "tkhd")
+		binary.BigEndian.PutUint32(tkhd[76:80], 1<<16)
+		binary.BigEndian.PutUint32(tkhd[80:84], 1<<16)
+		stsd := bytes.Index(data, []byte("stsd"))
+		require.NotEqual(t, -1, stsd)
+		avc1Relative := bytes.Index(data[stsd+4:], []byte("avc1"))
+		require.NotEqual(t, -1, avc1Relative)
+		avc1 := stsd + 4 + avc1Relative
+		binary.BigEndian.PutUint16(data[avc1+28:avc1+30], 1)
+		binary.BigEndian.PutUint16(data[avc1+30:avc1+32], 1)
+
+		metadata, err := media.DetectBytes(data, "")
+		require.NoError(t, err)
+		assert.Equal(t, int64(16), metadata.Width)
+		assert.Equal(t, int64(16), metadata.Height)
+		_, reason := media.InspectBytes(data, "", media.Policy{MaxBytes: media.MaxBytes, MaxPixels: 4, AllowVideo: true})
+		assert.Equal(t, media.ReasonTooManyPixels, reason)
+	})
+
+	t.Run("sample timing overrides shorter summaries", func(t *testing.T) {
+		data := decodableAVCMP4(t)
+		binary.BigEndian.PutUint32(mp4TestBoxPayload(t, data, "mvhd")[16:20], 1)
+		binary.BigEndian.PutUint32(mp4TestBoxPayload(t, data, "tkhd")[20:24], 1)
+		binary.BigEndian.PutUint32(mp4TestBoxPayload(t, data, "mdhd")[16:20], 1)
+
+		metadata, err := media.DetectBytes(data, "")
+		require.NoError(t, err)
+		assert.Equal(t, int64(1000), metadata.DurationMS)
+		assert.True(t, metadata.DurationKnown)
+		_, reason := media.InspectBytes(data, "", media.Policy{
+			MaxBytes: media.MaxBytes, MaxPixels: media.DefaultMaxPixels, MaxDurationMS: 500, AllowVideo: true,
+		})
+		assert.Equal(t, media.ReasonTooLong, reason)
+	})
+
+	t.Run("hevc codec dimensions override smaller summaries", func(t *testing.T) {
+		data := decodableHEVCMP4(t)
+		tkhd := mp4TestBoxPayload(t, data, "tkhd")
+		binary.BigEndian.PutUint32(tkhd[76:80], 1<<16)
+		binary.BigEndian.PutUint32(tkhd[80:84], 1<<16)
+		stsd := bytes.Index(data, []byte("stsd"))
+		require.NotEqual(t, -1, stsd)
+		hvc1Relative := bytes.Index(data[stsd+4:], []byte("hvc1"))
+		require.NotEqual(t, -1, hvc1Relative)
+		hvc1 := stsd + 4 + hvc1Relative
+		binary.BigEndian.PutUint16(data[hvc1+28:hvc1+30], 1)
+		binary.BigEndian.PutUint16(data[hvc1+30:hvc1+32], 1)
+
+		metadata, err := media.DetectBytes(data, "")
+		require.NoError(t, err)
+		assert.Equal(t, int64(16), metadata.Width)
+		assert.Equal(t, int64(16), metadata.Height)
+	})
+}
+
+// This 16x16, two-frame H.264 MP4 is a deterministic synthetic red video.
+// Its SEI encoder metadata was removed; changing only container summaries
+// leaves the codec configuration and media samples decodable.
+const decodableAVCMP4Base64 = "AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAMGbW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAA+gAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAlV0cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAA+gAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAABAAAAAQAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAAPoAAAAAAABAAAAAAHNbWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAABAAAAAQABVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABeG1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAThzdGJsAAAAuHN0c2QAAAAAAAAAAQAAAKhhdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAABAAEABIAAAASAAAAAAAAAABDExhdmMgbGlieDI2NAAAAAAAAAAAAAAAAAAAAAAAAAAAGP//AAAALmF2Y0MBQsAK/+EAFmdCwArZHsBEAAADAAQAAAMAEDxImSABAAVoy4PLIAAAABBwYXNwAAAAAQAAAAEAAAAUYnRydAAAAAAAAAEQAAAAAAAAABhzdHRzAAAAAAAAAAEAAAACAAAgAAAAABRzdHNzAAAAAAAAAAEAAAABAAAAHHN0c2MAAAAAAAAAAQAAAAEAAAACAAAAAQAAABxzdHN6AAAAAAAAAAAAAAACAAAAGAAAAAoAAAAUc3RjbwAAAAAAAAABAAADNgAAAD11ZHRhAAAANW1ldGEAAAAAAAAAIWhkbHIAAAAAAAAAAG1kaXJhcHBsAAAAAAAAAAAAAAAACGlsc3QAAAAIZnJlZQAAACptZGF0AAAAFGWIhAU8RigAC0rHAAE0mOAANAWAAAAABkGaOAl6gA=="
+
+const decodableHEVCMP4Base64 = "AAAAHGZ0eXBpc29tAAACAGlzb21pc28ybXA0MQAAAzltb292AAAAbG12aGQAAAAAAAAAAAAAAAAAAAPoAAAD6AABAAABAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAACiHRyYWsAAABcdGtoZAAAAAMAAAAAAAAAAAAAAAEAAAAAAAAD6AAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAEAAAABAAAAAAACRlZHRzAAAAHGVsc3QAAAAAAAAAAQAAA+gAAAAAAAEAAAAAAgBtZGlhAAAAIG1kaGQAAAAAAAAAAAAAAAAAAEAAAABAAFXEAAAAAAAtaGRscgAAAAAAAAAAdmlkZQAAAAAAAAAAAAAAAFZpZGVvSGFuZGxlcgAAAAGrbWluZgAAABR2bWhkAAAAAQAAAAAAAAAAAAAAJGRpbmYAAAAcZHJlZgAAAAAAAAABAAAADHVybCAAAAABAAABa3N0YmwAAAEHc3RzZAAAAAAAAAABAAAA92h2YzEAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAEAAQAEgAAABIAAAAAAAAAAEMTGF2YyBsaWJ4MjY1AAAAAAAAAAAAAAAAAAAAAAAAAAAY//8AAABzaHZjQwEBYAAAAJAAAAAAAB7wAPz9+PgAAA8DoAABABhAAQwB//8BYAAAAwCQAAADAAADAB6SgJChAAEAJ0IBAQFgAAADAJAAAAMAAAMAHqCIRZZKq8rwFoCAAAADAIAAAAMAhKIAAQAGRAHBc9CJAAAACmZpZWwBAAAAABBwYXNwAAAAAQAAAAEAAAAUYnRydAAAAAAAAACwAAAAAAAAABhzdHRzAAAAAAAAAAEAAAABAABAAAAAABxzdHNjAAAAAAAAAAEAAAABAAAAAQAAAAEAAAAUc3RzegAAAAAAAAAWAAAAAQAAABRzdGNvAAAAAAAAAAEAAANlAAAAPXVkdGEAAAA1bWV0YQAAAAAAAAAhaGRscgAAAAAAAAAAbWRpcmFwcGwAAAAAAAAAAAAAAAAIaWxzdAAAAAhmcmVlAAAAHm1kYXQAAAASKAGvE4D1JKP/sMNYO5pB9f+A"
+
+func decodableAVCMP4(t *testing.T) []byte {
+	t.Helper()
+	data, err := base64.StdEncoding.DecodeString(decodableAVCMP4Base64)
+	require.NoError(t, err)
+	return data
+}
+
+func decodableHEVCMP4(t *testing.T) []byte {
+	t.Helper()
+	data, err := base64.StdEncoding.DecodeString(decodableHEVCMP4Base64)
+	require.NoError(t, err)
+	return data
+}
+
+func mp4TestBoxPayload(t *testing.T, data []byte, kind string) []byte {
+	t.Helper()
+	index := bytes.Index(data, []byte(kind))
+	require.GreaterOrEqual(t, index, 4)
+	size := int(binary.BigEndian.Uint32(data[index-4 : index]))
+	require.GreaterOrEqual(t, size, 8)
+	require.LessOrEqual(t, index-4+size, len(data))
+	return data[index+4 : index-4+size]
 }
 
 func TestDetectReadsThroughReaderAtAndBoundsSize(t *testing.T) {
@@ -288,7 +399,7 @@ func mp4AudioTrackFirst(width, height int, durationMS int64) []byte {
 	mvhd := make([]byte, 20)
 	binary.BigEndian.PutUint32(mvhd[12:16], 1000)
 	binary.BigEndian.PutUint32(mvhd[16:20], uint32(durationMS))
-	audio := mediatest.Box("trak", append(mediatest.Box("tkhd", make([]byte, 84)), mediatest.Box("mdia", mp4Handler("soun"))...))
+	audio := mediatest.Box("trak", append(mediatest.Box("tkhd", make([]byte, 84)), mp4TimedHandler("soun", durationMS)...))
 	tkhd := make([]byte, 84)
 	binary.BigEndian.PutUint32(tkhd[76:80], uint32(width<<16))
 	binary.BigEndian.PutUint32(tkhd[80:84], uint32(height<<16))
@@ -319,17 +430,7 @@ func mp4WithCodedDimensions(presentationWidth, presentationHeight, codedWidth, c
 	binary.BigEndian.PutUint32(tkhd[76:80], uint32(presentationWidth<<16))
 	binary.BigEndian.PutUint32(tkhd[80:84], uint32(presentationHeight<<16))
 	trak := mediatest.Box("trak", mediatest.Box("tkhd", tkhd))
-	sample := make([]byte, 28)
-	binary.BigEndian.PutUint16(sample[24:26], uint16(codedWidth))
-	binary.BigEndian.PutUint16(sample[26:28], uint16(codedHeight))
-	stsd := make([]byte, 0, 8+8+len(sample))
-	stsd = append(stsd, make([]byte, 8)...)
-	binary.BigEndian.PutUint32(stsd[4:8], 1)
-	stsd = append(stsd, mediatest.Box("avc1", sample)...)
-	stbl := mediatest.Box("stbl", mediatest.Box("stsd", stsd))
-	minf := mediatest.Box("minf", stbl)
-	mdia := mediatest.Box("mdia", append(mp4Handler("vide"), minf...))
-	trak = append(trak, mdia...)
+	trak = append(trak, mp4SampleTableDuration(codedWidth, codedHeight, 500)...)
 	binary.BigEndian.PutUint32(trak[:4], uint32(len(trak)))
 	return append(ftyp, mediatest.Box("moov", append(mvhd, trak...))...)
 }
@@ -385,15 +486,98 @@ func mp4WithoutCodedDimensions(width, height int, durationMS int64) []byte {
 }
 
 func mp4SampleTable(width, height int) []byte {
-	sample := make([]byte, 28)
+	return mp4SampleTableDuration(width, height, 0)
+}
+
+func mp4SampleTableDuration(width, height int, durationMS int64) []byte {
+	sample := make([]byte, 78)
 	binary.BigEndian.PutUint16(sample[24:26], uint16(width))
 	binary.BigEndian.PutUint16(sample[26:28], uint16(height))
+	if width > 0 && height > 0 {
+		sample = slices.Concat(sample, mediatest.Box("avcC", mediatest.AVCConfig(width, height)))
+	}
 	stsd := make([]byte, 0, 8+8+len(sample))
 	stsd = append(stsd, make([]byte, 8)...)
 	binary.BigEndian.PutUint32(stsd[4:8], 1)
 	stsd = append(stsd, mediatest.Box("avc1", sample)...)
-	minf := mediatest.Box("minf", mediatest.Box("stbl", mediatest.Box("stsd", stsd)))
-	return mediatest.Box("mdia", append(mp4Handler("vide"), minf...))
+	stts := mp4STTS(durationMS)
+	stsz := mp4STSZ(durationMS)
+	minf := mediatest.Box("minf", mediatest.Box("stbl", append(append(mediatest.Box("stsd", stsd), mediatest.Box("stts", stts)...), mediatest.Box("stsz", stsz)...)))
+	mdhd := make([]byte, 24)
+	binary.BigEndian.PutUint32(mdhd[12:16], 1000)
+	binary.BigEndian.PutUint32(mdhd[16:20], uint32(durationMS))
+	return mediatest.Box("mdia", append(append(mediatest.Box("mdhd", mdhd), mp4Handler("vide")...), minf...))
+}
+
+func mp4TimedHandler(kind string, durationMS int64) []byte {
+	mdhd := make([]byte, 24)
+	binary.BigEndian.PutUint32(mdhd[12:16], 1000)
+	binary.BigEndian.PutUint32(mdhd[16:20], uint32(durationMS))
+	stbl := mediatest.Box("stbl", append(mediatest.Box("stts", mp4STTS(durationMS)), mediatest.Box("stsz", mp4STSZ(durationMS))...))
+	return mediatest.Box("mdia", append(append(mediatest.Box("mdhd", mdhd), mp4Handler(kind)...), mediatest.Box("minf", stbl)...))
+}
+
+func mp4STTS(durationMS int64) []byte {
+	stts := make([]byte, 8)
+	if durationMS > 0 {
+		binary.BigEndian.PutUint32(stts[4:8], 1)
+		entry := make([]byte, 8)
+		binary.BigEndian.PutUint32(entry[:4], 1)
+		binary.BigEndian.PutUint32(entry[4:8], uint32(durationMS))
+		stts = slices.Concat(stts, entry)
+	}
+	return stts
+}
+
+func mp4STSZ(durationMS int64) []byte {
+	stsz := make([]byte, 12)
+	binary.BigEndian.PutUint32(stsz[4:8], 1)
+	if durationMS > 0 {
+		binary.BigEndian.PutUint32(stsz[8:12], 1)
+	}
+	return stsz
+}
+
+func mp4WithSampleCountMismatch() []byte {
+	data := mediatest.MP4(16, 16, 500)
+	box := bytes.Index(data, []byte("stsz"))
+	binary.BigEndian.PutUint32(data[box+12:box+16], 2)
+	return data
+}
+
+func mp4WithZeroSampleDelta() []byte {
+	data := mediatest.MP4(16, 16, 500)
+	box := bytes.Index(data, []byte("stts"))
+	binary.BigEndian.PutUint32(data[box+16:box+20], 0)
+	return data
+}
+
+func mp4WithHEVCDimensions(visibleWidth, visibleHeight, codedWidth, codedHeight int) []byte {
+	ftyp := mediatest.Box("ftyp", append([]byte("isom"), make([]byte, 12)...))
+	mvhd := make([]byte, 20)
+	binary.BigEndian.PutUint32(mvhd[12:16], 1000)
+	binary.BigEndian.PutUint32(mvhd[16:20], 500)
+	tkhd := make([]byte, 84)
+	binary.BigEndian.PutUint32(tkhd[76:80], uint32(visibleWidth<<16))
+	binary.BigEndian.PutUint32(tkhd[80:84], uint32(visibleHeight<<16))
+	sample := make([]byte, 78)
+	binary.BigEndian.PutUint16(sample[24:26], uint16(visibleWidth))
+	binary.BigEndian.PutUint16(sample[26:28], uint16(visibleHeight))
+	sample = slices.Concat(sample, mediatest.Box("hvcC", mediatest.HEVCConfig(codedWidth, codedHeight, visibleWidth, visibleHeight)))
+	stsd := make([]byte, 8)
+	binary.BigEndian.PutUint32(stsd[4:8], 1)
+	stsd = slices.Concat(stsd, mediatest.Box("hvc1", sample))
+	mdhd := make([]byte, 24)
+	binary.BigEndian.PutUint32(mdhd[12:16], 1000)
+	binary.BigEndian.PutUint32(mdhd[16:20], 500)
+	stbl := mediatest.Box("stbl", slices.Concat(
+		mediatest.Box("stsd", stsd), mediatest.Box("stts", mp4STTS(500)), mediatest.Box("stsz", mp4STSZ(500)),
+	))
+	mdia := mediatest.Box("mdia", slices.Concat(
+		mediatest.Box("mdhd", mdhd), mp4Handler("vide"), mediatest.Box("minf", stbl),
+	))
+	trak := mediatest.Box("trak", append(mediatest.Box("tkhd", tkhd), mdia...))
+	return append(ftyp, mediatest.Box("moov", append(mediatest.Box("mvhd", mvhd), trak...))...)
 }
 
 // gifWithFrameSize rewrites the first image descriptor's frame width and
@@ -415,7 +599,7 @@ func mp4Parts(width, height int, durationMS int64) (ftyp, mvhd, trak []byte) {
 	tkhd := make([]byte, 84)
 	binary.BigEndian.PutUint32(tkhd[76:80], uint32(width<<16))
 	binary.BigEndian.PutUint32(tkhd[80:84], uint32(height<<16))
-	trak = mediatest.Box("trak", append(mediatest.Box("tkhd", tkhd), mp4SampleTable(width, height)...))
+	trak = mediatest.Box("trak", append(mediatest.Box("tkhd", tkhd), mp4SampleTableDuration(width, height, durationMS)...))
 	return ftyp, mvhd, trak
 }
 
@@ -509,4 +693,13 @@ func mp4WithMVHDVersion(version byte) []byte {
 	ftyp, mvhd, trak := mp4Parts(320, 240, 500)
 	mvhd[8] = version
 	return append(ftyp, mediatest.Box("moov", append(mvhd, trak...))...)
+}
+
+func mp4WithRenamedBox(kind string) []byte {
+	data := mediatest.MP4(320, 240, 500)
+	index := bytes.Index(data, []byte(kind))
+	if index >= 0 {
+		copy(data[index:index+4], "free")
+	}
+	return data
 }

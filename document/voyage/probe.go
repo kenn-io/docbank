@@ -340,27 +340,48 @@ func (r *probeRunner) probeImageQuery(ctx context.Context, documentCapability, f
 	return observation, nil
 }
 
-// probeTextImageQuery checks that a red text plus red JPEG query ranks the
-// red reference above the blue one.
+// probeTextImageQuery varies text and media independently. A provider must
+// change its embedding for each counterfactual and rank the aligned baseline
+// correctly, so consuming only one component cannot authorize the shape.
 func (r *probeRunner) probeTextImageQuery(ctx context.Context) (probeObservation, error) {
-	image, err := r.fixtures.media(FixtureJPEG)
+	redImage, err := r.fixtures.media(FixtureRed)
 	if err != nil {
 		return probeObservation{}, err
 	}
-	observation := probeObservation{fixtureDigest: fixtureDigest([]byte(ProbeQueryText), image.Bytes, r.fixtures[FixtureRed], r.fixtures[FixtureBlue])}
+	blueImage, err := r.fixtures.media(FixtureBlue)
+	if err != nil {
+		return probeObservation{}, err
+	}
+	observation := probeObservation{fixtureDigest: fixtureDigest(
+		[]byte(ProbeQueryText), []byte(ProbeBlueText), redImage.Bytes, blueImage.Bytes,
+		r.fixtures[FixtureRed], r.fixtures[FixtureBlue],
+	)}
 	red, blue, err := r.referenceDocuments(ctx)
 	if err != nil {
 		return observation, err
 	}
-	vector, usage, err := r.embedQuery(ctx, Input{Parts: []Part{{Text: ProbeQueryText}, {Media: image}}})
+	baseline, baselineUsage, err := r.embedQuery(ctx, Input{Parts: []Part{{Text: ProbeQueryText}, {Media: redImage}}})
 	if err != nil {
 		return observation, err
 	}
-	if values, ok := similarities(vector, red, blue); !ok || values[0] <= values[1] {
+	mediaChanged, mediaUsage, err := r.embedQuery(ctx, Input{Parts: []Part{{Text: ProbeQueryText}, {Media: blueImage}}})
+	if err != nil {
+		return observation, err
+	}
+	textChanged, textUsage, err := r.embedQuery(ctx, Input{Parts: []Part{{Text: ProbeBlueText}, {Media: redImage}}})
+	if err != nil {
+		return observation, err
+	}
+	if values, ok := similarities(baseline, red, blue); !ok || values[0] <= values[1] {
 		observation.reason = ReasonRankingNotObserved
 		return observation, nil
 	}
-	observation.tokens = usageTokens(usage)
+	if values, ok := similarities(baseline, mediaChanged, textChanged); !ok ||
+		values[0] >= contributionThreshold || values[1] >= contributionThreshold {
+		observation.reason = ReasonRankingNotObserved
+		return observation, nil
+	}
+	observation.tokens = aggregateUsageTokens(baselineUsage, mediaUsage, textUsage)
 	return observation, nil
 }
 
@@ -369,20 +390,31 @@ func (r *probeRunner) probeInterleaved(ctx context.Context) (probeObservation, e
 	if err != nil {
 		return probeObservation{}, err
 	}
-	observation := probeObservation{fixtureDigest: fixtureDigest([]byte(ProbeInterleavedText), blue.Bytes)}
-	_, blueOnly, err := r.referenceDocuments(ctx)
+	red, err := r.fixtures.media(FixtureRed)
+	if err != nil {
+		return probeObservation{}, err
+	}
+	observation := probeObservation{fixtureDigest: fixtureDigest(
+		[]byte(ProbeInterleavedText), []byte(ProbeBlueText), blue.Bytes, red.Bytes,
+	)}
+	baseline, err := r.embedFixtures(ctx, []Input{{Parts: []Part{{Text: ProbeInterleavedText}, {Media: blue}}}})
 	if err != nil {
 		return observation, err
 	}
-	result, err := r.embedFixtures(ctx, []Input{{Parts: []Part{{Text: ProbeInterleavedText}, {Media: blue}}}})
+	mediaChanged, err := r.embedFixtures(ctx, []Input{{Parts: []Part{{Text: ProbeInterleavedText}, {Media: red}}}})
 	if err != nil {
 		return observation, err
 	}
-	if values, ok := similarities(result.Vectors[0], blueOnly); !ok || values[0] >= contributionThreshold {
+	textChanged, err := r.embedFixtures(ctx, []Input{{Parts: []Part{{Text: ProbeBlueText}, {Media: blue}}}})
+	if err != nil {
+		return observation, err
+	}
+	if values, ok := similarities(baseline.Vectors[0], mediaChanged.Vectors[0], textChanged.Vectors[0]); !ok ||
+		values[0] >= contributionThreshold || values[1] >= contributionThreshold {
 		observation.reason = ReasonOrderNotObserved
 		return observation, nil
 	}
-	observation.tokens = usageTokens(result.Usage)
+	observation.tokens = aggregateUsageTokens(baseline.Usage, mediaChanged.Usage, textChanged.Usage)
 	return observation, nil
 }
 
@@ -436,6 +468,17 @@ func usageTokens(usage Usage) *int64 {
 	}
 	tokens := usage.TotalTokens
 	return &tokens
+}
+
+func aggregateUsageTokens(usages ...Usage) *int64 {
+	var total int64
+	for _, usage := range usages {
+		if !usage.Available || usage.TotalTokens > math.MaxInt64-total {
+			return nil
+		}
+		total += usage.TotalTokens
+	}
+	return &total
 }
 
 // fixtureDigest is the short digest over length-prefixed fixture inputs.

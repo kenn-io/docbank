@@ -28,6 +28,9 @@ const (
 	// ProbeQueryText is the text query the probe ranks against the red and
 	// blue reference documents.
 	ProbeQueryText = "a solid red square"
+	// ProbeBlueText is the opposing text used to prove that composite inputs
+	// consume their text part independently of their media part.
+	ProbeBlueText = "a solid blue square"
 	// ProbeInterleavedText is the text part of the interleaved probe document.
 	ProbeInterleavedText = "a solid red square"
 

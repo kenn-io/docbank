@@ -396,18 +396,20 @@ func (c *Client) embed(ctx context.Context, inputs []wireInput, inputType string
 		return nil, Usage{}, RequestMetrics{}, &ProviderError{Kind: ErrBatchTooLarge}
 	}
 	metrics := RequestMetrics{}
-	started := c.now()
 	malformedRetried := false
 	for attempt := 1; ; attempt++ {
 		metrics.Requests++
+		attemptStarted := c.now()
 		vectors, usage, requestErr := c.doOnce(ctx, body, len(inputs))
-		metrics.Latency = c.now().Sub(started)
+		if elapsed := c.now().Sub(attemptStarted); elapsed > 0 {
+			metrics.Latency += elapsed
+		}
 		if requestErr == nil {
 			return vectors, usage, metrics, nil
 		}
 		var providerErr *ProviderError
 		if !errors.As(requestErr, &providerErr) {
-			return nil, Usage{}, metrics, requestErr
+			return nil, Usage{}, metrics, &ProviderError{Kind: requestErr, Metrics: metrics}
 		}
 		providerErr.Metrics = metrics
 		retryable := errors.Is(providerErr.Kind, ErrTransientResponse)
@@ -417,14 +419,14 @@ func (c *Client) embed(ctx context.Context, inputs []wireInput, inputType string
 		if !retryable || attempt >= c.maxRetries {
 			return nil, Usage{}, metrics, providerErr
 		}
-		metrics.Retries++
 		delay := retryBackoffDelay(c.retryBaseDelay, attempt)
 		if providerErr.RetrySet {
 			delay = providerErr.RetryAfter
 		}
 		if err := sleepContext(ctx, delay); err != nil {
-			return nil, Usage{}, metrics, err
+			return nil, Usage{}, metrics, &ProviderError{Kind: err, Metrics: metrics}
 		}
+		metrics.Retries++
 	}
 }
 
