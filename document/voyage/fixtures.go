@@ -115,11 +115,6 @@ func WriteProbeFixtures(ctx context.Context, destination string, options Fixture
 	if err := safefileio.EnsurePrivateDir(staging); err != nil {
 		return fmt.Errorf("secure Voyage probe fixture staging directory: %w", err)
 	}
-	stagingRoot, err := os.OpenRoot(staging)
-	if err != nil {
-		return fmt.Errorf("open Voyage probe fixture staging directory: %w", err)
-	}
-	defer func() { err = errors.Join(err, stagingRoot.Close()) }()
 	for _, spec := range fixtureSpecs {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -140,7 +135,7 @@ func WriteProbeFixtures(ctx context.Context, destination string, options Fixture
 		if err := checkFixtureBytes(spec, data, media.DefaultPolicy()); err != nil {
 			return err
 		}
-		if err := writeFixtureFile(stagingRoot, spec.name, data); err != nil {
+		if err := writeFixtureFile(staging, spec.name, data); err != nil {
 			return fmt.Errorf("write Voyage probe fixture %s: %w", spec.name, err)
 		}
 	}
@@ -263,8 +258,12 @@ func readFixtureFile(root *os.Root, name string, limit int64) ([]byte, error) {
 	return data, nil
 }
 
-func writeFixtureFile(root *os.Root, name string, data []byte) error {
-	file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+// writeFixtureFile creates one fixture inside the freshly created private
+// staging directory; holding no directory handle keeps the later publish
+// rename possible on Windows.
+func writeFixtureFile(directory, name string, data []byte) error {
+	path := filepath.Join(directory, name)
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) // #nosec G304 -- name is a fixed fixture name under our own staging directory.
 	if err != nil {
 		return err
 	}
