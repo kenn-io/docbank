@@ -124,7 +124,9 @@ See [Docbank for Agents](agents.md), the
 
 Docbank does not synchronize a mutable folder between devices, create public
 share links, provide collaborative editing, or encrypt live secondary stores.
-Text extraction is intentionally limited to formats Docbank can verify and
-decode directly; OCR and semantic embeddings are not part of the current
-retrieval contract. The [Roadmap](roadmap.md) describes product direction
+Text extraction inside a vault is intentionally limited to formats Docbank can
+verify and decode directly; OCR and semantic embeddings are not part of the
+vault's retrieval contract. The reusable `document` packages give applications
+bounded Mistral OCR and Voyage multimodal embedding transports, but Docbank
+does not run them against its own vault. The [Roadmap](roadmap.md) describes product direction
 without turning these capability pages into an implementation tracker.

@@ -3,15 +3,14 @@ package mistral
 import (
 	"bytes"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"slices"
-	"strings"
 	"time"
 
+	"go.kenn.io/docbank/document/internal/manifestjson"
 	"go.kenn.io/docbank/document/mistral/internal/probecontract"
 )
 
@@ -240,74 +239,6 @@ func DecodeCapabilityManifest(reader io.Reader) (CapabilityManifest, error) {
 	return manifest, nil
 }
 
-func rejectDuplicateJSONKeys(data []byte, subject string) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	return scanJSONValue(decoder, 0, subject)
-}
-
-func scanJSONValue(decoder *json.Decoder, depth int, subject string) error {
-	if depth > 64 {
-		return fmt.Errorf("%s JSON is too deeply nested", subject)
-	}
-	token, err := decoder.Token()
-	if err != nil {
-		return err
-	}
-	delimiter, ok := token.(json.Delim)
-	if !ok {
-		return nil
-	}
-	switch delimiter {
-	case '{':
-		keys := make(map[string]struct{})
-		for decoder.More() {
-			keyToken, err := decoder.Token()
-			if err != nil {
-				return err
-			}
-			key, ok := keyToken.(string)
-			if !ok {
-				return fmt.Errorf("%s has a non-string JSON object key", subject)
-			}
-			if !canonicalJSONKey(key) {
-				return fmt.Errorf("%s JSON object key %q must use lowercase ASCII", subject, key)
-			}
-			if _, exists := keys[key]; exists {
-				return fmt.Errorf("%s has duplicate JSON object key %q", subject, key)
-			}
-			keys[key] = struct{}{}
-			if err := scanJSONValue(decoder, depth+1, subject); err != nil {
-				return err
-			}
-		}
-		_, err = decoder.Token()
-		return err
-	case '[':
-		for decoder.More() {
-			if err := scanJSONValue(decoder, depth+1, subject); err != nil {
-				return err
-			}
-		}
-		_, err = decoder.Token()
-		return err
-	default:
-		return fmt.Errorf("%s has an unexpected JSON delimiter", subject)
-	}
-}
-
-func canonicalJSONKey(key string) bool {
-	if key == "" {
-		return false
-	}
-	for index := range len(key) {
-		char := key[index]
-		if char >= 'A' && char <= 'Z' || char >= 0x80 {
-			return false
-		}
-	}
-	return true
-}
-
 type requestOptions = probecontract.RequestOptions
 
 func requestFingerprint(candidate CandidateFormat, options requestOptions) string {
@@ -341,10 +272,14 @@ func shortFixtureDigest(fullSHA256 string) (string, error) {
 	return fullSHA256[:16], nil
 }
 
-func lowerHex(value string) bool {
-	if value != strings.ToLower(value) {
-		return false
-	}
-	_, err := hex.DecodeString(value)
-	return err == nil
+func lowerHex(value string) bool { return manifestjson.LowerHex(value) }
+
+func rejectDuplicateJSONKeys(data []byte, subject string) error {
+	return manifestjson.RejectDuplicateKeys(data, subject)
 }
+
+func scanJSONValue(decoder *json.Decoder, depth int, subject string) error {
+	return manifestjson.ScanValue(decoder, depth, subject)
+}
+
+func canonicalJSONKey(key string) bool { return manifestjson.CanonicalKey(key) }

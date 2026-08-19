@@ -35,7 +35,7 @@ Every documentation page is also published as raw Markdown at the same path with
 - [Docbank for Agents](https://docbank.ai/agents.md): Why agents use docbank, which interface to choose, and the safety model for document automation.
 - [Agent Integration Guide](https://docbank.ai/agents/integration.md): Connect an agent to docbank safely using its OpenAPI contract, authenticated HTTP API, revisions, and dry-run maintenance operations.
 - [Embed in Go](https://docbank.ai/embedding.md): Own one or more independently rooted Docbank vaults inside a Go application, with CGO or pure-Go SQLite.
-- [Document Understanding in Go](https://docbank.ai/document-understanding.md): Normalize extracted documents and use bounded Mistral OCR without opening a Docbank vault.
+- [Document Understanding in Go](https://docbank.ai/document-understanding.md): Normalize extracted documents, use bounded Mistral OCR, and embed images and video through Voyage without opening a Docbank vault.
 
 ## Reference
 - [CLI Reference](https://docbank.ai/cli-reference.md): Every docbank command, flag, output format, and error behavior.
