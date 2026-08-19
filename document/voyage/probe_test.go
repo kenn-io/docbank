@@ -304,7 +304,9 @@ func (f *fakeProvider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		items[index] = wireItem{Embedding: vector, Index: index}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	assert.NoError(f.t, json.NewEncoder(w).Encode(map[string]any{"data": items, "usage": map[string]any{"total_tokens": 3}}))
+	assert.NoError(f.t, json.NewEncoder(w).Encode(map[string]any{
+		"model": voyage.DefaultModel, "data": items, "usage": map[string]any{"total_tokens": 3},
+	}))
 }
 
 func add(target, source []float32, scale float32) {

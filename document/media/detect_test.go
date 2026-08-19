@@ -8,6 +8,7 @@ import (
 	"hash/crc32"
 	"image/color"
 	"io"
+	"math"
 	"slices"
 	"testing"
 
@@ -119,6 +120,9 @@ func TestDetectBytesRejectsUnsupportedAndMalformedInput(t *testing.T) {
 		{name: "mp4 missing sample count", data: mp4WithRenamedBox("stsz"), want: media.ErrMalformedMedia},
 		{name: "mp4 sample count mismatch", data: mp4WithSampleCountMismatch(), want: media.ErrMalformedMedia},
 		{name: "mp4 zero sample delta", data: mp4WithZeroSampleDelta(), want: media.ErrMalformedMedia},
+		{name: "mp4 composition sample count mismatch", data: mp4WithCTTS(0, 2, 1000), want: media.ErrMalformedMedia},
+		{name: "mp4 unsupported composition timing version", data: mp4WithCTTS(2, 1, 1000), want: media.ErrMalformedMedia},
+		{name: "mp4 misplaced composition timing", data: mp4MisplacedCTTS(), want: media.ErrMalformedMedia},
 		{name: "mp4 unknown visual sample entry", data: mp4WithUnknownVisualSample(320, 240), want: media.ErrMalformedMedia},
 		{name: "mp4 zero-presentation unknown video track", data: mp4WithUnknownVideoTrack(), want: media.ErrMalformedMedia},
 		{name: "mp4 duplicate mvhd", data: mp4DuplicateMVHD(), want: media.ErrMalformedMedia},
@@ -216,6 +220,27 @@ func TestDetectBoundsDecodableMP4FromCodecAndSampleTiming(t *testing.T) {
 		})
 		assert.Equal(t, media.ReasonTooLong, reason)
 	})
+
+	for _, tt := range []struct {
+		name    string
+		version byte
+		offset  uint32
+	}{
+		{name: "unsigned composition offsets", version: 0, offset: 1000},
+		{name: "signed composition offsets", version: 1, offset: math.MaxUint32 - 249},
+	} {
+		t.Run(tt.name+" leave duration unknown", func(t *testing.T) {
+			data := mp4WithCTTS(tt.version, 1, tt.offset)
+
+			metadata, err := media.DetectBytes(data, "")
+			require.NoError(t, err)
+			assert.False(t, metadata.DurationKnown)
+			_, reason := media.InspectBytes(data, "", media.Policy{
+				MaxBytes: media.MaxBytes, MaxPixels: media.DefaultMaxPixels, MaxDurationMS: 500, AllowVideo: true,
+			})
+			assert.Equal(t, media.ReasonTooLong, reason)
+		})
+	}
 
 	t.Run("hevc codec dimensions override smaller summaries", func(t *testing.T) {
 		data := decodableHEVCMP4(t)
@@ -629,6 +654,10 @@ func mp4SampleTable(width, height int) []byte {
 }
 
 func mp4SampleTableDuration(width, height int, durationMS int64) []byte {
+	return mp4SampleTableDurationWithExtra(width, height, durationMS, nil)
+}
+
+func mp4SampleTableDurationWithExtra(width, height int, durationMS int64, extra []byte) []byte {
 	sample := make([]byte, 78)
 	binary.BigEndian.PutUint16(sample[24:26], uint16(width))
 	binary.BigEndian.PutUint16(sample[26:28], uint16(height))
@@ -641,7 +670,9 @@ func mp4SampleTableDuration(width, height int, durationMS int64) []byte {
 	stsd = append(stsd, mediatest.Box("avc1", sample)...)
 	stts := mp4STTS(durationMS)
 	stsz := mp4STSZ(durationMS)
-	minf := mediatest.Box("minf", mediatest.Box("stbl", append(append(mediatest.Box("stsd", stsd), mediatest.Box("stts", stts)...), mediatest.Box("stsz", stsz)...)))
+	minf := mediatest.Box("minf", mediatest.Box("stbl", slices.Concat(
+		mediatest.Box("stsd", stsd), mediatest.Box("stts", stts), extra, mediatest.Box("stsz", stsz),
+	)))
 	mdhd := make([]byte, 24)
 	binary.BigEndian.PutUint32(mdhd[12:16], 1000)
 	binary.BigEndian.PutUint32(mdhd[16:20], uint32(durationMS))
@@ -689,6 +720,34 @@ func mp4WithZeroSampleDelta() []byte {
 	box := bytes.Index(data, []byte("stts"))
 	binary.BigEndian.PutUint32(data[box+16:box+20], 0)
 	return data
+}
+
+func mp4WithCTTS(version byte, sampleCount, offset uint32) []byte {
+	ctts := make([]byte, 16)
+	ctts[0] = version
+	binary.BigEndian.PutUint32(ctts[4:8], 1)
+	binary.BigEndian.PutUint32(ctts[8:12], sampleCount)
+	binary.BigEndian.PutUint32(ctts[12:16], offset)
+	ftyp := mediatest.Box("ftyp", append([]byte("isom"), make([]byte, 12)...))
+	mvhd := make([]byte, 20)
+	binary.BigEndian.PutUint32(mvhd[12:16], 1000)
+	binary.BigEndian.PutUint32(mvhd[16:20], 500)
+	tkhd := make([]byte, 84)
+	binary.BigEndian.PutUint32(tkhd[20:24], 500)
+	binary.BigEndian.PutUint32(tkhd[76:80], 16<<16)
+	binary.BigEndian.PutUint32(tkhd[80:84], 16<<16)
+	trak := mediatest.Box("trak", append(
+		mediatest.Box("tkhd", tkhd),
+		mp4SampleTableDurationWithExtra(16, 16, 500, mediatest.Box("ctts", ctts))...,
+	))
+	return append(ftyp, mediatest.Box("moov", append(mediatest.Box("mvhd", mvhd), trak...))...)
+}
+
+func mp4MisplacedCTTS() []byte {
+	ctts := make([]byte, 16)
+	binary.BigEndian.PutUint32(ctts[4:8], 1)
+	binary.BigEndian.PutUint32(ctts[8:12], 1)
+	return append(mediatest.MP4(16, 16, 500), mediatest.Box("ctts", ctts)...)
 }
 
 func mp4WithHEVCDimensions(visibleWidth, visibleHeight, codedWidth, codedHeight int) []byte {

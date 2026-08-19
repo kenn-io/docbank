@@ -66,7 +66,8 @@ func TestRequestMetricsSumAttemptLatencyWithoutBackoff(t *testing.T) {
 	vector := make([]float32, policy.values.Dimension)
 	vector[0] = 1
 	payload, err := json.Marshal(map[string]any{
-		"data": []map[string]any{{"embedding": vector, "index": 0}},
+		"model": policy.values.Model,
+		"data":  []map[string]any{{"embedding": vector, "index": 0}},
 	})
 	require.NoError(t, err)
 	var calls atomic.Int32

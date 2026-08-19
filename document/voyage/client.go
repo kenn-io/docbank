@@ -320,7 +320,8 @@ type wireContentPart struct {
 }
 
 type wireResponse struct {
-	Data []struct {
+	Model string `json:"model"`
+	Data  []struct {
 		Embedding []strictFloat `json:"embedding"`
 		Index     *int          `json:"index"`
 	} `json:"data"`
@@ -518,7 +519,7 @@ func (c *Client) doOnce(ctx context.Context, body []byte, want int) ([][]float32
 }
 
 func (c *Client) decodeResponse(response wireResponse, want int) ([][]float32, Usage, bool) {
-	if len(response.Data) != want {
+	if response.Model != c.policy.values.Model || len(response.Data) != want {
 		return nil, Usage{}, false
 	}
 	vectors := make([][]float32, want)

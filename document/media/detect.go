@@ -436,16 +436,17 @@ func mp4Metadata(data []byte) (mp4Info, bool) {
 const maxMP4Depth = 6
 
 type mp4TrackInfo struct {
-	tkhdCount, hdlrCount, mdhdCount       int
-	stsdCount, sttsCount, sampleSizeCount int
-	handlerType                           string
-	presentationWidth, presentationHeight int64
-	codedWidth, codedHeight               int64
-	mediaTimescale, mediaDuration         uint64
-	sampleDuration                        uint64
-	timedSamples, sampleCount             uint64
-	hasVisualSamples                      bool
-	unknownSampleEntries                  int
+	tkhdCount, hdlrCount, mdhdCount                  int
+	stsdCount, sttsCount, cttsCount, sampleSizeCount int
+	handlerType                                      string
+	presentationWidth, presentationHeight            int64
+	codedWidth, codedHeight                          int64
+	mediaTimescale, mediaDuration                    uint64
+	sampleDuration                                   uint64
+	timedSamples, compositionSamples                 uint64
+	sampleCount                                      uint64
+	hasVisualSamples                                 bool
+	unknownSampleEntries                             int
 }
 
 // mp4BoxHeader returns the header length and total size of the box at offset,
@@ -536,6 +537,10 @@ func scanMP4Boxes(data []byte, info *mp4Info, track *mp4TrackInfo, parent string
 			if track == nil || !parseSTTS(payload, track) {
 				return false
 			}
+		case kind == "ctts" && parent == "stbl":
+			if track == nil || !parseCTTS(payload, info, track) {
+				return false
+			}
 		case (kind == "stsz" || kind == "stz2") && parent == "stbl":
 			if track == nil || !parseSampleSize(kind, payload, track) {
 				return false
@@ -549,7 +554,7 @@ func scanMP4Boxes(data []byte, info *mp4Info, track *mp4TrackInfo, parent string
 				return false
 			}
 		case kind == "moov" || kind == "trak" || kind == "mdia" || kind == "minf" ||
-			kind == "stbl" || kind == "stsd" || kind == "stts" || kind == "stsz" || kind == "stz2" || kind == "mvhd" ||
+			kind == "stbl" || kind == "stsd" || kind == "stts" || kind == "ctts" || kind == "stsz" || kind == "stz2" || kind == "mvhd" ||
 			kind == "tkhd" || kind == "hdlr" || kind == "mdhd":
 			// A structural header outside its authoritative position is not a
 			// file this package can bound.
@@ -728,6 +733,35 @@ func parseSTTS(payload []byte, track *mp4TrackInfo) bool {
 	return true
 }
 
+// parseCTTS validates composition-time sample coverage. Composition offsets
+// interact with edit lists and may extend the presentation timeline beyond
+// decode timing, so their presence leaves duration unknown and therefore
+// fails closed under a configured duration cap.
+func parseCTTS(payload []byte, info *mp4Info, track *mp4TrackInfo) bool {
+	if len(payload) < 8 || payload[0] > 1 || payload[1] != 0 || payload[2] != 0 || payload[3] != 0 {
+		return false
+	}
+	track.cttsCount++
+	if track.cttsCount > 1 {
+		return false
+	}
+	count := binary.BigEndian.Uint32(payload[4:8])
+	if count > math.MaxInt32 || len(payload) != 8+int(count)*8 {
+		return false
+	}
+	var samples uint64
+	for offset := 8; offset < len(payload); offset += 8 {
+		sampleCount := uint64(binary.BigEndian.Uint32(payload[offset : offset+4]))
+		if sampleCount == 0 || math.MaxUint64-samples < sampleCount {
+			return false
+		}
+		samples += sampleCount
+	}
+	track.compositionSamples = samples
+	info.unknownTrackDuration = true
+	return true
+}
+
 func parseSampleSize(kind string, payload []byte, track *mp4TrackInfo) bool {
 	if len(payload) < 12 || payload[0] != 0 {
 		return false
@@ -795,7 +829,8 @@ func isVisualSampleEntry(kind string) bool {
 
 func (track *mp4TrackInfo) finish(info *mp4Info) bool {
 	if track.tkhdCount != 1 || track.hdlrCount != 1 || track.mdhdCount != 1 || track.sttsCount != 1 ||
-		track.sampleSizeCount != 1 || track.timedSamples != track.sampleCount {
+		track.sampleSizeCount != 1 || track.timedSamples != track.sampleCount ||
+		track.cttsCount == 1 && track.compositionSamples != track.sampleCount {
 		return false
 	}
 	info.mediaDurations = append(info.mediaDurations,

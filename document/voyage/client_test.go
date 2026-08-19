@@ -57,7 +57,7 @@ func writeVectors(t *testing.T, w http.ResponseWriter, vectors [][]float32, toke
 	for index, vector := range vectors {
 		items[index] = wireItem{Embedding: vector, Index: index}
 	}
-	body := map[string]any{"data": items, "usage": map[string]any{"total_tokens": tokens}}
+	body := map[string]any{"model": voyage.DefaultModel, "data": items, "usage": map[string]any{"total_tokens": tokens}}
 	w.Header().Set("Content-Type", "application/json")
 	assert.NoError(t, json.NewEncoder(w).Encode(body))
 }
@@ -146,7 +146,9 @@ func TestEmbedDocumentsSendsOrderedInputsAndRestoresIndices(t *testing.T) {
 			{Embedding: unitVector(2, 1), Index: 2},
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"data": items, "usage": map[string]any{"total_tokens": 42}})
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model": voyage.DefaultModel, "data": items, "usage": map[string]any{"total_tokens": 42},
+		})
 	}))
 	defer server.Close()
 	client := newServerClient(t, server, policy, voyage.ClientConfig{})
@@ -341,17 +343,19 @@ func TestResponseValidationRejectsMalformedVectors(t *testing.T) {
 		name string
 		body string
 	}{
-		{name: "count", body: `{"data":[]}`},
-		{name: "dimension", body: `{"data":[{"embedding":[1,2,3],"index":0}]}`},
-		{name: "index out of range", body: `{"data":[{"embedding":` + vectorJSON() + `,"index":5}]}`},
-		{name: "duplicate index", body: `{"data":[{"embedding":` + vectorJSON() + `,"index":0},{"embedding":` + vectorJSON() + `,"index":0}]}`},
+		{name: "count", body: modelResponseJSON(`[]`)},
+		{name: "missing model", body: `{"data":[{"embedding":` + vectorJSON() + `,"index":0}]}`},
+		{name: "different model", body: `{"model":"voyage-multimodal-3","data":[{"embedding":` + vectorJSON() + `,"index":0}]}`},
+		{name: "dimension", body: modelResponseJSON(`[{"embedding":[1,2,3],"index":0}]`)},
+		{name: "index out of range", body: modelResponseJSON(`[{"embedding":` + vectorJSON() + `,"index":5}]`)},
+		{name: "duplicate index", body: modelResponseJSON(`[{"embedding":` + vectorJSON() + `,"index":0},{"embedding":` + vectorJSON() + `,"index":0}]`)},
 		{name: "not json", body: `<html>`},
-		{name: "missing index", body: `{"data":[{"embedding":` + vectorJSON() + `}]}`},
-		{name: "null element", body: `{"data":[{"embedding":` + strings.Replace(vectorJSON(), "[0.25", "[null", 1) + `,"index":0}]}`},
-		{name: "string element", body: `{"data":[{"embedding":` + strings.Replace(vectorJSON(), "[0.25", `["0"`, 1) + `,"index":0}]}`},
-		{name: "zero vector", body: `{"data":[{"embedding":` + zeroVectorJSON() + `,"index":0}]}`},
-		{name: "duplicate keys", body: `{"data":[{"embedding":` + vectorJSON() + `,"index":0,"index":0}]}`},
-		{name: "nan", body: `{"data":[{"embedding":` + strings.Replace(vectorJSON(), "[0.25", "[NaN", 1) + `,"index":0}]}`},
+		{name: "missing index", body: modelResponseJSON(`[{"embedding":` + vectorJSON() + `}]`)},
+		{name: "null element", body: modelResponseJSON(`[{"embedding":` + strings.Replace(vectorJSON(), "[0.25", "[null", 1) + `,"index":0}]`)},
+		{name: "string element", body: modelResponseJSON(`[{"embedding":` + strings.Replace(vectorJSON(), "[0.25", `["0"`, 1) + `,"index":0}]`)},
+		{name: "zero vector", body: modelResponseJSON(`[{"embedding":` + zeroVectorJSON() + `,"index":0}]`)},
+		{name: "duplicate keys", body: modelResponseJSON(`[{"embedding":` + vectorJSON() + `,"index":0,"index":0}]`)},
+		{name: "nan", body: modelResponseJSON(`[{"embedding":` + strings.Replace(vectorJSON(), "[0.25", "[NaN", 1) + `,"index":0}]`)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -376,6 +380,10 @@ func TestResponseValidationRejectsMalformedVectors(t *testing.T) {
 			assert.Equal(t, int32(2), calls.Load())
 		})
 	}
+}
+
+func modelResponseJSON(data string) string {
+	return `{"model":"` + voyage.DefaultModel + `","data":` + data + `}`
 }
 
 func vectorJSON() string {
