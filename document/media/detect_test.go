@@ -258,7 +258,7 @@ func mp4WithSizeZeroMoov(width, height int, durationMS int64) []byte {
 
 func mp4WithLargesizeMoov(width, height int, durationMS int64) []byte {
 	ftyp, mvhd, trak := mp4Parts(width, height, durationMS)
-	payload := append(mvhd, trak...)
+	payload := append(append([]byte(nil), mvhd...), trak...)
 	moov := make([]byte, 16+len(payload))
 	binary.BigEndian.PutUint32(moov[:4], 1)
 	copy(moov[4:8], "moov")

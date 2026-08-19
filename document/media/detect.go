@@ -319,21 +319,22 @@ func mp4BoxHeader(data []byte, offset int) (headerLen, size int, ok bool) {
 	if offset+8 > len(data) {
 		return 0, 0, false
 	}
+	remaining := len(data) - offset // Non-negative: offset+8 <= len(data).
 	size32 := binary.BigEndian.Uint32(data[offset : offset+4])
 	switch size32 {
 	case 0:
-		return 8, len(data) - offset, true
+		return 8, remaining, true
 	case 1:
 		if offset+16 > len(data) {
 			return 0, 0, false
 		}
 		large := binary.BigEndian.Uint64(data[offset+8 : offset+16])
-		if large < 16 || large > uint64(len(data)-offset) {
+		if large < 16 || large > math.MaxInt32 || int(large) > remaining {
 			return 0, 0, false
 		}
 		return 16, int(large), true
 	default:
-		if size32 < 8 || uint64(size32) > uint64(len(data)-offset) {
+		if size32 < 8 || size32 > math.MaxInt32 || int(size32) > remaining {
 			return 0, 0, false
 		}
 		return 8, int(size32), true
