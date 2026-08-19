@@ -189,7 +189,7 @@ jobs:
       matrix:
         include:
           - { runner: windows-latest, goarch: amd64 }
-          - { runner: windows-11-arm, goarch: arm64 }
+          - { runner: windows-11-vs2026-arm, goarch: arm64 }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
     defaults:

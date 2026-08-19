@@ -138,7 +138,7 @@ jobs:
       matrix:
         include:
           - { runner: windows-latest, goarch: amd64 }
-          - { runner: windows-11-arm, goarch: arm64 }
+          - { runner: windows-11-vs2026-arm, goarch: arm64 }
     runs-on: ${{ contains(fromJSON('["ubuntu-latest","ubuntu-24.04","ubuntu-22.04"]'), matrix.runner) && github.repository == 'kenn-io/docbank' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'kenn-linux-x64-public' || matrix.runner }}
     steps:
       - name: Check out repository
