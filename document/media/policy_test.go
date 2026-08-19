@@ -37,6 +37,9 @@ func TestEvaluateReturnsStableReasons(t *testing.T) {
 		{name: "width over cap", metadata: still, policy: media.Policy{MaxPixels: 3, AllowStill: true}, want: media.ReasonTooManyPixels},
 		{name: "product over cap", metadata: still, policy: media.Policy{MaxPixels: 11, AllowStill: true}, want: media.ReasonTooManyPixels},
 		{name: "product at cap", metadata: still, policy: media.Policy{MaxPixels: 12, AllowStill: true}, want: media.ReasonEligible},
+		{name: "frames over cap", metadata: animated, policy: media.Policy{MaxFrames: 1, AllowAnimated: true}, want: media.ReasonTooManyFrames},
+		{name: "frames at cap", metadata: animated, policy: media.Policy{MaxFrames: 2, AllowAnimated: true}, want: media.ReasonEligible},
+		{name: "negative frame cap refuses images", metadata: still, policy: media.Policy{MaxFrames: -1, AllowStill: true}, want: media.ReasonTooManyFrames},
 		{name: "too long", metadata: video, policy: media.Policy{MaxDurationMS: 4999, AllowVideo: true}, want: media.ReasonTooLong},
 		{name: "duration at cap", metadata: video, policy: media.Policy{MaxDurationMS: 5000, AllowVideo: true}, want: media.ReasonEligible},
 		{name: "unknown duration under cap", metadata: unmeasured, policy: media.Policy{MaxDurationMS: 5000, AllowVideo: true}, want: media.ReasonTooLong},
@@ -56,6 +59,7 @@ func TestPolicyDefaultsAndValidation(t *testing.T) {
 	normalized := media.Policy{AllowStill: true}.Normalized()
 	assert.Equal(t, media.MaxBytes, normalized.MaxBytes)
 	assert.Equal(t, media.DefaultMaxPixels, normalized.MaxPixels)
+	assert.Equal(t, media.DefaultMaxFrames, normalized.MaxFrames)
 	assert.Zero(t, normalized.MaxDurationMS)
 
 	require.NoError(t, media.DefaultPolicy().Validate())
@@ -64,12 +68,13 @@ func TestPolicyDefaultsAndValidation(t *testing.T) {
 	for name, policy := range map[string]media.Policy{
 		"negative bytes":    {MaxBytes: -1, AllowStill: true},
 		"negative pixels":   {MaxPixels: -1, AllowStill: true},
+		"negative frames":   {MaxFrames: -1, AllowStill: true},
 		"negative duration": {MaxDurationMS: -1, AllowVideo: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			require.ErrorContains(t, policy.Validate(), "negative")
 			normalized := policy.Normalized()
-			assert.True(t, normalized.MaxBytes < 0 || normalized.MaxPixels < 0 || normalized.MaxDurationMS < 0,
+			assert.True(t, normalized.MaxBytes < 0 || normalized.MaxPixels < 0 || normalized.MaxFrames < 0 || normalized.MaxDurationMS < 0,
 				"negative limits are not silently replaced by defaults")
 		})
 	}

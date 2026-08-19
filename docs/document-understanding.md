@@ -101,8 +101,8 @@ carry out-of-band H.264 (`avc1`/`avcC`) or H.265 (`hvc1`/`hvcC`) dimensions
 plus `mdhd` and `stts` timing. In-band or missing evidence is malformed rather
 than inferred from a smaller container summary. Detection never decodes pixels
 or samples and never trusts the declared media type.
-`media.Evaluate` applies a policy of byte, pixel, and duration caps and
-still, animated, and video toggles, returning a stable reason such as
+`media.Evaluate` applies a policy of byte, pixel, frame, and duration caps
+and still, animated, and video toggles, returning a stable reason such as
 `too_many_pixels` or `animated_not_allowed` that an application can record.
 Under a duration cap, video whose duration cannot be measured is refused.
 

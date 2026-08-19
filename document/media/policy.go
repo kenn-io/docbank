@@ -9,14 +9,20 @@ import (
 // DefaultMaxPixels is the default per-axis and total pixel ceiling.
 const DefaultMaxPixels = int64(16_000_000)
 
+// DefaultMaxFrames is the default image frame-count ceiling, bounding the
+// decode work an animation within the byte and pixel limits can demand.
+const DefaultMaxFrames = int64(1_000)
+
 // Policy bounds which detected media is eligible for further processing.
-// Zero MaxBytes and MaxPixels use the package defaults; zero MaxDurationMS
-// applies no duration cap.
+// Zero MaxBytes, MaxPixels, and MaxFrames use the package defaults; zero
+// MaxDurationMS applies no duration cap.
 type Policy struct {
 	// MaxBytes is the largest eligible input; it cannot exceed MaxBytes.
 	MaxBytes int64 `json:"max_bytes"`
 	// MaxPixels bounds width, height, and their product.
 	MaxPixels int64 `json:"max_pixels"`
+	// MaxFrames bounds an image's frame count.
+	MaxFrames int64 `json:"max_frames"`
 	// MaxDurationMS bounds video duration; zero applies no cap and a negative
 	// value refuses all video. Under a cap, video whose duration cannot be
 	// measured is refused as too long.
@@ -32,7 +38,7 @@ type Policy struct {
 // DefaultPolicy admits still images and video up to MaxBytes and
 // DefaultMaxPixels, and excludes animated images.
 func DefaultPolicy() Policy {
-	return Policy{MaxBytes: MaxBytes, MaxPixels: DefaultMaxPixels, AllowStill: true, AllowVideo: true}
+	return Policy{MaxBytes: MaxBytes, MaxPixels: DefaultMaxPixels, MaxFrames: DefaultMaxFrames, AllowStill: true, AllowVideo: true}
 }
 
 // Normalized returns the policy with defaults applied to zero limits.
@@ -45,13 +51,16 @@ func (p Policy) Normalized() Policy {
 	if p.MaxPixels == 0 {
 		p.MaxPixels = DefaultMaxPixels
 	}
+	if p.MaxFrames == 0 {
+		p.MaxFrames = DefaultMaxFrames
+	}
 	return p
 }
 
 // Validate reports whether the policy is usable.
 func (p Policy) Validate() error {
 	p = p.Normalized()
-	if p.MaxBytes < 0 || p.MaxPixels < 0 || p.MaxDurationMS < 0 {
+	if p.MaxBytes < 0 || p.MaxPixels < 0 || p.MaxFrames < 0 || p.MaxDurationMS < 0 {
 		return errors.New("media: policy limits must not be negative")
 	}
 	if p.MaxBytes > MaxBytes {
@@ -73,6 +82,7 @@ const (
 	ReasonMalformedMedia     Reason = "malformed_media"
 	ReasonTooLarge           Reason = "too_large"
 	ReasonTooManyPixels      Reason = "too_many_pixels"
+	ReasonTooManyFrames      Reason = "too_many_frames"
 	ReasonTooLong            Reason = "too_long"
 	ReasonStillNotAllowed    Reason = "still_not_allowed"
 	ReasonAnimatedNotAllowed Reason = "animated_not_allowed"
@@ -95,6 +105,9 @@ func Evaluate(metadata Metadata, policy Policy) Reason {
 		}
 		if !metadata.Animated && !policy.AllowStill {
 			return ReasonStillNotAllowed
+		}
+		if int64(metadata.FrameCount) > policy.MaxFrames {
+			return ReasonTooManyFrames
 		}
 	case KindVideo:
 		if !policy.AllowVideo {
