@@ -141,7 +141,10 @@ WriteProbeFixtures (JPEG, PNG, GIF generated; WebP and MP4 from operator seeds)
 ```
 
 WebP and MP4 cannot be encoded by the Go standard library, so the operator
-supplies synthetic seeds named `image_webp.webp` and `video_mp4.mp4`. The
+supplies synthetic seeds named `image_webp.webp` and `video_mp4.mp4`, plus
+contrasting `image_webp_alt.webp` and `video_mp4_alt.mp4` variants of the
+same format whose content differs, so pixel contribution is demonstrated
+within each format. The
 seed directory, destination parent, and published fixture directory must be
 owner-private, and fixture generation publishes a complete new directory
 atomically rather than updating an existing directory. The

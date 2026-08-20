@@ -37,11 +37,17 @@ func PNG(width, height int, fill color.Color) []byte {
 // GIF returns a GIF with the given number of frames. Frames alternate between
 // two palette colors so an animated result differs from its first frame.
 func GIF(width, height, frames int) []byte {
+	return GIFShifted(width, height, frames, 0)
+}
+
+// GIFShifted is GIF with the frame color parity shifted, producing a
+// contrasting variant of the same format and animation state.
+func GIFShifted(width, height, frames, shift int) []byte {
 	palette := color.Palette{color.Black, color.White}
 	animation := &gif.GIF{}
 	for frame := range frames {
 		img := image.NewPaletted(image.Rect(0, 0, width, height), palette)
-		if frame%2 == 1 {
+		if (frame+shift)%2 == 1 {
 			for index := range img.Pix {
 				img.Pix[index] = 1
 			}

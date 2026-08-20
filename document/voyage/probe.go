@@ -1,7 +1,6 @@
 package voyage
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -59,7 +58,7 @@ func RunCapabilityProbe(ctx context.Context, client *Client, config ProbeConfig)
 		Dimension: values.Dimension, MaxBatchItems: values.MaxBatchItems,
 		Results: make([]CapabilityResult, 0, len(capabilities)),
 	}
-	runner := &probeRunner{client: client, fixtures: fixtures, references: map[string][]float32{}}
+	runner := &probeRunner{client: client, fixtures: fixtures, references: map[string][]float32{}, passed: map[string]bool{}}
 	for _, capability := range capabilities {
 		if err := ctx.Err(); err != nil {
 			return CapabilityManifest{}, err
@@ -74,6 +73,7 @@ func RunCapabilityProbe(ctx context.Context, client *Client, config ProbeConfig)
 		case probeErr == nil && observation.reason == "":
 			result.Status = ProbeStatusPassed
 			result.TotalTokens = observation.tokens
+			runner.passed[capability.ID] = true
 		case probeErr == nil:
 			result.Status, result.ReasonCode = ProbeStatusFailed, observation.reason
 		default:
@@ -120,6 +120,7 @@ type probeRunner struct {
 	client     *Client
 	fixtures   probeFixtures
 	references map[string][]float32
+	passed     map[string]bool
 	allow      map[string]bool
 }
 
@@ -242,6 +243,7 @@ func (r *probeRunner) probeAnimated(ctx context.Context) (probeObservation, erro
 	if err != nil {
 		return observation, err
 	}
+	r.references[CapabilityImageGIFAnimated] = result.Vectors[0]
 	if values, ok := similarities(result.Vectors[0], reference); !ok || values[0] >= motionThreshold {
 		observation.reason = ReasonMotionNotObserved
 		return observation, nil
@@ -401,25 +403,29 @@ func (r *probeRunner) probeTextImageQuery(ctx context.Context) (probeObservation
 // probeInterleaved demonstrates that a text-then-media document of one
 // format embeds and that both parts contribute: swapping the media against a
 // contrasting cached composite and swapping the text each move the vector.
+// probeInterleaved demonstrates that a text-then-media document of one
+// format embeds and that both parts contribute: swapping the media between
+// contrasting fixtures of the SAME format and animation state moves the
+// vector, and swapping the text moves it again. Cross-format comparisons are
+// never used, so container-only sensitivity cannot pass as pixel
+// contribution.
 func (r *probeRunner) probeInterleaved(ctx context.Context, fixture string) (probeObservation, error) {
 	part, err := r.fixtures.media(fixture)
 	if err != nil {
 		return probeObservation{}, err
 	}
-	// Blue-content media compares its media swap against the red composite;
-	// everything else compares against the blue composite.
-	comparatorFixture := FixtureBlue
-	if bytes.Equal(part.Bytes, r.fixtures[FixtureBlue]) {
-		comparatorFixture = FixtureRed
+	variant, err := r.fixtures.media(fixtureVariants[fixture])
+	if err != nil {
+		return probeObservation{}, err
 	}
 	observation := probeObservation{fixtureDigest: fixtureDigest(
-		[]byte(ProbeInterleavedText), []byte(ProbeBlueText), part.Bytes, r.fixtures[comparatorFixture],
+		[]byte(ProbeInterleavedText), []byte(ProbeBlueText), part.Bytes, variant.Bytes,
 	)}
 	baseline, err := r.embedFixtures(ctx, []Input{{Parts: []Part{{Text: ProbeInterleavedText}, {Media: part}}}})
 	if err != nil {
 		return observation, err
 	}
-	mediaChanged, mediaUsage, err := r.interleavedReference(ctx, comparatorFixture)
+	mediaChanged, err := r.embedFixtures(ctx, []Input{{Parts: []Part{{Text: ProbeInterleavedText}, {Media: variant}}}})
 	if err != nil {
 		return observation, err
 	}
@@ -427,12 +433,12 @@ func (r *probeRunner) probeInterleaved(ctx context.Context, fixture string) (pro
 	if err != nil {
 		return observation, err
 	}
-	if values, ok := similarities(baseline.Vectors[0], mediaChanged, textChanged.Vectors[0]); !ok ||
+	if values, ok := similarities(baseline.Vectors[0], mediaChanged.Vectors[0], textChanged.Vectors[0]); !ok ||
 		values[0] >= contributionThreshold || values[1] >= contributionThreshold {
 		observation.reason = ReasonOrderNotObserved
 		return observation, nil
 	}
-	observation.tokens = aggregateUsageTokens(baseline.Usage, mediaUsage, textChanged.Usage)
+	observation.tokens = aggregateUsageTokens(baseline.Usage, mediaChanged.Usage, textChanged.Usage)
 	return observation, nil
 }
 
@@ -460,81 +466,136 @@ func (r *probeRunner) interleavedReference(ctx context.Context, fixture string) 
 	return result.Vectors[0], result.Usage, nil
 }
 
-// probeBatch demonstrates index association for a mixed batch at the policy
-// limit: members alternate blue PNG and red JPEG media, and when the batch
-// has room the final member is the text-then-blue-PNG composite, so mixed
-// formats and the interleaved shape inside a batch are both observed. Every
+// probeBatch demonstrates index association for mixed batches at the policy
+// limit. Every document format that passed its own probe appears in at least
+// one policy-limit batch, and when the interleaved PNG capability passed one
+// member is the text-then-blue-PNG composite, so batches are observed with
+// the same format and shape variety authorization later permits. Every
 // member is compared with an independently embedded one-item reference of
 // the identical input.
 func (r *probeRunner) probeBatch(ctx context.Context) (probeObservation, error) {
-	jpeg, err := r.fixtures.media(FixtureJPEG)
-	if err != nil {
-		return probeObservation{}, err
+	type member struct {
+		input     Input
+		reference []float32
+		digest    []byte
 	}
-	blue, err := r.fixtures.media(FixtureBlue)
-	if err != nil {
-		return probeObservation{}, err
+	documentFixtures := []struct {
+		capability string
+		fixture    string
+	}{
+		{CapabilityImagePNG, FixturePNG},
+		{CapabilityImageJPEG, FixtureJPEG},
+		{CapabilityImageWebP, FixtureWebP},
+		{CapabilityImageGIFStill, FixtureGIFStill},
+		{CapabilityImageGIFAnimated, FixtureGIFAnimated},
+		{CapabilityVideoMP4, FixtureMP4},
 	}
-	observation := probeObservation{fixtureDigest: fixtureDigest(
-		blue.Bytes, jpeg.Bytes, []byte(ProbeInterleavedText),
-	)}
-	blueReference, err := r.reference(ctx, FixtureBlue)
-	if err != nil {
-		return observation, err
+	members := make([]member, 0, len(documentFixtures)+1)
+	for _, candidate := range documentFixtures {
+		if !r.passed[candidate.capability] {
+			continue
+		}
+		part, err := r.fixtures.media(candidate.fixture)
+		if err != nil {
+			return probeObservation{}, err
+		}
+		reference, ok := r.references[candidate.capability]
+		if !ok {
+			reference, err = r.reference(ctx, candidate.fixture)
+			if err != nil {
+				return probeObservation{}, err
+			}
+		}
+		members = append(members, member{
+			input:     Input{Parts: []Part{{Media: part}}},
+			reference: reference, digest: part.Bytes,
+		})
 	}
-	jpegReference, ok := r.references[CapabilityImageJPEG]
-	if !ok {
-		jpegReference, err = r.reference(ctx, FixtureJPEG)
+	if r.passed[CapabilityInterleavedPNG] {
+		blue, err := r.fixtures.media(FixtureBlue)
+		if err != nil {
+			return probeObservation{}, err
+		}
+		compositeReference, _, err := r.interleavedReference(ctx, FixtureBlue)
+		if err != nil {
+			return probeObservation{}, err
+		}
+		members = append(members, member{
+			input:     Input{Parts: []Part{{Text: ProbeInterleavedText}, {Media: blue}}},
+			reference: compositeReference,
+			digest:    append([]byte(ProbeInterleavedText), blue.Bytes...),
+		})
+	}
+	digestInputs := make([][]byte, 0, len(members))
+	for _, candidate := range members {
+		digestInputs = append(digestInputs, candidate.digest)
+	}
+	if len(members) == 0 {
+		// No document capability passed. Attempt the reference batch anyway
+		// so this result records the provider's actual failure mode instead
+		// of a synthetic one.
+		blue, err := r.fixtures.media(FixtureBlue)
+		if err != nil {
+			return probeObservation{}, err
+		}
+		observation := probeObservation{fixtureDigest: fixtureDigest(blue.Bytes)}
+		reference, err := r.reference(ctx, FixtureBlue)
 		if err != nil {
 			return observation, err
 		}
+		members = append(members, member{
+			input:     Input{Parts: []Part{{Media: blue}}},
+			reference: reference, digest: blue.Bytes,
+		})
+		digestInputs = append(digestInputs, blue.Bytes)
 	}
-	compositeReference, _, err := r.interleavedReference(ctx, FixtureBlue)
-	if err != nil {
-		return observation, err
-	}
+	observation := probeObservation{fixtureDigest: fixtureDigest(digestInputs...)}
 	size := r.client.policy.values.MaxBatchItems
-	inputs := make([]Input, size)
-	references := make([][]float32, size)
-	for index := range inputs {
-		if index == size-1 && size >= 3 {
-			inputs[index] = Input{Parts: []Part{{Text: ProbeInterleavedText}, {Media: blue}}}
-			references[index] = compositeReference
-			continue
+	var tokens *int64
+	zero := int64(0)
+	tokens = &zero
+	for start := 0; start < len(members); start += size {
+		// Every batch runs at exactly the policy limit, cycling members so
+		// the final batch is not smaller than what authorization permits.
+		inputs := make([]Input, size)
+		references := make([][]float32, size)
+		for index := range size {
+			candidate := members[(start+index)%len(members)]
+			inputs[index] = candidate.input
+			references[index] = candidate.reference
 		}
-		if index%2 == 0 {
-			inputs[index] = Input{Parts: []Part{{Media: blue}}}
-			references[index] = blueReference
-		} else {
-			inputs[index] = Input{Parts: []Part{{Media: jpeg}}}
-			references[index] = jpegReference
+		result, err := r.embedFixtures(ctx, inputs)
+		if err != nil {
+			return observation, err
 		}
-	}
-	result, err := r.embedFixtures(ctx, inputs)
-	if err != nil {
-		return observation, err
-	}
-	for index, vector := range result.Vectors {
-		expected := references[index]
-		others := make([][]float32, 0, 2)
-		for _, candidate := range [][]float32{blueReference, jpegReference, compositeReference} {
-			if &candidate[0] != &expected[0] {
-				others = append(others, candidate)
-			}
-		}
-		values, ok := similarities(vector, append([][]float32{expected}, others...)...)
-		if !ok || values[0] < clusterThreshold {
-			observation.reason = ReasonOrderNotObserved
-			return observation, nil
-		}
-		for _, other := range values[1:] {
-			if values[0] <= other {
+		for index, vector := range result.Vectors {
+			expected := references[index]
+			values, ok := similarities(vector, expected)
+			if !ok || values[0] < clusterThreshold {
 				observation.reason = ReasonOrderNotObserved
 				return observation, nil
 			}
+			for _, other := range references {
+				if &other[0] == &expected[0] {
+					continue
+				}
+				crossValues, crossOK := similarities(vector, other)
+				if !crossOK || values[0] <= crossValues[0] {
+					observation.reason = ReasonOrderNotObserved
+					return observation, nil
+				}
+			}
+		}
+		if tokens != nil {
+			batchTokens := usageTokens(result.Usage)
+			if batchTokens == nil {
+				tokens = nil
+			} else {
+				*tokens += *batchTokens
+			}
 		}
 	}
-	observation.tokens = usageTokens(result.Usage)
+	observation.tokens = tokens
 	return observation, nil
 }
 

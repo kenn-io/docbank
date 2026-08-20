@@ -23,8 +23,19 @@ const (
 	FixtureGIFStill    = "image_gif_still.gif"
 	FixtureGIFAnimated = "image_gif_animated.gif"
 	FixtureMP4         = "video_mp4.mp4"
-	FixtureRed         = "probe_red.png"
-	FixtureBlue        = "probe_blue.png"
+
+	// FixtureJPEGAlt and the other variant fixtures contrast their primary:
+	// each interleaved probe swaps its media between a fixture and its
+	// variant so pixel contribution is demonstrated within the format, never
+	// across formats.
+	FixtureJPEGAlt        = "image_jpeg_alt.jpg"
+	FixtureWebPAlt        = "image_webp_alt.webp"
+	FixtureGIFStillAlt    = "image_gif_still_alt.gif"
+	FixtureGIFAnimatedAlt = "image_gif_animated_alt.gif"
+	FixtureMP4Alt         = "video_mp4_alt.mp4"
+
+	FixtureRed  = "probe_red.png"
+	FixtureBlue = "probe_blue.png"
 
 	// ProbeQueryText is the text query the probe ranks against the red and
 	// blue reference documents.
@@ -41,7 +52,18 @@ const (
 
 // SeedFixtureNames lists the fixtures an operator must supply as synthetic
 // seeds because the Go standard library cannot encode them.
-var SeedFixtureNames = []string{FixtureWebP, FixtureMP4}
+var SeedFixtureNames = []string{FixtureWebP, FixtureWebPAlt, FixtureMP4, FixtureMP4Alt}
+
+// fixtureVariants pairs each interleaved probe's primary fixture with its
+// contrasting same-format variant. PNG reuses the red and blue references.
+var fixtureVariants = map[string]string{
+	FixtureJPEG:        FixtureJPEGAlt,
+	FixturePNG:         FixtureRed,
+	FixtureWebP:        FixtureWebPAlt,
+	FixtureGIFStill:    FixtureGIFStillAlt,
+	FixtureGIFAnimated: FixtureGIFAnimatedAlt,
+	FixtureMP4:         FixtureMP4Alt,
+}
 
 var (
 	fixtureRed  = color.RGBA{R: 220, G: 30, B: 30, A: 255}
@@ -63,6 +85,11 @@ var fixtureSpecs = []fixtureSpec{
 	{name: FixtureGIFStill, format: media.FormatGIF, generate: func() []byte { return mediatest.GIF(fixtureSide, fixtureSide, 1) }},
 	{name: FixtureGIFAnimated, format: media.FormatGIF, animated: true, generate: func() []byte { return mediatest.GIF(fixtureSide, fixtureSide, animatedFrames) }},
 	{name: FixtureMP4, format: media.FormatMP4, seed: true},
+	{name: FixtureJPEGAlt, format: media.FormatJPEG, generate: func() []byte { return mediatest.JPEG(fixtureSide, fixtureSide, fixtureBlue) }},
+	{name: FixtureWebPAlt, format: media.FormatWebP, seed: true},
+	{name: FixtureGIFStillAlt, format: media.FormatGIF, generate: func() []byte { return mediatest.GIFShifted(fixtureSide, fixtureSide, 1, 1) }},
+	{name: FixtureGIFAnimatedAlt, format: media.FormatGIF, animated: true, generate: func() []byte { return mediatest.GIFShifted(fixtureSide, fixtureSide, animatedFrames, 1) }},
+	{name: FixtureMP4Alt, format: media.FormatMP4, seed: true},
 	{name: FixtureRed, format: media.FormatPNG, generate: func() []byte { return mediatest.PNG(fixtureSide, fixtureSide, fixtureRed) }},
 	{name: FixtureBlue, format: media.FormatPNG, generate: func() []byte { return mediatest.PNG(fixtureSide, fixtureSide, fixtureBlue) }},
 }
@@ -202,6 +229,9 @@ func loadProbeFixtures(ctx context.Context, policy Policy, config ProbeFixtureCo
 		}
 		fixtures[spec.name] = data
 	}
+	if err := validateFixtureVariants(fixtures); err != nil {
+		return nil, err
+	}
 	return fixtures, nil
 }
 
@@ -284,6 +314,18 @@ func checkFixtureBytes(spec fixtureSpec, data []byte, policy media.Policy) error
 	if metadata.Format != spec.format || metadata.Animated != spec.animated {
 		return fmt.Errorf("voyage probe fixture %s must be %s (animated=%t), detected %s (animated=%t)",
 			spec.name, spec.format, spec.animated, metadata.Format, metadata.Animated)
+	}
+	return nil
+}
+
+// validateFixtureVariants confirms every contrasting variant actually
+// contrasts: identical bytes would let a pixel-blind provider pass the
+// interleaved media-swap check trivially.
+func validateFixtureVariants(fixtures probeFixtures) error {
+	for primary, variant := range fixtureVariants {
+		if bytes.Equal(fixtures[primary], fixtures[variant]) {
+			return fmt.Errorf("voyage probe fixture %s must differ from %s", variant, primary)
+		}
 	}
 	return nil
 }
