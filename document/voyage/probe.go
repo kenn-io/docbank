@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"time"
 
 	"go.kenn.io/docbank/document/media"
@@ -644,24 +645,28 @@ type batchMember struct {
 func (r *probeRunner) chunkBatchMembers(members []batchMember) [][]batchMember {
 	maxItems := r.client.policy.values.MaxBatchItems
 	maxBytes := r.client.policy.values.MaxRequestBytes
+	estimate := func(batch []batchMember) int64 {
+		inputs := make([]Input, len(batch))
+		for index, candidate := range batch {
+			inputs[index] = candidate.input
+		}
+		return estimatedRequestBytes(inputs)
+	}
 	var batches [][]batchMember
 	var current []batchMember
-	var inputs []Input
 	for _, candidate := range members {
-		next := append(inputs, candidate.input)
-		if len(current) > 0 &&
-			(len(current) >= maxItems || estimatedRequestBytes(next) > maxBytes) {
+		proposed := append(slices.Clone(current), candidate)
+		if len(current) > 0 && (len(proposed) > maxItems || estimate(proposed) > maxBytes) {
 			batches = append(batches, current)
-			current, inputs = nil, nil
-			next = []Input{candidate.input}
+			current = nil
+			proposed = []batchMember{candidate}
 		}
-		if len(current) == 0 && estimatedRequestBytes(next) > maxBytes {
+		if len(current) == 0 && estimate(proposed) > maxBytes {
 			// A member that cannot fit alone can never be sent; skip it
 			// rather than building an unsendable request.
 			continue
 		}
-		current = append(current, candidate)
-		inputs = next
+		current = proposed
 	}
 	if len(current) > 0 {
 		batches = append(batches, current)
