@@ -16,10 +16,11 @@ import (
 const (
 	// CapabilitySchemaVersion is the manifest schema this package reads and
 	// writes.
-	CapabilitySchemaVersion = 1
+	CapabilitySchemaVersion = 2
 	// ProbeFixtureContract identifies the deterministic fixtures and evidence
-	// checks a probe must have used.
-	ProbeFixtureContract = 2
+	// checks a probe must have used. v3 added contrasting same-format
+	// variants and full-format batch coverage.
+	ProbeFixtureContract = 3
 
 	maxManifestBytes = int64(1 << 20)
 	fixtureDigestLen = 16

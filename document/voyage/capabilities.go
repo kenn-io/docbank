@@ -32,8 +32,15 @@ const (
 	CapabilityQueryImageWebP   = "query_image_webp"
 	CapabilityQueryImageGIF    = "query_image_gif"
 	CapabilityQueryTextImage   = "query_text_image"
-	CapabilityInterleaved      = "interleaved_text_media"
-	CapabilityBatchLimits      = "batch_limits"
+
+	CapabilityInterleavedJPEG        = "interleaved_text_jpeg"
+	CapabilityInterleavedPNG         = "interleaved_text_png"
+	CapabilityInterleavedWebP        = "interleaved_text_webp"
+	CapabilityInterleavedGIFStill    = "interleaved_text_gif"
+	CapabilityInterleavedGIFAnimated = "interleaved_text_gif_animated"
+	CapabilityInterleavedMP4         = "interleaved_text_mp4"
+
+	CapabilityBatchLimits = "batch_limits"
 )
 
 // Capability describes one probe-tested provider capability.
@@ -65,8 +72,13 @@ var capabilities = []Capability{
 	{ID: CapabilityQueryImageWebP, Kind: CapabilityKindQuery, Format: media.FormatWebP, InputType: inputTypeQuery, Description: "a WebP query ranks its own document embedding first"},
 	{ID: CapabilityQueryImageGIF, Kind: CapabilityKindQuery, Format: media.FormatGIF, InputType: inputTypeQuery, Description: "a still GIF query ranks its own document embedding first"},
 	{ID: CapabilityQueryTextImage, Kind: CapabilityKindQuery, Format: media.FormatPNG, InputType: inputTypeQuery, Description: "a text-then-PNG query embeds and both parts contribute"},
-	{ID: CapabilityInterleaved, Kind: CapabilityKindRequest, Format: media.FormatPNG, InputType: inputTypeDocument, Description: "a text-then-PNG document embeds and both parts contribute"},
-	{ID: CapabilityBatchLimits, Kind: CapabilityKindRequest, Format: media.FormatPNG, InputType: inputTypeDocument, Description: "a media-only PNG batch at the policy limit embeds and each result matches its input"},
+	{ID: CapabilityInterleavedJPEG, Kind: CapabilityKindRequest, Format: media.FormatJPEG, InputType: inputTypeDocument, Description: "a text-then-JPEG document embeds and both parts contribute"},
+	{ID: CapabilityInterleavedPNG, Kind: CapabilityKindRequest, Format: media.FormatPNG, InputType: inputTypeDocument, Description: "a text-then-PNG document embeds and both parts contribute"},
+	{ID: CapabilityInterleavedWebP, Kind: CapabilityKindRequest, Format: media.FormatWebP, InputType: inputTypeDocument, Description: "a text-then-WebP document embeds and both parts contribute"},
+	{ID: CapabilityInterleavedGIFStill, Kind: CapabilityKindRequest, Format: media.FormatGIF, InputType: inputTypeDocument, Description: "a text-then-still-GIF document embeds and both parts contribute"},
+	{ID: CapabilityInterleavedGIFAnimated, Kind: CapabilityKindRequest, Format: media.FormatGIF, Animated: true, InputType: inputTypeDocument, Description: "a text-then-animated-GIF document embeds and both parts contribute"},
+	{ID: CapabilityInterleavedMP4, Kind: CapabilityKindRequest, Format: media.FormatMP4, InputType: inputTypeDocument, Description: "a text-then-MP4 document embeds and both parts contribute"},
+	{ID: CapabilityBatchLimits, Kind: CapabilityKindRequest, InputType: inputTypeDocument, Description: "a mixed-format batch at the policy limit embeds and each result matches its input"},
 }
 
 // Capabilities returns every capability in manifest order.
@@ -91,6 +103,21 @@ func CapabilityByID(id string) (Capability, bool) {
 func documentCapabilityFor(metadata media.Metadata) (Capability, bool) {
 	for _, capability := range capabilities {
 		if capability.Kind != CapabilityKindDocument || capability.Format != metadata.Format {
+			continue
+		}
+		if capability.Animated == metadata.Animated {
+			return capability, true
+		}
+	}
+	return Capability{}, false
+}
+
+// interleavedCapabilityFor returns the text-then-media capability covering
+// the detected media, if any.
+func interleavedCapabilityFor(metadata media.Metadata) (Capability, bool) {
+	for _, capability := range capabilities {
+		if capability.Kind != CapabilityKindRequest || capability.Format != metadata.Format ||
+			capability.ID == CapabilityBatchLimits {
 			continue
 		}
 		if capability.Animated == metadata.Animated {

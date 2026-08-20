@@ -126,7 +126,8 @@ validated capability manifest for the pinned endpoint, model, and dimension.
 Docbank ships no live manifest. Each capability is authorized separately:
 JPEG, PNG, WebP, still GIF, animated GIF, and MP4 documents; text queries;
 JPEG, PNG, WebP, and still GIF image queries; text-then-PNG queries;
-text-then-PNG documents; and media-only PNG batches at the policy limit.
+text-then-media documents probed per format; and mixed-format batches at the
+policy limit.
 Whether animated GIF, video, or a given query shape may be sent is decided by
 recorded probe evidence, not by assumption.
 
@@ -140,7 +141,10 @@ WriteProbeFixtures (JPEG, PNG, GIF generated; WebP and MP4 from operator seeds)
 ```
 
 WebP and MP4 cannot be encoded by the Go standard library, so the operator
-supplies synthetic seeds named `image_webp.webp` and `video_mp4.mp4`. The
+supplies synthetic seeds named `image_webp.webp` and `video_mp4.mp4`, plus
+contrasting `image_webp_alt.webp` and `video_mp4_alt.mp4` variants of the
+same format whose content differs, so pixel contribution is demonstrated
+within each format. The
 seed directory, destination parent, and published fixture directory must be
 owner-private, and fixture generation publishes a complete new directory
 atomically rather than updating an existing directory. The
@@ -159,9 +163,9 @@ Policy.AuthorizeAll(validated manifest)
 `EmbedDocuments` accepts only the probed input shapes, `[media]` and
 `[text, media]`. It re-detects every media part and serializes from the
 detected metadata so caller metadata cannot misdescribe bytes, requires an
-authorization for the part's format and animation state, limits `[text,
-media]` to PNG under the interleaved capability, limits batches to media-only
-PNG inputs under the batch capability, and refuses requests over the policy's
+authorization for the part's format and animation state, requires the
+format's own interleaved capability for `[text, media]`, requires the batch
+capability for more than one input, and refuses requests over the policy's
 item and byte limits before allocation. `EmbedQuery` accepts `[text]`,
 `[image]`, or `[text, image]`, each needing its own probed capability, with
 image queries authorized per format and the combined shape limited to PNG.

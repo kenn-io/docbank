@@ -146,7 +146,7 @@ func (c *Client) EmbedDocuments(ctx context.Context, inputs []Input, authorizati
 	}
 	wireInputs := make([]wireInput, len(inputs))
 	for index, input := range inputs {
-		content, err := c.documentContent(input, authorized, c.policy.values.Media, len(inputs) > 1)
+		content, err := c.documentContent(input, authorized, c.policy.values.Media)
 		if err != nil {
 			return Result{}, fmt.Errorf("voyage document %d: %w", index, err)
 		}
@@ -193,7 +193,7 @@ func (c *Client) authorizationSet(authorizations []Authorization) (map[string]bo
 	return authorized, nil
 }
 
-func (c *Client) documentContent(input Input, authorized map[string]bool, mediaPolicy media.Policy, batch bool) ([]wireContentPart, error) {
+func (c *Client) documentContent(input Input, authorized map[string]bool, mediaPolicy media.Policy) ([]wireContentPart, error) {
 	// Only the probed shapes are accepted: [media] or [text, media].
 	var textPart, mediaPart *Part
 	switch len(input.Parts) {
@@ -221,15 +221,16 @@ func (c *Client) documentContent(input Input, authorized map[string]bool, mediaP
 	if !authorized[capability.ID] {
 		return nil, fmt.Errorf("%w: media requires %s", ErrCapabilityContract, capability.ID)
 	}
-	if batch && (textPart != nil || detected.Format != media.FormatPNG) {
-		return nil, fmt.Errorf("%w: %s is only probed with media-only png inputs", ErrCapabilityContract, CapabilityBatchLimits)
-	}
 	if textPart != nil {
-		if !authorized[CapabilityInterleaved] {
-			return nil, fmt.Errorf("%w: text with media requires %s", ErrCapabilityContract, CapabilityInterleaved)
+		// Text-then-media is probed per format: the batch probe covers index
+		// association for mixed members, and each member's shape and format
+		// still need their own recorded evidence.
+		interleaved, ok := interleavedCapabilityFor(detected)
+		if !ok {
+			return nil, fmt.Errorf("%w: text with %s media has no capability", ErrInvalidInput, detected.Format)
 		}
-		if detected.Format != media.FormatPNG {
-			return nil, fmt.Errorf("%w: %s is only probed with png media", ErrCapabilityContract, CapabilityInterleaved)
+		if !authorized[interleaved.ID] {
+			return nil, fmt.Errorf("%w: text with %s media requires %s", ErrCapabilityContract, detected.Format, interleaved.ID)
 		}
 	}
 	return append(content, wireMediaPart(detected, mediaPart.Media.Bytes)), nil

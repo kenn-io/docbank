@@ -34,7 +34,9 @@ func writeSeeds(t *testing.T) string {
 	t.Helper()
 	dir := privateTempDir(t)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, voyage.FixtureWebP), mediatest.WebP(64, 64), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, voyage.FixtureWebPAlt), mediatest.WebP(48, 64), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, voyage.FixtureMP4), mediatest.MP4(64, 64, 2000), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, voyage.FixtureMP4Alt), mediatest.MP4(64, 64, 2500), 0o600))
 	return dir
 }
 
@@ -54,7 +56,8 @@ func TestWriteProbeFixturesIsDeterministicAndRequiresSeeds(t *testing.T) {
 	require.NoError(voyage.WriteProbeFixtures(t.Context(), second, voyage.FixtureOptions{SeedDirectory: seeds}))
 	for _, name := range []string{
 		voyage.FixtureJPEG, voyage.FixturePNG, voyage.FixtureWebP, voyage.FixtureGIFStill, voyage.FixtureGIFAnimated,
-		voyage.FixtureMP4, voyage.FixtureRed, voyage.FixtureBlue,
+		voyage.FixtureMP4, voyage.FixtureJPEGAlt, voyage.FixtureWebPAlt, voyage.FixtureGIFStillAlt,
+		voyage.FixtureGIFAnimatedAlt, voyage.FixtureMP4Alt, voyage.FixtureRed, voyage.FixtureBlue,
 	} {
 		left, err := os.ReadFile(filepath.Join(first, name))
 		require.NoError(err, name)
@@ -177,6 +180,12 @@ type fakeProvider struct {
 	ignoreCompositeText  bool           // composite requests consume only their media part
 	ignoreCompositeMedia bool           // composite requests consume only their text part
 	formatOnlyComposite  bool           // composite media consumes only its container format
+	batchMangleVideo     bool           // batches embed video members as if they were webp
+	batchDuplicateAlts   bool           // batches embed variant fixtures as their primaries
+	batchDropText        bool           // batches embed composite members as media only
+	batchDropMedia       bool           // batches embed composite members as text only
+	mangleMixedBatches   bool           // batches holding several media formats swap their first two results
+	maxBatchSeen         int            // largest input count observed in one request
 	calls                int
 }
 
@@ -197,10 +206,20 @@ func (f *fakeProvider) vectorFor(kind string) []float32 {
 		vector[4] = 1
 	case "mp4":
 		vector[5] = 1
+	case "green":
+		vector[8] = 1
 	case "png-format":
 		vector[6] = 1
 	case "jpeg-format":
 		vector[7] = 1
+	case "gif2":
+		vector[10] = 1
+	case "animated2":
+		vector[10], vector[11] = 0.7, 0.7
+	case "webp2":
+		vector[12] = 1
+	case "mp42":
+		vector[13] = 1
 	default:
 		vector[9] = 1
 	}
@@ -215,22 +234,53 @@ func (f *fakeProvider) classify(data []byte) string {
 		switch name {
 		case voyage.FixtureRed, voyage.FixtureJPEG:
 			return "red"
-		case voyage.FixtureBlue, voyage.FixturePNG:
+		case voyage.FixtureBlue, voyage.FixtureJPEGAlt:
 			return "blue"
+		case voyage.FixturePNG:
+			return "green"
 		case voyage.FixtureGIFStill:
 			return "gif"
+		case voyage.FixtureGIFStillAlt:
+			return "gif2"
 		case voyage.FixtureGIFAnimated:
 			if f.frozenGIF {
 				return "gif"
 			}
 			return "animated"
+		case voyage.FixtureGIFAnimatedAlt:
+			if f.frozenGIF {
+				return "gif2"
+			}
+			return "animated2"
 		case voyage.FixtureWebP:
 			return "webp"
+		case voyage.FixtureWebPAlt:
+			return "webp2"
 		case voyage.FixtureMP4:
 			return "mp4"
+		case voyage.FixtureMP4Alt:
+			return "mp42"
 		}
 	}
 	return "unknown"
+}
+
+// primaryForAlt maps a contrasting variant fixture's bytes to its primary
+// fixture name, or empty when data is not a variant.
+func (f *fakeProvider) primaryForAlt(data []byte) string {
+	switch f.fixtureName(data) {
+	case voyage.FixtureJPEGAlt:
+		return voyage.FixtureJPEG
+	case voyage.FixtureWebPAlt:
+		return voyage.FixtureWebP
+	case voyage.FixtureGIFStillAlt:
+		return voyage.FixtureGIFStill
+	case voyage.FixtureGIFAnimatedAlt:
+		return voyage.FixtureGIFAnimated
+	case voyage.FixtureRed:
+		return voyage.FixturePNG
+	}
+	return ""
 }
 
 func (f *fakeProvider) fixtureName(data []byte) string {
@@ -245,6 +295,7 @@ func (f *fakeProvider) fixtureName(data []byte) string {
 func (f *fakeProvider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.calls++
 	request := decodeRequest(f.t, r)
+	f.maxBatchSeen = max(f.maxBatchSeen, len(request.Inputs))
 	vectors := make([][]float32, len(request.Inputs))
 	for index, input := range request.Inputs {
 		vector := make([]float32, fakeDimension)
@@ -255,6 +306,9 @@ func (f *fakeProvider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				if composite && f.ignoreCompositeText {
 					continue
 				}
+				if composite && f.batchDropText && len(request.Inputs) > 1 {
+					continue
+				}
 				if strings.Contains(part.Text, "red") {
 					add(vector, f.vectorFor("red"), 0.5)
 				} else if strings.Contains(part.Text, "blue") {
@@ -262,6 +316,9 @@ func (f *fakeProvider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 			case "image_base64", "video_base64":
 				if composite && f.ignoreCompositeMedia {
+					continue
+				}
+				if composite && f.batchDropMedia && len(request.Inputs) > 1 {
 					continue
 				}
 				payload := part.ImageBase64
@@ -275,6 +332,16 @@ func (f *fakeProvider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					w.WriteHeader(status)
 					_, _ = io.WriteString(w, `{"detail":"synthetic rejection"}`)
 					return
+				}
+				if part.Type == "video_base64" && f.batchMangleVideo && len(request.Inputs) > 1 {
+					add(vector, f.vectorFor("webp"), 1)
+					continue
+				}
+				if f.batchDuplicateAlts && len(request.Inputs) > 1 {
+					if primary := f.primaryForAlt(data); primary != "" {
+						add(vector, f.vectorFor(f.classify(f.fixtures[primary])), 1)
+						continue
+					}
 				}
 				if composite && f.formatOnlyComposite {
 					format := "jpeg-format"
@@ -298,6 +365,9 @@ func (f *fakeProvider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		for index := 0; index+1 < len(vectors); index += 2 {
 			vectors[index], vectors[index+1] = vectors[index+1], vectors[index]
 		}
+	}
+	if f.mangleMixedBatches && len(vectors) > 1 && len(batchMediaPrefixes(request)) > 1 {
+		vectors[0], vectors[1] = vectors[1], vectors[0]
 	}
 	items := make([]wireItem, len(vectors))
 	for index, vector := range vectors {
@@ -498,12 +568,19 @@ func TestRunCapabilityProbeRequiresBothCompositeComponents(t *testing.T) {
 				byID[result.CapabilityID] = result
 			}
 			assert.Equal(t, voyage.ProbeStatusFailed, byID[voyage.CapabilityQueryTextImage].Status)
-			assert.Equal(t, voyage.ProbeStatusFailed, byID[voyage.CapabilityInterleaved].Status)
+			for _, interleaved := range []string{
+				voyage.CapabilityInterleavedJPEG, voyage.CapabilityInterleavedPNG,
+				voyage.CapabilityInterleavedWebP, voyage.CapabilityInterleavedGIFStill,
+				voyage.CapabilityInterleavedGIFAnimated, voyage.CapabilityInterleavedMP4,
+			} {
+				assert.Equal(t, voyage.ProbeStatusFailed, byID[interleaved].Status,
+					"%s must not pass when composite pixels do not contribute", interleaved)
+			}
 		})
 	}
 }
 
-func TestRunCapabilityProbeSupportsSingleItemBatchPolicy(t *testing.T) {
+func TestRunCapabilityProbeSingleItemBatchPolicyRecordsNoBatchAuthority(t *testing.T) {
 	policy, err := voyage.NewPolicy(voyage.PolicyConfig{Media: media.DefaultPolicy(), MaxBatchItems: 1})
 	require.NoError(t, err)
 	dir := writeFixtures(t)
@@ -514,6 +591,13 @@ func TestRunCapabilityProbeSupportsSingleItemBatchPolicy(t *testing.T) {
 	manifest, err := voyage.RunCapabilityProbe(t.Context(), client, voyage.ProbeConfig{Fixtures: voyage.ProbeFixtureConfig{FixtureDirectory: dir}})
 	require.NoError(t, err)
 	for _, result := range manifest.Results {
+		if result.CapabilityID == voyage.CapabilityBatchLimits {
+			// A one-item policy can never send a multi-item request, so
+			// multi-item batches honestly have no evidence.
+			assert.Equal(t, voyage.ProbeStatusFailed, result.Status)
+			assert.Equal(t, voyage.ReasonProviderLimit, result.ReasonCode)
+			continue
+		}
 		assert.Equal(t, voyage.ProbeStatusPassed, result.Status, result.CapabilityID)
 	}
 }
@@ -533,4 +617,160 @@ func TestRunCapabilityProbeRejectsZeroVectorsAsEvidence(t *testing.T) {
 	authorizations, err := policy.AuthorizeAll(manifest)
 	require.NoError(t, err)
 	assert.Empty(t, authorizations)
+}
+
+func TestRunCapabilityProbeBatchCoversEveryPassedFormat(t *testing.T) {
+	policy, err := voyage.NewPolicy(voyage.PolicyConfig{Media: media.DefaultPolicy(), MaxBatchItems: 4})
+	require.NoError(t, err)
+	dir := writeFixtures(t)
+	provider := &fakeProvider{t: t, fixtures: loadFixtures(t, dir), batchMangleVideo: true}
+	server := httptest.NewTLSServer(provider)
+	defer server.Close()
+	client := newServerClient(t, server, policy, voyage.ClientConfig{})
+	manifest, err := voyage.RunCapabilityProbe(t.Context(), client, voyage.ProbeConfig{Fixtures: voyage.ProbeFixtureConfig{FixtureDirectory: dir}})
+	require.NoError(t, err)
+	byID := make(map[string]voyage.CapabilityResult, len(manifest.Results))
+	for _, result := range manifest.Results {
+		byID[result.CapabilityID] = result
+	}
+	assert.Equal(t, voyage.ProbeStatusPassed, byID[voyage.CapabilityVideoMP4].Status,
+		"one-item video documents still embed correctly")
+	assert.Equal(t, voyage.ProbeStatusFailed, byID[voyage.CapabilityBatchLimits].Status,
+		"a provider that mishandles video inside batches must fail the batch capability even though PNG-only batches would pass")
+	assert.Equal(t, voyage.ReasonOrderNotObserved, byID[voyage.CapabilityBatchLimits].ReasonCode)
+}
+
+func TestRunCapabilityProbeBatchDetectsSameFormatDuplication(t *testing.T) {
+	policy, err := voyage.NewPolicy(voyage.PolicyConfig{Media: media.DefaultPolicy(), MaxBatchItems: 4})
+	require.NoError(t, err)
+	dir := writeFixtures(t)
+	provider := &fakeProvider{t: t, fixtures: loadFixtures(t, dir), batchDuplicateAlts: true}
+	server := httptest.NewTLSServer(provider)
+	defer server.Close()
+	client := newServerClient(t, server, policy, voyage.ClientConfig{})
+	manifest, err := voyage.RunCapabilityProbe(t.Context(), client, voyage.ProbeConfig{Fixtures: voyage.ProbeFixtureConfig{FixtureDirectory: dir}})
+	require.NoError(t, err)
+	byID := manifestByID(manifest)
+	assert.Equal(t, voyage.ProbeStatusPassed, byID[voyage.CapabilityImagePNG].Status)
+	assert.Equal(t, voyage.ProbeStatusFailed, byID[voyage.CapabilityBatchLimits].Status,
+		"a provider that answers a variant slot with its same-format primary must fail the batch capability")
+	assert.Equal(t, voyage.ReasonOrderNotObserved, byID[voyage.CapabilityBatchLimits].ReasonCode)
+}
+
+func TestRunCapabilityProbeBatchDetectsDroppedCompositeText(t *testing.T) {
+	policy, err := voyage.NewPolicy(voyage.PolicyConfig{Media: media.DefaultPolicy(), MaxBatchItems: 4})
+	require.NoError(t, err)
+	dir := writeFixtures(t)
+	provider := &fakeProvider{t: t, fixtures: loadFixtures(t, dir), batchDropText: true}
+	server := httptest.NewTLSServer(provider)
+	defer server.Close()
+	client := newServerClient(t, server, policy, voyage.ClientConfig{})
+	manifest, err := voyage.RunCapabilityProbe(t.Context(), client, voyage.ProbeConfig{Fixtures: voyage.ProbeFixtureConfig{FixtureDirectory: dir}})
+	require.NoError(t, err)
+	byID := manifestByID(manifest)
+	assert.Equal(t, voyage.ProbeStatusPassed, byID[voyage.CapabilityInterleavedPNG].Status,
+		"one-item composites still carry their text")
+	assert.Equal(t, voyage.ProbeStatusFailed, byID[voyage.CapabilityBatchLimits].Status,
+		"a provider that drops composite text inside batches must fail the batch capability")
+}
+
+// batchMediaPrefixes collects the distinct data-URL media prefixes across a
+// request's media parts, approximating "how many formats share this batch".
+func batchMediaPrefixes(request wireRequest) map[string]bool {
+	prefixes := map[string]bool{}
+	for _, input := range request.Inputs {
+		for _, part := range input.Content {
+			payload := part.ImageBase64
+			if payload == "" {
+				payload = part.VideoBase64
+			}
+			if payload == "" {
+				continue
+			}
+			prefix, _, _ := strings.Cut(payload, ";base64,")
+			prefixes[prefix] = true
+		}
+	}
+	return prefixes
+}
+
+func TestRunCapabilityProbeSchedulesMixedFormatsAtSmallLimits(t *testing.T) {
+	policy, err := voyage.NewPolicy(voyage.PolicyConfig{Media: media.DefaultPolicy(), MaxBatchItems: 2})
+	require.NoError(t, err)
+	dir := writeFixtures(t)
+	provider := &fakeProvider{t: t, fixtures: loadFixtures(t, dir), mangleMixedBatches: true}
+	server := httptest.NewTLSServer(provider)
+	defer server.Close()
+	client := newServerClient(t, server, policy, voyage.ClientConfig{})
+	manifest, err := voyage.RunCapabilityProbe(t.Context(), client, voyage.ProbeConfig{Fixtures: voyage.ProbeFixtureConfig{FixtureDirectory: dir}})
+	require.NoError(t, err)
+	byID := manifestByID(manifest)
+	assert.Equal(t, voyage.ProbeStatusFailed, byID[voyage.CapabilityBatchLimits].Status,
+		"a provider that reorders only mixed-format batches must fail even when the item limit keeps grouped batches single-format")
+	assert.Equal(t, voyage.ReasonOrderNotObserved, byID[voyage.CapabilityBatchLimits].ReasonCode)
+	assert.Equal(t, voyage.ProbeStatusPassed, byID[voyage.CapabilityImagePNG].Status)
+}
+
+func manifestByID(manifest voyage.CapabilityManifest) map[string]voyage.CapabilityResult {
+	byID := make(map[string]voyage.CapabilityResult, len(manifest.Results))
+	for _, result := range manifest.Results {
+		byID[result.CapabilityID] = result
+	}
+	return byID
+}
+
+func TestRunCapabilityProbeExercisesTheRecordedItemLimit(t *testing.T) {
+	policy, err := voyage.NewPolicy(voyage.PolicyConfig{Media: media.DefaultPolicy(), MaxBatchItems: 30})
+	require.NoError(t, err)
+	dir := writeFixtures(t)
+	provider := &fakeProvider{t: t, fixtures: loadFixtures(t, dir)}
+	server := httptest.NewTLSServer(provider)
+	defer server.Close()
+	client := newServerClient(t, server, policy, voyage.ClientConfig{})
+	manifest, err := voyage.RunCapabilityProbe(t.Context(), client, voyage.ProbeConfig{Fixtures: voyage.ProbeFixtureConfig{FixtureDirectory: dir}})
+	require.NoError(t, err)
+	byID := manifestByID(manifest)
+	require.Equal(t, voyage.ProbeStatusPassed, byID[voyage.CapabilityBatchLimits].Status)
+	assert.Equal(t, 30, provider.maxBatchSeen,
+		"the boundary batch must run at the recorded item limit, cycling members beyond the pool size")
+}
+
+func TestRunCapabilityProbeDoesNotPassBatchesOnSingletonFallback(t *testing.T) {
+	policy, err := voyage.NewPolicy(voyage.PolicyConfig{Media: media.DefaultPolicy(), MaxBatchItems: 4})
+	require.NoError(t, err)
+	dir := writeFixtures(t)
+	// Reject every document fixture so no document capability passes, while
+	// the red and blue references still embed.
+	provider := &fakeProvider{t: t, fixtures: loadFixtures(t, dir), rejects: map[string]int{
+		voyage.FixturePNG: 422, voyage.FixtureJPEG: 422, voyage.FixtureWebP: 422,
+		voyage.FixtureGIFStill: 422, voyage.FixtureGIFAnimated: 422, voyage.FixtureMP4: 422,
+	}}
+	server := httptest.NewTLSServer(provider)
+	defer server.Close()
+	client := newServerClient(t, server, policy, voyage.ClientConfig{MaxRetries: 1})
+	manifest, err := voyage.RunCapabilityProbe(t.Context(), client, voyage.ProbeConfig{Fixtures: voyage.ProbeFixtureConfig{FixtureDirectory: dir}})
+	require.NoError(t, err)
+	byID := manifestByID(manifest)
+	assert.Equal(t, voyage.ProbeStatusRejected, byID[voyage.CapabilityImagePNG].Status)
+	require.NotEqual(t, voyage.ProbeStatusPassed, byID[voyage.CapabilityBatchLimits].Status,
+		"a successful singleton fallback is not multi-item evidence")
+	assert.Equal(t, voyage.ReasonProviderLimit, byID[voyage.CapabilityBatchLimits].ReasonCode)
+}
+
+func TestRunCapabilityProbeBatchDetectsDroppedCompositeMedia(t *testing.T) {
+	policy, err := voyage.NewPolicy(voyage.PolicyConfig{Media: media.DefaultPolicy(), MaxBatchItems: 4})
+	require.NoError(t, err)
+	dir := writeFixtures(t)
+	provider := &fakeProvider{t: t, fixtures: loadFixtures(t, dir), batchDropMedia: true}
+	server := httptest.NewTLSServer(provider)
+	defer server.Close()
+	client := newServerClient(t, server, policy, voyage.ClientConfig{})
+	manifest, err := voyage.RunCapabilityProbe(t.Context(), client, voyage.ProbeConfig{Fixtures: voyage.ProbeFixtureConfig{FixtureDirectory: dir}})
+	require.NoError(t, err)
+	byID := manifestByID(manifest)
+	assert.Equal(t, voyage.ProbeStatusPassed, byID[voyage.CapabilityInterleavedPNG].Status,
+		"one-item composites still carry their media")
+	assert.Equal(t, voyage.ProbeStatusFailed, byID[voyage.CapabilityBatchLimits].Status,
+		"a provider that drops composite media inside batches must fail the batch capability")
+	assert.Equal(t, voyage.ReasonOrderNotObserved, byID[voyage.CapabilityBatchLimits].ReasonCode)
 }
