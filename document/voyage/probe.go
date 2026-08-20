@@ -33,10 +33,13 @@ const (
 	clusterThreshold = 0.99
 )
 
-// textVariantSuffix keys the cached other-text composite each interleaved
-// probe proved distinct from its baseline; the batch probe uses it as the
-// composite member's contrast partner.
-const textVariantSuffix = ":text-variant"
+// textVariantSuffix and mediaVariantSuffix key the cached other-text and
+// other-media composites each interleaved probe proved distinct from its
+// baseline; the batch probe uses them as composite contrast partners.
+const (
+	textVariantSuffix  = ":text-variant"
+	mediaVariantSuffix = ":media-variant"
+)
 
 // RunCapabilityProbe probes every capability serially against the live
 // provider and returns sanitized observations only. An authorization failure
@@ -437,6 +440,7 @@ func (r *probeRunner) probeInterleaved(ctx context.Context, capabilityID, fixtur
 	if err != nil {
 		return observation, err
 	}
+	r.references[capabilityID+mediaVariantSuffix] = mediaChanged.Vectors[0]
 	textChanged, err := r.embedFixtures(ctx, []Input{{Parts: []Part{{Text: ProbeBlueText}, {Media: part}}}})
 	if err != nil {
 		return observation, err
@@ -503,26 +507,37 @@ func (r *probeRunner) probeBatch(ctx context.Context) (probeObservation, error) 
 			return probeObservation{}, err
 		}
 		group := []batchMember{
-			{input: Input{Parts: []Part{{Media: part}}}, reference: reference, contrast: variantReference, digest: part.Bytes, format: candidate.capability},
-			{input: Input{Parts: []Part{{Media: variant}}}, reference: variantReference, contrast: reference, digest: variant.Bytes, format: candidate.capability},
+			{input: Input{Parts: []Part{{Media: part}}}, reference: reference, contrasts: [][]float32{variantReference}, digest: part.Bytes, format: candidate.capability},
+			{input: Input{Parts: []Part{{Media: variant}}}, reference: variantReference, contrasts: [][]float32{reference}, digest: variant.Bytes, format: candidate.capability},
 		}
 		if r.passed[candidate.interleaved] {
 			compositeReference, ok := r.references[candidate.interleaved]
-			textVariant, variantOK := r.references[candidate.interleaved+textVariantSuffix]
-			if !ok || !variantOK {
+			textVariant, textOK := r.references[candidate.interleaved+textVariantSuffix]
+			mediaVariant, mediaOK := r.references[candidate.interleaved+mediaVariantSuffix]
+			if !ok || !textOK || !mediaOK {
 				return probeObservation{}, fmt.Errorf("voyage batch probe is missing the %s references", candidate.interleaved)
 			}
+			// Three composites with pairwise-contradictory inequalities: a
+			// provider that drops the text part inside batches cannot satisfy
+			// the baseline and other-text pair, and one that drops the media
+			// part cannot satisfy the baseline and other-media pair.
 			group = append(group,
 				batchMember{
 					input:     Input{Parts: []Part{{Text: ProbeInterleavedText}, {Media: part}}},
-					reference: compositeReference, contrast: textVariant,
+					reference: compositeReference, contrasts: [][]float32{textVariant, mediaVariant},
 					digest: append([]byte(ProbeInterleavedText), part.Bytes...),
 					format: candidate.capability,
 				},
 				batchMember{
 					input:     Input{Parts: []Part{{Text: ProbeBlueText}, {Media: part}}},
-					reference: textVariant, contrast: compositeReference,
+					reference: textVariant, contrasts: [][]float32{compositeReference},
 					digest: append([]byte(ProbeBlueText), part.Bytes...),
+					format: candidate.capability,
+				},
+				batchMember{
+					input:     Input{Parts: []Part{{Text: ProbeInterleavedText}, {Media: variant}}},
+					reference: mediaVariant, contrasts: [][]float32{compositeReference},
+					digest: append(append([]byte(ProbeInterleavedText), part.Bytes...), variant.Bytes...),
 					format: candidate.capability,
 				},
 			)
@@ -585,14 +600,16 @@ func (r *probeRunner) probeBatch(ctx context.Context) (probeObservation, error) 
 				break
 			}
 		}
-		mixedBatch := firstMultiFormatBatch(r.chunkBatchMembers(mixed))
-		if mixedBatch == nil {
+		mixedBatches := multiFormatBatches(r.chunkBatchMembers(mixed))
+		if len(mixedBatches) == 0 {
 			// Several formats passed but no permissible request can mix
 			// them, so mixed-format batches have no evidence.
 			observation.reason = ReasonProviderLimit
 			return observation, nil
 		}
-		batches = append(batches, mixedBatch)
+		// Every multi-format chunk runs, so each passed format is observed
+		// inside a mixed request even at small item limits.
+		batches = append(batches, mixedBatches...)
 	}
 
 	zero := int64(0)
@@ -616,13 +633,12 @@ func (r *probeRunner) probeBatch(ctx context.Context) (probeObservation, error) 
 				observation.reason = ReasonOrderNotObserved
 				return observation, nil
 			}
-			if batch[index].contrast == nil {
-				continue
-			}
-			contrastValues, contrastOK := similarities(vector, batch[index].contrast)
-			if !contrastOK || values[0] <= contrastValues[0] {
-				observation.reason = ReasonOrderNotObserved
-				return observation, nil
+			for _, contrast := range batch[index].contrasts {
+				contrastValues, contrastOK := similarities(vector, contrast)
+				if !contrastOK || values[0] <= contrastValues[0] {
+					observation.reason = ReasonOrderNotObserved
+					return observation, nil
+				}
 			}
 		}
 		if tokens != nil {
@@ -651,7 +667,7 @@ func (r *probeRunner) probeBatch(ctx context.Context) (probeObservation, error) 
 type batchMember struct {
 	input     Input
 	reference []float32
-	contrast  []float32
+	contrasts [][]float32
 	digest    []byte
 	// format is the document capability the member's media belongs to;
 	// mixed-batch selection needs at least two distinct formats.
@@ -682,19 +698,20 @@ func (r *probeRunner) padBatchMembers(members []batchMember) []batchMember {
 	return batch
 }
 
-// firstMultiFormatBatch returns the first batch holding at least two distinct
-// member formats, or nil.
-func firstMultiFormatBatch(batches [][]batchMember) []batchMember {
+// multiFormatBatches filters to batches holding at least two distinct member
+// formats.
+func multiFormatBatches(batches [][]batchMember) [][]batchMember {
+	var mixed [][]batchMember
 	for _, batch := range batches {
 		formats := map[string]bool{}
 		for _, candidate := range batch {
 			formats[candidate.format] = true
 		}
 		if len(formats) >= 2 {
-			return batch
+			mixed = append(mixed, batch)
 		}
 	}
-	return nil
+	return mixed
 }
 
 // chunkBatchMembers packs members into batches bounded by the policy's item

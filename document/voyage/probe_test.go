@@ -183,6 +183,7 @@ type fakeProvider struct {
 	batchMangleVideo     bool           // batches embed video members as if they were webp
 	batchDuplicateAlts   bool           // batches embed variant fixtures as their primaries
 	batchDropText        bool           // batches embed composite members as media only
+	batchDropMedia       bool           // batches embed composite members as text only
 	mangleMixedBatches   bool           // batches holding several media formats swap their first two results
 	maxBatchSeen         int            // largest input count observed in one request
 	calls                int
@@ -315,6 +316,9 @@ func (f *fakeProvider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 			case "image_base64", "video_base64":
 				if composite && f.ignoreCompositeMedia {
+					continue
+				}
+				if composite && f.batchDropMedia && len(request.Inputs) > 1 {
 					continue
 				}
 				payload := part.ImageBase64
@@ -751,4 +755,22 @@ func TestRunCapabilityProbeDoesNotPassBatchesOnSingletonFallback(t *testing.T) {
 	require.NotEqual(t, voyage.ProbeStatusPassed, byID[voyage.CapabilityBatchLimits].Status,
 		"a successful singleton fallback is not multi-item evidence")
 	assert.Equal(t, voyage.ReasonProviderLimit, byID[voyage.CapabilityBatchLimits].ReasonCode)
+}
+
+func TestRunCapabilityProbeBatchDetectsDroppedCompositeMedia(t *testing.T) {
+	policy, err := voyage.NewPolicy(voyage.PolicyConfig{Media: media.DefaultPolicy(), MaxBatchItems: 4})
+	require.NoError(t, err)
+	dir := writeFixtures(t)
+	provider := &fakeProvider{t: t, fixtures: loadFixtures(t, dir), batchDropMedia: true}
+	server := httptest.NewTLSServer(provider)
+	defer server.Close()
+	client := newServerClient(t, server, policy, voyage.ClientConfig{})
+	manifest, err := voyage.RunCapabilityProbe(t.Context(), client, voyage.ProbeConfig{Fixtures: voyage.ProbeFixtureConfig{FixtureDirectory: dir}})
+	require.NoError(t, err)
+	byID := manifestByID(manifest)
+	assert.Equal(t, voyage.ProbeStatusPassed, byID[voyage.CapabilityInterleavedPNG].Status,
+		"one-item composites still carry their media")
+	assert.Equal(t, voyage.ProbeStatusFailed, byID[voyage.CapabilityBatchLimits].Status,
+		"a provider that drops composite media inside batches must fail the batch capability")
+	assert.Equal(t, voyage.ReasonOrderNotObserved, byID[voyage.CapabilityBatchLimits].ReasonCode)
 }
