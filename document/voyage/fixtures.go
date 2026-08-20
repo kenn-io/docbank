@@ -88,7 +88,12 @@ var fixtureSpecs = []fixtureSpec{
 	{name: FixtureJPEGAlt, format: media.FormatJPEG, generate: func() []byte { return mediatest.JPEG(fixtureSide, fixtureSide, fixtureBlue) }},
 	{name: FixtureWebPAlt, format: media.FormatWebP, seed: true},
 	{name: FixtureGIFStillAlt, format: media.FormatGIF, generate: func() []byte { return mediatest.GIFShifted(fixtureSide, fixtureSide, 1, 1) }},
-	{name: FixtureGIFAnimatedAlt, format: media.FormatGIF, animated: true, generate: func() []byte { return mediatest.GIFShifted(fixtureSide, fixtureSide, animatedFrames, 1) }},
+	{name: FixtureGIFAnimatedAlt, format: media.FormatGIF, animated: true, generate: func() []byte {
+		// Contrast by frame count rather than frame order, so a provider
+		// that aggregates frames without encoding their order still
+		// distinguishes the variant.
+		return mediatest.GIF(fixtureSide, fixtureSide, animatedFrames-1)
+	}},
 	{name: FixtureMP4Alt, format: media.FormatMP4, seed: true},
 	{name: FixtureRed, format: media.FormatPNG, generate: func() []byte { return mediatest.PNG(fixtureSide, fixtureSide, fixtureRed) }},
 	{name: FixtureBlue, format: media.FormatPNG, generate: func() []byte { return mediatest.PNG(fixtureSide, fixtureSide, fixtureBlue) }},

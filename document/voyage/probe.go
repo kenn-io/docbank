@@ -32,6 +32,11 @@ const (
 	clusterThreshold = 0.99
 )
 
+// textVariantSuffix keys the cached other-text composite each interleaved
+// probe proved distinct from its baseline; the batch probe uses it as the
+// composite member's contrast partner.
+const textVariantSuffix = ":text-variant"
+
 // RunCapabilityProbe probes every capability serially against the live
 // provider and returns sanitized observations only. An authorization failure
 // aborts the probe because nothing can pass without a valid credential.
@@ -115,8 +120,6 @@ type probeObservation struct {
 }
 
 type probeRunner struct {
-	referenceUsage map[string]Usage
-
 	client     *Client
 	fixtures   probeFixtures
 	references map[string][]float32
@@ -170,17 +173,17 @@ func (r *probeRunner) probe(ctx context.Context, capability Capability) (probeOb
 	case CapabilityQueryTextImage:
 		return r.probeTextImageQuery(ctx)
 	case CapabilityInterleavedJPEG:
-		return r.probeInterleaved(ctx, FixtureJPEG)
+		return r.probeInterleaved(ctx, CapabilityInterleavedJPEG, FixtureJPEG)
 	case CapabilityInterleavedPNG:
-		return r.probeInterleaved(ctx, FixturePNG)
+		return r.probeInterleaved(ctx, CapabilityInterleavedPNG, FixturePNG)
 	case CapabilityInterleavedWebP:
-		return r.probeInterleaved(ctx, FixtureWebP)
+		return r.probeInterleaved(ctx, CapabilityInterleavedWebP, FixtureWebP)
 	case CapabilityInterleavedGIFStill:
-		return r.probeInterleaved(ctx, FixtureGIFStill)
+		return r.probeInterleaved(ctx, CapabilityInterleavedGIFStill, FixtureGIFStill)
 	case CapabilityInterleavedGIFAnimated:
-		return r.probeInterleaved(ctx, FixtureGIFAnimated)
+		return r.probeInterleaved(ctx, CapabilityInterleavedGIFAnimated, FixtureGIFAnimated)
 	case CapabilityInterleavedMP4:
-		return r.probeInterleaved(ctx, FixtureMP4)
+		return r.probeInterleaved(ctx, CapabilityInterleavedMP4, FixtureMP4)
 	case CapabilityBatchLimits:
 		return r.probeBatch(ctx)
 	default:
@@ -409,7 +412,7 @@ func (r *probeRunner) probeTextImageQuery(ctx context.Context) (probeObservation
 // vector, and swapping the text moves it again. Cross-format comparisons are
 // never used, so container-only sensitivity cannot pass as pixel
 // contribution.
-func (r *probeRunner) probeInterleaved(ctx context.Context, fixture string) (probeObservation, error) {
+func (r *probeRunner) probeInterleaved(ctx context.Context, capabilityID, fixture string) (probeObservation, error) {
 	part, err := r.fixtures.media(fixture)
 	if err != nil {
 		return probeObservation{}, err
@@ -425,6 +428,10 @@ func (r *probeRunner) probeInterleaved(ctx context.Context, fixture string) (pro
 	if err != nil {
 		return observation, err
 	}
+	// The batch probe reuses this composite's one-item embedding as the
+	// reference for the same composite inside a batch, and the other-text
+	// composite below as its proven-distinct contrast partner.
+	r.references[capabilityID] = baseline.Vectors[0]
 	mediaChanged, err := r.embedFixtures(ctx, []Input{{Parts: []Part{{Text: ProbeInterleavedText}, {Media: variant}}}})
 	if err != nil {
 		return observation, err
@@ -433,6 +440,7 @@ func (r *probeRunner) probeInterleaved(ctx context.Context, fixture string) (pro
 	if err != nil {
 		return observation, err
 	}
+	r.references[capabilityID+textVariantSuffix] = textChanged.Vectors[0]
 	if values, ok := similarities(baseline.Vectors[0], mediaChanged.Vectors[0], textChanged.Vectors[0]); !ok ||
 		values[0] >= contributionThreshold || values[1] >= contributionThreshold {
 		observation.reason = ReasonOrderNotObserved
@@ -442,55 +450,38 @@ func (r *probeRunner) probeInterleaved(ctx context.Context, fixture string) (pro
 	return observation, nil
 }
 
-// interleavedReference caches the composite [ProbeInterleavedText, fixture]
-// the interleaved probes compare their media swaps against. The cached usage
-// is retained so every probe that reuses the composite reports its cost once.
-func (r *probeRunner) interleavedReference(ctx context.Context, fixture string) ([]float32, Usage, error) {
-	key := "interleaved:" + fixture
-	if vector, ok := r.references[key]; ok {
-		return vector, r.referenceUsage[key], nil
-	}
-	part, err := r.fixtures.media(fixture)
-	if err != nil {
-		return nil, Usage{}, err
-	}
-	result, err := r.embedFixtures(ctx, []Input{{Parts: []Part{{Text: ProbeInterleavedText}, {Media: part}}}})
-	if err != nil {
-		return nil, Usage{}, err
-	}
-	r.references[key] = result.Vectors[0]
-	if r.referenceUsage == nil {
-		r.referenceUsage = map[string]Usage{}
-	}
-	r.referenceUsage[key] = Usage{Available: true}
-	return result.Vectors[0], result.Usage, nil
-}
-
 // probeBatch demonstrates index association for mixed batches at the policy
-// limit. Every document format that passed its own probe appears in at least
-// one policy-limit batch, and when the interleaved PNG capability passed one
-// member is the text-then-blue-PNG composite, so batches are observed with
-// the same format and shape variety authorization later permits. Every
-// member is compared with an independently embedded one-item reference of
-// the identical input.
+// limit. For every document format that passed its own probe the batch holds
+// the primary fixture AND its contrasting same-format variant, so same-format
+// reordering or duplication inside a batch is detectable, and for every
+// passed interleaved capability the batch holds that format's text-then-media
+// composite, so the shapes authorization later permits in batches are the
+// shapes that were observed. Every member must match an independently
+// embedded one-item reference of the identical input and beat its planted
+// contrast partner — the same-format sibling, or the media-only primary for a
+// composite. Cross-format content may legitimately embed alike, so only the
+// deliberately confusable pairs carry the inequality. Several policy-limit
+// batches run when one cannot hold every member.
 func (r *probeRunner) probeBatch(ctx context.Context) (probeObservation, error) {
 	type member struct {
 		input     Input
 		reference []float32
+		contrast  []float32
 		digest    []byte
 	}
 	documentFixtures := []struct {
-		capability string
-		fixture    string
+		capability  string
+		interleaved string
+		fixture     string
 	}{
-		{CapabilityImagePNG, FixturePNG},
-		{CapabilityImageJPEG, FixtureJPEG},
-		{CapabilityImageWebP, FixtureWebP},
-		{CapabilityImageGIFStill, FixtureGIFStill},
-		{CapabilityImageGIFAnimated, FixtureGIFAnimated},
-		{CapabilityVideoMP4, FixtureMP4},
+		{CapabilityImagePNG, CapabilityInterleavedPNG, FixturePNG},
+		{CapabilityImageJPEG, CapabilityInterleavedJPEG, FixtureJPEG},
+		{CapabilityImageWebP, CapabilityInterleavedWebP, FixtureWebP},
+		{CapabilityImageGIFStill, CapabilityInterleavedGIFStill, FixtureGIFStill},
+		{CapabilityImageGIFAnimated, CapabilityInterleavedGIFAnimated, FixtureGIFAnimated},
+		{CapabilityVideoMP4, CapabilityInterleavedMP4, FixtureMP4},
 	}
-	members := make([]member, 0, len(documentFixtures)+1)
+	members := make([]member, 0, 3*len(documentFixtures))
 	for _, candidate := range documentFixtures {
 		if !r.passed[candidate.capability] {
 			continue
@@ -506,29 +497,34 @@ func (r *probeRunner) probeBatch(ctx context.Context) (probeObservation, error) 
 				return probeObservation{}, err
 			}
 		}
-		members = append(members, member{
-			input:     Input{Parts: []Part{{Media: part}}},
-			reference: reference, digest: part.Bytes,
-		})
-	}
-	if r.passed[CapabilityInterleavedPNG] {
-		blue, err := r.fixtures.media(FixtureBlue)
+		variant, err := r.fixtures.media(fixtureVariants[candidate.fixture])
 		if err != nil {
 			return probeObservation{}, err
 		}
-		compositeReference, _, err := r.interleavedReference(ctx, FixtureBlue)
+		variantReference, err := r.reference(ctx, fixtureVariants[candidate.fixture])
 		if err != nil {
 			return probeObservation{}, err
 		}
-		members = append(members, member{
-			input:     Input{Parts: []Part{{Text: ProbeInterleavedText}, {Media: blue}}},
-			reference: compositeReference,
-			digest:    append([]byte(ProbeInterleavedText), blue.Bytes...),
-		})
-	}
-	digestInputs := make([][]byte, 0, len(members))
-	for _, candidate := range members {
-		digestInputs = append(digestInputs, candidate.digest)
+		members = append(members,
+			member{input: Input{Parts: []Part{{Media: part}}}, reference: reference, contrast: variantReference, digest: part.Bytes},
+			member{input: Input{Parts: []Part{{Media: variant}}}, reference: variantReference, contrast: reference, digest: variant.Bytes},
+		)
+		if r.passed[candidate.interleaved] {
+			compositeReference, ok := r.references[candidate.interleaved]
+			textVariant, variantOK := r.references[candidate.interleaved+textVariantSuffix]
+			if !ok || !variantOK {
+				return probeObservation{}, fmt.Errorf("voyage batch probe is missing the %s references", candidate.interleaved)
+			}
+			// The contrast partner is the other-text composite, which the
+			// interleaved probe proved distinct; the media alone can be
+			// colinear with its composite when text and pixels agree.
+			members = append(members, member{
+				input:     Input{Parts: []Part{{Text: ProbeInterleavedText}, {Media: part}}},
+				reference: compositeReference,
+				contrast:  textVariant,
+				digest:    append([]byte(ProbeInterleavedText), part.Bytes...),
+			})
+		}
 	}
 	if len(members) == 0 {
 		// No document capability passed. Attempt the reference batch anyway
@@ -547,43 +543,41 @@ func (r *probeRunner) probeBatch(ctx context.Context) (probeObservation, error) 
 			input:     Input{Parts: []Part{{Media: blue}}},
 			reference: reference, digest: blue.Bytes,
 		})
-		digestInputs = append(digestInputs, blue.Bytes)
+	}
+	digestInputs := make([][]byte, 0, len(members))
+	for _, candidate := range members {
+		digestInputs = append(digestInputs, candidate.digest)
 	}
 	observation := probeObservation{fixtureDigest: fixtureDigest(digestInputs...)}
 	size := r.client.policy.values.MaxBatchItems
-	var tokens *int64
 	zero := int64(0)
-	tokens = &zero
+	tokens := &zero
 	for start := 0; start < len(members); start += size {
 		// Every batch runs at exactly the policy limit, cycling members so
 		// the final batch is not smaller than what authorization permits.
 		inputs := make([]Input, size)
-		references := make([][]float32, size)
+		slots := make([]member, size)
 		for index := range size {
-			candidate := members[(start+index)%len(members)]
-			inputs[index] = candidate.input
-			references[index] = candidate.reference
+			slots[index] = members[(start+index)%len(members)]
+			inputs[index] = slots[index].input
 		}
 		result, err := r.embedFixtures(ctx, inputs)
 		if err != nil {
 			return observation, err
 		}
 		for index, vector := range result.Vectors {
-			expected := references[index]
-			values, ok := similarities(vector, expected)
+			values, ok := similarities(vector, slots[index].reference)
 			if !ok || values[0] < clusterThreshold {
 				observation.reason = ReasonOrderNotObserved
 				return observation, nil
 			}
-			for _, other := range references {
-				if &other[0] == &expected[0] {
-					continue
-				}
-				crossValues, crossOK := similarities(vector, other)
-				if !crossOK || values[0] <= crossValues[0] {
-					observation.reason = ReasonOrderNotObserved
-					return observation, nil
-				}
+			if slots[index].contrast == nil {
+				continue
+			}
+			contrastValues, contrastOK := similarities(vector, slots[index].contrast)
+			if !contrastOK || values[0] <= contrastValues[0] {
+				observation.reason = ReasonOrderNotObserved
+				return observation, nil
 			}
 		}
 		if tokens != nil {
