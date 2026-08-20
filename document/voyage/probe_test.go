@@ -183,6 +183,7 @@ type fakeProvider struct {
 	batchMangleVideo     bool           // batches embed video members as if they were webp
 	batchDuplicateAlts   bool           // batches embed variant fixtures as their primaries
 	batchDropText        bool           // batches embed composite members as media only
+	mangleMixedBatches   bool           // batches holding several media formats swap their first two results
 	calls                int
 }
 
@@ -354,6 +355,9 @@ func (f *fakeProvider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		for index := 0; index+1 < len(vectors); index += 2 {
 			vectors[index], vectors[index+1] = vectors[index+1], vectors[index]
 		}
+	}
+	if f.mangleMixedBatches && len(vectors) > 1 && len(batchMediaPrefixes(request)) > 1 {
+		vectors[0], vectors[1] = vectors[1], vectors[0]
 	}
 	items := make([]wireItem, len(vectors))
 	for index, vector := range vectors {
@@ -566,7 +570,7 @@ func TestRunCapabilityProbeRequiresBothCompositeComponents(t *testing.T) {
 	}
 }
 
-func TestRunCapabilityProbeSupportsSingleItemBatchPolicy(t *testing.T) {
+func TestRunCapabilityProbeSingleItemBatchPolicyRecordsNoBatchAuthority(t *testing.T) {
 	policy, err := voyage.NewPolicy(voyage.PolicyConfig{Media: media.DefaultPolicy(), MaxBatchItems: 1})
 	require.NoError(t, err)
 	dir := writeFixtures(t)
@@ -577,6 +581,13 @@ func TestRunCapabilityProbeSupportsSingleItemBatchPolicy(t *testing.T) {
 	manifest, err := voyage.RunCapabilityProbe(t.Context(), client, voyage.ProbeConfig{Fixtures: voyage.ProbeFixtureConfig{FixtureDirectory: dir}})
 	require.NoError(t, err)
 	for _, result := range manifest.Results {
+		if result.CapabilityID == voyage.CapabilityBatchLimits {
+			// A one-item policy can never send a multi-item request, so
+			// multi-item batches honestly have no evidence.
+			assert.Equal(t, voyage.ProbeStatusFailed, result.Status)
+			assert.Equal(t, voyage.ReasonProviderLimit, result.ReasonCode)
+			continue
+		}
 		assert.Equal(t, voyage.ProbeStatusPassed, result.Status, result.CapabilityID)
 	}
 }
@@ -651,6 +662,43 @@ func TestRunCapabilityProbeBatchDetectsDroppedCompositeText(t *testing.T) {
 		"one-item composites still carry their text")
 	assert.Equal(t, voyage.ProbeStatusFailed, byID[voyage.CapabilityBatchLimits].Status,
 		"a provider that drops composite text inside batches must fail the batch capability")
+}
+
+// batchMediaPrefixes collects the distinct data-URL media prefixes across a
+// request's media parts, approximating "how many formats share this batch".
+func batchMediaPrefixes(request wireRequest) map[string]bool {
+	prefixes := map[string]bool{}
+	for _, input := range request.Inputs {
+		for _, part := range input.Content {
+			payload := part.ImageBase64
+			if payload == "" {
+				payload = part.VideoBase64
+			}
+			if payload == "" {
+				continue
+			}
+			prefix, _, _ := strings.Cut(payload, ";base64,")
+			prefixes[prefix] = true
+		}
+	}
+	return prefixes
+}
+
+func TestRunCapabilityProbeSchedulesMixedFormatsAtSmallLimits(t *testing.T) {
+	policy, err := voyage.NewPolicy(voyage.PolicyConfig{Media: media.DefaultPolicy(), MaxBatchItems: 2})
+	require.NoError(t, err)
+	dir := writeFixtures(t)
+	provider := &fakeProvider{t: t, fixtures: loadFixtures(t, dir), mangleMixedBatches: true}
+	server := httptest.NewTLSServer(provider)
+	defer server.Close()
+	client := newServerClient(t, server, policy, voyage.ClientConfig{})
+	manifest, err := voyage.RunCapabilityProbe(t.Context(), client, voyage.ProbeConfig{Fixtures: voyage.ProbeFixtureConfig{FixtureDirectory: dir}})
+	require.NoError(t, err)
+	byID := manifestByID(manifest)
+	assert.Equal(t, voyage.ProbeStatusFailed, byID[voyage.CapabilityBatchLimits].Status,
+		"a provider that reorders only mixed-format batches must fail even when the item limit keeps grouped batches single-format")
+	assert.Equal(t, voyage.ReasonOrderNotObserved, byID[voyage.CapabilityBatchLimits].ReasonCode)
+	assert.Equal(t, voyage.ProbeStatusPassed, byID[voyage.CapabilityImagePNG].Status)
 }
 
 func manifestByID(manifest voyage.CapabilityManifest) map[string]voyage.CapabilityResult {
