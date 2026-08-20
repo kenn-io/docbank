@@ -68,6 +68,10 @@ var fixtureVariants = map[string]string{
 var (
 	fixtureRed  = color.RGBA{R: 220, G: 30, B: 30, A: 255}
 	fixtureBlue = color.RGBA{R: 30, G: 30, B: 220, A: 255}
+	// fixtureGreen keeps the PNG document fixture byte-distinct from the
+	// blue reference fixture, so rejecting or mishandling one can never be
+	// mistaken for the other.
+	fixtureGreen = color.RGBA{R: 30, G: 200, B: 30, A: 255}
 )
 
 type fixtureSpec struct {
@@ -80,7 +84,7 @@ type fixtureSpec struct {
 
 var fixtureSpecs = []fixtureSpec{
 	{name: FixtureJPEG, format: media.FormatJPEG, generate: func() []byte { return mediatest.JPEG(fixtureSide, fixtureSide, fixtureRed) }},
-	{name: FixturePNG, format: media.FormatPNG, generate: func() []byte { return mediatest.PNG(fixtureSide, fixtureSide, fixtureBlue) }},
+	{name: FixturePNG, format: media.FormatPNG, generate: func() []byte { return mediatest.PNG(fixtureSide, fixtureSide, fixtureGreen) }},
 	{name: FixtureWebP, format: media.FormatWebP, seed: true},
 	{name: FixtureGIFStill, format: media.FormatGIF, generate: func() []byte { return mediatest.GIF(fixtureSide, fixtureSide, 1) }},
 	{name: FixtureGIFAnimated, format: media.FormatGIF, animated: true, generate: func() []byte { return mediatest.GIF(fixtureSide, fixtureSide, animatedFrames) }},

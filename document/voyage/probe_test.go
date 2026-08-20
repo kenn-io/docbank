@@ -184,6 +184,7 @@ type fakeProvider struct {
 	batchDuplicateAlts   bool           // batches embed variant fixtures as their primaries
 	batchDropText        bool           // batches embed composite members as media only
 	mangleMixedBatches   bool           // batches holding several media formats swap their first two results
+	maxBatchSeen         int            // largest input count observed in one request
 	calls                int
 }
 
@@ -204,6 +205,8 @@ func (f *fakeProvider) vectorFor(kind string) []float32 {
 		vector[4] = 1
 	case "mp4":
 		vector[5] = 1
+	case "green":
+		vector[8] = 1
 	case "png-format":
 		vector[6] = 1
 	case "jpeg-format":
@@ -230,8 +233,10 @@ func (f *fakeProvider) classify(data []byte) string {
 		switch name {
 		case voyage.FixtureRed, voyage.FixtureJPEG:
 			return "red"
-		case voyage.FixtureBlue, voyage.FixturePNG, voyage.FixtureJPEGAlt:
+		case voyage.FixtureBlue, voyage.FixtureJPEGAlt:
 			return "blue"
+		case voyage.FixturePNG:
+			return "green"
 		case voyage.FixtureGIFStill:
 			return "gif"
 		case voyage.FixtureGIFStillAlt:
@@ -289,6 +294,7 @@ func (f *fakeProvider) fixtureName(data []byte) string {
 func (f *fakeProvider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.calls++
 	request := decodeRequest(f.t, r)
+	f.maxBatchSeen = max(f.maxBatchSeen, len(request.Inputs))
 	vectors := make([][]float32, len(request.Inputs))
 	for index, input := range request.Inputs {
 		vector := make([]float32, fakeDimension)
@@ -707,4 +713,42 @@ func manifestByID(manifest voyage.CapabilityManifest) map[string]voyage.Capabili
 		byID[result.CapabilityID] = result
 	}
 	return byID
+}
+
+func TestRunCapabilityProbeExercisesTheRecordedItemLimit(t *testing.T) {
+	policy, err := voyage.NewPolicy(voyage.PolicyConfig{Media: media.DefaultPolicy(), MaxBatchItems: 30})
+	require.NoError(t, err)
+	dir := writeFixtures(t)
+	provider := &fakeProvider{t: t, fixtures: loadFixtures(t, dir)}
+	server := httptest.NewTLSServer(provider)
+	defer server.Close()
+	client := newServerClient(t, server, policy, voyage.ClientConfig{})
+	manifest, err := voyage.RunCapabilityProbe(t.Context(), client, voyage.ProbeConfig{Fixtures: voyage.ProbeFixtureConfig{FixtureDirectory: dir}})
+	require.NoError(t, err)
+	byID := manifestByID(manifest)
+	require.Equal(t, voyage.ProbeStatusPassed, byID[voyage.CapabilityBatchLimits].Status)
+	assert.Equal(t, 30, provider.maxBatchSeen,
+		"the boundary batch must run at the recorded item limit, cycling members beyond the pool size")
+}
+
+func TestRunCapabilityProbeDoesNotPassBatchesOnSingletonFallback(t *testing.T) {
+	policy, err := voyage.NewPolicy(voyage.PolicyConfig{Media: media.DefaultPolicy(), MaxBatchItems: 4})
+	require.NoError(t, err)
+	dir := writeFixtures(t)
+	// Reject every document fixture so no document capability passes, while
+	// the red and blue references still embed.
+	provider := &fakeProvider{t: t, fixtures: loadFixtures(t, dir), rejects: map[string]int{
+		voyage.FixturePNG: 422, voyage.FixtureJPEG: 422, voyage.FixtureWebP: 422,
+		voyage.FixtureGIFStill: 422, voyage.FixtureGIFAnimated: 422, voyage.FixtureMP4: 422,
+	}}
+	server := httptest.NewTLSServer(provider)
+	defer server.Close()
+	client := newServerClient(t, server, policy, voyage.ClientConfig{MaxRetries: 1})
+	manifest, err := voyage.RunCapabilityProbe(t.Context(), client, voyage.ProbeConfig{Fixtures: voyage.ProbeFixtureConfig{FixtureDirectory: dir}})
+	require.NoError(t, err)
+	byID := manifestByID(manifest)
+	assert.Equal(t, voyage.ProbeStatusRejected, byID[voyage.CapabilityImagePNG].Status)
+	require.NotEqual(t, voyage.ProbeStatusPassed, byID[voyage.CapabilityBatchLimits].Status,
+		"a successful singleton fallback is not multi-item evidence")
+	assert.Equal(t, voyage.ReasonProviderLimit, byID[voyage.CapabilityBatchLimits].ReasonCode)
 }

@@ -503,8 +503,8 @@ func (r *probeRunner) probeBatch(ctx context.Context) (probeObservation, error) 
 			return probeObservation{}, err
 		}
 		group := []batchMember{
-			{input: Input{Parts: []Part{{Media: part}}}, reference: reference, contrast: variantReference, digest: part.Bytes},
-			{input: Input{Parts: []Part{{Media: variant}}}, reference: variantReference, contrast: reference, digest: variant.Bytes},
+			{input: Input{Parts: []Part{{Media: part}}}, reference: reference, contrast: variantReference, digest: part.Bytes, format: candidate.capability},
+			{input: Input{Parts: []Part{{Media: variant}}}, reference: variantReference, contrast: reference, digest: variant.Bytes, format: candidate.capability},
 		}
 		if r.passed[candidate.interleaved] {
 			compositeReference, ok := r.references[candidate.interleaved]
@@ -517,33 +517,33 @@ func (r *probeRunner) probeBatch(ctx context.Context) (probeObservation, error) 
 					input:     Input{Parts: []Part{{Text: ProbeInterleavedText}, {Media: part}}},
 					reference: compositeReference, contrast: textVariant,
 					digest: append([]byte(ProbeInterleavedText), part.Bytes...),
+					format: candidate.capability,
 				},
 				batchMember{
 					input:     Input{Parts: []Part{{Text: ProbeBlueText}, {Media: part}}},
 					reference: textVariant, contrast: compositeReference,
 					digest: append([]byte(ProbeBlueText), part.Bytes...),
+					format: candidate.capability,
 				},
 			)
 		}
 		formatMembers = append(formatMembers, group)
 	}
 	if len(formatMembers) == 0 {
-		// No document capability passed. Attempt the reference batch anyway
-		// so this result records the provider's actual failure mode instead
-		// of a synthetic one.
+		// No document capability passed, so no member pool exists and
+		// multi-item batches can have no evidence. Attempt one reference
+		// singleton anyway so this result records the provider's actual
+		// failure mode; a success still records the missing evidence.
 		blue, err := r.fixtures.media(FixtureBlue)
 		if err != nil {
 			return probeObservation{}, err
 		}
 		observation := probeObservation{fixtureDigest: fixtureDigest(blue.Bytes)}
-		reference, err := r.reference(ctx, FixtureBlue)
-		if err != nil {
+		if _, err := r.embedFixtures(ctx, []Input{{Parts: []Part{{Media: blue}}}}); err != nil {
 			return observation, err
 		}
-		formatMembers = append(formatMembers, []batchMember{{
-			input:     Input{Parts: []Part{{Media: blue}}},
-			reference: reference, digest: blue.Bytes,
-		}})
+		observation.reason = ReasonProviderLimit
+		return observation, nil
 	}
 	grouped := make([]batchMember, 0, 4*len(formatMembers))
 	for _, group := range formatMembers {
@@ -556,9 +556,22 @@ func (r *probeRunner) probeBatch(ctx context.Context) (probeObservation, error) 
 	observation := probeObservation{fixtureDigest: fixtureDigest(digestInputs...)}
 
 	batches := r.chunkBatchMembers(grouped)
+	// Boundary batch: cycle members up to the largest size the item and byte
+	// limits allow, so the recorded item limit is exercised rather than only
+	// the member count.
+	if boundary := r.padBatchMembers(grouped); len(boundary) > 0 {
+		largest := 0
+		for _, batch := range batches {
+			largest = max(largest, len(batch))
+		}
+		if len(boundary) > largest {
+			batches = append(batches, boundary)
+		}
+	}
 	if len(formatMembers) >= 2 {
-		// Column-wise across formats: the first fitting batch mixes formats
-		// even when the item limit is smaller than one format's group.
+		// Column-wise across formats: pick the first permissible chunk that
+		// actually holds several formats, so mixed requests are observed even
+		// when the item limit keeps the grouped batches single-format.
 		mixed := make([]batchMember, 0, len(grouped))
 		for column := 0; ; column++ {
 			row := false
@@ -572,27 +585,23 @@ func (r *probeRunner) probeBatch(ctx context.Context) (probeObservation, error) 
 				break
 			}
 		}
-		if mixedBatches := r.chunkBatchMembers(mixed); len(mixedBatches) > 0 {
-			batches = append(batches, mixedBatches[0])
+		mixedBatch := firstMultiFormatBatch(r.chunkBatchMembers(mixed))
+		if mixedBatch == nil {
+			// Several formats passed but no permissible request can mix
+			// them, so mixed-format batches have no evidence.
+			observation.reason = ReasonProviderLimit
+			return observation, nil
 		}
-	}
-	multiItem := false
-	for _, batch := range batches {
-		if len(batch) >= 2 {
-			multiItem = true
-			break
-		}
-	}
-	if !multiItem && len(grouped) >= 2 {
-		// The fixtures cannot form any multi-item request under the policy's
-		// byte limit, so multi-item batches have no evidence.
-		observation.reason = ReasonProviderLimit
-		return observation, nil
+		batches = append(batches, mixedBatch)
 	}
 
 	zero := int64(0)
 	tokens := &zero
+	multiItemObserved := false
 	for _, batch := range batches {
+		if len(batch) >= 2 {
+			multiItemObserved = true
+		}
 		inputs := make([]Input, len(batch))
 		for index, candidate := range batch {
 			inputs[index] = candidate.input
@@ -625,6 +634,13 @@ func (r *probeRunner) probeBatch(ctx context.Context) (probeObservation, error) 
 			}
 		}
 	}
+	if !multiItemObserved {
+		// Every permissible request was a singleton — including the
+		// fallback run when nothing passed — so multi-item batches have no
+		// evidence and must not be recorded as probed.
+		observation.reason = ReasonProviderLimit
+		return observation, nil
+	}
 	observation.tokens = tokens
 	return observation, nil
 }
@@ -637,6 +653,48 @@ type batchMember struct {
 	reference []float32
 	contrast  []float32
 	digest    []byte
+	// format is the document capability the member's media belongs to;
+	// mixed-batch selection needs at least two distinct formats.
+	format string
+}
+
+// padBatchMembers cycles members into one batch at the largest size the item
+// and byte limits allow, duplicating inputs when the member pool is smaller
+// than the item limit. Duplicated slots expect identical vectors, so every
+// check stays valid.
+func (r *probeRunner) padBatchMembers(members []batchMember) []batchMember {
+	if len(members) == 0 {
+		return nil
+	}
+	maxItems := r.client.policy.values.MaxBatchItems
+	maxBytes := r.client.policy.values.MaxRequestBytes
+	var batch []batchMember
+	var inputs []Input
+	for index := 0; len(batch) < maxItems; index++ {
+		candidate := members[index%len(members)]
+		proposed := append(slices.Clone(inputs), candidate.input)
+		if estimatedRequestBytes(proposed) > maxBytes {
+			break
+		}
+		batch = append(batch, candidate)
+		inputs = proposed
+	}
+	return batch
+}
+
+// firstMultiFormatBatch returns the first batch holding at least two distinct
+// member formats, or nil.
+func firstMultiFormatBatch(batches [][]batchMember) []batchMember {
+	for _, batch := range batches {
+		formats := map[string]bool{}
+		for _, candidate := range batch {
+			formats[candidate.format] = true
+		}
+		if len(formats) >= 2 {
+			return batch
+		}
+	}
+	return nil
 }
 
 // chunkBatchMembers packs members into batches bounded by the policy's item
