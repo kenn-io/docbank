@@ -188,12 +188,12 @@ func TestManifestValidationAndStrictDecoding(t *testing.T) {
 	}, "inconsistent")
 
 	t.Run("decode rejects duplicate keys", func(t *testing.T) {
-		text := strings.Replace(encoded.String(), `"schema_version": 1,`, `"schema_version": 1, "schema_version": 1,`, 1)
+		text := strings.Replace(encoded.String(), `"schema_version": 2,`, `"schema_version": 2, "schema_version": 2,`, 1)
 		_, err := voyage.DecodeCapabilityManifest(strings.NewReader(text))
 		require.ErrorContains(t, err, "duplicate")
 	})
 	t.Run("decode rejects unknown fields", func(t *testing.T) {
-		text := strings.Replace(encoded.String(), `"schema_version": 1,`, `"schema_version": 1, "vectors": [],`, 1)
+		text := strings.Replace(encoded.String(), `"schema_version": 2,`, `"schema_version": 2, "vectors": [],`, 1)
 		_, err := voyage.DecodeCapabilityManifest(strings.NewReader(text))
 		require.ErrorContains(t, err, "unknown field")
 	})

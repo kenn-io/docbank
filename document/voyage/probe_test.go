@@ -498,7 +498,7 @@ func TestRunCapabilityProbeRequiresBothCompositeComponents(t *testing.T) {
 				byID[result.CapabilityID] = result
 			}
 			assert.Equal(t, voyage.ProbeStatusFailed, byID[voyage.CapabilityQueryTextImage].Status)
-			assert.Equal(t, voyage.ProbeStatusFailed, byID[voyage.CapabilityInterleaved].Status)
+			assert.Equal(t, voyage.ProbeStatusFailed, byID[voyage.CapabilityInterleavedPNG].Status)
 		})
 	}
 }
