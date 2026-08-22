@@ -105,5 +105,8 @@ func canonicalEndpoint(raw string) (string, error) {
 	}
 	parsed.Scheme = strings.ToLower(parsed.Scheme)
 	parsed.Host = strings.ToLower(parsed.Host)
+	if parsed.RawPath == "" && parsed.Path == "/" {
+		parsed.Path = ""
+	}
 	return parsed.String(), nil
 }

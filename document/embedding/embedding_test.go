@@ -166,6 +166,21 @@ func TestEgressFingerprintSeparatesPurposeAndDestination(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, encodedDotsFingerprint, cleanedFingerprint)
 
+	root := base
+	root.Endpoint = "https://example.com/"
+	rootFingerprint, err := root.Fingerprint()
+	require.NoError(t, err)
+	emptyPath := base
+	emptyPath.Endpoint = "https://example.com"
+	emptyPathFingerprint, err := emptyPath.Fingerprint()
+	require.NoError(t, err)
+	assert.Equal(t, rootFingerprint, emptyPathFingerprint)
+	escapedRoot := base
+	escapedRoot.Endpoint = "https://example.com/%2F"
+	escapedRootFingerprint, err := escapedRoot.Fingerprint()
+	require.NoError(t, err)
+	assert.NotEqual(t, rootFingerprint, escapedRootFingerprint)
+
 	space := embedding.VectorSpaceIdentity{
 		Provider: "synthetic", Model: "embed-1", ModelRevision: "2026-08",
 		Dimension: 1_024, Normalization: "unit-length",
