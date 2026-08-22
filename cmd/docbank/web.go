@@ -82,7 +82,7 @@ func runWeb(
 	if err := open(ctx, launchURL); err != nil {
 		return fmt.Errorf("opening Docbank web application: %w", err)
 	}
-	base := strings.SplitN(rawURL, "#", 2)[0]
+	base, _, _ := strings.Cut(rawURL, "#")
 	_, err = fmt.Fprintf(out, "opened Docbank web application at %s\n", base)
 	if err != nil {
 		return fmt.Errorf("printing web application status: %w", err)

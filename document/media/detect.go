@@ -416,7 +416,7 @@ type mp4Info struct {
 	movieDuration        uint64
 	trackDurations       []uint64
 	mediaDurations       []mp4Duration
-	unknownDuration bool
+	unknownDuration      bool
 }
 
 type mp4Duration struct {

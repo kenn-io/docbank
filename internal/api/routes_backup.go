@@ -751,8 +751,7 @@ func fromBackupError(err error) error {
 }
 
 func backupProblem(err error) *Error {
-	var problem *Error
-	if errors.As(err, &problem) {
+	if problem, ok := errors.AsType[*Error](err); ok {
 		return problem
 	}
 	if errors.Is(err, backup.ErrRepoLocked) {

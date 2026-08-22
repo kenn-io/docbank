@@ -232,8 +232,7 @@ func validateWebUploadDestination(ctx context.Context, d Deps, parentID int64) *
 		return NewError(http.StatusNotFound, "not_found",
 			"upload destination does not exist")
 	case err != nil:
-		var problem *Error
-		if errors.As(FromStoreError(err), &problem) {
+		if problem, ok := errors.AsType[*Error](FromStoreError(err)); ok {
 			return problem
 		}
 		return NewError(http.StatusInternalServerError, "internal",

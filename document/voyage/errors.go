@@ -84,8 +84,7 @@ func RetryAfter(err error) (time.Duration, bool) {
 // MetricsFromError recovers provider request accounting from an embedding
 // error.
 func MetricsFromError(err error) RequestMetrics {
-	var providerErr *ProviderError
-	if errors.As(err, &providerErr) {
+	if providerErr, ok := errors.AsType[*ProviderError](err); ok {
 		return providerErr.Metrics
 	}
 	return RequestMetrics{}

@@ -130,8 +130,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request, d Deps, g *gate) {
 						"%w: upload contains more than one multipart part", errInvalidUploadEnvelope,
 					), prepared.Discard())
 				}
-				var maxBytesErr *http.MaxBytesError
-				if errors.As(nextErr, &maxBytesErr) {
+				if _, ok := errors.AsType[*http.MaxBytesError](nextErr); ok {
 					return errors.Join(
 						fmt.Errorf("upload multipart body exceeded limit: %w", nextErr),
 						prepared.Discard(),
@@ -161,8 +160,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request, d Deps, g *gate) {
 }
 
 func uploadMultipartReadError(err error, detail string) *Error {
-	var maxBytesErr *http.MaxBytesError
-	if errors.As(err, &maxBytesErr) {
+	if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 		return NewError(http.StatusRequestEntityTooLarge, "too_large", detail+": "+err.Error())
 	}
 	return NewError(http.StatusUnprocessableEntity, "validation", detail+": "+err.Error())

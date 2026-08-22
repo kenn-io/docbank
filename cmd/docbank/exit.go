@@ -47,8 +47,7 @@ func commandExitCode(err error, started bool) int {
 	if err == nil {
 		return exitSuccess
 	}
-	var classified *exitError
-	if errors.As(err, &classified) {
+	if classified, ok := errors.AsType[*exitError](err); ok {
 		return classified.code
 	}
 	if errors.Is(err, client.ErrIntegrity) {
