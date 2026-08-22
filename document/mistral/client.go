@@ -85,8 +85,7 @@ func (e *processError) Unwrap() error { return e.err }
 
 // MetricsFromError recovers provider request accounting from a Process error.
 func MetricsFromError(err error) RequestMetrics {
-	var processErr *processError
-	if errors.As(err, &processErr) {
+	if processErr, ok := errors.AsType[*processError](err); ok {
 		return processErr.metrics
 	}
 	return RequestMetrics{}

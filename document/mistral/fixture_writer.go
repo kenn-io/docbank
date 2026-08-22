@@ -328,8 +328,10 @@ func zipFixture(entries []zipEntry) ([]byte, bool, error) {
 	writer := zip.NewWriter(&output)
 	for _, entry := range entries {
 		header := &zip.FileHeader{
-			Name:         entry.name,
-			Method:       zip.Store,
+			Name:   entry.name,
+			Method: zip.Store,
+			// CreateRaw deliberately owns the DOS timestamp bytes; using Modified
+			// adds an extended timestamp and changes the published fixture digests.
 			ModifiedDate: zipEpochDate,
 		}
 		value := []byte(entry.value)

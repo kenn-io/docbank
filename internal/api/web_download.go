@@ -385,8 +385,7 @@ func mustDecodeHash(hash string) []byte {
 }
 
 func webDownloadProblem(err error) *Error {
-	var problem *Error
-	if errors.As(FromStoreError(err), &problem) {
+	if problem, ok := errors.AsType[*Error](FromStoreError(err)); ok {
 		return problem
 	}
 	return NewError(http.StatusInternalServerError, "internal", err.Error())
