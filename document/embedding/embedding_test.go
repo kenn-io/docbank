@@ -77,6 +77,11 @@ func TestCombinedRecipeBuildsDeterministicBoundedPlan(t *testing.T) {
 	repeated, err := embedding.BuildEmbeddingPlan(normalized, contextValue, recipe, &distillate)
 	require.NoError(t, err)
 	assert.Equal(t, plan, repeated)
+
+	partial := normalized
+	partial.Chunks = append([]document.Chunk(nil), normalized.Chunks[:len(normalized.Chunks)-1]...)
+	_, err = embedding.PrepareDistillation(partial, contextValue, recipe)
+	assert.ErrorContains(t, err, "checksum")
 }
 
 func TestDistillateRequiresCompleteOrderedCoverage(t *testing.T) {
@@ -124,7 +129,7 @@ func TestEgressFingerprintSeparatesPurposeAndDestination(t *testing.T) {
 	require.NoError(t, err)
 	canonical, err := (embedding.EgressIdentity{
 		Purpose: embedding.EgressDocumentEmbedding, Provider: "synthetic",
-		Endpoint: "https://example.com/v1", Model: "embed-1", ModelRevision: "2026-08",
+		Endpoint: "https://example.com/v1/", Model: "embed-1", ModelRevision: "2026-08",
 	}).Fingerprint()
 	require.NoError(t, err)
 	assert.Equal(t, first, canonical)
@@ -140,6 +145,26 @@ func TestEgressFingerprintSeparatesPurposeAndDestination(t *testing.T) {
 	redirectedFingerprint, err := redirected.Fingerprint()
 	require.NoError(t, err)
 	assert.NotEqual(t, first, redirectedFingerprint)
+
+	escaped := base
+	escaped.Endpoint = "https://example.com/tenant%2Fprivate"
+	escapedFingerprint, err := escaped.Fingerprint()
+	require.NoError(t, err)
+	literal := base
+	literal.Endpoint = "https://example.com/tenant/private"
+	literalFingerprint, err := literal.Fingerprint()
+	require.NoError(t, err)
+	assert.NotEqual(t, escapedFingerprint, literalFingerprint)
+
+	encodedDots := base
+	encodedDots.Endpoint = "https://example.com/a/%2e%2e/private"
+	encodedDotsFingerprint, err := encodedDots.Fingerprint()
+	require.NoError(t, err)
+	cleaned := base
+	cleaned.Endpoint = "https://example.com/private"
+	cleanedFingerprint, err := cleaned.Fingerprint()
+	require.NoError(t, err)
+	assert.NotEqual(t, encodedDotsFingerprint, cleanedFingerprint)
 
 	space := embedding.VectorSpaceIdentity{
 		Provider: "synthetic", Model: "embed-1", ModelRevision: "2026-08",

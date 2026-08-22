@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -107,6 +108,93 @@ func NormalizeDocument(source SourceDocument, policy NormalizePolicy) (Normalize
 	}
 	result.Checksum = checksumStrings(checksumParts...)
 	return result, nil
+}
+
+// ValidateNormalizedDocument verifies that a normalized document is a
+// structurally complete, internally consistent version-2 normalization
+// result. It detects stale identities after callers deserialize or copy the
+// public evidence structs.
+func ValidateNormalizedDocument(normalized NormalizedDocument) error {
+	if normalized.PolicyVersion != normalizationPolicyVersion || normalized.Family == "" ||
+		normalized.UnitKind == "" || len(normalized.Units) == 0 {
+		return errors.New("normalized document identity is incomplete")
+	}
+	anyTruncated := false
+	checksumParts := []string{fmt.Sprintf("v%d", normalized.PolicyVersion), normalized.Family, normalized.UnitKind}
+	for index, unit := range normalized.Units {
+		if err := validateNormalizedUnit(normalized.UnitKind, index, unit); err != nil {
+			return err
+		}
+		checksumParts = append(checksumParts, unit.Checksum)
+		anyTruncated = anyTruncated || unit.Truncated
+	}
+	for index, chunk := range normalized.Chunks {
+		if err := validateNormalizedChunk(normalized, index, chunk); err != nil {
+			return err
+		}
+		checksumParts = append(checksumParts, chunk.Checksum)
+		anyTruncated = anyTruncated || chunk.Truncated
+	}
+	if normalized.Checksum != checksumStrings(checksumParts...) {
+		return errors.New("normalized document checksum is invalid")
+	}
+	if anyTruncated && !normalized.Truncated {
+		return errors.New("normalized document truncation state is invalid")
+	}
+	return nil
+}
+
+func validateNormalizedUnit(unitKind string, index int, unit NormalizedUnit) error {
+	expectedKey := fmt.Sprintf("%s:%06d", unitKind, index)
+	if unit.Index != index || unit.SourceKey != expectedKey || unit.Kind != unitKind ||
+		!utf8.ValidString(unit.Text) || !utf8.ValidString(unit.Header) || !utf8.ValidString(unit.Footer) ||
+		unit.CharCount != utf8.RuneCountInString(unit.Text) {
+		return fmt.Errorf("normalized document unit %d is invalid", index)
+	}
+	if unit.Dimensions.DPI < 0 || unit.Dimensions.Height < 0 || unit.Dimensions.Width < 0 ||
+		unit.Dimensions.DPI > 100_000 || unit.Dimensions.Height > 10_000_000 || unit.Dimensions.Width > 10_000_000 {
+		return fmt.Errorf("normalized document unit %d has invalid dimensions", index)
+	}
+	previousOffset := -1
+	for _, mark := range unit.HeadingMarks {
+		if mark.CharOffset <= previousOffset || mark.CharOffset < 0 || mark.CharOffset >= unit.CharCount || len(mark.Path) == 0 {
+			return fmt.Errorf("normalized document unit %d has invalid heading marks", index)
+		}
+		if slices.Contains(mark.Path, "") {
+			return fmt.Errorf("normalized document unit %d has invalid heading marks", index)
+		}
+		previousOffset = mark.CharOffset
+	}
+	if unit.Checksum != checksumStrings(unit.SourceKey, unit.Text, unit.Header, unit.Footer) {
+		return fmt.Errorf("normalized document unit %d checksum is invalid", index)
+	}
+	return nil
+}
+
+func validateNormalizedChunk(normalized NormalizedDocument, index int, chunk Chunk) error {
+	if chunk.Ordinal != index || chunk.Text == "" || !utf8.ValidString(chunk.Text) ||
+		chunk.CharCount != utf8.RuneCountInString(chunk.Text) || len(chunk.Spans) != 1 {
+		return fmt.Errorf("normalized document chunk %d is invalid", index)
+	}
+	span := chunk.Spans[0]
+	if span.UnitIndex < 0 || span.UnitIndex >= len(normalized.Units) || span.CharStart < 0 || span.CharEnd <= span.CharStart {
+		return fmt.Errorf("normalized document chunk %d has an invalid source span", index)
+	}
+	unit := normalized.Units[span.UnitIndex]
+	unitRunes := []rune(unit.Text)
+	if span.CharEnd > len(unitRunes) || string(unitRunes[span.CharStart:span.CharEnd]) != chunk.Text {
+		return fmt.Errorf("normalized document chunk %d does not match its source span", index)
+	}
+	expectedKey := fmt.Sprintf("%s:%06d-%06d", unit.SourceKey, span.CharStart, span.CharEnd)
+	expectedHeadingPath := headingPathAt(unit.HeadingMarks, span.CharStart)
+	if chunk.Key != expectedKey || !slices.Equal(chunk.HeadingPath, expectedHeadingPath) || chunk.Truncated != unit.Truncated {
+		return fmt.Errorf("normalized document chunk %d identity is invalid", index)
+	}
+	expectedChecksum := checksumStrings(chunk.Key, chunk.Text, strings.Join(chunk.HeadingPath, "\x00"))
+	if chunk.Checksum != expectedChecksum {
+		return fmt.Errorf("normalized document chunk %d checksum is invalid", index)
+	}
+	return nil
 }
 
 func validateSourceUnits(units []SourceUnit) error {

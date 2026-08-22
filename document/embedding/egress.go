@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"path"
 	"strings"
 )
 
@@ -106,10 +105,5 @@ func canonicalEndpoint(raw string) (string, error) {
 	}
 	parsed.Scheme = strings.ToLower(parsed.Scheme)
 	parsed.Host = strings.ToLower(parsed.Host)
-	parsed.RawPath = ""
-	parsed.Path = path.Clean("/" + strings.TrimPrefix(parsed.Path, "/"))
-	if parsed.Path == "/" {
-		parsed.Path = ""
-	}
-	return strings.TrimSuffix(parsed.String(), "/"), nil
+	return parsed.String(), nil
 }

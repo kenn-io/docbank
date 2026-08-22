@@ -38,6 +38,7 @@ func TestPublicSourceEvidenceAndPolicy(t *testing.T) {
 
 	normalized, err := document.NormalizeDocument(source, policy)
 	require.NoError(t, err)
+	require.NoError(t, document.ValidateNormalizedDocument(normalized))
 	require.Len(t, normalized.Units, 1)
 	require.NotEmpty(t, normalized.Units[0].HeadingMarks)
 	require.NotEmpty(t, normalized.Chunks)
@@ -45,4 +46,14 @@ func TestPublicSourceEvidenceAndPolicy(t *testing.T) {
 	assert.Equal(t, "Synthetic report", normalized.Units[0].HeadingMarks[0].Path[0])
 	assert.Equal(t, 0, normalized.Chunks[0].Ordinal)
 	assert.Equal(t, 0, normalized.Chunks[0].Spans[0].UnitIndex)
+
+	stale := normalized
+	stale.Chunks = append([]document.Chunk(nil), normalized.Chunks...)
+	stale.Chunks[0].Text = "altered normalized evidence"
+	stale.Chunks[0].CharCount = len([]rune(stale.Chunks[0].Text))
+	require.Error(t, document.ValidateNormalizedDocument(stale))
+
+	partial := normalized
+	partial.Chunks = nil
+	assert.ErrorContains(t, document.ValidateNormalizedDocument(partial), "checksum")
 }

@@ -245,21 +245,11 @@ func embeddingPlanFingerprint(plan EmbeddingPlan) (string, error) {
 }
 
 func validateNormalizedDocument(normalized document.NormalizedDocument) error {
-	if normalized.Checksum == "" || normalized.PolicyVersion < 1 || len(normalized.Chunks) == 0 {
-		return errors.New("normalized document is incomplete or has no chunks")
+	if err := document.ValidateNormalizedDocument(normalized); err != nil {
+		return fmt.Errorf("validate normalized document: %w", err)
 	}
-	keys := make(map[string]bool, len(normalized.Chunks))
-	for index, chunk := range normalized.Chunks {
-		if chunk.Ordinal != index || chunk.Key == "" || chunk.Checksum == "" || chunk.Text == "" || !utf8.ValidString(chunk.Text) ||
-			chunk.CharCount != utf8.RuneCountInString(chunk.Text) || len(chunk.Spans) == 0 || keys[chunk.Key] {
-			return fmt.Errorf("normalized document chunk %d is invalid", index)
-		}
-		keys[chunk.Key] = true
-		for _, span := range chunk.Spans {
-			if span.UnitIndex < 0 || span.UnitIndex >= len(normalized.Units) || span.CharStart < 0 || span.CharEnd < span.CharStart || span.CharEnd > normalized.Units[span.UnitIndex].CharCount {
-				return fmt.Errorf("normalized document chunk %d has an invalid source span", index)
-			}
-		}
+	if len(normalized.Chunks) == 0 {
+		return errors.New("normalized document has no chunks")
 	}
 	return nil
 }
