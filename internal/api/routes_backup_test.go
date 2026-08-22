@@ -1,7 +1,9 @@
 package api_test
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -23,12 +25,12 @@ import (
 
 func decodeBackupEvents(t *testing.T, body string) []api.BackupCreateEvent {
 	t.Helper()
-	decoder := json.NewDecoder(strings.NewReader(body))
+	decoder := jsontext.NewDecoder(strings.NewReader(body))
 	var events []api.BackupCreateEvent
 	for {
 		var event api.BackupCreateEvent
-		err := decoder.Decode(&event)
-		if err == io.EOF {
+		err := json.UnmarshalDecode(decoder, &event)
+		if errors.Is(err, io.EOF) {
 			return events
 		}
 		require.NoError(t, err)
@@ -38,12 +40,12 @@ func decodeBackupEvents(t *testing.T, body string) []api.BackupCreateEvent {
 
 func decodeBackupVerifyEvents(t *testing.T, body string) []api.BackupVerifyEvent {
 	t.Helper()
-	decoder := json.NewDecoder(strings.NewReader(body))
+	decoder := jsontext.NewDecoder(strings.NewReader(body))
 	var events []api.BackupVerifyEvent
 	for {
 		var event api.BackupVerifyEvent
-		err := decoder.Decode(&event)
-		if err == io.EOF {
+		err := json.UnmarshalDecode(decoder, &event)
+		if errors.Is(err, io.EOF) {
 			return events
 		}
 		require.NoError(t, err)
@@ -53,12 +55,12 @@ func decodeBackupVerifyEvents(t *testing.T, body string) []api.BackupVerifyEvent
 
 func decodeBackupRestoreEvents(t *testing.T, body string) []api.BackupRestoreEvent {
 	t.Helper()
-	decoder := json.NewDecoder(strings.NewReader(body))
+	decoder := jsontext.NewDecoder(strings.NewReader(body))
 	var events []api.BackupRestoreEvent
 	for {
 		var event api.BackupRestoreEvent
-		err := decoder.Decode(&event)
-		if err == io.EOF {
+		err := json.UnmarshalDecode(decoder, &event)
+		if errors.Is(err, io.EOF) {
 			return events
 		}
 		require.NoError(t, err)

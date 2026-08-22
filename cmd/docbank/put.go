@@ -4,7 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -104,9 +105,8 @@ var putCmd = &cobra.Command{
 		}
 		uploadReader.finish()
 		if putJSON {
-			enc := json.NewEncoder(cmd.OutOrStdout())
-			enc.SetEscapeHTML(false)
-			if err := enc.Encode(receipt); err != nil {
+			enc := jsontext.NewEncoder(cmd.OutOrStdout())
+			if err := json.MarshalEncode(enc, receipt); err != nil {
 				return fmt.Errorf("writing replacement receipt: %w", err)
 			}
 			return nil

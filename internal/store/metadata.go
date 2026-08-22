@@ -5,7 +5,8 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -16,7 +17,6 @@ import (
 
 	"go.kenn.io/kit/packstore"
 
-	"go.kenn.io/docbank/internal/jsontext"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
@@ -178,9 +178,9 @@ type metadataExtractedText struct {
 }
 
 type metadataAuditRecord struct {
-	Type   string          `json:"type"`
-	Digest string          `json:"digest"`
-	Record json.RawMessage `json:"record"`
+	Type   string         `json:"type"`
+	Digest string         `json:"digest"`
+	Record jsontext.Value `json:"record"`
 }
 
 type metadataAuditAuthority struct {
@@ -317,10 +317,9 @@ type metadataWrite func(any) error
 // and exact projected-size calculations. Keeping both on this encoder prevents
 // previews from estimating a different wire representation than backups use.
 func newMetadataJSONWriter(w io.Writer) metadataWrite {
-	enc := json.NewEncoder(w)
-	enc.SetEscapeHTML(false)
+	enc := jsontext.NewEncoder(w)
 	return func(v any) error {
-		if err := enc.Encode(v); err != nil {
+		if err := json.MarshalEncode(enc, v, json.Deterministic(true)); err != nil {
 			return fmt.Errorf("encoding metadata: %w", err)
 		}
 		return nil
@@ -644,12 +643,9 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 }
 
 func importMetadataLines(ctx context.Context, tx *sql.Tx, r io.Reader) (metadataHeader, error) {
-	dec := json.NewDecoder(bufio.NewReader(r))
-	var rawHeader json.RawMessage
-	if err := dec.Decode(&rawHeader); err != nil {
-		return metadataHeader{}, fmt.Errorf("decoding metadata header: %w", err)
-	}
-	if err := validateMetadataJSON(rawHeader); err != nil {
+	dec := jsontext.NewDecoder(bufio.NewReader(r))
+	rawHeader, err := dec.ReadValue()
+	if err != nil {
 		return metadataHeader{}, fmt.Errorf("decoding metadata header: %w", err)
 	}
 	if err := requireMetadataFields(rawHeader, metadataHeaderFields, nil); err != nil {
@@ -668,15 +664,11 @@ func importMetadataLines(ctx context.Context, tx *sql.Tx, r io.Reader) (metadata
 		return metadataHeader{}, fmt.Errorf("invalid metadata vault_id: %w", err)
 	}
 	for record := 2; ; record++ {
-		var raw json.RawMessage
-		err := dec.Decode(&raw)
+		raw, err := dec.ReadValue()
 		if errors.Is(err, io.EOF) {
 			return header, nil
 		}
 		if err != nil {
-			return metadataHeader{}, fmt.Errorf("decoding metadata record %d: %w", record, err)
-		}
-		if err := validateMetadataJSON(raw); err != nil {
 			return metadataHeader{}, fmt.Errorf("decoding metadata record %d: %w", record, err)
 		}
 		var kind struct {
@@ -691,7 +683,7 @@ func importMetadataLines(ctx context.Context, tx *sql.Tx, r io.Reader) (metadata
 	}
 }
 
-func importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw json.RawMessage) error {
+func importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value) error {
 	required, ok := metadataRequiredFields[kind]
 	if !ok {
 		return fmt.Errorf("unknown record type %q", kind)
@@ -913,19 +905,11 @@ var metadataNullableFields = map[string]map[string]bool{
 	"extracted_text":       {"error": true, "text": true},
 }
 
-func decodeMetadataRecord(raw json.RawMessage, dst any) error {
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(dst); err != nil {
-		return err
-	}
-	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return errors.New("metadata record contains trailing JSON")
-	}
-	return nil
+func decodeMetadataRecord(raw jsontext.Value, dst any) error {
+	return json.Unmarshal(raw, dst, json.RejectUnknownMembers(true))
 }
 
-func requireMetadataFields(raw json.RawMessage, required []string, nullable map[string]bool) error {
+func requireMetadataFields(raw jsontext.Value, required []string, nullable map[string]bool) error {
 	fields, err := decodeMetadataFields(raw)
 	if err != nil {
 		return err
@@ -949,45 +933,15 @@ func requireMetadataFields(raw json.RawMessage, required []string, nullable map[
 	return nil
 }
 
-func decodeMetadataFields(raw json.RawMessage) (map[string]json.RawMessage, error) {
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	token, err := dec.Token()
-	if err != nil {
-		return nil, fmt.Errorf("decoding metadata fields: %w", err)
-	}
-	if delim, ok := token.(json.Delim); !ok || delim != '{' {
+func decodeMetadataFields(raw jsontext.Value) (map[string]jsontext.Value, error) {
+	if raw.Kind() != jsontext.KindBeginObject {
 		return nil, errors.New("metadata record must be a JSON object")
 	}
-	fields := make(map[string]json.RawMessage)
-	for dec.More() {
-		nameToken, err := dec.Token()
-		if err != nil {
-			return nil, fmt.Errorf("decoding metadata field name: %w", err)
-		}
-		name, ok := nameToken.(string)
-		if !ok {
-			return nil, errors.New("metadata field name is not a string")
-		}
-		if _, exists := fields[name]; exists {
-			return nil, fmt.Errorf("metadata record contains duplicate field %q", name)
-		}
-		var value json.RawMessage
-		if err := dec.Decode(&value); err != nil {
-			return nil, fmt.Errorf("decoding metadata field %q: %w", name, err)
-		}
-		fields[name] = value
-	}
-	if _, err := dec.Token(); err != nil {
-		return nil, fmt.Errorf("closing metadata object: %w", err)
-	}
-	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return nil, errors.New("metadata record contains trailing JSON")
+	fields := make(map[string]jsontext.Value)
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, fmt.Errorf("decoding metadata fields: %w", err)
 	}
 	return fields, nil
-}
-
-func validateMetadataJSON(raw json.RawMessage) error {
-	return jsontext.Validate(raw, "metadata JSON")
 }
 
 func validateUTF8Field(field, value string) error {

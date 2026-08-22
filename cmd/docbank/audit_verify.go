@@ -1,8 +1,7 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -12,7 +11,6 @@ import (
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/client"
-	"go.kenn.io/docbank/internal/jsontext"
 )
 
 var auditVerifyJSON bool
@@ -142,16 +140,8 @@ func readExpectedAuditEvidence(path string) (*api.AuditEvidence, error) {
 	if len(raw) > maxAuditEvidenceFileBytes {
 		return nil, fmt.Errorf("expected audit report exceeds %d bytes", maxAuditEvidenceFileBytes)
 	}
-	if err := jsontext.Validate(raw, "expected audit report"); err != nil {
-		return nil, err
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
 	var report api.AuditVerifyReport
-	if err := decoder.Decode(&report); err != nil {
-		return nil, fmt.Errorf("decoding expected audit report: %w", err)
-	}
-	if err := requireJSONEOF(decoder); err != nil {
+	if err := json.Unmarshal(raw, &report, json.RejectUnknownMembers(true)); err != nil {
 		return nil, fmt.Errorf("decoding expected audit report: %w", err)
 	}
 	if !report.Enabled || report.Evidence == nil || len(report.MetadataProblems) != 0 ||
@@ -165,18 +155,6 @@ func readExpectedAuditEvidence(path string) (*api.AuditEvidence, error) {
 		return nil, fmt.Errorf("invalid evidence in expected audit report: %w", err)
 	}
 	return report.Evidence, nil
-}
-
-func requireJSONEOF(decoder *json.Decoder) error {
-	var extra any
-	err := decoder.Decode(&extra)
-	if errors.Is(err, io.EOF) {
-		return nil
-	}
-	if err == nil {
-		return errors.New("multiple JSON values are not allowed")
-	}
-	return err
 }
 
 func init() {

@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -329,9 +329,9 @@ type wireInput struct {
 
 type wireContentPart struct {
 	Type        string `json:"type"`
-	Text        string `json:"text,omitempty"`
-	ImageBase64 string `json:"image_base64,omitempty"`
-	VideoBase64 string `json:"video_base64,omitempty"`
+	Text        string `json:"text,omitzero"`
+	ImageBase64 string `json:"image_base64,omitzero"`
+	VideoBase64 string `json:"video_base64,omitzero"`
 }
 
 type wireResponse struct {

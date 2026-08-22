@@ -35,21 +35,21 @@ type Metadata struct {
 	// MediaType is the canonical media type for Format.
 	MediaType string `json:"media_type"`
 	// DeclaredMediaType is the caller-declared media type, recorded verbatim.
-	DeclaredMediaType string `json:"declared_media_type,omitempty"`
+	DeclaredMediaType string `json:"declared_media_type,omitzero"`
 	// Size is the input length in bytes.
 	Size int64 `json:"size"`
 	// Width and Height are pixel dimensions.
 	Width  int64 `json:"width"`
 	Height int64 `json:"height"`
 	// FrameCount is the number of image frames; zero for video.
-	FrameCount int `json:"frame_count,omitempty"`
+	FrameCount int `json:"frame_count,omitzero"`
 	// DurationMS is the video duration in milliseconds when DurationKnown.
-	DurationMS int64 `json:"duration_ms,omitempty"`
+	DurationMS int64 `json:"duration_ms,omitzero"`
 	// DurationKnown reports that the container declared a measurable
 	// duration. Fragmented or header-only video leaves it false.
-	DurationKnown bool `json:"duration_known,omitempty"`
+	DurationKnown bool `json:"duration_known,omitzero"`
 	// Animated reports a multi-frame image.
-	Animated bool `json:"animated,omitempty"`
+	Animated bool `json:"animated,omitzero"`
 }
 
 // Pixels returns the total pixel count, zero when dimensions are unknown, or

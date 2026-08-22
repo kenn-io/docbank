@@ -2,7 +2,7 @@ package api_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -99,7 +99,7 @@ func TestBrowserJobListRedactsPrivateBackendErrors(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	var got api.JobList
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	require.NoError(t, json.UnmarshalRead(resp.Body, &got))
 	require.Len(t, got.Items, 1)
 	assert.NotEmpty(t, got.Items[0].Error)
 	assert.NotContains(t, got.Items[0].Error, "/Users/example")

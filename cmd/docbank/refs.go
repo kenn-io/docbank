@@ -1,7 +1,8 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"text/tabwriter"
@@ -45,9 +46,8 @@ var referencesCmd = &cobra.Command{
 			return err
 		}
 		if referencesJSON {
-			enc := json.NewEncoder(cmd.OutOrStdout())
-			enc.SetEscapeHTML(false)
-			if err := enc.Encode(page); err != nil {
+			enc := jsontext.NewEncoder(cmd.OutOrStdout())
+			if err := json.MarshalEncode(enc, page); err != nil {
 				return fmt.Errorf("writing content-reference JSON: %w", err)
 			}
 			return nil

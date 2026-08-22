@@ -4,7 +4,8 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -91,6 +92,18 @@ func NewServer(d Deps) *Server {
 
 	mux := http.NewServeMux()
 	cfg := huma.DefaultConfig("docbank", version.Version)
+	jsonFormat := huma.Format{
+		Marshal: func(w io.Writer, value any) error {
+			return json.MarshalWrite(w, value)
+		},
+		Unmarshal: func(data []byte, value any) error {
+			return json.Unmarshal(data, value)
+		},
+	}
+	cfg.Formats = map[string]huma.Format{
+		"application/json": jsonFormat,
+		"json":             jsonFormat,
+	}
 	// Every /api/v1 operation sits behind authMiddleware; the document-level
 	// security requirement tells generated clients that credentials are
 	// mandatory (either header form works, see the middleware).
@@ -142,10 +155,6 @@ func NewServer(d Deps) *Server {
 	registerWebDownload(mux, d.Cfg.Web.Enabled, d, s.webDownloads)
 
 	h := http.Handler(mux)
-	// Authenticate and enforce route topology before buffering small JSON
-	// envelopes, then validate their raw text before Huma's encoding/json
-	// decoder can perform lossy Unicode replacement.
-	h = jsonBodyTextMiddleware(h)
 	h = authMiddleware(h, d.Cfg.Server.APIKey, s.webSessions)
 	h = loopbackMiddleware(h)
 	h = timeoutMiddleware(h)
@@ -283,5 +292,5 @@ func (s *Server) registerShutdown(mux *http.ServeMux) {
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v) //nolint:errchkjson // see above
+	_ = json.MarshalWrite(w, v)
 }

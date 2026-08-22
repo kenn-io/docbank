@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"io"
 	"net/http"
 	"strings"
@@ -37,7 +37,7 @@ func TestBrowserUploadUsesAuthenticatedPinnedChannel(t *testing.T) {
 	var session struct {
 		Token string `json:"token"`
 	}
-	require.NoError(t, json.NewDecoder(response.Body).Decode(&session))
+	require.NoError(t, json.UnmarshalRead(response.Body, &session))
 	require.NoError(t, response.Body.Close())
 
 	socketURL := "ws" + strings.TrimPrefix(ts.URL, "http") +
@@ -153,7 +153,7 @@ func TestServerShutdownDrainsActiveBrowserUpload(t *testing.T) {
 	var session struct {
 		Token string `json:"token"`
 	}
-	require.NoError(t, json.NewDecoder(response.Body).Decode(&session))
+	require.NoError(t, json.UnmarshalRead(response.Body, &session))
 	require.NoError(t, response.Body.Close())
 
 	conn, response, err := websocket.Dial(

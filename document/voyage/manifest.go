@@ -1,9 +1,9 @@
 package voyage
 
 import (
-	"bytes"
 	"crypto/sha256"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -70,7 +70,7 @@ type CapabilityManifest struct {
 type CapabilityResult struct {
 	CapabilityID       string      `json:"capability_id"`
 	Status             ProbeStatus `json:"status"`
-	ReasonCode         string      `json:"reason_code,omitempty"`
+	ReasonCode         string      `json:"reason_code,omitzero"`
 	FixtureDigest      string      `json:"fixture_digest"`
 	RequestFingerprint string      `json:"request_fingerprint"`
 	TotalTokens        *int64      `json:"total_tokens,omitempty"`
@@ -145,10 +145,8 @@ func EncodeCapabilityManifest(writer io.Writer, manifest CapabilityManifest) err
 	if err := manifest.ValidateComplete(); err != nil {
 		return err
 	}
-	encoder := json.NewEncoder(writer)
-	encoder.SetIndent("", "  ")
-	encoder.SetEscapeHTML(true)
-	if err := encoder.Encode(manifest); err != nil {
+	encoder := jsontext.NewEncoder(writer, jsontext.WithIndent("  "), jsontext.EscapeForHTML(true))
+	if err := json.MarshalEncode(encoder, manifest); err != nil {
 		return fmt.Errorf("encode Voyage capability manifest: %w", err)
 	}
 	return nil
@@ -166,14 +164,9 @@ func DecodeCapabilityManifest(reader io.Reader) (CapabilityManifest, error) {
 	if err := manifestjson.RejectDuplicateKeys(data, "voyage capability manifest"); err != nil {
 		return CapabilityManifest{}, fmt.Errorf("decode Voyage capability manifest: %w", err)
 	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	var manifest CapabilityManifest
-	if err := decoder.Decode(&manifest); err != nil {
+	if err := json.Unmarshal(data, &manifest, json.RejectUnknownMembers(true)); err != nil {
 		return CapabilityManifest{}, fmt.Errorf("decode Voyage capability manifest: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return CapabilityManifest{}, errors.New("voyage capability manifest has trailing JSON")
 	}
 	if err := manifest.ValidateComplete(); err != nil {
 		return CapabilityManifest{}, err

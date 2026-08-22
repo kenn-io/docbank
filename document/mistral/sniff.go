@@ -5,7 +5,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/csv"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -969,12 +969,12 @@ func detectTextFormat(content []byte, mediaType string) (CandidateFormat, error)
 	trimmed := bytes.TrimSpace(content)
 	switch candidate.ID {
 	case "json":
-		if len(trimmed) == 0 || !json.Valid(trimmed) {
+		if len(trimmed) == 0 || !jsontext.Value(trimmed).IsValid() {
 			return CandidateFormat{}, errors.New("declared JSON document is invalid")
 		}
 	case "jsonl":
 		for line := range bytes.SplitSeq(trimmed, []byte{'\n'}) {
-			if len(bytes.TrimSpace(line)) > 0 && !json.Valid(bytes.TrimSpace(line)) {
+			if len(bytes.TrimSpace(line)) > 0 && !jsontext.Value(bytes.TrimSpace(line)).IsValid() {
 				return CandidateFormat{}, errors.New("declared JSONL document is invalid")
 			}
 		}

@@ -9,7 +9,8 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -30,7 +31,6 @@ import (
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/home"
-	"go.kenn.io/docbank/internal/jsontext"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -358,7 +358,7 @@ func (c *Client) doWithHeaders(
 		_, _ = io.Copy(io.Discard, resp.Body)
 		return resp.Header.Clone(), nil
 	}
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+	if err := json.UnmarshalRead(resp.Body, out); err != nil {
 		return nil, &responseDecodeError{err: fmt.Errorf(
 			"decoding %s %s response: %w", method, path, err,
 		)}
@@ -366,22 +366,10 @@ func (c *Client) doWithHeaders(
 	return resp.Header.Clone(), nil
 }
 
-// marshalJSONRequest preserves every Go string before encoding/json can
-// replace invalid UTF-8 with U+FFFD. The post-marshal check also keeps custom
-// encoders from introducing malformed surrogate escapes. All typed JSON
-// request paths, including streaming operations, go through this boundary.
+// marshalJSONRequest is the shared JSON v2 boundary for typed request bodies,
+// including streaming operations.
 func marshalJSONRequest(in any) ([]byte, error) {
-	if err := jsontext.ValidateValue(in, "JSON request"); err != nil {
-		return nil, err
-	}
-	body, err := json.Marshal(in)
-	if err != nil {
-		return nil, err
-	}
-	if err := jsontext.Validate(body, "JSON request"); err != nil {
-		return nil, err
-	}
-	return body, nil
+	return json.Marshal(in)
 }
 
 func ifMatch(rev int64) map[string]string {
@@ -2056,11 +2044,11 @@ func (c *Client) IngestStream(
 		return api.IngestReport{}, decodeError(resp)
 	}
 
-	decoder := json.NewDecoder(resp.Body)
+	decoder := jsontext.NewDecoder(resp.Body)
 	var result *api.IngestReport
 	for {
 		var event api.IngestEvent
-		if err := decoder.Decode(&event); err != nil {
+		if err := json.UnmarshalDecode(decoder, &event); err != nil {
 			if errors.Is(err, io.EOF) {
 				if result == nil {
 					return api.IngestReport{}, errors.New("ingest progress stream ended without a result")
@@ -2195,7 +2183,7 @@ func (c *Client) Upload(
 	if writerErr != nil {
 		return receipt, fmt.Errorf("streaming upload %q: %w", name, writerErr)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&receipt); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &receipt); err != nil {
 		return receipt, fmt.Errorf("decoding upload response: %w", err)
 	}
 	return receipt, nil
@@ -2257,7 +2245,7 @@ func (c *Client) ReplaceContent(
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return receipt, decodeError(resp)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&receipt); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &receipt); err != nil {
 		return receipt, fmt.Errorf("decoding content replacement response: %w", err)
 	}
 	if err := validateReplacementReceipt(
@@ -2346,7 +2334,7 @@ func (c *Client) RevertContent(
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return receipt, decodeError(resp)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&receipt); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &receipt); err != nil {
 		return receipt, fmt.Errorf("decoding content reversion response: %w", err)
 	}
 	if err := validateReversionReceipt(
@@ -2765,11 +2753,11 @@ func (c *Client) BackupCreateStream(
 		return api.BackupSnapshot{}, decodeError(resp)
 	}
 
-	decoder := json.NewDecoder(resp.Body)
+	decoder := jsontext.NewDecoder(resp.Body)
 	var result *api.BackupSnapshot
 	for {
 		var event api.BackupCreateEvent
-		if err := decoder.Decode(&event); err != nil {
+		if err := json.UnmarshalDecode(decoder, &event); err != nil {
 			if errors.Is(err, io.EOF) {
 				if result == nil {
 					return api.BackupSnapshot{}, errors.New(
@@ -2893,11 +2881,11 @@ func (c *Client) BackupVerifyStream(
 		return api.BackupVerifyReport{}, decodeError(resp)
 	}
 
-	decoder := json.NewDecoder(resp.Body)
+	decoder := jsontext.NewDecoder(resp.Body)
 	var result *api.BackupVerifyReport
 	for {
 		var event api.BackupVerifyEvent
-		if err := decoder.Decode(&event); err != nil {
+		if err := json.UnmarshalDecode(decoder, &event); err != nil {
 			if errors.Is(err, io.EOF) {
 				if result == nil {
 					return api.BackupVerifyReport{}, errors.New(
@@ -2997,11 +2985,11 @@ func (c *Client) BackupRestoreStream(
 		return api.BackupRestoreReport{}, decodeError(resp)
 	}
 
-	decoder := json.NewDecoder(resp.Body)
+	decoder := jsontext.NewDecoder(resp.Body)
 	var result *api.BackupRestoreReport
 	for {
 		var event api.BackupRestoreEvent
-		if err := decoder.Decode(&event); err != nil {
+		if err := json.UnmarshalDecode(decoder, &event); err != nil {
 			if errors.Is(err, io.EOF) {
 				if result == nil {
 					return api.BackupRestoreReport{}, errors.New(

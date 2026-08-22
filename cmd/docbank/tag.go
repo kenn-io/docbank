@@ -1,7 +1,8 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -335,9 +336,8 @@ func writeTag(w io.Writer, tag api.Tag) error {
 }
 
 func writeTagJSON(w io.Writer, value any) error {
-	enc := json.NewEncoder(w)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(value); err != nil {
+	enc := jsontext.NewEncoder(w)
+	if err := json.MarshalEncode(enc, value); err != nil {
 		return fmt.Errorf("writing tag JSON: %w", err)
 	}
 	return nil

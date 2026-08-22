@@ -4,7 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"os"
@@ -75,8 +76,8 @@ func (rawMetadataSnapshot) ContentInfo(context.Context) (*backup.ContentInfo, er
 	return &backup.ContentInfo{}, nil
 }
 
-func (rawMetadataSnapshot) Stats(context.Context) (json.RawMessage, error) {
-	return json.RawMessage(`{}`), nil
+func (rawMetadataSnapshot) Stats(context.Context) (jsontext.Value, error) {
+	return jsontext.Value(`{}`), nil
 }
 
 func (rawMetadataSnapshot) Close() error { return nil }

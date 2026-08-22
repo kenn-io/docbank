@@ -1,7 +1,8 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"time"
@@ -77,9 +78,8 @@ var daemonStatusCmd = &cobra.Command{
 				out["version"] = info.Version
 				out["started_at"] = rec.StartedAt.Format(time.RFC3339)
 			}
-			enc := json.NewEncoder(cmd.OutOrStdout())
-			enc.SetIndent("", "  ")
-			return enc.Encode(out)
+			enc := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
+			return json.MarshalEncode(enc, out)
 		}
 		if !ok {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "daemon not running")

@@ -13,12 +13,15 @@ Key assumptions reviewers MUST account for:
    against the go.mod language version before flagging (see 2), and
    prefer flagging logic over legality.
 
-2. GO VERSION: go.mod pins Go 1.26+. Go 1.26 added value-form `new(v)`,
+2. GO VERSION: go.mod pins Go 1.27+. Go 1.26 added value-form `new(v)`,
    which returns `*T` pointing to v — e.g. `new("clean")` is valid and
    yields a `*string`. DO NOT flag value-form `new` calls as "new
    requires a type" compile errors; that was true through 1.25 only.
+   Go 1.27 permits methods to declare type parameters, promoted field
+   selectors as struct-literal keys, and generic function inference in
+   every assignment context. Accept those forms when reviewing this tree.
    Likewise, `go build -o dist/docbank` creates missing parent
-   directories on this toolchain (verified on the Go 1.26 line;
+   directories on this toolchain (verified on the Go 1.27 line;
    CI pins that line via go-version-file) — do not flag a missing
    `mkdir -p dist` in the release workflow.
 

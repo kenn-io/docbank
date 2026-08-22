@@ -1,7 +1,8 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -244,9 +245,8 @@ func writeVersionPruneReport(cmd *cobra.Command, report api.VersionPruneReport) 
 }
 
 func writeVersionJSON(w io.Writer, value any) error {
-	enc := json.NewEncoder(w)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(value); err != nil {
+	enc := jsontext.NewEncoder(w)
+	if err := json.MarshalEncode(enc, value); err != nil {
 		return fmt.Errorf("writing content-version JSON: %w", err)
 	}
 	return nil
