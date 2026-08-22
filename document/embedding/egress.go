@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
 )
@@ -104,7 +105,11 @@ func canonicalEndpoint(raw string) (string, error) {
 		return "", errors.New("embedding egress endpoint cannot contain credentials, query, or fragment")
 	}
 	parsed.Scheme = strings.ToLower(parsed.Scheme)
-	parsed.Host = strings.ToLower(parsed.Host)
+	hostname := parsed.Hostname()
+	address, _, _ := strings.Cut(hostname, "%")
+	if net.ParseIP(address) == nil {
+		parsed.Host = strings.Replace(parsed.Host, hostname, strings.ToLower(hostname), 1)
+	}
 	if parsed.RawPath == "" && parsed.Path == "/" {
 		parsed.Path = ""
 	}

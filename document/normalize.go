@@ -99,19 +99,12 @@ func NormalizeDocument(source SourceDocument, policy NormalizePolicy) (Normalize
 	chunks, chunksTruncated := chunkNormalizedUnits(result.Units, policy)
 	result.Chunks = chunks
 	result.Truncated = result.Truncated || chunksTruncated
-	checksumParts := []string{fmt.Sprintf("v%d", result.PolicyVersion), result.Family, result.UnitKind}
-	for _, unit := range result.Units {
-		checksumParts = append(checksumParts, unit.Checksum)
-	}
-	for _, chunk := range result.Chunks {
-		checksumParts = append(checksumParts, chunk.Checksum)
-	}
-	result.Checksum = checksumStrings(checksumParts...)
+	result.Checksum = checksumNormalizedDocument(result)
 	return result, nil
 }
 
 // ValidateNormalizedDocument verifies that a normalized document is a
-// structurally complete, internally consistent version-2 normalization
+// structurally complete, internally consistent version-3 normalization
 // result. It detects stale identities after callers deserialize or copy the
 // public evidence structs.
 func ValidateNormalizedDocument(normalized NormalizedDocument) error {
@@ -120,28 +113,39 @@ func ValidateNormalizedDocument(normalized NormalizedDocument) error {
 		return errors.New("normalized document identity is incomplete")
 	}
 	anyTruncated := false
-	checksumParts := []string{fmt.Sprintf("v%d", normalized.PolicyVersion), normalized.Family, normalized.UnitKind}
 	for index, unit := range normalized.Units {
 		if err := validateNormalizedUnit(normalized.UnitKind, index, unit); err != nil {
 			return err
 		}
-		checksumParts = append(checksumParts, unit.Checksum)
 		anyTruncated = anyTruncated || unit.Truncated
 	}
 	for index, chunk := range normalized.Chunks {
 		if err := validateNormalizedChunk(normalized, index, chunk); err != nil {
 			return err
 		}
-		checksumParts = append(checksumParts, chunk.Checksum)
 		anyTruncated = anyTruncated || chunk.Truncated
 	}
-	if normalized.Checksum != checksumStrings(checksumParts...) {
+	if normalized.Checksum != checksumNormalizedDocument(normalized) {
 		return errors.New("normalized document checksum is invalid")
 	}
 	if anyTruncated && !normalized.Truncated {
 		return errors.New("normalized document truncation state is invalid")
 	}
 	return nil
+}
+
+func checksumNormalizedDocument(normalized NormalizedDocument) string {
+	checksumParts := []string{
+		fmt.Sprintf("v%d", normalized.PolicyVersion), normalized.Family, normalized.UnitKind,
+		fmt.Sprintf("truncated:%t", normalized.Truncated),
+	}
+	for _, unit := range normalized.Units {
+		checksumParts = append(checksumParts, unit.Checksum)
+	}
+	for _, chunk := range normalized.Chunks {
+		checksumParts = append(checksumParts, chunk.Checksum)
+	}
+	return checksumStrings(checksumParts...)
 }
 
 func validateNormalizedUnit(unitKind string, index int, unit NormalizedUnit) error {

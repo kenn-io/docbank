@@ -75,6 +75,26 @@ func TestNormalizeDocumentRejectsZeroPolicy(t *testing.T) {
 	require.ErrorContains(t, err, "use NewNormalizePolicy")
 }
 
+func TestNormalizeDocumentChecksumIncludesDocumentTruncation(t *testing.T) {
+	policy := testNormalizePolicy(t, 3)
+	complete, err := NormalizeDocument(SourceDocument{
+		Family: "text", UnitKind: "section",
+		Units: []SourceUnit{{Index: 0, Markdown: "one"}},
+	}, policy)
+	require.NoError(t, err)
+	truncated, err := NormalizeDocument(SourceDocument{
+		Family: "text", UnitKind: "section",
+		Units: []SourceUnit{{Index: 0, Markdown: "one"}, {Index: 1, Markdown: "two"}},
+	}, policy)
+	require.NoError(t, err)
+
+	assert.False(t, complete.Truncated)
+	assert.True(t, truncated.Truncated)
+	assert.Equal(t, complete.Units, truncated.Units)
+	assert.Equal(t, complete.Chunks, truncated.Chunks)
+	assert.NotEqual(t, complete.Checksum, truncated.Checksum)
+}
+
 func TestNormalizeDocumentPublishesHeaderAndFooterOnlyEvidence(t *testing.T) {
 	source := SourceDocument{Family: "pdf", UnitKind: "page", Units: []SourceUnit{{
 		Index: 0, Header: "Confidential **shipment**", Footer: "Dock 7",

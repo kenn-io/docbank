@@ -16,7 +16,7 @@ type normalizationCompatibilityCase struct {
 	Expected         NormalizedDocument `json:"expected"`
 }
 
-func TestNormalizeDocumentMatchesMsgvaultBaseline(t *testing.T) {
+func TestNormalizeDocumentVersionThreePreservesVersionTwoEvidence(t *testing.T) {
 	bundle, _, err := compattest.Load()
 	require.NoError(t, err)
 	section, ok := bundle.Sections["normalization_v2"]
@@ -35,7 +35,14 @@ func TestNormalizeDocumentMatchesMsgvaultBaseline(t *testing.T) {
 			require.NoError(t, err)
 			actual, err := NormalizeDocument(testCase.Source, policy)
 			require.NoError(t, err)
-			assert.Equal(t, testCase.Expected, actual)
+			require.NoError(t, ValidateNormalizedDocument(actual))
+			assert.Equal(t, 3, actual.PolicyVersion)
+			assert.Equal(t, testCase.Expected.Family, actual.Family)
+			assert.Equal(t, testCase.Expected.UnitKind, actual.UnitKind)
+			assert.Equal(t, testCase.Expected.Units, actual.Units)
+			assert.Equal(t, testCase.Expected.Chunks, actual.Chunks)
+			assert.Equal(t, testCase.Expected.Truncated, actual.Truncated)
+			assert.NotEqual(t, testCase.Expected.Checksum, actual.Checksum)
 		})
 	}
 }

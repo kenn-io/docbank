@@ -181,6 +181,16 @@ func TestEgressFingerprintSeparatesPurposeAndDestination(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, rootFingerprint, escapedRootFingerprint)
 
+	upperZone := base
+	upperZone.Endpoint = "http://[fe80::1%25ETH0]/v1"
+	upperZoneFingerprint, err := upperZone.Fingerprint()
+	require.NoError(t, err)
+	lowerZone := base
+	lowerZone.Endpoint = "http://[fe80::1%25eth0]/v1"
+	lowerZoneFingerprint, err := lowerZone.Fingerprint()
+	require.NoError(t, err)
+	assert.NotEqual(t, upperZoneFingerprint, lowerZoneFingerprint)
+
 	space := embedding.VectorSpaceIdentity{
 		Provider: "synthetic", Model: "embed-1", ModelRevision: "2026-08",
 		Dimension: 1_024, Normalization: "unit-length",

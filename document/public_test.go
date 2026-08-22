@@ -11,7 +11,7 @@ import (
 func TestPublicSourceEvidenceAndPolicy(t *testing.T) {
 	policy, err := document.NewNormalizePolicy(25_000_000)
 	require.NoError(t, err)
-	assert.Equal(t, 2, policy.Identity().Version)
+	assert.Equal(t, 3, policy.Identity().Version)
 	assert.Equal(t, 25_000_000, policy.Identity().MaxDocumentChars)
 
 	source := document.SourceDocument{

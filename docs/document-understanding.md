@@ -47,6 +47,9 @@ The policy's structural values are fixed for its normalization version. The
 only caller-selected input is the maximum normalized document size. A future
 change to the algorithm or structural values requires a new normalization
 version rather than silently changing the meaning of existing checksums.
+Version 3 also binds document-level truncation into the document checksum, so
+a complete shorter document cannot share an identity with a longer document
+whose remaining units were removed by the character budget.
 
 ## Run Mistral OCR safely
 
