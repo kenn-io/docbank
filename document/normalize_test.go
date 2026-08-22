@@ -78,12 +78,12 @@ func TestNormalizeDocumentRejectsZeroPolicy(t *testing.T) {
 func TestNormalizeDocumentChecksumIncludesDocumentTruncation(t *testing.T) {
 	policy := testNormalizePolicy(t, 3)
 	complete, err := NormalizeDocument(SourceDocument{
-		Family: "text", UnitKind: "section",
+		Family: "text", UnitKind: "unit",
 		Units: []SourceUnit{{Index: 0, Markdown: "one"}},
 	}, policy)
 	require.NoError(t, err)
 	truncated, err := NormalizeDocument(SourceDocument{
-		Family: "text", UnitKind: "section",
+		Family: "text", UnitKind: "unit",
 		Units: []SourceUnit{{Index: 0, Markdown: "one"}, {Index: 1, Markdown: "two"}},
 	}, policy)
 	require.NoError(t, err)
