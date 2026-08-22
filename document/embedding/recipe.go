@@ -15,6 +15,7 @@ const (
 	defaultMaxInputRunes     = 8_000
 	defaultMaxFilenameRunes  = 256
 	defaultMaxTitleRunes     = 512
+	defaultMaxHeadingRunes   = 512
 	defaultMaxPartitionRunes = 16_000
 	defaultMaxSections       = 128
 	defaultMaxSectionRunes   = 4_000
@@ -52,6 +53,7 @@ type RecipeConfig struct {
 	MaxInputRunes    int
 	MaxFilenameRunes int
 	MaxTitleRunes    int
+	MaxHeadingRunes  int
 	Distillation     *DistillationConfig
 }
 
@@ -63,6 +65,7 @@ type RecipeValues struct {
 	MaxInputRunes      int                 `json:"max_input_runes"`
 	MaxFilenameRunes   int                 `json:"max_filename_runes"`
 	MaxTitleRunes      int                 `json:"max_title_runes"`
+	MaxHeadingRunes    int                 `json:"max_heading_runes"`
 	Distillation       *DistillationConfig `json:"distillation,omitempty"`
 }
 
@@ -87,7 +90,10 @@ func NewRecipe(config RecipeConfig) (Recipe, error) {
 	if config.MaxTitleRunes == 0 {
 		config.MaxTitleRunes = defaultMaxTitleRunes
 	}
-	if config.MaxInputRunes < 1 || config.MaxFilenameRunes < 1 || config.MaxTitleRunes < 1 {
+	if config.MaxHeadingRunes == 0 {
+		config.MaxHeadingRunes = defaultMaxHeadingRunes
+	}
+	if config.MaxInputRunes < 1 || config.MaxFilenameRunes < 1 || config.MaxTitleRunes < 1 || config.MaxHeadingRunes < 1 {
 		return Recipe{}, errors.New("embedding recipe bounds must be positive")
 	}
 	if config.Mode != RepresentationRaw && config.Mode != RepresentationDistilled && config.Mode != RepresentationCombined {
@@ -105,7 +111,8 @@ func NewRecipe(config RecipeConfig) (Recipe, error) {
 	values := RecipeValues{
 		Version: recipeVersion, InputFormatVersion: inputFormatVersion, Mode: config.Mode,
 		MaxInputRunes: config.MaxInputRunes, MaxFilenameRunes: config.MaxFilenameRunes,
-		MaxTitleRunes: config.MaxTitleRunes, Distillation: distillationValues,
+		MaxTitleRunes: config.MaxTitleRunes, MaxHeadingRunes: config.MaxHeadingRunes,
+		Distillation: distillationValues,
 	}
 	encoded, err := json.Marshal(values)
 	if err != nil {

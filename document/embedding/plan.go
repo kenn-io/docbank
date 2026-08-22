@@ -81,7 +81,10 @@ func BuildEmbeddingPlan(normalized document.NormalizedDocument, context Document
 	}
 	if recipe.values.Mode == RepresentationRaw || recipe.values.Mode == RepresentationCombined {
 		for _, chunk := range normalized.Chunks {
-			input, err := rawInput(len(plan.Inputs), normalized, chunk, context, recipe.values.MaxInputRunes)
+			input, err := rawInput(
+				len(plan.Inputs), normalized, chunk, context,
+				recipe.values.MaxInputRunes, recipe.values.MaxHeadingRunes,
+			)
 			if err != nil {
 				return EmbeddingPlan{}, err
 			}
@@ -109,17 +112,19 @@ func BuildEmbeddingPlan(normalized document.NormalizedDocument, context Document
 	return plan, nil
 }
 
-func rawInput(ordinal int, normalized document.NormalizedDocument, chunk document.Chunk, context DocumentContext, maxRunes int) (EmbeddingInput, error) {
-	prefix := formatContext(context)
-	if len(chunk.HeadingPath) > 0 {
-		prefix += "Heading: " + strings.Join(chunk.HeadingPath, " > ") + "\n"
-	}
-	prefix += "Source: " + formatLocator(normalized, chunk.Spans) + "\nContent:\n"
+func rawInput(ordinal int, normalized document.NormalizedDocument, chunk document.Chunk, context DocumentContext, maxRunes, maxHeadingRunes int) (EmbeddingInput, error) {
+	contextPrefix := formatContext(context)
+	sourcePrefix := "Source: " + formatLocator(normalized, chunk.Spans) + "\nContent:\n"
+	heading, headingTruncated := boundedHeadingContext(
+		chunk.HeadingPath, maxHeadingRunes,
+		maxRunes-utf8.RuneCountInString(contextPrefix)-utf8.RuneCountInString(sourcePrefix)-1,
+	)
+	prefix := contextPrefix + heading + sourcePrefix
 	text, truncated, err := boundedInput(prefix, chunk.Text, maxRunes)
 	if err != nil {
 		return EmbeddingInput{}, fmt.Errorf("format normalized chunk %q: %w", chunk.Key, err)
 	}
-	return makeInput(ordinal, RepresentationKindRaw, text, []SourceRef{sourceRef(chunk)}, chunk.Truncated || truncated)
+	return makeInput(ordinal, RepresentationKindRaw, text, []SourceRef{sourceRef(chunk)}, chunk.Truncated || headingTruncated || truncated)
 }
 
 func distilledInput(ordinal int, section DerivedSection, context DocumentContext, maxRunes int) (EmbeddingInput, error) {
@@ -159,6 +164,22 @@ func formatContext(context DocumentContext) string {
 		builder.WriteByte('\n')
 	}
 	return builder.String()
+}
+
+func boundedHeadingContext(path []string, maxHeadingRunes, availableRunes int) (string, bool) {
+	if len(path) == 0 {
+		return "", false
+	}
+	const headingPrefix = "Heading: "
+	const headingSuffix = "\n"
+	overhead := utf8.RuneCountInString(headingPrefix + headingSuffix)
+	textLimit := min(maxHeadingRunes, availableRunes-overhead)
+	if textLimit < 1 {
+		return "", true
+	}
+	heading := strings.Join(path, " > ")
+	bounded := truncateRunes(heading, textLimit)
+	return headingPrefix + bounded + headingSuffix, bounded != heading
 }
 
 func formatLocator(normalized document.NormalizedDocument, spans []document.ChunkSpan) string {

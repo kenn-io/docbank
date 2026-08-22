@@ -105,8 +105,9 @@ combined plan containing both representations.
 
 ```go
 recipe, err := embedding.NewRecipe(embedding.RecipeConfig{
-	Mode:          embedding.RepresentationRaw,
-	MaxInputRunes: 8_000,
+	Mode:            embedding.RepresentationRaw,
+	MaxInputRunes:   8_000,
+	MaxHeadingRunes: 512,
 })
 if err != nil {
 	return err
@@ -124,7 +125,9 @@ if err != nil {
 ```
 
 Context includes bounded filename, title, heading path, and source locator
-fields. Every final input is truncated on rune boundaries to the recipe's
+fields. The recipe's heading bound applies to both final embedding inputs and
+distillation partitions, and yields to the enclosing limit so source content
+still fits. Every final input is truncated on rune boundaries to the recipe's
 provider input cap. Recipe, context, plan, source, and individual input
 fingerprints let an application store derived state without making worker
 batch size or claim timing part of vector identity.

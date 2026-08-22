@@ -161,7 +161,7 @@ func validateNormalizedUnit(unitKind string, index int, unit NormalizedUnit) err
 	}
 	previousOffset := -1
 	for _, mark := range unit.HeadingMarks {
-		if mark.CharOffset <= previousOffset || mark.CharOffset < 0 || mark.CharOffset >= unit.CharCount || len(mark.Path) == 0 {
+		if mark.CharOffset <= previousOffset || mark.CharOffset < 0 || mark.CharOffset >= unit.CharCount {
 			return fmt.Errorf("normalized document unit %d has invalid heading marks", index)
 		}
 		if slices.Contains(mark.Path, "") {

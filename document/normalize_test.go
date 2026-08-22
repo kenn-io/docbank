@@ -398,6 +398,18 @@ func TestNormalizeDocumentBoundsHeadingPathsByLevel(t *testing.T) {
 	}
 }
 
+func TestValidateNormalizedDocumentRejectsEmptyHeadingPathElements(t *testing.T) {
+	policy := testNormalizePolicy(t, 10_000)
+	normalized, err := NormalizeDocument(SourceDocument{
+		Family: "text", UnitKind: "page", Units: []SourceUnit{{Index: 0, Markdown: "# Parent\n\nbody"}},
+	}, policy)
+	require.NoError(t, err)
+	normalized.Units[0].HeadingMarks[0].Path = []string{"Parent", ""}
+
+	err = ValidateNormalizedDocument(normalized)
+	assert.ErrorContains(t, err, "invalid heading marks")
+}
+
 func TestNormalizeDocumentPreservesHeadingTextAcrossEmbeddedBreaks(t *testing.T) {
 	policy := testNormalizePolicy(t, 10_000)
 	source := SourceDocument{Family: "text", UnitKind: "page", Units: []SourceUnit{{

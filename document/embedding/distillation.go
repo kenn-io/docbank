@@ -168,7 +168,9 @@ func PrepareDistillation(normalized document.NormalizedDocument, context Documen
 	if err != nil {
 		return DistillationRequest{}, err
 	}
-	partitions, err := partitionDocument(normalized, recipe.values.Distillation.MaxPartitionRunes)
+	partitions, err := partitionDocument(
+		normalized, recipe.values.Distillation.MaxPartitionRunes, recipe.values.MaxHeadingRunes,
+	)
 	if err != nil {
 		return DistillationRequest{}, err
 	}
@@ -188,7 +190,7 @@ func PrepareDistillation(normalized document.NormalizedDocument, context Documen
 	return request, nil
 }
 
-func partitionDocument(normalized document.NormalizedDocument, maxRunes int) ([]SourcePartition, error) {
+func partitionDocument(normalized document.NormalizedDocument, maxRunes, maxHeadingRunes int) ([]SourcePartition, error) {
 	partitions := make([]SourcePartition, 0, len(normalized.Chunks))
 	type partitionChunk struct {
 		chunk document.Chunk
@@ -222,7 +224,7 @@ func partitionDocument(normalized document.NormalizedDocument, maxRunes int) ([]
 		return nil
 	}
 	for _, chunk := range normalized.Chunks {
-		chunkText := formatDistillationChunk(normalized, chunk)
+		chunkText := formatDistillationChunk(normalized, chunk, maxRunes, maxHeadingRunes)
 		chunkRunes := utf8.RuneCountInString(chunkText)
 		if chunkRunes > maxRunes {
 			return nil, fmt.Errorf("normalized chunk %q exceeds distillation partition limit", chunk.Key)
@@ -245,18 +247,12 @@ func partitionDocument(normalized document.NormalizedDocument, maxRunes int) ([]
 	return partitions, nil
 }
 
-func formatDistillationChunk(normalized document.NormalizedDocument, chunk document.Chunk) string {
-	var builder strings.Builder
-	if len(chunk.HeadingPath) > 0 {
-		builder.WriteString("Heading: ")
-		builder.WriteString(strings.Join(chunk.HeadingPath, " > "))
-		builder.WriteByte('\n')
-	}
-	builder.WriteString("Source: ")
-	builder.WriteString(formatLocator(normalized, chunk.Spans))
-	builder.WriteString("\nContent:\n")
-	builder.WriteString(chunk.Text)
-	return builder.String()
+func formatDistillationChunk(normalized document.NormalizedDocument, chunk document.Chunk, maxRunes, maxHeadingRunes int) string {
+	source := "Source: " + formatLocator(normalized, chunk.Spans) + "\nContent:\n" + chunk.Text
+	heading, _ := boundedHeadingContext(
+		chunk.HeadingPath, maxHeadingRunes, maxRunes-utf8.RuneCountInString(source),
+	)
+	return heading + source
 }
 
 // ValidateDistillate validates provider output, attaches exact source

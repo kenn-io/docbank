@@ -120,6 +120,107 @@ func TestRawRecipeNeedsNoDistillationAndRejectsIt(t *testing.T) {
 	assert.Len(t, plan.Inputs, len(normalized.Chunks))
 }
 
+func TestEmptyHeadingResetBuildsEmbeddingPlan(t *testing.T) {
+	policy, err := document.NewNormalizePolicy(10_000)
+	require.NoError(t, err)
+	normalized, err := document.NormalizeDocument(document.SourceDocument{
+		Family: "text", UnitKind: "page", Units: []document.SourceUnit{{
+			Index: 0, Markdown: "# Parent\n\nbefore\n\n#\n\nafter",
+		}},
+	}, policy)
+	require.NoError(t, err)
+	require.Len(t, normalized.Units[0].HeadingMarks, 2)
+	assert.Empty(t, normalized.Units[0].HeadingMarks[1].Path)
+
+	recipe, err := embedding.NewRecipe(embedding.RecipeConfig{})
+	require.NoError(t, err)
+	plan, err := embedding.BuildEmbeddingPlan(normalized, embedding.DocumentContext{}, recipe, nil)
+	require.NoError(t, err)
+	assert.NotEmpty(t, plan.Inputs)
+}
+
+func TestHeadingContextIsBoundedInPlanAndDistillation(t *testing.T) {
+	policy, err := document.NewNormalizePolicy(50_000)
+	require.NoError(t, err)
+	normalized, err := document.NormalizeDocument(document.SourceDocument{
+		Family: "text", UnitKind: "page", Units: []document.SourceUnit{{
+			Index: 0, Markdown: "# " + strings.Repeat("heading ", 700) + "\n\nsource evidence",
+		}},
+	}, policy)
+	require.NoError(t, err)
+	require.NotEmpty(t, normalized.Chunks)
+
+	recipe, err := embedding.NewRecipe(embedding.RecipeConfig{
+		Mode: embedding.RepresentationCombined, MaxInputRunes: 220, MaxHeadingRunes: 32,
+		Distillation: &embedding.DistillationConfig{
+			Provider: "synthetic", Model: "summarizer", ModelRevision: "revision-1",
+			PromptTemplateVersion: 1, MaxPartitionRunes: 4_100,
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 32, recipe.Values().MaxHeadingRunes)
+	widerHeadingRecipe, err := embedding.NewRecipe(embedding.RecipeConfig{
+		Mode: embedding.RepresentationCombined, MaxInputRunes: 220, MaxHeadingRunes: 33,
+		Distillation: &embedding.DistillationConfig{
+			Provider: "synthetic", Model: "summarizer", ModelRevision: "revision-1",
+			PromptTemplateVersion: 1, MaxPartitionRunes: 4_100,
+		},
+	})
+	require.NoError(t, err)
+	assert.NotEqual(t, recipe.Fingerprint(), widerHeadingRecipe.Fingerprint())
+
+	request, err := embedding.PrepareDistillation(normalized, embedding.DocumentContext{}, recipe)
+	require.NoError(t, err)
+	var partitionText strings.Builder
+	headingLines := 0
+	for _, partition := range request.Partitions {
+		assert.LessOrEqual(t, utf8.RuneCountInString(partition.Text), 4_100)
+		for line := range strings.SplitSeq(partition.Text, "\n") {
+			heading, ok := strings.CutPrefix(line, "Heading: ")
+			if ok {
+				headingLines++
+				assert.LessOrEqual(t, utf8.RuneCountInString(heading), 32)
+			}
+		}
+		partitionText.WriteString(partition.Text)
+	}
+	assert.Positive(t, headingLines)
+	for _, chunk := range normalized.Chunks {
+		assert.Contains(t, partitionText.String(), chunk.Text)
+	}
+
+	sections := make([]embedding.DerivedSectionResult, 0, len(request.Partitions))
+	for _, partition := range request.Partitions {
+		sections = append(sections, embedding.DerivedSectionResult{
+			Text: "bounded summary", PartitionKeys: []string{partition.Key},
+		})
+	}
+	distillate, err := embedding.ValidateDistillate(request, embedding.DistillationResult{
+		Provider: request.Provider, Model: request.Model, ModelRevision: request.ModelRevision,
+		Sections: sections,
+	})
+	require.NoError(t, err)
+	plan, err := embedding.BuildEmbeddingPlan(normalized, embedding.DocumentContext{}, recipe, &distillate)
+	require.NoError(t, err)
+	headingLines = 0
+	for _, input := range plan.Inputs {
+		assert.LessOrEqual(t, utf8.RuneCountInString(input.Text), 220)
+		if input.Kind == embedding.RepresentationKindRaw {
+			for line := range strings.SplitSeq(input.Text, "\n") {
+				heading, ok := strings.CutPrefix(line, "Heading: ")
+				if ok {
+					headingLines++
+					assert.LessOrEqual(t, utf8.RuneCountInString(heading), 32)
+				}
+			}
+			_, content, found := strings.Cut(input.Text, "Content:\n")
+			assert.True(t, found)
+			assert.NotEmpty(t, content)
+		}
+	}
+	assert.Positive(t, headingLines)
+}
+
 func TestEgressFingerprintSeparatesPurposeAndDestination(t *testing.T) {
 	base := embedding.EgressIdentity{
 		Purpose: embedding.EgressDocumentEmbedding, Provider: "synthetic",
