@@ -32,7 +32,7 @@ func registerStorageRegistryRoutes(api huma.API, d Deps, g *gate) {
 		Body struct {
 			Name     string `json:"name" minLength:"1" maxLength:"200"`
 			Binding  string `json:"binding" minLength:"1" maxLength:"63"`
-			Takeover bool   `json:"takeover,omitempty"`
+			Takeover bool   `json:"takeover,omitzero"`
 		}
 	}) (*previewOutput, error) {
 		if d.BlobRegistry == nil {
@@ -546,19 +546,17 @@ func blobStoreAPI(
 		observedAt = observation.ObservedAt.Format(time.RFC3339Nano)
 	}
 	return BlobStore{
-		StorageStoreStatus: StorageStoreStatus{
-			ID: item.ID, Name: item.Name, Kind: item.Kind, Role: item.Role,
-			Lifecycle: item.Lifecycle, State: string(observation.State),
-			Priority:             observation.Priority,
-			AuthoritativeObjects: stats.AuthoritativeObjects,
-			LogicalBytes:         stats.LogicalBytes, StoredBytes: stats.StoredBytes,
-			PackCount: stats.PackCount, DeadPackedBytes: stats.DeadPackedBytes,
-			SoleAuthorityObjects: stats.SoleAuthorityObjects,
-			AffectedDocuments:    stats.AffectedDocuments,
-			UnreadableObjects:    unreadableObjects,
-			ObservedAt:           observedAt,
-		},
-		Binding: item.Binding, OwnershipEpoch: item.OwnershipEpoch,
+		ID: item.ID, Name: item.Name, Kind: item.Kind, Role: item.Role,
+		Lifecycle: item.Lifecycle, State: string(observation.State),
+		Priority:             observation.Priority,
+		AuthoritativeObjects: stats.AuthoritativeObjects,
+		LogicalBytes:         stats.LogicalBytes, StoredBytes: stats.StoredBytes,
+		PackCount: stats.PackCount, DeadPackedBytes: stats.DeadPackedBytes,
+		SoleAuthorityObjects: stats.SoleAuthorityObjects,
+		AffectedDocuments:    stats.AffectedDocuments,
+		UnreadableObjects:    unreadableObjects,
+		ObservedAt:           observedAt,
+		Binding:              item.Binding, OwnershipEpoch: item.OwnershipEpoch,
 		Detail: observation.Detail, CreatedAt: item.CreatedAt.Format(time.RFC3339Nano),
 	}
 }

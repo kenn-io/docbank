@@ -21,10 +21,10 @@ type Node struct {
 	ParentID         *int64  `json:"parent_id,omitempty"`
 	Name             string  `json:"name"`
 	Kind             string  `json:"kind"`
-	CurrentVersionID string  `json:"current_version_id,omitempty"`
-	BlobHash         string  `json:"blob_hash,omitempty"`
+	CurrentVersionID string  `json:"current_version_id,omitzero"`
+	BlobHash         string  `json:"blob_hash,omitzero"`
 	Size             int64   `json:"size"`
-	MediaType        string  `json:"media_type,omitempty"`
+	MediaType        string  `json:"media_type,omitzero"`
 	Revision         int64   `json:"revision"`
 	CreatedAt        string  `json:"created_at"`
 	ModifiedAt       string  `json:"modified_at"`
@@ -37,7 +37,7 @@ type ContentVersion struct {
 	NodeID                int64   `json:"node_id"`
 	BlobHash              string  `json:"blob_hash"`
 	Size                  int64   `json:"size"`
-	MediaType             string  `json:"media_type,omitempty"`
+	MediaType             string  `json:"media_type,omitzero"`
 	RecordedAt            string  `json:"recorded_at"`
 	NodeRevision          int64   `json:"node_revision"`
 	IntroducedOperationID string  `json:"introduced_operation_id"`
@@ -85,7 +85,7 @@ type ProvenanceOptions struct {
 // Path is empty when the node is in trash.
 type ProvenancePage struct {
 	Node   Node             `json:"node"`
-	Path   string           `json:"path,omitempty"`
+	Path   string           `json:"path,omitzero"`
 	Items  []ProvenanceFact `json:"items"`
 	Total  int              `json:"total"`
 	Limit  int              `json:"limit"`
@@ -114,7 +114,7 @@ type RepairReceipt struct {
 // RevisionOptions applies an optional lost-update guard to one tree mutation.
 // Zero is unconditional; a positive value must match the node's revision.
 type RevisionOptions struct {
-	IfRevision int64 `json:"if_revision,omitempty"`
+	IfRevision int64 `json:"if_revision,omitzero"`
 }
 
 // MutationReceipt binds the resulting node projection to the canonical path
@@ -128,9 +128,9 @@ type MutationReceipt struct {
 // NodeID plus IfRevision. DestinationPath is an exact final coordinate
 // whose parent is resolved in the batch's planned final tree.
 type BatchMoveItem struct {
-	SourcePath      string `json:"source_path,omitempty"`
-	NodeID          int64  `json:"node_id,omitempty"`
-	IfRevision      int64  `json:"if_revision,omitempty"`
+	SourcePath      string `json:"source_path,omitzero"`
+	NodeID          int64  `json:"node_id,omitzero"`
+	IfRevision      int64  `json:"if_revision,omitzero"`
 	DestinationPath string `json:"destination_path"`
 }
 
@@ -150,7 +150,7 @@ const MaxBatchMoves = store.MaxBatchMoves
 // MaxRoots uses DefaultTrashEmptyMaxRoots. DryRun never deletes candidates.
 type TrashEmptyOptions struct {
 	OlderThan time.Duration `json:"older_than"`
-	MaxRoots  int           `json:"max_roots,omitempty"`
+	MaxRoots  int           `json:"max_roots,omitzero"`
 	DryRun    bool          `json:"dry_run"`
 }
 

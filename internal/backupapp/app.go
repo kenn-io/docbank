@@ -5,7 +5,8 @@ package backupapp
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -146,7 +147,7 @@ func (v *frozenView) ContentInfo(ctx context.Context) (*backup.ContentInfo, erro
 	return &backup.ContentInfo{Refs: refs, Rows: int64(len(refs))}, nil
 }
 
-func (v *frozenView) Stats(ctx context.Context) (json.RawMessage, error) {
+func (v *frozenView) Stats(ctx context.Context) (jsontext.Value, error) {
 	stats, err := computeStats(ctx, v.tx)
 	if err != nil {
 		return nil, err
@@ -193,7 +194,7 @@ func restoredContentPaths(ctx context.Context, db *sql.DB, allowPackedRestore bo
 	return paths, nil
 }
 
-func (a *App) RestoredStats(ctx context.Context, db *sql.DB) (json.RawMessage, error) {
+func (a *App) RestoredStats(ctx context.Context, db *sql.DB) (jsontext.Value, error) {
 	stats, err := computeStats(ctx, db)
 	if err != nil {
 		return nil, err
@@ -222,7 +223,7 @@ func (a *App) CheckManifest(manifest *backup.Manifest) []string {
 	return problems
 }
 
-func ParseStats(raw json.RawMessage) (Stats, error) {
+func ParseStats(raw jsontext.Value) (Stats, error) {
 	var stats Stats
 	if err := json.Unmarshal(raw, &stats); err != nil {
 		return Stats{}, fmt.Errorf("backupapp: parsing manifest stats: %w", err)

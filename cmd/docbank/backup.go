@@ -1,7 +1,8 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -304,9 +305,8 @@ func absoluteBackupTarget(target string) (string, error) {
 }
 
 func writeBackupJSON(w io.Writer, value any) error {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(value); err != nil {
+	enc := jsontext.NewEncoder(w, jsontext.WithIndent("  "))
+	if err := json.MarshalEncode(enc, value); err != nil {
 		return fmt.Errorf("writing backup JSON: %w", err)
 	}
 	return nil

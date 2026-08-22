@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -35,7 +35,7 @@ func TestTUIHelpDefinesRecoverableMutationBoundary(t *testing.T) {
 func TestTUIBackendReacquiresAfterPinnedDaemonConnectionCloses(t *testing.T) {
 	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		assert.NoError(t, json.NewEncoder(w).Encode(api.Node{
+		assert.NoError(t, json.MarshalWrite(w, api.Node{
 			ID: 1, Kind: "dir", Path: "/", Revision: 1,
 		}))
 	}))
@@ -59,7 +59,7 @@ func TestTUIBackendDoesNotRetryDaemonProblemResponses(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/problem+json")
 		w.WriteHeader(http.StatusNotFound)
-		assert.NoError(t, json.NewEncoder(w).Encode(api.NewError(
+		assert.NoError(t, json.MarshalWrite(w, api.NewError(
 			http.StatusNotFound, "not_found", "synthetic node is absent",
 		)))
 	}))
@@ -98,7 +98,7 @@ func TestTUIBackendDoesNotRetryMalformedDaemonResponses(t *testing.T) {
 func TestTUIBackendRetriesInterruptedDaemonAcquisition(t *testing.T) {
 	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		assert.NoError(t, json.NewEncoder(w).Encode(api.Node{
+		assert.NoError(t, json.MarshalWrite(w, api.Node{
 			ID: 1, Kind: "dir", Path: "/", Revision: 1,
 		}))
 	}))

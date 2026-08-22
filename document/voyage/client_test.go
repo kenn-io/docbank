@@ -2,7 +2,7 @@ package voyage_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"image/color"
 	"io"
@@ -58,13 +58,13 @@ func writeVectors(t *testing.T, w http.ResponseWriter, vectors [][]float32, toke
 	}
 	body := map[string]any{"model": voyage.DefaultModel, "data": items, "usage": map[string]any{"total_tokens": tokens}}
 	w.Header().Set("Content-Type", "application/json")
-	assert.NoError(t, json.NewEncoder(w).Encode(body))
+	assert.NoError(t, json.MarshalWrite(w, body))
 }
 
 func decodeRequest(t *testing.T, r *http.Request) wireRequest {
 	t.Helper()
 	var request wireRequest
-	assert.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+	assert.NoError(t, json.UnmarshalRead(r.Body, &request))
 	return request
 }
 
@@ -145,7 +145,7 @@ func TestEmbedDocumentsSendsOrderedInputsAndRestoresIndices(t *testing.T) {
 			{Embedding: unitVector(2, 1), Index: 2},
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		_ = json.MarshalWrite(w, map[string]any{
 			"model": voyage.DefaultModel, "data": items, "usage": map[string]any{"total_tokens": 42},
 		})
 	}))

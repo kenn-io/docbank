@@ -1,7 +1,8 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -52,9 +53,8 @@ var addCmd = &cobra.Command{
 				return err
 			}
 			if addJSON {
-				enc := json.NewEncoder(cmd.OutOrStdout())
-				enc.SetIndent("", "  ")
-				if err := enc.Encode(rep); err != nil {
+				enc := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
+				if err := json.MarshalEncode(enc, rep); err != nil {
 					return fmt.Errorf("encoding preflight report: %w", err)
 				}
 			} else {
@@ -82,9 +82,8 @@ var addCmd = &cobra.Command{
 			return err
 		}
 		if addJSON {
-			enc := json.NewEncoder(cmd.OutOrStdout())
-			enc.SetIndent("", "  ")
-			if err := enc.Encode(rep); err != nil {
+			enc := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
+			if err := json.MarshalEncode(enc, rep); err != nil {
 				return fmt.Errorf("encoding ingest report: %w", err)
 			}
 		} else {

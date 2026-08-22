@@ -49,9 +49,9 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 		Summary: "Rewrite eligible sparse packs and retire dead pack files",
 	}, func(ctx context.Context, in *struct {
 		Body struct {
-			MaxBytes     int64  `json:"max_bytes,omitempty" minimum:"0"`
-			MinAge       string `json:"min_age,omitempty" example:"24h"`
-			MinDeadBytes int64  `json:"min_dead_bytes,omitempty" minimum:"0"`
+			MaxBytes     int64  `json:"max_bytes,omitzero" minimum:"0"`
+			MinAge       string `json:"min_age,omitzero" example:"24h"`
+			MinDeadBytes int64  `json:"min_dead_bytes,omitzero" minimum:"0"`
 		}
 	}) (*storageRepackOutput, error) {
 		minAge, err := ParseAge(in.Body.MinAge)
@@ -76,7 +76,7 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 		Summary: "Pack authorized loose blobs into immutable pack files",
 	}, func(ctx context.Context, in *struct {
 		Body struct {
-			MaxBytes int64 `json:"max_bytes,omitempty" minimum:"0"`
+			MaxBytes int64 `json:"max_bytes,omitzero" minimum:"0"`
 		}
 	}) (*storagePackOutput, error) {
 		out := &storagePackOutput{}
@@ -241,8 +241,8 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 		Summary: "Report (run=false) or hard-delete (run=true) trash roots",
 	}, func(ctx context.Context, in *struct {
 		Body struct {
-			OlderThan string `json:"older_than,omitempty" example:"30d"`
-			Run       bool   `json:"run,omitempty" default:"false"`
+			OlderThan string `json:"older_than,omitzero" example:"30d"`
+			Run       bool   `json:"run,omitzero" default:"false"`
 		}
 	}) (*emptyOutput, error) {
 		age, err := ParseAge(in.Body.OlderThan)

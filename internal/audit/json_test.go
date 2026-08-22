@@ -1,7 +1,7 @@
 package audit
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
 	"strings"
 	"testing"
 
@@ -37,6 +37,17 @@ func TestPortableJSONUsesCanonicalBase64URLAndNull(t *testing.T) {
 	assert.JSONEq(t, `{"kind":"unknown_origin","fields":{"node_id":7,"parent_id":null,"name":"-_8"}}`, string(encoded))
 }
 
+func TestPortableJSONPreservesMetadataV1JavaScriptSeparatorEscapes(t *testing.T) {
+	record := exampleRecord(t, "tag_definition")
+	record = replaceField(record, "name", mustText(t, "line\u2028paragraph\u2029"))
+	encoded, err := MarshalJSONRecord(record)
+	require.NoError(t, err)
+	const want = `{"fields":{"name":"line\u2028paragraph\u2029","tag_id":"00112233-4455-4677-8899-aabbccddeeff"},"kind":"tag_definition"}`
+	if got := string(encoded); got != want {
+		t.Fatalf("metadata-v1 JSON bytes mismatch:\nwant: %s\n got: %s", want, got)
+	}
+}
+
 func TestPortableJSONRoundTripsPresentOptionalValues(t *testing.T) {
 	record := exampleRecord(t, "content_version")
 	record = replaceField(record, "media_type", mustText(t, "application/pdf"))
@@ -66,7 +77,7 @@ func TestPortableJSONRejectsLossyOrNoncanonicalInput(t *testing.T) {
 		},
 		"duplicate nested field": {
 			raw:  `{"kind":"unknown_origin","fields":{"node_id":1,"node_id":2,"parent_id":null,"name":null}}`,
-			want: "duplicate field",
+			want: "duplicate",
 		},
 		"padded base64": {
 			raw:  `{"kind":"unknown_origin","fields":{"node_id":1,"parent_id":null,"name":"YQ=="}}`,
@@ -78,7 +89,7 @@ func TestPortableJSONRejectsLossyOrNoncanonicalInput(t *testing.T) {
 		},
 		"lone surrogate": {
 			raw:  `{"kind":"tag_definition","fields":{"tag_id":"00112233-4455-4677-8899-aabbccddeeff","name":"\ud800"}}`,
-			want: "unpaired UTF-16 surrogate",
+			want: "invalid surrogate",
 		},
 		"required null": {
 			raw:  `{"kind":"unknown_origin","fields":{"node_id":null,"parent_id":null,"name":null}}`,
@@ -87,12 +98,12 @@ func TestPortableJSONRejectsLossyOrNoncanonicalInput(t *testing.T) {
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			_, parseErr := UnmarshalJSONRecord(json.RawMessage(test.raw))
+			_, parseErr := UnmarshalJSONRecord(jsontext.Value(test.raw))
 			require.ErrorContains(t, parseErr, test.want)
 		})
 	}
 
 	withUnknownField := strings.Replace(string(valid), `"fields":{`, `"extra":true,"fields":{`, 1)
-	_, err = UnmarshalJSONRecord(json.RawMessage(withUnknownField))
+	_, err = UnmarshalJSONRecord(jsontext.Value(withUnknownField))
 	require.ErrorContains(t, err, "unknown field")
 }

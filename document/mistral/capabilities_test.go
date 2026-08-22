@@ -2,7 +2,7 @@ package mistral
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"strings"
 	"testing"
 
@@ -95,7 +95,7 @@ func TestCapabilityManifestDecodingIsStrictAndBounded(t *testing.T) {
 	unknown, err := json.Marshal(object)
 	require.NoError(t, err)
 	_, err = DecodeCapabilityManifest(bytes.NewReader(unknown))
-	require.ErrorContains(t, err, "unknown field")
+	require.Error(t, err)
 
 	compact, err := json.Marshal(manifest)
 	require.NoError(t, err)

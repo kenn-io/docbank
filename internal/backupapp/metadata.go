@@ -2,7 +2,7 @@ package backupapp
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"io"
@@ -83,7 +83,7 @@ func (s *metadataSnapshot) ContentInfo(ctx context.Context) (*backup.ContentInfo
 	return (&frozenView{tx: s.tx}).ContentInfo(ctx)
 }
 
-func (s *metadataSnapshot) Stats(ctx context.Context) (json.RawMessage, error) {
+func (s *metadataSnapshot) Stats(ctx context.Context) (jsontext.Value, error) {
 	if s.closed {
 		return nil, errors.New("backupapp: metadata snapshot is closed")
 	}

@@ -28,9 +28,9 @@ func registerAuditRoutes(
 		Summary: "Preview one permanent audit scope without changing the vault",
 	}, func(ctx context.Context, in *struct {
 		Body struct {
-			Path       string `json:"path,omitempty"`
-			NodeID     int64  `json:"node_id,omitempty" minimum:"1"`
-			AgentLabel string `json:"agent_label,omitempty" maxLength:"200"`
+			Path       string `json:"path,omitzero"`
+			NodeID     int64  `json:"node_id,omitzero" minimum:"1"`
+			AgentLabel string `json:"agent_label,omitzero" maxLength:"200"`
 		}
 	}) (*auditPreviewOutput, error) {
 		if (in.Body.Path == "") == (in.Body.NodeID == 0) {

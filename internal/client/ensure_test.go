@@ -3,7 +3,7 @@ package client
 import (
 	"context"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -147,11 +147,12 @@ func TestEnsureRejectsForgedPingWithoutSendingRuntimeSecrets(t *testing.T) {
 		switch r.URL.Path {
 		case kitdaemon.DefaultPingPath:
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(kitdaemon.PingInfo{
+			_ = json.MarshalWrite(w, kitdaemon.PingInfo{
 				OK: true, Service: Service, Version: version.Version, PID: rec.PID,
 			})
+
 		case daemonauth.ChallengePath:
-			_ = json.NewEncoder(w).Encode(map[string]string{"proof": "forged"})
+			_ = json.MarshalWrite(w, map[string]string{"proof": "forged"})
 		default:
 			http.NotFound(w, r)
 		}
@@ -190,7 +191,7 @@ func TestProvenClientRefusesRedialAfterChallengeConnectionCloses(t *testing.T) {
 			return
 		}
 		w.Header().Set("Connection", "close")
-		_ = json.NewEncoder(w).Encode(map[string]string{
+		_ = json.MarshalWrite(w, map[string]string{
 			"proof": daemonauth.Proof(token, nonce),
 		})
 	}))
@@ -222,9 +223,10 @@ func TestShutdownHTTPRejectionUsesProcessStop(t *testing.T) {
 				http.Error(w, "bad nonce", http.StatusBadRequest)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(map[string]string{
+			_ = json.MarshalWrite(w, map[string]string{
 				"proof": daemonauth.Proof(rec.Metadata[metaShutdownToken], nonce),
 			})
+
 			return
 		}
 		w.Header().Set("Content-Type", "application/problem+json")

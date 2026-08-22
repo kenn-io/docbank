@@ -1,9 +1,8 @@
 package blob
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -318,15 +317,9 @@ func readPrimaryRestoreHandoff(
 			errors.New("primary restore handoff is too large")
 	}
 	var record primaryRestoreHandoffRecord
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&record); err != nil {
+	if err := json.Unmarshal(raw, &record, json.RejectUnknownMembers(true)); err != nil {
 		return primaryRestoreHandoffRecord{}, false,
 			fmt.Errorf("decoding primary restore handoff: %w", err)
-	}
-	if decoder.Decode(&struct{}{}) != io.EOF {
-		return primaryRestoreHandoffRecord{}, false,
-			errors.New("primary restore handoff contains trailing JSON")
 	}
 	if err := validatePrimaryRestoreHandoff(record); err != nil {
 		return primaryRestoreHandoffRecord{}, false, err

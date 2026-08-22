@@ -6,10 +6,9 @@ import (
 	"crypto/sha256"
 	_ "embed"
 	"encoding/hex"
-	"encoding/json"
-	"errors"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
-	"io"
 )
 
 // BundleSHA256 is the expected digest of the raw compatibility bundle.
@@ -30,8 +29,8 @@ type Bundle struct {
 
 // Section leaves its cases encoded so each package decodes only the contract it owns.
 type Section struct {
-	Owner string          `json:"owner"`
-	Cases json.RawMessage `json:"cases"`
+	Owner string         `json:"owner"`
+	Cases jsontext.Value `json:"cases"`
 }
 
 // Load verifies the raw bundle before decoding it.
@@ -42,17 +41,9 @@ func Load() (Bundle, []byte, error) {
 		return Bundle{}, nil, fmt.Errorf("document compatibility bundle digest is %s, want %s", actual, BundleSHA256)
 	}
 
-	decoder := json.NewDecoder(bytes.NewReader(bundleJSON))
 	var bundle Bundle
-	if err := decoder.Decode(&bundle); err != nil {
+	if err := json.Unmarshal(bundleJSON, &bundle); err != nil {
 		return Bundle{}, nil, fmt.Errorf("decode document compatibility bundle: %w", err)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		if err == nil {
-			err = errors.New("additional JSON value")
-		}
-		return Bundle{}, nil, fmt.Errorf("decode document compatibility bundle trailing data: %w", err)
 	}
 	return bundle, bytes.Clone(bundleJSON), nil
 }
