@@ -5,7 +5,7 @@ package maintenance
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -122,9 +122,9 @@ const (
 type cursor struct {
 	Version int       `json:"v"`
 	Kind    operation `json:"op"`
-	Phase   string    `json:"phase,omitempty"`
+	Phase   string    `json:"phase,omitzero"`
 	Hash    string    `json:"hash"`
-	PackID  string    `json:"pack_id,omitempty"`
+	PackID  string    `json:"pack_id,omitzero"`
 	Set     bool      `json:"set"`
 }
 

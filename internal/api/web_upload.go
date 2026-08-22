@@ -5,7 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -38,19 +38,19 @@ var (
 
 type webUploadMessage struct {
 	Type         string         `json:"type"`
-	Token        string         `json:"token,omitempty"`
-	Nonce        string         `json:"nonce,omitempty"`
-	Proof        string         `json:"proof,omitempty"`
-	RequestID    string         `json:"request_id,omitempty"`
-	ParentID     int64          `json:"parent_id,omitempty"`
-	Name         string         `json:"name,omitempty"`
-	MIMEType     string         `json:"mime_type,omitempty"`
-	ExpectedHash string         `json:"expected_hash,omitempty"`
-	ExpectedSize int64          `json:"expected_size,omitempty"`
+	Token        string         `json:"token,omitzero"`
+	Nonce        string         `json:"nonce,omitzero"`
+	Proof        string         `json:"proof,omitzero"`
+	RequestID    string         `json:"request_id,omitzero"`
+	ParentID     int64          `json:"parent_id,omitzero"`
+	Name         string         `json:"name,omitzero"`
+	MIMEType     string         `json:"mime_type,omitzero"`
+	ExpectedHash string         `json:"expected_hash,omitzero"`
+	ExpectedSize int64          `json:"expected_size,omitzero"`
 	Receipt      *UploadReceipt `json:"receipt,omitempty"`
-	Status       int            `json:"status,omitempty"`
-	Code         string         `json:"code,omitempty"`
-	Detail       string         `json:"detail,omitempty"`
+	Status       int            `json:"status,omitzero"`
+	Code         string         `json:"code,omitzero"`
+	Detail       string         `json:"detail,omitzero"`
 }
 
 type webUploadRequest struct {
@@ -303,8 +303,7 @@ func (r *webUploadReader) Read(p []byte) (int, error) {
 			r.cancel = cancel
 		case websocket.MessageText:
 			var terminal webUploadMessage
-			decoder := json.NewDecoder(io.LimitReader(next, 4096))
-			err := decoder.Decode(&terminal)
+			err := json.UnmarshalRead(io.LimitReader(next, 4096), &terminal)
 			cancel()
 			if err != nil || terminal.RequestID != r.requestID {
 				return 0, errWebUploadProtocol

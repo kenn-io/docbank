@@ -1,8 +1,7 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -13,7 +12,6 @@ import (
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/client"
-	"go.kenn.io/docbank/internal/jsontext"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -145,16 +143,8 @@ func readBatchMovePlan(cmd *cobra.Command, path string) (batchMovePlanFile, erro
 	if len(raw) > maxBatchMovePlanBytes {
 		return batchMovePlanFile{}, fmt.Errorf("batch move plan exceeds %d bytes", maxBatchMovePlanBytes)
 	}
-	if err := jsontext.Validate(raw, "batch move plan"); err != nil {
-		return batchMovePlanFile{}, err
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
 	var plan batchMovePlanFile
-	if err := decoder.Decode(&plan); err != nil {
-		return batchMovePlanFile{}, fmt.Errorf("decoding batch move plan: %w", err)
-	}
-	if err := requireJSONEOF(decoder); err != nil {
+	if err := json.Unmarshal(raw, &plan, json.RejectUnknownMembers(true)); err != nil {
 		return batchMovePlanFile{}, fmt.Errorf("decoding batch move plan: %w", err)
 	}
 	if len(plan.Moves) == 0 || len(plan.Moves) > store.MaxBatchMoves {

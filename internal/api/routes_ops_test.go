@@ -3,7 +3,7 @@ package api_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -183,7 +183,7 @@ func TestIngestRejectsNonLoopback(t *testing.T) {
 	}
 }
 
-func TestIngestRoutesRejectLossyJSONTextBeforeDecoding(t *testing.T) {
+func TestIngestRoutesRejectInvalidJSONTextBeforeDecoding(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	replacementName := "bad\ufffd.txt"
 	replacementPath := filepath.Join(t.TempDir(), replacementName)
@@ -193,16 +193,12 @@ func TestIngestRoutesRejectLossyJSONTextBeforeDecoding(t *testing.T) {
 	})
 	require.NoError(t, err)
 	tests := []struct {
-		name   string
-		body   []byte
-		detail string
+		name string
+		body []byte
 	}{
-		{name: "invalid UTF-8", body: bytes.Replace(validBody, []byte("\ufffd"), []byte{0xff}, 1),
-			detail: "request body is not valid UTF-8"},
-		{name: "lone high surrogate", body: bytes.Replace(validBody, []byte("\ufffd"), []byte(`\ud800`), 1),
-			detail: "request body contains an unpaired UTF-16 surrogate escape"},
-		{name: "lone low surrogate", body: bytes.Replace(validBody, []byte("\ufffd"), []byte(`\udc00`), 1),
-			detail: "request body contains an unpaired UTF-16 surrogate escape"},
+		{name: "invalid UTF-8", body: bytes.Replace(validBody, []byte("\ufffd"), []byte{0xff}, 1)},
+		{name: "lone high surrogate", body: bytes.Replace(validBody, []byte("\ufffd"), []byte(`\ud800`), 1)},
+		{name: "lone low surrogate", body: bytes.Replace(validBody, []byte("\ufffd"), []byte(`\udc00`), 1)},
 	}
 
 	for _, tt := range tests {
@@ -222,7 +218,6 @@ func TestIngestRoutesRejectLossyJSONTextBeforeDecoding(t *testing.T) {
 					require.NoError(t, resp.Body.Close())
 					assert.Equal(t, http.StatusBadRequest, resp.StatusCode, string(body))
 					assert.Contains(t, string(body), `"code":"validation"`)
-					assert.Contains(t, string(body), tt.detail)
 					_, lookupErr := s.NodeByPath(t.Context(), "/inbox/"+replacementName)
 					require.ErrorIs(t, lookupErr, store.ErrNotFound,
 						"malformed text must not retarget the replacement-character source")

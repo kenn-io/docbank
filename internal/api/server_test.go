@@ -5,7 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -357,7 +357,7 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 		UploadSecret string `json:"upload_secret"`
 		URL          string `json:"url"`
 	}
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&issued))
+	require.NoError(t, json.UnmarshalRead(resp.Body, &issued))
 	require.NoError(t, resp.Body.Close())
 	require.NotEmpty(t, issued.Token)
 	secret, err := base64.RawURLEncoding.DecodeString(issued.UploadSecret)
@@ -433,7 +433,7 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var assigned api.TagAssignmentReceipt
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&assigned))
+	require.NoError(t, json.UnmarshalRead(resp.Body, &assigned))
 	require.NoError(t, resp.Body.Close())
 	assert.True(t, assigned.Changed)
 	assert.Equal(t, reviewedTag.ID, assigned.Tag.ID)
@@ -453,7 +453,7 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var unassigned api.TagAssignmentReceipt
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&unassigned))
+	require.NoError(t, json.UnmarshalRead(resp.Body, &unassigned))
 	require.NoError(t, resp.Body.Close())
 	assert.True(t, unassigned.Changed)
 	assert.Equal(t, reviewedTag.ID, unassigned.Tag.ID)
@@ -471,7 +471,7 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
 	var browserTag api.Tag
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&browserTag))
+	require.NoError(t, json.UnmarshalRead(resp.Body, &browserTag))
 	require.NoError(t, resp.Body.Close())
 	assert.Equal(t, "filing", browserTag.Name)
 	assert.EqualValues(t, 1, browserTag.Revision)
@@ -488,7 +488,7 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	resp, err = ts.Client().Do(renameTagRequest)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&browserTag))
+	require.NoError(t, json.UnmarshalRead(resp.Body, &browserTag))
 	require.NoError(t, resp.Body.Close())
 	assert.Equal(t, "filed", browserTag.Name)
 	assert.EqualValues(t, 2, browserTag.Revision)
@@ -504,7 +504,7 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var deletedTag api.TagDeletionReceipt
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&deletedTag))
+	require.NoError(t, json.UnmarshalRead(resp.Body, &deletedTag))
 	require.NoError(t, resp.Body.Close())
 	assert.Equal(t, browserTag.ID, deletedTag.Tag.ID)
 	assert.Zero(t, deletedTag.RemovedAssignments)
@@ -555,7 +555,7 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var trashed api.Node
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&trashed))
+	require.NoError(t, json.UnmarshalRead(resp.Body, &trashed))
 	require.NoError(t, resp.Body.Close())
 	assert.Equal(t, document.ID, trashed.ID)
 	assert.NotEmpty(t, trashed.TrashedAt)
@@ -564,7 +564,7 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	resp = webRequest(http.MethodGet, "/api/v1/trash?limit=1000&offset=0")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var trashPage api.TrashPage
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&trashPage))
+	require.NoError(t, json.UnmarshalRead(resp.Body, &trashPage))
 	require.NoError(t, resp.Body.Close())
 	require.Len(t, trashPage.Items, 1)
 	assert.Equal(t, document.ID, trashPage.Items[0].ID)
@@ -587,7 +587,7 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var restored api.Node
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&restored))
+	require.NoError(t, json.UnmarshalRead(resp.Body, &restored))
 	require.NoError(t, resp.Body.Close())
 	assert.Equal(t, document.ID, restored.ID)
 	assert.Empty(t, restored.TrashedAt)

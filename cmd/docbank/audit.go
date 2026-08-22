@@ -1,7 +1,8 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -273,9 +274,8 @@ func auditDisplayPath(path string) string {
 }
 
 func writeAuditJSON(w io.Writer, value any) error {
-	encoder := json.NewEncoder(w)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(value); err != nil {
+	encoder := jsontext.NewEncoder(w, jsontext.WithIndent("  "))
+	if err := json.MarshalEncode(encoder, value); err != nil {
 		return fmt.Errorf("writing audit JSON: %w", err)
 	}
 	return nil

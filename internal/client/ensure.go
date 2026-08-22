@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -503,7 +503,7 @@ func proveOwnershipWithClient(
 		Proof string `json:"proof"`
 	}
 	limited := io.LimitReader(resp.Body, 4<<10)
-	if err := json.NewDecoder(limited).Decode(&result); err != nil {
+	if err := json.UnmarshalRead(limited, &result); err != nil {
 		return false, nil
 	}
 	_, _ = io.Copy(io.Discard, limited)

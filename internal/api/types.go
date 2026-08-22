@@ -23,15 +23,15 @@ type Node struct {
 	ParentID         *int64 `json:"parent_id,omitempty"`
 	Name             string `json:"name"`
 	Kind             string `json:"kind" enum:"dir,file"`
-	CurrentVersionID string `json:"current_version_id,omitempty" format:"uuid"`
-	BlobHash         string `json:"blob_hash,omitempty" pattern:"^[0-9a-f]{64}$"`
+	CurrentVersionID string `json:"current_version_id,omitzero" format:"uuid"`
+	BlobHash         string `json:"blob_hash,omitzero" pattern:"^[0-9a-f]{64}$"`
 	Size             int64  `json:"size"`
-	MimeType         string `json:"mime_type,omitempty"`
+	MimeType         string `json:"mime_type,omitzero"`
 	Revision         int64  `json:"revision"`
 	CreatedAt        string `json:"created_at"`
 	ModifiedAt       string `json:"modified_at"`
-	TrashedAt        string `json:"trashed_at,omitempty"`
-	Path             string `json:"path,omitempty"` // set on live single-node responses only
+	TrashedAt        string `json:"trashed_at,omitzero"`
+	Path             string `json:"path,omitzero"` // set on live single-node responses only
 }
 
 // NodePage is one bounded, ordered directory-child listing.
@@ -55,9 +55,9 @@ type TrashPage struct {
 // by stable node identity plus revision. DestinationPath is an exact final
 // coordinate whose parent is resolved in the planned final topology.
 type BatchMoveItem struct {
-	SourcePath      string `json:"source_path,omitempty"`
-	NodeID          int64  `json:"node_id,omitempty" minimum:"1"`
-	Revision        int64  `json:"revision,omitempty" minimum:"1"`
+	SourcePath      string `json:"source_path,omitzero"`
+	NodeID          int64  `json:"node_id,omitzero" minimum:"1"`
+	Revision        int64  `json:"revision,omitzero" minimum:"1"`
 	DestinationPath string `json:"destination_path" minLength:"1"`
 }
 
@@ -84,7 +84,7 @@ type ContentVersion struct {
 	NodeID                int64   `json:"node_id"`
 	BlobHash              string  `json:"blob_hash" pattern:"^[0-9a-f]{64}$"`
 	Size                  int64   `json:"size" minimum:"0"`
-	MimeType              string  `json:"mime_type,omitempty"`
+	MimeType              string  `json:"mime_type,omitzero"`
 	RecordedAt            string  `json:"recorded_at"`
 	NodeRevision          int64   `json:"node_revision" minimum:"1"`
 	IntroducedOperationID string  `json:"introduced_operation_id" format:"uuid"`
@@ -129,10 +129,10 @@ type ProvenancePage struct {
 // of VersionIDs, KeepNewest, OlderThan, or AllPrior must be set.
 type VersionPruneRequest struct {
 	VersionIDs []string `json:"version_ids,omitempty" format:"uuid" minItems:"1" maxItems:"1000" uniqueItems:"true"`
-	KeepNewest int      `json:"keep_newest,omitempty" minimum:"1"`
-	OlderThan  string   `json:"older_than,omitempty" example:"90d"`
-	AllPrior   bool     `json:"all_prior,omitempty"`
-	Run        bool     `json:"run,omitempty" default:"false"`
+	KeepNewest int      `json:"keep_newest,omitzero" minimum:"1"`
+	OlderThan  string   `json:"older_than,omitzero" example:"90d"`
+	AllPrior   bool     `json:"all_prior,omitzero"`
+	Run        bool     `json:"run,omitzero" default:"false"`
 }
 
 // VersionPruneReport distinguishes released logical history from physical
@@ -142,7 +142,7 @@ type VersionPruneReport struct {
 	Candidates                   []ContentVersion `json:"candidates"`
 	DependencyRetained           []ContentVersion `json:"dependency_retained"`
 	Checkpoint                   *ContentVersion  `json:"checkpoint,omitempty"`
-	Cutoff                       string           `json:"cutoff,omitempty"`
+	Cutoff                       string           `json:"cutoff,omitzero"`
 	LogicalBytes                 int64            `json:"logical_bytes" minimum:"0"`
 	UniqueBlobs                  int              `json:"unique_blobs" minimum:"0"`
 	SharedBlobs                  int              `json:"shared_blobs" minimum:"0"`
@@ -164,7 +164,7 @@ type VersionPruneReport struct {
 type ContentReference struct {
 	Version   ContentVersion `json:"version"`
 	Node      Node           `json:"node"`
-	Path      string         `json:"path,omitempty"`
+	Path      string         `json:"path,omitzero"`
 	IsCurrent bool           `json:"is_current"`
 }
 
@@ -196,7 +196,7 @@ type TagPage struct {
 // omit Path because their former display coordinate is not resolvable.
 type TaggedNode struct {
 	Node Node   `json:"node"`
-	Path string `json:"path,omitempty"`
+	Path string `json:"path,omitzero"`
 }
 
 // TaggedNodePage is one bounded stable-ID-sorted reverse tag lookup.
@@ -205,7 +205,7 @@ type TaggedNodePage struct {
 	Total          int          `json:"total"`
 	Limit          int          `json:"limit"`
 	Offset         int          `json:"offset"`
-	OmittedTrashed int          `json:"omitted_trashed,omitempty" minimum:"0"`
+	OmittedTrashed int          `json:"omitted_trashed,omitzero" minimum:"0"`
 }
 
 // TagAssignmentReceipt records whether an idempotent assignment request
@@ -253,7 +253,7 @@ type AuditEnrollmentPreview struct {
 type AuditScopeStatus struct {
 	ID                string `json:"id" format:"uuid"`
 	TargetNodeID      int64  `json:"target_node_id" minimum:"1"`
-	TargetPath        string `json:"target_path,omitempty"`
+	TargetPath        string `json:"target_path,omitzero"`
 	TargetTrashed     bool   `json:"target_trashed"`
 	EnableOperationID string `json:"enable_operation_id" format:"uuid"`
 	BaselineDigest    string `json:"baseline_digest" pattern:"^[0-9a-f]{64}$"`
@@ -265,7 +265,7 @@ type AuditScopeStatus struct {
 // AuditMembershipStatus describes one inspected node's sticky scope bindings.
 type AuditMembershipStatus struct {
 	NodeID          int64    `json:"node_id" minimum:"1"`
-	Path            string   `json:"path,omitempty"`
+	Path            string   `json:"path,omitzero"`
 	Trashed         bool     `json:"trashed"`
 	Protected       bool     `json:"protected"`
 	ScopeIDs        []string `json:"scope_ids" format:"uuid"`
@@ -276,12 +276,12 @@ type AuditMembershipStatus struct {
 // membership. Scopes is always a JSON array, including for a dormant vault.
 type AuditStatus struct {
 	Enabled                    bool                   `json:"enabled"`
-	EnabledScopeID             string                 `json:"enabled_scope_id,omitempty" format:"uuid"`
+	EnabledScopeID             string                 `json:"enabled_scope_id,omitzero" format:"uuid"`
 	VaultID                    string                 `json:"vault_id" format:"uuid"`
-	LineageID                  string                 `json:"lineage_id,omitempty" format:"uuid"`
+	LineageID                  string                 `json:"lineage_id,omitzero" format:"uuid"`
 	OperationSequenceHighWater int64                  `json:"operation_sequence_high_water" minimum:"0"`
 	AllocationEntryCount       int64                  `json:"allocation_entry_count" minimum:"0"`
-	AllocationHead             string                 `json:"allocation_head,omitempty" pattern:"^[0-9a-f]{64}$"`
+	AllocationHead             string                 `json:"allocation_head,omitzero" pattern:"^[0-9a-f]{64}$"`
 	Scopes                     []AuditScopeStatus     `json:"scopes"`
 	Membership                 *AuditMembershipStatus `json:"membership,omitempty"`
 }
@@ -315,7 +315,7 @@ type AuditVerifyRequest struct {
 // externally recorded evidence.
 type AuditEvidenceProblem struct {
 	Code    string `json:"code" enum:"audit_not_enabled,vault_mismatch,lineage_mismatch,allocation_shorter,allocation_diverged,scope_missing,scope_shorter,scope_diverged"`
-	ScopeID string `json:"scope_id,omitempty" format:"uuid"`
+	ScopeID string `json:"scope_id,omitzero" format:"uuid"`
 	Message string `json:"message"`
 }
 
@@ -372,18 +372,18 @@ type AuditPathState struct {
 
 // AuditAttachmentIdentity is the stable key of one tag or provenance record.
 type AuditAttachmentIdentity struct {
-	TagID        string `json:"tag_id,omitempty" format:"uuid"`
-	NodeID       int64  `json:"node_id,omitempty" minimum:"1"`
-	ProvenanceID string `json:"provenance_id,omitempty" pattern:"^[0-9a-f]{64}$"`
+	TagID        string `json:"tag_id,omitzero" format:"uuid"`
+	NodeID       int64  `json:"node_id,omitzero" minimum:"1"`
+	ProvenanceID string `json:"provenance_id,omitzero" pattern:"^[0-9a-f]{64}$"`
 }
 
 // AuditAttachmentState is one typed side of a tag or provenance transition.
 type AuditAttachmentState struct {
-	TagID         string  `json:"tag_id,omitempty" format:"uuid"`
-	NodeID        int64   `json:"node_id,omitempty" minimum:"1"`
-	TagName       string  `json:"tag_name,omitempty"`
-	ProvenanceID  string  `json:"provenance_id,omitempty" pattern:"^[0-9a-f]{64}$"`
-	IngestID      string  `json:"ingest_id,omitempty" format:"uuid"`
+	TagID         string  `json:"tag_id,omitzero" format:"uuid"`
+	NodeID        int64   `json:"node_id,omitzero" minimum:"1"`
+	TagName       string  `json:"tag_name,omitzero"`
+	ProvenanceID  string  `json:"provenance_id,omitzero" pattern:"^[0-9a-f]{64}$"`
+	IngestID      string  `json:"ingest_id,omitzero" format:"uuid"`
 	OriginalPath  *string `json:"original_path,omitempty"`
 	OriginalMTime *string `json:"original_mtime,omitempty" format:"date-time"`
 	Supersedes    *string `json:"supersedes,omitempty" pattern:"^[0-9a-f]{64}$"`
@@ -401,12 +401,12 @@ type AuditAttachmentChange struct {
 // AuditEventPage is a newest-first, cursor-stable timeline for one node.
 type AuditEventPage struct {
 	Node       Node         `json:"node"`
-	Path       string       `json:"path,omitempty"`
+	Path       string       `json:"path,omitzero"`
 	Items      []AuditEvent `json:"items"`
 	Total      int          `json:"total" minimum:"0"`
 	Limit      int          `json:"limit" minimum:"1" maximum:"500"`
-	Cursor     string       `json:"cursor,omitempty"`
-	NextCursor string       `json:"next_cursor,omitempty"`
+	Cursor     string       `json:"cursor,omitzero"`
+	NextCursor string       `json:"next_cursor,omitzero"`
 }
 
 // AuditScopeEventPage is a newest-first, cursor-stable timeline across one
@@ -416,8 +416,8 @@ type AuditScopeEventPage struct {
 	Items      []AuditEvent     `json:"items"`
 	Total      int              `json:"total" minimum:"0"`
 	Limit      int              `json:"limit" minimum:"1" maximum:"500"`
-	Cursor     string           `json:"cursor,omitempty"`
-	NextCursor string           `json:"next_cursor,omitempty"`
+	Cursor     string           `json:"cursor,omitzero"`
+	NextCursor string           `json:"next_cursor,omitzero"`
 }
 
 // ContentVerification binds a fresh physical read to the exact node revision
@@ -429,10 +429,10 @@ type ContentVerification struct {
 	Revision     int64  `json:"revision"`
 	BlobHash     string `json:"blob_hash" pattern:"^[0-9a-f]{64}$"`
 	Size         int64  `json:"size"`
-	ComputedHash string `json:"computed_hash,omitempty" pattern:"^[0-9a-f]{64}$"`
+	ComputedHash string `json:"computed_hash,omitzero" pattern:"^[0-9a-f]{64}$"`
 	ComputedSize int64  `json:"computed_size"`
 	Verified     bool   `json:"verified"`
-	Problem      string `json:"problem,omitempty" enum:"missing,corrupt,unreadable"`
+	Problem      string `json:"problem,omitzero" enum:"missing,corrupt,unreadable"`
 }
 
 // UploadReceipt proves which bytes the daemon computed and which stable node
@@ -474,11 +474,11 @@ type SearchReport struct {
 	Hits           []SearchHit `json:"hits"`
 	Limit          int         `json:"limit"`
 	Truncated      bool        `json:"truncated"`
-	TagID          string      `json:"tag_id,omitempty"`
-	MIMEType       string      `json:"mime_type,omitempty"`
-	UnderNodeID    int64       `json:"under_node_id,omitempty"`
-	ModifiedSince  string      `json:"modified_since,omitempty"`
-	ModifiedBefore string      `json:"modified_before,omitempty"`
+	TagID          string      `json:"tag_id,omitzero"`
+	MIMEType       string      `json:"mime_type,omitzero"`
+	UnderNodeID    int64       `json:"under_node_id,omitzero"`
+	ModifiedSince  string      `json:"modified_since,omitzero"`
+	ModifiedBefore string      `json:"modified_before,omitzero"`
 }
 
 // IngestFailure records one source path that failed to import.
@@ -616,7 +616,7 @@ type StorageStoreStatus struct {
 	SoleAuthorityObjects int64  `json:"sole_authority_objects"`
 	AffectedDocuments    int64  `json:"affected_documents"`
 	UnreadableObjects    int64  `json:"unreadable_objects"`
-	ObservedAt           string `json:"observed_at,omitempty"`
+	ObservedAt           string `json:"observed_at,omitzero"`
 }
 
 // BlobStore exposes one catalog identity to authenticated storage
@@ -627,7 +627,7 @@ type BlobStore struct {
 
 	Binding        string `json:"binding"`
 	OwnershipEpoch string `json:"ownership_epoch" format:"uuid"`
-	Detail         string `json:"detail,omitempty"`
+	Detail         string `json:"detail,omitzero"`
 	CreatedAt      string `json:"created_at"`
 }
 
@@ -682,11 +682,11 @@ type StorageOperation struct {
 	CopiedObjects    int64  `json:"copied_objects"`
 	CopiedBytes      int64  `json:"copied_bytes"`
 	CancelRequested  bool   `json:"cancel_requested"`
-	Error            string `json:"error,omitempty"`
+	Error            string `json:"error,omitzero"`
 	Receipt          any    `json:"receipt,omitempty"`
 	CreatedAt        string `json:"created_at"`
 	UpdatedAt        string `json:"updated_at"`
-	FinishedAt       string `json:"finished_at,omitempty"`
+	FinishedAt       string `json:"finished_at,omitzero"`
 }
 
 // VaultInfo identifies the selected vault and summarizes its logical and
@@ -744,7 +744,7 @@ type StorageRepackReport struct {
 // VerifyProblem flags one blob whose content didn't check out.
 type VerifyProblem struct {
 	Hash    string `json:"hash"`
-	StoreID string `json:"store_id,omitempty" format:"uuid"`
+	StoreID string `json:"store_id,omitzero" format:"uuid"`
 	Problem string `json:"problem" enum:"missing,corrupt,unreadable"`
 }
 
@@ -761,12 +761,12 @@ type Job struct {
 	Name             string `json:"name"`
 	Status           string `json:"status" enum:"queued,running,completed,failed,cancelled"`
 	StartedAt        string `json:"started_at"`
-	FinishedAt       string `json:"finished_at,omitempty"`
-	Error            string `json:"error,omitempty"`
-	OperationID      string `json:"operation_id,omitempty" format:"uuid"`
-	Kind             string `json:"kind,omitempty"`
-	CompletedObjects int64  `json:"completed_objects,omitempty"`
-	TotalObjects     int64  `json:"total_objects,omitempty"`
+	FinishedAt       string `json:"finished_at,omitzero"`
+	Error            string `json:"error,omitzero"`
+	OperationID      string `json:"operation_id,omitzero" format:"uuid"`
+	Kind             string `json:"kind,omitzero"`
+	CompletedObjects int64  `json:"completed_objects,omitzero"`
+	TotalObjects     int64  `json:"total_objects,omitzero"`
 }
 
 // JobList is returned as an object so the contract can gain aggregate state
@@ -805,9 +805,9 @@ type BackupRepository struct {
 // It deliberately omits Kit's physical pack/index details.
 type BackupSnapshot struct {
 	ID              string  `json:"id"`
-	ParentID        string  `json:"parent_id,omitempty"`
+	ParentID        string  `json:"parent_id,omitzero"`
 	CreatedAt       string  `json:"created_at"`
-	Tag             string  `json:"tag,omitempty"`
+	Tag             string  `json:"tag,omitzero"`
 	MetadataFormat  string  `json:"metadata_format"`
 	Nodes           int64   `json:"nodes"`
 	Files           int64   `json:"files"`
@@ -902,7 +902,7 @@ type BackupRestoreReport struct {
 	DurationSeconds float64                 `json:"duration_seconds"`
 	Proof           BackupRestoreProof      `json:"proof"`
 	Storage         *StorageStatus          `json:"storage,omitempty"`
-	StorageWarning  string                  `json:"storage_warning,omitempty"`
+	StorageWarning  string                  `json:"storage_warning,omitzero"`
 }
 
 // BackupRestoreEvent is one line of the backup-restore NDJSON stream. A report

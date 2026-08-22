@@ -5,7 +5,7 @@ package probecontract
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 )
 
 // FingerprintVersion changes whenever the request identity fields change.

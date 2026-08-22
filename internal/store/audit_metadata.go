@@ -5,7 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"math"
@@ -149,7 +149,7 @@ func exportAuditRecords(ctx context.Context, tx metadataQuerier, write metadataW
 		if err := rows.Scan(&value.Digest, &recordJSON); err != nil {
 			return fmt.Errorf("scanning audit record: %w", err)
 		}
-		value.Record = json.RawMessage(recordJSON)
+		value.Record = jsontext.Value(recordJSON)
 		if err := write(value); err != nil {
 			return err
 		}

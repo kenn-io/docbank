@@ -1,7 +1,8 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strings"
@@ -52,9 +53,8 @@ var storageStatusCmd = &cobra.Command{
 			return err
 		}
 		if storageStatusJSON {
-			enc := json.NewEncoder(cmd.OutOrStdout())
-			enc.SetIndent("", "  ")
-			return enc.Encode(status)
+			enc := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
+			return json.MarshalEncode(enc, status)
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "loose: %d blob(s), %d byte(s)\n",
 			status.LooseBlobs, status.LooseBytes)
@@ -518,9 +518,8 @@ var storagePackCmd = &cobra.Command{
 			return err
 		}
 		if storagePackJSON {
-			enc := json.NewEncoder(cmd.OutOrStdout())
-			enc.SetIndent("", "  ")
-			return enc.Encode(report)
+			enc := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
+			return json.MarshalEncode(enc, report)
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "packed %d blob(s), %d raw byte(s), sealed %d pack(s)\n",
 			report.BlobsPacked, report.BytesPacked, report.PacksSealed)
@@ -576,9 +575,8 @@ var storageRepackCmd = &cobra.Command{
 			return err
 		}
 		if storageRepackJSON {
-			enc := json.NewEncoder(cmd.OutOrStdout())
-			enc.SetIndent("", "  ")
-			return enc.Encode(report)
+			enc := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
+			return json.MarshalEncode(enc, report)
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 			"selected %d pack(s); rewrote %d live blob(s), %d raw byte(s), into %d pack(s)\n",
@@ -650,9 +648,8 @@ func init() {
 }
 
 func writeStorageJSON(cmd *cobra.Command, value any) error {
-	encoder := json.NewEncoder(cmd.OutOrStdout())
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(value)
+	encoder := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
+	return json.MarshalEncode(encoder, value)
 }
 
 func writeBlobStore(cmd *cobra.Command, item api.BlobStore) error {

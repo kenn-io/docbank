@@ -1,7 +1,8 @@
 package web
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net"
@@ -59,7 +60,7 @@ func WriteBootstrap(root, authenticatedURL string) (string, error) {
 	if err := restrictBootstrapFile(path); err != nil {
 		return "", err
 	}
-	encodedURL, err := json.Marshal(authenticatedURL)
+	encodedURL, err := json.Marshal(authenticatedURL, jsontext.EscapeForHTML(true))
 	if err != nil {
 		return "", fmt.Errorf("encoding web bootstrap destination: %w", err)
 	}

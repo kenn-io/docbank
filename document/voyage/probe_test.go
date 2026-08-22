@@ -3,7 +3,7 @@ package voyage_test
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -374,7 +374,7 @@ func (f *fakeProvider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		items[index] = wireItem{Embedding: vector, Index: index}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	assert.NoError(f.t, json.NewEncoder(w).Encode(map[string]any{
+	assert.NoError(f.t, json.MarshalWrite(w, map[string]any{
 		"model": voyage.DefaultModel, "data": items, "usage": map[string]any{"total_tokens": 3},
 	}))
 }

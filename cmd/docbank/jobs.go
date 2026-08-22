@@ -1,7 +1,8 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -54,9 +55,8 @@ var jobsShowCmd = &cobra.Command{
 			return err
 		}
 		if jobsShowJSON {
-			encoder := json.NewEncoder(cmd.OutOrStdout())
-			encoder.SetIndent("", "  ")
-			if err := encoder.Encode(operation); err != nil {
+			encoder := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
+			if err := json.MarshalEncode(encoder, operation); err != nil {
 				return fmt.Errorf("writing storage operation JSON: %w", err)
 			}
 			return nil
@@ -95,9 +95,8 @@ var jobsCancelCmd = &cobra.Command{
 }
 
 func writeJobsJSON(w io.Writer, items []api.Job) error {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(api.JobList{Items: items}); err != nil {
+	enc := jsontext.NewEncoder(w, jsontext.WithIndent("  "))
+	if err := json.MarshalEncode(enc, api.JobList{Items: items}); err != nil {
 		return fmt.Errorf("writing job status JSON: %w", err)
 	}
 	return nil

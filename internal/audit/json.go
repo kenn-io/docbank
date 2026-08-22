@@ -4,20 +4,18 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"io"
 	"strconv"
 	"strings"
-
-	"go.kenn.io/docbank/internal/jsontext"
 )
 
 // MarshalJSONRecord returns the deterministic metadata-v1 JSON form of one
 // registered canonical audit record. Byte fields use unpadded base64url;
 // their registered type keeps them distinct from ordinary text.
-func MarshalJSONRecord(record Record) (json.RawMessage, error) {
+func MarshalJSONRecord(record Record) (jsontext.Value, error) {
 	if err := Validate(record); err != nil {
 		return nil, err
 	}
@@ -25,21 +23,16 @@ func MarshalJSONRecord(record Record) (json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	var encoded bytes.Buffer
-	enc := json.NewEncoder(&encoded)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(value); err != nil {
+	encoded, err := json.Marshal(value, json.Deterministic(true), jsontext.EscapeForJS(true))
+	if err != nil {
 		return nil, fmt.Errorf("encoding portable audit record: %w", err)
 	}
-	return bytes.TrimSuffix(encoded.Bytes(), []byte{'\n'}), nil
+	return encoded, nil
 }
 
 // UnmarshalJSONRecord parses one deterministic metadata-v1 JSON audit record,
 // restoring its typed canonical values and enforcing the closed registry.
-func UnmarshalJSONRecord(raw json.RawMessage) (Record, error) {
-	if err := jsontext.Validate(raw, "audit record JSON"); err != nil {
-		return Record{}, err
-	}
+func UnmarshalJSONRecord(raw jsontext.Value) (Record, error) {
 	record, err := parsePortableRecord(raw, 0)
 	if err != nil {
 		return Record{}, err
@@ -71,7 +64,7 @@ func portableValue(value Value, depth int) (any, error) {
 	}
 	switch value.kind {
 	case kindAbsent:
-		return json.RawMessage("null"), nil
+		return jsontext.Value("null"), nil
 	case kindFalse:
 		return false, nil
 	case kindTrue:
@@ -114,7 +107,7 @@ func portableValue(value Value, depth int) (any, error) {
 	}
 }
 
-func parsePortableRecord(raw json.RawMessage, depth int) (Record, error) {
+func parsePortableRecord(raw jsontext.Value, depth int) (Record, error) {
 	if depth > maxValueDepth {
 		return Record{}, fmt.Errorf("portable audit record nesting exceeds %d levels", maxValueDepth)
 	}
@@ -158,7 +151,7 @@ func parsePortableRecord(raw json.RawMessage, depth int) (Record, error) {
 	return record, nil
 }
 
-func parsePortableValue(raw json.RawMessage, rule valueRule, depth int) (Value, error) {
+func parsePortableValue(raw jsontext.Value, rule valueRule, depth int) (Value, error) {
 	if depth > maxValueDepth {
 		return Value{}, fmt.Errorf("portable audit value nesting exceeds %d levels", maxValueDepth)
 	}
@@ -253,67 +246,33 @@ func parsePortableValue(raw json.RawMessage, rule valueRule, depth int) (Value, 
 	}
 }
 
-func decodeJSONObject(raw json.RawMessage, subject string) (map[string]json.RawMessage, error) {
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	token, err := dec.Token()
-	if err != nil {
-		return nil, fmt.Errorf("decoding %s: %w", subject, err)
-	}
-	if delim, ok := token.(json.Delim); !ok || delim != '{' {
+func decodeJSONObject(raw jsontext.Value, subject string) (map[string]jsontext.Value, error) {
+	if raw.Kind() != jsontext.KindBeginObject {
 		return nil, fmt.Errorf("%s must be a JSON object", subject)
 	}
-	fields := make(map[string]json.RawMessage)
-	for dec.More() {
-		nameToken, err := dec.Token()
-		if err != nil {
-			return nil, fmt.Errorf("decoding %s field name: %w", subject, err)
-		}
-		name, ok := nameToken.(string)
-		if !ok {
-			return nil, fmt.Errorf("%s field name must be a string", subject)
-		}
-		if _, exists := fields[name]; exists {
-			return nil, fmt.Errorf("%s contains duplicate field %q", subject, name)
-		}
-		var value json.RawMessage
-		if err := dec.Decode(&value); err != nil {
-			return nil, fmt.Errorf("decoding %s field %q: %w", subject, name, err)
-		}
-		fields[name] = value
-	}
-	if _, err := dec.Token(); err != nil {
-		return nil, fmt.Errorf("closing %s: %w", subject, err)
-	}
-	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return nil, fmt.Errorf("%s contains trailing JSON", subject)
+	fields := make(map[string]jsontext.Value)
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, fmt.Errorf("decoding %s: %w", subject, err)
 	}
 	return fields, nil
 }
 
-func decodeJSONArray(raw json.RawMessage) ([]json.RawMessage, error) {
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	var values []json.RawMessage
-	if err := dec.Decode(&values); err != nil {
-		return nil, fmt.Errorf("audit list must be a JSON array: %w", err)
+func decodeJSONArray(raw jsontext.Value) ([]jsontext.Value, error) {
+	if raw.Kind() != jsontext.KindBeginArray {
+		return nil, errors.New("audit list must be a JSON array")
 	}
-	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return nil, errors.New("audit list contains trailing JSON")
+	var values []jsontext.Value
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return nil, fmt.Errorf("audit list must be a JSON array: %w", err)
 	}
 	return values, nil
 }
 
-func decodeJSONScalar(raw json.RawMessage, value any) error {
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	if err := dec.Decode(value); err != nil {
-		return err
-	}
-	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return errors.New("JSON scalar contains trailing data")
-	}
-	return nil
+func decodeJSONScalar(raw jsontext.Value, value any) error {
+	return json.Unmarshal(raw, value)
 }
 
-func requireObjectFields(fields map[string]json.RawMessage, subject string, expected ...string) error {
+func requireObjectFields(fields map[string]jsontext.Value, subject string, expected ...string) error {
 	allowed := make(map[string]bool, len(expected))
 	for _, name := range expected {
 		allowed[name] = true

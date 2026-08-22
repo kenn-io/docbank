@@ -2,7 +2,8 @@ package api
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -26,29 +27,29 @@ import (
 )
 
 type backupCreateRequest struct {
-	Repo        string `json:"repo,omitempty"`
-	Tag         string `json:"tag,omitempty" maxLength:"256"`
-	Jobs        int    `json:"jobs,omitempty" minimum:"0"`
-	ForceUnlock bool   `json:"force_unlock,omitempty"`
+	Repo        string `json:"repo,omitzero"`
+	Tag         string `json:"tag,omitzero" maxLength:"256"`
+	Jobs        int    `json:"jobs,omitzero" minimum:"0"`
+	ForceUnlock bool   `json:"force_unlock,omitzero"`
 }
 
 type backupVerifyRequest struct {
-	Repo        string `json:"repo,omitempty"`
-	SnapshotID  string `json:"snapshot_id,omitempty"`
-	All         bool   `json:"all,omitempty"`
-	Quick       bool   `json:"quick,omitempty"`
-	Jobs        int    `json:"jobs,omitempty" minimum:"0"`
-	ForceUnlock bool   `json:"force_unlock,omitempty"`
+	Repo        string `json:"repo,omitzero"`
+	SnapshotID  string `json:"snapshot_id,omitzero"`
+	All         bool   `json:"all,omitzero"`
+	Quick       bool   `json:"quick,omitzero"`
+	Jobs        int    `json:"jobs,omitzero" minimum:"0"`
+	ForceUnlock bool   `json:"force_unlock,omitzero"`
 }
 
 type backupRestoreRequest struct {
-	Repo        string `json:"repo,omitempty"`
+	Repo        string `json:"repo,omitzero"`
 	Target      string `json:"target"`
-	SnapshotID  string `json:"snapshot_id,omitempty"`
-	Overwrite   bool   `json:"overwrite,omitempty"`
-	Jobs        int    `json:"jobs,omitempty" minimum:"0"`
-	ForceUnlock bool   `json:"force_unlock,omitempty"`
-	StoreMap    string `json:"store_map,omitempty"`
+	SnapshotID  string `json:"snapshot_id,omitzero"`
+	Overwrite   bool   `json:"overwrite,omitzero"`
+	Jobs        int    `json:"jobs,omitzero" minimum:"0"`
+	ForceUnlock bool   `json:"force_unlock,omitzero"`
+	StoreMap    string `json:"store_map,omitzero"`
 }
 
 func registerBackupRoutes(api huma.API, d Deps, g *gate) {
@@ -58,7 +59,7 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 		Summary: "Initialize an immutable backup repository",
 	}, func(_ context.Context, in *struct {
 		Body struct {
-			Repo string `json:"repo,omitempty"`
+			Repo string `json:"repo,omitzero"`
 		}
 	}) (*initOutput, error) {
 		repoPath, err := backupRepoPath(d, in.Body.Repo)
@@ -662,7 +663,7 @@ func backupProgress(event backup.ProgressEvent) *BackupProgress {
 
 type eventStreamWriter[T any] struct {
 	mu       sync.Mutex
-	encoder  *json.Encoder
+	encoder  *jsontext.Encoder
 	flusher  http.Flusher
 	cancel   context.CancelFunc
 	writeErr error
@@ -670,7 +671,7 @@ type eventStreamWriter[T any] struct {
 
 func newEventStreamWriter[T any](w io.Writer, cancel context.CancelFunc) *eventStreamWriter[T] {
 	return &eventStreamWriter[T]{
-		encoder: json.NewEncoder(w), flusher: responseFlusher(w), cancel: cancel,
+		encoder: jsontext.NewEncoder(w), flusher: responseFlusher(w), cancel: cancel,
 	}
 }
 
@@ -680,7 +681,7 @@ func (w *eventStreamWriter[T]) send(event T) {
 	if w.writeErr != nil {
 		return
 	}
-	if err := w.encoder.Encode(event); err != nil {
+	if err := json.MarshalEncode(w.encoder, event); err != nil {
 		w.writeErr = err
 		w.cancel()
 		return

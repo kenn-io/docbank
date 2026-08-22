@@ -2,7 +2,7 @@ package api
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"strings"
@@ -24,10 +24,10 @@ func registerStoragePlacementRoutes(api huma.API, d Deps, g *gate) {
 	}, func(ctx context.Context, in *struct {
 		Body struct {
 			NodeID                 int64  `json:"node_id" minimum:"1"`
-			Source                 string `json:"source,omitempty"`
+			Source                 string `json:"source,omitzero"`
 			Destination            string `json:"destination" minLength:"1"`
-			RetireSource           bool   `json:"retire_source,omitempty"`
-			AllowAuditedRemoteOnly bool   `json:"allow_audited_remote_only,omitempty"`
+			RetireSource           bool   `json:"retire_source,omitzero"`
+			AllowAuditedRemoteOnly bool   `json:"allow_audited_remote_only,omitzero"`
 		}
 	}) (*previewOutput, error) {
 		source, destination, err := placementStores(ctx, d, in.Body.Source, in.Body.Destination)

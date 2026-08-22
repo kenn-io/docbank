@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -27,7 +27,7 @@ func webSessionClient(t *testing.T, token string) (*client.Client, string) {
 		assert.Equal(t, http.MethodPost, r.Method)
 		assert.Equal(t, "/api/daemon/web-session", r.URL.Path)
 		assert.Equal(t, "private key", r.Header.Get("X-Api-Key"))
-		_ = json.NewEncoder(w).Encode(map[string]string{
+		_ = json.MarshalWrite(w, map[string]string{
 			"token":         token,
 			"upload_secret": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
 			"url":           webOrigin + "/",

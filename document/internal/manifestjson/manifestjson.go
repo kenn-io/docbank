@@ -5,7 +5,7 @@ package manifestjson
 import (
 	"bytes"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"strings"
 )
@@ -15,36 +15,35 @@ const maxDepth = 64
 // RejectDuplicateKeys fails when data contains a duplicate, non-lowercase, or
 // non-ASCII object key or is nested deeper than 64 levels.
 func RejectDuplicateKeys(data []byte, subject string) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder := jsontext.NewDecoder(bytes.NewReader(data), jsontext.AllowDuplicateNames(true))
 	return ScanValue(decoder, 0, subject)
 }
 
 // ScanValue consumes one JSON value from decoder, applying the same key rules
 // as RejectDuplicateKeys. Decoder errors are returned unwrapped.
-func ScanValue(decoder *json.Decoder, depth int, subject string) error {
+func ScanValue(decoder *jsontext.Decoder, depth int, subject string) error {
 	if depth > maxDepth {
 		return fmt.Errorf("%s JSON is too deeply nested", subject)
 	}
-	token, err := decoder.Token()
+	token, err := decoder.ReadToken()
 	if err != nil {
 		return err
 	}
-	delimiter, ok := token.(json.Delim)
-	if !ok {
+	if token.Kind() != jsontext.KindBeginObject && token.Kind() != jsontext.KindBeginArray {
 		return nil
 	}
-	switch delimiter {
-	case '{':
+	switch token.Kind() {
+	case jsontext.KindBeginObject:
 		keys := make(map[string]struct{})
-		for decoder.More() {
-			keyToken, err := decoder.Token()
+		for decoder.PeekKind() != jsontext.KindEndObject {
+			keyToken, err := decoder.ReadToken()
 			if err != nil {
 				return err
 			}
-			key, ok := keyToken.(string)
-			if !ok {
+			if keyToken.Kind() != jsontext.KindString {
 				return fmt.Errorf("%s has a non-string JSON object key", subject)
 			}
+			key := keyToken.String()
 			if !CanonicalKey(key) {
 				return fmt.Errorf("%s JSON object key %q must use lowercase ASCII", subject, key)
 			}
@@ -56,15 +55,15 @@ func ScanValue(decoder *json.Decoder, depth int, subject string) error {
 				return err
 			}
 		}
-		_, err = decoder.Token()
+		_, err = decoder.ReadToken()
 		return err
-	case '[':
-		for decoder.More() {
+	case jsontext.KindBeginArray:
+		for decoder.PeekKind() != jsontext.KindEndArray {
 			if err := ScanValue(decoder, depth+1, subject); err != nil {
 				return err
 			}
 		}
-		_, err = decoder.Token()
+		_, err = decoder.ReadToken()
 		return err
 	default:
 		return fmt.Errorf("%s has an unexpected JSON delimiter", subject)

@@ -38,7 +38,7 @@ type RepackOptions struct {
 }
 
 type MaintenanceProgress struct {
-	NextCursor string `json:"next_cursor,omitempty"`
+	NextCursor string `json:"next_cursor,omitzero"`
 	More       bool   `json:"more"`
 }
 
@@ -145,9 +145,7 @@ func internalBudget(budget WorkBudget) internalmaintenance.Budget {
 
 func fromMaintenanceGC(report internalmaintenance.GCReport) GCReport {
 	return GCReport{
-		MaintenanceProgress: MaintenanceProgress{
-			NextCursor: report.NextCursor, More: report.More,
-		},
+		NextCursor: report.NextCursor, More: report.More,
 		CandidateBlobs: report.CandidateBlobs, UntrackedFiles: report.UntrackedFiles,
 		ReclaimableBytes:   report.ReclaimableBytes,
 		PendingPackedBlobs: report.PendingPackedBlobs,
@@ -157,9 +155,8 @@ func fromMaintenanceGC(report internalmaintenance.GCReport) GCReport {
 }
 
 func fromMaintenanceVerify(report internalmaintenance.VerifyReport) VerifyReport {
-	out := VerifyReport{MaintenanceProgress: MaintenanceProgress{
-		NextCursor: report.NextCursor, More: report.More,
-	}, OK: report.OK, MetadataProblems: report.MetadataProblems}
+	out := VerifyReport{
+		NextCursor: report.NextCursor, More: report.More, OK: report.OK, MetadataProblems: report.MetadataProblems}
 	for _, problem := range report.Problems {
 		out.Problems = append(out.Problems, VerifyProblem{Hash: problem.Hash, Problem: problem.Problem})
 	}
@@ -168,9 +165,7 @@ func fromMaintenanceVerify(report internalmaintenance.VerifyReport) VerifyReport
 
 func fromMaintenanceRepack(report internalmaintenance.RepackReport) RepackReport {
 	return RepackReport{
-		MaintenanceProgress: MaintenanceProgress{
-			NextCursor: report.NextCursor, More: report.More,
-		},
+		NextCursor: report.NextCursor, More: report.More,
 		MappingsPruned: report.MappingsPruned, PacksSelected: report.PacksSelected,
 		PacksRewritten: report.PacksRewritten, PacksSealed: report.PacksSealed,
 		PacksRemoved:           report.PacksRemoved,

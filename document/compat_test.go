@@ -1,7 +1,7 @@
 package document
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,7 +26,7 @@ func TestNormalizeDocumentMatchesMsgvaultBaseline(t *testing.T) {
 	var cases []normalizationCompatibilityCase
 	// Public evidence types intentionally do not define a JSON serialization API.
 	// The frozen test bundle uses their Go field names from the baseline.
-	//nolint:musttag
+
 	require.NoError(t, json.Unmarshal(section.Cases, &cases))
 	require.Len(t, cases, 2)
 	for _, testCase := range cases {

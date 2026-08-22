@@ -1,11 +1,9 @@
 package api
 
 import (
-	"bytes"
 	"context"
 	"crypto/subtle"
-	"encoding/json"
-	"io"
+	"encoding/json/v2"
 	"log/slog"
 	"net"
 	"net/http"
@@ -15,7 +13,6 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"go.kenn.io/docbank/internal/daemonauth"
-	"go.kenn.io/docbank/internal/jsontext"
 )
 
 const requestTimeout = 60 * time.Second
@@ -46,10 +43,9 @@ func timeoutExempt(path string) bool {
 }
 
 // clearLongRunningBodyReadDeadlines keeps Huma's request-body deadline in
-// lockstep with Docbank's handler timeout policy. JSON mutation bodies have
-// already been read and text-validated by jsonBodyTextMiddleware before Huma
-// installs its deadline and dispatches them, so retaining that five-second
-// socket deadline can only cancel valid long-running handler work.
+// lockstep with Docbank's handler timeout policy. Retaining that five-second
+// socket deadline after decoding can only cancel valid long-running handler
+// work.
 func clearLongRunningBodyReadDeadlines(api huma.API) {
 	for path, item := range api.OpenAPI().Paths {
 		if !timeoutExempt(path) {
@@ -86,7 +82,7 @@ func writeError(w http.ResponseWriter, e *Error) {
 	w.WriteHeader(e.Status)
 	// Status and headers are already committed; there is nothing left to do
 	// if encoding this fixed-shape struct somehow fails.
-	_ = json.NewEncoder(w).Encode(e) //nolint:errchkjson // see above
+	_ = json.MarshalWrite(w, e)
 }
 
 // authMiddleware requires key on every non-exempt route. There is no
@@ -139,56 +135,6 @@ func loopbackMiddleware(next http.Handler) http.Handler {
 
 func isServerPathIngestRoute(path string) bool {
 	return path == "/api/v1/ingest" || path == "/api/v1/ingest/stream" || path == "/api/v1/ingest/preflight"
-}
-
-// jsonBodyTextMiddleware runs before Huma's JSON decoder, which follows
-// encoding/json's lossy behavior and replaces invalid UTF-8 or unpaired
-// surrogate escapes with U+FFFD. Names and paths must reach route validation
-// byte-for-byte or a mutation could target a different, replacement-character
-// node. Every mutating request is text-validated regardless of Content-Type:
-// Huma accepts an omitted Content-Type for body-bound operations, and malformed
-// headers must not bypass the boundary. Explicit content-write routes carry
-// opaque bytes and validate their own size, digest, and transport envelope.
-func jsonBodyTextMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Body == nil || !mutationMethod(r.Method) || isOpaqueBodyMutation(r) {
-			next.ServeHTTP(w, r)
-			return
-		}
-		body, err := io.ReadAll(r.Body)
-		_ = r.Body.Close()
-		if err != nil {
-			writeError(w, NewError(http.StatusBadRequest, "validation", "could not read request body"))
-			return
-		}
-		if err := jsontext.Validate(body, "request body"); err != nil {
-			writeError(w, NewError(http.StatusBadRequest, "validation", err.Error()))
-			return
-		}
-		r.Body = io.NopCloser(bytes.NewReader(body))
-		next.ServeHTTP(w, r)
-	})
-}
-
-func isOpaqueBodyMutation(r *http.Request) bool {
-	if r.Method == http.MethodPost && r.URL.Path == "/api/v1/uploads" {
-		return true
-	}
-	if r.Method == http.MethodPost && r.URL.Path == webDownloadPreparePath {
-		return true
-	}
-	return r.Method == http.MethodPut &&
-		strings.HasPrefix(r.URL.Path, "/api/v1/nodes/") &&
-		strings.HasSuffix(r.URL.Path, "/content")
-}
-
-func mutationMethod(method string) bool {
-	switch method {
-	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
-		return true
-	default:
-		return false
-	}
 }
 
 func isLoopbackRemote(remoteAddr string) bool {
