@@ -1,0 +1,106 @@
+name: docbank-glmocr
+
+services:
+  engine:
+    build:
+      context: .
+      args:
+        GLMOCR_SDK_REVISION: cef4d0ea120d1741f5cefe8985eee45f6c8eff1d
+    image: docbank-glmocr:cef4d0ea120d
+    command:
+      - python3
+      - -m
+      - vllm.entrypoints.cli.main
+      - serve
+      - /models/glm-ocr
+      - --host
+      - 0.0.0.0
+      - --port
+      - "30005"
+      - --served-model-name
+      - glm-ocr
+      - --max-model-len
+      - "8192"
+      - --max-num-seqs
+      - "4"
+      - --gpu-memory-utilization
+      - "0.12"
+      - --speculative-config
+      - '{"method":"mtp","num_speculative_tokens":3}'
+    expose:
+      - "30005"
+    environment:
+      FLASHINFER_WORKSPACE_DIR: /root/.cache/flashinfer
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      TRITON_CACHE_DIR: /root/.cache/triton
+      VLLM_CACHE_ROOT: /root/.cache/vllm
+      VLLM_NO_USAGE_STATS: "1"
+    gpus: all
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:30005/health', timeout=2).read()"
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 20s
+    ipc: host
+    read_only: true
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=1g
+      # Triton compiles GPU kernels here and must load its generated shared object.
+      - /root/.cache:rw,exec,nosuid,size=4g
+    volumes:
+      - ${GLMOCR_MODEL_ROOT:?set GLMOCR_MODEL_ROOT}/glm-ocr:/models/glm-ocr:ro
+
+  api:
+    image: docbank-glmocr:cef4d0ea120d
+    command:
+      - gunicorn
+      - --bind
+      - 0.0.0.0:30004
+      - --workers
+      - "1"
+      - --threads
+      - "4"
+      - --timeout
+      - "600"
+      - safe_server:create_app()
+    depends_on:
+      engine:
+        condition: service_healthy
+    environment:
+      GLMOCR_CONFIG: /etc/glmocr/config.yaml
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    gpus: all
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:30004/health', timeout=2).read()"
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 4m
+    ports:
+      - 127.0.0.1:30004:30004
+    read_only: true
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=2g
+      # PP-DocLayoutV3 also JIT-compiles GPU kernels.
+      - /root/.cache:rw,exec,nosuid,size=1g
+    volumes:
+      - ./config.yaml:/etc/glmocr/config.yaml:ro
+      - ./safe_server.py:/opt/glmocr-venv/lib/python3.12/site-packages/safe_server.py:ro
+      - ${GLMOCR_MODEL_ROOT:?set GLMOCR_MODEL_ROOT}/pp-doclayout-v3:/models/pp-doclayout-v3:ro
