@@ -204,6 +204,18 @@ linters:
         path: _test\.go
         text: "SA5011"
 
+      # CreateRaw owns the legacy DOS timestamp bytes in published Mistral
+      # fixtures. Using FileHeader.Modified adds an extended timestamp and
+      # changes their digests.
+      - linters: [staticcheck]
+        path: document/mistral/fixture_writer\.go
+        text: "SA1019"
+
+      # TOML requires pointer-receiver UnmarshalText while callers use the
+      # value-semantic Std accessor.
+      - linters: [recvcheck]
+        path: internal/config/config\.go
+
       # bodyclose can't see across function boundaries: internal/api's get()
       # test helper reads and closes the response body itself before
       # returning it for status/header assertions. Every route test file in

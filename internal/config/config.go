@@ -22,8 +22,6 @@ import (
 
 // Duration is a time.Duration that unmarshals from a TOML string such as
 // "30m"; "0" disables the associated timeout.
-//
-
 type Duration time.Duration
 
 // UnmarshalText parses a duration string, rejecting negative durations.
