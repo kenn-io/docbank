@@ -7,11 +7,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewNormalizePolicyReturnsVersionTwoIdentity(t *testing.T) {
+func TestNewNormalizePolicyReturnsVersionThreeIdentity(t *testing.T) {
 	policy, err := NewNormalizePolicy(25_000_000)
 	require.NoError(t, err)
 	assert.Equal(t, NormalizePolicyIdentity{
-		Version:                2,
+		Version:                3,
 		MaxDocumentChars:       25_000_000,
 		MaxUnitChars:           1_000_000,
 		MaxSourceUnitBytes:     4_000_000,

@@ -1,6 +1,6 @@
 ---
 title: Document Understanding in Go
-description: Normalize extracted documents, use bounded Mistral OCR, and embed images and video through Voyage without opening a Docbank vault.
+description: Normalize and prepare documents for search, use bounded Mistral OCR, and embed images and video through Voyage without opening a Docbank vault.
 ---
 
 # Document Understanding in Go
@@ -11,6 +11,9 @@ Docbank vault: importing them does not start a daemon, open storage, or connect
 to an existing installation.
 
 Use `go.kenn.io/docbank/document` for provider-neutral normalization. Use
+`go.kenn.io/docbank/document/embedding` to build deterministic text-embedding
+plans, optionally with a pre-embedding distillation step. Use
+`go.kenn.io/docbank/document/embedding/eval` to compare retrieval recipes. Use
 `go.kenn.io/docbank/document/mistral` when an application explicitly chooses
 Mistral OCR as its extraction provider. Use `go.kenn.io/docbank/document/media`
 to detect and bound images and video, and `go.kenn.io/docbank/document/voyage`
@@ -44,6 +47,9 @@ The policy's structural values are fixed for its normalization version. The
 only caller-selected input is the maximum normalized document size. A future
 change to the algorithm or structural values requires a new normalization
 version rather than silently changing the meaning of existing checksums.
+Version 3 also binds document-level truncation into the document checksum, so
+a complete shorter document cannot share an identity with a longer document
+whose remaining units were removed by the character budget.
 
 ## Run Mistral OCR safely
 
@@ -89,6 +95,84 @@ The importing application remains responsible for credentials, human consent,
 spending and scheduling limits, durable manifests, job orchestration,
 persistence, and search serving. Those application decisions are intentionally
 outside the reusable packages and their policy identity.
+
+## Prepare text for semantic retrieval
+
+`embedding.BuildEmbeddingPlan` converts a complete `NormalizedDocument` into a
+deterministic set of bounded provider inputs. Raw normalized chunks are the
+default representation. A recipe may instead select distilled sections or a
+combined plan containing both representations.
+
+```go
+recipe, err := embedding.NewRecipe(embedding.RecipeConfig{
+	Mode:          embedding.RepresentationRaw,
+	MaxInputRunes: 8_000,
+})
+if err != nil {
+	return err
+}
+
+plan, err := embedding.BuildEmbeddingPlan(
+	normalized,
+	embedding.DocumentContext{Filename: "quarterly-report.pdf"},
+	recipe,
+	nil,
+)
+if err != nil {
+	return err
+}
+```
+
+Context includes bounded filename, title, heading path, and source locator
+fields. Every final input is truncated on rune boundaries to the recipe's
+provider input cap. Recipe, context, plan, source, and individual input
+fingerprints let an application store derived state without making worker
+batch size or claim timing part of vector identity.
+
+For optional distillation, configure `Distillation` on a `distilled` or
+`combined` recipe and use this flow:
+
+```text
+PrepareDistillation(complete normalized document)
+  -> application checks separate distillation consent
+  -> Distiller.Distill
+  -> ValidateDistillate
+  -> BuildEmbeddingPlan
+```
+
+Partitions contain complete normalized chunks in source order. A distiller's
+result must cover every partition exactly once in that order and stays linked
+to exact source spans. Derived text is untrusted, non-authoritative evidence;
+callers should retain normalized source evidence for display and verification.
+Different provider output gets a different content-addressed distillate and
+plan identity.
+
+Docbank defines the provider-neutral `Distiller` interface but does not choose
+a distillation provider or make network requests. Provider implementations are
+responsible for authenticated capability checks, transport bounds, redirect
+policy, and per-request consent enforcement. `EgressIdentity` gives
+applications separate endpoint-sensitive fingerprints for document
+distillation, document embedding, and query embedding. Credentials are not
+part of those identities. `VectorSpaceIdentity` separately pins provider,
+model revision, dimension, and normalization without an endpoint, allowing an
+application to reuse compatible vectors while still requiring fresh consent
+when their destination changes.
+
+The shared retrieval helpers make omitted and `auto` search lexical, so a
+query is not sent to an embedding provider without explicit `semantic` or
+`hybrid` mode. Candidate limits default to 100 and are bounded at 1,000.
+`CollectScopedCandidates` requires the backend to apply scope before its
+vector cutoff and pages until authoritative exhaustion or a `limit+1`
+overflow probe. Reciprocal-rank fusion preserves lexical and semantic signals
+and reports overflow from either input lane or the fused union.
+
+`document/embedding/eval` runs versioned public or synthetic corpora through
+repeatable retrieval systems. Reports include Recall@5/10/20, nDCG@10, MRR,
+critical misses, provider calls and input/output usage, estimated cost, and
+latency. Repeated trials retain individual observations and report empirical
+minimum, mean, and maximum values instead of hiding hosted-provider variance.
+Applications should keep raw as the default unless measured results justify a
+different recipe.
 
 ## Detect and bound visual attachments
 
@@ -192,9 +276,14 @@ application storage and workers
 application storage and workers
   -> document/voyage (optional provider transport)
   -> document/media (provider-neutral detection and eligibility)
+
+application storage and workers
+  -> document/embedding (provider-neutral text planning and retrieval contracts)
+  -> document (provider-neutral normalization)
 ```
 
 No public package imports Docbank's vault, database, daemon, or queue. Local
 extractors can use `document` without depending on Mistral or any network
-transport, and applications can use `document/media` alone to record image
-dimensions at ingest without any provider.
+transport, applications can use `document/embedding` without a database or
+provider client, and applications can use `document/media` alone to record
+image dimensions at ingest without any provider.
