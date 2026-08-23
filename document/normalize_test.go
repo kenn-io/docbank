@@ -75,6 +75,47 @@ func TestNormalizeDocumentRejectsZeroPolicy(t *testing.T) {
 	require.ErrorContains(t, err, "use NewNormalizePolicy")
 }
 
+func TestNormalizeAndValidateRejectInvalidDocumentIdentifiers(t *testing.T) {
+	policy := testNormalizePolicy(t, 10_000)
+	validSource := SourceDocument{
+		Family: "text", UnitKind: "unit", Units: []SourceUnit{{Index: 0, Markdown: "evidence"}},
+	}
+	validNormalized, err := NormalizeDocument(validSource, policy)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name, family, unitKind, want string
+	}{
+		{
+			name: "family invalid UTF-8", family: string([]byte{0xff}), unitKind: "unit", want: "invalid UTF-8",
+		},
+		{
+			name: "unit kind invalid UTF-8", family: "text", unitKind: string([]byte{0xff}), want: "invalid UTF-8",
+		},
+		{
+			name: "family control character", family: "text\nother", unitKind: "unit", want: "control character",
+		},
+		{
+			name: "unit kind control character", family: "text", unitKind: "unit\tother", want: "control character",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			source := validSource
+			source.Family = test.family
+			source.UnitKind = test.unitKind
+			_, err := NormalizeDocument(source, policy)
+			require.ErrorContains(t, err, test.want)
+
+			normalized := validNormalized
+			normalized.Family = test.family
+			normalized.UnitKind = test.unitKind
+			err = ValidateNormalizedDocument(normalized)
+			require.ErrorContains(t, err, test.want)
+		})
+	}
+}
+
 func TestNormalizeDocumentChecksumIncludesDocumentTruncation(t *testing.T) {
 	policy := testNormalizePolicy(t, 3)
 	complete, err := NormalizeDocument(SourceDocument{

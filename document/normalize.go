@@ -31,6 +31,9 @@ func NormalizeDocument(source SourceDocument, policy NormalizePolicy) (Normalize
 	if source.Family == "" || source.UnitKind == "" || len(source.Units) == 0 {
 		return NormalizedDocument{}, errors.New("document normalization requires family, unit kind, and units")
 	}
+	if err := validateDocumentIdentifiers(source.Family, source.UnitKind); err != nil {
+		return NormalizedDocument{}, err
+	}
 	if err := policy.validate(); err != nil {
 		return NormalizedDocument{}, err
 	}
@@ -112,6 +115,9 @@ func ValidateNormalizedDocument(normalized NormalizedDocument) error {
 		normalized.UnitKind == "" || len(normalized.Units) == 0 {
 		return errors.New("normalized document identity is incomplete")
 	}
+	if err := validateDocumentIdentifiers(normalized.Family, normalized.UnitKind); err != nil {
+		return err
+	}
 	anyTruncated := false
 	for index, unit := range normalized.Units {
 		if err := validateNormalizedUnit(normalized.UnitKind, index, unit); err != nil {
@@ -130,6 +136,22 @@ func ValidateNormalizedDocument(normalized NormalizedDocument) error {
 	}
 	if anyTruncated && !normalized.Truncated {
 		return errors.New("normalized document truncation state is invalid")
+	}
+	return nil
+}
+
+func validateDocumentIdentifiers(family, unitKind string) error {
+	identifiers := [...]struct{ name, value string }{
+		{name: "family", value: family},
+		{name: "unit kind", value: unitKind},
+	}
+	for _, identifier := range identifiers {
+		if !utf8.ValidString(identifier.value) {
+			return fmt.Errorf("document %s contains invalid UTF-8", identifier.name)
+		}
+		if strings.IndexFunc(identifier.value, unicode.IsControl) >= 0 {
+			return fmt.Errorf("document %s contains a control character", identifier.name)
+		}
 	}
 	return nil
 }

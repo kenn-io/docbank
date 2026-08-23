@@ -47,6 +47,8 @@ The policy's structural values are fixed for its normalization version. The
 only caller-selected input is the maximum normalized document size. A future
 change to the algorithm or structural values requires a new normalization
 version rather than silently changing the meaning of existing checksums.
+Source family and unit-kind identifiers must be valid UTF-8 without control
+characters so they remain stable in fingerprints and provider-facing locators.
 Version 3 binds truncation into unit, chunk, and document checksums. A complete
 shorter document therefore cannot share an identity with a longer document
 whose retained evidence or remaining units were truncated by a normalization
