@@ -2,7 +2,7 @@ package api_test
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -196,6 +196,22 @@ func TestBatchMoveSwapsCoordinatesThroughTypedClient(t *testing.T) {
 		}}})
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 	assert.Contains(t, body, `"code":"invalid_batch_move"`)
+}
+
+func TestTypedRoutesRejectDuplicateJSONMembers(t *testing.T) {
+	ts, _ := newTestServer(t, nil)
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/path/trash",
+		bytes.NewBufferString(`{"path":"/first","path":"/second"}`))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := ts.Client().Do(req)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, string(body))
+	assert.Contains(t, string(body), `"code":"validation"`)
 }
 
 func TestPathMutationsRejectInvalidUTF8BeforeJSONDecoding(t *testing.T) {

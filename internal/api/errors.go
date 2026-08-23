@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/kit/packstore"
@@ -17,8 +18,8 @@ import (
 type Error struct {
 	Title  string   `json:"title"`
 	Status int      `json:"status"`
-	Detail string   `json:"detail,omitempty"`
-	Code   string   `json:"code,omitempty"`
+	Detail string   `json:"detail,omitzero"`
+	Code   string   `json:"code,omitzero"`
 	Errors []string `json:"errors,omitempty"`
 }
 
@@ -45,10 +46,10 @@ func installErrorFormatter() {
 		if status >= http.StatusInternalServerError {
 			code = "internal"
 		}
-		e := NewError(status, code, msg)
+		e := NewError(status, code, strings.ToValidUTF8(msg, "\ufffd"))
 		for _, err := range errs {
 			if err != nil {
-				e.Errors = append(e.Errors, err.Error())
+				e.Errors = append(e.Errors, strings.ToValidUTF8(err.Error(), "\ufffd"))
 			}
 		}
 		return e

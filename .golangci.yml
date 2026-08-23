@@ -1,6 +1,7 @@
 version: "2"
 
 run:
+  go: "1.27"
   # Lint the build-tagged code, not just the untagged subset. The primary
   # build uses `fts5` (Makefile BUILD_TAGS); without this tag golangci-lint
   # never compiles those files, so lint debt silently accumulates behind
@@ -174,6 +175,8 @@ linters:
         - io
         - os
         - encoding/json
+        - encoding/json/jsontext
+        - encoding/json/v2
         - encoding/csv
         - net/http
         - path/filepath

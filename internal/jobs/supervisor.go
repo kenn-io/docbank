@@ -86,9 +86,8 @@ func (s *Supervisor) Start(name string, run func(context.Context) error) error {
 	if _, exists := s.jobs[name]; exists {
 		return fmt.Errorf("job %q: %w", name, ErrDuplicate)
 	}
-	job := &state{Snapshot: Snapshot{
-		Name: name, Status: StatusRunning, StartedAt: time.Now().UTC(),
-	}}
+	job := &state{
+		Name: name, Status: StatusRunning, StartedAt: time.Now().UTC()}
 	s.jobs[name] = job
 	s.active++
 	go s.run(job, run)

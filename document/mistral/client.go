@@ -6,7 +6,8 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -471,26 +472,26 @@ func streamRequest(documentBytes, prefix, suffix []byte) (*io.PipeReader, <-chan
 }
 
 func decodeWireResult(data []byte, method UnitBoundMethod, maxUnits int) (wireResult, error) {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	opening, err := decoder.Token()
+	decoder := jsontext.NewDecoder(bytes.NewReader(data), jsontext.AllowDuplicateNames(true))
+	opening, err := decoder.ReadToken()
 	if err != nil {
 		return wireResult{}, err
 	}
-	if opening != json.Delim('{') {
+	if opening.Kind() != jsontext.KindBeginObject {
 		return wireResult{}, errors.New("mistral OCR response must be a JSON object")
 	}
 
 	var result wireResult
 	keys := make(map[string]struct{})
-	for decoder.More() {
-		keyToken, err := decoder.Token()
+	for decoder.PeekKind() != jsontext.KindEndObject {
+		keyToken, err := decoder.ReadToken()
 		if err != nil {
 			return wireResult{}, err
 		}
-		key, ok := keyToken.(string)
-		if !ok {
+		if keyToken.Kind() != jsontext.KindString {
 			return wireResult{}, errors.New("mistral OCR response has a non-string JSON object key")
 		}
+		key := keyToken.String()
 		if !canonicalJSONKey(key) {
 			return wireResult{}, fmt.Errorf(
 				"mistral OCR response JSON object key %q must use lowercase ASCII", key,
@@ -502,11 +503,11 @@ func decodeWireResult(data []byte, method UnitBoundMethod, maxUnits int) (wireRe
 		keys[key] = struct{}{}
 		switch key {
 		case "model":
-			err = decoder.Decode(&result.Model)
+			err = json.UnmarshalDecode(decoder, &result.Model)
 		case "pages":
 			result.Pages, err = decodeWirePages(decoder, method, maxUnits)
 		case "usage_info":
-			err = decoder.Decode(&result.UsageInfo)
+			err = json.UnmarshalDecode(decoder, &result.UsageInfo)
 		default:
 			err = scanJSONValue(decoder, 1, "mistral OCR response")
 		}
@@ -514,32 +515,32 @@ func decodeWireResult(data []byte, method UnitBoundMethod, maxUnits int) (wireRe
 			return wireResult{}, err
 		}
 	}
-	if _, err := decoder.Token(); err != nil {
+	if _, err := decoder.ReadToken(); err != nil {
 		return wireResult{}, err
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	if _, err := decoder.ReadToken(); !errors.Is(err, io.EOF) {
 		return wireResult{}, errors.New("mistral OCR response has trailing JSON")
 	}
 	return result, nil
 }
 
 func decodeWirePages(
-	decoder *json.Decoder,
+	decoder *jsontext.Decoder,
 	method UnitBoundMethod,
 	maxUnits int,
 ) ([]wirePage, error) {
-	opening, err := decoder.Token()
+	opening, err := decoder.ReadToken()
 	if err != nil {
 		return nil, err
 	}
-	if opening == nil {
+	if opening.Kind() == jsontext.KindNull {
 		return nil, nil
 	}
-	if opening != json.Delim('[') {
+	if opening.Kind() != jsontext.KindBeginArray {
 		return nil, errors.New("mistral OCR response pages must be an array")
 	}
 	pages := make([]wirePage, 0, min(maxUnits, 16))
-	for decoder.More() {
+	for decoder.PeekKind() != jsontext.KindEndArray {
 		if len(pages) == maxUnits {
 			if method == UnitBoundProviderRequest || method == UnitBoundLocalExact {
 				return nil, fmt.Errorf("provider returned more than %d authorized units: %w",
@@ -548,12 +549,12 @@ func decodeWirePages(
 			return nil, fmt.Errorf("mistral OCR response exceeds unit limit %d", maxUnits)
 		}
 		var page wirePage
-		if err := decoder.Decode(&page); err != nil {
+		if err := json.UnmarshalDecode(decoder, &page); err != nil {
 			return nil, err
 		}
 		pages = append(pages, page)
 	}
-	if _, err := decoder.Token(); err != nil {
+	if _, err := decoder.ReadToken(); err != nil {
 		return nil, err
 	}
 	return pages, nil
@@ -625,7 +626,7 @@ func requestEnvelope(
 		IncludeBlocks      bool   `json:"include_blocks"`
 		ExtractHeader      bool   `json:"extract_header"`
 		ExtractFooter      bool   `json:"extract_footer"`
-		Pages              string `json:"pages,omitempty"`
+		Pages              string `json:"pages,omitzero"`
 	}{
 		ExtractHeader: options.ExtractHeader,
 		ExtractFooter: options.ExtractFooter,

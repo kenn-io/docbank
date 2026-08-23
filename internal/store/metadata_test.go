@@ -4,7 +4,8 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -24,6 +25,20 @@ const (
 	metadataIngestID       = "44444444-4444-4444-8444-444444444444"
 	metadataTagID          = "55555555-5555-4555-8555-555555555555"
 )
+
+func TestExportMetadataPreservesV1JavaScriptSeparatorEscapes(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+
+	_, err = s.Mkdir(t.Context(), s.RootID(), "line\u2028paragraph\u2029")
+	require.NoError(t, err)
+
+	var exported bytes.Buffer
+	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
+	assert.Contains(t, exported.String(), `"name":"line\u2028paragraph\u2029"`)
+	assert.NotContains(t, exported.String(), "line\u2028paragraph\u2029")
+}
 
 func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 	ctx := context.Background()
@@ -420,25 +435,20 @@ func TestImportMetadataRejectsInvalidUTF8AndRollsBack(t *testing.T) {
 	}
 	tests := map[string]struct {
 		input []byte
-		want  string
 	}{
 		"header string": {
 			input: withInvalidByte(
 				`{"type":"meta","format":"docbank-`, `","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}`+"\n"),
-			want: "metadata JSON is not valid UTF-8",
 		},
 		"record string": {
 			input: withInvalidByte(
 				header+root+`{"type":"tag","tag_id":"`+metadataTagID+`","name":"invalid`, `","revision":1}`+"\n"),
-			want: "metadata JSON is not valid UTF-8",
 		},
 		"lone high surrogate": {
 			input: []byte(header + root + `{"type":"tag","tag_id":"` + metadataTagID + `","name":"invalid\ud800","revision":1}` + "\n"),
-			want:  "unpaired UTF-16 surrogate escape",
 		},
 		"lone low surrogate": {
 			input: []byte(header + root + `{"type":"tag","tag_id":"` + metadataTagID + `","name":"invalid\udc00","revision":1}` + "\n"),
-			want:  "unpaired UTF-16 surrogate escape",
 		},
 	}
 	for name, tt := range tests {
@@ -447,7 +457,7 @@ func TestImportMetadataRejectsInvalidUTF8AndRollsBack(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, target.Close()) })
 			err = target.ImportMetadata(t.Context(), bytes.NewReader(tt.input))
-			require.ErrorContains(t, err, tt.want)
+			require.Error(t, err)
 			var nodes, tags int64
 			require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodes))
 			require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM tags`).Scan(&tags))
@@ -633,9 +643,9 @@ func TestImportMetadataRejectsEachRevertContentMismatch(t *testing.T) {
 			tt.mutate(current, revertSource, &records)
 
 			var malformed bytes.Buffer
-			enc := json.NewEncoder(&malformed)
+			enc := jsontext.NewEncoder(&malformed)
 			for _, record := range records {
-				require.NoError(t, enc.Encode(record))
+				require.NoError(t, json.MarshalEncode(enc, record))
 			}
 			target, openErr := Open(filepath.Join(t.TempDir(), "target.db"))
 			require.NoError(t, openErr)

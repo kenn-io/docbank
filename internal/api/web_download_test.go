@@ -4,7 +4,8 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"mime"
@@ -34,7 +35,7 @@ func TestWebDownloadVerifiesBeforeOneUseBrowserHandoff(t *testing.T) {
 	var session struct {
 		Token string `json:"token"`
 	}
-	require.NoError(t, json.NewDecoder(sessionResponse.Body).Decode(&session))
+	require.NoError(t, json.UnmarshalRead(sessionResponse.Body, &session))
 	require.NoError(t, sessionResponse.Body.Close())
 
 	requestBody, err := json.Marshal(map[string]any{
@@ -64,7 +65,7 @@ func TestWebDownloadVerifiesBeforeOneUseBrowserHandoff(t *testing.T) {
 		VersionID string `json:"version_id"`
 		BlobHash  string `json:"blob_hash"`
 	}
-	decoder := json.NewDecoder(prepareResponse.Body)
+	decoder := jsontext.NewDecoder(prepareResponse.Body)
 	for {
 		var event struct {
 			Phase     string `json:"phase"`
@@ -75,7 +76,7 @@ func TestWebDownloadVerifiesBeforeOneUseBrowserHandoff(t *testing.T) {
 			VersionID string `json:"version_id"`
 			BlobHash  string `json:"blob_hash"`
 		}
-		err := decoder.Decode(&event)
+		err := json.UnmarshalDecode(decoder, &event)
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -163,7 +164,7 @@ func TestWebDownloadPreparesOneRetainedVersion(t *testing.T) {
 		VersionID string `json:"version_id"`
 		BlobHash  string `json:"blob_hash"`
 	}
-	decoder := json.NewDecoder(response.Body)
+	decoder := jsontext.NewDecoder(response.Body)
 	for {
 		var event struct {
 			Phase     string `json:"phase"`
@@ -171,7 +172,7 @@ func TestWebDownloadPreparesOneRetainedVersion(t *testing.T) {
 			VersionID string `json:"version_id"`
 			BlobHash  string `json:"blob_hash"`
 		}
-		err := decoder.Decode(&event)
+		err := json.UnmarshalDecode(decoder, &event)
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -217,7 +218,7 @@ func TestWebDownloadRejectsAStaleSelectionBeforeStaging(t *testing.T) {
 	var problem struct {
 		Code string `json:"code"`
 	}
-	require.NoError(t, json.NewDecoder(response.Body).Decode(&problem))
+	require.NoError(t, json.UnmarshalRead(response.Body, &problem))
 	require.NoError(t, response.Body.Close())
 	assert.Equal(t, "download_selection_stale", problem.Code)
 }

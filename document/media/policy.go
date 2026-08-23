@@ -26,7 +26,7 @@ type Policy struct {
 	// MaxDurationMS bounds video duration; zero applies no cap and a negative
 	// value refuses all video. Under a cap, video whose duration cannot be
 	// measured is refused as too long.
-	MaxDurationMS int64 `json:"max_duration_ms,omitempty"`
+	MaxDurationMS int64 `json:"max_duration_ms,omitzero"`
 	// AllowStill admits single-frame images.
 	AllowStill bool `json:"allow_still"`
 	// AllowAnimated admits multi-frame images.

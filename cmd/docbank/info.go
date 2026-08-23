@@ -1,7 +1,8 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -25,9 +26,8 @@ var infoCmd = &cobra.Command{
 			return err
 		}
 		if infoJSON {
-			enc := json.NewEncoder(cmd.OutOrStdout())
-			enc.SetIndent("", "  ")
-			return enc.Encode(info)
+			enc := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
+			return json.MarshalEncode(enc, info)
 		}
 
 		physicalBytes := info.Storage.LooseBytes + info.Storage.PackStoredBytes

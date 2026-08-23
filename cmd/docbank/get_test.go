@@ -4,7 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"os"
@@ -61,7 +62,7 @@ func TestGetRefusesExistingDestinationUnlessOverwriteIsExplicit(t *testing.T) {
 
 	out, err := runCLI(t, "get", "/inbox/report.txt", output, "--overwrite", "--json")
 	require.NoError(t, err)
-	assert.True(t, json.Valid([]byte(out)), out)
+	assert.True(t, jsontext.Value([]byte(out)).IsValid(), out)
 	bytes, readErr = os.ReadFile(output)
 	require.NoError(t, readErr)
 	assert.Equal(t, "authoritative", string(bytes))

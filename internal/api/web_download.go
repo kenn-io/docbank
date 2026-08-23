@@ -7,7 +7,8 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -59,11 +60,11 @@ type webDownloadEvent struct {
 	Phase     string `json:"phase"`
 	Received  int64  `json:"received"`
 	Total     int64  `json:"total"`
-	URL       string `json:"url,omitempty"`
-	Name      string `json:"name,omitempty"`
-	VersionID string `json:"version_id,omitempty"`
-	BlobHash  string `json:"blob_hash,omitempty"`
-	Detail    string `json:"detail,omitempty"`
+	URL       string `json:"url,omitzero"`
+	Name      string `json:"name,omitzero"`
+	VersionID string `json:"version_id,omitzero"`
+	BlobHash  string `json:"blob_hash,omitzero"`
+	Detail    string `json:"detail,omitzero"`
 }
 
 func newWebDownloadRegistry(vaultRoot string) *webDownloadRegistry {
@@ -224,10 +225,10 @@ func registerWebDownload(
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.WriteHeader(http.StatusOK)
-		encoder := json.NewEncoder(w)
+		encoder := jsontext.NewEncoder(w)
 		flusher, _ := w.(http.Flusher)
 		report := func(event webDownloadEvent) error {
-			if err := encoder.Encode(event); err != nil {
+			if err := json.MarshalEncode(encoder, event); err != nil {
 				return err
 			}
 			if flusher != nil {
@@ -322,16 +323,10 @@ func registerWebDownload(
 
 func decodeWebDownloadRequest(w http.ResponseWriter, r *http.Request) (webDownloadRequest, *Error) {
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
 	var request webDownloadRequest
-	if err := decoder.Decode(&request); err != nil {
+	if err := json.UnmarshalRead(r.Body, &request, json.RejectUnknownMembers(true)); err != nil {
 		return webDownloadRequest{}, NewError(http.StatusBadRequest, "validation",
 			"download request must be one JSON object with known fields")
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return webDownloadRequest{}, NewError(http.StatusBadRequest, "validation",
-			"download request must contain exactly one JSON object")
 	}
 	if request.NodeID < 1 || request.Revision < 1 || request.Size < 0 ||
 		request.VersionID == "" || len(request.BlobHash) != 64 {

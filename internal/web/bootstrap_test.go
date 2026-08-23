@@ -42,6 +42,18 @@ func TestWriteBootstrapKeepsCredentialsOutOfLaunchURL(t *testing.T) {
 	assert.NotContains(t, string(raw), `<a href=`)
 }
 
+func TestWriteBootstrapEscapesDestinationForInlineScript(t *testing.T) {
+	root := t.TempDir()
+	const authenticated = "http://127.0.0.1:43210/#web_session=private&web_upload_secret=proof</script><script>globalThis.injected=true</script>"
+	_, err := WriteBootstrap(root, authenticated)
+	require.NoError(t, err)
+
+	raw, err := os.ReadFile(filepath.Join(root, launchDirName, "index.html"))
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `proof\u003c/script\u003e\u003cscript\u003eglobalThis.injected=true\u003c/script\u003e`)
+	assert.NotContains(t, string(raw), `proof</script>`)
+}
+
 func TestWriteBootstrapRejectsUnauthenticatedDestination(t *testing.T) {
 	for _, destination := range []string{
 		"https://127.0.0.1:43210/#web_session=private",

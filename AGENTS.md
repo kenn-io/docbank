@@ -4,9 +4,10 @@ Instructions for autonomous coding agents working in this repository.
 
 ## Build and Test
 
-- Go 1.26+ (go.mod is authoritative). Go 1.26 language features — e.g.
-  value-form `new(v)` — are in use; verify against the toolchain before
-  treating unfamiliar syntax as an error.
+- Go 1.27+ (go.mod is authoritative). Go 1.26 value-form `new(v)` and Go
+  1.27 generic methods, promoted struct-literal fields, and assignment-context
+  inference are in use; verify against the toolchain before treating unfamiliar
+  syntax as an error.
 - Every build and test needs the fts5 tag: `make test` or
   `go test -tags fts5 ./...`. CGO builds use mattn SQLite; the supported
   pure-Go path uses `CGO_ENABLED=0` and modernc SQLite. Keep the complete suite
@@ -64,6 +65,9 @@ Instructions for autonomous coding agents working in this repository.
    of the actual rendered interface in the PR description. Use only synthetic
    data, visually inspect the image before publishing it, and never substitute a
    mockup for the implemented UI.
+8. Do not watch, poll, or wait for GitHub Actions or pull request checks unless
+   the user explicitly asks you to monitor them. A request to open, update, or
+   make a pull request merge-ready does not authorize ongoing CI monitoring.
 
 ## Releases
 

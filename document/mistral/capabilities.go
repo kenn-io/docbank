@@ -1,9 +1,9 @@
 package mistral
 
 import (
-	"bytes"
 	"crypto/sha256"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -91,18 +91,18 @@ type CapabilityResult struct {
 	MediaType           string          `json:"media_type"`
 	UnitKind            string          `json:"unit_kind"`
 	Status              ProbeStatus     `json:"status"`
-	ReasonCode          string          `json:"reason_code,omitempty"`
+	ReasonCode          string          `json:"reason_code,omitzero"`
 	FixtureDigest       string          `json:"fixture_digest"`
 	RequestFingerprint  string          `json:"request_fingerprint"`
-	ReturnedModel       string          `json:"returned_model,omitempty"`
-	UnitCount           int             `json:"unit_count,omitempty"`
-	UnitsProcessed      int             `json:"units_processed,omitempty"`
+	ReturnedModel       string          `json:"returned_model,omitzero"`
+	UnitCount           int             `json:"unit_count,omitzero"`
+	UnitsProcessed      int             `json:"units_processed,omitzero"`
 	ProviderBytes       *int64          `json:"provider_bytes,omitempty"`
 	UnitBoundMethod     UnitBoundMethod `json:"unit_bound_method"`
-	FixtureUnits        int             `json:"fixture_units,omitempty"`
-	BoundRequestedUnits int             `json:"bound_requested_units,omitempty"`
-	BoundUnitsProcessed int             `json:"bound_units_processed,omitempty"`
-	LocalUnits          int             `json:"local_units,omitempty"`
+	FixtureUnits        int             `json:"fixture_units,omitzero"`
+	BoundRequestedUnits int             `json:"bound_requested_units,omitzero"`
+	BoundUnitsProcessed int             `json:"bound_units_processed,omitzero"`
+	LocalUnits          int             `json:"local_units,omitzero"`
 }
 
 // ValidateComplete validates a complete manifest without performing network
@@ -203,10 +203,8 @@ func EncodeCapabilityManifest(writer io.Writer, manifest CapabilityManifest) err
 	if err := manifest.ValidateComplete(); err != nil {
 		return err
 	}
-	encoder := json.NewEncoder(writer)
-	encoder.SetIndent("", "  ")
-	encoder.SetEscapeHTML(true)
-	if err := encoder.Encode(manifest); err != nil {
+	encoder := jsontext.NewEncoder(writer, jsontext.WithIndent("  "), jsontext.EscapeForHTML(true))
+	if err := json.MarshalEncode(encoder, manifest); err != nil {
 		return fmt.Errorf("encode Mistral capability manifest: %w", err)
 	}
 	return nil
@@ -224,14 +222,9 @@ func DecodeCapabilityManifest(reader io.Reader) (CapabilityManifest, error) {
 	if err := rejectDuplicateJSONKeys(data, "mistral capability manifest"); err != nil {
 		return CapabilityManifest{}, fmt.Errorf("decode Mistral capability manifest: %w", err)
 	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	var manifest CapabilityManifest
-	if err := decoder.Decode(&manifest); err != nil {
+	if err := json.Unmarshal(data, &manifest, json.RejectUnknownMembers(true)); err != nil {
 		return CapabilityManifest{}, fmt.Errorf("decode Mistral capability manifest: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return CapabilityManifest{}, errors.New("mistral capability manifest has trailing JSON")
 	}
 	if err := manifest.ValidateComplete(); err != nil {
 		return CapabilityManifest{}, err
@@ -278,7 +271,7 @@ func rejectDuplicateJSONKeys(data []byte, subject string) error {
 	return manifestjson.RejectDuplicateKeys(data, subject)
 }
 
-func scanJSONValue(decoder *json.Decoder, depth int, subject string) error {
+func scanJSONValue(decoder *jsontext.Decoder, depth int, subject string) error {
 	return manifestjson.ScanValue(decoder, depth, subject)
 }
 

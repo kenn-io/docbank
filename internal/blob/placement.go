@@ -2,7 +2,7 @@ package blob
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -37,7 +37,7 @@ type PlacementReceipt struct {
 	CopiedBytes    int64                   `json:"copied_bytes"`
 	SourceRevoked  int64                   `json:"source_revoked"`
 	CleanupPending int64                   `json:"cleanup_pending"`
-	Evacuated      bool                    `json:"evacuated,omitempty"`
+	Evacuated      bool                    `json:"evacuated,omitzero"`
 	Objects        []PlacementObjectResult `json:"objects"`
 }
 

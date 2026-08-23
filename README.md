@@ -1,6 +1,6 @@
 # docbank
 
-[![Go 1.26+](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go)](https://go.dev)
+[![Go 1.27+](https://img.shields.io/badge/Go-1.27+-00ADD8?logo=go)](https://go.dev)
 [![CI](https://github.com/kenn-io/docbank/actions/workflows/ci.yml/badge.svg)](https://github.com/kenn-io/docbank/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/kenn-io/docbank?include_prereleases)](https://github.com/kenn-io/docbank/releases)
 
@@ -75,7 +75,7 @@ arm64 and refuse to install it unless its digest matches the release's
 `SHA256SUMS`. [GitHub Releases](https://github.com/kenn-io/docbank/releases)
 also provides the archives for manual verification.
 
-To build from source, install Go 1.26+, CGO, a C compiler, Node 24+, and npm:
+To build from source, install Go 1.27+, CGO, a C compiler, Node 24+, and npm:
 
 ```bash
 git clone https://github.com/kenn-io/docbank.git

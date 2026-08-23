@@ -5,7 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"math"
@@ -19,7 +19,7 @@ type PlacementRequest struct {
 	SourceStoreID          string `json:"source_store_id"`
 	DestinationStoreID     string `json:"destination_store_id"`
 	RetireSource           bool   `json:"retire_source"`
-	Evacuate               bool   `json:"evacuate,omitempty"`
+	Evacuate               bool   `json:"evacuate,omitzero"`
 	AllowAuditedRemoteOnly bool   `json:"allow_audited_remote_only"`
 }
 
@@ -35,7 +35,7 @@ type PlacementHash struct {
 	RetireSource        bool                    `json:"retire_source"`
 	PackRepackRequired  bool                    `json:"pack_repack_required"`
 	UnavailableAtSource bool                    `json:"unavailable_at_source"`
-	ScratchBytes        int64                   `json:"scratch_bytes,omitempty"`
+	ScratchBytes        int64                   `json:"scratch_bytes,omitzero"`
 }
 
 type PlacementPlan struct {

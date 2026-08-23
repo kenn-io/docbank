@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -176,9 +176,7 @@ func decodePlacementArtifacts(
 		)
 	}
 	var manifest placementManifest
-	decoder := json.NewDecoder(bytes.NewReader(artifact.Data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&manifest); err != nil {
+	if err := json.Unmarshal(artifact.Data, &manifest, json.RejectUnknownMembers(true)); err != nil {
 		return placementManifest{}, fmt.Errorf("backupapp: decoding placement manifest: %w", err)
 	}
 	if err := validatePlacementManifest(manifest); err != nil {
