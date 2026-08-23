@@ -135,11 +135,14 @@ func (p *Processor) Process(ctx context.Context, source ocr.Source) (result ocr.
 }
 
 func classifyProcessorError(err error, metrics RequestMetrics) error {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
 	kind := ocr.ErrorMalformedOutput
 	switch {
 	case errors.Is(err, ErrSpoolCapacity):
 		kind = ocr.ErrorCapacity
-	case errors.Is(err, ErrSpoolUnavailable), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+	case errors.Is(err, ErrSpoolUnavailable):
 		kind = ocr.ErrorTransient
 	case errors.Is(err, ErrInvalidSource):
 		kind = ocr.ErrorInvalidInput

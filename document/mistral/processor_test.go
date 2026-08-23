@@ -2,6 +2,7 @@ package mistral
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -92,6 +93,23 @@ func TestProcessorClassifiesStagingAndSourceFailures(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, ocr.ErrorInvalidInput, ocr.ErrorKindOf(err))
 	assert.False(t, ocr.IsRetryable(err))
+}
+
+func TestClassifyProcessorErrorPropagatesCancellation(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+	}{
+		{name: "canceled", err: context.Canceled},
+		{name: "deadline", err: context.DeadlineExceeded},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := classifyProcessorError(test.err, RequestMetrics{Requests: 1})
+			require.ErrorIs(t, err, test.err)
+			assert.Empty(t, ocr.ErrorKindOf(err))
+			assert.False(t, ocr.IsRetryable(err))
+		})
+	}
 }
 
 func newProcessorWithoutRequests(t *testing.T, spoolDirectory string) *Processor {

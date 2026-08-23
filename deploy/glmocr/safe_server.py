@@ -154,20 +154,23 @@ def validate_engine(deployment_fingerprint: str) -> None:
         raise RuntimeError("engine deployment fingerprint does not match the adapter")
 
 
-def validate_document(content: bytes, suffix: str) -> None:
+def validate_document(content: bytes, suffix: str, pdf_max_pages: int) -> int:
     try:
         if suffix == ".pdf":
             with pymupdf.open(stream=content, filetype="pdf") as document:
                 if document.needs_pass or document.page_count <= 0:
                     raise InvalidDocument("PDF cannot be opened for rendering")
+                if document.page_count > pdf_max_pages:
+                    raise InvalidDocument("PDF exceeds the configured page limit")
                 for page_index in range(document.page_count):
                     page = document.load_page(page_index)
                     page.get_pixmap(matrix=pymupdf.Matrix(0.1, 0.1), alpha=False)
-            return
+                return document.page_count
         with Image.open(BytesIO(content)) as image:
             image.verify()
         with Image.open(BytesIO(content)) as image:
             image.load()
+        return 1
     except InvalidDocument:
         raise
     except PYMUPDF_INPUT_ERRORS + (UnidentifiedImageError, OSError, RuntimeError, SyntaxError, ValueError) as error:
@@ -199,6 +202,7 @@ def create_app() -> Flask:
     config_path = os.environ.get("GLMOCR_CONFIG", "/etc/glmocr/config.yaml")
     deployment_fingerprint = validate_deployment(config_path)
     config = load_config(config_path)
+    pdf_max_pages = config.pipeline.page_loader.pdf_max_pages
     configure_logging(level=config.logging.level)
     pipeline = Pipeline(config=config.pipeline)
     pipeline.start()
@@ -232,7 +236,7 @@ def create_app() -> Flask:
         except ValueError as error:
             return jsonify({"error": str(error)}), 400
         try:
-            validate_document(content, suffix)
+            source_units = validate_document(content, suffix, pdf_max_pages)
         except InvalidDocument:
             return jsonify({"error": "source cannot be decoded"}), 422
         try:
@@ -254,6 +258,8 @@ def create_app() -> Flask:
             pages = result.json_result
             if not isinstance(pages, list) or not pages:
                 return jsonify({"error": "OCR pipeline returned no evidence"}), 422
+            if len(pages) != source_units:
+                return jsonify({"error": "OCR pipeline returned the wrong page count"}), 502
             if not all(isinstance(page, list) for page in pages):
                 return jsonify({"error": "OCR pipeline returned malformed pages"}), 502
             if not any(pages):
