@@ -6,7 +6,7 @@ services:
       context: .
       args:
         GLMOCR_SDK_REVISION: cef4d0ea120d1741f5cefe8985eee45f6c8eff1d
-    image: docbank-glmocr:cef4d0ea120d
+    image: docbank-glmocr:d132e09cf916
     command:
       - python3
       - -m
@@ -60,7 +60,7 @@ services:
       - ${GLMOCR_MODEL_ROOT:?set GLMOCR_MODEL_ROOT}/glm-ocr:/models/glm-ocr:ro
 
   api:
-    image: docbank-glmocr:cef4d0ea120d
+    image: docbank-glmocr:d132e09cf916
     command:
       - gunicorn
       - --bind
@@ -102,5 +102,5 @@ services:
       - /root/.cache:rw,exec,nosuid,size=1g
     volumes:
       - ./config.yaml:/etc/glmocr/config.yaml:ro
-      - ./safe_server.py:/opt/glmocr-venv/lib/python3.12/site-packages/safe_server.py:ro
+      - ${GLMOCR_MODEL_ROOT:?set GLMOCR_MODEL_ROOT}/glm-ocr:/models/glm-ocr:ro
       - ${GLMOCR_MODEL_ROOT:?set GLMOCR_MODEL_ROOT}/pp-doclayout-v3:/models/pp-doclayout-v3:ro

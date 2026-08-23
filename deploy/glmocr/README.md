@@ -16,14 +16,26 @@ Only the page-aware SDK endpoint is published, on loopback port `30004`.
 
 The container build installs the SDK from its Git commit and pins every package
 that it adds to the immutable vLLM base, including Transformers `5.15.1`,
-safetensors `0.8.0`, and Gunicorn `23.0.0`. The newer Transformers build is
-required for PP-DocLayoutV3 and GLM-OCR architecture support. The build imports
-the SDK, PyTorch, and Transformers before publishing the image.
+safetensors `0.8.0`, PyMuPDF `1.27.2.3`, and Gunicorn `23.0.0`. PyMuPDF embeds
+MuPDF `1.27.2`; the image build fails if either runtime version differs. This
+avoids the heap out-of-bounds write in
+[CVE-2026-3308](https://nvd.nist.gov/vuln/detail/CVE-2026-3308), which affects
+MuPDF through `1.27.0`. The newer
+Transformers build is required for PP-DocLayoutV3 and GLM-OCR architecture
+support. The build imports the SDK, PyTorch, PyMuPDF, and Transformers before
+publishing the image.
 
 `safe_server.py` is the public service boundary. It accepts one bounded PDF or
 image data URI, decodes it into a mode-`0600` file on the container's private
 tmpfs, deletes it after parsing, and never logs request data. It reports backend
 failures and empty recognition as errors instead of returning an empty success.
+At startup it hashes the pipeline configuration and both model weight files,
+checks the renderer versions, and refuses to start on a mismatch. The image
+build verifies the SDK source revision, and the immutable base-image digest is
+part of the deployment identity. Responses carry the same fingerprint that
+Docbank includes in its policy identity. The adapter is copied into the image
+rather than mounted from the host, so the running code changes only when the
+image is rebuilt.
 
 ## Install
 
@@ -81,9 +93,20 @@ only to the private Compose network. The document endpoint is bound to
 `127.0.0.1:30004`; do not change it to a wildcard address without adding an
 authenticated reverse proxy and a new privacy review.
 
+Loopback is a network exposure boundary, not local-service authentication. This
+deployment profile assumes a dedicated or single-user host where local users are
+trusted. Do not use it on a host shared with mutually untrusted local accounts;
+use an owner-restricted Unix socket or mutually authenticated transport for that
+threat model.
+
+The deployment fingerprint detects stale service versions and separates their
+derived output. It is not cryptographic authentication of the local listener;
+that guarantee depends on the single-user host assumption above.
+
 ## Verify
 
-Health confirms that the page-aware pipeline is ready:
+Health confirms that the page-aware pipeline is ready and reports the expected
+deployment fingerprint:
 
 ```bash
 curl --fail --silent http://127.0.0.1:30004/health
@@ -91,7 +114,9 @@ curl --fail --silent http://127.0.0.1:30004/health
 
 A real smoke test must submit a synthetic image or PDF as a data URI and check
 that `model` is `glm-ocr` and `json_result` contains ordered page arrays. A
-successful `/health` response alone does not prove that inference works.
+successful `/health` response alone does not prove that inference works. The
+Docbank client also requires the same fingerprint on the OCR response before it
+attributes output to this deployment.
 
 Verify GPU execution while that smoke test is active:
 
@@ -110,6 +135,11 @@ read-only.
 
 Measured with the repository's synthetic fixtures on an NVIDIA DGX Spark-class
 GB10 system:
+
+These measurements predate the PyMuPDF `1.27.2.3` renderer refresh. The model,
+layout, and vLLM pins are unchanged, but the deployment fingerprint changed.
+Treat these numbers as a baseline until the rebuilt image passes the same
+benchmark.
 
 | Process | Container RSS | NVIDIA reported memory |
 | --- | ---: | ---: |
@@ -157,9 +187,10 @@ relative quality from the missing Paddle result.
 
 ## Upgrade and rollback
 
-Treat model, SDK, layout, and container revisions as one output identity.
-Update all four pins in a branch, build a newly tagged image, run the synthetic
-benchmark, and only then change the systemd deployment.
+Treat the model, SDK, layout, pipeline configuration, renderer, and container
+revisions as one output identity. Update the matching constants in the service
+and Go policy, build a newly tagged image, run the synthetic benchmark, and only
+then change the systemd deployment.
 
 Rollback does not modify any other model or service:
 

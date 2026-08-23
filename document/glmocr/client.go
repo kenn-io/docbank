@@ -6,7 +6,8 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -161,8 +163,9 @@ func (c *Client) readSource(ctx context.Context, source ocr.Source) (_ []byte, e
 	if source.Content == nil {
 		return nil, &ocr.ProviderError{Kind: ocr.ErrorInvalidInput, Cause: errors.New("OCR source content is required")}
 	}
+	contentOwner := &onceReadCloser{ReadCloser: source.Content}
 	defer func() {
-		if closeErr := source.Content.Close(); err == nil && closeErr != nil {
+		if closeErr := contentOwner.Close(); err == nil && closeErr != nil {
 			err = &ocr.ProviderError{Kind: ocr.ErrorInvalidInput, Cause: fmt.Errorf("close GLM-OCR source: %w", closeErr)}
 		}
 	}()
@@ -178,7 +181,9 @@ func (c *Client) readSource(ctx context.Context, source ocr.Source) (_ []byte, e
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	content, err := io.ReadAll(io.LimitReader(&contextReader{ctx: ctx, reader: source.Content}, source.Size+1))
+	stopCancellation := context.AfterFunc(ctx, func() { _ = contentOwner.Close() })
+	defer stopCancellation()
+	content, err := io.ReadAll(io.LimitReader(contentOwner, source.Size+1))
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
@@ -205,21 +210,22 @@ func detectMediaType(content []byte) string {
 	return http.DetectContentType(content)
 }
 
-type contextReader struct {
-	ctx    context.Context
-	reader io.Reader
+type onceReadCloser struct {
+	io.ReadCloser
+
+	once sync.Once
+	err  error
 }
 
-func (r *contextReader) Read(buffer []byte) (int, error) {
-	if err := r.ctx.Err(); err != nil {
-		return 0, err
-	}
-	return r.reader.Read(buffer)
+func (c *onceReadCloser) Close() error {
+	c.once.Do(func() { c.err = c.ReadCloser.Close() })
+	return c.err
 }
 
 type wireResult struct {
-	JSONResult json.RawMessage `json:"json_result"`
-	Model      string          `json:"model"`
+	JSONResult            jsontext.Value `json:"json_result"`
+	Model                 string         `json:"model"`
+	DeploymentFingerprint string         `json:"deployment_fingerprint"`
 }
 
 type wireElement struct {
@@ -289,25 +295,10 @@ func (c *Client) processOnce(ctx context.Context, payload []byte) (wireResult, s
 		return wireResult{}, "", true, latency, errors.New("GLM-OCR response contains invalid UTF-8")
 	}
 	var result wireResult
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	if err := decoder.Decode(&result); err != nil {
+	if err := json.Unmarshal(body, &result); err != nil {
 		return wireResult{}, "", true, latency, fmt.Errorf("decode GLM-OCR response: %w", err)
 	}
-	if err := requireEOF(decoder); err != nil {
-		return wireResult{}, "", true, latency, err
-	}
 	return result, "", true, latency, nil
-}
-
-func requireEOF(decoder *json.Decoder) error {
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return errors.New("GLM-OCR response has trailing JSON")
-		}
-		return fmt.Errorf("decode trailing GLM-OCR response: %w", err)
-	}
-	return nil
 }
 
 func classifyHTTPError(err error) ocr.ErrorKind {
@@ -322,6 +313,12 @@ func classifyHTTPError(err error) ocr.ErrorKind {
 }
 
 func (c *Client) convert(wire wireResult, source ocr.Source, metrics ocr.RequestMetrics) (ocr.Result, error) {
+	if wire.DeploymentFingerprint != c.policy.deployment {
+		return ocr.Result{}, fmt.Errorf(
+			"GLM-OCR returned deployment fingerprint %q, want %q",
+			wire.DeploymentFingerprint, c.policy.deployment,
+		)
+	}
 	if wire.Model != c.policy.values.ServedModel {
 		return ocr.Result{}, fmt.Errorf("GLM-OCR returned model %q, want %q", wire.Model, c.policy.values.ServedModel)
 	}
@@ -329,8 +326,7 @@ func (c *Client) convert(wire wireResult, source ocr.Source, metrics ocr.Request
 	if len(wire.JSONResult) == 0 || bytes.Equal(wire.JSONResult, []byte("null")) {
 		return ocr.Result{}, errors.New("GLM-OCR response has no structured pages")
 	}
-	decoder := json.NewDecoder(bytes.NewReader(wire.JSONResult))
-	if err := decoder.Decode(&pages); err != nil {
+	if err := json.Unmarshal(wire.JSONResult, &pages); err != nil {
 		return ocr.Result{}, fmt.Errorf("decode GLM-OCR page structure: %w", err)
 	}
 	if len(pages) == 0 || len(pages) > c.policy.values.MaxUnits {
@@ -449,10 +445,14 @@ func (c *Client) Health(ctx context.Context) error {
 		return errors.New("GLM-OCR health response is invalid")
 	}
 	var health struct {
-		Status string `json:"status"`
+		Status                string `json:"status"`
+		DeploymentFingerprint string `json:"deployment_fingerprint"`
 	}
 	if err := json.Unmarshal(body, &health); err != nil || health.Status != "ok" {
 		return errors.New("GLM-OCR health response is not ok")
+	}
+	if health.DeploymentFingerprint != c.policy.deployment {
+		return errors.New("GLM-OCR health deployment fingerprint does not match policy")
 	}
 	return nil
 }

@@ -43,7 +43,8 @@ func NewProcessor(config ProcessorConfig) (*Processor, error) {
 	if config.SpoolDirectory == "" || config.MaxSpoolBytes < config.Policy.values.MaxDocumentBytes || config.MinFreeBytes <= 0 {
 		return nil, errors.New("mistral OCR processor staging bounds are invalid")
 	}
-	policyFingerprint, err := config.Policy.Fingerprint(config.CapabilityManifest)
+	manifest := cloneCapabilityManifest(config.CapabilityManifest)
+	policyFingerprint, err := config.Policy.Fingerprint(manifest)
 	if err != nil {
 		return nil, fmt.Errorf("configure Mistral OCR processor capability policy: %w", err)
 	}
@@ -52,10 +53,23 @@ func NewProcessor(config ProcessorConfig) (*Processor, error) {
 		return nil, fmt.Errorf("configure Mistral OCR identity: %w", err)
 	}
 	return &Processor{
-		client: config.Client, policy: config.Policy, manifest: config.CapabilityManifest,
+		client: config.Client, policy: config.Policy, manifest: manifest,
 		spoolDirectory: config.SpoolDirectory, maxSpoolBytes: config.MaxSpoolBytes,
 		minFreeBytes: config.MinFreeBytes, identity: identity, policyFingerprint: policyFingerprint,
 	}, nil
+}
+
+func cloneCapabilityManifest(manifest CapabilityManifest) CapabilityManifest {
+	clone := manifest
+	clone.Results = make([]CapabilityResult, len(manifest.Results))
+	copy(clone.Results, manifest.Results)
+	for index := range clone.Results {
+		if clone.Results[index].ProviderBytes != nil {
+			providerBytes := *clone.Results[index].ProviderBytes
+			clone.Results[index].ProviderBytes = &providerBytes
+		}
+	}
+	return clone
 }
 
 // Identity returns the pinned Mistral provider and model identity.

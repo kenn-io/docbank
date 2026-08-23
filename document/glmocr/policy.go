@@ -3,7 +3,7 @@ package glmocr
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net"
@@ -20,16 +20,57 @@ const (
 	DefaultModel          = "zai-org/GLM-OCR"
 	DefaultServedModel    = "glm-ocr"
 	DefaultModelRevision  = "ca5d8b3e287e52589e37c28385d9655ee4372f9d"
+	DefaultModelSHA256    = "a16eb0de98d199293371c560f95f83130d2a2c9612449df16839f08ff9498815"
 	DefaultSDKRevision    = "cef4d0ea120d1741f5cefe8985eee45f6c8eff1d"
 	DefaultLayoutModel    = "PaddlePaddle/PP-DocLayoutV3_safetensors"
 	DefaultLayoutRevision = "97d101e6db2642e162a1d05392d1b0231c91033e"
+	DefaultLayoutSHA256   = "5ea422c6cc5fe759a47e1357c35639b58173508e025a3131cbe4b6ac59e2b85e"
+	DefaultEngineImage    = "vllm/vllm-openai@sha256:4f986370d7737abacc70ac17f86695acd1dc7892a02ad89ac132639d5afee0d0"
+	DefaultPipelineSHA256 = "f299e93f6f928640d4aa7faceb79ed24c978f71ca33195a36dd8bc9f4855c5b0"
+	DefaultPyMuPDFVersion = "1.27.2.3"
+	DefaultMuPDFVersion   = "1.27.2"
+
+	// DefaultDeploymentFingerprint identifies the complete validated local
+	// inference deployment described by DefaultDeploymentIdentity.
+	DefaultDeploymentFingerprint = "d132e09cf91629e1514a75077e7d9cd7b6cc3184c96e7512b91a3cb5d2e8315b"
 
 	MaxDocumentBytes = int64(64 << 20)
 	MaxResponseBytes = int64(512 << 20)
 	MaxUnits         = 5_000
 
-	canonicalPolicyVersion = 1
+	canonicalPolicyVersion    = 2
+	deploymentIdentityVersion = 1
 )
+
+// DeploymentIdentity contains every pinned artifact and configuration input
+// included in local OCR output attribution.
+type DeploymentIdentity struct {
+	Version              int    `json:"version"`
+	Model                string `json:"model"`
+	ModelRevision        string `json:"model_revision"`
+	ModelSHA256          string `json:"model_sha256"`
+	SDKRevision          string `json:"sdk_revision"`
+	LayoutModel          string `json:"layout_model"`
+	LayoutRevision       string `json:"layout_revision"`
+	LayoutSHA256         string `json:"layout_sha256"`
+	EngineImage          string `json:"engine_image"`
+	PipelineConfigSHA256 string `json:"pipeline_config_sha256"`
+	PyMuPDFVersion       string `json:"pymupdf_version"`
+	MuPDFVersion         string `json:"mupdf_version"`
+}
+
+// DefaultDeploymentIdentity returns the deployment required by the package
+// policy. The service validates locally observable members at startup.
+func DefaultDeploymentIdentity() DeploymentIdentity {
+	return DeploymentIdentity{
+		Version: deploymentIdentityVersion,
+		Model:   DefaultModel, ModelRevision: DefaultModelRevision, ModelSHA256: DefaultModelSHA256,
+		SDKRevision: DefaultSDKRevision,
+		LayoutModel: DefaultLayoutModel, LayoutRevision: DefaultLayoutRevision, LayoutSHA256: DefaultLayoutSHA256,
+		EngineImage: DefaultEngineImage, PipelineConfigSHA256: DefaultPipelineSHA256,
+		PyMuPDFVersion: DefaultPyMuPDFVersion, MuPDFVersion: DefaultMuPDFVersion,
+	}
+}
 
 // PolicyConfig fixes every input, output, and artifact bound that can affect
 // local OCR evidence.
@@ -61,6 +102,7 @@ type PolicyValues struct {
 	MaxResponseBytes int64                            `json:"max_response_bytes"`
 	MaxUnits         int                              `json:"max_units"`
 	Normalization    document.NormalizePolicyIdentity `json:"normalization"`
+	Deployment       DeploymentIdentity               `json:"deployment"`
 }
 
 // Policy is an immutable local GLM-OCR processing policy.
@@ -68,6 +110,7 @@ type Policy struct {
 	values          PolicyValues
 	normalizePolicy document.NormalizePolicy
 	fingerprint     string
+	deployment      string
 	identity        ocr.Identity
 }
 
@@ -117,7 +160,16 @@ func NewPolicy(config PolicyConfig) (Policy, error) {
 		SDKRevision: config.SDKRevision, LayoutModel: config.LayoutModel,
 		LayoutRevision: config.LayoutRevision, MaxDocumentBytes: config.MaxDocumentBytes,
 		MaxResponseBytes: config.MaxResponseBytes, MaxUnits: config.MaxUnits,
-		Normalization: normalization,
+		Normalization: normalization, Deployment: DefaultDeploymentIdentity(),
+	}
+	deploymentEncoded, err := json.Marshal(values.Deployment)
+	if err != nil {
+		return Policy{}, fmt.Errorf("encode GLM-OCR deployment identity: %w", err)
+	}
+	deploymentDigest := sha256.Sum256(deploymentEncoded)
+	deploymentFingerprint := hex.EncodeToString(deploymentDigest[:])
+	if deploymentFingerprint != DefaultDeploymentFingerprint {
+		return Policy{}, errors.New("GLM-OCR package deployment identity is inconsistent")
 	}
 	payload := struct {
 		PolicyValues
@@ -135,7 +187,7 @@ func NewPolicy(config PolicyConfig) (Policy, error) {
 	}
 	return Policy{
 		values: values, normalizePolicy: config.NormalizePolicy,
-		fingerprint: hex.EncodeToString(digest[:]), identity: identity,
+		fingerprint: hex.EncodeToString(digest[:]), deployment: deploymentFingerprint, identity: identity,
 	}, nil
 }
 

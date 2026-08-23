@@ -12,7 +12,7 @@ RUN python3 -m pip install --no-cache-dir --no-deps \
       "hf-xet==1.6.0" \
       "safetensors==0.8.0" \
       "portalocker==3.2.0" \
-      "pymupdf==1.24.14" \
+      "pymupdf==1.27.2.3" \
       "pypdfium2==5.6.0" \
       "flask==3.1.2" \
       "gunicorn==23.0.0" \
@@ -22,6 +22,8 @@ RUN python3 -m pip install --no-cache-dir --no-deps \
       "werkzeug==3.1.8" \
     && python3 -m pip install --no-cache-dir --no-deps \
       "glmocr @ https://github.com/zai-org/GLM-OCR/archive/${GLMOCR_SDK_REVISION}.zip" \
-    && python3 -c "import flask, glmocr, torch, transformers; print(glmocr.__file__, torch.__version__, transformers.__version__)"
+    && python3 -c "from importlib.metadata import distribution; import flask, glmocr, pymupdf, torch, transformers; assert '${GLMOCR_SDK_REVISION}' in distribution('glmocr').read_text('direct_url.json'); assert pymupdf.pymupdf_version == '1.27.2.3'; assert pymupdf.mupdf_version == '1.27.2'; print(glmocr.__file__, pymupdf.pymupdf_version, pymupdf.mupdf_version, torch.__version__, transformers.__version__)"
+
+COPY safe_server.py /opt/glmocr-venv/lib/python3.12/site-packages/safe_server.py
 
 ENTRYPOINT []
