@@ -1,0 +1,89 @@
+server:
+  host: 0.0.0.0
+  port: 30004
+  debug: false
+
+logging:
+  level: INFO
+
+pipeline:
+  maas:
+    enabled: false
+
+  ocr_api:
+    api_host: engine
+    api_port: 30005
+    model: glm-ocr
+    api_path: /v1/chat/completions
+    api_mode: openai
+    verify_ssl: false
+    connect_timeout: 180
+    request_timeout: 300
+    retry_max_attempts: 2
+    retry_backoff_base_seconds: 0.5
+    retry_backoff_max_seconds: 8.0
+    retry_jitter_ratio: 0.2
+    retry_status_codes: [429, 500, 502, 503, 504]
+    connection_pool_size: 8
+
+  max_workers: 4
+  page_maxsize: 16
+  region_maxsize: 256
+
+  page_loader:
+    max_tokens: 4096
+    temperature: 0.0
+    top_p: 0.00001
+    top_k: 1
+    repetition_penalty: 1.1
+    t_patch_size: 2
+    patch_expand_factor: 1
+    image_expect_length: 6144
+    image_format: JPEG
+    min_pixels: 12544
+    max_pixels: 71372800
+    task_prompt_mapping:
+      text: "Text Recognition:"
+      table: "Table Recognition:"
+      formula: "Formula Recognition:"
+    pdf_dpi: 200
+    pdf_max_pages: 500
+    pdf_verbose: false
+
+  result_formatter:
+    output_format: both
+    enable_merge_formula_numbers: true
+    enable_merge_text_blocks: true
+    enable_format_bullet_points: true
+
+  layout:
+    model_dir: /models/pp-doclayout-v3
+    threshold: 0.3
+    batch_size: 1
+    workers: 1
+    cuda_visible_devices: "0"
+    device: cuda:0
+    use_polygon: false
+    layout_nms: true
+    label_task_mapping:
+      text:
+        - abstract
+        - algorithm
+        - aside_text
+        - content
+        - doc_title
+        - figure_title
+        - footer
+        - footnote
+        - header
+        - paragraph_title
+        - reference_content
+        - text
+        - vertical_text
+        - vision_footnote
+        - seal
+        - formula_number
+      table: [table]
+      formula: [display_formula, inline_formula]
+      skip: [chart, image]
+      abandon: [number, reference, footer_image, header_image]

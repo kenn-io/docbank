@@ -1,0 +1,17 @@
+[Unit]
+Description=Docbank local GLM-OCR service
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/docbank-glmocr
+EnvironmentFile=/etc/docbank-glmocr.env
+ExecStart=/usr/bin/docker compose up --detach --wait --wait-timeout 1200
+ExecStop=/usr/bin/docker compose down
+TimeoutStartSec=20min
+TimeoutStopSec=2min
+
+[Install]
+WantedBy=multi-user.target

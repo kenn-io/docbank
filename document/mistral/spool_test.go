@@ -104,7 +104,7 @@ func TestPrepareFailsClosedAndRemovesPartialFile(t *testing.T) {
 		mediaType string
 		wantError string
 	}{
-		{name: "hash", source: &observedReadCloser{Reader: bytes.NewReader(content)}, size: int64(len(content)), hash: stringsOfZero(64), mediaType: mediaTypePDF, wantError: "hash mismatch"},
+		{name: "hash", source: &observedReadCloser{Reader: bytes.NewReader(content)}, size: int64(len(content)), hash: zeroSHA256(), mediaType: mediaTypePDF, wantError: "hash mismatch"},
 		{name: "size", source: &observedReadCloser{Reader: bytes.NewReader(content)}, size: int64(len(content) + 1), hash: hex.EncodeToString(digest[:]), mediaType: mediaTypePDF, wantError: "size mismatch"},
 		{name: "source exceeds reservation", source: &observedReadCloser{Reader: bytes.NewReader(content)}, size: int64(len(content) - 1), hash: hex.EncodeToString(digest[:]), mediaType: mediaTypePDF, wantError: "size mismatch"},
 		{name: "close", source: &observedReadCloser{Reader: bytes.NewReader(content), closeErr: errors.New("synthetic close")}, size: int64(len(content)), hash: hex.EncodeToString(digest[:]), mediaType: mediaTypePDF, wantError: "close Mistral OCR source"},
@@ -136,7 +136,7 @@ func TestPrepareDoesNotReadAgainAfterCopyFailure(t *testing.T) {
 
 	_, err := Prepare(t.Context(), source, policy, PrepareOptions{
 		Directory: directory, DeclaredMediaType: mediaTypePDF,
-		ExpectedSize: 1, ExpectedSHA256: stringsOfZero(64),
+		ExpectedSize: 1, ExpectedSHA256: zeroSHA256(),
 		MaxSpoolBytes: 2048, MinFreeBytes: 1,
 	})
 	require.ErrorIs(t, err, copyErr)
@@ -200,7 +200,7 @@ func TestPrepareCancellationClosesBlockedSourceRead(t *testing.T) {
 	go func() {
 		_, err := Prepare(ctx, source, policy, PrepareOptions{
 			Directory: directory, DeclaredMediaType: mediaTypePDF,
-			ExpectedSize: 1, ExpectedSHA256: stringsOfZero(64),
+			ExpectedSize: 1, ExpectedSHA256: zeroSHA256(),
 			MaxSpoolBytes: 2048, MinFreeBytes: 1,
 		})
 		result <- err

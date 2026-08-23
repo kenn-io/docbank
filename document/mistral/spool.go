@@ -22,8 +22,14 @@ const (
 	spoolLockRetryInterval = 50 * time.Millisecond
 )
 
-// ErrSpoolCapacity marks a retryable quota or free-space refusal.
-var ErrSpoolCapacity = errors.New("mistral OCR spool capacity unavailable")
+var (
+	// ErrSpoolCapacity marks a retryable quota or free-space refusal.
+	ErrSpoolCapacity = errors.New("mistral OCR spool capacity unavailable")
+	// ErrSpoolUnavailable marks a retryable staging filesystem or source I/O failure.
+	ErrSpoolUnavailable = errors.New("mistral OCR spool temporarily unavailable")
+	// ErrInvalidSource marks content that failed local source validation.
+	ErrInvalidSource = errors.New("mistral OCR source is invalid")
+)
 
 // PrepareOptions supplies application-owned staging bounds and expected source
 // metadata. Policy.MaxDocumentBytes remains the file-byte limit.
@@ -84,6 +90,10 @@ func (d *PreparedDocument) MediaType() string {
 // Release removes only this package-created staging file. It is idempotent and
 // makes the document unavailable to future Process calls.
 func (d *PreparedDocument) Release() error {
+	return d.release(context.Background())
+}
+
+func (d *PreparedDocument) release(ctx context.Context) error {
 	if d == nil {
 		return nil
 	}
@@ -94,7 +104,7 @@ func (d *PreparedDocument) Release() error {
 	if path == "" {
 		return nil
 	}
-	releaseLock, err := acquireSpoolReservationLock(context.Background(), filepath.Dir(path))
+	releaseLock, err := acquireSpoolReservationLock(ctx, filepath.Dir(path))
 	if err != nil {
 		return err
 	}
@@ -143,7 +153,7 @@ func Prepare(
 	options PrepareOptions,
 ) (_ *PreparedDocument, err error) {
 	if source == nil {
-		return nil, errors.New("mistral OCR staging requires a source")
+		return nil, fmt.Errorf("%w: mistral OCR staging requires a source", ErrInvalidSource)
 	}
 	var closeSourceOnce sync.Once
 	var closeSourceErr error
@@ -169,29 +179,36 @@ func Prepare(
 		return nil, errors.New("mistral policy is invalid; use NewPolicy")
 	}
 	maxDocumentBytes := policy.values.MaxDocumentBytes
-	if options.Directory == "" || options.ExpectedSize < 0 ||
-		options.ExpectedSize > maxDocumentBytes || options.MaxSpoolBytes < maxDocumentBytes ||
-		options.MinFreeBytes <= 0 {
+	if options.Directory == "" || options.MaxSpoolBytes < maxDocumentBytes || options.MinFreeBytes <= 0 {
 		return nil, errors.New("mistral OCR staging has invalid bounds")
+	}
+	if options.ExpectedSize < 0 || options.ExpectedSize > maxDocumentBytes {
+		return nil, fmt.Errorf("%w: mistral OCR source size is outside policy bounds", ErrInvalidSource)
 	}
 	if len(options.ExpectedSHA256) != sha256.Size*2 ||
 		options.ExpectedSHA256 != strings.ToLower(options.ExpectedSHA256) {
-		return nil, errors.New("mistral OCR staging requires a lowercase SHA-256")
+		return nil, fmt.Errorf("%w: mistral OCR staging requires a lowercase SHA-256", ErrInvalidSource)
 	}
 	if _, decodeErr := hex.DecodeString(options.ExpectedSHA256); decodeErr != nil {
-		return nil, errors.New("mistral OCR staging requires a lowercase SHA-256")
+		return nil, fmt.Errorf("%w: mistral OCR staging requires a lowercase SHA-256", ErrInvalidSource)
 	}
 	if err := validatePrivateDirectory(options.Directory); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrSpoolUnavailable, err)
 	}
 
 	releaseLock, err := acquireSpoolReservationLock(ctx, options.Directory)
 	if err != nil {
-		return nil, err
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, fmt.Errorf("%w: %w", ErrSpoolUnavailable, err)
 	}
 	defer releaseLock()
 	if capacityErr := checkSpoolCapacity(options); capacityErr != nil {
-		return nil, capacityErr
+		if errors.Is(capacityErr, ErrSpoolCapacity) {
+			return nil, capacityErr
+		}
+		return nil, fmt.Errorf("%w: %w", ErrSpoolUnavailable, capacityErr)
 	}
 
 	file, err := os.CreateTemp(options.Directory, spoolFilenamePrefix+"*")
@@ -242,17 +259,17 @@ func Prepare(
 		return nil, ctxErr
 	}
 	if extraErr != nil && !errors.Is(extraErr, io.EOF) {
-		return nil, fmt.Errorf("verify Mistral OCR source length: %w", extraErr)
+		return nil, fmt.Errorf("%w: verify Mistral OCR source length: %w", ErrSpoolUnavailable, extraErr)
 	}
 	if sourceCloseErr != nil {
-		return nil, fmt.Errorf("close Mistral OCR source: %w", sourceCloseErr)
+		return nil, fmt.Errorf("%w: close Mistral OCR source: %w", ErrSpoolUnavailable, sourceCloseErr)
 	}
 	if written != options.ExpectedSize || extraBytes != 0 {
-		return nil, errors.New("mistral OCR source size mismatch")
+		return nil, fmt.Errorf("%w: mistral OCR source size mismatch", ErrInvalidSource)
 	}
 	actualHash := hex.EncodeToString(hash.Sum(nil))
 	if actualHash != options.ExpectedSHA256 {
-		return nil, errors.New("mistral OCR source hash mismatch")
+		return nil, fmt.Errorf("%w: mistral OCR source hash mismatch", ErrInvalidSource)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -265,7 +282,7 @@ func Prepare(
 		return nil, wrapSpoolIOError("sync Mistral OCR spool", syncErr)
 	}
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return nil, fmt.Errorf("rewind Mistral OCR spool: %w", err)
+		return nil, fmt.Errorf("%w: rewind Mistral OCR spool: %w", ErrSpoolUnavailable, err)
 	}
 	contextFile := &contextReaderAt{ctx: ctx, reader: file}
 	format, err := DetectFormat(contextFile, written, options.DeclaredMediaType)
@@ -273,7 +290,7 @@ func Prepare(
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
 		}
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrInvalidSource, err)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -283,7 +300,7 @@ func Prepare(
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
 		}
-		return nil, fmt.Errorf("count local Mistral OCR units: %w", err)
+		return nil, fmt.Errorf("%w: count local Mistral OCR units: %w", ErrInvalidSource, err)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -309,7 +326,7 @@ func wrapSpoolIOError(operation string, err error) error {
 	if isSpoolCapacityError(err) {
 		return fmt.Errorf("%w: %w", ErrSpoolCapacity, operationError)
 	}
-	return operationError
+	return fmt.Errorf("%w: %w", ErrSpoolUnavailable, operationError)
 }
 
 func countLocalUnits(format CandidateFormat, reader io.ReaderAt, size int64) (int, error) {
