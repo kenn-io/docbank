@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -276,6 +277,13 @@ func TestSourceEvidenceV1RejectsInvalidAuthority(t *testing.T) {
 			},
 			want: "artifact pointer",
 		},
+		{
+			name: "artifact pointer parent directory",
+			mutate: func(source *document.SourceEvidenceV1) {
+				source.Artifacts[0].Pointer = ".."
+			},
+			want: "artifact pointer",
+		},
 	}
 
 	for _, test := range tests {
@@ -285,6 +293,115 @@ func TestSourceEvidenceV1RejectsInvalidAuthority(t *testing.T) {
 			require.ErrorContains(t, document.ValidateSourceEvidenceV1(source), test.want)
 		})
 	}
+}
+
+func TestSourceEvidenceV1AllowsBlankUnits(t *testing.T) {
+	source := document.SourceEvidenceV1{
+		ContractVersion: document.SourceEvidenceContractV1,
+		Completeness:    document.EvidenceComplete,
+		Family:          "pdf",
+		UnitKind:        document.EvidenceUnitPage,
+		Units: []document.SourceEvidenceUnitV1{{
+			Order: 0,
+			Locator: document.SourceEvidenceLocatorV1{
+				Kind: document.EvidenceLocatorPage, IndexOrigin: document.EvidenceIndexOriginOne,
+				Start: 1, End: 1,
+			},
+		}},
+	}
+
+	require.NoError(t, document.ValidateSourceEvidenceV1(source))
+	policy, err := document.NewEvidencePolicy(1)
+	require.NoError(t, err)
+	normalized, err := document.NormalizeEvidenceV1(source, policy)
+	require.NoError(t, err)
+	assert.Empty(t, normalized.Units[0].Text)
+}
+
+func TestNormalizeEvidenceV1AppliesCharacterLimitAfterCanonicalization(t *testing.T) {
+	tests := []struct {
+		name     string
+		text     string
+		maxChars int
+	}{
+		{name: "CRLF", text: "x\r\n", maxChars: 2},
+		{name: "NFC", text: "e\u0301", maxChars: 1},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			source := document.SourceEvidenceV1{
+				ContractVersion: document.SourceEvidenceContractV1,
+				Completeness:    document.EvidenceComplete,
+				Family:          "pdf",
+				UnitKind:        document.EvidenceUnitPage,
+				Units: []document.SourceEvidenceUnitV1{{
+					Order: 0, Text: test.text,
+					Locator: document.SourceEvidenceLocatorV1{
+						Kind: document.EvidenceLocatorPage, IndexOrigin: document.EvidenceIndexOriginOne,
+						Start: 1, End: 1,
+					},
+				}},
+			}
+			policy, err := document.NewEvidencePolicy(test.maxChars)
+			require.NoError(t, err)
+
+			normalized, err := document.NormalizeEvidenceV1(source, policy)
+			require.NoError(t, err)
+			assert.Equal(t, test.maxChars, utf8.RuneCountInString(normalized.Units[0].Text))
+		})
+	}
+}
+
+func TestEvidenceV1RejectsExcessGeometry(t *testing.T) {
+	t.Run("boxes", func(t *testing.T) {
+		source := syntheticSourceEvidenceV1()
+		box := source.Units[0].Regions[0].Geometry.Boxes[0]
+		source.Units[0].Regions[0].Geometry.Boxes = make([]document.EvidenceBoxV1, 10_001)
+		for index := range source.Units[0].Regions[0].Geometry.Boxes {
+			source.Units[0].Regions[0].Geometry.Boxes[index] = box
+		}
+
+		require.ErrorContains(t, document.ValidateSourceEvidenceV1(source), "too many boxes")
+	})
+
+	t.Run("polygons", func(t *testing.T) {
+		source := syntheticSourceEvidenceV1()
+		polygon := document.EvidencePolygonV1{Points: []document.EvidencePointV1{{}, {}, {}}}
+		source.Units[0].Regions[0].Geometry.Polygons = make([]document.EvidencePolygonV1, 10_001)
+		for index := range source.Units[0].Regions[0].Geometry.Polygons {
+			source.Units[0].Regions[0].Geometry.Polygons[index] = polygon
+		}
+
+		require.ErrorContains(t, document.ValidateSourceEvidenceV1(source), "too many polygons")
+	})
+
+	t.Run("aggregate polygon points", func(t *testing.T) {
+		source := syntheticSourceEvidenceV1()
+		points := make([]document.EvidencePointV1, 1_001)
+		source.Units[0].Regions[0].Geometry.Polygons = make([]document.EvidencePolygonV1, 100)
+		for index := range source.Units[0].Regions[0].Geometry.Polygons {
+			source.Units[0].Regions[0].Geometry.Polygons[index] = document.EvidencePolygonV1{Points: points}
+		}
+
+		require.ErrorContains(t, document.ValidateSourceEvidenceV1(source), "too many polygon points")
+	})
+
+	t.Run("normalized", func(t *testing.T) {
+		policy, err := document.NewEvidencePolicy(100_000)
+		require.NoError(t, err)
+		normalized, err := document.NormalizeEvidenceV1(syntheticSourceEvidenceV1(), policy)
+		require.NoError(t, err)
+		normalized.Checksum = ""
+		box := normalized.Units[0].Regions[0].Geometry.Boxes[0]
+		normalized.Units[0].Regions[0].Geometry.Boxes = make([]document.EvidenceBoxV1, 10_001)
+		for index := range normalized.Units[0].Regions[0].Geometry.Boxes {
+			normalized.Units[0].Regions[0].Geometry.Boxes[index] = box
+		}
+
+		_, _, err = document.MarshalNormalizedEvidenceV1(normalized)
+		require.ErrorContains(t, err, "too many boxes")
+	})
 }
 
 func TestSourceEvidenceV1AllowsExplicitDegradedGenericUnit(t *testing.T) {

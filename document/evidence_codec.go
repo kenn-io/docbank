@@ -19,11 +19,14 @@ import (
 )
 
 const (
-	maxEvidenceIdentifierBytes = 1 << 10
-	maxEvidencePointerBytes    = 1 << 10
-	maxEvidenceReasonBytes     = 1 << 12
-	maxEvidenceTextBytes       = 256 << 20
-	maxEvidenceCoordinate      = int64(1_000_000_000_000_000)
+	maxEvidenceIdentifierBytes  = 1 << 10
+	maxEvidencePointerBytes     = 1 << 10
+	maxEvidenceReasonBytes      = 1 << 12
+	maxEvidenceTextBytes        = 256 << 20
+	maxEvidenceCoordinate       = int64(1_000_000_000_000_000)
+	maxEvidenceGeometryBoxes    = 10_000
+	maxEvidenceGeometryPolygons = 10_000
+	maxEvidenceGeometryPoints   = 100_000
 )
 
 // ValidateSourceEvidenceV1 validates a bounded source-evidence/v1 manifest
@@ -398,15 +401,26 @@ func validateSourceGeometry(geometry *SourceEvidenceGeometryV1) error {
 		geometry.Height > maxEvidenceCoordinate || abs64(geometry.Orientation) > 360*geometry.Scale {
 		return errors.New("source evidence geometry frame is invalid")
 	}
+	if len(geometry.Boxes) > maxEvidenceGeometryBoxes {
+		return errors.New("source evidence geometry has too many boxes")
+	}
+	if len(geometry.Polygons) > maxEvidenceGeometryPolygons {
+		return errors.New("source evidence geometry has too many polygons")
+	}
 	for index, box := range geometry.Boxes {
 		if err := validateEvidenceBox(geometry, box); err != nil {
 			return fmt.Errorf("source evidence geometry box %d: %w", index, err)
 		}
 	}
+	remainingPoints := maxEvidenceGeometryPoints
 	for index, polygon := range geometry.Polygons {
-		if len(polygon.Points) < 3 || len(polygon.Points) > 1_000_000 {
+		if len(polygon.Points) < 3 {
 			return fmt.Errorf("source evidence geometry polygon %d has invalid point count", index)
 		}
+		if len(polygon.Points) > remainingPoints {
+			return errors.New("source evidence geometry has too many polygon points")
+		}
+		remainingPoints -= len(polygon.Points)
 		for _, point := range polygon.Points {
 			if point.X < 0 || point.Y < 0 || point.X > geometry.Width || point.Y > geometry.Height {
 				return fmt.Errorf("source evidence geometry polygon %d leaves its frame", index)
@@ -441,6 +455,9 @@ func NormalizeEvidenceV1(source SourceEvidenceV1, policy EvidencePolicy) (Normal
 	}
 	textMaps, err := validateSourceEvidenceV1(source)
 	if err != nil {
+		return NormalizedEvidenceV1{}, err
+	}
+	if err := policy.validateTextMaps(textMaps); err != nil {
 		return NormalizedEvidenceV1{}, err
 	}
 
@@ -936,10 +953,8 @@ func (policy EvidencePolicy) validateSource(source SourceEvidenceV1) error {
 		len(source.Omissions) > policy.maxOmissions {
 		return errors.New("source evidence exceeds policy collection limits")
 	}
-	totalChars := 0
 	for index, unit := range source.Units {
-		totalChars += utf8.RuneCountInString(unit.Text)
-		if totalChars > policy.maxDocumentChars || len(unit.Regions) > policy.maxRegionsPerUnit ||
+		if len(unit.Regions) > policy.maxRegionsPerUnit ||
 			len(unit.Tables) > policy.maxTablesPerUnit || len(unit.Omissions) > policy.maxOmissions {
 			return fmt.Errorf("source evidence unit %d exceeds policy limits", index)
 		}
@@ -948,6 +963,17 @@ func (policy EvidencePolicy) validateSource(source SourceEvidenceV1) error {
 				return fmt.Errorf("source evidence unit %d table %d exceeds policy cell limit", index, tableIndex)
 			}
 		}
+	}
+	return nil
+}
+
+func (policy EvidencePolicy) validateTextMaps(textMaps []evidenceTextMap) error {
+	remaining := policy.maxDocumentChars
+	for index, textMap := range textMaps {
+		if textMap.normalizedRunes > remaining {
+			return fmt.Errorf("source evidence unit %d exceeds policy character limit", index)
+		}
+		remaining -= textMap.normalizedRunes
 	}
 	return nil
 }
@@ -1117,9 +1143,10 @@ func compareEvidenceOmissions(left, right EvidenceOmissionV1) int {
 }
 
 type evidenceTextMap struct {
-	boundaries  map[int]int
-	normalized  string
-	sourceRunes int
+	boundaries      map[int]int
+	normalized      string
+	normalizedRunes int
+	sourceRunes     int
 }
 
 func collectSourceRangeOffsets(unit SourceEvidenceUnitV1, documentOffsets []int) []int {
@@ -1241,7 +1268,8 @@ func newEvidenceTextMap(source string, offsets []int) evidenceTextMap {
 		assignBoundary(iterator.Pos(), normalizedOffset)
 	}
 	return evidenceTextMap{
-		boundaries: boundaries, normalized: normalized.String(), sourceRunes: len(sourceRunes),
+		boundaries: boundaries, normalized: normalized.String(), normalizedRunes: normalizedOffset,
+		sourceRunes: len(sourceRunes),
 	}
 }
 
@@ -1280,7 +1308,7 @@ func validateArtifactPointer(pointer string) error {
 	parsed, err := url.Parse(pointer)
 	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.RawQuery != "" || parsed.Fragment != "" ||
 		parsed.RawPath != "" || parsed.ForceQuery || strings.Contains(pointer, "\\") || strings.Contains(pointer, "%") ||
-		strings.HasPrefix(pointer, "/") || path.Clean(pointer) != pointer || pointer == "." ||
+		strings.HasPrefix(pointer, "/") || path.Clean(pointer) != pointer || pointer == "." || pointer == ".." ||
 		strings.HasPrefix(pointer, "../") {
 		return errors.New("artifact pointer must be a canonical relative path")
 	}
@@ -1327,8 +1355,8 @@ func validateSourceRegionID(
 }
 
 func validateEvidenceText(value, subject string) error {
-	if err := validateBoundedUTF8(value, maxEvidenceTextBytes, subject); err != nil {
-		return err
+	if !utf8.ValidString(value) || len(value) > maxEvidenceTextBytes {
+		return fmt.Errorf("%s must be bounded UTF-8", subject)
 	}
 	if strings.ContainsRune(value, '\x00') {
 		return fmt.Errorf("%s contains NUL", subject)
