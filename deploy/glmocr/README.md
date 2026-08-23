@@ -108,8 +108,8 @@ read-only.
 
 ## GB10 measurements and synthetic benchmark
 
-Measured on the target 120 GiB unified-memory GB10 host on 2026-08-22, while
-the existing embedding and image services remained online:
+Measured with the repository's synthetic fixtures on an NVIDIA DGX Spark-class
+GB10 system:
 
 | Process | Container RSS | NVIDIA reported memory |
 | --- | ---: | ---: |
