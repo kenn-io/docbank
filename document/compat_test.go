@@ -39,8 +39,22 @@ func TestNormalizeDocumentVersionThreePreservesVersionTwoEvidence(t *testing.T) 
 			assert.Equal(t, 3, actual.PolicyVersion)
 			assert.Equal(t, testCase.Expected.Family, actual.Family)
 			assert.Equal(t, testCase.Expected.UnitKind, actual.UnitKind)
-			assert.Equal(t, testCase.Expected.Units, actual.Units)
-			assert.Equal(t, testCase.Expected.Chunks, actual.Chunks)
+			expectedUnits := append([]NormalizedUnit(nil), testCase.Expected.Units...)
+			actualUnits := append([]NormalizedUnit(nil), actual.Units...)
+			for index := range actualUnits {
+				assert.NotEqual(t, expectedUnits[index].Checksum, actualUnits[index].Checksum)
+				expectedUnits[index].Checksum = ""
+				actualUnits[index].Checksum = ""
+			}
+			assert.Equal(t, expectedUnits, actualUnits)
+			expectedChunks := append([]Chunk(nil), testCase.Expected.Chunks...)
+			actualChunks := append([]Chunk(nil), actual.Chunks...)
+			for index := range actualChunks {
+				assert.NotEqual(t, expectedChunks[index].Checksum, actualChunks[index].Checksum)
+				expectedChunks[index].Checksum = ""
+				actualChunks[index].Checksum = ""
+			}
+			assert.Equal(t, expectedChunks, actualChunks)
 			assert.Equal(t, testCase.Expected.Truncated, actual.Truncated)
 			assert.NotEqual(t, testCase.Expected.Checksum, actual.Checksum)
 		})

@@ -120,6 +120,41 @@ func TestRawRecipeNeedsNoDistillationAndRejectsIt(t *testing.T) {
 	assert.Len(t, plan.Inputs, len(normalized.Chunks))
 }
 
+func TestTruncationStateChangesPublishedIdentities(t *testing.T) {
+	policy, err := document.NewNormalizePolicy(3)
+	require.NoError(t, err)
+	documentTruncated, err := document.NormalizeDocument(document.SourceDocument{
+		Family: "text", UnitKind: "unit", Units: []document.SourceUnit{
+			{Index: 0, Markdown: "one"},
+			{Index: 1, Markdown: "two"},
+		},
+	}, policy)
+	require.NoError(t, err)
+	unitTruncated, err := document.NormalizeDocument(document.SourceDocument{
+		Family: "text", UnitKind: "unit", Units: []document.SourceUnit{{Index: 0, Markdown: "one more"}},
+	}, policy)
+	require.NoError(t, err)
+
+	assert.True(t, documentTruncated.Truncated)
+	assert.True(t, unitTruncated.Truncated)
+	assert.False(t, documentTruncated.Units[0].Truncated)
+	assert.True(t, unitTruncated.Units[0].Truncated)
+	assert.Equal(t, documentTruncated.Units[0].Text, unitTruncated.Units[0].Text)
+	assert.NotEqual(t, documentTruncated.Units[0].Checksum, unitTruncated.Units[0].Checksum)
+	assert.NotEqual(t, documentTruncated.Chunks[0].Checksum, unitTruncated.Chunks[0].Checksum)
+	assert.NotEqual(t, documentTruncated.Checksum, unitTruncated.Checksum)
+
+	recipe, err := embedding.NewRecipe(embedding.RecipeConfig{})
+	require.NoError(t, err)
+	documentPlan, err := embedding.BuildEmbeddingPlan(
+		documentTruncated, embedding.DocumentContext{}, recipe, nil,
+	)
+	require.NoError(t, err)
+	unitPlan, err := embedding.BuildEmbeddingPlan(unitTruncated, embedding.DocumentContext{}, recipe, nil)
+	require.NoError(t, err)
+	assert.NotEqual(t, documentPlan.Inputs[0].Key, unitPlan.Inputs[0].Key)
+}
+
 func TestEmptyHeadingResetBuildsEmbeddingPlan(t *testing.T) {
 	policy, err := document.NewNormalizePolicy(10_000)
 	require.NoError(t, err)

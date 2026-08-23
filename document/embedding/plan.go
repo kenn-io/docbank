@@ -30,10 +30,11 @@ type EmbeddingInput struct {
 }
 
 type embeddingInputIdentity struct {
-	Ordinal  int                `json:"ordinal"`
-	Kind     RepresentationKind `json:"kind"`
-	Checksum string             `json:"checksum"`
-	Refs     []SourceRef        `json:"refs"`
+	Ordinal   int                `json:"ordinal"`
+	Kind      RepresentationKind `json:"kind"`
+	Checksum  string             `json:"checksum"`
+	Refs      []SourceRef        `json:"refs"`
+	Truncated bool               `json:"truncated"`
 }
 
 // EmbeddingPlan is an immutable set of inputs for one complete normalized
@@ -142,7 +143,8 @@ func makeInput(ordinal int, kind RepresentationKind, text string, refs []SourceR
 		Checksum: fingerprint([]byte(text)), Truncated: truncated,
 	}
 	keyBytes, err := json.Marshal(embeddingInputIdentity{
-		Ordinal: input.Ordinal, Kind: input.Kind, Checksum: input.Checksum, Refs: input.SourceRefs,
+		Ordinal: input.Ordinal, Kind: input.Kind, Checksum: input.Checksum,
+		Refs: input.SourceRefs, Truncated: input.Truncated,
 	})
 	if err != nil {
 		return EmbeddingInput{}, fmt.Errorf("encode embedding input identity: %w", err)

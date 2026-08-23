@@ -88,7 +88,7 @@ func NormalizeDocument(source SourceDocument, policy NormalizePolicy) (Normalize
 			Text: text, Header: header, Footer: footer, Dimensions: unit.Dimensions,
 			CharCount: utf8.RuneCountInString(text), Truncated: unitTruncated, HeadingMarks: boundedHeadings,
 		}
-		normalized.Checksum = checksumStrings(normalized.SourceKey, normalized.Text, normalized.Header, normalized.Footer)
+		normalized.Checksum = checksumNormalizedUnit(normalized)
 		result.Units = append(result.Units, normalized)
 		result.Truncated = result.Truncated || unitTruncated
 	}
@@ -148,6 +148,20 @@ func checksumNormalizedDocument(normalized NormalizedDocument) string {
 	return checksumStrings(checksumParts...)
 }
 
+func checksumNormalizedUnit(unit NormalizedUnit) string {
+	return checksumStrings(
+		unit.SourceKey, unit.Text, unit.Header, unit.Footer,
+		fmt.Sprintf("truncated:%t", unit.Truncated),
+	)
+}
+
+func checksumNormalizedChunk(chunk Chunk) string {
+	return checksumStrings(
+		chunk.Key, chunk.Text, strings.Join(chunk.HeadingPath, "\x00"),
+		fmt.Sprintf("truncated:%t", chunk.Truncated),
+	)
+}
+
 func validateNormalizedUnit(unitKind string, index int, unit NormalizedUnit) error {
 	expectedKey := fmt.Sprintf("%s:%06d", unitKind, index)
 	if unit.Index != index || unit.SourceKey != expectedKey || unit.Kind != unitKind ||
@@ -169,7 +183,7 @@ func validateNormalizedUnit(unitKind string, index int, unit NormalizedUnit) err
 		}
 		previousOffset = mark.CharOffset
 	}
-	if unit.Checksum != checksumStrings(unit.SourceKey, unit.Text, unit.Header, unit.Footer) {
+	if unit.Checksum != checksumNormalizedUnit(unit) {
 		return fmt.Errorf("normalized document unit %d checksum is invalid", index)
 	}
 	return nil
@@ -194,7 +208,7 @@ func validateNormalizedChunk(normalized NormalizedDocument, index int, chunk Chu
 	if chunk.Key != expectedKey || !slices.Equal(chunk.HeadingPath, expectedHeadingPath) || chunk.Truncated != unit.Truncated {
 		return fmt.Errorf("normalized document chunk %d identity is invalid", index)
 	}
-	expectedChecksum := checksumStrings(chunk.Key, chunk.Text, strings.Join(chunk.HeadingPath, "\x00"))
+	expectedChecksum := checksumNormalizedChunk(chunk)
 	if chunk.Checksum != expectedChecksum {
 		return fmt.Errorf("normalized document chunk %d checksum is invalid", index)
 	}
@@ -689,7 +703,7 @@ func chunkNormalizedUnits(units []NormalizedUnit, policy NormalizePolicy) ([]Chu
 				CharCount: utf8.RuneCountInString(span.Text), Truncated: unit.Truncated,
 				Spans: []ChunkSpan{{UnitIndex: unit.Index, CharStart: span.CharStart, CharEnd: span.CharEnd}},
 			}
-			chunk.Checksum = checksumStrings(chunk.Key, chunk.Text, strings.Join(chunk.HeadingPath, "\x00"))
+			chunk.Checksum = checksumNormalizedChunk(chunk)
 			chunks = append(chunks, chunk)
 		}
 	}
