@@ -163,7 +163,10 @@ func PrepareDistillation(normalized document.NormalizedDocument, context Documen
 	if !recipe.valid() || recipe.values.Distillation == nil {
 		return DistillationRequest{}, errors.New("embedding recipe does not configure distillation")
 	}
-	context = normalizeContext(context, recipe.values)
+	context, err := normalizeContext(context, recipe.values)
+	if err != nil {
+		return DistillationRequest{}, err
+	}
 	contextFingerprint, err := digestJSON(context)
 	if err != nil {
 		return DistillationRequest{}, err
@@ -334,6 +337,18 @@ func validateDistillationRequest(request DistillationRequest) error {
 		request.PromptTemplateVersion < 1 || request.MaxSections < 1 || request.MaxSectionRunes < 1 || len(request.Partitions) == 0 {
 		return errors.New("distillation request is incomplete")
 	}
+	if err := validateContextText(request.Context); err != nil {
+		return err
+	}
+	for _, identity := range [...]struct{ name, value string }{
+		{name: "distillation provider", value: request.Provider},
+		{name: "distillation model", value: request.Model},
+		{name: "distillation model revision", value: request.ModelRevision},
+	} {
+		if err := validateIdentityText(identity.name, identity.value); err != nil {
+			return err
+		}
+	}
 	contextFingerprint, err := digestJSON(request.Context)
 	if err != nil {
 		return err
@@ -401,11 +416,14 @@ func digestJSON(value any) (string, error) {
 	return fingerprint(encoded), nil
 }
 
-func normalizeContext(value DocumentContext, recipe RecipeValues) DocumentContext {
+func normalizeContext(value DocumentContext, recipe RecipeValues) (DocumentContext, error) {
+	if err := validateContextText(value); err != nil {
+		return DocumentContext{}, err
+	}
 	return DocumentContext{
 		Filename: truncateRunes(normalizeMetadata(value.Filename), recipe.MaxFilenameRunes),
 		Title:    truncateRunes(normalizeMetadata(value.Title), recipe.MaxTitleRunes),
-	}
+	}, nil
 }
 
 func normalizeMetadata(value string) string {

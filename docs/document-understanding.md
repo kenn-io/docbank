@@ -130,10 +130,12 @@ if err != nil {
 Context includes bounded filename, title, heading path, and source locator
 fields. The recipe's heading bound applies to both final embedding inputs and
 distillation partitions, and yields to the enclosing limit so source content
-still fits. Every final input is truncated on rune boundaries to the recipe's
+still fits. Filename and title context must be valid UTF-8; provider, model,
+revision, and vector-normalization identifiers must also be free of control
+characters. Every final input is truncated on rune boundaries to the recipe's
 provider input cap. Recipe, context, plan, source, and individual input
-fingerprints let an application store derived state without making worker
-batch size or claim timing part of vector identity.
+fingerprints let an application store derived state without making worker batch
+size or claim timing part of vector identity.
 
 For optional distillation, configure `Distillation` on a `distilled` or
 `combined` recipe and use this flow:

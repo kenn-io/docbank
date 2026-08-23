@@ -46,6 +46,16 @@ func (identity VectorSpaceIdentity) CanonicalJSON() ([]byte, error) {
 	if identity.Provider == "" || identity.Model == "" || identity.ModelRevision == "" || identity.Dimension < 1 || identity.Normalization == "" {
 		return nil, errors.New("vector space provider, model, revision, dimension, and normalization are required")
 	}
+	for _, value := range [...]struct{ name, text string }{
+		{name: "vector space provider", text: identity.Provider},
+		{name: "vector space model", text: identity.Model},
+		{name: "vector space model revision", text: identity.ModelRevision},
+		{name: "vector space normalization", text: identity.Normalization},
+	} {
+		if err := validateIdentityText(value.name, value.text); err != nil {
+			return nil, err
+		}
+	}
 	encoded, err := json.Marshal(identity)
 	if err != nil {
 		return nil, fmt.Errorf("encode vector space identity: %w", err)
@@ -71,6 +81,15 @@ func (identity EgressIdentity) CanonicalJSON() ([]byte, error) {
 	}
 	if identity.Provider == "" || identity.Model == "" {
 		return nil, errors.New("embedding egress provider and model are required")
+	}
+	for _, value := range [...]struct{ name, text string }{
+		{name: "embedding egress provider", text: identity.Provider},
+		{name: "embedding egress model", text: identity.Model},
+		{name: "embedding egress model revision", text: identity.ModelRevision},
+	} {
+		if err := validateIdentityText(value.name, value.text); err != nil {
+			return nil, err
+		}
 	}
 	endpoint, err := canonicalEndpoint(identity.Endpoint)
 	if err != nil {

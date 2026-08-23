@@ -23,8 +23,8 @@ func TestCombinedRecipeBuildsDeterministicBoundedPlan(t *testing.T) {
 	})
 	require.NoError(t, err)
 	contextValue := embedding.DocumentContext{
-		Filename: "  quarterly\tresults.pdf ",
-		Title:    "Synthetic report\nfor testing",
+		Filename: "  résumé\tresults.pdf ",
+		Title:    "東京 synthetic report\nfor testing",
 	}
 
 	request, err := embedding.PrepareDistillation(normalized, contextValue, recipe)
@@ -334,6 +334,56 @@ func TestEgressFingerprintSeparatesPurposeAndDestination(t *testing.T) {
 	spaceFingerprint, err := space.Fingerprint()
 	require.NoError(t, err)
 	assert.NotEmpty(t, spaceFingerprint)
+}
+
+func TestEmbeddingRejectsUnstableTextFields(t *testing.T) {
+	normalized := normalizedDocument(t)
+	rawRecipe, err := embedding.NewRecipe(embedding.RecipeConfig{})
+	require.NoError(t, err)
+	invalidUTF8 := string([]byte{0xff})
+
+	_, err = embedding.BuildEmbeddingPlan(
+		normalized, embedding.DocumentContext{Filename: invalidUTF8}, rawRecipe, nil,
+	)
+	require.ErrorContains(t, err, "invalid UTF-8")
+
+	distilledConfig := embedding.DistillationConfig{
+		Provider: "synthetic", Model: "summarizer", ModelRevision: "revision-1",
+		PromptTemplateVersion: 1,
+	}
+	distilledRecipe, err := embedding.NewRecipe(embedding.RecipeConfig{
+		Mode: embedding.RepresentationDistilled, Distillation: &distilledConfig,
+	})
+	require.NoError(t, err)
+	_, err = embedding.PrepareDistillation(
+		normalized, embedding.DocumentContext{Title: invalidUTF8}, distilledRecipe,
+	)
+	require.ErrorContains(t, err, "invalid UTF-8")
+
+	distilledConfig.Provider = invalidUTF8
+	_, err = embedding.NewRecipe(embedding.RecipeConfig{
+		Mode: embedding.RepresentationDistilled, Distillation: &distilledConfig,
+	})
+	require.ErrorContains(t, err, "invalid UTF-8")
+
+	distilledConfig.Provider = "synthetic"
+	distilledConfig.Model = "summary\nother"
+	_, err = embedding.NewRecipe(embedding.RecipeConfig{
+		Mode: embedding.RepresentationDistilled, Distillation: &distilledConfig,
+	})
+	require.ErrorContains(t, err, "control character")
+
+	_, err = (embedding.EgressIdentity{
+		Purpose: embedding.EgressDocumentEmbedding, Provider: "synthetic",
+		Endpoint: "https://example.com/v1", Model: "embed", ModelRevision: invalidUTF8,
+	}).Fingerprint()
+	require.ErrorContains(t, err, "invalid UTF-8")
+
+	_, err = (embedding.VectorSpaceIdentity{
+		Provider: "synthetic", Model: "embed", ModelRevision: "revision-1",
+		Dimension: 1_024, Normalization: "unit\nlength",
+	}).Fingerprint()
+	require.ErrorContains(t, err, "control character")
 }
 
 func normalizedDocument(t *testing.T) document.NormalizedDocument {

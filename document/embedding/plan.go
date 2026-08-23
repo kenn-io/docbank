@@ -59,7 +59,10 @@ func BuildEmbeddingPlan(normalized document.NormalizedDocument, context Document
 	if !recipe.valid() {
 		return EmbeddingPlan{}, errors.New("embedding recipe is invalid; use NewRecipe")
 	}
-	context = normalizeContext(context, recipe.values)
+	context, err := normalizeContext(context, recipe.values)
+	if err != nil {
+		return EmbeddingPlan{}, err
+	}
 	contextFingerprint, err := digestJSON(context)
 	if err != nil {
 		return EmbeddingPlan{}, err

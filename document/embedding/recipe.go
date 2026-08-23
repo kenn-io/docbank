@@ -144,6 +144,15 @@ func normalizeDistillation(mode RepresentationMode, config *DistillationConfig) 
 	if values.Provider == "" || values.Model == "" || values.ModelRevision == "" || values.PromptTemplateVersion < 1 {
 		return DistillationConfig{}, false, errors.New("distillation provider, model, revision, and prompt template version are required")
 	}
+	for _, identity := range [...]struct{ name, value string }{
+		{name: "distillation provider", value: values.Provider},
+		{name: "distillation model", value: values.Model},
+		{name: "distillation model revision", value: values.ModelRevision},
+	} {
+		if err := validateIdentityText(identity.name, identity.value); err != nil {
+			return DistillationConfig{}, false, err
+		}
+	}
 	if values.MaxPartitionRunes < 1 || values.MaxSections < 1 || values.MaxSectionRunes < 1 {
 		return DistillationConfig{}, false, errors.New("distillation bounds must be positive")
 	}
