@@ -77,6 +77,7 @@ type SourcePartition struct {
 	Text       string      `json:"text"`
 	SourceRefs []SourceRef `json:"source_refs"`
 	Checksum   string      `json:"checksum"`
+	Truncated  bool        `json:"truncated"`
 }
 
 type partitionIdentity struct {
@@ -84,6 +85,7 @@ type partitionIdentity struct {
 	Ordinal        int         `json:"ordinal"`
 	Refs           []SourceRef `json:"refs"`
 	Checksum       string      `json:"checksum"`
+	Truncated      bool        `json:"truncated"`
 }
 
 type derivedSectionIdentity struct {
@@ -91,6 +93,7 @@ type derivedSectionIdentity struct {
 	Ordinal            int         `json:"ordinal"`
 	Checksum           string      `json:"checksum"`
 	Refs               []SourceRef `json:"refs"`
+	Truncated          bool        `json:"truncated"`
 }
 
 // DistillationRequest is the immutable input to a Distiller.
@@ -139,6 +142,7 @@ type DerivedSection struct {
 	Text       string      `json:"text"`
 	SourceRefs []SourceRef `json:"source_refs"`
 	Checksum   string      `json:"checksum"`
+	Truncated  bool        `json:"truncated"`
 }
 
 // Distillate is a validated, content-addressed distillation artifact.
@@ -196,8 +200,9 @@ func PrepareDistillation(normalized document.NormalizedDocument, context Documen
 func partitionDocument(normalized document.NormalizedDocument, maxRunes, maxHeadingRunes int) ([]SourcePartition, error) {
 	partitions := make([]SourcePartition, 0, len(normalized.Chunks))
 	type partitionChunk struct {
-		chunk document.Chunk
-		text  string
+		chunk     document.Chunk
+		text      string
+		truncated bool
 	}
 	var chunks []partitionChunk
 	runes := 0
@@ -210,12 +215,13 @@ func partitionDocument(normalized document.NormalizedDocument, maxRunes, maxHead
 		for _, item := range chunks {
 			texts = append(texts, item.text)
 			partition.SourceRefs = append(partition.SourceRefs, sourceRef(item.chunk))
+			partition.Truncated = partition.Truncated || item.truncated
 		}
 		partition.Text = strings.Join(texts, "\n\n")
 		partition.Checksum = fingerprint([]byte(partition.Text))
 		keyBytes, err := json.Marshal(partitionIdentity{
 			SourceChecksum: normalized.Checksum, Ordinal: partition.Ordinal,
-			Refs: partition.SourceRefs, Checksum: partition.Checksum,
+			Refs: partition.SourceRefs, Checksum: partition.Checksum, Truncated: partition.Truncated,
 		})
 		if err != nil {
 			return fmt.Errorf("encode distillation partition identity: %w", err)
@@ -227,7 +233,7 @@ func partitionDocument(normalized document.NormalizedDocument, maxRunes, maxHead
 		return nil
 	}
 	for _, chunk := range normalized.Chunks {
-		chunkText := formatDistillationChunk(normalized, chunk, maxRunes, maxHeadingRunes)
+		chunkText, headingTruncated := formatDistillationChunk(normalized, chunk, maxRunes, maxHeadingRunes)
 		chunkRunes := utf8.RuneCountInString(chunkText)
 		if chunkRunes > maxRunes {
 			return nil, fmt.Errorf("normalized chunk %q exceeds distillation partition limit", chunk.Key)
@@ -241,7 +247,10 @@ func partitionDocument(normalized document.NormalizedDocument, maxRunes, maxHead
 				return nil, err
 			}
 		}
-		chunks = append(chunks, partitionChunk{chunk: chunk, text: chunkText})
+		chunks = append(chunks, partitionChunk{
+			chunk: chunk, text: chunkText,
+			truncated: normalized.Truncated || chunk.Truncated || headingTruncated,
+		})
 		runes += separator + chunkRunes
 	}
 	if err := flush(); err != nil {
@@ -250,12 +259,16 @@ func partitionDocument(normalized document.NormalizedDocument, maxRunes, maxHead
 	return partitions, nil
 }
 
-func formatDistillationChunk(normalized document.NormalizedDocument, chunk document.Chunk, maxRunes, maxHeadingRunes int) string {
+func formatDistillationChunk(
+	normalized document.NormalizedDocument,
+	chunk document.Chunk,
+	maxRunes, maxHeadingRunes int,
+) (string, bool) {
 	source := "Source: " + formatLocator(normalized, chunk.Spans) + "\nContent:\n" + chunk.Text
-	heading, _ := boundedHeadingContext(
+	heading, headingTruncated := boundedHeadingContext(
 		chunk.HeadingPath, maxHeadingRunes, maxRunes-utf8.RuneCountInString(source),
 	)
-	return heading + source
+	return heading + source, headingTruncated
 }
 
 // ValidateDistillate validates provider output, attaches exact source
@@ -302,11 +315,12 @@ func ValidateDistillate(request DistillationRequest, result DistillationResult) 
 			seen[key] = true
 			nextPartition++
 			section.SourceRefs = append(section.SourceRefs, cloneSourceRefs(partition.SourceRefs)...)
+			section.Truncated = section.Truncated || partition.Truncated
 		}
 		section.Checksum = fingerprint([]byte(section.Text))
 		keyBytes, err := json.Marshal(derivedSectionIdentity{
 			RequestFingerprint: request.Fingerprint, Ordinal: section.Ordinal,
-			Checksum: section.Checksum, Refs: section.SourceRefs,
+			Checksum: section.Checksum, Refs: section.SourceRefs, Truncated: section.Truncated,
 		})
 		if err != nil {
 			return Distillate{}, fmt.Errorf("encode derived section identity: %w", err)
@@ -365,7 +379,7 @@ func validateDistillationRequest(request DistillationRequest) error {
 		}
 		keyBytes, err := json.Marshal(partitionIdentity{
 			SourceChecksum: request.SourceChecksum, Ordinal: partition.Ordinal,
-			Refs: partition.SourceRefs, Checksum: partition.Checksum,
+			Refs: partition.SourceRefs, Checksum: partition.Checksum, Truncated: partition.Truncated,
 		})
 		if err != nil {
 			return fmt.Errorf("encode distillation partition identity: %w", err)

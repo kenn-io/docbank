@@ -153,6 +153,68 @@ func TestTruncationStateChangesPublishedIdentities(t *testing.T) {
 	unitPlan, err := embedding.BuildEmbeddingPlan(unitTruncated, embedding.DocumentContext{}, recipe, nil)
 	require.NoError(t, err)
 	assert.NotEqual(t, documentPlan.Inputs[0].Key, unitPlan.Inputs[0].Key)
+
+	distilledRecipe, err := embedding.NewRecipe(embedding.RecipeConfig{
+		Mode: embedding.RepresentationDistilled,
+		Distillation: &embedding.DistillationConfig{
+			Provider: "synthetic", Model: "summarizer", ModelRevision: "revision-1",
+			PromptTemplateVersion: 1,
+		},
+	})
+	require.NoError(t, err)
+	for _, test := range []struct {
+		name       string
+		normalized document.NormalizedDocument
+	}{
+		{name: "document", normalized: documentTruncated},
+		{name: "unit and chunk", normalized: unitTruncated},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request, err := embedding.PrepareDistillation(
+				test.normalized, embedding.DocumentContext{}, distilledRecipe,
+			)
+			require.NoError(t, err)
+			sections := make([]embedding.DerivedSectionResult, 0, len(request.Partitions))
+			for _, partition := range request.Partitions {
+				assert.True(t, partition.Truncated)
+				sections = append(sections, embedding.DerivedSectionResult{
+					Text: "summary", PartitionKeys: []string{partition.Key},
+				})
+			}
+			tamperedRequest := request
+			tamperedRequest.Partitions = append([]embedding.SourcePartition(nil), request.Partitions...)
+			tamperedRequest.Partitions[0].Truncated = false
+			_, err = embedding.ValidateDistillate(tamperedRequest, embedding.DistillationResult{
+				Provider: request.Provider, Model: request.Model, ModelRevision: request.ModelRevision,
+				Sections: sections,
+			})
+			require.ErrorContains(t, err, "key is invalid")
+
+			distillate, err := embedding.ValidateDistillate(request, embedding.DistillationResult{
+				Provider: request.Provider, Model: request.Model, ModelRevision: request.ModelRevision,
+				Sections: sections,
+			})
+			require.NoError(t, err)
+			for _, section := range distillate.Sections {
+				assert.True(t, section.Truncated)
+			}
+			plan, err := embedding.BuildEmbeddingPlan(
+				test.normalized, embedding.DocumentContext{}, distilledRecipe, &distillate,
+			)
+			require.NoError(t, err)
+			for _, input := range plan.Inputs {
+				assert.True(t, input.Truncated)
+			}
+
+			tampered := distillate
+			tampered.Sections = append([]embedding.DerivedSection(nil), distillate.Sections...)
+			tampered.Sections[0].Truncated = false
+			_, err = embedding.BuildEmbeddingPlan(
+				test.normalized, embedding.DocumentContext{}, distilledRecipe, &tampered,
+			)
+			assert.ErrorContains(t, err, "key is invalid")
+		})
+	}
 }
 
 func TestEmptyHeadingResetBuildsEmbeddingPlan(t *testing.T) {

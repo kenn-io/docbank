@@ -146,7 +146,10 @@ func distilledInput(ordinal int, section DerivedSection, context DocumentContext
 	if err != nil {
 		return EmbeddingInput{}, fmt.Errorf("format distilled section %q: %w", section.Key, err)
 	}
-	return makeInput(ordinal, RepresentationKindDistilled, text, section.SourceRefs, contextTruncated || truncated)
+	return makeInput(
+		ordinal, RepresentationKindDistilled, text, section.SourceRefs,
+		section.Truncated || contextTruncated || truncated,
+	)
 }
 
 func makeInput(ordinal int, kind RepresentationKind, text string, refs []SourceRef, truncated bool) (EmbeddingInput, error) {
@@ -290,7 +293,7 @@ func validateDistillateForPlan(distillate Distillate, sourceChecksum, contextFin
 		}
 		keyBytes, err := json.Marshal(derivedSectionIdentity{
 			RequestFingerprint: distillate.RequestFingerprint, Ordinal: section.Ordinal,
-			Checksum: section.Checksum, Refs: section.SourceRefs,
+			Checksum: section.Checksum, Refs: section.SourceRefs, Truncated: section.Truncated,
 		})
 		if err != nil {
 			return fmt.Errorf("encode derived section identity: %w", err)
