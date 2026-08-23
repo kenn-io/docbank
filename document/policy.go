@@ -2,9 +2,9 @@ package document
 
 import "errors"
 
-const normalizationPolicyVersion = 2
+const normalizationPolicyVersion = 3
 
-// NormalizePolicy fixes the version-2 normalization behavior. Its structural
+// NormalizePolicy fixes the version-3 normalization behavior. Its structural
 // values are private because changing any of them requires a new version.
 type NormalizePolicy struct {
 	version                int
@@ -31,7 +31,7 @@ type NormalizePolicyIdentity struct {
 	MaxChunks              int `json:"max_chunks"`
 }
 
-// NewNormalizePolicy returns the fixed version-2 policy for a document limit.
+// NewNormalizePolicy returns the fixed version-3 policy for a document limit.
 func NewNormalizePolicy(maxDocumentChars int) (NormalizePolicy, error) {
 	policy := NormalizePolicy{
 		version:                normalizationPolicyVersion,

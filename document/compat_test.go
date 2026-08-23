@@ -16,7 +16,7 @@ type normalizationCompatibilityCase struct {
 	Expected         NormalizedDocument `json:"expected"`
 }
 
-func TestNormalizeDocumentMatchesMsgvaultBaseline(t *testing.T) {
+func TestNormalizeDocumentVersionThreePreservesVersionTwoEvidence(t *testing.T) {
 	bundle, _, err := compattest.Load()
 	require.NoError(t, err)
 	section, ok := bundle.Sections["normalization_v2"]
@@ -35,7 +35,28 @@ func TestNormalizeDocumentMatchesMsgvaultBaseline(t *testing.T) {
 			require.NoError(t, err)
 			actual, err := NormalizeDocument(testCase.Source, policy)
 			require.NoError(t, err)
-			assert.Equal(t, testCase.Expected, actual)
+			require.NoError(t, ValidateNormalizedDocument(actual))
+			assert.Equal(t, 3, actual.PolicyVersion)
+			assert.Equal(t, testCase.Expected.Family, actual.Family)
+			assert.Equal(t, testCase.Expected.UnitKind, actual.UnitKind)
+			expectedUnits := append([]NormalizedUnit(nil), testCase.Expected.Units...)
+			actualUnits := append([]NormalizedUnit(nil), actual.Units...)
+			for index := range actualUnits {
+				assert.NotEqual(t, expectedUnits[index].Checksum, actualUnits[index].Checksum)
+				expectedUnits[index].Checksum = ""
+				actualUnits[index].Checksum = ""
+			}
+			assert.Equal(t, expectedUnits, actualUnits)
+			expectedChunks := append([]Chunk(nil), testCase.Expected.Chunks...)
+			actualChunks := append([]Chunk(nil), actual.Chunks...)
+			for index := range actualChunks {
+				assert.NotEqual(t, expectedChunks[index].Checksum, actualChunks[index].Checksum)
+				expectedChunks[index].Checksum = ""
+				actualChunks[index].Checksum = ""
+			}
+			assert.Equal(t, expectedChunks, actualChunks)
+			assert.Equal(t, testCase.Expected.Truncated, actual.Truncated)
+			assert.NotEqual(t, testCase.Expected.Checksum, actual.Checksum)
 		})
 	}
 }

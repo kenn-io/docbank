@@ -75,6 +75,67 @@ func TestNormalizeDocumentRejectsZeroPolicy(t *testing.T) {
 	require.ErrorContains(t, err, "use NewNormalizePolicy")
 }
 
+func TestNormalizeAndValidateRejectInvalidDocumentIdentifiers(t *testing.T) {
+	policy := testNormalizePolicy(t, 10_000)
+	validSource := SourceDocument{
+		Family: "text", UnitKind: "unit", Units: []SourceUnit{{Index: 0, Markdown: "evidence"}},
+	}
+	validNormalized, err := NormalizeDocument(validSource, policy)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name, family, unitKind, want string
+	}{
+		{
+			name: "family invalid UTF-8", family: string([]byte{0xff}), unitKind: "unit", want: "invalid UTF-8",
+		},
+		{
+			name: "unit kind invalid UTF-8", family: "text", unitKind: string([]byte{0xff}), want: "invalid UTF-8",
+		},
+		{
+			name: "family control character", family: "text\nother", unitKind: "unit", want: "control character",
+		},
+		{
+			name: "unit kind control character", family: "text", unitKind: "unit\tother", want: "control character",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			source := validSource
+			source.Family = test.family
+			source.UnitKind = test.unitKind
+			_, err := NormalizeDocument(source, policy)
+			require.ErrorContains(t, err, test.want)
+
+			normalized := validNormalized
+			normalized.Family = test.family
+			normalized.UnitKind = test.unitKind
+			err = ValidateNormalizedDocument(normalized)
+			require.ErrorContains(t, err, test.want)
+		})
+	}
+}
+
+func TestNormalizeDocumentChecksumIncludesDocumentTruncation(t *testing.T) {
+	policy := testNormalizePolicy(t, 3)
+	complete, err := NormalizeDocument(SourceDocument{
+		Family: "text", UnitKind: "unit",
+		Units: []SourceUnit{{Index: 0, Markdown: "one"}},
+	}, policy)
+	require.NoError(t, err)
+	truncated, err := NormalizeDocument(SourceDocument{
+		Family: "text", UnitKind: "unit",
+		Units: []SourceUnit{{Index: 0, Markdown: "one"}, {Index: 1, Markdown: "two"}},
+	}, policy)
+	require.NoError(t, err)
+
+	assert.False(t, complete.Truncated)
+	assert.True(t, truncated.Truncated)
+	assert.Equal(t, complete.Units, truncated.Units)
+	assert.Equal(t, complete.Chunks, truncated.Chunks)
+	assert.NotEqual(t, complete.Checksum, truncated.Checksum)
+}
+
 func TestNormalizeDocumentPublishesHeaderAndFooterOnlyEvidence(t *testing.T) {
 	source := SourceDocument{Family: "pdf", UnitKind: "page", Units: []SourceUnit{{
 		Index: 0, Header: "Confidential **shipment**", Footer: "Dock 7",
@@ -374,6 +435,59 @@ func TestNormalizeDocumentBoundsHeadingPathsByLevel(t *testing.T) {
 			normalized, err := NormalizeDocument(source, policy)
 			require.NoError(t, err)
 			assert.Equal(t, test.want, normalized.Units[0].HeadingMarks)
+		})
+	}
+}
+
+func TestValidateNormalizedDocumentRejectsEmptyHeadingPathElements(t *testing.T) {
+	policy := testNormalizePolicy(t, 10_000)
+	normalized, err := NormalizeDocument(SourceDocument{
+		Family: "text", UnitKind: "page", Units: []SourceUnit{{Index: 0, Markdown: "# Parent\n\nbody"}},
+	}, policy)
+	require.NoError(t, err)
+	normalized.Units[0].HeadingMarks[0].Path = []string{"Parent", ""}
+
+	err = ValidateNormalizedDocument(normalized)
+	assert.ErrorContains(t, err, "invalid heading marks")
+}
+
+func TestValidateNormalizedDocumentRejectsChangedUnitProvenance(t *testing.T) {
+	policy := testNormalizePolicy(t, 10_000)
+	normalized, err := NormalizeDocument(SourceDocument{
+		Family: "pdf", UnitKind: "page", Units: []SourceUnit{{
+			Index: 0, Markdown: "# Parent\n\nbody",
+			Dimensions: UnitDimensions{DPI: 200, Height: 1200, Width: 800},
+		}},
+	}, policy)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name   string
+		mutate func(*NormalizedDocument)
+	}{
+		{
+			name: "dimensions",
+			mutate: func(changed *NormalizedDocument) {
+				changed.Units[0].Dimensions.Width++
+			},
+		},
+		{
+			name: "heading mark",
+			mutate: func(changed *NormalizedDocument) {
+				changed.Units[0].HeadingMarks[0].Path[0] = "Changed"
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			changed := normalized
+			changed.Units = append([]NormalizedUnit(nil), normalized.Units...)
+			changed.Units[0].HeadingMarks = append([]HeadingMark(nil), normalized.Units[0].HeadingMarks...)
+			changed.Units[0].HeadingMarks[0].Path = append([]string(nil), normalized.Units[0].HeadingMarks[0].Path...)
+			test.mutate(&changed)
+
+			err := ValidateNormalizedDocument(changed)
+			assert.ErrorContains(t, err, "checksum is invalid")
 		})
 	}
 }
