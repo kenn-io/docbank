@@ -303,11 +303,21 @@ func (sequence *evidenceLocatorSequence) add(locator EvidenceLocatorV1) error {
 }
 
 func (sequence *evidenceLocatorSequence) requireGapOmissions(omitted []EvidenceLocatorV1) error {
-	declared := make(map[evidenceLocatorKey]struct{}, len(omitted))
-	for _, locator := range omitted {
-		declared[evidenceLocatorKey{
-			end: locator.End, indexOrigin: locator.IndexOrigin, kind: locator.Kind, start: locator.Start,
+	required := make(map[evidenceLocatorKey]struct{}, len(sequence.gaps))
+	for _, gap := range sequence.gaps {
+		required[evidenceLocatorKey{
+			end: gap.End, indexOrigin: gap.IndexOrigin, kind: gap.Kind, start: gap.Start,
 		}] = struct{}{}
+	}
+	declared := make(map[evidenceLocatorKey]struct{}, len(omitted))
+	for index, locator := range omitted {
+		key := evidenceLocatorKey{
+			end: locator.End, indexOrigin: locator.IndexOrigin, kind: locator.Kind, start: locator.Start,
+		}
+		if _, ok := required[key]; !ok {
+			return fmt.Errorf("unit omission %d does not match a locator gap", index)
+		}
+		declared[key] = struct{}{}
 	}
 	for _, gap := range sequence.gaps {
 		key := evidenceLocatorKey{
@@ -1222,6 +1232,9 @@ func validateOmissions(omissions []SourceEvidenceOmissionV1, textMaps []evidence
 			}
 			return fmt.Errorf("omission %d: %w", index, err)
 		}
+		if !unitLocal && omission.Kind == EvidenceOmissionField && omission.UnitOrder != 0 {
+			return fmt.Errorf("omission %d field must use the global unit order", index)
+		}
 		if omission.Kind == EvidenceOmissionField {
 			if err := validateEvidenceIdentifier(omission.Field, "omission field"); err != nil {
 				return fmt.Errorf("omission %d: %w", index, err)
@@ -1285,6 +1298,9 @@ func validateNormalizedOmissions(omissions []EvidenceOmissionV1, textMaps []evid
 		}
 		if unitOrder >= 0 && omission.UnitOrder != unitOrder {
 			return fmt.Errorf("omission %d has a noncanonical unit order", index)
+		}
+		if unitOrder < 0 && omission.Kind == EvidenceOmissionField && omission.UnitOrder != 0 {
+			return fmt.Errorf("omission %d field must use the global unit order", index)
 		}
 		if omission.Kind == EvidenceOmissionField {
 			if err := validateEvidenceIdentifier(omission.Field, "omission field"); err != nil {

@@ -66,6 +66,7 @@ func TestNormalizedEvidenceV1CanonicalizesProviderEvidence(t *testing.T) {
 	require.NoError(t, err)
 	wantBytes, err := os.ReadFile("testdata/normalized-evidence-v1.golden.json")
 	require.NoError(t, err)
+	wantBytes = bytes.TrimSuffix(wantBytes, []byte("\r\n"))
 	wantBytes = bytes.TrimSuffix(wantBytes, []byte("\n"))
 	assert.Equal(t, string(wantBytes), string(encoded))
 	wantDigest := sha256.Sum256(encoded)
@@ -353,6 +354,93 @@ func TestEvidenceV1LocatorSequenceAllowsDeclaredGap(t *testing.T) {
 	require.NotNil(t, normalized.Omissions[0].Locator)
 	assert.Equal(t, int64(2), normalized.Omissions[0].Locator.Start)
 	assert.Equal(t, int64(99), normalized.Omissions[0].Locator.End)
+}
+
+func TestEvidenceV1RejectsUnitOmissionsOutsideLocatorGaps(t *testing.T) {
+	tests := []struct {
+		name    string
+		locator document.EvidenceLocatorV1
+	}{
+		{
+			name: "wrong kind",
+			locator: document.EvidenceLocatorV1{
+				Kind: document.EvidenceLocatorSlide, IndexOrigin: document.EvidenceIndexOriginOne,
+				Start: 2, End: 2,
+			},
+		},
+		{
+			name: "wrong origin",
+			locator: document.EvidenceLocatorV1{
+				Kind: document.EvidenceLocatorPage, IndexOrigin: document.EvidenceIndexOriginZero,
+				Start: 2, End: 2,
+			},
+		},
+		{
+			name: "overlaps present unit",
+			locator: document.EvidenceLocatorV1{
+				Kind: document.EvidenceLocatorPage, IndexOrigin: document.EvidenceIndexOriginOne,
+				Start: 1, End: 1,
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			source := syntheticSourceEvidenceV1()
+			source.Completeness = document.EvidencePartial
+			sourceLocator := document.SourceEvidenceLocatorV1(test.locator)
+			source.Omissions = []document.SourceEvidenceOmissionV1{{
+				Kind: document.EvidenceOmissionUnit, Locator: &sourceLocator, Reason: "provider omitted a unit",
+			}}
+
+			require.ErrorContains(t, document.ValidateSourceEvidenceV1(source), "does not match a locator gap")
+			source.Units[1].Locator.Start = 3
+			source.Units[1].Locator.End = 3
+			source.Omissions = []document.SourceEvidenceOmissionV1{{
+				Kind: document.EvidenceOmissionUnit,
+				Locator: &document.SourceEvidenceLocatorV1{
+					Kind: document.EvidenceLocatorPage, IndexOrigin: document.EvidenceIndexOriginOne,
+					Start: 2, End: 2,
+				},
+				Reason: "provider omitted page 2",
+			}}
+			policy, err := document.NewEvidencePolicy(100_000)
+			require.NoError(t, err)
+			normalized, err := document.NormalizeEvidenceV1(source, policy)
+			require.NoError(t, err)
+			normalized.Checksum = ""
+			normalized.Omissions[0].Locator = &test.locator
+
+			_, _, err = document.MarshalNormalizedEvidenceV1(normalized)
+			require.ErrorContains(t, err, "does not match a locator gap")
+		})
+	}
+}
+
+func TestEvidenceV1RejectsDocumentFieldOmissionUnitOrder(t *testing.T) {
+	for _, unitOrder := range []int{-1, 99} {
+		t.Run(fmt.Sprintf("unit order %d", unitOrder), func(t *testing.T) {
+			source := syntheticSourceEvidenceV1()
+			source.Completeness = document.EvidencePartial
+			source.Omissions = []document.SourceEvidenceOmissionV1{{
+				Kind: document.EvidenceOmissionField, Field: "natural_provenance",
+				Reason: "provider omitted provenance", UnitOrder: unitOrder,
+			}}
+
+			require.ErrorContains(t, document.ValidateSourceEvidenceV1(source), "global unit order")
+
+			source.Omissions[0].UnitOrder = 0
+			policy, err := document.NewEvidencePolicy(100_000)
+			require.NoError(t, err)
+			normalized, err := document.NormalizeEvidenceV1(source, policy)
+			require.NoError(t, err)
+			normalized.Checksum = ""
+			normalized.Omissions[0].UnitOrder = unitOrder
+
+			_, _, err = document.MarshalNormalizedEvidenceV1(normalized)
+			require.ErrorContains(t, err, "global unit order")
+		})
+	}
 }
 
 func TestNormalizedEvidenceV1RejectsInvalidLocatorSequence(t *testing.T) {
