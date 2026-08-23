@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -110,6 +111,57 @@ func TestClassifyProcessorErrorUsesCallerContext(t *testing.T) {
 	assert.Equal(t, ocr.ErrorTransient, ocr.ErrorKindOf(err))
 	assert.Equal(t, toOCRMetrics(metrics), ocr.MetricsFromError(err))
 	assert.True(t, ocr.IsRetryable(err))
+}
+
+func TestProcessorCancellationDoesNotWaitForSpoolReservation(t *testing.T) {
+	content := testPDF("cancel-release")
+	digest := sha256.Sum256(content)
+	directory := filepath.Join(t.TempDir(), "spool")
+	makePrivateDirectory(t, directory)
+	policy := testPolicy(t, 1024, 10)
+	requestStarted := make(chan struct{})
+	client, err := NewClient(policy, ClientConfig{
+		APIKey: "synthetic-key",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			close(requestStarted)
+			<-request.Context().Done()
+			return nil, request.Context().Err()
+		})},
+	})
+	require.NoError(t, err)
+	processor, err := NewProcessor(ProcessorConfig{
+		Client: client, Policy: policy, CapabilityManifest: syntheticManifest(t, policy, true),
+		SpoolDirectory: directory, MaxSpoolBytes: 1024, MinFreeBytes: 1,
+	})
+	require.NoError(t, err)
+	source, err := ocr.NewSource(
+		io.NopCloser(bytes.NewReader(content)), mediaTypePDF, int64(len(content)), hex.EncodeToString(digest[:]),
+	)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		_, processErr := processor.Process(ctx, source)
+		done <- processErr
+	}()
+	<-requestStarted
+	releaseLock, err := acquireSpoolReservationLock(t.Context(), directory)
+	require.NoError(t, err)
+	cancel()
+
+	var processErr error
+	select {
+	case processErr = <-done:
+	case <-time.After(2 * spoolLockRetryInterval):
+		releaseLock()
+		<-done
+		t.Fatal("Process waited for the spool reservation after cancellation")
+	}
+	releaseLock()
+	require.ErrorIs(t, processErr, context.Canceled)
+	removed, err := ScavengeSpoolDirectory(directory, time.Now().Add(time.Second))
+	require.NoError(t, err)
+	assert.Equal(t, 1, removed)
 }
 
 func newProcessorWithoutRequests(t *testing.T, spoolDirectory string) *Processor {

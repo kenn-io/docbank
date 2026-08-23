@@ -104,7 +104,7 @@ func (p *Processor) Process(ctx context.Context, source ocr.Source) (result ocr.
 		return ocr.Result{}, classifyProcessorError(ctx, err, RequestMetrics{})
 	}
 	defer func() {
-		cleanupErr := prepared.Release()
+		cleanupErr := prepared.release(ctx)
 		if err != nil {
 			err = errors.Join(err, cleanupErr)
 		} else {

@@ -90,6 +90,10 @@ func (d *PreparedDocument) MediaType() string {
 // Release removes only this package-created staging file. It is idempotent and
 // makes the document unavailable to future Process calls.
 func (d *PreparedDocument) Release() error {
+	return d.release(context.Background())
+}
+
+func (d *PreparedDocument) release(ctx context.Context) error {
 	if d == nil {
 		return nil
 	}
@@ -100,7 +104,7 @@ func (d *PreparedDocument) Release() error {
 	if path == "" {
 		return nil
 	}
-	releaseLock, err := acquireSpoolReservationLock(context.Background(), filepath.Dir(path))
+	releaseLock, err := acquireSpoolReservationLock(ctx, filepath.Dir(path))
 	if err != nil {
 		return err
 	}
