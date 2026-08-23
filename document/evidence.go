@@ -201,11 +201,12 @@ type SourceEvidenceArtifactV1 struct {
 
 // SourceEvidenceOmissionV1 names an exact missing field, range, or unit.
 type SourceEvidenceOmissionV1 struct {
-	Field     string               `json:"field,omitempty"`
-	Kind      EvidenceOmissionKind `json:"kind"`
-	Range     *EvidenceTextRangeV1 `json:"range,omitempty"`
-	Reason    string               `json:"reason"`
-	UnitOrder int                  `json:"unit_order,omitempty"`
+	Field     string                   `json:"field,omitempty"`
+	Kind      EvidenceOmissionKind     `json:"kind"`
+	Locator   *SourceEvidenceLocatorV1 `json:"locator,omitempty"`
+	Range     *EvidenceTextRangeV1     `json:"range,omitempty"`
+	Reason    string                   `json:"reason"`
+	UnitOrder int                      `json:"unit_order,omitempty"`
 }
 
 // SourceEvidenceRegionV1 contains one provider-local structural region.
@@ -310,6 +311,7 @@ type EvidenceArtifactV1 struct {
 type EvidenceOmissionV1 struct {
 	Field     string               `json:"field,omitempty"`
 	Kind      EvidenceOmissionKind `json:"kind"`
+	Locator   *EvidenceLocatorV1   `json:"locator,omitempty"`
 	Range     *EvidenceTextRangeV1 `json:"range,omitempty"`
 	Reason    string               `json:"reason"`
 	UnitOrder int                  `json:"unit_order,omitempty"`
@@ -392,13 +394,13 @@ type EvidencePolicy struct {
 // limit.
 func NewEvidencePolicy(maxDocumentChars int) (EvidencePolicy, error) {
 	policy := EvidencePolicy{
-		maxArtifacts:      10_000,
-		maxCellsPerTable:  1_000_000,
+		maxArtifacts:      maxEvidenceArtifacts,
+		maxCellsPerTable:  maxEvidenceCellsPerTable,
 		maxDocumentChars:  maxDocumentChars,
-		maxOmissions:      100_000,
-		maxRegionsPerUnit: 1_000_000,
-		maxTablesPerUnit:  100_000,
-		maxUnits:          100_000,
+		maxOmissions:      maxEvidenceOmissions,
+		maxRegionsPerUnit: maxEvidenceRegionsPerUnit,
+		maxTablesPerUnit:  maxEvidenceTablesPerUnit,
+		maxUnits:          maxEvidenceUnits,
 	}
 	if err := policy.validate(); err != nil {
 		return EvidencePolicy{}, err

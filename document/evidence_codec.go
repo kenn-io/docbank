@@ -24,6 +24,13 @@ const (
 	maxEvidenceReasonBytes      = 1 << 12
 	maxEvidenceTextBytes        = 256 << 20
 	maxEvidenceCoordinate       = int64(1_000_000_000_000_000)
+	maxEvidenceArtifacts        = 10_000
+	maxEvidenceUnits            = 100_000
+	maxEvidenceOmissions        = 100_000
+	maxEvidenceRegionsPerUnit   = 1_000_000
+	maxEvidenceTablesPerUnit    = 100_000
+	maxEvidenceCellsPerTable    = 1_000_000
+	maxEvidenceTableDimension   = 1_000_000
 	maxEvidenceHeadingDepth     = 64
 	maxEvidenceHeadingBytes     = 1 << 20
 	maxEvidenceGeometryBoxes    = 10_000
@@ -51,7 +58,7 @@ func validateSourceEvidenceV1(source SourceEvidenceV1) ([]evidenceTextMap, error
 	if !validEvidenceUnitKind(source.UnitKind) {
 		return nil, errors.New("source evidence has invalid unit kind")
 	}
-	if len(source.Units) == 0 || len(source.Units) > 100_000 {
+	if len(source.Units) == 0 || len(source.Units) > maxEvidenceUnits {
 		return nil, errors.New("source evidence must contain a bounded non-empty unit list")
 	}
 	if err := validateSourceHeadingLimits(source.Units); err != nil {
@@ -85,11 +92,14 @@ func validateSourceEvidenceV1(source SourceEvidenceV1) ([]evidenceTextMap, error
 	if err := validateSourceOmissions(source.Omissions, textMaps); err != nil {
 		return nil, fmt.Errorf("source evidence omissions: %w", err)
 	}
+	if err := locatorSequence.requireGapOmissions(normalizeUnitOmissionLocators(source.Omissions)); err != nil {
+		return nil, err
+	}
 	return textMaps, nil
 }
 
 func validateSourceArtifacts(artifacts []SourceEvidenceArtifactV1) (map[string]struct{}, error) {
-	if len(artifacts) > 10_000 {
+	if len(artifacts) > maxEvidenceArtifacts {
 		return nil, errors.New("source evidence has too many artifacts")
 	}
 	providerIDs := make(map[string]struct{}, len(artifacts))
@@ -221,8 +231,16 @@ func validateSourceLocator(
 
 type evidenceLocatorSequence struct {
 	completeness EvidenceCompleteness
+	gaps         []EvidenceLocatorV1
 	previous     EvidenceLocatorV1
 	seen         bool
+}
+
+type evidenceLocatorKey struct {
+	end         int64
+	indexOrigin EvidenceIndexOrigin
+	kind        EvidenceLocatorKind
+	start       int64
 }
 
 func (sequence *evidenceLocatorSequence) add(locator EvidenceLocatorV1) error {
@@ -233,16 +251,21 @@ func (sequence *evidenceLocatorSequence) add(locator EvidenceLocatorV1) error {
 	if !sequence.seen {
 		sequence.previous = locator
 		sequence.seen = true
-		if sequence.completeness != EvidenceComplete {
-			return nil
-		}
 		first := int64(0)
 		if locator.Kind != EvidenceLocatorTime && locator.IndexOrigin == EvidenceIndexOriginOne {
 			first = 1
 		}
-		if locator.Start != first {
+		if locator.Start == first {
+			return nil
+		}
+		if sequence.completeness == EvidenceComplete {
 			return errors.New("complete locator sequence does not start at its index origin")
 		}
+		end := locator.Start
+		if locator.Kind != EvidenceLocatorTime {
+			end--
+		}
+		sequence.gaps = append(sequence.gaps, evidenceLocatorGap(locator, first, end))
 		return nil
 	}
 	if locator.Kind != sequence.previous.Kind {
@@ -255,19 +278,62 @@ func (sequence *evidenceLocatorSequence) add(locator EvidenceLocatorV1) error {
 		if locator.Start < sequence.previous.End {
 			return errors.New("locator sequence overlaps or regresses")
 		}
-		if sequence.completeness == EvidenceComplete && locator.Start != sequence.previous.End {
-			return errors.New("complete locator sequence has a gap")
+		if locator.Start > sequence.previous.End {
+			if sequence.completeness == EvidenceComplete {
+				return errors.New("complete locator sequence has a gap")
+			}
+			sequence.gaps = append(
+				sequence.gaps, evidenceLocatorGap(locator, sequence.previous.End, locator.Start),
+			)
 		}
 	} else {
 		if locator.Start <= sequence.previous.End {
 			return errors.New("locator sequence overlaps or regresses")
 		}
-		if sequence.completeness == EvidenceComplete && locator.Start != sequence.previous.End+1 {
-			return errors.New("complete locator sequence has a gap")
+		next := sequence.previous.End + 1
+		if locator.Start > next {
+			if sequence.completeness == EvidenceComplete {
+				return errors.New("complete locator sequence has a gap")
+			}
+			sequence.gaps = append(sequence.gaps, evidenceLocatorGap(locator, next, locator.Start-1))
 		}
 	}
 	sequence.previous = locator
 	return nil
+}
+
+func (sequence *evidenceLocatorSequence) requireGapOmissions(omitted []EvidenceLocatorV1) error {
+	declared := make(map[evidenceLocatorKey]struct{}, len(omitted))
+	for _, locator := range omitted {
+		declared[evidenceLocatorKey{
+			end: locator.End, indexOrigin: locator.IndexOrigin, kind: locator.Kind, start: locator.Start,
+		}] = struct{}{}
+	}
+	for _, gap := range sequence.gaps {
+		key := evidenceLocatorKey{
+			end: gap.End, indexOrigin: gap.IndexOrigin, kind: gap.Kind, start: gap.Start,
+		}
+		if _, ok := declared[key]; !ok {
+			return fmt.Errorf("partial evidence locator gap %d:%d lacks a matching unit omission", gap.Start, gap.End)
+		}
+	}
+	return nil
+}
+
+func evidenceLocatorGap(locator EvidenceLocatorV1, start, end int64) EvidenceLocatorV1 {
+	return EvidenceLocatorV1{
+		End: end, IndexOrigin: locator.IndexOrigin, Kind: locator.Kind, Start: start,
+	}
+}
+
+func normalizeUnitOmissionLocators(omissions []SourceEvidenceOmissionV1) []EvidenceLocatorV1 {
+	result := make([]EvidenceLocatorV1, 0, len(omissions))
+	for _, omission := range omissions {
+		if omission.Kind == EvidenceOmissionUnit && omission.Locator != nil {
+			result = append(result, evidenceLocatorFromSource(*omission.Locator))
+		}
+	}
+	return result
 }
 
 func evidenceLocatorFromSource(locator SourceEvidenceLocatorV1) EvidenceLocatorV1 {
@@ -346,7 +412,7 @@ func validateSourceRegions(
 	regions []SourceEvidenceRegionV1,
 	artifactIDs map[string]struct{},
 ) (map[string]sourceRegionRef, error) {
-	if len(regions) > 1_000_000 {
+	if len(regions) > maxEvidenceRegionsPerUnit {
 		return nil, fmt.Errorf("source evidence unit %d has too many regions", unitIndex)
 	}
 	providerIDs := make(map[string]sourceRegionRef, len(regions))
@@ -390,7 +456,7 @@ func validateSourceTables(
 	tables []SourceEvidenceTableV1,
 	regionIDs map[string]sourceRegionRef,
 ) error {
-	if len(tables) > 100_000 {
+	if len(tables) > maxEvidenceTablesPerUnit {
 		return fmt.Errorf("source evidence unit %d has too many tables", unitIndex)
 	}
 	providerIDs := make(map[string]struct{}, len(tables))
@@ -401,7 +467,8 @@ func validateSourceTables(
 		if err := validateProviderID(table.ProviderID, providerIDs); err != nil {
 			return fmt.Errorf("source evidence unit %d table %d: %w", unitIndex, index, err)
 		}
-		if table.Rows <= 0 || table.Columns <= 0 || table.Rows > 1_000_000 || table.Columns > 1_000_000 {
+		if table.Rows <= 0 || table.Columns <= 0 || table.Rows > maxEvidenceTableDimension ||
+			table.Columns > maxEvidenceTableDimension {
 			return fmt.Errorf("source evidence unit %d table %d has invalid dimensions", unitIndex, index)
 		}
 		if table.RegionProviderID != "" {
@@ -413,7 +480,7 @@ func validateSourceTables(
 				return fmt.Errorf("source evidence unit %d table %d has invalid table region", unitIndex, index)
 			}
 		}
-		if len(table.Cells) > 1_000_000 {
+		if len(table.Cells) > maxEvidenceCellsPerTable {
 			return fmt.Errorf("source evidence unit %d table %d has too many cells", unitIndex, index)
 		}
 		for cellIndex, cell := range table.Cells {
@@ -678,7 +745,9 @@ func normalizeRegions(
 		if err != nil {
 			return nil, nil, fmt.Errorf("marshal evidence region identity: %w", err)
 		}
-		normalized.ID = evidenceID("region", string(region.Kind), region.Order, local)
+		normalized.ID = evidenceID(
+			"region", fmt.Sprintf("%s/unit-%d", region.Kind, unit.Order), region.Order, local,
+		)
 		regions[index] = normalized
 		providerToID[region.ProviderID] = normalized.ID
 	}
@@ -711,7 +780,7 @@ func normalizeTables(
 		if err != nil {
 			return nil, fmt.Errorf("marshal evidence table identity: %w", err)
 		}
-		normalized.ID = evidenceID("table", "table", table.Order, local)
+		normalized.ID = evidenceID("table", fmt.Sprintf("table/unit-%d", unit.Order), table.Order, local)
 		tables[index] = normalized
 	}
 	return tables, nil
@@ -780,6 +849,11 @@ func normalizeOmissions(source []SourceEvidenceOmissionV1, textMaps []evidenceTe
 			}
 			normalized.Range = &textRange
 		}
+		if omission.Locator != nil {
+			locator := evidenceLocatorFromSource(*omission.Locator)
+			locator.Name = canonicalEvidenceString(locator.Name)
+			normalized.Locator = &locator
+		}
 		result[index] = normalized
 	}
 	slices.SortFunc(result, compareEvidenceOmissions)
@@ -814,7 +888,8 @@ func validateNormalizedEvidenceV1(evidence NormalizedEvidenceV1) error {
 		return fmt.Errorf("normalized evidence contract version must be %q", NormalizedEvidenceContractV1)
 	}
 	if !validEvidenceCompleteness(evidence.Completeness) || !validEvidenceUnitKind(evidence.UnitKind) ||
-		len(evidence.Units) == 0 {
+		len(evidence.Units) == 0 || len(evidence.Units) > maxEvidenceUnits ||
+		len(evidence.Omissions) > maxEvidenceOmissions {
 		return errors.New("normalized evidence identity is invalid")
 	}
 	if err := validateEvidenceIdentifier(evidence.Family, "document family"); err != nil {
@@ -837,9 +912,14 @@ func validateNormalizedEvidenceV1(evidence NormalizedEvidenceV1) error {
 	documentRangeOffsets := partitionNormalizedOmissionRangeOffsets(evidence.Omissions, len(evidence.Units))
 	locatorSequence := evidenceLocatorSequence{completeness: evidence.Completeness}
 	for index, unit := range evidence.Units {
-		if unit.Order != index || !validEvidenceID(unit.ID, "unit") || !utf8.ValidString(unit.Text) ||
-			!norm.NFC.IsNormalString(unit.Text) || strings.Contains(unit.Text, "\r") {
+		if unit.Order != index || !validEvidenceID(unit.ID, "unit") {
 			return fmt.Errorf("normalized evidence unit %d is not canonical", index)
+		}
+		if err := validateEvidenceText(unit.Text, "unit text"); err != nil {
+			return fmt.Errorf("normalized evidence unit %d: %w", index, err)
+		}
+		if !norm.NFC.IsNormalString(unit.Text) || strings.Contains(unit.Text, "\r") {
+			return fmt.Errorf("normalized evidence unit %d text is not canonical", index)
 		}
 		textMaps[index] = newEvidenceTextMap(unit.Text, collectNormalizedRangeOffsets(unit, documentRangeOffsets[index]))
 		if err := validateSourceLocator(
@@ -858,7 +938,8 @@ func validateNormalizedEvidenceV1(evidence NormalizedEvidenceV1) error {
 			return fmt.Errorf("normalized evidence unit %d: %w", index, err)
 		}
 		for headingIndex, heading := range unit.HeadingPath {
-			if canonicalEvidenceString(heading) != heading || heading == "" {
+			if err := validateEvidenceText(heading, "heading"); err != nil ||
+				canonicalEvidenceString(heading) != heading || heading == "" {
 				return fmt.Errorf("normalized evidence unit %d heading %d is not canonical", index, headingIndex)
 			}
 		}
@@ -885,6 +966,9 @@ func validateNormalizedEvidenceV1(evidence NormalizedEvidenceV1) error {
 	if err := validateNormalizedOmissions(evidence.Omissions, textMaps, -1); err != nil {
 		return fmt.Errorf("normalized evidence omissions: %w", err)
 	}
+	if err := locatorSequence.requireGapOmissions(normalizedUnitOmissionLocators(evidence.Omissions)); err != nil {
+		return err
+	}
 	if err := validateNormalizedCompleteness(evidence); err != nil {
 		return err
 	}
@@ -892,6 +976,9 @@ func validateNormalizedEvidenceV1(evidence NormalizedEvidenceV1) error {
 }
 
 func validateNormalizedArtifacts(artifacts []EvidenceArtifactV1) (map[string]struct{}, error) {
+	if len(artifacts) > maxEvidenceArtifacts {
+		return nil, errors.New("normalized evidence has too many artifacts")
+	}
 	ids := make(map[string]struct{}, len(artifacts))
 	previousID := ""
 	for index, artifact := range artifacts {
@@ -926,6 +1013,9 @@ func validateNormalizedRegions(
 	artifactIDs map[string]struct{},
 	textMap evidenceTextMap,
 ) (map[string]EvidenceRegionKind, error) {
+	if len(unit.Regions) > maxEvidenceRegionsPerUnit {
+		return nil, fmt.Errorf("normalized evidence unit %d has too many regions", unitIndex)
+	}
 	ids := make(map[string]EvidenceRegionKind, len(unit.Regions))
 	textRunes := utf8.RuneCountInString(unit.Text)
 	for index, region := range unit.Regions {
@@ -960,7 +1050,9 @@ func validateNormalizedRegions(
 		if err != nil {
 			return nil, fmt.Errorf("marshal normalized evidence region %d identity: %w", index, err)
 		}
-		if region.ID != evidenceID("region", string(region.Kind), region.Order, local) {
+		if region.ID != evidenceID(
+			"region", fmt.Sprintf("%s/unit-%d", region.Kind, unitIndex), region.Order, local,
+		) {
 			return nil, fmt.Errorf("normalized evidence unit %d region %d has invalid region ID", unitIndex, index)
 		}
 		ids[region.ID] = region.Kind
@@ -974,10 +1066,20 @@ func validateNormalizedTables(
 	regionIDs map[string]EvidenceRegionKind,
 	textMap evidenceTextMap,
 ) error {
+	if len(unit.Tables) > maxEvidenceTablesPerUnit {
+		return fmt.Errorf("normalized evidence unit %d has too many tables", unitIndex)
+	}
 	textRunes := utf8.RuneCountInString(unit.Text)
 	for index, table := range unit.Tables {
-		if table.Order != index || !validEvidenceID(table.ID, "table") || table.Rows <= 0 || table.Columns <= 0 {
+		if table.Order != index || !validEvidenceID(table.ID, "table") {
 			return fmt.Errorf("normalized evidence unit %d table %d is not canonical", unitIndex, index)
+		}
+		if table.Rows <= 0 || table.Columns <= 0 || table.Rows > maxEvidenceTableDimension ||
+			table.Columns > maxEvidenceTableDimension {
+			return fmt.Errorf("normalized evidence unit %d table %d has invalid table dimensions", unitIndex, index)
+		}
+		if len(table.Cells) > maxEvidenceCellsPerTable {
+			return fmt.Errorf("normalized evidence unit %d table %d has too many cells", unitIndex, index)
 		}
 		if table.RegionID != "" && regionIDs[table.RegionID] != EvidenceRegionTable {
 			return fmt.Errorf("normalized evidence unit %d table %d has invalid table region", unitIndex, index)
@@ -1003,7 +1105,7 @@ func validateNormalizedTables(
 		if err != nil {
 			return fmt.Errorf("marshal normalized evidence table %d identity: %w", index, err)
 		}
-		if table.ID != evidenceID("table", "table", table.Order, local) {
+		if table.ID != evidenceID("table", fmt.Sprintf("table/unit-%d", unitIndex), table.Order, local) {
 			return fmt.Errorf("normalized evidence unit %d table %d has invalid table ID", unitIndex, index)
 		}
 	}
@@ -1106,7 +1208,7 @@ func validateUnitOmissions(omissions []SourceEvidenceOmissionV1, unitOrder int, 
 }
 
 func validateOmissions(omissions []SourceEvidenceOmissionV1, textMaps []evidenceTextMap, unitLocal bool) error {
-	if len(omissions) > 100_000 {
+	if len(omissions) > maxEvidenceOmissions {
 		return errors.New("too many omissions")
 	}
 	for index, omission := range omissions {
@@ -1145,12 +1247,28 @@ func validateOmissions(omissions []SourceEvidenceOmissionV1, textMaps []evidence
 		} else if omission.Range != nil {
 			return fmt.Errorf("omission %d has a range outside a range omission", index)
 		}
+		if omission.Kind == EvidenceOmissionUnit {
+			if unitLocal {
+				return fmt.Errorf("omission %d cannot omit a unit from within a unit", index)
+			}
+			if omission.Locator == nil {
+				return fmt.Errorf("omission %d requires a locator", index)
+			}
+			if omission.UnitOrder != 0 {
+				return fmt.Errorf("omission %d unit locator must not claim a present unit order", index)
+			}
+			if err := validateOmissionLocator(evidenceLocatorFromSource(*omission.Locator), false); err != nil {
+				return fmt.Errorf("omission %d locator: %w", index, err)
+			}
+		} else if omission.Locator != nil {
+			return fmt.Errorf("omission %d has a locator outside a unit omission", index)
+		}
 	}
 	return nil
 }
 
 func validateNormalizedOmissions(omissions []EvidenceOmissionV1, textMaps []evidenceTextMap, unitOrder int) error {
-	if len(omissions) > 100_000 {
+	if len(omissions) > maxEvidenceOmissions {
 		return errors.New("too many omissions")
 	}
 	for index, omission := range omissions {
@@ -1194,11 +1312,71 @@ func validateNormalizedOmissions(omissions []EvidenceOmissionV1, textMaps []evid
 		} else if omission.Range != nil {
 			return fmt.Errorf("omission %d has a range outside a range omission", index)
 		}
+		if omission.Kind == EvidenceOmissionUnit {
+			if unitOrder >= 0 {
+				return fmt.Errorf("omission %d cannot omit a unit from within a unit", index)
+			}
+			if omission.Locator == nil {
+				return fmt.Errorf("omission %d requires a locator", index)
+			}
+			if omission.UnitOrder != 0 {
+				return fmt.Errorf("omission %d unit locator has a noncanonical unit order", index)
+			}
+			if err := validateOmissionLocator(*omission.Locator, true); err != nil {
+				return fmt.Errorf("omission %d locator: %w", index, err)
+			}
+		} else if omission.Locator != nil {
+			return fmt.Errorf("omission %d has a locator outside a unit omission", index)
+		}
 		if index > 0 && compareEvidenceOmissions(omissions[index-1], omission) > 0 {
 			return errors.New("omissions are not in canonical order")
 		}
 	}
 	return nil
+}
+
+func validateOmissionLocator(locator EvidenceLocatorV1, canonical bool) error {
+	if locator.Name != "" {
+		if err := validateBoundedUTF8(locator.Name, maxEvidenceIdentifierBytes, "omission locator name"); err != nil {
+			return err
+		}
+		if canonical && canonicalEvidenceString(locator.Name) != locator.Name {
+			return errors.New("omission locator name is not canonical")
+		}
+	}
+	if locator.Kind == EvidenceLocatorTime {
+		if locator.IndexOrigin != EvidenceIndexOriginNone || locator.Start < 0 || locator.End <= locator.Start ||
+			locator.End > maxEvidenceCoordinate {
+			return errors.New("omitted time-range locator is invalid")
+		}
+		return nil
+	}
+	if locator.Kind != EvidenceLocatorLine && locator.Kind != EvidenceLocatorPage &&
+		locator.Kind != EvidenceLocatorRecord && locator.Kind != EvidenceLocatorSheet &&
+		locator.Kind != EvidenceLocatorSlide && locator.Kind != EvidenceLocatorSpine {
+		return errors.New("omitted unit locator kind is not ordered")
+	}
+	if locator.IndexOrigin != EvidenceIndexOriginZero && locator.IndexOrigin != EvidenceIndexOriginOne {
+		return errors.New("omitted unit locator has invalid index origin")
+	}
+	minimum := int64(0)
+	if locator.IndexOrigin == EvidenceIndexOriginOne {
+		minimum = 1
+	}
+	if locator.Start < minimum || locator.End < locator.Start || locator.End > maxEvidenceCoordinate {
+		return errors.New("omitted unit locator has an invalid range")
+	}
+	return nil
+}
+
+func normalizedUnitOmissionLocators(omissions []EvidenceOmissionV1) []EvidenceLocatorV1 {
+	result := make([]EvidenceLocatorV1, 0, len(omissions))
+	for _, omission := range omissions {
+		if omission.Kind == EvidenceOmissionUnit && omission.Locator != nil {
+			result = append(result, *omission.Locator)
+		}
+	}
+	return result
 }
 
 func validateNormalizedCompleteness(evidence NormalizedEvidenceV1) error {
@@ -1222,6 +1400,17 @@ func compareEvidenceOmissions(left, right EvidenceOmissionV1) int {
 	if result := strings.Compare(string(left.Kind), string(right.Kind)); result != 0 {
 		return result
 	}
+	if left.Locator == nil && right.Locator != nil {
+		return -1
+	}
+	if left.Locator != nil && right.Locator == nil {
+		return 1
+	}
+	if left.Locator != nil {
+		if result := compareEvidenceLocators(*left.Locator, *right.Locator); result != 0 {
+			return result
+		}
+	}
 	if left.Range == nil && right.Range != nil {
 		return -1
 	}
@@ -1240,6 +1429,22 @@ func compareEvidenceOmissions(left, right EvidenceOmissionV1) int {
 		return result
 	}
 	return cmp.Compare(left.UnitOrder, right.UnitOrder)
+}
+
+func compareEvidenceLocators(left, right EvidenceLocatorV1) int {
+	if result := cmp.Compare(left.End, right.End); result != 0 {
+		return result
+	}
+	if result := strings.Compare(string(left.IndexOrigin), string(right.IndexOrigin)); result != 0 {
+		return result
+	}
+	if result := strings.Compare(string(left.Kind), string(right.Kind)); result != 0 {
+		return result
+	}
+	if result := strings.Compare(left.Name, right.Name); result != 0 {
+		return result
+	}
+	return cmp.Compare(left.Start, right.Start)
 }
 
 type evidenceTextMap struct {

@@ -318,7 +318,7 @@ func TestSourceEvidenceV1RejectsInvalidAuthority(t *testing.T) {
 	}
 }
 
-func TestEvidenceV1LocatorSequenceAllowsPartialGaps(t *testing.T) {
+func TestEvidenceV1LocatorSequenceRequiresGapOmission(t *testing.T) {
 	source := syntheticSourceEvidenceV1()
 	source.Completeness = document.EvidencePartial
 	source.Omissions = []document.SourceEvidenceOmissionV1{{
@@ -327,8 +327,35 @@ func TestEvidenceV1LocatorSequenceAllowsPartialGaps(t *testing.T) {
 	source.Units[1].Locator.Start = 3
 	source.Units[1].Locator.End = 3
 
-	require.NoError(t, document.ValidateSourceEvidenceV1(source))
+	require.ErrorContains(t, document.ValidateSourceEvidenceV1(source), "locator gap")
+}
 
+func TestEvidenceV1LocatorSequenceAllowsDeclaredGap(t *testing.T) {
+	source := syntheticSourceEvidenceV1()
+	source.Completeness = document.EvidencePartial
+	source.Omissions = []document.SourceEvidenceOmissionV1{{
+		Kind: document.EvidenceOmissionUnit,
+		Locator: &document.SourceEvidenceLocatorV1{
+			Kind: document.EvidenceLocatorPage, IndexOrigin: document.EvidenceIndexOriginOne,
+			Start: 2, End: 99,
+		},
+		Reason: "provider omitted pages 2 through 99",
+	}}
+	source.Units[1].Locator.Start = 100
+	source.Units[1].Locator.End = 100
+
+	require.NoError(t, document.ValidateSourceEvidenceV1(source))
+	policy, err := document.NewEvidencePolicy(100_000)
+	require.NoError(t, err)
+	normalized, err := document.NormalizeEvidenceV1(source, policy)
+	require.NoError(t, err)
+	require.Len(t, normalized.Omissions, 1)
+	require.NotNil(t, normalized.Omissions[0].Locator)
+	assert.Equal(t, int64(2), normalized.Omissions[0].Locator.Start)
+	assert.Equal(t, int64(99), normalized.Omissions[0].Locator.End)
+}
+
+func TestNormalizedEvidenceV1RejectsInvalidLocatorSequence(t *testing.T) {
 	policy, err := document.NewEvidencePolicy(100_000)
 	require.NoError(t, err)
 	normalized, err := document.NormalizeEvidenceV1(syntheticSourceEvidenceV1(), policy)
@@ -339,6 +366,56 @@ func TestEvidenceV1LocatorSequenceAllowsPartialGaps(t *testing.T) {
 
 	_, _, err = document.MarshalNormalizedEvidenceV1(normalized)
 	require.ErrorContains(t, err, "locator sequence overlaps")
+}
+
+func TestNormalizedEvidenceV1NamespacesStructureByUnit(t *testing.T) {
+	source := syntheticSourceEvidenceV1()
+	source.Units[1].Text = source.Units[0].Text
+	source.Units[1].Regions = append([]document.SourceEvidenceRegionV1(nil), source.Units[0].Regions...)
+	source.Units[1].Tables = append([]document.SourceEvidenceTableV1(nil), source.Units[0].Tables...)
+	policy, err := document.NewEvidencePolicy(100_000)
+	require.NoError(t, err)
+
+	normalized, err := document.NormalizeEvidenceV1(source, policy)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, normalized.Units[0].Regions[0].ID, normalized.Units[1].Regions[0].ID)
+	assert.NotEqual(t, normalized.Units[0].Tables[0].ID, normalized.Units[1].Tables[0].ID)
+}
+
+func TestNormalizedEvidenceV1EnforcesSourceBounds(t *testing.T) {
+	policy, err := document.NewEvidencePolicy(100_000)
+	require.NoError(t, err)
+
+	t.Run("artifacts", func(t *testing.T) {
+		normalized, err := document.NormalizeEvidenceV1(syntheticSourceEvidenceV1(), policy)
+		require.NoError(t, err)
+		normalized.Checksum = ""
+		normalized.Artifacts = make([]document.EvidenceArtifactV1, 10_001)
+
+		_, _, err = document.MarshalNormalizedEvidenceV1(normalized)
+		require.ErrorContains(t, err, "too many artifacts")
+	})
+
+	t.Run("table dimensions", func(t *testing.T) {
+		normalized, err := document.NormalizeEvidenceV1(syntheticSourceEvidenceV1(), policy)
+		require.NoError(t, err)
+		normalized.Checksum = ""
+		normalized.Units[0].Tables[0].Rows = 1_000_001
+
+		_, _, err = document.MarshalNormalizedEvidenceV1(normalized)
+		require.ErrorContains(t, err, "table dimensions")
+	})
+
+	t.Run("NUL text", func(t *testing.T) {
+		normalized, err := document.NormalizeEvidenceV1(syntheticSourceEvidenceV1(), policy)
+		require.NoError(t, err)
+		normalized.Checksum = ""
+		normalized.Units[0].Text = "\x00"
+
+		_, _, err = document.MarshalNormalizedEvidenceV1(normalized)
+		require.ErrorContains(t, err, "NUL")
+	})
 }
 
 func TestEvidenceV1RejectsExcessHeadings(t *testing.T) {
