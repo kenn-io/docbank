@@ -173,10 +173,20 @@ func checksumNormalizedDocument(normalized NormalizedDocument) string {
 }
 
 func checksumNormalizedUnit(unit NormalizedUnit) string {
-	return checksumStrings(
+	checksumParts := []string{
 		unit.SourceKey, unit.Text, unit.Header, unit.Footer,
+		fmt.Sprintf("dimensions:%d:%d:%d", unit.Dimensions.DPI, unit.Dimensions.Height, unit.Dimensions.Width),
 		fmt.Sprintf("truncated:%t", unit.Truncated),
-	)
+		fmt.Sprintf("heading-marks:%d", len(unit.HeadingMarks)),
+	}
+	for _, mark := range unit.HeadingMarks {
+		checksumParts = append(checksumParts,
+			fmt.Sprintf("offset:%d", mark.CharOffset),
+			fmt.Sprintf("path-parts:%d", len(mark.Path)),
+		)
+		checksumParts = append(checksumParts, mark.Path...)
+	}
+	return checksumStrings(checksumParts...)
 }
 
 func checksumNormalizedChunk(chunk Chunk) string {

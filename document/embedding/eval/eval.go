@@ -122,7 +122,8 @@ type Report struct {
 // Evaluate executes every system over every query for the requested number of
 // repetitions and computes metrics from observed rankings.
 func Evaluate(ctx context.Context, corpus Corpus, systems []System, repetitions int, runner Runner) (Report, error) {
-	if err := validateCorpus(corpus); err != nil {
+	documentIDs, err := validateCorpus(corpus)
+	if err != nil {
 		return Report{}, err
 	}
 	if len(systems) == 0 || repetitions < 1 || runner == nil {
@@ -137,7 +138,7 @@ func Evaluate(ctx context.Context, corpus Corpus, systems []System, repetitions 
 		seenSystems[system.ID] = true
 		systemReport := SystemReport{System: system}
 		for repetition := range repetitions {
-			trial, err := runTrial(ctx, corpus, system, repetition, runner)
+			trial, err := runTrial(ctx, corpus, documentIDs, system, repetition, runner)
 			if err != nil {
 				return Report{}, fmt.Errorf("evaluate system %q repetition %d: %w", system.ID, repetition+1, err)
 			}
@@ -149,7 +150,14 @@ func Evaluate(ctx context.Context, corpus Corpus, systems []System, repetitions 
 	return report, nil
 }
 
-func runTrial(ctx context.Context, corpus Corpus, system System, repetition int, runner Runner) (TrialReport, error) {
+func runTrial(
+	ctx context.Context,
+	corpus Corpus,
+	documentIDs map[string]bool,
+	system System,
+	repetition int,
+	runner Runner,
+) (TrialReport, error) {
 	trial := TrialReport{Repetition: repetition + 1}
 	for _, query := range corpus.Queries {
 		result, err := runner.Search(ctx, system, corpus, query)
@@ -160,7 +168,7 @@ func runTrial(ctx context.Context, corpus Corpus, system System, repetition int,
 			result.Usage.EstimatedCostMicros < 0 || result.Usage.Latency < 0 {
 			return TrialReport{}, fmt.Errorf("query %q: provider usage cannot be negative", query.ID)
 		}
-		if err := validateRanking(corpus, result.DocumentIDs); err != nil {
+		if err := validateRanking(documentIDs, result.DocumentIDs); err != nil {
 			return TrialReport{}, fmt.Errorf("query %q: %w", query.ID, err)
 		}
 		metrics := score(query.Judgments, result.DocumentIDs)
@@ -278,28 +286,28 @@ func interval(trials []TrialReport, value func(MetricSet) float64) MetricInterva
 	return result
 }
 
-func validateCorpus(corpus Corpus) error {
+func validateCorpus(corpus Corpus) (map[string]bool, error) {
 	if corpus.ID == "" || corpus.Version == "" || len(corpus.Documents) == 0 || len(corpus.Queries) == 0 {
-		return errors.New("evaluation corpus ID, version, documents, and queries are required")
+		return nil, errors.New("evaluation corpus ID, version, documents, and queries are required")
 	}
 	documents := make(map[string]bool, len(corpus.Documents))
 	for _, document := range corpus.Documents {
 		if document.ID == "" || document.Text == "" || documents[document.ID] {
-			return errors.New("evaluation document IDs and text must be non-empty and IDs unique")
+			return nil, errors.New("evaluation document IDs and text must be non-empty and IDs unique")
 		}
 		documents[document.ID] = true
 	}
 	queries := make(map[string]bool, len(corpus.Queries))
 	for _, query := range corpus.Queries {
 		if query.ID == "" || query.Text == "" || len(query.Judgments) == 0 || queries[query.ID] {
-			return errors.New("evaluation query IDs, text, and judgments must be non-empty and IDs unique")
+			return nil, errors.New("evaluation query IDs, text, and judgments must be non-empty and IDs unique")
 		}
 		queries[query.ID] = true
 		judged := make(map[string]bool, len(query.Judgments))
 		relevant := 0
 		for _, judgment := range query.Judgments {
 			if !documents[judgment.DocumentID] || judgment.Grade < 0 || judged[judgment.DocumentID] {
-				return fmt.Errorf("evaluation query %q has an invalid judgment", query.ID)
+				return nil, fmt.Errorf("evaluation query %q has an invalid judgment", query.ID)
 			}
 			judged[judgment.DocumentID] = true
 			if judgment.Grade > 0 {
@@ -307,17 +315,13 @@ func validateCorpus(corpus Corpus) error {
 			}
 		}
 		if relevant == 0 {
-			return fmt.Errorf("evaluation query %q has no relevant judgment", query.ID)
+			return nil, fmt.Errorf("evaluation query %q has no relevant judgment", query.ID)
 		}
 	}
-	return nil
+	return documents, nil
 }
 
-func validateRanking(corpus Corpus, ranking []string) error {
-	documents := make(map[string]bool, len(corpus.Documents))
-	for _, document := range corpus.Documents {
-		documents[document.ID] = true
-	}
+func validateRanking(documents map[string]bool, ranking []string) error {
 	seen := make(map[string]bool, len(ranking))
 	for _, documentID := range ranking {
 		if !documents[documentID] || seen[documentID] {

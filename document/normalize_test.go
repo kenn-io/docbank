@@ -451,6 +451,47 @@ func TestValidateNormalizedDocumentRejectsEmptyHeadingPathElements(t *testing.T)
 	assert.ErrorContains(t, err, "invalid heading marks")
 }
 
+func TestValidateNormalizedDocumentRejectsChangedUnitProvenance(t *testing.T) {
+	policy := testNormalizePolicy(t, 10_000)
+	normalized, err := NormalizeDocument(SourceDocument{
+		Family: "pdf", UnitKind: "page", Units: []SourceUnit{{
+			Index: 0, Markdown: "# Parent\n\nbody",
+			Dimensions: UnitDimensions{DPI: 200, Height: 1200, Width: 800},
+		}},
+	}, policy)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name   string
+		mutate func(*NormalizedDocument)
+	}{
+		{
+			name: "dimensions",
+			mutate: func(changed *NormalizedDocument) {
+				changed.Units[0].Dimensions.Width++
+			},
+		},
+		{
+			name: "heading mark",
+			mutate: func(changed *NormalizedDocument) {
+				changed.Units[0].HeadingMarks[0].Path[0] = "Changed"
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			changed := normalized
+			changed.Units = append([]NormalizedUnit(nil), normalized.Units...)
+			changed.Units[0].HeadingMarks = append([]HeadingMark(nil), normalized.Units[0].HeadingMarks...)
+			changed.Units[0].HeadingMarks[0].Path = append([]string(nil), normalized.Units[0].HeadingMarks[0].Path...)
+			test.mutate(&changed)
+
+			err := ValidateNormalizedDocument(changed)
+			assert.ErrorContains(t, err, "checksum is invalid")
+		})
+	}
+}
+
 func TestNormalizeDocumentPreservesHeadingTextAcrossEmbeddedBreaks(t *testing.T) {
 	policy := testNormalizePolicy(t, 10_000)
 	source := SourceDocument{Family: "text", UnitKind: "page", Units: []SourceUnit{{
