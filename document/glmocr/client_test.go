@@ -78,6 +78,21 @@ func TestClientRetriesTransientServiceFailure(t *testing.T) {
 	assert.Equal(t, int32(2), requests.Load())
 }
 
+func TestClientDoesNotRetryUnsuitableInput(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusUnprocessableEntity)
+	}))
+	defer server.Close()
+	client := newTestClient(t, server.URL+"/glmocr/parse", 1<<20, 1)
+
+	_, err := client.Process(t.Context(), syntheticPNGSource(t))
+	require.Error(t, err)
+	assert.Equal(t, ocr.ErrorRejected, ocr.ErrorKindOf(err))
+	assert.Equal(t, int32(1), requests.Load())
+}
+
 func TestClientAcceptsWebPSource(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
@@ -99,6 +114,24 @@ func TestClientAcceptsWebPSource(t *testing.T) {
 	assert.Equal(t, "synthetic webp", result.Document.Units[0].Text)
 }
 
+func TestClientPreservesBlankPagesWhenDocumentHasEvidence(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"model":"glm-ocr","deployment_fingerprint":"`+glmocr.DefaultDeploymentFingerprint+`","json_result":[[],[{"index":0,"label":"text","content":"synthetic evidence"}]]}`)
+	}))
+	defer server.Close()
+	client := newTestClient(t, server.URL+"/glmocr/parse", 1<<20, 2)
+
+	result, err := client.Process(t.Context(), syntheticPNGSource(t))
+	require.NoError(t, err)
+	require.Len(t, result.Source.Units, 2)
+	assert.Empty(t, result.Source.Units[0].Markdown)
+	assert.Equal(t, "synthetic evidence", result.Source.Units[1].Markdown)
+	require.Len(t, result.Document.Units, 2)
+	assert.Empty(t, result.Document.Units[0].Text)
+	assert.Equal(t, "synthetic evidence", result.Document.Units[1].Text)
+}
+
 func TestClientClassifiesBoundedAndMalformedResponses(t *testing.T) {
 	tests := []struct {
 		name string
@@ -110,6 +143,7 @@ func TestClientClassifiesBoundedAndMalformedResponses(t *testing.T) {
 		{name: "deployment drift", body: `{"model":"glm-ocr","deployment_fingerprint":"stale","json_result":[[{"index":0,"label":"text","content":"x"}]]}`, max: 1 << 20, kind: ocr.ErrorMalformedOutput},
 		{name: "model drift", body: `{"model":"glm-ocr-latest","deployment_fingerprint":"` + glmocr.DefaultDeploymentFingerprint + `","json_result":[[{"index":0,"label":"text","content":"x"}]]}`, max: 1 << 20, kind: ocr.ErrorMalformedOutput},
 		{name: "page index", body: `{"model":"glm-ocr","deployment_fingerprint":"` + glmocr.DefaultDeploymentFingerprint + `","json_result":[[{"index":4,"label":"text","content":"x"}]]}`, max: 1 << 20, kind: ocr.ErrorMalformedOutput},
+		{name: "no document evidence", body: `{"model":"glm-ocr","deployment_fingerprint":"` + glmocr.DefaultDeploymentFingerprint + `","json_result":[[]]}`, max: 1 << 20, kind: ocr.ErrorMalformedOutput},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

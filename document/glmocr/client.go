@@ -335,6 +335,7 @@ func (c *Client) convert(wire wireResult, source ocr.Source, metrics ocr.Request
 	family := acceptedMediaTypes[source.MediaType]
 	sourceDocument := document.SourceDocument{Family: family, UnitKind: "page", Units: make([]document.SourceUnit, len(pages))}
 	structure := make([]ocr.UnitStructure, len(pages))
+	hasEvidence := false
 	for pageIndex, page := range pages {
 		markdown := make([]string, 0, len(page))
 		elements := make([]ocr.Element, 0, len(page))
@@ -360,11 +361,12 @@ func (c *Client) convert(wire wireResult, source ocr.Source, metrics ocr.Request
 			})
 		}
 		pageMarkdown := strings.Join(markdown, "\n\n")
-		if strings.TrimSpace(pageMarkdown) == "" {
-			return ocr.Result{}, fmt.Errorf("GLM-OCR page %d has no textual evidence", pageIndex)
-		}
+		hasEvidence = hasEvidence || strings.TrimSpace(pageMarkdown) != ""
 		sourceDocument.Units[pageIndex] = document.SourceUnit{Index: pageIndex, Markdown: pageMarkdown}
 		structure[pageIndex] = ocr.UnitStructure{UnitIndex: pageIndex, Elements: elements}
+	}
+	if !hasEvidence {
+		return ocr.Result{}, errors.New("GLM-OCR document has no textual evidence")
 	}
 	normalized, err := document.NormalizeDocument(sourceDocument, c.policy.normalizePolicy)
 	if err != nil {

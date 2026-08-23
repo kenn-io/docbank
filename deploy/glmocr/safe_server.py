@@ -154,11 +154,11 @@ def create_app() -> Flask:
             messages = [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": temp_path}}]}]
             results = list(pipeline.process({"messages": messages}, save_layout_visualization=False))
             if len(results) != 1:
-                return jsonify({"error": "OCR pipeline returned no document"}), 502
+                return jsonify({"error": "OCR pipeline returned no document"}), 422
             result = results[0]
             pages = result.json_result
             if not isinstance(pages, list) or not pages or not any(isinstance(page, list) and page for page in pages):
-                return jsonify({"error": "OCR pipeline returned no evidence"}), 502
+                return jsonify({"error": "OCR pipeline returned no evidence"}), 422
             return jsonify(response_payload(pages, result.markdown_result or ""))
         except Exception as error:
             app.logger.error("OCR pipeline failed: %s", type(error).__name__)
