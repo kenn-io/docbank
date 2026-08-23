@@ -297,6 +297,7 @@ func TestClientPropagatesHTTPRequestCancellation(t *testing.T) {
 	case err := <-done:
 		require.ErrorIs(t, err, context.Canceled)
 		assert.Empty(t, ocr.ErrorKindOf(err))
+		assert.Equal(t, 1, ocr.MetricsFromError(err).Requests)
 	case <-time.After(time.Second):
 		t.Fatal("Process did not propagate HTTP request cancellation")
 	}

@@ -148,7 +148,7 @@ func (c *Client) Process(ctx context.Context, source ocr.Source) (ocr.Result, er
 			return result, nil
 		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return ocr.Result{}, ctxErr
+			return ocr.Result{}, &ocr.ProviderError{Metrics: metrics, Cause: ctxErr}
 		}
 		if _, ok := errors.AsType[*retryableError](err); !ok {
 			return ocr.Result{}, &ocr.ProviderError{Kind: classifyHTTPError(err), Metrics: metrics, Cause: err}
@@ -160,7 +160,7 @@ func (c *Client) Process(ctx context.Context, source ocr.Source) (ocr.Result, er
 			}
 		}
 		if err := waitContext(ctx, retryDelay(retryAfter, attempt, c.maxRetryDelay)); err != nil {
-			return ocr.Result{}, err
+			return ocr.Result{}, &ocr.ProviderError{Metrics: metrics, Cause: err}
 		}
 	}
 	panic("unreachable")

@@ -144,6 +144,9 @@ def validate_deployment(config_path: str) -> str:
 
 
 def validate_engine(deployment_fingerprint: str) -> None:
+    with urllib.request.urlopen("http://engine:30005/health", timeout=2) as upstream:
+        if upstream.status != 200:
+            raise RuntimeError("engine inference is not ready")
     with urllib.request.urlopen("http://engine:30005/deployment", timeout=2) as upstream:
         if upstream.status != 200:
             raise RuntimeError("engine deployment is not ready")

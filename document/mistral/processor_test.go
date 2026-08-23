@@ -102,6 +102,7 @@ func TestClassifyProcessorErrorUsesCallerContext(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Empty(t, ocr.ErrorKindOf(err))
 	assert.False(t, ocr.IsRetryable(err))
+	assert.Equal(t, 1, ocr.MetricsFromError(err).Requests)
 
 	metrics := RequestMetrics{Requests: 2, Retries: 1}
 	err = classifyProcessorError(t.Context(), errors.Join(ErrTransientResponse, context.DeadlineExceeded), metrics)

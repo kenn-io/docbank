@@ -136,7 +136,7 @@ func (p *Processor) Process(ctx context.Context, source ocr.Source) (result ocr.
 
 func classifyProcessorError(ctx context.Context, err error, metrics RequestMetrics) error {
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		return ctxErr
+		return &ocr.ProviderError{Metrics: toOCRMetrics(metrics), Cause: ctxErr}
 	}
 	kind := ocr.ErrorMalformedOutput
 	switch {
