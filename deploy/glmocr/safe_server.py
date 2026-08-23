@@ -11,12 +11,14 @@ import time
 import urllib.request
 import uuid
 from importlib.metadata import distribution, version
+from io import BytesIO
 from pathlib import Path
 
 from flask import Flask, jsonify, request
 from glmocr.config import load_config
 from glmocr.pipeline import Pipeline
 from glmocr.utils.logging import configure_logging
+from PIL import Image, UnidentifiedImageError
 import pymupdf
 
 
@@ -33,6 +35,15 @@ MEDIA_SUFFIXES = {
     "image/png": ".png",
     "image/webp": ".webp",
 }
+PYMUPDF_INPUT_ERRORS = tuple(
+    error
+    for name in ("EmptyFileError", "FileDataError")
+    if (error := getattr(pymupdf, name, None)) is not None
+)
+
+
+class InvalidDocument(ValueError):
+    """The decoded source cannot be parsed as its declared document type."""
 
 
 def response_payload(json_result, markdown_result, deployment_fingerprint):
@@ -129,6 +140,40 @@ def validate_deployment(config_path: str) -> str:
     return deployment_fingerprint
 
 
+def validate_engine(deployment_fingerprint: str) -> None:
+    with urllib.request.urlopen("http://engine:30005/deployment", timeout=2) as upstream:
+        if upstream.status != 200:
+            raise RuntimeError("engine deployment is not ready")
+        body = upstream.read(4097)
+        if len(body) > 4096:
+            raise RuntimeError("engine deployment response is too large")
+    identity = json.loads(body)
+    if not isinstance(identity, dict) or set(identity) != {"deployment_fingerprint"}:
+        raise RuntimeError("engine deployment response is invalid")
+    if identity["deployment_fingerprint"] != deployment_fingerprint:
+        raise RuntimeError("engine deployment fingerprint does not match the adapter")
+
+
+def validate_document(content: bytes, suffix: str) -> None:
+    try:
+        if suffix == ".pdf":
+            with pymupdf.open(stream=content, filetype="pdf") as document:
+                if document.needs_pass or document.page_count <= 0:
+                    raise InvalidDocument("PDF cannot be opened for rendering")
+                for page_index in range(document.page_count):
+                    page = document.load_page(page_index)
+                    page.get_pixmap(matrix=pymupdf.Matrix(0.1, 0.1), alpha=False)
+            return
+        with Image.open(BytesIO(content)) as image:
+            image.verify()
+        with Image.open(BytesIO(content)) as image:
+            image.load()
+    except InvalidDocument:
+        raise
+    except PYMUPDF_INPUT_ERRORS + (UnidentifiedImageError, OSError, RuntimeError, SyntaxError, ValueError) as error:
+        raise InvalidDocument("source cannot be decoded") from error
+
+
 def decode_source(value: object) -> tuple[bytes, str]:
     if not isinstance(value, str) or not value.startswith("data:"):
         raise ValueError("source must be a data URI")
@@ -165,9 +210,7 @@ def create_app() -> Flask:
     @app.get("/health")
     def health():
         try:
-            with urllib.request.urlopen("http://engine:30005/health", timeout=2) as upstream:
-                if upstream.status != 200:
-                    raise RuntimeError("engine is not ready")
+            validate_engine(deployment_fingerprint)
         except Exception:
             return jsonify({"status": "unavailable"}), 503
         return jsonify({"status": "ok", "deployment_fingerprint": deployment_fingerprint})
@@ -188,6 +231,14 @@ def create_app() -> Flask:
             content, suffix = decode_source(source)
         except ValueError as error:
             return jsonify({"error": str(error)}), 400
+        try:
+            validate_document(content, suffix)
+        except InvalidDocument:
+            return jsonify({"error": "source cannot be decoded"}), 422
+        try:
+            validate_engine(deployment_fingerprint)
+        except Exception:
+            return jsonify({"error": "OCR engine is unavailable"}), 503
 
         temp_path = None
         try:

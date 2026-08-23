@@ -179,10 +179,53 @@ func TestClientCancellationClosesBlockedSource(t *testing.T) {
 	select {
 	case err := <-done:
 		require.ErrorIs(t, err, context.Canceled)
+		assert.Empty(t, ocr.ErrorKindOf(err))
 	case <-time.After(time.Second):
 		t.Fatal("Process did not interrupt the blocked source read")
 	}
 	assert.Equal(t, int32(1), reader.closeCalls.Load())
+}
+
+func TestClientPropagatesHTTPRequestCancellation(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+		close(entered)
+		select {
+		case <-request.Context().Done():
+		case <-release:
+		}
+	}))
+	defer server.Close()
+	defer close(release)
+	client := newTestClient(t, server.URL+"/glmocr/parse", 1<<20, 1)
+	source := syntheticPNGSource(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		_, err := client.Process(ctx, source)
+		done <- err
+	}()
+	<-entered
+	cancel()
+
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.Canceled)
+		assert.Empty(t, ocr.ErrorKindOf(err))
+	case <-time.After(time.Second):
+		t.Fatal("Process did not propagate HTTP request cancellation")
+	}
+}
+
+func TestClientPropagatesExpiredDeadline(t *testing.T) {
+	client := newTestClient(t, "http://127.0.0.1:30004/glmocr/parse", 1<<20, 1)
+	ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	_, err := client.Process(ctx, syntheticPNGSource(t))
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Empty(t, ocr.ErrorKindOf(err))
 }
 
 func TestHealthRequiresDeploymentFingerprint(t *testing.T) {

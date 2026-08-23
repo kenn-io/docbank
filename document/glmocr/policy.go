@@ -30,13 +30,15 @@ const (
 	DefaultPipelineSHA256       = "f299e93f6f928640d4aa7faceb79ed24c978f71ca33195a36dd8bc9f4855c5b0"
 	DefaultPyMuPDFVersion       = "1.27.2.3"
 	DefaultMuPDFVersion         = "1.27.2"
-	DefaultAdapterSHA256        = "418b6da2cc6b43d3508854659ac3207f3e10c964d40ed233b4addeb53f9d1571"
-	DefaultImageRecipeSHA256    = "d8d7c51e1c1207bb4a21ba3875271a950a13f863bfa7d54bc1f7dfbcf734f86f"
+	DefaultVLLMVersion          = "0.19.0"
+	DefaultEngineAdapterSHA256  = "68afc40384a9c078f07408d2b497b3249c2907d925fc9991f8a3035ccde42359"
+	DefaultAdapterSHA256        = "cfa486445b5a88005113489f81c88f39e09ee33e552c8100f92f0f84bce2425e"
+	DefaultImageRecipeSHA256    = "64e1c5f821484d1ed68e2d4d421710ac70366ea29df496b284f68144c5557cb9"
 	DefaultDependencyLockSHA256 = "b8327b09b922791b91f6151d2e348cab19fac8da5c025ffec7166c393d0197ed"
 
 	// DefaultDeploymentFingerprint identifies the complete validated local
 	// inference deployment described by DefaultDeploymentIdentity.
-	DefaultDeploymentFingerprint = "f0919cc6c22bf8fc5c0da48efb5b2702625d73e133cb811947ce8413bf3d8ba5"
+	DefaultDeploymentFingerprint = "661a9d342394d74e5dad7e56cb2d82c65bdd9dc6251968ca511d979fc9f5a47d"
 
 	MaxDocumentBytes = int64(64 << 20)
 	MaxResponseBytes = int64(512 << 20)
@@ -61,6 +63,18 @@ type RuntimeDependency struct {
 	Version string `json:"version"`
 }
 
+// EngineEnvironment pins output-affecting and model-loading engine settings.
+type EngineEnvironment struct {
+	FlashInferWorkspace   string `json:"FLASHINFER_WORKSPACE_DIR"`
+	HuggingFaceOffline    string `json:"HF_HUB_OFFLINE"`
+	TransformersOffline   string `json:"TRANSFORMERS_OFFLINE"`
+	TritonCache           string `json:"TRITON_CACHE_DIR"`
+	VLLMCache             string `json:"VLLM_CACHE_ROOT"`
+	VLLMCUDACompatibility string `json:"VLLM_ENABLE_CUDA_COMPATIBILITY"`
+	VLLMNoUsageStats      string `json:"VLLM_NO_USAGE_STATS"`
+	VLLMUsageSource       string `json:"VLLM_USAGE_SOURCE"`
+}
+
 // DeploymentIdentity contains every pinned artifact and configuration input
 // included in local OCR output attribution.
 type DeploymentIdentity struct {
@@ -73,6 +87,10 @@ type DeploymentIdentity struct {
 	LayoutRevision       string                `json:"layout_revision"`
 	LayoutFiles          [6]ArtifactDigest     `json:"layout_files"`
 	EngineImage          string                `json:"engine_image"`
+	VLLMVersion          string                `json:"vllm_version"`
+	EngineAdapterSHA256  string                `json:"engine_adapter_sha256"`
+	EngineCommand        [21]string            `json:"engine_command"`
+	EngineEnvironment    EngineEnvironment     `json:"engine_environment"`
 	AdapterSHA256        string                `json:"adapter_sha256"`
 	ImageRecipeSHA256    string                `json:"image_recipe_sha256"`
 	DependencyLockSHA256 string                `json:"dependency_lock_sha256"`
@@ -110,7 +128,21 @@ func DefaultDeploymentIdentity() DeploymentIdentity {
 			{Path: "model.safetensors", Algorithm: artifactDigestSHA256, Digest: DefaultLayoutSHA256},
 			{Path: "preprocessor_config.json", Algorithm: artifactDigestGitSHA1, Digest: "ab66797648e5a3247eca2988e9fcd8af07a6a038"},
 		},
-		EngineImage: DefaultEngineImage, AdapterSHA256: DefaultAdapterSHA256,
+		EngineImage: DefaultEngineImage, VLLMVersion: DefaultVLLMVersion,
+		EngineAdapterSHA256: DefaultEngineAdapterSHA256,
+		EngineCommand: [21]string{
+			"python3", "-m", "vllm.entrypoints.cli.main", "serve", "/models/glm-ocr",
+			"--host", "0.0.0.0", "--port", "30005", "--served-model-name", "glm-ocr",
+			"--max-model-len", "8192", "--max-num-seqs", "4", "--gpu-memory-utilization", "0.12",
+			"--speculative-config", `{"method":"mtp","num_speculative_tokens":3}`,
+			"--middleware", "engine_identity.deployment_identity",
+		},
+		EngineEnvironment: EngineEnvironment{
+			FlashInferWorkspace: "/root/.cache/flashinfer", HuggingFaceOffline: "1",
+			TransformersOffline: "1", TritonCache: "/root/.cache/triton", VLLMCache: "/root/.cache/vllm",
+			VLLMCUDACompatibility: "0", VLLMNoUsageStats: "1", VLLMUsageSource: "production-docker-image",
+		},
+		AdapterSHA256:     DefaultAdapterSHA256,
 		ImageRecipeSHA256: DefaultImageRecipeSHA256, DependencyLockSHA256: DefaultDependencyLockSHA256,
 		PipelineConfigSHA256: DefaultPipelineSHA256,
 		RuntimeDependencies: [13]RuntimeDependency{

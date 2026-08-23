@@ -27,8 +27,28 @@
     {"path": "preprocessor_config.json", "algorithm": "git-sha1", "digest": "ab66797648e5a3247eca2988e9fcd8af07a6a038"}
   ],
   "engine_image": "vllm/vllm-openai@sha256:4f986370d7737abacc70ac17f86695acd1dc7892a02ad89ac132639d5afee0d0",
-  "adapter_sha256": "418b6da2cc6b43d3508854659ac3207f3e10c964d40ed233b4addeb53f9d1571",
-  "image_recipe_sha256": "d8d7c51e1c1207bb4a21ba3875271a950a13f863bfa7d54bc1f7dfbcf734f86f",
+  "vllm_version": "0.19.0",
+  "engine_adapter_sha256": "68afc40384a9c078f07408d2b497b3249c2907d925fc9991f8a3035ccde42359",
+  "engine_command": [
+    "python3", "-m", "vllm.entrypoints.cli.main", "serve", "/models/glm-ocr",
+    "--host", "0.0.0.0", "--port", "30005", "--served-model-name", "glm-ocr",
+    "--max-model-len", "8192", "--max-num-seqs", "4",
+    "--gpu-memory-utilization", "0.12", "--speculative-config",
+    "{\"method\":\"mtp\",\"num_speculative_tokens\":3}", "--middleware",
+    "engine_identity.deployment_identity"
+  ],
+  "engine_environment": {
+    "FLASHINFER_WORKSPACE_DIR": "/root/.cache/flashinfer",
+    "HF_HUB_OFFLINE": "1",
+    "TRANSFORMERS_OFFLINE": "1",
+    "TRITON_CACHE_DIR": "/root/.cache/triton",
+    "VLLM_CACHE_ROOT": "/root/.cache/vllm",
+    "VLLM_ENABLE_CUDA_COMPATIBILITY": "0",
+    "VLLM_NO_USAGE_STATS": "1",
+    "VLLM_USAGE_SOURCE": "production-docker-image"
+  },
+  "adapter_sha256": "cfa486445b5a88005113489f81c88f39e09ee33e552c8100f92f0f84bce2425e",
+  "image_recipe_sha256": "64e1c5f821484d1ed68e2d4d421710ac70366ea29df496b284f68144c5557cb9",
   "dependency_lock_sha256": "b8327b09b922791b91f6151d2e348cab19fac8da5c025ffec7166c393d0197ed",
   "pipeline_config_sha256": "f299e93f6f928640d4aa7faceb79ed24c978f71ca33195a36dd8bc9f4855c5b0",
   "runtime_dependencies": [

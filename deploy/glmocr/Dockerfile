@@ -12,6 +12,7 @@ RUN python3 -m pip install --no-cache-dir --no-build-isolation --no-deps --requi
 
 COPY Dockerfile /etc/glmocr/Dockerfile
 COPY deployment.json /etc/glmocr/deployment.json
+COPY engine_identity.py /opt/glmocr-venv/lib/python3.12/site-packages/engine_identity.py
 COPY safe_server.py /opt/glmocr-venv/lib/python3.12/site-packages/safe_server.py
 
 ENTRYPOINT []

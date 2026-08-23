@@ -33,10 +33,13 @@ failures and empty recognition as errors instead of returning an empty success.
 At startup it verifies every file in both pinned model snapshots, the service
 adapter, image recipe, pipeline configuration, added Python dependencies, SDK
 source revision, and renderer versions. It refuses to start on a mismatch. The
-immutable base-image digest is also part of the deployment identity. Responses
-carry the same fingerprint that Docbank includes in its policy identity. The
-adapter and deployment manifest are copied into the image rather than mounted
-from the host, so the running code changes only when the image is rebuilt.
+immutable base-image digest is also part of the deployment identity. Internal
+engine middleware verifies its own adapter, model snapshot, vLLM version,
+process arguments, and relevant environment before health or inference can
+succeed. Responses carry the same fingerprint that Docbank includes in its
+policy identity. The adapters and deployment manifest are copied into the image
+rather than mounted from the host, so the running code changes only when the
+image is rebuilt.
 
 ## Install
 
@@ -70,8 +73,8 @@ effective Compose configuration:
 
 ```bash
 sudo install -d -m 0755 /opt/docbank-glmocr
-sudo cp Dockerfile compose.yaml config.yaml deployment.json requirements.lock \
-  safe_server.py /opt/docbank-glmocr/
+sudo cp Dockerfile compose.yaml config.yaml deployment.json engine_identity.py \
+  requirements.lock safe_server.py /opt/docbank-glmocr/
 GLMOCR_MODEL_ROOT=/var/lib/docbank-glmocr/models \
   sudo --preserve-env=GLMOCR_MODEL_ROOT \
   docker compose --project-directory /opt/docbank-glmocr build
@@ -191,10 +194,11 @@ relative quality from the missing Paddle result.
 
 ## Upgrade and rollback
 
-Treat the model, SDK, layout, pipeline configuration, dependency lock, adapter,
-and image recipe as one output identity. Update the deployment manifest and Go
-policy together, build a newly tagged image, run the synthetic benchmark, and
-only then change the systemd deployment.
+Treat the model, SDK, layout, pipeline configuration, dependency lock,
+adapters, engine command, engine environment, and image recipe as one output
+identity. Update the deployment manifest and Go policy together, build a newly
+tagged image, run the synthetic benchmark, and only then change the systemd
+deployment.
 
 Rollback does not modify any other model or service:
 
