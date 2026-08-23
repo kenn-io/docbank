@@ -119,14 +119,16 @@ func ValidateNormalizedDocument(normalized NormalizedDocument) error {
 		return err
 	}
 	anyTruncated := false
+	unitRunes := make([][]rune, len(normalized.Units))
 	for index, unit := range normalized.Units {
 		if err := validateNormalizedUnit(normalized.UnitKind, index, unit); err != nil {
 			return err
 		}
+		unitRunes[index] = []rune(unit.Text)
 		anyTruncated = anyTruncated || unit.Truncated
 	}
 	for index, chunk := range normalized.Chunks {
-		if err := validateNormalizedChunk(normalized, index, chunk); err != nil {
+		if err := validateNormalizedChunk(normalized, unitRunes, index, chunk); err != nil {
 			return err
 		}
 		anyTruncated = anyTruncated || chunk.Truncated
@@ -211,7 +213,7 @@ func validateNormalizedUnit(unitKind string, index int, unit NormalizedUnit) err
 	return nil
 }
 
-func validateNormalizedChunk(normalized NormalizedDocument, index int, chunk Chunk) error {
+func validateNormalizedChunk(normalized NormalizedDocument, unitRunes [][]rune, index int, chunk Chunk) error {
 	if chunk.Ordinal != index || chunk.Text == "" || !utf8.ValidString(chunk.Text) ||
 		chunk.CharCount != utf8.RuneCountInString(chunk.Text) || len(chunk.Spans) != 1 {
 		return fmt.Errorf("normalized document chunk %d is invalid", index)
@@ -221,8 +223,8 @@ func validateNormalizedChunk(normalized NormalizedDocument, index int, chunk Chu
 		return fmt.Errorf("normalized document chunk %d has an invalid source span", index)
 	}
 	unit := normalized.Units[span.UnitIndex]
-	unitRunes := []rune(unit.Text)
-	if span.CharEnd > len(unitRunes) || string(unitRunes[span.CharStart:span.CharEnd]) != chunk.Text {
+	unitText := unitRunes[span.UnitIndex]
+	if span.CharEnd > len(unitText) || string(unitText[span.CharStart:span.CharEnd]) != chunk.Text {
 		return fmt.Errorf("normalized document chunk %d does not match its source span", index)
 	}
 	expectedKey := fmt.Sprintf("%s:%06d-%06d", unit.SourceKey, span.CharStart, span.CharEnd)
