@@ -132,7 +132,7 @@ func rawInput(ordinal int, normalized document.NormalizedDocument, chunk documen
 	}
 	return makeInput(
 		ordinal, RepresentationKindRaw, text, []SourceRef{sourceRef(chunk)},
-		chunk.Truncated || contextTruncated || headingTruncated || truncated,
+		normalized.Truncated || chunk.Truncated || contextTruncated || headingTruncated || truncated,
 	)
 }
 

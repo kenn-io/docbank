@@ -123,6 +123,10 @@ func TestRawRecipeNeedsNoDistillationAndRejectsIt(t *testing.T) {
 func TestTruncationStateChangesPublishedIdentities(t *testing.T) {
 	policy, err := document.NewNormalizePolicy(3)
 	require.NoError(t, err)
+	complete, err := document.NormalizeDocument(document.SourceDocument{
+		Family: "text", UnitKind: "unit", Units: []document.SourceUnit{{Index: 0, Markdown: "one"}},
+	}, policy)
+	require.NoError(t, err)
 	documentTruncated, err := document.NormalizeDocument(document.SourceDocument{
 		Family: "text", UnitKind: "unit", Units: []document.SourceUnit{
 			{Index: 0, Markdown: "one"},
@@ -135,6 +139,7 @@ func TestTruncationStateChangesPublishedIdentities(t *testing.T) {
 	}, policy)
 	require.NoError(t, err)
 
+	assert.False(t, complete.Truncated)
 	assert.True(t, documentTruncated.Truncated)
 	assert.True(t, unitTruncated.Truncated)
 	assert.False(t, documentTruncated.Units[0].Truncated)
@@ -146,16 +151,23 @@ func TestTruncationStateChangesPublishedIdentities(t *testing.T) {
 
 	recipe, err := embedding.NewRecipe(embedding.RecipeConfig{})
 	require.NoError(t, err)
+	completePlan, err := embedding.BuildEmbeddingPlan(
+		complete, embedding.DocumentContext{}, recipe, nil,
+	)
+	require.NoError(t, err)
 	documentPlan, err := embedding.BuildEmbeddingPlan(
 		documentTruncated, embedding.DocumentContext{}, recipe, nil,
 	)
 	require.NoError(t, err)
 	unitPlan, err := embedding.BuildEmbeddingPlan(unitTruncated, embedding.DocumentContext{}, recipe, nil)
 	require.NoError(t, err)
+	assert.False(t, completePlan.Inputs[0].Truncated)
+	assert.True(t, documentPlan.Inputs[0].Truncated)
+	assert.NotEqual(t, completePlan.Inputs[0].Key, documentPlan.Inputs[0].Key)
 	assert.NotEqual(t, documentPlan.Inputs[0].Key, unitPlan.Inputs[0].Key)
 
-	distilledRecipe, err := embedding.NewRecipe(embedding.RecipeConfig{
-		Mode: embedding.RepresentationDistilled,
+	combinedRecipe, err := embedding.NewRecipe(embedding.RecipeConfig{
+		Mode: embedding.RepresentationCombined,
 		Distillation: &embedding.DistillationConfig{
 			Provider: "synthetic", Model: "summarizer", ModelRevision: "revision-1",
 			PromptTemplateVersion: 1,
@@ -171,7 +183,7 @@ func TestTruncationStateChangesPublishedIdentities(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			request, err := embedding.PrepareDistillation(
-				test.normalized, embedding.DocumentContext{}, distilledRecipe,
+				test.normalized, embedding.DocumentContext{}, combinedRecipe,
 			)
 			require.NoError(t, err)
 			sections := make([]embedding.DerivedSectionResult, 0, len(request.Partitions))
@@ -199,7 +211,7 @@ func TestTruncationStateChangesPublishedIdentities(t *testing.T) {
 				assert.True(t, section.Truncated)
 			}
 			plan, err := embedding.BuildEmbeddingPlan(
-				test.normalized, embedding.DocumentContext{}, distilledRecipe, &distillate,
+				test.normalized, embedding.DocumentContext{}, combinedRecipe, &distillate,
 			)
 			require.NoError(t, err)
 			for _, input := range plan.Inputs {
@@ -210,7 +222,7 @@ func TestTruncationStateChangesPublishedIdentities(t *testing.T) {
 			tampered.Sections = append([]embedding.DerivedSection(nil), distillate.Sections...)
 			tampered.Sections[0].Truncated = false
 			_, err = embedding.BuildEmbeddingPlan(
-				test.normalized, embedding.DocumentContext{}, distilledRecipe, &tampered,
+				test.normalized, embedding.DocumentContext{}, combinedRecipe, &tampered,
 			)
 			assert.ErrorContains(t, err, "key is invalid")
 		})
