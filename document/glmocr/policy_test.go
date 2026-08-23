@@ -45,4 +45,10 @@ func TestPolicyFingerprintTracksArtifactsAndRequiresLoopback(t *testing.T) {
 		MaxUnits: 20, NormalizePolicy: normalize,
 	})
 	require.ErrorContains(t, err, "loopback")
+
+	_, err = glmocr.NewPolicy(glmocr.PolicyConfig{
+		MaxDocumentBytes: 10 << 20, MaxResponseBytes: 20 << 20,
+		MaxUnits: glmocr.MaxUnits + 1, NormalizePolicy: normalize,
+	})
+	require.ErrorContains(t, err, "bounds")
 }

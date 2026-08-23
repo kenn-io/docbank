@@ -59,7 +59,7 @@ def main() -> None:
         path = args.fixtures / spec["file"]
         media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         encoded = base64.b64encode(path.read_bytes()).decode("ascii")
-        body = json.dumps({"images": f"data:{media_type};base64,{encoded}"}).encode()
+        body = json.dumps({"images": f"data:{media_type};base64,{encoded}", "max_units": spec["pages"]}).encode()
         request = urllib.request.Request(args.endpoint, data=body, headers={"Content-Type": "application/json"})
         started = time.monotonic()
         try:

@@ -242,6 +242,9 @@ def create_app() -> Flask:
         data = request.get_json(silent=True)
         if not isinstance(data, dict):
             return jsonify({"error": "invalid JSON payload"}), 400
+        max_units = data.get("max_units")
+        if type(max_units) is not int or max_units <= 0 or max_units > page_loader.pdf_max_pages:
+            return jsonify({"error": "max_units is outside deployment bounds"}), 400
         source = data.get("images", data.get("file"))
         if isinstance(source, list):
             if len(source) != 1:
@@ -253,7 +256,7 @@ def create_app() -> Flask:
             return jsonify({"error": str(error)}), 400
         try:
             source_units = validate_document(
-                content, suffix, page_loader.pdf_max_pages, page_loader.max_pixels, page_loader.pdf_dpi
+                content, suffix, max_units, page_loader.max_pixels, page_loader.pdf_dpi
             )
         except InvalidDocument:
             return jsonify({"error": "source cannot be decoded"}), 422

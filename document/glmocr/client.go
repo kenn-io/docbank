@@ -121,8 +121,12 @@ func (c *Client) Process(ctx context.Context, source ocr.Source) (ocr.Result, er
 		return ocr.Result{}, err
 	}
 	payload, err := json.Marshal(struct {
-		Images []string `json:"images"`
-	}{Images: []string{"data:" + source.MediaType + ";base64," + base64.StdEncoding.EncodeToString(content)}})
+		Images   []string `json:"images"`
+		MaxUnits int      `json:"max_units"`
+	}{
+		Images:   []string{"data:" + source.MediaType + ";base64," + base64.StdEncoding.EncodeToString(content)},
+		MaxUnits: c.policy.values.MaxUnits,
+	})
 	if err != nil {
 		return ocr.Result{}, &ocr.ProviderError{Kind: ocr.ErrorInvalidInput, Cause: fmt.Errorf("encode GLM-OCR request: %w", err)}
 	}

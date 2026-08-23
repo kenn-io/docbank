@@ -47,7 +47,7 @@
     "VLLM_NO_USAGE_STATS": "1",
     "VLLM_USAGE_SOURCE": "production-docker-image"
   },
-  "adapter_sha256": "15064a6a96a2f15ca928c513ff46b88c86da6b94544b1eb0fb38400f91f517f3",
+  "adapter_sha256": "81d6732f3e1a753eca74ff2fe9f718b7870d63e74550142eb739a3096cf0e056",
   "image_recipe_sha256": "64e1c5f821484d1ed68e2d4d421710ac70366ea29df496b284f68144c5557cb9",
   "dependency_lock_sha256": "b8327b09b922791b91f6151d2e348cab19fac8da5c025ffec7166c393d0197ed",
   "pipeline_config_sha256": "f299e93f6f928640d4aa7faceb79ed24c978f71ca33195a36dd8bc9f4855c5b0",

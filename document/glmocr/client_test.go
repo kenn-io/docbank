@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"net/http"
@@ -29,6 +30,12 @@ func TestClientUsesStructuredPagesAndPreservesElements(t *testing.T) {
 		body, err := io.ReadAll(r.Body)
 		assert.NoError(t, err)
 		sawDataURI = strings.Contains(string(body), `data:image/png;base64,`)
+		var payload struct {
+			MaxUnits int `json:"max_units"`
+		}
+		if assert.NoError(t, json.Unmarshal(body, &payload)) {
+			assert.Equal(t, 2, payload.MaxUnits)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{
 			"model":"glm-ocr",
