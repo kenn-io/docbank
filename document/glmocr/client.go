@@ -169,7 +169,7 @@ func (c *Client) readSource(ctx context.Context, source ocr.Source) (_ []byte, e
 	contentOwner := &onceReadCloser{ReadCloser: source.Content}
 	defer func() {
 		if closeErr := contentOwner.Close(); err == nil && closeErr != nil {
-			err = &ocr.ProviderError{Kind: ocr.ErrorInvalidInput, Cause: fmt.Errorf("close GLM-OCR source: %w", closeErr)}
+			err = &ocr.ProviderError{Kind: ocr.ErrorTransient, Cause: fmt.Errorf("close GLM-OCR source: %w", closeErr)}
 		}
 	}()
 	if err := source.Validate(); err != nil {
@@ -191,7 +191,7 @@ func (c *Client) readSource(ctx context.Context, source ocr.Source) (_ []byte, e
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
 		}
-		return nil, &ocr.ProviderError{Kind: ocr.ErrorInvalidInput, Cause: fmt.Errorf("read GLM-OCR source: %w", err)}
+		return nil, &ocr.ProviderError{Kind: ocr.ErrorTransient, Cause: fmt.Errorf("read GLM-OCR source: %w", err)}
 	}
 	if int64(len(content)) != source.Size {
 		return nil, &ocr.ProviderError{Kind: ocr.ErrorInvalidInput, Cause: errors.New("GLM-OCR source size mismatch")}

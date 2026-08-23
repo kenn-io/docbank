@@ -32,13 +32,13 @@ const (
 	DefaultMuPDFVersion         = "1.27.2"
 	DefaultVLLMVersion          = "0.19.0"
 	DefaultEngineAdapterSHA256  = "68afc40384a9c078f07408d2b497b3249c2907d925fc9991f8a3035ccde42359"
-	DefaultAdapterSHA256        = "07229d883fc413c1dedad1ad089c3c4587fe18a52610e5a82ce8d6a47a617bd4"
+	DefaultAdapterSHA256        = "15064a6a96a2f15ca928c513ff46b88c86da6b94544b1eb0fb38400f91f517f3"
 	DefaultImageRecipeSHA256    = "64e1c5f821484d1ed68e2d4d421710ac70366ea29df496b284f68144c5557cb9"
 	DefaultDependencyLockSHA256 = "b8327b09b922791b91f6151d2e348cab19fac8da5c025ffec7166c393d0197ed"
 
 	// DefaultDeploymentFingerprint identifies the complete validated local
 	// inference deployment described by DefaultDeploymentIdentity.
-	DefaultDeploymentFingerprint = "e375c21d97fa71c1ae15b3d2e62ab8d460d46045622156cf62e1d5add85c1e88"
+	DefaultDeploymentFingerprint = "9d83671f0bfa5bc22d3a62e69eb2d3e6df6020e48af7543d2e8699ad01267af0"
 
 	MaxDocumentBytes = int64(64 << 20)
 	MaxResponseBytes = int64(512 << 20)

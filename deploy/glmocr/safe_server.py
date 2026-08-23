@@ -5,6 +5,7 @@ import base64
 import binascii
 import hashlib
 import json
+import math
 import os
 import tempfile
 import time
@@ -23,6 +24,8 @@ import pymupdf
 
 
 MAX_SOURCE_BYTES = 64 << 20
+PDF_RENDER_MAX_SIDE = 3500
+VALIDATION_RENDER_MAX_SIDE = 256
 DEPLOYMENT_MANIFEST = Path("/etc/glmocr/deployment.json")
 ADAPTER_PATH = Path(__file__)
 IMAGE_RECIPE_PATH = Path("/etc/glmocr/Dockerfile")
@@ -154,7 +157,7 @@ def validate_engine(deployment_fingerprint: str) -> None:
         raise RuntimeError("engine deployment fingerprint does not match the adapter")
 
 
-def validate_document(content: bytes, suffix: str, pdf_max_pages: int) -> int:
+def validate_document(content: bytes, suffix: str, pdf_max_pages: int, max_pixels: int, pdf_dpi: int) -> int:
     try:
         if suffix == ".pdf":
             with pymupdf.open(stream=content, filetype="pdf") as document:
@@ -164,9 +167,22 @@ def validate_document(content: bytes, suffix: str, pdf_max_pages: int) -> int:
                     raise InvalidDocument("PDF exceeds the configured page limit")
                 for page_index in range(document.page_count):
                     page = document.load_page(page_index)
-                    page.get_pixmap(matrix=pymupdf.Matrix(0.1, 0.1), alpha=False)
+                    width, height = page.rect.width, page.rect.height
+                    if not all(math.isfinite(value) and value > 0 for value in (width, height)):
+                        raise InvalidDocument("PDF page dimensions are invalid")
+                    scale = pdf_dpi / 72
+                    if max(width, height) * scale > PDF_RENDER_MAX_SIDE:
+                        scale = PDF_RENDER_MAX_SIDE / max(width, height)
+                    render_width = max(1, math.ceil(width * scale))
+                    render_height = max(1, math.ceil(height * scale))
+                    if render_width * render_height > max_pixels:
+                        raise InvalidDocument("PDF page exceeds the configured pixel limit")
+                    validation_scale = min(scale, VALIDATION_RENDER_MAX_SIDE / max(width, height))
+                    page.get_pixmap(matrix=pymupdf.Matrix(validation_scale, validation_scale), alpha=False)
                 return document.page_count
         with Image.open(BytesIO(content)) as image:
+            if image.width <= 0 or image.height <= 0 or image.width * image.height > max_pixels:
+                raise InvalidDocument("image exceeds the configured pixel limit")
             image.verify()
         with Image.open(BytesIO(content)) as image:
             image.load()
@@ -202,7 +218,7 @@ def create_app() -> Flask:
     config_path = os.environ.get("GLMOCR_CONFIG", "/etc/glmocr/config.yaml")
     deployment_fingerprint = validate_deployment(config_path)
     config = load_config(config_path)
-    pdf_max_pages = config.pipeline.page_loader.pdf_max_pages
+    page_loader = config.pipeline.page_loader
     configure_logging(level=config.logging.level)
     pipeline = Pipeline(config=config.pipeline)
     pipeline.start()
@@ -236,7 +252,9 @@ def create_app() -> Flask:
         except ValueError as error:
             return jsonify({"error": str(error)}), 400
         try:
-            source_units = validate_document(content, suffix, pdf_max_pages)
+            source_units = validate_document(
+                content, suffix, page_loader.pdf_max_pages, page_loader.max_pixels, page_loader.pdf_dpi
+            )
         except InvalidDocument:
             return jsonify({"error": "source cannot be decoded"}), 422
         try:
@@ -262,7 +280,20 @@ def create_app() -> Flask:
                 return jsonify({"error": "OCR pipeline returned the wrong page count"}), 502
             if not all(isinstance(page, list) for page in pages):
                 return jsonify({"error": "OCR pipeline returned malformed pages"}), 502
-            if not any(pages):
+            has_evidence = False
+            for page in pages:
+                for element_index, element in enumerate(page):
+                    if (
+                        not isinstance(element, dict)
+                        or type(element.get("index")) is not int
+                        or element["index"] != element_index
+                        or not isinstance(element.get("label"), str)
+                        or not element["label"]
+                        or not isinstance(element.get("content"), str)
+                    ):
+                        return jsonify({"error": "OCR pipeline returned malformed elements"}), 502
+                    has_evidence = has_evidence or bool(element["content"].strip())
+            if not has_evidence:
                 return jsonify({"error": "OCR pipeline returned no evidence"}), 422
             return jsonify(response_payload(pages, result.markdown_result or "", deployment_fingerprint))
         except Exception as error:

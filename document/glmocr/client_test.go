@@ -93,6 +93,38 @@ func TestClientDoesNotRetryUnsuitableInput(t *testing.T) {
 	assert.Equal(t, int32(1), requests.Load())
 }
 
+func TestClientClassifiesSourceIOFailuresAsTransient(t *testing.T) {
+	client := newTestClient(t, "http://127.0.0.1:30004/glmocr/parse", 1<<20, 1)
+	cause := errors.New("synthetic source I/O failure")
+	readDigest := sha256.Sum256([]byte{0})
+	readSource, err := ocr.NewSource(
+		&errorReadCloser{readErr: cause}, "image/png", 1, hex.EncodeToString(readDigest[:]),
+	)
+	require.NoError(t, err)
+	content := append([]byte("\x89PNG\r\n\x1a\n"), make([]byte, 504)...)
+	closeDigest := sha256.Sum256(content)
+	closeSource, err := ocr.NewSource(
+		&errorReadCloser{Reader: bytes.NewReader(content), closeErr: cause},
+		"image/png", int64(len(content)), hex.EncodeToString(closeDigest[:]),
+	)
+	require.NoError(t, err)
+
+	for _, test := range []struct {
+		name   string
+		source ocr.Source
+	}{
+		{name: "read", source: readSource},
+		{name: "close", source: closeSource},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := client.Process(t.Context(), test.source)
+			require.ErrorIs(t, err, cause)
+			assert.Equal(t, ocr.ErrorTransient, ocr.ErrorKindOf(err))
+			assert.True(t, ocr.IsRetryable(err))
+		})
+	}
+}
+
 func TestClientAcceptsWebPSource(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
@@ -290,6 +322,22 @@ type blockingReadCloser struct {
 	closeOnce  sync.Once
 	closeCalls atomic.Int32
 }
+
+type errorReadCloser struct {
+	io.Reader
+
+	readErr  error
+	closeErr error
+}
+
+func (r *errorReadCloser) Read(buffer []byte) (int, error) {
+	if r.readErr != nil {
+		return 0, r.readErr
+	}
+	return r.Reader.Read(buffer)
+}
+
+func (r *errorReadCloser) Close() error { return r.closeErr }
 
 func (r *blockingReadCloser) Read([]byte) (int, error) {
 	r.enterOnce.Do(func() { close(r.entered) })

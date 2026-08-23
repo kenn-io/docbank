@@ -4,7 +4,7 @@ services:
   engine:
     build:
       context: .
-    image: docbank-glmocr:e375c21d97fa
+    image: docbank-glmocr:9d83671f0bfa
     command:
       - python3
       - -m
@@ -60,7 +60,7 @@ services:
       - ${GLMOCR_MODEL_ROOT:?set GLMOCR_MODEL_ROOT}/glm-ocr:/models/glm-ocr:ro
 
   api:
-    image: docbank-glmocr:e375c21d97fa
+    image: docbank-glmocr:9d83671f0bfa
     command:
       - gunicorn
       - --bind
