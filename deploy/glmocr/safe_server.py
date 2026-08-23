@@ -181,6 +181,8 @@ def validate_document(content: bytes, suffix: str, pdf_max_pages: int, max_pixel
                     page.get_pixmap(matrix=pymupdf.Matrix(validation_scale, validation_scale), alpha=False)
                 return document.page_count
         with Image.open(BytesIO(content)) as image:
+            if getattr(image, "n_frames", 1) != 1:
+                raise InvalidDocument("multi-frame images are unsupported")
             if image.width <= 0 or image.height <= 0 or image.width * image.height > max_pixels:
                 raise InvalidDocument("image exceeds the configured pixel limit")
             image.verify()
@@ -215,6 +217,8 @@ def decode_source(value: object) -> tuple[bytes, str]:
 
 
 def create_app() -> Flask:
+    for staged_path in Path(tempfile.gettempdir()).glob("docbank-ocr-*"):
+        staged_path.unlink(missing_ok=True)
     config_path = os.environ.get("GLMOCR_CONFIG", "/etc/glmocr/config.yaml")
     deployment_fingerprint = validate_deployment(config_path)
     config = load_config(config_path)
@@ -274,15 +278,15 @@ def create_app() -> Flask:
             messages = [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": temp_path}}]}]
             results = list(pipeline.process({"messages": messages}, save_layout_visualization=False))
             if len(results) != 1:
-                return jsonify({"error": "OCR pipeline returned no document"}), 422
+                return jsonify({"error": "OCR pipeline returned no document"}), 424
             result = results[0]
             pages = result.json_result
             if not isinstance(pages, list) or not pages:
-                return jsonify({"error": "OCR pipeline returned no evidence"}), 422
+                return jsonify({"error": "OCR pipeline returned no evidence"}), 424
             if len(pages) != source_units:
-                return jsonify({"error": "OCR pipeline returned the wrong page count"}), 502
+                return jsonify({"error": "OCR pipeline returned the wrong page count"}), 424
             if not all(isinstance(page, list) for page in pages):
-                return jsonify({"error": "OCR pipeline returned malformed pages"}), 502
+                return jsonify({"error": "OCR pipeline returned malformed pages"}), 424
             has_evidence = False
             for page in pages:
                 for element_index, element in enumerate(page):
@@ -294,10 +298,10 @@ def create_app() -> Flask:
                         or not element["label"]
                         or not isinstance(element.get("content"), str)
                     ):
-                        return jsonify({"error": "OCR pipeline returned malformed elements"}), 502
+                        return jsonify({"error": "OCR pipeline returned malformed elements"}), 424
                     has_evidence = has_evidence or bool(element["content"].strip())
             if not has_evidence:
-                return jsonify({"error": "OCR pipeline returned no evidence"}), 422
+                return jsonify({"error": "OCR pipeline returned no evidence"}), 424
             return jsonify(response_payload(pages, result.markdown_result or "", deployment_fingerprint))
         except Exception as error:
             app.logger.error("OCR pipeline failed: %s", type(error).__name__)

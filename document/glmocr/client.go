@@ -147,8 +147,8 @@ func (c *Client) Process(ctx context.Context, source ocr.Source) (ocr.Result, er
 			}
 			return result, nil
 		}
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return ocr.Result{}, err
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ocr.Result{}, ctxErr
 		}
 		if _, ok := errors.AsType[*retryableError](err); !ok {
 			return ocr.Result{}, &ocr.ProviderError{Kind: classifyHTTPError(err), Metrics: metrics, Cause: err}
@@ -258,6 +258,7 @@ func (e *retryableError) Unwrap() error { return e.cause }
 
 var (
 	errRejected         = errors.New("GLM-OCR request rejected")
+	errMalformedOutput  = errors.New("GLM-OCR returned malformed output")
 	errResponseTooLarge = errors.New("GLM-OCR response too large")
 )
 
@@ -280,6 +281,9 @@ func (c *Client) processOnce(ctx context.Context, payload []byte) (wireResult, s
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= http.StatusInternalServerError {
 		return wireResult{}, response.Header.Get("Retry-After"), true, latency, &retryableError{status: response.StatusCode}
+	}
+	if response.StatusCode == http.StatusFailedDependency {
+		return wireResult{}, "", true, latency, errMalformedOutput
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return wireResult{}, "", true, latency, fmt.Errorf("GLM-OCR HTTP %d: %w", response.StatusCode, errRejected)
@@ -314,6 +318,8 @@ func classifyHTTPError(err error) ocr.ErrorKind {
 		return ocr.ErrorRejected
 	case errors.Is(err, errResponseTooLarge):
 		return ocr.ErrorResponseTooLarge
+	case errors.Is(err, errMalformedOutput):
+		return ocr.ErrorMalformedOutput
 	default:
 		return ocr.ErrorMalformedOutput
 	}

@@ -30,6 +30,9 @@ publishing the image.
 image data URI, decodes it into a mode-`0600` file on the container's private
 tmpfs, deletes it after parsing, and never logs request data. It reports backend
 failures and empty recognition as errors instead of returning an empty success.
+One synchronous API worker serializes requests and makes Gunicorn's 600-second
+worker timeout an inference deadline. A restarted worker removes any staged file
+left by a forced timeout before accepting another document.
 At startup it verifies every file in both pinned model snapshots, the service
 adapter, image recipe, pipeline configuration, added Python dependencies, SDK
 source revision, and renderer versions. It refuses to start on a mismatch. The

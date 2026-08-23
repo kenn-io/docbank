@@ -101,7 +101,7 @@ func (p *Processor) Process(ctx context.Context, source ocr.Source) (result ocr.
 		MaxSpoolBytes: p.maxSpoolBytes, MinFreeBytes: p.minFreeBytes,
 	})
 	if err != nil {
-		return ocr.Result{}, classifyProcessorError(err, RequestMetrics{})
+		return ocr.Result{}, classifyProcessorError(ctx, err, RequestMetrics{})
 	}
 	defer func() {
 		cleanupErr := prepared.Release()
@@ -118,7 +118,7 @@ func (p *Processor) Process(ctx context.Context, source ocr.Source) (result ocr.
 	}
 	providerResult, err := p.client.Process(ctx, prepared, authorization)
 	if err != nil {
-		return ocr.Result{}, classifyProcessorError(err, MetricsFromError(err))
+		return ocr.Result{}, classifyProcessorError(ctx, err, MetricsFromError(err))
 	}
 	normalized, err := document.NormalizeDocument(providerResult.Document, p.policy.NormalizePolicy())
 	if err != nil {
@@ -134,9 +134,9 @@ func (p *Processor) Process(ctx context.Context, source ocr.Source) (result ocr.
 	}, nil
 }
 
-func classifyProcessorError(err error, metrics RequestMetrics) error {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return err
+func classifyProcessorError(ctx context.Context, err error, metrics RequestMetrics) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
 	}
 	kind := ocr.ErrorMalformedOutput
 	switch {

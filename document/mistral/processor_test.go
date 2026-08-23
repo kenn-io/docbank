@@ -95,21 +95,20 @@ func TestProcessorClassifiesStagingAndSourceFailures(t *testing.T) {
 	assert.False(t, ocr.IsRetryable(err))
 }
 
-func TestClassifyProcessorErrorPropagatesCancellation(t *testing.T) {
-	for _, test := range []struct {
-		name string
-		err  error
-	}{
-		{name: "canceled", err: context.Canceled},
-		{name: "deadline", err: context.DeadlineExceeded},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			err := classifyProcessorError(test.err, RequestMetrics{Requests: 1})
-			require.ErrorIs(t, err, test.err)
-			assert.Empty(t, ocr.ErrorKindOf(err))
-			assert.False(t, ocr.IsRetryable(err))
-		})
-	}
+func TestClassifyProcessorErrorUsesCallerContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	err := classifyProcessorError(ctx, errors.Join(errors.New("transport failed"), context.DeadlineExceeded), RequestMetrics{Requests: 1})
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Empty(t, ocr.ErrorKindOf(err))
+	assert.False(t, ocr.IsRetryable(err))
+
+	metrics := RequestMetrics{Requests: 2, Retries: 1}
+	err = classifyProcessorError(t.Context(), errors.Join(ErrTransientResponse, context.DeadlineExceeded), metrics)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Equal(t, ocr.ErrorTransient, ocr.ErrorKindOf(err))
+	assert.Equal(t, toOCRMetrics(metrics), ocr.MetricsFromError(err))
+	assert.True(t, ocr.IsRetryable(err))
 }
 
 func newProcessorWithoutRequests(t *testing.T, spoolDirectory string) *Processor {

@@ -4,7 +4,7 @@ services:
   engine:
     build:
       context: .
-    image: docbank-glmocr:1d49e1c7491d
+    image: docbank-glmocr:e8f939af927d
     command:
       - python3
       - -m
@@ -60,15 +60,15 @@ services:
       - ${GLMOCR_MODEL_ROOT:?set GLMOCR_MODEL_ROOT}/glm-ocr:/models/glm-ocr:ro
 
   api:
-    image: docbank-glmocr:1d49e1c7491d
+    image: docbank-glmocr:e8f939af927d
     command:
       - gunicorn
       - --bind
       - 0.0.0.0:30004
       - --workers
       - "1"
-      - --threads
-      - "4"
+      - --worker-class
+      - sync
       - --timeout
       - "600"
       - safe_server:create_app()
