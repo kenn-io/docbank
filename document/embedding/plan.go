@@ -59,11 +59,11 @@ func BuildEmbeddingPlan(normalized document.NormalizedDocument, context Document
 	if !recipe.valid() {
 		return EmbeddingPlan{}, errors.New("embedding recipe is invalid; use NewRecipe")
 	}
-	context, err := normalizeContext(context, recipe.values)
+	context, contextTruncated, err := normalizeContext(context, recipe.values)
 	if err != nil {
 		return EmbeddingPlan{}, err
 	}
-	contextFingerprint, err := digestJSON(context)
+	contextFingerprint, err := fingerprintContext(context, contextTruncated)
 	if err != nil {
 		return EmbeddingPlan{}, err
 	}
@@ -87,7 +87,7 @@ func BuildEmbeddingPlan(normalized document.NormalizedDocument, context Document
 		for _, chunk := range normalized.Chunks {
 			input, err := rawInput(
 				len(plan.Inputs), normalized, chunk, context,
-				recipe.values.MaxInputRunes, recipe.values.MaxHeadingRunes,
+				contextTruncated, recipe.values.MaxInputRunes, recipe.values.MaxHeadingRunes,
 			)
 			if err != nil {
 				return EmbeddingPlan{}, err
@@ -98,7 +98,9 @@ func BuildEmbeddingPlan(normalized document.NormalizedDocument, context Document
 	if recipe.values.Mode == RepresentationDistilled || recipe.values.Mode == RepresentationCombined {
 		plan.DistillateFingerprint = distillate.Fingerprint
 		for _, section := range distillate.Sections {
-			input, err := distilledInput(len(plan.Inputs), section, context, recipe.values.MaxInputRunes)
+			input, err := distilledInput(
+				len(plan.Inputs), section, context, contextTruncated, recipe.values.MaxInputRunes,
+			)
 			if err != nil {
 				return EmbeddingPlan{}, err
 			}
@@ -116,9 +118,16 @@ func BuildEmbeddingPlan(normalized document.NormalizedDocument, context Document
 	return plan, nil
 }
 
-func rawInput(ordinal int, normalized document.NormalizedDocument, chunk document.Chunk, context DocumentContext, maxRunes, maxHeadingRunes int) (EmbeddingInput, error) {
+func rawInput(
+	ordinal int,
+	normalized document.NormalizedDocument,
+	chunk document.Chunk,
+	context DocumentContext,
+	contextTruncated bool,
+	maxRunes, maxHeadingRunes int,
+) (EmbeddingInput, error) {
 	sourcePrefix := "Source: " + formatLocator(normalized, chunk.Spans) + "\nContent:\n"
-	contextPrefix, contextTruncated := boundedContext(
+	contextPrefix, inputContextTruncated := boundedContext(
 		context, maxRunes-utf8.RuneCountInString(sourcePrefix)-1,
 	)
 	heading, headingTruncated := boundedHeadingContext(
@@ -132,13 +141,19 @@ func rawInput(ordinal int, normalized document.NormalizedDocument, chunk documen
 	}
 	return makeInput(
 		ordinal, RepresentationKindRaw, text, []SourceRef{sourceRef(chunk)},
-		normalized.Truncated || chunk.Truncated || contextTruncated || headingTruncated || truncated,
+		normalized.Truncated || chunk.Truncated || contextTruncated || inputContextTruncated || headingTruncated || truncated,
 	)
 }
 
-func distilledInput(ordinal int, section DerivedSection, context DocumentContext, maxRunes int) (EmbeddingInput, error) {
+func distilledInput(
+	ordinal int,
+	section DerivedSection,
+	context DocumentContext,
+	contextTruncated bool,
+	maxRunes int,
+) (EmbeddingInput, error) {
 	sourcePrefix := "Source: " + formatSourceRefs(section.SourceRefs) + "\nDerived summary (verify against source):\n"
-	contextPrefix, contextTruncated := boundedContext(
+	contextPrefix, inputContextTruncated := boundedContext(
 		context, maxRunes-utf8.RuneCountInString(sourcePrefix)-1,
 	)
 	prefix := contextPrefix + sourcePrefix
@@ -148,7 +163,7 @@ func distilledInput(ordinal int, section DerivedSection, context DocumentContext
 	}
 	return makeInput(
 		ordinal, RepresentationKindDistilled, text, section.SourceRefs,
-		section.Truncated || contextTruncated || truncated,
+		section.Truncated || contextTruncated || inputContextTruncated || truncated,
 	)
 }
 

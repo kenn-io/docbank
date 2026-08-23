@@ -347,6 +347,13 @@ func TestMetadataContextIsBoundedByProviderInputLimit(t *testing.T) {
 	}
 	request, err := embedding.PrepareDistillation(normalized, contextValue, recipe)
 	require.NoError(t, err)
+	assert.True(t, request.ContextTruncated)
+	exactRequest, err := embedding.PrepareDistillation(normalized, request.Context, recipe)
+	require.NoError(t, err)
+	assert.False(t, exactRequest.ContextTruncated)
+	assert.Equal(t, request.Context, exactRequest.Context)
+	assert.NotEqual(t, request.ContextFingerprint, exactRequest.ContextFingerprint)
+	assert.NotEqual(t, request.Fingerprint, exactRequest.Fingerprint)
 	sections := make([]embedding.DerivedSectionResult, 0, len(request.Partitions))
 	for _, partition := range request.Partitions {
 		sections = append(sections, embedding.DerivedSectionResult{
@@ -374,6 +381,32 @@ func TestMetadataContextIsBoundedByProviderInputLimit(t *testing.T) {
 			assert.True(t, found)
 			assert.NotEmpty(t, content)
 		}
+	}
+}
+
+func TestMetadataCapTruncationChangesPlanAndInputIdentities(t *testing.T) {
+	normalized := normalizedDocument(t)
+	recipe, err := embedding.NewRecipe(embedding.RecipeConfig{
+		MaxFilenameRunes: 4,
+		MaxTitleRunes:    4,
+	})
+	require.NoError(t, err)
+	exact, err := embedding.BuildEmbeddingPlan(
+		normalized, embedding.DocumentContext{Filename: "file", Title: "name"}, recipe, nil,
+	)
+	require.NoError(t, err)
+	truncated, err := embedding.BuildEmbeddingPlan(
+		normalized, embedding.DocumentContext{Filename: "file suffix", Title: "name suffix"}, recipe, nil,
+	)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, exact.ContextFingerprint, truncated.ContextFingerprint)
+	assert.NotEqual(t, exact.Fingerprint, truncated.Fingerprint)
+	require.Len(t, truncated.Inputs, len(exact.Inputs))
+	for index := range exact.Inputs {
+		assert.False(t, exact.Inputs[index].Truncated)
+		assert.True(t, truncated.Inputs[index].Truncated)
+		assert.NotEqual(t, exact.Inputs[index].Key, truncated.Inputs[index].Key)
 	}
 }
 

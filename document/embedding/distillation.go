@@ -20,6 +20,11 @@ type DocumentContext struct {
 	Title    string `json:"title,omitempty"`
 }
 
+type documentContextIdentity struct {
+	Context   DocumentContext `json:"context"`
+	Truncated bool            `json:"truncated"`
+}
+
 // SourceRef identifies the normalized source evidence represented by an input.
 type SourceRef struct {
 	ChunkKey      string               `json:"chunk_key"`
@@ -101,6 +106,7 @@ type DistillationRequest struct {
 	RecipeFingerprint     string            `json:"recipe_fingerprint"`
 	SourceChecksum        string            `json:"source_checksum"`
 	Context               DocumentContext   `json:"context"`
+	ContextTruncated      bool              `json:"context_truncated"`
 	ContextFingerprint    string            `json:"context_fingerprint"`
 	Provider              string            `json:"provider"`
 	Model                 string            `json:"model"`
@@ -167,11 +173,11 @@ func PrepareDistillation(normalized document.NormalizedDocument, context Documen
 	if !recipe.valid() || recipe.values.Distillation == nil {
 		return DistillationRequest{}, errors.New("embedding recipe does not configure distillation")
 	}
-	context, err := normalizeContext(context, recipe.values)
+	context, contextTruncated, err := normalizeContext(context, recipe.values)
 	if err != nil {
 		return DistillationRequest{}, err
 	}
-	contextFingerprint, err := digestJSON(context)
+	contextFingerprint, err := fingerprintContext(context, contextTruncated)
 	if err != nil {
 		return DistillationRequest{}, err
 	}
@@ -184,7 +190,7 @@ func PrepareDistillation(normalized document.NormalizedDocument, context Documen
 	config := recipe.values.Distillation
 	request := DistillationRequest{
 		RecipeFingerprint: recipe.digest, SourceChecksum: normalized.Checksum,
-		Context: context, ContextFingerprint: contextFingerprint,
+		Context: context, ContextTruncated: contextTruncated, ContextFingerprint: contextFingerprint,
 		Provider: config.Provider, Model: config.Model, ModelRevision: config.ModelRevision,
 		PromptTemplateVersion: config.PromptTemplateVersion, MaxSections: config.MaxSections,
 		MaxSectionRunes: config.MaxSectionRunes, Partitions: partitions,
@@ -363,7 +369,7 @@ func validateDistillationRequest(request DistillationRequest) error {
 			return err
 		}
 	}
-	contextFingerprint, err := digestJSON(request.Context)
+	contextFingerprint, err := fingerprintContext(request.Context, request.ContextTruncated)
 	if err != nil {
 		return err
 	}
@@ -430,14 +436,21 @@ func digestJSON(value any) (string, error) {
 	return fingerprint(encoded), nil
 }
 
-func normalizeContext(value DocumentContext, recipe RecipeValues) (DocumentContext, error) {
+func normalizeContext(value DocumentContext, recipe RecipeValues) (DocumentContext, bool, error) {
 	if err := validateContextText(value); err != nil {
-		return DocumentContext{}, err
+		return DocumentContext{}, false, err
 	}
-	return DocumentContext{
-		Filename: truncateRunes(normalizeMetadata(value.Filename), recipe.MaxFilenameRunes),
-		Title:    truncateRunes(normalizeMetadata(value.Title), recipe.MaxTitleRunes),
-	}, nil
+	filename := normalizeMetadata(value.Filename)
+	title := normalizeMetadata(value.Title)
+	context := DocumentContext{
+		Filename: strings.TrimSpace(truncateRunes(filename, recipe.MaxFilenameRunes)),
+		Title:    strings.TrimSpace(truncateRunes(title, recipe.MaxTitleRunes)),
+	}
+	return context, context.Filename != filename || context.Title != title, nil
+}
+
+func fingerprintContext(context DocumentContext, truncated bool) (string, error) {
+	return digestJSON(documentContextIdentity{Context: context, Truncated: truncated})
 }
 
 func normalizeMetadata(value string) string {
