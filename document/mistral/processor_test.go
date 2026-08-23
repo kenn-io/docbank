@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -64,4 +65,50 @@ func TestProcessorSnapshotsCapabilityManifest(t *testing.T) {
 	require.NotEmpty(t, result.Document.Chunks)
 	assert.Equal(t, []string{"Synthetic snapshot"}, result.Document.Chunks[0].HeadingPath)
 	assert.Equal(t, processor.policyFingerprint, result.PolicyFingerprint)
+}
+
+func TestProcessorClassifiesStagingAndSourceFailures(t *testing.T) {
+	content := testPDF("processor classification")
+	digest := sha256.Sum256(content)
+	newSource := func(hash string) ocr.Source {
+		source, err := ocr.NewSource(
+			io.NopCloser(bytes.NewReader(content)), mediaTypePDF, int64(len(content)), hash,
+		)
+		require.NoError(t, err)
+		return source
+	}
+
+	missingDirectory := filepath.Join(t.TempDir(), "missing")
+	processor := newProcessorWithoutRequests(t, missingDirectory)
+	_, err := processor.Process(t.Context(), newSource(hex.EncodeToString(digest[:])))
+	require.Error(t, err)
+	assert.Equal(t, ocr.ErrorTransient, ocr.ErrorKindOf(err))
+	assert.True(t, ocr.IsRetryable(err))
+
+	spoolDirectory := filepath.Join(t.TempDir(), "spool")
+	makePrivateDirectory(t, spoolDirectory)
+	processor = newProcessorWithoutRequests(t, spoolDirectory)
+	_, err = processor.Process(t.Context(), newSource(zeroSHA256()))
+	require.Error(t, err)
+	assert.Equal(t, ocr.ErrorInvalidInput, ocr.ErrorKindOf(err))
+	assert.False(t, ocr.IsRetryable(err))
+}
+
+func newProcessorWithoutRequests(t *testing.T, spoolDirectory string) *Processor {
+	t.Helper()
+	policy := testPolicy(t, 1024, 10)
+	client, err := NewClient(policy, ClientConfig{
+		APIKey: "synthetic-key",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			t.Fatal("staging failure unexpectedly reached the provider")
+			return nil, errors.New("unexpected provider request")
+		})},
+	})
+	require.NoError(t, err)
+	processor, err := NewProcessor(ProcessorConfig{
+		Client: client, Policy: policy, CapabilityManifest: syntheticManifest(t, policy, true),
+		SpoolDirectory: spoolDirectory, MaxSpoolBytes: 1024, MinFreeBytes: 1,
+	})
+	require.NoError(t, err)
+	return processor
 }

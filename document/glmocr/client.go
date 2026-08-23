@@ -322,15 +322,24 @@ func (c *Client) convert(wire wireResult, source ocr.Source, metrics ocr.Request
 	if wire.Model != c.policy.values.ServedModel {
 		return ocr.Result{}, fmt.Errorf("GLM-OCR returned model %q, want %q", wire.Model, c.policy.values.ServedModel)
 	}
-	var pages [][]wireElement
 	if len(wire.JSONResult) == 0 || bytes.Equal(wire.JSONResult, []byte("null")) {
 		return ocr.Result{}, errors.New("GLM-OCR response has no structured pages")
 	}
-	if err := json.Unmarshal(wire.JSONResult, &pages); err != nil {
+	var rawPages []jsontext.Value
+	if err := json.Unmarshal(wire.JSONResult, &rawPages); err != nil {
 		return ocr.Result{}, fmt.Errorf("decode GLM-OCR page structure: %w", err)
 	}
-	if len(pages) == 0 || len(pages) > c.policy.values.MaxUnits {
+	if len(rawPages) == 0 || len(rawPages) > c.policy.values.MaxUnits {
 		return ocr.Result{}, errors.New("GLM-OCR response page count is outside policy bounds")
+	}
+	pages := make([][]wireElement, len(rawPages))
+	for pageIndex, rawPage := range rawPages {
+		if len(rawPage) == 0 || rawPage.Kind() != '[' {
+			return ocr.Result{}, fmt.Errorf("GLM-OCR page %d is not an array", pageIndex)
+		}
+		if err := json.Unmarshal(rawPage, &pages[pageIndex]); err != nil {
+			return ocr.Result{}, fmt.Errorf("decode GLM-OCR page %d: %w", pageIndex, err)
+		}
 	}
 	family := acceptedMediaTypes[source.MediaType]
 	sourceDocument := document.SourceDocument{Family: family, UnitKind: "page", Units: make([]document.SourceUnit, len(pages))}

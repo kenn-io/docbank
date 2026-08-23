@@ -1,6 +1,11 @@
 package glmocr_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -8,6 +13,19 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/glmocr"
 )
+
+func TestDeploymentManifestMatchesPackageIdentity(t *testing.T) {
+	encoded, err := os.ReadFile("../../deploy/glmocr/deployment.json")
+	require.NoError(t, err)
+	var manifest glmocr.DeploymentIdentity
+	require.NoError(t, json.Unmarshal(encoded, &manifest))
+	assert.Equal(t, glmocr.DefaultDeploymentIdentity(), manifest)
+
+	canonical := jsontext.Value(encoded)
+	require.NoError(t, canonical.Canonicalize())
+	digest := sha256.Sum256(canonical)
+	assert.Equal(t, glmocr.DefaultDeploymentFingerprint, hex.EncodeToString(digest[:]))
+}
 
 func TestPolicyFingerprintTracksArtifactsAndRequiresLoopback(t *testing.T) {
 	normalize, err := document.NewNormalizePolicy(1_000_000)

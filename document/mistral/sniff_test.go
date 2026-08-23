@@ -3,6 +3,7 @@ package mistral
 import (
 	"archive/zip"
 	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
 	"io"
 	"testing"
@@ -274,6 +275,6 @@ func (r *observedReadCloser) Close() error {
 	return r.closeErr
 }
 
-func stringsOfZero(length int) string {
-	return string(bytes.Repeat([]byte{'0'}, length))
+func zeroSHA256() string {
+	return string(bytes.Repeat([]byte{'0'}, sha256.Size*2))
 }

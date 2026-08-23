@@ -143,6 +143,7 @@ func TestClientClassifiesBoundedAndMalformedResponses(t *testing.T) {
 		{name: "deployment drift", body: `{"model":"glm-ocr","deployment_fingerprint":"stale","json_result":[[{"index":0,"label":"text","content":"x"}]]}`, max: 1 << 20, kind: ocr.ErrorMalformedOutput},
 		{name: "model drift", body: `{"model":"glm-ocr-latest","deployment_fingerprint":"` + glmocr.DefaultDeploymentFingerprint + `","json_result":[[{"index":0,"label":"text","content":"x"}]]}`, max: 1 << 20, kind: ocr.ErrorMalformedOutput},
 		{name: "page index", body: `{"model":"glm-ocr","deployment_fingerprint":"` + glmocr.DefaultDeploymentFingerprint + `","json_result":[[{"index":4,"label":"text","content":"x"}]]}`, max: 1 << 20, kind: ocr.ErrorMalformedOutput},
+		{name: "null page", body: `{"model":"glm-ocr","deployment_fingerprint":"` + glmocr.DefaultDeploymentFingerprint + `","json_result":[null,[{"index":0,"label":"text","content":"x"}]]}`, max: 1 << 20, kind: ocr.ErrorMalformedOutput},
 		{name: "no document evidence", body: `{"model":"glm-ocr","deployment_fingerprint":"` + glmocr.DefaultDeploymentFingerprint + `","json_result":[[]]}`, max: 1 << 20, kind: ocr.ErrorMalformedOutput},
 	}
 	for _, test := range tests {

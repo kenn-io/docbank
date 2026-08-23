@@ -10,6 +10,7 @@ import tempfile
 import time
 import urllib.request
 import uuid
+from importlib.metadata import distribution, version
 from pathlib import Path
 
 from flask import Flask, jsonify, request
@@ -20,23 +21,12 @@ import pymupdf
 
 
 MAX_SOURCE_BYTES = 64 << 20
-DEPLOYMENT_FINGERPRINT = "d132e09cf91629e1514a75077e7d9cd7b6cc3184c96e7512b91a3cb5d2e8315b"
-DEPLOYMENT_IDENTITY = {
-    "version": 1,
-    "model": "zai-org/GLM-OCR",
-    "model_revision": "ca5d8b3e287e52589e37c28385d9655ee4372f9d",
-    "model_sha256": "a16eb0de98d199293371c560f95f83130d2a2c9612449df16839f08ff9498815",
-    "sdk_revision": "cef4d0ea120d1741f5cefe8985eee45f6c8eff1d",
-    "layout_model": "PaddlePaddle/PP-DocLayoutV3_safetensors",
-    "layout_revision": "97d101e6db2642e162a1d05392d1b0231c91033e",
-    "layout_sha256": "5ea422c6cc5fe759a47e1357c35639b58173508e025a3131cbe4b6ac59e2b85e",
-    "engine_image": "vllm/vllm-openai@sha256:4f986370d7737abacc70ac17f86695acd1dc7892a02ad89ac132639d5afee0d0",
-    "pipeline_config_sha256": "f299e93f6f928640d4aa7faceb79ed24c978f71ca33195a36dd8bc9f4855c5b0",
-    "pymupdf_version": "1.27.2.3",
-    "mupdf_version": "1.27.2",
-}
-MODEL_WEIGHTS = Path("/models/glm-ocr/model.safetensors")
-LAYOUT_WEIGHTS = Path("/models/pp-doclayout-v3/model.safetensors")
+DEPLOYMENT_MANIFEST = Path("/etc/glmocr/deployment.json")
+ADAPTER_PATH = Path(__file__)
+IMAGE_RECIPE_PATH = Path("/etc/glmocr/Dockerfile")
+DEPENDENCY_LOCK_PATH = Path("/etc/glmocr/requirements.lock")
+MODEL_ROOT = Path("/models/glm-ocr")
+LAYOUT_ROOT = Path("/models/pp-doclayout-v3")
 MEDIA_SUFFIXES = {
     "application/pdf": ".pdf",
     "image/jpeg": ".jpg",
@@ -45,7 +35,7 @@ MEDIA_SUFFIXES = {
 }
 
 
-def response_payload(json_result, markdown_result):
+def response_payload(json_result, markdown_result, deployment_fingerprint):
     return {
         "json_result": json_result,
         "markdown_result": markdown_result,
@@ -54,7 +44,7 @@ def response_payload(json_result, markdown_result):
         "data_info": {"pages": []},
         "usage": {},
         "model": "glm-ocr",
-        "deployment_fingerprint": DEPLOYMENT_FINGERPRINT,
+        "deployment_fingerprint": deployment_fingerprint,
         "id": f"chatcmpl-{uuid.uuid4().hex[:29]}",
         "created": int(time.time()),
     }
@@ -68,21 +58,75 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def validate_deployment(config_path: str) -> None:
-    encoded = json.dumps(DEPLOYMENT_IDENTITY, separators=(",", ":")).encode()
-    if hashlib.sha256(encoded).hexdigest() != DEPLOYMENT_FINGERPRINT:
-        raise RuntimeError("deployment identity fingerprint is invalid")
-    expected = DEPLOYMENT_IDENTITY
+def artifact_digest(path: Path, algorithm: str) -> str:
+    if algorithm == "sha256":
+        return sha256_file(path)
+    if algorithm == "git-sha1":
+        content = path.read_bytes()
+        digest = hashlib.sha1(usedforsecurity=False)
+        digest.update(f"blob {len(content)}\0".encode())
+        digest.update(content)
+        return digest.hexdigest()
+    raise RuntimeError("deployment manifest uses an unsupported digest")
+
+
+def validate_snapshot(root: Path, artifacts: object, name: str) -> None:
+    if not isinstance(artifacts, list) or not artifacts:
+        raise RuntimeError(f"{name} manifest is empty")
+    expected_paths = set()
+    for artifact in artifacts:
+        if not isinstance(artifact, dict) or set(artifact) != {"path", "algorithm", "digest"}:
+            raise RuntimeError(f"{name} manifest entry is invalid")
+        relative = artifact["path"]
+        if not isinstance(relative, str) or not relative or Path(relative).is_absolute() or ".." in Path(relative).parts:
+            raise RuntimeError(f"{name} manifest path is invalid")
+        if relative in expected_paths:
+            raise RuntimeError(f"{name} manifest path is duplicated")
+        expected_paths.add(relative)
+        candidate = root / relative
+        if not candidate.is_file() or artifact_digest(candidate, artifact["algorithm"]) != artifact["digest"]:
+            raise RuntimeError(f"{name} artifact {relative} does not match the pinned deployment")
+    actual_paths = {
+        str(path.relative_to(root))
+        for path in root.rglob("*")
+        if path.is_file() and ".cache" not in path.relative_to(root).parts
+    }
+    if actual_paths != expected_paths:
+        raise RuntimeError(f"{name} snapshot does not match the complete manifest")
+
+
+def validate_deployment(config_path: str) -> str:
+    manifest = json.loads(DEPLOYMENT_MANIFEST.read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict):
+        raise RuntimeError("deployment manifest is invalid")
+    encoded = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+    deployment_fingerprint = hashlib.sha256(encoded).hexdigest()
     checks = {
-        "pipeline configuration": (sha256_file(Path(config_path)), expected["pipeline_config_sha256"]),
-        "GLM-OCR weights": (sha256_file(MODEL_WEIGHTS), expected["model_sha256"]),
-        "layout weights": (sha256_file(LAYOUT_WEIGHTS), expected["layout_sha256"]),
-        "PyMuPDF version": (pymupdf.pymupdf_version, expected["pymupdf_version"]),
-        "MuPDF version": (pymupdf.mupdf_version, expected["mupdf_version"]),
+        "pipeline configuration": (sha256_file(Path(config_path)), manifest["pipeline_config_sha256"]),
+        "service adapter": (sha256_file(ADAPTER_PATH), manifest["adapter_sha256"]),
+        "image recipe": (sha256_file(IMAGE_RECIPE_PATH), manifest["image_recipe_sha256"]),
+        "dependency lock": (sha256_file(DEPENDENCY_LOCK_PATH), manifest["dependency_lock_sha256"]),
+        "PyMuPDF version": (pymupdf.pymupdf_version, manifest["pymupdf_version"]),
+        "MuPDF version": (pymupdf.mupdf_version, manifest["mupdf_version"]),
     }
     for name, (actual, wanted) in checks.items():
         if actual != wanted:
             raise RuntimeError(f"{name} does not match the pinned deployment")
+    dependencies = manifest.get("runtime_dependencies")
+    if not isinstance(dependencies, list) or not dependencies:
+        raise RuntimeError("runtime dependency manifest is invalid")
+    for dependency in dependencies:
+        if not isinstance(dependency, dict) or set(dependency) != {"name", "version"}:
+            raise RuntimeError("runtime dependency manifest entry is invalid")
+        if version(dependency["name"]) != dependency["version"]:
+            raise RuntimeError(f"runtime dependency {dependency['name']} does not match the pinned deployment")
+    direct_url = json.loads(distribution("glmocr").read_text("direct_url.json"))
+    expected_sdk_url = f"https://github.com/zai-org/GLM-OCR/archive/{manifest['sdk_revision']}.zip"
+    if direct_url.get("url") != expected_sdk_url:
+        raise RuntimeError("GLM-OCR SDK does not match the pinned deployment")
+    validate_snapshot(MODEL_ROOT, manifest["model_files"], "GLM-OCR")
+    validate_snapshot(LAYOUT_ROOT, manifest["layout_files"], "layout model")
+    return deployment_fingerprint
 
 
 def decode_source(value: object) -> tuple[bytes, str]:
@@ -108,7 +152,7 @@ def decode_source(value: object) -> tuple[bytes, str]:
 
 def create_app() -> Flask:
     config_path = os.environ.get("GLMOCR_CONFIG", "/etc/glmocr/config.yaml")
-    validate_deployment(config_path)
+    deployment_fingerprint = validate_deployment(config_path)
     config = load_config(config_path)
     configure_logging(level=config.logging.level)
     pipeline = Pipeline(config=config.pipeline)
@@ -126,7 +170,7 @@ def create_app() -> Flask:
                     raise RuntimeError("engine is not ready")
         except Exception:
             return jsonify({"status": "unavailable"}), 503
-        return jsonify({"status": "ok", "deployment_fingerprint": DEPLOYMENT_FINGERPRINT})
+        return jsonify({"status": "ok", "deployment_fingerprint": deployment_fingerprint})
 
     @app.post("/glmocr/parse")
     def parse():
@@ -148,8 +192,8 @@ def create_app() -> Flask:
         temp_path = None
         try:
             with tempfile.NamedTemporaryFile(prefix="docbank-ocr-", suffix=suffix, delete=False) as staged:
-                staged.write(content)
                 temp_path = staged.name
+                staged.write(content)
             os.chmod(temp_path, 0o600)
             messages = [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": temp_path}}]}]
             results = list(pipeline.process({"messages": messages}, save_layout_visualization=False))
@@ -157,9 +201,13 @@ def create_app() -> Flask:
                 return jsonify({"error": "OCR pipeline returned no document"}), 422
             result = results[0]
             pages = result.json_result
-            if not isinstance(pages, list) or not pages or not any(isinstance(page, list) and page for page in pages):
+            if not isinstance(pages, list) or not pages:
                 return jsonify({"error": "OCR pipeline returned no evidence"}), 422
-            return jsonify(response_payload(pages, result.markdown_result or ""))
+            if not all(isinstance(page, list) for page in pages):
+                return jsonify({"error": "OCR pipeline returned malformed pages"}), 502
+            if not any(pages):
+                return jsonify({"error": "OCR pipeline returned no evidence"}), 422
+            return jsonify(response_payload(pages, result.markdown_result or "", deployment_fingerprint))
         except Exception as error:
             app.logger.error("OCR pipeline failed: %s", type(error).__name__)
             return jsonify({"error": "OCR pipeline failed"}), 502

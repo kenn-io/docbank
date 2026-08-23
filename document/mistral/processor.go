@@ -139,6 +139,10 @@ func classifyProcessorError(err error, metrics RequestMetrics) error {
 	switch {
 	case errors.Is(err, ErrSpoolCapacity):
 		kind = ocr.ErrorCapacity
+	case errors.Is(err, ErrSpoolUnavailable), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		kind = ocr.ErrorTransient
+	case errors.Is(err, ErrInvalidSource):
+		kind = ocr.ErrorInvalidInput
 	case errors.Is(err, ErrTransientResponse):
 		kind = ocr.ErrorTransient
 	case errors.Is(err, ErrPermanentResponse):
@@ -148,7 +152,7 @@ func classifyProcessorError(err error, metrics RequestMetrics) error {
 	case errors.Is(err, ErrCapabilityContract):
 		kind = ocr.ErrorCapabilityChanged
 	case metrics.Requests == 0:
-		kind = ocr.ErrorInvalidInput
+		kind = ocr.ErrorTransient
 	}
 	return &ocr.ProviderError{Kind: kind, Metrics: toOCRMetrics(metrics), Cause: err}
 }

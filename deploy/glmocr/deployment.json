@@ -1,0 +1,51 @@
+{
+  "version": 2,
+  "model": "zai-org/GLM-OCR",
+  "model_revision": "ca5d8b3e287e52589e37c28385d9655ee4372f9d",
+  "model_files": [
+    {"path": ".eval_results/mdpbench.yaml", "algorithm": "git-sha1", "digest": "ff3401de97f415491b0fd674059823e3f8510a5e"},
+    {"path": ".eval_results/olmocrbench.yaml", "algorithm": "git-sha1", "digest": "7186fb2de9bf6b20f8fcb23bfcb31e1f7826c692"},
+    {"path": ".gitattributes", "algorithm": "git-sha1", "digest": "a6344aac8c09253b3b630fb776ae94478aa0275b"},
+    {"path": "README.md", "algorithm": "git-sha1", "digest": "2dcab5a6ed326dd7db202569c79c2244654ca028"},
+    {"path": "chat_template.jinja", "algorithm": "git-sha1", "digest": "8f3b7224cc22edcb813a59ca438efc92f15749a9"},
+    {"path": "config.json", "algorithm": "git-sha1", "digest": "46fbd1c232b7d9d0fc261cf10361350ef3af02c3"},
+    {"path": "generation_config.json", "algorithm": "git-sha1", "digest": "0de866e8cc29b4479b56bf68300da9353bc63a71"},
+    {"path": "model.safetensors", "algorithm": "sha256", "digest": "a16eb0de98d199293371c560f95f83130d2a2c9612449df16839f08ff9498815"},
+    {"path": "preprocessor_config.json", "algorithm": "git-sha1", "digest": "308553695af766b3e3d05e68279d2c690e73273e"},
+    {"path": "tokenizer.json", "algorithm": "git-sha1", "digest": "9f4a549a14a96217569648aa7627c6674ad94fe9"},
+    {"path": "tokenizer_config.json", "algorithm": "git-sha1", "digest": "18f2106a5124ac945ee5526ac60fa75e09e97e11"}
+  ],
+  "sdk_revision": "cef4d0ea120d1741f5cefe8985eee45f6c8eff1d",
+  "layout_model": "PaddlePaddle/PP-DocLayoutV3_safetensors",
+  "layout_revision": "97d101e6db2642e162a1d05392d1b0231c91033e",
+  "layout_files": [
+    {"path": ".gitattributes", "algorithm": "git-sha1", "digest": "a6344aac8c09253b3b630fb776ae94478aa0275b"},
+    {"path": "README.md", "algorithm": "git-sha1", "digest": "48fc6ecdb0cec7cc38d759cdea3caaccba39ae4a"},
+    {"path": "config.json", "algorithm": "git-sha1", "digest": "5a22928c191950850cbc0e56e43f722073e7c8da"},
+    {"path": "inference.yml", "algorithm": "git-sha1", "digest": "ed7472400b398e0e0e032893f7986b32692980e7"},
+    {"path": "model.safetensors", "algorithm": "sha256", "digest": "5ea422c6cc5fe759a47e1357c35639b58173508e025a3131cbe4b6ac59e2b85e"},
+    {"path": "preprocessor_config.json", "algorithm": "git-sha1", "digest": "ab66797648e5a3247eca2988e9fcd8af07a6a038"}
+  ],
+  "engine_image": "vllm/vllm-openai@sha256:4f986370d7737abacc70ac17f86695acd1dc7892a02ad89ac132639d5afee0d0",
+  "adapter_sha256": "418b6da2cc6b43d3508854659ac3207f3e10c964d40ed233b4addeb53f9d1571",
+  "image_recipe_sha256": "d8d7c51e1c1207bb4a21ba3875271a950a13f863bfa7d54bc1f7dfbcf734f86f",
+  "dependency_lock_sha256": "b8327b09b922791b91f6151d2e348cab19fac8da5c025ffec7166c393d0197ed",
+  "pipeline_config_sha256": "f299e93f6f928640d4aa7faceb79ed24c978f71ca33195a36dd8bc9f4855c5b0",
+  "runtime_dependencies": [
+    {"name": "transformers", "version": "5.15.1"},
+    {"name": "huggingface-hub", "version": "1.28.0"},
+    {"name": "hf-xet", "version": "1.6.0"},
+    {"name": "safetensors", "version": "0.8.0"},
+    {"name": "portalocker", "version": "3.2.0"},
+    {"name": "PyMuPDF", "version": "1.27.2.3"},
+    {"name": "pypdfium2", "version": "5.6.0"},
+    {"name": "Flask", "version": "3.1.2"},
+    {"name": "gunicorn", "version": "23.0.0"},
+    {"name": "blinker", "version": "1.9.0"},
+    {"name": "click", "version": "8.4.2"},
+    {"name": "itsdangerous", "version": "2.2.0"},
+    {"name": "Werkzeug", "version": "3.1.8"}
+  ],
+  "pymupdf_version": "1.27.2.3",
+  "mupdf_version": "1.27.2"
+}

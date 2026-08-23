@@ -39,6 +39,7 @@ func TestSyntheticManifestAuthorizesPDF(t *testing.T) {
 func TestRetryClassification(t *testing.T) {
 	assert.True(t, mistral.IsRetryable(fmt.Errorf("provider: %w", mistral.ErrTransientResponse)))
 	assert.True(t, mistral.IsRetryable(fmt.Errorf("spool: %w", mistral.ErrSpoolCapacity)))
+	assert.True(t, mistral.IsRetryable(fmt.Errorf("spool: %w", mistral.ErrSpoolUnavailable)))
 	assert.False(t, mistral.IsRetryable(mistral.ErrPermanentResponse))
 	assert.False(t, mistral.IsRetryable(errors.New("application failure")))
 }

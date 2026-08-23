@@ -14,10 +14,11 @@ Only the page-aware SDK endpoint is published, on loopback port `30004`.
 | PP-DocLayoutV3 | `PaddlePaddle/PP-DocLayoutV3_safetensors@97d101e6db2642e162a1d05392d1b0231c91033e` | Apache-2.0 |
 | vLLM ARM64 image | `vllm/vllm-openai@sha256:4f986370d7737abacc70ac17f86695acd1dc7892a02ad89ac132639d5afee0d0` | Apache-2.0 |
 
-The container build installs the SDK from its Git commit and pins every package
-that it adds to the immutable vLLM base, including Transformers `5.15.1`,
-safetensors `0.8.0`, PyMuPDF `1.27.2.3`, and Gunicorn `23.0.0`. PyMuPDF embeds
-MuPDF `1.27.2`; the image build fails if either runtime version differs. This
+The container build installs the SDK from its Git commit and uses artifact
+hashes to pin every package that it adds to the immutable vLLM base, including
+Transformers `5.15.1`, safetensors `0.8.0`, PyMuPDF `1.27.2.3`, and Gunicorn
+`23.0.0`. PyMuPDF embeds MuPDF `1.27.2`; the image build fails if either runtime
+version differs. This
 avoids the heap out-of-bounds write in
 [CVE-2026-3308](https://nvd.nist.gov/vuln/detail/CVE-2026-3308), which affects
 MuPDF through `1.27.0`. The newer
@@ -29,13 +30,13 @@ publishing the image.
 image data URI, decodes it into a mode-`0600` file on the container's private
 tmpfs, deletes it after parsing, and never logs request data. It reports backend
 failures and empty recognition as errors instead of returning an empty success.
-At startup it hashes the pipeline configuration and both model weight files,
-checks the renderer versions, and refuses to start on a mismatch. The image
-build verifies the SDK source revision, and the immutable base-image digest is
-part of the deployment identity. Responses carry the same fingerprint that
-Docbank includes in its policy identity. The adapter is copied into the image
-rather than mounted from the host, so the running code changes only when the
-image is rebuilt.
+At startup it verifies every file in both pinned model snapshots, the service
+adapter, image recipe, pipeline configuration, added Python dependencies, SDK
+source revision, and renderer versions. It refuses to start on a mismatch. The
+immutable base-image digest is also part of the deployment identity. Responses
+carry the same fingerprint that Docbank includes in its policy identity. The
+adapter and deployment manifest are copied into the image rather than mounted
+from the host, so the running code changes only when the image is rebuilt.
 
 ## Install
 
@@ -69,8 +70,11 @@ effective Compose configuration:
 
 ```bash
 sudo install -d -m 0755 /opt/docbank-glmocr
-sudo cp Dockerfile compose.yaml config.yaml safe_server.py /opt/docbank-glmocr/
-sudo docker compose --project-directory /opt/docbank-glmocr build
+sudo cp Dockerfile compose.yaml config.yaml deployment.json requirements.lock \
+  safe_server.py /opt/docbank-glmocr/
+GLMOCR_MODEL_ROOT=/var/lib/docbank-glmocr/models \
+  sudo --preserve-env=GLMOCR_MODEL_ROOT \
+  docker compose --project-directory /opt/docbank-glmocr build
 GLMOCR_MODEL_ROOT=/var/lib/docbank-glmocr/models \
   sudo --preserve-env=GLMOCR_MODEL_ROOT \
   docker compose --project-directory /opt/docbank-glmocr config --quiet
@@ -187,10 +191,10 @@ relative quality from the missing Paddle result.
 
 ## Upgrade and rollback
 
-Treat the model, SDK, layout, pipeline configuration, renderer, and container
-revisions as one output identity. Update the matching constants in the service
-and Go policy, build a newly tagged image, run the synthetic benchmark, and only
-then change the systemd deployment.
+Treat the model, SDK, layout, pipeline configuration, dependency lock, adapter,
+and image recipe as one output identity. Update the deployment manifest and Go
+policy together, build a newly tagged image, run the synthetic benchmark, and
+only then change the systemd deployment.
 
 Rollback does not modify any other model or service:
 

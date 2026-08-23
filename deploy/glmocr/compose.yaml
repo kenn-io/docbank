@@ -4,9 +4,7 @@ services:
   engine:
     build:
       context: .
-      args:
-        GLMOCR_SDK_REVISION: cef4d0ea120d1741f5cefe8985eee45f6c8eff1d
-    image: docbank-glmocr:d132e09cf916
+    image: docbank-glmocr:f0919cc6c22b
     command:
       - python3
       - -m
@@ -60,7 +58,7 @@ services:
       - ${GLMOCR_MODEL_ROOT:?set GLMOCR_MODEL_ROOT}/glm-ocr:/models/glm-ocr:ro
 
   api:
-    image: docbank-glmocr:d132e09cf916
+    image: docbank-glmocr:f0919cc6c22b
     command:
       - gunicorn
       - --bind
