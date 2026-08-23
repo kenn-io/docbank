@@ -117,8 +117,10 @@ func BuildEmbeddingPlan(normalized document.NormalizedDocument, context Document
 }
 
 func rawInput(ordinal int, normalized document.NormalizedDocument, chunk document.Chunk, context DocumentContext, maxRunes, maxHeadingRunes int) (EmbeddingInput, error) {
-	contextPrefix := formatContext(context)
 	sourcePrefix := "Source: " + formatLocator(normalized, chunk.Spans) + "\nContent:\n"
+	contextPrefix, contextTruncated := boundedContext(
+		context, maxRunes-utf8.RuneCountInString(sourcePrefix)-1,
+	)
 	heading, headingTruncated := boundedHeadingContext(
 		chunk.HeadingPath, maxHeadingRunes,
 		maxRunes-utf8.RuneCountInString(contextPrefix)-utf8.RuneCountInString(sourcePrefix)-1,
@@ -128,16 +130,23 @@ func rawInput(ordinal int, normalized document.NormalizedDocument, chunk documen
 	if err != nil {
 		return EmbeddingInput{}, fmt.Errorf("format normalized chunk %q: %w", chunk.Key, err)
 	}
-	return makeInput(ordinal, RepresentationKindRaw, text, []SourceRef{sourceRef(chunk)}, chunk.Truncated || headingTruncated || truncated)
+	return makeInput(
+		ordinal, RepresentationKindRaw, text, []SourceRef{sourceRef(chunk)},
+		chunk.Truncated || contextTruncated || headingTruncated || truncated,
+	)
 }
 
 func distilledInput(ordinal int, section DerivedSection, context DocumentContext, maxRunes int) (EmbeddingInput, error) {
-	prefix := formatContext(context) + "Source: " + formatSourceRefs(section.SourceRefs) + "\nDerived summary (verify against source):\n"
+	sourcePrefix := "Source: " + formatSourceRefs(section.SourceRefs) + "\nDerived summary (verify against source):\n"
+	contextPrefix, contextTruncated := boundedContext(
+		context, maxRunes-utf8.RuneCountInString(sourcePrefix)-1,
+	)
+	prefix := contextPrefix + sourcePrefix
 	text, truncated, err := boundedInput(prefix, section.Text, maxRunes)
 	if err != nil {
 		return EmbeddingInput{}, fmt.Errorf("format distilled section %q: %w", section.Key, err)
 	}
-	return makeInput(ordinal, RepresentationKindDistilled, text, section.SourceRefs, truncated)
+	return makeInput(ordinal, RepresentationKindDistilled, text, section.SourceRefs, contextTruncated || truncated)
 }
 
 func makeInput(ordinal int, kind RepresentationKind, text string, refs []SourceRef, truncated bool) (EmbeddingInput, error) {
@@ -169,6 +178,41 @@ func formatContext(context DocumentContext) string {
 		builder.WriteByte('\n')
 	}
 	return builder.String()
+}
+
+func boundedContext(context DocumentContext, availableRunes int) (string, bool) {
+	formatted := formatContext(context)
+	if utf8.RuneCountInString(formatted) <= availableRunes {
+		return formatted, false
+	}
+	if availableRunes < 1 {
+		return "", formatted != ""
+	}
+
+	var builder strings.Builder
+	usedRunes := 0
+	truncated := false
+	for _, field := range [...]struct{ label, value string }{
+		{label: "Filename: ", value: context.Filename},
+		{label: "Title: ", value: context.Title},
+	} {
+		if field.value == "" {
+			continue
+		}
+		remaining := availableRunes - usedRunes
+		valueLimit := remaining - utf8.RuneCountInString(field.label) - 1
+		if valueLimit < 1 {
+			truncated = true
+			continue
+		}
+		value := truncateRunes(field.value, valueLimit)
+		builder.WriteString(field.label)
+		builder.WriteString(value)
+		builder.WriteByte('\n')
+		usedRunes += utf8.RuneCountInString(field.label) + utf8.RuneCountInString(value) + 1
+		truncated = truncated || value != field.value
+	}
+	return builder.String(), truncated
 }
 
 func boundedHeadingContext(path []string, maxHeadingRunes, availableRunes int) (string, bool) {
