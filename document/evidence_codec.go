@@ -61,6 +61,9 @@ func validateSourceEvidenceV1(source SourceEvidenceV1) ([]evidenceTextMap, error
 	if len(source.Units) == 0 || len(source.Units) > maxEvidenceUnits {
 		return nil, errors.New("source evidence must contain a bounded non-empty unit list")
 	}
+	if err := validateSourceOmissionLimit(source, maxEvidenceOmissions); err != nil {
+		return nil, err
+	}
 	if err := validateSourceHeadingLimits(source.Units); err != nil {
 		return nil, err
 	}
@@ -828,6 +831,9 @@ func normalizeEvidenceUnit(
 		omissions[index].UnitOrder = source.Order
 	}
 	slices.SortFunc(omissions, compareEvidenceOmissions)
+	if err := validateCanonicalOmissionOrder(omissions); err != nil {
+		return NormalizedEvidenceUnitV1{}, err
+	}
 	headingPath := make([]string, len(source.HeadingPath))
 	for index, heading := range source.HeadingPath {
 		headingPath[index] = canonicalEvidenceString(heading)
@@ -990,6 +996,9 @@ func normalizeOmissions(source []SourceEvidenceOmissionV1, textMaps []evidenceTe
 		result[index] = normalized
 	}
 	slices.SortFunc(result, compareEvidenceOmissions)
+	if err := validateCanonicalOmissionOrder(result); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
@@ -1021,9 +1030,11 @@ func validateNormalizedEvidenceV1(evidence NormalizedEvidenceV1) error {
 		return fmt.Errorf("normalized evidence contract version must be %q", NormalizedEvidenceContractV1)
 	}
 	if !validEvidenceCompleteness(evidence.Completeness) || !validEvidenceUnitKind(evidence.UnitKind) ||
-		len(evidence.Units) == 0 || len(evidence.Units) > maxEvidenceUnits ||
-		len(evidence.Omissions) > maxEvidenceOmissions {
+		len(evidence.Units) == 0 || len(evidence.Units) > maxEvidenceUnits {
 		return errors.New("normalized evidence identity is invalid")
+	}
+	if err := validateNormalizedOmissionLimit(evidence); err != nil {
+		return err
 	}
 	if err := validateEvidenceIdentifier(evidence.Family, "document family"); err != nil {
 		return err
@@ -1292,13 +1303,15 @@ func (policy EvidencePolicy) validate() error {
 }
 
 func (policy EvidencePolicy) validateSource(source SourceEvidenceV1) error {
-	if len(source.Artifacts) > policy.maxArtifacts || len(source.Units) > policy.maxUnits ||
-		len(source.Omissions) > policy.maxOmissions {
+	if len(source.Artifacts) > policy.maxArtifacts || len(source.Units) > policy.maxUnits {
 		return errors.New("source evidence exceeds policy collection limits")
+	}
+	if err := validateSourceOmissionLimit(source, policy.maxOmissions); err != nil {
+		return err
 	}
 	for index, unit := range source.Units {
 		if len(unit.Regions) > policy.maxRegionsPerUnit ||
-			len(unit.Tables) > policy.maxTablesPerUnit || len(unit.Omissions) > policy.maxOmissions {
+			len(unit.Tables) > policy.maxTablesPerUnit {
 			return fmt.Errorf("source evidence unit %d exceeds policy limits", index)
 		}
 		for tableIndex, table := range unit.Tables {
@@ -1306,6 +1319,36 @@ func (policy EvidencePolicy) validateSource(source SourceEvidenceV1) error {
 				return fmt.Errorf("source evidence unit %d table %d exceeds policy cell limit", index, tableIndex)
 			}
 		}
+	}
+	return nil
+}
+
+func validateSourceOmissionLimit(source SourceEvidenceV1, limit int) error {
+	remaining := limit
+	if len(source.Omissions) > remaining {
+		return errors.New("source evidence exceeds the total omission limit")
+	}
+	remaining -= len(source.Omissions)
+	for _, unit := range source.Units {
+		if len(unit.Omissions) > remaining {
+			return errors.New("source evidence exceeds the total omission limit")
+		}
+		remaining -= len(unit.Omissions)
+	}
+	return nil
+}
+
+func validateNormalizedOmissionLimit(evidence NormalizedEvidenceV1) error {
+	remaining := maxEvidenceOmissions
+	if len(evidence.Omissions) > remaining {
+		return errors.New("normalized evidence exceeds the total omission limit")
+	}
+	remaining -= len(evidence.Omissions)
+	for _, unit := range evidence.Units {
+		if len(unit.Omissions) > remaining {
+			return errors.New("normalized evidence exceeds the total omission limit")
+		}
+		remaining -= len(unit.Omissions)
 	}
 	return nil
 }
@@ -1475,11 +1518,8 @@ func validateNormalizedOmissions(omissions []EvidenceOmissionV1, textMaps []evid
 		} else if omission.Locator != nil {
 			return fmt.Errorf("omission %d has a locator outside a unit omission", index)
 		}
-		if index > 0 && compareEvidenceOmissions(omissions[index-1], omission) > 0 {
-			return errors.New("omissions are not in canonical order")
-		}
 	}
-	return nil
+	return validateCanonicalOmissionOrder(omissions)
 }
 
 func validateOmissionLocator(locator EvidenceLocatorV1, canonical bool) error {
@@ -1583,6 +1623,18 @@ func compareEvidenceOmissions(left, right EvidenceOmissionV1) int {
 		return result
 	}
 	return cmp.Compare(left.UnitOrder, right.UnitOrder)
+}
+
+func validateCanonicalOmissionOrder(omissions []EvidenceOmissionV1) error {
+	for index := 1; index < len(omissions); index++ {
+		switch comparison := compareEvidenceOmissions(omissions[index-1], omissions[index]); {
+		case comparison == 0:
+			return errors.New("duplicate canonical omission")
+		case comparison > 0:
+			return errors.New("omissions are not in strict canonical order")
+		}
+	}
+	return nil
 }
 
 func compareEvidenceLocators(left, right EvidenceLocatorV1) int {

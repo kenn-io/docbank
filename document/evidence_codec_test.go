@@ -843,6 +843,75 @@ func TestMarshalNormalizedEvidenceV1RejectsInvalidOmissions(t *testing.T) {
 	require.ErrorContains(t, err, "omission")
 }
 
+func TestEvidenceV1EnforcesAggregateOmissionLimit(t *testing.T) {
+	const documentOmissions = 50_000
+	const unitOmissions = 50_001
+
+	t.Run("source", func(t *testing.T) {
+		source := syntheticSourceEvidenceV1()
+		source.Completeness = document.EvidencePartial
+		source.Omissions = make([]document.SourceEvidenceOmissionV1, documentOmissions)
+		source.Units[0].Omissions = make([]document.SourceEvidenceOmissionV1, unitOmissions)
+
+		require.ErrorContains(t, document.ValidateSourceEvidenceV1(source), "total omission limit")
+	})
+
+	t.Run("normalized", func(t *testing.T) {
+		policy, err := document.NewEvidencePolicy(1_000)
+		require.NoError(t, err)
+		normalized, err := document.NormalizeEvidenceV1(syntheticSourceEvidenceV1(), policy)
+		require.NoError(t, err)
+
+		normalized.Checksum = ""
+		normalized.Completeness = document.EvidencePartial
+		normalized.Omissions = make([]document.EvidenceOmissionV1, documentOmissions)
+		normalized.Units[0].Omissions = make([]document.EvidenceOmissionV1, unitOmissions)
+
+		_, _, err = document.MarshalNormalizedEvidenceV1(normalized)
+		require.ErrorContains(t, err, "total omission limit")
+	})
+}
+
+func TestEvidenceV1RejectsDuplicateCanonicalOmissions(t *testing.T) {
+	t.Run("source normalization", func(t *testing.T) {
+		source := syntheticSourceEvidenceV1()
+		source.Completeness = document.EvidencePartial
+		source.Omissions = []document.SourceEvidenceOmissionV1{
+			{
+				Kind: document.EvidenceOmissionField, Field: "natural_provenance",
+				Reason: "Cafe\u0301",
+			},
+			{
+				Kind: document.EvidenceOmissionField, Field: "natural_provenance",
+				Reason: "Café",
+			},
+		}
+		policy, err := document.NewEvidencePolicy(1_000)
+		require.NoError(t, err)
+
+		_, err = document.NormalizeEvidenceV1(source, policy)
+		require.ErrorContains(t, err, "duplicate canonical omission")
+	})
+
+	t.Run("normalized manifest", func(t *testing.T) {
+		source := syntheticSourceEvidenceV1()
+		source.Completeness = document.EvidencePartial
+		source.Omissions = []document.SourceEvidenceOmissionV1{{
+			Kind: document.EvidenceOmissionField, Field: "natural_provenance", Reason: "Café",
+		}}
+		policy, err := document.NewEvidencePolicy(1_000)
+		require.NoError(t, err)
+		normalized, err := document.NormalizeEvidenceV1(source, policy)
+		require.NoError(t, err)
+
+		normalized.Checksum = ""
+		normalized.Omissions = append(normalized.Omissions, normalized.Omissions[0])
+
+		_, _, err = document.MarshalNormalizedEvidenceV1(normalized)
+		require.ErrorContains(t, err, "duplicate canonical omission")
+	})
+}
+
 func TestNormalizeEvidenceV1MapsManyRanges(t *testing.T) {
 	const regionCount = 5_000
 	regions := make([]document.SourceEvidenceRegionV1, regionCount)
