@@ -117,11 +117,15 @@ def main() -> None:
     for name, (render, expected) in cases.items():
         target = args.output / f"{name}.png"
         render(target)
-        manifest[name] = {"file": target.name, "expected": expected}
+        manifest[name] = {"file": target.name, "expected": expected, "pages": 1}
     first = Image.open(args.output / "ordinary.png")
     second = Image.open(args.output / "table.png")
     first.save(args.output / "two_page.pdf", save_all=True, append_images=[second], resolution=150)
-    manifest["two_page"] = {"file": "two_page.pdf", "expected": ["DBK-4827", "Archive box"]}
+    manifest["two_page"] = {
+        "file": "two_page.pdf",
+        "expected": ["DBK-4827", "Archive box"],
+        "pages": 2,
+    }
     (args.output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
 

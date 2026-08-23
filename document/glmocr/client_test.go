@@ -142,6 +142,7 @@ func TestClientClassifiesBoundedAndMalformedResponses(t *testing.T) {
 		{name: "too large", body: strings.Repeat("x", 1025), max: 1024, kind: ocr.ErrorResponseTooLarge},
 		{name: "deployment drift", body: `{"model":"glm-ocr","deployment_fingerprint":"stale","json_result":[[{"index":0,"label":"text","content":"x"}]]}`, max: 1 << 20, kind: ocr.ErrorMalformedOutput},
 		{name: "model drift", body: `{"model":"glm-ocr-latest","deployment_fingerprint":"` + glmocr.DefaultDeploymentFingerprint + `","json_result":[[{"index":0,"label":"text","content":"x"}]]}`, max: 1 << 20, kind: ocr.ErrorMalformedOutput},
+		{name: "missing element index", body: `{"model":"glm-ocr","deployment_fingerprint":"` + glmocr.DefaultDeploymentFingerprint + `","json_result":[[{"label":"text","content":"x"}]]}`, max: 1 << 20, kind: ocr.ErrorMalformedOutput},
 		{name: "page index", body: `{"model":"glm-ocr","deployment_fingerprint":"` + glmocr.DefaultDeploymentFingerprint + `","json_result":[[{"index":4,"label":"text","content":"x"}]]}`, max: 1 << 20, kind: ocr.ErrorMalformedOutput},
 		{name: "null page", body: `{"model":"glm-ocr","deployment_fingerprint":"` + glmocr.DefaultDeploymentFingerprint + `","json_result":[null,[{"index":0,"label":"text","content":"x"}]]}`, max: 1 << 20, kind: ocr.ErrorMalformedOutput},
 		{name: "no document evidence", body: `{"model":"glm-ocr","deployment_fingerprint":"` + glmocr.DefaultDeploymentFingerprint + `","json_result":[[]]}`, max: 1 << 20, kind: ocr.ErrorMalformedOutput},

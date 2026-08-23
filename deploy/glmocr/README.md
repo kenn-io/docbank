@@ -158,8 +158,13 @@ The downloaded GLM-OCR snapshot uses 2.5 GiB on disk; PP-DocLayoutV3 uses
 `a16eb0de98d199293371c560f95f83130d2a2c9612449df16839f08ff9498815`
 and `5ea422c6cc5fe759a47e1357c35639b58173508e025a3131cbe4b6ac59e2b85e`.
 
-The repository benchmark generator creates only synthetic data. A warm run
-processed nine pages across eight cases in 3.878 seconds (2.321 pages/second):
+The repository benchmark generator creates only synthetic data. The runner
+counts a case as functional only when the model, deployment
+fingerprint, and page count match; token and Markdown checks remain quality
+observations.
+
+A warm run processed nine pages across eight cases in 3.878 seconds (2.321
+pages/second):
 
 | Case | Result |
 | --- | --- |

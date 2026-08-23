@@ -232,7 +232,7 @@ type wireResult struct {
 }
 
 type wireElement struct {
-	Index   int    `json:"index"`
+	Index   *int   `json:"index"`
 	Label   string `json:"label"`
 	Content string `json:"content"`
 	Bounds  []int  `json:"bbox_2d"`
@@ -352,7 +352,7 @@ func (c *Client) convert(wire wireResult, source ocr.Source, metrics ocr.Request
 		markdown := make([]string, 0, len(page))
 		elements := make([]ocr.Element, 0, len(page))
 		for elementIndex, element := range page {
-			if element.Index != elementIndex || element.Label == "" || len(element.Label) > 64 ||
+			if element.Index == nil || *element.Index != elementIndex || element.Label == "" || len(element.Label) > 64 ||
 				element.Label != strings.ToLower(element.Label) || strings.ContainsAny(element.Label, "\r\n\x00") ||
 				!utf8.ValidString(element.Content) {
 				return ocr.Result{}, fmt.Errorf("GLM-OCR page %d element %d is invalid", pageIndex, elementIndex)
@@ -369,7 +369,7 @@ func (c *Client) convert(wire wireResult, source ocr.Source, metrics ocr.Request
 				markdown = append(markdown, element.Content)
 			}
 			elements = append(elements, ocr.Element{
-				Index: element.Index, Kind: element.Label, Markdown: element.Content, Bounds: boundsPointer,
+				Index: *element.Index, Kind: element.Label, Markdown: element.Content, Bounds: boundsPointer,
 			})
 		}
 		pageMarkdown := strings.Join(markdown, "\n\n")
