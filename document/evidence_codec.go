@@ -232,20 +232,27 @@ func validateSourceLocator(
 type evidenceLocatorSequence struct {
 	completeness EvidenceCompleteness
 	gaps         []EvidenceLocatorV1
+	presentNames map[string]struct{}
 	previous     EvidenceLocatorV1
 	seen         bool
 }
 
-type evidenceLocatorKey struct {
-	end         int64
-	indexOrigin EvidenceIndexOrigin
-	kind        EvidenceLocatorKind
-	start       int64
-}
-
 func (sequence *evidenceLocatorSequence) add(locator EvidenceLocatorV1) error {
-	if locator.Kind == EvidenceLocatorGeneric || locator.Kind == EvidenceLocatorMessage ||
-		locator.Kind == EvidenceLocatorSection {
+	if locator.Kind == EvidenceLocatorGeneric {
+		return nil
+	}
+	if locator.Kind == EvidenceLocatorMessage || locator.Kind == EvidenceLocatorSection {
+		if sequence.seen && locator.Kind != sequence.previous.Kind {
+			return errors.New("locator sequence changes kind")
+		}
+		if !sequence.seen {
+			sequence.previous = locator
+			sequence.presentNames = make(map[string]struct{})
+			sequence.seen = true
+		}
+		if locator.Name != "" {
+			sequence.presentNames[canonicalEvidenceString(locator.Name)] = struct{}{}
+		}
 		return nil
 	}
 	if !sequence.seen {
@@ -303,31 +310,72 @@ func (sequence *evidenceLocatorSequence) add(locator EvidenceLocatorV1) error {
 }
 
 func (sequence *evidenceLocatorSequence) requireGapOmissions(omitted []EvidenceLocatorV1) error {
-	required := make(map[evidenceLocatorKey]struct{}, len(sequence.gaps))
-	for _, gap := range sequence.gaps {
-		required[evidenceLocatorKey{
-			end: gap.End, indexOrigin: gap.IndexOrigin, kind: gap.Kind, start: gap.Start,
-		}] = struct{}{}
-	}
-	declared := make(map[evidenceLocatorKey]struct{}, len(omitted))
-	for index, locator := range omitted {
-		key := evidenceLocatorKey{
-			end: locator.End, indexOrigin: locator.IndexOrigin, kind: locator.Kind, start: locator.Start,
+	if sequence.seen && (sequence.previous.Kind == EvidenceLocatorMessage ||
+		sequence.previous.Kind == EvidenceLocatorSection) {
+		for index, locator := range omitted {
+			if locator.Kind != sequence.previous.Kind || locator.IndexOrigin != EvidenceIndexOriginNone ||
+				locator.Start != 0 || locator.End != 0 || strings.TrimSpace(locator.Name) == "" {
+				return fmt.Errorf("unit omission %d does not match the named locator sequence", index)
+			}
+			if _, present := sequence.presentNames[canonicalEvidenceString(locator.Name)]; present {
+				return fmt.Errorf("unit omission %d overlaps a present named unit", index)
+			}
 		}
-		if _, ok := required[key]; !ok {
+		return nil
+	}
+
+	for index, locator := range omitted {
+		if !sequence.seen || locator.Kind != sequence.previous.Kind ||
+			locator.IndexOrigin != sequence.previous.IndexOrigin {
 			return fmt.Errorf("unit omission %d does not match a locator gap", index)
 		}
-		declared[key] = struct{}{}
 	}
-	for _, gap := range sequence.gaps {
-		key := evidenceLocatorKey{
-			end: gap.End, indexOrigin: gap.IndexOrigin, kind: gap.Kind, start: gap.Start,
+	ordered := slices.Clone(omitted)
+	slices.SortFunc(ordered, func(left, right EvidenceLocatorV1) int {
+		if result := cmp.Compare(left.Start, right.Start); result != 0 {
+			return result
 		}
-		if _, ok := declared[key]; !ok {
+		return cmp.Compare(left.End, right.End)
+	})
+	omissionIndex := 0
+	for _, gap := range sequence.gaps {
+		cursor := gap.Start
+		for omissionIndex < len(ordered) && locatorStartsWithinGap(ordered[omissionIndex], gap) {
+			locator := ordered[omissionIndex]
+			if locator.Start != cursor || locator.End > gap.End {
+				return fmt.Errorf("unit omission %d does not match a locator gap", omissionIndex)
+			}
+			cursor = locatorPositionAfter(locator)
+			omissionIndex++
+		}
+		if cursor != locatorPositionAfter(gap) {
 			return fmt.Errorf("partial evidence locator gap %d:%d lacks a matching unit omission", gap.Start, gap.End)
 		}
 	}
+	trailingCursor := locatorPositionAfter(sequence.previous)
+	for omissionIndex < len(ordered) {
+		locator := ordered[omissionIndex]
+		if locator.Start != trailingCursor {
+			return fmt.Errorf("unit omission %d does not match a locator gap", omissionIndex)
+		}
+		trailingCursor = locatorPositionAfter(locator)
+		omissionIndex++
+	}
 	return nil
+}
+
+func locatorStartsWithinGap(locator, gap EvidenceLocatorV1) bool {
+	if gap.Kind == EvidenceLocatorTime {
+		return locator.Start < gap.End
+	}
+	return locator.Start <= gap.End
+}
+
+func locatorPositionAfter(locator EvidenceLocatorV1) int64 {
+	if locator.Kind == EvidenceLocatorTime {
+		return locator.End
+	}
+	return locator.End + 1
 }
 
 func evidenceLocatorGap(locator EvidenceLocatorV1, start, end int64) EvidenceLocatorV1 {
@@ -498,6 +546,11 @@ func validateSourceTables(
 				return fmt.Errorf("source evidence unit %d table %d cell %d: %w", unitIndex, index, cellIndex, err)
 			}
 		}
+		if evidenceTableCellsOverlap(table.Cells, func(cell SourceEvidenceTableCellV1) (int, int, int, int) {
+			return cell.Row, cell.Row + cell.RowSpan, cell.Column, cell.Column + cell.ColumnSpan
+		}) {
+			return fmt.Errorf("source evidence unit %d table %d has overlapping cells", unitIndex, index)
+		}
 	}
 	return nil
 }
@@ -530,6 +583,76 @@ func validateSourceTableCell(
 		return fmt.Errorf("text range: %w", err)
 	}
 	return nil
+}
+
+type evidenceTableCellEvent struct {
+	columnEnd   int
+	columnStart int
+	delta       int32
+	row         int
+}
+
+func evidenceTableCellsOverlap[T any](
+	cells []T,
+	bounds func(T) (rowStart, rowEnd, columnStart, columnEnd int),
+) bool {
+	if len(cells) < 2 {
+		return false
+	}
+	events := make([]evidenceTableCellEvent, 0, len(cells)*2)
+	columns := make([]int, 0, len(cells)*2)
+	for _, cell := range cells {
+		rowStart, rowEnd, columnStart, columnEnd := bounds(cell)
+		columns = append(columns, columnStart, columnEnd)
+		events = append(events,
+			evidenceTableCellEvent{
+				columnEnd: columnEnd, columnStart: columnStart, delta: 1, row: rowStart,
+			},
+			evidenceTableCellEvent{
+				columnEnd: columnEnd, columnStart: columnStart, delta: -1, row: rowEnd,
+			},
+		)
+	}
+	slices.Sort(columns)
+	columns = slices.Compact(columns)
+	slices.SortFunc(events, func(left, right evidenceTableCellEvent) int {
+		if result := cmp.Compare(left.row, right.row); result != 0 {
+			return result
+		}
+		return cmp.Compare(left.delta, right.delta)
+	})
+	segmentCount := len(columns) - 1
+	maximum := make([]int32, 4*segmentCount)
+	lazy := make([]int32, 4*segmentCount)
+	for _, event := range events {
+		columnStart, _ := slices.BinarySearch(columns, event.columnStart)
+		columnEnd, _ := slices.BinarySearch(columns, event.columnEnd)
+		addEvidenceCellCoverage(maximum, lazy, 1, 0, segmentCount, columnStart, columnEnd, event.delta)
+		if maximum[1] > 1 {
+			return true
+		}
+	}
+	return false
+}
+
+func addEvidenceCellCoverage(
+	maximum, lazy []int32,
+	node, left, right, updateLeft, updateRight int,
+	delta int32,
+) {
+	if updateLeft <= left && right <= updateRight {
+		maximum[node] += delta
+		lazy[node] += delta
+		return
+	}
+	middle := left + (right-left)/2
+	if updateLeft < middle {
+		addEvidenceCellCoverage(maximum, lazy, node*2, left, middle, updateLeft, updateRight, delta)
+	}
+	if updateRight > middle {
+		addEvidenceCellCoverage(maximum, lazy, node*2+1, middle, right, updateLeft, updateRight, delta)
+	}
+	maximum[node] = lazy[node] + max(maximum[node*2], maximum[node*2+1])
 }
 
 func validateSourceConfidence(confidence *SourceEvidenceConfidenceV1) error {
@@ -931,6 +1054,9 @@ func validateNormalizedEvidenceV1(evidence NormalizedEvidenceV1) error {
 		if !norm.NFC.IsNormalString(unit.Text) || strings.Contains(unit.Text, "\r") {
 			return fmt.Errorf("normalized evidence unit %d text is not canonical", index)
 		}
+		if canonicalEvidenceString(unit.Locator.Name) != unit.Locator.Name {
+			return fmt.Errorf("normalized evidence unit %d locator name is not canonical", index)
+		}
 		textMaps[index] = newEvidenceTextMap(unit.Text, collectNormalizedRangeOffsets(unit, documentRangeOffsets[index]))
 		if err := validateSourceLocator(
 			evidence.Family, evidence.UnitKind, evidence.Completeness,
@@ -1108,6 +1234,11 @@ func validateNormalizedTables(
 			if cell.RegionID != "" && regionIDs[cell.RegionID] != EvidenceRegionTableCell {
 				return fmt.Errorf("normalized evidence unit %d table %d cell %d has invalid cell region", unitIndex, index, cellIndex)
 			}
+		}
+		if evidenceTableCellsOverlap(table.Cells, func(cell NormalizedEvidenceTableCellV1) (int, int, int, int) {
+			return cell.Row, cell.Row + cell.RowSpan, cell.Column, cell.Column + cell.ColumnSpan
+		}) {
+			return fmt.Errorf("normalized evidence unit %d table %d has overlapping cells", unitIndex, index)
 		}
 		withoutID := table
 		withoutID.ID = ""
@@ -1364,6 +1495,13 @@ func validateOmissionLocator(locator EvidenceLocatorV1, canonical bool) error {
 		if locator.IndexOrigin != EvidenceIndexOriginNone || locator.Start < 0 || locator.End <= locator.Start ||
 			locator.End > maxEvidenceCoordinate {
 			return errors.New("omitted time-range locator is invalid")
+		}
+		return nil
+	}
+	if locator.Kind == EvidenceLocatorMessage || locator.Kind == EvidenceLocatorSection {
+		if locator.IndexOrigin != EvidenceIndexOriginNone || locator.Start != 0 || locator.End != 0 ||
+			strings.TrimSpace(locator.Name) == "" {
+			return errors.New("omitted named unit locator is invalid")
 		}
 		return nil
 	}

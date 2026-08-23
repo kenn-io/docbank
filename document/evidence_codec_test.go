@@ -356,6 +356,95 @@ func TestEvidenceV1LocatorSequenceAllowsDeclaredGap(t *testing.T) {
 	assert.Equal(t, int64(99), normalized.Omissions[0].Locator.End)
 }
 
+func TestEvidenceV1LocatorSequenceAllowsCoveredAndTrailingOmissions(t *testing.T) {
+	t.Run("split interior gap", func(t *testing.T) {
+		source := syntheticSourceEvidenceV1()
+		source.Completeness = document.EvidencePartial
+		source.Units[1].Locator.Start = 5
+		source.Units[1].Locator.End = 5
+		source.Omissions = []document.SourceEvidenceOmissionV1{
+			{
+				Kind: document.EvidenceOmissionUnit,
+				Locator: &document.SourceEvidenceLocatorV1{
+					Kind: document.EvidenceLocatorPage, IndexOrigin: document.EvidenceIndexOriginOne,
+					Start: 2, End: 3,
+				},
+				Reason: "provider omitted pages 2 and 3",
+			},
+			{
+				Kind: document.EvidenceOmissionUnit,
+				Locator: &document.SourceEvidenceLocatorV1{
+					Kind: document.EvidenceLocatorPage, IndexOrigin: document.EvidenceIndexOriginOne,
+					Start: 4, End: 4,
+				},
+				Reason: "provider omitted page 4",
+			},
+		}
+
+		policy, err := document.NewEvidencePolicy(100_000)
+		require.NoError(t, err)
+		_, err = document.NormalizeEvidenceV1(source, policy)
+		require.NoError(t, err)
+	})
+
+	t.Run("trailing range", func(t *testing.T) {
+		source := syntheticSourceEvidenceV1()
+		source.Completeness = document.EvidencePartial
+		source.Omissions = []document.SourceEvidenceOmissionV1{{
+			Kind: document.EvidenceOmissionUnit,
+			Locator: &document.SourceEvidenceLocatorV1{
+				Kind: document.EvidenceLocatorPage, IndexOrigin: document.EvidenceIndexOriginOne,
+				Start: 3, End: 10,
+			},
+			Reason: "provider omitted trailing pages",
+		}}
+
+		policy, err := document.NewEvidencePolicy(100_000)
+		require.NoError(t, err)
+		_, err = document.NormalizeEvidenceV1(source, policy)
+		require.NoError(t, err)
+	})
+}
+
+func TestEvidenceV1LocatorSequenceAllowsNamedUnitOmissions(t *testing.T) {
+	for _, unitKind := range []document.EvidenceUnitKind{
+		document.EvidenceUnitMessage,
+		document.EvidenceUnitSection,
+	} {
+		t.Run(string(unitKind), func(t *testing.T) {
+			family := "mail"
+			if unitKind == document.EvidenceUnitSection {
+				family = "text"
+			}
+			locatorKind := document.EvidenceLocatorKind(unitKind)
+			source := document.SourceEvidenceV1{
+				ContractVersion: document.SourceEvidenceContractV1,
+				Completeness:    document.EvidencePartial,
+				Family:          family,
+				UnitKind:        unitKind,
+				Units: []document.SourceEvidenceUnitV1{{
+					Order: 0, Text: "present unit",
+					Locator: document.SourceEvidenceLocatorV1{
+						Kind: locatorKind, IndexOrigin: document.EvidenceIndexOriginNone, Name: "present",
+					},
+				}},
+				Omissions: []document.SourceEvidenceOmissionV1{{
+					Kind: document.EvidenceOmissionUnit,
+					Locator: &document.SourceEvidenceLocatorV1{
+						Kind: locatorKind, IndexOrigin: document.EvidenceIndexOriginNone, Name: "missing",
+					},
+					Reason: "provider omitted a named unit",
+				}},
+			}
+
+			policy, err := document.NewEvidencePolicy(100_000)
+			require.NoError(t, err)
+			_, err = document.NormalizeEvidenceV1(source, policy)
+			require.NoError(t, err)
+		})
+	}
+}
+
 func TestEvidenceV1RejectsUnitOmissionsOutsideLocatorGaps(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -504,6 +593,50 @@ func TestNormalizedEvidenceV1EnforcesSourceBounds(t *testing.T) {
 		_, _, err = document.MarshalNormalizedEvidenceV1(normalized)
 		require.ErrorContains(t, err, "NUL")
 	})
+}
+
+func TestEvidenceV1RejectsOverlappingTableCells(t *testing.T) {
+	source := syntheticSourceEvidenceV1()
+	source.Units[0].Tables[0].Rows = 3
+	source.Units[0].Tables[0].Columns = 3
+	source.Units[0].Tables[0].Cells[0].RowSpan = 2
+	source.Units[0].Tables[0].Cells[0].ColumnSpan = 2
+	overlap := source.Units[0].Tables[0].Cells[0]
+	overlap.Order = 1
+	overlap.Row = 1
+	overlap.Column = 1
+	source.Units[0].Tables[0].Cells = append(source.Units[0].Tables[0].Cells, overlap)
+
+	require.ErrorContains(t, document.ValidateSourceEvidenceV1(source), "overlapping cells")
+
+	source.Units[0].Tables[0].Cells = source.Units[0].Tables[0].Cells[:1]
+	policy, err := document.NewEvidencePolicy(100_000)
+	require.NoError(t, err)
+	normalized, err := document.NormalizeEvidenceV1(source, policy)
+	require.NoError(t, err)
+	normalized.Checksum = ""
+	normalizedOverlap := normalized.Units[0].Tables[0].Cells[0]
+	normalizedOverlap.Order = 1
+	normalizedOverlap.Row = 1
+	normalizedOverlap.Column = 1
+	normalized.Units[0].Tables[0].Cells = append(
+		normalized.Units[0].Tables[0].Cells, normalizedOverlap,
+	)
+
+	_, _, err = document.MarshalNormalizedEvidenceV1(normalized)
+	require.ErrorContains(t, err, "overlapping cells")
+}
+
+func TestNormalizedEvidenceV1RejectsNoncanonicalLocatorName(t *testing.T) {
+	policy, err := document.NewEvidencePolicy(100_000)
+	require.NoError(t, err)
+	normalized, err := document.NormalizeEvidenceV1(syntheticSourceEvidenceV1(), policy)
+	require.NoError(t, err)
+	normalized.Checksum = ""
+	normalized.Units[0].Locator.Name = "Cafe\u0301"
+
+	_, _, err = document.MarshalNormalizedEvidenceV1(normalized)
+	require.ErrorContains(t, err, "locator name is not canonical")
 }
 
 func TestEvidenceV1RejectsExcessHeadings(t *testing.T) {
