@@ -24,6 +24,8 @@ const (
 	maxEvidenceReasonBytes      = 1 << 12
 	maxEvidenceTextBytes        = 256 << 20
 	maxEvidenceCoordinate       = int64(1_000_000_000_000_000)
+	maxEvidenceHeadingDepth     = 64
+	maxEvidenceHeadingBytes     = 1 << 20
 	maxEvidenceGeometryBoxes    = 10_000
 	maxEvidenceGeometryPolygons = 10_000
 	maxEvidenceGeometryPoints   = 100_000
@@ -52,6 +54,9 @@ func validateSourceEvidenceV1(source SourceEvidenceV1) ([]evidenceTextMap, error
 	if len(source.Units) == 0 || len(source.Units) > 100_000 {
 		return nil, errors.New("source evidence must contain a bounded non-empty unit list")
 	}
+	if err := validateSourceHeadingLimits(source.Units); err != nil {
+		return nil, err
+	}
 	if err := validateCompletenessOmissions(source); err != nil {
 		return nil, err
 	}
@@ -68,9 +73,13 @@ func validateSourceEvidenceV1(source SourceEvidenceV1) ([]evidenceTextMap, error
 		}
 		textMaps[index] = newEvidenceTextMap(unit.Text, collectSourceRangeOffsets(unit, documentRangeOffsets[index]))
 	}
+	locatorSequence := evidenceLocatorSequence{completeness: source.Completeness}
 	for index := range source.Units {
 		if err := validateSourceUnit(source, index, artifactIDs, textMaps[index]); err != nil {
 			return nil, err
+		}
+		if err := locatorSequence.add(evidenceLocatorFromSource(source.Units[index].Locator)); err != nil {
+			return nil, fmt.Errorf("source evidence unit %d: %w", index, err)
 		}
 	}
 	if err := validateSourceOmissions(source.Omissions, textMaps); err != nil {
@@ -206,6 +215,84 @@ func validateSourceLocator(
 	}
 	if locator.Kind == EvidenceLocatorSheet && strings.TrimSpace(locator.Name) == "" {
 		return errors.New("sheet locator requires a stable name")
+	}
+	return nil
+}
+
+type evidenceLocatorSequence struct {
+	completeness EvidenceCompleteness
+	previous     EvidenceLocatorV1
+	seen         bool
+}
+
+func (sequence *evidenceLocatorSequence) add(locator EvidenceLocatorV1) error {
+	if locator.Kind == EvidenceLocatorGeneric || locator.Kind == EvidenceLocatorMessage ||
+		locator.Kind == EvidenceLocatorSection {
+		return nil
+	}
+	if !sequence.seen {
+		sequence.previous = locator
+		sequence.seen = true
+		if sequence.completeness != EvidenceComplete {
+			return nil
+		}
+		first := int64(0)
+		if locator.Kind != EvidenceLocatorTime && locator.IndexOrigin == EvidenceIndexOriginOne {
+			first = 1
+		}
+		if locator.Start != first {
+			return errors.New("complete locator sequence does not start at its index origin")
+		}
+		return nil
+	}
+	if locator.Kind != sequence.previous.Kind {
+		return errors.New("locator sequence changes kind")
+	}
+	if locator.IndexOrigin != sequence.previous.IndexOrigin {
+		return errors.New("locator sequence changes index origin")
+	}
+	if locator.Kind == EvidenceLocatorTime {
+		if locator.Start < sequence.previous.End {
+			return errors.New("locator sequence overlaps or regresses")
+		}
+		if sequence.completeness == EvidenceComplete && locator.Start != sequence.previous.End {
+			return errors.New("complete locator sequence has a gap")
+		}
+	} else {
+		if locator.Start <= sequence.previous.End {
+			return errors.New("locator sequence overlaps or regresses")
+		}
+		if sequence.completeness == EvidenceComplete && locator.Start != sequence.previous.End+1 {
+			return errors.New("complete locator sequence has a gap")
+		}
+	}
+	sequence.previous = locator
+	return nil
+}
+
+func evidenceLocatorFromSource(locator SourceEvidenceLocatorV1) EvidenceLocatorV1 {
+	return EvidenceLocatorV1(locator)
+}
+
+func validateSourceHeadingLimits(units []SourceEvidenceUnitV1) error {
+	remaining := maxEvidenceHeadingBytes
+	for index, unit := range units {
+		if err := validateHeadingPathLimits(unit.HeadingPath, &remaining); err != nil {
+			return fmt.Errorf("source evidence unit %d: %w", index, err)
+		}
+	}
+	return nil
+}
+
+func validateHeadingPathLimits(headingPath []string, remainingBytes *int) error {
+	if len(headingPath) > maxEvidenceHeadingDepth {
+		return errors.New("evidence heading depth exceeds its limit")
+	}
+	for _, heading := range headingPath {
+		if len(heading) > *remainingBytes {
+			return errors.New("evidence heading bytes exceed their document limit")
+		}
+		*remainingBytes -= len(heading)
 	}
 	return nil
 }
@@ -736,23 +823,36 @@ func validateNormalizedEvidenceV1(evidence NormalizedEvidenceV1) error {
 	if err := validateFamilyUnitKindForCompleteness(evidence.Family, evidence.UnitKind, evidence.Completeness); err != nil {
 		return err
 	}
+	headingBytes := maxEvidenceHeadingBytes
+	for index, unit := range evidence.Units {
+		if err := validateHeadingPathLimits(unit.HeadingPath, &headingBytes); err != nil {
+			return fmt.Errorf("normalized evidence unit %d: %w", index, err)
+		}
+	}
 	artifactIDs, err := validateNormalizedArtifacts(evidence.Artifacts)
 	if err != nil {
 		return err
 	}
 	textMaps := make([]evidenceTextMap, len(evidence.Units))
 	documentRangeOffsets := partitionNormalizedOmissionRangeOffsets(evidence.Omissions, len(evidence.Units))
+	locatorSequence := evidenceLocatorSequence{completeness: evidence.Completeness}
 	for index, unit := range evidence.Units {
 		if unit.Order != index || !validEvidenceID(unit.ID, "unit") || !utf8.ValidString(unit.Text) ||
 			!norm.NFC.IsNormalString(unit.Text) || strings.Contains(unit.Text, "\r") {
 			return fmt.Errorf("normalized evidence unit %d is not canonical", index)
 		}
 		textMaps[index] = newEvidenceTextMap(unit.Text, collectNormalizedRangeOffsets(unit, documentRangeOffsets[index]))
-		if err := validateSourceLocator(evidence.Family, evidence.UnitKind, evidence.Completeness, SourceEvidenceLocatorV1{
-			End: unit.Locator.End, IndexOrigin: unit.Locator.IndexOrigin, Kind: unit.Locator.Kind,
-			Name: unit.Locator.Name, Start: unit.Locator.Start,
-		}); err != nil {
+		if err := validateSourceLocator(
+			evidence.Family, evidence.UnitKind, evidence.Completeness,
+			SourceEvidenceLocatorV1{
+				End: unit.Locator.End, IndexOrigin: unit.Locator.IndexOrigin, Kind: unit.Locator.Kind,
+				Name: unit.Locator.Name, Start: unit.Locator.Start,
+			},
+		); err != nil {
 			return fmt.Errorf("normalized evidence unit %d locator: %w", index, err)
+		}
+		if err := locatorSequence.add(unit.Locator); err != nil {
+			return fmt.Errorf("normalized evidence unit %d: %w", index, err)
 		}
 		if err := validateNormalizedConfidence(unit.Confidence); err != nil {
 			return fmt.Errorf("normalized evidence unit %d: %w", index, err)

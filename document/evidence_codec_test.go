@@ -150,6 +150,29 @@ func TestSourceEvidenceV1RejectsInvalidAuthority(t *testing.T) {
 			want: "noncontiguous unit order",
 		},
 		{
+			name: "duplicate page locator",
+			mutate: func(source *document.SourceEvidenceV1) {
+				source.Units[1].Locator.Start = 1
+				source.Units[1].Locator.End = 1
+			},
+			want: "locator sequence overlaps",
+		},
+		{
+			name: "mixed locator origins",
+			mutate: func(source *document.SourceEvidenceV1) {
+				source.Units[1].Locator.IndexOrigin = document.EvidenceIndexOriginZero
+			},
+			want: "locator sequence changes index origin",
+		},
+		{
+			name: "complete locator gap",
+			mutate: func(source *document.SourceEvidenceV1) {
+				source.Units[1].Locator.Start = 3
+				source.Units[1].Locator.End = 3
+			},
+			want: "complete locator sequence has a gap",
+		},
+		{
 			name: "missing page locator",
 			mutate: func(source *document.SourceEvidenceV1) {
 				source.Units[0].Locator = document.SourceEvidenceLocatorV1{}
@@ -293,6 +316,63 @@ func TestSourceEvidenceV1RejectsInvalidAuthority(t *testing.T) {
 			require.ErrorContains(t, document.ValidateSourceEvidenceV1(source), test.want)
 		})
 	}
+}
+
+func TestEvidenceV1LocatorSequenceAllowsPartialGaps(t *testing.T) {
+	source := syntheticSourceEvidenceV1()
+	source.Completeness = document.EvidencePartial
+	source.Omissions = []document.SourceEvidenceOmissionV1{{
+		Kind: document.EvidenceOmissionField, Field: "source_unit", Reason: "provider omitted page 2",
+	}}
+	source.Units[1].Locator.Start = 3
+	source.Units[1].Locator.End = 3
+
+	require.NoError(t, document.ValidateSourceEvidenceV1(source))
+
+	policy, err := document.NewEvidencePolicy(100_000)
+	require.NoError(t, err)
+	normalized, err := document.NormalizeEvidenceV1(syntheticSourceEvidenceV1(), policy)
+	require.NoError(t, err)
+	normalized.Checksum = ""
+	normalized.Units[1].Locator.Start = 1
+	normalized.Units[1].Locator.End = 1
+
+	_, _, err = document.MarshalNormalizedEvidenceV1(normalized)
+	require.ErrorContains(t, err, "locator sequence overlaps")
+}
+
+func TestEvidenceV1RejectsExcessHeadings(t *testing.T) {
+	t.Run("depth", func(t *testing.T) {
+		source := syntheticSourceEvidenceV1()
+		source.Units[0].HeadingPath = make([]string, 65)
+		for index := range source.Units[0].HeadingPath {
+			source.Units[0].HeadingPath[index] = "heading"
+		}
+
+		require.ErrorContains(t, document.ValidateSourceEvidenceV1(source), "heading depth")
+	})
+
+	t.Run("aggregate bytes", func(t *testing.T) {
+		source := syntheticSourceEvidenceV1()
+		source.Units[0].HeadingPath = []string{strings.Repeat("h", (1<<20)+1)}
+
+		require.ErrorContains(t, document.ValidateSourceEvidenceV1(source), "heading bytes")
+	})
+
+	t.Run("normalized", func(t *testing.T) {
+		policy, err := document.NewEvidencePolicy(100_000)
+		require.NoError(t, err)
+		normalized, err := document.NormalizeEvidenceV1(syntheticSourceEvidenceV1(), policy)
+		require.NoError(t, err)
+		normalized.Checksum = ""
+		normalized.Units[0].HeadingPath = make([]string, 65)
+		for index := range normalized.Units[0].HeadingPath {
+			normalized.Units[0].HeadingPath[index] = "heading"
+		}
+
+		_, _, err = document.MarshalNormalizedEvidenceV1(normalized)
+		require.ErrorContains(t, err, "heading depth")
+	})
 }
 
 func TestSourceEvidenceV1AllowsBlankUnits(t *testing.T) {
