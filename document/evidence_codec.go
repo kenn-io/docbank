@@ -1301,6 +1301,9 @@ func validateNormalizedTables(
 		if table.Order != index || !validEvidenceID(table.ID, "table") {
 			return fmt.Errorf("normalized evidence unit %d table %d is not canonical", unitIndex, index)
 		}
+		if table.Cells == nil {
+			return fmt.Errorf("normalized evidence unit %d table %d has a nil cell list", unitIndex, index)
+		}
 		if table.Rows <= 0 || table.Columns <= 0 || table.Rows > maxEvidenceTableDimension ||
 			table.Columns > maxEvidenceTableDimension {
 			return fmt.Errorf("normalized evidence unit %d table %d has invalid table dimensions", unitIndex, index)

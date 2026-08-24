@@ -1084,32 +1084,31 @@ func TestEvidenceV1RejectsAmbiguousAuthorities(t *testing.T) {
 func TestMarshalNormalizedEvidenceV1RejectsAmbiguousAuthorities(t *testing.T) {
 	policy, err := document.NewEvidencePolicy(1_000)
 	require.NoError(t, err)
+	identity := func(kind, subtype string, order int, value any) string {
+		local, marshalErr := json.Marshal(value)
+		require.NoError(t, marshalErr)
+		localDigest := sha256.Sum256(local)
+		hash := sha256.New()
+		hash.Write([]byte("docbank-normalized-evidence-id/v1\x00"))
+		hash.Write([]byte(document.NormalizedEvidenceContractV1))
+		hash.Write([]byte{'\x00'})
+		hash.Write([]byte(kind))
+		hash.Write([]byte{'\x00'})
+		_, _ = fmt.Fprintf(hash, "%09d", order)
+		hash.Write([]byte{'\x00'})
+		hash.Write([]byte(subtype))
+		hash.Write([]byte{'\x00'})
+		hash.Write(localDigest[:])
+		return kind + "_" + hex.EncodeToString(hash.Sum(nil))
+	}
 
 	t.Run("reused table region", func(t *testing.T) {
 		normalized, err := document.NormalizeEvidenceV1(syntheticSourceEvidenceV1(), policy)
 		require.NoError(t, err)
 		normalized.Checksum = ""
 
-		identity := func(kind, subtype string, order int, value any) string {
-			local, marshalErr := json.Marshal(value)
-			require.NoError(t, marshalErr)
-			localDigest := sha256.Sum256(local)
-			hash := sha256.New()
-			hash.Write([]byte("docbank-normalized-evidence-id/v1\x00"))
-			hash.Write([]byte(document.NormalizedEvidenceContractV1))
-			hash.Write([]byte{'\x00'})
-			hash.Write([]byte(kind))
-			hash.Write([]byte{'\x00'})
-			_, _ = fmt.Fprintf(hash, "%09d", order)
-			hash.Write([]byte{'\x00'})
-			hash.Write([]byte(subtype))
-			hash.Write([]byte{'\x00'})
-			hash.Write(localDigest[:])
-			return kind + "_" + hex.EncodeToString(hash.Sum(nil))
-		}
-
 		table := normalized.Units[0].Tables[0]
-		table.Cells = nil
+		table.Cells = []document.NormalizedEvidenceTableCellV1{}
 		table.ID = ""
 		table.Order = 1
 		table.ID = identity("table", "table/unit-0", table.Order, table)
@@ -1121,6 +1120,24 @@ func TestMarshalNormalizedEvidenceV1RejectsAmbiguousAuthorities(t *testing.T) {
 
 		_, _, err = document.MarshalNormalizedEvidenceV1(normalized)
 		require.ErrorContains(t, err, "reuses a table region")
+	})
+
+	t.Run("nil cell list", func(t *testing.T) {
+		source := syntheticSourceEvidenceV1()
+		source.Units[0].Tables[0].Cells = []document.SourceEvidenceTableCellV1{}
+		normalized, err := document.NormalizeEvidenceV1(source, policy)
+		require.NoError(t, err)
+		normalized.Checksum = ""
+		normalized.Units[0].Tables[0].Cells = nil
+		table := &normalized.Units[0].Tables[0]
+		table.ID = ""
+		table.ID = identity("table", "table/unit-0", table.Order, *table)
+		unit := &normalized.Units[0]
+		unit.ID = ""
+		unit.ID = identity("unit", string(unit.Locator.Kind), unit.Order, *unit)
+
+		_, _, err = document.MarshalNormalizedEvidenceV1(normalized)
+		require.ErrorContains(t, err, "nil cell list")
 	})
 
 	t.Run("conflicting artifact checksums", func(t *testing.T) {
