@@ -1861,6 +1861,7 @@ func validateArtifactPointer(pointer string) error {
 	parsed, err := url.Parse(pointer)
 	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.RawQuery != "" || parsed.Fragment != "" ||
 		parsed.RawPath != "" || parsed.ForceQuery || strings.Contains(pointer, "\\") || strings.Contains(pointer, "%") ||
+		strings.Contains(pointer, "#") ||
 		strings.HasPrefix(pointer, "/") || path.Clean(pointer) != pointer || pointer == "." || pointer == ".." ||
 		strings.HasPrefix(pointer, "../") {
 		return errors.New("artifact pointer must be a canonical relative path")

@@ -315,6 +315,20 @@ func TestSourceEvidenceV1RejectsInvalidAuthority(t *testing.T) {
 			want: "artifact pointer",
 		},
 		{
+			name: "artifact pointer empty fragment",
+			mutate: func(source *document.SourceEvidenceV1) {
+				source.Artifacts[0].Pointer = "provider/evidence.json#"
+			},
+			want: "artifact pointer",
+		},
+		{
+			name: "artifact pointer fragment delimiter",
+			mutate: func(source *document.SourceEvidenceV1) {
+				source.Artifacts[0].Pointer = "#"
+			},
+			want: "artifact pointer",
+		},
+		{
 			name: "artifact pointer escaped traversal",
 			mutate: func(source *document.SourceEvidenceV1) {
 				source.Artifacts[0].Pointer = "provider/%2e%2e/evidence.json"
