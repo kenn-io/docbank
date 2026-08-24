@@ -778,6 +778,24 @@ func TestNormalizeEvidenceV1StopsAtCharacterLimit(t *testing.T) {
 	require.ErrorContains(t, err, "policy character limit")
 }
 
+func TestNormalizeEvidenceV1BoundsOverLimitAllocations(t *testing.T) {
+	const sourceBytes = 64 << 10
+	source := syntheticSourceEvidenceV1()
+	source.Units[0].Text = strings.Repeat("x", sourceBytes)
+	policy, err := document.NewEvidencePolicy(1)
+	require.NoError(t, err)
+
+	result := testing.Benchmark(func(b *testing.B) {
+		b.Helper()
+		for range b.N {
+			if _, normalizeErr := document.NormalizeEvidenceV1(source, policy); normalizeErr == nil {
+				b.Fatal("over-limit evidence was accepted")
+			}
+		}
+	})
+	require.Less(t, result.AllocedBytesPerOp(), int64(sourceBytes))
+}
+
 func TestEvidenceV1RejectsExcessGeometry(t *testing.T) {
 	t.Run("boxes", func(t *testing.T) {
 		source := syntheticSourceEvidenceV1()

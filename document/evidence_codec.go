@@ -1758,68 +1758,54 @@ func partitionNormalizedOmissionRangeOffsets(omissions []EvidenceOmissionV1, uni
 }
 
 func newEvidenceTextMap(source string, offsets []int, maxRunes int) (evidenceTextMap, error) {
-	sourceRunes := []rune(source)
-	requested := make(map[int]struct{}, len(offsets)+1)
-	requested[len(sourceRunes)] = struct{}{}
+	requested := make(map[int]struct{}, len(offsets))
 	for _, offset := range offsets {
-		if offset >= 0 && offset <= len(sourceRunes) {
+		if offset >= 0 {
 			requested[offset] = struct{}{}
 		}
 	}
+	boundaries := make(map[int]int, len(requested)+1)
+	if _, ok := requested[0]; ok {
+		boundaries[0] = 0
+	}
 
-	intermediateBySource := make(map[int]int, len(requested))
-	var intermediate strings.Builder
-	intermediate.Grow(len(source))
-	for index := 0; index <= len(sourceRunes); {
-		if _, ok := requested[index]; ok {
-			intermediateBySource[index] = intermediate.Len()
-		}
-		if index == len(sourceRunes) {
-			break
-		}
-		if sourceRunes[index] == '\r' {
-			intermediate.WriteByte('\n')
-			if index+1 < len(sourceRunes) && sourceRunes[index+1] == '\n' {
+	var normalized strings.Builder
+	grow := len(source)
+	if maxRunes >= 0 && maxRunes < grow {
+		grow = maxRunes
+	}
+	normalized.Grow(grow)
+	var iterator norm.Iter
+	iterator.InitString(norm.NFC, source)
+	sourceOffset := 0
+	normalizedOffset := 0
+	for !iterator.Done() {
+		sourceStart := iterator.Pos()
+		segment := iterator.Next()
+		sourceEnd := iterator.Pos()
+		if len(segment) == 1 && segment[0] == '\r' {
+			segment = []byte{'\n'}
+			if sourceEnd < len(source) && source[sourceEnd] == '\n' {
 				// A range boundary between CR and LF has no canonical meaning.
-				index += 2
-				continue
+				_ = iterator.Next()
+				sourceEnd = iterator.Pos()
 			}
-			index++
-			continue
 		}
-		intermediate.WriteRune(sourceRunes[index])
-		index++
-	}
-
-	sourcesByIntermediate := make(map[int][]int, len(intermediateBySource))
-	for sourceOffset, intermediateOffset := range intermediateBySource {
-		sourcesByIntermediate[intermediateOffset] = append(sourcesByIntermediate[intermediateOffset], sourceOffset)
-	}
-	boundaries := make(map[int]int, len(intermediateBySource))
-	assignBoundary := func(intermediateOffset, normalizedOffset int) {
-		for _, sourceOffset := range sourcesByIntermediate[intermediateOffset] {
+		segmentRunes := utf8.RuneCount(segment)
+		if maxRunes >= 0 && segmentRunes > maxRunes-normalizedOffset {
+			return evidenceTextMap{}, errors.New("canonical text exceeds the remaining character budget")
+		}
+		normalized.Write(segment)
+		normalizedOffset += segmentRunes
+		sourceOffset += utf8.RuneCountInString(source[sourceStart:sourceEnd])
+		if _, ok := requested[sourceOffset]; ok {
 			boundaries[sourceOffset] = normalizedOffset
 		}
 	}
-	assignBoundary(0, 0)
-
-	var normalized strings.Builder
-	normalized.Grow(intermediate.Len())
-	var iterator norm.Iter
-	iterator.InitString(norm.NFC, intermediate.String())
-	normalizedOffset := 0
-	for !iterator.Done() {
-		segment := iterator.Next()
-		normalized.Write(segment)
-		normalizedOffset += utf8.RuneCount(segment)
-		if maxRunes >= 0 && normalizedOffset > maxRunes {
-			return evidenceTextMap{}, errors.New("canonical text exceeds the remaining character budget")
-		}
-		assignBoundary(iterator.Pos(), normalizedOffset)
-	}
+	boundaries[sourceOffset] = normalizedOffset
 	return evidenceTextMap{
 		boundaries: boundaries, normalized: normalized.String(), normalizedRunes: normalizedOffset,
-		sourceRunes: len(sourceRunes),
+		sourceRunes: sourceOffset,
 	}, nil
 }
 
