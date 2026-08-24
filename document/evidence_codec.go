@@ -516,9 +516,13 @@ func validateSourceRegions(
 				return nil, fmt.Errorf("source evidence unit %d region %d has unknown artifact", unitIndex, index)
 			}
 		}
-		if _, err := textMap.normalizeRange(region.TextRange); err != nil {
+		textRange, err := textMap.normalizeRange(region.TextRange)
+		if err != nil {
 			return nil, fmt.Errorf("source evidence unit %d region %d text range: %w", unitIndex, index, err)
 		}
+		ref := providerIDs[region.ProviderID]
+		ref.textRange = textRange
+		providerIDs[region.ProviderID] = ref
 		if err := validateSourceConfidence(region.Confidence); err != nil {
 			return nil, fmt.Errorf("source evidence unit %d region %d: %w", unitIndex, index, err)
 		}
@@ -598,6 +602,10 @@ func validateSourceTableCell(
 		cell.Row > table.Rows-cell.RowSpan || cell.Column > table.Columns-cell.ColumnSpan {
 		return errors.New("cell coordinates exceed table dimensions")
 	}
+	textRange, err := textMap.normalizeRange(cell.TextRange)
+	if err != nil {
+		return fmt.Errorf("text range: %w", err)
+	}
 	if cell.RegionProviderID != "" {
 		region, ok := regionIDs[cell.RegionProviderID]
 		if !ok {
@@ -609,13 +617,13 @@ func validateSourceTableCell(
 		if region.parent != table.RegionProviderID {
 			return errors.New("cell region belongs to a different table")
 		}
+		if region.textRange != textRange {
+			return errors.New("cell text range does not match cell region")
+		}
 		if _, used := cellRegions[cell.RegionProviderID]; used {
 			return errors.New("cell region is already used by another cell")
 		}
 		cellRegions[cell.RegionProviderID] = struct{}{}
-	}
-	if _, err := textMap.normalizeRange(cell.TextRange); err != nil {
-		return fmt.Errorf("text range: %w", err)
 	}
 	return nil
 }
@@ -784,15 +792,20 @@ func NormalizeEvidenceV1(source SourceEvidenceV1, policy EvidencePolicy) (Normal
 	if err != nil {
 		return NormalizedEvidenceV1{}, err
 	}
+	documentOmissions, unitRangeOmissions := partitionSourceOmissionsForNormalization(
+		source.Omissions, len(source.Units),
+	)
 	units := make([]NormalizedEvidenceUnitV1, len(source.Units))
 	for index, unit := range source.Units {
-		normalized, err := normalizeEvidenceUnit(unit, artifactIDs, textMaps[index])
+		normalized, err := normalizeEvidenceUnit(
+			unit, unitRangeOmissions[index], artifactIDs, textMaps[index],
+		)
 		if err != nil {
 			return NormalizedEvidenceV1{}, fmt.Errorf("normalize source evidence unit %d: %w", index, err)
 		}
 		units[index] = normalized
 	}
-	omissions, err := normalizeOmissions(source.Omissions, textMaps)
+	omissions, err := normalizeOmissions(documentOmissions, textMaps)
 	if err != nil {
 		return NormalizedEvidenceV1{}, fmt.Errorf("normalize source evidence omissions: %w", err)
 	}
@@ -839,6 +852,7 @@ func normalizeArtifacts(
 
 func normalizeEvidenceUnit(
 	source SourceEvidenceUnitV1,
+	documentRanges []SourceEvidenceOmissionV1,
 	artifactIDs map[string]string,
 	textMap evidenceTextMap,
 ) (NormalizedEvidenceUnitV1, error) {
@@ -856,13 +870,18 @@ func normalizeEvidenceUnit(
 	if err != nil {
 		return NormalizedEvidenceUnitV1{}, err
 	}
+	normalizedDocumentRanges, err := normalizeOmissions(documentRanges, []evidenceTextMap{textMap})
+	if err != nil {
+		return NormalizedEvidenceUnitV1{}, err
+	}
+	omissions = append(omissions, normalizedDocumentRanges...)
 	for index := range omissions {
 		omissions[index].UnitOrder = source.Order
 	}
 	slices.SortFunc(omissions, compareEvidenceOmissions)
-	if err := validateCanonicalOmissionOrder(omissions); err != nil {
-		return NormalizedEvidenceUnitV1{}, err
-	}
+	omissions = slices.CompactFunc(omissions, func(left, right EvidenceOmissionV1) bool {
+		return compareEvidenceOmissions(left, right) == 0
+	})
 	headingPath := make([]string, len(source.HeadingPath))
 	for index, heading := range source.HeadingPath {
 		headingPath[index] = canonicalEvidenceString(heading)
@@ -1031,6 +1050,23 @@ func normalizeOmissions(source []SourceEvidenceOmissionV1, textMaps []evidenceTe
 	return result, nil
 }
 
+func partitionSourceOmissionsForNormalization(
+	source []SourceEvidenceOmissionV1,
+	unitCount int,
+) ([]SourceEvidenceOmissionV1, [][]SourceEvidenceOmissionV1) {
+	documentOmissions := make([]SourceEvidenceOmissionV1, 0, len(source))
+	unitRanges := make([][]SourceEvidenceOmissionV1, unitCount)
+	for _, omission := range source {
+		if omission.Kind == EvidenceOmissionRange && omission.Range != nil &&
+			omission.UnitOrder >= 0 && omission.UnitOrder < unitCount {
+			unitRanges[omission.UnitOrder] = append(unitRanges[omission.UnitOrder], omission)
+			continue
+		}
+		documentOmissions = append(documentOmissions, omission)
+	}
+	return documentOmissions, unitRanges
+}
+
 // MarshalNormalizedEvidenceV1 returns exact canonical JSON and its SHA-256.
 func MarshalNormalizedEvidenceV1(evidence NormalizedEvidenceV1) ([]byte, string, error) {
 	return marshalNormalizedEvidenceV1(evidence, true)
@@ -1082,7 +1118,6 @@ func validateNormalizedEvidenceV1(evidence NormalizedEvidenceV1) error {
 		return err
 	}
 	textMaps := make([]evidenceTextMap, len(evidence.Units))
-	documentRangeOffsets := partitionNormalizedOmissionRangeOffsets(evidence.Omissions, len(evidence.Units))
 	locatorSequence := evidenceLocatorSequence{completeness: evidence.Completeness}
 	for index, unit := range evidence.Units {
 		if unit.Order != index || !validEvidenceID(unit.ID, "unit") {
@@ -1097,9 +1132,7 @@ func validateNormalizedEvidenceV1(evidence NormalizedEvidenceV1) error {
 		if canonicalEvidenceString(unit.Locator.Name) != unit.Locator.Name {
 			return fmt.Errorf("normalized evidence unit %d locator name is not canonical", index)
 		}
-		textMap, err := newEvidenceTextMap(
-			unit.Text, collectNormalizedRangeOffsets(unit, documentRangeOffsets[index]), -1,
-		)
+		textMap, err := newEvidenceTextMap(unit.Text, collectNormalizedRangeOffsets(unit), -1)
 		if err != nil {
 			return fmt.Errorf("normalized evidence unit %d text map: %w", index, err)
 		}
@@ -1245,7 +1278,9 @@ func validateNormalizedRegions(
 		) {
 			return nil, fmt.Errorf("normalized evidence unit %d region %d has invalid region ID", unitIndex, index)
 		}
-		ids[region.ID] = sourceRegionRef{kind: region.Kind, order: index, parent: region.ParentID}
+		ids[region.ID] = sourceRegionRef{
+			kind: region.Kind, order: index, parent: region.ParentID, textRange: region.TextRange,
+		}
 	}
 	return ids, nil
 }
@@ -1300,6 +1335,9 @@ func validateNormalizedTables(
 				}
 				if region.parent != table.RegionID {
 					return fmt.Errorf("normalized evidence unit %d table %d cell %d cell region belongs to a different table", unitIndex, index, cellIndex)
+				}
+				if region.textRange != cell.TextRange {
+					return fmt.Errorf("normalized evidence unit %d table %d cell %d text range does not match cell region", unitIndex, index, cellIndex)
 				}
 				if _, used := cellRegions[cell.RegionID]; used {
 					return fmt.Errorf("normalized evidence unit %d table %d cell %d reuses a cell region", unitIndex, index, cellIndex)
@@ -1534,6 +1572,9 @@ func validateNormalizedOmissions(omissions []EvidenceOmissionV1, textMaps []evid
 			return fmt.Errorf("omission %d has a field outside a field omission", index)
 		}
 		if omission.Kind == EvidenceOmissionRange {
+			if unitOrder < 0 {
+				return fmt.Errorf("omission %d range omission must be scoped to a unit", index)
+			}
 			if omission.Range == nil {
 				return fmt.Errorf("omission %d requires a range", index)
 			}
@@ -1721,8 +1762,8 @@ func collectSourceRangeOffsets(unit SourceEvidenceUnitV1, documentOffsets []int)
 	return offsets
 }
 
-func collectNormalizedRangeOffsets(unit NormalizedEvidenceUnitV1, documentOffsets []int) []int {
-	offsets := append([]int{0}, documentOffsets...)
+func collectNormalizedRangeOffsets(unit NormalizedEvidenceUnitV1) []int {
+	offsets := []int{0}
 	for _, region := range unit.Regions {
 		offsets = append(offsets, region.TextRange.Start, region.TextRange.End)
 	}
@@ -1740,18 +1781,6 @@ func collectNormalizedRangeOffsets(unit NormalizedEvidenceUnitV1, documentOffset
 }
 
 func partitionSourceOmissionRangeOffsets(omissions []SourceEvidenceOmissionV1, unitCount int) [][]int {
-	result := make([][]int, unitCount)
-	for _, omission := range omissions {
-		if omission.Range != nil && omission.UnitOrder >= 0 && omission.UnitOrder < unitCount {
-			result[omission.UnitOrder] = append(
-				result[omission.UnitOrder], omission.Range.Start, omission.Range.End,
-			)
-		}
-	}
-	return result
-}
-
-func partitionNormalizedOmissionRangeOffsets(omissions []EvidenceOmissionV1, unitCount int) [][]int {
 	result := make([][]int, unitCount)
 	for _, omission := range omissions {
 		if omission.Range != nil && omission.UnitOrder >= 0 && omission.UnitOrder < unitCount {
@@ -1880,9 +1909,10 @@ func validateProviderID(value string, seen map[string]struct{}) error {
 }
 
 type sourceRegionRef struct {
-	kind   EvidenceRegionKind
-	order  int
-	parent string
+	kind      EvidenceRegionKind
+	order     int
+	parent    string
+	textRange EvidenceTextRangeV1
 }
 
 func validateSourceRegionID(

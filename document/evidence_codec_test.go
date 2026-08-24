@@ -136,6 +136,55 @@ func TestNormalizedEvidenceV1CanonicalizesUnorderedCollections(t *testing.T) {
 	assert.Equal(t, first, second)
 }
 
+func TestNormalizedEvidenceV1CanonicalizesRangeOmissionScope(t *testing.T) {
+	rangeOmission := document.SourceEvidenceOmissionV1{
+		Kind: document.EvidenceOmissionRange, Range: &document.EvidenceTextRangeV1{Start: 0, End: 3},
+		Reason: "redacted", UnitOrder: 0,
+	}
+	sourceWith := func(documentScope, unitScope bool) document.SourceEvidenceV1 {
+		source := syntheticSourceEvidenceV1()
+		source.Completeness = document.EvidencePartial
+		source.Units = slices.Clone(source.Units)
+		if documentScope {
+			source.Omissions = []document.SourceEvidenceOmissionV1{rangeOmission}
+		}
+		if unitScope {
+			source.Units[0].Omissions = []document.SourceEvidenceOmissionV1{rangeOmission}
+		}
+		return source
+	}
+	policy, err := document.NewEvidencePolicy(1_000)
+	require.NoError(t, err)
+
+	documentScoped, err := document.NormalizeEvidenceV1(sourceWith(true, false), policy)
+	require.NoError(t, err)
+	unitScoped, err := document.NormalizeEvidenceV1(sourceWith(false, true), policy)
+	require.NoError(t, err)
+	bothScopes, err := document.NormalizeEvidenceV1(sourceWith(true, true), policy)
+	require.NoError(t, err)
+
+	assert.Equal(t, unitScoped, documentScoped)
+	assert.Equal(t, unitScoped, bothScopes)
+	assert.Empty(t, unitScoped.Omissions)
+	require.Len(t, unitScoped.Units[0].Omissions, 1)
+}
+
+func TestMarshalNormalizedEvidenceV1RejectsDocumentRangeOmission(t *testing.T) {
+	policy, err := document.NewEvidencePolicy(1_000)
+	require.NoError(t, err)
+	normalized, err := document.NormalizeEvidenceV1(syntheticSourceEvidenceV1(), policy)
+	require.NoError(t, err)
+	normalized.Checksum = ""
+	normalized.Completeness = document.EvidencePartial
+	normalized.Omissions = []document.EvidenceOmissionV1{{
+		Kind: document.EvidenceOmissionRange, Range: &document.EvidenceTextRangeV1{Start: 0, End: 4},
+		Reason: "redacted", UnitOrder: 0,
+	}}
+
+	_, _, err = document.MarshalNormalizedEvidenceV1(normalized)
+	require.ErrorContains(t, err, "range omission must be scoped to a unit")
+}
+
 func TestSourceEvidenceV1RejectsInvalidAuthority(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -1005,6 +1054,22 @@ func TestEvidenceV1RejectsAmbiguousAuthorities(t *testing.T) {
 		source.Units[0].Tables[0].Cells = append(source.Units[0].Tables[0].Cells, cell)
 		require.ErrorContains(t, document.ValidateSourceEvidenceV1(source), "already used by another cell")
 	})
+	t.Run("cell range differs from cell region", func(t *testing.T) {
+		source := syntheticSourceEvidenceV1()
+		source.Units[0].Tables[0].Cells[0].TextRange.Start++
+		require.ErrorContains(t, document.ValidateSourceEvidenceV1(source), "does not match cell region")
+	})
+	t.Run("normalized cell range differs from cell region", func(t *testing.T) {
+		policy, err := document.NewEvidencePolicy(1_000)
+		require.NoError(t, err)
+		normalized, err := document.NormalizeEvidenceV1(syntheticSourceEvidenceV1(), policy)
+		require.NoError(t, err)
+		normalized.Checksum = ""
+		normalized.Units[0].Tables[0].Cells[0].TextRange.Start++
+
+		_, _, err = document.MarshalNormalizedEvidenceV1(normalized)
+		require.ErrorContains(t, err, "does not match cell region")
+	})
 	t.Run("reused table region", func(t *testing.T) {
 		source := syntheticSourceEvidenceV1()
 		table := source.Units[0].Tables[0]
@@ -1241,7 +1306,10 @@ func TestNormalizeEvidenceV1PartitionsDocumentRangesByUnit(t *testing.T) {
 
 	normalized, err := document.NormalizeEvidenceV1(source, policy)
 	require.NoError(t, err)
-	require.Len(t, normalized.Omissions, unitCount)
+	require.Empty(t, normalized.Omissions)
+	for index := range normalized.Units {
+		require.Len(t, normalized.Units[index].Omissions, 1)
+	}
 }
 
 func syntheticSourceEvidenceV1() document.SourceEvidenceV1 {
