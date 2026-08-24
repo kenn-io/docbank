@@ -99,6 +99,11 @@ func TestNormalizedEvidenceV1CanonicalizesProviderEvidence(t *testing.T) {
 	tampered.Artifacts[0].Pointer = "provider/other.json"
 	_, _, err = document.MarshalNormalizedEvidenceV1(tampered)
 	require.ErrorContains(t, err, "artifact ID")
+
+	stale := first
+	stale.Checksum = strings.Repeat("0", sha256.Size*2)
+	_, _, err = document.MarshalNormalizedEvidenceV1(stale)
+	require.ErrorContains(t, err, "checksum does not match canonical bytes")
 }
 
 func TestNormalizedEvidenceV1CanonicalizesUnorderedCollections(t *testing.T) {

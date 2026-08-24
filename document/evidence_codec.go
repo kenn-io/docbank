@@ -1721,7 +1721,6 @@ func newEvidenceTextMap(source string, offsets []int) evidenceTextMap {
 			intermediate.WriteByte('\n')
 			if index+1 < len(sourceRunes) && sourceRunes[index+1] == '\n' {
 				// A range boundary between CR and LF has no canonical meaning.
-				delete(intermediateBySource, index+1)
 				index += 2
 				continue
 			}
