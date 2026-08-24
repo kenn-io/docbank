@@ -106,6 +106,7 @@ func validateSourceArtifacts(artifacts []SourceEvidenceArtifactV1) (map[string]s
 		return nil, errors.New("source evidence has too many artifacts")
 	}
 	providerIDs := make(map[string]struct{}, len(artifacts))
+	pointerChecksums := make(map[string]string, len(artifacts))
 	canonicalArtifacts := make(map[struct {
 		pointer string
 		role    EvidenceArtifactRole
@@ -124,6 +125,13 @@ func validateSourceArtifacts(artifacts []SourceEvidenceArtifactV1) (map[string]s
 		if err := validateArtifactPointer(artifact.Pointer); err != nil {
 			return nil, fmt.Errorf("source evidence artifact %d: %w", index, err)
 		}
+		if known, exists := pointerChecksums[artifact.Pointer]; exists && known != artifact.SHA256 {
+			return nil, fmt.Errorf(
+				"source evidence artifact %d conflicts with the checksum of pointer %q",
+				index, artifact.Pointer,
+			)
+		}
+		pointerChecksums[artifact.Pointer] = artifact.SHA256
 		canonicalIdentity := struct {
 			pointer string
 			role    EvidenceArtifactRole
@@ -248,7 +256,11 @@ func (sequence *evidenceLocatorSequence) add(locator EvidenceLocatorV1) error {
 			sequence.seen = true
 		}
 		if locator.Name != "" {
-			sequence.presentNames[canonicalEvidenceString(locator.Name)] = struct{}{}
+			name := canonicalEvidenceString(locator.Name)
+			if _, exists := sequence.presentNames[name]; exists {
+				return errors.New("locator sequence repeats a named unit")
+			}
+			sequence.presentNames[name] = struct{}{}
 		}
 		return nil
 	}
@@ -292,14 +304,20 @@ func (sequence *evidenceLocatorSequence) add(locator EvidenceLocatorV1) error {
 func (sequence *evidenceLocatorSequence) requireGapOmissions(omitted []EvidenceLocatorV1) error {
 	if sequence.seen && (sequence.previous.Kind == EvidenceLocatorMessage ||
 		sequence.previous.Kind == EvidenceLocatorSection) {
+		omittedNames := make(map[string]struct{}, len(omitted))
 		for index, locator := range omitted {
 			if locator.Kind != sequence.previous.Kind || locator.IndexOrigin != EvidenceIndexOriginNone ||
 				locator.Start != 0 || locator.End != 0 || strings.TrimSpace(locator.Name) == "" {
 				return fmt.Errorf("unit omission %d does not match the named locator sequence", index)
 			}
-			if _, present := sequence.presentNames[canonicalEvidenceString(locator.Name)]; present {
+			name := canonicalEvidenceString(locator.Name)
+			if _, present := sequence.presentNames[name]; present {
 				return fmt.Errorf("unit omission %d overlaps a present named unit", index)
 			}
+			if _, duplicate := omittedNames[name]; duplicate {
+				return fmt.Errorf("unit omission %d repeats a named unit", index)
+			}
+			omittedNames[name] = struct{}{}
 		}
 		return nil
 	}
@@ -465,7 +483,7 @@ func validateSourceRegions(
 		if region.Order != index {
 			return nil, fmt.Errorf("source evidence unit %d has noncontiguous region order", unitIndex)
 		}
-		if err := validateSourceRegionID(region.ProviderID, region.Kind, providerIDs, index); err != nil {
+		if err := validateSourceRegionID(region.ProviderID, region.Kind, region.ParentProviderID, providerIDs, index); err != nil {
 			return nil, fmt.Errorf("source evidence unit %d region %d: %w", unitIndex, index, err)
 		}
 		if !validEvidenceRegionKind(region.Kind) {
@@ -505,6 +523,7 @@ func validateSourceTables(
 		return fmt.Errorf("source evidence unit %d has too many tables", unitIndex)
 	}
 	providerIDs := make(map[string]struct{}, len(tables))
+	cellRegions := make(map[string]struct{})
 	for index, table := range tables {
 		if table.Order != index {
 			return fmt.Errorf("source evidence unit %d has noncontiguous table order", unitIndex)
@@ -529,7 +548,7 @@ func validateSourceTables(
 			return fmt.Errorf("source evidence unit %d table %d has too many cells", unitIndex, index)
 		}
 		for cellIndex, cell := range table.Cells {
-			if err := validateSourceTableCell(textMap, table, cell, cellIndex, regionIDs); err != nil {
+			if err := validateSourceTableCell(textMap, table, cell, cellIndex, regionIDs, cellRegions); err != nil {
 				return fmt.Errorf("source evidence unit %d table %d cell %d: %w", unitIndex, index, cellIndex, err)
 			}
 		}
@@ -548,6 +567,7 @@ func validateSourceTableCell(
 	cell SourceEvidenceTableCellV1,
 	index int,
 	regionIDs map[string]sourceRegionRef,
+	cellRegions map[string]struct{},
 ) error {
 	if cell.Order != index {
 		return errors.New("noncontiguous cell order")
@@ -565,6 +585,13 @@ func validateSourceTableCell(
 		if region.kind != EvidenceRegionTableCell {
 			return errors.New("invalid cell region")
 		}
+		if region.parent != table.RegionProviderID {
+			return errors.New("cell region belongs to a different table")
+		}
+		if _, used := cellRegions[cell.RegionProviderID]; used {
+			return errors.New("cell region is already used by another cell")
+		}
+		cellRegions[cell.RegionProviderID] = struct{}{}
 	}
 	if _, err := textMap.normalizeRange(cell.TextRange); err != nil {
 		return fmt.Errorf("text range: %w", err)
@@ -1143,11 +1170,11 @@ func validateNormalizedRegions(
 	unit NormalizedEvidenceUnitV1,
 	artifactIDs map[string]struct{},
 	textMap evidenceTextMap,
-) (map[string]EvidenceRegionKind, error) {
+) (map[string]sourceRegionRef, error) {
 	if len(unit.Regions) > maxEvidenceRegionsPerUnit {
 		return nil, fmt.Errorf("normalized evidence unit %d has too many regions", unitIndex)
 	}
-	ids := make(map[string]EvidenceRegionKind, len(unit.Regions))
+	ids := make(map[string]sourceRegionRef, len(unit.Regions))
 	textRunes := utf8.RuneCountInString(unit.Text)
 	for index, region := range unit.Regions {
 		if region.Order != index || !validEvidenceID(region.ID, "region") || !validEvidenceRegionKind(region.Kind) ||
@@ -1186,7 +1213,7 @@ func validateNormalizedRegions(
 		) {
 			return nil, fmt.Errorf("normalized evidence unit %d region %d has invalid region ID", unitIndex, index)
 		}
-		ids[region.ID] = region.Kind
+		ids[region.ID] = sourceRegionRef{kind: region.Kind, order: index, parent: region.ParentID}
 	}
 	return ids, nil
 }
@@ -1194,13 +1221,14 @@ func validateNormalizedRegions(
 func validateNormalizedTables(
 	unitIndex int,
 	unit NormalizedEvidenceUnitV1,
-	regionIDs map[string]EvidenceRegionKind,
+	regionIDs map[string]sourceRegionRef,
 	textMap evidenceTextMap,
 ) error {
 	if len(unit.Tables) > maxEvidenceTablesPerUnit {
 		return fmt.Errorf("normalized evidence unit %d has too many tables", unitIndex)
 	}
 	textRunes := utf8.RuneCountInString(unit.Text)
+	cellRegions := make(map[string]struct{})
 	for index, table := range unit.Tables {
 		if table.Order != index || !validEvidenceID(table.ID, "table") {
 			return fmt.Errorf("normalized evidence unit %d table %d is not canonical", unitIndex, index)
@@ -1212,7 +1240,7 @@ func validateNormalizedTables(
 		if len(table.Cells) > maxEvidenceCellsPerTable {
 			return fmt.Errorf("normalized evidence unit %d table %d has too many cells", unitIndex, index)
 		}
-		if table.RegionID != "" && regionIDs[table.RegionID] != EvidenceRegionTable {
+		if table.RegionID != "" && regionIDs[table.RegionID].kind != EvidenceRegionTable {
 			return fmt.Errorf("normalized evidence unit %d table %d has invalid table region", unitIndex, index)
 		}
 		for cellIndex, cell := range table.Cells {
@@ -1226,8 +1254,18 @@ func validateNormalizedTables(
 			if err != nil || mappedRange != cell.TextRange {
 				return fmt.Errorf("normalized evidence unit %d table %d cell %d has invalid text range", unitIndex, index, cellIndex)
 			}
-			if cell.RegionID != "" && regionIDs[cell.RegionID] != EvidenceRegionTableCell {
-				return fmt.Errorf("normalized evidence unit %d table %d cell %d has invalid cell region", unitIndex, index, cellIndex)
+			if cell.RegionID != "" {
+				region, ok := regionIDs[cell.RegionID]
+				if !ok || region.kind != EvidenceRegionTableCell {
+					return fmt.Errorf("normalized evidence unit %d table %d cell %d has invalid cell region", unitIndex, index, cellIndex)
+				}
+				if region.parent != table.RegionID {
+					return fmt.Errorf("normalized evidence unit %d table %d cell %d cell region belongs to a different table", unitIndex, index, cellIndex)
+				}
+				if _, used := cellRegions[cell.RegionID]; used {
+					return fmt.Errorf("normalized evidence unit %d table %d cell %d reuses a cell region", unitIndex, index, cellIndex)
+				}
+				cellRegions[cell.RegionID] = struct{}{}
 			}
 		}
 		if evidenceTableCellsOverlap(table.Cells, func(cell NormalizedEvidenceTableCellV1) (int, int, int, int) {
@@ -1824,13 +1862,15 @@ func validateProviderID(value string, seen map[string]struct{}) error {
 }
 
 type sourceRegionRef struct {
-	kind  EvidenceRegionKind
-	order int
+	kind   EvidenceRegionKind
+	order  int
+	parent string
 }
 
 func validateSourceRegionID(
 	value string,
 	kind EvidenceRegionKind,
+	parent string,
 	seen map[string]sourceRegionRef,
 	order int,
 ) error {
@@ -1840,7 +1880,7 @@ func validateSourceRegionID(
 	if _, exists := seen[value]; exists {
 		return errors.New("provider ID is duplicated")
 	}
-	seen[value] = sourceRegionRef{kind: kind, order: order}
+	seen[value] = sourceRegionRef{kind: kind, order: order, parent: parent}
 	return nil
 }
 

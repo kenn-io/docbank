@@ -624,6 +624,7 @@ func TestEvidenceV1RejectsOverlappingTableCells(t *testing.T) {
 	overlap.Order = 1
 	overlap.Row = 1
 	overlap.Column = 1
+	overlap.RegionProviderID = ""
 	source.Units[0].Tables[0].Cells = append(source.Units[0].Tables[0].Cells, overlap)
 
 	require.ErrorContains(t, document.ValidateSourceEvidenceV1(source), "overlapping cells")
@@ -638,6 +639,7 @@ func TestEvidenceV1RejectsOverlappingTableCells(t *testing.T) {
 	normalizedOverlap.Order = 1
 	normalizedOverlap.Row = 1
 	normalizedOverlap.Column = 1
+	normalizedOverlap.RegionID = ""
 	normalized.Units[0].Tables[0].Cells = append(
 		normalized.Units[0].Tables[0].Cells, normalizedOverlap,
 	)
@@ -847,6 +849,82 @@ func TestSourceEvidenceV1RejectsDegradedEvidenceWithUnknownFamily(t *testing.T) 
 	}
 
 	require.ErrorContains(t, document.ValidateSourceEvidenceV1(source), "unknown document family")
+}
+
+func TestEvidenceV1RejectsAmbiguousAuthorities(t *testing.T) {
+	namedMessages := func() document.SourceEvidenceV1 {
+		return document.SourceEvidenceV1{
+			ContractVersion: document.SourceEvidenceContractV1,
+			Completeness:    document.EvidencePartial,
+			Family:          "mail",
+			UnitKind:        document.EvidenceUnitMessage,
+			Omissions: []document.SourceEvidenceOmissionV1{{
+				Kind: document.EvidenceOmissionField, Field: "attachment",
+				Reason: "provider omitted an attachment",
+			}},
+			Units: []document.SourceEvidenceUnitV1{{
+				Order: 0, Text: "first",
+				Locator: document.SourceEvidenceLocatorV1{
+					Kind: document.EvidenceLocatorMessage, IndexOrigin: document.EvidenceIndexOriginNone,
+					Name: "intro",
+				},
+			}, {
+				Order: 1, Text: "second",
+				Locator: document.SourceEvidenceLocatorV1{
+					Kind: document.EvidenceLocatorMessage, IndexOrigin: document.EvidenceIndexOriginNone,
+					Name: "intro",
+				},
+			}},
+		}
+	}
+	t.Run("duplicate named units", func(t *testing.T) {
+		require.ErrorContains(t, document.ValidateSourceEvidenceV1(namedMessages()), "repeats a named unit")
+	})
+	t.Run("duplicate omitted names", func(t *testing.T) {
+		source := namedMessages()
+		source.Units[1].Locator.Name = "outro"
+		omittedLocator := document.SourceEvidenceLocatorV1{
+			Kind: document.EvidenceLocatorMessage, IndexOrigin: document.EvidenceIndexOriginNone,
+			Name: "hidden",
+		}
+		source.Omissions = append(source.Omissions,
+			document.SourceEvidenceOmissionV1{
+				Kind: document.EvidenceOmissionUnit, Locator: &omittedLocator,
+				Reason: "provider omitted a message",
+			},
+			document.SourceEvidenceOmissionV1{
+				Kind: document.EvidenceOmissionUnit, Locator: &omittedLocator,
+				Reason: "provider omitted the same message twice",
+			},
+		)
+		require.ErrorContains(t, document.ValidateSourceEvidenceV1(source), "repeats a named unit")
+	})
+	t.Run("conflicting artifact checksums", func(t *testing.T) {
+		source := syntheticSourceEvidenceV1()
+		source.Artifacts = append(source.Artifacts, document.SourceEvidenceArtifactV1{
+			ProviderID: "provider-artifact-conflict",
+			Pointer:    source.Artifacts[0].Pointer,
+			Role:       document.EvidenceArtifactMarkdown,
+			SHA256:     strings.Repeat("2", sha256.Size*2),
+		})
+		require.ErrorContains(t, document.ValidateSourceEvidenceV1(source), "conflicts with the checksum")
+	})
+	t.Run("cell region owned by another table", func(t *testing.T) {
+		source := syntheticSourceEvidenceV1()
+		source.Units[0].Tables[0].RegionProviderID = ""
+		require.ErrorContains(t, document.ValidateSourceEvidenceV1(source), "belongs to a different table")
+	})
+	t.Run("reused cell region", func(t *testing.T) {
+		source := syntheticSourceEvidenceV1()
+		source.Units[0].Tables[0].Rows = 2
+		source.Units[0].Tables[0].Columns = 2
+		cell := source.Units[0].Tables[0].Cells[0]
+		cell.Order = 1
+		cell.Row = 0
+		cell.Column = 1
+		source.Units[0].Tables[0].Cells = append(source.Units[0].Tables[0].Cells, cell)
+		require.ErrorContains(t, document.ValidateSourceEvidenceV1(source), "already used by another cell")
+	})
 }
 
 func TestMarshalNormalizedEvidenceV1RejectsExtremeConfidenceBounds(t *testing.T) {
