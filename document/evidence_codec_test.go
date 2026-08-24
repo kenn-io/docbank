@@ -66,7 +66,7 @@ func TestNormalizedEvidenceV1CanonicalizesProviderEvidence(t *testing.T) {
 	require.NoError(t, err)
 	wantBytes, err := os.ReadFile("testdata/normalized-evidence-v1.golden.json")
 	require.NoError(t, err)
-	wantBytes = bytes.TrimSuffix(wantBytes, []byte("\r\n"))
+	wantBytes = bytes.ReplaceAll(wantBytes, []byte("\r\n"), []byte("\n"))
 	wantBytes = bytes.TrimSuffix(wantBytes, []byte("\n"))
 	assert.Equal(t, string(wantBytes), string(encoded))
 	wantDigest := sha256.Sum256(encoded)
@@ -207,6 +207,20 @@ func TestSourceEvidenceV1RejectsInvalidAuthority(t *testing.T) {
 				source.Artifacts[0].Pointer = "https://provider.test/result/1"
 			},
 			want: "artifact pointer",
+		},
+		{
+			name: "non-canonical artifact pointer",
+			mutate: func(source *document.SourceEvidenceV1) {
+				source.Artifacts[0].Pointer = "provider/cafe\u0301.json"
+			},
+			want: "artifact pointer",
+		},
+		{
+			name: "time-range unit kind is not supported",
+			mutate: func(source *document.SourceEvidenceV1) {
+				source.UnitKind = document.EvidenceUnitKind("time_range")
+			},
+			want: "invalid unit kind",
 		},
 		{
 			name: "unknown parent",
@@ -807,6 +821,27 @@ func TestSourceEvidenceV1AllowsExplicitDegradedGenericUnit(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, document.EvidenceDegradedProvenance, normalized.Completeness)
 	assert.Equal(t, document.EvidenceLocatorGeneric, normalized.Units[0].Locator.Kind)
+}
+
+func TestSourceEvidenceV1RejectsDegradedEvidenceWithUnknownFamily(t *testing.T) {
+	source := document.SourceEvidenceV1{
+		ContractVersion: document.SourceEvidenceContractV1,
+		Completeness:    document.EvidenceDegradedProvenance,
+		Family:          "videeo",
+		UnitKind:        document.EvidenceUnitGeneric,
+		Omissions: []document.SourceEvidenceOmissionV1{{
+			Kind: document.EvidenceOmissionField, Field: "natural_provenance",
+			Reason: "converter returned Markdown without page structure",
+		}},
+		Units: []document.SourceEvidenceUnitV1{{
+			Order: 0, Text: "readable evidence",
+			Locator: document.SourceEvidenceLocatorV1{
+				Kind: document.EvidenceLocatorGeneric, IndexOrigin: document.EvidenceIndexOriginNone,
+			},
+		}},
+	}
+
+	require.ErrorContains(t, document.ValidateSourceEvidenceV1(source), "unknown document family")
 }
 
 func TestMarshalNormalizedEvidenceV1RejectsExtremeConfidenceBounds(t *testing.T) {

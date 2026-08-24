@@ -36,7 +36,6 @@ const (
 	EvidenceUnitSheet   EvidenceUnitKind = "sheet"
 	EvidenceUnitSlide   EvidenceUnitKind = "slide"
 	EvidenceUnitSpine   EvidenceUnitKind = "spine"
-	EvidenceUnitTime    EvidenceUnitKind = "time_range"
 )
 
 // EvidenceLocatorKind identifies how a unit maps back to its source.
@@ -52,7 +51,6 @@ const (
 	EvidenceLocatorSheet   EvidenceLocatorKind = "sheet"
 	EvidenceLocatorSlide   EvidenceLocatorKind = "slide"
 	EvidenceLocatorSpine   EvidenceLocatorKind = "spine"
-	EvidenceLocatorTime    EvidenceLocatorKind = "time_range"
 )
 
 // EvidenceIndexOrigin records whether integer source locators are zero- or

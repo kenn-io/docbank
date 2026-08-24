@@ -1,2 +1,4 @@
 # The compatibility bundle is a byte-for-byte oracle, not a text file.
 document/internal/compattest/testdata/document-compat-v1.json -text
+# The evidence golden bundle is a byte-for-byte oracle, not a text file.
+document/testdata/normalized-evidence-v1.golden.json -text

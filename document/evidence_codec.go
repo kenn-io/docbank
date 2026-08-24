@@ -128,7 +128,7 @@ func validateSourceArtifacts(artifacts []SourceEvidenceArtifactV1) (map[string]s
 			pointer string
 			role    EvidenceArtifactRole
 			sha256  string
-		}{canonicalEvidenceString(artifact.Pointer), artifact.Role, artifact.SHA256}
+		}{artifact.Pointer, artifact.Role, artifact.SHA256}
 		if _, exists := canonicalArtifacts[canonicalIdentity]; exists {
 			return nil, fmt.Errorf("source evidence artifact %d duplicates a canonical identity", index)
 		}
@@ -197,12 +197,6 @@ func validateSourceLocator(
 			return err
 		}
 	}
-	if locator.Kind == EvidenceLocatorTime {
-		if locator.IndexOrigin != EvidenceIndexOriginNone || locator.Start < 0 || locator.End <= locator.Start {
-			return errors.New("time-range locator must contain a positive half-open millisecond range")
-		}
-		return nil
-	}
 	if locator.Kind == EvidenceLocatorGeneric || locator.Kind == EvidenceLocatorMessage ||
 		locator.Kind == EvidenceLocatorSection {
 		if locator.IndexOrigin != EvidenceIndexOriginNone || locator.Start != 0 || locator.End != 0 {
@@ -262,7 +256,7 @@ func (sequence *evidenceLocatorSequence) add(locator EvidenceLocatorV1) error {
 		sequence.previous = locator
 		sequence.seen = true
 		first := int64(0)
-		if locator.Kind != EvidenceLocatorTime && locator.IndexOrigin == EvidenceIndexOriginOne {
+		if locator.IndexOrigin == EvidenceIndexOriginOne {
 			first = 1
 		}
 		if locator.Start == first {
@@ -271,10 +265,7 @@ func (sequence *evidenceLocatorSequence) add(locator EvidenceLocatorV1) error {
 		if sequence.completeness == EvidenceComplete {
 			return errors.New("complete locator sequence does not start at its index origin")
 		}
-		end := locator.Start
-		if locator.Kind != EvidenceLocatorTime {
-			end--
-		}
+		end := locator.Start - 1
 		sequence.gaps = append(sequence.gaps, evidenceLocatorGap(locator, first, end))
 		return nil
 	}
@@ -284,29 +275,15 @@ func (sequence *evidenceLocatorSequence) add(locator EvidenceLocatorV1) error {
 	if locator.IndexOrigin != sequence.previous.IndexOrigin {
 		return errors.New("locator sequence changes index origin")
 	}
-	if locator.Kind == EvidenceLocatorTime {
-		if locator.Start < sequence.previous.End {
-			return errors.New("locator sequence overlaps or regresses")
+	if locator.Start <= sequence.previous.End {
+		return errors.New("locator sequence overlaps or regresses")
+	}
+	next := sequence.previous.End + 1
+	if locator.Start > next {
+		if sequence.completeness == EvidenceComplete {
+			return errors.New("complete locator sequence has a gap")
 		}
-		if locator.Start > sequence.previous.End {
-			if sequence.completeness == EvidenceComplete {
-				return errors.New("complete locator sequence has a gap")
-			}
-			sequence.gaps = append(
-				sequence.gaps, evidenceLocatorGap(locator, sequence.previous.End, locator.Start),
-			)
-		}
-	} else {
-		if locator.Start <= sequence.previous.End {
-			return errors.New("locator sequence overlaps or regresses")
-		}
-		next := sequence.previous.End + 1
-		if locator.Start > next {
-			if sequence.completeness == EvidenceComplete {
-				return errors.New("complete locator sequence has a gap")
-			}
-			sequence.gaps = append(sequence.gaps, evidenceLocatorGap(locator, next, locator.Start-1))
-		}
+		sequence.gaps = append(sequence.gaps, evidenceLocatorGap(locator, next, locator.Start-1))
 	}
 	sequence.previous = locator
 	return nil
@@ -368,16 +345,10 @@ func (sequence *evidenceLocatorSequence) requireGapOmissions(omitted []EvidenceL
 }
 
 func locatorStartsWithinGap(locator, gap EvidenceLocatorV1) bool {
-	if gap.Kind == EvidenceLocatorTime {
-		return locator.Start < gap.End
-	}
 	return locator.Start <= gap.End
 }
 
 func locatorPositionAfter(locator EvidenceLocatorV1) int64 {
-	if locator.Kind == EvidenceLocatorTime {
-		return locator.End
-	}
 	return locator.End + 1
 }
 
@@ -433,6 +404,9 @@ func validateFamilyUnitKindForCompleteness(
 		if unitKind != EvidenceUnitGeneric {
 			return errors.New("degraded-provenance evidence must use generic units")
 		}
+		if !validEvidenceFamily(family) {
+			return fmt.Errorf("unknown document family %q", family)
+		}
 		return nil
 	}
 	if unitKind == EvidenceUnitGeneric {
@@ -442,6 +416,9 @@ func validateFamilyUnitKindForCompleteness(
 }
 
 func validateFamilyUnitKind(family string, unitKind EvidenceUnitKind) error {
+	if !validEvidenceFamily(family) {
+		return fmt.Errorf("unknown document family %q", family)
+	}
 	var allowed bool
 	switch family {
 	case "pdf", "word":
@@ -458,13 +435,20 @@ func validateFamilyUnitKind(family string, unitKind EvidenceUnitKind) error {
 		allowed = unitKind == EvidenceUnitSection || unitKind == EvidenceUnitLine
 	case "mail":
 		allowed = unitKind == EvidenceUnitMessage
-	default:
-		return fmt.Errorf("unknown document family %q", family)
 	}
 	if !allowed {
 		return fmt.Errorf("document family %q cannot use unit kind %q", family, unitKind)
 	}
 	return nil
+}
+
+func validEvidenceFamily(family string) bool {
+	switch family {
+	case "pdf", "word", "presentation", "spreadsheet", "ebook", "structured", "source", "text", "mail":
+		return true
+	default:
+		return false
+	}
 }
 
 func validateSourceRegions(
@@ -792,7 +776,7 @@ func normalizeArtifacts(
 	providerToID := make(map[string]string, len(source))
 	for index, artifact := range source {
 		normalized := EvidenceArtifactV1{
-			Pointer: canonicalEvidenceString(artifact.Pointer), Role: artifact.Role, SHA256: artifact.SHA256,
+			Pointer: artifact.Pointer, Role: artifact.Role, SHA256: artifact.SHA256,
 		}
 		local, err := json.Marshal(normalized)
 		if err != nil {
@@ -1531,13 +1515,6 @@ func validateOmissionLocator(locator EvidenceLocatorV1, canonical bool) error {
 			return errors.New("omission locator name is not canonical")
 		}
 	}
-	if locator.Kind == EvidenceLocatorTime {
-		if locator.IndexOrigin != EvidenceIndexOriginNone || locator.Start < 0 || locator.End <= locator.Start ||
-			locator.End > maxEvidenceCoordinate {
-			return errors.New("omitted time-range locator is invalid")
-		}
-		return nil
-	}
 	if locator.Kind == EvidenceLocatorMessage || locator.Kind == EvidenceLocatorSection {
 		if locator.IndexOrigin != EvidenceIndexOriginNone || locator.Start != 0 || locator.End != 0 ||
 			strings.TrimSpace(locator.Name) == "" {
@@ -1816,6 +1793,9 @@ func validateArtifactPointer(pointer string) error {
 	if err := validateBoundedUTF8(pointer, maxEvidencePointerBytes, "artifact pointer"); err != nil {
 		return err
 	}
+	if canonicalEvidenceString(pointer) != pointer {
+		return errors.New("artifact pointer must be canonical NFC text without carriage returns")
+	}
 	parsed, err := url.Parse(pointer)
 	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.RawQuery != "" || parsed.Fragment != "" ||
 		parsed.RawPath != "" || parsed.ForceQuery || strings.Contains(pointer, "\\") || strings.Contains(pointer, "%") ||
@@ -1912,7 +1892,7 @@ func validEvidenceCompleteness(value EvidenceCompleteness) bool {
 func validEvidenceUnitKind(value EvidenceUnitKind) bool {
 	return slices.Contains([]EvidenceUnitKind{
 		EvidenceUnitGeneric, EvidenceUnitLine, EvidenceUnitMessage, EvidenceUnitPage, EvidenceUnitRecord,
-		EvidenceUnitSection, EvidenceUnitSheet, EvidenceUnitSlide, EvidenceUnitSpine, EvidenceUnitTime,
+		EvidenceUnitSection, EvidenceUnitSheet, EvidenceUnitSlide, EvidenceUnitSpine,
 	}, value)
 }
 
