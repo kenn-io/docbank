@@ -41,11 +41,11 @@ const (
 // ValidateSourceEvidenceV1 validates a bounded source-evidence/v1 manifest
 // without assigning durable IDs.
 func ValidateSourceEvidenceV1(source SourceEvidenceV1) error {
-	_, err := validateSourceEvidenceV1(source)
+	_, err := validateSourceEvidenceV1(source, -1)
 	return err
 }
 
-func validateSourceEvidenceV1(source SourceEvidenceV1) ([]evidenceTextMap, error) {
+func validateSourceEvidenceV1(source SourceEvidenceV1, maxDocumentChars int) ([]evidenceTextMap, error) {
 	if source.ContractVersion != SourceEvidenceContractV1 {
 		return nil, fmt.Errorf("source evidence contract version must be %q", SourceEvidenceContractV1)
 	}
@@ -77,11 +77,21 @@ func validateSourceEvidenceV1(source SourceEvidenceV1) ([]evidenceTextMap, error
 	}
 	textMaps := make([]evidenceTextMap, len(source.Units))
 	documentRangeOffsets := partitionSourceOmissionRangeOffsets(source.Omissions, len(source.Units))
+	remainingChars := maxDocumentChars
 	for index, unit := range source.Units {
 		if err := validateEvidenceText(unit.Text, "unit text"); err != nil {
 			return nil, fmt.Errorf("source evidence unit %d: %w", index, err)
 		}
-		textMaps[index] = newEvidenceTextMap(unit.Text, collectSourceRangeOffsets(unit, documentRangeOffsets[index]))
+		textMap, err := newEvidenceTextMap(
+			unit.Text, collectSourceRangeOffsets(unit, documentRangeOffsets[index]), remainingChars,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("source evidence unit %d exceeds policy character limit: %w", index, err)
+		}
+		textMaps[index] = textMap
+		if remainingChars >= 0 {
+			remainingChars -= textMap.normalizedRunes
+		}
 	}
 	locatorSequence := evidenceLocatorSequence{completeness: source.Completeness}
 	for index := range source.Units {
@@ -523,6 +533,7 @@ func validateSourceTables(
 		return fmt.Errorf("source evidence unit %d has too many tables", unitIndex)
 	}
 	providerIDs := make(map[string]struct{}, len(tables))
+	tableRegions := make(map[string]struct{})
 	cellRegions := make(map[string]struct{})
 	for index, table := range tables {
 		if table.Order != index {
@@ -543,6 +554,10 @@ func validateSourceTables(
 			if region.kind != EvidenceRegionTable {
 				return fmt.Errorf("source evidence unit %d table %d has invalid table region", unitIndex, index)
 			}
+			if _, used := tableRegions[table.RegionProviderID]; used {
+				return fmt.Errorf("source evidence unit %d table %d region is already used by another table", unitIndex, index)
+			}
+			tableRegions[table.RegionProviderID] = struct{}{}
 		}
 		if len(table.Cells) > maxEvidenceCellsPerTable {
 			return fmt.Errorf("source evidence unit %d table %d has too many cells", unitIndex, index)
@@ -754,11 +769,8 @@ func NormalizeEvidenceV1(source SourceEvidenceV1, policy EvidencePolicy) (Normal
 	if err := policy.validateSource(source); err != nil {
 		return NormalizedEvidenceV1{}, err
 	}
-	textMaps, err := validateSourceEvidenceV1(source)
+	textMaps, err := validateSourceEvidenceV1(source, policy.maxDocumentChars)
 	if err != nil {
-		return NormalizedEvidenceV1{}, err
-	}
-	if err := policy.validateTextMaps(textMaps); err != nil {
 		return NormalizedEvidenceV1{}, err
 	}
 
@@ -1079,7 +1091,13 @@ func validateNormalizedEvidenceV1(evidence NormalizedEvidenceV1) error {
 		if canonicalEvidenceString(unit.Locator.Name) != unit.Locator.Name {
 			return fmt.Errorf("normalized evidence unit %d locator name is not canonical", index)
 		}
-		textMaps[index] = newEvidenceTextMap(unit.Text, collectNormalizedRangeOffsets(unit, documentRangeOffsets[index]))
+		textMap, err := newEvidenceTextMap(
+			unit.Text, collectNormalizedRangeOffsets(unit, documentRangeOffsets[index]), -1,
+		)
+		if err != nil {
+			return fmt.Errorf("normalized evidence unit %d text map: %w", index, err)
+		}
+		textMaps[index] = textMap
 		if err := validateSourceLocator(
 			evidence.Family, evidence.UnitKind, evidence.Completeness,
 			SourceEvidenceLocatorV1{
@@ -1138,6 +1156,7 @@ func validateNormalizedArtifacts(artifacts []EvidenceArtifactV1) (map[string]str
 		return nil, errors.New("normalized evidence has too many artifacts")
 	}
 	ids := make(map[string]struct{}, len(artifacts))
+	pointerChecksums := make(map[string]string, len(artifacts))
 	previousID := ""
 	for index, artifact := range artifacts {
 		if !validEvidenceArtifactRole(artifact.Role) || len(artifact.SHA256) != sha256.Size*2 ||
@@ -1147,6 +1166,13 @@ func validateNormalizedArtifacts(artifacts []EvidenceArtifactV1) (map[string]str
 		if err := validateArtifactPointer(artifact.Pointer); err != nil {
 			return nil, fmt.Errorf("normalized evidence artifact %d: %w", index, err)
 		}
+		if known, exists := pointerChecksums[artifact.Pointer]; exists && known != artifact.SHA256 {
+			return nil, fmt.Errorf(
+				"normalized evidence artifact %d conflicts with the checksum of pointer %q",
+				index, artifact.Pointer,
+			)
+		}
+		pointerChecksums[artifact.Pointer] = artifact.SHA256
 		withoutID := artifact
 		withoutID.ID = ""
 		local, err := json.Marshal(withoutID)
@@ -1228,6 +1254,7 @@ func validateNormalizedTables(
 		return fmt.Errorf("normalized evidence unit %d has too many tables", unitIndex)
 	}
 	textRunes := utf8.RuneCountInString(unit.Text)
+	tableRegions := make(map[string]struct{})
 	cellRegions := make(map[string]struct{})
 	for index, table := range unit.Tables {
 		if table.Order != index || !validEvidenceID(table.ID, "table") {
@@ -1240,8 +1267,14 @@ func validateNormalizedTables(
 		if len(table.Cells) > maxEvidenceCellsPerTable {
 			return fmt.Errorf("normalized evidence unit %d table %d has too many cells", unitIndex, index)
 		}
-		if table.RegionID != "" && regionIDs[table.RegionID].kind != EvidenceRegionTable {
-			return fmt.Errorf("normalized evidence unit %d table %d has invalid table region", unitIndex, index)
+		if table.RegionID != "" {
+			if regionIDs[table.RegionID].kind != EvidenceRegionTable {
+				return fmt.Errorf("normalized evidence unit %d table %d has invalid table region", unitIndex, index)
+			}
+			if _, used := tableRegions[table.RegionID]; used {
+				return fmt.Errorf("normalized evidence unit %d table %d reuses a table region", unitIndex, index)
+			}
+			tableRegions[table.RegionID] = struct{}{}
 		}
 		for cellIndex, cell := range table.Cells {
 			if cell.Order != cellIndex || cell.Row < 0 || cell.Column < 0 || cell.RowSpan <= 0 || cell.ColumnSpan <= 0 ||
@@ -1371,17 +1404,6 @@ func validateNormalizedOmissionLimit(evidence NormalizedEvidenceV1) error {
 			return errors.New("normalized evidence exceeds the total omission limit")
 		}
 		remaining -= len(unit.Omissions)
-	}
-	return nil
-}
-
-func (policy EvidencePolicy) validateTextMaps(textMaps []evidenceTextMap) error {
-	remaining := policy.maxDocumentChars
-	for index, textMap := range textMaps {
-		if textMap.normalizedRunes > remaining {
-			return fmt.Errorf("source evidence unit %d exceeds policy character limit", index)
-		}
-		remaining -= textMap.normalizedRunes
 	}
 	return nil
 }
@@ -1735,7 +1757,7 @@ func partitionNormalizedOmissionRangeOffsets(omissions []EvidenceOmissionV1, uni
 	return result
 }
 
-func newEvidenceTextMap(source string, offsets []int) evidenceTextMap {
+func newEvidenceTextMap(source string, offsets []int, maxRunes int) (evidenceTextMap, error) {
 	sourceRunes := []rune(source)
 	requested := make(map[int]struct{}, len(offsets)+1)
 	requested[len(sourceRunes)] = struct{}{}
@@ -1790,12 +1812,15 @@ func newEvidenceTextMap(source string, offsets []int) evidenceTextMap {
 		segment := iterator.Next()
 		normalized.Write(segment)
 		normalizedOffset += utf8.RuneCount(segment)
+		if maxRunes >= 0 && normalizedOffset > maxRunes {
+			return evidenceTextMap{}, errors.New("canonical text exceeds the remaining character budget")
+		}
 		assignBoundary(iterator.Pos(), normalizedOffset)
 	}
 	return evidenceTextMap{
 		boundaries: boundaries, normalized: normalized.String(), normalizedRunes: normalizedOffset,
 		sourceRunes: len(sourceRunes),
-	}
+	}, nil
 }
 
 func (textMap evidenceTextMap) normalizeRange(sourceRange EvidenceTextRangeV1) (EvidenceTextRangeV1, error) {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
@@ -752,6 +753,17 @@ func TestNormalizeEvidenceV1AppliesCharacterLimitAfterCanonicalization(t *testin
 	}
 }
 
+func TestNormalizeEvidenceV1StopsAtCharacterLimit(t *testing.T) {
+	source := syntheticSourceEvidenceV1()
+	source.Units[0].Text = "too long"
+	source.Units[1].Text = string([]byte{0xff})
+	policy, err := document.NewEvidencePolicy(1)
+	require.NoError(t, err)
+
+	_, err = document.NormalizeEvidenceV1(source, policy)
+	require.ErrorContains(t, err, "policy character limit")
+}
+
 func TestEvidenceV1RejectsExcessGeometry(t *testing.T) {
 	t.Run("boxes", func(t *testing.T) {
 		source := syntheticSourceEvidenceV1()
@@ -924,6 +936,77 @@ func TestEvidenceV1RejectsAmbiguousAuthorities(t *testing.T) {
 		cell.Column = 1
 		source.Units[0].Tables[0].Cells = append(source.Units[0].Tables[0].Cells, cell)
 		require.ErrorContains(t, document.ValidateSourceEvidenceV1(source), "already used by another cell")
+	})
+	t.Run("reused table region", func(t *testing.T) {
+		source := syntheticSourceEvidenceV1()
+		table := source.Units[0].Tables[0]
+		table.Cells = nil
+		table.Order = 1
+		table.ProviderID = "provider-table-reuse"
+		source.Units[0].Tables = append(source.Units[0].Tables, table)
+		require.ErrorContains(t, document.ValidateSourceEvidenceV1(source), "already used by another table")
+	})
+}
+
+func TestMarshalNormalizedEvidenceV1RejectsAmbiguousAuthorities(t *testing.T) {
+	policy, err := document.NewEvidencePolicy(1_000)
+	require.NoError(t, err)
+
+	t.Run("reused table region", func(t *testing.T) {
+		normalized, err := document.NormalizeEvidenceV1(syntheticSourceEvidenceV1(), policy)
+		require.NoError(t, err)
+		normalized.Checksum = ""
+
+		identity := func(kind, subtype string, order int, value any) string {
+			local, marshalErr := json.Marshal(value)
+			require.NoError(t, marshalErr)
+			localDigest := sha256.Sum256(local)
+			hash := sha256.New()
+			hash.Write([]byte("docbank-normalized-evidence-id/v1\x00"))
+			hash.Write([]byte(document.NormalizedEvidenceContractV1))
+			hash.Write([]byte{'\x00'})
+			hash.Write([]byte(kind))
+			hash.Write([]byte{'\x00'})
+			_, _ = fmt.Fprintf(hash, "%09d", order)
+			hash.Write([]byte{'\x00'})
+			hash.Write([]byte(subtype))
+			hash.Write([]byte{'\x00'})
+			hash.Write(localDigest[:])
+			return kind + "_" + hex.EncodeToString(hash.Sum(nil))
+		}
+
+		table := normalized.Units[0].Tables[0]
+		table.Cells = nil
+		table.ID = ""
+		table.Order = 1
+		table.ID = identity("table", "table/unit-0", table.Order, table)
+		normalized.Units[0].Tables = append(normalized.Units[0].Tables, table)
+		normalized.Units[0].ID = ""
+		normalized.Units[0].ID = identity(
+			"unit", string(normalized.Units[0].Locator.Kind), normalized.Units[0].Order, normalized.Units[0],
+		)
+
+		_, _, err = document.MarshalNormalizedEvidenceV1(normalized)
+		require.ErrorContains(t, err, "reuses a table region")
+	})
+
+	t.Run("conflicting artifact checksums", func(t *testing.T) {
+		normalized, err := document.NormalizeEvidenceV1(syntheticSourceEvidenceV1(), policy)
+		require.NoError(t, err)
+		conflict := syntheticSourceEvidenceV1()
+		conflict.Artifacts[0].Role = document.EvidenceArtifactMarkdown
+		conflict.Artifacts[0].SHA256 = strings.Repeat("2", sha256.Size*2)
+		conflicting, err := document.NormalizeEvidenceV1(conflict, policy)
+		require.NoError(t, err)
+
+		normalized.Checksum = ""
+		normalized.Artifacts = append(normalized.Artifacts, conflicting.Artifacts[0])
+		slices.SortFunc(normalized.Artifacts, func(left, right document.EvidenceArtifactV1) int {
+			return strings.Compare(left.ID, right.ID)
+		})
+
+		_, _, err = document.MarshalNormalizedEvidenceV1(normalized)
+		require.ErrorContains(t, err, "conflicts with the checksum")
 	})
 }
 
