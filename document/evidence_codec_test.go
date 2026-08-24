@@ -943,6 +943,42 @@ func TestEvidenceV1RejectsAmbiguousAuthorities(t *testing.T) {
 		)
 		require.ErrorContains(t, document.ValidateSourceEvidenceV1(source), "repeats a named unit")
 	})
+	t.Run("named omission with unnamed present unit", func(t *testing.T) {
+		source := namedMessages()
+		source.Units[0].Locator.Name = ""
+		source.Units[1].Locator.Name = "outro"
+		omittedLocator := document.SourceEvidenceLocatorV1{
+			Kind: document.EvidenceLocatorMessage, IndexOrigin: document.EvidenceIndexOriginNone,
+			Name: "hidden",
+		}
+		source.Omissions = append(source.Omissions, document.SourceEvidenceOmissionV1{
+			Kind: document.EvidenceOmissionUnit, Locator: &omittedLocator,
+			Reason: "provider omitted a message",
+		})
+
+		require.ErrorContains(t, document.ValidateSourceEvidenceV1(source), "unnamed present unit")
+	})
+	t.Run("normalized named omission with unnamed present unit", func(t *testing.T) {
+		source := namedMessages()
+		source.Units[0].Locator.Name = ""
+		source.Units[1].Locator.Name = "outro"
+		policy, err := document.NewEvidencePolicy(1_000)
+		require.NoError(t, err)
+		normalized, err := document.NormalizeEvidenceV1(source, policy)
+		require.NoError(t, err)
+		normalized.Checksum = ""
+		omittedLocator := document.EvidenceLocatorV1{
+			Kind: document.EvidenceLocatorMessage, IndexOrigin: document.EvidenceIndexOriginNone,
+			Name: "hidden",
+		}
+		normalized.Omissions = append([]document.EvidenceOmissionV1{{
+			Kind: document.EvidenceOmissionUnit, Locator: &omittedLocator,
+			Reason: "provider omitted a message",
+		}}, normalized.Omissions...)
+
+		_, _, err = document.MarshalNormalizedEvidenceV1(normalized)
+		require.ErrorContains(t, err, "unnamed present unit")
+	})
 	t.Run("conflicting artifact checksums", func(t *testing.T) {
 		source := syntheticSourceEvidenceV1()
 		source.Artifacts = append(source.Artifacts, document.SourceEvidenceArtifactV1{

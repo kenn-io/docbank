@@ -248,6 +248,7 @@ type evidenceLocatorSequence struct {
 	completeness EvidenceCompleteness
 	gaps         []EvidenceLocatorV1
 	presentNames map[string]struct{}
+	unnamed      bool
 	previous     EvidenceLocatorV1
 	seen         bool
 }
@@ -265,13 +266,15 @@ func (sequence *evidenceLocatorSequence) add(locator EvidenceLocatorV1) error {
 			sequence.presentNames = make(map[string]struct{})
 			sequence.seen = true
 		}
-		if locator.Name != "" {
-			name := canonicalEvidenceString(locator.Name)
-			if _, exists := sequence.presentNames[name]; exists {
-				return errors.New("locator sequence repeats a named unit")
-			}
-			sequence.presentNames[name] = struct{}{}
+		if strings.TrimSpace(locator.Name) == "" {
+			sequence.unnamed = true
+			return nil
 		}
+		name := canonicalEvidenceString(locator.Name)
+		if _, exists := sequence.presentNames[name]; exists {
+			return errors.New("locator sequence repeats a named unit")
+		}
+		sequence.presentNames[name] = struct{}{}
 		return nil
 	}
 	if !sequence.seen {
@@ -314,6 +317,9 @@ func (sequence *evidenceLocatorSequence) add(locator EvidenceLocatorV1) error {
 func (sequence *evidenceLocatorSequence) requireGapOmissions(omitted []EvidenceLocatorV1) error {
 	if sequence.seen && (sequence.previous.Kind == EvidenceLocatorMessage ||
 		sequence.previous.Kind == EvidenceLocatorSection) {
+		if len(omitted) > 0 && sequence.unnamed {
+			return errors.New("named unit omission is ambiguous with an unnamed present unit")
+		}
 		omittedNames := make(map[string]struct{}, len(omitted))
 		for index, locator := range omitted {
 			if locator.Kind != sequence.previous.Kind || locator.IndexOrigin != EvidenceIndexOriginNone ||
