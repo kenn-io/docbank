@@ -18,6 +18,7 @@ import (
 	"github.com/BurntSushi/toml"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/embedding"
 	"go.kenn.io/docbank/internal/storenamespace"
 )
 
@@ -409,8 +410,6 @@ var storeBindingNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
 var lowercaseSHA256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var credentialReferencePattern = regexp.MustCompile(`^credential:[a-z][a-z0-9_-]{0,62}$`)
 
-const maxProfileRetrievalLimit = 1_000_000
-
 func validateProcessingProfiles(c Config) error {
 	for name, profile := range c.RenditionProfiles {
 		prefix := fmt.Sprintf("[rendition_profiles.%s]", name)
@@ -435,11 +434,11 @@ func validateProcessingProfiles(c Config) error {
 		if err := validateProfileName(name, prefix); err != nil {
 			return err
 		}
-		if profile.LexicalLimit <= 0 || profile.LexicalLimit > maxProfileRetrievalLimit {
-			return fmt.Errorf("%s lexical_limit must be between 1 and %d", prefix, maxProfileRetrievalLimit)
+		if profile.LexicalLimit <= 0 || profile.LexicalLimit > embedding.MaxCandidateLimit {
+			return fmt.Errorf("%s lexical_limit must be between 1 and %d", prefix, embedding.MaxCandidateLimit)
 		}
-		if profile.VectorLimit <= 0 || profile.VectorLimit > maxProfileRetrievalLimit {
-			return fmt.Errorf("%s vector_limit must be between 1 and %d", prefix, maxProfileRetrievalLimit)
+		if profile.VectorLimit <= 0 || profile.VectorLimit > embedding.MaxCandidateLimit {
+			return fmt.Errorf("%s vector_limit must be between 1 and %d", prefix, embedding.MaxCandidateLimit)
 		}
 	}
 	for name := range c.ProcessingProfiles {

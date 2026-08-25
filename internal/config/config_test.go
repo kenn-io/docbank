@@ -217,7 +217,7 @@ func TestProcessingProfilesRejectInvalidReferencesAndPolicies(t *testing.T) {
 		}, "vector_limit"},
 		{"retrieval limit above maximum", func(c *Config) {
 			p := c.RetrievalProfiles["hybrid"]
-			p.LexicalLimit = 1_000_001
+			p.LexicalLimit = 1_001
 			c.RetrievalProfiles["hybrid"] = p
 		}, "lexical_limit"},
 		{"raw rendition secret", func(c *Config) {
