@@ -728,6 +728,97 @@ WHEN NEW.supersedes IS NOT NULL AND EXISTS (
     SELECT RAISE(ABORT, 'provenance supersession must stay on one node');
 END;
 
+-- Processing consent is scoped to a random local incarnation. The pointer is
+-- deliberately not backup authority: a restored database keeps the imported
+-- grant history while the fresh restore target retains its own incarnation.
+CREATE TABLE IF NOT EXISTS processing_incarnations (
+    incarnation_id TEXT PRIMARY KEY,
+    created_at     TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS current_processing_incarnation (
+    singleton      INTEGER PRIMARY KEY CHECK (singleton = 1),
+    incarnation_id TEXT NOT NULL UNIQUE REFERENCES processing_incarnations(incarnation_id)
+);
+
+CREATE TRIGGER IF NOT EXISTS current_processing_incarnation_immutable_update
+BEFORE UPDATE ON current_processing_incarnation BEGIN
+    SELECT RAISE(ABORT, 'current processing incarnation is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS current_processing_incarnation_immutable_delete
+BEFORE DELETE ON current_processing_incarnation BEGIN
+    SELECT RAISE(ABORT, 'current processing incarnation is immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS processing_consent_grants (
+    grant_id                  TEXT PRIMARY KEY,
+    vault_uid                 TEXT NOT NULL REFERENCES vault_metadata(vault_uid),
+    incarnation_id            TEXT NOT NULL REFERENCES processing_incarnations(incarnation_id),
+    principal                 TEXT NOT NULL,
+    scope                     TEXT NOT NULL,
+    profile_fingerprint       TEXT NOT NULL,
+    disclosure_fingerprint    TEXT NOT NULL,
+    input_classes_json        TEXT NOT NULL,
+    retained_classes_json     TEXT NOT NULL,
+    revocation_fence          INTEGER NOT NULL CHECK (revocation_fence >= 0),
+    issued_at                 TEXT NOT NULL,
+    expires_at                TEXT
+);
+
+CREATE INDEX IF NOT EXISTS processing_consent_grants_authority
+    ON processing_consent_grants(
+        vault_uid, incarnation_id, principal, scope, profile_fingerprint,
+        disclosure_fingerprint, input_classes_json, retained_classes_json,
+        issued_at, grant_id
+    );
+
+CREATE TABLE IF NOT EXISTS processing_consent_revocations (
+    revocation_id  TEXT PRIMARY KEY,
+    vault_uid      TEXT NOT NULL REFERENCES vault_metadata(vault_uid),
+    incarnation_id TEXT NOT NULL REFERENCES processing_incarnations(incarnation_id),
+    principal      TEXT NOT NULL,
+    scope          TEXT NOT NULL,
+    fence          INTEGER NOT NULL CHECK (fence > 0),
+    revoked_at     TEXT NOT NULL,
+    UNIQUE (vault_uid, incarnation_id, principal, scope, fence)
+);
+
+CREATE INDEX IF NOT EXISTS processing_consent_revocations_scope
+    ON processing_consent_revocations(
+        vault_uid, incarnation_id, principal, scope, fence
+    );
+
+CREATE TRIGGER IF NOT EXISTS processing_incarnations_immutable_update
+BEFORE UPDATE ON processing_incarnations BEGIN
+    SELECT RAISE(ABORT, 'processing incarnation records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS processing_incarnations_immutable_delete
+BEFORE DELETE ON processing_incarnations BEGIN
+    SELECT RAISE(ABORT, 'processing incarnation records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS processing_consent_grants_immutable_update
+BEFORE UPDATE ON processing_consent_grants BEGIN
+    SELECT RAISE(ABORT, 'processing consent grant records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS processing_consent_grants_immutable_delete
+BEFORE DELETE ON processing_consent_grants BEGIN
+    SELECT RAISE(ABORT, 'processing consent grant records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS processing_consent_revocations_immutable_update
+BEFORE UPDATE ON processing_consent_revocations BEGIN
+    SELECT RAISE(ABORT, 'processing consent revocation records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS processing_consent_revocations_immutable_delete
+BEFORE DELETE ON processing_consent_revocations BEGIN
+    SELECT RAISE(ABORT, 'processing consent revocation records are immutable');
+END;
+
 -- Processing profiles are immutable canonical policy snapshots. Rendition
 -- builds deliberately reference only their rendition/evidence components;
 -- embedding-only profile fields never enter build identity.

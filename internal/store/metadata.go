@@ -697,7 +697,12 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM rendition_attachments)
 		    + (SELECT COUNT(*) FROM rendition_heads)
 		    + (SELECT COUNT(*) FROM current_rendition_roots)
-		    + (SELECT COUNT(*) FROM derivative_purge_suppressions),
+		    + (SELECT COUNT(*) FROM derivative_purge_suppressions)
+		    + (SELECT COUNT(*) FROM processing_consent_grants)
+		    + (SELECT COUNT(*) FROM processing_consent_revocations)
+		    + (SELECT COUNT(*) FROM processing_incarnations
+		       WHERE incarnation_id != (SELECT incarnation_id
+		         FROM current_processing_incarnation WHERE singleton=1)),
 		  (SELECT COUNT(*) FROM blob_locations)
 		    + (SELECT COUNT(*) FROM blob_packs)
 		    + (SELECT COUNT(*) FROM blob_pack_entries)
@@ -997,6 +1002,9 @@ var metadataRequiredFields = map[string][]string{
 	metadataAuditScopeType:                 {metadataTypeField, auditScopeIDField, "target_node_id", "enable_operation_id", "entry_count", "chain_head"},
 	metadataAuditMembershipType:            {metadataTypeField, auditScopeIDField, metadataNodeIDField, "baseline_digest"},
 	metadataAuditRecordType:                {metadataTypeField, "digest", "record"},
+	metadataProcessingIncarnationType:      processingMetadataRequiredFields[metadataProcessingIncarnationType],
+	metadataProcessingConsentGrantType:     processingMetadataRequiredFields[metadataProcessingConsentGrantType],
+	metadataProcessingConsentRevokeType:    processingMetadataRequiredFields[metadataProcessingConsentRevokeType],
 	metadataProcessingProfileType:          processingMetadataRequiredFields[metadataProcessingProfileType],
 	metadataRenditionBuildType:             processingMetadataRequiredFields[metadataRenditionBuildType],
 	metadataRenditionArtifactType:          processingMetadataRequiredFields[metadataRenditionArtifactType],
@@ -1014,10 +1022,11 @@ var metadataNullableFields = map[string]map[string]bool{
 		"parent_id": true, "current_version_id": true, "trashed_at": true,
 		"trash_parent": true, "trash_name": true,
 	},
-	"content_version":                {"mime_type": true, "source_version_id": true},
-	metadataProvenanceType:           {"original_mtime": true, "supersedes": true},
-	"extracted_text":                 {"error": true, "text": true},
-	metadataCurrentRenditionRootType: {"released_at": true},
+	"content_version":                  {"mime_type": true, "source_version_id": true},
+	metadataProvenanceType:             {"original_mtime": true, "supersedes": true},
+	"extracted_text":                   {"error": true, "text": true},
+	metadataCurrentRenditionRootType:   {"released_at": true},
+	metadataProcessingConsentGrantType: {"expires_at": true},
 	metadataDerivativePurgeSuppressionType: {
 		"superseded_at": true, "superseding_build_id": true,
 	},
