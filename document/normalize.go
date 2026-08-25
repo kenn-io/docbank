@@ -559,6 +559,7 @@ type renditionHTMLWriter struct {
 	inlineText         strings.Builder
 	ignoredLinkDepth   int
 	linkDepthTruncated bool
+	suppressedTags     []string
 
 	inTable          bool
 	inRow            bool
@@ -842,7 +843,10 @@ func (w *renditionHTMLWriter) consumeFragment(fragment []byte, suppressText bool
 		case html.SelfClosingTagToken:
 			w.startTag(tokenizer.Token(), tokenOffset, suppressText)
 		case html.EndTagToken:
-			w.endTag(tokenizer.Token().Data)
+			tag := tokenizer.Token().Data
+			if !w.endSuppressedTag(tag) {
+				w.endTag(tag)
+			}
 		case html.CommentToken, html.DoctypeToken:
 			// Not searchable evidence.
 		}
@@ -876,6 +880,12 @@ func (w *renditionHTMLWriter) startTag(token html.Token, tokenOffset int, suppre
 	if w.skipDepth > 0 {
 		if tag == w.skipTag {
 			w.skipDepth++
+		}
+		return
+	}
+	if suppressText {
+		if isRenditionStatefulTag(tag) {
+			w.suppressedTags = append(w.suppressedTags, tag)
 		}
 		return
 	}
@@ -1021,6 +1031,23 @@ func (w *renditionHTMLWriter) startTag(token html.Token, tokenOffset int, suppre
 			w.startBlock(renditionParagraph, 0)
 		}
 	}
+}
+
+func isRenditionStatefulTag(tag string) bool {
+	switch tag {
+	case "ul", "ol", "li", "table", "tr", "td", "th", "pre", "code", "a":
+		return true
+	default:
+		return false
+	}
+}
+
+func (w *renditionHTMLWriter) endSuppressedTag(tag string) bool {
+	if len(w.suppressedTags) == 0 || w.suppressedTags[len(w.suppressedTags)-1] != tag {
+		return false
+	}
+	w.suppressedTags = w.suppressedTags[:len(w.suppressedTags)-1]
+	return true
 }
 
 func parserGeneratedCheckboxMarker(token html.Token) (string, bool) {

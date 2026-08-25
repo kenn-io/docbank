@@ -213,6 +213,23 @@ func TestBuildRenditionV1DropsGeneratedTextInsideActiveHTML(t *testing.T) {
 	assert.NotContains(t, html, "[x]")
 }
 
+func TestBuildRenditionV1DoesNotEmitStructuresOpenedInsideActiveHTML(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		source string
+	}{
+		{name: "list", source: "<iframe>\n\n- hidden\n\n</iframe>"},
+		{name: "table", source: "<iframe>\n\n| h |\n| --- |\n| hidden |\n\n</iframe>"},
+		{name: "code", source: "<iframe>\n\n```text\nhidden\n```\n\n</iframe>"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := buildRenditionMarkdownResultForTest(t, test.source, 100_000)
+
+			require.ErrorContains(t, err, "evidence produced no readable text")
+		})
+	}
+}
+
 func TestBuildRenditionV1TreatsSelfClosingActiveSyntaxAsAnOpener(t *testing.T) {
 	for _, tag := range []string{"script", "iframe"} {
 		t.Run(tag, func(t *testing.T) {
