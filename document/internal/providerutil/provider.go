@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -26,6 +27,18 @@ const (
 
 	maxConsecutiveEmptyReads = 100
 )
+
+// ValidOptionalFilename accepts an undisclosed filename or one safe basename
+// whose case-insensitive extension is in allowedExtensions.
+func ValidOptionalFilename(filename string, allowedExtensions ...string) bool {
+	if filename == "" {
+		return true
+	}
+	if filename != strings.TrimSpace(filename) || strings.ContainsAny(filename, "/\\:\x00") {
+		return false
+	}
+	return slices.Contains(allowedExtensions, strings.ToLower(filepath.Ext(filename)))
+}
 
 // Provider is one adapter's display name. It prefixes every classified
 // error cause the adapter produces and, lowercased, every constructor error.

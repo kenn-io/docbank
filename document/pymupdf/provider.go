@@ -42,10 +42,6 @@ const (
 	MaxTimeout = 30 * time.Minute
 )
 
-var (
-	errOutputTooLarge = errors.New("child output exceeds limit")
-)
-
 // Profile fixes one executable, immutable runtime identity, and all local bounds.
 type Profile struct {
 	Executable       string
@@ -74,7 +70,7 @@ func New(profile Profile) (*Provider, error) {
 	if !filepath.IsAbs(profile.Executable) || filepath.Clean(profile.Executable) != profile.Executable {
 		return nil, errors.New("pymupdf: executable must be an absolute clean path")
 	}
-	if pythonInterpreter(filepath.Base(profile.Executable)) {
+	if providerutil.IsPythonInterpreter(profile.Executable) {
 		return nil, errors.New("pymupdf: executable must not be a Python interpreter")
 	}
 	pinnedExecutable, err := providerutil.LoadPinnedExecutable(
@@ -196,22 +192,26 @@ func (provider *Provider) Render(
 	defer func() { _ = cleanupExecutable() }()
 
 	responseLimit := min(provider.maxResponseBytes, int64(authorization.MaxTotalResultBytes))
-	stdout := &boundedBuffer{limit: responseLimit}
+	var managedCommand *providerutil.ManagedCommand
+	stdout := providerutil.NewBoundedBuffer(responseLimit, func() {
+		if managedCommand != nil {
+			_ = managedCommand.Kill()
+		}
+	})
 	command := exec.CommandContext( //nolint:gosec // the operator pins one direct executable; source bytes never select it
 		operationCtx, executable, "--protocol", protocolVersion,
 	)
 	command.Dir = filepath.Dir(executable)
-	command.Env = cleanEnvironment()
+	command.Env = providerutil.PythonEnvironment()
 	command.Stdin = bytes.NewReader(source)
 	command.Stdout = stdout
 	command.Stderr = io.Discard
 	command.WaitDelay = childDrainWindow
-	managedCommand, err := providerutil.NewManagedCommand(command)
+	managedCommand, err = providerutil.NewManagedCommand(command)
 	if err != nil {
 		return document.RenditionResult{}, providerError(document.RenditionErrorTransient,
 			"PyMuPDF executable could not be isolated", err)
 	}
-	stdout.overflow = func() { _ = managedCommand.Kill() }
 	runErr := managedCommand.Run()
 	cleanupErr := cleanupExecutable()
 	if operationCtx.Err() != nil {
@@ -221,7 +221,7 @@ func (provider *Provider) Render(
 		return document.RenditionResult{}, providerError(document.RenditionErrorTransient,
 			"PyMuPDF executable cleanup failed", cleanupErr)
 	}
-	if stdout.exceeded {
+	if stdout.Exceeded() {
 		return document.RenditionResult{}, providerError(document.RenditionErrorMalformedEvidence,
 			"PyMuPDF output exceeds the configured byte limit", nil)
 	}
@@ -346,42 +346,6 @@ func parseResponse(
 	return wire, nil
 }
 
-type boundedBuffer struct {
-	data     bytes.Buffer
-	limit    int64
-	exceeded bool
-	overflow func()
-}
-
-func (buffer *boundedBuffer) Write(data []byte) (int, error) {
-	remaining := buffer.limit - int64(buffer.data.Len())
-	if remaining <= 0 {
-		buffer.failOverflow()
-		return 0, errOutputTooLarge
-	}
-	if int64(len(data)) > remaining {
-		written, _ := buffer.data.Write(data[:remaining])
-		buffer.failOverflow()
-		return written, errOutputTooLarge
-	}
-	written, _ := buffer.data.Write(data)
-	return written, nil
-}
-
-func (buffer *boundedBuffer) Bytes() []byte { return buffer.data.Bytes() }
-
-func (buffer *boundedBuffer) Len() int { return buffer.data.Len() }
-
-func (buffer *boundedBuffer) failOverflow() {
-	if buffer.exceeded {
-		return
-	}
-	buffer.exceeded = true
-	if buffer.overflow != nil {
-		buffer.overflow()
-	}
-}
-
 func (provider *Provider) contextError(parent context.Context, expiry bool, cause error) error {
 	if parent.Err() != nil {
 		return providerError(document.RenditionErrorCanceled, "PyMuPDF rendering canceled", parent.Err())
@@ -412,13 +376,6 @@ func providerError(code document.RenditionErrorCode, message string, cause error
 	return providerutil.ClassifiedError("PyMuPDF", code, message, 0, cause)
 }
 
-func cleanEnvironment() []string {
-	return []string{
-		"LANG=C.UTF-8", "LC_ALL=C.UTF-8", "TZ=UTC", "PYTHONHASHSEED=0",
-		"PYTHONNOUSERSITE=1", "PYTHONDONTWRITEBYTECODE=1",
-	}
-}
-
 func validateRuntimeIdentity(value string) error {
 	if value == "" || len(value) > 512 || value != strings.TrimSpace(value) || !utf8.ValidString(value) {
 		return errors.New("pymupdf: runtime identity must be non-empty bounded UTF-8")
@@ -441,29 +398,6 @@ func validExplanation(value string) bool {
 		}
 	}
 	return true
-}
-
-func pythonInterpreter(base string) bool {
-	name := strings.TrimSuffix(strings.ToLower(base), ".exe")
-	if name == "py" {
-		return true
-	}
-	for _, prefix := range []string{"python", "pypy"} {
-		if !strings.HasPrefix(name, prefix) {
-			continue
-		}
-		suffix := strings.TrimPrefix(name, prefix)
-		if suffix == "" {
-			return true
-		}
-		for _, char := range suffix {
-			if (char < '0' || char > '9') && char != '.' {
-				return false
-			}
-		}
-		return true
-	}
-	return false
 }
 
 var _ document.RenditionProvider = (*Provider)(nil)
