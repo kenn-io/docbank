@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/sqlite/modernc"
+	"go.kenn.io/kit/packstore"
 )
 
 const (
@@ -1227,4 +1230,304 @@ func appendMetadataRecords(t *testing.T, input []byte, records ...any) []byte {
 		result = append(result, '\n')
 	}
 	return result
+}
+
+func TestProcessingMetadataJSONLIsDependencyOrderedAndCrossDriverStable(t *testing.T) {
+	ctx := t.Context()
+	source := newTestStore(t)
+	versions, profiles, build := seedProcessingMetadataCatalog(t, source)
+
+	var first, second bytes.Buffer
+	require.NoError(t, source.ExportMetadata(ctx, &first))
+	require.NoError(t, source.ExportMetadata(ctx, &second))
+	assert.Equal(t, first.Bytes(), second.Bytes(), "unchanged processing authority must export byte-identically")
+	assert.Equal(t, []string{
+		"processing_profile", "processing_profile", "rendition_build",
+		"rendition_artifact", "rendition_artifact", "rendition_unit",
+		"rendition_lexical_segment", "rendition_attachment", "rendition_attachment",
+		"rendition_head", "rendition_head",
+	}, processingMetadataRecordTypes(t, first.Bytes()))
+	assert.Contains(t, first.String(), `"blob_hash":"`+catalogEvidenceBlobHash+`"`,
+		"derivative blob membership must be portable authority")
+	assert.Contains(t, first.String(), `"blob_hash":"`+catalogMarkdownBlobHash+`"`)
+
+	targetPath := filepath.Join(t.TempDir(), "modernc-target.db")
+	materializeCatalogBlobs(t, targetPath, "", "")
+	target, err := Open(targetPath, modernc.Driver{})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, target.Close()) })
+	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(first.Bytes())))
+
+	var restored bytes.Buffer
+	require.NoError(t, target.ExportMetadata(ctx, &restored))
+	assert.Equal(t, first.Bytes(), restored.Bytes(),
+		"mattn/default and modernc must preserve the exact processing JSONL bytes")
+	sourceView, err := source.ActiveRendition(ctx, versions[0], profiles[0].Fingerprint)
+	require.NoError(t, err)
+	restoredView, err := target.ActiveRendition(ctx, versions[0], profiles[0].Fingerprint)
+	require.NoError(t, err)
+	assert.Equal(t, sourceView, restoredView)
+	assert.Equal(t, build, restoredView.Build)
+}
+
+func TestProcessingMetadataImportRequiresVerifiedPhysicalBytes(t *testing.T) {
+	source := newTestStore(t)
+	seedProcessingMetadataCatalog(t, source)
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(t.Context(), &exported))
+
+	for name, setup := range map[string]func(*testing.T, string){
+		"metadata only": func(t *testing.T, _ string) {
+			t.Helper()
+		},
+		"missing derivative": func(t *testing.T, targetPath string) {
+			t.Helper()
+			materializeCatalogBlobs(t, targetPath, catalogEvidenceBlobHash, "")
+		},
+		"corrupt derivative": func(t *testing.T, targetPath string) {
+			t.Helper()
+			materializeCatalogBlobs(t, targetPath, "", catalogMarkdownBlobHash)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			targetPath := filepath.Join(t.TempDir(), "target.db")
+			setup(t, targetPath)
+			target, err := Open(targetPath)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, target.Close()) })
+
+			err = target.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes()))
+			require.ErrorContains(t, err, "physical")
+
+			var processingRows, heads int
+			require.NoError(t, target.db.QueryRow(`
+				SELECT
+				  (SELECT COUNT(*) FROM processing_profiles)
+				    + (SELECT COUNT(*) FROM rendition_builds)
+				    + (SELECT COUNT(*) FROM rendition_artifacts)
+				    + (SELECT COUNT(*) FROM rendition_units)
+				    + (SELECT COUNT(*) FROM rendition_lexical_segments)
+				    + (SELECT COUNT(*) FROM rendition_attachments),
+				  (SELECT COUNT(*) FROM rendition_heads)
+			`).Scan(&processingRows, &heads))
+			assert.Zero(t, processingRows)
+			assert.Zero(t, heads)
+		})
+	}
+}
+
+func TestProcessingMetadataNilHeadingPathRoundTripsAsEmptyArray(t *testing.T) {
+	source := newTestStore(t)
+	versions := seedRenditionCatalogVersions(t, source)
+	profile := catalogProcessingProfile(t, false)
+	build := catalogRenditionBuild(source, profile)
+	build.Units[0].HeadingPath = nil
+	require.NoError(t, source.StageRenditionBuild(t.Context(), build))
+	attachment := RenditionAttachmentRecord{
+		ID: catalogAttachmentFirst, VaultID: source.VaultID(), ContentVersionID: versions[0],
+		BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-22T10:00:00.000000000Z",
+	}
+	require.NoError(t, source.AttachRenditionBuild(t.Context(), attachment))
+	require.NoError(t, source.PublishRenditionHead(t.Context(), RenditionHeadRecord{
+		ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
+		AttachmentID: attachment.ID, PublishedAt: "2026-08-22T10:01:00.000000000Z",
+	}))
+
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(t.Context(), &exported))
+	assert.Contains(t, exported.String(), `"heading_path":[]`)
+	assert.NotContains(t, exported.String(), `"heading_path":null`)
+
+	targetPath := filepath.Join(t.TempDir(), "target.db")
+	materializeCatalogBlobs(t, targetPath, "", "")
+	target, err := Open(targetPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, target.Close()) })
+	require.NoError(t, target.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
+
+	view, err := target.ActiveRendition(t.Context(), versions[0], profile.Fingerprint)
+	require.NoError(t, err)
+	assert.Empty(t, view.Build.Units[0].HeadingPath)
+	assert.NotNil(t, view.Build.Units[0].HeadingPath)
+}
+
+func TestProcessingMetadataImportRejectsInvalidAuthorityTransactionally(t *testing.T) {
+	source := newTestStore(t)
+	seedProcessingMetadataCatalog(t, source)
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(t.Context(), &exported))
+
+	for name, mutate := range map[string]func(*testing.T, []byte) []byte{
+		"duplicate immutable profile": func(t *testing.T, input []byte) []byte {
+			t.Helper()
+			line := firstProcessingMetadataRecord(t, input, "processing_profile")
+			return append(append(bytes.Clone(input), line...), '\n')
+		},
+		"missing declared artifact": func(t *testing.T, input []byte) []byte {
+			t.Helper()
+			return removeFirstProcessingMetadataRecord(t, input, "rendition_artifact")
+		},
+		"missing attachment reference": func(t *testing.T, input []byte) []byte {
+			t.Helper()
+			return mutateFirstProcessingMetadataRecord(t, input, "rendition_head", func(fields map[string]jsontext.Value) {
+				fields["attachment_id"] = jsontext.Value(`"` + fakeHash("fe") + `"`)
+			})
+		},
+		"artifact checksum disagreement": func(t *testing.T, input []byte) []byte {
+			t.Helper()
+			return mutateFirstProcessingMetadataRecord(t, input, "rendition_artifact", func(fields map[string]jsontext.Value) {
+				fields["checksum"] = jsontext.Value(`"` + fakeHash("2f") + `"`)
+			})
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			target := newTestStore(t)
+			originalVaultID := target.VaultID()
+			err := target.ImportMetadata(t.Context(), bytes.NewReader(mutate(t, exported.Bytes())))
+			require.Error(t, err)
+
+			var processingRows, nodes int
+			require.NoError(t, target.db.QueryRow(`
+				SELECT
+				  (SELECT COUNT(*) FROM processing_profiles)
+				    + (SELECT COUNT(*) FROM rendition_builds)
+				    + (SELECT COUNT(*) FROM rendition_artifacts)
+				    + (SELECT COUNT(*) FROM rendition_units)
+				    + (SELECT COUNT(*) FROM rendition_lexical_segments)
+				    + (SELECT COUNT(*) FROM rendition_attachments)
+				    + (SELECT COUNT(*) FROM rendition_heads),
+				  (SELECT COUNT(*) FROM nodes)
+			`).Scan(&processingRows, &nodes))
+			assert.Zero(t, processingRows, "a failed import must publish no processing rows or heads")
+			assert.Equal(t, 1, nodes, "a failed import must restore the pristine root")
+			assert.Equal(t, originalVaultID, target.VaultID(), "a failed import must not replace vault identity")
+		})
+	}
+}
+
+func seedProcessingMetadataCatalog(
+	t *testing.T, s *Store,
+) ([]string, []ProcessingProfileRecord, RenditionBuildRecord) {
+	t.Helper()
+	versions := seedRenditionCatalogVersions(t, s)
+	profiles := []ProcessingProfileRecord{
+		catalogProcessingProfile(t, false), catalogProcessingProfile(t, true),
+	}
+	build := catalogRenditionBuild(s, profiles[0])
+	require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+	attachments := []RenditionAttachmentRecord{
+		{ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
+			BuildID: build.ID, Profile: profiles[0], AttachedAt: "2026-08-22T10:00:00.000000000Z"},
+		{ID: catalogAttachmentSecond, VaultID: s.VaultID(), ContentVersionID: versions[1],
+			BuildID: build.ID, Profile: profiles[1], AttachedAt: "2026-08-22T10:01:00.000000000Z"},
+	}
+	for index, attachment := range attachments {
+		require.NoError(t, s.AttachRenditionBuild(t.Context(), attachment))
+		require.NoError(t, s.PublishRenditionHead(t.Context(), RenditionHeadRecord{
+			ContentVersionID:             attachment.ContentVersionID,
+			ProcessingProfileFingerprint: attachment.Profile.Fingerprint,
+			AttachmentID:                 attachment.ID,
+			PublishedAt:                  time.Date(2026, time.August, 22, 10, 2+index, 0, 0, time.UTC).Format(timestampLayout),
+		}))
+	}
+	return versions, profiles, build
+}
+
+func processingMetadataRecordTypes(t *testing.T, input []byte) []string {
+	t.Helper()
+	var result []string
+	for line := range bytes.SplitSeq(bytes.TrimSpace(input), []byte{'\n'}) {
+		var kind struct {
+			Type string `json:"type"`
+		}
+		require.NoError(t, json.Unmarshal(line, &kind))
+		switch kind.Type {
+		case "processing_profile", "rendition_build", "rendition_artifact",
+			"rendition_unit", "rendition_lexical_segment", "rendition_attachment", "rendition_head":
+			result = append(result, kind.Type)
+		}
+	}
+	return result
+}
+
+func firstProcessingMetadataRecord(t *testing.T, input []byte, kind string) []byte {
+	t.Helper()
+	for line := range bytes.SplitSeq(bytes.TrimSpace(input), []byte{'\n'}) {
+		var recordKind struct {
+			Type string `json:"type"`
+		}
+		require.NoError(t, json.Unmarshal(line, &recordKind))
+		if recordKind.Type == kind {
+			return bytes.Clone(line)
+		}
+	}
+	require.FailNow(t, "processing metadata record not found", kind)
+	return nil
+}
+
+func removeFirstProcessingMetadataRecord(t *testing.T, input []byte, kind string) []byte {
+	t.Helper()
+	lines := bytes.Split(bytes.TrimSpace(input), []byte{'\n'})
+	for index, line := range lines {
+		var recordKind struct {
+			Type string `json:"type"`
+		}
+		require.NoError(t, json.Unmarshal(line, &recordKind))
+		if recordKind.Type == kind {
+			lines = append(lines[:index], lines[index+1:]...)
+			return append(bytes.Join(lines, []byte{'\n'}), '\n')
+		}
+	}
+	require.FailNow(t, "processing metadata record not found", kind)
+	return nil
+}
+
+func mutateFirstProcessingMetadataRecord(
+	t *testing.T, input []byte, kind string, mutate func(map[string]jsontext.Value),
+) []byte {
+	t.Helper()
+	lines := bytes.Split(bytes.TrimSpace(input), []byte{'\n'})
+	for index, line := range lines {
+		var recordKind struct {
+			Type string `json:"type"`
+		}
+		require.NoError(t, json.Unmarshal(line, &recordKind))
+		if recordKind.Type != kind {
+			continue
+		}
+		var fields map[string]jsontext.Value
+		require.NoError(t, json.Unmarshal(line, &fields))
+		mutate(fields)
+		var err error
+		lines[index], err = json.Marshal(fields, json.Deterministic(true))
+		require.NoError(t, err)
+		return append(bytes.Join(lines, []byte{'\n'}), '\n')
+	}
+	require.FailNow(t, "processing metadata record not found", kind)
+	return nil
+}
+
+func materializeCatalogBlobs(t *testing.T, databasePath, omittedHash, corruptHash string) {
+	t.Helper()
+	layout, err := packstore.NewLayout(filepath.Join(filepath.Dir(databasePath), "blobs"), packstore.LayoutOptions{
+		Staging: packstore.StagingStoreDirectory, StagingDir: "tmp",
+	})
+	require.NoError(t, err)
+	loose, err := packstore.NewLooseStore(layout)
+	require.NoError(t, err)
+	for hash, content := range catalogBlobContents {
+		if hash == omittedHash {
+			continue
+		}
+		parsed, parseErr := packstore.ParseHash(hash)
+		require.NoError(t, parseErr)
+		_, writeErr := loose.WriteBytes(t.Context(), content, packstore.WriteOptions{
+			Durability: packstore.AtomicPublication, Dedup: packstore.VerifyFullHash,
+			ExpectedHash: parsed, ExpectedSize: int64(len(content)), SizeKnown: true,
+		})
+		require.NoError(t, writeErr)
+		if hash == corruptHash {
+			require.NoError(t, os.WriteFile(layout.LoosePath(parsed), bytes.Repeat([]byte{'x'}, len(content)), 0o600))
+		}
+	}
 }
