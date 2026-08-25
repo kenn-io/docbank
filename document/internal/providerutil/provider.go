@@ -277,6 +277,7 @@ type Receipt struct {
 	CompletedAt   time.Time
 	Warnings      []string
 	Usage         document.RenditionUsage
+	RetryDelay    time.Duration
 }
 
 // NewReceipt binds a completed rendering to its descriptor and authorization.
@@ -297,5 +298,6 @@ func NewReceipt(provider Provider, input Receipt) (document.RenditionReceipt, er
 		CompletedAt:                 input.CompletedAt.UTC().Format(TimestampForm),
 		Warnings:                    input.Warnings,
 		Usage:                       input.Usage,
+		RetryDelayMillis:            input.RetryDelay.Milliseconds(),
 	}, nil
 }

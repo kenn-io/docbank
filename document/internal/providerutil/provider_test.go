@@ -37,6 +37,12 @@ func TestParseRetryAfterAcceptsSecondsAndHTTPDate(t *testing.T) {
 	assert.Zero(t, ParseRetryAfter(http.Header{}))
 }
 
+func TestRequireMediaTypeAcceptsOnlyTheRequestedWildcardFamily(t *testing.T) {
+	require.NoError(t, testProvider.RequireMediaType("image/png", "image/*"))
+	assertCode(t, testProvider.RequireMediaType("application/json", "image/*"),
+		document.RenditionErrorMalformedEvidence)
+}
+
 func TestStatusErrorUsesOneTableForEveryStage(t *testing.T) {
 	for _, testCase := range []struct {
 		name      string
@@ -108,6 +114,15 @@ func TestOperationCheckOrdersCallerExpiryAndTotalTimeout(t *testing.T) {
 		require.NoError(t, err)
 		defer operation.Cancel()
 		assertCode(t, operation.Check(), document.RenditionErrorPolicyRejected)
+	})
+
+	t.Run("resumed operation uses only a new total timeout", func(t *testing.T) {
+		operation := NewResumedOperation(t.Context(), testProvider, time.Millisecond)
+		defer operation.Cancel()
+		<-operation.Context().Done()
+		err := operation.Check()
+		assertCode(t, err, document.RenditionErrorCapacity)
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
 	})
 }
 

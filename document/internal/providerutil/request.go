@@ -247,7 +247,10 @@ func (provider Provider) RequireMediaType(got, want string) error {
 		return provider.Malformed(string(provider)+" response content type is invalid", err)
 	}
 	wantType, wantParams, err := mime.ParseMediaType(want)
-	if err != nil || gotType != wantType || len(wantParams) != 0 && !reflect.DeepEqual(gotParams, wantParams) {
+	wantFamily, wantSubtype, wildcard := strings.Cut(wantType, "/")
+	gotFamily, _, _ := strings.Cut(gotType, "/")
+	matches := gotType == wantType || wildcard && wantSubtype == "*" && gotFamily == wantFamily
+	if err != nil || !matches || len(wantParams) != 0 && !reflect.DeepEqual(gotParams, wantParams) {
 		return provider.Malformed(string(provider)+" response content type does not match protocol", err)
 	}
 	return nil
