@@ -17,6 +17,8 @@ import (
 
 	"github.com/BurntSushi/toml"
 
+	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/embedding"
 	"go.kenn.io/docbank/internal/storenamespace"
 )
 
@@ -98,14 +100,103 @@ type WatchConfig struct {
 	Exclude      []string `toml:"exclude"`
 }
 
+// RenditionProfileConfig names a deployment binding for one pinned rendition
+// descriptor. CredentialBinding is resolved only by the eventual provider
+// adapter, never while loading config.toml.
+type RenditionProfileConfig struct {
+	AdapterContract          string   `toml:"adapter_contract"`
+	AuthorizationFingerprint string   `toml:"authorization_fingerprint"`
+	CredentialBinding        string   `toml:"credential_binding"`
+	DeploymentFingerprint    string   `toml:"deployment_fingerprint"`
+	DescriptorID             string   `toml:"descriptor_id"`
+	DescriptorFingerprint    string   `toml:"descriptor_fingerprint"`
+	DiscloseFilename         bool     `toml:"disclose_filename"`
+	DisclosureFingerprint    string   `toml:"disclosure_fingerprint"`
+	MaxDocumentBytes         int64    `toml:"max_document_bytes"`
+	MaxResponseBytes         int64    `toml:"max_response_bytes"`
+	MaxUnits                 int      `toml:"max_units"`
+	RequestedArtifacts       []string `toml:"requested_artifacts"`
+	TrustBoundary            string   `toml:"trust_boundary"`
+	UploadOptionsFingerprint string   `toml:"upload_options_fingerprint"`
+}
+
+// EmbeddingChunkConfig pins rendition-chunk input generation.
+type EmbeddingChunkConfig struct {
+	ContextFingerprint string `toml:"context_fingerprint"`
+	Formatter          string `toml:"formatter"`
+	MaxTokens          int    `toml:"max_tokens"`
+	OverlapTokens      int    `toml:"overlap_tokens"`
+	Tokenizer          string `toml:"tokenizer"`
+	TruncationPolicy   string `toml:"truncation_policy"`
+}
+
+// EmbeddingProfileConfig names a deployment binding for one pinned embedding
+// descriptor and semantic input kind.
+type EmbeddingProfileConfig struct {
+	Activation               string               `toml:"activation"`
+	AuthorizationFingerprint string               `toml:"authorization_fingerprint"`
+	Chunk                    EmbeddingChunkConfig `toml:"chunk"`
+	CompatibilityID          string               `toml:"compatibility_id"`
+	CredentialBinding        string               `toml:"credential_binding"`
+	DescriptorID             string               `toml:"descriptor_id"`
+	DescriptorFingerprint    string               `toml:"descriptor_fingerprint"`
+	Dimensions               int                  `toml:"dimensions"`
+	DisclosureFingerprint    string               `toml:"disclosure_fingerprint"`
+	DocumentFormatter        string               `toml:"document_formatter"`
+	InputKind                string               `toml:"input_kind"`
+	MaxBatchItems            int                  `toml:"max_batch_items"`
+	MaxInputBytes            int64                `toml:"max_input_bytes"`
+	MaxResponseBytes         int64                `toml:"max_response_bytes"`
+	Metric                   string               `toml:"metric"`
+	Model                    string               `toml:"model"`
+	Normalization            string               `toml:"normalization"`
+	QueryFormatter           string               `toml:"query_formatter"`
+	ScalarEncoding           string               `toml:"scalar_encoding"`
+	TrustBoundary            string               `toml:"trust_boundary"`
+}
+
+// RetrievalProfileConfig contains bounded candidate limits for one named
+// retrieval policy.
+type RetrievalProfileConfig struct {
+	LexicalLimit int `toml:"lexical_limit"`
+	VectorLimit  int `toml:"vector_limit"`
+}
+
+// ProcessingProfileConfig assembles named rendition, embedding, and retrieval
+// policies without copying provider credentials into portable policy.
+type ProcessingProfileConfig struct {
+	AttachmentPolicyFingerprint string   `toml:"attachment_policy_fingerprint"`
+	CompletenessFingerprint     string   `toml:"completeness_fingerprint"`
+	ConsentFingerprint          string   `toml:"consent_fingerprint"`
+	Embeddings                  []string `toml:"embeddings"`
+	LexicalSegmenterFingerprint string   `toml:"lexical_segmenter_fingerprint"`
+	MaxSegmentRunes             int      `toml:"max_segment_runes"`
+	MaxUnitRunes                int      `toml:"max_unit_runes"`
+	NormalizedEvidenceContract  string   `toml:"normalized_evidence_contract"`
+	NormalizerFingerprint       string   `toml:"normalizer_fingerprint"`
+	Rendition                   string   `toml:"rendition"`
+	RenditionContract           string   `toml:"rendition_contract"`
+	RetainProviderMarkdown      bool     `toml:"retain_provider_markdown"`
+	RetainSanitizedMarkdown     bool     `toml:"retain_sanitized_markdown"`
+	RetainTypedArtifacts        bool     `toml:"retain_typed_artifacts"`
+	Retrieval                   string   `toml:"retrieval"`
+	SanitizerFingerprint        string   `toml:"sanitizer_fingerprint"`
+	SourceEvidenceContract      string   `toml:"source_evidence_contract"`
+	TrustBoundary               string   `toml:"trust_boundary"`
+}
+
 // Config is the full contents of config.toml.
 type Config struct {
-	Server        ServerConfig                  `toml:"server"`
-	Web           WebConfig                     `toml:"web"`
-	Backup        BackupConfig                  `toml:"backup"`
-	Storage       StorageConfig                 `toml:"storage"`
-	StoreBindings map[string]StoreBindingConfig `toml:"store_bindings"`
-	Watches       []WatchConfig                 `toml:"watch"`
+	Server             ServerConfig                       `toml:"server"`
+	Web                WebConfig                          `toml:"web"`
+	Backup             BackupConfig                       `toml:"backup"`
+	Storage            StorageConfig                      `toml:"storage"`
+	StoreBindings      map[string]StoreBindingConfig      `toml:"store_bindings"`
+	RenditionProfiles  map[string]RenditionProfileConfig  `toml:"rendition_profiles"`
+	EmbeddingProfiles  map[string]EmbeddingProfileConfig  `toml:"embedding_profiles"`
+	RetrievalProfiles  map[string]RetrievalProfileConfig  `toml:"retrieval_profiles"`
+	ProcessingProfiles map[string]ProcessingProfileConfig `toml:"processing_profiles"`
+	Watches            []WatchConfig                      `toml:"watch"`
 }
 
 // Default returns the configuration used when config.toml is absent.
@@ -115,8 +206,12 @@ func Default() Config {
 			BindAddr:    "127.0.0.1",
 			IdleTimeout: Duration(30 * time.Minute),
 		},
-		Web:     WebConfig{Enabled: true},
-		Storage: StorageConfig{PackMaxBytes: 256 << 20},
+		Web:                WebConfig{Enabled: true},
+		Storage:            StorageConfig{PackMaxBytes: 256 << 20},
+		RenditionProfiles:  make(map[string]RenditionProfileConfig),
+		EmbeddingProfiles:  make(map[string]EmbeddingProfileConfig),
+		RetrievalProfiles:  make(map[string]RetrievalProfileConfig),
+		ProcessingProfiles: make(map[string]ProcessingProfileConfig),
 	}
 }
 
@@ -291,6 +386,9 @@ func (c Config) Validate() error {
 	if err := validateStoreBindings(c.StoreBindings); err != nil {
 		return err
 	}
+	if err := validateProcessingProfiles(c); err != nil {
+		return err
+	}
 	for _, watch := range c.Watches {
 		if err := validateWatch(watch); err != nil {
 			return err
@@ -308,6 +406,296 @@ func (c Config) Validate() error {
 }
 
 var storeBindingNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
+
+var lowercaseSHA256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var credentialReferencePattern = regexp.MustCompile(`^credential:[a-z][a-z0-9_-]{0,62}$`)
+
+func validateProcessingProfiles(c Config) error {
+	for name, profile := range c.RenditionProfiles {
+		prefix := fmt.Sprintf("[rendition_profiles.%s]", name)
+		if err := validateProfileName(name, prefix); err != nil {
+			return err
+		}
+		if err := validateRenditionProfileConfig(profile, prefix); err != nil {
+			return err
+		}
+	}
+	for name, profile := range c.EmbeddingProfiles {
+		prefix := fmt.Sprintf("[embedding_profiles.%s]", name)
+		if err := validateProfileName(name, prefix); err != nil {
+			return err
+		}
+		if err := validateEmbeddingProfileConfig(profile, prefix); err != nil {
+			return err
+		}
+	}
+	for name, profile := range c.RetrievalProfiles {
+		prefix := fmt.Sprintf("[retrieval_profiles.%s]", name)
+		if err := validateProfileName(name, prefix); err != nil {
+			return err
+		}
+		if err := validateRetrievalProfileConfig(profile, prefix); err != nil {
+			return err
+		}
+	}
+	for name := range c.ProcessingProfiles {
+		prefix := fmt.Sprintf("[processing_profiles.%s]", name)
+		if err := validateProfileName(name, prefix); err != nil {
+			return err
+		}
+		assembled, err := c.assembleProcessingProfile(name)
+		if err != nil {
+			return err
+		}
+		if _, _, err := document.CanonicalProfile(assembled); err != nil {
+			return fmt.Errorf("%s is invalid: %w", prefix, err)
+		}
+	}
+	return nil
+}
+
+func validateRetrievalProfileConfig(profile RetrievalProfileConfig, prefix string) error {
+	if profile.LexicalLimit <= 0 || profile.LexicalLimit > embedding.MaxCandidateLimit {
+		return fmt.Errorf("%s lexical_limit must be between 1 and %d", prefix, embedding.MaxCandidateLimit)
+	}
+	if profile.VectorLimit <= 0 || profile.VectorLimit > embedding.MaxCandidateLimit {
+		return fmt.Errorf("%s vector_limit must be between 1 and %d", prefix, embedding.MaxCandidateLimit)
+	}
+	return nil
+}
+
+func validateRenditionProfileConfig(profile RenditionProfileConfig, prefix string) error {
+	for field, value := range map[string]string{
+		"adapter_contract": profile.AdapterContract, "descriptor_id": profile.DescriptorID,
+		"trust_boundary": profile.TrustBoundary,
+	} {
+		if value == "" {
+			return fmt.Errorf("%s %s is required", prefix, field)
+		}
+	}
+	for field, value := range map[string]string{
+		"authorization_fingerprint": profile.AuthorizationFingerprint, "deployment_fingerprint": profile.DeploymentFingerprint,
+		"descriptor_fingerprint": profile.DescriptorFingerprint, "disclosure_fingerprint": profile.DisclosureFingerprint,
+		"upload_options_fingerprint": profile.UploadOptionsFingerprint,
+	} {
+		if !lowercaseSHA256Pattern.MatchString(value) {
+			return fmt.Errorf("%s %s must be a lowercase SHA-256 value", prefix, field)
+		}
+	}
+	if !credentialReferencePattern.MatchString(profile.CredentialBinding) {
+		return fmt.Errorf("%s credential_binding must use credential:<name>", prefix)
+	}
+	if profile.MaxDocumentBytes <= 0 || profile.MaxDocumentBytes > 1<<40 {
+		return fmt.Errorf("%s max document bytes must be between 1 and %d", prefix, int64(1<<40))
+	}
+	if profile.MaxResponseBytes <= 0 || profile.MaxResponseBytes > 1<<30 {
+		return fmt.Errorf("%s max response bytes must be between 1 and %d", prefix, int64(1<<30))
+	}
+	if profile.MaxUnits <= 0 || profile.MaxUnits > 1_000_000 {
+		return fmt.Errorf("%s max units must be between 1 and 1000000", prefix)
+	}
+	if len(profile.RequestedArtifacts) == 0 || len(profile.RequestedArtifacts) > 4 {
+		return fmt.Errorf("%s requested_artifacts must contain 1-4 roles", prefix)
+	}
+	seenArtifacts := make(map[string]struct{}, len(profile.RequestedArtifacts))
+	for _, role := range profile.RequestedArtifacts {
+		switch document.EvidenceArtifactRole(role) {
+		case document.EvidenceArtifactImage, document.EvidenceArtifactMarkdown,
+			document.EvidenceArtifactStructured, document.EvidenceArtifactTranscript:
+		default:
+			return fmt.Errorf("%s requested artifact role %q is unknown", prefix, role)
+		}
+		if _, exists := seenArtifacts[role]; exists {
+			return fmt.Errorf("%s requested artifact role %q is duplicated", prefix, role)
+		}
+		seenArtifacts[role] = struct{}{}
+	}
+	return nil
+}
+
+func validateEmbeddingProfileConfig(profile EmbeddingProfileConfig, prefix string) error {
+	for field, value := range map[string]string{
+		"compatibility_id": profile.CompatibilityID, "descriptor_id": profile.DescriptorID,
+		"document_formatter": profile.DocumentFormatter, "metric": profile.Metric, "model": profile.Model,
+		"normalization": profile.Normalization, "query_formatter": profile.QueryFormatter,
+		"scalar_encoding": profile.ScalarEncoding, "trust_boundary": profile.TrustBoundary,
+	} {
+		if value == "" {
+			return fmt.Errorf("%s %s is required", prefix, field)
+		}
+	}
+	for field, value := range map[string]string{
+		"authorization_fingerprint": profile.AuthorizationFingerprint, "descriptor_fingerprint": profile.DescriptorFingerprint,
+		"disclosure_fingerprint": profile.DisclosureFingerprint,
+	} {
+		if !lowercaseSHA256Pattern.MatchString(value) {
+			return fmt.Errorf("%s %s must be a lowercase SHA-256 value", prefix, field)
+		}
+	}
+	if !credentialReferencePattern.MatchString(profile.CredentialBinding) {
+		return fmt.Errorf("%s credential_binding must use credential:<name>", prefix)
+	}
+	if profile.Activation != string(document.EmbeddingOptional) && profile.Activation != string(document.EmbeddingRequired) {
+		return fmt.Errorf("%s activation must be optional or required", prefix)
+	}
+	if profile.InputKind != string(document.EmbeddingInputOriginalFile) && profile.InputKind != string(document.EmbeddingInputRenditionChunk) {
+		return fmt.Errorf("%s input_kind must be original_file or rendition_chunk", prefix)
+	}
+	if profile.Dimensions <= 0 || profile.Dimensions > 1_000_000 {
+		return fmt.Errorf("%s dimensions must be between 1 and 1000000", prefix)
+	}
+	if profile.MaxBatchItems <= 0 || profile.MaxBatchItems > 10_000 {
+		return fmt.Errorf("%s max batch items must be between 1 and 10000", prefix)
+	}
+	if profile.MaxInputBytes <= 0 || profile.MaxInputBytes > 1<<30 {
+		return fmt.Errorf("%s max input bytes must be between 1 and %d", prefix, int64(1<<30))
+	}
+	if profile.MaxResponseBytes <= 0 || profile.MaxResponseBytes > 1<<30 {
+		return fmt.Errorf("%s max response bytes must be between 1 and %d", prefix, int64(1<<30))
+	}
+	if profile.InputKind == string(document.EmbeddingInputRenditionChunk) {
+		if profile.Chunk.MaxTokens <= 0 || profile.Chunk.MaxTokens > 1_000_000 ||
+			profile.Chunk.OverlapTokens < 0 || profile.Chunk.OverlapTokens >= profile.Chunk.MaxTokens ||
+			profile.Chunk.Tokenizer == "" || profile.Chunk.Formatter == "" || profile.Chunk.TruncationPolicy == "" ||
+			!lowercaseSHA256Pattern.MatchString(profile.Chunk.ContextFingerprint) {
+			return fmt.Errorf("%s chunk policy is invalid", prefix)
+		}
+	} else if profile.Chunk != (EmbeddingChunkConfig{}) {
+		return fmt.Errorf("%s original_file input must not define chunk policy", prefix)
+	}
+	return nil
+}
+
+// ProcessingProfile assembles one named processing profile without resolving
+// credential references or contacting providers.
+func (c Config) ProcessingProfile(name string) (document.ProcessingProfileV1, error) {
+	profile, err := c.assembleProcessingProfile(name)
+	if err != nil {
+		return document.ProcessingProfileV1{}, err
+	}
+	canonical, err := document.CanonicalizeProfile(profile)
+	if err != nil {
+		return document.ProcessingProfileV1{}, fmt.Errorf("processing profile %q is invalid: %w", name, err)
+	}
+	return canonical, nil
+}
+
+func (c Config) assembleProcessingProfile(name string) (document.ProcessingProfileV1, error) {
+	configured, exists := c.ProcessingProfiles[name]
+	if !exists {
+		return document.ProcessingProfileV1{}, fmt.Errorf("processing profile %q is not defined", name)
+	}
+	if configured.Retrieval == "" {
+		return document.ProcessingProfileV1{}, fmt.Errorf("[processing_profiles.%s] retrieval is required", name)
+	}
+	retrieval, exists := c.RetrievalProfiles[configured.Retrieval]
+	if !exists {
+		return document.ProcessingProfileV1{}, fmt.Errorf("[processing_profiles.%s] retrieval %q is not defined", name, configured.Retrieval)
+	}
+	if err := validateRetrievalProfileConfig(retrieval, fmt.Sprintf("[retrieval_profiles.%s]", configured.Retrieval)); err != nil {
+		return document.ProcessingProfileV1{}, err
+	}
+	profile := document.ProcessingProfileV1{
+		ContractVersion: document.ProcessingProfileContractV1,
+		EvidenceLexical: document.EvidenceLexicalPolicyV1{
+			CompletenessFingerprint:     configured.CompletenessFingerprint,
+			LexicalSegmenterFingerprint: configured.LexicalSegmenterFingerprint,
+			MaxSegmentRunes:             configured.MaxSegmentRunes, MaxUnitRunes: configured.MaxUnitRunes,
+			NormalizedEvidenceContract: valueOr(configured.NormalizedEvidenceContract, document.NormalizedEvidenceContractV1),
+			NormalizerFingerprint:      configured.NormalizerFingerprint,
+			RenditionContract:          valueOr(configured.RenditionContract, document.RenditionContractV1),
+			SanitizerFingerprint:       configured.SanitizerFingerprint,
+			SourceEvidenceContract:     valueOr(configured.SourceEvidenceContract, document.SourceEvidenceContractV1),
+		},
+		RetentionDisclosure: document.RetentionDisclosurePolicyV1{
+			AttachmentPolicyFingerprint: configured.AttachmentPolicyFingerprint,
+			ConsentFingerprint:          configured.ConsentFingerprint, RetainProviderMarkdown: configured.RetainProviderMarkdown,
+			RetainSanitizedMarkdown: configured.RetainSanitizedMarkdown, RetainTypedArtifacts: configured.RetainTypedArtifacts,
+			TrustBoundary: configured.TrustBoundary,
+		},
+		Retrieval: document.RetrievalPolicyV1{LexicalLimit: retrieval.LexicalLimit, VectorLimit: retrieval.VectorLimit},
+	}
+	if configured.Rendition != "" {
+		rendition, exists := c.RenditionProfiles[configured.Rendition]
+		if !exists {
+			return document.ProcessingProfileV1{}, fmt.Errorf("[processing_profiles.%s] rendition %q is not defined", name, configured.Rendition)
+		}
+		profile.Rendition = renditionDocumentBinding(configured.Rendition, rendition)
+	}
+	seen := make(map[string]struct{}, len(configured.Embeddings))
+	for _, bindingName := range configured.Embeddings {
+		if _, exists := seen[bindingName]; exists {
+			return document.ProcessingProfileV1{}, fmt.Errorf("[processing_profiles.%s] embedding %q is duplicated", name, bindingName)
+		}
+		seen[bindingName] = struct{}{}
+		binding, exists := c.EmbeddingProfiles[bindingName]
+		if !exists {
+			return document.ProcessingProfileV1{}, fmt.Errorf("[processing_profiles.%s] embedding %q is not defined", name, bindingName)
+		}
+		if err := validateEmbeddingProfileConfig(binding, fmt.Sprintf("[embedding_profiles.%s]", bindingName)); err != nil {
+			return document.ProcessingProfileV1{}, err
+		}
+		if binding.InputKind == string(document.EmbeddingInputRenditionChunk) && profile.Rendition == nil {
+			return document.ProcessingProfileV1{}, fmt.Errorf("[processing_profiles.%s] rendition_chunk embedding %q requires rendition", name, bindingName)
+		}
+		profile.Embeddings = append(profile.Embeddings, embeddingDocumentBinding(bindingName, binding))
+	}
+	if profile.Rendition == nil && (configured.RetainSanitizedMarkdown || configured.RetainProviderMarkdown) {
+		return document.ProcessingProfileV1{}, fmt.Errorf("[processing_profiles.%s] retained Markdown requires rendition", name)
+	}
+	return profile, nil
+}
+
+func renditionDocumentBinding(name string, profile RenditionProfileConfig) *document.RenditionBindingV1 {
+	roles := make([]document.EvidenceArtifactRole, len(profile.RequestedArtifacts))
+	for index, role := range profile.RequestedArtifacts {
+		roles[index] = document.EvidenceArtifactRole(role)
+	}
+	return &document.RenditionBindingV1{
+		AdapterContract: profile.AdapterContract, AuthorizationFingerprint: profile.AuthorizationFingerprint,
+		CredentialBinding: profile.CredentialBinding, DeploymentFingerprint: profile.DeploymentFingerprint,
+		Descriptor:       document.ProviderDescriptorV1{ID: profile.DescriptorID, Fingerprint: profile.DescriptorFingerprint},
+		DiscloseFilename: profile.DiscloseFilename, DisclosureFingerprint: profile.DisclosureFingerprint,
+		MaxDocumentBytes: profile.MaxDocumentBytes, MaxResponseBytes: profile.MaxResponseBytes, MaxUnits: profile.MaxUnits,
+		Name: name, RequestedArtifacts: roles, TrustBoundary: profile.TrustBoundary,
+		UploadOptionsFingerprint: profile.UploadOptionsFingerprint,
+	}
+}
+
+func embeddingDocumentBinding(name string, profile EmbeddingProfileConfig) document.EmbeddingBindingV1 {
+	result := document.EmbeddingBindingV1{
+		Activation: document.EmbeddingActivation(profile.Activation), AuthorizationFingerprint: profile.AuthorizationFingerprint,
+		CompatibilityID: profile.CompatibilityID, CredentialBinding: profile.CredentialBinding,
+		Descriptor: document.ProviderDescriptorV1{ID: profile.DescriptorID, Fingerprint: profile.DescriptorFingerprint},
+		Dimensions: profile.Dimensions, DisclosureFingerprint: profile.DisclosureFingerprint,
+		DocumentFormatter: profile.DocumentFormatter, InputKind: document.EmbeddingInputKind(profile.InputKind),
+		MaxBatchItems: profile.MaxBatchItems, MaxInputBytes: profile.MaxInputBytes, MaxResponseBytes: profile.MaxResponseBytes,
+		Metric: profile.Metric, Model: profile.Model, Name: name, Normalization: profile.Normalization,
+		QueryFormatter: profile.QueryFormatter, ScalarEncoding: profile.ScalarEncoding, TrustBoundary: profile.TrustBoundary,
+	}
+	if profile.InputKind == string(document.EmbeddingInputRenditionChunk) {
+		result.Chunk = &document.EmbeddingChunkPolicyV1{
+			ContextFingerprint: profile.Chunk.ContextFingerprint, Formatter: profile.Chunk.Formatter,
+			MaxTokens: profile.Chunk.MaxTokens, OverlapTokens: profile.Chunk.OverlapTokens,
+			Tokenizer: profile.Chunk.Tokenizer, TruncationPolicy: profile.Chunk.TruncationPolicy,
+		}
+	}
+	return result
+}
+
+func valueOr(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func validateProfileName(name, prefix string) error {
+	if !storeBindingNamePattern.MatchString(name) {
+		return fmt.Errorf("%s name must start with a lowercase letter and contain only lowercase letters, digits, _ or -", prefix)
+	}
+	return nil
+}
 
 func validateStoreBindings(bindings map[string]StoreBindingConfig) error {
 	for name, binding := range bindings {
