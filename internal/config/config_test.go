@@ -3,11 +3,13 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 )
 
 func TestLoadMissingFileReturnsDefaults(t *testing.T) {
@@ -22,6 +24,10 @@ func TestLoadMissingFileReturnsDefaults(t *testing.T) {
 	assert.Zero(t, c.Backup.ZstdLevel)
 	assert.Zero(t, c.Storage.PackInterval.Std())
 	assert.Equal(t, int64(256<<20), c.Storage.PackMaxBytes)
+	assert.NotNil(t, c.RenditionProfiles)
+	assert.NotNil(t, c.EmbeddingProfiles)
+	assert.NotNil(t, c.RetrievalProfiles)
+	assert.NotNil(t, c.ProcessingProfiles)
 }
 
 func TestLoadParsesFile(t *testing.T) {
@@ -71,6 +77,216 @@ func TestLoadPartialFileKeepsDefaults(t *testing.T) {
 	assert.Equal(t, "127.0.0.1", c.Server.BindAddr)
 	assert.Equal(t, 30*time.Minute, c.Server.IdleTimeout.Std())
 	assert.True(t, c.Web.Enabled)
+}
+
+func TestProcessingProfilesLoadNamedBindingsWithoutResolvingSecrets(t *testing.T) {
+	dir := privateTestConfigDir(t)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(`
+[rendition_profiles.primary]
+adapter_contract = "mistral-ocr-adapter/v1"
+authorization_fingerprint = "2222222222222222222222222222222222222222222222222222222222222222"
+descriptor_id = "mistral-ocr-v1"
+descriptor_fingerprint = "1111111111111111111111111111111111111111111111111111111111111111"
+credential_binding = "credential:ocr-primary"
+deployment_fingerprint = "3333333333333333333333333333333333333333333333333333333333333333"
+disclose_filename = true
+disclosure_fingerprint = "4444444444444444444444444444444444444444444444444444444444444444"
+max_document_bytes = 10485760
+max_response_bytes = 4194304
+max_units = 256
+requested_artifacts = ["provider_markdown", "structured_evidence"]
+trust_boundary = "processor-primary"
+upload_options_fingerprint = "5555555555555555555555555555555555555555555555555555555555555555"
+
+[embedding_profiles.semantic]
+activation = "required"
+authorization_fingerprint = "6666666666666666666666666666666666666666666666666666666666666666"
+compatibility_id = "voyage-3-large/1024"
+descriptor_id = "voyage-text-v1"
+descriptor_fingerprint = "7777777777777777777777777777777777777777777777777777777777777777"
+credential_binding = "credential:embedding-primary"
+dimensions = 1024
+disclosure_fingerprint = "8888888888888888888888888888888888888888888888888888888888888888"
+document_formatter = "document/v1"
+model = "voyage-3-large"
+input_kind = "rendition_chunk"
+max_batch_items = 32
+max_input_bytes = 1048576
+max_response_bytes = 1048576
+metric = "cosine"
+normalization = "unit_length"
+query_formatter = "query/v1"
+scalar_encoding = "float32"
+trust_boundary = "processor-primary"
+
+[embedding_profiles.semantic.chunk]
+context_fingerprint = "9999999999999999999999999999999999999999999999999999999999999999"
+formatter = "rendition-chunk/v1"
+max_tokens = 800
+overlap_tokens = 80
+tokenizer = "voyage-3"
+truncation_policy = "reject"
+
+[retrieval_profiles.hybrid]
+lexical_limit = 40
+vector_limit = 60
+
+[processing_profiles.archive]
+rendition = "primary"
+embeddings = ["semantic"]
+retrieval = "hybrid"
+attachment_policy_fingerprint = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+completeness_fingerprint = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+consent_fingerprint = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+lexical_segmenter_fingerprint = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+max_segment_runes = 2000
+max_unit_runes = 100000
+normalizer_fingerprint = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+sanitizer_fingerprint = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+retain_sanitized_markdown = true
+retain_typed_artifacts = true
+trust_boundary = "vault-primary"
+`), 0o600))
+
+	cfg, err := Load(dir)
+	require.NoError(t, err)
+	require.NoError(t, cfg.Validate())
+	assert.Equal(t, "credential:ocr-primary", cfg.RenditionProfiles["primary"].CredentialBinding)
+	assert.Equal(t, "credential:embedding-primary", cfg.EmbeddingProfiles["semantic"].CredentialBinding)
+	assert.Equal(t, []string{"semantic"}, cfg.ProcessingProfiles["archive"].Embeddings)
+	assert.Equal(t, 40, cfg.RetrievalProfiles["hybrid"].LexicalLimit)
+
+	profile, err := cfg.ProcessingProfile("archive")
+	require.NoError(t, err)
+	assert.Equal(t, document.RetrievalPolicyV1{LexicalLimit: 40, VectorLimit: 60}, profile.Retrieval)
+	_, _, err = document.CanonicalProfile(profile)
+	require.NoError(t, err)
+}
+
+func TestProcessingProfileReturnsCanonicalPolicy(t *testing.T) {
+	cfg := validProcessingConfig()
+	embedding := cfg.EmbeddingProfiles["semantic"]
+	embedding.Model = "model-Cafe\u0301\r\nrevision"
+	cfg.EmbeddingProfiles["semantic"] = embedding
+
+	profile, err := cfg.ProcessingProfile("archive")
+	require.NoError(t, err)
+	assert.Equal(t, "model-Café\nrevision", profile.Embeddings[0].Model)
+}
+
+func TestProcessingProfilesRejectUnknownKeys(t *testing.T) {
+	for _, key := range []string{"unknown_policy", "api_key"} {
+		t.Run(key, func(t *testing.T) {
+			dir := privateTestConfigDir(t)
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(
+				"[rendition_profiles.primary]\n"+key+" = \"sk-test-do-not-persist\"\n"), 0o600))
+			_, err := Load(dir)
+			require.ErrorContains(t, err, key)
+		})
+	}
+}
+
+func TestProcessingProfilesRejectInvalidReferencesAndPolicies(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+		want   string
+	}{
+		{"unknown rendition", func(c *Config) {
+			c.ProcessingProfiles["archive"] = withProcessing(c.ProcessingProfiles["archive"], func(p *ProcessingProfileConfig) { p.Rendition = "missing" })
+		}, "rendition"},
+		{"unknown embedding", func(c *Config) {
+			c.ProcessingProfiles["archive"] = withProcessing(c.ProcessingProfiles["archive"], func(p *ProcessingProfileConfig) { p.Embeddings = []string{"missing"} })
+		}, "embedding"},
+		{"unknown retrieval", func(c *Config) {
+			c.ProcessingProfiles["archive"] = withProcessing(c.ProcessingProfiles["archive"], func(p *ProcessingProfileConfig) { p.Retrieval = "missing" })
+		}, "retrieval"},
+		{"duplicate embedding", func(c *Config) {
+			c.ProcessingProfiles["archive"] = withProcessing(c.ProcessingProfiles["archive"], func(p *ProcessingProfileConfig) { p.Embeddings = []string{"semantic", "semantic"} })
+		}, "duplicated"},
+		{"chunk without rendition", func(c *Config) {
+			c.ProcessingProfiles["archive"] = withProcessing(c.ProcessingProfiles["archive"], func(p *ProcessingProfileConfig) { p.Rendition = ""; p.RetainSanitizedMarkdown = false })
+		}, "rendition_chunk"},
+		{"markdown without rendition", func(c *Config) {
+			c.ProcessingProfiles["archive"] = withProcessing(c.ProcessingProfiles["archive"], func(p *ProcessingProfileConfig) { p.Rendition = ""; p.Embeddings = nil })
+		}, "retained Markdown"},
+		{"retrieval limit zero", func(c *Config) {
+			p := c.RetrievalProfiles["hybrid"]
+			p.VectorLimit = 0
+			c.RetrievalProfiles["hybrid"] = p
+		}, "vector_limit"},
+		{"retrieval limit above maximum", func(c *Config) {
+			p := c.RetrievalProfiles["hybrid"]
+			p.LexicalLimit = 1_000_001
+			c.RetrievalProfiles["hybrid"] = p
+		}, "lexical_limit"},
+		{"raw rendition secret", func(c *Config) {
+			p := c.RenditionProfiles["primary"]
+			p.CredentialBinding = "sk-test-do-not-persist"
+			c.RenditionProfiles["primary"] = p
+		}, "credential:"},
+		{"raw embedding secret", func(c *Config) {
+			p := c.EmbeddingProfiles["semantic"]
+			p.CredentialBinding = "sk-test-do-not-persist"
+			c.EmbeddingProfiles["semantic"] = p
+		}, "credential:"},
+		{"unreferenced invalid embedding", func(c *Config) {
+			p := c.EmbeddingProfiles["semantic"]
+			p.MaxBatchItems = 10_001
+			c.EmbeddingProfiles["disabled"] = p
+		}, "max batch items"},
+		{"unreferenced rendition with unknown artifact role", func(c *Config) {
+			p := c.RenditionProfiles["primary"]
+			p.RequestedArtifacts = []string{"unknown"}
+			c.RenditionProfiles["disabled"] = p
+		}, "unknown"},
+		{"unreferenced rendition with duplicate artifact role", func(c *Config) {
+			p := c.RenditionProfiles["primary"]
+			p.RequestedArtifacts = []string{"structured_evidence", "structured_evidence"}
+			c.RenditionProfiles["disabled"] = p
+		}, "duplicated"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validProcessingConfig()
+			test.mutate(&cfg)
+			require.ErrorContains(t, cfg.Validate(), test.want)
+		})
+	}
+}
+
+func validProcessingConfig() Config {
+	return Config{
+		Server: Default().Server, Web: Default().Web, Storage: Default().Storage,
+		RenditionProfiles: map[string]RenditionProfileConfig{"primary": {
+			AdapterContract: "adapter/v1", AuthorizationFingerprint: strings.Repeat("1", 64), CredentialBinding: "credential:ocr-primary",
+			DeploymentFingerprint: strings.Repeat("2", 64), DescriptorID: "ocr-v1", DescriptorFingerprint: strings.Repeat("3", 64),
+			DisclosureFingerprint: strings.Repeat("4", 64), MaxDocumentBytes: 1 << 20, MaxResponseBytes: 1 << 20, MaxUnits: 10,
+			RequestedArtifacts: []string{"structured_evidence"}, TrustBoundary: "processor", UploadOptionsFingerprint: strings.Repeat("5", 64),
+		}},
+		EmbeddingProfiles: map[string]EmbeddingProfileConfig{"semantic": {
+			Activation: "required", AuthorizationFingerprint: strings.Repeat("6", 64), CompatibilityID: "model/8",
+			CredentialBinding: "credential:embedding-primary", DescriptorID: "embedding-v1", DescriptorFingerprint: strings.Repeat("7", 64),
+			Dimensions: 8, DisclosureFingerprint: strings.Repeat("8", 64), DocumentFormatter: "document/v1", InputKind: "rendition_chunk",
+			MaxBatchItems: 8, MaxInputBytes: 1 << 20, MaxResponseBytes: 1 << 20, Metric: "cosine", Model: "model",
+			Normalization: "unit_length", QueryFormatter: "query/v1", ScalarEncoding: "float32", TrustBoundary: "processor",
+			Chunk: EmbeddingChunkConfig{ContextFingerprint: strings.Repeat("9", 64), Formatter: "chunk/v1", MaxTokens: 100,
+				OverlapTokens: 10, Tokenizer: "tokenizer", TruncationPolicy: "reject"},
+		}},
+		RetrievalProfiles: map[string]RetrievalProfileConfig{"hybrid": {LexicalLimit: 10, VectorLimit: 10}},
+		ProcessingProfiles: map[string]ProcessingProfileConfig{"archive": {
+			Rendition: "primary", Embeddings: []string{"semantic"}, Retrieval: "hybrid",
+			AttachmentPolicyFingerprint: strings.Repeat("a", 64), CompletenessFingerprint: strings.Repeat("b", 64),
+			ConsentFingerprint: strings.Repeat("c", 64), LexicalSegmenterFingerprint: strings.Repeat("d", 64),
+			MaxSegmentRunes: 100, MaxUnitRunes: 1000, NormalizerFingerprint: strings.Repeat("e", 64),
+			RetainSanitizedMarkdown: true, SanitizerFingerprint: strings.Repeat("f", 64), TrustBoundary: "vault",
+		}},
+	}
+}
+
+func withProcessing(profile ProcessingProfileConfig, mutate func(*ProcessingProfileConfig)) ProcessingProfileConfig {
+	mutate(&profile)
+	return profile
 }
 
 func TestLoadResolvesStoreBindings(t *testing.T) {
