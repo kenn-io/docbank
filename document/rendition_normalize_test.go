@@ -1748,6 +1748,27 @@ func TestBuildRenditionV1PrefixTruncatesRejectedLinkLabels(t *testing.T) {
 	}
 }
 
+func TestBuildRenditionV1PrefixTruncatesSafeLinkLabels(t *testing.T) {
+	const source = `<a href="https://example.test/safe">a*b</a>`
+	const full = `[a\*b](<https://example.test/safe>)`
+	for _, test := range []struct {
+		name  string
+		limit int
+		want  string
+	}{
+		{name: "one rune", limit: 1, want: "a"},
+		{name: "before escaped punctuation", limit: 2, want: "a"},
+		{name: "escaped punctuation", limit: 3, want: `a\*`},
+		{name: "below complete link", limit: len(full) - 1, want: `a\*b`},
+		{name: "complete link", limit: len(full), want: full},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rendered := buildRenditionMarkdownForTest(t, source, test.limit)
+			assert.Equal(t, test.want+"\n", string(rendered.Markdown))
+		})
+	}
+}
+
 func assertTruncatedRenditionIsInert(t *testing.T, evidence NormalizedEvidenceV1, normalization NormalizePolicy) {
 	t.Helper()
 	policy, err := NewRenditionPolicy(normalization)

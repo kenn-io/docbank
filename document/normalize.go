@@ -1994,6 +1994,7 @@ func appendRenditionInlinesWithFallback(
 		case renditionLinkInline:
 			overhead := utf8.RuneCountInString(inline.destination) + 4
 			if available >= 0 && overhead > remaining {
+				appendRenditionPlainLabel(output, inline.children, remaining, fallback)
 				return true
 			}
 			markBytes, markRunes := len(output.bytes), output.runes
@@ -2005,6 +2006,7 @@ func appendRenditionInlinesWithFallback(
 			}
 			if appendRenditionInlinesWithFallback(output, inline.children, labelBudget, inTable, nil) {
 				output.rollback(markBytes, markRunes)
+				appendRenditionPlainLabel(output, inline.children, remaining, fallback)
 				return true
 			}
 			if output.runes == labelStart {
@@ -2015,6 +2017,38 @@ func appendRenditionInlinesWithFallback(
 			output.WriteString(inline.destination)
 			output.WriteString(")")
 			fallback.mark(output)
+		}
+	}
+	return false
+}
+
+func appendRenditionPlainLabel(
+	output *renditionBuffer,
+	inlines []renditionInline,
+	available int,
+	fallback *renditionBufferFallback,
+) bool {
+	startRunes := output.runes
+	for _, inline := range inlines {
+		remaining := available
+		if available >= 0 {
+			remaining -= output.runes - startRunes
+		}
+		switch inline.kind {
+		case renditionText, renditionInlineCode:
+			textStart := output.checkpoint()
+			value := escapeRenditionText(inline.text)
+			if available >= 0 && utf8.RuneCountInString(value) > remaining {
+				output.WriteString(truncateEscapedRenditionText(inline.text, max(0, remaining)))
+				fallback.markEscapedText(textStart, inline.text)
+				return true
+			}
+			output.WriteString(value)
+			fallback.markEscapedText(textStart, inline.text)
+		case renditionLinkInline:
+			if appendRenditionPlainLabel(output, inline.children, remaining, fallback) {
+				return true
+			}
 		}
 	}
 	return false
