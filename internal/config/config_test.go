@@ -254,6 +254,11 @@ func TestProcessingProfilesRejectInvalidReferencesAndPolicies(t *testing.T) {
 			p.CredentialBinding = "sk-test-do-not-persist"
 			c.EmbeddingProfiles["semantic"] = p
 		}, "credential:"},
+		{"unknown embedding metric", func(c *Config) {
+			p := c.EmbeddingProfiles["semantic"]
+			p.Metric = "provider_default"
+			c.EmbeddingProfiles["semantic"] = p
+		}, "metric"},
 		{"unreferenced invalid embedding", func(c *Config) {
 			p := c.EmbeddingProfiles["semantic"]
 			p.MaxBatchItems = 10_001

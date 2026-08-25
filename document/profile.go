@@ -120,6 +120,7 @@ type EmbeddingBindingV1 struct {
 	MaxInputBytes            int64                   `json:"max_input_bytes"`
 	MaxResponseBytes         int64                   `json:"max_response_bytes"`
 	Metric                   string                  `json:"metric"`
+	ModelInput               ModelInputContract      `json:"model_input"`
 	Model                    string                  `json:"model"`
 	Name                     string                  `json:"name"`
 	Normalization            string                  `json:"normalization"`
@@ -188,21 +189,23 @@ type renditionRequestIdentity struct {
 }
 
 type embeddingInputIdentity struct {
-	Chunk           *EmbeddingChunkPolicyV1 `json:"chunk"`
-	EvidenceLexical string                  `json:"evidence_lexical"`
-	InputKind       EmbeddingInputKind      `json:"input_kind"`
+	Chunk                 *EmbeddingChunkPolicyV1 `json:"chunk"`
+	EvidenceLexical       string                  `json:"evidence_lexical"`
+	InputKind             EmbeddingInputKind      `json:"input_kind"`
+	ModelInputFingerprint string                  `json:"model_input_fingerprint"`
 }
 
 type vectorSpaceIdentity struct {
-	CompatibilityID   string               `json:"compatibility_id"`
-	Descriptor        ProviderDescriptorV1 `json:"descriptor"`
-	Dimensions        int                  `json:"dimensions"`
-	DocumentFormatter string               `json:"document_formatter"`
-	Metric            string               `json:"metric"`
-	Model             string               `json:"model"`
-	Normalization     string               `json:"normalization"`
-	QueryFormatter    string               `json:"query_formatter"`
-	ScalarEncoding    string               `json:"scalar_encoding"`
+	CompatibilityID       string               `json:"compatibility_id"`
+	Descriptor            ProviderDescriptorV1 `json:"descriptor"`
+	Dimensions            int                  `json:"dimensions"`
+	DocumentFormatter     string               `json:"document_formatter"`
+	Metric                string               `json:"metric"`
+	ModelInputFingerprint string               `json:"model_input_fingerprint"`
+	Model                 string               `json:"model"`
+	Normalization         string               `json:"normalization"`
+	QueryFormatter        string               `json:"query_formatter"`
+	ScalarEncoding        string               `json:"scalar_encoding"`
 }
 
 type providerDisclosureIdentity struct {
@@ -257,7 +260,7 @@ func CanonicalProfile(profile ProcessingProfileV1) ([]byte, FingerprintSet, erro
 		return nil, FingerprintSet{}, err
 	}
 	for _, binding := range canonicalProfile.Embeddings {
-		input := embeddingInputIdentity{InputKind: binding.InputKind, Chunk: binding.Chunk}
+		input := embeddingInputIdentity{InputKind: binding.InputKind, Chunk: binding.Chunk, ModelInputFingerprint: binding.ModelInput.Fingerprint}
 		if binding.InputKind == EmbeddingInputRenditionChunk {
 			input.EvidenceLexical = evidenceFingerprint
 		}
@@ -268,7 +271,8 @@ func CanonicalProfile(profile ProcessingProfileV1) ([]byte, FingerprintSet, erro
 		result.VectorSpace[binding.Name], err = componentFingerprint("vector_space", vectorSpaceIdentity{
 			CompatibilityID: binding.CompatibilityID, Descriptor: binding.Descriptor, Dimensions: binding.Dimensions,
 			DocumentFormatter: binding.DocumentFormatter, Metric: binding.Metric, Model: binding.Model,
-			Normalization: binding.Normalization, QueryFormatter: binding.QueryFormatter, ScalarEncoding: binding.ScalarEncoding,
+			ModelInputFingerprint: binding.ModelInput.Fingerprint, Normalization: binding.Normalization,
+			QueryFormatter: binding.QueryFormatter, ScalarEncoding: binding.ScalarEncoding,
 		})
 		if err != nil {
 			return nil, FingerprintSet{}, err
@@ -314,6 +318,13 @@ func canonicalProcessingProfile(profile ProcessingProfileV1) (ProcessingProfileV
 		if profile.Embeddings[index].Chunk != nil {
 			chunk := *profile.Embeddings[index].Chunk
 			canonicalProfile.Embeddings[index].Chunk = &chunk
+		}
+		if canonicalProfile.Embeddings[index].ModelInput == (ModelInputContract{}) {
+			empty, err := NewModelInputContract(ModelInputContractConfig{})
+			if err != nil {
+				return ProcessingProfileV1{}, err
+			}
+			canonicalProfile.Embeddings[index].ModelInput = empty
 		}
 	}
 	if err := normalizeProfileStrings(&canonicalProfile); err != nil {
@@ -526,6 +537,18 @@ func validateEmbeddingBinding(binding EmbeddingBindingV1, hasRendition bool) err
 	}
 	if err := validateProviderDescriptor(binding.Descriptor); err != nil {
 		return fmt.Errorf("descriptor: %w", err)
+	}
+	if err := validateModelInputContract(binding.ModelInput); err != nil {
+		return fmt.Errorf("model input: %w", err)
+	}
+	if binding.ModelInput.Profile != "" && binding.ModelInput.CompatibilityID != binding.CompatibilityID {
+		return errors.New("model input compatibility ID does not match embedding compatibility ID")
+	}
+	if !IsValidVectorMetric(binding.Metric) {
+		return errors.New("embedding metric is invalid")
+	}
+	if !validVectorNormalization(binding.Normalization) {
+		return errors.New("embedding normalization is invalid")
 	}
 	for subject, value := range map[string]string{"authorization fingerprint": binding.AuthorizationFingerprint, "disclosure fingerprint": binding.DisclosureFingerprint} {
 		if err := validateFingerprint(value, subject); err != nil {

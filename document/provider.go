@@ -339,12 +339,7 @@ func RenderRendition(
 	if !sealed.DiscloseFilename {
 		metadata.Filename = ""
 	}
-	hasher := sha256.New()
-	limited := &io.LimitedReader{R: ownedUpload, N: sealed.SourceBytes}
-	providerUpload := &sealedAuthorizedUpload{
-		ctx: executionCtx, source: ownedUpload, metadata: metadata, limited: limited,
-		reader: io.TeeReader(limited, hasher), hasher: hasher, expectedSHA256: sealed.SourceSHA256,
-	}
+	providerUpload := newSealedAuthorizedUpload(executionCtx, ownedUpload, metadata)
 	if err := executionCtx.Err(); err != nil {
 		return RenditionResult{}, err
 	}
@@ -880,6 +875,17 @@ type sealedAuthorizedUpload struct {
 	hasher         hash.Hash
 	expectedSHA256 string
 	providerClosed bool
+}
+
+func newSealedAuthorizedUpload(
+	ctx context.Context, source *ownedAuthorizedUpload, metadata AuthorizedUploadMetadata,
+) *sealedAuthorizedUpload {
+	hasher := sha256.New()
+	limited := &io.LimitedReader{R: source, N: metadata.ByteLength}
+	return &sealedAuthorizedUpload{
+		ctx: ctx, source: source, metadata: metadata, limited: limited,
+		reader: io.TeeReader(limited, hasher), hasher: hasher, expectedSHA256: metadata.SHA256,
+	}
 }
 
 func (upload *sealedAuthorizedUpload) Metadata() AuthorizedUploadMetadata {
