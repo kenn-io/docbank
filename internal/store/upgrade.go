@@ -434,6 +434,11 @@ func cutoverReleasedDatabase(
 		_ = closeSource()
 		return err
 	}
+	if _, err := target.MigrateLegacyPlainText(context.Background()); err != nil {
+		_ = target.Close()
+		_ = closeSource()
+		return fmt.Errorf("migrating %s legacy plain-text authority: %w", sourceSchema.release, err)
+	}
 	if err := target.ValidateMetadata(context.Background()); err != nil {
 		_ = target.Close()
 		_ = closeSource()
@@ -1010,6 +1015,12 @@ func validateUpgradeStage(path string, driver docsqlite.Driver) error {
 	store, err := openCurrentStore(path, driver)
 	if err != nil {
 		return fmt.Errorf("opening interrupted upgrade staging store: %w", err)
+	}
+	if _, err := store.MigrateLegacyPlainText(context.Background()); err != nil {
+		return errors.Join(
+			fmt.Errorf("migrating interrupted upgrade staging authority: %w", err),
+			store.Close(),
+		)
 	}
 	validateErr := store.ValidateMetadata(context.Background())
 	closeErr = store.Close()
