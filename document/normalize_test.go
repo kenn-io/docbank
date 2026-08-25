@@ -65,6 +65,20 @@ package synthetic
 	assert.Regexp(`^[0-9a-f]{64}$`, normalized.Checksum)
 }
 
+func TestNormalizeDocumentKeepsFrozenTableBoundaries(t *testing.T) {
+	normalized, err := NormalizeDocument(SourceDocument{
+		Family: "text", UnitKind: "section", Units: []SourceUnit{{
+			Index: 0, Markdown: "before<table><tr><td>x</td></tr></table>after",
+		}},
+	}, testNormalizePolicy(t, 100_000))
+	require.NoError(t, err)
+
+	require.Len(t, normalized.Units, 1)
+	assert.Equal(t, "before\nx\nafter", normalized.Units[0].Text)
+	assert.Equal(t, "a8a611c408751feacca74b4da4d7842bfd0833e8ffe20406073a9b5c38c6a644", normalized.Units[0].Checksum)
+	assert.Equal(t, "31a205248e1b22cd02ded0386ad37ba1684ff7afa7c6820411d7f71334106546", normalized.Checksum)
+}
+
 func TestNormalizeDocumentRejectsZeroPolicy(t *testing.T) {
 	source := SourceDocument{
 		Family: "text", UnitKind: "section",
