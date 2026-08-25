@@ -5,13 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+
+	"go.kenn.io/docbank/document"
 )
 
 const (
 	// DefaultCandidateLimit is the shared lexical, semantic, and hybrid default.
 	DefaultCandidateLimit = 100
 	// MaxCandidateLimit bounds final scoped candidate collection.
-	MaxCandidateLimit = 1_000
+	MaxCandidateLimit = document.MaxRetrievalCandidateLimit
 	// DefaultReciprocalRankConstant is the shared RRF smoothing constant.
 	DefaultReciprocalRankConstant = 60
 )

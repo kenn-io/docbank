@@ -19,6 +19,8 @@ import (
 const (
 	// ProcessingProfileContractV1 identifies immutable processing policy.
 	ProcessingProfileContractV1 = "processing-profile/v1"
+	// MaxRetrievalCandidateLimit bounds each processing-profile retrieval lane.
+	MaxRetrievalCandidateLimit = 1_000
 
 	maxProfileStringBytes     = 1 << 10
 	maxProcessingEmbeddings   = 64
@@ -33,7 +35,6 @@ const (
 	maxEmbeddingInputBytes    = int64(1 << 30)
 	maxEmbeddingResponseBytes = int64(1 << 30)
 	maxEmbeddingChunkTokens   = 1_000_000
-	maxRetrievalCandidates    = 1_000_000
 )
 
 // EmbeddingInputKind identifies the evidence presented to an embedding
@@ -583,11 +584,11 @@ func validateRetentionDisclosure(policy RetentionDisclosurePolicyV1) error {
 }
 
 func validateRetrievalPolicy(policy RetrievalPolicyV1) error {
-	if policy.LexicalLimit <= 0 || policy.LexicalLimit > maxRetrievalCandidates {
-		return fmt.Errorf("retrieval lexical limit must be between 1 and %d", maxRetrievalCandidates)
+	if policy.LexicalLimit <= 0 || policy.LexicalLimit > MaxRetrievalCandidateLimit {
+		return fmt.Errorf("retrieval lexical limit must be between 1 and %d", MaxRetrievalCandidateLimit)
 	}
-	if policy.VectorLimit <= 0 || policy.VectorLimit > maxRetrievalCandidates {
-		return fmt.Errorf("retrieval vector limit must be between 1 and %d", maxRetrievalCandidates)
+	if policy.VectorLimit <= 0 || policy.VectorLimit > MaxRetrievalCandidateLimit {
+		return fmt.Errorf("retrieval vector limit must be between 1 and %d", MaxRetrievalCandidateLimit)
 	}
 	return nil
 }

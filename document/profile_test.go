@@ -179,7 +179,7 @@ func TestCanonicalProfileRejectsInvalidPolicy(t *testing.T) {
 		{"retained markdown without rendition", func(p *document.ProcessingProfileV1) { p.Rendition = nil; p.Embeddings = p.Embeddings[:1] }, "retained Markdown"},
 		{"invalid UTF-8", func(p *document.ProcessingProfileV1) { p.Embeddings[0].Model = string([]byte{0xff}) }, "UTF-8"},
 		{"zero lexical retrieval limit", func(p *document.ProcessingProfileV1) { p.Retrieval.LexicalLimit = 0 }, "retrieval lexical limit"},
-		{"excessive vector retrieval limit", func(p *document.ProcessingProfileV1) { p.Retrieval.VectorLimit = 1_000_001 }, "retrieval vector limit"},
+		{"excessive vector retrieval limit", func(p *document.ProcessingProfileV1) { p.Retrieval.VectorLimit = 1_001 }, "retrieval vector limit"},
 		{"unsupported source evidence contract", func(p *document.ProcessingProfileV1) {
 			p.EvidenceLexical.SourceEvidenceContract = "source-evidence/v2"
 		}, "source evidence contract"},
