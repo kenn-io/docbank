@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/internal/providerutil"
 )
 
 //go:embed testdata/docling-pages.json
@@ -348,7 +349,7 @@ func TestReadExactStopsOnCancellationAndNoProgress(t *testing.T) {
 	t.Run("cancellation", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		reads := 0
-		_, err := readExact(ctx, readerFunc(func([]byte) (int, error) {
+		_, err := providerutil.ReadAuthorizedUpload(ctx, readerFunc(func([]byte) (int, error) {
 			reads++
 			if reads == 2 {
 				cancel()
@@ -357,7 +358,7 @@ func TestReadExactStopsOnCancellationAndNoProgress(t *testing.T) {
 				return 0, errors.New("synthetic terminal read failure")
 			}
 			return 0, nil
-		}), fixture.metadata)
+		}), fixture.metadata, "Docling")
 		require.Error(t, err)
 		providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
 		require.True(t, ok)
@@ -366,13 +367,13 @@ func TestReadExactStopsOnCancellationAndNoProgress(t *testing.T) {
 	})
 	t.Run("no progress", func(t *testing.T) {
 		reads := 0
-		_, err := readExact(t.Context(), readerFunc(func([]byte) (int, error) {
+		_, err := providerutil.ReadAuthorizedUpload(t.Context(), readerFunc(func([]byte) (int, error) {
 			reads++
 			if reads == 101 {
 				return 0, errors.New("synthetic terminal read failure")
 			}
 			return 0, nil
-		}), fixture.metadata)
+		}), fixture.metadata, "Docling")
 		require.Error(t, err)
 		require.ErrorIs(t, err, io.ErrNoProgress)
 		assert.Equal(t, 100, reads)

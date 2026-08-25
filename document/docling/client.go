@@ -4,8 +4,6 @@ package docling
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +21,7 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/internal/providerutil"
 	"go.kenn.io/docbank/document/providerhttp"
 )
 
@@ -33,20 +32,19 @@ const (
 	pollPath    = "/v1/status/poll/"
 	resultPath  = "/v1/result/"
 
-	defaultRequestTimeout    = 30 * time.Second
-	defaultTotalTimeout      = 10 * time.Minute
-	defaultPollInterval      = time.Second
-	defaultMaxPollAttempts   = 300
-	defaultMaxResponseBytes  = int64(512 << 20)
-	defaultMaxDocumentBytes  = int64(64 << 20)
-	maxTimeout               = 24 * time.Hour
-	maxPollAttempts          = 10_000
-	maxResponseBytes         = int64(512 << 20)
-	maxDocumentBytes         = int64(1 << 30)
-	maxSecretBytes           = 64 << 10
-	maxTaskIDBytes           = 120
-	maxConsecutiveEmptyReads = 100
-	timestampForm            = "2006-01-02T15:04:05.000000000Z"
+	defaultRequestTimeout   = 30 * time.Second
+	defaultTotalTimeout     = 10 * time.Minute
+	defaultPollInterval     = time.Second
+	defaultMaxPollAttempts  = 300
+	defaultMaxResponseBytes = int64(512 << 20)
+	defaultMaxDocumentBytes = int64(64 << 20)
+	maxTimeout              = 24 * time.Hour
+	maxPollAttempts         = 10_000
+	maxResponseBytes        = int64(512 << 20)
+	maxDocumentBytes        = int64(1 << 30)
+	maxSecretBytes          = 64 << 10
+	maxTaskIDBytes          = 120
+	timestampForm           = "2006-01-02T15:04:05.000000000Z"
 )
 
 var (
@@ -149,12 +147,9 @@ func New(profile Profile, secrets SecretResolver, httpClient *http.Client) (*Cli
 		profile.MaxDocumentBytes < 1 || profile.MaxDocumentBytes > maxDocumentBytes {
 		return nil, errors.New("docling: execution bounds are invalid")
 	}
-	isolate := *httpClient
-	isolate.Jar = nil
-	isolate.CheckRedirect = providerhttp.RefuseRedirects
 	return &Client{
-		origin: origin, descriptor: cloneDescriptor(descriptor), secretBinding: profile.SecretBinding,
-		secrets: secrets, http: &isolate, requestTimeout: profile.RequestTimeout,
+		origin: origin, descriptor: providerutil.CloneDescriptor(descriptor), secretBinding: profile.SecretBinding,
+		secrets: secrets, http: providerhttp.IsolateClient(httpClient), requestTimeout: profile.RequestTimeout,
 		totalTimeout: profile.TotalTimeout, pollInterval: profile.PollInterval,
 		maxPollAttempts: profile.MaxPollAttempts, maxResponseBytes: profile.MaxResponseBytes,
 		maxDocumentBytes: profile.MaxDocumentBytes,
@@ -166,7 +161,7 @@ func (client *Client) Descriptor() document.RenditionDescriptor {
 	if client == nil {
 		return document.RenditionDescriptor{}
 	}
-	return cloneDescriptor(client.descriptor)
+	return providerutil.CloneDescriptor(client.descriptor)
 }
 
 // Render verifies the sealed bytes before they cross the provider boundary,
@@ -193,7 +188,7 @@ func (client *Client) Render(
 		return document.RenditionResult{}, err
 	}
 	stopInterrupt := context.AfterFunc(totalCtx, func() { _ = document.InterruptAuthorizedUpload(upload) })
-	source, err := readExact(totalCtx, upload, metadata)
+	source, err := providerutil.ReadAuthorizedUpload(totalCtx, upload, metadata, "Docling")
 	stopInterrupt()
 	if err != nil {
 		if operationErr := checkOperation(totalCtx, expiresAt); operationErr != nil {
@@ -222,7 +217,7 @@ func (client *Client) Render(
 			return document.RenditionResult{}, ambiguousSubmissionError(classifiedError(
 				document.RenditionErrorCapacity, "Docling polling limit reached", nil))
 		}
-		if err := waitContext(totalCtx, client.pollInterval); err != nil {
+		if err := providerutil.Wait(totalCtx, client.pollInterval); err != nil {
 			if operationErr := checkOperation(totalCtx, expiresAt); operationErr != nil {
 				return document.RenditionResult{}, knownTaskOperationError(operationErr)
 			}
@@ -265,7 +260,7 @@ func (client *Client) Render(
 			return document.RenditionResult{}, ambiguousSubmissionError(err)
 		}
 		usage.retries++
-		if err := waitContext(totalCtx, client.pollInterval); err != nil {
+		if err := providerutil.Wait(totalCtx, client.pollInterval); err != nil {
 			if operationErr := checkOperation(totalCtx, expiresAt); operationErr != nil {
 				return document.RenditionResult{}, knownTaskOperationError(operationErr)
 			}
@@ -284,7 +279,7 @@ func (client *Client) Render(
 	if !includeMarkdown {
 		providerMarkdown = nil
 	}
-	if injectsDocbankFrontmatter(providerMarkdown) {
+	if providerutil.InjectsDocbankFrontmatter(providerMarkdown) {
 		return document.RenditionResult{}, malformedError(
 			"Docling provider Markdown attempts Docbank frontmatter injection", nil)
 	}
@@ -293,7 +288,8 @@ func (client *Client) Render(
 		if len(providerMarkdown) == 0 || int64(len(providerMarkdown)) > int64(authorization.MaxProviderMarkdownBytes) {
 			return document.RenditionResult{}, malformedError("Docling result has no usable bounded evidence", nil)
 		}
-		evidence = degradedEvidence(authorization.MediaFamily, string(providerMarkdown))
+		evidence = providerutil.DegradedEvidence(authorization.MediaFamily, string(providerMarkdown),
+			"Docling structured evidence is unavailable")
 		structured = nil
 	}
 	if partialSuccess {
@@ -310,11 +306,11 @@ func (client *Client) Render(
 		return document.RenditionResult{}, malformedError("Docling Markdown exceeds authorization", nil)
 	}
 	artifacts := make([]document.RenditionArtifact, 0, 1)
-	if len(structured) != 0 && allowsStructured(authorization) {
+	if len(structured) != 0 && providerutil.AllowsStructured(authorization) {
 		if len(structured) > authorization.MaxArtifactBytes {
 			return document.RenditionResult{}, malformedError("Docling structured output exceeds authorization", nil)
 		}
-		digest := sha256Hex(structured)
+		digest := providerutil.SHA256Hex(structured)
 		artifacts = append(artifacts, document.RenditionArtifact{
 			Role: document.EvidenceArtifactStructured, MediaType: "application/json", Payload: structured, SHA256: digest,
 		})
@@ -745,79 +741,6 @@ func familyUnit(family string) (document.EvidenceUnitKind, document.EvidenceLoca
 	}
 }
 
-func degradedEvidence(family, markdown string) document.SourceEvidenceV1 {
-	return document.SourceEvidenceV1{
-		ContractVersion: document.SourceEvidenceContractV1, Completeness: document.EvidenceDegradedProvenance,
-		Family: family, UnitKind: document.EvidenceUnitGeneric,
-		Omissions: []document.SourceEvidenceOmissionV1{{
-			Kind: document.EvidenceOmissionField, Field: "natural_provenance", Reason: "Docling structured evidence is unavailable",
-		}},
-		Units: []document.SourceEvidenceUnitV1{{Order: 0, Text: markdown,
-			Locator: document.SourceEvidenceLocatorV1{Kind: document.EvidenceLocatorGeneric, IndexOrigin: document.EvidenceIndexOriginNone}}},
-	}
-}
-
-func injectsDocbankFrontmatter(markdown []byte) bool {
-	frontmatter := bytes.HasPrefix(markdown, []byte("---\n")) ||
-		bytes.HasPrefix(markdown, []byte("---\r\n")) ||
-		bytes.HasPrefix(markdown, []byte("---\r"))
-	return frontmatter && bytes.Contains(markdown, []byte("docbank-sanitized-markdown/v1"))
-}
-
-func allowsStructured(authorization document.RenditionAuthorization) bool {
-	if slices.Contains(authorization.AllowedArtifactRoles, document.EvidenceArtifactStructured) {
-		return authorization.MaxArtifacts > 0 && authorization.MaxArtifactBytes > 0
-	}
-	return false
-}
-
-func readExact(ctx context.Context, upload io.Reader, metadata document.AuthorizedUploadMetadata) ([]byte, error) {
-	limited := &io.LimitedReader{R: upload, N: metadata.ByteLength + 1}
-	data := make([]byte, 0, 32<<10)
-	buffer := make([]byte, 32<<10)
-	emptyReads := 0
-	for limited.N > 0 {
-		if err := ctx.Err(); err != nil {
-			return nil, classifiedError(document.RenditionErrorCanceled, "Docling rendering canceled", err)
-		}
-		count, err := limited.Read(buffer)
-		if count > 0 {
-			data = append(data, buffer[:count]...)
-			emptyReads = 0
-		}
-		switch {
-		case errors.Is(err, io.EOF):
-			limited.N = 0
-		case err != nil:
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return nil, classifiedError(document.RenditionErrorCanceled, "Docling rendering canceled", ctxErr)
-			}
-			return nil, classifiedError(document.RenditionErrorTransient, "could not read the authorized upload", err)
-		case count == 0:
-			emptyReads++
-			if emptyReads >= maxConsecutiveEmptyReads {
-				return nil, classifiedError(document.RenditionErrorTransient,
-					"authorized upload stopped making progress", io.ErrNoProgress)
-			}
-		}
-	}
-	if int64(len(data)) != metadata.ByteLength || sha256Hex(data) != metadata.SHA256 {
-		return nil, classifiedError(document.RenditionErrorPolicyRejected, "authorized upload identity mismatch", nil)
-	}
-	return data, nil
-}
-
-func waitContext(ctx context.Context, delay time.Duration) error {
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
-}
-
 func validateOrigin(raw string, trust document.RenditionTrustBoundary) (string, error) {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Opaque != "" ||
@@ -863,12 +786,6 @@ func supportedDoclingMajor(version string) bool {
 	return ok && major == "1"
 }
 
-func cloneDescriptor(value document.RenditionDescriptor) document.RenditionDescriptor {
-	value.SupportedFormats = append([]document.RenditionFormatCapability(nil), value.SupportedFormats...)
-	value.ArtifactRoles = append([]document.EvidenceArtifactRole(nil), value.ArtifactRoles...)
-	return value
-}
-
 func readBounded(reader io.Reader, maximum int64) ([]byte, error) {
 	value, err := io.ReadAll(io.LimitReader(reader, maximum+1))
 	if err != nil {
@@ -878,11 +795,6 @@ func readBounded(reader io.Reader, maximum int64) ([]byte, error) {
 		return value, malformedError("Docling response exceeds byte limit", nil)
 	}
 	return value, nil
-}
-
-func sha256Hex(value []byte) string {
-	digest := sha256.Sum256(value)
-	return hex.EncodeToString(digest[:])
 }
 
 func taskStatusError(status string) error {
@@ -988,19 +900,5 @@ func malformedError(message string, cause error) error {
 }
 
 func classifiedError(code document.RenditionErrorCode, message string, cause error) error {
-	if cause == nil {
-		cause = errors.New(message)
-	} else {
-		cause = fmt.Errorf("%s: %w", message, cause)
-	}
-	providerError, err := document.NewRenditionProviderError(code, 0, cause)
-	if err == nil {
-		return providerError
-	}
-	fallback, fallbackErr := document.NewRenditionProviderError(document.RenditionErrorMalformedEvidence,
-		0, fmt.Errorf("docling returned an invalid error: %w", err))
-	if fallbackErr == nil {
-		return fallback
-	}
-	return errors.Join(err, fallbackErr)
+	return providerutil.ClassifiedError("Docling", code, message, cause)
 }

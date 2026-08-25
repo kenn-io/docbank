@@ -15,6 +15,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/netip"
 	"strconv"
@@ -348,6 +349,22 @@ func TestEgressRefusesRedirectReplay(t *testing.T) {
 	require.NoError(t, response.Body.Close())
 	assert.Equal(t, http.StatusTemporaryRedirect, response.StatusCode)
 	assert.Zero(t, redirected.Load())
+}
+
+func TestIsolateClientDropsAmbientStateWithoutMutatingInput(t *testing.T) {
+	jar, err := cookiejar.New(nil)
+	require.NoError(t, err)
+	originalRedirect := func(*http.Request, []*http.Request) error { return nil }
+	original := &http.Client{Jar: jar, CheckRedirect: originalRedirect, Timeout: time.Second}
+
+	isolate := providerhttp.IsolateClient(original)
+
+	require.NotSame(t, original, isolate)
+	assert.Nil(t, isolate.Jar)
+	require.ErrorIs(t, isolate.CheckRedirect(nil, nil), http.ErrUseLastResponse)
+	assert.Same(t, jar, original.Jar)
+	require.NoError(t, original.CheckRedirect(nil, nil))
+	assert.Equal(t, original.Timeout, isolate.Timeout)
 }
 
 func TestEgressValidatesPolicy(t *testing.T) {

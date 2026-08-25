@@ -93,12 +93,9 @@ func New(profile Profile, secrets SecretResolver, httpClient *http.Client) (*Cli
 		profile.MaxResponseBytes < 1 || profile.MaxResponseBytes > maxBridgeResponseBytes {
 		return nil, errors.New("bridge: execution bounds are invalid")
 	}
-	isolatedHTTP := *httpClient
-	isolatedHTTP.CheckRedirect = providerhttp.RefuseRedirects
-	isolatedHTTP.Jar = nil
 	return &Client{
 		origin: origin, descriptor: cloneDescriptor(descriptor),
-		secretBinding: profile.SecretBinding, secrets: secrets, http: &isolatedHTTP,
+		secretBinding: profile.SecretBinding, secrets: secrets, http: providerhttp.IsolateClient(httpClient),
 		requestTimeout: profile.RequestTimeout, totalTimeout: profile.TotalTimeout,
 		pollInterval: profile.PollInterval, maxPollAttempts: profile.MaxPollAttempts,
 		maxResponseBytes: profile.MaxResponseBytes,
