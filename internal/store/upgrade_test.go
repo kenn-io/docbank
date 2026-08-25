@@ -27,6 +27,9 @@ var schemaV0100PhysicalSQL string
 //go:embed testdata/schema-v0.11.0-addition.sql
 var schemaV0110AdditionSQL string
 
+//go:embed testdata/schema-v0.14.0.sql
+var schemaV0140SQL string
+
 type v090Fixture struct {
 	looseHash  string
 	packedHash string
@@ -42,6 +45,13 @@ type v2Fixture struct {
 	missingHash string
 	packID      string
 	metadata    []byte
+}
+
+type v3Fixture struct {
+	blobHash         string
+	primaryStoreID   string
+	secondaryStoreID string
+	metadata         []byte
 }
 
 func TestOpenCutsOverReleasedV090ThroughJSONL(t *testing.T) {
@@ -176,6 +186,44 @@ func TestOpenCutsOverEveryReleasedSchemaV2LayoutThroughJSONL(t *testing.T) {
 				require.NoError(t, backup.Close())
 			})
 		}
+	}
+}
+
+func TestOpenCutsOverReleasedSchemaV3ThroughJSONL(t *testing.T) {
+	for _, test := range v090UpgradeDrivers() {
+		t.Run(test.name, func(t *testing.T) {
+			dbPath := filepath.Join(t.TempDir(), "docbank.db")
+			fixture := createV3Fixture(t, dbPath, test.driver)
+
+			s, err := Open(dbPath, test.driver)
+			require.NoError(t, err)
+			var schemaVersion int
+			require.NoError(t, s.db.QueryRow(`
+				SELECT schema_version FROM vault_metadata WHERE singleton=1`).Scan(&schemaVersion))
+			assert.Equal(t, 4, schemaVersion)
+			var upgraded bytes.Buffer
+			require.NoError(t, s.ExportMetadata(t.Context(), &upgraded))
+			assert.Equal(t, fixture.metadata, upgraded.Bytes())
+			var stores, locations int
+			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM blob_stores
+				WHERE store_id IN (?,?)`, fixture.primaryStoreID, fixture.secondaryStoreID).Scan(&stores))
+			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM blob_locations
+				WHERE blob_hash=? AND store_id IN (?,?)`, fixture.blobHash,
+				fixture.primaryStoreID, fixture.secondaryStoreID).Scan(&locations))
+			assert.Equal(t, 2, stores)
+			assert.Equal(t, 2, locations)
+			require.NoError(t, s.Close())
+
+			backup, err := test.driver.Open(dbPath+v3BackupSuffix, docsqlite.OpenOptions{
+				Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred,
+			})
+			require.NoError(t, err)
+			kind, err := classifyDatabaseSchema(backup)
+			require.NoError(t, err)
+			assert.Equal(t, 3, kind.version)
+			assert.NotNil(t, kind.source)
+			require.NoError(t, backup.Close())
+		})
 	}
 }
 
@@ -487,6 +535,61 @@ func createV2Fixture(
 	return v2Fixture{
 		rawHash: rawHash, zstdHash: zstdHash, packedHash: packedHash,
 		missingHash: missingHash, packID: packID, metadata: metadata.Bytes(),
+	}
+}
+
+func createV3Fixture(t *testing.T, path string, driver docsqlite.Driver) v3Fixture {
+	t.Helper()
+	db, err := driver.Open(path, docsqlite.OpenOptions{
+		Access: docsqlite.Create, TransactionMode: docsqlite.Immediate,
+	})
+	require.NoError(t, err)
+	_, err = db.Exec(schemaV0140SQL)
+	require.NoError(t, err)
+	const (
+		timestamp        = "2026-08-16T12:00:00.000000000Z"
+		vaultID          = "10000000-0000-4000-8000-000000000003"
+		blobHash         = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		primaryStoreID   = "20000000-0000-4000-8000-000000000003"
+		secondaryStoreID = "20000000-0000-4000-8000-000000000004"
+	)
+	tx, err := db.BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	_, err = tx.Exec(`PRAGMA defer_foreign_keys=ON`)
+	require.NoError(t, err)
+	statements := []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO vault_metadata(singleton,vault_uid,schema_version) VALUES(1,?,3)`, []any{vaultID}},
+		{`INSERT INTO nodes(id,parent_id,name,kind,revision,created_at,modified_at)
+			VALUES(1,NULL,'','dir',1,?,?)`, []any{timestamp, timestamp}},
+		{`INSERT INTO blobs(hash,size,created_at) VALUES(?,17,?)`, []any{blobHash, timestamp}},
+		{`INSERT INTO blob_stores(store_id,name,kind,role,lifecycle,binding,ownership_epoch,created_at)
+			VALUES(?,'primary','filesystem','primary','managed','{}',?,?)`,
+			[]any{primaryStoreID, "30000000-0000-4000-8000-000000000003", timestamp}},
+		{`INSERT INTO blob_stores(store_id,name,kind,role,lifecycle,binding,ownership_epoch,created_at)
+			VALUES(?,'archive','filesystem','archive','managed','{}',?,?)`,
+			[]any{secondaryStoreID, "30000000-0000-4000-8000-000000000004", timestamp}},
+		{`INSERT INTO blob_locations(blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible)
+			VALUES(?,?,'1','loose','raw',17,1)`, []any{blobHash, primaryStoreID}},
+		{`INSERT INTO blob_locations(blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible)
+			VALUES(?,?,'2','loose','raw',17,0)`, []any{blobHash, secondaryStoreID}},
+	}
+	for _, statement := range statements {
+		_, err = tx.Exec(statement.query, statement.args...)
+		require.NoError(t, err)
+	}
+	require.NoError(t, tx.Commit())
+	snapshot, err := db.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
+	require.NoError(t, err)
+	var metadata bytes.Buffer
+	require.NoError(t, exportMetadataSnapshot(t.Context(), snapshot, &metadata))
+	require.NoError(t, snapshot.Rollback())
+	require.NoError(t, db.Close())
+	return v3Fixture{
+		blobHash: blobHash, primaryStoreID: primaryStoreID,
+		secondaryStoreID: secondaryStoreID, metadata: metadata.Bytes(),
 	}
 }
 

@@ -224,14 +224,29 @@ func GarbageCollect(
 	report := GCReport{DryRun: opts.DryRun}
 	tracked := scan.Items
 	trackedHashes := make([]string, 0, budget.MaxObjects)
-	type retirement struct {
-		hash       packstore.Hash
-		resolution packstore.Resolution
-	}
-	retirements := make([]retirement, 0, budget.MaxObjects)
+	retirements := make([]store.GCLooseRetirement, 0, budget.MaxObjects)
 	primary, err := metadata.PrimaryBlobStore(ctx)
 	if err != nil {
 		return report, err
+	}
+	if !opts.DryRun {
+		pending, err := metadata.PendingGCLooseRetirements(ctx, budget.MaxObjects+1)
+		if err != nil {
+			return report, err
+		}
+		pendingMore := len(pending) > budget.MaxObjects
+		if pendingMore {
+			pending = pending[:budget.MaxObjects]
+		}
+		reclaimed, err := retireGCLooseItems(ctx, metadata, blobs, primary.ID, pending)
+		report.ReclaimedFiles += reclaimed
+		if err != nil {
+			return report, err
+		}
+		if len(pending) != 0 {
+			report.More = pendingMore || len(tracked) != 0 || scan.More
+			return report, nil
+		}
 	}
 	processedBytes := int64(0)
 	processed := 0
@@ -273,24 +288,30 @@ func GarbageCollect(
 			if err := validateUnreachableLooseLocations(blobs, primary.ID, resolution); err != nil {
 				return report, err
 			}
-			retirements = append(retirements, retirement{hash: hash, resolution: resolution})
+			for _, location := range resolution.Candidates {
+				if location.Loose == nil {
+					continue
+				}
+				retirements = append(retirements, store.GCLooseRetirement{
+					StoreID: string(location.StoreID), Hash: hash,
+					Encoding: location.Loose.Encoding,
+				})
+			}
 		}
 		processed++
 	}
 	if !opts.DryRun && len(trackedHashes) > 0 {
-		if err := metadata.DeleteBlobRows(ctx, trackedHashes); err != nil {
+		if err := metadata.DeleteBlobRowsWithGCRetirements(
+			ctx, trackedHashes, retirements,
+		); err != nil {
 			return report, err
 		}
 		report.RemovedBlobs = len(trackedHashes)
 		report.Removed += len(trackedHashes)
-		for _, item := range retirements {
-			removed, err := retireUnreachableLooseLocations(
-				ctx, blobs, primary.ID, item.hash, item.resolution,
-			)
-			if err != nil {
-				return report, err
-			}
-			report.ReclaimedFiles += removed
+		reclaimed, err := retireGCLooseItems(ctx, metadata, blobs, primary.ID, retirements)
+		report.ReclaimedFiles += reclaimed
+		if err != nil {
+			return report, err
 		}
 	}
 	report.More = processed < len(tracked) || scan.More
@@ -302,6 +323,61 @@ func GarbageCollect(
 		report.NextCursor = encodeCursor(operationGC, resumeHash)
 	}
 	return report, nil
+}
+
+func retireGCLooseItems(
+	ctx context.Context,
+	metadata *store.Store,
+	blobs *blob.Store,
+	primaryStoreID string,
+	items []store.GCLooseRetirement,
+) (int, error) {
+	retired := 0
+	for _, item := range items {
+		shouldRetire, err := metadata.PrepareGCLooseRetirement(ctx, item)
+		if err != nil {
+			return retired, err
+		}
+		if !shouldRetire {
+			continue
+		}
+		removed := false
+		if item.StoreID == primaryStoreID {
+			count, err := blobs.RemoveIfExists(item.Hash.String())
+			if err != nil {
+				return retired, fmt.Errorf("retiring unreachable blob %s: %w", item.Hash, err)
+			}
+			removed = count != 0
+		} else {
+			backend, ok := blobs.WritableBackend(packstore.StoreID(item.StoreID))
+			if !ok {
+				return retired, fmt.Errorf(
+					"%w: gc cleanup store %s is not writable",
+					packstore.ErrStoreUnavailable, item.StoreID,
+				)
+			}
+			err := backend.Retire(ctx, packstore.ObjectRef{
+				LooseHash: item.Hash, LooseEncoding: item.Encoding,
+			})
+			switch {
+			case errors.Is(err, fs.ErrNotExist), errors.Is(err, packstore.ErrPhysicalMissing):
+			case err != nil:
+				return retired, fmt.Errorf(
+					"retiring unreachable blob %s from store %s: %w",
+					item.Hash, item.StoreID, err,
+				)
+			default:
+				removed = true
+			}
+		}
+		if err := metadata.CompleteGCLooseRetirement(ctx, item); err != nil {
+			return retired, err
+		}
+		if removed {
+			retired++
+		}
+	}
+	return retired, nil
 }
 
 func validateUnreachableLooseLocations(
@@ -319,57 +395,6 @@ func validateUnreachableLooseLocations(
 		}
 	}
 	return nil
-}
-
-func retireUnreachableLooseLocations(
-	ctx context.Context,
-	blobs *blob.Store,
-	primaryStoreID string,
-	hash packstore.Hash,
-	resolution packstore.Resolution,
-) (int, error) {
-	backends := make(map[packstore.StoreID]packstore.Backend)
-	primaryLoose := false
-	for _, location := range resolution.Candidates {
-		if location.Loose == nil {
-			continue
-		}
-		if location.StoreID == packstore.StoreID(primaryStoreID) {
-			primaryLoose = true
-			continue
-		}
-		backend, ok := blobs.WritableBackend(location.StoreID)
-		if !ok {
-			return 0, fmt.Errorf(
-				"%w: gc cleanup store %s is not writable",
-				packstore.ErrStoreUnavailable, location.StoreID,
-			)
-		}
-		backends[location.StoreID] = backend
-	}
-	secondary := make([]packstore.ReadLocation, 0, len(resolution.Candidates))
-	for _, location := range resolution.Candidates {
-		if location.Loose == nil ||
-			location.StoreID == packstore.StoreID(primaryStoreID) {
-			continue
-		}
-		secondary = append(secondary, location)
-	}
-	retired, err := retireLooseCandidates(
-		secondary, func(location packstore.ReadLocation) error {
-			return backends[location.StoreID].Retire(ctx, packstore.ObjectRef{
-				LooseHash: hash, LooseEncoding: location.Loose.Encoding,
-			})
-		},
-	)
-	if err != nil {
-		return 0, fmt.Errorf("retiring unreachable blob %s: %w", hash, err)
-	}
-	if !primaryLoose {
-		return retired, nil
-	}
-	primaryRemoved, err := blobs.RemoveIfExists(hash.String())
-	return retired + primaryRemoved, err
 }
 
 func retireLooseCandidates(

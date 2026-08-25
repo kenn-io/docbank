@@ -477,6 +477,20 @@ func adoptBlobStoreCleanupTx(
 		INSERT OR IGNORE INTO storage_operation_cleanup(
 			operation_id,store_id,loose_hash,loose_encoding,pack_id
 		)
+		SELECT ?,store_id,blob_hash,loose_encoding,''
+		FROM gc_loose_retirements WHERE store_id=?`, operationID, storeID,
+	); err != nil {
+		return fmt.Errorf("adopting GC cleanup for %s: %w", storeID, err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM gc_loose_retirements WHERE store_id=?`, storeID,
+	); err != nil {
+		return fmt.Errorf("transferring GC cleanup for %s: %w", storeID, err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT OR IGNORE INTO storage_operation_cleanup(
+			operation_id,store_id,loose_hash,loose_encoding,pack_id
+		)
 		SELECT ?,store_id,loose_hash,loose_encoding,pack_id
 		FROM storage_operation_cleanup
 		WHERE store_id=? AND operation_id<>?`,
@@ -607,8 +621,9 @@ func (s *Store) DetachBlobStore(ctx context.Context, selector string) error {
 			SELECT
 				(SELECT COUNT(*) FROM blob_locations WHERE store_id = ?),
 				(SELECT COUNT(*) FROM blob_packs WHERE store_id = ?),
-				(SELECT COUNT(*) FROM storage_operation_cleanup WHERE store_id = ?)`,
-			store.ID, store.ID, store.ID,
+				(SELECT COUNT(*) FROM storage_operation_cleanup WHERE store_id = ?)
+				  + (SELECT COUNT(*) FROM gc_loose_retirements WHERE store_id = ?)`,
+			store.ID, store.ID, store.ID, store.ID,
 		).Scan(&locations, &packs, &cleanups); err != nil {
 			return fmt.Errorf("checking blob store %s contents: %w", store.ID, err)
 		}

@@ -1020,6 +1020,8 @@ func validateProcessingMetadataState(ctx context.Context, tx metadataQuerier) er
 	if err != nil {
 		return err
 	}
+	type attachmentPolicyBinding struct{ buildID, profileID string }
+	bindings := make([]attachmentPolicyBinding, 0)
 	for rows.Next() {
 		var id, vaultID, contentVersionID, buildID, profileID, attachedAt string
 		if err := rows.Scan(&id, &vaultID, &contentVersionID, &buildID, &profileID, &attachedAt); err != nil {
@@ -1034,6 +1036,7 @@ func validateProcessingMetadataState(ctx context.Context, tx metadataQuerier) er
 			_ = rows.Close()
 			return err
 		}
+		bindings = append(bindings, attachmentPolicyBinding{buildID: buildID, profileID: profileID})
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
@@ -1041,6 +1044,19 @@ func validateProcessingMetadataState(ctx context.Context, tx metadataQuerier) er
 	}
 	if err := rows.Close(); err != nil {
 		return err
+	}
+	for _, binding := range bindings {
+		profile, err := loadProcessingProfile(ctx, tx, binding.profileID)
+		if err != nil {
+			return err
+		}
+		build, err := loadRenditionBuild(ctx, tx, binding.buildID)
+		if err != nil {
+			return err
+		}
+		if err := validateRenditionArtifactRolesForProfile(profile, build); err != nil {
+			return fmt.Errorf("invalid restored rendition attachment: %w", err)
+		}
 	}
 	rows, err = tx.QueryContext(ctx, `SELECT content_version_id,profile_fingerprint,attachment_id,published_at FROM rendition_heads`)
 	if err != nil {

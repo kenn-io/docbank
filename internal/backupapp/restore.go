@@ -245,7 +245,7 @@ func verifyRestoredRenditionHeads(
 	defer func() {
 		retErr = errors.Join(retErr, metadata.Close())
 	}()
-	physical, err := blob.New(
+	physical, err := blob.NewPreparedRestoreReader(
 		store.NewPackCatalog(metadata), filepath.Join(target, "blobs"),
 	)
 	if err != nil {

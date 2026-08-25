@@ -169,6 +169,40 @@ func TestRenditionCatalogRejectsArtifactsForbiddenByAttachmentProfile(t *testing
 	}
 }
 
+func TestProcessingMetadataRejectsRestoredAttachmentWithForbiddenArtifact(t *testing.T) {
+	s, versions := newRenditionCatalogFixture(t)
+	profile := catalogProcessingProfileWith(t, false, func(profile *document.ProcessingProfileV1) {
+		profile.RetentionDisclosure.RetainTypedArtifacts = false
+	})
+	build := catalogRenditionBuild(s, profile)
+	build.CapturedArtifactPolicy = jsontext.Value(
+		`{"roles":[{"max_count":1,"min_count":1,"role":"normalized_evidence"},{"max_count":1,"min_count":1,"role":"sanitized_markdown"},{"max_count":1,"min_count":1,"role":"structured_evidence"}],"version":1}`,
+	)
+	build.CapturedArtifactPolicyFingerprint = testSHA256(build.CapturedArtifactPolicy)
+	build.Artifacts = append(build.Artifacts, RenditionArtifactRecord{
+		ID: "artifact_" + fakeHash("30"), Role: string(document.EvidenceArtifactStructured),
+		BlobHash: catalogEvidenceBlobHash, Size: int64(len(catalogBlobContents[catalogEvidenceBlobHash])),
+		Checksum: catalogEvidenceBlobHash, State: RenditionArtifactVerified,
+	})
+	build.DeclaredArtifactCount = len(build.Artifacts)
+	require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		return ensureProcessingProfileTx(t.Context(), tx, profile)
+	}))
+	_, err := s.db.Exec(`INSERT INTO rendition_attachments(
+		attachment_id,vault_uid,content_version_id,build_id,profile_fingerprint,
+		retention_disclosure_fingerprint,attachment_policy_fingerprint,
+		consent_fingerprint,rendition_disclosure_fingerprint,trust_boundary,attached_at
+	) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+		catalogAttachmentFirst, s.VaultID(), versions[0], build.ID, profile.Fingerprint,
+		profile.RetentionDisclosureFingerprint, profile.AttachmentPolicyFingerprint,
+		profile.ConsentFingerprint, profile.RenditionDisclosureFingerprint, profile.TrustBoundary,
+		"2026-08-25T15:10:00.000000000Z")
+	require.NoError(t, err)
+
+	require.ErrorContains(t, s.ValidateMetadata(t.Context()), "artifact role")
+}
+
 func TestRenditionCatalogRejectsIncompleteArtifactsWithoutPartialStage(t *testing.T) {
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)

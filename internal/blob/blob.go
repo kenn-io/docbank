@@ -274,9 +274,22 @@ func New(catalog packstore.Catalog, blobsDir string) (*Store, error) {
 	return NewWithOptions(catalog, blobsDir, Options{})
 }
 
+// NewPreparedRestoreReader opens staged physical authority after a restore
+// handoff has been prepared without consuming the marker that makes a crash
+// before database publication recoverable.
+func NewPreparedRestoreReader(catalog packstore.Catalog, blobsDir string) (*Store, error) {
+	return newWithOptions(catalog, blobsDir, Options{}, false)
+}
+
 // NewWithOptions constructs the daemon-owned store with explicit physical
 // loose-storage policy.
 func NewWithOptions(catalog packstore.Catalog, blobsDir string, opts Options) (*Store, error) {
+	return newWithOptions(catalog, blobsDir, opts, true)
+}
+
+func newWithOptions(
+	catalog packstore.Catalog, blobsDir string, opts Options, recoverRestoreHandoff bool,
+) (*Store, error) {
 	if err := ValidateOptions(opts); err != nil {
 		return nil, err
 	}
@@ -291,10 +304,12 @@ func NewWithOptions(catalog packstore.Catalog, blobsDir string, opts Options) (*
 		if err := ownership.Validate(); err != nil {
 			return nil, fmt.Errorf("reading primary filesystem ownership: %w", err)
 		}
-		if err := RecoverPrimaryRestoreHandoff(
-			context.Background(), blobsDir, &ownership, nil,
-		); err != nil {
-			return nil, fmt.Errorf("recovering primary restore ownership: %w", err)
+		if recoverRestoreHandoff {
+			if err := RecoverPrimaryRestoreHandoff(
+				context.Background(), blobsDir, &ownership, nil,
+			); err != nil {
+				return nil, fmt.Errorf("recovering primary restore ownership: %w", err)
+			}
 		}
 	}
 	coordinator := packstore.NewCoordinator()
