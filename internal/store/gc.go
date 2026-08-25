@@ -135,6 +135,8 @@ func (s *Store) UnreachableBlobs(ctx context.Context) ([]BlobInfo, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT b.hash, b.size FROM blobs b
 		WHERE NOT EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash = b.hash)
+		  AND NOT EXISTS (SELECT 1 FROM rendition_builds r WHERE r.source_sha256 = b.hash)
+		  AND NOT EXISTS (SELECT 1 FROM rendition_artifacts a WHERE a.blob_hash = b.hash)
 		ORDER BY b.hash`)
 	if err != nil {
 		return nil, fmt.Errorf("finding unreachable blobs: %w", err)
@@ -205,6 +207,8 @@ const unreachableBlobsStartPageSQL = `
 	)
 	SELECT p.hash, p.loose_stored_size,
 	       NOT EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash = p.hash)
+	       AND NOT EXISTS (SELECT 1 FROM rendition_builds r WHERE r.source_sha256 = p.hash)
+	       AND NOT EXISTS (SELECT 1 FROM rendition_artifacts a WHERE a.blob_hash = p.hash)
 	FROM raw_page p ORDER BY p.hash`
 
 const unreachableBlobsResumePageSQL = `
@@ -219,6 +223,8 @@ const unreachableBlobsResumePageSQL = `
 	)
 	SELECT p.hash, p.loose_stored_size,
 	       NOT EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash = p.hash)
+	       AND NOT EXISTS (SELECT 1 FROM rendition_builds r WHERE r.source_sha256 = p.hash)
+	       AND NOT EXISTS (SELECT 1 FROM rendition_artifacts a WHERE a.blob_hash = p.hash)
 	FROM raw_page p ORDER BY p.hash`
 
 func unreachableBlobScanQuery(after *string, limit int) (string, []any) {
@@ -545,9 +551,10 @@ func (s *Store) DeadPackUsagePage(
 }
 
 // DeleteBlobRows removes logical membership and derived metadata for reclaimed
-// blobs. Callers must hold the exclusive vault lock (see UnreachableBlobs) and
-// retire every loose location first. Packed entries remain as dead physical
-// accounting until repack retires their immutable container.
+// blobs. Callers must hold the exclusive vault lock (see UnreachableBlobs),
+// resolve and validate every loose location first, and retire physical bytes
+// only after this logical deletion succeeds. Packed entries remain as dead
+// physical accounting until repack retires their immutable container.
 func (s *Store) DeleteBlobRows(ctx context.Context, hashes []string) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		for _, h := range hashes {

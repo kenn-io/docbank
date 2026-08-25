@@ -381,7 +381,7 @@ func isProcessingMetadataType(kind string) bool {
 }
 
 func (s *Store) importProcessingMetadataRecord(
-	ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value,
+	ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value, verifyPhysicalBytes bool,
 ) error {
 	switch kind {
 	case metadataProcessingProfileType:
@@ -509,7 +509,7 @@ func (s *Store) importProcessingMetadataRecord(
 		}); err != nil {
 			return err
 		}
-		if err := s.verifyImportedRenditionHeadBytes(ctx, tx, value); err != nil {
+		if err := s.validateImportedRenditionHead(ctx, tx, value, verifyPhysicalBytes); err != nil {
 			return err
 		}
 		_, err := tx.ExecContext(ctx, `
@@ -527,8 +527,83 @@ type importedProcessingBlob struct {
 	size int64
 }
 
-func (s *Store) verifyImportedRenditionHeadBytes(
-	ctx context.Context, tx *sql.Tx, head metadataRenditionHead,
+// RenditionBlobReader opens catalog-authorized loose or packed content for
+// post-restore verification.
+type RenditionBlobReader interface {
+	OpenStreamContext(ctx context.Context, hash string) (packstore.VerifiedReadCloser, int64, error)
+}
+
+// VerifyRenditionHeadBytes verifies every source and artifact reachable from
+// an active rendition head through the restored mixed-storage catalog.
+func (s *Store) VerifyRenditionHeadBytes(ctx context.Context, reader RenditionBlobReader) error {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT b.source_sha256, source.size
+		FROM rendition_heads h
+		JOIN rendition_attachments a
+		  ON a.content_version_id=h.content_version_id
+		 AND a.profile_fingerprint=h.profile_fingerprint
+		 AND a.attachment_id=h.attachment_id
+		JOIN rendition_builds b ON b.build_id=a.build_id AND b.vault_uid=a.vault_uid
+		JOIN blobs source ON source.hash=b.source_sha256
+		UNION
+		SELECT artifact.blob_hash, artifact.size
+		FROM rendition_heads h
+		JOIN rendition_attachments a
+		  ON a.content_version_id=h.content_version_id
+		 AND a.profile_fingerprint=h.profile_fingerprint
+		 AND a.attachment_id=h.attachment_id
+		JOIN rendition_artifacts artifact ON artifact.build_id=a.build_id
+		ORDER BY 1, 2`)
+	if err != nil {
+		return fmt.Errorf("listing active rendition bytes: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var blob importedProcessingBlob
+		if err := rows.Scan(&blob.hash, &blob.size); err != nil {
+			return fmt.Errorf("scanning active rendition bytes: %w", err)
+		}
+		if err := verifyRenditionBlob(ctx, reader, blob); err != nil {
+			return err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterating active rendition bytes: %w", err)
+	}
+	return nil
+}
+
+func verifyRenditionBlob(
+	ctx context.Context, reader RenditionBlobReader, blob importedProcessingBlob,
+) (retErr error) {
+	stream, logicalSize, err := reader.OpenStreamContext(ctx, blob.hash)
+	if err != nil {
+		return fmt.Errorf("opening restored rendition blob %s: %w", blob.hash, err)
+	}
+	defer func() { retErr = errors.Join(retErr, stream.Close()) }()
+	if logicalSize != blob.size {
+		return fmt.Errorf(
+			"restored rendition blob %s size %d does not match catalog size %d",
+			blob.hash, logicalSize, blob.size,
+		)
+	}
+	read, err := io.Copy(io.Discard, stream)
+	if err != nil {
+		return fmt.Errorf("reading restored rendition blob %s: %w", blob.hash, err)
+	}
+	if read != blob.size {
+		return fmt.Errorf(
+			"restored rendition blob %s read %d bytes, want %d", blob.hash, read, blob.size,
+		)
+	}
+	if err := stream.Verify(); err != nil {
+		return fmt.Errorf("verifying restored rendition blob %s: %w", blob.hash, err)
+	}
+	return nil
+}
+
+func (s *Store) validateImportedRenditionHead(
+	ctx context.Context, tx *sql.Tx, head metadataRenditionHead, verifyPhysicalBytes bool,
 ) (retErr error) {
 	var buildID string
 	var source importedProcessingBlob
@@ -570,6 +645,9 @@ func (s *Store) verifyImportedRenditionHeadBytes(
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("iterating imported rendition artifact bytes: %w", err)
+	}
+	if !verifyPhysicalBytes {
+		return nil
 	}
 
 	layout, err := packstore.NewLayout(

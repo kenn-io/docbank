@@ -570,6 +570,17 @@ func stringPtr(v sql.NullString) *string {
 // ImportMetadata replaces the pristine root in a newly created store with a
 // logical JSONL snapshot. It refuses a store containing user or pack state.
 func (s *Store) ImportMetadata(ctx context.Context, r io.Reader) error {
+	return s.importMetadata(ctx, r, true)
+}
+
+// ImportMetadataForBackupRestore imports logical metadata before Kit restores
+// physical content. The backup restore must call VerifyRenditionHeadBytes after
+// every loose or packed blob is available and before publishing the target.
+func (s *Store) ImportMetadataForBackupRestore(ctx context.Context, r io.Reader) error {
+	return s.importMetadata(ctx, r, false)
+}
+
+func (s *Store) importMetadata(ctx context.Context, r io.Reader, verifyProcessingBytes bool) error {
 	rootID := int64(0)
 	vaultID := ""
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
@@ -582,7 +593,7 @@ func (s *Store) ImportMetadata(ctx context.Context, r io.Reader) error {
 		if _, err := tx.ExecContext(ctx, `PRAGMA defer_foreign_keys = ON`); err != nil {
 			return fmt.Errorf("deferring metadata foreign keys: %w", err)
 		}
-		header, err := s.importMetadataLines(ctx, tx, r)
+		header, err := s.importMetadataLines(ctx, tx, r, verifyProcessingBytes)
 		if err != nil {
 			return err
 		}
@@ -652,7 +663,9 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 	return nil
 }
 
-func (s *Store) importMetadataLines(ctx context.Context, tx *sql.Tx, r io.Reader) (metadataHeader, error) {
+func (s *Store) importMetadataLines(
+	ctx context.Context, tx *sql.Tx, r io.Reader, verifyProcessingBytes bool,
+) (metadataHeader, error) {
 	dec := jsontext.NewDecoder(bufio.NewReader(r))
 	rawHeader, err := dec.ReadValue()
 	if err != nil {
@@ -687,13 +700,15 @@ func (s *Store) importMetadataLines(ctx context.Context, tx *sql.Tx, r io.Reader
 		if err := json.Unmarshal(raw, &kind); err != nil {
 			return metadataHeader{}, fmt.Errorf("decoding metadata record %d type: %w", record, err)
 		}
-		if err := s.importMetadataRecord(ctx, tx, kind.Type, raw); err != nil {
+		if err := s.importMetadataRecord(ctx, tx, kind.Type, raw, verifyProcessingBytes); err != nil {
 			return metadataHeader{}, fmt.Errorf("importing metadata record %d (%s): %w", record, kind.Type, err)
 		}
 	}
 }
 
-func (s *Store) importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value) error {
+func (s *Store) importMetadataRecord(
+	ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value, verifyProcessingBytes bool,
+) error {
 	required, ok := metadataRequiredFields[kind]
 	if !ok {
 		return fmt.Errorf("unknown record type %q", kind)
@@ -702,7 +717,7 @@ func (s *Store) importMetadataRecord(ctx context.Context, tx *sql.Tx, kind strin
 		return err
 	}
 	if isProcessingMetadataType(kind) {
-		return s.importProcessingMetadataRecord(ctx, tx, kind, raw)
+		return s.importProcessingMetadataRecord(ctx, tx, kind, raw, verifyProcessingBytes)
 	}
 	switch kind {
 	case "blob":

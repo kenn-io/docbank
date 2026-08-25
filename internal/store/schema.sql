@@ -62,6 +62,8 @@ INSERT INTO docbank_processing_schema_v1_expected(object_type, object_name, obje
         evidence_lexical_fingerprint, captured_artifact_policy_fingerprint
     )
 )'),
+('index', 'rendition_builds_source', 'CREATE INDEX rendition_builds_source
+    ON rendition_builds(source_sha256, build_id)'),
 ('table', 'rendition_artifacts', 'CREATE TABLE rendition_artifacts (
     build_id    TEXT NOT NULL REFERENCES rendition_builds(build_id),
     artifact_id TEXT NOT NULL
@@ -112,7 +114,7 @@ INSERT INTO docbank_processing_schema_v1_expected(object_type, object_name, obje
 ('table', 'rendition_attachments', 'CREATE TABLE rendition_attachments (
     attachment_id                    TEXT PRIMARY KEY,
     vault_uid                        TEXT NOT NULL,
-    content_version_id               TEXT NOT NULL REFERENCES content_versions(version_id),
+    content_version_id               TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
     build_id                          TEXT NOT NULL,
     profile_fingerprint               TEXT NOT NULL REFERENCES processing_profiles(profile_fingerprint),
     retention_disclosure_fingerprint  TEXT NOT NULL,
@@ -136,7 +138,7 @@ INSERT INTO docbank_processing_schema_v1_expected(object_type, object_name, obje
     FOREIGN KEY (content_version_id, profile_fingerprint, attachment_id)
         REFERENCES rendition_attachments(
             content_version_id, profile_fingerprint, attachment_id
-        )
+        ) ON DELETE CASCADE
 )'),
 ('trigger', 'processing_profiles_immutable_update', 'CREATE TRIGGER processing_profiles_immutable_update
 BEFORE UPDATE ON processing_profiles BEGIN
@@ -648,6 +650,9 @@ CREATE TABLE IF NOT EXISTS rendition_builds (
     )
 );
 
+CREATE INDEX IF NOT EXISTS rendition_builds_source
+    ON rendition_builds(source_sha256, build_id);
+
 CREATE TABLE IF NOT EXISTS rendition_artifacts (
     build_id    TEXT NOT NULL REFERENCES rendition_builds(build_id),
     artifact_id TEXT NOT NULL
@@ -705,7 +710,7 @@ CREATE TABLE IF NOT EXISTS rendition_lexical_segments (
 CREATE TABLE IF NOT EXISTS rendition_attachments (
     attachment_id                    TEXT PRIMARY KEY,
     vault_uid                        TEXT NOT NULL,
-    content_version_id               TEXT NOT NULL REFERENCES content_versions(version_id),
+    content_version_id               TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
     build_id                          TEXT NOT NULL,
     profile_fingerprint               TEXT NOT NULL REFERENCES processing_profiles(profile_fingerprint),
     retention_disclosure_fingerprint  TEXT NOT NULL,
@@ -732,7 +737,7 @@ CREATE TABLE IF NOT EXISTS rendition_heads (
     FOREIGN KEY (content_version_id, profile_fingerprint, attachment_id)
         REFERENCES rendition_attachments(
             content_version_id, profile_fingerprint, attachment_id
-        )
+        ) ON DELETE CASCADE
 );
 
 CREATE TRIGGER IF NOT EXISTS processing_profiles_immutable_update

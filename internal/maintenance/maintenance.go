@@ -224,6 +224,11 @@ func GarbageCollect(
 	report := GCReport{DryRun: opts.DryRun}
 	tracked := scan.Items
 	trackedHashes := make([]string, 0, budget.MaxObjects)
+	type retirement struct {
+		hash       packstore.Hash
+		resolution packstore.Resolution
+	}
+	retirements := make([]retirement, 0, budget.MaxObjects)
 	primary, err := metadata.PrimaryBlobStore(ctx)
 	if err != nil {
 		return report, err
@@ -265,13 +270,10 @@ func GarbageCollect(
 		report.ReclaimableBytes += looseSize
 		processedBytes += looseSize + packedSize
 		if !opts.DryRun {
-			removed, err := retireUnreachableLooseLocations(
-				ctx, blobs, primary.ID, hash, resolution,
-			)
-			if err != nil {
+			if err := validateUnreachableLooseLocations(blobs, primary.ID, resolution); err != nil {
 				return report, err
 			}
-			report.ReclaimedFiles += removed
+			retirements = append(retirements, retirement{hash: hash, resolution: resolution})
 		}
 		processed++
 	}
@@ -281,6 +283,15 @@ func GarbageCollect(
 		}
 		report.RemovedBlobs = len(trackedHashes)
 		report.Removed += len(trackedHashes)
+		for _, item := range retirements {
+			removed, err := retireUnreachableLooseLocations(
+				ctx, blobs, primary.ID, item.hash, item.resolution,
+			)
+			if err != nil {
+				return report, err
+			}
+			report.ReclaimedFiles += removed
+		}
 	}
 	report.More = processed < len(tracked) || scan.More
 	if report.More {
@@ -291,6 +302,23 @@ func GarbageCollect(
 		report.NextCursor = encodeCursor(operationGC, resumeHash)
 	}
 	return report, nil
+}
+
+func validateUnreachableLooseLocations(
+	blobs *blob.Store, primaryStoreID string, resolution packstore.Resolution,
+) error {
+	for _, location := range resolution.Candidates {
+		if location.Loose == nil || location.StoreID == packstore.StoreID(primaryStoreID) {
+			continue
+		}
+		if _, ok := blobs.WritableBackend(location.StoreID); !ok {
+			return fmt.Errorf(
+				"%w: gc cleanup store %s is not writable",
+				packstore.ErrStoreUnavailable, location.StoreID,
+			)
+		}
+	}
+	return nil
 }
 
 func retireUnreachableLooseLocations(

@@ -88,6 +88,36 @@ func TestGarbageCollectMissingLooseFileDoesNotCountPhysicalReclamation(t *testin
 		"only a file actually unlinked by this call is physically reclaimed")
 }
 
+func TestGarbageCollectKeepsLooseBytesWhenLogicalDeletionFails(t *testing.T) {
+	vault := newMaintenanceVault(t, nil)
+	created, err := vault.Put(t.Context(), "/blocked", strings.NewReader("blocked"), PutOptions{})
+	require.NoError(t, err)
+	trashMaintenanceFiles(t, vault, []PutReceipt{created})
+	blobPath := filepath.Join(
+		vault.root.Name(), "blobs", created.Node.BlobHash[:2], created.Node.BlobHash,
+	)
+	require.FileExists(t, blobPath)
+	db, err := vault.metadata.SQLiteDriver().Open(
+		filepath.Join(vault.root.Name(), "docbank.db"),
+		docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate},
+	)
+	require.NoError(t, err)
+	_, err = db.Exec(`
+		CREATE TRIGGER block_blob_delete
+		BEFORE DELETE ON blobs BEGIN
+			SELECT RAISE(ABORT, 'synthetic logical delete failure');
+		END`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	_, err = vault.GarbageCollect(t.Context(), GCOptions{})
+	require.ErrorContains(t, err, "synthetic logical delete failure")
+	assert.FileExists(t, blobPath)
+	recorded, recordErr := vault.metadata.HasBlob(t.Context(), created.Node.BlobHash)
+	require.NoError(t, recordErr)
+	assert.True(t, recorded)
+}
+
 func TestGarbageCollectAdvancesAcrossLiveOnlyScanWindow(t *testing.T) {
 	for _, test := range maintenanceDrivers() {
 		t.Run(test.name, func(t *testing.T) {

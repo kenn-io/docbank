@@ -18,6 +18,7 @@ import (
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
@@ -228,6 +229,139 @@ func TestJSONLLooseSnapshotVerifyAndRestore(t *testing.T) {
 	}
 	require.NoError(t, restoredBlobs.Close())
 	require.NoError(t, restoredStore.Close())
+}
+
+func TestJSONLSnapshotRestoresRenditionBytesBeforeVerifyingHeads(t *testing.T) {
+	fixture := newArchiveFixture(t)
+	source, err := fixture.metadata.NodeByPath(t.Context(), "/alpha.txt")
+	require.NoError(t, err)
+
+	artifactContents := []struct {
+		name    string
+		content string
+	}{
+		{name: "evidence.bin", content: "synthetic restored evidence"},
+		{name: "rendition.md", content: "synthetic restored markdown"},
+	}
+	artifactHashes := make([]string, 0, len(artifactContents))
+	require.NoError(t, fixture.blobs.WithMutation(t.Context(), func() error {
+		for _, artifact := range artifactContents {
+			hash, size, writeErr := fixture.blobs.WriteContext(
+				t.Context(), strings.NewReader(artifact.content),
+			)
+			if writeErr != nil {
+				return writeErr
+			}
+			if _, createErr := fixture.metadata.CreateFile(
+				t.Context(), fixture.metadata.RootID(), artifact.name,
+				hash, size, "application/octet-stream",
+			); createErr != nil {
+				return createErr
+			}
+			artifactHashes = append(artifactHashes, hash)
+		}
+		return nil
+	}))
+
+	profile := document.ProcessingProfileV1{
+		ContractVersion: document.ProcessingProfileContractV1,
+		Rendition: &document.RenditionBindingV1{
+			AdapterContract: "rendition-adapter/v1", AuthorizationFingerprint: strings.Repeat("a", 64),
+			CredentialBinding: "credential:restore", DeploymentFingerprint: strings.Repeat("b", 64),
+			Descriptor:            document.ProviderDescriptorV1{ID: "synthetic-restore", Fingerprint: strings.Repeat("c", 64)},
+			DisclosureFingerprint: strings.Repeat("d", 64), MaxDocumentBytes: 1 << 20,
+			MaxResponseBytes: 1 << 20, MaxUnits: 100, Name: "restore",
+			RequestedArtifacts: []document.EvidenceArtifactRole{document.EvidenceArtifactStructured},
+			TrustBoundary:      "synthetic-restore", UploadOptionsFingerprint: strings.Repeat("e", 64),
+		},
+		EvidenceLexical: document.EvidenceLexicalPolicyV1{
+			CompletenessFingerprint: strings.Repeat("1", 64), LexicalSegmenterFingerprint: strings.Repeat("2", 64),
+			MaxSegmentRunes: 100, MaxUnitRunes: 1000,
+			NormalizedEvidenceContract: document.NormalizedEvidenceContractV1,
+			NormalizerFingerprint:      strings.Repeat("3", 64), RenditionContract: document.RenditionContractV1,
+			SanitizerFingerprint: strings.Repeat("4", 64), SourceEvidenceContract: document.SourceEvidenceContractV1,
+		},
+		RetentionDisclosure: document.RetentionDisclosurePolicyV1{
+			AttachmentPolicyFingerprint: strings.Repeat("5", 64), ConsentFingerprint: strings.Repeat("6", 64),
+			RetainSanitizedMarkdown: true, RetainTypedArtifacts: true, TrustBoundary: "synthetic-restore",
+		},
+		Retrieval: document.RetrievalPolicyV1{LexicalLimit: 100, VectorLimit: 100},
+	}
+	canonical, fingerprints, err := document.CanonicalProfile(profile)
+	require.NoError(t, err)
+	profileRecord := store.ProcessingProfileRecord{
+		Fingerprint: fingerprints.Profile, CanonicalProfile: jsontext.Value(canonical),
+		RenditionRequestFingerprint:    fingerprints.RenditionRequest,
+		EvidenceLexicalFingerprint:     fingerprints.EvidenceLexical,
+		RetentionDisclosureFingerprint: fingerprints.RetentionDisclosure,
+		AttachmentPolicyFingerprint:    profile.RetentionDisclosure.AttachmentPolicyFingerprint,
+		ConsentFingerprint:             profile.RetentionDisclosure.ConsentFingerprint,
+		RenditionDisclosureFingerprint: profile.Rendition.DisclosureFingerprint,
+		TrustBoundary:                  profile.RetentionDisclosure.TrustBoundary,
+	}
+	capturedPolicy := jsontext.Value(
+		`{"roles":[{"max_count":1,"min_count":1,"role":"normalized_evidence"},{"max_count":1,"min_count":1,"role":"sanitized_markdown"}],"version":1}`,
+	)
+	build := store.RenditionBuildRecord{
+		ID: strings.Repeat("7", 64), VaultID: fixture.metadata.VaultID(), SourceSHA256: source.BlobHash,
+		RenditionRequestFingerprint:       fingerprints.RenditionRequest,
+		EvidenceLexicalFingerprint:        fingerprints.EvidenceLexical,
+		CapturedArtifactPolicyFingerprint: fmt.Sprintf("%x", sha256.Sum256(capturedPolicy)),
+		CapturedArtifactPolicy:            capturedPolicy, AuthorizationChecksum: strings.Repeat("8", 64),
+		ProviderOperationID: "synthetic-restore", ProviderReceipt: jsontext.Value(`{"provider":"synthetic"}`),
+		EvidenceChecksum: artifactHashes[0], RenditionChecksum: artifactHashes[1],
+		MarkdownChecksum: artifactHashes[1], Completeness: document.EvidenceComplete,
+		Warnings: []string{}, CompletedAt: "2026-08-25T12:00:00.000000000Z",
+		DeclaredArtifactCount: 2,
+		Artifacts: []store.RenditionArtifactRecord{
+			{ID: "evidence", Role: "normalized_evidence", BlobHash: artifactHashes[0],
+				Size: int64(len(artifactContents[0].content)), Checksum: artifactHashes[0], State: store.RenditionArtifactVerified},
+			{ID: "markdown", Role: "sanitized_markdown", BlobHash: artifactHashes[1],
+				Size: int64(len(artifactContents[1].content)), Checksum: artifactHashes[1], State: store.RenditionArtifactVerified},
+		},
+	}
+	require.NoError(t, fixture.metadata.StageRenditionBuild(t.Context(), build))
+	attachment := store.RenditionAttachmentRecord{
+		ID: strings.Repeat("9", 64), VaultID: fixture.metadata.VaultID(),
+		ContentVersionID: source.CurrentVersionID, BuildID: build.ID,
+		Profile: profileRecord, AttachedAt: "2026-08-25T12:01:00.000000000Z",
+	}
+	require.NoError(t, fixture.metadata.AttachRenditionBuild(t.Context(), attachment))
+	require.NoError(t, fixture.metadata.PublishRenditionHead(t.Context(), store.RenditionHeadRecord{
+		ContentVersionID:             source.CurrentVersionID,
+		ProcessingProfileFingerprint: profileRecord.Fingerprint,
+		AttachmentID:                 attachment.ID, PublishedAt: "2026-08-25T12:02:00.000000000Z",
+	}))
+
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	_, err = backupapp.Create(
+		t.Context(), repo, "test-version", fixture.metadata, fixture.blobs, backup.CreateOptions{},
+	)
+	require.NoError(t, err)
+	target := filepath.Join(t.TempDir(), "restored")
+	_, err = backupapp.Restore(t.Context(), repo, "test-version", backup.RestoreOptions{TargetDir: target})
+	require.NoError(t, err)
+
+	restoredMetadata, err := store.Open(filepath.Join(target, "docbank.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restoredMetadata.Close()) })
+	restoredBlobs, err := blob.New(store.NewPackCatalog(restoredMetadata), filepath.Join(target, "blobs"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restoredBlobs.Close()) })
+	view, err := restoredMetadata.ActiveRendition(
+		t.Context(), source.CurrentVersionID, profileRecord.Fingerprint,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, build.ID, view.Build.ID)
+	for index, hash := range artifactHashes {
+		reader, openErr := restoredBlobs.OpenContext(t.Context(), hash)
+		require.NoError(t, openErr)
+		contents, readErr := io.ReadAll(reader)
+		require.NoError(t, readErr)
+		require.NoError(t, reader.Close())
+		assert.Equal(t, artifactContents[index].content, string(contents))
+	}
 }
 
 func TestOverwriteRestorePublishesMatchingPrimaryOwnership(t *testing.T) {
