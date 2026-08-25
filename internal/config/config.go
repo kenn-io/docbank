@@ -632,6 +632,9 @@ func (c Config) assembleProcessingProfile(name string) (document.ProcessingProfi
 		if !exists {
 			return document.ProcessingProfileV1{}, fmt.Errorf("[processing_profiles.%s] embedding %q is not defined", name, bindingName)
 		}
+		if err := validateEmbeddingProfileConfig(binding, fmt.Sprintf("[embedding_profiles.%s]", bindingName)); err != nil {
+			return document.ProcessingProfileV1{}, err
+		}
 		if binding.InputKind == string(document.EmbeddingInputRenditionChunk) && profile.Rendition == nil {
 			return document.ProcessingProfileV1{}, fmt.Errorf("[processing_profiles.%s] rendition_chunk embedding %q requires rendition", name, bindingName)
 		}

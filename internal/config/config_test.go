@@ -184,6 +184,16 @@ func TestProcessingProfileRejectsUnsupportedRetrievalLimit(t *testing.T) {
 	require.ErrorContains(t, err, "lexical_limit")
 }
 
+func TestProcessingProfileRejectsOriginalFileChunkPolicy(t *testing.T) {
+	cfg := validProcessingConfig()
+	embedding := cfg.EmbeddingProfiles["semantic"]
+	embedding.InputKind = string(document.EmbeddingInputOriginalFile)
+	cfg.EmbeddingProfiles["semantic"] = embedding
+
+	_, err := cfg.ProcessingProfile("archive")
+	require.ErrorContains(t, err, "original_file")
+}
+
 func TestProcessingProfilesRejectUnknownKeys(t *testing.T) {
 	for _, key := range []string{"unknown_policy", "api_key"} {
 		t.Run(key, func(t *testing.T) {
