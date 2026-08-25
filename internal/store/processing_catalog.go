@@ -284,6 +284,9 @@ func (s *Store) AttachRenditionBuild(ctx context.Context, record RenditionAttach
 			build.EvidenceLexicalFingerprint != normalized.Profile.EvidenceLexicalFingerprint {
 			return errors.New("rendition attachment profile does not match build component identity")
 		}
+		if err := validateRenditionArtifactRolesForProfile(normalized.Profile, build); err != nil {
+			return err
+		}
 		var sourceSHA256 string
 		if err := tx.QueryRowContext(ctx,
 			`SELECT blob_hash FROM content_versions WHERE version_id=?`, normalized.ContentVersionID,
@@ -329,6 +332,41 @@ func (s *Store) AttachRenditionBuild(ctx context.Context, record RenditionAttach
 		}
 		return nil
 	})
+}
+
+func validateRenditionArtifactRolesForProfile(
+	record ProcessingProfileRecord, build RenditionBuildRecord,
+) error {
+	var profile document.ProcessingProfileV1
+	if err := json.Unmarshal(record.CanonicalProfile, &profile, json.RejectUnknownMembers(true)); err != nil {
+		return fmt.Errorf("decoding attachment processing profile: %w", err)
+	}
+	requested := make(map[document.EvidenceArtifactRole]bool, len(profile.Rendition.RequestedArtifacts))
+	for _, role := range profile.Rendition.RequestedArtifacts {
+		requested[role] = true
+	}
+	for _, artifact := range build.Artifacts {
+		role := document.EvidenceArtifactRole(artifact.Role)
+		switch artifact.Role {
+		case catalogArtifactNormalizedEvidence:
+			continue
+		case catalogArtifactSanitizedMarkdown:
+			if profile.RetentionDisclosure.RetainSanitizedMarkdown {
+				continue
+			}
+		case string(document.EvidenceArtifactMarkdown):
+			if requested[role] && profile.RetentionDisclosure.RetainProviderMarkdown {
+				continue
+			}
+		case string(document.EvidenceArtifactImage), string(document.EvidenceArtifactStructured),
+			string(document.EvidenceArtifactTranscript):
+			if requested[role] && profile.RetentionDisclosure.RetainTypedArtifacts {
+				continue
+			}
+		}
+		return fmt.Errorf("rendition artifact role %q is forbidden by attachment profile", artifact.Role)
+	}
+	return nil
 }
 
 // PublishRenditionHead atomically validates and activates one exact

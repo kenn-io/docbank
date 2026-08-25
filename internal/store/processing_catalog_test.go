@@ -103,6 +103,72 @@ func TestRenditionCatalogRejectsCrossVaultAttachment(t *testing.T) {
 	assert.Zero(t, count)
 }
 
+func TestRenditionCatalogRejectsArtifactsForbiddenByAttachmentProfile(t *testing.T) {
+	tests := []struct {
+		name   string
+		role   string
+		policy jsontext.Value
+		mutate func(*document.ProcessingProfileV1)
+	}{
+		{
+			name: "sanitized Markdown retention disabled",
+			mutate: func(profile *document.ProcessingProfileV1) {
+				profile.RetentionDisclosure.RetainSanitizedMarkdown = false
+			},
+		},
+		{
+			name: "provider Markdown retention disabled",
+			role: string(document.EvidenceArtifactMarkdown),
+			policy: jsontext.Value(
+				`{"roles":[{"max_count":1,"min_count":1,"role":"normalized_evidence"},{"max_count":1,"min_count":1,"role":"provider_markdown"},{"max_count":1,"min_count":1,"role":"sanitized_markdown"}],"version":1}`,
+			),
+			mutate: func(profile *document.ProcessingProfileV1) {
+				profile.Rendition.RequestedArtifacts = []document.EvidenceArtifactRole{
+					document.EvidenceArtifactMarkdown,
+				}
+			},
+		},
+		{
+			name: "typed artifact retention disabled",
+			role: string(document.EvidenceArtifactStructured),
+			policy: jsontext.Value(
+				`{"roles":[{"max_count":1,"min_count":1,"role":"normalized_evidence"},{"max_count":1,"min_count":1,"role":"sanitized_markdown"},{"max_count":1,"min_count":1,"role":"structured_evidence"}],"version":1}`,
+			),
+			mutate: func(profile *document.ProcessingProfileV1) {
+				profile.RetentionDisclosure.RetainTypedArtifacts = false
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, versions := newRenditionCatalogFixture(t)
+			profile := catalogProcessingProfileWith(t, false, tt.mutate)
+			build := catalogRenditionBuild(s, profile)
+			if tt.role != "" {
+				build.CapturedArtifactPolicy = tt.policy
+				build.CapturedArtifactPolicyFingerprint = testSHA256(tt.policy)
+				build.Artifacts = append(build.Artifacts, RenditionArtifactRecord{
+					ID: "artifact_" + fakeHash("2f"), Role: tt.role,
+					BlobHash: catalogEvidenceBlobHash, Size: int64(len(catalogBlobContents[catalogEvidenceBlobHash])),
+					Checksum: catalogEvidenceBlobHash, State: RenditionArtifactVerified,
+				})
+				build.DeclaredArtifactCount = len(build.Artifacts)
+			}
+			require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+
+			err := s.AttachRenditionBuild(t.Context(), RenditionAttachmentRecord{
+				ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
+				BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-25T15:00:00.000000000Z",
+			})
+			require.ErrorContains(t, err, "artifact role")
+
+			var count int
+			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_attachments`).Scan(&count))
+			assert.Zero(t, count)
+		})
+	}
+}
+
 func TestRenditionCatalogRejectsIncompleteArtifactsWithoutPartialStage(t *testing.T) {
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)
@@ -704,6 +770,13 @@ func seedRenditionCatalogVersions(t *testing.T, s *Store) []string {
 
 func catalogProcessingProfile(t *testing.T, withEmbedding bool) ProcessingProfileRecord {
 	t.Helper()
+	return catalogProcessingProfileWith(t, withEmbedding, nil)
+}
+
+func catalogProcessingProfileWith(
+	t *testing.T, withEmbedding bool, mutate func(*document.ProcessingProfileV1),
+) ProcessingProfileRecord {
+	t.Helper()
 	profile := document.ProcessingProfileV1{
 		ContractVersion: document.ProcessingProfileContractV1,
 		Rendition: &document.RenditionBindingV1{
@@ -739,6 +812,9 @@ func catalogProcessingProfile(t *testing.T, withEmbedding bool) ProcessingProfil
 			Normalization: "none", QueryFormatter: "query/v1", ScalarEncoding: "float32_le",
 			TrustBoundary: "synthetic-vault",
 		}}
+	}
+	if mutate != nil {
+		mutate(&profile)
 	}
 	canonical, fingerprints, err := document.CanonicalProfile(profile)
 	require.NoError(t, err)
