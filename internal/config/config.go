@@ -434,11 +434,8 @@ func validateProcessingProfiles(c Config) error {
 		if err := validateProfileName(name, prefix); err != nil {
 			return err
 		}
-		if profile.LexicalLimit <= 0 || profile.LexicalLimit > embedding.MaxCandidateLimit {
-			return fmt.Errorf("%s lexical_limit must be between 1 and %d", prefix, embedding.MaxCandidateLimit)
-		}
-		if profile.VectorLimit <= 0 || profile.VectorLimit > embedding.MaxCandidateLimit {
-			return fmt.Errorf("%s vector_limit must be between 1 and %d", prefix, embedding.MaxCandidateLimit)
+		if err := validateRetrievalProfileConfig(profile, prefix); err != nil {
+			return err
 		}
 	}
 	for name := range c.ProcessingProfiles {
@@ -453,6 +450,16 @@ func validateProcessingProfiles(c Config) error {
 		if _, _, err := document.CanonicalProfile(assembled); err != nil {
 			return fmt.Errorf("%s is invalid: %w", prefix, err)
 		}
+	}
+	return nil
+}
+
+func validateRetrievalProfileConfig(profile RetrievalProfileConfig, prefix string) error {
+	if profile.LexicalLimit <= 0 || profile.LexicalLimit > embedding.MaxCandidateLimit {
+		return fmt.Errorf("%s lexical_limit must be between 1 and %d", prefix, embedding.MaxCandidateLimit)
+	}
+	if profile.VectorLimit <= 0 || profile.VectorLimit > embedding.MaxCandidateLimit {
+		return fmt.Errorf("%s vector_limit must be between 1 and %d", prefix, embedding.MaxCandidateLimit)
 	}
 	return nil
 }
@@ -584,6 +591,9 @@ func (c Config) assembleProcessingProfile(name string) (document.ProcessingProfi
 	retrieval, exists := c.RetrievalProfiles[configured.Retrieval]
 	if !exists {
 		return document.ProcessingProfileV1{}, fmt.Errorf("[processing_profiles.%s] retrieval %q is not defined", name, configured.Retrieval)
+	}
+	if err := validateRetrievalProfileConfig(retrieval, fmt.Sprintf("[retrieval_profiles.%s]", configured.Retrieval)); err != nil {
+		return document.ProcessingProfileV1{}, err
 	}
 	profile := document.ProcessingProfileV1{
 		ContractVersion: document.ProcessingProfileContractV1,

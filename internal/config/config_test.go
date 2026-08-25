@@ -174,6 +174,16 @@ func TestProcessingProfileReturnsCanonicalPolicy(t *testing.T) {
 	assert.Equal(t, "model-Café\nrevision", profile.Embeddings[0].Model)
 }
 
+func TestProcessingProfileRejectsUnsupportedRetrievalLimit(t *testing.T) {
+	cfg := validProcessingConfig()
+	retrieval := cfg.RetrievalProfiles["hybrid"]
+	retrieval.LexicalLimit = 1_001
+	cfg.RetrievalProfiles["hybrid"] = retrieval
+
+	_, err := cfg.ProcessingProfile("archive")
+	require.ErrorContains(t, err, "lexical_limit")
+}
+
 func TestProcessingProfilesRejectUnknownKeys(t *testing.T) {
 	for _, key := range []string{"unknown_policy", "api_key"} {
 		t.Run(key, func(t *testing.T) {
