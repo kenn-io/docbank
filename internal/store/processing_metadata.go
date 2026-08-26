@@ -264,9 +264,9 @@ func exportLexicalGenerations(
 		              WHERE h.generation_id=g.generation_id)
 		FROM rendition_lexical_generations g
 		JOIN rendition_lexical_generation_manifests m ON m.generation_id=g.generation_id
-		WHERE (g.build_count>0 AND EXISTS(
+		WHERE EXISTS(
 		         SELECT 1 FROM rendition_lexical_heads h WHERE h.generation_id=g.generation_id
-		      )) OR EXISTS(
+		      ) OR EXISTS(
 		         SELECT 1 FROM current_rendition_roots r
 		         WHERE r.target_kind='lexical_generation' AND r.target_id=g.generation_id
 		           AND r.root_kind IN ('retention','audit')

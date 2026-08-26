@@ -172,6 +172,17 @@ func TestPurgeDerivativesRetriesDurablePackedErasureAfterInterruption(t *testing
 
 	logical, err := metadata.PurgeDerivatives(t.Context(), store.PurgeRequest{})
 	require.NoError(t, err)
+	ordinaryCandidates, err := metadata.UnreachableBlobs(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, ordinaryCandidates,
+		"the unpaged ordinary GC inventory must also preserve exact purge receipts")
+	ordinary, err := GarbageCollect(t.Context(), metadata, blobs, GCOptions{})
+	require.NoError(t, err)
+	assert.Zero(t, ordinary.RemovedBlobs,
+		"ordinary GC must leave exact derivative erasure receipts for the purge retry")
+	hasDerivative, err := metadata.HasBlob(t.Context(), derivative.Hash)
+	require.NoError(t, err)
+	assert.True(t, hasDerivative)
 	physical, err := collectExactUnreachableBlobs(
 		t.Context(), metadata, blobs, logical.PhysicalDerivativeBlobsPendingGC)
 	require.NoError(t, err)

@@ -452,7 +452,7 @@ func collectExactUnreachableBlobs(
 	if len(hashes) == 0 {
 		return report, nil
 	}
-	unreachable, err := metadata.UnreachableBlobs(ctx)
+	unreachable, err := metadata.UnreachableDerivativePurgeBlobs(ctx)
 	if err != nil {
 		return report, err
 	}

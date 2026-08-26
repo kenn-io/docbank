@@ -65,7 +65,7 @@ func TestRestoreUsesNonDefaultSQLiteDriverThroughout(t *testing.T) {
 	require.Contains(accesses, docsqlite.ReadOnlyImmutable, "restore proof must use the selected driver")
 	require.Contains(accesses, docsqlite.ReadWriteExisting, "packed catalog must use the selected driver")
 
-	restored, err := store.Open(filepath.Join(target, "docbank.db"), modernc.Driver{})
+	restored, err := store.OpenForRestore(filepath.Join(target, "docbank.db"), modernc.Driver{})
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(restored.Close()) })
 	require.Equal(string(wantMetadata), string(exportMetadata(t, restored)))

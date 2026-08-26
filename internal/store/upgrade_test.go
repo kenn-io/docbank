@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
+	"encoding/json/v2"
 	"errors"
 	"os"
 	"path/filepath"
@@ -68,8 +69,7 @@ func TestOpenCutsOverReleasedV090ThroughJSONL(t *testing.T) {
 			assert.Equal(t, currentStorageSchemaVersion, schemaVersion)
 			var upgraded bytes.Buffer
 			require.NoError(t, s.ExportMetadata(t.Context(), &upgraded))
-			assert.Equal(t, fixture.metadata, upgraded.Bytes(),
-				"the released logical authority survives byte-for-byte")
+			assertReleasedMetadataWithEmptyLexicalHead(t, fixture.metadata, upgraded.Bytes())
 
 			loose, err := s.PhysicalContent(t.Context(), fixture.looseHash)
 			require.NoError(t, err)
@@ -522,7 +522,7 @@ func TestOpenCompletesInterruptedReleasedCutover(t *testing.T) {
 	require.NoError(t, err)
 	var metadata bytes.Buffer
 	require.NoError(t, recovered.ExportMetadata(t.Context(), &metadata))
-	assert.Equal(t, fixture.metadata, metadata.Bytes())
+	assertReleasedMetadataWithEmptyLexicalHead(t, fixture.metadata, metadata.Bytes())
 	require.NoError(t, recovered.Close())
 	_, err = os.Stat(stagePath)
 	require.ErrorIs(t, err, os.ErrNotExist)
@@ -909,6 +909,40 @@ func assertPhysicalContent(t *testing.T, s *Store, hash string, want PhysicalCon
 	got, err := s.PhysicalContent(t.Context(), hash)
 	require.NoError(t, err)
 	assert.Equal(t, want, got)
+}
+
+func assertReleasedMetadataWithEmptyLexicalHead(t *testing.T, released, current []byte) {
+	t.Helper()
+	var retained [][]byte
+	var generations []metadataLexicalGeneration
+	for line := range bytes.SplitSeq(bytes.TrimSpace(current), []byte{'\n'}) {
+		var kind struct {
+			Type string `json:"type"`
+		}
+		require.NoError(t, json.Unmarshal(line, &kind))
+		if kind.Type != metadataLexicalGenerationType {
+			retained = append(retained, bytes.Clone(line))
+			continue
+		}
+		var generation metadataLexicalGeneration
+		require.NoError(t, json.Unmarshal(line, &generation))
+		generations = append(generations, generation)
+	}
+	require.Len(t, generations, 1)
+	require.NotEmpty(t, generations[0].BuiltAt)
+	generations[0].BuiltAt = ""
+	assert.Equal(t, metadataLexicalGeneration{
+		Type:           metadataLexicalGenerationType,
+		GenerationID:   "0d552c0f8d591c15930b04a8a529cb7fe71bc38fdbe44046206c8cf45480e187",
+		SegmentCount:   0,
+		ManifestDigest: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+		BuildIDs:       []string{},
+		BuildDigest:    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+		Headed:         true,
+	}, generations[0])
+	retainedMetadata := append(bytes.Join(retained, []byte{'\n'}), '\n')
+	assert.Equal(t, released, retainedMetadata,
+		"the released logical authority must survive byte-for-byte")
 }
 
 func v090UpgradeDrivers() []struct {

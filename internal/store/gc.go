@@ -1221,11 +1221,31 @@ func (s *Store) UnreachableBlobs(ctx context.Context) ([]BlobInfo, error) {
 		WHERE NOT EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash = b.hash)
 		  AND NOT EXISTS (SELECT 1 FROM rendition_builds r WHERE r.source_sha256 = b.hash)
 		  AND NOT EXISTS (SELECT 1 FROM rendition_artifacts a WHERE a.blob_hash = b.hash)
+		  AND NOT EXISTS (SELECT 1 FROM derivative_blob_purge_pending p
+		                  WHERE p.blob_hash = b.hash)
 		ORDER BY b.hash`)
 	if err != nil {
 		return nil, fmt.Errorf("finding unreachable blobs: %w", err)
 	}
 	return scanBlobInfos(rows, "finding unreachable blobs")
+}
+
+// UnreachableDerivativePurgeBlobs lists pending exact-erasure targets that no
+// live original or rendition authority has reclaimed. The derivative purge
+// path records location-aware retirement metadata before deleting these rows;
+// ordinary garbage collection must not consume them first.
+func (s *Store) UnreachableDerivativePurgeBlobs(ctx context.Context) ([]BlobInfo, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT b.hash, b.size FROM blobs b
+		JOIN derivative_blob_purge_pending p ON p.blob_hash = b.hash
+		WHERE NOT EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash = b.hash)
+		  AND NOT EXISTS (SELECT 1 FROM rendition_builds r WHERE r.source_sha256 = b.hash)
+		  AND NOT EXISTS (SELECT 1 FROM rendition_artifacts a WHERE a.blob_hash = b.hash)
+		ORDER BY b.hash`)
+	if err != nil {
+		return nil, fmt.Errorf("finding pending derivative purge blobs: %w", err)
+	}
+	return scanBlobInfos(rows, "finding pending derivative purge blobs")
 }
 
 // UnreachableBlobsPageFrom distinguishes the beginning of an ordering from an
@@ -1293,6 +1313,8 @@ const unreachableBlobsStartPageSQL = `
 	       NOT EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash = p.hash)
 	       AND NOT EXISTS (SELECT 1 FROM rendition_builds r WHERE r.source_sha256 = p.hash)
 	       AND NOT EXISTS (SELECT 1 FROM rendition_artifacts a WHERE a.blob_hash = p.hash)
+	       AND NOT EXISTS (SELECT 1 FROM derivative_blob_purge_pending d
+	                       WHERE d.blob_hash = p.hash)
 	FROM raw_page p ORDER BY p.hash`
 
 const unreachableBlobsResumePageSQL = `
@@ -1309,6 +1331,8 @@ const unreachableBlobsResumePageSQL = `
 	       NOT EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash = p.hash)
 	       AND NOT EXISTS (SELECT 1 FROM rendition_builds r WHERE r.source_sha256 = p.hash)
 	       AND NOT EXISTS (SELECT 1 FROM rendition_artifacts a WHERE a.blob_hash = p.hash)
+	       AND NOT EXISTS (SELECT 1 FROM derivative_blob_purge_pending d
+	                       WHERE d.blob_hash = p.hash)
 	FROM raw_page p ORDER BY p.hash`
 
 func unreachableBlobScanQuery(after *string, limit int) (string, []any) {

@@ -1351,6 +1351,29 @@ func TestProcessingMetadataJSONLIsDependencyOrderedAndCrossDriverStable(t *testi
 	assert.Equal(t, build, restoredView.Build)
 }
 
+func TestProcessingMetadataRoundTripsHeadedEmptyLexicalGeneration(t *testing.T) {
+	// Mutation caught: requiring a headed generation to contain builds omits the
+	// sole lexical serving pointer from metadata backup and restore.
+	source := newTestStore(t)
+	generation, err := source.StageLexicalGeneration(t.Context(), fakeHash("ce"))
+	require.NoError(t, err)
+	require.Zero(t, generation.BuildCount)
+	_, err = source.db.ExecContext(t.Context(),
+		`INSERT INTO rendition_lexical_heads(singleton,generation_id) VALUES(1,?)`, generation.ID)
+	require.NoError(t, err)
+
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(t.Context(), &exported))
+	assert.Contains(t, exported.String(), `"generation_id":"`+generation.ID+`"`)
+
+	target := newTestStore(t)
+	require.NoError(t, target.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
+	restored, err := target.ActiveLexicalGeneration(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, generation.ID, restored.ID)
+	assert.Zero(t, restored.BuildCount)
+}
+
 func TestProcessingMetadataImportRequiresVerifiedPhysicalBytes(t *testing.T) {
 	source := newTestStore(t)
 	seedProcessingMetadataCatalog(t, source)

@@ -577,9 +577,12 @@ func TestPurgeDerivativesRemovesCompleteLiveManifestButNeverOriginal(t *testing.
 	require.NoError(t, err, "purging derivatives must never revoke original blob authority")
 	unreachable, err := s.UnreachableBlobs(ctx)
 	require.NoError(t, err)
-	require.Len(t, unreachable, 2)
+	assert.Empty(t, unreachable)
+	exactPurge, err := s.UnreachableDerivativePurgeBlobs(ctx)
+	require.NoError(t, err)
+	require.Len(t, exactPurge, 2)
 	assert.Equal(t, []string{catalogMarkdownBlobHash, catalogEvidenceBlobHash},
-		[]string{unreachable[0].Hash, unreachable[1].Hash})
+		[]string{exactPurge[0].Hash, exactPurge[1].Hash})
 
 	replayed, err := s.PurgeDerivatives(ctx, PurgeRequest{ContentVersionIDs: versions})
 	require.NoError(t, err)
