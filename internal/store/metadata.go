@@ -217,8 +217,9 @@ type metadataAuditMembership struct {
 
 // BackupBlobAuthorityCTE is the complete blob closure for portable backup:
 // retained document versions, rendition artifacts, staged rendition sources,
-// and watcher cursor bytes. Rows outside this closure were never published as
-// logical authority and are deliberately excluded from new snapshots.
+// and no operational cursor or cache rows. Rows outside this closure were
+// never published as logical authority and are deliberately excluded from new
+// snapshots.
 const BackupBlobAuthorityCTE = `
 WITH backup_authorized_blobs(hash) AS (
 	SELECT blob_hash FROM content_versions
@@ -226,8 +227,6 @@ WITH backup_authorized_blobs(hash) AS (
 	SELECT blob_hash FROM rendition_artifacts
 	UNION
 	SELECT source_sha256 FROM rendition_builds
-	UNION
-	SELECT blob_hash FROM watch_sources
 )
 `
 
@@ -323,7 +322,7 @@ func exportMetadataSnapshotWithVaultIdentity(
 	if err := exportProvenance(ctx, tx, write); err != nil {
 		return err
 	}
-	if err := exportWatchSources(ctx, tx, write, backupScoped); err != nil {
+	if err := exportWatchSources(ctx, tx, write); err != nil {
 		return err
 	}
 	if err := exportTags(ctx, tx, write); err != nil {
@@ -492,19 +491,11 @@ func exportProvenance(ctx context.Context, tx metadataQuerier, write metadataWri
 }
 
 func exportWatchSources(
-	ctx context.Context, tx metadataQuerier, write metadataWrite, backupScoped bool,
+	ctx context.Context, tx metadataQuerier, write metadataWrite,
 ) error {
-	query := `
+	rows, err := tx.QueryContext(ctx, `
 		SELECT watch_name, source_ref, node_id, blob_hash, size
-		FROM watch_sources ORDER BY watch_name, source_ref`
-	if backupScoped {
-		query = BackupBlobAuthorityCTE + `
-		SELECT w.watch_name, w.source_ref, w.node_id, w.blob_hash, w.size
-		FROM watch_sources w
-		JOIN backup_authorized_blobs a ON a.hash = w.blob_hash
-		ORDER BY w.watch_name, w.source_ref`
-	}
-	rows, err := tx.QueryContext(ctx, query)
+		FROM watch_sources ORDER BY watch_name, source_ref`)
 	if err != nil {
 		return fmt.Errorf("exporting watched sources: %w", err)
 	}

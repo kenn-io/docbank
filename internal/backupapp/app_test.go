@@ -1617,6 +1617,132 @@ func TestPrunedVersionHistoryRoundTripsWithoutResurrection(t *testing.T) {
 	assert.Equal(t, replaced.CurrentVersionID, versions[0].ID)
 }
 
+func TestWatchCursorSurvivesBackupWithoutRetainingPrunedSourceBytes(t *testing.T) {
+	fixture := newArchiveFixture(t)
+	const (
+		watchName  = "synthetic-watch"
+		sourceRef  = "inbox/watched.txt"
+		sourceData = "watched source before a manual edit"
+		manualData = "manual replacement retained as authority"
+	)
+	var watched store.Node
+	var sourceHash string
+	require.NoError(t, fixture.blobs.WithMutation(t.Context(), func() error {
+		var sourceSize int64
+		var err error
+		sourceHash, sourceSize, err = fixture.blobs.WriteContext(
+			t.Context(), strings.NewReader(sourceData),
+		)
+		if err != nil {
+			return err
+		}
+		run, err := fixture.metadata.BeginIngest(t.Context(), "watch", watchName)
+		if err != nil {
+			return err
+		}
+		watched, err = fixture.metadata.IngestFileExact(
+			t.Context(), run, fixture.metadata.RootID(), "watched.txt",
+			sourceHash, sourceSize, "text/plain", sourceRef, "",
+		)
+		return err
+	}))
+	prunedVersionID := watched.CurrentVersionID
+	var replaced store.Node
+	require.NoError(t, fixture.blobs.WithMutation(t.Context(), func() error {
+		manualHash, manualSize, err := fixture.blobs.WriteContext(
+			t.Context(), strings.NewReader(manualData),
+		)
+		if err != nil {
+			return err
+		}
+		replaced, _, err = fixture.metadata.ReplaceContent(
+			t.Context(), watched.ID, watched.Revision,
+			manualHash, manualSize, "text/plain",
+		)
+		return err
+	}))
+	pruned, err := fixture.metadata.PruneContentVersions(
+		t.Context(), watched.ID, replaced.Revision,
+		store.VersionPruneSelector{AllPrior: true}, true,
+	)
+	require.NoError(t, err)
+	require.Equal(t, 1, pruned.DeletedVersions)
+	unreachable, err := fixture.metadata.UnreachableBlobs(t.Context())
+	require.NoError(t, err)
+	assert.Contains(t, unreachable, store.BlobInfo{Hash: sourceHash, Size: int64(len(sourceData))},
+		"the operational cursor must not defeat explicit version pruning")
+
+	ordinaryMetadata := string(exportMetadata(t, fixture.metadata))
+	assert.Contains(t, ordinaryMetadata, `{"type":"blob","hash":"`+sourceHash+`"`,
+		"ordinary metadata export preserves catalog rows for direct import")
+	wantMetadata := string(exportBackupMetadata(t, fixture.metadata))
+	assert.NotContains(t, wantMetadata, `{"type":"blob","hash":"`+sourceHash+`"`,
+		"backup must not retain bytes released from document authority")
+	assert.Contains(t, wantMetadata,
+		`{"type":"watch_source","watch_name":"`+watchName+`","source_ref":"`+sourceRef+`"`,
+		"backup must preserve the operational cursor across daemon restarts")
+	assert.Contains(t, wantMetadata, `"blob_hash":"`+sourceHash+`"`)
+
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	manifest, err := backupapp.Create(
+		t.Context(), repo, "test-version", fixture.metadata, fixture.blobs,
+		backup.CreateOptions{Jobs: 2},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), manifest.Attachments.Blobs,
+		"backup carries the two fixture heads and the manual replacement, not pruned source bytes")
+
+	target := filepath.Join(t.TempDir(), "restored")
+	_, err = backupapp.Restore(t.Context(), repo, "test-version", backup.RestoreOptions{
+		TargetDir: target, Jobs: 2,
+	})
+	require.NoError(t, err)
+	restoredStore, err := store.OpenForRestore(
+		filepath.Join(target, "docbank.db"), store.DefaultSQLiteDriver(),
+	)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, restoredStore.Close()) }()
+	restoredMetadata := string(exportMetadata(t, restoredStore))
+	assert.Contains(t, restoredMetadata,
+		`{"type":"watch_source","watch_name":"`+watchName+`","source_ref":"`+sourceRef+`"`)
+	assert.NotContains(t, restoredMetadata, `{"type":"blob","hash":"`+sourceHash+`"`)
+	_, err = restoredStore.ContentVersionByID(t.Context(), prunedVersionID)
+	require.ErrorIs(t, err, store.ErrNotFound)
+	restoredNode, err := restoredStore.NodeByID(t.Context(), watched.ID)
+	require.NoError(t, err)
+	assert.Equal(t, replaced.CurrentVersionID, restoredNode.CurrentVersionID)
+	restoredBlobs, err := blob.New(
+		store.NewPackCatalog(restoredStore), filepath.Join(target, "blobs"),
+	)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, restoredBlobs.Close()) }()
+	var unchanged store.Node
+	var noVersion store.ContentVersion
+	var changed bool
+	require.NoError(t, restoredBlobs.WithMutation(t.Context(), func() error {
+		incomingHash, incomingSize, writeErr := restoredBlobs.WriteContext(
+			t.Context(), strings.NewReader(sourceData),
+		)
+		if writeErr != nil {
+			return writeErr
+		}
+		if incomingHash != sourceHash {
+			return fmt.Errorf("restored watch input hash = %s, want %s", incomingHash, sourceHash)
+		}
+		unchanged, noVersion, changed, writeErr = restoredStore.SyncWatchedContent(
+			t.Context(), watchName, sourceRef,
+			incomingHash, incomingSize, "text/plain",
+		)
+		return writeErr
+	}))
+	assert.False(t, changed,
+		"the restored cursor must recognize unchanged source bytes")
+	assert.Empty(t, noVersion.ID)
+	assert.Equal(t, replaced.CurrentVersionID, unchanged.CurrentVersionID,
+		"an unchanged watched source must not overwrite the retained manual edit")
+}
+
 func TestDerivativeAuthoritySnapshotRestoresCatalogBlobsAndRebuildsLexicalProjection(t *testing.T) {
 	fixture := newArchiveFixture(t)
 	source, err := fixture.metadata.NodeByPath(t.Context(), "/alpha.txt")
