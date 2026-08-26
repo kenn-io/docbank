@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	docsqlite "go.kenn.io/docbank/sqlite"
@@ -112,7 +113,9 @@ func (s *Store) bootstrap() error {
 
 func (s *Store) bootstrapTx() error {
 	return s.withStorageTx(context.Background(), func(tx *sql.Tx) error {
-		if _, err := tx.Exec(schemaSQL); err != nil {
+		// Embedded files retain checkout line endings, while Go raw strings use
+		// LF. Normalize before exact sqlite_schema identity is recorded.
+		if _, err := tx.Exec(strings.ReplaceAll(schemaSQL, "\r\n", "\n")); err != nil {
 			return fmt.Errorf("applying schema: %w", err)
 		}
 		var schemaVersion int

@@ -678,6 +678,26 @@ func TestProcessingMetadataOpenRejectsPartialLexicalSchema(t *testing.T) {
 	require.ErrorContains(t, err, "lexical")
 }
 
+func TestProcessingMetadataOpenAcceptsCRLFEmbeddedSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "crlf-schema.db")
+	driver := DefaultSQLiteDriver()
+	originalSchema := schemaSQL
+	schemaSQL = strings.ReplaceAll(schemaSQL, "\n", "\r\n")
+	t.Cleanup(func() { schemaSQL = originalSchema })
+	current, err := openCurrentStore(path, driver)
+	require.NoError(t, err)
+	_, err = current.db.Exec(lexicalProjectionSchema)
+	require.NoError(t, err)
+	require.NoError(t, current.Close())
+
+	reopened, err := openCurrentStore(path, driver)
+	if reopened != nil {
+		require.NoError(t, reopened.Close())
+	}
+	require.NoError(t, err,
+		"checkout line endings must not change exact lexical schema identity")
+}
+
 func TestProcessingMetadataOpenRejectsMismatchedCompleteSchemas(t *testing.T) {
 	for name, mutate := range map[string]func(*testing.T, string, docsqlite.Driver){
 		"exact 763eec7 processing layout": func(t *testing.T, path string, driver docsqlite.Driver) {
