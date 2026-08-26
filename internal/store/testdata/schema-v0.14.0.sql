@@ -1,0 +1,528 @@
+-- docbank core schema. Idempotent: applied on every Open.
+
+-- One stable logical identity follows the vault through JSONL backup and
+-- restore. Filesystem location is deliberately not identity.
+CREATE TABLE IF NOT EXISTS vault_metadata (
+    singleton      INTEGER PRIMARY KEY CHECK (singleton = 1),
+    vault_uid      TEXT NOT NULL UNIQUE,
+    schema_version INTEGER NOT NULL CHECK (schema_version >= 1)
+);
+
+-- AUTOINCREMENT: node ids are stored as origins (trash_parent) and will be
+-- handed to agents over the HTTP API; a reused rowid would silently retarget
+-- those references at an unrelated node.
+CREATE TABLE IF NOT EXISTS nodes (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    parent_id     INTEGER REFERENCES nodes(id) ON DELETE CASCADE,
+    name          TEXT NOT NULL,
+    kind          TEXT NOT NULL CHECK (kind IN ('dir', 'file')),
+    current_version_id TEXT,
+    revision      INTEGER NOT NULL DEFAULT 1,
+    created_at    TEXT NOT NULL,
+    modified_at   TEXT NOT NULL,
+    trashed_at    TEXT,
+    trash_parent  INTEGER REFERENCES nodes(id) ON DELETE SET NULL,
+    trash_name    TEXT,
+    CHECK ((kind = 'file') = (current_version_id IS NOT NULL)),
+    FOREIGN KEY (id, current_version_id)
+        REFERENCES content_versions(node_id, version_id)
+        DEFERRABLE INITIALLY DEFERRED
+);
+
+-- Exactly one root. SQLite treats NULLs as distinct in unique indexes, so
+-- uniqueness of the NULL parent needs a constant-expression partial index.
+CREATE UNIQUE INDEX IF NOT EXISTS one_root ON nodes((1)) WHERE parent_id IS NULL;
+
+-- Sibling names are unique among LIVE nodes only; trashed nodes never block
+-- reuse of a name.
+CREATE UNIQUE INDEX IF NOT EXISTS live_sibling_names
+    ON nodes(parent_id, name) WHERE trashed_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS nodes_parent ON nodes(parent_id);
+CREATE INDEX IF NOT EXISTS nodes_parent_name_id ON nodes(parent_id, name, id);
+CREATE INDEX IF NOT EXISTS nodes_trashed ON nodes(trashed_at) WHERE trashed_at IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS blobs (
+    hash       TEXT PRIMARY KEY,
+    size       INTEGER NOT NULL CHECK (size >= 0),
+    created_at TEXT NOT NULL
+);
+
+-- Physical placement authority is store-scoped. The logical blobs table says
+-- which content Docbank retains; these rows say where verified bytes live.
+-- Lifecycle and placement policy stay in Go.
+CREATE TABLE IF NOT EXISTS blob_stores (
+    store_id        TEXT PRIMARY KEY,
+    name            TEXT NOT NULL UNIQUE,
+    kind            TEXT NOT NULL,
+    role            TEXT NOT NULL,
+    lifecycle       TEXT NOT NULL,
+    binding         TEXT NOT NULL,
+    ownership_epoch TEXT NOT NULL,
+    created_at      TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS one_primary_blob_store
+    ON blob_stores((1)) WHERE role = 'primary';
+
+CREATE TABLE IF NOT EXISTS blob_locations (
+    blob_hash    TEXT NOT NULL REFERENCES blobs(hash) ON DELETE CASCADE,
+    store_id     TEXT NOT NULL REFERENCES blob_stores(store_id),
+    generation   TEXT NOT NULL,
+    kind         TEXT NOT NULL,
+    encoding     TEXT,
+    stored_size  INTEGER NOT NULL CHECK (stored_size >= 0),
+    pack_eligible INTEGER NOT NULL CHECK (pack_eligible IN (0, 1)),
+    PRIMARY KEY (blob_hash, store_id)
+);
+
+CREATE INDEX IF NOT EXISTS blob_locations_store
+    ON blob_locations(store_id, blob_hash);
+
+CREATE TABLE IF NOT EXISTS blob_packs (
+    store_id     TEXT NOT NULL REFERENCES blob_stores(store_id),
+    pack_id      TEXT NOT NULL,
+    entry_count  INTEGER NOT NULL CHECK (entry_count >= 0),
+    stored_bytes INTEGER NOT NULL CHECK (stored_bytes >= 0),
+    created_at   TEXT NOT NULL,
+    scan_hash             TEXT NOT NULL DEFAULT '',
+    live_entries          INTEGER NOT NULL DEFAULT 0 CHECK (live_entries >= 0),
+    live_stored_bytes     INTEGER NOT NULL DEFAULT 0 CHECK (live_stored_bytes >= 0),
+    live_raw_bytes        INTEGER NOT NULL DEFAULT 0 CHECK (live_raw_bytes >= 0),
+    max_live_stored_len   INTEGER NOT NULL DEFAULT 0 CHECK (max_live_stored_len >= 0),
+    max_live_raw_len      INTEGER NOT NULL DEFAULT 0 CHECK (max_live_raw_len >= 0),
+    PRIMARY KEY (store_id, pack_id)
+);
+
+CREATE TABLE IF NOT EXISTS blob_pack_entries (
+    blob_hash   TEXT NOT NULL,
+    store_id    TEXT NOT NULL,
+    pack_id     TEXT NOT NULL,
+    pack_offset INTEGER NOT NULL CHECK (pack_offset >= 0),
+    stored_len  INTEGER NOT NULL CHECK (stored_len >= 0),
+    raw_len     INTEGER NOT NULL CHECK (raw_len >= 0),
+    flags       INTEGER NOT NULL CHECK (flags BETWEEN 0 AND 255),
+    crc32c      INTEGER NOT NULL CHECK (crc32c BETWEEN 0 AND 4294967295),
+    PRIMARY KEY (blob_hash, store_id),
+    FOREIGN KEY (store_id, pack_id)
+        REFERENCES blob_packs(store_id, pack_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS blob_pack_entries_pack
+    ON blob_pack_entries(store_id, pack_id, blob_hash);
+CREATE INDEX IF NOT EXISTS blob_pack_entries_store_hash
+    ON blob_pack_entries(store_id, blob_hash);
+
+-- Durable storage work is resumable deployment state. Request and receipt
+-- shapes are versioned and validated in Go; SQLite owns only atomic progress
+-- and bounded lifecycle bookkeeping.
+CREATE TABLE IF NOT EXISTS storage_operations (
+    operation_id      TEXT PRIMARY KEY,
+    kind              TEXT NOT NULL,
+    source_store_id   TEXT REFERENCES blob_stores(store_id) ON DELETE SET NULL,
+    request_version   INTEGER NOT NULL CHECK (request_version > 0),
+    request_digest    TEXT NOT NULL,
+    request_json      TEXT NOT NULL,
+    plan_json         TEXT NOT NULL,
+    state             TEXT NOT NULL,
+    cursor            TEXT NOT NULL DEFAULT '',
+    total_objects     INTEGER NOT NULL DEFAULT 0 CHECK (total_objects >= 0),
+    completed_objects INTEGER NOT NULL DEFAULT 0 CHECK (completed_objects >= 0),
+    copied_objects    INTEGER NOT NULL DEFAULT 0 CHECK (copied_objects >= 0),
+    copied_bytes      INTEGER NOT NULL DEFAULT 0 CHECK (copied_bytes >= 0),
+    cancel_requested  INTEGER NOT NULL DEFAULT 0 CHECK (cancel_requested IN (0, 1)),
+    error             TEXT NOT NULL DEFAULT '',
+    receipt_json      TEXT NOT NULL DEFAULT '',
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    finished_at       TEXT,
+    retention_until   TEXT
+);
+
+CREATE INDEX IF NOT EXISTS storage_operations_state
+    ON storage_operations(state, created_at, operation_id);
+CREATE INDEX IF NOT EXISTS storage_operations_retention
+    ON storage_operations(retention_until)
+    WHERE retention_until IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS one_active_evacuation_per_store
+    ON storage_operations(source_store_id)
+    WHERE kind = 'evacuate' AND state IN ('queued', 'running');
+
+CREATE TABLE IF NOT EXISTS storage_operation_stores (
+    operation_id TEXT NOT NULL REFERENCES storage_operations(operation_id) ON DELETE CASCADE,
+    store_id     TEXT NOT NULL REFERENCES blob_stores(store_id) ON DELETE CASCADE,
+    role         TEXT NOT NULL CHECK (role IN ('source', 'destination')),
+    PRIMARY KEY (operation_id, store_id)
+);
+
+CREATE INDEX IF NOT EXISTS storage_operation_stores_store
+    ON storage_operation_stores(store_id, operation_id);
+
+CREATE TABLE IF NOT EXISTS storage_operation_cleanup (
+    operation_id  TEXT NOT NULL REFERENCES storage_operations(operation_id) ON DELETE CASCADE,
+    store_id      TEXT NOT NULL REFERENCES blob_stores(store_id),
+    loose_hash    TEXT NOT NULL DEFAULT '',
+    loose_encoding INTEGER NOT NULL DEFAULT 0,
+    pack_id       TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (operation_id, store_id, loose_hash, loose_encoding, pack_id)
+);
+
+-- Bounded maintenance reads pack summaries instead of rescanning every mapping.
+-- These triggers maintain physical catalog projections only; document liveness
+-- remains Go-owned and is expressed by inserting or deleting blobs rows.
+CREATE TRIGGER IF NOT EXISTS blob_pack_summary_mapping_insert
+AFTER INSERT ON blob_pack_entries
+WHEN EXISTS (SELECT 1 FROM blobs WHERE hash=NEW.blob_hash)
+BEGIN
+    UPDATE blob_packs SET
+        scan_hash=CASE WHEN scan_hash='' THEN NEW.blob_hash ELSE scan_hash END,
+        live_entries=live_entries+1,
+        live_stored_bytes=live_stored_bytes+NEW.stored_len,
+        live_raw_bytes=live_raw_bytes+NEW.raw_len,
+        max_live_stored_len=MAX(max_live_stored_len, NEW.stored_len),
+        max_live_raw_len=MAX(max_live_raw_len, NEW.raw_len)
+    WHERE store_id=NEW.store_id AND pack_id=NEW.pack_id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS blob_pack_summary_mapping_delete
+AFTER DELETE ON blob_pack_entries
+WHEN EXISTS (SELECT 1 FROM blobs WHERE hash=OLD.blob_hash)
+BEGIN
+    UPDATE blob_packs SET
+        live_entries=live_entries-1,
+        live_stored_bytes=live_stored_bytes-OLD.stored_len,
+        live_raw_bytes=live_raw_bytes-OLD.raw_len,
+        max_live_stored_len=CASE WHEN max_live_stored_len=OLD.stored_len
+            THEN COALESCE((SELECT MAX(i.stored_len) FROM blob_pack_entries i
+                JOIN blobs b ON b.hash=i.blob_hash
+                WHERE i.store_id=OLD.store_id AND i.pack_id=OLD.pack_id),0)
+            ELSE max_live_stored_len END,
+        max_live_raw_len=CASE WHEN max_live_raw_len=OLD.raw_len
+            THEN COALESCE((SELECT MAX(i.raw_len) FROM blob_pack_entries i
+                JOIN blobs b ON b.hash=i.blob_hash
+                WHERE i.store_id=OLD.store_id AND i.pack_id=OLD.pack_id),0)
+            ELSE max_live_raw_len END
+    WHERE store_id=OLD.store_id AND pack_id=OLD.pack_id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS blob_pack_summary_mapping_update
+AFTER UPDATE ON blob_pack_entries
+WHEN EXISTS (SELECT 1 FROM blobs WHERE hash=OLD.blob_hash)
+BEGIN
+    UPDATE blob_packs SET
+        live_entries=live_entries-1,
+        live_stored_bytes=live_stored_bytes-OLD.stored_len,
+        live_raw_bytes=live_raw_bytes-OLD.raw_len,
+        max_live_stored_len=COALESCE((SELECT MAX(i.stored_len) FROM blob_pack_entries i
+            JOIN blobs b ON b.hash=i.blob_hash
+            WHERE i.store_id=OLD.store_id AND i.pack_id=OLD.pack_id),0),
+        max_live_raw_len=COALESCE((SELECT MAX(i.raw_len) FROM blob_pack_entries i
+            JOIN blobs b ON b.hash=i.blob_hash
+            WHERE i.store_id=OLD.store_id AND i.pack_id=OLD.pack_id),0)
+    WHERE store_id=OLD.store_id AND pack_id=OLD.pack_id;
+    UPDATE blob_packs SET
+        scan_hash=CASE WHEN scan_hash='' THEN NEW.blob_hash ELSE scan_hash END,
+        live_entries=live_entries+1,
+        live_stored_bytes=live_stored_bytes+NEW.stored_len,
+        live_raw_bytes=live_raw_bytes+NEW.raw_len,
+        max_live_stored_len=MAX(max_live_stored_len, NEW.stored_len),
+        max_live_raw_len=MAX(max_live_raw_len, NEW.raw_len)
+    WHERE store_id=NEW.store_id AND pack_id=NEW.pack_id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS blob_pack_summary_blob_delete
+AFTER DELETE ON blobs
+WHEN EXISTS (SELECT 1 FROM blob_pack_entries WHERE blob_hash=OLD.hash)
+BEGIN
+    UPDATE blob_packs SET
+        live_entries=live_entries-1,
+        live_stored_bytes=live_stored_bytes-(
+            SELECT stored_len FROM blob_pack_entries
+            WHERE blob_hash=OLD.hash AND store_id=blob_packs.store_id
+        ),
+        live_raw_bytes=live_raw_bytes-(
+            SELECT raw_len FROM blob_pack_entries
+            WHERE blob_hash=OLD.hash AND store_id=blob_packs.store_id
+        ),
+        max_live_stored_len=COALESCE((SELECT MAX(i.stored_len) FROM blob_pack_entries i
+            JOIN blobs b ON b.hash=i.blob_hash
+            WHERE i.store_id=blob_packs.store_id AND i.pack_id=blob_packs.pack_id),0),
+        max_live_raw_len=COALESCE((SELECT MAX(i.raw_len) FROM blob_pack_entries i
+            JOIN blobs b ON b.hash=i.blob_hash
+            WHERE i.store_id=blob_packs.store_id AND i.pack_id=blob_packs.pack_id),0)
+    WHERE EXISTS (
+        SELECT 1 FROM blob_pack_entries i
+        WHERE i.blob_hash=OLD.hash
+          AND i.store_id=blob_packs.store_id
+          AND i.pack_id=blob_packs.pack_id
+    );
+END;
+
+CREATE TRIGGER IF NOT EXISTS blob_pack_summary_blob_insert
+AFTER INSERT ON blobs
+WHEN EXISTS (SELECT 1 FROM blob_pack_entries WHERE blob_hash=NEW.hash)
+BEGIN
+    UPDATE blob_packs SET
+        live_entries=live_entries+1,
+        live_stored_bytes=live_stored_bytes+(
+            SELECT stored_len FROM blob_pack_entries
+            WHERE blob_hash=NEW.hash AND store_id=blob_packs.store_id
+        ),
+        live_raw_bytes=live_raw_bytes+(
+            SELECT raw_len FROM blob_pack_entries
+            WHERE blob_hash=NEW.hash AND store_id=blob_packs.store_id
+        ),
+        max_live_stored_len=MAX(max_live_stored_len,
+            (SELECT stored_len FROM blob_pack_entries
+             WHERE blob_hash=NEW.hash AND store_id=blob_packs.store_id)),
+        max_live_raw_len=MAX(max_live_raw_len,
+            (SELECT raw_len FROM blob_pack_entries
+             WHERE blob_hash=NEW.hash AND store_id=blob_packs.store_id))
+    WHERE EXISTS (
+        SELECT 1 FROM blob_pack_entries i
+        WHERE i.blob_hash=NEW.hash
+          AND i.store_id=blob_packs.store_id
+          AND i.pack_id=blob_packs.pack_id
+    );
+END;
+
+CREATE INDEX IF NOT EXISTS blob_packs_dead_scan
+ON blob_packs(store_id, scan_hash, pack_id) WHERE live_entries=0;
+CREATE INDEX IF NOT EXISTS blob_packs_live_scan
+ON blob_packs(store_id, scan_hash, pack_id) WHERE live_entries>0;
+
+-- A file node is stable document identity; immutable content-version rows are
+-- its byte history. Random UUIDv4 identities remain safe across JSONL
+-- round-trips and pruning because they are never allocator-derived or reused.
+CREATE TABLE IF NOT EXISTS content_versions (
+    version_id              TEXT PRIMARY KEY,
+    node_id                 INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    blob_hash               TEXT NOT NULL REFERENCES blobs(hash),
+    size                    INTEGER NOT NULL CHECK (size >= 0),
+    mime_type               TEXT,
+    recorded_at             TEXT NOT NULL,
+    node_revision           INTEGER NOT NULL CHECK (node_revision > 0),
+    introduced_operation_id TEXT NOT NULL,
+    transition_kind         TEXT NOT NULL
+        CHECK (transition_kind IN ('content_create', 'content_replace', 'content_revert')),
+    source_version_id       TEXT REFERENCES content_versions(version_id)
+        DEFERRABLE INITIALLY DEFERRED,
+    UNIQUE (node_id, node_revision),
+    UNIQUE (node_id, introduced_operation_id),
+    UNIQUE (node_id, version_id),
+    CHECK ((transition_kind = 'content_create') = (node_revision = 1)),
+    CHECK ((transition_kind = 'content_revert') = (source_version_id IS NOT NULL))
+);
+
+CREATE INDEX IF NOT EXISTS content_versions_node
+    ON content_versions(node_id, node_revision DESC);
+CREATE INDEX IF NOT EXISTS content_versions_blob ON content_versions(blob_hash);
+
+CREATE TABLE IF NOT EXISTS ingests (
+    id          TEXT PRIMARY KEY NOT NULL,
+    started_at  TEXT NOT NULL,
+    source_kind TEXT NOT NULL,
+    source_desc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS provenance (
+    identity       TEXT PRIMARY KEY NOT NULL,
+    node_id        INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    ingest_id      TEXT NOT NULL REFERENCES ingests(id),
+    original_path  TEXT NOT NULL,
+    original_mtime TEXT,
+    supersedes     TEXT REFERENCES provenance(identity)
+        DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE INDEX IF NOT EXISTS provenance_node ON provenance(node_id);
+CREATE UNIQUE INDEX IF NOT EXISTS provenance_direct_successor
+    ON provenance(supersedes) WHERE supersedes IS NOT NULL;
+
+-- A watched source has two independent identities: the stable document node
+-- and the last source bytes the watcher accepted. Keeping this small cursor
+-- separate from provenance prevents an unchanged source from overwriting a
+-- later manual edit after daemon restart. The primary key is the hot restart
+-- lookup; policy decisions remain in Go.
+CREATE TABLE IF NOT EXISTS watch_sources (
+    watch_name TEXT NOT NULL,
+    source_ref TEXT NOT NULL,
+    node_id    INTEGER NOT NULL UNIQUE REFERENCES nodes(id) ON DELETE CASCADE,
+    blob_hash  TEXT NOT NULL,
+    size       INTEGER NOT NULL CHECK (size >= 0),
+    PRIMARY KEY (watch_name, source_ref)
+) WITHOUT ROWID;
+
+-- Ingest and provenance facts are append-only authority. Corrections add a
+-- new provenance fact linked through supersedes; they never rewrite history.
+CREATE TRIGGER IF NOT EXISTS ingests_immutable_update
+BEFORE UPDATE ON ingests BEGIN
+    SELECT RAISE(ABORT, 'ingest records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS provenance_immutable_update
+BEFORE UPDATE ON provenance BEGIN
+    SELECT RAISE(ABORT, 'provenance records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS provenance_same_node_insert
+BEFORE INSERT ON provenance
+WHEN NEW.supersedes IS NOT NULL AND EXISTS (
+    SELECT 1 FROM provenance prior
+    WHERE prior.identity = NEW.supersedes AND prior.node_id != NEW.node_id
+) BEGIN
+    SELECT RAISE(ABORT, 'provenance supersession must stay on one node');
+END;
+
+CREATE TABLE IF NOT EXISTS tags (
+    id       TEXT PRIMARY KEY NOT NULL,
+    name     TEXT NOT NULL UNIQUE,
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1)
+);
+
+CREATE TABLE IF NOT EXISTS node_tags (
+    node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    tag_id  TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (node_id, tag_id)
+);
+
+CREATE INDEX IF NOT EXISTS node_tags_tag ON node_tags(tag_id);
+
+-- Canonical full-audit records are immutable content-addressed authority. The
+-- digest is over Docbank's typed canonical audit encoding, never the JSON
+-- spelling retained here for deterministic metadata-v1 transport.
+CREATE TABLE IF NOT EXISTS audit_records (
+    digest             TEXT PRIMARY KEY NOT NULL,
+    kind               TEXT NOT NULL CHECK (kind IN (
+        'enrollment_baseline', 'topology_genesis',
+        'attached_metadata_genesis', 'event', 'canonical_mutation',
+        'scope_chain_entry', 'allocation_genesis', 'allocation_entry',
+        'topology_delta', 'path_effect_list', 'attached_metadata_delta'
+    )),
+    operation_id       TEXT,
+    operation_sequence INTEGER CHECK (operation_sequence IS NULL OR operation_sequence > 0),
+    scope_id           TEXT,
+    entry_count        INTEGER CHECK (entry_count IS NULL OR entry_count > 0),
+    event_id           TEXT,
+    event_ordinal      INTEGER CHECK (event_ordinal IS NULL OR event_ordinal >= 0),
+    node_id            INTEGER CHECK (node_id IS NULL OR node_id > 0),
+    record_json        TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS audit_record_event
+    ON audit_records(event_id) WHERE event_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS audit_record_event_node
+    ON audit_records(node_id) WHERE kind = 'event';
+CREATE INDEX IF NOT EXISTS audit_record_event_scope
+    ON audit_records(scope_id) WHERE kind = 'event';
+CREATE UNIQUE INDEX IF NOT EXISTS audit_record_mutation_operation
+    ON audit_records(operation_id) WHERE kind = 'canonical_mutation';
+CREATE UNIQUE INDEX IF NOT EXISTS audit_record_mutation_sequence
+    ON audit_records(operation_sequence) WHERE kind = 'canonical_mutation';
+CREATE UNIQUE INDEX IF NOT EXISTS audit_record_scope_entry
+    ON audit_records(scope_id, entry_count) WHERE kind = 'scope_chain_entry';
+CREATE UNIQUE INDEX IF NOT EXISTS audit_record_allocation_operation
+    ON audit_records(operation_id) WHERE kind = 'allocation_entry';
+CREATE UNIQUE INDEX IF NOT EXISTS audit_record_allocation_sequence
+    ON audit_records(operation_sequence) WHERE kind = 'allocation_entry';
+CREATE UNIQUE INDEX IF NOT EXISTS audit_record_single_genesis
+    ON audit_records(kind) WHERE kind IN (
+        'topology_genesis', 'attached_metadata_genesis', 'allocation_genesis'
+    );
+
+CREATE TABLE IF NOT EXISTS audit_authority (
+    singleton                       INTEGER PRIMARY KEY CHECK (singleton = 1),
+    lineage_id                      TEXT NOT NULL UNIQUE,
+    operation_sequence_high_water   INTEGER NOT NULL CHECK (operation_sequence_high_water > 0),
+    allocation_genesis_digest       TEXT NOT NULL UNIQUE REFERENCES audit_records(digest)
+        DEFERRABLE INITIALLY DEFERRED,
+    allocation_entry_count          INTEGER NOT NULL CHECK (allocation_entry_count > 0),
+    allocation_head                 TEXT NOT NULL REFERENCES audit_records(digest)
+        DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TABLE IF NOT EXISTS audit_scopes (
+    scope_id             TEXT PRIMARY KEY NOT NULL,
+    target_node_id       INTEGER NOT NULL REFERENCES nodes(id),
+    enable_operation_id  TEXT NOT NULL UNIQUE,
+    entry_count          INTEGER NOT NULL CHECK (entry_count > 0),
+    chain_head           TEXT NOT NULL REFERENCES audit_records(digest)
+        DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TABLE IF NOT EXISTS audit_baselines (
+    digest          TEXT PRIMARY KEY NOT NULL REFERENCES audit_records(digest)
+        DEFERRABLE INITIALLY DEFERRED,
+    scope_id        TEXT NOT NULL REFERENCES audit_scopes(scope_id)
+        DEFERRABLE INITIALLY DEFERRED,
+    target_node_id  INTEGER NOT NULL REFERENCES nodes(id),
+    operation_id    TEXT NOT NULL,
+    UNIQUE (scope_id, target_node_id, operation_id)
+);
+
+CREATE TABLE IF NOT EXISTS audit_memberships (
+    scope_id         TEXT NOT NULL REFERENCES audit_scopes(scope_id)
+        DEFERRABLE INITIALLY DEFERRED,
+    node_id          INTEGER NOT NULL REFERENCES nodes(id),
+    baseline_digest  TEXT NOT NULL REFERENCES audit_baselines(digest)
+        DEFERRABLE INITIALLY DEFERRED,
+    PRIMARY KEY (scope_id, node_id)
+);
+
+CREATE INDEX IF NOT EXISTS audit_membership_node ON audit_memberships(node_id);
+
+CREATE TABLE IF NOT EXISTS extracted_text (
+    id                INTEGER PRIMARY KEY,
+    blob_hash         TEXT NOT NULL,
+    extractor         TEXT NOT NULL,
+    extractor_version INTEGER NOT NULL,
+    status            TEXT NOT NULL CHECK (status IN ('ok', 'failed')),
+    error             TEXT,
+    attempts          INTEGER NOT NULL DEFAULT 0,
+    text              TEXT,
+    extracted_at      TEXT NOT NULL,
+    UNIQUE (blob_hash, extractor)
+);
+
+-- Derived work queue. Logical writes enqueue supported text in Go; the daemon
+-- drains it after terminally verified reads. It is not portable authority.
+CREATE TABLE IF NOT EXISTS text_extraction_queue (
+    blob_hash       TEXT PRIMARY KEY REFERENCES blobs(hash) ON DELETE CASCADE,
+    next_attempt_at TEXT NOT NULL
+);
+
+-- Per-version search eligibility is derived from MIME policy in Go. Keeping
+-- this projection separate lets existing vaults adopt it without altering the
+-- authoritative content-version table.
+CREATE TABLE IF NOT EXISTS text_searchable_versions (
+    version_id TEXT PRIMARY KEY REFERENCES content_versions(version_id) ON DELETE CASCADE
+);
+
+-- Derived full-text cache. This table is rebuilt from extracted_text during
+-- portable import and is never part of document or audit authority.
+CREATE VIRTUAL TABLE IF NOT EXISTS content_fts USING fts5(
+    blob_hash UNINDEXED,
+    extractor UNINDEXED,
+    text
+);
+
+-- FTS over live node names. External-content table kept in sync by triggers;
+-- trashed nodes are filtered at query time (the row stays indexed).
+CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(
+    name,
+    content='nodes',
+    content_rowid='id'
+);
+
+CREATE TRIGGER IF NOT EXISTS nodes_fts_insert AFTER INSERT ON nodes BEGIN
+    INSERT INTO nodes_fts(rowid, name) VALUES (new.id, new.name);
+END;
+
+CREATE TRIGGER IF NOT EXISTS nodes_fts_delete AFTER DELETE ON nodes BEGIN
+    INSERT INTO nodes_fts(nodes_fts, rowid, name) VALUES ('delete', old.id, old.name);
+END;
+
+CREATE TRIGGER IF NOT EXISTS nodes_fts_update AFTER UPDATE OF name ON nodes BEGIN
+    INSERT INTO nodes_fts(nodes_fts, rowid, name) VALUES ('delete', old.id, old.name);
+    INSERT INTO nodes_fts(rowid, name) VALUES (new.id, new.name);
+END;

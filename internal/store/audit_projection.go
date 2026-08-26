@@ -152,6 +152,7 @@ func currentAuditAttachments(ctx context.Context, tx metadataQuerier) ([]audit.R
 	var records []audit.Record
 	appenders := []func(context.Context, metadataQuerier, *[]audit.Record) error{
 		appendAuditIngests, appendAuditProvenance, appendAuditTagAssignments, appendAuditTagDefinitions,
+		appendAuditDerivativePurgeSuppressions,
 	}
 	for _, appendRecords := range appenders {
 		if err := appendRecords(ctx, tx, &records); err != nil {
@@ -338,6 +339,16 @@ func attachedAuditIdentity(record audit.Record) (audit.Record, error) {
 	case auditTagDefinitionKind:
 		value, err := auditField(record, "tag_id")
 		return audit.Record{Kind: "tag_definition_identity", Fields: []audit.Field{{Name: "tag_id", Value: value}}}, err
+	case auditDerivativePurgeSuppressionKind:
+		fields := make([]audit.Field, 0, 3)
+		for _, name := range []string{"source_sha256", "profile_fingerprint", "build_id"} {
+			value, err := auditField(record, name)
+			if err != nil {
+				return audit.Record{}, err
+			}
+			fields = append(fields, audit.Field{Name: name, Value: value})
+		}
+		return audit.Record{Kind: "derivative_purge_suppression_identity", Fields: fields}, nil
 	default:
 		return audit.Record{}, fmt.Errorf("record kind %q has no attached-metadata identity", record.Kind)
 	}

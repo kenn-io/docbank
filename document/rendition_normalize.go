@@ -55,7 +55,8 @@ func BuildRenditionV1(evidence NormalizedEvidenceV1, policy RenditionPolicy) (Re
 			remaining = max(0, remaining-separatorBudget)
 			remaining = max(0, remaining-utf8.RuneCountInString(text))
 			markdownUnits = append(markdownUnits, text)
-			result.LexicalSegments = append(result.LexicalSegments, lexicalSegment(unit, len(result.LexicalSegments)))
+			result.LexicalSegments = append(result.LexicalSegments,
+				lexicalSegments(unit, len(result.LexicalSegments), policy.maxSegmentRunes)...)
 		}
 	}
 	if truncated {
@@ -89,19 +90,23 @@ func normalizedRenditionUnit(evidenceUnit NormalizedEvidenceUnitV1, text string)
 	return unit
 }
 
-func lexicalSegment(unit NormalizedUnitV1, order int) LexicalSegmentV1 {
-	segment := LexicalSegmentV1{
-		CharEnd: utf8.RuneCountInString(unit.Text),
-		Order:   order,
-		Text:    unit.Text,
-		UnitID:  unit.ID,
+func lexicalSegments(unit NormalizedUnitV1, firstOrder, maxRunes int) []LexicalSegmentV1 {
+	runes := []rune(unit.Text)
+	segments := make([]LexicalSegmentV1, 0, (len(runes)+maxRunes-1)/maxRunes)
+	for start := 0; start < len(runes); start += maxRunes {
+		end := min(start+maxRunes, len(runes))
+		segment := LexicalSegmentV1{
+			CharStart: start, CharEnd: end, Order: firstOrder + len(segments),
+			Text: string(runes[start:end]), UnitID: unit.ID,
+		}
+		segment.Checksum = checksumStrings(
+			RenditionContractV1, unit.ID, strconv.Itoa(segment.Order),
+			strconv.Itoa(segment.CharStart), strconv.Itoa(segment.CharEnd), segment.Text,
+		)
+		segment.ID = "lexical_segment_" + segment.Checksum
+		segments = append(segments, segment)
 	}
-	segment.Checksum = checksumStrings(
-		RenditionContractV1, unit.ID, strconv.Itoa(segment.Order),
-		strconv.Itoa(segment.CharStart), strconv.Itoa(segment.CharEnd), segment.Text,
-	)
-	segment.ID = "lexical_segment_" + segment.Checksum
-	return segment
+	return segments
 }
 
 func renditionChecksum(rendition RenditionV1) string {
