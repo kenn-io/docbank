@@ -408,6 +408,7 @@ func isMP4(data []byte) bool {
 
 type mp4Info struct {
 	width, height, durationMS int64
+	frameCount                int64
 	durationKnown             bool
 	pictureTracks             int
 
@@ -918,6 +919,14 @@ func (track *mp4TrackInfo) finish(info *mp4Info) bool {
 		track.codedWidth <= 0 || track.codedHeight <= 0 {
 		return false
 	}
+	if track.sampleCount > math.MaxInt64 {
+		return false
+	}
+	sampleCount := int64(track.sampleCount) // #nosec G115 -- checked against MaxInt64 above.
+	if sampleCount > math.MaxInt64-info.frameCount {
+		return false
+	}
+	info.frameCount += sampleCount
 	info.pictureTracks++
 	info.width = max(info.width, track.presentationWidth, track.codedWidth)
 	info.height = max(info.height, track.presentationHeight, track.codedHeight)

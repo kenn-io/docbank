@@ -35,6 +35,44 @@ type SearchOptions struct {
 	CandidateLimit int
 }
 
+// RetrievalPolicy binds the independent lexical and semantic candidate
+// ceilings selected by deployment configuration.
+type RetrievalPolicy struct {
+	lexicalLimit int
+	vectorLimit  int
+}
+
+// NewRetrievalPolicy validates and seals independent retrieval-lane limits.
+func NewRetrievalPolicy(lexicalLimit, vectorLimit int) (RetrievalPolicy, error) {
+	if lexicalLimit < 1 || lexicalLimit > MaxCandidateLimit {
+		return RetrievalPolicy{}, fmt.Errorf("lexical candidate limit must be between 1 and %d", MaxCandidateLimit)
+	}
+	if vectorLimit < 1 || vectorLimit > MaxCandidateLimit {
+		return RetrievalPolicy{}, fmt.Errorf("vector candidate limit must be between 1 and %d", MaxCandidateLimit)
+	}
+	return RetrievalPolicy{lexicalLimit: lexicalLimit, vectorLimit: vectorLimit}, nil
+}
+
+// LexicalLimit returns the configured lexical-lane candidate ceiling.
+func (p RetrievalPolicy) LexicalLimit() int { return p.lexicalLimit }
+
+// VectorLimit returns the configured semantic vector-lane candidate ceiling.
+func (p RetrievalPolicy) VectorLimit() int { return p.vectorLimit }
+
+// CollectLexical applies the configured lexical ceiling to scoped collection.
+func (p RetrievalPolicy) CollectLexical(
+	ctx context.Context, source ScopedPageSource, pageSize int,
+) (ScopedCandidates, error) {
+	return CollectScopedCandidates(ctx, source, p.lexicalLimit, pageSize)
+}
+
+// CollectSemantic applies the configured vector ceiling to scoped collection.
+func (p RetrievalPolicy) CollectSemantic(
+	ctx context.Context, source ScopedPageSource, pageSize int,
+) (ScopedCandidates, error) {
+	return CollectScopedCandidates(ctx, source, p.vectorLimit, pageSize)
+}
+
 // NormalizeSearchOptions applies shared defaults and validates public bounds.
 func NormalizeSearchOptions(options SearchOptions) (SearchOptions, error) {
 	if options.Mode == "" || options.Mode == SearchModeAuto {
