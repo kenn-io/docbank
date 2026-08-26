@@ -99,6 +99,20 @@ var recordSchemas = map[string]recordSchema{
 		field("tag_id", uuidRule),
 		field("node_id", unsignedRule),
 	),
+	"derivative_purge_suppression": schema(
+		field("source_sha256", digestRule),
+		field("profile_fingerprint", digestRule),
+		field("build_id", digestRule),
+		field("purged_at", timestampRule),
+		field("active", boolRule),
+		field("superseded_at", optionalTimestamp),
+		field("superseding_build_id", optionalDigest),
+	),
+	"derivative_purge_suppression_identity": schema(
+		field("source_sha256", digestRule),
+		field("profile_fingerprint", digestRule),
+		field("build_id", digestRule),
+	),
 	"ingest": schema(
 		field("ingest_id", uuidRule),
 		field("started_at", timestampRule),
@@ -468,11 +482,13 @@ func orderedListOf(element valueRule, policy collectionPolicy) valueRule {
 }
 
 func attachedRecordRule() valueRule {
-	return recordOf("ingest", "provenance", "tag_assignment", "tag_definition")
+	return recordOf("ingest", "provenance", "tag_assignment", "tag_definition",
+		"derivative_purge_suppression")
 }
 
 func attachedIdentityRule() valueRule {
-	return recordOf("ingest_identity", "provenance_identity_ref", "tag_assignment_identity", "tag_definition_identity")
+	return recordOf("ingest_identity", "provenance_identity_ref", "tag_assignment_identity",
+		"tag_definition_identity", "derivative_purge_suppression_identity")
 }
 
 func eventAttachmentIdentityRule() valueRule {
@@ -480,7 +496,8 @@ func eventAttachmentIdentityRule() valueRule {
 }
 
 func attachedRecordKindRule() valueRule {
-	return textEnum("ingest", "provenance", "tag_assignment", "tag_definition")
+	return textEnum("ingest", "provenance", "tag_assignment", "tag_definition",
+		"derivative_purge_suppression")
 }
 
 func eventPayloadRule() valueRule {

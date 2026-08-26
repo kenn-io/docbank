@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"slices"
 	"unicode/utf8"
 
 	"go.kenn.io/kit/packstore"
@@ -18,13 +19,16 @@ import (
 )
 
 const (
-	metadataProcessingProfileType = "processing_profile"
-	metadataRenditionBuildType    = "rendition_build"
-	metadataRenditionArtifactType = "rendition_artifact"
-	metadataRenditionUnitType     = "rendition_unit"
-	metadataRenditionSegmentType  = "rendition_lexical_segment"
-	metadataRenditionAttachType   = "rendition_attachment"
-	metadataRenditionHeadType     = "rendition_head"
+	metadataProcessingProfileType          = "processing_profile"
+	metadataRenditionBuildType             = "rendition_build"
+	metadataRenditionArtifactType          = "rendition_artifact"
+	metadataRenditionUnitType              = "rendition_unit"
+	metadataRenditionSegmentType           = "rendition_lexical_segment"
+	metadataRenditionAttachType            = "rendition_attachment"
+	metadataRenditionHeadType              = "rendition_head"
+	metadataLexicalGenerationType          = "rendition_lexical_generation"
+	metadataCurrentRenditionRootType       = "current_rendition_root"
+	metadataDerivativePurgeSuppressionType = "derivative_purge_suppression"
 )
 
 type metadataProcessingProfile struct {
@@ -122,6 +126,40 @@ type metadataRenditionHead struct {
 	PublishedAt                  string `json:"published_at"`
 }
 
+type metadataLexicalGeneration struct {
+	Type           string   `json:"type"`
+	GenerationID   string   `json:"generation_id"`
+	SegmentCount   int      `json:"segment_count"`
+	ManifestDigest string   `json:"manifest_digest"`
+	BuildIDs       []string `json:"build_ids"`
+	BuildDigest    string   `json:"build_digest"`
+	BuiltAt        string   `json:"built_at"`
+	Headed         bool     `json:"headed"`
+}
+
+type metadataCurrentRenditionRoot struct {
+	Type         string                     `json:"type"`
+	ID           string                     `json:"root_id"`
+	Kind         CurrentRenditionRootKind   `json:"root_kind"`
+	TargetKind   CurrentRenditionTargetKind `json:"target_kind"`
+	TargetID     string                     `json:"target_id"`
+	FencingToken int64                      `json:"fencing_token"`
+	RecordedAt   string                     `json:"recorded_at"`
+	Active       bool                       `json:"active"`
+	ReleasedAt   *string                    `json:"released_at"`
+}
+
+type metadataDerivativePurgeSuppression struct {
+	Type               string  `json:"type"`
+	SourceSHA256       string  `json:"source_sha256"`
+	ProfileFingerprint string  `json:"profile_fingerprint"`
+	BuildID            string  `json:"build_id"`
+	PurgedAt           string  `json:"purged_at"`
+	Active             bool    `json:"active"`
+	SupersededAt       *string `json:"superseded_at"`
+	SupersedingBuildID *string `json:"superseding_build_id"`
+}
+
 var processingMetadataRequiredFields = map[string][]string{
 	metadataProcessingProfileType: {
 		metadataTypeField, "profile_fingerprint", "canonical_profile",
@@ -161,6 +199,18 @@ var processingMetadataRequiredFields = map[string][]string{
 		metadataTypeField, "content_version_id", "processing_profile_fingerprint",
 		"attachment_id", "published_at",
 	},
+	metadataLexicalGenerationType: {
+		metadataTypeField, "generation_id", "segment_count", "manifest_digest",
+		"build_ids", "build_digest", "built_at", "headed",
+	},
+	metadataCurrentRenditionRootType: {
+		metadataTypeField, "root_id", "root_kind", "target_kind", "target_id",
+		"fencing_token", "recorded_at", "active", "released_at",
+	},
+	metadataDerivativePurgeSuppressionType: {
+		metadataTypeField, "source_sha256", "profile_fingerprint", "build_id",
+		"purged_at", "active", "superseded_at", "superseding_build_id",
+	},
 }
 
 func exportProcessingMetadata(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
@@ -189,7 +239,154 @@ func exportProcessingMetadata(ctx context.Context, tx metadataQuerier, write met
 	if err := exportRenditionAttachments(ctx, tx, write); err != nil {
 		return err
 	}
-	return exportRenditionHeads(ctx, tx, write)
+	if err := exportRenditionHeads(ctx, tx, write); err != nil {
+		return err
+	}
+	if err := exportLexicalGenerations(ctx, tx, write); err != nil {
+		return err
+	}
+	if err := exportDurableCurrentRenditionRoots(ctx, tx, write); err != nil {
+		return err
+	}
+	return exportDerivativePurgeSuppressions(ctx, tx, write)
+}
+
+func exportLexicalGenerations(
+	ctx context.Context, tx metadataQuerier, write metadataWrite,
+) error {
+	present, err := lexicalGenerationSchemaPresentTx(ctx, tx)
+	if err != nil || !present {
+		return err
+	}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT g.generation_id,g.segment_count,m.manifest_digest,m.build_digest,g.built_at,
+		       EXISTS(SELECT 1 FROM rendition_lexical_heads h
+		              WHERE h.generation_id=g.generation_id)
+		FROM rendition_lexical_generations g
+		JOIN rendition_lexical_generation_manifests m ON m.generation_id=g.generation_id
+		WHERE (g.build_count>0 AND EXISTS(
+		         SELECT 1 FROM rendition_lexical_heads h WHERE h.generation_id=g.generation_id
+		      )) OR EXISTS(
+		         SELECT 1 FROM current_rendition_roots r
+		         WHERE r.target_kind='lexical_generation' AND r.target_id=g.generation_id
+		           AND r.root_kind IN ('retention','audit')
+		      )
+		ORDER BY g.generation_id`)
+	if err != nil {
+		return fmt.Errorf("exporting lexical generations: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var records []metadataLexicalGeneration
+	for rows.Next() {
+		record := metadataLexicalGeneration{Type: metadataLexicalGenerationType}
+		if err := rows.Scan(&record.GenerationID, &record.SegmentCount,
+			&record.ManifestDigest, &record.BuildDigest, &record.BuiltAt, &record.Headed); err != nil {
+			return fmt.Errorf("scanning lexical generation metadata: %w", err)
+		}
+		record.BuildIDs, err = lexicalGenerationBuildIDsQuery(ctx, tx, record.GenerationID)
+		if err != nil {
+			return err
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("exporting lexical generations: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("closing lexical generation metadata: %w", err)
+	}
+	for _, record := range records {
+		if err := write(record); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func lexicalGenerationBuildIDsQuery(
+	ctx context.Context, tx metadataQuerier, generationID string,
+) (_ []string, retErr error) {
+	rows, err := tx.QueryContext(ctx, `SELECT build_id
+		FROM rendition_lexical_generation_builds
+		WHERE generation_id=? ORDER BY build_id`, generationID)
+	if err != nil {
+		return nil, fmt.Errorf("reading lexical generation %s membership: %w", generationID, err)
+	}
+	defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+	var buildIDs []string
+	for rows.Next() {
+		var buildID string
+		if err := rows.Scan(&buildID); err != nil {
+			return nil, fmt.Errorf("scanning lexical generation %s membership: %w", generationID, err)
+		}
+		buildIDs = append(buildIDs, buildID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading lexical generation %s membership: %w", generationID, err)
+	}
+	return buildIDs, nil
+}
+
+func exportDurableCurrentRenditionRoots(
+	ctx context.Context, tx metadataQuerier, write metadataWrite,
+) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT root_id,root_kind,target_kind,target_id,fencing_token,recorded_at,
+		       active,released_at
+		FROM current_rendition_roots
+		WHERE root_kind IN ('retention','audit')
+		ORDER BY root_id`)
+	if err != nil {
+		return fmt.Errorf("exporting durable current rendition roots: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		record := metadataCurrentRenditionRoot{Type: metadataCurrentRenditionRootType}
+		var released sql.NullString
+		if err := rows.Scan(&record.ID, &record.Kind, &record.TargetKind, &record.TargetID,
+			&record.FencingToken, &record.RecordedAt, &record.Active, &released); err != nil {
+			return fmt.Errorf("scanning durable current rendition root metadata: %w", err)
+		}
+		if released.Valid {
+			record.ReleasedAt = &released.String
+		}
+		if err := write(record); err != nil {
+			return err
+		}
+	}
+	return rowsError("durable current rendition root", rows)
+}
+
+func exportDerivativePurgeSuppressions(
+	ctx context.Context, tx metadataQuerier, write metadataWrite,
+) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT source_sha256,profile_fingerprint,build_id,purged_at,active,
+		       superseded_at,superseding_build_id
+		FROM derivative_purge_suppressions
+		ORDER BY source_sha256,profile_fingerprint,build_id`)
+	if err != nil {
+		return fmt.Errorf("exporting derivative purge suppressions: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		record := metadataDerivativePurgeSuppression{Type: metadataDerivativePurgeSuppressionType}
+		var supersededAt, supersedingBuildID sql.NullString
+		if err := rows.Scan(&record.SourceSHA256, &record.ProfileFingerprint, &record.BuildID,
+			&record.PurgedAt, &record.Active, &supersededAt, &supersedingBuildID); err != nil {
+			return fmt.Errorf("scanning derivative purge suppression metadata: %w", err)
+		}
+		if supersededAt.Valid {
+			record.SupersededAt = &supersededAt.String
+		}
+		if supersedingBuildID.Valid {
+			record.SupersedingBuildID = &supersedingBuildID.String
+		}
+		if err := write(record); err != nil {
+			return err
+		}
+	}
+	return rowsError("derivative purge suppression", rows)
 }
 
 func exportProcessingProfiles(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
@@ -517,9 +714,204 @@ func (s *Store) importProcessingMetadataRecord(
 			VALUES(?,?,?,?)`, value.ContentVersionID, value.ProcessingProfileFingerprint,
 			value.AttachmentID, value.PublishedAt)
 		return err
+	case metadataLexicalGenerationType:
+		var value metadataLexicalGeneration
+		if err := decodeMetadataRecord(raw, &value); err != nil {
+			return err
+		}
+		return restoreLexicalGenerationTx(ctx, tx, value)
+	case metadataCurrentRenditionRootType:
+		var value metadataCurrentRenditionRoot
+		if err := decodeMetadataRecord(raw, &value); err != nil {
+			return err
+		}
+		root := CurrentRenditionRoot{
+			ID: value.ID, Kind: value.Kind, TargetKind: value.TargetKind,
+			TargetID: value.TargetID, FencingToken: value.FencingToken,
+			RecordedAt: value.RecordedAt,
+		}
+		if err := validateDurableCurrentRenditionRootMetadata(value, root); err != nil {
+			return err
+		}
+		if value.Active {
+			if err := requireCurrentRenditionTargetTx(ctx, tx, root); err != nil {
+				return err
+			}
+		}
+		var released any
+		if value.ReleasedAt != nil {
+			released = *value.ReleasedAt
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO current_rendition_roots(
+				root_id,root_kind,target_kind,target_id,fencing_token,recorded_at,expires_at,
+				active,released_at
+			) VALUES(?,?,?,?,?,?,NULL,?,?)`, root.ID, root.Kind, root.TargetKind,
+			root.TargetID, root.FencingToken, root.RecordedAt, value.Active, released)
+		return err
+	case metadataDerivativePurgeSuppressionType:
+		var value metadataDerivativePurgeSuppression
+		if err := decodeMetadataRecord(raw, &value); err != nil {
+			return err
+		}
+		if err := validateMetadataDerivativePurgeSuppression(value); err != nil {
+			return err
+		}
+		var supersededAt, supersedingBuildID any
+		if value.SupersededAt != nil {
+			supersededAt = *value.SupersededAt
+		}
+		if value.SupersedingBuildID != nil {
+			supersedingBuildID = *value.SupersedingBuildID
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO derivative_purge_suppressions(
+				source_sha256,profile_fingerprint,build_id,purged_at,active,
+				superseded_at,superseding_build_id
+			) VALUES(?,?,?,?,?,?,?)`, value.SourceSHA256, value.ProfileFingerprint,
+			value.BuildID, value.PurgedAt, value.Active, supersededAt, supersedingBuildID)
+		return err
 	default:
 		return fmt.Errorf("unknown processing metadata type %q", kind)
 	}
+}
+
+func restoreLexicalGenerationTx(
+	ctx context.Context, tx *sql.Tx, value metadataLexicalGeneration,
+) error {
+	if err := validateMetadataLexicalGeneration(value); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, lexicalProjectionSchema); err != nil {
+		return fmt.Errorf("initializing restored lexical projection: %w", err)
+	}
+	segments := make([]lexicalManifestRow, 0, value.SegmentCount)
+	for _, buildID := range value.BuildIDs {
+		buildSegments, err := readCatalogLexicalManifestRowsTx(ctx, tx, buildID)
+		if err != nil {
+			return err
+		}
+		segments = append(segments, buildSegments...)
+	}
+	if len(segments) != value.SegmentCount ||
+		lexicalManifestDigest(segments) != value.ManifestDigest ||
+		lexicalBuildDigest(value.BuildIDs) != value.BuildDigest {
+		return fmt.Errorf("restored lexical generation %s has a different immutable manifest",
+			value.GenerationID)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO rendition_lexical_generations(generation_id,segment_count,build_count,built_at)
+		VALUES(?,?,?,?)`, value.GenerationID, value.SegmentCount, len(value.BuildIDs), value.BuiltAt,
+	); err != nil {
+		return fmt.Errorf("restoring lexical generation %s: %w", value.GenerationID, err)
+	}
+	for _, buildID := range value.BuildIDs {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO rendition_lexical_generation_builds(
+			generation_id,build_id) VALUES(?,?)`, value.GenerationID, buildID); err != nil {
+			return fmt.Errorf("restoring lexical generation %s build %s: %w",
+				value.GenerationID, buildID, err)
+		}
+	}
+	for _, segment := range segments {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO rendition_lexical_fts(
+			generation_id,build_id,segment_id,text) VALUES(?,?,?,?)`,
+			value.GenerationID, segment.buildID, segment.segmentID, segment.text); err != nil {
+			return fmt.Errorf("rebuilding restored lexical generation %s: %w",
+				value.GenerationID, err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO rendition_lexical_generation_manifests(
+		generation_id,manifest_digest,build_digest) VALUES(?,?,?)`,
+		value.GenerationID, value.ManifestDigest, value.BuildDigest); err != nil {
+		return fmt.Errorf("restoring lexical generation %s manifest: %w", value.GenerationID, err)
+	}
+	if value.Headed {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO rendition_lexical_heads(
+			singleton,generation_id) VALUES(1,?)`, value.GenerationID); err != nil {
+			return fmt.Errorf("restoring lexical generation %s head: %w", value.GenerationID, err)
+		}
+	}
+	return nil
+}
+
+func validateMetadataLexicalGeneration(value metadataLexicalGeneration) error {
+	if value.Type != metadataLexicalGenerationType || value.SegmentCount < 0 ||
+		value.SegmentCount > maxRenditionLexicalSegments ||
+		len(value.BuildIDs) > maxRenditionLexicalSegments {
+		return errors.New("invalid lexical generation metadata")
+	}
+	for subject, digest := range map[string]string{
+		"lexical generation ID":   value.GenerationID,
+		"lexical manifest digest": value.ManifestDigest,
+		"lexical build digest":    value.BuildDigest,
+	} {
+		if err := validateCatalogSHA256(digest, subject); err != nil {
+			return err
+		}
+	}
+	if err := validateMetadataTime("lexical generation built_at", value.BuiltAt); err != nil {
+		return err
+	}
+	if !slices.IsSorted(value.BuildIDs) {
+		return errors.New("lexical generation build IDs are not canonical")
+	}
+	for index, buildID := range value.BuildIDs {
+		if err := validateCatalogSHA256(buildID, "lexical generation build ID"); err != nil {
+			return err
+		}
+		if index > 0 && buildID == value.BuildIDs[index-1] {
+			return errors.New("lexical generation build IDs are duplicated")
+		}
+	}
+	return nil
+}
+
+func validateMetadataDerivativePurgeSuppression(
+	value metadataDerivativePurgeSuppression,
+) error {
+	if value.Type != metadataDerivativePurgeSuppressionType ||
+		value.Active == (value.SupersededAt != nil || value.SupersedingBuildID != nil) ||
+		(value.SupersededAt == nil) != (value.SupersedingBuildID == nil) {
+		return errors.New("invalid derivative purge suppression record")
+	}
+	for name, digest := range map[string]string{
+		"source SHA-256": value.SourceSHA256, "profile fingerprint": value.ProfileFingerprint,
+		"build ID": value.BuildID,
+	} {
+		if err := validateCatalogSHA256(digest, name); err != nil {
+			return err
+		}
+	}
+	if err := validateMetadataTime("derivative purge suppression purged_at", value.PurgedAt); err != nil {
+		return err
+	}
+	if value.SupersededAt != nil {
+		if err := validateMetadataTime(
+			"derivative purge suppression superseded_at", *value.SupersededAt); err != nil {
+			return err
+		}
+		return validateCatalogSHA256(*value.SupersedingBuildID, "superseding build ID")
+	}
+	return nil
+}
+
+func validateDurableCurrentRenditionRootMetadata(
+	value metadataCurrentRenditionRoot, root CurrentRenditionRoot,
+) error {
+	if value.Type != metadataCurrentRenditionRootType ||
+		(root.Kind != RenditionRootRetention && root.Kind != RenditionRootAudit) {
+		return errors.New("invalid durable current rendition root record")
+	}
+	if err := validateCurrentRenditionRoot(root); err != nil {
+		return err
+	}
+	if value.Active == (value.ReleasedAt != nil) {
+		return errors.New("durable current rendition root active state is inconsistent")
+	}
+	if value.ReleasedAt != nil {
+		return validateMetadataTime("current rendition root released_at", *value.ReleasedAt)
+	}
+	return nil
 }
 
 type importedProcessingBlob struct {
@@ -620,6 +1012,18 @@ func (s *Store) RebuildRenditionLexicalProjection(ctx context.Context) error {
 		if !present {
 			return nil
 		}
+		var activeGenerationID string
+		err = tx.QueryRowContext(ctx, `SELECT generation_id
+			FROM rendition_lexical_heads WHERE singleton=1`).Scan(&activeGenerationID)
+		if err == nil {
+			if _, err := loadAndValidateLexicalGenerationTx(ctx, tx, activeGenerationID); err != nil {
+				return fmt.Errorf("validating restored lexical projection: %w", err)
+			}
+			return nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) && !isMissingLexicalSchema(err) {
+			return fmt.Errorf("reading restored lexical projection head: %w", err)
+		}
 		var heads int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM rendition_heads`).Scan(&heads); err != nil {
 			return fmt.Errorf("counting rendition heads for lexical rebuild: %w", err)
@@ -631,7 +1035,11 @@ func (s *Store) RebuildRenditionLexicalProjection(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		generationID = lexicalManifestDigest(rows)
+		buildIDs, err := lexicalCatalogBuildIDsTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		generationID = lexicalReplacementGenerationID(rows, buildIDs)
 		return nil
 	})
 	if err != nil || generationID == "" {
@@ -1148,6 +1556,103 @@ func validateProcessingMetadataState(ctx context.Context, tx metadataQuerier) er
 			return err
 		}
 		if err := validateRenditionHeadRecord(record); err != nil {
+			return err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	return validateCurrentRenditionRootState(ctx, tx)
+}
+
+func validateCurrentRenditionRootState(ctx context.Context, tx metadataQuerier) (_ error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT root_id,root_kind,target_kind,target_id,fencing_token,recorded_at,
+		       COALESCE(expires_at,''),active,released_at
+		FROM current_rendition_roots ORDER BY root_id`)
+	if err != nil {
+		return fmt.Errorf("reading current rendition root state: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var root CurrentRenditionRoot
+		var active bool
+		var released sql.NullString
+		if err := rows.Scan(&root.ID, &root.Kind, &root.TargetKind, &root.TargetID,
+			&root.FencingToken, &root.RecordedAt, &root.ExpiresAt, &active, &released); err != nil {
+			return fmt.Errorf("scanning current rendition root state: %w", err)
+		}
+		if err := validateCurrentRenditionRoot(root); err != nil {
+			return fmt.Errorf("invalid current rendition root %s: %w", root.ID, err)
+		}
+		if active == released.Valid {
+			return fmt.Errorf("current rendition root %s active state is inconsistent", root.ID)
+		}
+		if released.Valid {
+			if err := validateMetadataTime("current rendition root released_at", released.String); err != nil {
+				return err
+			}
+		}
+		if !active {
+			continue
+		}
+		var present bool
+		switch root.TargetKind {
+		case RenditionRootBuild:
+			err = tx.QueryRowContext(ctx,
+				`SELECT EXISTS(SELECT 1 FROM rendition_builds WHERE build_id=?)`, root.TargetID,
+			).Scan(&present)
+		case RenditionRootLexicalGeneration:
+			var schema bool
+			err = tx.QueryRowContext(ctx, `SELECT EXISTS(
+				SELECT 1 FROM sqlite_schema WHERE type='table'
+				AND name='rendition_lexical_generations'
+			)`).Scan(&schema)
+			if err == nil && schema {
+				err = tx.QueryRowContext(ctx, `SELECT EXISTS(
+					SELECT 1 FROM rendition_lexical_generations WHERE generation_id=?
+				)`, root.TargetID).Scan(&present)
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("validating current rendition root %s target: %w", root.ID, err)
+		}
+		if !present {
+			return fmt.Errorf("current rendition root %s target %s is missing", root.ID, root.TargetID)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	return validateDerivativePurgeSuppressionState(ctx, tx)
+}
+
+func validateDerivativePurgeSuppressionState(
+	ctx context.Context, tx metadataQuerier,
+) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT source_sha256,profile_fingerprint,build_id,purged_at,active,
+		       superseded_at,superseding_build_id
+		FROM derivative_purge_suppressions
+		ORDER BY source_sha256,profile_fingerprint,build_id`)
+	if err != nil {
+		return fmt.Errorf("reading derivative purge suppression state: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		value := metadataDerivativePurgeSuppression{Type: metadataDerivativePurgeSuppressionType}
+		var supersededAt, supersedingBuildID sql.NullString
+		if err := rows.Scan(&value.SourceSHA256, &value.ProfileFingerprint, &value.BuildID,
+			&value.PurgedAt, &value.Active, &supersededAt, &supersedingBuildID); err != nil {
+			return err
+		}
+		if supersededAt.Valid {
+			value.SupersededAt = &supersededAt.String
+		}
+		if supersedingBuildID.Valid {
+			value.SupersedingBuildID = &supersedingBuildID.String
+		}
+		if err := validateMetadataDerivativePurgeSuppression(value); err != nil {
 			return err
 		}
 	}

@@ -185,6 +185,14 @@ type ProcessingProfileConfig struct {
 	TrustBoundary               string   `toml:"trust_boundary"`
 }
 
+// ResolvedProcessingProfile keeps deployment retrieval policy alongside the
+// portable document profile without adding runtime limits to its fingerprint.
+type ResolvedProcessingProfile struct {
+	Document      document.ProcessingProfileV1
+	RetrievalName string
+	Retrieval     embedding.RetrievalPolicy
+}
+
 // Config is the full contents of config.toml.
 type Config struct {
 	Server             ServerConfig                       `toml:"server"`
@@ -447,7 +455,7 @@ func validateProcessingProfiles(c Config) error {
 		if err != nil {
 			return err
 		}
-		if _, _, err := document.CanonicalProfile(assembled); err != nil {
+		if _, _, err := document.CanonicalProfile(assembled.Document); err != nil {
 			return fmt.Errorf("%s is invalid: %w", prefix, err)
 		}
 	}
@@ -566,34 +574,41 @@ func validateEmbeddingProfileConfig(profile EmbeddingProfileConfig, prefix strin
 	return nil
 }
 
-// ProcessingProfile assembles one named processing profile without resolving
-// credential references or contacting providers.
-func (c Config) ProcessingProfile(name string) (document.ProcessingProfileV1, error) {
+// ProcessingProfile assembles one named portable profile and its deployment
+// retrieval policy without resolving credential references or contacting providers.
+func (c Config) ProcessingProfile(name string) (ResolvedProcessingProfile, error) {
 	profile, err := c.assembleProcessingProfile(name)
 	if err != nil {
-		return document.ProcessingProfileV1{}, err
+		return ResolvedProcessingProfile{}, err
 	}
-	canonical, err := document.CanonicalizeProfile(profile)
+	canonical, err := document.CanonicalizeProfile(profile.Document)
 	if err != nil {
-		return document.ProcessingProfileV1{}, fmt.Errorf("processing profile %q is invalid: %w", name, err)
+		return ResolvedProcessingProfile{}, fmt.Errorf("processing profile %q is invalid: %w", name, err)
 	}
-	return canonical, nil
+	profile.Document = canonical
+	return profile, nil
 }
 
-func (c Config) assembleProcessingProfile(name string) (document.ProcessingProfileV1, error) {
+func (c Config) assembleProcessingProfile(name string) (ResolvedProcessingProfile, error) {
 	configured, exists := c.ProcessingProfiles[name]
 	if !exists {
-		return document.ProcessingProfileV1{}, fmt.Errorf("processing profile %q is not defined", name)
+		return ResolvedProcessingProfile{}, fmt.Errorf("processing profile %q is not defined", name)
 	}
 	if configured.Retrieval == "" {
-		return document.ProcessingProfileV1{}, fmt.Errorf("[processing_profiles.%s] retrieval is required", name)
+		return ResolvedProcessingProfile{}, fmt.Errorf("[processing_profiles.%s] retrieval is required", name)
 	}
-	retrieval, exists := c.RetrievalProfiles[configured.Retrieval]
+	retrievalConfig, exists := c.RetrievalProfiles[configured.Retrieval]
 	if !exists {
-		return document.ProcessingProfileV1{}, fmt.Errorf("[processing_profiles.%s] retrieval %q is not defined", name, configured.Retrieval)
+		return ResolvedProcessingProfile{}, fmt.Errorf("[processing_profiles.%s] retrieval %q is not defined", name, configured.Retrieval)
 	}
-	if err := validateRetrievalProfileConfig(retrieval, fmt.Sprintf("[retrieval_profiles.%s]", configured.Retrieval)); err != nil {
-		return document.ProcessingProfileV1{}, err
+	if err := validateRetrievalProfileConfig(
+		retrievalConfig, fmt.Sprintf("[retrieval_profiles.%s]", configured.Retrieval),
+	); err != nil {
+		return ResolvedProcessingProfile{}, err
+	}
+	retrieval, err := embedding.NewRetrievalPolicy(retrievalConfig.LexicalLimit, retrievalConfig.VectorLimit)
+	if err != nil {
+		return ResolvedProcessingProfile{}, fmt.Errorf("[processing_profiles.%s] retrieval %q: %w", name, configured.Retrieval, err)
 	}
 	profile := document.ProcessingProfileV1{
 		ContractVersion: document.ProcessingProfileContractV1,
@@ -613,37 +628,41 @@ func (c Config) assembleProcessingProfile(name string) (document.ProcessingProfi
 			RetainSanitizedMarkdown: configured.RetainSanitizedMarkdown, RetainTypedArtifacts: configured.RetainTypedArtifacts,
 			TrustBoundary: configured.TrustBoundary,
 		},
-		Retrieval: document.RetrievalPolicyV1{LexicalLimit: retrieval.LexicalLimit, VectorLimit: retrieval.VectorLimit},
+		Retrieval: document.RetrievalPolicyV1{
+			LexicalLimit: retrievalConfig.LexicalLimit, VectorLimit: retrievalConfig.VectorLimit,
+		},
 	}
 	if configured.Rendition != "" {
 		rendition, exists := c.RenditionProfiles[configured.Rendition]
 		if !exists {
-			return document.ProcessingProfileV1{}, fmt.Errorf("[processing_profiles.%s] rendition %q is not defined", name, configured.Rendition)
+			return ResolvedProcessingProfile{}, fmt.Errorf("[processing_profiles.%s] rendition %q is not defined", name, configured.Rendition)
 		}
 		profile.Rendition = renditionDocumentBinding(configured.Rendition, rendition)
 	}
 	seen := make(map[string]struct{}, len(configured.Embeddings))
 	for _, bindingName := range configured.Embeddings {
 		if _, exists := seen[bindingName]; exists {
-			return document.ProcessingProfileV1{}, fmt.Errorf("[processing_profiles.%s] embedding %q is duplicated", name, bindingName)
+			return ResolvedProcessingProfile{}, fmt.Errorf("[processing_profiles.%s] embedding %q is duplicated", name, bindingName)
 		}
 		seen[bindingName] = struct{}{}
 		binding, exists := c.EmbeddingProfiles[bindingName]
 		if !exists {
-			return document.ProcessingProfileV1{}, fmt.Errorf("[processing_profiles.%s] embedding %q is not defined", name, bindingName)
+			return ResolvedProcessingProfile{}, fmt.Errorf("[processing_profiles.%s] embedding %q is not defined", name, bindingName)
 		}
 		if err := validateEmbeddingProfileConfig(binding, fmt.Sprintf("[embedding_profiles.%s]", bindingName)); err != nil {
-			return document.ProcessingProfileV1{}, err
+			return ResolvedProcessingProfile{}, err
 		}
 		if binding.InputKind == string(document.EmbeddingInputRenditionChunk) && profile.Rendition == nil {
-			return document.ProcessingProfileV1{}, fmt.Errorf("[processing_profiles.%s] rendition_chunk embedding %q requires rendition", name, bindingName)
+			return ResolvedProcessingProfile{}, fmt.Errorf("[processing_profiles.%s] rendition_chunk embedding %q requires rendition", name, bindingName)
 		}
 		profile.Embeddings = append(profile.Embeddings, embeddingDocumentBinding(bindingName, binding))
 	}
 	if profile.Rendition == nil && (configured.RetainSanitizedMarkdown || configured.RetainProviderMarkdown) {
-		return document.ProcessingProfileV1{}, fmt.Errorf("[processing_profiles.%s] retained Markdown requires rendition", name)
+		return ResolvedProcessingProfile{}, fmt.Errorf("[processing_profiles.%s] retained Markdown requires rendition", name)
 	}
-	return profile, nil
+	return ResolvedProcessingProfile{
+		Document: profile, RetrievalName: configured.Retrieval, Retrieval: retrieval,
+	}, nil
 }
 
 func renditionDocumentBinding(name string, profile RenditionProfileConfig) *document.RenditionBindingV1 {

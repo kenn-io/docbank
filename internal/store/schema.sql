@@ -163,6 +163,63 @@ END'),
 ('trigger', 'rendition_attachments_immutable_update', 'CREATE TRIGGER rendition_attachments_immutable_update
 BEFORE UPDATE ON rendition_attachments BEGIN
     SELECT RAISE(ABORT, ''rendition attachment records are immutable'');
+END'),
+('table', 'current_rendition_roots', 'CREATE TABLE current_rendition_roots (
+    root_id       TEXT PRIMARY KEY,
+    root_kind     TEXT NOT NULL CHECK (root_kind IN (
+        ''attachment'', ''head'', ''retention'', ''audit'', ''job'',
+        ''reader_lease'', ''worker_lease'', ''backup_pin''
+    )),
+    target_kind   TEXT NOT NULL CHECK (target_kind IN (
+        ''rendition_build'', ''lexical_generation''
+    )),
+    target_id     TEXT NOT NULL,
+    fencing_token INTEGER NOT NULL CHECK (fencing_token > 0),
+    recorded_at   TEXT NOT NULL,
+    expires_at    TEXT,
+    active        INTEGER NOT NULL CHECK (active IN (0, 1)),
+    released_at   TEXT,
+    CHECK ((root_kind IN (''reader_lease'', ''worker_lease'')) = (expires_at IS NOT NULL)),
+    CHECK ((active = 1) = (released_at IS NULL))
+)'),
+('index', 'current_rendition_roots_target', 'CREATE INDEX current_rendition_roots_target
+    ON current_rendition_roots(target_kind, target_id, root_kind)'),
+('index', 'current_rendition_roots_expiry', 'CREATE INDEX current_rendition_roots_expiry
+    ON current_rendition_roots(expires_at)
+    WHERE expires_at IS NOT NULL'),
+('table', 'derivative_purge_suppressions', 'CREATE TABLE derivative_purge_suppressions (
+    source_sha256        TEXT NOT NULL,
+    profile_fingerprint  TEXT NOT NULL,
+    build_id             TEXT NOT NULL,
+    purged_at            TEXT NOT NULL,
+    active               INTEGER NOT NULL CHECK (active IN (0, 1)),
+    superseded_at        TEXT,
+    superseding_build_id TEXT,
+    PRIMARY KEY (source_sha256, profile_fingerprint, build_id),
+    CHECK ((active = 1) = (superseded_at IS NULL AND superseding_build_id IS NULL))
+)'),
+('index', 'derivative_purge_suppressions_active_source', 'CREATE INDEX derivative_purge_suppressions_active_source
+    ON derivative_purge_suppressions(source_sha256, profile_fingerprint)
+    WHERE active = 1'),
+('table', 'rendition_blob_staging', 'CREATE TABLE rendition_blob_staging (
+    blob_hash TEXT PRIMARY KEY REFERENCES blobs(hash) ON DELETE CASCADE
+)'),
+('table', 'derivative_blob_purge_pending', 'CREATE TABLE derivative_blob_purge_pending (
+    blob_hash TEXT PRIMARY KEY REFERENCES blobs(hash) ON DELETE CASCADE
+)'),
+('table', 'derivative_pack_purge_pending', 'CREATE TABLE derivative_pack_purge_pending (
+    store_id TEXT NOT NULL,
+    pack_id  TEXT NOT NULL,
+    PRIMARY KEY (store_id, pack_id),
+    FOREIGN KEY (store_id, pack_id) REFERENCES blob_packs(store_id, pack_id) ON DELETE CASCADE
+)'),
+('trigger', 'content_versions_promote_rendition_staging', 'CREATE TRIGGER content_versions_promote_rendition_staging
+AFTER INSERT ON content_versions BEGIN
+    DELETE FROM rendition_blob_staging WHERE blob_hash=NEW.blob_hash;
+END'),
+('trigger', 'content_versions_revoke_derivative_purge', 'CREATE TRIGGER content_versions_revoke_derivative_purge
+AFTER INSERT ON content_versions BEGIN
+    DELETE FROM derivative_blob_purge_pending WHERE blob_hash=NEW.blob_hash;
 END');
 
 CREATE TEMP TABLE IF NOT EXISTS docbank_processing_schema_preflight (
@@ -174,14 +231,14 @@ INSERT INTO docbank_processing_schema_preflight(identity_matches)
 SELECT CASE
     WHEN NOT EXISTS (
         SELECT 1 FROM sqlite_schema
-        WHERE (type = 'table' AND name IN (
+        WHERE name IN (SELECT object_name FROM docbank_processing_schema_v1_expected)
+           OR (type IN ('index', 'trigger') AND sql IS NOT NULL AND tbl_name IN (
             'processing_profiles', 'rendition_builds', 'rendition_artifacts',
             'rendition_units', 'rendition_lexical_segments',
-            'rendition_attachments', 'rendition_heads'
-        )) OR (type IN ('index', 'trigger') AND sql IS NOT NULL AND tbl_name IN (
-            'processing_profiles', 'rendition_builds', 'rendition_artifacts',
-            'rendition_units', 'rendition_lexical_segments',
-            'rendition_attachments', 'rendition_heads'
+            'rendition_attachments', 'rendition_heads',
+            'current_rendition_roots', 'derivative_purge_suppressions',
+            'rendition_blob_staging', 'derivative_blob_purge_pending',
+            'derivative_pack_purge_pending'
         ))
     ) THEN 1
     WHEN NOT EXISTS (
@@ -189,25 +246,25 @@ SELECT CASE
         FROM docbank_processing_schema_v1_expected
         EXCEPT
         SELECT type, name, sql FROM sqlite_schema
-        WHERE (type = 'table' AND name IN (
+        WHERE name IN (SELECT object_name FROM docbank_processing_schema_v1_expected)
+           OR (type IN ('index', 'trigger') AND sql IS NOT NULL AND tbl_name IN (
             'processing_profiles', 'rendition_builds', 'rendition_artifacts',
             'rendition_units', 'rendition_lexical_segments',
-            'rendition_attachments', 'rendition_heads'
-        )) OR (type IN ('index', 'trigger') AND sql IS NOT NULL AND tbl_name IN (
-            'processing_profiles', 'rendition_builds', 'rendition_artifacts',
-            'rendition_units', 'rendition_lexical_segments',
-            'rendition_attachments', 'rendition_heads'
+            'rendition_attachments', 'rendition_heads',
+            'current_rendition_roots', 'derivative_purge_suppressions',
+            'rendition_blob_staging', 'derivative_blob_purge_pending',
+            'derivative_pack_purge_pending'
         ))
     ) AND NOT EXISTS (
         SELECT type, name, sql FROM sqlite_schema
-        WHERE (type = 'table' AND name IN (
+        WHERE name IN (SELECT object_name FROM docbank_processing_schema_v1_expected)
+           OR (type IN ('index', 'trigger') AND sql IS NOT NULL AND tbl_name IN (
             'processing_profiles', 'rendition_builds', 'rendition_artifacts',
             'rendition_units', 'rendition_lexical_segments',
-            'rendition_attachments', 'rendition_heads'
-        )) OR (type IN ('index', 'trigger') AND sql IS NOT NULL AND tbl_name IN (
-            'processing_profiles', 'rendition_builds', 'rendition_artifacts',
-            'rendition_units', 'rendition_lexical_segments',
-            'rendition_attachments', 'rendition_heads'
+            'rendition_attachments', 'rendition_heads',
+            'current_rendition_roots', 'derivative_purge_suppressions',
+            'rendition_blob_staging', 'derivative_blob_purge_pending',
+            'derivative_pack_purge_pending'
         ))
         EXCEPT
         SELECT object_type, object_name, object_sql
@@ -217,6 +274,75 @@ SELECT CASE
 END;
 DROP TABLE docbank_processing_schema_preflight;
 DROP TABLE docbank_processing_schema_v1_expected;
+
+-- The lexical projection is created lazily, but once any part exists it must
+-- be the complete current layout. This rejects partial unshipped schema-v4
+-- states instead of silently layering new columns or membership tables onto
+-- an older projection.
+CREATE TEMP TABLE IF NOT EXISTS docbank_lexical_schema_expected (
+    object_type TEXT NOT NULL,
+    object_name TEXT NOT NULL,
+    object_sql  TEXT NOT NULL,
+    PRIMARY KEY (object_type, object_name)
+);
+DELETE FROM docbank_lexical_schema_expected;
+INSERT INTO docbank_lexical_schema_expected(object_type, object_name, object_sql) VALUES
+('table', 'rendition_lexical_generations', 'CREATE TABLE rendition_lexical_generations (
+    generation_id TEXT PRIMARY KEY,
+    segment_count INTEGER NOT NULL CHECK (segment_count >= 0),
+    build_count   INTEGER NOT NULL CHECK (build_count >= 0),
+    built_at      TEXT NOT NULL
+)'),
+('table', 'rendition_lexical_generation_manifests', 'CREATE TABLE rendition_lexical_generation_manifests (
+    generation_id  TEXT PRIMARY KEY REFERENCES rendition_lexical_generations(generation_id),
+    manifest_digest TEXT NOT NULL CHECK (length(manifest_digest) = 64),
+    build_digest    TEXT NOT NULL CHECK (length(build_digest) = 64)
+)'),
+('table', 'rendition_lexical_generation_builds', 'CREATE TABLE rendition_lexical_generation_builds (
+    generation_id TEXT NOT NULL REFERENCES rendition_lexical_generations(generation_id)
+        ON DELETE CASCADE,
+    build_id      TEXT NOT NULL REFERENCES rendition_builds(build_id),
+    PRIMARY KEY (generation_id, build_id)
+)'),
+('table', 'rendition_lexical_fts', 'CREATE VIRTUAL TABLE rendition_lexical_fts USING fts5(
+    generation_id UNINDEXED,
+    build_id      UNINDEXED,
+    segment_id    UNINDEXED,
+    text
+)'),
+('table', 'rendition_lexical_heads', 'CREATE TABLE rendition_lexical_heads (
+    singleton     INTEGER PRIMARY KEY CHECK (singleton = 1),
+    generation_id TEXT NOT NULL REFERENCES rendition_lexical_generations(generation_id)
+)');
+
+CREATE TEMP TABLE IF NOT EXISTS docbank_lexical_schema_preflight (
+    identity_matches INTEGER NOT NULL,
+    CONSTRAINT lexical_projection_schema_identity CHECK (identity_matches = 1)
+);
+DELETE FROM docbank_lexical_schema_preflight;
+INSERT INTO docbank_lexical_schema_preflight(identity_matches)
+SELECT CASE
+    WHEN NOT EXISTS (
+        SELECT 1 FROM sqlite_schema
+        WHERE name IN (SELECT object_name FROM docbank_lexical_schema_expected)
+    ) THEN 1
+    WHEN NOT EXISTS (
+        SELECT object_type, object_name, object_sql
+        FROM docbank_lexical_schema_expected
+        EXCEPT
+        SELECT type, name, sql FROM sqlite_schema
+        WHERE name IN (SELECT object_name FROM docbank_lexical_schema_expected)
+    ) AND NOT EXISTS (
+        SELECT type, name, sql FROM sqlite_schema
+        WHERE name IN (SELECT object_name FROM docbank_lexical_schema_expected)
+        EXCEPT
+        SELECT object_type, object_name, object_sql
+        FROM docbank_lexical_schema_expected
+    ) THEN 1
+    ELSE 0
+END;
+DROP TABLE docbank_lexical_schema_preflight;
+DROP TABLE docbank_lexical_schema_expected;
 
 -- One stable logical identity follows the vault through JSONL backup and
 -- restore. Filesystem location is deliberately not identity.
@@ -749,6 +875,84 @@ CREATE TABLE IF NOT EXISTS rendition_heads (
             content_version_id, profile_fingerprint, attachment_id
         ) ON DELETE CASCADE
 );
+
+-- Root producers outside the immutable rendition catalog retain one exact
+-- build or lexical generation. Lease expiry uses canonical fixed-width UTC
+-- timestamps; monotonic fencing prevents a stale worker from releasing a
+-- renewed root. Attachments and heads remain normalized in their own tables.
+CREATE TABLE IF NOT EXISTS current_rendition_roots (
+    root_id       TEXT PRIMARY KEY,
+    root_kind     TEXT NOT NULL CHECK (root_kind IN (
+        'attachment', 'head', 'retention', 'audit', 'job',
+        'reader_lease', 'worker_lease', 'backup_pin'
+    )),
+    target_kind   TEXT NOT NULL CHECK (target_kind IN (
+        'rendition_build', 'lexical_generation'
+    )),
+    target_id     TEXT NOT NULL,
+    fencing_token INTEGER NOT NULL CHECK (fencing_token > 0),
+    recorded_at   TEXT NOT NULL,
+    expires_at    TEXT,
+    active        INTEGER NOT NULL CHECK (active IN (0, 1)),
+    released_at   TEXT,
+    CHECK ((root_kind IN ('reader_lease', 'worker_lease')) = (expires_at IS NOT NULL)),
+    CHECK ((active = 1) = (released_at IS NULL))
+);
+
+CREATE INDEX IF NOT EXISTS current_rendition_roots_target
+    ON current_rendition_roots(target_kind, target_id, root_kind);
+CREATE INDEX IF NOT EXISTS current_rendition_roots_expiry
+    ON current_rendition_roots(expires_at)
+    WHERE expires_at IS NOT NULL;
+
+-- Purge suppression is durable logical authority. It prevents startup legacy
+-- convergence from silently recreating an exact purged derivative. A later
+-- explicit authorization supersedes, rather than deletes, that history.
+CREATE TABLE IF NOT EXISTS derivative_purge_suppressions (
+    source_sha256        TEXT NOT NULL,
+    profile_fingerprint  TEXT NOT NULL,
+    build_id             TEXT NOT NULL,
+    purged_at            TEXT NOT NULL,
+    active               INTEGER NOT NULL CHECK (active IN (0, 1)),
+    superseded_at        TEXT,
+    superseding_build_id TEXT,
+    PRIMARY KEY (source_sha256, profile_fingerprint, build_id),
+    CHECK ((active = 1) = (superseded_at IS NULL AND superseding_build_id IS NULL))
+);
+
+CREATE TABLE IF NOT EXISTS rendition_blob_staging (
+    blob_hash TEXT PRIMARY KEY REFERENCES blobs(hash) ON DELETE CASCADE
+);
+
+-- Logical purge and physical erasure are separate crash boundaries. Pending
+-- hashes remain durable until location-aware collection deletes the blob row.
+CREATE TABLE IF NOT EXISTS derivative_blob_purge_pending (
+    blob_hash TEXT PRIMARY KEY REFERENCES blobs(hash) ON DELETE CASCADE
+);
+
+-- Packed erasure targets outlive the blob rows whose dead bytes they contain.
+-- Repack deletes each receipt through the source pack's cascading retirement
+-- only after the old immutable pack file is absent.
+CREATE TABLE IF NOT EXISTS derivative_pack_purge_pending (
+    store_id TEXT NOT NULL,
+    pack_id  TEXT NOT NULL,
+    PRIMARY KEY (store_id, pack_id),
+    FOREIGN KEY (store_id, pack_id) REFERENCES blob_packs(store_id, pack_id) ON DELETE CASCADE
+);
+
+CREATE TRIGGER IF NOT EXISTS content_versions_promote_rendition_staging
+AFTER INSERT ON content_versions BEGIN
+    DELETE FROM rendition_blob_staging WHERE blob_hash=NEW.blob_hash;
+END;
+
+CREATE TRIGGER IF NOT EXISTS content_versions_revoke_derivative_purge
+AFTER INSERT ON content_versions BEGIN
+    DELETE FROM derivative_blob_purge_pending WHERE blob_hash=NEW.blob_hash;
+END;
+
+CREATE INDEX IF NOT EXISTS derivative_purge_suppressions_active_source
+    ON derivative_purge_suppressions(source_sha256, profile_fingerprint)
+    WHERE active = 1;
 
 CREATE TRIGGER IF NOT EXISTS processing_profiles_immutable_update
 BEFORE UPDATE ON processing_profiles BEGIN

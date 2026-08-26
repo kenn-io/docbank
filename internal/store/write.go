@@ -301,7 +301,7 @@ func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64, physical ...Bl
 }
 
 func (s *Store) createFileTx(
-	tx *sql.Tx, parentID int64, name, blobHash string, size int64, mimeType string,
+	ctx context.Context, tx *sql.Tx, parentID int64, name, blobHash string, size int64, mimeType string,
 	physical ...BlobPhysical,
 ) (Node, ContentVersion, error) {
 	operation, err := newContentVersionOperation()
@@ -309,13 +309,13 @@ func (s *Store) createFileTx(
 		return Node{}, ContentVersion{}, err
 	}
 	created, version, err := s.createFileWithOperationTx(
-		tx, parentID, name, blobHash, size, mimeType, operation, physical...,
+		ctx, tx, parentID, name, blobHash, size, mimeType, operation, physical...,
 	)
 	return created, version, err
 }
 
 func (s *Store) createFileWithOperationTx(
-	tx *sql.Tx, parentID int64, name, blobHash string, size int64, mimeType string,
+	ctx context.Context, tx *sql.Tx, parentID int64, name, blobHash string, size int64, mimeType string,
 	operation contentVersionOperation, physical ...BlobPhysical,
 ) (Node, ContentVersion, error) {
 	if err := validateUTF8Field("content MIME type", mimeType); err != nil {
@@ -357,7 +357,7 @@ func (s *Store) createFileWithOperationTx(
 		return Node{}, ContentVersion{}, fmt.Errorf(
 			"recording initial content version for node %d: %w", id, err)
 	}
-	if err := queueTextExtractionTx(tx, operation.versionID, blobHash, mimeType); err != nil {
+	if err := queueTextExtractionTx(ctx, tx, operation.versionID, blobHash, mimeType); err != nil {
 		return Node{}, ContentVersion{}, err
 	}
 	if err := bumpRevisionTx(tx, parentID, operation.recordedAt); err != nil {
@@ -402,7 +402,7 @@ func (s *Store) CreateFileWithReceipt(
 		}
 		if !active {
 			receipt.Node, receipt.Version, err = s.createFileTx(
-				tx, parentID, name, blobHash, size, mimeType, physical...,
+				ctx, tx, parentID, name, blobHash, size, mimeType, physical...,
 			)
 			if err != nil {
 				return err
@@ -423,7 +423,7 @@ func (s *Store) CreateFileWithReceipt(
 			return err
 		}
 		receipt.Node, receipt.Version, err = s.createFileWithOperationTx(
-			tx, parentID, name, blobHash, size, mimeType, operation, physical...,
+			ctx, tx, parentID, name, blobHash, size, mimeType, operation, physical...,
 		)
 		if err != nil {
 			return err

@@ -233,6 +233,35 @@ func TestTrashEmpty(t *testing.T) {
 	assert.Equal(t, 1, blobCount)
 }
 
+func TestTrashEmptyRemovesProcessedDocumentRenditionAttachment(t *testing.T) {
+	s, versions := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	profile := catalogProcessingProfile(t, false)
+	build := catalogRenditionBuild(s, profile)
+	require.NoError(t, s.StageRenditionBuild(ctx, build))
+	attachment := RenditionAttachmentRecord{
+		ID: catalogAttachmentFirst, VaultID: s.VaultID(),
+		ContentVersionID: versions[0], BuildID: build.ID, Profile: profile,
+		AttachedAt: "2026-08-24T15:10:00.000000000Z",
+	}
+	require.NoError(t, publishAttachmentForTest(t, s, attachment))
+
+	node, err := s.NodeByPath(ctx, "/synthetic-source-a.pdf")
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, node.ID, node.Revision)
+	require.NoError(t, err)
+	report, err := s.TrashEmpty(ctx, 0, true)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), report.Deleted)
+
+	var attachments, heads, builds int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_attachments`).Scan(&attachments))
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_heads`).Scan(&heads))
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_builds`).Scan(&builds))
+	assert.Equal(t, []int{0, 0, 1}, []int{attachments, heads, builds},
+		"permanent document deletion revokes version authority while immutable builds remain for GC")
+}
+
 func TestVaultEmptyTrashBoundedStore(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()

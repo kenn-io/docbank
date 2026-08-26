@@ -184,6 +184,20 @@ type RenditionView struct {
 	Build      RenditionBuildRecord
 }
 
+// ValidateProcessingProfileRecord applies the complete canonical profile
+// contract without mutating catalog state.
+func ValidateProcessingProfileRecord(record ProcessingProfileRecord) error {
+	_, err := normalizeProcessingProfileRecord(record)
+	return err
+}
+
+// ValidateRenditionBuildRecord applies the complete immutable build and
+// captured-artifact contract without requiring physical blob authority.
+func ValidateRenditionBuildRecord(record RenditionBuildRecord) error {
+	_, err := normalizeRenditionBuildRecord(record)
+	return err
+}
+
 // StageRenditionBuild inserts or exactly reuses one completed immutable build.
 // No head can reach it until a separately authorized attachment is published.
 func (s *Store) StageRenditionBuild(ctx context.Context, record RenditionBuildRecord) error {
@@ -196,10 +210,59 @@ func (s *Store) StageRenditionBuild(ctx context.Context, record RenditionBuildRe
 			normalized.VaultID, s.vaultID)
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		if err := validateRenditionBuildBlobAuthorityTx(ctx, tx, normalized); err != nil {
+		return stageRenditionBuildTx(ctx, tx, normalized)
+	})
+}
+
+// StageRenditionBuildWithRoot atomically records a complete immutable build
+// and the exact fenced authority that protects it from concurrent maintenance.
+func (s *Store) StageRenditionBuildWithRoot(
+	ctx context.Context, record RenditionBuildRecord, root CurrentRenditionRoot,
+) error {
+	normalized, err := normalizeRenditionBuildRecord(record)
+	if err != nil {
+		return fmt.Errorf("staging rooted rendition build: %w", err)
+	}
+	if normalized.VaultID != s.vaultID {
+		return fmt.Errorf("staging rooted rendition build: vault %q does not match store vault %q",
+			normalized.VaultID, s.vaultID)
+	}
+	if err := validateCurrentRenditionRoot(root); err != nil {
+		return err
+	}
+	if root.TargetKind != RenditionRootBuild || root.TargetID != normalized.ID {
+		return errors.New("rooted rendition build requires a root for the staged build")
+	}
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		if err := stageRenditionBuildTx(ctx, tx, normalized); err != nil {
 			return err
 		}
-		result, err := tx.ExecContext(ctx, `
+		return putCurrentRenditionRootTx(ctx, tx, root)
+	})
+}
+
+func stageRenditionBuildTx(
+	ctx context.Context, tx *sql.Tx, normalized RenditionBuildRecord,
+) error {
+	suppressed, err := derivativeBuildSuppressedTx(
+		ctx, tx, normalized.SourceSHA256, normalized.ID)
+	if err != nil {
+		return fmt.Errorf("checking rendition build purge suppression: %w", err)
+	}
+	if suppressed {
+		return fmt.Errorf("rendition build %s has an active purge suppression", normalized.ID)
+	}
+	if err := validateRenditionBuildBlobAuthorityTx(ctx, tx, normalized); err != nil {
+		return err
+	}
+	for _, artifact := range normalized.Artifacts {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM rendition_blob_staging WHERE blob_hash=?`, artifact.BlobHash,
+		); err != nil {
+			return fmt.Errorf("committing rendition artifact blob %s: %w", artifact.BlobHash, err)
+		}
+	}
+	result, err := tx.ExecContext(ctx, `
 			INSERT OR IGNORE INTO rendition_builds(
 				build_id,vault_uid,source_sha256,rendition_request_fingerprint,
 				evidence_lexical_fingerprint,captured_artifact_policy_fingerprint,
@@ -207,55 +270,54 @@ func (s *Store) StageRenditionBuild(ctx context.Context, record RenditionBuildRe
 				provider_receipt_json,evidence_checksum,rendition_checksum,markdown_checksum,
 				completeness,partial_success,truncated,warnings_json,completed_at,
 				declared_artifact_count,unit_count,lexical_segment_count
-			) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-			normalized.ID, normalized.VaultID, normalized.SourceSHA256,
-			normalized.RenditionRequestFingerprint, normalized.EvidenceLexicalFingerprint,
-			normalized.CapturedArtifactPolicyFingerprint, string(normalized.CapturedArtifactPolicy),
-			normalized.AuthorizationChecksum, normalized.ProviderOperationID,
-			string(normalized.ProviderReceipt), normalized.EvidenceChecksum,
-			normalized.RenditionChecksum, normalized.MarkdownChecksum,
-			normalized.Completeness, normalized.PartialSuccess, normalized.Truncated,
-			mustCatalogJSON(normalized.Warnings), normalized.CompletedAt,
-			normalized.DeclaredArtifactCount, len(normalized.Units), len(normalized.LexicalSegments),
-		)
-		if err != nil {
-			return fmt.Errorf("inserting rendition build %s: %w", normalized.ID, err)
-		}
-		inserted, err := result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("checking rendition build %s insertion: %w", normalized.ID, err)
-		}
-		if inserted == 0 {
-			stored, loadErr := loadRenditionBuild(ctx, tx, normalized.ID)
-			if errors.Is(loadErr, ErrNotFound) {
-				var existingID string
-				identityErr := tx.QueryRowContext(ctx, `
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		normalized.ID, normalized.VaultID, normalized.SourceSHA256,
+		normalized.RenditionRequestFingerprint, normalized.EvidenceLexicalFingerprint,
+		normalized.CapturedArtifactPolicyFingerprint, string(normalized.CapturedArtifactPolicy),
+		normalized.AuthorizationChecksum, normalized.ProviderOperationID,
+		string(normalized.ProviderReceipt), normalized.EvidenceChecksum,
+		normalized.RenditionChecksum, normalized.MarkdownChecksum,
+		normalized.Completeness, normalized.PartialSuccess, normalized.Truncated,
+		mustCatalogJSON(normalized.Warnings), normalized.CompletedAt,
+		normalized.DeclaredArtifactCount, len(normalized.Units), len(normalized.LexicalSegments),
+	)
+	if err != nil {
+		return fmt.Errorf("inserting rendition build %s: %w", normalized.ID, err)
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking rendition build %s insertion: %w", normalized.ID, err)
+	}
+	if inserted == 0 {
+		stored, loadErr := loadRenditionBuild(ctx, tx, normalized.ID)
+		if errors.Is(loadErr, ErrNotFound) {
+			var existingID string
+			identityErr := tx.QueryRowContext(ctx, `
 					SELECT build_id FROM rendition_builds
 					WHERE vault_uid=? AND source_sha256=?
 					  AND rendition_request_fingerprint=?
 					  AND evidence_lexical_fingerprint=?
 					  AND captured_artifact_policy_fingerprint=?`,
-					normalized.VaultID, normalized.SourceSHA256,
-					normalized.RenditionRequestFingerprint, normalized.EvidenceLexicalFingerprint,
-					normalized.CapturedArtifactPolicyFingerprint,
-				).Scan(&existingID)
-				if identityErr == nil {
-					return fmt.Errorf("rendition build identity already belongs to immutable build %s", existingID)
-				}
+				normalized.VaultID, normalized.SourceSHA256,
+				normalized.RenditionRequestFingerprint, normalized.EvidenceLexicalFingerprint,
+				normalized.CapturedArtifactPolicyFingerprint,
+			).Scan(&existingID)
+			if identityErr == nil {
+				return fmt.Errorf("rendition build identity already belongs to immutable build %s", existingID)
 			}
-			if loadErr != nil {
-				return loadErr
-			}
-			if !reflect.DeepEqual(stored, normalized) {
-				return fmt.Errorf("rendition build %s names different immutable metadata", normalized.ID)
-			}
-			return validateRenditionBuildStateTx(ctx, tx, normalized.ID)
 		}
-		if err := insertRenditionBuildChildrenTx(ctx, tx, normalized); err != nil {
-			return err
+		if loadErr != nil {
+			return loadErr
+		}
+		if !reflect.DeepEqual(stored, normalized) {
+			return fmt.Errorf("rendition build %s names different immutable metadata", normalized.ID)
 		}
 		return validateRenditionBuildStateTx(ctx, tx, normalized.ID)
-	})
+	}
+	if err := insertRenditionBuildChildrenTx(ctx, tx, normalized); err != nil {
+		return err
+	}
+	return validateRenditionBuildStateTx(ctx, tx, normalized.ID)
 }
 
 func validateRenditionArtifactRolesForProfile(
@@ -264,6 +326,9 @@ func validateRenditionArtifactRolesForProfile(
 	var profile document.ProcessingProfileV1
 	if err := json.Unmarshal(record.CanonicalProfile, &profile, json.RejectUnknownMembers(true)); err != nil {
 		return fmt.Errorf("decoding attachment processing profile: %w", err)
+	}
+	if profile.Rendition == nil {
+		return errors.New("rendition attachment profile lacks a rendition binding")
 	}
 	requested := make(map[document.EvidenceArtifactRole]bool, len(profile.Rendition.RequestedArtifacts))
 	for _, role := range profile.Rendition.RequestedArtifacts {
@@ -330,6 +395,9 @@ func (s *Store) ActiveRendition(
 	view.Build, err = loadRenditionBuild(ctx, tx, view.Attachment.BuildID)
 	if err != nil {
 		return RenditionView{}, fmt.Errorf("reading active rendition build: %w", err)
+	}
+	if err := validateRenditionArtifactRolesForProfile(view.Attachment.Profile, view.Build); err != nil {
+		return RenditionView{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return RenditionView{}, fmt.Errorf("closing active rendition snapshot: %w", err)

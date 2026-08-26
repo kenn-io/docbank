@@ -622,7 +622,12 @@ func TestProcessingMetadataOpenRejectsPartialSchemas(t *testing.T) {
 			"rendition_heads", "rendition_attachments", "rendition_lexical_segments",
 			"rendition_units", "rendition_artifacts", "rendition_builds",
 		},
-		"six of seven tables": {"rendition_heads"},
+		"six of seven tables":                {"rendition_heads"},
+		"missing current roots":              {"current_rendition_roots"},
+		"missing purge suppressions":         {"derivative_purge_suppressions"},
+		"missing provider staging":           {"rendition_blob_staging"},
+		"missing pending derivative erasure": {"derivative_blob_purge_pending"},
+		"missing pending pack erasure":       {"derivative_pack_purge_pending"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "partial.db")
@@ -647,6 +652,30 @@ func TestProcessingMetadataOpenRejectsPartialSchemas(t *testing.T) {
 			require.ErrorContains(t, err, "processing")
 		})
 	}
+}
+
+func TestProcessingMetadataOpenRejectsPartialLexicalSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "partial-lexical.db")
+	driver := DefaultSQLiteDriver()
+	current, err := openCurrentStore(path, driver)
+	require.NoError(t, err)
+	_, err = current.db.Exec(lexicalProjectionSchema)
+	require.NoError(t, err)
+	require.NoError(t, current.Close())
+
+	db, err := driver.Open(path, docsqlite.OpenOptions{
+		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+	})
+	require.NoError(t, err)
+	_, err = db.Exec(`DROP TABLE rendition_lexical_generation_builds`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	opened, err := openCurrentStore(path, driver)
+	if opened != nil {
+		require.NoError(t, opened.Close())
+	}
+	require.ErrorContains(t, err, "lexical")
 }
 
 func TestProcessingMetadataOpenRejectsMismatchedCompleteSchemas(t *testing.T) {
@@ -811,6 +840,31 @@ func publishRenditionForTest(
 		AttachmentID:                 attachment.ID,
 		PublishedAt:                  publishedAt,
 	}, generation.ID)
+}
+
+func publishAttachmentForTest(
+	t *testing.T, s *Store, attachment RenditionAttachmentRecord,
+) error {
+	t.Helper()
+	var generationID string
+	err := s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		rows, err := readCatalogLexicalManifestRowsTx(t.Context(), tx, "")
+		if err != nil {
+			return err
+		}
+		buildIDs, err := lexicalCatalogBuildIDsTx(t.Context(), tx)
+		if err != nil {
+			return err
+		}
+		generationID = lexicalReplacementGenerationID(rows, buildIDs)
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return publishRenditionForTest(
+		t, s, attachment, nowRFC3339(), generationID,
+	)
 }
 
 func seedRenditionCatalogVersions(t *testing.T, s *Store) []string {

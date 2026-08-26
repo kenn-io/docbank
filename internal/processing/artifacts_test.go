@@ -6,18 +6,22 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/blob"
+	"go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -75,6 +79,22 @@ func TestPublishRenditionAcceptsNilBuildWarnings(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestPublishRenditionRejectsLexicalSegmentLimitOutsideCanonicalProfile(t *testing.T) {
+	fixture := newPublicationFixture(t)
+	publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
+	require.NoError(t, err)
+	staged := fixture.stage(t,
+		publicationIDs{"b1", "51", "91"}, "short searchable evidence", "short markdown",
+	)
+	normalization, err := document.NewNormalizePolicy(100_000)
+	require.NoError(t, err)
+	staged.RenditionPolicy, err = document.NewRenditionPolicy(normalization, 4_000)
+	require.NoError(t, err)
+
+	_, err = publisher.PublishRendition(t.Context(), staged)
+	require.ErrorContains(t, err, "canonical profile max segment runes")
+}
+
 func TestPublishRenditionRejectsArtifactReceiptMismatchBeforeCatalogAuthority(t *testing.T) {
 	// Mutation caught: trusting declared size instead of the verified CAS
 	// receipt would grant catalog authority to bytes from a rejected candidate.
@@ -89,13 +109,123 @@ func TestPublishRenditionRejectsArtifactReceiptMismatchBeforeCatalogAuthority(t 
 
 	_, err = publisher.PublishRendition(t.Context(), staged)
 	require.Error(t, err)
-	_, err = fixture.catalog.PhysicalContent(t.Context(), actualHash)
-	require.ErrorIs(t, err, store.ErrNotFound,
-		"a rejected receipt must not gain catalog-authorized membership")
+	snapshot, err := fixture.catalog.BeginMetadataSnapshot(t.Context())
+	require.NoError(t, err)
+	var authorized int
+	require.NoError(t, snapshot.QueryRowContext(t.Context(), store.BackupBlobAuthorityCTE+
+		`SELECT COUNT(*) FROM backup_authorized_blobs WHERE hash=?`, actualHash).Scan(&authorized))
+	require.NoError(t, snapshot.Close())
+	assert.Zero(t, authorized, "a rejected receipt must remain non-backup staging")
+	purged, err := fixture.catalog.PurgeDerivatives(t.Context(), store.PurgeRequest{})
+	require.NoError(t, err)
+	assert.Contains(t, purged.PhysicalDerivativeBlobsPendingGC, actualHash,
+		"abandoned receipt bytes must remain discoverable for exact physical erasure")
 	_, err = fixture.catalog.ActiveRendition(
 		t.Context(), fixture.versionID, fixture.profile.Fingerprint,
 	)
 	require.ErrorIs(t, err, store.ErrNotFound)
+}
+
+func TestPublishRenditionRejectsRetentionAndConcreteProfileBoundsBeforeWriting(t *testing.T) {
+	for _, testCase := range []struct {
+		name   string
+		want   string
+		mutate func(*testing.T, *StagedRendition)
+	}{
+		{
+			name: "invalid captured artifact policy",
+			want: "captured artifact policy fingerprint",
+			mutate: func(_ *testing.T, staged *StagedRendition) {
+				staged.Build.CapturedArtifactPolicy = jsontext.Value(`{"roles":[],"version":1}`)
+			},
+		},
+		{
+			name: "sanitized markdown retention disabled",
+			want: "sanitized Markdown retention",
+			mutate: func(t *testing.T, staged *StagedRendition) {
+				t.Helper()
+				updateStagedProfile(t, staged, func(profile *document.ProcessingProfileV1) {
+					profile.RetentionDisclosure.RetainSanitizedMarkdown = false
+				})
+			},
+		},
+		{
+			name: "typed artifact retention disabled",
+			want: "typed artifact retention",
+			mutate: func(t *testing.T, staged *StagedRendition) {
+				t.Helper()
+				updateStagedProfile(t, staged, func(profile *document.ProcessingProfileV1) {
+					profile.RetentionDisclosure.RetainTypedArtifacts = false
+				})
+				staged.Build.Artifacts[0].Role = string(document.EvidenceArtifactStructured)
+				policy := jsontext.Value(`{"roles":[{"max_count":1,"min_count":1,"role":"sanitized_markdown"},{"max_count":1,"min_count":1,"role":"structured_evidence"}],"version":1}`)
+				staged.Build.CapturedArtifactPolicy = policy
+				staged.Build.CapturedArtifactPolicyFingerprint = processingSHA256(policy)
+			},
+		},
+		{
+			name: "provider markdown retention disabled",
+			want: "provider Markdown retention",
+			mutate: func(_ *testing.T, staged *StagedRendition) {
+				staged.Build.Artifacts[0].Role = string(document.EvidenceArtifactMarkdown)
+				policy := jsontext.Value(`{"roles":[{"max_count":1,"min_count":1,"role":"provider_markdown"},{"max_count":1,"min_count":1,"role":"sanitized_markdown"}],"version":1}`)
+				staged.Build.CapturedArtifactPolicy = policy
+				staged.Build.CapturedArtifactPolicyFingerprint = processingSHA256(policy)
+			},
+		},
+		{
+			name: "declared response bytes",
+			want: "max response bytes",
+			mutate: func(t *testing.T, staged *StagedRendition) {
+				t.Helper()
+				updateStagedProfile(t, staged, func(profile *document.ProcessingProfileV1) {
+					profile.Rendition.MaxResponseBytes = 1
+				})
+			},
+		},
+		{
+			name: "unit rune bound",
+			want: "max unit runes",
+			mutate: func(t *testing.T, staged *StagedRendition) {
+				t.Helper()
+				updateStagedProfile(t, staged, func(profile *document.ProcessingProfileV1) {
+					profile.EvidenceLexical.MaxUnitRunes = 100
+				})
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture := newPublicationFixture(t)
+			publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
+			require.NoError(t, err)
+			staged := fixture.stage(t, publicationIDs{"ba", "5a", "9a"},
+				strings.Repeat("x", 101), "bounded markdown")
+			testCase.mutate(t, &staged)
+
+			_, err = publisher.PublishRendition(t.Context(), staged)
+			require.ErrorContains(t, err, testCase.want)
+			for _, artifact := range staged.Build.Artifacts {
+				_, lookupErr := fixture.catalog.PhysicalContent(t.Context(), artifact.BlobHash)
+				require.ErrorIs(t, lookupErr, store.ErrNotFound,
+					"profile and captured-policy failures must precede retained-byte writes")
+			}
+		})
+	}
+}
+
+func TestPublishRenditionStopsReadingArtifactPastDeclaredSize(t *testing.T) {
+	fixture := newPublicationFixture(t)
+	publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
+	require.NoError(t, err)
+	staged := fixture.stage(t, publicationIDs{"bc", "5c", "9c"}, "bounded evidence", "bounded markdown")
+	oversized := bytes.NewReader(append(bytes.Repeat([]byte("x"),
+		int(staged.Build.Artifacts[0].Size)+1), bytes.Repeat([]byte("unread"), 1<<16)...))
+	staged.Artifacts[0].Payload = oversized
+
+	_, err = publisher.PublishRendition(t.Context(), staged)
+	require.ErrorContains(t, err, "does not match catalog")
+	assert.Greater(t, oversized.Len(), 1<<16,
+		"publication must stop after the declared artifact size plus one byte")
 }
 
 func TestPublishRenditionRejectsForgedProducerGraph(t *testing.T) {
@@ -203,6 +333,12 @@ func TestPublishRenditionRejectsForgedProducerGraph(t *testing.T) {
 
 			_, err = publisher.PublishRendition(t.Context(), staged)
 			require.ErrorContains(t, err, testCase.want)
+			purged, purgeErr := fixture.catalog.PurgeDerivatives(t.Context(), store.PurgeRequest{})
+			require.NoError(t, purgeErr)
+			for _, artifact := range staged.Build.Artifacts {
+				assert.Contains(t, purged.PhysicalDerivativeBlobsPendingGC, artifact.BlobHash,
+					"graph rejection must leave every written receipt under exact erasure authority")
+			}
 			_, err = fixture.catalog.ActiveRendition(
 				t.Context(), fixture.versionID, fixture.profile.Fingerprint,
 			)
@@ -257,6 +393,55 @@ func TestPublishRenditionFailureAfterCatalogStagePreservesPriorHeads(t *testing.
 		"the injected failure occurs after the immutable build is staged")
 }
 
+func TestPublishRenditionExcludesDerivativePurgeAcrossEveryStagingBoundary(t *testing.T) {
+	for _, boundary := range []string{"receipt", "build", "lexical"} {
+		t.Run(boundary, func(t *testing.T) {
+			fixture := newPublicationFixture(t)
+			blocking := &blockingPublicationCatalog{
+				renditionPublicationCatalog: fixture.catalog,
+				boundary:                    boundary, reached: make(chan struct{}), release: make(chan struct{}),
+			}
+			publisher, err := NewArtifactPublisher(blocking, fixture.blobs)
+			require.NoError(t, err)
+			staged := fixture.stage(t, publicationIDs{"bc", "5c", "9c"},
+				"concurrent synthetic evidence", "concurrent markdown")
+			publicationDone := make(chan error, 1)
+			go func() {
+				_, publishErr := publisher.PublishRendition(t.Context(), staged)
+				publicationDone <- publishErr
+			}()
+			<-blocking.reached
+
+			purgeDone := make(chan error, 1)
+			go func() {
+				_, purgeErr := maintenance.PurgeDerivatives(
+					t.Context(), fixture.catalog, fixture.blobs, store.PurgeRequest{})
+				purgeDone <- purgeErr
+			}()
+			require.Eventually(t, func() bool {
+				probeCtx, cancel := context.WithTimeout(t.Context(), 5*time.Millisecond)
+				defer cancel()
+				return errors.Is(fixture.blobs.WithMutation(probeCtx, func() error { return nil }),
+					context.DeadlineExceeded)
+			}, time.Second, time.Millisecond,
+				"purge must queue exclusive maintenance behind the in-flight publication")
+			select {
+			case purgeErr := <-purgeDone:
+				require.Failf(t, "purge completed during publication", "error: %v", purgeErr)
+			default:
+			}
+
+			close(blocking.release)
+			require.NoError(t, <-publicationDone)
+			require.NoError(t, <-purgeDone)
+			view, err := fixture.catalog.ActiveRendition(
+				t.Context(), fixture.versionID, fixture.profile.Fingerprint)
+			require.NoError(t, err)
+			assert.Equal(t, staged.Build.ID, view.Build.ID)
+		})
+	}
+}
+
 type publicationFixture struct {
 	catalog         *store.Store
 	blobs           *blob.Store
@@ -293,7 +478,7 @@ func newPublicationFixture(t *testing.T) publicationFixture {
 	require.NoError(t, err)
 	normalizationPolicy, err := document.NewNormalizePolicy(100_000)
 	require.NoError(t, err)
-	renditionPolicy, err := document.NewRenditionPolicy(normalizationPolicy)
+	renditionPolicy, err := document.NewRenditionPolicy(normalizationPolicy, 100)
 	require.NoError(t, err)
 	return publicationFixture{
 		catalog: catalog, blobs: blobs, profile: processingProfile(t),
@@ -460,6 +645,31 @@ func processingProfile(t *testing.T) store.ProcessingProfileRecord {
 	}
 }
 
+func updateStagedProfile(
+	t *testing.T, staged *StagedRendition, mutate func(*document.ProcessingProfileV1),
+) {
+	t.Helper()
+	var profile document.ProcessingProfileV1
+	require.NoError(t, json.Unmarshal(
+		staged.Attachment.Profile.CanonicalProfile, &profile, json.RejectUnknownMembers(true)))
+	mutate(&profile)
+	canonical, fingerprints, err := document.CanonicalProfile(profile)
+	require.NoError(t, err)
+	staged.Attachment.Profile = store.ProcessingProfileRecord{
+		Fingerprint: fingerprints.Profile, CanonicalProfile: jsontext.Value(canonical),
+		RenditionRequestFingerprint:    fingerprints.RenditionRequest,
+		EvidenceLexicalFingerprint:     fingerprints.EvidenceLexical,
+		RetentionDisclosureFingerprint: fingerprints.RetentionDisclosure,
+		AttachmentPolicyFingerprint:    profile.RetentionDisclosure.AttachmentPolicyFingerprint,
+		ConsentFingerprint:             profile.RetentionDisclosure.ConsentFingerprint,
+		RenditionDisclosureFingerprint: profile.Rendition.DisclosureFingerprint,
+		TrustBoundary:                  profile.RetentionDisclosure.TrustBoundary,
+	}
+	staged.Head.ProcessingProfileFingerprint = fingerprints.Profile
+	staged.Build.RenditionRequestFingerprint = fingerprints.RenditionRequest
+	staged.Build.EvidenceLexicalFingerprint = fingerprints.EvidenceLexical
+}
+
 func processingBlobPhysical(t *testing.T, receipt blob.WriteReceipt) store.BlobPhysical {
 	t.Helper()
 	encoding, err := receipt.EncodingName()
@@ -491,6 +701,57 @@ type failAfterCatalogStage struct {
 	renditionPublicationCatalog
 
 	staged bool
+}
+
+type blockingPublicationCatalog struct {
+	renditionPublicationCatalog
+
+	boundary string
+	reached  chan struct{}
+	release  chan struct{}
+	once     sync.Once
+}
+
+func (c *blockingPublicationCatalog) block(boundary string) {
+	if c.boundary != boundary {
+		return
+	}
+	c.once.Do(func() {
+		close(c.reached)
+		<-c.release
+	})
+}
+
+func (c *blockingPublicationCatalog) RecordRenditionBlob(
+	ctx context.Context, hash string, size int64, physical store.BlobPhysical,
+) error {
+	if err := c.renditionPublicationCatalog.RecordRenditionBlob(
+		ctx, hash, size, physical); err != nil {
+		return err
+	}
+	c.block("receipt")
+	return nil
+}
+
+func (c *blockingPublicationCatalog) StageRenditionBuild(
+	ctx context.Context, record store.RenditionBuildRecord,
+) error {
+	if err := c.renditionPublicationCatalog.StageRenditionBuild(ctx, record); err != nil {
+		return err
+	}
+	c.block("build")
+	return nil
+}
+
+func (c *blockingPublicationCatalog) StageLexicalGeneration(
+	ctx context.Context, generationID string,
+) (store.LexicalGeneration, error) {
+	generation, err := c.renditionPublicationCatalog.StageLexicalGeneration(ctx, generationID)
+	if err != nil {
+		return store.LexicalGeneration{}, err
+	}
+	c.block("lexical")
+	return generation, nil
 }
 
 func (c *failAfterCatalogStage) StageRenditionBuild(

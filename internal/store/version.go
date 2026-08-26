@@ -472,7 +472,7 @@ func (s *Store) replaceContentTx(
 		return Node{}, ContentVersion{}, err
 	}
 	return installContentVersionTx(
-		tx, n, blobHash, size, mimeType, "content_replace", nil,
+		ctx, tx, n, blobHash, size, mimeType, "content_replace", nil,
 	)
 }
 
@@ -536,7 +536,7 @@ func (s *Store) RevertContent(
 			return err
 		}
 		updated, version, err = installContentVersionTx(
-			tx, n, source.BlobHash, source.Size, source.MimeType, "content_revert", &source.ID,
+			ctx, tx, n, source.BlobHash, source.Size, source.MimeType, "content_revert", &source.ID,
 		)
 		return err
 	})
@@ -547,7 +547,7 @@ func (s *Store) RevertContent(
 }
 
 func installContentVersionTx(
-	tx *sql.Tx, n Node, blobHash string, size int64, mimeType, transitionKind string,
+	ctx context.Context, tx *sql.Tx, n Node, blobHash string, size int64, mimeType, transitionKind string,
 	sourceVersionID *string,
 ) (Node, ContentVersion, error) {
 	operation, err := newContentVersionOperation()
@@ -555,7 +555,7 @@ func installContentVersionTx(
 		return Node{}, ContentVersion{}, err
 	}
 	return installContentVersionWithOperationTx(
-		tx, n, blobHash, size, mimeType, transitionKind, sourceVersionID, operation,
+		ctx, tx, n, blobHash, size, mimeType, transitionKind, sourceVersionID, operation,
 	)
 }
 
@@ -580,7 +580,7 @@ func newContentVersionOperation() (contentVersionOperation, error) {
 }
 
 func installContentVersionWithOperationTx(
-	tx *sql.Tx, n Node, blobHash string, size int64, mimeType, transitionKind string,
+	ctx context.Context, tx *sql.Tx, n Node, blobHash string, size int64, mimeType, transitionKind string,
 	sourceVersionID *string, operation contentVersionOperation,
 ) (Node, ContentVersion, error) {
 	newRevision := n.Revision + 1
@@ -599,7 +599,7 @@ func installContentVersionWithOperationTx(
 		return Node{}, ContentVersion{}, fmt.Errorf(
 			"recording %s content version for node %d: %w", transitionKind, n.ID, err)
 	}
-	if err := queueTextExtractionTx(tx, operation.versionID, blobHash, mimeType); err != nil {
+	if err := queueTextExtractionTx(ctx, tx, operation.versionID, blobHash, mimeType); err != nil {
 		return Node{}, ContentVersion{}, err
 	}
 	if _, err := tx.Exec(

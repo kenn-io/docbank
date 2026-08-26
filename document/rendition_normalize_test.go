@@ -118,6 +118,44 @@ func TestNormalizedRenditionUnitChecksumIncludesEveryLocatorField(t *testing.T) 
 	}
 }
 
+func TestBuildRenditionV1BoundsLexicalSegmentsByRune(t *testing.T) {
+	evidence := normalizeRenditionEvidence(t, SourceEvidenceV1{
+		ContractVersion: SourceEvidenceContractV1,
+		Completeness:    EvidenceComplete,
+		Family:          "pdf",
+		UnitKind:        EvidenceUnitPage,
+		Units: []SourceEvidenceUnitV1{{Order: 0, Text: "ab😀cdéfgh",
+			Locator: SourceEvidenceLocatorV1{
+				Kind: EvidenceLocatorPage, IndexOrigin: EvidenceIndexOriginOne, Start: 1, End: 1,
+			}}},
+	})
+	normalization := testNormalizePolicy(t, 100)
+	normalization.maxChunkRunes = 4_000
+	normalization.chunkOverlap = 0
+	policy, err := NewRenditionPolicy(normalization, 4)
+	require.NoError(t, err)
+
+	rendered, err := BuildRenditionV1(evidence, policy)
+	require.NoError(t, err)
+	require.Len(t, rendered.LexicalSegments, 3)
+	assert.Equal(t, []int{0, 4, 8}, []int{
+		rendered.LexicalSegments[0].CharStart,
+		rendered.LexicalSegments[1].CharStart,
+		rendered.LexicalSegments[2].CharStart,
+	})
+	assert.Equal(t, []int{4, 8, 9}, []int{
+		rendered.LexicalSegments[0].CharEnd,
+		rendered.LexicalSegments[1].CharEnd,
+		rendered.LexicalSegments[2].CharEnd,
+	})
+	var joined strings.Builder
+	for _, segment := range rendered.LexicalSegments {
+		assert.LessOrEqual(t, utf8.RuneCountInString(segment.Text), 4)
+		joined.WriteString(segment.Text)
+	}
+	assert.Equal(t, rendered.Units[0].Text, joined.String())
+}
+
 func TestBuildRenditionV1DegradesGenericUnitsWithoutInventingProvenance(t *testing.T) {
 	evidence := normalizeRenditionEvidence(t, SourceEvidenceV1{
 		ContractVersion: SourceEvidenceContractV1,
@@ -1435,7 +1473,11 @@ func TestBuildRenditionV1ScalesLinearlyAtNearLimit(t *testing.T) {
 	expectedDigest := sha256.Sum256(expectedMarkdown)
 	assert.Equal(t, expectedMarkdown, rendered.Markdown)
 	assert.Equal(t, source, rendered.Units[0].Text)
-	assert.Equal(t, source, rendered.LexicalSegments[0].Text)
+	var lexical strings.Builder
+	for _, segment := range rendered.LexicalSegments {
+		lexical.WriteString(segment.Text)
+	}
+	assert.Equal(t, source, lexical.String())
 	assert.Equal(t, hex.EncodeToString(expectedDigest[:]), rendered.MarkdownChecksum)
 }
 

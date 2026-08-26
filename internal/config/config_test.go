@@ -156,10 +156,13 @@ trust_boundary = "vault-primary"
 	assert.Equal(t, []string{"semantic"}, cfg.ProcessingProfiles["archive"].Embeddings)
 	assert.Equal(t, 40, cfg.RetrievalProfiles["hybrid"].LexicalLimit)
 
-	profile, err := cfg.ProcessingProfile("archive")
+	resolved, err := cfg.ProcessingProfile("archive")
 	require.NoError(t, err)
-	assert.Equal(t, document.RetrievalPolicyV1{LexicalLimit: 40, VectorLimit: 60}, profile.Retrieval)
-	_, _, err = document.CanonicalProfile(profile)
+	assert.Equal(t, "hybrid", resolved.RetrievalName)
+	assert.Equal(t, 40, resolved.Retrieval.LexicalLimit())
+	assert.Equal(t, 60, resolved.Retrieval.VectorLimit())
+	assert.Equal(t, document.RetrievalPolicyV1{LexicalLimit: 40, VectorLimit: 60}, resolved.Document.Retrieval)
+	_, _, err = document.CanonicalProfile(resolved.Document)
 	require.NoError(t, err)
 }
 
@@ -171,7 +174,7 @@ func TestProcessingProfileReturnsCanonicalPolicy(t *testing.T) {
 
 	profile, err := cfg.ProcessingProfile("archive")
 	require.NoError(t, err)
-	assert.Equal(t, "model-Café\nrevision", profile.Embeddings[0].Model)
+	assert.Equal(t, "model-Café\nrevision", profile.Document.Embeddings[0].Model)
 }
 
 func TestProcessingProfileRejectsUnsupportedRetrievalLimit(t *testing.T) {

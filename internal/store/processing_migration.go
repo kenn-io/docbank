@@ -101,6 +101,23 @@ func (s *Store) MigrateLegacyPlainText(
 				!utf8.ValidString(row.text.String) {
 				continue
 			}
+			suppressed, err := legacyTextExtractionSuppressedTx(ctx, tx, row.blobHash)
+			if err != nil {
+				return fmt.Errorf("checking legacy derivative purge suppression: %w", err)
+			}
+			if suppressed {
+				continue
+			}
+			buildID := legacyPlainTextBuildFingerprint(
+				row.blobHash, row.extractor, row.extractorVersion, row.status,
+				[]byte(row.text.String))
+			buildSuppressed, err := derivativeBuildSuppressedTx(ctx, tx, row.blobHash, buildID)
+			if err != nil {
+				return fmt.Errorf("checking legacy build purge suppression: %w", err)
+			}
+			if buildSuppressed {
+				continue
+			}
 			if _, authorityErr := requirePhysicalAuthorityTx(tx, row.blobHash); authorityErr != nil {
 				if errors.Is(authorityErr, ErrNotFound) ||
 					errors.Is(authorityErr, ErrPhysicalAuthorityMissing) {
@@ -131,15 +148,23 @@ func (s *Store) MigrateLegacyPlainText(
 			report.MigratedBuilds++
 		}
 
-		generation, err := stageLegacyLexicalGenerationTx(ctx, tx)
-		if err != nil {
+		if err := revokeStaleLegacyPlainTextHeadsTx(
+			ctx, tx, selected, eligible, profile.Fingerprint,
+		); err != nil {
 			return err
 		}
-		report.LexicalGenerationID = generation.ID
 
 		for _, version := range selected {
 			row, ok := eligible[version.blobHash]
 			if !ok {
+				continue
+			}
+			suppressed, err := legacyDerivativeSuppressedTx(
+				ctx, tx, version.blobHash, version.versionID, profile.Fingerprint)
+			if err != nil {
+				return fmt.Errorf("checking legacy attachment purge suppression: %w", err)
+			}
+			if suppressed {
 				continue
 			}
 			buildID := legacyPlainTextBuildFingerprint(
@@ -167,6 +192,12 @@ func (s *Store) MigrateLegacyPlainText(
 			report.MigratedAttachments++
 		}
 
+		generation, err := stageLegacyLexicalGenerationTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		report.LexicalGenerationID = generation.ID
+
 		if err := compareLegacyServingCompatibilityTx(
 			ctx, tx, selected, eligible, profile.Fingerprint, generation.ID,
 		); err != nil {
@@ -181,6 +212,17 @@ func (s *Store) MigrateLegacyPlainText(
 					`DELETE FROM text_extraction_queue WHERE blob_hash=?`, blobHash,
 				); err != nil {
 					return fmt.Errorf("clearing migrated legacy plain-text work: %w", err)
+				}
+				continue
+			}
+			suppressed, err := legacyTextExtractionSuppressedTx(ctx, tx, blobHash)
+			if err != nil {
+				return fmt.Errorf("checking legacy repair purge suppression: %w", err)
+			}
+			if suppressed {
+				if _, err := tx.ExecContext(ctx,
+					`DELETE FROM text_extraction_queue WHERE blob_hash=?`, blobHash); err != nil {
+					return fmt.Errorf("clearing suppressed legacy repair work: %w", err)
 				}
 				continue
 			}
@@ -212,6 +254,74 @@ func (s *Store) MigrateLegacyPlainText(
 		return LegacyMigrationReport{}, fmt.Errorf("migrating legacy plain-text authority: %w", err)
 	}
 	return report, nil
+}
+
+func revokeStaleLegacyPlainTextHeadsTx(
+	ctx context.Context, tx *sql.Tx, selected []legacySelectedVersion,
+	eligible map[string]legacyPlainTextRow, profileFingerprint string,
+) error {
+	expected := make(map[string]string, len(selected))
+	for _, version := range selected {
+		row, ok := eligible[version.blobHash]
+		if !ok {
+			continue
+		}
+		suppressed, err := legacyDerivativeSuppressedTx(
+			ctx, tx, version.blobHash, version.versionID, profileFingerprint)
+		if err != nil {
+			return fmt.Errorf("checking legacy head purge suppression: %w", err)
+		}
+		if suppressed {
+			continue
+		}
+		buildID := legacyPlainTextBuildFingerprint(
+			row.blobHash, row.extractor, row.extractorVersion, row.status, []byte(row.text.String),
+		)
+		expected[version.versionID] = legacyPlainTextAttachmentID(version.versionID, buildID)
+	}
+	type staleHead struct{ versionID, attachmentID string }
+	stale, err := func() (_ []staleHead, retErr error) {
+		rows, err := tx.QueryContext(ctx, `
+			SELECT h.content_version_id,h.attachment_id
+			FROM rendition_heads h
+			JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
+			JOIN rendition_builds b ON b.build_id=a.build_id
+			WHERE h.profile_fingerprint=? AND b.provider_operation_id=?
+			ORDER BY h.content_version_id`, profileFingerprint, legacyPlainTextProvider)
+		if err != nil {
+			return nil, fmt.Errorf("reading legacy rendition heads for replacement: %w", err)
+		}
+		defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+		var result []staleHead
+		for rows.Next() {
+			var head staleHead
+			if err := rows.Scan(&head.versionID, &head.attachmentID); err != nil {
+				return nil, fmt.Errorf("scanning legacy rendition head for replacement: %w", err)
+			}
+			if expected[head.versionID] != head.attachmentID {
+				result = append(result, head)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("reading legacy rendition heads for replacement: %w", err)
+		}
+		return result, nil
+	}()
+	if err != nil {
+		return err
+	}
+	for _, head := range stale {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM rendition_heads
+			WHERE content_version_id=? AND profile_fingerprint=? AND attachment_id=?`,
+			head.versionID, profileFingerprint, head.attachmentID); err != nil {
+			return fmt.Errorf("revoking stale legacy rendition head %s: %w", head.attachmentID, err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM rendition_attachments
+			WHERE attachment_id=?`, head.attachmentID); err != nil {
+			return fmt.Errorf("removing stale legacy rendition attachment %s: %w", head.attachmentID, err)
+		}
+	}
+	return nil
 }
 
 func readLegacyPlainTextRows(
@@ -414,6 +524,13 @@ func legacyPlainTextAttachmentID(versionID, buildID string) string {
 func insertLegacyRenditionBuildTx(
 	ctx context.Context, tx *sql.Tx, record RenditionBuildRecord,
 ) error {
+	suppressed, err := derivativeBuildSuppressedTx(ctx, tx, record.SourceSHA256, record.ID)
+	if err != nil {
+		return fmt.Errorf("checking legacy rendition build purge suppression: %w", err)
+	}
+	if suppressed {
+		return fmt.Errorf("legacy rendition build %s has an active purge suppression", record.ID)
+	}
 	if err := validateRenditionBuildBlobAuthorityTx(ctx, tx, record); err != nil {
 		return err
 	}
@@ -520,62 +637,15 @@ func insertLegacyRenditionAttachmentTx(
 func stageLegacyLexicalGenerationTx(
 	ctx context.Context, tx *sql.Tx,
 ) (LexicalGeneration, error) {
-	if _, err := tx.ExecContext(ctx, lexicalProjectionSchema); err != nil {
-		return LexicalGeneration{}, fmt.Errorf("initializing migrated lexical projection: %w", err)
-	}
 	rows, err := readCatalogLexicalManifestRowsTx(ctx, tx, "")
 	if err != nil {
 		return LexicalGeneration{}, err
 	}
-	generation := LexicalGeneration{
-		ID: lexicalManifestDigest(rows), SegmentCount: len(rows),
-		ManifestDigest: lexicalManifestDigest(rows),
+	buildIDs, err := lexicalCatalogBuildIDsTx(ctx, tx)
+	if err != nil {
+		return LexicalGeneration{}, err
 	}
-	var existingCount int
-	var existingManifest sql.NullString
-	err = tx.QueryRowContext(ctx, `
-		SELECT g.segment_count,m.manifest_digest
-		FROM rendition_lexical_generations g
-		LEFT JOIN rendition_lexical_generation_manifests m USING(generation_id)
-		WHERE g.generation_id=?`, generation.ID,
-	).Scan(&existingCount, &existingManifest)
-	if err == nil {
-		existingRows, err := readLexicalManifestRowsTx(ctx, tx, generation.ID, "")
-		if err != nil {
-			return LexicalGeneration{}, err
-		}
-		if !existingManifest.Valid || existingCount != generation.SegmentCount ||
-			lexicalManifestDigest(existingRows) != generation.ManifestDigest {
-			return LexicalGeneration{}, fmt.Errorf(
-				"migrated lexical generation %s has a different immutable manifest", generation.ID,
-			)
-		}
-		return generation, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return LexicalGeneration{}, fmt.Errorf("reading migrated lexical generation: %w", err)
-	}
-	for _, row := range rows {
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO rendition_lexical_fts(generation_id,build_id,segment_id,text)
-			VALUES(?,?,?,?)`, generation.ID, row.buildID, row.segmentID, row.text,
-		); err != nil {
-			return LexicalGeneration{}, fmt.Errorf("building migrated lexical generation: %w", err)
-		}
-	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO rendition_lexical_generations(generation_id,segment_count,built_at)
-		VALUES(?,?,?)`, generation.ID, generation.SegmentCount, nowRFC3339(),
-	); err != nil {
-		return LexicalGeneration{}, fmt.Errorf("completing migrated lexical generation: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO rendition_lexical_generation_manifests(generation_id,manifest_digest)
-		VALUES(?,?)`, generation.ID, generation.ManifestDigest,
-	); err != nil {
-		return LexicalGeneration{}, fmt.Errorf("recording migrated lexical manifest: %w", err)
-	}
-	return generation, nil
+	return stageLexicalGenerationTx(ctx, tx, lexicalReplacementGenerationID(rows, buildIDs))
 }
 
 func compareLegacyServingCompatibilityTx(
@@ -588,9 +658,19 @@ func compareLegacyServingCompatibilityTx(
 		if version.trashed {
 			continue
 		}
-		if row, ok := eligible[version.blobHash]; ok {
-			want[version.versionID] = authority{name: version.name, text: row.text.String}
+		row, ok := eligible[version.blobHash]
+		if !ok {
+			continue
 		}
+		suppressed, err := legacyDerivativeSuppressedTx(
+			ctx, tx, version.blobHash, version.versionID, profileFingerprint)
+		if err != nil {
+			return fmt.Errorf("checking legacy compatibility purge suppression: %w", err)
+		}
+		if suppressed {
+			continue
+		}
+		want[version.versionID] = authority{name: version.name, text: row.text.String}
 	}
 	rows, err := tx.QueryContext(ctx, `
 		SELECT h.content_version_id,n.name,f.text

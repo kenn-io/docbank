@@ -666,6 +666,52 @@ func TestLexicalGenerationPublicationRejectsGenerationMissingPublishedBuild(t *t
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
+func TestLexicalGenerationRejectsOutOfOrderStagedSnapshot(t *testing.T) {
+	// Two workers may stage snapshots before either publishes. An older snapshot
+	// must not publish after a newer head because it would silently remove that
+	// headed build from the active lexical generation.
+	s, versions := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	profile := catalogProcessingProfile(t, false)
+	firstBuild := lexicalSearchBuild(s, profile, fakeHash("a8"), "first mercury authority")
+	require.NoError(t, s.StageRenditionBuild(ctx, firstBuild))
+	olderGeneration, err := s.StageLexicalGeneration(ctx, fakeHash("a9"))
+	require.NoError(t, err)
+
+	secondBuild, secondVersion := lexicalSearchReplacementBuild(
+		t, s, profile, fakeHash("aa"), "second venus authority",
+	)
+	require.NoError(t, s.StageRenditionBuild(ctx, secondBuild))
+	newerGeneration, err := s.StageLexicalGeneration(ctx, fakeHash("ab"))
+	require.NoError(t, err)
+	secondAttachment := RenditionAttachmentRecord{
+		ID: fakeHash("ac"), VaultID: s.VaultID(), ContentVersionID: secondVersion,
+		BuildID: secondBuild.ID, Profile: profile, AttachedAt: "2026-08-22T10:00:00.000000000Z",
+	}
+	require.NoError(t, s.PublishRenditionAndLexicalHeads(ctx, secondAttachment, RenditionHeadRecord{
+		ContentVersionID: secondVersion, ProcessingProfileFingerprint: profile.Fingerprint,
+		AttachmentID: secondAttachment.ID, PublishedAt: "2026-08-22T10:01:00.000000000Z",
+	}, newerGeneration.ID))
+
+	firstAttachment := RenditionAttachmentRecord{
+		ID: fakeHash("ad"), VaultID: s.VaultID(), ContentVersionID: versions[0],
+		BuildID: firstBuild.ID, Profile: profile, AttachedAt: "2026-08-22T10:02:00.000000000Z",
+	}
+	err = s.PublishRenditionAndLexicalHeads(ctx, firstAttachment, RenditionHeadRecord{
+		ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
+		AttachmentID: firstAttachment.ID, PublishedAt: "2026-08-22T10:03:00.000000000Z",
+	}, olderGeneration.ID)
+	require.ErrorContains(t, err, "current rendition head build")
+	active, err := s.ActiveLexicalGeneration(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, newerGeneration, active)
+	_, err = s.ActiveRendition(ctx, versions[0], profile.Fingerprint)
+	require.ErrorIs(t, err, ErrNotFound, "the rejected publication rolls back its rendition head")
+	hits, _, err := s.SearchPage(ctx, "venus", 10)
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+}
+
 func TestLexicalGenerationReaderLeasePinsAndEnumeratesExactRoots(t *testing.T) {
 	// Mutation caught: returning only the active generation value leaves no
 	// acquire/release lifetime or enumerable root for generation garbage collection.
@@ -855,6 +901,30 @@ func TestLexicalGenerationPublicationRejectsSameCountContentSubstitution(t *test
 		AttachmentID: attachment.ID, PublishedAt: "2026-08-22T10:01:00.000000000Z",
 	}, generationID)
 	require.ErrorContains(t, err, "immutable manifest")
+	_, err = s.ActiveLexicalGeneration(ctx)
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestLexicalGenerationPublicationRejectsMissingZeroSegmentBuildMembership(t *testing.T) {
+	s, versions := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	profile := catalogProcessingProfile(t, false)
+	generation, err := s.StageLexicalGeneration(ctx, fakeHash("9a"))
+	require.NoError(t, err)
+	build := catalogRenditionBuild(s, profile)
+	build.Units = nil
+	build.LexicalSegments = nil
+	require.NoError(t, s.StageRenditionBuild(ctx, build))
+	attachment := RenditionAttachmentRecord{
+		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
+		BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-22T10:04:00.000000000Z",
+	}
+
+	err = s.PublishRenditionAndLexicalHeads(ctx, attachment, RenditionHeadRecord{
+		ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
+		AttachmentID: attachment.ID, PublishedAt: "2026-08-22T10:05:00.000000000Z",
+	}, generation.ID)
+	require.ErrorContains(t, err, "does not exactly contain build")
 	_, err = s.ActiveLexicalGeneration(ctx)
 	require.ErrorIs(t, err, ErrNotFound)
 }
