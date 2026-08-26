@@ -677,15 +677,24 @@ func (s *Store) Open(hash string) (io.ReadSeekCloser, error) {
 
 // OpenContext is Open with cancellation for daemon request paths.
 func (s *Store) OpenContext(ctx context.Context, hash string) (io.ReadSeekCloser, error) {
+	reader, _, err := s.OpenSeekableContext(ctx, hash)
+	return reader, err
+}
+
+// OpenSeekableContext opens catalog-authorized decoded logical content and
+// preserves its logical size for range consumers.
+func (s *Store) OpenSeekableContext(
+	ctx context.Context, hash string,
+) (io.ReadSeekCloser, int64, error) {
 	parsed, err := packstore.ParseHash(hash)
 	if err != nil {
-		return nil, fmt.Errorf("blob hash %q: %w", hash, ErrInvalidHash)
+		return nil, 0, fmt.Errorf("blob hash %q: %w", hash, ErrInvalidHash)
 	}
-	reader, _, err := s.reader.Open(ctx, parsed)
+	reader, size, err := s.reader.Open(ctx, parsed)
 	if err != nil {
-		return nil, fmt.Errorf("opening blob %s: %w", hash, err)
+		return nil, 0, fmt.Errorf("opening blob %s: %w", hash, err)
 	}
-	return reader, nil
+	return reader, size, nil
 }
 
 // OpenStream returns catalog-authorized loose or packed content without

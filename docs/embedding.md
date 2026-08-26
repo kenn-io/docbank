@@ -191,6 +191,32 @@ disagrees with metadata. Metadata lookup failures retain their existing
 physical open can match both `context.Canceled` and `ErrContentUnavailable`, so
 callers that distinguish cancellation should check the context error first.
 
+`OpenVersionContentRange` selects a non-empty decoded logical byte range from
+one exact immutable version. Offsets and lengths address the same logical bytes
+described by `ContentVersion.BlobHash` and `Size`, regardless of whether current
+physical authority is raw loose, zstd-compressed loose, packed, or secondary:
+
+```go
+part, err := vault.OpenVersionContentRange(ctx, versionID,
+    docbank.ContentRangeOptions{Offset: 1 << 20, Length: 256 << 10},
+)
+if err != nil {
+    return err
+}
+defer part.Reader.Close()
+_, err = io.Copy(dst, part.Reader)
+```
+
+Raw loose content uses native filesystem offsets. Compressed loose and packed
+content may materialize a seekable representation or decode from the beginning,
+so applications should not infer constant-time physical seeking from the public
+range contract. The reader returns exactly the requested length or an error and
+holds the vault lifecycle lease until `Close`. A successful partial read proves
+catalog authorization, decoded size, and range bounds; it is not whole-object
+integrity verification. Use `OpenVersionContent` to consume and verify the full
+stream, or a maintenance verification operation when full integrity evidence is
+required.
+
 ## Traverse and mutate the tree
 
 `Children` exposes the live virtual tree without materializing an unbounded

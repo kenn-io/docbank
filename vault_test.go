@@ -90,6 +90,22 @@ func TestVaultCreateIsImmutableAndIdempotent(t *testing.T) {
 	require.Equal(created.Computed.SHA256, after.BlobHash)
 }
 
+func TestLeasedLimitedReaderShortRead(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "short.bin")
+	require.NoError(t, os.WriteFile(path, []byte("12"), 0o600))
+	source, err := os.Open(path)
+	require.NoError(t, err)
+	releases := 0
+	reader := newLeasedLimitedReader(source, 4, func() { releases++ })
+
+	body, err := io.ReadAll(reader)
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	require.Equal(t, []byte("12"), body)
+	require.NoError(t, reader.Close())
+	require.NoError(t, reader.Close())
+	require.Equal(t, 1, releases)
+}
+
 func TestNewRecoversInterruptedRestoreBeforeOpeningMetadata(t *testing.T) {
 	root := t.TempDir()
 	digest := ""

@@ -42,6 +42,9 @@ var (
 	// ErrContentConflict means immutable creation targeted an existing path
 	// with different bytes, size, media type, provenance, or node kind.
 	ErrContentConflict = errors.New("docbank immutable content conflict")
+	// ErrInvalidContentRange means a requested logical byte range falls
+	// outside its exact immutable content version.
+	ErrInvalidContentRange = errors.New("docbank invalid content range")
 
 	ErrNotFound                 = store.ErrNotFound
 	ErrExists                   = store.ErrExists
@@ -1008,6 +1011,100 @@ func (v *Vault) OpenVersionContent(ctx context.Context, versionID string) (*Vers
 		Version: fromStoreVersion(version),
 		Reader:  &leasedReader{VerifiedReadCloser: reader, release: v.lifecycle.RUnlock},
 	}, nil
+}
+
+// OpenVersionContentRange opens a bounded decoded logical byte range from one
+// exact immutable content version. Raw loose content uses native offsets;
+// compressed loose and packed content may decode or materialize from the
+// beginning. A partial range proves catalog authorization and slice bounds,
+// not whole-object integrity.
+func (v *Vault) OpenVersionContentRange(
+	ctx context.Context, versionID string, opts ContentRangeOptions,
+) (*VersionContentRange, error) {
+	if err := v.begin(); err != nil {
+		return nil, err
+	}
+	version, err := v.metadata.ContentVersionByID(ctx, versionID)
+	if err != nil {
+		v.lifecycle.RUnlock()
+		return nil, err
+	}
+	if opts.Offset < 0 || opts.Length <= 0 ||
+		opts.Offset > version.Size ||
+		opts.Length > version.Size-opts.Offset {
+		v.lifecycle.RUnlock()
+		return nil, fmt.Errorf(
+			"version %q offset=%d length=%d size=%d: %w",
+			versionID, opts.Offset, opts.Length, version.Size,
+			ErrInvalidContentRange,
+		)
+	}
+	reader, size, err := v.blobs.OpenSeekableContext(ctx, version.BlobHash)
+	if err != nil {
+		v.lifecycle.RUnlock()
+		return nil, fmt.Errorf(
+			"opening content version range %q: %w: %w",
+			versionID, ErrContentUnavailable, err,
+		)
+	}
+	if size != version.Size {
+		closeErr := reader.Close()
+		v.lifecycle.RUnlock()
+		return nil, errors.Join(fmt.Errorf(
+			"physical size %d does not match version size %d: %w",
+			size, version.Size, ErrContentUnavailable,
+		), closeErr)
+	}
+	if _, err := reader.Seek(opts.Offset, io.SeekStart); err != nil {
+		closeErr := reader.Close()
+		v.lifecycle.RUnlock()
+		return nil, errors.Join(fmt.Errorf(
+			"seeking content version range %q: %w: %w",
+			versionID, ErrContentUnavailable, err,
+		), closeErr)
+	}
+	return &VersionContentRange{
+		Version: fromStoreVersion(version),
+		Offset:  opts.Offset,
+		Length:  opts.Length,
+		Reader: newLeasedLimitedReader(
+			reader, opts.Length, v.lifecycle.RUnlock,
+		),
+	}, nil
+}
+
+type leasedLimitedReader struct {
+	source   io.ReadSeekCloser
+	limited  *io.LimitedReader
+	release  func()
+	once     sync.Once
+	closeErr error
+}
+
+func newLeasedLimitedReader(
+	source io.ReadSeekCloser, length int64, release func(),
+) *leasedLimitedReader {
+	return &leasedLimitedReader{
+		source:  source,
+		limited: &io.LimitedReader{R: source, N: length},
+		release: release,
+	}
+}
+
+func (r *leasedLimitedReader) Read(p []byte) (int, error) {
+	n, err := r.limited.Read(p)
+	if errors.Is(err, io.EOF) && r.limited.N > 0 {
+		err = io.ErrUnexpectedEOF
+	}
+	return n, err
+}
+
+func (r *leasedLimitedReader) Close() error {
+	r.once.Do(func() {
+		r.closeErr = r.source.Close()
+		r.release()
+	})
+	return r.closeErr
 }
 
 func closeContentReader(reader packstore.VerifiedReadCloser) error {
