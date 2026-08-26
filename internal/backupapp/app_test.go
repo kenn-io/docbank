@@ -2388,6 +2388,9 @@ func (s legacyMetadataSnapshot) Close() error {
 }
 
 func TestPlacementRestoreDoesNotMigrateLegacySnapshotBeforePublication(t *testing.T) {
+	// v0.14 snapshots used metadata JSONL v1 with full-table fidelity stats.
+	// That released schema had extracted_text but no rendition catalog, so its
+	// manifest cannot contain derivative_authority.
 	fixture := newArchiveFixture(t)
 	alpha, err := fixture.metadata.NodeByPath(t.Context(), "/alpha.txt")
 	require.NoError(t, err)
@@ -2399,12 +2402,15 @@ func TestPlacementRestoreDoesNotMigrateLegacySnapshotBeforePublication(t *testin
 
 	repo, err := backup.Init(filepath.Join(t.TempDir(), "legacy-placement-repo"))
 	require.NoError(t, err)
-	_, err = backup.Create(t.Context(), repo, backupapp.New("legacy-version"),
+	manifest, err := backup.Create(t.Context(), repo, backupapp.New("legacy-version"),
 		backup.CreateOptions{
 			MetadataSource: legacyMetadataSource{metadata: fixture.metadata},
 			ContentSource:  backupapp.NewContentSource(fixture.blobs),
 		})
 	require.NoError(t, err)
+	require.NotNil(t, manifest.Metadata)
+	assert.Equal(t, backupapp.MetadataFormat, manifest.Metadata.Format)
+	assert.NotContains(t, string(manifest.Stats), `"derivative_authority"`)
 
 	target := filepath.Join(t.TempDir(), "restored")
 	_, err = backupapp.RestoreWithPlacement(

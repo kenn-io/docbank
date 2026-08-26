@@ -62,10 +62,11 @@ func Open(path string, drivers ...docsqlite.Driver) (*Store, error) {
 	return s, nil
 }
 
-// OpenForRestore opens a staged restore database without migrating legacy
-// extraction state. Restore validation must observe the snapshot exactly as it
-// was imported; the ordinary Open path performs that forward migration only
-// after the restored vault has been published for normal use.
+// OpenForRestore opens a current-schema staged database built from portable
+// metadata without migrating legacy extraction state. Released on-disk schema
+// upgrades belong to the ordinary Open path; restore validation must observe
+// the logical snapshot exactly as it was imported, before that post-publication
+// migration runs.
 func OpenForRestore(path string, driver docsqlite.Driver) (*Store, error) {
 	if err := docsqlite.Validate(driver); err != nil {
 		return nil, fmt.Errorf("opening restore database: %w", err)
