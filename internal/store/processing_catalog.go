@@ -577,12 +577,18 @@ func normalizeRenditionBuildRecord(record RenditionBuildRecord) (RenditionBuildR
 	}
 	record.CapturedArtifactPolicy = capturedPolicy.canonical
 	record.ProviderReceipt = receipt
-	record.Artifacts = append([]RenditionArtifactRecord(nil), record.Artifacts...)
+	artifacts := make([]RenditionArtifactRecord, len(record.Artifacts))
+	copy(artifacts, record.Artifacts)
+	record.Artifacts = artifacts
 	sort.Slice(record.Artifacts, func(i, j int) bool {
 		return record.Artifacts[i].ID < record.Artifacts[j].ID
 	})
-	record.Units = append([]RenditionUnitRecord(nil), record.Units...)
-	record.LexicalSegments = append([]RenditionLexicalSegmentRecord(nil), record.LexicalSegments...)
+	units := make([]RenditionUnitRecord, len(record.Units))
+	copy(units, record.Units)
+	record.Units = units
+	segments := make([]RenditionLexicalSegmentRecord, len(record.LexicalSegments))
+	copy(segments, record.LexicalSegments)
+	record.LexicalSegments = segments
 	if record.DeclaredArtifactCount < 0 || record.DeclaredArtifactCount > maxRenditionArtifacts {
 		return RenditionBuildRecord{}, fmt.Errorf(
 			"declared artifact count must be between 0 and %d", maxRenditionArtifacts,

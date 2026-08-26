@@ -733,6 +733,21 @@ func TestRenditionCatalogInsertOrReuseRejectsImmutableConflicts(t *testing.T) {
 	assert.Equal(t, build.ProviderOperationID, providerOperationID)
 }
 
+func TestRenditionCatalogExactRetryCanonicalizesEmptyBuildCollections(t *testing.T) {
+	s, _ := newRenditionCatalogFixture(t)
+	build := catalogRenditionBuild(s, catalogProcessingProfile(t, false))
+	build.CapturedArtifactPolicy = jsontext.Value(`{"roles":[],"version":1}`)
+	build.CapturedArtifactPolicyFingerprint = testSHA256(build.CapturedArtifactPolicy)
+	build.DeclaredArtifactCount = 0
+	build.Artifacts = []RenditionArtifactRecord{}
+	build.Units = []RenditionUnitRecord{}
+	build.LexicalSegments = []RenditionLexicalSegmentRecord{}
+
+	require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+	require.NoError(t, s.StageRenditionBuild(t.Context(), build),
+		"an exact retry must reuse an aggregate with empty child collections")
+}
+
 func TestRenditionCatalogFailedReplacementKeepsOldHead(t *testing.T) {
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)
