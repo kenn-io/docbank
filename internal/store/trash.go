@@ -416,6 +416,39 @@ func (s *Store) trashEmpty(
 		if !run {
 			return nil
 		}
+		versionIDs, err := func() (_ []string, retErr error) {
+			versionRows, err := tx.QueryContext(ctx, `
+				WITH RECURSIVE roots(id) AS (`+selection+`),
+				doomed(id) AS (
+				  SELECT id FROM roots
+				  UNION ALL
+				  SELECT n.id FROM nodes n JOIN doomed d ON n.parent_id=d.id
+				)
+				SELECT v.version_id FROM content_versions v JOIN doomed d ON d.id=v.node_id
+				ORDER BY v.version_id`, selectionArgs...)
+			if err != nil {
+				return nil, fmt.Errorf("listing rendition authority affected by trash empty: %w", err)
+			}
+			defer func() { retErr = errors.Join(retErr, versionRows.Close()) }()
+			var result []string
+			for versionRows.Next() {
+				var versionID string
+				if err := versionRows.Scan(&versionID); err != nil {
+					return nil, fmt.Errorf("scanning rendition authority affected by trash empty: %w", err)
+				}
+				result = append(result, versionID)
+			}
+			if err := versionRows.Err(); err != nil {
+				return nil, fmt.Errorf("listing rendition authority affected by trash empty: %w", err)
+			}
+			return result, nil
+		}()
+		if err != nil {
+			return err
+		}
+		if err := deleteRenditionAuthorityForVersionsTx(ctx, tx, versionIDs); err != nil {
+			return err
+		}
 		// One trash-empty operation advances each affected tag once, even when
 		// several assignments disappear. A row-level node_tags trigger would
 		// instead expose physical cascade cardinality as revision semantics.

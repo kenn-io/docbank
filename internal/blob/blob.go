@@ -4,6 +4,8 @@ package blob
 
 import (
 	"context"
+	"crypto/md5" //nolint:gosec // Auxiliary MD5 is interoperability metadata; SHA-256 remains authoritative.
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -249,6 +251,7 @@ func ValidateOptions(opts Options) error {
 // WriteReceipt describes the physical result of one logical blob write.
 type WriteReceipt struct {
 	Hash         string
+	MD5          string
 	Size         int64
 	Encoding     packstore.LooseEncoding
 	StoredSize   int64
@@ -274,22 +277,9 @@ func New(catalog packstore.Catalog, blobsDir string) (*Store, error) {
 	return NewWithOptions(catalog, blobsDir, Options{})
 }
 
-// NewPreparedRestoreReader opens staged physical authority after a restore
-// handoff has been prepared without consuming the marker that makes a crash
-// before database publication recoverable.
-func NewPreparedRestoreReader(catalog packstore.Catalog, blobsDir string) (*Store, error) {
-	return newWithOptions(catalog, blobsDir, Options{}, false)
-}
-
 // NewWithOptions constructs the daemon-owned store with explicit physical
 // loose-storage policy.
 func NewWithOptions(catalog packstore.Catalog, blobsDir string, opts Options) (*Store, error) {
-	return newWithOptions(catalog, blobsDir, opts, true)
-}
-
-func newWithOptions(
-	catalog packstore.Catalog, blobsDir string, opts Options, recoverRestoreHandoff bool,
-) (*Store, error) {
 	if err := ValidateOptions(opts); err != nil {
 		return nil, err
 	}
@@ -304,12 +294,10 @@ func newWithOptions(
 		if err := ownership.Validate(); err != nil {
 			return nil, fmt.Errorf("reading primary filesystem ownership: %w", err)
 		}
-		if recoverRestoreHandoff {
-			if err := RecoverPrimaryRestoreHandoff(
-				context.Background(), blobsDir, &ownership, nil,
-			); err != nil {
-				return nil, fmt.Errorf("recovering primary restore ownership: %w", err)
-			}
+		if err := RecoverPrimaryRestoreHandoff(
+			context.Background(), blobsDir, &ownership, nil,
+		); err != nil {
+			return nil, fmt.Errorf("recovering primary restore ownership: %w", err)
 		}
 	}
 	coordinator := packstore.NewCoordinator()
@@ -585,6 +573,12 @@ func (s *Store) withMaintenance(ctx context.Context, fn func() error) error {
 	return errors.Join(fn(), lease.Release())
 }
 
+// WithMaintenance excludes blob mutations while a higher-level operation
+// rewrites and retires an exact physical object set.
+func (s *Store) WithMaintenance(ctx context.Context, fn func() error) error {
+	return s.withMaintenance(ctx, fn)
+}
+
 // Write streams r into durable canonical loose storage. The caller holds a
 // mutation lease across the subsequent metadata transaction.
 func (s *Store) Write(r io.Reader) (string, int64, error) {
@@ -601,7 +595,8 @@ func (s *Store) WriteContext(ctx context.Context, r io.Reader) (string, int64, e
 // representation. The caller holds a mutation lease across the subsequent
 // metadata transaction.
 func (s *Store) WriteDetailedContext(ctx context.Context, r io.Reader) (WriteReceipt, error) {
-	result, err := s.loose.Write(ctx, r, packstore.WriteOptions{
+	auxiliary := md5.New() //nolint:gosec // Interoperability-only digest; SHA-256 remains authoritative.
+	result, err := s.loose.Write(ctx, io.TeeReader(r, auxiliary), packstore.WriteOptions{
 		Durability:  packstore.DurablePublication,
 		Dedup:       packstore.VerifyTypeAndSize,
 		MaxBytes:    MaxIngestBytes,
@@ -610,7 +605,9 @@ func (s *Store) WriteDetailedContext(ctx context.Context, r io.Reader) (WriteRec
 	if err != nil {
 		return WriteReceipt{}, fmt.Errorf("writing blob: %w", err)
 	}
-	return writeReceipt(result), nil
+	receipt := writeReceipt(result)
+	receipt.MD5 = hex.EncodeToString(auxiliary.Sum(nil))
+	return receipt, nil
 }
 
 // RepairContext verifies trusted bytes against one required logical identity
@@ -649,7 +646,8 @@ func (s *Store) repairContext(
 	if err != nil {
 		return WriteReceipt{}, fmt.Errorf("blob hash %q: %w", hash, ErrInvalidHash)
 	}
-	result, err := s.loose.Repair(ctx, trusted, packstore.LooseIdentity{
+	auxiliary := md5.New() //nolint:gosec // Interoperability-only digest; SHA-256 remains authoritative.
+	result, err := s.loose.Repair(ctx, io.TeeReader(trusted, auxiliary), packstore.LooseIdentity{
 		Hash: parsed, Size: size,
 	}, packstore.RepairOptions{
 		Durability:  packstore.DurablePublication,
@@ -659,7 +657,9 @@ func (s *Store) repairContext(
 	if err != nil {
 		return WriteReceipt{}, fmt.Errorf("repairing blob %s: %w", hash, err)
 	}
-	return writeReceipt(result), nil
+	receipt := writeReceipt(result)
+	receipt.MD5 = hex.EncodeToString(auxiliary.Sum(nil))
+	return receipt, nil
 }
 
 func writeReceipt(result packstore.WriteResult) WriteReceipt {
