@@ -8,6 +8,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"time"
@@ -65,6 +66,15 @@ type GCReport struct {
 	RemovedBlobs       int
 	Removed            int
 	DryRun             bool
+}
+
+// DerivativePurgeReport separates the atomic live-catalog purge receipt from
+// the location-aware physical GC that follows it. Immutable backup repository
+// copies remain outside both mutation boundaries.
+type DerivativePurgeReport struct {
+	Purge    store.PurgeReport
+	Physical GCReport
+	Repack   RepackReport
 }
 
 type VerifyOptions struct{ Budget Budget }
@@ -224,29 +234,9 @@ func GarbageCollect(
 	report := GCReport{DryRun: opts.DryRun}
 	tracked := scan.Items
 	trackedHashes := make([]string, 0, budget.MaxObjects)
-	retirements := make([]store.GCLooseRetirement, 0, budget.MaxObjects)
 	primary, err := metadata.PrimaryBlobStore(ctx)
 	if err != nil {
 		return report, err
-	}
-	if !opts.DryRun {
-		pending, err := metadata.PendingGCLooseRetirements(ctx, budget.MaxObjects+1)
-		if err != nil {
-			return report, err
-		}
-		pendingMore := len(pending) > budget.MaxObjects
-		if pendingMore {
-			pending = pending[:budget.MaxObjects]
-		}
-		reclaimed, err := retireGCLooseItems(ctx, metadata, blobs, primary.ID, pending)
-		report.ReclaimedFiles += reclaimed
-		if err != nil {
-			return report, err
-		}
-		if len(pending) != 0 {
-			report.More = pendingMore || len(tracked) != 0 || scan.More
-			return report, nil
-		}
 	}
 	processedBytes := int64(0)
 	processed := 0
@@ -285,34 +275,22 @@ func GarbageCollect(
 		report.ReclaimableBytes += looseSize
 		processedBytes += looseSize + packedSize
 		if !opts.DryRun {
-			if err := validateUnreachableLooseLocations(blobs, primary.ID, resolution); err != nil {
+			removed, err := retireUnreachableLooseLocations(
+				ctx, blobs, primary.ID, hash, resolution,
+			)
+			if err != nil {
 				return report, err
 			}
-			for _, location := range resolution.Candidates {
-				if location.Loose == nil {
-					continue
-				}
-				retirements = append(retirements, store.GCLooseRetirement{
-					StoreID: string(location.StoreID), Hash: hash,
-					Encoding: location.Loose.Encoding,
-				})
-			}
+			report.ReclaimedFiles += removed
 		}
 		processed++
 	}
 	if !opts.DryRun && len(trackedHashes) > 0 {
-		if err := metadata.DeleteBlobRowsWithGCRetirements(
-			ctx, trackedHashes, retirements,
-		); err != nil {
+		if err := metadata.DeleteBlobRows(ctx, trackedHashes); err != nil {
 			return report, err
 		}
 		report.RemovedBlobs = len(trackedHashes)
 		report.Removed += len(trackedHashes)
-		reclaimed, err := retireGCLooseItems(ctx, metadata, blobs, primary.ID, retirements)
-		report.ReclaimedFiles += reclaimed
-		if err != nil {
-			return report, err
-		}
 	}
 	report.More = processed < len(tracked) || scan.More
 	if report.More {
@@ -325,76 +303,249 @@ func GarbageCollect(
 	return report, nil
 }
 
-func retireGCLooseItems(
+// PurgeDerivatives removes complete live derivative manifests, then physically
+// collects only the derivative and abandoned-staging hashes named by the
+// atomic purge receipt. Vault-wide GC remains a separate maintenance action.
+func PurgeDerivatives(
 	ctx context.Context,
 	metadata *store.Store,
 	blobs *blob.Store,
-	primaryStoreID string,
-	items []store.GCLooseRetirement,
-) (int, error) {
-	retired := 0
-	for _, item := range items {
-		shouldRetire, err := metadata.PrepareGCLooseRetirement(ctx, item)
+	request store.PurgeRequest,
+) (DerivativePurgeReport, error) {
+	report := DerivativePurgeReport{}
+	err := blobs.WithMaintenance(ctx, func() error {
+		purged, err := metadata.PurgeDerivatives(ctx, request)
+		report.Purge = purged
 		if err != nil {
-			return retired, err
+			return err
 		}
-		if !shouldRetire {
-			continue
+		report.Physical, err = collectExactUnreachableBlobs(
+			ctx, metadata, blobs, purged.PhysicalDerivativeBlobsPendingGC)
+		if err != nil {
+			return fmt.Errorf("collecting purged derivative blobs: %w", err)
 		}
-		removed := false
-		if item.StoreID == primaryStoreID {
-			count, err := blobs.RemoveIfExists(item.Hash.String())
-			if err != nil {
-				return retired, fmt.Errorf("retiring unreachable blob %s: %w", item.Hash, err)
-			}
-			removed = count != 0
-		} else {
-			backend, ok := blobs.WritableBackend(packstore.StoreID(item.StoreID))
-			if !ok {
-				return retired, fmt.Errorf(
-					"%w: gc cleanup store %s is not writable",
-					packstore.ErrStoreUnavailable, item.StoreID,
-				)
-			}
-			err := backend.Retire(ctx, packstore.ObjectRef{
-				LooseHash: item.Hash, LooseEncoding: item.Encoding,
-			})
-			switch {
-			case errors.Is(err, fs.ErrNotExist), errors.Is(err, packstore.ErrPhysicalMissing):
-			case err != nil:
-				return retired, fmt.Errorf(
-					"retiring unreachable blob %s from store %s: %w",
-					item.Hash, item.StoreID, err,
-				)
-			default:
-				removed = true
-			}
+		if err := retirePendingDerivativePacks(ctx, metadata, blobs, &report.Repack); err != nil {
+			return fmt.Errorf("retiring purged packed derivative bytes: %w", err)
 		}
-		if err := metadata.CompleteGCLooseRetirement(ctx, item); err != nil {
-			return retired, err
-		}
-		if removed {
-			retired++
-		}
+		return nil
+	})
+	if err != nil {
+		return report, err
 	}
-	return retired, nil
+	return report, nil
 }
 
-func validateUnreachableLooseLocations(
-	blobs *blob.Store, primaryStoreID string, resolution packstore.Resolution,
-) error {
-	for _, location := range resolution.Candidates {
-		if location.Loose == nil || location.StoreID == packstore.StoreID(primaryStoreID) {
+func collectExactUnreachableBlobs(
+	ctx context.Context, metadata *store.Store, blobs *blob.Store, hashes []string,
+) (GCReport, error) {
+	report := GCReport{}
+	if len(hashes) == 0 {
+		return report, nil
+	}
+	unreachable, err := metadata.UnreachableBlobs(ctx)
+	if err != nil {
+		return report, err
+	}
+	eligible := make(map[string]struct{}, len(unreachable))
+	for _, item := range unreachable {
+		eligible[item.Hash] = struct{}{}
+	}
+	primary, err := metadata.PrimaryBlobStore(ctx)
+	if err != nil {
+		return report, err
+	}
+	collected := make([]string, 0, len(hashes))
+	for _, candidate := range hashes {
+		if _, ok := eligible[candidate]; !ok {
 			continue
 		}
-		if _, ok := blobs.WritableBackend(location.StoreID); !ok {
-			return fmt.Errorf(
+		hash, err := packstore.ParseHash(candidate)
+		if err != nil {
+			return report, fmt.Errorf("parsing derivative GC candidate hash %s: %w", candidate, err)
+		}
+		resolution, err := metadata.ResolveBlobLocations(ctx, hash)
+		if err != nil {
+			return report, err
+		}
+		var looseSize, packedSize int64
+		var packed bool
+		for _, location := range resolution.Candidates {
+			if location.Loose != nil {
+				looseSize += location.Loose.StoredSize
+			} else if location.Pack != nil {
+				packed = true
+				packedSize += location.Pack.StoredLen
+			}
+		}
+		report.CandidateBlobs++
+		report.ReclaimableBytes += looseSize
+		if packed {
+			report.PendingPackedBlobs++
+			report.PendingPackedBytes += packedSize
+		}
+		removed, err := retireUnreachableLooseLocations(ctx, blobs, primary.ID, hash, resolution)
+		if err != nil {
+			return report, err
+		}
+		report.ReclaimedFiles += removed
+		collected = append(collected, candidate)
+	}
+	if len(collected) != 0 {
+		if err := metadata.RecordDerivativePackPurgeTargets(ctx, collected); err != nil {
+			return report, err
+		}
+		if err := metadata.DeleteBlobRows(ctx, collected); err != nil {
+			return report, err
+		}
+		report.RemovedBlobs = len(collected)
+		report.Removed = len(collected)
+	}
+	return report, nil
+}
+
+func retirePendingDerivativePacks(
+	ctx context.Context, metadata *store.Store, blobs *blob.Store, report *RepackReport,
+) error {
+	targets, err := metadata.PendingDerivativePackPurgeTargets(ctx)
+	if err != nil {
+		return err
+	}
+	for _, target := range targets {
+		if err := retireDerivativePack(ctx, metadata, blobs, target, report); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func retireDerivativePack(
+	ctx context.Context, metadata *store.Store, blobs *blob.Store,
+	target store.DerivativePackPurgeTarget, report *RepackReport,
+) error {
+	backend, ok := blobs.WritableBackend(packstore.StoreID(target.StoreID))
+	if !ok {
+		return fmt.Errorf("%w: derivative purge store %s is not writable",
+			packstore.ErrStoreUnavailable, target.StoreID)
+	}
+	entries, err := metadata.LiveDerivativePackEntries(ctx, target)
+	if err != nil {
+		return err
+	}
+	report.PacksSelected++
+	if len(entries) != 0 {
+		report.PacksRewritten++
+	}
+	for _, entry := range entries {
+		receipt, err := rewriteDerivativePackEntry(ctx, backend, entry)
+		if err != nil {
+			return fmt.Errorf("preserving live blob %s from derivative pack %s: %w",
+				entry.Hash, target.PackID, err)
+		}
+		if err := metadata.ReplaceDerivativePackEntryWithLoose(ctx, target, entry, receipt); err != nil {
+			return err
+		}
+		report.BlobsRepacked++
+		report.BytesRepacked += entry.RawLen
+	}
+	if err := backend.Retire(ctx, packstore.ObjectRef{PackID: target.PackID}); err != nil &&
+		!errors.Is(err, fs.ErrNotExist) && !errors.Is(err, packstore.ErrPhysicalMissing) {
+		return fmt.Errorf("retiring derivative pack %s in store %s: %w",
+			target.PackID, target.StoreID, err)
+	}
+	if err := metadata.CompleteDerivativePackPurge(ctx, target); err != nil {
+		return err
+	}
+	report.PacksRemoved++
+	return nil
+}
+
+func rewriteDerivativePackEntry(
+	ctx context.Context, backend packstore.Backend, entry packstore.IndexEntry,
+) (receipt packstore.LooseReceipt, retErr error) {
+	source, size, err := backend.OpenPack(ctx, entry.Hash, entry)
+	if err != nil {
+		return receipt, fmt.Errorf("opening packed blob %s: %w", entry.Hash, err)
+	}
+	defer func() { retErr = errors.Join(retErr, source.Close()) }()
+	if size != entry.RawLen {
+		return receipt, packstore.ErrPhysicalCorrupt
+	}
+	receipt, err = backend.PublishLoose(ctx, entry.Hash, source, packstore.PublishOptions{
+		ExpectedSize: entry.RawLen, SizeKnown: true, MaxBytes: entry.RawLen,
+		Durability: packstore.DurablePublication, Dedup: packstore.VerifyFullHash,
+	})
+	if err != nil {
+		return receipt, fmt.Errorf("publishing replacement loose blob %s: %w", entry.Hash, err)
+	}
+	verified, verifiedSize, err := backend.OpenLoose(ctx, entry.Hash, receipt.Location)
+	if err != nil {
+		return receipt, fmt.Errorf("opening replacement loose blob %s: %w", entry.Hash, err)
+	}
+	if verifiedSize != entry.RawLen {
+		_ = verified.Close()
+		return receipt, packstore.ErrPhysicalCorrupt
+	}
+	written, copyErr := io.Copy(io.Discard, verified)
+	verifyErr := verified.Verify()
+	closeErr := verified.Close()
+	if err := errors.Join(copyErr, verifyErr, closeErr); err != nil {
+		return receipt, err
+	}
+	if written != entry.RawLen {
+		return receipt, packstore.ErrPhysicalCorrupt
+	}
+	return receipt, nil
+}
+
+func retireUnreachableLooseLocations(
+	ctx context.Context,
+	blobs *blob.Store,
+	primaryStoreID string,
+	hash packstore.Hash,
+	resolution packstore.Resolution,
+) (int, error) {
+	backends := make(map[packstore.StoreID]packstore.Backend)
+	primaryLoose := false
+	for _, location := range resolution.Candidates {
+		if location.Loose == nil {
+			continue
+		}
+		if location.StoreID == packstore.StoreID(primaryStoreID) {
+			primaryLoose = true
+			continue
+		}
+		backend, ok := blobs.WritableBackend(location.StoreID)
+		if !ok {
+			return 0, fmt.Errorf(
 				"%w: gc cleanup store %s is not writable",
 				packstore.ErrStoreUnavailable, location.StoreID,
 			)
 		}
+		backends[location.StoreID] = backend
 	}
-	return nil
+	secondary := make([]packstore.ReadLocation, 0, len(resolution.Candidates))
+	for _, location := range resolution.Candidates {
+		if location.Loose == nil ||
+			location.StoreID == packstore.StoreID(primaryStoreID) {
+			continue
+		}
+		secondary = append(secondary, location)
+	}
+	retired, err := retireLooseCandidates(
+		secondary, func(location packstore.ReadLocation) error {
+			return backends[location.StoreID].Retire(ctx, packstore.ObjectRef{
+				LooseHash: hash, LooseEncoding: location.Loose.Encoding,
+			})
+		},
+	)
+	if err != nil {
+		return 0, fmt.Errorf("retiring unreachable blob %s: %w", hash, err)
+	}
+	if !primaryLoose {
+		return retired, nil
+	}
+	primaryRemoved, err := blobs.RemoveIfExists(hash.String())
+	return retired + primaryRemoved, err
 }
 
 func retireLooseCandidates(

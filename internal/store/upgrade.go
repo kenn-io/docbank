@@ -17,9 +17,10 @@ import (
 )
 
 const (
-	v090BackupSuffix = ".v0.9.0.bak"
-	v2BackupSuffix   = ".schema-v2.bak"
-	v3BackupSuffix   = ".schema-v3.bak"
+	v090BackupSuffix                 = ".v0.9.0.bak"
+	v2BackupSuffix                   = ".schema-v2.bak"
+	v3BackupSuffix                   = ".schema-v3.bak"
+	lastReleasedStorageSchemaVersion = 3
 )
 
 type databaseSchema struct {
@@ -138,7 +139,7 @@ func validateReleasedStorageSchemas() error {
 		versions[source.version] = true
 		suffixes[source.backupSuffix] = true
 	}
-	for version := 1; version < currentStorageSchemaVersion; version++ {
+	for version := 1; version <= lastReleasedStorageSchemaVersion; version++ {
 		if !versions[version] {
 			return fmt.Errorf("released storage schema version %d adapter is missing", version)
 		}
@@ -256,6 +257,27 @@ func validateCurrentSchemaColumns(
 			return fmt.Errorf(
 				"opening database: schema version %d has an unexpected %s layout (%s)",
 				currentStorageSchemaVersion, table, strings.Join(got, ","),
+			)
+		}
+	}
+	if err := validateCurrentEmbeddingCatalogSchema(db); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateCurrentEmbeddingCatalogSchema(db *sql.DB) error {
+	for _, table := range embeddingCatalogSchema {
+		got, err := tableColumns(db, table.name)
+		if err != nil {
+			return err
+		}
+		want := slices.Clone(table.columns)
+		slices.Sort(want)
+		if !slices.Equal(got, want) {
+			return fmt.Errorf(
+				"opening database: embedding catalog schema %s columns are invalid (%s)",
+				table.name, strings.Join(got, ","),
 			)
 		}
 	}
@@ -433,6 +455,11 @@ func cutoverReleasedDatabase(
 		_ = target.Close()
 		_ = closeSource()
 		return err
+	}
+	if _, err := target.MigrateLegacyPlainText(context.Background()); err != nil {
+		_ = target.Close()
+		_ = closeSource()
+		return fmt.Errorf("migrating %s legacy plain-text authority: %w", sourceSchema.release, err)
 	}
 	if err := target.ValidateMetadata(context.Background()); err != nil {
 		_ = target.Close()
@@ -1010,6 +1037,12 @@ func validateUpgradeStage(path string, driver docsqlite.Driver) error {
 	store, err := openCurrentStore(path, driver)
 	if err != nil {
 		return fmt.Errorf("opening interrupted upgrade staging store: %w", err)
+	}
+	if _, err := store.MigrateLegacyPlainText(context.Background()); err != nil {
+		return errors.Join(
+			fmt.Errorf("migrating interrupted upgrade staging authority: %w", err),
+			store.Close(),
+		)
 	}
 	validateErr := store.ValidateMetadata(context.Background())
 	closeErr = store.Close()

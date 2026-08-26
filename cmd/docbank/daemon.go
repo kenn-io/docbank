@@ -32,6 +32,7 @@ import (
 	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/jobs"
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 	docweb "go.kenn.io/docbank/internal/web"
 )
@@ -49,6 +50,36 @@ var daemonRunCmd = &cobra.Command{
 		}
 		return err
 	},
+}
+
+type embeddingRuntimeReadiness interface{ Ready() bool }
+
+type embeddingJobRunner interface {
+	Run(ctx context.Context) error
+}
+
+type embeddingJobStarter interface {
+	Start(name string, run func(context.Context) error) error
+}
+
+// startEmbeddingWorkerIfReady preserves the daemon's normal supervisor-owned
+// cancellation and drain lifecycle. An empty runtime registry leaves durable
+// work untouched. A ready runtime must provide a real worker; configuration
+// failures are not converted into a no-op polling loop.
+func startEmbeddingWorkerIfReady(starter embeddingJobStarter, readiness embeddingRuntimeReadiness,
+	build func() (embeddingJobRunner, error),
+) error {
+	if readiness == nil || !readiness.Ready() {
+		return nil
+	}
+	worker, err := build()
+	if err != nil {
+		return err
+	}
+	if worker == nil {
+		return errors.New("embedding worker builder returned nil")
+	}
+	return starter.Start("process:embeddings", worker.Run)
 }
 
 func runServe(ctx context.Context) (retErr error) {
@@ -136,6 +167,9 @@ func runServe(ctx context.Context) (retErr error) {
 	}
 	defer func() { _ = blobs.Close() }()
 	// Exclusive lock holder: any stale tmp file is provably abandoned.
+	if err := recoverEmbeddingRuntimeSpool(sigCtx, layout.BlobTmpDir()); err != nil {
+		return err
+	}
 	if err := blobs.CleanTmp(); err != nil {
 		return err
 	}
@@ -149,6 +183,169 @@ func runServe(ctx context.Context) (retErr error) {
 		}
 	}()
 	operationGate := api.NewOperationGate()
+	runtimeRegistry := processing.NewRenditionRuntimeRegistry()
+	embeddingRuntimeRegistry, err := configureEmbeddingRuntimes(cfg, blobs, layout.BlobTmpDir())
+	if err != nil {
+		return fmt.Errorf("configuring embedding runtimes: %w", err)
+	}
+	// Provider adapters register before this admission point. Until the daemon
+	// has one, leave restored jobs untouched instead of repeatedly claiming and
+	// delaying work that this process cannot execute.
+	if runtimeRegistry.Ready() {
+		renditionWorker, workerErr := processing.NewRenditionWorker(processing.RenditionWorkerConfig{
+			Catalog: s, Blobs: blobs, Runtime: runtimeRegistry, Gate: operationGate,
+			Owner: "daemon-rendition-worker", LeaseDuration: 5 * time.Minute,
+			IdleDelay: time.Second,
+		})
+		if workerErr != nil {
+			return fmt.Errorf("configuring rendition worker: %w", workerErr)
+		}
+		if err := jobSupervisor.Start("process:renditions", renditionWorker.Run); err != nil {
+			return fmt.Errorf("starting rendition worker: %w", err)
+		}
+	}
+	if err := startEmbeddingWorkerIfReady(jobSupervisor, embeddingRuntimeRegistry,
+		func() (embeddingJobRunner, error) {
+			worker, workerErr := processing.NewEmbeddingWorker(processing.EmbeddingWorkerConfig{
+				Catalog: s, Authority: s, Blobs: blobs, GenerationBlobs: blobs, Runtime: embeddingRuntimeRegistry,
+				Gate: operationGate, Owner: "daemon-embedding-worker",
+				LeaseDuration: 5 * time.Minute, IdleDelay: time.Second,
+				RetryLimit: 3, RetryBaseDelay: time.Second, MaxRetryDelay: 30 * time.Second,
+				AttemptLifetime: 30 * time.Minute, MaxRows: 100_000,
+				MaxDimensions: 1_048_576, MaxVectorBlobBytes: 64 << 20,
+				DescriptorFingerprints: embeddingRuntimeRegistry.Fingerprints(),
+			})
+			if workerErr != nil {
+				return nil, fmt.Errorf("configuring embedding worker: %w", workerErr)
+			}
+			return worker, nil
+		}); err != nil {
+		return err
+	}
+	if err := jobSupervisor.Start("maintenance:auxiliary-checksums", func(ctx context.Context) error {
+		cursor := ""
+		retries := newBackfillRetrySet()
+		for {
+			targets, listErr := retryDaemonList(ctx, 5*time.Second, func() (
+				[]store.BlobChecksumTarget, error,
+			) {
+				return s.MissingBlobChecksumTargetsAfter(ctx, cursor, 100)
+			}, func(err error) {
+				logger.Warn("listing auxiliary checksum targets will retry", "error", err)
+			})
+			if listErr != nil {
+				return listErr
+			}
+			if len(targets) == 0 {
+				cursor = ""
+				if len(retries) == 0 {
+					return nil
+				}
+				if err := waitDaemonJob(ctx, retries.waitDelay(time.Now().UTC(), 10*time.Second)); err != nil {
+					return err
+				}
+				continue
+			}
+			cursor = targets[len(targets)-1].BlobSHA256
+			completed := 0
+			attempted := 0
+			err := operationGate.MutateContext(ctx, func() error {
+				var batchErr error
+				for _, target := range targets {
+					now := time.Now().UTC()
+					if !retries.ready(target.BlobSHA256, now) {
+						continue
+					}
+					attempted++
+					done, targetErr := processing.BackfillAuxiliaryChecksumTargets(
+						ctx, s, blobs, []store.BlobChecksumTarget{target})
+					completed += done
+					if targetErr != nil {
+						retries.failed(target.BlobSHA256, now)
+						batchErr = errors.Join(batchErr, targetErr)
+					} else {
+						retries.succeeded(target.BlobSHA256)
+					}
+				}
+				return batchErr
+			})
+			if err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				logger.Warn("auxiliary checksum backfill will retry", "completed", completed, "error", err)
+			}
+			delay := backfillBatchWaitDelay(attempted, retries, time.Now().UTC())
+			if err := waitDaemonJob(ctx, delay); err != nil {
+				return err
+			}
+		}
+	}); err != nil {
+		return fmt.Errorf("starting auxiliary checksum backfill: %w", err)
+	}
+	if err := jobSupervisor.Start("extract:source-metadata", func(ctx context.Context) error {
+		idleDelay := time.Second
+		cursor := ""
+		retries := newBackfillRetrySet()
+		for {
+			targets, listErr := retryDaemonList(ctx, 5*time.Second, func() (
+				[]store.SourceMetadataTarget, error,
+			) {
+				return s.MissingSourceMetadataTargetsAfter(
+					ctx, processing.SourceMetadataExtractorFingerprint, cursor, 10)
+			}, func(err error) {
+				logger.Warn("listing source metadata targets will retry", "error", err)
+			})
+			if listErr != nil {
+				return listErr
+			}
+			if len(targets) == 0 {
+				cursor = ""
+				delay := retries.waitDelay(time.Now().UTC(), idleDelay)
+				if err := waitDaemonJob(ctx, delay); err != nil {
+					return err
+				}
+				idleDelay = min(idleDelay*2, 10*time.Second)
+				continue
+			}
+			cursor = targets[len(targets)-1].SourceSHA256
+			idleDelay = time.Second
+			completed := 0
+			attempted := 0
+			err := operationGate.MutateContext(ctx, func() error {
+				var batchErr error
+				for _, target := range targets {
+					now := time.Now().UTC()
+					if !retries.ready(target.SourceSHA256, now) {
+						continue
+					}
+					attempted++
+					done, targetErr := processing.BackfillSourceMetadataTargets(
+						ctx, s, blobs, []store.SourceMetadataTarget{target})
+					completed += done
+					if targetErr != nil {
+						retries.failed(target.SourceSHA256, now)
+						batchErr = errors.Join(batchErr, targetErr)
+					} else {
+						retries.succeeded(target.SourceSHA256)
+					}
+				}
+				return batchErr
+			})
+			if err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				logger.Warn("source metadata backfill will retry", "completed", completed, "error", err)
+			}
+			delay := backfillBatchWaitDelay(attempted, retries, time.Now().UTC())
+			if err := waitDaemonJob(ctx, delay); err != nil {
+				return err
+			}
+		}
+	}); err != nil {
+		return fmt.Errorf("starting source metadata backfill: %w", err)
+	}
 	placementRunner := blob.PlacementRunner{
 		Metadata: s, Blobs: blobs, Commit: operationGate.PhysicalMutate,
 	}
@@ -324,6 +521,35 @@ func runServe(ctx context.Context) (retErr error) {
 		return shutdownErr
 	}
 	return serveErr
+}
+
+func retryDaemonList[T any](
+	ctx context.Context, retryDelay time.Duration, list func() ([]T, error), onRetry func(error),
+) ([]T, error) {
+	for {
+		items, err := list()
+		if err == nil {
+			return items, nil
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		onRetry(err)
+		if err := waitDaemonJob(ctx, retryDelay); err != nil {
+			return nil, err
+		}
+	}
+}
+
+func waitDaemonJob(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func validateConfiguredWatchStores(
