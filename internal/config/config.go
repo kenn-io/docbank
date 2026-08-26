@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -130,29 +131,67 @@ type EmbeddingChunkConfig struct {
 	TruncationPolicy   string `toml:"truncation_policy"`
 }
 
+type EmbeddingModelInputEncoderConfig struct {
+	Mode     string `toml:"mode"`
+	Template string `toml:"template"`
+}
+
+type EmbeddingModelInputConfig struct {
+	Profile          string                           `toml:"profile"`
+	CompatibilityID  string                           `toml:"compatibility_id"`
+	Document         EmbeddingModelInputEncoderConfig `toml:"document"`
+	Query            EmbeddingModelInputEncoderConfig `toml:"query"`
+	QueryInstruction string                           `toml:"query_instruction"`
+}
+
+type EmbeddingRuntimeConfig struct {
+	AdapterContract        string   `toml:"adapter_contract"`
+	Endpoint               string   `toml:"endpoint"`
+	ModelRevision          string   `toml:"model_revision"`
+	DeploymentEpoch        string   `toml:"deployment_epoch"`
+	ProviderRevisionHeader string   `toml:"provider_revision_header"`
+	CapabilityManifest     string   `toml:"capability_manifest"`
+	RequestTimeout         Duration `toml:"request_timeout"`
+	MaxRequestBytes        int64    `toml:"max_request_bytes"`
+	MaxRetries             int      `toml:"max_retries"`
+	RetryBaseDelay         Duration `toml:"retry_base_delay"`
+	AllowedCIDRs           []string `toml:"allowed_cidrs"`
+	SPKISHA256             []string `toml:"spki_sha256"`
+	ProxyMode              string   `toml:"proxy_mode"`
+	ConnectTimeout         Duration `toml:"connect_timeout"`
+	KeepAlive              Duration `toml:"keep_alive"`
+	TLSHandshakeTimeout    Duration `toml:"tls_handshake_timeout"`
+}
+
+type CredentialBindingConfig struct {
+	EnvironmentVariable string `toml:"environment_variable"`
+}
+
 // EmbeddingProfileConfig names a deployment binding for one pinned embedding
 // descriptor and semantic input kind.
 type EmbeddingProfileConfig struct {
-	Activation               string               `toml:"activation"`
-	AuthorizationFingerprint string               `toml:"authorization_fingerprint"`
-	Chunk                    EmbeddingChunkConfig `toml:"chunk"`
-	CompatibilityID          string               `toml:"compatibility_id"`
-	CredentialBinding        string               `toml:"credential_binding"`
-	DescriptorID             string               `toml:"descriptor_id"`
-	DescriptorFingerprint    string               `toml:"descriptor_fingerprint"`
-	Dimensions               int                  `toml:"dimensions"`
-	DisclosureFingerprint    string               `toml:"disclosure_fingerprint"`
-	DocumentFormatter        string               `toml:"document_formatter"`
-	InputKind                string               `toml:"input_kind"`
-	MaxBatchItems            int                  `toml:"max_batch_items"`
-	MaxInputBytes            int64                `toml:"max_input_bytes"`
-	MaxResponseBytes         int64                `toml:"max_response_bytes"`
-	Metric                   string               `toml:"metric"`
-	Model                    string               `toml:"model"`
-	Normalization            string               `toml:"normalization"`
-	QueryFormatter           string               `toml:"query_formatter"`
-	ScalarEncoding           string               `toml:"scalar_encoding"`
-	TrustBoundary            string               `toml:"trust_boundary"`
+	Activation               string                    `toml:"activation"`
+	AuthorizationFingerprint string                    `toml:"authorization_fingerprint"`
+	Chunk                    EmbeddingChunkConfig      `toml:"chunk"`
+	CompatibilityID          string                    `toml:"compatibility_id"`
+	CredentialBinding        string                    `toml:"credential_binding"`
+	DescriptorID             string                    `toml:"descriptor_id"`
+	DescriptorFingerprint    string                    `toml:"descriptor_fingerprint"`
+	Dimensions               int                       `toml:"dimensions"`
+	DisclosureFingerprint    string                    `toml:"disclosure_fingerprint"`
+	DocumentFormatter        string                    `toml:"document_formatter"`
+	InputKind                string                    `toml:"input_kind"`
+	MaxBatchItems            int                       `toml:"max_batch_items"`
+	MaxInputBytes            int64                     `toml:"max_input_bytes"`
+	MaxResponseBytes         int64                     `toml:"max_response_bytes"`
+	Metric                   string                    `toml:"metric"`
+	Model                    string                    `toml:"model"`
+	Normalization            string                    `toml:"normalization"`
+	QueryFormatter           string                    `toml:"query_formatter"`
+	ScalarEncoding           string                    `toml:"scalar_encoding"`
+	TrustBoundary            string                    `toml:"trust_boundary"`
+	ModelInput               EmbeddingModelInputConfig `toml:"model_input"`
+	Runtime                  *EmbeddingRuntimeConfig   `toml:"runtime"`
 }
 
 // RetrievalProfileConfig contains bounded candidate limits for one named
@@ -194,6 +233,7 @@ type Config struct {
 	StoreBindings      map[string]StoreBindingConfig      `toml:"store_bindings"`
 	RenditionProfiles  map[string]RenditionProfileConfig  `toml:"rendition_profiles"`
 	EmbeddingProfiles  map[string]EmbeddingProfileConfig  `toml:"embedding_profiles"`
+	CredentialBindings map[string]CredentialBindingConfig `toml:"credential_bindings"`
 	RetrievalProfiles  map[string]RetrievalProfileConfig  `toml:"retrieval_profiles"`
 	ProcessingProfiles map[string]ProcessingProfileConfig `toml:"processing_profiles"`
 	Watches            []WatchConfig                      `toml:"watch"`
@@ -210,6 +250,7 @@ func Default() Config {
 		Storage:            StorageConfig{PackMaxBytes: 256 << 20},
 		RenditionProfiles:  make(map[string]RenditionProfileConfig),
 		EmbeddingProfiles:  make(map[string]EmbeddingProfileConfig),
+		CredentialBindings: make(map[string]CredentialBindingConfig),
 		RetrievalProfiles:  make(map[string]RetrievalProfileConfig),
 		ProcessingProfiles: make(map[string]ProcessingProfileConfig),
 	}
@@ -246,6 +287,13 @@ func Load(root string) (Config, error) {
 	}
 	if err := resolveWatches(&c); err != nil {
 		return Config{}, fmt.Errorf("loading %s: %w", path, err)
+	}
+	for name, profile := range c.EmbeddingProfiles {
+		if profile.Runtime == nil || profile.Runtime.CapabilityManifest == "" || filepath.IsAbs(profile.Runtime.CapabilityManifest) {
+			continue
+		}
+		profile.Runtime.CapabilityManifest = filepath.Clean(filepath.Join(root, profile.Runtime.CapabilityManifest))
+		c.EmbeddingProfiles[name] = profile
 	}
 	return c, nil
 }
@@ -409,8 +457,17 @@ var storeBindingNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
 
 var lowercaseSHA256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var credentialReferencePattern = regexp.MustCompile(`^credential:[a-z][a-z0-9_-]{0,62}$`)
+var environmentVariablePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 func validateProcessingProfiles(c Config) error {
+	for name, binding := range c.CredentialBindings {
+		if err := validateProfileName(name, fmt.Sprintf("[credential_bindings.%s]", name)); err != nil {
+			return err
+		}
+		if !environmentVariablePattern.MatchString(binding.EnvironmentVariable) {
+			return fmt.Errorf("[credential_bindings.%s] environment_variable must be a variable name", name)
+		}
+	}
 	for name, profile := range c.RenditionProfiles {
 		prefix := fmt.Sprintf("[rendition_profiles.%s]", name)
 		if err := validateProfileName(name, prefix); err != nil {
@@ -427,6 +484,12 @@ func validateProcessingProfiles(c Config) error {
 		}
 		if err := validateEmbeddingProfileConfig(profile, prefix); err != nil {
 			return err
+		}
+		if profile.Runtime != nil {
+			credentialName := strings.TrimPrefix(profile.CredentialBinding, "credential:")
+			if _, ok := c.CredentialBindings[credentialName]; !ok {
+				return fmt.Errorf("%s runtime credential binding %q is not defined", prefix, profile.CredentialBinding)
+			}
 		}
 	}
 	for name, profile := range c.RetrievalProfiles {
@@ -563,7 +626,80 @@ func validateEmbeddingProfileConfig(profile EmbeddingProfileConfig, prefix strin
 	} else if profile.Chunk != (EmbeddingChunkConfig{}) {
 		return fmt.Errorf("%s original_file input must not define chunk policy", prefix)
 	}
+	if profile.Runtime != nil {
+		runtime := profile.Runtime
+		if runtime.AdapterContract != "docbank-openai-compatible-embeddings/v1" &&
+			runtime.AdapterContract != "docbank-voyage-embeddings/v1" {
+			return fmt.Errorf("%s runtime adapter_contract is unsupported", prefix)
+		}
+		parsed, err := url.Parse(runtime.Endpoint)
+		if err != nil || parsed.User != nil || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return fmt.Errorf("%s runtime endpoint must be exact and credential-free", prefix)
+		}
+		if runtime.ModelRevision == "" || runtime.ModelRevision != strings.TrimSpace(runtime.ModelRevision) {
+			return fmt.Errorf("%s runtime model_revision is required", prefix)
+		}
+		if runtime.ConnectTimeout.Std() <= 0 || runtime.ConnectTimeout.Std() > 5*time.Minute ||
+			runtime.KeepAlive.Std() <= 0 || runtime.KeepAlive.Std() > 5*time.Minute ||
+			runtime.TLSHandshakeTimeout.Std() <= 0 || runtime.TLSHandshakeTimeout.Std() > 5*time.Minute {
+			return fmt.Errorf("%s runtime transport time bounds are invalid", prefix)
+		}
+		if runtime.MaxRequestBytes < 1 || runtime.MaxRequestBytes > 1<<30 || runtime.RequestTimeout.Std() <= 0 ||
+			runtime.RequestTimeout.Std() > 5*time.Minute || runtime.MaxRetries != 1 || runtime.RetryBaseDelay.Std() != 0 {
+			return fmt.Errorf("%s runtime request bounds or retry ownership are invalid", prefix)
+		}
+		if runtime.ProxyMode != "disabled" || len(runtime.AllowedCIDRs) == 0 {
+			return fmt.Errorf("%s runtime egress must be proxy-disabled with allowed CIDRs", prefix)
+		}
+		for _, value := range runtime.AllowedCIDRs {
+			if _, err := netip.ParsePrefix(value); err != nil {
+				return fmt.Errorf("%s runtime allowed CIDR %q is invalid", prefix, value)
+			}
+		}
+		for _, value := range runtime.SPKISHA256 {
+			if !lowercaseSHA256Pattern.MatchString(value) {
+				return fmt.Errorf("%s runtime SPKI pin must be lowercase SHA-256", prefix)
+			}
+		}
+		contract, err := embeddingModelInputContract(profile.ModelInput)
+		if err != nil || contract.CompatibilityID != profile.CompatibilityID {
+			return fmt.Errorf("%s model_input is invalid or incompatible", prefix)
+		}
+		switch runtime.AdapterContract {
+		case "docbank-openai-compatible-embeddings/v1":
+			if profile.InputKind != string(document.EmbeddingInputRenditionChunk) || runtime.CapabilityManifest != "" ||
+				(parsed.Path != "" && parsed.Path != "/") || (runtime.DeploymentEpoch == "") == (runtime.ProviderRevisionHeader == "") {
+				return fmt.Errorf("%s OpenAI-compatible runtime authority is invalid", prefix)
+			}
+			if runtime.DeploymentEpoch != "" && runtime.DeploymentEpoch != runtime.ModelRevision {
+				return fmt.Errorf("%s OpenAI-compatible deployment epoch differs from model revision", prefix)
+			}
+		case "docbank-voyage-embeddings/v1":
+			if profile.InputKind != string(document.EmbeddingInputOriginalFile) ||
+				runtime.Endpoint != "https://api.voyageai.com/v1" || runtime.CapabilityManifest == "" ||
+				!filepath.IsAbs(runtime.CapabilityManifest) || runtime.DeploymentEpoch != "" || runtime.ProviderRevisionHeader != "" {
+				return fmt.Errorf("%s Voyage runtime authority is invalid", prefix)
+			}
+		}
+	}
 	return nil
+}
+
+func embeddingModelInputContract(config EmbeddingModelInputConfig) (document.ModelInputContract, error) {
+	return document.NewModelInputContract(document.ModelInputContractConfig{
+		Profile: document.ModelInputProfile(config.Profile), CompatibilityID: config.CompatibilityID,
+		Document:         document.ModelInputEncoder{Mode: document.ModelInputMode(config.Document.Mode), Template: config.Document.Template},
+		Query:            document.ModelInputEncoder{Mode: document.ModelInputMode(config.Query.Mode), Template: config.Query.Template},
+		QueryInstruction: config.QueryInstruction,
+	})
+}
+
+func (c Config) EmbeddingModelInput(name string) (document.ModelInputContract, error) {
+	profile, ok := c.EmbeddingProfiles[name]
+	if !ok {
+		return document.ModelInputContract{}, fmt.Errorf("embedding profile %q is not defined", name)
+	}
+	return embeddingModelInputContract(profile.ModelInput)
 }
 
 // ProcessingProfile assembles one named processing profile without resolving
@@ -663,6 +799,10 @@ func renditionDocumentBinding(name string, profile RenditionProfileConfig) *docu
 }
 
 func embeddingDocumentBinding(name string, profile EmbeddingProfileConfig) document.EmbeddingBindingV1 {
+	var modelInput document.ModelInputContract
+	if profile.ModelInput != (EmbeddingModelInputConfig{}) {
+		modelInput, _ = embeddingModelInputContract(profile.ModelInput)
+	}
 	result := document.EmbeddingBindingV1{
 		Activation: document.EmbeddingActivation(profile.Activation), AuthorizationFingerprint: profile.AuthorizationFingerprint,
 		CompatibilityID: profile.CompatibilityID, CredentialBinding: profile.CredentialBinding,
@@ -672,6 +812,7 @@ func embeddingDocumentBinding(name string, profile EmbeddingProfileConfig) docum
 		MaxBatchItems: profile.MaxBatchItems, MaxInputBytes: profile.MaxInputBytes, MaxResponseBytes: profile.MaxResponseBytes,
 		Metric: profile.Metric, Model: profile.Model, Name: name, Normalization: profile.Normalization,
 		QueryFormatter: profile.QueryFormatter, ScalarEncoding: profile.ScalarEncoding, TrustBoundary: profile.TrustBoundary,
+		ModelInput: modelInput,
 	}
 	if profile.InputKind == string(document.EmbeddingInputRenditionChunk) {
 		result.Chunk = &document.EmbeddingChunkPolicyV1{

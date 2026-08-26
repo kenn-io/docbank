@@ -468,6 +468,11 @@ func (s *Store) RepairBlobAuthority(
 			return fmt.Errorf("blob %s: recorded size %d does not match repaired size %d",
 				hash, recordedSize, size)
 		}
+		if err := ensureBlobChecksumTx(tx, BlobChecksumRecord{
+			BlobSHA256: hash, MD5: storage.MD5,
+		}); err != nil {
+			return err
+		}
 		if err := tx.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM content_versions WHERE blob_hash = ?`, hash,
 		).Scan(&references); err != nil {

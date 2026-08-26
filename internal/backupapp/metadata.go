@@ -2,15 +2,20 @@ package backupapp
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"math"
 	"os"
+	"strconv"
 
 	"go.kenn.io/kit/backup"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
@@ -18,6 +23,159 @@ import (
 // MetadataFormat is the stable Kit manifest identifier for Docbank's
 // deterministic logical metadata stream.
 const MetadataFormat = "docbank-metadata-jsonl-v1"
+
+const derivativeAuthorityVersion = 1
+
+// DerivativeAuthorityStats describes the catalog-authorized derivative
+// authority pinned by one backup snapshot. Future derivative classes extend
+// this versioned list; absent classes do not claim unavailable coverage.
+type DerivativeAuthorityStats struct {
+	Version           int                    `json:"version"`
+	Classes           []DerivativeClassStats `json:"classes"`
+	ProviderDependent []string               `json:"provider_dependent"`
+}
+
+// DerivativeClassStats records one current derivative class. Checksum is a
+// deterministic digest of the class's catalog records, not provider output.
+type DerivativeClassStats struct {
+	Class          string `json:"class"`
+	Classification string `json:"classification"`
+	Count          int64  `json:"count"`
+	LogicalBytes   int64  `json:"logical_bytes"`
+	BlobCount      int64  `json:"blob_count"`
+	Checksum       string `json:"checksum"`
+}
+
+type derivativeClassAccumulator struct {
+	DerivativeClassStats
+
+	checksum hash.Hash
+	blobs    map[string]struct{}
+}
+
+func computeDerivativeAuthorityStats(ctx context.Context, q rowQuerier) (*DerivativeAuthorityStats, bool, error) {
+	classes := make(map[string]*derivativeClassAccumulator)
+	get := func(classification, class string) *derivativeClassAccumulator {
+		item := classes[class]
+		if item != nil {
+			return item
+		}
+		item = &derivativeClassAccumulator{
+			Class: class, Classification: classification,
+			checksum: sha256.New(),
+			blobs:    make(map[string]struct{}),
+		}
+		writeDerivativeClassField(item.checksum, class)
+		writeDerivativeClassField(item.checksum, classification)
+		classes[class] = item
+		return item
+	}
+
+	if err := func() error {
+		rows, err := q.QueryContext(ctx, `
+			SELECT role,build_id,artifact_id,blob_hash,size,checksum
+			FROM rendition_artifacts
+			ORDER BY role,build_id,artifact_id`)
+		if err != nil {
+			return fmt.Errorf("listing derivative artifacts: %w", err)
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var role, buildID, artifactID, blobHash, checksum string
+			var size int64
+			if err := rows.Scan(&role, &buildID, &artifactID, &blobHash, &size, &checksum); err != nil {
+				return fmt.Errorf("scanning derivative artifact: %w", err)
+			}
+			item := get("included", role)
+			if err := addDerivativeClassBytes(&item.LogicalBytes, size); err != nil {
+				return fmt.Errorf("derivative class %s: %w", role, err)
+			}
+			item.Count++
+			item.blobs[blobHash] = struct{}{}
+			for _, field := range []string{buildID, artifactID, blobHash, checksum, strconv.FormatInt(size, 10)} {
+				writeDerivativeClassField(item.checksum, field)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("iterating derivative artifacts: %w", err)
+		}
+		return nil
+	}(); err != nil {
+		return nil, false, fmt.Errorf("backupapp: %w", err)
+	}
+
+	if err := func() error {
+		rows, err := q.QueryContext(ctx, `
+			SELECT build_id,segment_id,checksum,text
+			FROM rendition_lexical_segments
+			ORDER BY build_id,segment_order,segment_id`)
+		if err != nil {
+			return fmt.Errorf("listing lexical projection: %w", err)
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var buildID, segmentID, checksum, text string
+			if err := rows.Scan(&buildID, &segmentID, &checksum, &text); err != nil {
+				return fmt.Errorf("scanning lexical projection: %w", err)
+			}
+			item := get("reconstructible", "lexical_projection")
+			if err := addDerivativeClassBytes(&item.LogicalBytes, int64(len(text))); err != nil {
+				return fmt.Errorf("lexical projection: %w", err)
+			}
+			item.Count++
+			for _, field := range []string{buildID, segmentID, checksum, text} {
+				writeDerivativeClassField(item.checksum, field)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("iterating lexical projection: %w", err)
+		}
+		return nil
+	}(); err != nil {
+		return nil, false, fmt.Errorf("backupapp: %w", err)
+	}
+
+	if len(classes) == 0 {
+		return nil, false, nil
+	}
+	ordered := []string{
+		"normalized_evidence", "sanitized_markdown",
+		string(document.EvidenceArtifactImage), string(document.EvidenceArtifactMarkdown),
+		string(document.EvidenceArtifactStructured), string(document.EvidenceArtifactTranscript),
+		"lexical_projection",
+	}
+	result := &DerivativeAuthorityStats{
+		Version: derivativeAuthorityVersion, ProviderDependent: []string{},
+	}
+	for _, class := range ordered {
+		item := classes[class]
+		if item == nil {
+			continue
+		}
+		item.BlobCount = int64(len(item.blobs))
+		item.Checksum = hex.EncodeToString(item.checksum.Sum(nil))
+		result.Classes = append(result.Classes, item.DerivativeClassStats)
+		delete(classes, class)
+	}
+	if len(classes) != 0 {
+		return nil, false, errors.New("backupapp: derivative artifact class is not catalog-authorized")
+	}
+	return result, true, nil
+}
+
+func addDerivativeClassBytes(total *int64, value int64) error {
+	if value < 0 || value > math.MaxInt64-*total {
+		return errors.New("logical bytes exceed int64")
+	}
+	*total += value
+	return nil
+}
+
+func writeDerivativeClassField(dst hash.Hash, value string) {
+	_, _ = io.WriteString(dst, strconv.Itoa(len(value)))
+	_, _ = io.WriteString(dst, ":")
+	_, _ = io.WriteString(dst, value)
+}
 
 // MetadataSource pins one Docbank transaction for JSONL, content membership,
 // and fidelity statistics. OpenMetadata performs a counting pass and then
@@ -62,14 +220,14 @@ func (s *metadataSnapshot) OpenMetadata(ctx context.Context) (io.ReadCloser, int
 	}
 	s.opened = true
 	var count byteCounter
-	if err := s.tx.Export(ctx, &count); err != nil {
+	if err := s.tx.ExportBackup(ctx, &count); err != nil {
 		return nil, 0, fmt.Errorf("backupapp: sizing metadata JSONL: %w", err)
 	}
 	reader, writer := io.Pipe()
 	s.reader = reader
 	s.exportDone = make(chan error, 1)
 	go func() {
-		exportErr := s.tx.Export(ctx, writer)
+		exportErr := s.tx.ExportBackup(ctx, writer)
 		closeErr := writer.CloseWithError(exportErr)
 		s.exportDone <- errors.Join(exportErr, closeErr)
 	}()
@@ -133,7 +291,7 @@ func (r metadataRestorer) RestoreMetadata(
 			resultErr = errors.Join(resultErr, target.Close())
 		}
 	}()
-	if err := target.ImportMetadataForBackupRestore(ctx, metadata); err != nil {
+	if err := target.ImportMetadataForRestore(ctx, metadata); err != nil {
 		return fmt.Errorf("backupapp: importing metadata JSONL: %w", err)
 	}
 	if err := target.Checkpoint(ctx); err != nil {
