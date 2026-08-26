@@ -562,6 +562,32 @@ func TestUnreachableBlobs(t *testing.T) {
 	assert.Equal(t, fakeHash("c3"), un[0].Hash)
 }
 
+func TestUnreachableBlobsKeepsRenditionBuildBytesReachable(t *testing.T) {
+	s := newTestStore(t)
+	seedRenditionCatalogVersions(t, s)
+	build := catalogRenditionBuild(s, catalogProcessingProfile(t, false))
+	require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+
+	// Remove every content-version reference so the rendition build and its
+	// artifacts are the only remaining authority for these three blobs.
+	_, err := s.db.Exec(`DELETE FROM nodes WHERE parent_id IS NOT NULL`)
+	require.NoError(t, err)
+	orphan := fakeHash("f9")
+	_, err = s.db.Exec(`INSERT INTO blobs(hash,size,created_at) VALUES(?,1,?)`,
+		orphan, "2026-01-01T00:00:00.000000000Z")
+	require.NoError(t, err)
+
+	unreachable, err := s.UnreachableBlobs(t.Context())
+	require.NoError(t, err)
+	require.Len(t, unreachable, 1)
+	assert.Equal(t, orphan, unreachable[0].Hash)
+
+	page, err := s.UnreachableBlobsPageFrom(t.Context(), nil, 10)
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	assert.Equal(t, orphan, page.Items[0].Hash)
+}
+
 func TestDeleteBlobRows(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()

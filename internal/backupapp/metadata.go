@@ -133,7 +133,7 @@ func (r metadataRestorer) RestoreMetadata(
 			resultErr = errors.Join(resultErr, target.Close())
 		}
 	}()
-	if err := target.ImportMetadata(ctx, metadata); err != nil {
+	if err := target.ImportMetadataForBackupRestore(ctx, metadata); err != nil {
 		return fmt.Errorf("backupapp: importing metadata JSONL: %w", err)
 	}
 	if err := target.Checkpoint(ctx); err != nil {

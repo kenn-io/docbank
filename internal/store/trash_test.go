@@ -261,6 +261,21 @@ func TestVaultEmptyTrashBoundedStore(t *testing.T) {
 	require.ErrorContains(t, err, "maximum trash roots must be positive")
 }
 
+func TestTrashEmptyRemovesRenditionAttachment(t *testing.T) {
+	s := newTestStore(t)
+	versions, profiles, _ := seedProcessingMetadataCatalog(t, s)
+	node, err := s.NodeByPath(t.Context(), "/synthetic-source-a.pdf")
+	require.NoError(t, err)
+	_, _, err = s.Trash(t.Context(), node.ID, node.Revision)
+	require.NoError(t, err)
+
+	receipt, err := s.TrashEmpty(t.Context(), 0, true)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), receipt.Deleted)
+	_, err = s.ActiveRendition(t.Context(), versions[0], profiles[0].Fingerprint)
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
 func TestTrashEmptyAdvancesAffectedTagRevisionsOnce(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()

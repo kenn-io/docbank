@@ -156,6 +156,26 @@ func TestPruneContentVersionsRetainsDependenciesAndCheckpointsAllPrior(t *testin
 	assert.Equal(t, replacement.BlobHash, unreachable[0].Hash)
 }
 
+func TestPruneContentVersionsRemovesRenditionAttachment(t *testing.T) {
+	s := newTestStore(t)
+	versions, profiles, _ := seedProcessingMetadataCatalog(t, s)
+	node, err := s.NodeByPath(t.Context(), "/synthetic-source-a.pdf")
+	require.NoError(t, err)
+	replaced, _, err := s.ReplaceContent(
+		t.Context(), node.ID, node.Revision, fakeHash("f7"), 21, "application/pdf",
+	)
+	require.NoError(t, err)
+
+	receipt, err := s.PruneContentVersions(
+		t.Context(), node.ID, replaced.Revision,
+		VersionPruneSelector{VersionIDs: []string{versions[0]}}, true,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, 1, receipt.DeletedVersions)
+	_, err = s.ActiveRendition(t.Context(), versions[0], profiles[0].Fingerprint)
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
 func TestPruneContentVersionsReportsPackedAndSharedConsequences(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()

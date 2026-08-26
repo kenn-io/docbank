@@ -17,6 +17,14 @@ type BlobInfo struct {
 	Size int64
 }
 
+// GCLooseRetirement is durable retry authority for one loose physical object
+// whose logical blob membership has already been removed.
+type GCLooseRetirement struct {
+	StoreID  string
+	Hash     packstore.Hash
+	Encoding packstore.LooseEncoding
+}
+
 func pageLimitWithSentinel(limit int) (int, error) {
 	if limit <= 0 {
 		return 0, errors.New("page limit must be positive")
@@ -135,6 +143,8 @@ func (s *Store) UnreachableBlobs(ctx context.Context) ([]BlobInfo, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT b.hash, b.size FROM blobs b
 		WHERE NOT EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash = b.hash)
+		  AND NOT EXISTS (SELECT 1 FROM rendition_builds r WHERE r.source_sha256 = b.hash)
+		  AND NOT EXISTS (SELECT 1 FROM rendition_artifacts a WHERE a.blob_hash = b.hash)
 		ORDER BY b.hash`)
 	if err != nil {
 		return nil, fmt.Errorf("finding unreachable blobs: %w", err)
@@ -205,6 +215,8 @@ const unreachableBlobsStartPageSQL = `
 	)
 	SELECT p.hash, p.loose_stored_size,
 	       NOT EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash = p.hash)
+	       AND NOT EXISTS (SELECT 1 FROM rendition_builds r WHERE r.source_sha256 = p.hash)
+	       AND NOT EXISTS (SELECT 1 FROM rendition_artifacts a WHERE a.blob_hash = p.hash)
 	FROM raw_page p ORDER BY p.hash`
 
 const unreachableBlobsResumePageSQL = `
@@ -219,6 +231,8 @@ const unreachableBlobsResumePageSQL = `
 	)
 	SELECT p.hash, p.loose_stored_size,
 	       NOT EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash = p.hash)
+	       AND NOT EXISTS (SELECT 1 FROM rendition_builds r WHERE r.source_sha256 = p.hash)
+	       AND NOT EXISTS (SELECT 1 FROM rendition_artifacts a WHERE a.blob_hash = p.hash)
 	FROM raw_page p ORDER BY p.hash`
 
 func unreachableBlobScanQuery(after *string, limit int) (string, []any) {
@@ -545,29 +559,158 @@ func (s *Store) DeadPackUsagePage(
 }
 
 // DeleteBlobRows removes logical membership and derived metadata for reclaimed
-// blobs. Callers must hold the exclusive vault lock (see UnreachableBlobs) and
-// retire every loose location first. Packed entries remain as dead physical
-// accounting until repack retires their immutable container.
+// blobs. Callers must hold the exclusive vault lock (see UnreachableBlobs),
+// resolve and validate every loose location first, and retire physical bytes
+// only after this logical deletion succeeds. Packed entries remain as dead
+// physical accounting until repack retires their immutable container.
 func (s *Store) DeleteBlobRows(ctx context.Context, hashes []string) error {
+	return s.deleteBlobRows(ctx, hashes, nil)
+}
+
+// DeleteBlobRowsWithGCRetirements atomically records exact physical cleanup
+// before removing the blob rows that own their ordinary location metadata.
+func (s *Store) DeleteBlobRowsWithGCRetirements(
+	ctx context.Context, hashes []string, retirements []GCLooseRetirement,
+) error {
+	return s.deleteBlobRows(ctx, hashes, retirements)
+}
+
+func (s *Store) deleteBlobRows(
+	ctx context.Context, hashes []string, retirements []GCLooseRetirement,
+) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		for _, retirement := range retirements {
+			if retirement.StoreID == "" {
+				return errors.New("GC loose retirement store ID is required")
+			}
+			if err := retirement.Hash.Validate(); err != nil {
+				return fmt.Errorf("validating GC loose retirement hash: %w", err)
+			}
+			if retirement.Encoding != packstore.LooseEncodingRaw &&
+				retirement.Encoding != packstore.LooseEncodingZstd {
+				return fmt.Errorf("invalid GC loose retirement encoding %d", retirement.Encoding)
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO gc_loose_retirements(
+				store_id,blob_hash,loose_encoding
+			) VALUES(?,?,?)`, retirement.StoreID, retirement.Hash.String(), retirement.Encoding); err != nil {
+				return fmt.Errorf("recording GC loose retirement: %w", err)
+			}
+		}
 		for _, h := range hashes {
-			if _, err := tx.Exec(`DELETE FROM text_extraction_queue WHERE blob_hash = ?`, h); err != nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM text_extraction_queue WHERE blob_hash = ?`, h); err != nil {
 				return fmt.Errorf("deleting extraction queue row of %s: %w", h, err)
 			}
-			if _, err := tx.Exec(`DELETE FROM content_fts WHERE rowid IN (
+			if _, err := tx.ExecContext(ctx, `DELETE FROM content_fts WHERE rowid IN (
 				SELECT rowid FROM extracted_text WHERE blob_hash = ?
 			)`, h); err != nil {
 				return fmt.Errorf("deleting content search rows of %s: %w", h, err)
 			}
-			if _, err := tx.Exec(`DELETE FROM extracted_text WHERE blob_hash = ?`, h); err != nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM extracted_text WHERE blob_hash = ?`, h); err != nil {
 				return fmt.Errorf("deleting extracted text of %s: %w", h, err)
 			}
-			if _, err := tx.Exec(`DELETE FROM blobs WHERE hash = ?`, h); err != nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM blobs WHERE hash = ?`, h); err != nil {
 				return fmt.Errorf("deleting blob row %s: %w", h, err)
 			}
 		}
 		return nil
 	})
+}
+
+// PendingGCLooseRetirements lists a bounded stable page of cleanup authority.
+func (s *Store) PendingGCLooseRetirements(
+	ctx context.Context, limit int,
+) ([]GCLooseRetirement, error) {
+	if limit <= 0 {
+		return nil, errors.New("GC loose retirement limit must be positive")
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT store_id,blob_hash,loose_encoding
+		FROM gc_loose_retirements
+		ORDER BY store_id,blob_hash,loose_encoding LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("listing GC loose retirements: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	result := make([]GCLooseRetirement, 0, limit)
+	for rows.Next() {
+		var item GCLooseRetirement
+		var hash string
+		var encoding int
+		if err := rows.Scan(&item.StoreID, &hash, &encoding); err != nil {
+			return nil, fmt.Errorf("scanning GC loose retirement: %w", err)
+		}
+		parsed, err := packstore.ParseHash(hash)
+		if err != nil {
+			return nil, fmt.Errorf("parsing GC loose retirement hash: %w", err)
+		}
+		if encoding != int(packstore.LooseEncodingRaw) &&
+			encoding != int(packstore.LooseEncodingZstd) {
+			return nil, fmt.Errorf("invalid GC loose retirement encoding %d", encoding)
+		}
+		item.Hash = parsed
+		item.Encoding = packstore.LooseEncoding(encoding)
+		result = append(result, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("listing GC loose retirements: %w", err)
+	}
+	return result, nil
+}
+
+// PrepareGCLooseRetirement prevents a retry from deleting content that became
+// authoritative again. Reauthorized work is consumed without physical removal.
+func (s *Store) PrepareGCLooseRetirement(
+	ctx context.Context, item GCLooseRetirement,
+) (bool, error) {
+	retire := false
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		var exists, authorized bool
+		if err := tx.QueryRowContext(ctx, `SELECT
+			EXISTS(SELECT 1 FROM gc_loose_retirements
+			 WHERE store_id=? AND blob_hash=? AND loose_encoding=?),
+			EXISTS(SELECT 1 FROM blob_locations WHERE store_id=? AND blob_hash=?)`,
+			item.StoreID, item.Hash.String(), item.Encoding,
+			item.StoreID, item.Hash.String()).Scan(&exists, &authorized); err != nil {
+			return fmt.Errorf("checking GC loose retirement: %w", err)
+		}
+		if !exists {
+			return fmt.Errorf("GC loose retirement no longer exists: %w", ErrNotFound)
+		}
+		if authorized {
+			return completeGCLooseRetirementTx(ctx, tx, item)
+		}
+		retire = true
+		return nil
+	})
+	return retire, err
+}
+
+// CompleteGCLooseRetirement acknowledges successful or already-missing cleanup.
+func (s *Store) CompleteGCLooseRetirement(
+	ctx context.Context, item GCLooseRetirement,
+) error {
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		return completeGCLooseRetirementTx(ctx, tx, item)
+	})
+}
+
+func completeGCLooseRetirementTx(
+	ctx context.Context, tx *sql.Tx, item GCLooseRetirement,
+) error {
+	result, err := tx.ExecContext(ctx, `DELETE FROM gc_loose_retirements
+		WHERE store_id=? AND blob_hash=? AND loose_encoding=?`,
+		item.StoreID, item.Hash.String(), item.Encoding)
+	if err != nil {
+		return fmt.Errorf("completing GC loose retirement: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("reading GC loose retirement completion: %w", err)
+	}
+	if affected != 1 {
+		return fmt.Errorf("GC loose retirement no longer exists: %w", ErrNotFound)
+	}
+	return nil
 }
 
 // AllBlobs lists every recorded blob, hash-ordered.
