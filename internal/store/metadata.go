@@ -57,6 +57,13 @@ func (s *MetadataSnapshot) Export(ctx context.Context, w io.Writer) error {
 	return exportMetadataSnapshot(ctx, s, w)
 }
 
+// ExportBackup writes the deterministic logical authority carried by a backup
+// snapshot. Unlike Export, it omits blob and extraction-cache rows that are not
+// reachable from retained logical authority and therefore have no attachment.
+func (s *MetadataSnapshot) ExportBackup(ctx context.Context, w io.Writer) error {
+	return exportBackupMetadataSnapshot(ctx, s, w)
+}
+
 // BeginMetadataSnapshot establishes a pinned read transaction for logical
 // backup capture. The initial read is required: BeginTx alone is lazy in
 // SQLite and would not pin a snapshot before Kit releases the mutation gate.
@@ -208,6 +215,21 @@ type metadataAuditMembership struct {
 	BaselineDigest string `json:"baseline_digest"`
 }
 
+// BackupBlobAuthorityCTE is the complete blob closure for portable backup:
+// retained document versions, rendition artifacts, staged rendition sources,
+// and no operational cursor or cache rows. Rows outside this closure were
+// never published as logical authority and are deliberately excluded from new
+// snapshots.
+const BackupBlobAuthorityCTE = `
+WITH backup_authorized_blobs(hash) AS (
+	SELECT blob_hash FROM content_versions
+	UNION
+	SELECT blob_hash FROM rendition_artifacts
+	UNION
+	SELECT source_sha256 FROM rendition_builds
+)
+`
+
 // ExportMetadata writes a deterministic JSONL description of Docbank's
 // logical state. Rebuildable FTS data and physical pack authority are omitted.
 func (s *Store) ExportMetadata(ctx context.Context, w io.Writer) error {
@@ -250,15 +272,19 @@ type metadataQuerier interface {
 // Backup capture uses this entry point so metadata and blob membership come
 // from the same frozen transaction.
 func exportMetadataSnapshot(ctx context.Context, tx metadataQuerier, w io.Writer) error {
-	return exportMetadataSnapshotWithVaultIdentity(ctx, tx, w, false)
+	return exportMetadataSnapshotWithVaultIdentity(ctx, tx, w, false, false)
+}
+
+func exportBackupMetadataSnapshot(ctx context.Context, tx metadataQuerier, w io.Writer) error {
+	return exportMetadataSnapshotWithVaultIdentity(ctx, tx, w, false, true)
 }
 
 func exportV090MetadataSnapshot(ctx context.Context, tx metadataQuerier, w io.Writer) error {
-	return exportMetadataSnapshotWithVaultIdentity(ctx, tx, w, true)
+	return exportMetadataSnapshotWithVaultIdentity(ctx, tx, w, true, false)
 }
 
 func exportMetadataSnapshotWithVaultIdentity(
-	ctx context.Context, tx metadataQuerier, w io.Writer, legacyV090 bool,
+	ctx context.Context, tx metadataQuerier, w io.Writer, legacyV090, backupScoped bool,
 ) error {
 	if tx == nil {
 		return errors.New("exporting metadata: nil transaction")
@@ -281,7 +307,7 @@ func exportMetadataSnapshotWithVaultIdentity(
 	}); err != nil {
 		return err
 	}
-	if err := exportBlobs(ctx, tx, write); err != nil {
+	if err := exportBlobs(ctx, tx, write, backupScoped); err != nil {
 		return err
 	}
 	if err := exportNodes(ctx, tx, write); err != nil {
@@ -305,7 +331,7 @@ func exportMetadataSnapshotWithVaultIdentity(
 	if err := exportNodeTags(ctx, tx, write); err != nil {
 		return err
 	}
-	if err := exportExtractedText(ctx, tx, write); err != nil {
+	if err := exportExtractedText(ctx, tx, write, backupScoped); err != nil {
 		return err
 	}
 	if err := exportAuditMetadata(ctx, tx, write); err != nil {
@@ -329,8 +355,17 @@ func newMetadataJSONWriter(w io.Writer) metadataWrite {
 	}
 }
 
-func exportBlobs(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	rows, err := tx.QueryContext(ctx, `SELECT hash, size, created_at FROM blobs ORDER BY hash`)
+func exportBlobs(
+	ctx context.Context, tx metadataQuerier, write metadataWrite, backupScoped bool,
+) error {
+	query := `SELECT hash, size, created_at FROM blobs ORDER BY hash`
+	if backupScoped {
+		query = BackupBlobAuthorityCTE + `
+SELECT b.hash, b.size, b.created_at
+FROM blobs b JOIN backup_authorized_blobs a ON a.hash = b.hash
+ORDER BY b.hash`
+	}
+	rows, err := tx.QueryContext(ctx, query)
 	if err != nil {
 		return fmt.Errorf("exporting blobs: %w", err)
 	}
@@ -455,7 +490,9 @@ func exportProvenance(ctx context.Context, tx metadataQuerier, write metadataWri
 	return rowsError(metadataProvenanceType, rows)
 }
 
-func exportWatchSources(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
+func exportWatchSources(
+	ctx context.Context, tx metadataQuerier, write metadataWrite,
+) error {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT watch_name, source_ref, node_id, blob_hash, size
 		FROM watch_sources ORDER BY watch_name, source_ref`)
@@ -520,10 +557,21 @@ func exportNodeTags(ctx context.Context, tx metadataQuerier, write metadataWrite
 	return rowsError("node tag", rows)
 }
 
-func exportExtractedText(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	rows, err := tx.QueryContext(ctx, `
+func exportExtractedText(
+	ctx context.Context, tx metadataQuerier, write metadataWrite, backupScoped bool,
+) error {
+	query := `
 		SELECT blob_hash, extractor, extractor_version, status, error, attempts, text, extracted_at
-		FROM extracted_text ORDER BY blob_hash, extractor`)
+		FROM extracted_text ORDER BY blob_hash, extractor`
+	if backupScoped {
+		query = BackupBlobAuthorityCTE + `
+		SELECT e.blob_hash, e.extractor, e.extractor_version, e.status,
+		       e.error, e.attempts, e.text, e.extracted_at
+		FROM extracted_text e
+		JOIN backup_authorized_blobs a ON a.hash = e.blob_hash
+		ORDER BY e.blob_hash, e.extractor`
+	}
+	rows, err := tx.QueryContext(ctx, query)
 	if err != nil {
 		return fmt.Errorf("exporting extracted text: %w", err)
 	}
@@ -574,7 +622,7 @@ func (s *Store) ImportMetadata(ctx context.Context, r io.Reader) error {
 }
 
 // ImportMetadataForBackupRestore imports logical metadata before Kit restores
-// physical content. The backup restore must call VerifyRenditionHeadBytes after
+// physical content. The backup restore must call VerifyRenditionBlobBytes after
 // every loose or packed blob is available and before publishing the target.
 func (s *Store) ImportMetadataForBackupRestore(ctx context.Context, r io.Reader) error {
 	return s.importMetadata(ctx, r, false)

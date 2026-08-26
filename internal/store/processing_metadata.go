@@ -533,44 +533,122 @@ type RenditionBlobReader interface {
 	OpenStreamContext(ctx context.Context, hash string) (packstore.VerifiedReadCloser, int64, error)
 }
 
-// VerifyRenditionHeadBytes verifies every source and artifact reachable from
-// an active rendition head through the restored mixed-storage catalog.
-func (s *Store) VerifyRenditionHeadBytes(ctx context.Context, reader RenditionBlobReader) error {
+// VerifyRenditionBlobBytes verifies every retained rendition source and
+// artifact through the restored mixed-storage catalog, including builds that
+// are staged but not attached to an active head.
+func (s *Store) VerifyRenditionBlobBytes(ctx context.Context, reader RenditionBlobReader) error {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT b.source_sha256, source.size
-		FROM rendition_heads h
-		JOIN rendition_attachments a
-		  ON a.content_version_id=h.content_version_id
-		 AND a.profile_fingerprint=h.profile_fingerprint
-		 AND a.attachment_id=h.attachment_id
-		JOIN rendition_builds b ON b.build_id=a.build_id AND b.vault_uid=a.vault_uid
+		FROM rendition_builds b
 		JOIN blobs source ON source.hash=b.source_sha256
 		UNION
 		SELECT artifact.blob_hash, artifact.size
-		FROM rendition_heads h
-		JOIN rendition_attachments a
-		  ON a.content_version_id=h.content_version_id
-		 AND a.profile_fingerprint=h.profile_fingerprint
-		 AND a.attachment_id=h.attachment_id
-		JOIN rendition_artifacts artifact ON artifact.build_id=a.build_id
+		FROM rendition_artifacts artifact
 		ORDER BY 1, 2`)
 	if err != nil {
-		return fmt.Errorf("listing active rendition bytes: %w", err)
+		return fmt.Errorf("listing retained rendition bytes: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var blob importedProcessingBlob
 		if err := rows.Scan(&blob.hash, &blob.size); err != nil {
-			return fmt.Errorf("scanning active rendition bytes: %w", err)
+			return fmt.Errorf("scanning retained rendition bytes: %w", err)
 		}
 		if err := verifyRenditionBlob(ctx, reader, blob); err != nil {
 			return err
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterating active rendition bytes: %w", err)
+		return fmt.Errorf("iterating retained rendition bytes: %w", err)
 	}
 	return nil
+}
+
+// VerifyRenditionBlobAuthority verifies the relational and physical-catalog
+// location authority for every retained rendition source and artifact,
+// including staged builds that are not currently attached to a document
+// version. VerifyRenditionBlobBytes separately reads and verifies each location.
+func (s *Store) VerifyRenditionBlobAuthority(ctx context.Context) (retErr error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return fmt.Errorf("starting processing blob verification: %w", err)
+	}
+	defer func() { retErr = errors.Join(retErr, tx.Rollback()) }()
+	if err := validateProcessingMetadataState(ctx, tx); err != nil {
+		return fmt.Errorf("validating processing blob authority: %w", err)
+	}
+	if err := verifyRenditionBlobCatalogAuthority(ctx, tx); err != nil {
+		return fmt.Errorf("verifying processing blob authority: %w", err)
+	}
+	return nil
+}
+
+func verifyRenditionBlobCatalogAuthority(ctx context.Context, tx *sql.Tx) (retErr error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT source_sha256 FROM rendition_builds
+		UNION
+		SELECT blob_hash FROM rendition_artifacts
+		ORDER BY source_sha256`)
+	if err != nil {
+		return fmt.Errorf("reading processing blob catalog authority: %w", err)
+	}
+	defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+	for rows.Next() {
+		var hash string
+		if err := rows.Scan(&hash); err != nil {
+			return fmt.Errorf("scanning processing blob catalog authority: %w", err)
+		}
+		if _, err := requirePhysicalAuthorityTx(tx, hash); err != nil {
+			return fmt.Errorf("processing blob %s: %w", hash, err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterating processing blob catalog authority: %w", err)
+	}
+	return nil
+}
+
+// RebuildRenditionLexicalProjection reconstructs the excluded FTS projection
+// solely from restored catalog rows. No provider or network access is involved.
+func (s *Store) RebuildRenditionLexicalProjection(ctx context.Context) error {
+	var generationID string
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		present, err := processingMetadataSchemaPresent(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if !present {
+			return nil
+		}
+		var heads int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM rendition_heads`).Scan(&heads); err != nil {
+			return fmt.Errorf("counting rendition heads for lexical rebuild: %w", err)
+		}
+		if heads == 0 {
+			return nil
+		}
+		rows, err := readCatalogLexicalManifestRowsTx(ctx, tx, "")
+		if err != nil {
+			return err
+		}
+		generationID = lexicalManifestDigest(rows)
+		return nil
+	})
+	if err != nil || generationID == "" {
+		return err
+	}
+	if _, err := s.StageLexicalGeneration(ctx, generationID); err != nil {
+		return fmt.Errorf("rebuilding restored lexical projection: %w", err)
+	}
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO rendition_lexical_heads(singleton,generation_id) VALUES(1,?)
+			ON CONFLICT(singleton) DO UPDATE SET generation_id=excluded.generation_id`, generationID,
+		); err != nil {
+			return fmt.Errorf("publishing rebuilt lexical projection: %w", err)
+		}
+		return nil
+	})
 }
 
 func verifyRenditionBlob(
