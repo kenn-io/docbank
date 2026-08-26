@@ -202,9 +202,10 @@ func readCatalogLexicalManifestRowsTx(
 	ctx context.Context, tx *sql.Tx, buildID string,
 ) ([]lexicalManifestRow, error) {
 	query := `
-		SELECT build_id,segment_id,text
-		FROM rendition_lexical_segments
-		ORDER BY build_id,segment_order,segment_id`
+		SELECT s.build_id,s.segment_id,s.text,b.provider_operation_id
+		FROM rendition_lexical_segments s
+		JOIN rendition_builds b ON b.build_id=s.build_id
+		ORDER BY s.build_id,s.segment_order,s.segment_id`
 	var (
 		rows *sql.Rows
 		err  error
@@ -213,15 +214,16 @@ func readCatalogLexicalManifestRowsTx(
 		rows, err = tx.QueryContext(ctx, query)
 	} else {
 		rows, err = tx.QueryContext(ctx, `
-			SELECT build_id,segment_id,text
-			FROM rendition_lexical_segments
-			WHERE build_id=?
-			ORDER BY build_id,segment_order,segment_id`, buildID)
+			SELECT s.build_id,s.segment_id,s.text,b.provider_operation_id
+			FROM rendition_lexical_segments s
+			JOIN rendition_builds b ON b.build_id=s.build_id
+			WHERE s.build_id=?
+			ORDER BY s.build_id,s.segment_order,s.segment_id`, buildID)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("reading staged lexical manifest: %w", err)
 	}
-	return scanLexicalManifestRows(rows, "staged lexical manifest")
+	return scanCatalogLexicalManifestRows(rows, "staged lexical manifest")
 }
 
 func readLexicalManifestRowsTx(
@@ -257,8 +259,9 @@ func readPublishedLexicalManifestRowsTx(
 	)
 	if generationID == "" {
 		rows, err = tx.QueryContext(ctx, `
-			SELECT s.build_id,s.segment_id,s.text
+			SELECT s.build_id,s.segment_id,s.text,b.provider_operation_id
 			FROM rendition_lexical_segments s
+			JOIN rendition_builds b ON b.build_id=s.build_id
 			WHERE EXISTS (
 			  SELECT 1 FROM rendition_attachments a
 			  JOIN rendition_heads h
@@ -266,7 +269,8 @@ func readPublishedLexicalManifestRowsTx(
 			   AND h.profile_fingerprint=a.profile_fingerprint
 			   AND h.attachment_id=a.attachment_id
 			  WHERE a.build_id=s.build_id
-			)`)
+			)
+			ORDER BY s.build_id,s.segment_order,s.segment_id`)
 	} else {
 		rows, err = tx.QueryContext(ctx, `
 			SELECT f.build_id,f.segment_id,f.text
@@ -283,7 +287,38 @@ func readPublishedLexicalManifestRowsTx(
 	if err != nil {
 		return nil, fmt.Errorf("reading published lexical manifest: %w", err)
 	}
+	if generationID == "" {
+		return scanCatalogLexicalManifestRows(rows, "published lexical manifest")
+	}
 	return scanLexicalManifestRows(rows, "published lexical manifest")
+}
+
+func scanCatalogLexicalManifestRows(
+	rows *sql.Rows, description string,
+) (_ []lexicalManifestRow, retErr error) {
+	defer func() {
+		if err := rows.Close(); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("closing %s: %w", description, err))
+		}
+	}()
+	var result []lexicalManifestRow
+	for rows.Next() {
+		var row lexicalManifestRow
+		var providerOperation string
+		if err := rows.Scan(&row.buildID, &row.segmentID, &row.text, &providerOperation); err != nil {
+			return nil, fmt.Errorf("reading %s row: %w", description, err)
+		}
+		if providerOperation == legacyPlainTextProvider && len(result) > 0 &&
+			result[len(result)-1].buildID == row.buildID {
+			result[len(result)-1].text += row.text
+			continue
+		}
+		result = append(result, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading %s rows: %w", description, err)
+	}
+	return result, nil
 }
 
 func scanLexicalManifestRows(
@@ -741,17 +776,10 @@ func (s *Store) SearchPageWithOptions(
 			LIMIT ?`
 		if generationID != "" {
 			// Selection, attachment resolution, and row consumption share
-			// this reader's one immutable publication snapshot.
+			// this reader's one immutable publication snapshot. Once a
+			// lexical head exists, legacy content_fts is a non-serving cache.
 			contentQuery = `
 				WITH matched_versions(version_id,best_rank) AS (
-				  SELECT cv_legacy.version_id, MIN(content_fts.rank)
-				  FROM content_fts
-				  JOIN content_versions cv_legacy ON cv_legacy.blob_hash=content_fts.blob_hash
-				  JOIN text_searchable_versions tsv_legacy
-				    ON tsv_legacy.version_id=cv_legacy.version_id
-				  WHERE content_fts MATCH ?
-				  GROUP BY cv_legacy.version_id
-				  UNION ALL
 				  SELECT a.content_version_id, MIN(rendition_lexical_fts.rank)
 				  FROM rendition_lexical_fts
 				  JOIN rendition_attachments a ON a.build_id=rendition_lexical_fts.build_id
@@ -762,18 +790,15 @@ func (s *Store) SearchPageWithOptions(
 				  WHERE rendition_lexical_fts MATCH ?
 				    AND rendition_lexical_fts.generation_id=?
 				  GROUP BY a.content_version_id
-				), best_versions AS (
-				  SELECT version_id,MIN(best_rank) AS best_rank
-				  FROM matched_versions GROUP BY version_id
 				)
 				SELECT ` + nodeCols + `
 				FROM ` + nodeFrom + `
-				JOIN best_versions mv ON mv.version_id=cv.version_id
+				JOIN matched_versions mv ON mv.version_id=cv.version_id
 				WHERE n.trashed_at IS NULL
 				  ` + filterSQL + `
 				ORDER BY mv.best_rank,n.name,n.id
 				LIMIT ?`
-			contentArgs = append(contentArgs, fq, generationID)
+			contentArgs = append(contentArgs, generationID)
 		}
 		contentArgs = append(contentArgs, filterArgs...)
 		contentArgs = append(contentArgs, remaining+len(nameHits)+1)

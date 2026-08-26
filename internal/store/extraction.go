@@ -299,7 +299,11 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 		return fmt.Errorf("invalid extraction status %q", result.Status)
 	}
 
-	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	publishRendition := false
+	exactLegacySuccess := result.Extractor == legacyPlainTextExtractor &&
+		result.ExtractorVersion == legacyPlainTextExtractorVersion &&
+		result.Status == ExtractionOK
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var exists bool
 		if err := tx.QueryRowContext(ctx,
 			`SELECT EXISTS(SELECT 1 FROM blobs WHERE hash = ?)`, result.BlobHash,
@@ -308,6 +312,28 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 		}
 		if !exists {
 			return fmt.Errorf("blob %s: %w", result.BlobHash, ErrNotFound)
+		}
+		var storedVersion int64
+		var storedStatus string
+		err := tx.QueryRowContext(ctx, `
+			SELECT extractor_version,status FROM extracted_text
+			WHERE blob_hash=? AND extractor=?`, result.BlobHash, result.Extractor,
+		).Scan(&storedVersion, &storedStatus)
+		if err == nil && result.ExtractorVersion < storedVersion {
+			return fmt.Errorf(
+				"extractor %s result version %d is older than stored version %d",
+				result.Extractor, result.ExtractorVersion, storedVersion,
+			)
+		}
+		if err == nil && result.ExtractorVersion == storedVersion &&
+			storedStatus == ExtractionOK && result.Status == ExtractionFailed {
+			return fmt.Errorf(
+				"cannot replace a successful extraction with a same-version failure for extractor %s version %d",
+				result.Extractor, result.ExtractorVersion,
+			)
+		}
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("reading stored extraction version: %w", err)
 		}
 		var extractErr, text any
 		if result.Error != "" {
@@ -334,13 +360,53 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 		if err := replaceContentFTSTx(ctx, tx, result.BlobHash, result.Extractor, text); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM text_extraction_queue WHERE blob_hash = ?`, result.BlobHash,
-		); err != nil {
-			return fmt.Errorf("finishing text extraction: %w", err)
+		if exactLegacySuccess {
+			published, publishErr := hasPublishedLexicalHeadTx(ctx, tx)
+			if publishErr != nil {
+				return publishErr
+			}
+			publishRendition = published
+		}
+		if !publishRendition {
+			if _, err := tx.ExecContext(ctx,
+				`DELETE FROM text_extraction_queue WHERE blob_hash = ?`, result.BlobHash,
+			); err != nil {
+				return fmt.Errorf("finishing text extraction: %w", err)
+			}
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	if !publishRendition {
+		return nil
+	}
+	if _, err := s.MigrateLegacyPlainText(ctx); err != nil {
+		return fmt.Errorf("publishing extracted text rendition: %w", err)
+	}
+	return nil
+}
+
+func hasPublishedLexicalHeadTx(ctx context.Context, tx *sql.Tx) (bool, error) {
+	var schemaExists bool
+	if err := tx.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM sqlite_schema
+			WHERE type='table' AND name='rendition_lexical_heads'
+		)`).Scan(&schemaExists); err != nil {
+		return false, fmt.Errorf("checking lexical projection schema: %w", err)
+	}
+	if !schemaExists {
+		return false, nil
+	}
+	var published bool
+	if err := tx.QueryRowContext(ctx, `
+		SELECT EXISTS(SELECT 1 FROM rendition_lexical_heads WHERE singleton=1)
+	`).Scan(&published); err != nil {
+		return false, fmt.Errorf("checking published lexical authority: %w", err)
+	}
+	return published, nil
 }
 
 func replaceContentFTSTx(

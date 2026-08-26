@@ -52,7 +52,14 @@ func Open(path string, drivers ...docsqlite.Driver) (*Store, error) {
 	if err := prepareReleasedSchemaUpgrade(path, driver); err != nil {
 		return nil, err
 	}
-	return openCurrentStore(path, driver)
+	s, err := openCurrentStore(path, driver)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.MigrateLegacyPlainText(context.Background()); err != nil {
+		return nil, errors.Join(err, s.Close())
+	}
+	return s, nil
 }
 
 func openCurrentStore(path string, driver docsqlite.Driver) (*Store, error) {
