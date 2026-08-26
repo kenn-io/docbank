@@ -1327,11 +1327,9 @@ func TestProcessingMetadataNilHeadingPathRoundTripsAsEmptyArray(t *testing.T) {
 		ID: catalogAttachmentFirst, VaultID: source.VaultID(), ContentVersionID: versions[0],
 		BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-22T10:00:00.000000000Z",
 	}
-	require.NoError(t, source.AttachRenditionBuild(t.Context(), attachment))
-	require.NoError(t, source.PublishRenditionHead(t.Context(), RenditionHeadRecord{
-		ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
-		AttachmentID: attachment.ID, PublishedAt: "2026-08-22T10:01:00.000000000Z",
-	}))
+	require.NoError(t, publishRenditionForTest(
+		t, source, attachment, "2026-08-22T10:01:00.000000000Z", fakeHash("c8"),
+	))
 
 	var exported bytes.Buffer
 	require.NoError(t, source.ExportMetadata(t.Context(), &exported))
@@ -1422,13 +1420,11 @@ func seedProcessingMetadataCatalog(
 			BuildID: build.ID, Profile: profiles[1], AttachedAt: "2026-08-22T10:01:00.000000000Z"},
 	}
 	for index, attachment := range attachments {
-		require.NoError(t, s.AttachRenditionBuild(t.Context(), attachment))
-		require.NoError(t, s.PublishRenditionHead(t.Context(), RenditionHeadRecord{
-			ContentVersionID:             attachment.ContentVersionID,
-			ProcessingProfileFingerprint: attachment.Profile.Fingerprint,
-			AttachmentID:                 attachment.ID,
-			PublishedAt:                  time.Date(2026, time.August, 22, 10, 2+index, 0, 0, time.UTC).Format(timestampLayout),
-		}))
+		require.NoError(t, publishRenditionForTest(
+			t, s, attachment,
+			time.Date(2026, time.August, 22, 10, 2+index, 0, 0, time.UTC).Format(timestampLayout),
+			fakeHash("c9"),
+		))
 	}
 	return versions, profiles, build
 }

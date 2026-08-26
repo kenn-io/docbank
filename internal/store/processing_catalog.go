@@ -258,82 +258,6 @@ func (s *Store) StageRenditionBuild(ctx context.Context, record RenditionBuildRe
 	})
 }
 
-// AttachRenditionBuild inserts or exactly reuses one version-scoped authority
-// grant. Sharing bytes never carries another version's profile or consent.
-func (s *Store) AttachRenditionBuild(ctx context.Context, record RenditionAttachmentRecord) error {
-	normalized, err := normalizeRenditionAttachmentRecord(record)
-	if err != nil {
-		return fmt.Errorf("attaching rendition build: %w", err)
-	}
-	if normalized.VaultID != s.vaultID {
-		return fmt.Errorf("attaching rendition build: vault %q does not match store vault %q",
-			normalized.VaultID, s.vaultID)
-	}
-	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		if err := ensureProcessingProfileTx(ctx, tx, normalized.Profile); err != nil {
-			return err
-		}
-		build, err := loadRenditionBuild(ctx, tx, normalized.BuildID)
-		if err != nil {
-			return fmt.Errorf("reading rendition build %s: %w", normalized.BuildID, err)
-		}
-		if build.VaultID != normalized.VaultID {
-			return errors.New("rendition attachment and build belong to different vaults")
-		}
-		if build.RenditionRequestFingerprint != normalized.Profile.RenditionRequestFingerprint ||
-			build.EvidenceLexicalFingerprint != normalized.Profile.EvidenceLexicalFingerprint {
-			return errors.New("rendition attachment profile does not match build component identity")
-		}
-		if err := validateRenditionArtifactRolesForProfile(normalized.Profile, build); err != nil {
-			return err
-		}
-		var sourceSHA256 string
-		if err := tx.QueryRowContext(ctx,
-			`SELECT blob_hash FROM content_versions WHERE version_id=?`, normalized.ContentVersionID,
-		).Scan(&sourceSHA256); errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("content version %s: %w", normalized.ContentVersionID, ErrNotFound)
-		} else if err != nil {
-			return fmt.Errorf("reading content version %s: %w", normalized.ContentVersionID, err)
-		}
-		if sourceSHA256 != build.SourceSHA256 {
-			return errors.New("rendition attachment source does not match content version")
-		}
-		if err := validateRenditionBuildStateTx(ctx, tx, build.ID); err != nil {
-			return err
-		}
-		result, err := tx.ExecContext(ctx, `
-			INSERT OR IGNORE INTO rendition_attachments(
-				attachment_id,vault_uid,content_version_id,build_id,profile_fingerprint,
-				retention_disclosure_fingerprint,attachment_policy_fingerprint,
-				consent_fingerprint,rendition_disclosure_fingerprint,trust_boundary,attached_at
-			) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-			normalized.ID, normalized.VaultID, normalized.ContentVersionID, normalized.BuildID,
-			normalized.Profile.Fingerprint, normalized.Profile.RetentionDisclosureFingerprint,
-			normalized.Profile.AttachmentPolicyFingerprint, normalized.Profile.ConsentFingerprint,
-			normalized.Profile.RenditionDisclosureFingerprint, normalized.Profile.TrustBoundary,
-			normalized.AttachedAt,
-		)
-		if err != nil {
-			return fmt.Errorf("inserting rendition attachment %s: %w", normalized.ID, err)
-		}
-		inserted, err := result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("checking rendition attachment %s insertion: %w", normalized.ID, err)
-		}
-		if inserted != 0 {
-			return nil
-		}
-		stored, err := loadRenditionAttachment(ctx, tx, normalized.ID)
-		if err != nil {
-			return fmt.Errorf("reading rendition attachment %s: %w", normalized.ID, err)
-		}
-		if !reflect.DeepEqual(stored, normalized) {
-			return fmt.Errorf("rendition attachment %s names different immutable metadata", normalized.ID)
-		}
-		return nil
-	})
-}
-
 func validateRenditionArtifactRolesForProfile(
 	record ProcessingProfileRecord, build RenditionBuildRecord,
 ) error {
@@ -367,41 +291,6 @@ func validateRenditionArtifactRolesForProfile(
 		return fmt.Errorf("rendition artifact role %q is forbidden by attachment profile", artifact.Role)
 	}
 	return nil
-}
-
-// PublishRenditionHead atomically validates and activates one exact
-// version/profile attachment. Any failure leaves the prior head unchanged.
-func (s *Store) PublishRenditionHead(ctx context.Context, record RenditionHeadRecord) error {
-	if err := validateRenditionHeadRecord(record); err != nil {
-		return fmt.Errorf("publishing rendition head: %w", err)
-	}
-	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		attachment, err := loadRenditionAttachment(ctx, tx, record.AttachmentID)
-		if err != nil {
-			return fmt.Errorf("reading rendition head attachment %s: %w", record.AttachmentID, err)
-		}
-		if attachment.ContentVersionID != record.ContentVersionID ||
-			attachment.Profile.Fingerprint != record.ProcessingProfileFingerprint {
-			return errors.New("rendition head does not resolve through its exact attachment")
-		}
-		if err := validateRenditionBuildStateTx(ctx, tx, attachment.BuildID); err != nil {
-			return err
-		}
-		_, err = tx.ExecContext(ctx, `
-			INSERT INTO rendition_heads(
-				content_version_id,profile_fingerprint,attachment_id,published_at
-			) VALUES(?,?,?,?)
-			ON CONFLICT(content_version_id,profile_fingerprint) DO UPDATE SET
-				attachment_id=excluded.attachment_id,
-				published_at=excluded.published_at`,
-			record.ContentVersionID, record.ProcessingProfileFingerprint,
-			record.AttachmentID, record.PublishedAt,
-		)
-		if err != nil {
-			return fmt.Errorf("publishing rendition head: %w", err)
-		}
-		return nil
-	})
 }
 
 // ActiveRendition returns the active attachment and immutable build at one
