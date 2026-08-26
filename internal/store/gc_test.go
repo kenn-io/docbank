@@ -1004,6 +1004,25 @@ func TestPurgeNeverAttachedBuildSuppressesExactRestaging(t *testing.T) {
 	require.NoError(t, s.StageRenditionBuild(ctx, build))
 }
 
+func TestAuthorizeDerivativeRebuildRejectsContentVersionWithoutProfile(t *testing.T) {
+	s, versions := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	profile := catalogProcessingProfile(t, false)
+	build := catalogRenditionBuild(s, profile)
+	require.NoError(t, s.StageRenditionBuild(ctx, build))
+
+	_, err := s.PurgeDerivatives(ctx, PurgeRequest{BuildIDs: []string{build.ID}})
+	require.NoError(t, err)
+	err = s.AuthorizeDerivativeRebuild(ctx, DerivativeRebuildAuthorization{
+		SourceSHA256: build.SourceSHA256, ContentVersionID: versions[0],
+		PurgedBuildID: build.ID, SupersedingBuildID: build.ID,
+		AuthorizedAt: "2026-08-23T13:16:00.000000000Z",
+	})
+	require.Error(t, err)
+	require.ErrorContains(t, s.StageRenditionBuild(ctx, build), "purge suppression",
+		"invalid attachment-scoped authorization must not clear build-wide suppression")
+}
+
 func TestPurgeReplacesLexicalHeadWithoutSelectedBuild(t *testing.T) {
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()

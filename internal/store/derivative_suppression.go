@@ -45,6 +45,9 @@ func (s *Store) AuthorizeDerivativeRebuild(
 ) error {
 	profileFingerprint := authorization.ProfileFingerprint
 	if profileFingerprint == "" {
+		if authorization.ContentVersionID != "" {
+			return errors.New("derivative rebuild content version requires profile fingerprint")
+		}
 		profileFingerprint = derivativeBuildSuppressionProfile
 	} else {
 		if err := validateUUIDv4(authorization.ContentVersionID); err != nil {
