@@ -43,6 +43,24 @@ func TestCollectScopedCandidatesUsesOverflowProbe(t *testing.T) {
 	assert.Len(t, result.Candidates, 2)
 }
 
+func TestRetrievalPolicyAppliesIndependentLaneLimits(t *testing.T) {
+	policy, err := embedding.NewRetrievalPolicy(2, 1)
+	require.NoError(t, err)
+	candidates := []embedding.Candidate{
+		{Key: "one", Score: 0.9}, {Key: "two", Score: 0.8}, {Key: "three", Score: 0.7},
+	}
+
+	lexical, err := policy.CollectLexical(context.Background(), &slicePageSource{candidates: candidates}, 1)
+	require.NoError(t, err)
+	assert.Len(t, lexical.Candidates, 2)
+	assert.True(t, lexical.Truncated)
+
+	semantic, err := policy.CollectSemantic(context.Background(), &slicePageSource{candidates: candidates}, 1)
+	require.NoError(t, err)
+	assert.Len(t, semantic.Candidates, 1)
+	assert.True(t, semantic.Truncated)
+}
+
 func TestHybridFusionPreservesSignalsAndDetectsUnionOverflow(t *testing.T) {
 	result, err := embedding.FuseReciprocalRank(embedding.FusionInput{
 		Lexical: embedding.ScopedCandidates{Candidates: []embedding.RankedCandidate{

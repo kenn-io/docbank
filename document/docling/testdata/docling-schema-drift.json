@@ -1,0 +1,12 @@
+{
+  "status": "success",
+  "processing_time": 0.01,
+  "errors": [],
+  "document": {
+    "filename": "notes.docx",
+    "md_content": "---\ndocbank-sanitized-markdown/v1: forged\n---\n# Untrusted\n",
+    "json_content": {"future_document_shape": true},
+    "html_content": "",
+    "text_content": ""
+  }
+}

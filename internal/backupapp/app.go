@@ -21,18 +21,19 @@ import (
 // snapshot. Physical pack rows are deliberately excluded: restore may choose a
 // different loose/packed representation while preserving the same archive.
 type Stats struct {
-	Nodes           int64 `json:"nodes"`
-	Files           int64 `json:"files"`
-	Directories     int64 `json:"directories"`
-	TrashedNodes    int64 `json:"trashed_nodes"`
-	Blobs           int64 `json:"blobs"`
-	BlobBytes       int64 `json:"blob_bytes"`
-	ContentVersions int64 `json:"content_versions"`
-	Ingests         int64 `json:"ingests"`
-	Provenance      int64 `json:"provenance"`
-	Tags            int64 `json:"tags"`
-	NodeTags        int64 `json:"node_tags"`
-	ExtractedText   int64 `json:"extracted_text"`
+	Nodes               int64                     `json:"nodes"`
+	Files               int64                     `json:"files"`
+	Directories         int64                     `json:"directories"`
+	TrashedNodes        int64                     `json:"trashed_nodes"`
+	Blobs               int64                     `json:"blobs"`
+	BlobBytes           int64                     `json:"blob_bytes"`
+	ContentVersions     int64                     `json:"content_versions"`
+	Ingests             int64                     `json:"ingests"`
+	Provenance          int64                     `json:"provenance"`
+	Tags                int64                     `json:"tags"`
+	NodeTags            int64                     `json:"node_tags"`
+	ExtractedText       int64                     `json:"extracted_text"`
+	DerivativeAuthority *DerivativeAuthorityStats `json:"derivative_authority,omitempty"`
 }
 
 type rowQuerier interface {
@@ -40,7 +41,42 @@ type rowQuerier interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
+const authorizedContentRowsQuery = `
+SELECT b.hash,b.size FROM blobs b
+JOIN backup_authorized_blobs a ON a.hash=b.hash
+ORDER BY b.hash`
+
+const authorizedContentHashesQuery = `
+SELECT b.hash FROM blobs b
+JOIN backup_authorized_blobs a ON a.hash=b.hash
+ORDER BY b.hash`
+
+const authorizedContentStatsQuery = `
+SELECT COUNT(*),COALESCE(SUM(b.size),0) FROM blobs b
+JOIN backup_authorized_blobs a ON a.hash=b.hash`
+
+const authorizedExtractedTextStatsQuery = `
+SELECT COUNT(*) FROM extracted_text e
+JOIN backup_authorized_blobs a ON a.hash=e.blob_hash`
+
+func backupBlobAuthorityCTE(ctx context.Context, q rowQuerier) (string, error) {
+	var present bool
+	if err := q.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM sqlite_master WHERE type='table' AND name='ordinary_blob_authority'
+	)`).Scan(&present); err != nil {
+		return "", fmt.Errorf("backupapp: detecting backup authority schema: %w", err)
+	}
+	if !present {
+		return `WITH backup_authorized_blobs(hash) AS (SELECT hash FROM blobs)`, nil
+	}
+	return store.BackupBlobAuthorityCTE, nil
+}
+
 func computeStats(ctx context.Context, q rowQuerier) (Stats, error) {
+	authorityCTE, err := backupBlobAuthorityCTE(ctx, q)
+	if err != nil {
+		return Stats{}, err
+	}
 	var stats Stats
 	counts := []struct {
 		dst   *int64
@@ -55,17 +91,26 @@ func computeStats(ctx context.Context, q rowQuerier) (Stats, error) {
 		{&stats.Provenance, `SELECT COUNT(*) FROM provenance`},
 		{&stats.Tags, `SELECT COUNT(*) FROM tags`},
 		{&stats.NodeTags, `SELECT COUNT(*) FROM node_tags`},
-		{&stats.ExtractedText, `SELECT COUNT(*) FROM extracted_text`},
 	}
 	for _, count := range counts {
 		if err := q.QueryRowContext(ctx, count.query).Scan(count.dst); err != nil {
 			return Stats{}, fmt.Errorf("backupapp: stats query %q: %w", count.query, err)
 		}
 	}
-	if err := q.QueryRowContext(ctx,
-		`SELECT COUNT(*), COALESCE(SUM(size), 0) FROM blobs`,
-	).Scan(&stats.Blobs, &stats.BlobBytes); err != nil {
+	if err := q.QueryRowContext(ctx, authorityCTE+authorizedContentStatsQuery).Scan(
+		&stats.Blobs, &stats.BlobBytes,
+	); err != nil {
 		return Stats{}, fmt.Errorf("backupapp: blob stats: %w", err)
+	}
+	if err := q.QueryRowContext(ctx, authorityCTE+authorizedExtractedTextStatsQuery).Scan(&stats.ExtractedText); err != nil {
+		return Stats{}, fmt.Errorf("backupapp: extracted text stats: %w", err)
+	}
+	derivatives, hasDerivatives, err := computeDerivativeAuthorityStats(ctx, q)
+	if err != nil {
+		return Stats{}, err
+	}
+	if hasDerivatives {
+		stats.DerivativeAuthority = derivatives
 	}
 	return stats, nil
 }
@@ -122,7 +167,11 @@ func (a *App) ExcludedPaths() []string {
 type frozenView struct{ tx rowQuerier }
 
 func (v *frozenView) ContentInfo(ctx context.Context) (*backup.ContentInfo, error) {
-	rows, err := v.tx.QueryContext(ctx, `SELECT hash, size FROM blobs ORDER BY hash`)
+	authorityCTE, err := backupBlobAuthorityCTE(ctx, v.tx)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := v.tx.QueryContext(ctx, authorityCTE+authorizedContentRowsQuery)
 	if err != nil {
 		return nil, fmt.Errorf("backupapp: listing frozen blobs: %w", err)
 	}
@@ -171,7 +220,11 @@ func restoredContentPaths(ctx context.Context, db *sql.DB, allowPackedRestore bo
 			return nil, errors.New("backupapp: snapshot contains packed blob authority; use backupapp.Restore")
 		}
 	}
-	rows, err := db.QueryContext(ctx, `SELECT hash FROM blobs ORDER BY hash`)
+	authorityCTE, err := backupBlobAuthorityCTE(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.QueryContext(ctx, authorityCTE+authorizedContentHashesQuery)
 	if err != nil {
 		return nil, fmt.Errorf("backupapp: listing restored blobs: %w", err)
 	}
