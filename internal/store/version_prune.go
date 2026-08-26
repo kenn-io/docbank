@@ -122,7 +122,7 @@ func (s *Store) PruneContentVersions(
 		}
 		if checkpointRequired {
 			updated, checkpoint, err := installContentVersionTx(
-				tx, node, versions[0].BlobHash, versions[0].Size, versions[0].MimeType,
+				ctx, tx, node, versions[0].BlobHash, versions[0].Size, versions[0].MimeType,
 				"content_replace", nil,
 			)
 			if err != nil {
@@ -137,6 +137,13 @@ func (s *Store) PruneContentVersions(
 			}
 			result.Node.Revision++
 			result.Node.ModifiedAt = now
+		}
+		versionIDs := make([]string, len(result.Candidates))
+		for index, version := range result.Candidates {
+			versionIDs[index] = version.ID
+		}
+		if err := deleteRenditionAuthorityForVersionsTx(ctx, tx, versionIDs); err != nil {
+			return err
 		}
 		for _, version := range result.Candidates {
 			if _, err := tx.Exec(`DELETE FROM content_versions WHERE version_id = ?`, version.ID); err != nil {

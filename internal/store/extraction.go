@@ -46,16 +46,16 @@ func supportsTextExtractionMIME(value string) bool {
 		mediaType == "application/x-ndjson" || mediaType == "application/jsonl"
 }
 
-func markTextSearchableVersionTx(tx *sql.Tx, versionID, mimeType string) (bool, error) {
+func markTextSearchableVersionTx(tx *sql.Tx, versionID, mimeType string) error {
 	if !supportsTextExtractionMIME(mimeType) {
-		return false, nil
+		return nil
 	}
 	if _, err := tx.Exec(`
 		INSERT INTO text_searchable_versions(version_id) VALUES(?)
 		ON CONFLICT(version_id) DO NOTHING`, versionID); err != nil {
-		return false, fmt.Errorf("recording text-search eligibility for %s: %w", versionID, err)
+		return fmt.Errorf("recording text-search eligibility for %s: %w", versionID, err)
 	}
-	return true, nil
+	return nil
 }
 
 func enqueueTextBlobTx(tx *sql.Tx, blobHash string) error {
@@ -68,12 +68,86 @@ func enqueueTextBlobTx(tx *sql.Tx, blobHash string) error {
 	return nil
 }
 
-func queueTextExtractionTx(tx *sql.Tx, versionID, blobHash, mimeType string) error {
-	eligible, err := markTextSearchableVersionTx(tx, versionID, mimeType)
-	if err != nil || !eligible {
+func queueTextExtractionTx(
+	ctx context.Context, tx *sql.Tx, versionID, blobHash, mimeType string,
+) error {
+	if !supportsTextExtractionMIME(mimeType) {
+		return nil
+	}
+	suppressed, err := legacyTextVersionSuppressedTx(ctx, tx, blobHash, versionID)
+	if err != nil {
+		return fmt.Errorf("checking text-extraction purge suppression: %w", err)
+	}
+	if suppressed {
+		return nil
+	}
+	if err := markTextSearchableVersionTx(tx, versionID, mimeType); err != nil {
 		return err
 	}
 	return enqueueTextBlobTx(tx, blobHash)
+}
+
+func legacyTextExtractionSuppressedTx(
+	ctx context.Context, tx metadataQuerier, blobHash string,
+) (bool, error) {
+	var extractor, status string
+	var extractorVersion int64
+	var text sql.NullString
+	err := tx.QueryRowContext(ctx, `SELECT extractor,extractor_version,status,text
+		FROM extracted_text WHERE blob_hash=? AND extractor=?`,
+		blobHash, legacyPlainTextExtractor,
+	).Scan(&extractor, &extractorVersion, &status, &text)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+	if err == nil && extractorVersion == legacyPlainTextExtractorVersion &&
+		status == ExtractionOK && text.Valid && utf8.ValidString(text.String) {
+		buildID := legacyPlainTextBuildFingerprint(
+			blobHash, extractor, extractorVersion, status, []byte(text.String))
+		suppressed, err := derivativeBuildSuppressedTx(ctx, tx, blobHash, buildID)
+		if err != nil || suppressed {
+			return suppressed, err
+		}
+	}
+	profile, err := legacyPlainTextProfile()
+	if err != nil {
+		return false, err
+	}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT v.version_id FROM content_versions v
+		WHERE v.blob_hash=? ORDER BY v.version_id`, blobHash)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var versionID string
+		if err := rows.Scan(&versionID); err != nil {
+			return false, err
+		}
+		suppressed, err := legacyDerivativeSuppressedTx(
+			ctx, tx, blobHash, versionID, profile.Fingerprint)
+		if err != nil {
+			return false, err
+		}
+		if !suppressed {
+			return false, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func legacyTextVersionSuppressedTx(
+	ctx context.Context, tx metadataQuerier, blobHash, versionID string,
+) (bool, error) {
+	profile, err := legacyPlainTextProfile()
+	if err != nil {
+		return false, err
+	}
+	return legacyDerivativeSuppressedTx(ctx, tx, blobHash, versionID, profile.Fingerprint)
 }
 
 // rebuildImportedTextExtractionStateTx reconstructs the derived search
@@ -123,7 +197,14 @@ func rebuildImportedTextExtractionStateTx(ctx context.Context, tx *sql.Tx) error
 
 	queued := make(map[string]struct{})
 	for _, item := range seeds {
-		if _, err := markTextSearchableVersionTx(tx, item.versionID, item.mimeType); err != nil {
+		suppressed, err := legacyTextVersionSuppressedTx(ctx, tx, item.hash, item.versionID)
+		if err != nil {
+			return fmt.Errorf("checking imported extraction purge suppression: %w", err)
+		}
+		if suppressed {
+			continue
+		}
+		if err := markTextSearchableVersionTx(tx, item.versionID, item.mimeType); err != nil {
 			return err
 		}
 		if item.hasExtraction {
@@ -149,6 +230,14 @@ func (s *Store) SeedTextExtractionQueue(
 ) error {
 	if extractor == "" || version < 1 {
 		return errors.New("extractor name and positive version are required")
+	}
+	var suppressionProfile string
+	if extractor == legacyPlainTextExtractor && version == legacyPlainTextExtractorVersion {
+		profile, err := legacyPlainTextProfile()
+		if err != nil {
+			return err
+		}
+		suppressionProfile = profile.Fingerprint
 	}
 	type seed struct {
 		versionID, hash, mimeType string
@@ -188,7 +277,17 @@ func (s *Store) SeedTextExtractionQueue(
 
 		queued := make(map[string]struct{})
 		for _, item := range seeds {
-			if _, err := markTextSearchableVersionTx(tx, item.versionID, item.mimeType); err != nil {
+			if suppressionProfile != "" {
+				suppressed, err := legacyDerivativeSuppressedTx(
+					ctx, tx, item.hash, item.versionID, suppressionProfile)
+				if err != nil {
+					return fmt.Errorf("checking extraction purge suppression: %w", err)
+				}
+				if suppressed {
+					continue
+				}
+			}
+			if err := markTextSearchableVersionTx(tx, item.versionID, item.mimeType); err != nil {
 				return err
 			}
 			if !item.needsExtraction {
@@ -300,9 +399,9 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 	}
 
 	publishRendition := false
-	exactLegacySuccess := result.Extractor == legacyPlainTextExtractor &&
-		result.ExtractorVersion == legacyPlainTextExtractorVersion &&
-		result.Status == ExtractionOK
+	legacyReplacement := result.Extractor == legacyPlainTextExtractor
+	exactLegacyResult := result.Extractor == legacyPlainTextExtractor &&
+		result.ExtractorVersion == legacyPlainTextExtractorVersion
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var exists bool
 		if err := tx.QueryRowContext(ctx,
@@ -313,27 +412,45 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 		if !exists {
 			return fmt.Errorf("blob %s: %w", result.BlobHash, ErrNotFound)
 		}
-		var storedVersion int64
-		var storedStatus string
-		err := tx.QueryRowContext(ctx, `
-			SELECT extractor_version,status FROM extracted_text
-			WHERE blob_hash=? AND extractor=?`, result.BlobHash, result.Extractor,
-		).Scan(&storedVersion, &storedStatus)
-		if err == nil && result.ExtractorVersion < storedVersion {
-			return fmt.Errorf(
-				"extractor %s result version %d is older than stored version %d",
-				result.Extractor, result.ExtractorVersion, storedVersion,
-			)
-		}
-		if err == nil && result.ExtractorVersion == storedVersion &&
-			storedStatus == ExtractionOK && result.Status == ExtractionFailed {
-			return fmt.Errorf(
-				"cannot replace a successful extraction with a same-version failure for extractor %s version %d",
-				result.Extractor, result.ExtractorVersion,
-			)
-		}
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("reading stored extraction version: %w", err)
+		if exactLegacyResult {
+			if result.Status == ExtractionOK {
+				buildID := legacyPlainTextBuildFingerprint(
+					result.BlobHash, result.Extractor, result.ExtractorVersion,
+					result.Status, []byte(result.Text))
+				buildSuppressed, suppressionErr := derivativeBuildSuppressedTx(
+					ctx, tx, result.BlobHash, buildID)
+				if suppressionErr != nil {
+					return fmt.Errorf("checking extraction-result build suppression: %w", suppressionErr)
+				}
+				if buildSuppressed {
+					if _, err := tx.ExecContext(ctx,
+						`DELETE FROM text_extraction_queue WHERE blob_hash=?`, result.BlobHash); err != nil {
+						return fmt.Errorf("clearing build-suppressed extraction work: %w", err)
+					}
+					return nil
+				}
+			}
+			suppressed, suppressionErr := legacyTextExtractionSuppressedTx(ctx, tx, result.BlobHash)
+			if suppressionErr != nil {
+				return fmt.Errorf("checking extraction-result purge suppression: %w", suppressionErr)
+			}
+			if suppressed {
+				if _, err := tx.ExecContext(ctx, `DELETE FROM content_fts WHERE rowid IN (
+					SELECT rowid FROM extracted_text WHERE blob_hash=? AND extractor=?
+				)`, result.BlobHash, result.Extractor); err != nil {
+					return fmt.Errorf("removing suppressed extraction search row: %w", err)
+				}
+				if _, err := tx.ExecContext(ctx,
+					`DELETE FROM extracted_text WHERE blob_hash=? AND extractor=?`,
+					result.BlobHash, result.Extractor); err != nil {
+					return fmt.Errorf("removing suppressed extraction result: %w", err)
+				}
+				if _, err := tx.ExecContext(ctx,
+					`DELETE FROM text_extraction_queue WHERE blob_hash=?`, result.BlobHash); err != nil {
+					return fmt.Errorf("clearing suppressed extraction work: %w", err)
+				}
+				return nil
+			}
 		}
 		var extractErr, text any
 		if result.Error != "" {
@@ -360,7 +477,7 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 		if err := replaceContentFTSTx(ctx, tx, result.BlobHash, result.Extractor, text); err != nil {
 			return err
 		}
-		if exactLegacySuccess {
+		if legacyReplacement {
 			published, publishErr := hasPublishedLexicalHeadTx(ctx, tx)
 			if publishErr != nil {
 				return publishErr
@@ -382,10 +499,24 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 	if !publishRendition {
 		return nil
 	}
-	if _, err := s.MigrateLegacyPlainText(ctx); err != nil {
-		return fmt.Errorf("publishing extracted text rendition: %w", err)
+	if err := s.migrateLegacyPlainTextBlob(ctx, result.BlobHash); err != nil {
+		return fmt.Errorf("publishing legacy extraction authority transition: %w", err)
 	}
-	return nil
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM text_extraction_queue
+			 WHERE blob_hash = ?
+			   AND NOT EXISTS(
+			     SELECT 1
+			     FROM content_versions v
+			     JOIN nodes n ON n.current_version_id=v.version_id
+			     WHERE v.blob_hash=? AND n.trashed_at IS NULL
+			   )`, result.BlobHash, result.BlobHash,
+		); err != nil {
+			return fmt.Errorf("finishing published text extraction: %w", err)
+		}
+		return nil
+	})
 }
 
 func hasPublishedLexicalHeadTx(ctx context.Context, tx *sql.Tx) (bool, error) {

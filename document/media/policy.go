@@ -136,7 +136,7 @@ func withinPixels(width, height, limit int64) bool {
 	return width <= limit && height <= limit && width <= limit/height
 }
 
-// Inspect detects and evaluates one input. Detection failures become the
+// Inspect detects and evaluates one visual input. Detection failures become the
 // matching Reason rather than an error so callers can record stable outcomes;
 // only read failures are returned as errors. Inputs longer than the policy
 // limit are refused before they are read.
