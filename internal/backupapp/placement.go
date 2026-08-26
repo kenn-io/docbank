@@ -13,6 +13,8 @@ import (
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
+
+	"go.kenn.io/docbank/internal/store"
 )
 
 const (
@@ -63,11 +65,14 @@ func (s *metadataSnapshot) AuxiliaryArtifacts(
 }
 
 func encodePlacementManifest(ctx context.Context, q rowQuerier) ([]byte, error) {
-	rows, err := q.QueryContext(ctx, `
+	rows, err := q.QueryContext(ctx, store.BackupBlobAuthorityCTE+`
 		SELECT s.store_id, s.name, s.kind, s.role,
 		       COUNT(l.blob_hash), COALESCE(SUM(b.size), 0)
 		FROM blob_stores s
-		LEFT JOIN blob_locations l ON l.store_id = s.store_id
+		LEFT JOIN (
+			SELECT l.* FROM blob_locations l
+			JOIN backup_authorized_blobs a ON a.hash = l.blob_hash
+		) l ON l.store_id = s.store_id
 		LEFT JOIN blobs b ON b.hash = l.blob_hash
 		GROUP BY s.store_id, s.name, s.kind, s.role
 		ORDER BY CASE s.role WHEN 'primary' THEN 0 ELSE 1 END, s.name, s.store_id`)
@@ -95,9 +100,9 @@ func encodePlacementManifest(ctx context.Context, q rowQuerier) ([]byte, error) 
 		return nil, fmt.Errorf("backupapp: closing placement stores: %w", err)
 	}
 
-	rows, err = q.QueryContext(ctx, `
+	rows, err = q.QueryContext(ctx, store.BackupBlobAuthorityCTE+`
 		SELECT b.hash, l.store_id
-		FROM blobs b
+		FROM blobs b JOIN backup_authorized_blobs a ON a.hash = b.hash
 		LEFT JOIN blob_locations l ON l.blob_hash = b.hash
 		ORDER BY b.hash, l.store_id`)
 	if err != nil {

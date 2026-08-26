@@ -29,7 +29,7 @@ type Store struct {
 // by this binary. It is intentionally independent of metadata JSONL's logical
 // format version: physical schema changes can rebuild through the same logical
 // format without changing that portable contract.
-const currentStorageSchemaVersion = 4
+const currentStorageSchemaVersion = 5
 
 // DefaultSQLiteDriver returns the build's standalone-compatible adapter: CGO
 // builds use mattn/go-sqlite3 and no-CGO builds use modernc.org/sqlite.
@@ -58,6 +58,24 @@ func Open(path string, drivers ...docsqlite.Driver) (*Store, error) {
 	}
 	if _, err := s.MigrateLegacyPlainText(context.Background()); err != nil {
 		return nil, errors.Join(err, s.Close())
+	}
+	return s, nil
+}
+
+// OpenForRestore opens an already-staged restore database without applying
+// local legacy-cache migration. Restore must compare the exact snapshot
+// authority before it publishes the target; the normal Open path performs the
+// migration after the restored vault is first opened for ordinary use.
+func OpenForRestore(path string, driver docsqlite.Driver) (*Store, error) {
+	if err := docsqlite.Validate(driver); err != nil {
+		return nil, fmt.Errorf("opening restore database: %w", err)
+	}
+	if err := prepareReleasedSchemaUpgrade(path, driver); err != nil {
+		return nil, err
+	}
+	s, err := openCurrentStore(path, driver)
+	if err != nil {
+		return nil, err
 	}
 	return s, nil
 }
@@ -103,6 +121,9 @@ func (s *Store) bootstrapTx() error {
 		if _, err := tx.Exec(schemaSQL); err != nil {
 			return fmt.Errorf("applying schema: %w", err)
 		}
+		if err := validateEmbeddingCatalogSchemaTx(context.Background(), tx); err != nil {
+			return err
+		}
 		var schemaVersion int
 		if err := tx.QueryRow(`
 			SELECT vault_uid, schema_version FROM vault_metadata WHERE singleton = 1`).Scan(
@@ -130,6 +151,9 @@ func (s *Store) bootstrapTx() error {
 		}
 		if err := validateUUIDv4(s.vaultID); err != nil {
 			return fmt.Errorf("validating vault identity: %w", err)
+		}
+		if err := ensureProcessingIncarnationTx(tx); err != nil {
+			return err
 		}
 		primary, err := ensurePrimaryBlobStoreTx(tx)
 		if err != nil {

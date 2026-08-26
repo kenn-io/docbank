@@ -1,0 +1,66 @@
+{
+  "version": 2,
+  "checksum": "53ff67cdb1e076cc2af4db3a51adcf4d2fb7b657c0752f812f4ff7218f5ba04c",
+  "policy_fingerprint": "5b75326f6b5bd3cd4515bb151ec978e6f3218f6b3aa62dfe38691d272e0be0c0",
+  "evidence_checksum": "be5eaa990540eb4b5c5512ef07b63333b29897716b01283017f46f1ac6ab8b04",
+  "tokenizer_identity": {
+    "name": "synthetic-pairs",
+    "revision": "v1",
+    "prefix_token_counts_monotonic": true
+  },
+  "lexical_evidence_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "formatter": "evidence-text/v1",
+  "model_input_fingerprint": "c8286ca7895bcc8dbe3f761b94807abc30ec2b800d062561be3d3a5662fcab6a",
+  "content_token_budget": 6,
+  "overlap_tokens": 1,
+  "truncation_policy": "reject_indivisible",
+  "context_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "total_content_tokens": 12,
+  "total_rendered_tokens": 29,
+  "total_content_bytes": 23,
+  "total_rendered_bytes": 57,
+  "inputs": [
+    {
+      "key": "chunk-000000-30be6a24a77a",
+      "content": "Alpha beta.",
+      "rendered": "search_document: Alpha beta.",
+      "content_tokens": 6,
+      "rendered_tokens": 14,
+      "checksum": "30be6a24a77ac2dae8990bac594a34fcdd03ba6a7a643ecdf68fe7900453fa99",
+      "heading_paths": [
+        [
+          "Intro"
+        ]
+      ],
+      "source_spans": [
+        {
+          "unit_index": 0,
+          "char_start": 0,
+          "char_end": 11
+        }
+      ],
+      "truncated": false
+    },
+    {
+      "key": "chunk-000001-0e192444c494",
+      "content": "Gamma delta.",
+      "rendered": "search_document: Gamma delta.",
+      "content_tokens": 6,
+      "rendered_tokens": 15,
+      "checksum": "0e192444c494cb0c4ad53d9fa290948c3035c8aff4573d68b4035a24991df282",
+      "heading_paths": [
+        [
+          "Details"
+        ]
+      ],
+      "source_spans": [
+        {
+          "unit_index": 1,
+          "char_start": 0,
+          "char_end": 12
+        }
+      ],
+      "truncated": false
+    }
+  ]
+}

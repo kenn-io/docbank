@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/url"
@@ -21,6 +22,24 @@ import (
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/store"
 )
+
+func TestRetryDaemonListSurvivesTransientFailure(t *testing.T) {
+	attempts := 0
+	retries := 0
+	items, err := retryDaemonList(t.Context(), 0, func() ([]string, error) {
+		attempts++
+		if attempts == 1 {
+			return nil, errors.New("synthetic transient listing failure")
+		}
+		return []string{"ready"}, nil
+	}, func(error) {
+		retries++
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"ready"}, items)
+	assert.Equal(t, 2, attempts)
+	assert.Equal(t, 1, retries)
+}
 
 func TestWebOriginUsesDedicatedEphemeralLoopbackListeners(t *testing.T) {
 	first, firstURL, err := listenWebOriginWithIdentity(
