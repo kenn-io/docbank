@@ -11,12 +11,14 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/vectorworker"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
@@ -173,6 +175,22 @@ func RestoreWithPlacement(
 	opts.BeforePublication = func(
 		hookCtx context.Context, staged backup.RestorePublicationTarget,
 	) error {
+		processingStore, err := store.OpenForRestore(staged.DBPath, driver)
+		if err != nil {
+			return fmt.Errorf("backupapp: opening staged processing authority: %w", err)
+		}
+		if err := processingStore.VerifyRestoredRenditionBlobAuthority(hookCtx); err != nil {
+			return errors.Join(err, processingStore.Close())
+		}
+		if err := processingStore.RebuildRenditionLexicalProjection(hookCtx); err != nil {
+			return errors.Join(err, processingStore.Close())
+		}
+		if _, err := rebuildRestoredVectorIndexes(hookCtx, processingStore); err != nil {
+			return errors.Join(err, processingStore.Close())
+		}
+		if err := processingStore.Close(); err != nil {
+			return fmt.Errorf("backupapp: closing staged processing authority: %w", err)
+		}
 		blobsDir := filepath.Join(staged.TargetDir, "blobs")
 		if err := RecoverInterruptedPrimaryHandoff(
 			hookCtx, staged.TargetDir, driver,
@@ -196,11 +214,6 @@ func RestoreWithPlacement(
 			return err
 		}
 		if err := primaryHandoff.Prepare(hookCtx); err != nil {
-			return err
-		}
-		if err := verifyRestoredRenditionHeads(
-			hookCtx, staged.TargetDir, staged.DBPath, driver,
-		); err != nil {
 			return err
 		}
 		if placement.Map == nil {
@@ -235,29 +248,22 @@ func RestoreWithPlacement(
 	return result, nil
 }
 
-func verifyRestoredRenditionHeads(
-	ctx context.Context, target, databasePath string, driver docsqlite.Driver,
-) (retErr error) {
-	metadata, err := store.Open(databasePath, driver)
+func rebuildRestoredVectorIndexes(
+	ctx context.Context, metadata *store.Store,
+) (vectorworker.IndexRestoreReport, error) {
+	worker, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
+		Catalog: metadata, Owner: "restore-vector-index-worker",
+		BuildLease: 30 * time.Minute, ReaderLease: 5 * time.Minute,
+		IdleDelay: time.Second,
+	})
 	if err != nil {
-		return fmt.Errorf("backupapp: opening restored rendition catalog: %w", err)
+		return vectorworker.IndexRestoreReport{}, fmt.Errorf("backupapp: configuring restored vector indexes: %w", err)
 	}
-	defer func() {
-		retErr = errors.Join(retErr, metadata.Close())
-	}()
-	physical, err := blob.NewPreparedRestoreReader(
-		store.NewPackCatalog(metadata), filepath.Join(target, "blobs"),
-	)
+	report, err := worker.Restore(ctx)
 	if err != nil {
-		return fmt.Errorf("backupapp: opening restored rendition storage: %w", err)
+		return report, fmt.Errorf("backupapp: rebuilding restored vector indexes: %w", err)
 	}
-	defer func() {
-		retErr = errors.Join(retErr, physical.Close())
-	}()
-	if err := metadata.VerifyRenditionHeadBytes(ctx, physical); err != nil {
-		return fmt.Errorf("backupapp: verifying restored rendition bytes: %w", err)
-	}
-	return nil
+	return report, nil
 }
 
 // RecoverInterruptedPrimaryHandoff resolves a durable restore marker against

@@ -455,7 +455,7 @@ func validateFamilyUnitKind(family string, unitKind EvidenceUnitKind) error {
 	}
 	var allowed bool
 	switch family {
-	case "pdf", "word":
+	case "image", "pdf", "word":
 		allowed = unitKind == EvidenceUnitPage
 	case "presentation":
 		allowed = unitKind == EvidenceUnitSlide
@@ -478,7 +478,7 @@ func validateFamilyUnitKind(family string, unitKind EvidenceUnitKind) error {
 
 func validEvidenceFamily(family string) bool {
 	switch family {
-	case "pdf", "word", "presentation", "spreadsheet", "ebook", "structured", "source", "text", "mail":
+	case "audio", "image", "video", "pdf", "word", "presentation", "spreadsheet", "ebook", "structured", "source", "text", "mail":
 		return true
 	default:
 		return false

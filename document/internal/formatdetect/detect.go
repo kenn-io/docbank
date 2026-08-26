@@ -1,0 +1,1862 @@
+package formatdetect
+
+import (
+	"archive/zip"
+	"bytes"
+	"encoding/binary"
+	"encoding/csv"
+	"encoding/hex"
+	"encoding/json/jsontext"
+	"encoding/xml"
+	"errors"
+	"fmt"
+	"io"
+	"math"
+	"mime"
+	"net/mail"
+	"os"
+	"path"
+	"strconv"
+	"strings"
+	"unicode/utf8"
+)
+
+const (
+	// MaxDocumentBytes is the absolute detector allocation and read ceiling.
+	MaxDocumentBytes         = int64(500 << 20)
+	maxSniffBytes            = int64(8 << 20)
+	maxTextSniffBytes        = int64(50 << 20)
+	maxZIPEntries            = 10_000
+	maxZIPCentralDirectory   = uint32(16 << 20)
+	maxZIPExpandedBytes      = uint64(500 << 20)
+	maxZIPSingleExpandedByte = uint64(100 << 20)
+	maxPDFTailBytes          = int64(64 << 10)
+	maxPDFXRefBytes          = int64(4 << 10)
+	maxPDFStructuralBytes    = 64 << 20
+	maxPDFTokens             = 1 << 20
+	maxPDFPageTreeDepth      = 256
+	ooxmlContentTypesName    = "[Content_Types].xml"
+)
+
+// CompoundDirectoryNames validates one legacy compound-file directory. It is
+// exported only so the Mistral compatibility suite can retain its allocation
+// regression test while format detection is shared with core inspection.
+func CompoundDirectoryNames(reader io.ReaderAt, size int64) (map[string]bool, error) {
+	return compoundDirectoryNames(reader, size)
+}
+
+var (
+	compoundFileMagic = []byte{0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1}
+)
+
+const compoundNoStream = uint32(0xffffffff)
+
+type compoundDirectoryEntry struct {
+	name               string
+	entryType          byte
+	left, right, child uint32
+}
+
+// DetectFormat validates a provider candidate from bounded bytes. Declared
+// type is a hint only: container families must prove internal markers, while
+// inherently ambiguous text formats also require syntactically safe UTF-8.
+func DetectFormat(reader io.ReaderAt, size int64, declaredMediaType string) (CandidateFormat, error) {
+	if reader == nil || size <= 0 {
+		return CandidateFormat{}, errors.New("document format detection requires nonempty bytes")
+	}
+	if size > MaxDocumentBytes {
+		return CandidateFormat{}, errors.New("document exceeds the format-detection byte limit")
+	}
+	mediaType, parameters, err := mime.ParseMediaType(declaredMediaType)
+	if err != nil || len(parameters) != 0 || mediaType != strings.ToLower(mediaType) {
+		return CandidateFormat{}, errors.New("document format detection requires a canonical media type")
+	}
+	prefix, err := readPrefix(reader, size, maxSniffBytes)
+	if err != nil {
+		return CandidateFormat{}, err
+	}
+
+	var detected CandidateFormat
+	switch {
+	case bytes.HasPrefix(prefix, []byte("%PDF-")):
+		if err = validatePDFStructure(reader, size, prefix); err == nil {
+			detected, _ = CandidateFormatByID(formatIDPDF)
+		}
+	case bytes.HasPrefix(prefix, []byte(`{\rtf`)):
+		detected, _ = CandidateFormatByID("rtf")
+	case bytes.HasPrefix(prefix, compoundFileMagic):
+		detected, err = detectCompoundFormat(reader, size)
+	case bytes.HasPrefix(prefix, []byte("PK\x03\x04")) || bytes.HasPrefix(prefix, []byte("PK\x05\x06")):
+		detected, err = detectZIPFormat(reader, size)
+	default:
+		if size > maxTextSniffBytes {
+			return CandidateFormat{}, errors.New("document text exceeds type-detection limit")
+		}
+		content, readErr := readPrefix(reader, size, maxTextSniffBytes)
+		if readErr != nil {
+			return CandidateFormat{}, readErr
+		}
+		detected, err = detectTextFormat(content, mediaType)
+	}
+	if err != nil {
+		return CandidateFormat{}, err
+	}
+	if detected.MediaType != mediaType {
+		return CandidateFormat{}, fmt.Errorf("document bytes are %s, not declared %s", detected.MediaType, mediaType)
+	}
+	return detected, nil
+}
+
+func validatePDFStructure(reader io.ReaderAt, size int64, prefix []byte) error {
+	if len(prefix) < 9 || !validPDFVersion(prefix[5:8]) || !isPDFWhitespace(prefix[8]) {
+		return errors.New("PDF header is invalid")
+	}
+	tailLength := min(size, maxPDFTailBytes)
+	tailOffset := size - tailLength
+	tail := make([]byte, tailLength)
+	read, err := reader.ReadAt(tail, tailOffset)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("read PDF trailer: %w", err)
+	}
+	if int64(read) != tailLength {
+		return errors.New("document bytes changed during PDF trailer read")
+	}
+	eofIndex := bytes.LastIndex(tail, []byte("%%EOF"))
+	if eofIndex < 0 || len(trimPDFWhitespace(tail[eofIndex+len("%%EOF"):])) != 0 {
+		return errors.New("PDF end marker is missing or not final")
+	}
+	beforeEOF := tail[:eofIndex]
+	startXRefIndex := bytes.LastIndex(beforeEOF, []byte("startxref"))
+	if startXRefIndex < 0 {
+		return errors.New("PDF startxref is missing")
+	}
+	offsetText := trimPDFWhitespace(beforeEOF[startXRefIndex+len("startxref"):])
+	digitEnd := 0
+	for digitEnd < len(offsetText) && offsetText[digitEnd] >= '0' && offsetText[digitEnd] <= '9' {
+		digitEnd++
+	}
+	if digitEnd == 0 || len(trimPDFWhitespace(offsetText[digitEnd:])) != 0 {
+		return errors.New("PDF startxref offset is invalid")
+	}
+	xrefOffset, err := strconv.ParseInt(string(offsetText[:digitEnd]), 10, 64)
+	if err != nil || xrefOffset <= 0 || xrefOffset >= tailOffset+int64(eofIndex) {
+		return errors.New("PDF startxref offset is outside the document")
+	}
+	xrefLength := min(size-xrefOffset, maxPDFXRefBytes)
+	xref := make([]byte, xrefLength)
+	read, err = reader.ReadAt(xref, xrefOffset)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("read PDF cross-reference data: %w", err)
+	}
+	if int64(read) != xrefLength {
+		return errors.New("document bytes changed during PDF cross-reference read")
+	}
+	xrefEnd := tailOffset + int64(startXRefIndex)
+	streamXRefLength := xrefEnd - xrefOffset
+	if validPDFTableXRef(xref, beforeEOF[:startXRefIndex]) ||
+		streamXRefLength > 0 && streamXRefLength <= int64(len(xref)) && validPDFStreamXRef(
+			reader, size, xrefOffset, xref[:streamXRefLength]) {
+		return nil
+	}
+	return errors.New("PDF cross-reference data is invalid")
+}
+
+// CountPDFPages resolves the catalog's page tree and returns its verified leaf
+// count. Stream bodies are removed using their direct Length before tokenizing,
+// so page-like bytes in content streams, strings, comments, or orphan objects
+// cannot inflate the result. PDFs whose stream boundaries cannot be proven
+// locally are rejected rather than estimated.
+func CountPDFPages(data []byte) (int64, error) {
+	structural, err := pdfWithoutStreamData(data)
+	if err != nil {
+		return 0, err
+	}
+	tokens, ok := tokenizePDF(structural)
+	if !ok {
+		return 0, errors.New("PDF object syntax is invalid")
+	}
+
+	objects := make(map[string]map[string][]string)
+	for position := 0; position+3 < len(tokens); position++ {
+		if tokens[position+2] != "obj" || !pdfObjectNumber(tokens[position]) || !pdfGeneration(tokens[position+1]) {
+			continue
+		}
+		dictionary, _, parsed := parsePDFDictionaryTokens(tokens, position+3, 0)
+		if parsed {
+			objects[pdfReferenceKey(tokens[position], tokens[position+1])] = dictionary
+		}
+	}
+
+	authority, ok := pdfCrossReferenceAuthority(data)
+	if !ok {
+		return 0, errors.New("PDF cross-reference authority is missing")
+	}
+	if authority.objects != nil {
+		objects = pdfXRefSelectedDictionaries(data, authority.objects)
+	}
+	root, ok := pdfReference(authority.dictionary["Root"])
+	if !ok {
+		return 0, errors.New("PDF cross-reference root is invalid")
+	}
+	catalog, ok := objects[root]
+	if !ok || !pdfDictionaryType(catalog, "/Catalog") {
+		return 0, errors.New("PDF catalog is invalid")
+	}
+	pagesRoot, ok := pdfReference(catalog["Pages"])
+	if !ok {
+		return 0, errors.New("PDF catalog page tree is invalid")
+	}
+
+	visiting := make(map[string]bool)
+	var walk func(string, string, bool, int) (int64, error)
+	walk = func(reference, parent string, root bool, depth int) (int64, error) {
+		if depth > maxPDFPageTreeDepth {
+			return 0, errors.New("PDF page tree exceeds the nesting bound")
+		}
+		if visiting[reference] {
+			return 0, errors.New("PDF page tree contains a cycle")
+		}
+		item, exists := objects[reference]
+		if !exists {
+			return 0, errors.New("PDF page tree references a missing object")
+		}
+		if !root {
+			declaredParent, parentOK := pdfReference(item["Parent"])
+			if !parentOK || declaredParent != parent {
+				return 0, errors.New("PDF page tree parent is invalid")
+			}
+		}
+		switch {
+		case pdfDictionaryType(item, "/Page"):
+			return 1, nil
+		case pdfDictionaryType(item, "/Pages"):
+			declared, countOK := pdfPositiveInteger(item["Count"])
+			children, kidsOK := pdfReferences(item["Kids"])
+			if !countOK || declared > math.MaxInt64 || !kidsOK || len(children) == 0 {
+				return 0, errors.New("PDF page tree node is invalid")
+			}
+			visiting[reference] = true
+			var total int64
+			for _, child := range children {
+				count, childErr := walk(child, reference, false, depth+1)
+				if childErr != nil || count > math.MaxInt64-total {
+					delete(visiting, reference)
+					if childErr != nil {
+						return 0, childErr
+					}
+					return 0, errors.New("PDF page count overflows")
+				}
+				total += count
+			}
+			delete(visiting, reference)
+			if uint64(total) != declared {
+				return 0, errors.New("PDF page tree count is inconsistent")
+			}
+			return total, nil
+		default:
+			return 0, errors.New("PDF page tree object has an invalid type")
+		}
+	}
+	return walk(pagesRoot, "", true, 0)
+}
+
+// PDFInfoFields resolves the final cross-reference authority's exact Info
+// dictionary and returns its directly embedded string values. Unrelated
+// objects and stream bytes are not metadata authority.
+func PDFInfoFields(data []byte) (map[string]string, error) {
+	structural, err := pdfWithoutStreamData(data)
+	if err != nil {
+		return nil, err
+	}
+	tokens, ok := tokenizePDF(structural)
+	if !ok {
+		return nil, errors.New("PDF object syntax is invalid")
+	}
+	objects := make(map[string]map[string][]string)
+	for position := 0; position+3 < len(tokens); position++ {
+		if tokens[position+2] != "obj" || !pdfObjectNumber(tokens[position]) || !pdfGeneration(tokens[position+1]) {
+			continue
+		}
+		dictionary, _, parsed := parsePDFDictionaryTokens(tokens, position+3, 0)
+		if parsed {
+			objects[pdfReferenceKey(tokens[position], tokens[position+1])] = dictionary
+		}
+	}
+	authority, ok := pdfCrossReferenceAuthority(data)
+	if !ok {
+		return nil, errors.New("PDF cross-reference authority is missing")
+	}
+	if authority.objects != nil {
+		objects = pdfXRefSelectedDictionaries(data, authority.objects)
+	}
+	infoReference, hasInfo := pdfReference(authority.dictionary["Info"])
+	if !hasInfo {
+		return map[string]string{}, nil
+	}
+	info, ok := objects[infoReference]
+	if !ok {
+		return nil, errors.New("PDF Info dictionary reference is missing")
+	}
+	result := make(map[string]string)
+	for _, key := range []string{"Title", "Author", "Subject", "Keywords", "CreationDate", "ModDate"} {
+		value, ok := pdfString(info[key])
+		if ok {
+			result[key] = value
+		}
+	}
+	return result, nil
+}
+
+func pdfString(tokens []string) (string, bool) {
+	if len(tokens) != 1 || len(tokens[0]) < 2 {
+		return "", false
+	}
+	value := tokens[0]
+	if value[0] == '<' && value[1] != '<' && value[len(value)-1] == '>' {
+		hexText := strings.Map(func(character rune) rune {
+			if character == 0 || character == '\t' || character == '\n' ||
+				character == '\f' || character == '\r' || character == ' ' {
+				return -1
+			}
+			return character
+		}, value[1:len(value)-1])
+		if len(hexText)%2 != 0 {
+			hexText += "0"
+		}
+		decoded, err := hex.DecodeString(hexText)
+		return string(decoded), err == nil
+	}
+	if value[0] != '(' || value[len(value)-1] != ')' {
+		return "", false
+	}
+	input := []byte(value[1 : len(value)-1])
+	output := make([]byte, 0, len(input))
+	for position := 0; position < len(input); position++ {
+		if input[position] != '\\' {
+			output = append(output, input[position])
+			continue
+		}
+		position++
+		if position == len(input) {
+			return "", false
+		}
+		switch input[position] {
+		case 'n':
+			output = append(output, '\n')
+		case 'r':
+			output = append(output, '\r')
+		case 't':
+			output = append(output, '\t')
+		case 'b':
+			output = append(output, '\b')
+		case 'f':
+			output = append(output, '\f')
+		case '\r':
+			if position+1 < len(input) && input[position+1] == '\n' {
+				position++
+			}
+		case '\n':
+		case '0', '1', '2', '3', '4', '5', '6', '7':
+			value := int(input[position] - '0')
+			for count := 1; count < 3 && position+1 < len(input) && input[position+1] >= '0' && input[position+1] <= '7'; count++ {
+				position++
+				value = value*8 + int(input[position]-'0')
+			}
+			output = append(output, byte(value&0xff))
+		default:
+			output = append(output, input[position])
+		}
+	}
+	return string(output), true
+}
+
+func pdfWithoutStreamData(data []byte) ([]byte, error) {
+	result := make([]byte, 0, min(len(data), maxPDFStructuralBytes))
+	segmentStart, objectStart := 0, -1
+	for position := 0; position < len(data); {
+		start, end, ok := nextPDFLexeme(data, position)
+		if !ok {
+			return nil, errors.New("PDF token is unterminated")
+		}
+		if start == end {
+			break
+		}
+		position = end
+		word := string(data[start:end])
+		if word == "obj" {
+			objectStart = start
+			continue
+		}
+		if word == "endobj" {
+			objectStart = -1
+			continue
+		}
+		if word != "stream" {
+			continue
+		}
+		if objectStart < 0 {
+			return nil, errors.New("PDF stream is outside an object")
+		}
+		prefixTokens, tokenOK := tokenizePDF(data[objectStart:start])
+		if !tokenOK {
+			return nil, errors.New("PDF stream dictionary is invalid")
+		}
+		dictionaryStart := -1
+		for index, token := range prefixTokens {
+			if token == "<<" {
+				dictionaryStart = index
+				break
+			}
+		}
+		if dictionaryStart < 0 {
+			return nil, errors.New("PDF stream dictionary is missing")
+		}
+		dictionary, _, parsed := parsePDFDictionaryTokens(prefixTokens, dictionaryStart, 0)
+		length, lengthOK := pdfNonnegativeInteger(dictionary["Length"])
+		if !parsed || !lengthOK || length > uint64(len(data)) {
+			return nil, errors.New("PDF stream length is not directly bounded")
+		}
+		bodyStart := end
+		for bodyStart < len(data) && (data[bodyStart] == ' ' || data[bodyStart] == '\t' || data[bodyStart] == '\f' || data[bodyStart] == 0) {
+			bodyStart++
+		}
+		switch {
+		case bodyStart < len(data) && data[bodyStart] == '\r':
+			bodyStart++
+			if bodyStart < len(data) && data[bodyStart] == '\n' {
+				bodyStart++
+			}
+		case bodyStart < len(data) && data[bodyStart] == '\n':
+			bodyStart++
+		default:
+			return nil, errors.New("PDF stream has no line boundary")
+		}
+		bodyLength := int(length) // #nosec G115 -- length is bounded by len(data) above.
+		if bodyLength > len(data)-bodyStart {
+			return nil, errors.New("PDF stream exceeds the document")
+		}
+		bodyEnd := bodyStart + bodyLength
+		endStream := bodyEnd
+		if endStream < len(data) && data[endStream] == '\r' {
+			endStream++
+			if endStream < len(data) && data[endStream] == '\n' {
+				endStream++
+			}
+		} else if endStream < len(data) && data[endStream] == '\n' {
+			endStream++
+		}
+		if endStream+len("endstream") > len(data) || string(data[endStream:endStream+len("endstream")]) != "endstream" {
+			return nil, errors.New("PDF stream end does not match its length")
+		}
+		if bodyStart-segmentStart > maxPDFStructuralBytes-len(result) {
+			return nil, errors.New("PDF object structure exceeds the inspection bound")
+		}
+		result = append(result, data[segmentStart:bodyStart]...)
+		segmentStart = bodyEnd
+		position = bodyEnd
+	}
+	if len(data)-segmentStart > maxPDFStructuralBytes-len(result) {
+		return nil, errors.New("PDF object structure exceeds the inspection bound")
+	}
+	return append(result, data[segmentStart:]...), nil
+}
+
+func nextPDFLexeme(data []byte, position int) (int, int, bool) {
+	for {
+		for position < len(data) && isPDFWhitespace(data[position]) {
+			position++
+		}
+		if position == len(data) {
+			return position, position, true
+		}
+		if data[position] != '%' {
+			break
+		}
+		for position < len(data) && data[position] != '\r' && data[position] != '\n' {
+			position++
+		}
+	}
+	start := position
+	switch data[position] {
+	case '(':
+		depth, escaped := 0, false
+		for ; position < len(data); position++ {
+			char := data[position]
+			if escaped {
+				escaped = false
+				continue
+			}
+			if char == '\\' {
+				escaped = true
+				continue
+			}
+			switch char {
+			case '(':
+				depth++
+			case ')':
+				depth--
+				if depth == 0 {
+					return start, position + 1, true
+				}
+			}
+		}
+		return start, position, false
+	case '<':
+		if position+1 < len(data) && data[position+1] == '<' {
+			return start, position + 2, true
+		}
+		for position++; position < len(data); position++ {
+			if data[position] == '>' {
+				return start, position + 1, true
+			}
+		}
+		return start, position, false
+	case '>':
+		if position+1 < len(data) && data[position+1] == '>' {
+			return start, position + 2, true
+		}
+		return start, position + 1, true
+	case '[', ']', '{', '}':
+		return start, position + 1, true
+	case '/':
+		position++
+	}
+	for position < len(data) && !isPDFTokenBoundary(data[position]) {
+		position++
+	}
+	if position == start || position == start+1 && data[start] == '/' {
+		return start, position, false
+	}
+	return start, position, true
+}
+
+func pdfObjectNumber(value string) bool {
+	number, err := strconv.ParseUint(value, 10, 64)
+	return err == nil && number > 0
+}
+
+func pdfGeneration(value string) bool {
+	generation, err := strconv.ParseUint(value, 10, 16)
+	return err == nil && generation <= 65_535
+}
+
+func pdfReferenceKey(number, generation string) string { return number + " " + generation }
+
+func pdfReference(tokens []string) (string, bool) {
+	if len(tokens) != 3 || tokens[2] != "R" || !pdfObjectNumber(tokens[0]) || !pdfGeneration(tokens[1]) {
+		return "", false
+	}
+	return pdfReferenceKey(tokens[0], tokens[1]), true
+}
+
+func pdfReferences(tokens []string) ([]string, bool) {
+	if len(tokens) < 5 || tokens[0] != "[" || tokens[len(tokens)-1] != "]" || (len(tokens)-2)%3 != 0 {
+		return nil, false
+	}
+	references := make([]string, 0, (len(tokens)-2)/3)
+	for position := 1; position < len(tokens)-1; position += 3 {
+		reference, ok := pdfReference(tokens[position : position+3])
+		if !ok {
+			return nil, false
+		}
+		references = append(references, reference)
+	}
+	return references, len(references) > 0
+}
+
+func pdfDictionaryType(dictionary map[string][]string, expected string) bool {
+	return len(dictionary["Type"]) == 1 && dictionary["Type"][0] == expected
+}
+
+func pdfNonnegativeInteger(tokens []string) (uint64, bool) {
+	if len(tokens) != 1 {
+		return 0, false
+	}
+	value, err := strconv.ParseUint(tokens[0], 10, 64)
+	return value, err == nil
+}
+
+func validPDFVersion(version []byte) bool {
+	return len(version) == 3 && version[1] == '.' &&
+		((version[0] == '1' && version[2] >= '0' && version[2] <= '7') ||
+			(version[0] == '2' && version[2] == '0'))
+}
+
+func validPDFTableXRef(xref, beforeStartXRef []byte) bool {
+	position := 0
+	line, ok := nextPDFLine(xref, &position)
+	if !ok || !bytes.Equal(trimPDFWhitespace(line), []byte("xref")) {
+		return false
+	}
+	header, ok := nextNonemptyPDFLine(xref, &position)
+	if !ok {
+		return false
+	}
+	headerFields := bytes.Fields(header)
+	if len(headerFields) != 2 {
+		return false
+	}
+	first, firstErr := strconv.ParseUint(string(headerFields[0]), 10, 64)
+	count, countErr := strconv.ParseUint(string(headerFields[1]), 10, 64)
+	if firstErr != nil || countErr != nil || count == 0 || first > math.MaxUint64-count {
+		return false
+	}
+	validatedRecords := uint64(0)
+	for validatedRecords < count {
+		record, ok := nextPDFLine(xref, &position)
+		if !ok {
+			break
+		}
+		if !validPDFXRefRecord(record) {
+			if position == len(xref) {
+				break
+			}
+			return false
+		}
+		validatedRecords++
+	}
+	if validatedRecords == 0 {
+		return false
+	}
+
+	return validPDFTrailer(beforeStartXRef, first, count)
+}
+
+type pdfXRefEntry struct {
+	kind, field2, field3 uint64
+}
+
+type pdfXRefStream struct {
+	dictionary               map[string][]string
+	objectNumber, generation uint64
+	entries                  map[uint64]pdfXRefEntry
+}
+
+type pdfCrossReference struct {
+	dictionary map[string][]string
+	objects    map[string]int64
+}
+
+func validPDFStreamXRef(reader io.ReaderAt, size, xrefOffset int64, xref []byte) bool {
+	_, ok := validatedPDFStreamXRef(reader, size, xrefOffset, xref)
+	return ok
+}
+
+func validatedPDFStreamXRef(
+	reader io.ReaderAt, size, xrefOffset int64, xref []byte,
+) (pdfXRefStream, bool) {
+	if reader == nil || size <= 0 || xrefOffset <= 0 || xrefOffset >= size {
+		return pdfXRefStream{}, false
+	}
+	parsed, ok := parsePDFStreamXRef(xref)
+	if !ok {
+		return pdfXRefStream{}, false
+	}
+	xrefLimit := uint64(xrefOffset) // #nosec G115 -- xrefOffset is positive above.
+	sizeLimit := uint64(size)       // #nosec G115 -- size is positive above.
+	seenOffsets := make(map[uint64]struct{}, len(parsed.entries))
+	for objectNumber, entry := range parsed.entries {
+		switch entry.kind {
+		case 0:
+			if entry.field3 > 65_535 {
+				return pdfXRefStream{}, false
+			}
+		case 1:
+			if objectNumber == 0 || entry.field2 == 0 || entry.field2 > xrefLimit ||
+				entry.field2 >= sizeLimit || entry.field3 > 65_535 {
+				return pdfXRefStream{}, false
+			}
+			if _, duplicate := seenOffsets[entry.field2]; duplicate {
+				return pdfXRefStream{}, false
+			}
+			seenOffsets[entry.field2] = struct{}{}
+			objectOffset := int64(entry.field2) // #nosec G115 -- field2 is below positive int64 size above.
+			if !validPDFObjectHeaderAt(reader, size, objectOffset, objectNumber, entry.field3) {
+				return pdfXRefStream{}, false
+			}
+		default:
+			// Compressed objects and unknown entry kinds are not local authority.
+			return pdfXRefStream{}, false
+		}
+	}
+	if !pdfXRefEntryMatches(parsed, parsed.objectNumber, parsed.generation, xrefLimit) ||
+		!pdfXRefReferenceIsDirect(parsed, parsed.dictionary["Root"]) {
+		return pdfXRefStream{}, false
+	}
+	if _, hasInfo := parsed.dictionary["Info"]; hasInfo &&
+		!pdfXRefReferenceIsDirect(parsed, parsed.dictionary["Info"]) {
+		return pdfXRefStream{}, false
+	}
+	return parsed, true
+}
+
+func parsePDFStreamXRef(xref []byte) (pdfXRefStream, bool) {
+	if int64(len(xref)) > maxPDFXRefBytes {
+		return pdfXRefStream{}, false
+	}
+	streamIndex := firstPDFKeyword(xref, "stream")
+	if streamIndex < 0 {
+		return pdfXRefStream{}, false
+	}
+	tokens, ok := tokenizePDF(xref[:streamIndex])
+	if !ok || len(tokens) < 5 || tokens[2] != "obj" {
+		return pdfXRefStream{}, false
+	}
+	objectNumber, err := strconv.ParseUint(tokens[0], 10, 64)
+	if err != nil || objectNumber == 0 {
+		return pdfXRefStream{}, false
+	}
+	generation, err := strconv.ParseUint(tokens[1], 10, 64)
+	if err != nil || generation > 65_535 {
+		return pdfXRefStream{}, false
+	}
+	dictionary, next, ok := parsePDFDictionaryTokens(tokens, 3, 0)
+	if !ok || next != len(tokens) {
+		return pdfXRefStream{}, false
+	}
+	size, sizeOK := pdfPositiveInteger(dictionary["Size"])
+	widths, entryWidth, widthsOK := pdfXRefWidths(dictionary["W"])
+	length, lengthOK := pdfNonnegativeInteger(dictionary["Length"])
+	if !sizeOK || !widthsOK || !lengthOK ||
+		len(dictionary["Type"]) != 1 || dictionary["Type"][0] != "/XRef" ||
+		!validPDFRootReference(dictionary["Root"]) || pdfXRefHasUnsupportedEncoding(dictionary) {
+		return pdfXRefStream{}, false
+	}
+	sections, entryCount, sectionsOK := pdfXRefSections(dictionary["Index"], size)
+	if !sectionsOK || entryCount > math.MaxUint64/entryWidth || entryCount*entryWidth != length {
+		return pdfXRefStream{}, false
+	}
+	bodyStart, bodyOK := pdfStreamBodyStart(xref, streamIndex+len("stream"))
+	if !bodyOK {
+		return pdfXRefStream{}, false
+	}
+	available := uint64(len(xref) - bodyStart) // #nosec G115 -- bodyStart is within xref when bodyOK.
+	if length > available {
+		return pdfXRefStream{}, false
+	}
+	bodyLength := int(length) // #nosec G115 -- length is bounded by the xref slice above.
+	bodyEnd := bodyStart + bodyLength
+	endStream := bodyEnd
+	if endStream < len(xref) && xref[endStream] == '\r' {
+		endStream++
+		if endStream < len(xref) && xref[endStream] == '\n' {
+			endStream++
+		}
+	} else if endStream < len(xref) && xref[endStream] == '\n' {
+		endStream++
+	}
+	closing, closingOK := tokenizePDF(xref[endStream:])
+	if !closingOK || len(closing) != 2 || closing[0] != "endstream" || closing[1] != "endobj" {
+		return pdfXRefStream{}, false
+	}
+	entryCapacity := int(entryCount) // #nosec G115 -- count is bounded by the 4 KiB xref slice.
+	entries := make(map[uint64]pdfXRefEntry, entryCapacity)
+	position := bodyStart
+	for _, section := range sections {
+		for objectNumber := section.first; objectNumber < section.first+section.count; objectNumber++ {
+			if _, duplicate := entries[objectNumber]; duplicate {
+				return pdfXRefStream{}, false
+			}
+			kind := uint64(1)
+			if widths[0] != 0 {
+				kind = pdfXRefField(xref[position : position+widths[0]])
+			}
+			position += widths[0]
+			field2 := pdfXRefField(xref[position : position+widths[1]])
+			position += widths[1]
+			field3 := pdfXRefField(xref[position : position+widths[2]])
+			position += widths[2]
+			entries[objectNumber] = pdfXRefEntry{kind: kind, field2: field2, field3: field3}
+		}
+	}
+	return pdfXRefStream{
+		dictionary: dictionary, objectNumber: objectNumber, generation: generation, entries: entries,
+	}, true
+}
+
+type pdfXRefSection struct{ first, count uint64 }
+
+func pdfXRefSections(value []string, size uint64) ([]pdfXRefSection, uint64, bool) {
+	if len(value) == 0 {
+		return []pdfXRefSection{{first: 0, count: size}}, size, true
+	}
+	if len(value) < 4 || value[0] != "[" || value[len(value)-1] != "]" || (len(value)-2)%2 != 0 {
+		return nil, 0, false
+	}
+	sections := make([]pdfXRefSection, 0, (len(value)-2)/2)
+	var total uint64
+	for position := 1; position < len(value)-1; position += 2 {
+		first, firstOK := pdfNonnegativeInteger(value[position : position+1])
+		count, countOK := pdfPositiveInteger(value[position+1 : position+2])
+		if !firstOK || !countOK || first >= size || count > size-first || total > math.MaxUint64-count {
+			return nil, 0, false
+		}
+		for _, previous := range sections {
+			if first < previous.first+previous.count && previous.first < first+count {
+				return nil, 0, false
+			}
+		}
+		sections = append(sections, pdfXRefSection{first: first, count: count})
+		total += count
+	}
+	return sections, total, true
+}
+
+func pdfXRefWidths(value []string) ([3]int, uint64, bool) {
+	var widths [3]int
+	if len(value) != 5 || value[0] != "[" || value[4] != "]" {
+		return widths, 0, false
+	}
+	var total uint64
+	for index, value := range value[1:4] {
+		parsed, err := strconv.ParseUint(value, 10, 8)
+		if err != nil || parsed > 8 {
+			return widths, 0, false
+		}
+		widths[index] = int(parsed)
+		total += parsed
+	}
+	return widths, total, total > 0
+}
+
+func pdfXRefHasUnsupportedEncoding(dictionary map[string][]string) bool {
+	for _, key := range []string{"Filter", "DecodeParms", "F", "FFilter", "FDecodeParms"} {
+		if _, exists := dictionary[key]; exists {
+			return true
+		}
+	}
+	return false
+}
+
+func pdfStreamBodyStart(data []byte, position int) (int, bool) {
+	for position < len(data) && (data[position] == ' ' || data[position] == '\t' ||
+		data[position] == '\f' || data[position] == 0) {
+		position++
+	}
+	switch {
+	case position < len(data) && data[position] == '\r':
+		position++
+		if position < len(data) && data[position] == '\n' {
+			position++
+		}
+		return position, true
+	case position < len(data) && data[position] == '\n':
+		return position + 1, true
+	default:
+		return 0, false
+	}
+}
+
+func pdfXRefField(data []byte) uint64 {
+	var result uint64
+	for _, value := range data {
+		result = result<<8 | uint64(value)
+	}
+	return result
+}
+
+func pdfXRefEntryMatches(parsed pdfXRefStream, number, generation, offset uint64) bool {
+	entry, ok := parsed.entries[number]
+	return ok && entry.kind == 1 && entry.field2 == offset && entry.field3 == generation
+}
+
+func pdfXRefReferenceIsDirect(parsed pdfXRefStream, reference []string) bool {
+	if len(reference) != 3 || reference[2] != "R" {
+		return false
+	}
+	number, numberErr := strconv.ParseUint(reference[0], 10, 64)
+	generation, generationErr := strconv.ParseUint(reference[1], 10, 64)
+	return numberErr == nil && generationErr == nil &&
+		pdfXRefEntryMatches(parsed, number, generation, parsed.entries[number].field2)
+}
+
+func validPDFObjectHeaderAt(
+	reader io.ReaderAt, size, offset int64, objectNumber, generation uint64,
+) bool {
+	if offset < 0 || offset >= size {
+		return false
+	}
+	length := min(size-offset, int64(64))
+	prefix := make([]byte, length)
+	read, err := reader.ReadAt(prefix, offset)
+	if err != nil && !errors.Is(err, io.EOF) || int64(read) != length {
+		return false
+	}
+	position := 0
+	values := make([]string, 0, 3)
+	for range 3 {
+		start, end, ok := nextPDFLexeme(prefix, position)
+		if !ok || start == end || len(values) == 0 && start != 0 {
+			return false
+		}
+		values = append(values, string(prefix[start:end]))
+		position = end
+	}
+	number, numberErr := strconv.ParseUint(values[0], 10, 64)
+	actualGeneration, generationErr := strconv.ParseUint(values[1], 10, 64)
+	return numberErr == nil && generationErr == nil && values[2] == "obj" &&
+		number == objectNumber && actualGeneration == generation
+}
+
+func pdfXRefSelectedDictionaries(
+	data []byte, selected map[string]int64,
+) map[string]map[string][]string {
+	result := make(map[string]map[string][]string, len(selected))
+	for reference, offset := range selected {
+		dictionary, ok := pdfDictionaryAtOffset(data, offset, reference)
+		if ok {
+			result[reference] = dictionary
+		}
+	}
+	return result
+}
+
+func pdfDictionaryAtOffset(data []byte, offset int64, reference string) (map[string][]string, bool) {
+	if offset < 0 || offset >= int64(len(data)) {
+		return nil, false
+	}
+	position := int(offset) // #nosec G115 -- offset is bounded by the in-memory slice above.
+	header := make([]string, 0, 3)
+	for range 3 {
+		start, end, ok := nextPDFLexeme(data, position)
+		if !ok || start == end || len(header) == 0 && start != position {
+			return nil, false
+		}
+		header = append(header, string(data[start:end]))
+		position = end
+	}
+	if header[2] != "obj" || pdfReferenceKey(header[0], header[1]) != reference {
+		return nil, false
+	}
+	start, end, ok := nextPDFLexeme(data, position)
+	if !ok || string(data[start:end]) != "<<" {
+		return nil, false
+	}
+	tokens := []string{"<<"}
+	position, depth := end, 1
+	for depth > 0 {
+		if len(tokens) >= maxPDFTokens || position-int(offset) > maxPDFStructuralBytes {
+			return nil, false
+		}
+		start, end, ok = nextPDFLexeme(data, position)
+		if !ok || start == end {
+			return nil, false
+		}
+		token := string(data[start:end])
+		tokens = append(tokens, token)
+		position = end
+		switch token {
+		case "<<":
+			depth++
+		case ">>":
+			depth--
+		}
+	}
+	dictionary, next, parsed := parsePDFDictionaryTokens(tokens, 0, 0)
+	if !parsed || next != len(tokens) {
+		return nil, false
+	}
+	start, end, ok = nextPDFLexeme(data, position)
+	if !ok || start == end {
+		return nil, false
+	}
+	closing := string(data[start:end])
+	return dictionary, closing == "endobj" || closing == "stream"
+}
+
+func pdfCrossReferenceAuthority(data []byte) (pdfCrossReference, bool) {
+	eofIndex := bytes.LastIndex(data, []byte("%%EOF"))
+	if eofIndex < 0 || len(trimPDFWhitespace(data[eofIndex+len("%%EOF"):])) != 0 {
+		return pdfCrossReference{}, false
+	}
+	beforeEOF := data[:eofIndex]
+	startXRefIndex := bytes.LastIndex(beforeEOF, []byte("startxref"))
+	if startXRefIndex < 0 {
+		return pdfCrossReference{}, false
+	}
+	offsetText := trimPDFWhitespace(beforeEOF[startXRefIndex+len("startxref"):])
+	digitEnd := 0
+	for digitEnd < len(offsetText) && offsetText[digitEnd] >= '0' && offsetText[digitEnd] <= '9' {
+		digitEnd++
+	}
+	if digitEnd == 0 || len(trimPDFWhitespace(offsetText[digitEnd:])) != 0 {
+		return pdfCrossReference{}, false
+	}
+	offset, err := strconv.ParseUint(string(offsetText[:digitEnd]), 10, 64)
+	if err != nil || offset == 0 || offset >= uint64(startXRefIndex) {
+		return pdfCrossReference{}, false
+	}
+	xrefOffset := int(offset) // #nosec G115 -- offset is bounded by the in-memory slice index above.
+	xref := data[xrefOffset:startXRefIndex]
+	if stream, ok := validatedPDFStreamXRef(
+		bytes.NewReader(data), int64(len(data)), int64(xrefOffset), xref,
+	); ok {
+		objects := make(map[string]int64)
+		for number, entry := range stream.entries {
+			if entry.kind == 1 {
+				objectOffset := int64(entry.field2) // #nosec G115 -- validated below the positive document size.
+				objects[pdfReferenceKey(strconv.FormatUint(number, 10), strconv.FormatUint(entry.field3, 10))] =
+					objectOffset
+			}
+		}
+		return pdfCrossReference{dictionary: stream.dictionary, objects: objects}, true
+	}
+	if !validPDFTableXRef(xref, data[:startXRefIndex]) {
+		return pdfCrossReference{}, false
+	}
+	trailerIndex := lastPDFKeyword(data[:startXRefIndex], "trailer")
+	if trailerIndex < 0 {
+		return pdfCrossReference{}, false
+	}
+	dictionary, ok := parsePDFDictionary(data[trailerIndex+len("trailer") : startXRefIndex])
+	if !ok {
+		return pdfCrossReference{}, false
+	}
+	return pdfCrossReference{dictionary: dictionary}, true
+}
+
+func validPDFTrailer(data []byte, first, count uint64) bool {
+	for end := len(data); end > 0; {
+		trailerIndex := lastPDFKeyword(data[:end], "trailer")
+		if trailerIndex < 0 {
+			return false
+		}
+		trailer, ok := parsePDFDictionary(data[trailerIndex+len("trailer"):])
+		if ok {
+			if !validPDFRootReference(trailer["Root"]) {
+				return false
+			}
+			size, sizeOK := pdfPositiveInteger(trailer["Size"])
+			return sizeOK && first+count <= size
+		}
+		end = trailerIndex
+	}
+	return false
+}
+
+func nextPDFLine(data []byte, position *int) ([]byte, bool) {
+	if *position >= len(data) {
+		return nil, false
+	}
+	start := *position
+	for *position < len(data) && data[*position] != '\n' && data[*position] != '\r' {
+		*position++
+	}
+	line := data[start:*position]
+	if *position < len(data) && data[*position] == '\r' {
+		*position++
+	}
+	if *position < len(data) && data[*position] == '\n' {
+		*position++
+	}
+	return line, true
+}
+
+func nextNonemptyPDFLine(data []byte, position *int) ([]byte, bool) {
+	for {
+		line, ok := nextPDFLine(data, position)
+		if !ok {
+			return nil, false
+		}
+		if line = trimPDFWhitespace(line); len(line) != 0 {
+			return line, true
+		}
+	}
+}
+
+func validPDFXRefRecord(line []byte) bool {
+	fields := bytes.Fields(line)
+	if len(fields) != 3 || len(fields[0]) != 10 || len(fields[1]) != 5 || len(fields[2]) != 1 ||
+		(fields[2][0] != 'n' && fields[2][0] != 'f') {
+		return false
+	}
+	return decimalBytes(fields[0]) && decimalBytes(fields[1])
+}
+
+func decimalBytes(value []byte) bool {
+	if len(value) == 0 {
+		return false
+	}
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func lastPDFKeyword(data []byte, keyword string) int {
+	for end := len(data); end > 0; {
+		index := bytes.LastIndex(data[:end], []byte(keyword))
+		if index < 0 {
+			return -1
+		}
+		beforeOK := index == 0 || isPDFTokenBoundary(data[index-1])
+		after := index + len(keyword)
+		afterOK := after == len(data) || isPDFTokenBoundary(data[after])
+		if beforeOK && afterOK {
+			return index
+		}
+		end = index
+	}
+	return -1
+}
+
+func firstPDFKeyword(data []byte, keyword string) int {
+	for start := 0; start < len(data); {
+		relative := bytes.Index(data[start:], []byte(keyword))
+		if relative < 0 {
+			return -1
+		}
+		index := start + relative
+		beforeOK := index == 0 || isPDFTokenBoundary(data[index-1])
+		after := index + len(keyword)
+		afterOK := after == len(data) || isPDFTokenBoundary(data[after])
+		if beforeOK && afterOK {
+			return index
+		}
+		start = index + 1
+	}
+	return -1
+}
+
+func isPDFTokenBoundary(char byte) bool {
+	return isPDFWhitespace(char) || strings.ContainsRune("()<>[]{}/%", rune(char))
+}
+
+func tokenizePDF(data []byte) ([]string, bool) {
+	tokens := make([]string, 0, 32)
+	for position := 0; position < len(data); {
+		if len(tokens) >= maxPDFTokens {
+			return nil, false
+		}
+		char := data[position]
+		if isPDFWhitespace(char) {
+			position++
+			continue
+		}
+		if char == '%' {
+			for position < len(data) && data[position] != '\r' && data[position] != '\n' {
+				position++
+			}
+			continue
+		}
+		if position+1 < len(data) && (string(data[position:position+2]) == "<<" ||
+			string(data[position:position+2]) == ">>") {
+			tokens = append(tokens, string(data[position:position+2]))
+			position += 2
+			continue
+		}
+		if char == '(' {
+			start, depth, escaped := position, 0, false
+			for ; position < len(data); position++ {
+				current := data[position]
+				if escaped {
+					escaped = false
+					continue
+				}
+				if current == '\\' {
+					escaped = true
+					continue
+				}
+				if current == '(' {
+					depth++
+				} else if current == ')' {
+					depth--
+					if depth == 0 {
+						position++
+						break
+					}
+				}
+			}
+			if depth != 0 {
+				return nil, false
+			}
+			tokens = append(tokens, string(data[start:position]))
+			continue
+		}
+		if char == '<' {
+			start := position
+			position++
+			for position < len(data) && data[position] != '>' {
+				position++
+			}
+			if position == len(data) {
+				return nil, false
+			}
+			position++
+			tokens = append(tokens, string(data[start:position]))
+			continue
+		}
+		if strings.ContainsRune("[]{}", rune(char)) {
+			tokens = append(tokens, string(char))
+			position++
+			continue
+		}
+		start := position
+		if char == '/' {
+			position++
+		}
+		for position < len(data) && !isPDFTokenBoundary(data[position]) {
+			position++
+		}
+		if position == start || (position == start+1 && char == '/') {
+			return nil, false
+		}
+		tokens = append(tokens, string(data[start:position]))
+	}
+	return tokens, true
+}
+
+func parsePDFDictionary(data []byte) (map[string][]string, bool) {
+	tokens, ok := tokenizePDF(data)
+	if !ok {
+		return nil, false
+	}
+	dictionary, next, ok := parsePDFDictionaryTokens(tokens, 0, 0)
+	return dictionary, ok && next == len(tokens)
+}
+
+func parsePDFDictionaryTokens(
+	tokens []string,
+	position int,
+	depth int,
+) (map[string][]string, int, bool) {
+	if depth > 32 || position >= len(tokens) || tokens[position] != "<<" {
+		return nil, position, false
+	}
+	position++
+	dictionary := make(map[string][]string)
+	for position < len(tokens) && tokens[position] != ">>" {
+		key := tokens[position]
+		if len(key) < 2 || key[0] != '/' {
+			return nil, position, false
+		}
+		key = key[1:]
+		if _, exists := dictionary[key]; exists {
+			return nil, position, false
+		}
+		position++
+		valueStart := position
+		var ok bool
+		position, ok = skipPDFObject(tokens, position, depth+1)
+		if !ok {
+			return nil, position, false
+		}
+		dictionary[key] = tokens[valueStart:position]
+	}
+	if position >= len(tokens) || tokens[position] != ">>" {
+		return nil, position, false
+	}
+	return dictionary, position + 1, true
+}
+
+func skipPDFObject(tokens []string, position, depth int) (int, bool) {
+	if depth > 32 || position >= len(tokens) {
+		return position, false
+	}
+	switch tokens[position] {
+	case "<<":
+		_, next, ok := parsePDFDictionaryTokens(tokens, position, depth)
+		return next, ok
+	case "[":
+		position++
+		for position < len(tokens) && tokens[position] != "]" {
+			var ok bool
+			position, ok = skipPDFObject(tokens, position, depth+1)
+			if !ok {
+				return position, false
+			}
+		}
+		return position + 1, position < len(tokens)
+	case ">>", "]":
+		return position, false
+	default:
+		if position+2 < len(tokens) && decimalString(tokens[position]) &&
+			decimalString(tokens[position+1]) && tokens[position+2] == "R" {
+			return position + 3, true
+		}
+		return position + 1, true
+	}
+}
+
+func pdfPositiveInteger(value []string) (uint64, bool) {
+	if len(value) != 1 || !decimalString(value[0]) {
+		return 0, false
+	}
+	parsed, err := strconv.ParseUint(value[0], 10, 64)
+	return parsed, err == nil && parsed > 0
+}
+
+func validPDFRootReference(value []string) bool {
+	if len(value) != 3 || value[2] != "R" {
+		return false
+	}
+	objectNumber, objectErr := strconv.ParseUint(value[0], 10, 64)
+	generation, generationErr := strconv.ParseUint(value[1], 10, 64)
+	return objectErr == nil && objectNumber > 0 && generationErr == nil && generation <= 65_535
+}
+
+func decimalString(value string) bool {
+	return decimalBytes([]byte(value))
+}
+
+func trimPDFWhitespace(value []byte) []byte {
+	for len(value) > 0 && isPDFWhitespace(value[0]) {
+		value = value[1:]
+	}
+	for len(value) > 0 && isPDFWhitespace(value[len(value)-1]) {
+		value = value[:len(value)-1]
+	}
+	return value
+}
+
+func isPDFWhitespace(char byte) bool {
+	return char == 0 || char == '\t' || char == '\n' || char == '\f' || char == '\r' || char == ' '
+}
+
+func detectCompoundFormat(reader io.ReaderAt, size int64) (CandidateFormat, error) {
+	names, err := compoundDirectoryNames(reader, size)
+	if err != nil {
+		return CandidateFormat{}, err
+	}
+	ids := make([]string, 0, 2)
+	if names["WordDocument"] {
+		ids = append(ids, "doc")
+	}
+	if names["Workbook"] || names["Book"] {
+		ids = append(ids, "xls")
+	}
+	if names["PowerPoint Document"] {
+		ids = append(ids, "ppt")
+	}
+	if names["__properties_version1.0"] {
+		ids = append(ids, "msg")
+	}
+	if len(ids) != 1 {
+		return CandidateFormat{}, errors.New("compound document has missing or ambiguous family markers")
+	}
+	format, _ := CandidateFormatByID(ids[0])
+	return format, nil
+}
+
+func compoundDirectoryNames(reader io.ReaderAt, size int64) (map[string]bool, error) {
+	const (
+		freeSector        = uint32(0xffffffff)
+		endOfChain        = uint32(0xfffffffe)
+		fatSector         = uint32(0xfffffffd)
+		difatSector       = uint32(0xfffffffc)
+		maxDIFATSectors   = 1_024
+		maxDirectoryBytes = int64(8 << 20)
+	)
+	if size < 512 {
+		return nil, errors.New("compound document header is truncated")
+	}
+	header := make([]byte, 512)
+	if _, err := reader.ReadAt(header, 0); err != nil {
+		return nil, fmt.Errorf("read compound document header: %w", err)
+	}
+	if !bytes.Equal(header[:8], compoundFileMagic) || binary.LittleEndian.Uint16(header[28:30]) != 0xfffe {
+		return nil, errors.New("compound document header is invalid")
+	}
+	sectorShift := binary.LittleEndian.Uint16(header[30:32])
+	majorVersion := binary.LittleEndian.Uint16(header[26:28])
+	if (majorVersion != 3 || sectorShift != 9) && (majorVersion != 4 || sectorShift != 12) {
+		return nil, errors.New("compound document sector size is unsupported")
+	}
+	sectorSize := int64(1 << sectorShift)
+	sectorCount := size/sectorSize - 1
+	if sectorCount <= 0 || size%sectorSize != 0 {
+		return nil, errors.New("compound document size is invalid")
+	}
+	fatEntriesPerSector := sectorSize / 4
+	maxFATSectors := int((sectorCount + fatEntriesPerSector - 1) / fatEntriesPerSector)
+	numFAT := int(binary.LittleEndian.Uint32(header[44:48]))
+	firstDirectory := binary.LittleEndian.Uint32(header[48:52])
+	firstDIFAT := binary.LittleEndian.Uint32(header[68:72])
+	numDIFAT := int(binary.LittleEndian.Uint32(header[72:76]))
+	if numFAT <= 0 || numFAT > maxFATSectors || numDIFAT > maxDIFATSectors {
+		return nil, errors.New("compound document allocation table exceeds limits")
+	}
+	fatSectors := make([]uint32, 0, numFAT)
+	for offset := 76; offset < 512 && len(fatSectors) < numFAT; offset += 4 {
+		sector := binary.LittleEndian.Uint32(header[offset : offset+4])
+		if sector != freeSector {
+			fatSectors = append(fatSectors, sector)
+		}
+	}
+	seenDIFAT := map[uint32]bool{}
+	for i, sector := 0, firstDIFAT; i < numDIFAT; i++ {
+		if int64(sector) >= sectorCount || seenDIFAT[sector] {
+			return nil, errors.New("compound document DIFAT chain is invalid")
+		}
+		seenDIFAT[sector] = true
+		data, readErr := readCompoundSector(reader, sector, sectorSize, size)
+		if readErr != nil {
+			return nil, readErr
+		}
+		for offset := 0; offset < len(data)-4 && len(fatSectors) < numFAT; offset += 4 {
+			fatID := binary.LittleEndian.Uint32(data[offset : offset+4])
+			if fatID != freeSector {
+				fatSectors = append(fatSectors, fatID)
+			}
+		}
+		sector = binary.LittleEndian.Uint32(data[len(data)-4:])
+		if i == numDIFAT-1 && sector != endOfChain {
+			return nil, errors.New("compound document DIFAT chain does not terminate")
+		}
+	}
+	if len(fatSectors) != numFAT {
+		return nil, errors.New("compound document FAT sector count is invalid")
+	}
+	fat := make([]uint32, 0, int(sectorCount))
+	seenFAT := map[uint32]bool{}
+	for _, sector := range fatSectors {
+		if int64(sector) >= sectorCount || seenFAT[sector] {
+			return nil, errors.New("compound document FAT sector list is invalid")
+		}
+		seenFAT[sector] = true
+		data, readErr := readCompoundSector(reader, sector, sectorSize, size)
+		if readErr != nil {
+			return nil, readErr
+		}
+		for offset := 0; offset < len(data); offset += 4 {
+			fat = append(fat, binary.LittleEndian.Uint32(data[offset:offset+4]))
+		}
+	}
+	if len(fat) < int(sectorCount) {
+		return nil, errors.New("compound document FAT is truncated")
+	}
+	for _, sector := range fatSectors {
+		if fat[sector] != fatSector {
+			return nil, errors.New("compound document FAT sector is not self-marked")
+		}
+	}
+	for sector := range seenDIFAT {
+		if fat[sector] != difatSector {
+			return nil, errors.New("compound document DIFAT sector is not self-marked")
+		}
+	}
+
+	var directory bytes.Buffer
+	seenDirectory := map[uint32]bool{}
+	for sector := firstDirectory; sector != endOfChain; {
+		if int64(sector) >= sectorCount || seenDirectory[sector] || int64(directory.Len())+sectorSize > maxDirectoryBytes {
+			return nil, errors.New("compound document directory chain exceeds limits")
+		}
+		seenDirectory[sector] = true
+		data, readErr := readCompoundSector(reader, sector, sectorSize, size)
+		if readErr != nil {
+			return nil, readErr
+		}
+		_, _ = directory.Write(data)
+		next := fat[sector]
+		if next == freeSector || next == fatSector || next == difatSector {
+			return nil, errors.New("compound document directory chain is invalid")
+		}
+		sector = next
+	}
+	entries := make([]compoundDirectoryEntry, 0, directory.Len()/128)
+	rootIndex := -1
+	data := directory.Bytes()
+	for offset := 0; offset+128 <= len(data); offset += 128 {
+		entry := data[offset : offset+128]
+		entryType := entry[66]
+		if entryType == 0 {
+			entries = append(entries, compoundDirectoryEntry{})
+			continue
+		}
+		if entryType != 1 && entryType != 2 && entryType != 5 {
+			return nil, errors.New("compound document directory entry type is invalid")
+		}
+		nameLength := int(binary.LittleEndian.Uint16(entry[64:66]))
+		if nameLength < 2 || nameLength > 64 || nameLength%2 != 0 {
+			return nil, errors.New("compound document directory name is invalid")
+		}
+		name, decodeErr := decodeUTF16LE(entry[:nameLength-2])
+		if decodeErr != nil || name == "" {
+			return nil, errors.New("compound document directory name is invalid")
+		}
+		entries = append(entries, compoundDirectoryEntry{
+			name: name, entryType: entryType,
+			left: binary.LittleEndian.Uint32(entry[68:72]), right: binary.LittleEndian.Uint32(entry[72:76]),
+			child: binary.LittleEndian.Uint32(entry[76:80]),
+		})
+		if entryType == 5 {
+			if rootIndex != -1 {
+				return nil, errors.New("compound document has multiple root entries")
+			}
+			rootIndex = len(entries) - 1
+		}
+	}
+	if rootIndex < 0 {
+		return nil, errors.New("compound document has no root entry")
+	}
+	names := map[string]bool{}
+	seen := map[uint32]bool{}
+	stack := []uint32{entries[rootIndex].child}
+	for len(stack) > 0 {
+		index := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if index == compoundNoStream {
+			continue
+		}
+		if uint64(index) >= uint64(len(entries)) || seen[index] || entries[index].entryType == 0 || entries[index].entryType == 5 {
+			return nil, errors.New("compound document root directory tree is invalid")
+		}
+		seen[index] = true
+		entry := entries[index]
+		if entry.entryType == 2 {
+			names[entry.name] = true
+		}
+		stack = append(stack, entry.left, entry.right)
+	}
+	return names, nil
+}
+
+func readCompoundSector(reader io.ReaderAt, sector uint32, sectorSize, size int64) ([]byte, error) {
+	offset := (int64(sector) + 1) * sectorSize
+	if offset < sectorSize || offset > size-sectorSize {
+		return nil, errors.New("compound document sector is out of range")
+	}
+	data := make([]byte, sectorSize)
+	if _, err := reader.ReadAt(data, offset); err != nil {
+		return nil, fmt.Errorf("read compound document sector: %w", err)
+	}
+	return data, nil
+}
+
+func decodeUTF16LE(data []byte) (string, error) {
+	if len(data)%2 != 0 {
+		return "", errors.New("odd UTF-16 length")
+	}
+	runes := make([]rune, 0, len(data)/2)
+	for i := 0; i < len(data); i += 2 {
+		value := binary.LittleEndian.Uint16(data[i : i+2])
+		if value == 0 || value >= 0xd800 && value <= 0xdfff {
+			return "", errors.New("unsupported UTF-16 directory name")
+		}
+		runes = append(runes, rune(value))
+	}
+	return string(runes), nil
+}
+
+func detectZIPFormat(reader io.ReaderAt, size int64) (CandidateFormat, error) {
+	if err := validateZIPEndRecord(reader, size); err != nil {
+		return CandidateFormat{}, err
+	}
+	archive, err := zip.NewReader(reader, size)
+	if err != nil {
+		return CandidateFormat{}, fmt.Errorf("open document ZIP container: %w", err)
+	}
+	if len(archive.File) > maxZIPEntries {
+		return CandidateFormat{}, errors.New("document ZIP container has too many entries")
+	}
+	names := make(map[string]bool, len(archive.File))
+	var expanded uint64
+	var mimeValue string
+	var contentTypes []byte
+	for _, entry := range archive.File {
+		if err := validateZIPName(entry.Name); err != nil {
+			return CandidateFormat{}, err
+		}
+		if entry.Mode()&os.ModeSymlink != 0 {
+			return CandidateFormat{}, errors.New("document ZIP container contains a symlink")
+		}
+		if entry.Flags&1 != 0 || (entry.Method != zip.Store && entry.Method != zip.Deflate) {
+			return CandidateFormat{}, errors.New("document ZIP container uses unsupported encryption or compression")
+		}
+		if entry.UncompressedSize64 > maxZIPSingleExpandedByte || expanded > maxZIPExpandedBytes-entry.UncompressedSize64 {
+			return CandidateFormat{}, errors.New("document ZIP container exceeds expanded-byte limits")
+		}
+		expanded += entry.UncompressedSize64
+		if names[entry.Name] {
+			return CandidateFormat{}, errors.New("document ZIP container has duplicate entry names")
+		}
+		names[entry.Name] = true
+		if err := verifyZIPEntry(entry); err != nil {
+			return CandidateFormat{}, err
+		}
+		if entry.Name == "mimetype" {
+			value, readErr := readZIPEntry(entry, 256)
+			if readErr != nil {
+				return CandidateFormat{}, readErr
+			}
+			mimeValue = string(value)
+		}
+		if entry.Name == ooxmlContentTypesName {
+			value, readErr := readZIPEntry(entry, 2<<20)
+			if readErr != nil {
+				return CandidateFormat{}, readErr
+			}
+			contentTypes = value
+		}
+	}
+
+	var id string
+	switch {
+	case names["word/document.xml"] && hasOOXMLMainType(contentTypes, "/word/document.xml",
+		"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"):
+		id = "docx"
+	case names["ppt/presentation.xml"] && hasOOXMLMainType(contentTypes, "/ppt/presentation.xml",
+		"application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"):
+		id = "pptx"
+	case names["xl/workbook.xml"] && hasOOXMLMainType(contentTypes, "/xl/workbook.xml",
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"):
+		id = "xlsx"
+	case mimeValue == "application/vnd.oasis.opendocument.text" && names["META-INF/manifest.xml"]:
+		id = "odt"
+	case mimeValue == "application/vnd.oasis.opendocument.spreadsheet" && names["META-INF/manifest.xml"]:
+		id = "ods"
+	case mimeValue == "application/epub+zip" && names["META-INF/container.xml"]:
+		id = "epub"
+	case hasNumbersMarker(names):
+		id = "numbers"
+	default:
+		return CandidateFormat{}, errors.New("zip container is not a supported document format")
+	}
+	format, _ := CandidateFormatByID(id)
+	return format, nil
+}
+
+func hasOOXMLMainType(content []byte, partName, contentType string) bool {
+	if len(content) == 0 || !validXMLDocument(content) {
+		return false
+	}
+	var document struct {
+		XMLName   xml.Name `xml:"Types"`
+		Overrides []struct {
+			PartName    string `xml:"PartName,attr"`
+			ContentType string `xml:"ContentType,attr"`
+		} `xml:"Override"`
+	}
+	if err := xml.Unmarshal(content, &document); err != nil ||
+		document.XMLName.Space != "http://schemas.openxmlformats.org/package/2006/content-types" {
+		return false
+	}
+	found := false
+	for _, override := range document.Overrides {
+		if override.PartName != partName {
+			continue
+		}
+		if found || override.ContentType != contentType {
+			return false
+		}
+		found = true
+	}
+	return found
+}
+
+func validateZIPEndRecord(reader io.ReaderAt, size int64) error {
+	const maxTail = int64(65_557)
+	tailSize := min(size, maxTail)
+	tail := make([]byte, tailSize)
+	if _, err := reader.ReadAt(tail, size-tailSize); err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("read document ZIP end record: %w", err)
+	}
+	signature := []byte{'P', 'K', 0x05, 0x06}
+	offset := bytes.LastIndex(tail, signature)
+	if offset < 0 || len(tail)-offset < 22 {
+		return errors.New("document ZIP container has no bounded end record")
+	}
+	record := tail[offset:]
+	entries := binary.LittleEndian.Uint16(record[10:12])
+	entriesOnDisk := binary.LittleEndian.Uint16(record[8:10])
+	centralSize := binary.LittleEndian.Uint32(record[12:16])
+	centralOffset := binary.LittleEndian.Uint32(record[16:20])
+	commentSize := int(binary.LittleEndian.Uint16(record[20:22]))
+	if binary.LittleEndian.Uint16(record[4:6]) != 0 || binary.LittleEndian.Uint16(record[6:8]) != 0 || entriesOnDisk != entries {
+		return errors.New("multi-disk document ZIP containers are unsupported")
+	}
+	if entries == 0xffff || centralSize == 0xffffffff || centralOffset == 0xffffffff ||
+		int(entries) > maxZIPEntries || centralSize > maxZIPCentralDirectory {
+		return errors.New("document ZIP central directory exceeds limits")
+	}
+	if int64(centralOffset)+int64(centralSize) > size {
+		return errors.New("document ZIP central directory is out of range")
+	}
+	if len(record) != 22+commentSize {
+		return errors.New("document ZIP end record has invalid comment length")
+	}
+	return nil
+}
+
+func validateZIPName(name string) error {
+	if name == "" || strings.ContainsRune(name, 0) || strings.ContainsAny(name, "\\:") || strings.HasPrefix(name, "/") {
+		return errors.New("document ZIP container has an unsafe entry name")
+	}
+	clean := path.Clean(name)
+	if clean == ".." || strings.HasPrefix(clean, "../") || clean != strings.TrimSuffix(name, "/") {
+		return errors.New("document ZIP container has a traversing entry name")
+	}
+	return nil
+}
+
+func readZIPEntry(entry *zip.File, limit int64) ([]byte, error) {
+	if limit < 0 || entry.UncompressedSize64 > maxZIPSingleExpandedByte || int64(entry.UncompressedSize64) > limit {
+		return nil, errors.New("document ZIP marker entry exceeds limit")
+	}
+	reader, err := entry.Open()
+	if err != nil {
+		return nil, fmt.Errorf("open document ZIP marker: %w", err)
+	}
+	defer func() { _ = reader.Close() }()
+	value, err := io.ReadAll(io.LimitReader(reader, limit+1))
+	if err != nil {
+		return nil, fmt.Errorf("read document ZIP marker: %w", err)
+	}
+	if int64(len(value)) > limit {
+		return nil, errors.New("document ZIP marker entry exceeds limit")
+	}
+	return value, nil
+}
+
+func verifyZIPEntry(entry *zip.File) error {
+	if entry.UncompressedSize64 > maxZIPSingleExpandedByte {
+		return errors.New("document ZIP entry exceeds verification limit")
+	}
+	reader, err := entry.Open()
+	if err != nil {
+		return fmt.Errorf("open document ZIP entry: %w", err)
+	}
+	expectedSize := int64(entry.UncompressedSize64)
+	written, readErr := io.Copy(io.Discard, io.LimitReader(reader, expectedSize+1))
+	closeErr := reader.Close()
+	if readErr != nil || closeErr != nil || written != expectedSize {
+		return errors.New("document ZIP entry failed bounded verification")
+	}
+	return nil
+}
+
+func hasNumbersMarker(names map[string]bool) bool {
+	for name := range names {
+		if strings.HasPrefix(name, "Index/Tables/") && strings.HasSuffix(name, ".iwa") {
+			return true
+		}
+	}
+	return false
+}
+
+func detectTextFormat(content []byte, mediaType string) (CandidateFormat, error) {
+	if !utf8.Valid(content) || bytes.IndexByte(content, 0) >= 0 {
+		return CandidateFormat{}, errors.New("document text is not safe UTF-8")
+	}
+	candidate, ok := candidateByMediaType(mediaType)
+	if !ok || !isTextCandidate(candidate) {
+		return CandidateFormat{}, errors.New("document bytes have no supported signature")
+	}
+	trimmed := bytes.TrimSpace(content)
+	switch candidate.ID {
+	case "json":
+		if len(trimmed) == 0 || !jsontext.Value(trimmed).IsValid() {
+			return CandidateFormat{}, errors.New("declared JSON document is invalid")
+		}
+	case "jsonl":
+		for line := range bytes.SplitSeq(trimmed, []byte{'\n'}) {
+			if len(bytes.TrimSpace(line)) > 0 && !jsontext.Value(bytes.TrimSpace(line)).IsValid() {
+				return CandidateFormat{}, errors.New("declared JSONL document is invalid")
+			}
+		}
+	case "xml":
+		if !validXMLDocument(content) {
+			return CandidateFormat{}, errors.New("declared XML document is invalid")
+		}
+	case "csv":
+		csvReader := csv.NewReader(bytes.NewReader(content))
+		csvReader.FieldsPerRecord = -1
+		csvReader.ReuseRecord = true
+		records := 0
+		for {
+			_, readErr := csvReader.Read()
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			if readErr != nil {
+				return CandidateFormat{}, errors.New("declared CSV document is invalid")
+			}
+			records++
+		}
+		if records == 0 {
+			return CandidateFormat{}, errors.New("declared CSV document is invalid")
+		}
+	case "latex":
+		if !bytes.Contains(content, []byte(`\documentclass`)) && !bytes.Contains(content, []byte(`\begin{document}`)) {
+			return CandidateFormat{}, errors.New("declared LaTeX document has no document marker")
+		}
+	case "eml":
+		message, err := mail.ReadMessage(bytes.NewReader(content))
+		if err != nil || message.Header.Get("From") == "" || message.Header.Get("Date") == "" {
+			return CandidateFormat{}, errors.New("declared EML document lacks required message headers")
+		}
+	case "yaml":
+		if len(trimmed) == 0 || (!bytes.HasPrefix(trimmed, []byte("---")) && !bytes.Contains(trimmed, []byte(": "))) {
+			return CandidateFormat{}, errors.New("declared YAML document has no structural marker")
+		}
+	}
+	return candidate, nil
+}
+
+func validXMLDocument(content []byte) bool {
+	decoder := xml.NewDecoder(bytes.NewReader(content))
+	depth := 0
+	roots := 0
+	for {
+		token, err := decoder.Token()
+		if errors.Is(err, io.EOF) {
+			return roots == 1 && depth == 0
+		}
+		if err != nil {
+			return false
+		}
+		switch value := token.(type) {
+		case xml.StartElement:
+			if depth == 0 {
+				roots++
+				if roots > 1 {
+					return false
+				}
+			}
+			depth++
+		case xml.EndElement:
+			depth--
+			if depth < 0 {
+				return false
+			}
+		case xml.CharData:
+			if depth == 0 && len(bytes.TrimSpace(value)) != 0 {
+				return false
+			}
+		}
+	}
+}
+
+func isTextCandidate(candidate CandidateFormat) bool {
+	switch candidate.Family {
+	case "text", "structured", "source", "mail", "spreadsheet":
+		return candidate.ID != "msg" && candidate.ID != "xls" && candidate.ID != "xlsx" && candidate.ID != "ods" && candidate.ID != "numbers"
+	default:
+		return false
+	}
+}
+
+func candidateByMediaType(mediaType string) (CandidateFormat, bool) {
+	for _, candidate := range candidateFormats {
+		if candidate.MediaType == mediaType {
+			return candidate, true
+		}
+	}
+	return CandidateFormat{}, false
+}
+
+func readPrefix(reader io.ReaderAt, size, limit int64) ([]byte, error) {
+	length := min(size, limit)
+	buffer := make([]byte, length)
+	read, err := reader.ReadAt(buffer, 0)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("read document signature: %w", err)
+	}
+	if int64(read) != length {
+		return nil, errors.New("document bytes changed during signature read")
+	}
+	return buffer, nil
+}

@@ -11,24 +11,47 @@ const RenditionContractV1 = "rendition/v1"
 // RenditionPolicy binds rendition construction to the frozen document
 // normalization limits.
 type RenditionPolicy struct {
-	normalization NormalizePolicy
+	normalization   NormalizePolicy
+	maxSegmentRunes int
 }
 
 // NewRenditionPolicy returns a policy whose bounds match the supplied document
-// normalization policy.
-func NewRenditionPolicy(normalization NormalizePolicy) (RenditionPolicy, error) {
+// normalization policy and, when supplied, the canonical evidence-lexical
+// segment limit. The normalization chunk limit remains the compatibility
+// default for callers that do not publish against a processing profile.
+func NewRenditionPolicy(normalization NormalizePolicy, lexicalSegmentLimit ...int) (RenditionPolicy, error) {
 	if err := normalization.validate(); err != nil {
 		return RenditionPolicy{}, fmt.Errorf("rendition normalization policy: %w", err)
 	}
-	return RenditionPolicy{normalization: normalization}, nil
+	if len(lexicalSegmentLimit) > 1 {
+		return RenditionPolicy{}, errors.New("rendition policy accepts at most one lexical segment limit")
+	}
+	maxSegmentRunes := normalization.maxChunkRunes
+	if len(lexicalSegmentLimit) == 1 {
+		maxSegmentRunes = lexicalSegmentLimit[0]
+	}
+	if maxSegmentRunes <= 0 || maxSegmentRunes > maxEvidenceSegmentRunes {
+		return RenditionPolicy{}, fmt.Errorf(
+			"rendition max segment runes must be between 1 and %d", maxEvidenceSegmentRunes)
+	}
+	return RenditionPolicy{
+		normalization: normalization, maxSegmentRunes: maxSegmentRunes,
+	}, nil
 }
 
 func (p RenditionPolicy) validate() error {
 	if err := p.normalization.validate(); err != nil {
 		return fmt.Errorf("rendition policy: %w", err)
 	}
+	if p.maxSegmentRunes <= 0 || p.maxSegmentRunes > maxEvidenceSegmentRunes {
+		return fmt.Errorf("rendition policy max segment runes must be between 1 and %d", maxEvidenceSegmentRunes)
+	}
 	return nil
 }
+
+// MaxSegmentRunes returns the durable lexical segment bound carried by the
+// policy for publication-profile validation.
+func (p RenditionPolicy) MaxSegmentRunes() int { return p.maxSegmentRunes }
 
 // RenditionWarningV1 records a non-fatal loss of source provenance while
 // retaining sanitized readable evidence.
