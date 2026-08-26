@@ -458,11 +458,6 @@ func TestSearchAttachmentEligibilityKeepsSharedBuildVersionScoped(t *testing.T) 
 		ContentVersionID: versions[1], BuildID: build.ID, Profile: secondProfile,
 		AttachedAt: "2026-08-22T10:02:00.000000000Z",
 	}
-	require.NoError(t, s.AttachRenditionBuild(ctx, second))
-	hits, _, err = s.SearchPage(ctx, "mercury", 10)
-	require.NoError(t, err)
-	require.Len(t, hits, 1, "a staged attachment without a head is not eligible")
-
 	require.NoError(t, s.PublishRenditionAndLexicalHeads(ctx, second, RenditionHeadRecord{
 		ContentVersionID: versions[1], ProcessingProfileFingerprint: secondProfile.Fingerprint,
 		AttachmentID: second.ID, PublishedAt: "2026-08-22T10:03:00.000000000Z",
@@ -627,6 +622,47 @@ func TestLexicalGenerationPublicationRejectsForbiddenArtifacts(t *testing.T) {
 	_, err = s.ActiveRendition(ctx, versions[0], attachmentProfile.Fingerprint)
 	require.ErrorIs(t, err, ErrNotFound)
 	_, err = s.ActiveLexicalGeneration(ctx)
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestLexicalGenerationPublicationRejectsGenerationMissingPublishedBuild(t *testing.T) {
+	s, versions := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	profile := catalogProcessingProfile(t, false)
+	firstBuild := lexicalSearchBuild(s, profile, fakeHash("b7"), "first mercury phrase")
+	require.NoError(t, s.StageRenditionBuild(ctx, firstBuild))
+	staleGeneration, err := s.StageLexicalGeneration(ctx, fakeHash("9d"))
+	require.NoError(t, err)
+
+	secondBuild, secondVersion := lexicalSearchReplacementBuild(
+		t, s, profile, fakeHash("b8"), "second venus phrase",
+	)
+	require.NoError(t, s.StageRenditionBuild(ctx, secondBuild))
+	currentGeneration, err := s.StageLexicalGeneration(ctx, fakeHash("9e"))
+	require.NoError(t, err)
+	secondAttachment := RenditionAttachmentRecord{
+		ID: catalogAttachmentSecond, VaultID: s.VaultID(), ContentVersionID: secondVersion,
+		BuildID: secondBuild.ID, Profile: profile, AttachedAt: "2026-08-22T10:00:00.000000000Z",
+	}
+	require.NoError(t, s.PublishRenditionAndLexicalHeads(ctx, secondAttachment, RenditionHeadRecord{
+		ContentVersionID: secondVersion, ProcessingProfileFingerprint: profile.Fingerprint,
+		AttachmentID: secondAttachment.ID, PublishedAt: "2026-08-22T10:01:00.000000000Z",
+	}, currentGeneration.ID))
+
+	firstAttachment := RenditionAttachmentRecord{
+		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
+		BuildID: firstBuild.ID, Profile: profile, AttachedAt: "2026-08-22T10:02:00.000000000Z",
+	}
+	err = s.PublishRenditionAndLexicalHeads(ctx, firstAttachment, RenditionHeadRecord{
+		ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
+		AttachmentID: firstAttachment.ID, PublishedAt: "2026-08-22T10:03:00.000000000Z",
+	}, staleGeneration.ID)
+	require.ErrorContains(t, err, "does not cover published rendition build")
+
+	active, err := s.ActiveLexicalGeneration(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, currentGeneration, active)
+	_, err = s.ActiveRendition(ctx, versions[0], profile.Fingerprint)
 	require.ErrorIs(t, err, ErrNotFound)
 }
 

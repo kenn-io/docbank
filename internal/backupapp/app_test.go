@@ -321,17 +321,18 @@ func TestJSONLSnapshotRestoresRenditionBytesBeforeVerifyingHeads(t *testing.T) {
 		},
 	}
 	require.NoError(t, fixture.metadata.StageRenditionBuild(t.Context(), build))
+	generation, err := fixture.metadata.StageLexicalGeneration(t.Context(), strings.Repeat("f", 64))
+	require.NoError(t, err)
 	attachment := store.RenditionAttachmentRecord{
 		ID: strings.Repeat("9", 64), VaultID: fixture.metadata.VaultID(),
 		ContentVersionID: source.CurrentVersionID, BuildID: build.ID,
 		Profile: profileRecord, AttachedAt: "2026-08-25T12:01:00.000000000Z",
 	}
-	require.NoError(t, fixture.metadata.AttachRenditionBuild(t.Context(), attachment))
-	require.NoError(t, fixture.metadata.PublishRenditionHead(t.Context(), store.RenditionHeadRecord{
+	require.NoError(t, fixture.metadata.PublishRenditionAndLexicalHeads(t.Context(), attachment, store.RenditionHeadRecord{
 		ContentVersionID:             source.CurrentVersionID,
 		ProcessingProfileFingerprint: profileRecord.Fingerprint,
 		AttachmentID:                 attachment.ID, PublishedAt: "2026-08-25T12:02:00.000000000Z",
-	}))
+	}, generation.ID))
 
 	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
 	require.NoError(t, err)

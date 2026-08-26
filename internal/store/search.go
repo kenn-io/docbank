@@ -248,6 +248,44 @@ func readLexicalManifestRowsTx(
 	return scanLexicalManifestRows(rows, "lexical generation "+generationID+" manifest")
 }
 
+func readPublishedLexicalManifestRowsTx(
+	ctx context.Context, tx *sql.Tx, generationID string,
+) ([]lexicalManifestRow, error) {
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if generationID == "" {
+		rows, err = tx.QueryContext(ctx, `
+			SELECT s.build_id,s.segment_id,s.text
+			FROM rendition_lexical_segments s
+			WHERE EXISTS (
+			  SELECT 1 FROM rendition_attachments a
+			  JOIN rendition_heads h
+			    ON h.content_version_id=a.content_version_id
+			   AND h.profile_fingerprint=a.profile_fingerprint
+			   AND h.attachment_id=a.attachment_id
+			  WHERE a.build_id=s.build_id
+			)`)
+	} else {
+		rows, err = tx.QueryContext(ctx, `
+			SELECT f.build_id,f.segment_id,f.text
+			FROM rendition_lexical_fts f
+			WHERE f.generation_id=? AND EXISTS (
+			  SELECT 1 FROM rendition_attachments a
+			  JOIN rendition_heads h
+			    ON h.content_version_id=a.content_version_id
+			   AND h.profile_fingerprint=a.profile_fingerprint
+			   AND h.attachment_id=a.attachment_id
+			  WHERE a.build_id=f.build_id
+			)`, generationID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading published lexical manifest: %w", err)
+	}
+	return scanLexicalManifestRows(rows, "published lexical manifest")
+}
+
 func scanLexicalManifestRows(
 	rows *sql.Rows, description string,
 ) (_ []lexicalManifestRow, retErr error) {
@@ -476,6 +514,18 @@ func (s *Store) PublishRenditionAndLexicalHeads(
 		if !generationManifest.Valid || len(generationRows) != generationSegments ||
 			lexicalManifestDigest(generationRows) != generationManifest.String {
 			return fmt.Errorf("lexical generation %s has a different immutable manifest", generationID)
+		}
+		publishedCatalogRows, err := readPublishedLexicalManifestRowsTx(ctx, tx, "")
+		if err != nil {
+			return err
+		}
+		publishedGenerationRows, err := readPublishedLexicalManifestRowsTx(ctx, tx, generationID)
+		if err != nil {
+			return err
+		}
+		if len(publishedGenerationRows) != len(publishedCatalogRows) ||
+			lexicalManifestDigest(publishedGenerationRows) != lexicalManifestDigest(publishedCatalogRows) {
+			return fmt.Errorf("lexical generation %s does not cover published rendition builds", generationID)
 		}
 		if err := ensureProcessingProfileTx(ctx, tx, normalized.Profile); err != nil {
 			return err

@@ -55,16 +55,12 @@ func TestRenditionCatalogSharesOneBuildAcrossVersionProfilesWithinVault(t *testi
 		ContentVersionID: versions[1], BuildID: build.ID, Profile: embeddingProfile,
 		AttachedAt: "2026-08-22T10:01:00.000000000Z",
 	}
-	require.NoError(t, s.AttachRenditionBuild(t.Context(), first))
-	require.NoError(t, s.AttachRenditionBuild(t.Context(), second))
-	require.NoError(t, s.PublishRenditionHead(t.Context(), RenditionHeadRecord{
-		ContentVersionID: versions[0], ProcessingProfileFingerprint: baseProfile.Fingerprint,
-		AttachmentID: first.ID, PublishedAt: "2026-08-22T10:02:00.000000000Z",
-	}))
-	require.NoError(t, s.PublishRenditionHead(t.Context(), RenditionHeadRecord{
-		ContentVersionID: versions[1], ProcessingProfileFingerprint: embeddingProfile.Fingerprint,
-		AttachmentID: second.ID, PublishedAt: "2026-08-22T10:03:00.000000000Z",
-	}))
+	require.NoError(t, publishRenditionForTest(
+		t, s, first, "2026-08-22T10:02:00.000000000Z", fakeHash("c1"),
+	))
+	require.NoError(t, publishRenditionForTest(
+		t, s, second, "2026-08-22T10:03:00.000000000Z", fakeHash("c1"),
+	))
 
 	firstView, err := s.ActiveRendition(t.Context(), versions[0], baseProfile.Fingerprint)
 	require.NoError(t, err)
@@ -91,11 +87,11 @@ func TestRenditionCatalogRejectsCrossVaultAttachment(t *testing.T) {
 	build := catalogRenditionBuild(s, profile)
 	require.NoError(t, s.StageRenditionBuild(t.Context(), build))
 
-	err := s.AttachRenditionBuild(t.Context(), RenditionAttachmentRecord{
+	err := publishRenditionForTest(t, s, RenditionAttachmentRecord{
 		ID: catalogAttachmentFirst, VaultID: other.VaultID(),
 		ContentVersionID: versions[0], BuildID: build.ID, Profile: profile,
 		AttachedAt: "2026-08-22T10:00:00.000000000Z",
-	})
+	}, "2026-08-22T10:01:00.000000000Z", fakeHash("c2"))
 	require.ErrorContains(t, err, "vault")
 
 	var count int
@@ -156,10 +152,10 @@ func TestRenditionCatalogRejectsArtifactsForbiddenByAttachmentProfile(t *testing
 			}
 			require.NoError(t, s.StageRenditionBuild(t.Context(), build))
 
-			err := s.AttachRenditionBuild(t.Context(), RenditionAttachmentRecord{
+			err := publishRenditionForTest(t, s, RenditionAttachmentRecord{
 				ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
 				BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-25T15:00:00.000000000Z",
-			})
+			}, "2026-08-25T15:01:00.000000000Z", fakeHash("c3"))
 			require.ErrorContains(t, err, "artifact role")
 
 			var count int
@@ -218,11 +214,11 @@ func TestRenditionCatalogRejectsIncompleteArtifactsWithoutPartialStage(t *testin
 	assert.Zero(t, buildCount, "a rejected aggregate must not leave its parent row")
 	assert.Zero(t, artifactCount, "a rejected aggregate must not leave child rows")
 
-	err = s.AttachRenditionBuild(t.Context(), RenditionAttachmentRecord{
+	err = publishRenditionForTest(t, s, RenditionAttachmentRecord{
 		ID: catalogAttachmentFirst, VaultID: s.VaultID(),
 		ContentVersionID: versions[0], BuildID: build.ID, Profile: profile,
 		AttachedAt: "2026-08-22T10:00:00.000000000Z",
-	})
+	}, "2026-08-22T10:01:00.000000000Z", fakeHash("c4"))
 	require.Error(t, err)
 	_, err = s.ActiveRendition(t.Context(), versions[0], profile.Fingerprint)
 	require.ErrorIs(t, err, ErrNotFound)
@@ -718,12 +714,18 @@ func TestRenditionCatalogInsertOrReuseRejectsImmutableConflicts(t *testing.T) {
 		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
 		BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-22T10:00:00.000000000Z",
 	}
-	require.NoError(t, s.AttachRenditionBuild(t.Context(), attachment))
-	require.NoError(t, s.AttachRenditionBuild(t.Context(), attachment), "an exact retry must reuse the immutable attachment")
+	require.NoError(t, publishRenditionForTest(
+		t, s, attachment, "2026-08-22T10:01:00.000000000Z", fakeHash("c5"),
+	))
+	require.NoError(t, publishRenditionForTest(
+		t, s, attachment, "2026-08-22T10:01:00.000000000Z", fakeHash("c5"),
+	), "an exact retry must reuse the immutable attachment")
 
 	conflictingAttachment := attachment
 	conflictingAttachment.AttachedAt = "2026-08-22T10:00:01.000000000Z"
-	err = s.AttachRenditionBuild(t.Context(), conflictingAttachment)
+	err = publishRenditionForTest(
+		t, s, conflictingAttachment, "2026-08-22T10:01:00.000000000Z", fakeHash("c5"),
+	)
 	require.ErrorContains(t, err, "different immutable")
 
 	var providerOperationID string
@@ -757,11 +759,9 @@ func TestRenditionCatalogFailedReplacementKeepsOldHead(t *testing.T) {
 		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
 		BuildID: oldBuild.ID, Profile: profile, AttachedAt: "2026-08-22T10:00:00.000000000Z",
 	}
-	require.NoError(t, s.AttachRenditionBuild(t.Context(), oldAttachment))
-	require.NoError(t, s.PublishRenditionHead(t.Context(), RenditionHeadRecord{
-		ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
-		AttachmentID: oldAttachment.ID, PublishedAt: "2026-08-22T10:01:00.000000000Z",
-	}))
+	require.NoError(t, publishRenditionForTest(
+		t, s, oldAttachment, "2026-08-22T10:01:00.000000000Z", fakeHash("c6"),
+	))
 
 	replacement := cloneCatalogBuild(oldBuild)
 	replacement.ID = catalogBuildReplacement
@@ -776,17 +776,14 @@ func TestRenditionCatalogFailedReplacementKeepsOldHead(t *testing.T) {
 		ID: catalogAttachmentSecond, VaultID: s.VaultID(), ContentVersionID: versions[0],
 		BuildID: replacement.ID, Profile: profile, AttachedAt: "2026-08-22T11:01:00.000000000Z",
 	}
-	require.NoError(t, s.AttachRenditionBuild(t.Context(), newAttachment))
-
 	_, err := s.db.Exec(`CREATE TRIGGER synthetic_reject_rendition_head_update
 		BEFORE UPDATE ON rendition_heads BEGIN
 			SELECT RAISE(ABORT, 'synthetic head publication failure');
 		END`)
 	require.NoError(t, err)
-	err = s.PublishRenditionHead(t.Context(), RenditionHeadRecord{
-		ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
-		AttachmentID: newAttachment.ID, PublishedAt: "2026-08-22T11:02:00.000000000Z",
-	})
+	err = publishRenditionForTest(
+		t, s, newAttachment, "2026-08-22T11:02:00.000000000Z", fakeHash("c7"),
+	)
 	require.ErrorContains(t, err, "synthetic head publication failure")
 
 	active, err := s.ActiveRendition(t.Context(), versions[0], profile.Fingerprint)
@@ -800,6 +797,20 @@ func newRenditionCatalogFixture(t *testing.T) (*Store, []string) {
 	t.Helper()
 	s := newTestStore(t)
 	return s, seedRenditionCatalogVersions(t, s)
+}
+
+func publishRenditionForTest(
+	t *testing.T, s *Store, attachment RenditionAttachmentRecord, publishedAt, generationID string,
+) error {
+	t.Helper()
+	generation, err := s.StageLexicalGeneration(t.Context(), generationID)
+	require.NoError(t, err)
+	return s.PublishRenditionAndLexicalHeads(t.Context(), attachment, RenditionHeadRecord{
+		ContentVersionID:             attachment.ContentVersionID,
+		ProcessingProfileFingerprint: attachment.Profile.Fingerprint,
+		AttachmentID:                 attachment.ID,
+		PublishedAt:                  publishedAt,
+	}, generation.ID)
 }
 
 func seedRenditionCatalogVersions(t *testing.T, s *Store) []string {
