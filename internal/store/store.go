@@ -29,7 +29,7 @@ type Store struct {
 // by this binary. It is intentionally independent of metadata JSONL's logical
 // format version: physical schema changes can rebuild through the same logical
 // format without changing that portable contract.
-const currentStorageSchemaVersion = 4
+const currentStorageSchemaVersion = 5
 
 // DefaultSQLiteDriver returns the build's standalone-compatible adapter: CGO
 // builds use mattn/go-sqlite3 and no-CGO builds use modernc.org/sqlite.
@@ -115,6 +115,9 @@ func (s *Store) bootstrapTx() error {
 		if _, err := tx.Exec(schemaSQL); err != nil {
 			return fmt.Errorf("applying schema: %w", err)
 		}
+		if err := validateEmbeddingCatalogSchemaTx(context.Background(), tx); err != nil {
+			return err
+		}
 		var schemaVersion int
 		if err := tx.QueryRow(`
 			SELECT vault_uid, schema_version FROM vault_metadata WHERE singleton = 1`).Scan(
@@ -142,6 +145,9 @@ func (s *Store) bootstrapTx() error {
 		}
 		if err := validateUUIDv4(s.vaultID); err != nil {
 			return fmt.Errorf("validating vault identity: %w", err)
+		}
+		if err := ensureProcessingIncarnationTx(tx); err != nil {
+			return err
 		}
 		primary, err := ensurePrimaryBlobStoreTx(tx)
 		if err != nil {

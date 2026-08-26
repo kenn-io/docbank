@@ -4,6 +4,7 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,7 +12,326 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/vectorindex"
 )
+
+func TestResolveSemanticCandidatesReturnsOnlyCurrentScopedHeads(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+		document.EmbeddingInputOriginalFile, "optional", "")
+	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+		Key: EmbeddingHeadKey{ContentVersionID: versionID, BindingID: record.BindingID,
+			InputKind: record.InputKind}, SetID: record.ID, VectorSpaceID: record.VectorSpace.ID,
+		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
+	}))
+	source, err := s.CaptureVectorIndexSource(t.Context(), record.VectorSpace.ID)
+	require.NoError(t, err)
+	_, err = s.CreateFile(t.Context(), s.RootID(), "late-unembedded.pdf",
+		fakeHash("late-unembedded"), 1, "application/pdf")
+	require.NoError(t, err)
+
+	resolution, err := s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint, record.BindingID,
+		record.InputKind, record.VectorSpace.ID, source.ManifestChecksum,
+		[]vectorindex.Neighbor{{
+			SetID: record.VectorSet.ID, InputKey: versionID,
+			InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: 0.9}},
+		10, SearchOptions{MIMEType: "application/pdf"})
+	require.NoError(t, err)
+	assert.False(t, resolution.Truncated)
+	assert.Equal(t, 3, resolution.ScopedDocuments)
+	assert.Equal(t, 1, resolution.CompleteDocuments)
+	require.Len(t, resolution.Candidates, 1)
+	assert.Equal(t, versionID, resolution.Candidates[0].ContentVersionID)
+	assert.Equal(t, record.ID, resolution.Candidates[0].EmbeddingSetID)
+	assert.Equal(t, document.EmbeddingInputOriginalFile, resolution.Candidates[0].InputKind)
+	assert.Empty(t, resolution.Candidates[0].Excerpt, "direct-file semantic evidence cannot fabricate text")
+
+	filtered, err := s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint, record.BindingID,
+		record.InputKind, record.VectorSpace.ID, source.ManifestChecksum,
+		[]vectorindex.Neighbor{{
+			SetID: record.VectorSet.ID, InputKey: versionID,
+			InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: 0.9}},
+		10, SearchOptions{MIMEType: "text/plain"})
+	require.NoError(t, err)
+	assert.Empty(t, filtered.Candidates, "scope filters apply before the semantic document cutoff")
+}
+
+func TestResolveSemanticCandidatesRejectsStaleSourceManifest(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+		document.EmbeddingInputOriginalFile, "optional", "")
+	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+		Key: EmbeddingHeadKey{ContentVersionID: versionID, BindingID: record.BindingID,
+			InputKind: record.InputKind}, SetID: record.ID, VectorSpaceID: record.VectorSpace.ID,
+		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
+	}))
+
+	_, err := s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint, record.BindingID,
+		record.InputKind, record.VectorSpace.ID, strings.Repeat("f", 64), nil, 10, SearchOptions{})
+
+	require.ErrorIs(t, err, ErrVectorIndexSourceStale)
+}
+
+func TestRevalidateSearchCandidatesPreservesOrderAtTheCandidateLimit(t *testing.T) {
+	s := newTestStore(t)
+	first, err := s.CreateFile(t.Context(), s.RootID(), "first.txt", fakeHash("first"), 5, "text/plain")
+	require.NoError(t, err)
+	second, err := s.CreateFile(t.Context(), s.RootID(), "second.txt", fakeHash("second"), 6, "text/plain")
+	require.NoError(t, err)
+	requested := make([]SearchCandidateIdentity, document.MaxRetrievalCandidateLimit)
+	for i := range requested {
+		node := first
+		if i%2 == 0 {
+			node = second
+		}
+		requested[i] = SearchCandidateIdentity{NodeID: node.ID, NodeRevision: node.Revision,
+			ContentVersionID: node.CurrentVersionID,
+			Evidence:         []SearchEvidenceIdentity{{Kind: "node_name"}}}
+	}
+
+	revalidation, err := s.RevalidateSearchCandidates(t.Context(), requested, SearchOptions{}, "", "")
+
+	require.NoError(t, err)
+	require.Len(t, revalidation.Candidates, len(requested))
+	for i := range requested {
+		assert.Equal(t, requested[i].NodeID, revalidation.Candidates[i].NodeID)
+		assert.Equal(t, requested[i].ContentVersionID, revalidation.Candidates[i].ContentVersionID)
+	}
+}
+
+func TestRevalidateSearchCandidatesAppliesCurrentScopeAndBlobEvidence(t *testing.T) {
+	s := newTestStore(t)
+	text, err := s.CreateFile(t.Context(), s.RootID(), "text.txt", fakeHash("text"), 4, "text/plain")
+	require.NoError(t, err)
+	pdf, err := s.CreateFile(t.Context(), s.RootID(), "paper.pdf", fakeHash("pdf"), 3, "application/pdf")
+	require.NoError(t, err)
+	requested := []SearchCandidateIdentity{
+		{NodeID: text.ID, NodeRevision: text.Revision, ContentVersionID: text.CurrentVersionID,
+			Evidence: []SearchEvidenceIdentity{{Kind: "content_blob", BlobHash: text.BlobHash}}},
+		{NodeID: pdf.ID, NodeRevision: pdf.Revision, ContentVersionID: pdf.CurrentVersionID,
+			Evidence: []SearchEvidenceIdentity{{Kind: "content_blob", BlobHash: pdf.BlobHash}}},
+	}
+
+	revalidation, err := s.RevalidateSearchCandidates(t.Context(), requested,
+		SearchOptions{MIMEType: "application/pdf"}, "", "")
+
+	require.NoError(t, err)
+	require.Len(t, revalidation.Candidates, 1)
+	assert.Equal(t, pdf.ID, revalidation.Candidates[0].NodeID)
+	requested[1].Evidence[0].BlobHash = fakeHash("stale-pdf")
+	revalidation, err = s.RevalidateSearchCandidates(t.Context(), requested, SearchOptions{}, "", "")
+	require.NoError(t, err)
+	require.Len(t, revalidation.Candidates, 1)
+	assert.Equal(t, text.ID, revalidation.Candidates[0].NodeID)
+	_, _, err = s.Move(t.Context(), text.ID, s.RootID(), "renamed.txt", text.Revision)
+	require.NoError(t, err)
+	revalidation, err = s.RevalidateSearchCandidates(t.Context(), requested[:1], SearchOptions{}, "", "")
+	require.NoError(t, err)
+	assert.Empty(t, revalidation.Candidates, "a rename must fence the stale name/path snapshot")
+}
+
+func TestRevalidateSearchCandidatesRequiresCurrentActiveRenditionEvidence(t *testing.T) {
+	s, versions := newRenditionCatalogFixture(t)
+	profile := catalogProcessingProfile(t, false)
+	build := lexicalSearchBuild(s, profile, catalogBuildID, "current evidence")
+	require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+	generation, err := s.StageLexicalGeneration(t.Context(), hashVectorIndexTest("revalidation-lexical"))
+	require.NoError(t, err)
+	attachment := RenditionAttachmentRecord{ID: catalogAttachmentFirst, VaultID: s.VaultID(),
+		ContentVersionID: versions[0], BuildID: build.ID, Profile: profile, AttachedAt: embeddingCatalogTime}
+	require.NoError(t, s.PublishRenditionAndLexicalHeads(t.Context(), attachment, RenditionHeadRecord{
+		ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
+		AttachmentID: attachment.ID, PublishedAt: embeddingCatalogTime}, generation.ID))
+	var nodeID, nodeRevision int64
+	require.NoError(t, s.db.QueryRow(`SELECT n.id,n.revision FROM nodes n JOIN content_versions cv
+		ON cv.node_id=n.id WHERE cv.version_id=?`, versions[0]).Scan(&nodeID, &nodeRevision))
+	requested := []SearchCandidateIdentity{{NodeID: nodeID, NodeRevision: nodeRevision, ContentVersionID: versions[0],
+		Evidence: []SearchEvidenceIdentity{{Kind: "rendition_segment", BuildID: build.ID,
+			SegmentID: build.LexicalSegments[0].ID}}}}
+
+	revalidation, err := s.RevalidateSearchCandidates(t.Context(), requested, SearchOptions{}, "", "")
+	require.NoError(t, err)
+	require.Len(t, revalidation.Candidates, 1)
+
+	_, err = s.db.Exec(`DELETE FROM rendition_lexical_heads`)
+	require.NoError(t, err)
+	revalidation, err = s.RevalidateSearchCandidates(t.Context(), requested, SearchOptions{}, "", "")
+	require.NoError(t, err)
+	assert.Empty(t, revalidation.Candidates)
+}
+
+func TestRevalidateSearchCandidatesRejectsStaleSemanticSourceAndHead(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+		document.EmbeddingInputOriginalFile, "optional", "")
+	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+		Key: EmbeddingHeadKey{ContentVersionID: versionID, BindingID: record.BindingID,
+			InputKind: record.InputKind}, SetID: record.ID, VectorSpaceID: record.VectorSpace.ID,
+		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
+	}))
+	source, err := s.CaptureVectorIndexSource(t.Context(), record.VectorSpace.ID)
+	require.NoError(t, err)
+	var nodeID, nodeRevision int64
+	require.NoError(t, s.db.QueryRow(`SELECT n.id,n.revision FROM nodes n JOIN content_versions cv
+		ON cv.node_id=n.id WHERE cv.version_id=?`, versionID).Scan(&nodeID, &nodeRevision))
+	requested := []SearchCandidateIdentity{{NodeID: nodeID, NodeRevision: nodeRevision, ContentVersionID: versionID,
+		Evidence: []SearchEvidenceIdentity{{Kind: "embedding", VectorSpaceID: record.VectorSpace.ID,
+			EmbeddingSetID: record.ID, InputGenerationID: record.InputGeneration.ID,
+			InputID: record.InputGeneration.Inputs[0].ID, InputKind: record.InputKind,
+			SourceManifestChecksum: source.ManifestChecksum}}}}
+
+	revalidation, err := s.RevalidateSearchCandidates(t.Context(), requested, SearchOptions{},
+		profile.Fingerprint, record.BindingID)
+	require.NoError(t, err)
+	require.Len(t, revalidation.Candidates, 1)
+	require.NotNil(t, revalidation.Coverage)
+	assert.Equal(t, 2, revalidation.Coverage.ScopedDocuments)
+	assert.Equal(t, 1, revalidation.Coverage.CompleteDocuments)
+
+	_, err = s.db.Exec(`DELETE FROM embedding_heads WHERE embedding_set_id=?`, record.ID)
+	require.NoError(t, err)
+	_, err = s.RevalidateSearchCandidates(t.Context(), requested, SearchOptions{},
+		profile.Fingerprint, record.BindingID)
+	require.ErrorIs(t, err, ErrVectorIndexSourceStale)
+}
+
+func TestReduceSemanticCandidatesExhaustsNeighborsWithoutDatabaseWork(t *testing.T) {
+	const missed = 10_000
+	neighbors := make([]vectorindex.Neighbor, missed+1)
+	for index := range missed {
+		neighbors[index] = vectorindex.Neighbor{
+			SetID: "filtered", InputKey: fmt.Sprintf("filtered-%d", index), InputChecksum: fakeHash("filtered"),
+		}
+	}
+	neighbors[missed] = vectorindex.Neighbor{
+		SetID: "eligible", InputKey: "eligible-input", InputChecksum: fakeHash("eligible"), Score: 0.75,
+	}
+	key := semanticEligibilityKey{
+		VectorSetID: "eligible", InputID: "eligible-input", InputChecksum: fakeHash("eligible"),
+	}
+	eligible := map[semanticEligibilityKey]semanticEligibility{
+		key: {Node: Node{ID: 42, CurrentVersionID: "version-42"}, Path: "/later.pdf",
+			Candidate: SemanticSearchCandidate{EmbeddingSetID: "embedding-set", InputGenerationID: "generation",
+				InputKind: document.EmbeddingInputOriginalFile}},
+	}
+
+	candidates, truncated := reduceSemanticCandidates("vault", fakeHash("space"), neighbors, 10, eligible)
+
+	assert.False(t, truncated)
+	require.Len(t, candidates, 1)
+	assert.Equal(t, int64(42), candidates[0].NodeID)
+	assert.InDelta(t, 0.75, candidates[0].Score, 1e-12)
+}
+
+func TestReduceSemanticCandidatesKeepsBestChunkPerDocument(t *testing.T) {
+	spaceID := fakeHash("space")
+	firstKey := semanticEligibilityKey{VectorSetID: "set", InputID: "chunk-1", InputChecksum: fakeHash("chunk-1")}
+	secondKey := semanticEligibilityKey{VectorSetID: "set", InputID: "chunk-2", InputChecksum: fakeHash("chunk-2")}
+	eligible := map[semanticEligibilityKey]semanticEligibility{
+		firstKey: {Node: Node{ID: 42, CurrentVersionID: "version-42"}, Path: "/chunked.pdf",
+			Candidate: SemanticSearchCandidate{EmbeddingSetID: "embedding-set", InputGenerationID: "generation",
+				InputKind: document.EmbeddingInputRenditionChunk}},
+		secondKey: {Node: Node{ID: 42, CurrentVersionID: "version-42"}, Path: "/chunked.pdf",
+			Candidate: SemanticSearchCandidate{EmbeddingSetID: "embedding-set", InputGenerationID: "generation",
+				InputKind: document.EmbeddingInputRenditionChunk}},
+	}
+
+	candidates, truncated := reduceSemanticCandidates("vault", spaceID, []vectorindex.Neighbor{
+		{SetID: firstKey.VectorSetID, InputKey: firstKey.InputID, InputChecksum: firstKey.InputChecksum, Score: 0.9},
+		{SetID: secondKey.VectorSetID, InputKey: secondKey.InputID, InputChecksum: secondKey.InputChecksum, Score: 0.8},
+	}, 10, eligible)
+
+	assert.False(t, truncated)
+	require.Len(t, candidates, 1)
+	assert.Equal(t, "chunk-1", candidates[0].InputID)
+	assert.InDelta(t, 0.9, candidates[0].Score, 1e-12)
+}
+
+func TestAcquireSemanticSearchAuthorityUsesStoredDescriptorAndCoverage(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+		document.EmbeddingInputOriginalFile, "optional", "")
+	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+		Key: EmbeddingHeadKey{ContentVersionID: versionID, BindingID: record.BindingID,
+			InputKind: record.InputKind}, SetID: record.ID, VectorSpaceID: record.VectorSpace.ID,
+		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
+	}))
+	set, err := document.DecodeVectorSetV1(record.VectorSet.Payload, document.VectorBounds{
+		MaxRows: 100, MaxDimension: record.VectorSpace.Descriptor.Dimension,
+		MaxBytes: len(record.VectorSet.Payload),
+	})
+	require.NoError(t, err)
+	manifest, err := vectorindex.NewManifest([]string{record.VectorSet.ID})
+	require.NoError(t, err)
+	generation, err := vectorindex.BuildGeneration(manifest, []document.VectorSetV1{set}, vectorindex.Options{})
+	require.NoError(t, err)
+	source, err := s.CaptureVectorIndexSource(t.Context(), record.VectorSpace.ID)
+	require.NoError(t, err)
+	stored := VectorIndexGenerationRecord{ID: hashVectorIndexTest("semantic-search-generation"),
+		VectorSpaceID: record.VectorSpace.ID, SourceManifestChecksum: source.ManifestChecksum,
+		IndexManifestChecksum: generation.Metadata().Manifest.Checksum, Bytes: generation.Bytes(),
+		RowCount: generation.Metadata().RowCount, BuiltAt: embeddingCatalogTime}
+	require.NoError(t, putActiveVectorIndexGenerationForTest(t, s, stored))
+
+	now := time.Now().UTC()
+	authority, err := s.AcquireSemanticSearchAuthority(t.Context(), profile.Fingerprint,
+		record.BindingID, "retrieval-test", now, time.Minute, SearchOptions{MIMEType: "application/pdf"})
+	require.NoError(t, err)
+	assert.Equal(t, record.VectorSpace.Descriptor, authority.VectorSpace.Descriptor)
+	assert.False(t, authority.BindingRequired)
+	assert.Equal(t, 2, authority.ScopedDocuments)
+	assert.Equal(t, 1, authority.CompleteDocuments)
+	assert.Equal(t, stored.ID, authority.Lease.Generation.ID)
+	require.NoError(t, s.ReleaseVectorIndexGeneration(t.Context(), authority.Lease.ID,
+		authority.Lease.FencingToken, now))
+}
+
+func TestSearchExplainedLexicalCandidatesCitesActiveRenditionSegment(t *testing.T) {
+	s, versions := newRenditionCatalogFixture(t)
+	profile := catalogProcessingProfile(t, false)
+	build := lexicalSearchBuild(s, profile, catalogBuildID,
+		strings.Repeat("x", 2048)+" mercury bounded evidence excerpt")
+	require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+	generation, err := s.StageLexicalGeneration(t.Context(), hashVectorIndexTest("e9-lexical"))
+	require.NoError(t, err)
+	attachment := RenditionAttachmentRecord{ID: catalogAttachmentFirst, VaultID: s.VaultID(),
+		ContentVersionID: versions[0], BuildID: build.ID, Profile: profile,
+		AttachedAt: embeddingCatalogTime}
+	require.NoError(t, s.PublishRenditionAndLexicalHeads(t.Context(), attachment, RenditionHeadRecord{
+		ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
+		AttachmentID: attachment.ID, PublishedAt: embeddingCatalogTime}, generation.ID))
+
+	candidates, truncated, err := s.SearchExplainedLexicalCandidates(t.Context(), "mercury", 10, SearchOptions{})
+	require.NoError(t, err)
+	assert.False(t, truncated)
+	require.Len(t, candidates, 1)
+	assert.Equal(t, build.ID, candidates[0].BuildID)
+	assert.Equal(t, build.LexicalSegments[0].ID, candidates[0].SegmentID)
+	assert.Contains(t, candidates[0].Excerpt, "mercury")
+	assert.LessOrEqual(t, len([]rune(candidates[0].Excerpt)), maxExplainedSearchExcerptRunes)
+	assert.Equal(t, versions[0], candidates[0].Node.CurrentVersionID)
+}
+
+func TestSearchExplainedLexicalCandidatesIncludesNamePath(t *testing.T) {
+	s := newTestStore(t)
+	docs, err := s.Mkdir(t.Context(), s.RootID(), "docs")
+	require.NoError(t, err)
+	_, err = s.Mkdir(t.Context(), s.RootID(), "alpha-folder")
+	require.NoError(t, err)
+	_, err = s.CreateFile(t.Context(), docs.ID, "alpha.pdf", fakeHash("alpha"), 1, "application/pdf")
+	require.NoError(t, err)
+
+	candidates, truncated, err := s.SearchExplainedLexicalCandidates(t.Context(), "alpha", 10, SearchOptions{})
+
+	require.NoError(t, err)
+	assert.False(t, truncated)
+	require.Len(t, candidates, 1)
+	assert.Equal(t, "/docs/alpha.pdf", candidates[0].Path)
+}
 
 func TestSearchFindsLiveNodesOnly(t *testing.T) {
 	s := newTestStore(t)
@@ -458,6 +778,11 @@ func TestSearchAttachmentEligibilityKeepsSharedBuildVersionScoped(t *testing.T) 
 		ContentVersionID: versions[1], BuildID: build.ID, Profile: secondProfile,
 		AttachedAt: "2026-08-22T10:02:00.000000000Z",
 	}
+	require.NoError(t, s.AttachRenditionBuild(ctx, second))
+	hits, _, err = s.SearchPage(ctx, "mercury", 10)
+	require.NoError(t, err)
+	require.Len(t, hits, 1, "a staged attachment without a head is not eligible")
+
 	require.NoError(t, s.PublishRenditionAndLexicalHeads(ctx, second, RenditionHeadRecord{
 		ContentVersionID: versions[1], ProcessingProfileFingerprint: secondProfile.Fingerprint,
 		AttachmentID: second.ID, PublishedAt: "2026-08-22T10:03:00.000000000Z",
@@ -522,7 +847,7 @@ func TestLexicalGenerationBuildFailureLeavesNoReadablePartialGeneration(t *testi
 	require.ErrorContains(t, err, "injected failure after FTS build")
 	var partialRows int
 	require.NoError(t, s.db.QueryRow(
-		`SELECT COUNT(*) FROM rendition_lexical_fts WHERE generation_id=?`, secondGenerationID,
+		`SELECT COUNT(*) FROM rendition_lexical_fts WHERE build_id=?`, secondBuild.ID,
 	).Scan(&partialRows))
 	assert.Zero(t, partialRows)
 	active, err := s.ActiveLexicalGeneration(ctx)
@@ -534,6 +859,71 @@ func TestLexicalGenerationBuildFailureLeavesNoReadablePartialGeneration(t *testi
 	hits, _, err = s.SearchPage(ctx, "venus", 10)
 	require.NoError(t, err)
 	assert.Empty(t, hits)
+}
+
+func TestLexicalGenerationsShareImmutableBuildRows(t *testing.T) {
+	// Mutation caught: storing FTS rows per generation copies every existing
+	// build again whenever one new build extends the catalog.
+	s, _ := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	profile := catalogProcessingProfile(t, false)
+	first := lexicalSearchBuild(s, profile, fakeHash("c1"), "first shared lexical row")
+	require.NoError(t, s.StageRenditionBuild(ctx, first))
+	_, err := s.StageLexicalGeneration(ctx, fakeHash("c2"))
+	require.NoError(t, err)
+
+	second, _ := lexicalSearchReplacementBuild(
+		t, s, profile, fakeHash("c3"), "second shared lexical row",
+	)
+	require.NoError(t, s.StageRenditionBuild(ctx, second))
+	_, err = s.StageLexicalGeneration(ctx, fakeHash("c4"))
+	require.NoError(t, err)
+
+	var catalogRows, indexedRows int
+	require.NoError(t, s.db.QueryRow(
+		`SELECT COUNT(*) FROM rendition_lexical_segments`,
+	).Scan(&catalogRows))
+	require.NoError(t, s.db.QueryRow(
+		`SELECT COUNT(*) FROM rendition_lexical_fts`,
+	).Scan(&indexedRows))
+	assert.Equal(t, catalogRows, indexedRows,
+		"immutable build text is indexed once and shared by generation membership")
+}
+
+func TestLexicalProjectionRebuildsGenerationKeyedCandidateCache(t *testing.T) {
+	s, _ := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	profile := catalogProcessingProfile(t, false)
+	build := lexicalSearchBuild(s, profile, fakeHash("c5"), "candidate cache migration")
+	require.NoError(t, s.StageRenditionBuild(ctx, build))
+	firstGenerationID := fakeHash("c6")
+	_, err := s.StageLexicalGeneration(ctx, firstGenerationID)
+	require.NoError(t, err)
+
+	_, err = s.db.Exec(`DROP TABLE rendition_lexical_fts;
+		CREATE VIRTUAL TABLE rendition_lexical_fts USING fts5(
+			generation_id UNINDEXED,build_id UNINDEXED,segment_id UNINDEXED,text
+		);
+		INSERT INTO rendition_lexical_fts(generation_id,build_id,segment_id,text)
+		SELECT ?,build_id,segment_id,text FROM rendition_lexical_segments`, firstGenerationID)
+	require.NoError(t, err)
+
+	_, err = s.StageLexicalGeneration(ctx, fakeHash("c7"))
+	require.NoError(t, err)
+	rows, err := s.db.Query(`SELECT name FROM pragma_table_info('rendition_lexical_fts') ORDER BY cid`)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	var columns []string
+	for rows.Next() {
+		var column string
+		require.NoError(t, rows.Scan(&column))
+		columns = append(columns, column)
+	}
+	require.NoError(t, rows.Err())
+	assert.Equal(t, []string{"build_id", "segment_id", "text"}, columns)
+	var indexedRows int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_lexical_fts`).Scan(&indexedRows))
+	assert.Equal(t, 1, indexedRows)
 }
 
 func TestLexicalGenerationHeadFailureRollsBackAttachmentAndBothHeads(t *testing.T) {
@@ -596,74 +986,50 @@ func TestLexicalGenerationHeadFailureRollsBackAttachmentAndBothHeads(t *testing.
 	assert.Empty(t, hits)
 }
 
-func TestLexicalGenerationPublicationRejectsForbiddenArtifacts(t *testing.T) {
-	s, versions := newRenditionCatalogFixture(t)
-	ctx := t.Context()
-	buildProfile := catalogProcessingProfile(t, false)
-	build := catalogRenditionBuild(s, buildProfile)
-	require.NoError(t, s.StageRenditionBuild(ctx, build))
-	generation, err := s.StageLexicalGeneration(ctx, fakeHash("9c"))
-	require.NoError(t, err)
-
-	attachmentProfile := catalogProcessingProfileWith(t, false, func(profile *document.ProcessingProfileV1) {
-		profile.RetentionDisclosure.RetainSanitizedMarkdown = false
-	})
-	attachment := RenditionAttachmentRecord{
-		ID: catalogAttachmentFirst, VaultID: s.VaultID(),
-		ContentVersionID: versions[0], BuildID: build.ID, Profile: attachmentProfile,
-		AttachedAt: "2026-08-22T10:00:00.000000000Z",
-	}
-	err = s.PublishRenditionAndLexicalHeads(ctx, attachment, RenditionHeadRecord{
-		ContentVersionID: versions[0], ProcessingProfileFingerprint: attachmentProfile.Fingerprint,
-		AttachmentID: attachment.ID, PublishedAt: "2026-08-22T10:01:00.000000000Z",
-	}, generation.ID)
-	require.ErrorContains(t, err, `artifact role "sanitized_markdown" is forbidden`)
-
-	_, err = s.ActiveRendition(ctx, versions[0], attachmentProfile.Fingerprint)
-	require.ErrorIs(t, err, ErrNotFound)
-	_, err = s.ActiveLexicalGeneration(ctx)
-	require.ErrorIs(t, err, ErrNotFound)
-}
-
-func TestLexicalGenerationPublicationRejectsGenerationMissingPublishedBuild(t *testing.T) {
+func TestLexicalGenerationRejectsOutOfOrderStagedSnapshot(t *testing.T) {
+	// Two workers may stage snapshots before either publishes. An older snapshot
+	// must not publish after a newer head because it would silently remove that
+	// headed build from the active lexical generation.
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
-	firstBuild := lexicalSearchBuild(s, profile, fakeHash("b7"), "first mercury phrase")
+	firstBuild := lexicalSearchBuild(s, profile, fakeHash("a8"), "first mercury authority")
 	require.NoError(t, s.StageRenditionBuild(ctx, firstBuild))
-	staleGeneration, err := s.StageLexicalGeneration(ctx, fakeHash("9d"))
+	olderGeneration, err := s.StageLexicalGeneration(ctx, fakeHash("a9"))
 	require.NoError(t, err)
 
 	secondBuild, secondVersion := lexicalSearchReplacementBuild(
-		t, s, profile, fakeHash("b8"), "second venus phrase",
+		t, s, profile, fakeHash("aa"), "second venus authority",
 	)
 	require.NoError(t, s.StageRenditionBuild(ctx, secondBuild))
-	currentGeneration, err := s.StageLexicalGeneration(ctx, fakeHash("9e"))
+	newerGeneration, err := s.StageLexicalGeneration(ctx, fakeHash("ab"))
 	require.NoError(t, err)
 	secondAttachment := RenditionAttachmentRecord{
-		ID: catalogAttachmentSecond, VaultID: s.VaultID(), ContentVersionID: secondVersion,
+		ID: fakeHash("ac"), VaultID: s.VaultID(), ContentVersionID: secondVersion,
 		BuildID: secondBuild.ID, Profile: profile, AttachedAt: "2026-08-22T10:00:00.000000000Z",
 	}
 	require.NoError(t, s.PublishRenditionAndLexicalHeads(ctx, secondAttachment, RenditionHeadRecord{
 		ContentVersionID: secondVersion, ProcessingProfileFingerprint: profile.Fingerprint,
 		AttachmentID: secondAttachment.ID, PublishedAt: "2026-08-22T10:01:00.000000000Z",
-	}, currentGeneration.ID))
+	}, newerGeneration.ID))
 
 	firstAttachment := RenditionAttachmentRecord{
-		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
+		ID: fakeHash("ad"), VaultID: s.VaultID(), ContentVersionID: versions[0],
 		BuildID: firstBuild.ID, Profile: profile, AttachedAt: "2026-08-22T10:02:00.000000000Z",
 	}
 	err = s.PublishRenditionAndLexicalHeads(ctx, firstAttachment, RenditionHeadRecord{
 		ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
 		AttachmentID: firstAttachment.ID, PublishedAt: "2026-08-22T10:03:00.000000000Z",
-	}, staleGeneration.ID)
-	require.ErrorContains(t, err, "does not cover published rendition build")
-
+	}, olderGeneration.ID)
+	require.ErrorContains(t, err, "current rendition head build")
 	active, err := s.ActiveLexicalGeneration(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, currentGeneration, active)
+	assert.Equal(t, newerGeneration, active)
 	_, err = s.ActiveRendition(ctx, versions[0], profile.Fingerprint)
-	require.ErrorIs(t, err, ErrNotFound)
+	require.ErrorIs(t, err, ErrNotFound, "the rejected publication rolls back its rendition head")
+	hits, _, err := s.SearchPage(ctx, "venus", 10)
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
 }
 
 func TestLexicalGenerationReaderLeasePinsAndEnumeratesExactRoots(t *testing.T) {
@@ -776,13 +1142,14 @@ func TestLexicalGenerationReadSnapshotCannotMixPublicationEpochs(t *testing.T) {
 		rows, queryErr := queryer.QueryContext(ctx, `
 			SELECT f.build_id
 			FROM rendition_lexical_fts f
+			JOIN rendition_lexical_generation_builds gb ON gb.build_id=f.build_id
 			JOIN rendition_attachments a ON a.build_id=f.build_id
 			JOIN rendition_heads rh
 			  ON rh.content_version_id=a.content_version_id
 			 AND rh.profile_fingerprint=a.profile_fingerprint
 			 AND rh.attachment_id=a.attachment_id
 			WHERE rendition_lexical_fts MATCH 'epoch'
-			  AND f.generation_id=?`, generation.ID)
+			  AND gb.generation_id=?`, generation.ID)
 		if queryErr != nil {
 			return queryErr
 		}
@@ -823,7 +1190,7 @@ func TestLexicalGenerationReuseRejectsSameCountContentSubstitution(t *testing.T)
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(ctx, `
 		UPDATE rendition_lexical_fts SET text='substituted venus phrase'
-		WHERE generation_id=? AND build_id=?`, generationID, build.ID)
+		WHERE build_id=?`, build.ID)
 	require.NoError(t, err)
 
 	_, err = s.StageLexicalGeneration(ctx, generationID)
@@ -843,7 +1210,7 @@ func TestLexicalGenerationPublicationRejectsSameCountContentSubstitution(t *test
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(ctx, `
 		UPDATE rendition_lexical_fts SET text='substituted venus phrase'
-		WHERE generation_id=? AND build_id=?`, generationID, build.ID)
+		WHERE build_id=?`, build.ID)
 	require.NoError(t, err)
 	attachment := RenditionAttachmentRecord{
 		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
@@ -855,6 +1222,30 @@ func TestLexicalGenerationPublicationRejectsSameCountContentSubstitution(t *test
 		AttachmentID: attachment.ID, PublishedAt: "2026-08-22T10:01:00.000000000Z",
 	}, generationID)
 	require.ErrorContains(t, err, "immutable manifest")
+	_, err = s.ActiveLexicalGeneration(ctx)
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestLexicalGenerationPublicationRejectsMissingZeroSegmentBuildMembership(t *testing.T) {
+	s, versions := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	profile := catalogProcessingProfile(t, false)
+	generation, err := s.StageLexicalGeneration(ctx, fakeHash("9a"))
+	require.NoError(t, err)
+	build := catalogRenditionBuild(s, profile)
+	build.Units = nil
+	build.LexicalSegments = nil
+	require.NoError(t, s.StageRenditionBuild(ctx, build))
+	attachment := RenditionAttachmentRecord{
+		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
+		BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-22T10:04:00.000000000Z",
+	}
+
+	err = s.PublishRenditionAndLexicalHeads(ctx, attachment, RenditionHeadRecord{
+		ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
+		AttachmentID: attachment.ID, PublishedAt: "2026-08-22T10:05:00.000000000Z",
+	}, generation.ID)
+	require.ErrorContains(t, err, "does not exactly contain build")
 	_, err = s.ActiveLexicalGeneration(ctx)
 	require.ErrorIs(t, err, ErrNotFound)
 }
@@ -933,64 +1324,6 @@ func TestPendingAndFailedTextExtractions(t *testing.T) {
 	pending, err = s.PendingTextExtractions(ctx, 10)
 	require.NoError(t, err)
 	assert.Len(t, pending, 2)
-}
-
-// Mutation caught: accepting an older extractor result replaces newer cached
-// text and its serving projection with a version downgrade.
-func TestRecordExtractionRejectsVersionDowngrade(t *testing.T) {
-	s := newTestStore(t)
-	ctx := t.Context()
-	hash := fakeHash("a9")
-	_, err := s.CreateFile(ctx, s.RootID(), "versioned.txt", hash, 10, "text/plain")
-	require.NoError(t, err)
-	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
-		BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 2,
-		Status: ExtractionOK, Text: "newer-version-authority",
-	}))
-
-	err = s.RecordExtraction(ctx, ExtractionResult{
-		BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1,
-		Status: ExtractionOK, Text: "downgraded-authority",
-	})
-	require.Error(t, err)
-	var version int64
-	var text string
-	require.NoError(t, s.db.QueryRow(`
-		SELECT extractor_version,text FROM extracted_text
-		WHERE blob_hash=? AND extractor='plain-text'`, hash,
-	).Scan(&version, &text))
-	assert.Equal(t, int64(2), version)
-	assert.Equal(t, "newer-version-authority", text)
-	hits, _, err := s.SearchPage(ctx, "newer-version-authority", 20)
-	require.NoError(t, err)
-	require.Len(t, hits, 1)
-}
-
-// Mutation caught: replacing a successful extraction with a same-version
-// failure leaves its published rendition ahead of the portable cache.
-func TestRecordExtractionRejectsSameVersionFailureAfterSuccess(t *testing.T) {
-	s := newTestStore(t)
-	ctx := t.Context()
-	hash := fakeHash("aa")
-	_, err := s.CreateFile(ctx, s.RootID(), "stable.txt", hash, 10, "text/plain")
-	require.NoError(t, err)
-	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
-		BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1,
-		Status: ExtractionOK, Text: "stable-extraction-authority",
-	}))
-	_, err = s.MigrateLegacyPlainText(ctx)
-	require.NoError(t, err)
-
-	err = s.RecordExtraction(ctx, ExtractionResult{
-		BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1,
-		Status: ExtractionFailed, Error: "synthetic later failure",
-	})
-	require.ErrorContains(t, err, "cannot replace a successful extraction")
-	_, err = s.MigrateLegacyPlainText(ctx)
-	require.NoError(t, err)
-	hits, _, err := s.SearchPage(ctx, "stable-extraction-authority", 20)
-	require.NoError(t, err)
-	require.Len(t, hits, 1)
 }
 
 func TestPendingTextExtractionsSkipsSupersededQueuedContent(t *testing.T) {
