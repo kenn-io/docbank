@@ -150,6 +150,7 @@ func TestEmbeddingProviderClassifiesCapacityAndExhaustedTransient(t *testing.T) 
 		{"permanent", http.StatusBadRequest, voyage.ErrPermanentResponse},
 		{"rate limit", http.StatusTooManyRequests, voyage.ErrTransientResponse},
 		{"transient", http.StatusServiceUnavailable, voyage.ErrTransientResponse},
+		{"request timeout", http.StatusRequestTimeout, voyage.ErrTransientResponse},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var calls atomic.Int32
@@ -418,7 +419,7 @@ func TestDirectFileEmbeddingBoundsCredentialResolution(t *testing.T) {
 		CapabilityRecordChecksum: strings.Repeat("b", 64), ProviderMetadataChecksum: strings.Repeat("c", 64), InputKind: document.RenditionInputOriginalFile,
 	}}
 	_, err = document.ExecuteEmbedding(t.Context(), provider, []document.EmbeddingInput{{Key: "image", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputOriginalFile, Source: source}}, voyageAuthorization(profile.Descriptor))
-	require.ErrorContains(t, err, "credential")
+	require.ErrorIs(t, err, voyage.ErrUnauthorized)
 	require.True(t, bounded, "credential lookup must receive the adapter timeout")
 }
 

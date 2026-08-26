@@ -59,6 +59,13 @@ func deleteRenditionAuthorityForVersionsTx(
 // applies its roots independently after the version-owned sets are gone.
 func deleteEmbeddingAuthorityForVersionsTx(ctx context.Context, tx *sql.Tx, versionIDs []string) error {
 	for _, versionID := range versionIDs {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM current_rendition_roots WHERE root_kind=? AND root_id IN (
+            SELECT job_id FROM embedding_jobs WHERE content_version_id=?)`, RenditionRootWorkerLease, versionID); err != nil {
+			return fmt.Errorf("releasing embedding job roots: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_jobs WHERE content_version_id=?`, versionID); err != nil {
+			return fmt.Errorf("deleting embedding jobs: %w", err)
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM current_rendition_roots WHERE
 			target_kind='embedding_set' AND target_id IN (
 				SELECT embedding_set_id FROM embedding_sets WHERE content_version_id=?)`,

@@ -88,7 +88,8 @@ to serialize daemon launch before the launcher owns or creates the vault root.
 
 `$DOCBANK_HOME/config.toml` is read once, at daemon startup (`docbank
 daemon run` / `daemon start`). It's optional. There are no general per-field
-environment overrides; the only environment knob remains `DOCBANK_HOME`.
+environment overrides. `DOCBANK_HOME` selects the vault, and named credential
+bindings can read explicitly configured environment variables.
 Backup commands can override their configured repository with `--repo`. An
 unrecognized key is treated as a typo and rejected at startup rather than
 silently ignored.
@@ -239,6 +240,86 @@ watch name, relative path, stable node mapping, and last accepted content
 identity are preserved in portable metadata. The watcher does not pack content
 itself. Configure `[storage] pack_interval` when accumulated loose content
 should be packed automatically; GC and repack remain explicit.
+
+### Embedding workers and credentials
+
+The daemon executes retained embedding work for configured providers. Each
+binding publishes independently: a failed provider does not remove another
+binding's completed vectors. Configuring a provider does not create input
+generations or apply a processing profile to newly imported documents. Work
+requires an existing input generation, a matching processing profile and
+provider descriptor, and current disclosure consent. After restore, the daemon
+recreates jobs from retained inputs once those requirements are met again.
+
+`[processing_profiles.<name>]` selects embedding bindings by name in its
+`embeddings` array. `[embedding_profiles.<name>]` defines each binding's model,
+input kind, dimensions, formatters, compatibility identity, descriptor and
+disclosure fingerprints, byte limits, and `optional` or `required` activation.
+Chunk bindings also pin their tokenizer and chunk policy in `.chunk`. Use the
+fingerprints from the exact provisioned profile and deployment; arbitrary
+fingerprints or an endpoint's model alias do not establish compatibility.
+
+Credentials are referenced by name, never stored as values in a processing
+profile. This fragment connects an existing `semantic` binding to a secret in
+the daemon's environment:
+
+```toml
+[credential_bindings.embedding-primary]
+environment_variable = "DOCBANK_EMBEDDING_PRIMARY_KEY"
+
+[embedding_profiles.semantic]
+credential_binding = "credential:embedding-primary"
+# The remaining pinned profile fields are also required.
+```
+
+A missing or empty secret does not prevent daemon startup or ordinary document
+operations. Affected embedding jobs record an authorization failure and remain
+eligible for recovery. Secrets are resolved for each request from the running
+daemon's environment. Exporting a variable in another shell does not update
+that environment: set the variable for the daemon and restart it. An undefined
+credential binding, invalid runtime configuration, or mismatched descriptor
+still fails startup.
+
+#### Runtime settings
+
+An optional `[embedding_profiles.<name>.runtime]` section makes a binding
+executable on this machine. Without it, the daemon does not claim that binding's
+work. Runtime configuration and environment-variable mappings are machine-local
+and must be supplied separately after restoring a vault.
+
+| Fields | Meaning |
+| --- | --- |
+| `adapter_contract` | `docbank-openai-compatible-embeddings/v1` for rendition chunks, or `docbank-voyage-embeddings/v1` for original files. |
+| `endpoint`, `model_revision` | Exact provider endpoint and pinned revision. OpenAI-compatible endpoints are origins without a path; Voyage uses `https://api.voyageai.com/v1`. |
+| `deployment_epoch`, `provider_revision_header` | OpenAI-compatible runtimes require exactly one. The epoch must equal `model_revision`; a revision header must echo the pinned revision in every response. |
+| `capability_manifest` | Voyage requires an absolute path to a capability manifest matching its model, media policy, and descriptor. |
+| `request_timeout`, `max_request_bytes` | Bound each provider request. The profile's `max_batch_items`, `max_input_bytes`, and `max_response_bytes` supply the other request/response limits. |
+| `allowed_cidrs`, `spki_sha256`, `proxy_mode` | Explicit destination CIDRs, optional TLS public-key pins, and `proxy_mode = "disabled"`. The provider connection enforces this policy. |
+| `connect_timeout`, `keep_alive`, `tls_handshake_timeout` | Required positive transport durations, each at most five minutes. |
+
+Request timeouts must also be positive and at most five minutes. Retry policy
+belongs to the worker, so runtime configuration has no retry-count or retry-delay
+fields. The worker handles transient failures and capacity-driven batch splits;
+malformed responses are recorded separately from rejected document input.
+
+#### Model input
+
+`[embedding_profiles.<name>.model_input]` pins how document and query inputs are
+formatted. Its `profile` selects a named contract such as `nomic/v1`, `bge-m3/v1`,
+`e5/v1`, or `gte/v1`; it is not an arbitrary provider model name. The resulting
+contract must match the binding's `compatibility_id` and provider descriptor.
+For `custom/v1`, supply `compatibility_id` and explicit `.document` and `.query`
+encoders, each with `mode` and `template`. Templates use `{{content}}`; contract
+validation checks the supported roles and formatting rules. `query_instruction`
+is available only to contracts that support it.
+
+Discovery uses bounded pages and waits one minute between complete passes.
+Existing queued work is still checked on the normal one-second idle cadence.
+Missing or invalid generation bytes are skipped during discovery so later
+candidates can proceed; a later pass retries discovery. Database failures retain
+their separate bounded storage-retry behavior. Terminal jobs do not retain
+superseded generations after their last embedding set is collected, while
+queued/running jobs and explicit retention roots keep their inputs.
 
 ### Store bindings
 

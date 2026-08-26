@@ -175,7 +175,7 @@ type renditionWorkerCatalog interface {
 		store.RenditionJobClaim, error)
 	BeginRenditionProviderEgress(ctx context.Context, claim store.RenditionJobClaim, waiterID string,
 		at time.Time, snapshots ...document.RenditionExecutionSnapshotV1) (
-		store.ProviderOperationAuthorization, *store.RenditionProviderEgressFence, error)
+		store.ProviderOperationAuthorization, *store.ProviderEgressFence, error)
 	CheckpointRenditionProvider(ctx context.Context, claim store.RenditionJobClaim,
 		handle string, at time.Time) error
 	MarkRenditionJobRetry(ctx context.Context, claim store.RenditionJobClaim,
@@ -390,7 +390,7 @@ func (worker *RenditionWorker) runOne(ctx context.Context) (
 
 	var execution RenditionExecution
 	var snapshot document.RenditionExecutionSnapshotV1
-	var egressFence *store.RenditionProviderEgressFence
+	var egressFence *store.ProviderEgressFence
 	var durableResume atomic.Bool
 	workerOwnsUpload := false
 	resuming := claim.ResumeHandle != ""
@@ -1096,11 +1096,11 @@ func renditionBytesSHA256(value []byte) string {
 
 type renditionEgressFencedProvider struct {
 	provider document.RenditionProvider
-	fence    *store.RenditionProviderEgressFence
+	fence    *store.ProviderEgressFence
 }
 
 func renditionProviderWithEgressFence(
-	provider document.RenditionProvider, fence *store.RenditionProviderEgressFence,
+	provider document.RenditionProvider, fence *store.ProviderEgressFence,
 ) document.RenditionProvider {
 	if resumable, ok := provider.(document.ResumableRenditionProvider); ok {
 		return &renditionEgressFencedResumableProvider{

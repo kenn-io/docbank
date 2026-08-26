@@ -20,8 +20,22 @@ func collectOrphanEmbeddingArtifactsTx(
 	ctx context.Context, tx *sql.Tx, asOf string,
 ) (_ embeddingOrphanCollection, retErr error) {
 	var result embeddingOrphanCollection
+	// Failed attempts may never stage a set. Once their source authority is
+	// superseded, their terminal rows must not keep orphan inputs alive.
+	// A current but trashed version remains restorable, so trash alone is
+	// deliberately not a reason to discard its work.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_jobs AS j
+		WHERE j.state IN ('completed','failed','abandoned')
+		AND EXISTS (SELECT 1 FROM embedding_input_generations g WHERE g.generation_id=j.generation_id
+		    AND NOT EXISTS (SELECT 1 FROM embedding_sets s WHERE s.input_generation_id=g.generation_id)
+		    AND NOT EXISTS (SELECT 1 FROM content_versions v JOIN nodes n ON n.current_version_id=v.version_id
+		        WHERE v.version_id=g.source_version_id AND (g.attachment_id IS NULL OR EXISTS (
+		            SELECT 1 FROM rendition_heads h WHERE h.content_version_id=g.source_version_id
+		            AND h.profile_fingerprint=g.profile_fingerprint AND h.attachment_id=g.attachment_id))))`); err != nil {
+		return result, fmt.Errorf("collecting superseded terminal embedding jobs: %w", err)
+	}
 	generationRows, err := tx.QueryContext(ctx, `DELETE FROM embedding_input_generations AS g
-		WHERE NOT EXISTS (
+		WHERE NOT EXISTS (SELECT 1 FROM embedding_jobs j WHERE j.generation_id=g.generation_id) AND NOT EXISTS (
 			SELECT 1 FROM embedding_sets s WHERE s.input_generation_id=g.generation_id
 		) AND NOT EXISTS (
 			SELECT 1 FROM current_rendition_roots r
@@ -79,7 +93,8 @@ func collectOrphanEmbeddingArtifactsTx(
 	}
 
 	if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_vector_spaces AS v
-		WHERE NOT EXISTS (SELECT 1 FROM embedding_sets s WHERE s.vector_space_id=v.vector_space_id)
+		WHERE NOT EXISTS (SELECT 1 FROM embedding_jobs j WHERE j.vector_space_id=v.vector_space_id)
+		  AND NOT EXISTS (SELECT 1 FROM embedding_sets s WHERE s.vector_space_id=v.vector_space_id)
 		  AND NOT EXISTS (SELECT 1 FROM embedding_vector_sets s WHERE s.vector_space_id=v.vector_space_id)`); err != nil {
 		return result, fmt.Errorf("collecting orphan embedding vector spaces: %w", err)
 	}

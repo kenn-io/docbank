@@ -73,6 +73,15 @@ func prepareEmbeddingPurgeTx(
 				versionID, fingerprint, binding.Name, binding.InputKind); err != nil {
 				return nil, fmt.Errorf("clearing purged embedding failures: %w", err)
 			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM current_rendition_roots WHERE root_kind=? AND root_id IN (
+                SELECT job_id FROM embedding_jobs WHERE content_version_id=? AND profile_fingerprint=? AND binding_id=? AND input_kind=?)`,
+				RenditionRootWorkerLease, versionID, fingerprint, binding.Name, binding.InputKind); err != nil {
+				return nil, err
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_jobs WHERE content_version_id=? AND profile_fingerprint=? AND binding_id=? AND input_kind=?`,
+				versionID, fingerprint, binding.Name, binding.InputKind); err != nil {
+				return nil, err
+			}
 			result = append(result, derivativePurgeSuppression{
 				sourceSHA256: source, profileFingerprint: derivativeBuildSuppressionProfile,
 				buildID:  embeddingPurgeScope(EmbeddingHeadKey{versionID, binding.Name, binding.InputKind}, fingerprint),
@@ -142,7 +151,7 @@ func requireEmbeddingPurgeAuthorityTx(ctx context.Context, tx *sql.Tx, set Embed
 		return fmt.Errorf("checking embedding purge suppression: %w", err)
 	}
 	if suppression.active || suppression.supersedingBuildID != set.ID {
-		return errors.New("embedding binding has a purge suppression without authorization for this set")
+		return fmt.Errorf("embedding binding has a purge suppression without authorization for this set: %w", ErrEmbeddingAuthorityStale)
 	}
 	return nil
 }
