@@ -84,12 +84,16 @@ func (s *Store) MigrateLegacyPlainText(
 		}
 
 		eligible := make(map[string]legacyPlainTextRow)
-		newerSuccessful := make(map[string]struct{})
 		for _, row := range rows {
 			if row.extractor == legacyPlainTextExtractor &&
 				row.extractorVersion > legacyPlainTextExtractorVersion &&
 				row.status == ExtractionOK && row.text.Valid && utf8.ValidString(row.text.String) {
-				newerSuccessful[row.blobHash] = struct{}{}
+				if len(selectedByBlob[row.blobHash]) != 0 {
+					return fmt.Errorf(
+						"unsupported newer plain-text extraction version %d for selected blob %s",
+						row.extractorVersion, row.blobHash,
+					)
+				}
 			}
 			if row.extractor != legacyPlainTextExtractor ||
 				row.extractorVersion != legacyPlainTextExtractorVersion ||
@@ -172,8 +176,7 @@ func (s *Store) MigrateLegacyPlainText(
 		queued := make(map[string]struct{})
 		for blobHash := range selectedByBlob {
 			_, migrated := eligible[blobHash]
-			_, newer := newerSuccessful[blobHash]
-			if migrated || newer {
+			if migrated {
 				if _, err := tx.ExecContext(ctx,
 					`DELETE FROM text_extraction_queue WHERE blob_hash=?`, blobHash,
 				); err != nil {

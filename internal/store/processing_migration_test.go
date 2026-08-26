@@ -49,9 +49,6 @@ func TestMigrateLegacyPlainTextCutsOverExactEligibleRows(t *testing.T) {
 	unknownHash := seedLegacyMigrationRow(t, s, "unknown.txt", "63", ExtractionResult{
 		Extractor: "other", ExtractorVersion: 1, Status: ExtractionOK, Text: "unknown-authority-token",
 	})
-	seedLegacyMigrationRow(t, s, "obsolete.txt", "64", ExtractionResult{
-		Extractor: "plain-text", ExtractorVersion: 2, Status: ExtractionOK, Text: "obsolete-authority-token",
-	})
 	invalidHash := fakeHash("65")
 	_, err = s.CreateFile(ctx, s.RootID(), "invalid.txt", invalidHash, 1, "text/plain")
 	require.NoError(t, err)
@@ -93,11 +90,9 @@ func TestMigrateLegacyPlainTextCutsOverExactEligibleRows(t *testing.T) {
 	assert.Equal(t, beforeName, afterName, "name search remains byte-for-byte compatible")
 	assert.Equal(t, beforeText, afterText, "eligible text search keeps exact result order")
 
-	for _, query := range []string{"unknown-authority-token", "obsolete-authority-token"} {
-		hits, _, searchErr := s.SearchPage(ctx, query, 20)
-		require.NoError(t, searchErr)
-		assert.Empty(t, hits, "%s must not keep serving from the portable cache", query)
-	}
+	hits, _, searchErr := s.SearchPage(ctx, "unknown-authority-token", 20)
+	require.NoError(t, searchErr)
+	assert.Empty(t, hits, "unknown extractors must not keep serving from the portable cache")
 
 	var builds, units, segments, attachments, heads, legacyFTS int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_builds`).Scan(&builds))
@@ -147,7 +142,7 @@ func TestMigrateLegacyPlainTextCutsOverExactEligibleRows(t *testing.T) {
 
 	var retainedRows int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM extracted_text`).Scan(&retainedRows))
-	assert.Equal(t, 7, retainedRows, "portable legacy rows remain recoverable")
+	assert.Equal(t, 6, retainedRows, "portable legacy rows remain recoverable")
 }
 
 // Mutation caught: publishing heads, the lexical generation, cache fencing,
@@ -483,20 +478,24 @@ func TestLegacyMigrationRestoresTrashedContentSearch(t *testing.T) {
 	assert.Equal(t, SearchMatchContent, hits[0].Match)
 }
 
-// Mutation caught: treating a successful newer extractor result as missing
-// work lets the legacy worker replace it with version 1.
-func TestLegacyMigrationDoesNotQueueNewerExtractionSuccess(t *testing.T) {
+// Mutation caught: silently accepting an unsupported newer extractor result
+// fences its serving cache without publishing equivalent rendition authority.
+func TestLegacyMigrationRejectsUnsupportedNewerExtraction(t *testing.T) {
 	s := newTestStore(t)
 	seedLegacyMigrationRow(t, s, "newer.txt", "7f", ExtractionResult{
 		Extractor: "plain-text", ExtractorVersion: 2,
 		Status: ExtractionOK, Text: "newer-extractor-authority",
 	})
-	_, err := s.MigrateLegacyPlainText(t.Context())
+	before, _, err := s.SearchPage(t.Context(), "newer-extractor-authority", 20)
 	require.NoError(t, err)
+	require.Len(t, before, 1)
 
-	pending, err := s.PendingTextExtractions(t.Context(), 20)
+	_, err = s.MigrateLegacyPlainText(t.Context())
+	require.ErrorContains(t, err, "unsupported newer plain-text extraction")
+
+	after, _, err := s.SearchPage(t.Context(), "newer-extractor-authority", 20)
 	require.NoError(t, err)
-	assert.Empty(t, pending)
+	assert.Equal(t, before, after, "a rejected cutover must preserve serving authority")
 }
 
 // Mutation caught: restricting legacy convergence to released-schema staging

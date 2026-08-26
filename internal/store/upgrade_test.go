@@ -309,6 +309,79 @@ func TestOpenCutsOverReleasedSchemaV3ThroughJSONL(t *testing.T) {
 	}
 }
 
+// Coverage guard: the exact released v0.14 schema must carry its plain-text
+// search result through the one-authority cutover in both SQLite modes.
+func TestUpgradeReleasedV014MigratesPlainText(t *testing.T) {
+	for _, test := range v090UpgradeDrivers() {
+		t.Run(test.name, func(t *testing.T) {
+			dbPath := filepath.Join(t.TempDir(), "docbank.db")
+			fixture := createV3Fixture(t, dbPath, test.driver)
+			const (
+				timestamp = "2026-08-16T12:00:00.000000000Z"
+				versionID = "40000000-0000-4000-8000-000000000003"
+				operation = "50000000-0000-4000-8000-000000000003"
+				text      = "v014-search-token"
+			)
+
+			db, err := test.driver.Open(dbPath, docsqlite.OpenOptions{
+				Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+			})
+			require.NoError(t, err)
+			tx, err := db.BeginTx(t.Context(), nil)
+			require.NoError(t, err)
+			_, err = tx.Exec(`INSERT INTO nodes(
+				id,parent_id,name,kind,current_version_id,revision,created_at,modified_at
+			) VALUES(2,1,'released.txt','file',?,1,?,?)`, versionID, timestamp, timestamp)
+			require.NoError(t, err)
+			_, err = tx.Exec(`INSERT INTO content_versions(
+				version_id,node_id,blob_hash,size,mime_type,recorded_at,node_revision,
+				introduced_operation_id,transition_kind
+			) VALUES(?,2,?,17,'text/plain',?,1,?,'content_create')`,
+				versionID, fixture.blobHash, timestamp, operation)
+			require.NoError(t, err)
+			result, err := tx.Exec(`INSERT INTO extracted_text(
+				blob_hash,extractor,extractor_version,status,error,attempts,text,extracted_at
+			) VALUES(?,'plain-text',1,'ok',NULL,1,?,?)`, fixture.blobHash, text, timestamp)
+			require.NoError(t, err)
+			rowID, err := result.LastInsertId()
+			require.NoError(t, err)
+			_, err = tx.Exec(`INSERT INTO content_fts(rowid,blob_hash,extractor,text)
+				VALUES(?,?,'plain-text',?)`, rowID, fixture.blobHash, text)
+			require.NoError(t, err)
+			_, err = tx.Exec(`INSERT INTO text_searchable_versions(version_id) VALUES(?)`, versionID)
+			require.NoError(t, err)
+			require.NoError(t, tx.Commit())
+			require.NoError(t, db.Close())
+
+			s, err := Open(dbPath, test.driver)
+			require.NoError(t, err)
+			hits, _, err := s.SearchPage(t.Context(), text, 20)
+			require.NoError(t, err)
+			require.Len(t, hits, 1)
+			assert.Equal(t, "/released.txt", hits[0].Path)
+			assert.Equal(t, SearchMatchContent, hits[0].Match)
+			var heads, legacyFTS int
+			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_heads`).Scan(&heads))
+			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM content_fts`).Scan(&legacyFTS))
+			assert.Equal(t, 1, heads)
+			assert.Zero(t, legacyFTS)
+			require.NoError(t, s.Close())
+
+			backup, err := test.driver.Open(dbPath+v3BackupSuffix, docsqlite.OpenOptions{
+				Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred,
+			})
+			require.NoError(t, err)
+			var retained string
+			require.NoError(t, backup.QueryRow(`
+				SELECT text FROM extracted_text
+				WHERE blob_hash=? AND extractor='plain-text'`, fixture.blobHash,
+			).Scan(&retained))
+			assert.Equal(t, text, retained)
+			require.NoError(t, backup.Close())
+		})
+	}
+}
+
 // Coverage guard: both released schema-v2 layouts must carry legacy text
 // through the same one-authority cutover in both supported SQLite modes.
 func TestUpgradeEveryReleasedSchemaV2LayoutMigratesLegacyPlainText(t *testing.T) {

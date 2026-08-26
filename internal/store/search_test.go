@@ -966,6 +966,33 @@ func TestRecordExtractionRejectsVersionDowngrade(t *testing.T) {
 	require.Len(t, hits, 1)
 }
 
+// Mutation caught: replacing a successful extraction with a same-version
+// failure leaves its published rendition ahead of the portable cache.
+func TestRecordExtractionRejectsSameVersionFailureAfterSuccess(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	hash := fakeHash("aa")
+	_, err := s.CreateFile(ctx, s.RootID(), "stable.txt", hash, 10, "text/plain")
+	require.NoError(t, err)
+	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+		BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: "stable-extraction-authority",
+	}))
+	_, err = s.MigrateLegacyPlainText(ctx)
+	require.NoError(t, err)
+
+	err = s.RecordExtraction(ctx, ExtractionResult{
+		BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionFailed, Error: "synthetic later failure",
+	})
+	require.ErrorContains(t, err, "cannot replace a successful extraction")
+	_, err = s.MigrateLegacyPlainText(ctx)
+	require.NoError(t, err)
+	hits, _, err := s.SearchPage(ctx, "stable-extraction-authority", 20)
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+}
+
 func TestPendingTextExtractionsSkipsSupersededQueuedContent(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
