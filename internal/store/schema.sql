@@ -689,6 +689,157 @@ CREATE TABLE IF NOT EXISTS rendition_heads (
         ) ON DELETE CASCADE
 );
 
+-- Embedding authority is normalized into immutable identities. Rendered text
+-- and vector bytes remain in bounded derivative payloads; SQLite retains only
+-- checksums, membership, activation pointers, and provider-neutral failures.
+CREATE TABLE IF NOT EXISTS embedding_vector_spaces (
+    vector_space_id          TEXT PRIMARY KEY,
+    contract_version         TEXT NOT NULL CHECK (contract_version = 'embedding-vector-space/v1'),
+    descriptor_json          BLOB NOT NULL CHECK (length(descriptor_json) BETWEEN 2 AND 65536),
+    provider_descriptor      TEXT NOT NULL CHECK (length(CAST(provider_descriptor AS BLOB)) BETWEEN 1 AND 1024),
+    provider_revision        TEXT NOT NULL CHECK (length(CAST(provider_revision AS BLOB)) BETWEEN 1 AND 1024),
+    descriptor_fingerprint   TEXT NOT NULL,
+    compatibility_id         TEXT NOT NULL CHECK (length(CAST(compatibility_id AS BLOB)) BETWEEN 1 AND 1024),
+    dimensions               INTEGER NOT NULL CHECK (dimensions BETWEEN 1 AND 1048576),
+    metric                   TEXT NOT NULL CHECK (length(CAST(metric AS BLOB)) BETWEEN 1 AND 64),
+    normalization            TEXT NOT NULL CHECK (length(CAST(normalization AS BLOB)) BETWEEN 1 AND 64),
+    scalar_encoding          TEXT NOT NULL CHECK (length(CAST(scalar_encoding AS BLOB)) BETWEEN 1 AND 64),
+    document_formatter       TEXT NOT NULL CHECK (length(CAST(document_formatter AS BLOB)) BETWEEN 1 AND 1024),
+    query_formatter          TEXT NOT NULL CHECK (length(CAST(query_formatter AS BLOB)) BETWEEN 1 AND 1024),
+    model_input_fingerprint  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS embedding_input_generations (
+    generation_id                  TEXT PRIMARY KEY,
+    generation_blob_hash           TEXT REFERENCES blobs(hash),
+    generation_encoded_size        INTEGER NOT NULL CHECK (generation_encoded_size BETWEEN 0 AND 67108864),
+    generation_checksum            TEXT NOT NULL,
+    source_version_id              TEXT NOT NULL,
+    profile_fingerprint            TEXT NOT NULL REFERENCES processing_profiles(profile_fingerprint),
+    evidence_fingerprint           TEXT NOT NULL,
+    tokenizer_fingerprint          TEXT NOT NULL,
+    chunk_policy_fingerprint       TEXT NOT NULL,
+    formatter_fingerprint          TEXT NOT NULL,
+    attachment_context_fingerprint TEXT NOT NULL,
+    attachment_id                  TEXT,
+    input_count                    INTEGER NOT NULL CHECK (input_count BETWEEN 1 AND 100000),
+    created_at                     TEXT NOT NULL,
+    CHECK (attachment_context_fingerprint = '' OR attachment_id IS NOT NULL),
+    CHECK ((generation_blob_hash IS NULL AND generation_encoded_size = 0)
+        OR (generation_blob_hash IS NOT NULL AND generation_encoded_size >= 2))
+);
+
+CREATE TABLE IF NOT EXISTS embedding_generation_inputs (
+    generation_id     TEXT NOT NULL REFERENCES embedding_input_generations(generation_id) ON DELETE CASCADE,
+    input_id          TEXT NOT NULL CHECK (length(CAST(input_id AS BLOB)) BETWEEN 1 AND 1024),
+    input_order       INTEGER NOT NULL CHECK (input_order BETWEEN 0 AND 99999),
+    rendered_checksum TEXT NOT NULL,
+    PRIMARY KEY (generation_id, input_id),
+    UNIQUE (generation_id, input_order)
+);
+
+CREATE TABLE IF NOT EXISTS embedding_vector_sets (
+    vector_set_id      TEXT PRIMARY KEY,
+    contract_version   TEXT NOT NULL CHECK (contract_version = 'vector-set/v1'),
+    vector_space_id    TEXT NOT NULL REFERENCES embedding_vector_spaces(vector_space_id),
+    payload_blob_hash  TEXT NOT NULL REFERENCES blobs(hash),
+    payload_size       INTEGER NOT NULL CHECK (payload_size BETWEEN 1 AND 67108864),
+    payload_checksum   TEXT NOT NULL,
+    manifest_checksum  TEXT NOT NULL,
+    row_count          INTEGER NOT NULL CHECK (row_count BETWEEN 1 AND 100000),
+    dimensions         INTEGER NOT NULL CHECK (dimensions BETWEEN 1 AND 1048576)
+);
+
+CREATE TABLE IF NOT EXISTS embedding_vector_rows (
+    vector_set_id  TEXT NOT NULL REFERENCES embedding_vector_sets(vector_set_id) ON DELETE CASCADE,
+    row_id         TEXT NOT NULL CHECK (length(CAST(row_id AS BLOB)) BETWEEN 1 AND 1024),
+    row_order      INTEGER NOT NULL CHECK (row_order BETWEEN 0 AND 99999),
+    input_id       TEXT NOT NULL CHECK (length(CAST(input_id AS BLOB)) BETWEEN 1 AND 1024),
+    dimensions     INTEGER NOT NULL CHECK (dimensions BETWEEN 1 AND 1048576),
+    checksum       TEXT NOT NULL,
+    PRIMARY KEY (vector_set_id, row_id),
+    UNIQUE (vector_set_id, row_order),
+    UNIQUE (vector_set_id, input_id)
+);
+
+CREATE INDEX IF NOT EXISTS embedding_vector_sets_payload
+    ON embedding_vector_sets(payload_blob_hash, vector_set_id);
+
+CREATE TABLE IF NOT EXISTS embedding_sets (
+    embedding_set_id             TEXT PRIMARY KEY,
+    vault_uid                    TEXT NOT NULL REFERENCES vault_metadata(vault_uid),
+    binding_id                   TEXT NOT NULL CHECK (length(CAST(binding_id AS BLOB)) BETWEEN 1 AND 1024),
+    input_kind                   TEXT NOT NULL CHECK (input_kind IN ('rendition_chunk', 'original_file')),
+    content_version_id           TEXT NOT NULL REFERENCES content_versions(version_id),
+    profile_fingerprint          TEXT NOT NULL REFERENCES processing_profiles(profile_fingerprint),
+    embedding_input_fingerprint  TEXT NOT NULL,
+    vector_space_id              TEXT NOT NULL REFERENCES embedding_vector_spaces(vector_space_id),
+    input_generation_id          TEXT NOT NULL REFERENCES embedding_input_generations(generation_id),
+    vector_set_id                TEXT NOT NULL REFERENCES embedding_vector_sets(vector_set_id),
+    created_at                   TEXT NOT NULL,
+    UNIQUE (vault_uid, content_version_id, binding_id, input_kind,
+            vector_space_id, input_generation_id, vector_set_id)
+);
+
+CREATE INDEX IF NOT EXISTS embedding_sets_content_version
+    ON embedding_sets(content_version_id, embedding_set_id);
+CREATE INDEX IF NOT EXISTS embedding_sets_input_generation
+    ON embedding_sets(input_generation_id, embedding_set_id);
+CREATE INDEX IF NOT EXISTS embedding_sets_vector_set
+    ON embedding_sets(vector_set_id, embedding_set_id);
+CREATE INDEX IF NOT EXISTS embedding_sets_vector_space
+    ON embedding_sets(vector_space_id, embedding_set_id);
+
+CREATE TABLE IF NOT EXISTS embedding_heads (
+    content_version_id   TEXT NOT NULL,
+    binding_id           TEXT NOT NULL,
+    input_kind           TEXT NOT NULL CHECK (input_kind IN ('rendition_chunk', 'original_file')),
+    embedding_set_id     TEXT NOT NULL REFERENCES embedding_sets(embedding_set_id),
+    vector_space_id      TEXT NOT NULL REFERENCES embedding_vector_spaces(vector_space_id),
+    profile_fingerprint  TEXT NOT NULL REFERENCES processing_profiles(profile_fingerprint),
+    published_at         TEXT NOT NULL,
+    PRIMARY KEY (content_version_id, profile_fingerprint, binding_id, input_kind)
+);
+
+CREATE INDEX IF NOT EXISTS embedding_heads_set
+    ON embedding_heads(embedding_set_id);
+
+CREATE TABLE IF NOT EXISTS embedding_failures (
+    content_version_id   TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    profile_fingerprint  TEXT NOT NULL REFERENCES processing_profiles(profile_fingerprint),
+    binding_id           TEXT NOT NULL CHECK (length(CAST(binding_id AS BLOB)) BETWEEN 1 AND 1024),
+    input_kind           TEXT NOT NULL CHECK (input_kind IN ('rendition_chunk', 'original_file')),
+    failure_code         TEXT NOT NULL CHECK (failure_code IN (
+        'provider_unavailable','authorization','invalid_response','input_rejected','stale_authority'
+    )),
+    failed_at            TEXT NOT NULL,
+    PRIMARY KEY (content_version_id, profile_fingerprint, binding_id, input_kind)
+);
+
+CREATE TRIGGER IF NOT EXISTS embedding_vector_spaces_immutable_update
+BEFORE UPDATE ON embedding_vector_spaces BEGIN
+    SELECT RAISE(ABORT, 'embedding vector space records are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS embedding_input_generations_immutable_update
+BEFORE UPDATE ON embedding_input_generations BEGIN
+    SELECT RAISE(ABORT, 'embedding input generation records are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS embedding_generation_inputs_immutable_update
+BEFORE UPDATE ON embedding_generation_inputs BEGIN
+    SELECT RAISE(ABORT, 'embedding input records are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS embedding_vector_sets_immutable_update
+BEFORE UPDATE ON embedding_vector_sets BEGIN
+    SELECT RAISE(ABORT, 'embedding vector set records are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS embedding_vector_rows_immutable_update
+BEFORE UPDATE ON embedding_vector_rows BEGIN
+    SELECT RAISE(ABORT, 'embedding vector row records are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS embedding_sets_immutable_update
+BEFORE UPDATE ON embedding_sets BEGIN
+    SELECT RAISE(ABORT, 'embedding set records are immutable');
+END;
 -- The lexical projection is rebuildable search state over immutable rendition
 -- builds. Segment text is indexed once per build in rendition_lexical_index;
 -- the FTS table is an external-content index over it. A generation names one

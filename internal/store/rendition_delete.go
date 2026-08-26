@@ -18,6 +18,9 @@ func deleteRenditionAuthorityForVersionsTx(
 	if len(versionIDs) == 0 {
 		return nil
 	}
+	if err := deleteEmbeddingAuthorityForVersionsTx(ctx, tx, versionIDs); err != nil {
+		return err
+	}
 	deleteHeads, err := tx.PrepareContext(ctx,
 		`DELETE FROM rendition_heads WHERE content_version_id=?`)
 	if err != nil {
@@ -48,6 +51,28 @@ func deleteRenditionAuthorityForVersionsTx(
 		}
 	}
 	return reconcileRenditionJobsAfterWaiterDeletionTx(ctx, tx, nowRFC3339())
+}
+
+// deleteEmbeddingAuthorityForVersionsTx removes dependent derivative
+// authority before the owning version and its rendition attachment. Immutable
+// vector/generation authority remains for the shared derivative GC path, which
+// applies its roots independently after the version-owned sets are gone.
+func deleteEmbeddingAuthorityForVersionsTx(ctx context.Context, tx *sql.Tx, versionIDs []string) error {
+	for _, versionID := range versionIDs {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM current_rendition_roots WHERE
+			target_kind='embedding_set' AND target_id IN (
+				SELECT embedding_set_id FROM embedding_sets WHERE content_version_id=?)`,
+			versionID); err != nil {
+			return fmt.Errorf("releasing embedding roots for content version %s: %w", versionID, err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_heads WHERE content_version_id=?`, versionID); err != nil {
+			return fmt.Errorf("deleting embedding heads for content version %s: %w", versionID, err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_sets WHERE content_version_id=?`, versionID); err != nil {
+			return fmt.Errorf("deleting embedding sets for content version %s: %w", versionID, err)
+		}
+	}
+	return nil
 }
 
 // reconcileRenditionJobsAfterWaiterDeletionTx reselects or requeues shared

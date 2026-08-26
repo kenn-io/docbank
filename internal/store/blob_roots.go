@@ -24,6 +24,8 @@ var blobRootReferences = []blobReference{
 	{table: "rendition_builds", column: columnSourceSHA256},
 	{table: "rendition_jobs", column: columnSourceSHA256},
 	{table: "rendition_artifacts", column: columnBlobHash},
+	{table: "embedding_input_generations", column: "generation_blob_hash"},
+	{table: "embedding_vector_sets", column: "payload_blob_hash"},
 	{table: "visual_preview_generations", column: "output_blob_hash"},
 }
 

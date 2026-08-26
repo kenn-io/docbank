@@ -1619,9 +1619,9 @@ type RenditionBlobReader interface {
 	OpenStreamContext(ctx context.Context, hash string) (packstore.VerifiedReadCloser, int64, error)
 }
 
-// VerifyRenditionBlobBytes verifies every retained rendition source, artifact,
-// and ready visual preview through the restored mixed-storage catalog,
-// including builds that are staged but not attached to an active head.
+// VerifyRenditionBlobBytes verifies every retained rendition and embedding
+// artifact through the restored mixed-storage catalog, including builds that
+// are staged but not attached to an active head.
 func (s *Store) VerifyRenditionBlobBytes(ctx context.Context, reader RenditionBlobReader) error {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT b.source_sha256, source.size
@@ -1655,6 +1655,21 @@ func (s *Store) VerifyRenditionBlobBytes(ctx context.Context, reader RenditionBl
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("iterating retained rendition bytes: %w", err)
 	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("closing retained rendition bytes: %w", err)
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return fmt.Errorf("starting exact embedding artifact verification: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := verifyEmbeddingArtifacts(ctx, tx, func(
+		ctx context.Context, hash string, size int64,
+	) ([]byte, error) {
+		return readEmbeddingArtifact(ctx, reader, importedProcessingBlob{hash: hash, size: size})
+	}); err != nil {
+		return fmt.Errorf("verifying exact embedding artifacts: %w", err)
+	}
 	return nil
 }
 
@@ -1670,6 +1685,9 @@ func (s *Store) VerifyRenditionBlobAuthority(ctx context.Context) (retErr error)
 	defer func() { retErr = errors.Join(retErr, tx.Rollback()) }()
 	if err := validateProcessingMetadataState(ctx, tx); err != nil {
 		return fmt.Errorf("validating processing blob authority: %w", err)
+	}
+	if err := validateEmbeddingMetadataState(ctx, tx); err != nil {
+		return fmt.Errorf("validating embedding blob authority: %w", err)
 	}
 	if err := verifyRenditionBlobCatalogAuthority(ctx, tx); err != nil {
 		return fmt.Errorf("verifying processing blob authority: %w", err)
@@ -1687,6 +1705,11 @@ func verifyRenditionBlobCatalogAuthority(ctx context.Context, tx *sql.Tx) (retEr
 		WHERE output_blob_hash IS NOT NULL
 		UNION
 		SELECT source_sha256 FROM rendition_jobs
+		UNION
+		SELECT generation_blob_hash FROM embedding_input_generations
+		WHERE generation_blob_hash IS NOT NULL
+		UNION
+		SELECT payload_blob_hash FROM embedding_vector_sets
 		ORDER BY source_sha256`)
 	if err != nil {
 		return fmt.Errorf("reading processing blob catalog authority: %w", err)
@@ -1783,6 +1806,118 @@ func verifyRenditionBlob(
 		return fmt.Errorf("verifying restored rendition blob %s: %w", blob.hash, err)
 	}
 	return nil
+}
+
+type embeddingArtifactReader func(context.Context, string, int64) ([]byte, error)
+
+func verifyEmbeddingArtifacts(
+	ctx context.Context, tx *sql.Tx, read embeddingArtifactReader,
+) error {
+	generationIDs, err := loadProcessingMetadataIDs(ctx, tx, "embedding generation", `
+		SELECT generation_id FROM embedding_input_generations
+		WHERE generation_blob_hash IS NOT NULL ORDER BY generation_id`)
+	if err != nil {
+		return err
+	}
+	for _, id := range generationIDs {
+		record, err := loadInputGenerationTx(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		data, err := read(ctx, record.GenerationBlobHash, record.GenerationEncodedSize)
+		if err != nil {
+			return fmt.Errorf("reading E2 generation artifact %s: %w", id, err)
+		}
+		if err := validateExactEmbeddingGenerationArtifact(record, data); err != nil {
+			return fmt.Errorf("validating E2 generation artifact %s: %w", id, err)
+		}
+		setIDs, err := stringColumnTx(ctx, tx, "embedding generation sets", `
+			SELECT embedding_set_id FROM embedding_sets
+			WHERE input_generation_id=? ORDER BY embedding_set_id`, id)
+		if err != nil {
+			return err
+		}
+		for _, setID := range setIDs {
+			set, err := loadEmbeddingSetTx(ctx, tx, setID)
+			if err != nil {
+				return err
+			}
+			set.InputGeneration.GenerationJSON = data
+			binding, fingerprints, err := embeddingProfileBindingAuthority(
+				ctx, tx, set.ProcessingProfileFingerprint, set.BindingID,
+			)
+			if err != nil {
+				return err
+			}
+			if err := validateEmbeddingBindingAuthority(set, binding, fingerprints); err != nil {
+				return fmt.Errorf("validating E2 generation profile binding %s: %w", setID, err)
+			}
+		}
+	}
+	vectorSetIDs, err := loadProcessingMetadataIDs(ctx, tx, "embedding vector set", `
+		SELECT vector_set_id FROM embedding_vector_sets ORDER BY vector_set_id`)
+	if err != nil {
+		return err
+	}
+	for _, id := range vectorSetIDs {
+		vectorSet, err := loadVectorSetTx(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		var generationID string
+		if err := tx.QueryRowContext(ctx, `SELECT input_generation_id FROM embedding_sets
+			WHERE vector_set_id=? ORDER BY embedding_set_id LIMIT 1`, id).Scan(&generationID); err != nil {
+			return fmt.Errorf("finding vector-set generation %s: %w", id, err)
+		}
+		generation, err := loadInputGenerationTx(ctx, tx, generationID)
+		if err != nil {
+			return err
+		}
+		space, err := loadVectorSpaceTx(ctx, tx, vectorSet.VectorSpaceID)
+		if err != nil {
+			return err
+		}
+		data, err := read(ctx, vectorSet.PayloadBlobHash, vectorSet.PayloadSize)
+		if err != nil {
+			return fmt.Errorf("reading vector-set artifact %s: %w", id, err)
+		}
+		if err := validateExactEmbeddingVectorArtifact(vectorSet, space, generation, data); err != nil {
+			return fmt.Errorf("validating vector-set artifact %s: %w", id, err)
+		}
+	}
+	return nil
+}
+
+func readEmbeddingArtifact(
+	ctx context.Context, reader RenditionBlobReader, blob importedProcessingBlob,
+) (data []byte, retErr error) {
+	if blob.size < 1 || blob.size > 64<<20 {
+		return nil, errors.New("embedding artifact size exceeds bounds")
+	}
+	stream, logicalSize, err := reader.OpenStreamContext(ctx, blob.hash)
+	if err != nil {
+		return nil, fmt.Errorf("opening restored embedding artifact %s: %w", blob.hash, err)
+	}
+	defer func() { retErr = errors.Join(retErr, stream.Close()) }()
+	if logicalSize != blob.size {
+		return nil, fmt.Errorf(
+			"restored embedding artifact %s size %d does not match catalog size %d",
+			blob.hash, logicalSize, blob.size,
+		)
+	}
+	data, err = io.ReadAll(io.LimitReader(stream, blob.size+1))
+	if err != nil {
+		return nil, fmt.Errorf("reading restored embedding artifact %s: %w", blob.hash, err)
+	}
+	if int64(len(data)) != blob.size {
+		return nil, fmt.Errorf(
+			"restored embedding artifact %s read %d bytes, want %d", blob.hash, len(data), blob.size,
+		)
+	}
+	if err := stream.Verify(); err != nil {
+		return nil, fmt.Errorf("verifying restored embedding artifact %s: %w", blob.hash, err)
+	}
+	return data, nil
 }
 
 // validateImportedRenditionHead checks that a restored head resolves through
@@ -2487,6 +2622,22 @@ func validateCurrentRenditionRootState(ctx context.Context, tx metadataQuerier) 
 			err = tx.QueryRowContext(ctx, `SELECT EXISTS(
 				SELECT 1 FROM rendition_lexical_generations WHERE generation_id=?
 			)`, root.TargetID).Scan(&present)
+		case RenditionRootEmbeddingSet:
+			err = tx.QueryRowContext(ctx, `SELECT EXISTS(
+				SELECT 1 FROM embedding_sets WHERE embedding_set_id=?
+			)`, root.TargetID).Scan(&present)
+		case RenditionRootEmbeddingGeneration:
+			err = tx.QueryRowContext(ctx, `SELECT EXISTS(
+				SELECT 1 FROM embedding_input_generations WHERE generation_id=?
+			)`, root.TargetID).Scan(&present)
+		case RenditionRootEmbeddingVectorSet:
+			err = tx.QueryRowContext(ctx, `SELECT EXISTS(
+				SELECT 1 FROM embedding_vector_sets WHERE vector_set_id=?
+			)`, root.TargetID).Scan(&present)
+		case RenditionRootEmbeddingPayload:
+			err = tx.QueryRowContext(ctx, `SELECT EXISTS(
+				SELECT 1 FROM embedding_vector_sets WHERE payload_blob_hash=?
+			)`, root.TargetID).Scan(&present)
 		}
 		if err != nil {
 			return fmt.Errorf("validating current rendition root %s target: %w", root.ID, err)
@@ -2525,6 +2676,8 @@ func validateCurrentRenditionRootState(ctx context.Context, tx metadataQuerier) 
 						"current rendition job root %s does not match the job lexical generation", root.ID)
 				}
 				activeJobGenerationRoots[jobID] = true
+			default:
+				return fmt.Errorf("current rendition job root %s has invalid target kind %s", root.ID, root.TargetKind)
 			}
 		}
 	}
