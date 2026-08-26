@@ -138,3 +138,14 @@ Do NOT flag issues that only apply to public-facing, multi-tenant, or
 internet-exposed services. Focus on bugs, logic errors, data corruption
 risks, and code quality issues.
 """
+
+# Review routing: GPT-5.6 Terra at high effort via the Codex agent.
+agent = "codex"
+model = "gpt-5.6-terra"
+review_agent = "codex"
+review_model = "gpt-5.6-terra"
+review_reasoning = "high"
+
+# Cadence: reviews are batched, not per-commit. No post-commit hook is
+# installed; every 5 commits on a working branch, run a range review:
+#   roborev review <last-reviewed-sha>..HEAD
