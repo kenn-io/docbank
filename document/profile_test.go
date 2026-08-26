@@ -26,16 +26,16 @@ func TestCanonicalProfileMatchesGoldenAndCanonicalizesInput(t *testing.T) {
 	want = bytes.TrimSuffix(want, []byte("\n"))
 	assert.Equal(t, want, encoded)
 	assert.Equal(t, original, profile, "canonicalization must not mutate caller-owned policy")
-	assert.Equal(t, "389b38a03edb9c156e4804473d96accbef7d0e773f49387b84b1b7e6ade33b91", fingerprints.Profile)
+	assert.Equal(t, "38a06e593e2fe3588e88f76e842e3138184237c5a3d8052872fe865d117f0e1f", fingerprints.Profile)
 	assert.Equal(t, "9d0a202be29b43e16684f74b540a41778443fe2f4757d4b1815d85994f5b2522", fingerprints.RenditionRequest)
 	assert.Equal(t, "f5405d835d1bb377cade66ca6e18b488972fadc862bfd96faf746cd374184819", fingerprints.EvidenceLexical)
 	assert.Equal(t, map[string]string{
-		"direct":   "59c57d1c5b5b3106ce6310660b0ec8aa038c58c20bdcaad9ef711c40b0ae9ff1",
-		"semantic": "dff3236afbf4b8810a1ff40a1c812f9ae7bef5dae28c08b6a80f78e811094872",
+		"direct":   "6d0ee0f814c74992f6bcedfcab8b52f07c0024077526919ff5c2c336d9f353b2",
+		"semantic": "0a363d012a8caeb222de2a8eab8692fcf30a3d733a39f76199ebdd0bf364cf45",
 	}, fingerprints.EmbeddingInput)
 	assert.Equal(t, map[string]string{
-		"direct":   "dc2da50bb2d163a114834bbcee2ea439cd838da23f4e0ac8a504d9b007487357",
-		"semantic": "9bb1db44ac603c26f0f4028b009d50e2ca83cef5b61fa4fd2dad4108b31a541b",
+		"direct":   "f731443d0c91d8b4a548ebf821090522fb3dbe772a4d3985ef9336f60c8f801e",
+		"semantic": "94b86507a61e14509a5c744f1db31e94d84cbfd61a62f2d8cf5ba893834f900d",
 	}, fingerprints.VectorSpace)
 	assert.Equal(t, "3debf7c7ff983edfebee3fe195f5db2a2d32dae3ff3f64eb834e382925e2a1ef", fingerprints.RetentionDisclosure)
 
@@ -164,12 +164,34 @@ func TestCanonicalProfileFingerprintsTrackExactLayerFields(t *testing.T) {
 	}
 }
 
+// This test fails if changing the sealed document/query envelope leaves either
+// the input-generation or vector-space authority unchanged.
+func TestCanonicalProfileModelInputRotatesInputAndVectorSpace(t *testing.T) {
+	base := syntheticProcessingProfileV1()
+	_, before, err := document.CanonicalProfile(base)
+	require.NoError(t, err)
+
+	modelInput, err := document.NewModelInputContract(document.ModelInputContractConfig{
+		Profile: document.ModelInputProfileCustom, CompatibilityID: "voyage-3-large/1024",
+		Document: document.ModelInputEncoder{Mode: document.ModelInputModeDocument, Template: "document: {{content}}"},
+		Query:    document.ModelInputEncoder{Mode: document.ModelInputModeQuery, Template: "query: {{content}}"},
+	})
+	require.NoError(t, err)
+	changed := cloneProcessingProfile(base)
+	changed.Embeddings[1].ModelInput = modelInput
+	_, after, err := document.CanonicalProfile(changed)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, layers("profile", "input:semantic", "vector:semantic"), changedFingerprintLayers(before, after))
+}
+
 func TestCanonicalProfileRejectsInvalidPolicy(t *testing.T) {
 	tests := []struct {
 		name   string
 		mutate func(*document.ProcessingProfileV1)
 		want   string
 	}{
+		{"l2 embedding normalization alias", func(p *document.ProcessingProfileV1) { p.Embeddings[0].Normalization = "l2" }, "normalization"},
+		{"unknown embedding normalization", func(p *document.ProcessingProfileV1) { p.Embeddings[0].Normalization = "provider_default" }, "normalization"},
 		{"duplicate binding name", func(p *document.ProcessingProfileV1) { p.Embeddings[1].Name = "direct" }, "duplicated"},
 		{"unknown input kind", func(p *document.ProcessingProfileV1) { p.Embeddings[0].InputKind = "summary" }, "input kind"},
 		{"chunk embedding without rendition", func(p *document.ProcessingProfileV1) {

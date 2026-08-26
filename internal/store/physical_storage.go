@@ -46,6 +46,9 @@ type BlobPhysical struct {
 	Encoding     string
 	StoredBytes  int64
 	PackEligible bool
+	// MD5 is an auxiliary digest computed from the exact logical bytes in the
+	// same streaming pass as the authoritative SHA-256 write.
+	MD5 string
 	// Created proves this write published a new, fully hashed canonical loose
 	// representation rather than deduplicating an existing file by type and size.
 	Created bool
@@ -59,6 +62,11 @@ func normalizeBlobPhysical(size int64, physical []BlobPhysical) (BlobPhysical, e
 		return BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: size, PackEligible: size <= maxPackEligibleBytes}, nil
 	}
 	result := physical[0]
+	if result.MD5 != "" {
+		if err := validateAuxiliaryMD5(result.MD5); err != nil {
+			return BlobPhysical{}, err
+		}
+	}
 	if result.Encoding != looseEncodingRaw && result.Encoding != looseEncodingZstd {
 		return BlobPhysical{}, fmt.Errorf("invalid loose encoding %q", result.Encoding)
 	}

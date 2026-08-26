@@ -1,6 +1,7 @@
 package config
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -271,6 +272,97 @@ func TestProcessingProfilesRejectInvalidReferencesAndPolicies(t *testing.T) {
 			cfg := validProcessingConfig()
 			test.mutate(&cfg)
 			require.ErrorContains(t, cfg.Validate(), test.want)
+		})
+	}
+}
+
+func TestEmbeddingRuntimeConfigIsExactBoundedAndPortable(t *testing.T) {
+	cfg := validProcessingConfig()
+	cfg.CredentialBindings = map[string]CredentialBindingConfig{
+		"embedding-primary": {EnvironmentVariable: "DOCBANK_EMBEDDING_PRIMARY_KEY"},
+	}
+	profile := cfg.EmbeddingProfiles["semantic"]
+	profile.ModelInput = EmbeddingModelInputConfig{Profile: string(document.ModelInputProfileNomic)}
+	profile.CompatibilityID = "nomic/search/v1"
+	profile.DescriptorID = "openai-compatible.embeddings-v1"
+	profile.Runtime = &EmbeddingRuntimeConfig{
+		AdapterContract: "docbank-openai-compatible-embeddings/v1", Endpoint: "https://embedding.example.invalid",
+		ModelRevision: "deployment-v1", DeploymentEpoch: "deployment-v1",
+		RequestTimeout: Duration(time.Second), MaxRequestBytes: 1 << 20, MaxRetries: 1,
+		AllowedCIDRs: []string{"192.0.2.0/24"}, SPKISHA256: []string{strings.Repeat("a", 64)},
+		ProxyMode: "disabled", ConnectTimeout: Duration(time.Second), KeepAlive: Duration(time.Second),
+		TLSHandshakeTimeout: Duration(time.Second),
+	}
+	cfg.EmbeddingProfiles["semantic"] = profile
+	require.NoError(t, cfg.Validate())
+	portable, err := cfg.ProcessingProfile("archive")
+	require.NoError(t, err)
+	require.Len(t, portable.Embeddings, 1)
+	assert.Equal(t, profile.CredentialBinding, portable.Embeddings[0].CredentialBinding)
+	assert.Equal(t, "nomic/search/v1", portable.Embeddings[0].ModelInput.CompatibilityID)
+
+	for name, mutate := range map[string]func(*Config){
+		"undefined credential": func(value *Config) { value.CredentialBindings = nil },
+		"credential value instead of name": func(value *Config) {
+			value.CredentialBindings["embedding-primary"] = CredentialBindingConfig{EnvironmentVariable: "synthetic secret"}
+		},
+		"ambient proxy": func(value *Config) {
+			changed := value.EmbeddingProfiles["semantic"]
+			changed.Runtime.ProxyMode = "environment"
+			value.EmbeddingProfiles["semantic"] = changed
+		},
+		"provider owns retries": func(value *Config) {
+			changed := value.EmbeddingProfiles["semantic"]
+			changed.Runtime.MaxRetries = 2
+			value.EmbeddingProfiles["semantic"] = changed
+		},
+		"credential in endpoint": func(value *Config) {
+			changed := value.EmbeddingProfiles["semantic"]
+			changed.Runtime.Endpoint = "https://secret@embedding.example.invalid"
+			value.EmbeddingProfiles["semantic"] = changed
+		},
+		"portable model input differs": func(value *Config) {
+			changed := value.EmbeddingProfiles["semantic"]
+			changed.ModelInput = EmbeddingModelInputConfig{Profile: string(document.ModelInputProfileE5)}
+			value.EmbeddingProfiles["semantic"] = changed
+		},
+		"openai endpoint path": func(value *Config) {
+			changed := value.EmbeddingProfiles["semantic"]
+			changed.Runtime.Endpoint += "/api"
+			value.EmbeddingProfiles["semantic"] = changed
+		},
+		"two revision authorities": func(value *Config) {
+			changed := value.EmbeddingProfiles["semantic"]
+			changed.Runtime.ProviderRevisionHeader = "X-Model-Revision"
+			value.EmbeddingProfiles["semantic"] = changed
+		},
+		"unbounded connect": func(value *Config) {
+			changed := value.EmbeddingProfiles["semantic"]
+			changed.Runtime.ConnectTimeout = 0
+			value.EmbeddingProfiles["semantic"] = changed
+		},
+		"openai original file": func(value *Config) {
+			changed := value.EmbeddingProfiles["semantic"]
+			changed.InputKind = string(document.EmbeddingInputOriginalFile)
+			changed.Chunk = EmbeddingChunkConfig{}
+			value.EmbeddingProfiles["semantic"] = changed
+		},
+		"voyage missing capability manifest": func(value *Config) {
+			changed := value.EmbeddingProfiles["semantic"]
+			changed.Runtime.AdapterContract = "docbank-voyage-embeddings/v1"
+			changed.Runtime.Endpoint = "https://api.voyageai.com/v1"
+			changed.Runtime.DeploymentEpoch = ""
+			changed.InputKind = string(document.EmbeddingInputOriginalFile)
+			changed.Chunk = EmbeddingChunkConfig{}
+			value.EmbeddingProfiles["semantic"] = changed
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := cfg
+			changed.CredentialBindings = maps.Clone(cfg.CredentialBindings)
+			changed.EmbeddingProfiles = maps.Clone(cfg.EmbeddingProfiles)
+			mutate(&changed)
+			require.Error(t, changed.Validate())
 		})
 	}
 }
