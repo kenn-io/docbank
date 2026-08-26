@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"slices"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/blob"
@@ -221,7 +222,7 @@ func validateStagedRendition(staged StagedRendition) error {
 	}
 	if !reflect.DeepEqual(units, staged.Build.Units) ||
 		!reflect.DeepEqual(segments, staged.Build.LexicalSegments) ||
-		!reflect.DeepEqual(warnings, staged.Build.Warnings) {
+		!slices.Equal(warnings, staged.Build.Warnings) {
 		return errors.New("staged rendition units, lexical segments, or warnings disagree with its build")
 	}
 

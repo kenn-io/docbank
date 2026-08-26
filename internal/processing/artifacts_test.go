@@ -59,6 +59,22 @@ func TestPublishRenditionPublishesVerifiedArtifactsAndHeads(t *testing.T) {
 	assert.Equal(t, store.SearchMatchContent, hits[0].Match)
 }
 
+func TestPublishRenditionAcceptsNilBuildWarnings(t *testing.T) {
+	// Mutation caught: exact slice comparison rejects a warning-free build
+	// when one representation uses nil and the other uses an empty slice.
+	fixture := newPublicationFixture(t)
+	publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
+	require.NoError(t, err)
+	staged := fixture.stage(t,
+		publicationIDs{"b1", "51", "91"}, "searchable mercury evidence", "first markdown",
+	)
+	require.Empty(t, staged.Rendition.Warnings)
+	staged.Build.Warnings = nil
+
+	_, err = publisher.PublishRendition(t.Context(), staged)
+	require.NoError(t, err)
+}
+
 func TestPublishRenditionRejectsArtifactReceiptMismatchBeforeCatalogAuthority(t *testing.T) {
 	// Mutation caught: trusting declared size instead of the verified CAS
 	// receipt would grant catalog authority to bytes from a rejected candidate.
