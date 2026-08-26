@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -228,11 +229,236 @@ func SearchNeedsQuery(query string, opts SearchOptions) bool {
 		opts.ModifiedSince == "" && opts.ModifiedBefore == ""
 }
 
+// SearchCandidateIdentity identifies one current scoped head for a final
+// retrieval fence without retaining any query or document text.
+type SearchCandidateIdentity struct {
+	NodeID           int64
+	NodeRevision     int64
+	ContentVersionID string
+	Evidence         []SearchEvidenceIdentity
+}
+
+// SearchCoverageSnapshot is the current semantic coverage captured with the
+// final candidate/evidence fence.
+type SearchCoverageSnapshot struct {
+	ScopedDocuments   int
+	CompleteDocuments int
+}
+
+// SearchCandidateRevalidation returns allowed candidates and, when semantic
+// authority was supplied, coverage from the same storage snapshot.
+type SearchCandidateRevalidation struct {
+	Candidates []SearchCandidateIdentity
+	Coverage   *SearchCoverageSnapshot
+}
+
+// SearchEvidenceIdentity is the text-free stable authority needed to prove
+// that one result still cites current serving evidence.
+type SearchEvidenceIdentity struct {
+	Kind                   string                      `json:"kind"`
+	VectorSpaceID          string                      `json:"vector_space_id,omitempty"`
+	EmbeddingSetID         string                      `json:"embedding_set_id,omitempty"`
+	InputGenerationID      string                      `json:"input_generation_id,omitempty"`
+	InputID                string                      `json:"input_id,omitempty"`
+	InputKind              document.EmbeddingInputKind `json:"input_kind,omitempty"`
+	BuildID                string                      `json:"build_id,omitempty"`
+	SegmentID              string                      `json:"segment_id,omitempty"`
+	BlobHash               string                      `json:"blob_hash,omitempty"`
+	SourceManifestChecksum string                      `json:"source_manifest_checksum,omitempty"`
+}
+
+type searchCandidateRevalidationJSON struct {
+	NodeID           int64                    `json:"node_id"`
+	NodeRevision     int64                    `json:"node_revision"`
+	ContentVersionID string                   `json:"version_id"`
+	Evidence         []SearchEvidenceIdentity `json:"evidence"`
+}
+
+// RevalidateSearchCandidates retains only supplied identities that remain live,
+// current, and inside the operator scope at this final check.
+func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []SearchCandidateIdentity,
+	opts SearchOptions, semanticProfileFingerprint, semanticBindingID string,
+) (SearchCandidateRevalidation, error) {
+	if len(candidates) > document.MaxRetrievalCandidateLimit {
+		return SearchCandidateRevalidation{}, errors.New("search candidate revalidation exceeds the retrieval limit")
+	}
+	normalized, err := s.normalizeSearchOptions(ctx, opts)
+	if err != nil {
+		return SearchCandidateRevalidation{}, err
+	}
+	if len(candidates) == 0 && semanticProfileFingerprint == "" && semanticBindingID == "" {
+		return SearchCandidateRevalidation{}, nil
+	}
+	payload := make([]searchCandidateRevalidationJSON, len(candidates))
+	semanticSpace, semanticSource := "", ""
+	hasRenditionEvidence := false
+	for i, candidate := range candidates {
+		if len(candidate.Evidence) == 0 || len(candidate.Evidence) > 32 {
+			return SearchCandidateRevalidation{}, errors.New("search candidate evidence is invalid")
+		}
+		payload[i] = searchCandidateRevalidationJSON(candidate)
+		for _, evidence := range candidate.Evidence {
+			if evidence.Kind == "rendition_segment" {
+				hasRenditionEvidence = true
+			}
+			if evidence.Kind != "embedding" {
+				continue
+			}
+			if evidence.VectorSpaceID == "" || evidence.SourceManifestChecksum == "" {
+				return SearchCandidateRevalidation{}, errors.New("semantic search evidence authority is incomplete")
+			}
+			if semanticSpace == "" {
+				semanticSpace, semanticSource = evidence.VectorSpaceID, evidence.SourceManifestChecksum
+			}
+			if semanticSpace != evidence.VectorSpaceID || semanticSource != evidence.SourceManifestChecksum {
+				return SearchCandidateRevalidation{}, errors.New("semantic search evidence authority is incompatible")
+			}
+		}
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return SearchCandidateRevalidation{}, err
+	}
+	filterSQL, filterArgs := searchFilterSQL(normalized)
+	var result SearchCandidateRevalidation
+	var allowedPositions []int
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		if semanticProfileFingerprint != "" || semanticBindingID != "" {
+			if semanticProfileFingerprint == "" || semanticBindingID == "" {
+				return errors.New("semantic search coverage authority is incomplete")
+			}
+			binding, fingerprints, authorityErr := embeddingProfileBindingAuthority(ctx, tx,
+				semanticProfileFingerprint, semanticBindingID)
+			if authorityErr != nil {
+				return authorityErr
+			}
+			expectedSpace := fingerprints.VectorSpace[semanticBindingID]
+			if semanticSpace != "" && semanticSpace != expectedSpace {
+				return errors.New("semantic search evidence does not match coverage authority")
+			}
+			semanticSpace = expectedSpace
+			scoped, complete, coverageErr := semanticSearchCoverageTx(ctx, tx,
+				semanticProfileFingerprint, semanticBindingID, binding.InputKind, semanticSpace, normalized)
+			if coverageErr != nil {
+				return coverageErr
+			}
+			result.Coverage = &SearchCoverageSnapshot{ScopedDocuments: scoped, CompleteDocuments: complete}
+		} else if semanticSpace != "" {
+			return errors.New("semantic search evidence lacks coverage authority")
+		}
+		renditionEvidenceSQL := `WHEN 'rendition_segment' THEN 1`
+		if hasRenditionEvidence {
+			var lexicalProjection bool
+			if schemaErr := tx.QueryRowContext(ctx, `SELECT EXISTS(
+				SELECT 1 FROM sqlite_schema WHERE type='table' AND name='rendition_lexical_heads'
+			)`).Scan(&lexicalProjection); schemaErr != nil {
+				return schemaErr
+			}
+			if lexicalProjection {
+				renditionEvidenceSQL = `WHEN 'rendition_segment' THEN NOT EXISTS (
+					SELECT 1 FROM rendition_lexical_heads lh
+					JOIN rendition_lexical_generation_builds gb ON gb.generation_id=lh.generation_id
+					JOIN rendition_lexical_segments ls ON ls.build_id=gb.build_id
+					JOIN rendition_attachments ra ON ra.build_id=ls.build_id
+					JOIN rendition_heads rh ON rh.content_version_id=ra.content_version_id
+					 AND rh.profile_fingerprint=ra.profile_fingerprint AND rh.attachment_id=ra.attachment_id
+					WHERE lh.singleton=1 AND ra.content_version_id=scoped.version_id
+					 AND ls.build_id=json_extract(evidence.value,'$.build_id')
+					 AND ls.segment_id=json_extract(evidence.value,'$.segment_id'))`
+			}
+		}
+		if semanticSource != "" {
+			current, captureErr := captureVectorIndexSourceTx(ctx, tx, semanticSpace)
+			if captureErr != nil {
+				if errors.Is(captureErr, ErrNotFound) {
+					return ErrVectorIndexSourceStale
+				}
+				return captureErr
+			}
+			if current.ManifestChecksum != semanticSource {
+				return ErrVectorIndexSourceStale
+			}
+		}
+		args := append([]any{string(encoded)}, filterArgs...)
+		args = append(args, semanticProfileFingerprint, semanticBindingID)
+		rows, queryErr := tx.QueryContext(ctx, `WITH requested AS (
+			SELECT CAST(key AS INTEGER) AS position,
+			       CAST(json_extract(value,'$.node_id') AS INTEGER) AS node_id,
+			       CAST(json_extract(value,'$.node_revision') AS INTEGER) AS node_revision,
+			       json_extract(value,'$.version_id') AS version_id,
+			       json_extract(value,'$.evidence') AS evidence
+			FROM json_each(?)
+		), scoped AS (
+			SELECT requested.position,requested.node_id,requested.version_id,requested.evidence,cv.blob_hash
+			FROM requested JOIN nodes n ON n.id=requested.node_id
+			JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=n.current_version_id
+			 AND cv.version_id=requested.version_id
+			WHERE n.kind='file' AND n.revision=requested.node_revision AND n.trashed_at IS NULL `+filterSQL+`
+		)
+		SELECT scoped.position FROM scoped
+		WHERE NOT EXISTS (
+			SELECT 1 FROM json_each(scoped.evidence) evidence
+			WHERE CASE json_extract(evidence.value,'$.kind')
+			WHEN 'node_name' THEN 0
+			WHEN 'content_blob' THEN NOT (
+				json_extract(evidence.value,'$.blob_hash')<>'' AND
+				json_extract(evidence.value,'$.blob_hash')=scoped.blob_hash)
+			`+renditionEvidenceSQL+`
+			WHEN 'embedding' THEN NOT EXISTS (
+				SELECT 1 FROM embedding_heads eh
+				JOIN embedding_sets es ON es.embedding_set_id=eh.embedding_set_id
+				 AND es.content_version_id=eh.content_version_id AND es.binding_id=eh.binding_id
+				 AND es.input_kind=eh.input_kind AND es.vector_space_id=eh.vector_space_id
+				 AND es.profile_fingerprint=eh.profile_fingerprint
+				JOIN embedding_vector_rows evr ON evr.vector_set_id=es.vector_set_id
+				JOIN embedding_generation_inputs egi ON egi.generation_id=es.input_generation_id
+				 AND egi.input_id=evr.input_id AND egi.rendered_checksum=evr.checksum
+				JOIN embedding_input_generations eig ON eig.generation_id=es.input_generation_id
+				WHERE eh.content_version_id=scoped.version_id
+				 AND eh.vector_space_id=json_extract(evidence.value,'$.vector_space_id')
+				 AND eh.embedding_set_id=json_extract(evidence.value,'$.embedding_set_id')
+				 AND eh.input_kind=json_extract(evidence.value,'$.input_kind')
+				 AND es.profile_fingerprint=? AND es.binding_id=?
+				 AND es.input_generation_id=json_extract(evidence.value,'$.input_generation_id')
+				 AND evr.input_id=json_extract(evidence.value,'$.input_id')
+				 AND (es.input_kind='original_file' OR EXISTS (
+					SELECT 1 FROM rendition_heads current_rh
+					WHERE current_rh.content_version_id=es.content_version_id
+					 AND current_rh.profile_fingerprint=es.profile_fingerprint
+					 AND current_rh.attachment_id=eig.attachment_id)))
+			ELSE 1 END
+		) ORDER BY scoped.position`, args...)
+		if queryErr != nil {
+			return queryErr
+		}
+		return func() (retErr error) {
+			defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+			for rows.Next() {
+				var position int
+				if scanErr := rows.Scan(&position); scanErr != nil {
+					return scanErr
+				}
+				allowedPositions = append(allowedPositions, position)
+			}
+			return rows.Err()
+		}()
+	})
+	if err != nil {
+		return SearchCandidateRevalidation{}, err
+	}
+	result.Candidates = make([]SearchCandidateIdentity, 0, len(allowedPositions))
+	for _, position := range allowedPositions {
+		result.Candidates = append(result.Candidates, candidates[position])
+	}
+	return result, nil
+}
+
 // SemanticSearchCandidate is one vector neighbor reduced to a current,
 // scope-eligible document. Only the lexical lane supplies excerpts.
 type SemanticSearchCandidate struct {
 	VaultID           string
 	NodeID            int64
+	NodeRevision      int64
 	ContentVersionID  string
 	Path              string
 	VectorSpaceID     string
@@ -436,7 +662,7 @@ func loadSemanticEligibility(ctx context.Context, tx metadataQuerier, profileFin
 	inputKind document.EmbeddingInputKind, vectorSpaceID, filterSQL string, filterArgs []any,
 ) (_ map[semanticEligibilityKey]SemanticSearchCandidate, retErr error) {
 	args := append([]any{vectorSpaceID, profileFingerprint, bindingID, inputKind}, filterArgs...)
-	rows, err := tx.QueryContext(ctx, `SELECT n.id,n.current_version_id,
+	rows, err := tx.QueryContext(ctx, `SELECT n.id,n.revision,n.current_version_id,
 			es.embedding_set_id,es.input_generation_id,es.input_kind,
 			evr.vector_set_id,evr.input_id,evr.checksum
 		FROM `+nodeFrom+`
@@ -469,7 +695,7 @@ func loadSemanticEligibility(ctx context.Context, tx metadataQuerier, profileFin
 			entry SemanticSearchCandidate
 			key   semanticEligibilityKey
 		)
-		if err := rows.Scan(&entry.NodeID, &entry.ContentVersionID, &entry.EmbeddingSetID,
+		if err := rows.Scan(&entry.NodeID, &entry.NodeRevision, &entry.ContentVersionID, &entry.EmbeddingSetID,
 			&entry.InputGenerationID, &entry.InputKind, &key.VectorSetID, &key.InputID, &key.InputChecksum); err != nil {
 			return nil, err
 		}

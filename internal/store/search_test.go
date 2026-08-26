@@ -126,6 +126,130 @@ func TestResolveSemanticCandidatesRejectsStaleSourceManifest(t *testing.T) {
 	require.ErrorIs(t, err, ErrVectorIndexSourceStale)
 }
 
+func TestRevalidateSearchCandidatesPreservesOrderAtTheCandidateLimit(t *testing.T) {
+	s := newTestStore(t)
+	first, err := s.CreateFile(t.Context(), s.RootID(), "first.txt", fakeHash("first"), 5, "text/plain")
+	require.NoError(t, err)
+	second, err := s.CreateFile(t.Context(), s.RootID(), "second.txt", fakeHash("second"), 6, "text/plain")
+	require.NoError(t, err)
+	requested := make([]SearchCandidateIdentity, document.MaxRetrievalCandidateLimit)
+	for i := range requested {
+		node := first
+		if i%2 == 0 {
+			node = second
+		}
+		requested[i] = SearchCandidateIdentity{NodeID: node.ID, NodeRevision: node.Revision,
+			ContentVersionID: node.CurrentVersionID,
+			Evidence:         []SearchEvidenceIdentity{{Kind: "node_name"}}}
+	}
+
+	revalidation, err := s.RevalidateSearchCandidates(t.Context(), requested, SearchOptions{}, "", "")
+
+	require.NoError(t, err)
+	require.Len(t, revalidation.Candidates, len(requested))
+	for i := range requested {
+		assert.Equal(t, requested[i].NodeID, revalidation.Candidates[i].NodeID)
+		assert.Equal(t, requested[i].ContentVersionID, revalidation.Candidates[i].ContentVersionID)
+	}
+}
+
+func TestRevalidateSearchCandidatesAppliesCurrentScopeAndBlobEvidence(t *testing.T) {
+	s := newTestStore(t)
+	text, err := s.CreateFile(t.Context(), s.RootID(), "text.txt", fakeHash("text"), 4, "text/plain")
+	require.NoError(t, err)
+	pdf, err := s.CreateFile(t.Context(), s.RootID(), "paper.pdf", fakeHash("pdf"), 3, "application/pdf")
+	require.NoError(t, err)
+	requested := []SearchCandidateIdentity{
+		{NodeID: text.ID, NodeRevision: text.Revision, ContentVersionID: text.CurrentVersionID,
+			Evidence: []SearchEvidenceIdentity{{Kind: "content_blob", BlobHash: text.BlobHash}}},
+		{NodeID: pdf.ID, NodeRevision: pdf.Revision, ContentVersionID: pdf.CurrentVersionID,
+			Evidence: []SearchEvidenceIdentity{{Kind: "content_blob", BlobHash: pdf.BlobHash}}},
+	}
+
+	revalidation, err := s.RevalidateSearchCandidates(t.Context(), requested,
+		SearchOptions{MIMEType: "application/pdf"}, "", "")
+
+	require.NoError(t, err)
+	require.Len(t, revalidation.Candidates, 1)
+	assert.Equal(t, pdf.ID, revalidation.Candidates[0].NodeID)
+	requested[1].Evidence[0].BlobHash = fakeHash("stale-pdf")
+	revalidation, err = s.RevalidateSearchCandidates(t.Context(), requested, SearchOptions{}, "", "")
+	require.NoError(t, err)
+	require.Len(t, revalidation.Candidates, 1)
+	assert.Equal(t, text.ID, revalidation.Candidates[0].NodeID)
+	_, _, err = s.Move(t.Context(), text.ID, s.RootID(), "renamed.txt", text.Revision)
+	require.NoError(t, err)
+	revalidation, err = s.RevalidateSearchCandidates(t.Context(), requested[:1], SearchOptions{}, "", "")
+	require.NoError(t, err)
+	assert.Empty(t, revalidation.Candidates, "a rename must fence the stale name/path snapshot")
+}
+
+func TestRevalidateSearchCandidatesRequiresCurrentActiveRenditionEvidence(t *testing.T) {
+	s, versions := newRenditionCatalogFixture(t)
+	profile := catalogProcessingProfile(t, false)
+	build := lexicalSearchBuild(s, profile, catalogBuildID, "current evidence")
+	require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+	generation, err := s.StageLexicalGeneration(t.Context(), hashVectorIndexTest("revalidation-lexical"))
+	require.NoError(t, err)
+	attachment := RenditionAttachmentRecord{ID: catalogAttachmentFirst, VaultID: s.VaultID(),
+		ContentVersionID: versions[0], BuildID: build.ID, Profile: profile, AttachedAt: embeddingCatalogTime}
+	require.NoError(t, s.PublishRenditionAndLexicalHeads(t.Context(), attachment, RenditionHeadRecord{
+		ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
+		AttachmentID: attachment.ID, PublishedAt: embeddingCatalogTime}, generation.ID))
+	var nodeID, nodeRevision int64
+	require.NoError(t, s.db.QueryRow(`SELECT n.id,n.revision FROM nodes n JOIN content_versions cv
+		ON cv.node_id=n.id WHERE cv.version_id=?`, versions[0]).Scan(&nodeID, &nodeRevision))
+	requested := []SearchCandidateIdentity{{NodeID: nodeID, NodeRevision: nodeRevision, ContentVersionID: versions[0],
+		Evidence: []SearchEvidenceIdentity{{Kind: "rendition_segment", BuildID: build.ID,
+			SegmentID: build.LexicalSegments[0].ID}}}}
+
+	revalidation, err := s.RevalidateSearchCandidates(t.Context(), requested, SearchOptions{}, "", "")
+	require.NoError(t, err)
+	require.Len(t, revalidation.Candidates, 1)
+
+	_, err = s.db.Exec(`DELETE FROM rendition_lexical_heads`)
+	require.NoError(t, err)
+	revalidation, err = s.RevalidateSearchCandidates(t.Context(), requested, SearchOptions{}, "", "")
+	require.NoError(t, err)
+	assert.Empty(t, revalidation.Candidates)
+}
+
+func TestRevalidateSearchCandidatesRejectsStaleSemanticSourceAndHead(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+		document.EmbeddingInputOriginalFile, "optional", "")
+	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+		Key: EmbeddingHeadKey{ContentVersionID: versionID, BindingID: record.BindingID,
+			InputKind: record.InputKind}, SetID: record.ID, VectorSpaceID: record.VectorSpace.ID,
+		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime, FencingToken: 1,
+	}))
+	source, err := s.CaptureVectorIndexSource(t.Context(), record.VectorSpace.ID)
+	require.NoError(t, err)
+	var nodeID, nodeRevision int64
+	require.NoError(t, s.db.QueryRow(`SELECT n.id,n.revision FROM nodes n JOIN content_versions cv
+		ON cv.node_id=n.id WHERE cv.version_id=?`, versionID).Scan(&nodeID, &nodeRevision))
+	requested := []SearchCandidateIdentity{{NodeID: nodeID, NodeRevision: nodeRevision, ContentVersionID: versionID,
+		Evidence: []SearchEvidenceIdentity{{Kind: "embedding", VectorSpaceID: record.VectorSpace.ID,
+			EmbeddingSetID: record.ID, InputGenerationID: record.InputGeneration.ID,
+			InputID: record.InputGeneration.Inputs[0].ID, InputKind: record.InputKind,
+			SourceManifestChecksum: source.ManifestChecksum}}}}
+
+	revalidation, err := s.RevalidateSearchCandidates(t.Context(), requested, SearchOptions{},
+		profile.Fingerprint, record.BindingID)
+	require.NoError(t, err)
+	require.Len(t, revalidation.Candidates, 1)
+	require.NotNil(t, revalidation.Coverage)
+	assert.Equal(t, 2, revalidation.Coverage.ScopedDocuments)
+	assert.Equal(t, 1, revalidation.Coverage.CompleteDocuments)
+
+	_, err = s.db.Exec(`DELETE FROM embedding_heads WHERE embedding_set_id=?`, record.ID)
+	require.NoError(t, err)
+	_, err = s.RevalidateSearchCandidates(t.Context(), requested, SearchOptions{},
+		profile.Fingerprint, record.BindingID)
+	require.ErrorIs(t, err, ErrVectorIndexSourceStale)
+}
+
 func TestReduceSemanticCandidatesExhaustsNeighborsWithoutDatabaseWork(t *testing.T) {
 	const missed = 10_000
 	neighbors := make([]vectorindex.Neighbor, missed+1)

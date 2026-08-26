@@ -2,10 +2,12 @@ package retrieval
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -20,6 +22,14 @@ type Backend interface {
 	SearchExplainedLexicalCandidates(ctx context.Context, query string, limit int,
 		options store.SearchOptions) ([]store.ExplainedLexicalCandidate, bool, error)
 }
+
+type CandidateRevalidationBackend interface {
+	RevalidateSearchCandidates(ctx context.Context, candidates []store.SearchCandidateIdentity,
+		options store.SearchOptions, semanticProfileFingerprint,
+		semanticBindingID string) (store.SearchCandidateRevalidation, error)
+}
+
+var ErrExpandedSearchFailed = errors.New("expanded retrieval stage failed")
 
 type SemanticBackend interface {
 	AcquireSemanticSearchAuthority(ctx context.Context, profile, binding, owner string, at time.Time,
@@ -40,6 +50,8 @@ type SearcherConfig struct {
 	Owner         string
 	LeaseDuration time.Duration
 	Clock         func() time.Time
+	Expansion     ExpansionConfig
+	Reranking     RerankingConfig
 }
 
 type Searcher struct {
@@ -48,6 +60,8 @@ type Searcher struct {
 	owner         string
 	leaseDuration time.Duration
 	clock         func() time.Time
+	expansion     ExpansionConfig
+	reranking     RerankingConfig
 }
 
 func NewSearcher(config SearcherConfig) (*Searcher, error) {
@@ -60,11 +74,18 @@ func NewSearcher(config SearcherConfig) (*Searcher, error) {
 	if config.LeaseDuration <= 0 {
 		return nil, errors.New("retrieval vector lease duration must be positive")
 	}
+	if err := validateExpansionConfig(config.Expansion); err != nil {
+		return nil, err
+	}
+	if err := validateRerankingConfig(config.Reranking); err != nil {
+		return nil, err
+	}
 	if config.Clock == nil {
 		config.Clock = time.Now
 	}
 	return &Searcher{backend: config.Backend, encoders: config.Encoders, owner: config.Owner,
-		leaseDuration: config.LeaseDuration, clock: config.Clock}, nil
+		leaseDuration: config.LeaseDuration, clock: config.Clock, expansion: config.Expansion,
+		reranking: config.Reranking}, nil
 }
 
 func (searcher *Searcher) Search(ctx context.Context, query Query) (Report, error) {
@@ -72,6 +93,127 @@ func (searcher *Searcher) Search(ctx context.Context, query Query) (Report, erro
 	if err != nil {
 		return Report{}, err
 	}
+	variants, expansionReceipt, expansionDegradation, err := searcher.expand(ctx, query)
+	if err != nil {
+		return Report{}, err
+	}
+	reports := make([]Report, 0, len(variants)+1)
+	for _, text := range append([]string{query.Text}, variants...) {
+		variant := query
+		variant.Text = text
+		report, err := searcher.searchBase(ctx, variant)
+		if err != nil {
+			if searcher.expansion.Enabled {
+				if ctx.Err() != nil {
+					return Report{}, ctx.Err()
+				}
+				return Report{}, ErrExpandedSearchFailed
+			}
+			return Report{}, err
+		}
+		reports = append(reports, report)
+	}
+	report, err := mergeVariantReports(reports, query.Limit)
+	if err != nil {
+		return Report{}, err
+	}
+	if expansionReceipt != nil {
+		report.Receipts = append(report.Receipts, *expansionReceipt)
+	}
+	if expansionDegradation != DegradationNone {
+		report.Degradations = append(report.Degradations, expansionDegradation)
+	}
+	if searcher.expansion.Enabled {
+		revalidated, err := searcher.revalidateExpandedReport(ctx, query, report)
+		if err != nil {
+			if ctx.Err() != nil {
+				return Report{}, ctx.Err()
+			}
+			return Report{}, ErrExpandedSearchFailed
+		}
+		report = revalidated
+	}
+	report, rerankingReceipt, rerankingDegradation, err := searcher.rerank(ctx, query, report)
+	if err != nil {
+		return Report{}, err
+	}
+	if rerankingReceipt != nil {
+		report.Receipts = append(report.Receipts, *rerankingReceipt)
+	}
+	if rerankingDegradation != DegradationNone {
+		report.Degradations = append(report.Degradations, rerankingDegradation)
+	}
+	return report, nil
+}
+
+func (searcher *Searcher) revalidateExpandedReport(ctx context.Context, query Query, report Report) (Report, error) {
+	backend, ok := searcher.backend.(CandidateRevalidationBackend)
+	if !ok {
+		return Report{}, errors.New("expanded retrieval revalidation is unavailable")
+	}
+	requested := make([]store.SearchCandidateIdentity, len(report.Results))
+	for i, result := range report.Results {
+		evidence := make([]store.SearchEvidenceIdentity, len(result.Evidence))
+		var nodeRevision int64
+		for j, reference := range result.Evidence {
+			if nodeRevision == 0 {
+				nodeRevision = reference.NodeRevision
+			}
+			if reference.NodeRevision != nodeRevision {
+				return Report{}, errors.New("search result evidence spans node revisions")
+			}
+			evidence[j] = store.SearchEvidenceIdentity{Kind: reference.Kind,
+				VectorSpaceID: reference.VectorSpaceID, EmbeddingSetID: reference.EmbeddingSetID,
+				InputGenerationID: reference.InputGenerationID, InputID: reference.InputID,
+				InputKind: reference.InputKind, BuildID: reference.BuildID, SegmentID: reference.SegmentID,
+				BlobHash: reference.BlobHash, SourceManifestChecksum: reference.SourceManifestChecksum}
+		}
+		requested[i] = store.SearchCandidateIdentity{NodeID: result.Document.NodeID, NodeRevision: nodeRevision,
+			ContentVersionID: result.Document.ContentVersionID, Evidence: evidence}
+	}
+	semanticProfile, semanticBinding := "", ""
+	if report.ActualMode == ModeSemantic || report.ActualMode == ModeHybrid {
+		semanticProfile, semanticBinding = query.ProcessingProfileFingerprint, query.BindingID
+	}
+	revalidation, err := backend.RevalidateSearchCandidates(ctx, requested, query.Scope,
+		semanticProfile, semanticBinding)
+	if err != nil {
+		return Report{}, err
+	}
+	if revalidation.Coverage != nil {
+		report.Coverage.ScopedDocuments = revalidation.Coverage.ScopedDocuments
+		report.Coverage.CompleteDocuments = revalidation.Coverage.CompleteDocuments
+		report.Coverage.State = CoverageComplete
+		if report.Coverage.ScopedDocuments != report.Coverage.CompleteDocuments {
+			report.Coverage.State = CoverageIncomplete
+		}
+	}
+	type documentKey struct {
+		nodeID  int64
+		version string
+	}
+	set := make(map[documentKey]struct{}, len(revalidation.Candidates))
+	for _, candidate := range revalidation.Candidates {
+		set[documentKey{nodeID: candidate.NodeID, version: candidate.ContentVersionID}] = struct{}{}
+	}
+	results := report.Results[:0]
+	for _, result := range report.Results {
+		if _, ok := set[documentKey{nodeID: result.Document.NodeID,
+			version: result.Document.ContentVersionID}]; ok {
+			results = append(results, result)
+		}
+	}
+	if len(results) != len(report.Results) {
+		report.Truncated = true
+	}
+	for i := range results {
+		results[i].Rank = i + 1
+	}
+	report.Results = results
+	return report, nil
+}
+
+func (searcher *Searcher) searchBase(ctx context.Context, query Query) (Report, error) {
 	requested := query.Mode
 	switch requested {
 	case ModeLexical, ModeAuto:
@@ -86,6 +228,86 @@ func (searcher *Searcher) Search(ctx context.Context, query Query) (Report, erro
 		return searcher.hybrid(ctx, query, requested)
 	}
 	return Report{}, errors.New("unreachable retrieval mode")
+}
+
+func mergeVariantReports(reports []Report, limit int) (Report, error) {
+	if len(reports) == 0 {
+		return Report{}, errors.New("retrieval requires one query report")
+	}
+	if len(reports) == 1 {
+		return reports[0], nil
+	}
+	merged := reports[0]
+	merged.Coverage = conservativeCoverage(reports)
+	byDocument := make(map[DocumentIdentity]*Result)
+	for _, report := range reports {
+		if report.RequestedMode != merged.RequestedMode || report.ActualMode != merged.ActualMode {
+			return Report{}, errors.New("query variants returned inconsistent retrieval modes")
+		}
+		if !slices.Equal(report.Degradations, merged.Degradations) {
+			return Report{}, errors.New("query variants returned incompatible degradations")
+		}
+		merged.Truncated = merged.Truncated || report.Truncated
+		for _, result := range report.Results {
+			current := byDocument[result.Document]
+			if current == nil {
+				mergedResult := result
+				mergedResult.Explanation = slices.Clone(result.Explanation)
+				mergedResult.Evidence = slices.Clone(result.Evidence)
+				byDocument[result.Document] = &mergedResult
+				continue
+			}
+			current.Score += result.Score
+			current.Explanation = append(current.Explanation, result.Explanation...)
+			current.Evidence = append(current.Evidence, result.Evidence...)
+		}
+	}
+	merged.Results = make([]Result, 0, len(byDocument))
+	for _, result := range byDocument {
+		merged.Results = append(merged.Results, *result)
+	}
+	slices.SortFunc(merged.Results, compareResults)
+	if len(merged.Results) > limit {
+		merged.Results = merged.Results[:limit]
+		merged.Truncated = true
+	}
+	for index := range merged.Results {
+		merged.Results[index].Rank = index + 1
+	}
+	return merged, nil
+}
+
+func compareResults(left, right Result) int {
+	return cmp.Or(cmp.Compare(right.Score, left.Score),
+		cmp.Compare(left.Document.VaultID, right.Document.VaultID),
+		cmp.Compare(left.Document.NodeID, right.Document.NodeID),
+		cmp.Compare(left.Document.ContentVersionID, right.Document.ContentVersionID))
+}
+
+func conservativeCoverage(reports []Report) Coverage {
+	coverage := reports[0].Coverage
+	complete := coverage.CompleteDocuments
+	unknown, incomplete := coverage.State == CoverageUnknown, coverage.State == CoverageIncomplete
+	for _, report := range reports[1:] {
+		coverage.BindingRequired = coverage.BindingRequired || report.Coverage.BindingRequired
+		coverage.ScopedDocuments = max(coverage.ScopedDocuments, report.Coverage.ScopedDocuments)
+		complete = min(complete, report.Coverage.CompleteDocuments)
+		unknown = unknown || report.Coverage.State == CoverageUnknown
+		incomplete = incomplete || report.Coverage.State == CoverageIncomplete
+	}
+	if unknown {
+		coverage.ScopedDocuments = 0
+		coverage.CompleteDocuments = 0
+		coverage.State = CoverageUnknown
+		return coverage
+	}
+	coverage.CompleteDocuments = complete
+	if incomplete || coverage.CompleteDocuments != coverage.ScopedDocuments {
+		coverage.State = CoverageIncomplete
+		return coverage
+	}
+	coverage.State = CoverageComplete
+	return coverage
 }
 
 type semanticReleaseError struct {
@@ -194,6 +416,10 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 		coverage.State = CoverageIncomplete
 	}
 	resolved := resolution.Candidates
+	if len(resolved) > query.Limit {
+		resolved = resolved[:query.Limit]
+		truncated = true
+	}
 	candidates := make([]Candidate, len(resolved))
 	for index, item := range resolved {
 		if item.VectorSpaceID != authority.VectorSpace.ID {
@@ -203,12 +429,12 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 			NodeID: item.NodeID, ContentVersionID: item.ContentVersionID}, Lane: LaneSemantic,
 			Rank: index + 1, Score: item.Score, Path: item.Path, VectorSpaceID: item.VectorSpaceID,
 			Evidence: []EvidenceReference{{Kind: "embedding", VaultID: item.VaultID,
-				NodeID: item.NodeID, ContentVersionID: item.ContentVersionID,
+				NodeID: item.NodeID, NodeRevision: item.NodeRevision, ContentVersionID: item.ContentVersionID,
 				VectorSpaceID: item.VectorSpaceID, EmbeddingSetID: item.EmbeddingSetID,
 				InputGenerationID: item.InputGenerationID, InputID: item.InputID,
-				InputKind: item.InputKind}}}
+				InputKind: item.InputKind, SourceManifestChecksum: resolution.SourceManifestChecksum}}}
 	}
-	return candidates, coverage, resolution.Truncated, nil
+	return candidates, coverage, truncated || resolution.Truncated, nil
 }
 
 func normalizeQuery(query Query) (Query, error) {
@@ -232,13 +458,17 @@ func (searcher *Searcher) collectLexical(ctx context.Context, query Query) ([]Ca
 	if err != nil {
 		return nil, false, err
 	}
+	if len(hits) > query.Limit {
+		hits = hits[:query.Limit]
+		truncated = true
+	}
 	candidates := make([]Candidate, len(hits))
 	for index, hit := range hits {
 		candidates[index] = Candidate{Document: DocumentIdentity{VaultID: searcher.backend.VaultID(),
 			NodeID: hit.Node.ID, ContentVersionID: hit.Node.CurrentVersionID}, Lane: LaneLexical,
 			Rank: index + 1, Path: hit.Path, Excerpt: hit.Excerpt,
 			Evidence: []EvidenceReference{{Kind: hit.EvidenceKind, VaultID: searcher.backend.VaultID(),
-				NodeID: hit.Node.ID, ContentVersionID: hit.Node.CurrentVersionID,
+				NodeID: hit.Node.ID, NodeRevision: hit.Node.Revision, ContentVersionID: hit.Node.CurrentVersionID,
 				BuildID: hit.BuildID, SegmentID: hit.SegmentID, BlobHash: hit.BlobHash}}}
 	}
 	return candidates, truncated, nil
