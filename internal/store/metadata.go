@@ -622,7 +622,7 @@ func (s *Store) ImportMetadata(ctx context.Context, r io.Reader) error {
 }
 
 // ImportMetadataForBackupRestore imports logical metadata before Kit restores
-// physical content. The backup restore must call VerifyRenditionHeadBytes after
+// physical content. The backup restore must call VerifyRenditionBlobBytes after
 // every loose or packed blob is available and before publishing the target.
 func (s *Store) ImportMetadataForBackupRestore(ctx context.Context, r io.Reader) error {
 	return s.importMetadata(ctx, r, false)

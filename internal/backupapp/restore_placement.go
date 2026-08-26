@@ -324,7 +324,7 @@ func applyRestorePlacement(
 	if err := config.EnsureStoreBindings(target, restoreBindings); err != nil {
 		return fmt.Errorf("backupapp: provisioning restored store bindings: %w", err)
 	}
-	metadata, err := store.Open(databasePath, driver)
+	metadata, err := store.OpenForRestore(databasePath, driver)
 	if err != nil {
 		return fmt.Errorf("backupapp: opening restored placement catalog: %w", err)
 	}

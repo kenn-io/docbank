@@ -973,6 +973,78 @@ func TestCompressedLooseSnapshotRestoresIndexedAuthority(t *testing.T) {
 	require.NoError(t, reader.Close())
 }
 
+func TestStagedRenditionVerificationReadsLooseZstdAuthority(t *testing.T) {
+	root := t.TempDir()
+	databasePath := filepath.Join(root, "docbank.db")
+	metadata, err := store.Open(databasePath)
+	require.NoError(t, err)
+	blobsDir := filepath.Join(root, "blobs")
+	require.NoError(t, os.MkdirAll(filepath.Join(blobsDir, "tmp"), 0o700))
+	blobs, err := blob.NewWithOptions(store.NewPackCatalog(metadata), blobsDir, blob.Options{
+		LooseCompression: blob.LooseCompressionOptions{
+			Enabled: true, MinBytes: 1, MinSavingsPercent: 0,
+		},
+	})
+	require.NoError(t, err)
+
+	content := strings.Repeat("synthetic staged rendition source\n", 64)
+	var sourceHash string
+	require.NoError(t, blobs.WithMutation(t.Context(), func() error {
+		receipt, writeErr := blobs.WriteDetailedContext(t.Context(), strings.NewReader(content))
+		if writeErr != nil {
+			return writeErr
+		}
+		if receipt.Encoding != packstore.LooseEncodingZstd {
+			return fmt.Errorf("staged rendition encoding = %v, want zstd", receipt.Encoding)
+		}
+		sourceHash = receipt.Hash
+		node, createErr := metadata.CreateFile(
+			t.Context(), metadata.RootID(), "staged.txt",
+			receipt.Hash, receipt.Size, "text/plain",
+			store.BlobPhysical{
+				Encoding: "zstd", StoredBytes: receipt.StoredSize,
+				PackEligible: receipt.PackEligible, Created: receipt.Created,
+			},
+		)
+		if createErr != nil {
+			return createErr
+		}
+		return metadata.RecordExtraction(t.Context(), store.ExtractionResult{
+			BlobHash: node.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
+			Status: store.ExtractionOK, Text: "synthetic extracted text",
+		})
+	}))
+	report, err := metadata.MigrateLegacyPlainText(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, 1, report.MigratedBuilds)
+	require.NoError(t, blobs.Close())
+	require.NoError(t, metadata.Close())
+
+	driver := store.DefaultSQLiteDriver()
+	raw, err := driver.Open(databasePath, docsqlite.OpenOptions{
+		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+	})
+	require.NoError(t, err)
+	_, err = raw.ExecContext(t.Context(), `DELETE FROM rendition_heads`)
+	require.NoError(t, err)
+	_, err = raw.ExecContext(t.Context(), `DELETE FROM rendition_attachments`)
+	require.NoError(t, err)
+	_, err = raw.ExecContext(t.Context(), `UPDATE blobs SET size=size-1 WHERE hash=?`, sourceHash)
+	require.NoError(t, err)
+	require.NoError(t, raw.Close())
+
+	restored, err := store.OpenForRestore(databasePath, driver)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, restored.Close()) }()
+	restoredBlobs, err := blob.New(store.NewPackCatalog(restored), blobsDir)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, restoredBlobs.Close()) }()
+	require.NoError(t, restored.VerifyRenditionBlobAuthority(t.Context()),
+		"the catalog-only check cannot derive decoded zstd length")
+	err = restored.VerifyRenditionBlobBytes(t.Context(), restoredBlobs)
+	require.ErrorContains(t, err, "opening restored rendition blob "+sourceHash)
+}
+
 func TestAuditedIncrementalSnapshotRestoresCompleteProtectedHistory(t *testing.T) {
 	fixture := newArchiveFixture(t)
 	writeFile := func(parentID int64, name, content string) store.Node {
@@ -2036,7 +2108,7 @@ func TestDerivativeAuthoritySnapshotRestoresCatalogBlobsAndRebuildsLexicalProjec
 		_, restoreErr := backupapp.Restore(t.Context(), mismatchRepo, "test-version", backup.RestoreOptions{
 			TargetDir: failureTarget, Overwrite: true,
 		})
-		require.ErrorContains(t, restoreErr, "rendition blob catalog size authority")
+		require.ErrorContains(t, restoreErr, "restored rendition blob "+stagedSourceHash+" size")
 		assertRestoreTargetUnchanged(t, failureTarget, beforeDigest)
 		assert.Zero(t, providerCalls.Load(), "authority rejection must not contact a provider")
 	})
@@ -2227,6 +2299,20 @@ type legacyMetadataSnapshot struct {
 	pinned *store.MetadataSnapshot
 }
 
+func (s legacyMetadataSnapshot) AuxiliaryArtifacts(
+	ctx context.Context,
+) ([]backup.AuxiliaryArtifact, error) {
+	source, ok := s.MetadataSnapshot.(backup.AuxiliarySource)
+	if !ok {
+		return nil, nil
+	}
+	artifacts, err := source.AuxiliaryArtifacts(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("opening legacy metadata auxiliary artifacts: %w", err)
+	}
+	return artifacts, nil
+}
+
 func (s legacyMetadataSnapshot) OpenMetadata(
 	ctx context.Context,
 ) (io.ReadCloser, int64, error) {
@@ -2299,6 +2385,43 @@ func (s legacyMetadataSnapshot) Stats(ctx context.Context) (jsontext.Value, erro
 
 func (s legacyMetadataSnapshot) Close() error {
 	return errors.Join(s.pinned.Close(), s.MetadataSnapshot.Close())
+}
+
+func TestPlacementRestoreDoesNotMigrateLegacySnapshotBeforePublication(t *testing.T) {
+	fixture := newArchiveFixture(t)
+	alpha, err := fixture.metadata.NodeByPath(t.Context(), "/alpha.txt")
+	require.NoError(t, err)
+	require.NoError(t, fixture.metadata.RecordExtraction(t.Context(), store.ExtractionResult{
+		BlobHash: alpha.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: store.ExtractionOK, Text: "synthetic legacy searchable text",
+	}))
+	wantMetadata := exportMetadata(t, fixture.metadata)
+
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "legacy-placement-repo"))
+	require.NoError(t, err)
+	_, err = backup.Create(t.Context(), repo, backupapp.New("legacy-version"),
+		backup.CreateOptions{
+			MetadataSource: legacyMetadataSource{metadata: fixture.metadata},
+			ContentSource:  backupapp.NewContentSource(fixture.blobs),
+		})
+	require.NoError(t, err)
+
+	target := filepath.Join(t.TempDir(), "restored")
+	_, err = backupapp.RestoreWithPlacement(
+		t.Context(), repo, "legacy-version", store.DefaultSQLiteDriver(),
+		backup.RestoreOptions{TargetDir: target},
+		backupapp.RestorePlacementOptions{Map: &backupapp.RestoreStoreMap{
+			Version: backupapp.RestoreStoreMapVersion,
+		}},
+	)
+	require.NoError(t, err)
+	restored, err := store.OpenForRestore(
+		filepath.Join(target, "docbank.db"), store.DefaultSQLiteDriver(),
+	)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, restored.Close()) }()
+	assert.Equal(t, string(wantMetadata), string(exportMetadata(t, restored)),
+		"placement reconstruction must not add rendition authority absent from the snapshot")
 }
 
 func TestLegacyUnscopedSnapshotWithUnreachableBlobRestoresFaithfully(t *testing.T) {

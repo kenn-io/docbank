@@ -533,49 +533,41 @@ type RenditionBlobReader interface {
 	OpenStreamContext(ctx context.Context, hash string) (packstore.VerifiedReadCloser, int64, error)
 }
 
-// VerifyRenditionHeadBytes verifies every source and artifact reachable from
-// an active rendition head through the restored mixed-storage catalog.
-func (s *Store) VerifyRenditionHeadBytes(ctx context.Context, reader RenditionBlobReader) error {
+// VerifyRenditionBlobBytes verifies every retained rendition source and
+// artifact through the restored mixed-storage catalog, including builds that
+// are staged but not attached to an active head.
+func (s *Store) VerifyRenditionBlobBytes(ctx context.Context, reader RenditionBlobReader) error {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT b.source_sha256, source.size
-		FROM rendition_heads h
-		JOIN rendition_attachments a
-		  ON a.content_version_id=h.content_version_id
-		 AND a.profile_fingerprint=h.profile_fingerprint
-		 AND a.attachment_id=h.attachment_id
-		JOIN rendition_builds b ON b.build_id=a.build_id AND b.vault_uid=a.vault_uid
+		FROM rendition_builds b
 		JOIN blobs source ON source.hash=b.source_sha256
 		UNION
 		SELECT artifact.blob_hash, artifact.size
-		FROM rendition_heads h
-		JOIN rendition_attachments a
-		  ON a.content_version_id=h.content_version_id
-		 AND a.profile_fingerprint=h.profile_fingerprint
-		 AND a.attachment_id=h.attachment_id
-		JOIN rendition_artifacts artifact ON artifact.build_id=a.build_id
+		FROM rendition_artifacts artifact
 		ORDER BY 1, 2`)
 	if err != nil {
-		return fmt.Errorf("listing active rendition bytes: %w", err)
+		return fmt.Errorf("listing retained rendition bytes: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var blob importedProcessingBlob
 		if err := rows.Scan(&blob.hash, &blob.size); err != nil {
-			return fmt.Errorf("scanning active rendition bytes: %w", err)
+			return fmt.Errorf("scanning retained rendition bytes: %w", err)
 		}
 		if err := verifyRenditionBlob(ctx, reader, blob); err != nil {
 			return err
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterating active rendition bytes: %w", err)
+		return fmt.Errorf("iterating retained rendition bytes: %w", err)
 	}
 	return nil
 }
 
 // VerifyRenditionBlobAuthority verifies the relational and physical-catalog
-// authority for every retained rendition source and artifact, including staged
-// builds that are not currently attached to a document version.
+// location authority for every retained rendition source and artifact,
+// including staged builds that are not currently attached to a document
+// version. VerifyRenditionBlobBytes separately reads and verifies each location.
 func (s *Store) VerifyRenditionBlobAuthority(ctx context.Context) (retErr error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
@@ -609,41 +601,9 @@ func verifyRenditionBlobCatalogAuthority(ctx context.Context, tx *sql.Tx) (retEr
 		if _, err := requirePhysicalAuthorityTx(tx, hash); err != nil {
 			return fmt.Errorf("processing blob %s: %w", hash, err)
 		}
-		if err := verifyRenditionBlobCatalogSizeAuthorityTx(ctx, tx, hash); err != nil {
-			return err
-		}
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("iterating processing blob catalog authority: %w", err)
-	}
-	return nil
-}
-
-func verifyRenditionBlobCatalogSizeAuthorityTx(
-	ctx context.Context, tx metadataQuerier, hash string,
-) error {
-	var valid bool
-	err := tx.QueryRowContext(ctx, `
-		SELECT EXISTS(
-			SELECT 1
-			FROM blobs b
-			JOIN blob_locations l ON l.blob_hash=b.hash
-			LEFT JOIN blob_pack_entries e
-			  ON e.blob_hash=l.blob_hash AND e.store_id=l.store_id
-			WHERE b.hash=?
-			  AND (
-				(l.kind='loose' AND l.encoding='raw' AND l.stored_size=b.size)
-				OR (l.kind='loose' AND l.encoding='zstd')
-				OR (l.kind='packed' AND e.raw_len=b.size)
-			  )
-		)`, hash).Scan(&valid)
-	if err != nil {
-		return fmt.Errorf("reading rendition blob catalog size authority %s: %w", hash, err)
-	}
-	if !valid {
-		return fmt.Errorf(
-			"rendition blob catalog size authority %s disagrees with logical metadata", hash,
-		)
 	}
 	return nil
 }

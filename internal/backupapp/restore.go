@@ -257,7 +257,7 @@ func verifyRestoredRenditionHeads(
 	defer func() {
 		retErr = errors.Join(retErr, physical.Close())
 	}()
-	if err := metadata.VerifyRenditionHeadBytes(ctx, physical); err != nil {
+	if err := metadata.VerifyRenditionBlobBytes(ctx, physical); err != nil {
 		return fmt.Errorf("backupapp: verifying restored rendition bytes: %w", err)
 	}
 	if err := metadata.RebuildRenditionLexicalProjection(ctx); err != nil {
