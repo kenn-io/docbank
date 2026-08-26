@@ -51,6 +51,7 @@ type legacySelectedVersion struct {
 	versionID string
 	blobHash  string
 	name      string
+	trashed   bool
 }
 
 // MigrateLegacyPlainText retains the portable extracted_text cache while
@@ -83,7 +84,13 @@ func (s *Store) MigrateLegacyPlainText(
 		}
 
 		eligible := make(map[string]legacyPlainTextRow)
+		newerSuccessful := make(map[string]struct{})
 		for _, row := range rows {
+			if row.extractor == legacyPlainTextExtractor &&
+				row.extractorVersion > legacyPlainTextExtractorVersion &&
+				row.status == ExtractionOK && row.text.Valid && utf8.ValidString(row.text.String) {
+				newerSuccessful[row.blobHash] = struct{}{}
+			}
 			if row.extractor != legacyPlainTextExtractor ||
 				row.extractorVersion != legacyPlainTextExtractorVersion ||
 				row.status != ExtractionOK || !row.text.Valid ||
@@ -164,7 +171,9 @@ func (s *Store) MigrateLegacyPlainText(
 
 		queued := make(map[string]struct{})
 		for blobHash := range selectedByBlob {
-			if _, ok := eligible[blobHash]; ok {
+			_, migrated := eligible[blobHash]
+			_, newer := newerSuccessful[blobHash]
+			if migrated || newer {
 				if _, err := tx.ExecContext(ctx,
 					`DELETE FROM text_extraction_queue WHERE blob_hash=?`, blobHash,
 				); err != nil {
@@ -233,11 +242,10 @@ func readLegacySelectedVersions(
 	ctx context.Context, tx *sql.Tx,
 ) ([]legacySelectedVersion, error) {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT v.version_id,v.blob_hash,n.name
+		SELECT v.version_id,v.blob_hash,n.name,n.trashed_at IS NOT NULL
 		FROM text_searchable_versions sv
 		JOIN content_versions v ON v.version_id=sv.version_id
 		JOIN nodes n ON n.current_version_id=v.version_id
-		WHERE n.trashed_at IS NULL
 		ORDER BY v.version_id`)
 	if err != nil {
 		return nil, fmt.Errorf("reading legacy searchable versions: %w", err)
@@ -246,7 +254,9 @@ func readLegacySelectedVersions(
 	var result []legacySelectedVersion
 	for rows.Next() {
 		var version legacySelectedVersion
-		if err := rows.Scan(&version.versionID, &version.blobHash, &version.name); err != nil {
+		if err := rows.Scan(
+			&version.versionID, &version.blobHash, &version.name, &version.trashed,
+		); err != nil {
 			return nil, fmt.Errorf("reading legacy searchable version: %w", err)
 		}
 		result = append(result, version)
@@ -572,6 +582,9 @@ func compareLegacyServingCompatibilityTx(
 	type authority struct{ name, text string }
 	want := make(map[string]authority)
 	for _, version := range selected {
+		if version.trashed {
+			continue
+		}
 		if row, ok := eligible[version.blobHash]; ok {
 			want[version.versionID] = authority{name: version.name, text: row.text.String}
 		}

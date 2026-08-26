@@ -313,6 +313,20 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 		if !exists {
 			return fmt.Errorf("blob %s: %w", result.BlobHash, ErrNotFound)
 		}
+		var storedVersion int64
+		err := tx.QueryRowContext(ctx, `
+			SELECT extractor_version FROM extracted_text
+			WHERE blob_hash=? AND extractor=?`, result.BlobHash, result.Extractor,
+		).Scan(&storedVersion)
+		if err == nil && result.ExtractorVersion < storedVersion {
+			return fmt.Errorf(
+				"extractor %s result version %d is older than stored version %d",
+				result.Extractor, result.ExtractorVersion, storedVersion,
+			)
+		}
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("reading stored extraction version: %w", err)
+		}
 		var extractErr, text any
 		if result.Error != "" {
 			extractErr = result.Error

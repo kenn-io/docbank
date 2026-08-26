@@ -24,7 +24,7 @@ func TestLegacyPlainTextBuildFingerprintUsesExactStoredBytes(t *testing.T) {
 
 // Mutations caught: broadening the eligible extractor row, building once per
 // version instead of per blob, normalizing stored bytes, leaving legacy FTS
-// serving, or failing to queue every selected blob without an eligible row.
+// serving, or failing to queue every repairable selected blob without an eligible row.
 func TestMigrateLegacyPlainTextCutsOverExactEligibleRows(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -49,7 +49,7 @@ func TestMigrateLegacyPlainTextCutsOverExactEligibleRows(t *testing.T) {
 	unknownHash := seedLegacyMigrationRow(t, s, "unknown.txt", "63", ExtractionResult{
 		Extractor: "other", ExtractorVersion: 1, Status: ExtractionOK, Text: "unknown-authority-token",
 	})
-	obsoleteHash := seedLegacyMigrationRow(t, s, "obsolete.txt", "64", ExtractionResult{
+	seedLegacyMigrationRow(t, s, "obsolete.txt", "64", ExtractionResult{
 		Extractor: "plain-text", ExtractorVersion: 2, Status: ExtractionOK, Text: "obsolete-authority-token",
 	})
 	invalidHash := fakeHash("65")
@@ -82,7 +82,7 @@ func TestMigrateLegacyPlainTextCutsOverExactEligibleRows(t *testing.T) {
 	assert.Equal(t, 1, report.EligibleRows)
 	assert.Equal(t, 1, report.MigratedBuilds)
 	assert.Equal(t, 2, report.MigratedAttachments)
-	assert.Equal(t, 5, report.QueuedBlobs)
+	assert.Equal(t, 4, report.QueuedBlobs)
 	require.NotEmpty(t, report.ProfileFingerprint)
 	require.NotEmpty(t, report.LexicalGenerationID)
 
@@ -135,7 +135,7 @@ func TestMigrateLegacyPlainTextCutsOverExactEligibleRows(t *testing.T) {
 
 	queued := queuedLegacyHashes(t, s)
 	assert.Equal(t, []string{
-		failedHash, unknownHash, obsoleteHash, invalidHash, missingExtractionHash,
+		failedHash, unknownHash, invalidHash, missingExtractionHash,
 	}, queued)
 
 	for _, versionID := range []string{first.CurrentVersionID, second.CurrentVersionID} {
@@ -421,6 +421,82 @@ func TestLegacyMigrationPreservesSearchAcrossSegmentBoundary(t *testing.T) {
 	after, _, err := s.SearchPage(t.Context(), "left-boundary right-boundary", 20)
 	require.NoError(t, err)
 	assert.Equal(t, before, after)
+}
+
+// Mutation caught: comparing raw legacy catalog segments with their coalesced
+// serving row prevents every later rendition head from publishing.
+func TestLegacyMigrationAllowsLaterPublicationAfterSegmentCoalescing(t *testing.T) {
+	s, _ := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	text := strings.Repeat("x", legacyPlainTextSegmentRunes) + " later-publication-boundary"
+	hash := fakeHash("7a")
+	_, err := s.CreateFile(ctx, s.RootID(), "legacy-long.txt", hash, int64(len(text)), "text/plain")
+	require.NoError(t, err)
+	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+		BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: text,
+	}))
+	_, err = s.MigrateLegacyPlainText(ctx)
+	require.NoError(t, err)
+
+	profile := catalogProcessingProfile(t, false)
+	build, versionID := lexicalSearchReplacementBuild(
+		t, s, profile, fakeHash("7b"), "later rendition authority",
+	)
+	require.NoError(t, s.StageRenditionBuild(ctx, build))
+	generation, err := s.StageLexicalGeneration(ctx, fakeHash("7c"))
+	require.NoError(t, err)
+	attachment := RenditionAttachmentRecord{
+		ID: fakeHash("7d"), VaultID: s.VaultID(), ContentVersionID: versionID,
+		BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-22T13:00:00.000000000Z",
+	}
+	require.NoError(t, s.PublishRenditionAndLexicalHeads(ctx, attachment, RenditionHeadRecord{
+		ContentVersionID: versionID, ProcessingProfileFingerprint: profile.Fingerprint,
+		AttachmentID: attachment.ID, PublishedAt: "2026-08-22T13:01:00.000000000Z",
+	}, generation.ID))
+}
+
+// Mutation caught: excluding trashed current versions from migrated heads
+// leaves their retained text unreachable after restore.
+func TestLegacyMigrationRestoresTrashedContentSearch(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	const text = "restored-heritage-authority"
+	hash := fakeHash("7e")
+	node, err := s.CreateFile(ctx, s.RootID(), "archived.txt", hash, int64(len(text)), "text/plain")
+	require.NoError(t, err)
+	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+		BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: text,
+	}))
+	trashed, _, err := s.Trash(ctx, node.ID, node.Revision)
+	require.NoError(t, err)
+	_, err = s.MigrateLegacyPlainText(ctx)
+	require.NoError(t, err)
+
+	_, _, err = s.Restore(ctx, trashed.ID, trashed.Revision)
+	require.NoError(t, err)
+	hits, _, err := s.SearchPage(ctx, text, 20)
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.Equal(t, "/archived.txt", hits[0].Path)
+	assert.Equal(t, SearchMatchContent, hits[0].Match)
+}
+
+// Mutation caught: treating a successful newer extractor result as missing
+// work lets the legacy worker replace it with version 1.
+func TestLegacyMigrationDoesNotQueueNewerExtractionSuccess(t *testing.T) {
+	s := newTestStore(t)
+	seedLegacyMigrationRow(t, s, "newer.txt", "7f", ExtractionResult{
+		Extractor: "plain-text", ExtractorVersion: 2,
+		Status: ExtractionOK, Text: "newer-extractor-authority",
+	})
+	_, err := s.MigrateLegacyPlainText(t.Context())
+	require.NoError(t, err)
+
+	pending, err := s.PendingTextExtractions(t.Context(), 20)
+	require.NoError(t, err)
+	assert.Empty(t, pending)
 }
 
 // Mutation caught: restricting legacy convergence to released-schema staging
