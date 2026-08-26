@@ -238,13 +238,16 @@ func RestoreWithPlacement(
 func verifyRestoredRenditionHeads(
 	ctx context.Context, target, databasePath string, driver docsqlite.Driver,
 ) (retErr error) {
-	metadata, err := store.Open(databasePath, driver)
+	metadata, err := store.OpenForRestore(databasePath, driver)
 	if err != nil {
 		return fmt.Errorf("backupapp: opening restored rendition catalog: %w", err)
 	}
 	defer func() {
 		retErr = errors.Join(retErr, metadata.Close())
 	}()
+	if err := metadata.VerifyRenditionBlobAuthority(ctx); err != nil {
+		return fmt.Errorf("backupapp: verifying restored rendition authority: %w", err)
+	}
 	physical, err := blob.NewPreparedRestoreReader(
 		store.NewPackCatalog(metadata), filepath.Join(target, "blobs"),
 	)
@@ -256,6 +259,9 @@ func verifyRestoredRenditionHeads(
 	}()
 	if err := metadata.VerifyRenditionHeadBytes(ctx, physical); err != nil {
 		return fmt.Errorf("backupapp: verifying restored rendition bytes: %w", err)
+	}
+	if err := metadata.RebuildRenditionLexicalProjection(ctx); err != nil {
+		return fmt.Errorf("backupapp: rebuilding restored lexical projection: %w", err)
 	}
 	return nil
 }

@@ -573,6 +573,124 @@ func (s *Store) VerifyRenditionHeadBytes(ctx context.Context, reader RenditionBl
 	return nil
 }
 
+// VerifyRenditionBlobAuthority verifies the relational and physical-catalog
+// authority for every retained rendition source and artifact, including staged
+// builds that are not currently attached to a document version.
+func (s *Store) VerifyRenditionBlobAuthority(ctx context.Context) (retErr error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return fmt.Errorf("starting processing blob verification: %w", err)
+	}
+	defer func() { retErr = errors.Join(retErr, tx.Rollback()) }()
+	if err := validateProcessingMetadataState(ctx, tx); err != nil {
+		return fmt.Errorf("validating processing blob authority: %w", err)
+	}
+	if err := verifyRenditionBlobCatalogAuthority(ctx, tx); err != nil {
+		return fmt.Errorf("verifying processing blob authority: %w", err)
+	}
+	return nil
+}
+
+func verifyRenditionBlobCatalogAuthority(ctx context.Context, tx *sql.Tx) (retErr error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT source_sha256 FROM rendition_builds
+		UNION
+		SELECT blob_hash FROM rendition_artifacts
+		ORDER BY source_sha256`)
+	if err != nil {
+		return fmt.Errorf("reading processing blob catalog authority: %w", err)
+	}
+	defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+	for rows.Next() {
+		var hash string
+		if err := rows.Scan(&hash); err != nil {
+			return fmt.Errorf("scanning processing blob catalog authority: %w", err)
+		}
+		if _, err := requirePhysicalAuthorityTx(tx, hash); err != nil {
+			return fmt.Errorf("processing blob %s: %w", hash, err)
+		}
+		if err := verifyRenditionBlobCatalogSizeAuthorityTx(ctx, tx, hash); err != nil {
+			return err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterating processing blob catalog authority: %w", err)
+	}
+	return nil
+}
+
+func verifyRenditionBlobCatalogSizeAuthorityTx(
+	ctx context.Context, tx metadataQuerier, hash string,
+) error {
+	var valid bool
+	err := tx.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1
+			FROM blobs b
+			JOIN blob_locations l ON l.blob_hash=b.hash
+			LEFT JOIN blob_pack_entries e
+			  ON e.blob_hash=l.blob_hash AND e.store_id=l.store_id
+			WHERE b.hash=?
+			  AND (
+				(l.kind='loose' AND l.encoding='raw' AND l.stored_size=b.size)
+				OR (l.kind='loose' AND l.encoding='zstd')
+				OR (l.kind='packed' AND e.raw_len=b.size)
+			  )
+		)`, hash).Scan(&valid)
+	if err != nil {
+		return fmt.Errorf("reading rendition blob catalog size authority %s: %w", hash, err)
+	}
+	if !valid {
+		return fmt.Errorf(
+			"rendition blob catalog size authority %s disagrees with logical metadata", hash,
+		)
+	}
+	return nil
+}
+
+// RebuildRenditionLexicalProjection reconstructs the excluded FTS projection
+// solely from restored catalog rows. No provider or network access is involved.
+func (s *Store) RebuildRenditionLexicalProjection(ctx context.Context) error {
+	var generationID string
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		present, err := processingMetadataSchemaPresent(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if !present {
+			return nil
+		}
+		var heads int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM rendition_heads`).Scan(&heads); err != nil {
+			return fmt.Errorf("counting rendition heads for lexical rebuild: %w", err)
+		}
+		if heads == 0 {
+			return nil
+		}
+		rows, err := readCatalogLexicalManifestRowsTx(ctx, tx, "")
+		if err != nil {
+			return err
+		}
+		generationID = lexicalManifestDigest(rows)
+		return nil
+	})
+	if err != nil || generationID == "" {
+		return err
+	}
+	if _, err := s.StageLexicalGeneration(ctx, generationID); err != nil {
+		return fmt.Errorf("rebuilding restored lexical projection: %w", err)
+	}
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO rendition_lexical_heads(singleton,generation_id) VALUES(1,?)
+			ON CONFLICT(singleton) DO UPDATE SET generation_id=excluded.generation_id`, generationID,
+		); err != nil {
+			return fmt.Errorf("publishing rebuilt lexical projection: %w", err)
+		}
+		return nil
+	})
+}
+
 func verifyRenditionBlob(
 	ctx context.Context, reader RenditionBlobReader, blob importedProcessingBlob,
 ) (retErr error) {
