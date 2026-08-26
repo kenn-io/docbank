@@ -412,6 +412,18 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 		if !exists {
 			return fmt.Errorf("blob %s: %w", result.BlobHash, ErrNotFound)
 		}
+		if legacyReplacement && !exactLegacyResult {
+			published, publishErr := hasPublishedLexicalHeadTx(ctx, tx)
+			if publishErr != nil {
+				return publishErr
+			}
+			if published {
+				return fmt.Errorf(
+					"unsupported newer plain-text extraction version %d after legacy authority migration",
+					result.ExtractorVersion,
+				)
+			}
+		}
 		if exactLegacyResult {
 			if result.Status == ExtractionOK {
 				buildID := legacyPlainTextBuildFingerprint(

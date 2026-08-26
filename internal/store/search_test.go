@@ -1063,6 +1063,51 @@ func TestRecordExtractionRejectsSameVersionFailureAfterSuccess(t *testing.T) {
 	require.Len(t, hits, 1)
 }
 
+// Mutation caught: accepting a newer plain-text result after legacy authority
+// publication can replace the portable version-1 source without a compatible
+// rendition transition.
+func TestRecordExtractionRejectsUnsupportedVersionAfterLegacyMigration(t *testing.T) {
+	for name, replacement := range map[string]ExtractionResult{
+		"failure": {
+			Extractor: "plain-text", ExtractorVersion: 2,
+			Status: ExtractionFailed, Error: "synthetic newer failure",
+		},
+		"success": {
+			Extractor: "plain-text", ExtractorVersion: 2,
+			Status: ExtractionOK, Text: "unsupported-newer-authority",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			hash := fakeHash("ab")
+			_, err := s.CreateFile(ctx, s.RootID(), "stable.txt", hash, 10, "text/plain")
+			require.NoError(t, err)
+			require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+				BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1,
+				Status: ExtractionOK, Text: "stable-version-one-authority",
+			}))
+			_, err = s.MigrateLegacyPlainText(ctx)
+			require.NoError(t, err)
+
+			replacement.BlobHash = hash
+			err = s.RecordExtraction(ctx, replacement)
+			require.ErrorContains(t, err, "unsupported newer plain-text extraction")
+			var version int64
+			var status, text string
+			require.NoError(t, s.db.QueryRow(`SELECT extractor_version,status,text
+				FROM extracted_text WHERE blob_hash=? AND extractor='plain-text'`, hash,
+			).Scan(&version, &status, &text))
+			assert.Equal(t, int64(1), version)
+			assert.Equal(t, ExtractionOK, status)
+			assert.Equal(t, "stable-version-one-authority", text)
+			hits, _, searchErr := s.SearchPage(ctx, "stable-version-one-authority", 20)
+			require.NoError(t, searchErr)
+			require.Len(t, hits, 1)
+		})
+	}
+}
+
 func TestPendingTextExtractionsSkipsSupersededQueuedContent(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
