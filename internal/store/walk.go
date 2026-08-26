@@ -226,7 +226,7 @@ func (w *Walker) popFrontier(ctx context.Context) (WalkEntry, int, error) {
 		LIMIT 1`,
 	).Scan(&entry.Path, &depth,
 		&entry.Node.ID, &entry.Node.ParentID, &entry.Node.Name, &entry.Node.Kind,
-		&entry.Node.CurrentVersionID, &entry.Node.BlobHash, &entry.Node.Size,
+		&entry.Node.CurrentVersionID, &entry.Node.BlobHash, &entry.Node.MD5, &entry.Node.Size,
 		&entry.Node.MimeType, &entry.Node.Revision, &entry.Node.CreatedAt,
 		&entry.Node.ModifiedAt, &entry.Node.TrashedAt,
 	)

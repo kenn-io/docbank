@@ -173,6 +173,19 @@ func RestoreWithPlacement(
 	opts.BeforePublication = func(
 		hookCtx context.Context, staged backup.RestorePublicationTarget,
 	) error {
+		processingStore, err := store.OpenForRestore(staged.DBPath, driver)
+		if err != nil {
+			return fmt.Errorf("backupapp: opening staged processing authority: %w", err)
+		}
+		if err := processingStore.VerifyRenditionBlobAuthority(hookCtx); err != nil {
+			return errors.Join(err, processingStore.Close())
+		}
+		if err := processingStore.RebuildRenditionLexicalProjection(hookCtx); err != nil {
+			return errors.Join(err, processingStore.Close())
+		}
+		if err := processingStore.Close(); err != nil {
+			return fmt.Errorf("backupapp: closing staged processing authority: %w", err)
+		}
 		blobsDir := filepath.Join(staged.TargetDir, "blobs")
 		if err := RecoverInterruptedPrimaryHandoff(
 			hookCtx, staged.TargetDir, driver,
