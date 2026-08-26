@@ -309,6 +309,18 @@ func TestWriteAndReadBack(t *testing.T) {
 	assert.Empty(t, entries)
 }
 
+func TestOpenSeekableContextReturnsLogicalSize(t *testing.T) {
+	bs := newTestBlobStore(t)
+	content := []byte("seekable logical content")
+	receipt, err := bs.WriteDetailedContext(t.Context(), bytes.NewReader(content))
+	require.NoError(t, err)
+
+	reader, size, err := bs.OpenSeekableContext(t.Context(), receipt.Hash)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, reader.Close()) })
+	require.Equal(t, int64(len(content)), size)
+}
+
 func TestOpenStreamRequiresTerminalVerification(t *testing.T) {
 	bs := newTestBlobStore(t)
 	content := "stream me completely"

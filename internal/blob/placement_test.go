@@ -58,6 +58,16 @@ func TestPlacementRunnerCopiesVerifiesAndRetiresLooseSource(t *testing.T) {
 	require.NoError(t, stream.Close())
 	assert.Equal(t, int64(len(content)), size)
 	assert.Equal(t, content, got)
+
+	reader, size, err := blobs.OpenSeekableContext(t.Context(), hash)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, reader.Close()) })
+	require.Equal(t, int64(len(content)), size)
+	_, err = reader.Seek(3, io.SeekStart)
+	require.NoError(t, err)
+	suffix, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	require.Equal(t, content[3:], suffix)
 }
 
 func TestPlacementRunnerRejectsDestinationRemovedBeforeCatalogCommit(t *testing.T) {

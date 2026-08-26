@@ -262,6 +262,21 @@ type VersionContent struct {
 	Reader  VerifiedReadCloser
 }
 
+// ContentRangeOptions selects a non-empty decoded logical byte range.
+type ContentRangeOptions struct {
+	Offset int64
+	Length int64
+}
+
+// VersionContentRange binds a bounded logical byte stream to one immutable
+// content version. Reader must be closed to release its vault lease.
+type VersionContentRange struct {
+	Version ContentVersion
+	Offset  int64
+	Length  int64
+	Reader  io.ReadCloser
+}
+
 func fromStoreNode(node store.Node) Node {
 	return Node{
 		ID: node.ID, ParentID: node.ParentID, Name: node.Name, Kind: node.Kind,

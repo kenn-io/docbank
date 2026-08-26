@@ -6,10 +6,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -20,6 +23,234 @@ func TestRootPackageConstructor(t *testing.T) {
 	vault, err := docbank.New(context.Background(), docbank.Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	require.NoError(t, vault.Close())
+}
+
+func createRangeFixture(
+	t *testing.T, vault *docbank.Vault, virtualPath string, content []byte,
+) docbank.PutReceipt {
+	t.Helper()
+	sum := sha256.Sum256(content)
+	receipt, err := vault.Create(
+		t.Context(), virtualPath, bytes.NewReader(content),
+		docbank.CreateOptions{
+			MediaType: "application/octet-stream",
+			Expected: docbank.ContentIdentity{
+				SHA256: hex.EncodeToString(sum[:]),
+				Size:   int64(len(content)),
+			},
+		},
+	)
+	require.NoError(t, err)
+	return receipt
+}
+
+func TestOpenVersionContentRangeRejectsInvalidSlices(t *testing.T) {
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	receipt := createRangeFixture(
+		t, vault, "/ranges/value.bin", []byte("0123456789"),
+	)
+
+	cases := []docbank.ContentRangeOptions{
+		{Offset: -1, Length: 1},
+		{Offset: 0, Length: 0},
+		{Offset: 0, Length: -1},
+		{Offset: 10, Length: 1},
+		{Offset: 9, Length: 2},
+		{Offset: math.MaxInt64, Length: math.MaxInt64},
+	}
+	for _, opts := range cases {
+		_, err := vault.OpenVersionContentRange(t.Context(), receipt.Version.ID, opts)
+		require.ErrorIs(t, err, docbank.ErrInvalidContentRange)
+	}
+}
+
+func TestOpenVersionContentRangeMissingVersion(t *testing.T) {
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+	_, err = vault.OpenVersionContentRange(
+		t.Context(), "00000000-0000-4000-8000-000000000000",
+		docbank.ContentRangeOptions{Offset: 0, Length: 1},
+	)
+	require.ErrorIs(t, err, docbank.ErrNotFound)
+}
+
+func TestOpenVersionContentRangeRawLoose(t *testing.T) {
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	receipt := createRangeFixture(
+		t, vault, "/ranges/raw.bin", []byte("0123456789"),
+	)
+
+	got, err := vault.OpenVersionContentRange(
+		t.Context(), receipt.Version.ID,
+		docbank.ContentRangeOptions{Offset: 2, Length: 4},
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, got.Reader.Close()) })
+	body, err := io.ReadAll(got.Reader)
+	require.NoError(t, err)
+	require.Equal(t, []byte("2345"), body)
+	require.Equal(t, receipt.Version, got.Version)
+	require.Equal(t, int64(2), got.Offset)
+	require.Equal(t, int64(4), got.Length)
+}
+
+func TestOpenVersionContentRangeHistoricalVersion(t *testing.T) {
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	path := "/ranges/history.bin"
+	first := createRangeFixture(t, vault, path, []byte("abcdefghij"))
+	_, err = vault.Put(
+		t.Context(), path, bytes.NewReader([]byte("ABCDEFGHIJ")),
+		docbank.PutOptions{MediaType: "application/octet-stream"},
+	)
+	require.NoError(t, err)
+
+	got, err := vault.OpenVersionContentRange(
+		t.Context(), first.Version.ID,
+		docbank.ContentRangeOptions{Offset: 1, Length: 3},
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, got.Reader.Close()) })
+	body, err := io.ReadAll(got.Reader)
+	require.NoError(t, err)
+	require.Equal(t, []byte("bcd"), body)
+	require.Equal(t, first.Version.ID, got.Version.ID)
+}
+
+func TestOpenVersionContentRangeCompressedLoose(t *testing.T) {
+	vault, err := docbank.New(t.Context(), docbank.Config{
+		Root: t.TempDir(),
+		LooseCompression: docbank.LooseCompressionOptions{
+			Enabled: true, MinBytes: 1, MinSavingsPercent: 0,
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	content := []byte(strings.Repeat("compressed logical range\n", 128))
+	receipt := createRangeFixture(t, vault, "/ranges/compressed.bin", content)
+	require.Equal(t, "loose", receipt.Physical.Kind)
+	require.Equal(t, "zstd", receipt.Physical.Encoding)
+
+	got, err := vault.OpenVersionContentRange(
+		t.Context(), receipt.Version.ID,
+		docbank.ContentRangeOptions{Offset: 11, Length: 17},
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, got.Reader.Close()) })
+	body, err := io.ReadAll(got.Reader)
+	require.NoError(t, err)
+	require.Equal(t, content[11:28], body)
+}
+
+func TestOpenVersionContentRangePacked(t *testing.T) {
+	root := t.TempDir()
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: root})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	content := []byte("packed logical range content")
+	receipt := createRangeFixture(t, vault, "/ranges/packed.bin", content)
+	report, err := vault.Pack(t.Context(), docbank.PackOptions{})
+	require.NoError(t, err)
+	require.Equal(t, 1, report.BlobsPacked)
+	require.NoFileExists(t, looseBlobPath(root, receipt.Computed.SHA256))
+
+	got, err := vault.OpenVersionContentRange(
+		t.Context(), receipt.Version.ID,
+		docbank.ContentRangeOptions{Offset: 7, Length: 7},
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, got.Reader.Close()) })
+	body, err := io.ReadAll(got.Reader)
+	require.NoError(t, err)
+	require.Equal(t, content[7:14], body)
+}
+
+func TestOpenVersionContentRangeUnavailable(t *testing.T) {
+	tests := []struct {
+		name    string
+		corrupt func(*testing.T, string)
+	}{
+		{
+			name: "missing authority",
+			corrupt: func(t *testing.T, path string) {
+				t.Helper()
+				require.NoError(t, os.Remove(path))
+			},
+		},
+		{
+			name: "physical size mismatch",
+			corrupt: func(t *testing.T, path string) {
+				t.Helper()
+				require.NoError(t, os.WriteFile(path, []byte("short"), 0o600))
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			vault, err := docbank.New(t.Context(), docbank.Config{Root: root})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, vault.Close()) })
+			content := []byte("physical authority bytes")
+			receipt := createRangeFixture(t, vault, "/ranges/unavailable.bin", content)
+			test.corrupt(t, looseBlobPath(root, receipt.Computed.SHA256))
+
+			_, err = vault.OpenVersionContentRange(
+				t.Context(), receipt.Version.ID,
+				docbank.ContentRangeOptions{Offset: 0, Length: 1},
+			)
+			require.ErrorIs(t, err, docbank.ErrContentUnavailable)
+		})
+	}
+}
+
+func TestOpenVersionContentRangeHoldsVaultLease(t *testing.T) {
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	receipt := createRangeFixture(t, vault, "/ranges/lease.bin", []byte("lease bytes"))
+	opened, err := vault.OpenVersionContentRange(
+		t.Context(), receipt.Version.ID,
+		docbank.ContentRangeOptions{Offset: 0, Length: 1},
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, opened.Reader.Close()) })
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- vault.Close() }()
+	select {
+	case err := <-closeDone:
+		require.FailNow(t, "vault closed while a range held its lifecycle lease", "error: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	require.NoError(t, opened.Reader.Close())
+	select {
+	case err := <-closeDone:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "vault did not close after the range released its lease")
+	}
+}
+
+func TestOpenVersionContentRangeClosedVault(t *testing.T) {
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	receipt := createRangeFixture(t, vault, "/ranges/closed.bin", []byte("closed bytes"))
+	require.NoError(t, vault.Close())
+
+	_, err = vault.OpenVersionContentRange(
+		t.Context(), receipt.Version.ID,
+		docbank.ContentRangeOptions{Offset: 0, Length: 1},
+	)
+	require.ErrorIs(t, err, docbank.ErrClosed)
 }
 
 func TestEmbeddedImmutableCreate(t *testing.T) {
