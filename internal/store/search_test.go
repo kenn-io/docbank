@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/docbank/document"
 )
 
 func TestSearchFindsLiveNodesOnly(t *testing.T) {
@@ -597,6 +599,35 @@ func TestLexicalGenerationHeadFailureRollsBackAttachmentAndBothHeads(t *testing.
 	hits, _, err = s.SearchPage(ctx, "venus", 10)
 	require.NoError(t, err)
 	assert.Empty(t, hits)
+}
+
+func TestLexicalGenerationPublicationRejectsForbiddenArtifacts(t *testing.T) {
+	s, versions := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	buildProfile := catalogProcessingProfile(t, false)
+	build := catalogRenditionBuild(s, buildProfile)
+	require.NoError(t, s.StageRenditionBuild(ctx, build))
+	generation, err := s.StageLexicalGeneration(ctx, fakeHash("9c"))
+	require.NoError(t, err)
+
+	attachmentProfile := catalogProcessingProfileWith(t, false, func(profile *document.ProcessingProfileV1) {
+		profile.RetentionDisclosure.RetainSanitizedMarkdown = false
+	})
+	attachment := RenditionAttachmentRecord{
+		ID: catalogAttachmentFirst, VaultID: s.VaultID(),
+		ContentVersionID: versions[0], BuildID: build.ID, Profile: attachmentProfile,
+		AttachedAt: "2026-08-22T10:00:00.000000000Z",
+	}
+	err = s.PublishRenditionAndLexicalHeads(ctx, attachment, RenditionHeadRecord{
+		ContentVersionID: versions[0], ProcessingProfileFingerprint: attachmentProfile.Fingerprint,
+		AttachmentID: attachment.ID, PublishedAt: "2026-08-22T10:01:00.000000000Z",
+	}, generation.ID)
+	require.ErrorContains(t, err, `artifact role "sanitized_markdown" is forbidden`)
+
+	_, err = s.ActiveRendition(ctx, versions[0], attachmentProfile.Fingerprint)
+	require.ErrorIs(t, err, ErrNotFound)
+	_, err = s.ActiveLexicalGeneration(ctx)
+	require.ErrorIs(t, err, ErrNotFound)
 }
 
 func TestLexicalGenerationReaderLeasePinsAndEnumeratesExactRoots(t *testing.T) {

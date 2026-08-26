@@ -491,6 +491,9 @@ func (s *Store) PublishRenditionAndLexicalHeads(
 			build.EvidenceLexicalFingerprint != normalized.Profile.EvidenceLexicalFingerprint {
 			return errors.New("rendition attachment profile does not match build component identity")
 		}
+		if err := validateRenditionArtifactRolesForProfile(normalized.Profile, build); err != nil {
+			return err
+		}
 		var sourceSHA256 string
 		if err := tx.QueryRowContext(ctx,
 			`SELECT blob_hash FROM content_versions WHERE version_id=?`, normalized.ContentVersionID,
