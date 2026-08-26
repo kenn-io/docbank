@@ -1,0 +1,21 @@
+{
+  "status": "success",
+  "processing_time": 0.01,
+  "errors": [],
+  "document": {
+    "filename": "report.pdf",
+    "md_content": "# Synthetic report\n",
+    "json_content": {
+      "schema_name": "DoclingDocument",
+      "version": "1.7.0",
+      "origin": {"filename": "report.pdf"},
+      "pages": {"1": {}, "2": {}},
+      "texts": [
+        {"text": "first page", "prov": [{"page_no": 1}]},
+        {"text": "second page", "prov": [{"page_no": 2}]}
+      ]
+    },
+    "html_content": "<h1>Synthetic report</h1>",
+    "text_content": "Synthetic report"
+  }
+}
