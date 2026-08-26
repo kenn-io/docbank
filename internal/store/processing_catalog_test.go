@@ -682,6 +682,7 @@ func TestProcessingMetadataOpenAcceptsCRLFEmbeddedSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "crlf-schema.db")
 	driver := DefaultSQLiteDriver()
 	originalSchema := schemaSQL
+	schemaSQL = strings.ReplaceAll(schemaSQL, "\r\n", "\n")
 	schemaSQL = strings.ReplaceAll(schemaSQL, "\n", "\r\n")
 	t.Cleanup(func() { schemaSQL = originalSchema })
 	current, err := openCurrentStore(path, driver)
