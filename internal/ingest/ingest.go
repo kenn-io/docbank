@@ -712,6 +712,9 @@ func (ing *Ingester) readLocalFileWith(
 	// must hold for the file actually read, not the one classified.
 	f, err := open()
 	if err != nil {
+		if hint := placeholderReadHint(err); hint != "" {
+			return result, fmt.Errorf("opening %s: %w (%s)", sourcePath, err, hint)
+		}
 		return result, fmt.Errorf("opening %s: %w", sourcePath, err)
 	}
 	defer func() { _ = f.Close() }()
@@ -731,6 +734,9 @@ func (ing *Ingester) readLocalFileWith(
 	head := make([]byte, 512)
 	n, err := io.ReadFull(f, head)
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		if hint := placeholderReadHint(err); hint != "" {
+			return result, fmt.Errorf("reading %s: %w (%s)", sourcePath, err, hint)
+		}
 		return result, fmt.Errorf("reading %s: %w", sourcePath, err)
 	}
 	head = head[:n]

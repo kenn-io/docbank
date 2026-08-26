@@ -631,14 +631,29 @@ func TestPreflightInventoriesWithoutMutatingVault(t *testing.T) {
 func TestPreflightSizePolicyBoundaries(t *testing.T) {
 	var report PreflightReport
 	types := make(map[string]FileType)
-	report.addFile("packed.bin", blob.MaxPackedBlobBytes, types)
-	report.addFile("loose.bin", blob.MaxPackedBlobBytes+1, types)
-	report.addFile("limit.bin", blob.MaxIngestBytes, types)
-	report.addFile("rejected.bin", blob.MaxIngestBytes+1, types)
+	report.addFile("packed.bin", blob.MaxPackedBlobBytes, false, types)
+	report.addFile("loose.bin", blob.MaxPackedBlobBytes+1, false, types)
+	report.addFile("limit.bin", blob.MaxIngestBytes, false, types)
+	report.addFile("rejected.bin", blob.MaxIngestBytes+1, false, types)
 
 	assert.Equal(t, int64(1), report.PackEligible.Files)
 	assert.Equal(t, int64(2), report.LooseOnly.Files)
 	assert.Equal(t, int64(1), report.Rejected.Files)
+	assert.Equal(t, int64(0), report.CloudPlaceholders.Files)
+}
+
+// A cloud placeholder is counted separately and still belongs to its size
+// class: the report describes the same file from two angles.
+func TestPreflightCountsCloudPlaceholders(t *testing.T) {
+	var report PreflightReport
+	types := make(map[string]FileType)
+	report.addFile("local.bin", 1024, false, types)
+	report.addFile("dataless.bin", 4096, true, types)
+
+	assert.Equal(t, int64(2), report.Files)
+	assert.Equal(t, int64(2), report.PackEligible.Files)
+	assert.Equal(t, int64(1), report.CloudPlaceholders.Files)
+	assert.Equal(t, int64(4096), report.CloudPlaceholders.Bytes)
 }
 
 func TestAddPathsHonorsPreflightExclusions(t *testing.T) {

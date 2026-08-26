@@ -120,7 +120,9 @@ never modified or deleted.
   interrupted bulk import can simply be re-run. See
   [Importing Documents](usage/importing.md).
 
-Run `--preflight` before a large import. It reports regular-file and directory
+Run `--preflight` before a large import. On macOS the report also names how
+many regular files are cloud placeholders whose bytes are not present locally;
+importing them downloads the content through the provider. It reports regular-file and directory
 counts, logical bytes, pack-eligible files, larger loose-only files, files over
 the ingest ceiling, exclusions, skipped non-regular entries, filesystem errors,
 and the largest extension groups. The scan reads filesystem metadata only: it
