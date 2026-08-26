@@ -17,8 +17,10 @@ import (
 )
 
 const (
-	v090BackupSuffix = ".v0.9.0.bak"
-	v2BackupSuffix   = ".schema-v2.bak"
+	v090BackupSuffix                 = ".v0.9.0.bak"
+	v2BackupSuffix                   = ".schema-v2.bak"
+	v3BackupSuffix                   = ".schema-v3.bak"
+	lastReleasedStorageSchemaVersion = 3
 )
 
 type databaseSchema struct {
@@ -53,6 +55,14 @@ var releasedStorageSchemas = []releasedStorageSchema{
 			return exportMetadataSnapshot(ctx, source, dst)
 		},
 		restorePhysical: restoreV2PhysicalCatalog,
+	},
+	{
+		version: 3, release: "schema v3 (v0.12.0–v0.14.0)", backupSuffix: v3BackupSuffix,
+		validate: validateV3Schema,
+		exportMetadata: func(ctx context.Context, source *sql.Tx, dst io.Writer) error {
+			return exportMetadataSnapshot(ctx, source, dst)
+		},
+		restorePhysical: restoreV3PhysicalCatalog,
 	},
 }
 
@@ -129,7 +139,7 @@ func validateReleasedStorageSchemas() error {
 		versions[source.version] = true
 		suffixes[source.backupSuffix] = true
 	}
-	for version := 1; version < currentStorageSchemaVersion; version++ {
+	for version := 1; version <= lastReleasedStorageSchemaVersion; version++ {
 		if !versions[version] {
 			return fmt.Errorf("released storage schema version %d adapter is missing", version)
 		}
@@ -250,6 +260,27 @@ func validateCurrentSchemaColumns(
 			)
 		}
 	}
+	if err := validateCurrentEmbeddingCatalogSchema(db); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateCurrentEmbeddingCatalogSchema(db *sql.DB) error {
+	for _, table := range embeddingCatalogSchema {
+		got, err := tableColumns(db, table.name)
+		if err != nil {
+			return err
+		}
+		want := slices.Clone(table.columns)
+		slices.Sort(want)
+		if !slices.Equal(got, want) {
+			return fmt.Errorf(
+				"opening database: embedding catalog schema %s columns are invalid (%s)",
+				table.name, strings.Join(got, ","),
+			)
+		}
+	}
 	return nil
 }
 
@@ -277,6 +308,44 @@ func validateV2Schema(db *sql.DB, blobs, packs []string) error {
 		return errors.New("not a released schema-v2 database")
 	}
 	return requireV090Tables(db)
+}
+
+func validateV3Schema(db *sql.DB, blobs, packs []string) error {
+	v3BlobColumns := []string{metadataCreatedAtField, "hash", metadataSizeField}
+	v3PackColumns := []string{
+		metadataCreatedAtField, "entry_count", "live_entries", "live_raw_bytes",
+		"live_stored_bytes", "max_live_raw_len", "max_live_stored_len", "pack_id",
+		"scan_hash", "store_id", "stored_bytes",
+	}
+	if !slices.Equal(blobs, v3BlobColumns) || !slices.Equal(packs, v3PackColumns) {
+		return errors.New("not a released schema-v3 database")
+	}
+	required := []string{
+		"audit_authority", "audit_baselines", "audit_memberships", "audit_records", "audit_scopes",
+		"blob_locations", "blob_pack_entries", "blob_packs", "blob_stores", "blobs",
+		"content_versions", "extracted_text", "ingests", "node_tags", "nodes", "provenance",
+		"storage_operation_cleanup", "storage_operation_stores", "storage_operations", "tags",
+		"text_extraction_queue", "text_searchable_versions", "vault_metadata", "watch_sources",
+	}
+	for _, table := range required {
+		columns, err := tableColumns(db, table)
+		if err != nil {
+			return err
+		}
+		if len(columns) == 0 {
+			return fmt.Errorf("not a released schema-v3 database: missing table %s", table)
+		}
+	}
+	for _, table := range []string{"processing_profiles", "rendition_builds", "rendition_attachments"} {
+		columns, err := tableColumns(db, table)
+		if err != nil {
+			return err
+		}
+		if len(columns) != 0 {
+			return fmt.Errorf("not a released schema-v3 database: unexpected table %s", table)
+		}
+	}
+	return nil
 }
 
 func validateV090Schema(db *sql.DB, blobs, packs []string) error {
@@ -386,6 +455,11 @@ func cutoverReleasedDatabase(
 		_ = target.Close()
 		_ = closeSource()
 		return err
+	}
+	if _, err := target.MigrateLegacyPlainText(context.Background()); err != nil {
+		_ = target.Close()
+		_ = closeSource()
+		return fmt.Errorf("migrating %s legacy plain-text authority: %w", sourceSchema.release, err)
 	}
 	if err := target.ValidateMetadata(context.Background()); err != nil {
 		_ = target.Close()
@@ -542,6 +616,147 @@ func restoreV2PhysicalCatalog(ctx context.Context, source metadataQuerier, targe
 		}
 		return nil
 	})
+}
+
+func restoreV3PhysicalCatalog(ctx context.Context, source metadataQuerier, target *Store) error {
+	return target.withStorageTx(ctx, func(tx *sql.Tx) error {
+		if err := resetImportedPhysicalCatalog(ctx, tx); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM blob_stores`); err != nil {
+			return fmt.Errorf("resetting imported blob stores: %w", err)
+		}
+		primaryStoreID, err := restoreV3BlobStores(ctx, source, tx)
+		if err != nil {
+			return err
+		}
+		if err := restoreV3BlobLocations(ctx, source, tx); err != nil {
+			return err
+		}
+		if err := restoreV3BlobPacks(ctx, source, tx); err != nil {
+			return err
+		}
+		if err := restoreV3BlobPackEntries(ctx, source, tx); err != nil {
+			return err
+		}
+		target.primaryStoreID = primaryStoreID
+		return nil
+	})
+}
+
+func restoreV3BlobStores(ctx context.Context, source metadataQuerier, tx *sql.Tx) (string, error) {
+	rows, err := source.QueryContext(ctx, `
+		SELECT store_id,name,kind,role,lifecycle,binding,ownership_epoch,created_at
+		FROM blob_stores ORDER BY store_id`)
+	if err != nil {
+		return "", fmt.Errorf("reading schema-v3 blob stores: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	primaryStoreID := ""
+	for rows.Next() {
+		var storeID, name, kind, role, lifecycle, binding, ownershipEpoch, createdAt string
+		if err := rows.Scan(&storeID, &name, &kind, &role, &lifecycle,
+			&binding, &ownershipEpoch, &createdAt); err != nil {
+			return "", fmt.Errorf("scanning schema-v3 blob store: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO blob_stores(
+			store_id,name,kind,role,lifecycle,binding,ownership_epoch,created_at
+		) VALUES(?,?,?,?,?,?,?,?)`, storeID, name, kind, role, lifecycle,
+			binding, ownershipEpoch, createdAt); err != nil {
+			return "", fmt.Errorf("restoring schema-v3 blob store %s: %w", storeID, err)
+		}
+		if role == blobStoreRolePrimary {
+			primaryStoreID = storeID
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("reading schema-v3 blob stores: %w", err)
+	}
+	if primaryStoreID == "" {
+		return "", errors.New("schema-v3 physical catalog has no primary blob store")
+	}
+	return primaryStoreID, nil
+}
+
+func restoreV3BlobLocations(ctx context.Context, source metadataQuerier, tx *sql.Tx) error {
+	rows, err := source.QueryContext(ctx, `
+		SELECT blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
+		FROM blob_locations ORDER BY blob_hash,store_id`)
+	if err != nil {
+		return fmt.Errorf("reading schema-v3 blob locations: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var blobHash, storeID, generation, kind string
+		var encoding sql.NullString
+		var storedSize int64
+		var packEligible bool
+		if err := rows.Scan(&blobHash, &storeID, &generation, &kind, &encoding,
+			&storedSize, &packEligible); err != nil {
+			return fmt.Errorf("scanning schema-v3 blob location: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO blob_locations(
+			blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
+		) VALUES(?,?,?,?,?,?,?)`, blobHash, storeID, generation, kind, encoding,
+			storedSize, packEligible); err != nil {
+			return fmt.Errorf("restoring schema-v3 blob location %s/%s: %w", blobHash, storeID, err)
+		}
+	}
+	return rows.Err()
+}
+
+func restoreV3BlobPacks(ctx context.Context, source metadataQuerier, tx *sql.Tx) error {
+	rows, err := source.QueryContext(ctx, `SELECT
+		store_id,pack_id,entry_count,stored_bytes,created_at,scan_hash,
+		live_entries,live_stored_bytes,live_raw_bytes,max_live_stored_len,max_live_raw_len
+		FROM blob_packs ORDER BY store_id,pack_id`)
+	if err != nil {
+		return fmt.Errorf("reading schema-v3 blob packs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var storeID, packID, createdAt, scanHash string
+		var entryCount, storedBytes, liveEntries, liveStoredBytes int64
+		var liveRawBytes, maxLiveStoredLen, maxLiveRawLen int64
+		if err := rows.Scan(&storeID, &packID, &entryCount, &storedBytes, &createdAt,
+			&scanHash, &liveEntries, &liveStoredBytes, &liveRawBytes,
+			&maxLiveStoredLen, &maxLiveRawLen); err != nil {
+			return fmt.Errorf("scanning schema-v3 blob pack: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO blob_packs(
+			store_id,pack_id,entry_count,stored_bytes,created_at,scan_hash,
+			live_entries,live_stored_bytes,live_raw_bytes,max_live_stored_len,max_live_raw_len
+		) VALUES(?,?,?,?,?,?,0,0,0,0,0)`, storeID, packID, entryCount, storedBytes,
+			createdAt, scanHash); err != nil {
+			return fmt.Errorf("restoring schema-v3 blob pack %s/%s: %w", storeID, packID, err)
+		}
+	}
+	return rows.Err()
+}
+
+func restoreV3BlobPackEntries(ctx context.Context, source metadataQuerier, tx *sql.Tx) error {
+	rows, err := source.QueryContext(ctx, `SELECT
+		blob_hash,store_id,pack_id,pack_offset,stored_len,raw_len,flags,crc32c
+		FROM blob_pack_entries ORDER BY blob_hash,store_id`)
+	if err != nil {
+		return fmt.Errorf("reading schema-v3 blob pack entries: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var blobHash, storeID, packID string
+		var packOffset, storedLen, rawLen, flags, crc32c int64
+		if err := rows.Scan(&blobHash, &storeID, &packID, &packOffset,
+			&storedLen, &rawLen, &flags, &crc32c); err != nil {
+			return fmt.Errorf("scanning schema-v3 blob pack entry: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO blob_pack_entries(
+			blob_hash,store_id,pack_id,pack_offset,stored_len,raw_len,flags,crc32c
+		) VALUES(?,?,?,?,?,?,?,?)`, blobHash, storeID, packID, packOffset,
+			storedLen, rawLen, flags, crc32c); err != nil {
+			return fmt.Errorf("restoring schema-v3 blob pack entry %s/%s: %w", blobHash, storeID, err)
+		}
+	}
+	return rows.Err()
 }
 
 func resetImportedPhysicalCatalog(ctx context.Context, tx *sql.Tx) error {
@@ -822,6 +1037,12 @@ func validateUpgradeStage(path string, driver docsqlite.Driver) error {
 	store, err := openCurrentStore(path, driver)
 	if err != nil {
 		return fmt.Errorf("opening interrupted upgrade staging store: %w", err)
+	}
+	if _, err := store.MigrateLegacyPlainText(context.Background()); err != nil {
+		return errors.Join(
+			fmt.Errorf("migrating interrupted upgrade staging authority: %w", err),
+			store.Close(),
+		)
 	}
 	validateErr := store.ValidateMetadata(context.Background())
 	closeErr = store.Close()

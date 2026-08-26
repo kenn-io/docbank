@@ -344,6 +344,24 @@ func attachedRecordIdentity(record *Record) ([]byte, error) {
 			return nil, err
 		}
 		identity = Record{Kind: "tag_definition_identity", Fields: []Field{{Name: "tag_id", Value: tagID}}}
+	case "derivative_purge_suppression":
+		source, err := recordField(record, "source_sha256")
+		if err != nil {
+			return nil, err
+		}
+		profile, err := recordField(record, "profile_fingerprint")
+		if err != nil {
+			return nil, err
+		}
+		build, err := recordField(record, "build_id")
+		if err != nil {
+			return nil, err
+		}
+		identity = Record{Kind: "derivative_purge_suppression_identity", Fields: []Field{
+			{Name: "source_sha256", Value: source},
+			{Name: "profile_fingerprint", Value: profile},
+			{Name: "build_id", Value: build},
+		}}
 	default:
 		return nil, fmt.Errorf("record kind %q has no attached-metadata identity", record.Kind)
 	}
