@@ -695,6 +695,7 @@ func TestJobsShowsDaemonStatus(t *testing.T) {
 		checksums, found := jobNamed(got, "maintenance:auxiliary-checksums")
 		return found && checksums.Status == "completed"
 	}, 5*time.Second, 25*time.Millisecond)
+	assert.Equal(t, "running", requireJob(t, got, "process:vector-indexes").Status)
 	assert.Equal(t, "running", requireJob(t, got, "extract:plain-text").Status)
 	assert.Equal(t, "running", requireJob(t, got, "extract:source-metadata").Status)
 	_, renditions := jobNamed(got, "process:renditions")
@@ -756,6 +757,7 @@ func TestConfiguredAutomaticPackingPacksAndKeepsDaemonAlive(t *testing.T) {
 	require.NoError(t, err)
 	var got api.JobList
 	require.NoError(t, json.Unmarshal([]byte(out), &got))
+	assert.Equal(t, "running", requireJob(t, got, "process:vector-indexes").Status)
 	assert.Equal(t, "running", requireJob(t, got, "storage:pack").Status)
 
 	time.Sleep(100 * time.Millisecond)
@@ -797,6 +799,7 @@ func TestConfiguredWatchIngestsStableFilesAndRemainsObservable(t *testing.T) {
 	require.NoError(t, err)
 	var got api.JobList
 	require.NoError(t, json.Unmarshal([]byte(out), &got))
+	assert.Equal(t, "running", requireJob(t, got, "process:vector-indexes").Status)
 	assert.Equal(t, "running", requireJob(t, got, "extract:plain-text").Status)
 	assert.Equal(t, "running", requireJob(t, got, "watch:sessions").Status)
 
