@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"hash"
@@ -192,24 +193,6 @@ type RenditionResult struct {
 	Receipt          RenditionReceipt    `json:"receipt"`
 }
 
-// ValidateRenditionProviderRequest validates the provider snapshot and exact upload authorization.
-func ValidateRenditionProviderRequest(
-	provider RenditionProvider, upload AuthorizedUpload, authorization RenditionAuthorization,
-) (RenditionDescriptor, error) {
-	return ValidateRenditionProviderRequestAt(time.Now().UTC(), provider, upload, authorization)
-}
-
-// ValidateRenditionProviderRequestAt validates a request against an explicit
-// trusted clock. Callers with a transaction clock can avoid time-of-check
-// drift while retaining the same expiry boundary.
-func ValidateRenditionProviderRequestAt(
-	now time.Time, provider RenditionProvider, upload AuthorizedUpload,
-	authorization RenditionAuthorization,
-) (RenditionDescriptor, error) {
-	descriptor, _, err := validateRenditionProviderRequestAt(now, provider, upload, authorization)
-	return descriptor, err
-}
-
 func validateRenditionProviderRequestAt(
 	now time.Time, provider RenditionProvider, upload AuthorizedUpload,
 	authorization RenditionAuthorization,
@@ -311,7 +294,7 @@ func RenderRendition(
 		}
 		return RenditionResult{}, err
 	}
-	if err := ValidateRenditionResult(descriptor, sealed, result); err != nil {
+	if err := preflightRenditionResult(sealed.MaxTotalResultBytes, result); err != nil {
 		return RenditionResult{}, err
 	}
 	result = cloneRenditionResult(result)
@@ -346,6 +329,9 @@ func ValidateRenditionResult(
 	if err := validateAuthorizationWithoutUpload(descriptor, authorization); err != nil {
 		return err
 	}
+	if err := preflightRenditionResult(authorization.MaxTotalResultBytes, result); err != nil {
+		return err
+	}
 	if err := ValidateSourceEvidenceV1(result.Evidence); err != nil {
 		return fmt.Errorf("provider evidence: %w", err)
 	}
@@ -368,25 +354,122 @@ func ValidateRenditionResult(
 	if err := validateRenditionReceipt(descriptor, authorization, result.Receipt); err != nil {
 		return err
 	}
-	encodedEvidence, err := canonicalJSON(result.Evidence)
-	if err != nil {
-		return fmt.Errorf("encode provider evidence: %w", err)
+	return nil
+}
+
+var errRenditionResultTooLarge = errors.New("provider total result bytes exceed authorization")
+
+type renditionResultSizeWriter struct {
+	remaining int64
+}
+
+func (writer *renditionResultSizeWriter) Write(value []byte) (int, error) {
+	if int64(len(value)) > writer.remaining {
+		return 0, errRenditionResultTooLarge
 	}
-	encodedReceipt, err := canonicalJSON(result.Receipt)
-	if err != nil {
-		return fmt.Errorf("encode provider receipt: %w", err)
+	writer.remaining -= int64(len(value))
+	return len(value), nil
+}
+
+func preflightRenditionResult(maxBytes int, result RenditionResult) error {
+	// Bound encoded string and byte tokens without first copying them into
+	// the streaming encoder's buffer, then count the complete JSON structure.
+	remaining := int64(maxBytes)
+	if !consumeRenditionResultTokens(reflect.ValueOf(result), &remaining) {
+		return errRenditionResultTooLarge
 	}
-	total := int64(len(encodedEvidence)) + int64(len(encodedReceipt)) + int64(len(result.ProviderMarkdown))
-	for _, artifact := range result.Artifacts {
-		total += int64(len(artifact.Role) + len(artifact.MediaType) + len(artifact.SHA256) + len(artifact.Payload))
-		if total > int64(authorization.MaxTotalResultBytes) {
-			return errors.New("provider total result bytes exceed authorization")
+	writer := renditionResultSizeWriter{remaining: int64(maxBytes)}
+	if err := json.MarshalWrite(&writer, result); err != nil {
+		if errors.Is(err, errRenditionResultTooLarge) {
+			return errRenditionResultTooLarge
 		}
-	}
-	if total > int64(authorization.MaxTotalResultBytes) {
-		return errors.New("provider total result bytes exceed authorization")
+		return fmt.Errorf("encode provider result: %w", err)
 	}
 	return nil
+}
+
+func consumeRenditionResultTokens(value reflect.Value, remaining *int64) bool {
+	if !value.IsValid() {
+		return true
+	}
+	switch value.Kind() {
+	case reflect.Interface, reflect.Pointer:
+		return value.IsNil() || consumeRenditionResultTokens(value.Elem(), remaining)
+	case reflect.String:
+		return consumeRenditionJSONString(value.String(), remaining)
+	case reflect.Slice:
+		if value.Type().Elem().Kind() == reflect.Uint8 {
+			if value.Len() == 0 {
+				return true
+			}
+			encodedBytes := int64(value.Len()/3) * 4
+			if value.Len()%3 != 0 {
+				encodedBytes += 4
+			}
+			return consumeRenditionBytes(encodedBytes+2, remaining)
+		}
+		fallthrough
+	case reflect.Array:
+		for index := range value.Len() {
+			if !consumeRenditionResultTokens(value.Index(index), remaining) {
+				return false
+			}
+		}
+	case reflect.Struct:
+		for _, field := range value.Fields() {
+			if !consumeRenditionResultTokens(field, remaining) {
+				return false
+			}
+		}
+	case reflect.Map:
+		iterator := value.MapRange()
+		for iterator.Next() {
+			if !consumeRenditionResultTokens(iterator.Key(), remaining) ||
+				!consumeRenditionResultTokens(iterator.Value(), remaining) {
+				return false
+			}
+		}
+	case reflect.Invalid,
+		reflect.Bool,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+		reflect.Float32, reflect.Float64,
+		reflect.Complex64, reflect.Complex128,
+		reflect.Chan, reflect.Func, reflect.UnsafePointer:
+	}
+	return true
+}
+
+func consumeRenditionJSONString(value string, remaining *int64) bool {
+	if value == "" {
+		return true
+	}
+	if !consumeRenditionBytes(2, remaining) {
+		return false
+	}
+	for index := range len(value) {
+		encodedBytes := int64(1)
+		switch value[index] {
+		case '\\', '"', '\b', '\f', '\n', '\r', '\t':
+			encodedBytes = 2
+		default:
+			if value[index] < 0x20 {
+				encodedBytes = 6
+			}
+		}
+		if !consumeRenditionBytes(encodedBytes, remaining) {
+			return false
+		}
+	}
+	return true
+}
+
+func consumeRenditionBytes(count int64, remaining *int64) bool {
+	if count > *remaining {
+		return false
+	}
+	*remaining -= count
+	return true
 }
 
 // RenditionErrorCode is a stable, bounded provider failure class.

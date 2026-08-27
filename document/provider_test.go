@@ -119,12 +119,9 @@ func TestRenditionProviderContractAcceptsExactBoundedResult(t *testing.T) {
 		ReadCloser: io.NopCloser(strings.NewReader("synthetic exact source")), metadata: metadata,
 	}
 
-	validated, err := ValidateRenditionProviderRequest(provider, upload, authorization)
+	produced, err := RenderRendition(t.Context(), provider, upload, authorization)
 	require.NoError(t, err)
-	assert.Equal(t, descriptor, validated)
-	produced, err := provider.Render(t.Context(), upload, authorization)
-	require.NoError(t, err)
-	require.NoError(t, ValidateRenditionResult(validated, authorization, produced))
+	assert.Equal(t, result, produced)
 }
 
 func TestRenditionProviderContractRejectsInvalidDescriptorAndAuthorization(t *testing.T) {
@@ -172,7 +169,9 @@ func TestRenditionProviderContractRejectsInvalidDescriptorAndAuthorization(t *te
 			upload := &syntheticAuthorizedUpload{
 				ReadCloser: io.NopCloser(bytes.NewReader(nil)), metadata: metadata,
 			}
-			_, err := ValidateRenditionProviderRequest(provider, upload, authorization)
+			_, _, err := validateRenditionProviderRequestAt(
+				time.Now().UTC(), provider, upload, authorization,
+			)
 			require.ErrorContains(t, err, testCase.want)
 		})
 	}
@@ -251,6 +250,20 @@ func TestRenditionProviderContractCountsReceiptAgainstTotal(t *testing.T) {
 	artifact := result.Artifacts[0]
 	authorization.MaxTotalResultBytes = len(encodedEvidence) + len(result.ProviderMarkdown) +
 		len(artifact.Role) + len(artifact.MediaType) + len(artifact.SHA256) + len(artifact.Payload)
+
+	require.ErrorContains(t,
+		ValidateRenditionResult(descriptor, authorization, result),
+		"total result bytes",
+	)
+}
+
+func TestRenditionProviderContractPreflightsTotalBeforeEvidenceValidation(t *testing.T) {
+	descriptor := validRenditionDescriptor(t)
+	metadata := validAuthorizedUploadMetadata()
+	authorization := validRenditionAuthorization(descriptor, metadata)
+	authorization.MaxTotalResultBytes = 128
+	result := validRenditionResult(descriptor, authorization)
+	result.Evidence.ContractVersion = "malformed"
 
 	require.ErrorContains(t,
 		ValidateRenditionResult(descriptor, authorization, result),
@@ -371,11 +384,11 @@ func TestRenditionProviderContractRejectsExpiredAuthorizationAndOutOfWindowRecei
 	authorization := validRenditionAuthorization(descriptor, metadata)
 	now, err := parseRenditionTimestamp(authorization.ExpiresAt)
 	require.NoError(t, err)
-	_, err = ValidateRenditionProviderRequestAt(now, provider, upload, authorization)
+	_, _, err = validateRenditionProviderRequestAt(now, provider, upload, authorization)
 	require.ErrorContains(t, err, "not current")
 	authorizedAt, err := parseRenditionTimestamp(authorization.AuthorizedAt)
 	require.NoError(t, err)
-	_, err = ValidateRenditionProviderRequestAt(
+	_, _, err = validateRenditionProviderRequestAt(
 		authorizedAt.Add(-time.Nanosecond),
 		provider, upload, authorization)
 	require.ErrorContains(t, err, "not current")
@@ -440,7 +453,7 @@ func TestRenditionProviderContractRejectsMutableBoundarySnapshots(t *testing.T) 
 	changedDescriptor.ID = "changed-provider"
 	provider := &changingRenditionProvider{descriptors: []RenditionDescriptor{descriptor, changedDescriptor}}
 	upload := &syntheticAuthorizedUpload{ReadCloser: io.NopCloser(bytes.NewReader(nil)), metadata: metadata}
-	_, err := ValidateRenditionProviderRequest(provider, upload, authorization)
+	_, _, err := validateRenditionProviderRequestAt(time.Now().UTC(), provider, upload, authorization)
 	require.ErrorContains(t, err, "descriptor changed")
 
 	changedMetadata := metadata
@@ -450,7 +463,9 @@ func TestRenditionProviderContractRejectsMutableBoundarySnapshots(t *testing.T) 
 		ReadCloser: io.NopCloser(bytes.NewReader(nil)),
 		metadata:   []AuthorizedUploadMetadata{metadata, changedMetadata},
 	}
-	_, err = ValidateRenditionProviderRequest(provider, changingUpload, authorization)
+	_, _, err = validateRenditionProviderRequestAt(
+		time.Now().UTC(), provider, changingUpload, authorization,
+	)
 	require.ErrorContains(t, err, "upload metadata changed")
 }
 
@@ -463,7 +478,7 @@ func TestRenditionProviderContractFreezesAliasedDescriptorSlices(t *testing.T) {
 		ReadCloser: io.NopCloser(bytes.NewReader(nil)), metadata: metadata,
 	}
 
-	_, err := ValidateRenditionProviderRequest(provider, upload, authorization)
+	_, _, err := validateRenditionProviderRequestAt(time.Now().UTC(), provider, upload, authorization)
 	require.ErrorContains(t, err, "descriptor changed")
 }
 
@@ -740,14 +755,16 @@ func TestRenditionProviderContractRejectsTypedNilBoundaryValues(t *testing.T) {
 	var provider *changingRenditionProvider
 	upload := &syntheticAuthorizedUpload{ReadCloser: io.NopCloser(bytes.NewReader(nil)), metadata: metadata}
 	assert.NotPanics(t, func() {
-		_, err := ValidateRenditionProviderRequest(provider, upload, authorization)
+		_, _, err := validateRenditionProviderRequestAt(time.Now().UTC(), provider, upload, authorization)
 		require.ErrorContains(t, err, "provider is required")
 	})
 
 	validProvider := syntheticRenditionProvider{descriptor: descriptor}
 	var nilUpload *syntheticAuthorizedUpload
 	assert.NotPanics(t, func() {
-		_, err := ValidateRenditionProviderRequest(validProvider, nilUpload, authorization)
+		_, _, err := validateRenditionProviderRequestAt(
+			time.Now().UTC(), validProvider, nilUpload, authorization,
+		)
 		require.ErrorContains(t, err, "upload is required")
 	})
 }
