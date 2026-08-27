@@ -521,6 +521,9 @@ func TestPurgedLegacyDerivativeStaysSuppressedAcrossRestartUntilExplicitAuthoriz
 		BlobHash: hash, Extractor: legacyPlainTextExtractor,
 		ExtractorVersion: legacyPlainTextExtractorVersion, Status: ExtractionOK, Text: text,
 	}))
+	pending, err = s.PendingTextExtractions(t.Context(), 10)
+	require.NoError(t, err)
+	assert.Empty(t, pending, "the worker must retire exactly suppressed extraction work")
 	_, err = s.MigrateLegacyPlainText(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_builds`).Scan(&builds))

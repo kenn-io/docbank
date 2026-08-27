@@ -425,22 +425,25 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 			}
 		}
 		if exactLegacyResult {
+			suppressed := false
 			if result.Status == ExtractionOK {
 				buildID := legacyPlainTextBuildFingerprint(
 					result.BlobHash, result.Extractor, result.ExtractorVersion,
 					result.Status, []byte(result.Text))
-				buildSuppressed, suppressionErr := derivativeBuildSuppressedTx(
+				var suppressionErr error
+				suppressed, suppressionErr = derivativeBuildSuppressedTx(
 					ctx, tx, result.BlobHash, buildID)
 				if suppressionErr != nil {
 					return fmt.Errorf("checking extraction-result build suppression: %w", suppressionErr)
 				}
-				if buildSuppressed {
-					return nil
-				}
 			}
-			suppressed, suppressionErr := legacyTextExtractionSuppressedTx(ctx, tx, result.BlobHash)
-			if suppressionErr != nil {
-				return fmt.Errorf("checking extraction-result purge suppression: %w", suppressionErr)
+			if !suppressed {
+				var suppressionErr error
+				suppressed, suppressionErr = legacyTextExtractionSuppressedTx(
+					ctx, tx, result.BlobHash)
+				if suppressionErr != nil {
+					return fmt.Errorf("checking extraction-result purge suppression: %w", suppressionErr)
+				}
 			}
 			if suppressed {
 				if _, err := tx.ExecContext(ctx, `DELETE FROM content_fts WHERE rowid IN (
