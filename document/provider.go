@@ -300,6 +300,10 @@ func RenderRendition(
 	if err := ValidateRenditionResult(descriptor, sealed, result); err != nil {
 		return RenditionResult{}, err
 	}
+	result = cloneRenditionResult(result)
+	if err := ValidateRenditionResult(descriptor, sealed, result); err != nil {
+		return RenditionResult{}, err
+	}
 	if err := providerUpload.verify(ctx); err != nil {
 		if contextErr := ctx.Err(); contextErr != nil {
 			return RenditionResult{}, contextErr
@@ -345,7 +349,11 @@ func ValidateRenditionResult(
 	if err != nil {
 		return fmt.Errorf("encode provider evidence: %w", err)
 	}
-	total := int64(len(encodedEvidence) + len(result.ProviderMarkdown))
+	encodedReceipt, err := canonicalJSON(result.Receipt)
+	if err != nil {
+		return fmt.Errorf("encode provider receipt: %w", err)
+	}
+	total := int64(len(encodedEvidence)) + int64(len(encodedReceipt)) + int64(len(result.ProviderMarkdown))
 	for _, artifact := range result.Artifacts {
 		total += int64(len(artifact.Role) + len(artifact.MediaType) + len(artifact.SHA256) + len(artifact.Payload))
 		if total > int64(authorization.MaxTotalResultBytes) {
@@ -490,6 +498,66 @@ func validateRenditionDescriptor(descriptor RenditionDescriptor) error {
 func cloneRenditionAuthorization(value RenditionAuthorization) RenditionAuthorization {
 	value.AllowedArtifactRoles = slices.Clone(value.AllowedArtifactRoles)
 	return value
+}
+
+func cloneRenditionResult(value RenditionResult) RenditionResult {
+	value.Evidence = cloneSourceEvidenceV1(value.Evidence)
+	value.ProviderMarkdown = slices.Clone(value.ProviderMarkdown)
+	value.Artifacts = slices.Clone(value.Artifacts)
+	for index := range value.Artifacts {
+		value.Artifacts[index].Payload = slices.Clone(value.Artifacts[index].Payload)
+	}
+	value.Receipt.Warnings = slices.Clone(value.Receipt.Warnings)
+	return value
+}
+
+func cloneSourceEvidenceV1(value SourceEvidenceV1) SourceEvidenceV1 {
+	value.Artifacts = slices.Clone(value.Artifacts)
+	value.Omissions = cloneSourceEvidenceOmissions(value.Omissions)
+	value.Units = slices.Clone(value.Units)
+	for unitIndex := range value.Units {
+		unit := &value.Units[unitIndex]
+		if unit.Confidence != nil {
+			confidence := *unit.Confidence
+			unit.Confidence = &confidence
+		}
+		unit.HeadingPath = slices.Clone(unit.HeadingPath)
+		unit.Omissions = cloneSourceEvidenceOmissions(unit.Omissions)
+		unit.Regions = slices.Clone(unit.Regions)
+		for regionIndex := range unit.Regions {
+			region := &unit.Regions[regionIndex]
+			if region.Confidence != nil {
+				confidence := *region.Confidence
+				region.Confidence = &confidence
+			}
+			if region.Geometry != nil {
+				geometry := *region.Geometry
+				geometry.Boxes = slices.Clone(geometry.Boxes)
+				geometry.Polygons = cloneEvidencePolygons(geometry.Polygons)
+				region.Geometry = &geometry
+			}
+		}
+		unit.Tables = slices.Clone(unit.Tables)
+		for tableIndex := range unit.Tables {
+			unit.Tables[tableIndex].Cells = slices.Clone(unit.Tables[tableIndex].Cells)
+		}
+	}
+	return value
+}
+
+func cloneSourceEvidenceOmissions(source []SourceEvidenceOmissionV1) []SourceEvidenceOmissionV1 {
+	result := slices.Clone(source)
+	for index := range result {
+		if result[index].Locator != nil {
+			locator := *result[index].Locator
+			result[index].Locator = &locator
+		}
+		if result[index].Range != nil {
+			textRange := *result[index].Range
+			result[index].Range = &textRange
+		}
+	}
+	return result
 }
 
 type sealedAuthorizedUpload struct {
@@ -662,7 +730,7 @@ func validateRenditionFormat(format RenditionFormatCapability) error {
 }
 
 func validateAuthorizedUploadMetadata(metadata AuthorizedUploadMetadata) error {
-	if metadata.Filename == "" || len(metadata.Filename) > 255 || strings.ContainsAny(metadata.Filename, "/\\\x00") {
+	if len(metadata.Filename) > 255 || strings.ContainsAny(metadata.Filename, "/\\\x00") {
 		return errors.New("upload filename must be a safe basename of at most 255 bytes")
 	}
 	if err := validateRenditionFormat(RenditionFormatCapability{
@@ -689,6 +757,9 @@ func validateRenditionAuthorization(
 ) error {
 	if err := validateAuthorizationWithoutUpload(descriptor, authorization); err != nil {
 		return err
+	}
+	if authorization.DiscloseFilename && metadata.Filename == "" {
+		return errors.New("authorization requires filename disclosure but upload filename is empty")
 	}
 	if authorization.SourceSHA256 != metadata.SHA256 || authorization.SourceBytes != metadata.ByteLength {
 		return errors.New("authorization does not match exact upload bytes")

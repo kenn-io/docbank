@@ -241,6 +241,23 @@ func TestRenditionProviderContractCountsArtifactMetadataAgainstTotal(t *testing.
 	)
 }
 
+func TestRenditionProviderContractCountsReceiptAgainstTotal(t *testing.T) {
+	descriptor := validRenditionDescriptor(t)
+	metadata := validAuthorizedUploadMetadata()
+	authorization := validRenditionAuthorization(descriptor, metadata)
+	result := validRenditionResult(descriptor, authorization)
+	encodedEvidence, err := canonicalJSON(result.Evidence)
+	require.NoError(t, err)
+	artifact := result.Artifacts[0]
+	authorization.MaxTotalResultBytes = len(encodedEvidence) + len(result.ProviderMarkdown) +
+		len(artifact.Role) + len(artifact.MediaType) + len(artifact.SHA256) + len(artifact.Payload)
+
+	require.ErrorContains(t,
+		ValidateRenditionResult(descriptor, authorization, result),
+		"total result bytes",
+	)
+}
+
 func TestRenditionProviderContractAcceptsRepeatedArtifactRoles(t *testing.T) {
 	descriptor := validRenditionDescriptor(t)
 	metadata := validAuthorizedUploadMetadata()
@@ -472,6 +489,34 @@ func TestRenderRenditionKeepsSealedAuthorizationSeparateFromProvider(t *testing.
 		"provider mutation must not reach the caller or sealed validation snapshot")
 }
 
+func TestRenderRenditionOwnsValidatedResult(t *testing.T) {
+	descriptor := validRenditionDescriptor(t)
+	metadata := validAuthorizedUploadMetadata()
+	authorization := validRenditionAuthorization(descriptor, metadata)
+	provided := validRenditionResult(descriptor, authorization)
+	expected, err := canonicalJSON(provided)
+	require.NoError(t, err)
+	provider := &mutatingRenditionProvider{descriptor: descriptor}
+	provider.render = func(_ AuthorizedUpload, _ RenditionAuthorization) RenditionResult {
+		return provided
+	}
+	upload := &syntheticAuthorizedUpload{
+		ReadCloser: io.NopCloser(strings.NewReader("synthetic exact source")), metadata: metadata,
+	}
+
+	result, err := RenderRendition(t.Context(), provider, upload, authorization)
+	require.NoError(t, err)
+	provided.Evidence.Artifacts[0].Pointer = "provider/changed.json"
+	provided.Evidence.Omissions[0].Reason = "changed"
+	provided.Evidence.Units[0].Text = "changed"
+	provided.ProviderMarkdown[0] = 'X'
+	provided.Artifacts[0].Payload[0] = 'X'
+	provided.Receipt.Warnings[0] = "changed"
+	actual, err := canonicalJSON(result)
+	require.NoError(t, err)
+	assert.Equal(t, expected, actual)
+}
+
 func TestRenderRenditionOwnsUpload(t *testing.T) {
 	t.Run("validation failure preserves close error", func(t *testing.T) {
 		descriptor := validRenditionDescriptor(t)
@@ -596,16 +641,21 @@ func TestRenderRenditionCancellationClosesBlockedUpload(t *testing.T) {
 
 func TestRenderRenditionEnforcesFilenameDisclosure(t *testing.T) {
 	for _, testCase := range []struct {
-		name     string
-		disclose bool
-		want     string
+		name           string
+		sourceFilename string
+		disclose       bool
+		want           string
+		wantError      string
 	}{
-		{name: "withheld", want: ""},
-		{name: "disclosed", disclose: true, want: "document.pdf"},
+		{name: "withheld", sourceFilename: "document.pdf", want: ""},
+		{name: "already redacted", want: ""},
+		{name: "disclosed", sourceFilename: "document.pdf", disclose: true, want: "document.pdf"},
+		{name: "missing disclosed filename", disclose: true, wantError: "filename disclosure"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			descriptor := validRenditionDescriptor(t)
 			metadata := validAuthorizedUploadMetadata()
+			metadata.Filename = testCase.sourceFilename
 			authorization := validRenditionAuthorization(descriptor, metadata)
 			authorization.DiscloseFilename = testCase.disclose
 			provider := &mutatingRenditionProvider{descriptor: descriptor}
@@ -646,10 +696,14 @@ func TestRenderRenditionEnforcesFilenameDisclosure(t *testing.T) {
 			}
 
 			_, err := RenderRendition(t.Context(), provider, upload, authorization)
+			if testCase.wantError != "" {
+				require.ErrorContains(t, err, testCase.wantError)
+				return
+			}
 			require.NoError(t, err)
 			assert.Equal(t, testCase.want, received.Filename)
 			assert.Equal(t, testCase.want, reflectedFilename)
-			assert.Equal(t, "document.pdf", upload.Metadata().Filename)
+			assert.Equal(t, testCase.sourceFilename, upload.Metadata().Filename)
 		})
 	}
 }
