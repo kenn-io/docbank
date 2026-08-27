@@ -557,6 +557,43 @@ func TestRenderRenditionEnforcesExactUploadBytes(t *testing.T) {
 	}
 }
 
+func TestRenderRenditionCancellationClosesBlockedUpload(t *testing.T) {
+	descriptor := validRenditionDescriptor(t)
+	metadata := validAuthorizedUploadMetadata()
+	authorization := validRenditionAuthorization(descriptor, metadata)
+	pipeReader, pipeWriter := io.Pipe()
+	t.Cleanup(func() { _ = pipeWriter.Close() })
+	upload := &syntheticAuthorizedUpload{ReadCloser: pipeReader, metadata: metadata}
+	started := make(chan struct{})
+	readDone := make(chan error, 1)
+	provider := &mutatingRenditionProvider{descriptor: descriptor}
+	provider.render = func(upload AuthorizedUpload, received RenditionAuthorization) RenditionResult {
+		close(started)
+		_, readErr := upload.Read(make([]byte, 1))
+		readDone <- readErr
+		return validRenditionResult(descriptor, received)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		_, err := RenderRendition(ctx, provider, upload, authorization)
+		done <- err
+	}()
+	<-started
+	cancel()
+
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(5 * time.Second):
+		_ = pipeReader.Close()
+		<-done
+		t.Fatal("RenderRendition did not close a blocked upload after cancellation")
+	}
+	require.Error(t, <-readDone)
+	assert.Equal(t, 1, upload.closeCalls)
+}
+
 func TestRenderRenditionEnforcesFilenameDisclosure(t *testing.T) {
 	for _, testCase := range []struct {
 		name     string

@@ -263,6 +263,11 @@ func RenderRendition(
 			err = errors.Join(err, fmt.Errorf("close authorized upload: %w", closeErr))
 		}
 	}()
+	stopClose := context.AfterFunc(ctx, func() { _ = ownedUpload.Close() })
+	defer stopClose()
+	if err := ctx.Err(); err != nil {
+		return RenditionResult{}, err
+	}
 
 	sealed := cloneRenditionAuthorization(authorization)
 	descriptor, metadata, err := validateRenditionProviderRequestAt(time.Now().UTC(), provider, ownedUpload, sealed)
@@ -278,8 +283,14 @@ func RenderRendition(
 		source: ownedUpload, metadata: metadata, limited: limited,
 		reader: io.TeeReader(limited, hasher), hasher: hasher, expectedSHA256: sealed.SourceSHA256,
 	}
+	if err := ctx.Err(); err != nil {
+		return RenditionResult{}, err
+	}
 	result, err = provider.Render(ctx, providerUpload, cloneRenditionAuthorization(sealed))
 	_ = providerUpload.Close()
+	if contextErr := ctx.Err(); contextErr != nil {
+		return RenditionResult{}, contextErr
+	}
 	if err != nil {
 		if classified := ValidateRenditionProviderError(err); classified != nil {
 			return RenditionResult{}, classified
@@ -290,6 +301,9 @@ func RenderRendition(
 		return RenditionResult{}, err
 	}
 	if err := providerUpload.verify(ctx); err != nil {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return RenditionResult{}, contextErr
+		}
 		return RenditionResult{}, err
 	}
 	return result, nil
