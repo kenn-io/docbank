@@ -54,7 +54,7 @@ type changingRenditionProvider struct {
 
 type mutatingRenditionProvider struct {
 	descriptor       RenditionDescriptor
-	render           func(RenditionAuthorization) RenditionResult
+	render           func(AuthorizedUpload, RenditionAuthorization) RenditionResult
 	mutateDescriptor bool
 	calls            int
 }
@@ -68,9 +68,9 @@ func (provider *mutatingRenditionProvider) Descriptor() RenditionDescriptor {
 }
 
 func (provider *mutatingRenditionProvider) Render(
-	_ context.Context, _ AuthorizedUpload, authorization RenditionAuthorization,
+	_ context.Context, upload AuthorizedUpload, authorization RenditionAuthorization,
 ) (RenditionResult, error) {
-	return provider.render(authorization), nil
+	return provider.render(upload, authorization), nil
 }
 
 func (provider *changingRenditionProvider) Descriptor() RenditionDescriptor {
@@ -177,11 +177,11 @@ func TestRenditionProviderContractRejectsDuplicateAndOversizedOutputs(t *testing
 		want   string
 	}{
 		{
-			name: "duplicate artifact role",
+			name: "duplicate artifact identity",
 			mutate: func(result *RenditionResult) {
 				result.Artifacts = append(result.Artifacts, result.Artifacts[0])
 			},
-			want: "artifact role",
+			want: "artifact identity",
 		},
 		{
 			name: "oversized provider Markdown",
@@ -205,6 +205,28 @@ func TestRenditionProviderContractRejectsDuplicateAndOversizedOutputs(t *testing
 				ValidateRenditionResult(descriptor, authorization, result), testCase.want)
 		})
 	}
+}
+
+func TestRenditionProviderContractAcceptsRepeatedArtifactRoles(t *testing.T) {
+	descriptor := validRenditionDescriptor(t)
+	metadata := validAuthorizedUploadMetadata()
+	authorization := validRenditionAuthorization(descriptor, metadata)
+	authorization.MaxArtifacts = 2
+	result := validRenditionResult(descriptor, authorization)
+
+	payload := []byte(`{"synthetic":"second structured artifact"}`)
+	digest := sha256.Sum256(payload)
+	checksum := hex.EncodeToString(digest[:])
+	result.Artifacts = append(result.Artifacts, RenditionArtifact{
+		Role: EvidenceArtifactStructured, MediaType: "application/json",
+		Payload: payload, SHA256: checksum,
+	})
+	result.Evidence.Artifacts = append(result.Evidence.Artifacts, SourceEvidenceArtifactV1{
+		ProviderID: "provider-artifact-2", Pointer: "provider/structured-2.json",
+		Role: EvidenceArtifactStructured, SHA256: checksum,
+	})
+
+	require.NoError(t, ValidateRenditionResult(descriptor, authorization, result))
 }
 
 func TestRenditionProviderContractRejectsUnauthorizedOrUnmatchedEvidenceArtifacts(t *testing.T) {
@@ -238,6 +260,13 @@ func TestRenditionProviderContractRejectsUnsafeReceiptFields(t *testing.T) {
 		want   string
 	}{
 		{
+			name: "rendition request mismatch",
+			mutate: func(receipt *RenditionReceipt) {
+				receipt.RenditionRequestFingerprint = strings.Repeat("9", 64)
+			},
+			want: "does not match",
+		},
+		{
 			name: "provider body in warning",
 			mutate: func(receipt *RenditionReceipt) {
 				receipt.Warnings = []string{"raw body: {\"document\":\"secret\"}"}
@@ -268,7 +297,7 @@ func TestRenditionProviderContractRejectsUnclassifiedErrors(t *testing.T) {
 	)
 	cause := errors.New("raw provider body with secret")
 	providerError, err := NewRenditionProviderError(
-		RenditionErrorRateLimited, "provider rate limit", 30*time.Second, cause,
+		RenditionErrorRateLimited, 30*time.Second, cause,
 	)
 	require.NoError(t, err)
 	require.NoError(t, ValidateRenditionProviderError(providerError))
@@ -276,6 +305,7 @@ func TestRenditionProviderContractRejectsUnclassifiedErrors(t *testing.T) {
 	wrapped := fmt.Errorf("unsafe wrapper includes provider body: %w", providerError)
 	require.ErrorContains(t, ValidateRenditionProviderError(wrapped), "unclassified")
 	assert.False(t, IsRenditionProviderErrorRetryable(wrapped))
+	assert.Equal(t, "rendition provider rate limit reached", providerError.Error())
 	assert.NotContains(t, providerError.Error(), "secret")
 	assert.ErrorIs(t, providerError, cause)
 }
@@ -381,7 +411,7 @@ func TestRenderRenditionKeepsSealedAuthorizationSeparateFromProvider(t *testing.
 	metadata := validAuthorizedUploadMetadata()
 	authorization := validRenditionAuthorization(descriptor, metadata)
 	provider := &mutatingRenditionProvider{descriptor: descriptor}
-	provider.render = func(received RenditionAuthorization) RenditionResult {
+	provider.render = func(_ AuthorizedUpload, received RenditionAuthorization) RenditionResult {
 		received.AllowedArtifactRoles[0] = EvidenceArtifactImage
 		result := validRenditionResult(descriptor, received)
 		result.Artifacts[0].Role = EvidenceArtifactImage
@@ -396,6 +426,38 @@ func TestRenderRenditionKeepsSealedAuthorizationSeparateFromProvider(t *testing.
 	require.ErrorContains(t, err, "not authorized")
 	assert.Equal(t, []EvidenceArtifactRole{EvidenceArtifactStructured}, authorization.AllowedArtifactRoles,
 		"provider mutation must not reach the caller or sealed validation snapshot")
+}
+
+func TestRenderRenditionEnforcesFilenameDisclosure(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		disclose bool
+		want     string
+	}{
+		{name: "withheld", want: ""},
+		{name: "disclosed", disclose: true, want: "document.pdf"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			descriptor := validRenditionDescriptor(t)
+			metadata := validAuthorizedUploadMetadata()
+			authorization := validRenditionAuthorization(descriptor, metadata)
+			authorization.DiscloseFilename = testCase.disclose
+			provider := &mutatingRenditionProvider{descriptor: descriptor}
+			var received AuthorizedUploadMetadata
+			provider.render = func(upload AuthorizedUpload, receivedAuthorization RenditionAuthorization) RenditionResult {
+				received = upload.Metadata()
+				return validRenditionResult(descriptor, receivedAuthorization)
+			}
+			upload := &syntheticAuthorizedUpload{
+				ReadCloser: io.NopCloser(strings.NewReader("synthetic exact source")), metadata: metadata,
+			}
+
+			_, err := RenderRendition(t.Context(), provider, upload, authorization)
+			require.NoError(t, err)
+			assert.Equal(t, testCase.want, received.Filename)
+			assert.Equal(t, "document.pdf", upload.Metadata().Filename)
+		})
+	}
 }
 
 func TestRenditionProviderContractRejectsTypedNilBoundaryValues(t *testing.T) {
@@ -465,6 +527,7 @@ func validRenditionAuthorization(
 		CapabilityRecordChecksum: metadata.CapabilityRecordChecksum,
 		ProviderMetadataChecksum: metadata.ProviderMetadataChecksum,
 		MediaFamily:              metadata.MediaFamily, MediaType: metadata.MediaType, InputKind: metadata.InputKind,
+		DiscloseFilename:         false,
 		AllowedArtifactRoles:     []EvidenceArtifactRole{EvidenceArtifactStructured},
 		MaxProviderMarkdownBytes: 1_024, MaxArtifactBytes: 1_024,
 		MaxArtifacts: 1, MaxTotalResultBytes: 4_096,
@@ -507,12 +570,13 @@ func validRenditionResult(
 		}},
 		Receipt: RenditionReceipt{
 			ProviderID: descriptor.ID, DescriptorFingerprint: descriptor.Fingerprint,
-			PolicyFingerprint: authorization.PolicyFingerprint,
-			SourceSHA256:      authorization.SourceSHA256,
-			OperationID:       "operation-synthetic-1",
-			StartedAt:         authorizedAt.Add(time.Second).Format(renditionTimestampForm),
-			CompletedAt:       authorizedAt.Add(2 * time.Second).Format(renditionTimestampForm),
-			Warnings:          []string{"degraded_provenance"},
+			PolicyFingerprint:           authorization.PolicyFingerprint,
+			RenditionRequestFingerprint: authorization.RenditionRequestFingerprint,
+			SourceSHA256:                authorization.SourceSHA256,
+			OperationID:                 "operation-synthetic-1",
+			StartedAt:                   authorizedAt.Add(time.Second).Format(renditionTimestampForm),
+			CompletedAt:                 authorizedAt.Add(2 * time.Second).Format(renditionTimestampForm),
+			Warnings:                    []string{"degraded_provenance"},
 			Usage: RenditionUsage{
 				Requests: 1, InputBytes: authorization.SourceBytes,
 				OutputBytes: int64(len(payload) + len("synthetic evidence\n")), Units: 1,

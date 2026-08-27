@@ -114,6 +114,7 @@ func NewRenditionDescriptor(value RenditionDescriptor) (RenditionDescriptor, err
 }
 
 // AuthorizedUploadMetadata describes the exact bytes presented to a provider.
+// Filename is empty when the authorization withholds filename disclosure.
 type AuthorizedUploadMetadata struct {
 	Filename                 string             `json:"filename"`
 	MediaFamily              string             `json:"media_family"`
@@ -138,6 +139,7 @@ type RenditionAuthorization struct {
 	MediaFamily                 string                 `json:"media_family"`
 	MediaType                   string                 `json:"media_type"`
 	InputKind                   RenditionInputKind     `json:"input_kind"`
+	DiscloseFilename            bool                   `json:"disclose_filename"`
 	AllowedArtifactRoles        []EvidenceArtifactRole `json:"allowed_artifact_roles"`
 	MaxProviderMarkdownBytes    int                    `json:"max_provider_markdown_bytes"`
 	MaxArtifactBytes            int                    `json:"max_artifact_bytes"`
@@ -166,16 +168,17 @@ type RenditionUsage struct {
 
 // RenditionReceipt is a sanitized, bounded execution record without provider bodies or secrets.
 type RenditionReceipt struct {
-	ProviderID            string         `json:"provider_id"`
-	DescriptorFingerprint string         `json:"descriptor_fingerprint"`
-	PolicyFingerprint     string         `json:"policy_fingerprint"`
-	SourceSHA256          string         `json:"source_sha256"`
-	OperationID           string         `json:"operation_id"`
-	StartedAt             string         `json:"started_at"`
-	CompletedAt           string         `json:"completed_at"`
-	Warnings              []string       `json:"warnings,omitempty"`
-	Usage                 RenditionUsage `json:"usage"`
-	RetryDelayMillis      int64          `json:"retry_delay_millis,omitempty"`
+	ProviderID                  string         `json:"provider_id"`
+	DescriptorFingerprint       string         `json:"descriptor_fingerprint"`
+	PolicyFingerprint           string         `json:"policy_fingerprint"`
+	RenditionRequestFingerprint string         `json:"rendition_request_fingerprint"`
+	SourceSHA256                string         `json:"source_sha256"`
+	OperationID                 string         `json:"operation_id"`
+	StartedAt                   string         `json:"started_at"`
+	CompletedAt                 string         `json:"completed_at"`
+	Warnings                    []string       `json:"warnings,omitempty"`
+	Usage                       RenditionUsage `json:"usage"`
+	RetryDelayMillis            int64          `json:"retry_delay_millis,omitempty"`
 }
 
 // RenditionResult contains bounded provider output and its sanitized receipt.
@@ -200,34 +203,42 @@ func ValidateRenditionProviderRequestAt(
 	now time.Time, provider RenditionProvider, upload AuthorizedUpload,
 	authorization RenditionAuthorization,
 ) (RenditionDescriptor, error) {
+	descriptor, _, err := validateRenditionProviderRequestAt(now, provider, upload, authorization)
+	return descriptor, err
+}
+
+func validateRenditionProviderRequestAt(
+	now time.Time, provider RenditionProvider, upload AuthorizedUpload,
+	authorization RenditionAuthorization,
+) (RenditionDescriptor, AuthorizedUploadMetadata, error) {
 	if nilInterface(provider) {
-		return RenditionDescriptor{}, errors.New("rendition provider is required")
+		return RenditionDescriptor{}, AuthorizedUploadMetadata{}, errors.New("rendition provider is required")
 	}
 	if nilInterface(upload) {
-		return RenditionDescriptor{}, errors.New("authorized upload is required")
+		return RenditionDescriptor{}, AuthorizedUploadMetadata{}, errors.New("authorized upload is required")
 	}
 	authorization = cloneRenditionAuthorization(authorization)
 	descriptor := cloneRenditionDescriptor(provider.Descriptor())
 	if err := validateRenditionDescriptor(descriptor); err != nil {
-		return RenditionDescriptor{}, err
+		return RenditionDescriptor{}, AuthorizedUploadMetadata{}, err
 	}
 	if second := cloneRenditionDescriptor(provider.Descriptor()); !equalRenditionDescriptors(descriptor, second) {
-		return RenditionDescriptor{}, errors.New("rendition descriptor changed during validation")
+		return RenditionDescriptor{}, AuthorizedUploadMetadata{}, errors.New("rendition descriptor changed during validation")
 	}
 	metadata := upload.Metadata()
 	if err := validateAuthorizedUploadMetadata(metadata); err != nil {
-		return RenditionDescriptor{}, err
+		return RenditionDescriptor{}, AuthorizedUploadMetadata{}, err
 	}
 	if second := upload.Metadata(); second != metadata {
-		return RenditionDescriptor{}, errors.New("authorized upload metadata changed during validation")
+		return RenditionDescriptor{}, AuthorizedUploadMetadata{}, errors.New("authorized upload metadata changed during validation")
 	}
 	if err := validateRenditionAuthorization(descriptor, metadata, authorization); err != nil {
-		return RenditionDescriptor{}, err
+		return RenditionDescriptor{}, AuthorizedUploadMetadata{}, err
 	}
 	if err := validateAuthorizationCurrentAt(authorization, now); err != nil {
-		return RenditionDescriptor{}, err
+		return RenditionDescriptor{}, AuthorizedUploadMetadata{}, err
 	}
-	return cloneRenditionDescriptor(descriptor), nil
+	return cloneRenditionDescriptor(descriptor), metadata, nil
 }
 
 // RenderRendition validates immutable boundary snapshots, gives the provider
@@ -238,11 +249,15 @@ func RenderRendition(
 	authorization RenditionAuthorization,
 ) (RenditionResult, error) {
 	sealed := cloneRenditionAuthorization(authorization)
-	descriptor, err := ValidateRenditionProviderRequest(provider, upload, sealed)
+	descriptor, metadata, err := validateRenditionProviderRequestAt(time.Now().UTC(), provider, upload, sealed)
 	if err != nil {
 		return RenditionResult{}, err
 	}
-	result, err := provider.Render(ctx, upload, cloneRenditionAuthorization(sealed))
+	if !sealed.DiscloseFilename {
+		metadata.Filename = ""
+	}
+	providerUpload := &sealedAuthorizedUpload{ReadCloser: upload, metadata: metadata}
+	result, err := provider.Render(ctx, providerUpload, cloneRenditionAuthorization(sealed))
 	if err != nil {
 		if classified := ValidateRenditionProviderError(err); classified != nil {
 			return RenditionResult{}, classified
@@ -317,31 +332,53 @@ const (
 	RenditionErrorAmbiguousSubmission RenditionErrorCode = "ambiguous_submission"
 )
 
-// RenditionProviderError preserves a private cause behind a sanitized error class and message.
+// RenditionProviderError preserves a private cause behind a fixed error class.
 type RenditionProviderError struct {
 	code       RenditionErrorCode
-	message    string
 	retryAfter time.Duration
 	cause      error
 }
 
 // NewRenditionProviderError constructs a classified provider failure.
 func NewRenditionProviderError(
-	code RenditionErrorCode, message string, retryAfter time.Duration, cause error,
+	code RenditionErrorCode, retryAfter time.Duration, cause error,
 ) (*RenditionProviderError, error) {
-	providerError := &RenditionProviderError{code: code, message: message, retryAfter: retryAfter, cause: cause}
+	providerError := &RenditionProviderError{code: code, retryAfter: retryAfter, cause: cause}
 	if err := validateClassifiedProviderError(providerError); err != nil {
 		return nil, err
 	}
 	return providerError, nil
 }
 
-// Error returns only the sanitized failure class and message.
+// Error returns only the fixed message for the failure class.
 func (providerError *RenditionProviderError) Error() string {
 	if providerError == nil {
 		return "rendition provider error"
 	}
-	return fmt.Sprintf("rendition provider %s: %s", providerError.code, providerError.message)
+	switch providerError.code {
+	case RenditionErrorUnsupportedInput:
+		return "rendition provider does not support the input"
+	case RenditionErrorPolicyRejected:
+		return "rendition provider rejected the request policy"
+	case RenditionErrorAuthentication:
+		return "rendition provider authentication failed"
+	case RenditionErrorCapacity:
+		return "rendition provider has insufficient capacity"
+	case RenditionErrorRateLimited:
+		return "rendition provider rate limit reached"
+	case RenditionErrorTransient:
+		return "rendition provider failed temporarily"
+	case RenditionErrorMalformedEvidence:
+		return "rendition provider returned malformed evidence"
+	case RenditionErrorUnknownJob:
+		return "rendition provider job is unknown"
+	case RenditionErrorCanceled:
+		return "rendition provider request was canceled"
+	case RenditionErrorAmbiguousSubmission:
+		return "rendition provider submission status is ambiguous"
+	default:
+		return "rendition provider error"
+	}
 }
 
 // Unwrap exposes the private cause for programmatic matching without rendering it.
@@ -411,6 +448,16 @@ func validateRenditionDescriptor(descriptor RenditionDescriptor) error {
 func cloneRenditionAuthorization(value RenditionAuthorization) RenditionAuthorization {
 	value.AllowedArtifactRoles = slices.Clone(value.AllowedArtifactRoles)
 	return value
+}
+
+type sealedAuthorizedUpload struct {
+	io.ReadCloser
+
+	metadata AuthorizedUploadMetadata
+}
+
+func (upload *sealedAuthorizedUpload) Metadata() AuthorizedUploadMetadata {
+	return upload.metadata
 }
 
 func validateRenditionDescriptorFields(descriptor RenditionDescriptor) error {
@@ -557,7 +604,7 @@ func validateAuthorizationWithoutUpload(descriptor RenditionDescriptor, authoriz
 		return errors.New("authorization artifact bytes are invalid")
 	}
 	if authorization.MaxArtifacts < 0 || authorization.MaxArtifacts > maxRenditionArtifacts ||
-		authorization.MaxArtifacts > len(authorization.AllowedArtifactRoles) {
+		authorization.MaxArtifacts > 0 && len(authorization.AllowedArtifactRoles) == 0 {
 		return errors.New("authorization artifact count is invalid")
 	}
 	if authorization.MaxTotalResultBytes <= 0 || authorization.MaxTotalResultBytes > maxRenditionTotalResultBytes {
@@ -609,16 +656,16 @@ func validateAuthorizedRoles(descriptor RenditionDescriptor, roles []EvidenceArt
 func validateRenditionArtifacts(
 	descriptor RenditionDescriptor, authorization RenditionAuthorization, artifacts []RenditionArtifact,
 ) error {
-	seen := make(map[EvidenceArtifactRole]struct{}, len(artifacts))
+	type identity struct {
+		role   EvidenceArtifactRole
+		sha256 string
+	}
+	seen := make(map[identity]struct{}, len(artifacts))
 	for _, artifact := range artifacts {
 		if !validProfileArtifactRole(artifact.Role) || !slices.Contains(descriptor.ArtifactRoles, artifact.Role) ||
 			!slices.Contains(authorization.AllowedArtifactRoles, artifact.Role) {
 			return fmt.Errorf("provider artifact role %q is not authorized", artifact.Role)
 		}
-		if _, exists := seen[artifact.Role]; exists {
-			return fmt.Errorf("provider artifact role %q is duplicated", artifact.Role)
-		}
-		seen[artifact.Role] = struct{}{}
 		if err := validateCanonicalMediaType(artifact.MediaType); err != nil {
 			return fmt.Errorf("provider artifact: %w", err)
 		}
@@ -629,6 +676,11 @@ func validateRenditionArtifacts(
 		if artifact.SHA256 != hex.EncodeToString(digest[:]) {
 			return errors.New("provider artifact checksum does not match payload")
 		}
+		key := identity{role: artifact.Role, sha256: artifact.SHA256}
+		if _, exists := seen[key]; exists {
+			return errors.New("provider artifact identity is duplicated")
+		}
+		seen[key] = struct{}{}
 	}
 	if len(artifacts) > authorization.MaxArtifacts {
 		return errors.New("provider artifact count exceeds authorization")
@@ -671,7 +723,9 @@ func validateRenditionReceipt(
 	descriptor RenditionDescriptor, authorization RenditionAuthorization, receipt RenditionReceipt,
 ) error {
 	if receipt.ProviderID != descriptor.ID || receipt.DescriptorFingerprint != descriptor.Fingerprint ||
-		receipt.PolicyFingerprint != authorization.PolicyFingerprint || receipt.SourceSHA256 != authorization.SourceSHA256 {
+		receipt.PolicyFingerprint != authorization.PolicyFingerprint ||
+		receipt.RenditionRequestFingerprint != authorization.RenditionRequestFingerprint ||
+		receipt.SourceSHA256 != authorization.SourceSHA256 {
 		return errors.New("provider receipt does not match authorization")
 	}
 	if err := validateStableToken(receipt.OperationID, "operation ID", 128); err != nil {
@@ -739,24 +793,8 @@ func validateClassifiedProviderError(providerError *RenditionProviderError) erro
 	default:
 		return errors.New("rendition provider error code is invalid")
 	}
-	if err := validateSafeMessage(providerError.message); err != nil {
-		return err
-	}
 	if providerError.retryAfter < 0 || providerError.retryAfter > 24*time.Hour {
 		return errors.New("rendition provider retry delay is outside the supported bound")
-	}
-	return nil
-}
-
-func validateSafeMessage(value string) error {
-	if value == "" || len(value) > 160 || strings.ContainsAny(value, "\r\n{}[]<>=\"") {
-		return errors.New("rendition provider error message must be a bounded safe summary")
-	}
-	lower := strings.ToLower(value)
-	for _, unsafe := range []string{"authorization:", "bearer ", "api_key", "apikey", "secret", "token="} {
-		if strings.Contains(lower, unsafe) {
-			return errors.New("rendition provider error message contains credential-shaped content")
-		}
 	}
 	return nil
 }
