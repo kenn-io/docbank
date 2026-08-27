@@ -402,6 +402,7 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 	legacyReplacement := result.Extractor == legacyPlainTextExtractor
 	exactLegacyResult := result.Extractor == legacyPlainTextExtractor &&
 		result.ExtractorVersion == legacyPlainTextExtractorVersion
+	exactLegacySuccess := exactLegacyResult && result.Status == ExtractionOK
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var exists bool
 		if err := tx.QueryRowContext(ctx,
@@ -510,7 +511,7 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 		if err := replaceContentFTSTx(ctx, tx, result.BlobHash, result.Extractor, text); err != nil {
 			return err
 		}
-		if legacyReplacement {
+		if exactLegacySuccess {
 			published, publishErr := hasPublishedLexicalHeadTx(ctx, tx)
 			if publishErr != nil {
 				return publishErr

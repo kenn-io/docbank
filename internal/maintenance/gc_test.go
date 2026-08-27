@@ -210,6 +210,61 @@ func TestPurgeDerivativesRetriesDurablePackedErasureAfterInterruption(t *testing
 	assert.Empty(t, pending)
 }
 
+func TestPurgeDerivativesRetriesDurableLooseErasureAfterInterruption(t *testing.T) {
+	root := t.TempDir()
+	databasePath := filepath.Join(root, "metadata.db")
+	blobRoot := filepath.Join(root, "blobs")
+	metadata, err := store.Open(databasePath)
+	require.NoError(t, err)
+	blobs, err := blob.New(store.NewPackCatalog(metadata), blobRoot)
+	require.NoError(t, err)
+
+	derivative, err := blobs.WriteDetailedContext(
+		t.Context(), bytes.NewReader([]byte("purged synthetic loose derivative")))
+	require.NoError(t, err)
+	derivativeEncoding, err := derivative.EncodingName()
+	require.NoError(t, err)
+	require.NoError(t, metadata.RecordRenditionBlob(t.Context(), derivative.Hash, derivative.Size,
+		store.BlobPhysical{Encoding: derivativeEncoding, StoredBytes: derivative.StoredSize,
+			PackEligible: derivative.PackEligible, Created: derivative.Created}))
+	path := filepath.Join(blobRoot, derivative.Hash[:2], derivative.Hash)
+	require.FileExists(t, path)
+
+	logical, err := metadata.PurgeDerivatives(t.Context(), store.PurgeRequest{})
+	require.NoError(t, err)
+	require.Equal(t, []string{derivative.Hash}, logical.PhysicalDerivativeBlobsPendingGC)
+	parsed, err := packstore.ParseHash(derivative.Hash)
+	require.NoError(t, err)
+	require.NoError(t, metadata.DeleteBlobRowsWithGCRetirements(
+		t.Context(), logical.PhysicalDerivativeBlobsPendingGC,
+		[]store.GCLooseRetirement{{
+			StoreID: metadata.PrimaryBlobStoreID(), Hash: parsed,
+			Encoding: derivative.Encoding,
+		}}, nil,
+	))
+	require.FileExists(t, path,
+		"the interruption occurs after durable logical deletion but before loose-file removal")
+	pending, err := metadata.PendingGCLooseRetirements(t.Context(), 10)
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	require.NoError(t, blobs.Close())
+	require.NoError(t, metadata.Close())
+
+	metadata, err = store.Open(databasePath)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, metadata.Close()) })
+	blobs, err = blob.New(store.NewPackCatalog(metadata), blobRoot)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
+	report, err := PurgeDerivatives(t.Context(), metadata, blobs, store.PurgeRequest{})
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.Physical.ReclaimedFiles)
+	assert.NoFileExists(t, path)
+	pending, err = metadata.PendingGCLooseRetirements(t.Context(), 10)
+	require.NoError(t, err)
+	assert.Empty(t, pending)
+}
+
 func TestPurgeDerivativesRunsLocationAwarePhysicalGC(t *testing.T) {
 	// Mutation caught: stopping after catalog-manifest deletion leaves sensitive
 	// loose provider output in the live vault instead of completing physical GC.

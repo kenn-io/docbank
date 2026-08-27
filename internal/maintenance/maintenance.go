@@ -345,13 +345,30 @@ func PurgeDerivatives(
 ) (DerivativePurgeReport, error) {
 	report := DerivativePurgeReport{}
 	err := blobs.WithMaintenance(ctx, func() error {
+		for {
+			pending, err := metadata.PendingGCLooseRetirements(ctx, DefaultMaxObjects)
+			if err != nil {
+				return err
+			}
+			if len(pending) == 0 {
+				break
+			}
+			reclaimed, err := retireGCLooseItems(
+				ctx, metadata, blobs, metadata.PrimaryBlobStoreID(), pending)
+			report.Physical.ReclaimedFiles += reclaimed
+			if err != nil {
+				return fmt.Errorf("retiring pending loose blobs before derivative purge: %w", err)
+			}
+		}
 		purged, err := metadata.PurgeDerivatives(ctx, request)
 		report.Purge = purged
 		if err != nil {
 			return err
 		}
-		report.Physical, err = collectExactUnreachableBlobs(
+		physical, err := collectExactUnreachableBlobs(
 			ctx, metadata, blobs, purged.PhysicalDerivativeBlobsPendingGC)
+		physical.ReclaimedFiles += report.Physical.ReclaimedFiles
+		report.Physical = physical
 		if err != nil {
 			return fmt.Errorf("collecting purged derivative blobs: %w", err)
 		}

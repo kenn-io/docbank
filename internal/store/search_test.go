@@ -1108,6 +1108,29 @@ func TestRecordExtractionRejectsUnsupportedVersionAfterLegacyMigration(t *testin
 	}
 }
 
+func TestRecordExtractionRetiresFailureAfterLegacyMigration(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	seedLegacyMigrationRow(t, s, "published.txt", "ac", ExtractionResult{
+		Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: "published lexical authority",
+	})
+	_, err := s.MigrateLegacyPlainText(ctx)
+	require.NoError(t, err)
+
+	failedHash := fakeHash("ad")
+	_, err = s.CreateFile(ctx, s.RootID(), "failed.txt", failedHash, 1, "text/plain")
+	require.NoError(t, err)
+	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+		BlobHash: failedHash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionFailed, Error: "synthetic terminal failure",
+	}))
+
+	pending, err := s.PendingTextExtractions(ctx, 10)
+	require.NoError(t, err)
+	assert.Empty(t, pending)
+}
+
 func TestPendingTextExtractionsSkipsSupersededQueuedContent(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
