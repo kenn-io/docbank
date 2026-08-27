@@ -38,11 +38,21 @@ var _ RenditionProvider = syntheticRenditionProvider{}
 type syntheticAuthorizedUpload struct {
 	io.ReadCloser
 
-	metadata AuthorizedUploadMetadata
+	closeCalls int
+	closeErr   error
+	metadata   AuthorizedUploadMetadata
 }
 
 func (upload *syntheticAuthorizedUpload) Metadata() AuthorizedUploadMetadata {
 	return upload.metadata
+}
+
+func (upload *syntheticAuthorizedUpload) Close() error {
+	upload.closeCalls++
+	if upload.closeErr != nil {
+		return upload.closeErr
+	}
+	return upload.ReadCloser.Close()
 }
 
 var _ AuthorizedUpload = (*syntheticAuthorizedUpload)(nil)
@@ -184,6 +194,13 @@ func TestRenditionProviderContractRejectsDuplicateAndOversizedOutputs(t *testing
 			want: "artifact identity",
 		},
 		{
+			name: "oversized artifact media type",
+			mutate: func(result *RenditionResult) {
+				result.Artifacts[0].MediaType = "application/" + strings.Repeat("x", maxRenditionMediaTypeBytes)
+			},
+			want: "media type",
+		},
+		{
 			name: "oversized provider Markdown",
 			mutate: func(result *RenditionResult) {
 				result.ProviderMarkdown = bytes.Repeat([]byte("x"), authorization.MaxProviderMarkdownBytes+1)
@@ -205,6 +222,22 @@ func TestRenditionProviderContractRejectsDuplicateAndOversizedOutputs(t *testing
 				ValidateRenditionResult(descriptor, authorization, result), testCase.want)
 		})
 	}
+}
+
+func TestRenditionProviderContractCountsArtifactMetadataAgainstTotal(t *testing.T) {
+	descriptor := validRenditionDescriptor(t)
+	metadata := validAuthorizedUploadMetadata()
+	authorization := validRenditionAuthorization(descriptor, metadata)
+	result := validRenditionResult(descriptor, authorization)
+	encodedEvidence, err := canonicalJSON(result.Evidence)
+	require.NoError(t, err)
+	authorization.MaxTotalResultBytes = len(encodedEvidence) +
+		len(result.ProviderMarkdown) + len(result.Artifacts[0].Payload)
+
+	require.ErrorContains(t,
+		ValidateRenditionResult(descriptor, authorization, result),
+		"total result bytes",
+	)
 }
 
 func TestRenditionProviderContractAcceptsRepeatedArtifactRoles(t *testing.T) {
@@ -370,6 +403,16 @@ func TestRenditionDescriptorCanonicalizesAndOwnsCollections(t *testing.T) {
 	assert.Equal(t, descriptor, reordered)
 }
 
+func TestRenditionDescriptorRequiresStructuredEvidence(t *testing.T) {
+	descriptor := validRenditionDescriptor(t)
+	descriptor.Fingerprint = ""
+	descriptor.ReturnsStructured = false
+	descriptor.ReturnsMarkdown = true
+
+	_, err := NewRenditionDescriptor(descriptor)
+	require.ErrorContains(t, err, "structured evidence")
+}
+
 func TestRenditionProviderContractRejectsMutableBoundarySnapshots(t *testing.T) {
 	descriptor := validRenditionDescriptor(t)
 	metadata := validAuthorizedUploadMetadata()
@@ -426,6 +469,47 @@ func TestRenderRenditionKeepsSealedAuthorizationSeparateFromProvider(t *testing.
 	require.ErrorContains(t, err, "not authorized")
 	assert.Equal(t, []EvidenceArtifactRole{EvidenceArtifactStructured}, authorization.AllowedArtifactRoles,
 		"provider mutation must not reach the caller or sealed validation snapshot")
+}
+
+func TestRenderRenditionOwnsUpload(t *testing.T) {
+	t.Run("validation failure preserves close error", func(t *testing.T) {
+		descriptor := validRenditionDescriptor(t)
+		metadata := validAuthorizedUploadMetadata()
+		authorization := validRenditionAuthorization(descriptor, metadata)
+		authorization.ProviderID = "wrong-provider"
+		closeErr := errors.New("synthetic close failure")
+		upload := &syntheticAuthorizedUpload{
+			ReadCloser: io.NopCloser(strings.NewReader("synthetic exact source")),
+			closeErr:   closeErr,
+			metadata:   metadata,
+		}
+
+		_, err := RenderRendition(
+			t.Context(), syntheticRenditionProvider{descriptor: descriptor}, upload, authorization,
+		)
+		require.ErrorContains(t, err, "provider ID")
+		require.ErrorIs(t, err, closeErr)
+		assert.Equal(t, 1, upload.closeCalls)
+	})
+
+	t.Run("provider close remains exactly once", func(t *testing.T) {
+		descriptor := validRenditionDescriptor(t)
+		metadata := validAuthorizedUploadMetadata()
+		authorization := validRenditionAuthorization(descriptor, metadata)
+		provider := &mutatingRenditionProvider{descriptor: descriptor}
+		provider.render = func(upload AuthorizedUpload, received RenditionAuthorization) RenditionResult {
+			require.NoError(t, upload.Close())
+			return validRenditionResult(descriptor, received)
+		}
+		upload := &syntheticAuthorizedUpload{
+			ReadCloser: io.NopCloser(strings.NewReader("synthetic exact source")),
+			metadata:   metadata,
+		}
+
+		_, err := RenderRendition(t.Context(), provider, upload, authorization)
+		require.NoError(t, err)
+		assert.Equal(t, 1, upload.closeCalls)
+	})
 }
 
 func TestRenderRenditionEnforcesFilenameDisclosure(t *testing.T) {

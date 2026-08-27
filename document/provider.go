@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -21,6 +22,7 @@ const (
 	maxRenditionFormats          = 64
 	maxRenditionArtifactRoles    = 16
 	maxRenditionArtifacts        = 64
+	maxRenditionMediaTypeBytes   = 255
 	maxRenditionSourceBytes      = int64(1 << 40)
 	maxRenditionMarkdownBytes    = 64 << 20
 	maxRenditionArtifactBytes    = 256 << 20
@@ -241,23 +243,36 @@ func validateRenditionProviderRequestAt(
 	return cloneRenditionDescriptor(descriptor), metadata, nil
 }
 
-// RenderRendition validates immutable boundary snapshots, gives the provider
-// a separate authorization copy, and validates its result against the sealed
-// copy. Provider mutation therefore cannot broaden its own output authority.
+// RenderRendition takes ownership of upload, validates immutable boundary
+// snapshots, gives the provider a separate authorization copy, and validates
+// its result against the sealed copy. Provider mutation therefore cannot
+// broaden its own output authority. The upload is closed exactly once before
+// return, including when validation or the provider fails.
 func RenderRendition(
 	ctx context.Context, provider RenditionProvider, upload AuthorizedUpload,
 	authorization RenditionAuthorization,
-) (RenditionResult, error) {
+) (result RenditionResult, err error) {
+	if nilInterface(upload) {
+		return RenditionResult{}, errors.New("authorized upload is required")
+	}
+	ownedUpload := &ownedAuthorizedUpload{AuthorizedUpload: upload}
+	defer func() {
+		closeErr := ownedUpload.Close()
+		if closeErr != nil && !errors.Is(err, closeErr) {
+			err = errors.Join(err, fmt.Errorf("close authorized upload: %w", closeErr))
+		}
+	}()
+
 	sealed := cloneRenditionAuthorization(authorization)
-	descriptor, metadata, err := validateRenditionProviderRequestAt(time.Now().UTC(), provider, upload, sealed)
+	descriptor, metadata, err := validateRenditionProviderRequestAt(time.Now().UTC(), provider, ownedUpload, sealed)
 	if err != nil {
 		return RenditionResult{}, err
 	}
 	if !sealed.DiscloseFilename {
 		metadata.Filename = ""
 	}
-	providerUpload := &sealedAuthorizedUpload{ReadCloser: upload, metadata: metadata}
-	result, err := provider.Render(ctx, providerUpload, cloneRenditionAuthorization(sealed))
+	providerUpload := &sealedAuthorizedUpload{ReadCloser: ownedUpload, metadata: metadata}
+	result, err = provider.Render(ctx, providerUpload, cloneRenditionAuthorization(sealed))
 	if err != nil {
 		if classified := ValidateRenditionProviderError(err); classified != nil {
 			return RenditionResult{}, classified
@@ -306,11 +321,14 @@ func ValidateRenditionResult(
 	if err != nil {
 		return fmt.Errorf("encode provider evidence: %w", err)
 	}
-	total := len(encodedEvidence) + len(result.ProviderMarkdown)
+	total := int64(len(encodedEvidence) + len(result.ProviderMarkdown))
 	for _, artifact := range result.Artifacts {
-		total += len(artifact.Payload)
+		total += int64(len(artifact.Role) + len(artifact.MediaType) + len(artifact.SHA256) + len(artifact.Payload))
+		if total > int64(authorization.MaxTotalResultBytes) {
+			return errors.New("provider total result bytes exceed authorization")
+		}
 	}
-	if total > authorization.MaxTotalResultBytes {
+	if total > int64(authorization.MaxTotalResultBytes) {
 		return errors.New("provider total result bytes exceed authorization")
 	}
 	return nil
@@ -460,6 +478,20 @@ func (upload *sealedAuthorizedUpload) Metadata() AuthorizedUploadMetadata {
 	return upload.metadata
 }
 
+type ownedAuthorizedUpload struct {
+	AuthorizedUpload
+
+	closeErr  error
+	closeOnce sync.Once
+}
+
+func (upload *ownedAuthorizedUpload) Close() error {
+	upload.closeOnce.Do(func() {
+		upload.closeErr = upload.AuthorizedUpload.Close()
+	})
+	return upload.closeErr
+}
+
 func validateRenditionDescriptorFields(descriptor RenditionDescriptor) error {
 	if err := validateStableToken(descriptor.ID, "descriptor ID", 128); err != nil {
 		return err
@@ -501,8 +533,8 @@ func validateRenditionDescriptorFields(descriptor RenditionDescriptor) error {
 		}
 		seenRoles[role] = struct{}{}
 	}
-	if !descriptor.ReturnsMarkdown && !descriptor.ReturnsStructured && len(descriptor.ArtifactRoles) == 0 {
-		return errors.New("descriptor must declare at least one result kind")
+	if !descriptor.ReturnsStructured {
+		return errors.New("descriptor must declare structured evidence")
 	}
 	return nil
 }
@@ -813,6 +845,9 @@ func validateStableToken(value, subject string, maxLength int) error {
 }
 
 func validateCanonicalMediaType(value string) error {
+	if len(value) == 0 || len(value) > maxRenditionMediaTypeBytes {
+		return fmt.Errorf("media type must contain 1-%d bytes", maxRenditionMediaTypeBytes)
+	}
 	parsed, parameters, err := mime.ParseMediaType(value)
 	if err != nil || parsed != value || len(parameters) != 0 || !strings.Contains(value, "/") {
 		return fmt.Errorf("media type %q must be canonical and contain no parameters", value)
