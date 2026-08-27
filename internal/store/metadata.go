@@ -709,6 +709,33 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		return fmt.Errorf("metadata import target is not pristine: nodes=%d logical_rows=%d pack_rows=%d",
 			nodes, other, packs)
 	}
+	for _, table := range []struct {
+		name  string
+		count string
+	}{
+		{"rendition_lexical_generations", `SELECT COUNT(*) FROM rendition_lexical_generations`},
+		{"rendition_lexical_generation_manifests", `SELECT COUNT(*) FROM rendition_lexical_generation_manifests`},
+		{"rendition_lexical_generation_builds", `SELECT COUNT(*) FROM rendition_lexical_generation_builds`},
+		{"rendition_lexical_fts", `SELECT COUNT(*) FROM rendition_lexical_fts`},
+		{"rendition_lexical_heads", `SELECT COUNT(*) FROM rendition_lexical_heads`},
+	} {
+		var exists bool
+		if err := tx.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?)`, table.name,
+		).Scan(&exists); err != nil {
+			return fmt.Errorf("checking metadata import target for %s: %w", table.name, err)
+		}
+		if !exists {
+			continue
+		}
+		var rows int64
+		if err := tx.QueryRowContext(ctx, table.count).Scan(&rows); err != nil {
+			return fmt.Errorf("counting metadata import target table %s: %w", table.name, err)
+		}
+		if rows != 0 {
+			return fmt.Errorf("metadata import target is not pristine: %s_rows=%d", table.name, rows)
+		}
+	}
 	return nil
 }
 

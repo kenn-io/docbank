@@ -1014,6 +1014,22 @@ func TestImportMetadataRejectsNonPristineTarget(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestImportMetadataRejectsLexicalProjectionState(t *testing.T) {
+	target := newTestStore(t)
+	generation, err := target.StageLexicalGeneration(t.Context(), fakeHash("cf"))
+	require.NoError(t, err)
+	_, err = target.db.ExecContext(t.Context(),
+		`INSERT INTO rendition_lexical_heads(singleton,generation_id) VALUES(1,?)`, generation.ID)
+	require.NoError(t, err)
+
+	input := `{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n"
+	err = target.ImportMetadata(t.Context(), strings.NewReader(input))
+	require.ErrorContains(t, err, "not pristine")
+	active, err := target.ActiveLexicalGeneration(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, generation.ID, active.ID)
+}
+
 func TestImportMetadataRejectsUnknownVersionAndFields(t *testing.T) {
 	for _, input := range []string{
 		`{"type":"meta","format":"docbank-metadata","version":2,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n",
