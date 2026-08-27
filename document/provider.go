@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"mime"
 	"reflect"
@@ -255,7 +256,7 @@ func RenderRendition(
 	if nilInterface(upload) {
 		return RenditionResult{}, errors.New("authorized upload is required")
 	}
-	ownedUpload := &ownedAuthorizedUpload{AuthorizedUpload: upload}
+	ownedUpload := &ownedAuthorizedUpload{upload: upload}
 	defer func() {
 		closeErr := ownedUpload.Close()
 		if closeErr != nil && !errors.Is(err, closeErr) {
@@ -271,8 +272,14 @@ func RenderRendition(
 	if !sealed.DiscloseFilename {
 		metadata.Filename = ""
 	}
-	providerUpload := &sealedAuthorizedUpload{ReadCloser: ownedUpload, metadata: metadata}
+	hasher := sha256.New()
+	limited := &io.LimitedReader{R: ownedUpload, N: sealed.SourceBytes}
+	providerUpload := &sealedAuthorizedUpload{
+		source: ownedUpload, metadata: metadata, limited: limited,
+		reader: io.TeeReader(limited, hasher), hasher: hasher, expectedSHA256: sealed.SourceSHA256,
+	}
 	result, err = provider.Render(ctx, providerUpload, cloneRenditionAuthorization(sealed))
+	_ = providerUpload.Close()
 	if err != nil {
 		if classified := ValidateRenditionProviderError(err); classified != nil {
 			return RenditionResult{}, classified
@@ -280,6 +287,9 @@ func RenderRendition(
 		return RenditionResult{}, err
 	}
 	if err := ValidateRenditionResult(descriptor, sealed, result); err != nil {
+		return RenditionResult{}, err
+	}
+	if err := providerUpload.verify(ctx); err != nil {
 		return RenditionResult{}, err
 	}
 	return result, nil
@@ -469,25 +479,110 @@ func cloneRenditionAuthorization(value RenditionAuthorization) RenditionAuthoriz
 }
 
 type sealedAuthorizedUpload struct {
-	io.ReadCloser
+	mu sync.Mutex
 
-	metadata AuthorizedUploadMetadata
+	source         *ownedAuthorizedUpload
+	metadata       AuthorizedUploadMetadata
+	reader         io.Reader
+	limited        *io.LimitedReader
+	hasher         hash.Hash
+	expectedSHA256 string
+	providerClosed bool
 }
 
 func (upload *sealedAuthorizedUpload) Metadata() AuthorizedUploadMetadata {
 	return upload.metadata
 }
 
+func (upload *sealedAuthorizedUpload) Read(buffer []byte) (int, error) {
+	upload.mu.Lock()
+	defer upload.mu.Unlock()
+	if upload.providerClosed {
+		return 0, io.ErrClosedPipe
+	}
+	return upload.reader.Read(buffer)
+}
+
+// Close ends provider access. RenderRendition retains the source until it has
+// verified and closed the exact authorized stream.
+func (upload *sealedAuthorizedUpload) Close() error {
+	upload.mu.Lock()
+	defer upload.mu.Unlock()
+	upload.providerClosed = true
+	return nil
+}
+
+func (upload *sealedAuthorizedUpload) verify(ctx context.Context) error {
+	upload.mu.Lock()
+	defer upload.mu.Unlock()
+	upload.providerClosed = true
+	buffer := make([]byte, 128<<10)
+	noProgress := 0
+	for upload.limited.N != 0 {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("verify authorized upload: %w", err)
+		}
+		count, err := upload.reader.Read(buffer)
+		if err != nil && !errors.Is(err, io.EOF) {
+			return fmt.Errorf("read authorized upload: %w", err)
+		}
+		if errors.Is(err, io.EOF) && upload.limited.N != 0 {
+			return errors.New("authorized upload is shorter than declared byte length")
+		}
+		if count == 0 && err == nil {
+			noProgress++
+			if noProgress >= 100 {
+				return io.ErrNoProgress
+			}
+		} else {
+			noProgress = 0
+		}
+	}
+	var extra [1]byte
+	noProgress = 0
+	for {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("verify authorized upload: %w", err)
+		}
+		count, err := upload.source.Read(extra[:])
+		if count != 0 {
+			return errors.New("authorized upload exceeds declared byte length")
+		}
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("read authorized upload: %w", err)
+		}
+		noProgress++
+		if noProgress >= 100 {
+			return io.ErrNoProgress
+		}
+	}
+	if hex.EncodeToString(upload.hasher.Sum(nil)) != upload.expectedSHA256 {
+		return errors.New("authorized upload SHA-256 does not match authorization")
+	}
+	return nil
+}
+
 type ownedAuthorizedUpload struct {
-	AuthorizedUpload
+	upload AuthorizedUpload
 
 	closeErr  error
 	closeOnce sync.Once
 }
 
+func (upload *ownedAuthorizedUpload) Read(buffer []byte) (int, error) {
+	return upload.upload.Read(buffer)
+}
+
+func (upload *ownedAuthorizedUpload) Metadata() AuthorizedUploadMetadata {
+	return upload.upload.Metadata()
+}
+
 func (upload *ownedAuthorizedUpload) Close() error {
 	upload.closeOnce.Do(func() {
-		upload.closeErr = upload.AuthorizedUpload.Close()
+		upload.closeErr = upload.upload.Close()
 	})
 	return upload.closeErr
 }

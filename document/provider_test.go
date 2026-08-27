@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -512,6 +513,50 @@ func TestRenderRenditionOwnsUpload(t *testing.T) {
 	})
 }
 
+func TestRenderRenditionEnforcesExactUploadBytes(t *testing.T) {
+	exact := []byte("synthetic exact source")
+	mismatch := bytes.Clone(exact)
+	mismatch[0] = 'S'
+	for _, testCase := range []struct {
+		name         string
+		source       []byte
+		wantReceived []byte
+		wantError    string
+	}{
+		{name: "exact", source: exact, wantReceived: exact},
+		{name: "extra", source: append(bytes.Clone(exact), []byte("private tail")...), wantReceived: exact,
+			wantError: "exceeds declared byte length"},
+		{name: "short", source: exact[:len(exact)-1], wantReceived: exact[:len(exact)-1],
+			wantError: "shorter than declared byte length"},
+		{name: "mismatched hash", source: mismatch, wantReceived: mismatch,
+			wantError: "SHA-256 does not match"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			descriptor := validRenditionDescriptor(t)
+			metadata := validAuthorizedUploadMetadata()
+			authorization := validRenditionAuthorization(descriptor, metadata)
+			provider := &mutatingRenditionProvider{descriptor: descriptor}
+			var received []byte
+			provider.render = func(upload AuthorizedUpload, receivedAuthorization RenditionAuthorization) RenditionResult {
+				received, _ = io.ReadAll(upload)
+				return validRenditionResult(descriptor, receivedAuthorization)
+			}
+			upload := &syntheticAuthorizedUpload{
+				ReadCloser: io.NopCloser(bytes.NewReader(testCase.source)), metadata: metadata,
+			}
+
+			_, err := RenderRendition(t.Context(), provider, upload, authorization)
+			assert.Equal(t, testCase.wantReceived, received)
+			if testCase.wantError == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, testCase.wantError)
+			}
+			assert.Equal(t, 1, upload.closeCalls)
+		})
+	}
+}
+
 func TestRenderRenditionEnforcesFilenameDisclosure(t *testing.T) {
 	for _, testCase := range []struct {
 		name     string
@@ -528,8 +573,35 @@ func TestRenderRenditionEnforcesFilenameDisclosure(t *testing.T) {
 			authorization.DiscloseFilename = testCase.disclose
 			provider := &mutatingRenditionProvider{descriptor: descriptor}
 			var received AuthorizedUploadMetadata
+			var reflectedFilename string
 			provider.render = func(upload AuthorizedUpload, receivedAuthorization RenditionAuthorization) RenditionResult {
 				received = upload.Metadata()
+				var inspect func(reflect.Value)
+				inspect = func(value reflect.Value) {
+					if reflectedFilename != "" || !value.IsValid() {
+						return
+					}
+					if value.CanInterface() {
+						if nested, ok := reflect.TypeAssert[AuthorizedUpload](value); ok {
+							reflectedFilename = nested.Metadata().Filename
+							if reflectedFilename != "" {
+								return
+							}
+						}
+					}
+					switch value.Kind() {
+					case reflect.Interface, reflect.Pointer:
+						inspect(value.Elem())
+					case reflect.Struct:
+						for _, field := range value.Fields() {
+							if field.CanInterface() {
+								inspect(field)
+							}
+						}
+					default:
+					}
+				}
+				inspect(reflect.ValueOf(upload))
 				return validRenditionResult(descriptor, receivedAuthorization)
 			}
 			upload := &syntheticAuthorizedUpload{
@@ -539,6 +611,7 @@ func TestRenderRenditionEnforcesFilenameDisclosure(t *testing.T) {
 			_, err := RenderRendition(t.Context(), provider, upload, authorization)
 			require.NoError(t, err)
 			assert.Equal(t, testCase.want, received.Filename)
+			assert.Equal(t, testCase.want, reflectedFilename)
 			assert.Equal(t, "document.pdf", upload.Metadata().Filename)
 		})
 	}
