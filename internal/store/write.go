@@ -256,6 +256,11 @@ func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64, physical ...Bl
 	if err != nil {
 		return fmt.Errorf("checking blob %s insertion: %w", hash, err)
 	}
+	if err := ensureBlobChecksumTx(tx, BlobChecksumRecord{
+		BlobSHA256: hash, MD5: storage.MD5,
+	}); err != nil {
+		return err
+	}
 	if inserted != 0 {
 		return writeLooseLocationTx(
 			context.Background(), tx, s.primaryStoreID, hash, storage,
@@ -300,6 +305,29 @@ func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64, physical ...Bl
 	)
 }
 
+// EnsureOrdinaryBlobTx records positive ordinary-content authority separately
+// from current version reachability. That authority deliberately survives
+// history pruning so derivative erasure cannot collect deduplicated regret-
+// window bytes that once belonged to ordinary content.
+func (s *Store) EnsureOrdinaryBlobTx(
+	tx *sql.Tx, hash string, size int64, physical ...BlobPhysical,
+) error {
+	if err := s.EnsureBlobTx(tx, hash, size, physical...); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO ordinary_blob_authority(blob_hash) VALUES(?)
+		ON CONFLICT(blob_hash) DO NOTHING`, hash); err != nil {
+		return fmt.Errorf("recording ordinary blob %s authority: %w", hash, err)
+	}
+	if _, err := tx.Exec(`DELETE FROM rendition_blob_staging WHERE blob_hash=?`, hash); err != nil {
+		return fmt.Errorf("promoting ordinary blob %s from rendition staging: %w", hash, err)
+	}
+	if _, err := tx.Exec(`DELETE FROM derivative_blob_purge_pending WHERE blob_hash=?`, hash); err != nil {
+		return fmt.Errorf("revoking derivative purge for ordinary blob %s: %w", hash, err)
+	}
+	return nil
+}
+
 func (s *Store) createFileTx(
 	ctx context.Context, tx *sql.Tx, parentID int64, name, blobHash string, size int64, mimeType string,
 	physical ...BlobPhysical,
@@ -324,7 +352,7 @@ func (s *Store) createFileWithOperationTx(
 	if _, err := liveDirTx(tx, parentID); err != nil {
 		return Node{}, ContentVersion{}, err
 	}
-	if err := s.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
+	if err := s.EnsureOrdinaryBlobTx(tx, blobHash, size, physical...); err != nil {
 		return Node{}, ContentVersion{}, err
 	}
 	res, err := tx.Exec(
