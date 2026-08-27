@@ -639,6 +639,30 @@ func TestRenderRenditionCancellationClosesBlockedUpload(t *testing.T) {
 	assert.Equal(t, 1, upload.closeCalls)
 }
 
+func TestRenderRenditionEnforcesAuthorizationExpiryDuringExecution(t *testing.T) {
+	descriptor := validRenditionDescriptor(t)
+	metadata := validAuthorizedUploadMetadata()
+	authorization := validRenditionAuthorization(descriptor, metadata)
+	expiresAt := time.Now().UTC().Add(250 * time.Millisecond)
+	authorization.ExpiresAt = expiresAt.Format(renditionTimestampForm)
+	upload := &syntheticAuthorizedUpload{
+		ReadCloser: io.NopCloser(strings.NewReader("synthetic exact source")), metadata: metadata,
+	}
+	readDone := make(chan error, 1)
+	provider := &mutatingRenditionProvider{descriptor: descriptor}
+	provider.render = func(upload AuthorizedUpload, received RenditionAuthorization) RenditionResult {
+		time.Sleep(time.Until(expiresAt.Add(20 * time.Millisecond)))
+		_, readErr := upload.Read(make([]byte, 1))
+		readDone <- readErr
+		return validRenditionResult(descriptor, received)
+	}
+
+	_, err := RenderRendition(t.Context(), provider, upload, authorization)
+	require.ErrorContains(t, err, "authorization is not current")
+	require.Error(t, <-readDone)
+	assert.Equal(t, 1, upload.closeCalls)
+}
+
 func TestRenderRenditionEnforcesFilenameDisclosure(t *testing.T) {
 	for _, testCase := range []struct {
 		name           string

@@ -274,21 +274,35 @@ func RenderRendition(
 	if err != nil {
 		return RenditionResult{}, err
 	}
+	expiresAt, err := parseRenditionTimestamp(sealed.ExpiresAt)
+	if err != nil {
+		return RenditionResult{}, errors.New("authorization expiry must be canonical")
+	}
+	executionCtx, cancelExecution := context.WithDeadline(ctx, expiresAt)
+	defer cancelExecution()
+	stopExecutionClose := context.AfterFunc(executionCtx, func() { _ = ownedUpload.Close() })
+	defer stopExecutionClose()
 	if !sealed.DiscloseFilename {
 		metadata.Filename = ""
 	}
 	hasher := sha256.New()
 	limited := &io.LimitedReader{R: ownedUpload, N: sealed.SourceBytes}
 	providerUpload := &sealedAuthorizedUpload{
-		source: ownedUpload, metadata: metadata, limited: limited,
+		ctx: executionCtx, source: ownedUpload, metadata: metadata, limited: limited,
 		reader: io.TeeReader(limited, hasher), hasher: hasher, expectedSHA256: sealed.SourceSHA256,
 	}
-	if err := ctx.Err(); err != nil {
+	if err := executionCtx.Err(); err != nil {
 		return RenditionResult{}, err
 	}
-	result, err = provider.Render(ctx, providerUpload, cloneRenditionAuthorization(sealed))
+	result, err = provider.Render(executionCtx, providerUpload, cloneRenditionAuthorization(sealed))
 	_ = providerUpload.Close()
 	if contextErr := ctx.Err(); contextErr != nil {
+		return RenditionResult{}, contextErr
+	}
+	if err := validateAuthorizationCurrentAt(sealed, time.Now().UTC()); err != nil {
+		return RenditionResult{}, err
+	}
+	if contextErr := executionCtx.Err(); contextErr != nil {
 		return RenditionResult{}, contextErr
 	}
 	if err != nil {
@@ -304,10 +318,19 @@ func RenderRendition(
 	if err := ValidateRenditionResult(descriptor, sealed, result); err != nil {
 		return RenditionResult{}, err
 	}
-	if err := providerUpload.verify(ctx); err != nil {
+	if err := providerUpload.verify(executionCtx); err != nil {
 		if contextErr := ctx.Err(); contextErr != nil {
 			return RenditionResult{}, contextErr
 		}
+		if currentErr := validateAuthorizationCurrentAt(sealed, time.Now().UTC()); currentErr != nil {
+			return RenditionResult{}, currentErr
+		}
+		if contextErr := executionCtx.Err(); contextErr != nil {
+			return RenditionResult{}, contextErr
+		}
+		return RenditionResult{}, err
+	}
+	if err := validateAuthorizationCurrentAt(sealed, time.Now().UTC()); err != nil {
 		return RenditionResult{}, err
 	}
 	return result, nil
@@ -563,6 +586,7 @@ func cloneSourceEvidenceOmissions(source []SourceEvidenceOmissionV1) []SourceEvi
 type sealedAuthorizedUpload struct {
 	mu sync.Mutex
 
+	ctx            context.Context
 	source         *ownedAuthorizedUpload
 	metadata       AuthorizedUploadMetadata
 	reader         io.Reader
@@ -579,6 +603,9 @@ func (upload *sealedAuthorizedUpload) Metadata() AuthorizedUploadMetadata {
 func (upload *sealedAuthorizedUpload) Read(buffer []byte) (int, error) {
 	upload.mu.Lock()
 	defer upload.mu.Unlock()
+	if err := upload.ctx.Err(); err != nil {
+		return 0, err
+	}
 	if upload.providerClosed {
 		return 0, io.ErrClosedPipe
 	}
