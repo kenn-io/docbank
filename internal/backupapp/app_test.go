@@ -287,7 +287,9 @@ func TestJSONLLooseSnapshotVerifyAndRestore(t *testing.T) {
 	assert.Equal(t, int64(2), restored.PackedAttachmentBlobs)
 	assert.Zero(t, restored.LooseAttachmentBlobs)
 
-	restoredStore, err := store.Open(filepath.Join(target, "docbank.db"))
+	restoredStore, err := store.OpenForRestore(
+		filepath.Join(target, "docbank.db"), store.DefaultSQLiteDriver(),
+	)
 	require.NoError(t, err)
 	assert.Equal(t, string(wantMetadata), string(exportMetadata(t, restoredStore)))
 	restoredStores, err := restoredStore.BlobStores(t.Context())
@@ -1173,7 +1175,9 @@ func TestAuditedIncrementalSnapshotRestoresCompleteProtectedHistory(t *testing.T
 	)
 	require.NoError(t, err)
 	assert.Equal(t, manifest.Attachments.Blobs, result.AttachmentBlobs)
-	restoredStore, err := store.Open(filepath.Join(target, "docbank.db"))
+	restoredStore, err := store.OpenForRestore(
+		filepath.Join(target, "docbank.db"), store.DefaultSQLiteDriver(),
+	)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restoredStore.Close()) })
 	assert.Equal(t, wantMetadata, exportMetadata(t, restoredStore))
@@ -1571,7 +1575,9 @@ func TestVersionedEditingRoundTripsPackedRevertSource(t *testing.T) {
 		TargetDir: target, Jobs: 2,
 	})
 	require.NoError(t, err)
-	restoredStore, err := store.Open(filepath.Join(target, "docbank.db"))
+	restoredStore, err := store.OpenForRestore(
+		filepath.Join(target, "docbank.db"), store.DefaultSQLiteDriver(),
+	)
 	require.NoError(t, err)
 	assert.Equal(t, string(wantMetadata), string(exportMetadata(t, restoredStore)),
 		"JSONL restore must preserve the complete replacement history byte-for-byte")

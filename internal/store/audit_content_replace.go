@@ -70,7 +70,7 @@ func installAuditedContentVersionTx(
 		return Node{}, ContentVersion{}, fmt.Errorf("reading audited prior content: %w", err)
 	}
 	updated, version, err := installContentVersionWithOperationTx(
-		tx, node, blobHash, size, mimeType, transitionKind, sourceVersionID, operation,
+		ctx, tx, node, blobHash, size, mimeType, transitionKind, sourceVersionID, operation,
 	)
 	if err != nil {
 		return Node{}, ContentVersion{}, err

@@ -11,6 +11,7 @@ import (
 	"io"
 	"reflect"
 	"slices"
+	"unicode/utf8"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/blob"
@@ -106,20 +107,28 @@ func (p *ArtifactPublisher) PublishRendition(
 		}
 		type verifiedArtifact struct {
 			published PublishedArtifact
-			physical  store.BlobPhysical
 		}
 		verified := make([]verifiedArtifact, 0, len(staged.Build.Artifacts))
 		var normalizedEvidence []byte
 		for _, record := range staged.Build.Artifacts {
 			candidate := artifacts[record.ID]
-			reader := candidate.Payload
+			reader := io.LimitReader(candidate.Payload, record.Size+1)
 			var evidence bytes.Buffer
 			if record.Role == "normalized_evidence" {
 				reader = io.TeeReader(reader, &evidence)
 			}
-			receipt, err := p.blobs.WriteDetailedContext(ctx, reader)
-			if err != nil {
-				return fmt.Errorf("publishing rendition artifact %s: %w", record.ID, err)
+			receipt, writeErr := p.blobs.WriteDetailedContext(ctx, reader)
+			if receipt.Hash != "" {
+				if err := p.recordRenditionReceipt(ctx, receipt); err != nil {
+					if writeErr != nil {
+						return fmt.Errorf("publishing rendition artifact %s: %w",
+							record.ID, errors.Join(writeErr, err))
+					}
+					return fmt.Errorf("publishing rendition artifact %s: %w", record.ID, err)
+				}
+			}
+			if writeErr != nil {
+				return fmt.Errorf("publishing rendition artifact %s: %w", record.ID, writeErr)
 			}
 			if receipt.Hash != record.BlobHash || receipt.Size != record.Size {
 				return fmt.Errorf(
@@ -127,20 +136,11 @@ func (p *ArtifactPublisher) PublishRendition(
 					record.ID, receipt.Hash, receipt.Size, record.BlobHash, record.Size,
 				)
 			}
-			encoding, err := receipt.EncodingName()
-			if err != nil {
-				return fmt.Errorf("publishing rendition artifact %s: %w", record.ID, err)
-			}
-			physical := store.BlobPhysical{
-				Encoding: encoding, StoredBytes: receipt.StoredSize,
-				PackEligible: receipt.PackEligible, Created: receipt.Created,
-			}
 			verified = append(verified, verifiedArtifact{
 				published: PublishedArtifact{ID: record.ID, Hash: receipt.Hash, Size: receipt.Size},
-				physical:  physical,
 			})
 			if record.Role == "normalized_evidence" {
-				normalizedEvidence = append([]byte(nil), evidence.Bytes()...)
+				normalizedEvidence = evidence.Bytes()
 			}
 		}
 		if err := validateStagedRenditionGraph(staged, normalizedEvidence); err != nil {
@@ -148,11 +148,6 @@ func (p *ArtifactPublisher) PublishRendition(
 		}
 		publishedArtifacts := make([]PublishedArtifact, 0, len(verified))
 		for _, artifact := range verified {
-			if err := p.catalog.RecordRenditionBlob(
-				ctx, artifact.published.Hash, artifact.published.Size, artifact.physical,
-			); err != nil {
-				return fmt.Errorf("recording rendition artifact %s: %w", artifact.published.ID, err)
-			}
 			publishedArtifacts = append(publishedArtifacts, artifact.published)
 		}
 		if err := p.catalog.StageRenditionBuild(ctx, staged.Build); err != nil {
@@ -179,6 +174,22 @@ func (p *ArtifactPublisher) PublishRendition(
 	return published, nil
 }
 
+func (p *ArtifactPublisher) recordRenditionReceipt(
+	ctx context.Context, receipt blob.WriteReceipt,
+) error {
+	encoding, err := receipt.EncodingName()
+	if err != nil {
+		return err
+	}
+	if err := p.catalog.RecordRenditionBlob(ctx, receipt.Hash, receipt.Size, store.BlobPhysical{
+		Encoding: encoding, StoredBytes: receipt.StoredSize,
+		PackEligible: receipt.PackEligible, Created: receipt.Created,
+	}); err != nil {
+		return fmt.Errorf("recording retained bytes as rendition staging: %w", err)
+	}
+	return nil
+}
+
 func validateStagedRendition(staged StagedRendition) error {
 	if staged.Build.ID == "" || staged.Attachment.ID == "" || staged.LexicalGenerationID == "" {
 		return errors.New("staged rendition lacks exact publication identities")
@@ -187,6 +198,60 @@ func validateStagedRendition(staged StagedRendition) error {
 		staged.Head.ContentVersionID != staged.Attachment.ContentVersionID ||
 		staged.Head.ProcessingProfileFingerprint != staged.Attachment.Profile.Fingerprint {
 		return errors.New("staged rendition head does not resolve through its exact attachment and build")
+	}
+	if err := store.ValidateProcessingProfileRecord(staged.Attachment.Profile); err != nil {
+		return fmt.Errorf("staged rendition profile is invalid: %w", err)
+	}
+	if err := store.ValidateRenditionBuildRecord(staged.Build); err != nil {
+		return fmt.Errorf("staged rendition build is invalid: %w", err)
+	}
+	var profile document.ProcessingProfileV1
+	if err := json.Unmarshal(
+		staged.Attachment.Profile.CanonicalProfile, &profile, json.RejectUnknownMembers(true),
+	); err != nil {
+		return fmt.Errorf("staged rendition canonical profile is invalid: %w", err)
+	}
+	if profile.Rendition == nil {
+		return errors.New("staged rendition profile has no rendition binding")
+	}
+	if staged.Build.RenditionRequestFingerprint != staged.Attachment.Profile.RenditionRequestFingerprint ||
+		staged.Build.EvidenceLexicalFingerprint != staged.Attachment.Profile.EvidenceLexicalFingerprint {
+		return errors.New("staged rendition build does not match canonical profile components")
+	}
+	if staged.RenditionPolicy.MaxSegmentRunes() != profile.EvidenceLexical.MaxSegmentRunes {
+		return fmt.Errorf(
+			"staged rendition policy max segment runes %d does not match canonical profile max segment runes %d",
+			staged.RenditionPolicy.MaxSegmentRunes(), profile.EvidenceLexical.MaxSegmentRunes,
+		)
+	}
+	if len(staged.Rendition.Units) > profile.Rendition.MaxUnits {
+		return fmt.Errorf("staged rendition has %d units, exceeding canonical profile max units %d",
+			len(staged.Rendition.Units), profile.Rendition.MaxUnits)
+	}
+	var declaredResponseBytes int64
+	for _, artifact := range staged.Build.Artifacts {
+		if artifact.Size > profile.Rendition.MaxResponseBytes-declaredResponseBytes {
+			return fmt.Errorf(
+				"staged rendition declares more than canonical profile max response bytes %d",
+				profile.Rendition.MaxResponseBytes,
+			)
+		}
+		declaredResponseBytes += artifact.Size
+	}
+	for index, unit := range staged.Rendition.Units {
+		if runes := utf8.RuneCountInString(unit.Text); runes > profile.EvidenceLexical.MaxUnitRunes {
+			return fmt.Errorf("staged rendition unit %d has %d runes, exceeding canonical profile max unit runes %d",
+				index, runes, profile.EvidenceLexical.MaxUnitRunes)
+		}
+	}
+	for index, segment := range staged.Rendition.LexicalSegments {
+		if runes := utf8.RuneCountInString(segment.Text); runes > profile.EvidenceLexical.MaxSegmentRunes {
+			return fmt.Errorf("staged rendition segment %d has %d runes, exceeding canonical profile max segment runes %d",
+				index, runes, profile.EvidenceLexical.MaxSegmentRunes)
+		}
+	}
+	if err := validateRetainedArtifactPolicy(profile, staged.Build.Artifacts); err != nil {
+		return err
 	}
 	if staged.Rendition.ContractVersion != document.RenditionContractV1 ||
 		staged.Rendition.Checksum != staged.Build.RenditionChecksum ||
@@ -251,6 +316,45 @@ func validateStagedRendition(staged StagedRendition) error {
 			return fmt.Errorf("staged rendition artifact payload %q is not exact membership", artifact.ID)
 		}
 		seen[artifact.ID] = true
+	}
+	return nil
+}
+
+func validateRetainedArtifactPolicy(
+	profile document.ProcessingProfileV1, artifacts []store.RenditionArtifactRecord,
+) error {
+	for _, artifact := range artifacts {
+		var requestedRole document.EvidenceArtifactRole
+		switch artifact.Role {
+		case "normalized_evidence":
+			continue
+		case "sanitized_markdown":
+			if !profile.RetentionDisclosure.RetainSanitizedMarkdown {
+				return errors.New("staged rendition includes sanitized Markdown without sanitized Markdown retention")
+			}
+			continue
+		case string(document.EvidenceArtifactMarkdown):
+			if !profile.RetentionDisclosure.RetainProviderMarkdown {
+				return errors.New("staged rendition includes provider Markdown without provider Markdown retention")
+			}
+			requestedRole = document.EvidenceArtifactMarkdown
+		case string(document.EvidenceArtifactImage):
+			requestedRole = document.EvidenceArtifactImage
+		case string(document.EvidenceArtifactStructured):
+			requestedRole = document.EvidenceArtifactStructured
+		case string(document.EvidenceArtifactTranscript):
+			requestedRole = document.EvidenceArtifactTranscript
+		default:
+			return fmt.Errorf("staged rendition artifact role %q is unknown", artifact.Role)
+		}
+		if requestedRole != document.EvidenceArtifactMarkdown &&
+			!profile.RetentionDisclosure.RetainTypedArtifacts {
+			return fmt.Errorf("staged rendition includes %q without typed artifact retention", artifact.Role)
+		}
+		if !slices.Contains(profile.Rendition.RequestedArtifacts, requestedRole) {
+			return fmt.Errorf("staged rendition artifact role %q was not requested by the canonical profile",
+				artifact.Role)
+		}
 	}
 	return nil
 }

@@ -67,6 +67,15 @@ type GCReport struct {
 	DryRun             bool
 }
 
+// DerivativePurgeReport separates the atomic live-catalog purge receipt from
+// the location-aware physical GC that follows it. Immutable backup repository
+// copies remain outside both mutation boundaries.
+type DerivativePurgeReport struct {
+	Purge    store.PurgeReport
+	Physical GCReport
+	Repack   RepackReport
+}
+
 type VerifyOptions struct{ Budget Budget }
 
 type VerifyProblem struct {
@@ -302,7 +311,7 @@ func GarbageCollect(
 	}
 	if !opts.DryRun && len(trackedHashes) > 0 {
 		if err := metadata.DeleteBlobRowsWithGCRetirements(
-			ctx, trackedHashes, retirements,
+			ctx, trackedHashes, retirements, nil,
 		); err != nil {
 			return report, err
 		}
@@ -323,6 +332,237 @@ func GarbageCollect(
 		report.NextCursor = encodeCursor(operationGC, resumeHash)
 	}
 	return report, nil
+}
+
+// PurgeDerivatives removes complete live derivative manifests, then physically
+// collects only the derivative and abandoned-staging hashes named by the
+// atomic purge receipt. Vault-wide GC remains a separate maintenance action.
+func PurgeDerivatives(
+	ctx context.Context,
+	metadata *store.Store,
+	blobs *blob.Store,
+	request store.PurgeRequest,
+) (DerivativePurgeReport, error) {
+	report := DerivativePurgeReport{}
+	err := blobs.WithMaintenance(ctx, func() error {
+		for {
+			pending, err := metadata.PendingGCLooseRetirements(ctx, DefaultMaxObjects)
+			if err != nil {
+				return err
+			}
+			if len(pending) == 0 {
+				break
+			}
+			reclaimed, err := retireGCLooseItems(
+				ctx, metadata, blobs, metadata.PrimaryBlobStoreID(), pending)
+			report.Physical.ReclaimedFiles += reclaimed
+			if err != nil {
+				return fmt.Errorf("retiring pending loose blobs before derivative purge: %w", err)
+			}
+		}
+		purged, err := metadata.PurgeDerivatives(ctx, request)
+		report.Purge = purged
+		if err != nil {
+			return err
+		}
+		physical, err := collectExactUnreachableBlobs(
+			ctx, metadata, blobs, purged.PhysicalDerivativeBlobsPendingGC)
+		physical.ReclaimedFiles += report.Physical.ReclaimedFiles
+		report.Physical = physical
+		if err != nil {
+			return fmt.Errorf("collecting purged derivative blobs: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return report, err
+	}
+	report.Repack, err = retireDerivativePurgePacks(ctx, metadata, blobs)
+	if err != nil {
+		return report, fmt.Errorf("retiring purged packed derivative bytes: %w", err)
+	}
+	return report, nil
+}
+
+func retireDerivativePurgePacks(
+	ctx context.Context, metadata *store.Store, blobs *blob.Store,
+) (RepackReport, error) {
+	report := RepackReport{}
+	baseCatalog := store.NewPackCatalog(metadata)
+	for {
+		pending, err := metadata.PendingDerivativePackRetirements(ctx, DefaultMaxObjects)
+		if err != nil {
+			return report, err
+		}
+		if len(pending) == 0 {
+			return report, nil
+		}
+		packIDs := make([]string, len(pending))
+		for index, usage := range pending {
+			packIDs[index] = usage.PackID
+		}
+		pruned, err := metadata.PruneDerivativePackRetirementMappings(ctx, packIDs)
+		if err != nil {
+			return report, err
+		}
+		report.MappingsPruned += pruned
+		forced := make([]packstore.PackUsage, len(pending))
+		for index, usage := range pending {
+			forced[index] = forcedDerivativeRepackUsage(usage)
+		}
+		stats, err := blobs.RepackWithCatalog(ctx,
+			&scopedCatalog{Catalog: baseCatalog, usages: forced},
+			packstore.RepackOptions{Now: time.Now().UTC(), Selection: packstore.RepackSelection{
+				MinAge: time.Nanosecond, MinDeadStored: 1,
+			}})
+		addRepackStats(&report, stats)
+		if err != nil || stats.PacksSelected != len(pending) || stats.PacksRemoved != len(pending) {
+			current, currentErr := metadata.PendingDerivativePackRetirements(
+				ctx, DefaultMaxObjects)
+			if currentErr != nil {
+				return report, errors.Join(err, currentErr)
+			}
+			if derivativePackSelectionChanged(pending, current) {
+				continue
+			}
+			if err != nil {
+				return report, err
+			}
+			return report, errors.New("exact derivative pack retirement made no complete progress")
+		}
+	}
+}
+
+func derivativePackSelectionChanged(
+	selected []packstore.PackUsage, current []packstore.PackUsage,
+) bool {
+	currentByID := make(map[string]packstore.PackUsage, len(current))
+	for _, usage := range current {
+		currentByID[usage.PackID] = usage
+	}
+	for _, usage := range selected {
+		if currentUsage, ok := currentByID[usage.PackID]; !ok || currentUsage != usage {
+			return true
+		}
+	}
+	return false
+}
+
+// Kit deliberately selects only economically sparse packs. Exact erasure has
+// a stronger selection policy, so this scoped planning view marks every
+// receipt-selected partial pack eligible while its live-entry inventory stays
+// exact for Kit's preflight and compare-and-swap checks.
+func forcedDerivativeRepackUsage(usage packstore.PackUsage) packstore.PackUsage {
+	if usage.LiveEntries == 0 {
+		return usage
+	}
+	usage.EntryCount = usage.LiveEntries*2 + 1
+	usage.StoredBytes = usage.LiveStoredBytes + 1
+	usage.CreatedAt = time.Unix(0, 0).UTC()
+	return usage
+}
+
+func collectExactUnreachableBlobs(
+	ctx context.Context, metadata *store.Store, blobs *blob.Store, hashes []string,
+) (GCReport, error) {
+	report := GCReport{}
+	if len(hashes) == 0 {
+		return report, nil
+	}
+	unreachable, err := metadata.UnreachableDerivativePurgeBlobs(ctx)
+	if err != nil {
+		return report, err
+	}
+	eligible := make(map[string]struct{}, len(unreachable))
+	for _, item := range unreachable {
+		eligible[item.Hash] = struct{}{}
+	}
+	primary, err := metadata.PrimaryBlobStore(ctx)
+	if err != nil {
+		return report, err
+	}
+	collected := make([]string, 0, len(hashes))
+	retirements := make([]store.GCLooseRetirement, 0, len(hashes))
+	packRetirements := make([]store.GCPackRetirement, 0, len(hashes))
+	for _, candidate := range hashes {
+		if _, ok := eligible[candidate]; !ok {
+			continue
+		}
+		hash, err := packstore.ParseHash(candidate)
+		if err != nil {
+			return report, fmt.Errorf("parsing derivative GC candidate hash %s: %w", candidate, err)
+		}
+		resolution, err := metadata.ResolveBlobLocations(ctx, hash)
+		if err != nil {
+			return report, err
+		}
+		var looseSize, packedSize int64
+		var packed bool
+		for _, location := range resolution.Candidates {
+			if location.Loose != nil {
+				looseSize += location.Loose.StoredSize
+			} else if location.Pack != nil {
+				packed = true
+				packedSize += location.Pack.StoredLen
+			}
+		}
+		report.CandidateBlobs++
+		report.ReclaimableBytes += looseSize
+		if packed {
+			report.PendingPackedBlobs++
+			report.PendingPackedBytes += packedSize
+		}
+		if err := validateUnreachableLooseLocations(blobs, primary.ID, resolution); err != nil {
+			return report, err
+		}
+		if err := validateUnreachablePackLocations(primary.ID, resolution); err != nil {
+			return report, err
+		}
+		for _, location := range resolution.Candidates {
+			if location.Loose != nil {
+				retirements = append(retirements, store.GCLooseRetirement{
+					StoreID: string(location.StoreID), Hash: hash,
+					Encoding: location.Loose.Encoding,
+				})
+			}
+			if location.Pack != nil {
+				packRetirements = append(packRetirements, store.GCPackRetirement{
+					StoreID: string(location.StoreID), PackID: location.Pack.PackID,
+				})
+			}
+		}
+		collected = append(collected, candidate)
+	}
+	if len(collected) != 0 {
+		if err := metadata.DeleteBlobRowsWithGCRetirements(
+			ctx, collected, retirements, packRetirements,
+		); err != nil {
+			return report, err
+		}
+		report.RemovedBlobs = len(collected)
+		report.Removed = len(collected)
+		reclaimed, err := retireGCLooseItems(ctx, metadata, blobs, primary.ID, retirements)
+		report.ReclaimedFiles += reclaimed
+		if err != nil {
+			return report, err
+		}
+	}
+	return report, nil
+}
+
+func validateUnreachablePackLocations(
+	primaryStoreID string, resolution packstore.Resolution,
+) error {
+	for _, location := range resolution.Candidates {
+		if location.Pack == nil || string(location.StoreID) == primaryStoreID {
+			continue
+		}
+		return fmt.Errorf(
+			"%w: exact derivative erasure cannot rewrite packed store %s",
+			packstore.ErrStoreUnavailable, location.StoreID,
+		)
+	}
+	return nil
 }
 
 func retireGCLooseItems(

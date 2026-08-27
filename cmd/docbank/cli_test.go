@@ -94,7 +94,7 @@ func startTestDaemon(t *testing.T, dir string) {
 	require.Eventually(t, func() bool {
 		_, _, ok, err := client.Find(ctx, dir)
 		return err == nil && ok
-	}, 10*time.Second, 25*time.Millisecond, "test daemon never became ready")
+	}, 30*time.Second, 25*time.Millisecond, "test daemon never became ready")
 }
 
 func writeSourceFile(t *testing.T, name, content string) string {

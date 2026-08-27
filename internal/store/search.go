@@ -10,6 +10,7 @@ import (
 	"io"
 	"mime"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -48,6 +49,8 @@ type LexicalGeneration struct {
 	ID             string
 	SegmentCount   int
 	ManifestDigest string
+	BuildCount     int
+	BuildDigest    string
 }
 
 // LexicalGenerationRoot is one exact immutable generation currently retained
@@ -76,11 +79,19 @@ const lexicalProjectionSchema = `
 CREATE TABLE IF NOT EXISTS rendition_lexical_generations (
     generation_id TEXT PRIMARY KEY,
     segment_count INTEGER NOT NULL CHECK (segment_count >= 0),
+    build_count   INTEGER NOT NULL CHECK (build_count >= 0),
     built_at      TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS rendition_lexical_generation_manifests (
     generation_id  TEXT PRIMARY KEY REFERENCES rendition_lexical_generations(generation_id),
-    manifest_digest TEXT NOT NULL CHECK (length(manifest_digest) = 64)
+    manifest_digest TEXT NOT NULL CHECK (length(manifest_digest) = 64),
+    build_digest    TEXT NOT NULL CHECK (length(build_digest) = 64)
+);
+CREATE TABLE IF NOT EXISTS rendition_lexical_generation_builds (
+    generation_id TEXT NOT NULL REFERENCES rendition_lexical_generations(generation_id)
+        ON DELETE CASCADE,
+    build_id      TEXT NOT NULL REFERENCES rendition_builds(build_id),
+    PRIMARY KEY (generation_id, build_id)
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS rendition_lexical_fts USING fts5(
     generation_id UNINDEXED,
@@ -99,7 +110,16 @@ func (s *Store) RecordRenditionBlob(
 	ctx context.Context, hash string, size int64, physical BlobPhysical,
 ) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		return s.EnsureBlobTx(tx, hash, size, physical)
+		if err := s.EnsureBlobTx(tx, hash, size, physical); err != nil {
+			return err
+		}
+		if physical.Created {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO rendition_blob_staging(blob_hash)
+				VALUES(?) ON CONFLICT(blob_hash) DO NOTHING`, hash); err != nil {
+				return fmt.Errorf("marking rendition blob %s as uncommitted staging: %w", hash, err)
+			}
+		}
+		return nil
 	})
 }
 
@@ -111,85 +131,147 @@ func (s *Store) StageLexicalGeneration(
 	if err := validateCatalogSHA256(generationID, "lexical generation ID"); err != nil {
 		return LexicalGeneration{}, err
 	}
-	generation := LexicalGeneration{ID: generationID}
+	var generation LexicalGeneration
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, lexicalProjectionSchema); err != nil {
-			return fmt.Errorf("initializing lexical projection: %w", err)
-		}
-		var storedCount int
-		var storedManifest sql.NullString
-		err := tx.QueryRowContext(ctx, `
-			SELECT g.segment_count,m.manifest_digest
-			FROM rendition_lexical_generations g
-			LEFT JOIN rendition_lexical_generation_manifests m
-			  ON m.generation_id=g.generation_id
-			WHERE g.generation_id=?`,
-			generationID,
-		).Scan(&storedCount, &storedManifest)
-		if err == nil {
-			actualRows, err := readLexicalManifestRowsTx(ctx, tx, generationID, "")
-			if err != nil {
-				return err
-			}
-			actualManifest := lexicalManifestDigest(actualRows)
-			if !storedManifest.Valid || len(actualRows) != storedCount ||
-				actualManifest != storedManifest.String {
-				return fmt.Errorf("lexical generation %s has a different immutable manifest", generationID)
-			}
-			generation.SegmentCount = storedCount
-			generation.ManifestDigest = storedManifest.String
-			return nil
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("reading lexical generation %s: %w", generationID, err)
-		}
-
-		segments, err := readCatalogLexicalManifestRowsTx(ctx, tx, "")
-		if err != nil {
-			return err
-		}
-
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM rendition_lexical_fts WHERE generation_id=?`, generationID,
-		); err != nil {
-			return fmt.Errorf("clearing interrupted lexical generation %s: %w", generationID, err)
-		}
-		for _, segment := range segments {
-			if _, err := tx.ExecContext(ctx, `
-				INSERT INTO rendition_lexical_fts(generation_id,build_id,segment_id,text)
-				VALUES(?,?,?,?)`, generationID, segment.buildID, segment.segmentID, segment.text,
-			); err != nil {
-				return fmt.Errorf("building lexical generation %s: %w", generationID, err)
-			}
-		}
-		generation.SegmentCount = len(segments)
-		generation.ManifestDigest = lexicalManifestDigest(segments)
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO rendition_lexical_generations(generation_id,segment_count,built_at)
-			VALUES(?,?,?)`, generationID, generation.SegmentCount, nowRFC3339(),
-		); err != nil {
-			return fmt.Errorf("completing lexical generation %s: %w", generationID, err)
-		}
-		actualRows, err := readLexicalManifestRowsTx(ctx, tx, generationID, "")
-		if err != nil {
-			return err
-		}
-		if len(actualRows) != generation.SegmentCount ||
-			lexicalManifestDigest(actualRows) != generation.ManifestDigest {
-			return fmt.Errorf("lexical generation %s has a different immutable manifest", generationID)
-		}
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO rendition_lexical_generation_manifests(generation_id,manifest_digest)
-			VALUES(?,?)`, generationID, generation.ManifestDigest,
-		); err != nil {
-			return fmt.Errorf("recording lexical generation %s manifest: %w", generationID, err)
-		}
-		return nil
+		var err error
+		generation, err = stageLexicalGenerationTx(ctx, tx, generationID)
+		return err
 	})
 	if err != nil {
 		return LexicalGeneration{}, err
 	}
 	return generation, nil
+}
+
+// StageLexicalGenerationWithRoot atomically records a complete immutable
+// projection and the exact fenced authority protecting it from maintenance.
+func (s *Store) StageLexicalGenerationWithRoot(
+	ctx context.Context, generationID string, root CurrentRenditionRoot,
+) (LexicalGeneration, error) {
+	if err := validateCatalogSHA256(generationID, "lexical generation ID"); err != nil {
+		return LexicalGeneration{}, err
+	}
+	if err := validateCurrentRenditionRoot(root); err != nil {
+		return LexicalGeneration{}, err
+	}
+	if root.TargetKind != RenditionRootLexicalGeneration || root.TargetID != generationID {
+		return LexicalGeneration{}, errors.New(
+			"rooted lexical generation requires a root for the staged generation")
+	}
+	var generation LexicalGeneration
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		generation, err = stageLexicalGenerationTx(ctx, tx, generationID)
+		if err != nil {
+			return err
+		}
+		return putCurrentRenditionRootTx(ctx, tx, root)
+	})
+	if err != nil {
+		return LexicalGeneration{}, err
+	}
+	return generation, nil
+}
+
+func stageLexicalGenerationTx(
+	ctx context.Context, tx *sql.Tx, generationID string,
+) (LexicalGeneration, error) {
+	if _, err := tx.ExecContext(ctx, lexicalProjectionSchema); err != nil {
+		return LexicalGeneration{}, fmt.Errorf("initializing lexical projection: %w", err)
+	}
+	segments, err := readCatalogLexicalManifestRowsTx(ctx, tx, "")
+	if err != nil {
+		return LexicalGeneration{}, err
+	}
+	buildIDs, err := lexicalCatalogBuildIDsTx(ctx, tx)
+	if err != nil {
+		return LexicalGeneration{}, err
+	}
+	return stageLexicalGenerationRowsTx(ctx, tx, generationID, segments, buildIDs)
+}
+
+func stageLexicalGenerationExcludingTx(
+	ctx context.Context, tx *sql.Tx, excludedBuildIDs map[string]struct{},
+) (LexicalGeneration, error) {
+	segments, err := readCatalogLexicalManifestRowsTx(ctx, tx, "")
+	if err != nil {
+		return LexicalGeneration{}, err
+	}
+	segments = slices.DeleteFunc(segments, func(row lexicalManifestRow) bool {
+		_, excluded := excludedBuildIDs[row.buildID]
+		return excluded
+	})
+	buildIDs, err := lexicalCatalogBuildIDsTx(ctx, tx)
+	if err != nil {
+		return LexicalGeneration{}, err
+	}
+	buildIDs = slices.DeleteFunc(buildIDs, func(buildID string) bool {
+		_, excluded := excludedBuildIDs[buildID]
+		return excluded
+	})
+	if len(buildIDs) == 0 {
+		return LexicalGeneration{}, nil
+	}
+	generationID := lexicalReplacementGenerationID(segments, buildIDs)
+	return stageLexicalGenerationRowsTx(ctx, tx, generationID, segments, buildIDs)
+}
+
+func stageLexicalGenerationRowsTx(
+	ctx context.Context, tx *sql.Tx, generationID string,
+	segments []lexicalManifestRow, buildIDs []string,
+) (LexicalGeneration, error) {
+	stored, err := loadAndValidateLexicalGenerationTx(ctx, tx, generationID)
+	if err == nil {
+		return stored, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return LexicalGeneration{}, err
+	}
+	generation := LexicalGeneration{
+		ID: generationID, SegmentCount: len(segments), ManifestDigest: lexicalManifestDigest(segments),
+		BuildCount: len(buildIDs), BuildDigest: lexicalBuildDigest(buildIDs),
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM rendition_lexical_fts WHERE generation_id=?`, generationID,
+	); err != nil {
+		return LexicalGeneration{}, fmt.Errorf("clearing interrupted lexical generation %s: %w", generationID, err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO rendition_lexical_generations(generation_id,segment_count,build_count,built_at)
+		VALUES(?,?,?,?)`, generation.ID, generation.SegmentCount, generation.BuildCount, nowRFC3339(),
+	); err != nil {
+		return LexicalGeneration{}, fmt.Errorf("completing lexical generation %s: %w", generationID, err)
+	}
+	for _, buildID := range buildIDs {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO rendition_lexical_generation_builds(generation_id,build_id)
+			VALUES(?,?)`, generationID, buildID); err != nil {
+			return LexicalGeneration{}, fmt.Errorf(
+				"recording lexical generation %s build %s: %w", generationID, buildID, err)
+		}
+	}
+	for _, segment := range segments {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO rendition_lexical_fts(generation_id,build_id,segment_id,text)
+			VALUES(?,?,?,?)`, generationID, segment.buildID, segment.segmentID, segment.text,
+		); err != nil {
+			return LexicalGeneration{}, fmt.Errorf("building lexical generation %s: %w", generationID, err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO rendition_lexical_generation_manifests(
+			generation_id,manifest_digest,build_digest
+		) VALUES(?,?,?)`, generation.ID, generation.ManifestDigest, generation.BuildDigest,
+	); err != nil {
+		return LexicalGeneration{}, fmt.Errorf("recording lexical generation %s manifest: %w", generationID, err)
+	}
+	return loadAndValidateLexicalGenerationTx(ctx, tx, generationID)
+}
+
+func lexicalReplacementGenerationID(rows []lexicalManifestRow, buildIDs []string) string {
+	digest := sha256.Sum256([]byte("docbank-lexical-gc-replacement/v1\x00" +
+		lexicalManifestDigest(rows) + lexicalBuildDigest(buildIDs)))
+	return hex.EncodeToString(digest[:])
 }
 
 type lexicalManifestRow struct {
@@ -200,7 +282,7 @@ type lexicalManifestRow struct {
 
 func readCatalogLexicalManifestRowsTx(
 	ctx context.Context, tx *sql.Tx, buildID string,
-) ([]lexicalManifestRow, error) {
+) (_ []lexicalManifestRow, retErr error) {
 	query := `
 		SELECT s.build_id,s.segment_id,s.text,b.provider_operation_id
 		FROM rendition_lexical_segments s
@@ -223,7 +305,32 @@ func readCatalogLexicalManifestRowsTx(
 	if err != nil {
 		return nil, fmt.Errorf("reading staged lexical manifest: %w", err)
 	}
-	return scanCatalogLexicalManifestRows(rows, "staged lexical manifest")
+	defer func() {
+		if err := rows.Close(); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("closing staged lexical manifest: %w", err))
+		}
+	}()
+
+	var result []lexicalManifestRow
+	for rows.Next() {
+		var (
+			row               lexicalManifestRow
+			providerOperation string
+		)
+		if err := rows.Scan(&row.buildID, &row.segmentID, &row.text, &providerOperation); err != nil {
+			return nil, fmt.Errorf("reading staged lexical manifest row: %w", err)
+		}
+		if providerOperation == legacyPlainTextProvider && len(result) > 0 &&
+			result[len(result)-1].buildID == row.buildID {
+			result[len(result)-1].text += row.text
+			continue
+		}
+		result = append(result, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading staged lexical manifest rows: %w", err)
+	}
+	return result, nil
 }
 
 func readLexicalManifestRowsTx(
@@ -248,77 +355,6 @@ func readLexicalManifestRowsTx(
 		return nil, fmt.Errorf("reading lexical generation %s manifest: %w", generationID, err)
 	}
 	return scanLexicalManifestRows(rows, "lexical generation "+generationID+" manifest")
-}
-
-func readPublishedLexicalManifestRowsTx(
-	ctx context.Context, tx *sql.Tx, generationID string,
-) ([]lexicalManifestRow, error) {
-	var (
-		rows *sql.Rows
-		err  error
-	)
-	if generationID == "" {
-		rows, err = tx.QueryContext(ctx, `
-			SELECT s.build_id,s.segment_id,s.text,b.provider_operation_id
-			FROM rendition_lexical_segments s
-			JOIN rendition_builds b ON b.build_id=s.build_id
-			WHERE EXISTS (
-			  SELECT 1 FROM rendition_attachments a
-			  JOIN rendition_heads h
-			    ON h.content_version_id=a.content_version_id
-			   AND h.profile_fingerprint=a.profile_fingerprint
-			   AND h.attachment_id=a.attachment_id
-			  WHERE a.build_id=s.build_id
-			)
-			ORDER BY s.build_id,s.segment_order,s.segment_id`)
-	} else {
-		rows, err = tx.QueryContext(ctx, `
-			SELECT f.build_id,f.segment_id,f.text
-			FROM rendition_lexical_fts f
-			WHERE f.generation_id=? AND EXISTS (
-			  SELECT 1 FROM rendition_attachments a
-			  JOIN rendition_heads h
-			    ON h.content_version_id=a.content_version_id
-			   AND h.profile_fingerprint=a.profile_fingerprint
-			   AND h.attachment_id=a.attachment_id
-			  WHERE a.build_id=f.build_id
-			)`, generationID)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("reading published lexical manifest: %w", err)
-	}
-	if generationID == "" {
-		return scanCatalogLexicalManifestRows(rows, "published lexical manifest")
-	}
-	return scanLexicalManifestRows(rows, "published lexical manifest")
-}
-
-func scanCatalogLexicalManifestRows(
-	rows *sql.Rows, description string,
-) (_ []lexicalManifestRow, retErr error) {
-	defer func() {
-		if err := rows.Close(); err != nil {
-			retErr = errors.Join(retErr, fmt.Errorf("closing %s: %w", description, err))
-		}
-	}()
-	var result []lexicalManifestRow
-	for rows.Next() {
-		var row lexicalManifestRow
-		var providerOperation string
-		if err := rows.Scan(&row.buildID, &row.segmentID, &row.text, &providerOperation); err != nil {
-			return nil, fmt.Errorf("reading %s row: %w", description, err)
-		}
-		if providerOperation == legacyPlainTextProvider && len(result) > 0 &&
-			result[len(result)-1].buildID == row.buildID {
-			result[len(result)-1].text += row.text
-			continue
-		}
-		result = append(result, row)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("reading %s rows: %w", description, err)
-	}
-	return result, nil
 }
 
 func scanLexicalManifestRows(
@@ -365,6 +401,97 @@ func lexicalManifestDigest(rows []lexicalManifestRow) string {
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
+func lexicalCatalogBuildIDsTx(ctx context.Context, tx *sql.Tx) ([]string, error) {
+	return lexicalBuildIDsTx(ctx, tx,
+		`SELECT build_id FROM rendition_builds ORDER BY build_id`, nil)
+}
+
+func lexicalGenerationBuildIDsTx(
+	ctx context.Context, tx *sql.Tx, generationID string,
+) ([]string, error) {
+	return lexicalBuildIDsTx(ctx, tx, `
+		SELECT build_id FROM rendition_lexical_generation_builds
+		WHERE generation_id=? ORDER BY build_id`, []any{generationID})
+}
+
+func lexicalBuildIDsTx(
+	ctx context.Context, tx *sql.Tx, query string, args []any,
+) (_ []string, retErr error) {
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("reading lexical generation build membership: %w", err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf(
+				"closing lexical generation build membership: %w", err))
+		}
+	}()
+	var buildIDs []string
+	for rows.Next() {
+		var buildID string
+		if err := rows.Scan(&buildID); err != nil {
+			return nil, fmt.Errorf("scanning lexical generation build membership: %w", err)
+		}
+		buildIDs = append(buildIDs, buildID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading lexical generation build membership: %w", err)
+	}
+	return buildIDs, nil
+}
+
+func lexicalBuildDigest(buildIDs []string) string {
+	ordered := append([]string(nil), buildIDs...)
+	sort.Strings(ordered)
+	hash := sha256.New()
+	for _, buildID := range ordered {
+		_, _ = io.WriteString(hash, strconv.Itoa(len(buildID)))
+		_, _ = io.WriteString(hash, ":")
+		_, _ = io.WriteString(hash, buildID)
+	}
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func loadAndValidateLexicalGenerationTx(
+	ctx context.Context, tx *sql.Tx, generationID string,
+) (LexicalGeneration, error) {
+	generation := LexicalGeneration{ID: generationID}
+	var manifestDigest, buildDigest sql.NullString
+	err := tx.QueryRowContext(ctx, `
+		SELECT g.segment_count,g.build_count,m.manifest_digest,m.build_digest
+		FROM rendition_lexical_generations g
+		LEFT JOIN rendition_lexical_generation_manifests m
+		  ON m.generation_id=g.generation_id
+		WHERE g.generation_id=?`, generationID,
+	).Scan(&generation.SegmentCount, &generation.BuildCount, &manifestDigest, &buildDigest)
+	if errors.Is(err, sql.ErrNoRows) {
+		return LexicalGeneration{}, ErrNotFound
+	}
+	if err != nil {
+		return LexicalGeneration{}, fmt.Errorf("reading lexical generation %s: %w", generationID, err)
+	}
+	segments, err := readLexicalManifestRowsTx(ctx, tx, generationID, "")
+	if err != nil {
+		return LexicalGeneration{}, err
+	}
+	buildIDs, err := lexicalGenerationBuildIDsTx(ctx, tx, generationID)
+	if err != nil {
+		return LexicalGeneration{}, err
+	}
+	if !manifestDigest.Valid || !buildDigest.Valid ||
+		len(segments) != generation.SegmentCount ||
+		len(buildIDs) != generation.BuildCount ||
+		lexicalManifestDigest(segments) != manifestDigest.String ||
+		lexicalBuildDigest(buildIDs) != buildDigest.String {
+		return LexicalGeneration{}, fmt.Errorf(
+			"lexical generation %s has a different immutable manifest", generationID)
+	}
+	generation.ManifestDigest = manifestDigest.String
+	generation.BuildDigest = buildDigest.String
+	return generation, nil
+}
+
 // ActiveLexicalGeneration returns the exact complete projection selected by
 // the lexical head. Call AcquireLexicalGeneration when the generation must
 // remain rooted after this lookup returns.
@@ -377,12 +504,13 @@ func readActiveLexicalGeneration(
 ) (LexicalGeneration, error) {
 	var generation LexicalGeneration
 	err := queryer.QueryRowContext(ctx, `
-		SELECT g.generation_id,g.segment_count,m.manifest_digest
+		SELECT g.generation_id,g.segment_count,m.manifest_digest,g.build_count,m.build_digest
 		FROM rendition_lexical_heads h
 		JOIN rendition_lexical_generations g ON g.generation_id=h.generation_id
 		JOIN rendition_lexical_generation_manifests m ON m.generation_id=g.generation_id
 		WHERE h.singleton=1`).Scan(
 		&generation.ID, &generation.SegmentCount, &generation.ManifestDigest,
+		&generation.BuildCount, &generation.BuildDigest,
 	)
 	if errors.Is(err, sql.ErrNoRows) || isMissingLexicalSchema(err) {
 		return LexicalGeneration{}, ErrNotFound
@@ -528,40 +656,6 @@ func (s *Store) PublishRenditionAndLexicalHeads(
 		if _, err := tx.ExecContext(ctx, lexicalProjectionSchema); err != nil {
 			return fmt.Errorf("initializing lexical projection: %w", err)
 		}
-		var generationSegments int
-		var generationManifest sql.NullString
-		if err := tx.QueryRowContext(ctx, `
-			SELECT g.segment_count,m.manifest_digest
-			FROM rendition_lexical_generations g
-			LEFT JOIN rendition_lexical_generation_manifests m
-			  ON m.generation_id=g.generation_id
-			WHERE g.generation_id=?`,
-			generationID,
-		).Scan(&generationSegments, &generationManifest); errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("lexical generation %s: %w", generationID, ErrNotFound)
-		} else if err != nil {
-			return fmt.Errorf("reading lexical generation %s: %w", generationID, err)
-		}
-		generationRows, err := readLexicalManifestRowsTx(ctx, tx, generationID, "")
-		if err != nil {
-			return err
-		}
-		if !generationManifest.Valid || len(generationRows) != generationSegments ||
-			lexicalManifestDigest(generationRows) != generationManifest.String {
-			return fmt.Errorf("lexical generation %s has a different immutable manifest", generationID)
-		}
-		publishedCatalogRows, err := readPublishedLexicalManifestRowsTx(ctx, tx, "")
-		if err != nil {
-			return err
-		}
-		publishedGenerationRows, err := readPublishedLexicalManifestRowsTx(ctx, tx, generationID)
-		if err != nil {
-			return err
-		}
-		if len(publishedGenerationRows) != len(publishedCatalogRows) ||
-			lexicalManifestDigest(publishedGenerationRows) != lexicalManifestDigest(publishedCatalogRows) {
-			return fmt.Errorf("lexical generation %s does not cover published rendition builds", generationID)
-		}
 		if err := ensureProcessingProfileTx(ctx, tx, normalized.Profile); err != nil {
 			return err
 		}
@@ -590,8 +684,33 @@ func (s *Store) PublishRenditionAndLexicalHeads(
 		if sourceSHA256 != build.SourceSHA256 {
 			return errors.New("rendition attachment source does not match content version")
 		}
+		suppressed, err := derivativeAttachmentSuppressedTx(
+			ctx, tx, build.SourceSHA256, normalized.ContentVersionID,
+			normalized.Profile.Fingerprint, build.ID)
+		if err != nil {
+			return fmt.Errorf("checking rendition attachment purge suppression: %w", err)
+		}
+		if suppressed {
+			return fmt.Errorf("rendition attachment for build %s has an active purge suppression", build.ID)
+		}
 		if err := validateRenditionBuildStateTx(ctx, tx, build.ID); err != nil {
 			return err
+		}
+		if _, err := loadAndValidateLexicalGenerationTx(ctx, tx, generationID); errors.Is(err, ErrNotFound) {
+			return fmt.Errorf("lexical generation %s: %w", generationID, ErrNotFound)
+		} else if err != nil {
+			return err
+		}
+		var containsBuild bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+			SELECT 1 FROM rendition_lexical_generation_builds
+			WHERE generation_id=? AND build_id=?
+		)`, generationID, build.ID).Scan(&containsBuild); err != nil {
+			return fmt.Errorf("checking lexical generation %s build membership: %w", generationID, err)
+		}
+		if !containsBuild {
+			return fmt.Errorf("lexical generation %s does not exactly contain build %s",
+				generationID, build.ID)
 		}
 		expectedBuildRows, err := readCatalogLexicalManifestRowsTx(ctx, tx, build.ID)
 		if err != nil {
@@ -645,6 +764,9 @@ func (s *Store) PublishRenditionAndLexicalHeads(
 		); err != nil {
 			return fmt.Errorf("publishing rendition head: %w", err)
 		}
+		if err := validateLexicalGenerationCoversCurrentHeadsTx(ctx, tx, generationID); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO rendition_lexical_heads(singleton,generation_id) VALUES(1,?)
 			ON CONFLICT(singleton) DO UPDATE SET generation_id=excluded.generation_id`,
@@ -654,6 +776,64 @@ func (s *Store) PublishRenditionAndLexicalHeads(
 		}
 		return nil
 	})
+}
+
+func validateLexicalGenerationCoversCurrentHeadsTx(
+	ctx context.Context, tx *sql.Tx, generationID string,
+) error {
+	buildIDs, err := currentRenditionHeadBuildIDsTx(ctx, tx)
+	if err != nil {
+		return err
+	}
+	generationBuildIDs, err := lexicalGenerationBuildIDsTx(ctx, tx, generationID)
+	if err != nil {
+		return err
+	}
+	for _, buildID := range buildIDs {
+		if !slices.Contains(generationBuildIDs, buildID) {
+			return fmt.Errorf("lexical generation %s does not cover published rendition build %s (current rendition head build)",
+				generationID, buildID)
+		}
+		expected, err := readCatalogLexicalManifestRowsTx(ctx, tx, buildID)
+		if err != nil {
+			return err
+		}
+		indexed, err := readLexicalManifestRowsTx(ctx, tx, generationID, buildID)
+		if err != nil {
+			return err
+		}
+		if len(indexed) != len(expected) || lexicalManifestDigest(indexed) != lexicalManifestDigest(expected) {
+			return fmt.Errorf("lexical generation %s does not exactly contain current rendition head build %s",
+				generationID, buildID)
+		}
+	}
+	return nil
+}
+
+func currentRenditionHeadBuildIDsTx(
+	ctx context.Context, tx *sql.Tx,
+) (_ []string, retErr error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT DISTINCT a.build_id
+		FROM rendition_heads h
+		JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
+		ORDER BY a.build_id`)
+	if err != nil {
+		return nil, fmt.Errorf("reading current rendition head builds: %w", err)
+	}
+	defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+	var buildIDs []string
+	for rows.Next() {
+		var buildID string
+		if err := rows.Scan(&buildID); err != nil {
+			return nil, fmt.Errorf("scanning current rendition head build: %w", err)
+		}
+		buildIDs = append(buildIDs, buildID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading current rendition head builds: %w", err)
+	}
+	return buildIDs, nil
 }
 
 // ftsQuery converts free-form user input into a safe FTS5 query: each

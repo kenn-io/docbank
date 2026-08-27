@@ -423,7 +423,7 @@ func (s *Store) ingestFile(
 		}
 		var version ContentVersion
 		receipt.Node, version, err = s.createFileWithOperationTx(
-			tx, parentID, finalName, blobHash, size, mimeType, operation, physical...,
+			ctx, tx, parentID, finalName, blobHash, size, mimeType, operation, physical...,
 		)
 		if err != nil {
 			return err

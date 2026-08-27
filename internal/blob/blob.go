@@ -572,9 +572,10 @@ func (s *Store) WithMutation(ctx context.Context, fn func() error) error {
 	return errors.Join(fn(), lease.Release())
 }
 
-// withMaintenance excludes every mutation lease across one physical cleanup.
-// Callers must acquire any location lock before entering this boundary.
-func (s *Store) withMaintenance(ctx context.Context, fn func() error) error {
+// WithMaintenance excludes every mutation lease across one logical and
+// physical cleanup boundary. fn must not invoke a Kit maintenance operation,
+// because maintenance leases are deliberately non-reentrant.
+func (s *Store) WithMaintenance(ctx context.Context, fn func() error) error {
 	if s.coordinator == nil {
 		return fn()
 	}
@@ -583,6 +584,12 @@ func (s *Store) withMaintenance(ctx context.Context, fn func() error) error {
 		return fmt.Errorf("acquiring blob maintenance lease: %w", err)
 	}
 	return errors.Join(fn(), lease.Release())
+}
+
+// withMaintenance is the package-internal spelling retained for placement
+// reconciliation, whose caller also holds the required location lock.
+func (s *Store) withMaintenance(ctx context.Context, fn func() error) error {
+	return s.WithMaintenance(ctx, fn)
 }
 
 // Write streams r into durable canonical loose storage. The caller holds a
