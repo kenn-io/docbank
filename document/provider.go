@@ -153,6 +153,11 @@ type RenditionAuthorization struct {
 	ExpiresAt                   string                 `json:"expires_at"`
 }
 
+// Fingerprint returns the canonical identity of every authorization field.
+func (authorization RenditionAuthorization) Fingerprint() (string, error) {
+	return componentFingerprint("rendition_authorization", cloneRenditionAuthorization(authorization))
+}
+
 // RenditionArtifact is one bounded, checksum-addressed provider output.
 type RenditionArtifact struct {
 	Role      EvidenceArtifactRole `json:"role"`
@@ -176,6 +181,7 @@ type RenditionReceipt struct {
 	DescriptorFingerprint       string         `json:"descriptor_fingerprint"`
 	PolicyFingerprint           string         `json:"policy_fingerprint"`
 	RenditionRequestFingerprint string         `json:"rendition_request_fingerprint"`
+	AuthorizationFingerprint    string         `json:"authorization_fingerprint"`
 	SourceSHA256                string         `json:"source_sha256"`
 	OperationID                 string         `json:"operation_id"`
 	StartedAt                   string         `json:"started_at"`
@@ -813,10 +819,10 @@ func validateRenditionDescriptorFields(descriptor RenditionDescriptor) error {
 	seenRoles := make(map[EvidenceArtifactRole]struct{}, len(descriptor.ArtifactRoles))
 	for _, role := range descriptor.ArtifactRoles {
 		if !validProfileArtifactRole(role) {
-			return fmt.Errorf("descriptor artifact role %q is invalid", role)
+			return errors.New("descriptor artifact role is invalid")
 		}
 		if _, exists := seenRoles[role]; exists {
-			return fmt.Errorf("descriptor artifact role %q is duplicated", role)
+			return errors.New("descriptor artifact role is duplicated")
 		}
 		seenRoles[role] = struct{}{}
 	}
@@ -964,11 +970,14 @@ func validateAuthorizedRoles(descriptor RenditionDescriptor, roles []EvidenceArt
 	}
 	seen := make(map[EvidenceArtifactRole]struct{}, len(roles))
 	for _, role := range roles {
-		if !validProfileArtifactRole(role) || !slices.Contains(descriptor.ArtifactRoles, role) {
-			return fmt.Errorf("authorization artifact role %q is not declared", role)
+		if !validProfileArtifactRole(role) {
+			return errors.New("authorization artifact role is invalid")
+		}
+		if !slices.Contains(descriptor.ArtifactRoles, role) {
+			return errors.New("authorization artifact role is not declared")
 		}
 		if _, exists := seen[role]; exists {
-			return fmt.Errorf("authorization artifact role %q is duplicated", role)
+			return errors.New("authorization artifact role is duplicated")
 		}
 		seen[role] = struct{}{}
 	}
@@ -986,7 +995,7 @@ func validateRenditionArtifacts(
 	for _, artifact := range artifacts {
 		if !validProfileArtifactRole(artifact.Role) || !slices.Contains(descriptor.ArtifactRoles, artifact.Role) ||
 			!slices.Contains(authorization.AllowedArtifactRoles, artifact.Role) {
-			return fmt.Errorf("provider artifact role %q is not authorized", artifact.Role)
+			return errors.New("provider artifact role is not authorized")
 		}
 		if err := validateCanonicalMediaType(artifact.MediaType); err != nil {
 			return fmt.Errorf("provider artifact: %w", err)
@@ -1025,7 +1034,7 @@ func validateEvidenceArtifactAuthorization(
 	referenced := make(map[identity]struct{}, len(evidence))
 	for _, artifact := range evidence {
 		if !slices.Contains(authorization.AllowedArtifactRoles, artifact.Role) {
-			return fmt.Errorf("source evidence artifact role %q is not authorized", artifact.Role)
+			return errors.New("source evidence artifact role is not authorized")
 		}
 		key := identity{role: artifact.Role, sha256: artifact.SHA256}
 		if _, ok := retainedSet[key]; !ok {
@@ -1044,9 +1053,14 @@ func validateEvidenceArtifactAuthorization(
 func validateRenditionReceipt(
 	descriptor RenditionDescriptor, authorization RenditionAuthorization, receipt RenditionReceipt,
 ) error {
+	authorizationFingerprint, err := authorization.Fingerprint()
+	if err != nil {
+		return fmt.Errorf("fingerprint rendition authorization: %w", err)
+	}
 	if receipt.ProviderID != descriptor.ID || receipt.DescriptorFingerprint != descriptor.Fingerprint ||
 		receipt.PolicyFingerprint != authorization.PolicyFingerprint ||
 		receipt.RenditionRequestFingerprint != authorization.RenditionRequestFingerprint ||
+		receipt.AuthorizationFingerprint != authorizationFingerprint ||
 		receipt.SourceSHA256 != authorization.SourceSHA256 {
 		return errors.New("provider receipt does not match authorization")
 	}

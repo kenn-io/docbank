@@ -354,6 +354,40 @@ func TestRenditionProviderContractRejectsUnsafeReceiptFields(t *testing.T) {
 	}
 }
 
+func TestRenditionProviderContractRejectsReceiptFromDifferentAuthorization(t *testing.T) {
+	descriptor := validRenditionDescriptor(t)
+	metadata := validAuthorizedUploadMetadata()
+	authorization := validRenditionAuthorization(descriptor, metadata)
+	result := validRenditionResult(descriptor, authorization)
+	different := authorization
+	different.CapabilityRecordChecksum = strings.Repeat("9", 64)
+
+	require.ErrorContains(t,
+		ValidateRenditionResult(descriptor, different, result),
+		"receipt does not match authorization",
+	)
+}
+
+func TestRenditionProviderContractDoesNotReflectInvalidArtifactRoles(t *testing.T) {
+	descriptor := validRenditionDescriptor(t)
+	descriptor.Fingerprint = ""
+	descriptor.ArtifactRoles = []EvidenceArtifactRole{
+		EvidenceArtifactRole(strings.Repeat("provider-controlled", 4_096)),
+	}
+	_, err := NewRenditionDescriptor(descriptor)
+	require.EqualError(t, err, "descriptor artifact role is invalid")
+
+	descriptor = validRenditionDescriptor(t)
+	metadata := validAuthorizedUploadMetadata()
+	authorization := validRenditionAuthorization(descriptor, metadata)
+	result := validRenditionResult(descriptor, authorization)
+	result.Artifacts[0].Role = EvidenceArtifactRole("provider-controlled-value")
+	require.EqualError(t,
+		ValidateRenditionResult(descriptor, authorization, result),
+		"provider artifact role is not authorized",
+	)
+}
+
 func TestRenditionProviderContractRejectsUnclassifiedErrors(t *testing.T) {
 	require.ErrorContains(t,
 		ValidateRenditionProviderError(errors.New("raw provider body with secret")),
@@ -829,6 +863,7 @@ func validRenditionResult(
 	descriptor RenditionDescriptor, authorization RenditionAuthorization,
 ) RenditionResult {
 	authorizedAt, _ := parseRenditionTimestamp(authorization.AuthorizedAt)
+	authorizationFingerprint, _ := authorization.Fingerprint()
 	payload := []byte(`{"synthetic":"structured"}`)
 	digest := sha256.Sum256(payload)
 	return RenditionResult{
@@ -861,6 +896,7 @@ func validRenditionResult(
 			ProviderID: descriptor.ID, DescriptorFingerprint: descriptor.Fingerprint,
 			PolicyFingerprint:           authorization.PolicyFingerprint,
 			RenditionRequestFingerprint: authorization.RenditionRequestFingerprint,
+			AuthorizationFingerprint:    authorizationFingerprint,
 			SourceSHA256:                authorization.SourceSHA256,
 			OperationID:                 "operation-synthetic-1",
 			StartedAt:                   authorizedAt.Add(time.Second).Format(renditionTimestampForm),
