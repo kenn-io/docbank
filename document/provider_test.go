@@ -181,6 +181,7 @@ func TestRenditionProviderContractRejectsDuplicateAndOversizedOutputs(t *testing
 	descriptor := validRenditionDescriptor(t)
 	metadata := validAuthorizedUploadMetadata()
 	authorization := validRenditionAuthorization(descriptor, metadata)
+	authorization.MaxArtifacts = 2
 	for _, testCase := range []struct {
 		name   string
 		mutate func(*RenditionResult)
@@ -222,6 +223,21 @@ func TestRenditionProviderContractRejectsDuplicateAndOversizedOutputs(t *testing
 				ValidateRenditionResult(descriptor, authorization, result), testCase.want)
 		})
 	}
+}
+
+func TestRenditionProviderContractRejectsArtifactCountBeforeResultProcessing(t *testing.T) {
+	descriptor := validRenditionDescriptor(t)
+	metadata := validAuthorizedUploadMetadata()
+	authorization := validRenditionAuthorization(descriptor, metadata)
+	authorization.MaxTotalResultBytes = 128
+	result := validRenditionResult(descriptor, authorization)
+	result.Artifacts = append(result.Artifacts, result.Artifacts[0])
+	result.Evidence.ContractVersion = "malformed"
+
+	require.ErrorContains(t,
+		ValidateRenditionResult(descriptor, authorization, result),
+		"artifact count",
+	)
 }
 
 func TestRenditionProviderContractCountsArtifactMetadataAgainstTotal(t *testing.T) {

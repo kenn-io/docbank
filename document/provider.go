@@ -300,6 +300,9 @@ func RenderRendition(
 		}
 		return RenditionResult{}, err
 	}
+	if err := validateRenditionArtifactCount(sealed.MaxArtifacts, result.Artifacts); err != nil {
+		return RenditionResult{}, err
+	}
 	if err := preflightRenditionResult(sealed.MaxTotalResultBytes, result); err != nil {
 		return RenditionResult{}, err
 	}
@@ -333,6 +336,9 @@ func ValidateRenditionResult(
 		return err
 	}
 	if err := validateAuthorizationWithoutUpload(descriptor, authorization); err != nil {
+		return err
+	}
+	if err := validateRenditionArtifactCount(authorization.MaxArtifacts, result.Artifacts); err != nil {
 		return err
 	}
 	if err := preflightRenditionResult(authorization.MaxTotalResultBytes, result); err != nil {
@@ -1013,7 +1019,11 @@ func validateRenditionArtifacts(
 		}
 		seen[key] = struct{}{}
 	}
-	if len(artifacts) > authorization.MaxArtifacts {
+	return nil
+}
+
+func validateRenditionArtifactCount(maxArtifacts int, artifacts []RenditionArtifact) error {
+	if len(artifacts) > maxArtifacts {
 		return errors.New("provider artifact count exceeds authorization")
 	}
 	return nil
