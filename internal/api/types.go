@@ -551,6 +551,12 @@ type IngestPreflightReport struct {
 	PackEligible IngestSizeClass `json:"pack_eligible"`
 	LooseOnly    IngestSizeClass `json:"loose_only"`
 	Rejected     IngestSizeClass `json:"rejected"`
+	// CloudPlaceholders are regular files whose content is not present
+	// locally (macOS dataless files from iCloud Drive, Google Drive for
+	// Desktop, and similar). Ingest hydrates them through the provider at
+	// network speed, or fails each one the provider will not serve to the
+	// daemon. Zero on other platforms.
+	CloudPlaceholders IngestSizeClass `json:"cloud_placeholders"`
 
 	Excluded int64 `json:"excluded"`
 	Skipped  int64 `json:"skipped"`

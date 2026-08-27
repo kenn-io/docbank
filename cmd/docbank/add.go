@@ -142,6 +142,11 @@ func printIngestPreflight(cmd *cobra.Command, rep api.IngestPreflightReport) {
 		rep.LooseOnly.Files, formatBackupBytes(rep.LooseOnly.Bytes))
 	_, _ = fmt.Fprintf(out, "rejected: %d file(s), %s\n",
 		rep.Rejected.Files, formatBackupBytes(rep.Rejected.Bytes))
+	if rep.CloudPlaceholders.Files > 0 {
+		_, _ = fmt.Fprintf(out, "cloud placeholders (not present locally): %d file(s), %s — "+
+			"ingest downloads these through the provider, or fails those it will not serve to the daemon\n",
+			rep.CloudPlaceholders.Files, formatBackupBytes(rep.CloudPlaceholders.Bytes))
+	}
 	_, _ = fmt.Fprintf(out, "excluded: %d  skipped non-regular: %d  errors: %d\n",
 		rep.Excluded, rep.Skipped, rep.Errors)
 

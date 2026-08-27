@@ -63,6 +63,14 @@ type PreflightReport struct {
 	LooseOnly    SizeClass
 	Rejected     SizeClass
 
+	// CloudPlaceholders counts regular files whose bytes are not present
+	// locally (macOS dataless files from iCloud Drive, Google Drive for
+	// Desktop, and similar). Preflight never opens them; a real ingest will
+	// either hydrate each one through the provider at network speed or, for a
+	// daemon the provider will not serve, fail that file. They are also
+	// counted in the size classes above.
+	CloudPlaceholders SizeClass
+
 	Excluded int64
 	Skipped  int64
 	Errors   int64
@@ -190,7 +198,7 @@ func Preflight(ctx context.Context, sources []string, opts Options) (PreflightRe
 			}
 		}
 		if info.Mode().IsRegular() {
-			report.addFile(source, info.Size(), types)
+			report.addFile(source, info.Size(), isCloudPlaceholder(info), types)
 			continue
 		}
 		if !info.IsDir() {
@@ -255,7 +263,7 @@ func preflightTree(
 				report.addFinding(sourcePath, "error", err.Error())
 				return nil
 			}
-			report.addFile(sourcePath, info.Size(), types)
+			report.addFile(sourcePath, info.Size(), isCloudPlaceholder(info), types)
 		default:
 			report.addFinding(sourcePath, "skipped", "not a regular file (symlinks are skipped)")
 		}
@@ -263,9 +271,13 @@ func preflightTree(
 	})
 }
 
-func (r *PreflightReport) addFile(path string, size int64, types map[string]FileType) {
+func (r *PreflightReport) addFile(path string, size int64, placeholder bool, types map[string]FileType) {
 	r.Files++
 	r.LogicalBytes += size
+	if placeholder {
+		r.CloudPlaceholders.Files++
+		r.CloudPlaceholders.Bytes += size
+	}
 	switch {
 	case size <= blob.MaxPackedBlobBytes:
 		r.PackEligible.Files++

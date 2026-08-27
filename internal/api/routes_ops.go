@@ -383,10 +383,11 @@ func validateIngestPaths(paths []string) error {
 func ingestPreflightReport(report ingest.PreflightReport) IngestPreflightReport {
 	out := IngestPreflightReport{
 		Files: report.Files, Directories: report.Directories, LogicalBytes: report.LogicalBytes,
-		PackEligible: ingestSizeClass(report.PackEligible),
-		LooseOnly:    ingestSizeClass(report.LooseOnly),
-		Rejected:     ingestSizeClass(report.Rejected),
-		Excluded:     report.Excluded, Skipped: report.Skipped, Errors: report.Errors,
+		PackEligible:      ingestSizeClass(report.PackEligible),
+		LooseOnly:         ingestSizeClass(report.LooseOnly),
+		Rejected:          ingestSizeClass(report.Rejected),
+		CloudPlaceholders: ingestSizeClass(report.CloudPlaceholders),
+		Excluded:          report.Excluded, Skipped: report.Skipped, Errors: report.Errors,
 		OtherFileTypes:     ingestSizeClass(report.OtherFileTypes),
 		FileTypesTruncated: report.FileTypesTruncated, FindingsTruncated: report.FindingsTruncated,
 		FileTypes: make([]IngestFileType, 0, len(report.FileTypes)),

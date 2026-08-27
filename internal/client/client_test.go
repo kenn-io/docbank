@@ -645,10 +645,16 @@ func TestBackupCreateStreamRoundTripAndTypedError(t *testing.T) {
 	require.Error(t, err)
 	_, err = os.Stat(filepath.Join(cancelledTarget, "docbank.db"))
 	require.ErrorIs(t, err, os.ErrNotExist, "cancelled restore must not publish its database")
+	// The shared repo lock is released only after the aborted restore fully
+	// unwinds (target lease, staged files, durability passes) — on Windows CI
+	// that unwinding has taken tens of seconds. The wait bounds a leaked
+	// lock, not abort latency. AcquireExclusiveLock itself blocks up to 60s
+	// while a fresh shared lock exists, so one call may consume most of the
+	// window.
 	require.Eventually(t, func() bool {
 		lock, lockErr = repo.AcquireExclusiveLock("restore-cancel-test", false)
 		return lockErr == nil
-	}, 5*time.Second, 10*time.Millisecond,
+	}, 90*time.Second, 10*time.Millisecond,
 		"server-side cancellation must release the restore repository lock")
 	require.NoError(t, lock.Release())
 

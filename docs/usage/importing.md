@@ -60,7 +60,17 @@ Preflight is metadata-only. In particular, it does not open cloud-provider
 placeholder content merely to estimate the import. That avoids an inventory
 silently hydrating an entire cloud tree, but it also means successful preflight
 cannot promise that every file will remain readable when the later import
-opens it. Re-run preflight after changing exclusions, then pass the exact same
+opens it. It does report how much of the tree is in that state: on macOS,
+`cloud placeholders` counts the regular files whose bytes are not present
+locally (iCloud Drive, Google Drive for Desktop, and similar dataless files),
+so a source that is mostly placeholders is visible before the import spends
+network time on it. Those files are also counted in the size classes above.
+
+A provider may decline to hydrate a placeholder for the process that opens it —
+a daemon started by launchd as a background job is the usual case, while an
+interactive session succeeds. Docbank reports that failure for the individual
+file, names the cause, and suggests opening the file once from a user session
+(or marking it available offline) before retrying the import. Re-run preflight after changing exclusions, then pass the exact same
 `--exclude` flags to the real `docbank add` command.
 
 Filesystem names and provenance paths must currently be valid UTF-8. On POSIX
