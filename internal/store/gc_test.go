@@ -13,6 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/pack"
+
+	"go.kenn.io/docbank/document"
 )
 
 func TestLifecycleMetadataRoundTripPreservesDurableRootsAndZeroSegmentMembership(t *testing.T) {
@@ -60,7 +62,7 @@ func TestLifecycleMetadataRoundTripPreservesDurableRootsAndZeroSegmentMembership
 	assert.NotContains(t, exported.String(), "operational-backup")
 
 	restored := newTestStore(t)
-	require.NoError(t, restored.ImportMetadataForBackupRestore(ctx, bytes.NewReader(exported.Bytes())))
+	require.NoError(t, restored.ImportMetadataForRestore(ctx, bytes.NewReader(exported.Bytes())))
 	require.NoError(t, restored.RebuildRenditionLexicalProjection(ctx))
 	rebuilt, err := restored.ActiveLexicalGeneration(ctx)
 	require.NoError(t, err)
@@ -201,7 +203,7 @@ func TestDerivativeGCPlanSelectsOnlyUnrootedStagedBuilds(t *testing.T) {
 		ContentVersionID: versions[0], BuildID: build.ID, Profile: profile,
 		AttachedAt: "2026-08-22T10:00:00.000000000Z",
 	}
-	require.NoError(t, publishAttachmentForTest(t, s, attachment))
+	require.NoError(t, s.AttachRenditionBuild(t.Context(), attachment))
 	plan, err = s.DerivativeGCPlan(t.Context())
 	require.NoError(t, err)
 	assert.Empty(t, plan.Builds, "a version attachment roots its shared build")
@@ -386,7 +388,7 @@ func TestStageAndRootAPIsPublishNoCollectibleWindow(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, plan.Builds)
 
-	require.NoError(t, publishAttachmentForTest(t, s, RenditionAttachmentRecord{
+	require.NoError(t, s.AttachRenditionBuild(ctx, RenditionAttachmentRecord{
 		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
 		BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-23T10:31:00.000000000Z",
 	}))
@@ -555,8 +557,8 @@ func TestPurgeDerivativesRemovesCompleteLiveManifestButNeverOriginal(t *testing.
 	assert.Equal(t, 2, report.RemovedArtifacts)
 	assert.Equal(t, 2, report.RemovedUnits)
 	assert.Equal(t, 2, report.RemovedLexicalSegments)
-	assert.Equal(t, 2, report.RemovedLexicalGenerations)
-	assert.Equal(t, 3, report.RemovedLexicalRows)
+	assert.Equal(t, 1, report.RemovedLexicalGenerations)
+	assert.Equal(t, 2, report.RemovedLexicalRows)
 	assert.Equal(t, 1, report.RemovedLegacyCacheRows)
 	assert.Equal(t, []string{catalogMarkdownBlobHash, catalogEvidenceBlobHash},
 		report.PhysicalDerivativeBlobsPendingGC)
@@ -594,13 +596,45 @@ func TestPurgeDerivativesRemovesCompleteLiveManifestButNeverOriginal(t *testing.
 	}, replayed, "replaying a completed purge must retain crash-durable physical targets")
 }
 
+func TestPurgeDerivativesPreservesPrunedOrdinaryBlobSharingArtifactHash(t *testing.T) {
+	s, versions := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	ordinary, err := s.CreateFile(ctx, s.RootID(), "ordinary.txt", catalogEvidenceBlobHash,
+		int64(len(catalogBlobContents[catalogEvidenceBlobHash])), "text/plain")
+	require.NoError(t, err)
+	ordinary, _, err = s.ReplaceContent(ctx, ordinary.ID, ordinary.Revision, fakeHash("8d"), 17, "text/plain")
+	require.NoError(t, err)
+	_, err = s.PruneContentVersions(ctx, ordinary.ID, ordinary.Revision,
+		VersionPruneSelector{AllPrior: true}, true)
+	require.NoError(t, err)
+
+	profile := catalogProcessingProfile(t, false)
+	build := catalogRenditionBuild(s, profile)
+	require.NoError(t, s.StageRenditionBuild(ctx, build))
+	attachment := RenditionAttachmentRecord{
+		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
+		BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-24T10:00:00.000000000Z",
+	}
+	require.NoError(t, s.AttachRenditionBuild(ctx, attachment))
+
+	report, err := s.PurgeDerivatives(ctx, PurgeRequest{AttachmentIDs: []string{attachment.ID}})
+	require.NoError(t, err)
+	assert.Equal(t, []string{catalogMarkdownBlobHash}, report.PhysicalDerivativeBlobsPendingGC)
+	var ordinaryAuthority, pending int
+	require.NoError(t, s.db.QueryRow(`SELECT
+		EXISTS(SELECT 1 FROM ordinary_blob_authority WHERE blob_hash=?),
+		EXISTS(SELECT 1 FROM derivative_blob_purge_pending WHERE blob_hash=?)`,
+		catalogEvidenceBlobHash, catalogEvidenceBlobHash).Scan(&ordinaryAuthority, &pending))
+	assert.Equal(t, 1, ordinaryAuthority)
+	assert.Zero(t, pending)
+}
+
 func TestPurgeDerivativesPreservesLiveContentBlobSharingArtifactHash(t *testing.T) {
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	_, err := s.CreateFile(ctx, s.RootID(), "ordinary.txt", catalogEvidenceBlobHash,
 		int64(len(catalogBlobContents[catalogEvidenceBlobHash])), "text/plain")
 	require.NoError(t, err)
-
 	profile := catalogProcessingProfile(t, false)
 	build := catalogRenditionBuild(s, profile)
 	require.NoError(t, s.StageRenditionBuild(ctx, build))
@@ -649,7 +683,7 @@ func TestLateLegacyExtractionCannotRecreatePurgedDerivativeAfterRestore(t *testi
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &exported))
 	restored := newTestStore(t)
-	require.NoError(t, restored.ImportMetadataForBackupRestore(ctx, bytes.NewReader(exported.Bytes())))
+	require.NoError(t, restored.ImportMetadataForRestore(ctx, bytes.NewReader(exported.Bytes())))
 	pending, err := restored.PendingTextExtractions(ctx, 10)
 	require.NoError(t, err)
 	assert.Empty(t, pending, "restore must not recreate suppressed extraction work")
@@ -705,7 +739,7 @@ func TestPurgeBeforeLegacyExtractionSuppressesQueuedAndRestoredWorkByVersion(t *
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &exported))
 	restored := newTestStore(t)
-	require.NoError(t, restored.ImportMetadataForBackupRestore(ctx, bytes.NewReader(exported.Bytes())))
+	require.NoError(t, restored.ImportMetadataForRestore(ctx, bytes.NewReader(exported.Bytes())))
 	require.NoError(t, restored.SeedTextExtractionQueue(
 		ctx, legacyPlainTextExtractor, legacyPlainTextExtractorVersion))
 	pending, err := restored.PendingTextExtractions(ctx, 10)
@@ -862,11 +896,11 @@ func TestPurgeSharedBuildSuppressesOnlySelectedAttachmentProfile(t *testing.T) {
 	secondProfile := catalogProcessingProfile(t, true)
 	build := catalogRenditionBuild(s, firstProfile)
 	require.NoError(t, s.StageRenditionBuild(ctx, build))
-	require.NoError(t, publishAttachmentForTest(t, s, RenditionAttachmentRecord{
+	require.NoError(t, s.AttachRenditionBuild(ctx, RenditionAttachmentRecord{
 		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
 		BuildID: build.ID, Profile: firstProfile, AttachedAt: "2026-08-23T13:10:00.000000000Z",
 	}))
-	require.NoError(t, publishAttachmentForTest(t, s, RenditionAttachmentRecord{
+	require.NoError(t, s.AttachRenditionBuild(ctx, RenditionAttachmentRecord{
 		ID: catalogAttachmentSecond, VaultID: s.VaultID(), ContentVersionID: versions[1],
 		BuildID: build.ID, Profile: secondProfile, AttachedAt: "2026-08-23T13:11:00.000000000Z",
 	}))
@@ -893,11 +927,11 @@ func TestPurgeSharedBuildRejectsReattachingSuppressedProfile(t *testing.T) {
 	secondProfile := catalogProcessingProfile(t, true)
 	build := catalogRenditionBuild(s, firstProfile)
 	require.NoError(t, s.StageRenditionBuild(ctx, build))
-	require.NoError(t, publishAttachmentForTest(t, s, RenditionAttachmentRecord{
+	require.NoError(t, s.AttachRenditionBuild(ctx, RenditionAttachmentRecord{
 		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
 		BuildID: build.ID, Profile: firstProfile, AttachedAt: "2026-08-23T13:10:00.000000000Z",
 	}))
-	require.NoError(t, publishAttachmentForTest(t, s, RenditionAttachmentRecord{
+	require.NoError(t, s.AttachRenditionBuild(ctx, RenditionAttachmentRecord{
 		ID: catalogAttachmentSecond, VaultID: s.VaultID(), ContentVersionID: versions[1],
 		BuildID: build.ID, Profile: secondProfile, AttachedAt: "2026-08-23T13:11:00.000000000Z",
 	}))
@@ -908,7 +942,7 @@ func TestPurgeSharedBuildRejectsReattachingSuppressedProfile(t *testing.T) {
 		ID: fakeHash("c2"), VaultID: s.VaultID(), ContentVersionID: versions[0],
 		BuildID: build.ID, Profile: firstProfile, AttachedAt: "2026-08-23T13:12:00.000000000Z",
 	}
-	err = publishAttachmentForTest(t, s, reattachment)
+	err = s.AttachRenditionBuild(ctx, reattachment)
 	require.ErrorContains(t, err, "purge suppression")
 	require.NoError(t, s.AuthorizeDerivativeRebuild(ctx, DerivativeRebuildAuthorization{
 		SourceSHA256: build.SourceSHA256, ProfileFingerprint: firstProfile.Fingerprint,
@@ -916,7 +950,7 @@ func TestPurgeSharedBuildRejectsReattachingSuppressedProfile(t *testing.T) {
 		PurgedBuildID:    build.ID, SupersedingBuildID: build.ID,
 		AuthorizedAt: "2026-08-23T13:13:00.000000000Z",
 	}))
-	require.NoError(t, publishAttachmentForTest(t, s, reattachment))
+	require.NoError(t, s.AttachRenditionBuild(ctx, reattachment))
 }
 
 func TestPurgeAttachmentSuppressionDoesNotBleedAcrossVersionsSharingBuildAndProfile(t *testing.T) {
@@ -933,19 +967,22 @@ func TestPurgeAttachmentSuppressionDoesNotBleedAcrossVersionsSharingBuildAndProf
 	second.ID = catalogAttachmentSecond
 	second.ContentVersionID = versions[1]
 	second.AttachedAt = "2026-08-23T13:11:00.000000000Z"
-	require.NoError(t, publishAttachmentForTest(t, s, first))
-	require.NoError(t, publishAttachmentForTest(t, s, second))
+	require.NoError(t, s.AttachRenditionBuild(ctx, first))
+	require.NoError(t, s.AttachRenditionBuild(ctx, second))
 
 	_, err := s.PurgeDerivatives(ctx, PurgeRequest{ContentVersionIDs: []string{versions[0]}})
 	require.NoError(t, err)
-	active, err := s.ActiveRendition(ctx, versions[1], profile.Fingerprint)
-	require.NoError(t, err,
+	_, err = s.db.Exec(`DELETE FROM rendition_attachments WHERE attachment_id=?`, second.ID)
+	require.NoError(t, err)
+	third := second
+	third.ID = fakeHash("c7")
+	third.AttachedAt = "2026-08-23T13:12:00.000000000Z"
+	require.NoError(t, s.AttachRenditionBuild(ctx, third),
 		"a purge of one version must not suppress another version sharing source, profile, and build")
-	assert.Equal(t, build.ID, active.Build.ID)
 
 	first.ID = fakeHash("c8")
 	first.AttachedAt = "2026-08-23T13:13:00.000000000Z"
-	err = publishAttachmentForTest(t, s, first)
+	err = s.AttachRenditionBuild(ctx, first)
 	require.ErrorContains(t, err, "purge suppression")
 }
 
@@ -971,7 +1008,7 @@ func TestPurgeSharedBuildRejectsRepublishingSuppressedProfile(t *testing.T) {
 			ContentVersionID: versions[0], ProcessingProfileFingerprint: firstProfile.Fingerprint,
 			AttachmentID: firstAttachment.ID, PublishedAt: "2026-08-23T13:16:00.000000000Z",
 		}, generation.ID))
-	require.NoError(t, publishAttachmentForTest(t, s, secondAttachment))
+	require.NoError(t, s.AttachRenditionBuild(ctx, secondAttachment))
 
 	_, err = s.PurgeDerivatives(ctx, PurgeRequest{ContentVersionIDs: []string{versions[0]}})
 	require.NoError(t, err)
@@ -1041,7 +1078,11 @@ func TestPurgeReplacesLexicalHeadWithoutSelectedBuild(t *testing.T) {
 		ID: catalogAttachmentSecond, VaultID: s.VaultID(), ContentVersionID: secondVersion,
 		BuildID: second.ID, Profile: profile, AttachedAt: "2026-08-23T13:21:00.000000000Z",
 	}
-	require.NoError(t, publishAttachmentForTest(t, s, firstAttachment))
+	require.NoError(t, s.AttachRenditionBuild(ctx, firstAttachment))
+	require.NoError(t, s.PublishRenditionHead(ctx, RenditionHeadRecord{
+		ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
+		AttachmentID: firstAttachment.ID, PublishedAt: "2026-08-23T13:22:00.000000000Z",
+	}))
 	initial, err := s.StageLexicalGeneration(ctx, fakeHash("bd"))
 	require.NoError(t, err)
 	require.NoError(t, s.PublishRenditionAndLexicalHeads(ctx, secondAttachment,
@@ -1085,7 +1126,11 @@ func TestPurgeRootedBuildLeavesItPhysicalButRemovesItFromActiveLexicalHead(t *te
 		ID: catalogAttachmentSecond, VaultID: s.VaultID(), ContentVersionID: retainedVersion,
 		BuildID: retained.ID, Profile: profile, AttachedAt: "2026-08-23T13:31:00.000000000Z",
 	}
-	require.NoError(t, publishAttachmentForTest(t, s, selectedAttachment))
+	require.NoError(t, s.AttachRenditionBuild(ctx, selectedAttachment))
+	require.NoError(t, s.PublishRenditionHead(ctx, RenditionHeadRecord{
+		ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
+		AttachmentID: selectedAttachment.ID, PublishedAt: "2026-08-23T13:32:00.000000000Z",
+	}))
 	generation, err := s.StageLexicalGeneration(ctx, fakeHash("bf"))
 	require.NoError(t, err)
 	require.NoError(t, s.PublishRenditionAndLexicalHeads(ctx, retainedAttachment,
@@ -1111,8 +1156,9 @@ func TestPurgeRootedBuildLeavesItPhysicalButRemovesItFromActiveLexicalHead(t *te
 	active, err := s.ActiveLexicalGeneration(ctx)
 	require.NoError(t, err)
 	var selectedRows int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_lexical_fts
-		WHERE generation_id=? AND build_id=?`, active.ID, selected.ID).Scan(&selectedRows))
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*)
+		FROM rendition_lexical_fts f
+		WHERE f.generation_id=? AND f.build_id=?`, active.ID, selected.ID).Scan(&selectedRows))
 	assert.Zero(t, selectedRows, "a build-only pin must not preserve active search authority")
 	hits, _, err := s.SearchPage(ctx, "retained", 10)
 	require.NoError(t, err)
@@ -1129,7 +1175,7 @@ func TestPurgeRootedBuildRejectsReattachmentUntilEverySuppressionIsAuthorized(t 
 		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
 		BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-23T13:35:00.000000000Z",
 	}
-	require.NoError(t, publishAttachmentForTest(t, s, attachment))
+	require.NoError(t, s.AttachRenditionBuild(ctx, attachment))
 	require.NoError(t, s.PutCurrentRenditionRoot(ctx, CurrentRenditionRoot{
 		ID: "reattachment-build-pin", Kind: RenditionRootBackupPin,
 		TargetKind: RenditionRootBuild, TargetID: build.ID, FencingToken: 1,
@@ -1141,7 +1187,7 @@ func TestPurgeRootedBuildRejectsReattachmentUntilEverySuppressionIsAuthorized(t 
 	reattachment := attachment
 	reattachment.ID = fakeHash("c3")
 	reattachment.AttachedAt = "2026-08-23T13:37:00.000000000Z"
-	err = publishAttachmentForTest(t, s, reattachment)
+	err = s.AttachRenditionBuild(ctx, reattachment)
 	require.ErrorContains(t, err, "purge suppression")
 
 	require.NoError(t, s.AuthorizeDerivativeRebuild(ctx, DerivativeRebuildAuthorization{
@@ -1150,14 +1196,14 @@ func TestPurgeRootedBuildRejectsReattachmentUntilEverySuppressionIsAuthorized(t 
 		PurgedBuildID:    build.ID, SupersedingBuildID: build.ID,
 		AuthorizedAt: "2026-08-23T13:38:00.000000000Z",
 	}))
-	err = publishAttachmentForTest(t, s, reattachment)
+	err = s.AttachRenditionBuild(ctx, reattachment)
 	require.ErrorContains(t, err, "purge suppression",
 		"the independent exact-build suppression must still prevent reattachment")
 	require.NoError(t, s.AuthorizeDerivativeRebuild(ctx, DerivativeRebuildAuthorization{
 		SourceSHA256: build.SourceSHA256, PurgedBuildID: build.ID,
 		SupersedingBuildID: build.ID, AuthorizedAt: "2026-08-23T13:39:00.000000000Z",
 	}))
-	require.NoError(t, publishAttachmentForTest(t, s, reattachment))
+	require.NoError(t, s.AttachRenditionBuild(ctx, reattachment))
 }
 
 func TestOrdinaryDerivativeGCReplacesHeadBeforeCollectingUnrootedMemberBuild(t *testing.T) {
@@ -1214,8 +1260,16 @@ func TestPurgeDerivativesRetainsSharedBuildWhileAnyAttachmentRemains(t *testing.
 		ID: catalogAttachmentSecond, VaultID: s.VaultID(), ContentVersionID: versions[1],
 		BuildID: build.ID, Profile: secondProfile, AttachedAt: "2026-08-23T13:01:00.000000000Z",
 	}
-	require.NoError(t, publishAttachmentForTest(t, s, first))
-	require.NoError(t, publishAttachmentForTest(t, s, second))
+	require.NoError(t, s.AttachRenditionBuild(ctx, first))
+	require.NoError(t, s.AttachRenditionBuild(ctx, second))
+	require.NoError(t, s.PublishRenditionHead(ctx, RenditionHeadRecord{
+		ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
+		AttachmentID: first.ID, PublishedAt: "2026-08-23T13:02:00.000000000Z",
+	}))
+	require.NoError(t, s.PublishRenditionHead(ctx, RenditionHeadRecord{
+		ContentVersionID: versions[1], ProcessingProfileFingerprint: secondProfile.Fingerprint,
+		AttachmentID: second.ID, PublishedAt: "2026-08-23T13:03:00.000000000Z",
+	}))
 
 	report, err := s.PurgeDerivatives(ctx, PurgeRequest{ContentVersionIDs: []string{versions[0]}})
 	require.NoError(t, err)
@@ -1259,11 +1313,11 @@ func TestPurgeDerivativesKeepsServingGenerationForSharedBuildAttachment(t *testi
 			ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
 			AttachmentID: first.ID, PublishedAt: "2026-08-23T13:12:00.000000000Z",
 		}, generation.ID))
-	require.NoError(t, s.PublishRenditionAndLexicalHeads(ctx, second,
-		RenditionHeadRecord{
-			ContentVersionID: versions[1], ProcessingProfileFingerprint: secondProfile.Fingerprint,
-			AttachmentID: second.ID, PublishedAt: "2026-08-23T13:13:00.000000000Z",
-		}, generation.ID))
+	require.NoError(t, s.AttachRenditionBuild(ctx, second))
+	require.NoError(t, s.PublishRenditionHead(ctx, RenditionHeadRecord{
+		ContentVersionID: versions[1], ProcessingProfileFingerprint: secondProfile.Fingerprint,
+		AttachmentID: second.ID, PublishedAt: "2026-08-23T13:13:00.000000000Z",
+	}))
 
 	report, err := s.PurgeDerivatives(ctx, PurgeRequest{ContentVersionIDs: []string{versions[0]}})
 	require.NoError(t, err)
@@ -1447,7 +1501,7 @@ func TestPurgeDerivativesRecordsAuditedSuppressionAndHonorsExactAuditRoot(t *tes
 	profile := catalogProcessingProfile(t, false)
 	build := catalogRenditionBuild(s, profile)
 	require.NoError(t, s.StageRenditionBuild(ctx, build))
-	require.NoError(t, publishAttachmentForTest(t, s, RenditionAttachmentRecord{
+	require.NoError(t, s.AttachRenditionBuild(ctx, RenditionAttachmentRecord{
 		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
 		BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-23T16:10:00.000000000Z",
 	}))
@@ -1512,13 +1566,11 @@ func TestPurgeDerivativesRecordsAuditedSuppressionAndHonorsExactAuditRoot(t *tes
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &exported))
 	restored := newTestStore(t)
-	require.NoError(t, restored.ImportMetadataForBackupRestore(ctx, bytes.NewReader(exported.Bytes())))
+	require.NoError(t, restored.ImportMetadataForRestore(ctx, bytes.NewReader(exported.Bytes())))
 	require.NoError(t, restored.ValidateMetadata(ctx))
 }
 
-func TestPurgeDerivativesCollectsUnheadedGenerationOverRetainedBuild(t *testing.T) {
-	// Mutation caught: tying generation collection only to build deletion would
-	// leak interrupted or superseded FTS projections whose builds stay live.
+func TestPurgeDerivativesCollectsUnheadedGenerationOverExplicitlyRootedBuild(t *testing.T) {
 	s, _ := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
@@ -1537,6 +1589,38 @@ func TestPurgeDerivativesCollectsUnheadedGenerationOverRetainedBuild(t *testing.
 	assert.Zero(t, report.RemovedBuilds)
 	assert.Equal(t, 1, report.RemovedLexicalGenerations)
 	assert.Equal(t, 1, report.RemovedLexicalRows)
+	var builds, generations int
+	require.NoError(t, s.db.QueryRow(`SELECT
+		(SELECT COUNT(*) FROM rendition_builds),
+		(SELECT COUNT(*) FROM rendition_lexical_generations)`).Scan(&builds, &generations))
+	assert.Equal(t, 1, builds)
+	assert.Zero(t, generations)
+	assert.NotEmpty(t, generation.ID)
+}
+
+func TestPurgeDerivativesCollectsUnheadedGenerationOverRetainedBuild(t *testing.T) {
+	// Mutation caught: tying generation collection only to build deletion would
+	// leak interrupted or superseded FTS projections whose builds stay live.
+	s, versions := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	profile := catalogProcessingProfile(t, false)
+	build := catalogRenditionBuild(s, profile)
+	require.NoError(t, s.StageRenditionBuild(ctx, build))
+	require.NoError(t, s.AttachRenditionBuild(ctx, RenditionAttachmentRecord{
+		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
+		BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-23T17:00:00.000000000Z",
+	}))
+	generation, err := s.StageLexicalGeneration(ctx, fakeHash("88"))
+	require.NoError(t, err)
+
+	report, err := s.PurgeDerivatives(ctx, PurgeRequest{})
+	require.NoError(t, err)
+	assert.Zero(t, report.RemovedBuilds)
+	assert.Equal(t, 1, report.RemovedLexicalGenerations)
+	assert.Equal(t, 1, report.RemovedLexicalRows,
+		"collecting generation authority must remove its generation-scoped FTS row")
+	_, err = s.ActiveRendition(ctx, versions[0], profile.Fingerprint)
+	require.ErrorIs(t, err, ErrNotFound, "the attachment is staged but not headed")
 	var builds, generations int
 	require.NoError(t, s.db.QueryRow(`SELECT
 		(SELECT COUNT(*) FROM rendition_builds),
@@ -2050,8 +2134,6 @@ func TestUnreachableBlobsKeepsRenditionBuildBytesReachable(t *testing.T) {
 	build := catalogRenditionBuild(s, catalogProcessingProfile(t, false))
 	require.NoError(t, s.StageRenditionBuild(t.Context(), build))
 
-	// Remove every content-version reference so the rendition build and its
-	// artifacts are the only remaining authority for these three blobs.
 	_, err := s.db.Exec(`DELETE FROM nodes WHERE parent_id IS NOT NULL`)
 	require.NoError(t, err)
 	orphan := fakeHash("f9")
@@ -2063,11 +2145,38 @@ func TestUnreachableBlobsKeepsRenditionBuildBytesReachable(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, unreachable, 1)
 	assert.Equal(t, orphan, unreachable[0].Hash)
-
 	page, err := s.UnreachableBlobsPageFrom(t.Context(), nil, 10)
 	require.NoError(t, err)
 	require.Len(t, page.Items, 1)
 	assert.Equal(t, orphan, page.Items[0].Hash)
+}
+
+func TestUnreachableDerivativePurgeBlobsHonorsLaterBlobAuthority(t *testing.T) {
+	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
+	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+		document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
+	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+
+	ordinary := fakeHash("f7")
+	dead := fakeHash("f8")
+	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		if err := s.EnsureOrdinaryBlobTx(tx, ordinary, 7); err != nil {
+			return err
+		}
+		if err := s.EnsureBlobTx(tx, dead, 8); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`INSERT INTO derivative_blob_purge_pending(blob_hash)
+			VALUES(?),(?),(?),(?)`, ordinary, record.InputGeneration.GenerationBlobHash,
+			record.VectorSet.PayloadBlobHash, dead)
+		return err
+	}))
+
+	unreachable, err := s.UnreachableDerivativePurgeBlobs(t.Context())
+	require.NoError(t, err)
+	require.Len(t, unreachable, 1)
+	assert.Equal(t, dead, unreachable[0].Hash,
+		"ordinary, embedding-input, and embedding-vector authority must revoke exact erasure")
 }
 
 func TestDeleteBlobRows(t *testing.T) {

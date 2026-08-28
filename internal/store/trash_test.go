@@ -244,7 +244,11 @@ func TestTrashEmptyRemovesProcessedDocumentRenditionAttachment(t *testing.T) {
 		ContentVersionID: versions[0], BuildID: build.ID, Profile: profile,
 		AttachedAt: "2026-08-24T15:10:00.000000000Z",
 	}
-	require.NoError(t, publishAttachmentForTest(t, s, attachment))
+	require.NoError(t, s.AttachRenditionBuild(ctx, attachment))
+	require.NoError(t, s.PublishRenditionHead(ctx, RenditionHeadRecord{
+		ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
+		AttachmentID: attachment.ID, PublishedAt: "2026-08-24T15:11:00.000000000Z",
+	}))
 
 	node, err := s.NodeByPath(ctx, "/synthetic-source-a.pdf")
 	require.NoError(t, err)
@@ -297,7 +301,6 @@ func TestTrashEmptyRemovesRenditionAttachment(t *testing.T) {
 	require.NoError(t, err)
 	_, _, err = s.Trash(t.Context(), node.ID, node.Revision)
 	require.NoError(t, err)
-
 	receipt, err := s.TrashEmpty(t.Context(), 0, true)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), receipt.Deleted)

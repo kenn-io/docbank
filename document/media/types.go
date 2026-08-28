@@ -34,6 +34,10 @@ type Metadata struct {
 	Kind Kind `json:"kind"`
 	// MediaType is the canonical media type for Format.
 	MediaType string `json:"media_type"`
+	// Container is the canonical video container, when Kind is video.
+	Container string `json:"container,omitzero"`
+	// Codec is the locally verified visual codec, when Kind is video.
+	Codec string `json:"codec,omitzero"`
 	// DeclaredMediaType is the caller-declared media type, recorded verbatim.
 	DeclaredMediaType string `json:"declared_media_type,omitzero"`
 	// Size is the input length in bytes.

@@ -7,6 +7,7 @@ package mediatest
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"image"
 	"image/color"
 	"image/gif"
@@ -32,6 +33,54 @@ func PNG(width, height int, fill color.Color) []byte {
 		panic(err)
 	}
 	return out.Bytes()
+}
+
+// WAV returns 10 ms of synthetic unsigned 8-bit mono PCM at 8 kHz.
+func WAV() []byte {
+	const sampleRate = 8_000
+	const audioBytes = 80
+	data := make([]byte, 44+audioBytes)
+	copy(data[0:4], "RIFF")
+	binary.LittleEndian.PutUint32(data[4:8], uint32(len(data)-8)) //nolint:gosec // fixed tiny fixture
+	copy(data[8:12], "WAVE")
+	copy(data[12:16], "fmt ")
+	binary.LittleEndian.PutUint32(data[16:20], 16)
+	binary.LittleEndian.PutUint16(data[20:22], 1)
+	binary.LittleEndian.PutUint16(data[22:24], 1)
+	binary.LittleEndian.PutUint32(data[24:28], sampleRate)
+	binary.LittleEndian.PutUint32(data[28:32], sampleRate)
+	binary.LittleEndian.PutUint16(data[32:34], 1)
+	binary.LittleEndian.PutUint16(data[34:36], 8)
+	copy(data[36:40], "data")
+	binary.LittleEndian.PutUint32(data[40:44], audioBytes)
+	for index := 44; index < len(data); index++ {
+		data[index] = 128
+	}
+	return data
+}
+
+// PDF returns a synthetic one-page PDF 1.4 file with a literal cross-reference
+// table. It is assembled entirely in Go from public format syntax.
+func PDF() []byte {
+	objects := []string{
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 16 16] >>",
+	}
+	var output bytes.Buffer
+	_, _ = output.WriteString("%PDF-1.4\n%synthetic\n")
+	offsets := make([]int, len(objects))
+	for index, object := range objects {
+		offsets[index] = output.Len()
+		_, _ = fmt.Fprintf(&output, "%d 0 obj\n%s\nendobj\n", index+1, object)
+	}
+	xref := output.Len()
+	_, _ = fmt.Fprintf(&output, "xref\n0 %d\n0000000000 65535 f \n", len(objects)+1)
+	for _, offset := range offsets {
+		_, _ = fmt.Fprintf(&output, "%010d 00000 n \n", offset)
+	}
+	_, _ = fmt.Fprintf(&output, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, xref)
+	return output.Bytes()
 }
 
 // GIF returns a GIF with the given number of frames. Frames alternate between
