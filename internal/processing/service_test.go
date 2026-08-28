@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -153,7 +152,7 @@ func TestProcessingServiceRejectsRevokedRenditionWaiter(t *testing.T) {
 	require.NoError(t, err)
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{
 		Catalog: fixture.catalog, Blobs: fixture.blobs, Runtime: workerRuntime{provider: provider},
-		Gate: api.NewOperationGate(), Owner: "rendition-waiter-test",
+		Gate: newWorkerTestGate(), Owner: "rendition-waiter-test",
 		LeaseDuration: time.Minute, IdleDelay: time.Millisecond,
 	})
 	require.NoError(t, err)
@@ -166,12 +165,12 @@ func TestProcessingServiceRejectsRevokedRenditionWaiter(t *testing.T) {
 	service := &Service{catalog: fixture.catalog}
 	result, err := service.renditionResult(t.Context(), published.ID)
 	require.NoError(t, err)
-	require.Equal(t, renditionRun{jobID: job.ID, waiterID: published.ID}, result)
+	require.Equal(t, renditionRun{jobID: job.ID, waiterID: published.ID, attachmentID: published.AttachmentID}, result)
 	_, err = service.renditionResult(t.Context(), rejected.ID)
 	require.ErrorIs(t, err, ErrConsentRequired)
 }
 
-type processingServiceTestGate struct{ *api.OperationGate }
+type processingServiceTestGate struct{ *workerTestGate }
 
 func (gate processingServiceTestGate) PreserveContext(ctx context.Context, fn func() error) error {
 	return gate.MutateContext(ctx, fn)

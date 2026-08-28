@@ -107,6 +107,7 @@ type StartProcessingRequest struct {
 type ProcessingJob struct {
 	ID                 string   `json:"id"`
 	RenditionJobID     string   `json:"rendition_job_id,omitzero"`
+	AttachmentID       string   `json:"attachment_id,omitzero"`
 	EmbeddingJobIDs    []string `json:"embedding_job_ids"`
 	ProfileFingerprint string   `json:"profile_fingerprint"`
 	ContentVersionID   string   `json:"content_version_id"`

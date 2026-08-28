@@ -430,6 +430,32 @@ func (s *Store) ActiveRendition(
 	return view, nil
 }
 
+// ActiveRenditionByAttachment returns an attachment only while it remains the
+// active authority for its exact content-version/profile key.
+func (s *Store) ActiveRenditionByAttachment(ctx context.Context, attachmentID string) (RenditionView, error) {
+	if err := validateCatalogSHA256(attachmentID, "rendition attachment ID"); err != nil {
+		return RenditionView{}, fmt.Errorf("active rendition attachment %q: %w", attachmentID, ErrNotFound)
+	}
+	var contentVersionID, profileFingerprint string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT content_version_id,profile_fingerprint FROM rendition_heads
+		WHERE attachment_id=?`, attachmentID).Scan(&contentVersionID, &profileFingerprint)
+	if errors.Is(err, sql.ErrNoRows) {
+		return RenditionView{}, ErrNotFound
+	}
+	if err != nil {
+		return RenditionView{}, fmt.Errorf("reading active rendition attachment key: %w", err)
+	}
+	view, err := s.ActiveRendition(ctx, contentVersionID, profileFingerprint)
+	if err != nil {
+		return RenditionView{}, err
+	}
+	if view.Attachment.ID != attachmentID {
+		return RenditionView{}, ErrNotFound
+	}
+	return view, nil
+}
+
 func normalizeProcessingProfileRecord(record ProcessingProfileRecord) (ProcessingProfileRecord, error) {
 	canonical, err := canonicalCatalogJSON(record.CanonicalProfile, "processing profile")
 	if err != nil {

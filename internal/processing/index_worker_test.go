@@ -11,7 +11,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/internal/vectorindex"
@@ -67,7 +66,7 @@ func TestVectorIndexFailedReadReleasesBuildClaim(t *testing.T) {
 	require.Len(t, spaces, 1)
 	failRead := true
 	worker, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
-		Mutate:  api.NewOperationGate().MutateContext,
+		Mutate:  newWorkerTestGate().MutateContext,
 		Catalog: fixture.catalog, Owner: "index-worker", BuildLease: 30 * time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond,
 		ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
 			if failRead {
@@ -91,7 +90,7 @@ func TestVectorIndexRebuildWaitsForMaintenanceAdmission(t *testing.T) {
 	spaces, err := fixture.catalog.ListVectorIndexSpaces(t.Context())
 	require.NoError(t, err)
 	require.Len(t, spaces, 1)
-	gate := api.NewOperationGate()
+	gate := newWorkerTestGate()
 	worker, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
 		Catalog: fixture.catalog, Mutate: gate.MutateContext, Owner: "index-worker", BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond,
 		ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
@@ -120,7 +119,7 @@ func TestVectorIndexWorkerRetiresTrashedSource(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, spaces, 1)
 	worker, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
-		Catalog: fixture.catalog, Mutate: api.NewOperationGate().MutateContext, Owner: "index-worker", BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond,
+		Catalog: fixture.catalog, Mutate: newWorkerTestGate().MutateContext, Owner: "index-worker", BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond,
 		ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
 			return fixture.catalog.ReadVectorIndexVectorSet(ctx, fixture.blobs, member)
 		},
@@ -145,7 +144,7 @@ func TestVectorIndexMaintenanceCanRunDuringPayloadRead(t *testing.T) {
 	spaces, err := fixture.catalog.ListVectorIndexSpaces(t.Context())
 	require.NoError(t, err)
 	require.Len(t, spaces, 1)
-	gate := api.NewOperationGate()
+	gate := newWorkerTestGate()
 	worker, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
 		Catalog: fixture.catalog, Mutate: gate.MutateContext, Owner: "index-worker", BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond,
 		ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
@@ -167,7 +166,7 @@ func TestVectorIndexMissingPayloadWaitsForMaintenanceBeforeAbandoning(t *testing
 	_, err := embedding.ScanOnce(t.Context())
 	require.NoError(t, err)
 	synctest.Test(t, func(t *testing.T) {
-		gate := api.NewOperationGate()
+		gate := newWorkerTestGate()
 		held, done := make(chan struct{}), make(chan error, 1)
 		worker, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
 			Catalog: fixture.catalog, Mutate: gate.MutateContext, Owner: "index-worker", BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond,

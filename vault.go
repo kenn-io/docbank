@@ -343,6 +343,10 @@ func (gate embeddedMutationGate) PreserveContext(ctx context.Context, fn func() 
 	return gate.MutateContext(ctx, fn)
 }
 
+func (gate embeddedMutationGate) MaintainContext(ctx context.Context, fn func() error) error {
+	return gate.MutateContext(ctx, fn)
+}
+
 // Close waits for active operations and readers, then releases storage and
 // the upload directory and vault hierarchy locks. It is safe to call more than once.
 func (v *Vault) Close() error {

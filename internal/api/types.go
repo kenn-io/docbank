@@ -16,8 +16,241 @@ const (
 	BlobSizeHeader = "X-Docbank-Blob-Size"
 	// ContentVersionHeader carries the stable version identity whose immutable
 	// bytes are being streamed.
-	ContentVersionHeader = "X-Docbank-Content-Version"
+	ContentVersionHeader      = "X-Docbank-Content-Version"
+	RenditionAttachmentHeader = "X-Docbank-Rendition-Attachment"
+	RenditionBuildHeader      = "X-Docbank-Rendition-Build"
+	RenditionArtifactHeader   = "X-Docbank-Rendition-Artifact"
 )
+
+// ProcessingSelector binds provider work to one exact immutable document
+// version and one named deployment profile.
+type ProcessingSelector struct {
+	NodeID           int64  `json:"node_id" minimum:"1"`
+	ContentVersionID string `json:"content_version_id" format:"uuid"`
+	Profile          string `json:"profile" minLength:"1" maxLength:"128" pattern:"^[a-z][a-z0-9_-]*$"`
+}
+
+// ProcessingProfileSummary is one locally executable deployment profile.
+type ProcessingProfileSummary struct {
+	Name              string   `json:"name"`
+	Fingerprint       string   `json:"fingerprint" pattern:"^[0-9a-f]{64}$"`
+	Rendition         bool     `json:"rendition"`
+	EmbeddingBindings []string `json:"embedding_bindings"`
+}
+
+type ProcessingPlanRequest struct {
+	Selector ProcessingSelector `json:"selector"`
+}
+
+type ProcessingFlowHop struct {
+	Capability       string   `json:"capability"`
+	ProviderID       string   `json:"provider_id"`
+	TrustBoundary    string   `json:"trust_boundary"`
+	InputClasses     []string `json:"input_classes"`
+	DiscloseFilename bool     `json:"disclose_filename"`
+	Filename         string   `json:"filename,omitzero"`
+}
+
+type ProcessingEstimate struct {
+	SourceBytes   int64 `json:"source_bytes" minimum:"0"`
+	ProviderCalls int   `json:"provider_calls" minimum:"0"`
+	VectorSpaces  int   `json:"vector_spaces" minimum:"0"`
+}
+
+// ProcessingPlan is the complete reviewed disclosure. Its fingerprint must
+// be supplied unchanged when starting work.
+type ProcessingPlan struct {
+	Fingerprint        string              `json:"fingerprint" pattern:"^[0-9a-f]{64}$"`
+	VaultUID           string              `json:"vault_uid" format:"uuid"`
+	Selector           ProcessingSelector  `json:"selector"`
+	ProfileFingerprint string              `json:"profile_fingerprint" pattern:"^[0-9a-f]{64}$"`
+	Flow               []ProcessingFlowHop `json:"flow"`
+	DisclosedClasses   []string            `json:"disclosed_classes"`
+	RetainedClasses    []string            `json:"retained_classes"`
+	Estimate           ProcessingEstimate  `json:"estimate"`
+	ConsentRequired    bool                `json:"consent_required"`
+	BackupConsequence  string              `json:"backup_consequence"`
+}
+
+type StartProcessingRequest struct {
+	Selector        ProcessingSelector `json:"selector"`
+	PlanFingerprint string             `json:"plan_fingerprint" pattern:"^[0-9a-f]{64}$"`
+	Consent         bool               `json:"consent"`
+}
+
+type ProcessingConsentGrantRequest struct {
+	Selector        ProcessingSelector `json:"selector"`
+	PlanFingerprint string             `json:"plan_fingerprint" pattern:"^[0-9a-f]{64}$"`
+	ExpiresAt       string             `json:"expires_at,omitzero" format:"date-time"`
+}
+
+type ProcessingConsentGrant struct {
+	PlanFingerprint    string `json:"plan_fingerprint" pattern:"^[0-9a-f]{64}$"`
+	ProfileFingerprint string `json:"profile_fingerprint" pattern:"^[0-9a-f]{64}$"`
+	ExpiresAt          string `json:"expires_at,omitzero" format:"date-time"`
+}
+
+type ProcessingConsentRevokeRequest struct{}
+
+type ProcessingConsentRevocation struct {
+	RevokedAt string `json:"revoked_at" format:"date-time"`
+}
+
+type DerivativePurgePlanRequest struct {
+	ContentVersionIDs []string `json:"content_version_ids,omitzero" maxItems:"1000" uniqueItems:"true"`
+	AttachmentIDs     []string `json:"attachment_ids,omitzero" maxItems:"1000" uniqueItems:"true"`
+	BuildIDs          []string `json:"build_ids,omitzero" maxItems:"1000" uniqueItems:"true"`
+	All               bool     `json:"all,omitzero"`
+}
+
+type DerivativePurgePlan struct {
+	Fingerprint                    string   `json:"fingerprint" pattern:"^[0-9a-f]{64}$"`
+	VaultUID                       string   `json:"vault_uid" format:"uuid"`
+	ContentVersionIDs              []string `json:"content_version_ids"`
+	AttachmentIDs                  []string `json:"attachment_ids"`
+	BuildIDs                       []string `json:"build_ids"`
+	All                            bool     `json:"all"`
+	ImmutableBackupCopiesUntouched bool     `json:"immutable_backup_copies_untouched"`
+}
+
+type DerivativePurgeJobRequest struct {
+	ContentVersionIDs []string `json:"content_version_ids,omitzero" maxItems:"1000" uniqueItems:"true"`
+	AttachmentIDs     []string `json:"attachment_ids,omitzero" maxItems:"1000" uniqueItems:"true"`
+	BuildIDs          []string `json:"build_ids,omitzero" maxItems:"1000" uniqueItems:"true"`
+	All               bool     `json:"all,omitzero"`
+	PlanFingerprint   string   `json:"plan_fingerprint" pattern:"^[0-9a-f]{64}$"`
+}
+
+type DerivativePurgeReceipt struct {
+	ID                               string `json:"id" pattern:"^[0-9a-f]{64}$"`
+	PlanFingerprint                  string `json:"plan_fingerprint" pattern:"^[0-9a-f]{64}$"`
+	RemovedHeads                     int    `json:"removed_heads" minimum:"0"`
+	RemovedAttachments               int    `json:"removed_attachments" minimum:"0"`
+	RemovedBuilds                    int    `json:"removed_builds" minimum:"0"`
+	RemovedArtifacts                 int    `json:"removed_artifacts" minimum:"0"`
+	RemovedLexicalSegments           int    `json:"removed_lexical_segments" minimum:"0"`
+	RemovedEmbeddingHeads            int    `json:"removed_embedding_heads" minimum:"0"`
+	RemovedEmbeddingSets             int    `json:"removed_embedding_sets" minimum:"0"`
+	PhysicalDerivativeBlobsReclaimed int    `json:"physical_derivative_blobs_reclaimed" minimum:"0"`
+	ReclaimedFiles                   int    `json:"reclaimed_files" minimum:"0"`
+	ImmutableBackupCopiesUntouched   bool   `json:"immutable_backup_copies_untouched"`
+}
+
+type DerivativePurgeEvent struct {
+	Sequence int                     `json:"sequence" minimum:"1" maximum:"1"`
+	Type     string                  `json:"type" enum:"result"`
+	Receipt  *DerivativePurgeReceipt `json:"receipt"`
+	Terminal bool                    `json:"terminal"`
+}
+
+type ProcessingJob struct {
+	ID                 string   `json:"id" pattern:"^[0-9a-f]{64}$"`
+	RenditionJobID     string   `json:"rendition_job_id,omitzero" pattern:"^[0-9a-f]{64}$"`
+	AttachmentID       string   `json:"attachment_id,omitzero" pattern:"^[0-9a-f]{64}$"`
+	EmbeddingJobIDs    []string `json:"embedding_job_ids"`
+	ProfileFingerprint string   `json:"profile_fingerprint" pattern:"^[0-9a-f]{64}$"`
+	ContentVersionID   string   `json:"content_version_id" format:"uuid"`
+}
+
+type ProcessingStatus struct {
+	JobID             string   `json:"job_id" pattern:"^[0-9a-f]{64}$"`
+	State             string   `json:"state"`
+	Phase             string   `json:"phase"`
+	FailureCode       string   `json:"failure_code,omitzero"`
+	EmbeddingJobIDs   []string `json:"embedding_job_ids"`
+	CompletedBindings int      `json:"completed_bindings" minimum:"0"`
+}
+
+// ProcessingJobEvent is one bounded NDJSON event. A successful stream contains
+// one job event followed by one terminal status event.
+type ProcessingJobEvent struct {
+	Sequence int               `json:"sequence" minimum:"1" maximum:"2"`
+	Type     string            `json:"type" enum:"job,status"`
+	Job      *ProcessingJob    `json:"job,omitzero"`
+	Status   *ProcessingStatus `json:"status,omitzero"`
+	Terminal bool              `json:"terminal,omitzero"`
+}
+
+type DocumentSourceFence struct {
+	VaultUID          string   `json:"vault_uid" format:"uuid"`
+	ContentVersionIDs []string `json:"content_version_ids" minItems:"1" maxItems:"4096" uniqueItems:"true"`
+}
+
+type CoverageClass struct {
+	Name        string `json:"name"`
+	Required    bool   `json:"required"`
+	State       string `json:"state"`
+	Complete    int    `json:"complete" minimum:"0"`
+	Unavailable int    `json:"unavailable" minimum:"0"`
+	Stale       int    `json:"stale" minimum:"0"`
+	Ineligible  int    `json:"ineligible" minimum:"0"`
+	Total       int    `json:"total" minimum:"0"`
+}
+
+type CoverageReport struct {
+	VaultUID           string          `json:"vault_uid" format:"uuid"`
+	ProfileFingerprint string          `json:"profile_fingerprint" pattern:"^[0-9a-f]{64}$"`
+	State              string          `json:"state"`
+	Renditions         CoverageClass   `json:"renditions"`
+	Embeddings         []CoverageClass `json:"embeddings"`
+}
+
+type DocumentSearchRequest struct {
+	Query     string              `json:"query" minLength:"1" maxLength:"8192"`
+	Mode      string              `json:"mode" enum:"auto,lexical,semantic,hybrid"`
+	Limit     int                 `json:"limit,omitzero" minimum:"1" maximum:"100"`
+	Profile   string              `json:"profile" minLength:"1" maxLength:"128" pattern:"^[a-z][a-z0-9_-]*$"`
+	BindingID string              `json:"binding_id,omitzero" maxLength:"128"`
+	Fence     DocumentSourceFence `json:"fence"`
+	Explain   bool                `json:"explain,omitzero"`
+}
+
+type DocumentEvidenceReference struct {
+	Kind                   string `json:"kind"`
+	BuildID                string `json:"build_id,omitzero"`
+	SegmentID              string `json:"segment_id,omitzero"`
+	VectorSpaceID          string `json:"vector_space_id,omitzero"`
+	EmbeddingSetID         string `json:"embedding_set_id,omitzero"`
+	InputGenerationID      string `json:"input_generation_id,omitzero"`
+	InputID                string `json:"input_id,omitzero"`
+	InputKind              string `json:"input_kind,omitzero"`
+	SourceManifestChecksum string `json:"source_manifest_checksum,omitzero"`
+}
+
+type DocumentSearchTrace struct {
+	Code  string `json:"code"`
+	Count int    `json:"count" minimum:"0"`
+}
+
+type DocumentSearchResult struct {
+	VaultUID         string                      `json:"vault_uid" format:"uuid"`
+	NodeID           int64                       `json:"node_id" minimum:"1"`
+	ContentVersionID string                      `json:"content_version_id" format:"uuid"`
+	Rank             int                         `json:"rank" minimum:"1"`
+	Score            float64                     `json:"score"`
+	Path             string                      `json:"path"`
+	Excerpt          string                      `json:"excerpt,omitzero"`
+	LexicalRank      int                         `json:"lexical_rank,omitzero"`
+	SemanticRank     int                         `json:"semantic_rank,omitzero"`
+	Evidence         []DocumentEvidenceReference `json:"evidence"`
+}
+
+type DocumentSearchCoverage struct {
+	BindingRequired   bool   `json:"binding_required"`
+	ScopedDocuments   int    `json:"scoped_documents" minimum:"0"`
+	CompleteDocuments int    `json:"complete_documents" minimum:"0"`
+	State             string `json:"state"`
+}
+
+type DocumentSearchReport struct {
+	RequestedMode string                 `json:"requested_mode"`
+	ActualMode    string                 `json:"actual_mode"`
+	Coverage      DocumentSearchCoverage `json:"coverage"`
+	Degradations  []string               `json:"degradations"`
+	Results       []DocumentSearchResult `json:"results"`
+	Truncated     bool                   `json:"truncated"`
+	Trace         []DocumentSearchTrace  `json:"trace"`
+}
 
 // Node is the wire representation of a store.Node. Path is populated on live
 // single-node responses; lists and trashed nodes omit it.

@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/upload"
 	"go.kenn.io/docbank/internal/blob"
+	"go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/internal/vectorworker"
@@ -45,6 +46,9 @@ var (
 	ErrConsentRequired           = errors.New("processing consent is required")
 	ErrRenditionFailed           = store.ErrRenditionJobTerminal
 	ErrRenditionOperatorRequired = store.ErrRenditionJobOperatorRequired
+	ErrPurgePlanChanged          = errors.New("derivative purge plan changed after preview")
+	ErrInvalidPurgeRequest       = errors.New("derivative purge request is invalid")
+	ErrInvalidConsentExpiry      = errors.New("processing consent expiry is invalid")
 )
 
 type ProfileConfig struct {
@@ -60,6 +64,8 @@ type ServiceConfig struct {
 	Blobs          *blob.Store
 	Gate           processingOperationGate
 	Profiles       map[string]ProfileConfig
+	Principal      string
+	Scope          string
 	SpoolDirectory string
 	Clock          func() time.Time
 }
@@ -78,6 +84,8 @@ type Service struct {
 	blobs          *blob.Store
 	gate           processingOperationGate
 	profiles       map[string]configuredProfile
+	principal      string
+	scope          string
 	spoolDirectory string
 	clock          func() time.Time
 	renditions     *RenditionRuntimeRegistry
@@ -86,7 +94,7 @@ type Service struct {
 
 type processingOperationGate interface {
 	RenditionMutationGate
-	PreserveContext(ctx context.Context, fn func() error) error
+	MaintainContext(ctx context.Context, fn func() error) error
 }
 
 type Selector struct {
@@ -110,6 +118,15 @@ type Estimate struct {
 	VectorSpaces  int
 }
 
+// ProfileSummary describes one locally executable processing profile without
+// exposing provider credentials or deployment configuration.
+type ProfileSummary struct {
+	Name              string
+	Fingerprint       string
+	Rendition         bool
+	EmbeddingBindings []string
+}
+
 type Plan struct {
 	Fingerprint        string
 	VaultUID           string
@@ -129,9 +146,61 @@ type StartRequest struct {
 	Consent         bool
 }
 
+type ConsentGrantRequest struct {
+	Selector        Selector
+	PlanFingerprint string
+	ExpiresAt       *time.Time
+}
+
+type ConsentGrant struct {
+	PlanFingerprint    string
+	ProfileFingerprint string
+	ExpiresAt          *time.Time
+}
+
+type ConsentRevocation struct {
+	RevokedAt time.Time
+}
+
+type DerivativePurgeRequest struct {
+	ContentVersionIDs []string
+	AttachmentIDs     []string
+	BuildIDs          []string
+	All               bool
+}
+
+type DerivativePurgePlan struct {
+	Fingerprint                    string
+	VaultUID                       string
+	Request                        DerivativePurgeRequest
+	ImmutableBackupCopiesUntouched bool
+}
+
+type DerivativePurgeJobRequest struct {
+	DerivativePurgeRequest
+
+	PlanFingerprint string
+}
+
+type DerivativePurgeReceipt struct {
+	ID                               string
+	PlanFingerprint                  string
+	RemovedHeads                     int
+	RemovedAttachments               int
+	RemovedBuilds                    int
+	RemovedArtifacts                 int
+	RemovedLexicalSegments           int
+	RemovedEmbeddingHeads            int
+	RemovedEmbeddingSets             int
+	PhysicalDerivativeBlobsReclaimed int
+	ReclaimedFiles                   int
+	ImmutableBackupCopiesUntouched   bool
+}
+
 type Job struct {
 	ID                 string
 	RenditionJobID     string
+	AttachmentID       string
 	EmbeddingJobIDs    []string
 	ProfileFingerprint string
 	ContentVersionID   string
@@ -198,8 +267,16 @@ func NewService(config ServiceConfig) (*Service, error) {
 	if config.Clock == nil {
 		config.Clock = func() time.Time { return time.Now().UTC() }
 	}
+	if config.Principal == "" {
+		config.Principal = "embedded:operator"
+	}
+	if config.Scope == "" {
+		config.Scope = "document-processing"
+	}
 	service := &Service{catalog: config.Catalog, blobs: config.Blobs, gate: config.Gate,
 		profiles:       make(map[string]configuredProfile, len(config.Profiles)),
+		principal:      config.Principal,
+		scope:          config.Scope,
 		spoolDirectory: config.SpoolDirectory, clock: config.Clock,
 		renditions: NewRenditionRuntimeRegistry(), embeddings: NewEmbeddingRuntimeRegistry()}
 	registeredRenditions := make(map[string]document.RenditionProvider)
@@ -307,6 +384,21 @@ func NewService(config ServiceConfig) (*Service, error) {
 	return service, nil
 }
 
+func (service *Service) Profiles() []ProfileSummary {
+	result := make([]ProfileSummary, 0, len(service.profiles))
+	for name, profile := range service.profiles {
+		bindings := make([]string, 0, len(profile.portable.Embeddings))
+		for _, binding := range profile.portable.Embeddings {
+			bindings = append(bindings, binding.Name)
+		}
+		sort.Strings(bindings)
+		result = append(result, ProfileSummary{Name: name, Fingerprint: profile.record.Fingerprint,
+			Rendition: profile.portable.Rendition != nil, EmbeddingBindings: bindings})
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+	return result
+}
+
 func (service *Service) Plan(ctx context.Context, selector Selector) (Plan, error) {
 	node, version, profile, err := service.resolve(ctx, selector)
 	if err != nil {
@@ -381,46 +473,24 @@ func (service *Service) Start(ctx context.Context, request StartRequest) (Job, e
 	if request.PlanFingerprint == "" || request.PlanFingerprint != plan.Fingerprint {
 		return Job{}, ErrPlanChanged
 	}
-	if plan.ConsentRequired && !request.Consent {
-		return Job{}, ErrConsentRequired
-	}
-	principal, scope := "embedded:operator", "document-processing"
-	if err := service.gate.MutateContext(ctx, func() error {
-		for _, binding := range profile.portable.Embeddings {
-			_, err := service.catalog.GrantConsent(ctx, store.ProcessingConsentGrantRequest{
-				Principal: principal, Scope: scope, ProfileFingerprint: profile.record.Fingerprint,
-				DisclosureFingerprint:   binding.DisclosureFingerprint,
-				InputClasses:            []string{string(binding.InputKind)},
-				RetainedArtifactClasses: []string{"embedding_vector_set"}})
-			if err != nil {
-				return err
-			}
-			if profile.embedders[binding.Name].Descriptor().SupportsTextQuery {
-				_, err = service.catalog.GrantConsent(ctx, store.ProcessingConsentGrantRequest{
-					Principal: principal, Scope: scope, ProfileFingerprint: profile.record.Fingerprint,
-					DisclosureFingerprint: binding.DisclosureFingerprint,
-					InputClasses:          []string{"query_text"}, RetainedArtifactClasses: []string{}})
-				if err != nil {
-					return err
-				}
-			}
+	if request.Consent {
+		if err := service.grantProfileConsent(ctx, profile, nil); err != nil {
+			return Job{}, err
 		}
-		return nil
-	}); err != nil {
-		return Job{}, err
 	}
-	processingJobID, renditionJobID := "", ""
+	principal, scope := service.principal, service.scope
+	processingJobID, renditionJobID, attachmentID := "", "", ""
 	if profile.portable.Rendition != nil {
 		var renditionRun renditionRun
 		renditionRun, err = service.runRendition(ctx, node, version, profile, principal, scope)
 		if err != nil {
-			return Job{}, err
+			return Job{}, processingConsentBoundaryError(err)
 		}
-		processingJobID, renditionJobID = renditionRun.waiterID, renditionRun.jobID
+		processingJobID, renditionJobID, attachmentID = renditionRun.waiterID, renditionRun.jobID, renditionRun.attachmentID
 	}
 	embeddingJobIDs, err := service.runEmbeddings(ctx, version, profile, principal, scope)
 	if err != nil {
-		return Job{}, err
+		return Job{}, processingConsentBoundaryError(err)
 	}
 	if processingJobID == "" && len(embeddingJobIDs) != 0 {
 		processingJobID = embeddingJobIDs[0]
@@ -428,12 +498,192 @@ func (service *Service) Start(ctx context.Context, request StartRequest) (Job, e
 	if processingJobID == "" {
 		return Job{}, errors.New("processing profile has no executable stage")
 	}
-	return Job{ID: processingJobID, RenditionJobID: renditionJobID,
+	return Job{ID: processingJobID, RenditionJobID: renditionJobID, AttachmentID: attachmentID,
 		EmbeddingJobIDs: embeddingJobIDs, ProfileFingerprint: profile.record.Fingerprint,
 		ContentVersionID: version.ID}, nil
 }
 
-type renditionRun struct{ jobID, waiterID string }
+func processingConsentBoundaryError(err error) error {
+	if errors.Is(err, store.ErrProcessingConsentRequired) ||
+		errors.Is(err, store.ErrProcessingConsentExpired) ||
+		errors.Is(err, store.ErrProcessingConsentRevoked) {
+		return errors.Join(ErrConsentRequired, err)
+	}
+	return err
+}
+
+func (service *Service) GrantConsent(ctx context.Context, request ConsentGrantRequest) (ConsentGrant, error) {
+	node, version, profile, err := service.resolve(ctx, request.Selector)
+	if err != nil {
+		return ConsentGrant{}, err
+	}
+	plan, err := service.planForSource(request.Selector, node, version, profile)
+	if err != nil {
+		return ConsentGrant{}, err
+	}
+	if request.PlanFingerprint == "" || request.PlanFingerprint != plan.Fingerprint {
+		return ConsentGrant{}, ErrPlanChanged
+	}
+	if request.ExpiresAt != nil && !request.ExpiresAt.After(service.clock()) {
+		return ConsentGrant{}, fmt.Errorf("%w: expiry must be in the future", ErrInvalidConsentExpiry)
+	}
+	if err := service.grantProfileConsent(ctx, profile, request.ExpiresAt); err != nil {
+		return ConsentGrant{}, err
+	}
+	return ConsentGrant{PlanFingerprint: plan.Fingerprint, ProfileFingerprint: profile.record.Fingerprint,
+		ExpiresAt: request.ExpiresAt}, nil
+}
+
+func (service *Service) RevokeConsent(ctx context.Context) (ConsentRevocation, error) {
+	var result ConsentRevocation
+	err := service.gate.MutateContext(ctx, func() error {
+		revocation, err := service.catalog.RevokeConsent(ctx, store.ProcessingConsentRevocationRequest{
+			Principal: service.principal, Scope: service.scope})
+		result.RevokedAt = revocation.RevokedAt
+		return err
+	})
+	return result, err
+}
+
+func (service *Service) PlanDerivativePurge(ctx context.Context,
+	request DerivativePurgeRequest,
+) (DerivativePurgePlan, error) {
+	normalized, err := normalizeDerivativePurgeRequest(request)
+	if err != nil {
+		return DerivativePurgePlan{}, err
+	}
+	state := sha256.New()
+	if err := service.catalog.ExportMetadata(ctx, state); err != nil {
+		return DerivativePurgePlan{}, fmt.Errorf("fingerprinting derivative authority: %w", err)
+	}
+	payload := struct {
+		Contract string                 `json:"contract"`
+		VaultUID string                 `json:"vault_uid"`
+		State    string                 `json:"state"`
+		Request  DerivativePurgeRequest `json:"request"`
+	}{Contract: "docbank-derivative-purge-plan/v1", VaultUID: service.catalog.VaultID(),
+		State: hex.EncodeToString(state.Sum(nil)), Request: normalized}
+	canonical, err := json.Marshal(payload, json.Deterministic(true))
+	if err != nil {
+		return DerivativePurgePlan{}, err
+	}
+	digest := sha256.Sum256(canonical)
+	return DerivativePurgePlan{Fingerprint: hex.EncodeToString(digest[:]), VaultUID: service.catalog.VaultID(),
+		Request: normalized, ImmutableBackupCopiesUntouched: true}, nil
+}
+
+func (service *Service) RunDerivativePurge(ctx context.Context,
+	request DerivativePurgeJobRequest,
+) (DerivativePurgeReceipt, error) {
+	var receipt DerivativePurgeReceipt
+	err := service.gate.MaintainContext(ctx, func() error {
+		plan, err := service.PlanDerivativePurge(ctx, request.DerivativePurgeRequest)
+		if err != nil {
+			return err
+		}
+		if request.PlanFingerprint == "" || request.PlanFingerprint != plan.Fingerprint {
+			return ErrPurgePlanChanged
+		}
+		report, err := maintenance.PurgeDerivatives(ctx, service.catalog, service.blobs, store.PurgeRequest{
+			ContentVersionIDs: plan.Request.ContentVersionIDs, AttachmentIDs: plan.Request.AttachmentIDs,
+			BuildIDs: plan.Request.BuildIDs, All: plan.Request.All})
+		if err != nil {
+			return err
+		}
+		receipt = DerivativePurgeReceipt{PlanFingerprint: plan.Fingerprint,
+			RemovedHeads: report.Purge.RemovedHeads, RemovedAttachments: report.Purge.RemovedAttachments,
+			RemovedBuilds: report.Purge.RemovedBuilds, RemovedArtifacts: report.Purge.RemovedArtifacts,
+			RemovedLexicalSegments:           report.Purge.RemovedLexicalSegments,
+			RemovedEmbeddingHeads:            report.Purge.RemovedEmbeddingHeads,
+			RemovedEmbeddingSets:             report.Purge.RemovedEmbeddingSets,
+			PhysicalDerivativeBlobsReclaimed: report.Physical.RemovedBlobs,
+			ReclaimedFiles:                   report.Physical.ReclaimedFiles,
+			ImmutableBackupCopiesUntouched:   report.Purge.ImmutableBackupCopiesUntouched}
+		encoded, err := json.Marshal(receipt, json.Deterministic(true))
+		if err != nil {
+			return err
+		}
+		receipt.ID = stableHash("docbank/derivative-purge-receipt/v1", string(encoded))
+		return nil
+	})
+	return receipt, err
+}
+
+func normalizeDerivativePurgeRequest(request DerivativePurgeRequest) (DerivativePurgeRequest, error) {
+	if request.All && (len(request.ContentVersionIDs) != 0 || len(request.AttachmentIDs) != 0 || len(request.BuildIDs) != 0) {
+		return DerivativePurgeRequest{}, fmt.Errorf("%w: vault-wide purge cannot include selectors", ErrInvalidPurgeRequest)
+	}
+	if !request.All && len(request.ContentVersionIDs) == 0 && len(request.AttachmentIDs) == 0 && len(request.BuildIDs) == 0 {
+		return DerivativePurgeRequest{}, fmt.Errorf("%w: a selector or all=true is required", ErrInvalidPurgeRequest)
+	}
+	normalize := func(subject string, values []string, uuidValues bool) ([]string, error) {
+		if len(values) > 1000 {
+			return nil, fmt.Errorf("%w: at most 1000 %s IDs are accepted", ErrInvalidPurgeRequest, subject)
+		}
+		result := slices.Clone(values)
+		sort.Strings(result)
+		for index, value := range result {
+			valid := len(value) == sha256.Size*2
+			if uuidValues {
+				_, err := uuid.Parse(value)
+				valid = err == nil
+			} else if valid {
+				decoded, err := hex.DecodeString(value)
+				valid = err == nil && len(decoded) == sha256.Size && value == strings.ToLower(value)
+			}
+			if !valid {
+				return nil, fmt.Errorf("%w: %s ID is invalid", ErrInvalidPurgeRequest, subject)
+			}
+			if index > 0 && result[index-1] == value {
+				return nil, fmt.Errorf("%w: %s ID is duplicated", ErrInvalidPurgeRequest, subject)
+			}
+		}
+		return result, nil
+	}
+	var err error
+	request.ContentVersionIDs, err = normalize("content version", request.ContentVersionIDs, true)
+	if err != nil {
+		return DerivativePurgeRequest{}, err
+	}
+	request.AttachmentIDs, err = normalize("attachment", request.AttachmentIDs, false)
+	if err != nil {
+		return DerivativePurgeRequest{}, err
+	}
+	request.BuildIDs, err = normalize("build", request.BuildIDs, false)
+	return request, err
+}
+
+func (service *Service) grantProfileConsent(ctx context.Context, profile configuredProfile, expiresAt *time.Time) error {
+	return service.gate.MutateContext(ctx, func() error {
+		grant := func(disclosure string, inputs, retained []string) error {
+			_, err := service.catalog.GrantConsent(ctx, store.ProcessingConsentGrantRequest{
+				Principal: service.principal, Scope: service.scope, ProfileFingerprint: profile.record.Fingerprint,
+				DisclosureFingerprint: disclosure, InputClasses: inputs,
+				RetainedArtifactClasses: retained, ExpiresAt: expiresAt})
+			return err
+		}
+		if profile.portable.Rendition != nil {
+			if err := grant(profile.record.RenditionDisclosureFingerprint,
+				[]string{string(document.RenditionInputOriginalFile)}, retainedRenditionClasses(profile.portable)); err != nil {
+				return err
+			}
+		}
+		for _, binding := range profile.portable.Embeddings {
+			if err := grant(binding.DisclosureFingerprint, []string{string(binding.InputKind)},
+				[]string{"embedding_vector_set"}); err != nil {
+				return err
+			}
+			if profile.embedders[binding.Name].Descriptor().SupportsTextQuery {
+				if err := grant(binding.DisclosureFingerprint, []string{"query_text"}, []string{}); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+}
+
+type renditionRun struct{ jobID, waiterID, attachmentID string }
 
 func (service *Service) runRendition(ctx context.Context, node store.Node, version store.ContentVersion,
 	profile configuredProfile, principal, scope string,
@@ -472,13 +722,6 @@ func (service *Service) runRendition(ctx context.Context, node store.Node, versi
 	var job store.RenditionJob
 	var waiter store.RenditionJobWaiter
 	err = service.gate.MutateContext(ctx, func() error {
-		if _, err := service.catalog.GrantConsent(ctx, store.ProcessingConsentGrantRequest{
-			Principal: principal, Scope: scope, ProfileFingerprint: profile.record.Fingerprint,
-			DisclosureFingerprint: profile.record.RenditionDisclosureFingerprint,
-			InputClasses:          []string{string(document.RenditionInputOriginalFile)}, RetainedArtifactClasses: retained,
-		}); err != nil {
-			return err
-		}
 		var enqueueErr error
 		job, waiter, enqueueErr = service.catalog.EnqueueRenditionJob(ctx, store.RenditionJobRequest{
 			ContentVersionID: version.ID, Profile: profile.record,
@@ -535,7 +778,7 @@ func (service *Service) renditionResult(ctx context.Context, waiterID string) (r
 	}
 	// Shared work can finish while rejecting this request's publication authority.
 	if waiter.State == "published" {
-		return renditionRun{jobID: waiter.JobID, waiterID: waiter.ID}, nil
+		return renditionRun{jobID: waiter.JobID, waiterID: waiter.ID, attachmentID: waiter.AttachmentID}, nil
 	}
 	if waiter.FailureCode == store.RenditionFailureConsent {
 		return renditionRun{}, ErrConsentRequired
@@ -652,6 +895,28 @@ func (service *Service) Rendition(ctx context.Context, selector Selector, limit 
 	if err != nil {
 		return Rendition{}, err
 	}
+	return service.renditionFromView(ctx, node, selector.ContentVersionID, view, limit)
+}
+
+func (service *Service) RenditionByAttachment(ctx context.Context, attachmentID string, limit int64) (Rendition, error) {
+	view, err := service.catalog.ActiveRenditionByAttachment(ctx, attachmentID)
+	if err != nil {
+		return Rendition{}, err
+	}
+	version, err := service.catalog.ContentVersionByID(ctx, view.Attachment.ContentVersionID)
+	if err != nil {
+		return Rendition{}, err
+	}
+	node, err := service.catalog.NodeByID(ctx, version.NodeID)
+	if err != nil {
+		return Rendition{}, err
+	}
+	return service.renditionFromView(ctx, node, version.ID, view, limit)
+}
+
+func (service *Service) renditionFromView(ctx context.Context, node store.Node, contentVersionID string,
+	view store.RenditionView, limit int64,
+) (Rendition, error) {
 	if limit == 0 {
 		limit = MaxRenditionBytes
 	}
@@ -680,7 +945,7 @@ func (service *Service) Rendition(ctx context.Context, selector Selector, limit 
 		return Rendition{}, errors.New("rendition blob size disagrees with catalog authority")
 	}
 	return Rendition{VaultUID: service.catalog.VaultID(), NodeID: node.ID,
-		ContentVersionID: selector.ContentVersionID, ProfileFingerprint: profile.record.Fingerprint,
+		ContentVersionID: contentVersionID, ProfileFingerprint: view.Attachment.Profile.Fingerprint,
 		AttachmentID: view.Attachment.ID, BuildID: view.Build.ID, ArtifactID: artifact.ID,
 		SHA256: artifact.BlobHash, Size: artifact.Size, Completeness: string(view.Build.Completeness),
 		Warnings: slices.Clone(view.Build.Warnings), Reader: reader}, nil
@@ -796,7 +1061,7 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 		request.BindingID = binding.Name
 		if mode == retrieval.ModeSemantic || mode == retrieval.ModeHybrid {
 			_, fence, err := service.catalog.BeginProviderEgress(ctx, store.ProviderOperationAuthorizationRequest{
-				Principal: "embedded:operator", Scope: "document-processing",
+				Principal: service.principal, Scope: service.scope,
 				ProfileFingerprint: profile.record.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
 				InputClasses: []string{"query_text"}, RetainedArtifactClasses: []string{},
 			})
