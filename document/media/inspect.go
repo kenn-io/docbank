@@ -269,6 +269,19 @@ func (record CapabilityRecord) InspectionPolicy() (InspectionPolicy, bool) {
 	return record.Policy, record.localAuthority
 }
 
+// UnmarshalJSON decodes a portable record. Local upload authority is not part
+// of the representation and is never restored by decoding, including when the
+// destination already held it.
+func (record *CapabilityRecord) UnmarshalJSON(data []byte) error {
+	type portable CapabilityRecord
+	var decoded portable
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return fmt.Errorf("media: decode capability record: %w", err)
+	}
+	*record = CapabilityRecord(decoded)
+	return nil
+}
+
 func sealCapabilityRecord(
 	policy InspectionPolicy, data []byte, record CapabilityRecord,
 ) (CapabilityRecord, error) {
@@ -621,7 +634,7 @@ func inspectXML(
 	depth, roots := 0, 0
 	styleDepth := 0
 	var styleText []byte
-	bases := make([]*url.URL, 0, 8)
+	bases := make([]xmlScope, 0, 8)
 	type odsRow struct {
 		depth, repeat, cells int64
 	}
@@ -645,11 +658,11 @@ func inspectXML(
 		case xml.ProcInst:
 			if strings.EqualFold(value.Target, "xml-stylesheet") {
 				href, found := procInstAttribute(value.Inst, "href")
-				var base *url.URL
+				scope := xmlScope{home: home}
 				if len(bases) != 0 {
-					base = bases[len(bases)-1]
+					scope = bases[len(bases)-1]
 				}
-				if !found || isExternalXMLURI(href, base, home) {
+				if !found || isExternalXMLURI(href, scope.url, scope.home) {
 					return true, nil
 				}
 			}
@@ -667,18 +680,18 @@ func inspectXML(
 					return false, errors.New("XML document contains multiple root elements")
 				}
 			}
-			var inheritedBase *url.URL
+			inherited := xmlScope{home: home}
 			if len(bases) != 0 {
-				inheritedBase = bases[len(bases)-1]
+				inherited = bases[len(bases)-1]
 			}
-			base, external, attrErr := inspectXMLAttributes(value.Attr, inheritedBase, home)
+			scope, external, attrErr := inspectXMLAttributes(value.Attr, inherited)
 			if attrErr != nil {
 				return false, attrErr
 			}
 			if external {
 				return true, nil
 			}
-			bases = append(bases, base)
+			bases = append(bases, scope)
 			depth++
 
 			name := strings.ToLower(value.Name.Local)
@@ -715,7 +728,8 @@ func inspectXML(
 			}
 		case xml.EndElement:
 			if styleDepth != 0 && styleDepth == depth && len(bases) != 0 {
-				external, styleErr := cssTextIsExternal(styleText, bases[len(bases)-1], home)
+				scope := bases[len(bases)-1]
+				external, styleErr := cssTextIsExternal(styleText, scope.url, scope.home)
 				if styleErr != nil {
 					return false, styleErr
 				}
@@ -790,10 +804,8 @@ func isXMLSpace(value byte) bool {
 	return value == ' ' || value == '\t' || value == '\r' || value == '\n'
 }
 
-func inspectXMLAttributes(
-	attributes []xml.Attr, inheritedBase *url.URL, home string,
-) (*url.URL, bool, error) {
-	base := inheritedBase
+func inspectXMLAttributes(attributes []xml.Attr, inherited xmlScope) (xmlScope, bool, error) {
+	scope := inherited
 	for _, attribute := range attributes {
 		if attribute.Name.Space != "http://www.w3.org/XML/1998/namespace" ||
 			!strings.EqualFold(attribute.Name.Local, "base") {
@@ -802,48 +814,79 @@ func inspectXMLAttributes(
 		value := strings.TrimSpace(attribute.Value)
 		// A base is a locator like any other, so it is classified by the same
 		// rule. Testing it separately let every later rule miss it.
-		if isExternalXMLURI(value, base, home) {
-			return nil, true, nil
+		if isExternalXMLURI(value, scope.url, scope.home) {
+			return xmlScope{}, true, nil
 		}
 		parsed, err := url.Parse(value)
 		if err != nil {
-			return nil, false, fmt.Errorf("inspect XML base URI: %w", err)
+			return xmlScope{}, false, fmt.Errorf("inspect XML base URI: %w", err)
 		}
-		if base != nil {
-			parsed = base.ResolveReference(parsed)
+		// A base moves where later references resolve from, so containment has
+		// to follow it. Checking them against the entry's own directory let a
+		// base spend the distance and a reference cross the root after it.
+		scope.home = resolveArchiveDir(scope.home, value)
+		if scope.url != nil {
+			parsed = scope.url.ResolveReference(parsed)
 		}
-		base = parsed
+		scope.url = parsed
 	}
 	for _, attribute := range attributes {
 		value := strings.TrimSpace(attribute.Value)
 		switch name := strings.ToLower(attribute.Name.Local); {
 		case name == "targetmode":
 			if strings.EqualFold(value, "External") {
-				return nil, true, nil
+				return xmlScope{}, true, nil
 			}
 		case name == "style":
-			external, err := cssTextIsExternal([]byte(value), base, home)
+			external, err := cssTextIsExternal([]byte(value), scope.url, scope.home)
 			if err != nil {
-				return nil, false, err
+				return xmlScope{}, false, err
 			}
 			if external {
-				return nil, true, nil
+				return xmlScope{}, true, nil
 			}
 		case name == "srcset":
 			for candidate := range strings.SplitSeq(value, ",") {
 				fields := strings.Fields(candidate)
-				if len(fields) == 0 || isExternalXMLURI(fields[0], base, home) {
-					return nil, true, nil
+				if len(fields) == 0 || isExternalXMLURI(fields[0], scope.url, scope.home) {
+					return xmlScope{}, true, nil
 				}
 			}
 		case nonLocatorXMLAttribute(attribute):
 		default:
-			if isExternalXMLURI(value, base, home) {
-				return nil, true, nil
+			if isExternalXMLURI(value, scope.url, scope.home) {
+				return xmlScope{}, true, nil
 			}
 		}
 	}
-	return base, false, nil
+	return scope, false, nil
+}
+
+// xmlScope is where references in one element resolve from: the archive
+// directory that containment is measured against, and any xml:base in effect.
+type xmlScope struct {
+	url  *url.URL
+	home string
+}
+
+// resolveArchiveDir moves an archive directory by a base reference. An absolute
+// or host-bearing base names nothing inside the archive, so containment stops
+// applying and the directory is cleared.
+func resolveArchiveDir(home, base string) string {
+	if home == "" {
+		return ""
+	}
+	candidate := strings.ReplaceAll(base, `\`, "/")
+	if index := strings.IndexAny(candidate, "?#"); index >= 0 {
+		candidate = candidate[:index]
+	}
+	if candidate == "" {
+		return home
+	}
+	if path.IsAbs(candidate) || strings.Contains(candidate, "://") {
+		return ""
+	}
+	return path.Clean(path.Join(home, candidate))
 }
 
 // nonLocatorXMLAttribute reports attributes whose values name a vocabulary
@@ -1617,8 +1660,15 @@ func ooxmlDeclaredTypes(files []*zip.File, limit int64) contentDeclarations {
 		if part == "" {
 			continue
 		}
+		// A part name is a URI path, so it may be percent-encoded. A consumer
+		// decodes it before matching, and an encoded name that matched nothing
+		// left its part undeclared and inspected only by its filename.
+		declaredType := normalizeDeclaredType(override.ContentType)
 		// An Override replaces the Default for that part rather than adding to it.
-		declared[part] = []string{normalizeDeclaredType(override.ContentType)}
+		declared[part] = []string{declaredType}
+		if decoded, err := url.PathUnescape(part); err == nil && decoded != part {
+			declared[decoded] = []string{declaredType}
+		}
 	}
 	return declared
 }

@@ -42,6 +42,20 @@ func TestInspectBindsFiniteTextToPolicyAndSource(t *testing.T) {
 	mutated.Measurements.TextLines++
 	require.ErrorContains(t, media.ValidateCapabilityRecord(mutated), "checksum")
 
+	// Decoding never restores local authority, including over a record that
+	// already held it: the bytes described afterwards are the decoded ones.
+	foreign := []byte("gamma\n")
+	other, err := media.InspectCapability(bytes.NewReader(foreign),
+		inspectionPolicy(foreign, "other.txt", "text/plain"))
+	require.NoError(t, err)
+	transferred, err := json.Marshal(other, json.Deterministic(true))
+	require.NoError(t, err)
+	overwritten := record
+	require.NoError(t, json.Unmarshal(transferred, &overwritten))
+	_, retained := overwritten.InspectionPolicy()
+	assert.False(t, retained, "decoding must not carry local upload authority")
+	assert.Equal(t, other.SourceSHA256, overwritten.SourceSHA256)
+
 	encoded, err := json.Marshal(record, json.Deterministic(true))
 	require.NoError(t, err)
 	assert.Contains(t, string(encoded), `"max_text_lines":1000`)
@@ -276,6 +290,42 @@ func TestInspectRejectsArchiveEscapingReference(t *testing.T) {
 		})
 	}
 
+	// A base moves where later references resolve from, so containment follows
+	// it. Measuring against the entry's own directory let a base spend the
+	// distance and a reference cross the root after it.
+	bases := []struct {
+		name, base, reference string
+		eligible              bool
+	}{
+		{name: "base spends the distance", base: "../", reference: "../../outside"},
+		{name: "base spends more", base: "../../", reference: "../outside"},
+		{name: "base stays inside", base: "../", reference: "../outside", eligible: true},
+		// Descending by a base means more distance is needed to leave.
+		{name: "base descends and stays inside", base: "images/",
+			reference: "../../../outside", eligible: true},
+		{name: "base descends and still leaves", base: "images/",
+			reference: "../../../../outside"},
+		{name: "no base", base: "", reference: "../../outside", eligible: true},
+	}
+	for _, tt := range bases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			attribute := ""
+			if tt.base != "" {
+				attribute = ` xml:base="` + tt.base + `"`
+			}
+			data := zipBytes(t, validEPUBEntries(
+				zipEntry{name: "OPS/content.opf", body: `<package><manifest><item id="c" href="text/c.xhtml"/></manifest><spine><itemref idref="c"/></spine></package>`},
+				zipEntry{name: "OPS/text/c.xhtml", body: `<html xmlns="http://www.w3.org/1999/xhtml"` + attribute +
+					`><body><img src="` + tt.reference + `"/></body></html>`},
+			))
+			record, err := media.InspectCapability(bytes.NewReader(data),
+				inspectionPolicy(data, "book.epub", "application/epub+zip"))
+			require.NoError(t, err)
+			assert.Equal(t, tt.eligible, record.Eligible, record.Reason)
+		})
+	}
+
 	// A manifest href that leaves the container is caught where the package
 	// document is scanned, rather than dropped as unresolvable.
 	t.Run("manifest href", func(t *testing.T) {
@@ -425,6 +475,24 @@ func TestInspectFollowsDeclaredContainerParts(t *testing.T) {
 		contentTypes := `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
 			`<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>` +
 			`<Override PartName="/xl/report.bin" ContentType="application/xml"/></Types>`
+		data := zipBytes(t, []zipEntry{
+			{name: "[Content_Types].xml", body: contentTypes},
+			{name: "xl/workbook.xml", body: `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>`},
+			{name: "xl/report.bin", body: `<root><img src="https://example.invalid/t.png"/></root>`},
+		})
+		record, err := media.InspectCapability(bytes.NewReader(data), inspectionPolicy(data, "book.xlsx",
+			"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+		require.NoError(t, err)
+		assert.False(t, record.Eligible)
+		assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
+	})
+
+	// A part name is a URI path, so a consumer decodes it before matching.
+	t.Run("percent-encoded OOXML part name", func(t *testing.T) {
+		t.Parallel()
+		contentTypes := `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+			`<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>` +
+			`<Override PartName="/xl/re%70ort.bin" ContentType="application/xml"/></Types>`
 		data := zipBytes(t, []zipEntry{
 			{name: "[Content_Types].xml", body: contentTypes},
 			{name: "xl/workbook.xml", body: `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>`},
