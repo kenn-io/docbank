@@ -1,3 +1,7 @@
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
+import { parseDocument } from "yaml";
+
 export interface Node {
   id: number;
   parent_id?: number;
@@ -84,6 +88,132 @@ export interface SearchReport {
   limit: number;
   truncated: boolean;
   tag_id?: string;
+}
+
+export interface ProcessingSelector {
+  node_id: number;
+  content_version_id: string;
+  profile: string;
+}
+
+export interface ProcessingProfileSummary {
+  name: string;
+  fingerprint: string;
+  rendition: boolean;
+  embedding_bindings: string[];
+}
+
+export interface ProcessingFlowHop {
+  capability: string;
+  provider_id: string;
+  trust_boundary: string;
+  input_classes: string[];
+}
+
+export interface ProcessingPlan {
+  fingerprint: string;
+  vault_uid: string;
+  selector: ProcessingSelector;
+  profile_fingerprint: string;
+  flow: ProcessingFlowHop[];
+  disclosed_classes: string[];
+  retained_classes: string[];
+  estimate: { source_bytes: number; provider_calls: number; vector_spaces: number };
+  consent_required: boolean;
+  consent_state: "active" | "required" | "expired" | "revoked";
+  backup_consequence: string;
+}
+
+export interface ProcessingJob {
+  id: string;
+  rendition_job_id?: string;
+  attachment_id?: string;
+  embedding_job_ids: string[];
+  profile_fingerprint: string;
+  content_version_id: string;
+}
+
+export interface ProcessingStatus {
+  job_id: string;
+  state: string;
+  phase: string;
+  failure_code?: string;
+  embedding_job_ids: string[];
+  completed_bindings: number;
+}
+
+export interface ProcessingRun {
+  job: ProcessingJob;
+  status: ProcessingStatus;
+}
+
+export interface CoverageClass {
+  name: string;
+  required: boolean;
+  state: string;
+  complete: number;
+  unavailable: number;
+  stale: number;
+  ineligible: number;
+  total: number;
+}
+
+export interface CoverageReport {
+  vault_uid: string;
+  profile_fingerprint: string;
+  state: string;
+  renditions: CoverageClass;
+  embeddings: CoverageClass[];
+}
+
+export interface DocumentSearchRequest {
+  query: string;
+  mode: "auto" | "lexical" | "semantic" | "hybrid";
+  limit: number;
+  profile: string;
+  binding_id?: string;
+  fence: { vault_uid: string; content_version_ids: string[] };
+  explain?: boolean;
+}
+
+export interface DocumentSearchResult {
+  vault_uid: string;
+  node_id: number;
+  content_version_id: string;
+  rank: number;
+  score: number;
+  path: string;
+  excerpt?: string;
+  evidence: Array<{ kind: string; build_id?: string; segment_id?: string; vector_space_id?: string }>;
+}
+
+export interface DocumentSearchReport {
+  requested_mode: string;
+  actual_mode: string;
+  coverage: { binding_required: boolean; scoped_documents: number; complete_documents: number; state: string };
+  degradations: string[];
+  results: DocumentSearchResult[];
+  truncated: boolean;
+  trace: Array<{ code: string; count: number }>;
+}
+
+export interface RenditionArtifact {
+  attachmentID: string;
+  buildID: string;
+  artifactID: string;
+  contentVersionID: string;
+  blobHash: string;
+  profileFingerprint: string;
+  frontmatter: string;
+  markdown: string;
+  completeness: string;
+  warnings: string[];
+  source: { sha256: string; format: string; mediaType: string };
+  document: { title: string; language: string; unitKind: string; unitCount: number };
+  navigation: {
+    complete: boolean;
+    entries: Array<{ key: string; kind: string; title: string; line: number; byte: number }>;
+  };
 }
 
 export interface Tag {
@@ -446,6 +576,231 @@ export async function search(
     `/api/v1/search?${params.toString()}`,
     session,
   );
+}
+
+export async function processingProfiles(session: string): Promise<ProcessingProfileSummary[]> {
+  return requestJSON<ProcessingProfileSummary[]>("/api/v1/processing/profiles", session);
+}
+
+export async function processingPlan(
+  session: string,
+  selector: ProcessingSelector,
+): Promise<ProcessingPlan> {
+  return requestJSON<ProcessingPlan>("/api/v1/processing/plans", session, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ selector }),
+  });
+}
+
+export async function startProcessing(
+  session: string,
+  selector: ProcessingSelector,
+  planFingerprint: string,
+  consent: boolean,
+): Promise<ProcessingRun> {
+  const response = await requestResponse("/api/v1/processing/jobs", session, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" },
+    body: JSON.stringify({ selector, plan_fingerprint: planFingerprint, consent }),
+  });
+  if (!(response.headers.get("Content-Type") ?? "").startsWith("application/x-ndjson")) {
+    throw new Error("The daemon returned an invalid processing stream.");
+  }
+  const lines = (await response.text()).trimEnd().split("\n");
+  if (lines.length !== 2) throw new Error("The processing stream did not end after its terminal status.");
+  const first = JSON.parse(lines[0] ?? "null") as { sequence?: number; type?: string; job?: ProcessingJob };
+  const second = JSON.parse(lines[1] ?? "null") as { sequence?: number; type?: string; status?: ProcessingStatus; terminal?: boolean };
+  if (first.sequence !== 1 || first.type !== "job" || !first.job || second.sequence !== 2 ||
+      second.type !== "status" || !second.status || !second.terminal || second.status.job_id !== first.job.id) {
+    throw new Error("The daemon returned malformed processing progress.");
+  }
+  return { job: first.job, status: second.status };
+}
+
+export async function documentCoverage(
+  session: string,
+  profile: string,
+  vaultUID: string,
+  contentVersionIDs: string[],
+): Promise<CoverageReport> {
+  const params = new URLSearchParams({ profile, vault_uid: vaultUID });
+  for (const id of contentVersionIDs) params.append("content_version_id", id);
+  return requestJSON<CoverageReport>(`/api/v1/coverage?${params.toString()}`, session);
+}
+
+export async function documentSearch(
+  session: string,
+  request: DocumentSearchRequest,
+): Promise<DocumentSearchReport> {
+  return requestJSON<DocumentSearchReport>("/api/v1/search", session, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+}
+
+export async function renditionArtifact(session: string, attachmentID: string): Promise<RenditionArtifact> {
+  const response = await requestResponse(`/api/v1/renditions/${encodeURIComponent(attachmentID)}`, session, {
+    headers: { Accept: "text/markdown" },
+  });
+  if (!(response.headers.get("Content-Type") ?? "").toLowerCase().startsWith("text/markdown")) {
+    throw new Error("The daemon returned an invalid rendition content type.");
+  }
+  const receivedAttachment = response.headers.get("X-Docbank-Rendition-Attachment") ?? "";
+  const buildID = response.headers.get("X-Docbank-Rendition-Build") ?? "";
+  const artifactID = response.headers.get("X-Docbank-Rendition-Artifact") ?? "";
+  const contentVersionID = response.headers.get("X-Docbank-Content-Version") ?? "";
+  const blobHash = response.headers.get("X-Docbank-Blob-Hash") ?? "";
+  const profileFingerprint = response.headers.get("X-Docbank-Rendition-Profile") ?? "";
+  const transportCompleteness = response.headers.get("X-Docbank-Rendition-Completeness") ?? "";
+  const warnings = parseRenditionWarnings(response.headers.get("X-Docbank-Rendition-Warnings") ?? "");
+  const declaredSize = Number(response.headers.get("X-Docbank-Blob-Size"));
+  if (receivedAttachment !== attachmentID || !/^[0-9a-f]{64}$/.test(buildID) ||
+      !/^[0-9a-f]{64}$/.test(artifactID) || !/^[0-9a-f]{64}$/.test(blobHash) ||
+      !/^[0-9a-f]{64}$/.test(profileFingerprint) ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(contentVersionID) ||
+      !["complete", "partial", "degraded_provenance"].includes(transportCompleteness)) {
+    throw new Error("The daemon returned invalid rendition identities.");
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (!Number.isSafeInteger(declaredSize) || declaredSize < 1 || declaredSize !== bytes.length || bytes.length > 64 * 1024 * 1024) {
+    throw new Error("The daemon returned an invalid rendition size.");
+  }
+  if (bytesToHex(sha256(bytes)) !== blobHash) throw new Error("The rendition transport checksum does not match.");
+  const artifact = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  if (!artifact.startsWith("---\n")) throw new Error("The rendition is missing canonical frontmatter.");
+  const closing = artifact.indexOf("\n---\n", 4);
+  if (closing < 0 || closing + 5 > 256 * 1024) throw new Error("The rendition frontmatter is incomplete or too large.");
+  const frontmatter = artifact.slice(4, closing);
+  const markdown = artifact.slice(closing + 5);
+  if (!markdown) throw new Error("The rendition Markdown body is empty.");
+  const metadata = parseRenditionFrontmatter(frontmatter, markdown);
+  const bodyHash = metadata.bodyHash;
+  if (bytesToHex(sha256(utf8ToBytes(markdown))) !== bodyHash) {
+    throw new Error("The rendition body checksum does not match.");
+  }
+  if (metadata.buildID !== buildID || metadata.completeness !== transportCompleteness) {
+    throw new Error("The rendition transport metadata does not match its frontmatter.");
+  }
+  return { attachmentID, buildID, artifactID, contentVersionID, blobHash, profileFingerprint,
+    frontmatter, markdown, completeness: metadata.completeness, warnings, source: metadata.source,
+    document: metadata.document, navigation: metadata.navigation };
+}
+
+type UnknownRecord = Record<string, unknown>;
+
+function parseRenditionWarnings(value: string): string[] {
+  if (!value) return [];
+  const warnings = value.split(",");
+  if (warnings.length > 64 || new Set(warnings).size !== warnings.length ||
+      warnings.some((warning) => !/^[a-z0-9_.-]{1,63}$/.test(warning))) {
+    throw new Error("The daemon returned invalid rendition warnings.");
+  }
+  return warnings;
+}
+
+function record(value: unknown, subject: string): UnknownRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`The rendition ${subject} is invalid.`);
+  return value as UnknownRecord;
+}
+
+function exactKeys(value: UnknownRecord, required: string[], optional: string[] = []): void {
+  const allowed = new Set([...required, ...optional]);
+  if (required.some((key) => !(key in value)) || Object.keys(value).some((key) => !allowed.has(key))) {
+    throw new Error("The rendition frontmatter contains an invalid field set.");
+  }
+}
+
+function textField(value: UnknownRecord, key: string, optional = false): string {
+  const field = value[key];
+  if (optional && field === undefined) return "";
+  if (typeof field !== "string" || !field || field.length > 1024) throw new Error(`The rendition ${key} is invalid.`);
+  return field;
+}
+
+function integerField(value: UnknownRecord, key: string, minimum: number): number {
+  const field = value[key];
+  if (!Number.isSafeInteger(field) || Number(field) < minimum) throw new Error(`The rendition ${key} is invalid.`);
+  return Number(field);
+}
+
+function booleanField(value: UnknownRecord, key: string): boolean {
+  const field = value[key];
+  if (typeof field !== "boolean") throw new Error(`The rendition ${key} is invalid.`);
+  return field;
+}
+
+function digestField(value: UnknownRecord, key: string): string {
+  const field = textField(value, key);
+  if (!/^[0-9a-f]{64}$/.test(field)) throw new Error(`The rendition ${key} is invalid.`);
+  return field;
+}
+
+function parseRenditionFrontmatter(frontmatter: string, markdown: string): {
+  buildID: string;
+  bodyHash: string;
+  completeness: string;
+  source: RenditionArtifact["source"];
+  document: RenditionArtifact["document"];
+  navigation: RenditionArtifact["navigation"];
+} {
+  const parsed = parseDocument(frontmatter, { schema: "core", strict: true, uniqueKeys: true });
+  if (parsed.errors.length > 0 || parsed.warnings.length > 0) throw new Error("The rendition frontmatter is invalid YAML.");
+  const root = record(parsed.toJS({ maxAliasCount: 0 }), "frontmatter");
+  exactKeys(root, ["docbank"]);
+  const docbank = record(root.docbank, "docbank envelope");
+  exactKeys(docbank, ["contract", "source", "rendition", "document", "navigation"]);
+  if (textField(docbank, "contract") !== "docbank-sanitized-markdown/v1") throw new Error("The rendition contract is unsupported.");
+
+  const sourceValue = record(docbank.source, "source identity");
+  exactKeys(sourceValue, ["sha256", "format", "media_type"]);
+  const source = { sha256: digestField(sourceValue, "sha256"), format: textField(sourceValue, "format"), mediaType: textField(sourceValue, "media_type") };
+
+  const rendition = record(docbank.rendition, "build identity");
+  exactKeys(rendition, ["build_id", "rendition_request_fingerprint", "evidence_lexical_fingerprint", "normalized_evidence_contract", "body_sha256", "completeness", "truncated"]);
+  const buildID = digestField(rendition, "build_id");
+  digestField(rendition, "rendition_request_fingerprint");
+  digestField(rendition, "evidence_lexical_fingerprint");
+  if (textField(rendition, "normalized_evidence_contract") !== "normalized-evidence/v1") throw new Error("The rendition evidence contract is unsupported.");
+  const bodyHash = digestField(rendition, "body_sha256");
+  const completeness = textField(rendition, "completeness");
+  if (!["complete", "partial", "degraded_provenance"].includes(completeness)) throw new Error("The rendition completeness is invalid.");
+  booleanField(rendition, "truncated");
+
+  const documentValue = record(docbank.document, "document identity");
+  exactKeys(documentValue, ["unit_kind", "unit_count"], ["title", "language"]);
+  const unitKind = textField(documentValue, "unit_kind");
+  if (!["generic", "line", "message", "page", "record", "section", "sheet", "slide", "spine"].includes(unitKind)) throw new Error("The rendition unit kind is invalid.");
+  const document = { title: textField(documentValue, "title", true), language: textField(documentValue, "language", true), unitKind, unitCount: integerField(documentValue, "unit_count", 1) };
+
+  const navigationValue = record(docbank.navigation, "navigation");
+  exactKeys(navigationValue, ["offset_base", "complete", "entries"]);
+  if (textField(navigationValue, "offset_base") !== "body") throw new Error("The rendition navigation offset base is invalid.");
+  const rawEntries = navigationValue.entries;
+  if (!Array.isArray(rawEntries) || rawEntries.length > 1024 || rawEntries.length > document.unitCount) throw new Error("The rendition navigation entries are invalid.");
+  const bodyBytes = utf8ToBytes(markdown);
+  const seen = new Set<string>();
+  let priorByte = -1;
+  const entries = rawEntries.map((rawEntry) => {
+    const entry = record(rawEntry, "navigation entry");
+    exactKeys(entry, ["key", "kind", "line", "byte"], ["title"]);
+    const key = textField(entry, "key");
+    const kind = textField(entry, "kind");
+    const title = textField(entry, "title", true);
+    const line = integerField(entry, "line", 1);
+    const byte = integerField(entry, "byte", 0);
+    if (!["generic", "line", "message", "page", "record", "section", "sheet", "slide", "spine"].includes(kind) ||
+        seen.has(key) || byte < priorByte || byte >= bodyBytes.length || (bodyBytes[byte]! & 0xc0) === 0x80 ||
+        line !== 1 + bodyBytes.slice(0, byte).filter((value) => value === 0x0a).length) {
+      throw new Error("The rendition navigation entry is invalid.");
+    }
+    seen.add(key);
+    priorByte = byte;
+    return { key, kind, title, line, byte };
+  });
+  return { buildID, bodyHash, completeness, source, document,
+    navigation: { complete: booleanField(navigationValue, "complete"), entries } };
 }
 
 export async function tags(session: string): Promise<TagPage> {

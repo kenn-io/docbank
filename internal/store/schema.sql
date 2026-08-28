@@ -168,10 +168,11 @@ END'),
     root_id       TEXT PRIMARY KEY,
     root_kind     TEXT NOT NULL CHECK (root_kind IN (
         ''attachment'', ''head'', ''retention'', ''audit'', ''job'',
-        ''reader_lease'', ''worker_lease'', ''backup_pin''
+        ''reader_lease'', ''worker_lease'', ''backup_pin'', ''policy_pin'', ''restore_pin''
     )),
     target_kind   TEXT NOT NULL CHECK (target_kind IN (
-        ''rendition_build'', ''lexical_generation''
+        ''rendition_build'', ''lexical_generation'', ''embedding_set'',
+        ''embedding_input_generation'', ''embedding_vector_set'', ''embedding_payload''
     )),
     target_id     TEXT NOT NULL,
     fencing_token INTEGER NOT NULL CHECK (fencing_token > 0),
@@ -391,6 +392,48 @@ CREATE TABLE IF NOT EXISTS blobs (
     size       INTEGER NOT NULL CHECK (size >= 0),
     created_at TEXT NOT NULL
 );
+
+-- MD5 is auxiliary interoperability metadata over the same exact logical
+-- bytes. SHA-256 remains the sole content identity and authority.
+CREATE TABLE IF NOT EXISTS blob_checksums (
+    blob_sha256 TEXT PRIMARY KEY REFERENCES blobs(hash) ON DELETE CASCADE,
+    md5         TEXT NOT NULL
+        CHECK (length(md5) = 32 AND md5 NOT GLOB '*[^0-9a-f]*')
+);
+
+CREATE TRIGGER IF NOT EXISTS blob_checksums_immutable_update
+BEFORE UPDATE ON blob_checksums BEGIN
+    SELECT RAISE(ABORT, 'blob checksum records are immutable');
+END;
+
+-- Source metadata is immutable evidence derived only from verified original
+-- bytes. New extractor behavior creates a new generation; it never rewrites
+-- an older observation. The small head table selects the active generation.
+CREATE TABLE IF NOT EXISTS source_metadata_generations (
+    generation_id        TEXT PRIMARY KEY,
+    source_sha256        TEXT NOT NULL REFERENCES blobs(hash) ON DELETE CASCADE,
+    contract_version     TEXT NOT NULL,
+    extractor_fingerprint TEXT NOT NULL,
+    canonical_json       BLOB NOT NULL,
+    checksum             TEXT NOT NULL,
+    created_at           TEXT NOT NULL,
+    UNIQUE (source_sha256, contract_version, extractor_fingerprint),
+    UNIQUE (source_sha256, generation_id)
+);
+
+CREATE TABLE IF NOT EXISTS source_metadata_heads (
+    source_sha256 TEXT PRIMARY KEY REFERENCES blobs(hash) ON DELETE CASCADE,
+    generation_id TEXT NOT NULL UNIQUE
+        REFERENCES source_metadata_generations(generation_id) ON DELETE CASCADE,
+    published_at TEXT NOT NULL,
+    FOREIGN KEY (source_sha256, generation_id)
+        REFERENCES source_metadata_generations(source_sha256, generation_id) ON DELETE CASCADE
+);
+
+CREATE TRIGGER IF NOT EXISTS source_metadata_generations_immutable_update
+BEFORE UPDATE ON source_metadata_generations BEGIN
+    SELECT RAISE(ABORT, 'source metadata generations are immutable');
+END;
 
 -- Physical placement authority is store-scoped. The logical blobs table says
 -- which content Docbank retains; these rows say where verified bytes live.
@@ -728,6 +771,97 @@ WHEN NEW.supersedes IS NOT NULL AND EXISTS (
     SELECT RAISE(ABORT, 'provenance supersession must stay on one node');
 END;
 
+-- Processing consent is scoped to a random local incarnation. The pointer is
+-- deliberately not backup authority: a restored database keeps the imported
+-- grant history while the fresh restore target retains its own incarnation.
+CREATE TABLE IF NOT EXISTS processing_incarnations (
+    incarnation_id TEXT PRIMARY KEY,
+    created_at     TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS current_processing_incarnation (
+    singleton      INTEGER PRIMARY KEY CHECK (singleton = 1),
+    incarnation_id TEXT NOT NULL UNIQUE REFERENCES processing_incarnations(incarnation_id)
+);
+
+CREATE TRIGGER IF NOT EXISTS current_processing_incarnation_immutable_update
+BEFORE UPDATE ON current_processing_incarnation BEGIN
+    SELECT RAISE(ABORT, 'current processing incarnation is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS current_processing_incarnation_immutable_delete
+BEFORE DELETE ON current_processing_incarnation BEGIN
+    SELECT RAISE(ABORT, 'current processing incarnation is immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS processing_consent_grants (
+    grant_id                  TEXT PRIMARY KEY,
+    vault_uid                 TEXT NOT NULL REFERENCES vault_metadata(vault_uid),
+    incarnation_id            TEXT NOT NULL REFERENCES processing_incarnations(incarnation_id),
+    principal                 TEXT NOT NULL,
+    scope                     TEXT NOT NULL,
+    profile_fingerprint       TEXT NOT NULL,
+    disclosure_fingerprint    TEXT NOT NULL,
+    input_classes_json        TEXT NOT NULL,
+    retained_classes_json     TEXT NOT NULL,
+    revocation_fence          INTEGER NOT NULL CHECK (revocation_fence >= 0),
+    issued_at                 TEXT NOT NULL,
+    expires_at                TEXT
+);
+
+CREATE INDEX IF NOT EXISTS processing_consent_grants_authority
+    ON processing_consent_grants(
+        vault_uid, incarnation_id, principal, scope, profile_fingerprint,
+        disclosure_fingerprint, input_classes_json, retained_classes_json,
+        issued_at, grant_id
+    );
+
+CREATE TABLE IF NOT EXISTS processing_consent_revocations (
+    revocation_id  TEXT PRIMARY KEY,
+    vault_uid      TEXT NOT NULL REFERENCES vault_metadata(vault_uid),
+    incarnation_id TEXT NOT NULL REFERENCES processing_incarnations(incarnation_id),
+    principal      TEXT NOT NULL,
+    scope          TEXT NOT NULL,
+    fence          INTEGER NOT NULL CHECK (fence > 0),
+    revoked_at     TEXT NOT NULL,
+    UNIQUE (vault_uid, incarnation_id, principal, scope, fence)
+);
+
+CREATE INDEX IF NOT EXISTS processing_consent_revocations_scope
+    ON processing_consent_revocations(
+        vault_uid, incarnation_id, principal, scope, fence
+    );
+
+CREATE TRIGGER IF NOT EXISTS processing_incarnations_immutable_update
+BEFORE UPDATE ON processing_incarnations BEGIN
+    SELECT RAISE(ABORT, 'processing incarnation records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS processing_incarnations_immutable_delete
+BEFORE DELETE ON processing_incarnations BEGIN
+    SELECT RAISE(ABORT, 'processing incarnation records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS processing_consent_grants_immutable_update
+BEFORE UPDATE ON processing_consent_grants BEGIN
+    SELECT RAISE(ABORT, 'processing consent grant records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS processing_consent_grants_immutable_delete
+BEFORE DELETE ON processing_consent_grants BEGIN
+    SELECT RAISE(ABORT, 'processing consent grant records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS processing_consent_revocations_immutable_update
+BEFORE UPDATE ON processing_consent_revocations BEGIN
+    SELECT RAISE(ABORT, 'processing consent revocation records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS processing_consent_revocations_immutable_delete
+BEFORE DELETE ON processing_consent_revocations BEGIN
+    SELECT RAISE(ABORT, 'processing consent revocation records are immutable');
+END;
+
 -- Processing profiles are immutable canonical policy snapshots. Rendition
 -- builds deliberately reference only their rendition/evidence components;
 -- embedding-only profile fields never enter build identity.
@@ -876,6 +1010,340 @@ CREATE TABLE IF NOT EXISTS rendition_heads (
         ) ON DELETE CASCADE
 );
 
+-- Embedding authority is normalized into immutable identities. Rendered text
+-- and vector bytes remain in bounded derivative payloads; SQLite retains only
+-- checksums, membership, activation pointers, and coverage state.
+CREATE TABLE IF NOT EXISTS embedding_vector_spaces (
+    vector_space_id          TEXT PRIMARY KEY,
+    contract_version         TEXT NOT NULL CHECK (contract_version = 'embedding-vector-space/v1'),
+    descriptor_json          BLOB NOT NULL CHECK (length(descriptor_json) BETWEEN 2 AND 65536),
+    provider_descriptor      TEXT NOT NULL CHECK (length(CAST(provider_descriptor AS BLOB)) BETWEEN 1 AND 1024),
+    provider_revision        TEXT NOT NULL CHECK (length(CAST(provider_revision AS BLOB)) BETWEEN 1 AND 1024),
+    descriptor_fingerprint   TEXT NOT NULL,
+    compatibility_id         TEXT NOT NULL CHECK (length(CAST(compatibility_id AS BLOB)) BETWEEN 1 AND 1024),
+    dimensions               INTEGER NOT NULL CHECK (dimensions BETWEEN 1 AND 1048576),
+    metric                   TEXT NOT NULL CHECK (length(CAST(metric AS BLOB)) BETWEEN 1 AND 64),
+    normalization            TEXT NOT NULL CHECK (length(CAST(normalization AS BLOB)) BETWEEN 1 AND 64),
+    scalar_encoding          TEXT NOT NULL CHECK (length(CAST(scalar_encoding AS BLOB)) BETWEEN 1 AND 64),
+    document_formatter       TEXT NOT NULL CHECK (length(CAST(document_formatter AS BLOB)) BETWEEN 1 AND 1024),
+    query_formatter          TEXT NOT NULL CHECK (length(CAST(query_formatter AS BLOB)) BETWEEN 1 AND 1024),
+    model_input_fingerprint  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS embedding_input_generations (
+    generation_id                  TEXT PRIMARY KEY,
+    generation_blob_hash           TEXT REFERENCES blobs(hash),
+    generation_encoded_size        INTEGER NOT NULL CHECK (generation_encoded_size BETWEEN 0 AND 67108864),
+    generation_checksum            TEXT NOT NULL,
+    source_version_id              TEXT NOT NULL REFERENCES content_versions(version_id),
+    profile_fingerprint            TEXT NOT NULL REFERENCES processing_profiles(profile_fingerprint),
+    evidence_fingerprint           TEXT NOT NULL,
+    tokenizer_fingerprint          TEXT NOT NULL,
+    chunk_policy_fingerprint       TEXT NOT NULL,
+    formatter_fingerprint          TEXT NOT NULL,
+    attachment_context_fingerprint TEXT NOT NULL,
+    attachment_id                  TEXT REFERENCES rendition_attachments(attachment_id),
+    input_count                    INTEGER NOT NULL CHECK (input_count BETWEEN 1 AND 100000),
+    created_at                     TEXT NOT NULL,
+    CHECK (attachment_context_fingerprint = '' OR attachment_id IS NOT NULL),
+    CHECK ((generation_blob_hash IS NULL AND generation_encoded_size = 0)
+        OR (generation_blob_hash IS NOT NULL AND generation_encoded_size >= 2))
+);
+
+-- Embedding jobs are rebuildable operational state. Immutable input
+-- generations, vector spaces, consent grants, failures, and published heads
+-- remain the portable authority; this table only resumes bounded execution.
+CREATE TABLE IF NOT EXISTS embedding_jobs (
+    job_id              TEXT PRIMARY KEY,
+    vault_uid           TEXT NOT NULL,
+    content_version_id  TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    profile_fingerprint TEXT NOT NULL REFERENCES processing_profiles(profile_fingerprint),
+    binding_id          TEXT NOT NULL,
+    input_kind          TEXT NOT NULL CHECK (input_kind IN ('original_file','rendition_chunk')),
+    generation_id       TEXT NOT NULL REFERENCES embedding_input_generations(generation_id) ON DELETE CASCADE,
+    vector_space_id     TEXT NOT NULL REFERENCES embedding_vector_spaces(vector_space_id) ON DELETE CASCADE,
+    principal           TEXT NOT NULL,
+    scope               TEXT NOT NULL,
+    state               TEXT NOT NULL CHECK (state IN ('queued','running','retry_wait','failed','completed')),
+    claim_owner         TEXT,
+    claim_epoch         INTEGER NOT NULL DEFAULT 0 CHECK (claim_epoch >= 0),
+    lease_expires_at    TEXT,
+    available_at        TEXT NOT NULL,
+    failure_code        TEXT,
+    receipt_json        TEXT,
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL,
+    UNIQUE (content_version_id,profile_fingerprint,binding_id,input_kind,generation_id),
+    CHECK ((state='running') = (claim_owner IS NOT NULL AND lease_expires_at IS NOT NULL))
+);
+
+CREATE INDEX IF NOT EXISTS embedding_jobs_ready
+    ON embedding_jobs(state,available_at,job_id);
+
+CREATE TABLE IF NOT EXISTS embedding_generation_inputs (
+    generation_id     TEXT NOT NULL REFERENCES embedding_input_generations(generation_id) ON DELETE CASCADE,
+    input_id          TEXT NOT NULL CHECK (length(CAST(input_id AS BLOB)) BETWEEN 1 AND 1024),
+    input_order       INTEGER NOT NULL CHECK (input_order BETWEEN 0 AND 99999),
+    rendered_checksum TEXT NOT NULL,
+    PRIMARY KEY (generation_id, input_id),
+    UNIQUE (generation_id, input_order)
+);
+
+CREATE TABLE IF NOT EXISTS embedding_vector_sets (
+    vector_set_id      TEXT PRIMARY KEY,
+    contract_version   TEXT NOT NULL CHECK (contract_version = 'vector-set/v1'),
+    vector_space_id    TEXT NOT NULL REFERENCES embedding_vector_spaces(vector_space_id),
+    payload_blob_hash  TEXT NOT NULL REFERENCES blobs(hash),
+    payload_size       INTEGER NOT NULL CHECK (payload_size BETWEEN 1 AND 67108864),
+    payload_checksum   TEXT NOT NULL,
+    manifest_checksum  TEXT NOT NULL,
+    row_count          INTEGER NOT NULL CHECK (row_count BETWEEN 1 AND 100000),
+    dimensions         INTEGER NOT NULL CHECK (dimensions BETWEEN 1 AND 1048576)
+);
+
+CREATE TABLE IF NOT EXISTS embedding_vector_rows (
+    vector_set_id  TEXT NOT NULL REFERENCES embedding_vector_sets(vector_set_id) ON DELETE CASCADE,
+    row_id         TEXT NOT NULL CHECK (length(CAST(row_id AS BLOB)) BETWEEN 1 AND 1024),
+    row_order      INTEGER NOT NULL CHECK (row_order BETWEEN 0 AND 99999),
+    input_id       TEXT NOT NULL CHECK (length(CAST(input_id AS BLOB)) BETWEEN 1 AND 1024),
+    dimensions     INTEGER NOT NULL CHECK (dimensions BETWEEN 1 AND 1048576),
+    checksum       TEXT NOT NULL,
+    PRIMARY KEY (vector_set_id, row_id),
+    UNIQUE (vector_set_id, row_order),
+    UNIQUE (vector_set_id, input_id)
+);
+
+CREATE INDEX IF NOT EXISTS embedding_vector_sets_payload
+    ON embedding_vector_sets(payload_blob_hash, vector_set_id);
+
+CREATE TABLE IF NOT EXISTS embedding_sets (
+    embedding_set_id     TEXT PRIMARY KEY,
+    vault_uid            TEXT NOT NULL REFERENCES vault_metadata(vault_uid),
+    binding_id           TEXT NOT NULL CHECK (length(CAST(binding_id AS BLOB)) BETWEEN 1 AND 1024),
+    input_kind           TEXT NOT NULL CHECK (input_kind IN ('rendition_chunk', 'original_file')),
+    content_version_id   TEXT NOT NULL REFERENCES content_versions(version_id),
+    profile_fingerprint  TEXT NOT NULL REFERENCES processing_profiles(profile_fingerprint),
+    embedding_input_fingerprint TEXT NOT NULL,
+    vector_space_id      TEXT NOT NULL REFERENCES embedding_vector_spaces(vector_space_id),
+    input_generation_id  TEXT NOT NULL REFERENCES embedding_input_generations(generation_id),
+    vector_set_id        TEXT NOT NULL REFERENCES embedding_vector_sets(vector_set_id),
+    created_at           TEXT NOT NULL,
+    UNIQUE (vault_uid, content_version_id, binding_id, input_kind,
+            vector_space_id, input_generation_id, vector_set_id)
+);
+
+CREATE TABLE IF NOT EXISTS embedding_heads (
+    content_version_id   TEXT NOT NULL,
+    binding_id           TEXT NOT NULL,
+    input_kind           TEXT NOT NULL CHECK (input_kind IN ('rendition_chunk', 'original_file')),
+    embedding_set_id     TEXT NOT NULL REFERENCES embedding_sets(embedding_set_id),
+    vector_space_id      TEXT NOT NULL REFERENCES embedding_vector_spaces(vector_space_id),
+    profile_fingerprint  TEXT NOT NULL REFERENCES processing_profiles(profile_fingerprint),
+    published_at         TEXT NOT NULL,
+    PRIMARY KEY (content_version_id, binding_id, input_kind)
+);
+
+CREATE TABLE IF NOT EXISTS embedding_failures (
+    content_version_id   TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    profile_fingerprint  TEXT NOT NULL REFERENCES processing_profiles(profile_fingerprint),
+    binding_id           TEXT NOT NULL CHECK (length(CAST(binding_id AS BLOB)) BETWEEN 1 AND 1024),
+    input_kind           TEXT NOT NULL CHECK (input_kind IN ('rendition_chunk', 'original_file')),
+    failure_code         TEXT NOT NULL CHECK (failure_code IN (
+        'provider_unavailable','authorization','invalid_response','input_rejected','stale_authority'
+    )),
+    failed_at            TEXT NOT NULL,
+    PRIMARY KEY (content_version_id, binding_id, input_kind)
+);
+
+CREATE TABLE IF NOT EXISTS embedding_corpus_generations (
+    corpus_generation_id TEXT PRIMARY KEY,
+    contract_version     TEXT NOT NULL CHECK (contract_version = 'embedding-corpus-generation/v1'),
+    binding_id           TEXT NOT NULL CHECK (length(CAST(binding_id AS BLOB)) BETWEEN 1 AND 1024),
+    vector_space_id      TEXT NOT NULL REFERENCES embedding_vector_spaces(vector_space_id),
+    manifest_checksum    TEXT NOT NULL,
+    member_count         INTEGER NOT NULL CHECK (member_count BETWEEN 0 AND 1000000),
+    created_at           TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS embedding_corpus_members (
+    corpus_generation_id TEXT NOT NULL REFERENCES embedding_corpus_generations(corpus_generation_id) ON DELETE CASCADE,
+    member_order         INTEGER NOT NULL CHECK (member_order BETWEEN 0 AND 999999),
+    embedding_set_id     TEXT NOT NULL REFERENCES embedding_sets(embedding_set_id),
+    PRIMARY KEY (corpus_generation_id, embedding_set_id),
+    UNIQUE (corpus_generation_id, member_order)
+);
+
+CREATE TRIGGER IF NOT EXISTS embedding_vector_spaces_immutable_update
+BEFORE UPDATE ON embedding_vector_spaces BEGIN
+    SELECT RAISE(ABORT, 'embedding vector space records are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS embedding_input_generations_immutable_update
+BEFORE UPDATE ON embedding_input_generations BEGIN
+    SELECT RAISE(ABORT, 'embedding input generation records are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS embedding_generation_inputs_immutable_update
+BEFORE UPDATE ON embedding_generation_inputs BEGIN
+    SELECT RAISE(ABORT, 'embedding input records are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS embedding_vector_sets_immutable_update
+BEFORE UPDATE ON embedding_vector_sets BEGIN
+    SELECT RAISE(ABORT, 'embedding vector set records are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS embedding_vector_rows_immutable_update
+BEFORE UPDATE ON embedding_vector_rows BEGIN
+    SELECT RAISE(ABORT, 'embedding vector row records are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS embedding_sets_immutable_update
+BEFORE UPDATE ON embedding_sets BEGIN
+    SELECT RAISE(ABORT, 'embedding set records are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS embedding_corpus_generations_immutable_update
+BEFORE UPDATE ON embedding_corpus_generations BEGIN
+    SELECT RAISE(ABORT, 'embedding corpus generation records are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS embedding_corpus_members_immutable_update
+BEFORE UPDATE ON embedding_corpus_members BEGIN
+    SELECT RAISE(ABORT, 'embedding corpus member records are immutable');
+END;
+
+-- Vector indexes are disposable, vault-local projection state. These rows are
+-- deliberately absent from metadata-v1 export/import: restore reconstructs
+-- them from current logical embedding authority and retained vector-set blobs.
+CREATE TABLE IF NOT EXISTS vector_index_generations (
+    generation_id             TEXT PRIMARY KEY,
+    vector_space_id           TEXT NOT NULL,
+    source_manifest_checksum  TEXT NOT NULL,
+    index_manifest_checksum   TEXT NOT NULL,
+    generation_bytes          BLOB NOT NULL
+        CHECK (length(generation_bytes) BETWEEN 1 AND 536870912),
+    byte_size                 INTEGER NOT NULL
+        CHECK (byte_size = length(generation_bytes)),
+    row_count                 INTEGER NOT NULL CHECK (row_count BETWEEN 1 AND 1000000),
+    built_at                  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS vector_index_generations_space
+    ON vector_index_generations(vector_space_id, source_manifest_checksum, generation_id);
+
+CREATE TABLE IF NOT EXISTS vector_index_heads (
+    vector_space_id          TEXT PRIMARY KEY,
+    generation_id           TEXT NOT NULL REFERENCES vector_index_generations(generation_id),
+    source_manifest_checksum TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS vector_index_build_jobs (
+    vector_space_id          TEXT PRIMARY KEY,
+    source_manifest_checksum TEXT NOT NULL,
+    owner                    TEXT NOT NULL,
+    fencing_token            INTEGER NOT NULL CHECK (fencing_token > 0),
+    lease_expires_at         TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS vector_index_reader_leases (
+    lease_id          TEXT PRIMARY KEY,
+    generation_id     TEXT NOT NULL REFERENCES vector_index_generations(generation_id) ON DELETE CASCADE,
+    owner             TEXT NOT NULL,
+    fencing_token     INTEGER NOT NULL CHECK (fencing_token > 0),
+    lease_expires_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS vector_index_reader_leases_generation
+    ON vector_index_reader_leases(generation_id, lease_expires_at);
+
+CREATE TABLE IF NOT EXISTS vector_index_unavailable_coverage (
+    vector_space_id           TEXT NOT NULL,
+    source_manifest_checksum  TEXT NOT NULL,
+    embedding_set_id          TEXT NOT NULL,
+    vector_set_id             TEXT NOT NULL,
+    payload_blob_hash         TEXT NOT NULL,
+    external_reembedding_required INTEGER NOT NULL
+        CHECK (external_reembedding_required = 1),
+    PRIMARY KEY (vector_space_id, source_manifest_checksum, embedding_set_id)
+);
+
+-- Rendition jobs are restart authority, not immutable artifact authority.
+-- Provider-specific payloads never enter these tables. Continuation authority
+-- is only the provider-neutral sealed execution snapshot plus an optional
+-- opaque provider-issued handle.
+CREATE TABLE IF NOT EXISTS rendition_jobs (
+    job_id                               TEXT PRIMARY KEY,
+    vault_uid                            TEXT NOT NULL REFERENCES vault_metadata(vault_uid),
+    source_sha256                        TEXT NOT NULL REFERENCES blobs(hash),
+    rendition_request_fingerprint        TEXT NOT NULL,
+    evidence_lexical_fingerprint         TEXT NOT NULL,
+    captured_artifact_policy_fingerprint TEXT NOT NULL,
+    execution_identity_fingerprint        TEXT NOT NULL,
+    execution_identity_json               TEXT NOT NULL
+        CHECK (length(CAST(execution_identity_json AS BLOB)) BETWEEN 2 AND 65536),
+    execution_snapshot_json               TEXT
+        CHECK (execution_snapshot_json IS NULL OR
+               length(CAST(execution_snapshot_json AS BLOB)) BETWEEN 2 AND 65536),
+    captured_artifact_policy_json        TEXT NOT NULL
+        CHECK (length(CAST(captured_artifact_policy_json AS BLOB)) BETWEEN 2 AND 65536),
+    state                                TEXT NOT NULL CHECK (state IN (
+        'queued', 'running', 'retry_wait', 'operator_required', 'failed', 'completed'
+    )),
+    phase                                TEXT NOT NULL CHECK (phase IN (
+        'queued', 'provider', 'build_staged', 'generation_staged', 'published'
+    )),
+    claim_owner                          TEXT,
+    claim_epoch                          INTEGER NOT NULL DEFAULT 0 CHECK (claim_epoch >= 0),
+    lease_expires_at                     TEXT,
+    available_at                         TEXT NOT NULL,
+    provider_started                     INTEGER NOT NULL DEFAULT 0
+        CHECK (provider_started IN (0, 1)),
+    provider_resume_handle               TEXT
+        CHECK (provider_resume_handle IS NULL OR
+               length(CAST(provider_resume_handle AS BLOB)) BETWEEN 1 AND 512),
+    selected_waiter_id                   TEXT,
+    authorization_grant_id               TEXT,
+    authorization_incarnation_id         TEXT,
+    authorization_revocation_fence       INTEGER,
+    lexical_generation_id                TEXT,
+    failure_code                         TEXT CHECK (failure_code IS NULL OR failure_code IN (
+        'transient', 'terminal', 'ambiguous', 'consent', 'stale_authority'
+    )),
+    created_at                           TEXT NOT NULL,
+    updated_at                           TEXT NOT NULL,
+    CHECK ((state = 'running') = (claim_owner IS NOT NULL AND lease_expires_at IS NOT NULL)),
+    CHECK ((authorization_grant_id IS NULL) =
+           (authorization_incarnation_id IS NULL AND authorization_revocation_fence IS NULL)),
+    UNIQUE (
+        vault_uid, source_sha256, rendition_request_fingerprint,
+        evidence_lexical_fingerprint, captured_artifact_policy_fingerprint,
+        execution_identity_fingerprint
+    )
+);
+
+CREATE INDEX IF NOT EXISTS rendition_jobs_claimable
+    ON rendition_jobs(state, available_at, lease_expires_at, job_id);
+
+CREATE TABLE IF NOT EXISTS rendition_job_waiters (
+    waiter_id                TEXT PRIMARY KEY,
+    job_id                   TEXT NOT NULL REFERENCES rendition_jobs(job_id) ON DELETE CASCADE,
+    content_version_id       TEXT NOT NULL REFERENCES content_versions(version_id),
+    profile_fingerprint      TEXT NOT NULL REFERENCES processing_profiles(profile_fingerprint),
+    principal                TEXT NOT NULL,
+    scope                    TEXT NOT NULL,
+    disclosure_fingerprint   TEXT NOT NULL,
+    input_classes_json       TEXT NOT NULL,
+    retained_classes_json    TEXT NOT NULL,
+    state                    TEXT NOT NULL CHECK (state IN ('waiting', 'published', 'rejected')),
+    failure_code             TEXT CHECK (
+        failure_code IS NULL OR failure_code IN ('consent', 'stale_authority')
+    ),
+    attachment_id            TEXT NOT NULL,
+    created_at               TEXT NOT NULL,
+    updated_at               TEXT NOT NULL,
+    UNIQUE (
+        job_id, content_version_id, profile_fingerprint, principal, scope,
+        disclosure_fingerprint, input_classes_json, retained_classes_json
+    )
+);
+
+CREATE INDEX IF NOT EXISTS rendition_job_waiters_job
+    ON rendition_job_waiters(job_id, state, waiter_id);
+
 -- Root producers outside the immutable rendition catalog retain one exact
 -- build or lexical generation. Lease expiry uses canonical fixed-width UTC
 -- timestamps; monotonic fencing prevents a stale worker from releasing a
@@ -884,10 +1352,11 @@ CREATE TABLE IF NOT EXISTS current_rendition_roots (
     root_id       TEXT PRIMARY KEY,
     root_kind     TEXT NOT NULL CHECK (root_kind IN (
         'attachment', 'head', 'retention', 'audit', 'job',
-        'reader_lease', 'worker_lease', 'backup_pin'
+        'reader_lease', 'worker_lease', 'backup_pin', 'policy_pin', 'restore_pin'
     )),
     target_kind   TEXT NOT NULL CHECK (target_kind IN (
-        'rendition_build', 'lexical_generation'
+        'rendition_build', 'lexical_generation', 'embedding_set',
+        'embedding_input_generation', 'embedding_vector_set', 'embedding_payload'
     )),
     target_id     TEXT NOT NULL,
     fencing_token INTEGER NOT NULL CHECK (fencing_token > 0),
@@ -920,6 +1389,14 @@ CREATE TABLE IF NOT EXISTS derivative_purge_suppressions (
     CHECK ((active = 1) = (superseded_at IS NULL AND superseding_build_id IS NULL))
 );
 
+-- Provider output is not backup authority until an immutable rendition build
+-- commits it. This table classifies ordinary bytes for exact erasure; retained
+-- logical references separately authorize backup, so pruned ordinary bytes are
+-- excluded.
+CREATE TABLE IF NOT EXISTS ordinary_blob_authority (
+    blob_hash TEXT PRIMARY KEY REFERENCES blobs(hash) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS rendition_blob_staging (
     blob_hash TEXT PRIMARY KEY REFERENCES blobs(hash) ON DELETE CASCADE
 );
@@ -947,6 +1424,13 @@ END;
 
 CREATE TRIGGER IF NOT EXISTS content_versions_revoke_derivative_purge
 AFTER INSERT ON content_versions BEGIN
+    DELETE FROM derivative_blob_purge_pending WHERE blob_hash=NEW.blob_hash;
+END;
+
+CREATE TRIGGER IF NOT EXISTS content_versions_record_ordinary_blob_authority
+AFTER INSERT ON content_versions BEGIN
+    INSERT INTO ordinary_blob_authority(blob_hash) VALUES(NEW.blob_hash)
+        ON CONFLICT(blob_hash) DO NOTHING;
     DELETE FROM derivative_blob_purge_pending WHERE blob_hash=NEW.blob_hash;
 END;
 
@@ -1107,6 +1591,91 @@ CREATE TABLE IF NOT EXISTS text_extraction_queue (
 CREATE TABLE IF NOT EXISTS text_searchable_versions (
     version_id TEXT PRIMARY KEY REFERENCES content_versions(version_id) ON DELETE CASCADE
 );
+
+-- Startup legacy convergence is derived from these two portable source
+-- tables. Revisions make the unchanged Open path O(1) without treating this
+-- cache as portable authority.
+CREATE TABLE IF NOT EXISTS legacy_plain_text_migration_state (
+    singleton             INTEGER PRIMARY KEY CHECK (singleton = 1),
+    source_revision       INTEGER NOT NULL CHECK (source_revision > 0),
+    migrated_revision     INTEGER NOT NULL CHECK (migrated_revision >= 0),
+    generation_id         TEXT NOT NULL,
+    eligible_rows         INTEGER NOT NULL CHECK (eligible_rows >= 0),
+    migrated_builds       INTEGER NOT NULL CHECK (migrated_builds >= 0),
+    migrated_attachments  INTEGER NOT NULL CHECK (migrated_attachments >= 0),
+    queued_blobs          INTEGER NOT NULL CHECK (queued_blobs >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS legacy_plain_text_migration_blobs (
+    blob_hash         TEXT PRIMARY KEY,
+    eligible          INTEGER NOT NULL CHECK (eligible IN (0, 1)),
+    attachment_count  INTEGER NOT NULL CHECK (attachment_count >= 0),
+    queued            INTEGER NOT NULL CHECK (queued IN (0, 1))
+);
+
+CREATE TABLE IF NOT EXISTS legacy_plain_text_migration_dirty_blobs (
+    blob_hash TEXT PRIMARY KEY
+);
+
+INSERT INTO legacy_plain_text_migration_state(
+    singleton,source_revision,migrated_revision,generation_id,
+    eligible_rows,migrated_builds,migrated_attachments,queued_blobs
+) VALUES(1,1,0,'',0,0,0,0)
+ON CONFLICT(singleton) DO NOTHING;
+
+CREATE TRIGGER IF NOT EXISTS legacy_plain_text_extracted_insert
+AFTER INSERT ON extracted_text BEGIN
+    UPDATE legacy_plain_text_migration_state
+    SET source_revision=source_revision+1 WHERE singleton=1;
+    INSERT INTO legacy_plain_text_migration_dirty_blobs(blob_hash)
+    SELECT NEW.blob_hash WHERE NOT EXISTS(
+        SELECT 1 FROM legacy_plain_text_migration_dirty_blobs WHERE blob_hash=NEW.blob_hash
+    );
+END;
+
+CREATE TRIGGER IF NOT EXISTS legacy_plain_text_extracted_update
+AFTER UPDATE ON extracted_text BEGIN
+    UPDATE legacy_plain_text_migration_state
+    SET source_revision=source_revision+1 WHERE singleton=1;
+    INSERT INTO legacy_plain_text_migration_dirty_blobs(blob_hash)
+    SELECT OLD.blob_hash WHERE NOT EXISTS(
+        SELECT 1 FROM legacy_plain_text_migration_dirty_blobs WHERE blob_hash=OLD.blob_hash
+    );
+    INSERT INTO legacy_plain_text_migration_dirty_blobs(blob_hash)
+    SELECT NEW.blob_hash WHERE NEW.blob_hash<>OLD.blob_hash AND NOT EXISTS(
+        SELECT 1 FROM legacy_plain_text_migration_dirty_blobs WHERE blob_hash=NEW.blob_hash
+    );
+END;
+
+CREATE TRIGGER IF NOT EXISTS legacy_plain_text_extracted_delete
+AFTER DELETE ON extracted_text BEGIN
+    UPDATE legacy_plain_text_migration_state
+    SET source_revision=source_revision+1 WHERE singleton=1;
+    INSERT INTO legacy_plain_text_migration_dirty_blobs(blob_hash)
+    SELECT OLD.blob_hash WHERE NOT EXISTS(
+        SELECT 1 FROM legacy_plain_text_migration_dirty_blobs WHERE blob_hash=OLD.blob_hash
+    );
+END;
+
+CREATE TRIGGER IF NOT EXISTS legacy_plain_text_selection_insert
+AFTER INSERT ON text_searchable_versions BEGIN
+    UPDATE legacy_plain_text_migration_state
+    SET source_revision=source_revision+1 WHERE singleton=1;
+    INSERT INTO legacy_plain_text_migration_dirty_blobs(blob_hash)
+    SELECT v.blob_hash FROM content_versions v WHERE v.version_id=NEW.version_id
+      AND NOT EXISTS(SELECT 1 FROM legacy_plain_text_migration_dirty_blobs d
+                     WHERE d.blob_hash=v.blob_hash);
+END;
+
+CREATE TRIGGER IF NOT EXISTS legacy_plain_text_selection_delete
+BEFORE DELETE ON text_searchable_versions BEGIN
+    UPDATE legacy_plain_text_migration_state
+    SET source_revision=source_revision+1 WHERE singleton=1;
+    INSERT INTO legacy_plain_text_migration_dirty_blobs(blob_hash)
+    SELECT v.blob_hash FROM content_versions v WHERE v.version_id=OLD.version_id
+      AND NOT EXISTS(SELECT 1 FROM legacy_plain_text_migration_dirty_blobs d
+                     WHERE d.blob_hash=v.blob_hash);
+END;
 
 -- Derived full-text cache. This table is rebuilt from extracted_text during
 -- portable import and is never part of document or audit authority.

@@ -1,0 +1,66 @@
+{
+  "version": 2,
+  "checksum": "d423df2193723b79d18b43f1775d1093a64e02a189e3f891b6a112074fb0b10d",
+  "policy_fingerprint": "b605e26a5585df6f6a809e234abbf5c900217025418584ccf7a6ae3940c8e457",
+  "evidence_checksum": "be5eaa990540eb4b5c5512ef07b63333b29897716b01283017f46f1ac6ab8b04",
+  "tokenizer_identity": {
+    "name": "synthetic-pairs",
+    "revision": "v1",
+    "prefix_token_counts_monotonic": true
+  },
+  "lexical_evidence_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "formatter": "evidence-text/v1",
+  "model_input_fingerprint": "f280138c305dc66fcea0eca352898efba5f94513cef80e4475186d596d6f8cce",
+  "content_token_budget": 6,
+  "overlap_tokens": 1,
+  "truncation_policy": "reject_indivisible",
+  "context_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "total_content_tokens": 12,
+  "total_rendered_tokens": 12,
+  "total_content_bytes": 23,
+  "total_rendered_bytes": 23,
+  "inputs": [
+    {
+      "key": "chunk-000000-6d09c2dd9f6a",
+      "content": "Alpha beta.",
+      "rendered": "Alpha beta.",
+      "content_tokens": 6,
+      "rendered_tokens": 6,
+      "checksum": "6d09c2dd9f6acb7404974f19cfc7e9036ac59abb930e505351a55e94b8b1701c",
+      "heading_paths": [
+        [
+          "Intro"
+        ]
+      ],
+      "source_spans": [
+        {
+          "unit_index": 0,
+          "char_start": 0,
+          "char_end": 11
+        }
+      ],
+      "truncated": false
+    },
+    {
+      "key": "chunk-000001-750e49755ff9",
+      "content": "Gamma delta.",
+      "rendered": "Gamma delta.",
+      "content_tokens": 6,
+      "rendered_tokens": 6,
+      "checksum": "750e49755ff93394b3ad9ff170f45d3e2ebc528e427347d6f08939db37835113",
+      "heading_paths": [
+        [
+          "Details"
+        ]
+      ],
+      "source_spans": [
+        {
+          "unit_index": 1,
+          "char_start": 0,
+          "char_end": 12
+        }
+      ],
+      "truncated": false
+    }
+  ]
+}

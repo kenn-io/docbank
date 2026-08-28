@@ -82,6 +82,49 @@ func TestBackupCaptureBlocksPlacementAuthorityCommit(t *testing.T) {
 	require.NoError(t, <-commitDone)
 }
 
+func TestDaemonPreservationReadFencesPlacementAndMaintenance(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		run  func(*OperationGate, func() error) error
+	}{
+		{name: "placement", run: func(g *OperationGate, fn func() error) error { return g.PhysicalMutate(fn) }},
+		{name: "maintenance", run: func(g *OperationGate, fn func() error) error {
+			return g.MaintainContext(context.Background(), fn)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			g := NewOperationGate()
+			readStarted, releaseRead := make(chan struct{}), make(chan struct{})
+			readDone := make(chan error, 1)
+			go func() {
+				readDone <- g.PreserveContext(t.Context(), func() error {
+					close(readStarted)
+					<-releaseRead
+					return nil
+				})
+			}()
+			<-readStarted
+
+			mutationStarted := make(chan struct{})
+			mutationDone := make(chan error, 1)
+			go func() { mutationDone <- test.run(g, func() error { close(mutationStarted); return nil }) }()
+			select {
+			case <-mutationStarted:
+				t.Fatal("physical authority changed while preservation read was active")
+			case <-time.After(25 * time.Millisecond):
+			}
+			close(releaseRead)
+			require.NoError(t, <-readDone)
+			select {
+			case <-mutationStarted:
+			case <-time.After(time.Second):
+				t.Fatal("physical authority change did not resume after preservation read")
+			}
+			require.NoError(t, <-mutationDone)
+		})
+	}
+}
+
 func TestQueuedMaintenanceRejectsRouteMutation(t *testing.T) {
 	g := NewOperationGate()
 	captureEntered := make(chan struct{})
@@ -119,6 +162,20 @@ func TestQueuedMaintenanceRejectsRouteMutation(t *testing.T) {
 	releaseOnce.Do(func() { close(releaseCapture) })
 	require.NoError(t, <-captureDone)
 	require.NoError(t, <-maintenanceDone)
+}
+
+func TestDaemonLogicalMutationDoesNotFailCloseRouteMutations(t *testing.T) {
+	g := NewOperationGate()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	go func() { done <- g.MutateContext(t.Context(), func() error { close(entered); <-release; return nil }) }()
+	<-entered
+	reached := false
+	require.NoError(t, g.mutate(func() error { reached = true; return nil }))
+	assert.True(t, reached)
+	close(release)
+	require.NoError(t, <-done)
 }
 
 func TestCanceledQueuedMaintenanceStopsRejectingRouteMutation(t *testing.T) {
