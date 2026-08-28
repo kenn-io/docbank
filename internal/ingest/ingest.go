@@ -197,7 +197,7 @@ func physicalReceipt(receipt blob.WriteReceipt) (store.BlobPhysical, error) {
 	}
 	return store.BlobPhysical{
 		Encoding: encoding, StoredBytes: receipt.StoredSize,
-		PackEligible: receipt.PackEligible, Created: receipt.Created,
+		PackEligible: receipt.PackEligible, MD5: receipt.MD5, Created: receipt.Created,
 	}, nil
 }
 

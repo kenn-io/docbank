@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	docsqlite "go.kenn.io/docbank/sqlite"
 	"go.kenn.io/docbank/sqlite/modernc"
 	"go.kenn.io/kit/packstore"
 )
@@ -41,6 +42,141 @@ func TestExportMetadataPreservesV1JavaScriptSeparatorEscapes(t *testing.T) {
 	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
 	assert.Contains(t, exported.String(), `"name":"line\u2028paragraph\u2029"`)
 	assert.NotContains(t, exported.String(), "line\u2028paragraph\u2029")
+}
+
+func TestAuxiliaryChecksumMetadataRoundTripsAndRejectsMalformedMD5(t *testing.T) {
+	for _, testCase := range []struct {
+		name   string
+		driver docsqlite.Driver
+	}{
+		{name: "default", driver: DefaultSQLiteDriver()},
+		{name: "pure Go", driver: modernc.Driver{}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			source, err := Open(filepath.Join(t.TempDir(), "source.db"), testCase.driver)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, source.Close()) })
+			const md5sum = "f6fdffe48c908deb0f4c3bd36c032e72"
+			_, err = source.CreateFile(t.Context(), source.RootID(), "source.bin",
+				metadataHashCurrent, 9, "application/octet-stream", BlobPhysical{
+					Encoding: "raw", StoredBytes: 9, PackEligible: true,
+					Created: true, MD5: md5sum,
+				})
+			require.NoError(t, err)
+			var exported bytes.Buffer
+			require.NoError(t, source.ExportMetadata(t.Context(), &exported))
+			assert.Contains(t, exported.String(),
+				`{"type":"blob_checksum","blob_sha256":"`+metadataHashCurrent+`","md5":"`+md5sum+`"}`)
+
+			target, err := Open(filepath.Join(t.TempDir(), "target.db"), testCase.driver)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, target.Close()) })
+			require.NoError(t, target.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
+			record, err := target.BlobChecksums(t.Context(), metadataHashCurrent)
+			require.NoError(t, err)
+			assert.Equal(t, md5sum, record.MD5)
+
+			malformed := strings.Replace(exported.String(), md5sum, strings.ToUpper(md5sum), 1)
+			rejected, err := Open(filepath.Join(t.TempDir(), "rejected.db"), testCase.driver)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, rejected.Close()) })
+			err = rejected.ImportMetadata(t.Context(), strings.NewReader(malformed))
+			require.ErrorContains(t, err, "canonical lowercase MD5")
+			_, err = rejected.BlobChecksums(t.Context(), metadataHashCurrent)
+			require.ErrorIs(t, err, ErrNotFound)
+		})
+	}
+}
+
+func TestBackupExcludesPrunedOrdinaryBlobsAndUncommittedProviderStaging(t *testing.T) {
+	s := newTestStore(t)
+	ordinary := fakeHash("91")
+	staged := fakeHash("92")
+	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		return s.EnsureOrdinaryBlobTx(tx, ordinary, 7)
+	}))
+	require.NoError(t, s.RecordRenditionBlob(t.Context(), staged, 9,
+		BlobPhysical{Encoding: "raw", StoredBytes: 9, PackEligible: true, Created: true}))
+	var stagedCount int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_blob_staging
+		WHERE blob_hash=?`, staged).Scan(&stagedCount))
+	require.Equal(t, 1, stagedCount)
+
+	var exported bytes.Buffer
+	snapshot, err := s.BeginMetadataSnapshot(t.Context())
+	require.NoError(t, err)
+	var authorized int
+	require.NoError(t, snapshot.QueryRowContext(t.Context(), BackupBlobAuthorityCTE+
+		`SELECT COUNT(*) FROM backup_authorized_blobs WHERE hash=?`, staged).Scan(&authorized))
+	require.Zero(t, authorized)
+	require.NoError(t, snapshot.ExportBackup(t.Context(), &exported))
+	require.NoError(t, snapshot.Close())
+	assert.NotContains(t, exported.String(), ordinary,
+		"pruned ordinary content has no retained logical backup authority")
+	assert.NotContains(t, exported.String(), staged,
+		"uncommitted provider staging is not logical backup authority")
+}
+
+func TestImportLegacyMetadataTreatsEveryBlobAsOrdinaryAuthority(t *testing.T) {
+	source := newTestStore(t)
+	legacyBlob := fakeHash("90")
+	require.NoError(t, source.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		return source.EnsureOrdinaryBlobTx(tx, legacyBlob, 7)
+	}))
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(t.Context(), &exported))
+	lines := strings.Split(strings.TrimSpace(exported.String()), "\n")
+	legacyLines := lines[:0]
+	for _, line := range lines {
+		if strings.Contains(line, `"type":"ordinary_blob_authority"`) ||
+			strings.Contains(line, `"type":"ordinary_blob_authority_complete"`) {
+			continue
+		}
+		legacyLines = append(legacyLines, line)
+	}
+
+	target := newTestStore(t)
+	require.NoError(t, target.ImportMetadataForRestore(
+		t.Context(), strings.NewReader(strings.Join(legacyLines, "\n")+"\n")))
+	var authority int
+	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM ordinary_blob_authority
+		WHERE blob_hash=?`, legacyBlob).Scan(&authority))
+	require.Equal(t, 1, authority)
+}
+
+func TestBackupExcludesPrunedBlobAfterProviderStagingHashCollision(t *testing.T) {
+	s := newTestStore(t)
+	shared := fakeHash("93")
+	node, err := s.CreateFile(t.Context(), s.RootID(), "durable.txt", shared, 9, "text/plain")
+	require.NoError(t, err)
+	require.NotEmpty(t, node.CurrentVersionID)
+	require.NoError(t, s.RecordRenditionBlob(t.Context(), shared, 9,
+		BlobPhysical{Encoding: "raw", StoredBytes: 9, PackEligible: true, Created: false}))
+	var staged int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_blob_staging
+		WHERE blob_hash=?`, shared).Scan(&staged))
+	require.Zero(t, staged, "deduplicated ordinary bytes are not provider staging")
+	replacement := fakeHash("94")
+	node, _, err = s.ReplaceContent(t.Context(), node.ID, node.Revision, replacement, 11, "text/plain")
+	require.NoError(t, err)
+	_, err = s.PruneContentVersions(t.Context(), node.ID, node.Revision,
+		VersionPruneSelector{AllPrior: true}, true)
+	require.NoError(t, err)
+
+	snapshot, err := s.BeginMetadataSnapshot(t.Context())
+	require.NoError(t, err)
+	var exported bytes.Buffer
+	require.NoError(t, snapshot.ExportBackup(t.Context(), &exported))
+	require.NoError(t, snapshot.Close())
+	assert.NotContains(t, exported.String(), shared,
+		"a pruned blob has no retained authority after provider staging deduplicates against it")
+	restored := newTestStore(t)
+	require.NoError(t, restored.ImportMetadataForRestore(
+		t.Context(), bytes.NewReader(exported.Bytes())))
+	var authority int
+	require.NoError(t, restored.db.QueryRow(`SELECT COUNT(*) FROM ordinary_blob_authority
+		WHERE blob_hash=?`, shared).Scan(&authority))
+	assert.Zero(t, authority, "pruned hash-collision authority must not survive restore")
 }
 
 func TestBackupExcludesUncommittedProviderStaging(t *testing.T) {
@@ -117,7 +253,7 @@ func TestBackupExcludesCrashPendingDerivativeErasureAcrossMetadataRoundTrip(t *t
 	assert.NotContains(t, exported.String(), pending)
 
 	restored := newTestStore(t)
-	require.NoError(t, restored.ImportMetadataForBackupRestore(
+	require.NoError(t, restored.ImportMetadataForRestore(
 		t.Context(), bytes.NewReader(exported.Bytes())))
 	has, err := restored.HasBlob(t.Context(), pending)
 	require.NoError(t, err)
@@ -1014,6 +1150,25 @@ func TestImportMetadataRejectsNonPristineTarget(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestImportMetadataRejectsPendingGCLooseRetirement(t *testing.T) {
+	target := newTestStore(t)
+	primary, err := target.PrimaryBlobStore(t.Context())
+	require.NoError(t, err)
+	hash := fakeHash("f3")
+	_, err = target.db.ExecContext(t.Context(), `
+		INSERT INTO gc_loose_retirements(store_id,blob_hash,loose_encoding)
+		VALUES(?,?,?)`, primary.ID, hash, packstore.LooseEncodingRaw)
+	require.NoError(t, err)
+
+	input := `{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n"
+	err = target.ImportMetadata(t.Context(), strings.NewReader(input))
+	require.ErrorContains(t, err, "not pristine")
+	pending, err := target.PendingGCLooseRetirements(t.Context(), 10)
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	assert.Equal(t, hash, pending[0].Hash.String())
+}
+
 func TestImportMetadataRejectsLexicalProjectionState(t *testing.T) {
 	target := newTestStore(t)
 	generation, err := target.StageLexicalGeneration(t.Context(), fakeHash("cf"))
@@ -1447,9 +1602,11 @@ func TestProcessingMetadataNilHeadingPathRoundTripsAsEmptyArray(t *testing.T) {
 		ID: catalogAttachmentFirst, VaultID: source.VaultID(), ContentVersionID: versions[0],
 		BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-22T10:00:00.000000000Z",
 	}
-	require.NoError(t, publishRenditionForTest(
-		t, source, attachment, "2026-08-22T10:01:00.000000000Z", fakeHash("c8"),
-	))
+	require.NoError(t, source.AttachRenditionBuild(t.Context(), attachment))
+	require.NoError(t, source.PublishRenditionHead(t.Context(), RenditionHeadRecord{
+		ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
+		AttachmentID: attachment.ID, PublishedAt: "2026-08-22T10:01:00.000000000Z",
+	}))
 
 	var exported bytes.Buffer
 	require.NoError(t, source.ExportMetadata(t.Context(), &exported))
@@ -1523,6 +1680,38 @@ func TestProcessingMetadataImportRejectsInvalidAuthorityTransactionally(t *testi
 	}
 }
 
+func TestProcessingMetadataRestoreRejectsHeadedLexicalGenerationMissingCurrentBuild(t *testing.T) {
+	source := newTestStore(t)
+	versions, profiles, build := seedProcessingMetadataCatalog(t, source)
+	generation, err := source.StageLexicalGeneration(t.Context(), fakeHash("ed"))
+	require.NoError(t, err)
+	attachment := RenditionAttachmentRecord{
+		ID: catalogAttachmentFirst, VaultID: source.VaultID(), ContentVersionID: versions[0],
+		BuildID: build.ID, Profile: profiles[0], AttachedAt: "2026-08-22T10:00:00.000000000Z",
+	}
+	require.NoError(t, source.PublishRenditionAndLexicalHeads(t.Context(), attachment,
+		RenditionHeadRecord{
+			ContentVersionID: versions[0], ProcessingProfileFingerprint: profiles[0].Fingerprint,
+			AttachmentID: attachment.ID, PublishedAt: "2026-08-22T10:04:00.000000000Z",
+		}, generation.ID))
+
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(t.Context(), &exported))
+	mutated := mutateFirstProcessingMetadataRecord(
+		t, exported.Bytes(), metadataLexicalGenerationType,
+		func(fields map[string]jsontext.Value) {
+			fields["segment_count"] = jsontext.Value(`0`)
+			fields["manifest_digest"] = jsontext.Value(`"` + lexicalManifestDigest(nil) + `"`)
+			fields["build_ids"] = jsontext.Value(`[]`)
+			fields["build_digest"] = jsontext.Value(`"` + lexicalBuildDigest(nil) + `"`)
+		},
+	)
+
+	target := newTestStore(t)
+	err = target.ImportMetadataForRestore(t.Context(), bytes.NewReader(mutated))
+	require.ErrorContains(t, err, "omits current rendition head build")
+}
+
 func seedProcessingMetadataCatalog(
 	t *testing.T, s *Store,
 ) ([]string, []ProcessingProfileRecord, RenditionBuildRecord) {
@@ -1540,11 +1729,13 @@ func seedProcessingMetadataCatalog(
 			BuildID: build.ID, Profile: profiles[1], AttachedAt: "2026-08-22T10:01:00.000000000Z"},
 	}
 	for index, attachment := range attachments {
-		require.NoError(t, publishRenditionForTest(
-			t, s, attachment,
-			time.Date(2026, time.August, 22, 10, 2+index, 0, 0, time.UTC).Format(timestampLayout),
-			fakeHash("c9"),
-		))
+		require.NoError(t, s.AttachRenditionBuild(t.Context(), attachment))
+		require.NoError(t, s.PublishRenditionHead(t.Context(), RenditionHeadRecord{
+			ContentVersionID:             attachment.ContentVersionID,
+			ProcessingProfileFingerprint: attachment.Profile.Fingerprint,
+			AttachmentID:                 attachment.ID,
+			PublishedAt:                  time.Date(2026, time.August, 22, 10, 2+index, 0, 0, time.UTC).Format(timestampLayout),
+		}))
 	}
 	return versions, profiles, build
 }
