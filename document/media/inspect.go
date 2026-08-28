@@ -460,7 +460,7 @@ func inspectZIP(data []byte, ext, mediaType string, policy InspectionPolicy) Cap
 		}
 	}
 	var epubPackages map[string]bool
-	var declaredTypes map[string]string
+	var declaredTypes contentDeclarations
 	if ext == ".epub" {
 		var err error
 		epubPackages, declaredTypes, err = epubPackageManifest(zr.File, policy.MaxEntryBytes)
@@ -483,18 +483,17 @@ func inspectZIP(data []byte, ext, mediaType string, policy InspectionPolicy) Cap
 			return record
 		}
 		name := strings.ToLower(file.Name)
-		declared := declaredTypes[file.Name]
 		xmlContent := strings.HasSuffix(name, ".xml") || strings.HasSuffix(name, ".rels") ||
-			strings.HasSuffix(name, ".opf") || isXMLMediaType(declared) ||
+			strings.HasSuffix(name, ".opf") || declaredTypes.anyXML(file.Name) ||
 			ext == ".epub" && (strings.HasSuffix(name, ".xhtml") || strings.HasSuffix(name, ".html") ||
 				strings.HasSuffix(name, ".htm") || strings.HasSuffix(name, ".svg") ||
 				epubPackages[file.Name])
 		// A part counts toward its semantic limit because of what it is, not
 		// where it sits, so the declared content type decides alongside the name.
 		isWorksheet := strings.HasPrefix(name, "xl/worksheets/") ||
-			declared == ooxmlWorksheetType
+			declaredTypes.contains(file.Name, ooxmlWorksheetType)
 		isSlide := strings.HasPrefix(name, "ppt/slides/slide") && strings.HasSuffix(name, ".xml") ||
-			declared == ooxmlSlideType
+			declaredTypes.contains(file.Name, ooxmlSlideType)
 		if xmlContent {
 			mode := xmlMeasureNone
 			switch {
@@ -515,7 +514,8 @@ func inspectZIP(data []byte, ext, mediaType string, policy InspectionPolicy) Cap
 				return record
 			}
 		}
-		if ext == ".epub" && (strings.HasSuffix(name, ".css") || declared == "text/css") {
+		if ext == ".epub" && (strings.HasSuffix(name, ".css") ||
+			declaredTypes.contains(file.Name, "text/css")) {
 			external, cssErr := inspectEPUBCSS(body, file.Name, archiveNames)
 			if cssErr != nil {
 				record.Reason = CapabilityReasonMalformed
@@ -1233,7 +1233,7 @@ func hasZIPSignature(data []byte) bool {
 // the entry's filename.
 func epubPackageManifest(
 	files []*zip.File, limit int64,
-) (map[string]bool, map[string]string, error) {
+) (map[string]bool, contentDeclarations, error) {
 	var container *zip.File
 	for _, file := range files {
 		if file.Name == "META-INF/container.xml" {
@@ -1264,7 +1264,7 @@ func epubPackageManifest(
 	// A container may declare several renditions. Each one's package document
 	// and manifest is reachable content, so inspect all of them.
 	packages := make(map[string]bool, len(document.Rootfiles.Items))
-	declared := make(map[string]string)
+	declared := make(contentDeclarations)
 	for _, rootfile := range document.Rootfiles.Items {
 		packagePath, err := epubArchivePath(rootfile.FullPath, "")
 		if err != nil {
@@ -1289,7 +1289,7 @@ func epubPackageManifest(
 }
 
 func epubManifestTypes(
-	packageFile *zip.File, packagePath string, limit int64, declared map[string]string,
+	packageFile *zip.File, packagePath string, limit int64, declared contentDeclarations,
 ) error {
 	body, err := readZIPEntry(packageFile, limit)
 	if err != nil {
@@ -1323,23 +1323,9 @@ func epubManifestTypes(
 			// classifies that when it scans the package document itself.
 			continue
 		}
-		declaredType := strings.ToLower(strings.TrimSpace(item.MediaType))
-		// Renditions can declare the same entry differently. Keep whichever
-		// declaration causes inspection, so a second rendition cannot demote a
-		// scanned resource to an opaque one.
-		if existing, seen := declared[resource]; seen && existing != declaredType &&
-			inspectedEPUBType(existing) {
-			continue
-		}
-		declared[resource] = declaredType
+		declared.add(resource, strings.ToLower(strings.TrimSpace(item.MediaType)))
 	}
 	return nil
-}
-
-// inspectedEPUBType reports whether a declared type puts a resource in scope
-// for reference scanning.
-func inspectedEPUBType(mediaType string) bool {
-	return isXMLMediaType(mediaType) || mediaType == "text/css"
 }
 
 // epubArchivePath resolves one EPUB-relative reference to an archive entry
@@ -1364,6 +1350,28 @@ func epubArchivePath(reference, base string) (string, error) {
 	return resource, nil
 }
 
+// contentDeclarations maps an archive entry to the content types its container
+// declares for it. An OOXML part has exactly one type. An EPUB container that
+// lists several renditions can declare one entry more than once, and each
+// declaration decides how some reader interprets those bytes, so inspection
+// has to satisfy all of them rather than pick a winner.
+type contentDeclarations map[string][]string
+
+func (declarations contentDeclarations) add(name, mediaType string) {
+	if slices.Contains(declarations[name], mediaType) {
+		return
+	}
+	declarations[name] = append(declarations[name], mediaType)
+}
+
+func (declarations contentDeclarations) contains(name, mediaType string) bool {
+	return slices.Contains(declarations[name], mediaType)
+}
+
+func (declarations contentDeclarations) anyXML(name string) bool {
+	return slices.ContainsFunc(declarations[name], isXMLMediaType)
+}
+
 // isXMLMediaType reports whether a declared media type makes a consumer parse
 // the resource as markup. The "+xml" suffix is the structured-syntax suffix
 // every OOXML part type carries.
@@ -1381,7 +1389,7 @@ func isXMLMediaType(mediaType string) bool {
 // ooxmlDeclaredTypes maps each OOXML part to the content type the package
 // declares for it. A part is markup because [Content_Types].xml says so, not
 // because of how it is named.
-func ooxmlDeclaredTypes(files []*zip.File, limit int64) map[string]string {
+func ooxmlDeclaredTypes(files []*zip.File, limit int64) contentDeclarations {
 	var contentTypes *zip.File
 	for _, file := range files {
 		if file.Name == "[Content_Types].xml" {
@@ -1416,10 +1424,10 @@ func ooxmlDeclaredTypes(files []*zip.File, limit int64) map[string]string {
 		byExtension["."+strings.ToLower(strings.TrimSpace(def.Extension))] =
 			strings.ToLower(strings.TrimSpace(def.ContentType))
 	}
-	declared := make(map[string]string, len(files))
+	declared := make(contentDeclarations, len(files))
 	for _, file := range files {
 		if declaredType, ok := byExtension[strings.ToLower(path.Ext(file.Name))]; ok {
-			declared[file.Name] = declaredType
+			declared[file.Name] = []string{declaredType}
 		}
 	}
 	for _, override := range document.Overrides {
@@ -1427,7 +1435,8 @@ func ooxmlDeclaredTypes(files []*zip.File, limit int64) map[string]string {
 		if part == "" {
 			continue
 		}
-		declared[part] = strings.ToLower(strings.TrimSpace(override.ContentType))
+		// An Override replaces the Default for that part rather than adding to it.
+		declared[part] = []string{strings.ToLower(strings.TrimSpace(override.ContentType))}
 	}
 	return declared
 }

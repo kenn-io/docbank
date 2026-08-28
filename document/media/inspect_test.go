@@ -299,30 +299,39 @@ func TestInspectFollowsDeclaredContainerParts(t *testing.T) {
 		assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
 	})
 
-	// Renditions can declare the same entry differently. The declaration that
-	// puts a resource in scope has to win, or a later one hides its content.
-	t.Run("conflicting EPUB declarations", func(t *testing.T) {
-		t.Parallel()
-		container := `<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles>` +
-			`<rootfile full-path="OPS/content.opf"/><rootfile full-path="OPS/alt.opf"/></rootfiles></container>`
-		manifest := func(mediaType string) string {
-			return `<package><manifest><item id="c" href="chapter.dat" media-type="` + mediaType +
-				`"/></manifest><spine><itemref idref="c"/></spine></package>`
-		}
-		data := zipBytes(t, []zipEntry{
-			{name: "mimetype", body: "application/epub+zip"},
-			{name: "META-INF/container.xml", body: container},
-			{name: "OPS/content.opf", body: manifest("application/xhtml+xml")},
-			{name: "OPS/alt.opf", body: manifest("image/png")},
-			{name: "OPS/chapter.dat", body: `<html xmlns="http://www.w3.org/1999/xhtml">` +
-				`<body><img src="https://example.invalid/t.png"/></body></html>`},
+	// Renditions can declare the same entry differently, and each declaration
+	// decides how some reader reads those bytes. Inspection has to satisfy every
+	// one of them, whatever order the container lists them in.
+	conflicts := [][2]string{
+		{"application/xhtml+xml", "image/png"},
+		{"image/png", "application/xhtml+xml"},
+		{"text/css", "application/xhtml+xml"},
+		{"application/xhtml+xml", "text/css"},
+	}
+	for _, declarations := range conflicts {
+		t.Run("conflicting EPUB declarations "+declarations[0]+" then "+declarations[1], func(t *testing.T) {
+			t.Parallel()
+			container := `<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles>` +
+				`<rootfile full-path="OPS/content.opf"/><rootfile full-path="OPS/alt.opf"/></rootfiles></container>`
+			manifest := func(mediaType string) string {
+				return `<package><manifest><item id="c" href="chapter.dat" media-type="` + mediaType +
+					`"/></manifest><spine><itemref idref="c"/></spine></package>`
+			}
+			data := zipBytes(t, []zipEntry{
+				{name: "mimetype", body: "application/epub+zip"},
+				{name: "META-INF/container.xml", body: container},
+				{name: "OPS/content.opf", body: manifest(declarations[0])},
+				{name: "OPS/alt.opf", body: manifest(declarations[1])},
+				{name: "OPS/chapter.dat", body: `<html xmlns="http://www.w3.org/1999/xhtml">` +
+					`<body><img src="https://example.invalid/t.png"/></body></html>`},
+			})
+			record, err := media.InspectCapability(bytes.NewReader(data),
+				inspectionPolicy(data, "book.epub", "application/epub+zip"))
+			require.NoError(t, err)
+			assert.False(t, record.Eligible)
+			assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
 		})
-		record, err := media.InspectCapability(bytes.NewReader(data),
-			inspectionPolicy(data, "book.epub", "application/epub+zip"))
-		require.NoError(t, err)
-		assert.False(t, record.Eligible)
-		assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
-	})
+	}
 }
 
 // A part counts toward its semantic limit because of what it is, so a
@@ -351,6 +360,26 @@ func TestInspectCountsDeclaredOOXMLParts(t *testing.T) {
 		assert.Equal(t, int64(1), record.Measurements.Sheets)
 		assert.Equal(t, int64(5), record.Measurements.Cells)
 		assert.Equal(t, media.CapabilityReasonSemanticUnits, record.Reason)
+	})
+
+	// Unlike EPUB renditions, which each state a valid reading, an OOXML
+	// Override states the single content type for that part and replaces the
+	// Default its extension would otherwise carry.
+	t.Run("override replaces default", func(t *testing.T) {
+		t.Parallel()
+		data := zipBytes(t, []zipEntry{
+			{name: "[Content_Types].xml", body: `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+				`<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>` +
+				`<Default Extension="bin" ContentType="` + worksheetType + `"/>` +
+				`<Override PartName="/parts/data.bin" ContentType="application/vnd.openxmlformats-officedocument.oleObject"/></Types>`},
+			{name: "xl/workbook.xml", body: `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>`},
+			{name: "parts/data.bin", body: "opaque"},
+		})
+		record, err := media.InspectCapability(bytes.NewReader(data), inspectionPolicy(data, "book.xlsx",
+			"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+		require.NoError(t, err)
+		require.True(t, record.Eligible, record.Reason)
+		assert.Equal(t, int64(0), record.Measurements.Sheets)
 	})
 
 	t.Run("slide", func(t *testing.T) {
@@ -683,8 +712,9 @@ func TestInspectResolvesAndBoundsAuthoritativePDFObjects(t *testing.T) {
 		})
 	}
 
-	// /Type is optional in a file specification, so a path entry decides. An
-	// embedded file travels inside the document and reaches nothing outside.
+	// /Type is optional in a file specification, so a path entry decides, in
+	// whichever of the five path keys carries it. An embedded file travels
+	// inside the document and reaches nothing outside.
 	fileSpecifications := []struct {
 		name, object string
 		eligible     bool
@@ -693,6 +723,9 @@ func TestInspectResolvesAndBoundsAuthoritativePDFObjects(t *testing.T) {
 		{name: "typeless", object: "<< /F (remote.txt) /AFRelationship /Data >>"},
 		{name: "unicode path", object: "<< /UF (remote.txt) >>"},
 		{name: "hex path", object: "<< /F <72656d6f74652e747874> >>"},
+		{name: "dos path", object: `<< /Type /Filespec /DOS (C:\\share\\remote.txt) >>`},
+		{name: "mac path", object: "<< /Type /Filespec /Mac (Disk:remote.txt) >>"},
+		{name: "unix path", object: "<< /Type /Filespec /Unix (/etc/passwd) >>"},
 		{name: "embedded", object: "<< /Type /Filespec /F (data.txt) /EF << /F 5 0 R >> >>", eligible: true},
 	}
 	for _, testCase := range fileSpecifications {

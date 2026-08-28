@@ -341,10 +341,14 @@ func pdfDictHasExternalReference(context *model.Context, dictionary types.Dict) 
 	// They must be strings: an annotation's /F is an integer flags field, and a
 	// stream's /F names external data, which is external in its own right.
 	// An /EF entry means the file travels embedded rather than by reference.
+	//
+	// /DOS, /Mac, and /Unix hold the same path for one platform. A viewer on
+	// that platform reads them, and a specification may carry them with no /F
+	// at all, so all five keys count.
 	if dictionary.HasEntry("EF") {
 		return false, nil
 	}
-	for _, key := range []string{"F", "UF"} {
+	for _, key := range []string{"F", "UF", "DOS", "Mac", "Unix"} {
 		isPath, err := pdfDictHasStringEntry(context, dictionary, key)
 		if err != nil || isPath {
 			return isPath, err
