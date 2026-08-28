@@ -337,12 +337,35 @@ func pdfDictHasExternalReference(context *model.Context, dictionary types.Dict) 
 	if fileSystem == "URL" {
 		return true, nil
 	}
-	dictionaryType, err := pdfDictName(context, dictionary, "Type")
-	if err != nil {
-		return false, err
+	// /Type is optional in a file specification, so the path entries decide.
+	// They must be strings: an annotation's /F is an integer flags field, and a
+	// stream's /F names external data, which is external in its own right.
+	// An /EF entry means the file travels embedded rather than by reference.
+	if dictionary.HasEntry("EF") {
+		return false, nil
 	}
-	if dictionaryType == "Filespec" && !dictionary.HasEntry("EF") &&
-		(dictionary.HasEntry("F") || dictionary.HasEntry("UF")) {
+	for _, key := range []string{"F", "UF"} {
+		isPath, err := pdfDictHasStringEntry(context, dictionary, key)
+		if err != nil || isPath {
+			return isPath, err
+		}
+	}
+	return false, nil
+}
+
+func pdfDictHasStringEntry(
+	context *model.Context, dictionary types.Dict, key string,
+) (bool, error) {
+	object, ok := dictionary[key]
+	if !ok {
+		return false, nil
+	}
+	resolved, err := context.Dereference(object)
+	if err != nil {
+		return false, fmt.Errorf("dereference PDF dictionary %q: %w", key, err)
+	}
+	switch resolved.(type) {
+	case types.StringLiteral, types.HexLiteral:
 		return true, nil
 	}
 	return false, nil

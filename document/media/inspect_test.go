@@ -298,6 +298,81 @@ func TestInspectFollowsDeclaredContainerParts(t *testing.T) {
 		assert.False(t, record.Eligible)
 		assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
 	})
+
+	// Renditions can declare the same entry differently. The declaration that
+	// puts a resource in scope has to win, or a later one hides its content.
+	t.Run("conflicting EPUB declarations", func(t *testing.T) {
+		t.Parallel()
+		container := `<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles>` +
+			`<rootfile full-path="OPS/content.opf"/><rootfile full-path="OPS/alt.opf"/></rootfiles></container>`
+		manifest := func(mediaType string) string {
+			return `<package><manifest><item id="c" href="chapter.dat" media-type="` + mediaType +
+				`"/></manifest><spine><itemref idref="c"/></spine></package>`
+		}
+		data := zipBytes(t, []zipEntry{
+			{name: "mimetype", body: "application/epub+zip"},
+			{name: "META-INF/container.xml", body: container},
+			{name: "OPS/content.opf", body: manifest("application/xhtml+xml")},
+			{name: "OPS/alt.opf", body: manifest("image/png")},
+			{name: "OPS/chapter.dat", body: `<html xmlns="http://www.w3.org/1999/xhtml">` +
+				`<body><img src="https://example.invalid/t.png"/></body></html>`},
+		})
+		record, err := media.InspectCapability(bytes.NewReader(data),
+			inspectionPolicy(data, "book.epub", "application/epub+zip"))
+		require.NoError(t, err)
+		assert.False(t, record.Eligible)
+		assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
+	})
+}
+
+// A part counts toward its semantic limit because of what it is, so a
+// worksheet or slide parked outside the conventional path still counts.
+func TestInspectCountsDeclaredOOXMLParts(t *testing.T) {
+	t.Parallel()
+	const worksheetType = "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"
+	const slideType = "application/vnd.openxmlformats-officedocument.presentationml.slide+xml"
+
+	t.Run("worksheet", func(t *testing.T) {
+		t.Parallel()
+		sheet := `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
+			`<c/><c/><c/><c/><c/></worksheet>`
+		data := zipBytes(t, []zipEntry{
+			{name: "[Content_Types].xml", body: `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+				`<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>` +
+				`<Override PartName="/parts/data.bin" ContentType="` + worksheetType + `"/></Types>`},
+			{name: "xl/workbook.xml", body: `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>`},
+			{name: "parts/data.bin", body: sheet},
+		})
+		policy := inspectionPolicy(data, "book.xlsx",
+			"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+		policy.MaxCells = 4
+		record, err := media.InspectCapability(bytes.NewReader(data), policy)
+		require.NoError(t, err)
+		assert.Equal(t, int64(1), record.Measurements.Sheets)
+		assert.Equal(t, int64(5), record.Measurements.Cells)
+		assert.Equal(t, media.CapabilityReasonSemanticUnits, record.Reason)
+	})
+
+	t.Run("slide", func(t *testing.T) {
+		t.Parallel()
+		slide := `<sld xmlns="http://schemas.openxmlformats.org/presentationml/2006/main"/>`
+		data := zipBytes(t, []zipEntry{
+			{name: "[Content_Types].xml", body: `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+				`<Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>` +
+				`<Override PartName="/parts/one.bin" ContentType="` + slideType + `"/>` +
+				`<Override PartName="/parts/two.bin" ContentType="` + slideType + `"/></Types>`},
+			{name: "ppt/presentation.xml", body: `<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"/>`},
+			{name: "parts/one.bin", body: slide},
+			{name: "parts/two.bin", body: slide},
+		})
+		policy := inspectionPolicy(data, "deck.pptx",
+			"application/vnd.openxmlformats-officedocument.presentationml.presentation")
+		policy.MaxSlides = 1
+		record, err := media.InspectCapability(bytes.NewReader(data), policy)
+		require.NoError(t, err)
+		assert.Equal(t, int64(2), record.Measurements.Slides)
+		assert.Equal(t, media.CapabilityReasonSemanticUnits, record.Reason)
+	})
 }
 
 // Treating every unlisted attribute as a locator must not reject the
@@ -608,18 +683,49 @@ func TestInspectResolvesAndBoundsAuthoritativePDFObjects(t *testing.T) {
 		})
 	}
 
-	t.Run("external file specification", func(t *testing.T) {
-		pdf := syntheticPDFObjects("external-file", []string{
-			"<< /Type /Catalog /Pages 2 0 R /AF [4 0 R] >>",
+	// /Type is optional in a file specification, so a path entry decides. An
+	// embedded file travels inside the document and reaches nothing outside.
+	fileSpecifications := []struct {
+		name, object string
+		eligible     bool
+	}{
+		{name: "typed", object: "<< /Type /Filespec /F (remote.txt) /AFRelationship /Data >>"},
+		{name: "typeless", object: "<< /F (remote.txt) /AFRelationship /Data >>"},
+		{name: "unicode path", object: "<< /UF (remote.txt) >>"},
+		{name: "hex path", object: "<< /F <72656d6f74652e747874> >>"},
+		{name: "embedded", object: "<< /Type /Filespec /F (data.txt) /EF << /F 5 0 R >> >>", eligible: true},
+	}
+	for _, testCase := range fileSpecifications {
+		t.Run("file specification "+testCase.name, func(t *testing.T) {
+			pdf := syntheticPDFObjects("file-spec", []string{
+				"<< /Type /Catalog /Pages 2 0 R /AF [4 0 R] >>",
+				"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+				"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+				testCase.object,
+				"<< /Length 4 >>\nstream\ndata\nendstream",
+			})
+			record, err := media.InspectCapability(bytes.NewReader(pdf),
+				inspectionPolicy(pdf, "report.pdf", "application/pdf"))
+			require.NoError(t, err)
+			assert.Equal(t, testCase.eligible, record.Eligible, record.Reason)
+			if !testCase.eligible {
+				assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
+			}
+		})
+	}
+
+	// An annotation's /F is an integer flags field, not a path.
+	t.Run("annotation flags", func(t *testing.T) {
+		pdf := syntheticPDFObjects("annot-flags", []string{
+			"<< /Type /Catalog /Pages 2 0 R >>",
 			"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-			"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
-			"<< /Type /Filespec /F (remote.txt) /AFRelationship /Data >>",
+			"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Annots [4 0 R] >>",
+			"<< /Type /Annot /Subtype /Text /Rect [0 0 1 1] /F 4 >>",
 		})
 		record, err := media.InspectCapability(bytes.NewReader(pdf),
 			inspectionPolicy(pdf, "report.pdf", "application/pdf"))
 		require.NoError(t, err)
-		assert.False(t, record.Eligible)
-		assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
+		assert.True(t, record.Eligible, record.Reason)
 	})
 
 	t.Run("xref and object streams", func(t *testing.T) {

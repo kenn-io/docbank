@@ -33,6 +33,9 @@ import (
 const (
 	capabilityRecordVersion  = 1
 	maxInspectionSourceBytes = int64(1 << 30)
+
+	ooxmlWorksheetType = "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"
+	ooxmlSlideType     = "application/vnd.openxmlformats-officedocument.presentationml.slide+xml"
 )
 
 // CapabilityReason is a stable capability inspection outcome.
@@ -486,10 +489,16 @@ func inspectZIP(data []byte, ext, mediaType string, policy InspectionPolicy) Cap
 			ext == ".epub" && (strings.HasSuffix(name, ".xhtml") || strings.HasSuffix(name, ".html") ||
 				strings.HasSuffix(name, ".htm") || strings.HasSuffix(name, ".svg") ||
 				epubPackages[file.Name])
+		// A part counts toward its semantic limit because of what it is, not
+		// where it sits, so the declared content type decides alongside the name.
+		isWorksheet := strings.HasPrefix(name, "xl/worksheets/") ||
+			declared == ooxmlWorksheetType
+		isSlide := strings.HasPrefix(name, "ppt/slides/slide") && strings.HasSuffix(name, ".xml") ||
+			declared == ooxmlSlideType
 		if xmlContent {
 			mode := xmlMeasureNone
 			switch {
-			case strings.HasPrefix(name, "xl/worksheets/"):
+			case isWorksheet:
 				mode = xmlMeasureOOXMLSheet
 			case name == "content.xml" && ext == ".ods":
 				mode = xmlMeasureODSSheet
@@ -517,10 +526,10 @@ func inspectZIP(data []byte, ext, mediaType string, policy InspectionPolicy) Cap
 				return record
 			}
 		}
-		if strings.HasPrefix(name, "ppt/slides/slide") && strings.HasSuffix(name, ".xml") {
+		if isSlide {
 			record.Measurements.Slides++
 		}
-		if strings.HasPrefix(name, "xl/worksheets/") && strings.HasSuffix(name, ".xml") {
+		if isWorksheet {
 			record.Measurements.Sheets++
 		}
 	}
@@ -1314,9 +1323,23 @@ func epubManifestTypes(
 			// classifies that when it scans the package document itself.
 			continue
 		}
-		declared[resource] = strings.ToLower(strings.TrimSpace(item.MediaType))
+		declaredType := strings.ToLower(strings.TrimSpace(item.MediaType))
+		// Renditions can declare the same entry differently. Keep whichever
+		// declaration causes inspection, so a second rendition cannot demote a
+		// scanned resource to an opaque one.
+		if existing, seen := declared[resource]; seen && existing != declaredType &&
+			inspectedEPUBType(existing) {
+			continue
+		}
+		declared[resource] = declaredType
 	}
 	return nil
+}
+
+// inspectedEPUBType reports whether a declared type puts a resource in scope
+// for reference scanning.
+func inspectedEPUBType(mediaType string) bool {
+	return isXMLMediaType(mediaType) || mediaType == "text/css"
 }
 
 // epubArchivePath resolves one EPUB-relative reference to an archive entry
