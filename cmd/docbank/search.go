@@ -1,12 +1,15 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -17,20 +20,53 @@ const (
 )
 
 var (
-	searchLimit  int
-	searchJSON   bool
-	searchTag    string
-	searchMIME   string
-	searchUnder  string
-	searchSince  string
-	searchBefore string
+	searchLimit          int
+	searchJSON           bool
+	searchTag            string
+	searchMIME           string
+	searchUnder          string
+	searchSince          string
+	searchBefore         string
+	searchMode           string
+	searchProfile        string
+	searchBinding        string
+	searchSourceVersions []string
+	searchExplain        bool
 )
+
+type documentSearchCLIOptions struct {
+	Mode              string
+	Profile           string
+	BindingID         string
+	ContentVersionIDs []string
+	Limit             int
+	Explain           bool
+	JSON              bool
+}
 
 var searchCmd = &cobra.Command{
 	Use:   "search <query>...",
 	Short: "Search document names and extracted text",
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if documentSearchFlagsChanged(cmd) {
+			if searchTag != "" || searchMIME != "" || searchUnder != "" || searchSince != "" || searchBefore != "" {
+				return usageError(errors.New("--mode search cannot be combined with tag, MIME, directory, or time filters"))
+			}
+			options := documentSearchCLIOptions{
+				Mode: searchMode, Profile: searchProfile, BindingID: searchBinding,
+				ContentVersionIDs: searchSourceVersions, Limit: searchLimit,
+				Explain: searchExplain, JSON: searchJSON,
+			}
+			if err := validateDocumentSearchOptions(strings.Join(args, " "), options); err != nil {
+				return err
+			}
+			c, err := client.Ensure(cmd.Context())
+			if err != nil {
+				return err
+			}
+			return runDocumentSearch(cmd, c, strings.Join(args, " "), options)
+		}
 		if searchLimit < 1 || searchLimit > maxSearchLimit {
 			return usageError(fmt.Errorf("--limit must be between 1 and %d", maxSearchLimit))
 		}
@@ -135,6 +171,162 @@ var searchCmd = &cobra.Command{
 	},
 }
 
+func documentSearchFlagsChanged(cmd *cobra.Command) bool {
+	return cmd.Flags().Changed("mode") || cmd.Flags().Changed("profile") ||
+		cmd.Flags().Changed("binding") || cmd.Flags().Changed("source-version") ||
+		cmd.Flags().Changed("explain")
+}
+
+func runDocumentSearch(cmd *cobra.Command, c *client.Client, query string, options documentSearchCLIOptions) error {
+	if err := validateDocumentSearchOptions(query, options); err != nil {
+		return err
+	}
+
+	profiles, err := c.ProcessingProfiles(cmd.Context())
+	if err != nil {
+		return err
+	}
+	profile, found := findProcessingProfile(profiles, options.Profile)
+	if !found {
+		return usageError(fmt.Errorf("processing profile %q is not executable on this daemon", options.Profile))
+	}
+	bindingID, err := selectDocumentSearchBinding(options.Mode, options.BindingID, profile.EmbeddingBindings)
+	if err != nil {
+		return usageError(err)
+	}
+	info, err := c.Info(cmd.Context())
+	if err != nil {
+		return err
+	}
+	report, err := c.SearchDocuments(cmd.Context(), api.DocumentSearchRequest{
+		Query: query, Mode: options.Mode, Limit: options.Limit, Profile: options.Profile,
+		BindingID: bindingID, Explain: options.Explain,
+		Fence: api.DocumentSourceFence{VaultUID: info.VaultID, ContentVersionIDs: options.ContentVersionIDs},
+	})
+	if err != nil {
+		return err
+	}
+	if options.JSON {
+		return writeCLIJSON(cmd.OutOrStdout(), report)
+	}
+	return writeDocumentSearchReport(cmd, report, options.Explain)
+}
+
+func validateDocumentSearchOptions(query string, options documentSearchCLIOptions) error {
+	if !validDocumentSearchMode(options.Mode) {
+		if options.Mode == "" {
+			return usageError(errors.New("--mode is required with processing search options"))
+		}
+		return usageError(errors.New("--mode must be lexical, semantic, hybrid, or auto"))
+	}
+	if options.Profile == "" {
+		return usageError(errors.New("--profile is required for processing search"))
+	}
+	if options.Limit < 1 || options.Limit > 100 {
+		return usageError(errors.New("--limit must be between 1 and 100 for processing search"))
+	}
+	if strings.TrimSpace(query) == "" {
+		return usageError(errors.New("search query must not be empty"))
+	}
+	if len(options.ContentVersionIDs) == 0 {
+		return usageError(errors.New("at least one --source-version is required"))
+	}
+	if len(options.ContentVersionIDs) > 4096 {
+		return usageError(errors.New("at most 4096 --source-version values are allowed"))
+	}
+	seen := make(map[string]struct{}, len(options.ContentVersionIDs))
+	for _, versionID := range options.ContentVersionIDs {
+		if !client.IsCanonicalUUIDv4(versionID) {
+			return usageError(fmt.Errorf("source version %q must be a canonical UUIDv4", versionID))
+		}
+		if _, exists := seen[versionID]; exists {
+			return usageError(fmt.Errorf("source version %q is duplicated", versionID))
+		}
+		seen[versionID] = struct{}{}
+	}
+	return nil
+}
+
+func validDocumentSearchMode(mode string) bool {
+	switch mode {
+	case "lexical", "semantic", "hybrid", "auto":
+		return true
+	default:
+		return false
+	}
+}
+
+func findProcessingProfile(profiles []api.ProcessingProfileSummary, name string) (api.ProcessingProfileSummary, bool) {
+	for _, profile := range profiles {
+		if profile.Name == name {
+			return profile, true
+		}
+	}
+	return api.ProcessingProfileSummary{}, false
+}
+
+func selectDocumentSearchBinding(mode, requested string, bindings []string) (string, error) {
+	if mode == "lexical" {
+		if requested != "" {
+			return "", errors.New("--binding is not used by lexical search")
+		}
+		return "", nil
+	}
+	if requested != "" {
+		if slices.Contains(bindings, requested) {
+			return requested, nil
+		}
+		return "", fmt.Errorf("--binding %q is not available in this profile", requested)
+	}
+	if len(bindings) == 1 {
+		return bindings[0], nil
+	}
+	if len(bindings) > 1 {
+		return "", errors.New("--binding is required because this profile has multiple embedding bindings")
+	}
+	if mode == "semantic" || mode == "hybrid" {
+		return "", errors.New("selected profile has no embedding binding for semantic search")
+	}
+	return "", nil
+}
+
+func writeDocumentSearchReport(cmd *cobra.Command, report api.DocumentSearchReport, explain bool) error {
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "mode: %s", report.ActualMode)
+	if report.RequestedMode != report.ActualMode {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), " (requested %s)", report.RequestedMode)
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\ncoverage: %s (%d/%d source document(s) complete)\n",
+		report.Coverage.State, report.Coverage.CompleteDocuments, report.Coverage.ScopedDocuments)
+	for _, degradation := range report.Degradations {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "degraded: %s\n", degradation)
+	}
+	if len(report.Results) == 0 {
+		_, err := fmt.Fprintln(cmd.OutOrStdout(), "no matches inside the source fence")
+		if err != nil {
+			return fmt.Errorf("writing empty document search result: %w", err)
+		}
+		return nil
+	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintln(w, "RANK\tSCORE\tSELECTOR\tVERSION\tPATH\tEXCERPT")
+	for _, result := range report.Results {
+		_, _ = fmt.Fprintf(w, "%d\t%.6g\t%s\t%s\t%s\t%s\n", result.Rank, result.Score,
+			formatNodeSelector(result.NodeID), result.ContentVersionID, result.Path, result.Excerpt)
+	}
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("writing document search results: %w", err)
+	}
+	if explain {
+		for _, event := range report.Trace {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "trace: %s=%d\n", event.Code, event.Count)
+		}
+	}
+	if report.Truncated {
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "results truncated at the requested limit")
+	}
+	return nil
+}
+
 func init() {
 	searchCmd.Flags().IntVar(&searchLimit, "limit", defaultSearchLimit,
 		"maximum results to return (1-1000)")
@@ -148,6 +340,16 @@ func init() {
 		"require modification at or after an absolute RFC3339 timestamp")
 	searchCmd.Flags().StringVar(&searchBefore, "modified-before", "",
 		"require modification before an absolute RFC3339 timestamp")
+	searchCmd.Flags().StringVar(&searchMode, "mode", "",
+		"processing search mode: lexical, semantic, hybrid, or auto")
+	searchCmd.Flags().StringVar(&searchProfile, "profile", "",
+		"named executable processing profile for --mode search")
+	searchCmd.Flags().StringVar(&searchBinding, "binding", "",
+		"embedding binding for semantic or hybrid search")
+	searchCmd.Flags().StringSliceVar(&searchSourceVersions, "source-version", nil,
+		"allowed content-version UUID (repeat for a bounded source fence)")
+	searchCmd.Flags().BoolVar(&searchExplain, "explain", false,
+		"show bounded retrieval stages without raw similarities or vectors")
 	searchCmd.Flags().BoolVar(&searchJSON, "json", false, "emit machine-readable JSON")
 	rootCmd.AddCommand(searchCmd)
 }

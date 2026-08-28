@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-08-28
 title: Searching
 description: Ranked, prefix-matching search over document names and verified text content.
 ---
@@ -82,6 +83,14 @@ extraction failure. `docbank jobs` shows whether that worker is running.
 
 PDF text layers, office formats, and OCR are unsupported. Their absence never
 changes name-search results or document authority.
+
+## Processing search
+
+Configured document processing adds a separate source-fenced retrieval surface
+for retained renditions and embeddings. It requires an explicit mode, profile,
+and authorized immutable source-version set; it does not change ordinary name
+and plain-text search. See [Document processing search](search.md) for modes,
+coverage, and the consumer authority contract.
 
 Next: organize documents beyond paths with
 [Organizing & Tagging](organizing.md), or see every search flag in the
