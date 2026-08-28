@@ -1,0 +1,28 @@
+{
+  "status": "complete",
+  "success": true,
+  "output_format": "markdown,json",
+  "markdown": "# Synthetic report\n\nFirst page.\n\n---\n\nSecond page.\n",
+  "json": {
+    "block_type": "Document",
+    "children": [
+      {
+        "id": "/page/0/Page/0",
+        "block_type": "Page",
+        "children": [
+          {"id": "/page/0/Text/0", "block_type": "Text", "html": "<p>First &amp; page.</p>"}
+        ]
+      },
+      {
+        "id": "/page/1/Page/1",
+        "block_type": "Page",
+        "children": [
+          {"id": "/page/1/Text/0", "block_type": "Text", "html": "<p>Second page.</p>"}
+        ]
+      }
+    ]
+  },
+  "page_count": 2,
+  "versions": {"marker": "2.1.0", "surya": "0.8.0"},
+  "result_url": "https://attacker.invalid/provider-result"
+}

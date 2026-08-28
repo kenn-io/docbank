@@ -325,7 +325,7 @@ func TestBuildRenditionV1PreservesParserGeneratedTaskCheckboxes(t *testing.T) {
 
 	rendered, err := BuildRenditionV1(evidence, policy)
 	require.NoError(t, err)
-	assert.Equal(t, "- \\[x\\] shipped\n- \\[ \\] pending\n", string(rendered.Markdown))
+	assert.Equal(t, "- [x] shipped\n- [ ] pending\n", string(rendered.Markdown))
 }
 
 func TestBuildRenditionV1DropsProviderSuppliedCheckboxControls(t *testing.T) {

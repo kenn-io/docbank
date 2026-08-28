@@ -3,6 +3,7 @@ package mistral
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -113,13 +114,43 @@ func testPDF(label string) []byte {
 }
 
 func testPDFXRefStream() []byte {
+	return testPDFXRefStreamWith(nil)
+}
+
+func testPDFXRefStreamWith(mutate func([]byte, []int) []byte) []byte {
 	var output bytes.Buffer
 	output.WriteString("%PDF-1.5\n")
+	offsets := make([]int, 3)
+	for index, object := range []string{
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		"<< /Type /Page /Parent 2 0 R >>",
+	} {
+		offsets[index] = output.Len()
+		_, _ = fmt.Fprintf(&output, "%d 0 obj\n%s\nendobj\n", index+1, object)
+	}
 	xref := output.Len()
-	_, _ = fmt.Fprintf(&output, "1 0 obj\n<< /Type /XRef /Size 2 /Root 2 0 R /W [1 2 1] /Length 4 >>\nstream\n")
-	output.Write([]byte{0, 0, 0, 0})
+	entries := make([]byte, 5*7)
+	putTestXRefEntry(entries, 0, 0, 0, 65_535)
+	for index, offset := range offsets {
+		putTestXRefEntry(entries, index+1, 1, uint32(offset), 0) // #nosec G115 -- bounded fixture.
+	}
+	putTestXRefEntry(entries, 4, 1, uint32(xref), 0) // #nosec G115 -- bounded fixture.
+	if mutate != nil {
+		entries = mutate(entries, offsets)
+	}
+	_, _ = fmt.Fprintf(&output,
+		"4 0 obj\n<< /Type /XRef /Size 5 /Root 1 0 R /W [1 4 2] /Length %d >>\nstream\n", len(entries))
+	output.Write(entries)
 	_, _ = fmt.Fprintf(&output, "\nendstream\nendobj\nstartxref\n%d\n%%%%EOF\n", xref)
 	return output.Bytes()
+}
+
+func putTestXRefEntry(entries []byte, index int, kind byte, offset uint32, generation uint16) {
+	entry := entries[index*7 : (index+1)*7]
+	entry[0] = kind
+	binary.BigEndian.PutUint32(entry[1:5], offset)
+	binary.BigEndian.PutUint16(entry[5:7], generation)
 }
 
 type errorReader struct {
