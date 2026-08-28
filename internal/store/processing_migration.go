@@ -11,6 +11,7 @@ import (
 	"io"
 	"reflect"
 	"strconv"
+	"strings"
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/document"
@@ -61,22 +62,57 @@ type legacySelectedVersion struct {
 func (s *Store) MigrateLegacyPlainText(
 	ctx context.Context,
 ) (LegacyMigrationReport, error) {
+	return s.migrateLegacyPlainText(ctx, "")
+}
+
+func (s *Store) migrateLegacyPlainTextBlob(ctx context.Context, blobHash string) error {
+	if err := validateCatalogSHA256(blobHash, "legacy plain-text blob hash"); err != nil {
+		return err
+	}
+	_, err := s.migrateLegacyPlainText(ctx, blobHash)
+	return err
+}
+
+func (s *Store) migrateLegacyPlainText(
+	ctx context.Context, blobFilter string,
+) (LegacyMigrationReport, error) {
 	profile, err := legacyPlainTextProfile()
 	if err != nil {
 		return LegacyMigrationReport{}, err
 	}
 	report := LegacyMigrationReport{ProfileFingerprint: profile.Fingerprint}
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		rows, err := readLegacyPlainTextRows(ctx, tx)
-		if err != nil {
-			return err
+		var sourceRevision, migratedRevision int64
+		if err := tx.QueryRowContext(ctx, `
+			SELECT source_revision,migrated_revision,generation_id,
+			       eligible_rows,migrated_builds,migrated_attachments,queued_blobs
+			FROM legacy_plain_text_migration_state WHERE singleton=1`,
+		).Scan(&sourceRevision, &migratedRevision, &report.LexicalGenerationID,
+			&report.EligibleRows, &report.MigratedBuilds,
+			&report.MigratedAttachments, &report.QueuedBlobs); err != nil {
+			return fmt.Errorf("reading legacy migration state: %w", err)
 		}
-		selected, err := readLegacySelectedVersions(ctx, tx)
-		if err != nil {
-			return err
-		}
-		if len(rows) == 0 && len(selected) == 0 {
+		if blobFilter == "" && sourceRevision == migratedRevision {
 			return nil
+		}
+		report.EligibleRows = 0
+		report.MigratedBuilds = 0
+		report.MigratedAttachments = 0
+		report.QueuedBlobs = 0
+		report.LexicalGenerationID = ""
+
+		rows, err := readLegacyPlainTextRows(ctx, tx, blobFilter)
+		if err != nil {
+			return err
+		}
+		selected, err := readLegacySelectedVersions(ctx, tx, blobFilter)
+		if err != nil {
+			return err
+		}
+		if blobFilter == "" {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM legacy_plain_text_migration_blobs`); err != nil {
+				return fmt.Errorf("resetting legacy plain-text migration report: %w", err)
+			}
 		}
 		selectedByBlob := make(map[string][]legacySelectedVersion)
 		for _, version := range selected {
@@ -149,11 +185,12 @@ func (s *Store) MigrateLegacyPlainText(
 		}
 
 		if err := revokeStaleLegacyPlainTextHeadsTx(
-			ctx, tx, selected, eligible, profile.Fingerprint,
+			ctx, tx, selected, eligible, profile.Fingerprint, blobFilter,
 		); err != nil {
 			return err
 		}
 
+		attachmentCounts := make(map[string]int)
 		for _, version := range selected {
 			row, ok := eligible[version.blobHash]
 			if !ok {
@@ -190,24 +227,29 @@ func (s *Store) MigrateLegacyPlainText(
 				return fmt.Errorf("publishing migrated legacy plain-text head: %w", err)
 			}
 			report.MigratedAttachments++
+			attachmentCounts[version.blobHash]++
 		}
 
-		generation, err := stageLegacyLexicalGenerationTx(ctx, tx)
-		if err != nil {
-			return err
+		generation := LexicalGeneration{}
+		if len(rows) != 0 || len(selected) != 0 {
+			generation, err = stageLegacyLexicalGenerationTx(ctx, tx)
+			if err != nil {
+				return err
+			}
+			report.LexicalGenerationID = generation.ID
 		}
-		report.LexicalGenerationID = generation.ID
 
-		if err := compareLegacyServingCompatibilityTx(
-			ctx, tx, selected, eligible, profile.Fingerprint, generation.ID,
-		); err != nil {
-			return err
+		if generation.ID != "" {
+			if err := compareLegacyServingCompatibilityTx(
+				ctx, tx, selected, eligible, profile.Fingerprint, generation.ID, blobFilter,
+			); err != nil {
+				return err
+			}
 		}
 
 		queued := make(map[string]struct{})
 		for blobHash := range selectedByBlob {
-			_, migrated := eligible[blobHash]
-			if migrated {
+			if _, ok := eligible[blobHash]; ok {
 				if _, err := tx.ExecContext(ctx,
 					`DELETE FROM text_extraction_queue WHERE blob_hash=?`, blobHash,
 				); err != nil {
@@ -235,20 +277,71 @@ func (s *Store) MigrateLegacyPlainText(
 			}
 		}
 		report.QueuedBlobs = len(queued)
+		stateBlobs := make(map[string]struct{})
+		for _, row := range rows {
+			stateBlobs[row.blobHash] = struct{}{}
+		}
+		for blobHash := range selectedByBlob {
+			stateBlobs[blobHash] = struct{}{}
+		}
+		for blobHash := range stateBlobs {
+			_, isEligible := eligible[blobHash]
+			_, isQueued := queued[blobHash]
+			if _, err := tx.ExecContext(ctx, `INSERT INTO legacy_plain_text_migration_blobs(
+				blob_hash,eligible,attachment_count,queued
+			) VALUES(?,?,?,?) ON CONFLICT(blob_hash) DO UPDATE SET
+				eligible=excluded.eligible,
+				attachment_count=excluded.attachment_count,
+				queued=excluded.queued`, blobHash, isEligible, attachmentCounts[blobHash], isQueued,
+			); err != nil {
+				return fmt.Errorf("recording legacy plain-text blob migration state: %w", err)
+			}
+		}
 
 		// extracted_text remains portable and recoverable. Its FTS projection is
 		// deliberately empty after the new lexical head becomes authoritative.
 		if _, err := tx.ExecContext(ctx, `DELETE FROM content_fts`); err != nil {
 			return fmt.Errorf("fencing legacy plain-text search authority: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO rendition_lexical_heads(singleton,generation_id) VALUES(1,?)
-			ON CONFLICT(singleton) DO UPDATE SET generation_id=excluded.generation_id`,
-			generation.ID,
-		); err != nil {
-			return fmt.Errorf("publishing migrated legacy lexical head: %w", err)
+		if generation.ID != "" {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO rendition_lexical_heads(singleton,generation_id) VALUES(1,?)
+				ON CONFLICT(singleton) DO UPDATE SET generation_id=excluded.generation_id`,
+				generation.ID,
+			); err != nil {
+				return fmt.Errorf("publishing migrated legacy lexical head: %w", err)
+			}
+			if err := s.collectSupersededLegacyLexicalGenerationsTx(
+				ctx, tx, generation.ID, nowRFC3339(),
+			); err != nil {
+				return err
+			}
 		}
-		return nil
+		if blobFilter == "" {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM legacy_plain_text_migration_dirty_blobs`); err != nil {
+				return fmt.Errorf("clearing completed legacy plain-text migration sources: %w", err)
+			}
+		} else if _, err := tx.ExecContext(ctx,
+			`DELETE FROM legacy_plain_text_migration_dirty_blobs WHERE blob_hash=?`, blobFilter,
+		); err != nil {
+			return fmt.Errorf("clearing completed legacy plain-text blob source: %w", err)
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT
+			COALESCE(SUM(eligible),0),COALESCE(SUM(eligible),0),
+			COALESCE(SUM(attachment_count),0),COALESCE(SUM(queued),0)
+			FROM legacy_plain_text_migration_blobs`).Scan(
+			&report.EligibleRows, &report.MigratedBuilds,
+			&report.MigratedAttachments, &report.QueuedBlobs,
+		); err != nil {
+			return fmt.Errorf("reading completed legacy plain-text migration report: %w", err)
+		}
+		var dirty bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+			SELECT 1 FROM legacy_plain_text_migration_dirty_blobs
+		)`).Scan(&dirty); err != nil {
+			return fmt.Errorf("reading dirty legacy plain-text migration sources: %w", err)
+		}
+		return storeLegacyMigrationStateTx(ctx, tx, sourceRevision, report, !dirty)
 	})
 	if err != nil {
 		return LegacyMigrationReport{}, fmt.Errorf("migrating legacy plain-text authority: %w", err)
@@ -256,9 +349,94 @@ func (s *Store) MigrateLegacyPlainText(
 	return report, nil
 }
 
+func storeLegacyMigrationStateTx(
+	ctx context.Context, tx *sql.Tx, sourceRevision int64, report LegacyMigrationReport,
+	completed bool,
+) error {
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE legacy_plain_text_migration_state SET
+			migrated_revision=CASE WHEN ? THEN ? ELSE migrated_revision END,
+			generation_id=?,eligible_rows=?,migrated_builds=?,
+			migrated_attachments=?,queued_blobs=?
+		WHERE singleton=1 AND source_revision=?`,
+		completed, sourceRevision, report.LexicalGenerationID, report.EligibleRows,
+		report.MigratedBuilds, report.MigratedAttachments, report.QueuedBlobs,
+		sourceRevision,
+	); err != nil {
+		return fmt.Errorf("recording legacy migration state: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) collectSupersededLegacyLexicalGenerationsTx(
+	ctx context.Context, tx *sql.Tx, activeGenerationID, asOf string,
+) error {
+	lexicalGenerationReaders.Lock()
+	defer lexicalGenerationReaders.Unlock()
+
+	generationIDs, err := func() (_ []string, retErr error) {
+		rows, err := tx.QueryContext(ctx, `
+			SELECT g.generation_id
+			FROM rendition_lexical_generations g
+			WHERE g.generation_id<>?
+			  AND NOT EXISTS(
+				SELECT 1 FROM rendition_lexical_heads h
+				WHERE h.generation_id=g.generation_id
+			  )
+			  AND NOT EXISTS(
+				SELECT 1 FROM current_rendition_roots r
+				WHERE r.target_kind='lexical_generation'
+				  AND r.target_id=g.generation_id
+				  AND r.active=1
+				  AND (r.expires_at IS NULL OR r.expires_at>?)
+			  )
+			ORDER BY g.generation_id`, activeGenerationID, asOf)
+		if err != nil {
+			return nil, fmt.Errorf("listing superseded legacy lexical generations: %w", err)
+		}
+		defer func() {
+			retErr = errors.Join(retErr, rows.Close())
+		}()
+		var result []string
+		for rows.Next() {
+			var generationID string
+			if err := rows.Scan(&generationID); err != nil {
+				return nil, fmt.Errorf("scanning superseded legacy lexical generation: %w", err)
+			}
+			if lexicalGenerationReaders.stores[s][generationID] == 0 {
+				result = append(result, generationID)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("listing superseded legacy lexical generations: %w", err)
+		}
+		return result, nil
+	}()
+	if err != nil {
+		return err
+	}
+	for _, generationID := range generationIDs {
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM rendition_lexical_fts WHERE generation_id=?`, generationID); err != nil {
+			return fmt.Errorf("removing superseded lexical rows %s: %w", generationID, err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM rendition_lexical_generation_manifests WHERE generation_id=?`,
+			generationID); err != nil {
+			return fmt.Errorf("removing superseded lexical manifest %s: %w", generationID, err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM rendition_lexical_generations WHERE generation_id=?`,
+			generationID); err != nil {
+			return fmt.Errorf("removing superseded lexical generation %s: %w", generationID, err)
+		}
+	}
+	return nil
+}
+
 func revokeStaleLegacyPlainTextHeadsTx(
 	ctx context.Context, tx *sql.Tx, selected []legacySelectedVersion,
-	eligible map[string]legacyPlainTextRow, profileFingerprint string,
+	eligible map[string]legacyPlainTextRow, profileFingerprint, blobFilter string,
 ) error {
 	expected := make(map[string]string, len(selected))
 	for _, version := range selected {
@@ -281,13 +459,20 @@ func revokeStaleLegacyPlainTextHeadsTx(
 	}
 	type staleHead struct{ versionID, attachmentID string }
 	stale, err := func() (_ []staleHead, retErr error) {
-		rows, err := tx.QueryContext(ctx, `
+		query := `
 			SELECT h.content_version_id,h.attachment_id
 			FROM rendition_heads h
 			JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
 			JOIN rendition_builds b ON b.build_id=a.build_id
+			JOIN content_versions v ON v.version_id=h.content_version_id
 			WHERE h.profile_fingerprint=? AND b.provider_operation_id=?
-			ORDER BY h.content_version_id`, profileFingerprint, legacyPlainTextProvider)
+			ORDER BY h.content_version_id`
+		args := []any{profileFingerprint, legacyPlainTextProvider}
+		if blobFilter != "" {
+			query = strings.Replace(query, "\n\t\t\tORDER BY", " AND v.blob_hash=?\n\t\t\tORDER BY", 1)
+			args = append(args, blobFilter)
+		}
+		rows, err := tx.QueryContext(ctx, query, args...)
 		if err != nil {
 			return nil, fmt.Errorf("reading legacy rendition heads for replacement: %w", err)
 		}
@@ -325,11 +510,18 @@ func revokeStaleLegacyPlainTextHeadsTx(
 }
 
 func readLegacyPlainTextRows(
-	ctx context.Context, tx *sql.Tx,
+	ctx context.Context, tx *sql.Tx, blobFilter string,
 ) ([]legacyPlainTextRow, error) {
-	rows, err := tx.QueryContext(ctx, `
+	query := `
 		SELECT blob_hash,extractor,extractor_version,status,text,extracted_at
-		FROM extracted_text ORDER BY blob_hash,extractor`)
+		FROM extracted_text`
+	args := []any(nil)
+	if blobFilter != "" {
+		query += ` WHERE blob_hash=?`
+		args = append(args, blobFilter)
+	}
+	query += ` ORDER BY blob_hash,extractor`
+	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("reading legacy extracted-text cache: %w", err)
 	}
@@ -352,14 +544,20 @@ func readLegacyPlainTextRows(
 }
 
 func readLegacySelectedVersions(
-	ctx context.Context, tx *sql.Tx,
+	ctx context.Context, tx *sql.Tx, blobFilter string,
 ) ([]legacySelectedVersion, error) {
-	rows, err := tx.QueryContext(ctx, `
+	query := `
 		SELECT v.version_id,v.blob_hash,n.name,n.trashed_at IS NOT NULL
 		FROM text_searchable_versions sv
 		JOIN content_versions v ON v.version_id=sv.version_id
-		JOIN nodes n ON n.current_version_id=v.version_id
-		ORDER BY v.version_id`)
+		JOIN nodes n ON n.current_version_id=v.version_id`
+	args := []any(nil)
+	if blobFilter != "" {
+		query += ` WHERE v.blob_hash=?`
+		args = append(args, blobFilter)
+	}
+	query += ` ORDER BY v.version_id`
+	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("reading legacy searchable versions: %w", err)
 	}
@@ -650,7 +848,7 @@ func stageLegacyLexicalGenerationTx(
 
 func compareLegacyServingCompatibilityTx(
 	ctx context.Context, tx *sql.Tx, selected []legacySelectedVersion,
-	eligible map[string]legacyPlainTextRow, profileFingerprint, generationID string,
+	eligible map[string]legacyPlainTextRow, profileFingerprint, generationID, blobFilter string,
 ) error {
 	type authority struct{ name, text string }
 	want := make(map[string]authority)
@@ -672,15 +870,21 @@ func compareLegacyServingCompatibilityTx(
 		}
 		want[version.versionID] = authority{name: version.name, text: row.text.String}
 	}
-	rows, err := tx.QueryContext(ctx, `
+	query := `
 		SELECT h.content_version_id,n.name,f.text
 		FROM rendition_heads h
 		JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
 		JOIN rendition_lexical_fts f ON f.build_id=a.build_id
 		JOIN content_versions v ON v.version_id=h.content_version_id
 		JOIN nodes n ON n.current_version_id=v.version_id
-		WHERE h.profile_fingerprint=? AND f.generation_id=? AND n.trashed_at IS NULL
-		ORDER BY h.content_version_id,f.segment_id`, profileFingerprint, generationID)
+		WHERE h.profile_fingerprint=? AND f.generation_id=? AND n.trashed_at IS NULL`
+	args := []any{profileFingerprint, generationID}
+	if blobFilter != "" {
+		query += ` AND v.blob_hash=?`
+		args = append(args, blobFilter)
+	}
+	query += ` ORDER BY h.content_version_id,f.segment_id`
+	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("comparing migrated search compatibility: %w", err)
 	}

@@ -1,6 +1,9 @@
 package api
 
-import "go.kenn.io/docbank/internal/store"
+import (
+	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/store"
+)
 
 const openAPIStringType = "string"
 
@@ -19,19 +22,21 @@ const (
 // Node is the wire representation of a store.Node. Path is populated on live
 // single-node responses; lists and trashed nodes omit it.
 type Node struct {
-	ID               int64  `json:"id"`
-	ParentID         *int64 `json:"parent_id,omitempty"`
-	Name             string `json:"name"`
-	Kind             string `json:"kind" enum:"dir,file"`
-	CurrentVersionID string `json:"current_version_id,omitzero" format:"uuid"`
-	BlobHash         string `json:"blob_hash,omitzero" pattern:"^[0-9a-f]{64}$"`
-	Size             int64  `json:"size"`
-	MimeType         string `json:"mime_type,omitzero"`
-	Revision         int64  `json:"revision"`
-	CreatedAt        string `json:"created_at"`
-	ModifiedAt       string `json:"modified_at"`
-	TrashedAt        string `json:"trashed_at,omitzero"`
-	Path             string `json:"path,omitzero"` // set on live single-node responses only
+	ID               int64           `json:"id"`
+	ParentID         *int64          `json:"parent_id,omitempty"`
+	Name             string          `json:"name"`
+	Kind             string          `json:"kind" enum:"dir,file"`
+	CurrentVersionID string          `json:"current_version_id,omitzero" format:"uuid"`
+	BlobHash         string          `json:"blob_hash,omitzero" pattern:"^[0-9a-f]{64}$"`
+	MD5              string          `json:"md5,omitzero" pattern:"^[0-9a-f]{32}$"`
+	Size             int64           `json:"size"`
+	MimeType         string          `json:"mime_type,omitzero"`
+	Revision         int64           `json:"revision"`
+	CreatedAt        string          `json:"created_at"`
+	ModifiedAt       string          `json:"modified_at"`
+	TrashedAt        string          `json:"trashed_at,omitzero"`
+	Path             string          `json:"path,omitzero"` // set on live single-node responses only
+	SourceMetadata   *SourceMetadata `json:"source_metadata,omitempty"`
 }
 
 // NodePage is one bounded, ordered directory-child listing.
@@ -80,16 +85,29 @@ type BatchMoveReport struct {
 
 // ContentVersion is the wire representation of an immutable version record.
 type ContentVersion struct {
-	ID                    string  `json:"id" format:"uuid"`
-	NodeID                int64   `json:"node_id"`
-	BlobHash              string  `json:"blob_hash" pattern:"^[0-9a-f]{64}$"`
-	Size                  int64   `json:"size" minimum:"0"`
-	MimeType              string  `json:"mime_type,omitzero"`
-	RecordedAt            string  `json:"recorded_at"`
-	NodeRevision          int64   `json:"node_revision" minimum:"1"`
-	IntroducedOperationID string  `json:"introduced_operation_id" format:"uuid"`
-	TransitionKind        string  `json:"transition_kind" enum:"content_create,content_replace,content_revert"`
-	SourceVersionID       *string `json:"source_version_id,omitempty" format:"uuid"`
+	ID                    string          `json:"id" format:"uuid"`
+	NodeID                int64           `json:"node_id"`
+	BlobHash              string          `json:"blob_hash" pattern:"^[0-9a-f]{64}$"`
+	MD5                   string          `json:"md5,omitzero" pattern:"^[0-9a-f]{32}$"`
+	Size                  int64           `json:"size" minimum:"0"`
+	MimeType              string          `json:"mime_type,omitzero"`
+	RecordedAt            string          `json:"recorded_at"`
+	NodeRevision          int64           `json:"node_revision" minimum:"1"`
+	IntroducedOperationID string          `json:"introduced_operation_id" format:"uuid"`
+	TransitionKind        string          `json:"transition_kind" enum:"content_create,content_replace,content_revert"`
+	SourceVersionID       *string         `json:"source_version_id,omitempty" format:"uuid"`
+	SourceMetadata        *SourceMetadata `json:"source_metadata,omitempty"`
+}
+
+// SourceMetadata is durable local evidence extracted from verified original
+// bytes, plus attachment facts joined only for the requested node/version.
+type SourceMetadata struct {
+	ContractVersion      string                              `json:"contract_version"`
+	ExtractorFingerprint string                              `json:"extractor_fingerprint" pattern:"^[0-9a-f]{64}$"`
+	Checksum             string                              `json:"checksum" pattern:"^[0-9a-f]{64}$"`
+	Fields               []document.SourceMetadataFieldV1    `json:"fields"`
+	Warnings             []document.SourceMetadataWarningV1  `json:"warnings"`
+	Attachment           store.SourceMetadataAttachmentFacts `json:"attachment"`
 }
 
 // ContentVersionPage is one bounded newest-first version listing.
@@ -923,7 +941,7 @@ type BackupRestoreEvent struct {
 func fromStoreNode(n store.Node) Node {
 	out := Node{
 		ID: n.ID, ParentID: n.ParentID, Name: n.Name, Kind: n.Kind,
-		CurrentVersionID: n.CurrentVersionID, BlobHash: n.BlobHash,
+		CurrentVersionID: n.CurrentVersionID, BlobHash: n.BlobHash, MD5: n.MD5,
 		Size: n.Size, MimeType: n.MimeType, Revision: n.Revision,
 		CreatedAt: n.CreatedAt, ModifiedAt: n.ModifiedAt,
 	}
@@ -935,11 +953,18 @@ func fromStoreNode(n store.Node) Node {
 
 func fromStoreContentVersion(v store.ContentVersion) ContentVersion {
 	return ContentVersion{
-		ID: v.ID, NodeID: v.NodeID, BlobHash: v.BlobHash, Size: v.Size,
+		ID: v.ID, NodeID: v.NodeID, BlobHash: v.BlobHash, MD5: v.MD5, Size: v.Size,
 		MimeType: v.MimeType, RecordedAt: v.RecordedAt, NodeRevision: v.NodeRevision,
 		IntroducedOperationID: v.IntroducedOperationID,
 		TransitionKind:        v.TransitionKind, SourceVersionID: v.SourceVersionID,
 	}
+}
+
+func fromStoreSourceMetadata(view store.SourceMetadataView) *SourceMetadata {
+	return &SourceMetadata{ContractVersion: view.Metadata.ContractVersion,
+		ExtractorFingerprint: view.Generation.ExtractorFingerprint,
+		Checksum:             view.Generation.Checksum, Fields: view.Metadata.Fields,
+		Warnings: view.Metadata.Warnings, Attachment: view.Attachment}
 }
 
 func fromStoreProvenanceFact(fact store.ProvenanceFact) ProvenanceFact {

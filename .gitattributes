@@ -1,8 +1,8 @@
 # The compatibility bundle is a byte-for-byte oracle, not a text file.
 document/internal/compattest/testdata/document-compat-v1.json -text
-# The evidence golden bundle is a byte-for-byte oracle, not a text file.
+# Document goldens are byte-for-byte protocol, rendering, and vector oracles.
 document/testdata/normalized-evidence-v1.golden.json -text
-# The rendition golden bundle is a byte-for-byte oracle, not a text file.
-document/testdata/rendition-v1.golden.md -text
-# The processing profile golden bundle is a byte-for-byte oracle, not a text file.
 document/testdata/profile-v1.golden.json -text
+document/testdata/rendition-v1.golden.md -text
+document/testdata/source-metadata-v1.golden.json -text
+document/testdata/vector-set-v1.golden.bin -text

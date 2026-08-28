@@ -16,6 +16,7 @@ type ContentVersion struct {
 	ID                    string
 	NodeID                int64
 	BlobHash              string
+	MD5                   string
 	Size                  int64
 	MimeType              string
 	RecordedAt            string
@@ -32,13 +33,14 @@ type ContentVersionView struct {
 	Version ContentVersion
 }
 
-const contentVersionCols = `version_id, node_id, blob_hash, size,
+const contentVersionCols = `version_id, node_id, blob_hash,
+	COALESCE((SELECT md5 FROM blob_checksums WHERE blob_sha256=content_versions.blob_hash), ''), size,
 	COALESCE(mime_type, ''), recorded_at, node_revision,
 	introduced_operation_id, transition_kind, source_version_id`
 
 func scanContentVersion(row interface{ Scan(args ...any) error }) (ContentVersion, error) {
 	var v ContentVersion
-	err := row.Scan(&v.ID, &v.NodeID, &v.BlobHash, &v.Size, &v.MimeType,
+	err := row.Scan(&v.ID, &v.NodeID, &v.BlobHash, &v.MD5, &v.Size, &v.MimeType,
 		&v.RecordedAt, &v.NodeRevision, &v.IntroducedOperationID,
 		&v.TransitionKind, &v.SourceVersionID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -124,9 +126,11 @@ func (s *Store) ContentVersions(
 		 ), totals AS (
 		   SELECT COUNT(*) AS total FROM content_versions WHERE node_id = ?
 		 )
-		 SELECT target.kind, totals.total,
+			 SELECT target.kind, totals.total,
 		        COALESCE(page.version_id, ''), COALESCE(page.node_id, 0),
-		        COALESCE(page.blob_hash, ''), COALESCE(page.size, 0),
+		        COALESCE(page.blob_hash, ''),
+		        COALESCE((SELECT md5 FROM blob_checksums WHERE blob_sha256=page.blob_hash), ''),
+		        COALESCE(page.size, 0),
 		        COALESCE(page.mime_type, ''), COALESCE(page.recorded_at, ''),
 		        COALESCE(page.node_revision, 0),
 		        COALESCE(page.introduced_operation_id, ''),
@@ -145,7 +149,7 @@ func (s *Store) ContentVersions(
 		found = true
 		var kind string
 		var v ContentVersion
-		if err := rows.Scan(&kind, &total, &v.ID, &v.NodeID, &v.BlobHash, &v.Size,
+		if err := rows.Scan(&kind, &total, &v.ID, &v.NodeID, &v.BlobHash, &v.MD5, &v.Size,
 			&v.MimeType, &v.RecordedAt, &v.NodeRevision, &v.IntroducedOperationID,
 			&v.TransitionKind, &v.SourceVersionID); err != nil {
 			return nil, 0, fmt.Errorf("listing content versions of node %d: scanning page: %w", nodeID, err)
@@ -310,7 +314,7 @@ func (s *Store) confirmContentWithReceiptTx(
 			n.ID, ifRev, ErrStaleRevision,
 		)
 	}
-	if err := s.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
+	if err := s.EnsureOrdinaryBlobTx(tx, blobHash, size, physical...); err != nil {
 		return ContentWriteReceipt{}, err
 	}
 	receipt := ContentWriteReceipt{Node: n}
@@ -368,7 +372,7 @@ func (s *Store) SyncWatchedContent(
 			return err
 		}
 		if cursor.blobHash == blobHash && cursor.size == size {
-			if err := s.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
+			if err := s.EnsureOrdinaryBlobTx(tx, blobHash, size, physical...); err != nil {
 				return fmt.Errorf("reconciling unchanged watched content: %w", err)
 			}
 			if n.BlobHash != blobHash {
@@ -380,7 +384,7 @@ func (s *Store) SyncWatchedContent(
 			return nil
 		}
 		if n.BlobHash == blobHash && n.Size == size {
-			if err := s.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
+			if err := s.EnsureOrdinaryBlobTx(tx, blobHash, size, physical...); err != nil {
 				return fmt.Errorf("checking unchanged watched content: %w", err)
 			}
 			updated = n
@@ -468,7 +472,7 @@ func (s *Store) replaceContentTx(
 			ctx, tx, s, n, blobHash, size, mimeType, "content_replace", nil, physical...,
 		)
 	}
-	if err := s.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
+	if err := s.EnsureOrdinaryBlobTx(tx, blobHash, size, physical...); err != nil {
 		return Node{}, ContentVersion{}, err
 	}
 	return installContentVersionTx(

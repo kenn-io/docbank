@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -43,7 +45,15 @@ func TestRenditionCatalogSharesOneBuildAcrossVersionProfilesWithinVault(t *testi
 	require.Equal(t, baseProfile.EvidenceLexicalFingerprint, embeddingProfile.EvidenceLexicalFingerprint)
 	require.NotEqual(t, baseProfile.Fingerprint, embeddingProfile.Fingerprint,
 		"an unrelated embedding binding must change the full profile only")
+	_, err := s.db.Exec(`INSERT INTO rendition_blob_staging(blob_hash) VALUES(?),(?)`,
+		catalogEvidenceBlobHash, catalogMarkdownBlobHash)
+	require.NoError(t, err)
 	require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+	var stagedArtifacts int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_blob_staging
+		WHERE blob_hash IN (?,?)`, catalogEvidenceBlobHash, catalogMarkdownBlobHash,
+	).Scan(&stagedArtifacts))
+	assert.Zero(t, stagedArtifacts, "an immutable build commits its provider artifact bytes")
 
 	first := RenditionAttachmentRecord{
 		ID: catalogAttachmentFirst, VaultID: s.VaultID(),
@@ -55,12 +65,16 @@ func TestRenditionCatalogSharesOneBuildAcrossVersionProfilesWithinVault(t *testi
 		ContentVersionID: versions[1], BuildID: build.ID, Profile: embeddingProfile,
 		AttachedAt: "2026-08-22T10:01:00.000000000Z",
 	}
-	require.NoError(t, publishRenditionForTest(
-		t, s, first, "2026-08-22T10:02:00.000000000Z", fakeHash("c1"),
-	))
-	require.NoError(t, publishRenditionForTest(
-		t, s, second, "2026-08-22T10:03:00.000000000Z", fakeHash("c1"),
-	))
+	require.NoError(t, s.AttachRenditionBuild(t.Context(), first))
+	require.NoError(t, s.AttachRenditionBuild(t.Context(), second))
+	require.NoError(t, s.PublishRenditionHead(t.Context(), RenditionHeadRecord{
+		ContentVersionID: versions[0], ProcessingProfileFingerprint: baseProfile.Fingerprint,
+		AttachmentID: first.ID, PublishedAt: "2026-08-22T10:02:00.000000000Z",
+	}))
+	require.NoError(t, s.PublishRenditionHead(t.Context(), RenditionHeadRecord{
+		ContentVersionID: versions[1], ProcessingProfileFingerprint: embeddingProfile.Fingerprint,
+		AttachmentID: second.ID, PublishedAt: "2026-08-22T10:03:00.000000000Z",
+	}))
 
 	firstView, err := s.ActiveRendition(t.Context(), versions[0], baseProfile.Fingerprint)
 	require.NoError(t, err)
@@ -80,6 +94,73 @@ func TestRenditionCatalogSharesOneBuildAcrossVersionProfilesWithinVault(t *testi
 	assert.Equal(t, 2, attachmentCount)
 }
 
+func TestContentDeletionCascadesVersionScopedRenditionAuthority(t *testing.T) {
+	setup := func(t *testing.T, historical bool) (*Store, Node, string, ProcessingProfileRecord) {
+		t.Helper()
+		s := newTestStore(t)
+		created, err := s.CreateFile(t.Context(), s.RootID(), "processed.pdf",
+			catalogSourceHash, int64(len(catalogBlobContents[catalogSourceHash])), "application/pdf")
+		require.NoError(t, err)
+		targetVersion := created.CurrentVersionID
+		if historical {
+			created, _, err = s.ReplaceContent(t.Context(), created.ID, created.Revision,
+				fakeHash("53"), 23, "application/pdf")
+			require.NoError(t, err)
+		}
+		require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+			if err := s.EnsureBlobTx(tx, catalogEvidenceBlobHash,
+				int64(len(catalogBlobContents[catalogEvidenceBlobHash]))); err != nil {
+				return err
+			}
+			return s.EnsureBlobTx(tx, catalogMarkdownBlobHash,
+				int64(len(catalogBlobContents[catalogMarkdownBlobHash])))
+		}))
+		profile := catalogProcessingProfile(t, false)
+		build := catalogRenditionBuild(s, profile)
+		require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+		attachment := RenditionAttachmentRecord{
+			ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: targetVersion,
+			BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-22T10:00:00.000000000Z",
+		}
+		require.NoError(t, s.AttachRenditionBuild(t.Context(), attachment))
+		require.NoError(t, s.PublishRenditionHead(t.Context(), RenditionHeadRecord{
+			ContentVersionID: targetVersion, ProcessingProfileFingerprint: profile.Fingerprint,
+			AttachmentID: attachment.ID, PublishedAt: "2026-08-22T10:01:00.000000000Z",
+		}))
+		return s, created, targetVersion, profile
+	}
+
+	assertRevoked := func(t *testing.T, s *Store, versionID string, profile ProcessingProfileRecord) {
+		t.Helper()
+		_, err := s.ActiveRendition(t.Context(), versionID, profile.Fingerprint)
+		require.ErrorIs(t, err, ErrNotFound)
+		var attachments, heads int
+		require.NoError(t, s.db.QueryRow(`SELECT
+			(SELECT COUNT(*) FROM rendition_attachments),
+			(SELECT COUNT(*) FROM rendition_heads)`).Scan(&attachments, &heads))
+		assert.Zero(t, attachments)
+		assert.Zero(t, heads)
+	}
+
+	t.Run("history prune", func(t *testing.T) {
+		s, node, versionID, profile := setup(t, true)
+		_, err := s.PruneContentVersions(t.Context(), node.ID, node.Revision,
+			VersionPruneSelector{VersionIDs: []string{versionID}}, true)
+		require.NoError(t, err)
+		assertRevoked(t, s, versionID, profile)
+	})
+
+	t.Run("empty trash", func(t *testing.T) {
+		s, node, versionID, profile := setup(t, false)
+		node, _, err := s.Trash(t.Context(), node.ID, node.Revision)
+		require.NoError(t, err)
+		require.NotNil(t, node.TrashedAt)
+		_, err = s.TrashEmpty(t.Context(), 0, true)
+		require.NoError(t, err)
+		assertRevoked(t, s, versionID, profile)
+	})
+}
+
 func TestRenditionCatalogRejectsCrossVaultAttachment(t *testing.T) {
 	s, versions := newRenditionCatalogFixture(t)
 	other := newTestStore(t)
@@ -87,11 +168,11 @@ func TestRenditionCatalogRejectsCrossVaultAttachment(t *testing.T) {
 	build := catalogRenditionBuild(s, profile)
 	require.NoError(t, s.StageRenditionBuild(t.Context(), build))
 
-	err := publishRenditionForTest(t, s, RenditionAttachmentRecord{
+	err := s.AttachRenditionBuild(t.Context(), RenditionAttachmentRecord{
 		ID: catalogAttachmentFirst, VaultID: other.VaultID(),
 		ContentVersionID: versions[0], BuildID: build.ID, Profile: profile,
 		AttachedAt: "2026-08-22T10:00:00.000000000Z",
-	}, "2026-08-22T10:01:00.000000000Z", fakeHash("c2"))
+	})
 	require.ErrorContains(t, err, "vault")
 
 	var count int
@@ -100,67 +181,73 @@ func TestRenditionCatalogRejectsCrossVaultAttachment(t *testing.T) {
 }
 
 func TestRenditionCatalogRejectsArtifactsForbiddenByAttachmentProfile(t *testing.T) {
+	t.Run("sanitized Markdown retention disabled", func(t *testing.T) {
+		s, versions := newRenditionCatalogFixture(t)
+		profile := catalogProcessingProfileWith(t, false, func(profile *document.ProcessingProfileV1) {
+			profile.RetentionDisclosure.RetainSanitizedMarkdown = false
+		})
+		build := catalogRenditionBuild(s, profile)
+		require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+
+		err := s.AttachRenditionBuild(t.Context(), RenditionAttachmentRecord{
+			ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
+			BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-25T15:00:00.000000000Z",
+		})
+		require.ErrorContains(t, err, "artifact role")
+
+		var count int
+		require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_attachments`).Scan(&count))
+		assert.Zero(t, count)
+	})
+
 	tests := []struct {
 		name   string
-		role   string
-		policy jsontext.Value
+		role   document.EvidenceArtifactRole
 		mutate func(*document.ProcessingProfileV1)
 	}{
 		{
-			name: "sanitized Markdown retention disabled",
-			mutate: func(profile *document.ProcessingProfileV1) {
-				profile.RetentionDisclosure.RetainSanitizedMarkdown = false
-			},
-		},
-		{
-			name: "provider Markdown retention disabled",
-			role: string(document.EvidenceArtifactMarkdown),
-			policy: jsontext.Value(
-				`{"roles":[{"max_count":1,"min_count":1,"role":"normalized_evidence"},{"max_count":1,"min_count":1,"role":"provider_markdown"},{"max_count":1,"min_count":1,"role":"sanitized_markdown"}],"version":1}`,
-			),
-			mutate: func(profile *document.ProcessingProfileV1) {
-				profile.Rendition.RequestedArtifacts = []document.EvidenceArtifactRole{
-					document.EvidenceArtifactMarkdown,
-				}
-			},
-		},
-		{
-			name: "typed artifact retention disabled",
-			role: string(document.EvidenceArtifactStructured),
-			policy: jsontext.Value(
-				`{"roles":[{"max_count":1,"min_count":1,"role":"normalized_evidence"},{"max_count":1,"min_count":1,"role":"sanitized_markdown"},{"max_count":1,"min_count":1,"role":"structured_evidence"}],"version":1}`,
-			),
+			name: "typed artifact retention disabled", role: document.EvidenceArtifactStructured,
 			mutate: func(profile *document.ProcessingProfileV1) {
 				profile.RetentionDisclosure.RetainTypedArtifacts = false
 			},
 		},
+		{
+			name: "provider Markdown not requested", role: document.EvidenceArtifactMarkdown,
+			mutate: func(profile *document.ProcessingProfileV1) {
+				profile.RetentionDisclosure.RetainProviderMarkdown = true
+			},
+		},
 	}
-	for _, tt := range tests {
+	for index, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s, versions := newRenditionCatalogFixture(t)
 			profile := catalogProcessingProfileWith(t, false, tt.mutate)
 			build := catalogRenditionBuild(s, profile)
-			if tt.role != "" {
-				build.CapturedArtifactPolicy = tt.policy
-				build.CapturedArtifactPolicyFingerprint = testSHA256(tt.policy)
-				build.Artifacts = append(build.Artifacts, RenditionArtifactRecord{
-					ID: "artifact_" + fakeHash("2f"), Role: tt.role,
-					BlobHash: catalogEvidenceBlobHash, Size: int64(len(catalogBlobContents[catalogEvidenceBlobHash])),
-					Checksum: catalogEvidenceBlobHash, State: RenditionArtifactVerified,
-				})
-				build.DeclaredArtifactCount = len(build.Artifacts)
+			build.ID = fakeHash(string(rune('d' + index)))
+			roles := []capturedArtifactRoleV1{
+				{MaxCount: 1, MinCount: 1, Role: catalogArtifactNormalizedEvidence},
+				{MaxCount: 1, MinCount: 1, Role: catalogArtifactSanitizedMarkdown},
+				{MaxCount: 1, MinCount: 1, Role: string(tt.role)},
 			}
+			sort.Slice(roles, func(i, j int) bool { return roles[i].Role < roles[j].Role })
+			policyBytes, err := json.Marshal(capturedArtifactPolicyV1{Roles: roles, Version: 1}, json.Deterministic(true))
+			require.NoError(t, err)
+			policy := jsontext.Value(policyBytes)
+			build.CapturedArtifactPolicy = policy
+			build.CapturedArtifactPolicyFingerprint = testSHA256(policy)
+			build.Artifacts = append(build.Artifacts, RenditionArtifactRecord{
+				ID: "artifact_" + fakeHash("2f"), Role: string(tt.role),
+				BlobHash: catalogEvidenceBlobHash, Size: int64(len(catalogBlobContents[catalogEvidenceBlobHash])),
+				Checksum: catalogEvidenceBlobHash, State: RenditionArtifactVerified,
+			})
+			build.DeclaredArtifactCount = len(build.Artifacts)
 			require.NoError(t, s.StageRenditionBuild(t.Context(), build))
 
-			err := publishRenditionForTest(t, s, RenditionAttachmentRecord{
+			err = s.AttachRenditionBuild(t.Context(), RenditionAttachmentRecord{
 				ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
-				BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-25T15:00:00.000000000Z",
-			}, "2026-08-25T15:01:00.000000000Z", fakeHash("c3"))
+				BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-24T12:00:00.000000000Z",
+			})
 			require.ErrorContains(t, err, "artifact role")
-
-			var count int
-			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_attachments`).Scan(&count))
-			assert.Zero(t, count)
 		})
 	}
 }
@@ -171,10 +258,16 @@ func TestProcessingMetadataRejectsRestoredAttachmentWithForbiddenArtifact(t *tes
 		profile.RetentionDisclosure.RetainTypedArtifacts = false
 	})
 	build := catalogRenditionBuild(s, profile)
-	build.CapturedArtifactPolicy = jsontext.Value(
-		`{"roles":[{"max_count":1,"min_count":1,"role":"normalized_evidence"},{"max_count":1,"min_count":1,"role":"sanitized_markdown"},{"max_count":1,"min_count":1,"role":"structured_evidence"}],"version":1}`,
-	)
-	build.CapturedArtifactPolicyFingerprint = testSHA256(build.CapturedArtifactPolicy)
+	roles := []capturedArtifactRoleV1{
+		{MaxCount: 1, MinCount: 1, Role: catalogArtifactNormalizedEvidence},
+		{MaxCount: 1, MinCount: 1, Role: catalogArtifactSanitizedMarkdown},
+		{MaxCount: 1, MinCount: 1, Role: string(document.EvidenceArtifactStructured)},
+	}
+	sort.Slice(roles, func(i, j int) bool { return roles[i].Role < roles[j].Role })
+	policyBytes, err := json.Marshal(capturedArtifactPolicyV1{Roles: roles, Version: 1}, json.Deterministic(true))
+	require.NoError(t, err)
+	build.CapturedArtifactPolicy = jsontext.Value(policyBytes)
+	build.CapturedArtifactPolicyFingerprint = testSHA256(policyBytes)
 	build.Artifacts = append(build.Artifacts, RenditionArtifactRecord{
 		ID: "artifact_" + fakeHash("30"), Role: string(document.EvidenceArtifactStructured),
 		BlobHash: catalogEvidenceBlobHash, Size: int64(len(catalogBlobContents[catalogEvidenceBlobHash])),
@@ -185,7 +278,7 @@ func TestProcessingMetadataRejectsRestoredAttachmentWithForbiddenArtifact(t *tes
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
 		return ensureProcessingProfileTx(t.Context(), tx, profile)
 	}))
-	_, err := s.db.Exec(`INSERT INTO rendition_attachments(
+	_, err = s.db.Exec(`INSERT INTO rendition_attachments(
 		attachment_id,vault_uid,content_version_id,build_id,profile_fingerprint,
 		retention_disclosure_fingerprint,attachment_policy_fingerprint,
 		consent_fingerprint,rendition_disclosure_fingerprint,trust_boundary,attached_at
@@ -193,7 +286,7 @@ func TestProcessingMetadataRejectsRestoredAttachmentWithForbiddenArtifact(t *tes
 		catalogAttachmentFirst, s.VaultID(), versions[0], build.ID, profile.Fingerprint,
 		profile.RetentionDisclosureFingerprint, profile.AttachmentPolicyFingerprint,
 		profile.ConsentFingerprint, profile.RenditionDisclosureFingerprint, profile.TrustBoundary,
-		"2026-08-25T15:10:00.000000000Z")
+		"2026-08-24T12:10:00.000000000Z")
 	require.NoError(t, err)
 
 	require.ErrorContains(t, s.ValidateMetadata(t.Context()), "artifact role")
@@ -214,11 +307,11 @@ func TestRenditionCatalogRejectsIncompleteArtifactsWithoutPartialStage(t *testin
 	assert.Zero(t, buildCount, "a rejected aggregate must not leave its parent row")
 	assert.Zero(t, artifactCount, "a rejected aggregate must not leave child rows")
 
-	err = publishRenditionForTest(t, s, RenditionAttachmentRecord{
+	err = s.AttachRenditionBuild(t.Context(), RenditionAttachmentRecord{
 		ID: catalogAttachmentFirst, VaultID: s.VaultID(),
 		ContentVersionID: versions[0], BuildID: build.ID, Profile: profile,
 		AttachedAt: "2026-08-22T10:00:00.000000000Z",
-	}, "2026-08-22T10:01:00.000000000Z", fakeHash("c4"))
+	})
 	require.Error(t, err)
 	_, err = s.ActiveRendition(t.Context(), versions[0], profile.Fingerprint)
 	require.ErrorIs(t, err, ErrNotFound)
@@ -764,15 +857,19 @@ func TestRenditionCatalogInsertOrReuseRejectsImmutableConflicts(t *testing.T) {
 		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
 		BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-22T10:00:00.000000000Z",
 	}
+	require.NoError(t, s.AttachRenditionBuild(t.Context(), attachment))
+	require.NoError(t, s.AttachRenditionBuild(t.Context(), attachment), "an exact retry must reuse the immutable attachment")
 	require.NoError(t, publishRenditionForTest(
 		t, s, attachment, "2026-08-22T10:01:00.000000000Z", fakeHash("c5"),
 	))
 	require.NoError(t, publishRenditionForTest(
 		t, s, attachment, "2026-08-22T10:01:00.000000000Z", fakeHash("c5"),
-	), "an exact retry must reuse the immutable attachment")
+	), "an exact atomic retry must reuse the immutable attachment")
 
 	conflictingAttachment := attachment
 	conflictingAttachment.AttachedAt = "2026-08-22T10:00:01.000000000Z"
+	err = s.AttachRenditionBuild(t.Context(), conflictingAttachment)
+	require.ErrorContains(t, err, "different immutable")
 	err = publishRenditionForTest(
 		t, s, conflictingAttachment, "2026-08-22T10:01:00.000000000Z", fakeHash("c5"),
 	)
@@ -783,6 +880,36 @@ func TestRenditionCatalogInsertOrReuseRejectsImmutableConflicts(t *testing.T) {
 		`SELECT provider_operation_id FROM rendition_builds WHERE build_id = ?`, build.ID,
 	).Scan(&providerOperationID))
 	assert.Equal(t, build.ProviderOperationID, providerOperationID)
+}
+
+func TestRenditionCatalogExactlyReusesEmptyCollections(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*RenditionBuildRecord)
+	}{
+		{
+			name: "empty heading path",
+			mutate: func(build *RenditionBuildRecord) {
+				build.Units[0].HeadingPath = []string{}
+			},
+		},
+		{
+			name: "zero lexical segments",
+			mutate: func(build *RenditionBuildRecord) {
+				build.LexicalSegments = []RenditionLexicalSegmentRecord{}
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s, _ := newRenditionCatalogFixture(t)
+			build := catalogRenditionBuild(s, catalogProcessingProfile(t, false))
+			test.mutate(&build)
+
+			require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+			require.NoError(t, s.StageRenditionBuild(t.Context(), build),
+				"an exact retry must reuse empty immutable collections")
+		})
+	}
 }
 
 func TestRenditionCatalogExactRetryCanonicalizesEmptyBuildCollections(t *testing.T) {
@@ -809,9 +936,11 @@ func TestRenditionCatalogFailedReplacementKeepsOldHead(t *testing.T) {
 		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
 		BuildID: oldBuild.ID, Profile: profile, AttachedAt: "2026-08-22T10:00:00.000000000Z",
 	}
-	require.NoError(t, publishRenditionForTest(
-		t, s, oldAttachment, "2026-08-22T10:01:00.000000000Z", fakeHash("c6"),
-	))
+	require.NoError(t, s.AttachRenditionBuild(t.Context(), oldAttachment))
+	require.NoError(t, s.PublishRenditionHead(t.Context(), RenditionHeadRecord{
+		ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
+		AttachmentID: oldAttachment.ID, PublishedAt: "2026-08-22T10:01:00.000000000Z",
+	}))
 
 	replacement := cloneCatalogBuild(oldBuild)
 	replacement.ID = catalogBuildReplacement
@@ -826,14 +955,17 @@ func TestRenditionCatalogFailedReplacementKeepsOldHead(t *testing.T) {
 		ID: catalogAttachmentSecond, VaultID: s.VaultID(), ContentVersionID: versions[0],
 		BuildID: replacement.ID, Profile: profile, AttachedAt: "2026-08-22T11:01:00.000000000Z",
 	}
+	require.NoError(t, s.AttachRenditionBuild(t.Context(), newAttachment))
+
 	_, err := s.db.Exec(`CREATE TRIGGER synthetic_reject_rendition_head_update
 		BEFORE UPDATE ON rendition_heads BEGIN
 			SELECT RAISE(ABORT, 'synthetic head publication failure');
 		END`)
 	require.NoError(t, err)
-	err = publishRenditionForTest(
-		t, s, newAttachment, "2026-08-22T11:02:00.000000000Z", fakeHash("c7"),
-	)
+	err = s.PublishRenditionHead(t.Context(), RenditionHeadRecord{
+		ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
+		AttachmentID: newAttachment.ID, PublishedAt: "2026-08-22T11:02:00.000000000Z",
+	})
 	require.ErrorContains(t, err, "synthetic head publication failure")
 
 	active, err := s.ActiveRendition(t.Context(), versions[0], profile.Fingerprint)
@@ -841,6 +973,42 @@ func TestRenditionCatalogFailedReplacementKeepsOldHead(t *testing.T) {
 	assert.Equal(t, oldBuild.ID, active.Build.ID)
 	assert.Equal(t, oldAttachment.ID, active.Attachment.ID)
 	assert.Equal(t, oldAttachment.ID, active.Head.AttachmentID)
+}
+
+func TestPublishRenditionHeadCannotDivergeFromActiveLexicalGeneration(t *testing.T) {
+	s, versions := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	profile := catalogProcessingProfile(t, false)
+	first := lexicalSearchBuild(s, profile, catalogBuildID, "first authority")
+	require.NoError(t, s.StageRenditionBuild(ctx, first))
+	firstAttachment := RenditionAttachmentRecord{
+		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
+		BuildID: first.ID, Profile: profile, AttachedAt: "2026-08-22T12:00:00.000000000Z",
+	}
+	require.NoError(t, s.AttachRenditionBuild(ctx, firstAttachment))
+	generation, err := s.StageLexicalGeneration(ctx, fakeHash("d7"))
+	require.NoError(t, err)
+	require.NoError(t, s.PublishRenditionAndLexicalHeads(ctx, firstAttachment,
+		RenditionHeadRecord{ContentVersionID: versions[0],
+			ProcessingProfileFingerprint: profile.Fingerprint,
+			AttachmentID:                 firstAttachment.ID, PublishedAt: "2026-08-22T12:01:00.000000000Z"},
+		generation.ID))
+
+	second, secondVersion := lexicalSearchReplacementBuild(
+		t, s, profile, fakeHash("d8"), "second authority")
+	require.NoError(t, s.StageRenditionBuild(ctx, second))
+	secondAttachment := RenditionAttachmentRecord{
+		ID: catalogAttachmentSecond, VaultID: s.VaultID(), ContentVersionID: secondVersion,
+		BuildID: second.ID, Profile: profile, AttachedAt: "2026-08-22T12:02:00.000000000Z",
+	}
+	require.NoError(t, s.AttachRenditionBuild(ctx, secondAttachment))
+	err = s.PublishRenditionHead(ctx, RenditionHeadRecord{
+		ContentVersionID: secondVersion, ProcessingProfileFingerprint: profile.Fingerprint,
+		AttachmentID: secondAttachment.ID, PublishedAt: "2026-08-22T12:03:00.000000000Z",
+	})
+	require.ErrorContains(t, err, "omits current rendition head build")
+	_, err = s.ActiveRendition(ctx, secondVersion, profile.Fingerprint)
+	require.ErrorIs(t, err, ErrNotFound, "the rejected standalone head flip must roll back")
 }
 
 func newRenditionCatalogFixture(t *testing.T) (*Store, []string) {
