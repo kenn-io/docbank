@@ -214,6 +214,43 @@ func TestInspectRejectsExternalReferenceInEPUBContent(t *testing.T) {
 	}
 }
 
+// A reader interprets an EPUB resource by its declared media type, so a
+// neutral filename must not decide whether the resource is inspected.
+func TestInspectFollowsEPUBDeclaredMediaTypes(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, href, mediaType, body string
+	}{
+		{
+			name: "XHTML", href: "chapter.dat", mediaType: "application/xhtml+xml",
+			body: `<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="https://example.invalid/t.png"/></body></html>`,
+		},
+		{
+			name: "SVG", href: "art.bin", mediaType: "image/svg+xml",
+			body: `<svg xmlns="http://www.w3.org/2000/svg"><image href="https://example.invalid/i.png"/></svg>`,
+		},
+		{
+			name: "CSS", href: "style.res", mediaType: "text/css",
+			body: `body { background: url(https://example.invalid/p.png) }`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			data := zipBytes(t, validEPUBEntries(
+				zipEntry{name: "OPS/content.opf", body: `<package><manifest><item id="c" href="` +
+					tt.href + `" media-type="` + tt.mediaType + `"/></manifest><spine><itemref idref="c"/></spine></package>`},
+				zipEntry{name: "OPS/" + tt.href, body: tt.body},
+			))
+			record, err := media.InspectCapability(bytes.NewReader(data),
+				inspectionPolicy(data, "book.epub", "application/epub+zip"))
+			require.NoError(t, err)
+			assert.False(t, record.Eligible)
+			assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
+		})
+	}
+}
+
 // Treating every unlisted attribute as a locator must not reject the
 // vocabulary URIs and colon-bearing values that ordinary documents carry.
 func TestInspectAcceptsVocabularyAttributeValues(t *testing.T) {
