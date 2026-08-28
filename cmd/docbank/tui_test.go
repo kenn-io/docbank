@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -18,6 +19,21 @@ import (
 	"go.kenn.io/docbank/internal/store"
 	doctui "go.kenn.io/docbank/internal/tui"
 )
+
+func TestTUIProcessingRetainsJobAfterInterruptedResponse(t *testing.T) {
+	job := api.ProcessingJob{ID: strings.Repeat("a", 64)}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		assert.NoError(t, json.MarshalWrite(w, api.ProcessingJobEvent{Sequence: 1, Type: "job", Job: &job}))
+	}))
+	t.Cleanup(server.Close)
+	backend := &tuiDaemonBackend{ensure: func(context.Context) (*client.Client, error) {
+		return client.New(server.URL, ""), nil
+	}}
+	accepted, err := backend.StartProcessing(t.Context(), api.StartProcessingRequest{})
+	require.Error(t, err)
+	assert.Equal(t, job.ID, accepted.ID)
+}
 
 func TestTUIHelpDefinesRecoverableMutationBoundary(t *testing.T) {
 	out, err := runCLI(t, "tui", "--help")

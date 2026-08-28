@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -17,35 +18,48 @@ import (
 )
 
 type fakeBackend struct {
-	nodes              map[string]api.Node
-	children           map[int64]api.NodePage
-	search             api.SearchReport
-	err                error
-	childLimit         int
-	searchMax          int
-	nodeIDs            []int64
-	statPaths          []string
-	history            map[string]api.AuditEventPage
-	historyErr         error
-	historyIDs         []int64
-	historyCursors     []string
-	tags               map[int64]api.TagPage
-	tagNodeIDs         []int64
-	jobs               []api.Job
-	jobsErr            error
-	jobCalls           int
-	info               api.VaultInfo
-	infoErr            error
-	infoCalls          int
-	snapshots          []api.BackupSnapshot
-	backupErr          error
-	backupCalls        int
-	trash              api.TrashPage
-	trashCalls         int
-	trashed            []api.Node
-	restored           []api.Node
-	mutationErr        error
-	mutationReceiptErr error
+	nodes                 map[string]api.Node
+	children              map[int64]api.NodePage
+	search                api.SearchReport
+	err                   error
+	childLimit            int
+	searchMax             int
+	nodeIDs               []int64
+	statPaths             []string
+	history               map[string]api.AuditEventPage
+	historyErr            error
+	historyIDs            []int64
+	historyCursors        []string
+	tags                  map[int64]api.TagPage
+	tagNodeIDs            []int64
+	jobs                  []api.Job
+	jobsErr               error
+	jobCalls              int
+	info                  api.VaultInfo
+	infoErr               error
+	infoCalls             int
+	snapshots             []api.BackupSnapshot
+	backupErr             error
+	backupCalls           int
+	profiles              []api.ProcessingProfileSummary
+	profileCalls          int
+	plan                  api.ProcessingPlan
+	plans                 map[string]api.ProcessingPlan
+	planCalls             int
+	coverage              api.CoverageReport
+	coverageCalls         int
+	processingSearch      api.DocumentSearchReport
+	processingSearchCalls int
+	processingJob         api.ProcessingJob
+	processingStatus      api.ProcessingStatus
+	rendition             Rendition
+	processingStarts      []api.StartProcessingRequest
+	trash                 api.TrashPage
+	trashCalls            int
+	trashed               []api.Node
+	restored              []api.Node
+	mutationErr           error
+	mutationReceiptErr    error
 }
 
 func newFakeBackend() *fakeBackend {
@@ -160,6 +174,30 @@ func newFakeBackend() *fakeBackend {
 			},
 			Total: 1, Limit: maxTrashItems,
 		},
+		profiles: []api.ProcessingProfileSummary{{
+			Name: "private", Fingerprint: strings.Repeat("a", 64), Rendition: true,
+			EmbeddingBindings: []string{"semantic"},
+		}},
+		plan: api.ProcessingPlan{
+			Fingerprint: strings.Repeat("b", 64), VaultUID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+			Selector:           api.ProcessingSelector{NodeID: readme.ID, ContentVersionID: readme.CurrentVersionID, Profile: "private"},
+			ProfileFingerprint: strings.Repeat("a", 64),
+			Flow: []api.ProcessingFlowHop{
+				{Capability: "rendition", ProviderID: "docling-local", TrustBoundary: "operator_network", InputClasses: []string{"original_file"}},
+				{Capability: "embedding", ProviderID: "local-embed", TrustBoundary: "local_process", InputClasses: []string{"rendition_chunk"}},
+			},
+			DisclosedClasses: []string{"original_file", "rendition_chunk"},
+			RetainedClasses:  []string{"sanitized_markdown", "embedding_vector_set"},
+			Estimate:         api.ProcessingEstimate{SourceBytes: 12, ProviderCalls: 2, VectorSpaces: 1},
+			ConsentRequired:  true, ConsentState: "required", BackupConsequence: "retained derivatives enter future backups",
+		},
+		coverage: api.CoverageReport{
+			VaultUID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", ProfileFingerprint: strings.Repeat("a", 64), State: "partial",
+			Renditions: api.CoverageClass{Name: "rendition", Required: true, State: "complete", Complete: 1, Total: 1},
+			Embeddings: []api.CoverageClass{{Name: "semantic", State: "unavailable", Unavailable: 1, Total: 1}},
+		},
+		processingJob:    api.ProcessingJob{ID: strings.Repeat("e", 64), AttachmentID: strings.Repeat("f", 64), ContentVersionID: readme.CurrentVersionID},
+		processingStatus: api.ProcessingStatus{JobID: strings.Repeat("e", 64), State: "completed", Phase: "published"},
 	}
 }
 
@@ -245,6 +283,80 @@ func (f *fakeBackend) BackupList(
 		return nil, f.backupErr
 	}
 	return append([]api.BackupSnapshot(nil), f.snapshots...), nil
+}
+
+func (f *fakeBackend) ProcessingProfiles(_ context.Context) ([]api.ProcessingProfileSummary, error) {
+	f.profileCalls++
+	if f.err != nil {
+		return nil, f.err
+	}
+	return append([]api.ProcessingProfileSummary(nil), f.profiles...), nil
+}
+
+func (f *fakeBackend) PlanProcessing(_ context.Context, request api.ProcessingPlanRequest) (api.ProcessingPlan, error) {
+	f.planCalls++
+	if f.err != nil {
+		return api.ProcessingPlan{}, f.err
+	}
+	plan := f.plan
+	if f.plans != nil {
+		plan = f.plans[request.Selector.Profile]
+	}
+	if request.Selector != plan.Selector {
+		return api.ProcessingPlan{}, errors.New("unexpected processing selector")
+	}
+	return plan, nil
+}
+
+func (f *fakeBackend) DocumentCoverage(_ context.Context, profile string, fence api.DocumentSourceFence) (api.CoverageReport, error) {
+	f.coverageCalls++
+	if f.err != nil {
+		return api.CoverageReport{}, f.err
+	}
+	plan := f.plan
+	if candidate, ok := f.plans[profile]; ok {
+		plan = candidate
+	}
+	if profile != plan.Selector.Profile || fence.VaultUID != plan.VaultUID ||
+		!assert.ObjectsAreEqual(fence.ContentVersionIDs, []string{plan.Selector.ContentVersionID}) {
+		return api.CoverageReport{}, errors.New("unexpected processing coverage fence")
+	}
+	return f.coverage, nil
+}
+
+func (f *fakeBackend) SearchDocuments(_ context.Context, request api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
+	f.processingSearchCalls++
+	if f.err != nil {
+		return api.DocumentSearchReport{}, f.err
+	}
+	if request.Limit != maxProcessingSearchItems || request.Mode != "auto" || !request.Explain ||
+		request.Profile != f.plan.Selector.Profile || request.Fence.VaultUID != f.plan.VaultUID ||
+		!assert.ObjectsAreEqual(request.Fence.ContentVersionIDs, []string{f.plan.Selector.ContentVersionID}) {
+		return api.DocumentSearchReport{}, errors.New("unexpected document search request")
+	}
+	return f.processingSearch, nil
+}
+
+func (f *fakeBackend) StartProcessing(_ context.Context, request api.StartProcessingRequest) (api.ProcessingJob, error) {
+	f.processingStarts = append(f.processingStarts, request)
+	if request.Selector != f.plan.Selector || request.PlanFingerprint != f.plan.Fingerprint || request.Consent != f.plan.ConsentRequired {
+		return api.ProcessingJob{}, errors.New("unexpected processing start")
+	}
+	return f.processingJob, nil
+}
+
+func (f *fakeBackend) ProcessingStatus(_ context.Context, jobID string) (api.ProcessingStatus, error) {
+	if jobID != f.processingJob.ID {
+		return api.ProcessingStatus{}, errors.New("unexpected processing job")
+	}
+	return f.processingStatus, nil
+}
+
+func (f *fakeBackend) RenditionForSelector(_ context.Context, selector api.ProcessingSelector, _ int64) (Rendition, error) {
+	if selector != f.plan.Selector {
+		return Rendition{}, errors.New("unexpected rendition selector")
+	}
+	return f.rendition, nil
 }
 
 func (f *fakeBackend) TrashPage(
@@ -1287,6 +1399,688 @@ func TestExpandedDetailExposesCompleteAuthority(t *testing.T) {
 	model, cmd = updateModel(t, model, key(tea.KeyEscape))
 	require.Nil(t, cmd)
 	assert.False(t, model.detailOpen)
+}
+
+func TestProcessingRunErrorPreservesCoverage(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.processingOpen = true
+	model.processingProfiles = backend.profiles
+	model.processingPlan, model.processingCoverage = &backend.plan, &backend.coverage
+	model, _ = updateModel(t, model, processingStartedMsg{
+		requestID: model.processingRequestID, err: errors.New("processing consent expired"),
+	})
+	content := strings.Join(model.processingLines(100), "\n")
+	assert.Contains(t, content, "processing consent expired")
+	assert.Contains(t, content, "Rendition · required · complete · 1/1 complete")
+	assert.NotContains(t, content, "Coverage unavailable")
+	assert.NotContains(t, model.renderProcessingLocation(), "processing unavailable")
+}
+
+func TestProcessingStatusDoesNotCrossRuns(t *testing.T) {
+	for _, nextID := range []string{strings.Repeat("e", 64), strings.Repeat("f", 64)} {
+		t.Run(nextID[:1], func(t *testing.T) {
+			backend := newFakeBackend()
+			backend.plan.ConsentRequired = false
+			model, err := New(t.Context(), backend)
+			require.NoError(t, err)
+			model.processingOpen = true
+			model.processingPlan = &backend.plan
+			model.processingJob = &backend.processingJob
+			backend.processingStatus.State = "running"
+			earlier := model.loadProcessingStatus(backend.processingJob.ID, model.processingRequestID)()
+			earlierError := model.loadProcessingStatus("superseded-job", model.processingRequestID)()
+
+			model, _ = updateModel(t, model, runeKey('b'))
+			backend.processingJob.ID = nextID
+			backend.processingStatus = api.ProcessingStatus{JobID: nextID, State: "completed"}
+			model, cmd := updateModel(t, model, processingStartedMsg{
+				requestID: model.processingRequestID, job: backend.processingJob,
+			})
+			model = runModelCommand(t, model, cmd)
+			for _, delayed := range []tea.Msg{earlier, earlierError} {
+				model, _ = updateModel(t, model, delayed)
+				require.NotNil(t, model.processingStatus)
+				assert.Equal(t, backend.processingStatus, *model.processingStatus)
+				require.NoError(t, model.processingStatusErr)
+			}
+		})
+	}
+}
+
+func TestProcessingRerunClearsPreviousJob(t *testing.T) {
+	for _, consent := range []bool{false, true} {
+		t.Run(strconv.FormatBool(consent), func(t *testing.T) {
+			backend := newFakeBackend()
+			backend.plan.ConsentRequired = consent
+			model, err := New(t.Context(), backend)
+			require.NoError(t, err)
+			model.processingOpen = true
+			model.processingPlan = &backend.plan
+			model.processingJob = &backend.processingJob
+			model.processingStatus = &backend.processingStatus
+			model.processingStatusErr = errors.New("old status read failed")
+			delayed := model.loadProcessingStatus(backend.processingJob.ID, model.processingRequestID)()
+			model, _ = updateModel(t, model, runeKey('b'))
+			if consent {
+				assert.NotNil(t, model.processingJob, "opening the confirmation does not start a run")
+				model, _ = updateModel(t, model, key(tea.KeyEnter))
+			}
+			assert.Nil(t, model.processingJob)
+			assert.Nil(t, model.processingStatus)
+			require.NoError(t, model.processingStatusErr)
+			model, _ = updateModel(t, model, delayed)
+			model, _ = updateModel(t, model, processingStartedMsg{
+				requestID: model.processingRequestID, err: errors.New("processing consent expired"),
+			})
+			assert.Nil(t, model.processingJob)
+			assert.Nil(t, model.processingStatus)
+			require.ErrorContains(t, model.processingRunErr, "processing consent expired")
+		})
+	}
+}
+
+func TestProcessingCloseStopsPendingRunSpinner(t *testing.T) {
+	backend := newFakeBackend()
+	backend.plan.ConsentRequired = false
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.processingOpen, model.loading = true, false
+	model.processingPlan = &backend.plan
+	model, delayed := updateModel(t, model, runeKey('b'))
+	require.NotNil(t, delayed)
+	model, _ = updateModel(t, model, key(tea.KeyEscape))
+	model = runModelCommand(t, model, delayed)
+	model, cmd := updateModel(t, model, spinnerTickMsg{})
+	assert.Nil(t, cmd)
+	assert.False(t, model.spinnerActive)
+}
+
+func TestProcessingRunRefreshesCoverage(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.processingOpen = true
+	model.processingPlan = &backend.plan
+	model.processingCoverage = &api.CoverageReport{State: "unavailable"}
+	model, cmd := updateModel(t, model, processingStartedMsg{
+		requestID: model.processingRequestID, job: backend.processingJob,
+	})
+	require.NotNil(t, cmd)
+	model, _ = updateModel(t, model, runeKey('b'))
+	assert.Nil(t, model.processingConfirmation, "wait for refreshed coverage before another run")
+	model = runModelCommand(t, model, cmd)
+	assert.Equal(t, backend.coverage.State, model.processingCoverage.State)
+}
+
+func TestProcessingBuildWaitsForInitialCoverage(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.processingOpen, model.processingLoading = true, true
+	model.processingPlan = &backend.plan
+	model, cmd := updateModel(t, model, runeKey('b'))
+	assert.Nil(t, cmd)
+	assert.Nil(t, model.processingConfirmation)
+	model, _ = updateModel(t, model, processingCoverageLoadedMsg{
+		requestID: model.processingRequestID, report: backend.coverage,
+	})
+	model, _ = updateModel(t, model, runeKey('b'))
+	assert.NotNil(t, model.processingConfirmation)
+}
+
+func TestProcessingShowsDisclosedFilename(t *testing.T) {
+	backend := newFakeBackend()
+	backend.plan.Flow[0].DiscloseFilename = true
+	backend.plan.Flow[0].Filename = "Quarterly report.txt"
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.width, model.height = 100, 40
+	model.processingOpen = true
+	model.processingProfiles = backend.profiles
+	model.processingPlan = &backend.plan
+	assert.Contains(t, strings.Join(model.processingLines(100), "\n"), backend.plan.Flow[0].Filename)
+	model, _ = updateModel(t, model, runeKey('b'))
+	assert.Contains(t, model.View().Content, backend.plan.Flow[0].Filename)
+}
+
+func TestProcessingLatestSearchWins(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.processingOpen = true
+	model.processingPlan = &backend.plan
+	model, _ = updateModel(t, model, runeKey('/'))
+	model.searchInput.SetValue("earlier")
+	model, earlier := updateModel(t, model, key(tea.KeyEnter))
+	model, _ = updateModel(t, model, runeKey('/'))
+	model.searchInput.SetValue("latest")
+	model, latest := updateModel(t, model, key(tea.KeyEnter))
+	backend.processingSearch = api.DocumentSearchReport{ActualMode: "semantic"}
+	model = runModelCommand(t, model, latest)
+	backend.processingSearch = api.DocumentSearchReport{ActualMode: "lexical"}
+	model = runModelCommand(t, model, earlier)
+	assert.Equal(t, "semantic", model.processingSearchReport.ActualMode)
+}
+
+func TestProcessingLatestRenditionWins(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.processingOpen = true
+	model.processingPlan = &backend.plan
+	model, earlier := updateModel(t, model, runeKey('R'))
+	model, latest := updateModel(t, model, runeKey('R'))
+	backend.rendition = Rendition{Markdown: "latest"}
+	model = runModelCommand(t, model, latest)
+	backend.rendition = Rendition{Markdown: "earlier"}
+	model = runModelCommand(t, model, earlier)
+	assert.Equal(t, "latest", model.processingRendition.Markdown)
+}
+
+func TestProcessingViewEscapesDocumentTerminalControls(t *testing.T) {
+	const controls = "\x1b[31m\x1b]52;c;c3ludGhldGlj\x07\r\b\u009b"
+	name, err := store.NormalizeName("résumé" + controls + ".txt")
+	require.NoError(t, err)
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.width, model.height = 120, 100
+	model.processingOpen = true
+	model.processingProfiles = backend.profiles
+	model.processingPlan = &backend.plan
+	model.processingSearchReport = &api.DocumentSearchReport{
+		Results: []api.DocumentSearchResult{{Rank: 1, Path: "/" + name, Excerpt: name}},
+	}
+	model, _ = updateModel(t, model, processingRenditionLoadedMsg{
+		requestID: model.processingRequestID,
+		rendition: Rendition{Markdown: "# Résumé\n\nFirst paragraph" + controls + "\n\nSecond paragraph\n"},
+	})
+	content := model.View().Content
+	for _, control := range []string{"\x1b[31m", "\x1b]52;", "\x07", "\r", "\b", "\u009b"} {
+		assert.NotContains(t, content, control)
+	}
+	assert.Contains(t, content, `"/résumé\x1b[31m`)
+	assert.Contains(t, content, "résumé.txt")
+	assert.Contains(t, content, "# Résumé")
+	assert.Contains(t, content, "First paragraph")
+	assert.Contains(t, content, "Second paragraph")
+}
+
+func TestProcessingRenditionRewrapsOnResize(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.processingOpen = true
+	model.processingProfiles = backend.profiles
+	model.processingPlan = &backend.plan
+	model, _ = updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 30})
+	model, _ = updateModel(t, model, processingRenditionLoadedMsg{
+		requestID: model.processingRequestID, rendition: Rendition{Markdown: strings.Repeat("x", 80)},
+	})
+	model, _ = updateModel(t, model, tea.WindowSizeMsg{Width: 40, Height: 30})
+	content := strings.Join(model.processingLines(40), "\n")
+	assert.Contains(t, content, strings.Repeat("x", 40)+"\n"+strings.Repeat("x", 40))
+}
+
+func BenchmarkProcessingRenditionScroll(b *testing.B) {
+	backend := newFakeBackend()
+	model, err := New(b.Context(), backend)
+	if err != nil {
+		b.Fatal(err)
+	}
+	model.width, model.height = 100, 30
+	model.processingOpen = true
+	model.processingProfiles = backend.profiles
+	model.processingPlan = &backend.plan
+	next, _ := model.Update(processingRenditionLoadedMsg{
+		requestID: model.processingRequestID,
+		rendition: Rendition{Markdown: strings.Repeat("Synthetic retained rendition text. ", 8192)[:256<<10]},
+	})
+	model, ok := next.(Model)
+	if !ok {
+		b.Fatalf("unexpected model %T", next)
+	}
+	for b.Loop() {
+		next, _ := model.Update(runeKey('j'))
+		model, ok = next.(Model)
+		if !ok {
+			b.Fatalf("unexpected model %T", next)
+		}
+		_ = model.View()
+	}
+}
+
+func TestProcessingPreviewFailureDiscardsPreviousPlan(t *testing.T) {
+	for _, action := range []rune{']', 'r'} {
+		t.Run(string(action), func(t *testing.T) {
+			backend := newFakeBackend()
+			backend.profiles = append(backend.profiles, api.ProcessingProfileSummary{Name: "hosted"})
+			model, err := New(t.Context(), backend)
+			require.NoError(t, err)
+			model.processingOpen = true
+			model.processingProfiles = backend.profiles
+			model.processingPlan = &backend.plan
+			model, _ = updateModel(t, model, runeKey(action))
+			model, _ = updateModel(t, model, processingPlanLoadedMsg{
+				requestID: model.processingRequestID, err: errors.New("profile unavailable"),
+			})
+			model, cmd := updateModel(t, model, runeKey('b'))
+			assert.Nil(t, cmd)
+			assert.Nil(t, model.processingConfirmation)
+			assert.Contains(t, strings.Join(model.processingLines(100), "\n"), "profile unavailable")
+		})
+	}
+}
+
+func TestProcessingInterruptedStartRetainsAcceptedJob(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.processingOpen = true
+	model.processingProfiles = backend.profiles
+	model.processingPlan = &backend.plan
+	model, cmd := updateModel(t, model, processingStartedMsg{
+		requestID: model.processingRequestID, job: backend.processingJob,
+		err: errors.New("decoding processing status event: unexpected EOF"),
+	})
+	require.NotNil(t, model.processingJob)
+	assert.Equal(t, backend.processingJob.ID, model.processingJob.ID)
+	require.NotNil(t, cmd)
+	model = runModelCommand(t, model, cmd)
+	assert.Equal(t, "completed", model.processingStatus.State)
+}
+
+func TestProcessingFailedStatusReadDiscardsPreviousStatus(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.processingOpen = true
+	model.processingProfiles = backend.profiles
+	model.processingPlan = &backend.plan
+	model.processingJob = &backend.processingJob
+	model.processingStatus = &backend.processingStatus
+	model, _ = updateModel(t, model, processingStatusLoadedMsg{
+		requestID: model.processingRequestID, err: errors.New("status read failed"),
+	})
+	content := strings.Join(model.processingLines(100), "\n")
+	assert.NotContains(t, content, "Processing status: completed")
+	assert.Contains(t, content, "Status unavailable:")
+	assert.Contains(t, content, backend.processingJob.ID)
+
+	model, _ = updateModel(t, model, runeKey('r'))
+	model, _ = updateModel(t, model, processingPlanLoadedMsg{
+		requestID: model.processingRequestID, err: errors.New("source version changed"),
+	})
+	content = strings.Join(model.processingLines(100), "\n")
+	assert.Contains(t, content, backend.processingJob.ID)
+	assert.Contains(t, content, "Status unavailable:")
+}
+
+func TestProcessingViewShowsPrivateFlowAndIndependentCoverage(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.width, model.height = 100, 22
+	model.cursor = 1
+
+	model, cmd := updateModel(t, model, runeKey('P'))
+	require.NotNil(t, cmd)
+	model = runModelCommand(t, model, cmd)
+	model = runModelCommand(t, model, model.loadProcessingPlan("private", model.processingRequestID))
+	require.NotNil(t, model.processingPlan)
+	model = runModelCommand(t, model, model.loadProcessingCoverage(*model.processingPlan, model.processingRequestID))
+
+	content := strings.Join(model.processingLines(model.width), "\n")
+	assert.Contains(t, content, "Document processing")
+	assert.Contains(t, content, "Profile: private")
+	assert.Contains(t, content, "Private network")
+	assert.Contains(t, content, "Local process")
+	assert.Contains(t, content, "Rendition · required · complete · 1/1 complete")
+	assert.Contains(t, content, "semantic · optional · unavailable · 0/1 complete")
+	assert.Contains(t, content, "unavailable: 1")
+	assert.Contains(t, content, "processing consent requires explicit confirmation")
+	assert.Equal(t, 1, backend.profileCalls)
+	assert.Equal(t, 1, backend.planCalls)
+	assert.Equal(t, 1, backend.coverageCalls)
+}
+
+func TestProcessingViewMakesHostedRebuildAndDegradedProvenanceExplicit(t *testing.T) {
+	backend := newFakeBackend()
+	backend.profiles = []api.ProcessingProfileSummary{{
+		Name: "hosted", Fingerprint: strings.Repeat("c", 64), EmbeddingBindings: []string{"direct-file"},
+	}}
+	backend.plan.Selector.Profile = "hosted"
+	backend.plan.Flow = []api.ProcessingFlowHop{{
+		Capability: "embedding", ProviderID: "gemini-file", TrustBoundary: "hosted_provider", InputClasses: []string{"original_file"},
+	}}
+	backend.coverage.State = "rebuilding"
+	backend.coverage.Renditions = api.CoverageClass{Name: "rendition", State: "ineligible", Ineligible: 1, Total: 1}
+	backend.coverage.Embeddings = []api.CoverageClass{{Name: "direct-file", Required: true, State: "unavailable", Unavailable: 1, Total: 1}}
+	backend.processingSearch = api.DocumentSearchReport{
+		ActualMode: "semantic", Coverage: api.DocumentSearchCoverage{BindingRequired: true, ScopedDocuments: 1, CompleteDocuments: 1, State: "complete"},
+		Degradations: []string{"degraded_provenance"},
+		Results:      []api.DocumentSearchResult{{Rank: 1, Path: "/README.txt", Evidence: []api.DocumentEvidenceReference{{Kind: "direct_file"}}}},
+	}
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.width, model.height = 100, 22
+	model.cursor = 1
+
+	model, cmd := updateModel(t, model, runeKey('P'))
+	model = runModelCommand(t, model, cmd)
+	model = runModelCommand(t, model, model.loadProcessingPlan("hosted", model.processingRequestID))
+	require.NotNil(t, model.processingPlan)
+	model = runModelCommand(t, model, model.loadProcessingCoverage(*model.processingPlan, model.processingRequestID))
+	content := strings.Join(model.processingLines(model.width), "\n")
+	assert.Contains(t, content, "Hosted provider")
+	assert.Contains(t, content, "Document data leaves this machine for this step")
+	assert.Contains(t, content, "Previous complete generation remains available while the rebuild runs")
+	assert.Contains(t, content, "direct-file · required · unavailable")
+
+	model, cmd = updateModel(t, model, runeKey('/'))
+	require.NotNil(t, cmd)
+	model.searchInput.SetValue("synthetic")
+	model, cmd = updateModel(t, model, key(tea.KeyEnter))
+	require.NotNil(t, cmd)
+	model = runModelCommand(t, model, cmd)
+	content = strings.Join(model.processingLines(model.width), "\n")
+	assert.Contains(t, content, "Direct-file result; no text excerpt.")
+	assert.Contains(t, content, "Warning: degraded_provenance")
+	assert.Contains(t, content, "Evidence: direct_file")
+	assert.Equal(t, 1, backend.processingSearchCalls)
+}
+
+func TestProcessingViewSelectsProfilesAndShowsRunStatusAndRendition(t *testing.T) {
+	backend := newFakeBackend()
+	backend.profiles = append(backend.profiles, api.ProcessingProfileSummary{
+		Name: "hosted", Fingerprint: strings.Repeat("c", 64), EmbeddingBindings: []string{"direct-file"},
+	})
+	backend.plans = map[string]api.ProcessingPlan{
+		"private": backend.plan,
+		"hosted": {
+			Fingerprint: strings.Repeat("d", 64), VaultUID: backend.plan.VaultUID,
+			Selector:           api.ProcessingSelector{NodeID: 3, ContentVersionID: backend.plan.Selector.ContentVersionID, Profile: "hosted"},
+			ProfileFingerprint: strings.Repeat("c", 64), Flow: []api.ProcessingFlowHop{{Capability: "embedding", ProviderID: "hosted-embed", TrustBoundary: "hosted_provider", InputClasses: []string{"original_file"}}},
+		},
+	}
+	backend.rendition = Rendition{Markdown: "# Synthetic rendition\n", BuildID: strings.Repeat("b", 64), ArtifactID: strings.Repeat("c", 64), SHA256: strings.Repeat("d", 64), Completeness: "degraded_provenance", Warnings: []string{"degraded_provenance"}}
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.width, model.height = 100, 30
+	model.cursor = 1
+	model, cmd := updateModel(t, model, runeKey('P'))
+	model = runModelCommand(t, model, cmd)
+	model = runModelCommand(t, model, model.loadProcessingPlan("private", model.processingRequestID))
+	require.NotNil(t, model.processingPlan)
+	model = runModelCommand(t, model, model.loadProcessingCoverage(*model.processingPlan, model.processingRequestID))
+
+	model, cmd = updateModel(t, model, runeKey(']'))
+	require.NotNil(t, cmd)
+	model = runModelCommand(t, model, cmd)
+	model = runModelCommand(t, model, model.loadProcessingCoverage(*model.processingPlan, model.processingRequestID))
+	assert.Contains(t, strings.Join(model.processingLines(model.width), "\n"), "Profile: hosted (2/2)")
+	assert.Contains(t, strings.Join(model.processingLines(model.width), "\n"), "Hosted provider")
+
+	model, cmd = updateModel(t, model, runeKey('['))
+	model = runModelCommand(t, model, cmd)
+	model = runModelCommand(t, model, model.loadProcessingCoverage(*model.processingPlan, model.processingRequestID))
+	model, cmd = updateModel(t, model, runeKey('b'))
+	require.Nil(t, cmd)
+	model, cmd = updateModel(t, model, key(tea.KeyEnter))
+	require.NotNil(t, cmd)
+	model = runModelCommand(t, model, cmd)
+	model = runModelCommand(t, model, model.loadProcessingStatus(model.processingJob.ID, model.processingRequestID))
+	model, cmd = updateModel(t, model, runeKey('R'))
+	model = runModelCommand(t, model, cmd)
+	content := strings.Join(model.processingLines(model.width), "\n")
+	assert.Contains(t, content, "Processing status: completed · published")
+	assert.Contains(t, content, "Sanitized Markdown rendition")
+	assert.Contains(t, content, "Build: "+backend.rendition.BuildID)
+	assert.Contains(t, content, "SHA-256: "+backend.rendition.SHA256)
+	assert.Contains(t, content, "Warning: degraded_provenance")
+}
+
+func TestProcessingBuildRequiresExplicitConsentConfirmation(t *testing.T) {
+	backend := newFakeBackend()
+	backend.profiles = []api.ProcessingProfileSummary{{Name: "hosted", Fingerprint: strings.Repeat("c", 64)}}
+	backend.plan.Selector.Profile = "hosted"
+	backend.plan.Flow = []api.ProcessingFlowHop{{
+		Capability: "embedding", ProviderID: "hosted-embed", TrustBoundary: "hosted_provider", InputClasses: []string{"original_file"},
+	}}
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.width, model.height, model.cursor = 100, 30, 1
+	model, cmd := updateModel(t, model, runeKey('P'))
+	model = runModelCommand(t, model, cmd)
+	model = runModelCommand(t, model, model.loadProcessingPlan("hosted", model.processingRequestID))
+	model = runModelCommand(t, model, model.loadProcessingCoverage(*model.processingPlan, model.processingRequestID))
+
+	model, cmd = updateModel(t, model, runeKey('b'))
+	require.Nil(t, cmd, "initial build keypress must not start a provider operation")
+	assert.Empty(t, backend.processingStarts)
+	assert.Contains(t, model.View().Content, "Confirm processing consent")
+	assert.Contains(t, model.View().Content, "all documents and searches")
+	assert.Contains(t, model.View().Content, "daemon operator")
+	assert.Contains(t, model.View().Content, "no expiry")
+	assert.Contains(t, model.View().Content, "until revoked")
+	assert.Contains(t, model.View().Content, "Hosted provider")
+	assert.Contains(t, model.View().Content, "Retained")
+}
+
+func TestProcessingConsentFitsStandardTerminal(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.width, model.height = 80, 24
+	model.processingConfirmation = &backend.plan
+	content := model.View().Content
+	assert.Contains(t, content, "all documents and searches")
+	assert.Contains(t, content, "daemon operator")
+	assert.Contains(t, content, "no expiry")
+	assert.Contains(t, content, "until revoked")
+	assert.Contains(t, content, "Enter consent and start · Esc cancel")
+}
+
+func TestProcessingBuildConsentConfirmationCancelsWithoutStarting(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.cursor = 1
+	model, cmd := updateModel(t, model, runeKey('P'))
+	model = runModelCommand(t, model, cmd)
+	model = runModelCommand(t, model, model.loadProcessingPlan("private", model.processingRequestID))
+	model = runModelCommand(t, model, model.loadProcessingCoverage(*model.processingPlan, model.processingRequestID))
+
+	model, cmd = updateModel(t, model, runeKey('b'))
+	require.Nil(t, cmd)
+	model, cmd = updateModel(t, model, key(tea.KeyEscape))
+	require.Nil(t, cmd)
+	assert.True(t, model.processingOpen)
+	assert.Empty(t, backend.processingStarts)
+	assert.NotContains(t, model.View().Content, "Confirm processing consent")
+}
+
+func TestProcessingBuildConsentConfirmationStartsOnlyAfterEnter(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.cursor = 1
+	model, cmd := updateModel(t, model, runeKey('P'))
+	model = runModelCommand(t, model, cmd)
+	model = runModelCommand(t, model, model.loadProcessingPlan("private", model.processingRequestID))
+	model = runModelCommand(t, model, model.loadProcessingCoverage(*model.processingPlan, model.processingRequestID))
+
+	model, cmd = updateModel(t, model, runeKey('b'))
+	require.Nil(t, cmd)
+	assert.Empty(t, backend.processingStarts)
+	model, cmd = updateModel(t, model, key(tea.KeyEnter))
+	require.NotNil(t, cmd)
+	assert.Empty(t, backend.processingStarts)
+	_ = runModelCommand(t, model, cmd)
+	require.Len(t, backend.processingStarts, 1)
+	assert.True(t, backend.processingStarts[0].Consent)
+}
+
+func TestProcessingBuildWithActiveConsentStartsWithoutConfirmation(t *testing.T) {
+	backend := newFakeBackend()
+	backend.plan.ConsentRequired = false
+	backend.plan.ConsentState = "active"
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.cursor = 1
+	model, cmd := updateModel(t, model, runeKey('P'))
+	model = runModelCommand(t, model, cmd)
+	model = runModelCommand(t, model, model.loadProcessingPlan("private", model.processingRequestID))
+	model = runModelCommand(t, model, model.loadProcessingCoverage(*model.processingPlan, model.processingRequestID))
+
+	model, cmd = updateModel(t, model, runeKey('b'))
+	require.NotNil(t, cmd)
+	assert.NotContains(t, model.View().Content, "Confirm processing consent")
+	_ = runModelCommand(t, model, cmd)
+	require.Len(t, backend.processingStarts, 1)
+	assert.False(t, backend.processingStarts[0].Consent)
+}
+
+func TestProcessingRefreshInvalidatesInFlightSearch(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.cursor = 1
+	model, cmd := updateModel(t, model, runeKey('P'))
+	model = runModelCommand(t, model, cmd)
+	model = runModelCommand(t, model, model.loadProcessingPlan("private", model.processingRequestID))
+	model = runModelCommand(t, model, model.loadProcessingCoverage(*model.processingPlan, model.processingRequestID))
+
+	searchRequestID := model.processingRequestID
+	model.processingSearchBusy = true
+	model.processingSearchErr = errors.New("stale search error")
+	model.processingSearchReport = &api.DocumentSearchReport{
+		Results: []api.DocumentSearchResult{{Rank: 1, Path: "/README.txt", Excerpt: "stale retained evidence"}},
+	}
+	model, cmd = updateModel(t, model, runeKey('r'))
+	require.NotNil(t, cmd)
+	assert.False(t, model.processingSearchBusy)
+	require.NoError(t, model.processingSearchErr)
+	assert.Nil(t, model.processingSearchReport)
+
+	model, _ = updateModel(t, model, processingSearchLoadedMsg{
+		requestID: searchRequestID,
+		report:    api.DocumentSearchReport{Results: []api.DocumentSearchResult{{Rank: 1, Path: "/README.txt", Excerpt: "late retained evidence"}}},
+	})
+	assert.False(t, model.processingSearchBusy)
+	assert.Nil(t, model.processingSearchReport)
+}
+
+func TestProcessingProfileSwitchInvalidatesSearchState(t *testing.T) {
+	backend := newFakeBackend()
+	backend.profiles = append(backend.profiles, api.ProcessingProfileSummary{
+		Name: "hosted", Fingerprint: strings.Repeat("c", 64), EmbeddingBindings: []string{"direct-file"},
+	})
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.cursor = 1
+	model, cmd := updateModel(t, model, runeKey('P'))
+	model = runModelCommand(t, model, cmd)
+
+	searchRequestID := model.processingRequestID
+	model.processingSearchBusy = true
+	model.processingSearchErr = errors.New("previous profile search error")
+	model.processingSearchReport = &api.DocumentSearchReport{
+		Results: []api.DocumentSearchResult{{Rank: 1, Path: "/README.txt", Excerpt: "private profile result"}},
+	}
+	model, cmd = updateModel(t, model, runeKey(']'))
+	require.NotNil(t, cmd)
+	assert.Equal(t, 1, model.processingProfile)
+	assert.False(t, model.processingSearchBusy)
+	require.NoError(t, model.processingSearchErr)
+	assert.Nil(t, model.processingSearchReport)
+
+	model, _ = updateModel(t, model, processingSearchLoadedMsg{
+		requestID: searchRequestID,
+		report:    api.DocumentSearchReport{Results: []api.DocumentSearchResult{{Rank: 1, Path: "/README.txt", Excerpt: "late private result"}}},
+	})
+	assert.False(t, model.processingSearchBusy)
+	assert.Nil(t, model.processingSearchReport)
+}
+
+func TestProcessingRefreshReloadsExistingJobStatus(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.cursor = 1
+	model, cmd := updateModel(t, model, runeKey('P'))
+	model = runModelCommand(t, model, cmd)
+	model = runModelCommand(t, model, model.loadProcessingPlan("private", model.processingRequestID))
+	model = runModelCommand(t, model, model.loadProcessingCoverage(*model.processingPlan, model.processingRequestID))
+
+	job := backend.processingJob
+	model.processingJob = &job
+	model.processingStatus = &api.ProcessingStatus{JobID: job.ID, State: "running", Phase: "rendering"}
+	backend.processingStatus = api.ProcessingStatus{JobID: job.ID, State: "completed", Phase: "published"}
+	model, cmd = updateModel(t, model, runeKey('r'))
+	require.NotNil(t, cmd)
+	require.NotNil(t, model.processingJob)
+	assert.Equal(t, job.ID, model.processingJob.ID)
+
+	model = runModelCommand(t, model, cmd)
+	require.NotNil(t, model.processingStatus)
+	assert.Equal(t, "completed", model.processingStatus.State)
+	assert.Equal(t, "published", model.processingStatus.Phase)
+}
+
+func TestProcessingViewScrollsToBoundedSearchResults(t *testing.T) {
+	backend := newFakeBackend()
+	backend.processingSearch = api.DocumentSearchReport{
+		ActualMode: "lexical", Coverage: api.DocumentSearchCoverage{State: "complete"},
+		Results: []api.DocumentSearchResult{{Rank: 1, Path: "/README.txt", Excerpt: "Synthetic retained evidence", Evidence: []api.DocumentEvidenceReference{{Kind: "lexical_segment"}}}},
+	}
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.width, model.height = 100, 12
+	model.cursor = 1
+	model, cmd := updateModel(t, model, runeKey('P'))
+	model = runModelCommand(t, model, cmd)
+	model = runModelCommand(t, model, model.loadProcessingPlan("private", model.processingRequestID))
+	require.NotNil(t, model.processingPlan)
+	model = runModelCommand(t, model, model.loadProcessingCoverage(*model.processingPlan, model.processingRequestID))
+	model, cmd = updateModel(t, model, runeKey('/'))
+	require.NotNil(t, cmd)
+	model.searchInput.SetValue("synthetic")
+	model, cmd = updateModel(t, model, key(tea.KeyEnter))
+	model = runModelCommand(t, model, cmd)
+
+	model, _ = updateModel(t, model, key(tea.KeyEnd))
+	assert.Positive(t, model.processingOffset)
+	assert.Contains(t, model.View().Content, "Synthetic retained evidence")
+}
+
+func TestProcessingSearchRestoresDocumentSearchPromptOnClose(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.cursor = 1
+	model, cmd := updateModel(t, model, runeKey('P'))
+	model = runModelCommand(t, model, cmd)
+	model = runModelCommand(t, model, model.loadProcessingPlan("private", model.processingRequestID))
+	model, _ = updateModel(t, model, runeKey('/'))
+	model, _ = updateModel(t, model, key(tea.KeyEscape))
+	model, _ = updateModel(t, model, key(tea.KeyEscape))
+	model, _ = updateModel(t, model, runeKey('/'))
+	assert.Equal(t, "search names and extracted text", model.searchInput.Placeholder)
 }
 
 func TestClosingDetailInvalidatesDelayedTags(t *testing.T) {

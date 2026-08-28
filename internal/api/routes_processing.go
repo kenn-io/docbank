@@ -279,6 +279,24 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		return renditionStream(rendition), nil
 	})
 
+	type renditionSelectInput struct{ Body RenditionSelectorRequest }
+	huma.Register(api, huma.Operation{
+		OperationID: "readDocumentRenditionBySelector", Method: http.MethodPost,
+		Path: "/api/v1/renditions/select", Summary: "Stream the active rendition for one exact source selector",
+	}, func(ctx context.Context, input *renditionSelectInput) (*huma.StreamResponse, error) {
+		if d.Processing == nil {
+			return nil, processingUnavailable()
+		}
+		rendition, err := d.Processing.Rendition(ctx, processing.Selector{
+			NodeID: input.Body.Selector.NodeID, ContentVersionID: input.Body.Selector.ContentVersionID,
+			Profile: input.Body.Selector.Profile,
+		}, input.Body.MaxBytes)
+		if err != nil {
+			return nil, fromProcessingError(err)
+		}
+		return renditionStream(rendition), nil
+	})
+
 	type coverageOutput struct{ Body CoverageReport }
 	huma.Register(api, huma.Operation{
 		OperationID: "getDocumentProcessingCoverage", Method: http.MethodGet,

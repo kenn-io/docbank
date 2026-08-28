@@ -44,6 +44,7 @@ func TestProcessingClientUsesTypedRoutesAndVerifiesRenditionStream(t *testing.T)
 	renditionBody := string(rendered.Markdown)
 	renderedHash := sha256.Sum256([]byte(renditionBody))
 	headerCompleteness := "complete"
+	headerVersionID := versionID
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, serverKey, r.Header.Get("X-Api-Key"))
 		w.Header().Set("Content-Type", "application/json")
@@ -85,7 +86,19 @@ func TestProcessingClientUsesTypedRoutesAndVerifiesRenditionStream(t *testing.T)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/processing/jobs/"+jobID:
 			_ = json.MarshalWrite(w, api.ProcessingStatus{JobID: jobID, State: "completed",
 				Phase: "published", EmbeddingJobIDs: []string{}})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/renditions/"+attachmentID:
+		case (r.Method == http.MethodGet && r.URL.Path == "/api/v1/renditions/"+attachmentID) ||
+			(r.Method == http.MethodPost && r.URL.Path == "/api/v1/renditions/select"):
+			if r.Method == http.MethodPost {
+				var request api.RenditionSelectorRequest
+				if err := json.UnmarshalRead(r.Body, &request); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				if request.Selector != (api.ProcessingSelector{NodeID: 7, ContentVersionID: versionID, Profile: "private"}) {
+					http.Error(w, "unexpected rendition selector", http.StatusBadRequest)
+					return
+				}
+			}
 			w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 			w.Header().Set(api.RenditionAttachmentHeader, attachmentID)
 			w.Header().Set(api.RenditionBuildHeader, buildID)
@@ -93,7 +106,7 @@ func TestProcessingClientUsesTypedRoutesAndVerifiesRenditionStream(t *testing.T)
 			w.Header().Set(api.RenditionProfileHeader, profileFingerprint)
 			w.Header().Set(api.RenditionCompletenessHeader, headerCompleteness)
 			w.Header().Set(api.RenditionWarningsHeader, "degraded_provenance")
-			w.Header().Set(api.ContentVersionHeader, versionID)
+			w.Header().Set(api.ContentVersionHeader, headerVersionID)
 			w.Header().Set(api.BlobHashHeader, hex.EncodeToString(renderedHash[:]))
 			w.Header().Set(api.BlobSizeHeader, strconv.Itoa(len(renditionBody)))
 			w.Header().Set("Trailer", "Content-Digest")
@@ -144,6 +157,20 @@ func TestProcessingClientUsesTypedRoutesAndVerifiesRenditionStream(t *testing.T)
 	assert.Equal(t, profileFingerprint, stream.ProfileFingerprint)
 	assert.Equal(t, "complete", stream.Completeness)
 	assert.Equal(t, []string{"degraded_provenance"}, stream.Warnings)
+	selectedStream, err := c.RenditionForSelector(t.Context(), selector, int64(len(renditionBody)))
+	require.NoError(t, err)
+	var selected strings.Builder
+	_, err = selectedStream.CopyVerified(&selected)
+	require.NoError(t, err)
+	assert.Equal(t, renditionBody, selected.String())
+	headerVersionID = "22222222-2222-4222-8222-222222222222"
+	wrongVersion, err := c.RenditionForSelector(t.Context(), selector, int64(len(renditionBody)))
+	if wrongVersion != nil {
+		require.NoError(t, wrongVersion.Close())
+	}
+	require.ErrorIs(t, err, client.ErrIntegrity)
+	assert.Nil(t, wrongVersion)
+	headerVersionID = versionID
 	rangeStream, err := c.RenditionRange(t.Context(), job.AttachmentID, 0, 16)
 	require.NoError(t, err)
 	var ranged strings.Builder

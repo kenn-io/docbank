@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -74,6 +75,8 @@ func (m Model) render() string {
 		lines = append(lines, m.renderJobsLocation())
 	} else if m.operationsOpen {
 		lines = append(lines, m.renderOperationsLocation())
+	} else if m.processingOpen {
+		lines = append(lines, m.renderProcessingLocation())
 	} else if m.trashOpen {
 		lines = append(lines, m.renderTrashLocation())
 	} else if m.historyOpen {
@@ -81,7 +84,7 @@ func (m Model) render() string {
 	} else {
 		lines = append(lines, m.renderLocation())
 	}
-	if m.searching {
+	if m.searching || m.processingSearching {
 		lines = append(lines, fit(m.searchInput.View(), m.width))
 	}
 	if m.notice != "" {
@@ -94,6 +97,8 @@ func (m Model) render() string {
 		body = m.renderJobsList(bodyHeight)
 	} else if m.operationsOpen {
 		body = m.renderOperations(bodyHeight)
+	} else if m.processingOpen {
+		body = m.renderProcessing(bodyHeight)
 	} else if m.trashOpen {
 		body = m.renderTrashList(bodyHeight)
 	} else if m.historyOpen {
@@ -113,6 +118,9 @@ func (m Model) render() string {
 	if m.helpOpen {
 		return m.renderHelp(content)
 	}
+	if m.processingConfirmation != nil {
+		return m.renderProcessingConfirmation(content)
+	}
 	if m.confirmation != nil {
 		return m.renderConfirmation(content)
 	}
@@ -121,7 +129,7 @@ func (m Model) render() string {
 
 func (m Model) bodyViewportHeight() int {
 	linesAboveBody := 2
-	if m.searching {
+	if m.searching || m.processingSearching {
 		linesAboveBody++
 	}
 	if m.notice != "" {
@@ -169,6 +177,18 @@ func (m Model) renderOperationsLocation() string {
 		right = "status unavailable"
 	} else if m.operationsStorageErr != nil || m.operationsBackupErr != nil {
 		right = "partial status"
+	}
+	return m.styles.stats.Render(joinSides(left, right, m.width))
+}
+
+func (m Model) renderProcessingLocation() string {
+	left := " Document processing · " + quoted(m.processingNode.path)
+	right := "reviewed execution"
+	if m.processingLoading || m.processingStarting {
+		right = m.styles.spinner.Render(m.spinnerIndicator()) + " loading"
+	}
+	if m.processingErr != nil {
+		right = "processing unavailable"
 	}
 	return m.styles.stats.Render(joinSides(left, right, m.width))
 }
@@ -314,6 +334,193 @@ func (m Model) renderOperations(height int) string {
 	return strings.Join(visible, "\n")
 }
 
+func (m Model) renderProcessing(height int) string {
+	lines := m.processingLines(m.width)
+	maximum := max(len(lines)-height, 0)
+	offset := min(m.processingOffset, maximum)
+	visible := append([]string(nil), lines[offset:min(offset+height, len(lines))]...)
+	for len(visible) < height {
+		visible = append(visible, strings.Repeat(" ", m.width))
+	}
+	return strings.Join(visible, "\n")
+}
+
+func (m Model) processingLines(width int) []string {
+	separator := m.styles.separator.Render(strings.Repeat("─", max(width, 0)))
+	lines := []string{
+		m.styles.heading.Render(pad(fit(" Document processing", width), width)),
+		separator,
+	}
+	if m.processingRunErr != nil {
+		lines = appendWrapped(lines, " Run error: "+quoted(m.processingRunErr.Error()), width, m.styles.error)
+	}
+	if m.processingJob != nil {
+		lines = appendWrapped(lines, " Processing job: "+m.processingJob.ID, width, m.styles.muted)
+	}
+	if m.processingStatusErr != nil {
+		lines = appendWrapped(lines, " Status unavailable: "+quoted(m.processingStatusErr.Error()), width, m.styles.error)
+	}
+	if m.processingStatus != nil {
+		status := *m.processingStatus
+		lines = appendWrapped(lines, " Processing status: "+status.State+" · "+status.Phase, width, lipgloss.NewStyle())
+		if status.FailureCode != "" {
+			lines = appendWrapped(lines, " Failure: "+status.FailureCode, width, m.styles.error)
+		}
+	}
+	if m.processingLoading && m.processingPlan == nil {
+		return append(lines, m.styles.muted.Render(pad(" Loading exact processing disclosure...", width)))
+	}
+	if m.processingErr != nil && m.processingPlan == nil {
+		return appendWrapped(lines, " Processing unavailable: "+quoted(m.processingErr.Error()), width, m.styles.error)
+	}
+	if len(m.processingProfiles) == 0 {
+		return append(lines, m.styles.muted.Render(pad(" No executable processing profiles", width)))
+	}
+	if m.processingPlan == nil {
+		return append(lines, m.styles.muted.Render(pad(" Preparing exact processing disclosure...", width)))
+	}
+	plan := *m.processingPlan
+	lines = appendWrapped(lines, fmt.Sprintf(" Profile: %s (%d/%d)", plan.Selector.Profile, m.processingProfile+1, len(m.processingProfiles)), width, lipgloss.NewStyle())
+	lines = appendWrapped(lines, " Exact version: "+plan.Selector.ContentVersionID, width, m.styles.muted)
+	lines = append(lines, separator,
+		m.styles.heading.Render(pad(fit(" Reviewed provider flow", width), width)), separator)
+	for _, hop := range plan.Flow {
+		lines = appendWrapped(lines, fmt.Sprintf(" %s · %s · %s", hop.Capability, hop.ProviderID, processingBoundaryLabel(hop.TrustBoundary)), width, lipgloss.NewStyle())
+		lines = appendWrapped(lines, "   Input: "+strings.Join(hop.InputClasses, ", "), width, m.styles.muted)
+		if hop.DiscloseFilename {
+			lines = appendWrapped(lines, "   Filename: "+quoted(hop.Filename), width, m.styles.muted)
+		}
+		lines = appendWrapped(lines, "   "+processingBoundaryDetail(hop.TrustBoundary), width, m.styles.muted)
+	}
+	lines = append(lines, separator,
+		m.styles.heading.Render(pad(fit(" Retained processing authority", width), width)), separator)
+	lines = appendWrapped(lines, " Disclosed: "+orNone(plan.DisclosedClasses), width, lipgloss.NewStyle())
+	lines = appendWrapped(lines, " Retained: "+orNone(plan.RetainedClasses), width, lipgloss.NewStyle())
+	estimate := fmt.Sprintf(" Estimate: %d source bytes · %d provider call(s) · %d vector space(s)",
+		plan.Estimate.SourceBytes, plan.Estimate.ProviderCalls, plan.Estimate.VectorSpaces)
+	lines = appendWrapped(lines, estimate, width, lipgloss.NewStyle())
+	lines = appendWrapped(lines, " Backup consequence: "+plan.BackupConsequence, width, m.styles.muted)
+	lines = appendWrapped(lines, " Provider configuration remains CLI or API only; processing consent requires explicit confirmation.", width, m.styles.muted)
+	lines = append(lines, separator,
+		m.styles.heading.Render(pad(fit(" Rendition and embedding coverage", width), width)), separator)
+	if m.processingLoading && m.processingCoverage == nil {
+		lines = append(lines, m.styles.muted.Render(pad(" Loading exact-version coverage...", width)))
+	} else if m.processingErr != nil {
+		lines = appendWrapped(lines, " Coverage unavailable: "+quoted(m.processingErr.Error()), width, m.styles.error)
+	} else if m.processingCoverage != nil {
+		coverage := *m.processingCoverage
+		lines = appendWrapped(lines, " State: "+coverage.State, width, lipgloss.NewStyle())
+		if coverage.State == "rebuilding" {
+			lines = appendWrapped(lines, " Previous complete generation remains available while the rebuild runs.", width, m.styles.muted)
+		}
+		lines = append(lines, processingCoverageLine(m.styles, coverage.Renditions, width))
+		for _, item := range coverage.Embeddings {
+			lines = append(lines, processingCoverageLine(m.styles, item, width))
+		}
+	}
+	lines = append(lines, separator,
+		m.styles.heading.Render(pad(fit(" Search this exact version", width), width)), separator)
+	if m.processingSearchBusy {
+		lines = append(lines, m.styles.muted.Render(pad(" Searching retained evidence...", width)))
+	} else if m.processingSearchErr != nil {
+		lines = appendWrapped(lines, " Search unavailable: "+quoted(m.processingSearchErr.Error()), width, m.styles.error)
+	} else if m.processingSearchReport != nil {
+		report := *m.processingSearchReport
+		lines = appendWrapped(lines, " Actual mode: "+report.ActualMode+" · coverage "+report.Coverage.State, width, lipgloss.NewStyle())
+		for _, degradation := range report.Degradations {
+			lines = appendWrapped(lines, " Warning: "+degradation, width, m.styles.error)
+		}
+		for _, result := range report.Results {
+			excerpt := result.Excerpt
+			if excerpt == "" {
+				excerpt = "Direct-file result; no text excerpt."
+			}
+			lines = appendWrapped(lines, fmt.Sprintf(" Rank %d · %s", result.Rank, quoted(result.Path)), width, lipgloss.NewStyle())
+			lines = appendWrapped(lines, "   "+excerpt, width, m.styles.muted)
+			kinds := make([]string, 0, len(result.Evidence))
+			for _, evidence := range result.Evidence {
+				kinds = append(kinds, evidence.Kind)
+			}
+			if len(kinds) > 0 {
+				lines = appendWrapped(lines, "   Evidence: "+strings.Join(kinds, ", "), width, m.styles.muted)
+			}
+		}
+	} else {
+		lines = append(lines, m.styles.muted.Render(pad(" Press / to search retained evidence for this exact version", width)))
+	}
+	lines = append(lines, separator, m.styles.heading.Render(pad(fit(" Sanitized Markdown rendition", width), width)), separator)
+	if m.processingRenditionErr != nil {
+		lines = appendWrapped(lines, " Rendition unavailable: "+quoted(m.processingRenditionErr.Error()), width, m.styles.error)
+	} else if m.processingRendition != nil {
+		rendition := *m.processingRendition
+		lines = appendWrapped(lines, " Build: "+rendition.BuildID, width, lipgloss.NewStyle())
+		lines = appendWrapped(lines, " Artifact: "+rendition.ArtifactID, width, m.styles.muted)
+		lines = appendWrapped(lines, " SHA-256: "+rendition.SHA256, width, m.styles.muted)
+		lines = appendWrapped(lines, " Completeness: "+rendition.Completeness, width, lipgloss.NewStyle())
+		for _, warning := range rendition.Warnings {
+			lines = appendWrapped(lines, " Warning: "+warning, width, m.styles.error)
+		}
+		lines = append(lines, m.processingMarkdown...)
+	} else {
+		lines = append(lines, m.styles.muted.Render(pad(" Press R to read the active bounded rendition", width)))
+	}
+	return lines
+}
+
+func (m *Model) wrapProcessingRendition() {
+	m.processingMarkdown = nil
+	if m.processingRendition != nil {
+		m.processingMarkdown = appendWrapped(nil, m.processingRendition.Markdown, m.width, lipgloss.NewStyle())
+	}
+}
+
+func processingBoundaryLabel(value string) string {
+	switch value {
+	case "local_process":
+		return "Local process"
+	case "operator_network":
+		return "Private network"
+	case "hosted_provider":
+		return "Hosted provider"
+	default:
+		return "Unrecognized boundary"
+	}
+}
+
+func processingBoundaryDetail(value string) string {
+	switch value {
+	case "local_process":
+		return "Processing stays inside this Docbank process."
+	case "operator_network":
+		return "Document data goes to an operator-controlled private endpoint."
+	case "hosted_provider":
+		return "Document data leaves this machine for this step."
+	default:
+		return "Treat this step as external until its trust boundary is configured correctly."
+	}
+}
+
+func processingCoverageLine(style styles, item api.CoverageClass, width int) string {
+	requirement := "optional"
+	if item.Required {
+		requirement = "required"
+	}
+	name := item.Name
+	if name == "rendition" {
+		name = "Rendition"
+	}
+	line := fmt.Sprintf(" %s · %s · %s · %d/%d complete · unavailable: %d · stale: %d · ineligible: %d",
+		name, requirement, item.State, item.Complete, item.Total, item.Unavailable, item.Stale, item.Ineligible)
+	return style.muted.Render(pad(fit(line, width), width))
+}
+
+func orNone(values []string) string {
+	if len(values) == 0 {
+		return "none"
+	}
+	return strings.Join(values, ", ")
+}
+
 func (m Model) operationsLines(width int) []string {
 	separator := m.styles.separator.Render(strings.Repeat("─", max(width, 0)))
 	lines := []string{
@@ -432,6 +639,13 @@ func (m Model) operationsLines(width int) []string {
 func appendWrapped(
 	lines []string, value string, width int, style lipgloss.Style,
 ) []string {
+	// Strip document-supplied terminal commands before adding our own styling.
+	value = strings.Map(func(character rune) rune {
+		if unicode.IsControl(character) && character != '\n' && character != '\t' {
+			return -1
+		}
+		return character
+	}, ansi.Strip(value))
 	wrapped := ansi.Hardwrap(value, max(width, 1), false)
 	for line := range strings.SplitSeq(wrapped, "\n") {
 		lines = append(lines, style.Render(pad(line, width)))
@@ -1047,6 +1261,9 @@ func (m Model) renderFooter() string {
 	if m.operationsOpen {
 		return m.renderOperationsFooter()
 	}
+	if m.processingOpen {
+		return m.renderProcessingFooter()
+	}
 	if m.historyOpen {
 		return m.renderHistoryFooter()
 	}
@@ -1077,6 +1294,7 @@ func (m Model) renderFooter() string {
 		hint{text: "T recover", priority: 74},
 		hint{text: "J jobs", priority: 68},
 		hint{text: "O operations", priority: 66},
+		hint{text: "P processing", priority: 67},
 		hint{text: "s sort", priority: 85},
 		hint{text: "v reverse", priority: 25},
 		hint{text: "r refresh", priority: 20},
@@ -1114,6 +1332,35 @@ func (m Model) renderOperationsFooter() string {
 		{text: "esc back", priority: 90},
 		{text: "? help", priority: 70},
 		{text: "q quit", priority: 60},
+	}
+	available := max(m.width-lipgloss.Width(position)-1, 0)
+	return m.styles.footer.Render(joinSides(fitHints(hints, available), position, m.width))
+}
+
+func (m Model) renderProcessingFooter() string {
+	hints := []hint{
+		{text: "[/] profile", priority: 95},
+		{text: "b build", priority: 94},
+		{text: "R rendition", priority: 93},
+		{text: "↑/↓ scroll", priority: 100},
+		{text: "/ search exact version", priority: 100},
+		{text: "r refresh", priority: 80},
+		{text: "esc back", priority: 90},
+		{text: "? help", priority: 70},
+		{text: "q quit", priority: 60},
+	}
+	if m.processingSearching {
+		hints = []hint{
+			{text: "enter search", priority: 100},
+			{text: "esc cancel", priority: 90},
+			{text: "ctrl+c quit", priority: 60},
+		}
+	}
+	position := ""
+	lines, viewport := m.processingLines(m.width), m.processingViewportHeight()
+	if len(lines) > viewport {
+		last := min(m.processingOffset+viewport, len(lines))
+		position = fmt.Sprintf(" %d-%d/%d ", m.processingOffset+1, last, len(lines))
 	}
 	available := max(m.width-lipgloss.Width(position)-1, 0)
 	return m.styles.footer.Render(joinSides(fitHints(hints, available), position, m.width))
@@ -1332,6 +1579,52 @@ func (m Model) renderConfirmation(background string) string {
 	return m.overlayModal(background, modal)
 }
 
+func (m Model) renderProcessingConfirmation(background string) string {
+	plan := m.processingConfirmation
+	if plan == nil {
+		return background
+	}
+	contentWidth := min(max(m.width-10, 1), 68)
+	lines := []string{
+		"Confirm processing consent",
+		"",
+	}
+	lines = appendWrapped(lines,
+		"Consent covers all documents and searches using this\n"+
+			"profile configuration for this vault's daemon operator.\n"+
+			"Consent has no expiry and stays active until revoked.\n"+
+			"Revoke all processing consent in the web app or API.",
+		contentWidth, lipgloss.NewStyle())
+	lines = append(lines,
+		" Run this version: "+plan.Selector.ContentVersionID,
+		" Profile: "+plan.Selector.Profile,
+		" Reviewed provider flow:",
+	)
+	for _, hop := range plan.Flow {
+		lines = append(lines,
+			fmt.Sprintf(" %s · %s · %s", hop.Capability, hop.ProviderID, processingBoundaryLabel(hop.TrustBoundary)),
+			"   Input: "+strings.Join(hop.InputClasses, ", "),
+			"   "+processingBoundaryDetail(hop.TrustBoundary),
+		)
+		if hop.DiscloseFilename {
+			lines = appendWrapped(lines, "   Filename: "+quoted(hop.Filename), contentWidth, lipgloss.NewStyle())
+		}
+	}
+	lines = append(lines,
+		" Disclosed: "+orNone(plan.DisclosedClasses),
+		" Retained: "+orNone(plan.RetainedClasses),
+		" Backup: "+plan.BackupConsequence,
+		"",
+		"Enter consent and start · Esc cancel",
+	)
+	for index := range lines {
+		lines[index] = fit(lines[index], contentWidth)
+	}
+	lines[0] = m.styles.modalTitle.Render(lines[0])
+	modal := m.styles.modal.Render(strings.Join(lines, "\n"))
+	return m.overlayModal(background, modal)
+}
+
 func (m Model) helpLines() []string {
 	if m.operationsOpen {
 		return []string{
@@ -1346,6 +1639,24 @@ func (m Model) helpLines() []string {
 			"",
 			"Packing, repacking, backup creation, and restore",
 			"remain deliberate CLI or API operations.",
+			"Press any key to close",
+		}
+	}
+	if m.processingOpen {
+		return []string{
+			"Document processing inspection",
+			"",
+			"/              Search this exact document version",
+			"[/]            Choose an executable processing profile",
+			"b              Confirm and run the exact reviewed plan",
+			"R              Read the bounded active rendition",
+			"r              Refresh profile, disclosure, and coverage",
+			"Esc            Return to documents",
+			"q              Quit",
+			"",
+			"Consent covers this profile's documents and searches",
+			"for the vault's daemon operator, with no expiry.",
+			"Revoke all processing consent in the web app or API.",
 			"Press any key to close",
 		}
 	}
@@ -1435,6 +1746,7 @@ func (m Model) helpLines() []string {
 		"T              Browse and restore recoverable trash",
 		"a              Browse permanent audited history",
 		"J              Inspect daemon background jobs",
+		"P              Inspect document processing and coverage",
 		"Esc/←/h        Return to the previous view",
 		"/              Search names and extracted text",
 		"s              Cycle the sort column",

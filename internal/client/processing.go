@@ -328,36 +328,78 @@ func (c *Client) Rendition(ctx context.Context, attachmentID string, maxBytes in
 	if err != nil {
 		return nil, &transportError{err: fmt.Errorf("fetching rendition: %w", err)}
 	}
-	if resp.StatusCode != http.StatusOK {
-		defer func() { _ = resp.Body.Close() }()
-		return nil, decodeError(resp)
-	}
-	fail := func(format string, args ...any) (*RenditionStream, error) {
+	stream, err := decodeRenditionResponse(resp, attachmentID, maxBytes)
+	if err != nil {
 		_ = resp.Body.Close()
-		return nil, integrityErrorf(format, args...)
+	}
+	return stream, err
+}
+
+// RenditionForSelector reads the active rendition for one exact immutable
+// source selector. The daemon resolves the live attachment internally.
+func (c *Client) RenditionForSelector(ctx context.Context, selector api.ProcessingSelector, maxBytes int64) (*RenditionStream, error) {
+	if maxBytes < 1 || maxBytes > 64<<20 {
+		return nil, errors.New("rendition max bytes must be between 1 and 67108864")
+	}
+	body, err := marshalJSONRequest(api.RenditionSelectorRequest{Selector: selector, MaxBytes: maxBytes})
+	if err != nil {
+		return nil, fmt.Errorf("encoding rendition selector: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/api/v1/renditions/select", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("building rendition selector request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.key != "" {
+		req.Header.Set("X-Api-Key", c.key)
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return nil, &transportError{err: fmt.Errorf("fetching rendition: %w", err)}
+	}
+	stream, err := decodeRenditionResponse(resp, "", maxBytes)
+	if err != nil {
+		_ = resp.Body.Close()
+		return nil, err
+	}
+	if stream.VersionID != selector.ContentVersionID {
+		_ = resp.Body.Close()
+		return nil, integrityErrorf("rendition returned content version %q, expected %q",
+			stream.VersionID, selector.ContentVersionID)
+	}
+	return stream, nil
+}
+
+func decodeRenditionResponse(
+	resp *http.Response, expectedAttachmentID string, maxBytes int64,
+) (*RenditionStream, error) {
+	if resp.StatusCode != http.StatusOK {
+		return nil, decodeError(resp)
 	}
 	mediaType, parameters, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	if err != nil || mediaType != "text/markdown" || parameters["charset"] != "utf-8" {
-		return fail("rendition returned invalid content type %q", resp.Header.Get("Content-Type"))
+		return nil, integrityErrorf("rendition returned invalid content type %q", resp.Header.Get("Content-Type"))
 	}
-	if got := resp.Header.Get(api.RenditionAttachmentHeader); got != attachmentID {
-		return fail("rendition returned attachment %q, expected %q", got, attachmentID)
+	attachmentID := resp.Header.Get(api.RenditionAttachmentHeader)
+	if expectedAttachmentID != "" && attachmentID != expectedAttachmentID {
+		return nil, integrityErrorf("rendition returned attachment %q, expected %q", attachmentID, expectedAttachmentID)
 	}
 	buildID, artifactID := resp.Header.Get(api.RenditionBuildHeader), resp.Header.Get(api.RenditionArtifactHeader)
-	if !validSHA256Hex(buildID) || !validSHA256Hex(artifactID) {
-		return fail("rendition returned invalid build or artifact identity")
+	if !validSHA256Hex(attachmentID) || !validSHA256Hex(buildID) || !validSHA256Hex(artifactID) {
+		return nil, integrityErrorf("rendition returned invalid build or artifact identity")
 	}
 	profileFingerprint, completeness, warnings, err := renditionMetadataHeaders(resp.Header)
 	if err != nil {
-		return fail("rendition returned invalid metadata: %v", err)
+		return nil, integrityErrorf("rendition returned invalid metadata: %v", err)
 	}
 	size, err := strconv.ParseInt(resp.Header.Get(api.BlobSizeHeader), 10, 64)
-	if err != nil || size < 0 || (maxBytes != 0 && size > maxBytes) {
-		return fail("rendition returned invalid size %q", resp.Header.Get(api.BlobSizeHeader))
+	if err != nil || size < 0 || (expectedAttachmentID == "" && size == 0) ||
+		(maxBytes != 0 && size > maxBytes) {
+		return nil, integrityErrorf("rendition returned invalid size %q", resp.Header.Get(api.BlobSizeHeader))
 	}
 	hash, versionID := resp.Header.Get(api.BlobHashHeader), resp.Header.Get(api.ContentVersionHeader)
 	if !validSHA256Hex(hash) || !validUUIDv4(versionID) {
-		return fail("rendition returned invalid blob or content-version identity")
+		return nil, integrityErrorf("rendition returned invalid blob or content-version identity")
 	}
 	return &RenditionStream{ContentStream: &ContentStream{ReadCloser: resp.Body,
 		VersionID: versionID, BlobHash: hash, Size: size, trailer: resp.Trailer},
