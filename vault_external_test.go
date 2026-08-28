@@ -17,12 +17,362 @@ import (
 	"github.com/stretchr/testify/require"
 
 	docbank "go.kenn.io/docbank"
+	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/plaintext"
 )
 
 func TestRootPackageConstructor(t *testing.T) {
 	vault, err := docbank.New(context.Background(), docbank.Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	require.NoError(t, vault.Close())
+}
+
+func TestEmbeddedProcessingPlanRunReadAndSearch(t *testing.T) {
+	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+	require.NoError(t, err)
+	profile := embeddedProcessingProfile(t, provider.Descriptor())
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(),
+		Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{
+			"private": {Profile: profile, RenditionProvider: provider},
+		}}})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	_, err = vault.Put(t.Context(), "/needle-outside-fence.txt", strings.NewReader("outside"),
+		docbank.PutOptions{MediaType: "text/plain"})
+	require.NoError(t, err)
+	receipt, err := vault.Put(t.Context(), "/private.txt",
+		strings.NewReader("# Private note\n\nA source-fenced needle.\n"),
+		docbank.PutOptions{MediaType: "text/plain"})
+	require.NoError(t, err)
+	selector := docbank.ProcessingSelector{NodeID: receipt.Node.ID,
+		ContentVersionID: receipt.Version.ID, Profile: "private"}
+	plan, err := vault.PlanProcessing(t.Context(), docbank.ProcessingPlanRequest{Selector: selector})
+	require.NoError(t, err)
+	require.NotEmpty(t, plan.Fingerprint)
+	require.Equal(t, "local_process", plan.Flow[0].TrustBoundary)
+	require.Contains(t, plan.RetainedClasses, "sanitized_markdown")
+	require.True(t, plan.ConsentRequired)
+
+	job, err := vault.StartProcessing(t.Context(), docbank.StartProcessingRequest{
+		PlanRequest:     docbank.ProcessingPlanRequest{Selector: selector},
+		PlanFingerprint: plan.Fingerprint, Consent: true,
+	})
+	require.NoError(t, err)
+	status, err := vault.ProcessingStatus(t.Context(), docbank.ProcessingStatusRequest{JobID: job.ID})
+	require.NoError(t, err)
+	require.Equalf(t, "completed", status.State, "status: %+v", status)
+	repeated, err := vault.StartProcessing(t.Context(), docbank.StartProcessingRequest{
+		PlanRequest:     docbank.ProcessingPlanRequest{Selector: selector},
+		PlanFingerprint: plan.Fingerprint, Consent: true,
+	})
+	require.NoError(t, err)
+	require.Equal(t, job.RenditionJobID, repeated.RenditionJobID)
+
+	rendition, err := vault.Rendition(t.Context(), docbank.RenditionRequest{Selector: selector})
+	require.NoError(t, err)
+	body, err := io.ReadAll(rendition.Reader)
+	require.NoError(t, err)
+	require.NoError(t, rendition.Reader.Close())
+	require.True(t, bytes.HasPrefix(body, []byte("---\ndocbank:\n  contract: \"docbank-sanitized-markdown/v1\"\n")))
+	require.Contains(t, string(body), "    format: \"txt\"")
+	require.Contains(t, string(body), "needle")
+
+	fence := docbank.DocumentSourceFence{VaultUID: vault.ID(), ContentVersionIDs: []string{receipt.Version.ID}}
+	report, err := vault.SearchDocuments(t.Context(), docbank.DocumentSearchRequest{
+		Query: "needle", Mode: docbank.DocumentSearchLexical, Profile: "private", Fence: fence,
+	})
+	require.NoError(t, err)
+	require.Len(t, report.Results, 1)
+	require.Equal(t, receipt.Version.ID, report.Results[0].ContentVersionID)
+	require.NotContains(t, report.Results[0].Excerpt, "docbank-sanitized-markdown")
+
+	metadataOnly, err := vault.SearchDocuments(t.Context(), docbank.DocumentSearchRequest{
+		Query: "sanitized-markdown", Mode: docbank.DocumentSearchLexical, Profile: "private", Fence: fence,
+	})
+	require.NoError(t, err)
+	require.Empty(t, metadataOnly.Results)
+}
+
+func TestEmbeddedProcessingRejectsForeignFenceAndClosedVault(t *testing.T) {
+	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+	require.NoError(t, err)
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(),
+		Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{
+			"private": {Profile: embeddedProcessingProfile(t, provider.Descriptor()), RenditionProvider: provider},
+		}}})
+	require.NoError(t, err)
+	_, err = vault.SearchDocuments(t.Context(), docbank.DocumentSearchRequest{Query: "value",
+		Mode: docbank.DocumentSearchLexical, Profile: "private", Fence: docbank.DocumentSourceFence{
+			VaultUID:          "00000000-0000-4000-8000-000000000000",
+			ContentVersionIDs: []string{"00000000-0000-4000-8000-000000000001"},
+		}})
+	require.ErrorIs(t, err, docbank.ErrForeignVault)
+	require.NoError(t, vault.Close())
+	_, err = vault.PlanProcessing(t.Context(), docbank.ProcessingPlanRequest{})
+	require.ErrorIs(t, err, docbank.ErrClosed)
+}
+
+func TestEmbeddedProcessingRunsDirectEmbeddingsAndSemanticSearch(t *testing.T) {
+	renditionProvider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+	require.NoError(t, err)
+	embeddingProvider := newSyntheticEmbeddingProvider(t)
+	profile := embeddedProcessingProfile(t, renditionProvider.Descriptor())
+	profile.Embeddings = []document.EmbeddingBindingV1{syntheticEmbeddingBinding(embeddingProvider.descriptor)}
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(),
+		Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{
+			"private": {Profile: profile, RenditionProvider: renditionProvider,
+				EmbeddingProviders: map[string]document.EmbeddingProvider{"direct": embeddingProvider}},
+		}}})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	receipt, err := vault.Put(t.Context(), "/private.txt", strings.NewReader("semantic needle"),
+		docbank.PutOptions{MediaType: "text/plain"})
+	require.NoError(t, err)
+	selector := docbank.ProcessingSelector{NodeID: receipt.Node.ID,
+		ContentVersionID: receipt.Version.ID, Profile: "private"}
+	plan, err := vault.PlanProcessing(t.Context(), docbank.ProcessingPlanRequest{Selector: selector})
+	require.NoError(t, err)
+	job, err := vault.StartProcessing(t.Context(), docbank.StartProcessingRequest{
+		PlanRequest: docbank.ProcessingPlanRequest{Selector: selector}, PlanFingerprint: plan.Fingerprint, Consent: true})
+	require.NoError(t, err)
+	require.Len(t, job.EmbeddingJobIDs, 1)
+	require.Equal(t, []string{"document.txt"}, embeddingProvider.filenames)
+	aggregate, err := vault.ProcessingStatus(t.Context(), docbank.ProcessingStatusRequest{JobID: job.ID})
+	require.NoError(t, err)
+	require.Equal(t, "completed", aggregate.State)
+	require.Equal(t, 1, aggregate.CompletedBindings)
+	require.Equal(t, job.EmbeddingJobIDs, aggregate.EmbeddingJobIDs)
+	embeddingStatus, err := vault.ProcessingStatus(t.Context(),
+		docbank.ProcessingStatusRequest{JobID: job.EmbeddingJobIDs[0]})
+	require.NoError(t, err)
+	require.Equal(t, "completed", embeddingStatus.State)
+
+	fence := docbank.DocumentSourceFence{VaultUID: vault.ID(), ContentVersionIDs: []string{receipt.Version.ID}}
+	coverage, err := vault.DocumentCoverage(t.Context(), docbank.CoverageRequest{Profile: "private", Fence: fence})
+	require.NoError(t, err)
+	require.Len(t, coverage.Embeddings, 1)
+	require.Equal(t, "complete", coverage.Embeddings[0].State)
+	report, err := vault.SearchDocuments(t.Context(), docbank.DocumentSearchRequest{
+		Query: "needle", Mode: docbank.DocumentSearchSemantic, Profile: "private", BindingID: "direct", Fence: fence})
+	require.NoError(t, err)
+	require.Equal(t, docbank.DocumentSearchSemantic, report.ActualMode)
+	require.Len(t, report.Results, 1)
+	require.Equal(t, receipt.Version.ID, report.Results[0].ContentVersionID)
+}
+
+func TestEmbeddedProcessingBuildsChunkEmbeddingsFromNormalizedEvidence(t *testing.T) {
+	renditionProvider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+	require.NoError(t, err)
+	embeddingProvider := newSyntheticEmbeddingProvider(t)
+	profile := embeddedProcessingProfile(t, renditionProvider.Descriptor())
+	profile.Embeddings = []document.EmbeddingBindingV1{syntheticChunkEmbeddingBinding(embeddingProvider.descriptor)}
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(),
+		Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{
+			"private": {Profile: profile, RenditionProvider: renditionProvider,
+				EmbeddingProviders: map[string]document.EmbeddingProvider{"chunks": embeddingProvider},
+				Tokenizers:         map[string]document.Tokenizer{"chunks": syntheticRuneTokenizer{}}},
+		}}})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	receipt, err := vault.Put(t.Context(), "/private.txt", strings.NewReader("chunk semantic needle"),
+		docbank.PutOptions{MediaType: "text/plain"})
+	require.NoError(t, err)
+	selector := docbank.ProcessingSelector{NodeID: receipt.Node.ID,
+		ContentVersionID: receipt.Version.ID, Profile: "private"}
+	plan, err := vault.PlanProcessing(t.Context(), docbank.ProcessingPlanRequest{Selector: selector})
+	require.NoError(t, err)
+	_, err = vault.StartProcessing(t.Context(), docbank.StartProcessingRequest{
+		PlanRequest: docbank.ProcessingPlanRequest{Selector: selector}, PlanFingerprint: plan.Fingerprint, Consent: true})
+	require.NoError(t, err)
+	fence := docbank.DocumentSourceFence{VaultUID: vault.ID(), ContentVersionIDs: []string{receipt.Version.ID}}
+	report, err := vault.SearchDocuments(t.Context(), docbank.DocumentSearchRequest{
+		Query: "needle", Mode: docbank.DocumentSearchSemantic, Profile: "private", BindingID: "chunks", Fence: fence})
+	require.NoError(t, err)
+	require.Len(t, report.Results, 1)
+	require.Equal(t, receipt.Version.ID, report.Results[0].ContentVersionID)
+	require.Equal(t, "rendition_chunk", report.Results[0].Evidence[0].InputKind)
+}
+
+func TestEmbeddedProcessingSupportsDirectEmbeddingWithoutRenditionProvider(t *testing.T) {
+	embeddingProvider := newSyntheticEmbeddingProvider(t)
+	profile := embeddedProcessingProfile(t, plaintextDescriptorForProfile(t))
+	profile.Rendition = nil
+	profile.RetentionDisclosure.RetainSanitizedMarkdown = false
+	profile.Embeddings = []document.EmbeddingBindingV1{syntheticEmbeddingBinding(embeddingProvider.descriptor)}
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(),
+		Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{
+			"direct": {Profile: profile,
+				EmbeddingProviders: map[string]document.EmbeddingProvider{"direct": embeddingProvider}},
+		}}})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	receipt, err := vault.Put(t.Context(), "/private.txt", strings.NewReader("direct-only needle"),
+		docbank.PutOptions{MediaType: "text/plain"})
+	require.NoError(t, err)
+	selector := docbank.ProcessingSelector{NodeID: receipt.Node.ID,
+		ContentVersionID: receipt.Version.ID, Profile: "direct"}
+	plan, err := vault.PlanProcessing(t.Context(), docbank.ProcessingPlanRequest{Selector: selector})
+	require.NoError(t, err)
+	require.Len(t, plan.Flow, 2)
+	require.Equal(t, "embedding", plan.Flow[0].Capability)
+	require.Contains(t, plan.DisclosedClasses, "query_text")
+	require.NotContains(t, plan.RetainedClasses, "normalized_evidence")
+	job, err := vault.StartProcessing(t.Context(), docbank.StartProcessingRequest{
+		PlanRequest: docbank.ProcessingPlanRequest{Selector: selector}, PlanFingerprint: plan.Fingerprint, Consent: true})
+	require.NoError(t, err)
+	require.Empty(t, job.RenditionJobID)
+	require.Equal(t, job.EmbeddingJobIDs[0], job.ID)
+	status, err := vault.ProcessingStatus(t.Context(), docbank.ProcessingStatusRequest{JobID: job.ID})
+	require.NoError(t, err)
+	require.Equal(t, "completed", status.State)
+	require.Equal(t, 1, status.CompletedBindings)
+	fence := docbank.DocumentSourceFence{VaultUID: vault.ID(), ContentVersionIDs: []string{receipt.Version.ID}}
+	report, err := vault.SearchDocuments(t.Context(), docbank.DocumentSearchRequest{
+		Query: "needle", Mode: docbank.DocumentSearchSemantic, Profile: "direct", BindingID: "direct", Fence: fence})
+	require.NoError(t, err)
+	require.Len(t, report.Results, 1)
+}
+
+func plaintextDescriptorForProfile(t *testing.T) document.RenditionDescriptor {
+	t.Helper()
+	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+	require.NoError(t, err)
+	return provider.Descriptor()
+}
+
+type syntheticEmbeddingProvider struct {
+	descriptor document.EmbeddingDescriptor
+	filenames  []string
+}
+
+func newSyntheticEmbeddingProvider(t *testing.T) *syntheticEmbeddingProvider {
+	t.Helper()
+	contract, err := document.NewModelInputContract(document.ModelInputContractConfig{
+		Profile: document.ModelInputProfileCustom, CompatibilityID: "synthetic-direct/v1",
+		Document: document.ModelInputEncoder{Mode: document.ModelInputModeText, Template: "document: {{content}}"},
+		Query:    document.ModelInputEncoder{Mode: document.ModelInputModeText, Template: "query: {{content}}"},
+	})
+	require.NoError(t, err)
+	descriptor, err := document.NewEmbeddingDescriptor(document.EmbeddingDescriptor{
+		ID: "synthetic-direct", ContractVersion: document.EmbeddingProviderContractVersion,
+		PolicyFingerprint: embeddedHash("synthetic-embedding-policy"),
+		TrustBoundary:     document.EmbeddingTrustLocalProcess, Model: "synthetic", ModelRevision: "v1",
+		Dimension: 2, Metric: document.VectorMetricCosine,
+		Normalization: document.VectorNormalizationUnitLength, ScalarEncoding: "float32",
+		DocumentFormatter: "document/v1", QueryFormatter: "query/v1",
+		InputKinds: []document.EmbeddingInputKind{document.EmbeddingInputOriginalFile,
+			document.EmbeddingInputRenditionChunk},
+		CompatibilityID: contract.CompatibilityID, SupportsTextQuery: true, ModelInput: contract,
+		SupportedRequestModes: []document.ModelInputMode{document.ModelInputModeText},
+	})
+	require.NoError(t, err)
+	return &syntheticEmbeddingProvider{descriptor: descriptor}
+}
+
+func (provider *syntheticEmbeddingProvider) Descriptor() document.EmbeddingDescriptor {
+	return provider.descriptor
+}
+
+func (provider *syntheticEmbeddingProvider) Embed(_ context.Context, inputs []document.EmbeddingInput,
+	_ document.EmbeddingAuthorization,
+) (document.EmbeddingResult, error) {
+	vectors := make([]document.EmbeddingVector, len(inputs))
+	for index, input := range inputs {
+		text := input.Text
+		if input.Source != nil {
+			provider.filenames = append(provider.filenames, input.Source.Metadata().Filename)
+			body, err := io.ReadAll(input.Source)
+			if err != nil {
+				return document.EmbeddingResult{}, err
+			}
+			text = string(body)
+		}
+		vector := []float32{0, 1}
+		if strings.Contains(text, "needle") {
+			vector = []float32{1, 0}
+		}
+		vectors[index] = document.EmbeddingVector{Key: input.Key, Values: vector}
+	}
+	return document.EmbeddingResult{Vectors: vectors}, nil
+}
+
+func syntheticEmbeddingBinding(descriptor document.EmbeddingDescriptor) document.EmbeddingBindingV1 {
+	return document.EmbeddingBindingV1{Activation: document.EmbeddingRequired,
+		AuthorizationFingerprint: embeddedHash("embedding-authorization"),
+		CompatibilityID:          descriptor.CompatibilityID, CredentialBinding: "credential:none",
+		Descriptor: document.ProviderDescriptorV1{ID: descriptor.ID, Fingerprint: descriptor.Fingerprint},
+		Dimensions: descriptor.Dimension, DisclosureFingerprint: embeddedHash("embedding-disclosure"),
+		DocumentFormatter: descriptor.DocumentFormatter, InputKind: document.EmbeddingInputOriginalFile,
+		MaxBatchItems: 8, MaxInputBytes: 1 << 20, MaxResponseBytes: 1 << 20,
+		Metric: descriptor.Metric, ModelInput: descriptor.ModelInput, Model: descriptor.Model, Name: "direct",
+		Normalization: descriptor.Normalization, QueryFormatter: descriptor.QueryFormatter,
+		ScalarEncoding: descriptor.ScalarEncoding, TrustBoundary: string(descriptor.TrustBoundary)}
+}
+
+func syntheticChunkEmbeddingBinding(descriptor document.EmbeddingDescriptor) document.EmbeddingBindingV1 {
+	binding := syntheticEmbeddingBinding(descriptor)
+	binding.Name = "chunks"
+	binding.InputKind = document.EmbeddingInputRenditionChunk
+	binding.Chunk = &document.EmbeddingChunkPolicyV1{ContextFingerprint: embeddedHash("chunk-context"),
+		Formatter: "rendition-chunk/v1", MaxTokens: 64, OverlapTokens: 8,
+		Tokenizer: "synthetic-runes@v1", TruncationPolicy: string(document.TruncationPolicyReject)}
+	return binding
+}
+
+type syntheticRuneTokenizer struct{}
+
+func (syntheticRuneTokenizer) Identity() document.TokenizerIdentity {
+	return document.TokenizerIdentity{Name: "synthetic-runes", Revision: "v1",
+		PrefixTokenCountsMonotonic: true}
+}
+
+func (syntheticRuneTokenizer) Tokenize(text string, limit int) ([]document.TokenBoundary, error) {
+	runes := []rune(text)
+	if len(runes) > limit {
+		return nil, document.ErrTokenizerLimit
+	}
+	result := make([]document.TokenBoundary, len(runes))
+	for index := range runes {
+		result[index] = document.TokenBoundary{Start: index, End: index + 1}
+	}
+	return result, nil
+}
+
+func embeddedHash(value string) string {
+	digest := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(digest[:])
+}
+
+func embeddedProcessingProfile(t *testing.T, descriptor document.RenditionDescriptor) document.ProcessingProfileV1 {
+	t.Helper()
+	hash := func(value string) string {
+		digest := sha256.Sum256([]byte(value))
+		return hex.EncodeToString(digest[:])
+	}
+	return document.ProcessingProfileV1{
+		ContractVersion: document.ProcessingProfileContractV1,
+		Rendition: &document.RenditionBindingV1{
+			AdapterContract: "plaintext.in-process/v1", AuthorizationFingerprint: hash("authorization"),
+			CredentialBinding: "credential:none", DeploymentFingerprint: hash("deployment"),
+			Descriptor:            document.ProviderDescriptorV1{ID: descriptor.ID, Fingerprint: descriptor.Fingerprint},
+			DisclosureFingerprint: hash("rendition-disclosure"), MaxDocumentBytes: 1 << 20,
+			MaxResponseBytes: 1 << 20, MaxUnits: 1000, Name: "plaintext",
+			RequestedArtifacts: []document.EvidenceArtifactRole{document.EvidenceArtifactStructured},
+			TrustBoundary:      string(descriptor.TrustBoundary), UploadOptionsFingerprint: hash("upload"),
+		},
+		EvidenceLexical: document.EvidenceLexicalPolicyV1{
+			CompletenessFingerprint: hash("completeness"), LexicalSegmenterFingerprint: hash("segments"),
+			MaxSegmentRunes: 1000, MaxUnitRunes: 100_000,
+			NormalizedEvidenceContract: document.NormalizedEvidenceContractV1,
+			NormalizerFingerprint:      hash("normalizer"), RenditionContract: document.RenditionContractV1,
+			SanitizerFingerprint: hash("sanitizer"), SourceEvidenceContract: document.SourceEvidenceContractV1,
+		},
+		RetentionDisclosure: document.RetentionDisclosurePolicyV1{
+			AttachmentPolicyFingerprint: hash("attachment"), ConsentFingerprint: hash("consent"),
+			RetainSanitizedMarkdown: true, TrustBoundary: string(descriptor.TrustBoundary),
+		},
+		Retrieval: document.RetrievalPolicyV1{LexicalLimit: 50, VectorLimit: 50},
+	}
 }
 
 func createRangeFixture(

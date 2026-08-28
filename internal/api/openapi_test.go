@@ -22,6 +22,10 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 		"createTag", "renameTag", "deleteTag", "assignTag", "unassignTag",
 		"assignTagPath", "unassignTagPath",
 		"previewAuditEnrollment", "enableAudit", "auditStatus", "auditNodeHistory", "verifyAudit",
+		"listDocumentProcessingProfiles", "planDocumentProcessing", "startDocumentProcessing",
+		"getDocumentProcessingJob", "grantDocumentProcessingConsent", "revokeDocumentProcessingConsent",
+		"planDerivativePurge", "runDerivativePurge", "getDocumentRendition",
+		"getDocumentProcessingCoverage", "searchDocuments",
 		"search", "createNode", "moveNode", "movePath", "trashNode", "trashPath", "restoreNode",
 		"storageStatus", "storagePack", "storageRepack", "ingest", "uploadFile", "listTrash", "emptyTrash", "gc", "verify",
 		"initBackupRepository", "createBackupSnapshot", "listBackupSnapshots", "listJobs"} {
@@ -33,6 +37,17 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 	assert.Contains(t, doc, api.ContentVersionHeader)
 	assert.Contains(t, doc, "Content-Digest")
 	assert.Contains(t, doc, "computed_hash")
+}
+
+func TestProcessingMutationRoutesClearBodyReadDeadline(t *testing.T) {
+	doc := api.NewOfflineServer().API().OpenAPI()
+	for _, operation := range []*huma.Operation{
+		doc.Paths["/api/v1/processing/jobs"].Post,
+		doc.Paths["/api/v1/derivatives/purge-jobs"].Post,
+	} {
+		require.NotNil(t, operation)
+		assert.Negative(t, operation.BodyReadTimeout)
+	}
 }
 
 func TestOpenAPIDeclaresSecurity(t *testing.T) {

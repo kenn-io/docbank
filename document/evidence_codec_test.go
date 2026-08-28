@@ -402,6 +402,41 @@ func TestSourceEvidenceV1RejectsInvalidAuthority(t *testing.T) {
 	}
 }
 
+func TestEvidenceV1SupportsVisualAndDegradedMediaFamilies(t *testing.T) {
+	for _, testCase := range []struct {
+		name         string
+		family       string
+		completeness document.EvidenceCompleteness
+		unitKind     document.EvidenceUnitKind
+		locatorKind  document.EvidenceLocatorKind
+	}{
+		{name: "image page", family: "image", completeness: document.EvidenceComplete, unitKind: document.EvidenceUnitPage, locatorKind: document.EvidenceLocatorPage},
+		{name: "audio fallback", family: "audio", completeness: document.EvidenceDegradedProvenance, unitKind: document.EvidenceUnitGeneric, locatorKind: document.EvidenceLocatorGeneric},
+		{name: "video fallback", family: "video", completeness: document.EvidenceDegradedProvenance, unitKind: document.EvidenceUnitGeneric, locatorKind: document.EvidenceLocatorGeneric},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			evidence := document.SourceEvidenceV1{
+				ContractVersion: document.SourceEvidenceContractV1,
+				Completeness:    testCase.completeness,
+				Family:          testCase.family,
+				UnitKind:        testCase.unitKind,
+				Units: []document.SourceEvidenceUnitV1{{
+					Order: 0, Text: "synthetic evidence",
+					Locator: document.SourceEvidenceLocatorV1{Kind: testCase.locatorKind, IndexOrigin: document.EvidenceIndexOriginNone},
+				}},
+			}
+			if testCase.completeness == document.EvidenceComplete {
+				evidence.Units[0].Locator.IndexOrigin = document.EvidenceIndexOriginZero
+			} else {
+				evidence.Omissions = []document.SourceEvidenceOmissionV1{{
+					Kind: document.EvidenceOmissionField, Field: "natural_provenance", Reason: "provider returned generic evidence",
+				}}
+			}
+			require.NoError(t, document.ValidateSourceEvidenceV1(evidence))
+		})
+	}
+}
+
 func TestEvidenceV1LocatorSequenceRequiresGapOmission(t *testing.T) {
 	source := syntheticSourceEvidenceV1()
 	source.Completeness = document.EvidencePartial

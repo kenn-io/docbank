@@ -85,6 +85,75 @@ func TestDetectBytesRecognizesSupportedContainers(t *testing.T) {
 	}
 }
 
+// TestDetectReportsVerifiedMP4CodecAndQuickTimeContainer catches a detector
+// that treats every ISO base-media file as generic MP4 or omits the verified
+// H.264 sample-entry identity needed for Gemini video eligibility.
+func TestDetectReportsVerifiedMP4CodecAndQuickTimeContainer(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name, codec, container string
+		data                   []byte
+	}{
+		{name: "QuickTime H.264", codec: "h264", container: "quicktime", data: mediatest.H264MOV()},
+		{name: "MP4 H.265", codec: "h265", container: "mp4", data: mediatest.H265MP4()},
+		{name: "MP4 VP9", codec: "vp9", container: "mp4", data: mediatest.VP9MP4()},
+		{name: "MP4 AV1", codec: "av1", container: "mp4", data: mediatest.AV1MP4()},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			metadata, err := media.DetectBytes(tt.data, "video/mp4")
+			require.NoError(t, err)
+			assert.Equal(t, tt.container, metadata.Container)
+			assert.Equal(t, tt.codec, metadata.Codec)
+			assert.Equal(t, int64(1_000), metadata.DurationMS)
+			assert.True(t, metadata.DurationKnown)
+		})
+	}
+
+	// Two authoritative visual sample entries must not collapse into an
+	// arbitrary codec choice.
+	conflicting := mp4TwoPictureTracks(16, 16, 16, 16)
+	secondEntry := bytes.LastIndex(conflicting, []byte("avc1"))
+	secondConfig := bytes.LastIndex(conflicting, []byte("avcC"))
+	require.NotEqual(t, -1, secondEntry)
+	require.NotEqual(t, -1, secondConfig)
+	copy(conflicting[secondEntry:secondEntry+4], "av01")
+	copy(conflicting[secondConfig:secondConfig+4], "av1C")
+	conflicting[secondConfig+4] = 0x81
+	_, err := media.DetectBytes(conflicting, "video/mp4")
+	require.ErrorIs(t, err, media.ErrMalformedMedia)
+}
+
+func TestDetectRejectsRenamedAVCConfigurationAsAnotherCodec(t *testing.T) {
+	t.Parallel()
+	for _, testCase := range []struct {
+		name, sampleEntry, configBox string
+	}{
+		{name: "VP9", sampleEntry: "vp09", configBox: "vpcC"},
+		{name: "AV1", sampleEntry: "av01", configBox: "av1C"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			data := decodableAVCMP4(t)
+			entry := bytes.Index(data, []byte("avc1"))
+			config := bytes.Index(data, []byte("avcC"))
+			require.NotEqual(t, -1, entry)
+			require.NotEqual(t, -1, config)
+			copy(data[entry:entry+4], testCase.sampleEntry)
+			copy(data[config:config+4], testCase.configBox)
+			if testCase.configBox == "av1C" {
+				copy(data[config+4:config+8], []byte{0x81, 0, 0, 0})
+			}
+
+			_, err := media.DetectBytes(data, "video/mp4")
+			require.ErrorIs(t, err, media.ErrMalformedMedia)
+		})
+	}
+}
+
+func quickTimeH264MP4() []byte {
+	return mediatest.H264MOV()
+}
+
 func TestDetectBytesRejectsUnsupportedAndMalformedInput(t *testing.T) {
 	tests := []struct {
 		name string
